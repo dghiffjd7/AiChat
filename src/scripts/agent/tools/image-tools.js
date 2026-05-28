@@ -10,6 +10,15 @@ export const createImageAgentTools = ({
     source: 'media-generation-service',
     permissions: ['network', 'storage'],
     riskLevel: 'high',
+    capabilities: {
+      read: false,
+      write: true,
+      network: true,
+      cost: 'variable',
+      undo: 'delete_asset',
+      modelContext: 'none',
+      confirmation: 'required',
+    },
     timeoutMs: 120000,
     outputLimit: 600,
     schema: {

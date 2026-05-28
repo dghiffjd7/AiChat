@@ -23,6 +23,15 @@ export const createMemoryAgentTools = ({
       source: 'memory-update-runtime',
       permissions: ['storage'],
       riskLevel: 'medium',
+      capabilities: {
+        read: true,
+        write: true,
+        network: false,
+        cost: 'none',
+        undo: 'rollback_snapshot',
+        modelContext: 'none',
+        confirmation: 'required',
+      },
       schema: {
         type: 'object',
         required: ['sessionId'],
@@ -62,6 +71,15 @@ export const createMemoryAgentTools = ({
       source: 'memory-update-runtime',
       permissions: ['storage'],
       riskLevel: 'medium',
+      capabilities: {
+        read: false,
+        write: true,
+        network: false,
+        cost: 'none',
+        undo: 'none',
+        modelContext: 'none',
+        confirmation: 'required',
+      },
       schema: {
         type: 'object',
         required: ['sessionId'],

@@ -83,6 +83,7 @@ const normalizeContactProfilePendingUpdate = (entry = {}) => {
 
 const normalizeTool = (tool = {}) => {
   const src = isPlainObject(tool) ? tool : {};
+  const capabilities = isPlainObject(src.capabilities) ? src.capabilities : {};
   return {
     name: trim(src.name, 'tool'),
     title: trim(src.title || src.label, trim(src.name, 'tool')),
@@ -91,6 +92,15 @@ const normalizeTool = (tool = {}) => {
     riskLevel: trim(src.riskLevel || src.risk, 'low'),
     permissions: list(src.permissions),
     executionMode: trim(src.executionMode, 'sequential'),
+    capabilities: {
+      read: capabilities.read === true,
+      write: capabilities.write === true,
+      network: capabilities.network === true,
+      cost: trim(capabilities.cost, 'none'),
+      undo: trim(capabilities.undo, 'none'),
+      modelContext: trim(capabilities.modelContext, 'none'),
+      confirmation: trim(capabilities.confirmation, 'allow_once'),
+    },
   };
 };
 
@@ -164,6 +174,8 @@ export const buildAgentCenterView = ({
       pending: pending.filter(item => item.status === 'pending').length,
       activeRuns: Number(runView?.meta?.scopedActive ?? runView?.meta?.active ?? 0),
       failedRuns: Number(runView?.meta?.scopedFailures ?? runView?.meta?.failures ?? 0),
+      unreadFailedRuns: Number(runView?.meta?.scopedUnreadFailures ?? runView?.meta?.unreadFailures ?? runView?.meta?.scopedFailures ?? runView?.meta?.failures ?? 0),
+      newestFailureAt: Number(runView?.meta?.scopedNewestFailureAt ?? runView?.meta?.newestFailureAt ?? 0),
       tools: normalizedTools.length,
       providerToolsEnabled: safety.providerTools.enabled,
       sessionGateEnabled: safety.sessionGate.enabled,

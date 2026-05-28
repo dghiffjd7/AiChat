@@ -3,7 +3,7 @@
  * 支持兼容 OpenAI 格式的自建 API
  */
 
-import { handleSSE } from '../stream.js';
+import { handleSSE, parseSSEBuffer } from '../stream.js';
 import { createLinkedAbortController, splitRequestOptions } from '../abort.js';
 import {
     createReasoningStreamEvent,
@@ -31,23 +31,23 @@ const isTauriWebview = () => {
     }
 };
 
-const parseSSEText = function* (text) {
-    const raw = String(text ?? '');
-    const lines = raw.split('\n');
-    for (const line of lines) {
-        if (!line.startsWith('data: ')) continue;
-        const data = line.slice(6).trim();
-        if (!data || data === '[DONE]') continue;
-        try {
-            yield JSON.parse(data);
-        } catch (_e) {}
-    }
-};
-
 const makeAbortError = () => {
     const err = new Error('Aborted');
     err.name = 'AbortError';
     return err;
+};
+
+const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
+
+const extractErrorDetail = (body) => {
+    const raw = String(body || '').trim();
+    if (!raw) return '';
+    try {
+        const j = JSON.parse(raw);
+        return String(j?.error?.message || j?.message || j?.detail || j?.error || '').trim();
+    } catch (_e) {
+        return raw.slice(0, 240);
+    }
 };
 
 const normalizeNonNegativeSeed = (value) => {
@@ -193,12 +193,7 @@ export class CustomProvider {
     async requestJson({ url, method = 'GET', headers = {}, body = undefined, signal, requestId = '' } = {}) {
         const res = await this.request({ url, method, headers, body, signal, requestId });
         if (!res.ok) {
-            const raw = String(res.body || '').trim();
-            let detail = '';
-            try {
-                const j = JSON.parse(raw);
-                detail = String(j?.error?.message || j?.message || j?.detail || j?.error || '').trim();
-            } catch (_e) {}
+            const detail = extractErrorDetail(res.body);
             const error = new Error(`Custom API Error: ${res.status}${detail ? ` - ${detail}` : ''}`);
             error.status = res.status;
             error.response = res.body;
@@ -269,9 +264,10 @@ export class CustomProvider {
      */
     async *streamChat(messages, options = {}) {
         const request = this.prepareChatRequest(messages, options);
+        const providerName = this.provider || 'custom';
         const notifyProviderToolCallDelta = data => {
             try {
-                request.onProviderToolCallDelta?.(data, { provider: this.provider || 'custom', model: this.model });
+                request.onProviderToolCallDelta?.(data, { provider: providerName, model: this.model });
             } catch {}
         };
         const payload = JSON.stringify({
@@ -282,35 +278,90 @@ export class CustomProvider {
         const invoker = getTauriInvoker();
         if (typeof invoker === 'function') {
             if (request.signal?.aborted) throw makeAbortError();
-            const res = await this.request({
+            const transport = prepareTransportRequest({
+                config: this.transportConfig,
+                provider: this.provider,
                 url: request.url,
-                method: 'POST',
                 headers: { ...this.getHeaders(), Accept: 'text/event-stream' },
-                body: payload,
-                signal: request.signal,
-                requestId: request.requestId,
             });
-            if (!res.ok) {
-                const raw = String(res.body || '').trim();
-                let detail = '';
-                try {
-                    const j = JSON.parse(raw);
-                    detail = String(j?.error?.message || j?.message || j?.detail || j?.error || '').trim();
-                } catch (_e) {}
-                const error = new Error(`Custom API Error: ${res.status}${detail ? ` - ${detail}` : ''}`);
-                error.status = res.status;
-                error.response = res.body;
-                throw error;
-            }
-            for (const data of parseSSEText(res.body)) {
+            const nativeStreamRequestId = String(
+                request.requestId || `custom_stream_${Date.now().toString(36)}_${Math.random().toString(16).slice(2, 10)}`,
+            ).trim();
+            let started = false;
+            let responseStatus = 0;
+            let responseOk = null;
+            let rawErrorBody = '';
+            let sseBuffer = '';
+            const emitParsed = function* (data) {
                 notifyProviderToolCallDelta(data);
                 const parts = extractOpenAICompatibleStreamParts(data);
                 if (parts.reasoning) {
-                    yield createReasoningStreamEvent(parts.reasoning, { provider: this.provider || 'custom' });
+                    yield createReasoningStreamEvent(parts.reasoning, { provider: providerName });
                 }
                 if (parts.content) yield parts.content;
+            };
+            try {
+                await invoker('http_stream_request_start', {
+                    url: transport.url,
+                    method: 'POST',
+                    headers: transport.headers,
+                    body: payload,
+                    timeoutMs: this.timeout,
+                    requestId: nativeStreamRequestId,
+                });
+                started = true;
+
+                while (true) {
+                    if (request.signal?.aborted) throw makeAbortError();
+                    const batch = await invoker('http_stream_request_read', {
+                        requestId: nativeStreamRequestId,
+                        maxChunks: 32,
+                    });
+                    if (Number.isFinite(Number(batch?.status))) responseStatus = Number(batch.status);
+                    if (typeof batch?.ok === 'boolean') responseOk = batch.ok;
+
+                    const chunks = Array.isArray(batch?.chunks) ? batch.chunks.map(chunk => String(chunk || '')) : [];
+                    if (responseOk === false) {
+                        rawErrorBody += chunks.join('');
+                    } else {
+                        for (const chunk of chunks) {
+                            sseBuffer += chunk;
+                            const parsed = parseSSEBuffer(sseBuffer, { final: false });
+                            sseBuffer = parsed.rest;
+                            for (const data of parsed.events) yield* emitParsed(data);
+                            if (parsed.done) return;
+                        }
+                    }
+
+                    const nativeError = String(batch?.error || '').trim();
+                    if (nativeError) {
+                        if (/aborted/i.test(nativeError)) throw makeAbortError();
+                        const error = new Error(`native custom stream request failed: ${nativeError}`);
+                        error.status = responseStatus;
+                        error.response = rawErrorBody;
+                        throw error;
+                    }
+
+                    if (batch?.done) {
+                        if (responseOk === false) {
+                            const detail = extractErrorDetail(rawErrorBody);
+                            const error = new Error(`Custom API Error: ${responseStatus || 0}${detail ? ` - ${detail}` : ''}`);
+                            error.status = responseStatus || 0;
+                            error.response = rawErrorBody;
+                            throw error;
+                        }
+                        const parsed = parseSSEBuffer(sseBuffer, { final: true });
+                        for (const data of parsed.events) yield* emitParsed(data);
+                        return;
+                    }
+
+                    if (!chunks.length) await delay(20);
+                }
+            } finally {
+                if (started) {
+                    invoker('http_stream_request_close', { requestId: nativeStreamRequestId }).catch(() => {});
+                }
             }
-            return;
         }
 
         const { controller, cleanup } = createLinkedAbortController({ timeoutMs: this.timeout, signal: request.signal });
@@ -330,11 +381,7 @@ export class CustomProvider {
 
             if (!response.ok) {
                 const txt = await response.text();
-                let detail = '';
-                try {
-                    const j = JSON.parse(String(txt || '').trim());
-                    detail = String(j?.error?.message || j?.message || j?.detail || j?.error || '').trim();
-                } catch (_e) {}
+                const detail = extractErrorDetail(txt);
                 const error = new Error(`Custom API Error: ${response.status}${detail ? ` - ${detail}` : ''}`);
                 error.status = response.status;
                 error.response = txt;
@@ -345,7 +392,7 @@ export class CustomProvider {
                 notifyProviderToolCallDelta(data);
                 const parts = extractOpenAICompatibleStreamParts(data);
                 if (parts.reasoning) {
-                    yield createReasoningStreamEvent(parts.reasoning, { provider: this.provider || 'custom' });
+                    yield createReasoningStreamEvent(parts.reasoning, { provider: providerName });
                 }
                 if (parts.content) yield parts.content;
             }

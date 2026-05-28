@@ -2,6 +2,44 @@
  * 流式响应处理工具
  */
 
+export const parseSSEBuffer = (buffer = '', { final = false } = {}) => {
+    const normalized = String(buffer ?? '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+    const frames = normalized.split(/\n\n+/);
+    const rest = final ? '' : (frames.pop() || '');
+    const events = [];
+    let done = false;
+
+    for (const frame of frames) {
+        const dataLines = [];
+        for (const rawLine of String(frame || '').split('\n')) {
+            if (!rawLine || rawLine.startsWith(':')) continue;
+            if (!rawLine.startsWith('data:')) continue;
+            let data = rawLine.slice(5);
+            if (data.startsWith(' ')) data = data.slice(1);
+            dataLines.push(data);
+        }
+        if (!dataLines.length) continue;
+        const dataText = dataLines.join('\n').trim();
+        if (!dataText) continue;
+        if (dataText === '[DONE]') {
+            done = true;
+            break;
+        }
+        try {
+            events.push(JSON.parse(dataText));
+        } catch (e) {
+            console.warn('SSE parse error:', e, 'data:', dataText);
+        }
+    }
+
+    return { events, rest, done };
+};
+
+export const parseSSEText = function* (text = '') {
+    const { events } = parseSSEBuffer(`${String(text ?? '')}\n\n`, { final: true });
+    yield* events;
+};
+
 /**
  * 处理 Server-Sent Events (SSE) 流
  * @param {Response} response - Fetch API 返回的响应对象
@@ -18,21 +56,16 @@ export async function* handleSSE(response) {
             if (done) break;
 
             buffer += decoder.decode(value, { stream: true });
-            const lines = buffer.split('\n');
-            buffer = lines.pop() || ''; // 保留不完整的行
+            const parsed = parseSSEBuffer(buffer, { final: false });
+            buffer = parsed.rest;
+            for (const event of parsed.events) yield event;
+            if (parsed.done) return;
+        }
 
-            for (const line of lines) {
-                if (line.startsWith('data: ')) {
-                    const data = line.slice(6);
-                    if (data === '[DONE]') return;
-
-                    try {
-                        yield JSON.parse(data);
-                    } catch (e) {
-                        console.warn('SSE parse error:', e, 'data:', data);
-                    }
-                }
-            }
+        buffer += decoder.decode();
+        if (buffer) {
+            const parsed = parseSSEBuffer(buffer, { final: true });
+            for (const event of parsed.events) yield event;
         }
     } finally {
         reader.releaseLock();

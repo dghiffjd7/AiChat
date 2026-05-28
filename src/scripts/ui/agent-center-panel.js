@@ -324,9 +324,13 @@ export class AgentCenterPanel {
     constructor({
         getActions = () => globalThis.window?.appBridge?.debugUiRegistry?.actions || {},
         confirm = appConfirm,
+        getFailureSeenAt = () => 0,
+        markFailureSeen = () => {},
     } = {}) {
         this.getActions = getActions;
         this.confirm = confirm;
+        this.getFailureSeenAt = getFailureSeenAt;
+        this.markFailureSeen = markFailureSeen;
         this.overlayElement = null;
         this.panelElement = null;
         this.contentElement = null;
@@ -404,8 +408,10 @@ export class AgentCenterPanel {
             ? (opts.activityStatus || opts.status || '')
             : this.activityStatus);
         const surface = normalizeSurface(hasSurface ? opts.surface : this.surface);
+        const failureSeenAt = Number(this.getFailureSeenAt?.({ surface }) || 0) || 0;
         const agentRunView = await this.callAction('listAgentRunView', {
             limit: 50,
+            failureSeenAt,
             ...(activityStatus ? { status: activityStatus } : {}),
             ...(surface ? { surface } : {}),
         }, null);
@@ -446,6 +452,14 @@ export class AgentCenterPanel {
     async refresh() {
         this.ensureDom();
         this.view = await this.collectView();
+        if (this.activeTab === 'activity' && normalizeActivityStatus(this.activityStatus) === 'failure') {
+            const newestFailureAt = Number(this.view?.meta?.newestFailureAt || this.view?.activity?.meta?.scopedNewestFailureAt || this.view?.activity?.meta?.newestFailureAt || 0) || 0;
+            this.markFailureSeen?.({
+                surface: this.surface,
+                at: Math.max(Date.now(), newestFailureAt),
+            });
+            if (this.view?.meta) this.view.meta.unreadFailedRuns = 0;
+        }
         this.render();
     }
 
@@ -695,6 +709,15 @@ export class AgentCenterPanel {
                     { label: `risk: ${tool.riskLevel}`, className: riskChipClass(tool.riskLevel) },
                     { label: tool.executionMode },
                     ...tool.permissions.map(permission => ({ label: permission })),
+                ])}
+                ${renderChips([
+                    { label: tool.capabilities?.read ? 'read' : 'no read' },
+                    { label: tool.capabilities?.write ? 'write' : 'read-only' },
+                    { label: tool.capabilities?.network ? 'network' : 'local' },
+                    { label: `cost: ${tool.capabilities?.cost || 'none'}` },
+                    { label: `undo: ${tool.capabilities?.undo || 'none'}` },
+                    { label: `model: ${tool.capabilities?.modelContext || 'none'}` },
+                    { label: `confirm: ${tool.capabilities?.confirmation || 'allow_once'}` },
                 ])}
             </article>
         `).join('')}</div>`;

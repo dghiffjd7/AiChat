@@ -166,19 +166,24 @@ const toCount = value => Math.max(0, Math.trunc(Number(value) || 0));
 
 const isActiveRun = run => run?.isActive === true || ['queued', 'running', 'waiting_permission'].includes(String(run?.status || '').trim());
 const isFailedRun = run => run?.isFailure === true || ['failed', 'cancelled'].includes(String(run?.status || '').trim());
+const failureAt = run => Math.max(0, Number(run?.updatedAt || run?.finishedAt || run?.createdAt || 0) || 0);
+const isUnreadFailedRun = (run, seenAt = 0) => isFailedRun(run) && failureAt(run) > Math.max(0, Number(seenAt) || 0);
 
 export const buildAgentStatusChipView = (agentCenterView = {}, {
     activityScope = 'meta',
     idleLabel = 'Agent',
     showSessionGateState = true,
     showToolsCount = true,
+    failureSeenAt = 0,
 } = {}) => {
     const meta = agentCenterView?.meta || {};
     const visibleRuns = Array.isArray(agentCenterView?.activity?.runs) ? agentCenterView.activity.runs : [];
     const useVisibleActivity = activityScope === 'visible';
     const pending = toCount(meta.pending);
     const activeRuns = useVisibleActivity ? visibleRuns.filter(isActiveRun).length : toCount(meta.activeRuns);
-    const failedRuns = useVisibleActivity ? visibleRuns.filter(isFailedRun).length : toCount(meta.failedRuns);
+    const unreadFailedRuns = useVisibleActivity
+        ? visibleRuns.filter(run => isUnreadFailedRun(run, failureSeenAt)).length
+        : toCount(meta.unreadFailedRuns ?? meta.failedRuns);
     const tools = showToolsCount ? toCount(meta.tools) : 0;
     const sessionGateEnabled = showSessionGateState && meta.sessionGateEnabled === true;
 
@@ -201,14 +206,14 @@ export const buildAgentStatusChipView = (agentCenterView = {}, {
             title: `打开 Agent Center，${activeRuns} 个 Agent 任务运行中`,
         };
     }
-    if (failedRuns > 0) {
+    if (unreadFailedRuns > 0) {
         return {
             label: '失败',
-            count: String(failedRuns),
+            count: String(unreadFailedRuns),
             tone: 'failed',
             tab: 'activity',
             activityStatus: 'failure',
-            title: `打开 Agent Center，${failedRuns} 个 Agent 任务失败`,
+            title: `打开 Agent Center，${unreadFailedRuns} 个未读失败任务`,
         };
     }
     if (sessionGateEnabled) {
@@ -238,6 +243,8 @@ export class AgentCenterStatusChip {
         beforeElement = null,
         collectView = async () => ({}),
         openAgentCenter = () => {},
+        getFailureSeenAt = () => 0,
+        markFailureSeen = () => {},
         refreshIntervalMs = DEFAULT_REFRESH_INTERVAL_MS,
         activityScope = 'meta',
         idleLabel = 'Agent',
@@ -249,6 +256,8 @@ export class AgentCenterStatusChip {
         this.beforeElement = beforeElement;
         this.collectView = collectView;
         this.openAgentCenter = openAgentCenter;
+        this.getFailureSeenAt = getFailureSeenAt;
+        this.markFailureSeen = markFailureSeen;
         this.refreshIntervalMs = Math.max(0, Number(refreshIntervalMs) || 0);
         this.viewOptions = { activityScope, idleLabel, showSessionGateState, showToolsCount };
         this.element = null;
@@ -282,6 +291,12 @@ export class AgentCenterStatusChip {
             <span class="agent-status-chip-count"></span>
         `;
         button.addEventListener('click', () => {
+            if (this.state?.tone === 'failed') {
+                this.markFailureSeen({
+                    activityStatus: 'failure',
+                    at: Date.now(),
+                });
+            }
             this.openAgentCenter({
                 tab: this.state.tab || 'activity',
                 activityStatus: this.state.activityStatus || '',
@@ -321,7 +336,11 @@ export class AgentCenterStatusChip {
         try {
             const view = await Promise.resolve(this.collectView());
             if (token !== this.refreshToken) return;
-            this.render(buildAgentStatusChipView(view, this.viewOptions));
+            const failureSeenAt = Number(this.getFailureSeenAt?.() || 0) || 0;
+            this.render(buildAgentStatusChipView(view, {
+                ...this.viewOptions,
+                failureSeenAt,
+            }));
         } catch (err) {
             if (token !== this.refreshToken) return;
             this.render({

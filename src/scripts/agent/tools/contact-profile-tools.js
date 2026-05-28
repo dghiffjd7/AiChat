@@ -31,6 +31,56 @@ export const createContactProfileAgentTools = ({
       source: 'contact-profile-store',
       permissions: ['storage'],
       riskLevel: 'low',
+      capabilities: {
+        read: true,
+        write: false,
+        network: false,
+        cost: 'none',
+        undo: 'none',
+        modelContext: 'none',
+        confirmation: 'allow_once',
+      },
+      schema: {
+        type: 'object',
+        required: ['contactId'],
+        additionalProperties: false,
+        properties: {
+          contactId: { type: 'string', minLength: 1 },
+        },
+      },
+      execute: async (args = {}) => {
+        const store = resolveStore();
+        if (!store || typeof store.getProfile !== 'function') {
+          throw new Error('contact profile store not available');
+        }
+        const contactId = trim(args.contactId);
+        const profile = store.getProfile(contactId);
+        return {
+          contactId,
+          found: Boolean(profile),
+          profile: clone(profile) || null,
+        };
+      },
+      summarizeResult: result => (result?.found
+        ? `contact profile loaded for ${trim(result.contactId)}`
+        : `contact profile missing for ${trim(result?.contactId)}`),
+    },
+    {
+      name: 'contact_profile.get',
+      title: 'Get contact profile',
+      description: 'Get a stored contact profile by contact id for provider tool calls.',
+      source: 'contact-profile-store',
+      permissions: ['storage'],
+      riskLevel: 'low',
+      capabilities: {
+        read: true,
+        write: false,
+        network: false,
+        cost: 'none',
+        undo: 'none',
+        modelContext: 'allowlist',
+        confirmation: 'allow_once',
+      },
       schema: {
         type: 'object',
         required: ['contactId'],
@@ -63,6 +113,15 @@ export const createContactProfileAgentTools = ({
       source: 'contact-profile-store',
       permissions: ['storage'],
       riskLevel: 'low',
+      capabilities: {
+        read: true,
+        write: false,
+        network: false,
+        cost: 'none',
+        undo: 'none',
+        modelContext: 'allowlist',
+        confirmation: 'allow_once',
+      },
       outputLimit: 1200,
       schema: {
         type: 'object',
@@ -93,6 +152,15 @@ export const createContactProfileAgentTools = ({
       source: 'contact-profile-store',
       permissions: ['storage'],
       riskLevel: 'medium',
+      capabilities: {
+        read: false,
+        write: true,
+        network: false,
+        cost: 'none',
+        undo: 'manual',
+        modelContext: 'none',
+        confirmation: 'required',
+      },
       schema: {
         type: 'object',
         required: ['profile'],

@@ -1,5 +1,6 @@
 const INTERNAL_TO_PROVIDER_TOOL_NAMES = Object.freeze({
   'contact_profile.list': 'contact_profile_list',
+  'contact_profile.get': 'contact_profile_get',
 });
 
 const PROVIDER_TO_INTERNAL_TOOL_NAMES = Object.freeze(

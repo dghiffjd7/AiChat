@@ -92,10 +92,30 @@ const createReadyContinuation = () => ({
   });
 
   assert.equal(model.canRun, true);
+  assert.equal(model.canAppend, false);
+  assert.equal(model.confirmLabel, 'Run Preview');
+  assert.equal(model.appendLabel, 'Run + Append');
   assert.equal(model.previewText.includes('sk-secret'), false);
   assert.equal(model.previewText.includes('[redacted]'), true);
   assert.equal(model.rows.some(row => row.label === 'network after confirm' && row.value === 'yes'), true);
   console.log('ok - provider continuation confirm model shows runnable preview without secrets');
+}
+
+{
+  const model = buildProviderContinuationConfirmViewModel({
+    continuation: createReadyContinuation(),
+    currentRunner: {
+      status: 'ready',
+      provider: 'openai',
+      model: 'gpt-test',
+      network: true,
+    },
+    allowAppendCommit: true,
+  });
+
+  assert.equal(model.canRun, true);
+  assert.equal(model.canAppend, true);
+  console.log('ok - provider continuation confirm model exposes append when a target message exists');
 }
 
 {
@@ -135,13 +155,47 @@ const createReadyContinuation = () => ({
   const footer = panel.children[2];
   const confirmButton = footer.children[1];
   assert.equal(confirmButton.disabled, false);
+  assert.equal(confirmButton.textContent, 'Run Preview');
   confirmButton.click();
   const result = await promise;
   assert.equal(confirmed, 1);
   assert.equal(result.action, 'confirm');
+  assert.equal(result.commitStrategy, 'preview_only');
   assert.equal(result.result.status, 'succeeded');
   assert.equal(documentLike.body.children.length, 0);
   console.log('ok - provider continuation confirm dialog runs callback only after confirm click');
+}
+
+{
+  const documentLike = createFakeDocument();
+  let commitStrategy = '';
+  const promise = showProviderContinuationConfirmDialog({
+    documentRef: documentLike,
+    continuation: createReadyContinuation(),
+    currentRunner: {
+      status: 'ready',
+      provider: 'openai',
+      model: 'gpt-test',
+      network: true,
+    },
+    allowAppendCommit: true,
+    onConfirm: async payload => {
+      commitStrategy = payload.commitStrategy;
+      return { status: 'succeeded' };
+    },
+  });
+
+  const panel = documentLike.body.children[0].children[0];
+  const footer = panel.children[2];
+  const appendButton = footer.children[2];
+  assert.equal(appendButton.disabled, false);
+  assert.equal(appendButton.textContent, 'Run + Append');
+  appendButton.click();
+  const result = await promise;
+  assert.equal(commitStrategy, 'append_to_previous_bubble');
+  assert.equal(result.action, 'confirm');
+  assert.equal(result.commitStrategy, 'append_to_previous_bubble');
+  console.log('ok - provider continuation confirm dialog supports append commit action');
 }
 
 {

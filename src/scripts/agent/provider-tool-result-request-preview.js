@@ -26,6 +26,7 @@ const FILTERED_KEYS = new Set([
 
 const DEFAULT_MODEL_RESULT_TOOLS = Object.freeze([
   'contact_profile.list',
+  'contact_profile.get',
 ]);
 
 const isPlainObject = value => Boolean(value && typeof value === 'object' && !Array.isArray(value));

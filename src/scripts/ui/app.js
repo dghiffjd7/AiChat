@@ -486,6 +486,10 @@ import { CustomBundleExporter } from './custom-bundle-exporter.js';
 import { ExtensionsPanel } from './extensions-panel.js';
 import { ExperiencePackTransfer } from './experience-pack-transfer.js';
 import { GeneralSettingsPanel } from './general-settings-panel.js';
+import {
+  getAgentFailureSeenAt,
+  markAgentFailuresSeen,
+} from './agent-failure-read-state.js';
 import { AgentCenterPanel } from './agent-center-panel.js';
 import { AgentCenterStatusChip } from './agent-center-status-chip.js';
 import {
@@ -2009,7 +2013,7 @@ const initApp = async () => {
   });
   const providerToolExperimentRuntime = createProviderToolExperimentRuntime({
     providerToolCallRuntime,
-    allowedTools: ['contact_profile.list'],
+    allowedTools: ['contact_profile.list', 'contact_profile.get'],
     enabledByDefault: false,
   });
   const readCurrentProviderToolSessionGate = (sessionId = chatStore.getCurrent()) => readProviderToolSessionGate({
@@ -2216,7 +2220,10 @@ const initApp = async () => {
   registerMemoryAgentTools(agentToolRegistry, {
     getMemoryUpdateRuntime: () => currentMemoryUpdateRuntime,
   });
-  const agentCenterPanel = new AgentCenterPanel();
+  const agentCenterPanel = new AgentCenterPanel({
+    getFailureSeenAt: ({ surface = '' } = {}) => getAgentFailureSeenAt({ surface }),
+    markFailureSeen: ({ surface = '', at = Date.now() } = {}) => markAgentFailuresSeen({ surface, at }),
+  });
   try {
     registerDebugRuntimeContextCore(window.appBridge, {
       panels: {
@@ -14060,6 +14067,8 @@ Phase G（Frame 36）：循环衔接
       beforeElement,
       showSessionGateState,
       showToolsCount,
+      getFailureSeenAt: () => getAgentFailureSeenAt({ surface: scopedSurface }),
+      markFailureSeen: ({ at = Date.now() } = {}) => markAgentFailuresSeen({ surface: scopedSurface, at }),
       collectView: () => agentCenterPanel.collectView(scopedSurface ? { surface: scopedSurface } : {}),
       openAgentCenter: options => agentCenterPanel.show({
         ...(options || {}),
@@ -14189,6 +14198,10 @@ Phase G（Frame 36）：循环衔接
   const isSessionActive = (sessionId) => activeSessionRuntime.isSessionActive(sessionId);
   const autoMarkReadIfActive = (sessionId, messageId = '') =>
     activeSessionRuntime.autoMarkReadIfActive(sessionId, messageId);
+  ui.setProviderContinuationCommitContext?.({
+    chatStore,
+    isSessionActive,
+  });
   const getProtocolDeliveryStorage = () => {
     try {
       return typeof localStorage !== 'undefined' ? localStorage : null;
@@ -20479,11 +20492,17 @@ Phase G（Frame 36）：循环衔接
       markActiveSwipeGeneration();
       const current = chatStore.findMessage(msgId, sid) || storedMsg || message;
       const updated = chatStore.updateMessage(msgId, {
-        content: current?.content ?? storedMsg?.content ?? message?.content ?? '',
-        raw: current?.raw ?? storedMsg?.raw ?? message?.raw ?? '',
+        content: '',
+        raw: '',
+        rawSource: '',
+        rawOriginal: '',
         meta: nextMeta,
       }, sid) || {
         ...current,
+        content: '',
+        raw: '',
+        rawSource: '',
+        rawOriginal: '',
         meta: nextMeta,
       };
       const wrapper = ui.scrollEl?.querySelector(`[data-msg-id="${CSS.escape(msgId)}"]`);

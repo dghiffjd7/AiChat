@@ -55,6 +55,17 @@ const computeDurationMs = (run = {}) => {
   return ended > started ? ended - started : 0;
 };
 
+const readFailureAt = summary => toFiniteNumber(summary.updatedAt || summary.finishedAt || summary.createdAt, 0);
+
+const countUnreadFailures = (summaries = [], seenAt = 0) => {
+  const threshold = toFiniteNumber(seenAt, 0);
+  return summaries.filter(summary => summary.isFailure && readFailureAt(summary) > threshold).length;
+};
+
+const newestFailureAt = (summaries = []) => summaries
+  .filter(summary => summary.isFailure)
+  .reduce((max, summary) => Math.max(max, readFailureAt(summary)), 0);
+
 const summarizeStep = (step = {}) => ({
   id: trim(step.id || step.stepId),
   type: trim(step.type || step.kind, 'task'),
@@ -152,6 +163,7 @@ export const buildAgentRunListView = (runs = [], {
   source = '',
   surface = '',
   query = '',
+  failureSeenAt = 0,
 } = {}) => {
   const allSummaries = normalizeRuns(runs).map(run => buildAgentRunSummary(run, { events }));
   const scoped = allSummaries
@@ -171,9 +183,13 @@ export const buildAgentRunListView = (runs = [], {
       visible: visible.length,
       active: allSummaries.filter(summary => summary.isActive).length,
       failures: allSummaries.filter(summary => summary.isFailure).length,
+      unreadFailures: countUnreadFailures(allSummaries, failureSeenAt),
+      newestFailureAt: newestFailureAt(allSummaries),
       scoped: scoped.length,
       scopedActive: scoped.filter(summary => summary.isActive).length,
       scopedFailures: scoped.filter(summary => summary.isFailure).length,
+      scopedUnreadFailures: countUnreadFailures(scoped, failureSeenAt),
+      scopedNewestFailureAt: newestFailureAt(scoped),
       statusCounts: countBy(allSummaries, summary => summary.status),
       scopedStatusCounts: countBy(scoped, summary => summary.status),
       kindCounts: countBy(allSummaries, summary => summary.kind),
@@ -185,6 +201,7 @@ export const buildAgentRunListView = (runs = [], {
       source: trim(source),
       surface: trim(surface),
       query: trim(query),
+      failureSeenAt: toFiniteNumber(failureSeenAt, 0),
       limit: count,
     },
     runs: visible,

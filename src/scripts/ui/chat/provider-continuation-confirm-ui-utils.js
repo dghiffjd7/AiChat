@@ -62,6 +62,7 @@ const buildRow = (label, value) => ({
 export const buildProviderContinuationConfirmViewModel = ({
   continuation = {},
   currentRunner = {},
+  allowAppendCommit = false,
 } = {}) => {
   const draft = readRunnerDraft(continuation);
   const runner = readCurrentRunner(currentRunner);
@@ -86,10 +87,12 @@ export const buildProviderContinuationConfirmViewModel = ({
 
   return {
     canRun,
+    canAppend: canRun && allowAppendCommit === true,
     title: 'Provider Continue Preview',
     blockedReason,
     previewText,
-    confirmLabel: 'Run Provider',
+    confirmLabel: 'Run Preview',
+    appendLabel: 'Run + Append',
     cancelLabel: 'Cancel',
     rows: [
       buildRow('continuation', continuation?.status),
@@ -122,12 +125,13 @@ export const showProviderContinuationConfirmDialog = ({
   documentRef = globalThis.document,
   continuation = {},
   currentRunner = {},
+  allowAppendCommit = false,
   onConfirm = null,
 } = {}) => {
   if (!documentRef?.createElement || !documentRef?.body?.appendChild) {
     return Promise.resolve({ action: 'unavailable', confirmed: false });
   }
-  const model = buildProviderContinuationConfirmViewModel({ continuation, currentRunner });
+  const model = buildProviderContinuationConfirmViewModel({ continuation, currentRunner, allowAppendCommit });
   return new Promise((resolve) => {
     const overlay = createElement(documentRef, 'div', {
       className: 'provider-continuation-confirm-overlay',
@@ -251,15 +255,32 @@ export const showProviderContinuationConfirmDialog = ({
         font-size:12px;font-weight:800;cursor:pointer;
       `,
     });
+    const appendButton = createElement(documentRef, 'button', {
+      text: model.appendLabel,
+      style: `
+        border:1px solid rgba(59,130,246,0.55);
+        background:rgba(59,130,246,0.18);
+        color:var(--app-text-primary, #f5f7fb);
+        min-height:34px;padding:6px 12px;border-radius:8px;
+        font-size:12px;font-weight:800;cursor:pointer;
+      `,
+    });
     cancelButton.type = 'button';
     confirmButton.type = 'button';
+    appendButton.type = 'button';
     confirmButton.disabled = model.canRun !== true;
+    appendButton.disabled = model.canAppend !== true;
     if (confirmButton.disabled && confirmButton.style) {
       confirmButton.style.opacity = '0.55';
       confirmButton.style.cursor = 'not-allowed';
     }
+    if (appendButton.disabled && appendButton.style) {
+      appendButton.style.opacity = '0.55';
+      appendButton.style.cursor = 'not-allowed';
+    }
     footer.appendChild(cancelButton);
     footer.appendChild(confirmButton);
+    if (allowAppendCommit === true) footer.appendChild(appendButton);
 
     panel.appendChild(header);
     panel.appendChild(body);
@@ -277,18 +298,23 @@ export const showProviderContinuationConfirmDialog = ({
     panel.addEventListener?.('click', event => event.stopPropagation?.());
     closeButton.addEventListener?.('click', () => close({ action: 'close', confirmed: false }));
     cancelButton.addEventListener?.('click', () => close({ action: 'cancel', confirmed: false }));
-    confirmButton.addEventListener?.('click', async () => {
-      if (!model.canRun || confirmButton.disabled) return;
+    const runConfirm = async (commitStrategy = 'preview_only', button = confirmButton) => {
+      if (!model.canRun || button.disabled) return;
       confirmButton.disabled = true;
+      appendButton.disabled = true;
       try {
         const result = typeof onConfirm === 'function'
-          ? await onConfirm({ model, continuation, currentRunner })
+          ? await onConfirm({ model, continuation, currentRunner, commitStrategy })
           : null;
-        close({ action: 'confirm', confirmed: true, result });
+        close({ action: 'confirm', confirmed: true, commitStrategy, result });
       } catch (error) {
-        close({ action: 'confirm_failed', confirmed: true, error });
+        close({ action: 'confirm_failed', confirmed: true, commitStrategy, error });
+      } finally {
+        if (!settled) button.disabled = false;
       }
-    });
+    };
+    confirmButton.addEventListener?.('click', () => runConfirm('preview_only', confirmButton));
+    appendButton.addEventListener?.('click', () => runConfirm('append_to_previous_bubble', appendButton));
 
     documentRef.body.appendChild(overlay);
     confirmButton.focus?.();

@@ -38,6 +38,23 @@ import {
 }
 
 {
+  const readFailures = buildAgentStatusChipView({
+    meta: { pending: 0, activeRuns: 0, failedRuns: 2, unreadFailedRuns: 0, tools: 6 },
+  });
+  assert.equal(readFailures.label, 'Agent');
+  assert.equal(readFailures.count, '6');
+  assert.equal(readFailures.tone, 'idle');
+
+  const unreadFailures = buildAgentStatusChipView({
+    meta: { pending: 0, activeRuns: 0, failedRuns: 2, unreadFailedRuns: 1, tools: 6 },
+  });
+  assert.equal(unreadFailures.label, '失败');
+  assert.equal(unreadFailures.count, '1');
+  assert.equal(unreadFailures.tone, 'failed');
+  console.log('ok - agent status chip uses unread failure count for topbar noise control');
+}
+
+{
   const scoped = buildAgentStatusChipView({
     meta: { pending: 0, activeRuns: 0, failedRuns: 3, tools: 6 },
     activity: {
@@ -50,6 +67,22 @@ import {
   assert.equal(scoped.label, '运行中');
   assert.equal(scoped.count, '1');
   assert.equal(scoped.tone, 'active');
+
+  const scopedFailure = buildAgentStatusChipView({
+    meta: { pending: 0, activeRuns: 0, failedRuns: 3, tools: 6 },
+    activity: {
+      runs: [
+        { id: 'run-old', status: 'failed', updatedAt: 90 },
+        { id: 'run-new', status: 'failed', updatedAt: 150 },
+      ],
+    },
+  }, {
+    activityScope: 'visible',
+    failureSeenAt: 100,
+    showToolsCount: false,
+  });
+  assert.equal(scopedFailure.label, '失败');
+  assert.equal(scopedFailure.count, '1');
 
   const idle = buildAgentStatusChipView({
     meta: { pending: 0, activeRuns: 0, failedRuns: 3, tools: 6, sessionGateEnabled: true },
@@ -163,4 +196,79 @@ import {
   assert.deepEqual(opened, { tab: 'activity', activityStatus: 'active' });
   assert.equal(element.dataset.agentStatusTone, 'active');
   console.log('ok - agent status chip mounts before chat menu and opens Agent Center');
+}
+
+{
+  let opened = null;
+  let marked = null;
+  const root = {
+    children: [],
+    appendChild(element) {
+      this.children.push(element);
+      element.parentNode = this;
+    },
+  };
+  const documentRef = {
+    visibilityState: 'visible',
+    head: { appendChild() {} },
+    getElementById: () => null,
+    createElement(tagName) {
+      return {
+        tagName,
+        dataset: {},
+        style: {},
+        children: [],
+        parentNode: null,
+        className: '',
+        title: '',
+        textContent: '',
+        innerHTML: '',
+        setAttribute(name, value) {
+          this[name] = value;
+        },
+        appendChild(child) {
+          this.children.push(child);
+          child.parentNode = this;
+        },
+        addEventListener(type, handler) {
+          this[`on${type}`] = handler;
+        },
+        querySelector(selector) {
+          if (selector === '.agent-status-chip-label') return this.labelElement;
+          if (selector === '.agent-status-chip-count') return this.countElement;
+          return null;
+        },
+        get labelElement() {
+          return this.children.find(child => child.className === 'agent-status-chip-label') || null;
+        },
+        get countElement() {
+          return this.children.find(child => child.className === 'agent-status-chip-count') || null;
+        },
+      };
+    },
+  };
+  const chip = new AgentCenterStatusChip({
+    documentRef,
+    rootElement: root,
+    refreshIntervalMs: 0,
+    collectView: () => ({ meta: { unreadFailedRuns: 1 } }),
+    openAgentCenter: options => {
+      opened = options;
+    },
+    markFailureSeen: options => {
+      marked = options;
+    },
+  });
+  const element = chip.mount();
+  element.children = [
+    { className: 'agent-status-chip-dot' },
+    { className: 'agent-status-chip-label', textContent: '' },
+    { className: 'agent-status-chip-count', textContent: '' },
+  ];
+  chip.render(buildAgentStatusChipView({ meta: { failedRuns: 1, unreadFailedRuns: 1 } }));
+  element.onclick();
+  assert.equal(marked.activityStatus, 'failure');
+  assert.equal(typeof marked.at, 'number');
+  assert.deepEqual(opened, { tab: 'activity', activityStatus: 'failure' });
+  console.log('ok - agent status chip marks failed state as seen when opening failures');
 }

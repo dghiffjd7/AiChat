@@ -126,6 +126,7 @@ import { AgentCenterPanel } from '../../src/scripts/ui/agent-center-panel.js';
 {
   let listOptions = null;
   const panel = new AgentCenterPanel({
+    getFailureSeenAt: () => 900,
     getActions: () => ({
       listAgentRunView: options => {
         listOptions = options;
@@ -140,8 +141,40 @@ import { AgentCenterPanel } from '../../src/scripts/ui/agent-center-panel.js';
   panel.activityStatus = 'failure';
   const view = await panel.collectView();
   assert.equal(listOptions.status, 'failure');
+  assert.equal(listOptions.failureSeenAt, 900);
   assert.equal(view.activity.runs[0].id, 'run-failed');
   console.log('ok - agent center panel requests filtered failed activity when opened from failure chip');
+}
+
+{
+  let marked = null;
+  const panel = new AgentCenterPanel({
+    markFailureSeen: options => {
+      marked = options;
+    },
+    getActions: () => ({
+      listAgentRunView: () => ({
+        meta: {
+          total: 1,
+          active: 0,
+          failures: 1,
+          unreadFailures: 1,
+          newestFailureAt: 2000,
+        },
+        filters: { status: 'failure' },
+        runs: [{ id: 'run-failed', kind: 'image_generation', status: 'failed', updatedAt: 2000 }],
+      }),
+    }),
+  });
+  panel.ensureDom = () => {};
+  panel.render = () => {};
+  panel.activeTab = 'activity';
+  panel.activityStatus = 'failure';
+  await panel.refresh();
+  assert.equal(marked.surface, '');
+  assert.equal(marked.at >= 2000, true);
+  assert.equal(panel.view.meta.unreadFailedRuns, 0);
+  console.log('ok - agent center panel marks failures as read after opening failure activity');
 }
 
 {
@@ -192,6 +225,39 @@ import { AgentCenterPanel } from '../../src/scripts/ui/agent-center-panel.js';
   assert.match(html, /错误：provider unavailable/);
   assert.match(html, /agent-center-card is-failure/);
   console.log('ok - agent center panel renders failed activity filter and error detail');
+}
+
+{
+  const panel = new AgentCenterPanel();
+  panel.view = {
+    tools: [
+      {
+        name: 'contact_profile.get',
+        title: 'Get contact profile',
+        source: 'contact-profile-store',
+        description: 'Get one profile',
+        riskLevel: 'low',
+        permissions: ['storage'],
+        executionMode: 'sequential',
+        capabilities: {
+          read: true,
+          write: false,
+          network: false,
+          cost: 'none',
+          undo: 'none',
+          modelContext: 'allowlist',
+          confirmation: 'allow_once',
+        },
+      },
+    ],
+  };
+  const html = panel.renderTools();
+  assert.match(html, /contact_profile\.get/);
+  assert.match(html, /read/);
+  assert.match(html, /read-only/);
+  assert.match(html, /local/);
+  assert.match(html, /model: allowlist/);
+  console.log('ok - agent center panel renders tool capability chips');
 }
 
 {

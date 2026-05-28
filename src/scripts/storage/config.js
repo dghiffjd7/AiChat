@@ -565,8 +565,10 @@ export class ConfigManager {
         };
         logger.info(`持久化配置: activeProfileId=${toSave.activeProfileId}, profiles数量=${Object.keys(toSave.profiles || {}).length}`);
 
+        let kvSaved = false;
         try {
             await safeInvoke('save_kv', { name: this.profileStoreKey, data: toSave });
+            kvSaved = true;
             logger.info('save_kv profiles 成功 (Tauri)');
         } catch (err) {
             logger.warn('save_kv profiles failed (可能非 Tauri)，回退 localStorage', err);
@@ -577,7 +579,13 @@ export class ConfigManager {
             localStorage.setItem(this.profileStoreKey, JSON.stringify(toSave));
             logger.info('localStorage profiles 保存成功（备份）');
         } catch (localErr) {
-            logger.error('localStorage profiles 保存失败', localErr);
+            if (kvSaved) {
+                try { localStorage.removeItem(this.profileStoreKey); } catch {}
+                const reason = String(localErr?.name || localErr?.message || localErr || '').trim();
+                logger.warn(`localStorage profiles 备份失败（KV 已保存，可忽略）${reason ? `: ${reason}` : ''}`);
+            } else {
+                logger.error('localStorage profiles 保存失败', localErr);
+            }
         }
     }
 

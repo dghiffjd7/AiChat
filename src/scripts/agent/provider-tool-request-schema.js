@@ -9,6 +9,7 @@ export const PROVIDER_TOOL_REQUEST_FORMATS = Object.freeze({
 
 export const DEFAULT_PROVIDER_MODEL_CONTEXT_TOOLS = Object.freeze([
   'contact_profile.list',
+  'contact_profile.get',
 ]);
 
 const GEMINI_SCHEMA_TYPES = Object.freeze({

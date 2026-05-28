@@ -80,12 +80,29 @@ const runs = [
   assert.equal(view.meta.visible, 2);
   assert.equal(view.meta.active, 1);
   assert.equal(view.meta.failures, 1);
+  assert.equal(view.meta.unreadFailures, 1);
+  assert.equal(view.meta.newestFailureAt, 1350);
+  assert.equal(view.meta.scopedUnreadFailures, 0);
+  assert.equal(view.meta.scopedNewestFailureAt, 0);
+  assert.equal(view.filters.failureSeenAt, 0);
   assert.deepEqual(view.runs.map(run => run.id), ['run-3', 'run-1']);
   assert.equal(buildAgentRunDiagnosticsMeta(view), 'runs=2/2 · total=3 · active=1 · failures=1');
   const text = formatAgentRunDiagnostics(view);
   assert.equal(text.includes('[RUNNING] contact_profile_update'), true);
   assert.equal(text.includes('lastStep: memory.apply [succeeded] · applied'), true);
   console.log('ok - buildAgentRunListView filters sorts and formats diagnostics');
+}
+
+{
+  const seenView = buildAgentRunListView(runs, {
+    failureSeenAt: 1350,
+    limit: 10,
+  });
+  assert.equal(seenView.meta.failures, 1);
+  assert.equal(seenView.meta.unreadFailures, 0);
+  assert.equal(seenView.meta.newestFailureAt, 1350);
+  assert.equal(seenView.filters.failureSeenAt, 1350);
+  console.log('ok - buildAgentRunListView separates historical failures from unread failures');
 }
 
 {

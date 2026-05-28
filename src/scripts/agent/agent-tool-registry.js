@@ -50,6 +50,26 @@ const createAbortError = (message = 'Agent tool aborted') => {
 
 const normalizeToolName = (name = '') => trim(name).replace(/\s+/g, '_');
 
+const normalizeAgentToolCapabilities = (capabilities = {}, {
+  permissions = [],
+  riskLevel = 'low',
+} = {}) => {
+  const src = isPlainObject(capabilities) ? capabilities : {};
+  const permissionSet = new Set(list(permissions));
+  const risk = trim(riskLevel, 'low');
+  const write = src.write === true || permissionSet.has('storage:write') || risk === 'medium' || risk === 'high';
+  const network = src.network === true || permissionSet.has('network');
+  return {
+    read: src.read !== false,
+    write,
+    network,
+    cost: trim(src.cost, network ? 'variable' : 'none'),
+    undo: trim(src.undo, write ? 'manual' : 'none'),
+    modelContext: trim(src.modelContext, 'none'),
+    confirmation: trim(src.confirmation, write || network ? 'required' : 'allow_once'),
+  };
+};
+
 export const normalizeAgentToolDefinition = (definition = {}) => {
   const src = isPlainObject(definition) ? definition : {};
   const name = normalizeToolName(src.name);
@@ -60,14 +80,20 @@ export const normalizeAgentToolDefinition = (definition = {}) => {
       toolName: name,
     });
   }
+  const permissions = list(src.permissions);
+  const riskLevel = trim(src.riskLevel || src.risk, 'low');
   return {
     name,
     title: trim(src.title || src.label, name),
     description: trim(src.description),
     source: trim(src.source, 'internal'),
-    permissions: list(src.permissions),
-    riskLevel: trim(src.riskLevel || src.risk, 'low'),
+    permissions,
+    riskLevel,
     executionMode: trim(src.executionMode, 'sequential'),
+    capabilities: normalizeAgentToolCapabilities(src.capabilities || src.metadata?.capabilities, {
+      permissions,
+      riskLevel,
+    }),
     schema: isPlainObject(src.schema) ? clone(src.schema) : { type: 'object' },
     timeoutMs: Math.max(0, Number(src.timeoutMs || 0) || 0),
     outputLimit: Math.max(0, Number(src.outputLimit || 0) || 0),

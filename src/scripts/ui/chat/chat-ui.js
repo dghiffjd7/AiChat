@@ -134,6 +134,7 @@ import { renderTextWithStickersCore } from './sticker-text-ui-utils.js';
 import { renderMessageBubbleContentCore } from './message-bubble-content-ui-utils.js';
 import { buildAgentMessageSidecarElement } from './agent-message-sidecar-ui-utils.js';
 import { showProviderContinuationConfirmDialog } from './provider-continuation-confirm-ui-utils.js';
+import { commitProviderContinuationToMessage } from './provider-continuation-commit-utils.js';
 import {
   appendStandardMessageLayoutCore,
   buildBubbleStackCore,
@@ -329,6 +330,10 @@ export class ChatUI {
     this.longPressTimer = null;
     this.actionHandler = null;
     this.replyCancelHandler = null;
+    this.providerContinuationCommitContext = {
+      chatStore: null,
+      isSessionActive: () => false,
+    };
     this.messageHeaderRuntime = createMessageHeaderUiRuntime({
       documentLike: document,
       appSettings,
@@ -651,7 +656,7 @@ export class ChatUI {
     const bridge = typeof window !== 'undefined' ? window.appBridge : null;
     const active = String(bridge?.getActiveSessionId?.() || '').trim();
     if (active) return active;
-    return String(bridge?.chatStore?.getCurrent?.() || '').trim();
+    return String(this.providerContinuationCommitContext?.chatStore?.getCurrent?.() || '').trim();
   }
 
   getReasoningText(message) {
@@ -1732,18 +1737,34 @@ export class ChatUI {
       const confirmResult = await showProviderContinuationConfirmDialog({
         continuation,
         currentRunner,
-        onConfirm: async () => {
+        allowAppendCommit: Boolean(request.message?.id),
+        onConfirm: async ({ commitStrategy = 'preview_only' } = {}) => {
           const runner = actions.planProviderToolPendingContinuationWithCurrentProvider;
           if (typeof runner !== 'function') {
             throw new Error('provider continuation current runner handler unavailable');
           }
-          return await runner({
+          const runResult = await runner({
             id: pendingPermissionId,
             sessionId,
             enabled: true,
             allowCurrentProviderRunner: true,
             allowRunnerNetwork: true,
           });
+          const commitContext = this.providerContinuationCommitContext || {};
+          const commitResult = commitProviderContinuationToMessage({
+            strategy: commitStrategy,
+            continuationResult: runResult,
+            targetMessage: request.message,
+            sessionId: sessionId || this.resolveMessageSessionId(request.message),
+            chatStore: commitContext.chatStore || null,
+            isSessionActive: sid => commitContext.isSessionActive?.(sid) === true,
+            updateUiMessage: (messageId, message) => this.updateMessage(messageId, message),
+          });
+          return {
+            ...runResult,
+            commitStrategy,
+            commitResult,
+          };
         },
       });
       if (confirmResult?.action === 'unavailable') {
@@ -1762,7 +1783,11 @@ export class ChatUI {
       if (confirmResult?.confirmed) {
         const runResult = confirmResult.result;
         if (runResult?.status === 'succeeded' || runResult?.ok === true) {
-          toastOnce('Provider 继续已完成', 'success', 3000);
+          if (runResult?.commitResult?.status === 'committed') {
+            toastOnce('Provider 继续已接到上一条回复', 'success', 3000);
+          } else {
+            toastOnce('Provider 继续已完成（预览）', 'success', 3000);
+          }
         } else {
           toastOnce(runResult?.reason || 'Provider 继续未执行', 'warning', 3500);
         }
@@ -2224,6 +2249,16 @@ export class ChatUI {
 
   onMessageAction(handler) {
     this.actionHandler = handler;
+  }
+
+  setProviderContinuationCommitContext(context = {}) {
+    const source = context && typeof context === 'object' ? context : {};
+    this.providerContinuationCommitContext = {
+      chatStore: source.chatStore || null,
+      isSessionActive: typeof source.isSessionActive === 'function'
+        ? source.isSessionActive
+        : () => false,
+    };
   }
 
   startLongPress(event, message) {

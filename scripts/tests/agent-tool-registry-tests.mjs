@@ -36,6 +36,15 @@ const logger = { warn: () => {} };
     execute: async args => ({ echoed: args.value, count: args.count }),
   });
   assert.equal(registry.get('echo.value').execute, undefined);
+  assert.deepEqual(registry.get('echo.value').capabilities, {
+    read: true,
+    write: false,
+    network: false,
+    cost: 'none',
+    undo: 'none',
+    modelContext: 'none',
+    confirmation: 'allow_once',
+  });
   assert.deepEqual(registry.listTools().map(tool => tool.name), ['echo.value']);
   await assert.rejects(
     () => registry.executeTool('echo.value', { value: 'a', extra: true }),
@@ -56,6 +65,33 @@ const logger = { warn: () => {} };
     'agent.tool.finished',
   ]);
   console.log('ok - agent tool registry validates args, executes tools, and emits lifecycle events');
+}
+
+{
+  const registry = createAgentToolRegistry({
+    permissionEvaluator: createAgentPermissionEvaluator({
+      defaultDecision: AGENT_PERMISSION_DECISIONS.allow,
+    }),
+    logger,
+  });
+  registry.register({
+    name: 'profile.write',
+    permissions: ['storage:write'],
+    riskLevel: 'medium',
+    execute: async () => true,
+  });
+  registry.register({
+    name: 'network.lookup',
+    permissions: ['network'],
+    execute: async () => true,
+  });
+  assert.equal(registry.get('profile.write').capabilities.write, true);
+  assert.equal(registry.get('profile.write').capabilities.confirmation, 'required');
+  assert.equal(registry.get('profile.write').capabilities.undo, 'manual');
+  assert.equal(registry.get('network.lookup').capabilities.network, true);
+  assert.equal(registry.get('network.lookup').capabilities.cost, 'variable');
+  assert.equal(registry.get('network.lookup').capabilities.confirmation, 'required');
+  console.log('ok - agent tool registry infers capability hints from permissions and risk');
 }
 
 {

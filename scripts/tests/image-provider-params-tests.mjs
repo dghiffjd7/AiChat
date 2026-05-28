@@ -269,6 +269,74 @@ import {
 }
 
 {
+  const previousTauri = globalThis.__TAURI__;
+  const calls = [];
+  let readCount = 0;
+  globalThis.__TAURI__ = {
+    core: {
+      invoke: async (cmd, args) => {
+        calls.push({ cmd, args });
+        if (cmd === 'http_stream_request_start') {
+          const body = JSON.parse(args.body);
+          assert.equal(args.url, 'https://example.com/v1/chat/completions');
+          assert.equal(args.headers.Accept, 'text/event-stream');
+          assert.equal(body.stream, true);
+          assert.equal(body.model, 'chat-model');
+          return true;
+        }
+        if (cmd === 'http_stream_request_read') {
+          readCount += 1;
+          if (readCount === 1) {
+            return {
+              status: 200,
+              ok: true,
+              done: false,
+              chunks: ['data:{"choices":[{"delta":{"content":"Hi"}}]}\n'],
+            };
+          }
+          return {
+            status: 200,
+            ok: true,
+            done: false,
+            chunks: ['\ndata: {"choices":[{"delta":{"content":" there"}}]}\r\n\r\ndata: [DONE]\n\n'],
+          };
+        }
+        if (cmd === 'http_stream_request_close') return true;
+        throw new Error(`unexpected command ${cmd}`);
+      },
+    },
+  };
+  try {
+    const provider = new CustomProvider({
+      provider: 'custom',
+      apiKey: 'test',
+      baseUrl: 'https://example.com/v1',
+      model: 'chat-model',
+    });
+    const chunks = [];
+    for await (const chunk of provider.streamChat([{ role: 'user', content: 'hi' }], {
+      requestId: 'custom-native-stream-test',
+    })) {
+      chunks.push(chunk);
+    }
+    assert.deepEqual(chunks, ['Hi', ' there']);
+    assert.deepEqual(calls.map(call => call.cmd), [
+      'http_stream_request_start',
+      'http_stream_request_read',
+      'http_stream_request_read',
+      'http_stream_request_close',
+    ]);
+  } finally {
+    if (previousTauri === undefined) {
+      delete globalThis.__TAURI__;
+    } else {
+      globalThis.__TAURI__ = previousTauri;
+    }
+  }
+  console.log('ok - custom chat provider streams through native SSE chunks');
+}
+
+{
   const provider = new CustomProvider({
     provider: 'custom',
     apiKey: 'test',

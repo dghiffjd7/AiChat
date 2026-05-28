@@ -14,6 +14,7 @@ import { buildProviderToolRunnerRequestDraft } from './provider-tool-runner-requ
 
 const DEFAULT_ALLOWED_TOOLS = Object.freeze([
   'contact_profile.list',
+  'contact_profile.get',
 ]);
 
 const isPlainObject = value => Boolean(value && typeof value === 'object' && !Array.isArray(value));

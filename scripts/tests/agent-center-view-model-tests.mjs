@@ -74,11 +74,22 @@ import {
   assert.equal(view.meta.pending, 2);
   assert.equal(view.meta.activeRuns, 1);
   assert.equal(view.meta.failedRuns, 1);
+  assert.equal(view.meta.unreadFailedRuns, 1);
+  assert.equal(view.meta.newestFailureAt, 9);
   assert.equal(view.meta.tools, 2);
   assert.equal(view.pending[0].id, 'profile-pending-1');
   assert.equal(view.pending[0].kind, 'contact_profile_update');
   assert.equal(view.pending[0].profileSummary, 'Bob · 特征 1 · 互动重点 1');
   assert.deepEqual(view.tools.map(tool => tool.name), ['contact_profile.list', 'memory.update_after_chat']);
+  assert.deepEqual(view.tools[0].capabilities, {
+    read: false,
+    write: false,
+    network: false,
+    cost: 'none',
+    undo: 'none',
+    modelContext: 'none',
+    confirmation: 'allow_once',
+  });
   assert.equal(view.tabs.find(tab => tab.id === 'pending').count, 2);
   assert.equal(view.tabs.find(tab => tab.id === 'activity').count, 1);
   assert.equal(view.tabs.find(tab => tab.id === 'tools').count, 2);
@@ -97,6 +108,7 @@ import {
   });
   assert.equal(view.activity.runs.length, 1);
   assert.equal(view.meta.activeRuns, 2);
+  assert.equal(view.meta.unreadFailedRuns, 1);
   assert.equal(view.meta.tools, 0);
   console.log('ok - agent center accepts prebuilt agent run views');
 }

@@ -236,6 +236,59 @@ test('syncChatRuntimeConfigToBridge fallback writes config and client', () => {
   assert.deepEqual(result, { ok: true, configured: true, clientReady: true });
 });
 
+test('ConfigManager treats profile backup quota as non-fatal after Tauri KV save', async () => {
+  const previousStorage = globalThis.localStorage;
+  const previousTauri = globalThis.__TAURI__;
+  const calls = [];
+  globalThis.localStorage = {
+    getItem: () => null,
+    setItem: (key) => {
+      calls.push(['setItem', key]);
+      const err = new Error('quota exceeded');
+      err.name = 'QuotaExceededError';
+      throw err;
+    },
+    removeItem: key => calls.push(['removeItem', key]),
+  };
+  globalThis.__TAURI__ = {
+    core: {
+      invoke: async (cmd, args) => {
+        calls.push([cmd, args?.name]);
+        return true;
+      },
+    },
+  };
+  try {
+    const { ConfigManager } = await import('../../src/scripts/storage/config.js');
+    const manager = new ConfigManager();
+    await manager.persistProfiles({
+      activeProfileId: 'profile-a',
+      profiles: {
+        'profile-a': {
+          id: 'profile-a',
+          name: 'A',
+          provider: 'custom',
+        },
+      },
+      savedAt: 1,
+    });
+    assert.deepEqual(calls[0], ['save_kv', 'llm_profiles_v1']);
+    assert.deepEqual(calls[1], ['setItem', 'llm_profiles_v1']);
+    assert.deepEqual(calls[2], ['removeItem', 'llm_profiles_v1']);
+  } finally {
+    if (previousStorage === undefined) {
+      delete globalThis.localStorage;
+    } else {
+      globalThis.localStorage = previousStorage;
+    }
+    if (previousTauri === undefined) {
+      delete globalThis.__TAURI__;
+    } else {
+      globalThis.__TAURI__ = previousTauri;
+    }
+  }
+});
+
 let failed = 0;
 for (const t of tests) {
   try {
