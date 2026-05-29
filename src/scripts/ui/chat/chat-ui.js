@@ -133,6 +133,10 @@ import { createRpFloorUiRuntime } from './rp-floor-ui-utils.js';
 import { renderTextWithStickersCore } from './sticker-text-ui-utils.js';
 import { renderMessageBubbleContentCore } from './message-bubble-content-ui-utils.js';
 import { buildAgentMessageSidecarElement } from './agent-message-sidecar-ui-utils.js';
+import {
+  buildChatFormatGuardianApplyRepairPayload,
+  buildChatFormatGuardianRetryPlan,
+} from './chat-format-guardian-action-utils.js';
 import { showProviderContinuationConfirmDialog } from './provider-continuation-confirm-ui-utils.js';
 import { commitProviderContinuationToMessage } from './provider-continuation-commit-utils.js';
 import {
@@ -1624,6 +1628,7 @@ export class ChatUI {
         ...payload,
         onProviderToolPermissionAction: request => this.handleProviderToolPermissionAction(request),
         onProviderToolContinuationAction: request => this.handleProviderToolContinuationAction(request),
+        onChatFormatGuardianAction: request => this.handleChatFormatGuardianAction(request),
       }),
       buildReactionSummaryElement: nextMessage => this.buildReactionSummaryElement(nextMessage),
       createReactionTriggerButton,
@@ -1681,6 +1686,121 @@ export class ChatUI {
       toastOnce('Agent 工具权限处理失败', 'error');
       return null;
     }
+  }
+
+  resolveMessageRawText(message = {}) {
+    return String(
+      message?.rawOriginal ||
+      message?.rawSource ||
+      message?.raw ||
+      message?.content ||
+      message?.text ||
+      '',
+    );
+  }
+
+  async handleChatFormatGuardianAction(request = {}) {
+    const action = String(request?.action || '').trim();
+    const part = request?.part || {};
+    const message = request?.message || {};
+    const actions = window.appBridge?.debugUiRegistry?.actions || {};
+    if (action === 'open_agent_center') {
+      const surface = String(part?.metadata?.events?.[0]?.surface || part?.metadata?.surface || 'chat').trim();
+      const activityStatus = part.status === 'failed'
+        ? 'failure'
+        : (part.status === 'waiting_permission' ? 'active' : '');
+      if (typeof actions.openAgentCenter === 'function') {
+        actions.openAgentCenter({
+          tab: 'activity',
+          activityStatus,
+          ...(surface ? { surface } : {}),
+        });
+      } else {
+        toastOnce('Agent Center 尚未就绪', 'warning');
+      }
+      return true;
+    }
+    if (action === 'review_original') {
+      const text = this.resolveMessageRawText(message).trim();
+      if (!text) {
+        toastOnce('没有可查看的原始回复', 'warning');
+        return false;
+      }
+      const meta = [
+        message?.id ? `message ${message.id}` : '',
+        part?.runId ? `run ${part.runId}` : '',
+      ].filter(Boolean).join(' · ');
+      if (typeof actions.showRawReplyModal === 'function') {
+        actions.showRawReplyModal(text, meta);
+      } else {
+        toastOnce('原文查看器尚未就绪', 'warning');
+      }
+      return true;
+    }
+    if (action === 'edit_user_input_suggestion') {
+      const suggestion = String(request?.actionMeta?.suggestion || part?.metadata?.inputSuggestion || '').trim();
+      if (!suggestion) {
+        toastOnce('暂无可用的输入修改建议', 'warning');
+        return false;
+      }
+      this.setInputText(suggestion);
+      try {
+        this.inputEl?.focus?.();
+        this.inputEl?.dispatchEvent?.(new Event('input', { bubbles: true }));
+      } catch {}
+      toastOnce('已放入输入框，发送前可继续修改', 'info', 3000);
+      return true;
+    }
+    if (action === 'apply_repair') {
+      const payload = buildChatFormatGuardianApplyRepairPayload({
+        actionMeta: request?.actionMeta,
+        part,
+      });
+      if (!payload) {
+        toastOnce('暂无可应用的格式修复候选', 'warning');
+        return false;
+      }
+      if (typeof this.actionHandler !== 'function') {
+        toastOnce('消息编辑处理器未就绪', 'warning');
+        return false;
+      }
+      try {
+        await this.actionHandler('edit-assistant-raw', message, payload);
+        toastOnce('已应用格式修复', 'success', 3000);
+        return true;
+      } catch (err) {
+        logger.warn('chat format guardian apply repair failed', err);
+        toastOnce('应用格式修复失败', 'error');
+        return false;
+      }
+    }
+    if (action === 'swipe_retry') {
+      if (typeof this.actionHandler !== 'function') {
+        toastOnce('重试处理器未就绪', 'warning');
+        return false;
+      }
+      const uiMode = String(document?.body?.dataset?.uiMode || '').trim();
+      try {
+        const plan = buildChatFormatGuardianRetryPlan({
+          uiMode,
+          canSwipeRegen: typeof this._swipeRegenHandler === 'function',
+          message,
+          part,
+        });
+        if (plan.kind === 'swipe_regen') {
+          await this._swipeRegenHandler(plan.payload);
+          return true;
+        }
+        await this.actionHandler(plan.action, plan.message, plan.payload);
+        return true;
+      } catch (err) {
+        logger.warn('chat format guardian retry generation failed', err);
+        toastOnce('重试生成失败', 'error');
+        return false;
+      }
+    }
+    toastOnce('这个 Agent 操作尚未开放', 'info', 3000);
+    return false;
   }
 
   async handleProviderToolContinuationAction(request = {}) {

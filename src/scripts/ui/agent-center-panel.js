@@ -314,6 +314,32 @@ const renderChips = (chips = []) => {
 
 const renderEmpty = message => `<div class="agent-center-empty">${escapeHtml(message)}</div>`;
 
+const renderChatFormatReview = (review = null) => {
+    if (!review) return '';
+    const issueText = formatMeta([
+        `${Number(review.eventCount || 0)} event`,
+        `${Number((review.errors || []).length)} error`,
+        `${Number((review.warnings || []).length)} warning`,
+        review.sourceTextKind ? `source: ${review.sourceTextKind}` : '',
+        review.hasRawOriginal ? 'rawOriginal' : '',
+    ]);
+    const errorText = (review.errors || []).length ? `错误：${(review.errors || []).join('；')}` : '';
+    const warningText = (review.warnings || []).length ? `警告：${(review.warnings || []).join('；')}` : '';
+    const repairText = review.repairCandidate?.available
+        ? `修复候选：${formatMeta([review.repairCandidate.title, review.repairCandidate.summary])}`
+        : '';
+    const actionText = (review.actionLabels || []).length
+        ? `可在消息旁处理：${review.actionLabels.join('、')}`
+        : '';
+    return [
+        issueText ? `<div class="agent-center-card-sub">格式诊断：${escapeHtml(issueText)}</div>` : '',
+        errorText ? `<div class="agent-center-card-sub agent-center-card-error">${escapeHtml(errorText)}</div>` : '',
+        warningText ? `<div class="agent-center-card-sub">${escapeHtml(warningText)}</div>` : '',
+        repairText ? `<div class="agent-center-card-sub">${escapeHtml(repairText)}</div>` : '',
+        actionText ? `<div class="agent-center-card-sub">${escapeHtml(actionText)}</div>` : '',
+    ].filter(Boolean).join('');
+};
+
 const providerToolActionLabel = action => ({
     [PROVIDER_TOOL_PERMISSION_ACTIONS.allowOnce]: '允许一次',
     [PROVIDER_TOOL_PERMISSION_ACTIONS.deny]: '拒绝',
@@ -529,6 +555,17 @@ export class AgentCenterPanel {
             const toolImpactText = isToolPermission
                 ? '允许一次只执行这一个已保存的 tool call；不会重放聊天、不会自动续跑 provider、不会直接写聊天正文。'
                 : '';
+            const chatEmitPreview = item.chatEmitPreview || null;
+            const chatEmitCommitPreview = item.chatEmitCommitPreview || null;
+            const chatEmitCommit = item.chatEmitCommit || null;
+            const chatEmitMeta = chatEmitPreview
+                ? formatMeta([
+                    chatEmitPreview.kind,
+                    chatEmitPreview.target ? `目标：${chatEmitPreview.target}` : '',
+                    chatEmitPreview.speaker ? `说话人：${chatEmitPreview.speaker}` : '',
+                    chatEmitPreview.time ? `时间：${chatEmitPreview.time}` : '',
+                ])
+                : '';
             const isPending = item.status === 'pending';
             return `
             <article class="agent-center-card">
@@ -554,15 +591,46 @@ export class AgentCenterPanel {
                 ` : ''}
                 ${isToolPermission ? `
                     <div class="agent-center-card-sub">${escapeHtml(toolImpactText)}</div>
+                    ${chatEmitPreview ? `
+                        <div class="agent-center-card-sub">候选预览：${escapeHtml(chatEmitMeta || chatEmitPreview.kind || '聊天事件候选')}</div>
+                        <div class="agent-center-card-sub">${escapeHtml(chatEmitPreview.contentPreview || '-')}</div>
+                    ` : ''}
+                    ${chatEmitCommitPreview ? `
+                        <div class="agent-center-card-sub">后续提交预览：${escapeHtml(chatEmitCommitPreview.effect || '-')}</div>
+                        <div class="agent-center-card-sub">撤销边界：${escapeHtml(chatEmitCommitPreview.undoSummary || '-')}</div>
+                    ` : ''}
                     ${renderChips([
                         { label: `resume: ${item.resumeStatus}` },
                         { label: `continue: ${item.continuationStatus}` },
+                        chatEmitCommit ? { label: `commit: ${chatEmitCommit.status}` } : null,
+                        chatEmitCommit ? { label: `undo: ${chatEmitCommit.undoStatus}` } : null,
                     ])}
+                    ${chatEmitCommit?.resultSummary ? `
+                        <div class="agent-center-card-sub">提交结果：${escapeHtml(chatEmitCommit.resultSummary)}</div>
+                    ` : ''}
+                    ${chatEmitCommit?.message ? `
+                        <div class="agent-center-card-sub">提交说明：${escapeHtml(chatEmitCommit.message)}</div>
+                    ` : ''}
+                    ${chatEmitCommit?.undoMessage ? `
+                        <div class="agent-center-card-sub">撤销说明：${escapeHtml(chatEmitCommit.undoMessage)}</div>
+                    ` : ''}
+                    ${chatEmitCommit?.errorMessage ? `
+                        <div class="agent-center-card-sub agent-center-card-error">提交错误：${escapeHtml(chatEmitCommit.errorMessage)}</div>
+                    ` : ''}
+                    ${chatEmitCommit?.undoErrorMessage ? `
+                        <div class="agent-center-card-sub agent-center-card-error">撤销错误：${escapeHtml(chatEmitCommit.undoErrorMessage)}</div>
+                    ` : ''}
                     ${isPending ? `
                         <div class="agent-center-card-actions">
                             <button type="button" class="agent-center-card-action is-primary" data-provider-permission-action="${PROVIDER_TOOL_PERMISSION_ACTIONS.allowOnce}" data-pending-id="${escapeHtml(item.id)}">允许一次</button>
                             <button type="button" class="agent-center-card-action is-danger" data-provider-permission-action="${PROVIDER_TOOL_PERMISSION_ACTIONS.deny}" data-pending-id="${escapeHtml(item.id)}">拒绝</button>
                             <button type="button" class="agent-center-card-action" data-provider-permission-action="${PROVIDER_TOOL_PERMISSION_ACTIONS.rememberAllow}" data-pending-id="${escapeHtml(item.id)}">记住允许</button>
+                        </div>
+                    ` : ''}
+                    ${chatEmitCommit?.canCommit || chatEmitCommit?.canUndo ? `
+                        <div class="agent-center-card-actions">
+                            ${chatEmitCommit?.canCommit ? `<button type="button" class="agent-center-card-action is-primary" data-chat-emit-commit-action="commit" data-pending-id="${escapeHtml(item.id)}">提交候选</button>` : ''}
+                            ${chatEmitCommit?.canUndo ? `<button type="button" class="agent-center-card-action is-danger" data-chat-emit-commit-action="undo" data-pending-id="${escapeHtml(item.id)}">撤销提交</button>` : ''}
                         </div>
                     ` : ''}
                 ` : ''}
@@ -629,6 +697,37 @@ export class AgentCenterPanel {
             this.lastError = trim(err?.message || err, 'resolveProviderToolPendingPermission failed');
             this.render();
         }
+    }
+
+    async handleChatEmitCommitAction(action = '', pendingId = '') {
+        const normalizedAction = trim(action);
+        const id = trim(pendingId);
+        if (!id || !['commit', 'undo'].includes(normalizedAction)) return;
+        const item = (this.view.pending || []).find(entry => entry.id === id);
+        const committing = normalizedAction === 'commit';
+        const ok = await this.confirm({
+            title: committing ? '提交聊天候选' : '撤销聊天候选',
+            message: committing
+                ? `确定提交「${item?.toolName || 'chat.emit'}」候选吗？\n\n这一步会实际写入聊天或动态；提交后可从 Agent Center 撤销本次提交。`
+                : `确定撤销「${item?.toolName || 'chat.emit'}」刚才提交的候选吗？\n\n撤销会删除本次新增聊天消息，或按提交快照回滚动态变更。`,
+            confirmText: committing ? '提交候选' : '撤销提交',
+            danger: !committing,
+        });
+        if (!ok) return;
+        const actionName = committing ? 'commitChatEmitPendingPermission' : 'undoChatEmitPendingCommit';
+        const result = await this.callAction(actionName, {
+            id,
+            confirmed: true,
+            reason: 'agent center chat emit commit action',
+        }, null);
+        if (!result) {
+            this.lastError = committing
+                ? '当前环境没有聊天候选提交动作'
+                : '当前环境没有聊天候选撤销动作';
+        } else if (result.ok === false && (result.message || result.reason)) {
+            this.lastError = result.message || result.reason;
+        }
+        await this.refresh();
     }
 
     async handleSessionGateAction(action = '') {
@@ -724,6 +823,7 @@ export class AgentCenterPanel {
                     { label: `tools ${Number(run.toolCallCount || 0)}` },
                     run.lastStep ? { label: `last: ${run.lastStep.type}` } : null,
                 ])}
+                ${renderChatFormatReview(run.review)}
             </article>
         `; }).join('')}</div>`;
     }
@@ -769,7 +869,7 @@ export class AgentCenterPanel {
                     </div>
                     <span class="${escapeHtml(statusChipClass(gateEnabled ? 'running' : 'denied'))}">${escapeHtml(gateEnabled ? '开启' : '关闭')}</span>
                 </div>
-                <div class="agent-center-card-sub">首版只建议开放低风险读取工具。启用 Gate 不会自动续跑 provider，不会直接写聊天正文，网络和真实 runner 默认保持关闭。</div>
+                <div class="agent-center-card-sub">首版只建议开放低风险读取或候选捕获工具。启用 Gate 不会自动续跑 provider，不会直接写聊天正文，网络和真实 runner 默认保持关闭。</div>
                 ${renderChips([
                     { label: gate.networkAllowed ? 'network allowed' : 'network blocked' },
                     { label: gate.realRunnerAllowed ? 'real runner allowed' : 'real runner blocked' },
@@ -842,6 +942,12 @@ export class AgentCenterPanel {
             this.contentElement.querySelectorAll('[data-provider-permission-action]').forEach((button) => {
                 button.addEventListener('click', () => this.handleProviderPermissionAction(
                     button.dataset.providerPermissionAction || '',
+                    button.dataset.pendingId || '',
+                ));
+            });
+            this.contentElement.querySelectorAll('[data-chat-emit-commit-action]').forEach((button) => {
+                button.addEventListener('click', () => this.handleChatEmitCommitAction(
+                    button.dataset.chatEmitCommitAction || '',
                     button.dataset.pendingId || '',
                 ));
             });

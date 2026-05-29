@@ -42,6 +42,13 @@ const createFakeDocument = () => {
   };
 };
 
+const collectElements = (node, predicate, out = []) => {
+  if (!node) return out;
+  if (predicate(node)) out.push(node);
+  (node.children || []).forEach(child => collectElements(child, predicate, out));
+  return out;
+};
+
 {
   const parts = [{ type: 'agent_status', runId: 'run-1', status: 'running' }];
   assert.equal(getAgentMessagePartsForMessage({ meta: { agentMessageParts: parts } }), parts);
@@ -194,4 +201,52 @@ const createFakeDocument = () => {
   assert.equal(actions[0].part.metadata.pendingPermissionId, 'pending-sidecar-continue-1');
   assert.equal(actions[1].action, 'disable_gate');
   console.log('ok - buildAgentMessageSidecarElement exposes provider continuation preview and rollback actions');
+}
+
+{
+  const documentLike = createFakeDocument();
+  const actions = [];
+  const element = buildAgentMessageSidecarElement({
+    documentLike,
+    message: {
+      id: 'm-chat-format',
+      meta: {
+        agentMessageParts: [{
+          id: 'chat-format-guardian:m-chat-format',
+          type: 'agent_status',
+          runId: 'run:chat-format-guardian:m-chat-format',
+          kind: 'chat_format.validate',
+          source: 'chat-format-guardian',
+          status: 'waiting_permission',
+          title: '聊天格式待确认',
+          summary: '1 event draft · 0 errors · 1 warning',
+          metadata: {
+            inputSuggestion: '请重写上一条回复，严格遵守当前聊天/动态输出格式。',
+            decisionActions: [
+              {
+                id: 'apply_repair',
+                label: '应用修复',
+                enabled: true,
+                repairCandidate: { replacementText: '<我和菲伦的私聊>\n菲伦--你好--22:10\n</我和菲伦的私聊>' },
+              },
+              { id: 'swipe_retry', label: '重试生成', enabled: true },
+              { id: 'review_original', label: '查看原文', enabled: true },
+              { id: 'edit_user_input_suggestion', label: '修改输入建议', enabled: true, suggestion: '请重写上一条回复。' },
+              { id: 'open_agent_center', label: 'Agent Center', enabled: true },
+            ],
+          },
+        }],
+      },
+    },
+    onChatFormatGuardianAction: request => actions.push(request),
+  });
+  const buttons = collectElements(element, node => Boolean(node.dataset?.chatFormatGuardianAction));
+  assert.equal(buttons.length, 5);
+  assert.deepEqual(buttons.map(button => button.textContent), ['应用修复', '重试生成', '查看原文', '修改输入建议', 'Agent Center']);
+  buttons[0].click();
+  assert.equal(actions.length, 1);
+  assert.equal(actions[0].action, 'apply_repair');
+  assert.equal(actions[0].actionMeta.repairCandidate.replacementText.includes('菲伦--你好'), true);
+  assert.equal(actions[0].part.kind, 'chat_format.validate');
+  console.log('ok - buildAgentMessageSidecarElement exposes chat format guardian review actions');
 }

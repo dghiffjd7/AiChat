@@ -4,6 +4,8 @@ import { AGENT_PERMISSION_DECISIONS } from '../../src/scripts/agent/agent-permis
 import {
   PROVIDER_TOOL_PENDING_PERMISSION_RESUME_CONTRACT,
   PROVIDER_TOOL_PENDING_PERMISSION_RESUME_STATUSES,
+  PROVIDER_TOOL_PENDING_PERMISSION_COMMIT_STATUSES,
+  PROVIDER_TOOL_PENDING_PERMISSION_COMMIT_UNDO_STATUSES,
   PROVIDER_TOOL_PENDING_PERMISSION_CONTINUATION_STATUSES,
   PROVIDER_TOOL_PENDING_PERMISSION_STATUSES,
   buildProviderToolPendingPermissionId,
@@ -184,4 +186,56 @@ import { PROVIDER_TOOL_PERMISSION_ACTIONS } from '../../src/scripts/agent/provid
   assert.deepEqual(ready.continuationResult.runnerFacade, { status: 'disabled' });
   assert.deepEqual(ready.continuationParts, [{ id: 'continuation-part-1', type: 'provider_stream_events', status: 'succeeded' }]);
   console.log('ok - provider tool pending permission store tracks continuation plan state');
+}
+
+{
+  let clock = 7000;
+  const store = createProviderToolPendingPermissionStore({
+    now: () => clock,
+  });
+  const entry = store.add({
+    requestId: 'stream-8',
+    toolCallId: 'call-9',
+    toolName: 'chat.emit_private',
+    sessionId: 's7',
+    permissions: ['chat:emit_candidate'],
+  });
+  clock = 7100;
+  const running = store.markCommit(entry.id, {
+    status: PROVIDER_TOOL_PENDING_PERMISSION_COMMIT_STATUSES.running,
+  });
+  clock = 7200;
+  const committed = store.markCommit(entry.id, {
+    status: PROVIDER_TOOL_PENDING_PERMISSION_COMMIT_STATUSES.committed,
+    result: {
+      status: 'committed',
+      refs: { createdMessageIds: ['m1'] },
+    },
+  });
+  clock = 7300;
+  const undoRunning = store.markCommitUndo(entry.id, {
+    status: PROVIDER_TOOL_PENDING_PERMISSION_COMMIT_UNDO_STATUSES.running,
+  });
+  clock = 7400;
+  const undone = store.markCommitUndo(entry.id, {
+    status: PROVIDER_TOOL_PENDING_PERMISSION_COMMIT_UNDO_STATUSES.undone,
+    result: {
+      status: 'undone',
+      refs: { deletedMessages: [{ sessionId: 's7', messageId: 'm1' }] },
+    },
+  });
+
+  assert.equal(running.commitStatus, PROVIDER_TOOL_PENDING_PERMISSION_COMMIT_STATUSES.running);
+  assert.equal(running.commitAttempt, 1);
+  assert.equal(running.commitStartedAt, 7100);
+  assert.equal(committed.commitStatus, PROVIDER_TOOL_PENDING_PERMISSION_COMMIT_STATUSES.committed);
+  assert.equal(committed.commitFinishedAt, 7200);
+  assert.deepEqual(committed.commitResult.refs.createdMessageIds, ['m1']);
+  assert.equal(undoRunning.commitUndoStatus, PROVIDER_TOOL_PENDING_PERMISSION_COMMIT_UNDO_STATUSES.running);
+  assert.equal(undoRunning.commitUndoAttempt, 1);
+  assert.equal(undone.commitStatus, PROVIDER_TOOL_PENDING_PERMISSION_COMMIT_STATUSES.undone);
+  assert.equal(undone.commitUndoStatus, PROVIDER_TOOL_PENDING_PERMISSION_COMMIT_UNDO_STATUSES.undone);
+  assert.equal(undone.commitUndoFinishedAt, 7400);
+  assert.deepEqual(undone.commitUndoResult.refs.deletedMessages, [{ sessionId: 's7', messageId: 'm1' }]);
+  console.log('ok - provider tool pending permission store tracks explicit chat emit commit and undo state');
 }

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 
 import {
   CHAT_FORMAT_EVENT_TYPES,
+  buildChatFormatRepairCandidate,
   extractChatFormatEventDrafts,
   validateChatFormatEventDraft,
 } from '../../src/scripts/ui/chat/chat-format-guardian-utils.js';
@@ -55,6 +56,11 @@ import {
   assert.equal(result.eventDrafts[1].targetId, 'group:case');
   assert.equal(result.eventDrafts[1].speakerId, 'contact:snow');
   assert.equal(result.warnings.includes('time is missing'), true);
+  const repair = buildChatFormatRepairCandidate(result, { fallbackTime: '22:12' });
+  assert.equal(repair.available, true);
+  assert.equal(repair.kind, 'fill_missing_time');
+  assert.equal(repair.replacementText.includes('系统消息--菲伦加入了群聊--22:12'), true);
+  assert.equal(repair.replacementText.includes('雪--我看到了门口的鞋印。--22:11'), true);
   console.log('ok - chat format guardian extracts group message and system event drafts');
 }
 

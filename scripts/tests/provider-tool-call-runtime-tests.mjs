@@ -5,6 +5,7 @@ import { createAgentToolRegistry } from '../../src/scripts/agent/agent-tool-regi
 import { createProviderToolCallRuntime } from '../../src/scripts/agent/provider-tool-call-runtime.js';
 import { createProviderToolLoopGuard } from '../../src/scripts/agent/provider-tool-loop-guard.js';
 import { createProviderToolPendingPermissionStore } from '../../src/scripts/agent/provider-tool-pending-permissions.js';
+import { createChatEmitAgentTools } from '../../src/scripts/agent/tools/chat-emit-tools.js';
 
 {
   const registry = createAgentToolRegistry({
@@ -156,6 +157,49 @@ import { createProviderToolPendingPermissionStore } from '../../src/scripts/agen
   assert.equal(pendingPermissionStore.list({ status: 'pending' }).length, 1);
   assert.equal(result.parts[2].errorMessage.includes('Agent tool permission ask'), true);
   console.log('ok - createProviderToolCallRuntime defers provider permission without modal prompt by default');
+}
+
+{
+  const registry = createAgentToolRegistry({
+    permissionEvaluator: createAgentPermissionEvaluator({
+      defaultDecision: AGENT_PERMISSION_DECISIONS.ask,
+    }),
+    logger: { warn: () => {} },
+  });
+  registry.registerMany(createChatEmitAgentTools());
+  const pendingPermissionStore = createProviderToolPendingPermissionStore({
+    now: () => 2600,
+  });
+  const runtime = createProviderToolCallRuntime({
+    toolRegistry: registry,
+    pendingPermissionStore,
+    now: () => 2600,
+    logger: { warn: () => {} },
+  });
+  const result = await runtime.executeToolCall({
+    id: 'call-chat-emit-1',
+    toolName: 'chat.emit_private',
+    arguments: {
+      targetName: '菲伦',
+      speakerName: '菲伦',
+      content: '今晚别一个人走。',
+    },
+  }, {
+    requestId: 'stream-chat-emit',
+    sessionId: 'contact:firen',
+    providerToolSessionGate: { enabled: true, sessionId: 'contact:firen' },
+    promptPermission: false,
+  });
+  const [pending] = pendingPermissionStore.list({ status: 'pending' });
+  assert.equal(result.ok, false);
+  assert.equal(result.status, 'failed');
+  assert.equal(result.parts[1].metadata.pendingPermissionId, 'provider-tool-permission:contact:firen:stream-chat-emit:call-chat-emit-1');
+  assert.equal(pending.toolName, 'chat.emit_private');
+  assert.deepEqual(pending.permissions, ['chat:emit_candidate']);
+  assert.equal(pending.resumeContract.writesChat, false);
+  assert.equal(pending.resumeContract.runsProvider, false);
+  assert.equal(result.parts[2].errorMessage.includes('Agent tool permission ask'), true);
+  console.log('ok - createProviderToolCallRuntime captures chat emit tool calls as pending review without writing');
 }
 
 {

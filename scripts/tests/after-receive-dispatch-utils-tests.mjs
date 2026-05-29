@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
 
 import {
+  buildChatFormatGuardianAgentRun,
   buildChatFormatGuardianMessagePart,
   dispatchAfterReceiveEffects,
+  resolveChatFormatGuardianInputText,
   resolveAfterReceiveSkipScripts,
   runChatFormatGuardianPreview,
 } from '../../src/scripts/ui/chat/after-receive-dispatch-utils.js';
@@ -391,6 +393,7 @@ test('buildChatFormatGuardianMessagePart summarizes warnings without exposing fu
   });
 
   assert.equal(part.type, 'agent_status');
+  assert.equal(part.runId, 'run:chat-format-guardian:m-format');
   assert.equal(part.source, 'chat-format-guardian');
   assert.equal(part.kind, 'chat_format.validate');
   assert.equal(part.status, 'waiting_permission');
@@ -398,9 +401,51 @@ test('buildChatFormatGuardianMessagePart summarizes warnings without exposing fu
   assert.equal(part.metadata.eventCount, 1);
   assert.deepEqual(part.metadata.countsByType, { group_message: 1 });
   assert.equal(part.metadata.events[0].contentPreview.endsWith('...'), true);
+  assert.deepEqual(
+    part.metadata.decisionActions.filter(action => action.enabled !== false).map(action => action.id),
+    ['swipe_retry', 'review_original', 'edit_user_input_suggestion', 'open_agent_center'],
+  );
+  assert.equal(part.metadata.inputSuggestion.includes('补齐每条聊天消息的时间'), true);
+});
+
+test('buildChatFormatGuardianAgentRun records review state without storing full content', () => {
+  const run = buildChatFormatGuardianAgentRun({
+    now: 1000,
+    sessionId: 'group:case',
+    message: { id: 'm-format', role: 'assistant' },
+    result: {
+      status: 'needs_review',
+      sourceMessageId: 'm-format',
+      summary: '1 chat format event draft(s), 0 error(s), 1 warning(s)',
+      eventDrafts: [{
+        type: 'group_message',
+        surface: 'chat',
+        targetId: 'group:case',
+        targetName: '调查组',
+        speakerId: 'contact:snow',
+        speakerName: '雪',
+        content: '这是一段非常长的内容，用来确认 Agent Run 只保存预览摘要，不把完整正文复制到元数据里。'.repeat(3),
+        warnings: ['time is missing'],
+      }],
+      errors: [],
+      warnings: ['time is missing'],
+    },
+  });
+
+  assert.equal(run.id, 'run:chat-format-guardian:m-format');
+  assert.equal(run.kind, 'chat_format_guardian');
+  assert.equal(run.status, 'waiting_permission');
+  assert.equal(run.surface, 'chat');
+  assert.equal(run.finishedAt, null);
+  assert.equal(run.steps.length, 1);
+  assert.equal(run.steps[0].type, 'chat_format.validate');
+  assert.equal(run.steps[0].status, 'waiting_permission');
+  assert.equal(run.metadata.events[0].contentPreview.endsWith('...'), true);
+  assert.equal(JSON.stringify(run).includes('非常长的内容'.repeat(2)), false);
 });
 
 test('runChatFormatGuardianPreview keeps ready results silent by default', () => {
+  const runs = [];
   const result = runChatFormatGuardianPreview({
     message: {
       id: 'm-ready',
@@ -419,11 +464,59 @@ test('runChatFormatGuardianPreview keeps ready results silent by default', () =>
       resolveSpeakerId: name => (name === '菲伦' ? 'contact:firen' : ''),
     },
     now: 1000,
+    onChatFormatGuardianRun({ agentRun }) {
+      runs.push(agentRun);
+    },
   });
 
   assert.equal(result.result.status, 'ready');
   assert.equal(result.part, null);
   assert.equal(result.patchedMessage, null);
+  assert.equal(result.agentRun.status, 'succeeded');
+  assert.equal(result.agentRun.finishedAt, 1000);
+  assert.equal(runs.length, 1);
+  assert.equal(runs[0].id, 'run:chat-format-guardian:m-ready');
+});
+
+test('runChatFormatGuardianPreview validates the full rawOriginal before cleaned content', () => {
+  const message = {
+    id: 'm-raw-original',
+    role: 'assistant',
+    content: '菲伦：今晚别一个人走。',
+    raw: '菲伦：今晚别一个人走。',
+    rawOriginal: [
+      '<我和菲伦的私聊>',
+      '菲伦--今晚别一个人走。',
+      '</我和菲伦的私聊>',
+    ].join('\n'),
+  };
+
+  assert.deepEqual(resolveChatFormatGuardianInputText(message), {
+    text: message.rawOriginal,
+    source: 'rawOriginal',
+    hasRawOriginal: true,
+  });
+
+  const result = runChatFormatGuardianPreview({
+    message,
+    sessionId: 'contact:firen',
+    chatFormatGuardian: {
+      enabled: true,
+      userName: '我',
+      resolvePrivateTargetId: name => (name === '菲伦' ? 'contact:firen' : ''),
+      resolveSpeakerId: name => (name === '菲伦' ? 'contact:firen' : ''),
+    },
+    now: 1000,
+  });
+
+  assert.equal(result.result.status, 'needs_review');
+  assert.equal(result.result.sourceTextKind, 'rawOriginal');
+  assert.equal(result.part.metadata.sourceTextKind, 'rawOriginal');
+  assert.equal(result.part.metadata.repairCandidate.available, true);
+  assert.equal(result.part.metadata.repairCandidate.replacementText.includes('菲伦--今晚别一个人走。--00:00'), true);
+  assert.equal(result.agentRun.steps[0].input.sourceTextKind, 'rawOriginal');
+  assert.equal(result.agentRun.metadata.repairCandidate.replacementText, undefined);
+  assert.equal(result.result.warnings.includes('time is missing'), true);
 });
 
 test('dispatchAfterReceiveEffects attaches chat format preview only through callback', () => {

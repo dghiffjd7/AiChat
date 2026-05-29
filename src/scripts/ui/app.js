@@ -27,6 +27,7 @@ import { createProviderToolPendingPermissionStore } from '../agent/provider-tool
 import { createProviderToolPendingContinuationPlanner } from '../agent/provider-tool-pending-continuation.js';
 import { resolveProviderToolCurrentRunnerClient } from '../agent/provider-tool-current-runner-client.js';
 import { createProviderToolPendingResumeExecutor } from '../agent/provider-tool-pending-resume.js';
+import { registerChatEmitAgentTools } from '../agent/tools/chat-emit-tools.js';
 import { registerContactProfileAgentTools } from '../agent/tools/contact-profile-tools.js';
 import { registerImageAgentTools } from '../agent/tools/image-tools.js';
 import { registerMemoryAgentTools } from '../agent/tools/memory-tools.js';
@@ -195,6 +196,11 @@ import { ChatUI } from './chat/chat-ui.js';
 import { enqueueMessagesCore } from './chat/typing-flow-ui-utils.js';
 import { createAssistantStreamRuntime, isStreamCtrlConnected } from './chat/assistant-stream-runtime.js';
 import { dispatchAfterReceiveEffects } from './chat/after-receive-dispatch-utils.js';
+import {
+  commitChatEmitContract,
+  undoChatEmitCommit,
+} from './chat/chat-emit-commit-adapter.js';
+import { createChatEmitPendingCommitActions } from './chat/chat-emit-pending-commit-actions.js';
 import {
   applyChatModeAssistantRegex as applyChatModeAssistantRegexCore,
   buildAssistantMessageFromText as buildAssistantMessageFromTextCore,
@@ -2013,9 +2019,17 @@ const initApp = async () => {
     pendingPermissionStore: providerToolPendingPermissionStore,
     logger,
   });
+  const providerModelContextTools = [
+    'contact_profile.list',
+    'contact_profile.get',
+    'chat.emit_private',
+    'chat.emit_group',
+    'chat.emit_moment_comment',
+    'chat.emit_moment_post',
+  ];
   const providerToolExperimentRuntime = createProviderToolExperimentRuntime({
     providerToolCallRuntime,
-    allowedTools: ['contact_profile.list', 'contact_profile.get'],
+    allowedTools: providerModelContextTools,
     enabledByDefault: false,
   });
   const readCurrentProviderToolSessionGate = (sessionId = chatStore.getCurrent()) => readProviderToolSessionGate({
@@ -2193,6 +2207,112 @@ const initApp = async () => {
       runsProvider: continuation?.runsProvider === true,
     };
   };
+  const createChatEmitCommitRuntime = () => {
+    const activeUser = getActiveUserProfile?.() || {};
+    const activeUserName = String(activeUser?.name || '').trim() || '我';
+    const isCommitUserSpeakerName = (speakerName = '') => {
+      const raw = normalizeSpeakerName(speakerName);
+      if (!raw) return false;
+      const key = normalizeLooseName(raw);
+      return raw === activeUserName || raw === '我' || key === normalizeLooseName(activeUserName) || key === normalizeLooseName('我');
+    };
+    const resolvePrivateTarget = (targetName = '') => {
+      const currentSessionId = chatStore.getCurrent();
+      return resolveChatFormatGuardianPrivateTargetId(targetName, currentSessionId) || currentSessionId || '';
+    };
+    const resolveGroupTarget = (targetName = '') => {
+      const currentSessionId = chatStore.getCurrent();
+      return resolveChatFormatGuardianGroupTargetId(targetName, currentSessionId) || '';
+    };
+    const buildCommitUserMessage = (content, time) => {
+      const parsed = parseSpecialMessage(content);
+      return {
+        role: 'user',
+        type: 'text',
+        ...parsed,
+        name: activeUserName,
+        avatar: avatars.user,
+        time: time || formatNowTime(),
+        meta: {
+          ...(parsed.meta || {}),
+          generatedByAssistant: true,
+          source: 'agent_chat_emit_commit',
+        },
+      };
+    };
+    const buildCommitAssistantMessage = async (
+      content,
+      { sessionId, time, name, avatar, showName, depth, speakerContactId } = {},
+    ) => {
+      const sid = String(sessionId || chatStore.getCurrent() || '').trim();
+      const contact = sid ? contactsStore.getContact(sid) : null;
+      return buildAssistantMessageFromTextCore(content, {
+        sessionId: sid,
+        time: time || formatNowTime(),
+        name,
+        avatar,
+        showName,
+        depth,
+        speakerContactId,
+        promptUserName: activeUserName,
+        isGroupChat: Boolean(contact?.isGroup) || sid.startsWith('group:'),
+        skipTemplate: true,
+        parseSpecialMessage,
+        getSessionContact: nextSid => contactsStore.getContact(nextSid),
+        getContactById: nextSid => contactsStore.getContact(nextSid),
+        resolveGroupSpeakerAvatar: ({ speakerName, sessionId: targetSessionId, speakerContactId: targetSpeakerContactId }) =>
+          resolveGroupSpeakerRenderAvatar(speakerName, targetSessionId, targetSpeakerContactId),
+        resolveContactAvatar: (nextSid, nextContact) => resolveAvatarForContact(nextSid, nextContact),
+        getAssistantAvatarForSession,
+        logger,
+      });
+    };
+    return {
+      chatStore,
+      momentsStore,
+      appendMessage: (message, sessionId) => chatStore.appendMessage(message, sessionId),
+      deleteMessage: (messageId, sessionId) => chatStore.deleteMessage(messageId, sessionId),
+      resolveTargetSessionId: resolvePrivateTarget,
+      resolveTargetSessionIdForEvent: (targetName, event = {}) => (
+        event?.type === 'group_chat' ? resolveGroupTarget(targetName) : resolvePrivateTarget(targetName)
+      ),
+      buildAssistantMessageFromText: buildCommitAssistantMessage,
+      buildUserMessageFromAI: buildCommitUserMessage,
+      buildSystemMessage: ({ content, time, fallbackTime } = {}) => ({
+        role: 'system',
+        type: 'meta',
+        content: String(content || ''),
+        name: '系统',
+        time: time || fallbackTime || formatNowTime(),
+      }),
+      normalizeDialogueMessage: msg => normalizeDialogueMessageCore(msg, {
+        isUserSpeakerName: isCommitUserSpeakerName,
+      }),
+      normalizeChatMessage: msg => normalizeProtocolChatMessage(msg),
+      isSystemSpeaker: speakerName => isSystemSpeakerLabel(speakerName),
+      isUserSpeakerName: isCommitUserSpeakerName,
+      resolveGroupSpeakerContact,
+      resolveGroupSpeakerAvatar,
+      isSessionActive: sessionId => isSessionActive(sessionId),
+      onAddUiMessage: message => ui.addMessage(message),
+      autoMarkReadIfActive: (sessionId, messageId) => autoMarkReadIfActive(sessionId, messageId),
+      emitPluginAfterReceive: (message, sessionId) => emitPluginAfterReceiveEffects(message, sessionId),
+    };
+  };
+  const chatEmitPendingCommitActions = createChatEmitPendingCommitActions({
+    pendingPermissionStore: providerToolPendingPermissionStore,
+    createRuntime: createChatEmitCommitRuntime,
+    commitChatEmitContract,
+    undoChatEmitCommit,
+    onCommitFinished: ({ commit }) => {
+      if (commit?.writesChat) refreshChatAndContacts({ immediate: true });
+      if (commit?.mutatedMoments) momentsPanel?.render({ preserveScroll: true });
+    },
+    onUndoFinished: () => {
+      refreshChatAndContacts({ immediate: true });
+      momentsPanel?.render({ preserveScroll: true });
+    },
+  });
   const lineageAgentRuntime = createLineageAgentRuntime({
     agentTaskRuntime,
     renderMapSceneHtml: renderLineageMapSceneHtmlAsync,
@@ -2219,6 +2339,7 @@ const initApp = async () => {
   });
   let currentMemoryUpdateRuntime = null;
   registerContactProfileAgentTools(agentToolRegistry, { contactProfileStore });
+  registerChatEmitAgentTools(agentToolRegistry);
   registerMemoryAgentTools(agentToolRegistry, {
     getMemoryUpdateRuntime: () => currentMemoryUpdateRuntime,
   });
@@ -2318,6 +2439,8 @@ const initApp = async () => {
         setProviderContinuationCommitPolicy: options => providerContinuationCommitPolicyStore.setPolicy(options || {}),
         resolveProviderToolPendingPermission,
         resumeProviderToolPendingPermission,
+        commitChatEmitPendingPermission: chatEmitPendingCommitActions.commitChatEmitPendingPermission,
+        undoChatEmitPendingCommit: chatEmitPendingCommitActions.undoChatEmitPendingCommit,
         planProviderToolPendingContinuation,
         resolveCurrentProviderToolRunnerClient: async (options = {}) => {
           const result = await resolveCurrentProviderToolRunnerClient(options || {});
@@ -21143,6 +21266,16 @@ Phase G（Frame 36）：循环衔接
     };
   };
 
+  const handleChatFormatGuardianAgentRun = ({ agentRun } = {}) => {
+    if (!agentRun?.id) return null;
+    try {
+      return agentRunStore.upsertRun(agentRun);
+    } catch (err) {
+      logger.warn('chat format guardian agent run record failed', err);
+      return null;
+    }
+  };
+
   const handleChatFormatGuardianPreview = ({ patchedMessage, sessionId: previewSessionId } = {}) => {
     const sid = String(previewSessionId || '').trim();
     if (!patchedMessage?.id || !isSessionActive(sid)) return;
@@ -21173,6 +21306,7 @@ Phase G（Frame 36）：循环衔接
       recordTraceEvent: recordDebugTraceEvent,
       chatFormatGuardian: buildChatFormatGuardianOptions(targetSessionId),
       onChatFormatGuardianPreview: handleChatFormatGuardianPreview,
+      onChatFormatGuardianRun: handleChatFormatGuardianAgentRun,
     });
     scheduleAutoImagePromptGenerationForMessage(message, targetSessionId, {
       source: 'after_receive',

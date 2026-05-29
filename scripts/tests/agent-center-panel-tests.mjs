@@ -87,6 +87,133 @@ import { AgentCenterPanel } from '../../src/scripts/ui/agent-center-panel.js';
 }
 
 {
+  const panel = new AgentCenterPanel();
+  panel.view = {
+    pending: [
+      {
+        kind: 'tool_permission',
+        id: 'chat-emit-pending-1',
+        status: 'pending',
+        toolName: 'chat.emit_private',
+        sessionId: 'contact:firen',
+        source: 'provider-tool-permission',
+        riskLevel: 'low',
+        permissions: ['chat:emit_candidate'],
+        resumeStatus: 'idle',
+        continuationStatus: 'idle',
+        chatEmitPreview: {
+          kind: '私聊候选',
+          target: '菲伦',
+          speaker: '菲伦',
+          time: '22:12',
+          contentPreview: '今晚别一个人走。',
+        },
+        chatEmitCommitPreview: {
+          effect: '新增 1 条私聊消息到「菲伦」',
+          undoSummary: '提交后撤销应删除该新增私聊消息或回滚提交快照',
+        },
+      },
+    ],
+  };
+  const html = panel.renderPending();
+  assert.match(html, /候选预览：私聊候选/);
+  assert.match(html, /目标：菲伦/);
+  assert.match(html, /说话人：菲伦/);
+  assert.match(html, /今晚别一个人走。/);
+  assert.match(html, /后续提交预览：新增 1 条私聊消息到「菲伦」/);
+  assert.match(html, /撤销边界：提交后撤销应删除该新增私聊消息或回滚提交快照/);
+  assert.match(html, /不会直接写聊天正文/);
+  assert.doesNotMatch(html, /提交候选/);
+  console.log('ok - agent center panel renders chat emit pending previews before approval');
+}
+
+{
+  const panel = new AgentCenterPanel();
+  panel.view = {
+    pending: [
+      {
+        kind: 'tool_permission',
+        id: 'chat-emit-pending-2',
+        status: 'allowed',
+        toolName: 'chat.emit_private',
+        sessionId: 'contact:firen',
+        source: 'provider-tool-permission',
+        riskLevel: 'low',
+        permissions: ['chat:emit_candidate'],
+        resumeStatus: 'succeeded',
+        continuationStatus: 'ready',
+        chatEmitPreview: {
+          kind: '私聊候选',
+          target: '菲伦',
+          speaker: '菲伦',
+          contentPreview: '今晚别一个人走。',
+        },
+        chatEmitCommitPreview: {
+          effect: '新增 1 条私聊消息到「菲伦」',
+          undoSummary: '提交后撤销应删除该新增私聊消息或回滚提交快照',
+        },
+        chatEmitCommit: {
+          status: 'idle',
+          undoStatus: 'idle',
+          canCommit: true,
+          canUndo: false,
+        },
+      },
+    ],
+  };
+  const html = panel.renderPending();
+  assert.match(html, /data-chat-emit-commit-action="commit"/);
+  assert.match(html, /提交候选/);
+  assert.doesNotMatch(html, /data-chat-emit-commit-action="undo"/);
+  console.log('ok - agent center panel renders explicit chat emit commit action after tool resume');
+}
+
+{
+  const panel = new AgentCenterPanel();
+  panel.view = {
+    pending: [
+      {
+        kind: 'tool_permission',
+        id: 'chat-emit-pending-3',
+        status: 'allowed',
+        toolName: 'chat.emit_private',
+        sessionId: 'contact:firen',
+        source: 'provider-tool-permission',
+        riskLevel: 'low',
+        permissions: ['chat:emit_candidate'],
+        resumeStatus: 'succeeded',
+        continuationStatus: 'ready',
+        chatEmitPreview: {
+          kind: '私聊候选',
+          target: '菲伦',
+          speaker: '菲伦',
+          contentPreview: '今晚别一个人走。',
+        },
+        chatEmitCommitPreview: {
+          effect: '新增 1 条私聊消息到「菲伦」',
+          undoSummary: '提交后撤销应删除该新增私聊消息或回滚提交快照',
+        },
+        chatEmitCommit: {
+          status: 'committed',
+          undoStatus: 'idle',
+          canCommit: false,
+          canUndo: true,
+          resultSummary: '消息 1',
+          message: '已提交 1 条消息。',
+        },
+      },
+    ],
+  };
+  const html = panel.renderPending();
+  assert.match(html, /commit: committed/);
+  assert.match(html, /提交结果：消息 1/);
+  assert.match(html, /提交说明：已提交 1 条消息。/);
+  assert.match(html, /data-chat-emit-commit-action="undo"/);
+  assert.match(html, /撤销提交/);
+  console.log('ok - agent center panel renders explicit chat emit undo action after commit');
+}
+
+{
   let confirmOptions = null;
   let resolverOptions = null;
   let refreshed = false;
@@ -122,6 +249,69 @@ import { AgentCenterPanel } from '../../src/scripts/ui/agent-center-panel.js';
   assert.equal(resolverOptions.reason, 'agent center pending action');
   assert.equal(refreshed, true);
   console.log('ok - agent center provider permission action resolves through debug registry contract');
+}
+
+{
+  let confirmOptions = null;
+  let actionOptions = null;
+  let refreshed = false;
+  const panel = new AgentCenterPanel({
+    confirm: async options => {
+      confirmOptions = options;
+      return true;
+    },
+    getActions: () => ({
+      commitChatEmitPendingPermission: options => {
+        actionOptions = options;
+        return { ok: true, status: 'committed' };
+      },
+    }),
+  });
+  panel.view = {
+    pending: [
+      {
+        kind: 'tool_permission',
+        id: 'chat-emit-pending-2',
+        toolName: 'chat.emit_private',
+      },
+    ],
+  };
+  panel.refresh = async () => {
+    refreshed = true;
+  };
+  await panel.handleChatEmitCommitAction('commit', 'chat-emit-pending-2');
+  assert.equal(confirmOptions.confirmText, '提交候选');
+  assert.equal(actionOptions.id, 'chat-emit-pending-2');
+  assert.equal(actionOptions.confirmed, true);
+  assert.equal(refreshed, true);
+  console.log('ok - agent center chat emit commit action requires confirmation and calls debug registry');
+}
+
+{
+  const panel = new AgentCenterPanel({
+    confirm: async () => true,
+    getActions: () => ({
+      commitChatEmitPendingPermission: () => ({
+        ok: false,
+        status: 'blocked',
+        reason: 'target_session_not_found',
+        message: '找不到候选目标会话，请检查目标名称或 ID 后重试。',
+      }),
+    }),
+  });
+  panel.view = {
+    pending: [
+      {
+        kind: 'tool_permission',
+        id: 'chat-emit-pending-blocked',
+        toolName: 'chat.emit_private',
+      },
+    ],
+  };
+  panel.refresh = async () => {};
+  await panel.handleChatEmitCommitAction('commit', 'chat-emit-pending-blocked');
+  assert.equal(panel.lastError, '找不到候选目标会话，请检查目标名称或 ID 后重试。');
+  console.log('ok - agent center chat emit commit action surfaces readable failure messages');
 }
 
 {
@@ -226,6 +416,46 @@ import { AgentCenterPanel } from '../../src/scripts/ui/agent-center-panel.js';
   assert.match(html, /错误：provider unavailable/);
   assert.match(html, /agent-center-card is-failure/);
   console.log('ok - agent center panel renders failed activity filter and error detail');
+}
+
+{
+  const panel = new AgentCenterPanel();
+  panel.activeTab = 'activity';
+  panel.view = {
+    activity: {
+      meta: { total: 1, active: 1, failures: 0, statusCounts: { waiting_permission: 1 } },
+      runs: [
+        {
+          id: 'run-format',
+          kind: 'chat_format_guardian',
+          title: '聊天格式待确认',
+          status: 'waiting_permission',
+          summary: '1 event draft · 0 errors · 1 warning',
+          review: {
+            sourceTextKind: 'rawOriginal',
+            hasRawOriginal: true,
+            eventCount: 1,
+            errors: [],
+            warnings: ['time is missing'],
+            repairCandidate: {
+              available: true,
+              title: '补齐时间',
+              summary: '补齐 1 条缺失时间',
+            },
+            actionLabels: ['应用修复', '重试生成', '查看原文'],
+          },
+        },
+      ],
+    },
+  };
+  const html = panel.renderActivity();
+  assert.match(html, /格式诊断：1 event/);
+  assert.match(html, /source: rawOriginal/);
+  assert.match(html, /警告：time is missing/);
+  assert.match(html, /修复候选：补齐时间/);
+  assert.match(html, /可在消息旁处理：应用修复、重试生成、查看原文/);
+  assert.doesNotMatch(html, /replacementText/);
+  console.log('ok - agent center panel renders chat format review details without write actions');
 }
 
 {

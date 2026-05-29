@@ -38,9 +38,30 @@ export const PROVIDER_TOOL_PENDING_PERMISSION_CONTINUATION_STATUSES = Object.fre
   failed: 'failed',
 });
 
+export const PROVIDER_TOOL_PENDING_PERMISSION_COMMIT_STATUSES = Object.freeze({
+  idle: 'idle',
+  running: 'running',
+  committed: 'committed',
+  skipped: 'skipped',
+  blocked: 'blocked',
+  failed: 'failed',
+  undone: 'undone',
+});
+
+export const PROVIDER_TOOL_PENDING_PERMISSION_COMMIT_UNDO_STATUSES = Object.freeze({
+  idle: 'idle',
+  running: 'running',
+  undone: 'undone',
+  skipped: 'skipped',
+  blocked: 'blocked',
+  failed: 'failed',
+});
+
 const STATUS_SET = new Set(Object.values(PROVIDER_TOOL_PENDING_PERMISSION_STATUSES));
 const RESUME_STATUS_SET = new Set(Object.values(PROVIDER_TOOL_PENDING_PERMISSION_RESUME_STATUSES));
 const CONTINUATION_STATUS_SET = new Set(Object.values(PROVIDER_TOOL_PENDING_PERMISSION_CONTINUATION_STATUSES));
+const COMMIT_STATUS_SET = new Set(Object.values(PROVIDER_TOOL_PENDING_PERMISSION_COMMIT_STATUSES));
+const COMMIT_UNDO_STATUS_SET = new Set(Object.values(PROVIDER_TOOL_PENDING_PERMISSION_COMMIT_UNDO_STATUSES));
 
 const isPlainObject = value => Boolean(value && typeof value === 'object' && !Array.isArray(value));
 
@@ -84,6 +105,22 @@ const normalizeContinuationStatus = (
 ) => {
   const status = trim(value, fallback).toLowerCase();
   return CONTINUATION_STATUS_SET.has(status) ? status : fallback;
+};
+
+const normalizeCommitStatus = (
+  value = '',
+  fallback = PROVIDER_TOOL_PENDING_PERMISSION_COMMIT_STATUSES.idle,
+) => {
+  const status = trim(value, fallback).toLowerCase();
+  return COMMIT_STATUS_SET.has(status) ? status : fallback;
+};
+
+const normalizeCommitUndoStatus = (
+  value = '',
+  fallback = PROVIDER_TOOL_PENDING_PERMISSION_COMMIT_UNDO_STATUSES.idle,
+) => {
+  const status = trim(value, fallback).toLowerCase();
+  return COMMIT_UNDO_STATUS_SET.has(status) ? status : fallback;
 };
 
 const readToolCall = (entry = {}) => (isPlainObject(entry.toolCall) ? entry.toolCall : {});
@@ -165,6 +202,18 @@ export const normalizeProviderToolPendingPermission = (entry = {}, {
     continuationResult: clone(src.continuationResult ?? null),
     continuationParts: clone(Array.isArray(src.continuationParts) ? src.continuationParts : []),
     continuationErrorMessage: trim(src.continuationErrorMessage),
+    commitStatus: normalizeCommitStatus(src.commitStatus),
+    commitAttempt: Math.max(0, Math.trunc(Number(src.commitAttempt || 0)) || 0),
+    commitStartedAt: toFiniteNumber(src.commitStartedAt, 0),
+    commitFinishedAt: toFiniteNumber(src.commitFinishedAt, 0),
+    commitResult: clone(src.commitResult ?? null),
+    commitErrorMessage: trim(src.commitErrorMessage),
+    commitUndoStatus: normalizeCommitUndoStatus(src.commitUndoStatus),
+    commitUndoAttempt: Math.max(0, Math.trunc(Number(src.commitUndoAttempt || 0)) || 0),
+    commitUndoStartedAt: toFiniteNumber(src.commitUndoStartedAt, 0),
+    commitUndoFinishedAt: toFiniteNumber(src.commitUndoFinishedAt, 0),
+    commitUndoResult: clone(src.commitUndoResult ?? null),
+    commitUndoErrorMessage: trim(src.commitUndoErrorMessage),
     toolCall: clone(toolCall),
   };
   normalized.request = isPlainObject(src.request)
@@ -331,6 +380,70 @@ export const createProviderToolPendingPermissionStore = ({
     return clone(next);
   };
 
+  const markCommit = (id = '', commit = {}) => {
+    expire();
+    const key = trim(id);
+    const current = entries.get(key);
+    if (!current) return null;
+    const src = isPlainObject(commit) ? commit : {};
+    const at = toFiniteNumber(src.now, readNow());
+    const status = normalizeCommitStatus(src.status, current.commitStatus);
+    const terminal = status === PROVIDER_TOOL_PENDING_PERMISSION_COMMIT_STATUSES.committed ||
+      status === PROVIDER_TOOL_PENDING_PERMISSION_COMMIT_STATUSES.skipped ||
+      status === PROVIDER_TOOL_PENDING_PERMISSION_COMMIT_STATUSES.blocked ||
+      status === PROVIDER_TOOL_PENDING_PERMISSION_COMMIT_STATUSES.failed ||
+      status === PROVIDER_TOOL_PENDING_PERMISSION_COMMIT_STATUSES.undone;
+    const next = {
+      ...current,
+      commitStatus: status,
+      commitAttempt: status === PROVIDER_TOOL_PENDING_PERMISSION_COMMIT_STATUSES.running
+        ? Number(current.commitAttempt || 0) + 1
+        : Number(current.commitAttempt || 0),
+      commitStartedAt: status === PROVIDER_TOOL_PENDING_PERMISSION_COMMIT_STATUSES.running
+        ? at
+        : Number(current.commitStartedAt || 0),
+      commitFinishedAt: terminal ? at : Number(current.commitFinishedAt || 0),
+      commitResult: src.result !== undefined ? clone(src.result) : current.commitResult,
+      commitErrorMessage: trim(src.errorMessage || src.reason, current.commitErrorMessage),
+      updatedAt: at,
+    };
+    entries.set(key, next);
+    return clone(next);
+  };
+
+  const markCommitUndo = (id = '', undo = {}) => {
+    expire();
+    const key = trim(id);
+    const current = entries.get(key);
+    if (!current) return null;
+    const src = isPlainObject(undo) ? undo : {};
+    const at = toFiniteNumber(src.now, readNow());
+    const status = normalizeCommitUndoStatus(src.status, current.commitUndoStatus);
+    const terminal = status === PROVIDER_TOOL_PENDING_PERMISSION_COMMIT_UNDO_STATUSES.undone ||
+      status === PROVIDER_TOOL_PENDING_PERMISSION_COMMIT_UNDO_STATUSES.skipped ||
+      status === PROVIDER_TOOL_PENDING_PERMISSION_COMMIT_UNDO_STATUSES.blocked ||
+      status === PROVIDER_TOOL_PENDING_PERMISSION_COMMIT_UNDO_STATUSES.failed;
+    const next = {
+      ...current,
+      commitStatus: status === PROVIDER_TOOL_PENDING_PERMISSION_COMMIT_UNDO_STATUSES.undone
+        ? PROVIDER_TOOL_PENDING_PERMISSION_COMMIT_STATUSES.undone
+        : current.commitStatus,
+      commitUndoStatus: status,
+      commitUndoAttempt: status === PROVIDER_TOOL_PENDING_PERMISSION_COMMIT_UNDO_STATUSES.running
+        ? Number(current.commitUndoAttempt || 0) + 1
+        : Number(current.commitUndoAttempt || 0),
+      commitUndoStartedAt: status === PROVIDER_TOOL_PENDING_PERMISSION_COMMIT_UNDO_STATUSES.running
+        ? at
+        : Number(current.commitUndoStartedAt || 0),
+      commitUndoFinishedAt: terminal ? at : Number(current.commitUndoFinishedAt || 0),
+      commitUndoResult: src.result !== undefined ? clone(src.result) : current.commitUndoResult,
+      commitUndoErrorMessage: trim(src.errorMessage || src.reason, current.commitUndoErrorMessage),
+      updatedAt: at,
+    };
+    entries.set(key, next);
+    return clone(next);
+  };
+
   const clear = () => {
     const count = entries.size;
     entries.clear();
@@ -360,6 +473,8 @@ export const createProviderToolPendingPermissionStore = ({
     get,
     getStats,
     list: listEntries,
+    markCommit,
+    markCommitUndo,
     markContinuation,
     markResume,
     resolve,

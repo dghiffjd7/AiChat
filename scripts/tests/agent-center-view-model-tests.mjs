@@ -114,3 +114,101 @@ import {
   assert.equal(view.meta.tools, 0);
   console.log('ok - agent center accepts prebuilt agent run views');
 }
+
+{
+  const view = buildAgentCenterView({
+    pendingPermissions: [{
+      id: 'chat-emit-pending-1',
+      status: 'pending',
+      toolName: 'chat.emit_private',
+      sessionId: 'contact:firen',
+      permissions: ['chat:emit_candidate'],
+      argsPreview: {
+        targetName: '菲伦',
+        speakerName: '菲伦',
+        content: '今晚别一个人走。',
+        time: '22:12',
+      },
+    }],
+  });
+  assert.equal(view.pending[0].chatEmitPreview.kind, '私聊候选');
+  assert.equal(view.pending[0].chatEmitPreview.target, '菲伦');
+  assert.equal(view.pending[0].chatEmitPreview.speaker, '菲伦');
+  assert.equal(view.pending[0].chatEmitPreview.contentPreview, '今晚别一个人走。');
+  assert.equal(view.pending[0].chatEmitCommitPreview.effect, '新增 1 条私聊消息到「菲伦」');
+  assert.equal(view.pending[0].chatEmitCommitPreview.currentExecutionWrites, false);
+  assert.equal(view.pending[0].chatEmitCommitPreview.confirmationRequired, true);
+  assert.equal(view.pending[0].chatEmitCommit.canCommit, false);
+  assert.equal(view.pending[0].chatEmitCommit.canUndo, false);
+  console.log('ok - agent center view summarizes chat emit pending previews');
+}
+
+{
+  const ready = buildAgentCenterView({
+    pendingPermissions: [{
+      id: 'chat-emit-pending-2',
+      status: 'allowed',
+      toolName: 'chat.emit_private',
+      sessionId: 'contact:firen',
+      permissions: ['chat:emit_candidate'],
+      resumeStatus: 'succeeded',
+      commitStatus: 'idle',
+      argsPreview: {
+        targetName: '菲伦',
+        speakerName: '菲伦',
+        content: '今晚别一个人走。',
+      },
+    }],
+  });
+  assert.equal(ready.pending[0].chatEmitCommit.canCommit, true);
+  assert.equal(ready.pending[0].chatEmitCommit.canUndo, false);
+
+  const committed = buildAgentCenterView({
+    pendingPermissions: [{
+      id: 'chat-emit-pending-3',
+      status: 'allowed',
+      toolName: 'chat.emit_private',
+      sessionId: 'contact:firen',
+      permissions: ['chat:emit_candidate'],
+      resumeStatus: 'succeeded',
+      commitStatus: 'committed',
+      commitResult: {
+        status: 'committed',
+        refs: { createdMessageIds: ['m1'] },
+      },
+      argsPreview: {
+        targetName: '菲伦',
+        speakerName: '菲伦',
+        content: '今晚别一个人走。',
+      },
+    }],
+  });
+  assert.equal(committed.pending[0].chatEmitCommit.canCommit, false);
+  assert.equal(committed.pending[0].chatEmitCommit.canUndo, true);
+  assert.equal(committed.pending[0].chatEmitCommit.resultSummary, '消息 1');
+
+  const skipped = buildAgentCenterView({
+    pendingPermissions: [{
+      id: 'chat-emit-pending-4',
+      status: 'allowed',
+      toolName: 'chat.emit_private',
+      sessionId: 'contact:firen',
+      permissions: ['chat:emit_candidate'],
+      resumeStatus: 'succeeded',
+      commitStatus: 'skipped',
+      commitResult: {
+        status: 'skipped',
+        reason: 'target_session_not_found',
+        displayMessage: '找不到候选目标会话，请检查目标名称或 ID 后重试。',
+      },
+      argsPreview: {
+        targetName: '菲伦',
+        speakerName: '菲伦',
+        content: '今晚别一个人走。',
+      },
+    }],
+  });
+  assert.equal(skipped.pending[0].chatEmitCommit.canCommit, true);
+  assert.equal(skipped.pending[0].chatEmitCommit.message, '找不到候选目标会话，请检查目标名称或 ID 后重试。');
+  console.log('ok - agent center view exposes chat emit commit and undo actions after resume');
+}

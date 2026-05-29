@@ -1,4 +1,5 @@
 import { buildAgentRunListView } from '../agent/agent-run-view-model.js';
+import { buildChatEmitCommitPreview } from '../agent/tools/chat-emit-commit-plan.js';
 
 export const AGENT_CENTER_TABS = Object.freeze([
   { id: 'pending', label: '待确认' },
@@ -18,6 +19,12 @@ const list = value => (Array.isArray(value) ? value : [value])
   .map(item => trim(item))
   .filter(Boolean);
 
+const truncate = (value = '', maxLength = 160) => {
+  const text = String(value ?? '').trim().replace(/\s+/g, ' ');
+  const limit = Math.max(20, Math.trunc(Number(maxLength) || 160));
+  return text.length > limit ? `${text.slice(0, limit - 1)}...` : text;
+};
+
 const toFiniteNumber = (value, fallback = 0) => {
   const numeric = Number(value);
   return Number.isFinite(numeric) ? numeric : fallback;
@@ -29,13 +36,108 @@ const normalizeLimit = (value, fallback = 50, max = 200) => {
   return Math.min(max, numeric);
 };
 
+const readArgsPreview = (src = {}) => {
+  const candidates = [
+    src.argsPreview,
+    src.request?.argsPreview,
+    src.toolCall?.arguments,
+  ];
+  return candidates.find(isPlainObject) || {};
+};
+
+const buildChatEmitPendingPreview = (toolName = '', args = {}) => {
+  const name = trim(toolName);
+  if (!name.startsWith('chat.emit_')) return null;
+  const src = isPlainObject(args) ? args : {};
+  if (name === 'chat.emit_private') {
+    return {
+      kind: '私聊候选',
+      target: trim(src.targetName || src.targetId),
+      speaker: trim(src.speakerName || src.speakerId),
+      time: trim(src.time),
+      contentPreview: truncate(src.content),
+    };
+  }
+  if (name === 'chat.emit_group') {
+    return {
+      kind: src.system === true ? '群系统候选' : '群聊候选',
+      target: trim(src.groupName || src.groupId),
+      speaker: trim(src.speakerName || src.speakerId),
+      time: trim(src.time),
+      contentPreview: truncate(src.content),
+    };
+  }
+  if (name === 'chat.emit_moment_comment') {
+    return {
+      kind: '动态评论候选',
+      target: trim(src.momentId),
+      speaker: trim(src.author),
+      time: trim(src.time),
+      contentPreview: truncate(src.content),
+    };
+  }
+  if (name === 'chat.emit_moment_post') {
+    return {
+      kind: '动态发布候选',
+      target: trim(src.momentId || src.author),
+      speaker: trim(src.author),
+      time: trim(src.time),
+      contentPreview: truncate(src.content),
+    };
+  }
+  return null;
+};
+
+const summarizeChatEmitCommitResult = (result = {}) => {
+  const refs = isPlainObject(result?.refs) ? result.refs : {};
+  const createdMessages = Array.isArray(refs.createdMessages) ? refs.createdMessages.length : 0;
+  const createdMessageIds = Array.isArray(refs.createdMessageIds) ? refs.createdMessageIds.length : 0;
+  const createdComments = Array.isArray(refs.createdCommentIds) ? refs.createdCommentIds.length : 0;
+  const createdMoments = Array.isArray(refs.createdMomentIds) ? refs.createdMomentIds.length : 0;
+  const parts = [];
+  if (createdMessages || createdMessageIds) parts.push(`消息 ${createdMessages || createdMessageIds}`);
+  if (createdComments) parts.push(`评论 ${createdComments}`);
+  if (createdMoments) parts.push(`动态 ${createdMoments}`);
+  return parts.join(' · ');
+};
+
+const buildChatEmitCommitState = (entry = {}, chatEmitPreview = null, chatEmitCommitPreview = null) => {
+  if (!chatEmitPreview && !chatEmitCommitPreview) return null;
+  const commitStatus = trim(entry.commitStatus, 'idle');
+  const undoStatus = trim(entry.commitUndoStatus, 'idle');
+  const resumeStatus = trim(entry.resumeStatus, 'idle');
+  const commitResult = isPlainObject(entry.commitResult) ? entry.commitResult : null;
+  const undoResult = isPlainObject(entry.commitUndoResult) ? entry.commitUndoResult : null;
+  return {
+    status: commitStatus,
+    undoStatus,
+    canCommit: resumeStatus === 'succeeded' && commitStatus !== 'running' &&
+      commitStatus !== 'committed' && commitStatus !== 'undone',
+    canUndo: commitStatus === 'committed' && undoStatus !== 'running' && undoStatus !== 'undone',
+    resultSummary: summarizeChatEmitCommitResult(commitResult),
+    undoSummary: summarizeChatEmitCommitResult(undoResult),
+    message: trim(commitResult?.displayMessage || commitResult?.reason),
+    undoMessage: trim(undoResult?.displayMessage || undoResult?.reason),
+    errorMessage: trim(entry.commitErrorMessage),
+    undoErrorMessage: trim(entry.commitUndoErrorMessage),
+  };
+};
+
 const normalizePendingPermission = (entry = {}) => {
   const src = isPlainObject(entry) ? entry : {};
+  const toolName = trim(src.toolName || src.request?.toolName || src.toolCall?.toolName, 'tool');
+  const argsPreview = readArgsPreview(src);
+  const chatEmitPreview = buildChatEmitPendingPreview(toolName, argsPreview);
+  const chatEmitCommitPreview = buildChatEmitCommitPreview({
+    toolName,
+    args: argsPreview,
+    sessionId: trim(src.sessionId || src.interaction?.sessionId),
+  });
   return {
     kind: 'tool_permission',
     id: trim(src.id),
     status: trim(src.status, 'pending'),
-    toolName: trim(src.toolName || src.request?.toolName || src.toolCall?.toolName, 'tool'),
+    toolName,
     sessionId: trim(src.sessionId || src.interaction?.sessionId),
     source: trim(src.source, 'provider-tool-permission'),
     riskLevel: trim(src.riskLevel || src.request?.riskLevel, 'low'),
@@ -45,6 +147,9 @@ const normalizePendingPermission = (entry = {}) => {
     reason: trim(src.reason),
     resumeStatus: trim(src.resumeStatus, 'idle'),
     continuationStatus: trim(src.continuationStatus, 'idle'),
+    chatEmitPreview,
+    chatEmitCommitPreview,
+    chatEmitCommit: buildChatEmitCommitState(src, chatEmitPreview, chatEmitCommitPreview),
   };
 };
 

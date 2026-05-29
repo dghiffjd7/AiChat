@@ -32,6 +32,14 @@ const normalizeStringList = value => list(value)
   .map(item => trim(item))
   .filter(Boolean);
 
+const compactWhitespace = value => String(value ?? '').trim().replace(/\s+/g, ' ');
+
+const truncatePreview = (value = '', maxLength = 240) => {
+  const text = String(value ?? '').trim();
+  const limit = Math.max(20, Math.trunc(Number(maxLength) || 240));
+  return text.length > limit ? `${text.slice(0, limit - 1)}...` : text;
+};
+
 const inferSurface = (type = '') => (
   type === CHAT_FORMAT_EVENT_TYPES.momentComment || type === CHAT_FORMAT_EVENT_TYPES.momentPost
     ? MOMENTS_SURFACE
@@ -230,6 +238,127 @@ export const validateChatFormatEventDrafts = (events = []) => {
   };
 };
 
+const normalizeRepairTime = value => {
+  const text = trim(value);
+  const match = text.match(/^(\d{1,2}):(\d{2})$/);
+  if (!match) return '';
+  const hour = Math.min(Math.max(0, Number(match[1]) || 0), 23);
+  const minute = Math.min(Math.max(0, Number(match[2]) || 0), 59);
+  return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
+};
+
+const serializeProtocolContent = value => (
+  trim(value)
+    .replace(/\n+/g, '<br>')
+    .replace(/\s*<br>\s*/gi, '<br>')
+);
+
+const buildProtocolLine = (event = {}, fallbackTime = '') => {
+  const speaker = trim(event?.speakerName);
+  const content = serializeProtocolContent(event?.content);
+  const time = normalizeRepairTime(event?.time) || fallbackTime;
+  if (!speaker || !content || !time) return '';
+  return `${speaker}--${content}--${time}`;
+};
+
+const getEventGroupKey = event => [
+  trim(event?.metadata?.protocolType),
+  trim(event?.metadata?.tagName),
+  trim(event?.targetName),
+  trim(event?.targetId),
+].join('\u0000');
+
+const groupEventsByProtocolBlock = (events = []) => {
+  const groups = [];
+  const byKey = new Map();
+  list(events).forEach((event) => {
+    const key = getEventGroupKey(event);
+    if (!byKey.has(key)) {
+      const group = { key, events: [] };
+      byKey.set(key, group);
+      groups.push(group);
+    }
+    byKey.get(key).events.push(event);
+  });
+  return groups;
+};
+
+const buildPrivateRepairBlock = (events = [], fallbackTime = '') => {
+  const first = events[0] || {};
+  const tagName = trim(first?.metadata?.tagName) || (trim(first?.targetName) ? `我和${trim(first.targetName)}的私聊` : '');
+  if (!tagName) return '';
+  const lines = events.map(event => buildProtocolLine(event, fallbackTime)).filter(Boolean);
+  if (!lines.length) return '';
+  return [`<${tagName}>`, ...lines, `</${tagName}>`].join('\n');
+};
+
+const buildGroupRepairBlock = (events = [], fallbackTime = '') => {
+  const first = events[0] || {};
+  const tagName = trim(first?.metadata?.tagName) || (trim(first?.targetName) ? `群聊:${trim(first.targetName)}` : '');
+  if (!tagName) return '';
+  const members = normalizeStringList(first?.metadata?.members);
+  const lines = events.map(event => buildProtocolLine(event, fallbackTime)).filter(Boolean);
+  if (!lines.length) return '';
+  return [
+    `<${tagName}>`,
+    ...(members.length ? [`<成员>${members.join(',')}</成员>`] : []),
+    '<聊天内容>',
+    ...lines,
+    '</聊天内容>',
+    `</${tagName}>`,
+  ].join('\n');
+};
+
+export const buildChatFormatRepairCandidate = (result = {}, {
+  fallbackTime = '',
+  maxPreviewLength = 240,
+} = {}) => {
+  const events = list(result?.eventDrafts).map(normalizeChatFormatEventDraft);
+  const errors = normalizeStringList(result?.errors);
+  const warnings = normalizeStringList(result?.warnings);
+  if (!events.length || !warnings.length) {
+    return { available: false, reason: 'no_repair_needed' };
+  }
+  if (errors.length) {
+    return { available: false, reason: 'has_errors', errors, warnings };
+  }
+  if (warnings.some(warning => warning !== 'time is missing')) {
+    return { available: false, reason: 'unsupported_warnings', errors, warnings };
+  }
+  if (events.some(event => event.surface !== CHAT_SURFACE)) {
+    return { available: false, reason: 'unsupported_surface', errors, warnings };
+  }
+  if (events.some(event => !trim(event?.speakerName) || !trim(event?.content))) {
+    return { available: false, reason: 'missing_speaker_or_content', errors, warnings };
+  }
+
+  const repairedTime = normalizeRepairTime(fallbackTime) || '00:00';
+  const blocks = groupEventsByProtocolBlock(events)
+    .map((group) => {
+      const protocolType = trim(group.events[0]?.metadata?.protocolType);
+      if (protocolType === 'private_chat') return buildPrivateRepairBlock(group.events, repairedTime);
+      if (protocolType === 'group_chat') return buildGroupRepairBlock(group.events, repairedTime);
+      return '';
+    })
+    .filter(Boolean);
+  const replacementText = blocks.join('\n\n').trim();
+  if (!replacementText) {
+    return { available: false, reason: 'empty_candidate', errors, warnings };
+  }
+  return {
+    available: true,
+    kind: 'fill_missing_time',
+    summary: `补齐 ${warnings.length} 处缺失时间`,
+    replacementText,
+    preview: truncatePreview(replacementText, maxPreviewLength),
+    fallbackTime: repairedTime,
+    fixedWarnings: Array.from(new Set(warnings)),
+    eventCount: events.length,
+    issueCount: warnings.length,
+    title: '补齐聊天时间字段',
+  };
+};
+
 export const extractChatFormatEventDrafts = (text = '', options = {}) => {
   const parser = new DialogueStreamParser({
     userName: trim(options.userName, '我'),
@@ -256,5 +385,6 @@ export const extractChatFormatEventDrafts = (text = '', options = {}) => {
     summary: eventDrafts.length
       ? `${eventDrafts.length} chat format event draft(s), ${validation.errors.length} error(s), ${validation.warnings.length} warning(s)`
       : 'no chat format events detected',
+    textPreview: truncatePreview(compactWhitespace(text), 180),
   };
 };

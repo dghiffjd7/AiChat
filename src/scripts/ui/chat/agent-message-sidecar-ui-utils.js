@@ -117,14 +117,16 @@ const buildActionButton = ({
   datasetKey = '',
   style = AGENT_MESSAGE_SIDECAR_STYLES.actionButton,
   onClick = null,
+  disabled = false,
 } = {}) => {
   const button = createElement(documentLike, 'button', {
     text,
-    style,
+    style: disabled ? `${style}opacity:.55;cursor:not-allowed;` : style,
   });
   button.type = 'button';
+  button.disabled = disabled === true;
   if (datasetKey && action) button.dataset[datasetKey] = action;
-  if (typeof onClick === 'function') button.addEventListener?.('click', onClick);
+  if (!disabled && typeof onClick === 'function') button.addEventListener?.('click', onClick);
   return button;
 };
 
@@ -155,6 +157,7 @@ export const buildAgentMessageSidecarElement = ({
   maxParts = 6,
   onProviderToolPermissionAction = null,
   onProviderToolContinuationAction = null,
+  onChatFormatGuardianAction = null,
 } = {}) => {
   if (!documentLike?.createElement) return null;
   const parts = buildAgentMessagePartViewModel(getAgentMessagePartsForMessage(message));
@@ -263,6 +266,34 @@ export const buildAgentMessageSidecarElement = ({
           continuationRow.appendChild(button);
         });
         if (continuationRow.children?.length) body.appendChild(continuationRow);
+      }
+    }
+    if (part.kind === 'chat_format.validate' && typeof onChatFormatGuardianAction === 'function') {
+      const actions = (Array.isArray(part.metadata?.decisionActions) ? part.metadata.decisionActions : [])
+        .filter(action => action?.enabled !== false)
+        .slice(0, 5);
+      if (actions.length) {
+        const actionRow = createElement(documentLike, 'div', {
+          style: AGENT_MESSAGE_SIDECAR_STYLES.actionRow,
+        });
+        actions.forEach((action) => {
+          const actionId = trim(action?.id);
+          const label = trim(action?.label, actionId);
+          const button = buildActionButton({
+            documentLike,
+            text: label,
+            action: actionId,
+            datasetKey: 'chatFormatGuardianAction',
+            onClick: () => onChatFormatGuardianAction({
+              action: actionId,
+              actionMeta: action,
+              part,
+              message,
+            }),
+          });
+          actionRow.appendChild(button);
+        });
+        if (actionRow.children?.length) body.appendChild(actionRow);
       }
     }
     details.appendChild(body);

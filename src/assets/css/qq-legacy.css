@@ -1004,7 +1004,7 @@ body[data-ui-mode='rp'] .QQ_chat_mymsg .QQ_chat_msgdiv {
 body[data-ui-mode='rp'] .QQ_chat_msgdiv {
   background-color: color-mix(
     in srgb,
-    var(--chat-bubble-color, var(--qq-color-bubble-default)) 88%,
+    var(--chat-bubble-color, var(--qq-color-bubble-default)) 78%,
     transparent
   );
 }
@@ -1012,7 +1012,7 @@ body[data-ui-mode='rp'] .QQ_chat_msgdiv {
 body[data-ui-mode='rp'] .QQ_chat_mymsg .QQ_chat_msgdiv {
   background-color: color-mix(
     in srgb,
-    var(--chat-user-bubble-color, var(--chat-bubble-color, var(--qq-color-bubble-default))) 88%,
+    var(--chat-user-bubble-color, var(--chat-bubble-color, var(--qq-color-bubble-default))) 78%,
     transparent
   );
 }

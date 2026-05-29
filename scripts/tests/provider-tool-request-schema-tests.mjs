@@ -10,6 +10,7 @@ import {
   PROVIDER_TOOL_REQUEST_FORMATS,
   buildProviderToolRequestSchema,
 } from '../../src/scripts/agent/provider-tool-request-schema.js';
+import { createChatEmitAgentTools } from '../../src/scripts/agent/tools/chat-emit-tools.js';
 
 const contactListTool = {
   name: 'contact_profile.list',
@@ -41,6 +42,8 @@ const contactGetTool = {
     },
   },
 };
+
+const [chatEmitPrivateTool] = createChatEmitAgentTools();
 
 const createRegistry = ({
   gate = { enabled: true, allowedTools: ['contact_profile.list'], source: 'test' },
@@ -107,6 +110,28 @@ const createRegistry = ({
 
 {
   const schema = buildProviderToolRequestSchema({
+    debugUiRegistry: createRegistry({
+      gate: { enabled: true, allowedTools: ['chat.emit_private'] },
+      tools: [chatEmitPrivateTool],
+    }),
+    provider: 'openai',
+    model: 'gpt-tool',
+    sessionId: 's1',
+  });
+
+  assert.equal(schema.enabled, true);
+  assert.deepEqual(schema.diagnostics.internalToolNames, ['chat.emit_private']);
+  assert.deepEqual(schema.diagnostics.providerToolNames, ['chat_emit_private']);
+  assert.equal(schema.diagnostics.writesChat, false);
+  const emitTool = schema.requestOptions.tools[0];
+  assert.equal(emitTool.function.name, 'chat_emit_private');
+  assert.equal(emitTool.function.parameters.required.includes('targetName'), true);
+  assert.equal(emitTool.function.parameters.required.includes('content'), true);
+  console.log('ok - provider tool request schema exposes chat_emit_private as review-only tool');
+}
+
+{
+  const schema = buildProviderToolRequestSchema({
     debugUiRegistry: createRegistry(),
     provider: 'anthropic',
     model: 'claude-tool',
@@ -163,6 +188,19 @@ const createRegistry = ({
   assert.equal(normalized.toolCallId, 'call-1');
   assert.deepEqual(normalized.arguments, { limit: 1 });
   console.log('ok - provider-safe tool names map back to internal agent tool names');
+}
+
+{
+  const normalized = normalizeProviderToolCall({
+    id: 'call-chat-1',
+    name: 'chat_emit_private',
+    arguments: { targetName: '菲伦', speakerName: '菲伦', content: '今晚别一个人走。' },
+  });
+
+  assert.equal(normalized.toolName, 'chat.emit_private');
+  assert.equal(normalized.toolCallId, 'call-chat-1');
+  assert.equal(normalized.arguments.targetName, '菲伦');
+  console.log('ok - provider-safe chat_emit_private maps back to internal chat emit tool');
 }
 
 {

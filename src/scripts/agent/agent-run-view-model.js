@@ -77,6 +77,42 @@ const summarizeStep = (step = {}) => ({
   errorMessage: trim(step.errorMessage || step.error),
 });
 
+const normalizeDecisionActions = (actions = []) => (
+  Array.isArray(actions) ? actions : []
+).map(action => ({
+  id: trim(action?.id),
+  label: trim(action?.label || action?.id),
+  enabled: action?.enabled !== false,
+})).filter(action => action.id && action.label);
+
+const buildChatFormatReview = (run = {}) => {
+  const kind = trim(run.kind || run.type);
+  const source = trim(run.source);
+  if (kind !== 'chat_format_guardian' && source !== 'chat-format-guardian') return null;
+  const metadata = isPlainObject(run.metadata) ? run.metadata : {};
+  const repair = isPlainObject(metadata.repairCandidate) && metadata.repairCandidate.available === true
+    ? {
+      available: true,
+      kind: trim(metadata.repairCandidate.kind),
+      title: trim(metadata.repairCandidate.title, '格式修复'),
+      summary: trim(metadata.repairCandidate.summary),
+    }
+    : null;
+  return {
+    sourceTextKind: trim(metadata.sourceTextKind),
+    hasRawOriginal: metadata.hasRawOriginal === true,
+    issueCount: toFiniteNumber(metadata.issueCount, 0),
+    eventCount: toFiniteNumber(metadata.eventCount, 0),
+    errors: (Array.isArray(metadata.errors) ? metadata.errors : []).map(item => trim(item)).filter(Boolean).slice(0, 4),
+    warnings: (Array.isArray(metadata.warnings) ? metadata.warnings : []).map(item => trim(item)).filter(Boolean).slice(0, 4),
+    repairCandidate: repair,
+    actionLabels: normalizeDecisionActions(metadata.decisionActions)
+      .filter(action => action.enabled)
+      .map(action => action.label)
+      .slice(0, 5),
+  };
+};
+
 export const buildAgentRunSummary = (run = {}, {
   events = [],
 } = {}) => {
@@ -111,6 +147,7 @@ export const buildAgentRunSummary = (run = {}, {
     eventCount: runEvents.length,
     stepStatusCounts: countBy(steps, step => step.status),
     lastStep,
+    review: buildChatFormatReview(run),
   };
 };
 

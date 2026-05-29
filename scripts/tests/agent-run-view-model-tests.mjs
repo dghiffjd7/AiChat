@@ -106,6 +106,41 @@ const runs = [
 }
 
 {
+  const summary = buildAgentRunSummary({
+    id: 'run-format',
+    kind: 'chat_format_guardian',
+    source: 'chat-format-guardian',
+    status: 'waiting_permission',
+    metadata: {
+      sourceTextKind: 'rawOriginal',
+      hasRawOriginal: true,
+      eventCount: 1,
+      issueCount: 1,
+      errors: [],
+      warnings: ['time is missing'],
+      repairCandidate: {
+        available: true,
+        kind: 'fill_missing_time',
+        title: '补齐时间',
+        summary: '补齐 1 条缺失时间',
+        replacementText: 'should not be surfaced',
+      },
+      decisionActions: [
+        { id: 'apply_repair', label: '应用修复', enabled: true, repairCandidate: { replacementText: 'hidden' } },
+        { id: 'review_original', label: '查看原文', enabled: true },
+      ],
+    },
+  });
+  assert.equal(summary.review.sourceTextKind, 'rawOriginal');
+  assert.equal(summary.review.hasRawOriginal, true);
+  assert.deepEqual(summary.review.warnings, ['time is missing']);
+  assert.equal(summary.review.repairCandidate.summary, '补齐 1 条缺失时间');
+  assert.equal(summary.review.repairCandidate.replacementText, undefined);
+  assert.deepEqual(summary.review.actionLabels, ['应用修复', '查看原文']);
+  console.log('ok - buildAgentRunSummary exposes safe chat format review metadata');
+}
+
+{
   const withCancelled = [
     ...runs,
     {
