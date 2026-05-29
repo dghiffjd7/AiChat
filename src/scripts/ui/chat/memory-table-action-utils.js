@@ -685,6 +685,256 @@ export const executeMemoryActionBatchMutation = async ({
   };
 };
 
+const cloneRowsIndexForPreview = ({
+  rowsById = null,
+  rowsByTableScope = null,
+} = {}) => ({
+  rowsById: new Map(rowsById instanceof Map ? rowsById : []),
+  rowsByTableScope: new Map(
+    Array.from(rowsByTableScope instanceof Map ? rowsByTableScope.entries() : [])
+      .map(([key, rows]) => [key, Array.isArray(rows) ? rows.slice() : []]),
+  ),
+});
+
+const normalizeMemoryPreviewActionType = action => String(action?.action || '').trim().toLowerCase() || 'unknown';
+
+const buildMemoryMutationPreviewEntry = ({
+  index = 0,
+  action = null,
+  context = null,
+  plan = null,
+  previewResult = null,
+  rowData = null,
+} = {}) => {
+  const actionType = normalizeMemoryPreviewActionType(action);
+  const tableId = String(context?.tableId || plan?.tableId || '').trim();
+  const scope = String(context?.scopeKey || plan?.scopeKey || '').trim();
+  const base = {
+    index,
+    action: actionType,
+    tableId,
+    scope,
+    rowId: String(plan?.rowId || action?.rowId || '').trim(),
+  };
+  if (!plan || plan.kind === 'skip') {
+    return {
+      ...base,
+      kind: 'skip',
+      skipped: true,
+      reason: String(plan?.reason || 'invalidAction').trim(),
+    };
+  }
+  if (plan.kind === 'queueInsert') {
+    return {
+      ...base,
+      kind: previewResult?.skipped ? 'skip' : 'insert',
+      skipped: previewResult?.skipped === true,
+      reason: previewResult?.skipped ? String(previewResult.reason || 'skipped').trim() : '',
+      diff: previewResult?.skipped
+        ? null
+        : {
+          before: null,
+          after: previewResult?.rowData || rowData || plan.data || {},
+        },
+    };
+  }
+  if (plan.kind === 'updateRow') {
+    return {
+      ...base,
+      kind: 'update',
+      skipped: false,
+      diff: {
+        before: plan.row?.row_data || {},
+        after: rowData || plan.merged || {},
+      },
+    };
+  }
+  if (plan.kind === 'deleteRow') {
+    return {
+      ...base,
+      kind: 'delete',
+      skipped: false,
+      diff: {
+        before: plan.row?.row_data || {},
+        after: null,
+      },
+    };
+  }
+  return {
+    ...base,
+    kind: 'skip',
+    skipped: true,
+    reason: 'unsupportedPlan',
+  };
+};
+
+export const buildMemoryActionBatchPreview = ({
+  actions = [],
+  actionContext = null,
+  updateMode = 'full',
+  currentTurnNumber = 0,
+  isGroup = false,
+} = {}) => {
+  const list = Array.isArray(actions) ? actions : [];
+  const permissions = resolveMemoryActionBatchPermissions(updateMode);
+  const totals = { inserted: 0, updated: 0, deleted: 0, skipped: 0 };
+  const templateId = String(actionContext?.templateId || '').trim();
+  const {
+    tableById,
+    rowsById,
+    rowsByTableScope,
+    resolveActionContext,
+    resolveRowId,
+    resolveRowIdByData,
+    resolveScopeForTable,
+    resolveTableId,
+  } = actionContext || {};
+
+  if (!templateId || typeof resolveActionContext !== 'function') {
+    return {
+      ...totals,
+      skipped: list.length,
+      changed: 0,
+      templateId,
+      entries: list.map((action, index) => buildMemoryMutationPreviewEntry({
+        index,
+        action,
+        plan: { kind: 'skip', reason: 'missingContext' },
+      })),
+      rollbackSnapshot: null,
+      ...permissions,
+    };
+  }
+
+  const rollbackSnapshot = buildMemoryRollbackSnapshot({
+    actions: list,
+    templateId,
+    resolveTableId,
+    tableById,
+    resolveScopeForTable,
+    rowsByTableScope,
+    allowSummaryTables: permissions.allowSummaryTables,
+    allowStandardTables: permissions.allowStandardTables,
+    isGroup,
+  });
+  const shadow = cloneRowsIndexForPreview({ rowsById, rowsByTableScope });
+  const createInputs = [];
+  const entries = [];
+
+  list.forEach((action, index) => {
+    const context = resolveActionContext({
+      action,
+      allowSummaryTables: permissions.allowSummaryTables,
+      allowStandardTables: permissions.allowStandardTables,
+    });
+    if (!context) {
+      totals.skipped += 1;
+      entries.push(buildMemoryMutationPreviewEntry({
+        index,
+        action,
+        plan: { kind: 'skip', reason: 'invalidContext' },
+      }));
+      return;
+    }
+    const data = normalizeTableRowData(action?.data, context.table?.columns || []);
+    const plan = resolveMemoryActionMutationPlan({
+      action,
+      actionContext: context,
+      data,
+      rowsByTableScope: shadow.rowsByTableScope,
+      resolveRowId,
+      resolveRowIdByData,
+      rowsById: shadow.rowsById,
+    });
+    if (plan.kind === 'queueInsert') {
+      const previewResult = queueMemoryInsert({
+        createInputs,
+        rowsByTableScope: shadow.rowsByTableScope,
+        templateId,
+        tableId: plan.tableId,
+        table: plan.table,
+        scopeKey: plan.scopeKey,
+        contactId: plan.contactId,
+        groupId: plan.groupId,
+        data: plan.data,
+        currentTurnNumber,
+        allowDuplicate: plan.allowDuplicate,
+      });
+      if (previewResult.skipped) totals.skipped += 1;
+      else totals.inserted += 1;
+      entries.push(buildMemoryMutationPreviewEntry({
+        index,
+        action,
+        context,
+        plan,
+        previewResult,
+        rowData: previewResult.rowData,
+      }));
+      return;
+    }
+    if (plan.kind === 'updateRow') {
+      const rowData = normalizeTimelineMemoryActionData({
+        tableId: plan.tableId,
+        rowData: plan.merged,
+        currentTurnNumber,
+      });
+      const sortOrder = isTimelineMemoryTableId(plan.tableId)
+        ? extractMemoryTimelineRound(rowData?.time)
+        : null;
+      updateMemoryRowInIndexes({
+        rowsById: shadow.rowsById,
+        rowsByTableScope: shadow.rowsByTableScope,
+        rowId: plan.rowId,
+        row: plan.row,
+        rowData,
+        sortOrder,
+      });
+      totals.updated += 1;
+      entries.push(buildMemoryMutationPreviewEntry({
+        index,
+        action,
+        context,
+        plan,
+        rowData,
+      }));
+      return;
+    }
+    if (plan.kind === 'deleteRow') {
+      removeMemoryRowFromIndexes({
+        rowsById: shadow.rowsById,
+        rowsByTableScope: shadow.rowsByTableScope,
+        rowId: plan.rowId,
+        row: plan.row,
+      });
+      totals.deleted += 1;
+      entries.push(buildMemoryMutationPreviewEntry({
+        index,
+        action,
+        context,
+        plan,
+      }));
+      return;
+    }
+    totals.skipped += 1;
+    entries.push(buildMemoryMutationPreviewEntry({
+      index,
+      action,
+      context,
+      plan,
+    }));
+  });
+
+  return {
+    ...totals,
+    changed: totals.inserted + totals.updated + totals.deleted,
+    templateId,
+    entries,
+    createInputs,
+    rollbackSnapshot,
+    ...permissions,
+  };
+};
+
 export const deleteNewestMatchingMemoryRow = async ({
   memoryTableStore = null,
   currentRows = [],

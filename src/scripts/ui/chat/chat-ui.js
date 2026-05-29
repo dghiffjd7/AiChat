@@ -137,6 +137,7 @@ import {
   buildChatFormatGuardianApplyRepairPayload,
   buildChatFormatGuardianRetryPlan,
 } from './chat-format-guardian-action-utils.js';
+import { buildChatBodyQualityApplyPatchPayload } from './chat-body-quality-action-utils.js';
 import { showProviderContinuationConfirmDialog } from './provider-continuation-confirm-ui-utils.js';
 import { commitProviderContinuationToMessage } from './provider-continuation-commit-utils.js';
 import {
@@ -1771,6 +1772,30 @@ export class ChatUI {
       } catch (err) {
         logger.warn('chat format guardian apply repair failed', err);
         toastOnce('应用格式修复失败', 'error');
+        return false;
+      }
+    }
+    if (action === 'apply_body_patch') {
+      const payload = buildChatBodyQualityApplyPatchPayload({
+        actionMeta: request?.actionMeta,
+        part,
+        message,
+      });
+      if (!payload) {
+        toastOnce('暂无可应用的正文优化候选', 'warning');
+        return false;
+      }
+      if (typeof this.actionHandler !== 'function') {
+        toastOnce('消息编辑处理器未就绪', 'warning');
+        return false;
+      }
+      try {
+        await this.actionHandler('edit-assistant-raw', message, payload);
+        toastOnce('已应用正文优化', 'success', 3000);
+        return true;
+      } catch (err) {
+        logger.warn('chat body quality guardian apply patch failed', err);
+        toastOnce('应用正文优化失败', 'error');
         return false;
       }
     }

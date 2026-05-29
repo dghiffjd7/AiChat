@@ -5,6 +5,7 @@ import {
   buildMemoryRollbackSnapshot,
   buildMemoryRollbackRestorePayload,
   buildMemoryRollbackRestorePlan,
+  buildMemoryActionBatchPreview,
   buildMemoryRowBucketKey,
   buildMemoryRowsIndex,
   countAssistantTurnsForMemoryTimeline,
@@ -748,6 +749,84 @@ test('executeMemoryActionBatchMutation applies actions, queues inserts, and snap
       }],
     }],
   });
+});
+
+test('buildMemoryActionBatchPreview returns diff and rollback data without mutating indexes', () => {
+  const row = {
+    id: 'row-1',
+    template_id: 'tpl-memory',
+    table_id: 'profile',
+    contact_id: 'chat:1',
+    group_id: null,
+    row_data: { title: 'old' },
+    is_active: true,
+    is_pinned: false,
+    priority: 0,
+    sort_order: 1,
+  };
+  const tableById = new Map([
+    ['profile', {
+      id: 'profile',
+      scope: 'contact',
+      maxRows: 3,
+      columns: [{ id: 'title', name: '标题' }],
+    }],
+    ['chat_summary', {
+      id: 'chat_summary',
+      scope: 'contact',
+      maxRows: 3,
+      columns: [{ id: 'summary', name: '摘要' }],
+    }],
+  ]);
+  const rowsById = new Map([['row-1', row]]);
+  const rowsByTableScope = new Map([
+    ['profile:contact', [row]],
+    ['chat_summary:contact', []],
+  ]);
+  const resolvers = createMemoryActionResolvers({
+    tableById,
+    tableOrder: ['profile', 'chat_summary'],
+    rowsByTableScope,
+    sessionId: 'chat:1',
+    isGroup: false,
+  });
+  const preview = buildMemoryActionBatchPreview({
+    actions: [
+      { action: 'update', tableId: 'profile', rowId: 'row-1', data: { title: 'next' } },
+      { action: 'insert', tableId: 'profile', data: { title: 'fresh' } },
+      { action: 'insert', tableId: 'chat_summary', data: { summary: 'skip summary' } },
+    ],
+    actionContext: {
+      templateId: 'tpl-memory',
+      tableById,
+      rowsById,
+      rowsByTableScope,
+      ...resolvers,
+    },
+    updateMode: 'standard',
+    currentTurnNumber: 5,
+    isGroup: false,
+  });
+
+  assert.equal(preview.inserted, 1);
+  assert.equal(preview.updated, 1);
+  assert.equal(preview.deleted, 0);
+  assert.equal(preview.skipped, 1);
+  assert.equal(preview.changed, 2);
+  assert.deepEqual(preview.entries.map(entry => entry.kind), ['update', 'insert', 'skip']);
+  assert.deepEqual(preview.entries[0].diff, {
+    before: { title: 'old' },
+    after: { title: 'next' },
+  });
+  assert.deepEqual(preview.entries[1].diff, {
+    before: null,
+    after: { title: 'fresh' },
+  });
+  assert.equal(preview.entries[2].reason, 'invalidContext');
+  assert.equal(preview.createInputs.length, 1);
+  assert.equal(rowsById.get('row-1')?.row_data.title, 'old');
+  assert.equal(rowsByTableScope.get('profile:contact').length, 1);
+  assert.deepEqual(preview.rollbackSnapshot.tables[0].rows[0].row_data, { title: 'old' });
 });
 
 test('buildMemoryRowBucketKey normalizes table and scope identifiers', () => {

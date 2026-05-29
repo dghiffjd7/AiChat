@@ -19,6 +19,12 @@ import {
   writeProviderToolSessionGate,
 } from '../agent/provider-tool-session-gate.js';
 import {
+  buildProviderToolRequestSchema,
+  DEFAULT_PROVIDER_BASE_MODEL_CONTEXT_TOOLS,
+  DEFAULT_PROVIDER_MODEL_CONTEXT_TOOLS,
+  WRITE_PREVIEW_PROVIDER_MODEL_CONTEXT_TOOLS,
+} from '../agent/provider-tool-request-schema.js';
+import {
   PROVIDER_TOOL_PERMISSION_ACTIONS,
   applyProviderToolPermissionAction,
   buildProviderToolPermissionPromptMessage,
@@ -31,6 +37,8 @@ import { registerChatEmitAgentTools } from '../agent/tools/chat-emit-tools.js';
 import { registerContactProfileAgentTools } from '../agent/tools/contact-profile-tools.js';
 import { registerImageAgentTools } from '../agent/tools/image-tools.js';
 import { registerMemoryAgentTools } from '../agent/tools/memory-tools.js';
+import { registerVariableAgentTools } from '../agent/tools/variable-tools.js';
+import { registerWorldbookAgentTools } from '../agent/tools/worldbook-tools.js';
 import { AgentRunStore } from '../storage/agent-run-store.js';
 import { appSettings } from '../storage/app-settings.js';
 import { renderTemplateTextAsync, templateSettings } from '../plugins/template-engine.js';
@@ -499,6 +507,8 @@ import {
 } from './agent-failure-read-state.js';
 import { AgentCenterPanel } from './agent-center-panel.js';
 import { AgentCenterStatusChip } from './agent-center-status-chip.js';
+import { createAgentWritePreviewPendingCommitActions } from './agent-write-preview-pending-commit-actions.js';
+import { createAgentWritePreviewRuntimes } from './agent-write-preview-runtime-utils.js';
 import {
   loadSessionMemoryActionContext,
   loadSessionMemoryRollbackSnapshotContext,
@@ -2019,14 +2029,27 @@ const initApp = async () => {
     pendingPermissionStore: providerToolPendingPermissionStore,
     logger,
   });
-  const providerModelContextTools = [
-    'contact_profile.list',
-    'contact_profile.get',
-    'chat.emit_private',
-    'chat.emit_group',
-    'chat.emit_moment_comment',
-    'chat.emit_moment_post',
-  ];
+  const providerDefaultModelContextTools = Array.from(DEFAULT_PROVIDER_BASE_MODEL_CONTEXT_TOOLS);
+  const providerModelContextTools = Array.from(DEFAULT_PROVIDER_MODEL_CONTEXT_TOOLS);
+  const providerModelContextToolSet = new Set(providerModelContextTools);
+  const normalizeProviderModelContextToolList = (tools = [], fallback = providerDefaultModelContextTools) => {
+    const values = (Array.isArray(tools) ? tools : [tools])
+      .map(tool => String(tool || '').trim())
+      .filter(tool => providerModelContextToolSet.has(tool));
+    const normalized = values.length ? values : fallback;
+    return Array.from(new Set((Array.isArray(normalized) ? normalized : [normalized])
+      .map(tool => String(tool || '').trim())
+      .filter(tool => providerModelContextToolSet.has(tool))));
+  };
+  const resolveProviderSessionAllowedTools = (options = {}) => {
+    const opts = options && typeof options === 'object' ? options : {};
+    const sessionId = opts.sessionId || chatStore.getCurrent();
+    if (Object.prototype.hasOwnProperty.call(opts, 'allowedTools')) {
+      return normalizeProviderModelContextToolList(opts.allowedTools, providerDefaultModelContextTools);
+    }
+    const current = readCurrentProviderToolSessionGate(sessionId);
+    return normalizeProviderModelContextToolList(current.allowedTools, providerDefaultModelContextTools);
+  };
   const providerToolExperimentRuntime = createProviderToolExperimentRuntime({
     providerToolCallRuntime,
     allowedTools: providerModelContextTools,
@@ -2035,17 +2058,24 @@ const initApp = async () => {
   const readCurrentProviderToolSessionGate = (sessionId = chatStore.getCurrent()) => readProviderToolSessionGate({
     chatStore,
     sessionId,
-    allowedTools: providerToolExperimentRuntime.getStatus().allowedTools,
+    allowedTools: providerDefaultModelContextTools,
   });
   const writeCurrentProviderToolSessionGate = (options = {}) => {
     const opts = options && typeof options === 'object' ? options : {};
+    const sessionId = opts.sessionId || chatStore.getCurrent();
+    const allowedTools = resolveProviderSessionAllowedTools({
+      sessionId,
+      ...(Object.prototype.hasOwnProperty.call(opts, 'allowedTools')
+        ? { allowedTools: opts.allowedTools }
+        : {}),
+    });
     return writeProviderToolSessionGate({
       chatStore,
-      sessionId: opts.sessionId || chatStore.getCurrent(),
+      sessionId,
       enabled: opts.enabled === true,
       networkAllowed: opts.networkAllowed === true,
       realRunnerAllowed: opts.realRunnerAllowed === true,
-      allowedTools: providerToolExperimentRuntime.getStatus().allowedTools,
+      allowedTools,
       source: opts.source || 'debug_panel',
       reason: opts.reason || '',
     });
@@ -2338,10 +2368,96 @@ const initApp = async () => {
     },
   });
   let currentMemoryUpdateRuntime = null;
+  const agentWritePreviewRuntimes = createAgentWritePreviewRuntimes({
+    chatStore,
+    memoryTableStore,
+    memoryTemplateStore,
+    loadActionContext: loadSessionMemoryActionContext,
+    loadRollbackContext: loadSessionMemoryRollbackSnapshotContext,
+    getLastMemoryPlan: () => getLastMemoryPlan(window.appBridge),
+    resolvePlanForSession: resolveMemoryUpdatePlanForSession,
+    getContact: sid => contactsStore.getContact(sid),
+    getUiMode: () => uiMode,
+    loadWorld: async (worldId) => {
+      const id = String(worldId || '').trim();
+      if (!id) return null;
+      return await window.appBridge.loadStoredWorldInfo?.(id) ||
+        await window.appBridge.getWorldInfo?.(id) ||
+        null;
+    },
+    saveWorld: async (worldId, worldData) => {
+      const id = String(worldId || '').trim();
+      if (!id || !worldData || typeof window.appBridge.saveWorldInfo !== 'function') return false;
+      await window.appBridge.saveWorldInfo(id, worldData);
+      return true;
+    },
+    onMemoryCommitted: ({ sessionId, refs }) => {
+      const sid = String(sessionId || refs?.sessionId || '').trim();
+      const templateId = String(refs?.templateId || '').trim();
+      if (!sid || !templateId) return;
+      emitSharedMemoryRowsUpdated({
+        target: window,
+        sessionId: sid,
+        templateId,
+      });
+      notifyMemoryEditsApplied({
+        target: window,
+        sessionId: sid,
+        templateId,
+        toastr: window.toastr,
+      });
+    },
+    onMemoryUndone: ({ refs }) => {
+      const sid = String(refs?.sessionId || '').trim();
+      const templateId = String(refs?.templateId || '').trim();
+      if (!sid || !templateId) return;
+      emitSharedMemoryRowsUpdated({
+        target: window,
+        sessionId: sid,
+        templateId,
+      });
+      notifyMemoryEditsRolledBack({
+        target: window,
+        sessionId: sid,
+        templateId,
+        toastr: window.toastr,
+      });
+    },
+  });
+  const writePreviewPendingCommitActions = createAgentWritePreviewPendingCommitActions({
+    pendingPermissionStore: providerToolPendingPermissionStore,
+    commitHandlers: {
+      'memory.preview_actions': agentWritePreviewRuntimes.memoryCommit.commit,
+      'variable.preview_commands': agentWritePreviewRuntimes.variableCommit.commit,
+      'worldbook.preview_actions': agentWritePreviewRuntimes.worldbookCommit.commit,
+    },
+    undoHandlers: {
+      'memory.preview_actions': agentWritePreviewRuntimes.memoryCommit.undo,
+      'variable.preview_commands': agentWritePreviewRuntimes.variableCommit.undo,
+      'worldbook.preview_actions': agentWritePreviewRuntimes.worldbookCommit.undo,
+    },
+    onCommitFinished: ({ commit }) => {
+      if (commit?.toolName === 'worldbook.preview_actions') {
+        refreshChatAndContacts({ immediate: true });
+      }
+    },
+    onUndoFinished: ({ undo }) => {
+      if (undo?.refs?.worldId) {
+        refreshChatAndContacts({ immediate: true });
+      }
+    },
+  });
   registerContactProfileAgentTools(agentToolRegistry, { contactProfileStore });
   registerChatEmitAgentTools(agentToolRegistry);
   registerMemoryAgentTools(agentToolRegistry, {
     getMemoryUpdateRuntime: () => currentMemoryUpdateRuntime,
+    getPreviewMemoryActions: () => agentWritePreviewRuntimes.previewMemoryActions,
+  });
+  registerVariableAgentTools(agentToolRegistry, {
+    getPreviewVariableCommands: () => agentWritePreviewRuntimes.previewVariableCommands,
+  });
+  registerWorldbookAgentTools(agentToolRegistry, {
+    getPreviewWorldbookActions: () => agentWritePreviewRuntimes.previewWorldbookActions,
   });
   const agentCenterPanel = new AgentCenterPanel({
     getFailureSeenAt: ({ surface = '' } = {}) => getAgentFailureSeenAt({ surface }),
@@ -2422,6 +2538,22 @@ const initApp = async () => {
         },
         setProviderToolSessionGate: (options = {}) => writeCurrentProviderToolSessionGate(options || {}),
         getProviderToolExperimentStatus: () => providerToolExperimentRuntime.getStatus(),
+        getProviderModelContextTools: () => ({
+          defaultTools: providerDefaultModelContextTools.slice(),
+          writePreviewTools: Array.from(WRITE_PREVIEW_PROVIDER_MODEL_CONTEXT_TOOLS),
+          allTools: providerModelContextTools.slice(),
+        }),
+        previewProviderToolRequestSchema: (options = {}) => {
+          const opts = options && typeof options === 'object' ? options : {};
+          return buildProviderToolRequestSchema({
+            debugUiRegistry: window.appBridge?.debugUiRegistry || null,
+            provider: opts.provider || 'openai',
+            model: opts.model || '',
+            sessionId: opts.sessionId || chatStore.getCurrent(),
+            sessionGate: opts.sessionGate || null,
+            existingOptions: Array.isArray(opts.existingOptions) ? opts.existingOptions : [],
+          });
+        },
         setProviderToolExperimentEnabled: enabled => providerToolExperimentRuntime.setEnabled(enabled === true),
         getProviderToolExperimentDiagnostics: options => providerToolExperimentRuntime.getDiagnostics(options || {}),
         clearProviderToolExperimentDiagnostics: () => providerToolExperimentRuntime.clearDiagnostics(),
@@ -2441,6 +2573,8 @@ const initApp = async () => {
         resumeProviderToolPendingPermission,
         commitChatEmitPendingPermission: chatEmitPendingCommitActions.commitChatEmitPendingPermission,
         undoChatEmitPendingCommit: chatEmitPendingCommitActions.undoChatEmitPendingCommit,
+        commitAgentWritePreviewPendingPermission: writePreviewPendingCommitActions.commitAgentWritePreviewPendingPermission,
+        undoAgentWritePreviewPendingCommit: writePreviewPendingCommitActions.undoAgentWritePreviewPendingCommit,
         planProviderToolPendingContinuation,
         resolveCurrentProviderToolRunnerClient: async (options = {}) => {
           const result = await resolveCurrentProviderToolRunnerClient(options || {});
@@ -21276,12 +21410,28 @@ Phase G（Frame 36）：循环衔接
     }
   };
 
+  const handleChatBodyQualityAgentRun = ({ agentRun } = {}) => {
+    if (!agentRun?.id) return null;
+    try {
+      return agentRunStore.upsertRun(agentRun);
+    } catch (err) {
+      logger.warn('chat body quality agent run record failed', err);
+      return null;
+    }
+  };
+
   const handleChatFormatGuardianPreview = ({ patchedMessage, sessionId: previewSessionId } = {}) => {
     const sid = String(previewSessionId || '').trim();
     if (!patchedMessage?.id || !isSessionActive(sid)) return;
     const decorated = decorateMessagesForDisplay([patchedMessage], { sessionId: sid })?.[0] || patchedMessage;
     ui.updateMessage(patchedMessage.id, decorated);
   };
+
+  const buildChatBodyQualityOptions = () => ({
+    enabled: true,
+    maxIssues: 6,
+    recordSucceededRun: false,
+  });
 
   const emitPluginAfterReceiveEffects = (
     message,
@@ -21307,6 +21457,9 @@ Phase G（Frame 36）：循环衔接
       chatFormatGuardian: buildChatFormatGuardianOptions(targetSessionId),
       onChatFormatGuardianPreview: handleChatFormatGuardianPreview,
       onChatFormatGuardianRun: handleChatFormatGuardianAgentRun,
+      chatBodyQualityGuardian: buildChatBodyQualityOptions(targetSessionId),
+      onChatBodyQualityPreview: handleChatFormatGuardianPreview,
+      onChatBodyQualityRun: handleChatBodyQualityAgentRun,
     });
     scheduleAutoImagePromptGenerationForMessage(message, targetSessionId, {
       source: 'after_receive',

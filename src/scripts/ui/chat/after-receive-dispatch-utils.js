@@ -8,9 +8,15 @@ import {
   buildChatFormatRepairCandidate,
   extractChatFormatEventDrafts,
 } from './chat-format-guardian-utils.js';
+import {
+  analyzeChatBodyQuality,
+  CHAT_BODY_QUALITY_STATUSES,
+} from './chat-body-quality-guardian-utils.js';
 
 const CHAT_FORMAT_GUARDIAN_SOURCE = 'chat-format-guardian';
 const CHAT_FORMAT_GUARDIAN_KIND = 'chat_format_guardian';
+const CHAT_BODY_QUALITY_SOURCE = 'chat-body-quality-guardian';
+const CHAT_BODY_QUALITY_KIND = 'chat_body_quality_guardian';
 
 const isPlainObject = value => Boolean(value && typeof value === 'object' && !Array.isArray(value));
 
@@ -57,6 +63,22 @@ const getChatFormatGuardianTitle = (status = '') => {
   return '聊天格式已验证';
 };
 
+const getChatBodyQualityStatus = (status = '') => {
+  if (status === CHAT_BODY_QUALITY_STATUSES.invalid) return 'failed';
+  if (status === CHAT_BODY_QUALITY_STATUSES.minorIssues ||
+    status === CHAT_BODY_QUALITY_STATUSES.needsReview) {
+    return 'waiting_permission';
+  }
+  return 'succeeded';
+};
+
+const getChatBodyQualityTitle = (status = '') => {
+  if (status === CHAT_BODY_QUALITY_STATUSES.invalid) return '正文不可用';
+  if (status === CHAT_BODY_QUALITY_STATUSES.minorIssues) return '正文可优化';
+  if (status === CHAT_BODY_QUALITY_STATUSES.needsReview) return '正文待确认';
+  return '正文已检查';
+};
+
 const sanitizeIdPart = (value = '', fallback = 'message') => {
   const text = trim(value, fallback)
     .replace(/[^a-zA-Z0-9:_-]+/g, '-')
@@ -71,6 +93,15 @@ const buildChatFormatGuardianRunId = ({
 } = {}) => {
   const sourceMessageId = trim(result?.sourceMessageId || message?.id || sessionId, 'message');
   return `run:chat-format-guardian:${sanitizeIdPart(sourceMessageId)}`;
+};
+
+const buildChatBodyQualityRunId = ({
+  result = null,
+  message = {},
+  sessionId = '',
+} = {}) => {
+  const sourceMessageId = trim(result?.sourceMessageId || message?.id || sessionId, 'message');
+  return `run:chat-body-quality:${sanitizeIdPart(sourceMessageId)}`;
 };
 
 const resolveChatFormatGuardianSurface = (events = []) => {
@@ -182,6 +213,12 @@ const shouldEmitChatFormatGuardianPart = (result = {}, options = {}) => {
   return true;
 };
 
+const shouldEmitChatBodyQualityPart = (result = {}, options = {}) => {
+  if (!result) return false;
+  if (result.status === CHAT_BODY_QUALITY_STATUSES.ready && options.showSucceededPreview !== true) return false;
+  return true;
+};
+
 export const resolveChatFormatGuardianInputText = (message = {}) => {
   const candidates = [
     ['rawOriginal', message?.rawOriginal],
@@ -283,6 +320,128 @@ export const buildChatFormatGuardianMessagePart = ({
           commitReady: list(event?.warnings).length === 0,
           warnings: list(event?.warnings).map(item => trim(item)).filter(Boolean).slice(0, 4),
         })),
+    },
+  };
+};
+
+const summarizeChatBodyQualityPatchCandidate = (patchCandidate = null, { includeText = false } = {}) => {
+  if (!patchCandidate?.available) return null;
+  const summary = {
+    available: true,
+    id: trim(patchCandidate.id),
+    title: trim(patchCandidate.title, '正文优化候选'),
+    summary: trim(patchCandidate.summary),
+    risk: trim(patchCandidate.risk, 'low'),
+    confidence: Number(patchCandidate.confidence || 0) || 0,
+    preview: truncate(patchCandidate.preview, 220),
+    operations: Array.isArray(patchCandidate.operations)
+      ? patchCandidate.operations.map(operation => ({
+        type: trim(operation?.type),
+        count: Number(operation?.count || 0) || 0,
+      })).filter(operation => operation.type)
+      : [],
+  };
+  if (includeText) summary.replacementText = String(patchCandidate.replacementText || '');
+  return summary;
+};
+
+const summarizeChatBodyQualityIssues = (issues = [], maxIssues = 6) => (
+  list(issues)
+    .slice(0, Math.max(0, Math.trunc(Number(maxIssues) || 6)))
+    .map(issue => ({
+      id: trim(issue?.id),
+      severity: trim(issue?.severity, 'warning'),
+      title: trim(issue?.title, '正文质量问题'),
+      summary: trim(issue?.summary),
+      risk: trim(issue?.risk, 'medium'),
+      confidence: Number(issue?.confidence || 0) || 0,
+      patchable: issue?.patchable === true,
+    }))
+);
+
+const buildChatBodyQualityDecisionActions = (result = {}, { includePatchText = false } = {}) => {
+  if (!result || result.status === CHAT_BODY_QUALITY_STATUSES.ready) return [];
+  const patchCandidate = summarizeChatBodyQualityPatchCandidate(result?.patchCandidate, { includeText: includePatchText });
+  const actions = [];
+  if (
+    result.status === CHAT_BODY_QUALITY_STATUSES.minorIssues &&
+    patchCandidate?.available &&
+    patchCandidate.risk === 'low'
+  ) {
+    actions.push({
+      id: 'apply_body_patch',
+      label: '应用优化',
+      enabled: true,
+      description: patchCandidate.summary || '应用低风险正文清理。',
+      patchCandidate,
+    });
+  }
+  actions.push(
+    {
+      id: 'review_original',
+      label: '查看原文',
+      enabled: true,
+      description: '查看这次 AI 回复的原始内容。',
+    },
+    {
+      id: 'open_agent_center',
+      label: 'Agent Center',
+      enabled: true,
+      description: '在 Agent Center 活动页查看正文诊断摘要。',
+    },
+  );
+  return actions;
+};
+
+export const buildChatBodyQualityMessagePart = ({
+  result = null,
+  message = {},
+  sessionId = '',
+  showSucceededPreview = false,
+  maxIssues = 6,
+  now = Date.now,
+} = {}) => {
+  if (!shouldEmitChatBodyQualityPart(result, { showSucceededPreview })) return null;
+  const issues = summarizeChatBodyQualityIssues(result?.issues, maxIssues);
+  const status = getChatBodyQualityStatus(result?.status);
+  const at = toTimestamp(now);
+  const sourceMessageId = trim(result?.sourceMessageId || message?.id || sessionId, 'message');
+  const runId = buildChatBodyQualityRunId({ result, message, sessionId });
+  const patchCandidate = summarizeChatBodyQualityPatchCandidate(result?.patchCandidate);
+  const issueText = `${Number(result?.issueCount || issues.length || 0)} issue${Number(result?.issueCount || issues.length || 0) === 1 ? '' : 's'}`;
+  return {
+    id: `chat-body-quality:${sourceMessageId}`,
+    type: 'agent_status',
+    runId,
+    source: CHAT_BODY_QUALITY_SOURCE,
+    kind: 'chat_body_quality.review',
+    status,
+    title: getChatBodyQualityTitle(result?.status),
+    summary: result?.summary || issueText,
+    createdAt: at,
+    updatedAt: at,
+    errorMessage: status === 'failed' ? trim(issues[0]?.summary || issues[0]?.title) : '',
+    metadata: {
+      sessionId: trim(sessionId),
+      surface: 'chat',
+      sourceMessageId,
+      status: trim(result?.status),
+      sourceTextKind: trim(result?.sourceTextKind),
+      hasRawOriginal: result?.hasRawOriginal === true,
+      issueCount: Number(result?.issueCount || issues.length || 0) || 0,
+      issues,
+      patchCandidate,
+      recommendedActions: Array.isArray(result?.recommendedActions)
+        ? result.recommendedActions.map(action => ({
+          id: trim(action?.id),
+          label: trim(action?.label || action?.id),
+          enabled: action?.enabled !== false,
+          description: trim(action?.description),
+        })).filter(action => action.id)
+        : [],
+      decisionActions: buildChatBodyQualityDecisionActions(result, { includePatchText: false }),
+      textPreview: truncate(result?.textPreview, 160),
+      displayPreview: truncate(result?.displayPreview, 160),
     },
   };
 };
@@ -393,6 +552,91 @@ export const buildChatFormatGuardianAgentRun = ({
   };
 };
 
+export const buildChatBodyQualityAgentRun = ({
+  result = null,
+  part = null,
+  message = {},
+  sessionId = '',
+  showSucceededRun = false,
+  maxIssues = 6,
+  now = Date.now,
+} = {}) => {
+  if (!result) return null;
+  if (result.status === CHAT_BODY_QUALITY_STATUSES.ready && showSucceededRun !== true) return null;
+  const issues = summarizeChatBodyQualityIssues(result?.issues, maxIssues);
+  const status = getChatBodyQualityStatus(result?.status);
+  const at = toTimestamp(now);
+  const sourceMessageId = trim(result?.sourceMessageId || message?.id || sessionId, 'message');
+  const runId = part?.runId || buildChatBodyQualityRunId({ result, message, sessionId });
+  const patchCandidate = summarizeChatBodyQualityPatchCandidate(result?.patchCandidate);
+  const issueCount = Number(result?.issueCount || issues.length || 0) || 0;
+  const summary = trim(result?.summary) || `${issueCount} body quality issue(s)`;
+  const metadata = {
+    sessionId: trim(sessionId),
+    surface: 'chat',
+    sourceMessageId,
+    sourceMessageRole: trim(message?.role),
+    rawStatus: trim(result?.status),
+    sourceTextKind: trim(result?.sourceTextKind),
+    hasRawOriginal: result?.hasRawOriginal === true,
+    issueCount,
+    issues,
+    patchCandidate,
+    recommendedActions: Array.isArray(result?.recommendedActions)
+      ? result.recommendedActions.map(action => ({
+        id: trim(action?.id),
+        label: trim(action?.label || action?.id),
+        enabled: action?.enabled !== false,
+        description: trim(action?.description),
+      })).filter(action => action.id)
+      : [],
+    decisionActions: buildChatBodyQualityDecisionActions(result),
+    textPreview: truncate(result?.textPreview, 160),
+    displayPreview: truncate(result?.displayPreview, 160),
+  };
+  return {
+    id: runId,
+    kind: CHAT_BODY_QUALITY_KIND,
+    title: getChatBodyQualityTitle(result?.status),
+    sessionId: trim(sessionId),
+    surface: 'chat',
+    trigger: 'after_receive',
+    source: CHAT_BODY_QUALITY_SOURCE,
+    status,
+    summary,
+    errorMessage: status === 'failed' ? trim(issues[0]?.summary || issues[0]?.title) : '',
+    exportable: true,
+    metadata,
+    steps: [{
+      id: `${runId}:review`,
+      runId,
+      type: 'chat_body_quality.review',
+      title: getChatBodyQualityTitle(result?.status),
+      status,
+      summary,
+      input: {
+        sourceMessageId,
+        messageRole: trim(message?.role),
+        sourceTextKind: trim(result?.sourceTextKind),
+        hasRawOriginal: result?.hasRawOriginal === true,
+      },
+      output: metadata,
+      metadata: {
+        issueCount,
+        patchAvailable: patchCandidate?.available === true,
+      },
+      errorMessage: status === 'failed' ? trim(issues[0]?.summary || issues[0]?.title) : '',
+      startedAt: at,
+      updatedAt: at,
+      finishedAt: status === 'waiting_permission' ? null : at,
+    }],
+    toolCalls: [],
+    createdAt: at,
+    updatedAt: at,
+    finishedAt: status === 'waiting_permission' ? null : at,
+  };
+};
+
 export const buildChatFormatGuardianPreviewMessage = (message = {}, part = null) => {
   if (!message || typeof message !== 'object' || !part) return null;
   const meta = isPlainObject(message.meta) ? { ...message.meta } : {};
@@ -465,6 +709,63 @@ export const runChatFormatGuardianPreview = ({
   }
 };
 
+export const runChatBodyQualityPreview = ({
+  message = null,
+  sessionId = '',
+  chatBodyQualityGuardian = null,
+  formatReport = null,
+  onChatBodyQualityPreview = null,
+  onChatBodyQualityRun = null,
+  logger = console,
+  now = Date.now,
+} = {}) => {
+  if (!message || message.role !== 'assistant' || !chatBodyQualityGuardian) return null;
+  const options = chatBodyQualityGuardian === true
+    ? { enabled: true }
+    : (isPlainObject(chatBodyQualityGuardian) ? { ...chatBodyQualityGuardian } : {});
+  if (options.enabled === false) return null;
+  try {
+    const result = {
+      ...analyzeChatBodyQuality({
+        message,
+        formatReport,
+        maxIssues: options.maxIssues,
+      }),
+      sourceMessageId: trim(message.id || options.sourceMessageId),
+      summary: '',
+    };
+    result.summary = `${Number(result.issueCount || 0)} body quality issue(s)`;
+    const part = buildChatBodyQualityMessagePart({
+      result,
+      message,
+      sessionId,
+      showSucceededPreview: options.showSucceededPreview === true,
+      maxIssues: options.maxIssues,
+      now,
+    });
+    const patchedMessage = buildChatFormatGuardianPreviewMessage(message, part);
+    const agentRun = buildChatBodyQualityAgentRun({
+      result,
+      part,
+      message,
+      sessionId,
+      showSucceededRun: options.recordSucceededRun === true,
+      maxIssues: options.maxIssues,
+      now,
+    });
+    if (patchedMessage && typeof onChatBodyQualityPreview === 'function') {
+      onChatBodyQualityPreview({ message, patchedMessage, result, part, agentRun, sessionId });
+    }
+    if (agentRun && typeof onChatBodyQualityRun === 'function') {
+      onChatBodyQualityRun({ message, patchedMessage, result, part, agentRun, sessionId });
+    }
+    return { result, part, patchedMessage, agentRun };
+  } catch (err) {
+    logger?.warn?.('chat body quality preview failed', err);
+    return null;
+  }
+};
+
 export const resolveAfterReceiveSkipScripts = (
   skipScriptsOverride,
   defaultSkipScripts = false,
@@ -494,6 +795,9 @@ export const dispatchAfterReceiveEffects = ({
   chatFormatGuardian = null,
   onChatFormatGuardianPreview = null,
   onChatFormatGuardianRun = null,
+  chatBodyQualityGuardian = null,
+  onChatBodyQualityPreview = null,
+  onChatBodyQualityRun = null,
 } = {}) => {
   if (!message || message.role !== 'assistant') return false;
   const shouldSkipScripts = resolveAfterReceiveSkipScripts(skipScripts, defaultSkipScripts);
@@ -530,12 +834,21 @@ export const dispatchAfterReceiveEffects = ({
   if (pluginRuntime) {
     dispatchRuntimeHook({ runtime: pluginRuntime, runtimeLabel: 'plugin' });
   }
-  runChatFormatGuardianPreview({
+  const chatFormatResult = runChatFormatGuardianPreview({
     message,
     sessionId,
     chatFormatGuardian,
     onChatFormatGuardianPreview,
     onChatFormatGuardianRun,
+    logger,
+  });
+  runChatBodyQualityPreview({
+    message: chatFormatResult?.patchedMessage || message,
+    sessionId,
+    chatBodyQualityGuardian,
+    formatReport: chatFormatResult?.result,
+    onChatBodyQualityPreview,
+    onChatBodyQualityRun,
     logger,
   });
   try {

@@ -250,3 +250,55 @@ const collectElements = (node, predicate, out = []) => {
   assert.equal(actions[0].part.kind, 'chat_format.validate');
   console.log('ok - buildAgentMessageSidecarElement exposes chat format guardian review actions');
 }
+
+{
+  const documentLike = createFakeDocument();
+  const actions = [];
+  const element = buildAgentMessageSidecarElement({
+    documentLike,
+    message: {
+      id: 'm-body-quality',
+      meta: {
+        agentMessageParts: [{
+          id: 'chat-body-quality:m-body-quality',
+          type: 'agent_status',
+          runId: 'run:chat-body-quality:m-body-quality',
+          kind: 'chat_body_quality.review',
+          source: 'chat-body-quality-guardian',
+          status: 'waiting_permission',
+          title: '正文可优化',
+          summary: '1 body quality issue(s)',
+          metadata: {
+            decisionActions: [
+              {
+                id: 'apply_body_patch',
+                label: '应用优化',
+                enabled: true,
+                patchCandidate: {
+                  available: true,
+                  id: 'body_quality_deterministic_cleanup',
+                  summary: '移除 1 行连续重复',
+                },
+              },
+              { id: 'review_original', label: '查看原文', enabled: true },
+              { id: 'open_agent_center', label: 'Agent Center', enabled: true },
+            ],
+          },
+        }],
+      },
+    },
+    onChatFormatGuardianAction: request => actions.push(request),
+  });
+  const buttons = collectElements(element, node => Boolean(node.dataset?.chatFormatGuardianAction));
+  assert.deepEqual(buttons.map(button => button.textContent), ['应用优化', '查看原文', 'Agent Center']);
+  buttons[0].click();
+  buttons[1].click();
+  buttons[2].click();
+  assert.equal(actions.length, 3);
+  assert.equal(actions[0].action, 'apply_body_patch');
+  assert.equal(actions[0].part.kind, 'chat_body_quality.review');
+  assert.equal(actions[0].actionMeta.patchCandidate.replacementText, undefined);
+  assert.equal(actions[1].action, 'review_original');
+  assert.equal(actions[2].action, 'open_agent_center');
+  console.log('ok - buildAgentMessageSidecarElement exposes chat body quality review actions');
+}

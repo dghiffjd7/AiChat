@@ -268,7 +268,10 @@ export const buildAgentMessageSidecarElement = ({
         if (continuationRow.children?.length) body.appendChild(continuationRow);
       }
     }
-    if (part.kind === 'chat_format.validate' && typeof onChatFormatGuardianAction === 'function') {
+    if (
+      (part.kind === 'chat_format.validate' || part.kind === 'chat_body_quality.review') &&
+      typeof onChatFormatGuardianAction === 'function'
+    ) {
       const actions = (Array.isArray(part.metadata?.decisionActions) ? part.metadata.decisionActions : [])
         .filter(action => action?.enabled !== false)
         .slice(0, 5);

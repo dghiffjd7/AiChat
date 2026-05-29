@@ -36,6 +36,15 @@ import { AgentCenterPanel } from '../../src/scripts/ui/agent-center-panel.js';
 
 {
   const panel = new AgentCenterPanel();
+  panel.view = { pending: [] };
+  const html = panel.renderPending();
+  assert.match(html, /没有待确认请求/);
+  assert.match(html, /AI 请求工具、画像保存或变更提交前/);
+  console.log('ok - agent center pending empty state explains when requests appear');
+}
+
+{
+  const panel = new AgentCenterPanel();
   panel.view = {
     pending: [
       {
@@ -82,8 +91,48 @@ import { AgentCenterPanel } from '../../src/scripts/ui/agent-center-panel.js';
   assert.match(html, /data-provider-permission-action="allow_once"/);
   assert.match(html, /data-provider-permission-action="deny"/);
   assert.match(html, /data-provider-permission-action="remember_allow"/);
-  assert.match(html, /不会重放聊天、不会自动续跑 provider、不会直接写聊天正文/);
+  assert.match(html, /不会重放聊天、不会自动继续生成、不会直接写聊天正文/);
   console.log('ok - agent center panel renders provider tool pending permission actions');
+}
+
+{
+  const panel = new AgentCenterPanel();
+  panel.view = {
+    pending: [
+      {
+        kind: 'tool_permission',
+        id: 'worldbook-preview-pending-1',
+        status: 'allowed',
+        toolName: 'worldbook.preview_actions',
+        sessionId: 'contact:firen',
+        source: 'provider-tool-permission',
+        riskLevel: 'low',
+        permissions: ['worldbook.read'],
+        resumeStatus: 'succeeded',
+        continuationStatus: 'idle',
+        writePreview: {
+          kind: '世界书写入预览',
+          targetLabel: '世界书',
+          target: 'world:firen',
+          requestSummary: '1 action',
+          previewReady: true,
+          resultSummary: '变更 1 · 跳过 0 · updated 1',
+          rollbackReady: true,
+          entries: ['update · e1 · 字段：content'],
+          entryOverflow: 0,
+        },
+      },
+    ],
+  };
+  const html = panel.renderPending();
+  assert.match(html, /写入预览：世界书写入预览/);
+  assert.match(html, /世界书：world:firen/);
+  assert.match(html, /预览结果：变更 1 · 跳过 0 · updated 1/);
+  assert.match(html, /撤销记录：已准备好/);
+  assert.match(html, /不会写入记忆、变量、世界书或聊天正文/);
+  assert.doesNotMatch(html, /提交候选/);
+  assert.doesNotMatch(html, /提交变更/);
+  console.log('ok - agent center panel renders write preview tool diffs before commit action is ready');
 }
 
 {
@@ -205,7 +254,7 @@ import { AgentCenterPanel } from '../../src/scripts/ui/agent-center-panel.js';
     ],
   };
   const html = panel.renderPending();
-  assert.match(html, /commit: committed/);
+  assert.match(html, /提交：已提交/);
   assert.match(html, /提交结果：消息 1/);
   assert.match(html, /提交说明：已提交 1 条消息。/);
   assert.match(html, /data-chat-emit-commit-action="undo"/);
@@ -249,6 +298,46 @@ import { AgentCenterPanel } from '../../src/scripts/ui/agent-center-panel.js';
   assert.equal(resolverOptions.reason, 'agent center pending action');
   assert.equal(refreshed, true);
   console.log('ok - agent center provider permission action resolves through debug registry contract');
+}
+
+{
+  let confirmOptions = null;
+  let resolverOptions = null;
+  const panel = new AgentCenterPanel({
+    confirm: async options => {
+      confirmOptions = options;
+      return true;
+    },
+    getActions: () => ({
+      resolveProviderToolPendingPermission: options => {
+        resolverOptions = options;
+        return { pending: { status: 'allowed' }, resume: { status: 'succeeded' } };
+      },
+    }),
+  });
+  panel.view = {
+    pending: [
+      {
+        kind: 'tool_permission',
+        id: 'memory-preview-pending-1',
+        status: 'pending',
+        toolName: 'memory.preview_actions',
+        writePreview: {
+          kind: '记忆表写入预览',
+          targetLabel: '会话',
+          target: 'chat:firen',
+          requestSummary: '2 actions',
+        },
+      },
+    ],
+  };
+  panel.refresh = async () => {};
+  await panel.handleProviderPermissionAction('allow_once', 'memory-preview-pending-1');
+  assert.match(confirmOptions.message, /变更预览/);
+  assert.match(confirmOptions.message, /不会写入记忆、变量、世界书或聊天正文/);
+  assert.equal(resolverOptions.id, 'memory-preview-pending-1');
+  assert.equal(resolverOptions.action, 'allow_once');
+  console.log('ok - agent center provider permission action describes write preview safety');
 }
 
 {
@@ -312,6 +401,70 @@ import { AgentCenterPanel } from '../../src/scripts/ui/agent-center-panel.js';
   await panel.handleChatEmitCommitAction('commit', 'chat-emit-pending-blocked');
   assert.equal(panel.lastError, '找不到候选目标会话，请检查目标名称或 ID 后重试。');
   console.log('ok - agent center chat emit commit action surfaces readable failure messages');
+}
+
+{
+  let confirmOptions = null;
+  let actionOptions = null;
+  let refreshed = false;
+  const panel = new AgentCenterPanel({
+    confirm: async options => {
+      confirmOptions = options;
+      return true;
+    },
+    getActions: () => ({
+      commitAgentWritePreviewPendingPermission: options => {
+        actionOptions = options;
+        return { ok: true, status: 'committed' };
+      },
+    }),
+  });
+  panel.view = {
+    pending: [
+      {
+        kind: 'tool_permission',
+        id: 'variable-preview-pending-1',
+        toolName: 'variable.preview_commands',
+      },
+    ],
+  };
+  panel.refresh = async () => {
+    refreshed = true;
+  };
+  await panel.handleWritePreviewCommitAction('commit', 'variable-preview-pending-1');
+  assert.equal(confirmOptions.confirmText, '提交变更');
+  assert.match(confirmOptions.message, /会写入记忆、变量或世界书/);
+  assert.equal(actionOptions.id, 'variable-preview-pending-1');
+  assert.equal(actionOptions.confirmed, true);
+  assert.equal(refreshed, true);
+  console.log('ok - agent center write preview commit action requires confirmation and calls debug registry');
+}
+
+{
+  const panel = new AgentCenterPanel({
+    confirm: async () => true,
+    getActions: () => ({
+      commitAgentWritePreviewPendingPermission: () => ({
+        ok: false,
+        status: 'blocked',
+        reason: 'preview_result_missing',
+        message: '找不到已生成的变更预览，请先允许一次执行预览。',
+      }),
+    }),
+  });
+  panel.view = {
+    pending: [
+      {
+        kind: 'tool_permission',
+        id: 'variable-preview-pending-blocked',
+        toolName: 'variable.preview_commands',
+      },
+    ],
+  };
+  panel.refresh = async () => {};
+  await panel.handleWritePreviewCommitAction('commit', 'variable-preview-pending-blocked');
+  assert.equal(panel.lastError, '找不到已生成的变更预览，请先允许一次执行预览。');
+  console.log('ok - agent center write preview commit action surfaces readable failure messages');
 }
 
 {
@@ -413,9 +566,36 @@ import { AgentCenterPanel } from '../../src/scripts/ui/agent-center-panel.js';
   const html = panel.renderActivity();
   assert.match(html, /data-activity-status="failure"/);
   assert.match(html, /is-danger/);
+  assert.match(html, /查看后会从顶部提醒移除，不会删除活动记录/);
+  assert.match(html, /data-failure-read-action="mark"/);
   assert.match(html, /错误：provider unavailable/);
   assert.match(html, /agent-center-card is-failure/);
   console.log('ok - agent center panel renders failed activity filter and error detail');
+}
+
+{
+  let marked = null;
+  const panel = new AgentCenterPanel({
+    markFailureSeen: options => {
+      marked = options;
+    },
+  });
+  panel.surface = 'moments';
+  panel.view = {
+    meta: { unreadFailedRuns: 1, newestFailureAt: 5000 },
+    activity: {
+      meta: { unreadFailures: 1, scopedUnreadFailures: 1, scopedNewestFailureAt: 5000 },
+      runs: [],
+    },
+  };
+  panel.render = () => {};
+  panel.handleFailureReadAction();
+  assert.equal(marked.surface, 'moments');
+  assert.equal(marked.at >= 5000, true);
+  assert.equal(panel.view.meta.unreadFailedRuns, 0);
+  assert.equal(panel.view.activity.meta.unreadFailures, 0);
+  assert.equal(panel.view.activity.meta.scopedUnreadFailures, 0);
+  console.log('ok - agent center failure read action removes failures from top reminder without deleting activity');
 }
 
 {
@@ -449,13 +629,58 @@ import { AgentCenterPanel } from '../../src/scripts/ui/agent-center-panel.js';
     },
   };
   const html = panel.renderActivity();
-  assert.match(html, /格式诊断：1 event/);
-  assert.match(html, /source: rawOriginal/);
-  assert.match(html, /警告：time is missing/);
+  assert.match(html, /格式检查：发现 1 条提醒/);
+  assert.match(html, /检查原始回复/);
+  assert.match(html, /提醒：time is missing/);
   assert.match(html, /修复候选：补齐时间/);
   assert.match(html, /可在消息旁处理：应用修复、重试生成、查看原文/);
   assert.doesNotMatch(html, /replacementText/);
   console.log('ok - agent center panel renders chat format review details without write actions');
+}
+
+{
+  const panel = new AgentCenterPanel();
+  panel.activeTab = 'activity';
+  panel.view = {
+    activity: {
+      meta: { total: 1, active: 1, failures: 0, statusCounts: { waiting_permission: 1 } },
+      runs: [
+        {
+          id: 'run-body',
+          kind: 'chat_body_quality_guardian',
+          title: '正文可优化',
+          status: 'waiting_permission',
+          summary: '1 body quality issue(s)',
+          review: {
+            type: 'body_quality',
+            sourceTextKind: 'rawOriginal',
+            hasRawOriginal: true,
+            issueCount: 1,
+            issues: [{
+              title: '连续重复句段',
+              summary: '发现 1 行连续重复正文。',
+              risk: 'low',
+            }],
+            patchCandidate: {
+              available: true,
+              title: '清理重复正文',
+              summary: '移除 1 行连续重复',
+              risk: 'low',
+            },
+            actionLabels: ['查看原文', 'Agent Center'],
+          },
+        },
+      ],
+    },
+  };
+  const html = panel.renderActivity();
+  assert.match(html, /正文检查：发现 1 个问题/);
+  assert.match(html, /检查原始回复/);
+  assert.match(html, /问题：连续重复句段/);
+  assert.match(html, /优化候选：清理重复正文/);
+  assert.match(html, /可在消息旁处理：查看原文、Agent Center/);
+  assert.doesNotMatch(html, /replacementText/);
+  console.log('ok - agent center panel renders chat body quality review details without write actions');
 }
 
 {
@@ -483,11 +708,11 @@ import { AgentCenterPanel } from '../../src/scripts/ui/agent-center-panel.js';
     ],
   };
   const html = panel.renderTools();
-  assert.match(html, /contact_profile\.get/);
-  assert.match(html, /read/);
-  assert.match(html, /read-only/);
-  assert.match(html, /local/);
-  assert.match(html, /model: allowlist/);
+  assert.match(html, /读取联系人画像/);
+  assert.match(html, /可读取/);
+  assert.match(html, /只读/);
+  assert.match(html, /本地执行/);
+  assert.match(html, /AI 可请求/);
   console.log('ok - agent center panel renders tool capability chips');
 }
 
@@ -501,6 +726,11 @@ import { AgentCenterPanel } from '../../src/scripts/ui/agent-center-panel.js';
         networkAllowed: false,
         realRunnerAllowed: false,
         writesChat: false,
+        writePreviewTools: {
+          enabled: false,
+          activeTools: [],
+          availableTools: ['memory.preview_actions', 'variable.preview_commands', 'worldbook.preview_actions'],
+        },
       },
       providerTools: { enabled: false, allowedTools: ['contact_profile.list'] },
       permissionRules: [],
@@ -508,12 +738,14 @@ import { AgentCenterPanel } from '../../src/scripts/ui/agent-center-panel.js';
     },
   };
   const html = panel.renderSafety();
-  assert.match(html, /启用当前会话 Gate/);
+  assert.match(html, /开启当前会话 Agent 工具/);
   assert.match(html, /data-session-gate-action="enable"/);
-  assert.match(html, /不会自动续跑 provider/);
-  assert.match(html, /writes chat blocked/);
-  assert.match(html, /contact_profile\.list/);
-  assert.match(html, /Continuation 默认策略/);
+  assert.match(html, /不会自动继续生成/);
+  assert.match(html, /不会自动写聊天/);
+  assert.match(html, /读取联系人列表/);
+  assert.match(html, /记忆\/变量\/世界书预览/);
+  assert.match(html, /data-write-preview-model-context-action="enable"/);
+  assert.match(html, /继续生成后的处理方式/);
   assert.match(html, /data-continuation-policy-strategy="append_to_previous_bubble"/);
   console.log('ok - agent center safety renders session gate controls and execution boundaries');
 }
@@ -524,10 +756,15 @@ import { AgentCenterPanel } from '../../src/scripts/ui/agent-center-panel.js';
     safety: {
       sessionGate: {
         enabled: true,
-        allowedTools: ['contact_profile.list'],
+        allowedTools: ['contact_profile.list', 'memory.preview_actions', 'variable.preview_commands', 'worldbook.preview_actions'],
         networkAllowed: false,
         realRunnerAllowed: false,
         writesChat: false,
+        writePreviewTools: {
+          enabled: true,
+          activeTools: ['memory.preview_actions', 'variable.preview_commands', 'worldbook.preview_actions'],
+          availableTools: ['memory.preview_actions', 'variable.preview_commands', 'worldbook.preview_actions'],
+        },
       },
       providerTools: { enabled: false, allowedTools: ['contact_profile.list'] },
       permissionRules: [],
@@ -535,11 +772,58 @@ import { AgentCenterPanel } from '../../src/scripts/ui/agent-center-panel.js';
     },
   };
   const html = panel.renderSafety();
-  assert.match(html, /关闭当前会话 Gate/);
+  assert.match(html, /关闭当前会话 Agent 工具/);
   assert.match(html, /data-session-gate-action="disable"/);
-  assert.match(html, /当前会话允许白名单工具进入待确认执行链路/);
+  assert.match(html, /AI 可以请求已允许的工具/);
+  assert.match(html, /data-write-preview-model-context-action="disable"/);
+  assert.match(html, /记忆变更预览/);
   assert.match(html, /接到上一气泡/);
   console.log('ok - agent center safety renders the enabled session gate state');
+}
+
+{
+  let saved = null;
+  let refreshed = false;
+  let confirmOptions = null;
+  const panel = new AgentCenterPanel({
+    confirm: async options => {
+      confirmOptions = options;
+      return true;
+    },
+    getActions: () => ({
+      setProviderToolSessionGate: options => {
+        saved = options;
+        return options;
+      },
+    }),
+  });
+  panel.view = {
+    safety: {
+      sessionGate: {
+        enabled: true,
+        allowedTools: ['contact_profile.list'],
+        networkAllowed: false,
+        realRunnerAllowed: false,
+        writesChat: false,
+      },
+    },
+  };
+  panel.refresh = async () => {
+    refreshed = true;
+  };
+  await panel.handleWritePreviewModelContextAction('enable');
+  assert.equal(confirmOptions.confirmText, '加入预览工具');
+  assert.equal(saved.enabled, true);
+  assert.equal(saved.networkAllowed, false);
+  assert.equal(saved.realRunnerAllowed, false);
+  assert.deepEqual(saved.allowedTools, [
+    'contact_profile.list',
+    'memory.preview_actions',
+    'variable.preview_commands',
+    'worldbook.preview_actions',
+  ]);
+  assert.equal(refreshed, true);
+  console.log('ok - agent center safety toggles write preview model-context tools');
 }
 
 {

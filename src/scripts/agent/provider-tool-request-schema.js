@@ -7,13 +7,24 @@ export const PROVIDER_TOOL_REQUEST_FORMATS = Object.freeze({
   unsupported: 'unsupported',
 });
 
-export const DEFAULT_PROVIDER_MODEL_CONTEXT_TOOLS = Object.freeze([
+export const DEFAULT_PROVIDER_BASE_MODEL_CONTEXT_TOOLS = Object.freeze([
   'contact_profile.list',
   'contact_profile.get',
   'chat.emit_private',
   'chat.emit_group',
   'chat.emit_moment_comment',
   'chat.emit_moment_post',
+]);
+
+export const WRITE_PREVIEW_PROVIDER_MODEL_CONTEXT_TOOLS = Object.freeze([
+  'memory.preview_actions',
+  'variable.preview_commands',
+  'worldbook.preview_actions',
+]);
+
+export const DEFAULT_PROVIDER_MODEL_CONTEXT_TOOLS = Object.freeze([
+  ...DEFAULT_PROVIDER_BASE_MODEL_CONTEXT_TOOLS,
+  ...WRITE_PREVIEW_PROVIDER_MODEL_CONTEXT_TOOLS,
 ]);
 
 const GEMINI_SCHEMA_TYPES = Object.freeze({

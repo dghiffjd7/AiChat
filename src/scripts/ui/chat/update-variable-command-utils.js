@@ -355,3 +355,62 @@ export const applyUpdateVariableCommandsToState = (
     skipped,
   };
 };
+
+export const buildUpdateVariableCommandsPreview = (
+  initialRoot,
+  commands,
+  {
+    getAt,
+    setAt,
+    deleteAt,
+    resolveExistingPath,
+    changeLimit = 24,
+  } = {},
+) => {
+  const original = cloneVariableValue(isPlainVariableObject(initialRoot) ? initialRoot : {});
+  const result = applyUpdateVariableCommandsToState(original, commands, {
+    getAt,
+    setAt,
+    deleteAt,
+    resolveExistingPath,
+  });
+  if (!isPlainVariableObject(result.root)) {
+    return {
+      appliedCount: Number(result.appliedCount || 0),
+      skipped: Array.isArray(result.skipped) ? result.skipped.slice() : [],
+      changed: 0,
+      entries: [],
+      updates: {},
+      rollbackSnapshot: original,
+      invalid: true,
+    };
+  }
+  const { updates } = buildVariableStateUpdates(original, result.root);
+  const limit = Math.max(0, Math.trunc(Number(changeLimit) || 24));
+  const entries = Object.keys(updates)
+    .slice(0, limit)
+    .map((key) => {
+      const before = original[key];
+      const after = result.root[key];
+      const removed = after === undefined;
+      const created = before === undefined && !removed;
+      return {
+        key,
+        kind: removed ? 'delete' : (created ? 'create' : 'update'),
+        before,
+        after: removed ? undefined : after,
+        beforePreview: previewVariableValue(before),
+        afterPreview: removed ? '(deleted)' : previewVariableValue(after),
+      };
+    });
+  return {
+    appliedCount: Number(result.appliedCount || 0),
+    skipped: Array.isArray(result.skipped) ? result.skipped.slice() : [],
+    changed: Object.keys(updates).length,
+    truncated: Object.keys(updates).length > entries.length,
+    entries,
+    updates,
+    rollbackSnapshot: original,
+    invalid: false,
+  };
+};

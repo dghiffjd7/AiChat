@@ -11,6 +11,8 @@ import {
 } from '../../src/scripts/agent/agent-tool-registry.js';
 import { createImageAgentTools } from '../../src/scripts/agent/tools/image-tools.js';
 import { createMemoryAgentTools } from '../../src/scripts/agent/tools/memory-tools.js';
+import { createVariableAgentTools } from '../../src/scripts/agent/tools/variable-tools.js';
+import { createWorldbookAgentTools } from '../../src/scripts/agent/tools/worldbook-tools.js';
 
 const logger = { warn: () => {} };
 
@@ -176,6 +178,88 @@ const logger = { warn: () => {} };
   await updateTool.execute({ sessionId: 's2' });
   assert.deepEqual(calls, ['s2']);
   console.log('ok - memory agent tools support deferred runtime lookup');
+}
+
+{
+  let received = null;
+  const tools = createMemoryAgentTools({
+    previewMemoryActions: async (payload) => {
+      received = payload;
+      return { changed: 2, skipped: 1, entries: [] };
+    },
+  });
+  const previewTool = tools.find(tool => tool.name === 'memory.preview_actions');
+  assert.equal(previewTool.capabilities.write, false);
+  assert.equal(previewTool.capabilities.modelContext, 'allowlist');
+  const result = await previewTool.execute({
+    sessionId: 's3',
+    isGroup: true,
+    updateMode: 'standard',
+    actions: [{ action: 'insert', tableId: 'profile', data: { name: '菲伦' } }],
+    contextType: 'chat',
+    uiMode: 'rp',
+    useSharedGlobalScope: true,
+  });
+  assert.deepEqual(result, { changed: 2, skipped: 1, entries: [] });
+  assert.deepEqual(received, {
+    sessionId: 's3',
+    isGroup: true,
+    updateMode: 'standard',
+    actions: [{ action: 'insert', tableId: 'profile', data: { name: '菲伦' } }],
+    contextType: 'chat',
+    uiMode: 'rp',
+    useSharedGlobalScope: true,
+  });
+  assert.equal(createMemoryAgentTools().some(tool => tool.name === 'memory.preview_actions'), false);
+  console.log('ok - memory agent tools expose read-only action preview contract');
+}
+
+{
+  let payload = null;
+  const [previewTool] = createVariableAgentTools({
+    previewVariableCommands: async (nextPayload) => {
+      payload = nextPayload;
+      return { changed: 1, skipped: [] };
+    },
+  });
+  assert.equal(previewTool.capabilities.write, false);
+  assert.equal(previewTool.capabilities.modelContext, 'allowlist');
+  const result = await previewTool.execute({
+    sessionId: 's-variable',
+    useGlobal: true,
+    commands: [{ type: 'set', path: ['hp'], value: 12 }],
+  });
+  assert.deepEqual(result, { changed: 1, skipped: [] });
+  assert.deepEqual(payload, {
+    sessionId: 's-variable',
+    useGlobal: true,
+    commands: [{ type: 'set', path: ['hp'], value: 12 }],
+  });
+  assert.equal(createVariableAgentTools().length, 0);
+  console.log('ok - variable agent tools expose read-only command preview contract');
+}
+
+{
+  let payload = null;
+  const [previewTool] = createWorldbookAgentTools({
+    previewWorldbookActions: async (nextPayload) => {
+      payload = nextPayload;
+      return { changed: 2, skipped: 0, entries: [] };
+    },
+  });
+  assert.equal(previewTool.capabilities.write, false);
+  assert.equal(previewTool.capabilities.modelContext, 'allowlist');
+  const result = await previewTool.execute({
+    worldId: 'world-agent',
+    actions: [{ action: 'update_entry', entryId: 'e1', patch: { content: 'next' } }],
+  });
+  assert.deepEqual(result, { changed: 2, skipped: 0, entries: [] });
+  assert.deepEqual(payload, {
+    worldId: 'world-agent',
+    actions: [{ action: 'update_entry', entryId: 'e1', patch: { content: 'next' } }],
+  });
+  assert.equal(createWorldbookAgentTools().length, 0);
+  console.log('ok - worldbook agent tools expose read-only action preview contract');
 }
 
 {

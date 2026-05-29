@@ -141,6 +141,46 @@ const runs = [
 }
 
 {
+  const summary = buildAgentRunSummary({
+    id: 'run-body',
+    kind: 'chat_body_quality_guardian',
+    source: 'chat-body-quality-guardian',
+    status: 'waiting_permission',
+    metadata: {
+      sourceTextKind: 'rawOriginal',
+      hasRawOriginal: true,
+      issueCount: 1,
+      issues: [{
+        id: 'consecutive_duplicate_lines',
+        severity: 'warning',
+        title: '连续重复句段',
+        summary: '发现 1 行连续重复正文。',
+        risk: 'low',
+      }],
+      patchCandidate: {
+        available: true,
+        id: 'body_quality_deterministic_cleanup',
+        title: '清理重复正文',
+        summary: '移除 1 行连续重复',
+        replacementText: 'should not be surfaced',
+      },
+      decisionActions: [
+        { id: 'review_original', label: '查看原文', enabled: true },
+        { id: 'open_agent_center', label: 'Agent Center', enabled: true },
+      ],
+    },
+  });
+  assert.equal(summary.review.type, 'body_quality');
+  assert.equal(summary.review.sourceTextKind, 'rawOriginal');
+  assert.equal(summary.review.issueCount, 1);
+  assert.equal(summary.review.issues[0].title, '连续重复句段');
+  assert.equal(summary.review.patchCandidate.summary, '移除 1 行连续重复');
+  assert.equal(summary.review.patchCandidate.replacementText, undefined);
+  assert.deepEqual(summary.review.actionLabels, ['查看原文', 'Agent Center']);
+  console.log('ok - buildAgentRunSummary exposes safe chat body quality review metadata');
+}
+
+{
   const withCancelled = [
     ...runs,
     {

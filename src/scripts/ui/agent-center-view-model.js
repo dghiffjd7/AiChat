@@ -1,4 +1,5 @@
 import { buildAgentRunListView } from '../agent/agent-run-view-model.js';
+import { WRITE_PREVIEW_PROVIDER_MODEL_CONTEXT_TOOLS } from '../agent/provider-tool-request-schema.js';
 import { buildChatEmitCommitPreview } from '../agent/tools/chat-emit-commit-plan.js';
 
 export const AGENT_CENTER_TABS = Object.freeze([
@@ -123,6 +124,127 @@ const buildChatEmitCommitState = (entry = {}, chatEmitPreview = null, chatEmitCo
   };
 };
 
+const WRITE_PREVIEW_TOOL_META = Object.freeze({
+  'memory.preview_actions': {
+    kind: '记忆表写入预览',
+    targetLabel: '会话',
+    requestKey: 'actions',
+    requestLabel: 'action',
+  },
+  'variable.preview_commands': {
+    kind: '变量写入预览',
+    targetLabel: '会话',
+    requestKey: 'commands',
+    requestLabel: 'command',
+  },
+  'worldbook.preview_actions': {
+    kind: '世界书写入预览',
+    targetLabel: '世界书',
+    requestKey: 'actions',
+    requestLabel: 'action',
+  },
+});
+
+const readPreviewResult = (entry = {}) => {
+  const resumeResult = isPlainObject(entry?.resumeResult) ? entry.resumeResult : null;
+  const output = isPlainObject(resumeResult?.output) ? resumeResult.output : null;
+  const result = output?.result ?? resumeResult?.result ?? entry?.previewResult ?? null;
+  return isPlainObject(result) ? result : null;
+};
+
+const formatWritePreviewEntry = (entry = {}) => {
+  const src = isPlainObject(entry) ? entry : {};
+  const parts = [
+    trim(src.kind || src.action || src.type, 'change'),
+    trim(src.tableId || src.scope || src.path || src.entryId || src.title),
+    src.reason ? `原因：${trim(src.reason)}` : '',
+  ].filter(Boolean);
+  const changedFields = Array.isArray(src.diff?.changedFields) ? src.diff.changedFields : [];
+  if (changedFields.length) parts.push(`字段：${changedFields.slice(0, 5).join(', ')}`);
+  return truncate(parts.join(' · '), 120);
+};
+
+const buildWritePreviewResultSummary = (result = {}) => {
+  const src = isPlainObject(result) ? result : {};
+  const parts = [];
+  const changed = toFiniteNumber(src.changed, -1);
+  const skipped = toFiniteNumber(src.skipped, -1);
+  if (changed >= 0) parts.push(`变更 ${changed}`);
+  if (skipped >= 0) parts.push(`跳过 ${skipped}`);
+  ['inserted', 'updated', 'deleted'].forEach((key) => {
+    const count = toFiniteNumber(src[key], 0);
+    if (count > 0) parts.push(`${key} ${count}`);
+  });
+  if (Number.isFinite(Number(src.entryCountBefore)) && Number.isFinite(Number(src.entryCountAfter))) {
+    parts.push(`条目 ${Number(src.entryCountBefore)} -> ${Number(src.entryCountAfter)}`);
+  }
+  return parts.join(' · ');
+};
+
+const summarizeWritePreviewCommitResult = (result = {}) => {
+  const src = isPlainObject(result) ? result : {};
+  const parts = [];
+  const changed = toFiniteNumber(src.changed, -1);
+  if (changed >= 0) parts.push(`变更 ${changed}`);
+  ['inserted', 'updated', 'deleted', 'skipped'].forEach((key) => {
+    const count = toFiniteNumber(src[key], 0);
+    if (count > 0) parts.push(`${key} ${count}`);
+  });
+  const refs = isPlainObject(src.refs) ? src.refs : {};
+  if (Array.isArray(refs.changedKeys) && refs.changedKeys.length) parts.push(`键 ${refs.changedKeys.length}`);
+  if (refs.worldId) parts.push(`世界书 ${refs.worldId}`);
+  return parts.join(' · ');
+};
+
+const buildWritePreviewCommitState = (entry = {}) => {
+  const commitStatus = trim(entry.commitStatus, 'idle');
+  const undoStatus = trim(entry.commitUndoStatus, 'idle');
+  const resumeStatus = trim(entry.resumeStatus, 'idle');
+  const commitResult = isPlainObject(entry.commitResult) ? entry.commitResult : null;
+  const undoResult = isPlainObject(entry.commitUndoResult) ? entry.commitUndoResult : null;
+  return {
+    status: commitStatus,
+    undoStatus,
+    canCommit: resumeStatus === 'succeeded' && commitStatus !== 'running' &&
+      commitStatus !== 'committed' && commitStatus !== 'undone',
+    canUndo: commitStatus === 'committed' && undoStatus !== 'running' && undoStatus !== 'undone',
+    resultSummary: summarizeWritePreviewCommitResult(commitResult),
+    undoSummary: summarizeWritePreviewCommitResult(undoResult),
+    message: trim(commitResult?.displayMessage || commitResult?.reason),
+    undoMessage: trim(undoResult?.displayMessage || undoResult?.reason),
+    errorMessage: trim(entry.commitErrorMessage),
+    undoErrorMessage: trim(entry.commitUndoErrorMessage),
+  };
+};
+
+const buildWritePreviewState = (toolName = '', args = {}, entry = {}) => {
+  const meta = WRITE_PREVIEW_TOOL_META[trim(toolName)];
+  if (!meta) return null;
+  const payload = isPlainObject(args) ? args : {};
+  const requestItems = Array.isArray(payload[meta.requestKey]) ? payload[meta.requestKey] : [];
+  const result = readPreviewResult(entry);
+  const resultEntries = Array.isArray(result?.entries) ? result.entries : [];
+  const target = trim(payload.worldId || payload.sessionId || entry.sessionId);
+  return {
+    kind: meta.kind,
+    targetLabel: meta.targetLabel,
+    target,
+    requestCount: requestItems.length,
+    requestLabel: meta.requestLabel,
+    requestSummary: `${requestItems.length} ${meta.requestLabel}${requestItems.length === 1 ? '' : 's'}`,
+    previewReady: Boolean(result),
+    resultSummary: result ? buildWritePreviewResultSummary(result) : '',
+    changed: result ? toFiniteNumber(result.changed, 0) : 0,
+    skipped: result ? toFiniteNumber(result.skipped, 0) : 0,
+    rollbackReady: Boolean(result?.rollbackSnapshot),
+    entries: resultEntries.slice(0, 6).map(formatWritePreviewEntry).filter(Boolean),
+    entryOverflow: Math.max(0, resultEntries.length - 6),
+    currentExecutionWrites: false,
+    commitRequiresUserConfirmation: true,
+    commit: buildWritePreviewCommitState(entry),
+  };
+};
+
 const normalizePendingPermission = (entry = {}) => {
   const src = isPlainObject(entry) ? entry : {};
   const toolName = trim(src.toolName || src.request?.toolName || src.toolCall?.toolName, 'tool');
@@ -150,6 +272,7 @@ const normalizePendingPermission = (entry = {}) => {
     chatEmitPreview,
     chatEmitCommitPreview,
     chatEmitCommit: buildChatEmitCommitState(src, chatEmitPreview, chatEmitCommitPreview),
+    writePreview: buildWritePreviewState(toolName, argsPreview, src),
   };
 };
 
@@ -218,13 +341,21 @@ const normalizeSafety = ({
   const gate = isPlainObject(sessionGate) ? sessionGate : {};
   const experiment = isPlainObject(experimentStatus) ? experimentStatus : {};
   const policy = isPlainObject(continuationCommitPolicy) ? continuationCommitPolicy : {};
+  const gateAllowedTools = list(gate.allowedTools);
+  const writePreviewTools = Array.from(WRITE_PREVIEW_PROVIDER_MODEL_CONTEXT_TOOLS);
+  const activeWritePreviewTools = writePreviewTools.filter(tool => gateAllowedTools.includes(tool));
   return {
     sessionGate: {
       enabled: gate.enabled === true,
       networkAllowed: gate.networkAllowed === true,
       realRunnerAllowed: gate.realRunnerAllowed === true,
       source: trim(gate.source),
-      allowedTools: list(gate.allowedTools),
+      allowedTools: gateAllowedTools,
+      writePreviewTools: {
+        enabled: activeWritePreviewTools.length === writePreviewTools.length,
+        activeTools: activeWritePreviewTools,
+        availableTools: writePreviewTools,
+      },
     },
     providerTools: {
       enabled: experiment.enabled === true,

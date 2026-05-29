@@ -3,6 +3,8 @@ const isPlainObject = value => Boolean(value && typeof value === 'object' && !Ar
 export const createMemoryAgentTools = ({
   memoryUpdateRuntime = null,
   getMemoryUpdateRuntime = null,
+  previewMemoryActions = null,
+  getPreviewMemoryActions = null,
 } = {}) => {
   const resolveRuntime = () => {
     if (memoryUpdateRuntime && typeof memoryUpdateRuntime === 'object') return memoryUpdateRuntime;
@@ -14,8 +16,18 @@ export const createMemoryAgentTools = ({
       return null;
     }
   };
+  const resolvePreviewMemoryActions = () => {
+    if (typeof previewMemoryActions === 'function') return previewMemoryActions;
+    if (typeof getPreviewMemoryActions !== 'function') return null;
+    try {
+      const fn = getPreviewMemoryActions();
+      return typeof fn === 'function' ? fn : null;
+    } catch {
+      return null;
+    }
+  };
 
-  return [
+  const tools = [
     {
       name: 'memory.update_after_chat',
       title: 'Update memory after chat',
@@ -103,6 +115,61 @@ export const createMemoryAgentTools = ({
       summarizeResult: result => `memory update abort requested for ${String(result?.sessionId || '').trim()}`,
     },
   ];
+
+  if (typeof previewMemoryActions === 'function' || typeof getPreviewMemoryActions === 'function') {
+    tools.push({
+      name: 'memory.preview_actions',
+      title: 'Preview memory actions',
+      description: 'Build a memory table diff and rollback preview without writing memory rows.',
+      source: 'memory-table-action-preview',
+      permissions: ['storage'],
+      riskLevel: 'low',
+      capabilities: {
+        read: true,
+        write: false,
+        network: false,
+        cost: 'none',
+        undo: 'none',
+        modelContext: 'allowlist',
+        confirmation: 'allow_once',
+      },
+      schema: {
+        type: 'object',
+        required: ['sessionId', 'actions'],
+        additionalProperties: false,
+        properties: {
+          sessionId: { type: 'string', minLength: 1 },
+          isGroup: { type: 'boolean' },
+          updateMode: { type: 'string', enum: ['full', 'summary', 'standard'] },
+          actions: {
+            type: 'array',
+            items: { type: 'object' },
+          },
+          contextType: { type: 'string' },
+          uiMode: { type: 'string' },
+          useSharedGlobalScope: { type: 'boolean' },
+        },
+      },
+      execute: async (args = {}) => {
+        const preview = resolvePreviewMemoryActions();
+        if (typeof preview !== 'function') {
+          throw new Error('memory action preview runtime not available');
+        }
+        return preview({
+          sessionId: String(args.sessionId || '').trim(),
+          isGroup: args.isGroup === true,
+          updateMode: String(args.updateMode || 'full').trim() || 'full',
+          actions: Array.isArray(args.actions) ? args.actions : [],
+          contextType: String(args.contextType || '').trim(),
+          uiMode: String(args.uiMode || '').trim(),
+          useSharedGlobalScope: args.useSharedGlobalScope === true,
+        });
+      },
+      summarizeResult: result => `memory action preview: ${Number(result?.changed || 0)} change(s), ${Number(result?.skipped || 0)} skipped`,
+    });
+  }
+
+  return tools;
 };
 
 export const registerMemoryAgentTools = (registry, deps = {}) => {

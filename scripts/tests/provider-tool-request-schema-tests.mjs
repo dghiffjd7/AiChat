@@ -7,10 +7,14 @@ import { VertexAIProvider } from '../../src/scripts/api/providers/vertexai.js';
 import { createProviderToolCallDeltaAccumulator } from '../../src/scripts/agent/provider-tool-call-delta-adapter.js';
 import { normalizeProviderToolCall } from '../../src/scripts/agent/provider-tool-call-parts.js';
 import {
+  DEFAULT_PROVIDER_BASE_MODEL_CONTEXT_TOOLS,
   PROVIDER_TOOL_REQUEST_FORMATS,
   buildProviderToolRequestSchema,
 } from '../../src/scripts/agent/provider-tool-request-schema.js';
 import { createChatEmitAgentTools } from '../../src/scripts/agent/tools/chat-emit-tools.js';
+import { createMemoryAgentTools } from '../../src/scripts/agent/tools/memory-tools.js';
+import { createVariableAgentTools } from '../../src/scripts/agent/tools/variable-tools.js';
+import { createWorldbookAgentTools } from '../../src/scripts/agent/tools/worldbook-tools.js';
 
 const contactListTool = {
   name: 'contact_profile.list',
@@ -44,6 +48,15 @@ const contactGetTool = {
 };
 
 const [chatEmitPrivateTool] = createChatEmitAgentTools();
+const memoryPreviewTool = createMemoryAgentTools({
+  previewMemoryActions: async () => ({ changed: 0, skipped: 0 }),
+}).find(tool => tool.name === 'memory.preview_actions');
+const [variablePreviewTool] = createVariableAgentTools({
+  previewVariableCommands: async () => ({ changed: 0, skipped: [] }),
+});
+const [worldbookPreviewTool] = createWorldbookAgentTools({
+  previewWorldbookActions: async () => ({ changed: 0, skipped: 0 }),
+});
 
 const createRegistry = ({
   gate = { enabled: true, allowedTools: ['contact_profile.list'], source: 'test' },
@@ -132,6 +145,61 @@ const createRegistry = ({
 
 {
   const schema = buildProviderToolRequestSchema({
+    debugUiRegistry: createRegistry({
+      gate: {
+        enabled: true,
+        allowedTools: ['memory.preview_actions', 'variable.preview_commands', 'worldbook.preview_actions'],
+      },
+      tools: [memoryPreviewTool, variablePreviewTool, worldbookPreviewTool],
+    }),
+    provider: 'openai',
+    model: 'gpt-tool',
+    sessionId: 's1',
+  });
+
+  assert.equal(schema.enabled, true);
+  assert.deepEqual(schema.diagnostics.internalToolNames, [
+    'memory.preview_actions',
+    'variable.preview_commands',
+    'worldbook.preview_actions',
+  ]);
+  assert.deepEqual(schema.diagnostics.providerToolNames, [
+    'memory_preview_actions',
+    'variable_preview_commands',
+    'worldbook_preview_actions',
+  ]);
+  assert.equal(schema.diagnostics.writesChat, false);
+  const previewToolNames = schema.requestOptions.tools.map(tool => tool.function.name);
+  assert.deepEqual(previewToolNames, [
+    'memory_preview_actions',
+    'variable_preview_commands',
+    'worldbook_preview_actions',
+  ]);
+  const memoryTool = schema.requestOptions.tools.find(tool => tool.function.name === 'memory_preview_actions');
+  assert.equal(memoryTool.function.parameters.required.includes('sessionId'), true);
+  assert.equal(memoryTool.function.parameters.required.includes('actions'), true);
+  console.log('ok - provider tool request schema can expose write previews as review-only diff tools');
+}
+
+{
+  const schema = buildProviderToolRequestSchema({
+    debugUiRegistry: createRegistry({
+      gate: { enabled: true, allowedTools: ['memory.preview_actions'] },
+      tools: [memoryPreviewTool],
+    }),
+    provider: 'openai',
+    model: 'gpt-tool',
+    sessionId: 's1',
+    allowedModelContextTools: DEFAULT_PROVIDER_BASE_MODEL_CONTEXT_TOOLS,
+  });
+
+  assert.equal(schema.enabled, false);
+  assert.equal(schema.diagnostics.reason, 'no allowed provider tools are registered');
+  console.log('ok - provider tool request schema keeps write previews behind explicit model-context policy');
+}
+
+{
+  const schema = buildProviderToolRequestSchema({
     debugUiRegistry: createRegistry(),
     provider: 'anthropic',
     model: 'claude-tool',
@@ -201,6 +269,36 @@ const createRegistry = ({
   assert.equal(normalized.toolCallId, 'call-chat-1');
   assert.equal(normalized.arguments.targetName, '菲伦');
   console.log('ok - provider-safe chat_emit_private maps back to internal chat emit tool');
+}
+
+{
+  const normalized = normalizeProviderToolCall({
+    id: 'call-memory-preview-1',
+    name: 'memory_preview_actions',
+    arguments: { sessionId: 's1', actions: [] },
+  });
+
+  assert.equal(normalized.toolName, 'memory.preview_actions');
+  assert.equal(normalized.toolCallId, 'call-memory-preview-1');
+  assert.deepEqual(normalized.arguments, { sessionId: 's1', actions: [] });
+  console.log('ok - provider-safe memory_preview_actions maps back to internal preview tool');
+}
+
+{
+  const variable = normalizeProviderToolCall({
+    id: 'call-variable-preview-1',
+    name: 'variable_preview_commands',
+    arguments: { sessionId: 's1', commands: [] },
+  });
+  const worldbook = normalizeProviderToolCall({
+    id: 'call-worldbook-preview-1',
+    name: 'worldbook_preview_actions',
+    arguments: { worldId: 'world-1', actions: [] },
+  });
+
+  assert.equal(variable.toolName, 'variable.preview_commands');
+  assert.equal(worldbook.toolName, 'worldbook.preview_actions');
+  console.log('ok - provider-safe write preview aliases map back to internal preview tools');
 }
 
 {

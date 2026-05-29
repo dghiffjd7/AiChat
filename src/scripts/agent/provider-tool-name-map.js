@@ -5,6 +5,9 @@ const INTERNAL_TO_PROVIDER_TOOL_NAMES = Object.freeze({
   'chat.emit_group': 'chat_emit_group',
   'chat.emit_moment_comment': 'chat_emit_moment_comment',
   'chat.emit_moment_post': 'chat_emit_moment_post',
+  'memory.preview_actions': 'memory_preview_actions',
+  'variable.preview_commands': 'variable_preview_commands',
+  'worldbook.preview_actions': 'worldbook_preview_actions',
 });
 
 const PROVIDER_TO_INTERNAL_TOOL_NAMES = Object.freeze(

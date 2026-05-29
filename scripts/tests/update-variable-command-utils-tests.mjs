@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 
 import {
   applyUpdateVariableCommandsToState,
+  buildUpdateVariableCommandsPreview,
   buildVariableStateUpdates,
   collectChangedVariableKeys,
 } from '../../src/scripts/ui/chat/update-variable-command-utils.js';
@@ -115,6 +116,52 @@ test('buildVariableStateUpdates and collectChangedVariableKeys summarize root di
     },
   );
   assert.deepEqual(collectChangedVariableKeys(original, root, { limit: 12 }), ['b', 'c', 'd']);
+});
+
+test('buildUpdateVariableCommandsPreview returns diff without mutating source state', () => {
+  const source = {
+    hp: [10, 'number'],
+    energy: 5,
+    removeMe: true,
+  };
+  const preview = buildUpdateVariableCommandsPreview(
+    source,
+    [
+      { type: 'set', path: ['hp'], value: '12' },
+      { type: 'add', path: ['energy'], value: 3 },
+      { type: 'delete', path: ['removeMe'] },
+      { type: 'set', path: ['missing'], value: 1 },
+    ],
+    {
+      getAt: (obj, path) => getValueAtPath(obj, path, { allowDirectKey: false }),
+      setAt: (obj, path, value, options = {}) => setValueAtPath(obj, path, value, options),
+      deleteAt: (obj, path) => deleteValueAtPath(obj, path),
+      resolveExistingPath: (obj, path, options = {}) => resolveExistingVariablePath(obj, path, options),
+    },
+  );
+
+  assert.equal(preview.appliedCount, 3);
+  assert.deepEqual(preview.skipped, ['set@missing:set path not found']);
+  assert.equal(preview.changed, 3);
+  assert.equal(preview.invalid, false);
+  assert.deepEqual(preview.entries.map(entry => [entry.key, entry.kind]), [
+    ['hp', 'update'],
+    ['energy', 'update'],
+    ['removeMe', 'delete'],
+  ]);
+  assert.deepEqual(preview.entries[0].before, [10, 'number']);
+  assert.deepEqual(preview.entries[0].after, [12, 'number']);
+  assert.equal(preview.entries[2].after, undefined);
+  assert.deepEqual(preview.rollbackSnapshot, {
+    hp: [10, 'number'],
+    energy: 5,
+    removeMe: true,
+  });
+  assert.deepEqual(source, {
+    hp: [10, 'number'],
+    energy: 5,
+    removeMe: true,
+  });
 });
 
 let failed = 0;

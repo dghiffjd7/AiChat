@@ -1,11 +1,14 @@
 import assert from 'node:assert/strict';
 
 import {
+  buildChatBodyQualityAgentRun,
+  buildChatBodyQualityMessagePart,
   buildChatFormatGuardianAgentRun,
   buildChatFormatGuardianMessagePart,
   dispatchAfterReceiveEffects,
   resolveChatFormatGuardianInputText,
   resolveAfterReceiveSkipScripts,
+  runChatBodyQualityPreview,
   runChatFormatGuardianPreview,
 } from '../../src/scripts/ui/chat/after-receive-dispatch-utils.js';
 import {
@@ -519,6 +522,110 @@ test('runChatFormatGuardianPreview validates the full rawOriginal before cleaned
   assert.equal(result.result.warnings.includes('time is missing'), true);
 });
 
+test('buildChatBodyQualityMessagePart summarizes issues without storing replacement text', () => {
+  const part = buildChatBodyQualityMessagePart({
+    now: 1000,
+    sessionId: 'contact:firen',
+    message: { id: 'm-body', role: 'assistant' },
+    result: {
+      status: 'minor_issues',
+      sourceMessageId: 'm-body',
+      sourceTextKind: 'rawOriginal',
+      hasRawOriginal: true,
+      issueCount: 1,
+      issues: [{
+        id: 'consecutive_duplicate_lines',
+        severity: 'warning',
+        title: '连续重复句段',
+        summary: '发现 1 行连续重复正文。',
+        risk: 'low',
+        patchable: true,
+      }],
+      patchCandidate: {
+        available: true,
+        id: 'body_quality_deterministic_cleanup',
+        title: '清理重复正文',
+        summary: '移除 1 行连续重复',
+        risk: 'low',
+        replacementText: 'should not be stored in sidecar metadata',
+        preview: '她看了看门口。',
+      },
+    },
+  });
+  assert.equal(part.kind, 'chat_body_quality.review');
+  assert.equal(part.status, 'waiting_permission');
+  assert.equal(part.title, '正文可优化');
+  assert.equal(part.metadata.sourceTextKind, 'rawOriginal');
+  assert.equal(part.metadata.patchCandidate.summary, '移除 1 行连续重复');
+  assert.equal(part.metadata.patchCandidate.replacementText, undefined);
+  assert.deepEqual(part.metadata.decisionActions.map(action => action.id), ['apply_body_patch', 'review_original', 'open_agent_center']);
+  assert.equal(part.metadata.decisionActions[0].patchCandidate.summary, '移除 1 行连续重复');
+  assert.equal(part.metadata.decisionActions[0].patchCandidate.replacementText, undefined);
+  assert.equal(JSON.stringify(part).includes('should not be stored in sidecar metadata'), false);
+});
+
+test('buildChatBodyQualityAgentRun records review state without full replacement text', () => {
+  const run = buildChatBodyQualityAgentRun({
+    now: 1000,
+    sessionId: 'contact:firen',
+    message: { id: 'm-body-run', role: 'assistant' },
+    result: {
+      status: 'minor_issues',
+      sourceMessageId: 'm-body-run',
+      sourceTextKind: 'rawOriginal',
+      hasRawOriginal: true,
+      issueCount: 1,
+      issues: [{
+        id: 'consecutive_duplicate_lines',
+        severity: 'warning',
+        title: '连续重复句段',
+        summary: '发现 1 行连续重复正文。',
+        risk: 'low',
+        patchable: true,
+      }],
+      patchCandidate: {
+        available: true,
+        id: 'body_quality_deterministic_cleanup',
+        title: '清理重复正文',
+        summary: '移除 1 行连续重复',
+        risk: 'low',
+        replacementText: 'hidden replacement',
+        preview: '她看了看门口。',
+      },
+    },
+  });
+  assert.equal(run.id, 'run:chat-body-quality:m-body-run');
+  assert.equal(run.kind, 'chat_body_quality_guardian');
+  assert.equal(run.status, 'waiting_permission');
+  assert.equal(run.finishedAt, null);
+  assert.equal(run.steps[0].type, 'chat_body_quality.review');
+  assert.equal(run.metadata.patchCandidate.replacementText, undefined);
+  assert.equal(JSON.stringify(run).includes('hidden replacement'), false);
+  assert.deepEqual(run.metadata.decisionActions.map(action => action.id), ['apply_body_patch', 'review_original', 'open_agent_center']);
+});
+
+test('runChatBodyQualityPreview stays silent for ready text by default', () => {
+  const runs = [];
+  const result = runChatBodyQualityPreview({
+    message: {
+      id: 'm-body-ready',
+      role: 'assistant',
+      content: '菲伦把伞往你这边偏了偏。',
+    },
+    sessionId: 'contact:firen',
+    chatBodyQualityGuardian: { enabled: true },
+    now: 1000,
+    onChatBodyQualityRun({ agentRun }) {
+      runs.push(agentRun);
+    },
+  });
+  assert.equal(result.result.status, 'ready');
+  assert.equal(result.part, null);
+  assert.equal(result.patchedMessage, null);
+  assert.equal(result.agentRun, null);
+  assert.equal(runs.length, 0);
+});
+
 test('dispatchAfterReceiveEffects attaches chat format preview only through callback', () => {
   const calls = [];
   const message = {
@@ -559,6 +666,57 @@ test('dispatchAfterReceiveEffects attaches chat format preview only through call
     ['preview', 'group:case', 'needs_review', 'waiting_permission', 1],
     ['update', 'm-needs-review'],
   ]);
+});
+
+test('dispatchAfterReceiveEffects merges chat format and body quality sidecars', () => {
+  const calls = [];
+  const runs = [];
+  const message = {
+    id: 'm-combined-review',
+    role: 'assistant',
+    rawOriginal: [
+      '<群聊:调查组>',
+      '<成员>我,菲伦,雪</成员>',
+      '<聊天内容>',
+      '雪--我看到了门口的鞋印。',
+      '雪--我看到了门口的鞋印。',
+      '</聊天内容>',
+      '</群聊:调查组>',
+    ].join('\n'),
+    content: '清理后正文',
+  };
+
+  dispatchAfterReceiveEffects({
+    message,
+    sessionId: 'group:case',
+    chatFormatGuardian: {
+      enabled: true,
+      userName: '我',
+      resolveGroupTargetId: name => (name === '调查组' ? 'group:case' : ''),
+      resolveSpeakerId: name => (name === '雪' ? 'contact:snow' : ''),
+    },
+    chatBodyQualityGuardian: { enabled: true },
+    onChatFormatGuardianPreview({ patchedMessage }) {
+      calls.push(['format', patchedMessage.meta.agentMessageParts.map(part => part.kind)]);
+    },
+    onChatBodyQualityPreview({ patchedMessage }) {
+      calls.push(['body', patchedMessage.meta.agentMessageParts.map(part => part.kind)]);
+    },
+    onChatFormatGuardianRun({ agentRun }) {
+      runs.push(agentRun.kind);
+    },
+    onChatBodyQualityRun({ agentRun }) {
+      runs.push(agentRun.kind);
+    },
+    logger: { warn() {} },
+  });
+
+  assert.deepEqual(calls, [
+    ['format', ['chat_format.validate']],
+    ['body', ['chat_format.validate', 'chat_body_quality.review']],
+  ]);
+  assert.deepEqual(runs, ['chat_format_guardian', 'chat_body_quality_guardian']);
+  assert.equal(message.meta, undefined);
 });
 
 test('dispatchAfterReceiveEffects respects skipScripts and logs async/sync failures', async () => {

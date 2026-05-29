@@ -95,7 +95,30 @@ import {
   assert.equal(view.tabs.find(tab => tab.id === 'activity').count, 1);
   assert.equal(view.tabs.find(tab => tab.id === 'tools').count, 2);
   assert.equal(view.safety.continuationCommitPolicy.defaultStrategy, 'append_to_previous_bubble');
+  assert.equal(view.safety.sessionGate.writePreviewTools.enabled, false);
+  assert.deepEqual(view.safety.sessionGate.writePreviewTools.activeTools, []);
   console.log('ok - agent center view summarizes pending activity tools and safety state');
+}
+
+{
+  const view = buildAgentCenterView({
+    sessionGate: {
+      enabled: true,
+      allowedTools: [
+        'contact_profile.list',
+        'memory.preview_actions',
+        'variable.preview_commands',
+        'worldbook.preview_actions',
+      ],
+    },
+  });
+  assert.equal(view.safety.sessionGate.writePreviewTools.enabled, true);
+  assert.deepEqual(view.safety.sessionGate.writePreviewTools.activeTools, [
+    'memory.preview_actions',
+    'variable.preview_commands',
+    'worldbook.preview_actions',
+  ]);
+  console.log('ok - agent center view summarizes write preview model-context state');
 }
 
 {
@@ -211,4 +234,72 @@ import {
   assert.equal(skipped.pending[0].chatEmitCommit.canCommit, true);
   assert.equal(skipped.pending[0].chatEmitCommit.message, '找不到候选目标会话，请检查目标名称或 ID 后重试。');
   console.log('ok - agent center view exposes chat emit commit and undo actions after resume');
+}
+
+{
+  const pending = buildAgentCenterView({
+    pendingPermissions: [{
+      id: 'memory-preview-pending-1',
+      status: 'pending',
+      toolName: 'memory.preview_actions',
+      sessionId: 'chat:firen',
+      permissions: ['storage'],
+      argsPreview: {
+        sessionId: 'chat:firen',
+        actions: [
+          { action: 'insert', tableId: 'profile', data: { name: '菲伦' } },
+          { action: 'update', tableId: 'profile', rowId: 'r1', data: { note: 'next' } },
+        ],
+      },
+    }],
+  });
+  assert.equal(pending.pending[0].writePreview.kind, '记忆表写入预览');
+  assert.equal(pending.pending[0].writePreview.target, 'chat:firen');
+  assert.equal(pending.pending[0].writePreview.requestCount, 2);
+  assert.equal(pending.pending[0].writePreview.previewReady, false);
+  assert.equal(pending.pending[0].writePreview.currentExecutionWrites, false);
+
+  const resumed = buildAgentCenterView({
+    pendingPermissions: [{
+      id: 'worldbook-preview-pending-1',
+      status: 'allowed',
+      toolName: 'worldbook.preview_actions',
+      sessionId: 'chat:firen',
+      permissions: ['worldbook.read'],
+      argsPreview: {
+        worldId: 'world:firen',
+        actions: [{ action: 'update_entry', entryId: 'e1', patch: { content: 'next' } }],
+      },
+      resumeStatus: 'succeeded',
+      resumeResult: {
+        output: {
+          status: 'succeeded',
+          result: {
+            changed: 1,
+            skipped: 0,
+            updated: 1,
+            entryCountBefore: 3,
+            entryCountAfter: 3,
+            rollbackSnapshot: { worldId: 'world:firen', worldData: { entries: [] } },
+            entries: [{
+              kind: 'update',
+              action: 'update_entry',
+              entryId: 'e1',
+              title: '菲伦',
+              diff: { changedFields: ['content'] },
+            }],
+          },
+        },
+      },
+    }],
+  });
+  assert.equal(resumed.pending[0].writePreview.kind, '世界书写入预览');
+  assert.equal(resumed.pending[0].writePreview.target, 'world:firen');
+  assert.equal(resumed.pending[0].writePreview.previewReady, true);
+  assert.equal(resumed.pending[0].writePreview.resultSummary, '变更 1 · 跳过 0 · updated 1 · 条目 3 -> 3');
+  assert.equal(resumed.pending[0].writePreview.rollbackReady, true);
+  assert.equal(resumed.pending[0].writePreview.commit.canCommit, true);
+  assert.equal(resumed.pending[0].writePreview.commit.canUndo, false);
+  assert.match(resumed.pending[0].writePreview.entries[0], /字段：content/);
+  console.log('ok - agent center view summarizes write preview tools and commit readiness');
 }

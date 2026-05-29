@@ -113,6 +113,46 @@ const buildChatFormatReview = (run = {}) => {
   };
 };
 
+const buildChatBodyQualityReview = (run = {}) => {
+  const kind = trim(run.kind || run.type);
+  const source = trim(run.source);
+  if (kind !== 'chat_body_quality_guardian' && source !== 'chat-body-quality-guardian') return null;
+  const metadata = isPlainObject(run.metadata) ? run.metadata : {};
+  const patch = isPlainObject(metadata.patchCandidate) && metadata.patchCandidate.available === true
+    ? {
+      available: true,
+      id: trim(metadata.patchCandidate.id),
+      title: trim(metadata.patchCandidate.title, '正文优化候选'),
+      summary: trim(metadata.patchCandidate.summary),
+      risk: trim(metadata.patchCandidate.risk, 'low'),
+      preview: trim(metadata.patchCandidate.preview),
+    }
+    : null;
+  return {
+    type: 'body_quality',
+    sourceTextKind: trim(metadata.sourceTextKind),
+    hasRawOriginal: metadata.hasRawOriginal === true,
+    issueCount: toFiniteNumber(metadata.issueCount, 0),
+    issues: (Array.isArray(metadata.issues) ? metadata.issues : [])
+      .map(issue => ({
+        id: trim(issue?.id),
+        severity: trim(issue?.severity, 'warning'),
+        title: trim(issue?.title, '正文质量问题'),
+        summary: trim(issue?.summary),
+        risk: trim(issue?.risk, 'medium'),
+      }))
+      .filter(issue => issue.id || issue.title || issue.summary)
+      .slice(0, 5),
+    patchCandidate: patch,
+    actionLabels: normalizeDecisionActions(metadata.decisionActions)
+      .filter(action => action.enabled)
+      .map(action => action.label)
+      .slice(0, 5),
+  };
+};
+
+const buildAgentReview = run => buildChatFormatReview(run) || buildChatBodyQualityReview(run);
+
 export const buildAgentRunSummary = (run = {}, {
   events = [],
 } = {}) => {
@@ -147,7 +187,7 @@ export const buildAgentRunSummary = (run = {}, {
     eventCount: runEvents.length,
     stepStatusCounts: countBy(steps, step => step.status),
     lastStep,
-    review: buildChatFormatReview(run),
+    review: buildAgentReview(run),
   };
 };
 
