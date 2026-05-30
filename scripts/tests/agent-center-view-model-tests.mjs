@@ -123,6 +123,48 @@ import {
 
 {
   const view = buildAgentCenterView({
+    permissionRules: [
+      {
+        layer: 'session',
+        decision: 'allow',
+        toolName: 'contact_profile.list',
+        permission: 'storage',
+        sessionId: 'chat:a',
+        priority: 0,
+      },
+      {
+        layer: 'global',
+        decision: 'deny',
+        toolName: 'contact_profile.list',
+        permission: 'storage',
+        sessionId: 'chat:a',
+        priority: 0,
+      },
+      {
+        layer: 'session',
+        decision: 'deny',
+        toolName: 'contact_profile.list',
+        permission: 'storage',
+        sessionId: 'chat:a',
+        priority: 1,
+      },
+    ],
+  });
+  const summary = view.safety.permissionRuleSummary;
+  assert.equal(summary.total, 3);
+  assert.equal(summary.orderText, '全局 > 角色卡 > 当前会话 > Agent > 插件 > 默认');
+  assert.equal(summary.tieBreakText, '同层先看优先级，仍相同则以后添加的规则生效。');
+  assert.equal(summary.decisionCounts.allow, 1);
+  assert.equal(summary.decisionCounts.deny, 2);
+  assert.equal(summary.conflictCount, 1);
+  assert.equal(summary.visibleRules[0].layerLabel, '全局');
+  assert.equal(summary.visibleRules[0].decisionLabel, '拒绝');
+  assert.equal(summary.visibleRules[1].priority, 1);
+  console.log('ok - agent center view summarizes permission precedence for safety UI');
+}
+
+{
+  const view = buildAgentCenterView({
     agentRunView: {
       meta: { total: 3, active: 2, failures: 1 },
       filters: { limit: 3 },

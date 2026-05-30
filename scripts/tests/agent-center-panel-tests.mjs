@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
 
-import { AgentCenterPanel } from '../../src/scripts/ui/agent-center-panel.js';
+import {
+  AgentCenterPanel,
+  formatAgentCenterExportText,
+} from '../../src/scripts/ui/agent-center-panel.js';
 
 {
   const panel = new AgentCenterPanel({
@@ -779,6 +782,127 @@ import { AgentCenterPanel } from '../../src/scripts/ui/agent-center-panel.js';
   assert.match(html, /记忆变更预览/);
   assert.match(html, /接到上一气泡/);
   console.log('ok - agent center safety renders the enabled session gate state');
+}
+
+{
+  const panel = new AgentCenterPanel();
+  panel.view = {
+    safety: {
+      sessionGate: {
+        enabled: false,
+        allowedTools: [],
+        networkAllowed: false,
+        realRunnerAllowed: false,
+        writesChat: false,
+        writePreviewTools: { enabled: false, activeTools: [], availableTools: [] },
+      },
+      providerTools: { enabled: false, allowedTools: [] },
+      permissionRules: [],
+      permissionRuleSummary: {
+        total: 2,
+        decisionCounts: { allow: 1, deny: 1, ask: 0 },
+        conflictCount: 1,
+        orderText: '全局 > 角色卡 > 当前会话 > Agent > 插件 > 默认',
+        tieBreakText: '同层先看优先级，仍相同则以后添加的规则生效。',
+        visibleRules: [
+          {
+            id: 'rule-1',
+            layerLabel: '当前会话',
+            decision: 'allow',
+            decisionLabel: '允许',
+            toolName: 'contact_profile.list',
+            permission: 'storage',
+            source: 'provider-tool-permission',
+            sessionId: 'chat:a',
+          },
+        ],
+        overflow: 1,
+      },
+      continuationCommitPolicy: { defaultStrategy: 'preview_only' },
+    },
+  };
+  const html = panel.renderSafety();
+  assert.match(html, /已记住的允许规则/);
+  assert.match(html, /优先顺序：全局 &gt; 角色卡 &gt; 当前会话 &gt; Agent &gt; 插件 &gt; 默认/);
+  assert.match(html, /同层先看优先级/);
+  assert.match(html, /检测到 1 组同范围不同决定/);
+  assert.match(html, /读取联系人列表/);
+  assert.match(html, /允许 1/);
+  assert.match(html, /拒绝 1/);
+  assert.match(html, /还有 1 条未显示/);
+  console.log('ok - agent center safety explains remembered permission precedence');
+}
+
+{
+  const text = formatAgentCenterExportText({
+    meta: { pending: 1, activeRuns: 0, unreadFailedRuns: 1, tools: 1 },
+    pending: [{
+      toolName: 'contact_profile.list',
+      status: 'pending',
+      sessionId: 'chat:a',
+      resumeStatus: 'idle',
+    }],
+    activity: {
+      runs: [{
+        title: '正文检查',
+        kind: 'chat_body_quality_guardian',
+        status: 'failed',
+        sessionId: 'chat:a',
+        summary: '发现问题',
+      }],
+    },
+    tools: [{
+      name: 'contact_profile.list',
+      riskLevel: 'low',
+      permissions: ['storage'],
+      capabilities: { read: true, write: false, network: false, cost: 'none', undo: 'none', modelContext: 'allowlist', confirmation: 'allow_once' },
+    }],
+    safety: {
+      sessionGate: {
+        enabled: true,
+        networkAllowed: false,
+        realRunnerAllowed: false,
+        allowedTools: ['contact_profile.list'],
+      },
+      permissionRuleSummary: {
+        total: 2,
+        conflictCount: 1,
+        orderText: '全局 > 角色卡 > 当前会话 > Agent > 插件 > 默认',
+      },
+    },
+  });
+  assert.match(text, /Agent Center 导出/);
+  assert.match(text, /待确认 1/);
+  assert.match(text, /读取联系人列表 · 待确认 · 范围：chat:a/);
+  assert.match(text, /正文检查 · 失败 · 范围：chat:a · 发现问题/);
+  assert.match(text, /工具白名单：读取联系人列表/);
+  assert.match(text, /规则冲突：1 组/);
+  assert.doesNotMatch(text, /rawOriginal|replacementText|runnerFacade/);
+  console.log('ok - agent center export text stays user-facing and lightweight');
+}
+
+{
+  const calls = [];
+  const panel = new AgentCenterPanel({
+    exportTextFile: async (text, filename, successLabel) => {
+      calls.push({ text, filename, successLabel });
+      return true;
+    },
+  });
+  panel.view = {
+    meta: { pending: 0, activeRuns: 0, unreadFailedRuns: 0, tools: 0 },
+    pending: [],
+    activity: { runs: [] },
+    tools: [],
+    safety: { sessionGate: { enabled: false, allowedTools: [] }, permissionRuleSummary: { total: 0 } },
+  };
+  const ok = await panel.handleExport();
+  assert.equal(ok, true);
+  assert.equal(calls.length, 1);
+  assert.match(calls[0].filename, /^agent-center-\d{8}-\d{6}\.txt$/);
+  assert.equal(calls[0].successLabel, 'Agent Center 已导出');
+  assert.match(calls[0].text, /Agent Center 导出/);
+  console.log('ok - agent center export action delegates lightweight text export');
 }
 
 {

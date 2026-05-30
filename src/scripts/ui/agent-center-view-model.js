@@ -1,4 +1,8 @@
 import { buildAgentRunListView } from '../agent/agent-run-view-model.js';
+import {
+  AGENT_PERMISSION_LAYERS,
+  normalizeAgentPermissionRule,
+} from '../agent/agent-permissions.js';
 import { WRITE_PREVIEW_PROVIDER_MODEL_CONTEXT_TOOLS } from '../agent/provider-tool-request-schema.js';
 import { buildChatEmitCommitPreview } from '../agent/tools/chat-emit-commit-plan.js';
 
@@ -19,6 +23,86 @@ const trim = (value, fallback = '') => {
 const list = value => (Array.isArray(value) ? value : [value])
   .map(item => trim(item))
   .filter(Boolean);
+
+const PERMISSION_LAYER_LABELS = Object.freeze({
+  default: '默认',
+  plugin: '插件',
+  agent: 'Agent',
+  session: '当前会话',
+  roleCard: '角色卡',
+  global: '全局',
+});
+
+const PERMISSION_DECISION_LABELS = Object.freeze({
+  allow: '允许',
+  deny: '拒绝',
+  ask: '每次确认',
+});
+
+const PERMISSION_LAYER_RANK = new Map(AGENT_PERMISSION_LAYERS.map((layer, index) => [layer, index]));
+
+const permissionRuleSort = (a, b) => {
+  const layerDelta = (PERMISSION_LAYER_RANK.get(b.layer) ?? 0) - (PERMISSION_LAYER_RANK.get(a.layer) ?? 0);
+  if (layerDelta) return layerDelta;
+  const priorityDelta = Number(b.priority || 0) - Number(a.priority || 0);
+  if (priorityDelta) return priorityDelta;
+  return Number(b.index || 0) - Number(a.index || 0);
+};
+
+const permissionRuleScopeKey = rule => [
+  rule.layer,
+  rule.toolName,
+  rule.permission,
+  rule.source,
+  rule.sessionId,
+  rule.roleCardId,
+  rule.agentId,
+  rule.pluginId,
+].join('\u0001');
+
+const buildPermissionRuleSummary = (permissionRules = []) => {
+  const normalizedRules = (Array.isArray(permissionRules) ? permissionRules : [])
+    .map((rule, index) => normalizeAgentPermissionRule(rule, index));
+  const sortedRules = normalizedRules.slice().sort(permissionRuleSort);
+  const decisionCounts = normalizedRules.reduce((acc, rule) => {
+    acc[rule.decision] = Number(acc[rule.decision] || 0) + 1;
+    return acc;
+  }, { allow: 0, deny: 0, ask: 0 });
+  const scopeDecisions = new Map();
+  normalizedRules.forEach((rule) => {
+    const key = permissionRuleScopeKey(rule);
+    if (!scopeDecisions.has(key)) scopeDecisions.set(key, new Set());
+    scopeDecisions.get(key).add(rule.decision);
+  });
+  const conflictCount = Array.from(scopeDecisions.values())
+    .filter(decisions => decisions.size > 1).length;
+  const orderLabels = AGENT_PERMISSION_LAYERS
+    .slice()
+    .reverse()
+    .map(layer => PERMISSION_LAYER_LABELS[layer] || layer);
+  return {
+    total: normalizedRules.length,
+    decisionCounts,
+    conflictCount,
+    orderLabels,
+    orderText: orderLabels.join(' > '),
+    tieBreakText: '同层先看优先级，仍相同则以后添加的规则生效。',
+    visibleRules: sortedRules.slice(0, 5).map(rule => ({
+      id: rule.id,
+      layer: rule.layer,
+      layerLabel: PERMISSION_LAYER_LABELS[rule.layer] || rule.layer,
+      decision: rule.decision,
+      decisionLabel: PERMISSION_DECISION_LABELS[rule.decision] || rule.decision,
+      toolName: rule.toolName,
+      permission: rule.permission,
+      source: rule.source,
+      sessionId: rule.sessionId,
+      reason: rule.reason,
+      priority: rule.priority,
+    })),
+    overflow: Math.max(0, sortedRules.length - 5),
+  };
+};
 
 const truncate = (value = '', maxLength = 160) => {
   const text = String(value ?? '').trim().replace(/\s+/g, ' ');
@@ -362,6 +446,7 @@ const normalizeSafety = ({
       allowedTools: list(experiment.allowedTools),
     },
     permissionRules: Array.isArray(permissionRules) ? permissionRules.slice() : [],
+    permissionRuleSummary: buildPermissionRuleSummary(permissionRules),
     continuationCommitPolicy: {
       defaultStrategy: trim(policy.defaultStrategy, 'preview_only'),
       strategies: list(policy.strategies),

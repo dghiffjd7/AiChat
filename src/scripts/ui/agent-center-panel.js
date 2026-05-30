@@ -2,6 +2,9 @@ import { buildAgentCenterView } from './agent-center-view-model.js';
 import { WRITE_PREVIEW_PROVIDER_MODEL_CONTEXT_TOOLS } from '../agent/provider-tool-request-schema.js';
 import { PROVIDER_TOOL_PERMISSION_ACTIONS } from '../agent/provider-tool-permission-actions.js';
 import { appConfirm } from './app-confirm.js';
+import { buildDebugTextFilename } from './debug-panel-utils.js';
+import { exportDebugTextFile } from './debug-panel-export-utils.js';
+import { exportDebugTextFlow } from './debug-panel-runtime-utils.js';
 
 const STYLE_ID = 'agent-center-panel-style';
 
@@ -169,6 +172,22 @@ const PANEL_CSS = `
 }
 .agent-center-card-error {
     color: #be123c;
+}
+.agent-center-rule-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-top: 8px;
+}
+.agent-center-rule-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 8px;
+    align-items: center;
+    padding: 7px 8px;
+    border: 1px solid rgba(148,163,184,0.18);
+    border-radius: 8px;
+    background: var(--app-surface-card);
 }
 .agent-center-chip-row {
     display: flex;
@@ -459,6 +478,44 @@ const displayRiskLabel = risk => RISK_LABELS[trim(risk).toLowerCase()] || trim(r
 const displayPermissionLabel = permission => PERMISSION_LABELS[trim(permission)] || trim(permission);
 const displayAgentKind = kind => AGENT_KIND_LABELS[trim(kind)] || trim(kind);
 
+const permissionDecisionChipClass = decision => ({
+    allow: statusChipClass('running'),
+    deny: statusChipClass('denied'),
+    ask: statusChipClass('pending'),
+}[trim(decision)] || 'agent-center-chip');
+
+const renderPermissionRuleSummary = (summary = {}) => {
+    const total = Number(summary.total || 0);
+    const visibleRules = Array.isArray(summary.visibleRules) ? summary.visibleRules : [];
+    const overflow = Number(summary.overflow || 0);
+    const decisionCounts = summary.decisionCounts || {};
+    return `
+        <div class="agent-center-card-sub">${escapeHtml(total ? `${total} 条。用于减少同类请求的重复确认。` : '0 条。工具请求仍会逐次确认。')}</div>
+        <div class="agent-center-card-sub">优先顺序：${escapeHtml(summary.orderText || '全局 > 角色卡 > 当前会话 > Agent > 插件 > 默认')}</div>
+        <div class="agent-center-card-sub">${escapeHtml(summary.tieBreakText || '同层先看优先级，仍相同则以后添加的规则生效。')}</div>
+        ${Number(summary.conflictCount || 0) > 0 ? `<div class="agent-center-card-sub agent-center-card-error">检测到 ${Number(summary.conflictCount || 0)} 组同范围不同决定，最终按上方顺序处理。</div>` : ''}
+        ${renderChips([
+            { label: `允许 ${Number(decisionCounts.allow || 0)}` },
+            { label: `拒绝 ${Number(decisionCounts.deny || 0)}` },
+            { label: `每次确认 ${Number(decisionCounts.ask || 0)}` },
+        ])}
+        ${visibleRules.length ? `<div class="agent-center-rule-list">${visibleRules.map(rule => `
+            <div class="agent-center-rule-row">
+                <div>
+                    <div class="agent-center-card-title">${escapeHtml(displayToolName(rule.toolName))}</div>
+                    <div class="agent-center-card-sub">${escapeHtml(formatMeta([
+                        rule.layerLabel,
+                        displayPermissionLabel(rule.permission),
+                        rule.source && rule.source !== '*' ? `来源：${rule.source}` : '',
+                        rule.sessionId && rule.sessionId !== '*' ? `会话：${rule.sessionId}` : '',
+                    ]))}</div>
+                </div>
+                <span class="${escapeHtml(permissionDecisionChipClass(rule.decision))}">${escapeHtml(rule.decisionLabel || rule.decision)}</span>
+            </div>
+        `).join('')}${overflow ? `<div class="agent-center-card-sub">还有 ${overflow} 条未显示。</div>` : ''}</div>` : ''}
+    `;
+};
+
 const capabilityLabels = (capabilities = {}) => [
     capabilities.read ? '可读取' : '',
     capabilities.write ? '会写入' : '只读',
@@ -481,15 +538,93 @@ const displayRunSummary = (run = {}) => {
     return trim(run.summary || run.lastStep?.summary || run.errorMessage, '-');
 };
 
+const formatExportLine = (items = []) => items.filter(Boolean).join(' · ');
+
+export const formatAgentCenterExportText = (view = {}) => {
+    const meta = view?.meta || {};
+    const lines = [
+        'Agent Center 导出',
+        '',
+        formatExportLine([
+            `待确认 ${Number(meta.pending || 0)}`,
+            `运行中 ${Number(meta.activeRuns || 0)}`,
+            `未读失败 ${Number(meta.unreadFailedRuns || 0)}`,
+            `工具 ${Number(meta.tools || 0)}`,
+        ]),
+        '',
+        '[待确认]',
+    ];
+    const pending = Array.isArray(view?.pending) ? view.pending : [];
+    if (!pending.length) lines.push('无');
+    pending.forEach((item, index) => {
+        lines.push(formatExportLine([
+            `#${index + 1}`,
+            displayToolName(item.toolName),
+            displayStatusLabel(item.status),
+            item.sessionId ? `范围：${item.sessionId}` : '',
+            item.resumeStatus ? `执行：${displayStatusLabel(item.resumeStatus)}` : '',
+        ]));
+    });
+
+    lines.push('', '[活动]');
+    const runs = Array.isArray(view?.activity?.runs) ? view.activity.runs : [];
+    if (!runs.length) lines.push('无');
+    runs.forEach((run, index) => {
+        lines.push(formatExportLine([
+            `#${index + 1}`,
+            run.title || displayAgentKind(run.kind),
+            displayStatusLabel(run.status),
+            run.sessionId ? `范围：${run.sessionId}` : '',
+            displayRunSummary(run),
+        ]));
+    });
+
+    lines.push('', '[工具]');
+    const tools = Array.isArray(view?.tools) ? view.tools : [];
+    if (!tools.length) lines.push('无');
+    tools.forEach(tool => {
+        lines.push(formatExportLine([
+            displayToolName(tool.name || tool.title),
+            displayRiskLabel(tool.riskLevel),
+            ...(Array.isArray(tool.permissions) ? tool.permissions.map(displayPermissionLabel) : []),
+            ...(tool.capabilities ? capabilityLabels(tool.capabilities) : []),
+        ]));
+    });
+
+    const safety = view?.safety || {};
+    const gate = safety.sessionGate || {};
+    const ruleSummary = safety.permissionRuleSummary || {};
+    lines.push('', '[安全]');
+    lines.push(formatExportLine([
+        gate.enabled ? '当前会话工具：已开启' : '当前会话工具：已关闭',
+        gate.networkAllowed ? '允许联网继续' : '不会联网继续',
+        gate.realRunnerAllowed ? '允许真实继续生成' : '不会自动继续生成',
+    ]));
+    lines.push(`工具白名单：${list(gate.allowedTools).map(displayToolName).join('、') || '无'}`);
+    lines.push(`权限规则：${Number(ruleSummary.total || 0)} 条`);
+    lines.push(`规则优先顺序：${trim(ruleSummary.orderText, '全局 > 角色卡 > 当前会话 > Agent > 插件 > 默认')}`);
+    if (Number(ruleSummary.conflictCount || 0) > 0) {
+        lines.push(`规则冲突：${Number(ruleSummary.conflictCount || 0)} 组`);
+    }
+    return lines.join('\n').trim();
+};
+
 export class AgentCenterPanel {
     constructor({
         getActions = () => globalThis.window?.appBridge?.debugUiRegistry?.actions || {},
         confirm = appConfirm,
+        exportTextFile = (text, filename, successLabel) => exportDebugTextFile({
+            text,
+            filename,
+            successLabel,
+            onSuccess: (message) => globalThis.window?.toastr?.success?.(message),
+        }),
         getFailureSeenAt = () => 0,
         markFailureSeen = () => {},
     } = {}) {
         this.getActions = getActions;
         this.confirm = confirm;
+        this.exportTextFile = exportTextFile;
         this.getFailureSeenAt = getFailureSeenAt;
         this.markFailureSeen = markFailureSeen;
         this.overlayElement = null;
@@ -527,6 +662,7 @@ export class AgentCenterPanel {
                     </div>
                     <div class="agent-center-actions">
                         <button type="button" class="agent-center-button" data-action="refresh">刷新</button>
+                        <button type="button" class="agent-center-button" data-action="export">导出</button>
                         <button type="button" class="agent-center-button" data-action="close">关闭</button>
                     </div>
                 </header>
@@ -539,6 +675,7 @@ export class AgentCenterPanel {
         });
         overlay.querySelector('[data-action="close"]')?.addEventListener('click', () => this.hide());
         overlay.querySelector('[data-action="refresh"]')?.addEventListener('click', () => this.refresh());
+        overlay.querySelector('[data-action="export"]')?.addEventListener('click', () => this.handleExport());
         this.overlayElement = overlay;
         this.panelElement = overlay.querySelector('.agent-center-panel');
         this.contentElement = overlay.querySelector('.agent-center-content');
@@ -557,6 +694,29 @@ export class AgentCenterPanel {
             this.lastError = trim(err?.message || err, `${name} failed`);
             return fallback;
         }
+    }
+
+    async handleExport() {
+        const text = formatAgentCenterExportText(this.view);
+        const ok = await exportDebugTextFlow({
+            text,
+            filenamePrefix: 'agent-center',
+            successLabel: 'Agent Center 已导出',
+            emptyMessage: '暂无 Agent 记录可导出',
+            exportFailureToast: 'Agent Center 导出失败',
+            exportFailurePrefix: 'Agent Center 导出失败: ',
+            buildFilename: buildDebugTextFilename,
+            exportTextFile: this.exportTextFile,
+            onWarning: (message) => globalThis.window?.toastr?.warning?.(message),
+            onLogWarn: (message) => {
+                this.lastError = message;
+            },
+            onError: (message) => {
+                this.lastError = message;
+                globalThis.window?.toastr?.error?.(message);
+            },
+        });
+        return ok;
     }
 
     async collectView(options = {}) {
@@ -1189,7 +1349,7 @@ export class AgentCenterPanel {
             </article>
             <article class="agent-center-card">
                 <div class="agent-center-card-title">已记住的允许规则</div>
-                <div class="agent-center-card-sub">${Number((safety.permissionRules || []).length)} 条。用于减少同类请求的重复确认。</div>
+                ${renderPermissionRuleSummary(safety.permissionRuleSummary)}
             </article>
         </div>`;
     }
