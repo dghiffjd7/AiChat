@@ -739,7 +739,7 @@ import {
 {
   const calls = [];
   const timer = saveUiStateSnapshot({
-    state: { activePage: 'chat' },
+    state: { activePage: 'chat', uiMode: 'rp' },
     key: 'ui',
     kvName: 'ui-kv',
     sessionStorageLike: { setItem: (key, value) => calls.push(['session', key, JSON.parse(value)]) },
@@ -757,12 +757,12 @@ import {
   });
   assert.equal(timer, 9);
   assert.deepEqual(calls, [
-    ['session', 'ui', { activePage: 'chat' }],
-    ['local', 'ui', { activePage: 'chat' }],
+    ['session', 'ui', { activePage: 'chat', uiMode: 'rp' }],
+    ['local', 'ui', { activePage: 'chat', uiMode: 'rp' }],
     ['clear', 7],
     ['timer', 123],
-    ['disk', { name: 'ui-kv', data: { activePage: 'chat' } }],
-    ['log', 'saveUiState', { activePage: 'chat' }],
+    ['disk', { name: 'ui-kv', data: { activePage: 'chat', uiMode: 'rp' } }],
+    ['log', 'saveUiState', { activePage: 'chat', uiMode: 'rp' }],
   ]);
   console.log('ok - saveUiStateSnapshot writes both storages, reschedules disk save, and logs snapshot');
 }
@@ -825,15 +825,19 @@ import {
 
 {
   const calls = [];
-  const result = applySavedUiRestoreState({
+  const result = await applySavedUiRestoreState({
     savedState: {
       activePage: 'contacts',
+      uiMode: 'rp',
       sessionId: 's7',
       inChatRoom: true,
       at: 123,
     },
     hasPage: page => page === 'contacts',
     switchPage: page => calls.push(['page', page]),
+    setUiMode: value => calls.push(['mode', value]),
+    persistUiMode: () => calls.push(['persist-mode']),
+    applyUiModeUI: () => calls.push(['apply-mode']),
     restoreSessionShell: sid => {
       calls.push(['shell', sid]);
       return false;
@@ -845,15 +849,90 @@ import {
     page: 'contacts',
     sessionId: 's7',
     inChatRoom: true,
+    uiMode: 'rp',
     sidKnown: false,
+    roomRestored: false,
   });
   assert.deepEqual(calls, [
-    ['log', 'restoreUiState: picked', { page: 'contacts', sid: 's7', inChatRoom: true, at: 123 }],
+    ['log', 'restoreUiState: picked', { page: 'contacts', sid: 's7', inChatRoom: true, uiMode: 'rp', at: 123 }],
+    ['mode', 'rp'],
+    ['persist-mode'],
+    ['apply-mode'],
     ['page', 'contacts'],
     ['shell', 's7'],
     ['log', 'restoreUiState: sid not yet known (skip switchSession)', { sid: 's7' }],
   ]);
   console.log('ok - applySavedUiRestoreState restores page and logs unresolved shell state');
+}
+
+{
+  const calls = [];
+  const result = await applySavedUiRestoreState({
+    savedState: {
+      activePage: 'chat',
+      uiMode: 'rp',
+      sessionId: 's-room',
+      inChatRoom: true,
+    },
+    hasPage: page => page === 'chat',
+    switchPage: page => calls.push(['page', page]),
+    setUiMode: value => calls.push(['mode', value]),
+    restoreSessionShell: sid => {
+      calls.push(['shell', sid]);
+      return sid === 's-room';
+    },
+    restoreChatRoom: async payload => {
+      calls.push(['room', payload]);
+      return true;
+    },
+  });
+  assert.deepEqual(result, {
+    restored: true,
+    page: 'chat',
+    sessionId: 's-room',
+    inChatRoom: true,
+    uiMode: 'rp',
+    sidKnown: true,
+    roomRestored: true,
+  });
+  assert.deepEqual(calls, [
+    ['mode', 'rp'],
+    ['page', 'chat'],
+    ['shell', 's-room'],
+    ['room', { sessionId: 's-room', page: 'chat', uiMode: 'rp' }],
+  ]);
+  console.log('ok - applySavedUiRestoreState re-enters saved chat room when shell is known');
+}
+
+{
+  const calls = [];
+  const result = await applySavedUiRestoreState({
+    savedState: {
+      activePage: 'chat',
+      sessionId: 'rp:legacy',
+      inChatRoom: true,
+    },
+    hasPage: page => page === 'chat',
+    switchPage: page => calls.push(['page', page]),
+    setUiMode: value => calls.push(['mode', value]),
+    restoreSessionShell: sid => {
+      calls.push(['shell', sid]);
+      return sid === 'rp:legacy';
+    },
+    restoreChatRoom: payload => {
+      calls.push(['room', payload]);
+      return true;
+    },
+  });
+  assert.equal(result.uiMode, 'rp');
+  assert.equal(result.roomRestored, true);
+  assert.deepEqual(calls, [
+    ['mode', 'rp'],
+    ['page', 'chat'],
+    ['shell', 'rp:legacy'],
+    ['room', { sessionId: 'rp:legacy', page: 'chat', uiMode: 'rp' }],
+  ]);
+  console.log('ok - applySavedUiRestoreState infers rp mode from legacy rp session snapshots');
 }
 
 {

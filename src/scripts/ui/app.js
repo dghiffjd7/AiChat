@@ -19,9 +19,9 @@ import {
   writeProviderToolSessionGate,
 } from '../agent/provider-tool-session-gate.js';
 import {
+  ALL_PROVIDER_MODEL_CONTEXT_TOOLS,
   buildProviderToolRequestSchema,
   DEFAULT_PROVIDER_BASE_MODEL_CONTEXT_TOOLS,
-  DEFAULT_PROVIDER_MODEL_CONTEXT_TOOLS,
   WRITE_PREVIEW_PROVIDER_MODEL_CONTEXT_TOOLS,
 } from '../agent/provider-tool-request-schema.js';
 import {
@@ -1079,8 +1079,12 @@ const initApp = async () => {
     getContactProfileSettings: window.appBridge.getContactProfileSettings?.bind(window.appBridge),
     updateContactProfileSettings: window.appBridge.updateContactProfileSettings?.bind(window.appBridge),
     listContactProfiles: window.appBridge.listContactProfiles?.bind(window.appBridge),
+    getContactProfile: window.appBridge.getContactProfile?.bind(window.appBridge),
     upsertContactProfile: window.appBridge.upsertContactProfile?.bind(window.appBridge),
     deleteContactProfile: window.appBridge.deleteContactProfile?.bind(window.appBridge),
+    listContactProfilePendingUpdates: window.appBridge.listContactProfilePendingUpdates?.bind(window.appBridge),
+    approveContactProfilePendingUpdate: window.appBridge.approveContactProfilePendingUpdate?.bind(window.appBridge),
+    denyContactProfilePendingUpdate: window.appBridge.denyContactProfilePendingUpdate?.bind(window.appBridge),
   });
   const turnCheckpointStore = new TurnCheckpointStore();
   registerRuntimeServiceBridgeContract(window.appBridge, {
@@ -2030,7 +2034,7 @@ const initApp = async () => {
     logger,
   });
   const providerDefaultModelContextTools = Array.from(DEFAULT_PROVIDER_BASE_MODEL_CONTEXT_TOOLS);
-  const providerModelContextTools = Array.from(DEFAULT_PROVIDER_MODEL_CONTEXT_TOOLS);
+  const providerModelContextTools = Array.from(ALL_PROVIDER_MODEL_CONTEXT_TOOLS);
   const providerModelContextToolSet = new Set(providerModelContextTools);
   const normalizeProviderModelContextToolList = (tools = [], fallback = providerDefaultModelContextTools) => {
     const values = (Array.isArray(tools) ? tools : [tools])
@@ -12584,6 +12588,7 @@ Phase G（Frame 36）：循环衔接
     loadDiskState: () => safeInvoke('load_kv', { name: getUiStateKvName() }),
     uiLog,
     getActivePage: () => activePage,
+    getUiMode: () => uiMode,
     isChatRoomVisible: () => Boolean(chatRoom ? !chatRoom.classList.contains('hidden') : false),
     getCurrentSessionId: () => chatStore.getCurrent(),
     hasKnownSession: sid => hasPersonaScopedSession({
@@ -12610,6 +12615,24 @@ Phase G（Frame 36）：循环衔接
     }),
     hasPage: page => Boolean(pages[page]),
     switchPage: (...args) => switchPage(...args),
+    setUiMode: value => {
+      uiMode = value === 'rp' ? 'rp' : 'chat';
+    },
+    persistUiMode,
+    applyUiModeUI,
+    restoreChatRoom: async ({ sessionId, page }) => {
+      const sid = String(sessionId || '').trim();
+      if (!sid) return false;
+      const contact = contactsStore.getContact(sid);
+      const title = isRpSessionId(sid)
+        ? String(getRpTitle?.() || '').trim()
+        : String(contact?.name || sid).trim();
+      const result = await enterChatRoom(sid, title || sid, page || 'chat', {
+        suppressInitialAutoScroll: true,
+      });
+      if (isRpSessionId(sid)) refreshRpToolbar(sid);
+      return result?.blocked !== true;
+    },
   });
   const saveUiState = () => {
     try {

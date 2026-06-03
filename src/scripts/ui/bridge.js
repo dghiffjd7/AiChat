@@ -621,12 +621,42 @@ class AppBridge {
     return this.contactProfileStore?.listProfiles?.() || [];
   }
 
+  getContactProfile(contactId = '') {
+    return this.contactProfileStore?.getProfile?.(contactId) || null;
+  }
+
   upsertContactProfile(profile = {}) {
     return this.contactProfileStore?.upsertProfile?.(profile) || null;
   }
 
   deleteContactProfile(contactId = '') {
     return this.contactProfileStore?.deleteProfile?.(contactId) || false;
+  }
+
+  listContactProfilePendingUpdates() {
+    return this.contactProfileStore?.listPendingUpdates?.() || [];
+  }
+
+  approveContactProfilePendingUpdate(request = {}) {
+    const id = String(typeof request === 'string' ? request : request?.id || '').trim();
+    if (!id) return { ok: false, reason: 'missing_id' };
+    const pending = (this.contactProfileStore?.listPendingUpdates?.() || [])
+      .find(item => String(item?.id || '').trim() === id);
+    if (!pending?.profile) return { ok: false, reason: 'missing_pending_update' };
+    const saved = this.contactProfileStore?.upsertProfile?.(pending.profile) || null;
+    if (saved) this.contactProfileStore?.clearPendingUpdate?.(id);
+    return {
+      ok: Boolean(saved),
+      contactId: String(saved?.contactId || pending?.contactId || '').trim(),
+    };
+  }
+
+  denyContactProfilePendingUpdate(request = {}) {
+    const id = String(typeof request === 'string' ? request : request?.id || '').trim();
+    if (!id) return { ok: false, reason: 'missing_id' };
+    return {
+      ok: Boolean(this.contactProfileStore?.clearPendingUpdate?.(id)),
+    };
   }
 
   setContextBuilder(fn) {

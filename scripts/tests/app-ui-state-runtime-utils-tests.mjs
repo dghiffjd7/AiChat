@@ -11,6 +11,7 @@ import { createAppUiStateRuntime } from '../../src/scripts/ui/app-ui-state-runti
     localStorageLike: 'local-storage',
     uiLog: () => {},
     getActivePage: () => 'contacts',
+    getUiMode: () => 'rp',
     isChatRoomVisible: () => true,
     getCurrentSessionId: () => 'session-1',
     nowFn: () => 123456,
@@ -25,6 +26,7 @@ import { createAppUiStateRuntime } from '../../src/scripts/ui/app-ui-state-runti
   assert.deepEqual(calls, [{
     state: {
       activePage: 'contacts',
+      uiMode: 'rp',
       inChatRoom: true,
       sessionId: 'session-1',
       at: 123456,
@@ -143,9 +145,21 @@ import { createAppUiStateRuntime } from '../../src/scripts/ui/app-ui-state-runti
     uiLog: (...args) => calls.push(['ui-log', ...args]),
     hasPage: (page) => page === 'chat',
     switchPage: (page) => calls.push(['switch-page', page]),
+    setUiMode: value => calls.push(['mode', value]),
+    persistUiMode: () => calls.push(['persist-mode']),
+    applyUiModeUI: () => calls.push(['apply-mode']),
+    restoreChatRoom: payload => {
+      calls.push(['restore-room', payload]);
+      return true;
+    },
     runSavedRestoreFlow: async (payload) => {
       calls.push(['run-restore', payload]);
-      const applied = payload.applySavedState({ activePage: 'chat', sessionId: 'session-1' });
+      const applied = await payload.applySavedState({
+        activePage: 'chat',
+        uiMode: 'rp',
+        sessionId: 'session-1',
+        inChatRoom: true,
+      });
       calls.push(['applied', applied]);
       return { restored: true };
     },
@@ -165,10 +179,19 @@ import { createAppUiStateRuntime } from '../../src/scripts/ui/app-ui-state-runti
   assert.equal(calls[0][0], 'run-restore');
   assert.equal(typeof calls[0][1].pickSavedUiState, 'function');
   assert.deepEqual(calls[1], ['apply-saved', {
-    savedState: { activePage: 'chat', sessionId: 'session-1' },
+    savedState: {
+      activePage: 'chat',
+      uiMode: 'rp',
+      sessionId: 'session-1',
+      inChatRoom: true,
+    },
     hasPage: calls[1][1].hasPage,
     switchPage: calls[1][1].switchPage,
+    setUiMode: calls[1][1].setUiMode,
+    persistUiMode: calls[1][1].persistUiMode,
+    applyUiModeUI: calls[1][1].applyUiModeUI,
     restoreSessionShell: calls[1][1].restoreSessionShell,
+    restoreChatRoom: calls[1][1].restoreChatRoom,
     uiLog: calls[1][1].uiLog,
   }]);
   assert.deepEqual(calls[2], ['applied', { page: 'chat', session: 'session-1' }]);

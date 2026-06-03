@@ -249,8 +249,9 @@ const createDocumentLike = () => {
     setUiStateArmed: value => calls.push(['uiStateArmed', value]),
     saveUiState: () => calls.push('saveUiState'),
   });
-  assert.equal(uiMode, 'chat');
+  assert.equal(uiMode, 'rp');
   assert.deepEqual(calls, [
+    ['setUiMode', 'rp'],
     'restore',
     ['setActivePage', 'chat'],
     ['switchPage', 'chat'],
@@ -259,13 +260,10 @@ const createDocumentLike = () => {
     'world',
     'refresh',
     'applyUiModeUI',
-    ['setUiMode', 'chat'],
-    'persistUiMode',
-    'applyUiModeUI',
     ['uiStateArmed', true],
     'saveUiState',
   ]);
-  console.log('ok - runAppBootRestoreFlow restores page shell and reapplies boot ui state');
+  console.log('ok - runAppBootRestoreFlow restores page shell without forcing rp mode back to chat');
 }
 
 {

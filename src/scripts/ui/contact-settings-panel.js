@@ -108,6 +108,38 @@ const applyMemoryTableSnapshot = async ({
         emitSharedMemoryRowsUpdated({ target: window, sessionId, templateId }),
 });
 
+const trimProfileText = (value, fallback = '') => {
+    const text = String(value ?? '').trim();
+    return text || fallback;
+};
+
+const listProfileText = (items = [], {
+    field = '',
+    limit = 6,
+} = {}) => {
+    const source = Array.isArray(items) ? items : [items];
+    const values = source
+        .map(item => trimProfileText(field && item && typeof item === 'object' ? item[field] : item))
+        .filter(Boolean)
+        .slice(0, Math.max(0, Number(limit) || 0));
+    return values.join('、');
+};
+
+const formatProfileUpdatedAt = (value = 0) => {
+    const time = Number(value || 0);
+    if (!Number.isFinite(time) || time <= 0) return '';
+    try {
+        return new Date(time).toLocaleString();
+    } catch {
+        return '';
+    }
+};
+
+const clearElement = (element) => {
+    if (!element) return;
+    while (element.firstChild) element.removeChild(element.firstChild);
+};
+
 export class ContactSettingsPanel {
     constructor({
         contactsStore,
@@ -170,6 +202,14 @@ export class ContactSettingsPanel {
         this.memoryShareSummary = null;
         this.memoryShareRuntime = null;
         this.exportExperiencePackBtn = null;
+        this.contactProfileButton = null;
+        this.contactProfileOverlay = null;
+        this.contactProfilePanel = null;
+        this.contactProfileTitle = null;
+        this.contactProfileSubtitle = null;
+        this.contactProfileBody = null;
+        this.contactProfileRefreshButton = null;
+        this.contactProfileGenerateButton = null;
     }
 
     resolveDefaultMemoryTemplateId() {
@@ -312,6 +352,11 @@ export class ContactSettingsPanel {
         const memoryShareButtonStyle = buildSessionBlockButtonStyle();
         const memoryShareSummaryStyle = buildSessionHelperTextStyle({ marginTop: 8 });
         const bridgeTitleStyle = buildSessionFieldLabelStyle({ marginBottom: 10 });
+        const contactProfileButtonStyle = buildSessionUtilityButtonStyle({
+            padding: '7px 10px',
+            fontSize: 12,
+            whiteSpace: 'nowrap',
+        });
 
         shell.body.innerHTML = `
                 <div style="${topRowStyle}">
@@ -425,7 +470,10 @@ export class ContactSettingsPanel {
                     </div>
 
                     <div id="contact-memory-table-section" style="${memoryTableBoxStyle}">
-                        <div style="${fieldLabelStyle}">记忆表格</div>
+                        <div style="${summaryHeaderRowStyle}">
+                            <div style="${fieldLabelStyle}; margin-bottom:0;">记忆表格</div>
+                            <button id="contact-profile-manage" type="button" style="${contactProfileButtonStyle}">联系人画像</button>
+                        </div>
                         <div id="contact-memory-table-content"></div>
                     </div>
 	                </div>
@@ -467,6 +515,7 @@ export class ContactSettingsPanel {
         this.memoryShareButton = this.panel.querySelector('#contact-memory-share-manage');
         this.memoryShareSummary = this.panel.querySelector('#contact-memory-share-summary');
         this.exportExperiencePackBtn = this.panel.querySelector('#contact-export-experience-pack');
+        this.contactProfileButton = this.panel.querySelector('#contact-profile-manage');
         const summariesClearButton = this.panel.querySelector('#contact-summaries-clear');
         const summariesBatchButton = this.panel.querySelector('#contact-summaries-batch');
         const summariesBatchCancelButton = this.panel.querySelector('#contact-summaries-batch-cancel');
@@ -537,6 +586,9 @@ export class ContactSettingsPanel {
             warnMessage: 'open memory share manager failed',
             errorMessage: '打开记忆共享失败',
             toastr: window.toastr,
+        });
+        this.contactProfileButton?.addEventListener('click', () => {
+            this.openContactProfileManager();
         });
         this.resetVarsBtn?.addEventListener('click', async () => {
             const sid = this.getSessionId();
@@ -830,6 +882,304 @@ export class ContactSettingsPanel {
 
     async saveMemoryShareManager() {
         await this.ensureMemoryShareRuntime().saveMemoryShareManager();
+    }
+
+    getContactProfileBridge() {
+        return typeof window !== 'undefined' ? window.appBridge : null;
+    }
+
+    getCurrentContactProfile(contactId = this.getSessionId()) {
+        const id = trimProfileText(contactId);
+        if (!id) return null;
+        const bridge = this.getContactProfileBridge();
+        try {
+            const direct = bridge?.getContactProfile?.(id);
+            if (direct) return direct;
+        } catch {}
+        try {
+            return (bridge?.listContactProfiles?.() || [])
+                .find(profile => trimProfileText(profile?.contactId || profile?.id) === id) || null;
+        } catch {
+            return null;
+        }
+    }
+
+    listContactProfilePendingUpdates(contactId = this.getSessionId()) {
+        const id = trimProfileText(contactId);
+        if (!id) return [];
+        const bridge = this.getContactProfileBridge();
+        try {
+            return (bridge?.listContactProfilePendingUpdates?.() || [])
+                .filter(item => trimProfileText(item?.contactId || item?.profile?.contactId) === id);
+        } catch {
+            return [];
+        }
+    }
+
+    callContactProfileAction(actionName = '', payload = {}) {
+        const bridge = this.getContactProfileBridge();
+        const direct = bridge?.[actionName];
+        if (typeof direct === 'function') return direct.call(bridge, payload);
+        const debugAction = bridge?.debugUiRegistry?.actions?.[actionName];
+        if (typeof debugAction === 'function') return debugAction(payload);
+        return null;
+    }
+
+    describeContactProfile(profile = {}) {
+        const parts = [];
+        const relationship = trimProfileText(profile?.relationship?.current);
+        const focus = listProfileText(profile?.interaction_focus, { limit: 4 });
+        const traits = listProfileText(profile?.stable_traits, { field: 'label', limit: 3 });
+        const events = listProfileText(profile?.important_events, { field: 'label', limit: 2 });
+        if (relationship) parts.push(relationship);
+        if (focus) parts.push(`近期主题：${focus}`);
+        if (traits) parts.push(`特征：${traits}`);
+        if (events) parts.push(`事件：${events}`);
+        return parts.join('；');
+    }
+
+    createContactProfileField(label = '', value = '') {
+        const text = trimProfileText(value);
+        if (!text) return null;
+        const row = document.createElement('div');
+        row.style.cssText = 'display:grid; grid-template-columns:86px minmax(0, 1fr); gap:8px; align-items:start; margin-top:8px;';
+        const labelEl = document.createElement('div');
+        labelEl.style.cssText = 'color:var(--app-text-muted); font-size:12px;';
+        labelEl.textContent = label;
+        const valueEl = document.createElement('div');
+        valueEl.style.cssText = 'color:var(--app-text-primary); font-size:13px; line-height:1.55; white-space:pre-wrap; overflow-wrap:anywhere;';
+        valueEl.textContent = text;
+        row.appendChild(labelEl);
+        row.appendChild(valueEl);
+        return row;
+    }
+
+    createContactProfileButton(label = '', {
+        danger = false,
+        primary = false,
+    } = {}) {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.textContent = label;
+        button.style.cssText = `
+            padding:8px 10px; border-radius:10px; cursor:pointer; font-weight:800;
+            border:1px solid ${danger ? '#fecaca' : (primary ? '#2563eb' : 'var(--app-border-default)')};
+            background:${primary ? '#2563eb' : 'var(--app-surface-card)'};
+            color:${primary ? 'white' : (danger ? '#b91c1c' : 'var(--app-text-primary)')};
+        `;
+        return button;
+    }
+
+    ensureContactProfileModal() {
+        if (this.contactProfileOverlay) return;
+        const overlay = document.createElement('div');
+        overlay.id = 'contact-profile-overlay';
+        overlay.className = 'app-themed-overlay';
+        overlay.style.cssText = `
+            display:none; position:fixed; inset:0; z-index:23000;
+            background:rgba(0,0,0,0.45); align-items:center; justify-content:center;
+            padding:calc(12px + env(safe-area-inset-top, 0px)) calc(12px + env(safe-area-inset-right, 0px)) calc(12px + env(safe-area-inset-bottom, 0px)) calc(12px + env(safe-area-inset-left, 0px));
+        `;
+        const panel = document.createElement('div');
+        panel.id = 'contact-profile-panel';
+        panel.className = 'app-themed-panel';
+        panel.style.cssText = `
+            width:min(640px, 100%); max-height:calc(100dvh - 24px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
+            background:var(--app-surface-card); color:var(--app-text-primary);
+            border:1px solid var(--app-border-default); border-radius:14px; box-shadow:0 16px 48px rgba(0,0,0,0.32);
+            overflow:hidden; display:flex; flex-direction:column;
+        `;
+        const header = document.createElement('div');
+        header.style.cssText = 'padding:14px 16px; border-bottom:1px solid var(--app-border-subtle); background:var(--app-surface-subtle); display:flex; align-items:center; justify-content:space-between; gap:10px;';
+        const titleWrap = document.createElement('div');
+        titleWrap.style.minWidth = '0';
+        const title = document.createElement('div');
+        title.style.cssText = 'font-weight:900; color:var(--app-text-primary);';
+        title.textContent = '联系人画像';
+        const subtitle = document.createElement('div');
+        subtitle.style.cssText = 'margin-top:2px; color:var(--app-text-muted); font-size:12px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;';
+        titleWrap.appendChild(title);
+        titleWrap.appendChild(subtitle);
+        const closeButton = document.createElement('button');
+        closeButton.type = 'button';
+        closeButton.textContent = '×';
+        closeButton.style.cssText = SESSION_PANEL_STYLES.closeButton;
+        header.appendChild(titleWrap);
+        header.appendChild(closeButton);
+
+        const body = document.createElement('div');
+        body.style.cssText = 'padding:14px 16px; overflow:auto; flex:1; min-height:0; -webkit-overflow-scrolling:touch;';
+        const footer = document.createElement('div');
+        footer.style.cssText = buildSessionFooterStyle({ safeAreaBottom: true, alignItems: 'center' });
+        const refreshButton = this.createContactProfileButton('刷新');
+        const generateButton = this.createContactProfileButton('生成候选', { primary: true });
+        const doneButton = this.createContactProfileButton('关闭');
+        footer.appendChild(refreshButton);
+        footer.appendChild(generateButton);
+        footer.appendChild(doneButton);
+
+        panel.appendChild(header);
+        panel.appendChild(body);
+        panel.appendChild(footer);
+        overlay.appendChild(panel);
+        document.body.appendChild(overlay);
+
+        overlay.addEventListener('click', () => this.closeContactProfileManager());
+        panel.addEventListener('click', event => event.stopPropagation());
+        closeButton.addEventListener('click', () => this.closeContactProfileManager());
+        doneButton.addEventListener('click', () => this.closeContactProfileManager());
+        refreshButton.addEventListener('click', () => this.renderContactProfileManager());
+        generateButton.addEventListener('click', () => this.runContactProfileCandidateUpdate());
+
+        this.contactProfileOverlay = overlay;
+        this.contactProfilePanel = panel;
+        this.contactProfileTitle = title;
+        this.contactProfileSubtitle = subtitle;
+        this.contactProfileBody = body;
+        this.contactProfileRefreshButton = refreshButton;
+        this.contactProfileGenerateButton = generateButton;
+    }
+
+    closeContactProfileManager() {
+        if (this.contactProfileOverlay) this.contactProfileOverlay.style.display = 'none';
+    }
+
+    async openContactProfileManager() {
+        this.ensureContactProfileModal();
+        if (this.contactProfileOverlay) this.contactProfileOverlay.style.display = 'flex';
+        await this.renderContactProfileManager();
+    }
+
+    appendContactProfileCard(title = '') {
+        const card = document.createElement('section');
+        card.style.cssText = buildSessionSurfaceBoxStyle({
+            margin: '0 0 12px',
+            padding: 12,
+            radius: 10,
+            background: 'var(--app-surface-subtle)',
+        });
+        if (title) {
+            const titleEl = document.createElement('div');
+            titleEl.style.cssText = 'font-weight:900; margin-bottom:8px; color:var(--app-text-primary);';
+            titleEl.textContent = title;
+            card.appendChild(titleEl);
+        }
+        this.contactProfileBody?.appendChild(card);
+        return card;
+    }
+
+    appendContactProfileEmpty(message = '') {
+        const empty = this.appendContactProfileCard('');
+        empty.style.textAlign = 'center';
+        empty.style.color = 'var(--app-text-muted)';
+        empty.style.fontWeight = '700';
+        empty.textContent = message;
+    }
+
+    async renderContactProfileManager() {
+        this.ensureContactProfileModal();
+        const body = this.contactProfileBody;
+        if (!body) return;
+        clearElement(body);
+        const sessionId = trimProfileText(this.getSessionId());
+        const contact = sessionId ? (this.contactsStore?.getContact?.(sessionId) || {}) : {};
+        const displayName = trimProfileText(contact.name || contact.displayName || sessionId, '当前联系人');
+        if (this.contactProfileTitle) this.contactProfileTitle.textContent = '联系人画像';
+        if (this.contactProfileSubtitle) this.contactProfileSubtitle.textContent = `${displayName} · ${sessionId || '-'}`;
+
+        const profile = this.getCurrentContactProfile(sessionId);
+        const pendingUpdates = this.listContactProfilePendingUpdates(sessionId);
+        if (!profile && !pendingUpdates.length) {
+            this.appendContactProfileEmpty('还没有画像候选。');
+        }
+
+        if (profile) {
+            const card = this.appendContactProfileCard('当前画像');
+            [
+                this.createContactProfileField('名称', trimProfileText(profile.displayName || displayName)),
+                this.createContactProfileField('关系', trimProfileText(profile.relationship?.current)),
+                this.createContactProfileField('互动', trimProfileText(profile.relationship?.user_dynamic)),
+                this.createContactProfileField('近期主题', listProfileText(profile.interaction_focus, { limit: 8 })),
+                this.createContactProfileField('触发词', listProfileText(profile.trigger_keywords, { limit: 12 })),
+                this.createContactProfileField('稳定特征', listProfileText(profile.stable_traits, { field: 'label', limit: 6 })),
+                this.createContactProfileField('重要事件', listProfileText(profile.important_events, { field: 'label', limit: 4 })),
+                this.createContactProfileField('注意事项', listProfileText(profile.negative_or_sensitive, { limit: 6 })),
+                this.createContactProfileField('更新时间', formatProfileUpdatedAt(profile.updatedAt)),
+            ].filter(Boolean).forEach(row => card.appendChild(row));
+        }
+
+        pendingUpdates.forEach((item) => {
+            const card = this.appendContactProfileCard('待保存候选');
+            const profileSummary = this.describeContactProfile(item.profile || {});
+            [
+                this.createContactProfileField('原因', trimProfileText(item.reason, '手动更新')),
+                this.createContactProfileField('摘要', profileSummary || trimProfileText(item.raw).slice(0, 240)),
+                this.createContactProfileField('时间', formatProfileUpdatedAt(item.updatedAt || item.createdAt)),
+            ].filter(Boolean).forEach(row => card.appendChild(row));
+            const actions = document.createElement('div');
+            actions.style.cssText = 'display:flex; gap:8px; justify-content:flex-end; flex-wrap:wrap; margin-top:12px;';
+            const approve = this.createContactProfileButton('保存画像', { primary: true });
+            const deny = this.createContactProfileButton('忽略', { danger: true });
+            approve.addEventListener('click', () => this.handleContactProfilePendingAction('approve', item.id));
+            deny.addEventListener('click', () => this.handleContactProfilePendingAction('deny', item.id));
+            actions.appendChild(approve);
+            actions.appendChild(deny);
+            card.appendChild(actions);
+        });
+    }
+
+    async runContactProfileCandidateUpdate() {
+        const sessionId = trimProfileText(this.getSessionId());
+        if (!sessionId) return;
+        const button = this.contactProfileGenerateButton;
+        if (button) button.disabled = true;
+        try {
+            const result = await Promise.resolve(this.callContactProfileAction('runContactProfileUpdate', {
+                sessionId,
+                contactId: sessionId,
+                reason: 'manual_contact_settings',
+                force: true,
+            }));
+            if (!result) {
+                window.toastr?.info?.('当前环境暂不支持生成画像候选');
+                return;
+            }
+            window.toastr?.success?.('已生成画像候选');
+            await this.renderContactProfileManager();
+        } catch (err) {
+            logger.warn('run contact profile update failed', err);
+            window.toastr?.error?.(err?.message || '生成画像候选失败');
+        } finally {
+            if (button) button.disabled = false;
+        }
+    }
+
+    async handleContactProfilePendingAction(action = '', pendingId = '') {
+        const id = trimProfileText(pendingId);
+        if (!id) return;
+        const approving = action === 'approve';
+        const ok = await appConfirm({
+            title: approving ? '保存联系人画像' : '忽略画像候选',
+            message: approving ? '保存后会用于后续提示词上下文和动态弱触发。' : '忽略只会清除本次候选，不删除已有画像。',
+            danger: !approving,
+            confirmText: approving ? '保存' : '忽略',
+        });
+        if (!ok) return;
+        try {
+            const result = await Promise.resolve(this.callContactProfileAction(
+                approving ? 'approveContactProfilePendingUpdate' : 'denyContactProfilePendingUpdate',
+                { id },
+            ));
+            if (!result?.ok) {
+                window.toastr?.error?.(approving ? '保存画像失败' : '忽略候选失败');
+                return;
+            }
+            window.toastr?.success?.(approving ? '已保存画像' : '已忽略候选');
+            await this.renderContactProfileManager();
+        } catch (err) {
+            logger.warn('contact profile pending action failed', err);
+            window.toastr?.error?.(err?.message || '画像候选处理失败');
+        }
     }
 
     populate() {

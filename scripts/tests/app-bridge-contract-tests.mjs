@@ -492,20 +492,31 @@ import {
   const appBridge = {};
   const memoryTableStore = { id: 'memory-table-store' };
   const memoryTemplateStore = { id: 'memory-template-store' };
+  const profile = { contactId: 'contact:1', displayName: '菲伦' };
   registerMemoryStoreBridgeContract(appBridge, {
     setMemoryTableStore: store => ({ store }),
     setMemoryTemplateStore: store => ({ store }),
     getMemoryTableStore: () => memoryTableStore,
     getMemoryTemplateStore: () => memoryTemplateStore,
+    listContactProfiles: () => [profile],
+    getContactProfile: id => (id === 'contact:1' ? profile : null),
+    listContactProfilePendingUpdates: () => [{ id: 'pending:1', contactId: 'contact:1' }],
+    approveContactProfilePendingUpdate: ({ id }) => ({ ok: id === 'pending:1' }),
+    denyContactProfilePendingUpdate: ({ id }) => ({ ok: id === 'pending:1' }),
   });
   assert.deepEqual(appBridge.setMemoryTableStore(memoryTableStore), { store: memoryTableStore });
   assert.deepEqual(appBridge.setMemoryTemplateStore(memoryTemplateStore), { store: memoryTemplateStore });
   assert.equal(appBridge.getMemoryTableStore(), memoryTableStore);
   assert.equal(appBridge.getMemoryTemplateStore(), memoryTemplateStore);
+  assert.deepEqual(appBridge.listContactProfiles(), [profile]);
+  assert.equal(appBridge.getContactProfile('contact:1'), profile);
+  assert.deepEqual(appBridge.listContactProfilePendingUpdates(), [{ id: 'pending:1', contactId: 'contact:1' }]);
+  assert.deepEqual(appBridge.approveContactProfilePendingUpdate({ id: 'pending:1' }), { ok: true });
+  assert.deepEqual(appBridge.denyContactProfilePendingUpdate({ id: 'pending:1' }), { ok: true });
   const registry = getBridgeContractRegistry(appBridge);
   assert.equal(registry.contracts.getMemoryTableStore.domain, BRIDGE_CONTRACT_DOMAINS.memoryStore);
-  assert.equal(registry.domains[BRIDGE_CONTRACT_DOMAINS.memoryStore].getMemoryTemplateStore, true);
-  console.log('ok - registerMemoryStoreBridgeContract assigns memory store getters');
+  assert.equal(registry.domains[BRIDGE_CONTRACT_DOMAINS.memoryStore].getContactProfile, true);
+  console.log('ok - registerMemoryStoreBridgeContract assigns memory and contact profile store helpers');
 }
 
 {

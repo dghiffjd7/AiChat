@@ -7,6 +7,7 @@ import { VertexAIProvider } from '../../src/scripts/api/providers/vertexai.js';
 import { createProviderToolCallDeltaAccumulator } from '../../src/scripts/agent/provider-tool-call-delta-adapter.js';
 import { normalizeProviderToolCall } from '../../src/scripts/agent/provider-tool-call-parts.js';
 import {
+  CHAT_EMIT_PROVIDER_MODEL_CONTEXT_TOOLS,
   DEFAULT_PROVIDER_BASE_MODEL_CONTEXT_TOOLS,
   PROVIDER_TOOL_REQUEST_FORMATS,
   buildProviderToolRequestSchema,
@@ -130,6 +131,23 @@ const createRegistry = ({
     provider: 'openai',
     model: 'gpt-tool',
     sessionId: 's1',
+  });
+
+  assert.equal(schema.enabled, false);
+  assert.equal(schema.diagnostics.reason, 'no allowed provider tools are registered');
+  console.log('ok - provider tool request schema keeps chat_emit_private out of default model context');
+}
+
+{
+  const schema = buildProviderToolRequestSchema({
+    debugUiRegistry: createRegistry({
+      gate: { enabled: true, allowedTools: ['chat.emit_private'] },
+      tools: [chatEmitPrivateTool],
+    }),
+    provider: 'openai',
+    model: 'gpt-tool',
+    sessionId: 's1',
+    allowedModelContextTools: CHAT_EMIT_PROVIDER_MODEL_CONTEXT_TOOLS,
   });
 
   assert.equal(schema.enabled, true);

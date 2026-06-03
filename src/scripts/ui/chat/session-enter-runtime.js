@@ -680,7 +680,11 @@ export const applySavedUiRestoreState = ({
   savedState = null,
   hasPage = null,
   switchPage = null,
+  setUiMode = null,
+  persistUiMode = null,
+  applyUiModeUI = null,
   restoreSessionShell = null,
+  restoreChatRoom = null,
   uiLog = null,
 } = {}) => {
   if (!savedState || typeof savedState !== 'object') {
@@ -689,36 +693,70 @@ export const applySavedUiRestoreState = ({
       page: '',
       sessionId: '',
       inChatRoom: false,
+      uiMode: '',
       sidKnown: false,
+      roomRestored: false,
     };
   }
   const page = String(savedState?.activePage || '').trim();
   const sid = String(savedState?.sessionId || '').trim();
   const inChatRoom = Boolean(savedState?.inChatRoom);
+  const rawSavedUiMode = Object.prototype.hasOwnProperty.call(savedState, 'uiMode')
+    ? String(savedState?.uiMode || '').trim().toLowerCase()
+    : '';
+  const shouldRestoreUiMode = Boolean(rawSavedUiMode) || sid.startsWith('rp:');
+  const uiMode = rawSavedUiMode === 'rp' || (!rawSavedUiMode && sid.startsWith('rp:')) ? 'rp' : 'chat';
   try {
     uiLog?.('restoreUiState: picked', {
       page,
       sid,
       inChatRoom,
+      ...(shouldRestoreUiMode ? { uiMode } : {}),
       at: savedState?.at || 0,
     });
   } catch {}
+  if (shouldRestoreUiMode) {
+    try {
+      setUiMode?.(uiMode);
+    } catch {}
+    try {
+      persistUiMode?.();
+    } catch {}
+    try {
+      applyUiModeUI?.();
+    } catch {}
+  }
   try {
     if (page && hasPage?.(page)) switchPage?.(page);
   } catch {}
   const sidKnown = sid ? Boolean(restoreSessionShell?.(sid)) : false;
+  const result = {
+    restored: true,
+    page,
+    sessionId: sid,
+    inChatRoom,
+    uiMode: shouldRestoreUiMode ? uiMode : '',
+    sidKnown,
+    roomRestored: false,
+  };
+  if (inChatRoom && sidKnown && typeof restoreChatRoom === 'function') {
+    try {
+      const restored = restoreChatRoom({ sessionId: sid, page, uiMode });
+      if (restored && typeof restored.then === 'function') {
+        return restored.then(value => ({
+          ...result,
+          roomRestored: Boolean(value),
+        })).catch(() => result);
+      }
+      result.roomRestored = Boolean(restored);
+    } catch {}
+  }
   try {
     if (sid && !sidKnown) {
       uiLog?.('restoreUiState: sid not yet known (skip switchSession)', { sid });
     }
   } catch {}
-  return {
-    restored: true,
-    page,
-    sessionId: sid,
-    inChatRoom,
-    sidKnown,
-  };
+  return result;
 };
 
 export const reconcileHydratedStoreUiState = async ({
@@ -1112,7 +1150,7 @@ export const runSavedUiRestoreFlow = async ({
     return { restored: false, missing: true };
   }
   const result = typeof applySavedState === 'function'
-    ? (applySavedState(savedState) || { restored: false })
+    ? ((await Promise.resolve(applySavedState(savedState))) || { restored: false })
     : { restored: false };
   return {
     missing: false,

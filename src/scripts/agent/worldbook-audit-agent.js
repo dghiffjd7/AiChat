@@ -180,16 +180,16 @@ export const createWorldbookAuditAgent = ({
     }
     return agentTaskRuntime.enqueue({
       kind: 'worldbook_audit',
-      title: 'Worldbook audit',
+      title: '世界书检查',
       sessionId: trim(src.sessionId),
-      source: 'worldbook-audit-agent',
+      source: 'worldbook-check',
       trigger: source,
-      summary: `worldbook audit${worldId ? `: ${worldId}` : ''}`,
+      summary: `worldbook check${worldId ? `: ${worldId}` : ''}`,
       metadata: { worldId },
     }, async ({ runId, startStep, finishStep }) => {
       const loadStep = startStep({
         type: 'worldbook_audit.load',
-        summary: 'load worldbook data',
+        summary: '读取世界书数据',
         input: { worldId, hasInlineWorldData: Boolean(src.worldData) },
       });
       const worldData = src.worldData || await loadWorld(worldId);
@@ -211,7 +211,7 @@ export const createWorldbookAuditAgent = ({
 
       const auditStep = startStep({
         type: 'worldbook_audit.analyze',
-        summary: 'analyze worldbook entries',
+        summary: '检查世界书条目',
       });
       const report = auditWorldbookData(worldData, { worldId, source });
       finishStep(auditStep.id, {

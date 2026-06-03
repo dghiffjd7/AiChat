@@ -2756,8 +2756,7 @@ export class ChatStore {
         } catch {}
         if (name) {
           const clean = name.trim();
-          // Append suffix only if no timestamp looks present
-          session.archives[idx].name = clean.match(/\d{4}\/\d{2}\/\d{2}/) ? clean : clean + suffix;
+          session.archives[idx].name = clean;
         }
         this._lastArchiveTransition = {
           sessionId: sid,
@@ -2772,10 +2771,8 @@ export class ChatStore {
 
     // 2. Create new archive
     const archiveId = `${Date.now()}-${Math.random().toString(16).slice(2, 6)}`;
-    let baseName = name || '存档';
-    if (!baseName.match(/\d{4}\/\d{2}\/\d{2}/)) {
-      baseName += suffix;
-    }
+    const cleanName = String(name || '').trim();
+    const baseName = cleanName || `存档${suffix}`;
 
     const getCurrentSummariesSnapshot = () => {
       try {

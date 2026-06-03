@@ -50,11 +50,13 @@ import { AgentRunStore } from '../../src/scripts/storage/agent-run-store.js';
   assert.equal(result.status, 'succeeded');
   assert.equal(result.report.counts.routeOnly, 1);
   assert.equal(run.status, 'succeeded');
+  assert.equal(run.title, '世界书检查');
+  assert.equal(run.source, 'worldbook-check');
   assert.deepEqual(run.steps.map(step => step.type), [
     'worldbook_audit.load',
     'worldbook_audit.analyze',
   ]);
-  console.log('ok - WorldbookAuditAgent records audit run and steps');
+  console.log('ok - WorldbookAuditAgent records worldbook check run and steps');
 }
 
 {

@@ -66,6 +66,27 @@ const makeSession = (timestamp = 1) => ({
 }
 
 {
+  const store = new ChatStore({ scopeId: 'persona_archive_name' });
+  store.state = {
+    currentId: 's-name',
+    sessions: {
+      's-name': makeSession(10),
+      's-auto': makeSession(11),
+    },
+  };
+  store.currentId = 's-name';
+
+  const archiveId = store.startNewChat('s-name', '流');
+  assert.equal(Boolean(archiveId), true);
+  assert.equal(store.state.sessions['s-name'].archives[0].name, '流');
+
+  const autoArchiveId = store.startNewChat('s-auto', '');
+  assert.equal(Boolean(autoArchiveId), true);
+  assert.match(store.state.sessions['s-auto'].archives[0].name, /^存档 \(\d{4}\/\d{2}\/\d{2} \d{2}:\d{2}\)$/);
+  console.log('ok - ChatStore startNewChat preserves typed archive names and auto-names blank archives');
+}
+
+{
   const contacts = __contactsStoreInternals;
   assert.equal(contacts.isScopedDataMatch({ contacts: {} }, 'persona_1'), false);
   assert.equal(contacts.isScopedDataMatch({ contacts: {} }, 'default'), true);

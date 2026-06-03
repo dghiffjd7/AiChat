@@ -23,6 +23,10 @@ export const runAppBootRestoreFlow = async ({
   setUiStateArmed = null,
   saveUiState = null,
 } = {}) => {
+  const initialUiMode = String(getInitialUiMode?.() || '').trim().toLowerCase() === 'rp' ? 'rp' : 'chat';
+  try {
+    setUiMode?.(initialUiMode);
+  } catch {}
   try {
     await restoreUiState?.();
   } catch {}
@@ -45,11 +49,6 @@ export const runAppBootRestoreFlow = async ({
   updateWorldIndicator?.();
   refreshChatAndContacts?.();
   applyUiModeUI?.();
-  if (String(getInitialUiMode?.() || '').trim() === 'rp') {
-    setUiMode?.('chat');
-    persistUiMode?.();
-    applyUiModeUI?.();
-  }
   setUiStateArmed?.(true);
   try {
     saveUiState?.();

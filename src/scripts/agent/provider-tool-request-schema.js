@@ -10,6 +10,9 @@ export const PROVIDER_TOOL_REQUEST_FORMATS = Object.freeze({
 export const DEFAULT_PROVIDER_BASE_MODEL_CONTEXT_TOOLS = Object.freeze([
   'contact_profile.list',
   'contact_profile.get',
+]);
+
+export const CHAT_EMIT_PROVIDER_MODEL_CONTEXT_TOOLS = Object.freeze([
   'chat.emit_private',
   'chat.emit_group',
   'chat.emit_moment_comment',
@@ -25,6 +28,11 @@ export const WRITE_PREVIEW_PROVIDER_MODEL_CONTEXT_TOOLS = Object.freeze([
 export const DEFAULT_PROVIDER_MODEL_CONTEXT_TOOLS = Object.freeze([
   ...DEFAULT_PROVIDER_BASE_MODEL_CONTEXT_TOOLS,
   ...WRITE_PREVIEW_PROVIDER_MODEL_CONTEXT_TOOLS,
+]);
+
+export const ALL_PROVIDER_MODEL_CONTEXT_TOOLS = Object.freeze([
+  ...DEFAULT_PROVIDER_MODEL_CONTEXT_TOOLS,
+  ...CHAT_EMIT_PROVIDER_MODEL_CONTEXT_TOOLS,
 ]);
 
 const GEMINI_SCHEMA_TYPES = Object.freeze({
