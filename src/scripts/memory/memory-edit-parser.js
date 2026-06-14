@@ -1,36 +1,36 @@
 export const stripTableEditBlocks = (text) => {
-  let out = String(text ?? '');
-  const startRe = /<tableEdit\b[^>]*>/i;
-  const endRe = /<\/tableEdit\s*>/i;
-  for (let i = 0; i < 20; i++) {
-    const start = out.match(startRe);
-    if (!start) break;
-    const startIdx = start.index ?? -1;
-    if (startIdx < 0) break;
-    const afterStart = out.slice(startIdx + start[0].length);
-    const end = afterStart.match(endRe);
-    if (!end) {
-      out = out.slice(0, startIdx);
-      break;
-    }
-    const endIdx = startIdx + start[0].length + (end.index ?? 0);
-    out = out.slice(0, startIdx) + out.slice(endIdx + end[0].length);
-  }
-  return out.replace(/\n{3,}/g, '\n\n').trim();
+  return extractTableEditBlocks(text).text.replace(/\n{3,}/g, '\n\n').trim();
 };
 
 export const extractTableEditBlocks = (text) => {
   const raw = String(text ?? '');
-  const re = /<tableEdit\b[^>]*>([\s\S]*?)<\/tableEdit>/gi;
-  const blocks = [];
+  const re = /<tableEdit\b[^>]*>([\s\S]*?)<\/tableEdit\s*>/gi;
+  const matches = [];
   let m;
-  while ((m = re.exec(raw))) blocks.push(m[1]);
-  if (!blocks.length) return { text: raw, blocks: [], actions: [] };
-  const stripped = raw.replace(re, '').replace(/\n{3,}/g, '\n\n').trim();
-  const actions = [];
-  for (const block of blocks) {
-    actions.push(...parseTableEditActions(block));
+  while ((m = re.exec(raw))) {
+    const block = m[1];
+    const actions = parseTableEditActions(block);
+    if (!actions.length) continue;
+    matches.push({
+      start: m.index,
+      end: re.lastIndex,
+      block,
+      actions,
+    });
   }
+  if (!matches.length) return { text: raw, blocks: [], actions: [] };
+  let cursor = 0;
+  let stripped = '';
+  const blocks = [];
+  const actions = [];
+  for (const match of matches) {
+    stripped += raw.slice(cursor, match.start);
+    cursor = match.end;
+    blocks.push(match.block);
+    actions.push(...match.actions);
+  }
+  stripped += raw.slice(cursor);
+  stripped = stripped.replace(/\n{3,}/g, '\n\n').trim();
   return { text: stripped, blocks, actions };
 };
 

@@ -837,10 +837,10 @@ body[data-ui-mode='rp'] .chat-scroll-date-badge {
   visibility: hidden !important;
 }
 
-.chat-scroll-bottom-btn {
+.chat-scroll-bottom-btn,
+.chat-scroll-top-btn {
   position: absolute;
   right: 14px;
-  bottom: calc(78px + env(safe-area-inset-bottom, 0px));
   width: 38px;
   height: 38px;
   border: 1px solid rgba(148, 163, 184, 0.28);
@@ -868,7 +868,16 @@ body[data-ui-mode='rp'] .chat-scroll-date-badge {
     box-shadow 0.18s ease;
 }
 
-.chat-scroll-bottom-btn svg {
+.chat-scroll-bottom-btn {
+  bottom: calc(78px + env(safe-area-inset-bottom, 0px));
+}
+
+.chat-scroll-top-btn {
+  top: calc(var(--safe-area-top, env(safe-area-inset-top, 0px)) + 66px);
+}
+
+.chat-scroll-bottom-btn svg,
+.chat-scroll-top-btn svg {
   width: 18px;
   height: 18px;
   display: block;
@@ -882,11 +891,29 @@ body[data-ui-mode='rp'] .chat-scroll-date-badge {
   transform: translateY(0) scale(1);
 }
 
-.chat-scroll-bottom-btn.is-immediate {
+.chat-scroll-top-btn.is-visible {
+  opacity: 0.62;
+  visibility: visible;
+  pointer-events: auto;
+  transform: translateY(0) scale(1);
+}
+
+.chat-scroll-top-btn:hover,
+.chat-scroll-top-btn:focus-visible {
+  opacity: 0.9;
+}
+
+body[data-ui-mode='rp'] .chat-scroll-top-btn {
+  top: calc(var(--safe-area-top, env(safe-area-inset-top, 0px)) + 112px);
+}
+
+.chat-scroll-bottom-btn.is-immediate,
+.chat-scroll-top-btn.is-immediate {
   transition: none !important;
 }
 
-.chat-scroll-bottom-btn:active {
+.chat-scroll-bottom-btn:active,
+.chat-scroll-top-btn:active {
   background: rgba(255, 255, 255, 0.76);
   box-shadow: 0 8px 18px rgba(15, 23, 42, 0.14);
   transform: translateY(0) scale(0.96);
@@ -906,7 +933,8 @@ body[data-ui-mode='rp'] .chat-scroll-date-badge {
   );
 }
 
-.QQ_chat_page.wallpaper-idle .chat-scroll-bottom-btn {
+.QQ_chat_page.wallpaper-idle .chat-scroll-bottom-btn,
+.QQ_chat_page.wallpaper-idle .chat-scroll-top-btn {
   opacity: 0;
   visibility: hidden;
   pointer-events: none;
@@ -6212,7 +6240,7 @@ body[data-ui-mode='rp'] .QQ_chat_page.sticker-preview-active .msgcontent {
   position: fixed;
   inset: 0;
   background: rgba(0, 0, 0, 0.45);
-  z-index: 24000;
+  z-index: 39000;
 }
 
 .app-confirm-modal {
@@ -6220,12 +6248,15 @@ body[data-ui-mode='rp'] .QQ_chat_page.sticker-preview-active .msgcontent {
   top: 50%;
   left: 50%;
   transform: translate(-50%, -50%);
-  width: 88%;
-  max-width: 380px;
+  width: min(92vw, 430px);
+  max-width: calc(100vw - 24px);
+  max-height: calc(var(--app-visual-height, 100dvh) - max(24px, env(safe-area-inset-top, 0px)) - max(24px, env(safe-area-inset-bottom, 0px)));
+  display: flex;
+  flex-direction: column;
   background: var(--app-surface-card);
   border-radius: 14px;
   box-shadow: 0 12px 30px rgba(0, 0, 0, 0.3);
-  z-index: 24001;
+  z-index: 39001;
   overflow: hidden;
 }
 
@@ -6237,9 +6268,13 @@ body[data-ui-mode='rp'] .QQ_chat_page.sticker-preview-active .msgcontent {
 }
 
 .app-confirm-title {
+  min-width: 0;
   font-size: 16px;
   font-weight: 700;
   color: var(--app-text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .app-confirm-close {
@@ -6252,6 +6287,8 @@ body[data-ui-mode='rp'] .QQ_chat_page.sticker-preview-active .msgcontent {
 }
 
 .app-confirm-body {
+  min-height: 0;
+  overflow: auto;
   padding: 0 16px 14px;
   font-size: 13px;
   line-height: 1.5;
@@ -6261,26 +6298,65 @@ body[data-ui-mode='rp'] .QQ_chat_page.sticker-preview-active .msgcontent {
 
 .app-confirm-actions {
   display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
   gap: 10px;
+  max-height: min(42vh, 320px);
+  overflow: auto;
   padding: 12px 16px 16px;
   border-top: 1px solid var(--app-border-subtle);
 }
 
 .app-confirm-btn {
-  flex: 1;
+  flex: 0 1 auto;
+  min-width: 96px;
+  max-width: 100%;
+  min-height: 38px;
   padding: 8px 10px;
   border-radius: 10px;
   border: 1px solid var(--app-border-default);
   background: var(--app-surface-subtle);
   color: var(--app-text-primary);
   font-size: 14px;
+  font-weight: 700;
+  line-height: 1.25;
+  white-space: normal;
+  overflow-wrap: anywhere;
   cursor: pointer;
+}
+
+.app-confirm-modal.is-choice {
+  max-width: min(480px, calc(100vw - 24px));
+}
+
+.app-confirm-modal.is-choice .app-confirm-actions {
+  display: grid;
+  grid-template-columns: 1fr;
+  align-items: stretch;
+  justify-content: stretch;
+  gap: 8px;
+}
+
+.app-confirm-modal.is-choice .app-confirm-btn {
+  width: 100%;
+  min-width: 0;
+  text-align: left;
+}
+
+.app-confirm-modal.is-choice .app-confirm-btn.app-confirm-ok {
+  box-shadow: inset 3px 0 0 #0ea5e9;
 }
 
 .app-confirm-btn.app-confirm-ok {
   border-color: #0ea5e9;
   background: #0ea5e9;
   color: var(--app-text-inverse);
+}
+
+.app-confirm-modal.is-choice .app-confirm-btn.app-confirm-ok {
+  border-color: rgba(14, 165, 233, 0.32);
+  background: rgba(14, 165, 233, 0.12);
+  color: var(--app-text-primary);
 }
 
 .app-confirm-modal.is-danger .app-confirm-btn.app-confirm-ok,

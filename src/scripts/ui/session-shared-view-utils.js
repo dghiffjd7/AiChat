@@ -24,11 +24,23 @@ const SESSION_SHARED_VIEW_STYLES = {
   memoryShareModalCancel: 'flex:1; padding:10px 12px; border:1px solid var(--app-border-default); border-radius:12px; background:var(--app-surface-card); cursor:pointer;',
   memoryShareModalSave: 'flex:1; padding:10px 12px; border:none; border-radius:12px; background:#019aff; color:var(--app-text-inverse); cursor:pointer; font-weight:900;',
   archiveEmpty: 'padding:12px; color:var(--app-text-muted); text-align:center; font-size:12px;',
-  archiveRow: (isCurrent) => `display:flex; align-items:center; justify-content:space-between; padding:8px 10px; border-bottom:1px solid var(--app-border-subtle); background:${isCurrent ? 'var(--app-surface-hover)' : 'var(--app-surface-card)'}; border-left:${isCurrent ? '3px solid var(--app-accent-primary, #019aff)' : 'none'};`,
+  archiveRow: (isCurrent) => `display:block; padding:8px 10px; border-bottom:1px solid var(--app-border-subtle); background:${isCurrent ? 'var(--app-surface-hover)' : 'var(--app-surface-card)'}; border-left:${isCurrent ? '3px solid var(--app-accent-primary, #019aff)' : 'none'};`,
+  archiveTopRow: 'display:flex; align-items:center; justify-content:space-between; gap:8px;',
   archiveInfo: 'flex:1; cursor:pointer; min-width:0;',
   archiveTitle: 'font-weight:600; color:var(--app-text-secondary); font-size:13px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;',
-  archiveMeta: 'color:var(--app-text-muted); font-size:11px;',
-  archiveDeleteButton: 'padding:4px 8px; border:none; background:transparent; color:var(--app-text-muted); font-size:16px; cursor:pointer; margin-left:6px;',
+  archiveMeta: 'color:var(--app-text-muted); font-size:11px; margin-top:2px; cursor:pointer;',
+  archiveActions: 'display:flex; align-items:center; gap:4px; flex:0 0 auto;',
+  archiveActionButton: 'width:28px; height:28px; border:none; background:transparent; color:var(--app-text-muted); font-size:15px; cursor:pointer; border-radius:8px;',
+  archiveDeleteButton: 'width:28px; height:28px; border:none; background:transparent; color:var(--app-text-muted); font-size:17px; cursor:pointer; border-radius:8px;',
+  archiveManagerOverlay: 'display:none; position:fixed; inset:0; background:rgba(0,0,0,0.48); z-index:24000;',
+  archiveManagerPanel: 'display:none; position:fixed; left:calc(14px + env(safe-area-inset-left, 0px)); right:calc(14px + env(safe-area-inset-right, 0px)); top:calc(14px + env(safe-area-inset-top, 0px)); bottom:calc(14px + env(safe-area-inset-bottom, 0px)); max-width:760px; margin:0 auto; background:var(--app-surface-card); color:var(--app-text-primary); border-radius:12px; box-shadow:0 18px 48px rgba(0,0,0,0.32); z-index:25000; overflow:hidden; flex-direction:column;',
+  archiveManagerHeader: 'padding:12px 14px; border-bottom:1px solid var(--app-border-subtle); display:flex; align-items:center; justify-content:space-between; gap:12px; flex:0 0 auto;',
+  archiveManagerTitleWrap: 'min-width:0; flex:1;',
+  archiveManagerTitle: 'font-weight:900; color:var(--app-text-primary); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;',
+  archiveManagerSubtitle: 'margin-top:2px; font-size:12px; color:var(--app-text-muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;',
+  archiveManagerClose: 'width:34px; height:34px; border:none; border-radius:8px; background:transparent; color:var(--app-text-secondary); cursor:pointer; font-size:20px; flex:0 0 auto;',
+  archiveManagerBody: 'flex:1; min-height:0; overflow:hidden; background:var(--app-surface-subtle);',
+  archiveManagerList: 'height:100%; overflow:auto; -webkit-overflow-scrolling:touch; background:var(--app-surface-card);',
   memoryShareEmpty: 'padding:10px; border:1px dashed var(--app-border-default); border-radius:12px; color:var(--app-text-muted); font-size:12px;',
   memoryShareRow: 'padding:10px; border:1px solid var(--app-border-default); border-radius:12px; background:var(--app-surface-card);',
   memoryShareHeader: 'display:flex; align-items:center; justify-content:space-between; gap:10px; cursor:pointer;',
@@ -191,20 +203,94 @@ export const createSessionArchiveEmptyState = ({
   return empty;
 };
 
+export const createSessionArchiveManagerModal = ({
+  documentRef = globalThis.document,
+  title = '历史存档',
+  subtitle = '',
+} = {}) => {
+  const overlay = documentRef.createElement('div');
+  overlay.className = 'app-themed-overlay session-archive-manager-overlay';
+  overlay.style.cssText = SESSION_SHARED_VIEW_STYLES.archiveManagerOverlay;
+
+  const panel = documentRef.createElement('div');
+  panel.className = 'app-themed-panel session-archive-manager-panel';
+  panel.style.cssText = SESSION_SHARED_VIEW_STYLES.archiveManagerPanel;
+  panel.addEventListener('click', (event) => event.stopPropagation());
+
+  const header = documentRef.createElement('div');
+  header.style.cssText = SESSION_SHARED_VIEW_STYLES.archiveManagerHeader;
+
+  const titleWrap = documentRef.createElement('div');
+  titleWrap.style.cssText = SESSION_SHARED_VIEW_STYLES.archiveManagerTitleWrap;
+
+  const titleEl = documentRef.createElement('div');
+  titleEl.style.cssText = SESSION_SHARED_VIEW_STYLES.archiveManagerTitle;
+  titleEl.textContent = title;
+
+  const subtitleEl = documentRef.createElement('div');
+  subtitleEl.style.cssText = SESSION_SHARED_VIEW_STYLES.archiveManagerSubtitle;
+  subtitleEl.textContent = subtitle;
+
+  titleWrap.appendChild(titleEl);
+  titleWrap.appendChild(subtitleEl);
+
+  const closeButton = documentRef.createElement('button');
+  closeButton.type = 'button';
+  closeButton.title = '关闭';
+  closeButton.setAttribute?.('aria-label', '关闭存档管理');
+  closeButton.textContent = '×';
+  closeButton.style.cssText = SESSION_SHARED_VIEW_STYLES.archiveManagerClose;
+
+  header.appendChild(titleWrap);
+  header.appendChild(closeButton);
+
+  const body = documentRef.createElement('div');
+  body.style.cssText = SESSION_SHARED_VIEW_STYLES.archiveManagerBody;
+
+  const listEl = documentRef.createElement('div');
+  listEl.style.cssText = SESSION_SHARED_VIEW_STYLES.archiveManagerList;
+  body.appendChild(listEl);
+
+  panel.appendChild(header);
+  panel.appendChild(body);
+
+  return {
+    overlay,
+    panel,
+    header,
+    titleEl,
+    subtitleEl,
+    closeButton,
+    body,
+    listEl,
+  };
+};
+
 export const createSessionArchiveRow = ({
   documentRef = globalThis.document,
+  archiveId = '',
   archiveName = '',
   isCurrent = false,
   dateText = '',
   messageCount = 0,
   onSelect = async () => {},
+  onExport = null,
+  onRename = async () => {},
   onDelete = async () => {},
+  canRename = true,
+  canDelete = true,
 } = {}) => {
   const row = documentRef.createElement('div');
+  row.className = 'session-archive-row';
   row.style.cssText = SESSION_SHARED_VIEW_STYLES.archiveRow(isCurrent);
+  if (archiveId) row.setAttribute('data-archive-id', String(archiveId));
+
+  const topRow = documentRef.createElement('div');
+  topRow.style.cssText = SESSION_SHARED_VIEW_STYLES.archiveTopRow;
 
   const info = documentRef.createElement('div');
   info.style.cssText = SESSION_SHARED_VIEW_STYLES.archiveInfo;
+  info.title = archiveId ? `${archiveName || '未命名存档'}\nID: ${archiveId}` : (archiveName || '未命名存档');
 
   const title = documentRef.createElement('div');
   title.style.cssText = SESSION_SHARED_VIEW_STYLES.archiveTitle;
@@ -215,23 +301,56 @@ export const createSessionArchiveRow = ({
   meta.textContent = `${dateText} · ${messageCount}条消息`;
 
   info.appendChild(title);
-  info.appendChild(meta);
   info.onclick = onSelect;
+  meta.onclick = onSelect;
+
+  const actions = documentRef.createElement('div');
+  actions.style.cssText = SESSION_SHARED_VIEW_STYLES.archiveActions;
+
+  let exportButton = null;
+  if (typeof onExport === 'function') {
+    exportButton = documentRef.createElement('button');
+    exportButton.type = 'button';
+    exportButton.textContent = '⇩';
+    exportButton.title = '导出聊天记录';
+    exportButton.setAttribute?.('aria-label', '导出聊天记录');
+    exportButton.style.cssText = SESSION_SHARED_VIEW_STYLES.archiveActionButton;
+    exportButton.onclick = onExport;
+    actions.appendChild(exportButton);
+  }
+
+  const renameButton = documentRef.createElement('button');
+  renameButton.type = 'button';
+  renameButton.textContent = '✎';
+  renameButton.title = '重命名存档';
+  renameButton.setAttribute?.('aria-label', '重命名存档');
+  renameButton.style.cssText = SESSION_SHARED_VIEW_STYLES.archiveActionButton;
+  renameButton.onclick = onRename;
 
   const deleteButton = documentRef.createElement('button');
   deleteButton.type = 'button';
   deleteButton.textContent = '×';
+  deleteButton.title = '删除存档';
+  deleteButton.setAttribute?.('aria-label', '删除存档');
   deleteButton.style.cssText = SESSION_SHARED_VIEW_STYLES.archiveDeleteButton;
   deleteButton.onclick = onDelete;
 
-  row.appendChild(info);
-  row.appendChild(deleteButton);
+  if (canRename) actions.appendChild(renameButton);
+  if (canDelete) actions.appendChild(deleteButton);
+  topRow.appendChild(info);
+  topRow.appendChild(actions);
+  row.appendChild(topRow);
+  row.appendChild(meta);
 
   return {
     row,
+    topRow,
     info,
     title,
     meta,
+    actions,
+    exportButton,
+    renameButton,
     deleteButton,
   };
 };

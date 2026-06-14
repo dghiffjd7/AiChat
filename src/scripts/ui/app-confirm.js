@@ -87,7 +87,7 @@ const ensureChoiceUI = () => {
   choiceOverlay.addEventListener('click', () => closeChoice(null));
 
   choiceModal = document.createElement('div');
-  choiceModal.className = 'app-confirm-modal';
+  choiceModal.className = 'app-confirm-modal is-choice';
   choiceModal.style.display = 'none';
   choiceModal.innerHTML = `
     <div class="app-confirm-header">
@@ -131,6 +131,7 @@ export const appConfirm = (options = {}) => {
     }
     if (confirmBodyEl) {
       confirmBodyEl.textContent = String(message || '');
+      confirmBodyEl.scrollTop = 0;
     }
     if (confirmCancelBtn) {
       confirmCancelBtn.textContent = String(cancelText || '取消');
@@ -139,6 +140,7 @@ export const appConfirm = (options = {}) => {
       confirmOkBtn.textContent = String(confirmText || '确定');
       confirmOkBtn.dataset.variant = danger ? 'danger' : 'primary';
     }
+    confirmModal?.classList.remove('is-choice');
     confirmModal?.classList.toggle('is-danger', danger);
 
     confirmKeyHandler = (event) => {
@@ -153,7 +155,7 @@ export const appConfirm = (options = {}) => {
     document.addEventListener('keydown', confirmKeyHandler);
 
     if (confirmOverlay) confirmOverlay.style.display = 'block';
-    if (confirmModal) confirmModal.style.display = 'block';
+    if (confirmModal) confirmModal.style.display = 'flex';
     requestAnimationFrame(() => confirmOkBtn?.focus());
   });
 };
@@ -176,9 +178,13 @@ export const appChoice = (options = {}) => {
     choiceResolve = resolve;
 
     if (choiceTitleEl) choiceTitleEl.textContent = String(title || '请选择');
-    if (choiceBodyEl) choiceBodyEl.textContent = String(message || '');
+    if (choiceBodyEl) {
+      choiceBodyEl.textContent = String(message || '');
+      choiceBodyEl.scrollTop = 0;
+    }
     if (choiceActionsEl) {
       choiceActionsEl.innerHTML = '';
+      choiceActionsEl.scrollTop = 0;
       const list = Array.isArray(actions) ? actions : [];
       list.forEach((action, idx) => {
         const id = String(action?.id || `action_${idx}`);
@@ -200,6 +206,7 @@ export const appChoice = (options = {}) => {
         choiceActionsEl.appendChild(btn);
       }
     }
+    choiceModal?.classList.add('is-choice');
     choiceModal?.classList.toggle('is-danger', danger);
 
     choiceKeyHandler = (event) => {
@@ -218,7 +225,7 @@ export const appChoice = (options = {}) => {
     document.addEventListener('keydown', choiceKeyHandler);
 
     if (choiceOverlay) choiceOverlay.style.display = 'block';
-    if (choiceModal) choiceModal.style.display = 'block';
+    if (choiceModal) choiceModal.style.display = 'flex';
     requestAnimationFrame(() => {
       const btn = choiceActionsEl?.querySelector?.('.app-confirm-ok') || choiceActionsEl?.querySelector?.('button');
       btn?.focus?.();

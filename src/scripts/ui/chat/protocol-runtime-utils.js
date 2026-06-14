@@ -293,7 +293,7 @@ export const finalizeProtocolStreamFlow = async (
     nextDidAnything = retryState.didAnything;
     nextMutatedMoments = retryState.mutatedMoments;
     if (!nextDidAnything && typeof warnNoValidTag === 'function') {
-      warnNoValidTag();
+      warnNoValidTag({ rawText: raw });
     }
   }
 
@@ -376,7 +376,7 @@ export const finalizeProtocolBufferedFlow = async (
   }
 
   if (typeof warnNoValidTag === 'function') {
-    warnNoValidTag();
+    warnNoValidTag({ rawText: raw });
   }
   return {
     didAnything: nextDidAnything,
@@ -992,10 +992,20 @@ export const createSendProtocolResponseFlowHandlers = ({
   createDialogueParser = null,
   processProtocolRetryEvent = null,
   showWarning = null,
+  onNoValidTag = null,
 } = {}) => {
   const isActive = () => Boolean(typeof isSessionActive === 'function' && isSessionActive(sessionId));
-  const warnNoValidTag = () => showWarning?.('未解析到有效对话标签，已丢弃；可在「本次 AI 回复」查看原始内容');
-  const createCommonHandlers = () => ({
+  const notifyNoValidTag = ({ rawText = '', mode = '' } = {}) => {
+    showWarning?.('未解析到有效对话标签，已丢弃；可在「本次 AI 回复」查看原始内容');
+    if (typeof onNoValidTag === 'function') {
+      onNoValidTag({
+        sessionId,
+        rawText: String(rawText || ''),
+        mode,
+      });
+    }
+  };
+  const createCommonHandlers = ({ mode = '' } = {}) => ({
     createDialogueParser,
     handleMemoryEditsFromRaw,
     addSummary,
@@ -1003,12 +1013,15 @@ export const createSendProtocolResponseFlowHandlers = ({
     refreshChatAndContacts,
     flushMoments,
     buildProtocolRetryCandidates,
-    warnNoValidTag,
+    warnNoValidTag: details => notifyNoValidTag({
+      ...(details || {}),
+      mode,
+    }),
   });
 
   return {
     createStreamHandlers: () => ({
-      ...createCommonHandlers(),
+      ...createCommonHandlers({ mode: 'stream' }),
       onBeforeRawSave: () => {
         if (!isActive()) return;
         if (typeof hideTyping === 'function') hideTyping();
@@ -1022,7 +1035,7 @@ export const createSendProtocolResponseFlowHandlers = ({
       }),
     }),
     createBufferedHandlers: () => ({
-      ...createCommonHandlers(),
+      ...createCommonHandlers({ mode: 'buffered' }),
       renderMoments: (
         typeof getActivePage === 'function'
         && getActivePage() === 'moments'

@@ -488,4 +488,14 @@ export class MomentsStore {
     exportState() {
         return clone(this.state);
     }
+
+    importState(state = {}) {
+        const next = state && typeof state === 'object' ? clone(state) : {};
+        this.state = {
+            moments: Array.isArray(next.moments) ? next.moments : [],
+        };
+        this._normalizeState();
+        this._persist();
+        return this.exportState();
+    }
 }

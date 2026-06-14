@@ -22,19 +22,257 @@ import {
       listAgentTools: () => [
         { name: 'contact_profile.list', title: 'Contact list', riskLevel: 'low', permissions: ['storage'] },
       ],
+      getAgentFeatureSettings: () => ({
+        features: {
+          reply_check: { enabled: true },
+        },
+      }),
       listAgentPermissionRules: () => [{ toolName: 'contact_profile.list' }],
       getProviderToolSessionGate: () => ({ enabled: false, allowedTools: ['contact_profile.list'] }),
       getProviderToolExperimentStatus: () => ({ enabled: false, allowedTools: ['contact_profile.list'] }),
       getProviderContinuationCommitPolicy: () => ({ defaultStrategy: 'preview_only', strategies: ['preview_only', 'append_to_previous_bubble'] }),
+      listAgentModelProfiles: () => [
+        { id: 'profile-a', name: '轻量检查', provider: 'openrouter', model: 'model-a' },
+      ],
     }),
   });
   const view = await panel.collectView();
   assert.equal(view.meta.pending, 2);
   assert.equal(view.meta.activeRuns, 1);
+  assert.equal(view.meta.enabledAgents, 1);
   assert.equal(view.meta.tools, 1);
   assert.equal(view.pending[0].kind, 'contact_profile_update');
+  assert.equal(view.agents.find(agent => agent.id === 'reply_check').enabled, true);
+  assert.equal(view.agentModelProfiles[0].label, '轻量检查 · openrouter / model-a');
   assert.equal(view.safety.permissionRules.length, 1);
   console.log('ok - agent center panel collects existing agent debug registry actions into a user view');
+}
+
+{
+  const panel = new AgentCenterPanel();
+  panel.view = {
+    agents: [
+      {
+        id: 'reply_check',
+        title: '检查回复格式',
+        summary: 'AI 回复后检查私聊、群聊、动态等格式问题，结果显示在消息旁。',
+        detail: ['检查私聊、群聊、动态等输出格式。'],
+        enabled: false,
+        implemented: true,
+        supportsModel: true,
+        supportsTriggerMode: true,
+        modelMode: 'profile',
+        modelProfileId: 'profile-a',
+        modelLabel: '轻量检查 · openrouter / model-a',
+        triggerLabel: '自动触发',
+      },
+      {
+        id: 'text_completion',
+        title: '文本补全',
+        summary: '为输入和选中文本提供写作补全建议。',
+        enabled: false,
+        implemented: false,
+        supportsModel: true,
+        modelLabel: '不调用模型',
+      },
+    ],
+    agentModelProfiles: [
+      { id: 'profile-a', label: '轻量检查 · openrouter / model-a' },
+    ],
+  };
+  const html = panel.renderAgents();
+  assert.match(html, /检查回复格式/);
+  assert.match(html, /AI 回复后检查私聊、群聊、动态等格式问题/);
+  assert.match(html, /data-agent-feature-action="enable"/);
+  assert.match(html, /data-agent-feature-id="reply_check"/);
+  assert.match(html, /data-agent-feature-model-select="reply_check"/);
+  assert.match(html, /data-agent-feature-model-button="reply_check"/);
+  assert.match(html, /data-agent-feature-model-manage="reply_check"/);
+  assert.match(html, /world-app-select-btn/);
+  assert.doesNotMatch(html, /data-agent-feature-model="reply_check"/);
+  assert.match(html, /轻量检查 · openrouter \/ model-a/);
+  assert.match(html, /value="profile:profile-a" selected/);
+  assert.match(html, /data-agent-feature-trigger="reply_check"/);
+  assert.match(html, /自动触发/);
+  assert.match(html, /文本补全/);
+  assert.match(html, /disabled/);
+  assert.match(html, /规划中/);
+  console.log('ok - agent center panel renders available agent feature cards');
+}
+
+{
+  let modelPayload = null;
+  const panel = new AgentCenterPanel({
+    getActions: () => ({
+      setAgentFeatureModel: payload => {
+        modelPayload = payload;
+        return { ok: true };
+      },
+    }),
+  });
+  panel.view = {
+    agents: [{
+      id: 'reply_check',
+      title: '检查回复格式',
+      enabled: true,
+      implemented: true,
+      supportsModel: true,
+      modelMode: 'none',
+    }],
+  };
+  panel.refresh = async () => {};
+  await panel.handleAgentFeatureModelSelect('reply_check', 'profile:profile-a');
+  assert.deepEqual(modelPayload, {
+    id: 'reply_check',
+    modelMode: 'profile',
+    modelProfileId: 'profile-a',
+  });
+  console.log('ok - agent center agent model selector updates feature model');
+}
+
+{
+  let triggerPayload = null;
+  let triggerChoice = null;
+  const panel = new AgentCenterPanel({
+    choice: async (options) => {
+      triggerChoice = options;
+      return 'manual';
+    },
+    getActions: () => ({
+      setAgentFeatureTriggerMode: payload => {
+        triggerPayload = payload;
+        return { ok: true };
+      },
+    }),
+  });
+  panel.view = {
+    agents: [{
+      id: 'reply_check',
+      title: '检查回复格式',
+      enabled: true,
+      implemented: true,
+      supportsTriggerMode: true,
+      triggerMode: 'auto',
+    }],
+  };
+  panel.refresh = async () => {};
+  await panel.handleAgentFeatureTriggerMode('reply_check');
+  assert.deepEqual(triggerChoice.actions.map(action => action.id), ['auto', 'manual']);
+  assert.deepEqual(triggerPayload, {
+    id: 'reply_check',
+    triggerMode: 'manual',
+  });
+  console.log('ok - agent center agent trigger selector updates feature trigger mode');
+}
+
+{
+  let updatePayload = null;
+  let guideChoice = null;
+  let openedConfig = null;
+  const panel = new AgentCenterPanel({
+    confirm: async () => true,
+    choice: async (options) => {
+      guideChoice = options;
+      return 'manage_api';
+    },
+    openConfig: (options = {}) => {
+      openedConfig = options;
+    },
+    getActions: () => ({
+      setAgentFeatureEnabled: payload => {
+        updatePayload = payload;
+        return { ok: true };
+      },
+    }),
+  });
+  panel.view = {
+    agents: [{
+      id: 'reply_check',
+      title: '检查回复格式',
+      summary: 'AI 回复后检查格式问题。',
+      enabled: false,
+      implemented: true,
+      supportsModel: true,
+      modelMode: 'none',
+    }],
+  };
+  panel.refresh = async () => {};
+  await panel.handleAgentFeatureToggle('enable', 'reply_check');
+  assert.deepEqual(updatePayload, {
+    id: 'reply_check',
+    enabled: true,
+    reason: 'agent center feature toggle',
+  });
+  assert.equal(guideChoice.title, '配置检查模型');
+  assert.deepEqual(guideChoice.actions.map(action => action.id), ['select_model', 'manage_api', 'keep_local']);
+  assert.equal(openedConfig.tab, 'chat');
+  console.log('ok - agent center prompts model configuration when enabling reply check with no model');
+}
+
+{
+  let refreshed = 0;
+  const panel = new AgentCenterPanel();
+  panel.activeTab = 'agents';
+  panel.overlayElement = { style: { display: 'flex' } };
+  panel.refresh = async () => {
+    refreshed += 1;
+  };
+  await panel.handleConfigProfileChanged({ detail: { tab: 'chat' } });
+  assert.equal(refreshed, 1);
+  await panel.handleConfigProfileChanged({ detail: { tab: 'image' } });
+  assert.equal(refreshed, 1);
+  panel.overlayElement.style.display = 'none';
+  await panel.handleConfigProfileChanged({ detail: { tab: 'chat' } });
+  assert.equal(refreshed, 1);
+  console.log('ok - agent center refreshes model profiles when visible chat API config changes');
+}
+
+{
+  let updatePayload = null;
+  let gatePayload = null;
+  const panel = new AgentCenterPanel({
+    confirm: async () => true,
+    getActions: () => ({
+      setAgentFeatureEnabled: payload => {
+        updatePayload = payload;
+        return { ok: true };
+      },
+      setProviderToolSessionGate: payload => {
+        gatePayload = payload;
+        return { ok: true };
+      },
+    }),
+  });
+  panel.view = {
+    agents: [{
+      id: 'write_preview',
+      title: '预览记忆和变量变更',
+      summary: 'AI 请求修改记忆、变量或世界书时，先显示可撤销预览。',
+      enabled: false,
+      implemented: true,
+    }],
+    safety: {
+      sessionGate: {
+        enabled: false,
+        allowedTools: ['contact_profile.list'],
+      },
+    },
+  };
+  panel.refresh = async () => {};
+  await panel.handleAgentFeatureToggle('enable', 'write_preview');
+  assert.deepEqual(updatePayload, {
+    id: 'write_preview',
+    enabled: true,
+    reason: 'agent center feature toggle',
+  });
+  assert.equal(gatePayload.enabled, true);
+  assert.deepEqual(gatePayload.allowedTools, [
+    'contact_profile.list',
+    'memory.preview_actions',
+    'variable.preview_commands',
+    'worldbook.preview_actions',
+  ]);
+  console.log('ok - agent center agent toggle can enable write preview tools as a shortcut');
 }
 
 {
@@ -90,7 +328,7 @@ import {
     ],
   };
   const html = panel.renderPending();
-  assert.match(html, /允许一次/);
+  assert.match(html, /执行一次/);
   assert.match(html, /data-provider-permission-action="allow_once"/);
   assert.match(html, /data-provider-permission-action="deny"/);
   assert.match(html, /data-provider-permission-action="remember_allow"/);
@@ -215,7 +453,9 @@ import {
   };
   const html = panel.renderPending();
   assert.match(html, /data-chat-emit-commit-action="commit"/);
-  assert.match(html, /提交候选/);
+  assert.match(html, /data-chat-emit-commit-action="reject"/);
+  assert.match(html, /执行/);
+  assert.match(html, /打回/);
   assert.doesNotMatch(html, /data-chat-emit-commit-action="undo"/);
   console.log('ok - agent center panel renders explicit chat emit commit action after tool resume');
 }
@@ -295,7 +535,7 @@ import {
     refreshed = true;
   };
   await panel.handleProviderPermissionAction('allow_once', 'provider-pending-1');
-  assert.equal(confirmOptions.confirmText, '允许一次');
+  assert.equal(confirmOptions.confirmText, '执行一次');
   assert.equal(resolverOptions.id, 'provider-pending-1');
   assert.equal(resolverOptions.action, 'allow_once');
   assert.equal(resolverOptions.reason, 'agent center pending action');
@@ -372,11 +612,48 @@ import {
     refreshed = true;
   };
   await panel.handleChatEmitCommitAction('commit', 'chat-emit-pending-2');
-  assert.equal(confirmOptions.confirmText, '提交候选');
+  assert.equal(confirmOptions.confirmText, '执行');
   assert.equal(actionOptions.id, 'chat-emit-pending-2');
   assert.equal(actionOptions.confirmed, true);
   assert.equal(refreshed, true);
   console.log('ok - agent center chat emit commit action requires confirmation and calls debug registry');
+}
+
+{
+  let confirmOptions = null;
+  let actionOptions = null;
+  let refreshed = false;
+  const panel = new AgentCenterPanel({
+    confirm: async options => {
+      confirmOptions = options;
+      return true;
+    },
+    getActions: () => ({
+      rejectChatEmitPendingCommit: options => {
+        actionOptions = options;
+        return { ok: true, status: 'skipped' };
+      },
+    }),
+  });
+  panel.view = {
+    pending: [
+      {
+        kind: 'tool_permission',
+        id: 'chat-emit-pending-reject',
+        toolName: 'chat.emit_private',
+      },
+    ],
+  };
+  panel.refresh = async () => {
+    refreshed = true;
+  };
+  await panel.handleChatEmitCommitAction('reject', 'chat-emit-pending-reject');
+  assert.equal(confirmOptions.confirmText, '打回');
+  assert.match(confirmOptions.message, /不会写入聊天或动态/);
+  assert.equal(actionOptions.id, 'chat-emit-pending-reject');
+  assert.equal(actionOptions.confirmed, true);
+  assert.equal(refreshed, true);
+  console.log('ok - agent center chat emit reject action marks candidates as handled');
 }
 
 {
@@ -435,12 +712,49 @@ import {
     refreshed = true;
   };
   await panel.handleWritePreviewCommitAction('commit', 'variable-preview-pending-1');
-  assert.equal(confirmOptions.confirmText, '提交变更');
+  assert.equal(confirmOptions.confirmText, '执行');
   assert.match(confirmOptions.message, /会写入记忆、变量或世界书/);
   assert.equal(actionOptions.id, 'variable-preview-pending-1');
   assert.equal(actionOptions.confirmed, true);
   assert.equal(refreshed, true);
   console.log('ok - agent center write preview commit action requires confirmation and calls debug registry');
+}
+
+{
+  let confirmOptions = null;
+  let actionOptions = null;
+  let refreshed = false;
+  const panel = new AgentCenterPanel({
+    confirm: async options => {
+      confirmOptions = options;
+      return true;
+    },
+    getActions: () => ({
+      rejectAgentWritePreviewPendingCommit: options => {
+        actionOptions = options;
+        return { ok: true, status: 'skipped' };
+      },
+    }),
+  });
+  panel.view = {
+    pending: [
+      {
+        kind: 'tool_permission',
+        id: 'variable-preview-pending-reject',
+        toolName: 'variable.preview_commands',
+      },
+    ],
+  };
+  panel.refresh = async () => {
+    refreshed = true;
+  };
+  await panel.handleWritePreviewCommitAction('reject', 'variable-preview-pending-reject');
+  assert.equal(confirmOptions.confirmText, '打回');
+  assert.match(confirmOptions.message, /不会写入记忆、变量或世界书/);
+  assert.equal(actionOptions.id, 'variable-preview-pending-reject');
+  assert.equal(actionOptions.confirmed, true);
+  assert.equal(refreshed, true);
+  console.log('ok - agent center write preview reject action marks candidates as handled');
 }
 
 {
@@ -602,6 +916,43 @@ import {
 }
 
 {
+  let actionPayload = null;
+  let confirmOptions = null;
+  let refreshed = false;
+  const panel = new AgentCenterPanel({
+    confirm: async options => {
+      confirmOptions = options;
+      return true;
+    },
+    getActions: () => ({
+      resolveAgentRunReview: payload => {
+        actionPayload = payload;
+        return { ok: true, status: 'cancelled' };
+      },
+    }),
+  });
+  panel.view = {
+    activity: {
+      runs: [{
+        id: 'run-format-review',
+        kind: 'chat_format_guardian',
+        title: '聊天格式待确认',
+        status: 'waiting_permission',
+      }],
+    },
+  };
+  panel.refresh = async () => {
+    refreshed = true;
+  };
+  await panel.handleAgentRunReviewAction('reject', 'run-format-review');
+  assert.equal(confirmOptions.confirmText, '打回');
+  assert.equal(actionPayload.runId, 'run-format-review');
+  assert.equal(actionPayload.decision, 'reject');
+  assert.equal(refreshed, true);
+  console.log('ok - agent center activity can reject waiting agent runs');
+}
+
+{
   const panel = new AgentCenterPanel();
   panel.activeTab = 'activity';
   panel.view = {
@@ -625,6 +976,28 @@ import {
               title: '补齐时间',
               summary: '补齐 1 条缺失时间',
             },
+            autoRepair: {
+              autoApplyRepair: true,
+              attempted: true,
+              didAnything: false,
+              reason: 'no_events',
+              eventCount: 0,
+            },
+            modelReviewDetail: {
+              status: 'needs_repair',
+              canRepair: true,
+              repairSummary: '补齐结束标签。',
+              rawPreview: '{"status":"needs_repair"...',
+              rawText: '{"status":"needs_repair","correctedText":"完整模型返回"}',
+              correctedText: 'MiPhone_start\nmsg_start\n<{{user}}和好友乙的私聊>\n</{{user}}和好友乙的私聊>',
+              linePatches: [{
+                startLine: 3,
+                endLine: 3,
+                reason: '补闭合标签',
+                originalLines: ['<{{user}}和好友乙的私聊>'],
+                replacementLines: ['<{{user}}和好友乙的私聊>', '</{{user}}和好友乙的私聊>'],
+              }],
+            },
             actionLabels: ['应用修复', '重试生成', '查看原文'],
           },
         },
@@ -632,12 +1005,22 @@ import {
     },
   };
   const html = panel.renderActivity();
+  assert.match(html, /data-activity-status="waiting_permission"/);
   assert.match(html, /格式检查：发现 1 条提醒/);
   assert.match(html, /检查原始回复/);
   assert.match(html, /提醒：time is missing/);
   assert.match(html, /修复候选：补齐时间/);
+  assert.match(html, /自动应用：自动应用开启 · 已尝试 · 未写入聊天 · no_events/);
   assert.match(html, /可在消息旁处理：应用修复、重试生成、查看原文/);
+  assert.match(html, /模型修复返回/);
+  assert.match(html, /修复后文本/);
+  assert.match(html, /模型原始返回预览/);
+  assert.match(html, /点击查看完整/);
+  assert.match(html, /完整模型返回/);
+  assert.match(html, /补闭合标签/);
   assert.doesNotMatch(html, /replacementText/);
+  assert.match(html, /data-agent-run-review-action="reject"/);
+  assert.match(html, /打回/);
   console.log('ok - agent center panel renders chat format review details without write actions');
 }
 
@@ -851,6 +1234,13 @@ import {
         summary: '发现问题',
       }],
     },
+    agents: [{
+      id: 'reply_check',
+      title: '检查回复格式',
+      enabled: true,
+      implemented: true,
+      modelLabel: '不调用模型',
+    }],
     tools: [{
       name: 'contact_profile.list',
       riskLevel: 'low',
@@ -875,6 +1265,7 @@ import {
   assert.match(text, /待确认 1/);
   assert.match(text, /读取联系人列表 · 待确认 · 范围：chat:a/);
   assert.match(text, /正文检查 · 失败 · 范围：chat:a · 发现问题/);
+  assert.match(text, /检查回复格式 · 已开启 · 可使用 · 模型：不调用模型/);
   assert.match(text, /工具白名单：读取联系人列表/);
   assert.match(text, /规则冲突：1 组/);
   assert.doesNotMatch(text, /rawOriginal|replacementText|runnerFacade/);

@@ -56,11 +56,20 @@ const createFakeDocument = () => {
 };
 
 {
-  const message = { content: 'a', raw: 'raw-a', meta: null };
+  const message = {
+    content: 'a',
+    raw: 'raw-a',
+    rawSource: 'source-a',
+    rawOriginal: 'original-a',
+    meta: { reasoningDisplay: 'think-a' },
+  };
   const meta = ensureSwipeMeta(message);
   assert.equal(Array.isArray(meta.swipes), true);
   assert.equal(meta.swipes.length, 1);
   assert.equal(meta.swipes[0].content, 'a');
+  assert.equal(meta.swipes[0].rawSource, 'source-a');
+  assert.equal(meta.swipes[0].rawOriginal, 'original-a');
+  assert.equal(meta.swipes[0].reasoningDisplay, 'think-a');
   assert.equal(meta.activeSwipe, 0);
   console.log('ok - ensureSwipeMeta seeds swipe branches and active index');
 }
@@ -128,6 +137,27 @@ const createFakeDocument = () => {
   assert.equal(target.children.length, 2);
   assert.equal(target.children[1].textContent, '生成中');
   console.log('ok - renderSwipeDraftPlaceholderCore mounts placeholder dots and text');
+}
+
+{
+  const resolved = resolveActiveSwipeMessageCore({
+    id: 'm-reason',
+    content: 'first',
+    rawOriginal: 'first original',
+    meta: {
+      reasoningDisplay: 'first reasoning',
+      activeSwipe: 1,
+      swipes: [
+        { content: 'first', raw: 'first raw', reasoningDisplay: 'branch first reasoning' },
+        { content: 'second', raw: 'second raw' },
+      ],
+    },
+  });
+  assert.equal(resolved.content, 'second');
+  assert.equal(resolved.raw, 'second raw');
+  assert.equal(resolved.rawOriginal, undefined);
+  assert.equal(resolved.meta.reasoningDisplay, undefined);
+  console.log('ok - resolveActiveSwipeMessageCore clears stale reasoning on later branches without reasoning');
 }
 
 {

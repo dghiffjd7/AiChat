@@ -187,6 +187,10 @@ const createRuntime = (overrides = {}) => {
   const target = { meta: {} };
   runtime.applyReasoningUiState(target, { meta: { reasoningCollapsed: true } });
   assert.equal(target.meta.reasoningCollapsed, true);
+  const expandedTarget = { meta: { reasoningExpanded: true, reasoningCollapsed: false } };
+  runtime.applyReasoningUiState(expandedTarget, { meta: { reasoningCollapsed: true, reasoningExpanded: false } });
+  assert.equal(expandedTarget.meta.reasoningCollapsed, true);
+  assert.equal(expandedTarget.meta.reasoningExpanded, false);
   const details = runtime.buildReasoningElement(message);
   assert.equal(details.open, true);
   const wrapper = documentLike.createElement('div');
@@ -246,6 +250,29 @@ const createRuntime = (overrides = {}) => {
   assert.deepEqual(scrollCalls, [['target-msg', { keyword: '原始消息', kind: 'anchor' }]]);
   assert.deepEqual(warningCalls, ['未找到被回复的消息']);
   console.log('ok - prepareTextContainer preserves header order and reply preview fallback flow');
+}
+
+{
+  const { runtime, documentLike } = createRuntime();
+  const message = {
+    meta: {
+      reasoning: 'first chain',
+    },
+  };
+  const bubble = documentLike.createElement('div');
+  const firstContent = runtime.prepareTextContainer(bubble, message);
+  firstContent.textContent = 'rendered body';
+  const secondContent = runtime.prepareTextContainer(bubble, {
+    meta: {
+      reasoning: 'updated chain',
+    },
+  });
+  assert.equal(secondContent, firstContent);
+  assert.equal(secondContent.textContent, 'rendered body');
+  assert.equal(bubble.children.length, 2);
+  assert.equal(bubble.children[0].className, 'chat-reasoning');
+  assert.equal(bubble.children[1], firstContent);
+  console.log('ok - prepareTextContainer reuses existing body node while rebuilding message headers');
 }
 
 {

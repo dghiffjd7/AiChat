@@ -69,8 +69,9 @@ const createWrapper = (message = null) => {
 	    rawSource: 'source-a',
 	    meta: {
 	      activeSwipe: 0,
+	      reasoningDisplay: 'old reasoning',
 	      swipes: [
-	        { content: 'a', raw: 'ra', rawSource: 'source-a' },
+	        { content: 'a', raw: 'ra', rawSource: 'source-a', reasoningDisplay: 'reason-a' },
 	        { content: 'b', raw: 'rb', rawSource: 'source-b', rawOriginal: 'original-b' },
 	      ],
 	    },
@@ -93,11 +94,39 @@ const createWrapper = (message = null) => {
 	  assert.equal(message.raw, 'rb');
 	  assert.equal(message.rawSource, 'source-b');
 	  assert.equal(message.rawOriginal, 'original-b');
+	  assert.equal(message.meta.reasoningDisplay, undefined);
 	  assert.equal(renders.length, 1);
   assert.equal(syncs.length, 1);
   assert.equal(change.index, 1);
   assert.equal(change.previousIndex, 0);
   console.log('ok - applySwipeCore updates active branch, renders content and emits change payload');
+}
+
+{
+  const message = {
+    id: 'm1-reason',
+    content: 'a',
+    raw: 'ra',
+    meta: {
+      activeSwipe: 0,
+      swipes: [
+        { content: 'a', raw: 'ra' },
+        { content: 'b', raw: 'rb', reasoningDisplay: 'reason-b', reasoningLabel: '推理' },
+      ],
+    },
+  };
+  const wrapper = createWrapper(message);
+  const applied = applySwipeCore({
+    wrapper,
+    message,
+    newIndex: 1,
+    renderSwipeContent() {},
+    syncSwipeIndicator() {},
+  });
+  assert.equal(applied, true);
+  assert.equal(message.meta.reasoningDisplay, 'reason-b');
+  assert.equal(message.meta.reasoningLabel, '推理');
+  console.log('ok - applySwipeCore applies branch-local reasoning state');
 }
 
 {

@@ -3,8 +3,10 @@ import assert from 'node:assert/strict';
 import {
   createScrollBottomButtonUiRuntime,
   getScrollDistanceFromBottom,
+  getScrollDistanceFromTop,
   isNearBottom,
   resolveScrollBottomButtonThresholds,
+  resolveScrollTopButtonThresholds,
 } from '../../src/scripts/ui/chat/scroll-bottom-button-ui-utils.js';
 
 const createClassList = () => {
@@ -59,9 +61,14 @@ const createFakeDocument = () => {
     scrollTop: 620,
   };
   assert.equal(getScrollDistanceFromBottom(scrollEl), 180);
+  assert.equal(getScrollDistanceFromTop(scrollEl), 620);
   assert.equal(isNearBottom(scrollEl, 200), true);
   assert.equal(isNearBottom(scrollEl, 100), false);
   assert.deepEqual(resolveScrollBottomButtonThresholds({ clientHeight: 500 }), {
+    show: 290,
+    hide: 90,
+  });
+  assert.deepEqual(resolveScrollTopButtonThresholds({ clientHeight: 500 }), {
     show: 290,
     hide: 90,
   });
@@ -100,6 +107,56 @@ const createFakeDocument = () => {
   timers[1][0]();
   assert.equal(button.classList.contains('is-immediate'), false);
   console.log('ok - scroll bottom runtime mounts button and toggles immediate visible states');
+}
+
+{
+  const documentLike = createFakeDocument();
+  const host = documentLike.createElement('div');
+  let clicked = 0;
+  const runtime = createScrollBottomButtonUiRuntime({ documentLike, schedule: () => null });
+  const button = runtime.ensureTopButton({
+    scrollEl: { parentElement: host },
+    existingButtonEl: null,
+    onClick: () => {
+      clicked += 1;
+    },
+  });
+  assert.equal(button.className, 'chat-scroll-top-btn');
+  assert.equal(host.children[0], button);
+  button.click();
+  assert.equal(clicked, 1);
+  console.log('ok - scroll runtime mounts top button and wires click callback');
+}
+
+{
+  const runtime = createScrollBottomButtonUiRuntime({
+    documentLike: createFakeDocument(),
+    schedule: () => null,
+  });
+  const button = createFakeDocument().createElement('button');
+  runtime.refreshTopButton({
+    scrollEl: {
+      scrollHeight: 1200,
+      clientHeight: 400,
+      scrollTop: 260,
+    },
+    buttonEl: button,
+    hideButton: options => runtime.hideButton({ buttonEl: button, ...options }),
+    showButton: options => runtime.showButton({ buttonEl: button, ...options }),
+  });
+  assert.equal(button.classList.contains('is-visible'), true);
+  runtime.refreshTopButton({
+    scrollEl: {
+      scrollHeight: 1200,
+      clientHeight: 400,
+      scrollTop: 20,
+    },
+    buttonEl: button,
+    hideButton: options => runtime.hideButton({ buttonEl: button, ...options }),
+    showButton: options => runtime.showButton({ buttonEl: button, ...options }),
+  });
+  assert.equal(button.classList.contains('is-visible'), false);
+  console.log('ok - refreshTopButton toggles visibility by scroll distance from top');
 }
 
 {

@@ -143,20 +143,6 @@ export class ExtensionsPanel {
         color: var(--app-text-muted);
         font-size: 12px;
       }
-      #extensions-panel .extensions-footer {
-        display: flex;
-        justify-content: flex-end;
-      }
-      #extensions-panel #extensions-done {
-        border: 1px solid #0ea5e9;
-        border-radius: 10px;
-        background: #0ea5e9;
-        color: var(--app-text-inverse);
-        font-weight: 700;
-        font-size: 14px;
-        padding: 8px 14px;
-        cursor: pointer;
-      }
       #extensions-panel .extensions-embedded-root {
         position: static !important;
         inset: auto !important;
@@ -228,9 +214,6 @@ export class ExtensionsPanel {
           </div>
         </div>
 
-        <div class="extensions-footer">
-          <button id="extensions-done">完成</button>
-        </div>
       </div>
     `;
     this.element.addEventListener('click', (e) => e.stopPropagation());
@@ -242,7 +225,6 @@ export class ExtensionsPanel {
       btn.addEventListener('click', () => this.toggleBody(btn));
     });
     this.element.querySelector('#extensions-close')?.addEventListener('click', () => this.hide());
-    this.element.querySelector('#extensions-done')?.addEventListener('click', () => this.hide());
   }
 
   async toggleBody(toggleBtn) {

@@ -159,6 +159,76 @@ const createTarget = () => ({
 }
 
 {
+  const target = createTarget();
+  const wrapper = {
+    dataset: {},
+    __chatappMessage: { content: 'old' },
+  };
+  let stickerRenderCount = 0;
+  let reasoningApplyCount = 0;
+  const options = {
+    messageEl: { nodeName: 'DIV' },
+    wrapperEl: wrapper,
+    msgId: 'm2-repeat',
+    meta: {},
+    placeholder: { id: 'm2-repeat' },
+    state: { content: 'same' },
+    applyReasoningUiState() { reasoningApplyCount += 1; },
+    cleanupRichTextMounts() {},
+    prepareTextContainer() { return target; },
+    normalizeAssistantLineBreaks: text => text,
+    renderTextWithStickers: () => {
+      stickerRenderCount += 1;
+      return false;
+    },
+    renderRichText() {},
+    applyCreativeBubbleState() {},
+  };
+  renderAssistantStreamStateCore(options);
+  renderAssistantStreamStateCore({
+    ...options,
+    state: { content: 'same', reasoning: 'updated reasoning' },
+  });
+  assert.equal(stickerRenderCount, 1);
+  assert.equal(reasoningApplyCount, 2);
+  assert.equal(wrapper.__chatappMessage.meta.reasoning, 'updated reasoning');
+  assert.equal(target.textContent, 'same');
+  console.log('ok - renderAssistantStreamStateCore skips duplicate body renders while preserving stream state updates');
+}
+
+{
+  const target = createTarget();
+  const wrapper = {
+    dataset: {},
+    __chatappMessage: { content: 'old' },
+  };
+  const renders = [];
+  const options = {
+    messageEl: { nodeName: 'DIV' },
+    wrapperEl: wrapper,
+    msgId: 'm2-repeat-rich',
+    meta: { renderRich: true },
+    placeholder: { id: 'm2-repeat-rich' },
+    state: { content: '<details><summary>推理</summary>正文</details>' },
+    applyReasoningUiState() {},
+    cleanupRichTextMounts() {},
+    prepareTextContainer() { return target; },
+    normalizeAssistantLineBreaks: text => text,
+    renderTextWithStickers: () => false,
+    renderRichText: (...args) => renders.push(args),
+    applyCreativeBubbleState() {},
+  };
+  renderAssistantStreamStateCore(options);
+  renderAssistantStreamStateCore({
+    ...options,
+    state: { content: '<details><summary>推理</summary>正文</details>', reasoning: 'updated reasoning' },
+  });
+  assert.equal(renders.length, 1);
+  assert.equal(wrapper.__chatappMessage.meta.reasoning, 'updated reasoning');
+  console.log('ok - renderAssistantStreamStateCore skips duplicate rich body renders while preserving stream state updates');
+}
+
+{
   const messageEl = { parentElement: { parentElement: { remove() {} } } };
   const target = createTarget();
   const wrapper = { __chatappMessage: { content: 'prev' } };

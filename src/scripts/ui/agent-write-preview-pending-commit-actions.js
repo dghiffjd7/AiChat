@@ -98,6 +98,14 @@ const buildBlockedResult = ({
   pending,
 });
 
+const buildRejectedCommit = (message = '已打回，未提交写入变更。') => ({
+  status: 'skipped',
+  reason: 'user_rejected',
+  reviewDecision: 'user_rejected',
+  displayMessage: trim(message, '已打回，未提交写入变更。'),
+  writesStore: false,
+});
+
 const readStore = store => ({
   get: typeof store?.get === 'function' ? store.get.bind(store) : null,
   markCommit: typeof store?.markCommit === 'function' ? store.markCommit.bind(store) : null,
@@ -198,6 +206,38 @@ export const createAgentWritePreviewPendingCommitActions = ({
     }
   };
 
+  const rejectAgentWritePreviewPendingCommit = async (options = {}) => {
+    const opts = isPlainObject(options) ? options : { id: options };
+    const id = trim(opts.id || opts.pendingPermissionId);
+    const pending = getPending(id);
+    if (!pending) return buildBlockedResult({ id, reason: 'pending_permission_not_found' });
+    const toolName = trim(pending.toolName);
+    if (!WRITE_PREVIEW_TOOLS.has(toolName)) {
+      return buildBlockedResult({ id, reason: 'not_write_preview_tool', pending });
+    }
+    if (pending.commitStatus === 'committed') {
+      return buildBlockedResult({ id, reason: 'already_committed', pending });
+    }
+    const commit = buildRejectedCommit(opts.message);
+    const nextPending = store.markCommit?.(id, {
+      status: 'skipped',
+      result: commit,
+      errorMessage: '',
+    }) || getPending(id);
+    if (typeof onCommitFinished === 'function') {
+      await onCommitFinished({ commit, pending: nextPending });
+    }
+    return {
+      ok: true,
+      status: 'skipped',
+      message: commit.displayMessage,
+      pendingPermissionId: id,
+      pending: nextPending,
+      commit,
+      writesStore: false,
+    };
+  };
+
   const undoAgentWritePreviewPendingCommit = async (options = {}) => {
     const opts = isPlainObject(options) ? options : { id: options };
     const id = trim(opts.id || opts.pendingPermissionId);
@@ -268,6 +308,7 @@ export const createAgentWritePreviewPendingCommitActions = ({
 
   return {
     commitAgentWritePreviewPendingPermission,
+    rejectAgentWritePreviewPendingCommit,
     undoAgentWritePreviewPendingCommit,
   };
 };

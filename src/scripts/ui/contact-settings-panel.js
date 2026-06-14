@@ -7,7 +7,7 @@ import { avatarDataUrlFromFile } from '../utils/image.js';
 import { appSettings } from '../storage/app-settings.js';
 import { getSummaryTableIdsForContext, isRpSessionId } from '../memory/memory-context-utils.js';
 import { MemoryTableEditor } from './memory-table-editor.js';
-import { appConfirm } from './app-confirm.js';
+import { appChoice, appConfirm } from './app-confirm.js';
 import { normalizeBadgeList } from '../utils/name-badges.js';
 import { FEATHER_DEFAULT, resolveLineAvatar } from '../utils/line-avatar.js';
 import { bindCustomSelectButton, closeCustomSelectMenu, refreshCustomSelectButton } from './custom-select.js';
@@ -68,8 +68,10 @@ import {
 } from './session-summary-utils.js';
 import { emitMemoryRowsUpdated as emitSharedMemoryRowsUpdated } from './session-memory-event-utils.js';
 import { createSessionSummarySectionRuntime } from './session-summary-section-runtime-utils.js';
+import { runSessionConversationExportFlow } from './session-conversation-export-utils.js';
 import {
     createSessionArchiveEmptyState,
+    createSessionArchiveManagerModal,
     createSessionArchiveRow,
 } from './session-shared-view-utils.js';
 const resolveDefaultMemoryTemplateId = async (memoryTemplateStore = null) => resolveSharedDefaultMemoryTemplateId({
@@ -169,6 +171,9 @@ export class ContactSettingsPanel {
         this.nameInput = null;
         this.archivesList = null;
         this.archiveRuntime = null;
+        this.archiveManageButton = null;
+        this.archiveManagerModal = null;
+        this.archiveManagerRuntime = null;
         this.newChatRuntime = null;
         this.summariesList = null;
         this.compactedList = null;
@@ -254,6 +259,7 @@ export class ContactSettingsPanel {
     }
 
     hide() {
+        this.hideArchiveManager();
         if (this.overlay) this.overlay.style.display = 'none';
         if (this.panel) this.panel.style.display = 'none';
     }
@@ -435,7 +441,10 @@ export class ContactSettingsPanel {
                     <button id="contact-export-experience-pack" type="button" style="${exportButtonStyle}">
                         <span>📦</span> 导出角色体验包
                     </button>
-                    <div style="${helperCaptionStyle}">历史存档（点击加载）</div>
+                    <div style="${summaryHeaderRowStyle}">
+                        <div style="${helperCaptionStyle}; margin-bottom:0;">历史存档（点击加载）</div>
+                        <button id="contact-archives-manage" type="button" style="${utilitySmallButtonStyle}">管理</button>
+                    </div>
                     <div id="contact-archives-list" style="${archiveListStyle}"></div>
 
                     <div id="contact-summary-section">
@@ -495,6 +504,7 @@ export class ContactSettingsPanel {
         this.nameInput = this.panel.querySelector('#contact-name-input');
         this.labelsInput = this.panel.querySelector('#contact-labels-input');
         this.archivesList = this.panel.querySelector('#contact-archives-list');
+        this.archiveManageButton = this.panel.querySelector('#contact-archives-manage');
         this.summariesList = this.panel.querySelector('#contact-summaries-list');
         this.compactedList = this.panel.querySelector('#contact-compacted-summary');
         this.summarySection = this.panel.querySelector('#contact-summary-section');
@@ -608,6 +618,7 @@ export class ContactSettingsPanel {
             }
         });
         this.panel.querySelector('#contact-new-chat').onclick = () => this.startNewChat();
+        this.archiveManageButton?.addEventListener('click', () => this.openArchiveManager());
         bindSessionSummarySectionControls({
             clearButtonEl: summariesClearButton,
             batchButtonEl: summariesBatchButton,
@@ -790,11 +801,21 @@ export class ContactSettingsPanel {
             deleteArchiveTurnCheckpointState: (sessionId, archiveId) =>
                 window.appBridge?.deleteArchiveTurnCheckpointState?.(sessionId, archiveId),
             deleteArchive: (archiveId, sessionId) => this.chatStore.deleteArchive(archiveId, sessionId),
+            renameArchive: (archiveId, name, sessionId) => this.chatStore.renameArchive(archiveId, name, sessionId),
+            promptArchiveRenameName: ({ archive }) => prompt('重命名存档', archive?.name || ''),
+            includeCurrentThread: true,
+            onExportCurrent: ({ sessionId }) => this.exportConversationArchive({ sessionId, current: true }),
+            onExportArchive: ({ sessionId, archive }) => this.exportConversationArchive({ sessionId, archive }),
             onArchiveLoaded: (sessionId) => {
                 window.toastr?.success('已加载存档');
                 this.onSaved?.({ id: sessionId, forceRefresh: true });
             },
             onArchiveDeleted: () => this.renderArchives(),
+            onArchiveRenamed: (sessionId) => {
+                window.toastr?.success('已重命名存档');
+                this.onSaved?.({ id: sessionId, forceRefresh: true });
+                this.renderArchives();
+            },
             onHide: () => this.hide(),
             createEmptyState: () => createSessionArchiveEmptyState(),
             createArchiveRow: (payload) => createSessionArchiveRow(payload),
@@ -807,6 +828,121 @@ export class ContactSettingsPanel {
 
     renderArchives() {
         return this.ensureArchiveRuntime().renderArchives();
+    }
+
+    exportConversationArchive(payload = {}) {
+        const sessionId = String(payload?.sessionId || this.getSessionId() || '').trim();
+        const archive = payload?.archive || null;
+        const current = payload?.current === true;
+        return runSessionConversationExportFlow({
+            chatStore: this.chatStore,
+            sessionId,
+            archive,
+            current,
+            title: current ? '当前聊天' : (archive?.name || '未命名存档'),
+            sourceLabel: current ? '当前聊天' : `存档：${archive?.name || archive?.id || '未命名存档'}`,
+            appChoiceFn: appChoice,
+            toastSuccess: text => window.toastr?.success?.(text),
+            toastWarning: text => window.toastr?.warning?.(text),
+            toastError: text => window.toastr?.error?.(text),
+            logger,
+        });
+    }
+
+    ensureArchiveManagerModal() {
+        if (this.archiveManagerModal) return this.archiveManagerModal;
+        const modal = createSessionArchiveManagerModal({
+            documentRef: document,
+            title: '历史存档',
+        });
+        modal.overlay.addEventListener('click', () => this.hideArchiveManager());
+        modal.closeButton.addEventListener('click', () => this.hideArchiveManager());
+        document.body.appendChild(modal.overlay);
+        document.body.appendChild(modal.panel);
+        this.archiveManagerModal = modal;
+        return modal;
+    }
+
+    openArchiveManager() {
+        const modal = this.ensureArchiveManagerModal();
+        const sessionId = this.getSessionId();
+        const count = Number(this.chatStore?.getArchives?.(sessionId)?.length || 0) || 0;
+        if (modal.subtitleEl) modal.subtitleEl.textContent = `${count} 份`;
+        modal.overlay.style.display = 'block';
+        modal.panel.style.display = 'flex';
+        this.renderArchiveManagerArchives();
+    }
+
+    hideArchiveManager() {
+        if (this.archiveManagerModal?.overlay) this.archiveManagerModal.overlay.style.display = 'none';
+        if (this.archiveManagerModal?.panel) this.archiveManagerModal.panel.style.display = 'none';
+    }
+
+    ensureArchiveManagerRuntime() {
+        if (this.archiveManagerRuntime) return this.archiveManagerRuntime;
+        this.archiveManagerRuntime = createSessionArchiveSectionRuntime({
+            getContainer: () => this.ensureArchiveManagerModal().listEl,
+            getSessionId: () => this.getSessionId(),
+            getChatStore: () => this.chatStore,
+            isGroup: false,
+            getMemoryStorageMode,
+            buildMemoryTableSnapshot: ({ sessionId, isGroup }) => this.buildMemoryTableSnapshot({ sessionId, isGroup }),
+            captureArchivePointer: (sessionId, options) =>
+                window.appBridge?.buildArchivePointerFromCurrentThread?.(sessionId, options),
+            loadArchivedMessages: (archiveId, sessionId, options) =>
+                this.chatStore.loadArchivedMessages(archiveId, sessionId, options),
+            getLastArchiveTransition: (sessionId) => this.chatStore.getLastArchiveTransition?.(sessionId),
+            persistArchivePointer: (sessionId, archiveId, archivePointer, options) =>
+                window.appBridge?.setArchivePointerForArchive?.(sessionId, archiveId, archivePointer, options),
+            applyMemoryTableSnapshot: ({ sessionId, isGroup, snapshot }) =>
+                this.applyMemoryTableSnapshot({ sessionId, isGroup, snapshot }),
+            restoreArchivePointerForLoadedThread: (sessionId, options) =>
+                window.appBridge?.restoreArchivePointerForLoadedThread?.(sessionId, options),
+            logger,
+            appConfirmFn: appConfirm,
+            runArchiveSwitchFlow,
+            runArchiveDeleteFlow,
+            deleteArchiveTurnCheckpointState: (sessionId, archiveId) =>
+                window.appBridge?.deleteArchiveTurnCheckpointState?.(sessionId, archiveId),
+            deleteArchive: (archiveId, sessionId) => this.chatStore.deleteArchive(archiveId, sessionId),
+            renameArchive: (archiveId, name, sessionId) => this.chatStore.renameArchive(archiveId, name, sessionId),
+            promptArchiveRenameName: ({ archive }) => prompt('重命名存档', archive?.name || ''),
+            includeCurrentThread: true,
+            onExportCurrent: ({ sessionId }) => this.exportConversationArchive({ sessionId, current: true }),
+            onExportArchive: ({ sessionId, archive }) => this.exportConversationArchive({ sessionId, archive }),
+            onArchiveLoaded: (sessionId) => {
+                window.toastr?.success('已加载存档');
+                this.onSaved?.({ id: sessionId, forceRefresh: true });
+            },
+            onArchiveDeleted: () => {
+                this.renderArchives();
+                this.renderArchiveManagerArchives();
+            },
+            onArchiveRenamed: (sessionId) => {
+                window.toastr?.success('已重命名存档');
+                this.onSaved?.({ id: sessionId, forceRefresh: true });
+                this.renderArchives();
+                this.renderArchiveManagerArchives();
+            },
+            onHide: () => {
+                this.hideArchiveManager();
+                this.hide();
+            },
+            createEmptyState: () => createSessionArchiveEmptyState(),
+            createArchiveRow: (payload) => createSessionArchiveRow(payload),
+            sourcePrefix: 'contact',
+            restoreWarnMessage: 'restore checkpoint memory after archive load failed',
+            deleteWarnMessage: 'delete archive turn checkpoint state failed',
+        });
+        return this.archiveManagerRuntime;
+    }
+
+    renderArchiveManagerArchives() {
+        const modal = this.ensureArchiveManagerModal();
+        const sessionId = this.getSessionId();
+        const count = Number(this.chatStore?.getArchives?.(sessionId)?.length || 0) || 0;
+        if (modal.subtitleEl) modal.subtitleEl.textContent = `${count} 份`;
+        return this.ensureArchiveManagerRuntime().renderArchives();
     }
 
     renderSummaries() {

@@ -8,19 +8,58 @@ import { getCharacterCardDisplayName, getCharacterCardSource } from '../utils/ch
 import { getDefaultAppIcon } from '../utils/default-icon.js';
 import { bindCustomSelectButton, closeCustomSelectMenu, refreshCustomSelectButton } from './custom-select.js';
 import { cleanupPersonaScopedData, deletePersonaCard } from './persona-runtime-utils.js';
+import {
+    applyPersonaGlobalMemorySnapshot,
+    restorePersonaRoleArchive,
+    runPersonaNewChatFlow,
+} from './persona-new-chat-runtime-utils.js';
 import { getRegexLocalSet, removeRegexLocalSet, waitForRegexStoreReady } from './regex-store-runtime-utils.js';
 import { waitForScriptStoreReady } from './script-runtime-utils.js';
 import { deleteWorldSessionMapEntry } from './world-session-runtime-utils.js';
+import {
+    applyMemoryTableSnapshot as applySharedMemoryTableSnapshot,
+    askMemoryTableNewChatMode,
+    buildMemoryTableSnapshot as buildSharedMemoryTableSnapshot,
+    resolveDefaultMemoryTemplateId as resolveSharedDefaultMemoryTemplateId,
+} from './session-memory-table-utils.js';
+import { emitMemoryRowsUpdated as emitSharedMemoryRowsUpdated } from './session-memory-event-utils.js';
+import { logger } from '../utils/logger.js';
 
 export class PersonaPanel {
-    constructor({ personaStore, userStore = null, chatStore = null, contactsStore = null, rpSessionStore = null, getSessionId = null, onPersonaChanged }) {
+    constructor({
+        personaStore,
+        userStore = null,
+        chatStore = null,
+        contactsStore = null,
+        rpSessionStore = null,
+        momentsStore = null,
+        momentSummaryStore = null,
+        personaArchiveStore = null,
+        memoryTableStore = null,
+        memoryTemplateStore = null,
+        getSessionId = null,
+        getMemoryStorageMode = null,
+        getPersonaScopeKey = null,
+        getRpSessionIdForPersona = null,
+        onPersonaChanged,
+        onRoleNewChatFinished = null,
+    }) {
         this.store = personaStore;
         this.userStore = userStore;
         this.chatStore = chatStore;
         this.contactsStore = contactsStore;
         this.rpSessionStore = rpSessionStore;
+        this.momentsStore = momentsStore;
+        this.momentSummaryStore = momentSummaryStore;
+        this.personaArchiveStore = personaArchiveStore;
+        this.memoryTableStore = memoryTableStore;
+        this.memoryTemplateStore = memoryTemplateStore;
         this.getSessionId = typeof getSessionId === 'function' ? getSessionId : null;
+        this.getMemoryStorageMode = typeof getMemoryStorageMode === 'function' ? getMemoryStorageMode : () => 'off';
+        this.getPersonaScopeKey = typeof getPersonaScopeKey === 'function' ? getPersonaScopeKey : null;
+        this.getRpSessionIdForPersona = typeof getRpSessionIdForPersona === 'function' ? getRpSessionIdForPersona : null;
         this.onPersonaChanged = onPersonaChanged;
+        this.onRoleNewChatFinished = typeof onRoleNewChatFinished === 'function' ? onRoleNewChatFinished : null;
         this.overlay = null;
         this.panel = null;
         this.mediaPicker = new MediaPicker({
@@ -52,11 +91,387 @@ export class PersonaPanel {
         this.importUrlBtn = null;
         this.importFileBtn = null;
         this.importCloseBtn = null;
+        this.roleNewChatRunning = false;
+        this.roleArchiveModal = null;
+        this.roleArchiveState = null;
     }
 
     async notifyPersonaChanged() {
         if (typeof this.onPersonaChanged !== 'function') return;
         await Promise.resolve(this.onPersonaChanged());
+    }
+
+    getPersonaScopeId(personaId) {
+        try {
+            return String(this.getPersonaScopeKey?.(personaId) || '').trim();
+        } catch {
+            return '';
+        }
+    }
+
+    getRoleRpSessionId(personaId) {
+        try {
+            const resolved = String(this.getRpSessionIdForPersona?.(personaId) || '').trim();
+            if (resolved) return resolved;
+        } catch {}
+        return `rp:${String(personaId || 'default').trim() || 'default'}`;
+    }
+
+    resolveDefaultMemoryTemplateId() {
+        return resolveSharedDefaultMemoryTemplateId({ memoryTemplateStore: this.memoryTemplateStore });
+    }
+
+    buildPersonaMemoryTableSnapshot(payload = {}) {
+        return buildSharedMemoryTableSnapshot({
+            ...payload,
+            memoryTableStore: this.memoryTableStore,
+            resolveDefaultMemoryTemplateId: () => this.resolveDefaultMemoryTemplateId(),
+        });
+    }
+
+    applyPersonaMemoryTableSnapshot(payload = {}) {
+        return applySharedMemoryTableSnapshot({
+            ...payload,
+            memoryTableStore: this.memoryTableStore,
+            resolveDefaultMemoryTemplateId: () => this.resolveDefaultMemoryTemplateId(),
+            notifyRowsUpdated: detail => this.notifyPersonaMemoryRowsUpdated(detail),
+        });
+    }
+
+    notifyPersonaMemoryRowsUpdated({ sessionId = '', templateId = '' } = {}) {
+        return emitSharedMemoryRowsUpdated({ target: window, sessionId, templateId });
+    }
+
+    async ensurePersonaArchiveScope(personaId) {
+        const pid = String(personaId || '').trim();
+        if (!pid) return false;
+        const activeId = String(this.store.getActive?.()?.id || '').trim();
+        if (activeId === pid) return true;
+        const switched = await this.store.setActive(pid);
+        if (!switched) return false;
+        this.renderList();
+        await this.notifyPersonaChanged();
+        return true;
+    }
+
+    async startRoleNewChat(personaId) {
+        const pid = String(personaId || '').trim();
+        if (!pid || this.roleNewChatRunning) return;
+        const persona = this.store.get(pid);
+        if (!persona) return;
+        const name = this.getCharacterCardName(persona) || pid;
+        const scopeId = this.getPersonaScopeId(pid);
+        if (!scopeId) {
+            window.toastr?.warning?.('当前数据未按角色卡隔离，无法安全执行角色卡新聊天');
+            return;
+        }
+
+        const ok = await appConfirm({
+            title: '角色卡开启新聊天',
+            message: `将为「${name}」创建角色卡存档，并清空当前角色卡下的聊天室、创意写作/RP、动态和对应记忆表格。之后可在角色卡存档中整体切回。`,
+            confirmText: '开启新聊天',
+            cancelText: '取消',
+            danger: true,
+        });
+        if (!ok) return;
+
+        this.roleNewChatRunning = true;
+        const editBtn = this.panel?.querySelector?.('#persona-new-chat-btn');
+        const listBtns = this.panel?.querySelectorAll?.('.persona-new-chat-btn') || [];
+        try {
+            if (editBtn) {
+                editBtn.disabled = true;
+                editBtn.textContent = '处理中...';
+            }
+            listBtns.forEach((btn) => {
+                btn.disabled = true;
+                btn.style.opacity = '0.65';
+            });
+
+            if (!await this.ensurePersonaArchiveScope(pid)) {
+                window.toastr?.error?.('无法切换到目标角色卡');
+                return;
+            }
+
+            const result = await runPersonaNewChatFlow({
+                personaId: pid,
+                personaName: name,
+                rpSessionId: this.getRoleRpSessionId(pid),
+                chatStore: this.chatStore,
+                contactsStore: this.contactsStore,
+                momentsStore: this.momentsStore,
+                momentSummaryStore: this.momentSummaryStore,
+                memoryTableStore: this.memoryTableStore,
+                resolveDefaultMemoryTemplateId: () => this.resolveDefaultMemoryTemplateId(),
+                getMemoryStorageMode: place => this.getMemoryStorageMode(place),
+                askMemoryTableNewChatMode,
+                promptForArchiveName: () => prompt('请输入本次角色卡存档名称（留空将自动命名）：'),
+                buildMemoryTableSnapshot: payload => this.buildPersonaMemoryTableSnapshot(payload),
+                captureArchivePointer: (sessionId, options) =>
+                    window.appBridge?.buildArchivePointerFromCurrentThread?.(sessionId, options),
+                persistArchivePointer: (sessionId, archiveId, archivePointer, options) =>
+                    window.appBridge?.setArchivePointerForArchive?.(sessionId, archiveId, archivePointer, options),
+                restoreMemoryForActiveThread: (sessionId, options) =>
+                    window.appBridge?.restoreMemoryForActiveThread?.(sessionId, options),
+                notifyRowsUpdated: detail => this.notifyPersonaMemoryRowsUpdated(detail),
+                createRoleArchive: payload => this.personaArchiveStore?.addArchive?.(payload),
+                requireRoleArchiveForExtras: true,
+                clearMemoryOnlyTargets: true,
+                clearMoments: true,
+                clearGlobalMemories: true,
+                logger,
+            });
+            if (result?.cancelled) return;
+
+            const details = [];
+            if (result?.startedSessions) details.push(`${result.startedSessions} 个会话`);
+            if (result?.clearedMoments) details.push(`${result.clearedMoments} 条动态`);
+            const suffix = details.length ? `（${details.join(' · ')}）` : '';
+            window.toastr?.success?.(`已为「${name}」开启新聊天${suffix}`);
+            await this.onRoleNewChatFinished?.({ personaId: pid, scopeId, result });
+            this.renderList();
+        } catch (err) {
+            logger.warn('persona new chat failed', err);
+            window.toastr?.error?.('角色卡开启新聊天失败');
+        } finally {
+            this.roleNewChatRunning = false;
+            if (editBtn) {
+                editBtn.disabled = false;
+                editBtn.textContent = '为此角色卡开启新聊天';
+            }
+            const freshBtns = this.panel?.querySelectorAll?.('.persona-new-chat-btn') || [];
+            freshBtns.forEach((btn) => {
+                btn.disabled = false;
+                btn.style.opacity = '';
+            });
+        }
+    }
+
+    ensureRoleArchiveModal() {
+        if (this.roleArchiveModal) return;
+        const overlay = document.createElement('div');
+        overlay.className = 'app-themed-overlay persona-role-archive-overlay';
+        overlay.style.cssText = `
+            display:none; position:fixed; inset:0;
+            background: rgba(0,0,0,0.38);
+            z-index: 22060;
+            padding: calc(10px + env(safe-area-inset-top, 0px)) 10px calc(10px + env(safe-area-inset-bottom, 0px)) 10px;
+            box-sizing: border-box;
+            align-items:center;
+            justify-content:center;
+        `;
+        overlay.addEventListener('click', (event) => {
+            if (event.target === overlay) this.hideRoleArchiveModal();
+        });
+
+        const panel = document.createElement('div');
+        panel.className = 'app-themed-panel persona-role-archive-panel';
+        panel.style.cssText = `
+            width: min(94vw, 520px);
+            max-height: min(86vh, 720px);
+            background: var(--app-surface-card);
+            border-radius: 14px;
+            overflow: hidden;
+            display:flex;
+            flex-direction:column;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.22);
+        `;
+        panel.addEventListener('click', (event) => event.stopPropagation());
+        panel.innerHTML = `
+            <div style="display:flex; align-items:center; gap:10px; padding:12px 14px; background:var(--app-surface-subtle); border-bottom:1px solid var(--app-border-default);">
+                <div style="min-width:0; flex:1;">
+                    <div id="persona-role-archive-title" style="font-weight:900; color:var(--app-text-primary); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">角色卡存档</div>
+                    <div id="persona-role-archive-subtitle" style="font-size:12px; color:var(--app-text-muted); margin-top:2px;"></div>
+                </div>
+                <button id="persona-role-archive-close" style="width:38px; height:38px; border:none; background:transparent; border-radius:10px; font-size:20px; cursor:pointer; color:var(--app-text-secondary);">×</button>
+            </div>
+            <div id="persona-role-archive-list" style="flex:1; min-height:0; overflow:auto; -webkit-overflow-scrolling:touch; padding:12px;"></div>
+            <div style="padding:10px 14px; border-top:1px solid var(--app-border-subtle); color:var(--app-text-muted); font-size:12px; line-height:1.45;">
+                加载存档会先自动保存当前会话状态，再切回该角色卡存档中的聊天、创作、动态和记忆表格。
+            </div>
+        `;
+        panel.querySelector('#persona-role-archive-close')?.addEventListener('click', () => this.hideRoleArchiveModal());
+        overlay.appendChild(panel);
+        document.body.appendChild(overlay);
+        this.roleArchiveModal = { overlay, panel };
+    }
+
+    hideRoleArchiveModal() {
+        if (this.roleArchiveModal) this.roleArchiveModal.overlay.style.display = 'none';
+    }
+
+    formatRoleArchiveTime(value = 0) {
+        const ts = Number(value || 0) || 0;
+        if (!ts) return '';
+        try {
+            return new Date(ts).toLocaleString();
+        } catch {
+            return '';
+        }
+    }
+
+    async openRoleArchiveModal(personaId) {
+        const pid = String(personaId || '').trim();
+        if (!pid) return;
+        if (!this.personaArchiveStore?.listArchives) {
+            window.toastr?.warning?.('当前环境不支持角色卡存档');
+            return;
+        }
+        const persona = this.store.get(pid);
+        if (!persona) return;
+        const scopeId = this.getPersonaScopeId(pid);
+        if (!scopeId) {
+            window.toastr?.warning?.('当前数据未按角色卡隔离，无法查看角色卡存档');
+            return;
+        }
+        if (!await this.ensurePersonaArchiveScope(pid)) {
+            window.toastr?.error?.('无法切换到目标角色卡');
+            return;
+        }
+        this.ensureRoleArchiveModal();
+        this.roleArchiveState = {
+            personaId: pid,
+            personaName: this.getCharacterCardName(persona) || pid,
+        };
+        this.renderRoleArchiveList();
+        this.roleArchiveModal.overlay.style.display = 'flex';
+    }
+
+    renderRoleArchiveList() {
+        if (!this.roleArchiveModal || !this.roleArchiveState) return;
+        const panel = this.roleArchiveModal.panel;
+        const titleEl = panel.querySelector('#persona-role-archive-title');
+        const subtitleEl = panel.querySelector('#persona-role-archive-subtitle');
+        const listEl = panel.querySelector('#persona-role-archive-list');
+        if (!listEl) return;
+        const archives = this.personaArchiveStore?.listArchives?.() || [];
+        if (titleEl) titleEl.textContent = '角色卡存档';
+        if (subtitleEl) subtitleEl.textContent = `${this.roleArchiveState.personaName} · ${archives.length} 份`;
+        listEl.innerHTML = '';
+        if (!archives.length) {
+            const empty = document.createElement('div');
+            empty.style.cssText = 'padding:26px 12px; text-align:center; color:var(--app-text-muted); font-size:14px;';
+            empty.textContent = '暂无角色卡存档';
+            listEl.appendChild(empty);
+            return;
+        }
+        archives.forEach((archive) => {
+            const row = document.createElement('div');
+            row.style.cssText = `
+                display:flex; gap:10px; align-items:flex-start;
+                padding:12px;
+                border:1px solid var(--app-border-subtle);
+                border-radius:12px;
+                background:var(--app-surface-card);
+                margin-bottom:10px;
+            `;
+            const main = document.createElement('div');
+            main.style.cssText = 'flex:1; min-width:0;';
+            const name = document.createElement('div');
+            name.style.cssText = 'font-weight:900; color:var(--app-text-primary); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;';
+            name.textContent = archive.name || '未命名存档';
+            const meta = document.createElement('div');
+            meta.style.cssText = 'margin-top:4px; color:var(--app-text-muted); font-size:12px; line-height:1.45;';
+            const stats = archive.stats || {};
+            const parts = [
+                this.formatRoleArchiveTime(archive.createdAt),
+                `${Number(stats.sessions || archive.sessionArchives?.length || 0)} 个会话`,
+                `${Number(stats.moments || archive.momentsSnapshot?.moments?.length || 0)} 条动态`,
+                `${Number(stats.memoryOnlyTargets || archive.memoryOnlySnapshots?.length || 0)} 个纯记忆目标`,
+            ].filter(Boolean);
+            meta.textContent = parts.join(' · ');
+            main.appendChild(name);
+            main.appendChild(meta);
+
+            const actions = document.createElement('div');
+            actions.style.cssText = 'display:flex; gap:6px; flex-shrink:0;';
+            const loadBtn = document.createElement('button');
+            loadBtn.type = 'button';
+            loadBtn.textContent = '加载';
+            loadBtn.style.cssText = 'border:none; background:#2563eb; color:var(--app-text-inverse); border-radius:10px; padding:8px 10px; font-weight:800; cursor:pointer;';
+            const deleteBtn = document.createElement('button');
+            deleteBtn.type = 'button';
+            deleteBtn.textContent = '删除';
+            deleteBtn.style.cssText = 'border:1px solid #fecaca; background:#fff1f2; color:#dc2626; border-radius:10px; padding:8px 10px; font-weight:800; cursor:pointer;';
+            loadBtn.addEventListener('click', () => this.loadRoleArchive(archive.id));
+            deleteBtn.addEventListener('click', () => this.deleteRoleArchive(archive.id));
+            actions.appendChild(loadBtn);
+            actions.appendChild(deleteBtn);
+            row.appendChild(main);
+            row.appendChild(actions);
+            listEl.appendChild(row);
+        });
+    }
+
+    async loadRoleArchive(archiveId) {
+        const archive = this.personaArchiveStore?.getArchive?.(archiveId);
+        if (!archive || !this.roleArchiveState) return;
+        const ok = await appConfirm({
+            title: '加载角色卡存档',
+            message: `确定要加载「${archive.name || '未命名存档'}」吗？当前状态会先按各会话规则自动保存。`,
+            confirmText: '加载',
+            cancelText: '取消',
+        });
+        if (!ok) return;
+        try {
+            const result = await restorePersonaRoleArchive({
+                archive,
+                chatStore: this.chatStore,
+                memoryTableStore: this.memoryTableStore,
+                resolveDefaultMemoryTemplateId: () => this.resolveDefaultMemoryTemplateId(),
+                getMemoryStorageMode: place => this.getMemoryStorageMode(place),
+                buildMemoryTableSnapshot: payload => this.buildPersonaMemoryTableSnapshot(payload),
+                captureArchivePointer: (sessionId, options) =>
+                    window.appBridge?.buildArchivePointerFromCurrentThread?.(sessionId, options),
+                loadArchivedMessages: (archiveId, sessionId, options) =>
+                    this.chatStore?.loadArchivedMessages?.(archiveId, sessionId, options),
+                getLastArchiveTransition: sessionId => this.chatStore?.getLastArchiveTransition?.(sessionId),
+                persistArchivePointer: (sessionId, nextArchiveId, archivePointer, options) =>
+                    window.appBridge?.setArchivePointerForArchive?.(sessionId, nextArchiveId, archivePointer, options),
+                applyMemoryTableSnapshot: payload => this.applyPersonaMemoryTableSnapshot(payload),
+                applyGlobalMemorySnapshot: payload => applyPersonaGlobalMemorySnapshot({
+                    ...payload,
+                    memoryTableStore: this.memoryTableStore,
+                    resolveDefaultMemoryTemplateId: () => this.resolveDefaultMemoryTemplateId(),
+                    notifyRowsUpdated: detail => this.notifyPersonaMemoryRowsUpdated(detail),
+                }),
+                restoreArchivePointerForLoadedThread: (sessionId, options) =>
+                    window.appBridge?.restoreArchivePointerForLoadedThread?.(sessionId, options),
+                momentsStore: this.momentsStore,
+                momentSummaryStore: this.momentSummaryStore,
+                notifyRowsUpdated: detail => this.notifyPersonaMemoryRowsUpdated(detail),
+                logger,
+            });
+            if (!result?.loaded) {
+                window.toastr?.warning?.('未能加载该角色卡存档');
+                return;
+            }
+            const missing = Array.isArray(result.missingSessionArchives) ? result.missingSessionArchives.length : 0;
+            window.toastr?.success?.(missing ? `已加载角色卡存档，${missing} 个会话存档缺失` : '已加载角色卡存档');
+            await this.onRoleNewChatFinished?.({ personaId: this.roleArchiveState.personaId, result });
+            this.renderRoleArchiveList();
+        } catch (err) {
+            logger.warn('load persona role archive failed', err);
+            window.toastr?.error?.('加载角色卡存档失败');
+        }
+    }
+
+    async deleteRoleArchive(archiveId) {
+        const archive = this.personaArchiveStore?.getArchive?.(archiveId);
+        if (!archive) return;
+        const ok = await appConfirm({
+            title: '删除角色卡存档',
+            message: `确定要删除「${archive.name || '未命名存档'}」吗？`,
+            confirmText: '删除',
+            cancelText: '取消',
+            danger: true,
+        });
+        if (!ok) return;
+        const deleted = this.personaArchiveStore?.deleteArchive?.(archiveId);
+        if (deleted) {
+            window.toastr?.success?.('已删除角色卡存档');
+            this.renderRoleArchiveList();
+        }
     }
 
     ensureUI() {
@@ -191,7 +606,9 @@ export class PersonaPanel {
                         </div>
                     </div>
 
-                    <button id="delete-persona-btn" style="width: 100%; padding: 12px; background: #fee2e2; color: #dc2626; border: none; border-radius: 8px; margin-top: 20px; cursor: pointer;">删除此角色卡</button>
+                    <button id="persona-new-chat-btn" class="persona-new-chat-btn" style="width: 100%; padding: 12px; background: var(--app-surface-subtle); color: #b45309; border: 1px solid #fcd34d; border-radius: 8px; margin-top: 20px; cursor: pointer; font-weight: 700;">为此角色卡开启新聊天</button>
+                    <button id="persona-archive-btn" style="width: 100%; padding: 12px; background: var(--app-surface-card); color: var(--app-text-primary); border: 1px solid var(--app-border-default); border-radius: 8px; margin-top: 10px; cursor: pointer; font-weight: 700;">角色卡存档</button>
+                    <button id="delete-persona-btn" style="width: 100%; padding: 12px; background: #fee2e2; color: #dc2626; border: none; border-radius: 8px; margin-top: 10px; cursor: pointer;">删除此角色卡</button>
                 </div>
                 <div style="padding: 15px; border-top: 1px solid var(--app-border-subtle); background: var(--app-surface-card);">
                     <button id="save-persona-btn" style="width: 100%; padding: 12px; background: #007bff; color: var(--app-text-inverse); border: none; border-radius: 8px; font-weight: bold; cursor: pointer;">保存</button>
@@ -218,6 +635,8 @@ export class PersonaPanel {
         this.panel.querySelector('#edit-avatar-btn').addEventListener('click', () => this.changeAvatar());
         this.panel.querySelector('#save-persona-btn').addEventListener('click', () => this.saveEdit());
         this.panel.querySelector('#delete-persona-btn').addEventListener('click', () => this.deleteCurrent());
+        this.panel.querySelector('#persona-new-chat-btn').addEventListener('click', () => this.startRoleNewChat(this.editingId));
+        this.panel.querySelector('#persona-archive-btn').addEventListener('click', () => this.openRoleArchiveModal(this.editingId));
         this.panel.querySelector('#edit-position').addEventListener('change', () => this.updateInjectionUi());
         bindCustomSelectButton({
             buttonEl: this.panel.querySelector('#edit-position-btn'),
@@ -730,19 +1149,31 @@ export class PersonaPanel {
                     <div style="font-weight: bold; color: var(--app-text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${cardName}</div>
                     <div style="font-size: 12px; color: var(--app-text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${subtitle}</div>
                 </div>
-                <button class="edit-btn" style="
-                    padding: 8px; border: none; background: transparent; color: var(--app-text-muted); cursor: pointer;
-                    font-size: 16px;
-                ">✎</button>
+                <div class="persona-card-actions" style="display:flex; align-items:center; gap:4px; flex-shrink:0;">
+                    <button class="persona-new-chat-btn" title="为此角色卡开启新聊天" style="
+                        padding: 7px 8px; border: 1px solid var(--app-border-default); background: var(--app-surface-subtle);
+                        color: var(--app-text-secondary); cursor: pointer; font-size: 12px; border-radius: 9px; font-weight: 700;
+                        white-space: nowrap;
+                    ">新聊天</button>
+                    <button class="edit-btn" style="
+                        width: 34px; height: 34px; border: none; background: transparent; color: var(--app-text-muted); cursor: pointer;
+                        font-size: 16px; border-radius: 9px;
+                    ">✎</button>
+                </div>
             `;
 
             // Click item to switch
             item.addEventListener('click', async (e) => {
                 // Ignore if clicked edit button
-                if (e.target.closest('.edit-btn')) return;
+                if (e.target.closest('.edit-btn, .persona-new-chat-btn')) return;
                 await this.store.setActive(p.id);
                 this.renderList();
                 await this.notifyPersonaChanged();
+            });
+
+            item.querySelector('.persona-new-chat-btn').addEventListener('click', (e) => {
+                e.stopPropagation();
+                this.startRoleNewChat(p.id);
             });
 
             // Click edit button
@@ -766,6 +1197,8 @@ export class PersonaPanel {
         const posBtn = this.panel.querySelector('#edit-position-btn');
         const roleBtn = this.panel.querySelector('#edit-role-btn');
         const deleteBtn = this.panel.querySelector('#delete-persona-btn');
+        const newChatBtn = this.panel.querySelector('#persona-new-chat-btn');
+        const archiveBtn = this.panel.querySelector('#persona-archive-btn');
         const title = view.querySelector('span');
 
         if (id) {
@@ -778,6 +1211,8 @@ export class PersonaPanel {
             if (roleEl) roleEl.value = String(Number.isFinite(Number(p.role)) ? Math.max(0, Math.min(2, Math.trunc(Number(p.role)))) : 0);
             this.updateAvatarPreview(p.avatar);
             deleteBtn.style.display = 'block';
+            if (newChatBtn) newChatBtn.style.display = 'block';
+            if (archiveBtn) archiveBtn.style.display = 'block';
             title.textContent = '编辑角色卡';
             
             // Disable delete if it's the only one
@@ -792,6 +1227,8 @@ export class PersonaPanel {
             if (roleEl) roleEl.value = '0';
             this.updateAvatarPreview('');
             deleteBtn.style.display = 'none';
+            if (newChatBtn) newChatBtn.style.display = 'none';
+            if (archiveBtn) archiveBtn.style.display = 'none';
             title.textContent = '新建角色卡';
         }
 
@@ -986,7 +1423,7 @@ export class PersonaPanel {
 
             const modal = document.createElement('div');
             modal.className = 'app-confirm-modal is-danger';
-            modal.style.display = 'block';
+            modal.style.display = 'flex';
             modal.innerHTML = `
                 <div class="app-confirm-header">
                     <div class="app-confirm-title">删除角色卡</div>

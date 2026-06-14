@@ -75,6 +75,16 @@ const makeDefaultState = () => ({
     compactedSummaryLastRaw: null,
 });
 
+const normalizeState = (input = {}) => {
+    const raw = input && typeof input === 'object' ? input : {};
+    return {
+        version: Number(raw.version || 1) || 1,
+        summaries: (Array.isArray(raw.summaries) ? raw.summaries : []).map(normalizeSummaryItem).filter(Boolean),
+        compactedSummary: normalizeCompactedSummary(raw.compactedSummary),
+        compactedSummaryLastRaw: normalizeCompactedRaw(raw.compactedSummaryLastRaw),
+    };
+};
+
 export class MomentSummaryStore {
     constructor({ scopeId = '' } = {}) {
         this.scopeId = normalizeScopeId(scopeId);
@@ -121,17 +131,7 @@ export class MomentSummaryStore {
                 return this.state;
             }
 
-            const summariesRaw = Array.isArray(data.summaries) ? data.summaries : [];
-            const summaries = summariesRaw.map(normalizeSummaryItem).filter(Boolean);
-            const compactedSummary = normalizeCompactedSummary(data.compactedSummary);
-            const compactedSummaryLastRaw = normalizeCompactedRaw(data.compactedSummaryLastRaw);
-
-            this.state = {
-                version: Number(data.version || 1) || 1,
-                summaries,
-                compactedSummary,
-                compactedSummaryLastRaw,
-            };
+            this.state = normalizeState(data);
             this.isLoaded = true;
             return this.state;
         } catch (err) {
@@ -280,5 +280,22 @@ export class MomentSummaryStore {
         this.state.compactedSummaryLastRaw = null;
         this._persist();
         return true;
+    }
+
+    exportState() {
+        return {
+            version: Number(this.state.version || 1) || 1,
+            summaries: this.getSummaries(),
+            compactedSummary: this.getCompactedSummary(),
+            compactedSummaryLastRaw: this.state.compactedSummaryLastRaw
+                ? { ...this.state.compactedSummaryLastRaw }
+                : null,
+        };
+    }
+
+    importState(state = {}) {
+        this.state = normalizeState(state);
+        this._persist();
+        return this.exportState();
     }
 }

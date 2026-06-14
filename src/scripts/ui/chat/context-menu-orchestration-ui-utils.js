@@ -19,6 +19,7 @@ export const showContextMenuCore = ({
   hideReactionPicker = null,
   resolveContextMenuContext = null,
   buildContextMenuActions = null,
+  canCheckFormatForMessage = null,
   isThreadingEnabledForMessage = null,
   normalizeReactionEntries = null,
   createContextMenuReactionRow = null,
@@ -61,6 +62,7 @@ export const showContextMenuCore = ({
       hasCode,
       isThreadingEnabled: threadingEnabled,
       inlineGeneratedImage,
+      canCheckFormat: canCheckFormatForMessage?.(resolvedMessage) === true,
     }) || []),
   ];
   contextMenu.innerHTML = '';

@@ -4014,6 +4014,149 @@ const RICH_INTERACTIVE_ESCAPED_HTML_RE = /&lt;!doctype\s+html|&lt;(script|iframe
 const RICH_MARKDOWN_BLOCK_HINT_RE = /(^|\n)\s*(#{1,6}\s+\S|>+\s*\S|[-*+]\s+\S|\d+\.\s+\S|(?:-{3,}|_{3,}|\*{3,})\s*$)/m;
 const RICH_MARKDOWN_INLINE_HINT_RE = /(\*\*[^*]+\*\*|__[^_]+__|~~[^~]+~~|`[^`]+`|\[[^\]]+\]\(([^)]+)\))/;
 const RICH_INLINE_MD_RE = /(`[^`]+`|\[[^\]]+\]\(([^)]+)\)|\*\*[\s\S]+?\*\*|__[\s\S]+?__|~~[\s\S]+?~~|\*[^*\n]+\*|_[^_\n]+_)/g;
+const RICH_DETAILS_STATE_PROP = '__chatappRichDetailsState';
+const RICH_DETAILS_TOGGLE_HANDLER_PROP = '__chatappRichDetailsToggleHandler';
+const RICH_DETAILS_STATE_LIMIT = 120;
+
+const normalizeRichDetailsKeyText = (value = '') => (
+    String(value ?? '').replace(/\s+/g, ' ').trim()
+);
+
+const getElementAttr = (el, name) => {
+    try {
+        return normalizeRichDetailsKeyText(el?.getAttribute?.(name) || '');
+    } catch {
+        return '';
+    }
+};
+
+const getDirectDetailsSummaryText = (detailsEl) => {
+    try {
+        const children = Array.from(detailsEl?.children || []);
+        const summary = children.find((child) => String(child?.tagName || '').toUpperCase() === 'SUMMARY');
+        return normalizeRichDetailsKeyText(summary?.textContent || '');
+    } catch {
+        return '';
+    }
+};
+
+export const getRichDetailsStateKey = (detailsEl, index = 0) => {
+    const explicit = getElementAttr(detailsEl, 'data-chatapp-details-key')
+        || getElementAttr(detailsEl, 'data-rich-details-key')
+        || getElementAttr(detailsEl, 'id');
+    if (explicit) return `id:${explicit}`;
+    const safeIndex = Number.isFinite(Number(index)) ? Math.max(0, Math.trunc(Number(index))) : 0;
+    const summary = getDirectDetailsSummaryText(detailsEl).slice(0, 96);
+    return `idx:${safeIndex}|summary:${summary}`;
+};
+
+const listRichDetails = (containerEl) => {
+    try {
+        return Array.from(containerEl?.querySelectorAll?.('details') || []);
+    } catch {
+        return [];
+    }
+};
+
+const hasRenderedRichDetails = (containerEl) => {
+    try {
+        return Boolean(containerEl?.querySelector?.('details'));
+    } catch {
+        return false;
+    }
+};
+
+const hasRichDetailsHint = (text = '') => /<\s*details\b|&lt;\s*details\b/i.test(String(text ?? ''));
+
+export const captureRichDetailsOpenStates = (containerEl, state) => {
+    if (!state?.openByKey) return;
+    listRichDetails(containerEl).forEach((detailsEl, index) => {
+        state.openByKey.set(getRichDetailsStateKey(detailsEl, index), detailsEl?.open === true);
+    });
+};
+
+const trimRichDetailsOpenStates = (state, activeKeys = new Set()) => {
+    if (!state?.openByKey || state.openByKey.size <= RICH_DETAILS_STATE_LIMIT) return;
+    for (const key of Array.from(state.openByKey.keys())) {
+        if (state.openByKey.size <= RICH_DETAILS_STATE_LIMIT) break;
+        if (!activeKeys.has(key)) state.openByKey.delete(key);
+    }
+    while (state.openByKey.size > RICH_DETAILS_STATE_LIMIT) {
+        const firstKey = state.openByKey.keys().next().value;
+        if (!firstKey) break;
+        state.openByKey.delete(firstKey);
+    }
+};
+
+export const restoreRichDetailsOpenStates = (containerEl, state) => {
+    if (!state?.openByKey) return;
+    const activeKeys = new Set();
+    listRichDetails(containerEl).forEach((detailsEl, index) => {
+        const key = getRichDetailsStateKey(detailsEl, index);
+        activeKeys.add(key);
+        if (state.openByKey.has(key)) {
+            const shouldOpen = state.openByKey.get(key) === true;
+            if (detailsEl.open !== shouldOpen) detailsEl.open = shouldOpen;
+            return;
+        }
+        state.openByKey.set(key, detailsEl?.open === true);
+    });
+    trimRichDetailsOpenStates(state, activeKeys);
+};
+
+const getRichDetailsScopeKey = (containerEl, messageId = '') => {
+    const mid = normalizeRichDetailsKeyText(messageId);
+    if (mid) return `msg:${mid}`;
+    const dataMid = normalizeRichDetailsKeyText(containerEl?.dataset?.msgId || containerEl?.dataset?.messageId || '');
+    if (dataMid) return `el:${dataMid}`;
+    return 'container';
+};
+
+const getRichDetailsState = (containerEl, messageId = '') => {
+    if (!containerEl) return null;
+    const scopeKey = getRichDetailsScopeKey(containerEl, messageId);
+    let state = containerEl[RICH_DETAILS_STATE_PROP];
+    if (!state || state.scopeKey !== scopeKey) {
+        state = { scopeKey, openByKey: new Map() };
+        try {
+            Object.defineProperty(containerEl, RICH_DETAILS_STATE_PROP, {
+                value: state,
+                configurable: true,
+                writable: true,
+            });
+        } catch {
+            containerEl[RICH_DETAILS_STATE_PROP] = state;
+        }
+    }
+    return state;
+};
+
+const rememberToggledRichDetails = (containerEl, detailsEl) => {
+    const state = containerEl?.[RICH_DETAILS_STATE_PROP];
+    if (!state?.openByKey || !detailsEl) return;
+    const details = listRichDetails(containerEl);
+    const index = Math.max(0, details.indexOf(detailsEl));
+    const key = getRichDetailsStateKey(detailsEl, index);
+    state.openByKey.set(key, detailsEl.open === true);
+    trimRichDetailsOpenStates(state, new Set([key]));
+};
+
+const ensureRichDetailsToggleTracking = (containerEl) => {
+    if (!containerEl || containerEl[RICH_DETAILS_TOGGLE_HANDLER_PROP]) return;
+    const handler = (ev) => {
+        const detailsEl = ev?.target;
+        if (!detailsEl || String(detailsEl?.tagName || '').toUpperCase() !== 'DETAILS') return;
+        if (typeof containerEl.contains === 'function' && !containerEl.contains(detailsEl)) return;
+        rememberToggledRichDetails(containerEl, detailsEl);
+    };
+    try {
+        containerEl.addEventListener?.('toggle', handler, true);
+        Object.defineProperty(containerEl, RICH_DETAILS_TOGGLE_HANDLER_PROP, {
+            value: handler,
+            configurable: true,
+        });
+    } catch {}
+};
 
 const decodeBasicHtmlEntities = (input) => {
     const s = String(input ?? '');
@@ -9024,6 +9167,12 @@ export const renderRichText = (
 ) => {
     if (!containerEl) return;
     cancelLazyRichMount(containerEl);
+    const shouldTrackDetails = hasRenderedRichDetails(containerEl) || hasRichDetailsHint(text);
+    const detailsState = shouldTrackDetails ? getRichDetailsState(containerEl, messageId) : null;
+    if (detailsState) {
+        ensureRichDetailsToggleTracking(containerEl);
+        captureRichDetailsOpenStates(containerEl, detailsState);
+    }
     if (lazyMount && shouldLazyMountRichText(text)) {
         scheduleLazyRichMount(containerEl, text, {
             messageId,
@@ -9213,6 +9362,7 @@ export const renderRichText = (
             if (idx !== lines.length - 1) containerEl.appendChild(document.createElement('br'));
         });
     });
+    if (detailsState) restoreRichDetailsOpenStates(containerEl, detailsState);
 };
 
 export const cleanupRichText = (containerEl) => {

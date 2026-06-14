@@ -8,6 +8,7 @@ import {
   createSelectableContactEmptyState,
   createSelectableContactRow,
   createSessionArchiveEmptyState,
+  createSessionArchiveManagerModal,
   createSessionArchiveRow,
 } from '../../src/scripts/ui/session-shared-view-utils.js';
 
@@ -60,23 +61,62 @@ const createFakeDocument = () => {
 {
   const calls = [];
   const documentRef = createFakeDocument();
-  const { row, info, title, meta, deleteButton } = createSessionArchiveRow({
+  const { row, topRow, info, title, meta, exportButton, renameButton, deleteButton } = createSessionArchiveRow({
     documentRef,
+    archiveId: 'archive-a',
     archiveName: '归档A',
     isCurrent: true,
     dateText: '2026/05/06 21:00:00',
     messageCount: 12,
     onSelect: async () => calls.push(['select']),
+    onExport: async (event) => calls.push(['export', event?.type || 'manual']),
+    onRename: async (event) => calls.push(['rename', event?.type || 'manual']),
     onDelete: async (event) => calls.push(['delete', event?.type || 'manual']),
   });
   await info.onclick();
+  await exportButton.onclick({ type: 'click' });
+  await renameButton.onclick({ type: 'click' });
   await deleteButton.onclick({ type: 'click' });
   assert.equal(row.children.length, 2);
+  assert.equal(topRow.children.length, 2);
   assert.equal(title.textContent, '归档A (当前)');
   assert.equal(meta.textContent, '2026/05/06 21:00:00 · 12条消息');
   assert.equal(row.style.cssText.includes('3px solid var(--app-accent-primary, #019aff)'), true);
-  assert.deepEqual(calls, [['select'], ['delete', 'click']]);
+  assert.equal(row['data-archive-id'], 'archive-a');
+  assert.deepEqual(calls, [['select'], ['export', 'click'], ['rename', 'click'], ['delete', 'click']]);
   console.log('ok - createSessionArchiveRow builds shared archive row and wires select/delete callbacks');
+}
+
+{
+  const documentRef = createFakeDocument();
+  const { actions, exportButton, renameButton, deleteButton } = createSessionArchiveRow({
+    documentRef,
+    archiveName: '当前聊天',
+    canRename: false,
+    canDelete: false,
+    onExport: () => {},
+  });
+  assert.equal(Boolean(exportButton), true);
+  assert.equal(actions.children.includes(exportButton), true);
+  assert.equal(actions.children.includes(renameButton), false);
+  assert.equal(actions.children.includes(deleteButton), false);
+  console.log('ok - createSessionArchiveRow can render current-chat export-only row');
+}
+
+{
+  const documentRef = createFakeDocument();
+  const modal = createSessionArchiveManagerModal({
+    documentRef,
+    title: '历史存档',
+    subtitle: '25 份',
+  });
+  assert.equal(modal.overlay.className, 'app-themed-overlay session-archive-manager-overlay');
+  assert.equal(modal.panel.className, 'app-themed-panel session-archive-manager-panel');
+  assert.equal(modal.titleEl.textContent, '历史存档');
+  assert.equal(modal.subtitleEl.textContent, '25 份');
+  assert.equal(modal.listEl.parentNode, modal.body);
+  assert.equal(typeof modal.panel.listeners.click[0], 'function');
+  console.log('ok - createSessionArchiveManagerModal builds shared archive manager shell');
 }
 
 {

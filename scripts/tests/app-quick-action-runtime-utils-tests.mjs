@@ -30,6 +30,7 @@ import {
     getContact: () => ({ name: '好友乙' }),
     getLastRawResponse: () => 'raw-text',
     getLastRawAt: () => '2026-05-07T08:09:10.000Z',
+    getRepairDetails: (sessionId) => ({ runId: `run:${sessionId}` }),
     showRawReplyModal: (...args) => shown.push(args),
     notifyWarning: () => {},
   });
@@ -37,6 +38,7 @@ import {
   assert.equal(shown.length, 1);
   assert.equal(shown[0][0], 'raw-text');
   assert.equal(shown[0][1].includes('好友乙'), true);
+  assert.deepEqual(shown[0][2], { runId: 'run:contact:2' });
   console.log('ok - openSessionRawReplyFlow opens modal with session label and timestamp meta');
 }
 

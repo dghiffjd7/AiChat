@@ -38,6 +38,15 @@ const DEEPSEEK_REASONING_OPTIONS = Object.freeze([
   { value: 'max', label: '最大' },
 ]);
 
+const ANTHROPIC_ADAPTIVE_REASONING_OPTIONS = Object.freeze([
+  { value: 'auto', label: '自动' },
+  { value: 'low', label: '低' },
+  { value: 'medium', label: '中' },
+  { value: 'high', label: '高' },
+  { value: 'xhigh', label: '极高' },
+  { value: 'max', label: '最大' },
+]);
+
 const KNOWN_REASONING_EFFORTS = new Set(
   REASONING_EFFORT_OPTIONS.map((item) => item.value),
 );
@@ -74,11 +83,36 @@ const isAnthropicThinkingModel = (model) => {
   const m = normalizeText(model);
   if (!m) return false;
   return (
+    isAnthropicAdaptiveThinkingModel(m) ||
     m.includes('claude-3-7-sonnet') ||
     m.includes('claude-sonnet-4') ||
     m.includes('claude-opus-4')
   );
 };
+
+const isAnthropicAlwaysAdaptiveThinkingModel = (model) => {
+  const m = normalizeText(model);
+  if (!m) return false;
+  return (
+    m.includes('claude-fable-5') ||
+    m.includes('claude-mythos-5') ||
+    m.includes('claude-mythos-preview')
+  );
+};
+
+const isAnthropicAdaptiveRequestModel = (model) => {
+  const m = normalizeText(model);
+  if (!m) return false;
+  return (
+    m.includes('claude-opus-4-8') ||
+    m.includes('claude-opus-4-7')
+  );
+};
+
+const isAnthropicAdaptiveThinkingModel = (model) => (
+  isAnthropicAlwaysAdaptiveThinkingModel(model) ||
+  isAnthropicAdaptiveRequestModel(model)
+);
 
 const isGeminiBudgetModel = (model) => normalizeText(model).includes('gemini-2.5');
 const isGeminiLevelModel = (model) => normalizeText(model).includes('gemini-3');
@@ -137,6 +171,13 @@ const deepSeekEffortFromSetting = (effort) => {
   return 'high';
 };
 
+const anthropicAdaptiveEffortFromSetting = (effort) => {
+  const normalized = normalizeReasoningEffort(effort, 'high');
+  if (normalized === 'auto') return null;
+  if (normalized === 'minimal') return 'low';
+  return normalized;
+};
+
 const openRouterReasoningEffortFromSetting = (effort) => {
   const normalized = normalizeReasoningEffort(effort, 'high');
   if (normalized === 'auto') return null;
@@ -167,6 +208,21 @@ const geminiOpenAIReasoningEffortFromSetting = (effort) => {
 export const getReasoningCapability = ({ provider, model, baseUrl } = {}) => {
   const p = normalizeText(provider);
   const m = normalizeText(model);
+
+  if (p === 'anthropic' && isAnthropicAdaptiveThinkingModel(m)) {
+    const alwaysOn = isAnthropicAlwaysAdaptiveThinkingModel(m);
+    return {
+      supported: true,
+      strategy: 'anthropic-adaptive',
+      requestControl: true,
+      effortControl: true,
+      effortOptions: ANTHROPIC_ADAPTIVE_REASONING_OPTIONS,
+      samplingRestricted: alwaysOn,
+      hint: alwaysOn
+        ? '该 Claude 模型的自适应推理始终开启，不能关闭；勾选后会请求返回推理摘要，并用 effort 控制强度。thinking 始终开启时会自动停用 temperature/top_p/top_k。'
+        : '该 Claude 模型使用自适应推理；勾选后发送 thinking.type=adaptive，并用 effort 控制强度，不再发送 budget_tokens。',
+    };
+  }
 
   if (p === 'anthropic' && isAnthropicThinkingModel(m)) {
     return {
@@ -313,6 +369,12 @@ export const buildReasoningRequestOptions = ({
       const budget = budgetFromEffort({ effort: reasoningEffort, maxOutputTokens });
       return budget ? { thinking: { type: 'enabled', budget_tokens: budget } } : {};
     }
+    case 'anthropic-adaptive': {
+      const effort = anthropicAdaptiveEffortFromSetting(reasoningEffort);
+      const request = { thinking: { type: 'adaptive', display: 'summarized' } };
+      if (effort) request.output_config = { effort };
+      return request;
+    }
     case 'gemini-budget': {
       const budget = budgetFromEffort({ effort: reasoningEffort, maxOutputTokens });
       return budget ? { thinkingBudget: budget } : {};
@@ -339,7 +401,7 @@ export const getReasoningSamplerPolicy = ({
   const p = normalizeText(provider);
   const capability = getReasoningCapability({ provider, model, baseUrl });
   const openAIRestrictedSampling = p === 'openai' && capability.strategy === 'openai-effort';
-  const active = (capability.supported && requestReasoning === true) || openAIRestrictedSampling;
+  const active = capability.samplingRestricted === true || (capability.supported && requestReasoning === true) || openAIRestrictedSampling;
   const disabledFields = new Set();
 
   if (!active) {
@@ -353,7 +415,7 @@ export const getReasoningSamplerPolicy = ({
   //   sampling controls while reasoning is requested.
   // - Google thinking models keep their sampling controls.
   // - DeepSeek thinking mode ignores temperature/top_p/presence_penalty/frequency_penalty.
-  if (capability.strategy === 'anthropic-budget' || capability.strategy === 'openai-effort' || capability.strategy === 'deepseek-thinking') {
+  if (capability.strategy === 'anthropic-budget' || capability.strategy === 'anthropic-adaptive' || capability.strategy === 'openai-effort' || capability.strategy === 'deepseek-thinking') {
     disabledFields.add('temperature');
     disabledFields.add('top_p');
     disabledFields.add('top_k');

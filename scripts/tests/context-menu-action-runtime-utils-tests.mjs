@@ -24,6 +24,28 @@ import {
 {
   const calls = [];
   const result = await dispatchContextMenuAction({
+    actionKey: 'check-format',
+    message: { id: 'm-format', role: 'assistant', content: 'raw' },
+    wrapper: { id: 'wrapper' },
+    hideMenu: () => calls.push(['hide']),
+    clearLongPress: () => calls.push(['clear']),
+    tryAction: async (key, payload, options) => {
+      calls.push(['try', key, payload, options]);
+      return true;
+    },
+  });
+  assert.equal(result, 'check-format');
+  assert.deepEqual(calls, [
+    ['hide'],
+    ['clear'],
+    ['try', 'check-format', undefined, { skipFallback: true }],
+  ]);
+  console.log('ok - dispatchContextMenuAction routes manual format check through app action');
+}
+
+{
+  const calls = [];
+  const result = await dispatchContextMenuAction({
     actionKey: 'view-code',
     message: { id: 'm1', role: 'assistant', content: 'content', raw: 'raw' },
     wrapper: { id: 'wrapper' },

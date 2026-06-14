@@ -1,3 +1,65 @@
+const normalizeArchiveQuery = value => String(value || '').trim().toLowerCase();
+
+const archiveMatchesQuery = ({ archive = {}, dateText = '', messageCount = 0, isCurrent = false } = {}, query = '') => {
+  const q = normalizeArchiveQuery(query);
+  if (!q) return true;
+  const fields = [
+    archive.name,
+    archive.id,
+    dateText,
+    `${messageCount}`,
+    `${messageCount}条消息`,
+    isCurrent ? '当前' : '',
+  ];
+  return fields.some(value => String(value || '').toLowerCase().includes(q));
+};
+
+const createArchiveManagementControls = ({
+  documentRef = null,
+  query = '',
+  total = 0,
+  onSearch = () => {},
+} = {}) => {
+  if (!documentRef?.createElement) return null;
+  const wrap = documentRef.createElement('div');
+  wrap.style.cssText = 'position:sticky; top:0; z-index:1; display:flex; align-items:center; gap:8px; padding:8px; border-bottom:1px solid var(--app-border-subtle); background:var(--app-surface-subtle);';
+
+  const input = documentRef.createElement('input');
+  input.type = 'search';
+  input.value = query;
+  input.placeholder = '搜索存档名称 / 日期 / ID';
+  input.setAttribute?.('aria-label', '搜索存档');
+  input.style.cssText = 'flex:1; min-width:0; height:30px; padding:0 9px; border:1px solid var(--app-border-default); border-radius:8px; background:var(--app-surface-input); color:var(--app-text-primary); font-size:12px;';
+
+  const count = documentRef.createElement('div');
+  count.style.cssText = 'min-width:52px; text-align:right; font-size:11px; color:var(--app-text-muted); white-space:nowrap;';
+  count.textContent = `${total} 份`;
+
+  const clearButton = documentRef.createElement('button');
+  clearButton.type = 'button';
+  clearButton.title = '清除搜索';
+  clearButton.textContent = '×';
+  clearButton.style.cssText = 'width:30px; height:30px; border:1px solid var(--app-border-default); border-radius:8px; background:var(--app-surface-card); color:var(--app-text-secondary); cursor:pointer; font-size:16px; line-height:1;';
+
+  input.oninput = () => onSearch(input.value);
+  clearButton.onclick = () => {
+    input.value = '';
+    onSearch('');
+    input.focus?.();
+  };
+
+  wrap.appendChild(input);
+  wrap.appendChild(count);
+  wrap.appendChild(clearButton);
+
+  return {
+    wrap,
+    input,
+    count,
+    clearButton,
+  };
+};
+
 export const renderSessionArchivesSection = ({
   container = null,
   sessionId = '',
@@ -17,11 +79,19 @@ export const renderSessionArchivesSection = ({
   runArchiveDeleteFlow = async () => {},
   deleteArchiveTurnCheckpointState = async () => null,
   deleteArchive = async () => null,
+  renameArchive = null,
+  promptArchiveRenameName = null,
+  includeCurrentThread = false,
+  onExportCurrent = null,
+  onExportArchive = null,
   onArchiveLoaded = () => {},
   onArchiveDeleted = () => {},
+  onArchiveRenamed = () => {},
   onHide = () => {},
   createEmptyState = () => null,
   createArchiveRow = () => ({ row: null }),
+  archiveSearchQuery = '',
+  onArchiveSearchQueryChange = () => {},
   sourcePrefix = 'contact',
   restoreWarnMessage = 'restore checkpoint memory after archive load failed',
   deleteWarnMessage = 'delete archive turn checkpoint state failed',
@@ -29,12 +99,79 @@ export const renderSessionArchivesSection = ({
   if (!container || !chatStore || !sessionId) return false;
   const archives = chatStore.getArchives(sessionId);
   const currentId = chatStore.state.sessions[sessionId]?.currentArchiveId;
+  const currentMessageCount = Number(chatStore.getMessages?.(sessionId)?.length || 0) || 0;
+  const shouldRenderCurrent = includeCurrentThread === true && typeof onExportCurrent === 'function';
   container.innerHTML = '';
 
-  if (!archives.length) {
+  if (!archives.length && !shouldRenderCurrent) {
     const empty = createEmptyState?.();
     if (empty) container.appendChild(empty);
     return true;
+  }
+
+  const documentRef = container.ownerDocument || globalThis.document || null;
+  const management = createArchiveManagementControls({
+    documentRef,
+    query: archiveSearchQuery,
+    total: archives.length + (shouldRenderCurrent ? 1 : 0),
+    onSearch: (query) => {
+      onArchiveSearchQueryChange?.(query);
+      applySearch(query);
+    },
+  });
+  if (management?.wrap) container.appendChild(management.wrap);
+
+  const entries = [];
+  const filteredEmpty = documentRef?.createElement ? documentRef.createElement('div') : null;
+  if (filteredEmpty) {
+    filteredEmpty.style.cssText = 'display:none; padding:14px 12px; color:var(--app-text-muted); text-align:center; font-size:12px;';
+    filteredEmpty.textContent = '没有匹配的存档';
+  }
+
+  const applySearch = (query = '') => {
+    let visible = 0;
+    for (const entry of entries) {
+      const matched = archiveMatchesQuery(entry, query);
+      if (matched) visible += 1;
+      if (entry.row?.style) entry.row.style.display = matched ? '' : 'none';
+    }
+    if (management?.count) {
+      management.count.textContent = normalizeArchiveQuery(query) ? `${visible} / ${archives.length}` : `${archives.length} 份`;
+    }
+    if (management?.clearButton?.style) {
+      management.clearButton.style.visibility = normalizeArchiveQuery(query) ? 'visible' : 'hidden';
+    }
+    if (filteredEmpty?.style) {
+      filteredEmpty.style.display = visible ? 'none' : 'block';
+    }
+  };
+
+  if (shouldRenderCurrent) {
+    const { row } = createArchiveRow({
+      archiveId: '',
+      archiveName: '当前聊天',
+      isCurrent: true,
+      dateText: '当前可见线程',
+      messageCount: currentMessageCount,
+      canRename: false,
+      canDelete: false,
+      onSelect: () => {},
+      onExport: async (event) => {
+        event?.stopPropagation?.();
+        event?.preventDefault?.();
+        await onExportCurrent?.({ sessionId });
+      },
+    });
+    if (row) {
+      entries.push({
+        row,
+        archive: { id: '', name: '当前聊天' },
+        dateText: '当前可见线程',
+        messageCount: currentMessageCount,
+        isCurrent: true,
+      });
+      container.appendChild(row);
+    }
   }
 
   archives.forEach((archive) => {
@@ -42,6 +179,7 @@ export const renderSessionArchivesSection = ({
     const messageCount = Number(archive.messageCount || (Array.isArray(archive.messages) ? archive.messages.length : 0)) || 0;
     const isCurrent = archive.id === currentId;
     const { row } = createArchiveRow({
+      archiveId: archive.id,
       archiveName: archive.name,
       isCurrent,
       dateText,
@@ -72,11 +210,38 @@ export const renderSessionArchivesSection = ({
         onArchiveLoaded?.(sessionId, archive);
         onHide?.();
       },
+      onExport: typeof onExportArchive === 'function'
+        ? async (event) => {
+            event?.stopPropagation?.();
+            event?.preventDefault?.();
+            await onExportArchive?.({ sessionId, archive });
+          }
+        : null,
+      onRename: async (event) => {
+        event?.stopPropagation?.();
+        event?.preventDefault?.();
+        const currentName = String(archive.name || '').trim();
+        const raw = await Promise.resolve(
+          typeof promptArchiveRenameName === 'function'
+            ? promptArchiveRenameName({ sessionId, archive })
+            : globalThis.prompt?.('重命名存档', currentName),
+        );
+        if (raw === null || raw === undefined) return;
+        const nextName = String(raw || '').trim();
+        if (!nextName || nextName === currentName) return;
+        const renameFn = typeof renameArchive === 'function'
+          ? renameArchive
+          : (archiveId, name, sid) => chatStore.renameArchive?.(archiveId, name, sid);
+        const renamed = await Promise.resolve(renameFn?.(archive.id, nextName, sessionId));
+        if (!renamed) return;
+        archive.name = nextName;
+        onArchiveRenamed?.(sessionId, archive);
+      },
       onDelete: async (event) => {
         event?.stopPropagation?.();
         const ok = await appConfirmFn({
           title: '删除存档',
-          message: '确定要删除这条存档吗？',
+          message: `确定要删除存档「${archive.name || '未命名存档'}」吗？`,
           danger: true,
         });
         if (!ok) return;
@@ -91,7 +256,12 @@ export const renderSessionArchivesSection = ({
         });
       },
     });
-    if (row) container.appendChild(row);
+    if (row) {
+      entries.push({ row, archive, dateText, messageCount, isCurrent });
+      container.appendChild(row);
+    }
   });
+  if (filteredEmpty) container.appendChild(filteredEmpty);
+  applySearch(archiveSearchQuery);
   return true;
 };

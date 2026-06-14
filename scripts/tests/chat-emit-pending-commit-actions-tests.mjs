@@ -133,6 +133,37 @@ import { createChatEmitPendingCommitActions } from '../../src/scripts/ui/chat/ch
 }
 
 {
+  const store = createProviderToolPendingPermissionStore({ now: () => 2600 });
+  const entry = store.add({
+    id: 'pending-chat-emit-reject',
+    status: 'allowed',
+    decision: 'allow',
+    action: PROVIDER_TOOL_PERMISSION_ACTIONS.allowOnce,
+    toolName: 'chat.emit_private',
+    sessionId: 'contact:firen',
+    permissions: ['chat:emit_candidate'],
+    resumeStatus: 'succeeded',
+    argsPreview: {
+      targetName: '菲伦',
+      speakerName: '菲伦',
+      content: '今晚别一个人走。',
+    },
+  });
+  const actions = createChatEmitPendingCommitActions({
+    pendingPermissionStore: store,
+  });
+  const result = await actions.rejectChatEmitPendingCommit({ id: entry.id });
+  const stored = store.get(entry.id);
+  assert.equal(result.ok, true);
+  assert.equal(result.status, 'skipped');
+  assert.equal(stored.commitStatus, 'skipped');
+  assert.equal(stored.commitResult.reason, 'user_rejected');
+  assert.equal(stored.commitResult.writesChat, false);
+  assert.match(stored.commitResult.displayMessage, /已打回/);
+  console.log('ok - chat emit pending reject action marks candidates as handled without writing chat');
+}
+
+{
   const store = createProviderToolPendingPermissionStore({ now: () => 3000 });
   const entry = store.add({
     id: 'pending-chat-emit-3',

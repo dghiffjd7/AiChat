@@ -21,9 +21,12 @@ export const applyReasoningUiState = (targetMessage, sourceMessage) => {
   if (!targetMessage.meta || typeof targetMessage.meta !== 'object') {
     targetMessage.meta = {};
   }
-  if (targetMessage.meta.reasoningCollapsed !== true && targetMessage.meta.reasoningExpanded !== true) {
-    if (sourceState.reasoningCollapsed) targetMessage.meta.reasoningCollapsed = true;
-    if (sourceState.reasoningExpanded) targetMessage.meta.reasoningExpanded = true;
+  if (sourceState.reasoningCollapsed || sourceState.reasoningExpanded) {
+    targetMessage.meta.reasoningCollapsed = sourceState.reasoningCollapsed === true;
+    targetMessage.meta.reasoningExpanded = sourceState.reasoningExpanded === true;
+  } else if (targetMessage.meta.reasoningCollapsed !== true && targetMessage.meta.reasoningExpanded !== true) {
+    targetMessage.meta.reasoningCollapsed = false;
+    targetMessage.meta.reasoningExpanded = false;
   }
   return targetMessage;
 };
@@ -186,11 +189,13 @@ export const createMessageHeaderUiRuntime = ({
       const greetingEl = runtime.buildGreetingSwitch(message);
       const reasoningEl = runtime.buildReasoningElement(message);
       if (!replyEl && !greetingEl && !reasoningEl) return bubble;
+      const existingContent = Array.from(bubble.children || [])
+        .find(child => String(child?.className || '').split(/\s+/).includes('chat-message-content')) || null;
       bubble.innerHTML = '';
       if (replyEl) bubble.appendChild(replyEl);
       if (greetingEl) bubble.appendChild(greetingEl);
       if (reasoningEl) bubble.appendChild(reasoningEl);
-      const content = documentLike.createElement('div');
+      const content = existingContent || documentLike.createElement('div');
       content.className = 'chat-message-content';
       bubble.appendChild(content);
       return content;

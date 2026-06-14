@@ -3,12 +3,14 @@ import {
   AGENT_PERMISSION_LAYERS,
   normalizeAgentPermissionRule,
 } from '../agent/agent-permissions.js';
+import { buildAgentFeatureList } from '../agent/agent-feature-settings.js';
 import { WRITE_PREVIEW_PROVIDER_MODEL_CONTEXT_TOOLS } from '../agent/provider-tool-request-schema.js';
 import { buildChatEmitCommitPreview } from '../agent/tools/chat-emit-commit-plan.js';
 
 export const AGENT_CENTER_TABS = Object.freeze([
   { id: 'pending', label: '待确认' },
   { id: 'activity', label: '活动' },
+  { id: 'agents', label: 'Agent' },
   { id: 'tools', label: '工具' },
   { id: 'safety', label: '安全' },
 ]);
@@ -193,10 +195,12 @@ const buildChatEmitCommitState = (entry = {}, chatEmitPreview = null, chatEmitCo
   const resumeStatus = trim(entry.resumeStatus, 'idle');
   const commitResult = isPlainObject(entry.commitResult) ? entry.commitResult : null;
   const undoResult = isPlainObject(entry.commitUndoResult) ? entry.commitUndoResult : null;
+  const userRejected = trim(commitResult?.reviewDecision || commitResult?.reason) === 'user_rejected';
   return {
     status: commitStatus,
     undoStatus,
-    canCommit: resumeStatus === 'succeeded' && commitStatus !== 'running' &&
+    reviewDecision: trim(commitResult?.reviewDecision || commitResult?.reason),
+    canCommit: !userRejected && resumeStatus === 'succeeded' && commitStatus !== 'running' &&
       commitStatus !== 'committed' && commitStatus !== 'undone',
     canUndo: commitStatus === 'committed' && undoStatus !== 'running' && undoStatus !== 'undone',
     resultSummary: summarizeChatEmitCommitResult(commitResult),
@@ -286,10 +290,12 @@ const buildWritePreviewCommitState = (entry = {}) => {
   const resumeStatus = trim(entry.resumeStatus, 'idle');
   const commitResult = isPlainObject(entry.commitResult) ? entry.commitResult : null;
   const undoResult = isPlainObject(entry.commitUndoResult) ? entry.commitUndoResult : null;
+  const userRejected = trim(commitResult?.reviewDecision || commitResult?.reason) === 'user_rejected';
   return {
     status: commitStatus,
     undoStatus,
-    canCommit: resumeStatus === 'succeeded' && commitStatus !== 'running' &&
+    reviewDecision: trim(commitResult?.reviewDecision || commitResult?.reason),
+    canCommit: !userRejected && resumeStatus === 'succeeded' && commitStatus !== 'running' &&
       commitStatus !== 'committed' && commitStatus !== 'undone',
     canUndo: commitStatus === 'committed' && undoStatus !== 'running' && undoStatus !== 'undone',
     resultSummary: summarizeWritePreviewCommitResult(commitResult),
@@ -393,6 +399,18 @@ const normalizeContactProfilePendingUpdate = (entry = {}) => {
   };
 };
 
+const hasPendingCenterAction = (item = {}) => {
+  if (!isPlainObject(item)) return false;
+  if (item.kind === 'contact_profile_update') return item.status === 'pending';
+  if (item.kind !== 'tool_permission') return item.status === 'pending';
+  if (item.status === 'pending') return true;
+  const chatCommit = item.chatEmitCommit || null;
+  if (chatCommit?.canCommit || chatCommit?.canUndo) return true;
+  const writeCommit = item.writePreview?.commit || null;
+  if (writeCommit?.canCommit || writeCommit?.canUndo) return true;
+  return false;
+};
+
 const normalizeTool = (tool = {}) => {
   const src = isPlainObject(tool) ? tool : {};
   const capabilities = isPlainObject(src.capabilities) ? src.capabilities : {};
@@ -413,6 +431,67 @@ const normalizeTool = (tool = {}) => {
       modelContext: trim(capabilities.modelContext, 'none'),
       confirmation: trim(capabilities.confirmation, 'allow_once'),
     },
+  };
+};
+
+const MODEL_MODE_LABELS = Object.freeze({
+  follow_current: '跟随当前聊天模型',
+  profile: '使用指定模型',
+  none: '不调用模型',
+});
+
+const TRIGGER_MODE_LABELS = Object.freeze({
+  auto: '自动触发',
+  auto_model: '自动触发',
+  local_only: '自动触发',
+  manual: '手动触发',
+  manual_only: '手动触发',
+});
+
+const normalizeAgentModelProfile = (profile = {}) => {
+  const src = isPlainObject(profile) ? profile : {};
+  const id = trim(src.id);
+  const name = trim(src.name || src.label || src.id);
+  const provider = trim(src.provider);
+  const model = trim(src.model);
+  const providerModel = [provider, model].filter(Boolean).join(' / ');
+  return {
+    id,
+    name,
+    provider,
+    model,
+    label: trim([name, providerModel].filter(Boolean).join(' · '), name || providerModel || id),
+  };
+};
+
+const resolveAgentModelLabel = (modelMode = '', modelProfileId = '', modelProfiles = []) => {
+  const mode = trim(modelMode, 'follow_current');
+  if (mode !== 'profile') return MODEL_MODE_LABELS[mode] || '跟随当前聊天模型';
+  const profile = (Array.isArray(modelProfiles) ? modelProfiles : []).find(item => item.id === trim(modelProfileId));
+  return profile?.label || (modelProfileId ? `指定模型：${modelProfileId}` : '使用指定模型');
+};
+
+const normalizeAgentFeature = (feature = {}, { modelProfiles = [] } = {}) => {
+  const src = isPlainObject(feature) ? feature : {};
+  const state = isPlainObject(src.state) ? src.state : {};
+  const modelMode = trim(state.modelMode || src.modelDefault, 'none');
+  const modelProfileId = trim(state.modelProfileId);
+  return {
+    id: trim(src.id),
+    title: trim(src.title, 'Agent'),
+    summary: trim(src.summary),
+    detailTitle: trim(src.detailTitle || src.title, 'Agent'),
+    detail: list(src.detail),
+    enabled: src.enabled === true || state.enabled === true,
+    implemented: src.implemented === true,
+    supportsModel: src.supportsModel === true,
+    supportsTriggerMode: src.supportsTriggerMode === true,
+    modelMode,
+    modelProfileId,
+    modelLabel: resolveAgentModelLabel(modelMode, modelProfileId, modelProfiles),
+    triggerMode: trim(state.triggerMode || src.triggerDefault, 'auto'),
+    triggerLabel: TRIGGER_MODE_LABELS[trim(state.triggerMode || src.triggerDefault, 'auto')] || '自动触发',
+    updatedAt: toFiniteNumber(state.updatedAt, 0),
   };
 };
 
@@ -457,11 +536,13 @@ const normalizeSafety = ({
 const buildTabs = ({
   pending = [],
   runView = {},
+  agents = [],
   tools = [],
 } = {}) => AGENT_CENTER_TABS.map((tab) => {
   let count = 0;
-  if (tab.id === 'pending') count = pending.filter(item => item.status === 'pending').length;
+  if (tab.id === 'pending') count = pending.length;
   if (tab.id === 'activity') count = Number(runView?.meta?.scopedActive ?? runView?.meta?.active ?? 0);
+  if (tab.id === 'agents') count = agents.filter(item => item.enabled).length;
   if (tab.id === 'tools') count = tools.length;
   if (tab.id === 'safety') count = 0;
   return { ...tab, count };
@@ -474,6 +555,9 @@ export const buildAgentCenterView = ({
   agentRuns = [],
   agentRunEvents = [],
   tools = [],
+  agentFeatureSettings = null,
+  agentFeatures = null,
+  agentModelProfiles = [],
   permissionRules = [],
   sessionGate = null,
   experimentStatus = null,
@@ -484,6 +568,7 @@ export const buildAgentCenterView = ({
     .map(normalizePendingPermission)
     .concat((Array.isArray(contactProfilePendingUpdates) ? contactProfilePendingUpdates : [])
       .map(normalizeContactProfilePendingUpdate))
+    .filter(hasPendingCenterAction)
     .sort((a, b) => toFiniteNumber(b.createdAt, 0) - toFiniteNumber(a.createdAt, 0));
   const runView = isPlainObject(agentRunView)
     ? agentRunView
@@ -494,22 +579,31 @@ export const buildAgentCenterView = ({
   const normalizedTools = (Array.isArray(tools) ? tools : [])
     .map(normalizeTool)
     .sort((a, b) => a.name.localeCompare(b.name));
+  const normalizedModelProfiles = (Array.isArray(agentModelProfiles) ? agentModelProfiles : [])
+    .map(normalizeAgentModelProfile)
+    .filter(profile => profile.id)
+    .sort((a, b) => a.label.localeCompare(b.label));
+  const normalizedAgents = (Array.isArray(agentFeatures) ? agentFeatures : buildAgentFeatureList(agentFeatureSettings || {}))
+    .map(feature => normalizeAgentFeature(feature, { modelProfiles: normalizedModelProfiles }))
+    .filter(agent => agent.id);
   const safety = normalizeSafety({
     sessionGate,
     experimentStatus,
     permissionRules,
     continuationCommitPolicy,
   });
-  const tabs = buildTabs({ pending, runView, tools: normalizedTools });
+  const tabs = buildTabs({ pending, runView, agents: normalizedAgents, tools: normalizedTools });
   return {
     tabs,
     meta: {
-      pending: pending.filter(item => item.status === 'pending').length,
+      pending: pending.length,
       activeRuns: Number(runView?.meta?.scopedActive ?? runView?.meta?.active ?? 0),
       failedRuns: Number(runView?.meta?.scopedFailures ?? runView?.meta?.failures ?? 0),
       unreadFailedRuns: Number(runView?.meta?.scopedUnreadFailures ?? runView?.meta?.unreadFailures ?? runView?.meta?.scopedFailures ?? runView?.meta?.failures ?? 0),
       newestFailureAt: Number(runView?.meta?.scopedNewestFailureAt ?? runView?.meta?.newestFailureAt ?? 0),
       tools: normalizedTools.length,
+      agents: normalizedAgents.length,
+      enabledAgents: normalizedAgents.filter(item => item.enabled).length,
       providerToolsEnabled: safety.providerTools.enabled,
       sessionGateEnabled: safety.sessionGate.enabled,
     },
@@ -519,6 +613,8 @@ export const buildAgentCenterView = ({
       filters: runView?.filters || {},
       runs: Array.isArray(runView?.runs) ? runView.runs : [],
     },
+    agents: normalizedAgents,
+    agentModelProfiles: normalizedModelProfiles,
     tools: normalizedTools,
     safety,
   };

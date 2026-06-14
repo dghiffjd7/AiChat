@@ -250,7 +250,7 @@ export class ConfigPanel {
             width: 100%;
             height: 100%;
             background: rgba(0, 0, 0, 0.5);
-            z-index: 20000;
+            z-index: 23000;
         `;
         this.overlayElement.onclick = () => this.hide();
 
@@ -258,7 +258,7 @@ export class ConfigPanel {
         this.element = document.createElement('div');
         this.element.id = 'config-panel';
         this.element.innerHTML = `
-            <div class="config-modal" style="padding: 20px; background: white; border-radius: 10px; box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+            <div class="config-modal" style="padding: 20px; background-color: rgb(255, 255, 255); color: var(--app-text-primary); opacity: 1; border: 1px solid var(--app-border-default); border-radius: 10px; box-shadow: 0 4px 20px rgba(0,0,0,0.3);
                         width: 96vw; max-width: 760px; max-height: calc(100vh - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px) - 20px); overflow-y: auto;">
                 <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:6px;">
                     <h2 id="config-title" style="margin: 0; color: var(--app-text-primary);">聊天模型配置</h2>
@@ -504,7 +504,7 @@ export class ConfigPanel {
             top: calc(env(safe-area-inset-top, 0px) + 10px);
             left: 50%;
             transform: translateX(-50%);
-            z-index: 21000;
+            z-index: 23010;
         `;
 
         // 阻止点击面板时关闭
@@ -1496,7 +1496,7 @@ export class ConfigPanel {
         this.keyOverlay = document.createElement('div');
         this.keyOverlay.id = 'config-key-overlay';
         this.keyOverlay.className = 'app-themed-overlay';
-        this.keyOverlay.style.cssText = 'display:none; position:fixed; inset:0; background:rgba(0,0,0,0.5); z-index: 20000;';
+        this.keyOverlay.style.cssText = 'display:none; position:fixed; inset:0; background:rgba(0,0,0,0.5); z-index: 23100;';
         this.keyOverlay.onclick = () => this.closeKeyManager();
 
         this.keyModal = document.createElement('div');
@@ -1506,7 +1506,7 @@ export class ConfigPanel {
             display:none; position:fixed; top:50%; left:50%; transform:translate(-50%,-50%);
             width:min(560px,92vw); max-height:80vh; overflow:auto;
             background:var(--app-surface-card); border-radius:12px; box-shadow:0 10px 40px rgba(0,0,0,0.25);
-            z-index: 21000; padding:16px;
+            z-index: 23110; padding:16px;
         `;
         this.keyModal.onclick = (e) => e.stopPropagation();
         this.keyModal.innerHTML = `

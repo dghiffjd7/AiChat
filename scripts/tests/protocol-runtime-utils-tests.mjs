@@ -311,7 +311,7 @@ import {
       handleMemoryEditsFromRaw: async (raw, options) => calls.push(['memory', raw, options]),
       flushMoments: async () => calls.push(['flush']),
       refreshChatAndContacts: () => calls.push(['refresh']),
-      warnNoValidTag: () => calls.push(['warn']),
+      warnNoValidTag: details => calls.push(['warn', details?.rawText]),
     },
   );
 
@@ -359,7 +359,7 @@ import {
         calls.push(['retry-event', event.id]);
         return { consumed: true, didAnything: true, mutatedMoments: true, targetSessionId: 's2' };
       },
-      warnNoValidTag: () => calls.push(['warn']),
+      warnNoValidTag: details => calls.push(['warn', details?.rawText]),
     },
   );
 
@@ -404,7 +404,7 @@ import {
         },
       }),
       handleRetryEvent: async () => ({ consumed: true, abortFlow: true, didAnything: true }),
-      warnNoValidTag: () => calls.push(['warn']),
+      warnNoValidTag: details => calls.push(['warn', details?.rawText]),
     },
   );
 
@@ -444,7 +444,7 @@ import {
         calls.push(['unexpected-retry']);
         return {};
       },
-      warnNoValidTag: () => calls.push(['warn']),
+      warnNoValidTag: details => calls.push(['warn', details?.rawText]),
     },
   );
 
@@ -532,14 +532,14 @@ import {
           return [];
         },
       }),
-      warnNoValidTag: () => calls.push(['warn']),
+      warnNoValidTag: details => calls.push(['warn', details?.rawText]),
     },
   );
 
   assert.equal(result.handled, false);
   assert.equal(result.warned, true);
   assert.equal(result.didAnything, false);
-  assert.deepEqual(calls, [['warn']]);
+  assert.deepEqual(calls, [['warn', 'raw']]);
   console.log('ok - finalizeProtocolBufferedFlow warns when primary and retry parsing miss');
 }
 
@@ -1128,7 +1128,7 @@ import {
         calls.push(['candidates', raw]);
         return { retryText: '' };
       },
-      warnNoValidTag: () => calls.push(['warn']),
+      warnNoValidTag: details => calls.push(['warn', details?.rawText]),
     },
   );
 
@@ -1140,7 +1140,7 @@ import {
     ['memory'],
     ['candidates', 'raw'],
     ['candidates', 'raw'],
-    ['warn'],
+    ['warn', 'raw'],
   ]);
   console.log('ok - runProtocolBufferedResponseFlow waits for memory and warns on misses');
 }
@@ -1404,6 +1404,7 @@ import {
       return { consumed: true };
     },
     showWarning: message => calls.push(['warn', message]),
+    onNoValidTag: payload => calls.push(['no-valid-tag', payload]),
   });
 
   const streamHandlers = handlers.createStreamHandlers();
@@ -1418,7 +1419,7 @@ import {
   streamHandlers.refreshChatAndContacts();
   streamHandlers.buildProtocolRetryCandidates('raw');
   streamHandlers.handleRetryEvent({ type: 'retry' });
-  streamHandlers.warnNoValidTag();
+  streamHandlers.warnNoValidTag({ rawText: 'raw' });
 
   assert.deepEqual(calls, [
     ['active', 'session-protocol'],
@@ -1434,6 +1435,7 @@ import {
     ['candidates', 'raw'],
     ['retry', 'retry', { renderMoments: true, refreshAfterAppend: true }],
     ['warn', '未解析到有效对话标签，已丢弃；可在「本次 AI 回复」查看原始内容'],
+    ['no-valid-tag', { sessionId: 'session-protocol', rawText: 'raw', mode: 'stream' }],
   ]);
   console.log('ok - createSendProtocolResponseFlowHandlers preserves stream raw save retry and warning side effects');
 }
@@ -1457,6 +1459,7 @@ import {
       return { consumed: true };
     },
     showWarning: message => calls.push(['warn', message]),
+    onNoValidTag: payload => calls.push(['no-valid-tag', payload]),
   });
 
   const inactiveStreamHandlers = handlers.createStreamHandlers();
@@ -1466,13 +1469,14 @@ import {
   bufferedHandlers.handleRetryEvent({ type: 'retry' });
   activePage = 'chat';
   assert.equal(handlers.createBufferedHandlers().renderMoments, null);
-  bufferedHandlers.warnNoValidTag();
+  bufferedHandlers.warnNoValidTag({ rawText: 'raw-buffered' });
 
   assert.deepEqual(calls, [
     ['active', 'session-protocol'],
     ['render'],
     ['retry', 'retry', undefined],
     ['warn', '未解析到有效对话标签，已丢弃；可在「本次 AI 回复」查看原始内容'],
+    ['no-valid-tag', { sessionId: 'session-protocol', rawText: 'raw-buffered', mode: 'buffered' }],
   ]);
   console.log('ok - createSendProtocolResponseFlowHandlers keeps buffered render and inactive stream behavior');
 }

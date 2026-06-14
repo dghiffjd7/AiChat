@@ -20,9 +20,16 @@ globalThis.setTimeout = () => 0;
 
 const {
   flattenRegexImportRules,
+  getRegexImportSetName,
   normalizeRegexScript,
   parseRegexImportText,
+  stripGenericRegexSetName,
 } = await import('../../src/scripts/utils/regex-transfer.js');
+const {
+  REGEX_CUSTOM_PROMPT_PRESET_TYPE,
+  buildRegexCustomPromptPresetBind,
+  listRegexCustomPromptPresetChoices,
+} = await import('../../src/scripts/ui/regex-preset-binding-utils.js');
 
 test('normalizeRegexScript accepts JS-Slash Runner tavern regex shape', () => {
   const rule = normalizeRegexScript({
@@ -79,6 +86,31 @@ test('parseRegexImportText reads character card extension regex scripts', () => 
   assert.equal(rules[0].findRegex, '/foo/g');
 });
 
+test('regex preset binding choices only expose custom prompt presets', () => {
+  const store = {
+    list(type) {
+      if (type === 'context') return [{ id: 'ctx', name: '上下文模板' }];
+      if (type === REGEX_CUSTOM_PROMPT_PRESET_TYPE) {
+        return [
+          { id: 'openai-a', name: '自定义 A' },
+          { id: 'openai-b', name: '自定义 B' },
+        ];
+      }
+      return [];
+    },
+  };
+
+  assert.deepEqual(listRegexCustomPromptPresetChoices(store), [
+    { id: 'openai-a', name: '自定义 A' },
+    { id: 'openai-b', name: '自定义 B' },
+  ]);
+  assert.deepEqual(buildRegexCustomPromptPresetBind('openai-a'), {
+    type: 'preset',
+    presetType: REGEX_CUSTOM_PROMPT_PRESET_TYPE,
+    presetId: 'openai-a',
+  });
+});
+
 test('parseRegexImportText reads ST RegexBinding from preset extensions', () => {
   const parsed = parseRegexImportText(JSON.stringify({
     extensions: {
@@ -100,6 +132,22 @@ test('parseRegexImportText reads ST RegexBinding from preset extensions', () => 
   assert.equal(parsed.sets.length, 1);
   assert.equal(parsed.sets[0].name, '替换状态栏');
   assert.equal(parsed.sets[0].rules[0].scriptName, '替换状态栏');
+});
+
+test('getRegexImportSetName removes RegexBinding and Regex Scripts generic names', () => {
+  const rules = [
+    {
+      scriptName: '状态栏清理',
+      findRegex: '/<status>[\\s\\S]*?<\\/status>/g',
+      replaceString: '',
+      placement: [2],
+    },
+  ];
+
+  assert.equal(stripGenericRegexSetName('RegexBinding: 状态栏清理'), '状态栏清理');
+  assert.equal(getRegexImportSetName('RegexBinding (Regex Scripts)', rules, '导入正则'), '状态栏清理');
+  assert.equal(getRegexImportSetName('Regex Scripts - 状态栏清理', [], '导入正则'), '状态栏清理');
+  assert.equal(getRegexImportSetName('导入正则 1', rules, '导入正则'), '状态栏清理');
 });
 
 test('parseRegexImportText replaces generic source names with regex script names', () => {

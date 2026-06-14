@@ -23,8 +23,11 @@ import { createSessionArchiveSectionRuntime } from '../../src/scripts/ui/session
     runArchiveDeleteFlow: () => {},
     deleteArchiveTurnCheckpointState: () => {},
     deleteArchive: () => {},
+    renameArchive: () => true,
+    promptArchiveRenameName: () => 'renamed',
     onArchiveLoaded: () => {},
     onArchiveDeleted: () => {},
+    onArchiveRenamed: () => {},
     onHide: () => {},
     createEmptyState: () => ({ kind: 'empty' }),
     createArchiveRow: () => ({ kind: 'row' }),
@@ -48,6 +51,13 @@ import { createSessionArchiveSectionRuntime } from '../../src/scripts/ui/session
   assert.equal(capturedOptions.sourcePrefix, 'contact');
   assert.equal(capturedOptions.restoreWarnMessage, 'restore warn');
   assert.equal(capturedOptions.deleteWarnMessage, 'delete warn');
+  assert.equal(typeof capturedOptions.renameArchive, 'function');
+  assert.equal(typeof capturedOptions.promptArchiveRenameName, 'function');
+  assert.equal(typeof capturedOptions.onArchiveRenamed, 'function');
+  assert.equal(capturedOptions.archiveSearchQuery, '');
+  capturedOptions.onArchiveSearchQueryChange('needle');
+  runtime.renderArchives();
+  assert.equal(capturedOptions.archiveSearchQuery, 'needle');
   console.log('ok - createSessionArchiveSectionRuntime forwards archive section dependencies for contacts');
 }
 

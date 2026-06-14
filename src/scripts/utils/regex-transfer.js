@@ -108,14 +108,34 @@ const normalizeRuleList = (rules = []) => {
 const GENERIC_SOURCE_NAME_PATTERNS = [
   /^regex\s*scripts?$/i,
   /^regex\s*bindings?$/i,
+  /^regex\s*binding\s*scripts?$/i,
   /^regexbinding$/i,
+  /^regexbinding\s*scripts?$/i,
   /^bindings?$/i,
   /^绑定正则(?:\s*\d+)?$/i,
   /^导入正则(?:\s*\d+)?$/i,
 ];
 
+export const stripGenericRegexSetName = (value) => {
+  let name = String(value || '').trim();
+  if (!name) return '';
+  if (/^(?:regex\s*(?:scripts?|bindings?|binding\s*scripts?)|regexbinding\s*scripts?|regexbinding|bindings?|绑定正则|导入正则)(?:\s*(?:\([^)]*\)|（[^）]*）|\[[^\]]*\]))?(?:\s*[-_:：/|]?\s*\d+)?$/i.test(name)) {
+    return '';
+  }
+  for (let i = 0; i < 3; i += 1) {
+    const next = name
+      .replace(/^(?:regex\s*(?:scripts?|bindings?|binding\s*scripts?)|regexbinding\s*scripts?|regexbinding|bindings?|绑定正则|导入正则)\s*/i, '')
+      .replace(/^(?:\((?:regex\s*)?(?:scripts?|bindings?)\)|（(?:regex\s*)?(?:scripts?|bindings?)）|\[(?:regex\s*)?(?:scripts?|bindings?)\])\s*/i, '')
+      .replace(/^\s*[-_:：/|]+\s*/, '')
+      .trim();
+    if (next === name) break;
+    name = next;
+  }
+  return name;
+};
+
 const isGenericSourceName = (value) => {
-  const name = String(value || '').trim();
+  const name = stripGenericRegexSetName(value) || String(value || '').trim();
   return Boolean(name) && GENERIC_SOURCE_NAME_PATTERNS.some((pattern) => pattern.test(name));
 };
 
@@ -134,13 +154,13 @@ const getNameFromRules = (rules = []) => {
 };
 
 export const getRegexImportSetName = (name, rules = [], fallbackName = '导入正则') => {
-  const explicitName = String(name || '').trim();
+  const explicitName = stripGenericRegexSetName(name);
   if (explicitName && !isGenericSourceName(explicitName)) return explicitName;
 
   const ruleName = getNameFromRules(rules);
   if (ruleName) return ruleName;
 
-  const fallback = String(fallbackName || '').trim();
+  const fallback = stripGenericRegexSetName(fallbackName);
   if (fallback && !isGenericSourceName(fallback)) return fallback;
 
   return explicitName || fallback || '未命名正则';

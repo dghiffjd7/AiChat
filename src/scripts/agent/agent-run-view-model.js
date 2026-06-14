@@ -85,6 +85,91 @@ const normalizeDecisionActions = (actions = []) => (
   enabled: action?.enabled !== false,
 })).filter(action => action.id && action.label);
 
+const normalizeLineList = (value = [], limit = 40) => (
+  Array.isArray(value) ? value : []
+).map(line => String(line ?? '')).slice(0, Math.max(1, Number(limit) || 40));
+
+const normalizeChatFormatModelReviewDetail = (detail = null) => {
+  if (!isPlainObject(detail)) return null;
+  const correctedTextRaw = String(detail.correctedText ?? '');
+  const rawTextRaw = String(detail.rawText ?? '');
+  const linePatches = (Array.isArray(detail.linePatches) ? detail.linePatches : [])
+    .map(patch => ({
+      startLine: toFiniteNumber(patch?.startLine, 0),
+      endLine: toFiniteNumber(patch?.endLine, 0),
+      reason: trim(patch?.reason),
+      originalLines: Array.isArray(patch?.originalLines)
+        ? normalizeLineList(patch.originalLines, 20)
+        : null,
+      replacementLines: normalizeLineList(patch?.replacementLines, 40),
+      replacementLineCount: toFiniteNumber(patch?.replacementLineCount, 0),
+      replacementLinesTruncated: patch?.replacementLinesTruncated === true,
+      originalMatches: patch?.originalMatches === true
+        ? true
+        : (patch?.originalMatches === false ? false : null),
+    }))
+    .filter(patch => patch.startLine > 0 && patch.endLine >= patch.startLine)
+    .slice(0, 8);
+  const issues = (Array.isArray(detail.issues) ? detail.issues : [])
+    .map(issue => ({
+      severity: trim(issue?.severity, 'warning'),
+      type: trim(issue?.type, 'other'),
+      message: trim(issue?.message),
+      evidence: trim(issue?.evidence),
+    }))
+    .filter(issue => issue.message)
+    .slice(0, 8);
+  const normalized = {
+    status: trim(detail.status),
+    canRepair: detail.canRepair === true,
+    repairSummary: trim(detail.repairSummary),
+    rawPreview: trim(detail.rawPreview),
+    rawText: rawTextRaw.trim() ? rawTextRaw : '',
+    rawTextTruncated: detail.rawTextTruncated === true,
+    issueCount: toFiniteNumber(detail.issueCount, issues.length),
+    patchCount: toFiniteNumber(detail.patchCount, linePatches.length),
+    correctedText: correctedTextRaw.trim() ? correctedTextRaw : '',
+    correctedTextTruncated: detail.correctedTextTruncated === true,
+    linePatches,
+    issues,
+  };
+  if (
+    !normalized.status &&
+    !normalized.repairSummary &&
+    !normalized.rawPreview &&
+    !normalized.rawText &&
+    !normalized.correctedText &&
+    !normalized.linePatches.length &&
+    !normalized.issues.length
+  ) {
+    return null;
+  }
+  return normalized;
+};
+
+const normalizeChatFormatAutoRepair = (autoRepair = null) => {
+  if (!isPlainObject(autoRepair)) return null;
+  const normalized = {
+    autoApplyRepair: autoRepair.autoApplyRepair === true,
+    attempted: autoRepair.attempted === true,
+    didAnything: autoRepair.didAnything === true,
+    reason: trim(autoRepair.reason),
+    errorMessage: trim(autoRepair.errorMessage),
+    eventCount: toFiniteNumber(autoRepair.eventCount, 0),
+    mutatedMoments: autoRepair.mutatedMoments === true,
+  };
+  if (
+    !normalized.autoApplyRepair &&
+    !normalized.attempted &&
+    !normalized.reason &&
+    !normalized.errorMessage &&
+    !normalized.eventCount
+  ) {
+    return null;
+  }
+  return normalized;
+};
+
 const buildChatFormatReview = (run = {}) => {
   const kind = trim(run.kind || run.type);
   const source = trim(run.source);
@@ -106,6 +191,8 @@ const buildChatFormatReview = (run = {}) => {
     errors: (Array.isArray(metadata.errors) ? metadata.errors : []).map(item => trim(item)).filter(Boolean).slice(0, 4),
     warnings: (Array.isArray(metadata.warnings) ? metadata.warnings : []).map(item => trim(item)).filter(Boolean).slice(0, 4),
     repairCandidate: repair,
+    modelReviewDetail: normalizeChatFormatModelReviewDetail(metadata.modelReviewDetail),
+    autoRepair: normalizeChatFormatAutoRepair(metadata.autoRepair),
     actionLabels: normalizeDecisionActions(metadata.decisionActions)
       .filter(action => action.enabled)
       .map(action => action.label)
@@ -159,6 +246,7 @@ export const buildAgentRunSummary = (run = {}, {
   const steps = Array.isArray(run.steps) ? run.steps.map(summarizeStep) : [];
   const status = trim(run.status, 'unknown');
   const runId = trim(run.id || run.runId);
+  const reviewDecision = trim(run.metadata?.reviewDecision);
   const runEvents = normalizeEvents(events).filter(event => trim(event.runId) === runId);
   const lastStep = steps.slice().sort((a, b) => (
     toFiniteNumber(b.updatedAt || b.finishedAt || b.startedAt, 0) -
@@ -176,12 +264,15 @@ export const buildAgentRunSummary = (run = {}, {
     summary: trim(run.summary),
     errorMessage: trim(run.errorMessage || run.error),
     cancelReason: trim(run.cancelReason),
+    reviewDecision,
+    reviewedAt: toFiniteNumber(run.metadata?.reviewedAt, 0),
+    reviewReason: trim(run.metadata?.reviewReason),
     createdAt: toFiniteNumber(run.createdAt || run.startedAt, 0),
     updatedAt: toFiniteNumber(run.updatedAt, 0),
     finishedAt: toFiniteNumber(run.finishedAt, 0),
     durationMs: computeDurationMs(run),
     isActive: RUNNING_STATUSES.has(status),
-    isFailure: FAILURE_STATUSES.has(status),
+    isFailure: FAILURE_STATUSES.has(status) && !['rejected', 'user_rejected'].includes(reviewDecision),
     stepCount: steps.length,
     toolCallCount: Array.isArray(run.toolCalls) ? run.toolCalls.length : 0,
     eventCount: runEvents.length,
@@ -303,7 +394,10 @@ export const buildAgentRunCacheStats = ({
     maxRuns: Math.max(0, Math.trunc(Number(maxRuns)) || 0),
     maxEvents: Math.max(0, Math.trunc(Number(maxEvents)) || 0),
     activeRuns: runList.filter(run => RUNNING_STATUSES.has(trim(run.status))).length,
-    failedRuns: runList.filter(run => FAILURE_STATUSES.has(trim(run.status))).length,
+    failedRuns: runList.filter(run => (
+      FAILURE_STATUSES.has(trim(run.status)) &&
+      !['rejected', 'user_rejected'].includes(trim(run.metadata?.reviewDecision))
+    )).length,
     oldestUpdatedAt: updatedTimes[0] || 0,
     newestUpdatedAt: updatedTimes[updatedTimes.length - 1] || 0,
   };

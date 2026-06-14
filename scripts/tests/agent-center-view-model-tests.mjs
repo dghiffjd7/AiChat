@@ -6,7 +6,7 @@ import {
 } from '../../src/scripts/ui/agent-center-view-model.js';
 
 {
-  assert.deepEqual(AGENT_CENTER_TABS.map(tab => tab.id), ['pending', 'activity', 'tools', 'safety']);
+  assert.deepEqual(AGENT_CENTER_TABS.map(tab => tab.id), ['pending', 'activity', 'agents', 'tools', 'safety']);
   console.log('ok - agent center exposes user-facing tabs');
 }
 
@@ -68,6 +68,12 @@ import {
       { name: 'memory.update_after_chat', title: 'Memory update', permissions: ['storage:write'], riskLevel: 'medium' },
       { name: 'contact_profile.list', title: 'Contact profile list', permissions: ['storage'], riskLevel: 'low' },
     ],
+    agentFeatureSettings: {
+      features: {
+        reply_check: { enabled: true, modelMode: 'none', triggerMode: 'local_only', updatedAt: 100 },
+        write_preview: { enabled: false, modelMode: 'none' },
+      },
+    },
     sessionGate: { enabled: false, allowedTools: ['contact_profile.list'] },
     experimentStatus: { enabled: false, allowedTools: ['contact_profile.list'] },
     continuationCommitPolicy: { defaultStrategy: 'append_to_previous_bubble', strategies: ['preview_only', 'append_to_previous_bubble'] },
@@ -81,7 +87,15 @@ import {
   assert.equal(view.pending[0].id, 'profile-pending-1');
   assert.equal(view.pending[0].kind, 'contact_profile_update');
   assert.equal(view.pending[0].profileSummary, 'Bob · 特征 1 · 互动重点 1');
+  assert.deepEqual(view.pending.map(item => item.id), ['profile-pending-1', 'permission-1']);
   assert.deepEqual(view.tools.map(tool => tool.name), ['contact_profile.list', 'memory.update_after_chat']);
+  assert.equal(view.meta.agents, 3);
+  assert.equal(view.meta.enabledAgents, 1);
+  assert.equal(view.agents.find(agent => agent.id === 'reply_check').title, '检查回复格式');
+  assert.equal(view.agents.find(agent => agent.id === 'reply_check').enabled, true);
+  assert.equal(view.agents.find(agent => agent.id === 'reply_check').modelLabel, '不调用模型');
+  assert.equal(view.agents.find(agent => agent.id === 'reply_check').triggerLabel, '自动触发');
+  assert.equal(view.agents.find(agent => agent.id === 'text_completion').implemented, false);
   assert.deepEqual(view.tools[0].capabilities, {
     read: false,
     write: false,
@@ -93,11 +107,28 @@ import {
   });
   assert.equal(view.tabs.find(tab => tab.id === 'pending').count, 2);
   assert.equal(view.tabs.find(tab => tab.id === 'activity').count, 1);
+  assert.equal(view.tabs.find(tab => tab.id === 'agents').count, 1);
   assert.equal(view.tabs.find(tab => tab.id === 'tools').count, 2);
   assert.equal(view.safety.continuationCommitPolicy.defaultStrategy, 'append_to_previous_bubble');
   assert.equal(view.safety.sessionGate.writePreviewTools.enabled, false);
   assert.deepEqual(view.safety.sessionGate.writePreviewTools.activeTools, []);
   console.log('ok - agent center view summarizes pending activity tools and safety state');
+}
+
+{
+  const view = buildAgentCenterView({
+    agentModelProfiles: [
+      { id: 'profile-a', name: '轻量检查', provider: 'openrouter', model: 'model-a' },
+    ],
+    agentFeatureSettings: {
+      features: {
+        reply_check: { modelMode: 'profile', modelProfileId: 'profile-a' },
+      },
+    },
+  });
+  assert.equal(view.agentModelProfiles[0].label, '轻量检查 · openrouter / model-a');
+  assert.equal(view.agents.find(agent => agent.id === 'reply_check').modelLabel, '轻量检查 · openrouter / model-a');
+  console.log('ok - agent center view resolves selected agent model profile labels');
 }
 
 {
@@ -275,6 +306,30 @@ import {
   });
   assert.equal(skipped.pending[0].chatEmitCommit.canCommit, true);
   assert.equal(skipped.pending[0].chatEmitCommit.message, '找不到候选目标会话，请检查目标名称或 ID 后重试。');
+
+  const rejected = buildAgentCenterView({
+    pendingPermissions: [{
+      id: 'chat-emit-pending-5',
+      status: 'allowed',
+      toolName: 'chat.emit_private',
+      sessionId: 'contact:firen',
+      permissions: ['chat:emit_candidate'],
+      resumeStatus: 'succeeded',
+      commitStatus: 'skipped',
+      commitResult: {
+        status: 'skipped',
+        reason: 'user_rejected',
+        reviewDecision: 'user_rejected',
+        displayMessage: '已打回，未提交聊天候选。',
+      },
+      argsPreview: {
+        targetName: '菲伦',
+        speakerName: '菲伦',
+        content: '今晚别一个人走。',
+      },
+    }],
+  });
+  assert.equal(rejected.pending.length, 0);
   console.log('ok - agent center view exposes chat emit commit and undo actions after resume');
 }
 

@@ -4,6 +4,10 @@ import { normalizeAssistantStreamChunk } from '../api/native-reasoning.js';
 import { isDeepSeekApiRequest } from '../api/providers/deepseek-compat.js';
 import { extractTableEditBlocks, stripTableEditBlocks } from '../memory/memory-edit-parser.js';
 import { getMemoryContextType, resolveMemorySessionMode, tableMatchesMemoryContext } from '../memory/memory-context-utils.js';
+import {
+  AGENT_FEATURE_IDS,
+  createAgentFeatureSettingsStore,
+} from '../agent/agent-feature-settings.js';
 import { buildAgentMessagePartsFromRun } from '../agent/agent-message-parts.js';
 import { createContactProfilerAgent } from '../agent/contact-profiler-agent.js';
 import { createImageDirectorAgent } from '../agent/image-director-agent.js';
@@ -54,6 +58,7 @@ import { MemorySnapshotStore } from '../storage/memory-snapshot-store.js';
 import { MemoryTemplateStore } from '../storage/memory-template-store.js';
 import { MomentSummaryStore } from '../storage/moment-summary-store.js';
 import { MomentsStore } from '../storage/moments-store.js';
+import { PersonaArchiveStore } from '../storage/persona-archive-store.js';
 import { PersonaStore } from '../storage/persona-store.js';
 import { PluginStore } from '../storage/plugin-store.js';
 import { RpSessionStore } from '../storage/rp-session-store.js';
@@ -203,7 +208,10 @@ import {
 import { ChatUI } from './chat/chat-ui.js';
 import { enqueueMessagesCore } from './chat/typing-flow-ui-utils.js';
 import { createAssistantStreamRuntime, isStreamCtrlConnected } from './chat/assistant-stream-runtime.js';
-import { dispatchAfterReceiveEffects } from './chat/after-receive-dispatch-utils.js';
+import {
+  dispatchAfterReceiveEffects,
+  runChatFormatGuardianPreview,
+} from './chat/after-receive-dispatch-utils.js';
 import {
   commitChatEmitContract,
   undoChatEmitCommit,
@@ -377,6 +385,10 @@ import {
   captureAssistantMemoryState as captureAssistantMemoryStateCore,
   persistSwipeBranchMemoryState as persistSwipeBranchMemoryStateCore,
 } from './chat/swipe-memory-state-utils.js';
+import {
+  SWIPE_REASONING_KEYS,
+  applySwipeReasoningStateToMeta,
+} from './chat/swipe-ui-utils.js';
 import {
   buildTurnCheckpointHydrationThreadKey as buildTurnCheckpointHydrationThreadKeyCore,
   createSwipeMemoryStateTracker,
@@ -1050,6 +1062,7 @@ const initApp = async () => {
   const groupStore = new GroupStore();
   const momentsStore = new MomentsStore();
   const momentSummaryStore = new MomentSummaryStore();
+  const personaArchiveStore = new PersonaArchiveStore();
   try {
     window.appBridge.setMomentSummaryStore?.(momentSummaryStore);
   } catch {}
@@ -1181,6 +1194,7 @@ const initApp = async () => {
     groupStore.setScope?.(initialScopeKey),
     momentsStore.setScope?.(initialScopeKey),
     momentSummaryStore.setScope?.(initialScopeKey),
+    personaArchiveStore.setScope?.(initialScopeKey),
     rpSessionStore.setScope?.(initialScopeKey),
   ]);
   const initMemoryStores = async () => {
@@ -1805,6 +1819,7 @@ const initApp = async () => {
       groupStore.setScope?.(nextKey),
       momentsStore.setScope?.(nextKey),
       momentSummaryStore.setScope?.(nextKey),
+      personaArchiveStore.setScope?.(nextKey),
       rpSessionStore.setScope?.(nextKey),
       memoryTableStore.setScope?.(nextKey),
       contactProfileStore.setScope?.(nextKey),
@@ -1884,12 +1899,35 @@ const initApp = async () => {
     chatStore,
     contactsStore,
     rpSessionStore,
+    momentsStore,
+    momentSummaryStore,
+    personaArchiveStore,
+    memoryTableStore,
+    memoryTemplateStore,
     getSessionId: () => chatStore.getCurrent(),
+    getMemoryStorageMode,
+    getPersonaScopeKey,
+    getRpSessionIdForPersona: personaId => getRpSessionId(personaId),
     onPersonaChanged: async () => {
       await applyPersonaScope({ personaId: personaStore.getActive?.()?.id });
       await syncBoundUserForCharacterCard(personaStore.getActive?.());
       syncUserPersonaUI(chatStore.getCurrent());
       refreshChatAndContacts();
+    },
+    onRoleNewChatFinished: async () => {
+      try {
+        clearGroupSpeakerCaches();
+        clearMessageDecorationCache();
+      } catch {}
+      refreshChatAndContacts({ immediate: true });
+      try {
+        await rerenderCurrentSession();
+      } catch (err) {
+        logger.warn('rerender after persona new chat failed', err);
+      }
+      try {
+        if (activePage === 'moments') momentsPanel?.render?.({ preserveScroll: false });
+      } catch {}
     },
   });
   const userPanel = new UserPanel({
@@ -2013,6 +2051,16 @@ const initApp = async () => {
   } catch (err) {
     logger.debug('agent run store load skipped', err);
   }
+  const agentFeatureSettingsStore = createAgentFeatureSettingsStore();
+  try {
+    await agentFeatureSettingsStore.hydrate?.();
+  } catch (err) {
+    logger.debug('agent feature settings hydrate skipped', err);
+  }
+  ui.canCheckFormatForMessage = message => (
+    message?.role === 'assistant' &&
+    agentFeatureSettingsStore.isEnabled(AGENT_FEATURE_IDS.replyCheck)
+  );
   const agentPermissionEvaluator = createAgentPermissionEvaluator({
     defaultDecision: 'ask',
   });
@@ -2101,9 +2149,9 @@ const initApp = async () => {
       message: buildProviderToolPermissionPromptMessage(request),
       defaultActionId: PROVIDER_TOOL_PERMISSION_ACTIONS.deny,
       actions: [
-        { id: PROVIDER_TOOL_PERMISSION_ACTIONS.allowOnce, label: '允许一次', primary: true },
-        { id: PROVIDER_TOOL_PERMISSION_ACTIONS.rememberAllow, label: '记住允许' },
-        { id: PROVIDER_TOOL_PERMISSION_ACTIONS.deny, label: '拒绝', variant: 'danger' },
+        { id: PROVIDER_TOOL_PERMISSION_ACTIONS.allowOnce, label: '执行一次', primary: true },
+        { id: PROVIDER_TOOL_PERMISSION_ACTIONS.rememberAllow, label: '记住执行' },
+        { id: PROVIDER_TOOL_PERMISSION_ACTIONS.deny, label: '打回', variant: 'danger' },
       ],
     });
     return applyProviderToolPermissionAction(action || PROVIDER_TOOL_PERMISSION_ACTIONS.deny, request, {
@@ -2466,6 +2514,7 @@ const initApp = async () => {
   const agentCenterPanel = new AgentCenterPanel({
     getFailureSeenAt: ({ surface = '' } = {}) => getAgentFailureSeenAt({ surface }),
     markFailureSeen: ({ surface = '', at = Date.now() } = {}) => markAgentFailuresSeen({ surface, at }),
+    openConfig: (options = {}) => configPanel.show({ tab: 'chat', ...(options || {}) }),
   });
   try {
     registerDebugRuntimeContextCore(window.appBridge, {
@@ -2530,6 +2579,92 @@ const initApp = async () => {
         ),
         getAgentRunCacheStats: () => agentRunStore.getStats(),
         compactAgentRuns: options => agentRunStore.compact(options || {}),
+        resolveAgentRunReview: (options = {}) => {
+          const opts = options && typeof options === 'object' ? options : {};
+          const runId = String(opts.runId || opts.id || '').trim();
+          if (!runId) return { ok: false, reason: 'missing_run_id', message: '缺少 Agent run id' };
+          const run = agentRunStore.getRun(runId);
+          if (!run) return { ok: false, reason: 'run_not_found', message: '找不到这条 Agent 记录' };
+          if (run.status !== 'waiting_permission') {
+            return {
+              ok: false,
+              reason: 'run_not_waiting_permission',
+              message: '这条 Agent 记录已经处理过',
+              run,
+            };
+          }
+          const decisionRaw = String(opts.decision || opts.action || '').trim();
+          const rejected = ['reject', 'rejected', 'deny', 'denied', 'skip', 'skipped'].includes(decisionRaw);
+          const executed = ['execute', 'executed', 'apply', 'applied', 'approve', 'approved'].includes(decisionRaw);
+          if (!rejected && !executed) {
+            return { ok: false, reason: 'unsupported_decision', message: '不支持的 Agent 确认动作', run };
+          }
+          const now = Date.now();
+          const status = rejected ? 'cancelled' : 'succeeded';
+          const reviewDecision = rejected ? 'rejected' : 'executed';
+          const summary = String(opts.summary || (rejected ? '已打回' : '已执行')).trim();
+          const reason = String(opts.reason || '').trim();
+          const steps = Array.isArray(run.steps)
+            ? run.steps.map(step => (
+              step?.status === 'waiting_permission'
+                ? {
+                    ...step,
+                    status,
+                    summary: step.summary || summary,
+                    updatedAt: now,
+                    finishedAt: now,
+                    ...(rejected ? { errorMessage: step.errorMessage || '' } : {}),
+                  }
+                : step
+            ))
+            : [];
+          const finished = agentTaskRuntime.finishRun(runId, {
+            status,
+            summary,
+            ...(rejected ? { cancelReason: reason || summary } : {}),
+            metadata: {
+              reviewDecision,
+              reviewedAt: now,
+              reviewReason: reason,
+              previousStatus: run.status,
+            },
+            steps,
+            finishedAt: now,
+            updatedAt: now,
+          });
+          return {
+            ok: Boolean(finished),
+            decision: reviewDecision,
+            status: finished?.status || status,
+            run: finished,
+          };
+        },
+        getAgentFeatureSettings: () => agentFeatureSettingsStore.getSettings(),
+        listAgentFeatures: () => agentFeatureSettingsStore.listFeatures(),
+        setAgentFeatureEnabled: (options = {}) => agentFeatureSettingsStore.setEnabled(
+          options?.id,
+          options?.enabled === true,
+        ),
+        setAgentFeatureModel: (options = {}) => agentFeatureSettingsStore.setModel(
+          options?.id,
+          {
+            modelMode: options?.modelMode,
+            modelProfileId: options?.modelProfileId,
+          },
+        ),
+        setAgentFeatureTriggerMode: (options = {}) => agentFeatureSettingsStore.setTriggerMode(
+          options?.id,
+          options?.triggerMode,
+        ),
+        listAgentModelProfiles: async () => {
+          await chatConfigManager.reload();
+          return (chatConfigManager.getProfiles?.() || []).map(profile => ({
+            id: String(profile?.id || '').trim(),
+            name: String(profile?.name || profile?.id || '').trim(),
+            provider: String(profile?.provider || '').trim(),
+            model: String(profile?.model || '').trim(),
+          })).filter(profile => profile.id);
+        },
         listAgentTools: () => agentToolRegistry.listTools(),
         getProviderToolCallLoopGuardSnapshot: () => providerToolCallRuntime.getLoopGuardSnapshot(),
         clearProviderToolCallLoopGuard: () => {
@@ -2576,8 +2711,10 @@ const initApp = async () => {
         resolveProviderToolPendingPermission,
         resumeProviderToolPendingPermission,
         commitChatEmitPendingPermission: chatEmitPendingCommitActions.commitChatEmitPendingPermission,
+        rejectChatEmitPendingCommit: chatEmitPendingCommitActions.rejectChatEmitPendingCommit,
         undoChatEmitPendingCommit: chatEmitPendingCommitActions.undoChatEmitPendingCommit,
         commitAgentWritePreviewPendingPermission: writePreviewPendingCommitActions.commitAgentWritePreviewPendingPermission,
+        rejectAgentWritePreviewPendingCommit: writePreviewPendingCommitActions.rejectAgentWritePreviewPendingCommit,
         undoAgentWritePreviewPendingCommit: writePreviewPendingCommitActions.undoAgentWritePreviewPendingCommit,
         planProviderToolPendingContinuation,
         resolveCurrentProviderToolRunnerClient: async (options = {}) => {
@@ -7531,24 +7668,46 @@ Phase G（Frame 36）：循环衔接
     chatInputGapTweak = Math.max(-120, Math.min(120, chatInputGapTweak + delta));
     syncChatInputOffset();
   };
+  let syncChatInputOffsetRaf = 0;
+  let syncChatBottomGapRaf = 0;
+  const scheduleSyncChatInputOffset = () => {
+    if (typeof requestAnimationFrame !== 'function') {
+      syncChatInputOffset();
+      return;
+    }
+    if (syncChatInputOffsetRaf) return;
+    syncChatInputOffsetRaf = requestAnimationFrame(() => {
+      syncChatInputOffsetRaf = 0;
+      syncChatInputOffset();
+    });
+  };
+  const scheduleSyncChatBottomGap = () => {
+    if (typeof requestAnimationFrame !== 'function') {
+      syncChatBottomGap();
+      return;
+    }
+    if (syncChatBottomGapRaf) return;
+    syncChatBottomGapRaf = requestAnimationFrame(() => {
+      syncChatBottomGapRaf = 0;
+      syncChatBottomGap();
+    });
+  };
   syncChatInputOffset();
-  if (typeof requestAnimationFrame === 'function') {
-    requestAnimationFrame(syncChatBottomGap);
-  }
+  scheduleSyncChatBottomGap();
   if (typeof ResizeObserver !== 'undefined' && chatInputContainer) {
     const observer = new ResizeObserver(() => {
       syncChatInputOffset();
-      if (typeof requestAnimationFrame === 'function') requestAnimationFrame(syncChatBottomGap);
+      scheduleSyncChatBottomGap();
     });
     observer.observe(chatInputContainer);
   }
   window.addEventListener('resize', () => {
     syncChatInputOffset();
-    if (typeof requestAnimationFrame === 'function') requestAnimationFrame(syncChatBottomGap);
+    scheduleSyncChatBottomGap();
   });
   composerInput?.addEventListener('input', () => {
-    requestAnimationFrame(syncChatInputOffset);
-    requestAnimationFrame(syncChatBottomGap);
+    scheduleSyncChatInputOffset();
+    scheduleSyncChatBottomGap();
   });
 
   const imageSlashPromptHint = (() => {
@@ -7860,13 +8019,13 @@ Phase G（Frame 36）：循环衔接
   chatScroll?.addEventListener(
     'scroll',
     () => {
-      if (typeof requestAnimationFrame === 'function') requestAnimationFrame(syncChatBottomGap);
+      scheduleSyncChatBottomGap();
     },
     { passive: true },
   );
   if (chatScroll && typeof MutationObserver !== 'undefined') {
     const observer = new MutationObserver(() => {
-      if (typeof requestAnimationFrame === 'function') requestAnimationFrame(syncChatBottomGap);
+      scheduleSyncChatBottomGap();
     });
     observer.observe(chatScroll, { childList: true });
   }
@@ -12917,6 +13076,139 @@ Phase G（Frame 36）：循环衔接
     let panel = null;
     let textarea = null;
     let metaEl = null;
+    let repairEl = null;
+
+    const formatRepairMeta = (items = []) => items.filter(Boolean).join(' · ');
+
+    const renderRepairCodeBlock = (label = '', text = '', className = '') => {
+      const body = String(text ?? '');
+      if (!body.trim()) return '';
+      return `
+        <div>
+          <div class="raw-reply-repair-label">${escapeHtml(label)}</div>
+          <pre class="raw-reply-repair-code${className ? ` ${escapeHtml(className)}` : ''}">${escapeHtml(body)}</pre>
+        </div>
+      `;
+    };
+
+    const renderExpandableRepairCodeBlock = ({
+      label = '',
+      preview = '',
+      text = '',
+      truncated = false,
+    } = {}) => {
+      const body = String(text || preview || '');
+      if (!body.trim()) return '';
+      const previewText = String(preview || body.replace(/\s+/g, ' ').slice(0, 180)).trim();
+      return `
+        <details class="raw-reply-repair-expandable">
+          <summary>
+            <span class="raw-reply-repair-expandable-title">${escapeHtml(label)}${truncated ? '（已截断保存）' : ''}</span>
+            <span class="raw-reply-repair-expandable-hint">点击查看完整</span>
+            ${previewText ? `<span class="raw-reply-repair-expandable-preview">${escapeHtml(previewText)}</span>` : ''}
+          </summary>
+          <pre class="raw-reply-repair-code">${escapeHtml(body)}</pre>
+        </details>
+      `;
+    };
+
+    const formatLineRange = (patch = {}) => {
+      const start = Number(patch?.startLine || 0);
+      const end = Number(patch?.endLine || 0);
+      if (!start || !end) return '';
+      return start === end ? `第 ${start} 行` : `第 ${start}-${end} 行`;
+    };
+
+    const renderRepairDetails = (details = null) => {
+      if (!details || typeof details !== 'object') return '';
+      const detail = details.modelReviewDetail && typeof details.modelReviewDetail === 'object'
+        ? details.modelReviewDetail
+        : null;
+      const fallbackReview = details.modelReview && typeof details.modelReview === 'object'
+        ? details.modelReview
+        : null;
+      const repairCandidate = details.repairCandidate && typeof details.repairCandidate === 'object'
+        ? details.repairCandidate
+        : null;
+      const status = String(detail?.status || fallbackReview?.status || details.status || '').trim();
+      const summary = String(
+        detail?.repairSummary ||
+        fallbackReview?.repairSummary ||
+        repairCandidate?.summary ||
+        details.summary ||
+        '',
+      ).trim();
+      const canRepair = detail?.canRepair === true || fallbackReview?.canRepair === true || repairCandidate?.available === true;
+      const meta = formatRepairMeta([
+        status ? `状态：${status}` : '',
+        canRepair ? '可修复' : '',
+        details.runId ? `run ${details.runId}` : '',
+      ]);
+      const issues = Array.isArray(detail?.issues)
+        ? detail.issues
+        : (Array.isArray(fallbackReview?.issues) ? fallbackReview.issues : []);
+      const issueText = issues
+        .map(issue => formatRepairMeta([
+          String(issue?.type || '').trim(),
+          String(issue?.message || '').trim(),
+        ]))
+        .filter(Boolean)
+        .join('；');
+      const linePatches = Array.isArray(detail?.linePatches) ? detail.linePatches : [];
+      const patchHtml = linePatches.map((patch) => {
+        const originalLines = Array.isArray(patch?.originalLines) ? patch.originalLines : [];
+        const replacementLines = Array.isArray(patch?.replacementLines) ? patch.replacementLines : [];
+        const originalText = originalLines.map(line => `- ${String(line ?? '')}`).join('\n');
+        const replacementText = replacementLines.map(line => `+ ${String(line ?? '')}`).join('\n');
+        const patchMeta = formatRepairMeta([
+          formatLineRange(patch),
+          String(patch?.reason || '').trim(),
+          patch?.originalMatches === false ? '原文校验未通过' : '',
+          patch?.replacementLinesTruncated ? '替换行已截断' : '',
+        ]);
+        return `
+          <div class="raw-reply-repair-patch">
+            ${patchMeta ? `<div class="raw-reply-repair-note">${escapeHtml(patchMeta)}</div>` : ''}
+            ${renderRepairCodeBlock('原文', originalText, 'is-delete')}
+            ${renderRepairCodeBlock(
+              '建议',
+              replacementText || (Number(patch?.replacementLineCount || 0) === 0 ? '+ （删除这些行）' : ''),
+              'is-add',
+            )}
+          </div>
+        `;
+      }).join('');
+      const correctedText = String(detail?.correctedText || repairCandidate?.replacementText || '').trim();
+      const correctedHtml = renderRepairCodeBlock(
+        detail?.correctedTextTruncated ? '修复后文本（已截断）' : '修复后文本',
+        correctedText,
+      );
+      const rawText = detail?.rawText || fallbackReview?.rawText || detail?.rawPreview || fallbackReview?.rawPreview || '';
+      const rawPreviewHtml = rawText
+        ? renderExpandableRepairCodeBlock({
+          label: '模型原始返回预览',
+          preview: detail?.rawPreview || fallbackReview?.rawPreview || '',
+          text: rawText,
+          truncated: detail?.rawTextTruncated === true || fallbackReview?.rawTextTruncated === true,
+        })
+        : '';
+      if (!meta && !summary && !issueText && !patchHtml && !correctedHtml && !rawPreviewHtml) return '';
+      return `
+        <details class="raw-reply-repair-card">
+          <summary>
+            <span>格式修复返回</span>
+            ${meta ? `<span class="raw-reply-repair-meta">${escapeHtml(meta)}</span>` : ''}
+          </summary>
+          <div class="raw-reply-repair-body">
+            ${summary ? `<div class="raw-reply-repair-note">${escapeHtml(summary)}</div>` : ''}
+            ${issueText ? `<div class="raw-reply-repair-note">模型判断：${escapeHtml(issueText)}</div>` : ''}
+            ${patchHtml}
+            ${correctedHtml}
+            ${rawPreviewHtml}
+          </div>
+        </details>
+      `;
+    };
 
     const ensure = () => {
       if (panel) return;
@@ -12944,28 +13236,15 @@ Phase G（Frame 36）：循环衔接
       panel.addEventListener('click', e => e.stopPropagation());
 
       panel.innerHTML = `
-                <div style="display:flex; align-items:center; gap:10px; padding:12px; background:#f3f4f6; border-bottom:1px solid var(--app-border-default);">
+                <div style="display:flex; align-items:center; gap:10px; padding:12px; background:var(--app-surface-subtle); border-bottom:1px solid var(--app-border-default);">
                     <div style="font-weight:900;">原始回复</div>
                     <div id="raw-reply-meta" style="margin-left:auto; font-size:12px; color:var(--app-text-muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;"></div>
                     <button id="raw-reply-copy" style="border:1px solid var(--app-border-default); background:var(--app-surface-card); border-radius:10px; padding:6px 10px;">复制</button>
                     <button id="raw-reply-close" style="border:1px solid var(--app-border-default); background:var(--app-surface-card); border-radius:10px; padding:6px 10px;">关闭</button>
                 </div>
-                <div style="flex:1; min-height:0; overflow:auto; -webkit-overflow-scrolling:touch; padding:10px;">
-                    <textarea id="raw-reply-text" readonly style="
-                        width:100%;
-                        height:100%;
-                        min-height: 100%;
-                        resize:none;
-                        border:1px solid rgba(0,0,0,0.10);
-                        border-radius:12px;
-                        padding:12px;
-                        font-size:13px;
-                        line-height:1.4;
-                        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
-                        white-space: pre;
-                        box-sizing:border-box;
-                        outline:none;
-                    "></textarea>
+                <div class="raw-reply-body">
+                    <textarea id="raw-reply-text" class="raw-reply-textarea" readonly></textarea>
+                    <div id="raw-reply-repair" class="raw-reply-repair" hidden></div>
                 </div>
             `;
 
@@ -12975,6 +13254,7 @@ Phase G（Frame 36）：循环衔接
 
       textarea = panel.querySelector('#raw-reply-text');
       metaEl = panel.querySelector('#raw-reply-meta');
+      repairEl = panel.querySelector('#raw-reply-repair');
       panel.querySelector('#raw-reply-close')?.addEventListener('click', hide);
       panel.querySelector('#raw-reply-copy')?.addEventListener('click', async () => {
         const text = String(textarea?.value || '');
@@ -12994,12 +13274,17 @@ Phase G（Frame 36）：循环衔接
       });
     };
 
-    const show = (text, meta) => {
+    const show = (text, meta, repairDetails = null) => {
       ensure();
       if (metaEl) metaEl.textContent = meta || '';
       if (textarea) {
         textarea.value = String(text || '');
         textarea.scrollTop = 0;
+      }
+      if (repairEl) {
+        const repairHtml = renderRepairDetails(repairDetails);
+        repairEl.innerHTML = repairHtml;
+        repairEl.hidden = !repairHtml;
       }
       overlay.style.display = 'block';
     };
@@ -13011,9 +13296,58 @@ Phase G（Frame 36）：循环衔接
     return { show, hide };
   })();
   patchDebugUiRegistry((registry) => {
-    registry.actions.showRawReplyModal = (text = '', meta = '') => rawReplyModal.show(text, meta);
+    registry.actions.showRawReplyModal = (text = '', meta = '', repairDetails = null) => rawReplyModal.show(text, meta, repairDetails);
     registry.actions.hideRawReplyModal = () => rawReplyModal.hide();
   });
+
+  const buildRawReplyRepairDetailsFromRun = (run = null) => {
+    if (!run || typeof run !== 'object') return null;
+    const metadata = run.metadata && typeof run.metadata === 'object' ? run.metadata : {};
+    const modelReviewDetail = metadata.modelReviewDetail && typeof metadata.modelReviewDetail === 'object'
+      ? metadata.modelReviewDetail
+      : null;
+    const modelReview = metadata.modelReview && typeof metadata.modelReview === 'object'
+      ? metadata.modelReview
+      : null;
+    const repairCandidate = metadata.repairCandidate && typeof metadata.repairCandidate === 'object'
+      ? metadata.repairCandidate
+      : null;
+    if (!modelReviewDetail && !modelReview && !repairCandidate) return null;
+    return {
+      runId: String(run.id || '').trim(),
+      status: String(metadata.rawStatus || run.status || '').trim(),
+      summary: String(
+        modelReviewDetail?.repairSummary ||
+        modelReview?.repairSummary ||
+        repairCandidate?.summary ||
+        run.summary ||
+        '',
+      ).trim(),
+      modelReviewDetail,
+      modelReview,
+      repairCandidate,
+      errors: Array.isArray(metadata.errors) ? metadata.errors.slice(0, 6) : [],
+      warnings: Array.isArray(metadata.warnings) ? metadata.warnings.slice(0, 6) : [],
+      updatedAt: Number(run.updatedAt || 0) || 0,
+    };
+  };
+
+  const getLatestChatFormatRepairDetails = (sessionId = '', { rawAt = 0 } = {}) => {
+    const sid = String(sessionId || '').trim();
+    if (!sid || typeof agentRunStore?.listRuns !== 'function') return null;
+    const timestamp = Number(rawAt || 0) || 0;
+    const minUpdatedAt = timestamp ? Math.max(0, timestamp) : 0;
+    const runs = agentRunStore.listRuns({
+      sessionId: sid,
+      kind: 'chat_format_guardian',
+      limit: 10,
+    });
+    const matched = runs.find((run) => {
+      if (minUpdatedAt && Number(run?.updatedAt || run?.createdAt || 0) < minUpdatedAt) return false;
+      return Boolean(buildRawReplyRepairDetailsFromRun(run));
+    });
+    return buildRawReplyRepairDetailsFromRun(matched);
+  };
 
   const showMomentRawReply = () => {
     const raw = String(lastMomentRawReply || '').trim();
@@ -14392,7 +14726,10 @@ Phase G（Frame 36）：循环衔接
     getContact: (sessionId) => contactsStore.getContact(sessionId),
     getLastRawResponse: (sessionId) => chatStore.getLastRawResponse(sessionId),
     getLastRawAt: (sessionId) => chatStore.getLastRawAt(sessionId),
-    showRawReplyModal: (text, meta) => rawReplyModal.show(text, meta),
+    getRepairDetails: (sessionId, context = {}) => getLatestChatFormatRepairDetails(sessionId, {
+      rawAt: context?.at,
+    }),
+    showRawReplyModal: (text, meta, repairDetails) => rawReplyModal.show(text, meta, repairDetails),
     notifyWarning: (message) => window.toastr?.warning?.(message),
   });
   bindChatroomMenuActions({
@@ -20652,7 +20989,7 @@ Phase G（Frame 36）：循环衔接
         logger.warn('apply swipe memory state failed', err);
       }
     }
-	    const nextMeta = { ...sourceMeta, swipes, activeSwipe: index };
+	    let nextMeta = applySwipeReasoningStateToMeta({ ...sourceMeta, swipes, activeSwipe: index }, activeBranch || {}, index);
 	    if (nextMeta && typeof nextMeta === 'object' && 'activeSwipeDraft' in nextMeta) {
 	      delete nextMeta.activeSwipeDraft;
 	    }
@@ -20679,6 +21016,7 @@ Phase G（Frame 36）：循环衔接
 	        ? activeBranch.rawSource
 	        : (activeBranch?.raw !== undefined ? activeBranch.raw : message.rawSource);
 	      if (activeBranch?.rawOriginal !== undefined) payload.rawOriginal = activeBranch.rawOriginal;
+	      else if (index > 0) payload.rawOriginal = undefined;
 	    }
     const saved = chatStore.updateMessage(msgId, payload, sid) || { ...stored, ...payload };
     if (!isDraftBranch) {
@@ -20773,6 +21111,9 @@ Phase G（Frame 36）：循环衔接
         activeSwipe: draftIndex,
         swipeRegenerating: true,
       };
+      SWIPE_REASONING_KEYS.forEach((key) => {
+        delete nextMeta[key];
+      });
       markActiveSwipeGeneration();
       const current = chatStore.findMessage(msgId, sid) || storedMsg || message;
       const updated = chatStore.updateMessage(msgId, {
@@ -20844,7 +21185,11 @@ Phase G（Frame 36）：循环衔接
 	      if (memoryTableSnapshot) newBranch.memoryTableSnapshot = cloneSwipePlainObject(memoryTableSnapshot);
 	      if (memoryUpdateEntry !== undefined) newBranch.memoryUpdateEntry = cloneSwipeMemoryUpdateEntry(memoryUpdateEntry);
 	      const merged = [...swipesBefore, newBranch];
-	      const nextMeta = { ...sourceMeta, swipes: merged, activeSwipe: merged.length - 1 };
+	      const nextMeta = applySwipeReasoningStateToMeta(
+	        { ...sourceMeta, swipes: merged, activeSwipe: merged.length - 1 },
+	        newBranch,
+	        merged.length - 1,
+	      );
 	      delete nextMeta.swipeRegenerating;
 	      delete nextMeta.activeSwipeDraft;
 	      delete nextMeta.autoImagePrompt;
@@ -20854,9 +21199,6 @@ Phase G（Frame 36）：循环衔接
 	        nextMeta.autoImagePromptRawContent = sourceAutoImageRawContent;
 	        nextMeta.autoImagePromptPlaceholders = sourceAutoImagePlaceholders;
 	      }
-	      ['reasoning', 'reasoningDisplay', 'reasoningSource', 'reasoningHidden', 'reasoningLabel'].forEach((key) => {
-	        if (newBranch[key] !== undefined) nextMeta[key] = newBranch[key];
-	      });
 	      const updated = chatStore.updateMessage(msgId, {
 	        content: newBranch.content,
 	        raw: newBranch.raw,
@@ -20915,8 +21257,12 @@ Phase G（Frame 36）：循环衔接
         ? cleanSwipes
         : [{ content: storedMsg?.content ?? message?.content ?? '', raw: storedMsg?.raw ?? message?.raw }];
       const restoredActive = Math.min(Math.max(0, previousActive), Math.max(0, restoredSwipes.length - 1));
-      const restoredMeta = { ...sourceMeta, swipes: restoredSwipes, activeSwipe: restoredActive };
       const branch = restoredSwipes[restoredActive] || restoredSwipes[0] || {};
+      const restoredMeta = applySwipeReasoningStateToMeta(
+        { ...sourceMeta, swipes: restoredSwipes, activeSwipe: restoredActive },
+        branch,
+        restoredActive,
+      );
       delete restoredMeta.swipeRegenerating;
       delete restoredMeta.activeSwipeDraft;
       try {
@@ -20929,11 +21275,23 @@ Phase G（Frame 36）：循环衔接
       const restored = chatStore.updateMessage(msgId, {
         content: branch.content ?? '',
         raw: branch.raw,
+        rawSource: branch.rawSource !== undefined
+          ? branch.rawSource
+          : (branch.raw !== undefined ? branch.raw : restoredBase?.rawSource),
+        rawOriginal: branch.rawOriginal !== undefined
+          ? branch.rawOriginal
+          : (restoredActive > 0 ? undefined : restoredBase?.rawOriginal),
         meta: restoredMeta,
       }, sid) || {
         ...restoredBase,
         content: branch.content ?? '',
         raw: branch.raw,
+        rawSource: branch.rawSource !== undefined
+          ? branch.rawSource
+          : (branch.raw !== undefined ? branch.raw : restoredBase?.rawSource),
+        rawOriginal: branch.rawOriginal !== undefined
+          ? branch.rawOriginal
+          : (restoredActive > 0 ? undefined : restoredBase?.rawOriginal),
         meta: restoredMeta,
       };
       const wrapper = ui.scrollEl?.querySelector(`[data-msg-id="${CSS.escape(msgId)}"]`);
@@ -21388,14 +21746,137 @@ Phase G（Frame 36）：循环衔接
     return hit?.id || '';
   };
 
+  const getChatFormatGuardianSessionLabel = (targetSessionId = '') => {
+    const sid = String(targetSessionId || '').trim();
+    if (!sid) return '';
+    const contact = contactsStore.getContact(sid);
+    return String(contact?.name || sid.replace(/^group:/, '') || sid).trim();
+  };
+
+  const getResolvedSyspromptPresetForSession = (targetSessionId = '') => {
+    const context = {
+      sessionId: String(targetSessionId || '').trim(),
+      uiMode,
+    };
+    return presetStore.getResolvedActive?.('sysprompt', context)?.preset ||
+      presetStore.getActive?.('sysprompt') ||
+      {};
+  };
+
+  const compactFormatReminderText = (text = '', maxLength = 1400) => {
+    const raw = String(text || '').trim();
+    if (!raw) return '';
+    const lines = raw
+      .split(/\r?\n/)
+      .map(line => line.trim())
+      .filter(Boolean);
+    const compact = lines.join('\n');
+    const limit = Math.max(200, Math.trunc(Number(maxLength) || 1400));
+    return compact.length > limit ? `${compact.slice(0, limit - 1)}...` : compact;
+  };
+
+  const appendFormatReminderSection = (sections, label, enabled, text) => {
+    if (!enabled) return;
+    const body = compactFormatReminderText(text);
+    if (!body) return;
+    sections.push(`【${label}】\n${body}`);
+  };
+
+  const buildChatFormatGuardianModelContext = (targetSessionId = '') => {
+    const preset = getResolvedSyspromptPresetForSession(targetSessionId);
+    const enabledFormats = {
+      phoneShell: Boolean(
+        preset.phone_format_intro_enabled ||
+        preset.phone_format_chat_enabled ||
+        preset.phone_format_moment_enabled ||
+        preset.phone_format_footer_enabled
+      ),
+      privateChat: Boolean(preset.dialogue_enabled || preset.phone_format_chat_enabled),
+      groupChat: Boolean(preset.group_enabled),
+      momentComment: Boolean(preset.moment_comment_enabled),
+      momentPost: Boolean(preset.moment_create_enabled || preset.phone_format_moment_enabled),
+      tableEdit: /<\s*tableEdit\b/i.test([
+        preset.phone_format_footer_rules,
+        preset.phone_format_chat_rules,
+      ].join('\n')),
+      imagePrompt: Boolean(preset.auto_image_prompt_enabled),
+    };
+    const sections = [];
+    appendFormatReminderSection(sections, '手机格式开头', preset.phone_format_intro_enabled, preset.phone_format_intro_rules);
+    appendFormatReminderSection(sections, 'QQ聊天格式', preset.phone_format_chat_enabled, preset.phone_format_chat_rules);
+    appendFormatReminderSection(sections, '私聊行为与格式', preset.dialogue_enabled, preset.dialogue_rules);
+    appendFormatReminderSection(sections, '群聊行为与格式', preset.group_enabled, preset.group_rules);
+    appendFormatReminderSection(sections, 'QQ空间格式', preset.phone_format_moment_enabled, preset.phone_format_moment_rules);
+    appendFormatReminderSection(sections, '动态发布格式', preset.moment_create_enabled, preset.moment_create_rules);
+    appendFormatReminderSection(sections, '动态评论格式', preset.moment_comment_enabled, preset.moment_comment_rules);
+    appendFormatReminderSection(sections, '手机格式结尾', preset.phone_format_footer_enabled, preset.phone_format_footer_rules);
+    appendFormatReminderSection(sections, '自动生图标签格式', preset.auto_image_prompt_enabled, preset.auto_image_prompt_rules);
+    return {
+      enabledFormats,
+      formatReminderText: sections.join('\n\n').slice(0, 12000),
+    };
+  };
+
+  const buildChatFormatGuardianModelReviewOptions = (targetSessionId = '', activeUser = null, {
+    force = false,
+  } = {}) => {
+    if (!agentFeatureSettingsStore.isEnabled(AGENT_FEATURE_IDS.replyCheck)) return { enabled: false };
+    const featureState = agentFeatureSettingsStore.getSettings()?.features?.[AGENT_FEATURE_IDS.replyCheck] || {};
+    const triggerMode = String(featureState.triggerMode || 'auto').trim() || 'auto';
+    if (!force && triggerMode === 'manual') return { enabled: false };
+    const modelMode = String(featureState.modelMode || 'none').trim() || 'none';
+    if (modelMode === 'none') return { enabled: false };
+    const sid = String(targetSessionId || '').trim();
+    const promptContext = buildChatFormatGuardianModelContext(sid);
+    const useProfile = modelMode === 'profile' && String(featureState.modelProfileId || '').trim();
+    const backgroundChat = useProfile
+      ? async (messages, options = {}) => {
+        const config = await chatConfigManager.getRuntimeConfigByProfileId(featureState.modelProfileId);
+        if (!config) throw new Error('Agent 指定模型配置不存在');
+        const { presetContext: _presetContext, ...requestOptions } = options || {};
+        const client = new LLMClient(config);
+        return client.chat(messages, requestOptions);
+      }
+      : (...args) => window.appBridge.backgroundChat(...args);
+    if (!useProfile) {
+      if (!isBridgeConfigured(window.appBridge)) return { enabled: false };
+      if (typeof window.appBridge?.backgroundChat !== 'function') return { enabled: false };
+    }
+    return {
+      enabled: true,
+      backgroundChat,
+      userName: activeUser?.name || '我',
+      sessionLabel: getChatFormatGuardianSessionLabel(sid),
+      enabledFormats: promptContext.enabledFormats,
+      formatReminderText: promptContext.formatReminderText,
+      reviewNoEvents: uiMode === 'chat' && Object.values(promptContext.enabledFormats).some(Boolean),
+      force,
+      surface: uiMode === 'rp' ? 'creative' : (uiMode === 'moments' ? 'moments' : 'chat'),
+      requestOptions: {
+        temperature: 0,
+        maxTokens: 900,
+        presetContext: { sessionId: sid, uiMode },
+      },
+      timeoutMs: 60000,
+      autoApplyRepair: force !== true,
+      recordSucceededRun: false,
+    };
+  };
+
   const buildChatFormatGuardianOptions = (targetSessionId = '') => {
     const sid = String(targetSessionId || '').trim();
     const activeUser = getActiveUserProfile();
+    const featureState = agentFeatureSettingsStore.getSettings()?.features?.[AGENT_FEATURE_IDS.replyCheck] || {};
+    const triggerMode = String(featureState.triggerMode || 'auto').trim() || 'auto';
+    const promptContext = buildChatFormatGuardianModelContext(sid);
     return {
-      enabled: true,
+      enabled: agentFeatureSettingsStore.isEnabled(AGENT_FEATURE_IDS.replyCheck) && triggerMode !== 'manual',
+      triggerMode,
       userName: activeUser?.name || '我',
+      enabledFormats: promptContext.enabledFormats,
       maxEvents: 6,
       maxIssues: 6,
+      modelReview: buildChatFormatGuardianModelReviewOptions(sid, activeUser),
       isSystemSpeaker: speakerName => isSystemSpeakerLabel(speakerName),
       resolvePrivateTargetId: name => resolveChatFormatGuardianPrivateTargetId(name, sid),
       resolveGroupTargetId: name => resolveChatFormatGuardianGroupTargetId(name, sid),
@@ -21423,14 +21904,47 @@ Phase G（Frame 36）：循环衔接
     };
   };
 
-  const handleChatFormatGuardianAgentRun = ({ agentRun } = {}) => {
+  const buildManualChatFormatGuardianOptions = (targetSessionId = '') => {
+    const sid = String(targetSessionId || '').trim();
+    const activeUser = getActiveUserProfile();
+    const base = buildChatFormatGuardianOptions(sid);
+    const featureState = agentFeatureSettingsStore.getSettings()?.features?.[AGENT_FEATURE_IDS.replyCheck] || {};
+    const modelMode = String(featureState.modelMode || 'follow_current').trim() || 'follow_current';
+    return {
+      ...base,
+      enabled: agentFeatureSettingsStore.isEnabled(AGENT_FEATURE_IDS.replyCheck),
+      manualTrigger: true,
+      showSucceededPreview: false,
+      recordSucceededRun: false,
+      modelReview: modelMode === 'none'
+        ? { enabled: false }
+        : buildChatFormatGuardianModelReviewOptions(sid, activeUser, { force: true }),
+    };
+  };
+
+  const handleChatFormatGuardianAgentRun = ({ agentRun, message, autoRepairResult } = {}) => {
     if (!agentRun?.id) return null;
+    let stored = null;
     try {
-      return agentRunStore.upsertRun(agentRun);
+      stored = agentRunStore.upsertRun(agentRun);
     } catch (err) {
       logger.warn('chat format guardian agent run record failed', err);
       return null;
     }
+    const isProtocolRepair = message?.meta?.protocolParseFailure === true;
+    const isActiveProtocolRepair = isProtocolRepair && isSessionActive(agentRun.sessionId);
+    if (isActiveProtocolRepair && agentRun.status === 'failed') {
+      const detail = String(agentRun.errorMessage || agentRun.summary || '').trim();
+      window.toastr?.warning?.(detail
+        ? `格式修复未能自动完成：${detail}`
+        : '格式修复未能自动完成，建议重新生成');
+    } else if (isActiveProtocolRepair && autoRepairResult?.didAnything === false) {
+      const detail = String(autoRepairResult.errorMessage || agentRun.summary || '').trim();
+      window.toastr?.warning?.(detail
+        ? `格式修复未能自动完成：${detail}`
+        : '格式修复未能自动完成，建议重新生成');
+    }
+    return stored;
   };
 
   const handleChatBodyQualityAgentRun = ({ agentRun } = {}) => {
@@ -21450,8 +21964,44 @@ Phase G（Frame 36）：循环衔接
     ui.updateMessage(patchedMessage.id, decorated);
   };
 
+  const handleChatFormatGuardianModelReviewQueued = ({ sessionId: previewSessionId } = {}) => {
+    const sid = String(previewSessionId || '').trim();
+    if (!isSessionActive(sid)) return;
+    window.toastr?.info?.('正在修复格式中');
+  };
+
+  const runManualChatFormatGuardianCheck = (message = null, targetSessionId = '') => {
+    const sid = String(targetSessionId || chatStore.getCurrent() || '').trim();
+    if (!agentFeatureSettingsStore.isEnabled(AGENT_FEATURE_IDS.replyCheck)) {
+      window.toastr?.warning?.('请先在 Agent Center 开启「检查回复格式」');
+      return false;
+    }
+    if (!message || message.role !== 'assistant') return false;
+    const options = buildManualChatFormatGuardianOptions(sid);
+    const result = runChatFormatGuardianPreview({
+      message,
+      sessionId: sid,
+      chatFormatGuardian: options,
+      onChatFormatGuardianPreview: handleChatFormatGuardianPreview,
+      onChatFormatGuardianRun: handleChatFormatGuardianAgentRun,
+      onChatFormatGuardianModelReviewQueued: handleChatFormatGuardianModelReviewQueued,
+      logger,
+    });
+    if (!result) {
+      window.toastr?.warning?.('这条回复没有可检查的原始内容');
+      return false;
+    }
+    const modelEnabled = options?.modelReview?.enabled === true;
+    if (result?.result?.status === 'ready') {
+      window.toastr?.info?.(modelEnabled ? '正在请求模型复核格式' : '未发现明确格式问题');
+    } else {
+      window.toastr?.info?.(modelEnabled ? '已开始格式修复检查' : '已完成本地格式检查');
+    }
+    return true;
+  };
+
   const buildChatBodyQualityOptions = () => ({
-    enabled: true,
+    enabled: false,
     maxIssues: 6,
     recordSucceededRun: false,
   });
@@ -21463,6 +22013,7 @@ Phase G（Frame 36）：循环衔接
       skipScripts: skipThisScripts,
       defaultSkipScripts = false,
       applyUpdateVariable = null,
+      applyChatFormatGuardianRepair = null,
     } = {},
   ) => {
     dispatchAfterReceiveEffects({
@@ -21480,6 +22031,8 @@ Phase G（Frame 36）：循环衔接
       chatFormatGuardian: buildChatFormatGuardianOptions(targetSessionId),
       onChatFormatGuardianPreview: handleChatFormatGuardianPreview,
       onChatFormatGuardianRun: handleChatFormatGuardianAgentRun,
+      onChatFormatGuardianModelReviewQueued: handleChatFormatGuardianModelReviewQueued,
+      onChatFormatGuardianAutoRepair: applyChatFormatGuardianRepair,
       chatBodyQualityGuardian: buildChatBodyQualityOptions(targetSessionId),
       onChatBodyQualityPreview: handleChatFormatGuardianPreview,
       onChatBodyQualityRun: handleChatBodyQualityAgentRun,
@@ -22427,11 +22980,48 @@ Phase G（Frame 36）：循环衔接
       logger,
     });
     registerUpdateVariableApplyFn(applyUpdateVariableFromMessage);
+    const applyChatFormatGuardianProtocolRepair = async ({ correctedText } = {}) => {
+      const repairText = String(correctedText || '').trim();
+      if (!repairText) {
+        window.toastr?.warning?.('格式修复没有可用内容，建议重新生成');
+        return { didAnything: false, reason: 'empty_repair_text' };
+      }
+      const parser = createDialogueParser();
+      const pushedEvents = parser?.push?.(repairText);
+      const flushedEvents = parser?.flush?.();
+      const events = [
+        ...(Array.isArray(pushedEvents) ? pushedEvents : []),
+        ...(Array.isArray(flushedEvents) ? flushedEvents : []),
+      ];
+      if (!events.length) {
+        window.toastr?.warning?.('格式修复未产生可显示内容，建议重新生成');
+        return { didAnything: false, reason: 'no_events' };
+      }
+      let didAnything = false;
+      let mutatedMoments = false;
+      for (const ev of events) {
+        const result = await processProtocolRetryEvent(ev, {
+          renderMoments: true,
+          refreshAfterAppend: true,
+        });
+        if (result?.didAnything) didAnything = true;
+        if (result?.mutatedMoments) mutatedMoments = true;
+      }
+      if (!didAnything) {
+        window.toastr?.warning?.('格式修复未产生可显示内容，建议重新生成');
+      }
+      return {
+        didAnything,
+        mutatedMoments,
+        eventCount: events.length,
+      };
+    };
     const emitPluginAfterReceive = (message, targetSessionId, { skipScripts: skipThisScripts } = {}) => {
       emitPluginAfterReceiveEffects(message, targetSessionId, {
         skipScripts: skipThisScripts,
         defaultSkipScripts: skipScripts,
         applyUpdateVariable: applyUpdateVariableFromMessage,
+        applyChatFormatGuardianRepair: applyChatFormatGuardianProtocolRepair,
       });
     };
     const processProtocolRetryEvent = async (ev, {
@@ -22500,6 +23090,34 @@ Phase G（Frame 36）：循环衔接
         formatNowTime,
       });
       return finalizeResult(privateResult);
+    };
+    const runChatFormatGuardianProtocolParseFailureRepair = (rawText = '', {
+      source = 'protocol_parse_failure',
+    } = {}) => {
+      const raw = String(rawText || '').trim();
+      if (!raw) return false;
+      const repairMessage = {
+        id: `protocol-format-repair-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`,
+        role: 'assistant',
+        name: '助手',
+        content: '',
+        rawOriginal: raw,
+        time: formatNowTime(),
+        meta: {
+          protocolParseFailure: true,
+          source,
+        },
+      };
+      return runChatFormatGuardianPreview({
+        message: repairMessage,
+        sessionId,
+        chatFormatGuardian: buildChatFormatGuardianOptions(sessionId),
+        onChatFormatGuardianPreview: handleChatFormatGuardianPreview,
+        onChatFormatGuardianRun: handleChatFormatGuardianAgentRun,
+        onChatFormatGuardianModelReviewQueued: handleChatFormatGuardianModelReviewQueued,
+        onChatFormatGuardianAutoRepair: applyChatFormatGuardianProtocolRepair,
+        logger,
+      });
     };
     const buildProtocolGroupBatch = (ev) => buildProtocolGroupChatBatch(ev, {
       resolveTargetSessionId: resolveGroupChatTargetSessionId,
@@ -23009,6 +23627,11 @@ Phase G（Frame 36）：循环衔接
       buildProtocolRetryCandidates,
       createDialogueParser,
       processProtocolRetryEvent,
+      onNoValidTag: ({ rawText, mode }) => {
+        runChatFormatGuardianProtocolParseFailureRepair(rawText, {
+          source: mode ? `protocol_${mode}_parse_failure` : 'protocol_parse_failure',
+        });
+      },
       showWarning: message => window.toastr?.warning?.(message),
     });
     const resolveTargetMemoryTimelineTurnNumber = async (targetSessionId = sessionId) => {
@@ -23730,6 +24353,10 @@ Phase G（Frame 36）：循环衔接
       ui.openCodeViewer({ message: current, text: String(raw || '') });
       return true;
     }
+    if (action === 'check-format' && message?.role === 'assistant') {
+      const current = ensureRenderedCancelledPartialPersisted(message) || chatStore.findMessage(message.id, sessionId) || message;
+      return runManualChatFormatGuardianCheck(current, sessionId);
+    }
     if (action === 'copy-text') {
       let text = '';
       if (message?.role === 'assistant' && message?.meta?.renderRich) {
@@ -23872,7 +24499,7 @@ Phase G（Frame 36）：循环衔接
       message = ensureRenderedCancelledPartialPersisted(message) || message;
       const next = String(payload?.text ?? '');
       const regexEditMode = payload?.regexEditMode === true;
-      const cleanedForRender = stripUpdateVariableBlocks(next);
+      const cleanedForRender = stripTableEditBlocks(stripUpdateVariableBlocks(next));
       const hadUpdateVariableTag = /<\s*(update(?:variable)?|variableupdate)\b/i.test(next);
       if (hadUpdateVariableTag) {
         logger.debug(
@@ -24076,6 +24703,29 @@ Phase G（Frame 36）：循环衔接
         } catch (err) {
           logger.warn('edit-assistant-raw: UpdateVariable parse failed', err);
 	        }
+        try {
+          const tableEditPreview = extractTableEditBlocks(next);
+          if (Array.isArray(tableEditPreview?.actions) && tableEditPreview.actions.length) {
+            const contact = contactsStore.getContact(sessionId);
+            const memoryParsed = await handleMemoryEditsFromRaw(next, {
+              sessionId,
+              isGroup: Boolean(contact?.isGroup) || String(sessionId || '').startsWith('group:'),
+              uiMode,
+              memoryPlace: uiMode === 'rp' ? 'writing' : 'chat',
+              force: true,
+              timelineMessageId: String(message?.id || ''),
+              resolveTimelineTurnNumber: targetSessionId => resolveMessageTimelineTurnNumber(
+                targetSessionId || sessionId,
+                message?.id,
+              ),
+            });
+            logger.debug(
+              `[edit-assistant-raw] table-edit messageId=${String(message?.id || '')} session=${String(sessionId || '')} actions=${Array.isArray(memoryParsed?.actions) ? memoryParsed.actions.length : 0}`,
+            );
+          }
+        } catch (err) {
+          logger.warn('edit-assistant-raw: tableEdit parse/apply failed', err);
+        }
 	        ui.updateMessage(message.id, finalMessage);
 	        const scheduleCandidates = [
 	          ['meta.autoImagePromptRawContent', finalMessage?.meta?.autoImagePromptRawContent],

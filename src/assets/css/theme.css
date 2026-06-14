@@ -1295,7 +1295,8 @@ body[data-theme-mode='dark'] :is(
 }
 
 body[data-theme-mode='dark'] #config-panel > .config-modal {
-  background: linear-gradient(180deg, rgba(26, 30, 36, 0.98) 0%, rgba(34, 39, 46, 0.98) 100%) !important;
+  background: #1f232b !important;
+  opacity: 1 !important;
 }
 
 body[data-theme-mode='dark'] #config-panel .config-tab {
@@ -2644,6 +2645,185 @@ body[data-theme-mode='dark'] :is(#raw-reply-text, #prompt-preview-text, #prompt-
   background: rgba(205, 217, 229, 0.04) !important;
   color: var(--app-text-primary) !important;
   border-color: var(--app-border-default) !important;
+}
+
+.raw-reply-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  -webkit-overflow-scrolling: touch;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 10px;
+}
+
+.raw-reply-textarea {
+  width: 100%;
+  flex: 1 1 320px;
+  min-height: 220px;
+  resize: none;
+  border: 1px solid rgba(0,0,0,0.10);
+  border-radius: 12px;
+  padding: 12px;
+  font-size: 13px;
+  line-height: 1.4;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
+  white-space: pre;
+  box-sizing: border-box;
+  outline: none;
+  background: var(--app-surface-card);
+  color: var(--app-text-primary);
+}
+
+.raw-reply-repair[hidden] {
+  display: none !important;
+}
+
+.raw-reply-repair-card {
+  border: 1px solid var(--app-border-default);
+  border-radius: 12px;
+  background: var(--app-surface-subtle);
+  overflow: hidden;
+}
+
+.raw-reply-repair-card summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+  cursor: pointer;
+  list-style: none;
+  font-weight: 900;
+  color: var(--app-text-primary);
+}
+
+.raw-reply-repair-card summary::-webkit-details-marker {
+  display: none;
+}
+
+.raw-reply-repair-card summary::after {
+  content: '展开';
+  flex: 0 0 auto;
+  color: var(--app-text-secondary);
+  font-size: 12px;
+}
+
+.raw-reply-repair-card[open] summary::after {
+  content: '收起';
+}
+
+.raw-reply-repair-meta {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--app-text-secondary);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.raw-reply-repair-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 0 12px 12px;
+}
+
+.raw-reply-repair-note {
+  color: var(--app-text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.raw-reply-repair-label {
+  margin-bottom: 5px;
+  color: var(--app-text-secondary);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.raw-reply-repair-code {
+  margin: 0;
+  max-height: 260px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  border: 1px solid rgba(148,163,184,0.24);
+  border-radius: 10px;
+  background: rgba(15,23,42,0.04);
+  color: var(--app-text-primary);
+  padding: 9px;
+  font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
+}
+
+.raw-reply-repair-code.is-delete {
+  border-color: rgba(244,63,94,0.26);
+  background: rgba(244,63,94,0.08);
+}
+
+.raw-reply-repair-code.is-add {
+  border-color: rgba(34,197,94,0.26);
+  background: rgba(34,197,94,0.08);
+}
+
+.raw-reply-repair-expandable {
+  border: 1px solid rgba(148,163,184,0.24);
+  border-radius: 10px;
+  background: var(--app-surface-card);
+  overflow: hidden;
+}
+
+.raw-reply-repair-expandable summary {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px 10px;
+  align-items: center;
+  padding: 9px 10px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.raw-reply-repair-expandable summary::-webkit-details-marker {
+  display: none;
+}
+
+.raw-reply-repair-expandable-title {
+  color: var(--app-text-secondary);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.raw-reply-repair-expandable-hint {
+  color: var(--app-text-secondary);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.raw-reply-repair-expandable-preview {
+  grid-column: 1 / -1;
+  color: var(--app-text-primary);
+  opacity: 0.82;
+  font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.raw-reply-repair-expandable[open] .raw-reply-repair-expandable-hint {
+  color: #2563eb;
+}
+
+.raw-reply-repair-expandable .raw-reply-repair-code {
+  margin: 0 10px 10px;
+}
+
+.raw-reply-repair-patch {
+  border: 1px solid rgba(148,163,184,0.18);
+  border-radius: 10px;
+  padding: 10px;
+  background: var(--app-surface-card);
 }
 
 .lineage-preview-view {

@@ -4,7 +4,13 @@
 
 import { resolveMediaAsset } from '../../utils/media-assets.js';
 import { stickerPackStore } from '../../storage/sticker-pack-store.js';
-import { cleanupRichText, renderRichText, setupIframeResizeListener } from './rich-text-renderer.js';
+import {
+  captureRichDetailsOpenStates,
+  cleanupRichText,
+  renderRichText,
+  restoreRichDetailsOpenStates,
+  setupIframeResizeListener,
+} from './rich-text-renderer.js';
 import {
   hideCreativeContentTagsForDisplay,
   resolveCreativeRichRenderSource,
@@ -53,8 +59,10 @@ import {
 import {
   createScrollBottomButtonUiRuntime,
   getScrollDistanceFromBottom as getScrollDistanceFromBottomCore,
+  getScrollDistanceFromTop as getScrollDistanceFromTopCore,
   isNearBottom as isNearBottomCore,
   resolveScrollBottomButtonThresholds as resolveScrollBottomButtonThresholdsCore,
+  resolveScrollTopButtonThresholds as resolveScrollTopButtonThresholdsCore,
 } from './scroll-bottom-button-ui-utils.js';
 import { createDeliveryStatusUiRuntime } from './delivery-status-ui-utils.js';
 import { createTypingIndicatorUiRuntime } from './typing-indicator-ui-utils.js';
@@ -334,6 +342,7 @@ export class ChatUI {
     this.reactionPicker = this.createReactionPicker();
     this.longPressTimer = null;
     this.actionHandler = null;
+    this.canCheckFormatForMessage = () => false;
     this.replyCancelHandler = null;
     this.providerContinuationCommitContext = {
       chatStore: null,
@@ -450,8 +459,11 @@ export class ChatUI {
     this.scrollDateBadgeEl = null;
     this.scrollDateHideTimer = null;
     this.scrollBottomButtonEl = null;
+    this.scrollTopButtonEl = null;
     this.scrollBottomButtonRaf = 0;
+    this.scrollTopButtonRaf = 0;
     this.scrollBottomButtonImmediate = false;
+    this.scrollTopButtonImmediate = false;
     this.scrollBottomButtonResizeObserver = null;
     this.streamAutoFollow = false;
     this._programmaticStreamFollowScroll = false;
@@ -466,6 +478,7 @@ export class ChatUI {
     this.initReplyDraftBar();
     this.initScrollDateBadge();
     this.initScrollBottomButton();
+    this.initScrollTopButton();
     this.bindIframeLongPressForwarding();
     this.bindInputAutosize();
     this.bindFocusScroll();
@@ -528,14 +541,16 @@ export class ChatUI {
   _renderSwipeContent(wrapper, msg, content, { streaming = false, placeholder = '' } = {}) {
     const bubble = wrapper?.querySelector?.('.QQ_chat_msgdiv');
     if (!bubble) return false;
-    this.cleanupRichTextMounts(bubble);
-    bubble.classList.remove('rp-swipe-draft-placeholder');
-    bubble.style.removeProperty('white-space');
-    bubble.innerHTML = '';
     const renderMsg = {
       ...(msg || {}),
       content: String(content ?? ''),
     };
+    const detailsState = renderMsg.meta?.renderRich ? { openByKey: new Map() } : null;
+    if (detailsState) captureRichDetailsOpenStates(bubble, detailsState);
+    this.cleanupRichTextMounts(bubble);
+    bubble.classList.remove('rp-swipe-draft-placeholder');
+    bubble.style.removeProperty('white-space');
+    bubble.innerHTML = '';
     const target = this.prepareTextContainer(bubble, renderMsg);
     target.classList.remove('rp-swipe-draft-placeholder');
     target.style.removeProperty('white-space');
@@ -554,6 +569,7 @@ export class ChatUI {
         deferSandboxExecution: streaming === true,
         streaming: streaming === true,
       });
+      restoreRichDetailsOpenStates(target, detailsState);
       return true;
     }
     const normalized = this.normalizeAssistantLineBreaks(hideCreativeContentTagsForDisplay(text));
@@ -824,6 +840,14 @@ export class ChatUI {
     });
   }
 
+  initScrollTopButton() {
+    this.scrollTopButtonEl = this.scrollBottomButtonRuntime.ensureTopButton({
+      scrollEl: this.scrollEl,
+      existingButtonEl: this.scrollTopButtonEl,
+      onClick: () => this.scrollToTop(),
+    });
+  }
+
   formatScrollDateLabel(timestamp) {
     return formatScrollDateLabelCore(timestamp);
   }
@@ -904,8 +928,16 @@ export class ChatUI {
     return getScrollDistanceFromBottomCore(this.scrollEl);
   }
 
+  getScrollDistanceFromTop() {
+    return getScrollDistanceFromTopCore(this.scrollEl);
+  }
+
   resolveScrollBottomButtonThresholds() {
     return resolveScrollBottomButtonThresholdsCore(this.scrollEl);
+  }
+
+  resolveScrollTopButtonThresholds() {
+    return resolveScrollTopButtonThresholdsCore(this.scrollEl);
   }
 
   hideScrollBottomButton({ immediate = false } = {}) {
@@ -918,6 +950,20 @@ export class ChatUI {
   showScrollBottomButton({ immediate = false } = {}) {
     this.scrollBottomButtonRuntime.showButton({
       buttonEl: this.scrollBottomButtonEl,
+      immediate,
+    });
+  }
+
+  hideScrollTopButton({ immediate = false } = {}) {
+    this.scrollBottomButtonRuntime.hideButton({
+      buttonEl: this.scrollTopButtonEl,
+      immediate,
+    });
+  }
+
+  showScrollTopButton({ immediate = false } = {}) {
+    this.scrollBottomButtonRuntime.showButton({
+      buttonEl: this.scrollTopButtonEl,
       immediate,
     });
   }
@@ -957,6 +1003,33 @@ export class ChatUI {
     });
   }
 
+  refreshScrollTopButton({ immediate = false } = {}) {
+    this.scrollBottomButtonRuntime.refreshTopButton({
+      scrollEl: this.scrollEl,
+      buttonEl: this.scrollTopButtonEl,
+      immediate,
+      hideButton: options => this.hideScrollTopButton(options),
+      showButton: options => this.showScrollTopButton(options),
+      getDistance: scrollEl => getScrollDistanceFromTopCore(scrollEl),
+      resolveThresholds: scrollEl => resolveScrollTopButtonThresholdsCore(scrollEl),
+    });
+  }
+
+  scheduleScrollTopButtonRefresh({ immediate = false } = {}) {
+    this.scrollBottomButtonRuntime.scheduleRefresh({
+      immediate,
+      getPendingImmediate: () => this.scrollTopButtonImmediate,
+      setPendingImmediate: value => {
+        this.scrollTopButtonImmediate = value;
+      },
+      getRafId: () => this.scrollTopButtonRaf,
+      setRafId: value => {
+        this.scrollTopButtonRaf = value;
+      },
+      refresh: options => this.refreshScrollTopButton(options),
+    });
+  }
+
   bindScrollBottomButton() {
     if (!this.scrollEl || this.__chatappScrollBottomButtonBound) return;
     this.__chatappScrollBottomButtonBound = true;
@@ -972,12 +1045,14 @@ export class ChatUI {
         }
         this.hideReactionPicker();
         this.scheduleScrollBottomButtonRefresh();
+        this.scheduleScrollTopButtonRefresh();
       },
       { passive: true },
     );
     if (typeof ResizeObserver === 'function') {
       this.scrollBottomButtonResizeObserver = new ResizeObserver(() => {
         this.scheduleScrollBottomButtonRefresh({ immediate: true });
+        this.scheduleScrollTopButtonRefresh({ immediate: true });
       });
       this.scrollBottomButtonResizeObserver.observe(this.scrollEl);
     }
@@ -985,6 +1060,7 @@ export class ChatUI {
       'resize',
       () => {
         this.scheduleScrollBottomButtonRefresh({ immediate: true });
+        this.scheduleScrollTopButtonRefresh({ immediate: true });
       },
       { passive: true },
     );
@@ -1413,6 +1489,20 @@ export class ChatUI {
     });
   }
 
+  scrollToTop() {
+    if (!this.scrollEl) return false;
+    this._programmaticStreamFollowScroll = true;
+    if (typeof this.scrollEl.scrollTo === 'function') {
+      this.scrollEl.scrollTo({ top: 0, behavior: 'smooth' });
+    } else {
+      this.scrollEl.scrollTop = 0;
+    }
+    this.streamAutoFollow = false;
+    this.scheduleScrollTopButtonRefresh({ immediate: true });
+    this.scheduleScrollBottomButtonRefresh({ immediate: true });
+    return true;
+  }
+
   scrollToMessage(msgId, options = {}) {
     const targetEl = scrollToMessageCore({
       msgId,
@@ -1700,6 +1790,29 @@ export class ChatUI {
     );
   }
 
+  async resolveAgentRunReviewFromPart({
+    part = {},
+    decision = '',
+    summary = '',
+    reason = '',
+  } = {}) {
+    const runId = String(part?.runId || part?.metadata?.runId || '').trim();
+    if (!runId) return null;
+    const resolver = window.appBridge?.debugUiRegistry?.actions?.resolveAgentRunReview;
+    if (typeof resolver !== 'function') return null;
+    try {
+      return await Promise.resolve(resolver({
+        runId,
+        decision,
+        summary,
+        reason,
+      }));
+    } catch (err) {
+      logger.warn('agent run review resolve failed', err);
+      return null;
+    }
+  }
+
   async handleChatFormatGuardianAction(request = {}) {
     const action = String(request?.action || '').trim();
     const part = request?.part || {};
@@ -1732,7 +1845,21 @@ export class ChatUI {
         part?.runId ? `run ${part.runId}` : '',
       ].filter(Boolean).join(' · ');
       if (typeof actions.showRawReplyModal === 'function') {
-        actions.showRawReplyModal(text, meta);
+        const partMetadata = part?.metadata && typeof part.metadata === 'object' ? part.metadata : {};
+        actions.showRawReplyModal(text, meta, {
+          runId: part?.runId || '',
+          status: partMetadata.status || part.status || '',
+          summary: partMetadata.modelReviewDetail?.repairSummary ||
+            partMetadata.modelReview?.repairSummary ||
+            partMetadata.repairCandidate?.summary ||
+            part.summary ||
+            '',
+          modelReviewDetail: partMetadata.modelReviewDetail || null,
+          modelReview: partMetadata.modelReview || null,
+          repairCandidate: partMetadata.repairCandidate || null,
+          errors: Array.isArray(partMetadata.errors) ? partMetadata.errors : [],
+          warnings: Array.isArray(partMetadata.warnings) ? partMetadata.warnings : [],
+        });
       } else {
         toastOnce('原文查看器尚未就绪', 'warning');
       }
@@ -1767,6 +1894,12 @@ export class ChatUI {
       }
       try {
         await this.actionHandler('edit-assistant-raw', message, payload);
+        await this.resolveAgentRunReviewFromPart({
+          part,
+          decision: 'execute',
+          summary: '已应用格式修复',
+          reason: 'chat sidecar applied format repair',
+        });
         toastOnce('已应用格式修复', 'success', 3000);
         return true;
       } catch (err) {
@@ -1791,6 +1924,12 @@ export class ChatUI {
       }
       try {
         await this.actionHandler('edit-assistant-raw', message, payload);
+        await this.resolveAgentRunReviewFromPart({
+          part,
+          decision: 'execute',
+          summary: '已应用正文优化',
+          reason: 'chat sidecar applied body patch',
+        });
         toastOnce('已应用正文优化', 'success', 3000);
         return true;
       } catch (err) {
@@ -1814,9 +1953,21 @@ export class ChatUI {
         });
         if (plan.kind === 'swipe_regen') {
           await this._swipeRegenHandler(plan.payload);
+          await this.resolveAgentRunReviewFromPart({
+            part,
+            decision: 'reject',
+            summary: '已打回并重试生成',
+            reason: 'chat sidecar requested retry',
+          });
           return true;
         }
         await this.actionHandler(plan.action, plan.message, plan.payload);
+        await this.resolveAgentRunReviewFromPart({
+          part,
+          decision: 'reject',
+          summary: '已打回并重试生成',
+          reason: 'chat sidecar requested retry',
+        });
         return true;
       } catch (err) {
         logger.warn('chat format guardian retry generation failed', err);
@@ -2568,6 +2719,7 @@ export class ChatUI {
       hideReactionPicker: () => this.hideReactionPicker(),
       resolveContextMenuContext,
       buildContextMenuActions,
+      canCheckFormatForMessage: nextMessage => this.canCheckFormatForMessage?.(nextMessage) === true,
       isThreadingEnabledForMessage: nextMessage => this.isThreadingEnabledForMessage(nextMessage),
       normalizeReactionEntries,
       createContextMenuReactionRow,

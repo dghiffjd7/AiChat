@@ -106,6 +106,14 @@ const buildBlockedResult = ({
   pending,
 });
 
+const buildRejectedCommit = (message = '已打回，未提交聊天候选。') => ({
+  status: 'skipped',
+  reason: 'user_rejected',
+  reviewDecision: 'user_rejected',
+  displayMessage: trim(message, '已打回，未提交聊天候选。'),
+  writesChat: false,
+});
+
 const readStore = store => ({
   get: typeof store?.get === 'function' ? store.get.bind(store) : null,
   markCommit: typeof store?.markCommit === 'function' ? store.markCommit.bind(store) : null,
@@ -203,6 +211,37 @@ export const createChatEmitPendingCommitActions = ({
     }
   };
 
+  const rejectChatEmitPendingCommit = async (options = {}) => {
+    const opts = isPlainObject(options) ? options : { id: options };
+    const id = trim(opts.id || opts.pendingPermissionId);
+    const pending = getPending(id);
+    if (!pending) return buildBlockedResult({ id, reason: 'pending_permission_not_found' });
+    if (!trim(pending.toolName).startsWith(CHAT_EMIT_PREFIX)) {
+      return buildBlockedResult({ id, reason: 'not_chat_emit_tool', pending });
+    }
+    if (pending.commitStatus === 'committed') {
+      return buildBlockedResult({ id, reason: 'already_committed', pending });
+    }
+    const commit = buildRejectedCommit(opts.message);
+    const nextPending = store.markCommit?.(id, {
+      status: 'skipped',
+      result: commit,
+      errorMessage: '',
+    }) || getPending(id);
+    if (typeof onCommitFinished === 'function') {
+      await onCommitFinished({ commit, pending: nextPending, runtime: getRuntime() });
+    }
+    return {
+      ok: true,
+      status: 'skipped',
+      message: commit.displayMessage,
+      pendingPermissionId: id,
+      pending: nextPending,
+      commit,
+      writesChat: false,
+    };
+  };
+
   const undoChatEmitPendingCommit = async (options = {}) => {
     const opts = isPlainObject(options) ? options : { id: options };
     const id = trim(opts.id || opts.pendingPermissionId);
@@ -270,6 +309,7 @@ export const createChatEmitPendingCommitActions = ({
 
   return {
     commitChatEmitPendingPermission,
+    rejectChatEmitPendingCommit,
     undoChatEmitPendingCommit,
   };
 };

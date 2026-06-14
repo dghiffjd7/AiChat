@@ -125,6 +125,31 @@ const runs = [
         summary: '补齐 1 条缺失时间',
         replacementText: 'should not be surfaced',
       },
+      autoRepair: {
+        autoApplyRepair: true,
+        attempted: true,
+        didAnything: false,
+        reason: 'no_events',
+        errorMessage: '',
+        eventCount: 0,
+      },
+      modelReviewDetail: {
+        status: 'needs_repair',
+        canRepair: true,
+        repairSummary: '补齐时间。',
+        rawPreview: '{"status":"needs_repair"...',
+        rawText: '{"status":"needs_repair","correctedText":"完整模型返回"}',
+        correctedText: 'MiPhone_start\nmsg_start\n<{{user}}和好友乙的私聊>',
+        correctedTextTruncated: false,
+        linePatches: [{
+          startLine: 2,
+          endLine: 2,
+          reason: '插入标签',
+          originalLines: ['msg_start'],
+          replacementLines: ['msg_start', '<{{user}}和好友乙的私聊>'],
+          replacementText: 'should not be surfaced',
+        }],
+      },
       decisionActions: [
         { id: 'apply_repair', label: '应用修复', enabled: true, repairCandidate: { replacementText: 'hidden' } },
         { id: 'review_original', label: '查看原文', enabled: true },
@@ -136,6 +161,14 @@ const runs = [
   assert.deepEqual(summary.review.warnings, ['time is missing']);
   assert.equal(summary.review.repairCandidate.summary, '补齐 1 条缺失时间');
   assert.equal(summary.review.repairCandidate.replacementText, undefined);
+  assert.equal(summary.review.autoRepair.autoApplyRepair, true);
+  assert.equal(summary.review.autoRepair.attempted, true);
+  assert.equal(summary.review.autoRepair.didAnything, false);
+  assert.equal(summary.review.autoRepair.reason, 'no_events');
+  assert.equal(summary.review.modelReviewDetail.correctedText.includes('MiPhone_start'), true);
+  assert.equal(summary.review.modelReviewDetail.rawText.includes('完整模型返回'), true);
+  assert.deepEqual(summary.review.modelReviewDetail.linePatches[0].replacementLines, ['msg_start', '<{{user}}和好友乙的私聊>']);
+  assert.equal(summary.review.modelReviewDetail.linePatches[0].replacementText, undefined);
   assert.deepEqual(summary.review.actionLabels, ['应用修复', '查看原文']);
   console.log('ok - buildAgentRunSummary exposes safe chat format review metadata');
 }
@@ -201,6 +234,42 @@ const runs = [
   assert.deepEqual(failureView.runs.map(run => run.id), ['run-4', 'run-2']);
   assert.equal(failureView.filters.status, 'failure');
   console.log('ok - buildAgentRunListView supports user-facing active and failure status filters');
+}
+
+{
+  const summary = buildAgentRunSummary({
+    id: 'run-reviewed',
+    kind: 'chat_format_guardian',
+    status: 'cancelled',
+    summary: '已打回',
+    cancelReason: '用户打回',
+    metadata: {
+      reviewDecision: 'rejected',
+      reviewedAt: 1600,
+      reviewReason: '用户打回',
+    },
+    createdAt: 1500,
+    updatedAt: 1600,
+    finishedAt: 1600,
+  });
+  assert.equal(summary.isActive, false);
+  assert.equal(summary.isFailure, false);
+  assert.equal(summary.reviewDecision, 'rejected');
+  assert.equal(summary.reviewedAt, 1600);
+  assert.equal(summary.reviewReason, '用户打回');
+  const view = buildAgentRunListView([{
+    id: 'run-reviewed',
+    kind: 'chat_format_guardian',
+    status: 'cancelled',
+    summary: '已打回',
+    metadata: { reviewDecision: 'rejected' },
+    createdAt: 1500,
+    updatedAt: 1600,
+    finishedAt: 1600,
+  }], { status: 'failure' });
+  assert.equal(view.meta.failures, 0);
+  assert.equal(view.runs.length, 0);
+  console.log('ok - buildAgentRunSummary exposes user review decisions for waiting runs');
 }
 
 {

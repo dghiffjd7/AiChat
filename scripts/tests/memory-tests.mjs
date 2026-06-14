@@ -62,6 +62,24 @@ test('extractTableEditBlocks + stripTableEditBlocks', () => {
   assert.ok(!stripped.includes('<tableEdit'));
 });
 
+test('extractTableEditBlocks ignores incomplete tableEdit tags', () => {
+  const input = 'before\n<tableEdit>\nafter';
+  const extracted = extractTableEditBlocks(input);
+  assert.equal(extracted.text, input);
+  assert.deepEqual(extracted.blocks, []);
+  assert.deepEqual(extracted.actions, []);
+  assert.equal(stripTableEditBlocks(input), input);
+});
+
+test('extractTableEditBlocks keeps complete but invalid tableEdit blocks', () => {
+  const input = 'before <tableEdit>not a valid action</tableEdit> after';
+  const extracted = extractTableEditBlocks(input);
+  assert.equal(extracted.text, input);
+  assert.deepEqual(extracted.blocks, []);
+  assert.deepEqual(extracted.actions, []);
+  assert.equal(stripTableEditBlocks(input), input);
+});
+
 test('validateTemplate: rules fields accepted', () => {
   const template = {
     meta: { id: 'tpl1', name: '模板' },

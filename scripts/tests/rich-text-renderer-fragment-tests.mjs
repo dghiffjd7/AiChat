@@ -9,8 +9,11 @@ globalThis.localStorage = {
 };
 
 const {
+  captureRichDetailsOpenStates,
+  getRichDetailsStateKey,
   prepareRichFragmentDisplayHtmlForParsing,
   prepareRichFragmentHtmlForParsing,
+  restoreRichDetailsOpenStates,
 } = await import('../../src/scripts/ui/chat/rich-text-renderer.js');
 
 const tests = [];
@@ -67,6 +70,39 @@ test('does not let a stray raw-text tag claim a later valid block', () => {
   assert.match(output, /说明&lt;script&gt;只是字面量/);
   assert.match(output, /<style>\.x\{color:red\}<\/style>/);
   assert.match(output, /<div>尾部<\/div>/);
+});
+
+const fakeDetails = ({ summary = '', open = false, attrs = {} } = {}) => ({
+  tagName: 'DETAILS',
+  open,
+  getAttribute: name => attrs[name] || '',
+  children: [{ tagName: 'SUMMARY', textContent: summary }],
+});
+
+const fakeDetailsContainer = details => ({
+  querySelectorAll: selector => (selector === 'details' ? details : []),
+});
+
+test('builds stable details state keys from explicit ids before summary text', () => {
+  const details = fakeDetails({
+    summary: '  推理   请求  ',
+    attrs: { 'data-rich-details-key': 'reasoning-request' },
+  });
+  assert.equal(getRichDetailsStateKey(details, 4), 'id:reasoning-request');
+  assert.equal(getRichDetailsStateKey(fakeDetails({ summary: '  推理   请求  ' }), 4), 'idx:4|summary:推理 请求');
+});
+
+test('restores user details open state across rich streaming rerenders', () => {
+  const state = { openByKey: new Map() };
+  captureRichDetailsOpenStates(
+    fakeDetailsContainer([fakeDetails({ summary: '推理请求', open: true })]),
+    state,
+  );
+
+  const rerendered = fakeDetails({ summary: '推理请求', open: false });
+  restoreRichDetailsOpenStates(fakeDetailsContainer([rerendered]), state);
+
+  assert.equal(rerendered.open, true);
 });
 
 let failed = 0;

@@ -97,6 +97,45 @@ import { createAgentWritePreviewPendingCommitActions } from '../../src/scripts/u
 {
   const store = createProviderToolPendingPermissionStore({ now: () => 1000 });
   const pending = store.add({
+    id: 'p-variable-reject',
+    sessionId: 's1',
+    requestId: 'r1',
+    toolCallId: 't1',
+    toolName: 'variable.preview_commands',
+    argsPreview: {
+      sessionId: 's1',
+      commands: [{ type: 'set', path: ['hp'], value: 12 }],
+    },
+  });
+  store.resolve(pending.id, 'allow_once');
+  store.markResume(pending.id, {
+    status: 'succeeded',
+    result: {
+      output: {
+        result: {
+          changed: 1,
+          updates: { hp: 12 },
+        },
+      },
+    },
+  });
+  const actions = createAgentWritePreviewPendingCommitActions({
+    pendingPermissionStore: store,
+  });
+  const result = await actions.rejectAgentWritePreviewPendingCommit({ id: pending.id });
+  const stored = store.get(pending.id);
+  assert.equal(result.ok, true);
+  assert.equal(result.status, 'skipped');
+  assert.equal(stored.commitStatus, 'skipped');
+  assert.equal(stored.commitResult.reason, 'user_rejected');
+  assert.equal(stored.commitResult.writesStore, false);
+  assert.match(stored.commitResult.displayMessage, /已打回/);
+  console.log('ok - write preview pending reject action marks candidates as handled without writing store');
+}
+
+{
+  const store = createProviderToolPendingPermissionStore({ now: () => 1000 });
+  const pending = store.add({
     id: 'p-chat',
     sessionId: 's1',
     requestId: 'r1',

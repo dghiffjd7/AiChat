@@ -9,7 +9,20 @@ export const getScrollDistanceFromBottom = (scrollEl) => {
 export const isNearBottom = (scrollEl, threshold = 120) =>
   getScrollDistanceFromBottom(scrollEl) <= Number(threshold || 0);
 
+export const getScrollDistanceFromTop = (scrollEl) => {
+  if (!scrollEl) return 0;
+  return Math.max(0, Number(scrollEl.scrollTop || 0));
+};
+
 export const resolveScrollBottomButtonThresholds = (scrollEl) => {
+  const viewportHeight = Math.max(0, Number(scrollEl?.clientHeight || 0));
+  return {
+    show: Math.max(220, Math.round(viewportHeight * 0.58)),
+    hide: Math.max(84, Math.round(viewportHeight * 0.18)),
+  };
+};
+
+export const resolveScrollTopButtonThresholds = (scrollEl) => {
   const viewportHeight = Math.max(0, Number(scrollEl?.clientHeight || 0));
   return {
     show: Math.max(220, Math.round(viewportHeight * 0.58)),
@@ -35,6 +48,30 @@ export const createScrollBottomButtonUiRuntime = ({
       <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
         <path
           d="M12 4.75a1 1 0 0 1 1 1v10.586l2.714-2.714a1 1 0 1 1 1.414 1.414l-4.422 4.422a1 1 0 0 1-1.414 0l-4.422-4.422a1 1 0 1 1 1.414-1.414L11 16.336V5.75a1 1 0 0 1 1-1Z"
+          fill="currentColor"
+        />
+      </svg>
+    `;
+    button.addEventListener?.('click', () => {
+      onClick?.();
+    });
+    host.appendChild?.(button);
+    return button;
+  },
+  ensureTopButton({ scrollEl, existingButtonEl, onClick }) {
+    if (!scrollEl) return existingButtonEl || null;
+    if (existingButtonEl) return existingButtonEl;
+    const host = scrollEl.parentElement;
+    if (!host) return null;
+    const button = documentLike.createElement('button');
+    button.type = 'button';
+    button.className = 'chat-scroll-top-btn';
+    button.setAttribute?.('aria-label', '回到最早消息');
+    button.setAttribute?.('title', '回到最早消息');
+    button.innerHTML = `
+      <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+        <path
+          d="M12 19.25a1 1 0 0 1-1-1V7.664L8.286 10.38a1 1 0 1 1-1.414-1.414l4.422-4.422a1 1 0 0 1 1.414 0l4.422 4.422a1 1 0 0 1-1.414 1.414L13 7.664V18.25a1 1 0 0 1-1 1Z"
           fill="currentColor"
         />
       </svg>
@@ -100,6 +137,31 @@ export const createScrollBottomButtonUiRuntime = ({
         showFloatingTyping?.(typingEl);
       }
     }
+    return shouldShow;
+  },
+  refreshTopButton({
+    scrollEl,
+    buttonEl,
+    immediate = false,
+    hideButton,
+    showButton,
+    getDistance = getScrollDistanceFromTop,
+    resolveThresholds = resolveScrollTopButtonThresholds,
+  }) {
+    if (!scrollEl || !buttonEl) return false;
+    const scrollHeight = Number(scrollEl.scrollHeight || 0);
+    const viewportHeight = Number(scrollEl.clientHeight || 0);
+    const maxScrollable = Math.max(0, scrollHeight - viewportHeight);
+    if (maxScrollable <= 8) {
+      hideButton?.({ immediate });
+      return false;
+    }
+    const distance = getDistance(scrollEl);
+    const { show, hide } = resolveThresholds(scrollEl);
+    const visible = buttonEl.classList.contains('is-visible');
+    const shouldShow = visible ? distance > hide : distance > show;
+    if (shouldShow) showButton?.({ immediate });
+    else hideButton?.({ immediate });
     return shouldShow;
   },
   scheduleRefresh({

@@ -1,8 +1,42 @@
+export const SWIPE_REASONING_KEYS = ['reasoning', 'reasoningDisplay', 'reasoningSource', 'reasoningHidden', 'reasoningLabel'];
+
+const hasOwn = (obj, key) => Object.prototype.hasOwnProperty.call(obj || {}, key);
+
+export const branchHasReasoningState = (branch = {}) => (
+  branch && typeof branch === 'object' && SWIPE_REASONING_KEYS.some(key => hasOwn(branch, key))
+);
+
+export const applySwipeReasoningStateToMeta = (meta = {}, branch = {}, activeIndex = 0) => {
+  const nextMeta = meta && typeof meta === 'object' ? { ...meta } : {};
+  if (branchHasReasoningState(branch)) {
+    for (const key of SWIPE_REASONING_KEYS) {
+      if (hasOwn(branch, key)) nextMeta[key] = branch[key];
+      else delete nextMeta[key];
+    }
+    return nextMeta;
+  }
+  if (Number(activeIndex) > 0) {
+    for (const key of SWIPE_REASONING_KEYS) delete nextMeta[key];
+  }
+  return nextMeta;
+};
+
+const buildSwipeBranchFromMessage = (message = {}) => {
+  const meta = message?.meta && typeof message.meta === 'object' ? message.meta : {};
+  const branch = { content: message?.content, raw: message?.raw };
+  if (message?.rawSource !== undefined) branch.rawSource = message.rawSource;
+  if (message?.rawOriginal !== undefined) branch.rawOriginal = message.rawOriginal;
+  for (const key of SWIPE_REASONING_KEYS) {
+    if (hasOwn(meta, key)) branch[key] = meta[key];
+  }
+  return branch;
+};
+
 export const ensureSwipeMeta = (message) => {
   if (!message || typeof message !== 'object') return null;
   if (!message.meta || typeof message.meta !== 'object') message.meta = {};
   if (!Array.isArray(message.meta.swipes)) {
-    message.meta.swipes = [{ content: message.content, raw: message.raw }];
+    message.meta.swipes = [buildSwipeBranchFromMessage(message)];
     message.meta.activeSwipe = 0;
   }
   return message.meta;
@@ -149,10 +183,11 @@ export const resolveActiveSwipeMessageCore = (message, {
   const activeSwipeDraft = branch?.draft
     ? { active: true, label: String(branch?.label || '生成新回复中...') }
     : null;
-  const nextMeta = { ...(meta || {}) };
+  let nextMeta = { ...(meta || {}) };
   if (meta.activeSwipe !== active) nextMeta.activeSwipe = active;
   if (activeSwipeDraft) nextMeta.activeSwipeDraft = activeSwipeDraft;
   else delete nextMeta.activeSwipeDraft;
+  nextMeta = applySwipeReasoningStateToMeta(nextMeta, branch, active);
   let content = branch.content ?? message.content ?? '';
   let raw = branch.raw !== undefined
     ? branch.raw
@@ -183,6 +218,8 @@ export const resolveActiveSwipeMessageCore = (message, {
   };
   if (raw !== undefined) next.raw = raw;
   if (rawSource !== undefined) next.rawSource = rawSource;
+  if (branch.rawOriginal !== undefined) next.rawOriginal = branch.rawOriginal;
+  else if (active > 0) delete next.rawOriginal;
   return next;
 };
 

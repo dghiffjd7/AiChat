@@ -3,6 +3,7 @@ export const openSessionRawReplyFlow = ({
   getContact = () => null,
   getLastRawResponse = () => '',
   getLastRawAt = () => '',
+  getRepairDetails = () => null,
   showRawReplyModal = () => {},
   notifyWarning = () => {},
 } = {}) => {
@@ -16,7 +17,8 @@ export const openSessionRawReplyFlow = ({
     return false;
   }
   const meta = `${name}${at ? ` · ${new Date(at).toLocaleString()}` : ''}`;
-  showRawReplyModal?.(raw, meta);
+  const repairDetails = getRepairDetails?.(sid, { raw, at, contact }) || null;
+  showRawReplyModal?.(raw, meta, repairDetails);
   return true;
 };
 

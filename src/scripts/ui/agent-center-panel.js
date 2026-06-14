@@ -1,7 +1,8 @@
 import { buildAgentCenterView } from './agent-center-view-model.js';
 import { WRITE_PREVIEW_PROVIDER_MODEL_CONTEXT_TOOLS } from '../agent/provider-tool-request-schema.js';
 import { PROVIDER_TOOL_PERMISSION_ACTIONS } from '../agent/provider-tool-permission-actions.js';
-import { appConfirm } from './app-confirm.js';
+import { appChoice, appConfirm } from './app-confirm.js';
+import { bindCustomSelectButton, closeCustomSelectMenu } from './custom-select.js';
 import { buildDebugTextFilename } from './debug-panel-utils.js';
 import { exportDebugTextFile } from './debug-panel-export-utils.js';
 import { exportDebugTextFlow } from './debug-panel-runtime-utils.js';
@@ -75,7 +76,7 @@ const PANEL_CSS = `
 }
 .agent-center-tabs {
     display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+    grid-template-columns: repeat(5, minmax(0, 1fr));
     gap: 6px;
     padding: 10px 12px;
     border-bottom: 1px solid var(--app-border-default);
@@ -173,6 +174,118 @@ const PANEL_CSS = `
 .agent-center-card-error {
     color: #be123c;
 }
+.agent-center-review-detail {
+    margin-top: 8px;
+    border: 1px solid rgba(148,163,184,0.22);
+    border-radius: 8px;
+    background: var(--app-surface-card);
+    overflow: hidden;
+}
+.agent-center-review-detail summary {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 8px 10px;
+    cursor: pointer;
+    list-style: none;
+    color: var(--app-text-primary);
+    font-size: 12px;
+    font-weight: 900;
+}
+.agent-center-review-detail summary::-webkit-details-marker {
+    display: none;
+}
+.agent-center-review-detail summary::after {
+    content: '展开';
+    color: var(--app-text-secondary);
+    font-size: 11px;
+    font-weight: 800;
+}
+.agent-center-review-detail[open] summary::after {
+    content: '收起';
+}
+.agent-center-review-detail-body {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 0 10px 10px;
+}
+.agent-center-review-label {
+    font-size: 11px;
+    font-weight: 900;
+    color: var(--app-text-secondary);
+}
+.agent-center-review-code {
+    margin: 4px 0 0;
+    max-height: 220px;
+    overflow: auto;
+    white-space: pre-wrap;
+    word-break: break-word;
+    border: 1px solid rgba(148,163,184,0.20);
+    border-radius: 8px;
+    background: rgba(15,23,42,0.04);
+    color: var(--app-text-primary);
+    padding: 8px;
+    font: 11px/1.5 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
+}
+.agent-center-review-code.is-delete {
+    border-color: rgba(244,63,94,0.22);
+    background: rgba(244,63,94,0.08);
+}
+.agent-center-review-code.is-add {
+    border-color: rgba(34,197,94,0.22);
+    background: rgba(34,197,94,0.08);
+}
+.agent-center-review-expandable {
+    border: 1px solid rgba(148,163,184,0.20);
+    border-radius: 8px;
+    background: rgba(15,23,42,0.03);
+    overflow: hidden;
+}
+.agent-center-review-expandable summary {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 6px 8px;
+    align-items: center;
+    padding: 8px;
+    cursor: pointer;
+    list-style: none;
+}
+.agent-center-review-expandable summary::-webkit-details-marker {
+    display: none;
+}
+.agent-center-review-expandable-title {
+    font-size: 11px;
+    font-weight: 900;
+    color: var(--app-text-secondary);
+}
+.agent-center-review-expandable-hint {
+    color: var(--app-text-secondary);
+    font-size: 11px;
+    font-weight: 800;
+}
+.agent-center-review-expandable-preview {
+    grid-column: 1 / -1;
+    color: var(--app-text-primary);
+    opacity: 0.82;
+    font: 11px/1.45 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.agent-center-review-expandable[open] .agent-center-review-expandable-hint {
+    color: #2563eb;
+}
+.agent-center-review-expandable .agent-center-review-code {
+    margin: 0 8px 8px;
+}
+.agent-center-review-patch {
+    border: 1px solid rgba(148,163,184,0.18);
+    border-radius: 8px;
+    padding: 8px;
+    background: rgba(148,163,184,0.06);
+}
 .agent-center-rule-list {
     display: flex;
     flex-direction: column;
@@ -200,6 +313,124 @@ const PANEL_CSS = `
     flex-wrap: wrap;
     gap: 8px;
     margin-top: 10px;
+}
+.agent-center-agent-list {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 10px;
+}
+.agent-center-agent-card {
+    padding: 12px;
+}
+.agent-center-agent-card.is-agent-on {
+    border-color: rgba(34,197,94,0.24);
+    background: linear-gradient(180deg, rgba(34,197,94,0.08), var(--app-surface-subtle));
+}
+.agent-center-agent-settings {
+    display: grid;
+    gap: 6px;
+    margin-top: 10px;
+}
+.agent-center-setting-row {
+    display: grid;
+    grid-template-columns: 72px minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 8px;
+    min-height: 34px;
+    padding: 7px 8px;
+    border: 1px solid rgba(148,163,184,0.16);
+    border-radius: 8px;
+    background: var(--app-surface-card);
+}
+.agent-center-setting-row.is-model {
+    grid-template-columns: 72px minmax(0, 1fr);
+}
+.agent-center-setting-label {
+    color: var(--app-text-secondary);
+    font-size: 12px;
+    font-weight: 800;
+}
+.agent-center-setting-value {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--app-text-primary);
+    font-size: 12px;
+    font-weight: 900;
+}
+.agent-center-model-select {
+    width: 100%;
+    min-width: 0;
+    min-height: 32px;
+    border: 1px solid var(--app-border-default);
+    border-radius: 8px;
+    background: var(--app-surface-subtle);
+    color: var(--app-text-primary);
+    padding: 6px 8px;
+    font-size: 12px;
+    font-weight: 800;
+    outline: none;
+    cursor: pointer;
+}
+.agent-center-model-select:focus {
+    border-color: rgba(59,130,246,0.40);
+    box-shadow: 0 0 0 2px rgba(59,130,246,0.12);
+}
+.agent-center-model-select:disabled {
+    cursor: not-allowed;
+    opacity: 0.58;
+}
+.agent-center-model-control {
+    min-width: 0;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 6px;
+    align-items: center;
+}
+.agent-center-model-control .world-app-select-btn {
+    min-height: 32px;
+    padding: 6px 8px;
+    border-radius: 8px;
+    background: var(--app-surface-subtle);
+    font-size: 12px;
+    font-weight: 800;
+}
+.agent-center-model-manage {
+    min-height: 32px;
+    border: 1px solid var(--app-border-default);
+    border-radius: 8px;
+    background: var(--app-surface-subtle);
+    color: var(--app-text-primary);
+    padding: 6px 9px;
+    font-size: 12px;
+    font-weight: 800;
+    cursor: pointer;
+    white-space: nowrap;
+}
+.agent-center-model-manage:disabled {
+    cursor: not-allowed;
+    opacity: 0.58;
+}
+.agent-center-switch {
+    min-width: 76px;
+    border: 1px solid var(--app-border-default);
+    border-radius: 999px;
+    background: var(--app-surface-card);
+    color: var(--app-text-secondary);
+    padding: 6px 10px;
+    font-size: 12px;
+    font-weight: 900;
+    cursor: pointer;
+}
+.agent-center-switch.is-on {
+    border-color: rgba(34,197,94,0.30);
+    background: rgba(34,197,94,0.12);
+    color: #047857;
+}
+.agent-center-switch:disabled {
+    cursor: not-allowed;
+    opacity: 0.58;
 }
 .agent-center-card-action {
     border: 1px solid var(--app-border-default);
@@ -278,6 +509,16 @@ const PANEL_CSS = `
     .agent-center-tabs {
         grid-template-columns: repeat(2, minmax(0, 1fr));
     }
+    .agent-center-setting-row {
+        grid-template-columns: 64px minmax(0, 1fr);
+    }
+    .agent-center-setting-row.is-model {
+        grid-template-columns: 64px minmax(0, 1fr);
+    }
+    .agent-center-setting-row .agent-center-card-action {
+        grid-column: 1 / -1;
+        width: 100%;
+    }
 }
 `;
 
@@ -323,9 +564,12 @@ const activityStatusLabel = (status = '') => ({
     cancelled: '已取消',
 }[normalizeActivityStatus(status)] || '全部');
 
-const activityCardClass = status => (
-    ['failed', 'cancelled'].includes(trim(status).toLowerCase()) ? 'agent-center-card is-failure' : 'agent-center-card'
-);
+const activityCardClass = runOrStatus => {
+    const status = trim(typeof runOrStatus === 'string' ? runOrStatus : runOrStatus?.status).toLowerCase();
+    const decision = trim(typeof runOrStatus === 'string' ? '' : runOrStatus?.reviewDecision || runOrStatus?.metadata?.reviewDecision);
+    if (status === 'cancelled' && ['rejected', 'user_rejected'].includes(decision)) return 'agent-center-card';
+    return ['failed', 'cancelled'].includes(status) ? 'agent-center-card is-failure' : 'agent-center-card';
+};
 
 const renderChips = (chips = []) => {
     const html = chips.filter(Boolean).map((chip) => {
@@ -354,6 +598,117 @@ const renderNotice = ({
         ` : ''}
     </article>
 `;
+
+const renderReviewCodeBlock = (label = '', text = '', className = '') => {
+    const body = String(text ?? '');
+    if (!body.trim()) return '';
+    return `
+        <div>
+            <div class="agent-center-review-label">${escapeHtml(label)}</div>
+            <pre class="agent-center-review-code${className ? ` ${escapeHtml(className)}` : ''}">${escapeHtml(body)}</pre>
+        </div>
+    `;
+};
+
+const renderExpandableReviewCodeBlock = ({
+    label = '',
+    preview = '',
+    text = '',
+    truncated = false,
+} = {}) => {
+    const body = String(text || preview || '');
+    if (!body.trim()) return '';
+    const previewText = trim(preview || body.replace(/\s+/g, ' ').slice(0, 180));
+    return `
+        <details class="agent-center-review-expandable">
+            <summary>
+                <span class="agent-center-review-expandable-title">${escapeHtml(label)}${truncated ? '（已截断保存）' : ''}</span>
+                <span class="agent-center-review-expandable-hint">点击查看完整</span>
+                ${previewText ? `<span class="agent-center-review-expandable-preview">${escapeHtml(previewText)}</span>` : ''}
+            </summary>
+            <pre class="agent-center-review-code">${escapeHtml(body)}</pre>
+        </details>
+    `;
+};
+
+const formatPatchLineRange = (patch = {}) => {
+    const start = Number(patch.startLine || 0);
+    const end = Number(patch.endLine || 0);
+    if (!start || !end) return '';
+    return start === end ? `第 ${start} 行` : `第 ${start}-${end} 行`;
+};
+
+const renderChatFormatModelReviewDetail = (detail = null) => {
+    if (!detail) return '';
+    const meta = formatMeta([
+        detail.status ? `状态：${detail.status}` : '',
+        detail.canRepair ? '可修复' : '',
+        Number(detail.patchCount || 0) ? `${Number(detail.patchCount || 0)} 个 patch` : '',
+    ]);
+    const issueText = (detail.issues || []).length
+        ? `模型判断：${(detail.issues || []).map(issue => formatMeta([issue.type, issue.message])).filter(Boolean).join('；')}`
+        : '';
+    const patchHtml = (detail.linePatches || []).map((patch) => {
+        const originalText = Array.isArray(patch.originalLines) ? patch.originalLines.map(line => `- ${line}`).join('\n') : '';
+        const replacementText = Array.isArray(patch.replacementLines) ? patch.replacementLines.map(line => `+ ${line}`).join('\n') : '';
+        const patchMeta = formatMeta([
+            formatPatchLineRange(patch),
+            patch.reason,
+            patch.originalMatches === false ? '原文校验未通过' : '',
+            patch.replacementLinesTruncated ? '替换行已截断' : '',
+        ]);
+        return `
+            <div class="agent-center-review-patch">
+                ${patchMeta ? `<div class="agent-center-card-sub">${escapeHtml(patchMeta)}</div>` : ''}
+                ${renderReviewCodeBlock('原文', originalText, 'is-delete')}
+                ${renderReviewCodeBlock('建议', replacementText || (Number(patch.replacementLineCount || 0) === 0 ? '+ （删除这些行）' : ''), 'is-add')}
+            </div>
+        `;
+    }).join('');
+    const correctedLabel = detail.correctedTextTruncated ? '修复后文本（已截断）' : '修复后文本';
+    const correctedHtml = renderReviewCodeBlock(correctedLabel, detail.correctedText || '');
+    const rawPreviewHtml = (detail.rawText || detail.rawPreview)
+        ? renderExpandableReviewCodeBlock({
+            label: '模型原始返回预览',
+            preview: detail.rawPreview,
+            text: detail.rawText || detail.rawPreview,
+            truncated: detail.rawTextTruncated,
+        })
+        : '';
+    if (!meta && !issueText && !patchHtml && !correctedHtml && !rawPreviewHtml && !detail.repairSummary) return '';
+    return `
+        <details class="agent-center-review-detail">
+            <summary>
+                <span>模型修复返回</span>
+                ${meta ? `<span class="agent-center-card-sub">${escapeHtml(meta)}</span>` : ''}
+            </summary>
+            <div class="agent-center-review-detail-body">
+                ${detail.repairSummary ? `<div class="agent-center-card-sub">${escapeHtml(detail.repairSummary)}</div>` : ''}
+                ${issueText ? `<div class="agent-center-card-sub">${escapeHtml(issueText)}</div>` : ''}
+                ${patchHtml}
+                ${correctedHtml}
+                ${rawPreviewHtml}
+            </div>
+        </details>
+    `;
+};
+
+const renderChatFormatAutoRepair = (autoRepair = null) => {
+    if (!autoRepair) return '';
+    const parts = [
+        autoRepair.autoApplyRepair ? '自动应用开启' : '',
+        autoRepair.attempted ? '已尝试' : '未尝试',
+        autoRepair.didAnything ? '已写入聊天' : '未写入聊天',
+        Number(autoRepair.eventCount || 0) ? `${Number(autoRepair.eventCount || 0)} 个事件` : '',
+        autoRepair.reason,
+        autoRepair.errorMessage,
+    ].filter(Boolean);
+    if (!parts.length) return '';
+    const className = autoRepair.attempted && !autoRepair.didAnything
+        ? 'agent-center-card-sub agent-center-card-error'
+        : 'agent-center-card-sub';
+    return `<div class="${className}">自动应用：${escapeHtml(parts.join(' · '))}</div>`;
+};
 
 const renderChatFormatReview = (review = null) => {
     if (!review) return '';
@@ -395,14 +750,16 @@ const renderChatFormatReview = (review = null) => {
         errorText ? `<div class="agent-center-card-sub agent-center-card-error">${escapeHtml(errorText)}</div>` : '',
         warningText ? `<div class="agent-center-card-sub">${escapeHtml(warningText)}</div>` : '',
         repairText ? `<div class="agent-center-card-sub">${escapeHtml(repairText)}</div>` : '',
+        renderChatFormatAutoRepair(review.autoRepair),
         actionText ? `<div class="agent-center-card-sub">${escapeHtml(actionText)}</div>` : '',
+        renderChatFormatModelReviewDetail(review.modelReviewDetail),
     ].filter(Boolean).join('');
 };
 
 const providerToolActionLabel = action => ({
-    [PROVIDER_TOOL_PERMISSION_ACTIONS.allowOnce]: '允许一次',
-    [PROVIDER_TOOL_PERMISSION_ACTIONS.deny]: '拒绝',
-    [PROVIDER_TOOL_PERMISSION_ACTIONS.rememberAllow]: '记住允许',
+    [PROVIDER_TOOL_PERMISSION_ACTIONS.allowOnce]: '执行一次',
+    [PROVIDER_TOOL_PERMISSION_ACTIONS.deny]: '打回',
+    [PROVIDER_TOOL_PERMISSION_ACTIONS.rememberAllow]: '记住执行',
 }[action] || '处理');
 
 const continuationCommitStrategyLabel = strategy => ({
@@ -436,6 +793,7 @@ const STATUS_LABELS = Object.freeze({
     succeeded: '已完成',
     failed: '失败',
     cancelled: '已取消',
+    skipped: '已略过',
     blocked: '已阻止',
     expired: '已过期',
     committed: '已提交',
@@ -472,11 +830,30 @@ const AGENT_KIND_LABELS = Object.freeze({
     lineage_layout: '血缘图排版',
 });
 
+const AGENT_FEATURE_LABELS = Object.freeze({
+    reply_check: '检查回复格式',
+    write_preview: '预览记忆和变量变更',
+    text_completion: '文本补全',
+});
+
 const displayToolName = toolName => TOOL_LABELS[trim(toolName)] || trim(toolName, 'Agent 工具');
 const displayStatusLabel = status => STATUS_LABELS[trim(status).toLowerCase()] || trim(status, '未知');
+const isUserRejectedReview = value => trim(value) === 'user_rejected' || trim(value) === 'rejected';
+const displayCommitStatusLabel = commit => (
+    isUserRejectedReview(commit?.reviewDecision) && trim(commit?.status) === 'skipped'
+        ? '已打回'
+        : displayStatusLabel(commit?.status)
+);
+const displayRunStatusLabel = run => {
+    const decision = trim(run?.reviewDecision || run?.metadata?.reviewDecision);
+    if (run?.status === 'cancelled' && (decision === 'rejected' || decision === 'user_rejected')) return '已打回';
+    if (run?.status === 'succeeded' && (decision === 'executed' || decision === 'user_executed')) return '已执行';
+    return displayStatusLabel(run?.status);
+};
 const displayRiskLabel = risk => RISK_LABELS[trim(risk).toLowerCase()] || trim(risk, '风险未知');
 const displayPermissionLabel = permission => PERMISSION_LABELS[trim(permission)] || trim(permission);
 const displayAgentKind = kind => AGENT_KIND_LABELS[trim(kind)] || trim(kind);
+const displayAgentFeature = id => AGENT_FEATURE_LABELS[trim(id)] || trim(id, 'Agent');
 
 const permissionDecisionChipClass = decision => ({
     allow: statusChipClass('running'),
@@ -579,6 +956,19 @@ export const formatAgentCenterExportText = (view = {}) => {
         ]));
     });
 
+    lines.push('', '[Agent]');
+    const agents = Array.isArray(view?.agents) ? view.agents : [];
+    if (!agents.length) lines.push('无');
+    agents.forEach(agent => {
+        lines.push(formatExportLine([
+            agent.title || displayAgentFeature(agent.id),
+            agent.enabled ? '已开启' : '已关闭',
+            agent.implemented ? '可使用' : '规划中',
+            agent.triggerLabel ? `触发：${agent.triggerLabel}` : '',
+            agent.modelLabel ? `模型：${agent.modelLabel}` : '',
+        ]));
+    });
+
     lines.push('', '[工具]');
     const tools = Array.isArray(view?.tools) ? view.tools : [];
     if (!tools.length) lines.push('无');
@@ -613,6 +1003,8 @@ export class AgentCenterPanel {
     constructor({
         getActions = () => globalThis.window?.appBridge?.debugUiRegistry?.actions || {},
         confirm = appConfirm,
+        choice = appChoice,
+        openConfig = (options = {}) => globalThis.window?.appBridge?.debugUiRegistry?.panels?.configPanel?.show?.(options),
         exportTextFile = (text, filename, successLabel) => exportDebugTextFile({
             text,
             filename,
@@ -624,6 +1016,8 @@ export class AgentCenterPanel {
     } = {}) {
         this.getActions = getActions;
         this.confirm = confirm;
+        this.choice = choice;
+        this.openConfig = openConfig;
         this.exportTextFile = exportTextFile;
         this.getFailureSeenAt = getFailureSeenAt;
         this.markFailureSeen = markFailureSeen;
@@ -637,6 +1031,7 @@ export class AgentCenterPanel {
         this.surface = '';
         this.view = buildAgentCenterView();
         this.lastError = '';
+        this.boundConfigProfileChanged = null;
     }
 
     ensureStyle() {
@@ -682,6 +1077,8 @@ export class AgentCenterPanel {
         this.metaElement = overlay.querySelector('.agent-center-meta');
         this.tabsElement = overlay.querySelector('.agent-center-tabs');
         document.body.appendChild(overlay);
+        this.boundConfigProfileChanged = (event) => this.handleConfigProfileChanged(event);
+        globalThis.window?.addEventListener?.('config-profile-changed', this.boundConfigProfileChanged);
     }
 
     async callAction(name, args = undefined, fallback = null) {
@@ -736,7 +1133,16 @@ export class AgentCenterPanel {
             ...(activityStatus ? { status: activityStatus } : {}),
             ...(surface ? { surface } : {}),
         }, null);
-        const [pendingPermissions, contactProfilePendingUpdates, tools, permissionRules, sessionGate, experimentStatus, continuationCommitPolicy] = await Promise.all([
+        const [
+            pendingPermissions,
+            contactProfilePendingUpdates,
+            tools,
+            permissionRules,
+            sessionGate,
+            experimentStatus,
+            continuationCommitPolicy,
+            agentModelProfiles,
+        ] = await Promise.all([
             this.callAction('listProviderToolPendingPermissions', { limit: 100 }, []),
             this.callAction('listContactProfilePendingUpdates', undefined, []),
             this.callAction('listAgentTools', undefined, []),
@@ -744,12 +1150,16 @@ export class AgentCenterPanel {
             this.callAction('getProviderToolSessionGate', undefined, null),
             this.callAction('getProviderToolExperimentStatus', undefined, null),
             this.callAction('getProviderContinuationCommitPolicy', undefined, null),
+            this.callAction('listAgentModelProfiles', undefined, []),
         ]);
+        const agentFeatureSettings = await this.callAction('getAgentFeatureSettings', undefined, null);
         return buildAgentCenterView({
             pendingPermissions,
             contactProfilePendingUpdates,
             agentRunView,
             tools,
+            agentFeatureSettings,
+            agentModelProfiles,
             permissionRules,
             sessionGate,
             experimentStatus,
@@ -769,7 +1179,19 @@ export class AgentCenterPanel {
     }
 
     hide() {
+        closeCustomSelectMenu();
         if (this.overlayElement) this.overlayElement.style.display = 'none';
+    }
+
+    isVisible() {
+        return Boolean(this.overlayElement && this.overlayElement.style.display !== 'none');
+    }
+
+    handleConfigProfileChanged(event = null) {
+        const tab = trim(event?.detail?.tab || 'chat');
+        if (tab && tab !== 'chat') return null;
+        if (this.activeTab !== 'agents' || !this.isVisible()) return null;
+        return this.refresh();
     }
 
     async refresh() {
@@ -831,10 +1253,116 @@ export class AgentCenterPanel {
             `待确认 ${Number(meta.pending || 0)}`,
             `活动中 ${Number(meta.activeRuns || 0)}`,
             `失败 ${Number(meta.failedRuns || 0)}`,
+            `Agent ${Number(meta.enabledAgents || 0)}/${Number(meta.agents || 0)}`,
             `工具 ${Number(meta.tools || 0)}`,
             this.surface ? `范围 ${this.surface}` : '',
             meta.sessionGateEnabled ? '当前会话已开启' : '当前会话未开启',
         ]);
+    }
+
+    getAgentModelSelectValue(agent = {}) {
+        const mode = trim(agent.modelMode, 'follow_current');
+        if (mode === 'none') return 'none';
+        if (mode === 'profile' && trim(agent.modelProfileId)) return `profile:${trim(agent.modelProfileId)}`;
+        return 'follow_current';
+    }
+
+    renderAgentModelSelect(agent = {}) {
+        const selectedValue = this.getAgentModelSelectValue(agent);
+        const profiles = Array.isArray(this.view.agentModelProfiles) ? this.view.agentModelProfiles : [];
+        const options = [
+            { value: 'follow_current', label: '跟随当前聊天模型' },
+            { value: 'none', label: '不调用模型' },
+            ...profiles.map(profile => ({
+                value: `profile:${trim(profile.id)}`,
+                label: trim(profile.label || [
+                    profile.name,
+                    [profile.provider, profile.model].map(trim).filter(Boolean).join(' / '),
+                ].filter(Boolean).join(' · '), profile.id),
+            })).filter(option => option.value !== 'profile:'),
+        ];
+        if (agent.modelMode === 'profile' && selectedValue !== 'profile:' &&
+            !options.some(option => option.value === selectedValue)) {
+            options.push({
+                value: selectedValue,
+                label: agent.modelLabel || `指定模型：${trim(agent.modelProfileId)}`,
+            });
+        }
+        const disabled = !agent.implemented || !agent.supportsModel;
+        return `
+            <div class="agent-center-model-control">
+                <select
+                    class="agent-center-model-select"
+                    data-agent-feature-model-select="${escapeHtml(agent.id)}"
+                    aria-label="${escapeHtml(`${agent.title || displayAgentFeature(agent.id)}模型`)}"
+                    style="display:none;"
+                    ${disabled ? 'disabled' : ''}
+                >
+                    ${options.map(option => `
+                        <option value="${escapeHtml(option.value)}"${option.value === selectedValue ? ' selected' : ''}>${escapeHtml(option.label)}</option>
+                    `).join('')}
+                </select>
+                <button
+                    type="button"
+                    class="world-app-select-btn agent-center-model-select-btn"
+                    data-agent-feature-model-button="${escapeHtml(agent.id)}"
+                    ${disabled ? 'disabled' : ''}
+                >
+                    <span class="pp-custom-select-label" data-custom-select-label>${escapeHtml(agent.modelLabel || '不调用模型')}</span>
+                    <span class="world-app-select-btn-chevron">▾</span>
+                </button>
+                <button
+                    type="button"
+                    class="agent-center-model-manage"
+                    data-agent-feature-model-manage="${escapeHtml(agent.id)}"
+                    ${agent.supportsModel && agent.implemented ? '' : 'disabled'}
+                >管理</button>
+            </div>
+        `;
+    }
+
+    renderAgents() {
+        const agents = this.view.agents || [];
+        if (!agents.length) return renderEmpty('还没有可启用的 Agent');
+        return `<div class="agent-center-agent-list">${agents.map(agent => `
+            <article class="agent-center-card agent-center-agent-card${agent.enabled ? ' is-agent-on' : ''}">
+                <div class="agent-center-card-head">
+                    <div>
+                        <div class="agent-center-card-title">${escapeHtml(agent.title || displayAgentFeature(agent.id))}</div>
+                        <div class="agent-center-card-sub">${escapeHtml(agent.summary || '')}</div>
+                    </div>
+                    <button
+                        type="button"
+                        class="agent-center-switch${agent.enabled ? ' is-on' : ''}"
+                        data-agent-feature-action="${escapeHtml(agent.enabled ? 'disable' : 'enable')}"
+                        data-agent-feature-id="${escapeHtml(agent.id)}"
+                        ${agent.implemented ? '' : 'disabled'}
+                    >${escapeHtml(agent.implemented ? (agent.enabled ? '已开启' : '开启') : '规划中')}</button>
+                </div>
+                <div class="agent-center-agent-settings">
+                    ${agent.supportsTriggerMode ? `
+                        <div class="agent-center-setting-row">
+                            <span class="agent-center-setting-label">触发</span>
+                            <span class="agent-center-setting-value">${escapeHtml(agent.triggerLabel || '自动触发')}</span>
+                            <button type="button" class="agent-center-card-action" data-agent-feature-trigger="${escapeHtml(agent.id)}" ${agent.implemented ? '' : 'disabled'}>设置</button>
+                        </div>
+                    ` : ''}
+                    <div class="agent-center-setting-row is-model">
+                        <span class="agent-center-setting-label">模型</span>
+                        ${agent.supportsModel
+                            ? this.renderAgentModelSelect(agent)
+                            : `<span class="agent-center-setting-value">${escapeHtml(agent.modelLabel || '不直接调用模型')}</span>`}
+                    </div>
+                </div>
+                ${renderChips([
+                    { label: agent.implemented ? '可使用' : '规划中', className: statusChipClass(agent.implemented ? 'succeeded' : 'pending') },
+                    { label: agent.enabled ? '已开启' : '默认关闭', className: statusChipClass(agent.enabled ? 'running' : 'denied') },
+                ])}
+                <div class="agent-center-card-actions">
+                    <button type="button" class="agent-center-card-action" data-agent-feature-detail="${escapeHtml(agent.id)}">详情</button>
+                </div>
+            </article>
+        `).join('')}</div>`;
     }
 
     renderPending() {
@@ -852,8 +1380,8 @@ export class AgentCenterPanel {
                 : '';
             const toolImpactText = isToolPermission
                 ? (writePreview
-                    ? '允许一次只生成变更预览和撤销记录；不会写入记忆、变量、世界书或聊天正文。真正提交还需要再次确认。'
-                    : '允许一次只执行这个工具请求；不会重放聊天、不会自动继续生成、不会直接写聊天正文。')
+                    ? '执行一次只生成变更预览和撤销记录；不会写入记忆、变量、世界书或聊天正文。真正提交还需要再次确认。'
+                    : '执行一次只处理这个工具请求；不会重放聊天、不会自动继续生成、不会直接写聊天正文。')
                 : '';
             const chatEmitPreview = item.chatEmitPreview || null;
             const chatEmitCommitPreview = item.chatEmitCommitPreview || null;
@@ -904,7 +1432,7 @@ export class AgentCenterPanel {
                                 <div class="agent-center-card-sub">变更摘要：${escapeHtml(writePreview.entries.join('；'))}${writePreview.entryOverflow ? escapeHtml(`；另有 ${writePreview.entryOverflow} 项`) : ''}</div>
                             ` : ''}
                         ` : `
-                            <div class="agent-center-card-sub">预览尚未执行；允许一次后只会生成可检查的变更摘要，不会提交。</div>
+                            <div class="agent-center-card-sub">预览尚未执行；执行一次后只会生成可检查的变更摘要，不会提交。</div>
                         `}
                     ` : ''}
                     ${chatEmitPreview ? `
@@ -917,9 +1445,9 @@ export class AgentCenterPanel {
                     ` : ''}
                     ${renderChips([
                         writePreview ? { label: writePreview.previewReady ? '预览已生成' : '等待预览' } : null,
-                        writePreviewCommit ? { label: `提交：${displayStatusLabel(writePreviewCommit.status)}` } : null,
+                        writePreviewCommit ? { label: `提交：${displayCommitStatusLabel(writePreviewCommit)}` } : null,
                         writePreviewCommit ? { label: `撤销：${displayStatusLabel(writePreviewCommit.undoStatus)}` } : null,
-                        chatEmitCommit ? { label: `提交：${displayStatusLabel(chatEmitCommit.status)}` } : null,
+                        chatEmitCommit ? { label: `提交：${displayCommitStatusLabel(chatEmitCommit)}` } : null,
                         chatEmitCommit ? { label: `撤销：${displayStatusLabel(chatEmitCommit.undoStatus)}` } : null,
                     ])}
                     ${writePreviewCommit?.resultSummary ? `
@@ -954,20 +1482,22 @@ export class AgentCenterPanel {
                     ` : ''}
                     ${isPending ? `
                         <div class="agent-center-card-actions">
-                            <button type="button" class="agent-center-card-action is-primary" data-provider-permission-action="${PROVIDER_TOOL_PERMISSION_ACTIONS.allowOnce}" data-pending-id="${escapeHtml(item.id)}">允许一次</button>
-                            <button type="button" class="agent-center-card-action is-danger" data-provider-permission-action="${PROVIDER_TOOL_PERMISSION_ACTIONS.deny}" data-pending-id="${escapeHtml(item.id)}">拒绝</button>
-                            <button type="button" class="agent-center-card-action" data-provider-permission-action="${PROVIDER_TOOL_PERMISSION_ACTIONS.rememberAllow}" data-pending-id="${escapeHtml(item.id)}">记住允许</button>
+                            <button type="button" class="agent-center-card-action is-primary" data-provider-permission-action="${PROVIDER_TOOL_PERMISSION_ACTIONS.allowOnce}" data-pending-id="${escapeHtml(item.id)}">执行一次</button>
+                            <button type="button" class="agent-center-card-action is-danger" data-provider-permission-action="${PROVIDER_TOOL_PERMISSION_ACTIONS.deny}" data-pending-id="${escapeHtml(item.id)}">打回</button>
+                            <button type="button" class="agent-center-card-action" data-provider-permission-action="${PROVIDER_TOOL_PERMISSION_ACTIONS.rememberAllow}" data-pending-id="${escapeHtml(item.id)}">记住执行</button>
                         </div>
                     ` : ''}
                     ${chatEmitCommit?.canCommit || chatEmitCommit?.canUndo ? `
                         <div class="agent-center-card-actions">
-                            ${chatEmitCommit?.canCommit ? `<button type="button" class="agent-center-card-action is-primary" data-chat-emit-commit-action="commit" data-pending-id="${escapeHtml(item.id)}">提交候选</button>` : ''}
+                            ${chatEmitCommit?.canCommit ? `<button type="button" class="agent-center-card-action is-primary" data-chat-emit-commit-action="commit" data-pending-id="${escapeHtml(item.id)}">执行</button>` : ''}
+                            ${chatEmitCommit?.canCommit ? `<button type="button" class="agent-center-card-action is-danger" data-chat-emit-commit-action="reject" data-pending-id="${escapeHtml(item.id)}">打回</button>` : ''}
                             ${chatEmitCommit?.canUndo ? `<button type="button" class="agent-center-card-action is-danger" data-chat-emit-commit-action="undo" data-pending-id="${escapeHtml(item.id)}">撤销提交</button>` : ''}
                         </div>
                     ` : ''}
                     ${writePreviewCommit?.canCommit || writePreviewCommit?.canUndo ? `
                         <div class="agent-center-card-actions">
-                            ${writePreviewCommit?.canCommit ? `<button type="button" class="agent-center-card-action is-primary" data-write-preview-commit-action="commit" data-pending-id="${escapeHtml(item.id)}">提交变更</button>` : ''}
+                            ${writePreviewCommit?.canCommit ? `<button type="button" class="agent-center-card-action is-primary" data-write-preview-commit-action="commit" data-pending-id="${escapeHtml(item.id)}">执行</button>` : ''}
+                            ${writePreviewCommit?.canCommit ? `<button type="button" class="agent-center-card-action is-danger" data-write-preview-commit-action="reject" data-pending-id="${escapeHtml(item.id)}">打回</button>` : ''}
                             ${writePreviewCommit?.canUndo ? `<button type="button" class="agent-center-card-action is-danger" data-write-preview-commit-action="undo" data-pending-id="${escapeHtml(item.id)}">撤销变更</button>` : ''}
                         </div>
                     ` : ''}
@@ -1011,14 +1541,14 @@ export class AgentCenterPanel {
         const ok = await this.confirm({
             title: `${label} Agent 工具`,
             message: denying
-                ? `确定拒绝「${toolLabel}」这次请求吗？\n\n拒绝后不会执行工具，也不会继续生成。`
+                ? `确定打回「${toolLabel}」这次请求吗？\n\n打回后不会执行工具，也不会继续生成。`
                 : remembering
                     ? (writePreview
-                        ? `确定记住允许「${toolLabel}」吗？\n\n影响范围：当前会话。后续同类预览请求可复用这条权限；执行只生成变更预览，不会写入记忆、变量、世界书或聊天正文。`
-                        : `确定记住允许「${toolLabel}」吗？\n\n影响范围：当前会话。后续同类请求可复用这条权限；执行仍不会重放聊天或直接写聊天正文。`)
+                        ? `确定记住执行「${toolLabel}」吗？\n\n影响范围：当前会话。后续同类预览请求可复用这条权限；执行只生成变更预览，不会写入记忆、变量、世界书或聊天正文。`
+                        : `确定记住执行「${toolLabel}」吗？\n\n影响范围：当前会话。后续同类请求可复用这条权限；执行仍不会重放聊天或直接写聊天正文。`)
                     : (writePreview
-                        ? `确定允许「${toolLabel}」执行一次吗？\n\n只会生成变更预览；不会写入记忆、变量、世界书或聊天正文。真正提交还需要再次确认。`
-                        : `确定允许「${toolLabel}」执行一次吗？\n\n只会执行这一个工具请求；不会重放聊天、不会自动继续生成、不会直接写聊天正文。`),
+                        ? `确定执行「${toolLabel}」一次吗？\n\n只会生成变更预览；不会写入记忆、变量、世界书或聊天正文。真正提交还需要再次确认。`
+                        : `确定执行「${toolLabel}」一次吗？\n\n只会执行这一个工具请求；不会重放聊天、不会自动继续生成、不会直接写聊天正文。`),
             confirmText: label,
             danger: denying,
         });
@@ -1046,20 +1576,25 @@ export class AgentCenterPanel {
     async handleChatEmitCommitAction(action = '', pendingId = '') {
         const normalizedAction = trim(action);
         const id = trim(pendingId);
-        if (!id || !['commit', 'undo'].includes(normalizedAction)) return;
+        if (!id || !['commit', 'undo', 'reject'].includes(normalizedAction)) return;
         const item = (this.view.pending || []).find(entry => entry.id === id);
         const committing = normalizedAction === 'commit';
+        const rejecting = normalizedAction === 'reject';
         const toolLabel = displayToolName(item?.toolName || 'chat.emit');
         const ok = await this.confirm({
-            title: committing ? '提交聊天候选' : '撤销聊天候选',
-            message: committing
+            title: committing ? '执行聊天候选' : (rejecting ? '打回聊天候选' : '撤销聊天候选'),
+            message: rejecting
+                ? `确定打回「${toolLabel}」吗？\n\n打回后不会写入聊天或动态，这条候选会离开待确认。`
+                : committing
                 ? `确定提交「${toolLabel}」吗？\n\n这一步会写入聊天或动态；提交后可在这里撤销。`
                 : `确定撤销「${toolLabel}」刚才提交的内容吗？\n\n撤销会删除本次新增聊天消息，或回滚动态变更。`,
-            confirmText: committing ? '提交候选' : '撤销提交',
+            confirmText: committing ? '执行' : (rejecting ? '打回' : '撤销提交'),
             danger: !committing,
         });
         if (!ok) return;
-        const actionName = committing ? 'commitChatEmitPendingPermission' : 'undoChatEmitPendingCommit';
+        const actionName = committing
+            ? 'commitChatEmitPendingPermission'
+            : (rejecting ? 'rejectChatEmitPendingCommit' : 'undoChatEmitPendingCommit');
         const result = await this.callAction(actionName, {
             id,
             confirmed: true,
@@ -1068,6 +1603,8 @@ export class AgentCenterPanel {
         if (!result) {
             this.lastError = committing
                 ? '当前环境没有聊天候选提交动作'
+                : rejecting
+                    ? '当前环境没有聊天候选打回动作'
                 : '当前环境没有聊天候选撤销动作';
         } else if (result.ok === false && (result.message || result.reason)) {
             this.lastError = result.message || result.reason;
@@ -1078,20 +1615,25 @@ export class AgentCenterPanel {
     async handleWritePreviewCommitAction(action = '', pendingId = '') {
         const normalizedAction = trim(action);
         const id = trim(pendingId);
-        if (!id || !['commit', 'undo'].includes(normalizedAction)) return;
+        if (!id || !['commit', 'undo', 'reject'].includes(normalizedAction)) return;
         const item = (this.view.pending || []).find(entry => entry.id === id);
         const committing = normalizedAction === 'commit';
+        const rejecting = normalizedAction === 'reject';
         const toolLabel = displayToolName(item?.toolName || '写入预览');
         const ok = await this.confirm({
-            title: committing ? '提交写入预览' : '撤销写入变更',
-            message: committing
+            title: committing ? '执行写入预览' : (rejecting ? '打回写入预览' : '撤销写入变更'),
+            message: rejecting
+                ? `确定打回「${toolLabel}」吗？\n\n打回后不会写入记忆、变量或世界书，这条候选会离开待确认。`
+                : committing
                 ? `确定提交「${toolLabel}」吗？\n\n这一步会写入记忆、变量或世界书；提交后可在这里撤销。`
                 : `确定撤销「${toolLabel}」刚才提交的变更吗？\n\n撤销只会回滚本次提交保存的变更。`,
-            confirmText: committing ? '提交变更' : '撤销变更',
+            confirmText: committing ? '执行' : (rejecting ? '打回' : '撤销变更'),
             danger: !committing,
         });
         if (!ok) return;
-        const actionName = committing ? 'commitAgentWritePreviewPendingPermission' : 'undoAgentWritePreviewPendingCommit';
+        const actionName = committing
+            ? 'commitAgentWritePreviewPendingPermission'
+            : (rejecting ? 'rejectAgentWritePreviewPendingCommit' : 'undoAgentWritePreviewPendingCommit');
         const result = await this.callAction(actionName, {
             id,
             confirmed: true,
@@ -1100,6 +1642,8 @@ export class AgentCenterPanel {
         if (!result) {
             this.lastError = committing
                 ? '当前环境没有写入预览提交动作'
+                : rejecting
+                    ? '当前环境没有写入预览打回动作'
                 : '当前环境没有写入预览撤销动作';
         } else if (result.ok === false && (result.message || result.reason)) {
             this.lastError = result.message || result.reason;
@@ -1186,6 +1730,182 @@ export class AgentCenterPanel {
         }
     }
 
+    async setWritePreviewModelContextEnabled(enabling = false) {
+        const gate = this.view?.safety?.sessionGate || {};
+        const writePreviewTools = Array.from(WRITE_PREVIEW_PROVIDER_MODEL_CONTEXT_TOOLS);
+        const currentTools = list(gate.allowedTools);
+        const nextTools = Array.from(new Set(enabling
+            ? currentTools.concat(writePreviewTools)
+            : currentTools.filter(tool => !writePreviewTools.includes(tool))));
+        const actions = this.getActions?.() || {};
+        if (typeof actions.setProviderToolSessionGate !== 'function') return false;
+        await Promise.resolve(actions.setProviderToolSessionGate({
+            enabled: enabling ? true : gate.enabled === true,
+            allowedTools: nextTools,
+            networkAllowed: false,
+            realRunnerAllowed: false,
+            source: 'agent_center',
+            reason: enabling
+                ? 'write preview agent enabled from Agent Center'
+                : 'write preview agent disabled from Agent Center',
+        }));
+        return true;
+    }
+
+    async handleAgentFeatureToggle(action = '', featureId = '') {
+        const id = trim(featureId);
+        const enabling = trim(action) === 'enable';
+        if (!id) return;
+        const agent = (this.view.agents || []).find(item => item.id === id);
+        if (!agent?.implemented) return;
+        const ok = await this.confirm({
+            title: enabling ? `开启${agent.title}` : `关闭${agent.title}`,
+            message: enabling
+                ? `开启后：${agent.summary || agent.title}\n\n${id === 'write_preview' ? '影响范围：当前会话。预览工具会加入可请求范围；真正提交仍需要再次确认。' : '解析失败且聊天室没有输出时会自动尝试修复；其他结果会显示在消息旁或 Agent Center。'}`
+                : `关闭后：${agent.summary || agent.title}\n\n已有活动记录不会删除。`,
+            confirmText: enabling ? '开启' : '关闭',
+            danger: !enabling,
+        });
+        if (!ok) return;
+        const result = await this.callAction('setAgentFeatureEnabled', {
+            id,
+            enabled: enabling,
+            reason: 'agent center feature toggle',
+        }, null);
+        if (!result) {
+            this.lastError = '当前环境不能切换 Agent';
+            this.render();
+            return;
+        }
+        if (id === 'write_preview') {
+            try {
+                await this.setWritePreviewModelContextEnabled(enabling);
+            } catch (err) {
+                this.lastError = trim(err?.message || err, '调整预览工具失败');
+            }
+        }
+        await this.refresh();
+        if (enabling && id === 'reply_check' && trim(agent.modelMode, 'none') === 'none') {
+            const selected = await this.choice({
+                title: '配置检查模型',
+                message: '默认只做本地格式检测。选择模型后，发现格式问题时可让 AI 再复核一次。',
+                defaultActionId: 'select_model',
+                actions: [
+                    { id: 'select_model', label: '现在选择模型', primary: true },
+                    { id: 'manage_api', label: '管理 API 配置' },
+                    { id: 'keep_local', label: '暂时只本地检测' },
+                ],
+            });
+            if (selected === 'select_model') {
+                this.openAgentModelSelect(id);
+            } else if (selected === 'manage_api') {
+                this.handleAgentFeatureModelManage(id);
+            }
+        }
+    }
+
+    async handleAgentFeatureDetail(featureId = '') {
+        const id = trim(featureId);
+        const agent = (this.view.agents || []).find(item => item.id === id);
+        if (!agent) return;
+        await this.confirm({
+            title: agent.detailTitle || agent.title || displayAgentFeature(id),
+            message: [
+                agent.summary,
+                ...(Array.isArray(agent.detail) ? agent.detail : []),
+                agent.supportsTriggerMode ? `触发：${agent.triggerLabel || '自动触发'}` : '',
+                agent.supportsModel ? `模型：${agent.modelLabel || '不调用模型'}` : '模型：不直接调用模型',
+                agent.enabled ? '状态：已开启' : '状态：默认关闭',
+            ].filter(Boolean).join('\n\n'),
+            confirmText: '知道了',
+        });
+    }
+
+    async handleAgentFeatureModel(featureId = '') {
+        const id = trim(featureId);
+        const agent = (this.view.agents || []).find(item => item.id === id);
+        if (!agent?.supportsModel || !agent?.implemented) return;
+        await this.handleAgentFeatureModelSelect(id, this.getAgentModelSelectValue(agent));
+    }
+
+    async handleAgentFeatureModelSelect(featureId = '', selectedValue = '', selectElement = null) {
+        const id = trim(featureId);
+        const agent = (this.view.agents || []).find(item => item.id === id);
+        if (!agent?.supportsModel || !agent?.implemented) return;
+        const selected = trim(selectedValue, 'follow_current');
+        const previousValue = this.getAgentModelSelectValue(agent);
+        const modelMode = selected.startsWith('profile:') ? 'profile' : selected;
+        const modelProfileId = selected.startsWith('profile:')
+            ? selected.slice('profile:'.length)
+            : '';
+        const result = await this.callAction('setAgentFeatureModel', {
+            id,
+            modelMode,
+            modelProfileId,
+        }, null);
+        if (!result) {
+            this.lastError = '当前环境不能更新 Agent 模型';
+            if (selectElement) selectElement.value = previousValue;
+            this.render();
+            return;
+        }
+        await this.refresh();
+    }
+
+    handleAgentFeatureModelManage(featureId = '') {
+        const id = trim(featureId);
+        const agent = (this.view.agents || []).find(item => item.id === id);
+        if (!agent?.supportsModel || !agent?.implemented || typeof this.openConfig !== 'function') return;
+        closeCustomSelectMenu();
+        this.hide();
+        this.openConfig({
+            tab: 'chat',
+            onHide: async () => {
+                this.show({ tab: 'agents' });
+            },
+        });
+    }
+
+    openAgentModelSelect(featureId = '') {
+        const id = trim(featureId);
+        if (!id || !this.contentElement) return;
+        const button = Array.from(this.contentElement.querySelectorAll('[data-agent-feature-model-button]'))
+            .find(item => item?.dataset?.agentFeatureModelButton === id);
+        if (button instanceof HTMLElement && !button.disabled) {
+            button.focus();
+            button.click();
+        }
+    }
+
+    async handleAgentFeatureTriggerMode(featureId = '') {
+        const id = trim(featureId);
+        const agent = (this.view.agents || []).find(item => item.id === id);
+        if (!agent?.supportsTriggerMode || !agent?.implemented) return;
+        const selected = await this.choice({
+            title: `${agent.title || displayAgentFeature(id)}触发方式`,
+            message: [
+                '选择这个 Agent 在 AI 回复后的工作方式。',
+                '自动触发只在解析失败且没有聊天输出时直接尝试修复；手动检查的修复候选仍由你确认。',
+            ].join('\n\n'),
+            defaultActionId: agent.triggerMode || 'auto',
+            actions: [
+                { id: 'auto', label: '自动触发', primary: agent.triggerMode !== 'manual' },
+                { id: 'manual', label: '手动触发', primary: agent.triggerMode === 'manual' },
+            ],
+        });
+        if (!selected) return;
+        const result = await this.callAction('setAgentFeatureTriggerMode', {
+            id,
+            triggerMode: selected,
+        }, null);
+        if (!result) {
+            this.lastError = '当前环境不能更新 Agent 触发方式';
+            this.render();
+            return;
+        }
+        await this.refresh();
+    }
+
     async handleContinuationPolicyAction(strategy = '') {
         const normalizedStrategy = normalizeContinuationCommitStrategy(strategy);
         const actions = this.getActions?.() || {};
@@ -1210,6 +1930,30 @@ export class AgentCenterPanel {
         this.render();
     }
 
+    async handleAgentRunReviewAction(action = '', runId = '') {
+        const normalizedAction = trim(action);
+        const id = trim(runId);
+        if (!id || normalizedAction !== 'reject') return;
+        const run = (this.view.activity?.runs || []).find(item => item.id === id);
+        const ok = await this.confirm({
+            title: '打回 Agent 待确认',
+            message: `确定打回「${run?.title || run?.kind || id}」吗？\n\n打回后不会执行候选动作，这条记录会离开待确认。`,
+            confirmText: '打回',
+            danger: true,
+        });
+        if (!ok) return;
+        const result = await this.callAction('resolveAgentRunReview', {
+            runId: id,
+            decision: 'reject',
+            reason: 'agent center review rejected',
+            summary: '已打回',
+        }, null);
+        if (!result || result.ok === false) {
+            this.lastError = result?.message || result?.reason || '当前环境没有 Agent 待确认处理动作';
+        }
+        await this.refresh();
+    }
+
     renderActivity() {
         const activity = this.view.activity || {};
         const runs = activity.runs || [];
@@ -1219,6 +1963,7 @@ export class AgentCenterPanel {
         const filters = [
             { status: '', label: `全部 ${Number(this.surface ? (meta.scoped ?? meta.filtered ?? 0) : (meta.total || 0))}` },
             { status: 'active', label: `运行中 ${Number(this.surface ? (meta.scopedActive ?? meta.active ?? 0) : (meta.active || 0))}` },
+            { status: 'waiting_permission', label: `待确认 ${Number(statusCounts.waiting_permission || 0)}` },
             { status: 'failure', label: `失败 ${Number(this.surface ? (meta.scopedFailures ?? meta.failures ?? 0) : (meta.failures || 0))}`, tone: 'danger' },
             { status: 'succeeded', label: `完成 ${Number(statusCounts.succeeded || 0)}` },
         ];
@@ -1243,13 +1988,13 @@ export class AgentCenterPanel {
         return `${filterHtml}${intro}<div class="agent-center-list">${runs.map(run => {
             const failureDetail = trim(run.errorMessage || run.cancelReason || run.lastStep?.errorMessage);
             return `
-            <article class="${escapeHtml(activityCardClass(run.status))}">
+            <article class="${escapeHtml(activityCardClass(run))}">
                 <div class="agent-center-card-head">
                     <div>
                         <div class="agent-center-card-title">${escapeHtml(run.title || run.kind || run.id)}</div>
                         <div class="agent-center-card-sub">${escapeHtml(formatMeta([displayAgentKind(run.kind), run.sessionId ? `范围：${run.sessionId}` : '']))}</div>
                     </div>
-                    <span class="${escapeHtml(statusChipClass(run.status))}">${escapeHtml(displayStatusLabel(run.status))}</span>
+                    <span class="${escapeHtml(statusChipClass(run.status))}">${escapeHtml(displayRunStatusLabel(run))}</span>
                 </div>
                 <div class="agent-center-card-sub">${escapeHtml(displayRunSummary(run))}</div>
                 ${failureDetail ? `<div class="agent-center-card-sub agent-center-card-error">错误：${escapeHtml(failureDetail)}</div>` : ''}
@@ -1259,6 +2004,11 @@ export class AgentCenterPanel {
                     run.lastStep ? { label: `最近：${displayAgentKind(run.lastStep.type)}` } : null,
                 ])}
                 ${renderChatFormatReview(run.review)}
+                ${run.status === 'waiting_permission' ? `
+                    <div class="agent-center-card-actions">
+                        <button type="button" class="agent-center-card-action is-danger" data-agent-run-review-action="reject" data-run-id="${escapeHtml(run.id)}">打回</button>
+                    </div>
+                ` : ''}
             </article>
         `; }).join('')}</div>`;
     }
@@ -1365,9 +2115,11 @@ export class AgentCenterPanel {
             ? this.renderPending()
             : this.activeTab === 'activity'
                 ? this.renderActivity()
-                : this.activeTab === 'tools'
-                    ? this.renderTools()
-                    : this.renderSafety();
+                : this.activeTab === 'agents'
+                    ? this.renderAgents()
+                    : this.activeTab === 'tools'
+                        ? this.renderTools()
+                        : this.renderSafety();
         this.contentElement.innerHTML = `${error}${body}`;
         if (this.activeTab === 'pending') {
             this.contentElement.querySelectorAll('[data-profile-action]').forEach((button) => {
@@ -1401,6 +2153,44 @@ export class AgentCenterPanel {
             });
             this.contentElement.querySelectorAll('[data-failure-read-action]').forEach((button) => {
                 button.addEventListener('click', () => this.handleFailureReadAction());
+            });
+            this.contentElement.querySelectorAll('[data-agent-run-review-action]').forEach((button) => {
+                button.addEventListener('click', () => this.handleAgentRunReviewAction(
+                    button.dataset.agentRunReviewAction || '',
+                    button.dataset.runId || '',
+                ));
+            });
+        }
+        if (this.activeTab === 'agents') {
+            this.contentElement.querySelectorAll('[data-agent-feature-action]').forEach((button) => {
+                button.addEventListener('click', () => this.handleAgentFeatureToggle(
+                    button.dataset.agentFeatureAction || '',
+                    button.dataset.agentFeatureId || '',
+                ));
+            });
+            this.contentElement.querySelectorAll('[data-agent-feature-detail]').forEach((button) => {
+                button.addEventListener('click', () => this.handleAgentFeatureDetail(button.dataset.agentFeatureDetail || ''));
+            });
+            this.contentElement.querySelectorAll('[data-agent-feature-model-select]').forEach((select) => {
+                const id = select.dataset.agentFeatureModelSelect || '';
+                const button = Array.from(this.contentElement.querySelectorAll('[data-agent-feature-model-button]'))
+                    .find(item => item?.dataset?.agentFeatureModelButton === id);
+                bindCustomSelectButton({
+                    buttonEl: button,
+                    selectEl: select,
+                    fallback: '不调用模型',
+                });
+                select.addEventListener('change', () => this.handleAgentFeatureModelSelect(
+                    select.dataset.agentFeatureModelSelect || '',
+                    select.value || '',
+                    select,
+                ));
+            });
+            this.contentElement.querySelectorAll('[data-agent-feature-model-manage]').forEach((button) => {
+                button.addEventListener('click', () => this.handleAgentFeatureModelManage(button.dataset.agentFeatureModelManage || ''));
+            });
+            this.contentElement.querySelectorAll('[data-agent-feature-trigger]').forEach((button) => {
+                button.addEventListener('click', () => this.handleAgentFeatureTriggerMode(button.dataset.agentFeatureTrigger || ''));
             });
         }
         if (this.activeTab === 'safety') {

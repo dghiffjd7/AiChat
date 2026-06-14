@@ -5,8 +5,10 @@ import {
 } from './hook-lifecycle-trace-utils.js';
 import { mergeAgentMessageParts } from '../../agent/agent-message-parts.js';
 import {
+  buildChatFormatGuardianModelPrompt,
   buildChatFormatRepairCandidate,
   extractChatFormatEventDrafts,
+  normalizeChatFormatGuardianModelReview,
 } from './chat-format-guardian-utils.js';
 import {
   analyzeChatBodyQuality,
@@ -40,6 +42,15 @@ const truncate = (value = '', maxLength = 80) => {
   const text = String(value ?? '').trim().replace(/\s+/g, ' ');
   const limit = Math.max(8, Math.trunc(Number(maxLength) || 80));
   return text.length > limit ? `${text.slice(0, limit - 1)}...` : text;
+};
+
+const truncateRawText = (value = '', maxLength = 6000) => {
+  const text = String(value ?? '');
+  const limit = Math.max(200, Math.trunc(Number(maxLength) || 6000));
+  return {
+    text: text.length > limit ? text.slice(0, limit) : text,
+    truncated: text.length > limit,
+  };
 };
 
 const countBy = (items = [], keyFn = item => item) => {
@@ -140,6 +151,128 @@ const summarizeChatFormatRepairCandidate = (repairCandidate = null, { includeTex
   return summary;
 };
 
+const summarizeChatFormatModelReview = (modelReview = null, { includeText = false } = {}) => {
+  if (!isPlainObject(modelReview)) return null;
+  const summary = {
+    status: trim(modelReview.status),
+    canRepair: modelReview.canRepair === true,
+    repairSummary: trim(modelReview.repairSummary),
+    rawPreview: truncate(modelReview.rawPreview, 180),
+    issueCount: list(modelReview.issues).length,
+    patchCount: list(modelReview.linePatches).length,
+    linePatches: list(modelReview.linePatches)
+      .map(patch => ({
+        startLine: Number(patch?.startLine || 0) || 0,
+        endLine: Number(patch?.endLine || 0) || 0,
+        reason: trim(patch?.reason),
+      }))
+      .filter(patch => patch.startLine > 0 && patch.endLine >= patch.startLine)
+      .slice(0, 8),
+    issues: list(modelReview.issues)
+      .map(issue => ({
+        severity: trim(issue?.severity, 'warning'),
+        type: trim(issue?.type, 'other'),
+        message: trim(issue?.message),
+        evidence: truncate(issue?.evidence, 96),
+      }))
+      .filter(issue => issue.message)
+      .slice(0, 6),
+  };
+  if (includeText) summary.correctedText = String(modelReview.correctedText || '');
+  return summary;
+};
+
+const summarizeChatFormatAutoRepairResult = (autoRepairResult = null, {
+  autoApplyRepair = false,
+} = {}) => {
+  const attempted = isPlainObject(autoRepairResult);
+  if (!autoApplyRepair && !attempted) return null;
+  const eventCount = Math.max(0, Math.trunc(Number(autoRepairResult?.eventCount) || 0));
+  return {
+    autoApplyRepair: autoApplyRepair === true,
+    attempted,
+    didAnything: autoRepairResult?.didAnything === true,
+    reason: trim(autoRepairResult?.reason),
+    errorMessage: trim(autoRepairResult?.errorMessage),
+    eventCount,
+    mutatedMoments: autoRepairResult?.mutatedMoments === true,
+  };
+};
+
+const summarizeChatFormatModelReviewDetail = (modelReview = null, {
+  maxTextLength = 6000,
+  maxRawTextLength = 12000,
+  maxPatchLines = 40,
+} = {}) => {
+  if (!isPlainObject(modelReview)) return null;
+  const corrected = truncateRawText(modelReview.correctedText, maxTextLength);
+  const rawText = truncateRawText(modelReview.rawText || modelReview.rawPreview, maxRawTextLength);
+  const normalizedPatchLines = Math.max(4, Math.trunc(Number(maxPatchLines) || 40));
+  const linePatches = list(modelReview.linePatches)
+    .map((patch) => {
+      const originalLines = Array.isArray(patch?.originalLines)
+        ? patch.originalLines.map(line => String(line ?? '')).slice(0, 20)
+        : null;
+      const replacementSource = Array.isArray(patch?.replacementLines)
+        ? patch.replacementLines
+        : String(patch?.replacementText || '').split(/\r?\n/);
+      const replacementLines = replacementSource
+        .map(line => String(line ?? ''))
+        .slice(0, normalizedPatchLines);
+      return {
+        startLine: Number(patch?.startLine || 0) || 0,
+        endLine: Number(patch?.endLine || 0) || 0,
+        reason: trim(patch?.reason),
+        originalLines,
+        replacementLines,
+        replacementLineCount: Array.isArray(patch?.replacementLines)
+          ? patch.replacementLines.length
+          : replacementSource.length,
+        replacementLinesTruncated: replacementSource.length > normalizedPatchLines,
+        originalMatches: patch?.originalMatches === true
+          ? true
+          : (patch?.originalMatches === false ? false : null),
+      };
+    })
+    .filter(patch => patch.startLine > 0 && patch.endLine >= patch.startLine)
+    .slice(0, 8);
+  const issues = list(modelReview.issues)
+    .map(issue => ({
+      severity: trim(issue?.severity, 'warning'),
+      type: trim(issue?.type, 'other'),
+      message: trim(issue?.message),
+      evidence: truncate(issue?.evidence, 160),
+    }))
+    .filter(issue => issue.message)
+    .slice(0, 8);
+  const detail = {
+    status: trim(modelReview.status),
+    canRepair: modelReview.canRepair === true,
+    repairSummary: trim(modelReview.repairSummary),
+    rawPreview: truncate(modelReview.rawPreview, 500),
+    rawText: rawText.text,
+    rawTextTruncated: modelReview.rawTextTruncated === true || rawText.truncated,
+    issueCount: list(modelReview.issues).length,
+    patchCount: list(modelReview.linePatches).length,
+    correctedText: corrected.text,
+    correctedTextTruncated: corrected.truncated,
+    linePatches,
+    issues,
+  };
+  if (
+    !detail.status &&
+    !detail.repairSummary &&
+    !detail.rawPreview &&
+    !detail.rawText.trim() &&
+    !detail.correctedText.trim() &&
+    !detail.linePatches.length &&
+    !detail.issues.length
+  ) {
+    return null;
+  }
+  return detail;
+};
+
 const buildChatFormatGuardianDecisionActions = ({
   result = null,
   errors = [],
@@ -201,6 +334,23 @@ const buildChatFormatGuardianDecisionActions = ({
 
 const resolveChatFormatGuardianRepairCandidate = ({ result = null, message = {} } = {}) => {
   if (!result || result.status === 'no_events' || result.status === 'ready') return null;
+  const modelReview = isPlainObject(result?.modelReview) ? result.modelReview : null;
+  const modelCorrectedText = String(modelReview?.correctedText || '').trim();
+  if (modelReview?.canRepair === true && modelCorrectedText) {
+    const issues = list(modelReview.issues);
+    return {
+      available: true,
+      kind: 'model_format_repair',
+      title: '模型格式修复',
+      summary: trim(modelReview.repairSummary, '应用模型给出的最小格式修复。'),
+      preview: truncate(modelCorrectedText, 220),
+      replacementText: modelCorrectedText,
+      fallbackTime: trim(result?.repairFallbackTime || message?.time),
+      fixedWarnings: issues.map(issue => trim(issue?.message)).filter(Boolean).slice(0, 6),
+      eventCount: list(result?.eventDrafts).length,
+      issueCount: issues.length,
+    };
+  }
   return buildChatFormatRepairCandidate(result, {
     fallbackTime: trim(result?.repairFallbackTime || message?.time),
     maxPreviewLength: 220,
@@ -251,6 +401,8 @@ export const buildChatFormatGuardianMessagePart = ({
   result = null,
   message = {},
   sessionId = '',
+  autoRepairResult = null,
+  autoApplyRepair = false,
   showSucceededPreview = false,
   maxEvents = 5,
   maxIssues = 6,
@@ -297,6 +449,9 @@ export const buildChatFormatGuardianMessagePart = ({
       status: trim(result?.status),
       sourceTextKind: trim(result?.sourceTextKind),
       hasRawOriginal: result?.hasRawOriginal === true,
+      modelReview: summarizeChatFormatModelReview(result?.modelReview, { includeText: false }),
+      modelReviewDetail: summarizeChatFormatModelReviewDetail(result?.modelReview),
+      autoRepair: summarizeChatFormatAutoRepairResult(autoRepairResult, { autoApplyRepair }),
       repairCandidate: summarizeChatFormatRepairCandidate(repairCandidate, { includeText: true }),
       eventCount,
       issueCount,
@@ -451,6 +606,8 @@ export const buildChatFormatGuardianAgentRun = ({
   part = null,
   message = {},
   sessionId = '',
+  autoRepairResult = null,
+  autoApplyRepair = false,
   showSucceededRun = true,
   maxEvents = 5,
   maxIssues = 6,
@@ -497,6 +654,9 @@ export const buildChatFormatGuardianAgentRun = ({
     rawStatus: trim(result?.status),
     sourceTextKind: trim(result?.sourceTextKind),
     hasRawOriginal: result?.hasRawOriginal === true,
+    modelReview: summarizeChatFormatModelReview(result?.modelReview, { includeText: false }),
+    modelReviewDetail: summarizeChatFormatModelReviewDetail(result?.modelReview),
+    autoRepair: summarizeChatFormatAutoRepairResult(autoRepairResult, { autoApplyRepair }),
     repairCandidate: summarizeChatFormatRepairCandidate(repairCandidate, { includeText: false }),
     eventCount,
     issueCount,
@@ -649,12 +809,307 @@ export const buildChatFormatGuardianPreviewMessage = (message = {}, part = null)
   };
 };
 
+const normalizeChatFormatGuardianModelOptions = (options = {}) => {
+  const raw = options?.modelReview === true
+    ? { enabled: true }
+    : (isPlainObject(options?.modelReview) ? { ...options.modelReview } : null);
+  if (!raw?.enabled) return null;
+  if (typeof raw.backgroundChat !== 'function') return null;
+  return raw;
+};
+
+const shouldRunChatFormatGuardianModelReview = (parserResult = null, modelOptions = null) => {
+  if (!modelOptions) return false;
+  if (modelOptions.force === true) return true;
+  const status = trim(parserResult?.status);
+  if (status === 'needs_review' || status === 'invalid') return true;
+  if (status === 'no_events') return modelOptions.reviewNoEvents === true;
+  return false;
+};
+
+const hasVisibleAssistantOutput = (message = {}) => [
+  message?.content,
+  message?.text,
+  message?.display,
+  message?.displayText,
+].some(value => typeof value === 'string' && value.trim());
+
+const isManualChatFormatGuardianCheck = (options = {}) => options?.manualTrigger === true;
+
+const shouldRunChatFormatGuardianModelReviewForContext = ({
+  parserResult = null,
+  modelOptions = null,
+  message = null,
+  options = {},
+} = {}) => {
+  if (!shouldRunChatFormatGuardianModelReview(parserResult, modelOptions)) return false;
+  if (modelOptions?.force === true) return true;
+  if (isManualChatFormatGuardianCheck(options)) return true;
+  return !hasVisibleAssistantOutput(message);
+};
+
+const buildChatFormatGuardianModelResult = ({
+  review = null,
+  parserResult = null,
+  message = {},
+  options = {},
+} = {}) => {
+  const issues = list(review?.issues);
+  const errors = issues
+    .filter(issue => trim(issue?.severity).toLowerCase() === 'error')
+    .map(issue => trim(issue?.message))
+    .filter(Boolean);
+  const warnings = issues
+    .filter(issue => trim(issue?.severity).toLowerCase() !== 'error')
+    .map(issue => trim(issue?.message))
+    .filter(Boolean);
+  const status = review?.status === 'ok'
+    ? 'ready'
+    : (review?.canRepair === true ? 'needs_review' : 'invalid');
+  return {
+    ...(isPlainObject(parserResult) ? parserResult : {}),
+    status,
+    summary: status === 'ready'
+      ? '模型格式检查通过'
+      : (review?.canRepair ? '模型发现可修复格式问题' : '模型发现格式问题'),
+    errors,
+    warnings,
+    sourceMessageId: trim(message?.id || options?.sourceMessageId),
+    sourceTextKind: trim(parserResult?.sourceTextKind),
+    hasRawOriginal: parserResult?.hasRawOriginal === true,
+    repairFallbackTime: trim(options?.repairFallbackTime || parserResult?.repairFallbackTime || message?.time),
+    modelReview: review,
+  };
+};
+
+const buildChatFormatGuardianModelFailureResult = ({
+  error = null,
+  parserResult = null,
+  message = {},
+  options = {},
+} = {}) => {
+  const errorMessage = trim(error?.message || error, '格式修复请求失败');
+  return {
+    ...(isPlainObject(parserResult) ? parserResult : {}),
+    status: 'invalid',
+    summary: '格式修复请求失败',
+    errors: [errorMessage],
+    warnings: [],
+    sourceMessageId: trim(message?.id || options?.sourceMessageId),
+    sourceTextKind: trim(parserResult?.sourceTextKind),
+    hasRawOriginal: parserResult?.hasRawOriginal === true,
+    repairFallbackTime: trim(options?.repairFallbackTime || parserResult?.repairFallbackTime || message?.time),
+    modelReview: {
+      ok: false,
+      status: 'invalid',
+      issues: [{
+        severity: 'error',
+        type: error?.code === 'CHAT_FORMAT_GUARDIAN_TIMEOUT' ? 'timeout' : 'request_error',
+        message: errorMessage,
+        evidence: '',
+      }],
+      canRepair: false,
+      repairSummary: errorMessage,
+      correctedText: '',
+      linePatches: [],
+      rawPreview: '',
+    },
+  };
+};
+
+const runChatFormatGuardianBackgroundChat = async (backgroundChat, messages = [], requestOptions = {}, {
+  timeoutMs = 75000,
+} = {}) => {
+  const ms = Number(timeoutMs);
+  if (!Number.isFinite(ms) || ms <= 0 || typeof AbortController !== 'function') {
+    return backgroundChat(messages, requestOptions || {});
+  }
+  const controller = new AbortController();
+  let timeoutId = null;
+  const timeoutPromise = new Promise((_, reject) => {
+    timeoutId = setTimeout(() => {
+      try { controller.abort(); } catch {}
+      const error = new Error(`格式修复请求超时（${Math.round(ms / 1000)} 秒）`);
+      error.code = 'CHAT_FORMAT_GUARDIAN_TIMEOUT';
+      reject(error);
+    }, ms);
+  });
+  const nextOptions = {
+    ...(requestOptions || {}),
+    signal: requestOptions?.signal || controller.signal,
+  };
+  try {
+    return await Promise.race([
+      backgroundChat(messages, nextOptions),
+      timeoutPromise,
+    ]);
+  } finally {
+    if (timeoutId) {
+      try { clearTimeout(timeoutId); } catch {}
+    }
+  }
+};
+
+const emitChatFormatGuardianModelReviewResult = ({
+  message = null,
+  sessionId = '',
+  result = null,
+  part = null,
+  autoRepairResult = null,
+  options = {},
+  modelOptions = null,
+  onChatFormatGuardianPreview = null,
+  onChatFormatGuardianRun = null,
+  now = Date.now,
+} = {}) => {
+  const resolvedPart = part || buildChatFormatGuardianMessagePart({
+    result,
+    message,
+    sessionId,
+    autoRepairResult,
+    autoApplyRepair: modelOptions?.autoApplyRepair === true,
+    showSucceededPreview: modelOptions?.showSucceededPreview === true,
+    maxEvents: options.maxEvents,
+    maxIssues: options.maxIssues,
+    now,
+  });
+  const patchedMessage = buildChatFormatGuardianPreviewMessage(message, resolvedPart);
+  const agentRun = buildChatFormatGuardianAgentRun({
+    result,
+    part: resolvedPart,
+    message,
+    sessionId,
+    autoRepairResult,
+    autoApplyRepair: modelOptions?.autoApplyRepair === true,
+    showSucceededRun: modelOptions?.recordSucceededRun === true,
+    maxEvents: options.maxEvents,
+    maxIssues: options.maxIssues,
+    now,
+  });
+  if (patchedMessage && typeof onChatFormatGuardianPreview === 'function') {
+    onChatFormatGuardianPreview({ message, patchedMessage, result, part: resolvedPart, agentRun, sessionId, autoRepairResult });
+  }
+  if (agentRun && typeof onChatFormatGuardianRun === 'function') {
+    onChatFormatGuardianRun({ message, patchedMessage, result, part: resolvedPart, agentRun, sessionId, autoRepairResult });
+  }
+  return { part: resolvedPart, patchedMessage, agentRun };
+};
+
+const scheduleChatFormatGuardianModelReview = ({
+  message = null,
+  sessionId = '',
+  parserResult = null,
+  inputText = '',
+  options = {},
+  modelOptions = null,
+  onChatFormatGuardianPreview = null,
+  onChatFormatGuardianRun = null,
+  onChatFormatGuardianModelReviewQueued = null,
+  onChatFormatGuardianAutoRepair = null,
+  logger = console,
+  now = Date.now,
+} = {}) => {
+  if (!message || !shouldRunChatFormatGuardianModelReviewForContext({
+    parserResult,
+    modelOptions,
+    message,
+    options,
+  })) return false;
+  if (typeof onChatFormatGuardianModelReviewQueued === 'function') {
+    try {
+      onChatFormatGuardianModelReviewQueued({ message, sessionId, result: parserResult, inputText });
+    } catch (err) {
+      logger?.warn?.('chat format guardian queued notification failed', err);
+    }
+  }
+  Promise.resolve().then(async () => {
+    const prompt = buildChatFormatGuardianModelPrompt({
+      assistantText: inputText,
+      formatReminderText: modelOptions.formatReminderText,
+      enabledFormats: modelOptions.enabledFormats,
+      parserReport: parserResult,
+      userName: modelOptions.userName || options.userName,
+      sessionLabel: modelOptions.sessionLabel,
+      surface: modelOptions.surface || resolveChatFormatGuardianSurface(parserResult?.eventDrafts),
+    });
+    const raw = await runChatFormatGuardianBackgroundChat(
+      modelOptions.backgroundChat,
+      prompt.messages,
+      modelOptions.requestOptions || { temperature: 0, maxTokens: 900 },
+      { timeoutMs: modelOptions.timeoutMs },
+    );
+    const review = normalizeChatFormatGuardianModelReview(raw, { originalText: inputText });
+    const result = buildChatFormatGuardianModelResult({
+      review,
+      parserResult,
+      message,
+      options,
+    });
+    let autoRepairResult = null;
+    const shouldAutoApplyRepair = modelOptions.autoApplyRepair === true &&
+      review?.canRepair === true &&
+      trim(review?.correctedText);
+    if (shouldAutoApplyRepair && typeof onChatFormatGuardianAutoRepair === 'function') {
+      try {
+        autoRepairResult = await onChatFormatGuardianAutoRepair({
+          message,
+          sessionId,
+          result,
+          correctedText: review.correctedText,
+          inputText,
+        });
+      } catch (err) {
+        autoRepairResult = {
+          didAnything: false,
+          errorMessage: err?.message ? String(err.message) : String(err || ''),
+        };
+        logger?.warn?.('chat format guardian auto repair failed', err);
+      }
+    }
+    if (modelOptions.autoApplyRepair === true && autoRepairResult?.didAnything) {
+      return;
+    }
+    emitChatFormatGuardianModelReviewResult({
+      message,
+      sessionId,
+      result,
+      autoRepairResult,
+      options,
+      modelOptions,
+      onChatFormatGuardianPreview,
+      onChatFormatGuardianRun,
+      now,
+    });
+  }).catch((err) => {
+    logger?.warn?.('chat format guardian model review failed', err);
+    const result = buildChatFormatGuardianModelFailureResult({
+      error: err,
+      parserResult,
+      message,
+      options,
+    });
+    emitChatFormatGuardianModelReviewResult({
+      message,
+      sessionId,
+      result,
+      options,
+      modelOptions,
+      onChatFormatGuardianPreview,
+      onChatFormatGuardianRun,
+      now,
+    });
+  });
+  return true;
+};
+
 export const runChatFormatGuardianPreview = ({
   message = null,
   sessionId = '',
   chatFormatGuardian = null,
   onChatFormatGuardianPreview = null,
   onChatFormatGuardianRun = null,
+  onChatFormatGuardianModelReviewQueued = null,
+  onChatFormatGuardianAutoRepair = null,
   logger = console,
   now = Date.now,
 } = {}) => {
@@ -665,43 +1120,93 @@ export const runChatFormatGuardianPreview = ({
   if (options.enabled === false) return null;
   const input = resolveChatFormatGuardianInputText(message);
   const text = input.text;
-  if (!text) return null;
+  const modelOptions = normalizeChatFormatGuardianModelOptions(options);
+  const manualCheck = isManualChatFormatGuardianCheck(options);
+  const visibleOutput = hasVisibleAssistantOutput(message);
+  const noEventsSeedResult = { status: 'no_events' };
+  if (!text && !shouldRunChatFormatGuardianModelReviewForContext({
+    parserResult: noEventsSeedResult,
+    modelOptions,
+    message,
+    options,
+  })) return null;
   try {
-    const result = {
-      ...extractChatFormatEventDrafts(text, {
-        ...options,
-        sourceMessageId: trim(message.id || options.sourceMessageId),
-      }),
-      sourceTextKind: input.source,
-      hasRawOriginal: input.hasRawOriginal,
-      repairFallbackTime: trim(options.repairFallbackTime || message?.time),
-    };
-    const part = buildChatFormatGuardianMessagePart({
-      result,
-      message,
-      sessionId,
-      showSucceededPreview: options.showSucceededPreview === true,
-      maxEvents: options.maxEvents,
-      maxIssues: options.maxIssues,
-      now,
-    });
-    const patchedMessage = buildChatFormatGuardianPreviewMessage(message, part);
-    const agentRun = buildChatFormatGuardianAgentRun({
-      result,
-      part,
-      message,
-      sessionId,
-      showSucceededRun: options.recordSucceededRun !== false,
-      maxEvents: options.maxEvents,
-      maxIssues: options.maxIssues,
-      now,
-    });
+    const sourceMessageId = trim(message.id || options.sourceMessageId);
+    const result = text
+      ? {
+        ...extractChatFormatEventDrafts(text, {
+          ...options,
+          sourceMessageId,
+        }),
+        sourceTextKind: input.source,
+        hasRawOriginal: input.hasRawOriginal,
+        repairFallbackTime: trim(options.repairFallbackTime || message?.time),
+      }
+      : {
+        ok: false,
+        status: 'no_events',
+        sourceMessageId,
+        protocolEvents: [],
+        eventDrafts: [],
+        errors: [],
+        warnings: [],
+        summary: 'empty assistant response',
+        textPreview: '',
+        sourceTextKind: input.source,
+        hasRawOriginal: input.hasRawOriginal,
+        repairFallbackTime: trim(options.repairFallbackTime || message?.time),
+      };
+    const suppressAutomaticDiagnostics = !manualCheck && modelOptions?.force !== true && visibleOutput;
+    const suppressLocalAutomaticPreview = !manualCheck;
+    if (suppressAutomaticDiagnostics) {
+      return { result, part: null, patchedMessage: null, agentRun: null };
+    }
+    const part = suppressLocalAutomaticPreview
+      ? null
+      : buildChatFormatGuardianMessagePart({
+        result,
+        message,
+        sessionId,
+        showSucceededPreview: options.showSucceededPreview === true,
+        maxEvents: options.maxEvents,
+        maxIssues: options.maxIssues,
+        now,
+      });
+    const patchedMessage = suppressLocalAutomaticPreview
+      ? null
+      : buildChatFormatGuardianPreviewMessage(message, part);
+    const agentRun = suppressLocalAutomaticPreview
+      ? null
+      : buildChatFormatGuardianAgentRun({
+        result,
+        part,
+        message,
+        sessionId,
+        showSucceededRun: options.recordSucceededRun !== false,
+        maxEvents: options.maxEvents,
+        maxIssues: options.maxIssues,
+        now,
+      });
     if (patchedMessage && typeof onChatFormatGuardianPreview === 'function') {
       onChatFormatGuardianPreview({ message, patchedMessage, result, part, agentRun, sessionId });
     }
     if (agentRun && typeof onChatFormatGuardianRun === 'function') {
       onChatFormatGuardianRun({ message, patchedMessage, result, part, agentRun, sessionId });
     }
+    scheduleChatFormatGuardianModelReview({
+      message,
+      sessionId,
+      parserResult: result,
+      inputText: text,
+      options,
+      modelOptions,
+      onChatFormatGuardianPreview,
+      onChatFormatGuardianRun,
+      onChatFormatGuardianModelReviewQueued,
+      onChatFormatGuardianAutoRepair,
+      logger,
+      now,
+    });
     return { result, part, patchedMessage, agentRun };
   } catch (err) {
     logger?.warn?.('chat format guardian preview failed', err);
@@ -795,6 +1300,8 @@ export const dispatchAfterReceiveEffects = ({
   chatFormatGuardian = null,
   onChatFormatGuardianPreview = null,
   onChatFormatGuardianRun = null,
+  onChatFormatGuardianModelReviewQueued = null,
+  onChatFormatGuardianAutoRepair = null,
   chatBodyQualityGuardian = null,
   onChatBodyQualityPreview = null,
   onChatBodyQualityRun = null,
@@ -840,6 +1347,8 @@ export const dispatchAfterReceiveEffects = ({
     chatFormatGuardian,
     onChatFormatGuardianPreview,
     onChatFormatGuardianRun,
+    onChatFormatGuardianModelReviewQueued,
+    onChatFormatGuardianAutoRepair,
     logger,
   });
   runChatBodyQualityPreview({

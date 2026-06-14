@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict';
 
-import { buildReasoningRequestOptions, getReasoningCapability } from '../../src/scripts/api/model-capabilities.js';
+import {
+  buildReasoningRequestOptions,
+  getReasoningCapability,
+  getReasoningSamplerPolicy,
+} from '../../src/scripts/api/model-capabilities.js';
 import { OpenAIProvider } from '../../src/scripts/api/providers/openai.js';
 import { CustomProvider } from '../../src/scripts/api/providers/custom.js';
 import {
@@ -190,6 +194,81 @@ import {
   assert.equal(Object.hasOwn(request.payload, 'thinkingLevel'), false);
   assert.equal(Object.hasOwn(request.payload, 'thinkingBudget'), false);
   console.log('ok - custom Gemini chat request matches OpenAI-compatible payload shape');
+}
+
+{
+  const capability = getReasoningCapability({
+    provider: 'anthropic',
+    model: 'claude-fable-5',
+  });
+  assert.equal(capability.supported, true);
+  assert.equal(capability.strategy, 'anthropic-adaptive');
+  assert.equal(capability.samplingRestricted, true);
+  assert.equal(capability.effortOptions.some((option) => option.value === 'minimal'), false);
+  assert.deepEqual(
+    buildReasoningRequestOptions({
+      provider: 'anthropic',
+      model: 'claude-fable-5',
+      requestReasoning: true,
+      reasoningEffort: 'xhigh',
+      maxOutputTokens: 8192,
+    }),
+    {
+      thinking: { type: 'adaptive', display: 'summarized' },
+      output_config: { effort: 'xhigh' },
+    },
+  );
+  assert.deepEqual(
+    buildReasoningRequestOptions({
+      provider: 'anthropic',
+      model: 'claude-fable-5',
+      requestReasoning: true,
+      reasoningEffort: 'auto',
+      maxOutputTokens: 8192,
+    }),
+    { thinking: { type: 'adaptive', display: 'summarized' } },
+  );
+  assert.deepEqual(
+    getReasoningSamplerPolicy({
+      provider: 'anthropic',
+      model: 'claude-fable-5',
+      requestReasoning: false,
+    }).disabledFields.sort(),
+    ['temperature', 'top_k', 'top_p'].sort(),
+  );
+  console.log('ok - Claude Fable 5 uses adaptive thinking and always-restricted sampling');
+}
+
+{
+  const capability = getReasoningCapability({
+    provider: 'anthropic',
+    model: 'claude-opus-4-8',
+  });
+  assert.equal(capability.supported, true);
+  assert.equal(capability.strategy, 'anthropic-adaptive');
+  assert.equal(capability.samplingRestricted, false);
+  assert.deepEqual(
+    buildReasoningRequestOptions({
+      provider: 'anthropic',
+      model: 'claude-opus-4-8',
+      requestReasoning: true,
+      reasoningEffort: 'high',
+      maxOutputTokens: 8192,
+    }),
+    {
+      thinking: { type: 'adaptive', display: 'summarized' },
+      output_config: { effort: 'high' },
+    },
+  );
+  assert.equal(
+    getReasoningSamplerPolicy({
+      provider: 'anthropic',
+      model: 'claude-opus-4-8',
+      requestReasoning: false,
+    }).active,
+    false,
+  );
+  console.log('ok - adaptive-only Claude models do not use manual budget_tokens');
 }
 
 {

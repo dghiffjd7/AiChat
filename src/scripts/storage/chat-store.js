@@ -7,7 +7,7 @@ import { makeScopedKey, normalizeScopeId } from './store-scope.js';
 import { appSettings } from './app-settings.js';
 const MAX_PERSIST_MESSAGES_PER_SESSION = 400;
 const MAX_PERSIST_TOTAL_TEXT_CHARS_PER_SESSION = 600_000;
-const MAX_PERSIST_ARCHIVES_PER_SESSION = 6;
+const MAX_PERSIST_ARCHIVES_PER_SESSION = 80;
 const MAX_PERSIST_ARCHIVE_MESSAGES = 400;
 const MAX_PERSIST_SUMMARIES_PER_SESSION = 120;
 const MAX_PERSIST_STRING_CHARS = 180_000;
@@ -410,6 +410,35 @@ const sliceTailWithinChars = (arr, getText, { maxItems, maxChars } = {}) => {
 const MAX_WALLPAPER_DATA_URL_CHARS = 200000;
 const LOCAL_BOOTSTRAP_JSON_SOFT_LIMIT = 450_000;
 
+const parseArchiveTimestamp = (archiveId = '') => {
+  const raw = String(archiveId || '').split('-')[0];
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? n : 0;
+};
+
+const formatArchiveTimestamp = (timestamp = Date.now()) => {
+  const value = Number(timestamp || 0) || Date.now();
+  const d = new Date(value);
+  return `${d.getFullYear()}/${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(
+    2,
+    '0',
+  )} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+};
+
+const makeRecoveredV2ArchiveMetadata = (archiveId = '', thread = {}) => {
+  const id = String(archiveId || '').trim();
+  if (!id) return null;
+  const timestamp = parseArchiveTimestamp(id) || Number(thread?.lastMessageAt || 0) || Date.now();
+  return {
+    id,
+    name: `存档 (${formatArchiveTimestamp(timestamp)})`,
+    timestamp,
+    messageCount: Number(thread?.total || 0) || 0,
+    summaries: [],
+    compactedSummary: null,
+  };
+};
+
 const sanitizeSessionForPersist = (session, options = {}) => {
   if (!session || typeof session !== 'object') return session;
   const out = { ...session };
@@ -542,6 +571,7 @@ const sanitizeSessionForPersist = (session, options = {}) => {
         return arc;
       })
       .filter(Boolean);
+    sanitized.sort((a, b) => (Number(b?.timestamp || 0) || 0) - (Number(a?.timestamp || 0) || 0));
     out.archives = sanitized.slice(0, MAX_PERSIST_ARCHIVES_PER_SESSION);
   } catch {}
 
@@ -1442,6 +1472,55 @@ export class ChatStore {
     this._v2ThreadState.delete(threadKey);
   }
 
+  _recoverV2ArchiveMetadata() {
+    if (!this._useV2) return false;
+    const sessions = this._v2.index?.sessions || {};
+    let changed = false;
+    for (const [sid, entry] of Object.entries(sessions)) {
+      const sessionId = String(sid || '').trim();
+      if (!sessionId || !entry || typeof entry !== 'object') continue;
+      const archiveThreads = entry.archives && typeof entry.archives === 'object' ? entry.archives : {};
+      const archiveIds = Object.keys(archiveThreads).map(id => String(id || '').trim()).filter(Boolean);
+      if (!archiveIds.length) continue;
+
+      const session = this._ensureSession(sessionId);
+      if (!session) continue;
+      const archives = Array.isArray(session.archives) ? session.archives : [];
+      if (!Array.isArray(session.archives)) {
+        session.archives = archives;
+        changed = true;
+      }
+      const existingById = new Map();
+      for (const archive of archives) {
+        const aid = String(archive?.id || '').trim();
+        if (aid) existingById.set(aid, archive);
+      }
+
+      for (const archiveId of archiveIds) {
+        const thread = archiveThreads[archiveId] || {};
+        const existing = existingById.get(archiveId);
+        if (existing) {
+          const total = Number(thread?.total || 0) || 0;
+          if (Number.isFinite(total) && Number(existing.messageCount || 0) !== total) {
+            existing.messageCount = total;
+            changed = true;
+          }
+          if (!Number(existing.timestamp || 0)) {
+            existing.timestamp = parseArchiveTimestamp(archiveId) || Number(thread?.lastMessageAt || 0) || Date.now();
+            changed = true;
+          }
+          continue;
+        }
+        const recovered = makeRecoveredV2ArchiveMetadata(archiveId, thread);
+        if (!recovered) continue;
+        session.archives.push(recovered);
+        existingById.set(archiveId, recovered);
+        changed = true;
+      }
+    }
+    return changed;
+  }
+
   async _hydrateV2FromDisk() {
     const token = this._scopeToken;
     const scopeId = this.scopeId;
@@ -1464,6 +1543,14 @@ export class ChatStore {
       await this._maybeMigrateToV2(token, scopeId);
     } catch (err) {
       logger.warn('chat store v2 migrate failed', err);
+    }
+    try {
+      if (this._recoverV2ArchiveMetadata()) {
+        logger.info('chat store v2 archive metadata recovered from sidecar index');
+        this._persist();
+      }
+    } catch (err) {
+      logger.warn('chat store v2 archive metadata recover failed', err);
     }
     try {
       if (this._isScopeStale(token, scopeId)) return false;
@@ -2909,6 +2996,22 @@ export class ChatStore {
       }
     }
     return list.sort((a, b) => b.timestamp - a.timestamp);
+  }
+
+  renameArchive(archiveId, name = '', id = this.currentId) {
+    const sid = String(id || '').trim();
+    const aid = String(archiveId || '').trim();
+    const cleanName = String(name || '').trim();
+    if (!sid || !aid || !cleanName) return false;
+    const session = this.state.sessions[sid];
+    if (!session || !Array.isArray(session.archives)) return false;
+    const archive = session.archives.find(a => String(a?.id || '').trim() === aid);
+    if (!archive) return false;
+    if (String(archive.name || '') === cleanName) return true;
+    archive.name = cleanName;
+    archive.updatedAt = Date.now();
+    this._persist();
+    return true;
   }
 
   async loadArchivedMessages(archiveId, id = this.currentId, options = {}) {

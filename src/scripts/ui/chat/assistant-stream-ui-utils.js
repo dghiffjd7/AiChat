@@ -3,6 +3,20 @@ import {
   resolveCreativeRichRenderSource,
 } from './creative-content-display-utils.js';
 
+const STREAM_RENDER_CACHE_PROP = '__chatappStreamRenderCache';
+
+const hasSameStreamRender = (target, mode, text) => {
+  const cache = target?.[STREAM_RENDER_CACHE_PROP];
+  return cache?.mode === mode && cache?.text === text;
+};
+
+const rememberStreamRender = (target, mode, text) => {
+  if (!target) return;
+  try {
+    target[STREAM_RENDER_CACHE_PROP] = { mode, text };
+  } catch {}
+};
+
 export const buildAssistantStreamMessageCore = (placeholder, meta, msgId, state = {}) => {
   const streamState = state && typeof state === 'object' ? state : { content: state };
   const content = String(streamState.content ?? '');
@@ -68,15 +82,18 @@ export const renderAssistantStreamStateCore = ({
     : String(nextMessage.content ?? '');
   if (nextMessage?.meta?.renderRich) {
     try {
-      renderRichText?.(target, text, {
-        messageId: msgId || nextMessage.id,
-        preserveHtmlNewlines: true,
-        sessionId: nextMessage.sessionId,
-        debugTag: nextMessage?.meta?.isGreeting ? 'rp-greeting' : '',
-        lazyMount: false,
-        deferSandboxExecution: true,
-        streaming: true,
-      });
+      if (!hasSameStreamRender(target, 'rich', text)) {
+        renderRichText?.(target, text, {
+          messageId: msgId || nextMessage.id,
+          preserveHtmlNewlines: true,
+          sessionId: nextMessage.sessionId,
+          debugTag: nextMessage?.meta?.isGreeting ? 'rp-greeting' : '',
+          lazyMount: false,
+          deferSandboxExecution: true,
+          streaming: true,
+        });
+        rememberStreamRender(target, 'rich', text);
+      }
     } catch {
       const normalized = hideCreativeContentTagsForDisplay(normalizeAssistantLineBreaks?.(text) ?? text);
       target.textContent = normalized;
@@ -84,9 +101,12 @@ export const renderAssistantStreamStateCore = ({
     }
   } else {
     const normalized = hideCreativeContentTagsForDisplay(normalizeAssistantLineBreaks?.(text) ?? text);
-    if (!renderTextWithStickers?.(target, normalized)) {
-      target.textContent = normalized;
-      target.style.whiteSpace = 'pre-wrap';
+    if (!hasSameStreamRender(target, 'plain', normalized)) {
+      if (!renderTextWithStickers?.(target, normalized)) {
+        target.textContent = normalized;
+        target.style.whiteSpace = 'pre-wrap';
+      }
+      rememberStreamRender(target, 'plain', normalized);
     }
   }
   if (wrapperEl) {

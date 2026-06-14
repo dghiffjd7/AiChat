@@ -19,8 +19,14 @@ export const createSessionArchiveSectionRuntime = ({
     runArchiveDeleteFlow = null,
     deleteArchiveTurnCheckpointState = null,
     deleteArchive = null,
+    renameArchive = null,
+    promptArchiveRenameName = null,
+    includeCurrentThread = false,
+    onExportCurrent = null,
+    onExportArchive = null,
     onArchiveLoaded = null,
     onArchiveDeleted = null,
+    onArchiveRenamed = null,
     onHide = null,
     createEmptyState = null,
     createArchiveRow = null,
@@ -33,6 +39,7 @@ export const createSessionArchiveSectionRuntime = ({
         renderSessionArchivesSection,
         ...deps,
     };
+    let archiveSearchQuery = '';
 
     return {
         renderArchives() {
@@ -56,11 +63,21 @@ export const createSessionArchiveSectionRuntime = ({
                 runArchiveDeleteFlow,
                 deleteArchiveTurnCheckpointState,
                 deleteArchive,
+                renameArchive,
+                promptArchiveRenameName,
+                includeCurrentThread,
+                onExportCurrent,
+                onExportArchive,
                 onArchiveLoaded,
                 onArchiveDeleted,
+                onArchiveRenamed,
                 onHide,
                 createEmptyState,
                 createArchiveRow,
+                archiveSearchQuery,
+                onArchiveSearchQueryChange: (query = '') => {
+                    archiveSearchQuery = String(query || '');
+                },
                 sourcePrefix,
                 restoreWarnMessage,
                 deleteWarnMessage,

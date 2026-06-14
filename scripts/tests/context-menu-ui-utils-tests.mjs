@@ -19,6 +19,16 @@ import {
 
 {
   const actions = buildContextMenuActions(
+    { role: 'assistant', type: 'text' },
+    { canCheckFormat: true },
+  );
+  assert.equal(actions.find(item => item.key === 'check-format')?.label, '检查格式');
+  assert.equal(buildContextMenuActions({ role: 'assistant', type: 'text' }).some(item => item.key === 'check-format'), false);
+  console.log('ok - buildContextMenuActions exposes manual format check only when enabled');
+}
+
+{
+  const actions = buildContextMenuActions(
     { role: 'user', status: 'pending', meta: {} },
     { hasCode: false, isThreadingEnabled: false },
   );

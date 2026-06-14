@@ -53,6 +53,7 @@ export const buildContextMenuActions = (message, {
   hasCode = false,
   isThreadingEnabled = false,
   inlineGeneratedImage = null,
+  canCheckFormat = false,
 } = {}) => {
   const actions = [];
   const inlineGeneratedAsset = resolveInlineGeneratedImageAsset(message, inlineGeneratedImage);
@@ -87,6 +88,9 @@ export const buildContextMenuActions = (message, {
     });
   }
   if (message?.role === 'assistant') {
+    if (canCheckFormat === true) {
+      actions.push({ key: 'check-format', label: '检查格式', group: 'main' });
+    }
     actions.push({ key: 'copy-text', label: '复制', group: 'main' });
     actions.push({ key: 'regenerate', label: '重新生成', group: 'main' });
     actions.push({ key: 'delete', label: '删除', group: 'danger', tone: 'danger' });
