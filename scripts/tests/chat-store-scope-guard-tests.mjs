@@ -90,6 +90,43 @@ const makeSession = (timestamp = 1) => ({
 }
 
 {
+  const sid = 'rp:persona_archive_edit';
+  const store = new ChatStore({ scopeId: 'persona_archive_edit' });
+  store.state = {
+    currentId: sid,
+    sessions: {
+      [sid]: {
+        messages: [{ id: 'm-edit', role: 'assistant', content: 'edited', timestamp: 1700000000100 }],
+        currentArchiveId: 'arc-a',
+        archives: [
+          { id: 'arc-a', name: 'A', timestamp: 1700000000000, messageCount: 2 },
+          { id: 'arc-b', name: 'B', timestamp: 1700000000200, messageCount: 1 },
+        ],
+      },
+    },
+  };
+  store.currentId = sid;
+  store._useV2 = true;
+  let cloneCalled = false;
+  store._v2 = {
+    getThreadTotal: (_sid, archiveId) => (archiveId === 'arc-a' ? 3 : 0),
+    enqueue: () => {
+      cloneCalled = true;
+      return Promise.resolve();
+    },
+  };
+
+  const archiveId = store.startNewChat(sid, '');
+  assert.equal(archiveId, 'arc-a');
+  assert.equal(cloneCalled, false);
+  assert.deepEqual(store.state.sessions[sid].archives.map(item => item.id), ['arc-a', 'arc-b']);
+  assert.equal(store.state.sessions[sid].archives[0].messageCount, 3);
+  assert.equal(store.state.sessions[sid].currentArchiveId, null);
+  assert.deepEqual(store.state.sessions[sid].messages, []);
+  console.log('ok - ChatStore startNewChat updates attached archive instead of creating an empty archive');
+}
+
+{
   const sid = 'rp:persona_archive_recover';
   const store = new ChatStore({ scopeId: 'persona_archive_recover' });
   store.state = {

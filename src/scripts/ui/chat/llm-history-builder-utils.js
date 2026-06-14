@@ -28,6 +28,7 @@ export const buildLlmHistoryForSession = ({
   const candidates = buildLlmHistoryCandidates(messages || [], {
     excludeMessageIds,
     isRpMode,
+    rpUiMode,
     isGroupChat,
   });
   const history = candidates

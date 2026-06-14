@@ -4,6 +4,7 @@
 
 import { logger } from '../utils/logger.js';
 import { getCurrentWorldId, setCurrentWorld } from './world-session-runtime-utils.js';
+import { buildRpFloorAssignments } from './chat/message-interaction-utils.js';
 
 const RP_HIDE_META_KEY = 'hiddenFromRpPrompt';
 
@@ -20,8 +21,8 @@ const resolveUiMode = (ctx = {}) => {
 
 const isRpMode = (ctx = {}) => resolveUiMode(ctx) === 'rp';
 
-const parseIndexRange = (token, maxIndex) => {
-  const upper = Number.isFinite(maxIndex) ? Number(maxIndex) : -1;
+const parseFloorRange = (token, maxFloor) => {
+  const upper = Number.isFinite(maxFloor) ? Number(maxFloor) : -1;
   if (upper < 0) return null;
   const raw = String(token || '').trim();
   if (!raw) return { start: upper, end: upper };
@@ -51,6 +52,18 @@ const getPromptEligibleMessages = (chatStore) => {
   );
 };
 
+const buildPromptFloorTargets = (messages = []) => {
+  const eligible = Array.isArray(messages) ? messages : [];
+  const assignments = buildRpFloorAssignments(eligible);
+  return eligible
+    .map((message, index) => {
+      const floor = Number(assignments[index]?.floor);
+      if (!Number.isFinite(floor)) return null;
+      return { message, floor };
+    })
+    .filter(Boolean);
+};
+
 const setPromptHiddenState = ({ chatStore, ui, reloadCurrentSession }, token, hidden) => {
   const sessionId = String(chatStore?.getCurrent?.() || '').trim();
   if (!sessionId) {
@@ -62,14 +75,16 @@ const setPromptHiddenState = ({ chatStore, ui, reloadCurrentSession }, token, hi
     window.toastr?.info?.('当前会话暂无可处理的消息');
     return;
   }
-  const range = parseIndexRange(token, eligible.length - 1);
+  const floorTargets = buildPromptFloorTargets(eligible);
+  const maxFloor = floorTargets.reduce((max, item) => Math.max(max, item.floor), -1);
+  const range = parseFloorRange(token, maxFloor);
   if (!range) {
     window.toastr?.warning?.('请使用 /hide、/hide 3 或 /hide 2-5');
     return;
   }
   let changed = 0;
-  for (let index = range.start; index <= range.end; index += 1) {
-    const target = eligible[index];
+  const targets = floorTargets.filter(item => item.floor >= range.start && item.floor <= range.end);
+  for (const { message: target } of targets) {
     if (!target?.id) continue;
     const meta = target.meta && typeof target.meta === 'object' ? { ...target.meta } : {};
     if (Boolean(meta[RP_HIDE_META_KEY]) === hidden) continue;
@@ -87,8 +102,8 @@ const setPromptHiddenState = ({ chatStore, ui, reloadCurrentSession }, token, hi
   const label = range.start === range.end ? `${range.start}` : `${range.start}-${range.end}`;
   window.toastr?.success?.(
     hidden
-      ? `已隐藏消息 ${label}，后续创意写作提示词将忽略它`
-      : `已恢复消息 ${label} 到创意写作提示词`
+      ? `已隐藏楼层 ${label}，后续创意写作提示词将忽略它`
+      : `已恢复楼层 ${label} 到创意写作提示词`
   );
 };
 
@@ -222,14 +237,14 @@ const COMMANDS = {
     }
   },
   '/hide': {
-    desc: '/hide [消息索引或范围] 隐藏消息，不参与创意写作提示词',
+    desc: '/hide [楼层或范围] 隐藏楼层，不参与创意写作提示词',
     rpOnly: true,
     run: async (ctx, args) => {
       setPromptHiddenState(ctx, args[1], true);
     }
   },
   '/unhide': {
-    desc: '/unhide [消息索引或范围] 恢复消息到创意写作提示词',
+    desc: '/unhide [楼层或范围] 恢复楼层到创意写作提示词',
     rpOnly: true,
     run: async (ctx, args) => {
       setPromptHiddenState(ctx, args[1], false);

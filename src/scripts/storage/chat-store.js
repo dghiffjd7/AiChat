@@ -2965,8 +2965,8 @@ export class ChatStore {
       ? this._v2.getThreadTotal(sid, session.currentArchiveId)
       : (session.messages || []).length;
     if (totalMessages > 0) {
-      // Force create a snapshot of current state before clearing
-      archiveId = this.archiveCurrentMessages(sid, archiveName, true, options);
+      const currentArchiveId = String(session.currentArchiveId || '').trim();
+      archiveId = this.archiveCurrentMessages(sid, archiveName, !currentArchiveId, options);
     }
 
     session.messages = [];

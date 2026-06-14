@@ -42,6 +42,13 @@ test('shouldIncludeLlmHistoryMessage filters pending, excluded, hidden rp, and p
     false,
   );
   assert.equal(
+    shouldIncludeLlmHistoryMessage(
+      { id: 'u3', role: 'user', content: 'x', meta: { hiddenFromRpPrompt: true } },
+      { rpUiMode: true },
+    ),
+    false,
+  );
+  assert.equal(
     shouldIncludeLlmHistoryMessage({ id: 's1', role: 'system', content: 'sys' }, { isGroupChat: false }),
     false,
   );

@@ -17,6 +17,7 @@ import {
   deactivateSessionEnterView,
   finalizeSessionEnterNavigation,
   finalizeSessionEnterUiState,
+  hasRecoverableActiveGenerationStream,
   loadSessionEnterHistoryStage,
   pickSavedUiStateSnapshot,
   readSavedUiStateFastSnapshot,
@@ -32,6 +33,24 @@ import {
   runSavedUiRestoreFlow,
   saveUiStateSnapshot,
 } from '../../src/scripts/ui/chat/session-enter-runtime.js';
+
+{
+  assert.equal(hasRecoverableActiveGenerationStream(null), false);
+  assert.equal(hasRecoverableActiveGenerationStream({ streamText: ' 正文 ' }), true);
+  assert.equal(hasRecoverableActiveGenerationStream({
+    streamText: '',
+    streamPayload: {
+      content: '',
+      reasoningDisplay: '已有推理',
+    },
+  }), true);
+  assert.equal(hasRecoverableActiveGenerationStream({
+    streamText: '',
+    streamPayload: { content: '', raw: '' },
+    streamMeta: { reasoningSource: '  ' },
+  }), false);
+  console.log('ok - hasRecoverableActiveGenerationStream detects reasoning-only stream payloads');
+}
 
 {
   assert.deepEqual(buildSessionEnterTraceEvent({
@@ -1227,4 +1246,30 @@ import {
     ['typing', 'avatar:s1', { sid: 's1' }],
   ]);
   console.log('ok - finalizeSessionEnterUiState restores ui state and reattaches typing');
+}
+
+{
+  const calls = [];
+  const result = finalizeSessionEnterUiState({
+    sessionId: 's-reasoning',
+    refreshChatAndContacts: () => calls.push(['refresh']),
+    activeGeneration: {
+      sessionId: 's-reasoning',
+      cancelled: false,
+      streamText: '',
+      streamPayload: {
+        content: '',
+        reasoningDisplay: '已经流出的推理',
+        meta: { renderRich: true },
+      },
+      reattachStream: () => {
+        calls.push(['reattach']);
+        return true;
+      },
+    },
+    showTyping: () => calls.push(['typing']),
+  });
+  assert.deepEqual(result, { refreshMs: 0, reattached: true });
+  assert.deepEqual(calls, [['refresh'], ['reattach']]);
+  console.log('ok - finalizeSessionEnterUiState reattaches reasoning-only active streams');
 }

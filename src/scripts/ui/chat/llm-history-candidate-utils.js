@@ -21,6 +21,7 @@ export const shouldIncludeLlmHistoryMessage = (
   {
     excludeMessageIds = null,
     isRpMode = false,
+    rpUiMode = false,
     isGroupChat = false,
   } = {},
 ) => {
@@ -30,7 +31,7 @@ export const shouldIncludeLlmHistoryMessage = (
     const messageId = String(message?.id || '');
     if (excludeMessageIds.has(messageId)) return false;
   }
-  if (isRpMode && message?.meta?.hiddenFromRpPrompt === true) return false;
+  if ((isRpMode || rpUiMode) && message?.meta?.hiddenFromRpPrompt === true) return false;
   if (typeof message.content !== 'string') return false;
   if (message.role === 'user' || message.role === 'assistant') return true;
   return isGroupChat && message.role === 'system';

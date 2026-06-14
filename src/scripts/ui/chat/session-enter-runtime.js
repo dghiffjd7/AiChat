@@ -31,6 +31,38 @@ export const buildSessionEnterTraceEvent = ({
   return event;
 };
 
+const hasNonBlankText = value => String(value ?? '').trim().length > 0;
+
+export const hasRecoverableActiveGenerationStream = (generation = null) => {
+  if (!generation || typeof generation !== 'object') return false;
+  if (hasNonBlankText(generation.streamText)) return true;
+  const payload = generation.streamPayload && typeof generation.streamPayload === 'object'
+    ? generation.streamPayload
+    : null;
+  const meta = generation.streamMeta && typeof generation.streamMeta === 'object'
+    ? generation.streamMeta
+    : null;
+  const payloadMeta = payload?.meta && typeof payload.meta === 'object' ? payload.meta : null;
+  const candidates = [
+    payload?.content,
+    payload?.raw,
+    payload?.rawSource,
+    payload?.raw_source,
+    payload?.rawOriginal,
+    payload?.rawOriginalSource,
+    payload?.reasoning,
+    payload?.reasoningDisplay,
+    payload?.reasoningSource,
+    payloadMeta?.reasoning,
+    payloadMeta?.reasoningDisplay,
+    payloadMeta?.reasoningSource,
+    meta?.reasoning,
+    meta?.reasoningDisplay,
+    meta?.reasoningSource,
+  ];
+  return candidates.some(hasNonBlankText);
+};
+
 export const buildSessionEnterStartTraceEvent = ({
   sessionId = '',
   originPage = '',
@@ -1308,8 +1340,8 @@ export const finalizeSessionEnterUiState = ({
   } catch {}
   let reattached = false;
   if (activeGeneration && !activeGeneration.cancelled && activeGeneration.sessionId === sid) {
-    const hasStreamText = String(activeGeneration.streamText || '').trim().length > 0;
-    if (hasStreamText && typeof activeGeneration.reattachStream === 'function') {
+    const hasRecoverableStream = hasRecoverableActiveGenerationStream(activeGeneration);
+    if (hasRecoverableStream && typeof activeGeneration.reattachStream === 'function') {
       try {
         reattached = activeGeneration.reattachStream() === true;
       } catch (err) {
