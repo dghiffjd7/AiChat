@@ -111,7 +111,10 @@ import {
   assert.equal(view.tabs.find(tab => tab.id === 'activity').count, 1);
   assert.equal(view.tabs.find(tab => tab.id === 'agents').count, 1);
   assert.equal(view.tabs.find(tab => tab.id === 'resources').count, 1);
-  assert.equal(view.resources.find(resource => resource.id === 'prompt_library').target.panel, 'presetPanel');
+  const promptResource = view.resources.find(resource => resource.id === 'prompt_library');
+  assert.equal(promptResource.title, '提示词');
+  assert.equal(promptResource.target.panel, 'presetPanel');
+  assert.equal(promptResource.shortcuts.find(shortcut => shortcut.promptId === 'dialogue').label, '私聊');
   assert.equal(view.resources.find(resource => resource.id === 'contact_profiles').count, 1);
   assert.equal(view.safety.continuationCommitPolicy.defaultStrategy, 'append_to_previous_bubble');
   assert.equal(view.safety.sessionGate.writePreviewTools.enabled, false);

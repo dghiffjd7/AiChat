@@ -35,12 +35,25 @@ export class ImageGenerationParamsPanel {
     this.currentConfig = {};
     this.currentSchema = resolveImageGenerationParamSchema({});
     this.isRendering = false;
+    this.mode = 'modal';
+    this.embeddedContainer = null;
+    this.onBack = null;
   }
 
   async show() {
-    if (!this.panel) this.createUI();
+    if (!this.panel || this.mode !== 'modal') this.createUI();
     await this.render();
     this.overlay.style.display = 'block';
+    this.panel.style.display = 'flex';
+  }
+
+  async showEmbedded({ container = null, onBack = null } = {}) {
+    if (!container) return;
+    if (!this.panel || this.mode !== 'embedded' || this.embeddedContainer !== container) {
+      this.createEmbeddedUI(container);
+    }
+    this.onBack = typeof onBack === 'function' ? onBack : null;
+    await this.render();
     this.panel.style.display = 'flex';
   }
 
@@ -49,10 +62,23 @@ export class ImageGenerationParamsPanel {
     if (this.panel) this.panel.style.display = 'none';
   }
 
+  goBack() {
+    if (typeof this.onBack === 'function') {
+      this.onBack();
+      return;
+    }
+    this.hide();
+  }
+
   createUI() {
+    if (this.panel?.parentNode) {
+      this.panel.parentNode.removeChild(this.panel);
+    }
+    this.mode = 'modal';
+    this.embeddedContainer = null;
     this.overlay = document.createElement('div');
     this.overlay.id = 'image-generation-params-overlay';
-    this.overlay.style.cssText = 'display:none; position:fixed; inset:0; background:rgba(0,0,0,0.5); z-index:22000;';
+    this.overlay.style.cssText = 'display:none; position:fixed; inset:0; background:rgba(0,0,0,0.5); z-index:23120;';
     this.overlay.addEventListener('click', () => this.hide());
 
     this.panel = document.createElement('div');
@@ -68,7 +94,7 @@ export class ImageGenerationParamsPanel {
       border:1px solid var(--app-border-default);
       border-radius:16px;
       box-shadow:0 20px 60px rgba(0,0,0,0.36);
-      z-index:23000;
+      z-index:23130;
       overflow:hidden;
       flex-direction:column;
     `;
@@ -105,6 +131,48 @@ export class ImageGenerationParamsPanel {
 
     document.body.appendChild(this.overlay);
     document.body.appendChild(this.panel);
+  }
+
+  createEmbeddedUI(container) {
+    if (this.panel?.parentNode) {
+      this.panel.parentNode.removeChild(this.panel);
+    }
+    this.mode = 'embedded';
+    this.overlay = null;
+    this.embeddedContainer = container;
+
+    this.panel = document.createElement('div');
+    this.panel.id = 'image-generation-params-panel';
+    this.panel.style.cssText = `
+      display:none;
+      min-height:0;
+      color:var(--app-text-primary);
+      flex-direction:column;
+    `;
+    this.panel.innerHTML = `
+      <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; padding-bottom:14px; border-bottom:1px solid var(--app-border-default);">
+        <div style="display:flex; align-items:center; gap:10px; min-width:0;">
+          <button type="button" data-action="back" style="min-height:32px; border:1px solid var(--app-border-default); border-radius:8px; background:var(--app-surface-subtle); color:var(--app-text-primary); padding:6px 10px; cursor:pointer;">‹ 返回</button>
+          <div style="min-width:0;">
+            <div style="font-size:18px; font-weight:900;">图片生成参数</div>
+            <div style="font-size:12px; color:var(--app-text-muted); margin-top:3px;">质量、尺寸、输出格式等共享参数</div>
+          </div>
+        </div>
+      </div>
+      <div data-role="body" style="min-height:0; padding:16px 0 0;"></div>
+      <div data-role="status" style="display:none; margin-top:12px; padding:10px 12px; border-radius:10px; font-size:13px;"></div>
+      <div style="display:flex; justify-content:flex-end; gap:10px; padding-top:14px; margin-top:14px; border-top:1px solid var(--app-border-default);">
+        <button type="button" data-action="cancel" style="padding:10px 16px; border-radius:10px; border:1px solid var(--app-border-default); background:var(--app-surface-subtle); color:var(--app-text-primary); cursor:pointer;">返回</button>
+        <button type="button" data-action="save" style="padding:10px 18px; border-radius:10px; border:none; background:#2563eb; color:var(--app-text-inverse); font-weight:800; cursor:pointer;">保存参数</button>
+      </div>
+    `;
+    this.body = this.panel.querySelector('[data-role="body"]');
+    this.statusEl = this.panel.querySelector('[data-role="status"]');
+    this.panel.querySelector('[data-action="back"]')?.addEventListener('click', () => this.goBack());
+    this.panel.querySelector('[data-action="cancel"]')?.addEventListener('click', () => this.goBack());
+    this.panel.querySelector('[data-action="save"]')?.addEventListener('click', () => this.saveCurrent());
+    container.innerHTML = '';
+    container.appendChild(this.panel);
   }
 
   async resolveConfig() {

@@ -1,6 +1,7 @@
 const DEFAULT_IMAGE_MIME = 'image/png';
 const DEFAULT_GEMINI_REFERENCE_IMAGE_MAX = 3;
 const DEFAULT_OPENAI_GPT_IMAGE_REFERENCE_IMAGE_MAX = 16;
+const DEFAULT_CUSTOM_OPENAI_REFERENCE_IMAGE_MAX = 16;
 
 const createId = (prefix = 'media') => {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
@@ -104,7 +105,15 @@ export const resolveImageReferenceCapability = (config = {}) => {
   }
 
   if (provider === 'custom') {
-    return unsupported('当前自定义 OpenAI 兼容图片链路暂不支持参考图');
+    const max = explicitMax !== null ? explicitMax : DEFAULT_CUSTOM_OPENAI_REFERENCE_IMAGE_MAX;
+    return {
+      supported: max > 0,
+      max,
+      reason: max > 0
+        ? `当前自定义 OpenAI 兼容图片链路支持最多 ${max} 张参考图`
+        : '当前配置已关闭参考图输入',
+      source: explicitMax !== null ? 'config' : 'builtin',
+    };
   }
 
   if (provider === 'vertexai') {

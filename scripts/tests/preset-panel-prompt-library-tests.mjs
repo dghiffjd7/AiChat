@@ -14,12 +14,15 @@ const source = readFileSync(panelPath, 'utf8');
   assert.doesNotMatch(source, /pp-prompt-library-workspace/);
   assert.doesNotMatch(source, /pp-prompt-library-detailbar/);
   assert.doesNotMatch(source, /dataset\.promptLibraryFilter/);
+  assert.doesNotMatch(source, /promptLibraryId/);
+  assert.doesNotMatch(source, /点击区块标题展开编辑/);
+  assert.doesNotMatch(source, /fixedHint/);
+  assert.doesNotMatch(source, /固定注入：/);
   assert.doesNotMatch(source, /openPromptDetail/);
   console.log('ok - chat prompt editor no longer renders prompt library summary or detail navigation');
 }
 
 {
-  assert.match(source, /点击区块标题展开编辑/);
   assert.match(source, /const list = document\.createElement\('div'\);/);
   assert.match(source, /list\.style\.cssText = 'display:flex; flex-direction:column; gap:10px;'/);
   assert.match(source, /wrap\.appendChild\(list\);/);
@@ -38,8 +41,14 @@ const source = readFileSync(panelPath, 'utf8');
 {
   const toggleHandlerCount = (source.match(/header\.addEventListener\('click', \(\) => setCollapsed\(card\.dataset\.collapsed !== 'true'\)\)/g) || []).length;
   assert.ok(toggleHandlerCount >= 2, 'expected reusable prompt blocks and default format block to toggle inline');
+  assert.match(source, /card\.dataset\.promptId = cfg\.idPrefix/);
+  assert.match(source, /card\.dataset\.promptId = 'ds-format'/);
+  assert.match(source, /const focusPromptId = String\(focusOptions\.promptId \|\| ''\)\.trim\(\)/);
+  assert.match(source, /setCollapsed\(!shouldFocus\)/);
+  assert.match(source, /scrollIntoView\?\.\(\{ block: 'center', behavior: reduceMotion \? 'auto' : 'smooth' \}\)/);
+  assert.match(source, /classList\.add\('is-jump-target'\)/);
+  assert.match(source, /\.pp-block-body textarea:not\(\[style\*="display: none"\]\), \.pp-block-body select, \.pp-block-body input/);
   assert.match(source, /card\.dataset\.collapsed = collapsed \? 'true' : 'false'/);
   assert.match(source, /body\.style\.display = collapsed \? 'none' : 'block'/);
-  assert.match(source, /setCollapsed\(true\)/);
-  console.log('ok - chat prompt blocks use inline expand and collapse behavior');
+  console.log('ok - chat prompt blocks use inline expand collapse and promptId focus behavior');
 }

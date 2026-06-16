@@ -74,6 +74,7 @@ export class ConfigPanel {
         this.customSelectMenuAnchor = null;
         this.transportExpanded = false;
         this.openOptions = {};
+        this.currentPage = 'main';
         this.imageGenerationParamsPanel = new ImageGenerationParamsPanel({
             getImageConfig: async () => {
                 const draft = this.getDraftConfig?.({ tab: 'image' });
@@ -105,6 +106,7 @@ export class ConfigPanel {
         }
         this.refreshProfileOptions();
         this.populateForm(config);
+        this.hideImageParamsPage();
 
         this.element.style.display = 'block';
         this.overlayElement.style.display = 'block';
@@ -114,6 +116,8 @@ export class ConfigPanel {
      * 隐藏配置面板
      */
     hide() {
+        this.hideImageParamsPage();
+        this.imageGenerationParamsPanel.hide();
         if (this.element) {
             this.element.style.display = 'none';
             this.overlayElement.style.display = 'none';
@@ -131,6 +135,7 @@ export class ConfigPanel {
 
     async setActiveTab(tab, { skipLoad = false } = {}) {
         const next = tab === 'image' ? 'image' : 'chat';
+        this.hideImageParamsPage();
         this.activeTab = next;
         this.configManager = next === 'image' ? this.imageConfigManager : this.chatConfigManager;
         this.updateTabUI();
@@ -235,6 +240,34 @@ export class ConfigPanel {
         }
     }
 
+    async showImageParamsPage() {
+        if (!this.element) return;
+        this.closeCustomSelectMenu();
+        if (this.activeTab !== 'image') {
+            await this.setActiveTab('image');
+        }
+        const mainPage = this.element.querySelector('#config-main-page');
+        const paramsPage = this.element.querySelector('#config-image-params-page');
+        if (!mainPage || !paramsPage) return;
+        this.currentPage = 'imageParams';
+        mainPage.style.display = 'none';
+        paramsPage.style.display = 'block';
+        await this.imageGenerationParamsPanel.showEmbedded({
+            container: paramsPage,
+            onBack: () => this.hideImageParamsPage(),
+        });
+    }
+
+    hideImageParamsPage() {
+        if (!this.element) return;
+        const mainPage = this.element.querySelector('#config-main-page');
+        const paramsPage = this.element.querySelector('#config-image-params-page');
+        this.currentPage = 'main';
+        this.imageGenerationParamsPanel.hide();
+        if (mainPage) mainPage.style.display = 'block';
+        if (paramsPage) paramsPage.style.display = 'none';
+    }
+
     /**
      * 创建 UI 元素
      */
@@ -264,6 +297,7 @@ export class ConfigPanel {
                     <h2 id="config-title" style="margin: 0; color: var(--app-text-primary);">聊天模型配置</h2>
                     <span style="color:var(--app-text-muted); font-size:12px;">(保存后立即生效)</span>
                 </div>
+                <div id="config-main-page">
                 <div style="display:flex; gap:8px; margin: 8px 0 16px;">
                     <button type="button" class="config-tab is-active" data-tab="chat"
                             style="border:1px solid var(--app-border-default); background:var(--app-surface-card); padding:6px 12px; border-radius:999px; font-size:12px; cursor:pointer;">
@@ -496,6 +530,8 @@ export class ConfigPanel {
                         保存
                     </button>
                 </div>
+                </div>
+                <div id="config-image-params-page" style="display:none;"></div>
             </div>
         `;
         this.element.style.cssText = `
@@ -536,7 +572,7 @@ export class ConfigPanel {
         this.element.querySelector('#config-transport-toggle').onclick = () => this.toggleTransportSection();
         this.element.querySelector('#toggle-proxy-token').onclick = () => this.toggleProxyToken();
         this.element.querySelector('#open-image-generation-params')?.addEventListener('click', () => {
-            this.imageGenerationParamsPanel.show();
+            this.showImageParamsPage();
         });
 
         // 连线设置档切换

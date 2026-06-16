@@ -507,14 +507,14 @@ const PANEL_CSS = `
 }
 .agent-center-resource-list {
     display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: minmax(0, 1fr);
     gap: 8px;
 }
 .agent-center-resource-card {
-    min-height: 154px;
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 8px 12px;
+    align-items: center;
 }
 .agent-center-resource-card:hover {
     border-color: rgba(59,130,246,0.22);
@@ -522,20 +522,49 @@ const PANEL_CSS = `
     transform: translateY(-1px);
 }
 .agent-center-resource-card .agent-center-card-head {
-    align-items: flex-start;
+    align-items: center;
 }
 .agent-center-resource-group {
-    margin-bottom: 3px;
+    margin-bottom: 2px;
     color: var(--app-text-secondary);
     font-size: 11px;
     font-weight: 900;
 }
-.agent-center-resource-detail {
-    flex: 1;
+.agent-center-resource-main {
+    min-width: 0;
 }
-.agent-center-resource-target {
-    font-size: 11px;
-    color: var(--app-text-muted);
+.agent-center-resource-main .agent-center-card-sub {
+    margin-top: 2px;
+}
+.agent-center-resource-shortcuts {
+    grid-column: 1 / -1;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+.agent-center-resource-shortcut {
+    min-height: 28px;
+    border: 1px solid rgba(148,163,184,0.22);
+    border-radius: 8px;
+    background: var(--app-surface-card);
+    color: var(--app-text-primary);
+    padding: 5px 8px;
+    font: inherit;
+    font-size: 12px;
+    font-weight: 800;
+    cursor: pointer;
+    transition: background 120ms ease, border-color 120ms ease, transform 90ms ease, box-shadow 120ms ease;
+}
+.agent-center-resource-shortcut:hover {
+    border-color: rgba(59,130,246,0.28);
+    background: rgba(59,130,246,0.08);
+}
+.agent-center-resource-shortcut:active {
+    transform: translateY(1px);
+}
+.agent-center-resource-actions {
+    margin-top: 0;
+    justify-content: flex-end;
 }
 .agent-center-chip.is-risk-high,
 .agent-center-chip.is-risk-medium {
@@ -595,6 +624,12 @@ const PANEL_CSS = `
     .agent-center-resource-list {
         grid-template-columns: minmax(0, 1fr);
     }
+    .agent-center-resource-card {
+        grid-template-columns: minmax(0, 1fr);
+    }
+    .agent-center-resource-actions {
+        justify-content: flex-start;
+    }
 }
 @media (prefers-reduced-motion: reduce) {
     .agent-center-overlay,
@@ -602,6 +637,7 @@ const PANEL_CSS = `
     .agent-center-button,
     .agent-center-card,
     .agent-center-card-action,
+    .agent-center-resource-shortcut,
     .agent-center-switch,
     .agent-center-filter,
     .agent-center-tab,
@@ -1017,7 +1053,7 @@ const openDefaultAgentResourceTarget = async (target = {}) => {
     if (panelName === 'presetPanel') {
         await Promise.resolve(panel.show?.({
             section: target.section || 'chatprompts',
-            focus: target.focus || 'prompt-library',
+            focus: target.focus || '',
             promptId: target.promptId || '',
         }));
         return true;
@@ -2140,42 +2176,47 @@ export class AgentCenterPanel {
     renderResources() {
         const resources = this.view.resources || [];
         if (!resources.length) return renderEmpty('还没有可管理资源入口。');
-        const intro = renderNotice({
-            title: '统一资源入口',
-            message: '这里仅显示摘要和跳转。同一功能无论从哪里进入，都打开对应主界面并定位到相关资源，避免多处重复管理。',
-        });
-        return `${intro}<div class="agent-center-resource-list">${resources.map(resource => {
-            const targetText = formatMeta([
-                resource.target?.panel ? `主界面：${resource.target.panel}` : '',
-                resource.target?.section ? `页面：${resource.target.section}` : '',
-                resource.target?.focus ? `定位：${resource.target.focus}` : '',
-                resource.target?.tab ? `页签：${resource.target.tab}` : '',
-            ]);
+        return `<div class="agent-center-resource-list">${resources.map(resource => {
+            const shortcuts = Array.isArray(resource.shortcuts) ? resource.shortcuts.filter(item => item?.label && item?.promptId) : [];
             return `
             <article class="agent-center-card agent-center-resource-card">
-                <div class="agent-center-card-head">
-                    <div>
-                        <div class="agent-center-resource-group">${escapeHtml(resource.group || '资源')}</div>
-                        <div class="agent-center-card-title">${escapeHtml(resource.title || resource.id)}</div>
+                <div class="agent-center-resource-main">
+                    <div class="agent-center-card-head">
+                        <div>
+                            <div class="agent-center-resource-group">${escapeHtml(resource.group || '资源')}</div>
+                            <div class="agent-center-card-title">${escapeHtml(resource.title || resource.id)}</div>
+                        </div>
+                        <span class="${escapeHtml(statusChipClass(Number(resource.count || 0) > 0 ? 'pending' : 'succeeded'))}">${escapeHtml(resource.status || '就绪')}</span>
                     </div>
-                    <span class="${escapeHtml(statusChipClass(Number(resource.count || 0) > 0 ? 'pending' : 'succeeded'))}">${escapeHtml(resource.status || '就绪')}</span>
+                    ${resource.summary ? `<div class="agent-center-card-sub">${escapeHtml(resource.summary)}</div>` : ''}
                 </div>
-                <div class="agent-center-card-sub">${escapeHtml(resource.summary || '')}</div>
-                <div class="agent-center-card-sub agent-center-resource-detail">${escapeHtml(resource.detail || '')}</div>
-                ${renderChips((resource.chips || []).map(label => ({ label })))}
-                ${targetText ? `<div class="agent-center-resource-target">${escapeHtml(targetText)}</div>` : ''}
-                <div class="agent-center-card-actions">
+                <div class="agent-center-card-actions agent-center-resource-actions">
                     <button type="button" class="agent-center-card-action is-primary" data-resource-open="${escapeHtml(resource.id)}">${escapeHtml(resource.actionLabel || '打开')}</button>
-                    ${Number(resource.count || 0) > 0 ? `<button type="button" class="agent-center-card-action" data-resource-pending="${escapeHtml(resource.id)}">查看待处理</button>` : ''}
+                    ${Number(resource.count || 0) > 0 ? `<button type="button" class="agent-center-card-action" data-resource-pending="${escapeHtml(resource.id)}">待处理</button>` : ''}
                 </div>
+                ${shortcuts.length ? `<div class="agent-center-resource-shortcuts">${shortcuts.map(shortcut => `
+                    <button
+                        type="button"
+                        class="agent-center-resource-shortcut"
+                        data-resource-open="${escapeHtml(resource.id)}"
+                        data-resource-prompt-id="${escapeHtml(shortcut.promptId)}"
+                    >${escapeHtml(shortcut.label)}</button>
+                `).join('')}</div>` : ''}
             </article>
         `; }).join('')}</div>`;
     }
 
-    async handleResourceOpen(resourceId = '') {
+    async handleResourceOpen(resourceId = '', options = {}) {
         const resource = findAgentCenterResource(this.view.resources || [], resourceId);
         if (!resource) return;
-        const ok = await Promise.resolve(this.openResourceTarget?.(resource.target || {}, resource));
+        const opts = options && typeof options === 'object' ? options : {};
+        const target = {
+            ...(resource.target || {}),
+            ...(opts.target || {}),
+        };
+        if (opts.promptId) target.promptId = opts.promptId;
+        if (opts.focus) target.focus = opts.focus;
+        const ok = await Promise.resolve(this.openResourceTarget?.(target, resource));
         if (ok) {
             this.hide();
             return;
@@ -2340,7 +2381,9 @@ export class AgentCenterPanel {
         }
         if (this.activeTab === 'resources') {
             this.contentElement.querySelectorAll('[data-resource-open]').forEach((button) => {
-                button.addEventListener('click', () => this.handleResourceOpen(button.dataset.resourceOpen || ''));
+                button.addEventListener('click', () => this.handleResourceOpen(button.dataset.resourceOpen || '', {
+                    promptId: button.dataset.resourcePromptId || '',
+                }));
             });
             this.contentElement.querySelectorAll('[data-resource-pending]').forEach((button) => {
                 button.addEventListener('click', () => this.handleResourcePending(button.dataset.resourcePending || ''));

@@ -145,6 +145,47 @@ import {
     provider: 'custom',
     apiKey: 'test',
     baseUrl: 'https://example.com/v1',
+    model: 'image-model',
+  });
+  let request = null;
+  provider.requestJson = async nextRequest => {
+    request = nextRequest;
+    return { data: [{ b64_json: 'abc123' }] };
+  };
+  await provider.generateImage('cat', {
+    referenceImages: [
+      'data:image/png;base64,cmVmMQ==',
+      { dataUrl: 'data:image/jpeg;base64,cmVmMg==', name: 'ref-two.jpg' },
+    ],
+    size: '1024x1024',
+    quality: 'high',
+    output_format: 'webp',
+    output_compression: 75,
+    seed: 42,
+  });
+  assert.equal(request.url, 'https://example.com/v1/images/edits');
+  assert.match(request.headers['Content-Type'], /^multipart\/form-data; boundary=MiPhoneCustomImage/);
+  assert.equal(typeof request.bodyBase64, 'string');
+  assert.equal(request.bodyBase64.length > 0, true);
+  assert.equal(Buffer.compare(Buffer.from(request.body), Buffer.from(request.bodyBase64, 'base64')), 0);
+  const bodyText = Buffer.from(request.bodyBase64, 'base64').toString('utf8');
+  assert.match(bodyText, /name="model"\r\n\r\nimage-model/);
+  assert.match(bodyText, /name="prompt"\r\n\r\ncat/);
+  assert.match(bodyText, /name="image\[\]"; filename="reference_1\.png"/);
+  assert.match(bodyText, /Content-Type: image\/png/);
+  assert.match(bodyText, /name="image\[\]"; filename="ref-two\.jpg"/);
+  assert.match(bodyText, /Content-Type: image\/jpeg/);
+  assert.match(bodyText, /name="output_format"\r\n\r\nwebp/);
+  assert.match(bodyText, /name="output_compression"\r\n\r\n75/);
+  assert.match(bodyText, /name="seed"\r\n\r\n42/);
+  console.log('ok - custom image provider sends reference images as multipart image edits');
+}
+
+{
+  const provider = new CustomProvider({
+    provider: 'custom',
+    apiKey: 'test',
+    baseUrl: 'https://example.com/v1',
     model: 'chat-model',
   });
   let body = null;
@@ -413,6 +454,48 @@ import {
     }
   }
   console.log('ok - custom chat provider streams through native SSE chunks');
+}
+
+{
+  const previousTauri = globalThis.__TAURI__;
+  let nativeArgs = null;
+  globalThis.__TAURI__ = {
+    core: {
+      invoke: async (cmd, args) => {
+        assert.equal(cmd, 'http_request');
+        nativeArgs = args;
+        return {
+          status: 200,
+          ok: true,
+          headers: {},
+          body: JSON.stringify({ data: [{ b64_json: 'abc123' }] }),
+        };
+      },
+    },
+  };
+  try {
+    const provider = new CustomProvider({
+      provider: 'custom',
+      apiKey: 'test',
+      baseUrl: 'https://example.com/v1',
+      model: 'image-model',
+    });
+    await provider.generateImage('cat', {
+      referenceImages: ['data:image/png;base64,cmVm'],
+    });
+    assert.equal(nativeArgs.url, 'https://example.com/v1/images/edits');
+    assert.equal(nativeArgs.body, null);
+    assert.equal(typeof nativeArgs.bodyBase64, 'string');
+    assert.equal(nativeArgs.bodyBase64.length > 0, true);
+    assert.match(nativeArgs.headers['Content-Type'], /^multipart\/form-data; boundary=MiPhoneCustomImage/);
+  } finally {
+    if (previousTauri === undefined) {
+      delete globalThis.__TAURI__;
+    } else {
+      globalThis.__TAURI__ = previousTauri;
+    }
+  }
+  console.log('ok - custom image provider passes multipart bytes through native bodyBase64');
 }
 
 {

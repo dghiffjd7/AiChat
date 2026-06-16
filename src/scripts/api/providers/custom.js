@@ -11,6 +11,8 @@ import {
 } from '../native-reasoning.js';
 import { prepareTransportRequest } from '../transport.js';
 
+const DEFAULT_IMAGE_MIME = 'image/png';
+
 const getTauriInvoker = () => {
     const g = typeof globalThis !== 'undefined' ? globalThis : undefined;
     return (
@@ -55,6 +57,159 @@ const normalizeNonNegativeSeed = (value) => {
     const seed = Math.trunc(Number(value));
     if (!Number.isFinite(seed) || seed < 0) return undefined;
     return seed;
+};
+
+const normalizeImageReferenceInputs = (referenceImages = []) => {
+    return (Array.isArray(referenceImages) ? referenceImages : [])
+        .map((item) => {
+            if (typeof item === 'string') {
+                return { dataUrl: item.trim(), name: '', mime: '' };
+            }
+            return {
+                dataUrl: String(item?.dataUrl || item?.data_url || item?.image_url || item?.imageUrl || item?.url || '').trim(),
+                name: String(item?.name || item?.fileName || item?.filename || '').trim(),
+                mime: String(item?.mime || item?.mimeType || item?.type || '').trim(),
+            };
+        })
+        .filter(item => item.dataUrl)
+        .slice(0, 16);
+};
+
+const base64ToBytes = (base64 = '') => {
+    const raw = String(base64 || '').replace(/\s+/g, '');
+    if (!raw) return new Uint8Array();
+    if (typeof Buffer !== 'undefined') {
+        return new Uint8Array(Buffer.from(raw, 'base64'));
+    }
+    const bin = atob(raw);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i += 1) bytes[i] = bin.charCodeAt(i);
+    return bytes;
+};
+
+const bytesToBase64 = (bytes) => {
+    const arr = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes || []);
+    if (typeof Buffer !== 'undefined') {
+        return Buffer.from(arr).toString('base64');
+    }
+    let bin = '';
+    const chunkSize = 0x8000;
+    for (let i = 0; i < arr.length; i += chunkSize) {
+        bin += String.fromCharCode(...arr.subarray(i, i + chunkSize));
+    }
+    return btoa(bin);
+};
+
+const encodeUtf8 = (text = '') => {
+    if (typeof TextEncoder !== 'undefined') return new TextEncoder().encode(String(text));
+    return new Uint8Array(Buffer.from(String(text), 'utf8'));
+};
+
+const concatBytes = (chunks = []) => {
+    const total = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
+    const out = new Uint8Array(total);
+    let offset = 0;
+    chunks.forEach((chunk) => {
+        out.set(chunk, offset);
+        offset += chunk.length;
+    });
+    return out;
+};
+
+const escapeMultipartName = (value = '') => String(value || '').replace(/["\r\n]/g, '_');
+
+const mimeToExtension = (mime = '') => {
+    const raw = String(mime || '').toLowerCase();
+    if (raw.includes('jpeg') || raw.includes('jpg')) return 'jpg';
+    if (raw.includes('webp')) return 'webp';
+    if (raw.includes('gif')) return 'gif';
+    if (raw.includes('avif')) return 'avif';
+    return 'png';
+};
+
+const decodeImageDataUrl = (dataUrl = '') => {
+    const raw = String(dataUrl || '').trim();
+    const match = raw.match(/^data:([^;,]+)?(?:;[^,]*)?;base64,([\s\S]+)$/i);
+    if (!match) {
+        throw new Error('自定义图片参考图需要本地上传的 data:image/...;base64 数据');
+    }
+    const mime = String(match[1] || DEFAULT_IMAGE_MIME).trim() || DEFAULT_IMAGE_MIME;
+    if (!mime.toLowerCase().startsWith('image/')) {
+        throw new Error(`自定义图片参考图不是图片 MIME: ${mime}`);
+    }
+    const bytes = base64ToBytes(match[2]);
+    if (!bytes.length) throw new Error('自定义图片参考图为空');
+    return { mime, bytes };
+};
+
+const appendMultipartText = (chunks, boundary, name, value) => {
+    if (value === undefined || value === null || String(value) === '') return;
+    chunks.push(encodeUtf8([
+        `--${boundary}`,
+        `Content-Disposition: form-data; name="${escapeMultipartName(name)}"`,
+        '',
+        String(value),
+        '',
+    ].join('\r\n')));
+};
+
+const appendMultipartFile = (chunks, boundary, name, file) => {
+    chunks.push(encodeUtf8([
+        `--${boundary}`,
+        `Content-Disposition: form-data; name="${escapeMultipartName(name)}"; filename="${escapeMultipartName(file.filename)}"`,
+        `Content-Type: ${file.mime || DEFAULT_IMAGE_MIME}`,
+        '',
+        '',
+    ].join('\r\n')));
+    chunks.push(file.bytes);
+    chunks.push(encodeUtf8('\r\n'));
+};
+
+const buildCustomImageEditMultipart = ({ prompt, model, options = {}, referenceImages = [] } = {}) => {
+    const boundary = `MiPhoneCustomImage${Date.now().toString(36)}${Math.random().toString(16).slice(2)}`;
+    const chunks = [];
+    appendMultipartText(chunks, boundary, 'model', model);
+    appendMultipartText(chunks, boundary, 'prompt', String(prompt || '').trim());
+    appendMultipartText(chunks, boundary, 'n', Number.isFinite(options.n) ? Math.trunc(options.n) : 1);
+    if (options.size) appendMultipartText(chunks, boundary, 'size', options.size);
+    if (options.quality) appendMultipartText(chunks, boundary, 'quality', options.quality);
+    if (options.style) appendMultipartText(chunks, boundary, 'style', options.style);
+    if (options.background) appendMultipartText(chunks, boundary, 'background', options.background);
+    if (options.outputFormat || options.output_format) {
+        appendMultipartText(chunks, boundary, 'output_format', options.outputFormat || options.output_format);
+    }
+    if (Number.isFinite(options.outputCompression) || Number.isFinite(options.output_compression)) {
+        appendMultipartText(
+            chunks,
+            boundary,
+            'output_compression',
+            Number.isFinite(options.outputCompression) ? Math.trunc(options.outputCompression) : Math.trunc(options.output_compression),
+        );
+    }
+    if (options.moderation) appendMultipartText(chunks, boundary, 'moderation', options.moderation);
+    if (options.user) appendMultipartText(chunks, boundary, 'user', options.user);
+    const responseFormat = options.responseFormat || options.response_format || '';
+    if (responseFormat) appendMultipartText(chunks, boundary, 'response_format', responseFormat);
+    const seed = normalizeNonNegativeSeed(options.seed);
+    if (seed !== undefined) appendMultipartText(chunks, boundary, 'seed', seed);
+
+    referenceImages.forEach((item, index) => {
+        const decoded = decodeImageDataUrl(item.dataUrl);
+        const mime = item.mime || decoded.mime || DEFAULT_IMAGE_MIME;
+        const fallbackName = `reference_${index + 1}.${mimeToExtension(mime)}`;
+        appendMultipartFile(chunks, boundary, 'image[]', {
+            filename: item.name || fallbackName,
+            mime,
+            bytes: decoded.bytes,
+        });
+    });
+    chunks.push(encodeUtf8(`--${boundary}--\r\n`));
+    const body = concatBytes(chunks);
+    return {
+        body,
+        bodyBase64: bytesToBase64(body),
+        contentType: `multipart/form-data; boundary=${boundary}`,
+    };
 };
 
 const buildEndpointUrl = (baseUrl, path) => {
@@ -141,7 +296,7 @@ export class CustomProvider {
         return headers;
     }
 
-    async request({ url, method = 'GET', headers = {}, body = undefined, signal, requestId = '' } = {}) {
+    async request({ url, method = 'GET', headers = {}, body = undefined, bodyBase64 = '', signal, requestId = '' } = {}) {
         const prepared = prepareTransportRequest({
             config: this.transportConfig,
             provider: this.provider,
@@ -157,7 +312,8 @@ export class CustomProvider {
                     url: prepared.url,
                     method,
                     headers: mergedHeaders,
-                    body: typeof body === 'string' ? body : body == null ? null : String(body),
+                    body: bodyBase64 ? null : (typeof body === 'string' ? body : body == null ? null : String(body)),
+                    bodyBase64: bodyBase64 || null,
                     timeoutMs: this.timeout,
                     requestId: requestId || null,
                 });
@@ -173,11 +329,12 @@ export class CustomProvider {
 
         const { controller, cleanup } = createLinkedAbortController({ timeoutMs: this.timeout, signal });
         try {
+            const fetchBody = body !== undefined ? body : (bodyBase64 ? base64ToBytes(bodyBase64) : body);
             const response = await fetch(prepared.url, {
                 method,
                 headers: mergedHeaders,
                 signal: controller.signal,
-                body,
+                body: fetchBody,
             });
             const text = await response.text();
             const outHeaders = {};
@@ -190,8 +347,8 @@ export class CustomProvider {
         }
     }
 
-    async requestJson({ url, method = 'GET', headers = {}, body = undefined, signal, requestId = '' } = {}) {
-        const res = await this.request({ url, method, headers, body, signal, requestId });
+    async requestJson({ url, method = 'GET', headers = {}, body = undefined, bodyBase64 = '', signal, requestId = '' } = {}) {
+        const res = await this.request({ url, method, headers, body, bodyBase64, signal, requestId });
         if (!res.ok) {
             const detail = extractErrorDetail(res.body);
             const error = new Error(`Custom API Error: ${res.status}${detail ? ` - ${detail}` : ''}`);
@@ -406,6 +563,37 @@ export class CustomProvider {
      */
     async generateImage(prompt, options = {}) {
         const { signal } = options || {};
+        const referenceImages = normalizeImageReferenceInputs(options.referenceImages || options.reference_images);
+        if (referenceImages.length) {
+            const multipart = buildCustomImageEditMultipart({
+                prompt,
+                model: this.model,
+                options,
+                referenceImages,
+            });
+            const data = await this.requestJson({
+                url: `${this.baseUrl}/images/edits`,
+                method: 'POST',
+                headers: {
+                    ...this.getHeaders(),
+                    'Content-Type': multipart.contentType,
+                },
+                body: multipart.body,
+                bodyBase64: multipart.bodyBase64,
+                signal,
+            });
+
+            const list = Array.isArray(data?.data) ? data.data : [];
+            return list.map((item, index) => {
+                const b64 = item?.b64_json || item?.b64 || '';
+                if (b64) {
+                    return { dataUrl: `data:image/png;base64,${b64}`, index };
+                }
+                const url = String(item?.url || '').trim();
+                return { url, index };
+            });
+        }
+
         const payload = {
             model: this.model,
             prompt: String(prompt || '').trim(),

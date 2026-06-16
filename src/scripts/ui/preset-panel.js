@@ -647,6 +647,12 @@ const PANEL_CSS = `
 .pp-block {
     border: 1px solid rgba(0,0,0,0.08); border-radius: 12px;
     background: var(--app-surface-card); overflow: hidden;
+    transition: border-color 160ms ease, box-shadow 160ms ease, background 160ms ease;
+}
+.pp-block.is-jump-target {
+    border-color: rgba(14,165,233,0.38);
+    background: rgba(14,165,233,0.05);
+    box-shadow: 0 0 0 3px rgba(14,165,233,0.12);
 }
 .pp-block-header {
     display: flex; align-items: center; justify-content: space-between;
@@ -2010,18 +2016,17 @@ export class PresetPanel {
     /* ── Chat prompts ── */
     renderChatPromptsEditor(p) {
         const wrap = document.createElement('div');
-        const desc = document.createElement('div');
-        desc.style.cssText = 'color:var(--app-text-muted); font-size:12px; margin-bottom:8px;';
-        desc.textContent = '点击区块标题展开编辑。聊天提示词仍按当前预设结构保存，启用状态和注入位置不变。';
-        wrap.appendChild(desc);
-
         const list = document.createElement('div');
         list.style.cssText = 'display:flex; flex-direction:column; gap:10px;';
+        const focusOptions = this.pendingOpenOptions || {};
+        const focusPromptId = String(focusOptions.promptId || '').trim();
+        let focusTarget = null;
 
         const makePromptBlock = (cfg) => {
             const card = document.createElement('div');
             card.className = 'pp-block';
             card.dataset.collapsed = 'true';
+            card.dataset.promptId = cfg.idPrefix;
 
             const isEnabled = p[cfg.enabledKey] !== false;
             if (!isEnabled) card.classList.add('pp-block-disabled');
@@ -2120,12 +2125,7 @@ export class PresetPanel {
             role.value = String(p[cfg.roleKey] ?? EXT_PROMPT_ROLES.SYSTEM);
             const roleWrap = this.wrapSelectWithCustomUI(role, '角色');
 
-            if (cfg.showPlacementControls === false) {
-                const fixedHint = document.createElement('div');
-                fixedHint.style.cssText = 'margin-bottom:10px; padding:10px 12px; border:1px solid #dbeafe; border-radius:12px; background:#eff6ff; color:#1d4ed8; font-size:12px; line-height:1.5;';
-                fixedHint.textContent = cfg.fixedHint || '固定注入位置';
-                body.appendChild(fixedHint);
-            } else if (cfg.showDepthRole !== false) {
+            if (cfg.showPlacementControls !== false && cfg.showDepthRole !== false) {
                 const row = this.renderInputRow([
                     { label: '注入位置', el: posWrap },
                     { label: '深度（IN_CHAT）', el: depth },
@@ -2134,7 +2134,7 @@ export class PresetPanel {
                 body.appendChild(row);
                 this.bindCustomSelect(pos.id, row);
                 this.bindCustomSelect(role.id, row);
-            } else {
+            } else if (cfg.showPlacementControls !== false) {
                 depth.disabled = true;
                 const row = this.renderInputRow([
                     { label: '注入位置', el: posWrap },
@@ -2156,7 +2156,9 @@ export class PresetPanel {
                 body.style.display = collapsed ? 'none' : 'block';
             };
             header.addEventListener('click', () => setCollapsed(card.dataset.collapsed !== 'true'));
-            setCollapsed(true);
+            const shouldFocus = focusPromptId === cfg.idPrefix;
+            setCollapsed(!shouldFocus);
+            if (shouldFocus) focusTarget = card;
 
             return card;
         };
@@ -2172,11 +2174,9 @@ export class PresetPanel {
             rulesKey: 'phone_format_intro_rules',
             placeholder: '手机格式开头',
             showPlacementControls: false,
-            fixedHint: '固定注入：IN_CHAT / SYSTEM / D0。始终排在手机格式链路的第 1 段。',
             metaChips: [
-                { label: '聊天主链路', tone: 'scope' },
                 { label: 'SYSTEM D0', tone: 'placement' },
-                { label: '固定顺序 1/4', tone: 'placement' },
+                { label: '顺序 1/4', tone: 'placement' },
             ],
         }));
         list.appendChild(makePromptBlock({
@@ -2185,11 +2185,9 @@ export class PresetPanel {
             rulesKey: 'phone_format_chat_rules',
             placeholder: 'QQ聊天格式说明',
             showPlacementControls: false,
-            fixedHint: '固定注入：IN_CHAT / SYSTEM / D0。表情包列表会在发送前按当前启用的表情包资源自动替换。',
             metaChips: [
-                { label: '聊天主链路', tone: 'scope' },
                 { label: 'SYSTEM D0', tone: 'placement' },
-                { label: '表情包列表动态填充', tone: 'dynamic' },
+                { label: '表情包自动填充', tone: 'dynamic' },
             ],
         }));
         list.appendChild(makePromptBlock({
@@ -2198,11 +2196,9 @@ export class PresetPanel {
             rulesKey: 'phone_format_moment_rules',
             placeholder: 'QQ空间格式说明',
             showPlacementControls: false,
-            fixedHint: '固定注入：IN_CHAT / SYSTEM / D0。用于动态发布相关格式说明，不参与动态评论回复任务。',
             metaChips: [
-                { label: '聊天主链路', tone: 'scope' },
                 { label: 'SYSTEM D0', tone: 'placement' },
-                { label: '动态评论任务不发送', tone: 'dynamic' },
+                { label: '动态格式', tone: 'dynamic' },
             ],
         }));
         list.appendChild(makePromptBlock({
@@ -2211,11 +2207,9 @@ export class PresetPanel {
             rulesKey: 'phone_format_footer_rules',
             placeholder: '手机格式结尾',
             showPlacementControls: false,
-            fixedHint: '固定注入：IN_CHAT / SYSTEM / D0。始终排在手机格式链路的最后一段。',
             metaChips: [
-                { label: '聊天主链路', tone: 'scope' },
                 { label: 'SYSTEM D0', tone: 'placement' },
-                { label: '固定顺序 4/4', tone: 'placement' },
+                { label: '顺序 4/4', tone: 'placement' },
             ],
         }));
         list.appendChild(makePromptBlock({
@@ -2224,7 +2218,7 @@ export class PresetPanel {
             depthKey: 'dialogue_depth', roleKey: 'dialogue_role',
             rulesKey: 'dialogue_rules', defaultDepth: 1, placeholder: '私聊协议提示词',
             metaChips: [
-                { label: '仅私聊', tone: 'scope' },
+                { label: '私聊', tone: 'scope' },
                 { label: '位置可调', tone: 'placement' },
             ],
         }));
@@ -2234,9 +2228,8 @@ export class PresetPanel {
             depthKey: 'moment_create_depth', roleKey: 'moment_create_role',
             rulesKey: 'moment_create_rules', defaultDepth: 0, placeholder: '动态发布决策提示词',
             metaChips: [
-                { label: '私聊/群聊', tone: 'scope' },
-                { label: '按任务条件发送', tone: 'dynamic' },
-                { label: '位置可调', tone: 'placement' },
+                { label: '动态发布', tone: 'scope' },
+                { label: '条件发送', tone: 'dynamic' },
             ],
         }));
         list.appendChild(makePromptBlock({
@@ -2245,8 +2238,7 @@ export class PresetPanel {
             depthKey: 'moment_comment_depth', roleKey: 'moment_comment_role',
             rulesKey: 'moment_comment_rules', defaultDepth: 0, placeholder: '动态评论回复规则',
             metaChips: [
-                { label: '仅动态评论回复', tone: 'scope' },
-                { label: '私聊/群聊不发送', tone: 'dynamic' },
+                { label: '动态评论', tone: 'scope' },
                 { label: '位置可调', tone: 'placement' },
             ],
         }));
@@ -2256,8 +2248,7 @@ export class PresetPanel {
             depthKey: 'moment_publish_comment_depth', roleKey: 'moment_publish_comment_role',
             rulesKey: 'moment_publish_comment_rules', defaultDepth: 0, placeholder: '用户发布动态后的评论规则',
             metaChips: [
-                { label: '仅发布后评论', tone: 'scope' },
-                { label: '私聊/群聊不发送', tone: 'dynamic' },
+                { label: '发布后评论', tone: 'scope' },
                 { label: '位置可调', tone: 'placement' },
             ],
         }));
@@ -2267,8 +2258,8 @@ export class PresetPanel {
             depthKey: 'auto_image_prompt_depth', roleKey: 'auto_image_prompt_role',
             rulesKey: 'auto_image_prompt_rules', defaultDepth: 0, placeholder: '自动标签生图提示词',
             metaChips: [
-                { label: '于通用设定开启', tone: 'dynamic' },
-                { label: '私聊/群聊/创意写作', tone: 'scope' },
+                { label: '生图', tone: 'scope' },
+                { label: '通用设定', tone: 'dynamic' },
             ],
         }));
         list.appendChild(makePromptBlock({
@@ -2277,7 +2268,7 @@ export class PresetPanel {
             depthKey: 'group_depth', roleKey: 'group_role',
             rulesKey: 'group_rules', defaultDepth: 1, placeholder: '群聊协议提示词',
             metaChips: [
-                { label: '仅群聊', tone: 'scope' },
+                { label: '群聊', tone: 'scope' },
                 { label: '位置可调', tone: 'placement' },
             ],
         }));
@@ -2288,9 +2279,8 @@ export class PresetPanel {
             rulesKey: 'summary_rules', defaultDepth: 1, placeholder: '摘要格式提示词',
             positionOptions: fixedDepthOpts, showDepthRole: false,
             metaChips: [
-                { label: '常规聊天', tone: 'scope' },
-                { label: '系统深度 1', tone: 'placement' },
-                { label: '记忆表格模式会替代', tone: 'replace' },
+                { label: '摘要', tone: 'scope' },
+                { label: '记忆模式替代', tone: 'replace' },
             ],
         }));
 
@@ -2299,6 +2289,7 @@ export class PresetPanel {
             const card = document.createElement('div');
             card.className = 'pp-block';
             card.dataset.collapsed = 'true';
+            card.dataset.promptId = 'ds-format';
 
             const header = document.createElement('div');
             header.className = 'pp-block-header';
@@ -2317,10 +2308,8 @@ export class PresetPanel {
             const meta = document.createElement('div');
             meta.className = 'pp-block-meta';
             [
-                { label: '仅 Default 预设', tone: 'scope' },
-                { label: '私聊/群聊/动态评论', tone: 'scope' },
-                { label: '末尾 system 角色', tone: 'placement' },
-                { label: '动态格式骨架', tone: 'dynamic' },
+                { label: 'Default', tone: 'scope' },
+                { label: '自动生成', tone: 'dynamic' },
             ].forEach(chip => {
                 const el = document.createElement('span');
                 el.className = `pp-meta-chip is-${chip.tone}`;
@@ -2347,7 +2336,7 @@ export class PresetPanel {
             const info = document.createElement('div');
             info.className = 'pp-help';
             info.style.cssText = 'margin-bottom:10px; color:var(--app-text-secondary); font-size:12px; line-height:1.6;';
-            info.textContent = '此区块由运行时自动生成。OpenAI 参数预设为 Default 时注入完整格式提醒；非 Default 时仅把当前私聊/群聊的一句提醒附加到 user input，不带后续格式示例。内容会按当前场景、同步写表、后续图片等功能动态生成，不再使用旧 DeepSeek 文案。';
+            info.textContent = '运行时按当前场景生成格式提醒。';
             body.appendChild(info);
             const preview = document.createElement('pre');
             preview.className = 'pp-code-preview';
@@ -2374,11 +2363,29 @@ export class PresetPanel {
                 body.style.display = collapsed ? 'none' : 'block';
             };
             header.addEventListener('click', () => setCollapsed(card.dataset.collapsed !== 'true'));
-            setCollapsed(true);
+            const shouldFocus = focusPromptId === 'ds-format';
+            setCollapsed(!shouldFocus);
+            if (shouldFocus) focusTarget = card;
             list.appendChild(card);
         }
 
         wrap.appendChild(list);
+        if (focusTarget) {
+            const focusBlock = () => {
+                const reduceMotion = globalThis.window?.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches === true;
+                focusTarget.scrollIntoView?.({ block: 'center', behavior: reduceMotion ? 'auto' : 'smooth' });
+                focusTarget.classList.add('is-jump-target');
+                globalThis.window?.setTimeout?.(() => {
+                    focusTarget.classList.remove('is-jump-target');
+                }, 1400);
+                focusTarget.querySelector?.('.pp-block-body textarea:not([style*="display: none"]), .pp-block-body select, .pp-block-body input')?.focus?.({ preventScroll: true });
+            };
+            if (globalThis.window?.requestAnimationFrame) {
+                globalThis.window.requestAnimationFrame(focusBlock);
+            } else {
+                focusBlock();
+            }
+        }
         return wrap;
     }
 

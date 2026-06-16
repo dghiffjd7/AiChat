@@ -1087,28 +1087,37 @@ import {
     resources: [
       {
         id: 'prompt_library',
-        group: '提示词',
-        title: 'Prompt Library',
-        summary: '统一管理提示词。',
-        detail: '编辑进入二级详情。',
-        status: '统一入口',
-        target: { panel: 'presetPanel', section: 'chatprompts', focus: 'prompt-library' },
-        actionLabel: '打开提示词库',
-        chips: ['统一入口', '二级详情'],
+        group: '预设',
+        title: '提示词',
+        summary: '私聊、群聊、动态、生图和摘要。',
+        status: '12 项',
+        target: { panel: 'presetPanel', section: 'chatprompts' },
+        actionLabel: '打开',
+        shortcuts: [
+          { id: 'dialogue', label: '私聊', promptId: 'dialogue' },
+          { id: 'group', label: '群聊', promptId: 'group' },
+        ],
       },
     ],
   };
   const html = panel.renderResources();
-  assert.match(html, /统一资源入口/);
-  assert.match(html, /Prompt Library/);
-  assert.match(html, /主界面：presetPanel/);
+  assert.match(html, /提示词/);
+  assert.match(html, /私聊、群聊、动态、生图和摘要。/);
+  assert.match(html, /data-resource-prompt-id="dialogue"/);
+  assert.match(html, /data-resource-prompt-id="group"/);
   assert.match(html, /data-resource-open="prompt_library"/);
+  assert.doesNotMatch(html, /统一资源入口/);
+  assert.doesNotMatch(html, /Prompt Library/);
+  assert.doesNotMatch(html, /主界面：presetPanel/);
+  assert.doesNotMatch(html, /二级详情/);
   await panel.handleResourceOpen('prompt_library');
   assert.equal(opened.target.panel, 'presetPanel');
   assert.equal(opened.target.section, 'chatprompts');
   assert.equal(opened.resource.id, 'prompt_library');
   assert.equal(hidden, true);
-  console.log('ok - agent center resources render unified entries and open their target panels');
+  await panel.handleResourceOpen('prompt_library', { promptId: 'dialogue' });
+  assert.equal(opened.target.promptId, 'dialogue');
+  console.log('ok - agent center resources render clean entries and prompt shortcuts');
 }
 
 {
@@ -1285,10 +1294,10 @@ import {
     }],
     resources: [{
       id: 'prompt_library',
-      title: 'Prompt Library',
-      group: '提示词',
-      status: '统一入口',
-      summary: '统一管理提示词。',
+      title: '提示词',
+      group: '预设',
+      status: '12 项',
+      summary: '私聊、群聊、动态、生图和摘要。',
     }],
     safety: {
       sessionGate: {
@@ -1309,7 +1318,7 @@ import {
   assert.match(text, /读取联系人列表 · 待确认 · 范围：chat:a/);
   assert.match(text, /正文检查 · 失败 · 范围：chat:a · 发现问题/);
   assert.match(text, /检查回复格式 · 已开启 · 可使用 · 模型：不调用模型/);
-  assert.match(text, /Prompt Library · 分组：提示词 · 状态：统一入口 · 统一管理提示词。/);
+  assert.match(text, /提示词 · 分组：预设 · 状态：12 项 · 私聊、群聊、动态、生图和摘要。/);
   assert.match(text, /工具白名单：读取联系人列表/);
   assert.match(text, /规则冲突：1 组/);
   assert.doesNotMatch(text, /rawOriginal|replacementText|runnerFacade/);

@@ -44,7 +44,9 @@ import {
   assert.equal(resolveImageReferenceCapability({ provider: 'openai', model: 'gpt-image-2' }).max, 16);
   assert.equal(resolveImageReferenceCapability({ provider: 'gemini', model: 'nano-banana-pro' }).max, 3);
   assert.equal(resolveImageReferenceCapability({ provider: 'makersuite', model: 'gemini-2.5-flash-image-preview', maxReferenceImages: 2 }).max, 2);
-  assert.equal(resolveImageReferenceCapability({ provider: 'custom', model: 'image-model', maxReferenceImages: 2 }).supported, false);
+  assert.equal(resolveImageReferenceCapability({ provider: 'custom', model: 'image-model' }).max, 16);
+  assert.equal(resolveImageReferenceCapability({ provider: 'custom', model: 'image-model', maxReferenceImages: 2 }).max, 2);
+  assert.equal(resolveImageReferenceCapability({ provider: 'custom', model: 'image-model', maxReferenceImages: 0 }).supported, false);
   assert.equal(resolveImageReferenceCapability({ provider: 'novelai', model: 'nai-diffusion-4-5-full' }).supported, false);
   console.log('ok - media generation service resolves image reference capabilities');
 }
