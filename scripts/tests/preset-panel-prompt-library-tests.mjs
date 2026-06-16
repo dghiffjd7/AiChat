@@ -8,35 +8,38 @@ const panelPath = resolve(__dirname, '../../src/scripts/ui/preset-panel.js');
 const source = readFileSync(panelPath, 'utf8');
 
 {
-  assert.match(source, /from '\.\/prompt-library-taxonomy\.js'/);
-  assert.match(source, /renderPromptLibrarySummary\(items = \[\]\)/);
-  assert.match(source, /dataset\.promptLibrarySummary = 'chatprompts'/);
-  assert.match(source, /dataset\.promptLibraryFilter = 'all'/);
-  assert.match(source, /pp-prompt-library-summary/);
-  console.log('ok - preset panel imports and renders prompt library summary');
+  assert.doesNotMatch(source, /from '\.\/prompt-library-taxonomy\.js'/);
+  assert.doesNotMatch(source, /renderPromptLibrarySummary/);
+  assert.doesNotMatch(source, /pp-prompt-library-summary/);
+  assert.doesNotMatch(source, /pp-prompt-library-workspace/);
+  assert.doesNotMatch(source, /pp-prompt-library-detailbar/);
+  assert.doesNotMatch(source, /dataset\.promptLibraryFilter/);
+  assert.doesNotMatch(source, /openPromptDetail/);
+  console.log('ok - chat prompt editor no longer renders prompt library summary or detail navigation');
 }
 
 {
-  assert.match(source, /PROMPT_LIBRARY_CATEGORIES\.image[\s\S]*自动标签生图提示词/);
-  assert.match(source, /PROMPT_LIBRARY_CATEGORIES\.moments[\s\S]*动态发布决策提示词/);
-  assert.match(source, /PROMPT_LIBRARY_CATEGORIES\.moments[\s\S]*动态评论回复提示词/);
-  assert.match(source, /PROMPT_LIBRARY_CATEGORIES\.chat[\s\S]*私聊提示词/);
-  console.log('ok - mixed chat prompt entries are classified for library migration');
+  assert.match(source, /点击区块标题展开编辑/);
+  assert.match(source, /const list = document\.createElement\('div'\);/);
+  assert.match(source, /list\.style\.cssText = 'display:flex; flex-direction:column; gap:10px;'/);
+  assert.match(source, /wrap\.appendChild\(list\);/);
+  console.log('ok - chat prompts render as a direct collapsible block list');
 }
 
 {
-  const descIndex = source.indexOf('当前仍统一编辑聊天提示词预设');
-  const summaryIndex = source.indexOf('const promptLibrarySummary = this.renderPromptLibrarySummary(promptLibraryItems);');
-  const listIndex = source.indexOf("list.style.cssText = 'display:flex; flex-direction:column; gap:10px;'");
-  assert.ok(descIndex > -1);
-  assert.ok(summaryIndex > descIndex);
-  assert.ok(listIndex > summaryIndex);
-  console.log('ok - prompt library summary appears before prompt blocks');
+  assert.match(source, /id="\$\{cfg\.idPrefix\}-enabled"/);
+  assert.match(source, /this\.renderTextarea\('规则内容', `\$\{cfg\.idPrefix\}-rules`/);
+  assert.match(source, /enabledInput\.addEventListener\('change'/);
+  assert.match(source, /id = 'ds-format-enabled'/);
+  assert.match(source, /id = 'ds-format-rules'/);
+  console.log('ok - legacy chat prompt field ids remain available for preset saving');
 }
 
 {
-  assert.match(source, /card\.dataset\.promptLibraryCategory = libraryItem\.category/);
-  assert.match(source, /card\.hidden = normalizedCategory !== 'all'/);
-  assert.match(source, /promptLibrarySummary\.addEventListener\('click'/);
-  console.log('ok - prompt library chips filter visible prompt blocks without removing fields');
+  const toggleHandlerCount = (source.match(/header\.addEventListener\('click', \(\) => setCollapsed\(card\.dataset\.collapsed !== 'true'\)\)/g) || []).length;
+  assert.ok(toggleHandlerCount >= 2, 'expected reusable prompt blocks and default format block to toggle inline');
+  assert.match(source, /card\.dataset\.collapsed = collapsed \? 'true' : 'false'/);
+  assert.match(source, /body\.style\.display = collapsed \? 'none' : 'block'/);
+  assert.match(source, /setCollapsed\(true\)/);
+  console.log('ok - chat prompt blocks use inline expand and collapse behavior');
 }

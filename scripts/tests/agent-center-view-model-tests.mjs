@@ -6,7 +6,7 @@ import {
 } from '../../src/scripts/ui/agent-center-view-model.js';
 
 {
-  assert.deepEqual(AGENT_CENTER_TABS.map(tab => tab.id), ['pending', 'activity', 'agents', 'tools', 'safety']);
+  assert.deepEqual(AGENT_CENTER_TABS.map(tab => tab.id), ['pending', 'agents', 'resources', 'activity', 'safety']);
   console.log('ok - agent center exposes user-facing tabs');
 }
 
@@ -84,12 +84,14 @@ import {
   assert.equal(view.meta.unreadFailedRuns, 1);
   assert.equal(view.meta.newestFailureAt, 9);
   assert.equal(view.meta.tools, 2);
+  assert.equal(view.meta.resources, 7);
+  assert.equal(view.meta.resourceAlerts, 1);
   assert.equal(view.pending[0].id, 'profile-pending-1');
   assert.equal(view.pending[0].kind, 'contact_profile_update');
   assert.equal(view.pending[0].profileSummary, 'Bob · 特征 1 · 互动重点 1');
   assert.deepEqual(view.pending.map(item => item.id), ['profile-pending-1', 'permission-1']);
   assert.deepEqual(view.tools.map(tool => tool.name), ['contact_profile.list', 'memory.update_after_chat']);
-  assert.equal(view.meta.agents, 3);
+  assert.equal(view.meta.agents, 5);
   assert.equal(view.meta.enabledAgents, 1);
   assert.equal(view.agents.find(agent => agent.id === 'reply_check').title, '检查回复格式');
   assert.equal(view.agents.find(agent => agent.id === 'reply_check').enabled, true);
@@ -108,7 +110,9 @@ import {
   assert.equal(view.tabs.find(tab => tab.id === 'pending').count, 2);
   assert.equal(view.tabs.find(tab => tab.id === 'activity').count, 1);
   assert.equal(view.tabs.find(tab => tab.id === 'agents').count, 1);
-  assert.equal(view.tabs.find(tab => tab.id === 'tools').count, 2);
+  assert.equal(view.tabs.find(tab => tab.id === 'resources').count, 1);
+  assert.equal(view.resources.find(resource => resource.id === 'prompt_library').target.panel, 'presetPanel');
+  assert.equal(view.resources.find(resource => resource.id === 'contact_profiles').count, 1);
   assert.equal(view.safety.continuationCommitPolicy.defaultStrategy, 'append_to_previous_bubble');
   assert.equal(view.safety.sessionGate.writePreviewTools.enabled, false);
   assert.deepEqual(view.safety.sessionGate.writePreviewTools.activeTools, []);

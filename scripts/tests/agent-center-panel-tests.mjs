@@ -41,6 +41,7 @@ import {
   assert.equal(view.meta.activeRuns, 1);
   assert.equal(view.meta.enabledAgents, 1);
   assert.equal(view.meta.tools, 1);
+  assert.equal(view.meta.resources, 7);
   assert.equal(view.pending[0].kind, 'contact_profile_update');
   assert.equal(view.agents.find(agent => agent.id === 'reply_check').enabled, true);
   assert.equal(view.agentModelProfiles[0].label, '轻量检查 · openrouter / model-a');
@@ -1070,6 +1071,47 @@ import {
 }
 
 {
+  let opened = null;
+  const panel = new AgentCenterPanel({
+    openResourceTarget: async (target, resource) => {
+      opened = { target, resource };
+      return true;
+    },
+  });
+  let hidden = false;
+  panel.hide = () => {
+    hidden = true;
+  };
+  panel.render = () => {};
+  panel.view = {
+    resources: [
+      {
+        id: 'prompt_library',
+        group: '提示词',
+        title: 'Prompt Library',
+        summary: '统一管理提示词。',
+        detail: '编辑进入二级详情。',
+        status: '统一入口',
+        target: { panel: 'presetPanel', section: 'chatprompts', focus: 'prompt-library' },
+        actionLabel: '打开提示词库',
+        chips: ['统一入口', '二级详情'],
+      },
+    ],
+  };
+  const html = panel.renderResources();
+  assert.match(html, /统一资源入口/);
+  assert.match(html, /Prompt Library/);
+  assert.match(html, /主界面：presetPanel/);
+  assert.match(html, /data-resource-open="prompt_library"/);
+  await panel.handleResourceOpen('prompt_library');
+  assert.equal(opened.target.panel, 'presetPanel');
+  assert.equal(opened.target.section, 'chatprompts');
+  assert.equal(opened.resource.id, 'prompt_library');
+  assert.equal(hidden, true);
+  console.log('ok - agent center resources render unified entries and open their target panels');
+}
+
+{
   const panel = new AgentCenterPanel();
   panel.view = {
     tools: [
@@ -1218,7 +1260,7 @@ import {
 
 {
   const text = formatAgentCenterExportText({
-    meta: { pending: 1, activeRuns: 0, unreadFailedRuns: 1, tools: 1 },
+    meta: { pending: 1, activeRuns: 0, unreadFailedRuns: 1, tools: 1, resources: 1 },
     pending: [{
       toolName: 'contact_profile.list',
       status: 'pending',
@@ -1241,11 +1283,12 @@ import {
       implemented: true,
       modelLabel: '不调用模型',
     }],
-    tools: [{
-      name: 'contact_profile.list',
-      riskLevel: 'low',
-      permissions: ['storage'],
-      capabilities: { read: true, write: false, network: false, cost: 'none', undo: 'none', modelContext: 'allowlist', confirmation: 'allow_once' },
+    resources: [{
+      id: 'prompt_library',
+      title: 'Prompt Library',
+      group: '提示词',
+      status: '统一入口',
+      summary: '统一管理提示词。',
     }],
     safety: {
       sessionGate: {
@@ -1266,6 +1309,7 @@ import {
   assert.match(text, /读取联系人列表 · 待确认 · 范围：chat:a/);
   assert.match(text, /正文检查 · 失败 · 范围：chat:a · 发现问题/);
   assert.match(text, /检查回复格式 · 已开启 · 可使用 · 模型：不调用模型/);
+  assert.match(text, /Prompt Library · 分组：提示词 · 状态：统一入口 · 统一管理提示词。/);
   assert.match(text, /工具白名单：读取联系人列表/);
   assert.match(text, /规则冲突：1 组/);
   assert.doesNotMatch(text, /rawOriginal|replacementText|runnerFacade/);
@@ -1281,10 +1325,10 @@ import {
     },
   });
   panel.view = {
-    meta: { pending: 0, activeRuns: 0, unreadFailedRuns: 0, tools: 0 },
+    meta: { pending: 0, activeRuns: 0, unreadFailedRuns: 0, tools: 0, resources: 0 },
     pending: [],
     activity: { runs: [] },
-    tools: [],
+    resources: [],
     safety: { sessionGate: { enabled: false, allowedTools: [] }, permissionRuleSummary: { total: 0 } },
   };
   const ok = await panel.handleExport();

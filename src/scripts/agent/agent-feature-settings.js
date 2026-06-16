@@ -6,6 +6,8 @@ export const AGENT_FEATURE_IDS = Object.freeze({
   replyCheck: 'reply_check',
   writePreview: 'write_preview',
   textCompletion: 'text_completion',
+  promptManager: 'prompt_manager',
+  memoryManager: 'memory_manager',
 });
 
 export const AGENT_FEATURE_TRIGGER_MODES = Object.freeze({
@@ -93,6 +95,38 @@ export const AGENT_FEATURE_DEFINITIONS = Object.freeze([
     modelDefault: 'none',
     supportsTriggerMode: false,
     triggerDefault: AGENT_FEATURE_TRIGGER_MODES.auto,
+  },
+  {
+    id: AGENT_FEATURE_IDS.promptManager,
+    title: '提示词管家',
+    summary: '只读检查提示词分类、重复、变量缺失和注入位置冲突。',
+    detailTitle: '提示词管家',
+    detail: [
+      '定位是只读审计，不会自动修改提示词。',
+      '后续会输出风险列表、整理建议和只读变更预览。',
+      '真正修改仍进入 Prompt Library 详情页，由用户保存。',
+    ],
+    implemented: false,
+    supportsModel: true,
+    modelDefault: 'none',
+    supportsTriggerMode: false,
+    triggerDefault: AGENT_FEATURE_TRIGGER_MODES.manual,
+  },
+  {
+    id: AGENT_FEATURE_IDS.memoryManager,
+    title: '记忆管家',
+    summary: '只读检查空表、重复行、跨模式共享范围和待确认写表变更。',
+    detailTitle: '记忆管家',
+    detail: [
+      '定位是只读审计，不会自动写入或删除记忆。',
+      '后续会输出表格健康度、当前会话注入摘要和清理建议。',
+      '涉及写入时仍走记忆写入预览、确认、提交、撤销流程。',
+    ],
+    implemented: false,
+    supportsModel: true,
+    modelDefault: 'none',
+    supportsTriggerMode: false,
+    triggerDefault: AGENT_FEATURE_TRIGGER_MODES.manual,
   },
 ]);
 

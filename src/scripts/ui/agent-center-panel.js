@@ -1,4 +1,5 @@
 import { buildAgentCenterView } from './agent-center-view-model.js';
+import { findAgentCenterResource } from './agent-center-resource-contract.js';
 import { WRITE_PREVIEW_PROVIDER_MODEL_CONTEXT_TOOLS } from '../agent/provider-tool-request-schema.js';
 import { PROVIDER_TOOL_PERMISSION_ACTIONS } from '../agent/provider-tool-permission-actions.js';
 import { appChoice, appConfirm } from './app-confirm.js';
@@ -20,6 +21,11 @@ const PANEL_CSS = `
     box-sizing: border-box;
     padding: max(8px, env(safe-area-inset-top, 0px)) max(8px, env(safe-area-inset-right, 0px)) max(8px, env(safe-area-inset-bottom, 0px)) max(8px, env(safe-area-inset-left, 0px));
     background: rgba(15,23,42,0.28);
+    opacity: 0;
+    transition: opacity 180ms ease;
+}
+.agent-center-overlay[style*="flex"] {
+    opacity: 1;
 }
 .agent-center-panel {
     width: min(620px, 100vw);
@@ -33,6 +39,11 @@ const PANEL_CSS = `
     border-radius: 12px;
     box-shadow: -12px 0 36px rgba(15,23,42,0.18);
     overflow: hidden;
+    transform: translateX(10px);
+    transition: transform 220ms cubic-bezier(.2,.8,.2,1);
+}
+.agent-center-overlay[style*="flex"] .agent-center-panel {
+    transform: translateX(0);
 }
 .agent-center-header {
     display: flex;
@@ -73,6 +84,33 @@ const PANEL_CSS = `
     padding: 7px 10px;
     font-weight: 800;
     cursor: pointer;
+    transition: background 120ms ease, border-color 120ms ease, transform 90ms ease, box-shadow 120ms ease;
+}
+.agent-center-button:hover,
+.agent-center-card-action:hover,
+.agent-center-switch:hover,
+.agent-center-filter:hover,
+.agent-center-tab:hover,
+.agent-center-model-manage:hover {
+    border-color: rgba(59,130,246,0.28);
+    box-shadow: 0 1px 0 rgba(15,23,42,0.06);
+}
+.agent-center-button:active,
+.agent-center-card-action:active,
+.agent-center-switch:active,
+.agent-center-filter:active,
+.agent-center-tab:active,
+.agent-center-model-manage:active {
+    transform: translateY(1px);
+}
+.agent-center-button:focus-visible,
+.agent-center-card-action:focus-visible,
+.agent-center-switch:focus-visible,
+.agent-center-filter:focus-visible,
+.agent-center-tab:focus-visible,
+.agent-center-model-manage:focus-visible {
+    outline: 2px solid rgba(59,130,246,0.42);
+    outline-offset: 2px;
 }
 .agent-center-tabs {
     display: grid;
@@ -91,6 +129,7 @@ const PANEL_CSS = `
     font-size: 12px;
     font-weight: 800;
     cursor: pointer;
+    transition: background 120ms ease, border-color 120ms ease, color 120ms ease, transform 90ms ease;
 }
 .agent-center-tab.is-active {
     border-color: rgba(59,130,246,0.24);
@@ -143,6 +182,7 @@ const PANEL_CSS = `
     border-radius: 8px;
     background: var(--app-surface-subtle);
     padding: 10px 12px;
+    transition: border-color 160ms ease, background 160ms ease, box-shadow 160ms ease, transform 120ms ease;
 }
 .agent-center-card.is-failure {
     border-color: rgba(244,63,94,0.24);
@@ -441,6 +481,7 @@ const PANEL_CSS = `
     font-size: 12px;
     font-weight: 800;
     cursor: pointer;
+    transition: background 120ms ease, border-color 120ms ease, color 120ms ease, transform 90ms ease, box-shadow 120ms ease;
 }
 .agent-center-card-action.is-primary {
     border-color: rgba(14,165,233,0.34);
@@ -463,6 +504,38 @@ const PANEL_CSS = `
     font-size: 11px;
     font-weight: 800;
     white-space: nowrap;
+}
+.agent-center-resource-list {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+}
+.agent-center-resource-card {
+    min-height: 154px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+.agent-center-resource-card:hover {
+    border-color: rgba(59,130,246,0.22);
+    box-shadow: 0 6px 18px rgba(15,23,42,0.08);
+    transform: translateY(-1px);
+}
+.agent-center-resource-card .agent-center-card-head {
+    align-items: flex-start;
+}
+.agent-center-resource-group {
+    margin-bottom: 3px;
+    color: var(--app-text-secondary);
+    font-size: 11px;
+    font-weight: 900;
+}
+.agent-center-resource-detail {
+    flex: 1;
+}
+.agent-center-resource-target {
+    font-size: 11px;
+    color: var(--app-text-muted);
 }
 .agent-center-chip.is-risk-high,
 .agent-center-chip.is-risk-medium {
@@ -518,6 +591,23 @@ const PANEL_CSS = `
     .agent-center-setting-row .agent-center-card-action {
         grid-column: 1 / -1;
         width: 100%;
+    }
+    .agent-center-resource-list {
+        grid-template-columns: minmax(0, 1fr);
+    }
+}
+@media (prefers-reduced-motion: reduce) {
+    .agent-center-overlay,
+    .agent-center-panel,
+    .agent-center-button,
+    .agent-center-card,
+    .agent-center-card-action,
+    .agent-center-switch,
+    .agent-center-filter,
+    .agent-center-tab,
+    .agent-center-model-manage {
+        transition: none !important;
+        transform: none !important;
     }
 }
 `;
@@ -917,6 +1007,33 @@ const displayRunSummary = (run = {}) => {
 
 const formatExportLine = (items = []) => items.filter(Boolean).join(' · ');
 
+const openDefaultAgentResourceTarget = async (target = {}) => {
+    const registry = globalThis.window?.appBridge?.debugUiRegistry || {};
+    const panels = registry.panels || {};
+    const panelName = trim(target?.panel);
+    if (!panelName) return false;
+    const panel = panels[panelName];
+    if (!panel) return false;
+    if (panelName === 'presetPanel') {
+        await Promise.resolve(panel.show?.({
+            section: target.section || 'chatprompts',
+            focus: target.focus || 'prompt-library',
+            promptId: target.promptId || '',
+        }));
+        return true;
+    }
+    if (panelName === 'configPanel') {
+        panel.show?.({ tab: target.tab || 'chat' });
+        return true;
+    }
+    if (panelName === 'worldPanel') {
+        await Promise.resolve(panel.show?.({ scope: target.scope || 'session' }));
+        return true;
+    }
+    await Promise.resolve(panel.show?.(target.options || {}));
+    return true;
+};
+
 export const formatAgentCenterExportText = (view = {}) => {
     const meta = view?.meta || {};
     const lines = [
@@ -926,6 +1043,7 @@ export const formatAgentCenterExportText = (view = {}) => {
             `待确认 ${Number(meta.pending || 0)}`,
             `运行中 ${Number(meta.activeRuns || 0)}`,
             `未读失败 ${Number(meta.unreadFailedRuns || 0)}`,
+            `资源 ${Number(meta.resources || 0)}`,
             `工具 ${Number(meta.tools || 0)}`,
         ]),
         '',
@@ -969,15 +1087,15 @@ export const formatAgentCenterExportText = (view = {}) => {
         ]));
     });
 
-    lines.push('', '[工具]');
-    const tools = Array.isArray(view?.tools) ? view.tools : [];
-    if (!tools.length) lines.push('无');
-    tools.forEach(tool => {
+    lines.push('', '[资源]');
+    const resources = Array.isArray(view?.resources) ? view.resources : [];
+    if (!resources.length) lines.push('无');
+    resources.forEach(resource => {
         lines.push(formatExportLine([
-            displayToolName(tool.name || tool.title),
-            displayRiskLabel(tool.riskLevel),
-            ...(Array.isArray(tool.permissions) ? tool.permissions.map(displayPermissionLabel) : []),
-            ...(tool.capabilities ? capabilityLabels(tool.capabilities) : []),
+            resource.title || resource.id,
+            resource.group ? `分组：${resource.group}` : '',
+            resource.status ? `状态：${resource.status}` : '',
+            resource.summary,
         ]));
     });
 
@@ -1005,6 +1123,7 @@ export class AgentCenterPanel {
         confirm = appConfirm,
         choice = appChoice,
         openConfig = (options = {}) => globalThis.window?.appBridge?.debugUiRegistry?.panels?.configPanel?.show?.(options),
+        openResourceTarget = openDefaultAgentResourceTarget,
         exportTextFile = (text, filename, successLabel) => exportDebugTextFile({
             text,
             filename,
@@ -1018,6 +1137,7 @@ export class AgentCenterPanel {
         this.confirm = confirm;
         this.choice = choice;
         this.openConfig = openConfig;
+        this.openResourceTarget = openResourceTarget;
         this.exportTextFile = exportTextFile;
         this.getFailureSeenAt = getFailureSeenAt;
         this.markFailureSeen = markFailureSeen;
@@ -1142,6 +1262,7 @@ export class AgentCenterPanel {
             experimentStatus,
             continuationCommitPolicy,
             agentModelProfiles,
+            resourceStatus,
         ] = await Promise.all([
             this.callAction('listProviderToolPendingPermissions', { limit: 100 }, []),
             this.callAction('listContactProfilePendingUpdates', undefined, []),
@@ -1151,6 +1272,7 @@ export class AgentCenterPanel {
             this.callAction('getProviderToolExperimentStatus', undefined, null),
             this.callAction('getProviderContinuationCommitPolicy', undefined, null),
             this.callAction('listAgentModelProfiles', undefined, []),
+            this.callAction('listAgentResourceStatus', undefined, {}),
         ]);
         const agentFeatureSettings = await this.callAction('getAgentFeatureSettings', undefined, null);
         return buildAgentCenterView({
@@ -1164,6 +1286,7 @@ export class AgentCenterPanel {
             sessionGate,
             experimentStatus,
             continuationCommitPolicy,
+            resourceStatus,
         });
     }
 
@@ -1254,6 +1377,7 @@ export class AgentCenterPanel {
             `活动中 ${Number(meta.activeRuns || 0)}`,
             `失败 ${Number(meta.failedRuns || 0)}`,
             `Agent ${Number(meta.enabledAgents || 0)}/${Number(meta.agents || 0)}`,
+            `资源 ${Number(meta.resources || 0)}`,
             `工具 ${Number(meta.tools || 0)}`,
             this.surface ? `范围 ${this.surface}` : '',
             meta.sessionGateEnabled ? '当前会话已开启' : '当前会话未开启',
@@ -2013,6 +2137,59 @@ export class AgentCenterPanel {
         `; }).join('')}</div>`;
     }
 
+    renderResources() {
+        const resources = this.view.resources || [];
+        if (!resources.length) return renderEmpty('还没有可管理资源入口。');
+        const intro = renderNotice({
+            title: '统一资源入口',
+            message: '这里仅显示摘要和跳转。同一功能无论从哪里进入，都打开对应主界面并定位到相关资源，避免多处重复管理。',
+        });
+        return `${intro}<div class="agent-center-resource-list">${resources.map(resource => {
+            const targetText = formatMeta([
+                resource.target?.panel ? `主界面：${resource.target.panel}` : '',
+                resource.target?.section ? `页面：${resource.target.section}` : '',
+                resource.target?.focus ? `定位：${resource.target.focus}` : '',
+                resource.target?.tab ? `页签：${resource.target.tab}` : '',
+            ]);
+            return `
+            <article class="agent-center-card agent-center-resource-card">
+                <div class="agent-center-card-head">
+                    <div>
+                        <div class="agent-center-resource-group">${escapeHtml(resource.group || '资源')}</div>
+                        <div class="agent-center-card-title">${escapeHtml(resource.title || resource.id)}</div>
+                    </div>
+                    <span class="${escapeHtml(statusChipClass(Number(resource.count || 0) > 0 ? 'pending' : 'succeeded'))}">${escapeHtml(resource.status || '就绪')}</span>
+                </div>
+                <div class="agent-center-card-sub">${escapeHtml(resource.summary || '')}</div>
+                <div class="agent-center-card-sub agent-center-resource-detail">${escapeHtml(resource.detail || '')}</div>
+                ${renderChips((resource.chips || []).map(label => ({ label })))}
+                ${targetText ? `<div class="agent-center-resource-target">${escapeHtml(targetText)}</div>` : ''}
+                <div class="agent-center-card-actions">
+                    <button type="button" class="agent-center-card-action is-primary" data-resource-open="${escapeHtml(resource.id)}">${escapeHtml(resource.actionLabel || '打开')}</button>
+                    ${Number(resource.count || 0) > 0 ? `<button type="button" class="agent-center-card-action" data-resource-pending="${escapeHtml(resource.id)}">查看待处理</button>` : ''}
+                </div>
+            </article>
+        `; }).join('')}</div>`;
+    }
+
+    async handleResourceOpen(resourceId = '') {
+        const resource = findAgentCenterResource(this.view.resources || [], resourceId);
+        if (!resource) return;
+        const ok = await Promise.resolve(this.openResourceTarget?.(resource.target || {}, resource));
+        if (ok) {
+            this.hide();
+            return;
+        }
+        this.lastError = `无法打开「${resource.title || resource.id}」主界面`;
+        this.render();
+    }
+
+    handleResourcePending(resourceId = '') {
+        const resource = findAgentCenterResource(this.view.resources || [], resourceId);
+        if (!resource) return;
+        this.setActiveTab('pending');
+    }
+
     renderTools() {
         const tools = this.view.tools || [];
         if (!tools.length) return renderEmpty('还没有注册 Agent 工具');
@@ -2113,12 +2290,12 @@ export class AgentCenterPanel {
             : '';
         const body = this.activeTab === 'pending'
             ? this.renderPending()
-            : this.activeTab === 'activity'
-                ? this.renderActivity()
-                : this.activeTab === 'agents'
-                    ? this.renderAgents()
-                    : this.activeTab === 'tools'
-                        ? this.renderTools()
+            : this.activeTab === 'agents'
+                ? this.renderAgents()
+                : this.activeTab === 'resources'
+                    ? this.renderResources()
+                    : this.activeTab === 'activity'
+                        ? this.renderActivity()
                         : this.renderSafety();
         this.contentElement.innerHTML = `${error}${body}`;
         if (this.activeTab === 'pending') {
@@ -2159,6 +2336,14 @@ export class AgentCenterPanel {
                     button.dataset.agentRunReviewAction || '',
                     button.dataset.runId || '',
                 ));
+            });
+        }
+        if (this.activeTab === 'resources') {
+            this.contentElement.querySelectorAll('[data-resource-open]').forEach((button) => {
+                button.addEventListener('click', () => this.handleResourceOpen(button.dataset.resourceOpen || ''));
+            });
+            this.contentElement.querySelectorAll('[data-resource-pending]').forEach((button) => {
+                button.addEventListener('click', () => this.handleResourcePending(button.dataset.resourcePending || ''));
             });
         }
         if (this.activeTab === 'agents') {

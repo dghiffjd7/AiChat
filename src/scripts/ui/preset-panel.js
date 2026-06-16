@@ -36,14 +36,6 @@ import {
 import { getRegexImportSetName } from '../utils/regex-transfer.js';
 import { getPresetStore } from './preset-store-runtime-utils.js';
 import { waitForScriptStoreReady } from './script-runtime-utils.js';
-import {
-    PROMPT_LIBRARY_CATEGORIES,
-    PROMPT_LIBRARY_CATEGORY_LABELS,
-    PROMPT_LIBRARY_CATEGORY_ORDER,
-    buildPromptLibraryFacetCounts,
-    normalizePromptLibraryItem,
-} from './prompt-library-taxonomy.js';
-
 /* Section definitions — order matters for rendering */
 const SECTIONS = [
     { id: 'openai',       storeType: 'openai',    label: '生成参数',        primary: true },
@@ -705,70 +697,6 @@ const PANEL_CSS = `
     border-color: rgba(244,63,94,0.18);
     color: #be123c;
 }
-.pp-prompt-library-summary {
-    margin: 0 0 10px;
-    padding: 12px;
-    border: 1px solid rgba(20,184,166,0.18);
-    border-radius: 12px;
-    background: var(--app-surface-card);
-    box-shadow: inset 3px 0 0 rgba(20,184,166,0.28);
-}
-.pp-prompt-library-head {
-    display: flex;
-    align-items: flex-start;
-    justify-content: space-between;
-    gap: 12px;
-}
-.pp-prompt-library-title {
-    font-size: 13px;
-    font-weight: 800;
-    color: var(--app-text-primary);
-}
-.pp-prompt-library-note {
-    margin-top: 3px;
-    font-size: 12px;
-    line-height: 1.5;
-    color: var(--app-text-secondary);
-}
-.pp-prompt-library-count {
-    flex-shrink: 0;
-    font-size: 12px;
-    font-weight: 800;
-    color: #0f766e;
-}
-.pp-prompt-library-chips {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 6px;
-    margin-top: 10px;
-}
-.pp-prompt-library-chip {
-    display: inline-flex;
-    align-items: center;
-    min-height: 24px;
-    padding: 4px 8px;
-    border-radius: 999px;
-    border: 1px solid rgba(15,118,110,0.16);
-    background: var(--app-surface-subtle);
-    color: var(--app-text-secondary);
-    cursor: pointer;
-    font: inherit;
-    font-size: 11px;
-    font-weight: 800;
-    white-space: nowrap;
-}
-.pp-prompt-library-chip.is-active {
-    background: rgba(20,184,166,0.12);
-    color: #0f766e;
-}
-.pp-prompt-library-advice {
-    margin-top: 10px;
-    padding-top: 10px;
-    border-top: 1px solid rgba(20,184,166,0.14);
-    color: var(--app-text-muted);
-    font-size: 12px;
-    line-height: 1.5;
-}
 .pp-block-right { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
 .pp-block-body { padding: 10px 12px; display: none; flex-direction: column; gap: 10px; }
 .pp-block.pp-block-disabled { opacity: 0.62; filter: grayscale(1); background: var(--app-surface-hover); }
@@ -994,6 +922,7 @@ const PANEL_CSS = `
         grid-template-columns: repeat(2, minmax(0, 1fr));
     }
 }
+
 `;
 
 export class PresetPanel {
@@ -1018,6 +947,7 @@ export class PresetPanel {
         this.currentPage = 'root';
         this.bindingStoreType = '';
         this.bindingPresetId = '';
+        this.pendingOpenOptions = null;
         this.drafts = new Map();
         this.customSelectMenuEl = null;
         this.customSelectMenuCleanup = null;
@@ -1383,15 +1313,20 @@ export class PresetPanel {
         return this.applyBoundConfigIfAny(this.getCurrentPresetContext(), options);
     }
 
-    async show() {
+    async show(options = {}) {
         await this.store.ready;
         if (!this.element) this.createUI();
-        this.currentSectionId = null;
-        this.currentPage = 'root';
+        const opts = options && typeof options === 'object' ? options : {};
+        this.pendingOpenOptions = opts;
+        const requestedSection = String(opts.section || opts.sectionId || '').trim();
+        const section = requestedSection ? this.getSectionById(requestedSection) : null;
+        this.currentSectionId = section ? section.id : null;
+        this.currentPage = section ? 'detail' : 'root';
         this.bindingStoreType = '';
         this.bindingPresetId = '';
         this.renderAllSections();
-        this.setPageView('root');
+        this.setPageView(this.currentPage);
+        if (section && this.detailScrollEl) this.detailScrollEl.scrollTop = 0;
         this.element.style.display = 'flex';
         this.overlayElement.style.display = 'block';
     }
@@ -2064,67 +1999,6 @@ export class PresetPanel {
         return row;
     }
 
-    renderPromptLibrarySummary(items = []) {
-        const normalizedItems = (Array.isArray(items) ? items : []).map(normalizePromptLibraryItem);
-        const counts = buildPromptLibraryFacetCounts(normalizedItems);
-        const total = normalizedItems.length;
-        const nonChatCount = normalizedItems.filter(item => item.category !== PROMPT_LIBRARY_CATEGORIES.chat).length;
-
-        const root = document.createElement('div');
-        root.className = 'pp-prompt-library-summary';
-        root.dataset.promptLibrarySummary = 'chatprompts';
-
-        const head = document.createElement('div');
-        head.className = 'pp-prompt-library-head';
-
-        const copy = document.createElement('div');
-        const title = document.createElement('div');
-        title.className = 'pp-prompt-library-title';
-        title.textContent = 'Prompt Library 分类预览';
-        const note = document.createElement('div');
-        note.className = 'pp-prompt-library-note';
-        note.textContent = '这些区块目前仍保存于聊天提示词预设；分类只用于整理视图，不改变注入行为。';
-        copy.appendChild(title);
-        copy.appendChild(note);
-        head.appendChild(copy);
-
-        const count = document.createElement('div');
-        count.className = 'pp-prompt-library-count';
-        count.textContent = `${total} 项`;
-        head.appendChild(count);
-        root.appendChild(head);
-
-        const chips = document.createElement('div');
-        chips.className = 'pp-prompt-library-chips';
-        const allChip = document.createElement('button');
-        allChip.type = 'button';
-        allChip.className = 'pp-prompt-library-chip is-active';
-        allChip.dataset.promptLibraryFilter = 'all';
-        allChip.textContent = `All ${total}`;
-        chips.appendChild(allChip);
-        PROMPT_LIBRARY_CATEGORY_ORDER.forEach((category) => {
-            const value = counts[category] || 0;
-            if (!value) return;
-            const chip = document.createElement('button');
-            chip.type = 'button';
-            chip.className = 'pp-prompt-library-chip';
-            chip.dataset.promptLibraryCategory = category;
-            chip.dataset.promptLibraryFilter = category;
-            chip.textContent = `${PROMPT_LIBRARY_CATEGORY_LABELS[category] || category} ${value}`;
-            chips.appendChild(chip);
-        });
-        root.appendChild(chips);
-
-        const advice = document.createElement('div');
-        advice.className = 'pp-prompt-library-advice';
-        advice.textContent = nonChatCount
-            ? `已识别 ${nonChatCount} 个非 Chat 区块。后续拆分 Prompt Library 时，Image、Moments、Writing 会迁移到各自页面。`
-            : '当前区块均归类为 Chat，后续可直接迁移到 Chat Prompts。';
-        root.appendChild(advice);
-
-        return root;
-    }
-
     /* ── System prompt ── */
     renderSyspromptEditor(p) {
         const wrap = document.createElement('div');
@@ -2138,24 +2012,8 @@ export class PresetPanel {
         const wrap = document.createElement('div');
         const desc = document.createElement('div');
         desc.style.cssText = 'color:var(--app-text-muted); font-size:12px; margin-bottom:8px;';
-        desc.textContent = '当前仍统一编辑聊天提示词预设。下方分类用于整理 Prompt Library 迁移方向，标签表示适用链路、注入位置与动态替换关系，不代表当前聊天室的实时状态。';
+        desc.textContent = '点击区块标题展开编辑。聊天提示词仍按当前预设结构保存，启用状态和注入位置不变。';
         wrap.appendChild(desc);
-        const promptLibraryItems = [
-            { category: PROMPT_LIBRARY_CATEGORIES.chat, name: '手机格式开头', content: p.phone_format_intro_rules },
-            { category: PROMPT_LIBRARY_CATEGORIES.chat, name: 'QQ聊天格式', content: p.phone_format_chat_rules },
-            { category: PROMPT_LIBRARY_CATEGORIES.moments, name: 'QQ空间格式', content: p.phone_format_moment_rules },
-            { category: PROMPT_LIBRARY_CATEGORIES.chat, name: '手机格式结尾', content: p.phone_format_footer_rules },
-            { category: PROMPT_LIBRARY_CATEGORIES.chat, name: '私聊提示词', content: p.dialogue_rules },
-            { category: PROMPT_LIBRARY_CATEGORIES.moments, name: '动态发布决策提示词', content: p.moment_create_rules },
-            { category: PROMPT_LIBRARY_CATEGORIES.moments, name: '动态评论回复提示词', content: p.moment_comment_rules },
-            { category: PROMPT_LIBRARY_CATEGORIES.moments, name: '发布后评论提示词', content: p.moment_publish_comment_rules },
-            { category: PROMPT_LIBRARY_CATEGORIES.image, name: '自动标签生图提示词', content: p.auto_image_prompt_rules },
-            { category: PROMPT_LIBRARY_CATEGORIES.chat, name: '群聊提示词', content: p.group_rules },
-            { category: PROMPT_LIBRARY_CATEGORIES.chat, name: '摘要提示词', content: p.summary_rules },
-            { category: PROMPT_LIBRARY_CATEGORIES.chat, name: 'Default 格式提醒（自动）', content: p.ds_format_rules },
-        ];
-        const promptLibrarySummary = this.renderPromptLibrarySummary(promptLibraryItems);
-        wrap.appendChild(promptLibrarySummary);
 
         const list = document.createElement('div');
         list.style.cssText = 'display:flex; flex-direction:column; gap:10px;';
@@ -2164,13 +2022,6 @@ export class PresetPanel {
             const card = document.createElement('div');
             card.className = 'pp-block';
             card.dataset.collapsed = 'true';
-            const libraryItem = normalizePromptLibraryItem({
-                category: cfg.libraryCategory,
-                name: cfg.title,
-                content: p[cfg.rulesKey] || cfg.placeholder || '',
-                tags: (cfg.metaChips || []).map(chip => chip?.label),
-            });
-            card.dataset.promptLibraryCategory = libraryItem.category;
 
             const isEnabled = p[cfg.enabledKey] !== false;
             if (!isEnabled) card.classList.add('pp-block-disabled');
@@ -2223,7 +2074,7 @@ export class PresetPanel {
             enabledWrap.innerHTML = `<input id="${cfg.idPrefix}-enabled" type="checkbox" style="width:16px; height:16px;">启用`;
             const enabledInput = enabledWrap.querySelector('input');
             enabledInput.checked = isEnabled;
-            enabledInput.addEventListener('click', (e) => e.stopPropagation());
+            enabledWrap.addEventListener('click', (e) => e.stopPropagation());
             enabledInput.addEventListener('change', () => {
                 card.classList.toggle('pp-block-disabled', !enabledInput.checked);
             });
@@ -2317,7 +2168,6 @@ export class PresetPanel {
 
         list.appendChild(makePromptBlock({
             idPrefix: 'phone-format-intro', title: '手机格式开头',
-            libraryCategory: PROMPT_LIBRARY_CATEGORIES.chat,
             enabledKey: 'phone_format_intro_enabled',
             rulesKey: 'phone_format_intro_rules',
             placeholder: '手机格式开头',
@@ -2331,7 +2181,6 @@ export class PresetPanel {
         }));
         list.appendChild(makePromptBlock({
             idPrefix: 'phone-format-chat', title: 'QQ聊天格式',
-            libraryCategory: PROMPT_LIBRARY_CATEGORIES.chat,
             enabledKey: 'phone_format_chat_enabled',
             rulesKey: 'phone_format_chat_rules',
             placeholder: 'QQ聊天格式说明',
@@ -2345,7 +2194,6 @@ export class PresetPanel {
         }));
         list.appendChild(makePromptBlock({
             idPrefix: 'phone-format-moment', title: 'QQ空间格式',
-            libraryCategory: PROMPT_LIBRARY_CATEGORIES.moments,
             enabledKey: 'phone_format_moment_enabled',
             rulesKey: 'phone_format_moment_rules',
             placeholder: 'QQ空间格式说明',
@@ -2359,7 +2207,6 @@ export class PresetPanel {
         }));
         list.appendChild(makePromptBlock({
             idPrefix: 'phone-format-footer', title: '手机格式结尾',
-            libraryCategory: PROMPT_LIBRARY_CATEGORIES.chat,
             enabledKey: 'phone_format_footer_enabled',
             rulesKey: 'phone_format_footer_rules',
             placeholder: '手机格式结尾',
@@ -2373,7 +2220,6 @@ export class PresetPanel {
         }));
         list.appendChild(makePromptBlock({
             idPrefix: 'dialogue', title: '私聊提示词',
-            libraryCategory: PROMPT_LIBRARY_CATEGORIES.chat,
             enabledKey: 'dialogue_enabled', positionKey: 'dialogue_position',
             depthKey: 'dialogue_depth', roleKey: 'dialogue_role',
             rulesKey: 'dialogue_rules', defaultDepth: 1, placeholder: '私聊协议提示词',
@@ -2384,7 +2230,6 @@ export class PresetPanel {
         }));
         list.appendChild(makePromptBlock({
             idPrefix: 'moment', title: '动态发布决策提示词',
-            libraryCategory: PROMPT_LIBRARY_CATEGORIES.moments,
             enabledKey: 'moment_create_enabled', positionKey: 'moment_create_position',
             depthKey: 'moment_create_depth', roleKey: 'moment_create_role',
             rulesKey: 'moment_create_rules', defaultDepth: 0, placeholder: '动态发布决策提示词',
@@ -2396,7 +2241,6 @@ export class PresetPanel {
         }));
         list.appendChild(makePromptBlock({
             idPrefix: 'moment-comment', title: '动态评论回复提示词',
-            libraryCategory: PROMPT_LIBRARY_CATEGORIES.moments,
             enabledKey: 'moment_comment_enabled', positionKey: 'moment_comment_position',
             depthKey: 'moment_comment_depth', roleKey: 'moment_comment_role',
             rulesKey: 'moment_comment_rules', defaultDepth: 0, placeholder: '动态评论回复规则',
@@ -2408,7 +2252,6 @@ export class PresetPanel {
         }));
         list.appendChild(makePromptBlock({
             idPrefix: 'moment-publish-comment', title: '发布后评论提示词',
-            libraryCategory: PROMPT_LIBRARY_CATEGORIES.moments,
             enabledKey: 'moment_publish_comment_enabled', positionKey: 'moment_publish_comment_position',
             depthKey: 'moment_publish_comment_depth', roleKey: 'moment_publish_comment_role',
             rulesKey: 'moment_publish_comment_rules', defaultDepth: 0, placeholder: '用户发布动态后的评论规则',
@@ -2420,7 +2263,6 @@ export class PresetPanel {
         }));
         list.appendChild(makePromptBlock({
             idPrefix: 'auto-image-prompt', title: '自动标签生图提示词',
-            libraryCategory: PROMPT_LIBRARY_CATEGORIES.image,
             enabledKey: 'auto_image_prompt_enabled', positionKey: 'auto_image_prompt_position',
             depthKey: 'auto_image_prompt_depth', roleKey: 'auto_image_prompt_role',
             rulesKey: 'auto_image_prompt_rules', defaultDepth: 0, placeholder: '自动标签生图提示词',
@@ -2431,7 +2273,6 @@ export class PresetPanel {
         }));
         list.appendChild(makePromptBlock({
             idPrefix: 'group', title: '群聊提示词',
-            libraryCategory: PROMPT_LIBRARY_CATEGORIES.chat,
             enabledKey: 'group_enabled', positionKey: 'group_position',
             depthKey: 'group_depth', roleKey: 'group_role',
             rulesKey: 'group_rules', defaultDepth: 1, placeholder: '群聊协议提示词',
@@ -2442,7 +2283,6 @@ export class PresetPanel {
         }));
         list.appendChild(makePromptBlock({
             idPrefix: 'summary', title: '摘要提示词',
-            libraryCategory: PROMPT_LIBRARY_CATEGORIES.chat,
             enabledKey: 'summary_enabled', positionKey: 'summary_position',
             depthKey: 'summary_depth', roleKey: 'summary_role',
             rulesKey: 'summary_rules', defaultDepth: 1, placeholder: '摘要格式提示词',
@@ -2459,7 +2299,6 @@ export class PresetPanel {
             const card = document.createElement('div');
             card.className = 'pp-block';
             card.dataset.collapsed = 'true';
-            card.dataset.promptLibraryCategory = PROMPT_LIBRARY_CATEGORIES.chat;
 
             const header = document.createElement('div');
             header.className = 'pp-block-header';
@@ -2538,22 +2377,6 @@ export class PresetPanel {
             setCollapsed(true);
             list.appendChild(card);
         }
-
-        const applyPromptLibraryFilter = (category = 'all') => {
-            const normalizedCategory = String(category || 'all').trim() || 'all';
-            list.querySelectorAll('.pp-block[data-prompt-library-category]').forEach((card) => {
-                card.hidden = normalizedCategory !== 'all' && card.dataset.promptLibraryCategory !== normalizedCategory;
-            });
-            promptLibrarySummary.querySelectorAll('[data-prompt-library-filter]').forEach((button) => {
-                button.classList.toggle('is-active', button.dataset.promptLibraryFilter === normalizedCategory);
-            });
-        };
-        promptLibrarySummary.addEventListener('click', (event) => {
-            const button = event.target.closest('[data-prompt-library-filter]');
-            if (!button) return;
-            applyPromptLibraryFilter(button.dataset.promptLibraryFilter || 'all');
-        });
-        applyPromptLibraryFilter('all');
 
         wrap.appendChild(list);
         return wrap;

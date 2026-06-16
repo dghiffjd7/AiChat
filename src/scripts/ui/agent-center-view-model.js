@@ -6,12 +6,13 @@ import {
 import { buildAgentFeatureList } from '../agent/agent-feature-settings.js';
 import { WRITE_PREVIEW_PROVIDER_MODEL_CONTEXT_TOOLS } from '../agent/provider-tool-request-schema.js';
 import { buildChatEmitCommitPreview } from '../agent/tools/chat-emit-commit-plan.js';
+import { buildAgentCenterResources } from './agent-center-resource-contract.js';
 
 export const AGENT_CENTER_TABS = Object.freeze([
-  { id: 'pending', label: '待确认' },
-  { id: 'activity', label: '活动' },
+  { id: 'pending', label: '待处理' },
   { id: 'agents', label: 'Agent' },
-  { id: 'tools', label: '工具' },
+  { id: 'resources', label: '资源' },
+  { id: 'activity', label: '活动' },
   { id: 'safety', label: '安全' },
 ]);
 
@@ -537,13 +538,13 @@ const buildTabs = ({
   pending = [],
   runView = {},
   agents = [],
-  tools = [],
+  resources = [],
 } = {}) => AGENT_CENTER_TABS.map((tab) => {
   let count = 0;
   if (tab.id === 'pending') count = pending.length;
-  if (tab.id === 'activity') count = Number(runView?.meta?.scopedActive ?? runView?.meta?.active ?? 0);
   if (tab.id === 'agents') count = agents.filter(item => item.enabled).length;
-  if (tab.id === 'tools') count = tools.length;
+  if (tab.id === 'resources') count = resources.filter(item => Number(item.count || 0) > 0).length;
+  if (tab.id === 'activity') count = Number(runView?.meta?.scopedActive ?? runView?.meta?.active ?? 0);
   if (tab.id === 'safety') count = 0;
   return { ...tab, count };
 });
@@ -562,6 +563,7 @@ export const buildAgentCenterView = ({
   sessionGate = null,
   experimentStatus = null,
   continuationCommitPolicy = null,
+  resourceStatus = {},
   limit = 50,
 } = {}) => {
   const pending = (Array.isArray(pendingPermissions) ? pendingPermissions : [])
@@ -592,7 +594,14 @@ export const buildAgentCenterView = ({
     permissionRules,
     continuationCommitPolicy,
   });
-  const tabs = buildTabs({ pending, runView, agents: normalizedAgents, tools: normalizedTools });
+  const resources = buildAgentCenterResources({
+    pending,
+    tools: normalizedTools,
+    agents: normalizedAgents,
+    safety,
+    resourceStatus,
+  });
+  const tabs = buildTabs({ pending, runView, agents: normalizedAgents, resources });
   return {
     tabs,
     meta: {
@@ -602,6 +611,8 @@ export const buildAgentCenterView = ({
       unreadFailedRuns: Number(runView?.meta?.scopedUnreadFailures ?? runView?.meta?.unreadFailures ?? runView?.meta?.scopedFailures ?? runView?.meta?.failures ?? 0),
       newestFailureAt: Number(runView?.meta?.scopedNewestFailureAt ?? runView?.meta?.newestFailureAt ?? 0),
       tools: normalizedTools.length,
+      resources: resources.length,
+      resourceAlerts: resources.filter(item => Number(item.count || 0) > 0).length,
       agents: normalizedAgents.length,
       enabledAgents: normalizedAgents.filter(item => item.enabled).length,
       providerToolsEnabled: safety.providerTools.enabled,
@@ -615,6 +626,7 @@ export const buildAgentCenterView = ({
     },
     agents: normalizedAgents,
     agentModelProfiles: normalizedModelProfiles,
+    resources,
     tools: normalizedTools,
     safety,
   };

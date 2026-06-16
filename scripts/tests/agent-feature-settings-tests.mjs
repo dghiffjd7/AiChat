@@ -30,6 +30,8 @@ const createStorage = () => {
   assert.equal(settings.features[AGENT_FEATURE_IDS.replyCheck].enabled, false);
   assert.equal(settings.features[AGENT_FEATURE_IDS.writePreview].enabled, false);
   assert.equal(settings.features[AGENT_FEATURE_IDS.textCompletion].enabled, false);
+  assert.equal(settings.features[AGENT_FEATURE_IDS.promptManager].enabled, false);
+  assert.equal(settings.features[AGENT_FEATURE_IDS.memoryManager].enabled, false);
   assert.equal(settings.features[AGENT_FEATURE_IDS.replyCheck].modelMode, 'none');
   assert.equal(settings.features[AGENT_FEATURE_IDS.replyCheck].triggerMode, AGENT_FEATURE_TRIGGER_MODES.auto);
   assert.equal(settings.features[AGENT_FEATURE_IDS.writePreview].modelMode, 'none');
@@ -167,6 +169,8 @@ const createStorage = () => {
   });
   const replyCheck = list.find(item => item.id === AGENT_FEATURE_IDS.replyCheck);
   const textCompletion = list.find(item => item.id === AGENT_FEATURE_IDS.textCompletion);
+  const promptManager = list.find(item => item.id === AGENT_FEATURE_IDS.promptManager);
+  const memoryManager = list.find(item => item.id === AGENT_FEATURE_IDS.memoryManager);
   assert.equal(replyCheck.title, '检查回复格式');
   assert.match(replyCheck.summary, /格式问题/);
   assert.equal(replyCheck.state.triggerMode, AGENT_FEATURE_TRIGGER_MODES.auto);
@@ -176,5 +180,11 @@ const createStorage = () => {
   assert.equal(textCompletion.state.modelMode, 'profile');
   assert.equal(textCompletion.state.modelProfileId, 'profile-a');
   assert.equal(textCompletion.implemented, false);
+  assert.equal(promptManager.title, '提示词管家');
+  assert.equal(promptManager.implemented, false);
+  assert.match(promptManager.summary, /只读检查提示词/);
+  assert.equal(memoryManager.title, '记忆管家');
+  assert.equal(memoryManager.implemented, false);
+  assert.match(memoryManager.summary, /只读检查空表/);
   console.log('ok - agent feature list merges product copy with saved state');
 }
