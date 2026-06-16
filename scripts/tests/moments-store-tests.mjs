@@ -128,6 +128,34 @@ test('MomentsStore addComments keeps the newest 50 comments and preserves reply 
   });
 });
 
+test('MomentsStore likeMoment toggles liked state and persists like count', async () => {
+  await withMomentsEnv(async (MomentsStore) => {
+    const store = new MomentsStore({ scopeId: 'moments:test' });
+    await store.ready;
+
+    store.upsert({
+      id: 'moment-like',
+      author: '发布者',
+      content: '点赞测试',
+      likes: 4,
+    });
+
+    const liked = store.likeMoment('moment-like');
+    await store.flush();
+
+    assert.equal(liked.likes, 5);
+    assert.equal(liked.userLiked, true);
+    assert.equal(store.get('moment-like').likes, 5);
+    assert.equal(store.get('moment-like').userLiked, true);
+
+    const second = store.likeMoment('moment-like');
+    await store.flush();
+
+    assert.equal(second.likes, 4);
+    assert.equal(second.userLiked, false);
+  });
+});
+
 let failed = 0;
 for (const t of tests) {
   try {

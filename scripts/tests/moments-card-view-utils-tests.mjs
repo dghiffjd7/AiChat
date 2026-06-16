@@ -48,9 +48,23 @@ import {
   });
   assert.equal(html.includes('https://example.com/a.png'), true);
   assert.equal(html.includes('展开查看更多评论 (2条)'), true);
+  assert.equal(html.includes('data-action="like"'), true);
+  assert.equal(html.includes('<span class="moment-like-count">3</span>'), true);
   assert.equal(html.includes('回复 <b>甲</b>：你好'), true);
   assert.equal(html.includes('发送中…'), true);
   console.log('ok - buildMomentCardMarkup renders stats threaded comments and reply composer state');
+}
+
+{
+  const html = buildMomentCardMarkup({
+    moment: { author: '角色A', likes: 8, userLiked: true },
+    avatar: '',
+    escapeHtml: (value) => String(value ?? ''),
+  });
+  assert.equal(html.includes('moment-like-button is-liked'), true);
+  assert.equal(html.includes('aria-pressed="true"'), true);
+  assert.equal(html.includes('disabled'), false);
+  console.log('ok - buildMomentCardMarkup renders persisted liked state');
 }
 
 {
@@ -120,4 +134,33 @@ import {
   contentEl.children[0].children[0].listeners.click?.({ stopPropagation() {} });
   assert.deepEqual(openedImages, ['https://example.com/p.png']);
   console.log('ok - renderMomentCardContent fills moment text and appends image/audio media blocks');
+}
+
+{
+  const cardEl = {
+    innerHTML: '',
+    querySelector() {
+      return null;
+    },
+  };
+  const comments = [
+    { id: 'c1', author: '甲', content: '1' },
+    { id: 'c2', author: '乙', content: '2' },
+    { id: 'c3', author: '丙', content: '3' },
+    { id: 'c4', author: '丁', content: '4' },
+  ];
+  renderMomentCardContent({
+    cardEl,
+    moment: { author: '角色A', comments },
+    expanded: true,
+    visibleComments: comments,
+    collapsedCommentLimit: 3,
+    documentLike: { createElement() {} },
+    buildThreadedComments: (items) => ({ roots: items, repliesByParent: new Map() }),
+    escapeHtml: (value) => String(value ?? ''),
+    renderMomentTextWithStickers: (value) => String(value ?? ''),
+    resolveMomentDisplayText: (value) => String(value?.content ?? ''),
+  });
+  assert.equal(cardEl.innerHTML.includes('收起评论'), true);
+  console.log('ok - renderMomentCardContent keeps collapse control visible when expanded');
 }

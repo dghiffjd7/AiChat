@@ -394,7 +394,7 @@ body[data-theme-mode='dark'] .moment-menu-dropdown {
 }
 
 body[data-theme-mode='dark'] .moment-menu-item {
-  background: rgba(205, 217, 229, 0.04) !important;
+  background: transparent !important;
   color: var(--app-text-primary) !important;
 }
 
@@ -410,8 +410,17 @@ body[data-theme-mode='dark'] :is(.moment-username, .moment-text, .comment-text) 
   color: var(--app-text-primary) !important;
 }
 
-body[data-theme-mode='dark'] :is(.moment-time, .moment-footer, .moment-stats, .moment-comments-toggle, .moment-audio-label, .moment-more) {
+body[data-theme-mode='dark'] :is(.moment-time, .moment-footer, .moment-stats, .moment-comments-toggle, .moment-audio-label, .moment-more, .moment-like-button) {
   color: var(--app-text-secondary) !important;
+}
+
+body[data-theme-mode='dark'] :is(.moment-more:hover, .moment-comments-toggle:hover, .moment-comments-toggle.is-expand, .moment-like-button:hover, .moment-like-button.is-liked) {
+  color: var(--app-accent-strong) !important;
+}
+
+body[data-theme-mode='dark'] .moment-comments {
+  background: rgba(205, 217, 229, 0.04) !important;
+  border-color: var(--app-border-subtle) !important;
 }
 
 body[data-theme-mode='dark'] .moment-comment {
@@ -524,7 +533,7 @@ body[data-theme-mode='dark'] .session-panel-overlay {
 }
 
 body[data-theme-mode='dark'] .session-panel {
-  background: linear-gradient(180deg, rgba(31, 36, 43, 0.98) 0%, rgba(38, 44, 52, 0.98) 100%) !important;
+  background: var(--app-surface-panel) !important;
   color: var(--app-text-primary) !important;
   border: 1px solid var(--app-border-subtle) !important;
   box-shadow: var(--app-shadow-md) !important;
@@ -541,7 +550,6 @@ body[data-theme-mode='dark'] .session-panel :is(
 
 body[data-theme-mode='dark'] .session-panel :is(
   .session-panel-title,
-  .session-recommend-title,
   .sticker-bind-name,
   .session-recommend-name
 ) {
@@ -554,7 +562,6 @@ body[data-theme-mode='dark'] .session-panel :is(
   .sticker-bind-meta,
   .sticker-bind-empty,
   .session-recommend-meta,
-  .session-recommend-hint,
   .session-recommend-empty,
   .session-recommend-pull-text
 ) {
@@ -567,8 +574,7 @@ body[data-theme-mode='dark'] .session-panel .sticker-bind-avatar {
 
 body[data-theme-mode='dark'] .session-panel :is(
   .session-panel-close,
-  .session-btn,
-  .session-recommend-refresh
+  .session-btn
 ) {
   background: rgba(205, 217, 229, 0.06) !important;
   color: var(--app-text-primary) !important;
@@ -613,7 +619,6 @@ body[data-theme-mode='dark'] .session-panel :is(.session-row-shared-added, .sess
 }
 
 body[data-theme-mode='dark'] .session-panel :is(
-  .session-recommend-tag,
   .session-recommend-pull
 ) {
   background: rgba(205, 217, 229, 0.06) !important;
@@ -1994,7 +1999,7 @@ body[data-theme-mode='dark'] :is(
   .world-manage-modal,
   .world-chatname-modal
 ) {
-  background: linear-gradient(180deg, rgba(26, 30, 36, 0.98) 0%, rgba(34, 39, 46, 0.98) 100%) !important;
+  background: var(--app-surface-panel) !important;
   color: var(--app-text-primary) !important;
   border: 1px solid var(--app-border-subtle) !important;
   box-shadow: var(--app-shadow-md) !important;
@@ -2124,12 +2129,12 @@ body[data-theme-mode='dark'] :is(
 }
 
 body[data-theme-mode='dark'] .world-entry-card.has-variable-condition {
-  background: linear-gradient(180deg, rgba(38, 21, 24, 0.98) 0%, rgba(34, 39, 46, 0.98) 100%) !important;
+  background: rgba(248, 81, 73, 0.12) !important;
   border-color: rgba(248, 81, 73, 0.28) !important;
 }
 
 body[data-theme-mode='dark'] .world-entry-card.is-variable-active {
-  background: linear-gradient(180deg, rgba(21, 39, 28, 0.98) 0%, rgba(34, 39, 46, 0.98) 100%) !important;
+  background: rgba(46, 160, 67, 0.12) !important;
   border-color: rgba(46, 160, 67, 0.28) !important;
 }
 
@@ -3711,7 +3716,7 @@ body[data-theme-mode='dark'] .session-panel :is(
 }
 
 body[data-theme-mode='dark'] .session-panel .session-recommend-block-head {
-  background: linear-gradient(180deg, rgba(39, 45, 55, 0.98) 0%, rgba(33, 38, 46, 0.98) 100%) !important;
+  background: rgba(205, 217, 229, 0.06) !important;
   border-bottom-color: var(--app-border-subtle) !important;
 }
 

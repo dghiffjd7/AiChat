@@ -1,3 +1,17 @@
+const momentIconSvg = (body) => `
+  <svg class="moment-icon" viewBox="0 0 24 24" aria-hidden="true">
+    ${body}
+  </svg>
+`;
+
+const MOMENT_ICONS = Object.freeze({
+  comment: momentIconSvg('<path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4Z"></path>'),
+  eye: momentIconSvg('<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z"></path><circle cx="12" cy="12" r="3"></circle>'),
+  like: momentIconSvg('<path d="M7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3"></path><path d="M7 11l4-8a3 3 0 0 1 3 3v4h4.5a2.5 2.5 0 0 1 2.45 3l-1.2 6A3 3 0 0 1 16.8 22H7Z"></path>'),
+  more: momentIconSvg('<circle cx="5" cy="12" r="1.6"></circle><circle cx="12" cy="12" r="1.6"></circle><circle cx="19" cy="12" r="1.6"></circle>'),
+  send: momentIconSvg('<path d="M22 2 11 13"></path><path d="m22 2-7 20-4-9-9-4Z"></path>'),
+});
+
 export const buildMomentThreadedCommentsHtml = ({
   visibleComments = [],
   buildThreadedComments = () => ({ roots: [], repliesByParent: new Map() }),
@@ -61,6 +75,8 @@ export const buildMomentCardMarkup = ({
   resolveMomentDisplayText = (value) => String(value?.content ?? ''),
 } = {}) => {
   const target = moment || {};
+  const likes = Math.max(0, Number(target.likes || 0) || 0);
+  const userLiked = Boolean(target.userLiked);
   return `
                 <div class="moment-header">
                     <img src="${escapeHtml(avatar)}" alt="" class="moment-avatar">
@@ -68,31 +84,28 @@ export const buildMomentCardMarkup = ({
                         <div class="moment-username">${escapeHtml(target.author || '角色')}</div>
                         <div class="moment-time">${escapeHtml(target.time || '')}</div>
                     </div>
-                    <button class="moment-more" aria-label="更多" title="更多">⋯</button>
+                    <button class="moment-more" aria-label="更多" title="更多">${MOMENT_ICONS.more}</button>
                 </div>
                 <div class="moment-content">
                     <div class="moment-text"></div>
                 </div>
                 <div class="moment-stats">
-                    <span>👁 浏览${Number(target.views || 0)}次</span>
-                    <span>💬 评论${comments.length}条</span>
+                    <span>${MOMENT_ICONS.eye}<span>浏览${Number(target.views || 0)}次</span></span>
+                    <span>${MOMENT_ICONS.comment}<span>评论${comments.length}条</span></span>
                 </div>
                 <div class="moment-footer">
-                    <span class="moment-likes">👍 ${Number(target.likes || 0)}人已赞</span>
-                    <button class="moment-action" data-action="comment">评论</button>
+                    <button type="button" class="moment-likes moment-like-button${userLiked ? ' is-liked' : ''}" data-action="like" aria-pressed="${userLiked ? 'true' : 'false'}" aria-label="${userLiked ? `已点赞，当前 ${likes} 人已赞` : `点赞，当前 ${likes} 人已赞`}" title="${userLiked ? '已点赞' : '点赞'}">
+                        ${MOMENT_ICONS.like}<span class="moment-like-count">${likes}</span><span>人已赞</span>
+                    </button>
+                    <button class="moment-action${showComposer ? ' is-active' : ''}" data-action="comment">${MOMENT_ICONS.comment}<span>评论</span></button>
                 </div>
                 <div class="moment-comments ${comments.length ? '' : 'empty hidden'}">
                     ${
-                      !expanded && hiddenCount > 0
-                        ? `<div class="moment-comments-toggle" data-action="expand">展开查看更多评论 (${hiddenCount}条)</div>`
+                      hiddenCount > 0
+                        ? `<button type="button" class="moment-comments-toggle ${expanded ? 'is-collapse' : 'is-expand'}" data-action="${expanded ? 'collapse' : 'expand'}">${expanded ? '收起评论' : `展开查看更多评论 (${hiddenCount}条)`}</button>`
                         : ''
                     }
                     ${threadedHtml}
-                    ${
-                      expanded && hiddenCount > 0
-                        ? `<div class="moment-comments-toggle" data-action="collapse">收起评论</div>`
-                        : ''
-                    }
                 </div>
                 <div class="moment-comment-composer${showComposer ? ' is-open' : ''}">
                     <div class="moment-replying${replyTarget ? '' : ' hidden'}">
@@ -104,8 +117,8 @@ export const buildMomentCardMarkup = ({
                         </div>
                     </div>
                     <div class="moment-comment-input-row">
-                        <input class="moment-comment-input" type="text" placeholder="${replyTarget ? `回复 ${escapeHtml(replyTarget.author || '')}...` : '写评论...'}" ${pending ? 'disabled' : ''} />
-                        <button class="moment_comment" data-action="send" ${pending ? 'disabled' : ''}>${pending ? '发送中…' : '发送'}</button>
+                        <input class="moment-comment-input" type="text" placeholder="${replyTarget ? `回复 ${escapeHtml(replyTarget.author || '')}…` : '写评论…'}" ${pending ? 'disabled' : ''} />
+                        <button class="moment_comment" data-action="send" ${pending ? 'disabled' : ''}>${MOMENT_ICONS.send}<span>${pending ? '发送中…' : '发送'}</span></button>
                     </div>
                 </div>
             `;
@@ -162,6 +175,7 @@ export const renderMomentCardContent = ({
   replyTarget = null,
   pending = false,
   visibleComments = [],
+  collapsedCommentLimit = 3,
   documentLike,
   buildThreadedComments = () => ({ roots: [], repliesByParent: new Map() }),
   escapeHtml = (value) => String(value ?? ''),
@@ -172,7 +186,10 @@ export const renderMomentCardContent = ({
 } = {}) => {
   if (!cardEl || !moment) return { hiddenCount: 0, media: { text: '', images: [], audios: [] } };
   const comments = Array.isArray(moment.comments) ? moment.comments : [];
-  const hiddenCount = comments.length > visibleComments.length ? comments.length - visibleComments.length : 0;
+  const baseLimit = Math.max(0, Number(collapsedCommentLimit) || 0);
+  const hiddenCount = baseLimit > 0 && comments.length > baseLimit
+    ? comments.length - baseLimit
+    : comments.length > visibleComments.length ? comments.length - visibleComments.length : 0;
   const threadedHtml = buildMomentThreadedCommentsHtml({
     visibleComments,
     buildThreadedComments,

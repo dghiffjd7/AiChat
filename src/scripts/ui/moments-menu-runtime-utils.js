@@ -57,12 +57,12 @@ export const createMomentsMenuRuntime = ({
     const menu = createMenuShell(documentLike);
     const deleteButton = createMenuButton(documentLike, {
       action: 'delete',
-      label: '🗑️ 删除动态',
+      label: '删除动态',
       danger: true,
     });
     const cancelButton = createMenuButton(documentLike, {
       action: 'cancel',
-      label: '❌ 取消',
+      label: '取消',
     });
     const hide = () => this.hideMomentMenu(menu);
     documentLike.addEventListener?.('click', hide);
@@ -111,12 +111,12 @@ export const createMomentsMenuRuntime = ({
     const menu = createMenuShell(documentLike);
     const deleteButton = createMenuButton(documentLike, {
       action: 'delete-comment',
-      label: '🗑️ 删除评论',
+      label: '删除评论',
       danger: true,
     });
     const cancelButton = createMenuButton(documentLike, {
       action: 'cancel',
-      label: '❌ 取消',
+      label: '取消',
     });
     const hide = () => this.hideCommentMenu(menu);
     documentLike.addEventListener?.('click', hide);

@@ -106,6 +106,28 @@ const calculateStaggerDelay = (index = 0) => {
   return Math.round(total);
 };
 
+const RECOMMEND_ADD_ICON = `
+  <svg class="session-recommend-add-icon" viewBox="0 0 24 24" aria-hidden="true">
+    <path d="M12 5v14"></path>
+    <path d="M5 12h14"></path>
+  </svg>
+`;
+
+const summarizeCharacterMeta = (character = {}) => {
+  const source = String(character.source || '').trim();
+  const tags = Array.isArray(character.tags)
+    ? character.tags.map(tag => String(tag || '').trim()).filter(Boolean)
+    : [];
+  const aliases = Array.isArray(character.aliases)
+    ? character.aliases.map(alias => String(alias || '').trim()).filter(Boolean)
+    : [];
+  const parts = [];
+  if (source) parts.push(source);
+  if (tags.length) parts.push(tags.slice(0, 3).join(' / '));
+  if (!parts.length && aliases.length) parts.push(`别名：${aliases.slice(0, 2).join(' / ')}`);
+  return parts.join(' · ');
+};
+
 export class SessionPanel {
   constructor(chatStore, contactsStore, ui, { onUpdated, personaStore, getPersonaScopeKey, getChatSessionId, getSocialSessionId } = {}) {
     this.store = chatStore;
@@ -136,7 +158,6 @@ export class SessionPanel {
     // 角色库推荐（按 persona scope 隔离）
     this.characterStore = new CharacterLibraryStore({ scopeId: this.contactsStore?.scopeId || '' });
     this.recommendSection = null;
-    this.recommendTagsEl = null;
     this.recommendListEl = null;
     this.recommendPullEl = null;
     this.recommendPullIcon = null;
@@ -144,7 +165,6 @@ export class SessionPanel {
     this.recommendMode = false;
     this.recommendLoading = false;
     this.recommendSections = [];
-    this.recommendTags = [];
     this.recommendCharacters = [];
     this.recommendQuery = '';
     this.lastRecommendRefreshAt = 0;
@@ -229,7 +249,7 @@ export class SessionPanel {
     if (!visibleContacts.length) {
       const empty = document.createElement('div');
       empty.className = 'sticker-bind-empty';
-      empty.textContent = this.contactsReadyResolved ? '暂无好友/群组' : '载入中...';
+      empty.textContent = this.contactsReadyResolved ? '暂无好友/群组' : '载入中…';
       this.listElCurrent.appendChild(empty);
     } else {
       visibleContacts.forEach(c => {
@@ -497,7 +517,7 @@ export class SessionPanel {
     if (this.sharedLoading) {
       const loading = document.createElement('div');
       loading.className = 'sticker-bind-empty';
-      loading.textContent = '载入中...';
+      loading.textContent = '载入中…';
       this.listElShared.appendChild(loading);
       this.panel?.classList.remove('has-shared');
       return;
@@ -767,12 +787,11 @@ export class SessionPanel {
       this.updateRecommendPullUI({ progress: 1, state: 'loading' });
       this.applyRecommendPullTransform(this.recommendPullThreshold, { dragging: false });
     }
-    this.renderRecommendSections([], { kind: 'loading', hint: '载入推荐中...' });
+    this.renderRecommendSections([], { kind: 'loading', hint: '载入推荐中…' });
     try {
       await this.characterStore?.setScope?.(this.contactsStore?.scopeId || '');
       const data = await this.characterStore?.buildRecommendations?.({ contactsStore: this.contactsStore });
       if (token !== this.recommendRequestToken) return;
-      this.recommendTags = Array.isArray(data?.tags) ? data.tags : [];
       this.recommendSections = Array.isArray(data?.sections) ? data.sections : [];
       this.recommendCharacters = Array.isArray(data?.characters) ? data.characters : [];
       this.renderRecommendSections(this.recommendCharacters, { kind: 'recommend' });
@@ -794,7 +813,7 @@ export class SessionPanel {
     if (!this.recommendMode) this.setRecommendMode(true);
     const token = ++this.recommendRequestToken;
     this.recommendLoading = true;
-    this.renderRecommendSections([], { kind: 'loading', hint: '搜索中...' });
+    this.renderRecommendSections([], { kind: 'loading', hint: '搜索中…' });
     try {
       await this.characterStore?.setScope?.(this.contactsStore?.scopeId || '');
       const results = await this.characterStore?.search?.(query, { contactsStore: this.contactsStore });
@@ -816,33 +835,6 @@ export class SessionPanel {
     }
   }
 
-  renderRecommendTags(tags, { kind = 'recommend', query = '' } = {}) {
-    if (!this.recommendTagsEl) return;
-    const el = this.recommendTagsEl;
-    el.innerHTML = '';
-    const list = Array.isArray(tags) ? tags : [];
-    if (kind === 'search') {
-      const hint = document.createElement('div');
-      hint.className = 'session-recommend-hint';
-      hint.textContent = query ? `搜索角色库：${query}` : '输入关键词搜索角色库';
-      el.appendChild(hint);
-      return;
-    }
-    if (!list.length) {
-      const hint = document.createElement('div');
-      hint.className = 'session-recommend-hint';
-      hint.textContent = '推荐标签';
-      el.appendChild(hint);
-      return;
-    }
-    list.forEach(tag => {
-      const chip = document.createElement('span');
-      chip.className = 'session-recommend-tag';
-      chip.textContent = String(tag || '').trim();
-      el.appendChild(chip);
-    });
-  }
-
   renderRecommendSections(characters, { kind = 'recommend', hint = '' } = {}) {
     if (!this.recommendListEl) return;
     const el = this.recommendListEl;
@@ -850,7 +842,7 @@ export class SessionPanel {
     if (kind === 'loading') {
       const loading = document.createElement('div');
       loading.className = 'session-recommend-empty';
-      loading.textContent = hint || '载入中...';
+      loading.textContent = hint || '载入中…';
       el.appendChild(loading);
       return;
     }
@@ -899,8 +891,43 @@ export class SessionPanel {
     nameEl.innerHTML = buildNameWithBadgesHtml(name, autoBadges);
     info.appendChild(nameEl);
 
+    const metaText = summarizeCharacterMeta(char);
+    if (metaText) {
+      const meta = document.createElement('div');
+      meta.className = 'session-recommend-meta';
+      meta.textContent = metaText;
+      info.appendChild(meta);
+    }
+
+    const tagList = Array.isArray(char.tags)
+      ? char.tags.map(tag => String(tag || '').trim()).filter(Boolean).slice(0, 3)
+      : [];
+    if (tagList.length) {
+      const chips = document.createElement('div');
+      chips.className = 'session-recommend-row-tags';
+      tagList.forEach(tag => {
+        const chip = document.createElement('span');
+        chip.className = 'session-recommend-row-tag';
+        chip.textContent = tag;
+        chips.appendChild(chip);
+      });
+      info.appendChild(chips);
+    }
+
+    const addBtn = document.createElement('button');
+    addBtn.type = 'button';
+    addBtn.className = 'session-recommend-add';
+    addBtn.setAttribute('aria-label', `添加 ${name}`);
+    addBtn.innerHTML = `${RECOMMEND_ADD_ICON}<span>添加</span>`;
+    addBtn.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      this.confirmAddCharacter(char);
+    });
+
     row.appendChild(avatar);
     row.appendChild(info);
+    row.appendChild(addBtn);
     return row;
   }
 
@@ -938,7 +965,7 @@ export class SessionPanel {
     this.recommendPullEl.classList.toggle('is-loading', isLoading);
 
     if (this.recommendPullText) {
-      if (isLoading) this.recommendPullText.textContent = '刷新中...';
+      if (isLoading) this.recommendPullText.textContent = '刷新中…';
       else this.recommendPullText.textContent = isArmed ? '释放刷新' : '上拉刷新';
     }
   }

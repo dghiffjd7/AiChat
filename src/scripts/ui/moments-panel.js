@@ -197,6 +197,38 @@ export class MomentsPanel {
     });
   }
 
+  likeMoment({ momentId, buttonEl = null } = {}) {
+    const id = String(momentId || '').trim();
+    if (!id) return false;
+    const current = this.store?.get?.(id);
+    if (!current) return false;
+    const saved = typeof this.store?.likeMoment === 'function'
+      ? this.store.likeMoment(id)
+      : this.store?.upsert?.({
+        id,
+        likes: current.userLiked
+          ? Math.max(0, (Number(current.likes || 0) || 0) - 1)
+          : (Number(current.likes || 0) || 0) + 1,
+        userLiked: !current.userLiked,
+      });
+    if (!saved) return false;
+    const likes = Math.max(0, Number(saved.likes || 0) || 0);
+    const liked = Boolean(saved.userLiked);
+    if (buttonEl) {
+      buttonEl.classList?.toggle?.('is-liked', liked);
+      buttonEl.classList?.add?.('is-burst');
+      buttonEl.dataset.likeDelta = liked ? '+1' : '-1';
+      buttonEl.setAttribute?.('aria-pressed', liked ? 'true' : 'false');
+      buttonEl.setAttribute?.('aria-label', `${liked ? '已点赞' : '点赞'}，当前 ${likes} 人已赞`);
+      buttonEl.setAttribute?.('title', liked ? '已点赞' : '点赞');
+      const countEl = buttonEl.querySelector?.('.moment-like-count');
+      if (countEl) countEl.textContent = String(likes);
+    }
+    const delay = buttonEl ? 360 : 0;
+    setTimeout(() => this.render({ preserveScroll: true }), delay);
+    return true;
+  }
+
   ensureCommentMenu() {
     this.commentMenuEl = this.menuRuntime.ensureCommentMenu({
       existingMenu: this.commentMenuEl,
@@ -280,6 +312,7 @@ export class MomentsPanel {
         replyTarget,
         pending,
         visibleComments,
+        collapsedCommentLimit: VISIBLE_COMMENTS,
         documentLike: document,
         buildThreadedComments: (items) => this.buildThreadedComments(items),
         escapeHtml: esc,
@@ -311,6 +344,7 @@ export class MomentsPanel {
             momentId: nextMomentId,
           }),
         }),
+        likeMoment: (payload) => this.likeMoment(payload),
         toggleComposer: (momentId) => toggleMomentComposer({
           momentId,
           openComposer: this.openComposer,

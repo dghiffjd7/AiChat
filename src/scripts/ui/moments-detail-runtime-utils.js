@@ -1,3 +1,14 @@
+const momentDetailIconSvg = (body) => `
+  <svg class="moment-icon" viewBox="0 0 24 24" aria-hidden="true">
+    ${body}
+  </svg>
+`;
+
+const MOMENT_DETAIL_ICONS = Object.freeze({
+  eye: momentDetailIconSvg('<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z"></path><circle cx="12" cy="12" r="3"></circle>'),
+  like: momentDetailIconSvg('<path d="M7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3"></path><path d="M7 11l4-8a3 3 0 0 1 3 3v4h4.5a2.5 2.5 0 0 1 2.45 3l-1.2 6A3 3 0 0 1 16.8 22H7Z"></path>'),
+});
+
 export const buildMomentDetailBodyMarkup = ({
   moment,
   avatar = '',
@@ -19,12 +30,14 @@ export const buildMomentDetailBodyMarkup = ({
     : `<div class="moment-detail-empty">（暂无评论）</div>`;
   return `
                 <div class="moment-detail-summary">
-                    <img src="${escapeHtml(avatar)}" class="moment-detail-summary-avatar">
+                    <img src="${escapeHtml(avatar)}" alt="" class="moment-detail-summary-avatar">
                     <div class="moment-detail-summary-main">
                         <div class="moment-detail-summary-author">${escapeHtml(target.author || '角色')}</div>
-                        <div class="moment-detail-summary-meta">${escapeHtml(target.time || '')} · 👁 ${Number(
-    target.views || 0,
-  )} · 👍 ${Number(target.likes || 0)}</div>
+                        <div class="moment-detail-summary-meta">
+                          <span>${escapeHtml(target.time || '')}</span>
+                          <span>${MOMENT_DETAIL_ICONS.eye}${Number(target.views || 0)}</span>
+                          <span>${MOMENT_DETAIL_ICONS.like}${Number(target.likes || 0)}</span>
+                        </div>
                         <div class="moment-detail-text"></div>
                     </div>
                 </div>

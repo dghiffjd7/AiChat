@@ -148,6 +148,7 @@ export const bindMomentFeedCardInteractions = ({
   showMenu,
   bindCommentContextMenu,
   activateReplyTarget,
+  likeMoment,
   toggleComposer,
   toggleExpanded,
   clearReplyTarget,
@@ -164,6 +165,15 @@ export const bindMomentFeedCardInteractions = ({
   cardEl.querySelector?.('[data-action="comment"]')?.addEventListener?.('click', (event) => {
     event.stopPropagation?.();
     toggleComposer?.(moment.id);
+  });
+
+  cardEl.querySelector?.('[data-action="like"]')?.addEventListener?.('click', (event) => {
+    event.preventDefault?.();
+    event.stopPropagation?.();
+    likeMoment?.({
+      momentId: moment.id,
+      buttonEl: event.currentTarget || cardEl.querySelector?.('[data-action="like"]') || null,
+    });
   });
 
   cardEl.querySelectorAll?.('.moment-comments-toggle')?.forEach((toggleEl) => {

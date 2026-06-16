@@ -14,12 +14,12 @@ export const ensureMomentDetailModalShell = ({
             <div class="moment-detail-header">
                 <div class="moment-detail-title">动态</div>
                 <div id="moment-detail-meta" class="moment-detail-meta"></div>
-                <button id="moment-detail-close" class="moment-detail-close">关闭</button>
+                <button id="moment-detail-close" class="moment-detail-close" type="button">关闭</button>
             </div>
             <div id="moment-detail-body" class="moment-detail-body"></div>
             <div class="moment-detail-footer">
-                <input id="moment-comment-input" class="moment-detail-input" type="text" placeholder="写评论...">
-                <button id="moment-comment-send" class="moment-detail-send">发送</button>
+                <input id="moment-comment-input" class="moment-detail-input" type="text" placeholder="写评论…">
+                <button id="moment-comment-send" class="moment-detail-send" type="button">发送</button>
             </div>
         `;
   overlay.appendChild?.(panel);

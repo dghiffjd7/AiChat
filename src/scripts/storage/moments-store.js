@@ -164,6 +164,7 @@ export class MomentsStore {
                 }
                 m.generatedImages = normalizeGeneratedImages(m.generatedImages);
                 m.mentions = normalizeMentions(m.mentions);
+                m.userLiked = Boolean(m.userLiked);
                 // Ensure comment ids for stable delete operations
                 if (Array.isArray(m.comments)) {
                     m.comments = m.comments.map((c) => {
@@ -341,6 +342,9 @@ export class MomentsStore {
         const likes = hasOwn(moment, 'likes')
             ? (Number.isFinite(Number(moment.likes)) ? Number(moment.likes) : 0)
             : (Number.isFinite(Number(existingById?.likes)) ? Number(existingById.likes) : (Number.isFinite(Number(existingBySig?.likes)) ? Number(existingBySig.likes) : 0));
+        const userLiked = hasOwn(moment, 'userLiked')
+            ? Boolean(moment.userLiked)
+            : Boolean(existingById?.userLiked || existingBySig?.userLiked);
 
         const normalizeComments = (incoming = []) => {
             const list = Array.isArray(incoming) ? incoming : [];
@@ -401,6 +405,7 @@ export class MomentsStore {
             time,
             views,
             likes,
+            userLiked,
             comments,
             generatedImages,
             mentions,
@@ -412,6 +417,17 @@ export class MomentsStore {
         this.state.moments = list;
         this._persist();
         return next;
+    }
+
+    likeMoment(momentId) {
+        const id = String(momentId || '').trim();
+        if (!id) return null;
+        const moment = this.get(id);
+        if (!moment) return null;
+        const likes = Number.isFinite(Number(moment.likes)) ? Number(moment.likes) : 0;
+        const nextLiked = !moment.userLiked;
+        const nextLikes = nextLiked ? likes + 1 : Math.max(0, likes - 1);
+        return this.upsert({ id, likes: nextLikes, userLiked: nextLiked });
     }
 
     addMany(moments = []) {

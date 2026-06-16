@@ -2935,9 +2935,7 @@ body[data-ui-mode='rp'] .rp-continue-btn {
   align-items: flex-end;
   justify-content: center;
   padding: 18px;
-  background: rgba(15, 23, 42, 0.34);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
+  background: var(--app-surface-overlay);
 }
 
 .writing-media-assets-overlay.is-active,
@@ -2952,10 +2950,10 @@ body[data-ui-mode='rp'] .rp-continue-btn {
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  border-radius: 24px;
-  border: 1px solid rgba(15, 23, 42, 0.1);
-  background: rgba(255, 255, 255, 0.96);
-  box-shadow: 0 24px 60px rgba(15, 23, 42, 0.24);
+  border-radius: 16px;
+  border: 1px solid var(--app-border-default);
+  background: var(--app-surface-card);
+  box-shadow: 0 24px 64px rgba(15, 23, 42, 0.24);
 }
 
 .writing-media-assets-header,
@@ -2969,9 +2967,14 @@ body[data-ui-mode='rp'] .rp-continue-btn {
   padding: 14px 16px;
 }
 
+.moment-compose-header {
+  border-bottom: 1px solid var(--app-border-default);
+  background: var(--app-surface-card);
+}
+
 .writing-media-assets-title,
 .moment-compose-title {
-  font-weight: 800;
+  font-weight: 900;
   color: var(--app-text-primary);
 }
 
@@ -2984,18 +2987,21 @@ body[data-ui-mode='rp'] .rp-continue-btn {
 
 .writing-media-assets-close,
 .moment-compose-close {
-  border: none;
-  background: transparent;
+  width: 34px;
+  height: 34px;
+  border: 1px solid var(--app-border-default);
+  border-radius: 10px;
+  background: var(--app-surface-subtle);
   color: var(--app-text-muted);
-  font-size: 24px;
+  font-size: 22px;
   line-height: 1;
   cursor: pointer;
 }
 
 .writing-media-assets-toolbar {
-  border-top: 1px solid rgba(15, 23, 42, 0.08);
-  border-bottom: 1px solid rgba(15, 23, 42, 0.08);
-  background: rgba(248, 250, 252, 0.72);
+  border-top: 1px solid var(--app-border-subtle);
+  border-bottom: 1px solid var(--app-border-subtle);
+  background: var(--app-surface-subtle);
   font-size: 12px;
   color: var(--app-text-muted);
 }
@@ -3004,12 +3010,13 @@ body[data-ui-mode='rp'] .rp-continue-btn {
 .writing-media-asset-actions button,
 .moment-compose-footer button {
   border-radius: 999px;
-  border: 1px solid rgba(15, 23, 42, 0.12);
+  border: 1px solid var(--app-border-default);
   background: var(--app-surface-card);
   color: var(--app-text-primary);
   padding: 8px 12px;
   font-weight: 700;
   cursor: pointer;
+  transition: transform 120ms ease, border-color 160ms ease, background 160ms ease;
 }
 
 .writing-media-assets-toolbar button,
@@ -3038,12 +3045,13 @@ body[data-ui-mode='rp'] .rp-continue-btn {
   overflow: auto;
   -webkit-overflow-scrolling: touch;
   padding: 14px 16px;
+  background: var(--app-surface-subtle);
 }
 
 .writing-media-assets-empty,
 .moment-compose-image-empty {
-  border: 1px dashed rgba(15, 23, 42, 0.18);
-  border-radius: 18px;
+  border: 1px dashed var(--app-border-default);
+  border-radius: 14px;
   padding: 18px;
   color: var(--app-text-muted);
   text-align: center;
@@ -3383,9 +3391,9 @@ body[data-ui-mode='rp'] .rp-continue-btn {
   width: 100%;
   min-height: 90px;
   resize: vertical;
-  border-radius: 18px;
-  border: 1px solid rgba(15, 23, 42, 0.14);
-  background: var(--app-surface-subtle);
+  border-radius: 12px;
+  border: 1px solid var(--app-border-default);
+  background: var(--app-surface-card);
   color: var(--app-text-primary);
   padding: 12px 14px;
   font: inherit;
@@ -3407,8 +3415,9 @@ body[data-ui-mode='rp'] .rp-continue-btn {
   position: relative;
   overflow: hidden;
   aspect-ratio: 1;
-  border-radius: 16px;
-  background: rgba(15, 23, 42, 0.08);
+  border: 1px solid var(--app-border-subtle);
+  border-radius: 12px;
+  background: var(--app-surface-card);
 }
 
 .moment-compose-image-card img {
@@ -3439,11 +3448,55 @@ body[data-ui-mode='rp'] .rp-continue-btn {
 }
 
 .moment-compose-status[data-kind='error'] {
-  color: #dc2626;
+  color: var(--app-danger-text);
 }
 
 .moment-compose-status[data-kind='success'] {
   color: #16a34a;
+}
+
+.moment-compose-close:hover,
+.moment-compose-footer button:hover,
+.writing-media-assets-close:hover,
+.writing-media-assets-toolbar button:hover,
+.writing-media-asset-actions button:hover {
+  border-color: rgba(37, 99, 235, 0.30);
+  background: var(--app-surface-hover);
+}
+
+.moment-compose-close:focus-visible,
+.moment-compose-footer button:focus-visible,
+.moment-compose-text:focus-visible,
+.moment-compose-prompt:focus-visible,
+.writing-media-assets-close:focus-visible,
+.writing-media-assets-toolbar button:focus-visible,
+.writing-media-asset-actions button:focus-visible {
+  outline: 2px solid rgba(37, 99, 235, 0.34);
+  outline-offset: 2px;
+}
+
+@media (max-width: 560px) {
+  .moment-compose-overlay,
+  .writing-media-assets-overlay {
+    padding: 10px max(10px, env(safe-area-inset-right, 0px)) max(10px, env(safe-area-inset-bottom, 0px)) max(10px, env(safe-area-inset-left, 0px));
+  }
+
+  .moment-compose-modal,
+  .writing-media-assets-panel {
+    width: 100%;
+    max-height: min(88dvh, calc(100dvh - 20px));
+    border-radius: 16px 16px 12px 12px;
+  }
+
+  .moment-compose-footer {
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    padding-bottom: calc(14px + env(safe-area-inset-bottom, 0px));
+  }
+
+  .moment-compose-images {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 .voice-btn {
@@ -5386,77 +5439,22 @@ body[data-ui-mode='rp'] .QQ_chat_page.sticker-preview-active .msgcontent {
   display: flex;
 }
 
-.session-recommend-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  padding: 10px 16px 8px;
-  border-bottom: 1px solid rgba(15, 23, 42, 0.06);
-}
-
-.session-recommend-title {
-  font-size: 13px;
-  font-weight: 800;
-  color: var(--app-text-primary);
-}
-
-.session-recommend-refresh {
-  border: 1px solid rgba(14, 165, 233, 0.35);
-  background: rgba(14, 165, 233, 0.1);
-  color: #0369a1;
-  border-radius: 999px;
-  padding: 6px 12px;
-  font-size: 12px;
-  font-weight: 800;
-  cursor: pointer;
-}
-
-.session-recommend-tags {
-  display: flex;
-  flex-wrap: nowrap;
-  gap: 6px;
-  padding: 8px 16px 10px;
-  overflow-x: auto;
-  border-bottom: 1px solid rgba(15, 23, 42, 0.06);
-  -webkit-overflow-scrolling: touch;
-}
-
-.session-recommend-hint {
-  font-size: 12px;
-  color: var(--app-text-muted);
-  font-weight: 700;
-}
-
-.session-recommend-tag {
-  display: inline-flex;
-  align-items: center;
-  padding: 4px 10px;
-  border-radius: 999px;
-  background: var(--app-surface-hover);
-  border: 1px solid var(--app-border-default);
-  color: var(--app-text-primary);
-  font-size: 12px;
-  font-weight: 800;
-  white-space: nowrap;
-}
-
 .session-recommend-list {
   flex: 1 1 auto;
   min-height: 0;
-  padding: 6px 16px 12px;
+  padding: 14px 16px;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 10px;
   background: var(--app-surface-card);
   -webkit-overflow-scrolling: touch;
   transition: transform 160ms ease;
-  will-change: transform;
 }
 
 .session-recommend-list.is-pulling {
   transition: none;
+  will-change: transform;
 }
 
 .session-recommend-pull {
@@ -5524,7 +5522,7 @@ body[data-ui-mode='rp'] .QQ_chat_page.sticker-preview-active .msgcontent {
 }
 
 .session-recommend-block {
-  border: 1px solid rgba(15, 23, 42, 0.06);
+  border: 1px solid var(--app-border-default);
   border-radius: 14px;
   background: var(--app-surface-card);
   overflow: hidden;
@@ -5536,8 +5534,8 @@ body[data-ui-mode='rp'] .QQ_chat_page.sticker-preview-active .msgcontent {
   justify-content: space-between;
   gap: 8px;
   padding: 10px 12px;
-  background: linear-gradient(180deg, rgba(248, 250, 252, 0.92), rgba(248, 250, 252, 0.7));
-  border-bottom: 1px solid rgba(15, 23, 42, 0.06);
+  background: var(--app-surface-subtle);
+  border-bottom: 1px solid var(--app-border-subtle);
 }
 
 .session-recommend-block-title {
@@ -5561,27 +5559,38 @@ body[data-ui-mode='rp'] .QQ_chat_page.sticker-preview-active .msgcontent {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 10px 12px;
-  max-height: 84px;
+  padding: 11px 12px;
+  min-height: 72px;
+  max-height: none;
   overflow: hidden;
-  border-bottom: 1px solid rgba(15, 23, 42, 0.05);
+  border: 1px solid var(--app-border-default);
+  border-radius: 14px;
+  background: var(--app-surface-card);
   cursor: pointer;
   transition:
     background 120ms ease,
+    border-color 160ms ease,
+    box-shadow 160ms ease,
     opacity 180ms ease,
-    transform 180ms ease,
-    max-height 220ms ease,
-    padding 220ms ease,
-    margin 220ms ease,
-    border-color 220ms ease;
+    transform 180ms ease;
   opacity: 0;
   transform: translateY(16px);
   animation: session-recommend-fade-in-up 320ms ease-out forwards;
-  will-change: opacity, transform;
 }
 
 .session-recommend-row:last-child {
-  border-bottom: none;
+  border-bottom: 1px solid var(--app-border-default);
+}
+
+.session-recommend-row:hover {
+  border-color: rgba(37, 99, 235, 0.28);
+  background: var(--app-surface-subtle);
+  box-shadow: 0 8px 22px rgba(15, 23, 42, 0.08);
+}
+
+.session-recommend-row:focus-within {
+  border-color: rgba(37, 99, 235, 0.38);
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.10);
 }
 
 .session-recommend-row:active {
@@ -5612,10 +5621,10 @@ body[data-ui-mode='rp'] .QQ_chat_page.sticker-preview-active .msgcontent {
 }
 
 .session-recommend-avatar {
-  width: 42px;
-  height: 42px;
-  border-radius: 12px;
-  border: 1px solid rgba(148, 163, 184, 0.35);
+  width: 48px;
+  height: 48px;
+  border-radius: 14px;
+  border: 1px solid var(--app-border-default);
   object-fit: cover;
   background: var(--app-surface-subtle);
   flex-shrink: 0;
@@ -5626,7 +5635,7 @@ body[data-ui-mode='rp'] .QQ_chat_page.sticker-preview-active .msgcontent {
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 5px;
 }
 
 .session-recommend-name {
@@ -5645,16 +5654,69 @@ body[data-ui-mode='rp'] .QQ_chat_page.sticker-preview-active .msgcontent {
   white-space: nowrap;
 }
 
+.session-recommend-row-tags {
+  display: flex;
+  gap: 5px;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.session-recommend-row-tag {
+  max-width: 92px;
+  display: inline-flex;
+  align-items: center;
+  min-height: 20px;
+  padding: 2px 7px;
+  border: 1px solid var(--app-border-subtle);
+  border-radius: 999px;
+  background: var(--app-surface-subtle);
+  color: var(--app-text-secondary);
+  font-size: 11px;
+  font-weight: 800;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .session-recommend-add {
-  border: 1px solid rgba(14, 165, 233, 0.45);
-  background: #e0f2fe;
-  color: #0369a1;
+  min-height: 32px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid rgba(37, 99, 235, 0.32);
+  background: rgba(37, 99, 235, 0.10);
+  color: var(--app-accent-strong);
   border-radius: 999px;
   padding: 6px 12px;
   font-size: 12px;
   font-weight: 900;
   cursor: pointer;
   flex-shrink: 0;
+  transition: transform 120ms ease, border-color 160ms ease, background 160ms ease;
+}
+
+.session-recommend-add-icon {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.session-recommend-add:hover {
+  border-color: rgba(37, 99, 235, 0.46);
+  background: rgba(37, 99, 235, 0.14);
+}
+
+.session-recommend-add:active {
+  transform: translateY(1px);
+}
+
+.session-recommend-add:focus-visible {
+  outline: 2px solid rgba(37, 99, 235, 0.34);
+  outline-offset: 2px;
 }
 
 @media (max-width: 520px) {

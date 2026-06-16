@@ -159,6 +159,7 @@ import {
     },
   });
   const dots = makeNode();
+  const likeBtn = makeNode();
   const commentBtn = makeNode();
   const toggle = makeNode({ action: 'expand' });
   const commentEl = makeNode({ commentId: 'c1' });
@@ -171,6 +172,7 @@ import {
     querySelector(selector) {
       return {
         '.moment-more': dots,
+        '[data-action="like"]': likeBtn,
         '[data-action="comment"]': commentBtn,
         '.moment-reply-cancel': cancelBtn,
         '.moment-comment-input': inputEl,
@@ -192,6 +194,7 @@ import {
     showMenu: (anchorEl, momentId) => calls.push(['menu', anchorEl === dots, momentId]),
     bindCommentContextMenu: (payload) => calls.push(['bind-comment', payload.momentId, payload.commentId]),
     activateReplyTarget: (payload) => calls.push(['reply', payload.momentId, payload.commentId]),
+    likeMoment: (payload) => calls.push(['like', payload.momentId, payload.buttonEl === likeBtn]),
     toggleComposer: (momentId) => calls.push(['composer', momentId]),
     toggleExpanded: (momentId, action) => calls.push(['expanded', momentId, action]),
     clearReplyTarget: (momentId) => calls.push(['clear-reply', momentId]),
@@ -201,6 +204,7 @@ import {
     },
   });
   dots.listeners.click?.({ stopPropagation() {} });
+  likeBtn.listeners.click?.({ preventDefault() {}, stopPropagation() {}, currentTarget: likeBtn });
   commentBtn.listeners.click?.({ stopPropagation() {} });
   toggle.listeners.click?.({ stopPropagation() {} });
   authorEl.listeners.click?.({ preventDefault() {}, stopPropagation() {} });
@@ -211,6 +215,7 @@ import {
     ['bind-comment', 'm1', 'c1'],
     ['create-send', 'm1', true, false],
     ['menu', true, 'm1'],
+    ['like', 'm1', true],
     ['composer', 'm1'],
     ['expanded', 'm1', 'expand'],
     ['reply', 'm1', 'c1'],
