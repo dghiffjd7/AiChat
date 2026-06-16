@@ -3,6 +3,116 @@ import { validateManifest } from '../storage/plugin-store.js';
 import { safeInvoke } from '../utils/tauri.js';
 import { RISKY_PERMISSIONS, RISKY_PERMISSION_SET } from '../plugins/plugin-permissions.js';
 
+const STYLE_ID = 'plugin-panel-polish-style';
+
+const iconSvg = (body) => `
+  <svg class="plugin-panel-icon" viewBox="0 0 24 24" aria-hidden="true">
+    ${body}
+  </svg>
+`;
+
+const ICONS = Object.freeze({
+  block: iconSvg('<circle cx="12" cy="12" r="9"/><path d="m5.7 5.7 12.6 12.6"/>'),
+  box: iconSvg('<path d="m21 8-9-5-9 5 9 5 9-5Z"/><path d="M3 8v8l9 5 9-5V8"/><path d="M12 13v8"/>'),
+  check: iconSvg('<path d="m5 12 4 4L19 6"/>'),
+  close: iconSvg('<path d="M18 6 6 18"/><path d="m6 6 12 12"/>'),
+  folder: iconSvg('<path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/>'),
+  gear: iconSvg('<path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z"/><path d="M19.4 15a1.8 1.8 0 0 0 .36 2l.05.05a2 2 0 0 1-2.83 2.83l-.05-.05a1.8 1.8 0 0 0-2-.36 1.8 1.8 0 0 0-1 1.63V21a2 2 0 0 1-4 0v-.08a1.8 1.8 0 0 0-1-1.63 1.8 1.8 0 0 0-2 .36l-.05.05a2 2 0 0 1-2.83-2.83l.05-.05a1.8 1.8 0 0 0 .36-2 1.8 1.8 0 0 0-1.63-1H3a2 2 0 0 1 0-4h.08a1.8 1.8 0 0 0 1.63-1 1.8 1.8 0 0 0-.36-2l-.05-.05a2 2 0 0 1 2.83-2.83l.05.05a1.8 1.8 0 0 0 2 .36 1.8 1.8 0 0 0 1-1.63V3a2 2 0 0 1 4 0v.08a1.8 1.8 0 0 0 1 1.63 1.8 1.8 0 0 0 2-.36l.05-.05a2 2 0 0 1 2.83 2.83l-.05.05a1.8 1.8 0 0 0-.36 2 1.8 1.8 0 0 0 1.63 1H21a2 2 0 0 1 0 4h-.08a1.8 1.8 0 0 0-1.52 1Z"/>'),
+  link: iconSvg('<path d="M10 13a5 5 0 0 0 7.1 0l2-2a5 5 0 0 0-7.1-7.1l-1.1 1.1"/><path d="M14 11a5 5 0 0 0-7.1 0l-2 2a5 5 0 0 0 7.1 7.1l1.1-1.1"/>'),
+  lock: iconSvg('<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>'),
+  more: iconSvg('<circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/>'),
+  refresh: iconSvg('<path d="M3 12a9 9 0 0 1 15.5-6.2"/><path d="M18 3v5h-5"/><path d="M21 12a9 9 0 0 1-15.5 6.2"/><path d="M6 21v-5h5"/>'),
+  rollback: iconSvg('<path d="M3 7v6h6"/><path d="M21 17a9 9 0 0 0-15-6.7L3 13"/>'),
+  trash: iconSvg('<path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v5"/><path d="M14 11v5"/>'),
+  unlock: iconSvg('<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 7.7-1.5"/>'),
+});
+
+const ensurePanelStyles = () => {
+  if (typeof document === 'undefined' || document.getElementById(STYLE_ID)) return;
+  const style = document.createElement('style');
+  style.id = STYLE_ID;
+  style.textContent = `
+    #plugin-panel.plugin-panel-shell,
+    .plugin-ui-panel {
+      border: 1px solid var(--app-border-default) !important;
+      box-shadow: 0 24px 60px rgba(15, 23, 42, 0.24) !important;
+    }
+    #plugin-panel .plugin-panel-header,
+    .plugin-ui-panel .plugin-panel-header {
+      background: color-mix(in srgb, var(--app-surface-card) 90%, var(--app-surface-subtle)) !important;
+      border-bottom-color: var(--app-border-default) !important;
+    }
+    #plugin-panel .plugin-panel-actionbar {
+      background: color-mix(in srgb, var(--app-surface-card) 86%, var(--app-surface-subtle)) !important;
+      border-bottom-color: var(--app-border-default) !important;
+    }
+    #plugin-panel .plugin-panel-button,
+    .plugin-ui-panel .plugin-panel-button,
+    .plugin-import-menu .import-menu-item,
+    .plugin-more-menu .plugin-more-menu-item {
+      display: inline-flex !important;
+      align-items: center !important;
+      justify-content: center !important;
+      gap: 7px !important;
+      transition: transform 120ms ease, border-color 160ms ease, background 160ms ease, box-shadow 160ms ease !important;
+    }
+    #plugin-panel .plugin-panel-button:hover,
+    .plugin-ui-panel .plugin-panel-button:hover,
+    .plugin-import-menu .import-menu-item:hover,
+    .plugin-more-menu .plugin-more-menu-item:hover {
+      border-color: rgba(37, 99, 235, 0.30) !important;
+      box-shadow: 0 6px 16px rgba(15, 23, 42, 0.08) !important;
+    }
+    #plugin-panel .plugin-panel-button:active,
+    .plugin-ui-panel .plugin-panel-button:active,
+    .plugin-import-menu .import-menu-item:active,
+    .plugin-more-menu .plugin-more-menu-item:active {
+      transform: translateY(1px) !important;
+      box-shadow: none !important;
+    }
+    #plugin-panel .plugin-panel-button:focus-visible,
+    .plugin-ui-panel .plugin-panel-button:focus-visible,
+    .plugin-import-menu .import-menu-item:focus-visible,
+    .plugin-more-menu .plugin-more-menu-item:focus-visible {
+      outline: 2px solid rgba(37, 99, 235, 0.34) !important;
+      outline-offset: 2px !important;
+    }
+    #plugin-panel .plugin-card {
+      border-radius: 14px !important;
+      background: color-mix(in srgb, var(--app-surface-card) 92%, var(--app-surface-subtle)) !important;
+      box-shadow: 0 5px 18px rgba(15, 23, 42, 0.055) !important;
+    }
+    .plugin-panel-icon {
+      width: 15px;
+      height: 15px;
+      fill: none;
+      stroke: currentColor;
+      stroke-width: 2;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+      flex: 0 0 auto;
+    }
+    @media (max-width: 680px) {
+      #plugin-panel.plugin-panel-shell {
+        inset: calc(8px + env(safe-area-inset-top, 0px)) calc(8px + env(safe-area-inset-right, 0px)) calc(8px + env(safe-area-inset-bottom, 0px)) calc(8px + env(safe-area-inset-left, 0px)) !important;
+        border-radius: 14px !important;
+      }
+      #plugin-list {
+        padding: 12px !important;
+      }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      #plugin-panel .plugin-panel-button,
+      .plugin-ui-panel .plugin-panel-button,
+      .plugin-import-menu .import-menu-item,
+      .plugin-more-menu .plugin-more-menu-item {
+        transition: none !important;
+      }
+    }
+  `;
+  document.head.appendChild(style);
+};
+
 const readFileText = (file) => new Promise((resolve, reject) => {
   const reader = new FileReader();
   reader.onload = () => resolve(String(reader.result || ''));
@@ -84,6 +194,7 @@ export class PluginPanel {
   }
 
   createUI() {
+    ensurePanelStyles();
     this.overlayElement = document.createElement('div');
     this.overlayElement.id = 'plugin-panel-overlay';
     this.overlayElement.className = 'app-themed-overlay plugin-panel-overlay';
@@ -113,26 +224,26 @@ export class PluginPanel {
     this.element.onclick = (e) => e.stopPropagation();
 
     this.element.innerHTML = `
-      <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 16px;border-bottom:1px solid rgba(15,23,42,0.08);">
+      <div class="plugin-panel-header" style="display:flex;align-items:center;justify-content:space-between;padding:14px 16px;border-bottom:1px solid rgba(15,23,42,0.08);">
         <div>
           <div style="font-size:16px;font-weight:700;color:var(--app-text-primary);">插件管理</div>
           <div style="font-size:12px;color:var(--app-text-muted);margin-top:2px;">管理已安装的插件</div>
         </div>
-        <button id="plugin-panel-close" style="border:none;background:rgba(15,23,42,0.08);width:28px;height:28px;border-radius:10px;cursor:pointer;font-size:16px;">×</button>
+        <button id="plugin-panel-close" class="plugin-panel-button" type="button" aria-label="关闭插件管理" style="border:none;background:rgba(15,23,42,0.08);width:32px;height:32px;border-radius:10px;cursor:pointer;">${ICONS.close}</button>
       </div>
       <div id="plugin-android-tip" style="display:none;background:#fef3c7;border:1px solid #fcd34d;border-radius:8px;padding:8px 12px;margin:12px 16px 0;font-size:12px;color:#92400e;">
         <span style="margin-right:6px;">⚠️</span>安卓端仅支持 ZIP 导入
       </div>
-      <div style="padding:12px 16px;border-bottom:1px solid rgba(148,163,184,0.15);background:var(--app-surface-subtle);">
+      <div class="plugin-panel-actionbar" style="padding:12px 16px;border-bottom:1px solid rgba(148,163,184,0.15);background:var(--app-surface-subtle);">
         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
-          <button id="plugin-import-btn" style="padding:8px 14px;border-radius:10px;border:none;background:#2563eb;color:var(--app-text-inverse);font-size:13px;cursor:pointer;display:flex;align-items:center;gap:6px;">
-            <span style="font-size:14px;">📁</span>导入插件
+          <button id="plugin-import-btn" class="plugin-panel-button" type="button" style="padding:8px 14px;border-radius:10px;border:none;background:#2563eb;color:var(--app-text-inverse);font-size:13px;cursor:pointer;display:flex;align-items:center;gap:6px;">
+            ${ICONS.folder}<span>导入插件</span>
           </button>
-          <button id="plugin-install-url-btn" style="padding:8px 14px;border-radius:10px;border:1px solid rgba(15,23,42,0.12);background:var(--app-surface-card);font-size:13px;cursor:pointer;display:flex;align-items:center;gap:6px;">
-            <span style="font-size:14px;">🔗</span>链接安装
+          <button id="plugin-install-url-btn" class="plugin-panel-button" type="button" style="padding:8px 14px;border-radius:10px;border:1px solid rgba(15,23,42,0.12);background:var(--app-surface-card);font-size:13px;cursor:pointer;display:flex;align-items:center;gap:6px;">
+            ${ICONS.link}<span>链接安装</span>
           </button>
-          <button id="plugin-refresh-btn" style="padding:8px 12px;border-radius:10px;border:1px solid rgba(15,23,42,0.12);background:var(--app-surface-card);font-size:13px;cursor:pointer;" title="刷新列表">↻</button>
-          <button id="plugin-ui-manage-btn" style="padding:8px 12px;border-radius:10px;border:1px solid rgba(15,23,42,0.12);background:var(--app-surface-card);font-size:13px;cursor:pointer;" title="UI 注入管理">⚙️</button>
+          <button id="plugin-refresh-btn" class="plugin-panel-button" type="button" style="padding:8px 12px;border-radius:10px;border:1px solid rgba(15,23,42,0.12);background:var(--app-surface-card);font-size:13px;cursor:pointer;" title="刷新列表" aria-label="刷新列表">${ICONS.refresh}</button>
+          <button id="plugin-ui-manage-btn" class="plugin-panel-button" type="button" style="padding:8px 12px;border-radius:10px;border:1px solid rgba(15,23,42,0.12);background:var(--app-surface-card);font-size:13px;cursor:pointer;" title="UI 注入管理" aria-label="UI 注入管理">${ICONS.gear}</button>
           <div id="plugin-status" style="margin-left:auto;font-size:12px;color:var(--app-text-muted);"></div>
         </div>
         <div style="margin-top:8px;font-size:11px;color:var(--app-text-muted);">
@@ -195,6 +306,7 @@ export class PluginPanel {
   }
 
   createUiManagerUI() {
+    ensurePanelStyles();
     if (this.uiManagePanel || this.uiManageOverlay) return;
     const overlay = document.createElement('div');
     overlay.className = 'app-themed-overlay plugin-ui-overlay';
@@ -222,9 +334,9 @@ export class PluginPanel {
     `;
     panel.addEventListener('click', (e) => e.stopPropagation());
     panel.innerHTML = `
-      <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 16px;border-bottom:1px solid rgba(15,23,42,0.08);">
+      <div class="plugin-panel-header" style="display:flex;align-items:center;justify-content:space-between;padding:14px 16px;border-bottom:1px solid rgba(15,23,42,0.08);">
         <div style="font-size:16px;font-weight:700;color:var(--app-text-primary);">UI 注入管理</div>
-        <button id="plugin-ui-close" style="border:none;background:rgba(15,23,42,0.08);width:28px;height:28px;border-radius:10px;cursor:pointer;font-size:16px;">×</button>
+        <button id="plugin-ui-close" class="plugin-panel-button" type="button" aria-label="关闭 UI 注入管理" style="border:none;background:rgba(15,23,42,0.08);width:32px;height:32px;border-radius:10px;cursor:pointer;">${ICONS.close}</button>
       </div>
       <div id="plugin-ui-list" style="flex:1;overflow:auto;padding:16px;display:flex;flex-direction:column;gap:12px;"></div>
     `;
@@ -314,6 +426,7 @@ export class PluginPanel {
       text.style.cssText = 'font-size:12px;color:var(--app-text-secondary);line-height:1.4;';
       const btn = document.createElement('button');
       btn.textContent = actionText;
+      btn.className = 'plugin-panel-button';
       btn.style.cssText = `
         border: 1px solid rgba(15,23,42,0.12);
         border-radius: 10px;
@@ -393,7 +506,7 @@ export class PluginPanel {
         padding: 10px 12px; border: none; background: transparent;
         border-radius: 8px; cursor: pointer; font-size: 13px; text-align: left;
       ">
-        <span style="font-size:16px;">📁</span>
+        ${ICONS.folder}
         <span>导入文件夹</span>
       </button>
       <button class="import-menu-item" data-type="zip" style="
@@ -401,7 +514,7 @@ export class PluginPanel {
         padding: 10px 12px; border: none; background: transparent;
         border-radius: 8px; cursor: pointer; font-size: 13px; text-align: left;
       ">
-        <span style="font-size:16px;">📦</span>
+        ${ICONS.box}
         <span>导入 ZIP</span>
       </button>
     `;
@@ -933,6 +1046,7 @@ export class PluginPanel {
 
     items.forEach(item => {
       const card = document.createElement('div');
+      card.className = 'plugin-card';
       card.style.cssText = `
         border: 1px solid rgba(148,163,184,0.2);
         border-radius: 12px;
@@ -971,13 +1085,14 @@ export class PluginPanel {
 
       // 更多菜单按钮
       const moreBtn = document.createElement('button');
-      moreBtn.textContent = '⋮';
+      moreBtn.innerHTML = ICONS.more;
       moreBtn.title = '更多操作';
+      moreBtn.setAttribute('aria-label', '更多操作');
+      moreBtn.className = 'plugin-panel-button';
       moreBtn.style.cssText = `
         border: 1px solid rgba(15,23,42,0.1);
         border-radius: 8px;
-        padding: 4px 10px;
-        font-size: 16px;
+        padding: 4px 9px;
         cursor: pointer;
         background: var(--app-surface-card);
         color: var(--app-text-muted);
@@ -1188,7 +1303,7 @@ export class PluginPanel {
     // 授权/撤销授权（仅 power 模式）
     if (isPower) {
       menuItems.push({
-        icon: isApproved ? '🔓' : '🔐',
+        icon: isApproved ? ICONS.unlock : ICONS.lock,
         label: isApproved ? '撤销授权' : '授权',
         danger: isApproved,
         action: async () => {
@@ -1223,7 +1338,7 @@ export class PluginPanel {
     // 权限授权/撤销（风险权限）
     if (hasRisky) {
       menuItems.push({
-        icon: permApproved ? '🔓' : '🔐',
+        icon: permApproved ? ICONS.unlock : ICONS.lock,
         label: permApproved ? '撤销权限授权' : '授权权限',
         danger: permApproved,
         action: async () => {
@@ -1259,7 +1374,7 @@ export class PluginPanel {
 
     // 拉黑/解除拉黑
     menuItems.push({
-      icon: isBlocked ? '✅' : '🚫',
+      icon: isBlocked ? ICONS.check : ICONS.block,
       label: isBlocked ? '解除拉黑' : '拉黑',
       danger: !isBlocked,
       action: async () => {
@@ -1284,7 +1399,7 @@ export class PluginPanel {
 
     if (backupCount > 0) {
       menuItems.push({
-        icon: '⏪',
+        icon: ICONS.rollback,
         label: '回滚到上一版',
         action: async () => {
           const ok = await appConfirm({
@@ -1308,7 +1423,7 @@ export class PluginPanel {
 
     // 删除
     menuItems.push({
-      icon: '🗑️',
+      icon: ICONS.trash,
       label: '删除插件',
       danger: true,
       action: async () => {
@@ -1328,6 +1443,7 @@ export class PluginPanel {
 
     menuItems.forEach(({ icon, label, danger, action }) => {
       const btn = document.createElement('button');
+      btn.className = 'plugin-more-menu-item';
       btn.style.cssText = `
         display: flex;
         align-items: center;
@@ -1342,7 +1458,7 @@ export class PluginPanel {
         text-align: left;
         color: ${danger ? '#ef4444' : 'var(--app-text-secondary)'};
       `;
-      btn.innerHTML = `<span style="font-size:14px;">${icon}</span><span>${label}</span>`;
+      btn.innerHTML = `${icon}<span>${label}</span>`;
       btn.addEventListener('mouseenter', () => btn.style.background = danger ? 'rgba(239,68,68,0.08)' : 'var(--app-surface-hover)');
       btn.addEventListener('mouseleave', () => btn.style.background = 'transparent');
       btn.addEventListener('click', () => {

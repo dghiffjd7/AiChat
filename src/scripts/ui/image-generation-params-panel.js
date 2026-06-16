@@ -23,6 +23,409 @@ const clone = (value) => {
 };
 
 const FIELD_CLASS = 'image-gen-param-field';
+const STYLE_ID = 'image-generation-params-panel-style';
+
+const iconSvg = (path) => `
+  <svg class="igp-icon" viewBox="0 0 24 24" aria-hidden="true">
+    ${path}
+  </svg>
+`;
+
+const ICONS = Object.freeze({
+  back: iconSvg('<path d="M15 18l-6-6 6-6"/><path d="M20 12H9"/>'),
+  close: iconSvg('<path d="M18 6 6 18"/><path d="m6 6 12 12"/>'),
+  image: iconSvg('<rect x="3" y="5" width="18" height="14" rx="3"/><circle cx="8.5" cy="10.5" r="1.5"/><path d="m21 15-4.2-4.2a2 2 0 0 0-2.8 0L6 18"/>'),
+  plus: iconSvg('<path d="M12 5v14"/><path d="M5 12h14"/>'),
+  rename: iconSvg('<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/>'),
+  reset: iconSvg('<path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v6h6"/>'),
+  save: iconSvg('<path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2Z"/><path d="M17 21v-8H7v8"/><path d="M7 3v5h8"/>'),
+  trash: iconSvg('<path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v5"/><path d="M14 11v5"/>'),
+});
+
+const ensureStyles = () => {
+  if (typeof document === 'undefined' || document.getElementById(STYLE_ID)) return;
+  const style = document.createElement('style');
+  style.id = STYLE_ID;
+  style.textContent = `
+    #image-generation-params-overlay {
+      display:none;
+      position:fixed;
+      inset:0;
+      z-index:23120;
+      background: rgba(15, 23, 42, 0.46);
+    }
+    .igp-panel {
+      color: var(--app-text-primary);
+      flex-direction: column;
+      min-height: 0;
+      box-sizing: border-box;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+    }
+    .igp-panel *,
+    .igp-panel *::before,
+    .igp-panel *::after {
+      box-sizing: border-box;
+    }
+    .igp-panel-modal {
+      display:none;
+      position:fixed;
+      top:calc(18px + env(safe-area-inset-top, 0px));
+      bottom:calc(18px + env(safe-area-inset-bottom, 0px));
+      left:50%;
+      transform:translateX(-50%);
+      width:min(760px, calc(100vw - 24px));
+      z-index:23130;
+      overflow:hidden;
+      border:1px solid color-mix(in srgb, var(--app-border-default) 78%, transparent);
+      border-radius:16px;
+      background: var(--app-surface-card);
+      box-shadow: 0 24px 64px rgba(15, 23, 42, 0.28);
+    }
+    .igp-panel-embedded {
+      display:none;
+      width:100%;
+    }
+    .igp-header,
+    .igp-footer {
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:12px;
+      flex-shrink:0;
+      border-color: var(--app-border-default);
+    }
+    .igp-header {
+      padding:16px 18px;
+      border-bottom:1px solid var(--app-border-default);
+      background: color-mix(in srgb, var(--app-surface-card) 92%, var(--app-surface-subtle));
+    }
+    .igp-panel-embedded .igp-header {
+      padding: 0 0 14px;
+      background: transparent;
+    }
+    .igp-title-wrap {
+      display:flex;
+      align-items:center;
+      gap:12px;
+      min-width:0;
+    }
+    .igp-title-icon {
+      width:36px;
+      height:36px;
+      display:inline-flex;
+      align-items:center;
+      justify-content:center;
+      flex:0 0 auto;
+      border:1px solid rgba(37, 99, 235, 0.18);
+      border-radius:12px;
+      background: rgba(37, 99, 235, 0.10);
+      color:#1d4ed8;
+    }
+    .igp-title {
+      font-size:18px;
+      font-weight:900;
+      line-height:1.2;
+      overflow:hidden;
+      text-overflow:ellipsis;
+      white-space:nowrap;
+    }
+    .igp-subtitle {
+      margin-top:3px;
+      color:var(--app-text-muted);
+      font-size:12px;
+      line-height:1.35;
+      overflow:hidden;
+      text-overflow:ellipsis;
+      white-space:nowrap;
+    }
+    .igp-body {
+      flex:1;
+      min-height:0;
+      overflow:auto;
+      padding:16px 18px;
+      -webkit-overflow-scrolling: touch;
+    }
+    .igp-panel-embedded .igp-body {
+      flex:0 1 auto;
+      padding:16px 0 0;
+      overflow:visible;
+    }
+    .igp-footer {
+      justify-content:flex-end;
+      padding:14px 18px;
+      border-top:1px solid var(--app-border-default);
+      background: color-mix(in srgb, var(--app-surface-card) 92%, var(--app-surface-subtle));
+    }
+    .igp-panel-embedded .igp-footer {
+      margin-top:14px;
+      padding:14px 0 0;
+      background: transparent;
+    }
+    .igp-button {
+      min-height:36px;
+      display:inline-flex;
+      align-items:center;
+      justify-content:center;
+      gap:7px;
+      border:1px solid var(--app-border-default);
+      border-radius:10px;
+      background:var(--app-surface-card);
+      color:var(--app-text-primary);
+      padding:8px 12px;
+      font:inherit;
+      font-size:13px;
+      font-weight:800;
+      cursor:pointer;
+      transition: transform 120ms ease, border-color 160ms ease, background 160ms ease, box-shadow 160ms ease, color 160ms ease;
+    }
+    .igp-button:hover {
+      border-color: rgba(37, 99, 235, 0.32);
+      background: var(--app-surface-hover);
+      box-shadow: 0 6px 16px rgba(15, 23, 42, 0.08);
+    }
+    .igp-button:active {
+      transform: translateY(1px);
+      box-shadow: none;
+    }
+    .igp-button:focus-visible,
+    .igp-input:focus-visible,
+    .igp-select:focus-visible,
+    .igp-textarea:focus-visible {
+      outline:2px solid rgba(37, 99, 235, 0.34);
+      outline-offset:2px;
+    }
+    .igp-button.is-icon {
+      width:36px;
+      padding:0;
+    }
+    .igp-button.is-primary {
+      border-color: rgba(37, 99, 235, 0.46);
+      background:#2563eb;
+      color:var(--app-text-inverse);
+      box-shadow: 0 10px 24px rgba(37, 99, 235, 0.22);
+    }
+    .igp-button.is-danger {
+      border-color: rgba(239, 68, 68, 0.28);
+      background: rgba(239, 68, 68, 0.10);
+      color:#dc2626;
+    }
+    .igp-button.is-muted {
+      background:var(--app-surface-subtle);
+      color:var(--app-text-secondary);
+    }
+    .igp-button:disabled {
+      cursor:not-allowed;
+      opacity:.55;
+      transform:none;
+      box-shadow:none;
+    }
+    .igp-icon {
+      width:16px;
+      height:16px;
+      fill:none;
+      stroke:currentColor;
+      stroke-width:2;
+      stroke-linecap:round;
+      stroke-linejoin:round;
+      flex:0 0 auto;
+    }
+    .igp-preset-bar {
+      display:grid;
+      grid-template-columns:minmax(0, 1fr) auto;
+      gap:12px;
+      align-items:end;
+      margin-bottom:14px;
+    }
+    .igp-preset-actions {
+      display:flex;
+      gap:6px;
+      flex-wrap:wrap;
+      justify-content:flex-end;
+    }
+    .igp-label {
+      display:block;
+      margin-bottom:6px;
+      color:var(--app-text-primary);
+      font-size:13px;
+      font-weight:850;
+      line-height:1.25;
+    }
+    .igp-input,
+    .igp-select,
+    .igp-textarea {
+      width:100%;
+      border:1px solid var(--app-border-default);
+      border-radius:10px;
+      background:var(--app-surface-card);
+      color:var(--app-text-primary);
+      padding:10px 12px;
+      font:inherit;
+      font-size:13px;
+      line-height:1.35;
+      transition:border-color 160ms ease, box-shadow 160ms ease, background 160ms ease;
+    }
+    .igp-select {
+      min-height:40px;
+      background:var(--app-surface-subtle);
+      cursor:pointer;
+    }
+    .igp-input:focus,
+    .igp-select:focus,
+    .igp-textarea:focus {
+      border-color: rgba(37, 99, 235, 0.42);
+      box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.10);
+      outline:none;
+    }
+    .igp-textarea {
+      min-height:140px;
+      resize:vertical;
+      font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      line-height:1.5;
+    }
+    .igp-model-card {
+      display:grid;
+      grid-template-columns:auto minmax(0, 1fr);
+      gap:10px;
+      align-items:center;
+      margin-bottom:14px;
+      padding:12px 14px;
+      border:1px solid rgba(37, 99, 235, 0.18);
+      border-radius:14px;
+      background: color-mix(in srgb, var(--app-surface-subtle) 86%, rgba(37, 99, 235, 0.12));
+    }
+    .igp-model-title {
+      font-weight:900;
+      line-height:1.3;
+      overflow:hidden;
+      text-overflow:ellipsis;
+      white-space:nowrap;
+    }
+    .igp-model-sub {
+      margin-top:4px;
+      color:var(--app-text-muted);
+      font-size:12px;
+      line-height:1.35;
+      overflow:hidden;
+      text-overflow:ellipsis;
+      white-space:nowrap;
+    }
+    .igp-fields-grid {
+      display:grid;
+      grid-template-columns:repeat(auto-fit, minmax(220px, 1fr));
+      gap:12px;
+    }
+    .igp-field {
+      display:block;
+      min-width:0;
+      padding:10px;
+      border:1px solid var(--app-border-subtle);
+      border-radius:12px;
+      background: color-mix(in srgb, var(--app-surface-card) 88%, var(--app-surface-subtle));
+    }
+    .igp-field-help {
+      margin-top:6px;
+      color:var(--app-text-muted);
+      font-size:11px;
+      line-height:1.45;
+    }
+    .igp-reset-row {
+      display:flex;
+      justify-content:flex-end;
+      margin-top:14px;
+    }
+    .igp-status {
+      display:none;
+      flex-shrink:0;
+      margin:0;
+      padding:10px 18px;
+      border-top:1px solid var(--app-border-default);
+      font-size:13px;
+      line-height:1.45;
+    }
+    .igp-panel-embedded .igp-status {
+      margin-top:12px;
+      padding:10px 12px;
+      border:1px solid transparent;
+      border-radius:10px;
+    }
+    .igp-status.is-success {
+      border-color:rgba(34, 197, 94, 0.20);
+      background:rgba(34,197,94,0.12);
+      color:#047857;
+    }
+    .igp-status.is-error {
+      border-color:rgba(239,68,68,0.20);
+      background:rgba(239,68,68,0.12);
+      color:#dc2626;
+    }
+    @media (max-width: 640px) {
+      .igp-panel-modal {
+        top:calc(8px + env(safe-area-inset-top, 0px));
+        bottom:calc(8px + env(safe-area-inset-bottom, 0px));
+        width:calc(100vw - 16px);
+        border-radius:12px;
+      }
+      .igp-header,
+      .igp-body,
+      .igp-footer {
+        padding-left:12px;
+        padding-right:12px;
+      }
+      .igp-title-icon {
+        width:32px;
+        height:32px;
+        border-radius:10px;
+      }
+      .igp-title {
+        font-size:16px;
+      }
+      .igp-preset-bar {
+        grid-template-columns:1fr;
+        align-items:stretch;
+      }
+      .igp-preset-actions {
+        display:grid;
+        grid-template-columns:repeat(3, minmax(0, 1fr));
+      }
+      .igp-preset-actions .igp-button,
+      .igp-footer .igp-button {
+        width:100%;
+      }
+      .igp-fields-grid {
+        grid-template-columns:1fr;
+        gap:10px;
+      }
+      .igp-footer {
+        display:grid;
+        grid-template-columns:1fr 1fr;
+      }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .igp-button,
+      .igp-input,
+      .igp-select,
+      .igp-textarea {
+        transition:none !important;
+      }
+    }
+    body[data-theme-mode='dark'] .igp-title-icon {
+      color:#8ecbff;
+      border-color:rgba(121, 192, 255, 0.26);
+      background:rgba(121, 192, 255, 0.12);
+    }
+    body[data-theme-mode='dark'] .igp-button.is-primary {
+      background:rgba(121, 192, 255, 0.18);
+      border-color:rgba(121, 192, 255, 0.34);
+      color:var(--app-text-primary);
+      box-shadow:none;
+    }
+    body[data-theme-mode='dark'] .igp-model-card {
+      border-color:rgba(121, 192, 255, 0.22);
+      background:rgba(121, 192, 255, 0.08);
+    }
+  `;
+  document.head.appendChild(style);
+};
 
 export class ImageGenerationParamsPanel {
   constructor({ store = null, getImageConfig = null } = {}) {
@@ -71,6 +474,7 @@ export class ImageGenerationParamsPanel {
   }
 
   createUI() {
+    ensureStyles();
     if (this.panel?.parentNode) {
       this.panel.parentNode.removeChild(this.panel);
     }
@@ -78,40 +482,30 @@ export class ImageGenerationParamsPanel {
     this.embeddedContainer = null;
     this.overlay = document.createElement('div');
     this.overlay.id = 'image-generation-params-overlay';
-    this.overlay.style.cssText = 'display:none; position:fixed; inset:0; background:rgba(0,0,0,0.5); z-index:23120;';
+    this.overlay.style.display = 'none';
     this.overlay.addEventListener('click', () => this.hide());
 
     this.panel = document.createElement('div');
     this.panel.id = 'image-generation-params-panel';
-    this.panel.style.cssText = `
-      display:none; position:fixed;
-      top:calc(18px + env(safe-area-inset-top, 0px));
-      bottom:calc(18px + env(safe-area-inset-bottom, 0px));
-      left:50%; transform:translateX(-50%);
-      width:min(720px, calc(100vw - 24px));
-      background:var(--app-surface-card);
-      color:var(--app-text-primary);
-      border:1px solid var(--app-border-default);
-      border-radius:16px;
-      box-shadow:0 20px 60px rgba(0,0,0,0.36);
-      z-index:23130;
-      overflow:hidden;
-      flex-direction:column;
-    `;
+    this.panel.className = 'igp-panel igp-panel-modal';
+    this.panel.style.display = 'none';
     this.panel.addEventListener('click', (event) => event.stopPropagation());
     this.panel.innerHTML = `
-      <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; padding:16px 18px; border-bottom:1px solid var(--app-border-default);">
-        <div style="min-width:0;">
-          <div style="font-size:18px; font-weight:900;">图片生成参数</div>
-          <div style="font-size:12px; color:var(--app-text-muted); margin-top:3px;">独立于 API Key 和连线设置档</div>
+      <div class="igp-header">
+        <div class="igp-title-wrap">
+          <span class="igp-title-icon">${ICONS.image}</span>
+          <div style="min-width:0;">
+            <div class="igp-title">图片生成参数</div>
+            <div class="igp-subtitle">独立于 API Key 和连线设置档</div>
+          </div>
         </div>
-        <button type="button" data-action="close" style="border:none; background:transparent; color:var(--app-text-primary); font-size:24px; cursor:pointer; line-height:1;">&times;</button>
+        <button type="button" class="igp-button is-icon" data-action="close" aria-label="关闭图片生成参数">${ICONS.close}</button>
       </div>
-      <div data-role="body" style="flex:1; min-height:0; overflow:auto; padding:16px 18px;"></div>
-      <div data-role="status" style="display:none; padding:10px 18px; border-top:1px solid var(--app-border-default); font-size:13px;"></div>
-      <div style="display:flex; justify-content:flex-end; gap:10px; padding:14px 18px; border-top:1px solid var(--app-border-default);">
-        <button type="button" data-action="cancel" style="padding:10px 16px; border-radius:10px; border:1px solid var(--app-border-default); background:var(--app-surface-subtle); color:var(--app-text-primary); cursor:pointer;">取消</button>
-        <button type="button" data-action="save" style="padding:10px 18px; border-radius:10px; border:none; background:#2563eb; color:var(--app-text-inverse); font-weight:800; cursor:pointer;">保存参数</button>
+      <div class="igp-body" data-role="body"></div>
+      <div class="igp-status" data-role="status"></div>
+      <div class="igp-footer">
+        <button type="button" class="igp-button is-muted" data-action="cancel">取消</button>
+        <button type="button" class="igp-button is-primary" data-action="save">${ICONS.save}<span>保存参数</span></button>
       </div>
     `;
     this.body = this.panel.querySelector('[data-role="body"]');
@@ -134,6 +528,7 @@ export class ImageGenerationParamsPanel {
   }
 
   createEmbeddedUI(container) {
+    ensureStyles();
     if (this.panel?.parentNode) {
       this.panel.parentNode.removeChild(this.panel);
     }
@@ -143,27 +538,24 @@ export class ImageGenerationParamsPanel {
 
     this.panel = document.createElement('div');
     this.panel.id = 'image-generation-params-panel';
-    this.panel.style.cssText = `
-      display:none;
-      min-height:0;
-      color:var(--app-text-primary);
-      flex-direction:column;
-    `;
+    this.panel.className = 'igp-panel igp-panel-embedded';
+    this.panel.style.display = 'none';
     this.panel.innerHTML = `
-      <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; padding-bottom:14px; border-bottom:1px solid var(--app-border-default);">
-        <div style="display:flex; align-items:center; gap:10px; min-width:0;">
-          <button type="button" data-action="back" style="min-height:32px; border:1px solid var(--app-border-default); border-radius:8px; background:var(--app-surface-subtle); color:var(--app-text-primary); padding:6px 10px; cursor:pointer;">‹ 返回</button>
+      <div class="igp-header">
+        <div class="igp-title-wrap">
+          <button type="button" class="igp-button is-muted" data-action="back">${ICONS.back}<span>返回</span></button>
+          <span class="igp-title-icon">${ICONS.image}</span>
           <div style="min-width:0;">
-            <div style="font-size:18px; font-weight:900;">图片生成参数</div>
-            <div style="font-size:12px; color:var(--app-text-muted); margin-top:3px;">质量、尺寸、输出格式等共享参数</div>
+            <div class="igp-title">图片生成参数</div>
+            <div class="igp-subtitle">质量、尺寸、输出格式等共享参数</div>
           </div>
         </div>
       </div>
-      <div data-role="body" style="min-height:0; padding:16px 0 0;"></div>
-      <div data-role="status" style="display:none; margin-top:12px; padding:10px 12px; border-radius:10px; font-size:13px;"></div>
-      <div style="display:flex; justify-content:flex-end; gap:10px; padding-top:14px; margin-top:14px; border-top:1px solid var(--app-border-default);">
-        <button type="button" data-action="cancel" style="padding:10px 16px; border-radius:10px; border:1px solid var(--app-border-default); background:var(--app-surface-subtle); color:var(--app-text-primary); cursor:pointer;">返回</button>
-        <button type="button" data-action="save" style="padding:10px 18px; border-radius:10px; border:none; background:#2563eb; color:var(--app-text-inverse); font-weight:800; cursor:pointer;">保存参数</button>
+      <div class="igp-body" data-role="body"></div>
+      <div class="igp-status" data-role="status"></div>
+      <div class="igp-footer">
+        <button type="button" class="igp-button is-muted" data-action="cancel">返回</button>
+        <button type="button" class="igp-button is-primary" data-action="save">${ICONS.save}<span>保存参数</span></button>
       </div>
     `;
     this.body = this.panel.querySelector('[data-role="body"]');
@@ -207,30 +599,31 @@ export class ImageGenerationParamsPanel {
       const modelLabel = [this.currentConfig?.provider, this.currentConfig?.model].filter(Boolean).join(' / ') || '未选择图片模型';
 
       this.body.innerHTML = `
-        <div style="display:grid; grid-template-columns: minmax(0,1fr) auto; gap:12px; align-items:end; margin-bottom:14px;">
+        <div class="igp-preset-bar">
           <div>
-            <label style="display:block; font-weight:800; margin-bottom:6px;">参数预设</label>
-            <select data-role="preset-select" style="width:100%; padding:10px 12px; border:1px solid var(--app-border-default); border-radius:10px; background:var(--app-surface-subtle); color:var(--app-text-primary);">
+            <label class="igp-label">参数预设</label>
+            <select class="igp-select" data-role="preset-select">
               ${presets.map(p => `<option value="${escapeHtml(p.id)}" ${p.id === active.id ? 'selected' : ''}>${escapeHtml(p.name || p.id)}</option>`).join('')}
             </select>
           </div>
-          <div style="display:flex; gap:6px; flex-wrap:wrap; justify-content:flex-end;">
-            <button type="button" data-action="new" style="padding:9px 11px; border-radius:10px; border:1px solid var(--app-border-default); background:var(--app-surface-card); color:var(--app-text-primary); cursor:pointer;">新建</button>
-            <button type="button" data-action="rename" style="padding:9px 11px; border-radius:10px; border:1px solid var(--app-border-default); background:var(--app-surface-card); color:var(--app-text-primary); cursor:pointer;">重命名</button>
-            <button type="button" data-action="delete" style="padding:9px 11px; border-radius:10px; border:1px solid #fecaca; background:rgba(239,68,68,0.10); color:#ef4444; cursor:pointer;">删除</button>
+          <div class="igp-preset-actions">
+            <button type="button" class="igp-button" data-action="new">${ICONS.plus}<span>新建</span></button>
+            <button type="button" class="igp-button" data-action="rename">${ICONS.rename}<span>重命名</span></button>
+            <button type="button" class="igp-button is-danger" data-action="delete">${ICONS.trash}<span>删除</span></button>
           </div>
         </div>
-        <div style="padding:12px 14px; border:1px solid var(--app-border-default); border-radius:14px; background:var(--app-surface-subtle); margin-bottom:14px;">
-          <div style="font-weight:900;">${escapeHtml(this.currentSchema.title)}</div>
-          <div style="font-size:12px; color:var(--app-text-muted); margin-top:4px;">当前图片模型：${escapeHtml(modelLabel)}</div>
+        <div class="igp-model-card">
+          <span class="igp-title-icon">${ICONS.image}</span>
+          <div style="min-width:0;">
+            <div class="igp-model-title">${escapeHtml(this.currentSchema.title)}</div>
+            <div class="igp-model-sub">当前图片模型：${escapeHtml(modelLabel)}</div>
+          </div>
         </div>
-        <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(220px, 1fr)); gap:12px;">
+        <div class="igp-fields-grid">
           ${this.currentSchema.fields.map(field => this.renderField(field, params[field.key])).join('')}
         </div>
-        <div style="margin-top:14px; display:flex; justify-content:flex-end;">
-          <button type="button" data-action="reset-provider" style="padding:9px 12px; border-radius:10px; border:1px solid var(--app-border-default); background:var(--app-surface-card); color:var(--app-text-muted); cursor:pointer;">
-            重置当前模型参数
-          </button>
+        <div class="igp-reset-row">
+          <button type="button" class="igp-button is-muted" data-action="reset-provider">${ICONS.reset}<span>重置当前模型参数</span></button>
         </div>
       `;
 
@@ -251,24 +644,23 @@ export class ImageGenerationParamsPanel {
 
   renderField(field, value) {
     const safeValue = value ?? field.defaultValue ?? '';
-    const help = field.help ? `<div style="font-size:11px; color:var(--app-text-muted); margin-top:5px; line-height:1.45;">${escapeHtml(field.help)}</div>` : '';
-    const common = `data-param-key="${escapeHtml(field.key)}" class="${FIELD_CLASS}"`;
-    const inputStyle = 'width:100%; padding:10px 12px; border:1px solid var(--app-border-default); border-radius:10px; background:var(--app-surface-card); color:var(--app-text-primary); box-sizing:border-box;';
+    const help = field.help ? `<div class="igp-field-help">${escapeHtml(field.help)}</div>` : '';
+    const common = `data-param-key="${escapeHtml(field.key)}"`;
     let control = '';
     if (field.type === 'select') {
-      control = `<select ${common} style="${inputStyle}">
+      control = `<select ${common} class="${FIELD_CLASS} igp-select">
         ${(field.options || []).map(opt => `<option value="${escapeHtml(opt.value)}" ${String(opt.value) === String(safeValue) ? 'selected' : ''}>${escapeHtml(opt.label || opt.value)}</option>`).join('')}
       </select>`;
     } else if (field.type === 'number') {
-      control = `<input ${common} type="number" min="${escapeHtml(field.min ?? '')}" max="${escapeHtml(field.max ?? '')}" step="${escapeHtml(field.step ?? 1)}" value="${escapeHtml(safeValue)}" style="${inputStyle}">`;
+      control = `<input ${common} class="${FIELD_CLASS} igp-input" type="number" min="${escapeHtml(field.min ?? '')}" max="${escapeHtml(field.max ?? '')}" step="${escapeHtml(field.step ?? 1)}" value="${escapeHtml(safeValue)}">`;
     } else if (field.type === 'textarea') {
-      control = `<textarea ${common} style="${inputStyle} min-height:140px; resize:vertical; font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; line-height:1.45;">${escapeHtml(safeValue)}</textarea>`;
+      control = `<textarea ${common} class="${FIELD_CLASS} igp-textarea">${escapeHtml(safeValue)}</textarea>`;
     } else {
-      control = `<input ${common} type="text" value="${escapeHtml(safeValue)}" style="${inputStyle}">`;
+      control = `<input ${common} class="${FIELD_CLASS} igp-input" type="text" value="${escapeHtml(safeValue)}">`;
     }
     return `
-      <label style="display:block;">
-        <div style="font-weight:800; margin-bottom:6px;">${escapeHtml(field.label)}</div>
+      <label class="igp-field">
+        <div class="igp-label">${escapeHtml(field.label)}</div>
         ${control}
         ${help}
       </label>
@@ -381,10 +773,7 @@ export class ImageGenerationParamsPanel {
   showStatus(message, type = 'info') {
     if (!this.statusEl) return;
     this.statusEl.style.display = 'block';
-    this.statusEl.style.background = type === 'error'
-      ? 'rgba(239,68,68,0.12)'
-      : 'rgba(34,197,94,0.12)';
-    this.statusEl.style.color = type === 'error' ? '#ef4444' : '#16a34a';
+    this.statusEl.className = `igp-status ${type === 'error' ? 'is-error' : 'is-success'}`;
     this.statusEl.textContent = message;
     setTimeout(() => {
       if (this.statusEl) this.statusEl.style.display = 'none';

@@ -19,6 +19,20 @@ const panelPresets = {
   },
 };
 
+const iconSvg = (body) => `
+  <svg class="extensions-icon" viewBox="0 0 24 24" aria-hidden="true">
+    ${body}
+  </svg>
+`;
+
+const icons = Object.freeze({
+  close: iconSvg('<path d="M18 6 6 18"/><path d="m6 6 12 12"/>'),
+  puzzle: iconSvg('<path d="M12 2a3 3 0 0 1 3 3v1h2a3 3 0 0 1 3 3v2h-1a3 3 0 0 0 0 6h1v2a3 3 0 0 1-3 3h-2v-1a3 3 0 0 0-6 0v1H7a3 3 0 0 1-3-3v-2h1a3 3 0 0 0 0-6H4V9a3 3 0 0 1 3-3h2V5a3 3 0 0 1 3-3Z"/>'),
+  regex: iconSvg('<path d="M7 8v8"/><path d="M5 10h4"/><path d="M5 14h4"/><path d="M14 8l5 8"/><path d="M19 8l-5 8"/>'),
+  script: iconSvg('<path d="M8 7 4 12l4 5"/><path d="m16 7 4 5-4 5"/><path d="m14 4-4 16"/>'),
+  plugin: iconSvg('<path d="M9 7V3"/><path d="M15 7V3"/><path d="M7 13H3"/><path d="M21 13h-4"/><rect x="7" y="7" width="10" height="12" rx="3"/><path d="M10 19v2"/><path d="M14 19v2"/>'),
+});
+
 export class ExtensionsPanel {
   constructor({ regexPanel, scriptPanel, pluginPanel } = {}) {
     this.overlay = null;
@@ -55,7 +69,7 @@ export class ExtensionsPanel {
         display: none;
         position: fixed;
         inset: 0;
-        background: rgba(15, 23, 42, 0.44);
+        background: rgba(15, 23, 42, 0.46);
         z-index: 20050;
       }
       #extensions-panel {
@@ -65,14 +79,14 @@ export class ExtensionsPanel {
         top: calc(env(safe-area-inset-top, 0px) + 12px);
         transform: translateX(-50%);
         z-index: 20060;
-        width: min(96vw, 980px);
+        width: min(96vw, 1020px);
       }
       #extensions-panel .extensions-modal {
-        padding: 16px;
+        padding: 0;
         border-radius: 16px;
         border: 1px solid var(--app-border-default);
-        background: linear-gradient(180deg, var(--app-surface-card) 0%, var(--app-surface-subtle) 100%);
-        box-shadow: 0 12px 34px rgba(15, 23, 42, 0.24);
+        background: var(--app-surface-card);
+        box-shadow: 0 24px 60px rgba(15, 23, 42, 0.26);
         max-height: calc(100vh - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px) - 24px);
         overflow-y: auto;
       }
@@ -80,49 +94,95 @@ export class ExtensionsPanel {
         display: flex;
         align-items: center;
         justify-content: space-between;
-        gap: 8px;
-        margin-bottom: 6px;
+        gap: 12px;
+        padding: 16px;
+        border-bottom: 1px solid var(--app-border-default);
+        background: color-mix(in srgb, var(--app-surface-card) 90%, var(--app-surface-subtle));
+      }
+      #extensions-panel .extensions-heading {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        min-width: 0;
+      }
+      #extensions-panel .extensions-title-icon {
+        width: 38px;
+        height: 38px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        flex: 0 0 auto;
+        border: 1px solid rgba(37, 99, 235, 0.18);
+        border-radius: 13px;
+        background: rgba(37, 99, 235, 0.10);
+        color: #1d4ed8;
       }
       #extensions-panel .extensions-title {
         margin: 0;
         color: var(--app-text-primary);
         font-size: 18px;
         font-weight: 800;
+        line-height: 1.2;
       }
       #extensions-panel .extensions-close {
-        width: 30px;
-        height: 30px;
+        width: 34px;
+        height: 34px;
         border: 1px solid var(--app-border-default);
         border-radius: 10px;
         background: var(--app-surface-card);
         color: var(--app-text-primary);
-        font-size: 18px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
         cursor: pointer;
+        transition: transform 120ms ease, border-color 160ms ease, background 160ms ease;
       }
       #extensions-panel .extensions-subtitle {
         color: var(--app-text-muted);
         font-size: 12px;
-        margin-bottom: 12px;
+        margin-top: 3px;
+        line-height: 1.4;
+      }
+      #extensions-panel .extensions-list {
+        padding: 14px 16px 16px;
       }
       #extensions-panel .extensions-item {
         margin-bottom: 10px;
         border: 1px solid var(--app-border-default);
         border-radius: 12px;
-        background: var(--app-surface-card);
+        background: color-mix(in srgb, var(--app-surface-card) 92%, var(--app-surface-subtle));
         overflow: hidden;
+        box-shadow: 0 4px 16px rgba(15, 23, 42, 0.045);
       }
       #extensions-panel .extensions-toggle {
         width: 100%;
         border: none;
-        background: var(--app-surface-subtle);
+        background: transparent;
         color: var(--app-text-primary);
         font-size: 14px;
-        font-weight: 700;
-        padding: 11px 12px;
+        font-weight: 800;
+        padding: 12px;
         display: flex;
         align-items: center;
         justify-content: space-between;
+        gap: 12px;
         cursor: pointer;
+        transition: background 160ms ease, color 160ms ease;
+      }
+      #extensions-panel .extensions-toggle-main {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        min-width: 0;
+      }
+      #extensions-panel .extensions-toggle:hover,
+      #extensions-panel .extensions-close:hover {
+        background: var(--app-surface-hover);
+      }
+      #extensions-panel .extensions-toggle:focus-visible,
+      #extensions-panel .extensions-close:focus-visible {
+        outline: 2px solid rgba(37, 99, 235, 0.34);
+        outline-offset: 2px;
       }
       #extensions-panel .extensions-toggle .chevron {
         color: var(--app-text-muted);
@@ -134,7 +194,8 @@ export class ExtensionsPanel {
       #extensions-panel .extensions-body {
         display: none;
         padding: 12px;
-        border-top: 1px dashed var(--app-border-default);
+        border-top: 1px solid var(--app-border-subtle);
+        background: var(--app-surface-card);
       }
       #extensions-panel .extensions-host {
         min-height: 92px;
@@ -164,6 +225,50 @@ export class ExtensionsPanel {
       #extensions-panel .extensions-embedded-root > div:first-child {
         display: none !important;
       }
+      #extensions-panel .extensions-icon {
+        width: 16px;
+        height: 16px;
+        fill: none;
+        stroke: currentColor;
+        stroke-width: 2;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+        flex: 0 0 auto;
+      }
+      @media (max-width: 680px) {
+        #extensions-panel {
+          left: calc(8px + env(safe-area-inset-left, 0px));
+          right: calc(8px + env(safe-area-inset-right, 0px));
+          top: calc(env(safe-area-inset-top, 0px) + 8px);
+          transform: none;
+          width: auto;
+        }
+        #extensions-panel .extensions-modal {
+          max-height: calc(var(--app-visual-height, 100dvh) - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px) - 16px);
+          border-radius: 14px;
+        }
+        #extensions-panel .extensions-header {
+          padding: 12px;
+        }
+        #extensions-panel .extensions-list {
+          padding: 10px 12px 12px;
+        }
+      }
+      body[data-theme-mode='dark'] #extensions-panel .extensions-title-icon {
+        color: #8ecbff;
+        border-color: rgba(121, 192, 255, 0.26);
+        background: rgba(121, 192, 255, 0.12);
+      }
+      body[data-theme-mode='dark'] #extensions-panel .extensions-item {
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.24);
+      }
+      @media (prefers-reduced-motion: reduce) {
+        #extensions-panel .extensions-close,
+        #extensions-panel .extensions-toggle,
+        #extensions-panel .extensions-toggle .chevron {
+          transition: none !important;
+        }
+      }
     `;
     document.head.appendChild(style);
   }
@@ -179,14 +284,20 @@ export class ExtensionsPanel {
     this.element.innerHTML = `
       <div class="extensions-modal">
         <div class="extensions-header">
-          <h2 class="extensions-title">扩展</h2>
-          <button id="extensions-close" class="extensions-close">×</button>
+          <div class="extensions-heading">
+            <span class="extensions-title-icon">${icons.puzzle}</span>
+            <div style="min-width:0;">
+              <h2 class="extensions-title">扩展</h2>
+              <div class="extensions-subtitle">正规表达式、脚本、插件统一管理。</div>
+            </div>
+          </div>
+          <button id="extensions-close" class="extensions-close" type="button" aria-label="关闭扩展">${icons.close}</button>
         </div>
-        <div class="extensions-subtitle">正规表达式、脚本、插件统一管理。</div>
+        <div class="extensions-list">
 
-        <div class="extensions-item">
-          <button class="extensions-toggle" data-target="regex" data-expanded="0">
-            <span>🧩 正规表达式</span>
+          <div class="extensions-item">
+          <button class="extensions-toggle" type="button" data-target="regex" data-expanded="0">
+            <span class="extensions-toggle-main">${icons.regex}<span>正规表达式</span></span>
             <span class="chevron">▾</span>
           </button>
           <div class="extensions-body" data-body="regex">
@@ -194,9 +305,9 @@ export class ExtensionsPanel {
           </div>
         </div>
 
-        <div class="extensions-item">
-          <button class="extensions-toggle" data-target="scripts" data-expanded="0">
-            <span>📜 脚本</span>
+          <div class="extensions-item">
+          <button class="extensions-toggle" type="button" data-target="scripts" data-expanded="0">
+            <span class="extensions-toggle-main">${icons.script}<span>脚本</span></span>
             <span class="chevron">▾</span>
           </button>
           <div class="extensions-body" data-body="scripts">
@@ -204,13 +315,14 @@ export class ExtensionsPanel {
           </div>
         </div>
 
-        <div class="extensions-item">
-          <button class="extensions-toggle" data-target="plugins" data-expanded="0">
-            <span>🧰 插件</span>
+          <div class="extensions-item">
+          <button class="extensions-toggle" type="button" data-target="plugins" data-expanded="0">
+            <span class="extensions-toggle-main">${icons.plugin}<span>插件</span></span>
             <span class="chevron">▾</span>
           </button>
           <div class="extensions-body" data-body="plugins">
             <div class="extensions-host" data-host="plugins"></div>
+          </div>
           </div>
         </div>
 

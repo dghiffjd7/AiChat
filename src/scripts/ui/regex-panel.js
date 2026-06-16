@@ -262,7 +262,7 @@ const ensureRegexPanelStyles = () => {
             height: 8px;
             border-radius: 999px;
             flex: 0 0 auto;
-            background: var(--regex-state-color, #94a3b8);
+            background: var(--regex-state-color, var(--app-text-muted));
             box-shadow: 0 0 0 3px var(--regex-state-glow, rgba(148,163,184,0.18));
         }
         #regex-panel .regex-set-title {
@@ -298,7 +298,7 @@ const ensureRegexPanelStyles = () => {
             align-self: start;
             border: 1px solid var(--regex-state-glow, rgba(148,163,184,0.2));
             border-radius: 999px;
-            color: var(--regex-state-color, #94a3b8);
+            color: var(--regex-state-color, var(--app-text-muted));
             background: var(--regex-state-bg, transparent);
             padding: 3px 8px;
             font-size: 12px;

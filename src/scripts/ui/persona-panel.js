@@ -392,7 +392,7 @@ export class PersonaPanel {
             const deleteBtn = document.createElement('button');
             deleteBtn.type = 'button';
             deleteBtn.textContent = '删除';
-            deleteBtn.style.cssText = 'border:1px solid #fecaca; background:#fff1f2; color:#dc2626; border-radius:10px; padding:8px 10px; font-weight:800; cursor:pointer;';
+            deleteBtn.style.cssText = 'border:1px solid var(--app-danger-border); background:var(--app-danger-soft); color:var(--app-danger-text); border-radius:10px; padding:8px 10px; font-weight:800; cursor:pointer;';
             loadBtn.addEventListener('click', () => this.loadRoleArchive(archive.id));
             deleteBtn.addEventListener('click', () => this.deleteRoleArchive(archive.id));
             actions.appendChild(loadBtn);

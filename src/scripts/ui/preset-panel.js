@@ -126,6 +126,16 @@ const REASONING_EFFORT_LABELS = Object.freeze({
 /* ── icons ── */
 const chevronRightSvg = `<svg viewBox="0 0 24 24" style="width:16px;height:16px;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;fill:none;"><polyline points="9 6 15 12 9 18"/></svg>`;
 const chevronLeftSvg = `<svg viewBox="0 0 24 24" style="width:16px;height:16px;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;fill:none;"><polyline points="15 6 9 12 15 18"/></svg>`;
+const panelIconSvg = (body) => `<svg class="pp-nav-item-icon-svg" viewBox="0 0 24 24" aria-hidden="true">${body}</svg>`;
+const SECTION_ICONS = Object.freeze({
+    openai: panelIconSvg('<path d="M4 7h16"/><path d="M7 12h10"/><path d="M10 17h4"/><circle cx="7" cy="7" r="2"/><circle cx="17" cy="12" r="2"/><circle cx="12" cy="17" r="2"/>'),
+    custom: panelIconSvg('<path d="M8 7 4 12l4 5"/><path d="m16 7 4 5-4 5"/><path d="m14 4-4 16"/>'),
+    sysprompt: panelIconSvg('<path d="M5 4h14v16H5z"/><path d="M8 8h8"/><path d="M8 12h8"/><path d="M8 16h5"/>'),
+    chatprompts: panelIconSvg('<path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4Z"/><path d="M8 9h8"/><path d="M8 13h5"/>'),
+    context: panelIconSvg('<path d="M4 6h16"/><path d="M4 12h16"/><path d="M4 18h16"/><path d="M8 6v12"/>'),
+    instruct: panelIconSvg('<path d="M12 5v14"/><path d="m19 12-7 7-7-7"/>'),
+    reasoning: panelIconSvg('<path d="M12 3a6 6 0 0 0-4 10.5V16h8v-2.5A6 6 0 0 0 12 3Z"/><path d="M9 20h6"/><path d="M10 16h4"/>'),
+});
 
 /* ── CSS ── */
 const PANEL_CSS = `
@@ -145,7 +155,7 @@ const PANEL_CSS = `
 .pp-header {
     padding: 14px 16px;
     border-bottom: 1px solid var(--app-border-default);
-    background: rgba(248,250,252,0.92);
+    background: color-mix(in srgb, var(--app-surface-card) 90%, var(--app-surface-subtle));
     display: flex;
     align-items: center;
     justify-content: space-between;
@@ -165,6 +175,35 @@ const PANEL_CSS = `
 .pp-header-actions button {
     border: 1px solid var(--app-border-default); background: var(--app-surface-card); padding: 6px 10px;
     border-radius: 10px; cursor: pointer; font-size: 12px; color: var(--app-text-secondary);
+    transition: transform 120ms ease, border-color 160ms ease, background 160ms ease, box-shadow 160ms ease;
+}
+.pp-header-actions button:hover,
+.pp-manager-btn:hover,
+.pp-binding-btn:hover,
+.pp-footer button:hover,
+.pp-back-btn:hover,
+.pp-nav-item:hover {
+    border-color: rgba(37,99,235,0.30);
+    box-shadow: 0 6px 16px rgba(15,23,42,0.07);
+}
+.pp-header-actions button:active,
+.pp-manager-btn:active,
+.pp-binding-btn:active,
+.pp-footer button:active {
+    transform: translateY(1px);
+    box-shadow: none;
+}
+.pp-header-actions button:focus-visible,
+.pp-manager-btn:focus-visible,
+.pp-binding-btn:focus-visible,
+.pp-footer button:focus-visible,
+.pp-back-btn:focus-visible,
+.pp-nav-item:focus-visible,
+.pp-input:focus-visible,
+.pp-textarea:focus-visible,
+.pp-switch input:focus-visible + .pp-switch-track {
+    outline: 2px solid rgba(37,99,235,0.34);
+    outline-offset: 2px;
 }
 .pp-close {
     border: none !important; background: transparent !important;
@@ -177,21 +216,20 @@ const PANEL_CSS = `
     min-height: 0;
     display: flex;
     flex-direction: column;
-    background: linear-gradient(180deg, #f8fbff 0%, var(--app-surface-card) 100%);
+    background: var(--app-surface-card);
 }
 
 .pp-manager {
     padding: 12px 16px 14px;
     border-bottom: 1px solid var(--app-border-default);
-    background: rgba(255,255,255,0.96);
-    backdrop-filter: blur(12px);
+    background: color-mix(in srgb, var(--app-surface-card) 92%, var(--app-surface-subtle));
     flex-shrink: 0;
 }
 .pp-manager-card {
-    border: 1px solid #dbe7ff;
+    border: 1px solid rgba(37,99,235,0.18);
     border-radius: 16px;
-    background: linear-gradient(180deg, #f8fbff 0%, #eef5ff 100%);
-    box-shadow: 0 8px 24px rgba(59,130,246,0.08);
+    background: var(--app-surface-card);
+    box-shadow: 0 8px 24px rgba(15,23,42,0.07);
     padding: 12px;
 }
 .pp-manager-head {
@@ -212,7 +250,7 @@ const PANEL_CSS = `
     margin-top: 8px;
     padding: 8px 10px;
     border-radius: 12px;
-    background: rgba(255,255,255,0.84);
+    background: var(--app-surface-subtle);
     border: 1px solid rgba(59,130,246,0.12);
     font-size: 12px;
     color: var(--app-text-secondary);
@@ -228,7 +266,7 @@ const PANEL_CSS = `
     gap: 8px;
     padding: 6px 10px;
     border-radius: 999px;
-    background: rgba(255,255,255,0.92);
+    background: var(--app-surface-subtle);
     border: 1px solid rgba(59,130,246,0.12);
 }
 .pp-enabled-chip.pp-readonly {
@@ -346,6 +384,7 @@ const PANEL_CSS = `
     font-size: 12px;
     font-weight: 700;
     cursor: pointer;
+    transition: transform 120ms ease, border-color 160ms ease, background 160ms ease, box-shadow 160ms ease;
 }
 .pp-manager-btn:disabled {
     opacity: 0.45;
@@ -381,7 +420,8 @@ const PANEL_CSS = `
     opacity: 0;
     visibility: hidden;
     pointer-events: none;
-    transition: opacity 120ms ease;
+    transition: opacity 120ms ease, transform 120ms ease;
+    transform: translateY(4px);
 }
 .pp-pages[data-view="root"] .pp-page[data-panel-page="root"],
 .pp-pages[data-view="detail"] .pp-page[data-panel-page="detail"],
@@ -389,6 +429,7 @@ const PANEL_CSS = `
     opacity: 1;
     visibility: visible;
     pointer-events: auto;
+    transform: translateY(0);
 }
 .pp-page-scroll {
     flex: 1 1 0;
@@ -409,7 +450,7 @@ const PANEL_CSS = `
     gap: 4px;
     border: none;
     background: transparent;
-    color: #2563eb;
+    color: var(--app-text-link);
     font-size: 14px;
     font-weight: 700;
     padding: 6px 2px;
@@ -441,7 +482,7 @@ const PANEL_CSS = `
     -webkit-appearance: none;
     width: 100%;
     border: 1px solid var(--app-border-default);
-    border-radius: 16px;
+    border-radius: 14px;
     background: var(--app-surface-card);
     padding: 14px 16px;
     display: flex;
@@ -450,16 +491,40 @@ const PANEL_CSS = `
     gap: 12px;
     text-align: left;
     cursor: pointer;
-    box-shadow: 0 4px 18px rgba(15,23,42,0.04);
+    box-shadow: 0 4px 18px rgba(15,23,42,0.045);
+    transition: transform 120ms ease, border-color 160ms ease, background 160ms ease, box-shadow 160ms ease;
 }
 .pp-nav-item:active {
     transform: scale(0.995);
 }
 .pp-nav-item-left {
     min-width: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 4px 10px;
+    align-items: center;
+}
+.pp-nav-item-icon {
+    grid-row: 1 / span 2;
+    width: 34px;
+    height: 34px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid rgba(37,99,235,0.16);
+    border-radius: 11px;
+    background: rgba(37,99,235,0.09);
+    color: #1d4ed8;
+    flex-shrink: 0;
+}
+.pp-nav-item-icon-svg {
+    width: 16px;
+    height: 16px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 2;
+    stroke-linecap: round;
+    stroke-linejoin: round;
 }
 .pp-nav-item-title {
     font-size: 15px;
@@ -468,6 +533,7 @@ const PANEL_CSS = `
     line-height: 1.35;
 }
 .pp-nav-item-sub {
+    grid-column: 2;
     font-size: 12px;
     color: var(--app-text-muted);
     line-height: 1.45;
@@ -478,6 +544,11 @@ const PANEL_CSS = `
 .pp-nav-item.pp-disabled .pp-nav-item-title,
 .pp-nav-item.pp-disabled .pp-nav-item-sub {
     color: var(--app-text-muted);
+}
+.pp-nav-item.pp-disabled .pp-nav-item-icon {
+    color: var(--app-text-muted);
+    border-color: var(--app-border-default);
+    background: var(--app-surface-hover);
 }
 .pp-nav-item-arrow {
     width: 30px;
@@ -499,7 +570,7 @@ const PANEL_CSS = `
 }
 .pp-binding-card {
     border: 1px solid var(--app-border-default);
-    border-radius: 16px;
+    border-radius: 14px;
     background: var(--app-surface-card);
     box-shadow: 0 4px 18px rgba(15,23,42,0.04);
     padding: 12px;
@@ -574,7 +645,7 @@ const PANEL_CSS = `
 }
 .pp-binding-item {
     border: 1px solid var(--app-border-default);
-    border-radius: 14px;
+    border-radius: 12px;
     background: var(--app-surface-subtle);
     padding: 10px 12px;
     display: flex;
@@ -618,14 +689,21 @@ const PANEL_CSS = `
 .pp-field-label { font-weight: 700; color: var(--app-text-primary); margin-bottom: 6px; font-size: 13px; }
 .pp-textarea {
     width: 100%; min-height: 140px; resize: vertical;
-    border: 1px solid var(--app-border-default); border-radius: 10px; padding: 10px;
+    border: 1px solid var(--app-border-default); border-radius: 11px; padding: 10px;
     font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
     font-size: 12px; line-height: 1.45;
     background: var(--app-surface-card); color: var(--app-text-primary); box-sizing: border-box;
 }
 .pp-input {
     width: 100%; padding: 10px; border: 1px solid var(--app-border-default);
-    border-radius: 10px; font-size: 14px; background: var(--app-surface-card); color: var(--app-text-primary);
+    border-radius: 11px; font-size: 14px; background: var(--app-surface-card); color: var(--app-text-primary);
+    transition: border-color 160ms ease, box-shadow 160ms ease, background 160ms ease;
+}
+.pp-input:focus,
+.pp-textarea:focus {
+    border-color: rgba(37,99,235,0.42);
+    box-shadow: 0 0 0 3px rgba(37,99,235,0.10);
+    outline: none;
 }
 .pp-row { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 10px; }
 .pp-row > div { flex: 1; min-width: 140px; }
@@ -637,17 +715,22 @@ const PANEL_CSS = `
 .pp-flags input[type="checkbox"] { width: 16px; height: 16px; }
 .pp-reasoning-card {
     margin-top: 12px;
-    border: 1px solid #dbe7ff;
+    border: 1px solid rgba(37,99,235,0.18);
     border-radius: 14px;
-    background: linear-gradient(180deg, #f8fbff 0%, #f1f6ff 100%);
+    background: color-mix(in srgb, var(--app-surface-card) 90%, rgba(37,99,235,0.10));
     padding: 12px;
 }
 
 /* ── openai blocks ── */
 .pp-block {
-    border: 1px solid rgba(0,0,0,0.08); border-radius: 12px;
+    border: 1px solid var(--app-border-default); border-radius: 14px;
     background: var(--app-surface-card); overflow: hidden;
-    transition: border-color 160ms ease, box-shadow 160ms ease, background 160ms ease;
+    box-shadow: 0 4px 16px rgba(15,23,42,0.045);
+    transition: transform 120ms ease, border-color 160ms ease, box-shadow 160ms ease, background 160ms ease;
+}
+.pp-block:hover {
+    border-color: rgba(37,99,235,0.24);
+    box-shadow: 0 8px 22px rgba(15,23,42,0.08);
 }
 .pp-block.is-jump-target {
     border-color: rgba(14,165,233,0.38);
@@ -656,11 +739,23 @@ const PANEL_CSS = `
 }
 .pp-block-header {
     display: flex; align-items: center; justify-content: space-between;
-    gap: 10px; padding: 10px 12px; background: rgba(248,250,252,0.85);
+    gap: 10px; padding: 11px 12px; background: color-mix(in srgb, var(--app-surface-card) 90%, var(--app-surface-subtle));
     cursor: pointer; user-select: none;
 }
 .pp-block-left { display: flex; align-items: center; gap: 10px; min-width: 0; flex: 1; }
-.pp-block-toggle { font-size: 16px; color: var(--app-text-muted); user-select: none; width: 18px; }
+.pp-block-toggle {
+    width: 24px;
+    height: 24px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 8px;
+    background: var(--app-surface-subtle);
+    color: var(--app-text-muted);
+    font-size: 14px;
+    user-select: none;
+    flex-shrink: 0;
+}
 .pp-block-drag { font-size: 16px; color: var(--app-text-muted); cursor: grab; user-select: none; }
 .pp-block-main { min-width: 0; display: flex; flex-direction: column; gap: 5px; }
 .pp-block-title { font-weight: 800; color: var(--app-text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -704,8 +799,8 @@ const PANEL_CSS = `
     color: #be123c;
 }
 .pp-block-right { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
-.pp-block-body { padding: 10px 12px; display: none; flex-direction: column; gap: 10px; }
-.pp-block.pp-block-disabled { opacity: 0.62; filter: grayscale(1); background: var(--app-surface-hover); }
+.pp-block-body { padding: 12px; display: none; flex-direction: column; gap: 10px; }
+.pp-block.pp-block-disabled { opacity: 0.66; background: var(--app-surface-hover); }
 .pp-block.pp-block-disabled .pp-block-header { background: var(--app-border-default); }
 
 /* ── status ── */
@@ -726,6 +821,7 @@ const PANEL_CSS = `
 .pp-header { flex-shrink: 0; }
 .pp-footer button {
     padding: 10px 18px; border-radius: 10px; cursor: pointer; font-size: 14px;
+    transition: transform 120ms ease, border-color 160ms ease, background 160ms ease, box-shadow 160ms ease;
 }
 .pp-btn-cancel { border: 1px solid var(--app-border-default); background: var(--app-surface-subtle); color: var(--app-text-secondary); }
 .pp-btn-save { border: none; background: #3b82f6; color: var(--app-text-inverse); font-weight: 700; }
@@ -876,6 +972,14 @@ const PANEL_CSS = `
         padding: 10px 12px;
         border-radius: 12px;
     }
+    .pp-nav-item-left {
+        gap: 3px 8px;
+    }
+    .pp-nav-item-icon {
+        width: 30px;
+        height: 30px;
+        border-radius: 10px;
+    }
     .pp-nav-item-title {
         font-size: 14px;
     }
@@ -926,6 +1030,33 @@ const PANEL_CSS = `
 @media (max-width: 380px) {
     .pp-manager-actions {
         grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+}
+
+body[data-theme-mode='dark'] #preset-panel .pp-nav-item-icon {
+    color: #8ecbff;
+    border-color: rgba(121, 192, 255, 0.24);
+    background: rgba(121, 192, 255, 0.10);
+}
+
+body[data-theme-mode='dark'] #preset-panel .pp-manager-card,
+body[data-theme-mode='dark'] #preset-panel .pp-block,
+body[data-theme-mode='dark'] #preset-panel .pp-binding-card {
+    box-shadow: 0 8px 24px rgba(0,0,0,0.24);
+}
+
+@media (prefers-reduced-motion: reduce) {
+    #preset-panel .pp-page,
+    #preset-panel .pp-header-actions button,
+    #preset-panel .pp-manager-btn,
+    #preset-panel .pp-binding-btn,
+    #preset-panel .pp-footer button,
+    #preset-panel .pp-nav-item,
+    #preset-panel .pp-block,
+    #preset-panel .pp-input,
+    #preset-panel .pp-textarea {
+        transition: none !important;
+        transform: none !important;
     }
 }
 
@@ -1651,6 +1782,7 @@ export class PresetPanel {
         item.className = `pp-nav-item ${this.store.getEnabled(sec.storeType) ? '' : 'pp-disabled'}`.trim();
         item.innerHTML = `
             <div class="pp-nav-item-left">
+                <span class="pp-nav-item-icon">${SECTION_ICONS[sec.id] || SECTION_ICONS.custom}</span>
                 <div class="pp-nav-item-title">${sec.label}</div>
                 <div class="pp-nav-item-sub">${this.getSectionBadge(sec) || '进入后编辑该分类内容'}</div>
             </div>

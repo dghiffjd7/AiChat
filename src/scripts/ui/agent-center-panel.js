@@ -10,6 +10,31 @@ import { exportDebugTextFlow } from './debug-panel-runtime-utils.js';
 
 const STYLE_ID = 'agent-center-panel-style';
 
+const iconSvg = (body) => `
+    <svg class="agent-center-icon" viewBox="0 0 24 24" aria-hidden="true">
+        ${body}
+    </svg>
+`;
+
+const ICONS = Object.freeze({
+    agent: iconSvg('<path d="M12 8V4"/><rect x="5" y="8" width="14" height="10" rx="4"/><path d="M9 18v2"/><path d="M15 18v2"/><path d="M9 13h.01"/><path d="M15 13h.01"/>'),
+    activity: iconSvg('<path d="M4 12h4l2-6 4 12 2-6h4"/>'),
+    close: iconSvg('<path d="M18 6 6 18"/><path d="m6 6 12 12"/>'),
+    export: iconSvg('<path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/>'),
+    pending: iconSvg('<path d="M12 6v6l4 2"/><circle cx="12" cy="12" r="9"/>'),
+    refresh: iconSvg('<path d="M3 12a9 9 0 0 1 15.5-6.2"/><path d="M18 3v5h-5"/><path d="M21 12a9 9 0 0 1-15.5 6.2"/><path d="M6 21v-5h5"/>'),
+    resources: iconSvg('<path d="M4 5h16"/><path d="M4 12h16"/><path d="M4 19h16"/><path d="M7 5v14"/>'),
+    safety: iconSvg('<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z"/><path d="m9 12 2 2 4-5"/>'),
+});
+
+const tabIcon = (id = '') => ({
+    pending: ICONS.pending,
+    agents: ICONS.agent,
+    resources: ICONS.resources,
+    activity: ICONS.activity,
+    safety: ICONS.safety,
+}[trim(id)] || ICONS.agent);
+
 const PANEL_CSS = `
 .agent-center-overlay {
     position: fixed;
@@ -19,8 +44,8 @@ const PANEL_CSS = `
     align-items: stretch;
     justify-content: flex-end;
     box-sizing: border-box;
-    padding: max(8px, env(safe-area-inset-top, 0px)) max(8px, env(safe-area-inset-right, 0px)) max(8px, env(safe-area-inset-bottom, 0px)) max(8px, env(safe-area-inset-left, 0px));
-    background: rgba(15,23,42,0.28);
+    padding: max(10px, env(safe-area-inset-top, 0px)) max(10px, env(safe-area-inset-right, 0px)) max(10px, env(safe-area-inset-bottom, 0px)) max(10px, env(safe-area-inset-left, 0px));
+    background: rgba(15,23,42,0.34);
     opacity: 0;
     transition: opacity 180ms ease;
 }
@@ -28,7 +53,7 @@ const PANEL_CSS = `
     opacity: 1;
 }
 .agent-center-panel {
-    width: min(620px, 100vw);
+    width: min(680px, 100vw);
     height: calc(var(--app-visual-height, 100dvh) - max(8px, env(safe-area-inset-top, 0px)) - max(8px, env(safe-area-inset-bottom, 0px)));
     max-height: calc(100vh - max(8px, env(safe-area-inset-top, 0px)) - max(8px, env(safe-area-inset-bottom, 0px)));
     display: flex;
@@ -36,11 +61,11 @@ const PANEL_CSS = `
     background: var(--app-surface-card);
     color: var(--app-text-primary);
     border: 1px solid var(--app-border-default);
-    border-radius: 12px;
-    box-shadow: -12px 0 36px rgba(15,23,42,0.18);
+    border-radius: 16px;
+    box-shadow: -18px 0 46px rgba(15,23,42,0.22);
     overflow: hidden;
-    transform: translateX(10px);
-    transition: transform 220ms cubic-bezier(.2,.8,.2,1);
+    transform: translateX(18px);
+    transition: transform 180ms ease-out;
 }
 .agent-center-overlay[style*="flex"] .agent-center-panel {
     transform: translateX(0);
@@ -50,12 +75,28 @@ const PANEL_CSS = `
     align-items: center;
     justify-content: space-between;
     gap: 12px;
-    padding: 14px 16px;
+    padding: 15px 16px;
     border-bottom: 1px solid var(--app-border-default);
+    background: color-mix(in srgb, var(--app-surface-card) 90%, var(--app-surface-subtle));
     flex-shrink: 0;
 }
 .agent-center-title {
     min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+.agent-center-title-mark {
+    width: 38px;
+    height: 38px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 auto;
+    border: 1px solid rgba(37, 99, 235, 0.18);
+    border-radius: 13px;
+    background: rgba(37, 99, 235, 0.10);
+    color: #1d4ed8;
 }
 .agent-center-title strong {
     display: block;
@@ -81,6 +122,11 @@ const PANEL_CSS = `
     border-radius: 10px;
     background: var(--app-surface-subtle);
     color: var(--app-text-primary);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 7px;
+    min-height: 34px;
     padding: 7px 10px;
     font-weight: 800;
     cursor: pointer;
@@ -115,17 +161,22 @@ const PANEL_CSS = `
 .agent-center-tabs {
     display: grid;
     grid-template-columns: repeat(5, minmax(0, 1fr));
-    gap: 6px;
+    gap: 7px;
     padding: 10px 12px;
     border-bottom: 1px solid var(--app-border-default);
     flex-shrink: 0;
 }
 .agent-center-tab {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
     border: 1px solid transparent;
     border-radius: 10px;
     background: transparent;
     color: var(--app-text-secondary);
-    padding: 8px 6px;
+    min-height: 36px;
+    padding: 8px 7px;
     font-size: 12px;
     font-weight: 800;
     cursor: pointer;
@@ -135,13 +186,24 @@ const PANEL_CSS = `
     border-color: rgba(59,130,246,0.24);
     background: rgba(59,130,246,0.10);
     color: #1d4ed8;
+    box-shadow: inset 0 -2px 0 rgba(37, 99, 235, 0.38);
+}
+.agent-center-icon {
+    width: 15px;
+    height: 15px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 2;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    flex: 0 0 auto;
 }
 .agent-center-content {
     min-height: 0;
     flex: 1;
     overflow: auto;
     -webkit-overflow-scrolling: touch;
-    padding: 12px;
+    padding: 14px;
 }
 .agent-center-list {
     display: flex;
@@ -179,9 +241,10 @@ const PANEL_CSS = `
 }
 .agent-center-card {
     border: 1px solid var(--app-border-default);
-    border-radius: 8px;
-    background: var(--app-surface-subtle);
-    padding: 10px 12px;
+    border-radius: 12px;
+    background: color-mix(in srgb, var(--app-surface-card) 90%, var(--app-surface-subtle));
+    padding: 12px 13px;
+    box-shadow: 0 4px 16px rgba(15, 23, 42, 0.045);
     transition: border-color 160ms ease, background 160ms ease, box-shadow 160ms ease, transform 120ms ease;
 }
 .agent-center-card.is-failure {
@@ -360,11 +423,11 @@ const PANEL_CSS = `
     gap: 10px;
 }
 .agent-center-agent-card {
-    padding: 12px;
+    padding: 14px;
 }
 .agent-center-agent-card.is-agent-on {
     border-color: rgba(34,197,94,0.24);
-    background: linear-gradient(180deg, rgba(34,197,94,0.08), var(--app-surface-subtle));
+    background: color-mix(in srgb, var(--app-surface-card) 88%, rgba(34,197,94,0.14));
 }
 .agent-center-agent-settings {
     display: grid;
@@ -474,7 +537,7 @@ const PANEL_CSS = `
 }
 .agent-center-card-action {
     border: 1px solid var(--app-border-default);
-    border-radius: 9px;
+    border-radius: 10px;
     background: var(--app-surface-card);
     color: var(--app-text-primary);
     padding: 6px 9px;
@@ -496,8 +559,8 @@ const PANEL_CSS = `
 .agent-center-chip {
     display: inline-flex;
     align-items: center;
-    min-height: 22px;
-    padding: 4px 7px;
+    min-height: 23px;
+    padding: 4px 8px;
     border-radius: 999px;
     border: 1px solid rgba(148,163,184,0.22);
     color: var(--app-text-secondary);
@@ -603,13 +666,34 @@ const PANEL_CSS = `
 }
 @media (max-width: 680px) {
     .agent-center-overlay {
+        align-items: flex-end;
         justify-content: center;
+        padding: max(8px, env(safe-area-inset-top, 0px)) max(8px, env(safe-area-inset-right, 0px)) max(8px, env(safe-area-inset-bottom, 0px)) max(8px, env(safe-area-inset-left, 0px));
     }
     .agent-center-panel {
         width: 100%;
+        height: min(92dvh, calc(var(--app-visual-height, 100dvh) - max(16px, env(safe-area-inset-top, 0px)) - max(8px, env(safe-area-inset-bottom, 0px))));
+        border-radius: 16px 16px 12px 12px;
+        transform: translateY(18px);
+        box-shadow: 0 -16px 42px rgba(15,23,42,0.22);
+    }
+    .agent-center-overlay[style*="flex"] .agent-center-panel {
+        transform: translateY(0);
+    }
+    .agent-center-header {
+        padding: 12px;
+    }
+    .agent-center-title-mark {
+        width: 34px;
+        height: 34px;
+        border-radius: 11px;
     }
     .agent-center-tabs {
         grid-template-columns: repeat(2, minmax(0, 1fr));
+        padding: 9px 10px;
+    }
+    .agent-center-content {
+        padding: 10px;
     }
     .agent-center-setting-row {
         grid-template-columns: 64px minmax(0, 1fr);
@@ -630,6 +714,33 @@ const PANEL_CSS = `
     .agent-center-resource-actions {
         justify-content: flex-start;
     }
+}
+@media (max-width: 430px) {
+    .agent-center-actions {
+        gap: 5px;
+    }
+    .agent-center-button span {
+        display: none;
+    }
+    .agent-center-button {
+        width: 34px;
+        padding: 0;
+    }
+}
+body[data-theme-mode='dark'] .agent-center-title-mark {
+    color: #8ecbff;
+    border-color: rgba(121, 192, 255, 0.26);
+    background: rgba(121, 192, 255, 0.12);
+}
+body[data-theme-mode='dark'] .agent-center-card,
+body[data-theme-mode='dark'] .agent-center-agent-card.is-agent-on {
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.24);
+}
+body[data-theme-mode='dark'] .agent-center-tab.is-active {
+    color: #8ecbff;
+    border-color: rgba(121, 192, 255, 0.32);
+    background: rgba(121, 192, 255, 0.13);
+    box-shadow: inset 0 -2px 0 rgba(121, 192, 255, 0.36);
 }
 @media (prefers-reduced-motion: reduce) {
     .agent-center-overlay,
@@ -1208,13 +1319,16 @@ export class AgentCenterPanel {
             <section class="agent-center-panel" role="dialog" aria-modal="true" aria-labelledby="agent-center-title">
                 <header class="agent-center-header">
                     <div class="agent-center-title">
-                        <strong id="agent-center-title">Agent Center</strong>
-                        <div class="agent-center-meta"></div>
+                        <span class="agent-center-title-mark">${ICONS.agent}</span>
+                        <div style="min-width:0;">
+                            <strong id="agent-center-title">Agent Center</strong>
+                            <div class="agent-center-meta"></div>
+                        </div>
                     </div>
                     <div class="agent-center-actions">
-                        <button type="button" class="agent-center-button" data-action="refresh">刷新</button>
-                        <button type="button" class="agent-center-button" data-action="export">导出</button>
-                        <button type="button" class="agent-center-button" data-action="close">关闭</button>
+                        <button type="button" class="agent-center-button" data-action="refresh">${ICONS.refresh}<span>刷新</span></button>
+                        <button type="button" class="agent-center-button" data-action="export">${ICONS.export}<span>导出</span></button>
+                        <button type="button" class="agent-center-button" data-action="close">${ICONS.close}<span>关闭</span></button>
                     </div>
                 </header>
                 <nav class="agent-center-tabs" aria-label="Agent Center tabs"></nav>
@@ -1396,7 +1510,7 @@ export class AgentCenterPanel {
                 type="button"
                 class="agent-center-tab${tab.id === this.activeTab ? ' is-active' : ''}"
                 data-tab="${escapeHtml(tab.id)}"
-            >${escapeHtml(tab.label)}${tab.count ? ` ${Number(tab.count)}` : ''}</button>
+            >${tabIcon(tab.id)}<span>${escapeHtml(tab.label)}${tab.count ? ` ${Number(tab.count)}` : ''}</span></button>
         `).join('');
         this.tabsElement.querySelectorAll('[data-tab]').forEach((button) => {
             button.addEventListener('click', () => this.setActiveTab(button.dataset.tab, {
