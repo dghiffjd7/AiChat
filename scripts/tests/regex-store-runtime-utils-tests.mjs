@@ -96,6 +96,69 @@ test('regex sync helpers tolerate missing contract', async () => {
   assert.equal(await syncWorldRegexBindings({}), null);
 });
 
+test('regex store activates preset-bound set when any selected preset id matches', async () => {
+  const previousLocalStorage = globalThis.localStorage;
+  const previousInvoke = globalThis.__TAURI_INVOKE__;
+  const kv = new Map();
+  const local = new Map();
+  globalThis.localStorage = {
+    getItem(key) {
+      return local.has(key) ? local.get(key) : null;
+    },
+    setItem(key, value) {
+      local.set(key, String(value));
+    },
+    removeItem(key) {
+      local.delete(key);
+    },
+  };
+  globalThis.__TAURI_INVOKE__ = async (cmd, args = {}) => {
+    if (cmd === 'load_kv') return kv.get(args.name) || null;
+    if (cmd === 'save_kv') {
+      kv.set(args.name, JSON.parse(JSON.stringify(args.data)));
+      return true;
+    }
+    throw new Error(`unexpected command: ${cmd}`);
+  };
+
+  try {
+    const { RegexStore, regex_placement } = await import('../../src/scripts/storage/regex-store.js');
+    const store = new RegexStore();
+    await store.ready;
+    const id = await store.upsertLocalSet({
+      name: 'Shared preset regex',
+      enabled: true,
+      bind: {
+        type: 'preset',
+        presetType: 'openai',
+        presetIds: ['preset-a', 'preset-b'],
+      },
+      rules: [{
+        scriptName: 'Replace',
+        findRegex: '/foo/g',
+        replaceString: 'bar',
+        placement: [regex_placement.AI_OUTPUT],
+      }],
+    });
+
+    const stored = store.getLocalSet(id);
+    assert.equal(stored.bind.presetId, 'preset-a');
+    assert.deepEqual(stored.bind.presetIds, ['preset-a', 'preset-b']);
+    assert.equal(store.computeActiveRules({ activePresets: { openai: 'preset-b' } }).length, 1);
+    assert.equal(store.computeActiveRules({ activePresets: { openai: 'preset-c' } }).length, 0);
+
+    await store.syncPresetBindings({ openai: 'preset-b' });
+    assert.equal(store.getLocalSet(id).enabled, true);
+    await store.syncPresetBindings({ openai: 'preset-c' });
+    assert.equal(store.getLocalSet(id).enabled, false);
+  } finally {
+    if (previousInvoke === undefined) delete globalThis.__TAURI_INVOKE__;
+    else globalThis.__TAURI_INVOKE__ = previousInvoke;
+    if (previousLocalStorage === undefined) delete globalThis.localStorage;
+    else globalThis.localStorage = previousLocalStorage;
+  }
+});
+
 let failed = 0;
 for (const t of tests) {
   try {

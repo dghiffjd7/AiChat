@@ -103,11 +103,12 @@ export class MomentSummaryStore {
         try {
             let data = await safeInvoke('load_kv', { name: storeKey });
             if (token !== this._scopeToken || storeKey !== this.storeKey || scopeId !== this.scopeId) return this.state;
+            if (data && typeof data === 'object' && data._tooLarge) data = null;
             if (data && this.scopeId) markLegacyMigrated();
             if (!data && this.scopeId && !isLegacyMigrated()) {
                 const legacy = await safeInvoke('load_kv', { name: BASE_STORE_KEY });
                 if (token !== this._scopeToken || storeKey !== this.storeKey || scopeId !== this.scopeId) return this.state;
-                if (legacy && typeof legacy === 'object') {
+                if (legacy && typeof legacy === 'object' && !legacy._tooLarge) {
                     data = legacy;
                     markLegacyMigrated();
                     try {

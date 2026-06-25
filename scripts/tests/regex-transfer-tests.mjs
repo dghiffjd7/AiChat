@@ -28,7 +28,9 @@ const {
 const {
   REGEX_CUSTOM_PROMPT_PRESET_TYPE,
   buildRegexCustomPromptPresetBind,
+  getRegexCustomPromptPresetBindIds,
   listRegexCustomPromptPresetChoices,
+  resolveImportedRegexPresetBindTarget,
 } = await import('../../src/scripts/ui/regex-preset-binding-utils.js');
 
 test('normalizeRegexScript accepts JS-Slash Runner tavern regex shape', () => {
@@ -109,6 +111,45 @@ test('regex preset binding choices only expose custom prompt presets', () => {
     presetType: REGEX_CUSTOM_PROMPT_PRESET_TYPE,
     presetId: 'openai-a',
   });
+  assert.deepEqual(buildRegexCustomPromptPresetBind(['openai-a', 'openai-b', 'openai-a', '']), {
+    type: 'preset',
+    presetType: REGEX_CUSTOM_PROMPT_PRESET_TYPE,
+    presetId: 'openai-a',
+    presetIds: ['openai-a', 'openai-b'],
+  });
+  assert.deepEqual(getRegexCustomPromptPresetBindIds({
+    type: 'preset',
+    presetType: REGEX_CUSTOM_PROMPT_PRESET_TYPE,
+    presetId: 'openai-a',
+    presetIds: ['openai-b', 'openai-a'],
+  }), ['openai-b', 'openai-a']);
+});
+
+test('imported preset regex binding targets the imported custom prompt preset directly', () => {
+  const store = {
+    list(type) {
+      if (type !== REGEX_CUSTOM_PROMPT_PRESET_TYPE) return [];
+      return [{ id: 'imported-openai', name: '导入预设' }];
+    },
+  };
+
+  assert.deepEqual(resolveImportedRegexPresetBindTarget({
+    importType: REGEX_CUSTOM_PROMPT_PRESET_TYPE,
+    presetId: 'imported-openai',
+    presetStore: store,
+  }), {
+    presetId: 'imported-openai',
+    bind: {
+      type: 'preset',
+      presetType: REGEX_CUSTOM_PROMPT_PRESET_TYPE,
+      presetId: 'imported-openai',
+    },
+  });
+  assert.equal(resolveImportedRegexPresetBindTarget({
+    importType: 'context',
+    presetId: 'ctx',
+    presetStore: store,
+  }), null);
 });
 
 test('parseRegexImportText reads ST RegexBinding from preset extensions', () => {

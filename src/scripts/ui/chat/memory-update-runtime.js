@@ -28,6 +28,7 @@ export const createMemoryUpdateRuntime = ({
   createClient,
   handleMemoryEditsFromRaw,
   isMemoryAutoExtractSeparate,
+  isMemoryUpdateTargetCurrent = async () => true,
   isOnline = () => typeof navigator === 'undefined' || navigator.onLine !== false,
   logger,
   memoryUpdateConfigManager,
@@ -60,6 +61,10 @@ export const createMemoryUpdateRuntime = ({
   };
 
   const abortMemoryUpdate = (sessionId) => {
+    const queue = memoryUpdateQueues.get(sessionId);
+    if (queue?.pending?.length) {
+      queue.pending = [];
+    }
     const ac = memoryUpdateAbortControllers.get(sessionId);
     if (ac) {
       try {
@@ -202,6 +207,18 @@ export const createMemoryUpdateRuntime = ({
       if (signal?.aborted) {
         await finishTrace({ status: 'cancelled', reason: 'aborted' });
         return;
+      }
+      if (checkpointMessageId) {
+        let targetCurrent = true;
+        try {
+          targetCurrent = await isMemoryUpdateTargetCurrent(sessionId, checkpointMessageId);
+        } catch (err) {
+          logger?.warn?.('memory update target validation failed', err);
+        }
+        if (!targetCurrent) {
+          await finishTrace({ status: 'skipped', reason: 'stale-checkpoint' });
+          return;
+        }
       }
       await handleMemoryEditsFromRaw(response, {
         sessionId,

@@ -5,7 +5,7 @@ import { logger } from '../utils/logger.js';
 const STORAGE_KEY = 'user_personas_v1';
 const ACTIVE_KEY = 'user_personas_active_id_v1';
 const LOCALSTORAGE_SOFT_LIMIT = 3 * 1024 * 1024; // 3MB safety cap for WebView localStorage
-const KV_SOFT_LIMIT = 9 * 1024 * 1024; // 9MB safety cap (load_kv rejects >10MB)
+const KV_SOFT_LIMIT = 9 * 1024 * 1024; // Keep persona list compact; larger card payloads are offloaded.
 const MAX_AVATAR_DATA_URL_CHARS = 350_000; // avoid bloating storage with huge data URLs
 
 // Align with SillyTavern's persona_description_positions (subset)

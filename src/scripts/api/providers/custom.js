@@ -52,6 +52,70 @@ const extractErrorDetail = (body) => {
     }
 };
 
+const pickOpenAICompatibleFinishReason = (body = {}) => {
+    const direct = String(body?.finish_reason || body?.finishReason || body?.stop_reason || body?.stopReason || '').trim();
+    const choices = Array.isArray(body?.choices) ? body.choices : [];
+    const reasons = choices
+        .map(choice => String(choice?.finish_reason || choice?.finishReason || choice?.stop_reason || choice?.stopReason || '').trim())
+        .filter(Boolean);
+    if (reasons.length) return reasons.join(',');
+    return direct;
+};
+
+const hasOpenAICompatibleToolDelta = (body = {}) => {
+    if (Array.isArray(body?.tool_calls) && body.tool_calls.length) return true;
+    const choices = Array.isArray(body?.choices) ? body.choices : [];
+    return choices.some((choice) => {
+        const delta = choice?.delta && typeof choice.delta === 'object' ? choice.delta : {};
+        const message = choice?.message && typeof choice.message === 'object' ? choice.message : {};
+        return (
+            (Array.isArray(delta.tool_calls) && delta.tool_calls.length > 0) ||
+            (Array.isArray(message.tool_calls) && message.tool_calls.length > 0) ||
+            String(choice?.finish_reason || choice?.finishReason || '').trim() === 'tool_calls'
+        );
+    });
+};
+
+const summarizeMessageRoles = (messages = [], limit = 12) => {
+    const roles = (Array.isArray(messages) ? messages : [])
+        .map(item => String(item?.role || '').trim().toLowerCase() || 'unknown');
+    if (!roles.length) return '';
+    const tail = roles.slice(-Math.max(1, Math.trunc(Number(limit) || 12)));
+    return tail.join('>');
+};
+
+const buildEmptyCustomStreamError = ({
+    status = 0,
+    finishReason = '',
+    messages = [],
+    baseUrl = '',
+    model = '',
+} = {}) => {
+    const roleTail = summarizeMessageRoles(messages);
+    const roles = (Array.isArray(messages) ? messages : [])
+        .map(item => String(item?.role || '').trim().toLowerCase() || 'unknown');
+    const lastRole = roles[roles.length - 1] || '';
+    const lastNonSystem = [...roles].reverse().find(role => role && role !== 'system') || '';
+    const rawBaseUrl = String(baseUrl || '').trim().toLowerCase();
+    const rawModel = String(model || '').trim().toLowerCase();
+    const likelyClaudeCompat =
+        rawBaseUrl.includes('pioneer') ||
+        rawModel.includes('claude') ||
+        rawModel.includes('opus') ||
+        rawModel.includes('sonnet');
+    const roleHint = likelyClaudeCompat && (lastRole === 'system' || lastNonSystem === 'assistant')
+        ? '；当前 payload 尾部不是有效 user turn，Claude/OpenAI-compatible 网关可能会返回空流。请在该连线配置将「提示词后处理」设为 semi 或 strict'
+        : '';
+    const reasonText = finishReason ? ` finish_reason=${finishReason}` : '';
+    const error = new Error(
+        `Custom API stream ended without content (status=${Number(status || 0) || 0}${reasonText}${roleTail ? ` roles_tail=${roleTail}` : ''})${roleHint}`
+    );
+    error.status = Number(status || 0) || 0;
+    error.finishReason = finishReason;
+    error.requestMessageRoles = roleTail;
+    return error;
+};
+
 const normalizeNonNegativeSeed = (value) => {
     if (String(value ?? '').trim() === '') return undefined;
     const seed = Math.trunc(Number(value));
@@ -449,13 +513,34 @@ export class CustomProvider {
             let responseOk = null;
             let rawErrorBody = '';
             let sseBuffer = '';
+            let outputChars = 0;
+            let reasoningChars = 0;
+            let toolDeltaCount = 0;
+            let finishReason = '';
             const emitParsed = function* (data) {
                 notifyProviderToolCallDelta(data);
+                if (hasOpenAICompatibleToolDelta(data)) toolDeltaCount += 1;
+                const nextFinishReason = pickOpenAICompatibleFinishReason(data);
+                if (nextFinishReason) finishReason = nextFinishReason;
                 const parts = extractOpenAICompatibleStreamParts(data);
                 if (parts.reasoning) {
+                    reasoningChars += parts.reasoning.length;
                     yield createReasoningStreamEvent(parts.reasoning, { provider: providerName });
                 }
-                if (parts.content) yield parts.content;
+                if (parts.content) {
+                    outputChars += parts.content.length;
+                    yield parts.content;
+                }
+            };
+            const throwIfEmptyStream = () => {
+                if (outputChars > 0 || reasoningChars > 0 || toolDeltaCount > 0) return;
+                throw buildEmptyCustomStreamError({
+                    status: responseStatus,
+                    finishReason,
+                    messages: request.messages,
+                    baseUrl: this.baseUrl,
+                    model: this.model,
+                });
             };
             try {
                 await invoker('http_stream_request_start', {
@@ -486,7 +571,10 @@ export class CustomProvider {
                             const parsed = parseSSEBuffer(sseBuffer, { final: false });
                             sseBuffer = parsed.rest;
                             for (const data of parsed.events) yield* emitParsed(data);
-                            if (parsed.done) return;
+                            if (parsed.done) {
+                                throwIfEmptyStream();
+                                return;
+                            }
                         }
                     }
 
@@ -509,6 +597,7 @@ export class CustomProvider {
                         }
                         const parsed = parseSSEBuffer(sseBuffer, { final: true });
                         for (const data of parsed.events) yield* emitParsed(data);
+                        throwIfEmptyStream();
                         return;
                     }
 
@@ -545,13 +634,33 @@ export class CustomProvider {
                 throw error;
             }
 
+            let outputChars = 0;
+            let reasoningChars = 0;
+            let toolDeltaCount = 0;
+            let finishReason = '';
             for await (const data of handleSSE(response)) {
                 notifyProviderToolCallDelta(data);
+                if (hasOpenAICompatibleToolDelta(data)) toolDeltaCount += 1;
+                const nextFinishReason = pickOpenAICompatibleFinishReason(data);
+                if (nextFinishReason) finishReason = nextFinishReason;
                 const parts = extractOpenAICompatibleStreamParts(data);
                 if (parts.reasoning) {
+                    reasoningChars += parts.reasoning.length;
                     yield createReasoningStreamEvent(parts.reasoning, { provider: providerName });
                 }
-                if (parts.content) yield parts.content;
+                if (parts.content) {
+                    outputChars += parts.content.length;
+                    yield parts.content;
+                }
+            }
+            if (outputChars <= 0 && reasoningChars <= 0 && toolDeltaCount <= 0) {
+                throw buildEmptyCustomStreamError({
+                    status: response.status,
+                    finishReason,
+                    messages: request.messages,
+                    baseUrl: this.baseUrl,
+                    model: this.model,
+                });
             }
         } finally {
             cleanup();

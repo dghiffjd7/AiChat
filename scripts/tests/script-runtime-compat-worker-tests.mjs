@@ -110,6 +110,18 @@ const createWorkerHarness = () => {
     const node = document.createElement('section');
     document.body.appendChild(node);
     if (document.body.children.length !== 1) throw new Error('missing document shim');
+    node.style.left = '12px';
+    node.style.setProperty('--orb-menu-max-height', '420px');
+    node.style.setProperty('background-color', 'red');
+    if (node.style.left !== '12px') throw new Error('missing direct style property shim');
+    if (node.style.getPropertyValue('--orb-menu-max-height') !== '420px') throw new Error('missing custom style property shim');
+    if (node.style.backgroundColor !== 'red') throw new Error('missing hyphenated style property shim');
+    if (!node.style.cssText.includes('--orb-menu-max-height: 420px;')) throw new Error('missing cssText style serialization');
+    if (node.style.removeProperty('--orb-menu-max-height') !== '420px') throw new Error('missing style removeProperty shim');
+    if (node.style.getPropertyValue('--orb-menu-max-height') !== '') throw new Error('style removeProperty did not clear value');
+    node.style.cssText = 'top: 16px; --orb-details-max-height: 240px;';
+    if (node.style.top !== '16px') throw new Error('missing cssText parsing for normal property');
+    if (node.style.getPropertyValue('--orb-details-max-height') !== '240px') throw new Error('missing cssText parsing for custom property');
     const missingNode = document.querySelector('#missing-node');
     missingNode.addEventListener('click', () => {});
     missingNode.setAttribute('data-ready', '1');

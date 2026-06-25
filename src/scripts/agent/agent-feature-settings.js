@@ -291,6 +291,7 @@ export const readAgentFeatureSettingsKv = async ({
   try {
     const raw = await loadKv('load_kv', { name: key });
     if (!raw || typeof raw !== 'object') return null;
+    if (raw._tooLarge) return null;
     return normalizeAgentFeatureSettings(raw);
   } catch {
     return null;

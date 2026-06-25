@@ -74,6 +74,7 @@ const testThrottleAndFinalize = () => {
     now: () => now,
     fps: 20,
     minChunkChars: 10,
+    maxWaitMs: 180,
     normalizeText: value => String(value ?? ''),
     extractReasoning: value => ({ content: String(value ?? ''), reasoning: '', reasoningDisplay: '' }),
     applyStored: value => value,
@@ -85,12 +86,16 @@ const testThrottleAndFinalize = () => {
   now += 10;
   assert.equal(processor.append('def'), null);
   now += 60;
-  const emitted = processor.append('ghi');
+  assert.equal(processor.append('ghi'), null);
+  now += 130;
+  const emitted = processor.append('j');
   assert.ok(emitted);
+  assert.equal(emitted.display, 'abcdefghij');
+  now += 10;
   const preview = processor.append('```code');
   assert.equal(preview, null);
   const finalSnapshot = processor.finalize();
-  assert.equal(finalSnapshot.display, 'abcdefghi```code');
+  assert.equal(finalSnapshot.display, 'abcdefghij```code');
 };
 
 const testIncompleteImagePromptSurvivesRegex = () => {

@@ -6,12 +6,14 @@
  */
 import { RegexStore, isLocalRegexSetAutoActive, regex_placement } from '../storage/regex-store.js';
 import { logger } from '../utils/logger.js';
-import { appConfirm, appChoice } from './app-confirm.js';
+import { appConfirm } from './app-confirm.js';
 import { bindCustomSelectButton, closeCustomSelectMenu } from './custom-select.js';
 import { getPresetStore } from './preset-store-runtime-utils.js';
 import {
     REGEX_CUSTOM_PROMPT_PRESET_LABEL,
     buildRegexCustomPromptPresetBind,
+    buildRegexCustomPromptPresetBindSummary,
+    getRegexCustomPromptPresetBindIds,
     listRegexCustomPromptPresetChoices,
 } from './regex-preset-binding-utils.js';
 import { getRegexContext } from './regex-store-runtime-utils.js';
@@ -127,26 +129,6 @@ const ensureRegexPanelStyles = () => {
             color: var(--app-text-primary);
             font-weight: 900;
         }
-        #regex-panel .regex-scope-summary {
-            border: 1px solid var(--app-border-subtle);
-            border-radius: 8px;
-            background: var(--app-surface-subtle);
-            padding: 9px 10px;
-            color: var(--app-text-secondary);
-            font-size: 12px;
-        }
-        #regex-panel .regex-scope-summary-main {
-            display: flex;
-            align-items: baseline;
-            justify-content: space-between;
-            gap: 10px;
-        }
-        #regex-panel .regex-scope-count {
-            color: #10b981;
-            font-size: 20px;
-            line-height: 1;
-            font-weight: 900;
-        }
         #regex-panel .regex-action-row {
             display: grid;
             grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -175,6 +157,9 @@ const ensureRegexPanelStyles = () => {
             flex-wrap: wrap;
         }
         #regex-panel .regex-filter-chip {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
             border: 1px solid var(--app-border-subtle);
             border-radius: 999px;
             background: var(--app-surface-card);
@@ -188,6 +173,18 @@ const ensureRegexPanelStyles = () => {
             border-color: var(--app-border-strong, var(--app-border-default));
             background: var(--app-border-default);
             color: var(--app-text-primary);
+        }
+        #regex-panel .regex-filter-dot {
+            width: 7px;
+            height: 7px;
+            border-radius: 999px;
+            background: var(--regex-filter-color, currentColor);
+            box-shadow: 0 0 0 3px var(--regex-filter-glow, rgba(148,163,184,0.16));
+            flex: 0 0 auto;
+        }
+        #regex-panel .regex-filter-count {
+            min-width: 1ch;
+            text-align: right;
         }
         #regex-panel .regex-set-list {
             border: 1px solid var(--app-border-default);
@@ -205,7 +202,7 @@ const ensureRegexPanelStyles = () => {
             border-bottom: 1px solid var(--app-border-subtle);
             cursor: pointer;
             display: grid;
-            grid-template-columns: minmax(0, 1fr) auto;
+            grid-template-columns: minmax(0, 1fr);
             gap: 10px;
             background: var(--app-surface-card);
             color: var(--app-text-primary);
@@ -231,7 +228,7 @@ const ensureRegexPanelStyles = () => {
             opacity: 1;
         }
         #regex-panel .regex-set-row.is-batch {
-            grid-template-columns: 22px minmax(0, 1fr) auto;
+            grid-template-columns: 22px minmax(0, 1fr);
         }
         #regex-panel .regex-set-row:hover {
             background: var(--app-surface-subtle);
@@ -278,38 +275,12 @@ const ensureRegexPanelStyles = () => {
             color: var(--app-text-secondary);
             font-weight: 800;
         }
-        #regex-panel .regex-set-meta,
-        #regex-panel .regex-set-detail {
+        #regex-panel .regex-set-meta {
             color: var(--app-text-muted);
             font-size: 12px;
             white-space: nowrap;
             overflow: hidden;
             text-overflow: ellipsis;
-        }
-        #regex-panel .regex-set-detail {
-            color: var(--app-text-secondary);
-            display: none;
-        }
-        #regex-panel .regex-set-row.is-active .regex-set-detail,
-        #regex-panel .regex-set-row.is-selected .regex-set-detail {
-            display: block;
-        }
-        #regex-panel .regex-state-pill {
-            align-self: start;
-            border: 1px solid var(--regex-state-glow, rgba(148,163,184,0.2));
-            border-radius: 999px;
-            color: var(--regex-state-color, var(--app-text-muted));
-            background: var(--regex-state-bg, transparent);
-            padding: 3px 8px;
-            font-size: 12px;
-            font-weight: 900;
-            white-space: nowrap;
-        }
-        #regex-panel .regex-set-row.is-muted .regex-state-pill,
-        #regex-panel .regex-set-row.is-dimmed .regex-state-pill {
-            border-color: var(--app-border-subtle);
-            background: transparent;
-            color: var(--app-text-muted);
         }
         #regex-panel .regex-batch-bar {
             border: 1px solid var(--app-border-subtle);
@@ -390,6 +361,73 @@ const ensureRegexPanelStyles = () => {
             justify-content: space-between;
             gap: 10px;
             flex-wrap: wrap;
+        }
+        .regex-preset-bind-modal .app-confirm-body {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            text-align: left;
+        }
+        .regex-preset-bind-toolbar {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+            flex-wrap: wrap;
+            color: var(--app-text-secondary);
+            font-size: 12px;
+        }
+        .regex-preset-bind-quick {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            flex-wrap: wrap;
+        }
+        .regex-preset-bind-quick button {
+            border: 1px solid var(--app-border-subtle);
+            border-radius: 8px;
+            background: var(--app-surface-card);
+            color: var(--app-text-secondary);
+            cursor: pointer;
+            padding: 5px 8px;
+            font-size: 12px;
+            font-weight: 800;
+        }
+        .regex-preset-bind-list {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            max-height: min(52vh, 420px);
+            overflow: auto;
+            padding-right: 2px;
+        }
+        .regex-preset-bind-item {
+            display: grid;
+            grid-template-columns: 20px minmax(0, 1fr);
+            gap: 8px;
+            align-items: center;
+            border: 1px solid var(--app-border-subtle);
+            border-radius: 8px;
+            background: var(--app-surface-card);
+            color: var(--app-text-primary);
+            cursor: pointer;
+            padding: 9px 10px;
+        }
+        .regex-preset-bind-item.is-selected {
+            border-color: var(--app-border-strong, var(--app-border-default));
+            background: var(--app-surface-subtle);
+        }
+        .regex-preset-bind-item input {
+            width: 16px;
+            height: 16px;
+        }
+        .regex-preset-bind-name {
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            font-size: 13px;
+            font-weight: 800;
         }
         @keyframes regex-editor-in {
             from {
@@ -787,7 +825,6 @@ export class RegexPanel {
                     <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
                         <span class="regex-status-dot" style="--regex-state-color:${g.enabled !== false ? '#10b981' : '#ef4444'}; --regex-state-glow:${g.enabled !== false ? 'rgba(16,185,129,0.28)' : 'rgba(239,68,68,0.22)'}; --regex-state-bg:${g.enabled !== false ? 'rgba(16,185,129,0.1)' : 'rgba(239,68,68,0.1)'};"></span>
                         <div class="regex-editor-title">全局正则</div>
-                        <span class="regex-state-pill" style="--regex-state-color:${g.enabled !== false ? '#10b981' : '#ef4444'}; --regex-state-glow:${g.enabled !== false ? 'rgba(16,185,129,0.28)' : 'rgba(239,68,68,0.22)'}; --regex-state-bg:${g.enabled !== false ? 'rgba(16,185,129,0.1)' : 'rgba(239,68,68,0.1)'};">${g.enabled !== false ? '全局已开启' : '全局已关闭'}</span>
                     </div>
                     <div class="regex-editor-sub">${stats.enabled}/${stats.total} 条规则启用 · ${stats.placementText}</div>
                 </div>
@@ -885,24 +922,25 @@ export class RegexPanel {
         return getRegexContext(window.appBridge);
     }
 
-    formatLocalSetRuntimeState(setObj) {
-        const s = setObj && typeof setObj === 'object' ? setObj : null;
-        if (!s) return '运行状态未知';
-        if (s.manualEnabled === false) return '当前不会生效：手动停用';
-        if (!s.bind) return '当前不会自动生效：未绑定';
-        return isLocalRegexSetAutoActive(s, this.getActiveRegexContext())
-            ? '当前已生效：绑定对象命中'
-            : '当前未生效：等待切换到对应绑定对象';
-    }
-
     formatBind(bind) {
         if (!bind) return '';
         if (bind.type === 'world') return `绑定世界书：${bind.worldId || ''}`;
         if (bind.type === 'preset') {
             const ptLabel = PRESET_TYPES.find(t => t.id === bind.presetType)?.label || bind.presetType || '';
+            const summary = buildRegexCustomPromptPresetBindSummary(bind, this.presetStore);
+            if (summary) return `绑定预设：${summary}`;
+            const presetIds = Array.from(new Set([
+                ...(Array.isArray(bind.presetIds) ? bind.presetIds : []),
+                bind.presetId,
+            ].map(id => String(id || '').trim()).filter(Boolean)));
             const presets = this.presetStore?.list?.(bind.presetType) || [];
-            const presetName = presets.find(p => String(p.id || '') === String(bind.presetId || ''))?.name || bind.presetId || '';
-            return `绑定预设：${ptLabel} / ${presetName}`;
+            const presetNames = presetIds.map(id => {
+                const preset = Array.isArray(presets)
+                    ? presets.find(p => String(p.id || '') === id)
+                    : null;
+                return String(preset?.name || id).trim() || id;
+            });
+            return `绑定预设：${ptLabel} / ${presetNames.join('、') || '未选择'}`;
         }
         return '绑定：未知';
     }
@@ -1152,10 +1190,9 @@ export class RegexPanel {
         const visual = this.getLocalSetVisualState(s, context);
         const name = this.getSetDisplayName(s);
         const stats = this.getRuleStats(s.rules);
-        const bindText = s.bind ? this.formatBind(s.bind) : '未绑定';
         const muted = visual.kind !== 'active';
         const dimmed = visual.kind === 'disabled' || visual.kind === 'unbound';
-        item.title = `${name} · ${visual.label}`;
+        item.title = name;
         item.setAttribute('aria-label', `${name}，${visual.label}`);
         item.setAttribute('role', 'button');
         item.tabIndex = 0;
@@ -1203,20 +1240,10 @@ export class RegexPanel {
         const meta = document.createElement('span');
         meta.className = 'regex-set-meta';
         meta.textContent = stats.total ? `${stats.enabled}/${stats.total} 条启用` : '暂无规则';
-        const detail = document.createElement('span');
-        detail.className = 'regex-set-detail';
-        detail.textContent = visual.kind === 'active'
-            ? `${bindText} · ${stats.placementText}`
-            : bindText;
         main.appendChild(heading);
         main.appendChild(meta);
-        main.appendChild(detail);
 
-        const pill = document.createElement('span');
-        pill.className = 'regex-state-pill';
-        pill.textContent = visual.label;
         item.appendChild(main);
-        item.appendChild(pill);
         const activateOrSelect = async () => {
             if (batchMode) {
                 const selection = this.getBatchSelection(scope);
@@ -1264,13 +1291,6 @@ export class RegexPanel {
             <div class="regex-scope-title-row">
                 <div class="regex-scope-title">${scopeLabel}正则集合</div>
             </div>
-            <div class="regex-scope-summary">
-                <div class="regex-scope-summary-main">
-                    <span>当前生效</span>
-                    <span class="regex-scope-count">${counts.active}</span>
-                </div>
-                <div style="margin-top:4px;">全部 ${counts.all} · 未生效 ${counts.inactive} · 未绑定 ${counts.unbound} · 停用 ${counts.disabled}</div>
-            </div>
             <div class="regex-action-row">
                 <button type="button" id="re-scoped-new" class="regex-btn regex-btn-primary">＋ 新建</button>
                 <button type="button" id="re-scoped-import" class="regex-btn">导入</button>
@@ -1287,16 +1307,29 @@ export class RegexPanel {
         const filterRow = document.createElement('div');
         filterRow.className = 'regex-filter-row';
         [
-            ['all', `全部 ${counts.all}`],
-            ['active', `生效 ${counts.active}`],
-            ['inactive', `未生效 ${counts.inactive}`],
-            ['disabled', `停用 ${counts.disabled}`],
-            ['unbound', `未绑定 ${counts.unbound}`],
-        ].forEach(([id, label]) => {
+            { id: 'all', label: `全部 ${counts.all}`, ariaLabel: `全部 ${counts.all}` },
+            { id: 'active', count: counts.active, ariaLabel: `生效 ${counts.active}`, color: '#10b981', glow: 'rgba(16,185,129,0.28)' },
+            { id: 'inactive', count: counts.inactive, ariaLabel: `未生效 ${counts.inactive}`, color: '#f59e0b', glow: 'rgba(245,158,11,0.22)' },
+            { id: 'disabled', count: counts.disabled, ariaLabel: `停用 ${counts.disabled}`, color: '#ef4444', glow: 'rgba(239,68,68,0.22)' },
+            { id: 'unbound', count: counts.unbound, ariaLabel: `未绑定 ${counts.unbound}`, color: '#94a3b8', glow: 'rgba(148,163,184,0.18)' },
+        ].forEach(({ id, label, count, ariaLabel, color, glow }) => {
             const chip = document.createElement('button');
             chip.type = 'button';
             chip.className = `regex-filter-chip ${this.localSetFilters[scope] === id ? 'is-active' : ''}`.trim();
-            chip.textContent = label;
+            chip.setAttribute('aria-label', ariaLabel);
+            if (color) {
+                const dot = document.createElement('span');
+                dot.className = 'regex-filter-dot';
+                dot.style.setProperty('--regex-filter-color', color);
+                dot.style.setProperty('--regex-filter-glow', glow);
+                const countEl = document.createElement('span');
+                countEl.className = 'regex-filter-count';
+                countEl.textContent = String(count);
+                chip.appendChild(dot);
+                chip.appendChild(countEl);
+            } else {
+                chip.textContent = label;
+            }
             chip.onclick = async () => {
                 this.localSetFilters[scope] = id;
                 await this.refreshAll();
@@ -1488,26 +1521,146 @@ export class RegexPanel {
         return { type: 'world', worldId: name };
     }
 
-    async pickPreset() {
+    openPresetMultiSelect(choices = [], selectedIds = []) {
+        if (typeof document === 'undefined') return Promise.resolve(null);
+        const list = Array.isArray(choices) ? choices : [];
+        const validIds = new Set(list.map(item => String(item?.id || '').trim()).filter(Boolean));
+        const selected = new Set(
+            (Array.isArray(selectedIds) ? selectedIds : [selectedIds])
+                .map(id => String(id || '').trim())
+                .filter(id => id && validIds.has(id)),
+        );
+
+        return new Promise((resolve) => {
+            let settled = false;
+            const overlay = document.createElement('div');
+            overlay.className = 'app-confirm-overlay';
+            overlay.style.display = 'block';
+
+            const modal = document.createElement('div');
+            modal.className = 'app-confirm-modal is-choice regex-preset-bind-modal';
+            modal.style.display = 'flex';
+            modal.innerHTML = `
+                <div class="app-confirm-header">
+                    <div class="app-confirm-title">绑定预设</div>
+                    <button type="button" class="app-confirm-close" aria-label="关闭">×</button>
+                </div>
+                <div class="app-confirm-body">
+                    <div class="regex-preset-bind-toolbar">
+                        <span class="regex-preset-bind-count"></span>
+                        <span class="regex-preset-bind-quick">
+                            <button type="button" data-action="select-all">全选</button>
+                            <button type="button" data-action="clear">清空</button>
+                        </span>
+                    </div>
+                    <div class="regex-preset-bind-list"></div>
+                </div>
+                <div class="app-confirm-actions">
+                    <button type="button" class="app-confirm-btn app-confirm-cancel">取消</button>
+                    <button type="button" class="app-confirm-btn app-confirm-ok">确定</button>
+                </div>
+            `;
+            modal.addEventListener('click', event => event.stopPropagation());
+
+            const countEl = modal.querySelector('.regex-preset-bind-count');
+            const listEl = modal.querySelector('.regex-preset-bind-list');
+            const okBtn = modal.querySelector('.app-confirm-ok');
+
+            const cleanup = (result) => {
+                if (settled) return;
+                settled = true;
+                document.removeEventListener('keydown', onKeyDown);
+                overlay.remove();
+                modal.remove();
+                resolve(result);
+            };
+            const updateState = () => {
+                if (countEl) countEl.textContent = `已选 ${selected.size} / ${list.length}`;
+                if (okBtn) {
+                    okBtn.disabled = selected.size === 0;
+                    okBtn.style.opacity = selected.size === 0 ? '0.55' : '';
+                    okBtn.style.cursor = selected.size === 0 ? 'not-allowed' : '';
+                }
+            };
+            const renderList = () => {
+                if (!listEl) return;
+                listEl.innerHTML = '';
+                list.forEach((item) => {
+                    const id = String(item?.id || '').trim();
+                    if (!id) return;
+                    const label = document.createElement('label');
+                    label.className = 'regex-preset-bind-item';
+                    const checkbox = document.createElement('input');
+                    checkbox.type = 'checkbox';
+                    checkbox.checked = selected.has(id);
+                    label.classList.toggle('is-selected', checkbox.checked);
+                    checkbox.addEventListener('change', () => {
+                        if (checkbox.checked) selected.add(id);
+                        else selected.delete(id);
+                        label.classList.toggle('is-selected', checkbox.checked);
+                        updateState();
+                    });
+                    const name = document.createElement('span');
+                    name.className = 'regex-preset-bind-name';
+                    name.textContent = item.name || id;
+                    label.appendChild(checkbox);
+                    label.appendChild(name);
+                    listEl.appendChild(label);
+                });
+            };
+            const onKeyDown = (event) => {
+                if (event.key !== 'Escape') return;
+                event.preventDefault();
+                cleanup(null);
+            };
+
+            overlay.addEventListener('click', () => cleanup(null));
+            modal.querySelector('.app-confirm-close')?.addEventListener('click', () => cleanup(null));
+            modal.querySelector('.app-confirm-cancel')?.addEventListener('click', () => cleanup(null));
+            okBtn?.addEventListener('click', () => {
+                if (!selected.size) return;
+                cleanup(buildRegexCustomPromptPresetBind(Array.from(selected)));
+            });
+            modal.querySelector('[data-action="select-all"]')?.addEventListener('click', () => {
+                list.forEach(item => {
+                    const id = String(item?.id || '').trim();
+                    if (id) selected.add(id);
+                });
+                renderList();
+                updateState();
+            });
+            modal.querySelector('[data-action="clear"]')?.addEventListener('click', () => {
+                selected.clear();
+                renderList();
+                updateState();
+            });
+
+            renderList();
+            updateState();
+            document.body.appendChild(overlay);
+            document.body.appendChild(modal);
+            document.addEventListener('keydown', onKeyDown);
+            requestAnimationFrame(() => {
+                const firstChecked = listEl?.querySelector?.('input:checked');
+                const firstInput = firstChecked || listEl?.querySelector?.('input');
+                firstInput?.focus?.();
+            });
+        });
+    }
+
+    async pickPreset(currentBind = null) {
         await this.presetStore?.ready;
         const presets = listRegexCustomPromptPresetChoices(this.presetStore);
         if (!presets.length) {
             this.showStatus(`${REGEX_CUSTOM_PROMPT_PRESET_LABEL}无可用预设`, 'info');
             return null;
         }
+        const validIds = new Set(presets.map(p => p.id));
+        const selectedIds = getRegexCustomPromptPresetBindIds(currentBind).filter(id => validIds.has(id));
         const activeId = String(this.presetStore?.getActiveId?.('openai') || '').trim();
-        const defaultActionId = presets.some(p => p.id === activeId) ? activeId : presets[0].id;
-        const choice = await appChoice({
-            title: '选择自定义预设',
-            message: `选择正则要绑定的${REGEX_CUSTOM_PROMPT_PRESET_LABEL}。`,
-            actions: presets.map(p => ({
-                id: p.id,
-                label: p.name,
-                primary: p.id === defaultActionId,
-            })),
-            defaultActionId,
-        });
-        return buildRegexCustomPromptPresetBind(choice);
+        if (!selectedIds.length && validIds.has(activeId)) selectedIds.push(activeId);
+        if (!selectedIds.length) selectedIds.push(presets[0].id);
+        return this.openPresetMultiSelect(presets, selectedIds);
     }
 
     renderScopedEditor(setObj, scope) {
@@ -1522,7 +1675,6 @@ export class RegexPanel {
 
         const wrap = document.createElement('div');
         wrap.style.cssText = 'display:flex; flex-direction:column; gap:12px;';
-        const runtimeStateText = this.formatLocalSetRuntimeState(s);
         const bindText = s.bind ? this.formatBind(s.bind) : '未绑定';
         const displayName = this.getSetDisplayName(s);
         const visual = this.getLocalSetVisualState(s);
@@ -1546,18 +1698,14 @@ export class RegexPanel {
         const titleDiv = document.createElement('div');
         titleDiv.className = 'regex-editor-title';
         titleDiv.textContent = displayName;
-        const statePill = document.createElement('span');
-        statePill.className = 'regex-state-pill';
-        statePill.textContent = visual.label;
         titleLine.appendChild(dot);
         titleLine.appendChild(titleDiv);
-        titleLine.appendChild(statePill);
         const subDiv = document.createElement('div');
         subDiv.className = 'regex-editor-sub';
-        subDiv.textContent = `${runtimeStateText} · ${stats.enabled}/${stats.total} 条规则启用`;
+        subDiv.textContent = `${stats.enabled}/${stats.total} 条规则启用 · ${stats.placementText}`;
         const stateDiv = document.createElement('div');
         stateDiv.className = 'regex-editor-sub';
-        stateDiv.textContent = `${bindText} · ${stats.placementText}`;
+        stateDiv.textContent = bindText;
         infoCol.appendChild(titleLine);
         infoCol.appendChild(subDiv);
         infoCol.appendChild(stateDiv);
@@ -1602,14 +1750,10 @@ export class RegexPanel {
 
         const bindDiv = document.createElement('div');
         bindDiv.style.cssText = 'display:flex; gap:8px; flex-wrap:wrap; align-items:center;';
-        const bindLabel = document.createElement('div');
-        bindLabel.style.cssText = 'font-size:13px; color:var(--app-text-secondary);';
-        bindLabel.textContent = '启用集合只表示手动允许，真正是否生效取决于绑定对象是否命中。';
         const btnRebind = document.createElement('button');
         btnRebind.type = 'button';
         btnRebind.textContent = '换绑';
         btnRebind.className = 'regex-btn';
-        bindDiv.appendChild(bindLabel);
         bindDiv.appendChild(btnRebind);
 
         row2.appendChild(enabledLabel);
@@ -1623,7 +1767,7 @@ export class RegexPanel {
         btnRebind.onclick = async () => {
             const newBind = scope === 'world'
                 ? await this.pickWorld()
-                : await this.pickPreset();
+                : await this.pickPreset(s.bind);
             if (!newBind) return;
             s.bind = newBind;
             await this.store.upsertLocalSet({ ...s });

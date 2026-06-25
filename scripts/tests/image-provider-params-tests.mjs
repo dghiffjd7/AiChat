@@ -458,6 +458,64 @@ import {
 
 {
   const previousTauri = globalThis.__TAURI__;
+  let closed = false;
+  globalThis.__TAURI__ = {
+    core: {
+      invoke: async (cmd) => {
+        if (cmd === 'http_stream_request_start') return true;
+        if (cmd === 'http_stream_request_read') {
+          return {
+            status: 200,
+            ok: true,
+            done: false,
+            chunks: ['data: [DONE]\n\n'],
+          };
+        }
+        if (cmd === 'http_stream_request_close') {
+          closed = true;
+          return true;
+        }
+        throw new Error(`unexpected command ${cmd}`);
+      },
+    },
+  };
+  try {
+    const provider = new CustomProvider({
+      provider: 'custom',
+      apiKey: 'test',
+      baseUrl: 'https://api.pioneer.ai/v1',
+      model: 'claude-opus-4-8',
+    });
+    let caught = null;
+    try {
+      for await (const _chunk of provider.streamChat([
+        { role: 'system', content: 'rules' },
+        { role: 'user', content: 'hi' },
+        { role: 'assistant', content: 'ok' },
+        { role: 'system', content: 'continue' },
+      ], {
+        requestId: 'custom-empty-stream-test',
+      })) {}
+    } catch (err) {
+      caught = err;
+    }
+    assert.ok(caught, 'empty custom stream should throw');
+    assert.match(caught.message, /Custom API stream ended without content/);
+    assert.match(caught.message, /semi.*strict/);
+    assert.match(caught.requestMessageRoles, /assistant>system$/);
+    assert.equal(closed, true);
+  } finally {
+    if (previousTauri === undefined) {
+      delete globalThis.__TAURI__;
+    } else {
+      globalThis.__TAURI__ = previousTauri;
+    }
+  }
+  console.log('ok - custom chat provider reports empty native streams with role hint');
+}
+
+{
+  const previousTauri = globalThis.__TAURI__;
   let nativeArgs = null;
   globalThis.__TAURI__ = {
     core: {

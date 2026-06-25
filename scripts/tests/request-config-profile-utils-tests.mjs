@@ -92,6 +92,24 @@ test('generation resolves request config before building provider messages', asy
   assert.match(source, /buildMessages\(userMessage, context = \{\}, options = \{\}\)/);
 });
 
+test('generation applies connection parameter filter to final request options', async () => {
+  const bridgePath = fileURLToPath(new URL('../../src/scripts/ui/bridge.js', import.meta.url));
+  const source = await readFile(bridgePath, 'utf8');
+  const generateStart = source.indexOf('async generate(userMessage, context = {})');
+  const backgroundStart = source.indexOf('async backgroundChat(messages, options = {})');
+  const streamStart = source.indexOf('async *generateStream(messages, genOptions = {}, originalUserMessage = \'\', streamMeta = {})');
+  assert.ok(generateStart >= 0 && backgroundStart > generateStart, 'bridge generate body should be discoverable');
+  assert.ok(streamStart > backgroundStart, 'backgroundChat body should be discoverable');
+
+  const generateBody = source.slice(generateStart, backgroundStart);
+  assert.match(generateBody, /const applyRuntimeParamFilter = options => applyGenerationParamFilter\(options, config\?\.excludedGenerationParams,\s*\{\s*protectedParams: \['signal', 'nativeRequestId'\]/);
+  assert.match(generateBody, /const requestOptions = applyRuntimeParamFilter\(\{\s*...\(genOptions \|\| \{\}\),\s*...\(providerDirectives \|\| \{\}\),\s*...\(providerToolRequestSchema\.requestOptions \|\| \{\}\),\s*signal: abortController\.signal,\s*nativeRequestId,/);
+  assert.match(generateBody, /requestOptions: \{\s*...applyRuntimeParamFilter\(\{\s*...\(genOptions \|\| \{\}\),/);
+
+  const backgroundBody = source.slice(backgroundStart, streamStart);
+  assert.match(backgroundBody, /const genOptions = applyGenerationParamFilter\(\{\s*...this\.getGenerationOptions\(resolvedPresetContext, config\),\s*...requestOverrides,\s*\}, config\?\.excludedGenerationParams,\s*\{\s*protectedParams: \['signal', 'nativeRequestId'\],\s*\}\);/);
+});
+
 for (const { name, fn } of tests) {
   await fn();
   console.log(`ok - ${name}`);

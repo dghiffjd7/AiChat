@@ -806,6 +806,73 @@ test('consumeCreativeAssistantStream uses an empty fallback preview for reasonin
   ]);
 });
 
+test('consumeCreativeAssistantStream throttles reasoning-only creative previews', async () => {
+  const pushed = [];
+  const reasoningChunks = [];
+  let now = 0;
+  async function* stream() {
+    yield { content: 'A' };
+    now = 10;
+    yield { reasoning: 'r1', content: '' };
+    now = 50;
+    yield { reasoning: 'r2', content: '' };
+    now = 240;
+    yield { reasoning: 'r3', content: '' };
+  }
+  const nativeReasoningState = { chunks: [] };
+  const creativeStreamProcessor = {
+    lastSnapshot: null,
+    maxWaitMs: 180,
+    now: () => now,
+    append(text) {
+      this.lastSnapshot = {
+        display: text,
+        stored: text,
+        contentSource: text,
+        raw: text,
+      };
+      return this.lastSnapshot;
+    },
+  };
+
+  const result = await consumeCreativeAssistantStream(
+    stream(),
+    {
+      nativeReasoningState,
+      creativeStreamProcessor,
+    },
+    {
+      appendReasoningChunk: (state, chunk) => {
+        state.chunks.push(chunk.reasoning);
+        reasoningChunks.push(chunk.reasoning);
+      },
+      resolveReasoningState: (_preview, state) => {
+        if (!state.chunks.length) return {};
+        return {
+          reasoning: state.chunks.join(''),
+          reasoningDisplay: state.chunks.join(''),
+        };
+      },
+      pushAssistantStreamText: payload => {
+        pushed.push({
+          content: payload.content,
+          reasoning: payload.reasoning,
+        });
+        return `ctrl-${pushed.length}`;
+      },
+    },
+  );
+
+  assert.equal(result.full, 'A');
+  assert.equal(result.streamCtrl, 'ctrl-3');
+  assert.deepEqual(reasoningChunks, ['r1', 'r2r3']);
+  assert.deepEqual(pushed, [
+    { content: 'A', reasoning: undefined },
+    { content: 'A', reasoning: 'r1' },
+    { content: 'A', reasoning: 'r1r2r3' },
+  ]);
+});
+
 test('consumeCreativeAssistantStream stops before handling an interrupted chunk', async () => {
   const calls = [];
   async function* stream() {

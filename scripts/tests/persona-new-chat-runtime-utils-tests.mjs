@@ -334,6 +334,96 @@ import {
 }
 
 {
+  const calls = [];
+  let savedRolePayload = null;
+  const archive = {
+    id: 'role-old',
+    sessionArchives: [
+      { sessionId: 'contact:a', archiveId: 'arc:old:a', sessionMode: 'chat', isGroup: false },
+    ],
+    momentsSnapshot: { moments: [{ id: 'old-moment' }] },
+  };
+  const result = await restorePersonaRoleArchive({
+    archive,
+    chatStore: {
+      getArchives: () => [{ id: 'arc:old:a', memoryTableSnapshot: { rows: [{ id: 'old-row' }] } }],
+    },
+    memoryTableStore: {
+      getMemories: async query => {
+        if (query.scope === 'global') return [{ id: 'global-before', table_id: 'moment_summary' }];
+        return [];
+      },
+    },
+    resolveDefaultMemoryTemplateId: async () => 'default-v1',
+    getMemoryStorageMode: () => 'table',
+    buildMemoryTableSnapshot: async payload => {
+      calls.push(['snapshot', payload.sessionId]);
+      return { rows: [{ id: 'current-row' }] };
+    },
+    captureArchivePointer: async sessionId => ({ sessionId, pointer: true }),
+    loadArchivedMessages: async (archiveId, sessionId, options) => {
+      calls.push(['load', archiveId, sessionId, options.memoryTableSnapshot?.rows?.[0]?.id]);
+      return true;
+    },
+    getLastArchiveTransition: () => ({ archivedCurrentId: 'arc:auto:a' }),
+    persistArchivePointer: async (sessionId, archiveId, pointer, options) =>
+      calls.push(['persist', sessionId, archiveId, pointer.pointer, options.source]),
+    applyMemoryTableSnapshot: async () => true,
+    restoreArchivePointerForLoadedThread: async () => true,
+    momentsStore: {
+      exportState: () => ({ moments: [{ id: 'current-moment' }] }),
+      importState: state => calls.push(['importMoments', state]),
+    },
+    momentSummaryStore: {
+      exportState: () => ({ summaries: [{ at: 1, text: 'current-summary' }] }),
+    },
+    createSavedCurrentRoleArchive: async payload => {
+      savedRolePayload = payload;
+      return { ...payload, id: 'role-auto' };
+    },
+  });
+  assert.equal(result.loaded, true);
+  assert.deepEqual(result.savedCurrentSessionArchives, [
+    { sessionId: 'contact:a', archiveId: 'arc:auto:a', isGroup: false, sessionMode: 'chat' },
+  ]);
+  assert.equal(result.savedCurrentRoleArchive.id, 'role-auto');
+  assert.equal(savedRolePayload.name, '自动存档');
+  assert.deepEqual(savedRolePayload.sessionArchives.map(item => [item.sessionId, item.archiveId]), [
+    ['contact:a', 'arc:auto:a'],
+  ]);
+  assert.deepEqual(savedRolePayload.momentsSnapshot, { moments: [{ id: 'current-moment' }] });
+  assert.deepEqual(savedRolePayload.globalMemorySnapshot.rows.map(row => row.id), ['global-before']);
+  assert.ok(calls.some(item => item[0] === 'persist' && item[1] === 'contact:a' && item[2] === 'arc:auto:a'));
+  console.log('ok - restorePersonaRoleArchive saves detached current role chat before loading an older role archive');
+}
+
+{
+  let savedRolePayload = null;
+  const result = await restorePersonaRoleArchive({
+    archive: {
+      id: 'role-old',
+      sessionArchives: [],
+      momentsSnapshot: { moments: [{ id: 'old-moment' }] },
+    },
+    currentRoleArchiveId: 'role-current',
+    createSavedCurrentRoleArchive: async payload => {
+      savedRolePayload = payload;
+      return { ...payload, id: payload.id || 'unexpected-new' };
+    },
+    momentsStore: {
+      exportState: () => ({ moments: [{ id: 'current-only-moment' }] }),
+      importState: () => {},
+    },
+  });
+  assert.equal(result.loaded, true);
+  assert.equal(result.savedCurrentRoleArchive.id, 'role-current');
+  assert.equal(savedRolePayload.id, 'role-current');
+  assert.deepEqual(savedRolePayload.sessionArchives, []);
+  assert.deepEqual(savedRolePayload.momentsSnapshot, { moments: [{ id: 'current-only-moment' }] });
+  console.log('ok - restorePersonaRoleArchive updates bound role archive for extras-only current edits');
+}
+
+{
   const memoryTableStore = {
     getMemories: async query => {
       if (query.scope === 'global') return [{ id: 'old', table_id: 'moment_summary', row_data: { a: 1 } }];

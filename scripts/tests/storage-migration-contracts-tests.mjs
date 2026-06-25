@@ -11,7 +11,7 @@ import {
   const ids = STORAGE_MIGRATION_CONTRACTS.map(contract => contract.id);
   assert.equal(new Set(ids).size, ids.length);
   assert.equal(STORAGE_MIGRATION_CONTRACTS.every(contract => contract.currentKey && contract.owner), true);
-  assert.equal(STORAGE_MIGRATION_CONTRACTS.every(contract => String(contract.currentKey).endsWith('_v1')), true);
+  assert.equal(STORAGE_MIGRATION_CONTRACTS.every(contract => /_v\d+(?:_|$)/.test(String(contract.currentKey))), true);
   assert.equal(STORAGE_MIGRATION_CONTRACTS.every(contract => Array.isArray(contract.writeTargets) && contract.writeTargets.length), true);
   assert.equal(STORAGE_MIGRATION_CONTRACTS.every(contract => Array.isArray(contract.tests) && contract.tests.length), true);
   console.log('ok - storage migration contracts have stable ids keys owners write targets and tests');
@@ -40,6 +40,8 @@ import {
   assert.equal(highRisk.some(contract => contract.id === 'memory-snapshots'), true);
   assert.equal(highRisk.some(contract => contract.id === 'turn-checkpoints'), true);
   assert.equal(findStorageMigrationContract('world-global-id').scopeStrategy, 'shared-with-scoped-legacy-read');
+  assert.deepEqual(findStorageMigrationContract('prompt-presets').legacyReadKeys, ['prompt_preset_store_v1']);
+  assert.equal(findStorageMigrationContract('prompt-presets').writeTargets.includes('prompt_preset_store_v2_index'), true);
   assert.equal(findStorageMigrationContract('missing'), null);
   console.log('ok - storage migration contract filters expose high-risk and shared legacy-read boundaries');
 }

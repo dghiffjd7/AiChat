@@ -2,6 +2,7 @@ import { hideCreativeContentTagsForDisplay } from './creative-content-display-ut
 
 const DEFAULT_STREAM_FPS = 18;
 const DEFAULT_MIN_CHARS = 6;
+const DEFAULT_MAX_WAIT_MS = 220;
 
 const normalizeText = (value) => String(value ?? '');
 
@@ -54,6 +55,10 @@ export class CreativeStreamProcessor {
       Math.round(1000 / Math.max(1, Number(this.options.fps) || DEFAULT_STREAM_FPS)),
     );
     this.minChars = Math.max(1, Math.trunc(Number(this.options.minChunkChars) || DEFAULT_MIN_CHARS));
+    this.maxWaitMs = Math.max(
+      this.frameMs,
+      Math.trunc(Number(this.options.maxWaitMs) || DEFAULT_MAX_WAIT_MS),
+    );
   }
 
   append(chunk) {
@@ -63,7 +68,10 @@ export class CreativeStreamProcessor {
     const now = Number(this.now()) || Date.now();
     const sinceLast = now - this.lastEmitAt;
     const deltaChars = this.fullText.length - this.lastPreviewLength;
-    if (sinceLast < this.frameMs && deltaChars < this.minChars) return null;
+    if (this.lastEmitAt > 0) {
+      if (sinceLast < this.frameMs) return null;
+      if (deltaChars < this.minChars && sinceLast < this.maxWaitMs) return null;
+    }
     return this.buildSnapshot({ final: false, emittedAt: now });
   }
 

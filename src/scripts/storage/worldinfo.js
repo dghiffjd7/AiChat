@@ -88,7 +88,9 @@ export class WorldInfoStore {
         try {
             // 优先从 Tauri 持久化读取
             const kv = await safeInvoke('load_kv', { name: STORAGE_KEY });
-            if (kv && typeof kv === 'object' && Object.keys(kv).length) {
+            if (kv && typeof kv === 'object' && kv._tooLarge) {
+                logger.warn('世界书持久化文件过大，跳过磁盘快照并尝试 localStorage', kv);
+            } else if (kv && typeof kv === 'object' && Object.keys(kv).length) {
                 this._replaceCache(kv);
                 return this.cache;
             }

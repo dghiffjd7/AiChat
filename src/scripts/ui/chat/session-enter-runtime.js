@@ -1208,11 +1208,17 @@ export const readSavedUiStateFastSnapshot = ({
   if (!storageKey) return null;
   try {
     const raw = sessionStorageLike?.getItem?.(storageKey);
-    if (raw) return JSON.parse(raw);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (!(parsed && typeof parsed === 'object' && parsed._tooLarge)) return parsed;
+    }
   } catch {}
   try {
     const raw = localStorageLike?.getItem?.(storageKey);
-    if (raw) return JSON.parse(raw);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (!(parsed && typeof parsed === 'object' && parsed._tooLarge)) return parsed;
+    }
   } catch {}
   return null;
 };
@@ -1231,7 +1237,7 @@ export const pickSavedUiStateSnapshot = async ({
   if (fastState) return fastState;
   try {
     const diskState = await Promise.resolve(loadDiskState?.());
-    if (diskState && typeof diskState === 'object') return diskState;
+    if (diskState && typeof diskState === 'object' && !diskState._tooLarge) return diskState;
   } catch {}
   return null;
 };

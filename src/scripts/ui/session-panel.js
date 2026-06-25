@@ -35,6 +35,7 @@ const readLocalState = key => {
 
 const hasMeaningfulData = data => {
   if (!data) return false;
+  if (data && typeof data === 'object' && data._tooLarge) return false;
   if (typeof data !== 'object') return true;
   return Object.keys(data).length > 0;
 };

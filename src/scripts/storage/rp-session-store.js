@@ -59,7 +59,7 @@ export class RpSessionStore {
     try {
       const kv = await safeInvoke('load_kv', { name: storeKey });
       if (token !== this._scopeToken || storeKey !== this.storeKey || scopeId !== this.scopeId) return;
-      if (kv && typeof kv === 'object') {
+      if (kv && typeof kv === 'object' && !kv._tooLarge) {
         this.state = normalizeState(kv);
         try {
           localStorage.setItem(storeKey, JSON.stringify(this.state));

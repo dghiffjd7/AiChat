@@ -93,6 +93,7 @@ export class ContactProfileStore {
     try {
       let data = await safeInvoke('load_kv', { name: storeKey }).catch(() => null);
       if (token !== this._scopeToken || storeKey !== this.storeKey || scopeId !== this.scopeId) return this.state;
+      if (data && typeof data === 'object' && data._tooLarge) data = null;
       if (!data) data = readLocalState(storeKey);
       this.state = normalizeState(data || makeDefaultState());
       this.isLoaded = true;

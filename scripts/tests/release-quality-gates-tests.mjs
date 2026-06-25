@@ -124,6 +124,7 @@ const splitScriptSteps = script =>
     'node scripts/tests/storage-migration-contracts-tests.mjs',
     'node scripts/tests/chat-store-large-field-tests.mjs',
     'node scripts/tests/chat-store-scope-guard-tests.mjs',
+    'node scripts/tests/kv-too-large-guard-tests.mjs',
   ]);
   console.log('ok - transfer and migration release gates preserve package and storage contract tests');
 }

@@ -1,8 +1,17 @@
+export const normalizeReasoningDisplayText = (value = '') => (
+  String(value ?? '')
+    .replace(/&amp;lt;\s*br\s*\/?\s*&amp;gt;/gi, '\n')
+    .replace(/&lt;\s*br\s*\/?\s*&gt;/gi, '\n')
+    .replace(/<\s*br\s*\/?\s*>/gi, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+);
+
 export const getReasoningText = (message) => {
   const meta = message?.meta;
   if (!meta || typeof meta !== 'object') return '';
   const raw = typeof meta.reasoningDisplay === 'string' ? meta.reasoningDisplay : meta.reasoning;
-  return String(raw ?? '').trim();
+  return normalizeReasoningDisplayText(raw);
 };
 
 export const getReasoningUiState = (message) => {

@@ -23,6 +23,8 @@ const safeInvoke = async (cmd, args) => {
 };
 
 const STORE_KEY = 'prompt_preset_store_v1';
+const SHARDED_STORE_INDEX_KEY = 'prompt_preset_store_v2_index';
+const SHARDED_STORE_ITEM_PREFIX = 'prompt_preset_store_v2_item';
 
 const genId = (prefix) => `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
 
@@ -544,6 +546,121 @@ const normalizeType = (type) => {
 };
 
 const ensureObj = (v, fallback) => (v && typeof v === 'object') ? v : fallback;
+const isNonEmptyObject = (value) => Boolean(value && typeof value === 'object' && Object.keys(value).length);
+const isPresetStoreState = (value) => Boolean(value && typeof value === 'object' && value.presets && typeof value.presets === 'object');
+
+const hashKey = (value) => {
+    let h = 2166136261;
+    const raw = String(value || '');
+    for (let i = 0; i < raw.length; i++) {
+        h ^= raw.charCodeAt(i);
+        h = Math.imul(h, 16777619);
+    }
+    return (h >>> 0).toString(36);
+};
+
+const sanitizeKeySegment = (value, max = 40) => {
+    const raw = String(value || '').trim();
+    let out = '';
+    for (const ch of raw) {
+        if (/^[a-zA-Z0-9_-]$/.test(ch)) out += ch;
+        else out += '_';
+        if (out.length >= max) break;
+    }
+    const cleaned = out.replace(/_+/g, '_').replace(/^_+|_+$/g, '');
+    return cleaned || 'item';
+};
+
+const makePresetItemKey = (type, id) => {
+    const t = normalizeType(type);
+    const presetId = String(id || '').trim();
+    return `${SHARDED_STORE_ITEM_PREFIX}_${t}_${hashKey(`${t}:${presetId}`)}_${sanitizeKeySegment(presetId)}`;
+};
+
+const makeEmptyPresetBuckets = () => Object.fromEntries(PRESET_TYPES.map(type => [type, {}]));
+
+const normalizePresetIndex = (raw) => {
+    if (!raw || typeof raw !== 'object' || raw._tooLarge) return null;
+    const source = raw.items && typeof raw.items === 'object' ? raw.items : raw.presets;
+    if (!source || typeof source !== 'object') return null;
+    const items = makeEmptyPresetBuckets();
+    for (const type of PRESET_TYPES) {
+        const bucket = source[type] && typeof source[type] === 'object' ? source[type] : {};
+        for (const [id, meta] of Object.entries(bucket)) {
+            const presetId = String(id || '').trim();
+            if (!presetId) continue;
+            const itemMeta = meta && typeof meta === 'object' ? meta : {};
+            const key = String(itemMeta.key || '').trim() || makePresetItemKey(type, presetId);
+            items[type][presetId] = {
+                key,
+                name: String(itemMeta.name || presetId),
+                updatedAt: Number.isFinite(Number(itemMeta.updatedAt)) ? Number(itemMeta.updatedAt) : 0,
+            };
+        }
+    }
+    return {
+        version: 2,
+        active: ensureObj(raw.active, {}),
+        enabled: ensureObj(raw.enabled, {}),
+        bindings: normalizeBindingsState(raw.bindings),
+        items,
+        savedAt: Number.isFinite(Number(raw.savedAt)) ? Number(raw.savedAt) : 0,
+    };
+};
+
+const buildPresetIndex = (state) => {
+    const index = {
+        version: 2,
+        active: clone(ensureObj(state?.active, {})),
+        enabled: clone(ensureObj(state?.enabled, {})),
+        bindings: normalizeBindingsState(state?.bindings),
+        items: makeEmptyPresetBuckets(),
+        savedAt: Date.now(),
+    };
+    for (const type of PRESET_TYPES) {
+        const presets = state?.presets?.[type] && typeof state.presets[type] === 'object' ? state.presets[type] : {};
+        for (const [id, data] of Object.entries(presets)) {
+            const presetId = String(id || '').trim();
+            if (!presetId) continue;
+            index.items[type][presetId] = {
+                key: makePresetItemKey(type, presetId),
+                name: String(data?.name || presetId),
+                updatedAt: Number.isFinite(Number(data?.updatedAt)) ? Number(data.updatedAt) : Date.now(),
+            };
+        }
+    }
+    return index;
+};
+
+const collectPresetItemKeys = (index) => {
+    const keys = new Set();
+    const normalized = normalizePresetIndex(index);
+    if (!normalized) return keys;
+    for (const type of PRESET_TYPES) {
+        for (const meta of Object.values(normalized.items[type] || {})) {
+            const key = String(meta?.key || '').trim();
+            if (key) keys.add(key);
+        }
+    }
+    return keys;
+};
+
+const makePresetItemPayload = (type, id, data) => ({
+    version: 2,
+    type,
+    id,
+    data,
+});
+
+const readPresetItemPayload = (payload, type, id) => {
+    if (!payload || typeof payload !== 'object' || payload._tooLarge) return null;
+    const data = payload.data && typeof payload.data === 'object' ? payload.data : null;
+    if (!data) return null;
+    const payloadType = String(payload.type || type).trim();
+    const payloadId = String(payload.id || id).trim();
+    if (payloadType !== type || payloadId !== id) return null;
+    return data;
+};
 
 const normalizeBindingMode = (mode, { sessionId = '' } = {}) => {
     const raw = String(mode || '').trim().toLowerCase();
@@ -876,6 +993,99 @@ export class PresetStore {
         this.ready = this.load();
     }
 
+    async loadShardedState() {
+        let indexRaw = null;
+        try {
+            indexRaw = await safeInvoke('load_kv', { name: SHARDED_STORE_INDEX_KEY });
+        } catch (err) {
+            logger.debug('load_kv sharded preset index failed (可能非 Tauri)', err);
+            return { state: null, skipPersistOnLoad: false };
+        }
+
+        const index = normalizePresetIndex(indexRaw);
+        if (!index) {
+            if (isNonEmptyObject(indexRaw)) {
+                if (indexRaw._tooLarge) {
+                    logger.warn('preset sharded index too large; fallback to legacy store', indexRaw);
+                } else {
+                    logger.warn('preset sharded index invalid; fallback to legacy store', indexRaw);
+                }
+            }
+            return { state: null, skipPersistOnLoad: false };
+        }
+
+        const state = {
+            version: 1,
+            presets: makeEmptyPresetBuckets(),
+            active: index.active,
+            enabled: index.enabled,
+            bindings: index.bindings,
+        };
+        let skipPersistOnLoad = false;
+        for (const type of PRESET_TYPES) {
+            const bucket = index.items[type] || {};
+            for (const [id, meta] of Object.entries(bucket)) {
+                const presetId = String(id || '').trim();
+                const key = String(meta?.key || '').trim();
+                if (!presetId || !key) continue;
+                try {
+                    const payload = await safeInvoke('load_kv', { name: key });
+                    if (payload && typeof payload === 'object' && payload._tooLarge) {
+                        skipPersistOnLoad = true;
+                        logger.warn('preset item payload too large; skip startup prune', { type, id: presetId, key, size: payload.size });
+                        continue;
+                    }
+                    const data = readPresetItemPayload(payload, type, presetId);
+                    if (data) state.presets[type][presetId] = data;
+                    else {
+                        skipPersistOnLoad = true;
+                        if (isNonEmptyObject(payload)) {
+                            logger.warn('preset item payload invalid; skipped without startup prune', { type, id: presetId, key });
+                        } else {
+                            logger.warn('preset item payload missing; skipped without startup prune', { type, id: presetId, key });
+                        }
+                    }
+                } catch (err) {
+                    skipPersistOnLoad = true;
+                    logger.warn('preset item load failed; skipped without startup prune', { type, id: presetId, key, err });
+                }
+            }
+        }
+
+        return { state, skipPersistOnLoad };
+    }
+
+    async persistShardedState(state) {
+        const index = buildPresetIndex(state);
+        let previousIndex = null;
+        try {
+            previousIndex = await safeInvoke('load_kv', { name: SHARDED_STORE_INDEX_KEY });
+        } catch {}
+        const previousKeys = collectPresetItemKeys(previousIndex);
+        const nextKeys = collectPresetItemKeys(index);
+
+        for (const type of PRESET_TYPES) {
+            const presets = state?.presets?.[type] && typeof state.presets[type] === 'object' ? state.presets[type] : {};
+            for (const [id, data] of Object.entries(presets)) {
+                const presetId = String(id || '').trim();
+                if (!presetId) continue;
+                const key = index.items[type]?.[presetId]?.key || makePresetItemKey(type, presetId);
+                await safeInvoke('save_kv', { name: key, data: makePresetItemPayload(type, presetId, data) });
+            }
+        }
+
+        await safeInvoke('save_kv', { name: SHARDED_STORE_INDEX_KEY, data: index });
+
+        for (const key of previousKeys) {
+            if (nextKeys.has(key)) continue;
+            try {
+                await safeInvoke('save_kv', { name: key, data: null });
+            } catch (err) {
+                logger.debug('preset stale item cleanup failed', { key, err });
+            }
+        }
+    }
+
     async loadBundledDefaults() {
         try {
             const resp = await fetch('./assets/presets/st-defaults.json', { cache: 'no-cache' });
@@ -909,21 +1119,50 @@ export class PresetStore {
         if (this.isLoaded && this.state) return this.state;
 
         let state = null;
-        try {
-            const kv = await safeInvoke('load_kv', { name: STORE_KEY });
-            if (kv && typeof kv === 'object' && Object.keys(kv).length) state = kv;
-        } catch (err) {
-            logger.debug('load_kv preset store failed (可能非 Tauri)', err);
+        let skipPersistOnLoad = false;
+
+        const sharded = await this.loadShardedState();
+        if (isPresetStoreState(sharded.state)) {
+            state = sharded.state;
+            skipPersistOnLoad = sharded.skipPersistOnLoad === true;
+        }
+
+        if (!state) {
+            try {
+                const kv = await safeInvoke('load_kv', { name: STORE_KEY });
+                if (isPresetStoreState(kv)) {
+                    state = kv;
+                } else if (isNonEmptyObject(kv)) {
+                    skipPersistOnLoad = true;
+                    if (kv._tooLarge) {
+                        logger.warn('preset store load_kv payload too large; skip startup overwrite', kv);
+                    } else {
+                        logger.warn('preset store load_kv payload invalid; skip startup overwrite', kv);
+                    }
+                }
+            } catch (err) {
+                logger.debug('load_kv preset store failed (可能非 Tauri)', err);
+            }
         }
 
         if (!state) {
             try {
                 const raw = localStorage.getItem(STORE_KEY);
-                if (raw) state = JSON.parse(raw);
+                if (raw) {
+                    const parsed = JSON.parse(raw);
+                    if (isPresetStoreState(parsed)) state = parsed;
+                }
             } catch {}
         }
 
         const defaults = await this.loadBundledDefaults();
+        const persistLoadedState = async (next) => {
+            if (skipPersistOnLoad) {
+                this.state = next;
+                return;
+            }
+            await this.persist(next);
+        };
         if (!state || typeof state !== 'object' || !state.presets) {
             state = makeDefaultState(defaults);
             // 对话模式默认值（保存于 sysprompt 预设）
@@ -1012,7 +1251,7 @@ export class PresetStore {
             try {
                 for (const p of Object.values(state.presets.openai || {})) normalizeOpenAIPreset(p);
             } catch {}
-            await this.persist(state);
+            await persistLoadedState(state);
         } else {
             // ensure structure and merge defaults (do not overwrite user edits)
             state.version = 1;
@@ -1136,7 +1375,7 @@ export class PresetStore {
             try {
                 for (const p of Object.values(state.presets.openai || {})) normalizeOpenAIPreset(p);
             } catch {}
-            await this.persist(state);
+            await persistLoadedState(state);
         }
 
         this.state = state;
@@ -1147,9 +1386,9 @@ export class PresetStore {
     async persist(next = this.state) {
         this.state = next;
         try {
-            await safeInvoke('save_kv', { name: STORE_KEY, data: this.state });
+            await this.persistShardedState(this.state);
         } catch (err) {
-            logger.warn('save_kv preset store failed (可能非 Tauri)，回退 localStorage', err);
+            logger.warn('save_kv sharded preset store failed (可能非 Tauri)，回退 localStorage', err);
             try {
                 localStorage.setItem(STORE_KEY, JSON.stringify(this.state));
             } catch {}

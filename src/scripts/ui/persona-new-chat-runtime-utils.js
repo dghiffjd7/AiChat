@@ -242,6 +242,18 @@ export const applyPersonaGlobalMemorySnapshot = async ({
   return true;
 };
 
+const hasRoleArchiveSnapshotContent = ({
+  globalMemorySnapshot = null,
+  momentsSnapshot = null,
+  momentSummarySnapshot = null,
+} = {}) => {
+  if (Array.isArray(globalMemorySnapshot?.rows) && globalMemorySnapshot.rows.length > 0) return true;
+  if (Array.isArray(momentsSnapshot?.moments) && momentsSnapshot.moments.length > 0) return true;
+  if (Array.isArray(momentSummarySnapshot?.summaries) && momentSummarySnapshot.summaries.length > 0) return true;
+  if (momentSummarySnapshot?.compactedSummary) return true;
+  return false;
+};
+
 const getStorageModeForTarget = ({ target, getMemoryStorageMode }) => {
   const place = target?.sessionMode === 'rp' ? 'rp' : 'chat';
   return trim(getMemoryStorageMode?.(place)).toLowerCase();
@@ -508,6 +520,8 @@ export const restorePersonaRoleArchive = async ({
   momentsStore = null,
   momentSummaryStore = null,
   notifyRowsUpdated = null,
+  currentRoleArchiveId = '',
+  createSavedCurrentRoleArchive = null,
   logger = null,
   deps = {},
 } = {}) => {
@@ -519,6 +533,20 @@ export const restorePersonaRoleArchive = async ({
   if (!archive || typeof archive !== 'object') return { loaded: false, loadedSessions: 0 };
   let loadedSessions = 0;
   const missingSessionArchives = [];
+  const savedCurrentSessionArchives = [];
+  const canSaveCurrentRoleArchive = typeof createSavedCurrentRoleArchive === 'function';
+  const currentMomentsSnapshot = canSaveCurrentRoleArchive
+    ? clone(momentsStore?.exportState?.() || null, null)
+    : null;
+  const currentMomentSummarySnapshot = canSaveCurrentRoleArchive
+    ? clone(momentSummaryStore?.exportState?.() || null, null)
+    : null;
+  const currentGlobalMemorySnapshot = canSaveCurrentRoleArchive
+    ? await buildPersonaGlobalMemorySnapshot({
+        memoryTableStore,
+        resolveDefaultMemoryTemplateId,
+      })
+    : null;
   const sessionArchives = Array.isArray(archive.sessionArchives) ? archive.sessionArchives : [];
   for (const entry of sessionArchives) {
     const sessionId = trim(entry?.sessionId);
@@ -549,6 +577,44 @@ export const restorePersonaRoleArchive = async ({
       restoreWarnMessage: 'restore checkpoint memory after persona role archive load failed',
     });
     if (result?.loaded) loadedSessions += 1;
+    const archivedCurrentId = trim(result?.archivedCurrentId);
+    if (result?.loaded && archivedCurrentId) {
+      savedCurrentSessionArchives.push({
+        sessionId,
+        archiveId: archivedCurrentId,
+        isGroup,
+        sessionMode,
+      });
+    }
+  }
+
+  let savedCurrentRoleArchive = null;
+  const shouldSaveCurrentRoleArchive = canSaveCurrentRoleArchive && (
+    savedCurrentSessionArchives.length > 0 ||
+    (trim(currentRoleArchiveId) && hasRoleArchiveSnapshotContent({
+      globalMemorySnapshot: currentGlobalMemorySnapshot,
+      momentsSnapshot: currentMomentsSnapshot,
+      momentSummarySnapshot: currentMomentSummarySnapshot,
+    }))
+  );
+  if (shouldSaveCurrentRoleArchive) {
+    try {
+      savedCurrentRoleArchive = await createSavedCurrentRoleArchive({
+        id: trim(currentRoleArchiveId) || undefined,
+        name: trim(currentRoleArchiveId) ? '' : '自动存档',
+        sessionArchives: savedCurrentSessionArchives,
+        globalMemorySnapshot: currentGlobalMemorySnapshot,
+        momentsSnapshot: currentMomentsSnapshot,
+        momentSummarySnapshot: currentMomentSummarySnapshot,
+        stats: {
+          sessions: savedCurrentSessionArchives.length,
+          moments: Array.isArray(currentMomentsSnapshot?.moments) ? currentMomentsSnapshot.moments.length : 0,
+          momentSummaries: Array.isArray(currentMomentSummarySnapshot?.summaries) ? currentMomentSummarySnapshot.summaries.length : 0,
+        },
+      });
+    } catch (err) {
+      logger?.warn?.('save current persona role archive before load failed', err);
+    }
   }
 
   const memoryOnlySnapshots = Array.isArray(archive.memoryOnlySnapshots) ? archive.memoryOnlySnapshots : [];
@@ -594,5 +660,7 @@ export const restorePersonaRoleArchive = async ({
     restoredMoments,
     restoredMomentSummary,
     missingSessionArchives,
+    savedCurrentSessionArchives,
+    savedCurrentRoleArchive,
   };
 };

@@ -45,6 +45,7 @@ export class ImageGenerationParamsStore {
     let state = null;
     try {
       state = await safeInvoke('load_kv', { name: IMAGE_GENERATION_PARAM_STORE_KEY });
+      if (state && typeof state === 'object' && state._tooLarge) state = null;
     } catch {}
     if (!state) {
       try {

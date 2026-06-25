@@ -134,7 +134,7 @@ export class CharacterLibraryStore {
     try {
       const disk = await safeInvoke('load_kv', { name: key });
       if (scope !== this.scopeId || key !== this.stateKey) return;
-      if (disk && typeof disk === 'object') {
+      if (disk && typeof disk === 'object' && !disk._tooLarge) {
         this.state = ensureStateShape(disk, this.scopeId);
         try {
           localStorage.setItem(this.stateKey, JSON.stringify(this.state));

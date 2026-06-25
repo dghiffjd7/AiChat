@@ -369,7 +369,49 @@ export const consumeCreativeAssistantStream = async (
   let full = String(initialFull ?? '');
   let nextStreamCtrl = streamCtrl;
   let interrupted = false;
+  let pendingReasoningChunk = null;
   const resolveInterrupted = () => Boolean(typeof isInterrupted === 'function' && isInterrupted());
+  const resolvePreviewNow = () => {
+    const injectedNow = Number(creativeStreamProcessor?.now?.());
+    if (Number.isFinite(injectedNow)) return injectedNow;
+    if (typeof performance !== 'undefined' && typeof performance.now === 'function') {
+      const perfNow = Number(performance.now());
+      if (Number.isFinite(perfNow)) return perfNow;
+    }
+    return Date.now();
+  };
+  const resolveReasoningPreviewIntervalMs = () => {
+    const maxWaitMs = Number(creativeStreamProcessor?.maxWaitMs);
+    if (Number.isFinite(maxWaitMs) && maxWaitMs > 0) return maxWaitMs;
+    const frameMs = Number(creativeStreamProcessor?.frameMs);
+    if (Number.isFinite(frameMs) && frameMs > 0) return Math.max(frameMs, 120);
+    return 220;
+  };
+  let lastReasoningPreviewAt = Number.NEGATIVE_INFINITY;
+  const shouldPushReasoningPreview = () => {
+    const now = resolvePreviewNow();
+    if ((now - lastReasoningPreviewAt) < resolveReasoningPreviewIntervalMs()) return false;
+    lastReasoningPreviewAt = now;
+    return true;
+  };
+  const queueReasoningChunk = (chunk = {}) => {
+    const reasoning = String(chunk?.reasoning || '');
+    if (!reasoning) return;
+    pendingReasoningChunk = {
+      content: '',
+      reasoning: `${pendingReasoningChunk?.reasoning || ''}${reasoning}`,
+      reasoningHidden: Boolean(pendingReasoningChunk?.reasoningHidden || chunk?.reasoningHidden === true),
+      reasoningLabel: pendingReasoningChunk?.reasoningLabel || chunk?.reasoningLabel || '',
+      provider: pendingReasoningChunk?.provider || chunk?.provider || '',
+    };
+  };
+  const flushReasoningChunk = () => {
+    if (!pendingReasoningChunk) return;
+    if (typeof appendReasoningChunk === 'function') {
+      appendReasoningChunk(nativeReasoningState, pendingReasoningChunk, { depth: 0 });
+    }
+    pendingReasoningChunk = null;
+  };
 
   for await (const chunk of (stream || [])) {
     if (resolveInterrupted()) {
@@ -379,16 +421,20 @@ export const consumeCreativeAssistantStream = async (
     const normalizedChunk = typeof normalizeChunk === 'function'
       ? normalizeChunk(chunk)
       : chunk;
-    if (normalizedChunk.reasoning && typeof appendReasoningChunk === 'function') {
-      appendReasoningChunk(nativeReasoningState, normalizedChunk, { depth: 0 });
+    const hasContentDelta = Boolean(normalizedChunk.content);
+    const hasReasoningDelta = Boolean(normalizedChunk.reasoning);
+    if (hasReasoningDelta) {
+      queueReasoningChunk(normalizedChunk);
     }
-    if (normalizedChunk.content) {
+    if (hasContentDelta) {
       full += normalizedChunk.content;
     }
-    const preview = normalizedChunk.content
+    const preview = hasContentDelta
       ? creativeStreamProcessor?.append?.(normalizedChunk.content)
       : (creativeStreamProcessor?.lastSnapshot || null);
-    if (!preview && !normalizedChunk.reasoning) continue;
+    if (!preview && !hasReasoningDelta) continue;
+    if (hasReasoningDelta && !hasContentDelta && !shouldPushReasoningPreview()) continue;
+    flushReasoningChunk();
     const currentPreview = preview || {
       display: '',
       stored: '',
@@ -437,6 +483,7 @@ export const consumeCreativeAssistantStream = async (
       );
     }
   }
+  flushReasoningChunk();
 
   return {
     full,

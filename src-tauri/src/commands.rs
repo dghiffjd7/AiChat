@@ -2685,7 +2685,7 @@ pub async fn load_kv(app: AppHandle, name: String) -> Result<Value, String> {
         return Ok(serde_json::json!({}));
     }
 
-    let max_len: u64 = 10 * 1024 * 1024; // 10 MiB
+    let max_len: u64 = 30 * 1024 * 1024; // 30 MiB safety cap
     if let Ok(meta) = fs::metadata(&file) {
         let len = meta.len();
         if len > max_len {

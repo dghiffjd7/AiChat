@@ -214,7 +214,19 @@ export class PersonaPanel {
                 restoreMemoryForActiveThread: (sessionId, options) =>
                     window.appBridge?.restoreMemoryForActiveThread?.(sessionId, options),
                 notifyRowsUpdated: detail => this.notifyPersonaMemoryRowsUpdated(detail),
-                createRoleArchive: payload => this.personaArchiveStore?.addArchive?.(payload),
+                createRoleArchive: (payload) => {
+                    const activeArchiveId = String(this.personaArchiveStore?.getCurrentArchiveId?.() || '').trim();
+                    const existing = activeArchiveId ? this.personaArchiveStore?.getArchive?.(activeArchiveId) : null;
+                    const nextPayload = existing
+                        ? {
+                            ...payload,
+                            id: activeArchiveId,
+                            createdAt: existing.createdAt,
+                            name: String(payload?.name || '').trim() || existing.name,
+                        }
+                        : payload;
+                    return this.personaArchiveStore?.addArchive?.(nextPayload);
+                },
                 requireRoleArchiveForExtras: true,
                 clearMemoryOnlyTargets: true,
                 clearMoments: true,
@@ -222,6 +234,7 @@ export class PersonaPanel {
                 logger,
             });
             if (result?.cancelled) return;
+            this.personaArchiveStore?.clearCurrentArchiveId?.();
 
             const details = [];
             if (result?.startedSessions) details.push(`${result.startedSessions} 个会话`);
@@ -414,6 +427,7 @@ export class PersonaPanel {
         });
         if (!ok) return;
         try {
+            const currentRoleArchiveId = String(this.personaArchiveStore?.getCurrentArchiveId?.() || '').trim();
             const result = await restorePersonaRoleArchive({
                 archive,
                 chatStore: this.chatStore,
@@ -439,6 +453,25 @@ export class PersonaPanel {
                     window.appBridge?.restoreArchivePointerForLoadedThread?.(sessionId, options),
                 momentsStore: this.momentsStore,
                 momentSummaryStore: this.momentSummaryStore,
+                currentRoleArchiveId,
+                createSavedCurrentRoleArchive: (payload) => {
+                    const payloadId = String(payload?.id || '').trim();
+                    const existing = payloadId ? this.personaArchiveStore?.getArchive?.(payloadId) : null;
+                    const payloadSessionArchives = Array.isArray(payload?.sessionArchives) ? payload.sessionArchives : [];
+                    return this.personaArchiveStore?.addArchive?.({
+                        ...payload,
+                        personaId: this.roleArchiveState.personaId,
+                        personaName: this.roleArchiveState.personaName,
+                        createdAt: existing?.createdAt || payload?.createdAt,
+                        name: String(payload?.name || '').trim() || existing?.name || '自动存档',
+                        sessionArchives: payloadSessionArchives.length
+                            ? payloadSessionArchives
+                            : (existing?.sessionArchives || []),
+                        memoryOnlySnapshots: Array.isArray(payload?.memoryOnlySnapshots)
+                            ? payload.memoryOnlySnapshots
+                            : (existing?.memoryOnlySnapshots || []),
+                    });
+                },
                 notifyRowsUpdated: detail => this.notifyPersonaMemoryRowsUpdated(detail),
                 logger,
             });
@@ -446,6 +479,7 @@ export class PersonaPanel {
                 window.toastr?.warning?.('未能加载该角色卡存档');
                 return;
             }
+            this.personaArchiveStore?.setCurrentArchiveId?.(archive.id);
             const missing = Array.isArray(result.missingSessionArchives) ? result.missingSessionArchives.length : 0;
             window.toastr?.success?.(missing ? `已加载角色卡存档，${missing} 个会话存档缺失` : '已加载角色卡存档');
             await this.onRoleNewChatFinished?.({ personaId: this.roleArchiveState.personaId, result });

@@ -205,6 +205,19 @@ const createRuntime = (overrides = {}) => {
 }
 
 {
+  const { runtime } = createRuntime();
+  const message = {
+    meta: {
+      reasoningDisplay: '第一行<br>第二行&lt;br /&gt;第三行&amp;lt;br&amp;gt;第四行',
+    },
+  };
+  assert.equal(runtime.getReasoningText(message), '第一行\n第二行\n第三行\n第四行');
+  const details = runtime.buildReasoningElement(message);
+  assert.equal(details.children[1].textContent, '第一行\n第二行\n第三行\n第四行');
+  console.log('ok - message header reasoning text treats escaped br markers as line breaks');
+}
+
+{
   const { runtime, documentLike, greetingCalls } = createRuntime();
   documentLike.body.dataset.uiMode = 'rp';
   const el = runtime.buildGreetingSwitch({

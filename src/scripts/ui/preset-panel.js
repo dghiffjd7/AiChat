@@ -16,10 +16,8 @@ import { safeInvoke } from '../utils/tauri.js';
 import { appConfirm, appChoice } from './app-confirm.js';
 import { buildScriptAuthorizationMessage } from './script-authorization-utils.js';
 import {
-    REGEX_CUSTOM_PROMPT_PRESET_LABEL,
     REGEX_CUSTOM_PROMPT_PRESET_TYPE,
-    buildRegexCustomPromptPresetBind,
-    listRegexCustomPromptPresetChoices,
+    resolveImportedRegexPresetBindTarget,
 } from './regex-preset-binding-utils.js';
 import {
     getActiveConfigProfile,
@@ -1122,28 +1120,6 @@ export class PresetPanel {
     getTypeLabel(type) {
         const hit = SECTIONS.find(t => t.id === type);
         return hit?.label || String(type || '');
-    }
-
-    async pickRegexBindingCustomPreset({ defaultPresetId = '' } = {}) {
-        await this.store?.ready;
-        const presets = listRegexCustomPromptPresetChoices(this.store);
-        if (!presets.length) {
-            window.toastr?.warning?.(`没有可绑定的${REGEX_CUSTOM_PROMPT_PRESET_LABEL}，已跳过正则导入`);
-            return null;
-        }
-        const fallbackId = String(defaultPresetId || this.store?.getActiveId?.(REGEX_CUSTOM_PROMPT_PRESET_TYPE) || '').trim();
-        const defaultActionId = presets.some(p => p.id === fallbackId) ? fallbackId : presets[0].id;
-        const choice = await appChoice({
-            title: '绑定正则',
-            message: `正则只会绑定到${REGEX_CUSTOM_PROMPT_PRESET_LABEL}。请选择这批正则要绑定的预设。`,
-            actions: presets.map(p => ({
-                id: p.id,
-                label: p.name,
-                primary: p.id === defaultActionId,
-            })),
-            defaultActionId,
-        });
-        return String(choice || '').trim() || null;
     }
 
     getBoundProfileForPreset(preset) {
@@ -3873,19 +3849,20 @@ export class PresetPanel {
                 });
                 if (ok) {
                     await waitForRegexStoreReady(window.appBridge);
-                    const regexPresetId = await this.pickRegexBindingCustomPreset({
-                        defaultPresetId: importType === REGEX_CUSTOM_PROMPT_PRESET_TYPE
-                            ? presetId
-                            : this.store.getActiveId(REGEX_CUSTOM_PROMPT_PRESET_TYPE),
+                    const bindTarget = resolveImportedRegexPresetBindTarget({
+                        importType,
+                        presetId,
+                        presetStore: this.store,
                     });
-                    if (!regexPresetId) {
+                    const regexPresetId = String(bindTarget?.presetId || '').trim();
+                    if (!regexPresetId || !bindTarget?.bind) {
                         window.toastr?.info?.('已跳过绑定正则导入');
                     } else {
                         const regexPresetName = String(
                             this.store.list(REGEX_CUSTOM_PROMPT_PRESET_TYPE).find(item => String(item.id || '') === regexPresetId)?.name ||
                             regexPresetId,
                         ).trim() || regexPresetId;
-                        const bind = buildRegexCustomPromptPresetBind(regexPresetId);
+                        const bind = bindTarget.bind;
                         const existingSigs = this.getExistingLocalRuleSigs();
                         for (const s of boundSets) {
                             const rulesRaw = Array.isArray(s?.rules) ? s.rules : [];

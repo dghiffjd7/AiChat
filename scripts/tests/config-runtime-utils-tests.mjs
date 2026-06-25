@@ -15,6 +15,11 @@ import {
   setActiveConfigProfile,
   syncChatRuntimeConfigToBridge,
 } from '../../src/scripts/ui/config-runtime-utils.js';
+import {
+  applyGenerationParamFilter,
+  normalizeGenerationParamFilterList,
+  splitGenerationParamFilterInput,
+} from '../../src/scripts/utils/generation-param-filter-utils.js';
 
 const tests = [];
 const test = (name, fn) => tests.push({ name, fn });
@@ -217,6 +222,25 @@ test('isBridgeConfigured prefers contract method and defaults to configured', ()
   assert.equal(isBridgeConfigured({}), true);
 });
 
+test('generation parameter filter normalizes names and removes selected request fields', () => {
+  assert.deepEqual(
+    splitGenerationParamFilterInput('temperature, top_p；bad/name\nstop'),
+    ['temperature', 'top_p', 'stop']
+  );
+  assert.deepEqual(
+    normalizeGenerationParamFilterList(['temperature', 'top_p', 'temperature', 'bad name', '_custom.param']),
+    ['temperature', 'top_p', '_custom.param']
+  );
+  assert.deepEqual(
+    applyGenerationParamFilter(
+      { temperature: 1, top_p: 0.9, signal: 'keep', stop: ['x'] },
+      ['temperature', 'stop', 'signal'],
+      { protectedParams: ['signal'] }
+    ),
+    { top_p: 0.9, signal: 'keep' }
+  );
+});
+
 test('syncChatRuntimeConfigToBridge fallback writes config and client', () => {
   const stored = [];
   const bridge = {
@@ -234,6 +258,70 @@ test('syncChatRuntimeConfigToBridge fallback writes config and client', () => {
   assert.deepEqual(stored, [{ provider: 'openai', apiKey: 'k' }]);
   assert.deepEqual(bridge.client, { provider: 'openai' });
   assert.deepEqual(result, { ok: true, configured: true, clientReady: true });
+});
+
+test('ConfigManager stores excluded generation params per active profile', async () => {
+  const previousStorage = globalThis.localStorage;
+  const previousTauri = globalThis.__TAURI__;
+  const store = new Map();
+  globalThis.localStorage = {
+    getItem: key => (store.has(key) ? store.get(key) : null),
+    setItem: (key, value) => store.set(key, String(value)),
+    removeItem: key => store.delete(key),
+  };
+  globalThis.__TAURI__ = {
+    core: {
+      invoke: async (cmd) => {
+        if (cmd === 'save_kv') return true;
+        return null;
+      },
+    },
+  };
+
+  try {
+    const { ConfigManager } = await import('../../src/scripts/storage/config.js');
+    const manager = new ConfigManager({ scope: `param_filter_${Date.now()}` });
+    const filtered = await manager.createProfile('Filtered', {
+      provider: 'custom',
+      baseUrl: 'https://example.com/v1',
+      model: 'pioneer-model',
+      excludedGenerationParams: ['temperature', 'top_p', 'bad name', 'stop', 'temperature'],
+    });
+    assert.deepEqual(manager.get().excludedGenerationParams, ['temperature', 'top_p', 'stop']);
+
+    const unfiltered = await manager.createProfile('Unfiltered', {
+      provider: 'openai',
+      baseUrl: 'https://api.openai.com/v1',
+      model: 'gpt-4o-mini',
+    });
+    assert.deepEqual(manager.get().excludedGenerationParams, []);
+
+    await manager.setActiveProfile(filtered.id);
+    assert.deepEqual(manager.get().excludedGenerationParams, ['temperature', 'top_p', 'stop']);
+
+    await manager.save({
+      provider: 'custom',
+      baseUrl: 'https://example.com/v1',
+      model: 'pioneer-model',
+      stream: true,
+      excludedGenerationParams: ['presence_penalty'],
+    });
+    assert.deepEqual(manager.get().excludedGenerationParams, ['presence_penalty']);
+
+    await manager.setActiveProfile(unfiltered.id);
+    assert.deepEqual(manager.get().excludedGenerationParams, []);
+  } finally {
+    if (previousStorage === undefined) {
+      delete globalThis.localStorage;
+    } else {
+      globalThis.localStorage = previousStorage;
+    }
+    if (previousTauri === undefined) {
+      delete globalThis.__TAURI__;
+    } else {
+      globalThis.__TAURI__ = previousTauri;
+    }
+  }
 });
 
 test('ConfigManager treats profile backup quota as non-fatal after Tauri KV save', async () => {

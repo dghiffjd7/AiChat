@@ -107,6 +107,24 @@ const createDeps = (overrides = {}) => {
 }
 
 {
+  const { calls, runtime } = createDeps({
+    isMemoryUpdateTargetCurrent: async (sessionId, messageId) => {
+      calls.validated = [sessionId, messageId];
+      return false;
+    },
+  });
+  await runtime.runMemoryUpdateAfterChat('s-stale', false, {}, { checkpointMessageId: 'gone-1' });
+  assert.deepEqual(calls.validated, ['s-stale', 'gone-1']);
+  assert.equal(calls.edits.length, 0);
+  assert.deepEqual(calls.syncs, []);
+  assert.deepEqual(calls.traces.map(event => [event.phase, event.status, event.details]), [
+    ['update.start', 'started', { isGroup: false, checkpointMessageId: 'gone-1' }],
+    ['update.finish', 'skipped', { reason: 'stale-checkpoint', checkpointMessageId: 'gone-1' }],
+  ]);
+  console.log('ok - createMemoryUpdateRuntime skips stale checkpoint targets before applying memory edits');
+}
+
+{
   let loadCount = 0;
   let runtimeConfigId = '';
   const { calls, runtime } = createDeps({

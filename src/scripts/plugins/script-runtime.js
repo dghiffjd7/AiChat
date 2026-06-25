@@ -477,6 +477,109 @@ const makeCompatDomTokenList = () => ({
   contains: () => false,
 });
 
+const normalizeStylePropertyName = (name) => String(name || '').trim();
+
+const stylePropertyToCssName = (name) => {
+  const raw = normalizeStylePropertyName(name);
+  if (!raw || raw.startsWith('--')) return raw;
+  return raw.replace(/[A-Z]/g, char => '-' + char.toLowerCase());
+};
+
+const makeCompatStyle = () => {
+  const values = new Map();
+  const setValue = (name, value, priority = '') => {
+    const prop = stylePropertyToCssName(name);
+    if (!prop) return;
+    const text = String(value ?? '');
+    const suffix = String(priority || '').trim();
+    values.set(prop, suffix ? text + ' !' + suffix : text);
+  };
+  const getValue = (name) => {
+    const prop = stylePropertyToCssName(name);
+    if (!prop) return '';
+    return values.has(prop) ? String(values.get(prop)) : '';
+  };
+  const removeValue = (name) => {
+    const prop = stylePropertyToCssName(name);
+    const prev = getValue(prop);
+    if (prop) values.delete(prop);
+    return prev;
+  };
+  const target = {};
+  Object.defineProperties(target, {
+    setProperty: {
+      value(name, value, priority) {
+        setValue(name, value, priority);
+      },
+    },
+    getPropertyValue: {
+      value(name) {
+        return getValue(name);
+      },
+    },
+    removeProperty: {
+      value(name) {
+        return removeValue(name);
+      },
+    },
+    cssText: {
+      enumerable: true,
+      configurable: true,
+      get() {
+        return Array.from(values.entries()).map(([name, value]) => name + ': ' + value + ';').join(' ');
+      },
+      set(text) {
+        values.clear();
+        String(text ?? '').split(';').forEach((part) => {
+          const idx = part.indexOf(':');
+          if (idx <= 0) return;
+          setValue(part.slice(0, idx).trim(), part.slice(idx + 1).trim());
+        });
+      },
+    },
+  });
+  return new Proxy(target, {
+    get(obj, prop) {
+      if (prop in obj) return obj[prop];
+      if (typeof prop === 'symbol') return obj[prop];
+      return getValue(prop);
+    },
+    set(obj, prop, value) {
+      if (prop === 'cssText') {
+        Reflect.set(obj, prop, value);
+        return true;
+      }
+      if (prop in obj) return true;
+      setValue(prop, value);
+      return true;
+    },
+    deleteProperty(obj, prop) {
+      if (prop in obj) return true;
+      removeValue(prop);
+      return true;
+    },
+    has(obj, prop) {
+      if (prop in obj) return true;
+      return typeof prop !== 'symbol' && getValue(prop) !== '';
+    },
+    ownKeys(obj) {
+      const keys = new Set(Reflect.ownKeys(obj));
+      values.forEach((_value, key) => keys.add(key));
+      return Array.from(keys);
+    },
+    getOwnPropertyDescriptor(obj, prop) {
+      if (prop in obj) return Object.getOwnPropertyDescriptor(obj, prop);
+      if (typeof prop === 'symbol' || !values.has(stylePropertyToCssName(prop))) return undefined;
+      return {
+        enumerable: true,
+        configurable: true,
+        writable: true,
+        value: getValue(prop),
+      };
+    },
+  });
+};
+
 class CompatObserver {
   constructor(callback) {
     this.callback = typeof callback === 'function' ? callback : null;
@@ -496,7 +599,7 @@ class CompatObserver {
 const makeCompatElement = (tagName = 'div') => {
   const element = {
     tagName: String(tagName || 'div').toUpperCase(),
-    style: {},
+    style: makeCompatStyle(),
     dataset: {},
     classList: makeCompatDomTokenList(),
     children: [],

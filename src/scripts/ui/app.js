@@ -280,6 +280,7 @@ import {
   renderLineageMapSceneHtmlAsync,
   summarizeLineageGraph,
 } from './chat/lineage-graph-view-utils.js';
+import { createCreativeExecutionLaneRuntime } from './chat/creative-execution-lane-runtime-utils.js';
 import { createPromptPreviewRuntime } from './chat/prompt-preview-runtime-utils.js';
 import {
   buildWorldDebugLocatorCandidates,
@@ -7565,6 +7566,7 @@ Phase G（Frame 36）：循环衔接
   let modeSwitchPinned = false;
   let modeSwitchPos = null;
   let modeSwitchDimTimer = null;
+  let creativeExecutionLaneRuntime = null;
   const MODE_SWITCH_DIM_DELAY = 30_000;
   const loadModeSwitchPos = () => readModeSwitchPosition();
   const saveModeSwitchPos = () => writeModeSwitchPosition(modeSwitchPos);
@@ -7601,6 +7603,7 @@ Phase G（Frame 36）：循环衔接
       modeSwitchBtn.setAttribute('aria-label', isRp ? '切换到社交' : '切换到创意写作');
       modeSwitchBtn.setAttribute('title', isRp ? '切换到社交' : '切换到创意写作');
     }
+    creativeExecutionLaneRuntime?.syncUiMode?.();
     scheduleModeSwitchSync();
   };
   const initialUiMode = loadUiMode();
@@ -7640,6 +7643,16 @@ Phase G（Frame 36）：循环衔接
     stageTimeline.mount({ container: chatRoom, before: chatScroll });
   }
   pluginUiManager.mount({ chatRoom, chatInputContainer });
+  creativeExecutionLaneRuntime = createCreativeExecutionLaneRuntime({
+    documentRef: document,
+    inputContainer: chatInputContainer,
+    getUiMode: () => uiMode,
+    now: () => Date.now(),
+    requestAnimationFrameFn: typeof requestAnimationFrame === 'function'
+      ? callback => requestAnimationFrame(callback)
+      : null,
+    logger,
+  });
   let chatInputGapTweak = 0;
   const syncChatInputOffset = () => {
     if (!chatRoom || !chatInputContainer || !chatScroll) return;
@@ -14840,10 +14853,10 @@ Phase G（Frame 36）：循环衔接
     const diskKey = String(key || '').trim();
     if (!diskKey) return {};
     const payload = await safeInvoke('load_kv', { name: diskKey });
-    if (payload && typeof payload === 'object') {
+    if (payload && typeof payload === 'object' && !payload._tooLarge) {
       protocolDeliveryDiskCache.set(diskKey, payload);
     }
-    return payload;
+    return payload && typeof payload === 'object' && !payload._tooLarge ? payload : {};
   };
   const writeProtocolDeliveryDiskPayload = (key, payload) => {
     const diskKey = String(key || '').trim();
@@ -15971,6 +15984,44 @@ Phase G（Frame 36）：循环衔接
       chatImageGenerationControllers.delete(savedPending.id);
     }
   };
+  const isCreativeExecutionTaskStatusTerminal = status => (
+    status === 'succeeded' || status === 'failed' || status === 'cancelled' || status === 'skipped'
+  );
+  const appendCreativeExecutionImageRetryTask = ({
+    sessionId = '',
+    messageId = '',
+    prompt = '',
+  } = {}) => {
+    const state = creativeExecutionLaneRuntime?.getState?.();
+    const sid = String(sessionId || '').trim();
+    if (!state?.visible || String(state.run?.sessionId || '').trim() !== sid) return '';
+    const tasks = Array.isArray(state.tasks) ? state.tasks : [];
+    const maxBucket = tasks.reduce((max, task) => Math.max(max, Math.trunc(Number(task.timeBucket)) || 0), 0);
+    const dependsOn = tasks.some(task => task.id === 'image') ? ['image'] : ['model'];
+    const task = creativeExecutionLaneRuntime?.appendTask?.({
+      id: `image-regenerate-${Date.now()}`,
+      laneId: 'image',
+      label: '图片重生成',
+      brief: '用户手动重新生成图片',
+      summary: '图片重新生成中',
+      status: 'running',
+      timeBucket: Math.max(4, maxBucket + 1),
+      dependsOn,
+      input: {
+        messageId: String(messageId || ''),
+        prompt: String(prompt || '').slice(0, 240),
+      },
+    });
+    return String(task?.id || '');
+  };
+  const completeCreativeExecutionIfIdle = () => {
+    const state = creativeExecutionLaneRuntime?.getState?.();
+    const tasks = Array.isArray(state?.tasks) ? state.tasks : [];
+    if (!tasks.length || tasks.some(task => !isCreativeExecutionTaskStatusTerminal(task.status))) return;
+    creativeExecutionLaneRuntime?.completeRun?.({
+      summary: '已完成 · 查看流程',
+    });
+  };
   const retryChatGeneratedMediaFailure = async ({
     sessionId = '',
     messageId = '',
@@ -15996,7 +16047,12 @@ Phase G（Frame 36）：循环衔接
     }
     const surface = String(generated.surface || '').trim() || resolveMediaSurfaceForSession(sid);
     window.toastr?.info?.('正在重新生成图片');
-    return runChatImageGeneration({
+    const creativeTaskId = appendCreativeExecutionImageRetryTask({
+      sessionId: sid,
+      messageId: mid,
+      prompt,
+    });
+    const result = await runChatImageGeneration({
       prompt,
       sourceMessage: message,
       surface,
@@ -16010,6 +16066,17 @@ Phase G（Frame 36）：循环衔接
       replaceMessageId: mid,
       sourceMessageIdOverride: String(generated.sourceMessageId || '').trim(),
     });
+    if (creativeTaskId) {
+      if (result) {
+        creativeExecutionLaneRuntime?.finishTask?.(creativeTaskId, 'succeeded', {
+          summary: '图片重生成完成',
+        });
+        completeCreativeExecutionIfIdle();
+      } else {
+        creativeExecutionLaneRuntime?.failTask?.(creativeTaskId, '图片重生成失败');
+      }
+    }
+    return result;
   };
 	  const openChatImageGenerationFlow = async ({
 	    initialPrompt = '',
@@ -16343,6 +16410,8 @@ Phase G（Frame 36）：循环衔接
     source = 'after_receive',
     fallbackSource = '',
     bypassRateLimit = false,
+    onItemDone = null,
+    onItemFailed = null,
   } = {}) => {
     const sessionId = String(targetSessionId || '').trim();
     const messageId = String(message?.id || '').trim();
@@ -16492,6 +16561,13 @@ Phase G（Frame 36）：循环衔接
           source,
           at: Date.now(),
         });
+        if (typeof onItemDone === 'function') {
+          try {
+            onItemDone({ item, asset: normalizedAsset || asset, token });
+          } catch (callbackErr) {
+            logger.debug?.('writing auto image done callback failed', callbackErr);
+          }
+        }
       } catch (err) {
         traceWritingAutoImagePrompt('generate-failed', {
           sessionId,
@@ -16519,6 +16595,13 @@ Phase G（Frame 36）：循环衔接
           at: Date.now(),
         });
         logger.warn('writing auto image prompt generation failed', err);
+        if (typeof onItemFailed === 'function') {
+          try {
+            onItemFailed(err, { item });
+          } catch (callbackErr) {
+            logger.debug?.('writing auto image failed callback failed', callbackErr);
+          }
+        }
       }
     }, 0));
     return true;
@@ -16574,6 +16657,11 @@ Phase G（Frame 36）：循环衔接
       window.toastr?.warning?.('没有找到失败占位，无法重试');
       return false;
     }
+    const creativeTaskId = appendCreativeExecutionImageRetryTask({
+      sessionId: sid,
+      messageId: mid,
+      prompt: retryPrompt,
+    });
     const started = runWritingAutoImagePromptGenerationForMessage(patched, sid, [{
       prompt: retryPrompt,
       pendingToken,
@@ -16582,7 +16670,24 @@ Phase G（Frame 36）：循环衔接
       source: 'retry_image_error',
       fallbackSource: String(patched.rawSource || fallbackSource || ''),
       bypassRateLimit: true,
+      onItemDone: () => {
+        if (!creativeTaskId) return;
+        creativeExecutionLaneRuntime?.finishTask?.(creativeTaskId, 'succeeded', {
+          summary: '图片重生成完成',
+        });
+        completeCreativeExecutionIfIdle();
+      },
+      onItemFailed: (err) => {
+        if (!creativeTaskId) return;
+        creativeExecutionLaneRuntime?.failTask?.(creativeTaskId, err);
+      },
     });
+    if (!started && creativeTaskId) {
+      creativeExecutionLaneRuntime?.finishTask?.(creativeTaskId, 'skipped', {
+        summary: '图片重生成未启动',
+      });
+      completeCreativeExecutionIfIdle();
+    }
     if (started) window.toastr?.info?.('正在重试图片生成');
     return started;
   };
@@ -21310,6 +21415,11 @@ Phase G（Frame 36）：循环衔接
     const isGroupScope = sid.startsWith('group:') || Boolean(contact?.isGroup);
     if (getMemoryStorageMode() === 'table') {
       try {
+        currentMemoryUpdateRuntime?.abortMemoryUpdate?.(sid);
+      } catch (err) {
+        logger.warn('abort memory update before swipe regen failed', err);
+      }
+      try {
         await persistSwipeBranchMemoryState(swipesBefore, previousActive, sid, { isGroup: isGroupScope });
         markActiveSwipeMemoryState(sid, msgId, previousActive);
       } catch (err) {
@@ -21510,6 +21620,7 @@ Phase G（Frame 36）：循环衔接
       setSendingState: value => ui.setSendingState(value),
     });
     if (!result.cancelled) return false;
+    creativeExecutionLaneRuntime?.cancelRun?.(reason);
     if (activeGeneration?.id === result.generation?.id) {
       activeGeneration = null;
     }
@@ -22083,6 +22194,40 @@ Phase G（Frame 36）：循环衔接
     let generationId = 0;
     let sendTraceStarted = false;
     let sendErrorMessage = '';
+    let creativeExecutionRunActive = false;
+    let creativeExecutionMemoryTask = null;
+    const creativeExecutionPlace = rpUiMode ? 'writing' : 'chat';
+    const getCreativeExecutionMemoryPhase = () => {
+      if (isMemoryAutoExtractInline(creativeExecutionPlace)) return 'sync';
+      if (isMemoryAutoExtractSeparate(creativeExecutionPlace)) return 'async';
+      return 'none';
+    };
+    const isCreativeExecutionTaskTerminal = taskId => {
+      const status = String(
+        creativeExecutionLaneRuntime?.getState?.()?.tasks?.find(task => task.id === taskId)?.status || '',
+      );
+      return status === 'succeeded' || status === 'failed' || status === 'cancelled' || status === 'skipped';
+    };
+    const isCreativeExecutionRunCurrent = () => {
+      const run = creativeExecutionLaneRuntime?.getState?.()?.run;
+      if (!run) return false;
+      return (Number(run.generationId) || 0) === (Number(generationId) || 0);
+    };
+    const syncCreativeExecutionPostModelTasks = () => {
+      if (!creativeExecutionRunActive || !isCreativeExecutionRunCurrent()) return;
+      const memoryPhase = getCreativeExecutionMemoryPhase();
+      if (memoryPhase === 'sync') {
+        creativeExecutionLaneRuntime?.finishTask?.('memory', 'succeeded', {
+          summary: '记忆表已随正文同步处理',
+        });
+      } else if (memoryPhase === 'async') {
+        creativeExecutionLaneRuntime?.markPostModelTasksRunning?.('同步记忆表与轮次快照');
+      } else {
+        creativeExecutionLaneRuntime?.skipTask?.('memory', {
+          summary: '本次未触发记忆表同步',
+        });
+      }
+    };
     if (activeGeneration && !activeGeneration.cancelled) {
       recordSendFlowTraceEvent(buildSendBlockedTraceEvent({
         sessionId,
@@ -22878,6 +23023,12 @@ Phase G（Frame 36）：循环衔接
       createClient: config => new LLMClient(config),
       handleMemoryEditsFromRaw,
       isMemoryAutoExtractSeparate: () => isMemoryAutoExtractSeparate(uiMode === 'rp' ? 'writing' : 'chat'),
+      isMemoryUpdateTargetCurrent: (targetSessionId, messageId) => {
+        const sid = String(targetSessionId || '').trim();
+        const mid = String(messageId || '').trim();
+        if (!sid || !mid) return true;
+        return isCheckpointTrackedAssistantMessage(chatStore.findMessage(mid, sid), sid);
+      },
       logger,
       memoryUpdateConfigManager,
       recordTraceEvent: recordDebugTraceEvent,
@@ -23016,11 +23167,28 @@ Phase G（Frame 36）：循环衔接
         eventCount: events.length,
       };
     };
+    const applyUpdateVariableForCreativeExecution = (message, targetSessionId) => {
+      const changed = applyUpdateVariableFromMessage(message, targetSessionId);
+      if (
+        changed &&
+        creativeExecutionRunActive &&
+        String(targetSessionId || '').trim() === sessionId &&
+        isCreativeExecutionRunCurrent()
+      ) {
+        creativeExecutionLaneRuntime?.finishTask?.('variable', 'succeeded', {
+          summary: '回复内变量编辑已应用',
+          output: {
+            messageId: String(message?.id || ''),
+          },
+        });
+      }
+      return changed;
+    };
     const emitPluginAfterReceive = (message, targetSessionId, { skipScripts: skipThisScripts } = {}) => {
       emitPluginAfterReceiveEffects(message, targetSessionId, {
         skipScripts: skipThisScripts,
         defaultSkipScripts: skipScripts,
-        applyUpdateVariable: applyUpdateVariableFromMessage,
+        applyUpdateVariable: applyUpdateVariableForCreativeExecution,
         applyChatFormatGuardianRepair: applyChatFormatGuardianProtocolRepair,
       });
     };
@@ -23338,7 +23506,6 @@ Phase G（Frame 36）：循环衔接
         logger.warn('ensure baseline checkpoint before send failed', err);
       }
     }
-
     const currentDraftReplyTarget = getReplyTargetForSession(sessionId);
     let consumedDraftReplyTarget = false;
     const hasUserText = Boolean(String(text || '').trim());
@@ -23692,20 +23859,82 @@ Phase G（Frame 36）：循环衔接
       }
       return result;
     };
-    const requestAssistantGeneration = () => runAssistantGenerationRequest({
-      text,
-      sessionId,
-    }, {
-      consumePromptInjections,
-      buildContext: llmContext,
-      appBridge: window.appBridge,
-    });
+    const requestAssistantGeneration = () => {
+      if (creativeExecutionRunActive) {
+        creativeExecutionLaneRuntime?.activateTask?.('model', {
+          summary: '模型请求已发送',
+          detail: {
+            generationId,
+            stream: Boolean(config.stream),
+            protocolEnabled,
+          },
+        });
+      }
+      return runAssistantGenerationRequest({
+        text,
+        sessionId,
+      }, {
+        consumePromptInjections,
+        buildContext: llmContext,
+        appBridge: window.appBridge,
+      });
+    };
+    if (rpUiMode) {
+      creativeExecutionRunActive = Boolean(creativeExecutionLaneRuntime?.startRun?.({
+        sessionId,
+        generationId,
+        title: continueTarget ? '续写流程' : (swipeTarget ? '重新生成流程' : '创意写作流程'),
+        text,
+        executionPlan: {
+          memoryPhase: getCreativeExecutionMemoryPhase(),
+          variablePhase: 'sync',
+        },
+      }));
+      if (creativeExecutionRunActive) {
+        creativeExecutionLaneRuntime?.finishTask?.('input', 'succeeded', {
+          summary: hasRequestAttachments ? '输入与参考附件已整理' : '输入已整理',
+          output: {
+            textLength: String(text || '').length,
+            attachmentCount: attachmentQueue.length + resendAttachmentParts.length + pendingAttachmentParts.length,
+            pendingCount: pendingMessagesToConfirm.length,
+            continue: Boolean(continueTarget),
+            regenerate: Boolean(swipeTarget),
+          },
+        });
+        creativeExecutionLaneRuntime?.finishTask?.('context', 'succeeded', {
+          summary: '上下文与请求配置已就绪',
+          detail: {
+            sessionId,
+            isGroupChat,
+            sharedVariables,
+            memoryMode: getMemoryStorageMode(),
+          },
+          output: {
+            stream: Boolean(config.stream),
+            protocolEnabled,
+            rpUiMode,
+            preset: String(presetContext?.presetId || presetContext?.id || ''),
+          },
+        });
+        creativeExecutionLaneRuntime?.activateTask?.('model', {
+          summary: config.stream ? '等待流式模型响应' : '等待模型完整响应',
+          detail: {
+            provider: String(config.provider || ''),
+            model: String(config.model || ''),
+            stream: Boolean(config.stream),
+          },
+        });
+      }
+    }
     try {
       if (config.stream) {
         if (rpUiMode) {
           // RP/创意写作界面：完整长文输出，不解析线上格式
           if (!startDeliveryAndTypingIfCurrent()) return;
           const stream = await requestAssistantGeneration();
+          if (creativeExecutionRunActive) {
+            creativeExecutionLaneRuntime?.activateTask?.('model', '正在接收流式内容');
+          }
           if (isGenerationInterrupted(generationId)) {
             stopGenerationIndicatorsIfActive();
             return;
@@ -23786,6 +24015,16 @@ Phase G（Frame 36）：循环衔接
           streamCtrl = creativeStreamState.streamCtrl;
           if (creativeStreamState.interrupted) return;
           checkpointTargetMessageId = creativeStreamState.checkpointTargetMessageId;
+          if (creativeExecutionRunActive) {
+            creativeExecutionLaneRuntime?.finishTask?.('model', 'succeeded', {
+              summary: '模型回复已生成',
+              output: {
+                checkpointTargetMessageId,
+                stream: true,
+              },
+            });
+            syncCreativeExecutionPostModelTasks();
+          }
           sendSucceeded = true;
         } else if (protocolEnabled) {
           // 对话模式（流式）：不逐字显示 AI 原文；只在捕获到完整的”有效标签”后输出解析结果
@@ -23873,6 +24112,9 @@ Phase G（Frame 36）：循环衔接
       } else {
         if (!startDeliveryAndTypingIfCurrent()) return;
         const resultRaw = await requestAssistantGeneration();
+        if (creativeExecutionRunActive) {
+          creativeExecutionLaneRuntime?.activateTask?.('model', '已收到完整模型回复，正在保存与解析');
+        }
         if (isGenerationInterrupted(generationId)) {
           stopGenerationIndicatorsIfActive();
           return;
@@ -23932,6 +24174,17 @@ Phase G（Frame 36）：循环衔接
         if (bufferedResponseState.checkpointTargetMessageId) {
           checkpointTargetMessageId = bufferedResponseState.checkpointTargetMessageId;
         }
+        if (creativeExecutionRunActive) {
+          creativeExecutionLaneRuntime?.finishTask?.('model', 'succeeded', {
+            summary: '模型回复已生成',
+            output: {
+              checkpointTargetMessageId,
+              branch: bufferedResponseState.branch || '',
+              stream: false,
+            },
+          });
+          syncCreativeExecutionPostModelTasks();
+        }
         if (bufferedResponseState.branch === 'protocol') {
           await syncProtocolCheckpoints(
             bufferedResponseState.protocolState,
@@ -23958,6 +24211,7 @@ Phase G（Frame 36）：循环衔接
       suppressErrorUI = catchResult.suppressErrorUI;
       if (suppressErrorUI) return;
     } finally {
+      const interruptedBeforeFinally = isGenerationInterrupted(generationId);
       const finallyResult = runSendFinallyFlow({
         sendSucceeded,
         pendingMessagesToConfirm,
@@ -23973,16 +24227,44 @@ Phase G（Frame 36）：循环衔接
         refreshChatAndContacts,
         scriptRuntime,
         runMemoryUpdateAfterChat: (targetSessionId, targetIsGroup, baseContext, options) => {
+          const trackCreativeMemoryTask = isMemoryAutoExtractSeparate(creativeExecutionPlace);
+          if (creativeExecutionRunActive && trackCreativeMemoryTask) {
+            creativeExecutionLaneRuntime?.activateTask?.('memory', {
+              summary: '同步记忆表与轮次快照',
+              detail: {
+                targetSessionId,
+                targetIsGroup: Boolean(targetIsGroup),
+              },
+            });
+          }
           const memoryTask = Promise.resolve(
             memoryUpdateRuntime.runMemoryUpdateAfterChat(targetSessionId, targetIsGroup, baseContext, options),
-          );
-          return memoryTask.then(
-            () => runMemoryTimelineAutoRepairOnceAfterSend(targetSessionId, targetIsGroup),
+          ).then(
+            async (memoryResult) => {
+              const repairResult = await runMemoryTimelineAutoRepairOnceAfterSend(targetSessionId, targetIsGroup);
+              if (creativeExecutionRunActive && trackCreativeMemoryTask && isCreativeExecutionRunCurrent()) {
+                creativeExecutionLaneRuntime?.finishTask?.('memory', 'succeeded', {
+                  summary: '记忆表同步完成',
+                  output: {
+                    memoryResult,
+                    repairResult,
+                  },
+                });
+              }
+              return repairResult;
+            },
             (err) => {
               logger.warn('memory update before timeline auto repair failed', err);
+              if (creativeExecutionRunActive && trackCreativeMemoryTask && isCreativeExecutionRunCurrent()) {
+                creativeExecutionLaneRuntime?.failTask?.('memory', err);
+              }
               throw err;
             },
           );
+          if (creativeExecutionRunActive && trackCreativeMemoryTask) {
+            creativeExecutionMemoryTask = memoryTask;
+          }
+          return memoryTask;
         },
         buildMemoryContext: () => llmContext(''),
         updatePendingFloat,
@@ -23994,7 +24276,45 @@ Phase G（Frame 36）：循环衔接
         recordTraceEvent: recordSendFlowTraceEvent,
       });
       if (sendSucceeded) {
-        scheduleAutoImagePromptGenerationFromLastRaw(sessionId);
+        const imagePromptScheduled = scheduleAutoImagePromptGenerationFromLastRaw(sessionId);
+        if (creativeExecutionRunActive) {
+          if (imagePromptScheduled) {
+            creativeExecutionLaneRuntime?.finishTask?.('image', 'succeeded', {
+              summary: '图片提示词已进入生成队列',
+            });
+          } else {
+            creativeExecutionLaneRuntime?.finishTask?.('image', 'skipped', {
+              summary: '本次未触发图片提示词任务',
+            });
+          }
+          if (!isCreativeExecutionTaskTerminal('variable')) {
+            creativeExecutionLaneRuntime?.finishTask?.('variable', 'skipped', {
+              summary: '本次未触发变量更新',
+            });
+          }
+          if (!isCreativeExecutionTaskTerminal('profile')) {
+            creativeExecutionLaneRuntime?.finishTask?.('profile', 'skipped', {
+              summary: '本次未触发画像任务',
+            });
+          }
+          const completeCreativeExecutionRun = () => {
+            if (!isCreativeExecutionRunCurrent()) return;
+            creativeExecutionLaneRuntime?.completeRun?.({
+              summary: '已完成 · 查看流程',
+            });
+          };
+          if (creativeExecutionMemoryTask?.then) {
+            creativeExecutionMemoryTask.then(completeCreativeExecutionRun, () => {});
+          } else {
+            completeCreativeExecutionRun();
+          }
+        }
+      } else if (creativeExecutionRunActive) {
+        if (suppressErrorUI || interruptedBeforeFinally) {
+          creativeExecutionLaneRuntime?.cancelRun?.('interrupted');
+        } else {
+          creativeExecutionLaneRuntime?.failRun?.(sendErrorMessage || '发送失败');
+        }
       }
       return finallyResult;
     }
@@ -24235,6 +24555,7 @@ Phase G（Frame 36）：循环衔接
         chatStore,
         ui,
         recordTraceEvent: recordSendFlowTraceEvent,
+        abortMemoryUpdate: (targetSessionId) => currentMemoryUpdateRuntime?.abortMemoryUpdate?.(targetSessionId),
         removeTurnCheckpointsForMessages,
         refreshChatAndContacts,
         getMemoryStorageMode,
@@ -24252,6 +24573,13 @@ Phase G（Frame 36）：循环衔接
       if (!targetMessage?.id) return false;
       const currentReplyTarget = getReplyTargetForSession(sessionId);
       const removedMessage = chatStore.findMessage(targetMessage.id, sessionId) || targetMessage;
+      if (getMemoryStorageMode() === 'table') {
+        try {
+          currentMemoryUpdateRuntime?.abortMemoryUpdate?.(sessionId);
+        } catch (err) {
+          logger.warn('abort memory update before delete failed', err);
+        }
+      }
       chatStore.deleteMessage(targetMessage.id, sessionId);
       ui.removeMessage(targetMessage.id);
       if (currentReplyTarget?.id === String(targetMessage.id || '')) clearReplyTargetForSession(sessionId);
@@ -24443,6 +24771,13 @@ Phase G（Frame 36）：循环衔接
       const removedMessages = ids
         .map(id => chatStore.findMessage(id, sessionId))
         .filter(Boolean);
+      if (getMemoryStorageMode() === 'table') {
+        try {
+          currentMemoryUpdateRuntime?.abortMemoryUpdate?.(sessionId);
+        } catch (err) {
+          logger.warn('abort memory update before delete-selected failed', err);
+        }
+      }
       ids.forEach(id => {
         chatStore.deleteMessage(id, sessionId);
         ui.removeMessage(id);
@@ -24467,6 +24802,13 @@ Phase G（Frame 36）：循环衔接
         cancelActiveGeneration('retract');
       }
       const currentReplyTarget = getReplyTargetForSession(sessionId);
+      if (getMemoryStorageMode() === 'table') {
+        try {
+          currentMemoryUpdateRuntime?.abortMemoryUpdate?.(sessionId);
+        } catch (err) {
+          logger.warn('abort memory update before retract failed', err);
+        }
+      }
       chatStore.deleteMessage(message.id, sessionId);
       ui.removeMessage(message.id);
       if (currentReplyTarget?.id === String(message.id || '')) clearReplyTargetForSession(sessionId);

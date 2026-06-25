@@ -1,0 +1,145 @@
+import assert from 'node:assert/strict';
+
+import {
+  buildCreativeExecutionDefaultTasks,
+  buildCreativeExecutionLaneViewModel,
+  createCreativeExecutionInitialState,
+  isCreativeExecutionTerminalStatus,
+  normalizeCreativeExecutionTask,
+  shouldShowCreativeExecutionForUiMode,
+} from '../../src/scripts/ui/chat/creative-execution-lane-runtime-utils.js';
+
+{
+  assert.equal(shouldShowCreativeExecutionForUiMode('rp'), true);
+  assert.equal(shouldShowCreativeExecutionForUiMode('social'), false);
+  assert.equal(shouldShowCreativeExecutionForUiMode(''), false);
+  console.log('ok - creative execution lane is scoped to rp ui mode');
+}
+
+{
+  const state = createCreativeExecutionInitialState({
+    runId: 'run-creative-1',
+    sessionId: 'rp:alice',
+    generationId: 12,
+    text: '写一段午后的剧情',
+    now: 1000,
+  });
+  assert.equal(state.run.id, 'run-creative-1');
+  assert.equal(state.run.status, 'running');
+  assert.deepEqual(state.tasks.map(task => task.id), [
+    'input',
+    'context',
+    'model',
+    'memory',
+    'profile',
+    'variable',
+    'image',
+  ]);
+  assert.equal(state.tasks.find(task => task.id === 'memory').timeBucket, 2);
+  assert.equal(state.tasks.find(task => task.id === 'model').label, '正文生成');
+  assert.equal(state.tasks.find(task => task.id === 'variable').timeBucket, 2);
+  assert.equal(state.tasks.find(task => task.id === 'profile').timeBucket, 3);
+  assert.equal(state.tasks.find(task => task.id === 'image').timeBucket, 3);
+  console.log('ok - initial state models memory as model-phase follow-up');
+}
+
+{
+  const tasks = buildCreativeExecutionDefaultTasks({
+    executionPlan: {
+      memoryPhase: 'async',
+      variablePhase: 'async',
+    },
+  });
+  assert.equal(tasks.find(task => task.id === 'memory').timeBucket, 3);
+  assert.equal(tasks.find(task => task.id === 'variable').timeBucket, 3);
+  console.log('ok - execution plan moves async follow-up tasks into the next time bucket');
+}
+
+{
+  const state = createCreativeExecutionInitialState({
+    runId: 'run-creative-2',
+    sessionId: 'rp:bob',
+    now: 2000,
+  });
+  state.tasks = state.tasks.map(task => normalizeCreativeExecutionTask({
+    ...task,
+    status: task.id === 'model' ? 'running' : (task.timeBucket < 2 ? 'succeeded' : task.status),
+    startedAt: 2000 + task.timeBucket * 10,
+    updatedAt: 2020 + task.timeBucket * 10,
+  }));
+  const desktop = buildCreativeExecutionLaneViewModel(state, { orientation: 'desktop' });
+  const mobile = buildCreativeExecutionLaneViewModel(state, { orientation: 'mobile' });
+  const desktopInput = desktop.tasks.find(task => task.id === 'input');
+  const desktopContext = desktop.tasks.find(task => task.id === 'context');
+  const desktopModel = desktop.tasks.find(task => task.id === 'model');
+  const desktopMemory = desktop.tasks.find(task => task.id === 'memory');
+  const desktopVariable = desktop.tasks.find(task => task.id === 'variable');
+  assert.equal(desktop.status, 'running');
+  assert.equal(desktop.currentTaskId, 'model');
+  assert.equal(desktopInput.y < desktopContext.y, true);
+  assert.equal(desktopInput.x < desktopModel.x, true);
+  assert.equal(desktopMemory.x, desktopModel.x);
+  assert.equal(desktopMemory.y > desktopModel.y, true);
+  assert.equal(desktopVariable.x, desktopModel.x);
+  assert.equal(desktopVariable.y > desktopMemory.y, true);
+  const mobileInput = mobile.tasks.find(task => task.id === 'input');
+  const mobileModel = mobile.tasks.find(task => task.id === 'model');
+  const mobileMemory = mobile.tasks.find(task => task.id === 'memory');
+  const mobileVariable = mobile.tasks.find(task => task.id === 'variable');
+  assert.equal(mobileInput.y < mobileModel.y, true);
+  assert.equal(mobileMemory.y, mobileModel.y);
+  assert.equal(mobileMemory.x > mobileModel.x, true);
+  assert.equal(mobileVariable.y, mobileModel.y);
+  assert.equal(mobileVariable.x > mobileMemory.x, true);
+  console.log('ok - view model rotates desktop time axis to mobile time axis');
+}
+
+{
+  const state = createCreativeExecutionInitialState({
+    runId: 'run-creative-3',
+    now: 3000,
+  });
+  state.tasks = state.tasks.map(task => normalizeCreativeExecutionTask({
+    ...task,
+    status: task.id === 'input' || task.id === 'context' ? 'succeeded' : (task.id === 'model' ? 'running' : 'queued'),
+  }));
+  const view = buildCreativeExecutionLaneViewModel(state, { orientation: 'desktop' });
+  const modelEdge = view.edges.find(edge => edge.targetId === 'model');
+  const memoryEdge = view.edges.find(edge => edge.targetId === 'memory');
+  assert.equal(modelEdge.active, true);
+  assert.equal(memoryEdge.active, false);
+  assert.match(modelEdge.path, /^M /);
+  assert.equal(view.displayTitle.includes('正文生成'), true);
+  console.log('ok - active edge follows the running dependency target only');
+}
+
+{
+  const state = createCreativeExecutionInitialState({
+    runId: 'run-creative-4',
+    now: 4000,
+  });
+  state.tasks = state.tasks.map(task => normalizeCreativeExecutionTask({
+    ...task,
+    status: task.id === 'memory' || task.id === 'variable'
+      ? 'running'
+      : (task.timeBucket < 2 || task.id === 'model' ? 'succeeded' : task.status),
+  }));
+  const view = buildCreativeExecutionLaneViewModel(state, { orientation: 'desktop' });
+  assert.equal(view.currentTaskId, 'memory');
+  assert.equal(view.displayTitle, '执行中 · 记忆表 等 2 项');
+  console.log('ok - parallel running task title uses stable first task plus count');
+}
+
+{
+  assert.equal(isCreativeExecutionTerminalStatus('succeeded'), true);
+  assert.equal(isCreativeExecutionTerminalStatus('skipped'), true);
+  assert.equal(isCreativeExecutionTerminalStatus('running'), false);
+  const normalized = normalizeCreativeExecutionTask({
+    id: 'x',
+    status: 'unknown',
+    label: 'A very long task title that should not expand forever in a node',
+  });
+  assert.equal(normalized.status, 'queued');
+  assert.equal(normalized.label.length <= 29, true);
+  console.log('ok - task normalization clamps invalid status and long labels');
+}

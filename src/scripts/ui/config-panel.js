@@ -6,6 +6,11 @@ import { ConfigManager } from '../storage/config.js';
 import { LLMClient } from '../api/client.js';
 import { canInitClient } from '../api/client-config-utils.js';
 import { logger } from '../utils/logger.js';
+import {
+    COMMON_GENERATION_PARAM_FILTERS,
+    normalizeGenerationParamFilterList,
+    splitGenerationParamFilterInput,
+} from '../utils/generation-param-filter-utils.js';
 import { appConfirm } from './app-confirm.js';
 import {
     reloadBridgeConfig,
@@ -73,6 +78,7 @@ export class ConfigPanel {
         this.customSelectMenuCleanup = null;
         this.customSelectMenuAnchor = null;
         this.transportExpanded = false;
+        this.excludedGenerationParams = [];
         this.openOptions = {};
         this.currentPage = 'main';
         this.imageGenerationParamsPanel = new ImageGenerationParamsPanel({
@@ -237,6 +243,10 @@ export class ConfigPanel {
         const promptPostProcessingSection = this.element.querySelector('#config-prompt-post-processing-section');
         if (promptPostProcessingSection) {
             promptPostProcessingSection.style.display = this.activeTab === 'chat' ? 'block' : 'none';
+        }
+        const generationParamFilterSection = this.element.querySelector('#config-generation-param-filter-section');
+        if (generationParamFilterSection) {
+            generationParamFilterSection.style.display = this.activeTab === 'chat' ? 'block' : 'none';
         }
     }
 
@@ -443,6 +453,17 @@ export class ConfigPanel {
                     <small style="color:var(--app-text-secondary);">仅聊天请求生效。越靠后的模式兼容性越强，但对原始提示词结构改动也越大。</small>
                 </div>
 
+                <div id="config-generation-param-filter-section" style="margin-bottom: 18px;">
+                    <button type="button" id="open-generation-param-filter"
+                            style="width:100%; display:flex; align-items:center; justify-content:space-between; gap:12px; padding:12px 14px; border:1px solid var(--app-border-default); border-radius:12px; background:var(--app-surface-subtle); color:var(--app-text-primary); cursor:pointer; text-align:left;">
+                        <span style="display:flex; flex-direction:column; gap:3px; min-width:0;">
+                            <span style="font-weight:800;">请求参数过滤</span>
+                            <span id="generation-param-filter-summary" style="font-size:12px; color:var(--app-text-muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">未排除生成参数</span>
+                        </span>
+                        <span style="color:var(--app-text-muted); flex:none;">›</span>
+                    </button>
+                </div>
+
                 <div style="margin-bottom: 20px;">
                     <label style="display:flex; align-items:center; justify-content:space-between; gap:10px; font-weight:bold; margin-bottom:6px;">
                         <span>请求超时（秒）</span>
@@ -571,6 +592,9 @@ export class ConfigPanel {
         this.element.querySelector('#refresh-models').onclick = () => this.refreshModels();
         this.element.querySelector('#config-transport-toggle').onclick = () => this.toggleTransportSection();
         this.element.querySelector('#toggle-proxy-token').onclick = () => this.toggleProxyToken();
+        this.element.querySelector('#open-generation-param-filter')?.addEventListener('click', () => {
+            this.openGenerationParamFilterDialog();
+        });
         this.element.querySelector('#open-image-generation-params')?.addEventListener('click', () => {
             this.showImageParamsPage();
         });
@@ -826,6 +850,175 @@ export class ConfigPanel {
             input.type = 'password';
             btn.textContent = '显示';
         }
+    }
+
+    setExcludedGenerationParams(params = [], { emit = false } = {}) {
+        this.excludedGenerationParams = normalizeGenerationParamFilterList(params);
+        this.refreshGenerationParamFilterSummary();
+        if (emit) this.emitDraftChange();
+    }
+
+    refreshGenerationParamFilterSummary() {
+        const summary = this.element?.querySelector?.('#generation-param-filter-summary');
+        if (!summary) return;
+        const list = normalizeGenerationParamFilterList(this.excludedGenerationParams);
+        if (!list.length) {
+            summary.textContent = '未排除生成参数';
+            summary.title = '';
+            return;
+        }
+        const visible = list.slice(0, 4).join(', ');
+        const suffix = list.length > 4 ? ` 等 ${list.length} 项` : '';
+        summary.textContent = `已排除：${visible}${suffix}`;
+        summary.title = list.join(', ');
+    }
+
+    openGenerationParamFilterDialog() {
+        const initial = normalizeGenerationParamFilterList(this.excludedGenerationParams);
+        let draft = initial.slice();
+        const overlay = document.createElement('div');
+        overlay.style.cssText = `
+            position: fixed;
+            inset: 0;
+            z-index: 24050;
+            background: rgba(0,0,0,.42);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 16px;
+            box-sizing: border-box;
+        `;
+        overlay.innerHTML = `
+            <div role="dialog" aria-modal="true" aria-label="请求参数过滤" style="
+                width: min(560px, 100%);
+                max-height: min(720px, calc(100vh - 32px));
+                overflow: auto;
+                background: var(--app-surface-card);
+                color: var(--app-text-primary);
+                border: 1px solid var(--app-border-default);
+                border-radius: 12px;
+                box-shadow: 0 18px 48px rgba(15, 23, 42, .28);
+                padding: 18px;
+                box-sizing: border-box;
+            ">
+                <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:12px; margin-bottom:14px;">
+                    <div>
+                        <div style="font-size:18px; font-weight:800;">请求参数过滤</div>
+                        <div style="font-size:12px; color:var(--app-text-muted); margin-top:4px;">保存后仅作用于当前连线设置档</div>
+                    </div>
+                    <button type="button" data-param-filter-action="cancel" aria-label="关闭" style="border:none; background:var(--app-surface-subtle); color:var(--app-text-secondary); width:32px; height:32px; border-radius:8px; cursor:pointer; font-size:18px; line-height:1;">×</button>
+                </div>
+                <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; margin:0 0 8px;">
+                    <div style="font-weight:800; font-size:13px;">常用参数</div>
+                    <div data-role="count" style="font-size:12px; color:var(--app-text-muted);"></div>
+                </div>
+                <div data-role="common" style="display:flex; flex-wrap:wrap; gap:8px; margin-bottom:16px;"></div>
+                <div style="display:flex; gap:8px; margin-bottom:10px;">
+                    <input data-role="custom-input" type="text" placeholder="输入参数名，例如 response_format"
+                           style="flex:1; min-width:0; padding:10px 12px; border:1px solid var(--app-border-default); border-radius:8px; background:var(--app-surface-card); color:var(--app-text-primary); font-size:14px;">
+                    <button type="button" data-param-filter-action="add" style="padding:0 14px; border:none; border-radius:8px; background:#019aff; color:var(--app-text-inverse); font-weight:700; cursor:pointer;">加入</button>
+                </div>
+                <div data-role="input-error" style="min-height:18px; font-size:12px; color:#b91c1c; margin-bottom:8px;"></div>
+                <div style="font-weight:800; font-size:13px; margin-bottom:8px;">已排除</div>
+                <div data-role="selected" style="display:flex; flex-wrap:wrap; gap:8px; min-height:42px; padding:10px; border:1px solid var(--app-border-default); border-radius:10px; background:var(--app-surface-subtle);"></div>
+                <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:18px;">
+                    <button type="button" data-param-filter-action="clear" style="padding:9px 12px; border:1px solid var(--app-border-default); border-radius:8px; background:var(--app-surface-card); color:var(--app-text-secondary); cursor:pointer;">清空</button>
+                    <button type="button" data-param-filter-action="cancel" style="padding:9px 12px; border:1px solid var(--app-border-default); border-radius:8px; background:var(--app-surface-subtle); color:var(--app-text-secondary); cursor:pointer;">取消</button>
+                    <button type="button" data-param-filter-action="apply" style="padding:9px 14px; border:none; border-radius:8px; background:#019aff; color:var(--app-text-inverse); font-weight:700; cursor:pointer;">完成</button>
+                </div>
+            </div>
+        `;
+        const commonEl = overlay.querySelector('[data-role="common"]');
+        const selectedEl = overlay.querySelector('[data-role="selected"]');
+        const inputEl = overlay.querySelector('[data-role="custom-input"]');
+        const errorEl = overlay.querySelector('[data-role="input-error"]');
+        const countEl = overlay.querySelector('[data-role="count"]');
+        const hasParam = name => draft.includes(name);
+        const addParams = (items = []) => {
+            draft = normalizeGenerationParamFilterList([...draft, ...items]);
+        };
+        const removeParam = (name = '') => {
+            draft = draft.filter(item => item !== name);
+        };
+        const render = () => {
+            if (countEl) countEl.textContent = draft.length ? `${draft.length} 项` : '未启用';
+            if (commonEl) {
+                commonEl.innerHTML = COMMON_GENERATION_PARAM_FILTERS.map((name) => {
+                    const active = hasParam(name);
+                    return `
+                        <button type="button" data-param-filter-action="toggle" data-param="${escapeHtml(name)}"
+                                style="padding:7px 10px; border-radius:999px; border:1px solid ${active ? '#0284c7' : 'var(--app-border-default)'}; background:${active ? '#e0f2fe' : 'var(--app-surface-card)'}; color:${active ? '#0369a1' : 'var(--app-text-primary)'}; cursor:pointer; font-size:12px; font-weight:${active ? '800' : '600'};">
+                            ${escapeHtml(name)}
+                        </button>
+                    `;
+                }).join('');
+            }
+            if (selectedEl) {
+                selectedEl.innerHTML = draft.length
+                    ? draft.map(name => `
+                        <button type="button" data-param-filter-action="remove" data-param="${escapeHtml(name)}"
+                                title="移除 ${escapeHtml(name)}"
+                                style="display:inline-flex; align-items:center; gap:6px; padding:7px 10px; border-radius:999px; border:1px solid var(--app-border-default); background:var(--app-surface-card); color:var(--app-text-primary); cursor:pointer; font-size:12px;">
+                            <span>${escapeHtml(name)}</span><span style="color:var(--app-text-muted);">×</span>
+                        </button>
+                    `).join('')
+                    : '<span style="font-size:12px; color:var(--app-text-muted); align-self:center;">未排除任何生成参数</span>';
+            }
+        };
+        const close = (apply = false) => {
+            if (apply) this.setExcludedGenerationParams(draft, { emit: true });
+            overlay.remove();
+        };
+        const addFromInput = () => {
+            const items = splitGenerationParamFilterInput(inputEl?.value || '');
+            if (!items.length) {
+                if (errorEl) errorEl.textContent = '请输入有效参数名：以字母或下划线开头，只包含字母、数字、下划线、点、冒号或短横线。';
+                return;
+            }
+            if (errorEl) errorEl.textContent = '';
+            addParams(items);
+            if (inputEl) inputEl.value = '';
+            render();
+        };
+
+        overlay.addEventListener('click', (event) => {
+            if (event.target === overlay) {
+                close(false);
+                return;
+            }
+            const btn = event.target?.closest?.('[data-param-filter-action]');
+            if (!btn || !overlay.contains(btn)) return;
+            const action = btn.dataset.paramFilterAction || '';
+            const param = btn.dataset.param || '';
+            if (action === 'toggle') {
+                if (hasParam(param)) removeParam(param);
+                else addParams([param]);
+                if (errorEl) errorEl.textContent = '';
+                render();
+            } else if (action === 'remove') {
+                removeParam(param);
+                render();
+            } else if (action === 'add') {
+                addFromInput();
+            } else if (action === 'clear') {
+                draft = [];
+                if (errorEl) errorEl.textContent = '';
+                render();
+            } else if (action === 'apply') {
+                close(true);
+            } else if (action === 'cancel') {
+                close(false);
+            }
+        });
+        inputEl?.addEventListener?.('keydown', (event) => {
+            if (event.key === 'Enter') {
+                event.preventDefault();
+                addFromInput();
+            }
+        });
+        render();
+        document.body.appendChild(overlay);
+        inputEl?.focus?.();
     }
 
     /**
@@ -1152,6 +1345,7 @@ export class ConfigPanel {
             : defaultBaseUrl;
         modelEl.value = config.model || '';
         streamEl.checked = config.stream !== false;
+        this.setExcludedGenerationParams(config.excludedGenerationParams || [], { emit: false });
         if (promptPostProcessingEl) promptPostProcessingEl.value = normalizePromptPostProcessingForForm(config.promptPostProcessing);
         if (transportModeEl) {
             transportModeEl.value = (config.connectionMode === 'reverse_proxy' || legacyProxyBaseUrl)
@@ -1399,6 +1593,7 @@ export class ConfigPanel {
             apiKey: apiKey,
             model: (panel.querySelector('#config-model')?.value || '').trim(),
             stream: Boolean(panel.querySelector('#config-stream')?.checked),
+            excludedGenerationParams: normalizeGenerationParamFilterList(this.excludedGenerationParams),
             timeout: (() => {
                 const secRaw = (panel.querySelector('#config-timeout')?.value || '').trim();
                 const sec = Number(secRaw);

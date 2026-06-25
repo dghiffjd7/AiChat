@@ -10,6 +10,7 @@ globalThis.localStorage = {
 
 const {
   captureRichDetailsOpenStates,
+  expandRichImageTokensForHtml,
   getRichDetailsStateKey,
   prepareRichFragmentDisplayHtmlForParsing,
   prepareRichFragmentHtmlForParsing,
@@ -62,6 +63,17 @@ test('hides escaped creative content wrapper before display fallback', () => {
   const input = '&lt;content type=&quot;story&quot;&gt;正文&lt;/content&gt;';
   const output = prepareRichFragmentDisplayHtmlForParsing(input);
   assert.equal(output, '正文');
+});
+
+test('expands generated image tokens in sandbox html text nodes', () => {
+  const imagePath = String.raw`C:\tmp\generated.png`;
+  const scriptPath = String.raw`C:\tmp\script-only.png`;
+  const input = `<body><section>正文 [img-${imagePath}]</section><script>const token="[img-${scriptPath}]"</script></body>`;
+  const output = expandRichImageTokensForHtml(input);
+  assert.match(output, /<img\b/);
+  assert.match(output, /src="file:\/\/\/C:\/tmp\/generated\.png"/);
+  assert.match(output, /data-inline-image-ref="C:\\tmp\\generated\.png"/);
+  assert.match(output, /<script>const token="\[img-C:\\tmp\\script-only\.png\]"<\/script>/);
 });
 
 test('does not let a stray raw-text tag claim a later valid block', () => {

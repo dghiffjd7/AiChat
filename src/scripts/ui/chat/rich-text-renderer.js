@@ -97,6 +97,77 @@ const isRenderableRichImageRef = (value = '') => {
         || raw.startsWith('./')
         || raw.startsWith('../');
 };
+const buildRichImageTokenHtml = (type = '', body = '', fullToken = '') => {
+    const tokenType = String(type || '').toLowerCase();
+    const token = String(fullToken || '');
+    if (tokenType === 'img-error') {
+        const payload = decodeRichImageErrorPayload(body);
+        const attrs = [
+            'class="chat-inline-image-error chat-rich-image-error"',
+            'data-retryable="1"',
+            token ? `data-img-error-token="${escapeHtmlText(token)}"` : '',
+            payload.prompt ? `data-prompt="${escapeHtmlText(payload.prompt)}"` : '',
+            payload.detail ? `title="${escapeHtmlText(payload.detail)}"` : '',
+        ].filter(Boolean).join(' ');
+        return `<span ${attrs}><span class="chat-inline-image-error-label">图片生成失败：${escapeHtmlText(payload.brief)}</span></span>`;
+    }
+    const ref = String(body || '').trim();
+    if (!isRenderableRichImageRef(ref)) return token;
+    const src = resolveLocalFileLikeUrl(ref) || ref;
+    if (!src) return token;
+    return [
+        '<img',
+        ' class="previewable chat-rich-inline-image chat-inline-generated-image"',
+        ' alt="image"',
+        ' loading="lazy"',
+        ' decoding="async"',
+        ` src="${escapeHtmlText(src)}"`,
+        ` data-generated-image-token="${escapeHtmlText(token)}"`,
+        ` data-inline-image-ref="${escapeHtmlText(ref)}"`,
+        '>',
+    ].join('');
+};
+const expandRichImageTokensInHtmlText = (segment = '') => {
+    const source = String(segment || '');
+    if (!source) return '';
+    const imageTokenRe = new RegExp(RICH_IMAGE_TOKEN_RE.source, RICH_IMAGE_TOKEN_RE.flags);
+    return source.replace(imageTokenRe, (full, type, body) => buildRichImageTokenHtml(type, body, full));
+};
+const RICH_IMAGE_HTML_TOKEN_SKIP_TAGS = new Set(['script', 'style', 'textarea', 'title', 'pre', 'code']);
+export const expandRichImageTokensForHtml = (input = '') => {
+    const source = String(input ?? '');
+    RICH_IMAGE_TOKEN_RE.lastIndex = 0;
+    if (!RICH_IMAGE_TOKEN_RE.test(source)) {
+        RICH_IMAGE_TOKEN_RE.lastIndex = 0;
+        return source;
+    }
+    RICH_IMAGE_TOKEN_RE.lastIndex = 0;
+    const tagRe = /<\/?([a-zA-Z][\w:-]*)(?:\s[^<>]*?)?>/g;
+    const skipStack = [];
+    let out = '';
+    let last = 0;
+    let match = null;
+    while ((match = tagRe.exec(source))) {
+        const textSegment = source.slice(last, match.index);
+        out += skipStack.length ? textSegment : expandRichImageTokensInHtmlText(textSegment);
+
+        const tagText = String(match[0] || '');
+        const tagName = String(match[1] || '').toLowerCase();
+        const isClosing = /^<\s*\//.test(tagText);
+        const isSelfClosing = /\/\s*>$/.test(tagText);
+        out += tagText;
+
+        if (skipStack.length) {
+            if (isClosing && tagName === skipStack[skipStack.length - 1]) skipStack.pop();
+        } else if (!isClosing && !isSelfClosing && RICH_IMAGE_HTML_TOKEN_SKIP_TAGS.has(tagName)) {
+            skipStack.push(tagName);
+        }
+        last = tagRe.lastIndex;
+    }
+    const tail = source.slice(last);
+    out += skipStack.length ? tail : expandRichImageTokensInHtmlText(tail);
+    return out;
+};
 const appendRichTextInlineMedia = (containerEl, text = '', {
     openLightbox = null,
     escapeText = value => String(value ?? ''),
@@ -7884,6 +7955,7 @@ const makeCodeBlock = ({
         // Keep full HTML documents byte-stable: injecting <br> into text nodes can
         // break card scripts that parse <content>/<state_bar> by raw line breaks.
         let html = (preserveHtmlNewlines && !looksLikeHtmlDoc) ? injectHtmlNewlines(code) : code;
+        html = expandRichImageTokensForHtml(html);
         if (effectiveAllowScripts) {
             html = stripInlineCspMeta(html);
             const rewriteResult = maybeRewriteMvuInlineHelpers(html, { needsMvuCompat, directLoad: Boolean(directBodyLoadUrl) });

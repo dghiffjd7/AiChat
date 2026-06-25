@@ -634,6 +634,9 @@ test('runRegenerateFromUserIndexFlow deletes regen messages restores table memor
       removeMessage: messageId => calls.push(['remove-ui', messageId]),
     },
     recordTraceEvent: event => calls.push(['trace', event.phase, event.status, event.details]),
+    abortMemoryUpdate: async (sessionId, options) => {
+      calls.push(['abort-memory', sessionId, options]);
+    },
     removeTurnCheckpointsForMessages: async (sessionId, regenMessages, options) => {
       calls.push(['remove-checkpoints', sessionId, regenMessages.map(message => message.id), options]);
     },
@@ -652,6 +655,7 @@ test('runRegenerateFromUserIndexFlow deletes regen messages restores table memor
   assert.deepEqual(result.plan.regenMessages.map(message => message.id), ['a1', 'synthetic-1']);
   assert.deepEqual(calls, [
     ['trace', 'regenerate.start', 'started', { userIdx: 0, allowEmpty: false, regenMessageCount: 2 }],
+    ['abort-memory', 'session-regen', { source: 'regenerate_from_user_index' }],
     ['delete', 'a1', 'session-regen'],
     ['remove-ui', 'a1'],
     ['delete', 'synthetic-1', 'session-regen'],

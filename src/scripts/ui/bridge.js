@@ -6,6 +6,7 @@ import { LLMClient } from '../api/client.js';
 import { canInitClient } from '../api/client-config-utils.js';
 import { buildReasoningRequestOptions, getReasoningSamplerPolicy } from '../api/model-capabilities.js';
 import { isReasoningStreamEvent } from '../api/native-reasoning.js';
+import { applyGenerationParamFilter } from '../utils/generation-param-filter-utils.js';
 import {
   isDeepSeekApiRequest,
   shouldUseDeepSeekReasonerCompatibility,
@@ -2464,7 +2465,7 @@ class AppBridge {
   async hydrateWorldSessionMap() {
     try {
       const kv = await safeInvoke('load_kv', { name: this.getWorldSessionMapKey() });
-      if (kv && typeof kv === 'object' && Object.keys(kv).length) {
+      if (kv && typeof kv === 'object' && !kv._tooLarge && Object.keys(kv).length) {
         this.worldSessionMap = kv;
         localStorage.setItem(this.getWorldSessionMapKey(), JSON.stringify(kv));
         // 切换当前 session 的世界书
@@ -2503,13 +2504,13 @@ class AppBridge {
   async hydrateWorldGlobalSettings() {
     try {
       const kv = await safeInvoke('load_kv', { name: this.getWorldGlobalSettingsKey() });
-      if (kv && typeof kv === 'object') {
+      if (kv && typeof kv === 'object' && !kv._tooLarge) {
         this.worldGlobalSettings = this.normalizeWorldGlobalSettings(kv);
         localStorage.setItem(this.getWorldGlobalSettingsKey(), JSON.stringify(this.worldGlobalSettings));
         return;
       }
       const legacy = await safeInvoke('load_kv', { name: this.getLegacyScopedWorldGlobalSettingsKey() });
-      if (legacy && typeof legacy === 'object') {
+      if (legacy && typeof legacy === 'object' && !legacy._tooLarge) {
         this.worldGlobalSettings = this.normalizeWorldGlobalSettings(legacy);
         this.persistWorldGlobalSettings();
       }
@@ -3379,6 +3380,9 @@ class AppBridge {
       }
       messages = this.normalizeOutgoingProviderMessages(messages, config);
       const genOptions = this.getGenerationOptions(presetContext, config);
+      const applyRuntimeParamFilter = options => applyGenerationParamFilter(options, config?.excludedGenerationParams, {
+        protectedParams: ['signal', 'nativeRequestId'],
+      });
       const providerDirectives = this.buildProviderRequestDirectives(nextContext, presetContext, config);
       const sessionId = String(nextContext?.session?.id || this.activeSessionId || 'default').trim() || 'default';
       const providerToolBridgeLoopPlan = buildProviderToolBridgeLoopPlan({
@@ -3396,14 +3400,14 @@ class AppBridge {
         sessionId,
         existingOptions: [genOptions, providerDirectives],
       });
-      const requestOptions = {
+      const requestOptions = applyRuntimeParamFilter({
         ...(genOptions || {}),
         ...(providerDirectives || {}),
         ...(providerToolRequestSchema.requestOptions || {}),
         signal: abortController.signal,
         nativeRequestId,
         ...(providerToolBridgeLoopPlan.requestOptions || {}),
-      };
+      });
       const preparedRequest = requestClient?.prepareChatRequest?.(messages, requestOptions) || null;
       const responsePrefix = String(preparedRequest?.responsePrefix || '');
 
@@ -3439,9 +3443,11 @@ class AppBridge {
           : null,
         options: preparedRequest?.normalizedOptions || genOptions,
         requestOptions: {
-          ...(genOptions || {}),
-          ...(providerDirectives || {}),
-          ...(providerToolRequestSchema.requestOptions || {}),
+          ...applyRuntimeParamFilter({
+            ...(genOptions || {}),
+            ...(providerDirectives || {}),
+            ...(providerToolRequestSchema.requestOptions || {}),
+          }),
         },
         providerToolRequestSchema: providerToolRequestSchema.diagnostics,
         providerToolBridgeLoop: providerToolBridgeLoopPlan.diagnostics,
@@ -3535,10 +3541,12 @@ class AppBridge {
     if (!requestClient) {
       throw new Error('请先配置 API 信息');
     }
-    const genOptions = {
+    const genOptions = applyGenerationParamFilter({
       ...this.getGenerationOptions(resolvedPresetContext, config),
       ...requestOverrides,
-    };
+    }, config?.excludedGenerationParams, {
+      protectedParams: ['signal', 'nativeRequestId'],
+    });
     const normalizedMsgs = this.normalizeOutgoingProviderMessages(msgs, config);
     return requestClient.chat(normalizedMsgs, genOptions);
   }
@@ -6578,6 +6586,8 @@ const stringifyMessageContent = (content) => {
       const provider = runtimeConfig?.provider;
       const model = runtimeConfig?.model;
       const baseUrl = runtimeConfig?.baseUrl;
+      const applyRuntimeParamFilter = options =>
+          applyGenerationParamFilter(options, runtimeConfig?.excludedGenerationParams);
       const samplerPolicy = getReasoningSamplerPolicy({
         provider,
         model,
@@ -6603,24 +6613,24 @@ const stringifyMessageContent = (content) => {
 
       // Provider-specific mapping
       if (provider === 'gemini' || provider === 'makersuite' || provider === 'vertexai') {
-        return {
+        return applyRuntimeParamFilter({
           temperature: base.temperature,
           top_p: base.top_p,
           top_k: base.top_k,
           maxTokens,
           ...reasoningOptions,
-        };
+        });
       }
 
       if (provider === 'anthropic') {
         // our AnthropicProvider expects maxTokens (camelCase), but will pass other fields through
-        return {
+        return applyRuntimeParamFilter({
           temperature: base.temperature,
           top_p: base.top_p,
           top_k: base.top_k,
           maxTokens,
           ...reasoningOptions,
-        };
+        });
       }
 
       // openai-like (openai/deepseek/custom)
@@ -6634,7 +6644,7 @@ const stringifyMessageContent = (content) => {
         ...reasoningOptions,
       };
       if (typeof maxTokens === 'number') options.max_tokens = maxTokens;
-      return options;
+      return applyRuntimeParamFilter(options);
     } catch (err) {
       logger.debug('getGenerationOptions failed', err);
       return {};

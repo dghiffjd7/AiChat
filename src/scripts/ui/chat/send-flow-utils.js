@@ -638,6 +638,7 @@ export const runRegenerateFromUserIndexFlow = async ({
   chatStore = null,
   ui = null,
   recordTraceEvent = () => {},
+  abortMemoryUpdate = async () => {},
   removeTurnCheckpointsForMessages = async () => {},
   refreshChatAndContacts = () => {},
   getMemoryStorageMode = () => '',
@@ -675,6 +676,13 @@ export const runRegenerateFromUserIndexFlow = async ({
   }));
 
   if (regenMessages.length) {
+    if (getMemoryStorageMode() === 'table') {
+      try {
+        await abortMemoryUpdate(sessionId, { source: 'regenerate_from_user_index' });
+      } catch (err) {
+        logger?.warn?.('abort memory update before regenerate failed', err);
+      }
+    }
     regenMessages.forEach(message => {
       chatStore?.deleteMessage?.(message.id, sessionId);
       ui?.removeMessage?.(message.id);

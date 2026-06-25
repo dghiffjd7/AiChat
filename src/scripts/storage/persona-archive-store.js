@@ -46,9 +46,13 @@ const normalizeState = (raw = {}) => {
     ? raw.archives.map(normalizeArchive).filter(Boolean)
     : [];
   archives.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+  const visibleArchives = archives.slice(0, MAX_ARCHIVES);
+  const currentArchiveId = String(raw?.currentArchiveId || '').trim();
+  const hasCurrentArchive = currentArchiveId && visibleArchives.some(item => String(item?.id || '').trim() === currentArchiveId);
   return {
     version: 1,
-    archives: archives.slice(0, MAX_ARCHIVES),
+    currentArchiveId: hasCurrentArchive ? currentArchiveId : '',
+    archives: visibleArchives,
   };
 };
 
@@ -77,7 +81,7 @@ export class PersonaArchiveStore {
     try {
       const data = await safeInvoke('load_kv', { name: storeKey });
       if (token !== this._scopeToken || storeKey !== this.storeKey || scopeId !== this.scopeId) return;
-      if (data && typeof data === 'object') {
+      if (data && typeof data === 'object' && !data._tooLarge) {
         this.state = normalizeState(data);
         try {
           localStorage.setItem(storeKey, JSON.stringify(this.state));
@@ -122,6 +126,23 @@ export class PersonaArchiveStore {
     return found ? clone(found, found) : null;
   }
 
+  getCurrentArchiveId() {
+    return String(this.state.currentArchiveId || '').trim();
+  }
+
+  setCurrentArchiveId(id = '') {
+    const aid = String(id || '').trim();
+    if (aid && !(this.state.archives || []).some(item => String(item?.id || '').trim() === aid)) return false;
+    if (String(this.state.currentArchiveId || '').trim() === aid) return true;
+    this.state.currentArchiveId = aid;
+    this._persist();
+    return true;
+  }
+
+  clearCurrentArchiveId() {
+    return this.setCurrentArchiveId('');
+  }
+
   addArchive(payload = {}) {
     const now = Date.now();
     const archive = normalizeArchive({
@@ -144,11 +165,14 @@ export class PersonaArchiveStore {
     const next = list.filter(item => String(item?.id || '').trim() !== aid);
     if (next.length === list.length) return false;
     this.state.archives = next;
+    if (String(this.state.currentArchiveId || '').trim() === aid) {
+      this.state.currentArchiveId = '';
+    }
     this._persist();
     return true;
   }
 
   exportState() {
-    return clone(this.state, { version: 1, archives: [] });
+    return clone(this.state, { version: 1, currentArchiveId: '', archives: [] });
   }
 }

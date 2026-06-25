@@ -3,6 +3,7 @@
  */
 
 import { logger } from '../utils/logger.js';
+import { normalizeGenerationParamFilterList } from '../utils/generation-param-filter-utils.js';
 import { safeInvoke } from '../utils/tauri.js';
 
 const SUPPORTED_PROVIDERS = [
@@ -128,6 +129,7 @@ const normalizeProfile = (p = {}, { touchUpdatedAt = false } = {}) => {
         promptPostProcessing: normalizePromptPostProcessing(p.promptPostProcessing),
         model: p.model || 'gpt-3.5-turbo',
         stream: p.stream !== false,
+        excludedGenerationParams: normalizeGenerationParamFilterList(p.excludedGenerationParams),
         timeout: typeof p.timeout === 'number' ? p.timeout : 60000,
         maxRetries: typeof p.maxRetries === 'number' ? p.maxRetries : 3,
         vertexaiRegion: p.vertexaiRegion,
@@ -359,6 +361,7 @@ export class ConfigManager {
             promptPostProcessing: 'none',
             model: isImage ? 'gpt-image-2' : 'gpt-3.5-turbo',
             stream: true,
+            excludedGenerationParams: [],
             timeout: 60000,
             maxRetries: 3
         };
@@ -371,6 +374,10 @@ export class ConfigManager {
         let profiles = null;
         try {
             profiles = await safeInvoke('load_kv', { name: this.profileStoreKey });
+            if (profiles && typeof profiles === 'object' && profiles._tooLarge) {
+                logger.warn('profiles load_kv payload too large, fallback to localStorage', profiles);
+                profiles = null;
+            }
             if (profiles) {
                 logger.debug(`load_kv profiles 成功 (Tauri): activeProfileId=${profiles.activeProfileId}, profiles数量=${Object.keys(profiles.profiles || {}).length}`);
             }
@@ -383,6 +390,10 @@ export class ConfigManager {
         let keyring = null;
         try {
             keyring = await safeInvoke('load_kv', { name: this.keyringStoreKey });
+            if (keyring && typeof keyring === 'object' && keyring._tooLarge) {
+                logger.warn('keyring load_kv payload too large, fallback to localStorage', keyring);
+                keyring = null;
+            }
             if (keyring) {
                 logger.debug('load_kv keyring 成功 (Tauri)');
             }
@@ -397,7 +408,7 @@ export class ConfigManager {
                 let masterB64 = null;
                 try {
                     const mk = await safeInvoke('load_kv', { name: this.keyringMasterKey });
-                    if (mk && typeof mk === 'object' && mk.master) masterB64 = mk.master;
+                    if (mk && typeof mk === 'object' && !mk._tooLarge && mk.master) masterB64 = mk.master;
                 } catch (err) {
                     logger.debug('load_kv master key failed (可能非 Tauri)', err);
                 }
@@ -810,6 +821,7 @@ export class ConfigManager {
             promptPostProcessing: normalizePromptPostProcessing(p.promptPostProcessing),
             model: p.model,
             stream: p.stream,
+            excludedGenerationParams: normalizeGenerationParamFilterList(p.excludedGenerationParams),
             timeout: p.timeout,
             maxRetries: p.maxRetries,
         };
@@ -868,6 +880,7 @@ export class ConfigManager {
             throw new Error(`无效的 provider: ${config.provider}。可用: ${supportedProviders.join(', ')}`);
         }
         config.provider = provider;
+        config.excludedGenerationParams = normalizeGenerationParamFilterList(config.excludedGenerationParams);
 
         // 验证 URL
         try {

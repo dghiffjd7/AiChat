@@ -45,11 +45,60 @@ const clone = (v) => {
 
 const ensureObj = (v, fallback) => (v && typeof v === 'object') ? v : fallback;
 const ensureArr = (v) => Array.isArray(v) ? v : [];
+const isNonEmptyObject = (value) => Boolean(value && typeof value === 'object' && Object.keys(value).length);
+const isRegexStoreState = (value) => Boolean(
+    value && typeof value === 'object' && (
+        Object.prototype.hasOwnProperty.call(value, 'global') ||
+        Object.prototype.hasOwnProperty.call(value, 'local') ||
+        Object.prototype.hasOwnProperty.call(value, 'session')
+    )
+);
 
 const ensureNumOrNull = (v) => {
     if (v === null || v === undefined || v === '') return null;
     const n = Number(v);
     return Number.isFinite(n) ? n : null;
+};
+
+const uniqueStrings = (values = []) => {
+    const out = [];
+    const seen = new Set();
+    (Array.isArray(values) ? values : [values]).forEach((value) => {
+        const id = String(value || '').trim();
+        if (!id || seen.has(id)) return;
+        seen.add(id);
+        out.push(id);
+    });
+    return out;
+};
+
+const getPresetBindIds = (bind) => {
+    if (!bind || typeof bind !== 'object' || bind.type !== 'preset') return [];
+    return uniqueStrings([
+        ...(Array.isArray(bind.presetIds) ? bind.presetIds : []),
+        bind.presetId,
+    ]);
+};
+
+const normalizeBind = (bind) => {
+    if (!bind || typeof bind !== 'object') return null;
+    if (bind.type === 'preset') {
+        const presetType = String(bind.presetType || '').trim();
+        const presetIds = getPresetBindIds(bind);
+        if (!presetType || !presetIds.length) return null;
+        const next = {
+            type: 'preset',
+            presetType,
+            presetId: presetIds[0],
+        };
+        if (presetIds.length > 1 || Array.isArray(bind.presetIds)) next.presetIds = presetIds;
+        return next;
+    }
+    if (bind.type === 'world') {
+        const worldId = String(bind.worldId || '').trim();
+        return worldId ? { type: 'world', worldId } : null;
+    }
+    return null;
 };
 
 /**
@@ -104,27 +153,27 @@ const normalizeRule = (r = {}) => {
     };
 };
 
-const normalizeLocalSet = (s = {}) => ({
-    id: s.id || genId('re-set'),
-    name: String(s.name || '未命名正则').trim() || '未命名正则',
-    // bind: null | { type:'preset', presetType, presetId } | { type:'world', worldId }
-    bind: (s.bind && typeof s.bind === 'object') ? s.bind : null,
-    // Legacy note:
-    // older sync logic rewrote `enabled` for bound sets based on the currently active preset/world,
-    // which breaks mode/session-bound matching. Persist a dedicated manual switch and treat old bound
-    // records as enabled-by-default unless the user explicitly saved `manualEnabled`.
-    enabled:
-        (typeof s.manualEnabled === 'boolean')
-            ? s.manualEnabled
-            : (((s.bind && typeof s.bind === 'object') ? true : (s.enabled !== false))),
-    manualEnabled:
-        (typeof s.manualEnabled === 'boolean')
-            ? s.manualEnabled
-            : (((s.bind && typeof s.bind === 'object') ? true : (s.enabled !== false))),
-    rules: ensureArr(s.rules).map(normalizeRule),
-    createdAt: Number.isFinite(Number(s.createdAt)) ? Number(s.createdAt) : Date.now(),
-    updatedAt: Number.isFinite(Number(s.updatedAt)) ? Number(s.updatedAt) : Date.now(),
-});
+const normalizeLocalSet = (s = {}) => {
+    const bind = normalizeBind(s.bind);
+    const manualEnabled = (typeof s.manualEnabled === 'boolean')
+        ? s.manualEnabled
+        : (bind ? true : (s.enabled !== false));
+    return {
+        id: s.id || genId('re-set'),
+        name: String(s.name || '未命名正则').trim() || '未命名正则',
+        // bind: null | { type:'preset', presetType, presetId, presetIds? } | { type:'world', worldId }
+        bind,
+        // Legacy note:
+        // older sync logic rewrote `enabled` for bound sets based on the currently active preset/world,
+        // which breaks mode/session-bound matching. Persist a dedicated manual switch and treat old bound
+        // records as enabled-by-default unless the user explicitly saved `manualEnabled`.
+        enabled: manualEnabled,
+        manualEnabled,
+        rules: ensureArr(s.rules).map(normalizeRule),
+        createdAt: Number.isFinite(Number(s.createdAt)) ? Number(s.createdAt) : Date.now(),
+        updatedAt: Number.isFinite(Number(s.updatedAt)) ? Number(s.updatedAt) : Date.now(),
+    };
+};
 
 const makeDefaultState = () => ({
     version: 1,
@@ -144,9 +193,10 @@ const matchBind = (bind, ctx) => {
     const type = bind.type;
     if (type === 'preset') {
         const pt = String(bind.presetType || '');
-        const pid = String(bind.presetId || '');
-        if (!pt || !pid) return false;
-        return String(ctx?.activePresets?.[pt] || '') === pid;
+        const ids = getPresetBindIds(bind);
+        const activeId = String(ctx?.activePresets?.[pt] || '').trim();
+        if (!pt || !ids.length || !activeId) return false;
+        return ids.includes(activeId);
     }
     if (type === 'world') {
         const wid = String(bind.worldId || '');
@@ -178,9 +228,19 @@ export class RegexStore {
         if (this.isLoaded && this.state) return this.state;
 
         let state = null;
+        let skipPersistOnLoad = false;
         try {
             const kv = await safeInvoke('load_kv', { name: STORE_KEY });
-            if (kv && typeof kv === 'object' && Object.keys(kv).length) state = kv;
+            if (isRegexStoreState(kv)) {
+                state = kv;
+            } else if (isNonEmptyObject(kv)) {
+                skipPersistOnLoad = true;
+                if (kv._tooLarge) {
+                    logger.warn('regex store load_kv payload too large; skip startup overwrite', kv);
+                } else {
+                    logger.warn('regex store load_kv payload invalid; skip startup overwrite', kv);
+                }
+            }
         } catch (err) {
             logger.debug('load_kv regex store failed (可能非 Tauri)', err);
         }
@@ -188,13 +248,23 @@ export class RegexStore {
         if (!state) {
             try {
                 const raw = localStorage.getItem(STORE_KEY);
-                if (raw) state = JSON.parse(raw);
+                if (raw) {
+                    const parsed = JSON.parse(raw);
+                    if (isRegexStoreState(parsed)) state = parsed;
+                }
             } catch {}
         }
 
+        const persistLoadedState = async (next) => {
+            if (skipPersistOnLoad) {
+                this.state = next;
+                return;
+            }
+            await this.persist(next);
+        };
         if (!state || typeof state !== 'object') {
             state = makeDefaultState();
-            await this.persist(state);
+            await persistLoadedState(state);
         } else {
             state.version = 1;
             state.global = ensureObj(state.global, { enabled: true, rules: [] });
@@ -227,7 +297,7 @@ export class RegexStore {
                 };
             }
 
-            await this.persist(state);
+            await persistLoadedState(state);
         }
 
         this.state = state;
@@ -324,9 +394,9 @@ export class RegexStore {
             const bind = s.bind;
             if (!bind || typeof bind !== 'object' || bind.type !== 'preset') continue;
             const pt = String(bind.presetType || '').trim();
-            const pid = String(bind.presetId || '').trim();
-            if (!pt || !pid) continue;
-            const shouldEnable = String(activePresets?.[pt] || '') === pid;
+            const ids = getPresetBindIds(bind);
+            if (!pt || !ids.length) continue;
+            const shouldEnable = ids.includes(String(activePresets?.[pt] || '').trim());
             if (s.enabled !== shouldEnable) {
                 s.enabled = shouldEnable;
                 s.updatedAt = Date.now();
