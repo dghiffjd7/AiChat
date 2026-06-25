@@ -6,6 +6,7 @@ import { serializeForInlineScript } from '../utils/inline-script.js';
 const SCRIPT_MAX_BYTES = 2 * 1024 * 1024;
 const SCRIPT_TOTAL_BYTES = 8 * 1024 * 1024;
 const SCRIPT_PAYLOAD_LIMIT = 1200000;
+const ST_PROMPT_ORDER_DUMMY_ID = 100001;
 
 const buildWorkerScript = () => `
 const scripts = new Map();
@@ -17,6 +18,14 @@ const pending = new Map();
 const importCache = new Map();
 const IMPORT_CACHE_LIMIT = 32;
 const listenedEvents = new Set();
+const ST_PROMPT_ORDER_DUMMY_ID = ${ST_PROMPT_ORDER_DUMMY_ID};
+let compatUiNodeSeq = 0;
+const compatUiNodes = new Map();
+let compatUiFlushTimer = 0;
+let compatUiLastSignature = '';
+const COMPAT_UI_MAX_HTML = 400000;
+const COMPAT_UI_MAX_ROOTS = 80;
+const compatUiLayouts = new Map();
 
 const notifyListener = (eventName) => {
   const name = String(eventName || '').trim();
@@ -291,15 +300,24 @@ const runCompatCallback = (fn, ...args) => {
 
 const makeCompatDollar = () => {
   const normalizeNodes = (selector) => {
-    if (!selector) return [makeCompatElement('div')];
+    if (selector == null) return [];
     if (selector === self || selector === self.window || selector === self.document) return [selector];
     if (Array.isArray(selector)) return selector.filter(Boolean);
     if (selector && typeof selector === 'object' && typeof selector.length === 'number' && typeof selector !== 'function') {
       return Array.from(selector).filter(Boolean);
     }
     if (selector && typeof selector === 'object') return [selector];
-    return [makeCompatElement(String(selector || 'div').startsWith('<') ? 'div' : String(selector || 'div'))];
+    const text = String(selector || '').trim();
+    if (!text) return [];
+    if (text.startsWith('<')) return parseCompatHtml(text);
+    return Array.from(self.document?.querySelectorAll?.(text) || []);
   };
+  const normalizeInsertItems = (items = []) => items.flatMap((item) => {
+    if (item && typeof item === 'object') return [item];
+    const text = String(item ?? '');
+    if (!text) return [];
+    return text.trim().startsWith('<') ? parseCompatHtml(text) : [makeCompatTextNode(text)];
+  });
   const makeCollection = (selector) => {
     const nodes = normalizeNodes(selector);
     const api = {
@@ -373,14 +391,14 @@ const makeCompatDollar = () => {
         return api;
       },
       append: (...items) => {
-        nodes.forEach(node => items.forEach(item => node?.appendChild?.(item && typeof item === 'object' ? item : makeCompatElement('span'))));
+        nodes.forEach(node => normalizeInsertItems(items).forEach(item => node?.appendChild?.(item)));
         return api;
       },
       prepend: (...items) => {
         nodes.forEach(node => {
-          if (!node || !Array.isArray(node.children)) return;
-          const next = items.map(item => (item && typeof item === 'object' ? item : makeCompatElement('span')));
-          node.children = [...next, ...node.children];
+          if (!node?.insertBefore) return;
+          const ref = node.firstChild || null;
+          normalizeInsertItems(items).forEach(item => node.insertBefore(item, ref));
         });
         return api;
       },
@@ -470,11 +488,135 @@ const makeCompatLocalStorage = () => ({
   },
 });
 
-const makeCompatDomTokenList = () => ({
-  add: () => {},
-  remove: () => {},
-  toggle: () => false,
-  contains: () => false,
+const makeCompatToastr = () => {
+  const notify = (level) => (...args) => {
+    const text = args.map(item => String(item?.message || item || '')).filter(Boolean).join(' ');
+    if (currentSettings.debugExecutionLogs && text) {
+      callRpc('log', { level, args: ['[toastr]', text] }).catch(() => {});
+    }
+  };
+  return {
+    info: notify('info'),
+    success: notify('info'),
+    warning: notify('warn'),
+    warn: notify('warn'),
+    error: notify('warn'),
+    clear: () => {},
+    remove: () => {},
+  };
+};
+
+const makeCompatEvent = (type, options = {}) => {
+  const event = {
+    type: String(type || ''),
+    bubbles: options?.bubbles !== false,
+    cancelable: options?.cancelable === true,
+    defaultPrevented: false,
+    target: null,
+    currentTarget: null,
+    detail: options?.detail,
+    preventDefault() {
+      if (this.cancelable) this.defaultPrevented = true;
+    },
+    stopPropagation() {
+      this.__stopped = true;
+    },
+    stopImmediatePropagation() {
+      this.__stopped = true;
+      this.__immediateStopped = true;
+    },
+  };
+  if (options && typeof options === 'object') {
+    Object.entries(options).forEach(([key, value]) => {
+      if (!(key in event)) event[key] = value;
+    });
+  }
+  return event;
+};
+
+const installCompatEventTarget = (target) => {
+  if (!target || typeof target !== 'object') return target;
+  if (target.__chatappEventTarget) return target;
+  Object.defineProperty(target, '__chatappEventTarget', { value: true, configurable: true });
+  Object.defineProperty(target, '__chatappListeners', { value: new Map(), configurable: true });
+  target.addEventListener = function addEventListener(type, handler) {
+    const name = String(type || '').trim();
+    if (!name || typeof handler !== 'function') return;
+    const list = target.__chatappListeners.get(name) || [];
+    if (!list.includes(handler)) list.push(handler);
+    target.__chatappListeners.set(name, list);
+  };
+  target.removeEventListener = function removeEventListener(type, handler) {
+    const name = String(type || '').trim();
+    if (!name || !target.__chatappListeners.has(name)) return;
+    if (!handler) {
+      target.__chatappListeners.delete(name);
+      return;
+    }
+    target.__chatappListeners.set(name, (target.__chatappListeners.get(name) || []).filter(item => item !== handler));
+  };
+  target.dispatchEvent = function dispatchEvent(event) {
+    const evt = typeof event === 'string' ? makeCompatEvent(event) : (event || makeCompatEvent(''));
+    if (!evt.type) return true;
+    try {
+      if (!evt.target) evt.target = target;
+    } catch {}
+    let node = target;
+    while (node && typeof node === 'object') {
+      try {
+        evt.currentTarget = node;
+      } catch {}
+      const list = (node.__chatappListeners?.get?.(evt.type) || []).slice();
+      list.forEach((handler) => {
+        if (evt.__immediateStopped) return;
+        runCompatCallback(handler, evt);
+      });
+      const prop = 'on' + evt.type;
+      if (!evt.__immediateStopped && typeof node[prop] === 'function') runCompatCallback(node[prop], evt);
+      if (evt.__stopped || evt.bubbles === false) break;
+      node = node.parentNode || null;
+    }
+    return !evt.defaultPrevented;
+  };
+  return target;
+};
+
+const splitClassNames = (values = []) => values
+  .flatMap(value => String(value || '').split(/\\s+/))
+  .map(value => value.trim())
+  .filter(Boolean);
+
+const syncClassAttribute = (element, set) => {
+  element.className = Array.from(set).join(' ');
+  if (element.attributes) element.attributes.class = element.className;
+  scheduleCompatUiFlush();
+};
+
+const makeCompatDomTokenList = (element) => ({
+  add: (...names) => {
+    const set = new Set(splitClassNames([element.className]));
+    splitClassNames(names).forEach(name => set.add(name));
+    syncClassAttribute(element, set);
+  },
+  remove: (...names) => {
+    const set = new Set(splitClassNames([element.className]));
+    splitClassNames(names).forEach(name => set.delete(name));
+    syncClassAttribute(element, set);
+  },
+  toggle: (name, force) => {
+    const key = String(name || '').trim();
+    if (!key) return false;
+    const set = new Set(splitClassNames([element.className]));
+    const shouldAdd = force === undefined ? !set.has(key) : force === true;
+    if (shouldAdd) set.add(key);
+    else set.delete(key);
+    syncClassAttribute(element, set);
+    return shouldAdd;
+  },
+  contains: (name) => {
+    const key = String(name || '').trim();
+    return Boolean(key && splitClassNames([element.className]).includes(key));
+  },
 });
 
 const normalizeStylePropertyName = (name) => String(name || '').trim();
@@ -485,14 +627,19 @@ const stylePropertyToCssName = (name) => {
   return raw.replace(/[A-Z]/g, char => '-' + char.toLowerCase());
 };
 
-const makeCompatStyle = () => {
+const makeCompatStyle = (onChange = null) => {
   const values = new Map();
+  const notifyChange = () => {
+    if (typeof onChange === 'function') onChange();
+    else scheduleCompatUiFlush();
+  };
   const setValue = (name, value, priority = '') => {
     const prop = stylePropertyToCssName(name);
     if (!prop) return;
     const text = String(value ?? '');
     const suffix = String(priority || '').trim();
     values.set(prop, suffix ? text + ' !' + suffix : text);
+    notifyChange();
   };
   const getValue = (name) => {
     const prop = stylePropertyToCssName(name);
@@ -503,6 +650,7 @@ const makeCompatStyle = () => {
     const prop = stylePropertyToCssName(name);
     const prev = getValue(prop);
     if (prop) values.delete(prop);
+    notifyChange();
     return prev;
   };
   const target = {};
@@ -535,6 +683,7 @@ const makeCompatStyle = () => {
           if (idx <= 0) return;
           setValue(part.slice(0, idx).trim(), part.slice(idx + 1).trim());
         });
+        notifyChange();
       },
     },
   });
@@ -596,16 +745,590 @@ class CompatObserver {
   }
 }
 
+const getCompatElementChildren = (node) => Array.isArray(node?.children) ? node.children : [];
+
+const walkCompatTree = (root, includeRoot = false) => {
+  const out = [];
+  const visit = (node) => {
+    if (!node || typeof node !== 'object') return;
+    out.push(node);
+    getCompatElementChildren(node).forEach(visit);
+  };
+  if (includeRoot) visit(root);
+  else getCompatElementChildren(root).forEach(visit);
+  return out;
+};
+
+const splitSelectorGroups = (selector = '') => {
+  const groups = [];
+  let cur = '';
+  let quote = '';
+  let bracketDepth = 0;
+  String(selector || '').split('').forEach((char) => {
+    if (quote) {
+      cur += char;
+      if (char === quote) quote = '';
+      return;
+    }
+    if (char === '"' || char === "'") {
+      quote = char;
+      cur += char;
+      return;
+    }
+    if (char === '[') bracketDepth += 1;
+    if (char === ']') bracketDepth = Math.max(0, bracketDepth - 1);
+    if (char === ',' && bracketDepth === 0) {
+      if (cur.trim()) groups.push(cur.trim());
+      cur = '';
+      return;
+    }
+    cur += char;
+  });
+  if (cur.trim()) groups.push(cur.trim());
+  return groups;
+};
+
+const splitSelectorTokens = (selector = '') => {
+  const tokens = [];
+  let cur = '';
+  let quote = '';
+  let bracketDepth = 0;
+  String(selector || '').trim().split('').forEach((char) => {
+    if (quote) {
+      cur += char;
+      if (char === quote) quote = '';
+      return;
+    }
+    if (char === '"' || char === "'") {
+      quote = char;
+      cur += char;
+      return;
+    }
+    if (char === '[') bracketDepth += 1;
+    if (char === ']') bracketDepth = Math.max(0, bracketDepth - 1);
+    if (/\\s/.test(char) && bracketDepth === 0) {
+      if (cur.trim()) tokens.push(cur.trim());
+      cur = '';
+      return;
+    }
+    cur += char;
+  });
+  if (cur.trim()) tokens.push(cur.trim());
+  return tokens;
+};
+
+const cssUnescape = (value = '') => String(value || '').replace(/\\\\/g, '');
+
+const getCompatAttribute = (node, name) => {
+  if (!node || typeof node !== 'object') return null;
+  const key = String(name || '').trim();
+  if (!key) return null;
+  if (key === 'id') return node.id ? String(node.id) : null;
+  if (key === 'class') return node.className ? String(node.className) : '';
+  if (key.startsWith('data-')) {
+    const dsKey = key.slice(5).replace(/-([a-z])/g, (_m, c) => c.toUpperCase());
+    if (node.dataset && Object.prototype.hasOwnProperty.call(node.dataset, dsKey)) return String(node.dataset[dsKey]);
+  }
+  if (node.attributes && Object.prototype.hasOwnProperty.call(node.attributes, key)) return String(node.attributes[key]);
+  if (Object.prototype.hasOwnProperty.call(node, key)) return String(node[key]);
+  return null;
+};
+
+const matchesCompatSimpleSelector = (node, selector = '') => {
+  if (!node || typeof node !== 'object') return false;
+  let text = String(selector || '').trim();
+  if (!text) return false;
+  text = text.replace(/:scope/g, '').trim();
+  if (!text || text === '*') return true;
+  const tagMatch = text.match(/^[a-zA-Z][\\w-]*/);
+  if (tagMatch && String(node.tagName || '').toLowerCase() !== tagMatch[0].toLowerCase()) return false;
+  const idMatches = Array.from(text.matchAll(/#([^\\.\\[#:\\s]+)/g));
+  if (idMatches.some(match => String(node.id || '') !== cssUnescape(match[1]))) return false;
+  const classMatches = Array.from(text.matchAll(/\\.([^\\.\\[#:\\s]+)/g));
+  if (classMatches.some(match => !node.classList?.contains?.(cssUnescape(match[1])))) return false;
+  const attrMatches = Array.from(text.matchAll(/\\[([^\\]=~\\^\\$\\*\\|\\s]+)(?:\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\]]+)))?\\]/g));
+  for (const match of attrMatches) {
+    const attr = String(match[1] || '').trim();
+    const expected = match[2] ?? match[3] ?? match[4];
+    const actual = getCompatAttribute(node, attr);
+    if (actual == null) return false;
+    if (expected !== undefined && String(actual) !== String(expected).trim()) return false;
+  }
+  return true;
+};
+
+const queryCompatSelectorAll = (root, selector = '') => {
+  const found = [];
+  splitSelectorGroups(selector).forEach((group) => {
+    const directMatch = group.match(/^:scope\\s*>\\s*(.+)$/);
+    if (directMatch) {
+      getCompatElementChildren(root).forEach((child) => {
+        if (matchesCompatSimpleSelector(child, directMatch[1]) && !found.includes(child)) found.push(child);
+      });
+      return;
+    }
+    const childParts = group.split(/\\s*>\\s*/).map(part => part.trim()).filter(Boolean);
+    if (childParts.length > 1) {
+      let scope = [root];
+      childParts.forEach((part, index) => {
+        const next = [];
+        scope.forEach((node) => {
+          const candidates = index === 0 ? walkCompatTree(node, false) : getCompatElementChildren(node);
+          candidates.forEach((child) => {
+            if (matchesCompatSimpleSelector(child, part)) next.push(child);
+          });
+        });
+        scope = next;
+      });
+      scope.forEach(node => { if (!found.includes(node)) found.push(node); });
+      return;
+    }
+    let scope = [root];
+    splitSelectorTokens(group).forEach((token) => {
+      const next = [];
+      scope.forEach((node) => {
+        walkCompatTree(node, false).forEach((child) => {
+          if (matchesCompatSimpleSelector(child, token)) next.push(child);
+        });
+      });
+      scope = next;
+    });
+    scope.forEach(node => { if (!found.includes(node)) found.push(node); });
+  });
+  return found;
+};
+
+const COMPAT_VOID_TAGS = new Set(['area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input', 'link', 'meta', 'param', 'source', 'track', 'wbr']);
+
+const escapeCompatHtml = (value = '') => String(value ?? '')
+  .replace(/&/g, '&amp;')
+  .replace(/</g, '&lt;')
+  .replace(/>/g, '&gt;')
+  .replace(/"/g, '&quot;');
+
+const decodeCompatHtml = (value = '') => String(value ?? '').replace(/&(amp|lt|gt|quot|#39);/g, (_match, entity) => {
+  if (entity === 'amp') return '&';
+  if (entity === 'lt') return '<';
+  if (entity === 'gt') return '>';
+  if (entity === 'quot') return '"';
+  if (entity === '#39') return "'";
+  return _match;
+});
+
+const COMPAT_UI_BLOCKED_TAGS = new Set(['script', 'iframe', 'object', 'embed', 'base', 'meta', 'link']);
+const COMPAT_UI_STYLE_TAGS = new Set(['style']);
+const COMPAT_UI_LISTENER_EVENTS = new Set([
+  'click',
+  'dblclick',
+  'mousedown',
+  'mouseup',
+  'mousemove',
+  'pointerdown',
+  'pointerup',
+  'pointermove',
+  'touchstart',
+  'touchend',
+  'keydown',
+  'keyup',
+  'input',
+  'change',
+  'submit',
+]);
+
+const getCompatTagName = (node) => String(node?.tagName || '').toLowerCase();
+
+const getCompatVirtualMarker = (node) => {
+  const value = node?.getAttribute?.('data-chatapp-virtual');
+  return value == null ? '' : String(value);
+};
+
+const isCompatInternalNode = (node) => Boolean(getCompatVirtualMarker(node));
+
+const hasCompatBlockedVirtualAncestor = (node) => {
+  let cursor = node;
+  while (cursor && typeof cursor === 'object') {
+    const marker = getCompatVirtualMarker(cursor);
+    if (marker && marker !== 'prompt-manager') return true;
+    cursor = cursor.parentNode || null;
+  }
+  return false;
+};
+
+const hasCompatUiListener = (node) => {
+  if (!node || typeof node !== 'object') return false;
+  if (node.__chatappListeners) {
+    for (const type of COMPAT_UI_LISTENER_EVENTS) {
+      if ((node.__chatappListeners.get?.(type) || []).length) return true;
+    }
+  }
+  for (const type of COMPAT_UI_LISTENER_EVENTS) {
+    if (typeof node['on' + type] === 'function') return true;
+  }
+  return false;
+};
+
+const datasetKeyToAttrName = (key = '') => String(key || '').replace(/[A-Z]/g, char => '-' + char.toLowerCase());
+
+const shouldSkipCompatUiAttribute = (name, value) => {
+  const key = String(name || '').trim().toLowerCase();
+  if (!key) return true;
+  if (key === 'style') return true;
+  if (key.startsWith('on')) return true;
+  if ((key === 'href' || key === 'src' || key.endsWith(':href')) && /^\\s*javascript:/i.test(String(value || ''))) return true;
+  return false;
+};
+
+const collectCompatUiAttributes = (node) => {
+  const attrs = {};
+  Object.entries(node?.attributes || {}).forEach(([name, value]) => {
+    attrs[String(name)] = String(value ?? '');
+  });
+  if (node?.id) attrs.id = String(node.id);
+  if (node?.className) attrs.class = String(node.className);
+  if (node?.dataset && typeof node.dataset === 'object') {
+    Object.entries(node.dataset).forEach(([key, value]) => {
+      attrs['data-' + datasetKeyToAttrName(key)] = String(value ?? '');
+    });
+  }
+  ['type', 'name', 'title', 'placeholder', 'role', 'href', 'src', 'alt'].forEach((key) => {
+    if (node?.[key] !== undefined && node?.[key] !== null && node?.[key] !== '') attrs[key] = String(node[key]);
+  });
+  const tag = getCompatTagName(node);
+  if ((tag === 'input' || tag === 'textarea' || tag === 'select' || tag === 'option') && node.value != null && node.value !== '') {
+    attrs.value = String(node.value);
+  }
+  if (tag === 'input' || tag === 'option') {
+    if (node.checked === true) attrs.checked = 'checked';
+    else delete attrs.checked;
+  }
+  if (node?.__chatappNodeId) attrs['data-chatapp-virtual-node-id'] = String(node.__chatappNodeId);
+  if (hasCompatUiListener(node)) attrs['data-chatapp-has-ui-listener'] = '1';
+  return attrs;
+};
+
+const serializeCompatUiAttributeText = (node) => Object.entries(collectCompatUiAttributes(node))
+  .filter(([name, value]) => !shouldSkipCompatUiAttribute(name, value))
+  .map(([name, value]) => ' ' + name + '="' + escapeCompatHtml(value) + '"')
+  .join('');
+
+const serializeCompatUiNode = (node, depth = 0) => {
+  if (!node || typeof node !== 'object' || depth > 80) return '';
+  if (node.nodeType === 3) return escapeCompatHtml(node.textContent);
+  if (node.nodeType !== 1) {
+    const nodes = Array.isArray(node.childNodes) ? node.childNodes : [];
+    return nodes.map(child => serializeCompatUiNode(child, depth + 1)).join('');
+  }
+  if (isCompatInternalNode(node)) return '';
+  const tag = getCompatTagName(node);
+  if (!tag || COMPAT_UI_BLOCKED_TAGS.has(tag) || COMPAT_UI_STYLE_TAGS.has(tag)) return '';
+  const attrText = serializeCompatUiAttributeText(node);
+  const styleText = node.style?.cssText ? ' style="' + escapeCompatHtml(node.style.cssText) + '"' : '';
+  if (COMPAT_VOID_TAGS.has(tag)) return '<' + tag + attrText + styleText + '>';
+  const childList = Array.isArray(node.childNodes) ? node.childNodes : [];
+  const children = childList.length
+    ? childList.map(child => serializeCompatUiNode(child, depth + 1)).join('')
+    : escapeCompatHtml(node.textContent || '');
+  return '<' + tag + attrText + styleText + '>' + children + '</' + tag + '>';
+};
+
+const collectCompatUiStyles = () => {
+  const doc = self.document;
+  const roots = [];
+  if (doc?.head) roots.push(doc.head);
+  if (doc?.body) roots.push(doc.body);
+  if (doc?.documentElement) roots.push(doc.documentElement);
+  const styles = [];
+  roots.forEach((root) => {
+    walkCompatTree(root, true).forEach((node) => {
+      if (!node || node.nodeType !== 1 || hasCompatBlockedVirtualAncestor(node)) return;
+      if (getCompatTagName(node) !== 'style') return;
+      const css = String(node.textContent || '').trim();
+      if (css && !styles.includes(css)) styles.push(css);
+    });
+  });
+  return styles;
+};
+
+const buildCompatUiPayload = () => {
+  const doc = self.document;
+  if (!doc?.body) return { styles: [], roots: [] };
+  const styles = collectCompatUiStyles();
+  const roots = [];
+  let total = styles.join('\\n').length;
+  const bodyNodes = Array.isArray(doc.body.childNodes) ? doc.body.childNodes : [];
+  const pushRoot = (node) => {
+    if (roots.length >= COMPAT_UI_MAX_ROOTS) return;
+    if (!node) return;
+    const marker = getCompatVirtualMarker(node);
+    if (marker) {
+      if (marker === 'prompt-manager') {
+        (Array.isArray(node.childNodes) ? node.childNodes : []).forEach(pushRoot);
+      }
+      return;
+    }
+    const tag = getCompatTagName(node);
+    if (tag && (COMPAT_UI_STYLE_TAGS.has(tag) || COMPAT_UI_BLOCKED_TAGS.has(tag))) return;
+    const html = serializeCompatUiNode(node);
+    if (!html) return;
+    if (total + html.length > COMPAT_UI_MAX_HTML) return;
+    total += html.length;
+    roots.push(html);
+  };
+  for (const node of bodyNodes) {
+    if (roots.length >= COMPAT_UI_MAX_ROOTS) break;
+    pushRoot(node);
+  }
+  const documentElementNodes = Array.isArray(doc.documentElement?.childNodes) ? doc.documentElement.childNodes : [];
+  for (const node of documentElementNodes) {
+    if (roots.length >= COMPAT_UI_MAX_ROOTS) break;
+    if (node === doc.head || node === doc.body) continue;
+    pushRoot(node);
+  }
+  return { styles, roots };
+};
+
+const parseCompatPx = (value) => {
+  const match = String(value || '').trim().match(/^(-?\\d+(?:\\.\\d+)?)px$/i);
+  return match ? Number(match[1]) || 0 : 0;
+};
+
+const normalizeCompatRect = (rect = {}) => {
+  const left = Number(rect.left ?? rect.x ?? 0) || 0;
+  const top = Number(rect.top ?? rect.y ?? 0) || 0;
+  const width = Math.max(0, Number(rect.width ?? ((Number(rect.right) || 0) - left) ?? 0) || 0);
+  const height = Math.max(0, Number(rect.height ?? ((Number(rect.bottom) || 0) - top) ?? 0) || 0);
+  const right = Number(rect.right ?? (left + width)) || left + width;
+  const bottom = Number(rect.bottom ?? (top + height)) || top + height;
+  return {
+    x: left,
+    y: top,
+    left,
+    top,
+    width,
+    height,
+    right,
+    bottom,
+    toJSON() {
+      return { x: left, y: top, left, top, width, height, right, bottom };
+    },
+  };
+};
+
+const getCompatStyleRectFallback = (element) => {
+  const style = element?.style;
+  const left = parseCompatPx(style?.getPropertyValue?.('left') || style?.left);
+  const top = parseCompatPx(style?.getPropertyValue?.('top') || style?.top);
+  const width = parseCompatPx(style?.getPropertyValue?.('width') || style?.width) || Number(element?.clientWidth || element?.scrollWidth || 0) || 0;
+  const height = parseCompatPx(style?.getPropertyValue?.('height') || style?.height) || Number(element?.clientHeight || element?.scrollHeight || 0) || 0;
+  return normalizeCompatRect({ left, top, width, height });
+};
+
+const getCompatElementRect = (element) => {
+  const nodeId = String(element?.__chatappNodeId || '');
+  if (nodeId && compatUiLayouts.has(nodeId)) return normalizeCompatRect(compatUiLayouts.get(nodeId));
+  return getCompatStyleRectFallback(element);
+};
+
+const updateCompatUiLayouts = (items = []) => {
+  if (!Array.isArray(items)) return;
+  items.forEach((item) => {
+    const nodeId = String(item?.nodeId || '').trim();
+    if (!nodeId) return;
+    const rect = normalizeCompatRect(item);
+    compatUiLayouts.set(nodeId, rect);
+    const node = compatUiNodes.get(nodeId);
+    if (node && typeof node === 'object') {
+      node.clientWidth = Number(item.clientWidth ?? rect.width) || rect.width;
+      node.clientHeight = Number(item.clientHeight ?? rect.height) || rect.height;
+      node.scrollWidth = Number(item.scrollWidth ?? node.clientWidth) || node.clientWidth;
+      node.scrollHeight = Number(item.scrollHeight ?? node.clientHeight) || node.clientHeight;
+    }
+  });
+};
+
+function flushCompatUi() {
+  compatUiFlushTimer = 0;
+  const payload = buildCompatUiPayload();
+  const signature = JSON.stringify(payload);
+  if (signature === compatUiLastSignature) return;
+  compatUiLastSignature = signature;
+  try {
+    postMessage({ type: 'ui_update', payload });
+  } catch {}
+}
+
+function scheduleCompatUiFlush() {
+  if (compatUiFlushTimer) return;
+  compatUiFlushTimer = setTimeout(flushCompatUi, 0);
+}
+
+function resetCompatDocumentForSync() {
+  if (compatUiFlushTimer) {
+    clearTimeout(compatUiFlushTimer);
+    compatUiFlushTimer = 0;
+  }
+  compatUiLastSignature = '';
+  compatUiNodes.clear();
+  compatUiLayouts.clear();
+  compatUiNodeSeq = 0;
+  self.document = makeCompatDocument();
+}
+
+function handleCompatUiEvent(msg = {}) {
+  const node = compatUiNodes.get(String(msg.nodeId || ''));
+  if (!node || typeof node.dispatchEvent !== 'function') return;
+  const data = msg.event && typeof msg.event === 'object' ? msg.event : {};
+  if ('value' in data) node.value = String(data.value ?? '');
+  if ('checked' in data) node.checked = data.checked === true;
+  node.dispatchEvent(makeCompatEvent(msg.eventType || data.type || '', {
+    ...data,
+    bubbles: data.bubbles !== false,
+    cancelable: data.cancelable === true,
+  }));
+  scheduleCompatUiFlush();
+}
+
+const makeCompatTextNode = (text = '') => {
+  let value = String(text ?? '');
+  const node = {
+    nodeType: 3,
+    nodeName: '#text',
+    parentNode: null,
+    parentElement: null,
+    remove() {
+      if (node.parentNode?.removeChild) node.parentNode.removeChild(node);
+    },
+  };
+  Object.defineProperties(node, {
+    textContent: {
+      enumerable: true,
+      configurable: true,
+      get() {
+        return value;
+      },
+      set(next) {
+        value = String(next ?? '');
+        scheduleCompatUiFlush();
+      },
+    },
+    nodeValue: {
+      enumerable: true,
+      configurable: true,
+      get() {
+        return value;
+      },
+      set(next) {
+        value = String(next ?? '');
+        scheduleCompatUiFlush();
+      },
+    },
+    data: {
+      enumerable: true,
+      configurable: true,
+      get() {
+        return value;
+      },
+      set(next) {
+        value = String(next ?? '');
+      },
+    },
+  });
+  return node;
+};
+
+const collectCompatText = (node) => {
+  if (!node || typeof node !== 'object') return '';
+  if (node.nodeType === 3) return String(node.textContent ?? '');
+  const nodes = Array.isArray(node.childNodes) ? node.childNodes : [];
+  if (nodes.length) return nodes.map(collectCompatText).join('');
+  return String(node.__chatappTextContent || '');
+};
+
+const serializeCompatNode = (node) => {
+  if (!node || typeof node !== 'object') return '';
+  if (node.nodeType === 3) return escapeCompatHtml(node.textContent);
+  if (typeof node.__chatappSerialize === 'function') return node.__chatappSerialize();
+  return escapeCompatHtml(node.textContent);
+};
+
+const parseCompatAttributes = (element, attrText = '') => {
+  String(attrText || '').replace(/([^\\s=\\/<>]+)(?:\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s"'=<>]+)))?/g, (_match, name, doubleQuoted, singleQuoted, bare) => {
+    const key = String(name || '').trim();
+    if (!key || key === '/') return '';
+    const raw = doubleQuoted ?? singleQuoted ?? bare ?? '';
+    element.setAttribute(key, decodeCompatHtml(raw));
+    return '';
+  });
+};
+
+const parseCompatHtml = (html = '') => {
+  const roots = [];
+  const root = {
+    appendChild(node) {
+      roots.push(node);
+      node.parentNode = null;
+      node.parentElement = null;
+    },
+  };
+  const stack = [root];
+  const appendText = (text) => {
+    const value = decodeCompatHtml(text);
+    if (!value) return;
+    const parent = stack[stack.length - 1] || root;
+    const node = makeCompatTextNode(value);
+    parent.appendChild(node);
+    if (String(parent.tagName || '').toLowerCase() === 'textarea') {
+      parent.value = String(parent.value || '') + value;
+    }
+  };
+  const tokens = String(html ?? '').match(/<[^>]*>|[^<]+/g) || [];
+  tokens.forEach((token) => {
+    if (!token) return;
+    if (!token.startsWith('<')) {
+      appendText(token);
+      return;
+    }
+    if (/^<!--/.test(token) || /^<!doctype/i.test(token)) return;
+    const closeMatch = token.match(/^<\\/\\s*([a-zA-Z][\\w:-]*)/);
+    if (closeMatch) {
+      const tag = closeMatch[1].toLowerCase();
+      while (stack.length > 1) {
+        const node = stack.pop();
+        if (String(node.tagName || '').toLowerCase() === tag) break;
+      }
+      return;
+    }
+    const openMatch = token.match(/^<\\s*([a-zA-Z][\\w:-]*)([^>]*)>/);
+    if (!openMatch) {
+      appendText(token);
+      return;
+    }
+    const tag = openMatch[1].toLowerCase();
+    const node = makeCompatElement(tag);
+    parseCompatAttributes(node, openMatch[2] || '');
+    (stack[stack.length - 1] || root).appendChild(node);
+    if (!COMPAT_VOID_TAGS.has(tag) && !/\\/\\s*>$/.test(token)) stack.push(node);
+  });
+  return roots;
+};
+
 const makeCompatElement = (tagName = 'div') => {
+  const attrs = {};
+  const childNodes = [];
+  let textContentValue = '';
+  let innerHTMLValue = '';
+  let idValue = '';
+  let classNameValue = '';
   const element = {
     tagName: String(tagName || 'div').toUpperCase(),
-    style: makeCompatStyle(),
+    nodeType: 1,
+    attributes: attrs,
+    style: makeCompatStyle(() => scheduleCompatUiFlush()),
     dataset: {},
-    classList: makeCompatDomTokenList(),
     children: [],
+    childNodes,
     parentNode: null,
-    textContent: '',
-    innerHTML: '',
+    parentElement: null,
     value: '',
     checked: false,
     scrollTop: 0,
@@ -616,44 +1339,337 @@ const makeCompatElement = (tagName = 'div') => {
     clientWidth: 0,
     appendChild(child) {
       if (child && typeof child === 'object') {
+        if (child.parentNode?.removeChild) child.parentNode.removeChild(child);
         child.parentNode = element;
-        element.children.push(child);
+        child.parentElement = child.nodeType === 1 ? element : null;
+        if (element.ownerDocument && !child.ownerDocument) child.ownerDocument = element.ownerDocument;
+        childNodes.push(child);
+        if (child.nodeType !== 3 && !element.children.includes(child)) element.children.push(child);
+        scheduleCompatUiFlush();
       }
       return child;
     },
+    insertBefore(child, before = null) {
+      if (!child || typeof child !== 'object') return child;
+      if (child.parentNode?.removeChild) child.parentNode.removeChild(child);
+      child.parentNode = element;
+      child.parentElement = child.nodeType === 1 ? element : null;
+      if (element.ownerDocument && !child.ownerDocument) child.ownerDocument = element.ownerDocument;
+      const nodeIdx = before ? childNodes.indexOf(before) : -1;
+      if (nodeIdx >= 0) childNodes.splice(nodeIdx, 0, child);
+      else childNodes.push(child);
+      if (child.nodeType !== 3) {
+        const elementIdx = before ? element.children.indexOf(before) : -1;
+        if (elementIdx >= 0) element.children.splice(elementIdx, 0, child);
+        else if (!element.children.includes(child)) element.children.push(child);
+      }
+      scheduleCompatUiFlush();
+      return child;
+    },
     removeChild(child) {
+      const nodeIdx = childNodes.indexOf(child);
+      if (nodeIdx >= 0) childNodes.splice(nodeIdx, 1);
       element.children = element.children.filter(item => item !== child);
-      if (child && typeof child === 'object') child.parentNode = null;
+      if (child && typeof child === 'object') {
+        child.parentNode = null;
+        child.parentElement = null;
+      }
+      scheduleCompatUiFlush();
       return child;
     },
     remove() {
       if (element.parentNode?.removeChild) element.parentNode.removeChild(element);
     },
+    replaceChildren(...items) {
+      childNodes.slice().forEach(child => element.removeChild(child));
+      items.forEach(item => element.appendChild(item && typeof item === 'object' ? item : makeCompatTextNode(item)));
+      textContentValue = collectCompatText(element);
+      innerHTMLValue = '';
+      scheduleCompatUiFlush();
+    },
     setAttribute(name, value) {
-      element[String(name || '')] = String(value ?? '');
+      const key = String(name || '').trim();
+      if (!key) return;
+      const text = String(value ?? '');
+      attrs[key] = text;
+      if (key === 'id') element.id = text;
+      else if (key === 'class') element.className = text;
+      else if (key === 'style') element.style.cssText = text;
+      else if (key === 'value') element.value = text;
+      else if (key === 'checked') element.checked = text !== 'false';
+      else if (key.startsWith('data-')) {
+        const dsKey = key.slice(5).replace(/-([a-z])/g, (_m, c) => c.toUpperCase());
+        element.dataset[dsKey] = text;
+      } else {
+        element[key] = text;
+      }
+      scheduleCompatUiFlush();
     },
     getAttribute(name) {
-      const key = String(name || '');
-      return Object.prototype.hasOwnProperty.call(element, key) ? String(element[key]) : null;
+      return getCompatAttribute(element, name);
     },
     removeAttribute(name) {
-      const key = String(name || '');
-      if (key) delete element[key];
+      const key = String(name || '').trim();
+      if (!key) return;
+      delete attrs[key];
+      if (key === 'id') element.id = '';
+      else if (key === 'class') element.className = '';
+      else if (key.startsWith('data-')) {
+        const dsKey = key.slice(5).replace(/-([a-z])/g, (_m, c) => c.toUpperCase());
+        delete element.dataset[dsKey];
+      } else {
+        delete element[key];
+      }
+      scheduleCompatUiFlush();
     },
     hasAttribute(name) {
-      const key = String(name || '');
-      return key ? Object.prototype.hasOwnProperty.call(element, key) : false;
+      return getCompatAttribute(element, name) != null;
     },
-    addEventListener: () => {},
-    removeEventListener: () => {},
-    dispatchEvent: () => true,
-    querySelector: () => makeCompatElement('div'),
-    querySelectorAll: () => [],
-    closest: () => makeCompatElement('div'),
+    matches(selector) {
+      return matchesCompatSimpleSelector(element, selector);
+    },
+    contains(node) {
+      if (node === element) return true;
+      return walkCompatTree(element, false).includes(node);
+    },
+    querySelector(selector = '') {
+      return queryCompatSelectorAll(element, selector)[0] || null;
+    },
+    querySelectorAll(selector = '') {
+      return queryCompatSelectorAll(element, selector);
+    },
+    closest(selector = '') {
+      let node = element;
+      while (node) {
+        if (matchesCompatSimpleSelector(node, selector)) return node;
+        node = node.parentNode;
+      }
+      return null;
+    },
+    insertAdjacentElement(position, node) {
+      const pos = String(position || '').toLowerCase();
+      if (pos === 'beforebegin' && element.parentNode?.insertBefore) return element.parentNode.insertBefore(node, element);
+      if (pos === 'afterbegin') return element.insertBefore(node, element.firstChild || null);
+      if (pos === 'afterend' && element.parentNode?.insertBefore) {
+        const siblings = element.parentNode.childNodes || element.parentNode.children || [];
+        const idx = siblings.indexOf(element);
+        return element.parentNode.insertBefore(node, siblings[idx + 1] || null);
+      }
+      return element.appendChild(node);
+    },
+    insertAdjacentHTML(position, html) {
+      const nodes = parseCompatHtml(html);
+      const pos = String(position || '').toLowerCase();
+      if (pos === 'beforebegin' && element.parentNode?.insertBefore) {
+        nodes.forEach(node => element.parentNode.insertBefore(node, element));
+        return;
+      }
+      if (pos === 'afterend' && element.parentNode?.insertBefore) {
+        const ref = element.nextSibling || null;
+        nodes.forEach(node => element.parentNode.insertBefore(node, ref));
+        return;
+      }
+      if (pos === 'afterbegin') {
+        const ref = element.firstChild || null;
+        nodes.forEach(node => element.insertBefore(node, ref));
+        return;
+      }
+      nodes.forEach(node => element.appendChild(node));
+    },
     focus: () => {},
     blur: () => {},
-    click: () => {},
+    click() {
+      element.dispatchEvent(makeCompatEvent('click', { bubbles: true, cancelable: true }));
+    },
+    getBoundingClientRect() {
+      return getCompatElementRect(element);
+    },
+    getClientRects() {
+      const rect = getCompatElementRect(element);
+      const list = [rect];
+      list.item = (index) => list[index] || null;
+      return list;
+    },
   };
+  element.classList = makeCompatDomTokenList(element);
+  Object.defineProperties(element, {
+    id: {
+      enumerable: true,
+      configurable: true,
+      get() {
+        return idValue;
+      },
+      set(value) {
+        idValue = String(value ?? '');
+        if (idValue) attrs.id = idValue;
+        else delete attrs.id;
+        scheduleCompatUiFlush();
+      },
+    },
+    className: {
+      enumerable: true,
+      configurable: true,
+      get() {
+        return classNameValue;
+      },
+      set(value) {
+        classNameValue = String(value ?? '');
+        if (classNameValue) attrs.class = classNameValue;
+        else delete attrs.class;
+        scheduleCompatUiFlush();
+      },
+    },
+    textContent: {
+      enumerable: true,
+      configurable: true,
+      get() {
+        return childNodes.length ? collectCompatText(element) : textContentValue;
+      },
+      set(value) {
+        textContentValue = String(value ?? '');
+        innerHTMLValue = escapeCompatHtml(textContentValue);
+        childNodes.slice().forEach(child => element.removeChild(child));
+        scheduleCompatUiFlush();
+      },
+    },
+    innerText: {
+      enumerable: true,
+      configurable: true,
+      get() {
+        return element.textContent;
+      },
+      set(value) {
+        element.textContent = value;
+      },
+    },
+    innerHTML: {
+      enumerable: true,
+      configurable: true,
+      get() {
+        return childNodes.length ? childNodes.map(serializeCompatNode).join('') : innerHTMLValue;
+      },
+      set(value) {
+        innerHTMLValue = String(value ?? '');
+        childNodes.slice().forEach(child => element.removeChild(child));
+        parseCompatHtml(innerHTMLValue).forEach(node => element.appendChild(node));
+        textContentValue = collectCompatText(element);
+        scheduleCompatUiFlush();
+      },
+    },
+    outerHTML: {
+      enumerable: true,
+      configurable: true,
+      get() {
+        return element.__chatappSerialize();
+      },
+    },
+    firstChild: {
+      enumerable: true,
+      configurable: true,
+      get() {
+        return childNodes[0] || null;
+      },
+    },
+    lastChild: {
+      enumerable: true,
+      configurable: true,
+      get() {
+        return childNodes[childNodes.length - 1] || null;
+      },
+    },
+    firstElementChild: {
+      enumerable: true,
+      configurable: true,
+      get() {
+        return element.children[0] || null;
+      },
+    },
+    lastElementChild: {
+      enumerable: true,
+      configurable: true,
+      get() {
+        return element.children[element.children.length - 1] || null;
+      },
+    },
+    nextSibling: {
+      enumerable: true,
+      configurable: true,
+      get() {
+        const siblings = element.parentNode?.childNodes || [];
+        const idx = siblings.indexOf(element);
+        return idx >= 0 ? siblings[idx + 1] || null : null;
+      },
+    },
+    previousSibling: {
+      enumerable: true,
+      configurable: true,
+      get() {
+        const siblings = element.parentNode?.childNodes || [];
+        const idx = siblings.indexOf(element);
+        return idx > 0 ? siblings[idx - 1] || null : null;
+      },
+    },
+    nextElementSibling: {
+      enumerable: true,
+      configurable: true,
+      get() {
+        const siblings = element.parentNode?.children || [];
+        const idx = siblings.indexOf(element);
+        return idx >= 0 ? siblings[idx + 1] || null : null;
+      },
+    },
+    previousElementSibling: {
+      enumerable: true,
+      configurable: true,
+      get() {
+        const siblings = element.parentNode?.children || [];
+        const idx = siblings.indexOf(element);
+        return idx > 0 ? siblings[idx - 1] || null : null;
+      },
+    },
+    offsetLeft: {
+      enumerable: true,
+      configurable: true,
+      get() {
+        return getCompatElementRect(element).left;
+      },
+    },
+    offsetTop: {
+      enumerable: true,
+      configurable: true,
+      get() {
+        return getCompatElementRect(element).top;
+      },
+    },
+    offsetWidth: {
+      enumerable: true,
+      configurable: true,
+      get() {
+        return getCompatElementRect(element).width;
+      },
+    },
+    offsetHeight: {
+      enumerable: true,
+      configurable: true,
+      get() {
+        return getCompatElementRect(element).height;
+      },
+    },
+  });
+  element.__chatappSerialize = () => {
+    const tag = String(element.tagName || 'div').toLowerCase();
+    const attrText = Object.entries(attrs)
+      .filter(([name]) => name && name !== 'style')
+      .map(([name, value]) => ' ' + name + '="' + escapeCompatHtml(value) + '"')
+      .join('');
+    const styleText = element.style?.cssText ? ' style="' + escapeCompatHtml(element.style.cssText) + '"' : '';
+    if (COMPAT_VOID_TAGS.has(tag)) return '<' + tag + attrText + styleText + '>';
+    return '<' + tag + attrText + styleText + '>' + element.innerHTML + '</' + tag + '>';
+  };
+  installCompatEventTarget(element);
+  const nodeId = String(++compatUiNodeSeq);
+  Object.defineProperty(element, '__chatappNodeId', { value: nodeId, configurable: true });
+  compatUiNodes.set(nodeId, element);
   return element;
 };
 
@@ -663,21 +1679,45 @@ const makeCompatDocument = () => {
   const documentElement = makeCompatElement('html');
   documentElement.appendChild(head);
   documentElement.appendChild(body);
-  return {
+  const document = {
+    nodeType: 9,
     readyState: 'complete',
     body,
     head,
     documentElement,
-    createElement: makeCompatElement,
-    createTextNode: (text = '') => ({ nodeType: 3, textContent: String(text ?? '') }),
-    createDocumentFragment: () => makeCompatElement('fragment'),
-    getElementById: (id = '') => makeCompatElement(id || 'div'),
-    querySelector: (selector = '') => makeCompatElement(selector || 'div'),
-    querySelectorAll: () => [],
-    addEventListener: () => {},
-    removeEventListener: () => {},
-    dispatchEvent: () => true,
+    createElement(tagName = 'div') {
+      const node = makeCompatElement(tagName);
+      node.ownerDocument = document;
+      return node;
+    },
+    createTextNode(text = '') {
+      const node = makeCompatTextNode(text);
+      node.ownerDocument = document;
+      return node;
+    },
+    createDocumentFragment() {
+      const node = makeCompatElement('fragment');
+      node.nodeType = 11;
+      node.ownerDocument = document;
+      return node;
+    },
+    getElementById(id = '') {
+      const key = String(id || '').trim();
+      if (!key) return null;
+      return walkCompatTree(documentElement, true).find(node => String(node.id || '') === key) || null;
+    },
+    querySelector(selector = '') {
+      return queryCompatSelectorAll(documentElement, selector)[0] || null;
+    },
+    querySelectorAll(selector = '') {
+      return queryCompatSelectorAll(documentElement, selector);
+    },
   };
+  documentElement.parentNode = document;
+  body.ownerDocument = document;
+  head.ownerDocument = document;
+  documentElement.ownerDocument = document;
+  return document;
 };
 
 const defaultErrorCatched = (fn) => (...args) => {
@@ -908,6 +1948,123 @@ const getPreset = () => {
   };
 };
 
+const getPromptIdentifier = (prompt = {}, fallback = '') => {
+  const candidates = [prompt.identifier, prompt.id, prompt.prompt_id, prompt.promptId, prompt.name, prompt.title, fallback];
+  for (const item of candidates) {
+    const value = String(item || '').trim();
+    if (value) return value;
+  }
+  return '';
+};
+
+const findPromptOrderItem = (preset, identifier = '') => {
+  const id = String(identifier || '').trim();
+  if (!id) return null;
+  const blocks = Array.isArray(preset?.prompt_order) ? preset.prompt_order : [];
+  for (const block of blocks) {
+    const order = Array.isArray(block?.order) ? block.order : [];
+    const hit = order.find(item => String(item?.identifier || item?.id || item?.name || '').trim() === id);
+    if (hit) return hit;
+  }
+  return null;
+};
+
+const isPresetPromptEnabled = (preset, prompt = {}, fallback = '') => {
+  const identifier = getPromptIdentifier(prompt, fallback);
+  const orderItem = findPromptOrderItem(preset, identifier);
+  if (orderItem && typeof orderItem === 'object' && 'enabled' in orderItem) return orderItem.enabled !== false;
+  return prompt?.enabled !== false;
+};
+
+const setLocalPresetPromptEnabled = (identifier = '', enabled = true) => {
+  const id = String(identifier || '').trim();
+  const preset = getPreset();
+  const prompts = Array.isArray(preset.prompts) ? preset.prompts : [];
+  const prompt = prompts.find((item, index) => {
+    const promptId = getPromptIdentifier(item, 'custom_' + index);
+    return promptId === id || String(item?.name || '').trim() === id;
+  });
+  if (!prompt) return false;
+  const promptId = getPromptIdentifier(prompt, id);
+  prompt.enabled = enabled !== false;
+  let blocks = Array.isArray(preset.prompt_order) ? preset.prompt_order : [];
+  if (!blocks.length) {
+    blocks = [{ character_id: ST_PROMPT_ORDER_DUMMY_ID, order: prompts.map((item, index) => ({ identifier: getPromptIdentifier(item, 'custom_' + index), enabled: item?.enabled !== false })) }];
+  }
+  let targetBlock = blocks.find(block => String(block?.character_id) === String(ST_PROMPT_ORDER_DUMMY_ID)) || blocks[0];
+  if (!targetBlock) {
+    targetBlock = { character_id: ST_PROMPT_ORDER_DUMMY_ID, order: [] };
+    blocks.push(targetBlock);
+  }
+  targetBlock.order = Array.isArray(targetBlock.order) ? targetBlock.order : [];
+  let orderItem = targetBlock.order.find(item => String(item?.identifier || item?.id || item?.name || '').trim() === promptId);
+  if (!orderItem) {
+    orderItem = { identifier: promptId, enabled: enabled !== false };
+    targetBlock.order.push(orderItem);
+  } else {
+    orderItem.identifier = promptId;
+    orderItem.enabled = enabled !== false;
+  }
+  preset.prompt_order = blocks;
+  currentContext.activePreset = preset;
+  currentContext.presetPrompts = prompts;
+  return true;
+};
+
+const syncVirtualPromptManager = () => {
+  const doc = self.document;
+  if (!doc?.body || typeof doc.createElement !== 'function') return;
+  let list = doc.getElementById?.('completion_prompt_manager_list');
+  if (!list) {
+    list = doc.createElement('ul');
+    list.id = 'completion_prompt_manager_list';
+    list.setAttribute('id', 'completion_prompt_manager_list');
+    list.setAttribute('data-chatapp-virtual', 'prompt-manager');
+    doc.body.appendChild(list);
+  }
+  if (list.getAttribute?.('data-chatapp-virtual') !== 'prompt-manager') return;
+  list.replaceChildren?.();
+  const preset = getPreset();
+  const prompts = Array.isArray(preset.prompts) ? preset.prompts : [];
+  prompts.forEach((prompt, index) => {
+    const identifier = getPromptIdentifier(prompt, 'custom_' + index);
+    if (!identifier) return;
+    const enabled = isPresetPromptEnabled(preset, prompt, 'custom_' + index);
+    const li = doc.createElement('li');
+    li.setAttribute('data-pm-identifier', identifier);
+    li.setAttribute('data-chatapp-virtual', 'prompt-row');
+    if (!enabled) li.classList.add('completion_prompt_manager_prompt_disabled');
+    const name = doc.createElement('span');
+    name.setAttribute('data-pm-name', String(prompt?.name || identifier));
+    name.textContent = String(prompt?.name || identifier);
+    const toggle = doc.createElement('button');
+    toggle.type = 'button';
+    toggle.className = 'prompt-manager-toggle-action toggle';
+    toggle.setAttribute('class', toggle.className);
+    toggle.setAttribute('data-action', 'toggle');
+    toggle.setAttribute('role', 'switch');
+    toggle.setAttribute('aria-label', 'toggle prompt');
+    toggle.setAttribute('aria-checked', String(enabled));
+    toggle.checked = enabled;
+    toggle.addEventListener('click', () => {
+      const nextEnabled = li.classList.contains('completion_prompt_manager_prompt_disabled');
+      li.classList.toggle('completion_prompt_manager_prompt_disabled', !nextEnabled);
+      toggle.checked = nextEnabled;
+      toggle.setAttribute('aria-checked', String(nextEnabled));
+      setLocalPresetPromptEnabled(identifier, nextEnabled);
+      callRpc('preset.setPromptEnabled', {
+        presetType: 'openai',
+        identifier,
+        enabled: nextEnabled,
+        sessionId: currentContext.sessionId,
+      }).catch(() => {});
+    });
+    li.appendChild(name);
+    li.appendChild(toggle);
+    list.appendChild(li);
+  });
+};
+
 const isPresetPlaceholderPrompt = (prompt = {}) => {
   const id = String(prompt.identifier || prompt.id || prompt.name || '').toLowerCase();
   return Boolean(prompt.placeholder || prompt.isPlaceholder || id.includes('placeholder'));
@@ -1020,10 +2177,23 @@ const ensureCompatGlobals = () => {
   if (!self.window) self.window = self;
   if (!self.parent) self.parent = self;
   if (!self.top) self.top = self;
+  installCompatEventTarget(self);
+  installCompatEventTarget(self.window);
+  installCompatEventTarget(self.parent);
+  installCompatEventTarget(self.top);
   if (!self.localStorage) self.localStorage = makeCompatLocalStorage();
   if (!self.document) self.document = makeCompatDocument();
+  installCompatEventTarget(self.document);
+  self.document.defaultView = self.window || self;
   if (!self.navigator) self.navigator = { userAgent: 'ChatApp ScriptRuntime' };
   if (!self.location) self.location = { href: '', origin: '' };
+  if (!self.toastr) self.toastr = makeCompatToastr();
+  self.window.toastr = self.window.toastr || self.toastr;
+  self.parent.toastr = self.parent.toastr || self.toastr;
+  self.top.toastr = self.top.toastr || self.toastr;
+  if (typeof self.Event !== 'function') self.Event = function Event(type, options) { return makeCompatEvent(type, options); };
+  if (typeof self.MouseEvent !== 'function') self.MouseEvent = function MouseEvent(type, options) { return makeCompatEvent(type, options); };
+  if (typeof self.getComputedStyle !== 'function') self.getComputedStyle = (node) => node?.style || makeCompatStyle();
   if (typeof self.requestAnimationFrame !== 'function') {
     self.requestAnimationFrame = (cb) => setTimeout(() => {
       if (typeof cb === 'function') cb(Date.now());
@@ -1111,6 +2281,7 @@ const ensureCompatGlobals = () => {
   helper.getCharWorldbookNames = helper.getCharWorldbookNames || getCharWorldbookNames;
   helper.getChatWorldbookName = helper.getChatWorldbookName || getChatWorldbookName;
   helper.getPreset = helper.getPreset || getPreset;
+  syncVirtualPromptManager();
 };
 
 let lastSchemaDebug = null;
@@ -1959,9 +3130,18 @@ self.onmessage = async (e) => {
     else pendingItem.resolve(msg.result);
     return;
   }
+  if (msg.type === 'ui_event') {
+    handleCompatUiEvent(msg);
+    return;
+  }
+  if (msg.type === 'ui_layout') {
+    updateCompatUiLayouts(msg.items || []);
+    return;
+  }
   if (msg.type === 'sync') {
     const list = Array.isArray(msg.scripts) ? msg.scripts : [];
     scripts.clear();
+    resetCompatDocumentForSync();
     if (msg.settings && typeof msg.settings === 'object') {
       currentSettings = { ...currentSettings, ...msg.settings };
     }
@@ -1975,6 +3155,7 @@ self.onmessage = async (e) => {
       scripts.set(record.id, compileScript(record));
     });
     postMessage({ type: 'sync_done' });
+    scheduleCompatUiFlush();
     return;
   }
   if (msg.type === 'context') {
@@ -1985,6 +3166,7 @@ self.onmessage = async (e) => {
       currentSettings = { ...currentSettings, ...msg.settings };
     }
     ensureCompatGlobals();
+    scheduleCompatUiFlush();
     return;
   }
   if (msg.type === 'dispatch') {
@@ -2073,6 +3255,42 @@ const deleteByPath = (obj, path) => {
   if (!Object.prototype.hasOwnProperty.call(cur, last)) return false;
   delete cur[last];
   return true;
+};
+
+const getPromptKey = (prompt = {}, fallback = '') => {
+  const candidates = [prompt.identifier, prompt.id, prompt.prompt_id, prompt.promptId, prompt.name, prompt.title, fallback];
+  for (const item of candidates) {
+    const value = String(item || '').trim();
+    if (value) return value;
+  }
+  return '';
+};
+
+const findPromptOrderBlock = (preset = {}) => {
+  const blocks = Array.isArray(preset.prompt_order) ? preset.prompt_order : [];
+  return blocks.find(block => String(block?.character_id) === String(ST_PROMPT_ORDER_DUMMY_ID)) || blocks[0] || null;
+};
+
+const ensurePromptOrderBlock = (preset = {}) => {
+  preset.prompt_order = Array.isArray(preset.prompt_order) ? preset.prompt_order : [];
+  let block = findPromptOrderBlock(preset);
+  if (!block) {
+    block = { character_id: ST_PROMPT_ORDER_DUMMY_ID, order: [] };
+    preset.prompt_order.push(block);
+  }
+  block.character_id = block.character_id ?? ST_PROMPT_ORDER_DUMMY_ID;
+  block.order = Array.isArray(block.order) ? block.order : [];
+  return block;
+};
+
+const findPresetPrompt = (preset = {}, identifier = '') => {
+  const key = String(identifier || '').trim();
+  if (!key) return null;
+  const prompts = Array.isArray(preset.prompts) ? preset.prompts : [];
+  return prompts.find((prompt, index) => {
+    const promptKey = getPromptKey(prompt, `custom_${index}`);
+    return promptKey === key || String(prompt?.name || '').trim() === key || String(prompt?.title || '').trim() === key;
+  }) || null;
 };
 
 const estimatePayloadSize = (value) => {
@@ -2677,6 +3895,10 @@ export class ScriptRuntime {
     this.seq = 0;
     this.oneTimeScripts = new Map();
     this.listenerEvents = new Set();
+    this.uiRoot = null;
+    this.uiShadow = null;
+    this.uiEventHandler = null;
+    this.uiLayoutTimer = 0;
     this.context = {
       sessionId: '',
       personaId: '',
@@ -2698,6 +3920,237 @@ export class ScriptRuntime {
       const key = String(event?.detail?.key || '');
       if (!key || !key.startsWith('script')) return;
       this.syncScripts().catch(() => {});
+    });
+  }
+
+  ensureUiRoot() {
+    if (typeof document === 'undefined' || !document.body) return null;
+    if (this.uiRoot?.isConnected && this.uiShadow) return this.uiShadow;
+    const root = document.getElementById('chatapp-script-virtual-ui-root') || document.createElement('div');
+    root.id = 'chatapp-script-virtual-ui-root';
+    root.setAttribute('data-chatapp-script-ui-root', 'true');
+    root.style.position = 'fixed';
+    root.style.inset = '0';
+    root.style.zIndex = '2147483000';
+    root.style.pointerEvents = 'none';
+    root.style.width = '100vw';
+    root.style.height = '100vh';
+    root.style.overflow = 'visible';
+    if (!root.parentNode) document.body.appendChild(root);
+    this.uiRoot = root;
+    this.uiShadow = root.shadowRoot || root.attachShadow?.({ mode: 'open' }) || root;
+    if (!this.uiEventHandler) this.uiEventHandler = (event) => this.handleUiEvent(event);
+    if (!this.uiShadow.__chatappScriptUiEvents) {
+      [
+        'click',
+        'dblclick',
+        'mousedown',
+        'mouseup',
+        'mousemove',
+        'pointerdown',
+        'pointerup',
+        'pointermove',
+        'touchstart',
+        'touchend',
+        'keydown',
+        'keyup',
+        'input',
+        'change',
+        'submit',
+      ].forEach(type => {
+        this.uiShadow.addEventListener?.(type, this.uiEventHandler, true);
+      });
+      this.uiShadow.__chatappScriptUiEvents = true;
+    }
+    return this.uiShadow;
+  }
+
+  clearWorkerUi() {
+    if (this.uiLayoutTimer) {
+      try {
+        cancelAnimationFrame(this.uiLayoutTimer);
+      } catch {}
+      try {
+        clearTimeout(this.uiLayoutTimer);
+      } catch {}
+      this.uiLayoutTimer = 0;
+    }
+    try {
+      this.uiShadow?.replaceChildren?.();
+    } catch {}
+    try {
+      this.uiRoot?.remove?.();
+    } catch {}
+    this.uiRoot = null;
+    this.uiShadow = null;
+  }
+
+  collectWorkerUiLayout() {
+    const shadow = this.uiShadow;
+    if (!shadow?.querySelectorAll) return [];
+    return Array.from(shadow.querySelectorAll('[data-chatapp-virtual-node-id]')).slice(0, 1500).map((node) => {
+      const rect = node.getBoundingClientRect();
+      return {
+        nodeId: String(node.getAttribute('data-chatapp-virtual-node-id') || ''),
+        left: rect.left,
+        top: rect.top,
+        right: rect.right,
+        bottom: rect.bottom,
+        width: rect.width,
+        height: rect.height,
+        clientWidth: node.clientWidth || rect.width,
+        clientHeight: node.clientHeight || rect.height,
+        scrollWidth: node.scrollWidth || node.clientWidth || rect.width,
+        scrollHeight: node.scrollHeight || node.clientHeight || rect.height,
+      };
+    }).filter(item => item.nodeId);
+  }
+
+  postWorkerUiLayout() {
+    const items = this.collectWorkerUiLayout();
+    if (!items.length || !this.worker) return;
+    this.worker.postMessage({ type: 'ui_layout', items });
+  }
+
+  scheduleWorkerUiLayoutSync() {
+    if (this.uiLayoutTimer) return;
+    const schedule = typeof requestAnimationFrame === 'function'
+      ? requestAnimationFrame
+      : (cb) => setTimeout(cb, 16);
+    this.uiLayoutTimer = schedule(() => {
+      this.uiLayoutTimer = 0;
+      this.postWorkerUiLayout();
+    });
+  }
+
+  getWorkerUiBaseCss() {
+    return `
+:host {
+  all: initial;
+  position: fixed;
+  inset: 0;
+  z-index: 2147483000;
+  pointer-events: none;
+  width: 100vw;
+  height: 100vh;
+  overflow: visible;
+}
+.chatapp-script-ui-surface {
+  position: fixed;
+  inset: 0;
+  z-index: 2147483000;
+  pointer-events: none;
+  width: 100vw;
+  height: 100vh;
+  overflow: visible;
+  color-scheme: light dark;
+}
+.chatapp-script-ui-surface *,
+.chatapp-script-ui-surface *::before,
+.chatapp-script-ui-surface *::after {
+  box-sizing: border-box;
+}
+.chatapp-script-ui-surface button,
+.chatapp-script-ui-surface input,
+.chatapp-script-ui-surface textarea,
+.chatapp-script-ui-surface select,
+.chatapp-script-ui-surface option,
+.chatapp-script-ui-surface a,
+.chatapp-script-ui-surface label,
+.chatapp-script-ui-surface summary,
+.chatapp-script-ui-surface [role="button"],
+.chatapp-script-ui-surface [role="switch"],
+.chatapp-script-ui-surface [role="checkbox"],
+.chatapp-script-ui-surface [tabindex],
+.chatapp-script-ui-surface [data-chatapp-has-ui-listener="1"] {
+  pointer-events: auto;
+}
+`.trim();
+  }
+
+  renderWorkerUi(payload = {}) {
+    const styles = Array.isArray(payload.styles)
+      ? payload.styles.map(item => String(item || '')).filter(Boolean)
+      : [];
+    const roots = Array.isArray(payload.roots)
+      ? payload.roots.map(item => String(item || '')).filter(Boolean)
+      : [];
+    if (!styles.length && !roots.length) {
+      this.clearWorkerUi();
+      return;
+    }
+    const shadow = this.ensureUiRoot();
+    if (!shadow) return;
+    try {
+      shadow.replaceChildren();
+      const baseStyle = document.createElement('style');
+      baseStyle.textContent = this.getWorkerUiBaseCss();
+      shadow.appendChild(baseStyle);
+      styles.forEach((css) => {
+        const style = document.createElement('style');
+        style.textContent = css;
+        shadow.appendChild(style);
+      });
+      const surface = document.createElement('div');
+      surface.className = 'chatapp-script-ui-surface';
+      surface.innerHTML = roots.join('');
+      shadow.appendChild(surface);
+      this.postWorkerUiLayout();
+      this.scheduleWorkerUiLayoutSync();
+    } catch (err) {
+      logger.warn('script runtime ui render failed', err);
+    }
+  }
+
+  collectUiEventPayload(event, target) {
+    const payload = {
+      type: event.type,
+      bubbles: true,
+      cancelable: event.cancelable === true,
+      detail: event.detail,
+      altKey: event.altKey === true,
+      ctrlKey: event.ctrlKey === true,
+      metaKey: event.metaKey === true,
+      shiftKey: event.shiftKey === true,
+    };
+    [
+      'key',
+      'code',
+      'button',
+      'buttons',
+      'clientX',
+      'clientY',
+      'screenX',
+      'screenY',
+      'pageX',
+      'pageY',
+      'offsetX',
+      'offsetY',
+      'pointerId',
+      'pointerType',
+      'isPrimary',
+    ].forEach((key) => {
+      if (event[key] !== undefined) payload[key] = event[key];
+    });
+    if (target && 'value' in target) payload.value = target.value;
+    if (target && 'checked' in target) payload.checked = target.checked === true;
+    return payload;
+  }
+
+  handleUiEvent(event) {
+    const rawTarget = event.composedPath?.()[0] || event.target;
+    const target = rawTarget?.closest?.('[data-chatapp-virtual-node-id]');
+    if (!target) return;
+    const nodeId = String(target.getAttribute('data-chatapp-virtual-node-id') || '');
+    if (!nodeId) return;
+    event.stopPropagation?.();
+    if (event.type === 'submit') event.preventDefault?.();
+    this.postWorkerUiLayout();
+    this.worker?.postMessage({
+      type: 'ui_event',
+      nodeId,
+      eventType: event.type,
+      event: this.collectUiEventPayload(event, target),
     });
   }
 
@@ -2753,6 +4206,7 @@ export class ScriptRuntime {
       this.worker?.terminate?.();
     } catch {}
     this.worker = null;
+    this.clearWorkerUi();
     for (const pending of this.pending.values()) {
       clearTimeout(pending.timer);
       pending.reject(new Error(msg));
@@ -2820,9 +4274,10 @@ export class ScriptRuntime {
       if (!id || presetIds.includes(id)) return;
       presetIds.push(id);
     };
+    let resolvedOpenAI = null;
     if (this.presets?.getResolvedActiveId) {
       const presetContext = { sessionId: sid, uiMode };
-      const resolvedOpenAI = this.presets.getResolvedActiveId('openai', presetContext);
+      resolvedOpenAI = this.presets.getResolvedActiveId('openai', presetContext);
       const resolvedSysPrompt = this.presets.getResolvedActiveId('sysprompt', presetContext);
       const resolvedContext = this.presets.getResolvedActiveId('context', presetContext);
       const resolvedInstruct = this.presets.getResolvedActiveId('instruct', presetContext);
@@ -2843,6 +4298,9 @@ export class ScriptRuntime {
       pushPresetId(state?.active?.reasoning);
     }
     if (!presetId && presetIds.length) presetId = presetIds[0];
+    const resolvedOpenAiState = this.presets?.getResolvedActive
+      ? this.presets.getResolvedActive('openai', { sessionId: sid, uiMode })
+      : null;
     const resolvedWorldState = this.bridge?.getResolvedWorldState?.(sid, {
       uiMode,
     }) || null;
@@ -2855,13 +4313,18 @@ export class ScriptRuntime {
       ...(Array.isArray(worldIds) ? worldIds : []),
       ...(worldId ? [worldId] : []),
     ].map(item => String(item || '').trim()).filter(Boolean)));
-    const activeOpenAiPreset = this.presets?.getActive?.('openai') || {};
+    const activeOpenAiPreset = resolvedOpenAiState?.preset || this.presets?.getActive?.('openai') || {};
+    const activeOpenAiPresetId = String(resolvedOpenAiState?.presetId || resolvedOpenAI?.presetId || this.presets?.getActiveId?.('openai') || '').trim();
     const activePresetPrompts = Array.isArray(activeOpenAiPreset?.prompts)
       ? clonePlain(activeOpenAiPreset.prompts)
       : [];
     const activePreset = {
+      id: activeOpenAiPresetId,
       name: String(activeOpenAiPreset?.name || ''),
       prompts: activePresetPrompts,
+      prompt_order: Array.isArray(activeOpenAiPreset?.prompt_order)
+        ? clonePlain(activeOpenAiPreset.prompt_order)
+        : [],
       prompts_unused: Array.isArray(activeOpenAiPreset?.prompts_unused)
         ? clonePlain(activeOpenAiPreset.prompts_unused)
         : [],
@@ -2878,6 +4341,7 @@ export class ScriptRuntime {
       personaName,
       presetId,
       presetIds,
+      openaiPresetId: activeOpenAiPresetId,
       worldId,
       worldIds,
       worldbookNames,
@@ -2931,6 +4395,7 @@ export class ScriptRuntime {
       if (this.iframeRuntime) {
         this.iframeRuntime.syncScripts([], this.context, runtimeSettings);
       }
+      this.clearWorkerUi();
       return;
     }
     const scripts = [];
@@ -3001,6 +4466,8 @@ export class ScriptRuntime {
         context: this.context,
         settings: runtimeSettings,
       });
+    } else if (!workerScripts.length) {
+      this.clearWorkerUi();
     }
     if (this.iframeRuntime) {
       this.iframeRuntime.syncScripts(iframeScripts, this.context, runtimeSettings);
@@ -3087,6 +4554,10 @@ export class ScriptRuntime {
     if (!msg || typeof msg !== 'object') return;
     if (msg.type === 'listener_add') {
       this.recordListener(msg.event);
+      return;
+    }
+    if (msg.type === 'ui_update') {
+      this.renderWorkerUi(msg.payload || {});
       return;
     }
     if (msg.type === 'dispatch_result') {
@@ -3370,12 +4841,18 @@ export class ScriptRuntime {
     if (method === 'context.getPreset') {
       const name = String(params.name || '');
       if (!name || name === 'in_use' || name === 'current') {
-        const activeOpenAiPreset = this.presets?.getActive?.('openai') || {};
+        const uiMode = sessionId.startsWith('rp:') ? 'rp' : 'chat';
+        const resolvedOpenAi = this.presets?.getResolvedActive?.('openai', { sessionId, uiMode }) || null;
+        const activeOpenAiPreset = resolvedOpenAi?.preset || this.presets?.getActive?.('openai') || {};
         return {
+          id: String(resolvedOpenAi?.presetId || this.presets?.getActiveId?.('openai') || ''),
           name: String(activeOpenAiPreset?.name || this.context.presetName || ''),
           prompts: Array.isArray(activeOpenAiPreset?.prompts)
             ? clonePlain(activeOpenAiPreset.prompts)
             : clonePlain(this.context.presetPrompts || []),
+          prompt_order: Array.isArray(activeOpenAiPreset?.prompt_order)
+            ? clonePlain(activeOpenAiPreset.prompt_order)
+            : [],
           prompts_unused: Array.isArray(activeOpenAiPreset?.prompts_unused)
             ? clonePlain(activeOpenAiPreset.prompts_unused)
             : [],
@@ -3386,6 +4863,58 @@ export class ScriptRuntime {
         return { name: String(active?.name || '') };
       }
       return { name };
+    }
+    if (method === 'preset.setPromptEnabled') {
+      if (!allowModifyVariables) return false;
+      const presetType = String(params.presetType || 'openai').trim() || 'openai';
+      if (presetType !== 'openai') return false;
+      const identifier = String(params.identifier || params.id || params.name || '').trim();
+      if (!identifier || !this.presets?.upsert) return false;
+      const uiMode = sessionId.startsWith('rp:') ? 'rp' : 'chat';
+      const resolved = this.presets?.getResolvedActive?.('openai', { sessionId, uiMode }) || null;
+      const presetId = String(
+        params.presetId ||
+        resolved?.presetId ||
+        this.context.openaiPresetId ||
+        this.presets?.getActiveId?.('openai') ||
+        ''
+      ).trim();
+      const preset = clonePlain(resolved?.preset || this.presets?.getActive?.('openai') || null);
+      if (!presetId || !preset || typeof preset !== 'object') return false;
+      const prompts = Array.isArray(preset.prompts) ? preset.prompts : [];
+      const prompt = findPresetPrompt(preset, identifier);
+      if (!prompt) return false;
+      const promptId = getPromptKey(prompt, identifier);
+      prompt.identifier = prompt.identifier || promptId;
+      prompt.enabled = params.enabled !== false;
+      const block = ensurePromptOrderBlock(preset);
+      if (!block.order.length && prompts.length) {
+        block.order = prompts.map((item, index) => ({
+          identifier: getPromptKey(item, `custom_${index}`),
+          enabled: item?.enabled !== false,
+        })).filter(item => item.identifier);
+      }
+      let orderItem = block.order.find(item => String(item?.identifier || item?.id || item?.name || '').trim() === promptId);
+      if (!orderItem) {
+        orderItem = { identifier: promptId, enabled: params.enabled !== false };
+        block.order.push(orderItem);
+      } else {
+        orderItem.identifier = promptId;
+        orderItem.enabled = params.enabled !== false;
+      }
+      await this.presets.upsert('openai', {
+        id: presetId,
+        name: String(preset.name || presetId),
+        data: preset,
+        makeActive: false,
+      });
+      this.context = { ...this.context, ...this.buildContext(sessionId) };
+      emitDebugLog({
+        message: `脚本已${params.enabled === false ? '关闭' : '开启'}预设条目：${prompt.name || promptId}`,
+        type: 'info',
+        source: 'script',
+      });
+      return true;
     }
     if (method === 'context.getContext') {
       const localVariables = sessionId && this.chatStore?.listVariables
