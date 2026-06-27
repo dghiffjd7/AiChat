@@ -22,6 +22,8 @@ const ICONS = Object.freeze({
     close: iconSvg('<path d="M18 6 6 18"/><path d="m6 6 12 12"/>'),
     export: iconSvg('<path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/>'),
     pending: iconSvg('<path d="M12 6v6l4 2"/><circle cx="12" cy="12" r="9"/>'),
+    prompts: iconSvg('<path d="M4 5h16"/><path d="M4 9h10"/><path d="M4 15h16"/><path d="M4 19h12"/>'),
+    diagnostics: iconSvg('<path d="M4 19V5"/><path d="M4 19h16"/><path d="m7 16 4-4 3 3 5-7"/><path d="M17 8h2v2"/>'),
     refresh: iconSvg('<path d="M3 12a9 9 0 0 1 15.5-6.2"/><path d="M18 3v5h-5"/><path d="M21 12a9 9 0 0 1-15.5 6.2"/><path d="M6 21v-5h5"/>'),
     resources: iconSvg('<path d="M4 5h16"/><path d="M4 12h16"/><path d="M4 19h16"/><path d="M7 5v14"/>'),
     safety: iconSvg('<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z"/><path d="m9 12 2 2 4-5"/>'),
@@ -30,6 +32,8 @@ const ICONS = Object.freeze({
 const tabIcon = (id = '') => ({
     pending: ICONS.pending,
     agents: ICONS.agent,
+    prompts: ICONS.prompts,
+    diagnostics: ICONS.diagnostics,
     resources: ICONS.resources,
     activity: ICONS.activity,
     safety: ICONS.safety,
@@ -419,20 +423,264 @@ const PANEL_CSS = `
 }
 .agent-center-agent-list {
     display: grid;
-    grid-template-columns: 1fr;
-    gap: 10px;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
 }
 .agent-center-agent-card {
-    padding: 14px;
+    min-height: 210px;
+    cursor: pointer;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    background:
+        linear-gradient(135deg, var(--agent-card-accent-soft, rgba(59,130,246,0.10)), transparent 46%),
+        color-mix(in srgb, var(--app-surface-card) 94%, var(--app-surface-subtle));
 }
 .agent-center-agent-card.is-agent-on {
-    border-color: rgba(34,197,94,0.24);
-    background: color-mix(in srgb, var(--app-surface-card) 88%, rgba(34,197,94,0.14));
+    border-color: var(--agent-card-accent-border, rgba(34,197,94,0.24));
+}
+.agent-center-agent-card:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 10px 26px rgba(15, 23, 42, 0.10);
+}
+.agent-center-agent-card[data-agent-accent="image"],
+.agent-center-floating-card[data-agent-accent="image"] {
+    --agent-card-accent-soft: rgba(14,165,233,0.12);
+    --agent-card-accent-border: rgba(14,165,233,0.28);
+}
+.agent-center-agent-card[data-agent-accent="memory"],
+.agent-center-floating-card[data-agent-accent="memory"] {
+    --agent-card-accent-soft: rgba(34,197,94,0.12);
+    --agent-card-accent-border: rgba(34,197,94,0.28);
+}
+.agent-center-agent-card[data-agent-accent="lineage"],
+.agent-center-agent-card[data-agent-accent="lane"],
+.agent-center-floating-card[data-agent-accent="lineage"],
+.agent-center-floating-card[data-agent-accent="lane"] {
+    --agent-card-accent-soft: rgba(99,102,241,0.12);
+    --agent-card-accent-border: rgba(99,102,241,0.26);
+}
+.agent-center-agent-card[data-agent-accent="moment"],
+.agent-center-agent-card[data-agent-accent="group"],
+.agent-center-floating-card[data-agent-accent="moment"],
+.agent-center-floating-card[data-agent-accent="group"] {
+    --agent-card-accent-soft: rgba(244,114,182,0.11);
+    --agent-card-accent-border: rgba(244,114,182,0.25);
+}
+.agent-center-agent-card[data-agent-accent="summary"],
+.agent-center-agent-card[data-agent-accent="dialogue"],
+.agent-center-agent-card[data-agent-accent="phone"],
+.agent-center-floating-card[data-agent-accent="summary"],
+.agent-center-floating-card[data-agent-accent="dialogue"],
+.agent-center-floating-card[data-agent-accent="phone"] {
+    --agent-card-accent-soft: rgba(245,158,11,0.11);
+    --agent-card-accent-border: rgba(245,158,11,0.25);
+}
+.agent-center-floating-layer {
+    position: fixed;
+    inset: 0;
+    z-index: 22030;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+    background: rgba(15, 23, 42, 0.22);
+}
+.agent-center-floating-card {
+    width: min(620px, calc(100vw - 32px));
+    height: min(720px, calc(100vh - 40px));
+    perspective: 1400px;
+}
+.agent-center-floating-inner {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    transform: rotateY(0deg);
+    transform-style: preserve-3d;
+    transition: transform 520ms cubic-bezier(0.16, 1, 0.3, 1);
+    will-change: transform;
+}
+.agent-center-floating-card.is-flipped .agent-center-floating-inner {
+    transform: rotateY(180deg);
+}
+.agent-center-floating-face {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    overflow: auto;
+    padding: 16px;
+    border: 1px solid var(--agent-card-accent-border, var(--app-border-default));
+    border-radius: 12px;
+    background:
+        linear-gradient(135deg, var(--agent-card-accent-soft, rgba(59,130,246,0.10)), transparent 44%),
+        color-mix(in srgb, var(--app-surface-card) 96%, var(--app-surface-subtle));
+    box-shadow: 0 22px 70px rgba(15, 23, 42, 0.24);
+    backface-visibility: hidden;
+}
+.agent-center-floating-face-back {
+    transform: rotateY(180deg);
+}
+.agent-center-floating-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+.agent-center-icon-button {
+    width: 34px;
+    height: 34px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 auto;
+    border: 1px solid var(--app-border-default);
+    border-radius: 8px;
+    background: var(--app-surface-card);
+    color: var(--app-text-primary);
+    cursor: pointer;
+}
+.agent-center-icon-button:hover {
+    background: var(--app-surface-hover);
+}
+.agent-center-agent-badge {
+    width: 38px;
+    height: 38px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 auto;
+    border: 1px solid var(--agent-card-accent-border, rgba(59,130,246,0.24));
+    border-radius: 8px;
+    background: var(--agent-card-accent-soft, rgba(59,130,246,0.10));
+    color: var(--app-text-primary);
+    font-size: 18px;
+    font-weight: 900;
+}
+.agent-center-agent-title-row {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 10px;
+}
+.agent-center-agent-title-main {
+    min-width: 0;
+    display: flex;
+    gap: 10px;
+    align-items: flex-start;
+}
+.agent-center-agent-face-back .agent-center-card-title {
+    font-size: 13px;
+}
+.agent-center-agent-section {
+    display: grid;
+    gap: 6px;
+    padding: 8px;
+    border: 1px solid rgba(148,163,184,0.16);
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--app-surface-card) 82%, transparent);
+}
+.agent-center-agent-section-title {
+    color: var(--app-text-secondary);
+    font-size: 11px;
+    font-weight: 900;
+}
+.agent-center-agent-mini-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+.agent-center-agent-mini-item {
+    min-height: 24px;
+    display: inline-flex;
+    align-items: center;
+    border: 1px solid rgba(148,163,184,0.20);
+    border-radius: 8px;
+    padding: 4px 7px;
+    background: var(--app-surface-card);
+    color: var(--app-text-primary);
+    font-size: 11px;
+    font-weight: 800;
+}
+.agent-center-agent-editor {
+    display: grid;
+    gap: 7px;
+}
+.agent-center-agent-editor-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 8px;
+    align-items: center;
+}
+.agent-center-agent-field-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 6px;
+}
+.agent-center-agent-field {
+    display: grid;
+    gap: 4px;
+}
+.agent-center-agent-field.is-wide {
+    grid-column: 1 / -1;
+}
+.agent-center-agent-field label,
+.agent-center-agent-check {
+    color: var(--app-text-secondary);
+    font-size: 11px;
+    font-weight: 900;
+}
+.agent-center-agent-check {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    cursor: pointer;
+}
+.agent-center-agent-input,
+.agent-center-agent-textarea {
+    width: 100%;
+    min-width: 0;
+    border: 1px solid var(--app-border-default);
+    border-radius: 8px;
+    background: var(--app-surface-card);
+    color: var(--app-text-primary);
+    font: inherit;
+    font-size: 12px;
+    box-sizing: border-box;
+}
+.agent-center-agent-input {
+    min-height: 30px;
+    padding: 5px 7px;
+}
+.agent-center-agent-textarea {
+    min-height: 92px;
+    resize: vertical;
+    padding: 8px;
+    line-height: 1.45;
+}
+.agent-center-agent-textarea.is-compact {
+    min-height: 70px;
+}
+.agent-center-agent-prompt-preview {
+    min-height: 86px;
+    padding: 8px;
+    border: 1px solid var(--app-border-default);
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--app-surface-card) 88%, transparent);
+    color: var(--app-text-secondary);
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 11px;
+    line-height: 1.45;
+    white-space: pre-wrap;
+}
+.agent-center-agent-input:focus,
+.agent-center-agent-textarea:focus {
+    outline: 2px solid rgba(59,130,246,0.22);
+    border-color: rgba(59,130,246,0.38);
 }
 .agent-center-agent-settings {
     display: grid;
     gap: 6px;
-    margin-top: 10px;
 }
 .agent-center-setting-row {
     display: grid;
@@ -695,6 +943,9 @@ const PANEL_CSS = `
     .agent-center-content {
         padding: 10px;
     }
+    .agent-center-agent-list {
+        grid-template-columns: minmax(0, 1fr);
+    }
     .agent-center-setting-row {
         grid-template-columns: 64px minmax(0, 1fr);
     }
@@ -704,6 +955,9 @@ const PANEL_CSS = `
     .agent-center-setting-row .agent-center-card-action {
         grid-column: 1 / -1;
         width: 100%;
+    }
+    .agent-center-agent-field-grid {
+        grid-template-columns: minmax(0, 1fr);
     }
     .agent-center-resource-list {
         grid-template-columns: minmax(0, 1fr);
@@ -747,6 +1001,7 @@ body[data-theme-mode='dark'] .agent-center-tab.is-active {
     .agent-center-panel,
     .agent-center-button,
     .agent-center-card,
+    .agent-center-floating-inner,
     .agent-center-card-action,
     .agent-center-resource-shortcut,
     .agent-center-switch,
@@ -1063,8 +1318,16 @@ const AGENT_KIND_LABELS = Object.freeze({
     chat_body_quality_guardian: '正文检查',
     memory_update: '记忆更新',
     image_generation: '图片生成',
+    image_director_generation: '生图整理',
     moment_summary: '动态整理',
     lineage_layout: '血缘图排版',
+    creative_execution_lane: '执行泳道',
+    summary_compaction: '摘要压缩',
+    moment_comment: '动态评论',
+    moment_publish: '动态发布',
+    phone_format: '手机格式',
+    chat_guide: '聊天提示',
+    group_chat: '群聊提示',
 });
 
 const AGENT_FEATURE_LABELS = Object.freeze({
@@ -1091,6 +1354,99 @@ const displayRiskLabel = risk => RISK_LABELS[trim(risk).toLowerCase()] || trim(r
 const displayPermissionLabel = permission => PERMISSION_LABELS[trim(permission)] || trim(permission);
 const displayAgentKind = kind => AGENT_KIND_LABELS[trim(kind)] || trim(kind);
 const displayAgentFeature = id => AGENT_FEATURE_LABELS[trim(id)] || trim(id, 'Agent');
+const displayCardCategory = category => ({
+    creative: '创作执行',
+    memory: '记忆与摘要',
+    social: '动态执行',
+    assistant: '辅助执行',
+    safety: '写入安全',
+    prompt_module: '提示词/协议',
+    diagnostic: '诊断视图',
+}[trim(category)] || trim(category, 'Agent'));
+
+const AGENT_CARD_GLYPHS = Object.freeze({
+    image_director: '图',
+    memory_table_agent: '记',
+    lineage_agent: '血',
+    execution_lane_agent: '泳',
+    summary_agent: '摘',
+    moment_agent: '动',
+    dialogue_agent: '私',
+    group_agent: '群',
+    phone_format_agent: '机',
+    reply_check: '检',
+    write_preview: '预',
+    text_completion: '补',
+    prompt_manager: '提',
+    memory_manager: '管',
+});
+
+const displayAgentCardGlyph = card => (
+    AGENT_CARD_GLYPHS[trim(card?.id)] || trim(card?.title, 'A').slice(0, 1).toUpperCase()
+);
+
+const FEATURE_AGENT_CARD_IDS = new Set([
+    'reply_check',
+    'write_preview',
+    'text_completion',
+    'prompt_manager',
+    'memory_manager',
+]);
+
+const isFeatureAgentCard = agent => (
+    trim(agent?.toggleKind) === 'feature' ||
+    trim(agent?.cardType) === 'feature' ||
+    FEATURE_AGENT_CARD_IDS.has(trim(agent?.id))
+);
+
+const PROMPT_POSITION_OPTIONS = Object.freeze([
+    { value: 0, label: 'IN_PROMPT' },
+    { value: 1, label: 'IN_CHAT' },
+    { value: 4, label: '最新输入前' },
+    { value: 5, label: '最新输入后' },
+    { value: 2, label: 'BEFORE_PROMPT' },
+    { value: -1, label: 'NONE' },
+]);
+
+const PROMPT_ROLE_OPTIONS = Object.freeze([
+    { value: 0, label: 'SYSTEM' },
+    { value: 1, label: 'USER' },
+    { value: 2, label: 'ASSISTANT' },
+]);
+
+const PROMPT_REFS_WITH_PLACEMENT = new Set([
+    'dialogue',
+    'group',
+    'moment',
+    'moment-comment',
+    'moment-publish-comment',
+    'auto-image-prompt',
+    'summary',
+]);
+
+const MEMORY_POSITION_OPTIONS = Object.freeze([
+    { value: '', label: '跟随通用设置' },
+    { value: 'template', label: '模板默认' },
+    { value: 'before_latest_user', label: '最新输入前' },
+    { value: 'after_latest_user', label: '最新输入后' },
+    { value: 'history_depth', label: '历史深度' },
+    { value: 'before_chat', label: '聊天前' },
+    { value: 'history_before', label: '历史前' },
+    { value: 'history_after', label: '历史后' },
+    { value: 'system_end', label: '系统末尾' },
+    { value: 'system_end+before_chat', label: '系统末尾 + 聊天前' },
+]);
+
+const REPLY_CHECK_PREVIEW_TARGET_OPTIONS = Object.freeze([
+    { value: 'auto', label: '跟随当前场景' },
+    { value: 'private_chat', label: '私聊格式' },
+    { value: 'group_chat', label: '群聊格式' },
+    { value: 'moment_comment', label: '动态评论' },
+    { value: 'moment_post', label: '动态发布' },
+    { value: 'image_prompt', label: '生图标签' },
+    { value: 'memory_table_edit', label: '记忆表格' },
+    { value: 'creative_text', label: '创意写作' },
+]);
 
 const permissionDecisionChipClass = decision => ({
     allow: statusChipClass('running'),
@@ -1190,6 +1546,9 @@ export const formatAgentCenterExportText = (view = {}) => {
             `待确认 ${Number(meta.pending || 0)}`,
             `运行中 ${Number(meta.activeRuns || 0)}`,
             `未读失败 ${Number(meta.unreadFailedRuns || 0)}`,
+            `Agent ${Number(meta.enabledAgents || 0)}/${Number(meta.agents || 0)}`,
+            `提示词 ${Number(meta.enabledPromptModules || 0)}/${Number(meta.promptModules || 0)}`,
+            `诊断 ${Number(meta.diagnosticViews || 0)}`,
             `资源 ${Number(meta.resources || 0)}`,
             `工具 ${Number(meta.tools || 0)}`,
         ]),
@@ -1231,6 +1590,29 @@ export const formatAgentCenterExportText = (view = {}) => {
             agent.implemented ? '可使用' : '规划中',
             agent.triggerLabel ? `触发：${agent.triggerLabel}` : '',
             agent.modelLabel ? `模型：${agent.modelLabel}` : '',
+        ]));
+    });
+
+    lines.push('', '[提示词]');
+    const promptModules = Array.isArray(view?.promptModules) ? view.promptModules : [];
+    if (!promptModules.length) lines.push('无');
+    promptModules.forEach(item => {
+        lines.push(formatExportLine([
+            item.title || displayAgentFeature(item.id),
+            item.enabled ? '已开启' : '已关闭',
+            item.promptRefs?.length ? `提示词 ${item.promptRefs.length}` : '',
+            item.summary,
+        ]));
+    });
+
+    lines.push('', '[诊断]');
+    const diagnosticViews = Array.isArray(view?.diagnosticViews) ? view.diagnosticViews : [];
+    if (!diagnosticViews.length) lines.push('无');
+    diagnosticViews.forEach(item => {
+        lines.push(formatExportLine([
+            item.title || item.id,
+            item.implemented ? '可使用' : '规划中',
+            item.summary,
         ]));
     });
 
@@ -1293,12 +1675,16 @@ export class AgentCenterPanel {
         this.contentElement = null;
         this.metaElement = null;
         this.tabsElement = null;
-        this.activeTab = 'pending';
+        this.activeTab = 'agents';
         this.activityStatus = '';
         this.surface = '';
         this.view = buildAgentCenterView();
         this.lastError = '';
         this.boundConfigProfileChanged = null;
+        this.boundMemoryStorageModeChanged = null;
+        this.floatingAgentId = '';
+        this.floatingAgentFlipped = false;
+        this.replyCheckPreviewTarget = 'auto';
     }
 
     ensureStyle() {
@@ -1349,6 +1735,10 @@ export class AgentCenterPanel {
         document.body.appendChild(overlay);
         this.boundConfigProfileChanged = (event) => this.handleConfigProfileChanged(event);
         globalThis.window?.addEventListener?.('config-profile-changed', this.boundConfigProfileChanged);
+        this.boundMemoryStorageModeChanged = () => {
+            if (this.isVisible()) this.refresh();
+        };
+        globalThis.window?.addEventListener?.('memory-storage-mode-changed', this.boundMemoryStorageModeChanged);
     }
 
     async callAction(name, args = undefined, fallback = null) {
@@ -1413,6 +1803,10 @@ export class AgentCenterPanel {
             continuationCommitPolicy,
             agentModelProfiles,
             resourceStatus,
+            agentCenterSettings,
+            agentProfileView,
+            memoryMode,
+            memoryAgentPromptConfig,
         ] = await Promise.all([
             this.callAction('listProviderToolPendingPermissions', { limit: 100 }, []),
             this.callAction('listContactProfilePendingUpdates', undefined, []),
@@ -1423,9 +1817,13 @@ export class AgentCenterPanel {
             this.callAction('getProviderContinuationCommitPolicy', undefined, null),
             this.callAction('listAgentModelProfiles', undefined, []),
             this.callAction('listAgentResourceStatus', undefined, {}),
+            this.callAction('getAgentCenterSettings', undefined, null),
+            this.callAction('getAgentCenterProfileView', undefined, null),
+            this.callAction('getMemoryStorageMode', undefined, 'table'),
+            this.callAction('getMemoryAgentPromptConfig', undefined, null),
         ]);
         const agentFeatureSettings = await this.callAction('getAgentFeatureSettings', undefined, null);
-        return buildAgentCenterView({
+        const view = buildAgentCenterView({
             pendingPermissions,
             contactProfilePendingUpdates,
             agentRunView,
@@ -1437,14 +1835,19 @@ export class AgentCenterPanel {
             experimentStatus,
             continuationCommitPolicy,
             resourceStatus,
+            agentCenterSettings,
+            agentProfileView,
+            memoryMode,
         });
+        view.memoryAgentPromptConfig = memoryAgentPromptConfig;
+        return view;
     }
 
     show(options = {}) {
         const opts = options && typeof options === 'object' ? options : {};
         const tab = Object.prototype.hasOwnProperty.call(opts, 'tab') ? opts.tab : this.activeTab;
         this.ensureDom();
-        this.activeTab = trim(tab, 'pending');
+        this.activeTab = trim(tab, 'agents');
         this.activityStatus = normalizeActivityStatus(opts.activityStatus || opts.status || '');
         this.surface = normalizeSurface(opts.surface || '');
         if (this.overlayElement) this.overlayElement.style.display = 'flex';
@@ -1453,6 +1856,8 @@ export class AgentCenterPanel {
 
     hide() {
         closeCustomSelectMenu();
+        this.floatingAgentId = '';
+        this.floatingAgentFlipped = false;
         if (this.overlayElement) this.overlayElement.style.display = 'none';
     }
 
@@ -1480,12 +1885,16 @@ export class AgentCenterPanel {
         const next = trim(tab, 'pending');
         if (!this.view.tabs.some(item => item.id === next)) return;
         this.activeTab = next;
+        this.floatingAgentId = '';
+        this.floatingAgentFlipped = false;
         if (resetActivityStatus) this.activityStatus = '';
         this.render();
     }
 
     setActivityStatus(status = '') {
         this.activeTab = 'activity';
+        this.floatingAgentId = '';
+        this.floatingAgentFlipped = false;
         this.activityStatus = normalizeActivityStatus(status);
         this.refresh();
     }
@@ -1527,6 +1936,8 @@ export class AgentCenterPanel {
             `活动中 ${Number(meta.activeRuns || 0)}`,
             `失败 ${Number(meta.failedRuns || 0)}`,
             `Agent ${Number(meta.enabledAgents || 0)}/${Number(meta.agents || 0)}`,
+            `提示词 ${Number(meta.enabledPromptModules || 0)}/${Number(meta.promptModules || 0)}`,
+            `诊断 ${Number(meta.diagnosticViews || 0)}`,
             `资源 ${Number(meta.resources || 0)}`,
             `工具 ${Number(meta.tools || 0)}`,
             this.surface ? `范围 ${this.surface}` : '',
@@ -1595,48 +2006,481 @@ export class AgentCenterPanel {
         `;
     }
 
-    renderAgents() {
-        const agents = this.view.agents || [];
-        if (!agents.length) return renderEmpty('还没有可启用的 Agent');
-        return `<div class="agent-center-agent-list">${agents.map(agent => `
-            <article class="agent-center-card agent-center-agent-card${agent.enabled ? ' is-agent-on' : ''}">
-                <div class="agent-center-card-head">
+    getAgentCards() {
+        return this.view.agentCards || this.view.agents || [];
+    }
+
+    getPromptModuleCards() {
+        return this.view.promptModules || [];
+    }
+
+    getDiagnosticCards() {
+        return this.view.diagnosticViews || [];
+    }
+
+    getAllCenterCards() {
+        return [
+            ...this.getAgentCards(),
+            ...this.getPromptModuleCards(),
+            ...this.getDiagnosticCards(),
+        ];
+    }
+
+    getAgentCardById(agentId = '') {
+        const id = trim(agentId);
+        return (this.getAllCenterCards() || []).find(item => item.id === id) || null;
+    }
+
+    renderAgentRuntimeState(agent = {}) {
+        const state = agent.runtimeState || null;
+        if (!state) return '';
+        return `
+            <div class="agent-center-agent-section">
+                <div class="agent-center-agent-section-title">最近运行</div>
+                <div class="agent-center-card-sub">${escapeHtml(formatMeta([
+                    displayAgentKind(state.kind),
+                    displayStatusLabel(state.status),
+                    state.summary,
+                ]))}</div>
+            </div>
+        `;
+    }
+
+    getAgentProfile(profileType = 'sysprompt') {
+        const view = this.view.agentProfileView || {};
+        const key = trim(profileType, 'sysprompt');
+        return view?.[key]?.profile || null;
+    }
+
+    getAgentPromptConfig(agent = {}, ref = {}) {
+        const profileType = trim(ref.profileType, 'sysprompt');
+        const profile = this.getAgentProfile(profileType);
+        const agentProfile = profile?.agents?.[trim(ref.agentId || agent.id)] || null;
+        const prompt = agentProfile?.prompts?.[trim(ref.id)] || null;
+        return prompt && typeof prompt === 'object' ? prompt : null;
+    }
+
+    renderSelectOptions(options = [], selectedValue = '') {
+        const selected = String(selectedValue ?? '');
+        return options.map(option => `
+            <option value="${escapeHtml(option.value)}"${String(option.value) === selected ? ' selected' : ''}>${escapeHtml(option.label)}</option>
+        `).join('');
+    }
+
+    renderAgentPromptEditor(agent = {}, ref = {}) {
+        const prompt = this.getAgentPromptConfig(agent, ref) || {};
+        const profileType = trim(ref.profileType, 'sysprompt');
+        const profileView = this.view.agentProfileView?.[profileType] || {};
+        const presetId = trim(profileView.presetId);
+        const promptId = trim(ref.id);
+        const hasPlacement = PROMPT_REFS_WITH_PLACEMENT.has(promptId) || prompt.position !== undefined;
+        const positionValue = prompt.position !== undefined ? prompt.position : (promptId === 'summary' ? 1 : 0);
+        const depthValue = prompt.depth !== undefined ? prompt.depth : (promptId === 'summary' ? 1 : 0);
+        const roleValue = prompt.role !== undefined ? prompt.role : 0;
+        return `
+            <div
+                class="agent-center-agent-editor"
+                data-agent-prompt-editor="${escapeHtml(promptId)}"
+                data-agent-id="${escapeHtml(agent.id)}"
+                data-agent-prompt-profile-type="${escapeHtml(profileType)}"
+                data-agent-prompt-preset-id="${escapeHtml(presetId)}"
+            >
+                <div class="agent-center-agent-editor-row">
+                    <label class="agent-center-agent-check">
+                        <input type="checkbox" data-agent-prompt-enabled ${prompt.enabled !== false ? 'checked' : ''}>
+                        <span>${escapeHtml(ref.label || promptId)}</span>
+                    </label>
+                    <button type="button" class="agent-center-card-action is-primary" data-agent-prompt-save="${escapeHtml(promptId)}">保存</button>
+                </div>
+                ${hasPlacement ? `
+                    <div class="agent-center-agent-field-grid">
+                        <div class="agent-center-agent-field">
+                            <label>注入位置</label>
+                            <select class="agent-center-agent-input" data-agent-prompt-position>
+                                ${this.renderSelectOptions(PROMPT_POSITION_OPTIONS, positionValue)}
+                            </select>
+                        </div>
+                        <div class="agent-center-agent-field">
+                            <label>深度</label>
+                            <input class="agent-center-agent-input" type="number" min="0" inputmode="numeric" data-agent-prompt-depth value="${escapeHtml(depthValue)}">
+                        </div>
+                        <div class="agent-center-agent-field">
+                            <label>角色</label>
+                            <select class="agent-center-agent-input" data-agent-prompt-role>
+                                ${this.renderSelectOptions(PROMPT_ROLE_OPTIONS, roleValue)}
+                            </select>
+                        </div>
+                    </div>
+                ` : ''}
+                <textarea class="agent-center-agent-textarea" data-agent-prompt-rules>${escapeHtml(prompt.rules || '')}</textarea>
+            </div>
+        `;
+    }
+
+    renderAgentPromptRefs(agent = {}) {
+        const refs = Array.isArray(agent.promptRefs) ? agent.promptRefs : [];
+        if (!refs.length) return '';
+        return `
+            <div class="agent-center-agent-section">
+                <div class="agent-center-agent-section-title">提示词</div>
+                ${refs.map(ref => this.renderAgentPromptEditor(agent, ref)).join('')}
+            </div>
+        `;
+    }
+
+    getMemoryAgentSettings() {
+        const profile = this.getAgentProfile('openai');
+        const agent = profile?.agents?.memory_table_agent || null;
+        return agent?.settings && typeof agent.settings === 'object' ? agent.settings : {};
+    }
+
+    getMemoryAgentPromptConfig() {
+        const cfg = this.view?.memoryAgentPromptConfig && typeof this.view.memoryAgentPromptConfig === 'object'
+            ? this.view.memoryAgentPromptConfig
+            : {};
+        return {
+            templateId: trim(cfg.templateId),
+            templateName: trim(cfg.templateName, '默认记忆模板'),
+            template: typeof cfg.template === 'string' ? cfg.template : '{{tableData}}',
+            wrapper: typeof cfg.wrapper === 'string' ? cfg.wrapper : '<memories>\n{{tableData}}\n</memories>',
+            position: trim(cfg.position, 'before_latest_user'),
+        };
+    }
+
+    renderMemoryAgentEditor(agent = {}) {
+        if (agent.id !== 'memory_table_agent') return '';
+        const profileView = this.view?.agentProfileView?.openai || {};
+        const settings = this.getMemoryAgentSettings();
+        const prompt = this.getMemoryAgentPromptConfig();
+        return `
+            <div
+                class="agent-center-agent-section agent-center-agent-editor"
+                data-memory-agent-editor="memory_table_agent"
+                data-memory-agent-preset-id="${escapeHtml(profileView.presetId || '')}"
+                data-memory-agent-template-id="${escapeHtml(prompt.templateId || '')}"
+            >
+                <div class="agent-center-agent-section-title">记忆提示词与注入</div>
+                <div class="agent-center-card-sub">${escapeHtml(prompt.templateName)} · 模板使用 {{tableData}} 插入表格内容</div>
+                <div class="agent-center-agent-field-grid">
+                    <div class="agent-center-agent-field">
+                        <label>记忆数据提示词位置</label>
+                        <select class="agent-center-agent-input" data-memory-data-position>
+                            ${this.renderSelectOptions(MEMORY_POSITION_OPTIONS, settings.dataPosition || '')}
+                        </select>
+                    </div>
+                    <div class="agent-center-agent-field">
+                        <label>数据深度</label>
+                        <input class="agent-center-agent-input" type="number" min="0" inputmode="numeric" data-memory-data-depth value="${escapeHtml(settings.dataDepth ?? 0)}">
+                    </div>
+                    <div class="agent-center-agent-field">
+                        <label>写表指导提示词位置</label>
+                        <select class="agent-center-agent-input" data-memory-guide-position>
+                            ${this.renderSelectOptions(MEMORY_POSITION_OPTIONS, settings.guidePosition || '')}
+                        </select>
+                    </div>
+                    <div class="agent-center-agent-field">
+                        <label>指导深度</label>
+                        <input class="agent-center-agent-input" type="number" min="0" inputmode="numeric" data-memory-guide-depth value="${escapeHtml(settings.guideDepth ?? 0)}">
+                    </div>
+                    <div class="agent-center-agent-field">
+                        <label>表格内容模板位置</label>
+                        <select class="agent-center-agent-input" data-memory-prompt-position>
+                            ${this.renderSelectOptions(MEMORY_POSITION_OPTIONS, prompt.position || 'before_latest_user')}
+                        </select>
+                    </div>
+                    <div class="agent-center-agent-field is-wide">
+                        <label>表格内容模板</label>
+                        <textarea class="agent-center-agent-textarea is-compact" data-memory-prompt-template>${escapeHtml(prompt.template || '')}</textarea>
+                    </div>
+                    <div class="agent-center-agent-field is-wide">
+                        <label>包裹模板</label>
+                        <textarea class="agent-center-agent-textarea is-compact" data-memory-prompt-wrapper>${escapeHtml(prompt.wrapper || '')}</textarea>
+                    </div>
+                </div>
+                <div class="agent-center-card-actions">
+                    <button type="button" class="agent-center-card-action is-primary" data-memory-agent-save="memory_table_agent">保存记忆设置</button>
+                </div>
+            </div>
+        `;
+    }
+
+    renderReplyCheckPromptInfo(agent = {}) {
+        if (agent.id !== 'reply_check') return '';
+        const promptText = [
+            '固定检查指令：只修复标签、顺序、闭合、缺失字段和时间等格式问题；不改写剧情或正文语义。',
+            '',
+            '运行时按触发目标选择最小格式规则：',
+            '- 私聊：QQ聊天格式 + 私聊格式',
+            '- 群聊：QQ聊天格式 + 群聊格式',
+            '- 动态：动态发布或动态评论格式',
+            '- 生图 / 记忆表格：只使用对应标签格式',
+            '- 创意写作：默认不注入聊天格式',
+        ].join('\n');
+        return `
+            <div class="agent-center-agent-section agent-center-agent-editor">
+                <div class="agent-center-agent-section-title">检查提示词</div>
+                <div class="agent-center-agent-field">
+                    <label>预览格式目标</label>
+                    <select class="agent-center-agent-input" data-reply-check-preview-target>
+                        ${this.renderSelectOptions(REPLY_CHECK_PREVIEW_TARGET_OPTIONS, this.replyCheckPreviewTarget || 'auto')}
+                    </select>
+                </div>
+                <div class="agent-center-agent-prompt-preview">${escapeHtml(promptText)}</div>
+            </div>
+        `;
+    }
+
+    renderAgentSettingRefs(agent = {}) {
+        const refs = list(agent.settingRefs);
+        if (!refs.length) return '';
+        return `
+            <div class="agent-center-agent-section">
+                <div class="agent-center-agent-section-title">可设定项目</div>
+                <div class="agent-center-agent-mini-list">
+                    ${refs.map(label => `<span class="agent-center-agent-mini-item">${escapeHtml(label)}</span>`).join('')}
+                </div>
+            </div>
+        `;
+    }
+
+    renderAgentResourceRefs(agent = {}) {
+        const refs = list(agent.resourceRefs);
+        if (!refs.length) return '';
+        const resources = this.view.resources || [];
+        return `
+            <div class="agent-center-agent-section">
+                <div class="agent-center-agent-section-title">关联资源</div>
+                <div class="agent-center-card-actions" style="margin-top:0;">
+                    ${refs.map(resourceId => {
+                        const resource = resources.find(item => item.id === resourceId) || { id: resourceId, title: resourceId };
+                        return `<button type="button" class="agent-center-card-action" data-agent-resource-open="${escapeHtml(resource.id)}">${escapeHtml(resource.title || resource.id)}</button>`;
+                    }).join('')}
+                </div>
+            </div>
+        `;
+    }
+
+    renderAgentPromptPreviewAction(agent = {}) {
+        if (!agent?.implemented) return '';
+        return `
+            <div class="agent-center-agent-section">
+                <div class="agent-center-agent-section-title">完整请求预览</div>
+                <div class="agent-center-card-sub">根据该 Agent 的当前触发场景构建完整提示词和请求参数；只预览，不发送。</div>
+                <div class="agent-center-card-actions" style="margin-top:0;">
+                    <button type="button" class="agent-center-card-action is-primary" data-agent-prompt-preview="${escapeHtml(agent.id || '')}">预览提示词</button>
+                </div>
+            </div>
+        `;
+    }
+
+    renderAgentFeatureSettings(agent = {}) {
+        if (!isFeatureAgentCard(agent)) return '';
+        return `
+            <div class="agent-center-agent-settings">
+                ${agent.supportsTriggerMode ? `
+                    <div class="agent-center-setting-row">
+                        <span class="agent-center-setting-label">触发</span>
+                        <span class="agent-center-setting-value">${escapeHtml(agent.triggerLabel || '自动触发')}</span>
+                        <button type="button" class="agent-center-card-action" data-agent-feature-trigger="${escapeHtml(agent.id)}" ${agent.implemented ? '' : 'disabled'}>设置</button>
+                    </div>
+                ` : ''}
+                <div class="agent-center-setting-row is-model">
+                    <span class="agent-center-setting-label">模型</span>
+                    ${agent.supportsModel
+                        ? this.renderAgentModelSelect(agent)
+                        : `<span class="agent-center-setting-value">${escapeHtml(agent.modelLabel || '不直接调用模型')}</span>`}
+                </div>
+            </div>
+        `;
+    }
+
+    renderAgentFront(agent = {}) {
+        const title = agent.title || displayAgentFeature(agent.id);
+        const isDiagnosticView = trim(agent.cardGroup || agent.category) === 'diagnostic';
+        const enableButton = isDiagnosticView || agent.enabled === true
+            ? ''
+            : isFeatureAgentCard(agent)
+                ? `
+                    <button
+                        type="button"
+                        class="agent-center-switch"
+                        data-agent-feature-action="enable"
+                        data-agent-feature-id="${escapeHtml(agent.id)}"
+                        ${agent.implemented ? '' : 'disabled'}
+                    >${escapeHtml(agent.implemented ? '开启' : '规划中')}</button>
+                `
+                : `
+                    <button
+                        type="button"
+                        class="agent-center-switch"
+                        data-agent-card-action="enable"
+                        data-agent-card-id="${escapeHtml(agent.id)}"
+                        ${agent.implemented ? '' : 'disabled'}
+                    >${escapeHtml(agent.implemented ? '开启' : '规划中')}</button>
+                `;
+        const stateBadge = isDiagnosticView
+            ? `<span class="${escapeHtml(statusChipClass('succeeded'))}">诊断视图</span>`
+            : agent.enabled
+                ? `<span class="${escapeHtml(statusChipClass('running'))}">已开启</span>`
+                : '';
+        const promptCount = Array.isArray(agent.promptRefs) ? agent.promptRefs.length : 0;
+        const runtimeState = agent.runtimeState || null;
+        return `
+            <div class="agent-center-agent-title-row">
+                <div class="agent-center-agent-title-main">
+                    <span class="agent-center-agent-badge">${escapeHtml(displayAgentCardGlyph(agent))}</span>
+                    <div>
+                        <div class="agent-center-card-title">${escapeHtml(title)}</div>
+                        <div class="agent-center-card-sub">${escapeHtml(agent.summary || '')}</div>
+                    </div>
+                </div>
+                ${enableButton || stateBadge}
+            </div>
+            ${renderChips([
+                { label: agent.implemented ? '可使用' : '规划中', className: statusChipClass(agent.implemented ? 'succeeded' : 'pending') },
+                isDiagnosticView ? null : { label: agent.enabled ? '已开启' : '已关闭', className: statusChipClass(agent.enabled ? 'running' : 'denied') },
+                promptCount ? { label: `提示词 ${promptCount}` } : null,
+                runtimeState ? { label: displayStatusLabel(runtimeState.status), className: statusChipClass(runtimeState.status) } : null,
+            ])}
+            <div class="agent-center-card-sub">${escapeHtml((Array.isArray(agent.detail) ? agent.detail[0] : '') || agent.summary || '')}</div>
+        `;
+    }
+
+    renderAgentBack(agent = {}) {
+        const detail = Array.isArray(agent.detail) ? agent.detail : [];
+        return `
+            <div class="agent-center-agent-title-row">
+                <div>
+                    <div class="agent-center-card-title">${escapeHtml(agent.detailTitle || agent.title || displayAgentFeature(agent.id))}</div>
+                    <div class="agent-center-card-sub">${escapeHtml(agent.category ? `分类：${displayCardCategory(agent.category)}` : '卡片详情')}</div>
+                </div>
+                <button type="button" class="agent-center-card-action" data-agent-float-flip>返回</button>
+            </div>
+            ${detail.length ? `
+                <div class="agent-center-agent-section">
+                    <div class="agent-center-agent-section-title">说明</div>
+                    ${detail.map(line => `<div class="agent-center-card-sub">${escapeHtml(line)}</div>`).join('')}
+                </div>
+            ` : ''}
+            ${this.renderAgentFeatureSettings(agent)}
+            ${this.renderAgentSettingRefs(agent)}
+            ${this.renderMemoryAgentEditor(agent)}
+            ${this.renderAgentPromptRefs(agent)}
+            ${this.renderAgentResourceRefs(agent)}
+            ${this.renderAgentRuntimeState(agent)}
+        `;
+    }
+
+    renderFloatingAgentFront(agent = {}) {
+        const detail = Array.isArray(agent.detail) ? agent.detail : [];
+        const isDiagnosticView = trim(agent.cardGroup || agent.category) === 'diagnostic';
+        const promptCount = Array.isArray(agent.promptRefs) ? agent.promptRefs.length : 0;
+        const runtimeState = agent.runtimeState || null;
+        return `
+            <div class="agent-center-agent-title-row">
+                <div class="agent-center-agent-title-main">
+                    <span class="agent-center-agent-badge">${escapeHtml(displayAgentCardGlyph(agent))}</span>
                     <div>
                         <div class="agent-center-card-title">${escapeHtml(agent.title || displayAgentFeature(agent.id))}</div>
                         <div class="agent-center-card-sub">${escapeHtml(agent.summary || '')}</div>
                     </div>
-                    <button
-                        type="button"
-                        class="agent-center-switch${agent.enabled ? ' is-on' : ''}"
-                        data-agent-feature-action="${escapeHtml(agent.enabled ? 'disable' : 'enable')}"
-                        data-agent-feature-id="${escapeHtml(agent.id)}"
-                        ${agent.implemented ? '' : 'disabled'}
-                    >${escapeHtml(agent.implemented ? (agent.enabled ? '已开启' : '开启') : '规划中')}</button>
                 </div>
-                <div class="agent-center-agent-settings">
-                    ${agent.supportsTriggerMode ? `
-                        <div class="agent-center-setting-row">
-                            <span class="agent-center-setting-label">触发</span>
-                            <span class="agent-center-setting-value">${escapeHtml(agent.triggerLabel || '自动触发')}</span>
-                            <button type="button" class="agent-center-card-action" data-agent-feature-trigger="${escapeHtml(agent.id)}" ${agent.implemented ? '' : 'disabled'}>设置</button>
+                <div class="agent-center-floating-toolbar">
+                    <button type="button" class="agent-center-icon-button" data-agent-float-flip title="翻转" aria-label="翻转">${ICONS.refresh}</button>
+                    <button type="button" class="agent-center-icon-button" data-agent-float-close title="关闭" aria-label="关闭">${ICONS.close}</button>
+                </div>
+            </div>
+            ${renderChips([
+                { label: displayCardCategory(agent.category), className: statusChipClass('pending') },
+                { label: agent.implemented ? '可使用' : '规划中', className: statusChipClass(agent.implemented ? 'succeeded' : 'pending') },
+                isDiagnosticView ? { label: '诊断视图' } : { label: agent.enabled ? '已开启' : '已关闭', className: statusChipClass(agent.enabled ? 'running' : 'denied') },
+                promptCount ? { label: `提示词 ${promptCount}` } : null,
+                runtimeState ? { label: displayStatusLabel(runtimeState.status), className: statusChipClass(runtimeState.status) } : null,
+            ])}
+            <div class="agent-center-agent-section">
+                <div class="agent-center-agent-section-title">说明</div>
+                ${(detail.length ? detail : [agent.summary]).filter(Boolean).map(line => `<div class="agent-center-card-sub">${escapeHtml(line)}</div>`).join('')}
+            </div>
+            ${this.renderAgentSettingRefs(agent)}
+            ${this.renderAgentRuntimeState(agent)}
+        `;
+    }
+
+    renderFloatingAgentBack(agent = {}) {
+        return `
+            <div class="agent-center-agent-title-row">
+                <div>
+                    <div class="agent-center-card-title">${escapeHtml(agent.title || displayAgentFeature(agent.id))}</div>
+                    <div class="agent-center-card-sub">配置</div>
+                </div>
+                <div class="agent-center-floating-toolbar">
+                    <button type="button" class="agent-center-icon-button" data-agent-float-flip title="翻转" aria-label="翻转">${ICONS.refresh}</button>
+                    <button type="button" class="agent-center-icon-button" data-agent-float-close title="关闭" aria-label="关闭">${ICONS.close}</button>
+                </div>
+            </div>
+            ${this.renderAgentFeatureSettings(agent)}
+            ${this.renderAgentPromptPreviewAction(agent)}
+            ${this.renderReplyCheckPromptInfo(agent)}
+            ${this.renderMemoryAgentEditor(agent)}
+            ${this.renderAgentPromptRefs(agent)}
+            ${this.renderAgentResourceRefs(agent)}
+            ${(!isFeatureAgentCard(agent) && agent.id !== 'memory_table_agent' && !(Array.isArray(agent.promptRefs) && agent.promptRefs.length) && !(Array.isArray(agent.resourceRefs) && agent.resourceRefs.length))
+                ? '<div class="agent-center-card-sub">这个卡片当前没有可编辑设置。</div>'
+                : ''}
+        `;
+    }
+
+    renderFloatingAgentCard() {
+        const agent = this.getAgentCardById(this.floatingAgentId);
+        if (!agent) return '';
+        return `
+            <div class="agent-center-floating-layer" data-agent-float-layer>
+                <section
+                    class="agent-center-floating-card${this.floatingAgentFlipped ? ' is-flipped' : ''}"
+                    data-agent-accent="${escapeHtml(agent.accent || '')}"
+                    role="dialog"
+                    aria-modal="true"
+                    aria-label="${escapeHtml(agent.title || displayAgentFeature(agent.id))}"
+                >
+                    <div class="agent-center-floating-inner">
+                        <div class="agent-center-floating-face agent-center-floating-face-front">
+                            ${this.renderFloatingAgentFront(agent)}
                         </div>
-                    ` : ''}
-                    <div class="agent-center-setting-row is-model">
-                        <span class="agent-center-setting-label">模型</span>
-                        ${agent.supportsModel
-                            ? this.renderAgentModelSelect(agent)
-                            : `<span class="agent-center-setting-value">${escapeHtml(agent.modelLabel || '不直接调用模型')}</span>`}
+                        <div class="agent-center-floating-face agent-center-floating-face-back">
+                            ${this.renderFloatingAgentBack(agent)}
+                        </div>
                     </div>
-                </div>
-                ${renderChips([
-                    { label: agent.implemented ? '可使用' : '规划中', className: statusChipClass(agent.implemented ? 'succeeded' : 'pending') },
-                    { label: agent.enabled ? '已开启' : '默认关闭', className: statusChipClass(agent.enabled ? 'running' : 'denied') },
-                ])}
-                <div class="agent-center-card-actions">
-                    <button type="button" class="agent-center-card-action" data-agent-feature-detail="${escapeHtml(agent.id)}">详情</button>
-                </div>
+                </section>
+            </div>
+        `;
+    }
+
+    renderCardList(cards = [], emptyMessage = '还没有可用卡片。') {
+        const agents = Array.isArray(cards) ? cards : [];
+        if (!agents.length) return renderEmpty(emptyMessage);
+        return `<div class="agent-center-agent-list">${agents.map(agent => `
+            <article
+                class="agent-center-card agent-center-agent-card${agent.enabled ? ' is-agent-on' : ''}"
+                data-agent-accent="${escapeHtml(agent.accent || '')}"
+                data-agent-card-open="${escapeHtml(agent.id)}"
+                role="button"
+                tabindex="0"
+            >
+                ${this.renderAgentFront(agent)}
             </article>
         `).join('')}</div>`;
+    }
+
+    renderAgents() {
+        return this.renderCardList(this.getAgentCards(), '还没有可启用的 Agent');
+    }
+
+    renderPromptModules() {
+        return this.renderCardList(this.getPromptModuleCards(), '还没有可管理的提示词/协议模块。');
+    }
+
+    renderDiagnostics() {
+        return this.renderCardList(this.getDiagnosticCards(), '还没有诊断视图。');
     }
 
     renderPending() {
@@ -2026,11 +2870,145 @@ export class AgentCenterPanel {
         return true;
     }
 
+    handleAgentCardFlip(agentId = '') {
+        this.openFloatingAgentCard(agentId);
+    }
+
+    openFloatingAgentCard(agentId = '') {
+        const id = trim(agentId);
+        if (!id || !this.getAgentCardById(id)) return;
+        this.floatingAgentId = id;
+        this.floatingAgentFlipped = false;
+        this.render();
+    }
+
+    closeFloatingAgentCard() {
+        this.floatingAgentId = '';
+        this.floatingAgentFlipped = false;
+        this.render();
+    }
+
+    toggleFloatingAgentCard() {
+        if (!this.floatingAgentId) return;
+        this.floatingAgentFlipped = !this.floatingAgentFlipped;
+        const card = this.contentElement?.querySelector?.('.agent-center-floating-card');
+        if (card) {
+            card.classList?.toggle?.('is-flipped', this.floatingAgentFlipped);
+            return;
+        }
+        this.render();
+    }
+
+    async handleAgentCardToggle(action = '', cardId = '') {
+        const id = trim(cardId);
+        const enabling = trim(action) === 'enable';
+        if (!id) return;
+        const agent = this.getAgentCardById(id);
+        if (!agent?.implemented) return;
+        const result = await this.callAction('setAgentCardEnabled', {
+            id,
+            enabled: enabling,
+            reason: 'agent center card toggle',
+        }, null);
+        if (!result) {
+            this.lastError = '当前环境不能切换这个卡片';
+            this.render();
+            return;
+        }
+        await this.refresh();
+    }
+
+    async handleAgentPromptSave(promptId = '', button = null) {
+        const id = trim(promptId);
+        const editor = button?.closest?.('[data-agent-prompt-editor]');
+        if (!id || !editor) return;
+        const agentId = trim(editor.dataset.agentId);
+        const profileType = trim(editor.dataset.agentPromptProfileType, 'sysprompt');
+        const presetId = trim(editor.dataset.agentPromptPresetId);
+        const config = {
+            enabled: editor.querySelector('[data-agent-prompt-enabled]')?.checked !== false,
+            rules: editor.querySelector('[data-agent-prompt-rules]')?.value ?? '',
+        };
+        const positionEl = editor.querySelector('[data-agent-prompt-position]');
+        const depthEl = editor.querySelector('[data-agent-prompt-depth]');
+        const roleEl = editor.querySelector('[data-agent-prompt-role]');
+        if (positionEl) config.position = Math.trunc(Number(positionEl.value));
+        if (depthEl) config.depth = Math.max(0, Math.trunc(Number(depthEl.value) || 0));
+        if (roleEl) config.role = Math.trunc(Number(roleEl.value));
+        const result = await this.callAction('setAgentPromptConfig', {
+            profileType,
+            presetId,
+            agentId,
+            promptId: id,
+            config,
+        }, null);
+        if (!result) {
+            this.lastError = '当前环境不能保存提示词';
+            this.render();
+            return;
+        }
+        await this.refresh();
+    }
+
+    async handleMemoryAgentSave(button = null) {
+        const editor = button?.closest?.('[data-memory-agent-editor]');
+        if (!editor) return;
+        const config = {
+            dataPosition: editor.querySelector('[data-memory-data-position]')?.value || '',
+            dataDepth: Math.max(0, Math.trunc(Number(editor.querySelector('[data-memory-data-depth]')?.value) || 0)),
+            guidePosition: editor.querySelector('[data-memory-guide-position]')?.value || '',
+            guideDepth: Math.max(0, Math.trunc(Number(editor.querySelector('[data-memory-guide-depth]')?.value) || 0)),
+        };
+        const result = await this.callAction('setMemoryAgentSettings', {
+            presetId: trim(editor.dataset.memoryAgentPresetId),
+            config,
+        }, null);
+        if (!result) {
+            this.lastError = '当前环境不能保存记忆表格 Agent 设置';
+            this.render();
+            return;
+        }
+        const promptResult = await this.callAction('setMemoryAgentPromptConfig', {
+            templateId: trim(editor.dataset.memoryAgentTemplateId),
+            config: {
+                template: editor.querySelector('[data-memory-prompt-template]')?.value ?? '',
+                wrapper: editor.querySelector('[data-memory-prompt-wrapper]')?.value ?? '',
+                position: editor.querySelector('[data-memory-prompt-position]')?.value || 'before_latest_user',
+            },
+        }, true);
+        if (!promptResult) {
+            this.lastError = '当前环境不能保存记忆提示词模板';
+            this.render();
+            return;
+        }
+        await this.refresh();
+    }
+
+    handleReplyCheckPreviewTargetChange(value = 'auto') {
+        const normalized = trim(value, 'auto');
+        const allowed = new Set(REPLY_CHECK_PREVIEW_TARGET_OPTIONS.map(option => option.value));
+        this.replyCheckPreviewTarget = allowed.has(normalized) ? normalized : 'auto';
+    }
+
+    async handleAgentPromptPreview(agentId = '') {
+        const id = trim(agentId);
+        const payload = {
+            source: 'agent_center',
+            agentId: id,
+        };
+        if (id === 'reply_check') payload.formatTarget = this.replyCheckPreviewTarget || 'auto';
+        const result = await this.callAction('showPromptPreview', payload, null);
+        if (result === false || result === null) {
+            this.lastError = '暂时无法构建本次 Prompt 预览。';
+            this.render();
+        }
+    }
+
     async handleAgentFeatureToggle(action = '', featureId = '') {
         const id = trim(featureId);
         const enabling = trim(action) === 'enable';
         if (!id) return;
-        const agent = (this.view.agents || []).find(item => item.id === id);
+        const agent = this.getAgentCardById(id);
         if (!agent?.implemented) return;
         const ok = await this.confirm({
             title: enabling ? `开启${agent.title}` : `关闭${agent.title}`,
@@ -2080,16 +3058,16 @@ export class AgentCenterPanel {
 
     async handleAgentFeatureDetail(featureId = '') {
         const id = trim(featureId);
-        const agent = (this.view.agents || []).find(item => item.id === id);
+        const agent = this.getAgentCardById(id);
         if (!agent) return;
         await this.confirm({
             title: agent.detailTitle || agent.title || displayAgentFeature(id),
             message: [
                 agent.summary,
                 ...(Array.isArray(agent.detail) ? agent.detail : []),
-                agent.supportsTriggerMode ? `触发：${agent.triggerLabel || '自动触发'}` : '',
-                agent.supportsModel ? `模型：${agent.modelLabel || '不调用模型'}` : '模型：不直接调用模型',
-                agent.enabled ? '状态：已开启' : '状态：默认关闭',
+                isFeatureAgentCard(agent) && agent.supportsTriggerMode ? `触发：${agent.triggerLabel || '自动触发'}` : '',
+                isFeatureAgentCard(agent) && agent.supportsModel ? `模型：${agent.modelLabel || '不调用模型'}` : '',
+                trim(agent.cardGroup || agent.category) === 'diagnostic' ? '类型：诊断视图' : (agent.enabled ? '状态：已开启' : '状态：默认关闭'),
             ].filter(Boolean).join('\n\n'),
             confirmText: '知道了',
         });
@@ -2097,14 +3075,14 @@ export class AgentCenterPanel {
 
     async handleAgentFeatureModel(featureId = '') {
         const id = trim(featureId);
-        const agent = (this.view.agents || []).find(item => item.id === id);
+        const agent = this.getAgentCardById(id);
         if (!agent?.supportsModel || !agent?.implemented) return;
         await this.handleAgentFeatureModelSelect(id, this.getAgentModelSelectValue(agent));
     }
 
     async handleAgentFeatureModelSelect(featureId = '', selectedValue = '', selectElement = null) {
         const id = trim(featureId);
-        const agent = (this.view.agents || []).find(item => item.id === id);
+        const agent = this.getAgentCardById(id);
         if (!agent?.supportsModel || !agent?.implemented) return;
         const selected = trim(selectedValue, 'follow_current');
         const previousValue = this.getAgentModelSelectValue(agent);
@@ -2128,7 +3106,7 @@ export class AgentCenterPanel {
 
     handleAgentFeatureModelManage(featureId = '') {
         const id = trim(featureId);
-        const agent = (this.view.agents || []).find(item => item.id === id);
+        const agent = this.getAgentCardById(id);
         if (!agent?.supportsModel || !agent?.implemented || typeof this.openConfig !== 'function') return;
         closeCustomSelectMenu();
         this.hide();
@@ -2153,7 +3131,7 @@ export class AgentCenterPanel {
 
     async handleAgentFeatureTriggerMode(featureId = '') {
         const id = trim(featureId);
-        const agent = (this.view.agents || []).find(item => item.id === id);
+        const agent = this.getAgentCardById(id);
         if (!agent?.supportsTriggerMode || !agent?.implemented) return;
         const selected = await this.choice({
             title: `${agent.title || displayAgentFeature(id)}触发方式`,
@@ -2331,10 +3309,7 @@ export class AgentCenterPanel {
         if (opts.promptId) target.promptId = opts.promptId;
         if (opts.focus) target.focus = opts.focus;
         const ok = await Promise.resolve(this.openResourceTarget?.(target, resource));
-        if (ok) {
-            this.hide();
-            return;
-        }
+        if (ok) return;
         this.lastError = `无法打开「${resource.title || resource.id}」主界面`;
         this.render();
     }
@@ -2447,12 +3422,16 @@ export class AgentCenterPanel {
             ? this.renderPending()
             : this.activeTab === 'agents'
                 ? this.renderAgents()
-                : this.activeTab === 'resources'
-                    ? this.renderResources()
-                    : this.activeTab === 'activity'
-                        ? this.renderActivity()
-                        : this.renderSafety();
-        this.contentElement.innerHTML = `${error}${body}`;
+                : this.activeTab === 'prompts'
+                    ? this.renderPromptModules()
+                    : this.activeTab === 'diagnostics'
+                        ? this.renderDiagnostics()
+                        : this.activeTab === 'resources'
+                            ? this.renderResources()
+                            : this.activeTab === 'activity'
+                                ? this.renderActivity()
+                                : this.renderSafety();
+        this.contentElement.innerHTML = `${error}${body}${this.renderFloatingAgentCard()}`;
         if (this.activeTab === 'pending') {
             this.contentElement.querySelectorAll('[data-profile-action]').forEach((button) => {
                 button.addEventListener('click', () => this.handleProfilePendingAction(
@@ -2503,15 +3482,54 @@ export class AgentCenterPanel {
                 button.addEventListener('click', () => this.handleResourcePending(button.dataset.resourcePending || ''));
             });
         }
-        if (this.activeTab === 'agents') {
-            this.contentElement.querySelectorAll('[data-agent-feature-action]').forEach((button) => {
-                button.addEventListener('click', () => this.handleAgentFeatureToggle(
-                    button.dataset.agentFeatureAction || '',
-                    button.dataset.agentFeatureId || '',
+        if (['agents', 'prompts', 'diagnostics'].includes(this.activeTab)) {
+            this.contentElement.querySelectorAll('[data-agent-card-open]').forEach((card) => {
+                const open = () => this.openFloatingAgentCard(card.dataset.agentCardOpen || '');
+                card.addEventListener('click', (event) => {
+                    if (event.target?.closest?.('button, input, textarea, select, a')) return;
+                    open();
+                });
+                card.addEventListener('keydown', (event) => {
+                    if (event.key !== 'Enter' && event.key !== ' ') return;
+                    event.preventDefault();
+                    open();
+                });
+            });
+            this.contentElement.querySelectorAll('[data-agent-card-action]').forEach((button) => {
+                button.addEventListener('click', (event) => {
+                    event.stopPropagation();
+                    this.handleAgentCardToggle(
+                    button.dataset.agentCardAction || '',
+                    button.dataset.agentCardId || '',
+                    );
+                });
+            });
+            this.contentElement.querySelectorAll('[data-agent-resource-open]').forEach((button) => {
+                button.addEventListener('click', () => this.handleResourceOpen(button.dataset.agentResourceOpen || ''));
+            });
+            this.contentElement.querySelectorAll('[data-agent-prompt-save]').forEach((button) => {
+                button.addEventListener('click', () => this.handleAgentPromptSave(
+                    button.dataset.agentPromptSave || '',
+                    button,
                 ));
             });
-            this.contentElement.querySelectorAll('[data-agent-feature-detail]').forEach((button) => {
-                button.addEventListener('click', () => this.handleAgentFeatureDetail(button.dataset.agentFeatureDetail || ''));
+            this.contentElement.querySelectorAll('[data-memory-agent-save]').forEach((button) => {
+                button.addEventListener('click', () => this.handleMemoryAgentSave(button));
+            });
+            this.contentElement.querySelectorAll('[data-agent-prompt-preview]').forEach((button) => {
+                button.addEventListener('click', () => this.handleAgentPromptPreview(button.dataset.agentPromptPreview || ''));
+            });
+            this.contentElement.querySelectorAll('[data-reply-check-preview-target]').forEach((select) => {
+                select.addEventListener('change', () => this.handleReplyCheckPreviewTargetChange(select.value || 'auto'));
+            });
+            this.contentElement.querySelectorAll('[data-agent-feature-action]').forEach((button) => {
+                button.addEventListener('click', (event) => {
+                    event.stopPropagation();
+                    this.handleAgentFeatureToggle(
+                    button.dataset.agentFeatureAction || '',
+                    button.dataset.agentFeatureId || '',
+                    );
+                });
             });
             this.contentElement.querySelectorAll('[data-agent-feature-model-select]').forEach((select) => {
                 const id = select.dataset.agentFeatureModelSelect || '';
@@ -2533,6 +3551,15 @@ export class AgentCenterPanel {
             });
             this.contentElement.querySelectorAll('[data-agent-feature-trigger]').forEach((button) => {
                 button.addEventListener('click', () => this.handleAgentFeatureTriggerMode(button.dataset.agentFeatureTrigger || ''));
+            });
+            this.contentElement.querySelectorAll('[data-agent-float-flip]').forEach((button) => {
+                button.addEventListener('click', () => this.toggleFloatingAgentCard());
+            });
+            this.contentElement.querySelectorAll('[data-agent-float-close]').forEach((button) => {
+                button.addEventListener('click', () => this.closeFloatingAgentCard());
+            });
+            this.contentElement.querySelector('[data-agent-float-layer]')?.addEventListener('click', (event) => {
+                if (event.target?.dataset?.agentFloatLayer !== undefined) this.closeFloatingAgentCard();
             });
         }
         if (this.activeTab === 'safety') {

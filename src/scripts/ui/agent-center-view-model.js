@@ -6,11 +6,18 @@ import {
 import { buildAgentFeatureList } from '../agent/agent-feature-settings.js';
 import { WRITE_PREVIEW_PROVIDER_MODEL_CONTEXT_TOOLS } from '../agent/provider-tool-request-schema.js';
 import { buildChatEmitCommitPreview } from '../agent/tools/chat-emit-commit-plan.js';
+import {
+  buildAgentCardList,
+  buildAgentDiagnosticCardList,
+  buildAgentPromptModuleCardList,
+} from './agent-center-card-catalog.js';
 import { buildAgentCenterResources } from './agent-center-resource-contract.js';
 
 export const AGENT_CENTER_TABS = Object.freeze([
   { id: 'pending', label: '待处理' },
   { id: 'agents', label: 'Agent' },
+  { id: 'prompts', label: '提示词' },
+  { id: 'diagnostics', label: '诊断' },
   { id: 'resources', label: '资源' },
   { id: 'activity', label: '活动' },
   { id: 'safety', label: '安全' },
@@ -26,6 +33,13 @@ const trim = (value, fallback = '') => {
 const list = value => (Array.isArray(value) ? value : [value])
   .map(item => trim(item))
   .filter(Boolean);
+
+const normalizeMemoryMode = (value = '') => {
+  const text = trim(value, 'table').toLowerCase();
+  if (text === 'summary') return 'summary';
+  if (text === 'off' || text === 'disabled') return 'off';
+  return 'table';
+};
 
 const PERMISSION_LAYER_LABELS = Object.freeze({
   default: '默认',
@@ -538,11 +552,15 @@ const buildTabs = ({
   pending = [],
   runView = {},
   agents = [],
+  promptModules = [],
+  diagnosticViews = [],
   resources = [],
 } = {}) => AGENT_CENTER_TABS.map((tab) => {
   let count = 0;
   if (tab.id === 'pending') count = pending.length;
-  if (tab.id === 'agents') count = agents.filter(item => item.enabled).length;
+  if (tab.id === 'agents') count = agents.length;
+  if (tab.id === 'prompts') count = promptModules.length;
+  if (tab.id === 'diagnostics') count = diagnosticViews.length;
   if (tab.id === 'resources') count = resources.filter(item => Number(item.count || 0) > 0).length;
   if (tab.id === 'activity') count = Number(runView?.meta?.scopedActive ?? runView?.meta?.active ?? 0);
   if (tab.id === 'safety') count = 0;
@@ -558,14 +576,18 @@ export const buildAgentCenterView = ({
   tools = [],
   agentFeatureSettings = null,
   agentFeatures = null,
+  agentCenterSettings = null,
+  agentProfileView = null,
   agentModelProfiles = [],
   permissionRules = [],
   sessionGate = null,
   experimentStatus = null,
   continuationCommitPolicy = null,
   resourceStatus = {},
+  memoryMode = 'table',
   limit = 50,
 } = {}) => {
+  const normalizedMemoryMode = normalizeMemoryMode(memoryMode);
   const pending = (Array.isArray(pendingPermissions) ? pendingPermissions : [])
     .map(normalizePendingPermission)
     .concat((Array.isArray(contactProfilePendingUpdates) ? contactProfilePendingUpdates : [])
@@ -588,6 +610,22 @@ export const buildAgentCenterView = ({
   const normalizedAgents = (Array.isArray(agentFeatures) ? agentFeatures : buildAgentFeatureList(agentFeatureSettings || {}))
     .map(feature => normalizeAgentFeature(feature, { modelProfiles: normalizedModelProfiles }))
     .filter(agent => agent.id);
+  const agentCards = buildAgentCardList({
+    featureAgents: normalizedAgents,
+    agentCenterSettings,
+    runView,
+    memoryMode: normalizedMemoryMode,
+  });
+  const promptModules = buildAgentPromptModuleCardList({
+    agentCenterSettings,
+    runView,
+    memoryMode: normalizedMemoryMode,
+  });
+  const diagnosticViews = buildAgentDiagnosticCardList({
+    agentCenterSettings,
+    runView,
+    memoryMode: normalizedMemoryMode,
+  });
   const safety = normalizeSafety({
     sessionGate,
     experimentStatus,
@@ -601,7 +639,7 @@ export const buildAgentCenterView = ({
     safety,
     resourceStatus,
   });
-  const tabs = buildTabs({ pending, runView, agents: normalizedAgents, resources });
+  const tabs = buildTabs({ pending, runView, agents: agentCards, promptModules, diagnosticViews, resources });
   return {
     tabs,
     meta: {
@@ -613,8 +651,14 @@ export const buildAgentCenterView = ({
       tools: normalizedTools.length,
       resources: resources.length,
       resourceAlerts: resources.filter(item => Number(item.count || 0) > 0).length,
-      agents: normalizedAgents.length,
-      enabledAgents: normalizedAgents.filter(item => item.enabled).length,
+      agents: agentCards.length,
+      promptModules: promptModules.length,
+      diagnosticViews: diagnosticViews.length,
+      featureAgents: normalizedAgents.length,
+      enabledAgents: agentCards.filter(item => item.enabled).length,
+      enabledPromptModules: promptModules.filter(item => item.enabled).length,
+      enabledFeatureAgents: normalizedAgents.filter(item => item.enabled).length,
+      memoryMode: normalizedMemoryMode,
       providerToolsEnabled: safety.providerTools.enabled,
       sessionGateEnabled: safety.sessionGate.enabled,
     },
@@ -624,7 +668,12 @@ export const buildAgentCenterView = ({
       filters: runView?.filters || {},
       runs: Array.isArray(runView?.runs) ? runView.runs : [],
     },
-    agents: normalizedAgents,
+    agents: agentCards,
+    agentCards,
+    promptModules,
+    diagnosticViews,
+    featureAgents: normalizedAgents,
+    agentProfileView: isPlainObject(agentProfileView) ? agentProfileView : null,
     agentModelProfiles: normalizedModelProfiles,
     resources,
     tools: normalizedTools,

@@ -6,7 +6,7 @@ import {
 } from '../../src/scripts/ui/agent-center-view-model.js';
 
 {
-  assert.deepEqual(AGENT_CENTER_TABS.map(tab => tab.id), ['pending', 'agents', 'resources', 'activity', 'safety']);
+  assert.deepEqual(AGENT_CENTER_TABS.map(tab => tab.id), ['pending', 'agents', 'prompts', 'diagnostics', 'resources', 'activity', 'safety']);
   console.log('ok - agent center exposes user-facing tabs');
 }
 
@@ -84,7 +84,7 @@ import {
   assert.equal(view.meta.unreadFailedRuns, 1);
   assert.equal(view.meta.newestFailureAt, 9);
   assert.equal(view.meta.tools, 2);
-  assert.equal(view.meta.resources, 7);
+  assert.equal(view.meta.resources, 6);
   assert.equal(view.meta.resourceAlerts, 1);
   assert.equal(view.pending[0].id, 'profile-pending-1');
   assert.equal(view.pending[0].kind, 'contact_profile_update');
@@ -92,12 +92,25 @@ import {
   assert.deepEqual(view.pending.map(item => item.id), ['profile-pending-1', 'permission-1']);
   assert.deepEqual(view.tools.map(tool => tool.name), ['contact_profile.list', 'memory.update_after_chat']);
   assert.equal(view.meta.agents, 5);
-  assert.equal(view.meta.enabledAgents, 1);
+  assert.equal(view.meta.promptModules, 3);
+  assert.equal(view.meta.diagnosticViews, 2);
+  assert.equal(view.meta.featureAgents, 5);
+  assert.equal(view.meta.enabledAgents, 4);
+  assert.equal(view.meta.enabledPromptModules, 3);
+  assert.equal(view.meta.enabledFeatureAgents, 1);
   assert.equal(view.agents.find(agent => agent.id === 'reply_check').title, '检查回复格式');
   assert.equal(view.agents.find(agent => agent.id === 'reply_check').enabled, true);
   assert.equal(view.agents.find(agent => agent.id === 'reply_check').modelLabel, '不调用模型');
   assert.equal(view.agents.find(agent => agent.id === 'reply_check').triggerLabel, '自动触发');
-  assert.equal(view.agents.find(agent => agent.id === 'text_completion').implemented, false);
+  assert.equal(view.agents.find(agent => agent.id === 'text_completion'), undefined);
+  assert.equal(view.agents.find(agent => agent.id === 'prompt_manager'), undefined);
+  assert.equal(view.agents.find(agent => agent.id === 'memory_manager'), undefined);
+  assert.equal(view.agents.find(agent => agent.id === 'image_director').title, '生图 Agent');
+  assert.equal(view.agents.find(agent => agent.id === 'memory_table_agent').enabled, true);
+  assert.equal(view.agents.find(agent => agent.id === 'summary_agent'), undefined);
+  assert.equal(view.agents.find(agent => agent.id === 'execution_lane_agent'), undefined);
+  assert.equal(view.promptModules.find(agent => agent.id === 'phone_format_agent').title, '手机格式');
+  assert.equal(view.diagnosticViews.find(agent => agent.id === 'execution_lane_agent').summary, '把创作过程按输入、模型、记忆和生图等泳道展示。');
   assert.deepEqual(view.tools[0].capabilities, {
     read: false,
     write: false,
@@ -109,17 +122,27 @@ import {
   });
   assert.equal(view.tabs.find(tab => tab.id === 'pending').count, 2);
   assert.equal(view.tabs.find(tab => tab.id === 'activity').count, 1);
-  assert.equal(view.tabs.find(tab => tab.id === 'agents').count, 1);
+  assert.equal(view.tabs.find(tab => tab.id === 'agents').count, 5);
+  assert.equal(view.tabs.find(tab => tab.id === 'prompts').count, 3);
+  assert.equal(view.tabs.find(tab => tab.id === 'diagnostics').count, 2);
   assert.equal(view.tabs.find(tab => tab.id === 'resources').count, 1);
-  const promptResource = view.resources.find(resource => resource.id === 'prompt_library');
-  assert.equal(promptResource.title, '提示词');
-  assert.equal(promptResource.target.panel, 'presetPanel');
-  assert.equal(promptResource.shortcuts.find(shortcut => shortcut.promptId === 'dialogue').label, '私聊');
+  assert.equal(view.resources.find(resource => resource.id === 'prompt_library'), undefined);
   assert.equal(view.resources.find(resource => resource.id === 'contact_profiles').count, 1);
   assert.equal(view.safety.continuationCommitPolicy.defaultStrategy, 'append_to_previous_bubble');
   assert.equal(view.safety.sessionGate.writePreviewTools.enabled, false);
   assert.deepEqual(view.safety.sessionGate.writePreviewTools.activeTools, []);
   console.log('ok - agent center view summarizes pending activity tools and safety state');
+}
+
+{
+  const view = buildAgentCenterView({
+    memoryMode: 'summary',
+  });
+  assert.equal(view.agents.find(agent => agent.id === 'memory_table_agent'), undefined);
+  assert.equal(view.agents.find(agent => agent.id === 'summary_agent').title, '摘要 Agent');
+  assert.equal(view.tabs.find(tab => tab.id === 'agents').count, 5);
+  assert.equal(view.meta.memoryMode, 'summary');
+  console.log('ok - agent center view shows summary agent instead of memory table in summary mode');
 }
 
 {

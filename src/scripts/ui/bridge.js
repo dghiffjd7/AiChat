@@ -3121,6 +3121,7 @@ class AppBridge {
    * @returns {Promise<string>|AsyncGenerator<string>} 回复内容或流
    */
   async generate(userMessage, context = {}) {
+    const previewOnly = context?.meta?.previewOnly === true;
     if (!this.initialized) {
       await this.init();
     }
@@ -3135,7 +3136,7 @@ class AppBridge {
       throw new Error('请先配置 API 信息');
     }
 
-    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+    if (!previewOnly && typeof navigator !== 'undefined' && !navigator.onLine) {
       throw new Error('当前离线，请连接网络后再试');
     }
 
@@ -3166,6 +3167,7 @@ class AppBridge {
       }
     };
 
+    const previousLastMemoryPlan = this.lastMemoryPlan;
     try {
       const originalInput = userMessage;
       // ST semantics:
@@ -3471,6 +3473,13 @@ class AppBridge {
         },
       );
 
+      if (previewOnly) {
+        this.lastRequest.previewOnly = true;
+        this.lastRequest.source = 'prompt_preview';
+        this.lastMemoryPlan = previousLastMemoryPlan;
+        return this.lastRequest;
+      }
+
       if (config.stream) {
         streaming = true;
         const inner = this.generateStream(messages, requestOptions, originalInput, {
@@ -3732,12 +3741,29 @@ class AppBridge {
     const useContext = Boolean(presetState?.enabled?.context);
     const useOpenAIPreset = Boolean(presetState?.enabled?.openai);
     const presetContext = { sessionId, uiMode: presetUiMode };
+    const resolveAgentPreset = (actionName = '', resolved = null) => {
+      const preset = resolved?.preset || null;
+      if (!preset || typeof preset !== 'object') return preset;
+      const action = this.debugUiRegistry?.actions?.[actionName];
+      if (typeof action !== 'function') return preset;
+      try {
+        const next = action({
+          presetId: String(resolved?.presetId || '').trim(),
+          preset,
+          sessionId,
+          uiMode: presetUiMode,
+        });
+        return next && typeof next === 'object' ? next : preset;
+      } catch {
+        return preset;
+      }
+    };
     const syspResolved = this.presets.getResolvedActive('sysprompt', presetContext) || null;
-    const syspActive = syspResolved?.preset || null;
+    const syspActive = resolveAgentPreset('resolveAgentSyspromptPresetSync', syspResolved);
     const sysp = useSysprompt ? syspActive : null;
     const ctxp = useContext ? (this.presets.getResolvedActive('context', presetContext)?.preset || null) : null;
     const openaiResolved = this.presets.getResolvedActive('openai', presetContext) || null;
-    const activeOpenAIPreset = openaiResolved?.preset || null;
+    const activeOpenAIPreset = resolveAgentPreset('resolveAgentOpenAIPresetSync', openaiResolved);
     const openp = useOpenAIPreset ? activeOpenAIPreset : null;
     const openAIFormatReminderState = resolveOpenAIPresetFormatReminderState(openaiResolved, activeOpenAIPreset);
     const activeOpenAIPresetId = openAIFormatReminderState.presetId;
@@ -7736,10 +7762,25 @@ const stringifyMessageContent = (content) => {
     const insertionStrategy = normalizeWorldInsertionStrategy(worldSettings.insertionStrategy, 'role_first');
     const resolvedWorldState = this.getResolvedWorldState(this.activeSessionId);
     const collectEntries = worldId => this.collectWorldEntries(worldId, { matchText: '' });
-    const syspActive = this.presets.getResolvedActive('sysprompt', {
+    const syspResolved = this.presets.getResolvedActive('sysprompt', {
       sessionId: this.activeSessionId,
       uiMode: String(this.activeSessionId || '').trim().startsWith('rp:') ? 'rp' : 'chat',
-    })?.preset || null;
+    }) || null;
+    const syspBase = syspResolved?.preset || null;
+    const syspResolver = this.debugUiRegistry?.actions?.resolveAgentSyspromptPresetSync;
+    let syspActive = syspBase;
+    if (typeof syspResolver === 'function' && syspBase) {
+      try {
+        syspActive = syspResolver({
+          presetId: String(syspResolved?.presetId || '').trim(),
+          preset: syspBase,
+          sessionId: this.activeSessionId,
+          uiMode: String(this.activeSessionId || '').trim().startsWith('rp:') ? 'rp' : 'chat',
+        }) || syspBase;
+      } catch {
+        syspActive = syspBase;
+      }
+    }
     const builtinEntries = this.buildPhoneFormatPromptEntries(syspActive, {
       momentCreateRules: syspActive?.moment_create_enabled && syspActive?.phone_format_moment_enabled !== false
         ? String(syspActive?.moment_create_rules || '')

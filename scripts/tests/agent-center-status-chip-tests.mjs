@@ -114,7 +114,7 @@ import {
   assert.equal(idle.label, 'Agent');
   assert.equal(idle.count, '6');
   assert.equal(idle.tone, 'idle');
-  assert.equal(idle.tab, 'activity');
+  assert.equal(idle.tab, '');
   console.log('ok - agent status chip keeps idle tool state compact');
 }
 
@@ -196,6 +196,68 @@ import {
   assert.deepEqual(opened, { tab: 'activity', activityStatus: 'active' });
   assert.equal(element.dataset.agentStatusTone, 'active');
   console.log('ok - agent status chip mounts before chat menu and opens Agent Center');
+}
+
+{
+  let opened = null;
+  const root = {
+    children: [],
+    appendChild(element) {
+      this.children.push(element);
+      element.parentNode = this;
+    },
+  };
+  const documentRef = {
+    visibilityState: 'visible',
+    head: { appendChild() {} },
+    getElementById: () => null,
+    createElement: () => {
+      const element = {
+        type: '',
+        className: '',
+        innerHTML: '',
+        dataset: {},
+        children: [],
+        style: {},
+        parentNode: null,
+        addEventListener(type, handler) {
+          if (type === 'click') this.onclick = handler;
+        },
+        setAttribute() {},
+        querySelector(selector) {
+          if (selector === '.agent-status-chip-label') return this.labelElement;
+          if (selector === '.agent-status-chip-count') return this.countElement;
+          return null;
+        },
+        get labelElement() {
+          return this.children.find(child => child.className === 'agent-status-chip-label') || null;
+        },
+        get countElement() {
+          return this.children.find(child => child.className === 'agent-status-chip-count') || null;
+        },
+      };
+      return element;
+    },
+  };
+  const chip = new AgentCenterStatusChip({
+    documentRef,
+    rootElement: root,
+    refreshIntervalMs: 0,
+    collectView: () => ({ meta: { tools: 6, sessionGateEnabled: false } }),
+    openAgentCenter: options => {
+      opened = options;
+    },
+  });
+  const element = chip.mount();
+  element.children = [
+    { className: 'agent-status-chip-dot' },
+    { className: 'agent-status-chip-label', textContent: '' },
+    { className: 'agent-status-chip-count', textContent: '' },
+  ];
+  chip.render(buildAgentStatusChipView({ meta: { tools: 6, sessionGateEnabled: false } }));
+  element.onclick();
+  assert.deepEqual(opened, {});
+  console.log('ok - agent status chip preserves the last Agent Center tab when idle');
 }
 
 {

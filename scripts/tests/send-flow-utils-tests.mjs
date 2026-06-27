@@ -321,6 +321,7 @@ test('normalizeHandleSendOptions preserves valid fields and deduplicates exclude
     skipInputRegex: true,
     skipTemplate: true,
     skipScripts: true,
+    previewOnly: true,
     suppressAssistantDom: true,
     createAssistantStream: streamFactory,
     continueTarget,
@@ -338,6 +339,7 @@ test('normalizeHandleSendOptions preserves valid fields and deduplicates exclude
   assert.equal(result.skipInputRegex, true);
   assert.equal(result.skipTemplate, true);
   assert.equal(result.skipScripts, true);
+  assert.equal(result.previewOnly, true);
   assert.equal(result.suppressAssistantDom, true);
   assert.equal(result.assistantStreamFactory, streamFactory);
   assert.equal(result.continueTarget, continueTarget);
@@ -365,6 +367,7 @@ test('normalizeHandleSendOptions falls back safely for invalid payloads', () => 
   assert.equal(result.partialCommitHandler, null);
   assert.equal(result.swipeTarget, null);
   assert.deepEqual(result.excludeMessageIds, []);
+  assert.equal(result.previewOnly, false);
   assert.equal(result.includeAttachments, true);
 });
 

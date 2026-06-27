@@ -233,6 +233,9 @@ export const buildExperiencePackJsonEntryPayloads = ({
       { name: 'room/presets.json', value: room.presets },
       { name: 'room/connection-profile.json', value: room.connection },
     );
+    if (room.agentCenterSettings) {
+      entries.push({ name: 'room/agent-center-settings.json', value: room.agentCenterSettings });
+    }
     if (ensureArray(room.stickers).length) {
       entries.push({ name: 'room/stickers.json', value: room.stickers });
     }

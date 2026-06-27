@@ -9,6 +9,7 @@ import {
   buildChatFormatRepairCandidate,
   extractChatFormatEventDrafts,
   normalizeChatFormatGuardianModelReview,
+  resolveChatFormatGuardianFormatProfile,
 } from './chat-format-guardian-utils.js';
 import {
   analyzeChatBodyQuality,
@@ -28,6 +29,9 @@ const trim = (value, fallback = '') => {
 };
 
 const list = value => (Array.isArray(value) ? value : []).filter(Boolean);
+const normalizeStringList = value => (Array.isArray(value) ? value : [value])
+  .map(item => trim(item))
+  .filter(Boolean);
 
 const toTimestamp = (now = Date.now) => {
   if (typeof now === 'function') {
@@ -950,6 +954,28 @@ const runChatFormatGuardianBackgroundChat = async (backgroundChat, messages = []
   }
 };
 
+const selectChatFormatReminderTextForProfile = (modelOptions = {}, profile = {}) => {
+  const sections = Array.isArray(modelOptions?.formatReminderSections)
+    ? modelOptions.formatReminderSections
+    : [];
+  const enabledIds = new Set(Array.isArray(profile?.enabledFormatIds) ? profile.enabledFormatIds : []);
+  const target = trim(profile?.target);
+  if (sections.length) {
+    return sections
+      .filter((section) => {
+        const ids = normalizeStringList(section?.formatIds);
+        const targets = normalizeStringList(section?.targets);
+        if (ids.some(id => enabledIds.has(id))) return true;
+        return target && targets.includes(target);
+      })
+      .map(section => trim(section?.content || section?.text))
+      .filter(Boolean)
+      .join('\n\n')
+      .slice(0, 12000);
+  }
+  return enabledIds.size ? trim(modelOptions?.formatReminderText).slice(0, 12000) : '';
+};
+
 const emitChatFormatGuardianModelReviewResult = ({
   message = null,
   sessionId = '',
@@ -1023,14 +1049,24 @@ const scheduleChatFormatGuardianModelReview = ({
     }
   }
   Promise.resolve().then(async () => {
+    const formatProfile = resolveChatFormatGuardianFormatProfile({
+      target: modelOptions.formatTarget || options.formatTarget,
+      uiMode: modelOptions.uiMode || options.uiMode,
+      surface: modelOptions.surface || options.surface || resolveChatFormatGuardianSurface(parserResult?.eventDrafts),
+      isGroupChat: modelOptions.isGroupChat === true || options.isGroupChat === true,
+      assistantText: inputText,
+      parserResult,
+      enabledFormats: modelOptions.enabledFormats,
+    });
     const prompt = buildChatFormatGuardianModelPrompt({
       assistantText: inputText,
-      formatReminderText: modelOptions.formatReminderText,
-      enabledFormats: modelOptions.enabledFormats,
+      formatReminderText: selectChatFormatReminderTextForProfile(modelOptions, formatProfile),
+      enabledFormats: formatProfile.enabledFormats,
       parserReport: parserResult,
       userName: modelOptions.userName || options.userName,
       sessionLabel: modelOptions.sessionLabel,
       surface: modelOptions.surface || resolveChatFormatGuardianSurface(parserResult?.eventDrafts),
+      formatTarget: formatProfile.target,
     });
     const raw = await runChatFormatGuardianBackgroundChat(
       modelOptions.backgroundChat,

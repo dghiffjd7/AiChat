@@ -19,23 +19,6 @@ const countPendingBy = (pending = [], predicate = () => false) => (
 
 const RESOURCE_DEFINITIONS = Object.freeze([
   {
-    id: 'prompt_library',
-    group: '预设',
-    title: '提示词',
-    summary: '私聊、群聊、动态、生图和摘要。',
-    target: { panel: 'presetPanel', section: 'chatprompts' },
-    actionLabel: '打开',
-    shortcuts: [
-      { id: 'dialogue', label: '私聊', promptId: 'dialogue' },
-      { id: 'group', label: '群聊', promptId: 'group' },
-      { id: 'moment', label: '动态发布', promptId: 'moment' },
-      { id: 'moment-comment', label: '动态评论', promptId: 'moment-comment' },
-      { id: 'auto-image-prompt', label: '生图', promptId: 'auto-image-prompt' },
-      { id: 'summary', label: '摘要', promptId: 'summary' },
-      { id: 'phone-format-intro', label: '手机格式', promptId: 'phone-format-intro' },
-    ],
-  },
-  {
     id: 'memory_center',
     group: '记忆',
     title: '记忆',
@@ -127,7 +110,6 @@ const mergeResourceOverride = (resource = {}, override = {}) => {
 export const buildAgentCenterResources = ({
   pending = [],
   tools = [],
-  agents = [],
   safety = {},
   resourceStatus = {},
 } = {}) => {
@@ -138,14 +120,8 @@ export const buildAgentCenterResources = ({
   const profilePending = countPendingBy(pending, item => item?.kind === 'contact_profile_update');
   const writePreviewEnabled = safety?.sessionGate?.writePreviewTools?.enabled === true;
   const toolCount = Array.isArray(tools) ? tools.length : 0;
-  const enabledAgentCount = (Array.isArray(agents) ? agents : []).filter(agent => agent?.enabled).length;
 
   const computed = {
-    prompt_library: {
-      status: '12 项',
-      count: 0,
-      chips: [enabledAgentCount ? `Agent ${enabledAgentCount} 个启用` : ''],
-    },
     memory_center: {
       status: memoryPreviewPending ? `${memoryPreviewPending} 个待确认` : '就绪',
       count: memoryPreviewPending,

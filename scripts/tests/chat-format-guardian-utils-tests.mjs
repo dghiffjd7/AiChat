@@ -1,11 +1,13 @@
 import assert from 'node:assert/strict';
 
 import {
+  CHAT_FORMAT_GUARDIAN_TARGETS,
   CHAT_FORMAT_EVENT_TYPES,
   buildChatFormatRepairCandidate,
   buildChatFormatGuardianModelPrompt,
   extractChatFormatEventDrafts,
   normalizeChatFormatGuardianModelReview,
+  resolveChatFormatGuardianFormatProfile,
   validateChatFormatEventDraft,
 } from '../../src/scripts/ui/chat/chat-format-guardian-utils.js';
 
@@ -114,6 +116,47 @@ import {
 }
 
 {
+  const enabledFormats = {
+    phoneShell: true,
+    privateChat: true,
+    groupChat: true,
+    momentComment: true,
+    momentPost: true,
+    tableEdit: true,
+    imagePrompt: true,
+  };
+  const groupProfile = resolveChatFormatGuardianFormatProfile({
+    target: CHAT_FORMAT_GUARDIAN_TARGETS.groupChat,
+    enabledFormats,
+  });
+  assert.equal(groupProfile.target, CHAT_FORMAT_GUARDIAN_TARGETS.groupChat);
+  assert.deepEqual(groupProfile.enabledFormatIds, ['phoneShell', 'groupChat']);
+
+  const imageProfile = resolveChatFormatGuardianFormatProfile({
+    assistantText: '<image_prompt>\n雨夜街道\n</image_prompt>',
+    enabledFormats,
+  });
+  assert.equal(imageProfile.target, CHAT_FORMAT_GUARDIAN_TARGETS.imagePrompt);
+  assert.deepEqual(imageProfile.enabledFormatIds, ['imagePrompt']);
+
+  const memoryProfile = resolveChatFormatGuardianFormatProfile({
+    assistantText: '<tableEdit>\nupdate memory\n</tableEdit>',
+    enabledFormats,
+  });
+  assert.equal(memoryProfile.target, CHAT_FORMAT_GUARDIAN_TARGETS.memoryTableEdit);
+  assert.deepEqual(memoryProfile.enabledFormatIds, ['tableEdit']);
+
+  const creativeProfile = resolveChatFormatGuardianFormatProfile({
+    uiMode: 'rp',
+    surface: 'creative',
+    enabledFormats,
+  });
+  assert.equal(creativeProfile.target, CHAT_FORMAT_GUARDIAN_TARGETS.creativeText);
+  assert.deepEqual(creativeProfile.enabledFormatIds, []);
+  console.log('ok - chat format guardian format profile selects minimal target requirements');
+}
+
+{
   const validation = validateChatFormatEventDraft({
     type: 'private_message',
     surface: 'chat',
@@ -188,6 +231,38 @@ import {
   assert.match(prompt.messages[0].content, /末尾截断/);
   assert.match(user, /time is missing/);
   console.log('ok - chat format guardian model prompt uses only enabled format requirements');
+}
+
+{
+  const prompt = buildChatFormatGuardianModelPrompt({
+    assistantText: '画一张雨夜街道的霓虹灯',
+    formatReminderText: '必须使用 <image_prompt> 包裹图片提示词。',
+    enabledFormats: {
+      phoneShell: false,
+      privateChat: false,
+      groupChat: false,
+      imagePrompt: true,
+    },
+    parserReport: {
+      status: 'no_events',
+      summary: 'missing image prompt tag',
+      errors: [],
+      warnings: [],
+      eventDrafts: [],
+    },
+    formatTarget: CHAT_FORMAT_GUARDIAN_TARGETS.imagePrompt,
+  });
+  const system = prompt.messages[0].content;
+  const user = prompt.messages[1].content;
+  assert.deepEqual(prompt.enabledFormatIds, ['imagePrompt']);
+  assert.match(user, /formatTarget: image_prompt/);
+  assert.match(user, /图片提示词格式/);
+  assert.match(user, /<image_prompt>/);
+  assert.doesNotMatch(user, /MiPhone_start/);
+  assert.doesNotMatch(user, /私聊格式/);
+  assert.doesNotMatch(system, /<\{\{user\}\}和联系人名的私聊>/);
+  assert.doesNotMatch(system, /MiPhone_end 之后/);
+  console.log('ok - chat format guardian image prompt repair omits chat-only requirements');
 }
 
 {

@@ -640,6 +640,19 @@ export class ExperiencePackTransfer extends CharacterCardTransfer {
     return { presets };
   }
 
+  collectAgentCenterSettingsBundle() {
+    try {
+      const actions = this.appBridge?.debugUiRegistry?.actions || {};
+      const settings = typeof actions.getAgentCenterSettings === 'function'
+        ? actions.getAgentCenterSettings()
+        : null;
+      return settings && typeof settings === 'object' ? cloneJson(settings, null) : null;
+    } catch (err) {
+      logger.warn('collect agent center settings failed', err);
+      return null;
+    }
+  }
+
   async collectConnectionProfileBundle(sessionId, { hideServiceAddresses = false } = {}) {
     const sid = String(sessionId || '').trim();
     const presetStore = this.presetStore;
@@ -741,6 +754,7 @@ export class ExperiencePackTransfer extends CharacterCardTransfer {
       sessionSettings: rawSettings,
       wallpaper,
       presets: this.collectResolvedPresetBundle(sid),
+      agentCenterSettings: this.collectAgentCenterSettingsBundle(),
       connection: await this.collectConnectionProfileBundle(sid, {
         hideServiceAddresses: options.hideServiceAddresses === true,
       }),
@@ -916,6 +930,7 @@ export class ExperiencePackTransfer extends CharacterCardTransfer {
       regex: this.readJsonEntry(entryMap, 'scripts/regex.json', null),
       roomConfig: this.readJsonEntry(entryMap, 'room/config.json', null),
       roomPresets: this.readJsonEntry(entryMap, 'room/presets.json', null),
+      roomAgentCenterSettings: this.readJsonEntry(entryMap, 'room/agent-center-settings.json', null),
       roomConnection: this.readJsonEntry(entryMap, 'room/connection-profile.json', null),
       roomStickers: this.readJsonEntry(entryMap, 'room/stickers.json', []),
       memoryTemplate: this.readJsonEntry(entryMap, 'memory/template.json', null),
@@ -1295,6 +1310,23 @@ export class ExperiencePackTransfer extends CharacterCardTransfer {
       } catch (err) {
         logger.warn('bind imported preset to session failed', err);
       }
+    }
+    if (packageData?.roomAgentCenterSettings) {
+      try {
+        await this.appBridge?.debugUiRegistry?.actions?.importAgentCenterSettings?.({
+          settings: packageData.roomAgentCenterSettings,
+          presetIdMap: restoredPresetIds,
+        });
+      } catch (err) {
+        logger.warn('import agent center settings from experience pack failed', err);
+      }
+    } else {
+      try {
+        await this.appBridge?.debugUiRegistry?.actions?.getAgentCenterProfileView?.({
+          sessionId: sid,
+          uiMode: 'chat',
+        });
+      } catch {}
     }
 
     if (roomConnection?.profile && this.configManager?.createProfile) {

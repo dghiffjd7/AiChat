@@ -6,6 +6,21 @@ import {
 } from '../../src/scripts/ui/agent-center-panel.js';
 
 {
+  const panel = new AgentCenterPanel();
+  panel.ensureDom = () => {
+    panel.overlayElement = { style: {} };
+  };
+  panel.refresh = () => {};
+  panel.activeTab = 'activity';
+  panel.show();
+  assert.equal(panel.activeTab, 'activity');
+  panel.show({ tab: 'activity', activityStatus: 'failure' });
+  assert.equal(panel.activeTab, 'activity');
+  assert.equal(panel.activityStatus, 'failure');
+  console.log('ok - agent center panel restores the last tab unless a tab is explicit');
+}
+
+{
   const panel = new AgentCenterPanel({
     getActions: () => ({
       listProviderToolPendingPermissions: () => [
@@ -39,11 +54,19 @@ import {
   const view = await panel.collectView();
   assert.equal(view.meta.pending, 2);
   assert.equal(view.meta.activeRuns, 1);
-  assert.equal(view.meta.enabledAgents, 1);
+  assert.equal(view.meta.enabledAgents, 4);
+  assert.equal(view.meta.promptModules, 3);
+  assert.equal(view.meta.diagnosticViews, 2);
   assert.equal(view.meta.tools, 1);
-  assert.equal(view.meta.resources, 7);
+  assert.equal(view.meta.resources, 6);
   assert.equal(view.pending[0].kind, 'contact_profile_update');
   assert.equal(view.agents.find(agent => agent.id === 'reply_check').enabled, true);
+  assert.equal(view.agents.find(agent => agent.id === 'image_director').title, '生图 Agent');
+  assert.equal(view.agents.find(agent => agent.id === 'summary_agent'), undefined);
+  assert.equal(view.agents.find(agent => agent.id === 'memory_manager'), undefined);
+  assert.equal(view.agents.find(agent => agent.id === 'phone_format_agent'), undefined);
+  assert.equal(view.promptModules.find(agent => agent.id === 'phone_format_agent').title, '手机格式');
+  assert.equal(view.diagnosticViews.find(agent => agent.id === 'lineage_agent').title, '血缘图');
   assert.equal(view.agentModelProfiles[0].label, '轻量检查 · openrouter / model-a');
   assert.equal(view.safety.permissionRules.length, 1);
   console.log('ok - agent center panel collects existing agent debug registry actions into a user view');
@@ -84,21 +107,266 @@ import {
   const html = panel.renderAgents();
   assert.match(html, /检查回复格式/);
   assert.match(html, /AI 回复后检查私聊、群聊、动态等格式问题/);
+  assert.match(html, /data-agent-card-open="reply_check"/);
   assert.match(html, /data-agent-feature-action="enable"/);
   assert.match(html, /data-agent-feature-id="reply_check"/);
-  assert.match(html, /data-agent-feature-model-select="reply_check"/);
-  assert.match(html, /data-agent-feature-model-button="reply_check"/);
-  assert.match(html, /data-agent-feature-model-manage="reply_check"/);
-  assert.match(html, /world-app-select-btn/);
+  assert.doesNotMatch(html, /data-agent-feature-action="disable"/);
+  assert.doesNotMatch(html, /data-agent-card-action="disable"/);
+  assert.doesNotMatch(html, /data-agent-feature-detail/);
+  assert.doesNotMatch(html, /data-agent-feature-model-select="reply_check"/);
+  assert.doesNotMatch(html, /data-agent-feature-model-button="reply_check"/);
+  assert.doesNotMatch(html, /data-agent-feature-model-manage="reply_check"/);
   assert.doesNotMatch(html, /data-agent-feature-model="reply_check"/);
-  assert.match(html, /轻量检查 · openrouter \/ model-a/);
-  assert.match(html, /value="profile:profile-a" selected/);
-  assert.match(html, /data-agent-feature-trigger="reply_check"/);
-  assert.match(html, /自动触发/);
+  assert.doesNotMatch(html, /value="profile:profile-a" selected/);
+  assert.doesNotMatch(html, /data-agent-feature-trigger="reply_check"/);
   assert.match(html, /文本补全/);
   assert.match(html, /disabled/);
   assert.match(html, /规划中/);
+  panel.openFloatingAgentCard('reply_check');
+  panel.floatingAgentFlipped = true;
+  const floatingHtml = panel.renderFloatingAgentCard();
+  assert.match(floatingHtml, /agent-center-floating-card/);
+  assert.match(floatingHtml, /data-agent-feature-model-select="reply_check"/);
+  assert.match(floatingHtml, /data-agent-feature-trigger="reply_check"/);
+  assert.match(floatingHtml, /data-agent-prompt-preview="reply_check"/);
+  assert.match(floatingHtml, /data-reply-check-preview-target/);
+  assert.match(floatingHtml, /生图标签/);
+  assert.match(floatingHtml, /预览提示词/);
+  assert.match(floatingHtml, /完整请求预览/);
+  assert.match(floatingHtml, /检查提示词/);
+  assert.match(floatingHtml, /固定检查指令/);
+  assert.match(floatingHtml, /自动触发/);
+  assert.match(floatingHtml, /value="profile:profile-a" selected/);
   console.log('ok - agent center panel renders available agent feature cards');
+}
+
+{
+  const panel = new AgentCenterPanel();
+  let renderCalls = 0;
+  const classes = new Set(['agent-center-floating-card']);
+  const card = {
+    classList: {
+      toggle: (name, force) => {
+        if (force) classes.add(name);
+        else classes.delete(name);
+      },
+    },
+  };
+  panel.floatingAgentId = 'reply_check';
+  panel.contentElement = {
+    querySelector: selector => (selector === '.agent-center-floating-card' ? card : null),
+  };
+  panel.render = () => {
+    renderCalls += 1;
+  };
+  panel.toggleFloatingAgentCard();
+  assert.equal(panel.floatingAgentFlipped, true);
+  assert.equal(classes.has('is-flipped'), true);
+  assert.equal(renderCalls, 0);
+  panel.toggleFloatingAgentCard();
+  assert.equal(panel.floatingAgentFlipped, false);
+  assert.equal(classes.has('is-flipped'), false);
+  assert.equal(renderCalls, 0);
+  console.log('ok - floating agent card flips by toggling the existing card class');
+}
+
+{
+  let payload = null;
+  const panel = new AgentCenterPanel({
+    getActions: () => ({
+      showPromptPreview: options => {
+        payload = options;
+        return true;
+      },
+    }),
+  });
+  panel.handleReplyCheckPreviewTargetChange('image_prompt');
+  assert.equal(panel.replyCheckPreviewTarget, 'image_prompt');
+  panel.handleReplyCheckPreviewTargetChange('unknown');
+  assert.equal(panel.replyCheckPreviewTarget, 'auto');
+  panel.handleReplyCheckPreviewTargetChange('group_chat');
+  await panel.handleAgentPromptPreview('reply_check');
+  assert.deepEqual(payload, {
+    source: 'agent_center',
+    agentId: 'reply_check',
+    formatTarget: 'group_chat',
+  });
+  console.log('ok - agent center prompt preview button delegates agent id to preview action');
+}
+
+{
+  const panel = new AgentCenterPanel();
+  panel.view = {
+    promptModules: [{
+      id: 'phone_format_agent',
+      title: '手机格式',
+      summary: '管理手机聊天、动态和结尾格式提示词。',
+      detail: ['承接原 preset 中的手机格式提示词。'],
+      enabled: true,
+      implemented: true,
+      category: 'prompt_module',
+      promptRefs: [
+        { id: 'phone-format-chat', label: 'QQ聊天格式', profileType: 'sysprompt', agentId: 'phone_format_agent' },
+      ],
+    }],
+    agentProfileView: {
+      sysprompt: {
+        presetId: 'sysp',
+        profile: {
+          agents: {
+            phone_format_agent: {
+              prompts: {
+                'phone-format-chat': { enabled: true, rules: 'format rules' },
+              },
+            },
+          },
+        },
+      },
+    },
+  };
+  const html = panel.renderPromptModules();
+  assert.match(html, /手机格式/);
+  assert.doesNotMatch(html, /QQ聊天格式/);
+  assert.doesNotMatch(html, /format rules/);
+  panel.openFloatingAgentCard('phone_format_agent');
+  const floatingHtml = panel.renderFloatingAgentCard();
+  assert.match(floatingHtml, /agent-center-floating-card/);
+  assert.match(floatingHtml, /提示词\/协议/);
+  assert.match(floatingHtml, /QQ聊天格式/);
+  assert.match(floatingHtml, /format rules/);
+  assert.match(floatingHtml, /data-agent-float-flip/);
+  assert.doesNotMatch(html, /模型：不直接调用模型/);
+  console.log('ok - agent center panel renders prompt modules outside Agent cards');
+}
+
+{
+  const panel = new AgentCenterPanel();
+  panel.view = {
+    diagnosticViews: [{
+      id: 'execution_lane_agent',
+      title: '执行泳道',
+      summary: '把创作过程按输入、模型、记忆和生图等泳道展示。',
+      detail: ['将运行过程投影为泳道视图。'],
+      enabled: true,
+      implemented: true,
+      category: 'diagnostic',
+    }],
+  };
+  const html = panel.renderDiagnostics();
+  assert.match(html, /执行泳道/);
+  assert.match(html, /诊断视图/);
+  assert.doesNotMatch(html, /data-agent-card-action="disable"/);
+  assert.match(html, /data-agent-card-open="execution_lane_agent"/);
+  console.log('ok - agent center panel renders diagnostic views without Agent toggle');
+}
+
+{
+  const panel = new AgentCenterPanel();
+  panel.view = {
+    agents: [{
+      id: 'image_director',
+      title: '生图 Agent',
+      summary: '根据对话自动整理生图标签和图片提示词。',
+      detail: ['负责判断当前回复是否需要图片表达。'],
+      enabled: true,
+      implemented: true,
+      toggleKind: 'agent_card',
+      accent: 'image',
+      promptRefs: [
+        { id: 'auto-image-prompt', label: '自动标签生图提示词', profileType: 'sysprompt', agentId: 'image_director' },
+      ],
+      settingRefs: ['自动标签策略'],
+      resourceRefs: ['image_templates'],
+    }],
+    resources: [{ id: 'image_templates', title: '生图模板' }],
+    agentProfileView: {
+      sysprompt: {
+        presetId: 'sysp-a',
+        profile: {
+          agents: {
+            image_director: {
+              prompts: {
+                'auto-image-prompt': {
+                  enabled: true,
+                  rules: 'image prompt rules',
+                  position: 4,
+                  depth: 0,
+                  role: 0,
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+  };
+  const html = panel.renderAgents();
+  assert.match(html, /生图 Agent/);
+  assert.doesNotMatch(html, /data-agent-card-action="disable"/);
+  assert.doesNotMatch(html, /data-agent-feature-detail/);
+  assert.doesNotMatch(html, /data-agent-prompt-save="auto-image-prompt"/);
+  panel.openFloatingAgentCard('image_director');
+  panel.floatingAgentFlipped = true;
+  const floatingHtml = panel.renderFloatingAgentCard();
+  assert.match(floatingHtml, /data-agent-prompt-save="auto-image-prompt"/);
+  assert.match(floatingHtml, /image prompt rules/);
+  assert.match(floatingHtml, /data-agent-resource-open="image_templates"/);
+  console.log('ok - agent center panel renders catalog cards with editable prompt refs');
+}
+
+{
+  const panel = new AgentCenterPanel();
+  panel.view = {
+    agents: [{
+      id: 'memory_table_agent',
+      title: '记忆表格 Agent',
+      summary: '管理记忆表格注入、更新和写入预览。',
+      detail: ['控制记忆表格数据和 guide 在请求中的位置。'],
+      enabled: true,
+      implemented: true,
+      category: 'memory',
+      accent: 'memory',
+      resourceRefs: ['memory_center'],
+    }],
+    resources: [{ id: 'memory_center', title: '记忆' }],
+    memoryAgentPromptConfig: {
+      templateId: 'default-v1',
+      templateName: '通用记忆模板',
+      template: '记忆内容：{{tableData}}',
+      wrapper: '<memories>\n{{tableData}}\n</memories>',
+      position: 'history_depth',
+    },
+    agentProfileView: {
+      openai: {
+        presetId: 'openai-a',
+        profile: {
+          agents: {
+            memory_table_agent: {
+              settings: {
+                dataPosition: 'before_latest_user',
+                dataDepth: 2,
+                guidePosition: 'after_latest_user',
+                guideDepth: 1,
+              },
+            },
+          },
+        },
+      },
+    },
+  };
+  panel.openFloatingAgentCard('memory_table_agent');
+  panel.floatingAgentFlipped = true;
+  const floatingHtml = panel.renderFloatingAgentCard();
+  assert.match(floatingHtml, /记忆提示词与注入/);
+  assert.match(floatingHtml, /记忆数据提示词位置/);
+  assert.match(floatingHtml, /写表指导提示词位置/);
+  assert.match(floatingHtml, /表格内容模板/);
+  assert.match(floatingHtml, /记忆内容：{{tableData}}/);
+  assert.match(floatingHtml, /&lt;memories&gt;/);
+  assert.match(floatingHtml, /data-memory-prompt-position/);
+  assert.match(floatingHtml, /value="history_depth" selected/);
+  assert.match(floatingHtml, /data-agent-resource-open="memory_center"/);
+  console.log('ok - memory table agent back renders editable prompt template settings');
 }
 
 {
@@ -1086,38 +1354,32 @@ import {
   panel.view = {
     resources: [
       {
-        id: 'prompt_library',
-        group: '预设',
-        title: '提示词',
-        summary: '私聊、群聊、动态、生图和摘要。',
-        status: '12 项',
-        target: { panel: 'presetPanel', section: 'chatprompts' },
+        id: 'memory_center',
+        group: '记忆',
+        title: '记忆',
+        summary: '表格、模板、导入导出。',
+        status: '就绪',
+        target: { panel: 'memoryTemplatePanel', focus: 'overview' },
         actionLabel: '打开',
-        shortcuts: [
-          { id: 'dialogue', label: '私聊', promptId: 'dialogue' },
-          { id: 'group', label: '群聊', promptId: 'group' },
-        ],
       },
     ],
   };
   const html = panel.renderResources();
-  assert.match(html, /提示词/);
-  assert.match(html, /私聊、群聊、动态、生图和摘要。/);
-  assert.match(html, /data-resource-prompt-id="dialogue"/);
-  assert.match(html, /data-resource-prompt-id="group"/);
-  assert.match(html, /data-resource-open="prompt_library"/);
+  assert.match(html, /记忆/);
+  assert.match(html, /表格、模板、导入导出/);
+  assert.doesNotMatch(html, /提示词/);
+  assert.doesNotMatch(html, /data-resource-prompt-id="dialogue"/);
+  assert.match(html, /data-resource-open="memory_center"/);
   assert.doesNotMatch(html, /统一资源入口/);
   assert.doesNotMatch(html, /Prompt Library/);
   assert.doesNotMatch(html, /主界面：presetPanel/);
   assert.doesNotMatch(html, /二级详情/);
-  await panel.handleResourceOpen('prompt_library');
-  assert.equal(opened.target.panel, 'presetPanel');
-  assert.equal(opened.target.section, 'chatprompts');
-  assert.equal(opened.resource.id, 'prompt_library');
-  assert.equal(hidden, true);
-  await panel.handleResourceOpen('prompt_library', { promptId: 'dialogue' });
-  assert.equal(opened.target.promptId, 'dialogue');
-  console.log('ok - agent center resources render clean entries and prompt shortcuts');
+  await panel.handleResourceOpen('memory_center');
+  assert.equal(opened.target.panel, 'memoryTemplatePanel');
+  assert.equal(opened.target.focus, 'overview');
+  assert.equal(opened.resource.id, 'memory_center');
+  assert.equal(hidden, false);
+  console.log('ok - agent center resources render clean entries without legacy prompt card');
 }
 
 {
@@ -1269,7 +1531,7 @@ import {
 
 {
   const text = formatAgentCenterExportText({
-    meta: { pending: 1, activeRuns: 0, unreadFailedRuns: 1, tools: 1, resources: 1 },
+    meta: { pending: 1, activeRuns: 0, unreadFailedRuns: 1, tools: 1, resources: 1, agents: 1, enabledAgents: 1, promptModules: 1, enabledPromptModules: 1, diagnosticViews: 1 },
     pending: [{
       toolName: 'contact_profile.list',
       status: 'pending',
@@ -1292,12 +1554,25 @@ import {
       implemented: true,
       modelLabel: '不调用模型',
     }],
+    promptModules: [{
+      id: 'phone_format_agent',
+      title: '手机格式',
+      enabled: true,
+      promptRefs: [{ id: 'phone-format-chat' }],
+      summary: '管理手机聊天、动态和结尾格式提示词。',
+    }],
+    diagnosticViews: [{
+      id: 'execution_lane_agent',
+      title: '执行泳道',
+      implemented: true,
+      summary: '把创作过程按输入、模型、记忆和生图等泳道展示。',
+    }],
     resources: [{
-      id: 'prompt_library',
-      title: '提示词',
-      group: '预设',
-      status: '12 项',
-      summary: '私聊、群聊、动态、生图和摘要。',
+      id: 'memory_center',
+      title: '记忆',
+      group: '记忆',
+      status: '就绪',
+      summary: '表格、模板、导入导出。',
     }],
     safety: {
       sessionGate: {
@@ -1318,7 +1593,10 @@ import {
   assert.match(text, /读取联系人列表 · 待确认 · 范围：chat:a/);
   assert.match(text, /正文检查 · 失败 · 范围：chat:a · 发现问题/);
   assert.match(text, /检查回复格式 · 已开启 · 可使用 · 模型：不调用模型/);
-  assert.match(text, /提示词 · 分组：预设 · 状态：12 项 · 私聊、群聊、动态、生图和摘要。/);
+  assert.match(text, /手机格式 · 已开启 · 提示词 1 · 管理手机聊天、动态和结尾格式提示词。/);
+  assert.match(text, /执行泳道 · 可使用 · 把创作过程按输入、模型、记忆和生图等泳道展示。/);
+  assert.match(text, /记忆 · 分组：记忆 · 状态：就绪 · 表格、模板、导入导出。/);
+  assert.doesNotMatch(text, /提示词 · 分组：Agent/);
   assert.match(text, /工具白名单：读取联系人列表/);
   assert.match(text, /规则冲突：1 组/);
   assert.doesNotMatch(text, /rawOriginal|replacementText|runnerFacade/);

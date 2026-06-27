@@ -1,0 +1,678 @@
+import { safeInvoke } from '../utils/tauri.js';
+
+export const AGENT_CENTER_SETTINGS_STORAGE_KEY = 'agent_center_settings_v1';
+
+const isPlainObject = value => Boolean(value && typeof value === 'object' && !Array.isArray(value));
+
+const trim = (value, fallback = '') => {
+  const text = String(value ?? '').trim();
+  return text || fallback;
+};
+
+const clone = (value, fallback = null) => {
+  try {
+    if (value === undefined) return fallback;
+    return JSON.parse(JSON.stringify(value));
+  } catch {
+    return fallback;
+  }
+};
+
+const toTimestamp = (now = Date.now) => {
+  try {
+    const value = typeof now === 'function' ? now() : now;
+    const numeric = Number(value);
+    return Number.isFinite(numeric) && numeric > 0 ? numeric : Date.now();
+  } catch {
+    return Date.now();
+  }
+};
+
+const readStorage = (storage = globalThis?.localStorage) => {
+  try {
+    return storage && typeof storage.getItem === 'function' && typeof storage.setItem === 'function'
+      ? storage
+      : null;
+  } catch {
+    return null;
+  }
+};
+
+export const makeAgentProfileKey = (profileType = '', presetId = '') => {
+  const type = trim(profileType);
+  const id = trim(presetId);
+  return type && id ? `${type}:${id}` : '';
+};
+
+export const SYSPROMPT_AGENT_PROMPT_MAPPINGS = Object.freeze([
+  {
+    agentId: 'phone_format_agent',
+    promptId: 'phone-format-intro',
+    enabledKey: 'phone_format_intro_enabled',
+    rulesKey: 'phone_format_intro_rules',
+  },
+  {
+    agentId: 'phone_format_agent',
+    promptId: 'phone-format-chat',
+    enabledKey: 'phone_format_chat_enabled',
+    rulesKey: 'phone_format_chat_rules',
+  },
+  {
+    agentId: 'phone_format_agent',
+    promptId: 'phone-format-moment',
+    enabledKey: 'phone_format_moment_enabled',
+    rulesKey: 'phone_format_moment_rules',
+  },
+  {
+    agentId: 'phone_format_agent',
+    promptId: 'phone-format-footer',
+    enabledKey: 'phone_format_footer_enabled',
+    rulesKey: 'phone_format_footer_rules',
+  },
+  {
+    agentId: 'dialogue_agent',
+    promptId: 'dialogue',
+    enabledKey: 'dialogue_enabled',
+    positionKey: 'dialogue_position',
+    depthKey: 'dialogue_depth',
+    roleKey: 'dialogue_role',
+    rulesKey: 'dialogue_rules',
+    defaults: { position: 0, depth: 1, role: 0 },
+  },
+  {
+    agentId: 'moment_agent',
+    promptId: 'moment',
+    enabledKey: 'moment_create_enabled',
+    positionKey: 'moment_create_position',
+    depthKey: 'moment_create_depth',
+    roleKey: 'moment_create_role',
+    rulesKey: 'moment_create_rules',
+    defaults: { position: 0, depth: 1, role: 0 },
+  },
+  {
+    agentId: 'moment_agent',
+    promptId: 'moment-comment',
+    enabledKey: 'moment_comment_enabled',
+    positionKey: 'moment_comment_position',
+    depthKey: 'moment_comment_depth',
+    roleKey: 'moment_comment_role',
+    rulesKey: 'moment_comment_rules',
+    defaults: { position: 0, depth: 0, role: 0 },
+  },
+  {
+    agentId: 'moment_agent',
+    promptId: 'moment-publish-comment',
+    enabledKey: 'moment_publish_comment_enabled',
+    positionKey: 'moment_publish_comment_position',
+    depthKey: 'moment_publish_comment_depth',
+    roleKey: 'moment_publish_comment_role',
+    rulesKey: 'moment_publish_comment_rules',
+    defaults: { position: 0, depth: 0, role: 0 },
+  },
+  {
+    agentId: 'image_director',
+    promptId: 'auto-image-prompt',
+    enabledKey: 'auto_image_prompt_enabled',
+    positionKey: 'auto_image_prompt_position',
+    depthKey: 'auto_image_prompt_depth',
+    roleKey: 'auto_image_prompt_role',
+    rulesKey: 'auto_image_prompt_rules',
+    defaults: { position: 4, depth: 0, role: 0 },
+  },
+  {
+    agentId: 'group_agent',
+    promptId: 'group',
+    enabledKey: 'group_enabled',
+    positionKey: 'group_position',
+    depthKey: 'group_depth',
+    roleKey: 'group_role',
+    rulesKey: 'group_rules',
+    defaults: { position: 0, depth: 1, role: 0 },
+  },
+  {
+    agentId: 'summary_agent',
+    promptId: 'summary',
+    enabledKey: 'summary_enabled',
+    positionKey: 'summary_position',
+    rulesKey: 'summary_rules',
+    defaults: { position: 1, depth: 1, role: 0 },
+  },
+]);
+
+export const MEMORY_AGENT_SETTING_KEYS = Object.freeze({
+  dataPosition: 'memory_data_position',
+  dataDepth: 'memory_data_depth',
+  guidePosition: 'memory_guide_position',
+  guideDepth: 'memory_guide_depth',
+});
+
+const normalizePromptConfig = (prompt = {}) => {
+  const src = isPlainObject(prompt) ? prompt : {};
+  const out = {
+    enabled: src.enabled !== false,
+    rules: typeof src.rules === 'string' ? src.rules : '',
+  };
+  if (Number.isFinite(Number(src.position))) out.position = Math.trunc(Number(src.position));
+  if (Number.isFinite(Number(src.depth))) out.depth = Math.max(0, Math.trunc(Number(src.depth)));
+  if (Number.isFinite(Number(src.role))) out.role = Math.trunc(Number(src.role));
+  if (Number.isFinite(Number(src.updatedAt))) out.updatedAt = Number(src.updatedAt);
+  return out;
+};
+
+const normalizePromptConfigPatch = (prompt = {}) => {
+  const src = isPlainObject(prompt) ? prompt : {};
+  const out = {};
+  if (typeof src.enabled === 'boolean') out.enabled = src.enabled;
+  if (typeof src.rules === 'string') out.rules = src.rules;
+  if (Number.isFinite(Number(src.position))) out.position = Math.trunc(Number(src.position));
+  if (Number.isFinite(Number(src.depth))) out.depth = Math.max(0, Math.trunc(Number(src.depth)));
+  if (Number.isFinite(Number(src.role))) out.role = Math.trunc(Number(src.role));
+  if (Number.isFinite(Number(src.updatedAt))) out.updatedAt = Number(src.updatedAt);
+  return out;
+};
+
+const normalizeAgentProfile = (profile = {}) => {
+  const src = isPlainObject(profile) ? profile : {};
+  const prompts = {};
+  const rawPrompts = isPlainObject(src.prompts) ? src.prompts : {};
+  Object.entries(rawPrompts).forEach(([promptId, prompt]) => {
+    const id = trim(promptId);
+    if (id) prompts[id] = normalizePromptConfig(prompt);
+  });
+  const settings = isPlainObject(src.settings) ? clone(src.settings, {}) : {};
+  return {
+    enabled: src.enabled !== false,
+    prompts,
+    settings,
+    updatedAt: Number(src.updatedAt || 0) || 0,
+  };
+};
+
+const normalizeProfile = (profile = {}) => {
+  const src = isPlainObject(profile) ? profile : {};
+  const agents = {};
+  const rawAgents = isPlainObject(src.agents) ? src.agents : {};
+  Object.entries(rawAgents).forEach(([agentId, agent]) => {
+    const id = trim(agentId);
+    if (id) agents[id] = normalizeAgentProfile(agent);
+  });
+  return {
+    profileType: trim(src.profileType),
+    presetId: trim(src.presetId),
+    presetName: trim(src.presetName),
+    source: trim(src.source, 'preset'),
+    agents,
+    updatedAt: Number(src.updatedAt || 0) || 0,
+  };
+};
+
+const normalizeCardState = (card = {}) => {
+  const src = isPlainObject(card) ? card : {};
+  return {
+    enabled: src.enabled !== false,
+    updatedAt: Number(src.updatedAt || 0) || 0,
+  };
+};
+
+export const normalizeAgentCenterSettings = (settings = {}) => {
+  const src = isPlainObject(settings) ? settings : {};
+  const profiles = {};
+  const rawProfiles = isPlainObject(src.profiles) ? src.profiles : {};
+  Object.entries(rawProfiles).forEach(([key, profile]) => {
+    const id = trim(key);
+    if (id) profiles[id] = normalizeProfile(profile);
+  });
+  const cards = {};
+  const rawCards = isPlainObject(src.cards) ? src.cards : {};
+  Object.entries(rawCards).forEach(([key, card]) => {
+    const id = trim(key);
+    if (id) cards[id] = normalizeCardState(card);
+  });
+  return {
+    version: 1,
+    migrations: isPlainObject(src.migrations) ? clone(src.migrations, {}) : {},
+    cards,
+    profiles,
+    global: isPlainObject(src.global) ? clone(src.global, {}) : {},
+  };
+};
+
+const ensureProfile = (settings, profileType = '', presetId = '', preset = {}, now = Date.now) => {
+  const key = makeAgentProfileKey(profileType, presetId);
+  if (!key) return null;
+  const timestamp = toTimestamp(now);
+  settings.profiles[key] = normalizeProfile({
+    ...(settings.profiles[key] || {}),
+    profileType,
+    presetId,
+    presetName: trim(preset?.name || presetId),
+    updatedAt: settings.profiles[key]?.updatedAt || timestamp,
+  });
+  return settings.profiles[key];
+};
+
+const ensureProfileAgent = (profile, agentId = '', now = Date.now) => {
+  const id = trim(agentId);
+  if (!id) return null;
+  const timestamp = toTimestamp(now);
+  profile.agents[id] = normalizeAgentProfile({
+    ...(profile.agents[id] || {}),
+    updatedAt: profile.agents[id]?.updatedAt || timestamp,
+  });
+  return profile.agents[id];
+};
+
+const promptFromPreset = (preset = {}, mapping = {}) => {
+  const defaults = mapping.defaults || {};
+  const prompt = {
+    enabled: typeof preset?.[mapping.enabledKey] === 'boolean'
+      ? preset[mapping.enabledKey]
+      : true,
+    rules: typeof preset?.[mapping.rulesKey] === 'string'
+      ? preset[mapping.rulesKey]
+      : '',
+  };
+  if (mapping.positionKey) {
+    prompt.position = Number.isFinite(Number(preset?.[mapping.positionKey]))
+      ? Math.trunc(Number(preset[mapping.positionKey]))
+      : Number(defaults.position || 0);
+  }
+  if (mapping.depthKey || Number.isFinite(Number(defaults.depth))) {
+    prompt.depth = Number.isFinite(Number(preset?.[mapping.depthKey]))
+      ? Math.max(0, Math.trunc(Number(preset[mapping.depthKey])))
+      : Math.max(0, Math.trunc(Number(defaults.depth || 0)));
+  }
+  if (mapping.roleKey || Number.isFinite(Number(defaults.role))) {
+    prompt.role = Number.isFinite(Number(preset?.[mapping.roleKey]))
+      ? Math.trunc(Number(preset[mapping.roleKey]))
+      : Math.trunc(Number(defaults.role || 0));
+  }
+  return normalizePromptConfig(prompt);
+};
+
+const mergeMissingPrompt = (target = {}, source = {}, now = Date.now) => {
+  if (!isPlainObject(target) || !Object.keys(target).length) {
+    return {
+      ...normalizePromptConfig(source),
+      updatedAt: toTimestamp(now),
+    };
+  }
+  const next = normalizePromptConfig(target);
+  const src = normalizePromptConfig(source);
+  let changed = false;
+  ['enabled', 'rules', 'position', 'depth', 'role'].forEach((key) => {
+    if (next[key] === undefined && src[key] !== undefined) {
+      next[key] = src[key];
+      changed = true;
+    }
+    if (key === 'rules' && !String(next.rules || '').trim() && String(src.rules || '').trim()) {
+      next.rules = src.rules;
+      changed = true;
+    }
+  });
+  if (changed || !next.updatedAt) next.updatedAt = toTimestamp(now);
+  return next;
+};
+
+const applySyspromptPresetMigration = (settings, presetId = '', preset = {}, { now = Date.now } = {}) => {
+  const profile = ensureProfile(settings, 'sysprompt', presetId, preset, now);
+  if (!profile) return settings;
+  SYSPROMPT_AGENT_PROMPT_MAPPINGS.forEach((mapping) => {
+    const agent = ensureProfileAgent(profile, mapping.agentId, now);
+    if (!agent) return;
+    agent.prompts[mapping.promptId] = mergeMissingPrompt(
+      agent.prompts[mapping.promptId],
+      promptFromPreset(preset, mapping),
+      now,
+    );
+  });
+  profile.updatedAt = toTimestamp(now);
+  return settings;
+};
+
+const memorySettingsFromPreset = (preset = {}) => ({
+  dataPosition: trim(preset?.[MEMORY_AGENT_SETTING_KEYS.dataPosition]),
+  dataDepth: Number.isFinite(Number(preset?.[MEMORY_AGENT_SETTING_KEYS.dataDepth]))
+    ? Math.max(0, Math.trunc(Number(preset[MEMORY_AGENT_SETTING_KEYS.dataDepth])))
+    : 0,
+  guidePosition: trim(preset?.[MEMORY_AGENT_SETTING_KEYS.guidePosition]),
+  guideDepth: Number.isFinite(Number(preset?.[MEMORY_AGENT_SETTING_KEYS.guideDepth]))
+    ? Math.max(0, Math.trunc(Number(preset[MEMORY_AGENT_SETTING_KEYS.guideDepth])))
+    : 0,
+});
+
+const applyOpenAIPresetMigration = (settings, presetId = '', preset = {}, { now = Date.now } = {}) => {
+  const profile = ensureProfile(settings, 'openai', presetId, preset, now);
+  if (!profile) return settings;
+  const agent = ensureProfileAgent(profile, 'memory_table_agent', now);
+  if (!agent) return settings;
+  agent.settings = {
+    ...memorySettingsFromPreset(preset),
+    ...(isPlainObject(agent.settings) ? agent.settings : {}),
+  };
+  agent.updatedAt = agent.updatedAt || toTimestamp(now);
+  profile.updatedAt = toTimestamp(now);
+  return settings;
+};
+
+export const migratePresetStateToAgentCenterSettings = (settings = {}, presetState = {}, {
+  now = Date.now,
+  force = false,
+} = {}) => {
+  const next = normalizeAgentCenterSettings(settings);
+  if (next.migrations?.presetPromptV1?.completed && !force) return next;
+  const state = isPlainObject(presetState) ? presetState : {};
+  Object.entries(state.presets?.sysprompt || {}).forEach(([presetId, preset]) => {
+    applySyspromptPresetMigration(next, presetId, preset, { now });
+  });
+  Object.entries(state.presets?.openai || {}).forEach(([presetId, preset]) => {
+    applyOpenAIPresetMigration(next, presetId, preset, { now });
+  });
+  next.migrations.presetPromptV1 = {
+    completed: true,
+    migratedAt: toTimestamp(now),
+  };
+  return normalizeAgentCenterSettings(next);
+};
+
+export const lazyMigratePresetProfileToAgentCenterSettings = (settings = {}, {
+  profileType = '',
+  presetId = '',
+  preset = {},
+  now = Date.now,
+} = {}) => {
+  const next = normalizeAgentCenterSettings(settings);
+  const type = trim(profileType);
+  if (type === 'sysprompt') {
+    applySyspromptPresetMigration(next, presetId, preset, { now });
+  } else if (type === 'openai') {
+    applyOpenAIPresetMigration(next, presetId, preset, { now });
+  }
+  return normalizeAgentCenterSettings(next);
+};
+
+const getProfileAgent = (settings = {}, profileType = '', presetId = '', agentId = '') => {
+  const normalized = normalizeAgentCenterSettings(settings);
+  const profile = normalized.profiles[makeAgentProfileKey(profileType, presetId)];
+  return profile?.agents?.[agentId] || null;
+};
+
+const isCardEnabled = (settings = {}, agentId = '') => {
+  const normalized = normalizeAgentCenterSettings(settings);
+  const card = normalized.cards[trim(agentId)];
+  return card ? card.enabled !== false : true;
+};
+
+export const resolveAgentSyspromptPreset = (settings = {}, {
+  presetId = '',
+  preset = {},
+} = {}) => {
+  const normalized = normalizeAgentCenterSettings(settings);
+  const out = clone(preset, {}) || {};
+  const profile = normalized.profiles[makeAgentProfileKey('sysprompt', presetId)] || null;
+  SYSPROMPT_AGENT_PROMPT_MAPPINGS.forEach((mapping) => {
+    const agent = profile?.agents?.[mapping.agentId] || null;
+    const prompt = agent?.prompts?.[mapping.promptId] || null;
+    const cardEnabled = isCardEnabled(normalized, mapping.agentId);
+    const agentEnabled = agent ? agent.enabled !== false : true;
+    if (prompt) {
+      if (mapping.enabledKey) out[mapping.enabledKey] = cardEnabled && agentEnabled && prompt.enabled !== false;
+      if (mapping.rulesKey && typeof prompt.rules === 'string') out[mapping.rulesKey] = prompt.rules;
+      if (mapping.positionKey && prompt.position !== undefined) out[mapping.positionKey] = prompt.position;
+      if (mapping.depthKey && prompt.depth !== undefined) out[mapping.depthKey] = prompt.depth;
+      if (mapping.roleKey && prompt.role !== undefined) out[mapping.roleKey] = prompt.role;
+    } else if (!cardEnabled && mapping.enabledKey) {
+      out[mapping.enabledKey] = false;
+    }
+  });
+  return out;
+};
+
+export const resolveAgentOpenAIPreset = (settings = {}, {
+  presetId = '',
+  preset = {},
+} = {}) => {
+  const out = clone(preset, {}) || {};
+  const agent = getProfileAgent(settings, 'openai', presetId, 'memory_table_agent');
+  const cfg = isPlainObject(agent?.settings) ? agent.settings : null;
+  if (!cfg) return out;
+  if (cfg.dataPosition !== undefined) out.memory_data_position = trim(cfg.dataPosition);
+  if (cfg.dataDepth !== undefined) out.memory_data_depth = Math.max(0, Math.trunc(Number(cfg.dataDepth) || 0));
+  if (cfg.guidePosition !== undefined) out.memory_guide_position = trim(cfg.guidePosition);
+  if (cfg.guideDepth !== undefined) out.memory_guide_depth = Math.max(0, Math.trunc(Number(cfg.guideDepth) || 0));
+  return out;
+};
+
+export const buildAgentCenterProfileView = (settings = {}, {
+  syspromptResolved = null,
+  openaiResolved = null,
+} = {}) => {
+  const normalized = normalizeAgentCenterSettings(settings);
+  const syspromptKey = makeAgentProfileKey('sysprompt', syspromptResolved?.presetId);
+  const openaiKey = makeAgentProfileKey('openai', openaiResolved?.presetId);
+  return {
+    sysprompt: {
+      presetId: trim(syspromptResolved?.presetId),
+      source: trim(syspromptResolved?.source),
+      presetName: trim(syspromptResolved?.preset?.name || syspromptResolved?.presetId),
+      profile: clone(normalized.profiles[syspromptKey] || null, null),
+    },
+    openai: {
+      presetId: trim(openaiResolved?.presetId),
+      source: trim(openaiResolved?.source),
+      presetName: trim(openaiResolved?.preset?.name || openaiResolved?.presetId),
+      profile: clone(normalized.profiles[openaiKey] || null, null),
+    },
+  };
+};
+
+export const setAgentCardEnabled = (settings = {}, agentId = '', enabled = false, {
+  now = Date.now,
+} = {}) => {
+  const normalized = normalizeAgentCenterSettings(settings);
+  const id = trim(agentId);
+  if (!id) return normalized;
+  normalized.cards[id] = {
+    enabled: enabled === true,
+    updatedAt: toTimestamp(now),
+  };
+  return normalized;
+};
+
+export const setAgentPromptConfig = (settings = {}, {
+  profileType = 'sysprompt',
+  presetId = '',
+  agentId = '',
+  promptId = '',
+  config = {},
+  preset = {},
+} = {}, {
+  now = Date.now,
+} = {}) => {
+  const normalized = lazyMigratePresetProfileToAgentCenterSettings(settings, {
+    profileType,
+    presetId,
+    preset,
+    now,
+  });
+  const profile = ensureProfile(normalized, profileType, presetId, preset, now);
+  const agent = ensureProfileAgent(profile, agentId, now);
+  const id = trim(promptId);
+  if (!agent || !id) return normalized;
+  agent.prompts[id] = {
+    ...normalizePromptConfig(agent.prompts[id]),
+    ...normalizePromptConfigPatch(config),
+    updatedAt: toTimestamp(now),
+  };
+  agent.updatedAt = toTimestamp(now);
+  profile.updatedAt = toTimestamp(now);
+  return normalizeAgentCenterSettings(normalized);
+};
+
+export const setMemoryAgentSettings = (settings = {}, {
+  presetId = '',
+  preset = {},
+  config = {},
+} = {}, {
+  now = Date.now,
+} = {}) => {
+  const normalized = lazyMigratePresetProfileToAgentCenterSettings(settings, {
+    profileType: 'openai',
+    presetId,
+    preset,
+    now,
+  });
+  const profile = ensureProfile(normalized, 'openai', presetId, preset, now);
+  const agent = ensureProfileAgent(profile, 'memory_table_agent', now);
+  if (!agent) return normalized;
+  agent.settings = {
+    ...memorySettingsFromPreset(preset),
+    ...(isPlainObject(agent.settings) ? agent.settings : {}),
+    dataPosition: trim(config.dataPosition),
+    dataDepth: Math.max(0, Math.trunc(Number(config.dataDepth) || 0)),
+    guidePosition: trim(config.guidePosition),
+    guideDepth: Math.max(0, Math.trunc(Number(config.guideDepth) || 0)),
+  };
+  agent.updatedAt = toTimestamp(now);
+  profile.updatedAt = toTimestamp(now);
+  return normalizeAgentCenterSettings(normalized);
+};
+
+export const mergeImportedAgentCenterSettings = (settings = {}, imported = {}, {
+  presetIdMap = {},
+  now = Date.now,
+} = {}) => {
+  const current = normalizeAgentCenterSettings(settings);
+  const incoming = normalizeAgentCenterSettings(imported);
+  const timestamp = toTimestamp(now);
+  Object.entries(incoming.cards || {}).forEach(([cardId, card]) => {
+    current.cards[cardId] = {
+      ...normalizeCardState(card),
+      updatedAt: timestamp,
+    };
+  });
+  Object.entries(incoming.profiles || {}).forEach(([key, profile]) => {
+    const type = trim(profile.profileType || key.split(':')[0]);
+    const mappedPresetId = trim(presetIdMap[type]);
+    const presetId = mappedPresetId || trim(profile.presetId || key.split(':').slice(1).join(':'));
+    const nextKey = makeAgentProfileKey(type, presetId);
+    if (!nextKey) return;
+    current.profiles[nextKey] = normalizeProfile({
+      ...profile,
+      profileType: type,
+      presetId,
+      updatedAt: timestamp,
+    });
+  });
+  current.global = {
+    ...(current.global || {}),
+    ...(incoming.global || {}),
+  };
+  current.migrations = {
+    ...(current.migrations || {}),
+    ...(incoming.migrations || {}),
+    importedAgentCenterSettingsAt: timestamp,
+  };
+  return normalizeAgentCenterSettings(current);
+};
+
+export const readAgentCenterSettings = ({
+  storage = globalThis?.localStorage,
+  key = AGENT_CENTER_SETTINGS_STORAGE_KEY,
+} = {}) => {
+  const store = readStorage(storage);
+  if (!store) return normalizeAgentCenterSettings();
+  try {
+    const raw = store.getItem(key);
+    return normalizeAgentCenterSettings(raw ? JSON.parse(raw) : {});
+  } catch {
+    return normalizeAgentCenterSettings();
+  }
+};
+
+export const writeAgentCenterSettings = (settings = {}, {
+  storage = globalThis?.localStorage,
+  key = AGENT_CENTER_SETTINGS_STORAGE_KEY,
+} = {}) => {
+  const normalized = normalizeAgentCenterSettings(settings);
+  const store = readStorage(storage);
+  if (store) {
+    try {
+      store.setItem(key, JSON.stringify(normalized));
+    } catch {}
+  }
+  return normalized;
+};
+
+export const readAgentCenterSettingsKv = async ({
+  key = AGENT_CENTER_SETTINGS_STORAGE_KEY,
+  loadKv = safeInvoke,
+} = {}) => {
+  try {
+    const raw = await loadKv('load_kv', { name: key });
+    if (!raw || typeof raw !== 'object') return null;
+    if (raw._tooLarge) return null;
+    return normalizeAgentCenterSettings(raw);
+  } catch {
+    return null;
+  }
+};
+
+export const writeAgentCenterSettingsKv = async (settings = {}, {
+  key = AGENT_CENTER_SETTINGS_STORAGE_KEY,
+  saveKv = safeInvoke,
+} = {}) => {
+  const normalized = normalizeAgentCenterSettings(settings);
+  try {
+    await saveKv('save_kv', { name: key, data: normalized });
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+export const createAgentCenterSettingsStore = ({
+  storage = globalThis?.localStorage,
+  key = AGENT_CENTER_SETTINGS_STORAGE_KEY,
+  loadKv = safeInvoke,
+  saveKv = safeInvoke,
+} = {}) => {
+  let current = readAgentCenterSettings({ storage, key });
+  let kvWrite = Promise.resolve(false);
+  const persistKv = (next) => {
+    kvWrite = kvWrite
+      .catch(() => false)
+      .then(() => writeAgentCenterSettingsKv(next, { key, saveKv }));
+    return kvWrite;
+  };
+  const save = (next) => {
+    current = writeAgentCenterSettings(next, { storage, key });
+    const snapshot = current;
+    return persistKv(snapshot).then(() => normalizeAgentCenterSettings(snapshot));
+  };
+  const migratePresetState = (presetState = {}, options = {}) => save(migratePresetStateToAgentCenterSettings(current, presetState, options));
+  const lazyMigratePresetProfile = (options = {}, meta = {}) => save(lazyMigratePresetProfileToAgentCenterSettings(current, {
+    ...(options || {}),
+    now: meta.now || Date.now,
+  }));
+  return {
+    getSettings: () => normalizeAgentCenterSettings(current),
+    setCardEnabled: (agentId, enabled, options = {}) => save(setAgentCardEnabled(current, agentId, enabled, options)),
+    setPromptConfig: (options = {}, meta = {}) => save(setAgentPromptConfig(current, options, meta)),
+    setMemorySettings: (options = {}, meta = {}) => save(setMemoryAgentSettings(current, options, meta)),
+    mergeImported: (imported = {}, options = {}) => save(mergeImportedAgentCenterSettings(current, imported, options)),
+    migratePresetState,
+    lazyMigratePresetProfile,
+    replace: settings => save(settings),
+    hydrate: async () => {
+      const disk = await readAgentCenterSettingsKv({ key, loadKv });
+      if (disk) current = writeAgentCenterSettings(disk, { storage, key });
+      await writeAgentCenterSettingsKv(current, { key, saveKv });
+      return normalizeAgentCenterSettings(current);
+    },
+    resolveSyspromptPreset: options => resolveAgentSyspromptPreset(current, options || {}),
+    resolveOpenAIPreset: options => resolveAgentOpenAIPreset(current, options || {}),
+    buildProfileView: options => buildAgentCenterProfileView(current, options || {}),
+    flush: () => kvWrite.catch(() => false),
+  };
+};

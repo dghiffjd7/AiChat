@@ -1055,6 +1055,72 @@ test('runChatFormatGuardianPreview can attach async model format repair candidat
   assert.equal(message.meta, undefined);
 });
 
+test('runChatFormatGuardianPreview filters model format reminders by resolved target', async () => {
+  const modelCalls = [];
+  const result = runChatFormatGuardianPreview({
+    message: {
+      id: 'm-model-group-format',
+      role: 'assistant',
+      content: [
+        '<群聊:调查组>',
+        '<聊天内容>',
+        '雪--我看到了鞋印。',
+        '</聊天内容>',
+        '</群聊:调查组>',
+      ].join('\n'),
+      time: '22:12',
+    },
+    sessionId: 'group:case',
+    chatFormatGuardian: {
+      enabled: true,
+      manualTrigger: true,
+      userName: '我',
+      resolveGroupTargetId: name => (name === '调查组' ? 'group:case' : ''),
+      resolveSpeakerId: name => (name === '雪' ? 'contact:snow' : ''),
+      modelReview: {
+        enabled: true,
+        enabledFormats: {
+          phoneShell: true,
+          privateChat: true,
+          groupChat: true,
+          imagePrompt: true,
+        },
+        formatReminderSections: [
+          { content: '私聊格式提醒', formatIds: ['privateChat'], targets: ['private_chat'] },
+          { content: '群聊格式提醒', formatIds: ['groupChat'], targets: ['group_chat'] },
+          { content: '生图格式提醒', formatIds: ['imagePrompt'], targets: ['image_prompt'] },
+        ],
+        backgroundChat: async (messages) => {
+          modelCalls.push(messages);
+          return JSON.stringify({
+            status: 'invalid',
+            issues: [{ severity: 'warning', type: 'missing_field', message: 'time is missing' }],
+            canRepair: false,
+            repairSummary: '测试返回',
+            linePatches: [],
+            correctedText: '',
+          });
+        },
+      },
+    },
+    logger: { warn() {} },
+  });
+
+  assert.equal(result.result.status, 'needs_review');
+  await flushMicrotasks();
+  await flushMicrotasks();
+
+  assert.equal(modelCalls.length, 1);
+  const userPrompt = modelCalls[0][1].content;
+  assert.match(userPrompt, /formatTarget: group_chat/);
+  assert.match(userPrompt, /群聊格式提醒/);
+  assert.match(userPrompt, /群聊格式/);
+  assert.doesNotMatch(userPrompt, /私聊格式提醒/);
+  assert.doesNotMatch(userPrompt, /生图格式提醒/);
+  assert.doesNotMatch(userPrompt, /图片提示词格式/);
+  console.log('ok - chat format guardian model request filters format reminders by resolved target');
+});
+
 test('runChatFormatGuardianPreview asks model to suggest regeneration for empty assistant replies', async () => {
   const modelCalls = [];
   const queued = [];

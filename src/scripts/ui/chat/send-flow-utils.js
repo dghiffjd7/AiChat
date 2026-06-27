@@ -271,6 +271,7 @@ export const normalizeHandleSendOptions = (options = {}) => {
     skipInputRegex: Boolean(raw.skipInputRegex),
     skipTemplate: Boolean(raw.skipTemplate),
     skipScripts: Boolean(raw.skipScripts),
+    previewOnly: Boolean(raw.previewOnly),
     suppressAssistantDom: Boolean(raw.suppressAssistantDom),
     assistantStreamFactory:
       typeof raw.createAssistantStream === 'function' ? raw.createAssistantStream : null,

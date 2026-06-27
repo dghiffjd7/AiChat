@@ -8,6 +8,7 @@ import {
   AGENT_FEATURE_IDS,
   createAgentFeatureSettingsStore,
 } from '../agent/agent-feature-settings.js';
+import { createAgentCenterSettingsStore } from '../storage/agent-center-settings-store.js';
 import { buildAgentMessagePartsFromRun } from '../agent/agent-message-parts.js';
 import { createContactProfilerAgent } from '../agent/contact-profiler-agent.js';
 import { createImageDirectorAgent } from '../agent/image-director-agent.js';
@@ -210,8 +211,16 @@ import { enqueueMessagesCore } from './chat/typing-flow-ui-utils.js';
 import { createAssistantStreamRuntime, isStreamCtrlConnected } from './chat/assistant-stream-runtime.js';
 import {
   dispatchAfterReceiveEffects,
+  resolveChatFormatGuardianInputText,
   runChatFormatGuardianPreview,
 } from './chat/after-receive-dispatch-utils.js';
+import {
+  CHAT_FORMAT_GUARDIAN_TARGETS,
+  buildChatFormatGuardianModelPrompt,
+  extractChatFormatEventDrafts,
+  normalizeChatFormatGuardianTarget,
+  resolveChatFormatGuardianFormatProfile,
+} from './chat/chat-format-guardian-utils.js';
 import {
   commitChatEmitContract,
   undoChatEmitCommit,
@@ -705,7 +714,20 @@ const initApp = async () => {
     isMemoryAutoExtractEnabled(place) && getMemoryAutoExtractMode() === 'separate';
   const getMemoryRuntimeConfig = () => {
     const settings = appSettings.get();
-    const openaiPreset = resolveOpenAIPresetForMemory?.() || {};
+    let openaiPreset = resolveOpenAIPresetForMemory?.() || {};
+    try {
+      const context = {
+        sessionId: chatStore.getCurrent?.(),
+        uiMode: uiMode === 'rp' ? 'rp' : 'chat',
+      };
+      const resolved = presetStore?.getResolvedActive?.('openai', context) || null;
+      if (resolved?.preset) {
+        openaiPreset = agentCenterSettingsStore?.resolveOpenAIPreset?.({
+          presetId: resolved.presetId,
+          preset: resolved.preset,
+        }) || resolved.preset || openaiPreset;
+      }
+    } catch {}
     const presetDataPosition = String(openaiPreset?.memory_data_position || '').trim();
     const presetDataDepthRaw = Math.trunc(Number(openaiPreset?.memory_data_depth));
     const settingsDataPosition = String(settings.memoryInjectPosition || 'before_latest_user').trim();
@@ -2058,6 +2080,13 @@ const initApp = async () => {
   } catch (err) {
     logger.debug('agent feature settings hydrate skipped', err);
   }
+  const agentCenterSettingsStore = createAgentCenterSettingsStore();
+  try {
+    await agentCenterSettingsStore.hydrate?.();
+    await agentCenterSettingsStore.migratePresetState?.(presetStore?.getState?.() || {});
+  } catch (err) {
+    logger.debug('agent center settings hydrate/migrate skipped', err);
+  }
   ui.canCheckFormatForMessage = message => (
     message?.role === 'assistant' &&
     agentFeatureSettingsStore.isEnabled(AGENT_FEATURE_IDS.replyCheck)
@@ -2517,6 +2546,58 @@ const initApp = async () => {
     markFailureSeen: ({ surface = '', at = Date.now() } = {}) => markAgentFailuresSeen({ surface, at }),
     openConfig: (options = {}) => configPanel.show({ tab: 'chat', ...(options || {}) }),
   });
+  const getAgentCenterPresetContext = (options = {}) => ({
+    sessionId: String(options?.sessionId || chatStore.getCurrent() || '').trim(),
+    uiMode: options?.uiMode || (uiMode === 'rp' ? 'rp' : 'chat'),
+  });
+  const resolveAgentCenterPresetPair = async (options = {}) => {
+    await presetStore?.ready;
+    const context = getAgentCenterPresetContext(options);
+    const syspromptResolved = presetStore.getResolvedActive?.('sysprompt', context) || null;
+    const openaiResolved = presetStore.getResolvedActive?.('openai', context) || null;
+    return { context, syspromptResolved, openaiResolved };
+  };
+  const ensureAgentCenterResolvedProfiles = async (options = {}) => {
+    const resolved = await resolveAgentCenterPresetPair(options);
+    if (resolved.syspromptResolved?.presetId && resolved.syspromptResolved?.preset) {
+      await agentCenterSettingsStore.lazyMigratePresetProfile?.({
+        profileType: 'sysprompt',
+        presetId: resolved.syspromptResolved.presetId,
+        preset: resolved.syspromptResolved.preset,
+      });
+    }
+    if (resolved.openaiResolved?.presetId && resolved.openaiResolved?.preset) {
+      await agentCenterSettingsStore.lazyMigratePresetProfile?.({
+        profileType: 'openai',
+        presetId: resolved.openaiResolved.presetId,
+        preset: resolved.openaiResolved.preset,
+      });
+    }
+    return resolved;
+  };
+  const getAgentCenterDefaultMemoryTemplateRecord = async (templateId = '') => {
+    if (!memoryTemplateStore?.getTemplates) return null;
+    await memoryTemplateStore.ensureDefaultTemplate?.();
+    const id = String(templateId || '').trim();
+    if (id && typeof memoryTemplateStore.getTemplateById === 'function') {
+      const record = await memoryTemplateStore.getTemplateById(id);
+      if (record) return record;
+    }
+    const defaults = await memoryTemplateStore.getTemplates({ is_default: true });
+    if (Array.isArray(defaults) && defaults.length) return defaults[0];
+    const fallback = await memoryTemplateStore.getTemplates({ id: 'default-v1' });
+    return Array.isArray(fallback) && fallback.length ? fallback[0] : null;
+  };
+  const normalizeMemoryAgentPromptConfig = (record = null) => {
+    const injection = record?.injection && typeof record.injection === 'object' ? record.injection : {};
+    return {
+      templateId: String(record?.id || '').trim(),
+      templateName: String(record?.name || '默认记忆模板').trim() || '默认记忆模板',
+      template: typeof injection.template === 'string' ? injection.template : '{{tableData}}',
+      wrapper: typeof injection.wrapper === 'string' ? injection.wrapper : '<memories>\n{{tableData}}\n</memories>',
+      position: String(injection.position || 'before_latest_user').trim() || 'before_latest_user',
+    };
+  };
   try {
     registerDebugRuntimeContextCore(window.appBridge, {
       panels: {
@@ -2563,6 +2644,7 @@ const initApp = async () => {
         providerToolPendingResumeExecutor,
         contactProfilerAgent,
         worldbookAuditAgent,
+        agentCenterSettingsStore,
       },
       actions: {
         getAgentTool: name => agentToolRegistry.get(name),
@@ -2657,6 +2739,97 @@ const initApp = async () => {
           options?.id,
           options?.triggerMode,
         ),
+        getMemoryStorageMode: (place = 'chat') => getMemoryStorageMode(place),
+        getMemoryAgentPromptConfig: async () => {
+          const record = await getAgentCenterDefaultMemoryTemplateRecord();
+          return normalizeMemoryAgentPromptConfig(record);
+        },
+        setMemoryAgentPromptConfig: async (options = {}) => {
+          if (!memoryTemplateStore?.updateTemplateInjection) return false;
+          const record = await getAgentCenterDefaultMemoryTemplateRecord(options?.templateId);
+          if (!record?.id) return false;
+          const current = normalizeMemoryAgentPromptConfig(record);
+          const config = options?.config && typeof options.config === 'object' ? options.config : {};
+          const nextInjection = {
+            template: String(config.template ?? current.template).trim() || '{{tableData}}',
+            wrapper: String(config.wrapper ?? current.wrapper).trim(),
+            position: String(config.position ?? current.position).trim() || 'before_latest_user',
+          };
+          await memoryTemplateStore.updateTemplateInjection(record.id, nextInjection);
+          window.dispatchEvent(new CustomEvent('memory-templates-updated', { detail: { templateId: record.id } }));
+          return true;
+        },
+        getAgentCenterSettings: () => agentCenterSettingsStore.getSettings(),
+        setAgentCardEnabled: (options = {}) => agentCenterSettingsStore.setCardEnabled(
+          options?.id,
+          options?.enabled === true,
+        ),
+        getAgentCenterProfileView: async (options = {}) => {
+          const resolved = await ensureAgentCenterResolvedProfiles(options || {});
+          return agentCenterSettingsStore.buildProfileView({
+            syspromptResolved: resolved.syspromptResolved,
+            openaiResolved: resolved.openaiResolved,
+          });
+        },
+        setAgentPromptConfig: async (options = {}) => {
+          const resolved = await ensureAgentCenterResolvedProfiles(options || {});
+          const profileType = String(options?.profileType || 'sysprompt').trim() || 'sysprompt';
+          const activeResolved = profileType === 'openai' ? resolved.openaiResolved : resolved.syspromptResolved;
+          return agentCenterSettingsStore.setPromptConfig({
+            profileType,
+            presetId: options?.presetId || activeResolved?.presetId || '',
+            preset: options?.preset || activeResolved?.preset || {},
+            agentId: options?.agentId,
+            promptId: options?.promptId,
+            config: options?.config || {},
+          });
+        },
+        setMemoryAgentSettings: async (options = {}) => {
+          const resolved = await ensureAgentCenterResolvedProfiles(options || {});
+          return agentCenterSettingsStore.setMemorySettings({
+            presetId: options?.presetId || resolved.openaiResolved?.presetId || '',
+            preset: options?.preset || resolved.openaiResolved?.preset || {},
+            config: options?.config || {},
+          });
+        },
+        importAgentCenterSettings: (options = {}) => agentCenterSettingsStore.mergeImported(
+          options?.settings || {},
+          {
+            presetIdMap: options?.presetIdMap || {},
+          },
+        ),
+        resolveAgentSyspromptPreset: async (options = {}) => {
+          const presetId = String(options?.presetId || '').trim();
+          const preset = options?.preset && typeof options.preset === 'object' ? options.preset : {};
+          if (presetId && preset) {
+            await agentCenterSettingsStore.lazyMigratePresetProfile?.({
+              profileType: 'sysprompt',
+              presetId,
+              preset,
+            });
+          }
+          return agentCenterSettingsStore.resolveSyspromptPreset({ presetId, preset });
+        },
+        resolveAgentSyspromptPresetSync: (options = {}) => agentCenterSettingsStore.resolveSyspromptPreset({
+          presetId: String(options?.presetId || '').trim(),
+          preset: options?.preset && typeof options.preset === 'object' ? options.preset : {},
+        }),
+        resolveAgentOpenAIPreset: async (options = {}) => {
+          const presetId = String(options?.presetId || '').trim();
+          const preset = options?.preset && typeof options.preset === 'object' ? options.preset : {};
+          if (presetId && preset) {
+            await agentCenterSettingsStore.lazyMigratePresetProfile?.({
+              profileType: 'openai',
+              presetId,
+              preset,
+            });
+          }
+          return agentCenterSettingsStore.resolveOpenAIPreset({ presetId, preset });
+        },
+        resolveAgentOpenAIPresetSync: (options = {}) => agentCenterSettingsStore.resolveOpenAIPreset({
+          presetId: String(options?.presetId || '').trim(),
+          preset: options?.preset && typeof options.preset === 'object' ? options.preset : {},
+        }),
         listAgentModelProfiles: async () => {
           await chatConfigManager.reload();
           return (chatConfigManager.getProfiles?.() || []).map(profile => ({
@@ -14153,6 +14326,216 @@ Phase G（Frame 36）：循环衔接
     notifyError: (message) => window.toastr?.error?.(message),
     logger,
   });
+  const showDraftPromptPreview = async () => {
+    try {
+      const request = await handleSend(null, {
+        previewOnly: true,
+        ignorePending: true,
+      });
+      if (!request || !Array.isArray(request.messages) || !request.messages.length) {
+        window.toastr?.warning?.('暂无可预览的 Prompt');
+        return false;
+      }
+      return showPromptPreview();
+    } catch (err) {
+      logger.warn('draft prompt preview failed', err);
+      window.toastr?.error?.('构建本次 Prompt 预览失败');
+      return false;
+    }
+  };
+  const getLatestAssistantMessageForPromptPreview = (sessionId = '') => {
+    const messages = Array.isArray(chatStore.getMessages?.(sessionId))
+      ? chatStore.getMessages(sessionId)
+      : [];
+    for (let i = messages.length - 1; i >= 0; i -= 1) {
+      if (messages[i]?.role === 'assistant') return messages[i];
+    }
+    return null;
+  };
+  const selectChatFormatReminderTextForProfile = (promptContext = {}, profile = {}) => {
+    const sections = Array.isArray(promptContext?.formatReminderSections)
+      ? promptContext.formatReminderSections
+      : [];
+    const enabledIds = new Set(Array.isArray(profile?.enabledFormatIds) ? profile.enabledFormatIds : []);
+    const target = String(profile?.target || '').trim();
+    const normalizeList = value => (Array.isArray(value) ? value : [value])
+      .map(item => String(item ?? '').trim())
+      .filter(Boolean);
+    if (sections.length) {
+      return sections
+        .filter((section) => {
+          const ids = normalizeList(section?.formatIds);
+          const targets = normalizeList(section?.targets);
+          if (ids.some(id => enabledIds.has(id))) return true;
+          return target && targets.includes(target);
+        })
+        .map(section => String(section?.content || section?.text || '').trim())
+        .filter(Boolean)
+        .join('\n\n')
+        .slice(0, 12000);
+    }
+    return enabledIds.size ? String(promptContext?.formatReminderText || '').trim().slice(0, 12000) : '';
+  };
+  const buildChatFormatGuardianPromptPreviewRequest = async ({
+    formatTarget = CHAT_FORMAT_GUARDIAN_TARGETS.auto,
+  } = {}) => {
+    const sessionId = String(chatStore.getCurrent() || '').trim();
+    const message = getLatestAssistantMessageForPromptPreview(sessionId);
+    if (!message) {
+      window.toastr?.warning?.('当前会话暂无可预览的 AI 回复');
+      return null;
+    }
+    const input = resolveChatFormatGuardianInputText(message);
+    const text = String(input?.text || '').trim();
+    const sourceMessageId = String(message?.id || '').trim();
+    const promptContext = buildChatFormatGuardianModelContext(sessionId);
+    const parserResult = text
+      ? {
+        ...extractChatFormatEventDrafts(text, {
+          ...buildManualChatFormatGuardianOptions(sessionId),
+          sourceMessageId,
+        }),
+        sourceTextKind: input.source,
+        hasRawOriginal: input.hasRawOriginal,
+        repairFallbackTime: String(message?.time || '').trim(),
+      }
+      : {
+        ok: false,
+        status: 'no_events',
+        sourceMessageId,
+        protocolEvents: [],
+        eventDrafts: [],
+        errors: [],
+        warnings: [],
+        summary: 'empty assistant response',
+        textPreview: '',
+        sourceTextKind: input.source,
+        hasRawOriginal: input.hasRawOriginal,
+        repairFallbackTime: String(message?.time || '').trim(),
+      };
+    const contact = contactsStore.getContact(sessionId);
+    const surface = uiMode === 'rp' ? 'creative' : (uiMode === 'moments' ? 'moments' : 'chat');
+    const isGroupChat = Boolean(contact?.isGroup) || sessionId.startsWith('group:');
+    const requestedFormatTarget = normalizeChatFormatGuardianTarget(formatTarget, CHAT_FORMAT_GUARDIAN_TARGETS.auto);
+    const formatProfile = resolveChatFormatGuardianFormatProfile({
+      target: requestedFormatTarget,
+      uiMode,
+      surface,
+      isGroupChat,
+      assistantText: text,
+      parserResult,
+      enabledFormats: promptContext.enabledFormats,
+    });
+    const prompt = buildChatFormatGuardianModelPrompt({
+      assistantText: text,
+      formatReminderText: selectChatFormatReminderTextForProfile(promptContext, formatProfile),
+      enabledFormats: formatProfile.enabledFormats,
+      parserReport: parserResult,
+      userName: getActiveUserProfile()?.name || '我',
+      sessionLabel: getChatFormatGuardianSessionLabel(sessionId),
+      surface,
+      formatTarget: formatProfile.target,
+    });
+    const requestOptions = {
+      temperature: 0,
+      maxTokens: 900,
+    };
+    const featureState = agentFeatureSettingsStore.getSettings()?.features?.[AGENT_FEATURE_IDS.replyCheck] || {};
+    const modelMode = String(featureState.modelMode || 'none').trim() || 'none';
+    let config = null;
+    let configProfile = {
+      id: '',
+      source: modelMode === 'profile' ? 'agent_profile' : 'current',
+      bound: modelMode === 'profile',
+    };
+    try {
+      if (modelMode === 'profile' && String(featureState.modelProfileId || '').trim()) {
+        config = await chatConfigManager.getRuntimeConfigByProfileId(featureState.modelProfileId);
+        configProfile.id = String(featureState.modelProfileId || '').trim();
+      } else {
+        const runtime = await window.appBridge.resolveRequestRuntimeConfig?.({ sessionId, uiMode });
+        config = runtime?.config || window.appBridge.getConfig?.() || null;
+        configProfile = {
+          id: runtime?.profileId || '',
+          source: runtime?.bindingSource || 'current',
+          bound: runtime?.bound === true,
+        };
+      }
+    } catch (err) {
+      logger.warn('resolve chat format guardian prompt preview config failed', err);
+      config = window.appBridge.getConfig?.() || null;
+    }
+    return {
+      at: Date.now(),
+      requestId: `chat_format_guardian_preview_${Date.now().toString(36)}`,
+      source: 'agent_center_prompt_preview',
+      provider: config?.provider || '',
+      baseUrl: config?.baseUrl || '',
+      model: config?.model || '',
+      stream: false,
+      configProfile,
+      session: {
+        id: sessionId,
+        name: getChatFormatGuardianSessionLabel(sessionId),
+        isGroup: isGroupChat,
+      },
+      task: {
+        type: 'chat_format_guardian',
+        mode: 'prompt_preview',
+        targetSessionId: sessionId,
+        targetMessageId: sourceMessageId,
+        formatTarget: formatProfile.target,
+      },
+      options: requestOptions,
+      requestOptions,
+      messages: prompt.messages,
+      agentPrompt: {
+        id: AGENT_FEATURE_IDS.replyCheck,
+        responseFormat: prompt.responseFormat,
+        enabledFormatIds: prompt.enabledFormatIds,
+        requestedFormatTarget,
+        formatTarget: formatProfile.target,
+        sourceTextKind: input.source,
+        hasRawOriginal: input.hasRawOriginal,
+      },
+    };
+  };
+  const showChatFormatGuardianPromptPreview = async (options = {}) => {
+    try {
+      const request = await buildChatFormatGuardianPromptPreviewRequest({
+        formatTarget: options?.formatTarget,
+      });
+      if (!request) return false;
+      const {
+        meta,
+        head,
+        body,
+      } = buildPromptPreviewSnapshot({
+        request,
+        contactName: `检查回复格式 · ${request.session?.name || request.session?.id || ''}`,
+      });
+      promptPreviewModal.show(
+        [head, body].filter(Boolean).join('\n\n').trim(),
+        meta,
+        {
+          request,
+          initialTab: 'prompt',
+        },
+      );
+      return true;
+    } catch (err) {
+      logger.warn('chat format guardian prompt preview failed', err);
+      window.toastr?.error?.('构建格式修复提示词预览失败');
+      return false;
+    }
+  };
+  const showAgentPromptPreview = async (options = {}) => {
+    const agentId = String(options?.agentId || '').trim();
+    if (agentId === AGENT_FEATURE_IDS.replyCheck) {
+      return showChatFormatGuardianPromptPreview(options);
+    }
+    return showDraftPromptPreview();
+  };
   const getLastMomentPromptRequest = () => {
     const req = window.appBridge?.lastRequest;
     return String(req?.task?.type || '').trim().toLowerCase() === 'moment_comment' ? req : null;
@@ -14367,6 +14750,9 @@ Phase G（Frame 36）：循环衔接
   };
   registerUiUtilityBridgeContract(window.appBridge, {
     showPromptPreview,
+  });
+  patchDebugUiRegistry((registry) => {
+    registry.actions.showPromptPreview = (options = {}) => showAgentPromptPreview(options);
   });
 
   /* ---------------- 头像设置菜单 ---------------- */
@@ -21886,11 +22272,24 @@ Phase G（Frame 36）：循环衔接
     return compact.length > limit ? `${compact.slice(0, limit - 1)}...` : compact;
   };
 
-  const appendFormatReminderSection = (sections, label, enabled, text) => {
+  const appendFormatReminderSection = (sections, {
+    id = '',
+    label = '',
+    enabled = false,
+    text = '',
+    formatIds = [],
+    targets = [],
+  } = {}) => {
     if (!enabled) return;
     const body = compactFormatReminderText(text);
     if (!body) return;
-    sections.push(`【${label}】\n${body}`);
+    sections.push({
+      id: String(id || label || '').trim(),
+      label,
+      content: `【${label}】\n${body}`,
+      formatIds,
+      targets,
+    });
   };
 
   const buildChatFormatGuardianModelContext = (targetSessionId = '') => {
@@ -21913,18 +22312,82 @@ Phase G（Frame 36）：循环衔接
       imagePrompt: Boolean(preset.auto_image_prompt_enabled),
     };
     const sections = [];
-    appendFormatReminderSection(sections, '手机格式开头', preset.phone_format_intro_enabled, preset.phone_format_intro_rules);
-    appendFormatReminderSection(sections, 'QQ聊天格式', preset.phone_format_chat_enabled, preset.phone_format_chat_rules);
-    appendFormatReminderSection(sections, '私聊行为与格式', preset.dialogue_enabled, preset.dialogue_rules);
-    appendFormatReminderSection(sections, '群聊行为与格式', preset.group_enabled, preset.group_rules);
-    appendFormatReminderSection(sections, 'QQ空间格式', preset.phone_format_moment_enabled, preset.phone_format_moment_rules);
-    appendFormatReminderSection(sections, '动态发布格式', preset.moment_create_enabled, preset.moment_create_rules);
-    appendFormatReminderSection(sections, '动态评论格式', preset.moment_comment_enabled, preset.moment_comment_rules);
-    appendFormatReminderSection(sections, '手机格式结尾', preset.phone_format_footer_enabled, preset.phone_format_footer_rules);
-    appendFormatReminderSection(sections, '自动生图标签格式', preset.auto_image_prompt_enabled, preset.auto_image_prompt_rules);
+    appendFormatReminderSection(sections, {
+      id: 'phone_format_intro',
+      label: '手机格式开头',
+      enabled: preset.phone_format_intro_enabled,
+      text: preset.phone_format_intro_rules,
+      formatIds: ['phoneShell'],
+      targets: ['private_chat', 'group_chat'],
+    });
+    appendFormatReminderSection(sections, {
+      id: 'phone_format_chat',
+      label: 'QQ聊天格式',
+      enabled: preset.phone_format_chat_enabled,
+      text: preset.phone_format_chat_rules,
+      formatIds: ['phoneShell', 'privateChat', 'groupChat', /<\s*tableEdit\b/i.test(preset.phone_format_chat_rules || '') ? 'tableEdit' : ''].filter(Boolean),
+      targets: ['private_chat', 'group_chat'],
+    });
+    appendFormatReminderSection(sections, {
+      id: 'dialogue',
+      label: '私聊行为与格式',
+      enabled: preset.dialogue_enabled,
+      text: preset.dialogue_rules,
+      formatIds: ['privateChat'],
+      targets: ['private_chat'],
+    });
+    appendFormatReminderSection(sections, {
+      id: 'group',
+      label: '群聊行为与格式',
+      enabled: preset.group_enabled,
+      text: preset.group_rules,
+      formatIds: ['groupChat'],
+      targets: ['group_chat'],
+    });
+    appendFormatReminderSection(sections, {
+      id: 'phone_format_moment',
+      label: 'QQ空间格式',
+      enabled: preset.phone_format_moment_enabled,
+      text: preset.phone_format_moment_rules,
+      formatIds: ['momentComment', 'momentPost'],
+      targets: ['moment_comment', 'moment_post'],
+    });
+    appendFormatReminderSection(sections, {
+      id: 'moment_create',
+      label: '动态发布格式',
+      enabled: preset.moment_create_enabled,
+      text: preset.moment_create_rules,
+      formatIds: ['momentPost'],
+      targets: ['moment_post'],
+    });
+    appendFormatReminderSection(sections, {
+      id: 'moment_comment',
+      label: '动态评论格式',
+      enabled: preset.moment_comment_enabled,
+      text: preset.moment_comment_rules,
+      formatIds: ['momentComment'],
+      targets: ['moment_comment'],
+    });
+    appendFormatReminderSection(sections, {
+      id: 'phone_format_footer',
+      label: '手机格式结尾',
+      enabled: preset.phone_format_footer_enabled,
+      text: preset.phone_format_footer_rules,
+      formatIds: ['phoneShell', /<\s*tableEdit\b/i.test(preset.phone_format_footer_rules || '') ? 'tableEdit' : ''].filter(Boolean),
+      targets: ['private_chat', 'group_chat'],
+    });
+    appendFormatReminderSection(sections, {
+      id: 'auto_image_prompt',
+      label: '自动生图标签格式',
+      enabled: preset.auto_image_prompt_enabled,
+      text: preset.auto_image_prompt_rules,
+      formatIds: ['imagePrompt'],
+      targets: ['image_prompt'],
+    });
     return {
       enabledFormats,
-      formatReminderText: sections.join('\n\n').slice(0, 12000),
+      formatReminderSections: sections,
+      formatReminderText: sections.map(section => section.content).join('\n\n').slice(0, 12000),
     };
   };
 
@@ -21960,9 +22423,13 @@ Phase G（Frame 36）：循环衔接
       sessionLabel: getChatFormatGuardianSessionLabel(sid),
       enabledFormats: promptContext.enabledFormats,
       formatReminderText: promptContext.formatReminderText,
+      formatReminderSections: promptContext.formatReminderSections,
       reviewNoEvents: uiMode === 'chat' && Object.values(promptContext.enabledFormats).some(Boolean),
       force,
       surface: uiMode === 'rp' ? 'creative' : (uiMode === 'moments' ? 'moments' : 'chat'),
+      uiMode,
+      isGroupChat: Boolean(contactsStore.getContact(sid)?.isGroup) || sid.startsWith('group:'),
+      formatTarget: 'auto',
       requestOptions: {
         temperature: 0,
         maxTokens: 900,
@@ -22170,6 +22637,7 @@ Phase G（Frame 36）：循环衔接
       skipInputRegex,
       skipTemplate,
       skipScripts,
+      previewOnly,
       suppressAssistantDom,
       assistantStreamFactory,
       continueTarget,
@@ -22236,45 +22704,53 @@ Phase G（Frame 36）：循环衔接
       window.toastr?.warning?.('正在生成中，请稍候...');
       return false;
     }
-    const pendingPreparation = runPendingSendPreparationFlow({
-      ignorePending,
-      targetMessageId,
-      allMessages: chatStore.getMessages(sessionId),
-      pendingQueue: !ignorePending && !targetMessageId ? chatStore.getPendingMessages(sessionId) || [] : [],
-      overrideText,
-      hasAttachments: hasRequestAttachments,
-      continueTarget,
-      sessionId,
-      userAvatar: avatars.user,
-      getInputText: () => (hasAttachments
+    let pendingMessagesToConfirm = [];
+    let text = '';
+    if (previewOnly) {
+      text = overrideText || (hasAttachments
         ? stripComposerAttachmentPlaceholders(ui.getInputText(), attachmentQueue)
-        : ui.getInputText()),
-      getActiveUserProfile,
-      isStickerAllowed,
-      parseStickerToken,
-      getReplyTargetForSession,
-      clearReplyTargetForSession,
-      formatNowTime,
-      appendMessage: (message, targetSessionId) => chatStore.appendMessage(message, targetSessionId),
-      addMessageToUi: message => ui.addMessage(message),
-      removePendingMessage: (messageId, targetSessionId) => chatStore.removePendingMessage(messageId, targetSessionId),
-      clearInput: () => ui.clearInput(),
-      buildStickerToken,
-      chatStore,
-      ui,
-      scriptRuntime,
-      pluginRuntime,
-      skipScripts,
-      logger,
-      recordTraceEvent: recordDebugTraceEvent,
-      refreshChatAndContacts,
-      updatePendingFloat,
-      showError: message => window.toastr?.error?.(message),
-      showWarning: message => window.toastr?.warning?.(message),
-    });
-    if (!pendingPreparation.shouldContinue) return false;
-    let pendingMessagesToConfirm = pendingPreparation.pendingMessagesToConfirm;
-    let text = pendingPreparation.text;
+        : ui.getInputText());
+    } else {
+      const pendingPreparation = runPendingSendPreparationFlow({
+        ignorePending,
+        targetMessageId,
+        allMessages: chatStore.getMessages(sessionId),
+        pendingQueue: !ignorePending && !targetMessageId ? chatStore.getPendingMessages(sessionId) || [] : [],
+        overrideText,
+        hasAttachments: hasRequestAttachments,
+        continueTarget,
+        sessionId,
+        userAvatar: avatars.user,
+        getInputText: () => (hasAttachments
+          ? stripComposerAttachmentPlaceholders(ui.getInputText(), attachmentQueue)
+          : ui.getInputText()),
+        getActiveUserProfile,
+        isStickerAllowed,
+        parseStickerToken,
+        getReplyTargetForSession,
+        clearReplyTargetForSession,
+        formatNowTime,
+        appendMessage: (message, targetSessionId) => chatStore.appendMessage(message, targetSessionId),
+        addMessageToUi: message => ui.addMessage(message),
+        removePendingMessage: (messageId, targetSessionId) => chatStore.removePendingMessage(messageId, targetSessionId),
+        clearInput: () => ui.clearInput(),
+        buildStickerToken,
+        chatStore,
+        ui,
+        scriptRuntime,
+        pluginRuntime,
+        skipScripts,
+        logger,
+        recordTraceEvent: recordDebugTraceEvent,
+        refreshChatAndContacts,
+        updatePendingFloat,
+        showError: message => window.toastr?.error?.(message),
+        showWarning: message => window.toastr?.warning?.(message),
+      });
+      if (!pendingPreparation.shouldContinue) return false;
+      pendingMessagesToConfirm = pendingPreparation.pendingMessagesToConfirm;
+      text = pendingPreparation.text;
+    }
     if (hasAttachments) {
       text = stripComposerAttachmentPlaceholders(text, attachmentQueue);
     }
@@ -22316,20 +22792,22 @@ Phase G（Frame 36）：循环衔接
       settingsStore: appSettings,
       promptChoice: appChoice,
     });
-    text = await applyBeforeSendHooks({
-      text,
-      sessionId,
-      userName,
-      isGroupChat,
-      hasAttachments,
-      allowTextOverride: !pendingMessagesToConfirm || pendingMessagesToConfirm.length === 0,
-      scriptRuntime,
-      pluginRuntime,
-      skipScripts,
-      logger,
-      recordTraceEvent: recordDebugTraceEvent,
-    });
-    if (variableRuleEngine) {
+    if (!previewOnly) {
+      text = await applyBeforeSendHooks({
+        text,
+        sessionId,
+        userName,
+        isGroupChat,
+        hasAttachments,
+        allowTextOverride: !pendingMessagesToConfirm || pendingMessagesToConfirm.length === 0,
+        scriptRuntime,
+        pluginRuntime,
+        skipScripts,
+        logger,
+        recordTraceEvent: recordDebugTraceEvent,
+      });
+    }
+    if (variableRuleEngine && !previewOnly) {
       variableRuleEngine.handleBeforeSend({ sessionId, content: text, useGlobalVariables: sharedVariables }).catch(err => {
         logger.warn('variable rules before_send failed', err);
       });
@@ -23429,6 +23907,63 @@ Phase G（Frame 36）：循环衔接
       window.appBridge.setContextBuilder?.(llmContext);
     } catch {}
 
+    const currentDraftReplyTarget = getReplyTargetForSession(sessionId);
+    let consumedDraftReplyTarget = false;
+    const hasUserText = Boolean(String(text || '').trim());
+
+    if (previewOnly) {
+      const previewAttachmentMessages = hasAttachments
+        ? buildAttachmentMessages(attachmentQueue, { name: userName, avatar: avatars.user })
+        : [];
+      if (currentDraftReplyTarget && !hasUserText && !suppressUserMessage && previewAttachmentMessages.length) {
+        previewAttachmentMessages[0] = attachReplyTargetToMessage(previewAttachmentMessages[0], currentDraftReplyTarget);
+      }
+      let previewUserMsg = null;
+      if (!suppressUserMessage && hasUserText) {
+        previewUserMsg = buildSendUserMessage({
+          text,
+          userName,
+          userAvatar: avatars.user,
+          time: formatNowTime(),
+          isStickerAllowed,
+          parseStickerToken,
+          applyInputStoredRegex: (value, opts) => window.appBridge.applyInputStoredRegex(value, opts),
+          applyInputDisplayRegex: (value, opts) => window.appBridge.applyInputDisplayRegex(value, opts),
+        });
+        if (currentDraftReplyTarget) {
+          previewUserMsg = attachReplyTargetToMessage(previewUserMsg, currentDraftReplyTarget);
+        }
+      }
+      outgoingReplyContexts = buildOutgoingReplyContexts(previewUserMsg ? [previewUserMsg] : previewAttachmentMessages);
+      const presetContext = getPresetContext();
+      const sysp = resolveEnabledPreset(window.appBridge, 'sysprompt', presetContext);
+      const protocolFlags = resolveSyspromptProtocolFlags({
+        sysp,
+        rpUiMode,
+        isGroupChat,
+        summaryEnabled: isSummaryMemoryEnabled(),
+      });
+      disableSummaryForThis = protocolFlags.disableSummaryForThis;
+      return runAssistantGenerationRequest({
+        text,
+        sessionId,
+      }, {
+        buildContext: llmContext,
+        appBridge: {
+          generate: (input, context) => {
+            const nextContext = context && typeof context === 'object' ? context : {};
+            return window.appBridge.generate(input, {
+              ...nextContext,
+              meta: {
+                ...(nextContext.meta || {}),
+                previewOnly: true,
+              },
+            });
+          },
+        },
+      });
+    }
+
     // slash command support
     if (text.startsWith('/')) {
       const handled = runCommand(text, {
@@ -23506,9 +24041,6 @@ Phase G（Frame 36）：循环衔接
         logger.warn('ensure baseline checkpoint before send failed', err);
       }
     }
-    const currentDraftReplyTarget = getReplyTargetForSession(sessionId);
-    let consumedDraftReplyTarget = false;
-    const hasUserText = Boolean(String(text || '').trim());
     let attachmentMessages = [];
     let attachmentPrimaryId = '';
     if (hasAttachments) {

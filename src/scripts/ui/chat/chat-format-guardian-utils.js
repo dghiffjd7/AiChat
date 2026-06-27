@@ -11,6 +11,18 @@ export const CHAT_FORMAT_EVENT_TYPES = Object.freeze({
 const CHAT_SURFACE = 'chat';
 const MOMENTS_SURFACE = 'moments';
 
+export const CHAT_FORMAT_GUARDIAN_TARGETS = Object.freeze({
+  auto: 'auto',
+  privateChat: 'private_chat',
+  groupChat: 'group_chat',
+  momentComment: 'moment_comment',
+  momentPost: 'moment_post',
+  imagePrompt: 'image_prompt',
+  memoryTableEdit: 'memory_table_edit',
+  creativeText: 'creative_text',
+  forum: 'forum',
+});
+
 const isPlainObject = value => Boolean(value && typeof value === 'object' && !Array.isArray(value));
 
 const trim = (value, fallback = '') => {
@@ -124,6 +136,118 @@ const CHAT_FORMAT_PROMPT_SNIPPETS = Object.freeze({
   ],
 });
 
+export const normalizeChatFormatGuardianTarget = (value = '', fallback = CHAT_FORMAT_GUARDIAN_TARGETS.auto) => {
+  const raw = trim(value || fallback, fallback).toLowerCase();
+  const aliases = {
+    private: CHAT_FORMAT_GUARDIAN_TARGETS.privateChat,
+    private_message: CHAT_FORMAT_GUARDIAN_TARGETS.privateChat,
+    dialogue: CHAT_FORMAT_GUARDIAN_TARGETS.privateChat,
+    chat: CHAT_FORMAT_GUARDIAN_TARGETS.privateChat,
+    group: CHAT_FORMAT_GUARDIAN_TARGETS.groupChat,
+    group_message: CHAT_FORMAT_GUARDIAN_TARGETS.groupChat,
+    moment: CHAT_FORMAT_GUARDIAN_TARGETS.momentPost,
+    moments: CHAT_FORMAT_GUARDIAN_TARGETS.momentComment,
+    moment_reply: CHAT_FORMAT_GUARDIAN_TARGETS.momentComment,
+    image: CHAT_FORMAT_GUARDIAN_TARGETS.imagePrompt,
+    image_tag: CHAT_FORMAT_GUARDIAN_TARGETS.imagePrompt,
+    memory: CHAT_FORMAT_GUARDIAN_TARGETS.memoryTableEdit,
+    table_edit: CHAT_FORMAT_GUARDIAN_TARGETS.memoryTableEdit,
+    tableedit: CHAT_FORMAT_GUARDIAN_TARGETS.memoryTableEdit,
+    creative: CHAT_FORMAT_GUARDIAN_TARGETS.creativeText,
+    rp: CHAT_FORMAT_GUARDIAN_TARGETS.creativeText,
+  };
+  const normalized = aliases[raw] || raw;
+  return Object.values(CHAT_FORMAT_GUARDIAN_TARGETS).includes(normalized)
+    ? normalized
+    : CHAT_FORMAT_GUARDIAN_TARGETS.auto;
+};
+
+const detectFormatTargetFromParserResult = (parserResult = null) => {
+  const events = list(parserResult?.eventDrafts);
+  if (events.some(event => trim(event?.type) === CHAT_FORMAT_EVENT_TYPES.groupMessage ||
+    trim(event?.type) === CHAT_FORMAT_EVENT_TYPES.groupSystemEvent)) {
+    return CHAT_FORMAT_GUARDIAN_TARGETS.groupChat;
+  }
+  if (events.some(event => trim(event?.type) === CHAT_FORMAT_EVENT_TYPES.privateMessage)) {
+    return CHAT_FORMAT_GUARDIAN_TARGETS.privateChat;
+  }
+  if (events.some(event => trim(event?.type) === CHAT_FORMAT_EVENT_TYPES.momentPost)) {
+    return CHAT_FORMAT_GUARDIAN_TARGETS.momentPost;
+  }
+  if (events.some(event => trim(event?.type) === CHAT_FORMAT_EVENT_TYPES.momentComment)) {
+    return CHAT_FORMAT_GUARDIAN_TARGETS.momentComment;
+  }
+  return '';
+};
+
+const detectFormatTargetFromText = (text = '') => {
+  const raw = String(text ?? '');
+  if (/<\s*image_prompt\b/i.test(raw)) return CHAT_FORMAT_GUARDIAN_TARGETS.imagePrompt;
+  if (/<\s*tableEdit\b/i.test(raw)) return CHAT_FORMAT_GUARDIAN_TARGETS.memoryTableEdit;
+  return '';
+};
+
+const selectFormatIdsForTarget = (target = '') => {
+  switch (normalizeChatFormatGuardianTarget(target)) {
+    case CHAT_FORMAT_GUARDIAN_TARGETS.privateChat:
+      return ['phoneShell', 'privateChat'];
+    case CHAT_FORMAT_GUARDIAN_TARGETS.groupChat:
+      return ['phoneShell', 'groupChat'];
+    case CHAT_FORMAT_GUARDIAN_TARGETS.momentComment:
+      return ['momentComment'];
+    case CHAT_FORMAT_GUARDIAN_TARGETS.momentPost:
+      return ['momentPost'];
+    case CHAT_FORMAT_GUARDIAN_TARGETS.imagePrompt:
+      return ['imagePrompt'];
+    case CHAT_FORMAT_GUARDIAN_TARGETS.memoryTableEdit:
+      return ['tableEdit'];
+    case CHAT_FORMAT_GUARDIAN_TARGETS.creativeText:
+    case CHAT_FORMAT_GUARDIAN_TARGETS.forum:
+      return [];
+    default:
+      return [];
+  }
+};
+
+export const resolveChatFormatGuardianFormatProfile = ({
+  target = CHAT_FORMAT_GUARDIAN_TARGETS.auto,
+  uiMode = '',
+  surface = '',
+  isGroupChat = false,
+  assistantText = '',
+  parserResult = null,
+  enabledFormats = {},
+} = {}) => {
+  const requested = normalizeChatFormatGuardianTarget(target);
+  const detectedFromText = detectFormatTargetFromText(assistantText);
+  const detectedFromParser = detectFormatTargetFromParserResult(parserResult);
+  const normalizedSurface = trim(surface).toLowerCase();
+  const normalizedUiMode = trim(uiMode).toLowerCase();
+  const resolvedTarget = requested !== CHAT_FORMAT_GUARDIAN_TARGETS.auto
+    ? requested
+    : (
+      detectedFromText ||
+      detectedFromParser ||
+      (normalizedUiMode === 'rp' || normalizedSurface === 'creative'
+        ? CHAT_FORMAT_GUARDIAN_TARGETS.creativeText
+        : (normalizedSurface === MOMENTS_SURFACE
+          ? CHAT_FORMAT_GUARDIAN_TARGETS.momentComment
+          : (isGroupChat ? CHAT_FORMAT_GUARDIAN_TARGETS.groupChat : CHAT_FORMAT_GUARDIAN_TARGETS.privateChat)))
+    );
+  const wantedIds = selectFormatIdsForTarget(resolvedTarget);
+  const source = isPlainObject(enabledFormats) ? enabledFormats : {};
+  const selectedFormats = {};
+  wantedIds.forEach((id) => {
+    if (source[id] === true) selectedFormats[id] = true;
+  });
+  return {
+    target: resolvedTarget,
+    requestedTarget: requested,
+    enabledFormats: selectedFormats,
+    enabledFormatIds: Object.keys(selectedFormats),
+  };
+};
+
 const normalizeEnabledFormatEntries = (enabledFormats = {}) => {
   if (Array.isArray(enabledFormats)) {
     return enabledFormats
@@ -193,7 +317,7 @@ const serializeFormatEntries = (entries = []) => (
 const buildPrivateChatTagName = ({ userName = '我', sessionLabel = '' } = {}) =>
   `${trim(userName, '我')}和${trim(sessionLabel, '联系人名')}的私聊`;
 
-const buildDirectRepairExample = ({ userName = '我', sessionLabel = '', fallbackTime = '' } = {}) => {
+const buildPrivateDirectRepairExample = ({ userName = '我', sessionLabel = '', fallbackTime = '' } = {}) => {
   const tagName = buildPrivateChatTagName({ userName, sessionLabel });
   const time = trim(fallbackTime, '00:00');
   return [
@@ -209,6 +333,84 @@ const buildDirectRepairExample = ({ userName = '我', sessionLabel = '', fallbac
     'msg_end',
     'MiPhone_end',
   ].join('\n');
+};
+
+const buildDirectRepairExample = ({
+  userName = '我',
+  sessionLabel = '',
+  fallbackTime = '',
+  target = CHAT_FORMAT_GUARDIAN_TARGETS.privateChat,
+} = {}) => {
+  const normalizedTarget = normalizeChatFormatGuardianTarget(target, CHAT_FORMAT_GUARDIAN_TARGETS.privateChat);
+  const time = trim(fallbackTime, '00:00');
+  if (normalizedTarget === CHAT_FORMAT_GUARDIAN_TARGETS.groupChat) {
+    return [
+      '错误原文示例：',
+      '成员A: 我到了',
+      '',
+      '可直接替换的修复文本示例：',
+      'MiPhone_start',
+      'msg_start',
+      '<群聊:群名>',
+      '<聊天内容>',
+      `成员A--我到了--${time}`,
+      '</聊天内容>',
+      '</群聊:群名>',
+      'msg_end',
+      'MiPhone_end',
+    ].join('\n');
+  }
+  if (normalizedTarget === CHAT_FORMAT_GUARDIAN_TARGETS.momentComment) {
+    return [
+      '错误原文示例：',
+      '评论者: 好看！',
+      '',
+      '可直接替换的修复文本示例：',
+      'moment_reply_start',
+      'moment_id:: 动态id',
+      '评论者--好看！',
+      'moment_reply_end',
+    ].join('\n');
+  }
+  if (normalizedTarget === CHAT_FORMAT_GUARDIAN_TARGETS.momentPost) {
+    return [
+      '错误原文示例：',
+      '今天去了海边。',
+      '',
+      '可直接替换的修复文本示例：',
+      'moment_start',
+      `author:: ${trim(userName, '我')}`,
+      'content:: 今天去了海边。',
+      'moment_end',
+    ].join('\n');
+  }
+  if (normalizedTarget === CHAT_FORMAT_GUARDIAN_TARGETS.imagePrompt) {
+    return [
+      '错误原文示例：',
+      '画一张黄昏海边的少女',
+      '',
+      '可直接替换的修复文本示例：',
+      '<image_prompt>',
+      '黄昏海边的少女，柔和光线，细节清晰',
+      '</image_prompt>',
+    ].join('\n');
+  }
+  if (normalizedTarget === CHAT_FORMAT_GUARDIAN_TARGETS.memoryTableEdit) {
+    return [
+      '错误原文示例：',
+      '把 Alice 的喜好改成喜欢红茶',
+      '',
+      '可直接替换的修复文本示例：',
+      '<tableEdit>',
+      'update memory set preference="喜欢红茶" where name="Alice"',
+      '</tableEdit>',
+    ].join('\n');
+  }
+  if (normalizedTarget === CHAT_FORMAT_GUARDIAN_TARGETS.creativeText ||
+      normalizedTarget === CHAT_FORMAT_GUARDIAN_TARGETS.forum) {
+    return '';
+  }
+  return buildPrivateDirectRepairExample({ userName, sessionLabel, fallbackTime });
 };
 
 const compactParserReportForPrompt = (report = null, { maxEvents = 6, maxIssues = 8 } = {}) => {
@@ -241,6 +443,7 @@ export const buildChatFormatGuardianModelPrompt = ({
   userName = '我',
   sessionLabel = '',
   surface = 'chat',
+  formatTarget = CHAT_FORMAT_GUARDIAN_TARGETS.privateChat,
 } = {}) => {
   const rawAssistantText = String(assistantText ?? '').trim();
   const reminder = String(formatReminderText ?? '').trim();
@@ -251,13 +454,23 @@ export const buildChatFormatGuardianModelPrompt = ({
   const looseChatRowCount = countLooseChatRows(rawAssistantText);
   const repairFallbackTime = trim(compactReport?.repairFallbackTime, '00:00');
   const privateTagName = buildPrivateChatTagName({ userName, sessionLabel });
-  const directRepairExample = buildDirectRepairExample({ userName, sessionLabel, fallbackTime: repairFallbackTime });
+  const normalizedTarget = normalizeChatFormatGuardianTarget(formatTarget, CHAT_FORMAT_GUARDIAN_TARGETS.privateChat);
+  const hasPrivateFormat = formatEntries.some(entry => entry.id === 'privateChat');
+  const hasChatFormat = formatEntries.some(entry => ['privateChat', 'groupChat', 'phoneShell'].includes(entry.id));
+  const directRepairExample = buildDirectRepairExample({
+    userName,
+    sessionLabel,
+    fallbackTime: repairFallbackTime,
+    target: normalizedTarget,
+  });
   const noEventsHint = compactReport?.status === 'no_events'
     ? (looseChatRowCount > 0
       ? [
         `本地解析器没有发现可提交的完整协议内容，但原始回复包含 ${looseChatRowCount} 行疑似聊天内容（例如“说话人--正文”或“说话人--正文--HH:mm”）。`,
         '这属于可修复的标签缺漏。保留原文发言人、顺序和正文，只补齐下方格式范例或格式规则明确要求的标签、字段和闭合结构。',
-        `私聊场景优先补成：MiPhone_start / msg_start / <${privateTagName}> / 原聊天行 / </${privateTagName}> / msg_end / MiPhone_end。`,
+        hasPrivateFormat
+          ? `私聊场景优先补成：MiPhone_start / msg_start / <${privateTagName}> / 原聊天行 / </${privateTagName}> / msg_end / MiPhone_end。`
+          : '优先补成当前目标格式要求的最小合法结构。',
         `若聊天行缺少时间字段，优先使用 repairFallbackTime（${repairFallbackTime}）；没有可用时间时使用 00:00。`,
       ].join('\n')
       : '本地解析器没有发现可提交的完整协议内容。若原始回复为空、完全没有有效聊天/动态内容，或只有残缺片段，不要补写剧情；返回 canRepair=false、correctedText=""、linePatches=[]，并在 repairSummary 中建议用户重新生成。')
@@ -268,16 +481,16 @@ export const buildChatFormatGuardianModelPrompt = ({
     '只修复格式，不评价剧情、修辞、角色一致性或用户意图。',
     '允许修复：补齐/移动/闭合协议标签，补齐 msg 外层，补齐缺失时间，移除末尾残缺半行，把“说话人: 正文”转换为“说话人--正文--HH:mm”。',
     '禁止修改：不得改写正文语义，不得新增剧情内容，不得扩写角色台词。',
-    '私聊标签遵循现有协议：<{{user}}和联系人名的私聊>...</{{user}}和联系人名的私聊>；{{user}} 经过宏替换后也可能表现为“我和联系人名的私聊”或“用户名和联系人名的私聊”。',
-    '如果原始回复没有任何外层标签，但包含“说话人--正文”或“说话人--正文--HH:mm”聊天行，应视为可修复的标签缺漏，优先补齐标签而不是建议重新生成。',
+    hasPrivateFormat ? '私聊标签遵循现有协议：<{{user}}和联系人名的私聊>...</{{user}}和联系人名的私聊>；{{user}} 经过宏替换后也可能表现为“我和联系人名的私聊”或“用户名和联系人名的私聊”。' : '',
+    hasChatFormat ? '如果原始回复没有任何外层标签，但包含“说话人--正文”或“说话人--正文--HH:mm”聊天行，应视为可修复的标签缺漏，优先补齐标签而不是建议重新生成。' : '',
     '如果回复明显在末尾截断，不要补写新剧情；只保留已经完整成行的内容并补齐必要闭合标签。',
     '输出必须是一个完整 JSON 对象。禁止 Markdown 代码块，禁止解释，禁止省略号，禁止在 JSON 前后输出任何文字。',
     'JSON 字符串字段内部不要使用英文双引号；需要引用格式名时使用中文引号或直接写文字，避免破坏 JSON。',
     'canRepair=true 时，correctedText 必须是完整的、可直接替换原回复的修复后文本；linePatches 可以为空数组。',
-    'correctedText 用于重新解析聊天/动态协议；不要在 MiPhone_end 之后追加额外段落或标签。',
-    '如果原始回复把 <image_prompt>...</image_prompt> 嵌入聊天行，聊天修复只保留可显示的聊天行内容；不要把独立 image_prompt 追加到 correctedText 尾部。',
+    hasChatFormat ? 'correctedText 用于重新解析聊天/动态协议；不要在 MiPhone_end 之后追加额外段落或标签。' : 'correctedText 用于重新解析当前目标格式；不要追加目标格式以外的解释段落。',
+    hasChatFormat ? '如果原始回复把 <image_prompt>...</image_prompt> 嵌入聊天行，聊天修复只保留可显示的聊天行内容；不要把独立 image_prompt 追加到 correctedText 尾部。' : '',
     'canRepair=false 时，correctedText 必须是空字符串，linePatches 必须是空数组。',
-  ].join('\n');
+  ].filter(Boolean).join('\n');
   const user = [
     [
       '# Task',
@@ -288,10 +501,11 @@ export const buildChatFormatGuardianModelPrompt = ({
       `userName: ${trim(userName, '我')}`,
       `sessionLabel: ${trim(sessionLabel, '') || 'N/A'}`,
       `surface: ${trim(surface, 'chat')}`,
+      `formatTarget: ${normalizedTarget}`,
       `repairFallbackTime: ${repairFallbackTime}`,
     ].join('\n'),
     formatSummary ? `# Required Format Examples\n${formatSummary}` : '',
-    `# Direct Replacement Example\n${directRepairExample}`,
+    directRepairExample ? `# Direct Replacement Example\n${directRepairExample}` : '',
     reminder ? `# Required Additional Format Rules\n${reminder}` : '',
     compactReport ? `# Local Parser Report\n${JSON.stringify(compactReport, null, 2)}` : '',
     noEventsHint,

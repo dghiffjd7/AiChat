@@ -230,7 +230,7 @@ export const buildAgentStatusChipView = (agentCenterView = {}, {
         label: idleLabel,
         count: tools ? String(tools) : '',
         tone: 'idle',
-        tab: 'activity',
+        tab: '',
         activityStatus: '',
         title: tools ? `打开 Agent Center，${tools} 个工具已注册` : '打开 Agent Center',
     };
@@ -297,10 +297,10 @@ export class AgentCenterStatusChip {
                     at: Date.now(),
                 });
             }
-            this.openAgentCenter({
-                tab: this.state.tab || 'activity',
-                activityStatus: this.state.activityStatus || '',
-            });
+            const options = {};
+            if (this.state?.tab) options.tab = this.state.tab;
+            if (this.state?.activityStatus) options.activityStatus = this.state.activityStatus;
+            this.openAgentCenter(options);
             this.refresh();
         });
         if (this.beforeElement && this.beforeElement.parentNode === root) {
