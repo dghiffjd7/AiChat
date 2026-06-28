@@ -202,3 +202,43 @@ class FakeDocument {
   assert.deepEqual(syncCalls, ['sync']);
   console.log('ok - createModeSwitchInteractionRuntime drag flow saves position suppresses click and resumes mode toggle');
 }
+
+{
+  const modeSwitchEl = new FakeElement('div');
+  const buttonEl = new FakeElement('button');
+  const scheduled = [];
+  const longPresses = [];
+  let enterCalls = 0;
+  const runtime = createModeSwitchInteractionRuntime({
+    modeSwitchEl,
+    modeSwitchBtnEl: buttonEl,
+    setTimeoutFn: (fn) => {
+      scheduled.push(fn);
+      return scheduled.length;
+    },
+    clearTimeoutFn: () => {},
+    nowFn: () => 1000,
+    getUiMode: () => 'chat',
+    enterRpMode: () => {
+      enterCalls += 1;
+    },
+    onLongPress: payload => {
+      longPresses.push(payload);
+      return true;
+    },
+  });
+
+  runtime.bind();
+  buttonEl.trigger('pointerdown', { clientX: 100, clientY: 200 });
+  assert.equal(runtime.hasLongPressTimer(), true);
+  scheduled.shift()?.();
+  assert.equal(longPresses.length, 1);
+  buttonEl.trigger('pointerup', { clientX: 100, clientY: 200 });
+  assert.equal(runtime.isSuppressingClick(), true);
+  assert.equal(runtime.handleClick(), false);
+  scheduled.shift()?.();
+  assert.equal(runtime.isSuppressingClick(), false);
+  assert.equal(runtime.handleClick(), true);
+  assert.equal(enterCalls, 1);
+  console.log('ok - createModeSwitchInteractionRuntime triggers long press and suppresses mode toggle click');
+}

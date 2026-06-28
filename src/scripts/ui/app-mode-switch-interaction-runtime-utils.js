@@ -38,6 +38,9 @@ export function createModeSwitchInteractionRuntime({
   },
   randomFn = Math.random,
   vibrate = () => {},
+  longPressMs = 560,
+  longPressMoveTolerance = 8,
+  onLongPress = null,
 } = {}) {
   let modeSwitchBounceHandle = null;
   let maidBounceCount = 0;
@@ -45,6 +48,7 @@ export function createModeSwitchInteractionRuntime({
   let modeSwitchSuppressClick = false;
   let modeSwitchDrag = null;
   let suppressClickTimer = null;
+  let longPressTimer = null;
 
   const scheduleFrame = (fn) => {
     if (typeof requestAnimationFrameFn === 'function') return requestAnimationFrameFn(fn);
@@ -64,6 +68,12 @@ export function createModeSwitchInteractionRuntime({
     if (suppressClickTimer == null) return;
     clearTimeoutFn?.(suppressClickTimer);
     suppressClickTimer = null;
+  };
+
+  const clearLongPressTimer = () => {
+    if (longPressTimer == null) return;
+    clearTimeoutFn?.(longPressTimer);
+    longPressTimer = null;
   };
 
   const scheduleSuppressClickRelease = () => {
@@ -255,7 +265,22 @@ export function createModeSwitchInteractionRuntime({
       lastX: originX,
       lastY: originY,
       lastTime: now,
+      longPressActivated: false,
     };
+    clearLongPressTimer();
+    if (typeof onLongPress === 'function' && Number(longPressMs) > 0) {
+      longPressTimer = setTimeoutFn?.(() => {
+        longPressTimer = null;
+        if (!modeSwitchDrag || modeSwitchDrag.moved) return;
+        modeSwitchDrag.longPressActivated = true;
+        modeSwitchSuppressClick = true;
+        onLongPress({
+          event,
+          x: modeSwitchDrag.lastX,
+          y: modeSwitchDrag.lastY,
+        });
+      }, Math.max(0, Number(longPressMs) || 0)) ?? null;
+    }
     modeSwitchEl.classList.add('is-dragging');
     modeSwitchBtnEl.setPointerCapture?.(event.pointerId);
     return true;
@@ -267,6 +292,9 @@ export function createModeSwitchInteractionRuntime({
     const dx = event.clientX - modeSwitchDrag.startX;
     const dy = event.clientY - modeSwitchDrag.startY;
     if (!modeSwitchDrag.moved && Math.hypot(dx, dy) > 4) modeSwitchDrag.moved = true;
+    if (Math.hypot(dx, dy) > Math.max(1, Number(longPressMoveTolerance) || 8)) {
+      clearLongPressTimer();
+    }
     const { w, h } = getViewportSize();
     if (!w || !h) return false;
     const safeInsets = getSafeInsets();
@@ -290,9 +318,13 @@ export function createModeSwitchInteractionRuntime({
   const endDrag = (event) => {
     if (!modeSwitchDrag || !modeSwitchEl) return false;
     if (event.pointerId !== modeSwitchDrag.pointerId) return false;
+    clearLongPressTimer();
     modeSwitchBtnEl?.releasePointerCapture?.(event.pointerId);
     modeSwitchEl.classList.remove('is-dragging');
-    if (modeSwitchDrag.moved) {
+    if (modeSwitchDrag.longPressActivated) {
+      modeSwitchSuppressClick = true;
+      scheduleSuppressClickRelease();
+    } else if (modeSwitchDrag.moved) {
       modeSwitchSuppressClick = true;
       const dt = Math.max(1, modeSwitchDrag.lastTime - modeSwitchDrag.prevTime);
       const vx = (modeSwitchDrag.lastX - modeSwitchDrag.prevX) / dt * 16;
@@ -343,5 +375,6 @@ export function createModeSwitchInteractionRuntime({
     isSuppressingClick: () => modeSwitchSuppressClick,
     hasBounceFrame: () => modeSwitchBounceHandle != null,
     getDragState: () => modeSwitchDrag,
+    hasLongPressTimer: () => longPressTimer != null,
   };
 }

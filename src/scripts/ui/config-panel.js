@@ -1940,6 +1940,18 @@ export class ConfigPanel {
             this.showStatus('配置保存成功！', 'success');
             logger.info('配置保存成功');
             this.emitProfileChanged();
+            if (typeof this.openOptions?.onSaved === 'function') {
+                try {
+                    await this.openOptions.onSaved({
+                        tab: this.activeTab,
+                        profileId: this.configManager.getActiveProfileId?.() || '',
+                        profile: this.configManager.getActiveProfile?.() || null,
+                        config: this.configManager.get?.() || null,
+                    });
+                } catch (callbackError) {
+                    logger.warn('config panel onSaved failed', callbackError);
+                }
+            }
 
             setTimeout(() => this.hide(), 1500);
         } catch (e) {

@@ -44,7 +44,19 @@ import { registerImageAgentTools } from '../agent/tools/image-tools.js';
 import { registerMemoryAgentTools } from '../agent/tools/memory-tools.js';
 import { registerVariableAgentTools } from '../agent/tools/variable-tools.js';
 import { registerWorldbookAgentTools } from '../agent/tools/worldbook-tools.js';
+import { createMaidAssistantAgent } from '../agent/maid-assistant-agent.js';
+import { createMaidChatResponder } from '../agent/maid-chat-responder.js';
+import {
+  buildAppFeatureKnowledgeText,
+  buildAppFeatureSearchContextText,
+} from '../agent/app-feature-catalog.js';
+import { createMaidModelBackedPlanner } from '../agent/maid-model-planner.js';
+import { createMaidRuntimeConfigResolver } from '../agent/maid-runtime-config.js';
+import { registerAppNavigationAgentTools } from '../agent/tools/app-navigation-tools.js';
+import { registerAppSessionAgentTools } from '../agent/tools/app-session-tools.js';
 import { AgentRunStore } from '../storage/agent-run-store.js';
+import { MaidGuideStore } from '../storage/maid-guide-store.js';
+import { MaidSettingsStore } from '../storage/maid-settings-store.js';
 import { appSettings } from '../storage/app-settings.js';
 import { renderTemplateTextAsync, templateSettings } from '../plugins/template-engine.js';
 import { ScriptRuntime } from '../plugins/script-runtime.js';
@@ -158,6 +170,9 @@ import {
 import {
   createModeSwitchInteractionRuntime,
 } from './app-mode-switch-interaction-runtime-utils.js';
+import { createAppGuidedActionRuntime } from './app-guided-action-runtime-utils.js';
+import { createMaidCommandInputRuntime } from './maid-command-input-runtime-utils.js';
+import { createMaidSettingsPanel } from './maid-settings-panel.js';
 import { createAppBackNavigationRuntime } from './app-back-navigation-runtime-utils.js';
 import {
   requestTauriNativeExit,
@@ -2540,6 +2555,98 @@ const initApp = async () => {
   });
   registerWorldbookAgentTools(agentToolRegistry, {
     getPreviewWorldbookActions: () => agentWritePreviewRuntimes.previewWorldbookActions,
+  });
+  registerAppNavigationAgentTools(agentToolRegistry, {
+    actions: {
+      'agent-center': options => agentCenterPanel.show(options || {}),
+      config: options => configPanel.show({ tab: options?.tab || 'chat' }),
+      session: () => sessionPanel.show(),
+      'session-config': options => sessionConfigPanel.show({ sessionId: options?.sessionId || chatStore.getCurrent() }),
+      worldbook: options => worldPanel.show(options || {}),
+      memory: () => memoryTemplatePanel.show(),
+      variables: () => {
+        blurComposerInput();
+        variablePanel.show();
+      },
+      regex: () => regexPanel.show(),
+      preset: () => presetPanel.show(),
+      extensions: () => extensionsPanel.show(),
+      settings: () => generalSettingsPanel.show(),
+    },
+    getCurrentState: () => ({
+      activePage,
+      uiMode,
+      sessionId: chatStore.getCurrent(),
+      chatRoomVisible: Boolean(chatRoom && !chatRoom.classList.contains('hidden')),
+      bodyClass: String(document.body?.className || ''),
+      modeSwitchPinned,
+      modeSwitchPos,
+    }),
+  });
+  registerAppSessionAgentTools(agentToolRegistry, {
+    contactsStore,
+    chatStore,
+    enterChatRoom: (...args) => enterChatRoom(...args),
+    refreshChatAndContacts: (...args) => refreshChatAndContacts(...args),
+    setActiveSession: sessionId => window.appBridge.setActiveSession(sessionId),
+    showSessionConfig: options => sessionConfigPanel.show(options || {}),
+    renderSessionNameHtml: (sessionId, contact) => renderSessionNameHtml(sessionId, contact),
+    defaultAvatar: '',
+  });
+  const maidGuideStore = new MaidGuideStore();
+  maidGuideStore.load();
+  const maidGuidedActionRuntime = createAppGuidedActionRuntime({
+    guideStore: maidGuideStore,
+    showGuide: guide => {
+      if (guide?.message) window.toastr?.info?.(guide.message);
+    },
+  });
+  const maidSettingsStore = new MaidSettingsStore();
+  await maidSettingsStore.load();
+  const recordMaidDebugSnapshot = ({
+    source = '',
+    input = '',
+    messages = null,
+    responseText = '',
+    requestPrompt = '',
+    appContext = '',
+  } = {}) => {
+    const promptText = requestPrompt || buildRequestPromptTextCore(Array.isArray(messages) ? messages : []);
+    maidSettingsStore.setLastExchange({
+      requestPrompt: promptText || '本次请求未发送模型提示词。',
+      appContext: appContext || buildAppFeatureSearchContextText(input, { limit: 5 }),
+      fullResponse: responseText || '',
+      source,
+    });
+  };
+  const resolveMaidRuntimeConfig = createMaidRuntimeConfigResolver({
+    settingsStore: maidSettingsStore,
+    configManager: chatConfigManager,
+    createClient: config => new LLMClient(config),
+    isConfigReady: canInitClient,
+    logger,
+  });
+  const maidPlanner = createMaidModelBackedPlanner({
+    resolveRuntimeConfig: resolveMaidRuntimeConfig,
+    createClient: config => new LLMClient(config),
+    isConfigReady: canInitClient,
+    onDebugSnapshot: recordMaidDebugSnapshot,
+    logger,
+  });
+  const maidChatResponder = createMaidChatResponder({
+    resolveRuntimeConfig: resolveMaidRuntimeConfig,
+    createClient: config => new LLMClient(config),
+    isConfigReady: canInitClient,
+    onDebugSnapshot: recordMaidDebugSnapshot,
+    logger,
+  });
+  const maidAssistantAgent = createMaidAssistantAgent({
+    toolRegistry: agentToolRegistry,
+    agentTaskRuntime,
+    planner: maidPlanner,
+    chatResponder: maidChatResponder,
+    guidedActionRuntime: maidGuidedActionRuntime,
+    logger,
   });
   const agentCenterPanel = new AgentCenterPanel({
     getFailureSeenAt: ({ surface = '' } = {}) => getAgentFailureSeenAt({ surface }),
@@ -20424,6 +20531,88 @@ Phase G（Frame 36）：循环衔接
     exitChatRoom();
   });
 
+  let maidCommandInputRuntime = null;
+  const bindMaidToSavedApiProfile = async ({ profileId = '', profile = null } = {}) => {
+    const savedProfileId = String(profileId || profile?.id || '').trim();
+    if (!savedProfileId) return false;
+    await maidSettingsStore.setBoundProfileId(savedProfileId);
+    window.toastr?.success?.(`女仆已绑定 API 配置「${profile?.name || savedProfileId}」`);
+    return true;
+  };
+  const openMaidApiConfigPanel = async ({ reason = 'manual' } = {}) => {
+    if (reason === 'required') {
+      window.toastr?.info?.('请先为女仆选择或保存一个 API 配置。');
+    }
+    await configPanel.show({
+      tab: 'chat',
+      onSaved: bindMaidToSavedApiProfile,
+    });
+  };
+  const maidSettingsPanel = createMaidSettingsPanel({
+    documentRef: document,
+    settingsStore: maidSettingsStore,
+    getAppKnowledgeText: () => buildAppFeatureKnowledgeText(),
+    onOpenApiConfig: () => openMaidApiConfigPanel({ reason: 'manual' }),
+    logger,
+  });
+  const openMaidCommandOrSettings = async () => {
+    try {
+      const runtime = await resolveMaidRuntimeConfig();
+      if (runtime?.configured) {
+        maidCommandInputRuntime?.open();
+        return true;
+      }
+      maidCommandInputRuntime?.close();
+      await openMaidApiConfigPanel({ reason: 'required' });
+      return false;
+    } catch (error) {
+      logger.warn('open maid command input failed', error);
+      maidCommandInputRuntime?.close();
+      await openMaidApiConfigPanel({ reason: 'required' });
+      return false;
+    }
+  };
+
+  maidCommandInputRuntime = createMaidCommandInputRuntime({
+    documentRef: document,
+    modeSwitchEl: modeSwitch,
+    getViewportSize,
+    onSubmit: async (text) => {
+      maidSettingsStore.setLastExchange({
+        requestPrompt: '本次请求尚未发送模型提示词。',
+        appContext: buildAppFeatureSearchContextText(text, { limit: 5 }),
+        fullResponse: '',
+        source: 'pending',
+      });
+      const result = await maidAssistantAgent.runPrompt(text, {
+        sessionId: chatStore.getCurrent(),
+        uiMode,
+        activePage,
+      });
+      const latestExchange = maidSettingsStore.getLastExchange?.() || {};
+      if (!String(latestExchange.requestPrompt || '').trim() || latestExchange.source === 'pending') {
+        maidSettingsStore.setLastExchange({
+          requestPrompt: '本次请求未调用模型提示词；由本地工具或规则直接处理。',
+          appContext: buildAppFeatureSearchContextText(text, { limit: 5 }),
+          fullResponse: result?.message || result?.reason || '',
+          source: 'local_result',
+        });
+      }
+      if (result?.ok === false) {
+        window.toastr?.warning?.(result.message || result.reason || '女仆暂时无法执行这个请求');
+      } else if (result?.message && result?.responseType !== 'chat') {
+        window.toastr?.success?.(result.message);
+      }
+      return result;
+    },
+    onSettings: () => {
+      maidCommandInputRuntime?.close();
+      maidSettingsPanel.show({ tab: 'api' });
+    },
+    setTimeoutFn: typeof setTimeout === 'function' ? setTimeout : null,
+    clearTimeoutFn: typeof clearTimeout === 'function' ? clearTimeout : null,
+  });
+
   const modeSwitchInteractionRuntime = createModeSwitchInteractionRuntime({
     documentRef: document,
     modeSwitchEl: modeSwitch,
@@ -20452,6 +20641,11 @@ Phase G（Frame 36）：循环衔接
     nowFn: () => performance.now(),
     randomFn: Math.random,
     vibrate: value => navigator.vibrate?.(value),
+    onLongPress: () => {
+      wakeModeSwitch();
+      void openMaidCommandOrSettings();
+      return true;
+    },
   });
   modeSwitchInteractionRuntime.bind();
 
