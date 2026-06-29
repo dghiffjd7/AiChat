@@ -53,6 +53,43 @@ const summarizeToolFailure = (output = {}) => {
   );
 };
 
+const makeToolErrorOutput = (plan = {}, error = null) => ({
+  toolName: trim(plan?.toolName),
+  status: 'failed',
+  summary: error?.message || String(error || 'maid assistant tool failed'),
+  errorMessage: error?.message || String(error || ''),
+  result: {
+    ok: false,
+    reason: error?.message || String(error || 'maid assistant tool failed'),
+  },
+});
+
+const shouldSkipReactAfterSuccess = (plan = {}, output = {}) => {
+  const result = unwrapToolOutputResult(output);
+  return plan?.toolName === 'chat.send_message' && result?.requestTriggered === true;
+};
+
+const buildReactStepSnapshot = ({
+  index = 0,
+  plan = {},
+  execution = {},
+  output = {},
+  ok = false,
+} = {}) => ({
+  index,
+  toolName: trim(plan?.toolName),
+  featureId: trim(plan?.featureId),
+  title: trim(plan?.title),
+  args: clone(plan?.args || {}),
+  status: ok ? 'succeeded' : 'failed',
+  guided: Boolean(execution?.guided),
+  guide: clone(execution?.guide || null),
+  guideMessage: trim(execution?.message),
+  summary: trim(output?.summary),
+  output: clone(unwrapToolOutputResult(output)),
+  errorMessage: trim(output?.errorMessage || (!ok ? summarizeToolFailure(output) : '')),
+});
+
 const buildSuccessMessage = ({ plan = {}, output = {}, execution = {} } = {}) => {
   const guideMessage = trim(execution?.message);
   const result = unwrapToolOutputResult(output);
@@ -471,8 +508,10 @@ export const createMaidAssistantAgent = ({
   toolRegistry = null,
   agentTaskRuntime = null,
   planner = requireAiPlanner,
+  reactPlanner = null,
   chatResponder = null,
   guidedActionRuntime = null,
+  maxReactSteps = 4,
   logger = console,
 } = {}) => {
   const runPlannedTool = async (plan, context = {}) => {
@@ -587,39 +626,186 @@ export const createMaidAssistantAgent = ({
         input: trim(input),
       };
     }
+    let currentPlan = plan;
+    let lastExecution = null;
+    let lastOutput = null;
+    let lastOk = false;
+    const steps = [];
+    const maxSteps = Math.max(1, Math.min(8, Math.trunc(Number(maxReactSteps) || 4)));
     try {
-      if (trim(plan.response) && typeof context?.onStatus === 'function') {
-        context.onStatus({
-          stage: 'planned',
-          tone: 'thinking',
-          message: trim(plan.response),
-          plan: clone(plan),
+      for (let stepIndex = 0; stepIndex < maxSteps; stepIndex += 1) {
+        if (trim(currentPlan.response) && typeof context?.onStatus === 'function') {
+          context.onStatus({
+            stage: stepIndex === 0 ? 'planned' : 'react_planned',
+            tone: 'thinking',
+            message: trim(currentPlan.response),
+            plan: clone(currentPlan),
+          });
+        }
+
+        let execution = null;
+        try {
+          execution = await executePlan(currentPlan, context);
+        } catch (error) {
+          logger?.warn?.('maid assistant tool execution failed', error);
+          execution = {
+            output: makeToolErrorOutput(currentPlan, error),
+            guided: false,
+            guide: null,
+            message: '',
+          };
+        }
+        const output = execution?.output ?? execution;
+        const ok = isToolOutputOk(output);
+        lastExecution = execution;
+        lastOutput = output;
+        lastOk = ok;
+        steps.push(buildReactStepSnapshot({
+          index: stepIndex + 1,
+          plan: currentPlan,
+          execution,
+          output,
+          ok,
+        }));
+
+        if (!reactPlanner || (ok && shouldSkipReactAfterSuccess(currentPlan, output))) {
+          if (!ok) {
+            return {
+              ok: false,
+              status: 'failed',
+              input: trim(input),
+              plan: clone(currentPlan),
+              output: clone(output),
+              steps: clone(steps),
+              guided: Boolean(execution?.guided),
+              guide: clone(execution?.guide || null),
+              reason: summarizeToolFailure(output),
+              message: summarizeToolFailure(output),
+            };
+          }
+          return {
+            ok: true,
+            status: 'succeeded',
+            input: trim(input),
+            plan: clone(currentPlan),
+            output: clone(output),
+            steps: clone(steps),
+            guided: Boolean(execution?.guided),
+            guide: clone(execution?.guide || null),
+            message: buildSuccessMessage({ plan: currentPlan, output, execution }),
+          };
+        }
+
+        if (typeof context?.onStatus === 'function') {
+          context.onStatus({
+            stage: ok ? 'observed' : 'repairing',
+            tone: 'thinking',
+            message: ok ? '我已经取得结果，正在整理给你。' : '工具遇到错误，我正在尝试修正参数。',
+            steps: clone(steps),
+          });
+        }
+
+        const decision = await reactPlanner(input, {
+          ...context,
+          maidReactSteps: clone(steps),
+          lastPlan: clone(currentPlan),
+          lastOutput: clone(output),
+          lastToolOk: ok,
         });
+        if (!decision?.ok) {
+          if (ok) {
+            return {
+              ok: true,
+              status: 'succeeded',
+              input: trim(input),
+              plan: clone(currentPlan),
+              output: clone(output),
+              steps: clone(steps),
+              guided: Boolean(execution?.guided),
+              guide: clone(execution?.guide || null),
+              message: buildSuccessMessage({ plan: currentPlan, output, execution }),
+              reactStoppedReason: decision?.reason || 'react_stopped',
+            };
+          }
+          return {
+            ok: false,
+            status: 'failed',
+            input: trim(input),
+            plan: clone(currentPlan),
+            output: clone(output),
+            steps: clone(steps),
+            reason: decision?.message || decision?.reason || summarizeToolFailure(output),
+            message: decision?.message || summarizeToolFailure(output),
+          };
+        }
+        if (decision.action === 'final') {
+          return {
+            ok,
+            status: ok ? 'succeeded' : 'failed',
+            responseType: 'react',
+            input: trim(input),
+            plan: clone(plan),
+            finalDecision: clone(decision),
+            output: clone(output),
+            steps: clone(steps),
+            guided: Boolean(execution?.guided),
+            guide: clone(execution?.guide || null),
+            reason: ok ? '' : summarizeToolFailure(output),
+            message: trim(decision.message),
+          };
+        }
+        if (decision.action === 'tool') {
+          currentPlan = decision;
+          continue;
+        }
+        if (!ok) {
+          return {
+            ok: false,
+            status: 'failed',
+            input: trim(input),
+            plan: clone(currentPlan),
+            output: clone(output),
+            steps: clone(steps),
+            reason: summarizeToolFailure(output),
+            message: summarizeToolFailure(output),
+          };
+        }
+        return {
+          ok: true,
+          status: 'succeeded',
+          input: trim(input),
+          plan: clone(currentPlan),
+          output: clone(output),
+          steps: clone(steps),
+          guided: Boolean(execution?.guided),
+          guide: clone(execution?.guide || null),
+          message: buildSuccessMessage({ plan: currentPlan, output, execution }),
+        };
       }
-      const execution = await executePlan(plan, context);
-      const output = execution?.output ?? execution;
-      if (!isToolOutputOk(output)) {
+
+      if (!lastOk) {
         return {
           ok: false,
           status: 'failed',
           input: trim(input),
-          plan: clone(plan),
-          output: clone(output),
-          guided: Boolean(execution?.guided),
-          guide: clone(execution?.guide || null),
-          reason: summarizeToolFailure(output),
-          message: summarizeToolFailure(output),
+          plan: clone(currentPlan),
+          output: clone(lastOutput),
+          steps: clone(steps),
+          reason: summarizeToolFailure(lastOutput),
+          message: summarizeToolFailure(lastOutput),
         };
       }
       return {
         ok: true,
         status: 'succeeded',
         input: trim(input),
-        plan: clone(plan),
-        output: clone(output),
-        guided: Boolean(execution?.guided),
-        guide: clone(execution?.guide || null),
-        message: buildSuccessMessage({ plan, output, execution }),
+        plan: clone(currentPlan),
+        output: clone(lastOutput),
+        steps: clone(steps),
+        guided: Boolean(lastExecution?.guided),
+        guide: clone(lastExecution?.guide || null),
+        message: buildSuccessMessage({ plan: currentPlan, output: lastOutput, execution: lastExecution }),
+        reactStoppedReason: 'max_steps_reached',
       };
     } catch (error) {
       logger?.warn?.('maid assistant run failed', error);
@@ -627,7 +813,8 @@ export const createMaidAssistantAgent = ({
         ok: false,
         status: 'failed',
         input: trim(input),
-        plan: clone(plan),
+        plan: clone(currentPlan),
+        steps: clone(steps),
         reason: error?.message || String(error || ''),
         message: error?.message || '女仆执行失败。',
       };

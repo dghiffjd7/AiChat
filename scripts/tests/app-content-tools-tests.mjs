@@ -106,6 +106,10 @@ const createProfileStore = (prefix = 'profile') => {
     personaStore,
     saveWorldInfo: async (id, data) => saved.set(id, data),
     getWorldInfo: async id => saved.get(id) || null,
+    listWorlds: async () => Array.from(saved.keys()),
+    waitForWorldStoreReady: async () => true,
+    getWorldIdsForSession: async () => ['Role A World'],
+    getGlobalWorldId: async () => 'Global World',
     assignWorldToPersona: async (personaId, worldId, options) => bound.push({ personaId, worldId, options }),
     now: () => 1000,
   });
@@ -133,7 +137,27 @@ const createProfileStore = (prefix = 'profile') => {
   assert.equal(inferred.worldbookId, 'Role A 世界书');
   assert.equal(saved.get('Role A 世界书').entries[0].comment, '当前角色条目');
   assert.deepEqual(bound.at(-1), { personaId: persona.id, worldId: 'Role A 世界书', options: { enabled: true } });
-  console.log('ok - app content tools create and bind worldbooks');
+
+  saved.set('Global World', { name: 'Global World', entries: [] });
+  const listResult = await getTool(tools, 'worldbook.list').execute({ sessionId: 'chat-a' });
+  assert.equal(listResult.ok, true);
+  assert.ok(listResult.worldbooks.some(item => item.id === 'Role A World' && item.boundToCurrentSession === true));
+  assert.ok(listResult.worldbooks.some(item => item.id === 'Global World' && item.global === true));
+
+  const readResult = await getTool(tools, 'worldbook.read').execute({ name: 'Role A World' });
+  assert.equal(readResult.ok, true);
+  assert.equal(readResult.name, 'Role A World');
+  assert.equal(readResult.entries.length, 2);
+  assert.equal(readResult.entries[0].title, '温柔大姐姐');
+  assert.deepEqual(readResult.entries[0].keys, ['姐姐']);
+  assert.match(readResult.entries[0].content, /超级温柔/);
+
+  const currentRead = await getTool(tools, 'worldbook.read').execute({ sessionId: 'chat-a', maxEntries: 1 });
+  assert.equal(currentRead.ok, true);
+  assert.equal(currentRead.id, 'Role A World');
+  assert.equal(currentRead.entries.length, 1);
+  assert.equal(currentRead.truncated, true);
+  console.log('ok - app content tools create bind list and read worldbooks');
 }
 
 {

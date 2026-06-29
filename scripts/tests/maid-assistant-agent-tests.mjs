@@ -128,14 +128,15 @@ import {
 }
 
 {
+  const modelResponse = '模型生成的发送前回应。';
   const agent = createMaidAssistantAgent({
     planner: async () => ({
       ok: true,
       toolName: 'chat.send_message',
-      args: { sessionName: '精灵女王', message: '妈妈' },
+      args: { sessionName: '目标联系人', message: '测试消息' },
       featureId: 'chat.send_message',
       title: '发送聊天消息',
-      response: '好的，主人，我这就给精灵女王发送消息。',
+      response: modelResponse,
     }),
     toolRegistry: {
       executeTool: async () => ({
@@ -145,20 +146,20 @@ import {
           ok: true,
           sent: true,
           requestTriggered: true,
-          sessionId: '精灵女王',
+          sessionId: '目标联系人',
         },
-        summary: 'sent message to 精灵女王',
+        summary: 'sent message to target contact',
       }),
     },
     logger: { warn() {} },
   });
   const statuses = [];
-  const result = await agent.runPrompt('给精灵女王发妈妈', {
+  const result = await agent.runPrompt('给目标联系人发送测试消息', {
     onStatus: status => statuses.push(status),
   });
   assert.equal(result.ok, true);
-  assert.equal(statuses[0].message, '好的，主人，我这就给精灵女王发送消息。');
-  assert.equal(result.message, '已发送给「精灵女王」，联系人正在回复。');
+  assert.equal(statuses[0].message, modelResponse);
+  assert.equal(result.message, '已发送给「目标联系人」，联系人正在回复。');
   console.log('ok - maid assistant agent reports pre-action reply and send-trigger final status');
 }
 
@@ -256,6 +257,114 @@ import {
   assert.equal(result.status, 'failed');
   assert.match(result.message, /missing_session_id/);
   console.log('ok - maid assistant agent reports business-level tool failures');
+}
+
+{
+  const statuses = [];
+  const reactCalls = [];
+  const agent = createMaidAssistantAgent({
+    planner: async () => ({
+      ok: true,
+      toolName: 'app.read_resource',
+      args: { resource: 'chat', sessionName: '精灵女王' },
+      featureId: 'app.resource.read',
+      title: '读取聊天消息',
+      response: '我先看看精灵女王最后回了什么。',
+    }),
+    reactPlanner: async (input, context) => {
+      reactCalls.push({ input, context });
+      return {
+        ok: true,
+        action: 'final',
+        message: '精灵女王最后回复了「晚上好，今天辛苦了」。',
+      };
+    },
+    toolRegistry: {
+      executeTool: async () => ({
+        toolName: 'app.read_resource',
+        status: 'succeeded',
+        result: {
+          ok: true,
+          resource: 'chat',
+          messages: [
+            { role: 'user', content: '晚上好' },
+            { role: 'assistant', rawOriginal: '晚上好，今天辛苦了', displayText: '晚上好，今天辛苦了' },
+          ],
+        },
+        summary: 'read resource chat',
+      }),
+    },
+    logger: { warn() {} },
+  });
+  const result = await agent.runPrompt('女王最后回了我什么？', {
+    onStatus: status => statuses.push(status),
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.responseType, 'react');
+  assert.match(result.message, /今天辛苦了/);
+  assert.equal(result.steps.length, 1);
+  assert.equal(reactCalls.length, 1);
+  assert.equal(reactCalls[0].context.maidReactSteps[0].toolName, 'app.read_resource');
+  assert.equal(statuses.some(status => status.stage === 'observed'), true);
+  console.log('ok - maid assistant agent continues after read tool and returns final answer');
+}
+
+{
+  const calls = [];
+  const reactCalls = [];
+  const agent = createMaidAssistantAgent({
+    planner: async () => ({
+      ok: true,
+      toolName: 'app.read_resource',
+      args: { resource: 'chat', sessionName: '精灵女王' },
+      featureId: 'app.resource.read',
+      title: '读取聊天消息',
+      response: '我先读取聊天消息。',
+    }),
+    reactPlanner: async (input, context) => {
+      reactCalls.push({ input, context });
+      if (reactCalls.length === 1) {
+        return {
+          ok: true,
+          action: 'tool',
+          toolName: 'app.read_resource',
+          args: { resource: 'chat', sessionId: 's1' },
+          featureId: 'app.resource.read',
+          title: '重新读取聊天消息',
+          response: '我换成正确的会话参数再试一次。',
+        };
+      }
+      return {
+        ok: true,
+        action: 'final',
+        message: '精灵女王最后回复了「晚上好」。',
+      };
+    },
+    toolRegistry: {
+      executeTool: async (toolName, args) => {
+        calls.push({ toolName, args });
+        if (calls.length === 1) {
+          throw new Error('Agent tool arguments invalid: args.sessionName is not allowed');
+        }
+        return {
+          toolName,
+          status: 'succeeded',
+          result: { ok: true, messages: [{ role: 'assistant', rawOriginal: '晚上好。' }] },
+          summary: 'read resource chat',
+        };
+      },
+    },
+    logger: { warn() {} },
+  });
+  const result = await agent.runPrompt('女王最后回了我什么？');
+  assert.equal(result.ok, true);
+  assert.match(result.message, /晚上好/);
+  assert.equal(calls.length, 2);
+  assert.equal(calls[0].args.sessionName, '精灵女王');
+  assert.equal(calls[1].args.sessionId, 's1');
+  assert.equal(result.steps[0].status, 'failed');
+  assert.equal(result.steps[1].status, 'succeeded');
+  console.log('ok - maid assistant agent can repair tool args through ReAct loop');
 }
 
 {

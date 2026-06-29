@@ -73,6 +73,8 @@ const invokePanelAction = async (actions = {}, panel = '', args = {}) => {
 export const createAppNavigationAgentTools = ({
   actions = {},
   getCurrentState = () => ({}),
+  getVisiblePanelSummary = null,
+  readResource = null,
 } = {}) => [
   {
     name: 'app.search_feature',
@@ -165,6 +167,90 @@ export const createAppNavigationAgentTools = ({
     },
     execute: async (args = {}) => invokePanelAction(actions, args.panel, args),
     summarizeResult: result => result?.opened ? `opened ${trim(result.panel, 'panel')}` : `open panel failed: ${trim(result?.reason, 'unsupported panel')}`,
+  },
+  {
+    name: 'app.read_visible_panel_summary',
+    title: 'Read visible APP panel summary',
+    description: 'Read a concise text summary of currently visible APP panels and active UI.',
+    source: 'maid-app-navigation',
+    permissions: [],
+    riskLevel: 'low',
+    capabilities: {
+      read: true,
+      write: false,
+      network: false,
+      cost: 'none',
+      undo: 'none',
+      modelContext: 'allowlist',
+      confirmation: 'allow_once',
+    },
+    schema: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        panel: { type: 'string', maxLength: 80 },
+        maxTextLength: { type: 'integer', minimum: 120, maximum: 6000 },
+      },
+    },
+    execute: async (args = {}) => {
+      if (typeof getVisiblePanelSummary !== 'function') {
+        return { ok: false, reason: 'visible_panel_summary_unavailable' };
+      }
+      const summary = await getVisiblePanelSummary(args);
+      return isPlainObject(summary) ? clone(summary) : { ok: true, summary };
+    },
+    summarizeResult: result => result?.ok === false
+      ? `visible panel summary failed: ${trim(result?.reason, 'unavailable')}`
+      : `visible panel summary panels=${Number(result?.panels?.length || 0)}`,
+  },
+  {
+    name: 'app.read_resource',
+    title: 'Read APP resource',
+    description: 'Read structured APP resources such as chat messages, worldbook settings, regex, memory, variables, presets, config, sessions, personas, or users.',
+    source: 'maid-app-navigation',
+    permissions: [],
+    riskLevel: 'low',
+    capabilities: {
+      read: true,
+      write: false,
+      network: false,
+      cost: 'none',
+      undo: 'none',
+      modelContext: 'allowlist',
+      confirmation: 'allow_once',
+    },
+    schema: {
+      type: 'object',
+      required: ['resource'],
+      additionalProperties: false,
+      properties: {
+        resource: { type: 'string', minLength: 1, maxLength: 80 },
+        id: { type: 'string', maxLength: 200 },
+        sessionId: { type: 'string', maxLength: 200 },
+        sessionName: { type: 'string', maxLength: 200 },
+        target: { type: 'string', maxLength: 200 },
+        chatName: { type: 'string', maxLength: 200 },
+        scope: { type: 'string', maxLength: 80 },
+        include: {
+          type: 'array',
+          items: { type: 'string', maxLength: 80 },
+          maxItems: 30,
+        },
+        query: { type: 'string', maxLength: 200 },
+        limit: { type: 'integer', minimum: 1, maximum: 200 },
+        maxTextLength: { type: 'integer', minimum: 120, maximum: 12000 },
+      },
+    },
+    execute: async (args = {}) => {
+      if (typeof readResource !== 'function') {
+        return { ok: false, reason: 'resource_reader_unavailable', resource: trim(args.resource) };
+      }
+      const result = await readResource(args);
+      return isPlainObject(result) ? clone(result) : { ok: true, resource: trim(args.resource), result };
+    },
+    summarizeResult: result => result?.ok === false
+      ? `read resource failed: ${trim(result?.resource, '-')} ${trim(result?.reason, 'unknown')}`
+      : `read resource ${trim(result?.resource, '-')}`,
   },
   {
     name: 'app.get_current_state',

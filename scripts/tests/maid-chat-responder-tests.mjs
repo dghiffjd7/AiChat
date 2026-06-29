@@ -56,6 +56,38 @@ import {
 }
 
 {
+  const messages = buildMaidChatResponderMessages({
+    input: '帮我看看这张图',
+    context: {
+      maidAttachments: [{ kind: 'image', url: 'data:image/png;base64,abc', name: 'screen.png' }],
+    },
+  });
+  assert.equal(Array.isArray(messages[1].content), true);
+  assert.match(messages[1].content[0].text, /用户附图/);
+  assert.equal(messages[1].content[1].type, 'image_url');
+  assert.equal(messages[1].content[1].image_url.url, 'data:image/png;base64,abc');
+  console.log('ok - maid chat responder includes image attachments as multimodal parts');
+}
+
+{
+  const messages = buildMaidChatResponderMessages({
+    input: '女王最后回了我什么？',
+    context: {
+      sessionId: 's1',
+      maidToolObservation: {
+        plan: { toolName: 'app.read_resource' },
+        output: { messages: [{ role: 'assistant', rawOriginal: '晚上好，今天辛苦了。' }] },
+      },
+    },
+  });
+  assert.match(messages[0].content, /工具观察结果/);
+  assert.match(messages[0].content, /不要只说已查看/);
+  assert.match(messages[1].content, /已执行工具观察结果/);
+  assert.match(messages[1].content, /今天辛苦了/);
+  console.log('ok - maid chat responder can summarize tool observations');
+}
+
+{
   const calls = [];
   const injected = [];
   const debugSnapshots = [];

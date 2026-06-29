@@ -5,22 +5,42 @@
  */
 
 /* 滚动条样式 */
+:root {
+  --app-scrollbar-size: 8px;
+  --app-scrollbar-thumb: rgba(100, 116, 139, 0.34);
+  --app-scrollbar-thumb-hover: rgba(71, 85, 105, 0.58);
+  --app-scrollbar-track: transparent;
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--app-scrollbar-thumb) var(--app-scrollbar-track);
+}
+
 ::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+  width: var(--app-scrollbar-size);
+  height: var(--app-scrollbar-size);
 }
 
 ::-webkit-scrollbar-track {
-  background: rgba(0, 0, 0, 0.1);
+  background: var(--app-scrollbar-track);
 }
 
 ::-webkit-scrollbar-thumb {
-  background: rgba(102, 126, 234, 0.5);
-  border-radius: 3px;
+  background: var(--app-scrollbar-thumb);
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background-clip: padding-box;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(102, 126, 234, 0.8);
+  background: var(--app-scrollbar-thumb-hover);
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+::-webkit-scrollbar-corner {
+  background: transparent;
 }
 
 /* 动画 */
@@ -951,6 +971,16 @@ body.chat-room-active .bottom-nav {
 }
 
 /* 世界书编辑器：紧凑重排 + 自绘下拉 */
+.world-panel-shell,
+.world-library-modal,
+.world-editor-popup,
+.world-node-canvas-wrap,
+.world-node-inspector {
+  --app-scrollbar-size: 7px;
+  --app-scrollbar-thumb: rgba(100, 116, 139, 0.30);
+  --app-scrollbar-thumb-hover: rgba(71, 85, 105, 0.58);
+}
+
 .world-entry-form {
   display: flex;
   flex-direction: column;
@@ -2947,7 +2977,7 @@ body.chat-room-active .bottom-nav {
   font-size: 12px;
   line-height: 1.5;
   scrollbar-width: thin;
-  scrollbar-color: transparent transparent;
+  scrollbar-color: rgba(100, 116, 139, 0.30) transparent;
   scrollbar-gutter: stable both-edges;
 }
 
@@ -2963,25 +2993,29 @@ body.chat-room-active .bottom-nav {
 }
 
 #we-block-content::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+  width: 7px;
+  height: 7px;
 }
 
 #we-block-content::-webkit-scrollbar-thumb {
-  background: transparent;
+  background: rgba(100, 116, 139, 0.30);
+  border: 2px solid transparent;
   border-radius: 999px;
+  background-clip: padding-box;
 }
 
 #we-block-content::-webkit-scrollbar-track {
   background: transparent;
 }
 
-.world-content-card.is-scrolling #we-block-content {
-  scrollbar-color: rgba(100, 116, 139, 0.72) transparent;
+.world-content-card.is-scrolling #we-block-content,
+#we-block-content:hover {
+  scrollbar-color: rgba(71, 85, 105, 0.58) transparent;
 }
 
-.world-content-card.is-scrolling #we-block-content::-webkit-scrollbar-thumb {
-  background: rgba(100, 116, 139, 0.72);
+.world-content-card.is-scrolling #we-block-content::-webkit-scrollbar-thumb,
+#we-block-content:hover::-webkit-scrollbar-thumb {
+  background: rgba(71, 85, 105, 0.58);
 }
 
 .world-guide-target {

@@ -3,9 +3,12 @@ import assert from 'node:assert/strict';
 import {
   buildMaidModelPlannerFeatureList,
   buildMaidModelPlannerMessages,
+  buildMaidModelReActMessages,
   createMaidModelBackedPlanner,
+  createMaidModelBackedReActPlanner,
   extractMaidModelPlannerJson,
   normalizeMaidModelPlan,
+  normalizeMaidModelReActDecision,
 } from '../../src/scripts/agent/maid-model-planner.js';
 
 {
@@ -38,6 +41,7 @@ import {
   assert.equal(messages.length, 2);
   assert.match(messages[0].content, /严格 JSON/);
   assert.match(messages[0].content, /女仆基础提示词/);
+  assert.match(messages[0].content, /自然生成/);
   assert.match(messages[1].content, /世界书在哪里/);
   assert.match(messages[1].content, /相关功能检索/);
   assert.match(messages[1].content, /worldbook\.open/);
@@ -73,6 +77,22 @@ import {
 }
 
 {
+  const messages = buildMaidModelPlannerMessages({
+    input: '这张图里是什么？',
+    context: {
+      maidAttachments: [{ kind: 'image', url: 'data:image/png;base64,abc', name: 'screen.png' }],
+    },
+    features: [],
+  });
+  assert.equal(Array.isArray(messages[1].content), true);
+  assert.equal(messages[1].content[0].type, 'text');
+  assert.match(messages[1].content[0].text, /用户附图/);
+  assert.equal(messages[1].content[1].type, 'image_url');
+  assert.equal(messages[1].content[1].image_url.url, 'data:image/png;base64,abc');
+  console.log('ok - maid model planner includes image attachments as multimodal parts');
+}
+
+{
   const parsed = extractMaidModelPlannerJson('```json\n{"ok":true,"toolName":"app.open_panel"}\n```');
   assert.equal(parsed.ok, true);
   assert.equal(parsed.toolName, 'app.open_panel');
@@ -80,6 +100,78 @@ import {
   const embedded = extractMaidModelPlannerJson('plan: {"ok":false,"reason":"unsupported_intent"} done');
   assert.equal(embedded.ok, false);
   console.log('ok - maid model planner extracts JSON from model text');
+}
+
+{
+  const messages = buildMaidModelReActMessages({
+    input: '女王最后回了我什么？',
+    context: { sessionId: 's1', uiMode: 'chat' },
+    features: [{
+      id: 'app.resource.read',
+      title: '读取 APP 结构化资源',
+      tools: ['app.read_resource'],
+      argsHint: 'resource/sessionName 可选',
+    }],
+    steps: [{
+      toolName: 'app.read_resource',
+      status: 'succeeded',
+      output: { resource: 'chat', messages: [{ role: 'assistant', rawOriginal: '晚上好。' }] },
+    }],
+  });
+  assert.equal(messages.length, 2);
+  assert.match(messages[0].content, /ReAct 控制器/);
+  assert.match(messages[0].content, /不要输出思考过程/);
+  assert.match(messages[0].content, /温柔、清楚、直接/);
+  assert.match(messages[1].content, /已执行步骤与观察结果/);
+  assert.match(messages[1].content, /晚上好/);
+  console.log('ok - maid model react planner builds observation prompt messages');
+}
+
+{
+  const messages = buildMaidModelReActMessages({
+    input: '继续看这张图',
+    context: {
+      maidAttachments: [{ kind: 'image', url: 'data:image/jpeg;base64,abc', name: 'photo.jpg' }],
+    },
+    features: [],
+    steps: [],
+  });
+  assert.equal(Array.isArray(messages[1].content), true);
+  assert.equal(messages[1].content[1].type, 'image_url');
+  console.log('ok - maid model react planner keeps image attachments across ReAct decisions');
+}
+
+{
+  const finalDecision = normalizeMaidModelReActDecision({
+    ok: true,
+    action: 'final',
+    message: '精灵女王最后回复了「晚上好」。',
+  });
+  assert.equal(finalDecision.ok, true);
+  assert.equal(finalDecision.action, 'final');
+  assert.match(finalDecision.message, /晚上好/);
+
+  const toolDecision = normalizeMaidModelReActDecision({
+    ok: true,
+    action: 'tool',
+    toolName: 'app.read_resource',
+    args: { resource: 'chat', sessionName: '精灵女王' },
+    featureId: 'app.resource.read',
+  });
+  assert.equal(toolDecision.ok, true);
+  assert.equal(toolDecision.action, 'tool');
+  assert.equal(toolDecision.toolName, 'app.read_resource');
+
+  const denied = normalizeMaidModelReActDecision({
+    ok: true,
+    action: 'tool',
+    toolName: 'session.create',
+    args: { name: 'A' },
+    featureId: 'app.resource.read',
+  });
+  assert.equal(denied.ok, false);
+  assert.equal(denied.reason, 'tool_not_allowed');
+  console.log('ok - maid model react planner validates final and tool decisions');
 }
 
 {
@@ -93,6 +185,16 @@ import {
   assert.equal(plan.ok, true);
   assert.equal(plan.toolName, 'app.open_panel');
   assert.equal(plan.args.panel, 'worldbook');
+  assert.equal(plan.response, '我来打开世界书。');
+
+  const noResponse = normalizeMaidModelPlan({
+    ok: true,
+    toolName: 'app.open_panel',
+    args: { panel: 'worldbook' },
+    featureId: 'worldbook.open',
+  });
+  assert.equal(noResponse.ok, true);
+  assert.equal(noResponse.response, '');
 
   const denied = normalizeMaidModelPlan({
     ok: true,
@@ -206,4 +308,36 @@ import {
   assert.equal(plan.ok, false);
   assert.equal(plan.reason, 'tool_not_allowed');
   console.log('ok - maid model planner rejects invalid model plans without local fallback');
+}
+
+{
+  const debugSnapshots = [];
+  const reactPlanner = createMaidModelBackedReActPlanner({
+    resolveRuntimeConfig: async () => ({
+      maidPrompt: '温柔一点',
+      client: {
+        chat: async () => JSON.stringify({
+          ok: true,
+          action: 'final',
+          message: '精灵女王最后回复了「晚上好」。',
+        }),
+      },
+    }),
+    onDebugSnapshot: snapshot => debugSnapshots.push(snapshot),
+  });
+  const decision = await reactPlanner('女王最后回了我什么？', {
+    sessionId: 's1',
+    maidReactSteps: [{
+      toolName: 'app.read_resource',
+      status: 'succeeded',
+      output: { messages: [{ rawOriginal: '晚上好。' }] },
+    }],
+  });
+  assert.equal(decision.ok, true);
+  assert.equal(decision.action, 'final');
+  assert.match(decision.message, /晚上好/);
+  assert.equal(debugSnapshots.length, 1);
+  assert.equal(debugSnapshots[0].source, 'maid_model_react');
+  assert.match(debugSnapshots[0].messages[0].content, /温柔一点/);
+  console.log('ok - maid model react planner calls configured model and returns final answer');
 }

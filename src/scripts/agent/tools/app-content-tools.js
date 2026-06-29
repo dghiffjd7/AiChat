@@ -135,6 +135,64 @@ const normalizeWorldEntry = (entry = {}, index = 0) => {
   };
 };
 
+const normalizeStringList = value => {
+  if (Array.isArray(value)) return value.map(item => trim(item)).filter(Boolean);
+  const text = trim(value);
+  return text ? [text] : [];
+};
+
+const truncateText = (value = '', maxLength = 2000) => {
+  const text = trim(value);
+  const limit = Math.max(120, Math.min(12000, Number(maxLength) || 2000));
+  if (text.length <= limit) return text;
+  return `${text.slice(0, Math.max(0, limit - 1))}…`;
+};
+
+const getWorldEntries = data => {
+  if (Array.isArray(data?.entries)) return data.entries;
+  if (data?.entries && typeof data.entries === 'object') return Object.values(data.entries);
+  return [];
+};
+
+const normalizeWorldbookEntrySummary = (entry = {}, index = 0, { includeContent = true, maxContentLength = 2000 } = {}) => {
+  const source = isPlainObject(entry) ? entry : {};
+  const title = trim(source.title || source.comment || source.name || source.id, `entry-${index + 1}`);
+  const keys = [
+    ...normalizeStringList(source.key),
+    ...normalizeStringList(source.keys),
+    ...normalizeStringList(source.triggers),
+  ];
+  const secondaryKeys = [
+    ...normalizeStringList(source.keysecondary),
+    ...normalizeStringList(source.secondary),
+  ];
+  const summary = {
+    id: trim(source.id),
+    title,
+    keys: Array.from(new Set(keys)),
+    secondaryKeys: Array.from(new Set(secondaryKeys)),
+    disabled: source.disable === true || source.disabled === true,
+    constant: source.constant === true,
+    order: Number.isFinite(Number(source.order ?? source.priority)) ? Number(source.order ?? source.priority) : undefined,
+    position: Number.isFinite(Number(source.position)) ? Number(source.position) : undefined,
+  };
+  if (includeContent !== false) {
+    summary.content = truncateText(source.content || source.description || '', maxContentLength);
+  }
+  return summary;
+};
+
+const summarizeWorldbook = (worldId = '', data = null, meta = {}) => {
+  const entries = getWorldEntries(data);
+  return {
+    id: trim(worldId || data?.id || data?.name),
+    name: trim(data?.name || worldId || data?.id),
+    entryCount: entries.length,
+    boundToCurrentSession: meta.boundToCurrentSession === true,
+    global: meta.global === true,
+  };
+};
+
 const formatNowTime = () => {
   try {
     return new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
@@ -152,6 +210,12 @@ export const createAppContentAgentTools = ({
   switchUserProfile = null,
   saveWorldInfo = null,
   getWorldInfo = null,
+  listWorlds = null,
+  waitForWorldStoreReady = null,
+  getCurrentWorldId = null,
+  getCurrentWorldIds = null,
+  getWorldIdsForSession = null,
+  getGlobalWorldId = null,
   assignWorldToPersona = null,
   enterChatRoom = null,
   refreshChatAndContacts = null,
@@ -161,7 +225,35 @@ export const createAppContentAgentTools = ({
   getActiveUserName = () => '我',
   getActiveUserAvatar = () => '',
   now = Date.now,
-} = {}) => [
+} = {}) => {
+  const getSessionWorldIds = async (sessionId = '') => {
+    const sid = trim(sessionId || chatStore?.getCurrent?.());
+    const ids = [];
+    if (typeof getWorldIdsForSession === 'function') {
+      ids.push(...normalizeStringList(await getWorldIdsForSession(sid)));
+    }
+    if (!ids.length && typeof getCurrentWorldIds === 'function') {
+      ids.push(...normalizeStringList(await getCurrentWorldIds(sid)));
+    }
+    if (!ids.length && typeof getCurrentWorldId === 'function') {
+      ids.push(...normalizeStringList(await getCurrentWorldId(sid)));
+    }
+    return Array.from(new Set(ids));
+  };
+
+  const getGlobalWorld = async () => (
+    typeof getGlobalWorldId === 'function' ? trim(await getGlobalWorldId()) : ''
+  );
+
+  const resolveWorldbookId = async (args = {}) => {
+    const explicit = trim(args.worldbookId || args.id || args.name);
+    if (explicit) return explicit;
+    const sessionIds = await getSessionWorldIds(args.sessionId);
+    if (sessionIds.length) return sessionIds[0];
+    return await getGlobalWorld();
+  };
+
+  return [
   {
     name: 'persona.create',
     title: 'Create character card',
@@ -423,6 +515,109 @@ export const createAppContentAgentTools = ({
     summarizeResult: result => `saved worldbook ${trim(result?.worldbookId, '-')} (${Number(result?.entryCount || 0)} entries)`,
   },
   {
+    name: 'worldbook.list',
+    title: 'List worldbooks',
+    description: 'List saved APP worldbooks and mark current-session/global bindings when available.',
+    source: 'maid-app-content',
+    permissions: [],
+    riskLevel: 'low',
+    capabilities: {
+      read: true,
+      write: false,
+      network: false,
+      cost: 'none',
+      undo: 'none',
+      modelContext: 'allowlist',
+      confirmation: 'allow_once',
+    },
+    schema: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        sessionId: { type: 'string', maxLength: 160 },
+        includeGlobal: { type: 'boolean' },
+        limit: { type: 'integer', minimum: 1, maximum: 200 },
+      },
+    },
+    execute: async (args = {}) => {
+      await waitForWorldStoreReady?.();
+      const sessionIds = await getSessionWorldIds(args.sessionId);
+      const globalId = args.includeGlobal === false ? '' : await getGlobalWorld();
+      const storedIds = typeof listWorlds === 'function' ? normalizeStringList(await listWorlds()) : [];
+      const ids = Array.from(new Set([...storedIds, ...sessionIds, globalId].filter(Boolean)));
+      const limit = Math.max(1, Math.min(200, Number(args.limit || 80) || 80));
+      const worldbooks = [];
+      for (const id of ids.slice(0, limit)) {
+        const data = typeof getWorldInfo === 'function' ? await getWorldInfo(id) : null;
+        worldbooks.push(summarizeWorldbook(id, data, {
+          boundToCurrentSession: sessionIds.includes(id),
+          global: Boolean(globalId && id === globalId),
+        }));
+      }
+      return {
+        ok: true,
+        count: ids.length,
+        worldbooks,
+      };
+    },
+    summarizeResult: result => `listed ${Number(result?.worldbooks?.length || 0)} worldbook(s)`,
+  },
+  {
+    name: 'worldbook.read',
+    title: 'Read worldbook',
+    description: 'Read a saved APP worldbook by name/id, or the current session worldbook when omitted.',
+    source: 'maid-app-content',
+    permissions: [],
+    riskLevel: 'low',
+    capabilities: {
+      read: true,
+      write: false,
+      network: false,
+      cost: 'none',
+      undo: 'none',
+      modelContext: 'allowlist',
+      confirmation: 'allow_once',
+    },
+    schema: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        id: { type: 'string', maxLength: 160 },
+        worldbookId: { type: 'string', maxLength: 160 },
+        name: { type: 'string', maxLength: 160 },
+        sessionId: { type: 'string', maxLength: 160 },
+        includeContent: { type: 'boolean' },
+        maxEntries: { type: 'integer', minimum: 1, maximum: 200 },
+        maxContentLength: { type: 'integer', minimum: 120, maximum: 12000 },
+      },
+    },
+    execute: async (args = {}) => {
+      await waitForWorldStoreReady?.();
+      const worldbookId = await resolveWorldbookId(args);
+      if (!worldbookId) return { ok: false, reason: 'missing_worldbook_id' };
+      if (typeof getWorldInfo !== 'function') {
+        return { ok: false, reason: 'worldbook_store_unavailable', worldbookId };
+      }
+      const data = await getWorldInfo(worldbookId);
+      if (!data) return { ok: false, reason: 'worldbook_not_found', worldbookId };
+      const entries = getWorldEntries(data);
+      const maxEntries = Math.max(1, Math.min(200, Number(args.maxEntries || 50) || 50));
+      const maxContentLength = Math.max(120, Math.min(12000, Number(args.maxContentLength || 2000) || 2000));
+      return {
+        ok: true,
+        ...summarizeWorldbook(worldbookId, data),
+        entries: entries.slice(0, maxEntries).map((entry, index) => normalizeWorldbookEntrySummary(entry, index, {
+          includeContent: args.includeContent !== false,
+          maxContentLength,
+        })),
+        truncated: entries.length > maxEntries,
+      };
+    },
+    summarizeResult: result => result?.ok === false
+      ? `read worldbook failed: ${trim(result?.reason, 'unknown')}`
+      : `read worldbook ${trim(result?.name || result?.id, '-')} (${Number(result?.entries?.length || 0)} entries)`,
+  },
+  {
     name: 'chat.send_message',
     title: 'Send chat message',
     description: 'Append a chat message to a private or group chat session and optionally open it.',
@@ -541,7 +736,8 @@ export const createAppContentAgentTools = ({
       ? `sent message to ${trim(result?.sessionId, '-')}`
       : `send message failed: ${trim(result?.reason, 'unknown')}`,
   },
-];
+  ];
+};
 
 export const registerAppContentAgentTools = (registry, deps = {}) => {
   const tools = createAppContentAgentTools(deps);

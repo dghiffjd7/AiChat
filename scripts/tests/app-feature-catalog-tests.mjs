@@ -14,6 +14,7 @@ import {
 import { createAppNavigationAgentTools } from '../../src/scripts/agent/tools/app-navigation-tools.js';
 import { createAppSessionAgentTools } from '../../src/scripts/agent/tools/app-session-tools.js';
 import { createAppContentAgentTools } from '../../src/scripts/agent/tools/app-content-tools.js';
+import { createWebSearchAgentTools } from '../../src/scripts/agent/tools/web-search-tools.js';
 
 const getTool = (tools, name) => tools.find(tool => tool.name === name);
 
@@ -35,6 +36,16 @@ const escapeRegex = value => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'
   assert.match(doc.doc, /界面路径/);
   assert.match(doc.doc, /session\.open_config/);
   console.log('ok - app feature catalog resolves aliases and builds concise docs');
+}
+
+{
+  const results = searchAppFeatures('帮我联网搜索最新资讯', { limit: 3 });
+  assert.equal(results[0].id, 'web.search');
+  assert.deepEqual(results[0].tools, ['web.search', 'web.fetch_url']);
+  const doc = buildAppFeatureDoc('web.search');
+  assert.match(doc.doc, /web\.search/);
+  assert.match(doc.doc, /web\.fetch_url/);
+  console.log('ok - app feature catalog exposes web search feature');
 }
 
 {
@@ -105,6 +116,18 @@ const escapeRegex = value => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'
       regex: options => openedPanels.push(['regex', options]),
     },
     getCurrentState: () => ({ activePage: 'chat', uiMode: 'chat', sessionId: current }),
+    getVisiblePanelSummary: () => ({
+      ok: true,
+      activePage: 'chat',
+      uiMode: 'chat',
+      sessionId: current,
+      panels: [{ id: 'chat', title: '聊天室', text: 'Beta 聊天室' }],
+    }),
+    readResource: args => ({
+      ok: true,
+      resource: args.resource,
+      sessionId: args.sessionId || current,
+    }),
   });
   const sessionTools = createAppSessionAgentTools({
     contactsStore: {
@@ -176,6 +199,10 @@ const escapeRegex = value => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'
     },
     saveWorldInfo: async (id, data) => savedWorlds.set(id, data),
     getWorldInfo: async id => savedWorlds.get(id) || null,
+    listWorlds: async () => Array.from(savedWorlds.keys()),
+    waitForWorldStoreReady: async () => true,
+    getWorldIdsForSession: async () => ['CatalogWorld'],
+    getGlobalWorldId: async () => '',
     assignWorldToPersona: async (personaId, worldId, options) => boundWorlds.push({ personaId, worldId, options }),
     enterChatRoom: async id => {
       openedSessions.push(id);
@@ -187,7 +214,20 @@ const escapeRegex = value => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'
     getActiveUserName: () => 'CatalogUser',
     now: () => 1000,
   });
-  const tools = [...navTools, ...sessionTools, ...contentTools];
+  const webTools = createWebSearchAgentTools({
+    httpRequest: async () => ({
+      ok: true,
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        Heading: 'Catalog Web',
+        AbstractText: 'Catalog web result.',
+        AbstractURL: 'https://example.com/catalog',
+        AbstractSource: 'Example',
+      }),
+    }),
+  });
+  const tools = [...navTools, ...sessionTools, ...contentTools, ...webTools];
 
   for (const feature of listAppFeatures()) {
     for (const toolName of feature.tools || []) {
@@ -249,6 +289,18 @@ const escapeRegex = value => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'
       assert.equal(result.entryCount, 1);
       return;
     }
+    if (feature.id === 'worldbook.list') {
+      const result = await getTool(tools, 'worldbook.list').execute({ sessionId: current });
+      assert.equal(result.ok, true);
+      assert.ok(result.worldbooks.some(item => item.id === 'CatalogWorld'));
+      return;
+    }
+    if (feature.id === 'worldbook.read') {
+      const result = await getTool(tools, 'worldbook.read').execute({ name: 'CatalogWorld' });
+      assert.equal(result.ok, true);
+      assert.equal(result.entries[0].title, 'CatalogEntry');
+      return;
+    }
     if (feature.id === 'chat.send_message') {
       const result = await getTool(tools, 'chat.send_message').execute({ sessionId: 'Beta', content: 'hi' });
       assert.equal(result.ok, true);
@@ -258,6 +310,24 @@ const escapeRegex = value => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'
     if (feature.id === 'app.state.read') {
       const result = await getTool(tools, 'app.get_current_state').execute({});
       assert.equal(result.activePage, 'chat');
+      return;
+    }
+    if (feature.id === 'app.visible_panel.read') {
+      const result = await getTool(tools, 'app.read_visible_panel_summary').execute({});
+      assert.equal(result.ok, true);
+      assert.equal(result.panels[0].id, 'chat');
+      return;
+    }
+    if (feature.id === 'app.resource.read') {
+      const result = await getTool(tools, 'app.read_resource').execute({ resource: 'chat', sessionId: current });
+      assert.equal(result.ok, true);
+      assert.equal(result.resource, 'chat');
+      return;
+    }
+    if (feature.id === 'web.search') {
+      const result = await getTool(tools, 'web.search').execute({ query: 'Catalog Web', limit: 1 });
+      assert.equal(result.ok, true);
+      assert.equal(result.results[0].url, 'https://example.com/catalog');
       return;
     }
     const panel = feature.panel;

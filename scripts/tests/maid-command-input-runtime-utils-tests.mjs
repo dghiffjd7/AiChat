@@ -31,8 +31,19 @@ class FakeElement {
     this.value = '';
     this.disabled = false;
     this.textContent = '';
+    this._innerHTML = '';
     this.focused = false;
+    this.scrollHeight = 32;
     this.rect = { left: 100, top: 200, width: 26, height: 26 };
+  }
+
+  set innerHTML(value) {
+    this._innerHTML = String(value || '');
+    this.children = [];
+  }
+
+  get innerHTML() {
+    return this._innerHTML;
   }
 
   appendChild(child) {
@@ -127,7 +138,7 @@ class FakeDocument {
     getViewportSize: () => ({ w: 360, h: 640 }),
     onSubmit: async (text, controls) => {
       submissions.push(text);
-      controls.setStatus('好的，主人，这就处理。', 'thinking');
+      controls.setStatus('模型生成的执行前回应', 'thinking');
       statusSnapshots.push(runtime.getElements().resultEl.textContent);
       return { ok: true, message: `done ${text}` };
     },
@@ -143,24 +154,76 @@ class FakeDocument {
   assert.match(documentRef.head.children[0].textContent, /\.maid-command-input:focus-within/);
   assert.doesNotMatch(documentRef.head.children[0].textContent, /\.maid-command-input-field:focus-visible/);
   assert.equal(rootEl.classList.contains('is-open'), true);
+  assert.equal(inputEl.tagName, 'TEXTAREA');
   assert.equal(rootEl.dataset.bubbleSide, 'bottom');
   assert.equal(modeSwitchEl.classList.contains('is-maid-input-open'), true);
   assert.match(runtime.getElements().settingsBtn.innerHTML, /svg/);
   assert.match(runtime.getElements().submitBtn.innerHTML, /svg/);
   timeouts.shift()?.();
   assert.equal(inputEl.focused, true);
+  assert.equal(inputEl.style.height, '32px');
+
+  inputEl.scrollHeight = 120;
+  inputEl.dispatchEvent('input');
+  assert.equal(inputEl.style.height, '76px');
+  assert.equal(inputEl.style.overflowY, 'auto');
+  assert.equal(rootEl.classList.contains('is-multiline'), true);
+
+  inputEl.scrollHeight = 32;
+  inputEl.dispatchEvent('input');
+  assert.equal(inputEl.style.height, '32px');
+  assert.equal(inputEl.style.overflowY, 'hidden');
 
   inputEl.value = '打开世界书';
   const result = await runtime.submit();
   assert.equal(result.ok, true);
   assert.deepEqual(submissions, ['打开世界书']);
-  assert.deepEqual(statusSnapshots, ['好的，主人，这就处理。']);
+  assert.deepEqual(statusSnapshots, ['模型生成的执行前回应']);
   assert.equal(runtime.getElements().resultEl.textContent, 'done 打开世界书');
   assert.equal(runtime.getElements().resultEl.dataset.tone, 'success');
   assert.equal(rootEl.classList.contains('has-result'), true);
   assert.equal(rootEl.classList.contains('is-open'), true);
   assert.equal(modeSwitchEl.classList.contains('is-maid-input-open'), true);
   console.log('ok - maid command input opens submits and keeps reply bubble visible');
+}
+
+{
+  const documentRef = new FakeDocument();
+  const submitted = [];
+  const runtime = createMaidCommandInputRuntime({
+    documentRef,
+    getViewportSize: () => ({ w: 360, h: 640 }),
+    onAttachFiles: async files => files.map((file, index) => ({
+      id: `img-${index}`,
+      kind: 'image',
+      url: `data:image/png;base64,${index}`,
+      name: file.name,
+      mime: file.type,
+      size: file.size,
+    })),
+    onSubmit: async (text, controls) => {
+      submitted.push({ text, attachments: controls.attachments });
+      return { ok: true, message: '看到了。' };
+    },
+    setTimeoutFn: () => 1,
+    clearTimeoutFn: () => {},
+  });
+
+  assert.equal(runtime.open(), true);
+  await runtime.addFiles([{ name: 'screen.png', type: 'image/png', size: 12 }], { source: 'test' });
+  const { rootEl, attachmentsEl, inputEl } = runtime.getElements();
+  assert.equal(runtime.getAttachments().length, 1);
+  assert.equal(rootEl.classList.contains('has-attachments'), true);
+  assert.equal(attachmentsEl.children.length, 1);
+  inputEl.value = '';
+  const result = await runtime.submit();
+  assert.equal(result.ok, true);
+  assert.equal(submitted.length, 1);
+  assert.equal(submitted[0].text, '请看这张图片。');
+  assert.equal(submitted[0].attachments.length, 1);
+  assert.equal(runtime.getAttachments().length, 0);
+  assert.equal(rootEl.classList.contains('has-attachments'), false);
+  console.log('ok - maid command input attaches images and submits them with fallback text');
 }
 
 {

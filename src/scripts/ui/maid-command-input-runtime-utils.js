@@ -1,4 +1,13 @@
+import {
+  collectImageFilesFromDropEvent,
+  collectImageFilesFromPasteEvent,
+  eventHasImageFiles,
+} from './image-attachment-input-utils.js';
+
 const STYLE_ID = 'maid-command-input-runtime-style';
+const FIELD_MIN_HEIGHT = 32;
+const FIELD_MAX_HEIGHT = 76;
+const DEFAULT_MAX_IMAGE_ATTACHMENTS = 4;
 
 const trim = (value, fallback = '') => {
   const text = String(value ?? '').trim();
@@ -26,6 +35,7 @@ const iconSvg = body => `
 `;
 
 const ICONS = Object.freeze({
+  attach: iconSvg('<path d="M12 5v14"/><path d="M5 12h14"/>'),
   settings: iconSvg('<path d="M12 8.5a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7Z"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.03.03a2.05 2.05 0 0 1-2.9 2.9l-.03-.03A1.7 1.7 0 0 0 15 19.4a1.7 1.7 0 0 0-1 .54V20a2 2 0 0 1-4 0v-.06a1.7 1.7 0 0 0-1-.54 1.7 1.7 0 0 0-1.88.34l-.03.03a2.05 2.05 0 0 1-2.9-2.9l.03-.03A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-.54-1H4a2 2 0 0 1 0-4h.06a1.7 1.7 0 0 0 .54-1 1.7 1.7 0 0 0-.34-1.88l-.03-.03a2.05 2.05 0 0 1 2.9-2.9l.03.03A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-.54V4a2 2 0 0 1 4 0v.06a1.7 1.7 0 0 0 1 .54 1.7 1.7 0 0 0 1.88-.34l.03-.03a2.05 2.05 0 0 1 2.9 2.9l-.03.03A1.7 1.7 0 0 0 19.4 9c.2.35.38.68.54 1H20a2 2 0 0 1 0 4h-.06a1.7 1.7 0 0 0-.54 1Z"/>'),
   send: iconSvg('<path d="M5 12h13"/><path d="m13 6 6 6-6 6"/>'),
 });
@@ -42,7 +52,7 @@ const injectStyle = (documentRef) => {
   width: min(376px, calc(100vw - 24px));
   min-height: 44px;
   display: flex;
-  align-items: center;
+  align-items: flex-end;
   gap: 8px;
   padding: 6px 7px 6px 14px;
   box-sizing: border-box;
@@ -56,6 +66,10 @@ const injectStyle = (documentRef) => {
   transform-origin: center;
   pointer-events: none;
   transition: opacity 150ms ease, transform 170ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.maid-command-input.is-dragover {
+  border-color: rgba(37, 99, 235, 0.42);
+  box-shadow: 0 16px 40px rgba(15, 23, 42, 0.20), 0 0 0 3px rgba(37, 99, 235, 0.12);
 }
 .maid-command-input.is-open {
   opacity: 1;
@@ -71,10 +85,13 @@ const injectStyle = (documentRef) => {
 .maid-command-input-field {
   min-width: 0;
   min-height: 32px;
+  max-height: 76px;
   flex: 1 1 auto;
-  padding: 0;
+  padding: 5px 0;
+  box-sizing: border-box;
   border: 0;
   outline: 0;
+  resize: none;
   appearance: none;
   -webkit-appearance: none;
   background: transparent;
@@ -83,10 +100,65 @@ const injectStyle = (documentRef) => {
   font: inherit;
   font-size: 14px;
   line-height: 22px;
+  overflow: hidden;
+  scrollbar-width: thin;
 }
 .maid-command-input-field::placeholder {
   color: var(--app-text-muted, rgba(100, 116, 139, 0.78));
 }
+.maid-command-input-attachments {
+  flex: 1 0 100%;
+  display: none;
+  gap: 6px;
+  min-width: 0;
+  overflow-x: auto;
+  padding: 1px 0 2px;
+  scrollbar-width: none;
+}
+.maid-command-input.has-attachments {
+  border-radius: 18px;
+}
+.maid-command-input.has-attachments .maid-command-input-attachments {
+  display: flex;
+}
+.maid-command-input-attachments::-webkit-scrollbar {
+  display: none;
+}
+.maid-command-input-attachment {
+  position: relative;
+  flex: 0 0 auto;
+  width: 38px;
+  height: 38px;
+  overflow: hidden;
+  border-radius: 12px;
+  border: 1px solid rgba(148, 163, 184, 0.30);
+  background: var(--app-surface-subtle, #f8fafc);
+}
+.maid-command-input-attachment img {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: cover;
+}
+.maid-command-input-attachment-remove {
+  position: absolute;
+  top: -1px;
+  right: -1px;
+  width: 16px;
+  height: 16px;
+  border: 0;
+  border-radius: 999px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(15, 23, 42, 0.78);
+  color: #fff;
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+}
+.maid-command-input-attach,
 .maid-command-input-settings,
 .maid-command-input-submit {
   flex: 0 0 auto;
@@ -103,6 +175,9 @@ const injectStyle = (documentRef) => {
   transition: background 120ms ease, color 120ms ease, transform 90ms ease;
   touch-action: manipulation;
 }
+.maid-command-input-attach {
+  background: var(--app-surface-subtle, #f8fafc);
+}
 .maid-command-input-settings {
   background: var(--app-surface-subtle, #f8fafc);
 }
@@ -110,6 +185,7 @@ const injectStyle = (documentRef) => {
   background: #2563eb;
   color: #fff;
 }
+.maid-command-input-attach:hover,
 .maid-command-input-settings:hover {
   background: rgba(37, 99, 235, 0.10);
   color: #2563eb;
@@ -117,10 +193,12 @@ const injectStyle = (documentRef) => {
 .maid-command-input-submit:hover {
   background: #1d4ed8;
 }
+.maid-command-input-attach:active,
 .maid-command-input-settings:active,
 .maid-command-input-submit:active {
   transform: translateY(1px);
 }
+.maid-command-input-attach:focus-visible,
 .maid-command-input-settings:focus-visible,
 .maid-command-input-submit:focus-visible {
   outline: 2px solid rgba(37, 99, 235, 0.32);
@@ -141,6 +219,7 @@ const injectStyle = (documentRef) => {
   stroke-linecap: round;
   stroke-linejoin: round;
 }
+.maid-command-input-attach:disabled,
 .maid-command-input-settings:disabled,
 .maid-command-input-submit:disabled {
   opacity: 0.55;
@@ -148,7 +227,7 @@ const injectStyle = (documentRef) => {
 }
 .maid-command-input-result {
   position: absolute;
-  width: min(320px, calc(100vw - 24px));
+  width: 100%;
   max-height: min(42vh, 260px);
   overflow: auto;
   padding: 10px 12px;
@@ -173,29 +252,9 @@ const injectStyle = (documentRef) => {
   border-bottom: inherit;
   transform: rotate(45deg);
 }
-.maid-command-input[data-bubble-side="right"] .maid-command-input-result {
-  left: calc(100% + 10px);
-  top: 50%;
-  transform: translateY(-50%);
-}
-.maid-command-input[data-bubble-side="right"] .maid-command-input-result::before {
-  left: -6px;
-  top: calc(50% - 5px);
-}
-.maid-command-input[data-bubble-side="left"] .maid-command-input-result {
-  right: calc(100% + 10px);
-  top: 50%;
-  transform: translateY(-50%);
-  border-radius: 16px 16px 5px 16px;
-}
-.maid-command-input[data-bubble-side="left"] .maid-command-input-result::before {
-  right: -6px;
-  top: calc(50% - 5px);
-  transform: rotate(225deg);
-}
 .maid-command-input[data-bubble-side="top"] .maid-command-input-result {
   left: 0;
-  bottom: calc(100% + 10px);
+  bottom: calc(100% + 8px);
 }
 .maid-command-input[data-bubble-side="top"] .maid-command-input-result::before {
   left: 24px;
@@ -204,7 +263,7 @@ const injectStyle = (documentRef) => {
 }
 .maid-command-input[data-bubble-side="bottom"] .maid-command-input-result {
   left: 0;
-  top: calc(100% + 10px);
+  top: calc(100% + 8px);
 }
 .maid-command-input[data-bubble-side="bottom"] .maid-command-input-result::before {
   left: 24px;
@@ -219,23 +278,10 @@ const injectStyle = (documentRef) => {
   background: color-mix(in srgb, var(--app-surface-card, #fff) 90%, rgba(239, 68, 68, 0.12));
 }
 @media (max-width: 760px) {
-  .maid-command-input-result {
-    width: auto;
-    max-width: calc(100vw - 24px);
-  }
   .maid-command-input[data-bubble-side] .maid-command-input-result {
     left: 0;
     right: 0;
-    top: calc(100% + 10px);
-    bottom: auto;
     transform: none;
-  }
-  .maid-command-input[data-bubble-side] .maid-command-input-result::before {
-    left: 24px;
-    right: auto;
-    top: -6px;
-    bottom: auto;
-    transform: rotate(135deg);
   }
 }
 @media (prefers-reduced-motion: reduce) {
@@ -253,11 +299,16 @@ export const createMaidCommandInputRuntime = ({
   getViewportSize = () => ({ w: 0, h: 0 }),
   onSubmit = async () => ({}),
   onSettings = null,
+  onAttachFiles = null,
+  maxImageAttachments = DEFAULT_MAX_IMAGE_ATTACHMENTS,
   setTimeoutFn = globalThis?.setTimeout || null,
   clearTimeoutFn = globalThis?.clearTimeout || null,
 } = {}) => {
   let rootEl = null;
   let inputEl = null;
+  let attachBtn = null;
+  let fileInputEl = null;
+  let attachmentsEl = null;
   let settingsBtn = null;
   let submitBtn = null;
   let resultEl = null;
@@ -265,6 +316,101 @@ export const createMaidCommandInputRuntime = ({
   let isOpen = false;
   let isSubmitting = false;
   let outsidePointerHandler = null;
+  let imageAttachments = [];
+
+  const createAttachmentId = () => {
+    if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') return crypto.randomUUID();
+    return `maid_img_${Date.now()}_${Math.random().toString(16).slice(2, 8)}`;
+  };
+
+  const normalizeIncomingAttachments = (result = null) => {
+    const raw = Array.isArray(result)
+      ? result
+      : Array.isArray(result?.attachments)
+        ? result.attachments
+        : [];
+    return raw
+      .filter(item => item && typeof item === 'object' && trim(item.url || item.llmUrl))
+      .map(item => ({
+        ...item,
+        id: trim(item.id) || createAttachmentId(),
+        kind: trim(item.kind, 'image'),
+      }));
+  };
+
+  const getMaxImages = () => Math.max(1, Math.trunc(Number(maxImageAttachments || 0)) || DEFAULT_MAX_IMAGE_ATTACHMENTS);
+
+  const renderAttachments = () => {
+    if (!attachmentsEl || !rootEl) return;
+    attachmentsEl.innerHTML = '';
+    rootEl.classList.toggle('has-attachments', imageAttachments.length > 0);
+    if (!imageAttachments.length) {
+      position();
+      return;
+    }
+    imageAttachments.forEach((attachment) => {
+      const item = documentRef.createElement?.('div');
+      if (!item) return;
+      item.className = 'maid-command-input-attachment';
+      item.dataset.attachmentId = attachment.id || '';
+      const img = documentRef.createElement?.('img');
+      if (img) {
+        img.src = attachment.url || attachment.llmUrl || '';
+        img.alt = attachment.name || 'image';
+        item.appendChild(img);
+      }
+      const remove = documentRef.createElement?.('button');
+      if (remove) {
+        remove.type = 'button';
+        remove.className = 'maid-command-input-attachment-remove';
+        remove.dataset.attachmentId = attachment.id || '';
+        remove.textContent = 'x';
+        item.appendChild(remove);
+      }
+      attachmentsEl.appendChild(item);
+    });
+    position();
+  };
+
+  const appendAttachments = (attachments = []) => {
+    const max = getMaxImages();
+    const next = imageAttachments.slice();
+    for (const attachment of attachments) {
+      if (!attachment || next.length >= max) break;
+      next.push({
+        ...attachment,
+        id: trim(attachment.id) || createAttachmentId(),
+        kind: trim(attachment.kind, 'image'),
+      });
+    }
+    imageAttachments = next;
+    renderAttachments();
+    return imageAttachments.length;
+  };
+
+  const addFiles = async (files = [], { source = 'picker' } = {}) => {
+    const list = Array.from(files || []);
+    if (!list.length || typeof onAttachFiles !== 'function') return [];
+    const remaining = getMaxImages() - imageAttachments.length;
+    if (remaining <= 0) return [];
+    const result = await onAttachFiles(list.slice(0, remaining), { source });
+    const attachments = normalizeIncomingAttachments(result);
+    appendAttachments(attachments);
+    return attachments;
+  };
+
+  const removeAttachment = (id = '') => {
+    const target = trim(id);
+    if (!target) return;
+    imageAttachments = imageAttachments.filter(item => trim(item.id) !== target);
+    renderAttachments();
+  };
+
+  const clearAttachments = () => {
+    if (!imageAttachments.length) return;
+    imageAttachments = [];
+    renderAttachments();
+  };
 
   const clearCloseTimer = () => {
     if (closeTimer == null) return;
@@ -296,6 +442,8 @@ export const createMaidCommandInputRuntime = ({
   const setSubmitting = (next) => {
     isSubmitting = next === true;
     rootEl?.classList.toggle('is-submitting', isSubmitting);
+    if (attachBtn) attachBtn.disabled = isSubmitting;
+    if (fileInputEl) fileInputEl.disabled = isSubmitting;
     if (settingsBtn) settingsBtn.disabled = isSubmitting;
     if (submitBtn) submitBtn.disabled = isSubmitting;
     if (inputEl) inputEl.disabled = isSubmitting;
@@ -323,6 +471,17 @@ export const createMaidCommandInputRuntime = ({
     documentRef.addEventListener('pointerdown', outsidePointerHandler, true);
   };
 
+  const resizeInput = () => {
+    if (!inputEl) return;
+    inputEl.style.height = 'auto';
+    const scrollHeight = Math.max(FIELD_MIN_HEIGHT, Number(inputEl.scrollHeight || 0) || FIELD_MIN_HEIGHT);
+    const nextHeight = Math.min(FIELD_MAX_HEIGHT, scrollHeight);
+    inputEl.style.height = `${Math.round(nextHeight)}px`;
+    inputEl.style.overflowY = scrollHeight > FIELD_MAX_HEIGHT + 1 ? 'auto' : 'hidden';
+    rootEl?.classList.toggle('is-multiline', nextHeight > FIELD_MIN_HEIGHT + 2);
+    position();
+  };
+
   const position = () => {
     if (!rootEl) return;
     const viewport = getViewportSize?.() || {};
@@ -337,21 +496,16 @@ export const createMaidCommandInputRuntime = ({
     const width = Math.min(376, Math.max(220, w - 24 || 376));
     const x = rect.left + rect.width / 2;
     const y = rect.top + rect.height / 2;
+    const rootRect = rootEl.getBoundingClientRect?.() || {};
+    const rootHeight = Math.max(44, Number(rootRect.height || 0) || (rootEl.classList.contains('is-multiline') ? 88 : 44));
     const left = w ? clamp(x - width / 2, 12, Math.max(12, w - width - 12)) : x - width / 2;
-    const top = h ? clamp(y - 22, 12, Math.max(12, h - 66)) : y - 22;
+    const top = h ? clamp(y - rootHeight / 2, 12, Math.max(12, h - rootHeight - 12)) : y - rootHeight / 2;
     rootEl.style.width = `${Math.round(width)}px`;
     rootEl.style.left = `${Math.round(left)}px`;
     rootEl.style.top = `${Math.round(top)}px`;
-    const rightSpace = w ? w - (left + width) - 12 : 0;
-    const leftSpace = w ? left - 12 : 0;
-    const bottomSpace = h ? h - (top + 42) - 12 : 0;
-    const side = rightSpace >= 232
-      ? 'right'
-      : leftSpace >= 232
-        ? 'left'
-        : bottomSpace >= 96
-          ? 'bottom'
-          : 'top';
+    const bottomSpace = h ? h - (top + rootHeight) - 12 : 0;
+    const topSpace = h ? top - 12 : 0;
+    const side = bottomSpace >= 96 || bottomSpace >= topSpace ? 'bottom' : 'top';
     rootEl.dataset.bubbleSide = side;
   };
 
@@ -362,11 +516,28 @@ export const createMaidCommandInputRuntime = ({
     rootEl.className = 'maid-command-input';
     rootEl.setAttribute('role', 'search');
     rootEl.setAttribute('aria-label', '女仆助手输入');
-    inputEl = documentRef.createElement?.('input');
+    fileInputEl = documentRef.createElement?.('input');
+    if (fileInputEl) {
+      fileInputEl.type = 'file';
+      fileInputEl.accept = 'image/*';
+      fileInputEl.multiple = true;
+      fileInputEl.style.display = 'none';
+    }
+    attachmentsEl = documentRef.createElement?.('div');
+    if (attachmentsEl) {
+      attachmentsEl.className = 'maid-command-input-attachments';
+      attachmentsEl.setAttribute?.('aria-live', 'polite');
+    }
+    attachBtn = documentRef.createElement?.('button');
+    attachBtn.className = 'maid-command-input-attach';
+    attachBtn.type = 'button';
+    attachBtn.innerHTML = ICONS.attach;
+    attachBtn.setAttribute('aria-label', '附加图片');
+    inputEl = documentRef.createElement?.('textarea');
     inputEl.className = 'maid-command-input-field';
-    inputEl.type = 'text';
     inputEl.placeholder = '问女仆...';
     inputEl.autocomplete = 'off';
+    inputEl.rows = 1;
     settingsBtn = documentRef.createElement?.('button');
     settingsBtn.className = 'maid-command-input-settings';
     settingsBtn.type = 'button';
@@ -377,6 +548,9 @@ export const createMaidCommandInputRuntime = ({
     submitBtn.type = 'submit';
     submitBtn.innerHTML = ICONS.send;
     submitBtn.setAttribute('aria-label', '发送给女仆');
+    if (fileInputEl) rootEl.appendChild(fileInputEl);
+    if (attachmentsEl) rootEl.appendChild(attachmentsEl);
+    rootEl.appendChild(attachBtn);
     rootEl.appendChild(inputEl);
     rootEl.appendChild(settingsBtn);
     rootEl.appendChild(submitBtn);
@@ -385,9 +559,68 @@ export const createMaidCommandInputRuntime = ({
       void submit();
     });
     inputEl.addEventListener?.('keydown', (event) => {
-      if (event.key !== 'Escape') return;
+      if (event.key === 'Escape') {
+        event.preventDefault?.();
+        close();
+        return;
+      }
+      if (event.key === 'Enter' && event.shiftKey !== true) {
+        event.preventDefault?.();
+        void submit();
+      }
+    });
+    inputEl.addEventListener?.('input', resizeInput);
+    inputEl.addEventListener?.('paste', (event) => {
+      const files = collectImageFilesFromPasteEvent(event);
+      if (!files.length) return;
       event.preventDefault?.();
-      close();
+      void addFiles(files, { source: 'clipboard-image' });
+    });
+    rootEl.addEventListener?.('dragover', (event) => {
+      if (!eventHasImageFiles(event)) return;
+      event.preventDefault?.();
+      event.stopPropagation?.();
+      if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy';
+      rootEl.classList.add('is-dragover');
+    });
+    rootEl.addEventListener?.('dragleave', (event) => {
+      const related = event?.relatedTarget || null;
+      if (related && containsNode(rootEl, related)) return;
+      rootEl.classList.remove('is-dragover');
+    });
+    rootEl.addEventListener?.('drop', (event) => {
+      const files = collectImageFilesFromDropEvent(event);
+      if (!files.length) return;
+      event.preventDefault?.();
+      event.stopPropagation?.();
+      rootEl.classList.remove('is-dragover');
+      void addFiles(files, { source: 'drop-image' });
+    });
+    attachmentsEl?.addEventListener?.('click', (event) => {
+      const target = event?.target || null;
+      const btn = typeof target?.closest === 'function'
+        ? target.closest('.maid-command-input-attachment-remove')
+        : target?.className === 'maid-command-input-attachment-remove'
+          ? target
+          : null;
+      if (!btn) return;
+      event.preventDefault?.();
+      removeAttachment(btn.dataset?.attachmentId || '');
+    });
+    attachBtn.addEventListener?.('click', (event) => {
+      event.preventDefault?.();
+      event.stopPropagation?.();
+      if (isSubmitting) return;
+      try {
+        fileInputEl?.click?.();
+      } catch {}
+    });
+    fileInputEl?.addEventListener?.('change', () => {
+      const files = Array.from(fileInputEl.files || []);
+      if (files.length) void addFiles(files, { source: 'picker-image' });
+      try {
+        fileInputEl.value = '';
+      } catch {}
     });
     settingsBtn.addEventListener?.('click', (event) => {
       event.preventDefault?.();
@@ -407,6 +640,7 @@ export const createMaidCommandInputRuntime = ({
     setSubmitting(false);
     setResult('');
     if (inputEl) inputEl.value = trim(initialText);
+    resizeInput();
     position();
     el.classList.add('is-open');
     modeSwitchEl?.classList.add?.('is-maid-input-open');
@@ -424,25 +658,34 @@ export const createMaidCommandInputRuntime = ({
     isOpen = false;
     setSubmitting(false);
     rootEl?.classList.remove('is-open');
+    rootEl?.classList.remove('is-dragover');
     modeSwitchEl?.classList.remove?.('is-maid-input-open');
     setResult('');
+    clearAttachments();
     unbindOutsidePointer();
     return true;
   };
 
   const submit = async () => {
     const text = trim(inputEl?.value);
-    if (!text || isSubmitting) return false;
+    const attachments = imageAttachments.slice();
+    if ((!text && !attachments.length) || isSubmitting) return false;
     clearCloseTimer();
     setSubmitting(true);
     setResult('女仆正在回复...', 'thinking');
     try {
-      const result = await onSubmit(text, {
+      const effectiveText = text || '请看这张图片。';
+      const result = await onSubmit(effectiveText, {
         setStatus: (message = '', tone = 'thinking') => setResult(message, tone),
+        attachments,
       });
       const ok = result?.ok !== false;
       setResult(result?.message || result?.summary || (ok ? '已完成。' : '执行失败。'), ok ? 'success' : 'error');
-      if (ok && inputEl) inputEl.value = '';
+      if (ok && inputEl) {
+        inputEl.value = '';
+        clearAttachments();
+        resizeInput();
+      }
       return result || { ok };
     } catch (error) {
       setResult(error?.message || '女仆执行失败。', 'error');
@@ -458,8 +701,11 @@ export const createMaidCommandInputRuntime = ({
     submit,
     position,
     setStatus: (message = '', tone = 'info') => setResult(message, tone),
+    addFiles,
+    clearAttachments,
+    getAttachments: () => imageAttachments.slice(),
     isOpen: () => isOpen,
     isSubmitting: () => isSubmitting,
-    getElements: () => ({ rootEl, inputEl, settingsBtn, submitBtn, resultEl }),
+    getElements: () => ({ rootEl, inputEl, attachBtn, fileInputEl, attachmentsEl, settingsBtn, submitBtn, resultEl }),
   };
 };

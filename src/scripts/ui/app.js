@@ -1,5 +1,6 @@
 import { LLMClient } from '../api/client.js';
 import { canInitClient } from '../api/client-config-utils.js';
+import { getVisionInputCapability } from '../api/vision-capabilities.js';
 import { normalizeAssistantStreamChunk } from '../api/native-reasoning.js';
 import { isDeepSeekApiRequest } from '../api/providers/deepseek-compat.js';
 import { extractTableEditBlocks, stripTableEditBlocks } from '../memory/memory-edit-parser.js';
@@ -50,11 +51,16 @@ import {
   buildAppFeatureKnowledgeText,
   buildAppFeatureSearchContextText,
 } from '../agent/app-feature-catalog.js';
-import { createMaidModelBackedPlanner } from '../agent/maid-model-planner.js';
+import { createAppResourceReader } from '../agent/app-resource-reader.js';
+import {
+  createMaidModelBackedPlanner,
+  createMaidModelBackedReActPlanner,
+} from '../agent/maid-model-planner.js';
 import { createMaidRuntimeConfigResolver } from '../agent/maid-runtime-config.js';
 import { registerAppNavigationAgentTools } from '../agent/tools/app-navigation-tools.js';
 import { registerAppSessionAgentTools } from '../agent/tools/app-session-tools.js';
 import { registerAppContentAgentTools } from '../agent/tools/app-content-tools.js';
+import { registerWebSearchAgentTools } from '../agent/tools/web-search-tools.js';
 import { AgentRunStore } from '../storage/agent-run-store.js';
 import { MaidGuideStore } from '../storage/maid-guide-store.js';
 import { MaidConversationStore } from '../storage/maid-conversation-store.js';
@@ -82,6 +88,12 @@ import { UserStore } from '../storage/user-store.js';
 import { stickerPackStore } from '../storage/sticker-pack-store.js';
 import { normalizeScopeId } from '../storage/store-scope.js';
 import { avatarDataUrlFromFile, compressImageDataUrl, isGifFile } from '../utils/image.js';
+import {
+  collectImageFilesFromDropEvent,
+  collectImageFilesFromPasteEvent,
+  createImageAttachmentFromFile,
+  eventHasImageFiles,
+} from './image-attachment-input-utils.js';
 import {
   buildGuideRects,
   buildGuideStateFromSettings,
@@ -2564,6 +2576,87 @@ const initApp = async () => {
   registerWorldbookAgentTools(agentToolRegistry, {
     getPreviewWorldbookActions: () => agentWritePreviewRuntimes.previewWorldbookActions,
   });
+  const isAgentReadableElementVisible = (element = null) => {
+    if (!element || element.hidden === true) return false;
+    if (element.classList?.contains?.('hidden')) return false;
+    const style = element.style || {};
+    if (style.display === 'none' || style.visibility === 'hidden') return false;
+    try {
+      const computed = window.getComputedStyle?.(element);
+      if (computed && (computed.display === 'none' || computed.visibility === 'hidden' || computed.opacity === '0')) return false;
+    } catch {}
+    const rect = element.getBoundingClientRect?.();
+    return !rect || rect.width > 0 || rect.height > 0 || style.display === 'block' || style.display === 'flex';
+  };
+  const readAgentVisibleText = (element = null, maxTextLength = 1800) => {
+    if (!element) return '';
+    const max = Math.max(120, Math.min(6000, Number(maxTextLength) || 1800));
+    const chunks = [];
+    const push = (value = '') => {
+      const text = String(value || '').replace(/\s+/g, ' ').trim();
+      if (text) chunks.push(text);
+    };
+    push(element.innerText || element.textContent || '');
+    const fields = Array.from(element.querySelectorAll?.('input, textarea, select') || []);
+    fields.slice(0, 80).forEach((field) => {
+      if (!isAgentReadableElementVisible(field)) return;
+      const type = String(field.type || '').toLowerCase();
+      const name = String(field.id || field.name || field.getAttribute?.('aria-label') || field.placeholder || '').toLowerCase();
+      if (type === 'password' || /api[-_ ]?key|token|secret|password|密钥|金鑰|密码/.test(name)) return;
+      const value = String(field.value || '').trim();
+      if (!value) return;
+      push(`${field.getAttribute?.('aria-label') || field.placeholder || field.name || field.id || 'field'}: ${value}`);
+    });
+    const text = Array.from(new Set(chunks)).join(' | ');
+    return text.length > max ? `${text.slice(0, max - 1)}…` : text;
+  };
+  const buildAgentVisiblePanelSummary = ({ panel = '', maxTextLength = 1800 } = {}) => {
+    const wanted = String(panel || '').trim().toLowerCase().replace(/_/g, '-');
+    const candidates = [
+      { id: 'agent-center', title: 'Agent Center', element: agentCenterPanel?.panelElement },
+      { id: 'config', title: 'API 配置', element: configPanel?.element },
+      { id: 'session', title: '聊天室列表', element: sessionPanel?.panel },
+      { id: 'session-config', title: '会话配置', element: sessionConfigPanel?.panel },
+      { id: 'worldbook-editor', title: '世界书编辑器', element: worldPanel?.editor?.modal, aliases: ['world-editor', 'worldbook'] },
+      { id: 'worldbook-library', title: '世界书库', element: worldPanel?.libraryModal, aliases: ['world-library', 'worldbook'] },
+      { id: 'worldbook', title: '世界书管理', element: worldPanel?.panel },
+      { id: 'memory', title: '记忆', element: memoryTemplatePanel?.panel },
+      { id: 'variables', title: '变量', element: variablePanel?.panel, aliases: ['variable'] },
+      { id: 'regex', title: '正则', element: regexPanel?.element },
+      { id: 'preset', title: '预设', element: presetPanel?.panel },
+      { id: 'extensions', title: '扩展', element: extensionsPanel?.element, aliases: ['plugin', 'plugins'] },
+      { id: 'settings', title: '设置', element: generalSettingsPanel?.panel },
+      { id: 'chat', title: '聊天室', element: chatRoom, aliases: ['room'] },
+    ];
+    const panels = candidates
+      .filter(item => !wanted || item.id === wanted || item.aliases?.includes?.(wanted))
+      .filter(item => isAgentReadableElementVisible(item.element))
+      .map(item => ({
+        id: item.id,
+        title: item.title,
+        text: readAgentVisibleText(item.element, maxTextLength),
+      }))
+      .filter(item => item.text);
+    return {
+      ok: true,
+      activePage,
+      uiMode,
+      sessionId: chatStore.getCurrent(),
+      panels,
+    };
+  };
+  const readAgentAppResource = createAppResourceReader({
+    appBridge: window.appBridge,
+    chatStore,
+    contactsStore,
+    personaStore,
+    userStore,
+    memoryTemplateStore,
+    memoryTableStore,
+    presetStore,
+    configPanel,
+    getUiMode: () => uiMode,
+  });
   registerAppNavigationAgentTools(agentToolRegistry, {
     actions: {
       'agent-center': options => agentCenterPanel.show(options || {}),
@@ -2590,6 +2683,8 @@ const initApp = async () => {
       modeSwitchPinned,
       modeSwitchPos,
     }),
+    getVisiblePanelSummary: buildAgentVisiblePanelSummary,
+    readResource: readAgentAppResource,
   });
   registerAppSessionAgentTools(agentToolRegistry, {
     contactsStore,
@@ -2610,6 +2705,12 @@ const initApp = async () => {
     switchUserProfile,
     saveWorldInfo: (id, data) => window.appBridge.saveWorldInfo?.(id, data),
     getWorldInfo: id => window.appBridge.getWorldInfo?.(id),
+    listWorlds: () => window.appBridge.listWorlds?.(),
+    waitForWorldStoreReady: () => window.appBridge.waitForWorldStoreReady?.(),
+    getCurrentWorldId: sessionId => window.appBridge.getCurrentWorldId?.(sessionId),
+    getCurrentWorldIds: sessionId => window.appBridge.getCurrentWorldIds?.(sessionId),
+    getWorldIdsForSession: sessionId => window.appBridge.getWorldIdsForSession?.(sessionId),
+    getGlobalWorldId: () => window.appBridge.getGlobalWorldId?.(),
     assignWorldToPersona: (personaId, worldId, options) => window.appBridge.assignRoleWorldToPersona?.(personaId, worldId, options || {}),
     enterChatRoom: (...args) => enterChatRoom(...args),
     refreshChatAndContacts: (...args) => refreshChatAndContacts(...args),
@@ -2636,6 +2737,9 @@ const initApp = async () => {
     renderSessionNameHtml: (sessionId, contact) => renderSessionNameHtml(sessionId, contact),
     getActiveUserName,
     getActiveUserAvatar,
+  });
+  registerWebSearchAgentTools(agentToolRegistry, {
+    httpRequest: payload => safeInvoke('http_request', payload),
   });
   const maidGuideStore = new MaidGuideStore();
   maidGuideStore.load();
@@ -2688,6 +2792,15 @@ const initApp = async () => {
     onDebugSnapshot: recordMaidDebugSnapshot,
     logger,
   });
+  const maidReActPlanner = createMaidModelBackedReActPlanner({
+    resolveRuntimeConfig: resolveMaidRuntimeConfig,
+    createClient: config => new LLMClient(config),
+    isConfigReady: canInitClient,
+    getConversationContext: getMaidConversationContext,
+    onContextInjected: recordMaidContextInjection,
+    onDebugSnapshot: recordMaidDebugSnapshot,
+    logger,
+  });
   const maidChatResponder = createMaidChatResponder({
     resolveRuntimeConfig: resolveMaidRuntimeConfig,
     createClient: config => new LLMClient(config),
@@ -2701,6 +2814,7 @@ const initApp = async () => {
     toolRegistry: agentToolRegistry,
     agentTaskRuntime,
     planner: maidPlanner,
+    reactPlanner: maidReActPlanner,
     chatResponder: maidChatResponder,
     guidedActionRuntime: maidGuidedActionRuntime,
     logger,
@@ -8581,6 +8695,58 @@ Phase G（Frame 36）：循环衔接
     composerAttachments = [];
     renderComposerAttachments();
   };
+  const addImageFilesToComposer = async (files = [], { source = 'user-image-input' } = {}) => {
+    const list = Array.from(files || []);
+    if (!list.length) return { ok: false, added: 0, total: 0 };
+    let added = 0;
+    for (const file of list) {
+      const attachment = await createImageAttachmentFromFile(file, {
+        readFileAsDataUrl,
+        compressImageDataUrl,
+        isGifFile,
+        maxDim: 1280,
+        quality: 0.82,
+        maxBytes: 1_200_000,
+        mime: 'image/jpeg',
+        source,
+      });
+      if (attachment && addComposerAttachment(attachment)) added += 1;
+    }
+    if (added > 0) {
+      window.toastr?.info?.(added === 1 ? '已附加图片' : `已附加 ${added} 张图片`, { timeOut: 1400 });
+    }
+    return { ok: added > 0, added, total: list.length };
+  };
+  const bindComposerImagePasteAndDrop = () => {
+    if (!composerInput || !chatInputContainer) return;
+    composerInput.addEventListener('paste', (event) => {
+      const files = collectImageFilesFromPasteEvent(event);
+      if (!files.length) return;
+      event.preventDefault?.();
+      void addImageFilesToComposer(files, { source: 'clipboard-image' });
+    });
+    chatInputContainer.addEventListener('dragover', (event) => {
+      if (!eventHasImageFiles(event)) return;
+      event.preventDefault?.();
+      event.stopPropagation?.();
+      if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy';
+      chatInputContainer.classList.add('is-image-dragover');
+    });
+    chatInputContainer.addEventListener('dragleave', (event) => {
+      const related = event?.relatedTarget || null;
+      if (related && chatInputContainer.contains?.(related)) return;
+      chatInputContainer.classList.remove('is-image-dragover');
+    });
+    chatInputContainer.addEventListener('drop', (event) => {
+      const files = collectImageFilesFromDropEvent(event);
+      if (!files.length) return;
+      event.preventDefault?.();
+      event.stopPropagation?.();
+      chatInputContainer.classList.remove('is-image-dragover');
+      void addImageFilesToComposer(files, { source: 'drop-image' });
+    });
+  };
+  bindComposerImagePasteAndDrop();
   const buildDocumentPromptText = attachment => {
     const name = String(attachment?.name || '文件').trim() || '文件';
     const meta = [];
@@ -20824,6 +20990,49 @@ Phase G（Frame 36）：循环衔接
     onOpenApiConfig: () => openMaidApiConfigPanel({ reason: 'manual' }),
     logger,
   });
+  const buildMaidImageAttachments = async (files = [], { source = 'maid-image-input' } = {}) => {
+    const attachments = [];
+    for (const file of Array.from(files || [])) {
+      const attachment = await createImageAttachmentFromFile(file, {
+        readFileAsDataUrl,
+        compressImageDataUrl,
+        isGifFile,
+        maxDim: 1280,
+        quality: 0.82,
+        maxBytes: 1_200_000,
+        mime: 'image/jpeg',
+        source,
+      });
+      if (attachment) attachments.push(attachment);
+    }
+    return attachments;
+  };
+  const checkMaidVisionInput = async (attachments = []) => {
+    const hasImages = Array.isArray(attachments) && attachments.some(item => item?.kind === 'image' && (item.url || item.llmUrl));
+    if (!hasImages) return { ok: true, capability: null };
+    const runtime = await resolveMaidRuntimeConfig({
+      sessionId: chatStore.getCurrent(),
+      uiMode,
+      taskType: 'maid_vision_check',
+    });
+    const config = runtime?.config || {};
+    const capability = getVisionInputCapability({
+      provider: config.provider,
+      model: config.model,
+      baseUrl: config.baseUrl,
+    });
+    if (!capability.supported) {
+      return {
+        ok: false,
+        capability,
+        message: capability.reason || '当前女仆 API 配置暂不支持图片输入。',
+      };
+    }
+    if (capability.status === 'unknown') {
+      window.toastr?.info?.(capability.reason, { timeOut: 2200 });
+    }
+    return { ok: true, capability };
+  };
   const openMaidCommandOrSettings = async () => {
     try {
       const runtime = await resolveMaidRuntimeConfig();
@@ -20846,7 +21055,19 @@ Phase G（Frame 36）：循环衔接
     documentRef: document,
     modeSwitchEl: modeSwitch,
     getViewportSize,
+    maxImageAttachments: 4,
+    onAttachFiles: buildMaidImageAttachments,
     onSubmit: async (text, controls = {}) => {
+      const attachments = Array.isArray(controls?.attachments) ? controls.attachments : [];
+      const visionCheck = await checkMaidVisionInput(attachments);
+      if (!visionCheck.ok) {
+        return {
+          ok: false,
+          status: 'failed',
+          reason: visionCheck.capability?.status || 'maid_vision_not_supported',
+          message: visionCheck.message,
+        };
+      }
       maidSettingsStore.setLastExchange({
         requestPrompt: '本次请求尚未发送模型提示词。',
         appContext: buildAppFeatureSearchContextText(text, { limit: 5 }),
@@ -20860,6 +21081,7 @@ Phase G（Frame 36）：循环衔接
       };
       const result = await maidAssistantAgent.runPrompt(text, {
         ...maidTurnContext,
+        maidAttachments: attachments,
         onStatus: (status = {}) => {
           const message = String(status?.message || '').trim();
           if (!message) return;
