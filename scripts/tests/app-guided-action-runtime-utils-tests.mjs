@@ -15,7 +15,24 @@ import {
   });
   assert.equal(guide.guideId, 'session.config.open.guide');
   assert.match(guide.message, /聊天室右上角菜单 -> 会话配置/);
+  assert.equal(guide.pathText, '聊天室右上角菜单 -> 会话配置');
+  assert.equal(guide.stepDetails.length, 2);
+  assert.equal(guide.stepDetails[0].label, '聊天室右上角菜单');
   console.log('ok - guided action runtime builds first-run guide messages');
+}
+
+{
+  const guide = buildGuidedActionGuide({
+    id: 'user.create',
+    title: '创建用户名称',
+    firstRunGuide: 'user.create.guide',
+    uiPath: ['头像/用户入口', '用户', '新建'],
+  });
+  assert.deepEqual(guide.steps, ['头像/用户入口', '用户', '新建']);
+  assert.ok(guide.stepDetails[0].selectors.some(selector => selector.includes('avatar-user-entry')));
+  assert.ok(guide.stepDetails[1].selectors.some(selector => selector.includes('persona-switcher-tab-user')));
+  assert.ok(guide.stepDetails[2].selectors.some(selector => selector.includes('create-user')));
+  console.log('ok - guided action runtime exposes selectors for step playback');
 }
 
 {

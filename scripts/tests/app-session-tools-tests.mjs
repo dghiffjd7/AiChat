@@ -63,6 +63,22 @@ const createHarness = () => {
 
 {
   const h = createHarness();
+  const result = await getTool(h.tools, 'session.create').execute({ names: ['精灵女王', '暗夜女王'], open: true });
+  assert.equal(result.ok, true);
+  assert.equal(result.count, 2);
+  assert.equal(result.createdCount, 2);
+  assert.deepEqual(result.sessionIds, ['精灵女王', '暗夜女王']);
+  assert.equal(h.contacts.has('精灵女王'), true);
+  assert.equal(h.contacts.has('暗夜女王'), true);
+  assert.equal(h.chatStore.getCurrent(), '暗夜女王');
+  assert.deepEqual(h.entered, [['精灵女王', '精灵女王'], ['暗夜女王', '暗夜女王']]);
+  assert.equal(h.messages.get('精灵女王')[0].content, '你创建了聊天室「精灵女王」');
+  assert.equal(h.messages.get('暗夜女王')[0].content, '你创建了聊天室「暗夜女王」');
+  console.log('ok - session.create creates multiple chat sessions from names');
+}
+
+{
+  const h = createHarness();
   h.contacts.set('A', { id: 'A', name: 'A', isGroup: false });
   const result = await getTool(h.tools, 'session.create').execute({ name: 'A' });
   assert.equal(result.created, false);

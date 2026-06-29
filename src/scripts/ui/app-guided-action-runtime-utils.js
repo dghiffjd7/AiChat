@@ -21,6 +21,37 @@ const list = value => (Array.isArray(value) ? value : [value])
   .map(item => trim(item))
   .filter(Boolean);
 
+const GUIDE_STEP_SELECTOR_CANDIDATES = Object.freeze({
+  '头像/用户入口': [
+    '[data-maid-guide-target="avatar-user-entry"]',
+    '.qq-message-topbar .user-avatar-btn',
+  ],
+  '头像/角色入口': [
+    '[data-maid-guide-target="avatar-user-entry"]',
+    '.qq-message-topbar .user-avatar-btn',
+  ],
+  '用户': [
+    '[data-maid-guide-target="persona-switcher-tab-user"]',
+    '#persona-switcher-menu button[data-action="switcher-tab"][data-tab="user"]',
+  ],
+  '角色卡': [
+    '[data-maid-guide-target="persona-switcher-tab-character"]',
+    '#persona-switcher-menu button[data-action="switcher-tab"][data-tab="character"]',
+  ],
+  '新建': [
+    '[data-maid-guide-target="create-user"]',
+    '[data-maid-guide-target="create-persona"]',
+    '#create-user-btn',
+    '#create-persona-btn',
+  ],
+  '选择用户': [
+    '#persona-switcher-menu [data-user-id]',
+  ],
+  '选择角色卡': [
+    '#persona-switcher-menu [data-persona-id]',
+  ],
+});
+
 export const isGuidedActionOutputOk = (output = {}) => {
   if (output?.status && output.status !== 'succeeded') return false;
   const result = output !== null &&
@@ -37,11 +68,18 @@ export const buildGuidedActionGuide = (feature = {}) => {
   if (!guideId) return null;
   const title = trim(feature.title || feature.id, '这个功能');
   const steps = list(feature.uiPath);
+  const stepDetails = steps.map((label, index) => ({
+    index,
+    label,
+    selectors: GUIDE_STEP_SELECTOR_CANDIDATES[label] || [],
+  }));
   return {
     guideId,
     featureId: trim(feature.id),
     title,
     steps,
+    stepDetails,
+    pathText: steps.join(' -> '),
     message: steps.length
       ? `首次引导：${title}的 APP 路径是「${steps.join(' -> ')}」。`
       : `首次引导：${title}没有固定界面路径，我会直接帮你执行。`,

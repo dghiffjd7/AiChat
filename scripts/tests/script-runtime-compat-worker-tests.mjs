@@ -136,6 +136,8 @@ const flushTimers = () => new Promise(resolve => setTimeout(resolve, 0));
     if (!node.style.cssText.includes('--orb-menu-max-height: 420px;')) throw new Error('missing cssText style serialization');
     if (node.style.removeProperty('--orb-menu-max-height') !== '420px') throw new Error('missing style removeProperty shim');
     if (node.style.getPropertyValue('--orb-menu-max-height') !== '') throw new Error('style removeProperty did not clear value');
+    node.style.left = 'NaNpx';
+    if (node.style.left === 'NaNpx') throw new Error('style shim should reject invalid NaN lengths');
     node.style.cssText = 'top: 16px; --orb-details-max-height: 240px;';
     if (node.style.top !== '16px') throw new Error('missing cssText parsing for normal property');
     if (node.style.getPropertyValue('--orb-details-max-height') !== '240px') throw new Error('missing cssText parsing for custom property');
@@ -248,6 +250,8 @@ const flushTimers = () => new Promise(resolve => setTimeout(resolve, 0));
 {
   const { sandbox, messages } = createWorkerHarness();
   const script = `
+    if (window.innerWidth !== 777 || window.innerHeight !== 555) throw new Error('missing viewport globals');
+    if (!window.visualViewport || window.visualViewport.width !== 777) throw new Error('missing visualViewport shim');
     const style = document.createElement('style');
     style.textContent = '.floating-box { position: fixed; right: 12px; bottom: 12px; }';
     document.head.appendChild(style);
@@ -262,8 +266,19 @@ const flushTimers = () => new Promise(resolve => setTimeout(resolve, 0));
       const rect = root.getBoundingClientRect();
       root.setAttribute('data-clicked', String(event.clientX));
       root.setAttribute('data-rect', rect.left + ',' + rect.top + ',' + rect.width + ',' + root.offsetHeight);
+      root.setAttribute('data-style-read', root.getAttribute('style'));
       root.textContent = 'clicked';
     });
+    document.addEventListener('mousemove', event => {
+      root.setAttribute('data-doc-move', event.clientX + ',' + window.innerWidth);
+    });
+    document.addEventListener('mouseup', event => {
+      root.setAttribute('data-doc-up', event.clientY + ',' + window.innerHeight);
+    });
+    window.addEventListener('resize', () => {
+      root.setAttribute('data-resize', window.innerWidth + 'x' + window.innerHeight);
+    });
+    root.style.left = '12px';
     document.body.appendChild(root);
     const htmlRoot = document.createElement('div');
     htmlRoot.id = 'html-mounted-widget';
@@ -274,7 +289,10 @@ const flushTimers = () => new Promise(resolve => setTimeout(resolve, 0));
   await sandbox.self.onmessage({
     data: {
       type: 'sync',
-      settings: { allowNetwork: false },
+      settings: {
+        allowNetwork: false,
+        viewport: { innerWidth: 777, innerHeight: 555, devicePixelRatio: 2 },
+      },
       context: { sessionId: 's1' },
       scripts: [{ id: 'ui-compat', name: 'ui compat', enabled: true, content: script }],
     },
@@ -295,6 +313,7 @@ const flushTimers = () => new Promise(resolve => setTimeout(resolve, 0));
   await sandbox.self.onmessage({
     data: {
       type: 'ui_layout',
+      viewport: { innerWidth: 900, innerHeight: 600, devicePixelRatio: 1.5 },
       items: [{
         nodeId,
         left: 9,
@@ -316,12 +335,39 @@ const flushTimers = () => new Promise(resolve => setTimeout(resolve, 0));
       event: { clientX: 42, bubbles: true, cancelable: true },
     },
   });
+  await sandbox.self.onmessage({
+    data: {
+      type: 'ui_event',
+      targetType: 'document',
+      eventType: 'mousemove',
+      event: { clientX: 88, clientY: 99, bubbles: true, cancelable: true },
+    },
+  });
+  await sandbox.self.onmessage({
+    data: {
+      type: 'ui_event',
+      targetType: 'document',
+      eventType: 'mouseup',
+      event: { clientX: 88, clientY: 101, bubbles: true, cancelable: true },
+    },
+  });
+  await sandbox.self.onmessage({
+    data: {
+      type: 'ui_viewport',
+      eventType: 'resize',
+      viewport: { innerWidth: 901, innerHeight: 601, devicePixelRatio: 1.5 },
+    },
+  });
   await flushTimers();
 
   const clickedUpdate = messages.filter(msg => msg.type === 'ui_update').at(-1);
   const clickedHtml = clickedUpdate.payload.roots.join('');
   assert.match(clickedHtml, /data-clicked="42"/);
   assert.match(clickedHtml, /data-rect="9,10,48,49"/);
+  assert.match(clickedHtml, /data-style-read="left: 12px;"/);
+  assert.match(clickedHtml, /data-doc-move="88,900"/);
+  assert.match(clickedHtml, /data-doc-up="101,600"/);
+  assert.match(clickedHtml, /data-resize="901x601"/);
   assert.match(clickedHtml, />clicked</);
   console.log('ok - script runtime mirrors virtual DOM UI generically and relays UI events');
 }

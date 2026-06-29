@@ -56,6 +56,23 @@ import {
 }
 
 {
+  const messages = buildMaidModelPlannerMessages({
+    input: '继续刚才那个角色卡',
+    context: { sessionId: 's1' },
+    conversationContext: {
+      historyText: '- 用户: 创建角色卡 A\n  工具: persona.create\n  结果: 已完成',
+      memoryText: '| 1 | 摘要 |\n| 内容 | 用户创建了角色卡 A。 |',
+    },
+  });
+  assert.match(messages[0].content, /历史上下文和记忆表格/);
+  assert.match(messages[1].content, /女仆记忆表格/);
+  assert.match(messages[1].content, /用户创建了角色卡 A/);
+  assert.match(messages[1].content, /女仆历史上下文/);
+  assert.match(messages[1].content, /persona\.create/);
+  console.log('ok - maid model planner injects history and memory context');
+}
+
+{
   const parsed = extractMaidModelPlannerJson('```json\n{"ok":true,"toolName":"app.open_panel"}\n```');
   assert.equal(parsed.ok, true);
   assert.equal(parsed.toolName, 'app.open_panel');
@@ -88,18 +105,44 @@ import {
 }
 
 {
-  let called = 0;
+  let runtimeCalls = 0;
+  let chatCalls = 0;
+  const injected = [];
   const planner = createMaidModelBackedPlanner({
     resolveRuntimeConfig: async () => {
-      called += 1;
-      return {};
+      runtimeCalls += 1;
+      return {
+        client: {
+          chat: async () => {
+            chatCalls += 1;
+            return JSON.stringify({
+              ok: true,
+              toolName: 'app.open_panel',
+              args: { panel: 'worldbook' },
+              featureId: 'worldbook.open',
+              title: '打开世界书',
+              response: '我来打开世界书。',
+            });
+          },
+        },
+      };
     },
+    getConversationContext: () => ({
+      historyText: '- 用户: 打开设置',
+      memoryText: '| 内容 | 用户正在测试女仆 |',
+      tokenCount: 18,
+    }),
+    onContextInjected: payload => injected.push(payload),
   });
   const plan = await planner('打开世界书');
   assert.equal(plan.ok, true);
   assert.equal(plan.toolName, 'app.open_panel');
-  assert.equal(called, 0);
-  console.log('ok - maid model planner keeps local planner as first choice');
+  assert.equal(runtimeCalls, 1);
+  assert.equal(chatCalls, 1);
+  assert.equal(plan.source, 'model_planner');
+  assert.equal(injected.length, 1);
+  assert.equal(injected[0].conversationContext.tokenCount, 18);
+  console.log('ok - maid model planner asks the model even for locally recognizable intents');
 }
 
 {
@@ -131,7 +174,7 @@ import {
   assert.match(debugSnapshots[0].messages[0].content, /用轻快语气回复/);
   assert.match(debugSnapshots[0].messages[1].content, /高级资料入口/);
   assert.match(debugSnapshots[0].responseText, /variables\.open/);
-  console.log('ok - maid model planner uses configured client after local fallback');
+  console.log('ok - maid model planner uses configured client as the tool planner');
 }
 
 {
@@ -139,8 +182,28 @@ import {
     resolveRuntimeConfig: async () => ({ config: {} }),
     isConfigReady: () => false,
   });
-  const plan = await planner('完全未知的请求');
+  const plan = await planner('打开世界书');
   assert.equal(plan.ok, false);
-  assert.equal(plan.reason, 'unsupported_intent');
-  console.log('ok - maid model planner falls back when API is not configured');
+  assert.equal(plan.reason, 'maid_api_not_configured');
+  console.log('ok - maid model planner does not use local fallback when API is not configured');
+}
+
+{
+  const planner = createMaidModelBackedPlanner({
+    resolveRuntimeConfig: async () => ({
+      client: {
+        chat: async () => JSON.stringify({
+          ok: true,
+          toolName: 'session.create',
+          args: { name: 'A' },
+          featureId: 'worldbook.open',
+          response: 'bad plan',
+        }),
+      },
+    }),
+  });
+  const plan = await planner('打开世界书');
+  assert.equal(plan.ok, false);
+  assert.equal(plan.reason, 'tool_not_allowed');
+  console.log('ok - maid model planner rejects invalid model plans without local fallback');
 }

@@ -1,0 +1,253 @@
+import assert from 'node:assert/strict';
+
+import {
+  AGENT_PERMISSION_DECISIONS,
+  createAgentPermissionEvaluator,
+} from '../../src/scripts/agent/agent-permissions.js';
+import { createAgentToolRegistry } from '../../src/scripts/agent/agent-tool-registry.js';
+import { createAppContentAgentTools } from '../../src/scripts/agent/tools/app-content-tools.js';
+
+const getTool = (tools, name) => tools.find(tool => tool.name === name);
+
+const createProfileStore = (prefix = 'profile') => {
+  const items = new Map();
+  let activeId = '';
+  let seq = 0;
+  return {
+    getAll: () => Array.from(items.values()),
+    get: id => items.get(id) || null,
+    async create(data = {}) {
+      seq += 1;
+      const item = {
+        id: `${prefix}-${seq}`,
+        name: data.name,
+        description: data.description || '',
+        avatar: data.avatar || '',
+        source: data.source || null,
+      };
+      items.set(item.id, item);
+      return item;
+    },
+    async setActive(id) {
+      if (!items.has(id)) return false;
+      activeId = id;
+      return true;
+    },
+    getActiveId: () => activeId,
+    getActive: () => items.get(activeId) || null,
+    items,
+  };
+};
+
+{
+  const personaStore = createProfileStore('persona');
+  const userStore = createProfileStore('user');
+  const switched = [];
+  const tools = createAppContentAgentTools({
+    personaStore,
+    userStore,
+    switchPersona: async id => switched.push(['persona', id]),
+    switchUserProfile: async id => switched.push(['user', id]),
+  });
+
+  const persona = await getTool(tools, 'persona.create').execute({ name: 'Role A', description: 'desc', setActive: true });
+  assert.equal(persona.ok, true);
+  assert.equal(persona.created, true);
+  assert.equal(persona.profile.name, 'Role A');
+  assert.equal(personaStore.get(persona.personaId).source.type, 'character_card');
+
+  const user = await getTool(tools, 'user.create').execute({ name: 'User A', setActive: true });
+  assert.equal(user.ok, true);
+  assert.equal(user.created, true);
+  assert.equal(user.profile.name, 'User A');
+  assert.deepEqual(switched, [['persona', persona.personaId], ['user', user.userId]]);
+  console.log('ok - app content tools create persona and user profiles');
+}
+
+{
+  const personaStore = createProfileStore('persona');
+  const userStore = createProfileStore('user');
+  const persona = await personaStore.create({ name: 'Role A' });
+  const user = await userStore.create({ name: 'User A' });
+  const switched = [];
+  const tools = createAppContentAgentTools({
+    personaStore,
+    userStore,
+    switchPersona: async id => {
+      switched.push(['persona', id]);
+      return id === persona.id;
+    },
+    switchUserProfile: async id => {
+      switched.push(['user', id]);
+      return id === user.id;
+    },
+  });
+
+  const personaResult = await getTool(tools, 'persona.switch').execute({ target: 'Role A' });
+  assert.equal(personaResult.ok, true);
+  assert.equal(personaResult.switched, true);
+  assert.equal(personaResult.personaId, persona.id);
+
+  const userResult = await getTool(tools, 'user.switch').execute({ name: 'User A' });
+  assert.equal(userResult.ok, true);
+  assert.equal(userResult.switched, true);
+  assert.equal(userResult.userId, user.id);
+  assert.deepEqual(switched, [['persona', persona.id], ['user', user.id]]);
+  console.log('ok - app content tools switch persona and user profiles');
+}
+
+{
+  const personaStore = createProfileStore('persona');
+  const persona = await personaStore.create({ name: 'Role A' });
+  await personaStore.setActive(persona.id);
+  const saved = new Map();
+  const bound = [];
+  const tools = createAppContentAgentTools({
+    personaStore,
+    saveWorldInfo: async (id, data) => saved.set(id, data),
+    getWorldInfo: async id => saved.get(id) || null,
+    assignWorldToPersona: async (personaId, worldId, options) => bound.push({ personaId, worldId, options }),
+    now: () => 1000,
+  });
+
+  const result = await getTool(tools, 'worldbook.create').execute({
+    name: 'Role A World',
+    personaName: 'Role A',
+    bindToPersona: true,
+    entries: [
+      { title: '温柔大姐姐', content: '超级温柔，和用户是姐弟关系。', keys: ['姐姐'] },
+      { title: '傲娇青梅竹马', content: '傲娇大小姐青梅竹马。' },
+    ],
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.created, true);
+  assert.equal(result.entryCount, 2);
+  assert.equal(saved.get('Role A World').entries[0].comment, '温柔大姐姐');
+  assert.equal(saved.get('Role A World').entries[0].constant, true);
+  assert.deepEqual(bound, [{ personaId: persona.id, worldId: 'Role A World', options: { enabled: true } }]);
+
+  const inferred = await getTool(tools, 'worldbook.create').execute({
+    entries: [{ title: '当前角色条目', content: '缺省世界书名。' }],
+  });
+  assert.equal(inferred.ok, true);
+  assert.equal(inferred.worldbookId, 'Role A 世界书');
+  assert.equal(saved.get('Role A 世界书').entries[0].comment, '当前角色条目');
+  assert.deepEqual(bound.at(-1), { personaId: persona.id, worldId: 'Role A 世界书', options: { enabled: true } });
+  console.log('ok - app content tools create and bind worldbooks');
+}
+
+{
+  const contacts = new Map([
+    ['sister', { id: 'sister', name: '温柔大姐姐', avatar: 'a' }],
+  ]);
+  const messages = new Map();
+  const opened = [];
+  const active = [];
+  const refreshed = [];
+  const current = { id: 'default' };
+  const tools = createAppContentAgentTools({
+    contactsStore: {
+      listContacts: () => Array.from(contacts.values()),
+      getContact: id => contacts.get(id) || null,
+    },
+    chatStore: {
+      getCurrent: () => current.id,
+      switchSession: id => {
+        current.id = id;
+      },
+      appendMessage: (message, sessionId) => {
+        const list = messages.get(sessionId) || [];
+        list.push(message);
+        messages.set(sessionId, list);
+      },
+    },
+    enterChatRoom: async (id, title) => opened.push([id, title]),
+    refreshChatAndContacts: options => refreshed.push(options),
+    setActiveSession: id => active.push(id),
+    getActiveUserName: () => '测试用户',
+    getActiveUserAvatar: () => 'u',
+    now: () => 1000,
+  });
+
+  const result = await getTool(tools, 'chat.send_message').execute({ sessionId: '温柔大姐姐', content: '晚上好' });
+  assert.equal(result.ok, true);
+  assert.equal(result.sent, true);
+  assert.equal(result.sessionId, 'sister');
+  assert.equal(messages.get('sister')[0].role, 'user');
+  assert.equal(messages.get('sister')[0].content, '晚上好');
+  assert.equal(messages.get('sister')[0].name, '测试用户');
+  assert.deepEqual(opened, [['sister', '温柔大姐姐']]);
+  assert.deepEqual(active, ['sister']);
+  assert.deepEqual(refreshed, [{ immediate: true }]);
+
+  const registry = createAgentToolRegistry({
+    permissionEvaluator: createAgentPermissionEvaluator({
+      defaultDecision: AGENT_PERMISSION_DECISIONS.allow,
+    }),
+    logger: { warn: () => {} },
+  });
+  registry.registerMany(tools);
+  const aliasResult = await registry.executeTool('chat.send_message', {
+    sessionName: '温柔大姐姐',
+    message: '妈妈',
+  });
+  assert.equal(aliasResult.status, 'succeeded');
+  assert.equal(aliasResult.result.ok, true);
+  assert.equal(aliasResult.result.sent, true);
+  assert.equal(aliasResult.result.sessionId, 'sister');
+  assert.equal(aliasResult.result.requestTriggered, false);
+  assert.equal(messages.get('sister')[1].role, 'user');
+  assert.equal(messages.get('sister')[1].content, '妈妈');
+  assert.deepEqual(opened.at(-1), ['sister', '温柔大姐姐']);
+  console.log('ok - app content tools send chat messages and accept model argument aliases');
+}
+
+{
+  const contacts = new Map([
+    ['elf', { id: 'elf', name: '精灵女王', avatar: 'e' }],
+  ]);
+  const messages = new Map();
+  const opened = [];
+  const active = [];
+  const sendCalls = [];
+  const current = { id: 'default' };
+  const chatStore = {
+    getCurrent: () => current.id,
+    switchSession: id => {
+      current.id = id;
+    },
+    appendMessage: (message, sessionId) => {
+      const list = messages.get(sessionId) || [];
+      list.push(message);
+      messages.set(sessionId, list);
+    },
+  };
+  const tools = createAppContentAgentTools({
+    contactsStore: {
+      listContacts: () => Array.from(contacts.values()),
+      getContact: id => contacts.get(id) || null,
+    },
+    chatStore,
+    enterChatRoom: async (id, title) => opened.push([id, title]),
+    setActiveSession: id => active.push(id),
+    sendChatMessage: async (content, options) => {
+      sendCalls.push({ content, options });
+      chatStore.appendMessage({ role: 'user', content, source: 'pipeline' }, options.sessionId);
+      return true;
+    },
+  });
+
+  const result = await getTool(tools, 'chat.send_message').execute({
+    sessionName: '精灵女王',
+    message: '妈妈',
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.sent, true);
+  assert.equal(result.requestTriggered, true);
+  assert.equal(result.sessionId, 'elf');
+  assert.deepEqual(sendCalls, [{ content: '妈妈', options: { sessionId: 'elf', source: 'maid', open: true, waitForReply: false } }]);
+  assert.deepEqual(messages.get('elf'), [{ role: 'user', content: '妈妈', source: 'pipeline' }]);
+  assert.deepEqual(opened, [['elf', '精灵女王']]);
+  assert.deepEqual(active, ['elf']);
+  console.log('ok - app content tools can route user sends through the reply-triggering send pipeline');
+}

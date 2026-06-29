@@ -20,14 +20,20 @@ const emitDebugSnapshot = (callback, payload = {}, logger = console) => {
 export const buildMaidChatResponderMessages = ({
   input = '',
   context = {},
+  conversationContext = null,
   features = listAppFeatures(),
   maidPrompt = DEFAULT_MAID_PROMPT,
 } = {}) => {
   const appContext = buildAppFeatureSearchContextText(input, { features, limit: 5 });
+  const memoryText = trim(conversationContext?.memoryText);
+  const historyText = trim(conversationContext?.historyText);
   return [
     {
       role: 'system',
-      content: trim(maidPrompt, DEFAULT_MAID_PROMPT),
+      content: [
+        trim(maidPrompt, DEFAULT_MAID_PROMPT),
+        '你可以参考女仆记忆表格和历史上下文来延续对话、理解“刚才那个”等省略指代；不要编造不存在的历史。',
+      ].filter(Boolean).join('\n'),
     },
     {
       role: 'user',
@@ -36,6 +42,8 @@ export const buildMaidChatResponderMessages = ({
         `当前会话：${trim(context?.sessionId, '-')}`,
         `UI 模式：${trim(context?.uiMode, '-')}`,
         `当前页面：${trim(context?.activePage, '-')}`,
+        `女仆记忆表格：\n${memoryText || '（空）'}`,
+        `女仆历史上下文：\n${historyText || '（空）'}`,
         `APP 相关讯息：\n${appContext}`,
       ].join('\n'),
     },
@@ -46,6 +54,8 @@ export const createMaidChatResponder = ({
   resolveRuntimeConfig = null,
   createClient = null,
   isConfigReady = () => false,
+  getConversationContext = null,
+  onContextInjected = null,
   onDebugSnapshot = null,
   logger = console,
 } = {}) => async (input = '', context = {}) => {
@@ -111,10 +121,19 @@ export const createMaidChatResponder = ({
   }
 
   try {
+    const conversationContext = typeof getConversationContext === 'function'
+      ? getConversationContext({ input: text, context, taskType: 'maid_chat' })
+      : context?.maidConversationContext || null;
     const messages = buildMaidChatResponderMessages({
       input: text,
       context,
+      conversationContext,
       maidPrompt: runtime?.maidPrompt || runtime?.personaPrompt,
+    });
+    onContextInjected?.({
+      source: 'maid_chat_responder',
+      input: text,
+      conversationContext,
     });
     const responseText = await client.chat(messages, {
       temperature: 0.7,
@@ -142,6 +161,9 @@ export const createMaidChatResponder = ({
       messages: buildMaidChatResponderMessages({
         input: text,
         context,
+        conversationContext: typeof getConversationContext === 'function'
+          ? getConversationContext({ input: text, context, taskType: 'maid_chat' })
+          : context?.maidConversationContext || null,
         maidPrompt: runtime?.maidPrompt || runtime?.personaPrompt,
       }),
       responseText: error?.message || '女仆暂时无法回复。',

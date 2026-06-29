@@ -553,7 +553,7 @@ export class PersonaPanel {
                         background: #0f172a; color: var(--app-text-inverse); border: none; padding: 10px 16px;
                         border-radius: 18px; font-size: 13px; cursor: pointer; flex: 1;
                     ">导入角色卡</button>
-                    <button id="create-persona-btn" style="
+                    <button id="create-persona-btn" data-maid-guide-target="create-persona" style="
                         background: #007bff; color: var(--app-text-inverse); border: none; padding: 10px 16px; 
                         border-radius: 18px; font-size: 13px; cursor: pointer; flex: 1;
                         box-shadow: 0 2px 5px rgba(0,123,255,0.3);

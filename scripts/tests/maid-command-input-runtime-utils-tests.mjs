@@ -120,12 +120,15 @@ class FakeDocument {
   const modeSwitchEl = new FakeElement('div');
   const timeouts = [];
   const submissions = [];
+  const statusSnapshots = [];
   const runtime = createMaidCommandInputRuntime({
     documentRef,
     modeSwitchEl,
     getViewportSize: () => ({ w: 360, h: 640 }),
-    onSubmit: async (text) => {
+    onSubmit: async (text, controls) => {
       submissions.push(text);
+      controls.setStatus('好的，主人，这就处理。', 'thinking');
+      statusSnapshots.push(runtime.getElements().resultEl.textContent);
       return { ok: true, message: `done ${text}` };
     },
     setTimeoutFn: (fn) => {
@@ -137,6 +140,8 @@ class FakeDocument {
 
   assert.equal(runtime.open(), true);
   const { rootEl, inputEl } = runtime.getElements();
+  assert.match(documentRef.head.children[0].textContent, /\.maid-command-input:focus-within/);
+  assert.doesNotMatch(documentRef.head.children[0].textContent, /\.maid-command-input-field:focus-visible/);
   assert.equal(rootEl.classList.contains('is-open'), true);
   assert.equal(rootEl.dataset.bubbleSide, 'bottom');
   assert.equal(modeSwitchEl.classList.contains('is-maid-input-open'), true);
@@ -149,6 +154,7 @@ class FakeDocument {
   const result = await runtime.submit();
   assert.equal(result.ok, true);
   assert.deepEqual(submissions, ['打开世界书']);
+  assert.deepEqual(statusSnapshots, ['好的，主人，这就处理。']);
   assert.equal(runtime.getElements().resultEl.textContent, 'done 打开世界书');
   assert.equal(runtime.getElements().resultEl.dataset.tone, 'success');
   assert.equal(rootEl.classList.contains('has-result'), true);

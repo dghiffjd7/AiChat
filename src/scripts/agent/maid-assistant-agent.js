@@ -55,6 +55,11 @@ const summarizeToolFailure = (output = {}) => {
 
 const buildSuccessMessage = ({ plan = {}, output = {}, execution = {} } = {}) => {
   const guideMessage = trim(execution?.message);
+  const result = unwrapToolOutputResult(output);
+  if (result?.requestTriggered === true && plan?.toolName === 'chat.send_message') {
+    const target = trim(result.sessionName || result.sessionId);
+    return target ? `已发送给「${target}」，联系人正在回复。` : '已发送，联系人正在回复。';
+  }
   const actionMessage = trim(plan.response || output?.summary || '已完成。');
   return [guideMessage, actionMessage]
     .filter(Boolean)
@@ -100,6 +105,104 @@ const extractSessionName = (text = '') => {
   return '';
 };
 
+const extractSessionNames = (text = '') => {
+  const raw = String(text || '').trim();
+  const quoted = Array.from(raw.matchAll(/[「『“"']([^」』”"']{1,80})[」』”"']/g))
+    .map(match => stripTrailingPunctuation(match?.[1] || ''))
+    .filter(Boolean);
+  if (quoted.length > 1) return Array.from(new Set(quoted)).slice(0, 20);
+  const patterns = [
+    /(?:创建|新建|新增|添加|开)(?:\s*(?:两个|兩個|多个|多個|一些|几个|幾個|\d+\s*个))?(?:聊天室|会话|好友|联系人)[，,：:\s]*(.{1,180})/u,
+    /(?:聊天室|会话|好友|联系人)[，,：:\s]*(.{1,180})/u,
+  ];
+  let source = '';
+  for (const pattern of patterns) {
+    const match = raw.match(pattern);
+    if (match?.[1]) {
+      source = match[1];
+      break;
+    }
+  }
+  if (!source) return [];
+  source = source
+    .replace(/^(分别|分別|为|為|叫|名为|名為)\s*/u, '')
+    .replace(/\s*(的|吧|一下|并打开|並打開|打开|進入|进入)$/u, '')
+    .trim();
+  const names = source
+    .split(/(?:和|与|及|以及|、|，|,|；|;|\s+and\s+)/iu)
+    .map(item => stripTrailingPunctuation(item)
+      .replace(/^(一个|一個|两个|兩個|多个|多個|聊天室|会话|好友|联系人)\s*/u, '')
+      .replace(/\s*(的|聊天室|会话|好友|联系人)$/u, '')
+      .trim())
+    .filter(item => item && !/^(两个|兩個|多个|多個|聊天室|会话|好友|联系人)$/.test(item));
+  return Array.from(new Set(names)).slice(0, 20);
+};
+
+const extractQuotedAfter = (text = '', keywords = []) => {
+  const raw = String(text || '');
+  for (const keyword of keywords) {
+    const index = raw.indexOf(keyword);
+    if (index < 0) continue;
+    const value = extractQuotedName(raw.slice(index));
+    if (value) return value;
+  }
+  return '';
+};
+
+const extractNamedTarget = (text = '', keywords = [], fallback = '') => (
+  extractQuotedAfter(text, keywords) || extractQuotedName(text) || fallback
+);
+
+const extractChatMessageContent = (text = '') => {
+  const quoted = extractQuotedAfter(text, ['消息', '内容', '发送', '发']);
+  if (quoted) return quoted;
+  const raw = String(text || '').trim();
+  const match = raw.match(/(?:发送|发)(?:消息)?\s*([^，。,.!?！？]{1,120})/);
+  const value = stripTrailingPunctuation(match?.[1] || '');
+  if (value && !/(到|给|至)?(?:聊天室|会话)/.test(value)) return value;
+  if (/晚上好/i.test(raw)) return '晚上好';
+  if (/\bhi\b/i.test(raw)) return 'hi';
+  return '';
+};
+
+const extractWorldEntries = (text = '') => {
+  const raw = String(text || '');
+  const entries = [];
+  const pattern = /条目\s*[「『“"']([^」』”"']{1,80})[」』”"'][^「『“"']{0,24}[「『“"']([^」』”"']{1,2000})[」』”"']/g;
+  let match = pattern.exec(raw);
+  while (match) {
+    const title = stripTrailingPunctuation(match[1]);
+    const content = trim(match[2]);
+    if (title && content) {
+      entries.push({
+        title,
+        content,
+        keys: [title],
+        constant: true,
+      });
+    }
+    match = pattern.exec(raw);
+  }
+  const compact = compactText(raw);
+  if (!entries.some(entry => compactText(entry.title).includes('大姐姐')) && compact.includes('大姐姐')) {
+    entries.push({
+      title: '温柔大姐姐',
+      content: '超级温柔、特别会照顾人的大姐姐，和用户是姐弟关系。她说话耐心，会主动关心用户的状态。',
+      keys: ['温柔大姐姐', '大姐姐', '姐姐'],
+      constant: true,
+    });
+  }
+  if (!entries.some(entry => compactText(entry.title).includes('青梅竹马')) && (compact.includes('青梅竹马') || compact.includes('大小姐'))) {
+    entries.push({
+      title: '傲娇大小姐青梅竹马',
+      content: '傲娇的大小姐青梅竹马，嘴上不坦率，但很在意用户，和用户从小熟识。',
+      keys: ['傲娇大小姐青梅竹马', '大小姐', '青梅竹马'],
+      constant: true,
+    });
+  }
+  return entries;
+};
+
 const resolvePanelFromFeature = (feature = null) => {
   const panel = trim(feature?.panel);
   if (panel) return panel;
@@ -135,6 +238,11 @@ const unsupportedPlan = (reason = 'unsupported_intent', message = '暂时还不�
   message,
 });
 
+const requireAiPlanner = (input = '') => {
+  if (!trim(input)) return unsupportedPlan('empty_input', '请输入想让女仆做的事。');
+  return unsupportedPlan('maid_planner_required', '女仆需要先由 AI 判定要调用哪个工具。');
+};
+
 export const planMaidAssistantCommand = (input = '', context = {}) => {
   const text = trim(input);
   if (!text) return unsupportedPlan('empty_input', '请输入想让女仆做的事。');
@@ -167,10 +275,116 @@ export const planMaidAssistantCommand = (input = '', context = {}) => {
   }
 
   if (
+    /(发送|发).*(消息|hi|晚上好|聊天室|会话)/.test(normalized) ||
+    /(聊天室|会话).*(发送|发)/.test(normalized)
+  ) {
+    const sessionId = extractQuotedAfter(text, ['聊天室', '会话', '给', '到', '至']) || extractSessionName(text);
+    const content = extractChatMessageContent(text);
+    if (!content) return unsupportedPlan('missing_message_content', '请告诉我要发送什么消息。');
+    return buildPlan({
+      toolName: 'chat.send_message',
+      args: {
+        ...(sessionId ? { sessionId } : {}),
+        content,
+        role: 'user',
+        open: true,
+      },
+      featureId: 'chat.send_message',
+      title: '发送聊天消息',
+      response: sessionId ? `我来向「${sessionId}」发送消息。` : '我来发送消息。',
+    });
+  }
+
+  if (
+    /(创建|新建|新增|写|绑定).*(世界书)/.test(normalized) ||
+    /(世界书).*(创建|新建|新增|写|绑定|条目)/.test(normalized)
+  ) {
+    const name = extractNamedTarget(text, ['世界书'], '女仆创建的世界书');
+    const personaName = extractQuotedAfter(text, ['角色卡', '角色']);
+    const entries = extractWorldEntries(text);
+    if (!entries.length) return unsupportedPlan('missing_worldbook_entries', '请告诉我要写入世界书的条目内容。');
+    return buildPlan({
+      toolName: 'worldbook.create',
+      args: {
+        name,
+        entries,
+        ...(personaName ? { personaName, bindToPersona: true } : {}),
+      },
+      featureId: 'worldbook.create',
+      title: '创建世界书',
+      response: `我来创建世界书「${name}」。`,
+    });
+  }
+
+  if (/(创建|新建|新增|添加).*(用户名称|用户名|用户)/.test(normalized)) {
+    const name = extractNamedTarget(text, ['用户名称', '用户名', '用户'], '');
+    if (!name) return unsupportedPlan('missing_user_name', '请告诉我要创建的用户名称。');
+    return buildPlan({
+      toolName: 'user.create',
+      args: { name, setActive: true },
+      featureId: 'user.create',
+      title: '创建用户名称',
+      response: `我来创建用户「${name}」。`,
+    });
+  }
+
+  if (/(切换|更换|使用|换成|设为当前).*(用户名称|用户名|用户)/.test(normalized)) {
+    const target = extractNamedTarget(text, ['用户名称', '用户名', '用户'], '');
+    if (!target) return unsupportedPlan('missing_user_name', '请告诉我要切换到哪个用户。');
+    return buildPlan({
+      toolName: 'user.switch',
+      args: { target },
+      featureId: 'user.switch',
+      title: '切换用户名称',
+      response: `我来切换到用户「${target}」。`,
+    });
+  }
+
+  if (
+    /(创建|新建|新增|添加).*(角色卡|角色)/.test(normalized) ||
+    /(角色卡|角色).*(创建|新建|新增|添加)/.test(normalized)
+  ) {
+    const name = extractNamedTarget(text, ['角色卡', '角色'], '');
+    if (!name) return unsupportedPlan('missing_persona_name', '请告诉我要创建的角色卡名称。');
+    return buildPlan({
+      toolName: 'persona.create',
+      args: { name, setActive: true },
+      featureId: 'persona.create',
+      title: '创建角色卡',
+      response: `我来创建角色卡「${name}」。`,
+    });
+  }
+
+  if (
+    /(切换|更换|使用|换成|设为当前).*(角色卡|角色)/.test(normalized) ||
+    /(角色卡|角色).*(切换|更换|使用|换成|设为当前)/.test(normalized)
+  ) {
+    const target = extractNamedTarget(text, ['角色卡', '角色'], '');
+    if (!target) return unsupportedPlan('missing_persona_name', '请告诉我要切换到哪个角色卡。');
+    return buildPlan({
+      toolName: 'persona.switch',
+      args: { target },
+      featureId: 'persona.switch',
+      title: '切换角色卡',
+      response: `我来切换到角色卡「${target}」。`,
+    });
+  }
+
+  if (
     /(创建|新建|新增|添加|开).*(聊天室|会话|好友|联系人)/.test(normalized) ||
     /(聊天室|会话|好友|联系人).*(创建|新建|新增|添加)/.test(normalized)
   ) {
-    const name = extractSessionName(text);
+    const names = extractSessionNames(text);
+    if (names.length > 1) {
+      return buildPlan({
+        toolName: 'session.create',
+        args: { names, open: true },
+        featureId: 'session.create',
+        title: '创建聊天室',
+        response: `我来创建 ${names.length} 个聊天室。`,
+      });
+    }
+    const name = names[0] || extractSessionName(text);
     if (!name) return unsupportedPlan('missing_session_name', '请告诉我要创建的聊天室名称。');
     return buildPlan({
       toolName: 'session.create',
@@ -256,7 +470,7 @@ const executeWithRegistry = async ({
 export const createMaidAssistantAgent = ({
   toolRegistry = null,
   agentTaskRuntime = null,
-  planner = planMaidAssistantCommand,
+  planner = requireAiPlanner,
   chatResponder = null,
   guidedActionRuntime = null,
   logger = console,
@@ -374,6 +588,14 @@ export const createMaidAssistantAgent = ({
       };
     }
     try {
+      if (trim(plan.response) && typeof context?.onStatus === 'function') {
+        context.onStatus({
+          stage: 'planned',
+          tone: 'thinking',
+          message: trim(plan.response),
+          plan: clone(plan),
+        });
+      }
       const execution = await executePlan(plan, context);
       const output = execution?.output ?? execution;
       if (!isToolOutputOk(output)) {

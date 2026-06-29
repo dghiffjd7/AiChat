@@ -70,10 +70,15 @@ const injectStyle = (documentRef) => {
 }
 .maid-command-input-field {
   min-width: 0;
+  min-height: 32px;
   flex: 1 1 auto;
+  padding: 0;
   border: 0;
   outline: 0;
+  appearance: none;
+  -webkit-appearance: none;
   background: transparent;
+  box-shadow: none;
   color: inherit;
   font: inherit;
   font-size: 14px;
@@ -87,6 +92,7 @@ const injectStyle = (documentRef) => {
   flex: 0 0 auto;
   width: 32px;
   height: 32px;
+  box-sizing: border-box;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -95,6 +101,7 @@ const injectStyle = (documentRef) => {
   cursor: pointer;
   color: var(--app-text-secondary, #475569);
   transition: background 120ms ease, color 120ms ease, transform 90ms ease;
+  touch-action: manipulation;
 }
 .maid-command-input-settings {
   background: var(--app-surface-subtle, #f8fafc);
@@ -115,15 +122,19 @@ const injectStyle = (documentRef) => {
   transform: translateY(1px);
 }
 .maid-command-input-settings:focus-visible,
-.maid-command-input-submit:focus-visible,
-.maid-command-input-field:focus-visible {
+.maid-command-input-submit:focus-visible {
   outline: 2px solid rgba(37, 99, 235, 0.32);
   outline-offset: 2px;
+}
+.maid-command-input:focus-within {
+  border-color: rgba(37, 99, 235, 0.38);
+  box-shadow: 0 16px 40px rgba(15, 23, 42, 0.20), 0 0 0 2px rgba(37, 99, 235, 0.10);
 }
 .maid-command-input-icon {
   width: 16px;
   height: 16px;
   display: block;
+  pointer-events: none;
   fill: none;
   stroke: currentColor;
   stroke-width: 1.9;
@@ -426,7 +437,9 @@ export const createMaidCommandInputRuntime = ({
     setSubmitting(true);
     setResult('女仆正在回复...', 'thinking');
     try {
-      const result = await onSubmit(text);
+      const result = await onSubmit(text, {
+        setStatus: (message = '', tone = 'thinking') => setResult(message, tone),
+      });
       const ok = result?.ok !== false;
       setResult(result?.message || result?.summary || (ok ? '已完成。' : '执行失败。'), ok ? 'success' : 'error');
       if (ok && inputEl) inputEl.value = '';
@@ -444,6 +457,7 @@ export const createMaidCommandInputRuntime = ({
     close,
     submit,
     position,
+    setStatus: (message = '', tone = 'info') => setResult(message, tone),
     isOpen: () => isOpen,
     isSubmitting: () => isSubmitting,
     getElements: () => ({ rootEl, inputEl, settingsBtn, submitBtn, resultEl }),

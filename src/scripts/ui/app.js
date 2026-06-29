@@ -54,8 +54,10 @@ import { createMaidModelBackedPlanner } from '../agent/maid-model-planner.js';
 import { createMaidRuntimeConfigResolver } from '../agent/maid-runtime-config.js';
 import { registerAppNavigationAgentTools } from '../agent/tools/app-navigation-tools.js';
 import { registerAppSessionAgentTools } from '../agent/tools/app-session-tools.js';
+import { registerAppContentAgentTools } from '../agent/tools/app-content-tools.js';
 import { AgentRunStore } from '../storage/agent-run-store.js';
 import { MaidGuideStore } from '../storage/maid-guide-store.js';
+import { MaidConversationStore } from '../storage/maid-conversation-store.js';
 import { MaidSettingsStore } from '../storage/maid-settings-store.js';
 import { appSettings } from '../storage/app-settings.js';
 import { renderTemplateTextAsync, templateSettings } from '../plugins/template-engine.js';
@@ -2000,6 +2002,9 @@ const initApp = async () => {
     await syncBoundUserForCharacterCard(target);
     syncUserPersonaUI(chatStore.getCurrent());
     refreshChatAndContacts();
+    try {
+      personaPanel.renderList?.();
+    } catch {}
     return true;
   };
   const switchUserProfile = async (userIdOrName) => {
@@ -2017,6 +2022,9 @@ const initApp = async () => {
     if (!ok) return false;
     syncUserPersonaUI(chatStore.getCurrent());
     refreshChatAndContacts();
+    try {
+      userPanel.renderList?.();
+    } catch {}
     return true;
   };
   registerPersonaBridgeContract(window.appBridge, {
@@ -2593,16 +2601,55 @@ const initApp = async () => {
     renderSessionNameHtml: (sessionId, contact) => renderSessionNameHtml(sessionId, contact),
     defaultAvatar: '',
   });
+  registerAppContentAgentTools(agentToolRegistry, {
+    personaStore,
+    userStore,
+    contactsStore,
+    chatStore,
+    switchPersona,
+    switchUserProfile,
+    saveWorldInfo: (id, data) => window.appBridge.saveWorldInfo?.(id, data),
+    getWorldInfo: id => window.appBridge.getWorldInfo?.(id),
+    assignWorldToPersona: (personaId, worldId, options) => window.appBridge.assignRoleWorldToPersona?.(personaId, worldId, options || {}),
+    enterChatRoom: (...args) => enterChatRoom(...args),
+    refreshChatAndContacts: (...args) => refreshChatAndContacts(...args),
+    setActiveSession: sessionId => window.appBridge.setActiveSession(sessionId),
+    sendChatMessage: (content, options = {}) => {
+      const sid = String(options?.sessionId || '').trim();
+      if (sid && String(chatStore.getCurrent() || '').trim() !== sid) {
+        chatStore.switchSession(sid);
+        window.appBridge.setActiveSession(sid);
+      }
+      const sendTask = handleSend(null, {
+        overrideText: String(content ?? ''),
+        ignorePending: true,
+        includeAttachments: false,
+      });
+      if (options?.waitForReply === false) {
+        Promise.resolve(sendTask).catch(error => {
+          logger.warn('maid send chat message failed', error);
+        });
+        return true;
+      }
+      return sendTask;
+    },
+    renderSessionNameHtml: (sessionId, contact) => renderSessionNameHtml(sessionId, contact),
+    getActiveUserName,
+    getActiveUserAvatar,
+  });
   const maidGuideStore = new MaidGuideStore();
   maidGuideStore.load();
+  let showMaidGuide = async (guide) => {
+    if (guide?.message) window.toastr?.info?.(guide.message);
+  };
   const maidGuidedActionRuntime = createAppGuidedActionRuntime({
     guideStore: maidGuideStore,
-    showGuide: guide => {
-      if (guide?.message) window.toastr?.info?.(guide.message);
-    },
+    showGuide: (guide, meta) => showMaidGuide(guide, meta),
   });
   const maidSettingsStore = new MaidSettingsStore();
   await maidSettingsStore.load();
+  const maidConversationStore = new MaidConversationStore();
+  await maidConversationStore.load();
   const recordMaidDebugSnapshot = ({
     source = '',
     input = '',
@@ -2619,6 +2666,12 @@ const initApp = async () => {
       source,
     });
   };
+  const getMaidConversationContext = () => maidConversationStore.getContextSnapshot();
+  const recordMaidContextInjection = ({ conversationContext = null } = {}) => {
+    const tokenCount = Number(conversationContext?.tokenCount || 0) || 0;
+    if (!tokenCount) return;
+    void maidConversationStore.recordContextInjection(tokenCount);
+  };
   const resolveMaidRuntimeConfig = createMaidRuntimeConfigResolver({
     settingsStore: maidSettingsStore,
     configManager: chatConfigManager,
@@ -2630,6 +2683,8 @@ const initApp = async () => {
     resolveRuntimeConfig: resolveMaidRuntimeConfig,
     createClient: config => new LLMClient(config),
     isConfigReady: canInitClient,
+    getConversationContext: getMaidConversationContext,
+    onContextInjected: recordMaidContextInjection,
     onDebugSnapshot: recordMaidDebugSnapshot,
     logger,
   });
@@ -2637,6 +2692,8 @@ const initApp = async () => {
     resolveRuntimeConfig: resolveMaidRuntimeConfig,
     createClient: config => new LLMClient(config),
     isConfigReady: canInitClient,
+    getConversationContext: getMaidConversationContext,
+    onContextInjected: recordMaidContextInjection,
     onDebugSnapshot: recordMaidDebugSnapshot,
     logger,
   });
@@ -2752,6 +2809,7 @@ const initApp = async () => {
         contactProfilerAgent,
         worldbookAuditAgent,
         agentCenterSettingsStore,
+        maidConversationStore,
       },
       actions: {
         getAgentTool: name => agentToolRegistry.get(name),
@@ -3042,6 +3100,15 @@ const initApp = async () => {
           return providerToolExperimentRuntime.captureStreamDeltas(events, {
             ...opts,
             sessionId: opts.sessionId || chatStore.getCurrent(),
+          });
+        },
+        runMaidAssistantPrompt: (options = {}) => {
+          const opts = options && typeof options === 'object' ? options : {};
+          const input = String(opts.input || opts.prompt || opts.text || '').trim();
+          return maidAssistantAgent.runPrompt(input, {
+            sessionId: opts.sessionId || chatStore.getCurrent(),
+            uiMode: opts.uiMode || uiMode,
+            activePage: opts.activePage || activePage,
           });
         },
         exportAgentRuns: options => agentRunStore.exportState(options || {}),
@@ -14871,6 +14938,7 @@ Phase G（Frame 36）：循环衔接
   const avatarBtns = document.querySelectorAll('.qq-message-topbar .user-avatar-btn');
   const settingsBtns = document.querySelectorAll('.qq-message-topbar .user-settings-btn');
   const plusBtns = document.querySelectorAll('.qq-message-topbar .topbar-plus-btn');
+  avatarBtns.forEach(btn => btn.setAttribute('data-maid-guide-target', 'avatar-user-entry'));
 	  const chatMenuBtn = document.getElementById('chat-menu-btn');
 	  const chatroomMenu = document.getElementById('chatroom-menu');
 	  const rpChatroomMenu = document.getElementById('rp-chatroom-menu');
@@ -15033,8 +15101,8 @@ Phase G（Frame 36）：循环衔接
     const activeTab = normalizePersonaSwitcherTab(personaSwitcherTab);
     const tabsHtml = `
       <div class="persona-switcher-tabs">
-        <button type="button" data-action="switcher-tab" data-tab="user" class="${activeTab === 'user' ? 'is-active' : ''}">用户</button>
-        <button type="button" data-action="switcher-tab" data-tab="character" class="${activeTab === 'character' ? 'is-active' : ''}">角色卡</button>
+        <button type="button" data-action="switcher-tab" data-tab="user" data-maid-guide-target="persona-switcher-tab-user" class="${activeTab === 'user' ? 'is-active' : ''}">用户</button>
+        <button type="button" data-action="switcher-tab" data-tab="character" data-maid-guide-target="persona-switcher-tab-character" class="${activeTab === 'character' ? 'is-active' : ''}">角色卡</button>
       </div>
     `;
 
@@ -15083,7 +15151,7 @@ Phase G（Frame 36）：循环衔接
           ${items || '<div class="persona-switcher-subtitle" style="padding: 8px 4px;">暂无其他用户</div>'}
         </div>
         <div class="persona-switcher-actions">
-          <button type="button" data-action="manage-users">管理用户</button>
+          <button type="button" data-action="manage-users" data-maid-guide-target="manage-users">管理用户</button>
         </div>
       `;
       return;
@@ -15147,10 +15215,209 @@ Phase G（Frame 36）：循环衔接
         ${items || '<div class="persona-switcher-subtitle" style="padding: 8px 4px;">暂无其他角色卡</div>'}
       </div>
       <div class="persona-switcher-actions">
-        <button type="button" data-action="manage-cards">管理角色卡</button>
+        <button type="button" data-action="manage-cards" data-maid-guide-target="manage-cards">管理角色卡</button>
       </div>
     `;
   };
+
+  const maidGuideDelay = ms => new Promise(resolve => setTimeout(resolve, Math.max(0, Number(ms) || 0)));
+  const ensureMaidGuideStyle = () => {
+    if (document.getElementById('maid-guide-step-style')) return;
+    const style = document.createElement('style');
+    style.id = 'maid-guide-step-style';
+    style.textContent = `
+.maid-guide-step-bubble {
+  position: fixed;
+  z-index: 26080;
+  max-width: min(320px, calc(100vw - 28px));
+  padding: 10px 12px;
+  border: 1px solid rgba(37, 99, 235, 0.22);
+  border-radius: 12px;
+  background: var(--app-surface-card, #fff);
+  color: var(--app-text-primary, #111827);
+  box-shadow: 0 14px 40px rgba(15, 23, 42, 0.18);
+  font-size: 12px;
+  line-height: 1.45;
+  pointer-events: none;
+}
+.maid-guide-step-title {
+  font-weight: 900;
+  margin-bottom: 3px;
+}
+.maid-guide-step-path {
+  color: var(--app-text-muted, #64748b);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.maid-guide-step-target {
+  position: relative;
+  z-index: 26079 !important;
+  outline: 3px solid rgba(37, 99, 235, 0.55) !important;
+  outline-offset: 4px !important;
+  box-shadow: 0 0 0 8px rgba(37, 99, 235, 0.16) !important;
+  transition: outline-color 120ms ease, box-shadow 120ms ease, transform 120ms ease;
+  transform: translateY(-1px);
+}
+`;
+    document.head?.appendChild(style);
+  };
+  const getOrCreateMaidGuideBubble = () => {
+    ensureMaidGuideStyle();
+    let bubble = document.getElementById('maid-guide-step-bubble');
+    if (!bubble) {
+      bubble = document.createElement('div');
+      bubble.id = 'maid-guide-step-bubble';
+      bubble.className = 'maid-guide-step-bubble';
+      document.body.appendChild(bubble);
+    }
+    return bubble;
+  };
+  const hideMaidGuideBubble = () => {
+    document.getElementById('maid-guide-step-bubble')?.remove();
+    document.querySelectorAll('.maid-guide-step-target').forEach(el => {
+      el.classList.remove('maid-guide-step-target');
+    });
+  };
+  const getMaidGuideStepSelectors = (guide = {}, step = {}) => {
+    const featureId = String(guide?.featureId || '').trim();
+    const label = String(step?.label || step || '').trim();
+    if (featureId === 'user.create' && label === '新建') {
+      return ['[data-maid-guide-target="create-user"]', '#create-user-btn'];
+    }
+    if (featureId === 'persona.create' && label === '新建') {
+      return ['[data-maid-guide-target="create-persona"]', '#create-persona-btn'];
+    }
+    if (featureId === 'user.switch' && label === '选择用户') {
+      return ['#persona-switcher-menu [data-user-id]'];
+    }
+    if (featureId === 'persona.switch' && label === '选择角色卡') {
+      return ['#persona-switcher-menu [data-persona-id]'];
+    }
+    return Array.isArray(step?.selectors) ? step.selectors : [];
+  };
+  const findMaidGuideTarget = (guide = {}, step = {}) => {
+    const selectors = getMaidGuideStepSelectors(guide, step);
+    for (const selector of selectors) {
+      try {
+        const found = document.querySelector(selector);
+        if (found) return found;
+      } catch {}
+    }
+    return null;
+  };
+  const positionMaidGuideBubble = (bubble, target = null) => {
+    const viewportPad = 14;
+    if (!target || typeof target.getBoundingClientRect !== 'function') {
+      bubble.style.left = `${viewportPad}px`;
+      bubble.style.right = `${viewportPad}px`;
+      bubble.style.top = 'auto';
+      bubble.style.bottom = 'calc(86px + env(safe-area-inset-bottom, 0px))';
+      return;
+    }
+    const rect = target.getBoundingClientRect();
+    const width = Math.min(320, window.innerWidth - viewportPad * 2);
+    const left = Math.min(Math.max(viewportPad, rect.left), Math.max(viewportPad, window.innerWidth - width - viewportPad));
+    const top = rect.bottom + 12 + 86 < window.innerHeight
+      ? rect.bottom + 12
+      : Math.max(viewportPad, rect.top - 86);
+    bubble.style.left = `${left}px`;
+    bubble.style.right = 'auto';
+    bubble.style.top = `${top}px`;
+    bubble.style.bottom = 'auto';
+  };
+  const showMaidGuideStepBubble = (guide = {}, step = {}, index = 0, total = 1, target = null) => {
+    const bubble = getOrCreateMaidGuideBubble();
+    const label = String(step?.label || step || '').trim() || `步骤 ${index + 1}`;
+    const pathText = String(guide?.pathText || (Array.isArray(guide?.steps) ? guide.steps.join(' -> ') : '') || '').trim();
+    bubble.innerHTML = `
+      <div class="maid-guide-step-title">${escapeHtml(guide?.title || '首次引导')} · ${index + 1}/${total}</div>
+      <div>${escapeHtml(label)}</div>
+      ${pathText ? `<div class="maid-guide-step-path">${escapeHtml(pathText)}</div>` : ''}
+    `;
+    positionMaidGuideBubble(bubble, target);
+  };
+  const highlightMaidGuideTarget = (target = null) => {
+    document.querySelectorAll('.maid-guide-step-target').forEach(el => {
+      if (el !== target) el.classList.remove('maid-guide-step-target');
+    });
+    if (!target) return;
+    try {
+      target.scrollIntoView?.({ block: 'center', inline: 'center', behavior: 'smooth' });
+    } catch {}
+    target.classList.add('maid-guide-step-target');
+  };
+  const openMaidPersonaSwitcherForGuide = () => {
+    const anchor = avatarBtns?.[0] || document.querySelector('[data-maid-guide-target="avatar-user-entry"]');
+    if (!anchor || !personaSwitcherMenu) return false;
+    hideMenus();
+    renderPersonaSwitcher();
+    positionSheet(personaSwitcherMenu, anchor, 0, 4, false);
+    personaSwitcherMenu.classList.remove('hidden');
+    return true;
+  };
+  const prepareMaidGuideStep = async (guide = {}, step = {}) => {
+    const featureId = String(guide?.featureId || '').trim();
+    const label = String(step?.label || step || '').trim();
+    if (label === '头像/用户入口' || label === '头像/角色入口') {
+      openMaidPersonaSwitcherForGuide();
+      await maidGuideDelay(80);
+      return;
+    }
+    if (label === '用户') {
+      openMaidPersonaSwitcherForGuide();
+      personaSwitcherTab = 'user';
+      persistPersonaSwitcherTab();
+      renderPersonaSwitcher();
+      const anchor = avatarBtns?.[0] || document.querySelector('[data-maid-guide-target="avatar-user-entry"]');
+      if (anchor) positionSheet(personaSwitcherMenu, anchor, 0, 4, false);
+      personaSwitcherMenu?.classList.remove('hidden');
+      await maidGuideDelay(80);
+      return;
+    }
+    if (label === '角色卡') {
+      openMaidPersonaSwitcherForGuide();
+      personaSwitcherTab = 'character';
+      persistPersonaSwitcherTab();
+      renderPersonaSwitcher();
+      const anchor = avatarBtns?.[0] || document.querySelector('[data-maid-guide-target="avatar-user-entry"]');
+      if (anchor) positionSheet(personaSwitcherMenu, anchor, 0, 4, false);
+      personaSwitcherMenu?.classList.remove('hidden');
+      await maidGuideDelay(80);
+      return;
+    }
+    if (label === '新建' && featureId === 'user.create') {
+      hideMenus();
+      await userPanel.show();
+      await maidGuideDelay(120);
+      return;
+    }
+    if (label === '新建' && featureId === 'persona.create') {
+      hideMenus();
+      await personaPanel.show();
+      await maidGuideDelay(120);
+      return;
+    }
+  };
+  const showMaidGuideSteps = async (guide = {}) => {
+    if (guide?.message) window.toastr?.info?.(guide.message);
+    const details = Array.isArray(guide?.stepDetails) && guide.stepDetails.length
+      ? guide.stepDetails
+      : (Array.isArray(guide?.steps) ? guide.steps.map((label, index) => ({ label, index })) : []);
+    if (!details.length) return;
+    ensureMaidGuideStyle();
+    for (let index = 0; index < details.length; index += 1) {
+      const step = details[index];
+      await prepareMaidGuideStep(guide, step);
+      const target = findMaidGuideTarget(guide, step);
+      highlightMaidGuideTarget(target);
+      showMaidGuideStepBubble(guide, step, index, details.length, target);
+      await maidGuideDelay(720);
+    }
+    await maidGuideDelay(120);
+    hideMaidGuideBubble();
+  };
+  showMaidGuide = showMaidGuideSteps;
 
   bindAppSheetToggleButtons({
     avatarBtns,
@@ -20552,6 +20819,8 @@ Phase G（Frame 36）：循环衔接
     documentRef: document,
     settingsStore: maidSettingsStore,
     getAppKnowledgeText: () => buildAppFeatureKnowledgeText(),
+    getHistoryContextText: () => maidConversationStore.getHistoryContextText(),
+    getMemoryTableText: () => maidConversationStore.getMemoryTableText(),
     onOpenApiConfig: () => openMaidApiConfigPanel({ reason: 'manual' }),
     logger,
   });
@@ -20577,25 +20846,47 @@ Phase G（Frame 36）：循环衔接
     documentRef: document,
     modeSwitchEl: modeSwitch,
     getViewportSize,
-    onSubmit: async (text) => {
+    onSubmit: async (text, controls = {}) => {
       maidSettingsStore.setLastExchange({
         requestPrompt: '本次请求尚未发送模型提示词。',
         appContext: buildAppFeatureSearchContextText(text, { limit: 5 }),
         fullResponse: '',
         source: 'pending',
       });
-      const result = await maidAssistantAgent.runPrompt(text, {
+      const maidTurnContext = {
         sessionId: chatStore.getCurrent(),
         uiMode,
         activePage,
+      };
+      const result = await maidAssistantAgent.runPrompt(text, {
+        ...maidTurnContext,
+        onStatus: (status = {}) => {
+          const message = String(status?.message || '').trim();
+          if (!message) return;
+          controls?.setStatus?.(message, status?.tone || 'thinking');
+        },
       });
+      try {
+        await maidConversationStore.appendTurn({
+          input: text,
+          status: result?.status || (result?.ok ? 'succeeded' : 'failed'),
+          responseType: result?.responseType || '',
+          message: result?.message || result?.reason || '',
+          toolName: result?.plan?.toolName || result?.output?.toolName || '',
+          featureId: result?.plan?.featureId || '',
+          title: result?.plan?.title || '',
+          context: maidTurnContext,
+        });
+      } catch (error) {
+        logger.warn('maid conversation turn save failed', error);
+      }
       const latestExchange = maidSettingsStore.getLastExchange?.() || {};
       if (!String(latestExchange.requestPrompt || '').trim() || latestExchange.source === 'pending') {
         maidSettingsStore.setLastExchange({
-          requestPrompt: '本次请求未调用模型提示词；由本地工具或规则直接处理。',
+          requestPrompt: '本次请求未成功调用模型提示词；未执行本地直连工具。',
           appContext: buildAppFeatureSearchContextText(text, { limit: 5 }),
           fullResponse: result?.message || result?.reason || '',
-          source: 'local_result',
+          source: 'no_model_result',
         });
       }
       if (result?.ok === false) {

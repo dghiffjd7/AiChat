@@ -13,6 +13,7 @@ import {
 } from '../../src/scripts/agent/app-feature-catalog.js';
 import { createAppNavigationAgentTools } from '../../src/scripts/agent/tools/app-navigation-tools.js';
 import { createAppSessionAgentTools } from '../../src/scripts/agent/tools/app-session-tools.js';
+import { createAppContentAgentTools } from '../../src/scripts/agent/tools/app-content-tools.js';
 
 const getTool = (tools, name) => tools.find(tool => tool.name === name);
 
@@ -81,6 +82,12 @@ const escapeRegex = value => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'
   const openedConfigs = [];
   const activeSessions = [];
   const refreshed = [];
+  const savedWorlds = new Map();
+  const boundWorlds = [];
+  const personas = new Map();
+  const users = new Map();
+  let personaSeq = 0;
+  let userSeq = 0;
   let current = 'B';
   const contacts = new Map([
     ['B', { id: 'B', name: 'Beta', isGroup: false }],
@@ -129,7 +136,58 @@ const escapeRegex = value => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'
     renderSessionNameHtml: (id, contact) => contact?.name || id,
     now: () => 1000,
   });
-  const tools = [...navTools, ...sessionTools];
+  const contentTools = createAppContentAgentTools({
+    personaStore: {
+      getAll: () => Array.from(personas.values()),
+      get: id => personas.get(id) || null,
+      create: async (data = {}) => {
+        personaSeq += 1;
+        const item = { id: `persona-${personaSeq}`, ...data };
+        personas.set(item.id, item);
+        return item;
+      },
+      setActive: async id => personas.has(id),
+    },
+    userStore: {
+      getAll: () => Array.from(users.values()),
+      get: id => users.get(id) || null,
+      create: async (data = {}) => {
+        userSeq += 1;
+        const item = { id: `user-${userSeq}`, ...data };
+        users.set(item.id, item);
+        return item;
+      },
+      setActive: async id => users.has(id),
+    },
+    contactsStore: {
+      listContacts: () => Array.from(contacts.values()),
+      getContact: id => contacts.get(id) || null,
+    },
+    chatStore: {
+      getCurrent: () => current,
+      switchSession: id => {
+        current = id;
+      },
+      appendMessage: (message, id = current) => {
+        const list = messages.get(id) || [];
+        list.push({ ...message });
+        messages.set(id, list);
+      },
+    },
+    saveWorldInfo: async (id, data) => savedWorlds.set(id, data),
+    getWorldInfo: async id => savedWorlds.get(id) || null,
+    assignWorldToPersona: async (personaId, worldId, options) => boundWorlds.push({ personaId, worldId, options }),
+    enterChatRoom: async id => {
+      openedSessions.push(id);
+      return { blocked: false };
+    },
+    refreshChatAndContacts: options => refreshed.push(options),
+    setActiveSession: id => activeSessions.push(id),
+    renderSessionNameHtml: (id, contact) => contact?.name || id,
+    getActiveUserName: () => 'CatalogUser',
+    now: () => 1000,
+  });
+  const tools = [...navTools, ...sessionTools, ...contentTools];
 
   for (const feature of listAppFeatures()) {
     for (const toolName of feature.tools || []) {
@@ -154,6 +212,47 @@ const escapeRegex = value => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'
       const result = await getTool(tools, 'session.open_config').execute({ sessionId: 'Beta' });
       assert.equal(result.ok, true);
       assert.equal(result.opened, true);
+      return;
+    }
+    if (feature.id === 'persona.create') {
+      const result = await getTool(tools, 'persona.create').execute({ name: 'CatalogRole', setActive: true });
+      assert.equal(result.ok, true);
+      assert.equal(result.created, true);
+      return;
+    }
+    if (feature.id === 'persona.switch') {
+      const result = await getTool(tools, 'persona.switch').execute({ target: 'CatalogRole' });
+      assert.equal(result.ok, true);
+      assert.equal(result.switched, true);
+      return;
+    }
+    if (feature.id === 'user.create') {
+      const result = await getTool(tools, 'user.create').execute({ name: 'CatalogUser', setActive: true });
+      assert.equal(result.ok, true);
+      assert.equal(result.created, true);
+      return;
+    }
+    if (feature.id === 'user.switch') {
+      const result = await getTool(tools, 'user.switch').execute({ target: 'CatalogUser' });
+      assert.equal(result.ok, true);
+      assert.equal(result.switched, true);
+      return;
+    }
+    if (feature.id === 'worldbook.create') {
+      const result = await getTool(tools, 'worldbook.create').execute({
+        name: 'CatalogWorld',
+        personaName: 'CatalogRole',
+        bindToPersona: true,
+        entries: [{ title: 'CatalogEntry', content: 'Catalog content.' }],
+      });
+      assert.equal(result.ok, true);
+      assert.equal(result.entryCount, 1);
+      return;
+    }
+    if (feature.id === 'chat.send_message') {
+      const result = await getTool(tools, 'chat.send_message').execute({ sessionId: 'Beta', content: 'hi' });
+      assert.equal(result.ok, true);
+      assert.equal(result.sent, true);
       return;
     }
     if (feature.id === 'app.state.read') {
@@ -181,6 +280,11 @@ const escapeRegex = value => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'
   assert.ok(openedSessions.includes('B'));
   assert.ok(openedSessions.includes('CatalogRoom'));
   assert.ok(activeSessions.includes('CatalogRoom'));
+  assert.ok(personas.has('persona-1'));
+  assert.ok(users.has('user-1'));
+  assert.ok(savedWorlds.has('CatalogWorld'));
+  assert.ok(boundWorlds.some(item => item.worldId === 'CatalogWorld'));
+  assert.ok(messages.get('B')?.some(message => message.content === 'hi'));
   assert.ok(refreshed.length > 0);
   console.log('ok - app feature catalog entries map to executable maid tools');
 }

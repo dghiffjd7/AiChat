@@ -41,6 +41,17 @@ const summarizeContact = contact => ({
   memberCount: Array.isArray(contact?.members) ? contact.members.length : 0,
 });
 
+const resolveCreateSessionNames = (args = {}) => {
+  const names = Array.isArray(args.names)
+    ? args.names
+    : (Array.isArray(args.nameList) ? args.nameList : []);
+  const merged = [
+    trim(args.name),
+    ...names.map(item => trim(item)),
+  ].filter(Boolean);
+  return Array.from(new Set(merged)).slice(0, 20);
+};
+
 const buildSessionNameHtmlFallback = (id, contact = null) => trim(contact?.name || id, id);
 
 const formatNowTime = () => {
@@ -83,6 +94,61 @@ export const createAppSessionAgentTools = ({
       ok: true,
       sessionId: sid,
       contact: contact ? summarizeContact(contact) : null,
+    };
+  };
+
+  const createOneSession = async (name = '', args = {}) => {
+    const sessionName = trim(name);
+    if (!sessionName) return { ok: false, created: false, reason: 'missing_name' };
+    if (isGroupLikeId(sessionName) || isRpLikeId(sessionName)) {
+      return { ok: false, created: false, reason: 'reserved_prefix', name: sessionName };
+    }
+    const existing = contactsStore?.getContact?.(sessionName) || findContact(contactsStore, sessionName);
+    if (existing) {
+      const sid = trim(existing.id || sessionName);
+      const opened = args.open === false ? null : await openSession(sid);
+      return {
+        ok: true,
+        created: false,
+        existing: true,
+        sessionId: sid,
+        contact: summarizeContact(existing),
+        opened,
+      };
+    }
+    const contact = {
+      id: sessionName,
+      name: sessionName,
+      avatar: trim(args.avatar || defaultAvatar),
+      isGroup: false,
+      addedAt: Number(now?.() || Date.now()) || Date.now(),
+      labels: [],
+      isUserCreated: true,
+    };
+    contactsStore?.upsertContact?.(contact);
+    chatStore?.switchSession?.(sessionName);
+    setActiveSession?.(sessionName);
+    const time = formatNowTime();
+    if (typeof chatStore?.appendMessage === 'function') {
+      try {
+        chatStore.appendMessage({
+          role: 'system',
+          type: 'meta',
+          content: `你创建了聊天室「${sessionName}」`,
+          name: '系统',
+          avatar: '',
+          time,
+        }, sessionName);
+      } catch {}
+    }
+    refreshChatAndContacts?.({ immediate: true });
+    const opened = args.open === false ? null : await openSession(sessionName);
+    return {
+      ok: true,
+      created: true,
+      sessionId: sessionName,
+      contact: summarizeContact(contact),
+      opened,
     };
   };
 
@@ -144,71 +210,59 @@ export const createAppSessionAgentTools = ({
       },
       schema: {
         type: 'object',
-        required: ['name'],
         additionalProperties: false,
         properties: {
           name: { type: 'string', minLength: 1, maxLength: 80 },
+          names: {
+            type: 'array',
+            items: { type: 'string', minLength: 1, maxLength: 80 },
+          },
+          nameList: {
+            type: 'array',
+            items: { type: 'string', minLength: 1, maxLength: 80 },
+          },
           avatar: { type: 'string', maxLength: 500000 },
           open: { type: 'boolean' },
         },
       },
       execute: async (args = {}) => {
-        const name = trim(args.name);
-        if (!name) return { ok: false, created: false, reason: 'missing_name' };
-        if (isGroupLikeId(name) || isRpLikeId(name)) {
-          return { ok: false, created: false, reason: 'reserved_prefix', name };
-        }
-        const existing = contactsStore?.getContact?.(name) || findContact(contactsStore, name);
-        if (existing) {
-          const sid = trim(existing.id || name);
-          const opened = args.open === false ? null : await openSession(sid);
+        const names = resolveCreateSessionNames(args);
+        if (names.length > 1) {
+          const sessions = [];
+          for (const name of names) {
+            const result = await createOneSession(name, args);
+            sessions.push(result);
+          }
+          const failed = sessions.find(item => item?.ok === false);
+          if (failed) {
+            return {
+              ok: false,
+              created: false,
+              reason: failed.reason || 'session_create_failed',
+              failed,
+              sessions,
+            };
+          }
           return {
             ok: true,
-            created: false,
-            existing: true,
-            sessionId: sid,
-            contact: summarizeContact(existing),
-            opened,
+            created: sessions.some(item => item?.created === true),
+            createdCount: sessions.filter(item => item?.created === true).length,
+            count: sessions.length,
+            sessions,
+            sessionIds: sessions.map(item => item.sessionId).filter(Boolean),
           };
         }
-        const contact = {
-          id: name,
-          name,
-          avatar: trim(args.avatar || defaultAvatar),
-          isGroup: false,
-          addedAt: Number(now?.() || Date.now()) || Date.now(),
-          labels: [],
-          isUserCreated: true,
-        };
-        contactsStore?.upsertContact?.(contact);
-        chatStore?.switchSession?.(name);
-        setActiveSession?.(name);
-        const time = formatNowTime();
-        if (typeof chatStore?.appendMessage === 'function') {
-          try {
-            chatStore.appendMessage({
-              role: 'system',
-              type: 'meta',
-              content: `你创建了聊天室「${name}」`,
-              name: '系统',
-              avatar: '',
-              time,
-            }, name);
-          } catch {}
-        }
-        refreshChatAndContacts?.({ immediate: true });
-        const opened = args.open === false ? null : await openSession(name);
-        return {
-          ok: true,
-          created: true,
-          sessionId: name,
-          contact: summarizeContact(contact),
-          opened,
-        };
+        const name = names[0] || '';
+        return createOneSession(name, args);
       },
-      summarizeResult: result => result?.created
-        ? `created session ${trim(result.sessionId, '-')}`
-        : `session already exists ${trim(result?.sessionId, '-')}`,
+      summarizeResult: result => {
+        if (Array.isArray(result?.sessions)) {
+          return `created ${Number(result.createdCount || 0)} of ${Number(result.count || result.sessions.length || 0)} session(s): ${result.sessionIds?.join(', ') || '-'}`;
+        }
+        return result?.created
+          ? `created session ${trim(result.sessionId, '-')}`
+          : `session already exists ${trim(result?.sessionId, '-')}`;
+      },
     },
     {
       name: 'session.open',

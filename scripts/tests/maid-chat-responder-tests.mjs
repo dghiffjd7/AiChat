@@ -34,12 +34,30 @@ import {
     input: '你好啊',
     maidPrompt: '自定义女仆 system prompt',
   });
-  assert.equal(messages[0].content, '自定义女仆 system prompt');
+  assert.match(messages[0].content, /自定义女仆 system prompt/);
+  assert.match(messages[0].content, /历史上下文/);
   console.log('ok - maid chat responder uses editable maid prompt as system prompt');
 }
 
 {
+  const messages = buildMaidChatResponderMessages({
+    input: '继续刚才那个',
+    context: { sessionId: 's1' },
+    conversationContext: {
+      historyText: '- 用户: 创建角色卡 A\n  结果: 已完成',
+      memoryText: '| 1 | 摘要 |\n| 内容 | 用户创建了角色卡 A。 |',
+    },
+  });
+  assert.match(messages[1].content, /女仆记忆表格/);
+  assert.match(messages[1].content, /用户创建了角色卡 A/);
+  assert.match(messages[1].content, /女仆历史上下文/);
+  assert.match(messages[1].content, /创建角色卡 A/);
+  console.log('ok - maid chat responder injects history and memory context');
+}
+
+{
   const calls = [];
+  const injected = [];
   const debugSnapshots = [];
   const responder = createMaidChatResponder({
     resolveRuntimeConfig: async () => ({
@@ -53,6 +71,12 @@ import {
       },
     }),
     isConfigReady: () => true,
+    getConversationContext: () => ({
+      historyText: '- 用户: 你好',
+      memoryText: '| 内容 | 用户在打招呼 |',
+      tokenCount: 12,
+    }),
+    onContextInjected: payload => injected.push(payload),
     onDebugSnapshot: snapshot => debugSnapshots.push(snapshot),
     logger: { warn() {} },
   });
@@ -61,12 +85,15 @@ import {
   assert.equal(result.status, 'responded');
   assert.equal(result.message, '你好，我在。');
   assert.equal(calls.length, 1);
-  assert.equal(calls[0].messages[0].content, '活泼一点');
+  assert.match(calls[0].messages[0].content, /活泼一点/);
+  assert.match(calls[0].messages[0].content, /历史上下文/);
   assert.equal(calls[0].options.maxTokens, 500);
   assert.equal(debugSnapshots.length, 1);
   assert.equal(debugSnapshots[0].source, 'maid_chat_responder');
   assert.equal(debugSnapshots[0].responseText, '你好，我在。');
   assert.match(debugSnapshots[0].messages[1].content, /你好啊/);
+  assert.equal(injected.length, 1);
+  assert.equal(injected[0].conversationContext.tokenCount, 12);
   console.log('ok - maid chat responder calls bound runtime client');
 }
 

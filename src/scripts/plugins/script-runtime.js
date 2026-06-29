@@ -26,6 +26,27 @@ let compatUiLastSignature = '';
 const COMPAT_UI_MAX_HTML = 400000;
 const COMPAT_UI_MAX_ROOTS = 80;
 const compatUiLayouts = new Map();
+const DEFAULT_COMPAT_VIEWPORT = {
+  innerWidth: 1024,
+  innerHeight: 768,
+  outerWidth: 1024,
+  outerHeight: 768,
+  devicePixelRatio: 1,
+  screenWidth: 1024,
+  screenHeight: 768,
+  screenAvailWidth: 1024,
+  screenAvailHeight: 768,
+  visualViewport: {
+    width: 1024,
+    height: 768,
+    offsetLeft: 0,
+    offsetTop: 0,
+    pageLeft: 0,
+    pageTop: 0,
+    scale: 1,
+  },
+};
+let compatViewport = { ...DEFAULT_COMPAT_VIEWPORT, visualViewport: { ...DEFAULT_COMPAT_VIEWPORT.visualViewport } };
 
 const notifyListener = (eventName) => {
   const name = String(eventName || '').trim();
@@ -581,6 +602,84 @@ const installCompatEventTarget = (target) => {
   return target;
 };
 
+const finiteCompatNumber = (value, fallback = 0) => {
+  const num = Number(value);
+  return Number.isFinite(num) ? num : fallback;
+};
+
+const defineCompatValue = (target, key, value) => {
+  if (!target || typeof target !== 'object') return;
+  try {
+    Object.defineProperty(target, key, {
+      configurable: true,
+      enumerable: true,
+      writable: true,
+      value,
+    });
+  } catch {
+    try { target[key] = value; } catch {}
+  }
+};
+
+const normalizeCompatViewport = (viewport = {}) => {
+  const source = viewport && typeof viewport === 'object' ? viewport : {};
+  const base = compatViewport || DEFAULT_COMPAT_VIEWPORT;
+  const screenSource = source.screen && typeof source.screen === 'object' ? source.screen : source;
+  const visualSource = source.visualViewport && typeof source.visualViewport === 'object' ? source.visualViewport : source;
+  const innerWidth = Math.max(1, finiteCompatNumber(source.innerWidth, base.innerWidth));
+  const innerHeight = Math.max(1, finiteCompatNumber(source.innerHeight, base.innerHeight));
+  return {
+    innerWidth,
+    innerHeight,
+    outerWidth: Math.max(1, finiteCompatNumber(source.outerWidth, innerWidth)),
+    outerHeight: Math.max(1, finiteCompatNumber(source.outerHeight, innerHeight)),
+    devicePixelRatio: Math.max(0.1, finiteCompatNumber(source.devicePixelRatio, base.devicePixelRatio || 1)),
+    screenWidth: Math.max(1, finiteCompatNumber(screenSource.width ?? screenSource.screenWidth, innerWidth)),
+    screenHeight: Math.max(1, finiteCompatNumber(screenSource.height ?? screenSource.screenHeight, innerHeight)),
+    screenAvailWidth: Math.max(1, finiteCompatNumber(screenSource.availWidth ?? screenSource.screenAvailWidth, innerWidth)),
+    screenAvailHeight: Math.max(1, finiteCompatNumber(screenSource.availHeight ?? screenSource.screenAvailHeight, innerHeight)),
+    visualViewport: {
+      width: Math.max(1, finiteCompatNumber(visualSource.width, innerWidth)),
+      height: Math.max(1, finiteCompatNumber(visualSource.height, innerHeight)),
+      offsetLeft: finiteCompatNumber(visualSource.offsetLeft, 0),
+      offsetTop: finiteCompatNumber(visualSource.offsetTop, 0),
+      pageLeft: finiteCompatNumber(visualSource.pageLeft, 0),
+      pageTop: finiteCompatNumber(visualSource.pageTop, 0),
+      scale: Math.max(0.1, finiteCompatNumber(visualSource.scale, 1)),
+    },
+  };
+};
+
+const applyCompatViewportSnapshot = (viewport = {}, options = {}) => {
+  const previous = JSON.stringify(compatViewport);
+  compatViewport = normalizeCompatViewport(viewport);
+  currentSettings.viewport = { ...compatViewport, visualViewport: { ...compatViewport.visualViewport } };
+  const targets = Array.from(new Set([self, self.window, self.parent, self.top].filter(Boolean)));
+  targets.forEach((target) => {
+    defineCompatValue(target, 'innerWidth', compatViewport.innerWidth);
+    defineCompatValue(target, 'innerHeight', compatViewport.innerHeight);
+    defineCompatValue(target, 'outerWidth', compatViewport.outerWidth);
+    defineCompatValue(target, 'outerHeight', compatViewport.outerHeight);
+    defineCompatValue(target, 'devicePixelRatio', compatViewport.devicePixelRatio);
+    const screen = target.screen && typeof target.screen === 'object' ? target.screen : {};
+    defineCompatValue(screen, 'width', compatViewport.screenWidth);
+    defineCompatValue(screen, 'height', compatViewport.screenHeight);
+    defineCompatValue(screen, 'availWidth', compatViewport.screenAvailWidth);
+    defineCompatValue(screen, 'availHeight', compatViewport.screenAvailHeight);
+    defineCompatValue(target, 'screen', screen);
+    const visualViewport = target.visualViewport && typeof target.visualViewport === 'object' ? target.visualViewport : {};
+    installCompatEventTarget(visualViewport);
+    Object.entries(compatViewport.visualViewport).forEach(([key, value]) => defineCompatValue(visualViewport, key, value));
+    defineCompatValue(target, 'visualViewport', visualViewport);
+  });
+  const changed = previous !== JSON.stringify(compatViewport);
+  if (changed && options.dispatchResize === true) {
+    try { (self.window || self).dispatchEvent?.(makeCompatEvent('resize', { bubbles: false, cancelable: false })); } catch {}
+    try { self.visualViewport?.dispatchEvent?.(makeCompatEvent('resize', { bubbles: false, cancelable: false })); } catch {}
+  }
+  return changed;
+};
+
 const splitClassNames = (values = []) => values
   .flatMap(value => String(value || '').split(/\\s+/))
   .map(value => value.trim())
@@ -637,6 +736,7 @@ const makeCompatStyle = (onChange = null) => {
     const prop = stylePropertyToCssName(name);
     if (!prop) return;
     const text = String(value ?? '');
+    if (!prop.startsWith('--') && /(?:-?Infinity|NaN)/i.test(text)) return;
     const suffix = String(priority || '').trim();
     values.set(prop, suffix ? text + ' !' + suffix : text);
     notifyChange();
@@ -825,6 +925,7 @@ const getCompatAttribute = (node, name) => {
   if (!key) return null;
   if (key === 'id') return node.id ? String(node.id) : null;
   if (key === 'class') return node.className ? String(node.className) : '';
+  if (key === 'style') return node.style?.cssText ? String(node.style.cssText) : '';
   if (key.startsWith('data-')) {
     const dsKey = key.slice(5).replace(/-([a-z])/g, (_m, c) => c.toUpperCase());
     if (node.dataset && Object.prototype.hasOwnProperty.call(node.dataset, dsKey)) return String(node.dataset[dsKey]);
@@ -927,7 +1028,16 @@ const COMPAT_UI_LISTENER_EVENTS = new Set([
   'pointerup',
   'pointermove',
   'touchstart',
+  'touchmove',
   'touchend',
+  'touchcancel',
+  'dragstart',
+  'drag',
+  'dragend',
+  'dragenter',
+  'dragover',
+  'dragleave',
+  'drop',
   'keydown',
   'keyup',
   'input',
@@ -1129,7 +1239,8 @@ const getCompatElementRect = (element) => {
   return getCompatStyleRectFallback(element);
 };
 
-const updateCompatUiLayouts = (items = []) => {
+const updateCompatUiLayouts = (items = [], viewport = null) => {
+  if (viewport && typeof viewport === 'object') applyCompatViewportSnapshot(viewport);
   if (!Array.isArray(items)) return;
   items.forEach((item) => {
     const nodeId = String(item?.nodeId || '').trim();
@@ -1157,6 +1268,14 @@ function flushCompatUi() {
   } catch {}
 }
 
+function flushCompatUiNow() {
+  if (compatUiFlushTimer) {
+    clearTimeout(compatUiFlushTimer);
+    compatUiFlushTimer = 0;
+  }
+  flushCompatUi();
+}
+
 function scheduleCompatUiFlush() {
   if (compatUiFlushTimer) return;
   compatUiFlushTimer = setTimeout(flushCompatUi, 0);
@@ -1175,17 +1294,26 @@ function resetCompatDocumentForSync() {
 }
 
 function handleCompatUiEvent(msg = {}) {
-  const node = compatUiNodes.get(String(msg.nodeId || ''));
-  if (!node || typeof node.dispatchEvent !== 'function') return;
   const data = msg.event && typeof msg.event === 'object' ? msg.event : {};
-  if ('value' in data) node.value = String(data.value ?? '');
-  if ('checked' in data) node.checked = data.checked === true;
-  node.dispatchEvent(makeCompatEvent(msg.eventType || data.type || '', {
+  const node = compatUiNodes.get(String(msg.nodeId || ''));
+  let target = node;
+  const targetType = String(msg.targetType || '').toLowerCase();
+  if (!target && targetType === 'document') target = self.document;
+  if (!target && targetType === 'window') target = self.window || self;
+  if (!target || typeof target.dispatchEvent !== 'function') return;
+  if (node && 'value' in data) node.value = String(data.value ?? '');
+  if (node && 'checked' in data) node.checked = data.checked === true;
+  const eventType = msg.eventType || data.type || '';
+  target.dispatchEvent(makeCompatEvent(eventType, {
     ...data,
     bubbles: data.bubbles !== false,
     cancelable: data.cancelable === true,
   }));
-  scheduleCompatUiFlush();
+  if (['click', 'dblclick', 'input', 'change', 'submit', 'keydown', 'keyup'].includes(String(eventType))) {
+    flushCompatUiNow();
+  } else {
+    scheduleCompatUiFlush();
+  }
 }
 
 const makeCompatTextNode = (text = '') => {
@@ -2181,6 +2309,7 @@ const ensureCompatGlobals = () => {
   installCompatEventTarget(self.window);
   installCompatEventTarget(self.parent);
   installCompatEventTarget(self.top);
+  applyCompatViewportSnapshot(currentSettings.viewport || compatViewport);
   if (!self.localStorage) self.localStorage = makeCompatLocalStorage();
   if (!self.document) self.document = makeCompatDocument();
   installCompatEventTarget(self.document);
@@ -3135,7 +3264,12 @@ self.onmessage = async (e) => {
     return;
   }
   if (msg.type === 'ui_layout') {
-    updateCompatUiLayouts(msg.items || []);
+    updateCompatUiLayouts(msg.items || [], msg.viewport || null);
+    return;
+  }
+  if (msg.type === 'ui_viewport') {
+    const changed = applyCompatViewportSnapshot(msg.viewport || {}, { dispatchResize: msg.eventType !== 'init' });
+    if (changed) scheduleCompatUiFlush();
     return;
   }
   if (msg.type === 'sync') {
@@ -3898,7 +4032,16 @@ export class ScriptRuntime {
     this.uiRoot = null;
     this.uiShadow = null;
     this.uiEventHandler = null;
+    this.uiGlobalEventHandler = null;
+    this.uiViewportHandler = null;
+    this.uiCaptureActive = false;
+    this.uiDraggingActive = false;
+    this.uiClickGuardActive = false;
+    this.uiClickGuardTimer = 0;
+    this.uiPointerStart = null;
+    this.pendingWorkerUiPayload = null;
     this.uiLayoutTimer = 0;
+    this.uiViewportTimer = 0;
     this.context = {
       sessionId: '',
       personaId: '',
@@ -3951,7 +4094,16 @@ export class ScriptRuntime {
         'pointerup',
         'pointermove',
         'touchstart',
+        'touchmove',
         'touchend',
+        'touchcancel',
+        'dragstart',
+        'drag',
+        'dragend',
+        'dragenter',
+        'dragover',
+        'dragleave',
+        'drop',
         'keydown',
         'keyup',
         'input',
@@ -3962,7 +4114,43 @@ export class ScriptRuntime {
       });
       this.uiShadow.__chatappScriptUiEvents = true;
     }
+    this.installGlobalUiEventHandlers();
+    this.installViewportSyncHandlers();
     return this.uiShadow;
+  }
+
+  installGlobalUiEventHandlers() {
+    if (this.uiGlobalEventHandler || typeof document === 'undefined') return;
+    this.uiGlobalEventHandler = (event) => this.handleGlobalUiEvent(event);
+    [
+      'mousemove',
+      'mouseup',
+      'pointermove',
+      'pointerup',
+      'touchmove',
+      'touchend',
+      'touchcancel',
+      'drag',
+      'dragover',
+      'dragend',
+      'drop',
+    ].forEach(type => {
+      document.addEventListener?.(type, this.uiGlobalEventHandler, true);
+      window.addEventListener?.(type, this.uiGlobalEventHandler, true);
+    });
+    window.addEventListener?.('blur', () => {
+      this.uiCaptureActive = false;
+    }, true);
+  }
+
+  installViewportSyncHandlers() {
+    if (this.uiViewportHandler || typeof window === 'undefined') return;
+    this.uiViewportHandler = (event) => this.scheduleWorkerViewportSync(event?.type || 'resize');
+    window.addEventListener?.('resize', this.uiViewportHandler, true);
+    window.addEventListener?.('orientationchange', this.uiViewportHandler, true);
+    window.visualViewport?.addEventListener?.('resize', this.uiViewportHandler, true);
+    window.visualViewport?.addEventListener?.('scroll', this.uiViewportHandler, true);
+    this.postWorkerViewport('init');
   }
 
   clearWorkerUi() {
@@ -3974,6 +4162,24 @@ export class ScriptRuntime {
         clearTimeout(this.uiLayoutTimer);
       } catch {}
       this.uiLayoutTimer = 0;
+    }
+    if (this.uiViewportTimer) {
+      try {
+        cancelAnimationFrame(this.uiViewportTimer);
+      } catch {}
+      try {
+        clearTimeout(this.uiViewportTimer);
+      } catch {}
+      this.uiViewportTimer = 0;
+    }
+    this.uiCaptureActive = false;
+    this.uiDraggingActive = false;
+    this.uiClickGuardActive = false;
+    this.uiPointerStart = null;
+    this.pendingWorkerUiPayload = null;
+    if (this.uiClickGuardTimer) {
+      clearTimeout(this.uiClickGuardTimer);
+      this.uiClickGuardTimer = 0;
     }
     try {
       this.uiShadow?.replaceChildren?.();
@@ -4006,10 +4212,50 @@ export class ScriptRuntime {
     }).filter(item => item.nodeId);
   }
 
+  getViewportSnapshot() {
+    if (typeof window === 'undefined') {
+      return {
+        innerWidth: 1024,
+        innerHeight: 768,
+        outerWidth: 1024,
+        outerHeight: 768,
+        devicePixelRatio: 1,
+        screen: { width: 1024, height: 768, availWidth: 1024, availHeight: 768 },
+        visualViewport: { width: 1024, height: 768, offsetLeft: 0, offsetTop: 0, pageLeft: 0, pageTop: 0, scale: 1 },
+      };
+    }
+    const docElement = typeof document !== 'undefined' ? document.documentElement : null;
+    const fallbackWidth = Number(docElement?.clientWidth || 1024) || 1024;
+    const fallbackHeight = Number(docElement?.clientHeight || 768) || 768;
+    const visualViewport = window.visualViewport;
+    return {
+      innerWidth: Number(window.innerWidth || fallbackWidth) || fallbackWidth,
+      innerHeight: Number(window.innerHeight || fallbackHeight) || fallbackHeight,
+      outerWidth: Number(window.outerWidth || window.innerWidth || fallbackWidth) || fallbackWidth,
+      outerHeight: Number(window.outerHeight || window.innerHeight || fallbackHeight) || fallbackHeight,
+      devicePixelRatio: Number(window.devicePixelRatio || 1) || 1,
+      screen: {
+        width: Number(window.screen?.width || fallbackWidth) || fallbackWidth,
+        height: Number(window.screen?.height || fallbackHeight) || fallbackHeight,
+        availWidth: Number(window.screen?.availWidth || window.screen?.width || fallbackWidth) || fallbackWidth,
+        availHeight: Number(window.screen?.availHeight || window.screen?.height || fallbackHeight) || fallbackHeight,
+      },
+      visualViewport: {
+        width: Number(visualViewport?.width || window.innerWidth || fallbackWidth) || fallbackWidth,
+        height: Number(visualViewport?.height || window.innerHeight || fallbackHeight) || fallbackHeight,
+        offsetLeft: Number(visualViewport?.offsetLeft || 0) || 0,
+        offsetTop: Number(visualViewport?.offsetTop || 0) || 0,
+        pageLeft: Number(visualViewport?.pageLeft || 0) || 0,
+        pageTop: Number(visualViewport?.pageTop || 0) || 0,
+        scale: Number(visualViewport?.scale || 1) || 1,
+      },
+    };
+  }
+
   postWorkerUiLayout() {
     const items = this.collectWorkerUiLayout();
-    if (!items.length || !this.worker) return;
-    this.worker.postMessage({ type: 'ui_layout', items });
+    if (!this.worker) return;
+    this.worker.postMessage({ type: 'ui_layout', items, viewport: this.getViewportSnapshot() });
   }
 
   scheduleWorkerUiLayoutSync() {
@@ -4021,6 +4267,99 @@ export class ScriptRuntime {
       this.uiLayoutTimer = 0;
       this.postWorkerUiLayout();
     });
+  }
+
+  postWorkerViewport(eventType = 'resize') {
+    if (!this.worker) return;
+    this.worker.postMessage({
+      type: 'ui_viewport',
+      eventType,
+      viewport: this.getViewportSnapshot(),
+    });
+  }
+
+  scheduleWorkerViewportSync(eventType = 'resize') {
+    if (this.uiViewportTimer) return;
+    const schedule = typeof requestAnimationFrame === 'function'
+      ? requestAnimationFrame
+      : (cb) => setTimeout(cb, 16);
+    this.uiViewportTimer = schedule(() => {
+      this.uiViewportTimer = 0;
+      this.postWorkerViewport(eventType);
+      this.postWorkerUiLayout();
+    });
+  }
+
+  getUiEventPoint(event) {
+    const touch = event?.changedTouches?.[0] || event?.touches?.[0] || event?.targetTouches?.[0] || null;
+    if (touch) return { x: Number(touch.clientX || 0) || 0, y: Number(touch.clientY || 0) || 0 };
+    if (typeof event?.clientX === 'number' || typeof event?.clientY === 'number') {
+      return { x: Number(event.clientX || 0) || 0, y: Number(event.clientY || 0) || 0 };
+    }
+    return null;
+  }
+
+  beginUiPointerSequence(event) {
+    this.uiCaptureActive = true;
+    this.uiDraggingActive = false;
+    this.uiClickGuardActive = true;
+    this.uiPointerStart = this.getUiEventPoint(event);
+    if (this.uiClickGuardTimer) {
+      clearTimeout(this.uiClickGuardTimer);
+      this.uiClickGuardTimer = 0;
+    }
+  }
+
+  updateUiPointerSequence(event) {
+    if (!this.uiCaptureActive || this.uiDraggingActive) return;
+    const point = this.getUiEventPoint(event);
+    const start = this.uiPointerStart;
+    if (!point || !start) return;
+    if (Math.abs(point.x - start.x) < 4 && Math.abs(point.y - start.y) < 4) return;
+    this.uiDraggingActive = true;
+    this.uiClickGuardActive = false;
+    this.flushDeferredWorkerUi();
+  }
+
+  endUiPointerSequence() {
+    this.uiCaptureActive = false;
+    if (this.uiDraggingActive) {
+      this.uiDraggingActive = false;
+      this.uiClickGuardActive = false;
+      this.uiPointerStart = null;
+      this.flushDeferredWorkerUi();
+      return;
+    }
+    this.uiClickGuardActive = true;
+    if (this.uiClickGuardTimer) clearTimeout(this.uiClickGuardTimer);
+    this.uiClickGuardTimer = setTimeout(() => {
+      this.uiClickGuardTimer = 0;
+      this.uiClickGuardActive = false;
+      this.uiPointerStart = null;
+      this.flushDeferredWorkerUi();
+    }, 180);
+  }
+
+  releaseUiClickGuardForClick() {
+    if (!this.uiClickGuardActive) return;
+    this.uiClickGuardActive = false;
+    this.uiPointerStart = null;
+    if (this.uiClickGuardTimer) {
+      clearTimeout(this.uiClickGuardTimer);
+      this.uiClickGuardTimer = 0;
+    }
+    this.flushDeferredWorkerUi();
+  }
+
+  shouldDeferWorkerUiRender() {
+    return this.uiClickGuardActive && !this.uiDraggingActive;
+  }
+
+  flushDeferredWorkerUi() {
+    if (!this.pendingWorkerUiPayload) return;
+    const payload = this.pendingWorkerUiPayload;
+    this.pendingWorkerUiPayload = null;
+    this.renderWorkerUi(payload);
   }
 
   getWorkerUiBaseCss() {
@@ -4102,6 +4441,19 @@ export class ScriptRuntime {
     }
   }
 
+  collectUiTouchList(list) {
+    if (!list || typeof list.length !== 'number') return [];
+    return Array.from(list).slice(0, 8).map(touch => ({
+      identifier: Number(touch.identifier || 0) || 0,
+      clientX: Number(touch.clientX || 0) || 0,
+      clientY: Number(touch.clientY || 0) || 0,
+      screenX: Number(touch.screenX || 0) || 0,
+      screenY: Number(touch.screenY || 0) || 0,
+      pageX: Number(touch.pageX || 0) || 0,
+      pageY: Number(touch.pageY || 0) || 0,
+    }));
+  }
+
   collectUiEventPayload(event, target) {
     const payload = {
       type: event.type,
@@ -4132,6 +4484,9 @@ export class ScriptRuntime {
     ].forEach((key) => {
       if (event[key] !== undefined) payload[key] = event[key];
     });
+    if (event.touches) payload.touches = this.collectUiTouchList(event.touches);
+    if (event.changedTouches) payload.changedTouches = this.collectUiTouchList(event.changedTouches);
+    if (event.targetTouches) payload.targetTouches = this.collectUiTouchList(event.targetTouches);
     if (target && 'value' in target) payload.value = target.value;
     if (target && 'checked' in target) payload.checked = target.checked === true;
     return payload;
@@ -4145,6 +4500,10 @@ export class ScriptRuntime {
     if (!nodeId) return;
     event.stopPropagation?.();
     if (event.type === 'submit') event.preventDefault?.();
+    if (['mousedown', 'pointerdown', 'touchstart', 'dragstart'].includes(event.type)) this.beginUiPointerSequence(event);
+    if (['mousemove', 'pointermove', 'touchmove', 'drag'].includes(event.type)) this.updateUiPointerSequence(event);
+    if (['mouseup', 'pointerup', 'touchend', 'touchcancel', 'dragend', 'drop'].includes(event.type)) this.endUiPointerSequence();
+    if (['click', 'dblclick'].includes(event.type)) this.releaseUiClickGuardForClick();
     this.postWorkerUiLayout();
     this.worker?.postMessage({
       type: 'ui_event',
@@ -4152,6 +4511,23 @@ export class ScriptRuntime {
       eventType: event.type,
       event: this.collectUiEventPayload(event, target),
     });
+  }
+
+  handleGlobalUiEvent(event) {
+    if (!this.uiCaptureActive) return;
+    const path = typeof event.composedPath === 'function' ? event.composedPath() : [];
+    if (path.includes(this.uiRoot) || path.includes(this.uiShadow)) return;
+    if (['mousemove', 'pointermove', 'touchmove', 'drag'].includes(event.type)) this.updateUiPointerSequence(event);
+    this.postWorkerUiLayout();
+    this.worker?.postMessage({
+      type: 'ui_event',
+      targetType: 'document',
+      eventType: event.type,
+      event: this.collectUiEventPayload(event, null),
+    });
+    if (['mouseup', 'pointerup', 'touchend', 'touchcancel', 'dragend', 'drop'].includes(event.type)) {
+      this.endUiPointerSequence();
+    }
   }
 
   recordListener(eventName) {
@@ -4382,6 +4758,7 @@ export class ScriptRuntime {
       allowModifyVariables: settings.scriptAllowModifyVariables !== false,
       allowNetwork: settings.scriptAllowNetwork === true,
       debugExecutionLogs: settings.debugExecutionLogs === true,
+      viewport: this.getViewportSnapshot(),
     };
     if (!this.isEnabled(this.context.sessionId)) {
       if (this.worker) {
@@ -4487,6 +4864,7 @@ export class ScriptRuntime {
       allowModifyVariables: settings.scriptAllowModifyVariables !== false,
       allowNetwork: settings.scriptAllowNetwork === true,
       debugExecutionLogs: settings.debugExecutionLogs === true,
+      viewport: this.getViewportSnapshot(),
     };
     if (this.worker) {
       this.worker.postMessage({
@@ -4557,6 +4935,10 @@ export class ScriptRuntime {
       return;
     }
     if (msg.type === 'ui_update') {
+      if (this.shouldDeferWorkerUiRender()) {
+        this.pendingWorkerUiPayload = msg.payload || {};
+        return;
+      }
       this.renderWorkerUi(msg.payload || {});
       return;
     }

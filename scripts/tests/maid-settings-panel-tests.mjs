@@ -119,6 +119,8 @@ const flushMicrotasks = () => new Promise(resolve => setTimeout(resolve, 0));
     documentRef,
     settingsStore: store,
     getAppKnowledgeText: () => '打开世界书 (worldbook.open)\n工具：app.open_panel',
+    getHistoryContextText: () => '- 用户: 创建角色卡 A\n  结果: 已完成',
+    getMemoryTableText: () => '| 1 | 摘要 |\n| 内容 | 用户创建了角色卡 A。 |',
     onOpenApiConfig: payload => apiCalls.push(payload),
     copyText: async text => copied.push(text),
     logger: { warn() {}, debug() {} },
@@ -126,8 +128,12 @@ const flushMicrotasks = () => new Promise(resolve => setTimeout(resolve, 0));
 
   assert.equal(panel.show({ tab: 'prompt' }), true);
   const elements = panel.getElements();
+  assert.equal(elements.tabButtons.has('lastResponse'), false);
   assert.equal(elements.tabButtons.get('prompt').classList.contains('is-active'), true);
   assert.equal(elements.promptTabButtons.get('persona').classList.contains('is-active'), true);
+  assert.equal(elements.promptTabButtons.has('historyContext'), true);
+  assert.equal(elements.promptTabButtons.has('memoryTable'), true);
+  assert.equal(elements.promptTabButtons.has('lastResponse'), true);
   assert.equal(elements.promptTextarea.value, '旧提示词');
   elements.promptTextarea.value = '新提示词';
   findByText(elements.sections.get('prompt'), '保存').dispatchEvent('click', {});
@@ -142,14 +148,46 @@ const flushMicrotasks = () => new Promise(resolve => setTimeout(resolve, 0));
   assert.match(elements.appKnowledgeTextarea.value, /worldbook\.open/);
   assert.match(elements.lastAppContextTextarea.value, /检索：已执行/);
 
+  panel.switchTab('historyContext');
+  assert.equal(elements.promptTabButtons.get('historyContext').classList.contains('is-active'), true);
+  assert.equal(elements.historyContextTextarea.value, '- 用户: 创建角色卡 A\n  结果: 已完成');
+  findByText(elements.promptPanes.get('historyContext'), '复制').dispatchEvent('click', {});
+  await flushMicrotasks();
+  assert.deepEqual(copied, ['- 用户: 创建角色卡 A\n  结果: 已完成']);
+
+  panel.switchTab('memoryTable');
+  assert.equal(elements.promptTabButtons.get('memoryTable').classList.contains('is-active'), true);
+  assert.match(elements.memoryTableTextarea.value, /用户创建了角色卡 A/);
+  findByText(elements.promptPanes.get('memoryTable'), '复制').dispatchEvent('click', {});
+  await flushMicrotasks();
+  assert.deepEqual(copied, [
+    '- 用户: 创建角色卡 A\n  结果: 已完成',
+    '| 1 | 摘要 |\n| 内容 | 用户创建了角色卡 A。 |',
+  ]);
+
   panel.switchTab('lastPrompt');
   assert.equal(elements.lastPromptTextarea.value, 'system:\n本次提示词');
   findByText(elements.promptPanes.get('lastPrompt'), '复制').dispatchEvent('click', {});
   await flushMicrotasks();
-  assert.deepEqual(copied, ['system:\n本次提示词']);
+  assert.deepEqual(copied, [
+    '- 用户: 创建角色卡 A\n  结果: 已完成',
+    '| 1 | 摘要 |\n| 内容 | 用户创建了角色卡 A。 |',
+    'system:\n本次提示词',
+  ]);
 
   panel.switchTab('lastResponse');
+  assert.equal(elements.tabButtons.get('prompt').classList.contains('is-active'), true);
+  assert.equal(elements.promptTabButtons.get('lastResponse').classList.contains('is-active'), true);
+  assert.equal(elements.promptPanes.get('lastResponse').classList.contains('is-active'), true);
   assert.equal(elements.lastResponseTextarea.value, '完整回复');
+  findByText(elements.promptPanes.get('lastResponse'), '复制').dispatchEvent('click', {});
+  await flushMicrotasks();
+  assert.deepEqual(copied, [
+    '- 用户: 创建角色卡 A\n  结果: 已完成',
+    '| 1 | 摘要 |\n| 内容 | 用户创建了角色卡 A。 |',
+    'system:\n本次提示词',
+    '完整回复',
+  ]);
 
   panel.switchTab('api');
   findByText(elements.sections.get('api'), '打开 API 设定').dispatchEvent('click', {});

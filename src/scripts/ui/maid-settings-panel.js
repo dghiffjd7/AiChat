@@ -86,6 +86,7 @@ const injectStyle = (documentRef) => {
 .maid-settings-close {
   width: 32px;
   height: 32px;
+  box-sizing: border-box;
   margin-left: auto;
   display: inline-flex;
   align-items: center;
@@ -93,7 +94,7 @@ const injectStyle = (documentRef) => {
 }
 .maid-settings-tabs {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 7px;
   overflow-x: auto;
   padding: 10px 12px;
@@ -102,6 +103,7 @@ const injectStyle = (documentRef) => {
 }
 .maid-settings-tab {
   min-height: 34px;
+  box-sizing: border-box;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -115,6 +117,7 @@ const injectStyle = (documentRef) => {
   font-size: 12px;
   font-weight: 800;
   white-space: nowrap;
+  touch-action: manipulation;
 }
 .maid-settings-tab.is-active {
   color: var(--app-text-primary, #111827);
@@ -153,6 +156,7 @@ const injectStyle = (documentRef) => {
 }
 .maid-settings-prompt-tab {
   min-height: 28px;
+  box-sizing: border-box;
   padding: 0 10px;
   border: 1px solid transparent;
   border-radius: 8px;
@@ -163,6 +167,7 @@ const injectStyle = (documentRef) => {
   font-weight: 800;
   white-space: nowrap;
   transition: background 120ms ease, border-color 120ms ease, transform 90ms ease;
+  touch-action: manipulation;
 }
 .maid-settings-prompt-tab.is-active {
   color: var(--app-text-primary, #111827);
@@ -228,9 +233,18 @@ const injectStyle = (documentRef) => {
 }
 .maid-settings-action {
   min-height: 32px;
+  box-sizing: border-box;
   padding: 0 12px;
   font-size: 12px;
   font-weight: 800;
+  touch-action: manipulation;
+}
+.maid-settings-tab > *,
+.maid-settings-prompt-tab > *,
+.maid-settings-action > *,
+.maid-settings-close > *,
+.maid-settings-icon {
+  pointer-events: none;
 }
 .maid-settings-action.is-primary {
   border-color: #2563eb;
@@ -282,7 +296,7 @@ const injectStyle = (documentRef) => {
     border-radius: 12px;
   }
   .maid-settings-tabs {
-    grid-template-columns: repeat(3, max-content);
+    grid-template-columns: repeat(2, max-content);
   }
   .maid-settings-tab {
     padding: 0 9px;
@@ -338,6 +352,8 @@ const ICONS = Object.freeze({
   api: iconSvg('<path d="M7 7h10v10H7z"/><path d="M3 10h4"/><path d="M3 14h4"/><path d="M17 10h4"/><path d="M17 14h4"/><path d="M10 3v4"/><path d="M14 3v4"/><path d="M10 17v4"/><path d="M14 17v4"/>'),
   prompt: iconSvg('<path d="M5 5h14"/><path d="M5 9h10"/><path d="M5 15h14"/><path d="M5 19h9"/>'),
   knowledge: iconSvg('<path d="M5 4h10a4 4 0 0 1 4 4v12H9a4 4 0 0 1-4-4Z"/><path d="M9 8h6"/><path d="M9 12h5"/>'),
+  history: iconSvg('<path d="M4 12a8 8 0 1 0 3-6.25"/><path d="M4 4v5h5"/><path d="M12 8v5l3 2"/>'),
+  table: iconSvg('<path d="M4 5h16v14H4z"/><path d="M4 10h16"/><path d="M4 15h16"/><path d="M10 5v14"/>'),
   request: iconSvg('<path d="M5 5h14v14H5z"/><path d="M8 9h8"/><path d="M8 13h5"/><path d="M8 17h7"/>'),
   response: iconSvg('<path d="M4 6h16v10H7l-3 3Z"/><path d="M8 10h8"/><path d="M8 14h5"/>'),
 });
@@ -352,6 +368,8 @@ export const createMaidSettingsPanel = ({
   settingsStore = null,
   onOpenApiConfig = null,
   getAppKnowledgeText = () => '',
+  getHistoryContextText = () => '',
+  getMemoryTableText = () => '',
   copyText = text => globalThis?.navigator?.clipboard?.writeText?.(text),
   logger = console,
 } = {}) => {
@@ -365,6 +383,8 @@ export const createMaidSettingsPanel = ({
   const promptPanes = new Map();
   let promptTextarea = null;
   let appKnowledgeTextarea = null;
+  let historyContextTextarea = null;
+  let memoryTableTextarea = null;
   let lastAppContextTextarea = null;
   let lastPromptTextarea = null;
   let lastResponseTextarea = null;
@@ -380,17 +400,21 @@ export const createMaidSettingsPanel = ({
   const getLastAppContextText = () => trim(settingsStore?.getLastAppContext?.(), '尚未记录任何本次检索。');
   const getLastResponseText = () => trim(settingsStore?.getLastFullResponse?.(), '尚未记录任何女仆完整回复。');
   const getAppKnowledge = () => trim(getAppKnowledgeText?.(), '暂无 APP 知识。');
+  const getHistoryContext = () => trim(getHistoryContextText?.(), '尚未记录女仆历史上下文。');
+  const getMemoryTable = () => trim(getMemoryTableText?.(), '尚未生成女仆记忆表格。');
 
   const refresh = () => {
     if (promptTextarea) promptTextarea.value = settingsStore?.getMaidPrompt?.() || settingsStore?.getPersonaPrompt?.() || '';
     if (appKnowledgeTextarea) appKnowledgeTextarea.value = getAppKnowledge();
+    if (historyContextTextarea) historyContextTextarea.value = getHistoryContext();
+    if (memoryTableTextarea) memoryTableTextarea.value = getMemoryTable();
     if (lastAppContextTextarea) lastAppContextTextarea.value = getLastAppContextText();
     if (lastPromptTextarea) lastPromptTextarea.value = getLastPromptText();
     if (lastResponseTextarea) lastResponseTextarea.value = getLastResponseText();
   };
 
   const switchPromptTab = (tab = 'persona') => {
-    const next = ['persona', 'appKnowledge', 'lastPrompt'].includes(tab) ? tab : 'persona';
+    const next = ['persona', 'appKnowledge', 'historyContext', 'memoryTable', 'lastPrompt', 'lastResponse'].includes(tab) ? tab : 'persona';
     activePromptTab = next;
     promptTabButtons.forEach((button, key) => {
       button.classList.toggle('is-active', key === activePromptTab);
@@ -403,10 +427,10 @@ export const createMaidSettingsPanel = ({
   };
 
   const switchTab = (tab = 'api') => {
-    const promptSubtab = tab === 'appKnowledge' || tab === 'lastPrompt' || tab === 'persona'
+    const promptSubtab = tab === 'appKnowledge' || tab === 'historyContext' || tab === 'memoryTable' || tab === 'lastPrompt' || tab === 'lastResponse' || tab === 'persona'
       ? tab
       : '';
-    const next = promptSubtab ? 'prompt' : (['api', 'prompt', 'lastResponse'].includes(tab) ? tab : 'api');
+    const next = promptSubtab ? 'prompt' : (['api', 'prompt'].includes(tab) ? tab : 'api');
     activeTab = next;
     tabButtons.forEach((button, key) => {
       button.classList.toggle('is-active', key === activeTab);
@@ -424,6 +448,10 @@ export const createMaidSettingsPanel = ({
       ? lastResponseTextarea?.value
       : kind === 'lastPrompt'
         ? lastPromptTextarea?.value
+        : kind === 'historyContext'
+          ? historyContextTextarea?.value
+          : kind === 'memoryTable'
+            ? memoryTableTextarea?.value
         : promptTextarea?.value;
     if (!trim(text)) return false;
     try {
@@ -485,7 +513,6 @@ export const createMaidSettingsPanel = ({
     [
       ['api', 'API', ICONS.api],
       ['prompt', '提示词', ICONS.prompt],
-      ['lastResponse', '本次完整回复', ICONS.response],
     ].forEach(([key, label, icon]) => {
       const button = createButton(documentRef, 'maid-settings-tab', label);
       setIconButtonContent(button, icon, label);
@@ -519,7 +546,10 @@ export const createMaidSettingsPanel = ({
     [
       ['persona', '人格'],
       ['appKnowledge', 'APP知识'],
+      ['historyContext', '历史上下文'],
+      ['memoryTable', '记忆表格'],
       ['lastPrompt', '本次提示词'],
+      ['lastResponse', '本次完整回复'],
     ].forEach(([key, label]) => {
       const button = createButton(documentRef, 'maid-settings-prompt-tab', label);
       button.addEventListener?.('click', () => switchPromptTab(key));
@@ -568,6 +598,38 @@ export const createMaidSettingsPanel = ({
     appKnowledgeSplit.append(appKnowledgeField, lastContextField);
     appKnowledgePane.append(appKnowledgeSplit);
 
+    const historyContextPane = documentRef.createElement?.('div');
+    historyContextPane.className = 'maid-settings-prompt-pane';
+    const historyContextField = documentRef.createElement?.('div');
+    historyContextField.className = 'maid-settings-field';
+    const historyContextLabel = documentRef.createElement?.('div');
+    historyContextLabel.className = 'maid-settings-label';
+    historyContextLabel.textContent = '历史上下文';
+    historyContextTextarea = createTextarea(documentRef, { readOnly: true });
+    const historyContextFooter = documentRef.createElement?.('div');
+    historyContextFooter.className = 'maid-settings-footer';
+    const copyHistoryContextBtn = createButton(documentRef, 'maid-settings-action', '复制');
+    copyHistoryContextBtn.addEventListener?.('click', () => void copyCurrentText('historyContext'));
+    historyContextFooter.appendChild(copyHistoryContextBtn);
+    historyContextField.append(historyContextLabel, historyContextTextarea);
+    historyContextPane.append(historyContextField, historyContextFooter);
+
+    const memoryTablePane = documentRef.createElement?.('div');
+    memoryTablePane.className = 'maid-settings-prompt-pane';
+    const memoryTableField = documentRef.createElement?.('div');
+    memoryTableField.className = 'maid-settings-field';
+    const memoryTableLabel = documentRef.createElement?.('div');
+    memoryTableLabel.className = 'maid-settings-label';
+    memoryTableLabel.textContent = '记忆表格';
+    memoryTableTextarea = createTextarea(documentRef, { readOnly: true });
+    const memoryTableFooter = documentRef.createElement?.('div');
+    memoryTableFooter.className = 'maid-settings-footer';
+    const copyMemoryTableBtn = createButton(documentRef, 'maid-settings-action', '复制');
+    copyMemoryTableBtn.addEventListener?.('click', () => void copyCurrentText('memoryTable'));
+    memoryTableFooter.appendChild(copyMemoryTableBtn);
+    memoryTableField.append(memoryTableLabel, memoryTableTextarea);
+    memoryTablePane.append(memoryTableField, memoryTableFooter);
+
     const lastPromptPane = documentRef.createElement?.('div');
     lastPromptPane.className = 'maid-settings-prompt-pane';
     const lastPromptField = documentRef.createElement?.('div');
@@ -583,13 +645,9 @@ export const createMaidSettingsPanel = ({
     lastPromptFooter.appendChild(copyLastPromptBtn);
     lastPromptField.append(lastPromptLabel, lastPromptTextarea);
     lastPromptPane.append(lastPromptField, lastPromptFooter);
-    promptPanes.set('persona', personaPane);
-    promptPanes.set('appKnowledge', appKnowledgePane);
-    promptPanes.set('lastPrompt', lastPromptPane);
-    promptSection.append(promptSubtabs, personaPane, appKnowledgePane, lastPromptPane);
 
-    const lastResponseSection = documentRef.createElement?.('section');
-    lastResponseSection.className = 'maid-settings-section';
+    const lastResponsePane = documentRef.createElement?.('div');
+    lastResponsePane.className = 'maid-settings-prompt-pane';
     const lastResponseField = documentRef.createElement?.('div');
     lastResponseField.className = 'maid-settings-field';
     const lastResponseLabel = documentRef.createElement?.('div');
@@ -602,12 +660,26 @@ export const createMaidSettingsPanel = ({
     copyLastResponseBtn.addEventListener?.('click', () => void copyCurrentText('lastResponse'));
     lastResponseFooter.appendChild(copyLastResponseBtn);
     lastResponseField.append(lastResponseLabel, lastResponseTextarea);
-    lastResponseSection.append(lastResponseField, lastResponseFooter);
+    lastResponsePane.append(lastResponseField, lastResponseFooter);
+    promptPanes.set('persona', personaPane);
+    promptPanes.set('appKnowledge', appKnowledgePane);
+    promptPanes.set('historyContext', historyContextPane);
+    promptPanes.set('memoryTable', memoryTablePane);
+    promptPanes.set('lastPrompt', lastPromptPane);
+    promptPanes.set('lastResponse', lastResponsePane);
+    promptSection.append(
+      promptSubtabs,
+      personaPane,
+      appKnowledgePane,
+      historyContextPane,
+      memoryTablePane,
+      lastPromptPane,
+      lastResponsePane,
+    );
 
     [
       ['api', apiSection],
       ['prompt', promptSection],
-      ['lastResponse', lastResponseSection],
     ].forEach(([key, section]) => {
       sections.set(key, section);
       body.appendChild(section);
@@ -647,6 +719,8 @@ export const createMaidSettingsPanel = ({
       panel,
       promptTextarea,
       appKnowledgeTextarea,
+      historyContextTextarea,
+      memoryTableTextarea,
       lastAppContextTextarea,
       lastPromptTextarea,
       lastResponseTextarea,

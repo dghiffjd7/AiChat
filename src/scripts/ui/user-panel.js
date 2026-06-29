@@ -127,7 +127,7 @@ export class UserPanel {
             </div>
             <div id="user-list-container" style="flex:1; overflow-y:auto; padding:10px;"></div>
             <div class="panel-footer" style="padding:15px; border-top:1px solid var(--app-border-subtle); background:var(--app-surface-card); text-align:center;">
-                <button id="create-user-btn" style="
+                <button id="create-user-btn" data-maid-guide-target="create-user" style="
                     width:100%;
                     background:#007bff;
                     color:var(--app-text-inverse);
