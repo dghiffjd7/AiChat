@@ -36,11 +36,22 @@ const createStorage = () => {
   const historyText = formatMaidHistoryContextText({
     turns: [
       { id: 't1', at: 1000, input: '创建角色卡 A', toolName: 'persona.create', featureId: 'persona.create', status: 'succeeded', message: '已完成' },
-      { id: 't2', at: 2000, input: '继续刚才那个', message: '已处理' },
+      {
+        id: 't2',
+        at: 2000,
+        input: '继续刚才那个',
+        status: 'interrupted',
+        continuable: true,
+        reactStoppedReason: 'max_steps_reached',
+        continueHint: '下一步建议工具：worldbook.update_entries',
+        message: '已达到本轮执行预算。',
+      },
     ],
   });
   assert.match(historyText, /创建角色卡 A/);
   assert.match(historyText, /继续刚才那个/);
+  assert.match(historyText, /可继续: 是/);
+  assert.match(historyText, /下一步建议工具/);
 
   const memoryText = formatMaidMemoryTableText({
     rows: [

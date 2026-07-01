@@ -1,5 +1,6 @@
-import { DEFAULT_MAID_PROMPT } from './maid-prompt-defaults.js';
+import { DEFAULT_MAID_PROMPT, MAID_OPERATION_SAFETY_PROMPT } from './maid-prompt-defaults.js';
 import { buildAppFeatureSearchContextText, listAppFeatures } from './app-feature-catalog.js';
+import { extractMaidModelPlannerJson } from './maid-model-planner.js';
 import {
   buildMaidImageAttachmentSummary,
   buildMaidUserContentWithImages,
@@ -25,6 +26,26 @@ const safeJsonStringify = (value, max = 6000) => {
   } catch {
     return truncate(String(value ?? ''), max);
   }
+};
+
+const isToolPlanLikeJson = value => (
+  isPlainObject(value) &&
+  (
+    trim(value.toolName) ||
+    trim(value.featureId) ||
+    trim(value.action).toLowerCase() === 'tool'
+  )
+);
+
+const detectToolPlanLikeChatResponse = (text = '') => {
+  const parsed = extractMaidModelPlannerJson(text);
+  if (isToolPlanLikeJson(parsed)) return parsed;
+  const raw = trim(text);
+  if (!raw) return null;
+  if (/"toolName"\s*:|["']action["']\s*:\s*["']tool["']|["']featureId["']\s*:/i.test(raw)) {
+    return { rawText: truncate(raw, 1000) };
+  }
+  return null;
 };
 
 const emitDebugSnapshot = (callback, payload = {}, logger = console) => {
@@ -67,6 +88,7 @@ export const buildMaidChatResponderMessages = ({
       role: 'system',
       content: [
         trim(maidPrompt, DEFAULT_MAID_PROMPT),
+        MAID_OPERATION_SAFETY_PROMPT,
         '你可以参考女仆记忆表格和历史上下文来延续对话、理解“刚才那个”等省略指代；不要编造不存在的历史。',
         observationText ? '如果提供了工具观察结果，请基于观察结果直接回答用户本次问题；不要只说已查看，也不要输出 JSON。' : '',
       ].filter(Boolean).join('\n'),
@@ -165,8 +187,8 @@ export const createMaidChatResponder = ({
     });
     const responseText = await client.chat(messages, {
       temperature: 0.7,
-      maxTokens: 500,
-      max_tokens: 500,
+      maxTokens: 800,
+      max_tokens: 800,
     });
     emitDebugSnapshot(onDebugSnapshot, {
       source: 'maid_chat_responder',
@@ -174,6 +196,18 @@ export const createMaidChatResponder = ({
       messages,
       responseText,
     }, logger);
+    const toolPlanLike = detectToolPlanLikeChatResponse(responseText);
+    if (toolPlanLike) {
+      return {
+        ok: false,
+        status: 'failed',
+        reason: 'chat_response_contains_tool_plan',
+        source: 'maid_chat_responder',
+        input: text,
+        message: '这个请求需要进入女仆工具执行流程，不能把工具调用当作聊天回复完成。',
+        toolPlanLike,
+      };
+    }
     return {
       ok: true,
       status: 'responded',

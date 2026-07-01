@@ -11,6 +11,24 @@ export const SUPPORTED_APP_RESOURCES = Object.freeze([
   'user',
 ]);
 
+const WORLD_AI_TEMPLATE_KEY = 'world_ai_template_v1';
+const DEFAULT_WORLD_AI_TEMPLATE = `
+name: ""
+english_name: ""
+gender: ""
+background: ""
+appearance: ""
+personality:
+  mbti: ""
+  traits: ""
+dialogue_examples:
+  note: "仅供参考，勿完全按照其输出"
+  examples:
+    - ""
+    - ""
+    - ""
+`.trim();
+
 const asArray = value => {
   if (Array.isArray(value)) return value;
   if (value === null || value === undefined || value === '') return [];
@@ -18,6 +36,12 @@ const asArray = value => {
 };
 
 const toText = value => String(value ?? '').trim();
+
+const normalizeStringList = value => (
+  Array.isArray(value)
+    ? value.map(item => toText(item)).filter(Boolean)
+    : (toText(value) ? [toText(value)] : [])
+);
 
 const isThenable = value => value && typeof value.then === 'function';
 
@@ -30,6 +54,24 @@ const callMethod = async (target, method, ...args) => {
 };
 
 const getBridgeFromDeps = deps => deps.appBridge || globalThis.window?.appBridge || {};
+
+const readAppLocalStorageText = (key = '') => {
+  try {
+    return toText(globalThis.localStorage?.getItem?.(key));
+  } catch {
+    return '';
+  }
+};
+
+const readWorldAiGenerationSettings = () => {
+  const storedTemplate = readAppLocalStorageText(WORLD_AI_TEMPLATE_KEY);
+  const template = storedTemplate || DEFAULT_WORLD_AI_TEMPLATE;
+  return {
+    templateStorageKey: WORLD_AI_TEMPLATE_KEY,
+    hasCustomTemplate: Boolean(storedTemplate),
+    template: trimAppResourceText(template, 12000),
+  };
+};
 
 const getUiModeFromDeps = deps => (
   typeof deps.getUiMode === 'function' ? deps.getUiMode() : deps.uiMode
@@ -66,7 +108,7 @@ export const sanitizeAppResourceValue = (value, depth = 0) => {
 export const normalizeAppResourceName = value => {
   const text = toText(value).toLowerCase().replace(/[_\s]+/g, '-');
   if (['message', 'messages', 'chat-message', 'chat-messages', 'reply', 'replies', 'ai-reply', 'ai-response'].includes(text)) return 'chat';
-  if (['world', 'world-info', 'worldbook-settings', 'world-settings'].includes(text)) return 'worldbook';
+  if (['world', 'world-info', 'worldbook-settings', 'world-settings', 'worldbook-template', 'world-ai-template', 'world-generation-template'].includes(text)) return 'worldbook';
   if (['regexes', 'regexp', 'regular-expression', 'postprocess', 'post-processing'].includes(text)) return 'regex';
   if (['variable', 'vars', 'mvu', 'mvu-variable'].includes(text)) return 'variables';
   if (['memories', 'memory-table', 'memory-tables', 'memory-template', 'memory-templates'].includes(text)) return 'memory';
@@ -96,6 +138,69 @@ export const summarizeAppChatMessage = (message = {}, maxTextLength = 4000) => (
 const normalizeWorldId = value => toText(value?.id ?? value?.name ?? value);
 
 const normalizeLookupText = value => toText(value).toLowerCase();
+
+const readWorldEntryId = entry => toText(entry?.id || entry?.uid || entry?.comment || entry?.title || entry?.name);
+
+const summarizeWorldbookEntry = (entry = {}, index = 0, {
+  includeContent = false,
+  maxContentLength = 2000,
+} = {}) => {
+  const title = toText(entry?.comment || entry?.title || entry?.name || entry?.id || `entry-${index + 1}`);
+  const content = toText(entry?.content || '');
+  const keys = [
+    ...normalizeStringList(entry?.key),
+    ...normalizeStringList(entry?.keys),
+  ];
+  const secondaryKeys = [
+    ...normalizeStringList(entry?.keysecondary),
+    ...normalizeStringList(entry?.secondaryKeys),
+    ...normalizeStringList(entry?.secondary),
+  ];
+  const summary = {
+    id: toText(entry?.id),
+    title,
+    keys: Array.from(new Set(keys)),
+    secondaryKeys: Array.from(new Set(secondaryKeys)),
+    position: Number.isFinite(Number(entry?.position)) ? Number(entry.position) : undefined,
+    order: Number.isFinite(Number(entry?.order ?? entry?.priority)) ? Number(entry.order ?? entry.priority) : undefined,
+    depth: Number.isFinite(Number(entry?.depth)) ? Number(entry.depth) : undefined,
+    constant: entry?.constant === true,
+    disabled: entry?.disable === true || entry?.disabled === true,
+    contentLength: content.length,
+  };
+  if (includeContent) {
+    summary.content = trimAppResourceText(content, maxContentLength);
+    summary.contentTruncated = content.length > Math.max(120, Math.min(12000, Number(maxContentLength) || 4000));
+  }
+  return summary;
+};
+
+const worldEntryMatches = (entry = {}, index = 0, args = {}) => {
+  const entryId = toText(args.entryId || args.entry || args.entryName);
+  const entryTitle = toText(args.entryTitle || args.title);
+  const query = toText(args.query);
+  if (!entryId && !entryTitle && !query) return true;
+  const id = readWorldEntryId(entry);
+  const title = toText(entry?.comment || entry?.title || entry?.name || `entry-${index + 1}`);
+  const keys = [
+    ...normalizeStringList(entry?.key || entry?.keys),
+    ...normalizeStringList(entry?.keysecondary || entry?.secondaryKeys || entry?.secondary),
+  ];
+  if (entryId) {
+    const target = normalizeLookupText(entryId);
+    if ([id, title, ...keys].map(normalizeLookupText).includes(target)) return true;
+  }
+  if (entryTitle) {
+    const target = normalizeLookupText(entryTitle);
+    if (normalizeLookupText(title) === target || normalizeLookupText(title).includes(target)) return true;
+  }
+  if (query) {
+    const target = normalizeLookupText(query);
+    const haystack = [id, title, ...keys, toText(entry?.content)].join('\n').toLowerCase();
+    return haystack.includes(target);
+  }
+  return false;
+};
 
 const resolveSessionId = async (deps, args = {}, { useId = true } = {}) => {
   const chatStore = deps.chatStore || {};
@@ -183,38 +288,43 @@ const createWorldbookReader = deps => async (args = {}) => {
   ids.push(normalizeWorldId(await callMethod(bridge, 'getCurrentWorldId', sid)));
   ids.push(normalizeWorldId(await callMethod(bridge, 'getGlobalWorldId')));
   const list = asArray(await callMethod(bridge, 'listWorlds')).map(normalizeWorldId);
-  const uniqueIds = Array.from(new Set([toText(args.id), ...ids, ...list].filter(Boolean)));
+  const targetWorldId = toText(args.worldbookId || args.name || args.id);
+  const uniqueIds = Array.from(new Set([targetWorldId, ...ids, ...list].filter(Boolean)));
   const limit = clampAppResourceLimit(args.limit, 30, 120);
+  const maxEntries = clampAppResourceLimit(args.maxEntries, 30, 200);
+  const maxContentLength = Number(args.maxContentLength || 2000) || 2000;
+  const hasEntryFilter = Boolean(toText(args.entryId || args.entry || args.entryName || args.entryTitle || args.title || args.query));
+  const includeContent = args.includeContent === true || hasEntryFilter;
   const worldbooks = [];
   for (const id of uniqueIds.slice(0, limit)) {
     const data = await callMethod(bridge, 'getWorldInfo', id);
     const entries = Array.isArray(data?.entries) ? data.entries : [];
+    const matchedEntries = entries.filter((entry, index) => worldEntryMatches(entry, index, args));
+    const returnedEntries = matchedEntries.slice(0, maxEntries);
     worldbooks.push({
       id,
       name: toText(data?.name || id),
       entryCount: entries.length,
-      entries: entries.slice(0, 30).map((entry, index) => ({
-        id: toText(entry?.id),
-        title: toText(entry?.comment || entry?.title || entry?.name || `entry-${index + 1}`),
-        keys: Array.isArray(entry?.key) ? entry.key : (Array.isArray(entry?.keys) ? entry.keys : []),
-        secondaryKeys: Array.isArray(entry?.keysecondary) ? entry.keysecondary : [],
-        position: Number.isFinite(Number(entry?.position)) ? Number(entry.position) : undefined,
-        order: Number.isFinite(Number(entry?.order ?? entry?.priority)) ? Number(entry.order ?? entry.priority) : undefined,
-        depth: Number.isFinite(Number(entry?.depth)) ? Number(entry.depth) : undefined,
-        constant: entry?.constant === true,
-        disabled: entry?.disable === true || entry?.disabled === true,
-        content: trimAppResourceText(entry?.content || '', args.maxTextLength || 2000),
+      returnedEntryCount: returnedEntries.length,
+      truncated: matchedEntries.length > returnedEntries.length,
+      contentMode: includeContent ? 'content' : 'summary',
+      entries: returnedEntries.map((entry, index) => summarizeWorldbookEntry(entry, index, {
+        includeContent,
+        maxContentLength,
       })),
     });
   }
   return {
     ok: true,
     resource: 'worldbook',
+    contentMode: includeContent ? 'content' : 'summary',
+    contentHint: includeContent ? '' : '世界书正文默认省略；需要正文时再次读取并传 includeContent:true、entryId、entryTitle 或 query。',
     sessionId: sid,
     sessionLookup: sanitizeAppResourceValue(session),
     currentWorldIds: Array.from(new Set(ids.filter(Boolean))),
     globalWorldId: normalizeWorldId(await callMethod(bridge, 'getGlobalWorldId')),
     globalSettings: sanitizeAppResourceValue(await callMethod(bridge, 'getWorldGlobalSettings') || {}),
+    aiGeneration: readWorldAiGenerationSettings(),
     count: uniqueIds.length,
     worldbooks,
   };

@@ -226,11 +226,16 @@ export const createAppNavigationAgentTools = ({
       properties: {
         resource: { type: 'string', minLength: 1, maxLength: 80 },
         id: { type: 'string', maxLength: 200 },
+        name: { type: 'string', maxLength: 200 },
+        worldbookId: { type: 'string', maxLength: 200 },
+        entryId: { type: 'string', maxLength: 200 },
+        entryTitle: { type: 'string', maxLength: 200 },
         sessionId: { type: 'string', maxLength: 200 },
         sessionName: { type: 'string', maxLength: 200 },
         target: { type: 'string', maxLength: 200 },
         chatName: { type: 'string', maxLength: 200 },
         scope: { type: 'string', maxLength: 80 },
+        includeContent: { type: 'boolean' },
         include: {
           type: 'array',
           items: { type: 'string', maxLength: 80 },
@@ -238,7 +243,9 @@ export const createAppNavigationAgentTools = ({
         },
         query: { type: 'string', maxLength: 200 },
         limit: { type: 'integer', minimum: 1, maximum: 200 },
+        maxEntries: { type: 'integer', minimum: 1, maximum: 200 },
         maxTextLength: { type: 'integer', minimum: 120, maximum: 12000 },
+        maxContentLength: { type: 'integer', minimum: 120, maximum: 12000 },
       },
     },
     execute: async (args = {}) => {

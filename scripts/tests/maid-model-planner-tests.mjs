@@ -42,6 +42,15 @@ import {
   assert.match(messages[0].content, /严格 JSON/);
   assert.match(messages[0].content, /女仆基础提示词/);
   assert.match(messages[0].content, /自然生成/);
+  assert.match(messages[0].content, /优先选择非破坏性做法/);
+  assert.match(messages[0].content, /删除、覆盖、替换/);
+  assert.match(messages[0].content, /APP 确认弹窗/);
+  assert.match(messages[0].content, /继续上一件未完成/);
+  assert.match(messages[0].content, /可继续: 是/);
+  assert.match(messages[0].content, /worldbook\.update_entries/);
+  assert.match(messages[0].content, /1-3 个条目/);
+  assert.match(messages[0].content, /完整、具体、可直接执行的 JSON/);
+  assert.match(messages[0].content, /__keep_existing/);
   assert.match(messages[1].content, /世界书在哪里/);
   assert.match(messages[1].content, /相关功能检索/);
   assert.match(messages[1].content, /worldbook\.open/);
@@ -56,6 +65,7 @@ import {
   });
   assert.match(messages[0].content, /自定义女仆 system prompt/);
   assert.match(messages[0].content, /不能改变上述工具和安全限制/);
+  assert.match(messages[0].content, /危险操作包括/);
   console.log('ok - maid model planner includes editable prompt without replacing safety constraints');
 }
 
@@ -99,6 +109,14 @@ import {
 
   const embedded = extractMaidModelPlannerJson('plan: {"ok":false,"reason":"unsupported_intent"} done');
   assert.equal(embedded.ok, false);
+
+  const toolWithFencedContent = extractMaidModelPlannerJson([
+    'I will update one worldbook entry.',
+    '{"ok":true,"action":"tool","toolName":"worldbook.update_entries","featureId":"worldbook.update_entries","args":{"name":"W","updates":[{"entryTitle":"A","content":"```yaml\\nname: \\"A\\"\\nbackground: \\"kept\\"\\n```"}]},"response":"更新 A"}',
+  ].join('\n\n'));
+  assert.equal(toolWithFencedContent.ok, true);
+  assert.equal(toolWithFencedContent.toolName, 'worldbook.update_entries');
+  assert.match(toolWithFencedContent.args.updates[0].content, /```yaml/);
   console.log('ok - maid model planner extracts JSON from model text');
 }
 
@@ -122,6 +140,12 @@ import {
   assert.match(messages[0].content, /ReAct 控制器/);
   assert.match(messages[0].content, /不要输出思考过程/);
   assert.match(messages[0].content, /温柔、清楚、直接/);
+  assert.match(messages[0].content, /优先选择非破坏性做法/);
+  assert.match(messages[0].content, /未确认时跳过/);
+  assert.match(messages[0].content, /最终回答前必须/);
+  assert.match(messages[0].content, /继续提示/);
+  assert.match(messages[0].content, /worldbook\.update_entries/);
+  assert.match(messages[0].content, /完整、具体、可直接执行的 JSON/);
   assert.match(messages[1].content, /已执行步骤与观察结果/);
   assert.match(messages[1].content, /晚上好/);
   console.log('ok - maid model react planner builds observation prompt messages');
@@ -210,13 +234,15 @@ import {
   let runtimeCalls = 0;
   let chatCalls = 0;
   const injected = [];
+  const chatOptions = [];
   const planner = createMaidModelBackedPlanner({
     resolveRuntimeConfig: async () => {
       runtimeCalls += 1;
       return {
         client: {
-          chat: async () => {
+          chat: async (messages, options) => {
             chatCalls += 1;
+            chatOptions.push(options);
             return JSON.stringify({
               ok: true,
               toolName: 'app.open_panel',
@@ -241,6 +267,7 @@ import {
   assert.equal(plan.toolName, 'app.open_panel');
   assert.equal(runtimeCalls, 1);
   assert.equal(chatCalls, 1);
+  assert.equal(chatOptions[0].maxTokens, 8000);
   assert.equal(plan.source, 'model_planner');
   assert.equal(injected.length, 1);
   assert.equal(injected[0].conversationContext.tokenCount, 18);
@@ -312,15 +339,19 @@ import {
 
 {
   const debugSnapshots = [];
+  const chatOptions = [];
   const reactPlanner = createMaidModelBackedReActPlanner({
     resolveRuntimeConfig: async () => ({
       maidPrompt: '温柔一点',
       client: {
-        chat: async () => JSON.stringify({
-          ok: true,
-          action: 'final',
-          message: '精灵女王最后回复了「晚上好」。',
-        }),
+        chat: async (messages, options) => {
+          chatOptions.push(options);
+          return JSON.stringify({
+            ok: true,
+            action: 'final',
+            message: '精灵女王最后回复了「晚上好」。',
+          });
+        },
       },
     }),
     onDebugSnapshot: snapshot => debugSnapshots.push(snapshot),
@@ -336,8 +367,49 @@ import {
   assert.equal(decision.ok, true);
   assert.equal(decision.action, 'final');
   assert.match(decision.message, /晚上好/);
+  assert.equal(chatOptions[0].maxTokens, 12000);
   assert.equal(debugSnapshots.length, 1);
   assert.equal(debugSnapshots[0].source, 'maid_model_react');
   assert.match(debugSnapshots[0].messages[0].content, /温柔一点/);
   console.log('ok - maid model react planner calls configured model and returns final answer');
+}
+
+{
+  const reactPlanner = createMaidModelBackedReActPlanner({
+    resolveRuntimeConfig: async () => ({
+      client: {
+        chat: async () => '主人，我看到了！这本世界书里一共有 5 个条目，其中 entry-1 到 entry-3 是念初相关设定。',
+      },
+    }),
+  });
+  const decision = await reactPlanner('在异世界世界书里面', {
+    sessionId: 's1',
+    maidReactSteps: [{
+      toolName: 'worldbook.read',
+      status: 'succeeded',
+      output: { entryCount: 5 },
+    }],
+  });
+  assert.equal(decision.ok, true);
+  assert.equal(decision.action, 'final');
+  assert.equal(decision.source, 'model_react_text_fallback');
+  assert.match(decision.message, /5 个条目/);
+  console.log('ok - maid model react planner treats non-JSON natural text as final answer');
+}
+
+{
+  const reactPlanner = createMaidModelBackedReActPlanner({
+    resolveRuntimeConfig: async () => ({
+      client: {
+        chat: async () => '我来执行：{"ok":true,"action":"tool","toolName":"worldbook.update_entries","featureId":"worldbook.update_entries","args":{"name":"W","updates":[{"entryTitle":"A","content":"截断',
+      },
+    }),
+  });
+  const decision = await reactPlanner('继续替换', {
+    maidReactSteps: [{ toolName: 'worldbook.read', status: 'succeeded', output: { entryCount: 3 } }],
+  });
+  assert.equal(decision.ok, false);
+  assert.equal(decision.reason, 'invalid_model_react_decision');
+  assert.match(decision.message, /不完整的工具决策/);
+  console.log('ok - maid model react planner rejects incomplete tool JSON as final text');
 }

@@ -130,6 +130,17 @@ const createProfileStore = (prefix = 'profile') => {
   assert.equal(saved.get('Role A World').entries[0].constant, true);
   assert.deepEqual(bound, [{ personaId: persona.id, worldId: 'Role A World', options: { enabled: true } }]);
 
+  const appended = await getTool(tools, 'worldbook.create').execute({
+    name: 'Role A World',
+    entries: [{ title: '新增条目', content: '不会覆盖旧内容。' }],
+  });
+  assert.equal(appended.ok, true);
+  assert.equal(appended.created, false);
+  assert.equal(appended.previousEntryCount, 2);
+  assert.equal(appended.addedEntryCount, 1);
+  assert.equal(appended.entryCount, 3);
+  assert.deepEqual(saved.get('Role A World').entries.map(entry => entry.comment), ['温柔大姐姐', '傲娇青梅竹马', '新增条目']);
+
   const inferred = await getTool(tools, 'worldbook.create').execute({
     entries: [{ title: '当前角色条目', content: '缺省世界书名。' }],
   });
@@ -147,10 +158,40 @@ const createProfileStore = (prefix = 'profile') => {
   const readResult = await getTool(tools, 'worldbook.read').execute({ name: 'Role A World' });
   assert.equal(readResult.ok, true);
   assert.equal(readResult.name, 'Role A World');
-  assert.equal(readResult.entries.length, 2);
+  assert.equal(readResult.entries.length, 3);
   assert.equal(readResult.entries[0].title, '温柔大姐姐');
   assert.deepEqual(readResult.entries[0].keys, ['姐姐']);
-  assert.match(readResult.entries[0].content, /超级温柔/);
+  assert.equal(readResult.entries[0].content, undefined);
+  assert.equal(readResult.entries[0].contentPreview, undefined);
+  assert.ok(readResult.entries[0].contentLength > 0);
+  assert.equal(readResult.contentMode, 'summary');
+
+  const contentRead = await getTool(tools, 'worldbook.read').execute({ name: 'Role A World', entryTitle: '温柔大姐姐' });
+  assert.equal(contentRead.ok, true);
+  assert.equal(contentRead.contentMode, 'content');
+  assert.equal(contentRead.entries.length, 1);
+  assert.match(contentRead.entries[0].content, /超级温柔/);
+
+  const updated = await getTool(tools, 'worldbook.update_entries').execute({
+    name: 'Role A World',
+    updates: [{
+      entryTitle: '温柔大姐姐',
+      content: '扩展后的温柔大姐姐设定，仍然和用户是姐弟关系。',
+      keys: ['姐姐', '大姐姐'],
+    }],
+  }, {
+    toolSafety: {
+      decision: 'allow',
+      request: { kind: 'worldbook.update_entries' },
+    },
+  });
+  assert.equal(updated.ok, true);
+  assert.equal(updated.updatedEntryCount, 1);
+  assert.equal(updated.entryCount, 3);
+  assert.deepEqual(saved.get('Role A World').entries.map(entry => entry.comment), ['温柔大姐姐', '傲娇青梅竹马', '新增条目']);
+  assert.match(saved.get('Role A World').entries[0].content, /扩展后的温柔大姐姐/);
+  assert.deepEqual(saved.get('Role A World').entries[0].key, ['姐姐', '大姐姐']);
+  assert.equal(saved.get('Role A World').entries[1].content, '傲娇大小姐青梅竹马。');
 
   const currentRead = await getTool(tools, 'worldbook.read').execute({ sessionId: 'chat-a', maxEntries: 1 });
   assert.equal(currentRead.ok, true);
@@ -158,6 +199,102 @@ const createProfileStore = (prefix = 'profile') => {
   assert.equal(currentRead.entries.length, 1);
   assert.equal(currentRead.truncated, true);
   console.log('ok - app content tools create bind list and read worldbooks');
+}
+
+{
+  const saved = new Map([
+    ['Existing World', { name: 'Existing World', entries: [{ id: 'old', comment: '旧条目', content: '保留' }] }],
+  ]);
+  const confirmations = [];
+  const tools = createAppContentAgentTools({
+    saveWorldInfo: async (id, data) => saved.set(id, data),
+    getWorldInfo: async id => saved.get(id) || null,
+    listWorlds: async () => Array.from(saved.keys()),
+    confirmDestructiveWrite: async request => {
+      confirmations.push(request);
+      return false;
+    },
+    now: () => 2000,
+  });
+  const result = await getTool(tools, 'worldbook.create').execute({
+    name: 'Existing World',
+    mode: 'replace',
+    entries: [{ title: '新条目', content: '另存' }],
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.created, true);
+  assert.equal(result.fallbackCreated, true);
+  assert.equal(result.overwritten, false);
+  assert.equal(result.worldbookId, 'Existing World (2)');
+  assert.equal(saved.get('Existing World').entries[0].comment, '旧条目');
+  assert.equal(saved.get('Existing World (2)').entries[0].comment, '新条目');
+  assert.equal(confirmations[0].kind, 'worldbook.replace');
+  console.log('ok - app content tools create a new worldbook when replace is not confirmed');
+}
+
+{
+  const saved = new Map([
+    ['Existing World', { name: 'Existing World', entries: [{ id: 'old', comment: '旧条目', content: '会被确认覆盖' }] }],
+  ]);
+  const tools = createAppContentAgentTools({
+    saveWorldInfo: async (id, data) => saved.set(id, data),
+    getWorldInfo: async id => saved.get(id) || null,
+    listWorlds: async () => Array.from(saved.keys()),
+    confirmDestructiveWrite: async () => true,
+    now: () => 3000,
+  });
+  const result = await getTool(tools, 'worldbook.create').execute({
+    name: 'Existing World',
+    mode: 'replace',
+    entries: [{ title: '确认后的新条目', content: '覆盖' }],
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.created, false);
+  assert.equal(result.overwritten, true);
+  assert.equal(result.fallbackCreated, false);
+  assert.equal(result.worldbookId, 'Existing World');
+  assert.deepEqual(saved.get('Existing World').entries.map(entry => entry.comment), ['确认后的新条目']);
+  console.log('ok - app content tools replace existing worldbook only after confirmation');
+}
+
+{
+  const saved = new Map([
+    ['Registry World', { name: 'Registry World', entries: [{ id: 'old', comment: '旧条目', content: '保留' }] }],
+  ]);
+  let confirmations = 0;
+  const tools = createAppContentAgentTools({
+    saveWorldInfo: async (id, data) => saved.set(id, data),
+    getWorldInfo: async id => saved.get(id) || null,
+    listWorlds: async () => Array.from(saved.keys()),
+    confirmDestructiveWrite: async () => {
+      throw new Error('tool-local confirmation should not run after registry safety fallback');
+    },
+  });
+  const registry = createAgentToolRegistry({
+    permissionEvaluator: createAgentPermissionEvaluator({
+      defaultDecision: AGENT_PERMISSION_DECISIONS.allow,
+    }),
+    logger: { warn: () => {} },
+  });
+  registry.registerMany(tools);
+  const result = await registry.executeTool('worldbook.create', {
+    name: 'Registry World',
+    mode: 'replace',
+    entries: [{ title: '新条目', content: '另存' }],
+  }, {
+    requestToolConfirmation: request => {
+      confirmations += 1;
+      assert.equal(request.kind, 'worldbook.replace');
+      return false;
+    },
+  });
+  assert.equal(result.status, 'succeeded');
+  assert.equal(result.result.fallbackCreated, true);
+  assert.equal(result.result.worldbookId, 'Registry World (2)');
+  assert.equal(saved.get('Registry World').entries[0].comment, '旧条目');
+  assert.equal(saved.get('Registry World (2)').entries[0].comment, '新条目');
+  assert.equal(confirmations, 1);
+  console.log('ok - app content tools use registry safety fallback for worldbook replace');
 }
 
 {

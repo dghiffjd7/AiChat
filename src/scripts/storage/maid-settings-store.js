@@ -69,6 +69,13 @@ const readTimestamp = (raw = {}) => {
   return Number.isFinite(value) ? value : 0;
 };
 
+const trimPersistedText = (value = '', maxLength = 160000) => {
+  const text = trim(value);
+  const limit = Math.max(0, Number(maxLength) || 0);
+  if (!limit || text.length <= limit) return text;
+  return `${text.slice(0, Math.max(0, limit - 1))}…`;
+};
+
 const chooseFieldFromSources = ({
   localRaw = {},
   kvRaw = {},
@@ -92,6 +99,11 @@ const toPersistedMaidSettingsState = (state = {}, { now = Date.now } = {}) => {
     updatedAt: normalized.updatedAt,
     boundProfileId: normalized.boundProfileId,
     maidPrompt: normalized.maidPrompt,
+    lastRequestPrompt: trimPersistedText(normalized.lastRequestPrompt),
+    lastAppContext: trimPersistedText(normalized.lastAppContext, 60000),
+    lastFullResponse: trimPersistedText(normalized.lastFullResponse),
+    lastExchangeAt: normalized.lastExchangeAt,
+    lastExchangeSource: normalized.lastExchangeSource,
   };
 };
 
@@ -149,6 +161,8 @@ export class MaidSettingsStore {
     const kvHasPrompt = hasExplicitPrompt(kvRaw);
     const shouldWriteBackup = localHasSettings || kvHasSettings;
 
+    const debugRaw = readTimestamp(kvRaw) >= readTimestamp(localRaw) ? kvRaw : localRaw;
+
     this.state = normalizeMaidSettingsState({
       updatedAt: Math.max(readTimestamp(localRaw), readTimestamp(kvRaw), safeNow(this.now)),
       boundProfileId: chooseFieldFromSources({
@@ -167,6 +181,11 @@ export class MaidSettingsStore {
         localHasValue: localHasPrompt,
         kvHasValue: kvHasPrompt,
       }) || DEFAULT_MAID_PROMPT,
+      lastRequestPrompt: debugRaw?.lastRequestPrompt || '',
+      lastAppContext: debugRaw?.lastAppContext || '',
+      lastFullResponse: debugRaw?.lastFullResponse || '',
+      lastExchangeAt: debugRaw?.lastExchangeAt || 0,
+      lastExchangeSource: debugRaw?.lastExchangeSource || '',
     }, { now: this.now });
 
     if (shouldWriteBackup && this.saveKv) {
@@ -292,6 +311,7 @@ export class MaidSettingsStore {
     this.state.lastFullResponse = trim(fullResponse);
     this.state.lastExchangeAt = Number(at || 0) || safeNow(this.now);
     this.state.lastExchangeSource = trim(source);
+    void this.write();
     return this.getLastExchange();
   }
 

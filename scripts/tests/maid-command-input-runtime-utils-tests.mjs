@@ -139,7 +139,7 @@ class FakeDocument {
     onSubmit: async (text, controls) => {
       submissions.push(text);
       controls.setStatus('模型生成的执行前回应', 'thinking');
-      statusSnapshots.push(runtime.getElements().resultEl.textContent);
+      statusSnapshots.push(runtime.getResultMessages().map(item => item.message));
       return { ok: true, message: `done ${text}` };
     },
     setTimeoutFn: (fn) => {
@@ -178,13 +178,77 @@ class FakeDocument {
   const result = await runtime.submit();
   assert.equal(result.ok, true);
   assert.deepEqual(submissions, ['打开世界书']);
-  assert.deepEqual(statusSnapshots, ['模型生成的执行前回应']);
-  assert.equal(runtime.getElements().resultEl.textContent, 'done 打开世界书');
+  assert.deepEqual(statusSnapshots, [['女仆正在回复...', '模型生成的执行前回应']]);
+  assert.deepEqual(runtime.getResultMessages().map(item => item.message), [
+    '女仆正在回复...',
+    '模型生成的执行前回应',
+    'done 打开世界书',
+  ]);
+  assert.equal(runtime.getElements().resultEl.children.length, 3);
   assert.equal(runtime.getElements().resultEl.dataset.tone, 'success');
   assert.equal(rootEl.classList.contains('has-result'), true);
   assert.equal(rootEl.classList.contains('is-open'), true);
   assert.equal(modeSwitchEl.classList.contains('is-maid-input-open'), true);
   console.log('ok - maid command input opens submits and keeps reply bubble visible');
+}
+
+{
+  const documentRef = new FakeDocument();
+  const modeSwitchEl = new FakeElement('div');
+  const outsideEl = new FakeElement('main');
+  documentRef.body.appendChild(outsideEl);
+  let finishSubmit = null;
+  const runtime = createMaidCommandInputRuntime({
+    documentRef,
+    modeSwitchEl,
+    getViewportSize: () => ({ w: 360, h: 640 }),
+    onSubmit: async (text, controls) => {
+      controls.setStatus('步骤 1：读取资料', 'thinking');
+      await new Promise(resolve => {
+        finishSubmit = resolve;
+      });
+      controls.setStatus('步骤 2：整理结果', 'thinking');
+      return { ok: true, message: `完成 ${text}` };
+    },
+    setTimeoutFn: () => 1,
+    clearTimeoutFn: () => {},
+  });
+
+  assert.equal(runtime.open(), true);
+  const { rootEl, inputEl } = runtime.getElements();
+  inputEl.value = '检查世界书';
+  const pending = runtime.submit();
+  assert.equal(runtime.isSubmitting(), true);
+  assert.deepEqual(runtime.getResultMessages().map(item => item.message), [
+    '女仆正在回复...',
+    '步骤 1：读取资料',
+  ]);
+
+  documentRef.dispatchEvent('pointerdown', { target: outsideEl });
+  assert.equal(rootEl.classList.contains('is-open'), false);
+  assert.equal(modeSwitchEl.classList.contains('is-maid-input-open'), false);
+  assert.equal(runtime.getElements().resultEl.children.length, 2);
+
+  assert.equal(runtime.open(), true);
+  assert.equal(rootEl.classList.contains('is-open'), true);
+  assert.equal(runtime.getElements().resultEl.children.length, 2);
+  assert.deepEqual(runtime.getResultMessages().map(item => item.message), [
+    '女仆正在回复...',
+    '步骤 1：读取资料',
+  ]);
+
+  finishSubmit();
+  const result = await pending;
+  assert.equal(result.ok, true);
+  assert.equal(runtime.isSubmitting(), false);
+  assert.deepEqual(runtime.getResultMessages().map(item => item.message), [
+    '女仆正在回复...',
+    '步骤 1：读取资料',
+    '步骤 2：整理结果',
+    '完成 检查世界书',
+  ]);
+  assert.equal(runtime.getElements().resultEl.children.length, 4);
+  console.log('ok - maid command input restores in-progress reply bubbles after closing');
 }
 
 {

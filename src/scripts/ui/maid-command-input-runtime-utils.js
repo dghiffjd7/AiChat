@@ -8,6 +8,7 @@ const STYLE_ID = 'maid-command-input-runtime-style';
 const FIELD_MIN_HEIGHT = 32;
 const FIELD_MAX_HEIGHT = 76;
 const DEFAULT_MAX_IMAGE_ATTACHMENTS = 4;
+const RESULT_VISIBLE_ITEM_LIMIT = 3;
 
 const trim = (value, fallback = '') => {
   const text = String(value ?? '').trim();
@@ -228,54 +229,52 @@ const injectStyle = (documentRef) => {
 .maid-command-input-result {
   position: absolute;
   width: 100%;
-  max-height: min(42vh, 260px);
+  max-height: min(42vh, calc(58px * ${RESULT_VISIBLE_ITEM_LIMIT} + 14px));
   overflow: auto;
-  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 1px 2px;
   box-sizing: border-box;
-  border: 1px solid rgba(148, 163, 184, 0.24);
-  border-radius: 16px 16px 16px 5px;
-  background: color-mix(in srgb, var(--app-surface-card, #fff) 94%, rgba(37, 99, 235, 0.08));
+  border: 0;
+  border-radius: 16px;
+  background: transparent;
   color: var(--app-text-primary, #111827);
   font-size: 13px;
   line-height: 1.5;
   white-space: pre-wrap;
   word-break: break-word;
-  box-shadow: 0 16px 36px rgba(15, 23, 42, 0.20);
+  box-shadow: none;
+  scrollbar-width: thin;
 }
 .maid-command-input-result::before {
-  content: '';
-  position: absolute;
-  width: 10px;
-  height: 10px;
-  background: inherit;
-  border-left: inherit;
-  border-bottom: inherit;
-  transform: rotate(45deg);
+  display: none;
+}
+.maid-command-input-result-item {
+  flex: 0 0 auto;
+  max-width: 100%;
+  min-height: 38px;
+  padding: 9px 11px;
+  box-sizing: border-box;
+  border: 1px solid rgba(148, 163, 184, 0.24);
+  border-radius: 16px 16px 16px 6px;
+  background: color-mix(in srgb, var(--app-surface-card, #fff) 94%, rgba(37, 99, 235, 0.08));
+  box-shadow: 0 12px 28px rgba(15, 23, 42, 0.16);
+}
+.maid-command-input-result-item[data-tone="thinking"] {
+  color: var(--app-text-secondary, #475569);
+}
+.maid-command-input-result-item[data-tone="error"] {
+  border-color: rgba(239, 68, 68, 0.30);
+  background: color-mix(in srgb, var(--app-surface-card, #fff) 90%, rgba(239, 68, 68, 0.12));
 }
 .maid-command-input[data-bubble-side="top"] .maid-command-input-result {
   left: 0;
   bottom: calc(100% + 8px);
 }
-.maid-command-input[data-bubble-side="top"] .maid-command-input-result::before {
-  left: 24px;
-  bottom: -6px;
-  transform: rotate(-45deg);
-}
 .maid-command-input[data-bubble-side="bottom"] .maid-command-input-result {
   left: 0;
   top: calc(100% + 8px);
-}
-.maid-command-input[data-bubble-side="bottom"] .maid-command-input-result::before {
-  left: 24px;
-  top: -6px;
-  transform: rotate(135deg);
-}
-.maid-command-input-result[data-tone="thinking"] {
-  color: var(--app-text-secondary, #475569);
-}
-.maid-command-input-result[data-tone="error"] {
-  border-color: rgba(239, 68, 68, 0.30);
-  background: color-mix(in srgb, var(--app-surface-card, #fff) 90%, rgba(239, 68, 68, 0.12));
 }
 @media (max-width: 760px) {
   .maid-command-input[data-bubble-side] .maid-command-input-result {
@@ -317,6 +316,8 @@ export const createMaidCommandInputRuntime = ({
   let isSubmitting = false;
   let outsidePointerHandler = null;
   let imageAttachments = [];
+  let resultMessages = [];
+  let restoreResultOnNextOpen = false;
 
   const createAttachmentId = () => {
     if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') return crypto.randomUUID();
@@ -418,15 +419,32 @@ export const createMaidCommandInputRuntime = ({
     closeTimer = null;
   };
 
-  const setResult = (message = '', tone = 'info') => {
+  const shouldStickResultToBottom = () => {
+    if (!resultEl) return true;
+    const scrollHeight = Number(resultEl.scrollHeight || 0) || 0;
+    const clientHeight = Number(resultEl.clientHeight || 0) || 0;
+    const scrollTop = Number(resultEl.scrollTop || 0) || 0;
+    if (!scrollHeight || !clientHeight) return true;
+    return scrollHeight - scrollTop - clientHeight <= 28;
+  };
+
+  const scrollResultToBottom = () => {
+    if (!resultEl) return;
+    try {
+      resultEl.scrollTop = Number(resultEl.scrollHeight || 0) || 0;
+    } catch {}
+  };
+
+  const renderResultMessages = ({ forceBottom = false } = {}) => {
     if (!rootEl || !documentRef) return;
-    const text = trim(message);
-    if (!text) {
+    if (!resultMessages.length) {
       resultEl?.remove?.();
       resultEl = null;
       rootEl.classList.remove('has-result');
       return;
     }
+    const keepBottom = forceBottom || shouldStickResultToBottom();
+    const previousScrollTop = Number(resultEl?.scrollTop || 0) || 0;
     if (!resultEl) {
       resultEl = documentRef.createElement?.('div');
       resultEl.className = 'maid-command-input-result';
@@ -435,8 +453,44 @@ export const createMaidCommandInputRuntime = ({
       rootEl.appendChild(resultEl);
     }
     rootEl.classList.add('has-result');
-    resultEl.dataset.tone = tone;
-    resultEl.textContent = text;
+    resultEl.innerHTML = '';
+    resultMessages.forEach((item) => {
+      const bubble = documentRef.createElement?.('div');
+      if (!bubble) return;
+      bubble.className = 'maid-command-input-result-item';
+      bubble.dataset.tone = item.tone;
+      bubble.textContent = item.message;
+      resultEl.appendChild(bubble);
+    });
+    const latest = resultMessages[resultMessages.length - 1] || {};
+    resultEl.dataset.tone = latest.tone || 'info';
+    resultEl.dataset.count = String(resultMessages.length);
+    if (keepBottom) scrollResultToBottom();
+    else resultEl.scrollTop = previousScrollTop;
+  };
+
+  const clearResult = () => {
+    resultMessages = [];
+    restoreResultOnNextOpen = false;
+    renderResultMessages();
+  };
+
+  const setResult = (message = '', tone = 'info', options = {}) => {
+    const text = trim(message);
+    if (!text) {
+      clearResult();
+      return;
+    }
+    if (options?.replace) resultMessages = [];
+    const normalizedTone = trim(tone, 'info');
+    const latest = resultMessages[resultMessages.length - 1];
+    if (!latest || latest.message !== text || latest.tone !== normalizedTone) {
+      resultMessages.push({
+        message: text,
+        tone: normalizedTone,
+      });
+    }
+    renderResultMessages({ forceBottom: options?.forceBottom !== false });
   };
 
   const setSubmitting = (next) => {
@@ -636,12 +690,15 @@ export const createMaidCommandInputRuntime = ({
     const el = ensure();
     if (!el) return false;
     clearCloseTimer();
+    const shouldRestoreResult = restoreResultOnNextOpen && resultMessages.length > 0;
     isOpen = true;
-    setSubmitting(false);
-    setResult('');
-    if (inputEl) inputEl.value = trim(initialText);
+    if (!isSubmitting) setSubmitting(false);
+    if (!shouldRestoreResult && !isSubmitting) clearResult();
+    restoreResultOnNextOpen = false;
+    if (!isSubmitting && inputEl) inputEl.value = trim(initialText);
     resizeInput();
     position();
+    renderResultMessages({ forceBottom: true });
     el.classList.add('is-open');
     modeSwitchEl?.classList.add?.('is-maid-input-open');
     bindOutsidePointer();
@@ -655,13 +712,18 @@ export const createMaidCommandInputRuntime = ({
 
   const close = () => {
     clearCloseTimer();
+    const shouldPreserveResult = isSubmitting && resultMessages.length > 0;
     isOpen = false;
-    setSubmitting(false);
+    if (!isSubmitting) setSubmitting(false);
     rootEl?.classList.remove('is-open');
     rootEl?.classList.remove('is-dragover');
     modeSwitchEl?.classList.remove?.('is-maid-input-open');
-    setResult('');
-    clearAttachments();
+    if (shouldPreserveResult) {
+      restoreResultOnNextOpen = true;
+    } else {
+      clearResult();
+      clearAttachments();
+    }
     unbindOutsidePointer();
     return true;
   };
@@ -671,8 +733,9 @@ export const createMaidCommandInputRuntime = ({
     const attachments = imageAttachments.slice();
     if ((!text && !attachments.length) || isSubmitting) return false;
     clearCloseTimer();
+    restoreResultOnNextOpen = false;
     setSubmitting(true);
-    setResult('女仆正在回复...', 'thinking');
+    setResult('女仆正在回复...', 'thinking', { replace: true });
     try {
       const effectiveText = text || '请看这张图片。';
       const result = await onSubmit(effectiveText, {
@@ -692,6 +755,7 @@ export const createMaidCommandInputRuntime = ({
       return { ok: false, error };
     } finally {
       setSubmitting(false);
+      if (!isOpen && resultMessages.length > 0) restoreResultOnNextOpen = true;
     }
   };
 
@@ -704,6 +768,7 @@ export const createMaidCommandInputRuntime = ({
     addFiles,
     clearAttachments,
     getAttachments: () => imageAttachments.slice(),
+    getResultMessages: () => resultMessages.map(item => ({ ...item })),
     isOpen: () => isOpen,
     isSubmitting: () => isSubmitting,
     getElements: () => ({ rootEl, inputEl, attachBtn, fileInputEl, attachmentsEl, settingsBtn, submitBtn, resultEl }),

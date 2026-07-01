@@ -5,6 +5,9 @@ const trim = (value, fallback = '') => {
 
 const isPlainObject = value => Boolean(value && typeof value === 'object' && !Array.isArray(value));
 
+const hasOwn = (value, key) => isPlainObject(value) &&
+  Object.prototype.hasOwnProperty.call(value, key);
+
 const clone = (value) => {
   if (value === null || value === undefined) return value;
   if (typeof value !== 'object') return value;
@@ -154,7 +157,48 @@ const getWorldEntries = data => {
   return [];
 };
 
-const normalizeWorldbookEntrySummary = (entry = {}, index = 0, { includeContent = true, maxContentLength = 2000 } = {}) => {
+const readWorldEntryId = entry => trim(entry?.id || entry?.uid || entry?.comment || entry?.title || entry?.name);
+
+const makeUniqueWorldEntryId = (baseEntry = {}, entries = [], index = 0) => {
+  const existing = new Set((Array.isArray(entries) ? entries : []).map(readWorldEntryId).filter(Boolean));
+  const base = trim(readWorldEntryId(baseEntry), `entry-${index + 1}`);
+  if (!existing.has(base)) return base;
+  let suffix = 2;
+  let next = `${base}-${suffix}`;
+  while (existing.has(next)) {
+    suffix += 1;
+    next = `${base}-${suffix}`;
+  }
+  return next;
+};
+
+const makeUniqueWorldbookName = async (baseName = '', {
+  listWorlds = null,
+  getWorldInfo = null,
+} = {}) => {
+  const base = trim(baseName, '女仆创建的世界书');
+  const names = new Set();
+  if (typeof listWorlds === 'function') {
+    try {
+      normalizeStringList(await listWorlds()).forEach(name => names.add(name));
+    } catch {}
+  }
+  if (!names.has(base) && typeof getWorldInfo === 'function') {
+    try {
+      if (await getWorldInfo(base)) names.add(base);
+    } catch {}
+  }
+  if (!names.has(base)) return base;
+  let index = 2;
+  let next = `${base} (${index})`;
+  while (names.has(next)) {
+    index += 1;
+    next = `${base} (${index})`;
+  }
+  return next;
+};
+
+const normalizeWorldbookEntrySummary = (entry = {}, index = 0, { includeContent = false, maxContentLength = 2000 } = {}) => {
   const source = isPlainObject(entry) ? entry : {};
   const title = trim(source.title || source.comment || source.name || source.id, `entry-${index + 1}`);
   const keys = [
@@ -175,12 +219,152 @@ const normalizeWorldbookEntrySummary = (entry = {}, index = 0, { includeContent 
     constant: source.constant === true,
     order: Number.isFinite(Number(source.order ?? source.priority)) ? Number(source.order ?? source.priority) : undefined,
     position: Number.isFinite(Number(source.position)) ? Number(source.position) : undefined,
+    contentLength: trim(source.content || source.description || '').length,
   };
-  if (includeContent !== false) {
+  if (includeContent === true) {
     summary.content = truncateText(source.content || source.description || '', maxContentLength);
+    summary.contentTruncated = trim(source.content || source.description || '').length > maxContentLength;
   }
   return summary;
 };
+
+const hasWorldbookEntryFilter = (args = {}) => Boolean(trim(
+  args.entryId || args.entry || args.entryName || args.entryTitle || args.title || args.query,
+));
+
+const worldbookEntryMatches = (entry = {}, index = 0, args = {}) => {
+  if (!hasWorldbookEntryFilter(args)) return true;
+  const source = isPlainObject(entry) ? entry : {};
+  const id = readWorldEntryId(source);
+  const title = trim(source.title || source.comment || source.name || source.id, `entry-${index + 1}`);
+  const keys = [
+    ...normalizeStringList(source.key),
+    ...normalizeStringList(source.keys),
+    ...normalizeStringList(source.triggers),
+    ...normalizeStringList(source.keysecondary),
+    ...normalizeStringList(source.secondary),
+  ];
+  const entryId = trim(args.entryId || args.entry || args.entryName);
+  if (entryId) {
+    const target = normalizeKey(entryId);
+    if ([id, title, ...keys].some(value => normalizeKey(value) === target)) return true;
+  }
+  const entryTitle = trim(args.entryTitle || args.title);
+  if (entryTitle) {
+    const target = normalizeKey(entryTitle);
+    const normalizedTitle = normalizeKey(title);
+    if (normalizedTitle === target || normalizedTitle.includes(target)) return true;
+  }
+  const query = trim(args.query);
+  if (query) {
+    const target = normalizeKey(query);
+    const haystack = [id, title, ...keys, trim(source.content || source.description || '')]
+      .map(normalizeKey)
+      .join('\n');
+    return haystack.includes(target);
+  }
+  return false;
+};
+
+const findWorldbookEntryIndex = (entries = [], update = {}) => {
+  const source = isPlainObject(update) ? update : {};
+  const exactTargets = [
+    source.entryId,
+    source.entry,
+    source.entryName,
+    source.entryTitle,
+    source.target,
+    source.id,
+    source.title,
+    source.comment,
+    source.name,
+  ].map(value => normalizeKey(value)).filter(Boolean);
+  if (exactTargets.length) {
+    const exactIndex = entries.findIndex((entry, index) => {
+      const title = trim(entry?.title || entry?.comment || entry?.name || entry?.id, `entry-${index + 1}`);
+      const keys = [
+        ...normalizeStringList(entry?.key),
+        ...normalizeStringList(entry?.keys),
+        ...normalizeStringList(entry?.triggers),
+        ...normalizeStringList(entry?.keysecondary),
+        ...normalizeStringList(entry?.secondary),
+      ];
+      return [readWorldEntryId(entry), title, ...keys]
+        .map(value => normalizeKey(value))
+        .some(value => value && exactTargets.includes(value));
+    });
+    if (exactIndex >= 0) return exactIndex;
+  }
+  const query = normalizeKey(source.query);
+  if (!query) return -1;
+  return entries.findIndex((entry, index) => {
+    const title = trim(entry?.title || entry?.comment || entry?.name || entry?.id, `entry-${index + 1}`);
+    const haystack = [
+      readWorldEntryId(entry),
+      title,
+      ...normalizeStringList(entry?.key),
+      ...normalizeStringList(entry?.keys),
+      ...normalizeStringList(entry?.triggers),
+      trim(entry?.content || entry?.description || ''),
+    ].map(value => normalizeKey(value)).join('\n');
+    return haystack.includes(query);
+  });
+};
+
+const applyWorldbookEntryUpdate = (entry = {}, update = {}, index = 0) => {
+  const source = isPlainObject(update) ? update : {};
+  const next = isPlainObject(entry) ? clone(entry) : {};
+  const title = trim(
+    hasOwn(source, 'newTitle') ? source.newTitle :
+      (hasOwn(source, 'title') ? source.title :
+        (hasOwn(source, 'comment') ? source.comment : '')),
+  );
+  if (title) {
+    next.title = title;
+    next.comment = title;
+  }
+  const newId = trim(source.newId);
+  if (newId) {
+    next.id = newId;
+  } else if (!trim(next.id)) {
+    next.id = trim(next.title || next.comment || next.name, `entry-${index + 1}`);
+  }
+  if (hasOwn(source, 'content')) next.content = trim(source.content);
+  if (!hasOwn(source, 'content') && hasOwn(source, 'description')) next.content = trim(source.description);
+  const keys = hasOwn(source, 'keys') ? source.keys : (hasOwn(source, 'key') ? source.key : source.triggers);
+  if (hasOwn(source, 'keys') || hasOwn(source, 'key') || hasOwn(source, 'triggers')) {
+    const normalizedKeys = normalizeStringList(keys);
+    next.key = normalizedKeys;
+    next.keys = normalizedKeys;
+    next.triggers = normalizedKeys;
+  }
+  const secondaryKeys = hasOwn(source, 'secondaryKeys')
+    ? source.secondaryKeys
+    : (hasOwn(source, 'keysecondary') ? source.keysecondary : source.secondary);
+  if (hasOwn(source, 'secondaryKeys') || hasOwn(source, 'keysecondary') || hasOwn(source, 'secondary')) {
+    const normalizedSecondary = normalizeStringList(secondaryKeys);
+    next.keysecondary = normalizedSecondary;
+    next.secondary = normalizedSecondary;
+  }
+  ['order', 'priority', 'depth', 'position', 'selectiveLogic', 'probability'].forEach((key) => {
+    if (!hasOwn(source, key)) return;
+    const numeric = Number(source[key]);
+    if (Number.isFinite(numeric)) next[key] = numeric;
+  });
+  if (hasOwn(source, 'disabled')) next.disable = source.disabled === true;
+  ['disable', 'selective', 'constant', 'useProbability'].forEach((key) => {
+    if (hasOwn(source, key)) next[key] = source[key] === true;
+  });
+  return normalizeWorldEntry(next, index);
+};
+
+const hasWorldbookEntryOverwriteFields = (updates = []) => (
+  (Array.isArray(updates) ? updates : []).some(update => (
+    isPlainObject(update) &&
+    ['content', 'description', 'title', 'newTitle', 'comment', 'name', 'keys', 'key', 'triggers', 'secondaryKeys', 'keysecondary', 'secondary']
+      .some(key => hasOwn(update, key))
+  ))
+);
 
 const summarizeWorldbook = (worldId = '', data = null, meta = {}) => {
   const entries = getWorldEntries(data);
@@ -221,6 +405,7 @@ export const createAppContentAgentTools = ({
   refreshChatAndContacts = null,
   setActiveSession = null,
   sendChatMessage = null,
+  confirmDestructiveWrite = null,
   renderSessionNameHtml = (id, contact) => trim(contact?.name || id, id),
   getActiveUserName = () => '我',
   getActiveUserAvatar = () => '',
@@ -253,6 +438,58 @@ export const createAppContentAgentTools = ({
     return await getGlobalWorld();
   };
 
+  const resolveWorldbookCreateTarget = async (args = {}) => {
+    const personaQuery = trim(args.personaId || args.personaName);
+    const persona = personaQuery
+      ? findStoreItem(personaStore, personaQuery)
+      : getActiveStoreItem(personaStore);
+    const fallbackWorldName = trim(persona?.name || persona?.id)
+      ? `${trim(persona?.name || persona?.id)} 世界书`
+      : '女仆创建的世界书';
+    const explicitName = trim(args.name);
+    const name = trim(explicitName, fallbackWorldName);
+    const existing = typeof getWorldInfo === 'function' ? await getWorldInfo(name) : null;
+    const existingEntries = getWorldEntries(existing);
+    const requestedMode = trim(args.mode, 'append');
+    const mode = requestedMode === 'replace'
+      ? 'replace'
+      : (requestedMode === 'create_new' ? 'create_new' : 'append');
+    return {
+      personaQuery,
+      persona,
+      explicitName,
+      name,
+      existing,
+      existingEntries,
+      mode,
+    };
+  };
+
+  const resolveWorldbookUpdateTarget = async (args = {}) => {
+    const worldbookId = await resolveWorldbookId(args);
+    const existing = worldbookId && typeof getWorldInfo === 'function'
+      ? await getWorldInfo(worldbookId)
+      : null;
+    const existingEntries = getWorldEntries(existing);
+    return {
+      worldbookId,
+      existing,
+      existingEntries,
+      updates: Array.isArray(args.updates) ? args.updates : [],
+      createMissing: args.createMissing === true,
+    };
+  };
+
+  const hasAllowedToolSafety = (context = {}, kind = '') => (
+    context?.toolSafety?.decision === 'allow' &&
+    (!kind || context?.toolSafety?.request?.kind === kind)
+  );
+  const hasFallbackToolSafety = (context = {}, kind = '') => (
+    context?.toolSafety?.decision === 'fallback' &&
+    (!kind || context?.toolSafety?.request?.kind === kind)
+  );
+  const isWorldbookUpdateAllowed = (context = {}) => hasAllowedToolSafety(context, 'worldbook.update_entries');
+
   return [
   {
     name: 'persona.create',
@@ -269,6 +506,11 @@ export const createAppContentAgentTools = ({
       undo: 'manual_delete',
       modelContext: 'none',
       confirmation: 'allow_once',
+    },
+    safety: {
+      operationType: 'create',
+      destructive: 'never',
+      description: 'Creates a new character card or reuses an existing one; it does not overwrite existing profile content.',
     },
     schema: {
       type: 'object',
@@ -331,6 +573,11 @@ export const createAppContentAgentTools = ({
       modelContext: 'none',
       confirmation: 'allow_once',
     },
+    safety: {
+      operationType: 'create',
+      destructive: 'never',
+      description: 'Creates a new user profile or reuses an existing one; it does not overwrite existing profile content.',
+    },
     schema: {
       type: 'object',
       required: ['name'],
@@ -386,6 +633,11 @@ export const createAppContentAgentTools = ({
       modelContext: 'none',
       confirmation: 'allow_once',
     },
+    safety: {
+      operationType: 'switch_active',
+      destructive: 'never',
+      description: 'Switches active user profile without deleting or overwriting profile data.',
+    },
     schema: {
       type: 'object',
       additionalProperties: false,
@@ -423,6 +675,11 @@ export const createAppContentAgentTools = ({
       modelContext: 'none',
       confirmation: 'allow_once',
     },
+    safety: {
+      operationType: 'switch_active',
+      destructive: 'never',
+      description: 'Switches active character card without deleting or overwriting profile data.',
+    },
     schema: {
       type: 'object',
       additionalProperties: false,
@@ -447,7 +704,7 @@ export const createAppContentAgentTools = ({
   {
     name: 'worldbook.create',
     title: 'Create worldbook',
-    description: 'Create or update a worldbook and optionally bind it to a character card.',
+    description: 'Create a worldbook or append new entries to an existing worldbook. Replacing existing entries requires user confirmation.',
     source: 'maid-app-content',
     permissions: [],
     riskLevel: 'medium',
@@ -467,52 +724,291 @@ export const createAppContentAgentTools = ({
       properties: {
         name: { type: 'string', minLength: 1, maxLength: 120 },
         entries: { type: 'array', minItems: 1, maxItems: 50 },
+        mode: { type: 'string', enum: ['append', 'create_new', 'replace'] },
         personaId: { type: 'string', maxLength: 160 },
         personaName: { type: 'string', maxLength: 160 },
         bindToPersona: { type: 'boolean' },
       },
     },
-    execute: async (args = {}) => {
-      const personaQuery = trim(args.personaId || args.personaName);
-      const persona = personaQuery
-        ? findStoreItem(personaStore, personaQuery)
-        : getActiveStoreItem(personaStore);
-      const fallbackWorldName = trim(persona?.name || persona?.id)
-        ? `${trim(persona?.name || persona?.id)} 世界书`
-        : '女仆创建的世界书';
-      const explicitName = trim(args.name);
-      const name = trim(explicitName, fallbackWorldName);
+    safety: {
+      operationType: 'append_or_replace_worldbook',
+      destructive: 'conditional',
+      preflight: async (args = {}) => {
+        const target = await resolveWorldbookCreateTarget(args);
+        if (target.mode !== 'replace' || !target.existingEntries.length) {
+          return { destructive: false, operationType: target.mode };
+        }
+        return {
+          destructive: true,
+          kind: 'worldbook.replace',
+          operationType: 'replace_existing',
+          title: '覆盖世界书条目',
+          message: `世界书「${target.name}」已有 ${target.existingEntries.length} 个条目。覆盖会用 ${args.entries.length} 个新条目替换原内容。`,
+          confirmText: '覆盖',
+          cancelText: '新建副本',
+          danger: true,
+          details: {
+            worldbookId: target.name,
+            currentEntryCount: target.existingEntries.length,
+            nextEntryCount: args.entries.length,
+          },
+          onDeny: {
+            action: 'replace_args',
+            reason: 'fallback_create_new',
+            args: {
+              ...args,
+              mode: 'create_new',
+            },
+          },
+        };
+      },
+    },
+    execute: async (args = {}, context = {}) => {
+      const {
+        personaQuery,
+        persona,
+        explicitName,
+        name,
+        existing,
+        existingEntries,
+        mode,
+      } = await resolveWorldbookCreateTarget(args);
       if (!Array.isArray(args.entries) || !args.entries.length) {
         return { ok: false, created: false, reason: 'missing_entries' };
       }
       if (typeof saveWorldInfo !== 'function') {
         return { ok: false, created: false, reason: 'worldbook_store_unavailable' };
       }
-      const existing = typeof getWorldInfo === 'function' ? await getWorldInfo(name) : null;
-      const entries = args.entries.map(normalizeWorldEntry);
+      let targetName = mode === 'create_new' ? await makeUniqueWorldbookName(name, { listWorlds, getWorldInfo }) : name;
+      let targetExisting = targetName === name ? existing : null;
+      let overwritten = false;
+      let fallbackCreated = hasFallbackToolSafety(context, 'worldbook.replace');
+      if (mode === 'replace' && existingEntries.length) {
+        const confirmed = hasAllowedToolSafety(context, 'worldbook.replace')
+          ? true
+          : (typeof confirmDestructiveWrite === 'function'
+          ? await confirmDestructiveWrite({
+            kind: 'worldbook.replace',
+            title: '覆盖世界书条目',
+            message: `世界书「${name}」已有 ${existingEntries.length} 个条目。覆盖会用 ${args.entries.length} 个新条目替换原内容。`,
+            confirmText: '覆盖',
+            cancelText: '新建副本',
+            danger: true,
+            worldbookId: name,
+            currentEntryCount: existingEntries.length,
+            nextEntryCount: args.entries.length,
+          })
+          : false);
+        if (confirmed === true) {
+          overwritten = true;
+        } else {
+          targetName = await makeUniqueWorldbookName(name, { listWorlds, getWorldInfo });
+          targetExisting = null;
+          fallbackCreated = true;
+        }
+      }
+      const targetExistingEntries = getWorldEntries(targetExisting);
+      const reservedEntries = mode === 'replace' && !fallbackCreated
+        ? []
+        : targetExistingEntries.map(entry => clone(entry));
+      const incomingEntries = args.entries.map((entry, index) => {
+        const normalized = normalizeWorldEntry(entry, index);
+        normalized.id = makeUniqueWorldEntryId(normalized, reservedEntries, index);
+        reservedEntries.push(normalized);
+        return normalized;
+      });
+      const nextEntries = mode === 'append' && targetExisting
+        ? [...targetExistingEntries.map(entry => clone(entry)), ...incomingEntries]
+        : incomingEntries;
       const payload = {
-        ...(isPlainObject(existing) ? existing : {}),
-        name,
-        entries,
+        ...(isPlainObject(targetExisting) ? targetExisting : {}),
+        name: targetName,
+        entries: nextEntries,
         updatedBy: 'maid',
         updatedAt: Number(now?.() || Date.now()) || Date.now(),
       };
-      await saveWorldInfo(name, payload);
+      await saveWorldInfo(targetName, payload);
       let boundPersonaId = '';
       const shouldBindPersona = args.bindToPersona === true || Boolean(personaQuery) || (!explicitName && persona?.id);
       if (shouldBindPersona && persona?.id && typeof assignWorldToPersona === 'function') {
-        await assignWorldToPersona(persona.id, name, { enabled: true });
+        await assignWorldToPersona(persona.id, targetName, { enabled: true });
         boundPersonaId = trim(persona.id);
       }
       return {
         ok: true,
-        created: !existing,
-        worldbookId: name,
-        entryCount: entries.length,
+        created: !targetExisting,
+        overwritten,
+        fallbackCreated,
+        mode: fallbackCreated ? 'create_new' : mode,
+        worldbookId: targetName,
+        previousWorldbookId: targetName === name ? '' : name,
+        previousEntryCount: targetExistingEntries.length,
+        addedEntryCount: incomingEntries.length,
+        entryCount: nextEntries.length,
         boundPersonaId,
       };
     },
     summarizeResult: result => `saved worldbook ${trim(result?.worldbookId, '-')} (${Number(result?.entryCount || 0)} entries)`,
+  },
+  {
+    name: 'worldbook.update_entries',
+    title: 'Update worldbook entries',
+    description: 'Update selected entries in an existing worldbook without replacing unrelated entries.',
+    source: 'maid-app-content',
+    permissions: [],
+    riskLevel: 'medium',
+    capabilities: {
+      read: true,
+      write: true,
+      network: false,
+      cost: 'none',
+      undo: 'manual_restore',
+      modelContext: 'none',
+      confirmation: 'allow_once',
+    },
+    schema: {
+      type: 'object',
+      required: ['updates'],
+      additionalProperties: false,
+      properties: {
+        id: { type: 'string', maxLength: 160 },
+        worldbookId: { type: 'string', maxLength: 160 },
+        name: { type: 'string', maxLength: 160 },
+        sessionId: { type: 'string', maxLength: 160 },
+        updates: { type: 'array', minItems: 1, maxItems: 50 },
+        createMissing: { type: 'boolean' },
+      },
+    },
+    safety: {
+      operationType: 'update_worldbook_entries',
+      destructive: 'conditional',
+      preflight: async (args = {}) => {
+        const target = await resolveWorldbookUpdateTarget(args);
+        if (!target.worldbookId || !target.existingEntries.length || !hasWorldbookEntryOverwriteFields(target.updates)) {
+          return { destructive: false, operationType: 'update_worldbook_entries' };
+        }
+        return {
+          destructive: true,
+          kind: 'worldbook.update_entries',
+          operationType: 'update_existing_entries',
+          title: '修改世界书条目',
+          message: `世界书「${target.worldbookId}」已有 ${target.existingEntries.length} 个条目。此操作会修改匹配条目的正文、标题或关键词，但不会删除未指定条目。`,
+          confirmText: '修改',
+          cancelText: '取消',
+          danger: true,
+          details: {
+            worldbookId: target.worldbookId,
+            currentEntryCount: target.existingEntries.length,
+            updateCount: target.updates.length,
+          },
+          onDeny: {
+            action: 'skip',
+            reason: 'worldbook_update_cancelled',
+          },
+        };
+      },
+    },
+    execute: async (args = {}, context = {}) => {
+      await waitForWorldStoreReady?.();
+      const target = await resolveWorldbookUpdateTarget(args);
+      if (!Array.isArray(args.updates) || !args.updates.length) {
+        return { ok: false, updated: false, reason: 'missing_updates' };
+      }
+      if (!target.worldbookId) return { ok: false, updated: false, reason: 'missing_worldbook_id' };
+      if (typeof getWorldInfo !== 'function' || typeof saveWorldInfo !== 'function') {
+        return { ok: false, updated: false, reason: 'worldbook_store_unavailable', worldbookId: target.worldbookId };
+      }
+      if (!target.existing) {
+        return { ok: false, updated: false, reason: 'worldbook_not_found', worldbookId: target.worldbookId };
+      }
+      const requiresConfirmation = target.existingEntries.length > 0 && hasWorldbookEntryOverwriteFields(args.updates);
+      if (requiresConfirmation && !isWorldbookUpdateAllowed(context)) {
+        const confirmed = typeof confirmDestructiveWrite === 'function'
+          ? await confirmDestructiveWrite({
+            kind: 'worldbook.update_entries',
+            title: '修改世界书条目',
+            message: `世界书「${target.worldbookId}」已有 ${target.existingEntries.length} 个条目。此操作会修改匹配条目的正文、标题或关键词，但不会删除未指定条目。`,
+            confirmText: '修改',
+            cancelText: '取消',
+            danger: true,
+            worldbookId: target.worldbookId,
+            currentEntryCount: target.existingEntries.length,
+            updateCount: args.updates.length,
+          })
+          : false;
+        if (confirmed !== true) {
+          return {
+            ok: false,
+            updated: false,
+            skipped: true,
+            reason: 'worldbook_update_cancelled',
+            worldbookId: target.worldbookId,
+          };
+        }
+      }
+
+      const nextEntries = target.existingEntries.map(entry => clone(entry));
+      const skippedUpdates = [];
+      const updatedEntries = [];
+      let createdEntryCount = 0;
+      args.updates.forEach((update, index) => {
+        if (!isPlainObject(update)) {
+          skippedUpdates.push({ index, reason: 'invalid_update' });
+          return;
+        }
+        const matchIndex = findWorldbookEntryIndex(nextEntries, update);
+        if (matchIndex < 0) {
+          if (args.createMissing === true) {
+            const normalized = normalizeWorldEntry(update, nextEntries.length);
+            normalized.id = makeUniqueWorldEntryId(normalized, nextEntries, nextEntries.length);
+            nextEntries.push(normalized);
+            createdEntryCount += 1;
+            updatedEntries.push(normalizeWorldbookEntrySummary(normalized, nextEntries.length - 1));
+            return;
+          }
+          skippedUpdates.push({
+            index,
+            reason: 'entry_not_found',
+            target: trim(update.entryId || update.entryTitle || update.title || update.name || update.query, `update-${index + 1}`),
+          });
+          return;
+        }
+        const nextEntry = applyWorldbookEntryUpdate(nextEntries[matchIndex], update, matchIndex);
+        nextEntries[matchIndex] = nextEntry;
+        updatedEntries.push(normalizeWorldbookEntrySummary(nextEntry, matchIndex));
+      });
+
+      if (!updatedEntries.length && !createdEntryCount) {
+        return {
+          ok: false,
+          updated: false,
+          reason: 'no_matching_entries',
+          worldbookId: target.worldbookId,
+          skippedUpdates,
+        };
+      }
+      const payload = {
+        ...(isPlainObject(target.existing) ? target.existing : {}),
+        name: trim(target.existing?.name || target.worldbookId),
+        entries: nextEntries,
+        updatedBy: 'maid',
+        updatedAt: Number(now?.() || Date.now()) || Date.now(),
+      };
+      await saveWorldInfo(target.worldbookId, payload);
+      return {
+        ok: true,
+        updated: true,
+        worldbookId: target.worldbookId,
+        updatedEntryCount: updatedEntries.length - createdEntryCount,
+        createdEntryCount,
+        entryCount: nextEntries.length,
+        skippedUpdates,
+        updatedEntries,
+      };
+    },
+    summarizeResult: result => result?.ok === false
+      ? `update worldbook entries failed: ${trim(result?.reason, 'unknown')}`
+      : `updated worldbook ${trim(result?.worldbookId, '-')} (${Number(result?.updatedEntryCount || 0)} updated, ${Number(result?.createdEntryCount || 0)} created)`,
   },
   {
     name: 'worldbook.list',
@@ -586,6 +1082,9 @@ export const createAppContentAgentTools = ({
         worldbookId: { type: 'string', maxLength: 160 },
         name: { type: 'string', maxLength: 160 },
         sessionId: { type: 'string', maxLength: 160 },
+        entryId: { type: 'string', maxLength: 160 },
+        entryTitle: { type: 'string', maxLength: 160 },
+        query: { type: 'string', maxLength: 200 },
         includeContent: { type: 'boolean' },
         maxEntries: { type: 'integer', minimum: 1, maximum: 200 },
         maxContentLength: { type: 'integer', minimum: 120, maximum: 12000 },
@@ -603,14 +1102,20 @@ export const createAppContentAgentTools = ({
       const entries = getWorldEntries(data);
       const maxEntries = Math.max(1, Math.min(200, Number(args.maxEntries || 50) || 50));
       const maxContentLength = Math.max(120, Math.min(12000, Number(args.maxContentLength || 2000) || 2000));
+      const includeContent = args.includeContent === true || hasWorldbookEntryFilter(args);
+      const matchedEntries = entries.filter((entry, index) => worldbookEntryMatches(entry, index, args));
+      const returnedEntries = matchedEntries.slice(0, maxEntries);
       return {
         ok: true,
         ...summarizeWorldbook(worldbookId, data),
-        entries: entries.slice(0, maxEntries).map((entry, index) => normalizeWorldbookEntrySummary(entry, index, {
-          includeContent: args.includeContent !== false,
+        contentMode: includeContent ? 'content' : 'summary',
+        contentHint: includeContent ? '' : '世界书正文默认省略；需要正文时再次读取并传 includeContent:true、entryId、entryTitle 或 query。',
+        returnedEntryCount: returnedEntries.length,
+        entries: returnedEntries.map((entry, index) => normalizeWorldbookEntrySummary(entry, index, {
+          includeContent,
           maxContentLength,
         })),
-        truncated: entries.length > maxEntries,
+        truncated: matchedEntries.length > maxEntries,
       };
     },
     summarizeResult: result => result?.ok === false
@@ -632,6 +1137,11 @@ export const createAppContentAgentTools = ({
       undo: 'manual_delete',
       modelContext: 'none',
       confirmation: 'allow_once',
+    },
+    safety: {
+      operationType: 'append_message',
+      destructive: 'never',
+      description: 'Appends a new chat message; it does not edit or delete existing messages.',
     },
     schema: {
       type: 'object',

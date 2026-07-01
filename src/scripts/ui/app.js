@@ -18,6 +18,7 @@ import { createWorldbookAuditAgent } from '../agent/worldbook-audit-agent.js';
 import { createAgentPermissionEvaluator } from '../agent/agent-permissions.js';
 import { createAgentTaskRuntime } from '../agent/agent-task-runtime.js';
 import { createAgentToolRegistry } from '../agent/agent-tool-registry.js';
+import { createAgentToolSafetyAllowStore } from '../agent/agent-tool-safety-allow-store.js';
 import { createProviderToolCallRuntime } from '../agent/provider-tool-call-runtime.js';
 import { createProviderToolExperimentRuntime } from '../agent/provider-tool-experiment-runtime.js';
 import {
@@ -60,6 +61,7 @@ import { createMaidRuntimeConfigResolver } from '../agent/maid-runtime-config.js
 import { registerAppNavigationAgentTools } from '../agent/tools/app-navigation-tools.js';
 import { registerAppSessionAgentTools } from '../agent/tools/app-session-tools.js';
 import { registerAppContentAgentTools } from '../agent/tools/app-content-tools.js';
+import { registerMaidMediaAssetTools } from '../agent/tools/media-asset-tools.js';
 import { registerWebSearchAgentTools } from '../agent/tools/web-search-tools.js';
 import { AgentRunStore } from '../storage/agent-run-store.js';
 import { MaidGuideStore } from '../storage/maid-guide-store.js';
@@ -94,6 +96,7 @@ import {
   createImageAttachmentFromFile,
   eventHasImageFiles,
 } from './image-attachment-input-utils.js';
+import { prepareImageDataUrlForAsset } from './image-transform-utils.js';
 import {
   buildGuideRects,
   buildGuideStateFromSettings,
@@ -2734,12 +2737,52 @@ const initApp = async () => {
       }
       return sendTask;
     },
+    confirmDestructiveWrite: request => appConfirm({
+      title: String(request?.title || '确认覆盖'),
+      message: String(request?.message || '这个动作会覆盖已有内容。取消后将改为新建副本。'),
+      confirmText: String(request?.confirmText || '覆盖'),
+      cancelText: String(request?.cancelText || '新建副本'),
+      danger: request?.danger !== false,
+    }),
     renderSessionNameHtml: (sessionId, contact) => renderSessionNameHtml(sessionId, contact),
     getActiveUserName,
     getActiveUserAvatar,
   });
+  registerMaidMediaAssetTools(agentToolRegistry, {
+    personaStore,
+    userStore,
+    contactsStore,
+    chatStore,
+    prepareImage: options => prepareImageDataUrlForAsset(options?.dataUrl || '', {
+      purpose: options?.purpose,
+      fit: options?.fit,
+      maxDim: options?.maxDim,
+      quality: options?.quality,
+      maxBytes: options?.maxBytes,
+      mime: options?.mime,
+      documentRef: document,
+      ImageCtor: Image,
+    }),
+    saveWallpaper: payload => safeInvoke('save_wallpaper', {
+      sessionId: String(payload?.sessionId || '').trim(),
+      dataUrl: String(payload?.dataUrl || ''),
+      fileName: String(payload?.fileName || ''),
+      previousPath: String(payload?.previousPath || ''),
+    }),
+    applyChatSettings: (sessionId, settings) => applyChatSettings(sessionId, settings),
+    refreshChatAndContacts: (...args) => refreshChatAndContacts(...args),
+    getCurrentSessionId: () => chatStore.getCurrent(),
+    confirmDestructiveWrite: request => appConfirm({
+      title: String(request?.title || '确认覆盖'),
+      message: String(request?.message || '这个动作会覆盖已有内容。'),
+      confirmText: String(request?.confirmText || '覆盖'),
+      cancelText: String(request?.cancelText || '取消'),
+      danger: request?.danger !== false,
+    }),
+  });
   registerWebSearchAgentTools(agentToolRegistry, {
     httpRequest: payload => safeInvoke('http_request', payload),
+    getSearchConfig: () => appSettings.get(),
   });
   const maidGuideStore = new MaidGuideStore();
   maidGuideStore.load();
@@ -2819,6 +2862,42 @@ const initApp = async () => {
     guidedActionRuntime: maidGuidedActionRuntime,
     logger,
   });
+  const maidToolSafetyAllowStore = createAgentToolSafetyAllowStore();
+  const requestMaidToolConfirmation = async request => {
+    if (maidToolSafetyAllowStore.isAllowed(request)) {
+      return { decision: 'allow', remembered: true };
+    }
+    const danger = request?.danger !== false;
+    const action = await appChoice({
+      title: String(request?.title || '确认危险操作'),
+      message: String(request?.message || '这个动作可能会覆盖、删除或替换已有内容。'),
+      defaultActionId: 'allow_once',
+      danger,
+      actions: [
+        {
+          id: 'deny',
+          label: String(request?.cancelText || '取消'),
+        },
+        {
+          id: 'allow_once',
+          label: '允许一次',
+          primary: true,
+        },
+        {
+          id: 'allow_always',
+          label: '始终允许',
+        },
+      ],
+    });
+    if (action === 'allow_always') {
+      const rule = maidToolSafetyAllowStore.allowAlways(request);
+      return { decision: 'allow', remembered: true, rule };
+    }
+    if (action === 'allow_once') {
+      return { decision: 'allow' };
+    }
+    return { decision: 'deny' };
+  };
   const agentCenterPanel = new AgentCenterPanel({
     getFailureSeenAt: ({ surface = '' } = {}) => getAgentFailureSeenAt({ surface }),
     markFailureSeen: ({ surface = '', at = Date.now() } = {}) => markAgentFailuresSeen({ surface, at }),
@@ -3223,6 +3302,7 @@ const initApp = async () => {
             sessionId: opts.sessionId || chatStore.getCurrent(),
             uiMode: opts.uiMode || uiMode,
             activePage: opts.activePage || activePage,
+            requestToolConfirmation: requestMaidToolConfirmation,
           });
         },
         exportAgentRuns: options => agentRunStore.exportState(options || {}),
@@ -15105,9 +15185,21 @@ Phase G（Frame 36）：循环衔接
   const settingsBtns = document.querySelectorAll('.qq-message-topbar .user-settings-btn');
   const plusBtns = document.querySelectorAll('.qq-message-topbar .topbar-plus-btn');
   avatarBtns.forEach(btn => btn.setAttribute('data-maid-guide-target', 'avatar-user-entry'));
+  settingsBtns.forEach(btn => btn.setAttribute('data-maid-guide-target', 'settings-entry'));
+  plusBtns.forEach(btn => btn.setAttribute('data-maid-guide-target', 'top-plus-entry'));
 	  const chatMenuBtn = document.getElementById('chat-menu-btn');
+  chatMenuBtn?.setAttribute('data-maid-guide-target', 'chatroom-menu-entry');
+  document.getElementById('current-chat-title')?.setAttribute('data-maid-guide-target', 'chat-title-entry');
 	  const chatroomMenu = document.getElementById('chatroom-menu');
 	  const rpChatroomMenu = document.getElementById('rp-chatroom-menu');
+  settingsMenu?.querySelector?.('button[data-action="agent-center"]')?.setAttribute('data-maid-guide-target', 'settings-agent-center');
+  settingsMenu?.querySelector?.('button[data-action="world-global"]')?.setAttribute('data-maid-guide-target', 'settings-world-global');
+  settingsMenu?.querySelector?.('button[data-action="session-config"]')?.setAttribute('data-maid-guide-target', 'settings-session-config');
+  settingsMenu?.querySelector?.('button[data-action="config"]')?.setAttribute('data-maid-guide-target', 'settings-api-config');
+  quickMenu?.querySelector?.('button[data-action="add-friend"]')?.setAttribute('data-maid-guide-target', 'quick-add-friend');
+  chatroomMenu?.querySelector?.('button[data-action="world"]')?.setAttribute('data-maid-guide-target', 'chatroom-world');
+  rpChatroomMenu?.querySelector?.('button[data-action="world"]')?.setAttribute('data-maid-guide-target', 'chatroom-world');
+  document.querySelector('#chat-title-menu button[data-action="session-config"]')?.setAttribute('data-maid-guide-target', 'chat-title-session-config');
 	  const momentsComposeBtn = document.getElementById('moments-compose-btn');
 	  const momentsSettingsBtn = document.getElementById('moments-settings-btn');
 	  const momentsMenu = (() => {
@@ -15387,6 +15479,7 @@ Phase G（Frame 36）：循环衔接
   };
 
   const maidGuideDelay = ms => new Promise(resolve => setTimeout(resolve, Math.max(0, Number(ms) || 0)));
+  let activeMaidGuideCleanup = null;
   const ensureMaidGuideStyle = () => {
     if (document.getElementById('maid-guide-step-style')) return;
     const style = document.createElement('style');
@@ -15396,25 +15489,66 @@ Phase G（Frame 36）：循环衔接
   position: fixed;
   z-index: 26080;
   max-width: min(320px, calc(100vw - 28px));
-  padding: 10px 12px;
+  padding: 11px 12px;
   border: 1px solid rgba(37, 99, 235, 0.22);
   border-radius: 12px;
-  background: var(--app-surface-card, #fff);
+  background: color-mix(in srgb, var(--app-surface-card, #fff) 94%, transparent);
   color: var(--app-text-primary, #111827);
   box-shadow: 0 14px 40px rgba(15, 23, 42, 0.18);
   font-size: 12px;
   line-height: 1.45;
-  pointer-events: none;
+  pointer-events: auto;
+  backdrop-filter: blur(12px);
 }
 .maid-guide-step-title {
   font-weight: 900;
   margin-bottom: 3px;
 }
+.maid-guide-step-label {
+  font-weight: 700;
+}
+.maid-guide-step-hint {
+  margin-top: 5px;
+  color: var(--app-text-muted, #64748b);
+}
 .maid-guide-step-path {
+  margin-top: 4px;
   color: var(--app-text-muted, #64748b);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.maid-guide-step-continue {
+  margin-top: 9px;
+  width: 100%;
+  height: 30px;
+  border: 0;
+  border-radius: 8px;
+  background: #2563eb;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 800;
+  cursor: pointer;
+}
+.maid-guide-step-pointer {
+  position: fixed;
+  z-index: 26081;
+  width: 46px;
+  height: 46px;
+  color: #2563eb;
+  pointer-events: none;
+}
+.maid-guide-step-pointer svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+  filter: drop-shadow(0 8px 14px rgba(15, 23, 42, 0.28));
+  transform-origin: center;
+  animation: maidGuidePointerNudge 880ms ease-in-out infinite;
+}
+.maid-guide-step-pointer.is-left svg {
+  animation-name: maidGuidePointerNudgeLeft;
+  transform: scaleX(-1);
 }
 .maid-guide-step-target {
   position: relative;
@@ -15425,8 +15559,33 @@ Phase G（Frame 36）：循环衔接
   transition: outline-color 120ms ease, box-shadow 120ms ease, transform 120ms ease;
   transform: translateY(-1px);
 }
+@keyframes maidGuidePointerNudge {
+  0%, 100% { transform: translateX(0); }
+  50% { transform: translateX(7px); }
+}
+@keyframes maidGuidePointerNudgeLeft {
+  0%, 100% { transform: scaleX(-1) translateX(0); }
+  50% { transform: scaleX(-1) translateX(7px); }
+}
 `;
     document.head?.appendChild(style);
+  };
+  const getOrCreateMaidGuidePointer = () => {
+    ensureMaidGuideStyle();
+    let pointer = document.getElementById('maid-guide-step-pointer');
+    if (!pointer) {
+      pointer = document.createElement('div');
+      pointer.id = 'maid-guide-step-pointer';
+      pointer.className = 'maid-guide-step-pointer';
+      pointer.setAttribute('aria-hidden', 'true');
+      pointer.innerHTML = `
+        <svg viewBox="0 0 64 64" focusable="false">
+          <text x="6" y="47" font-size="46" font-weight="900" fill="currentColor">☞</text>
+        </svg>
+      `;
+      document.body.appendChild(pointer);
+    }
+    return pointer;
   };
   const getOrCreateMaidGuideBubble = () => {
     ensureMaidGuideStyle();
@@ -15440,7 +15599,12 @@ Phase G（Frame 36）：循环衔接
     return bubble;
   };
   const hideMaidGuideBubble = () => {
+    if (typeof activeMaidGuideCleanup === 'function') {
+      activeMaidGuideCleanup();
+      activeMaidGuideCleanup = null;
+    }
     document.getElementById('maid-guide-step-bubble')?.remove();
+    document.getElementById('maid-guide-step-pointer')?.remove();
     document.querySelectorAll('.maid-guide-step-target').forEach(el => {
       el.classList.remove('maid-guide-step-target');
     });
@@ -15462,15 +15626,47 @@ Phase G（Frame 36）：循环衔接
     }
     return Array.isArray(step?.selectors) ? step.selectors : [];
   };
+  const isMaidGuideElementVisible = (element = null) => {
+    if (!element || !document.documentElement?.contains?.(element)) return false;
+    if (element.closest?.('.hidden,[hidden],[aria-hidden="true"]')) return false;
+    const rect = element.getBoundingClientRect?.();
+    if (!rect || rect.width <= 0 || rect.height <= 0) return false;
+    const style = window.getComputedStyle?.(element);
+    if (!style) return true;
+    if (style.display === 'none' || style.visibility === 'hidden') return false;
+    if (Number(style.opacity) === 0) return false;
+    return true;
+  };
   const findMaidGuideTarget = (guide = {}, step = {}) => {
     const selectors = getMaidGuideStepSelectors(guide, step);
+    let fallback = null;
     for (const selector of selectors) {
       try {
         const found = document.querySelector(selector);
-        if (found) return found;
+        if (!found) continue;
+        if (isMaidGuideElementVisible(found)) return found;
+        fallback = fallback || found;
       } catch {}
     }
-    return null;
+    return isMaidGuideElementVisible(fallback) ? fallback : null;
+  };
+  const positionMaidGuidePointer = (target = null) => {
+    const pointer = getOrCreateMaidGuidePointer();
+    if (!target || typeof target.getBoundingClientRect !== 'function') {
+      pointer.style.display = 'none';
+      return;
+    }
+    const rect = target.getBoundingClientRect();
+    const viewportPad = 8;
+    const size = 46;
+    const gap = 9;
+    const placeRight = rect.right + gap + size <= window.innerWidth - viewportPad || rect.left < size + gap + viewportPad;
+    const rawLeft = placeRight ? rect.right + gap : rect.left - size - gap;
+    const rawTop = rect.top + rect.height / 2 - size / 2;
+    pointer.style.display = 'block';
+    pointer.style.left = `${Math.min(Math.max(viewportPad, rawLeft), Math.max(viewportPad, window.innerWidth - size - viewportPad))}px`;
+    pointer.style.top = `${Math.min(Math.max(viewportPad, rawTop), Math.max(viewportPad, window.innerHeight - size - viewportPad))}px`;
+    pointer.classList.toggle('is-left', !placeRight);
   };
   const positionMaidGuideBubble = (bubble, target = null) => {
     const viewportPad = 14;
@@ -15498,10 +15694,14 @@ Phase G（Frame 36）：循环衔接
     const pathText = String(guide?.pathText || (Array.isArray(guide?.steps) ? guide.steps.join(' -> ') : '') || '').trim();
     bubble.innerHTML = `
       <div class="maid-guide-step-title">${escapeHtml(guide?.title || '首次引导')} · ${index + 1}/${total}</div>
-      <div>${escapeHtml(label)}</div>
+      <div class="maid-guide-step-label">${escapeHtml(label)}</div>
+      <div class="maid-guide-step-hint">${target ? '点击高亮处继续' : '完成这一步后继续'}</div>
       ${pathText ? `<div class="maid-guide-step-path">${escapeHtml(pathText)}</div>` : ''}
+      ${target ? '' : '<button type="button" class="maid-guide-step-continue" data-maid-guide-action="continue">继续</button>'}
     `;
     positionMaidGuideBubble(bubble, target);
+    positionMaidGuidePointer(target);
+    return bubble;
   };
   const highlightMaidGuideTarget = (target = null) => {
     document.querySelectorAll('.maid-guide-step-target').forEach(el => {
@@ -15522,49 +15722,168 @@ Phase G（Frame 36）：循环衔接
     personaSwitcherMenu.classList.remove('hidden');
     return true;
   };
+  const showMaidPersonaSwitcherTabForGuide = async (tab = 'user') => {
+    openMaidPersonaSwitcherForGuide();
+    personaSwitcherTab = normalizePersonaSwitcherTab(tab);
+    persistPersonaSwitcherTab();
+    renderPersonaSwitcher();
+    const anchor = avatarBtns?.[0] || document.querySelector('[data-maid-guide-target="avatar-user-entry"]');
+    if (anchor) positionSheet(personaSwitcherMenu, anchor, 0, 4, false);
+    personaSwitcherMenu?.classList.remove('hidden');
+    await maidGuideDelay(80);
+  };
+  const openMaidSettingsMenuForGuide = async () => {
+    const anchor = settingsBtns?.[0] || document.querySelector('[data-maid-guide-target="settings-entry"]');
+    if (!anchor || !settingsMenu) return false;
+    hideMenus();
+    positionSheet(settingsMenu, anchor, 0, 4, true);
+    settingsMenu.classList.remove('hidden');
+    await maidGuideDelay(80);
+    return true;
+  };
+  const openMaidQuickMenuForGuide = async () => {
+    const anchor = plusBtns?.[0] || document.querySelector('[data-maid-guide-target="top-plus-entry"]');
+    if (!anchor || !quickMenu) return false;
+    hideMenus();
+    positionSheet(quickMenu, anchor, 0, 4, true);
+    quickMenu.classList.remove('hidden');
+    await maidGuideDelay(80);
+    return true;
+  };
+  const openMaidChatroomMenuForGuide = async () => {
+    const anchor = chatMenuBtn || document.querySelector('[data-maid-guide-target="chatroom-menu-entry"]');
+    const menu = document.querySelector('#rp-chatroom-menu:not(.hidden), #chatroom-menu:not(.hidden)') || chatroomMenu || rpChatroomMenu;
+    if (!anchor || !menu) return false;
+    hideMenus();
+    positionSheet(menu, anchor, 0, 4, true);
+    menu.classList.remove('hidden');
+    await maidGuideDelay(80);
+    return true;
+  };
+  const openMaidChatTitleMenuForGuide = async () => {
+    const anchor = document.getElementById('current-chat-title');
+    const menu = document.getElementById('chat-title-menu');
+    if (!anchor || !menu) return false;
+    hideMenus();
+    positionSheet(menu, anchor, 0, 4, false);
+    menu.classList.remove('hidden');
+    await maidGuideDelay(80);
+    return true;
+  };
   const prepareMaidGuideStep = async (guide = {}, step = {}) => {
     const featureId = String(guide?.featureId || '').trim();
     const label = String(step?.label || step || '').trim();
     if (label === '头像/用户入口' || label === '头像/角色入口') {
-      openMaidPersonaSwitcherForGuide();
-      await maidGuideDelay(80);
       return;
     }
     if (label === '用户') {
-      openMaidPersonaSwitcherForGuide();
-      personaSwitcherTab = 'user';
-      persistPersonaSwitcherTab();
-      renderPersonaSwitcher();
-      const anchor = avatarBtns?.[0] || document.querySelector('[data-maid-guide-target="avatar-user-entry"]');
-      if (anchor) positionSheet(personaSwitcherMenu, anchor, 0, 4, false);
-      personaSwitcherMenu?.classList.remove('hidden');
-      await maidGuideDelay(80);
+      if (!findMaidGuideTarget(guide, step)) await showMaidPersonaSwitcherTabForGuide('user');
       return;
     }
     if (label === '角色卡') {
-      openMaidPersonaSwitcherForGuide();
-      personaSwitcherTab = 'character';
-      persistPersonaSwitcherTab();
-      renderPersonaSwitcher();
-      const anchor = avatarBtns?.[0] || document.querySelector('[data-maid-guide-target="avatar-user-entry"]');
-      if (anchor) positionSheet(personaSwitcherMenu, anchor, 0, 4, false);
-      personaSwitcherMenu?.classList.remove('hidden');
-      await maidGuideDelay(80);
+      if (!findMaidGuideTarget(guide, step)) await showMaidPersonaSwitcherTabForGuide('character');
+      return;
+    }
+    if (label === '管理用户') {
+      if (!findMaidGuideTarget(guide, step)) await showMaidPersonaSwitcherTabForGuide('user');
+      return;
+    }
+    if (label === '管理角色卡') {
+      if (!findMaidGuideTarget(guide, step)) await showMaidPersonaSwitcherTabForGuide('character');
       return;
     }
     if (label === '新建' && featureId === 'user.create') {
-      hideMenus();
-      await userPanel.show();
-      await maidGuideDelay(120);
+      if (!findMaidGuideTarget(guide, step)) {
+        hideMenus();
+        await userPanel.show();
+        await maidGuideDelay(120);
+      }
       return;
     }
     if (label === '新建' && featureId === 'persona.create') {
-      hideMenus();
-      await personaPanel.show();
-      await maidGuideDelay(120);
+      if (!findMaidGuideTarget(guide, step)) {
+        hideMenus();
+        await personaPanel.show();
+        await maidGuideDelay(120);
+      }
+      return;
+    }
+    if (label === '好友列表') {
+      if (!findMaidGuideTarget(guide, step)) await openMaidQuickMenuForGuide();
+      return;
+    }
+    if (label === 'API / 模型配置' || label === 'Agent Center' || label === '记忆') {
+      if (!findMaidGuideTarget(guide, step)) await openMaidSettingsMenuForGuide();
+      return;
+    }
+    if (label === '会话配置') {
+      if (!findMaidGuideTarget(guide, step)) {
+        await openMaidChatTitleMenuForGuide();
+        if (!findMaidGuideTarget(guide, step)) await openMaidSettingsMenuForGuide();
+      }
+      return;
+    }
+    if (label === '世界书' || label === '变量' || label === '正则 / 后处理') {
+      if (!findMaidGuideTarget(guide, step)) {
+        await openMaidChatroomMenuForGuide();
+        if (!findMaidGuideTarget(guide, step) && label === '世界书') await openMaidSettingsMenuForGuide();
+      }
+      return;
+    }
+    if (label === '聊天室右上角菜单' || label === '聊天室标题' || label === '设置' || label === '顶部 +') {
       return;
     }
   };
+  const waitForMaidGuideStepAdvance = (target = null, bubble = null) => new Promise(resolve => {
+    if (typeof activeMaidGuideCleanup === 'function') activeMaidGuideCleanup();
+    let done = false;
+    const cleanupFns = [];
+    const cleanup = () => {
+      cleanupFns.splice(0).forEach(fn => {
+        try { fn(); } catch {}
+      });
+      if (activeMaidGuideCleanup === cleanup) activeMaidGuideCleanup = null;
+    };
+    const finish = () => {
+      if (done) return;
+      done = true;
+      cleanup();
+      resolve();
+    };
+    const updatePosition = () => {
+      if (!done && bubble) {
+        const liveTarget = target && isMaidGuideElementVisible(target) ? target : null;
+        positionMaidGuideBubble(bubble, liveTarget);
+        positionMaidGuidePointer(liveTarget);
+      }
+    };
+    if (target) {
+      const onTargetClick = () => setTimeout(finish, 0);
+      target.addEventListener('click', onTargetClick, true);
+      cleanupFns.push(() => target.removeEventListener('click', onTargetClick, true));
+    }
+    const continueBtn = bubble?.querySelector?.('[data-maid-guide-action="continue"]');
+    if (continueBtn) {
+      const onContinue = (event) => {
+        event.preventDefault?.();
+        event.stopPropagation?.();
+        finish();
+      };
+      continueBtn.addEventListener('click', onContinue);
+      cleanupFns.push(() => continueBtn.removeEventListener('click', onContinue));
+    }
+    const onKeydown = (event) => {
+      if (event.key === 'Escape') finish();
+      if (!target && event.key === 'Enter') finish();
+    };
+    window.addEventListener('resize', updatePosition);
+    document.addEventListener('scroll', updatePosition, true);
+    document.addEventListener('keydown', onKeydown, true);
+    cleanupFns.push(() => window.removeEventListener('resize', updatePosition));
+    cleanupFns.push(() => document.removeEventListener('scroll', updatePosition, true));
+    cleanupFns.push(() => document.removeEventListener('keydown', onKeydown, true));
+    activeMaidGuideCleanup = cleanup;
+  });
   const showMaidGuideSteps = async (guide = {}) => {
     if (guide?.message) window.toastr?.info?.(guide.message);
     const details = Array.isArray(guide?.stepDetails) && guide.stepDetails.length
@@ -15577,10 +15896,11 @@ Phase G（Frame 36）：循环衔接
       await prepareMaidGuideStep(guide, step);
       const target = findMaidGuideTarget(guide, step);
       highlightMaidGuideTarget(target);
-      showMaidGuideStepBubble(guide, step, index, details.length, target);
-      await maidGuideDelay(720);
+      if (target) await maidGuideDelay(140);
+      const bubble = showMaidGuideStepBubble(guide, step, index, details.length, target);
+      await waitForMaidGuideStepAdvance(target, bubble);
+      await maidGuideDelay(120);
     }
-    await maidGuideDelay(120);
     hideMaidGuideBubble();
   };
   showMaidGuide = showMaidGuideSteps;
@@ -21082,6 +21402,7 @@ Phase G（Frame 36）：循环衔接
       const result = await maidAssistantAgent.runPrompt(text, {
         ...maidTurnContext,
         maidAttachments: attachments,
+        requestToolConfirmation: requestMaidToolConfirmation,
         onStatus: (status = {}) => {
           const message = String(status?.message || '').trim();
           if (!message) return;
@@ -21097,6 +21418,9 @@ Phase G（Frame 36）：循环衔接
           toolName: result?.plan?.toolName || result?.output?.toolName || '',
           featureId: result?.plan?.featureId || '',
           title: result?.plan?.title || '',
+          continuable: result?.continuable === true,
+          continueHint: result?.continueHint || '',
+          reactStoppedReason: result?.reactStoppedReason || '',
           context: maidTurnContext,
         });
       } catch (error) {

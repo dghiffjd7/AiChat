@@ -20,6 +20,16 @@ const truncate = (value = '', max = 4000) => {
   return `${text.slice(0, limit - 1)}…`;
 };
 
+const normalizeProviderName = (value = '', fallback = 'duckduckgo') => {
+  const raw = trim(value, fallback).toLowerCase().replace(/[\s-]+/g, '_');
+  if (['ddg', 'duckduckgo', 'duckduckgo_instant'].includes(raw)) return 'duckduckgo';
+  if (['brave', 'brave_search'].includes(raw)) return 'brave';
+  if (['tavily'].includes(raw)) return 'tavily';
+  if (['serpapi', 'serp_api'].includes(raw)) return 'serpapi';
+  if (['bing', 'bing_search'].includes(raw)) return 'bing';
+  return fallback;
+};
+
 const stripHtml = (html = '', max = 6000) => {
   const text = String(html || '')
     .replace(/<script[\s\S]*?<\/script>/gi, ' ')
@@ -80,6 +90,16 @@ const readHttpText = async (request, payload = {}) => {
   return String(response?.body || '');
 };
 
+const parseJsonBody = (body = '') => {
+  try {
+    return JSON.parse(String(body || ''));
+  } catch (error) {
+    const err = new Error(error?.message || 'invalid json response');
+    err.code = 'invalid_json_response';
+    throw err;
+  }
+};
+
 const parseDuckDuckGoTopics = (topics = [], out = []) => {
   (Array.isArray(topics) ? topics : []).forEach((topic) => {
     if (Array.isArray(topic?.Topics)) {
@@ -134,10 +154,297 @@ const normalizeSearchResults = (data = {}, limit = 5) => {
     .slice(0, max);
 };
 
+const normalizeGenericResults = (items = [], {
+  limit = 5,
+  provider = '',
+  map = item => item,
+} = {}) => {
+  const max = Math.max(1, Math.min(10, Math.trunc(Number(limit || 0)) || 5));
+  const seen = new Set();
+  return (Array.isArray(items) ? items : [])
+    .map(map)
+    .map(item => ({
+      title: truncate(item?.title || item?.name || item?.url || '', 220),
+      snippet: truncate(item?.snippet || item?.description || item?.content || '', 900),
+      url: trim(item?.url || item?.link),
+      source: trim(item?.source || provider),
+    }))
+    .filter((item) => {
+      const key = trim(item.url);
+      if (!key || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .slice(0, max);
+};
+
+const getSearchConfigValue = (config = {}, keys = [], fallback = '') => {
+  for (const key of keys) {
+    const value = trim(config?.[key]);
+    if (value) return value;
+  }
+  return fallback;
+};
+
+const resolveSearchConfig = ({
+  args = {},
+  baseConfig = {},
+  searchProvider = 'duckduckgo',
+  apiKey = '',
+} = {}) => {
+  const provider = normalizeProviderName(
+    args.provider ||
+    baseConfig.webSearchProvider ||
+    baseConfig.provider ||
+    searchProvider,
+    'duckduckgo',
+  );
+  const key = getSearchConfigValue(baseConfig, [
+    'webSearchApiKey',
+    `${provider}ApiKey`,
+    `${provider}SearchApiKey`,
+    provider === 'brave' ? 'braveSearchApiKey' : '',
+    provider === 'tavily' ? 'tavilyApiKey' : '',
+    provider === 'serpapi' ? 'serpApiKey' : '',
+    provider === 'bing' ? 'bingSearchApiKey' : '',
+  ].filter(Boolean), apiKey);
+  return {
+    provider,
+    apiKey: key,
+    locale: trim(args.locale || baseConfig.webSearchLocale || baseConfig.locale, 'zh-tw'),
+    endpoint: trim(baseConfig.webSearchEndpoint || baseConfig.endpoint),
+  };
+};
+
+const requireApiKey = (provider, apiKey) => {
+  if (trim(apiKey)) return null;
+  return {
+    ok: false,
+    provider,
+    reason: 'missing_api_key',
+    message: `${provider} 搜索需要先配置 API key。`,
+    results: [],
+  };
+};
+
+const performDuckDuckGoSearch = async (request, { query = '', limit = 5, locale = 'zh-tw' } = {}) => {
+  const url = new URL('https://api.duckduckgo.com/');
+  url.searchParams.set('q', query);
+  url.searchParams.set('format', 'json');
+  url.searchParams.set('no_html', '1');
+  url.searchParams.set('skip_disambig', '1');
+  url.searchParams.set('kl', locale);
+  const body = await readHttpText(request, {
+    url: url.toString(),
+    method: 'GET',
+    headers: {
+      accept: 'application/json',
+    },
+    body: null,
+    timeoutMs: 12000,
+  });
+  return normalizeSearchResults(parseJsonBody(body), limit);
+};
+
+const performBraveSearch = async (request, { query = '', limit = 5, locale = 'zh-tw', apiKey = '' } = {}) => {
+  const missing = requireApiKey('brave', apiKey);
+  if (missing) return missing;
+  const url = new URL('https://api.search.brave.com/res/v1/web/search');
+  url.searchParams.set('q', query);
+  url.searchParams.set('count', String(Math.max(1, Math.min(10, limit))));
+  if (locale) url.searchParams.set('search_lang', locale.split('-')[0] || locale);
+  const body = await readHttpText(request, {
+    url: url.toString(),
+    method: 'GET',
+    headers: {
+      accept: 'application/json',
+      'X-Subscription-Token': apiKey,
+    },
+    body: null,
+    timeoutMs: 12000,
+  });
+  const data = parseJsonBody(body);
+  return normalizeGenericResults(data?.web?.results || [], {
+    limit,
+    provider: 'brave',
+    map: item => ({
+      title: item?.title,
+      snippet: item?.description,
+      url: item?.url,
+      source: 'brave',
+    }),
+  });
+};
+
+const performTavilySearch = async (request, { query = '', limit = 5, apiKey = '' } = {}) => {
+  const missing = requireApiKey('tavily', apiKey);
+  if (missing) return missing;
+  const body = await readHttpText(request, {
+    url: 'https://api.tavily.com/search',
+    method: 'POST',
+    headers: {
+      accept: 'application/json',
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify({
+      api_key: apiKey,
+      query,
+      search_depth: 'basic',
+      max_results: Math.max(1, Math.min(10, limit)),
+      include_answer: false,
+    }),
+    timeoutMs: 15000,
+  });
+  const data = parseJsonBody(body);
+  return normalizeGenericResults(data?.results || [], {
+    limit,
+    provider: 'tavily',
+    map: item => ({
+      title: item?.title,
+      snippet: item?.content,
+      url: item?.url,
+      source: 'tavily',
+    }),
+  });
+};
+
+const performSerpApiSearch = async (request, { query = '', limit = 5, apiKey = '', locale = 'zh-tw' } = {}) => {
+  const missing = requireApiKey('serpapi', apiKey);
+  if (missing) return missing;
+  const url = new URL('https://serpapi.com/search.json');
+  url.searchParams.set('engine', 'google');
+  url.searchParams.set('q', query);
+  url.searchParams.set('api_key', apiKey);
+  url.searchParams.set('num', String(Math.max(1, Math.min(10, limit))));
+  if (locale) url.searchParams.set('hl', locale.split('-')[0] || locale);
+  const body = await readHttpText(request, {
+    url: url.toString(),
+    method: 'GET',
+    headers: { accept: 'application/json' },
+    body: null,
+    timeoutMs: 12000,
+  });
+  const data = parseJsonBody(body);
+  return normalizeGenericResults(data?.organic_results || [], {
+    limit,
+    provider: 'serpapi',
+    map: item => ({
+      title: item?.title,
+      snippet: item?.snippet,
+      url: item?.link,
+      source: item?.source || 'serpapi',
+    }),
+  });
+};
+
+const performBingSearch = async (request, { query = '', limit = 5, apiKey = '', locale = 'zh-tw' } = {}) => {
+  const missing = requireApiKey('bing', apiKey);
+  if (missing) return missing;
+  const url = new URL('https://api.bing.microsoft.com/v7.0/search');
+  url.searchParams.set('q', query);
+  url.searchParams.set('count', String(Math.max(1, Math.min(10, limit))));
+  if (locale) url.searchParams.set('mkt', locale);
+  const body = await readHttpText(request, {
+    url: url.toString(),
+    method: 'GET',
+    headers: {
+      accept: 'application/json',
+      'Ocp-Apim-Subscription-Key': apiKey,
+    },
+    body: null,
+    timeoutMs: 12000,
+  });
+  const data = parseJsonBody(body);
+  return normalizeGenericResults(data?.webPages?.value || [], {
+    limit,
+    provider: 'bing',
+    map: item => ({
+      title: item?.name,
+      snippet: item?.snippet,
+      url: item?.url,
+      source: 'bing',
+    }),
+  });
+};
+
+const performSearch = async (request, {
+  provider = 'duckduckgo',
+  query = '',
+  limit = 5,
+  locale = 'zh-tw',
+  apiKey = '',
+} = {}) => {
+  if (provider === 'brave') return performBraveSearch(request, { query, limit, locale, apiKey });
+  if (provider === 'tavily') return performTavilySearch(request, { query, limit, apiKey });
+  if (provider === 'serpapi') return performSerpApiSearch(request, { query, limit, locale, apiKey });
+  if (provider === 'bing') return performBingSearch(request, { query, limit, locale, apiKey });
+  return performDuckDuckGoSearch(request, { query, limit, locale });
+};
+
+const normalizeSearchOutput = ({ query = '', provider = '', results = [] } = {}) => {
+  if (results?.ok === false) {
+    return {
+      ...results,
+      query,
+      provider: trim(results.provider, provider),
+    };
+  }
+  const listResults = Array.isArray(results) ? results : [];
+  return {
+    ok: listResults.length > 0,
+    query,
+    provider,
+    results: clone(listResults),
+    sources: listResults.map(item => ({
+      title: trim(item.title || item.url),
+      url: trim(item.url),
+      source: trim(item.source, provider),
+    })),
+    message: listResults.length ? '' : '没有找到可用的网页搜索结果。',
+  };
+};
+
+const fetchReadableUrl = async (request, {
+  url = '',
+  maxTextLength = 5000,
+} = {}) => {
+  const target = trim(url);
+  if (!/^https?:\/\//i.test(target)) {
+    return { ok: false, url: target, reason: 'unsupported_url', message: '只支持 http/https 网页。' };
+  }
+  const body = await readHttpText(request, {
+    url: target,
+    method: 'GET',
+    headers: {
+      accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,text/plain;q=0.8,*/*;q=0.5',
+      'user-agent': 'Mozilla/5.0 ChatApp Maid Assistant',
+    },
+    body: null,
+    timeoutMs: 12000,
+  });
+  const max = Math.max(500, Math.min(12000, Math.trunc(Number(maxTextLength || 0)) || 5000));
+  return {
+    ok: true,
+    url: target,
+    title: extractTitle(body),
+    text: stripHtml(body, max),
+  };
+};
+
 export const createWebSearchAgentTools = ({
   httpRequest = requestWithFetch,
+  getSearchConfig = null,
+  searchProvider = 'duckduckgo',
+  apiKey = '',
 } = {}) => {
   const request = typeof httpRequest === 'function' ? httpRequest : requestWithFetch;
+  const readConfig = () => {
+    try {
+      return typeof getSearchConfig === 'function' ? (getSearchConfig() || {}) : {};
+    } catch {
+      return {};
+    }
+  };
   return [
     {
       name: 'web.search',
@@ -163,46 +470,39 @@ export const createWebSearchAgentTools = ({
           query: { type: 'string', minLength: 1, maxLength: 240 },
           limit: { type: 'integer', minimum: 1, maximum: 10 },
           locale: { type: 'string', maxLength: 20 },
+          provider: { type: 'string', maxLength: 40 },
         },
       },
       execute: async (args = {}) => {
         const query = trim(args.query);
         const limit = Math.max(1, Math.min(10, Math.trunc(Number(args.limit || 0)) || 5));
-        const locale = trim(args.locale, 'zh-tw');
-        const url = new URL('https://api.duckduckgo.com/');
-        url.searchParams.set('q', query);
-        url.searchParams.set('format', 'json');
-        url.searchParams.set('no_html', '1');
-        url.searchParams.set('skip_disambig', '1');
-        url.searchParams.set('kl', locale);
-        const body = await readHttpText(request, {
-          url: url.toString(),
-          method: 'GET',
-          headers: {
-            accept: 'application/json',
-          },
-          body: null,
-          timeoutMs: 12000,
+        const config = resolveSearchConfig({
+          args,
+          baseConfig: readConfig(),
+          searchProvider,
+          apiKey,
         });
-        let data = {};
         try {
-          data = JSON.parse(body);
+          const results = await performSearch(request, {
+            ...config,
+            query,
+            limit,
+          });
+          return normalizeSearchOutput({
+            query,
+            provider: config.provider,
+            results,
+          });
         } catch (error) {
           return {
             ok: false,
             query,
-            reason: 'invalid_search_response',
-            message: error?.message || 'search response parse failed',
+            provider: config.provider,
+            reason: error?.code || 'search_request_failed',
+            message: error?.message || '搜索请求失败。',
+            results: [],
           };
         }
-        const results = normalizeSearchResults(data, limit);
-        return {
-          ok: results.length > 0,
-          query,
-          provider: 'duckduckgo',
-          results: clone(results),
-          message: results.length ? '' : '没有找到可用的网页搜索结果。',
-        };
       },
       summarizeResult: result => result?.ok === false
         ? `web search failed: ${trim(result?.reason || result?.message, 'no_results')}`
@@ -234,31 +534,120 @@ export const createWebSearchAgentTools = ({
         },
       },
       execute: async (args = {}) => {
-        const url = trim(args.url);
-        if (!/^https?:\/\//i.test(url)) {
-          return { ok: false, url, reason: 'unsupported_url', message: '只支持 http/https 网页。' };
-        }
-        const body = await readHttpText(request, {
-          url,
-          method: 'GET',
-          headers: {
-            accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,text/plain;q=0.8,*/*;q=0.5',
-            'user-agent': 'Mozilla/5.0 ChatApp Maid Assistant',
-          },
-          body: null,
-          timeoutMs: 12000,
-        });
         const maxTextLength = Math.max(500, Math.min(12000, Math.trunc(Number(args.maxTextLength || 0)) || 5000));
-        return {
-          ok: true,
-          url,
-          title: extractTitle(body),
-          text: stripHtml(body, maxTextLength),
-        };
+        return fetchReadableUrl(request, {
+          url: args.url,
+          maxTextLength,
+        });
       },
       summarizeResult: result => result?.ok === false
         ? `web fetch failed: ${trim(result?.reason, 'failed')}`
         : `web fetch ${trim(result?.title || result?.url, 'page')}`,
+    },
+    {
+      name: 'web.research',
+      title: 'Search and read web sources',
+      description: 'Search public web information and fetch readable text from top results in one controlled tool call. Use it for current public facts that need citations.',
+      source: 'maid-web',
+      permissions: [],
+      riskLevel: 'low',
+      capabilities: {
+        read: true,
+        write: false,
+        network: true,
+        cost: 'variable',
+        undo: 'none',
+        modelContext: 'allowlist',
+        confirmation: 'allow_once',
+      },
+      schema: {
+        type: 'object',
+        required: ['query'],
+        additionalProperties: false,
+        properties: {
+          query: { type: 'string', minLength: 1, maxLength: 240 },
+          limit: { type: 'integer', minimum: 1, maximum: 10 },
+          fetchTop: { type: 'integer', minimum: 0, maximum: 5 },
+          locale: { type: 'string', maxLength: 20 },
+          provider: { type: 'string', maxLength: 40 },
+          maxTextLength: { type: 'integer', minimum: 500, maximum: 12000 },
+        },
+      },
+      execute: async (args = {}) => {
+        const query = trim(args.query);
+        const limit = Math.max(1, Math.min(10, Math.trunc(Number(args.limit || 0)) || 5));
+        const hasFetchTop = Object.prototype.hasOwnProperty.call(args, 'fetchTop');
+        const rawFetchTop = hasFetchTop ? Number(args.fetchTop) : NaN;
+        const fetchTop = hasFetchTop && Number.isFinite(rawFetchTop)
+          ? Math.max(0, Math.min(5, Math.trunc(rawFetchTop)))
+          : 2;
+        const maxTextLength = Math.max(500, Math.min(12000, Math.trunc(Number(args.maxTextLength || 0)) || 4000));
+        const config = resolveSearchConfig({
+          args,
+          baseConfig: readConfig(),
+          searchProvider,
+          apiKey,
+        });
+        const search = await (async () => {
+          try {
+            const results = await performSearch(request, {
+              ...config,
+              query,
+              limit,
+            });
+            return normalizeSearchOutput({ query, provider: config.provider, results });
+          } catch (error) {
+            return {
+              ok: false,
+              query,
+              provider: config.provider,
+              reason: error?.code || 'search_request_failed',
+              message: error?.message || '搜索请求失败。',
+              results: [],
+            };
+          }
+        })();
+        const documents = [];
+        if (search.ok && fetchTop > 0) {
+          for (const result of search.results.slice(0, fetchTop)) {
+            try {
+              const document = await fetchReadableUrl(request, {
+                url: result.url,
+                maxTextLength,
+              });
+              documents.push({
+                ok: document.ok,
+                title: trim(document.title || result.title),
+                url: result.url,
+                source: trim(result.source, config.provider),
+                text: trim(document.text),
+                reason: trim(document.reason),
+              });
+            } catch (error) {
+              documents.push({
+                ok: false,
+                title: trim(result.title),
+                url: result.url,
+                source: trim(result.source, config.provider),
+                reason: error?.message || 'fetch_failed',
+                text: '',
+              });
+            }
+          }
+        }
+        return {
+          ...search,
+          documents,
+          sources: search.sources || search.results?.map(item => ({
+            title: trim(item.title || item.url),
+            url: trim(item.url),
+            source: trim(item.source, config.provider),
+          })) || [],
+        };
+      },
+      summarizeResult: result => result?.ok === false
+        ? `web research failed: ${trim(result?.reason || result?.message, 'no_results')}`
+        : `web research results=${Number(result?.results?.length || 0)} documents=${Number(result?.documents?.length || 0)} query=${trim(result?.query, '-')}`,
     },
   ];
 };

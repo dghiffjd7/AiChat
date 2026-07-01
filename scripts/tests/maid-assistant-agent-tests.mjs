@@ -368,6 +368,193 @@ import {
 }
 
 {
+  const calls = [];
+  const agent = createMaidAssistantAgent({
+    maxReactSteps: 2,
+    planner: async () => ({
+      ok: true,
+      toolName: 'app.read_resource',
+      args: { resource: 'worldbook', name: '异世界 世界书' },
+      featureId: 'app.resource.read',
+      title: '读取世界书',
+      response: '我先读取世界书。',
+    }),
+    reactPlanner: async () => ({
+      ok: true,
+      action: 'tool',
+      toolName: 'app.read_resource',
+      args: { resource: 'worldbook', name: '异世界 世界书', includeContent: true },
+      featureId: 'app.resource.read',
+      title: '继续读取世界书',
+      response: '我继续读取正文。',
+    }),
+    toolRegistry: {
+      executeTool: async (toolName, args) => {
+        calls.push({ toolName, args });
+        return {
+          toolName,
+          status: 'succeeded',
+          result: { ok: true, resource: 'worldbook', entryCount: 3 },
+          summary: 'read resource worldbook',
+        };
+      },
+    },
+    logger: { warn() {} },
+  });
+  const result = await agent.runPrompt('帮我完整检查异世界世界书');
+  assert.equal(result.ok, false);
+  assert.equal(result.status, 'interrupted');
+  assert.equal(result.continuable, true);
+  assert.equal(result.reactStoppedReason, 'max_steps_reached');
+  assert.match(result.continueHint, /下一步建议工具/);
+  assert.equal(result.reactStepBudget.maxSteps, 2);
+  assert.equal(calls.length, 2);
+  console.log('ok - maid assistant agent returns continuable max-step interruption');
+}
+
+{
+  const agent = createMaidAssistantAgent({
+    repeatedFailureLimit: 3,
+    planner: async () => ({
+      ok: true,
+      toolName: 'app.read_resource',
+      args: { resource: 'chat', sessionName: '精灵女王' },
+      featureId: 'app.resource.read',
+      title: '读取聊天消息',
+      response: '我先读取聊天消息。',
+    }),
+    reactPlanner: async () => ({
+      ok: true,
+      action: 'tool',
+      toolName: 'app.read_resource',
+      args: { resource: 'chat', sessionName: '精灵女王' },
+      featureId: 'app.resource.read',
+      title: '再次读取聊天消息',
+      response: '我再试一次。',
+    }),
+    toolRegistry: {
+      executeTool: async () => {
+        throw new Error('Agent tool arguments invalid: args.sessionName is not allowed');
+      },
+    },
+    logger: { warn() {} },
+  });
+  const result = await agent.runPrompt('女王最后回了我什么？');
+  assert.equal(result.ok, false);
+  assert.equal(result.status, 'failed');
+  assert.equal(result.reason, 'repeated_tool_failure');
+  assert.equal(result.continuable, false);
+  assert.equal(result.steps.length, 3);
+  assert.match(result.message, /连续失败 3 次/);
+  console.log('ok - maid assistant agent stops repeated identical tool failures');
+}
+
+{
+  const calls = [];
+  const reactCalls = [];
+  const statuses = [];
+  const agent = createMaidAssistantAgent({
+    planner: async () => ({
+      ok: true,
+      toolName: 'worldbook.update_entries',
+      args: {
+        name: '异世界 世界书',
+        updates: [{ entryTitle: '精灵女王', content: '扩展后的精灵女王设定。' }],
+      },
+      featureId: 'worldbook.update_entries',
+      title: '修改世界书条目',
+      response: '我来更新这个条目。',
+    }),
+    reactPlanner: async (input, context) => {
+      reactCalls.push({ input, context });
+      return {
+        ok: true,
+        action: 'final',
+        message: '已经更新并读回确认，世界书里仍有 3 个条目。',
+      };
+    },
+    toolRegistry: {
+      executeTool: async (toolName, args) => {
+        calls.push({ toolName, args });
+        if (toolName === 'worldbook.update_entries') {
+          return {
+            toolName,
+            status: 'succeeded',
+            result: { ok: true, worldbookId: '异世界 世界书', updatedEntryCount: 1, entryCount: 3 },
+            summary: 'updated worldbook entries',
+          };
+        }
+        if (toolName === 'worldbook.read') {
+          return {
+            toolName,
+            status: 'succeeded',
+            result: {
+              ok: true,
+              name: args.name,
+              entryCount: 3,
+              entries: [{ title: '精灵女王', contentLength: 12 }],
+            },
+            summary: 'read worldbook for verification',
+          };
+        }
+        throw new Error(`unexpected tool ${toolName}`);
+      },
+    },
+    logger: { warn() {} },
+  });
+  const result = await agent.runPrompt('把精灵女王条目替换成扩展版', {
+    onStatus: status => statuses.push(status),
+  });
+  assert.equal(result.ok, true);
+  assert.deepEqual(calls.map(call => call.toolName), ['worldbook.update_entries', 'worldbook.read']);
+  assert.equal(calls[1].args.name, '异世界 世界书');
+  assert.equal(calls[1].args.includeContent, true);
+  assert.equal(result.steps.length, 2);
+  assert.equal(result.steps[1].metadata.verificationFor, 'worldbook.update_entries');
+  assert.equal(reactCalls.length, 1);
+  assert.deepEqual(reactCalls[0].context.maidReactSteps.map(step => step.toolName), ['worldbook.update_entries', 'worldbook.read']);
+  assert.equal(statuses.some(status => status.stage === 'verifying'), true);
+  assert.match(result.message, /读回确认/);
+  console.log('ok - maid assistant agent verifies worldbook writes before final answer');
+}
+
+{
+  const agent = createMaidAssistantAgent({
+    planner: async () => ({
+      ok: true,
+      toolName: 'app.read_resource',
+      args: { resource: 'worldbook', name: '青梅竹马' },
+      featureId: 'app.resource.read',
+      title: '读取世界书',
+      response: '我先读取世界书。',
+    }),
+    reactPlanner: async () => ({
+      ok: false,
+      reason: 'invalid_model_react_decision',
+      message: '模型没有返回有效 ReAct 决策。',
+    }),
+    toolRegistry: {
+      executeTool: async () => ({
+        toolName: 'app.read_resource',
+        status: 'succeeded',
+        result: { ok: true, resource: 'worldbook', worldbooks: [{ id: '青梅竹马', entryCount: 4 }] },
+        summary: 'read resource worldbook',
+      }),
+    },
+    logger: { warn() {} },
+  });
+  const result = await agent.runPrompt('帮我看青梅竹马世界书');
+  assert.equal(result.ok, false);
+  assert.equal(result.status, 'interrupted');
+  assert.equal(result.partial, true);
+  assert.equal(result.continuable, true);
+  assert.equal(result.reactStoppedReason, 'invalid_model_react_decision');
+  assert.match(result.continueHint, /用户原始目标/);
+  assert.match(result.message, /没有完成最终回答/);
+  console.log('ok - maid assistant agent reports ReAct interruption instead of false success');
+}
+
+{
   const agent = createMaidAssistantAgent({
     toolRegistry: {
       executeTool: async () => {
@@ -425,4 +612,63 @@ import {
   assert.equal(result.source, 'test_chat');
   assert.match(result.message, /你好啊/);
   console.log('ok - maid assistant agent uses chat responder for unsupported plain input');
+}
+
+{
+  const calls = [];
+  const reactContexts = [];
+  let chatCalls = 0;
+  const agent = createMaidAssistantAgent({
+    planner: async () => ({
+      ok: false,
+      status: 'unsupported',
+      reason: 'invalid_model_plan',
+      message: '模型没有返回有效计划。',
+    }),
+    reactPlanner: async (input, context) => {
+      reactContexts.push(context);
+      if (!context.maidReactSteps?.length) {
+        return {
+          ok: true,
+          action: 'tool',
+          toolName: 'worldbook.read',
+          args: { name: '异世界 世界书', includeContent: true },
+          featureId: 'worldbook.read',
+          title: '读取世界书',
+          response: '我重新读取世界书。',
+        };
+      }
+      return {
+        ok: true,
+        action: 'final',
+        message: '已经重新读回世界书内容。',
+      };
+    },
+    chatResponder: async () => {
+      chatCalls += 1;
+      return { ok: true, status: 'responded', message: '不该进入聊天。' };
+    },
+    toolRegistry: {
+      executeTool: async (toolName, args) => {
+        calls.push({ toolName, args });
+        return {
+          toolName,
+          status: 'succeeded',
+          result: { ok: true, name: args.name, entryCount: 3 },
+          summary: 'read worldbook',
+        };
+      },
+    },
+    logger: { warn() {} },
+  });
+  const result = await agent.runPrompt('刚失败了，再试一次');
+  assert.equal(result.ok, true);
+  assert.equal(result.responseType, 'react');
+  assert.equal(chatCalls, 0);
+  assert.deepEqual(calls.map(call => call.toolName), ['worldbook.read']);
+  assert.equal(calls[0].args.includeContent, true);
+  assert.equal(reactContexts[0].plannerFailure.reason, 'invalid_model_plan');
+  assert.equal(reactContexts[1].maidReactSteps.length, 1);
+  assert.match(result.message, /读回/);
+  console.log('ok - maid assistant agent lets ReAct recover invalid planner continuations');
 }

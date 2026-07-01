@@ -14,6 +14,7 @@ import {
 import { createAppNavigationAgentTools } from '../../src/scripts/agent/tools/app-navigation-tools.js';
 import { createAppSessionAgentTools } from '../../src/scripts/agent/tools/app-session-tools.js';
 import { createAppContentAgentTools } from '../../src/scripts/agent/tools/app-content-tools.js';
+import { createMaidMediaAssetTools } from '../../src/scripts/agent/tools/media-asset-tools.js';
 import { createWebSearchAgentTools } from '../../src/scripts/agent/tools/web-search-tools.js';
 
 const getTool = (tools, name) => tools.find(tool => tool.name === name);
@@ -41,11 +42,21 @@ const escapeRegex = value => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'
 {
   const results = searchAppFeatures('帮我联网搜索最新资讯', { limit: 3 });
   assert.equal(results[0].id, 'web.search');
-  assert.deepEqual(results[0].tools, ['web.search', 'web.fetch_url']);
+  assert.deepEqual(results[0].tools, ['web.search', 'web.fetch_url', 'web.research']);
   const doc = buildAppFeatureDoc('web.search');
   assert.match(doc.doc, /web\.search/);
   assert.match(doc.doc, /web\.fetch_url/);
+  assert.match(doc.doc, /web\.research/);
   console.log('ok - app feature catalog exposes web search feature');
+}
+
+{
+  const results = searchAppFeatures('把这张图设为角色头像', { limit: 3 });
+  assert.equal(results[0].id, 'persona.avatar.set');
+  const wallpaper = findAppFeature('设置聊天室壁纸');
+  assert.equal(wallpaper.id, 'session.wallpaper.set');
+  assert.ok(wallpaper.tools.includes('session.set_wallpaper'));
+  console.log('ok - app feature catalog exposes maid image asset features');
 }
 
 {
@@ -97,6 +108,7 @@ const escapeRegex = value => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'
   const boundWorlds = [];
   const personas = new Map();
   const users = new Map();
+  const sessionSettings = new Map();
   let personaSeq = 0;
   let userSeq = 0;
   let current = 'B';
@@ -227,7 +239,52 @@ const escapeRegex = value => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'
       }),
     }),
   });
-  const tools = [...navTools, ...sessionTools, ...contentTools, ...webTools];
+  const mediaTools = createMaidMediaAssetTools({
+    personaStore: {
+      getAll: () => Array.from(personas.values()),
+      get: id => personas.get(id) || null,
+      getActive: () => Array.from(personas.values())[0] || null,
+      update: async (id, patch) => {
+        const next = { ...personas.get(id), ...patch };
+        personas.set(id, next);
+        return next;
+      },
+    },
+    userStore: {
+      getAll: () => Array.from(users.values()),
+      get: id => users.get(id) || null,
+      getActive: () => Array.from(users.values())[0] || null,
+      update: async (id, patch) => {
+        const next = { ...users.get(id), ...patch };
+        users.set(id, next);
+        return next;
+      },
+    },
+    contactsStore: {
+      listContacts: () => Array.from(contacts.values()),
+      getContact: id => contacts.get(id) || null,
+      upsertContact: contact => contacts.set(contact.id, { ...contacts.get(contact.id), ...contact }),
+    },
+    chatStore: {
+      getSessionSettings: id => sessionSettings.get(id) || {},
+      setSessionSettings: (id, next) => sessionSettings.set(id, next),
+    },
+    getCurrentSessionId: () => current,
+    prepareImage: async ({ purpose }) => ({
+      dataUrl: `data:image/webp;base64,${purpose}`,
+      width: purpose === 'avatar' ? 256 : 1280,
+      height: purpose === 'avatar' ? 256 : 720,
+      mime: purpose === 'avatar' ? 'image/webp' : 'image/jpeg',
+      bytes: 120,
+      transformed: true,
+    }),
+    saveWallpaper: async payload => ({ path: `wallpapers/${payload.sessionId}/wallpaper.jpg`, bytes: 120 }),
+    refreshChatAndContacts: options => refreshed.push(options),
+    applyChatSettings: () => {},
+    now: () => 1000,
+  });
+  const tools = [...navTools, ...sessionTools, ...contentTools, ...mediaTools, ...webTools];
+  const maidAttachments = [{ id: 'catalog-image', kind: 'image', url: 'data:image/png;base64,AAAA', name: 'catalog.png' }];
 
   for (const feature of listAppFeatures()) {
     for (const toolName of feature.tools || []) {
@@ -266,6 +323,12 @@ const escapeRegex = value => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'
       assert.equal(result.switched, true);
       return;
     }
+    if (feature.id === 'persona.avatar.set') {
+      const result = await getTool(tools, 'persona.set_avatar').execute({ target: 'CatalogRole' }, { maidAttachments });
+      assert.equal(result.ok, true);
+      assert.match(personas.get('persona-1').avatar, /data:image\/webp/);
+      return;
+    }
     if (feature.id === 'user.create') {
       const result = await getTool(tools, 'user.create').execute({ name: 'CatalogUser', setActive: true });
       assert.equal(result.ok, true);
@@ -278,6 +341,24 @@ const escapeRegex = value => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'
       assert.equal(result.switched, true);
       return;
     }
+    if (feature.id === 'user.avatar.set') {
+      const result = await getTool(tools, 'user.set_avatar').execute({ target: 'CatalogUser' }, { maidAttachments });
+      assert.equal(result.ok, true);
+      assert.match(users.get('user-1').avatar, /data:image\/webp/);
+      return;
+    }
+    if (feature.id === 'contact.avatar.set') {
+      const result = await getTool(tools, 'contact.set_avatar').execute({ target: 'Beta' }, { maidAttachments });
+      assert.equal(result.ok, true);
+      assert.match(contacts.get('B').avatar, /data:image\/webp/);
+      return;
+    }
+    if (feature.id === 'session.wallpaper.set') {
+      const result = await getTool(tools, 'session.set_wallpaper').execute({ target: 'Beta' }, { maidAttachments });
+      assert.equal(result.ok, true);
+      assert.equal(sessionSettings.get('B').wallpaper.path, 'wallpapers/B/wallpaper.jpg');
+      return;
+    }
     if (feature.id === 'worldbook.create') {
       const result = await getTool(tools, 'worldbook.create').execute({
         name: 'CatalogWorld',
@@ -287,6 +368,20 @@ const escapeRegex = value => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'
       });
       assert.equal(result.ok, true);
       assert.equal(result.entryCount, 1);
+      return;
+    }
+    if (feature.id === 'worldbook.update_entries') {
+      const result = await getTool(tools, 'worldbook.update_entries').execute({
+        name: 'CatalogWorld',
+        updates: [{ entryTitle: 'CatalogEntry', content: 'Updated catalog content.' }],
+      }, {
+        toolSafety: {
+          decision: 'allow',
+          request: { kind: 'worldbook.update_entries' },
+        },
+      });
+      assert.equal(result.ok, true);
+      assert.equal(result.updatedEntryCount, 1);
       return;
     }
     if (feature.id === 'worldbook.list') {

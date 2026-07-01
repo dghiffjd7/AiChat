@@ -13,6 +13,8 @@ import {
   assert.equal(messages.length, 2);
   assert.match(messages[0].content, /女仆助手/);
   assert.match(messages[0].content, /不要输出 JSON/);
+  assert.match(messages[0].content, /优先选择非破坏性做法/);
+  assert.match(messages[0].content, /危险操作包括/);
   assert.match(messages[1].content, /你好啊/);
   assert.match(messages[1].content, /s1/);
   assert.match(messages[1].content, /APP 相关讯息/);
@@ -36,6 +38,7 @@ import {
   });
   assert.match(messages[0].content, /自定义女仆 system prompt/);
   assert.match(messages[0].content, /历史上下文/);
+  assert.match(messages[0].content, /未确认时跳过/);
   console.log('ok - maid chat responder uses editable maid prompt as system prompt');
 }
 
@@ -119,7 +122,7 @@ import {
   assert.equal(calls.length, 1);
   assert.match(calls[0].messages[0].content, /活泼一点/);
   assert.match(calls[0].messages[0].content, /历史上下文/);
-  assert.equal(calls[0].options.maxTokens, 500);
+  assert.equal(calls[0].options.maxTokens, 800);
   assert.equal(debugSnapshots.length, 1);
   assert.equal(debugSnapshots[0].source, 'maid_chat_responder');
   assert.equal(debugSnapshots[0].responseText, '你好，我在。');
@@ -127,6 +130,24 @@ import {
   assert.equal(injected.length, 1);
   assert.equal(injected[0].conversationContext.tokenCount, 12);
   console.log('ok - maid chat responder calls bound runtime client');
+}
+
+{
+  const responder = createMaidChatResponder({
+    resolveRuntimeConfig: async () => ({
+      configured: true,
+      client: {
+        chat: async () => '{"ok":true,"action":"tool","toolName":"worldbook.update_entries","featureId":"worldbook.update_entries","args":{"name":"W","updates":[]}}',
+      },
+    }),
+    logger: { warn() {} },
+  });
+  const result = await responder('是的，替换成扩展版');
+  assert.equal(result.ok, false);
+  assert.equal(result.status, 'failed');
+  assert.equal(result.reason, 'chat_response_contains_tool_plan');
+  assert.match(result.message, /工具执行流程/);
+  console.log('ok - maid chat responder refuses tool plans emitted as chat text');
 }
 
 {

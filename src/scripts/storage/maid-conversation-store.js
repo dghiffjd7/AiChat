@@ -88,6 +88,9 @@ const normalizeTurn = (raw = {}, { now = Date.now } = {}) => {
     toolName: trim(src.toolName || plan.toolName || output.toolName),
     featureId: trim(src.featureId || plan.featureId),
     title: trim(src.title || plan.title),
+    continuable: src.continuable === true,
+    continueHint: truncate(src.continueHint, 1200),
+    reactStoppedReason: trim(src.reactStoppedReason),
     compacted: src.compacted === true,
     context: isPlainObject(src.context) ? clone(src.context) : {},
   };
@@ -156,6 +159,9 @@ export const formatMaidHistoryContextText = ({
       turn.toolName ? `  工具: ${turn.toolName}` : '',
       turn.featureId ? `  功能: ${turn.featureId}` : '',
       turn.status ? `  状态: ${turn.status}` : '',
+      turn.reactStoppedReason ? `  中断原因: ${turn.reactStoppedReason}` : '',
+      turn.continuable ? '  可继续: 是' : '',
+      turn.continueHint ? `  继续提示: ${turn.continueHint}` : '',
       turn.message ? `  结果: ${turn.message}` : '',
     ].filter(Boolean);
     const text = lines.join('\n');
@@ -192,6 +198,9 @@ const buildMemoryRowFromTurns = (turns = [], {
     turn.toolName ? `   工具：${turn.toolName}` : '',
     turn.featureId ? `   功能：${turn.featureId}` : '',
     turn.status ? `   状态：${turn.status}` : '',
+    turn.reactStoppedReason ? `   中断原因：${turn.reactStoppedReason}` : '',
+    turn.continuable ? '   可继续：是' : '',
+    turn.continueHint ? `   继续提示：${turn.continueHint}` : '',
     turn.message ? `   结果：${turn.message}` : '',
   ].filter(Boolean).join('\n')).join('\n');
   return normalizeMemoryRow({

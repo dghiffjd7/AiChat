@@ -208,6 +208,11 @@ export const createAppSessionAgentTools = ({
         modelContext: 'none',
         confirmation: 'allow_once',
       },
+      safety: {
+        operationType: 'create',
+        destructive: 'never',
+        description: 'Creates a new chat session/contact or reuses an existing one; it does not overwrite existing chat content.',
+      },
       schema: {
         type: 'object',
         additionalProperties: false,

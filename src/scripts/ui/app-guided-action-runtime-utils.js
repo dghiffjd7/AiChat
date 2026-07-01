@@ -22,6 +22,66 @@ const list = value => (Array.isArray(value) ? value : [value])
   .filter(Boolean);
 
 const GUIDE_STEP_SELECTOR_CANDIDATES = Object.freeze({
+  '顶部 +': [
+    '[data-maid-guide-target="top-plus-entry"]',
+    '.qq-message-topbar .topbar-plus-btn',
+    '#plus-button',
+  ],
+  '好友列表': [
+    '[data-maid-guide-target="quick-add-friend"]',
+    '#quick-menu button[data-action="add-friend"]',
+  ],
+  '聊天列表': [
+    '[data-maid-guide-target="chat-list"]',
+    '#chat-list',
+    '#chat-list .chat-list-item',
+  ],
+  '点击联系人或群组': [
+    '#chat-list .chat-list-item',
+    '.contact-item',
+  ],
+  '聊天室': [
+    '#chat-room',
+  ],
+  '输入框': [
+    '#composer-input',
+  ],
+  '发送': [
+    '#send-button',
+  ],
+  '设置': [
+    '[data-maid-guide-target="settings-entry"]',
+    '.qq-message-topbar .user-settings-btn',
+  ],
+  'API / 模型配置': [
+    '[data-maid-guide-target="settings-api-config"]',
+    '#settings-menu button[data-action="config"]',
+  ],
+  'Agent Center': [
+    '[data-maid-guide-target="settings-agent-center"]',
+    '#settings-menu button[data-action="agent-center"]',
+  ],
+  '世界书': [
+    '[data-maid-guide-target="chatroom-world"]',
+    '[data-maid-guide-target="settings-world-global"]',
+    '#chatroom-menu button[data-action="world"]',
+    '#rp-chatroom-menu button[data-action="world"]',
+    '#settings-menu button[data-action="world-global"]',
+  ],
+  '变量': [
+    '[data-maid-guide-target="chatroom-vars"]',
+    '#chatroom-menu button[data-action="vars"]',
+    '#rp-chatroom-menu button[data-action="vars"]',
+  ],
+  '正则 / 后处理': [
+    '[data-maid-guide-target="chatroom-regex"]',
+    '#chatroom-menu button[data-action="regex"]',
+    '#rp-chatroom-menu button[data-action="regex"]',
+  ],
+  '聊天室标题': [
+    '[data-maid-guide-target="chat-title-entry"]',
+    '#current-chat-title',
+  ],
   '头像/用户入口': [
     '[data-maid-guide-target="avatar-user-entry"]',
     '.qq-message-topbar .user-avatar-btn',
@@ -37,6 +97,24 @@ const GUIDE_STEP_SELECTOR_CANDIDATES = Object.freeze({
   '角色卡': [
     '[data-maid-guide-target="persona-switcher-tab-character"]',
     '#persona-switcher-menu button[data-action="switcher-tab"][data-tab="character"]',
+  ],
+  '管理用户': [
+    '[data-maid-guide-target="manage-users"]',
+    '#persona-switcher-menu button[data-action="manage-users"]',
+  ],
+  '管理角色卡': [
+    '[data-maid-guide-target="manage-cards"]',
+    '#persona-switcher-menu button[data-action="manage-cards"]',
+  ],
+  '聊天室右上角菜单': [
+    '[data-maid-guide-target="chatroom-menu-entry"]',
+    '#chat-menu-btn',
+  ],
+  '会话配置': [
+    '[data-maid-guide-target="chat-title-session-config"]',
+    '[data-maid-guide-target="settings-session-config"]',
+    '#chat-title-menu button[data-action="session-config"]',
+    '#settings-menu button[data-action="session-config"]',
   ],
   '新建': [
     '[data-maid-guide-target="create-user"]',

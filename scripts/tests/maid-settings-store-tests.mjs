@@ -67,13 +67,13 @@ const createStorage = () => {
   });
   await store.setPersonaPrompt('稳重女仆 2');
   assert.match(storage.backing.get(MAID_SETTINGS_STORE_KEY), /profile-a/);
-  assert.doesNotMatch(storage.backing.get(MAID_SETTINGS_STORE_KEY), /secret prompt/);
-  assert.doesNotMatch(storage.backing.get(MAID_SETTINGS_STORE_KEY), /检索：已执行/);
-  assert.doesNotMatch(storage.backing.get(MAID_SETTINGS_STORE_KEY), /raw response/);
+  assert.match(storage.backing.get(MAID_SETTINGS_STORE_KEY), /secret prompt/);
+  assert.match(storage.backing.get(MAID_SETTINGS_STORE_KEY), /检索：已执行/);
+  assert.match(storage.backing.get(MAID_SETTINGS_STORE_KEY), /raw response/);
   assert.equal(kv.get(MAID_SETTINGS_STORE_KEY).boundProfileId, 'profile-a');
   assert.equal(kv.get(MAID_SETTINGS_STORE_KEY).maidPrompt, '稳重女仆 2');
   assert.equal(kv.get(MAID_SETTINGS_STORE_KEY).personaPrompt, undefined);
-  assert.equal(kv.get(MAID_SETTINGS_STORE_KEY).lastRequestPrompt, undefined);
+  assert.equal(kv.get(MAID_SETTINGS_STORE_KEY).lastRequestPrompt, 'system:\nsecret prompt');
   assert.equal(store.getLastRequestPrompt(), 'system:\nsecret prompt');
   assert.equal(store.getLastAppContext(), '检索：已执行');
   assert.equal(store.getLastFullResponse(), 'raw response');
@@ -91,10 +91,10 @@ const createStorage = () => {
   assert.equal(restored.getBoundProfileId(), 'profile-a');
   assert.equal(restored.getMaidPrompt(), '稳重女仆 2');
   assert.equal(restored.getPersonaPrompt(), '稳重女仆 2');
-  assert.equal(restored.getLastRequestPrompt(), '');
-  assert.equal(restored.getLastAppContext(), '');
-  assert.equal(restored.getLastFullResponse(), '');
-  console.log('ok - MaidSettingsStore persists explicit maid binding to KV and local backup');
+  assert.equal(restored.getLastRequestPrompt(), 'system:\nsecret prompt');
+  assert.equal(restored.getLastAppContext(), '检索：已执行');
+  assert.equal(restored.getLastFullResponse(), 'raw response');
+  console.log('ok - MaidSettingsStore persists explicit maid binding and debug exchange to KV and local backup');
 }
 
 {

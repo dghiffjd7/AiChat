@@ -114,6 +114,9 @@ const defaults = {
   uiThemeCompactInput: false,
   uiThemeHideChatAvatars: false,
   uiThemeSchemaVersion: 2,
+  webSearchProvider: 'duckduckgo',
+  webSearchLocale: 'zh-tw',
+  webSearchApiKey: '',
 };
 
 const readSettings = () => {
@@ -226,6 +229,12 @@ const migrateSettings = (settings = {}) => {
     if (!next[key] || typeof next[key] !== 'object' || Array.isArray(next[key])) next[key] = {};
   });
   next.chatDefaultColorMode = inferChatColorMode(next, defaults.chatDefaultColorMode);
+  const searchProvider = String(next.webSearchProvider || '').trim().toLowerCase().replace(/[\s-]+/g, '_');
+  next.webSearchProvider = ['duckduckgo', 'brave', 'tavily', 'serpapi', 'bing'].includes(searchProvider)
+    ? searchProvider
+    : defaults.webSearchProvider;
+  next.webSearchLocale = String(next.webSearchLocale || defaults.webSearchLocale).trim() || defaults.webSearchLocale;
+  next.webSearchApiKey = String(next.webSearchApiKey || '');
   return next;
 };
 

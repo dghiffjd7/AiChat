@@ -7,6 +7,7 @@ import {
 import {
   AgentToolError,
   AgentToolPermissionError,
+  AgentToolSafetyError,
   createAgentToolRegistry,
 } from '../../src/scripts/agent/agent-tool-registry.js';
 import { createImageAgentTools } from '../../src/scripts/agent/tools/image-tools.js';
@@ -117,6 +118,147 @@ const logger = { warn: () => {} };
   });
   assert.equal(result.result, 'allowed');
   console.log('ok - agent tool registry requires explicit approval for ask permissions');
+}
+
+{
+  const registry = createAgentToolRegistry({
+    permissionEvaluator: createAgentPermissionEvaluator({
+      defaultDecision: AGENT_PERMISSION_DECISIONS.allow,
+    }),
+    logger,
+  });
+  const calls = [];
+  registry.register({
+    name: 'world.replace',
+    riskLevel: 'medium',
+    schema: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        mode: { type: 'string' },
+        name: { type: 'string' },
+      },
+    },
+    safety: {
+      operationType: 'replace_existing',
+      destructive: 'conditional',
+      preflight: async args => (
+        args.mode === 'replace'
+          ? {
+              destructive: true,
+              kind: 'world.replace',
+              title: '覆盖世界书',
+              message: `覆盖 ${args.name}`,
+              confirmText: '覆盖',
+              cancelText: '新建副本',
+              onDeny: {
+                action: 'replace_args',
+                reason: 'fallback_create_new',
+                args: { ...args, mode: 'create_new' },
+              },
+            }
+          : { destructive: false }
+      ),
+    },
+    execute: async (args, context) => {
+      calls.push({ args, safety: context.toolSafety });
+      return { ok: true, mode: args.mode };
+    },
+  });
+  const publicTool = registry.get('world.replace');
+  assert.equal(publicTool.safety.operationType, 'replace_existing');
+  assert.equal(publicTool.safety.preflight, undefined);
+
+  const safe = await registry.executeTool('world.replace', { mode: 'append', name: 'A' });
+  assert.equal(safe.result.mode, 'append');
+  assert.equal(calls[0].safety.required, false);
+
+  const confirmations = [];
+  const confirmed = await registry.executeTool('world.replace', { mode: 'replace', name: 'A' }, {
+    requestToolConfirmation: request => {
+      confirmations.push(request);
+      return { decision: 'allow' };
+    },
+  });
+  assert.equal(confirmed.result.mode, 'replace');
+  assert.equal(calls[1].safety.decision, 'allow');
+  assert.equal(confirmations[0].title, '覆盖世界书');
+
+  const fallback = await registry.executeTool('world.replace', { mode: 'replace', name: 'A' }, {
+    requestToolConfirmation: () => false,
+  });
+  assert.equal(fallback.result.mode, 'create_new');
+  assert.equal(calls[2].safety.decision, 'fallback');
+  console.log('ok - agent tool registry runs safety preflight with confirmation and safe fallback args');
+}
+
+{
+  const registry = createAgentToolRegistry({
+    permissionEvaluator: createAgentPermissionEvaluator({
+      defaultDecision: AGENT_PERMISSION_DECISIONS.allow,
+    }),
+    logger,
+  });
+  let executed = false;
+  registry.register({
+    name: 'avatar.replace',
+    riskLevel: 'medium',
+    safety: {
+      operationType: 'replace_existing',
+      destructive: 'conditional',
+      preflight: async () => ({
+        destructive: true,
+        kind: 'avatar.replace',
+        title: '覆盖头像',
+        message: '覆盖已有头像',
+        onDeny: {
+          action: 'skip',
+          reason: 'destructive_write_cancelled',
+        },
+      }),
+    },
+    execute: async () => {
+      executed = true;
+      return { ok: true };
+    },
+  });
+  const output = await registry.executeTool('avatar.replace', {}, {
+    requestToolConfirmation: () => 'deny',
+  });
+  assert.equal(output.status, 'skipped');
+  assert.equal(output.result.skipped, true);
+  assert.equal(output.result.reason, 'destructive_write_cancelled');
+  assert.equal(executed, false);
+  console.log('ok - agent tool registry skips destructive tools when confirmation is denied');
+}
+
+{
+  const registry = createAgentToolRegistry({
+    permissionEvaluator: createAgentPermissionEvaluator({
+      defaultDecision: AGENT_PERMISSION_DECISIONS.allow,
+    }),
+    requireSafetyForWrites: true,
+    logger,
+  });
+  assert.throws(
+    () => registry.register({
+      name: 'unsafe.write',
+      riskLevel: 'medium',
+      execute: async () => true,
+    }),
+    err => err instanceof AgentToolSafetyError && err.code === 'agent_tool_safety_required',
+  );
+  registry.register({
+    name: 'safe.write',
+    riskLevel: 'medium',
+    safety: {
+      operationType: 'create',
+      destructive: 'never',
+    },
+    execute: async () => true,
+  });
+  assert.equal(registry.get('safe.write').safety.declared, true);
+  console.log('ok - agent tool registry can require explicit safety policy for write tools');
 }
 
 {

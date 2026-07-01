@@ -3412,6 +3412,8 @@ export class WorldEditorModal {
             });
             const item = document.createElement('div');
             item.className = `world-entry-item ${i === this.currentIndex ? 'active' : ''}`;
+            item.dataset.entryIndex = String(i);
+            item.dataset.entryId = entryId;
             if (this.batchMode && isSelected) item.classList.add('is-selected');
             if (entry.disable) item.classList.add('is-disabled');
             if (variableStatus.hasVariable) item.classList.add('has-variable-condition');
@@ -3578,17 +3580,55 @@ export class WorldEditorModal {
         }, 120);
     }
 
-    selectEntry(index) {
+    refreshEntryListSelection() {
+        if (!this.entriesListEl?.querySelectorAll) return false;
+        const items = Array.from(this.entriesListEl.querySelectorAll('.world-entry-item') || []);
+        if (!items.length) return false;
+        items.forEach((item) => {
+            const idx = Number(item.dataset?.entryIndex);
+            if (!Number.isInteger(idx)) return;
+            const entry = this.data.entries[idx];
+            if (!entry) return;
+            const entryId = item.dataset?.entryId || this.getEntryId(entry, idx);
+            const variableStatus = this.getEntryVariableStatus(entry, idx, {
+                includeActivation: idx === this.currentIndex,
+            });
+            item.classList.toggle('active', idx === this.currentIndex);
+            item.classList.toggle('is-selected', this.batchMode && this.selectedEntries.has(entryId));
+            item.classList.toggle('is-disabled', Boolean(entry.disable));
+            item.classList.toggle('has-variable-condition', Boolean(variableStatus.hasVariable));
+            item.classList.toggle('is-variable-active', Boolean(variableStatus.isActive));
+            const strategyLight = item.querySelector?.('.world-entry-light');
+            if (strategyLight) {
+                strategyLight.className = `world-entry-light ${entry.disable ? 'off' : this.getEntryTriggerStrategy(entry)}`;
+            }
+            const variableLight = item.querySelector?.('.world-entry-light.variable');
+            if (variableLight) {
+                variableLight.classList.toggle('is-active', Boolean(variableStatus.isActive));
+                variableLight.setAttribute('title', variableStatus.isActive ? '变量条件生效中' : '已配置变量条件');
+            }
+        });
+        this.updateEntryPageIndicator();
+        return true;
+    }
+
+    selectEntry(index, { forceRenderList = false } = {}) {
         this.hideBlockManageModal();
+        const previousPageIndex = this.entryPageIndex;
         this.currentIndex = Math.max(0, Math.min(index, this.data.entries.length - 1));
         const filtered = this.getFilteredEntries();
         const currentPos = filtered.findIndex(item => item.idx === this.currentIndex);
+        let shouldRenderList = Boolean(forceRenderList);
         if (currentPos >= 0) {
             const rawSize = Number(this.entryPageSize);
             const pageSize = Math.max(1, Math.min(200, Number.isFinite(rawSize) ? Math.trunc(rawSize) : 5));
-            this.entryPageIndex = Math.floor(currentPos / pageSize);
+            const nextPageIndex = Math.floor(currentPos / pageSize);
+            if (nextPageIndex !== previousPageIndex) shouldRenderList = true;
+            this.entryPageIndex = nextPageIndex;
+        } else if (filtered.length) {
+            shouldRenderList = true;
         }
-        this.renderList();
+        if (shouldRenderList || !this.refreshEntryListSelection()) this.renderList();
         this.renderEditor();
     }
 
@@ -4270,7 +4310,7 @@ export class WorldEditorModal {
         const newEntry = createDefaultEntry(this.data.entries.length);
         newEntry.id = `entry-${Date.now()}`;
         this.data.entries.unshift(newEntry);
-        this.selectEntry(0);
+        this.selectEntry(0, { forceRenderList: true });
     }
 
     duplicateEntry(index) {
@@ -4280,7 +4320,7 @@ export class WorldEditorModal {
         copy.id = `entry-${Date.now()}`;
         copy.comment = `${copy.comment || 'entry'}（复制）`;
         this.data.entries.splice(index + 1, 0, copy);
-        this.selectEntry(index + 1);
+        this.selectEntry(index + 1, { forceRenderList: true });
     }
 
     deleteEntry(index) {
@@ -4289,7 +4329,7 @@ export class WorldEditorModal {
             return;
         }
         this.data.entries.splice(index, 1);
-        this.selectEntry(Math.max(0, index - 1));
+        this.selectEntry(Math.max(0, index - 1), { forceRenderList: true });
     }
 
     ensureUniqueSessionId(baseName, contactsStore) {

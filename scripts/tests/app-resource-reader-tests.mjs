@@ -112,6 +112,7 @@ const makeDeps = () => {
 {
   assert.equal(normalizeAppResourceName('messages'), 'chat');
   assert.equal(normalizeAppResourceName('world-info'), 'worldbook');
+  assert.equal(normalizeAppResourceName('worldbook-template'), 'worldbook');
   assert.equal(normalizeAppResourceName('character-card'), 'persona');
   assert.deepEqual(sanitizeAppResourceValue({ token: 'secret', nested: { apiKey: 'secret', ok: true } }), {
     token: '[redacted]',
@@ -152,8 +153,29 @@ const makeDeps = () => {
   assert.equal(result.worldbooks[0].id, 'w1');
   assert.equal(result.worldbooks[0].entries[0].title, '精灵女王');
   assert.equal(result.worldbooks[0].entries[0].position, 4);
+  assert.equal(result.worldbooks[0].entries[0].content, undefined);
+  assert.equal(result.worldbooks[0].entries[0].contentPreview, undefined);
+  assert.ok(result.worldbooks[0].entries[0].contentLength > 0);
+  assert.equal(result.contentMode, 'summary');
   assert.equal(result.globalSettings.apiKey, '[redacted]');
-  console.log('ok - app resource reader returns worldbook entries, injection fields, and global settings');
+  assert.equal(result.aiGeneration.templateStorageKey, 'world_ai_template_v1');
+  assert.match(result.aiGeneration.template, /dialogue_examples/);
+  console.log('ok - app resource reader returns worldbook entry index, injection fields, and global settings');
+}
+
+{
+  const readResource = createAppResourceReader(makeDeps());
+  const result = await readResource({
+    resource: 'worldbook',
+    name: 'w1',
+    query: '精灵女王',
+    includeContent: true,
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.contentMode, 'content');
+  assert.equal(result.worldbooks[0].entries.length, 1);
+  assert.match(result.worldbooks[0].entries[0].content, /超级温柔/);
+  console.log('ok - app resource reader returns worldbook content only when explicitly requested');
 }
 
 {

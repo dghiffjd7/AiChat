@@ -25,6 +25,13 @@ export class AgentToolPermissionError extends AgentToolError {
   }
 }
 
+export class AgentToolSafetyError extends AgentToolError {
+  constructor(message, options = {}) {
+    super(message, { ...options, code: options.code || 'agent_tool_safety' });
+    this.name = 'AgentToolSafetyError';
+  }
+}
+
 const isPlainObject = value => Boolean(value && typeof value === 'object' && !Array.isArray(value));
 
 const trim = (value, fallback = '') => {
@@ -50,6 +57,9 @@ const createAbortError = (message = 'Agent tool aborted') => {
 
 const normalizeToolName = (name = '') => trim(name).replace(/\s+/g, '_');
 
+const SAFETY_DESTRUCTIVE_VALUES = new Set(['never', 'conditional', 'always']);
+const SAFETY_DENY_ACTIONS = new Set(['skip', 'replace_args', 'throw']);
+
 const normalizeAgentToolCapabilities = (capabilities = {}, {
   permissions = [],
   riskLevel = 'low',
@@ -70,6 +80,35 @@ const normalizeAgentToolCapabilities = (capabilities = {}, {
   };
 };
 
+const normalizeAgentToolSafety = (safety = null, { capabilities = {} } = {}) => {
+  const declared = isPlainObject(safety);
+  const src = declared ? safety : {};
+  const rawDestructive = src.destructive === true
+    ? 'always'
+    : (src.destructive === false ? 'never' : trim(src.destructive, 'never'));
+  const destructive = SAFETY_DESTRUCTIVE_VALUES.has(rawDestructive) ? rawDestructive : 'never';
+  const rawDenyAction = trim(src.onDeny?.action || src.onCancel?.action || src.denyAction, 'skip');
+  return {
+    declared,
+    operationType: trim(src.operationType || src.operation || (capabilities.write ? 'write' : 'read'), capabilities.write ? 'write' : 'read'),
+    destructive,
+    description: trim(src.description),
+    preflight: typeof src.preflight === 'function' ? src.preflight : null,
+    onDeny: {
+      action: SAFETY_DENY_ACTIONS.has(rawDenyAction) ? rawDenyAction : 'skip',
+      reason: trim(src.onDeny?.reason || src.onCancel?.reason || src.denyReason, 'destructive_operation_cancelled'),
+    },
+  };
+};
+
+const publicToolDefinition = tool => ({
+  ...tool,
+  execute: undefined,
+  prepareArguments: undefined,
+  summarizeResult: undefined,
+  safety: tool?.safety ? { ...tool.safety, preflight: undefined } : undefined,
+});
+
 export const normalizeAgentToolDefinition = (definition = {}) => {
   const src = isPlainObject(definition) ? definition : {};
   const name = normalizeToolName(src.name);
@@ -82,6 +121,10 @@ export const normalizeAgentToolDefinition = (definition = {}) => {
   }
   const permissions = list(src.permissions);
   const riskLevel = trim(src.riskLevel || src.risk, 'low');
+  const capabilities = normalizeAgentToolCapabilities(src.capabilities || src.metadata?.capabilities, {
+    permissions,
+    riskLevel,
+  });
   return {
     name,
     title: trim(src.title || src.label, name),
@@ -90,10 +133,8 @@ export const normalizeAgentToolDefinition = (definition = {}) => {
     permissions,
     riskLevel,
     executionMode: trim(src.executionMode, 'sequential'),
-    capabilities: normalizeAgentToolCapabilities(src.capabilities || src.metadata?.capabilities, {
-      permissions,
-      riskLevel,
-    }),
+    capabilities,
+    safety: normalizeAgentToolSafety(src.safety, { capabilities }),
     schema: isPlainObject(src.schema) ? clone(src.schema) : { type: 'object' },
     timeoutMs: Math.max(0, Number(src.timeoutMs || 0) || 0),
     outputLimit: Math.max(0, Number(src.outputLimit || 0) || 0),
@@ -201,16 +242,74 @@ const runWithTimeout = async (task, timeoutMs = 0, signal = null) => {
   }
 };
 
+const isSafetyConfirmationAllowed = value => {
+  if (value === true || value === AGENT_PERMISSION_DECISIONS.allow || value === 'confirmed') return true;
+  if (!isPlainObject(value)) return false;
+  const decision = trim(value.decision || value.status || value.action).toLowerCase();
+  return value.confirmed === true || decision === AGENT_PERMISSION_DECISIONS.allow || decision === 'confirmed';
+};
+
+const normalizeSafetyPreflightResult = (result = {}, tool = {}, args = {}) => {
+  const src = isPlainObject(result) ? result : {};
+  const destructive = src.destructive === true || src.requiresConfirmation === true;
+  const rawDenyAction = trim(src.onDeny?.action || src.onCancel?.action || tool.safety?.onDeny?.action, 'skip');
+  return {
+    destructive,
+    kind: trim(src.kind || src.action || `${tool.name}.${tool.safety?.operationType || 'operation'}`),
+    operationType: trim(src.operationType || tool.safety?.operationType, 'write'),
+    title: trim(src.title || src.confirmTitle || '确认危险操作'),
+    message: trim(src.message || src.confirmMessage || `工具「${tool.name}」将执行可能覆盖或删除已有内容的操作。`),
+    confirmText: trim(src.confirmText || '确认执行'),
+    cancelText: trim(src.cancelText || '取消'),
+    danger: src.danger !== false,
+    argsPreview: clone(src.argsPreview || args),
+    details: isPlainObject(src.details) ? clone(src.details) : null,
+    onDeny: {
+      action: SAFETY_DENY_ACTIONS.has(rawDenyAction) ? rawDenyAction : 'skip',
+      args: isPlainObject(src.onDeny?.args || src.onCancel?.args) ? clone(src.onDeny?.args || src.onCancel?.args) : null,
+      result: isPlainObject(src.onDeny?.result || src.onCancel?.result) ? clone(src.onDeny?.result || src.onCancel?.result) : null,
+      reason: trim(src.onDeny?.reason || src.onCancel?.reason || tool.safety?.onDeny?.reason, 'destructive_operation_cancelled'),
+    },
+  };
+};
+
+const buildSafetySkippedOutput = (tool, preflight, durationMs = 0) => {
+  const result = preflight.onDeny.result || {
+    ok: false,
+    skipped: true,
+    reason: preflight.onDeny.reason,
+    safety: {
+      kind: preflight.kind,
+      operationType: preflight.operationType,
+      destructive: true,
+    },
+  };
+  return {
+    toolName: tool.name,
+    status: 'skipped',
+    result,
+    summary: trim(result?.message || result?.reason, `tool skipped: ${tool.name}`),
+    durationMs,
+  };
+};
+
 export const createAgentToolRegistry = ({
   permissionEvaluator = createAgentPermissionEvaluator({ defaultDecision: AGENT_PERMISSION_DECISIONS.ask }),
+  requireSafetyForWrites = false,
   logger = console,
 } = {}) => {
   const tools = new Map();
 
   const register = (definition = {}) => {
     const normalized = normalizeAgentToolDefinition(definition);
+    if (requireSafetyForWrites && normalized.capabilities.write && normalized.safety.declared !== true) {
+      throw new AgentToolSafetyError(`Agent write tool missing safety policy: ${normalized.name}`, {
+        code: 'agent_tool_safety_required',
+        toolName: normalized.name,
+      });
+    }
     tools.set(normalized.name, normalized);
-    return { ...normalized, execute: undefined, prepareArguments: undefined, summarizeResult: undefined };
+    return publicToolDefinition(normalized);
   };
 
   const registerMany = (definitions = []) => (Array.isArray(definitions) ? definitions : [])
@@ -219,11 +318,11 @@ export const createAgentToolRegistry = ({
   const get = (name = '') => {
     const tool = tools.get(normalizeToolName(name)) || null;
     if (!tool) return null;
-    return { ...tool, execute: undefined, prepareArguments: undefined, summarizeResult: undefined };
+    return publicToolDefinition(tool);
   };
 
   const listTools = () => Array.from(tools.values())
-    .map(tool => ({ ...tool, execute: undefined, prepareArguments: undefined, summarizeResult: undefined }))
+    .map(publicToolDefinition)
     .sort((a, b) => a.name.localeCompare(b.name));
 
   const evaluatePermission = async (tool, args = {}, context = {}) => {
@@ -259,6 +358,103 @@ export const createAgentToolRegistry = ({
     });
   };
 
+  const evaluateSafety = async (tool, args = {}, context = {}) => {
+    const safety = tool.safety || {};
+    let rawPreflight = null;
+    if (typeof safety.preflight === 'function') {
+      rawPreflight = await safety.preflight(args, {
+        ...context,
+        tool: publicToolDefinition(tool),
+      });
+    } else if (safety.destructive === 'always') {
+      rawPreflight = { destructive: true };
+    }
+    const preflight = normalizeSafetyPreflightResult(rawPreflight || {}, tool, args);
+    if (!preflight.destructive) {
+      return {
+        args,
+        preflight,
+        confirmation: {
+          required: false,
+          decision: 'not_required',
+        },
+      };
+    }
+
+    const requestConfirmation = context.requestToolConfirmation ||
+      context.confirmToolSafety ||
+      context.requestSafetyConfirmation;
+    const request = {
+      toolName: tool.name,
+      source: tool.source,
+      riskLevel: tool.riskLevel,
+      operationType: preflight.operationType,
+      kind: preflight.kind,
+      title: preflight.title,
+      message: preflight.message,
+      confirmText: preflight.confirmText,
+      cancelText: preflight.cancelText,
+      danger: preflight.danger,
+      argsPreview: preflight.argsPreview,
+      details: preflight.details,
+    };
+    const allowed = typeof requestConfirmation === 'function'
+      ? isSafetyConfirmationAllowed(await requestConfirmation(request))
+      : false;
+    if (allowed) {
+      return {
+        args,
+        preflight,
+        confirmation: {
+          required: true,
+          decision: 'allow',
+          request,
+        },
+      };
+    }
+
+    if (preflight.onDeny.action === 'replace_args' && preflight.onDeny.args) {
+      const fallbackValidation = validateAgentToolArguments(preflight.onDeny.args, tool.schema);
+      if (!fallbackValidation.ok) {
+        throw new AgentToolSafetyError(`Agent tool safety fallback arguments invalid: ${fallbackValidation.errors.join('; ')}`, {
+          code: 'agent_tool_safety_fallback_args_invalid',
+          toolName: tool.name,
+          details: fallbackValidation.errors,
+        });
+      }
+      return {
+        args: fallbackValidation.args,
+        preflight,
+        confirmation: {
+          required: true,
+          decision: 'fallback',
+          request,
+          reason: preflight.onDeny.reason,
+        },
+      };
+    }
+
+    if (preflight.onDeny.action === 'throw') {
+      throw new AgentToolSafetyError(`Agent tool destructive operation not confirmed: ${tool.name}`, {
+        code: 'agent_tool_safety_confirmation_required',
+        toolName: tool.name,
+        details: request,
+      });
+    }
+
+    return {
+      args,
+      preflight,
+      skip: true,
+      confirmation: {
+        required: true,
+        decision: 'deny',
+        request,
+        reason: preflight.onDeny.reason,
+      },
+    };
+  };
+
   const executeTool = async (name = '', args = {}, context = {}) => {
     const toolName = normalizeToolName(name);
     const tool = tools.get(toolName);
@@ -278,9 +474,29 @@ export const createAgentToolRegistry = ({
     }
     await evaluatePermission(tool, validation.args, context);
     const startedAt = Date.now();
+    const safety = await evaluateSafety(tool, validation.args, context);
+    if (safety.skip) {
+      const durationMs = Math.max(0, Date.now() - startedAt);
+      const output = buildSafetySkippedOutput(tool, safety.preflight, durationMs);
+      context.emit?.({
+        type: AGENT_EVENT_TYPES.toolFinished,
+        runId: context.runId,
+        stepId: context.stepId,
+        sessionId: context.sessionId,
+        source: tool.source,
+        status: 'skipped',
+        summary: output.summary || `tool skipped: ${tool.name}`,
+        details: {
+          toolName: tool.name,
+          durationMs,
+          safety: clone(safety.confirmation),
+        },
+      });
+      return output;
+    }
     const preparedArgs = tool.prepareArguments
-      ? await tool.prepareArguments(validation.args, context)
-      : validation.args;
+      ? await tool.prepareArguments(safety.args, context)
+      : safety.args;
     context.emit?.({
       type: AGENT_EVENT_TYPES.toolStarted,
       runId: context.runId,
@@ -297,6 +513,7 @@ export const createAgentToolRegistry = ({
           ...context,
           signal: context.signal,
           tool,
+          toolSafety: clone(safety.confirmation),
         }),
         tool.timeoutMs,
         context.signal,

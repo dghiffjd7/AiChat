@@ -39,6 +39,40 @@ const getTool = (tools, name) => tools.find(tool => tool.name === name);
 }
 
 {
+  const requests = [];
+  const tools = createWebSearchAgentTools({
+    getSearchConfig: () => ({
+      webSearchProvider: 'brave',
+      webSearchApiKey: 'brave-key',
+      webSearchLocale: 'zh-tw',
+    }),
+    httpRequest: async (payload) => {
+      requests.push(payload);
+      return {
+        ok: true,
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          web: {
+            results: [
+              { title: 'Brave Result', description: 'Brave snippet', url: 'https://example.com/brave' },
+            ],
+          },
+        }),
+      };
+    },
+  });
+  const search = getTool(tools, 'web.search');
+  const result = await search.execute({ query: 'provider gateway', limit: 1 });
+  assert.equal(result.ok, true);
+  assert.equal(result.provider, 'brave');
+  assert.equal(result.results[0].url, 'https://example.com/brave');
+  assert.match(requests[0].url, /api\.search\.brave\.com/);
+  assert.equal(requests[0].headers['X-Subscription-Token'], 'brave-key');
+  console.log('ok - web search tool supports configurable provider gateway');
+}
+
+{
   const tools = createWebSearchAgentTools({
     httpRequest: async () => ({
       ok: true,
@@ -64,4 +98,67 @@ const getTool = (tools, name) => tools.find(tool => tool.name === name);
   assert.equal(result.ok, false);
   assert.equal(result.reason, 'unsupported_url');
   console.log('ok - web fetch tool rejects non-http urls');
+}
+
+{
+  const requests = [];
+  const tools = createWebSearchAgentTools({
+    httpRequest: async (payload) => {
+      requests.push(payload);
+      if (String(payload.url).includes('api.duckduckgo.com')) {
+        return {
+          ok: true,
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            Results: [
+              { Text: 'Result A', FirstURL: 'https://example.com/a' },
+              { Text: 'Result B', FirstURL: 'https://example.com/b' },
+            ],
+          }),
+        };
+      }
+      return {
+        ok: true,
+        status: 200,
+        headers: { 'content-type': 'text/html' },
+        body: '<html><head><title>Fetched</title></head><body><main>Readable source text</main></body></html>',
+      };
+    },
+  });
+  const research = getTool(tools, 'web.research');
+  const result = await research.execute({ query: 'research topic', limit: 2, fetchTop: 1 });
+  assert.equal(result.ok, true);
+  assert.equal(result.results.length, 2);
+  assert.equal(result.documents.length, 1);
+  assert.equal(result.documents[0].title, 'Fetched');
+  assert.match(result.documents[0].text, /Readable source text/);
+  assert.equal(requests.length, 2);
+  console.log('ok - web research tool searches and fetches readable source text');
+}
+
+{
+  const requests = [];
+  const tools = createWebSearchAgentTools({
+    httpRequest: async (payload) => {
+      requests.push(payload);
+      return {
+        ok: true,
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          Results: [
+            { Text: 'Result A', FirstURL: 'https://example.com/a' },
+          ],
+        }),
+      };
+    },
+  });
+  const research = getTool(tools, 'web.research');
+  const result = await research.execute({ query: 'search only', limit: 1, fetchTop: 0 });
+  assert.equal(result.ok, true);
+  assert.equal(result.results.length, 1);
+  assert.equal(result.documents.length, 0);
+  assert.equal(requests.length, 1);
+  console.log('ok - web research tool preserves fetchTop zero as search-only');
 }

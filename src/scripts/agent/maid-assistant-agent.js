@@ -27,6 +27,23 @@ const clone = (value) => {
   }
 };
 
+const stableForKey = (value) => {
+  if (Array.isArray(value)) return value.map(stableForKey);
+  if (!isPlainObject(value)) return value;
+  return Object.keys(value).sort().reduce((acc, key) => {
+    acc[key] = stableForKey(value[key]);
+    return acc;
+  }, {});
+};
+
+const stableJsonStringify = (value) => {
+  try {
+    return JSON.stringify(stableForKey(value));
+  } catch {
+    return String(value ?? '');
+  }
+};
+
 const hasOwn = (value, key) => value !== null &&
   value !== undefined &&
   Object.prototype.hasOwnProperty.call(Object(value), key);
@@ -69,6 +86,136 @@ const shouldSkipReactAfterSuccess = (plan = {}, output = {}) => {
   return plan?.toolName === 'chat.send_message' && result?.requestTriggered === true;
 };
 
+const countArrayItems = value => (Array.isArray(value) ? value.length : 0);
+
+const resolveReactStepBudget = ({
+  plan = {},
+  context = {},
+  configuredMaxReactSteps = 40,
+} = {}) => {
+  const toolName = trim(plan?.toolName);
+  const args = isPlainObject(plan?.args) ? plan.args : {};
+  const hardMax = Math.max(1, Math.min(80, Math.trunc(Number(
+    context.maxReactSteps || context.reactMaxSteps || configuredMaxReactSteps || 40,
+  )) || 40));
+  let recommended = 8;
+  if (toolName === 'app.open_panel' || toolName === 'session.open' || toolName === 'session.open_config') {
+    recommended = 6;
+  } else if (toolName === 'chat.send_message') {
+    recommended = 6;
+  } else if (toolName === 'app.read_resource' || toolName === 'worldbook.read' || toolName === 'worldbook.list') {
+    recommended = 10;
+  } else if (toolName === 'worldbook.create' || toolName === 'worldbook.update_entries') {
+    const batchSize = Math.max(countArrayItems(args.entries), countArrayItems(args.updates), 1);
+    recommended = Math.min(40, 14 + (batchSize * 3));
+  } else if (/^(persona|user|session|contact)\./.test(toolName)) {
+    recommended = 10;
+  }
+  const maxSteps = Math.max(1, Math.min(hardMax, recommended));
+  return {
+    maxSteps,
+    hardMax,
+    recommended,
+    toolName,
+  };
+};
+
+const getConsecutiveRepeatedFailure = (steps = []) => {
+  const list = Array.isArray(steps) ? steps : [];
+  const last = list.at(-1);
+  if (!last || last.status !== 'failed') return { count: 0, key: '' };
+  const key = `${trim(last.toolName)}:${stableJsonStringify(last.args || {})}`;
+  let count = 0;
+  for (let index = list.length - 1; index >= 0; index -= 1) {
+    const step = list[index];
+    const stepKey = `${trim(step?.toolName)}:${stableJsonStringify(step?.args || {})}`;
+    if (step?.status !== 'failed' || stepKey !== key) break;
+    count += 1;
+  }
+  return { count, key, toolName: trim(last.toolName), args: clone(last.args || {}) };
+};
+
+const buildContinueHint = ({
+  input = '',
+  pendingPlan = {},
+  steps = [],
+  reason = '',
+} = {}) => {
+  const lastStep = (Array.isArray(steps) ? steps : []).at(-1) || {};
+  const pendingTool = trim(pendingPlan?.toolName);
+  const lastTool = trim(lastStep.toolName);
+  return [
+    `用户原始目标：${trim(input, '-')}`,
+    lastTool ? `上一轮最后完成工具：${lastTool}` : '',
+    pendingTool ? `下一步建议工具：${pendingTool}` : '',
+    reason ? `中断原因：${reason}` : '',
+    '用户说“继续”时，应基于本轮历史继续执行、验证和修正，不要改成普通闲聊。',
+  ].filter(Boolean).join('\n');
+};
+
+const isContinuableReactStop = (reason = '') => {
+  const normalized = trim(reason);
+  return [
+    'max_steps_reached',
+    'invalid_model_react_decision',
+    'missing_final_message',
+    'invalid_react_action',
+  ].includes(normalized);
+};
+
+const shouldAttemptReactPlanRecovery = ({
+  input = '',
+  plan = {},
+  reactPlanner = null,
+} = {}) => {
+  if (typeof reactPlanner !== 'function' || !trim(input)) return false;
+  const reason = trim(plan?.reason);
+  if ([
+    'invalid_model_plan',
+    'feature_not_found',
+    'tool_not_allowed',
+    'invalid_model_react_decision',
+    'missing_final_message',
+    'invalid_react_action',
+  ].includes(reason)) return true;
+  const text = compactText(input);
+  if (!text) return false;
+  if (/^(继续|请继续|好的|好|是的|对|没错|确认|允许|可以|再试一次|重试)$/u.test(text)) return true;
+  return /(刚失败|失败了|没生效|没有生效|没有更新|再试|重试|继续|确认|替换成|扩展版|重新)/u.test(text);
+};
+
+const buildAutoVerificationPlan = (plan = {}, output = {}) => {
+  const toolName = trim(plan?.toolName);
+  const result = unwrapToolOutputResult(output);
+  if (!isPlainObject(result) || result.ok === false) return null;
+  if (toolName === 'worldbook.create' || toolName === 'worldbook.update_entries') {
+    const worldbookName = trim(result.worldbookId || plan?.args?.worldbookId || plan?.args?.name || plan?.args?.id);
+    if (!worldbookName) return null;
+    const entryCount = Number(result.entryCount || 0) || 0;
+    const touchedCount = Number(result.updatedEntryCount || 0) + Number(result.createdEntryCount || result.addedEntryCount || 0);
+    const includeContent = entryCount > 0 && entryCount <= 6 && touchedCount <= 3;
+    return {
+      ok: true,
+      action: 'tool',
+      toolName: 'worldbook.read',
+      args: {
+        name: worldbookName,
+        maxEntries: includeContent ? 10 : 80,
+        includeContent,
+        ...(includeContent ? { maxContentLength: 4000 } : {}),
+      },
+      featureId: 'worldbook.read',
+      title: '验证世界书内容',
+      response: '我再读回世界书确认是否已经保存。',
+      metadata: {
+        verificationFor: toolName,
+      },
+      source: 'auto_verification',
+    };
+  }
+  return null;
+};
+
 const buildReactStepSnapshot = ({
   index = 0,
   plan = {},
@@ -87,6 +234,7 @@ const buildReactStepSnapshot = ({
   guideMessage: trim(execution?.message),
   summary: trim(output?.summary),
   output: clone(unwrapToolOutputResult(output)),
+  metadata: clone(plan?.metadata || null),
   errorMessage: trim(output?.errorMessage || (!ok ? summarizeToolFailure(output) : '')),
 });
 
@@ -101,6 +249,15 @@ const buildSuccessMessage = ({ plan = {}, output = {}, execution = {} } = {}) =>
   return [guideMessage, actionMessage]
     .filter(Boolean)
     .join(' ');
+};
+
+const buildInterruptedMessage = ({ decision = {}, plan = {}, output = {}, execution = {}, fallback = '' } = {}) => {
+  const actionMessage = buildSuccessMessage({ plan, output, execution });
+  const reason = trim(decision?.message || decision?.reason || fallback, '女仆没有完成后续整理。');
+  return [
+    actionMessage ? `已执行：${actionMessage}` : '',
+    `但这轮女仆没有完成最终回答：${reason}`,
+  ].filter(Boolean).join('\n');
 };
 
 const stripTrailingPunctuation = value => trim(value)
@@ -511,7 +668,8 @@ export const createMaidAssistantAgent = ({
   reactPlanner = null,
   chatResponder = null,
   guidedActionRuntime = null,
-  maxReactSteps = 4,
+  maxReactSteps = 40,
+  repeatedFailureLimit = 3,
   logger = console,
 } = {}) => {
   const runPlannedTool = async (plan, context = {}) => {
@@ -576,62 +734,132 @@ export const createMaidAssistantAgent = ({
   };
 
   const runPrompt = async (input = '', context = {}) => {
-    const plan = await planner(input, context);
+    let plan = await planner(input, context);
     if (!plan?.ok) {
-      const shouldTryChat = Boolean(
-        trim(input) &&
-        plan?.reason !== 'empty_input' &&
-        typeof chatResponder === 'function',
-      );
-      if (shouldTryChat) {
+      let reactRecoveryFailure = null;
+      if (shouldAttemptReactPlanRecovery({ input, plan, reactPlanner })) {
         try {
-          const chatResult = await chatResponder(input, context, { plan });
-          if (chatResult?.ok && trim(chatResult.message)) {
+          const decision = await reactPlanner(input, {
+            ...context,
+            maidReactSteps: [],
+            plannerFailure: clone(plan),
+            lastPlan: clone(plan),
+            lastToolOk: false,
+          });
+          if (decision?.ok && decision.action === 'final') {
             return {
               ok: true,
-              status: chatResult.status || 'responded',
-              responseType: 'chat',
-              source: chatResult.source || 'maid_chat_responder',
+              status: 'succeeded',
+              responseType: 'react',
+              source: decision.source || 'maid_react_recovery',
               input: trim(input),
-              message: trim(chatResult.message),
+              finalDecision: clone(decision),
+              message: trim(decision.message),
             };
           }
-          if (chatResult?.status === 'failed') {
+          if (decision?.ok && decision.action === 'tool') {
+            plan = decision;
+          } else if (decision && !decision.ok && decision.reason !== 'unsupported_intent') {
+            const stoppedReason = decision.reason || 'react_recovery_failed';
+            const continuable = isContinuableReactStop(stoppedReason);
+            reactRecoveryFailure = {
+              ok: false,
+              status: continuable ? 'interrupted' : 'failed',
+              responseType: 'react',
+              input: trim(input),
+              partial: continuable,
+              continuable,
+              continueHint: continuable ? buildContinueHint({
+                input,
+                pendingPlan: {},
+                steps: [],
+                reason: stoppedReason,
+              }) : '',
+              reason: stoppedReason,
+              message: decision.message || decision.reason || '女仆暂时无法继续执行。',
+              reactStoppedReason: stoppedReason,
+            };
+          }
+        } catch (error) {
+          logger?.warn?.('maid assistant react recovery failed', error);
+          reactRecoveryFailure = {
+            ok: false,
+            status: 'failed',
+            responseType: 'react',
+            input: trim(input),
+            reason: error?.message || 'maid_react_recovery_failed',
+            message: error?.message || '女仆暂时无法继续执行。',
+          };
+        }
+      }
+      if (plan?.ok) {
+        // ReAct recovered a tool plan; continue through the normal execution loop.
+      } else if (reactRecoveryFailure) {
+        return reactRecoveryFailure;
+      } else {
+        const shouldTryChat = Boolean(
+          trim(input) &&
+          plan?.reason !== 'empty_input' &&
+          typeof chatResponder === 'function',
+        );
+        if (shouldTryChat) {
+          try {
+            const chatResult = await chatResponder(input, context, { plan });
+            if (chatResult?.ok && trim(chatResult.message)) {
+              return {
+                ok: true,
+                status: chatResult.status || 'responded',
+                responseType: 'chat',
+                source: chatResult.source || 'maid_chat_responder',
+                input: trim(input),
+                message: trim(chatResult.message),
+              };
+            }
+            if (chatResult?.status === 'failed') {
+              return {
+                ok: false,
+                status: 'failed',
+                responseType: 'chat',
+                input: trim(input),
+                reason: chatResult.reason || 'maid_chat_failed',
+                message: chatResult.message || '女仆暂时无法回复。',
+              };
+            }
+          } catch (error) {
+            logger?.warn?.('maid assistant chat response failed', error);
             return {
               ok: false,
               status: 'failed',
               responseType: 'chat',
               input: trim(input),
-              reason: chatResult.reason || 'maid_chat_failed',
-              message: chatResult.message || '女仆暂时无法回复。',
+              reason: error?.message || 'maid_chat_failed',
+              message: error?.message || '女仆暂时无法回复。',
             };
           }
-        } catch (error) {
-          logger?.warn?.('maid assistant chat response failed', error);
-          return {
-            ok: false,
-            status: 'failed',
-            responseType: 'chat',
-            input: trim(input),
-            reason: error?.message || 'maid_chat_failed',
-            message: error?.message || '女仆暂时无法回复。',
-          };
         }
+        return {
+          ok: false,
+          status: plan?.status || 'unsupported',
+          reason: plan?.reason || 'unsupported_intent',
+          message: plan?.message || '暂时还不会执行这个请求。',
+          input: trim(input),
+        };
       }
-      return {
-        ok: false,
-        status: plan?.status || 'unsupported',
-        reason: plan?.reason || 'unsupported_intent',
-        message: plan?.message || '暂时还不会执行这个请求。',
-        input: trim(input),
-      };
     }
     let currentPlan = plan;
     let lastExecution = null;
     let lastOutput = null;
     let lastOk = false;
     const steps = [];
-    const maxSteps = Math.max(1, Math.min(8, Math.trunc(Number(maxReactSteps) || 4)));
+    const stepBudget = resolveReactStepBudget({
+      plan,
+      context,
+      configuredMaxReactSteps: maxReactSteps,
+    });
+    const maxSteps = stepBudget.maxSteps;
+    const failureLimit = Math.max(2, Math.min(8, Math.trunc(Number(
+      context.repeatedFailureLimit || repeatedFailureLimit,
+    )) || 3));
     try {
       for (let stepIndex = 0; stepIndex < maxSteps; stepIndex += 1) {
         if (trim(currentPlan.response) && typeof context?.onStatus === 'function') {
@@ -656,10 +884,10 @@ export const createMaidAssistantAgent = ({
           };
         }
         const output = execution?.output ?? execution;
-        const ok = isToolOutputOk(output);
-        lastExecution = execution;
-        lastOutput = output;
-        lastOk = ok;
+        let ok = isToolOutputOk(output);
+        let observedPlan = currentPlan;
+        let observedExecution = execution;
+        let observedOutput = output;
         steps.push(buildReactStepSnapshot({
           index: stepIndex + 1,
           plan: currentPlan,
@@ -667,6 +895,76 @@ export const createMaidAssistantAgent = ({
           output,
           ok,
         }));
+        if (ok && reactPlanner) {
+          const verificationPlan = buildAutoVerificationPlan(currentPlan, output, steps);
+          if (verificationPlan) {
+            if (typeof context?.onStatus === 'function') {
+              context.onStatus({
+                stage: 'verifying',
+                tone: 'thinking',
+                message: trim(verificationPlan.response),
+                plan: clone(verificationPlan),
+                steps: clone(steps),
+              });
+            }
+            let verificationExecution = null;
+            try {
+              verificationExecution = await executePlan(verificationPlan, context);
+            } catch (error) {
+              logger?.warn?.('maid assistant verification failed', error);
+              verificationExecution = {
+                output: makeToolErrorOutput(verificationPlan, error),
+                guided: false,
+                guide: null,
+                message: '',
+              };
+            }
+            const verificationOutput = verificationExecution?.output ?? verificationExecution;
+            const verificationOk = isToolOutputOk(verificationOutput);
+            steps.push(buildReactStepSnapshot({
+              index: steps.length + 1,
+              plan: verificationPlan,
+              execution: verificationExecution,
+              output: verificationOutput,
+              ok: verificationOk,
+            }));
+            ok = verificationOk;
+            observedPlan = verificationPlan;
+            observedExecution = verificationExecution;
+            observedOutput = verificationOutput;
+          }
+        }
+        lastExecution = observedExecution;
+        lastOutput = observedOutput;
+        lastOk = ok;
+
+        const repeatedFailure = getConsecutiveRepeatedFailure(steps);
+        if (repeatedFailure.count >= failureLimit) {
+          const reason = 'repeated_tool_failure';
+          const message = `同一工具「${repeatedFailure.toolName || '未知工具'}」用相同参数连续失败 ${repeatedFailure.count} 次，已停止继续重试。`;
+          return {
+            ok: false,
+            status: 'failed',
+            responseType: 'react',
+            input: trim(input),
+            plan: clone(observedPlan),
+            output: clone(observedOutput),
+            steps: clone(steps),
+            guided: Boolean(observedExecution?.guided),
+            guide: clone(observedExecution?.guide || null),
+            partial: true,
+            continuable: false,
+            reason,
+            message,
+            reactStoppedReason: reason,
+            reactStepBudget: {
+              used: steps.length,
+              maxSteps,
+              hardMax: stepBudget.hardMax,
+              repeatedFailureLimit: failureLimit,
+            },
+          };
+        }
 
         if (!reactPlanner || (ok && shouldSkipReactAfterSuccess(currentPlan, output))) {
           if (!ok) {
@@ -674,25 +972,25 @@ export const createMaidAssistantAgent = ({
               ok: false,
               status: 'failed',
               input: trim(input),
-              plan: clone(currentPlan),
-              output: clone(output),
+              plan: clone(observedPlan),
+              output: clone(observedOutput),
               steps: clone(steps),
-              guided: Boolean(execution?.guided),
-              guide: clone(execution?.guide || null),
-              reason: summarizeToolFailure(output),
-              message: summarizeToolFailure(output),
+              guided: Boolean(observedExecution?.guided),
+              guide: clone(observedExecution?.guide || null),
+              reason: summarizeToolFailure(observedOutput),
+              message: summarizeToolFailure(observedOutput),
             };
           }
           return {
             ok: true,
             status: 'succeeded',
             input: trim(input),
-            plan: clone(currentPlan),
-            output: clone(output),
+            plan: clone(observedPlan),
+            output: clone(observedOutput),
             steps: clone(steps),
-            guided: Boolean(execution?.guided),
-            guide: clone(execution?.guide || null),
-            message: buildSuccessMessage({ plan: currentPlan, output, execution }),
+            guided: Boolean(observedExecution?.guided),
+            guide: clone(observedExecution?.guide || null),
+            message: buildSuccessMessage({ plan: observedPlan, output: observedOutput, execution: observedExecution }),
           };
         }
 
@@ -708,34 +1006,53 @@ export const createMaidAssistantAgent = ({
         const decision = await reactPlanner(input, {
           ...context,
           maidReactSteps: clone(steps),
-          lastPlan: clone(currentPlan),
-          lastOutput: clone(output),
+          lastPlan: clone(observedPlan),
+          lastOutput: clone(observedOutput),
           lastToolOk: ok,
         });
         if (!decision?.ok) {
           if (ok) {
+            const stoppedReason = decision?.reason || 'react_stopped';
+            const continuable = isContinuableReactStop(stoppedReason);
             return {
-              ok: true,
-              status: 'succeeded',
+              ok: false,
+              status: 'interrupted',
+              responseType: 'react',
               input: trim(input),
-              plan: clone(currentPlan),
-              output: clone(output),
+              plan: clone(observedPlan),
+              output: clone(observedOutput),
               steps: clone(steps),
-              guided: Boolean(execution?.guided),
-              guide: clone(execution?.guide || null),
-              message: buildSuccessMessage({ plan: currentPlan, output, execution }),
-              reactStoppedReason: decision?.reason || 'react_stopped',
+              guided: Boolean(observedExecution?.guided),
+              guide: clone(observedExecution?.guide || null),
+              partial: true,
+              continuable,
+              continueHint: continuable ? buildContinueHint({
+                input,
+                pendingPlan: observedPlan,
+                steps,
+                reason: stoppedReason,
+              }) : '',
+              reason: stoppedReason,
+              message: buildInterruptedMessage({ decision, plan: observedPlan, output: observedOutput, execution: observedExecution }),
+              reactStoppedReason: stoppedReason,
+              reactStepBudget: {
+                used: steps.length,
+                maxSteps,
+                hardMax: stepBudget.hardMax,
+                recommended: stepBudget.recommended,
+                initialToolName: stepBudget.toolName,
+              },
             };
           }
           return {
             ok: false,
             status: 'failed',
             input: trim(input),
-            plan: clone(currentPlan),
-            output: clone(output),
+            plan: clone(observedPlan),
+            output: clone(observedOutput),
             steps: clone(steps),
-            reason: decision?.message || decision?.reason || summarizeToolFailure(output),
-            message: decision?.message || summarizeToolFailure(output),
+            reason: decision?.message || decision?.reason || summarizeToolFailure(observedOutput),
+            message: decision?.message || summarizeToolFailure(observedOutput),
           };
         }
         if (decision.action === 'final') {
@@ -746,11 +1063,11 @@ export const createMaidAssistantAgent = ({
             input: trim(input),
             plan: clone(plan),
             finalDecision: clone(decision),
-            output: clone(output),
+            output: clone(observedOutput),
             steps: clone(steps),
-            guided: Boolean(execution?.guided),
-            guide: clone(execution?.guide || null),
-            reason: ok ? '' : summarizeToolFailure(output),
+            guided: Boolean(observedExecution?.guided),
+            guide: clone(observedExecution?.guide || null),
+            reason: ok ? '' : summarizeToolFailure(observedOutput),
             message: trim(decision.message),
           };
         }
@@ -763,23 +1080,23 @@ export const createMaidAssistantAgent = ({
             ok: false,
             status: 'failed',
             input: trim(input),
-            plan: clone(currentPlan),
-            output: clone(output),
+            plan: clone(observedPlan),
+            output: clone(observedOutput),
             steps: clone(steps),
-            reason: summarizeToolFailure(output),
-            message: summarizeToolFailure(output),
+            reason: summarizeToolFailure(observedOutput),
+            message: summarizeToolFailure(observedOutput),
           };
         }
         return {
           ok: true,
           status: 'succeeded',
           input: trim(input),
-          plan: clone(currentPlan),
-          output: clone(output),
+          plan: clone(observedPlan),
+          output: clone(observedOutput),
           steps: clone(steps),
-          guided: Boolean(execution?.guided),
-          guide: clone(execution?.guide || null),
-          message: buildSuccessMessage({ plan: currentPlan, output, execution }),
+          guided: Boolean(observedExecution?.guided),
+          guide: clone(observedExecution?.guide || null),
+          message: buildSuccessMessage({ plan: observedPlan, output: observedOutput, execution: observedExecution }),
         };
       }
 
@@ -796,16 +1113,40 @@ export const createMaidAssistantAgent = ({
         };
       }
       return {
-        ok: true,
-        status: 'succeeded',
+        ok: false,
+        status: 'interrupted',
+        responseType: 'react',
         input: trim(input),
         plan: clone(currentPlan),
+        pendingPlan: clone(currentPlan),
         output: clone(lastOutput),
         steps: clone(steps),
         guided: Boolean(lastExecution?.guided),
         guide: clone(lastExecution?.guide || null),
-        message: buildSuccessMessage({ plan: currentPlan, output: lastOutput, execution: lastExecution }),
+        partial: true,
+        continuable: true,
+        continueHint: buildContinueHint({
+          input,
+          pendingPlan: currentPlan,
+          steps,
+          reason: 'max_steps_reached',
+        }),
+        reason: 'max_steps_reached',
+        message: buildInterruptedMessage({
+          decision: { reason: 'max_steps_reached' },
+          plan: currentPlan,
+          output: lastOutput,
+          execution: lastExecution,
+          fallback: `已达到本轮执行预算（${steps.length}/${maxSteps} 个工具步骤）。你可以直接说“继续”，女仆会接着当前任务执行。`,
+        }),
         reactStoppedReason: 'max_steps_reached',
+        reactStepBudget: {
+          used: steps.length,
+          maxSteps,
+          hardMax: stepBudget.hardMax,
+          recommended: stepBudget.recommended,
+          initialToolName: stepBudget.toolName,
+        },
       };
     } catch (error) {
       logger?.warn?.('maid assistant run failed', error);
