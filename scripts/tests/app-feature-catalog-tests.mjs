@@ -17,6 +17,7 @@ import { createAppContentAgentTools } from '../../src/scripts/agent/tools/app-co
 import { createMaidMediaAssetTools } from '../../src/scripts/agent/tools/media-asset-tools.js';
 import { createWebSearchAgentTools } from '../../src/scripts/agent/tools/web-search-tools.js';
 import { createMaidTodoTools } from '../../src/scripts/agent/tools/maid-todo-tools.js';
+import { createChatFormatRepairTools } from '../../src/scripts/agent/tools/chat-format-tools.js';
 
 const getTool = (tools, name) => tools.find(tool => tool.name === name);
 
@@ -88,9 +89,10 @@ const escapeRegex = value => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'
       tools: ['app.open_panel'],
     },
   ]);
-  assert.match(knowledge, /打开世界书/);
-  assert.match(knowledge, /路径：聊天室右上角菜单 -> 世界书/);
-  assert.match(knowledge, /工具：app\.open_panel/);
+  assert.match(knowledge, /- id: worldbook\.open/);
+  assert.match(knowledge, /title: 打开世界书/);
+  assert.match(knowledge, /path: 聊天室右上角菜单 -> 世界书/);
+  assert.match(knowledge, /tools: \[app\.open_panel\]/);
 
   const context = buildAppFeatureSearchContextText('世界书在哪里', { limit: 2 });
   assert.match(context, /检索：已执行/);
@@ -295,7 +297,10 @@ const escapeRegex = value => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'
       return run;
     },
   });
-  const tools = [...navTools, ...sessionTools, ...contentTools, ...mediaTools, ...webTools, ...todoTools];
+  const formatTools = createChatFormatRepairTools({
+    repairMessageFormat: async args => ({ ok: true, applied: true, formatHint: args.formatHint }),
+  });
+  const tools = [...navTools, ...sessionTools, ...contentTools, ...mediaTools, ...webTools, ...todoTools, ...formatTools];
   const maidAttachments = [{ id: 'catalog-image', kind: 'image', url: 'data:image/png;base64,AAAA', name: 'catalog.png' }];
 
   for (const feature of listAppFeatures()) {
@@ -466,6 +471,12 @@ const escapeRegex = value => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'
       const result = await getTool(tools, 'web.search').execute({ query: 'Catalog Web', limit: 1 });
       assert.equal(result.ok, true);
       assert.equal(result.results[0].url, 'https://example.com/catalog');
+      return;
+    }
+    if (feature.id === 'chat.format.repair') {
+      const result = await getTool(tools, 'chat.repair_message_format').execute({ formatHint: '状态栏格式' });
+      assert.equal(result.ok, true);
+      assert.equal(result.applied, true);
       return;
     }
     if (feature.id === 'maid.todo') {

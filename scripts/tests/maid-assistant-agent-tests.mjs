@@ -911,3 +911,32 @@ import {
   assert.deepEqual(calls.map(call => call.toolName), ['session.set_wallpaper'], 'verification: null 的工具不应触发读回');
   console.log('ok - maid assistant agent skips auto-verification for result-authoritative tools');
 }
+
+{
+  const agent = createMaidAssistantAgent({
+    planner: async () => ({
+      ok: true,
+      toolName: 'maid.todo.write',
+      args: { todos: [{ content: 'a' }, { content: 'b' }, { content: 'c' }, { content: 'd' }] },
+      featureId: 'maid.todo',
+      title: '记录任务清单',
+      response: '我先记录任务清单。',
+    }),
+    reactPlanner: async () => ({
+      ok: true,
+      action: 'tool',
+      toolName: 'app.open_panel',
+      args: { panel: 'worldbook' },
+      featureId: 'worldbook.open',
+      title: '继续执行',
+      response: '继续。',
+    }),
+    toolRegistry: { executeTool: async () => ({ ok: true }) },
+    logger: { warn() {} },
+  });
+  const result = await agent.runPrompt('复合任务');
+  assert.equal(result.status, 'interrupted');
+  assert.equal(result.reactStepBudget.maxSteps, 30, '4 项清单应获得 10+4*5=30 步预算');
+  assert.equal(result.continuable, true);
+  console.log('ok - maid.todo.write 开场的复合任务获得扩展步数预算（4 项 -> 30 步）');
+}

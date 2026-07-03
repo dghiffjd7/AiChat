@@ -250,15 +250,19 @@ import { createAssistantStreamRuntime, isStreamCtrlConnected } from './chat/assi
 import {
   dispatchAfterReceiveEffects,
   resolveChatFormatGuardianInputText,
+  runChatFormatGuardianBackgroundChat,
   runChatFormatGuardianPreview,
 } from './chat/after-receive-dispatch-utils.js';
 import {
   CHAT_FORMAT_GUARDIAN_TARGETS,
   buildChatFormatGuardianModelPrompt,
   extractChatFormatEventDrafts,
+  normalizeChatFormatGuardianModelReview,
   normalizeChatFormatGuardianTarget,
   resolveChatFormatGuardianFormatProfile,
 } from './chat/chat-format-guardian-utils.js';
+import { registerChatFormatRepairTools } from '../agent/tools/chat-format-tools.js';
+import { showTextDiffConfirmDialog } from './text-diff-view-utils.js';
 import {
   commitChatEmitContract,
   undoChatEmitCommit,
@@ -21369,7 +21373,7 @@ Phase G（Frame 36）：循环衔接
     settingsStore: maidSettingsStore,
     getAppKnowledgeText: () => buildAppFeatureKnowledgeText(),
     getHistoryContextText: () => maidConversationStore.getHistoryContextText(),
-    getMemoryTableText: () => maidConversationStore.getMemoryTableText(),
+    getMemoryTableText: () => maidConversationStore.getMemoryTableDisplayText(),
     listRuns: options => agentRunStore.listRuns({ ...(options || {}), kind: 'maid_assistant' }),
     allowRulesStore: maidToolSafetyAllowStore,
     onResumeRun: (run = {}) => {
@@ -23571,6 +23575,135 @@ Phase G（Frame 36）：循环衔接
       },
     };
   };
+
+  // 女仆格式修复：guardian 手动检查 + 强制模型复核（formatHint 拼入修复 prompt），
+  // 候选经行级 diff 确认后经 edit-assistant-raw 写回。用户取消返回 applied:false 且 ok:true，
+  // 避免 ReAct 修复循环把“用户取消”当失败重试弹窗。
+  const repairAssistantMessageFormatForMaid = async ({
+    messageId = '',
+    sessionId = '',
+    sessionName = '',
+    formatHint = '',
+  } = {}) => {
+    let sid = String(sessionId || '').trim();
+    const wantedName = String(sessionName || '').trim();
+    if (!sid && wantedName) {
+      const contact = contactsStore.listContacts?.()
+        ?.find(item => String(item?.name || '').trim() === wantedName);
+      sid = String(contact?.id || '').trim();
+      if (!sid) return { ok: false, reason: 'session_not_found', message: `没有找到聊天室「${wantedName}」。` };
+    }
+    if (!sid) sid = String(chatStore.getCurrent() || '').trim();
+    if (!sid) return { ok: false, reason: 'session_not_found', message: '当前没有可修复的会话。' };
+
+    const wantedMessageId = String(messageId || '').trim();
+    const message = wantedMessageId
+      ? chatStore.findMessage(wantedMessageId, sid)
+      : [...(chatStore.getMessages(sid) || [])].reverse().find(item => item?.role === 'assistant');
+    if (!message || message.role !== 'assistant') {
+      return { ok: false, reason: 'assistant_message_not_found', message: '没有找到可修复的 AI 回复。' };
+    }
+    const input = resolveChatFormatGuardianInputText(message);
+    const inputText = String(input?.text || '').trim();
+    if (!inputText) return { ok: false, reason: 'no_raw_text', message: '这条回复没有可修复的原始内容。' };
+
+    const activeUser = getActiveUserProfile();
+    const modelOptions = buildChatFormatGuardianModelReviewOptions(sid, activeUser, { force: true });
+    if (modelOptions.enabled !== true || typeof modelOptions.backgroundChat !== 'function') {
+      return {
+        ok: false,
+        reason: 'reply_check_model_unavailable',
+        message: '请先在 Agent Center 开启「检查回复格式」并配置可用模型。',
+      };
+    }
+
+    const parserResult = extractChatFormatEventDrafts(inputText, {
+      ...buildChatFormatGuardianOptions(sid),
+      sourceMessageId: String(message.id || ''),
+    });
+    const formatProfile = resolveChatFormatGuardianFormatProfile({
+      target: modelOptions.formatTarget,
+      uiMode: modelOptions.uiMode,
+      surface: modelOptions.surface,
+      isGroupChat: modelOptions.isGroupChat === true,
+      assistantText: inputText,
+      parserResult,
+      enabledFormats: modelOptions.enabledFormats,
+    });
+    const prompt = buildChatFormatGuardianModelPrompt({
+      assistantText: inputText,
+      formatReminderText: selectChatFormatReminderTextForProfile(modelOptions, formatProfile),
+      customFormatGuide: String(formatHint || '').trim(),
+      enabledFormats: formatProfile.enabledFormats,
+      parserReport: parserResult,
+      userName: modelOptions.userName,
+      sessionLabel: modelOptions.sessionLabel,
+      surface: modelOptions.surface,
+      formatTarget: formatProfile.target,
+    });
+    let review = null;
+    try {
+      const raw = await runChatFormatGuardianBackgroundChat(
+        modelOptions.backgroundChat,
+        prompt.messages,
+        modelOptions.requestOptions || { temperature: 0, maxTokens: 900 },
+        { timeoutMs: modelOptions.timeoutMs },
+      );
+      review = normalizeChatFormatGuardianModelReview(raw, { originalText: inputText });
+    } catch (err) {
+      logger.warn('maid format repair model review failed', err);
+      return { ok: false, reason: 'format_repair_model_failed', message: err?.message || '格式修复模型请求失败。' };
+    }
+    const correctedText = String(review?.correctedText || '').trim();
+    if (review?.canRepair !== true || !correctedText) {
+      return {
+        ok: false,
+        reason: 'model_cannot_repair',
+        message: String(review?.repairSummary || '模型认为这条回复无法安全自动修复，建议重新生成。'),
+        issues: (review?.issues || []).slice(0, 5),
+      };
+    }
+
+    const diffResult = await showTextDiffConfirmDialog({
+      title: '应用格式修复',
+      summary: String(review.repairSummary || '').trim(),
+      oldText: inputText,
+      newText: correctedText,
+      confirmText: '应用修复',
+    });
+    if (!diffResult.changed) {
+      return { ok: true, applied: false, reason: 'no_changes', message: '修复结果与原文一致，无需修改。' };
+    }
+    if (!diffResult.confirmed) {
+      return {
+        ok: true,
+        applied: false,
+        userDecision: 'cancelled',
+        message: '用户在 diff 预览中取消了修复；不要重试，等待用户新的指示。',
+      };
+    }
+    if (typeof ui.actionHandler !== 'function') {
+      return { ok: false, reason: 'message_editor_unavailable', message: '消息编辑处理器未就绪。' };
+    }
+    await ui.actionHandler('edit-assistant-raw', message, {
+      text: correctedText,
+      regexEditMode: false,
+      source: 'maid_format_repair',
+    });
+    return {
+      ok: true,
+      applied: true,
+      sessionId: sid,
+      messageId: String(message.id || ''),
+      added: diffResult.diff.added,
+      removed: diffResult.diff.removed,
+      summary: String(review.repairSummary || '').trim(),
+      message: `格式修复已应用（+${diffResult.diff.added}/-${diffResult.diff.removed}）。`,
+    };
+  };
+  registerChatFormatRepairTools(agentToolRegistry, {
+    repairMessageFormat: repairAssistantMessageFormatForMaid,
+  });
 
   const buildManualChatFormatGuardianOptions = (targetSessionId = '') => {
     const sid = String(targetSessionId || '').trim();

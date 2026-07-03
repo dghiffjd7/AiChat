@@ -1,6 +1,8 @@
-(async () => {
-  const actions = window.appBridge.debugUiRegistry.actions;
-  await actions.setAgentFeatureEnabled({ id: 'reply_check', enabled: true });
-  const state = actions.getAgentFeatureSettings()?.features?.reply_check || {};
-  return { enabled: state.enabled, triggerMode: state.triggerMode, modelMode: state.modelMode };
+(() => {
+  const reg = window.appBridge.debugUiRegistry;
+  const display = reg.stores.maidConversationStore.getMemoryTableDisplayText();
+  return {
+    displayPreview: display.slice(0, 350),
+    hasIndentation: /\n    /.test(display),
+  };
 })()

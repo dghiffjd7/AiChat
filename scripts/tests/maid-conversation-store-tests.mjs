@@ -113,3 +113,18 @@ const createStorage = () => {
   assert.equal(snapshot.tokenCount > 0, true);
   console.log('ok - maid conversation store exposes context snapshots');
 }
+
+{
+  const { formatMaidMemoryTableText } = await import('../../src/scripts/storage/maid-conversation-store.js');
+  const text = formatMaidMemoryTableText({
+    rows: [
+      { title: '用户偏好', content: '喜欢简洁回复\n避免长篇解释', tags: ['偏好'] },
+      { title: '任务进度', content: '世界书清理完成' },
+    ],
+  });
+  const lines = text.split('\n');
+  assert.equal(lines.length, 2, '每条记忆一行');
+  assert.equal(lines[0], '- 标题: 用户偏好；内容: 喜欢简洁回复 / 避免长篇解释；标签: 偏好');
+  assert.equal(lines[1], '- 标题: 任务进度；内容: 世界书清理完成');
+  console.log('ok - 女仆记忆表格排列对齐聊天室记忆格式（标签: 值；分号分隔）');
+}

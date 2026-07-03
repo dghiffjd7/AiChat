@@ -40,7 +40,7 @@ import {
   });
   assert.equal(messages.length, 2);
   assert.match(messages[0].content, /严格 JSON/);
-  assert.match(messages[0].content, /女仆基础提示词/);
+  assert.match(messages[0].content, /## 女仆人格/);
   assert.match(messages[0].content, /自然生成/);
   assert.match(messages[0].content, /优先选择非破坏性做法/);
   assert.match(messages[0].content, /删除、覆盖、替换/);
@@ -412,4 +412,26 @@ import {
   assert.equal(decision.reason, 'invalid_model_react_decision');
   assert.match(decision.message, /不完整的工具决策/);
   console.log('ok - maid model react planner rejects incomplete tool JSON as final text');
+}
+
+{
+  const features = [{
+    id: 'session.create',
+    title: '创建聊天室',
+    tools: ['session.create', 'session.list'],
+    argsHint: 'name 创建单个聊天室',
+    panel: 'session',
+    aliases: ['创建聊天室'],
+    uiPath: ['顶部 +', '添加'],
+  }];
+  const yaml = buildMaidModelPlannerFeatureList(features);
+  assert.match(yaml, /^- id: session\.create$/m);
+  assert.match(yaml, /^  title: 创建聊天室$/m);
+  assert.match(yaml, /^  tools: \[session\.create, session\.list\]$/m);
+  assert.match(yaml, /^  path: 顶部 \+ -> 添加$/m);
+  const messages = buildMaidModelPlannerMessages({ input: '测试', features });
+  const system = messages[0].content;
+  assert.match(system, /<app_features>\n- id: session\.create/);
+  assert.match(system, /<\/app_features>/);
+  console.log('ok - 功能目录以 YAML 列表呈现并用 app_features 标签分隔');
 }

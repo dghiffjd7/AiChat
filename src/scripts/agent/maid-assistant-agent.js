@@ -176,7 +176,10 @@ const resolveReactStepBudget = ({
     context.maxReactSteps || context.reactMaxSteps || configuredMaxReactSteps || 40,
   )) || 40));
   let recommended = 8;
-  if (toolName === 'app.open_panel' || toolName === 'session.open' || toolName === 'session.open_config') {
+  if (toolName === 'maid.todo.write') {
+    // 以任务清单开场 = 复合多步任务：按清单长度给预算（每项工具+验证+清单更新约 5 步）。
+    recommended = Math.min(40, 10 + countArrayItems(args.todos) * 5);
+  } else if (toolName === 'app.open_panel' || toolName === 'session.open' || toolName === 'session.open_config') {
     recommended = 6;
   } else if (toolName === 'chat.send_message') {
     recommended = 6;

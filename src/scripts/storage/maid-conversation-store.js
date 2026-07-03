@@ -173,19 +173,32 @@ export const formatMaidHistoryContextText = ({
   return selected.join('\n');
 };
 
+// 排列对齐聊天室记忆表格的行格式：每条一行，`标签: 值；标签: 值`。
 export const formatMaidMemoryTableText = ({
   rows = [],
   maxRows = MAID_CONTEXT_MEMORY_ROW_LIMIT,
 } = {}) => (
   (Array.isArray(rows) ? rows : [])
     .slice(-Math.max(1, Number(maxRows) || MAID_CONTEXT_MEMORY_ROW_LIMIT))
-    .map((row, index) => [
-      `| ${index + 1} | ${trim(row.title, '上下文记忆')} |`,
-      `| 内容 | ${trim(row.content, '-') .replace(/\n+/g, ' / ')} |`,
-      row.tags?.length ? `| 标签 | ${row.tags.join(', ')} |` : '',
-    ].filter(Boolean).join('\n'))
+    .map(row => [
+      `标题: ${trim(row.title, '上下文记忆')}`,
+      `内容: ${trim(row.content, '-').replace(/\s*\r?\n\s*/g, ' / ')}`,
+      row.tags?.length ? `标签: ${row.tags.join(', ')}` : '',
+    ].filter(Boolean).join('；'))
+    .map(line => `- ${line}`)
     .join('\n')
 );
+
+// 压缩摘要只保留可读结论：截断长结果，剥掉嵌入的 JSON/代码转储，避免污染记忆表格。
+const summarizeTurnFieldForMemory = (value = '', maxLength = 240) => {
+  let text = trim(value);
+  if (!text) return '';
+  text = text
+    .replace(/```[\s\S]*?```/g, '（代码块已省略）')
+    .replace(/\{[\s\S]{160,}\}/g, '（JSON 参数已省略）')
+    .replace(/\s*\r?\n\s*/g, ' / ');
+  return text.length > maxLength ? `${text.slice(0, maxLength - 1)}…` : text;
+};
 
 const buildMemoryRowFromTurns = (turns = [], {
   at = Date.now(),
@@ -194,14 +207,14 @@ const buildMemoryRowFromTurns = (turns = [], {
   const selected = (Array.isArray(turns) ? turns : []).filter(turn => !turn?.compacted);
   if (!selected.length) return null;
   const content = selected.map((turn, index) => [
-    `${index + 1}. 用户请求：${trim(turn.input, '-')}`,
+    `${index + 1}. 用户请求：${summarizeTurnFieldForMemory(turn.input, 160) || '-'}`,
     turn.toolName ? `   工具：${turn.toolName}` : '',
     turn.featureId ? `   功能：${turn.featureId}` : '',
     turn.status ? `   状态：${turn.status}` : '',
     turn.reactStoppedReason ? `   中断原因：${turn.reactStoppedReason}` : '',
     turn.continuable ? '   可继续：是' : '',
-    turn.continueHint ? `   继续提示：${turn.continueHint}` : '',
-    turn.message ? `   结果：${turn.message}` : '',
+    turn.continueHint ? `   继续提示：${summarizeTurnFieldForMemory(turn.continueHint, 300)}` : '',
+    turn.message ? `   结果：${summarizeTurnFieldForMemory(turn.message, 240)}` : '',
   ].filter(Boolean).join('\n')).join('\n');
   return normalizeMemoryRow({
     id: `maid_memory_${at}_${compactionIndex}`,
@@ -302,6 +315,22 @@ export class MaidConversationStore {
 
   getMemoryTableText() {
     return trim(this.getContextSnapshot().memoryText, '尚未生成女仆记忆表格。');
+  }
+
+  // 面板展示版：多行缩进排版方便阅读；发送给模型的版本仍用紧凑单行（getMemoryTableText）。
+  getMemoryTableDisplayText() {
+    this.ensureLoaded();
+    const rows = this.state.memoryRows.slice(-MAID_CONTEXT_MAX_MEMORY_ROWS);
+    if (!rows.length) return '尚未生成女仆记忆表格。';
+    return rows.map((row, index) => [
+      `【${index + 1}】${trim(row.title, '上下文记忆')}`,
+      ...trim(row.content, '-')
+        .split(/\s*\r?\n\s*|\s+\/\s+/)
+        .map(line => trim(line))
+        .filter(Boolean)
+        .map(line => `    ${line}`),
+      row.tags?.length ? `    标签: ${row.tags.join(', ')}` : '',
+    ].filter(Boolean).join('\n')).join('\n\n');
   }
 
   async appendTurn(turn = {}) {

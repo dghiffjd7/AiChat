@@ -40,6 +40,10 @@ const RETRIEVAL_FIXTURES = [
   // 错误自查
   { input: '刚才为什么失败', expect: 'app.errors.read' },
   { input: '看看最近错误', expect: 'app.errors.read' },
+  // 格式修复
+  { input: '这次回复掉格式了', expect: 'chat.format.repair' },
+  { input: '帮我修一下格式', expect: 'chat.format.repair' },
+  { input: '回复格式不对', expect: 'chat.format.repair' },
 ];
 
 for (const { input, expect } of RETRIEVAL_FIXTURES) {

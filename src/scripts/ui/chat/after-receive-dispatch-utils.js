@@ -921,7 +921,7 @@ const buildChatFormatGuardianModelFailureResult = ({
   };
 };
 
-const runChatFormatGuardianBackgroundChat = async (backgroundChat, messages = [], requestOptions = {}, {
+const runChatFormatGuardianBackgroundChatOnce = async (backgroundChat, messages = [], requestOptions = {}, {
   timeoutMs = 75000,
 } = {}) => {
   const ms = Number(timeoutMs);
@@ -951,6 +951,21 @@ const runChatFormatGuardianBackgroundChat = async (backgroundChat, messages = []
     if (timeoutId) {
       try { clearTimeout(timeoutId); } catch {}
     }
+  }
+};
+
+export const runChatFormatGuardianBackgroundChat = async (backgroundChat, messages = [], requestOptions = {}, timing = {}) => {
+  try {
+    return await runChatFormatGuardianBackgroundChatOnce(backgroundChat, messages, requestOptions, timing);
+  } catch (err) {
+    // 部分模型不接受 temperature 等采样参数；剥掉后重试一次，避免修复链路对特定模型直接失败。
+    const message = String(err?.message || '');
+    const options = requestOptions || {};
+    if (/temperature/i.test(message) && Object.prototype.hasOwnProperty.call(options, 'temperature')) {
+      const { temperature: _temperature, ...rest } = options;
+      return runChatFormatGuardianBackgroundChatOnce(backgroundChat, messages, rest, timing);
+    }
+    throw err;
   }
 };
 
@@ -1061,6 +1076,7 @@ const scheduleChatFormatGuardianModelReview = ({
     const prompt = buildChatFormatGuardianModelPrompt({
       assistantText: inputText,
       formatReminderText: selectChatFormatReminderTextForProfile(modelOptions, formatProfile),
+      customFormatGuide: modelOptions.customFormatGuide || options.customFormatGuide || '',
       enabledFormats: formatProfile.enabledFormats,
       parserReport: parserResult,
       userName: modelOptions.userName || options.userName,

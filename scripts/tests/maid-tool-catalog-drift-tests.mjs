@@ -7,6 +7,7 @@ import { registerAppSessionAgentTools } from '../../src/scripts/agent/tools/app-
 import { registerAppContentAgentTools } from '../../src/scripts/agent/tools/app-content-tools.js';
 import { registerMaidMediaAssetTools } from '../../src/scripts/agent/tools/media-asset-tools.js';
 import { registerMaidTodoTools } from '../../src/scripts/agent/tools/maid-todo-tools.js';
+import { registerChatFormatRepairTools } from '../../src/scripts/agent/tools/chat-format-tools.js';
 import { registerWebSearchAgentTools } from '../../src/scripts/agent/tools/web-search-tools.js';
 
 // 已注册但不进入功能目录的元工具/本地工具。
@@ -19,6 +20,7 @@ registerAppSessionAgentTools(registry, {});
 registerAppContentAgentTools(registry, {});
 registerMaidMediaAssetTools(registry, {});
 registerMaidTodoTools(registry, {});
+registerChatFormatRepairTools(registry, {});
 registerWebSearchAgentTools(registry, {});
 
 const registeredNames = new Set(registry.listTools().map(tool => tool.name));

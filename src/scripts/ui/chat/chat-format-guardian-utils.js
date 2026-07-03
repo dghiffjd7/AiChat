@@ -438,6 +438,7 @@ const compactParserReportForPrompt = (report = null, { maxEvents = 6, maxIssues 
 export const buildChatFormatGuardianModelPrompt = ({
   assistantText = '',
   formatReminderText = '',
+  customFormatGuide = '',
   enabledFormats = {},
   parserReport = null,
   userName = '我',
@@ -447,6 +448,7 @@ export const buildChatFormatGuardianModelPrompt = ({
 } = {}) => {
   const rawAssistantText = String(assistantText ?? '').trim();
   const reminder = String(formatReminderText ?? '').trim();
+  const customGuide = String(customFormatGuide ?? '').trim().slice(0, 6000);
   const formatEntries = normalizeEnabledFormatEntries(enabledFormats);
   const formatSummary = serializeFormatEntries(formatEntries);
   const compactReport = compactParserReportForPrompt(parserReport);
@@ -507,6 +509,7 @@ export const buildChatFormatGuardianModelPrompt = ({
     formatSummary ? `# Required Format Examples\n${formatSummary}` : '',
     directRepairExample ? `# Direct Replacement Example\n${directRepairExample}` : '',
     reminder ? `# Required Additional Format Rules\n${reminder}` : '',
+    customGuide ? `# Custom Format Guide（从会话正则/世界书/角色卡提取的自定义格式规范，修复结果必须同时满足）\n${customGuide}` : '',
     compactReport ? `# Local Parser Report\n${JSON.stringify(compactReport, null, 2)}` : '',
     noEventsHint,
     [

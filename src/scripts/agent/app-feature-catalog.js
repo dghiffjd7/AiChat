@@ -347,6 +347,23 @@ export const APP_FEATURE_DEFINITIONS = Object.freeze([
     verification: null,
   },
   {
+    id: 'chat.format.repair',
+    title: '修复回复格式',
+    aliases: ['掉格式了', '格式坏了', '修复格式', '格式修复', '回复格式不对', '格式错了', '修一下格式', '渲染坏了', '这条回复格式有问题'],
+    summary: '把格式错误的 AI 回复修成正确格式；写回前用户会在行级 diff 预览中确认。内建格式可直接修复；自定义格式先查找格式定义再修复。',
+    uiPath: ['长按 AI 回复', '检查格式'],
+    tools: ['chat.repair_message_format', 'app.read_resource'],
+    argsHint: 'chat.repair_message_format: messageId 可选（缺省修最近一条 AI 回复）；sessionId/sessionName/target 可选；内建格式（聊天/动态/生图标签）无需 formatHint 直接调用；自定义格式（重前端角色卡等）先用 app.read_resource 按 preset（格式提醒）-> regex（渲染正则的匹配模式即格式规范）-> worldbook/persona（输出格式段落）顺序查找格式定义，把找到的规范文本作为 formatHint 传入；全部找不到时如实告知用户并请其补充，不要编造格式',
+    panel: '',
+    riskLevel: 'medium',
+    writes: true,
+    confirmation: 'allow_once',
+    firstRunGuide: '',
+    directAction: 'chat.repair_message_format',
+    // 写回前必经行级 diff 用户确认，工具返回 applied 即权威。
+    verification: null,
+  },
+  {
     id: 'config.api.open',
     title: '打开 API 配置',
     aliases: ['设置API', '配置API', '模型配置', '供应商配置', 'key设置', 'api key'],
@@ -647,17 +664,25 @@ export const buildAppFeatureDoc = (featureId = '') => {
   };
 };
 
+// YAML 列表呈现（层次分明），供女仆设定面板与知识注入使用。
+const knowledgeYamlText = (value = '') => {
+  const text = trim(value);
+  if (!text) return "''";
+  return /[:#\[\]{}\n"']/g.test(text) ? JSON.stringify(text) : text;
+};
+
 export const buildAppFeatureKnowledgeText = (features = listAppFeatures()) => (
   (Array.isArray(features) ? features : [])
     .map(feature => [
-      `${trim(feature.title, feature.id)} (${trim(feature.id)})`,
-      trim(feature.summary),
-      list(feature.uiPath).length ? `路径：${list(feature.uiPath).join(' -> ')}` : '',
-      list(feature.tools).length ? `工具：${list(feature.tools).join(', ')}` : '',
-      feature.argsHint ? `参数：${feature.argsHint}` : '',
+      `- id: ${knowledgeYamlText(feature.id)}`,
+      `  title: ${knowledgeYamlText(feature.title)}`,
+      trim(feature.summary) ? `  summary: ${knowledgeYamlText(feature.summary)}` : '',
+      list(feature.uiPath).length ? `  path: ${knowledgeYamlText(list(feature.uiPath).join(' -> '))}` : '',
+      list(feature.tools).length ? `  tools: [${list(feature.tools).map(knowledgeYamlText).join(', ')}]` : '',
+      feature.argsHint ? `  args: ${knowledgeYamlText(feature.argsHint)}` : '',
     ].filter(Boolean).join('\n'))
     .filter(Boolean)
-    .join('\n\n')
+    .join('\n')
 );
 
 export const buildAppFeatureSearchContextText = (query = '', {
