@@ -543,7 +543,7 @@ export const buildChatFormatGuardianModelPrompt = ({
   };
 };
 
-const extractJsonObjectText = (value = '') => {
+export const extractJsonObjectText = (value = '') => {
   const text = String(value ?? '').trim();
   if (!text) return '';
   const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/i);

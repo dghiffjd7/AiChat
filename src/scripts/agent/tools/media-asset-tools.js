@@ -121,17 +121,23 @@ const publicImageMeta = image => ({
   transformed: image?.transformed === true,
 });
 
-const resolveAttachment = (context = {}, args = {}) => {
+// 附件解析顺序：本次女仆输入附件 -> 联网下载的运行时图片池（media.fetch_image 产物）。
+const resolveAttachment = (context = {}, args = {}, fetchedImages = []) => {
   const images = normalizeMaidImageAttachments(context?.maidAttachments);
-  if (!images.length) return null;
+  const fetched = Array.isArray(fetchedImages) ? fetchedImages : [];
   const requested = trim(args.attachmentId || args.imageId || args.sourceImageId);
-  if (!requested) return images[0];
+  if (!requested) {
+    if (images.length) return images[0];
+    return fetched.length ? fetched[fetched.length - 1] : null;
+  }
   const key = normalizeKey(requested);
-  return images.find(item => (
+  const fromInput = images.find(item => (
     normalizeKey(item.id) === key ||
     normalizeKey(item.name) === key ||
     String(images.indexOf(item) + 1) === requested
-  )) || null;
+  ));
+  if (fromInput) return fromInput;
+  return fetched.find(item => normalizeKey(item.id) === key || normalizeKey(item.name) === key) || null;
 };
 
 const normalizePurpose = (value = '', fallback = 'image') => {
@@ -167,9 +173,13 @@ export const createMaidMediaAssetTools = ({
   refreshChatAndContacts = null,
   getCurrentSessionId = () => '',
   confirmDestructiveWrite = null,
+  fetchRemoteImage = null,
   now = Date.now,
   preparedImageCache = createPreparedImageCache(),
 } = {}) => {
+  // 联网下载图片的运行时池：media.fetch_image 写入，头像/壁纸工具经 attachmentId 取用。
+  const fetchedImages = [];
+  const FETCHED_IMAGE_LIMIT = 6;
   const prepareAndCacheImage = async ({
     args = {},
     context = {},
@@ -177,7 +187,7 @@ export const createMaidMediaAssetTools = ({
   } = {}) => {
     const cached = preparedImageCache.get(args.preparedImageId);
     if (cached) return cached;
-    const attachment = resolveAttachment(context, args);
+    const attachment = resolveAttachment(context, args, fetchedImages);
     if (!attachment?.url) {
       return {
         ok: false,
@@ -316,6 +326,79 @@ export const createMaidMediaAssetTools = ({
   };
 
   return [
+    {
+      name: 'media.fetch_image',
+      title: 'Fetch web image as attachment',
+      description: 'Download an HTTP(S) image (e.g. from web.search_images results) into the maid attachment pool; then use the returned attachmentId with avatar/wallpaper tools.',
+      source: 'maid-media-assets',
+      permissions: [],
+      riskLevel: 'low',
+      capabilities: {
+        read: true,
+        write: false,
+        network: true,
+        cost: 'variable',
+        undo: 'none',
+        modelContext: 'allowlist',
+        confirmation: 'allow_once',
+      },
+      schema: {
+        type: 'object',
+        required: ['url'],
+        additionalProperties: false,
+        properties: {
+          url: { type: 'string', minLength: 8, maxLength: 2048 },
+          fileName: { type: 'string', maxLength: 120 },
+        },
+      },
+      execute: async (args = {}) => {
+        if (typeof fetchRemoteImage !== 'function') {
+          return { ok: false, reason: 'image_fetch_unavailable', message: '当前环境不支持联网下载图片。' };
+        }
+        const url = trim(args.url);
+        if (!/^https?:\/\//i.test(url)) {
+          return { ok: false, reason: 'invalid_image_url', message: '只支持 http(s) 图片地址。' };
+        }
+        let fetched = null;
+        try {
+          fetched = await fetchRemoteImage(url);
+        } catch (error) {
+          return { ok: false, reason: 'image_fetch_failed', message: error?.message || '图片下载失败。', url };
+        }
+        const dataUrl = trim(fetched?.dataUrl);
+        const mime = trim(fetched?.mime).toLowerCase();
+        const bytes = Number(fetched?.bytes || 0) || 0;
+        if (!dataUrl || !mime.startsWith('image/')) {
+          return { ok: false, reason: 'not_an_image', message: `目标不是图片（content-type: ${mime || '未知'}）。`, url };
+        }
+        if (bytes > 6_000_000) {
+          return { ok: false, reason: 'image_too_large', message: '图片超过 6MB 限制，请换一张。', url };
+        }
+        const id = `fetched-${Number(typeof now === 'function' ? now() : Date.now()) || Date.now()}-${fetchedImages.length + 1}`;
+        const attachment = {
+          id,
+          name: trim(args.fileName, `${id}.${mime.split('/')[1] || 'jpg'}`),
+          url: dataUrl,
+          mime,
+          bytes,
+          sourceUrl: url,
+        };
+        fetchedImages.push(attachment);
+        while (fetchedImages.length > FETCHED_IMAGE_LIMIT) fetchedImages.shift();
+        return {
+          ok: true,
+          attachmentId: id,
+          name: attachment.name,
+          mime,
+          bytes,
+          sourceUrl: url,
+          message: `图片已下载为附件 ${id}，可用于头像/壁纸设置。`,
+        };
+      },
+      summarizeResult: result => (result?.ok === false
+        ? `image fetch failed: ${trim(result?.reason, 'unknown')}`
+        : `image fetched as ${trim(result?.attachmentId)} (${Number(result?.bytes || 0)} bytes)`),
+    },
     {
       name: 'media.prepare_image',
       title: 'Prepare uploaded image',

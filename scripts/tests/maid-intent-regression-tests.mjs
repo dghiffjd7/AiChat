@@ -44,6 +44,10 @@ const RETRIEVAL_FIXTURES = [
   { input: '这次回复掉格式了', expect: 'chat.format.repair' },
   { input: '帮我修一下格式', expect: 'chat.format.repair' },
   { input: '回复格式不对', expect: 'chat.format.repair' },
+  // 正文优化
+  { input: '帮我润色一下这条回复', expect: 'chat.message.optimize' },
+  { input: '这段写得太啰嗦了帮我精简', expect: 'chat.message.optimize' },
+  { input: '删掉重复的句子', expect: 'chat.message.optimize' },
 ];
 
 for (const { input, expect } of RETRIEVAL_FIXTURES) {

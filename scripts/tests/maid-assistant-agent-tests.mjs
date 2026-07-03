@@ -940,3 +940,44 @@ import {
   assert.equal(result.continuable, true);
   console.log('ok - maid.todo.write 开场的复合任务获得扩展步数预算（4 项 -> 30 步）');
 }
+
+{
+  let call = 0;
+  const agent = createMaidAssistantAgent({
+    planner: async () => ({
+      ok: true,
+      toolName: 'app.open_panel',
+      args: { panel: 'worldbook' },
+      featureId: 'worldbook.open',
+      title: '打开世界书',
+      response: '我来打开世界书。',
+    }),
+    reactPlanner: async () => ({
+      ok: true,
+      action: 'tool',
+      toolName: 'app.open_panel',
+      args: { panel: 'memory' },
+      featureId: 'memory.open',
+      title: '继续',
+      response: '继续。',
+    }),
+    toolRegistry: {
+      executeTool: async (toolName, args) => {
+        call += 1;
+        if (call === 2) {
+          return { toolName, status: 'failed', result: { ok: false, reason: 'memory panel busy' }, summary: 'memory panel busy' };
+        }
+        return { toolName, status: 'succeeded', result: { ok: true }, summary: `opened ${args?.panel}` };
+      },
+    },
+    logger: { warn() {} },
+  });
+  const result = await agent.runPrompt('打开世界书和记忆', { maxReactSteps: 3, repeatedFailureLimit: 8 });
+  assert.equal(result.status, 'interrupted', '应因步数耗尽中断（最后一步成功）');
+  assert.equal(result.continuable, true);
+  assert.match(result.continueHint, /已完成步骤（恢复后不要重复执行，也不要报告为未完成）：/);
+  assert.match(result.continueHint, /opened worldbook/);
+  assert.match(result.continueHint, /失败步骤：/);
+  assert.match(result.continueHint, /memory panel busy/);
+  console.log('ok - continueHint 附带已完成与失败步骤清单');
+}

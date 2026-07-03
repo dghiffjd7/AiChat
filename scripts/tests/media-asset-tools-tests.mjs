@@ -286,3 +286,46 @@ const attachment = {
   assert.equal(settings.get('room-1').wallpaper.path, 'wallpapers/room-1/old.jpg');
   console.log('ok - media asset tool requires confirmation before replacing chat wallpaper');
 }
+
+{
+  const { createMaidMediaAssetTools } = await import('../../src/scripts/agent/tools/media-asset-tools.js');
+  const tools = createMaidMediaAssetTools({
+    fetchRemoteImage: async (url) => {
+      assert.equal(url, 'https://img.example.com/tifa.jpg');
+      return { dataUrl: 'data:image/jpeg;base64,QUJD', mime: 'image/jpeg', bytes: 3 };
+    },
+    prepareImage: async ({ dataUrl }) => ({ dataUrl, mime: 'image/webp', bytes: 3, width: 64, height: 64 }),
+    now: () => 42,
+  });
+  const fetchTool = tools.find(t => t.name === 'media.fetch_image');
+  const fetched = await fetchTool.execute({ url: 'https://img.example.com/tifa.jpg' });
+  assert.equal(fetched.ok, true);
+  assert.match(fetched.attachmentId, /^fetched-42-1$/);
+
+  // 下载图可被 prepare 工具经 attachmentId 取用（无本次输入附件）。
+  const prepared = await tools.find(t => t.name === 'media.prepare_image')
+    .execute({ attachmentId: fetched.attachmentId, purpose: 'avatar' }, { maidAttachments: [] });
+  assert.equal(prepared.ok, true);
+  console.log('ok - media.fetch_image 下载入池且 prepare 可经 attachmentId 取用');
+}
+
+{
+  const { createMaidMediaAssetTools } = await import('../../src/scripts/agent/tools/media-asset-tools.js');
+  const tools = createMaidMediaAssetTools({
+    fetchRemoteImage: async () => ({ dataUrl: 'data:text/html;base64,QUJD', mime: 'text/html', bytes: 3 }),
+  });
+  const fetchTool = tools.find(t => t.name === 'media.fetch_image');
+  const notImage = await fetchTool.execute({ url: 'https://example.com/page' });
+  assert.equal(notImage.ok, false);
+  assert.equal(notImage.reason, 'not_an_image');
+
+  const badUrl = await fetchTool.execute({ url: 'file:///etc/passwd' });
+  assert.equal(badUrl.ok, false);
+  assert.equal(badUrl.reason, 'invalid_image_url');
+
+  const bare = createMaidMediaAssetTools({});
+  const unavailable = await bare.find(t => t.name === 'media.fetch_image').execute({ url: 'https://x.com/a.jpg' });
+  assert.equal(unavailable.ok, false);
+  assert.equal(unavailable.reason, 'image_fetch_unavailable');
+  console.log('ok - media.fetch_image 拦截非图片/非法协议/无通道');
+}

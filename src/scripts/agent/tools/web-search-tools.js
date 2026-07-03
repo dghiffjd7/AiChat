@@ -227,6 +227,54 @@ const requireApiKey = (provider, apiKey) => {
   };
 };
 
+// DDG HTML 版全文搜索（服务端渲染，免 key）：Instant Answer 空结果时的回落。
+// 链接是 /l/?uddg=<编码URL> 重定向格式，需解码。
+const decodeDuckDuckGoRedirect = (href = '') => {
+  const raw = trim(href);
+  const match = raw.match(/[?&]uddg=([^&]+)/);
+  if (match) {
+    try {
+      return decodeURIComponent(match[1]);
+    } catch {
+      return '';
+    }
+  }
+  return /^https?:\/\//i.test(raw) ? raw : '';
+};
+
+const parseDuckDuckGoHtmlResults = (html = '', limit = 5) => {
+  const out = [];
+  const source = String(html || '');
+  const pattern = /<a[^>]*class="[^"]*result__a[^"]*"[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>[\s\S]*?(?:class="[^"]*result__snippet[^"]*"[^>]*>([\s\S]*?)<\/a>)?/g;
+  let match = pattern.exec(source);
+  while (match && out.length < Math.max(1, Math.min(10, limit))) {
+    const url = decodeDuckDuckGoRedirect(match[1]);
+    const title = trim(stripHtml(match[2] || '', 220));
+    const snippet = trim(stripHtml(match[3] || '', 500));
+    if (url && title && !out.some(item => item.url === url)) {
+      out.push({ title, snippet: snippet || title, url, source: 'duckduckgo_html' });
+    }
+    match = pattern.exec(source);
+  }
+  return out;
+};
+
+const performDuckDuckGoHtmlSearch = async (request, { query = '', limit = 5 } = {}) => {
+  const url = new URL('https://html.duckduckgo.com/html/');
+  url.searchParams.set('q', query);
+  const body = await readHttpText(request, {
+    url: url.toString(),
+    method: 'GET',
+    headers: {
+      accept: 'text/html',
+      'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+    },
+    body: null,
+    timeoutMs: 15000,
+  });
+  return parseDuckDuckGoHtmlResults(body, limit);
+};
+
 const performDuckDuckGoSearch = async (request, { query = '', limit = 5, locale = 'zh-tw' } = {}) => {
   const url = new URL('https://api.duckduckgo.com/');
   url.searchParams.set('q', query);
@@ -243,7 +291,124 @@ const performDuckDuckGoSearch = async (request, { query = '', limit = 5, locale 
     body: null,
     timeoutMs: 12000,
   });
-  return normalizeSearchResults(parseJsonBody(body), limit);
+  const results = normalizeSearchResults(parseJsonBody(body), limit);
+  if (results.length) return results;
+  // Instant Answer 是知识卡 API，实体/长尾查询常为空；回落 HTML 版全文搜索。
+  try {
+    return await performDuckDuckGoHtmlSearch(request, { query, limit });
+  } catch {
+    return results;
+  }
+};
+
+// Bing 图片搜索（免 key，服务端渲染）：解析 iusc 元素 m 属性里的 JSON（murl=原图）。
+const decodeHtmlEntities = (value = '') => String(value || '')
+  .replace(/&quot;/g, '"')
+  .replace(/&amp;/g, '&')
+  .replace(/&lt;/g, '<')
+  .replace(/&gt;/g, '>')
+  .replace(/&#39;/g, "'");
+
+const parseBingImageResults = (html = '', limit = 6) => {
+  const out = [];
+  const source = String(html || '');
+  const pattern = /class="iusc"[^>]*\bm="([^"]+)"/g;
+  const max = Math.max(1, Math.min(12, Math.trunc(Number(limit || 0)) || 6));
+  let match = pattern.exec(source);
+  while (match && out.length < max) {
+    try {
+      const meta = JSON.parse(decodeHtmlEntities(match[1]));
+      const imageUrl = trim(meta?.murl);
+      if (/^https?:\/\//i.test(imageUrl) && !out.some(item => item.imageUrl === imageUrl)) {
+        out.push({
+          title: truncate(meta?.t || '', 160),
+          imageUrl,
+          thumbnailUrl: trim(meta?.turl),
+          width: 0,
+          height: 0,
+          sourceUrl: trim(meta?.purl),
+        });
+      }
+    } catch {}
+    match = pattern.exec(source);
+  }
+  return out;
+};
+
+const performBingImageSearch = async (request, { query = '', limit = 6 } = {}) => {
+  const url = new URL('https://www.bing.com/images/search');
+  url.searchParams.set('q', query);
+  url.searchParams.set('form', 'HDRSC2');
+  const body = await readHttpText(request, {
+    url: url.toString(),
+    method: 'GET',
+    headers: {
+      accept: 'text/html,application/xhtml+xml',
+      'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36',
+    },
+    body: null,
+    timeoutMs: 20000,
+  });
+  const images = parseBingImageResults(body, limit);
+  return { ok: images.length > 0, images, provider: 'bing_images' };
+};
+
+// DDG 图片搜索（免 key）：先取 vqd token，再调 i.js 拿图片 JSON。
+const extractDuckDuckGoVqd = (html = '') => {
+  const source = String(html || '');
+  const match = source.match(/vqd=["']?([\d-]+)["']?/) || source.match(/vqd=([\d-]+)&/);
+  return trim(match?.[1] || '');
+};
+
+const performDuckDuckGoImageSearch = async (request, { query = '', limit = 6 } = {}) => {
+  const tokenUrl = new URL('https://duckduckgo.com/');
+  tokenUrl.searchParams.set('q', query);
+  tokenUrl.searchParams.set('iax', 'images');
+  tokenUrl.searchParams.set('ia', 'images');
+  const tokenHtml = await readHttpText(request, {
+    url: tokenUrl.toString(),
+    method: 'GET',
+    headers: {
+      accept: 'text/html',
+      'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+    },
+    body: null,
+    timeoutMs: 15000,
+  });
+  const vqd = extractDuckDuckGoVqd(tokenHtml);
+  if (!vqd) {
+    return { ok: false, reason: 'image_search_token_missing', message: '图片搜索初始化失败（vqd token 未获取）。', images: [] };
+  }
+  const searchUrl = new URL('https://duckduckgo.com/i.js');
+  searchUrl.searchParams.set('l', 'us-en');
+  searchUrl.searchParams.set('o', 'json');
+  searchUrl.searchParams.set('q', query);
+  searchUrl.searchParams.set('vqd', vqd);
+  const body = await readHttpText(request, {
+    url: searchUrl.toString(),
+    method: 'GET',
+    headers: {
+      accept: 'application/json',
+      'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+      referer: 'https://duckduckgo.com/',
+    },
+    body: null,
+    timeoutMs: 15000,
+  });
+  const data = parseJsonBody(body);
+  const max = Math.max(1, Math.min(12, Math.trunc(Number(limit || 0)) || 6));
+  const images = (Array.isArray(data?.results) ? data.results : [])
+    .map(item => ({
+      title: truncate(item?.title || '', 160),
+      imageUrl: trim(item?.image),
+      thumbnailUrl: trim(item?.thumbnail),
+      width: Number(item?.width || 0) || 0,
+      height: Number(item?.height || 0) || 0,
+      sourceUrl: trim(item?.url),
+    }))
+    .filter(item => /^https?:\/\//i.test(item.imageUrl))
+    .slice(0, max);
+  return { ok: images.length > 0, images, provider: 'duckduckgo_images' };
 };
 
 const performBraveSearch = async (request, { query = '', limit = 5, locale = 'zh-tw', apiKey = '' } = {}) => {
@@ -507,6 +672,67 @@ export const createWebSearchAgentTools = ({
       summarizeResult: result => result?.ok === false
         ? `web search failed: ${trim(result?.reason || result?.message, 'no_results')}`
         : `web search results=${Number(result?.results?.length || 0)} query=${trim(result?.query, '-')}`,
+    },
+    {
+      name: 'web.search_images',
+      title: 'Search web images',
+      description: 'Search public web images (e.g. avatars, wallpapers) and return image URLs. Follow with media.fetch_image to download one.',
+      source: 'maid-web',
+      permissions: [],
+      riskLevel: 'low',
+      capabilities: {
+        read: true,
+        write: false,
+        network: true,
+        cost: 'variable',
+        undo: 'none',
+        modelContext: 'allowlist',
+        confirmation: 'allow_once',
+      },
+      schema: {
+        type: 'object',
+        required: ['query'],
+        additionalProperties: false,
+        properties: {
+          query: { type: 'string', minLength: 1, maxLength: 240 },
+          limit: { type: 'integer', minimum: 1, maximum: 12 },
+        },
+      },
+      execute: async (args = {}) => {
+        const query = trim(args.query);
+        const limit = Math.max(1, Math.min(12, Math.trunc(Number(args.limit || 0)) || 6));
+        // Bing HTML 优先（免 key 且稳定）；失败或空结果回落 DDG i.js。
+        let result = null;
+        try {
+          result = await performBingImageSearch(request, { query, limit });
+        } catch {
+          result = { ok: false, images: [] };
+        }
+        if (!result?.ok) {
+          try {
+            result = await performDuckDuckGoImageSearch(request, { query, limit });
+          } catch (error) {
+            return {
+              ok: false,
+              query,
+              provider: 'bing_images+duckduckgo_images',
+              reason: error?.code || 'image_search_failed',
+              message: error?.message || '图片搜索请求失败。',
+              images: [],
+            };
+          }
+        }
+        return {
+          ok: result.ok !== false && (result.images || []).length > 0,
+          query,
+          provider: result.provider || 'bing_images',
+          ...(result.reason ? { reason: result.reason, message: result.message } : {}),
+          images: result.images || [],
+        };
+      },
+      summarizeResult: result => result?.ok === false
+        ? `image search failed: ${trim(result?.reason || result?.message, 'no_results')}`
+        : `image search results=${Number(result?.images?.length || 0)} query=${trim(result?.query, '-')}`,
     },
     {
       name: 'web.fetch_url',

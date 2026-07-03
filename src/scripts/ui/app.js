@@ -262,6 +262,10 @@ import {
   resolveChatFormatGuardianFormatProfile,
 } from './chat/chat-format-guardian-utils.js';
 import { registerChatFormatRepairTools } from '../agent/tools/chat-format-tools.js';
+import {
+  buildChatBodyOptimizeModelPrompt,
+  normalizeChatBodyOptimizeModelResult,
+} from './chat/chat-body-optimize-utils.js';
 import { showTextDiffConfirmDialog } from './text-diff-view-utils.js';
 import {
   commitChatEmitContract,
@@ -2749,6 +2753,28 @@ const initApp = async () => {
     userStore,
     contactsStore,
     chatStore,
+    fetchRemoteImage: async (url = '') => {
+      const response = await safeInvoke('http_request', {
+        url: String(url || ''),
+        method: 'GET',
+        headers: {
+          accept: 'image/*',
+          'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        },
+        body: null,
+        responseBase64: true,
+        response_base64: true,
+      });
+      const status = Number(response?.status || 0) || 0;
+      if (status < 200 || status >= 300) throw new Error(`图片请求失败（HTTP ${status || '无响应'}）`);
+      // response_base64=true 时 Rust 端把 base64 放在 body 字段。
+      const base64 = String(response?.body || '').trim();
+      if (!base64) throw new Error('图片响应为空');
+      const headers = response?.headers || {};
+      const mime = String(headers['content-type'] || headers['Content-Type'] || '').split(';')[0].trim().toLowerCase() || 'application/octet-stream';
+      const bytes = Math.floor(base64.length * 3 / 4);
+      return { dataUrl: `data:${mime};base64,${base64}`, mime, bytes };
+    },
     prepareImage: options => prepareImageDataUrlForAsset(options?.dataUrl || '', {
       purpose: options?.purpose,
       fit: options?.fit,
@@ -23576,14 +23602,66 @@ Phase G（Frame 36）：循环衔接
     };
   };
 
+  // §4.6 协议修复文本重新解析进消息流：复用最近一轮发送链装配的协议事件分发器
+  // （协议事件自带目标名，跨会话安全；发送链尚未跑过时返回不可用并回落单条写回）。
+  let lastProtocolRetryDispatcher = null;
+  const applyRepairedProtocolTextToChat = async ({
+    correctedText = '',
+    sourceMessageId = '',
+    sourceSessionId = '',
+  } = {}) => {
+    const dispatcher = lastProtocolRetryDispatcher;
+    const repairText = String(correctedText || '').trim();
+    if (!dispatcher || typeof dispatcher.processEvent !== 'function') {
+      return { didAnything: false, reason: 'protocol_dispatcher_unavailable' };
+    }
+    if (!repairText) return { didAnything: false, reason: 'empty_repair_text' };
+    let events = [];
+    try {
+      const parser = dispatcher.createParser();
+      const pushed = parser?.push?.(repairText);
+      const flushed = parser?.flush?.();
+      events = [
+        ...(Array.isArray(pushed) ? pushed : []),
+        ...(Array.isArray(flushed) ? flushed : []),
+      ];
+    } catch (err) {
+      logger.warn('maid repair protocol parse failed', err);
+      return { didAnything: false, reason: 'protocol_parse_failed' };
+    }
+    if (!events.length) return { didAnything: false, reason: 'no_events' };
+    let didAnything = false;
+    const eventResults = [];
+    for (const ev of events) {
+      const result = await dispatcher.processEvent(ev, {
+        renderMoments: true,
+        refreshAfterAppend: true,
+      });
+      eventResults.push({
+        type: String(ev?.type || ''),
+        consumed: result?.consumed === true,
+        didAnything: result?.didAnything === true,
+        targetSessionId: String(result?.targetSessionId || ''),
+      });
+      if (result?.didAnything) didAnything = true;
+    }
+    if (didAnything && sourceMessageId) {
+      const removed = chatStore.deleteMessage(sourceMessageId, sourceSessionId);
+      if (removed && isSessionActive(sourceSessionId)) ui.removeMessage(sourceMessageId);
+      refreshChatAndContacts();
+    }
+    return { didAnything, eventCount: events.length, eventResults };
+  };
+
   // 女仆格式修复：guardian 手动检查 + 强制模型复核（formatHint 拼入修复 prompt），
-  // 候选经行级 diff 确认后经 edit-assistant-raw 写回。用户取消返回 applied:false 且 ok:true，
+  // 候选经行级 diff 确认；社交聊天优先重新解析进消息流并移除原坏消息，
+  // 无法分发时回落 edit-assistant-raw 单条写回。用户取消返回 applied:false 且 ok:true，
   // 避免 ReAct 修复循环把“用户取消”当失败重试弹窗。
-  const repairAssistantMessageFormatForMaid = async ({
+  // 修复/优化共享：按 messageId/会话名定位目标 AI 回复及其原始文本。
+  const resolveMaidTargetAssistantMessage = ({
     messageId = '',
     sessionId = '',
     sessionName = '',
-    formatHint = '',
   } = {}) => {
     let sid = String(sessionId || '').trim();
     const wantedName = String(sessionName || '').trim();
@@ -23591,21 +23669,35 @@ Phase G（Frame 36）：循环衔接
       const contact = contactsStore.listContacts?.()
         ?.find(item => String(item?.name || '').trim() === wantedName);
       sid = String(contact?.id || '').trim();
-      if (!sid) return { ok: false, reason: 'session_not_found', message: `没有找到聊天室「${wantedName}」。` };
+      if (!sid) return { error: { ok: false, reason: 'session_not_found', message: `没有找到聊天室「${wantedName}」。` } };
     }
     if (!sid) sid = String(chatStore.getCurrent() || '').trim();
-    if (!sid) return { ok: false, reason: 'session_not_found', message: '当前没有可修复的会话。' };
+    if (!sid) return { error: { ok: false, reason: 'session_not_found', message: '当前没有可操作的会话。' } };
 
     const wantedMessageId = String(messageId || '').trim();
     const message = wantedMessageId
       ? chatStore.findMessage(wantedMessageId, sid)
       : [...(chatStore.getMessages(sid) || [])].reverse().find(item => item?.role === 'assistant');
     if (!message || message.role !== 'assistant') {
-      return { ok: false, reason: 'assistant_message_not_found', message: '没有找到可修复的 AI 回复。' };
+      return { error: { ok: false, reason: 'assistant_message_not_found', message: '没有找到目标 AI 回复。' } };
     }
     const input = resolveChatFormatGuardianInputText(message);
     const inputText = String(input?.text || '').trim();
-    if (!inputText) return { ok: false, reason: 'no_raw_text', message: '这条回复没有可修复的原始内容。' };
+    if (!inputText) {
+      return { error: { ok: false, reason: 'no_raw_text', message: '这条回复没有可操作的原始内容。' } };
+    }
+    return { sid, message, inputText };
+  };
+
+  const repairAssistantMessageFormatForMaid = async ({
+    messageId = '',
+    sessionId = '',
+    sessionName = '',
+    formatHint = '',
+  } = {}) => {
+    const target = resolveMaidTargetAssistantMessage({ messageId, sessionId, sessionName });
+    if (target.error) return target.error;
+    const { sid, message, inputText } = target;
 
     const activeUser = getActiveUserProfile();
     const modelOptions = buildChatFormatGuardianModelReviewOptions(sid, activeUser, { force: true });
@@ -23643,13 +23735,28 @@ Phase G（Frame 36）：循环衔接
     });
     let review = null;
     try {
-      const raw = await runChatFormatGuardianBackgroundChat(
-        modelOptions.backgroundChat,
-        prompt.messages,
-        modelOptions.requestOptions || { temperature: 0, maxTokens: 900 },
-        { timeoutMs: modelOptions.timeoutMs },
-      );
-      review = normalizeChatFormatGuardianModelReview(raw, { originalText: inputText });
+      const requestRepairReview = async (retryHint = '') => {
+        const messages = retryHint
+          ? [...prompt.messages, { role: 'user', content: retryHint }]
+          : prompt.messages;
+        const raw = await runChatFormatGuardianBackgroundChat(
+          modelOptions.backgroundChat,
+          messages,
+          modelOptions.requestOptions || { temperature: 0, maxTokens: 900 },
+          { timeoutMs: modelOptions.timeoutMs },
+        );
+        return normalizeChatFormatGuardianModelReview(raw, { originalText: inputText });
+      };
+      review = await requestRepairReview();
+      // 便宜/弱模型的 JSON 输出偶发不合法：带强化提示重试一次。
+      const jsonParseFailed = r => r?.canRepair !== true &&
+        (r?.issues || []).some(issue => String(issue?.type || '') === 'parse_error');
+      if (jsonParseFailed(review)) {
+        logger.debug?.('maid format repair retrying after model JSON parse failure');
+        review = await requestRepairReview(
+          '上一次输出的 JSON 无法解析。请重新输出：只输出一个完整 JSON 对象，禁止任何其他文字和 Markdown 代码块；JSON 字符串值内部不要使用未转义的英文双引号。',
+        );
+      }
     } catch (err) {
       logger.warn('maid format repair model review failed', err);
       return { ok: false, reason: 'format_repair_model_failed', message: err?.message || '格式修复模型请求失败。' };
@@ -23682,13 +23789,139 @@ Phase G（Frame 36）：循环衔接
         message: '用户在 diff 预览中取消了修复；不要重试，等待用户新的指示。',
       };
     }
+    // 社交聊天：优先把修复文本解析成协议事件重新分发（进入正常消息流）并移除原坏消息。
+    // 按目标会话判定（全局 uiMode 可能是 rp 而修复目标是社交会话）。
+    let reparsed = false;
+    let reparseFallbackReason = '';
+    if (!isRpSessionId(sid)) {
+      const dispatchResult = await applyRepairedProtocolTextToChat({
+        correctedText,
+        sourceMessageId: String(message.id || ''),
+        sourceSessionId: sid,
+      });
+      reparsed = dispatchResult?.didAnything === true;
+      if (!reparsed) {
+        reparseFallbackReason = String(dispatchResult?.reason || 'dispatch_no_effect');
+        if (dispatchResult?.eventResults?.length) {
+          reparseFallbackReason += `:${JSON.stringify(dispatchResult.eventResults).slice(0, 300)}`;
+        }
+        logger.debug?.(`maid format repair reparse fallback: ${reparseFallbackReason}`);
+      }
+    }
+    if (!reparsed) {
+      if (typeof ui.actionHandler !== 'function') {
+        return { ok: false, reason: 'message_editor_unavailable', message: '消息编辑处理器未就绪。' };
+      }
+      await ui.actionHandler('edit-assistant-raw', message, {
+        text: correctedText,
+        regexEditMode: false,
+        source: 'maid_format_repair',
+      });
+    }
+    return {
+      ok: true,
+      applied: true,
+      reparsed,
+      ...(reparseFallbackReason ? { reparseFallbackReason } : {}),
+      sessionId: sid,
+      messageId: String(message.id || ''),
+      added: diffResult.diff.added,
+      removed: diffResult.diff.removed,
+      summary: String(review.repairSummary || '').trim(),
+      message: reparsed
+        ? `格式修复已应用（+${diffResult.diff.added}/-${diffResult.diff.removed}），消息已重新解析进入聊天流。`
+        : `格式修复已应用（+${diffResult.diff.added}/-${diffResult.diff.removed}）。`,
+    };
+  };
+  // 女仆正文优化（机制层）：按用户指示让优化模型产出替换文本 → 行级 diff 确认 →
+  // edit-assistant-raw 写回（creative 分支自带完整 reparse）。模型通道复用 reply_check 配置。
+  const optimizeAssistantMessageForMaid = async ({
+    messageId = '',
+    sessionId = '',
+    sessionName = '',
+    instruction = '',
+  } = {}) => {
+    const target = resolveMaidTargetAssistantMessage({ messageId, sessionId, sessionName });
+    if (target.error) return target.error;
+    const { sid, message, inputText } = target;
+
+    const activeUser = getActiveUserProfile();
+    const modelOptions = buildChatFormatGuardianModelReviewOptions(sid, activeUser, { force: true });
+    if (modelOptions.enabled !== true || typeof modelOptions.backgroundChat !== 'function') {
+      return {
+        ok: false,
+        reason: 'reply_check_model_unavailable',
+        message: '请先在 Agent Center 开启「检查回复格式」并配置可用模型（正文优化共用该模型配置）。',
+      };
+    }
+    const prompt = buildChatBodyOptimizeModelPrompt({
+      originalText: inputText,
+      instruction,
+      userName: modelOptions.userName,
+      sessionLabel: modelOptions.sessionLabel,
+      surface: modelOptions.surface,
+    });
+    let optimize = null;
+    try {
+      const requestOptimize = async (retryHint = '') => {
+        const messages = retryHint
+          ? [...prompt.messages, { role: 'user', content: retryHint }]
+          : prompt.messages;
+        const raw = await runChatFormatGuardianBackgroundChat(
+          modelOptions.backgroundChat,
+          messages,
+          modelOptions.requestOptions || { temperature: 0, maxTokens: 4000 },
+          { timeoutMs: modelOptions.timeoutMs },
+        );
+        return normalizeChatBodyOptimizeModelResult(raw, { originalText: inputText });
+      };
+      optimize = await requestOptimize();
+      if (!optimize.ok && (optimize.issues || []).some(issue => issue?.type === 'parse_error')) {
+        logger.debug?.('maid body optimize retrying after model JSON parse failure');
+        optimize = await requestOptimize(
+          '上一次输出的 JSON 无法解析。请重新输出：只输出一个完整 JSON 对象，禁止任何其他文字和 Markdown 代码块；JSON 字符串值内部不要使用未转义的英文双引号。',
+        );
+      }
+    } catch (err) {
+      logger.warn('maid body optimize model failed', err);
+      return { ok: false, reason: 'body_optimize_model_failed', message: err?.message || '正文优化模型请求失败。' };
+    }
+    if (!optimize.canOptimize) {
+      return {
+        ok: optimize.unchanged === true,
+        applied: false,
+        reason: optimize.unchanged === true ? 'no_changes' : 'model_cannot_optimize',
+        message: optimize.summary || (optimize.unchanged === true
+          ? '模型认为按该指示无需修改。'
+          : '模型认为这条回复无法按该指示安全优化。'),
+      };
+    }
+
+    const diffResult = await showTextDiffConfirmDialog({
+      title: '应用正文优化',
+      summary: optimize.summary,
+      oldText: inputText,
+      newText: optimize.optimizedText,
+      confirmText: '应用优化',
+    });
+    if (!diffResult.changed) {
+      return { ok: true, applied: false, reason: 'no_changes', message: '优化结果与原文一致，无需修改。' };
+    }
+    if (!diffResult.confirmed) {
+      return {
+        ok: true,
+        applied: false,
+        userDecision: 'cancelled',
+        message: '用户在 diff 预览中取消了优化；不要重试，等待用户新的指示。',
+      };
+    }
     if (typeof ui.actionHandler !== 'function') {
       return { ok: false, reason: 'message_editor_unavailable', message: '消息编辑处理器未就绪。' };
     }
     await ui.actionHandler('edit-assistant-raw', message, {
-      text: correctedText,
+      text: optimize.optimizedText,
       regexEditMode: false,
-      source: 'maid_format_repair',
+      source: 'maid_body_optimize',
     });
     return {
       ok: true,
@@ -23697,12 +23930,13 @@ Phase G（Frame 36）：循环衔接
       messageId: String(message.id || ''),
       added: diffResult.diff.added,
       removed: diffResult.diff.removed,
-      summary: String(review.repairSummary || '').trim(),
-      message: `格式修复已应用（+${diffResult.diff.added}/-${diffResult.diff.removed}）。`,
+      summary: optimize.summary,
+      message: `正文优化已应用（+${diffResult.diff.added}/-${diffResult.diff.removed}）：${optimize.summary || ''}`,
     };
   };
   registerChatFormatRepairTools(agentToolRegistry, {
     repairMessageFormat: repairAssistantMessageFormatForMaid,
+    optimizeMessage: optimizeAssistantMessageForMaid,
   });
 
   const buildManualChatFormatGuardianOptions = (targetSessionId = '') => {
@@ -24909,11 +25143,13 @@ Phase G（Frame 36）：循环衔接
       };
 
       try {
-        return finalizeResult(applyProtocolMomentEvent(ev, {
+        const momentResult = applyProtocolMomentEvent(ev, {
           addMoments: items => addMomentsWithAutoImage(ingestMoments(items)),
           addMomentComments: (momentId, comments) => momentsStore.addComments(momentId, comments),
           normalizeComments: comments => normalizeMomentCommentsForStore(comments, { regexMode: 'output', depth: 0 }),
-        }));
+        });
+        // 只有 moment 类事件（consumed）在此返回；聊天类事件继续走群聊/私聊分发。
+        if (momentResult?.consumed) return finalizeResult(momentResult);
       } catch {}
 
       const groupResult = await appendProtocolGroupChatEventImmediate(ev, {
@@ -24959,6 +25195,11 @@ Phase G（Frame 36）：循环衔接
         formatNowTime,
       });
       return finalizeResult(privateResult);
+    };
+    // 供发送轮之外的修复分发复用（§4.6）：协议事件自带目标名，跨会话安全。
+    lastProtocolRetryDispatcher = {
+      processEvent: processProtocolRetryEvent,
+      createParser: createDialogueParser,
     };
     const runChatFormatGuardianProtocolParseFailureRepair = (rawText = '', {
       source = 'protocol_parse_failure',

@@ -162,3 +162,79 @@ const getTool = (tools, name) => tools.find(tool => tool.name === name);
   assert.equal(requests.length, 1);
   console.log('ok - web research tool preserves fetchTop zero as search-only');
 }
+
+{
+  const { createWebSearchAgentTools } = await import('../../src/scripts/agent/tools/web-search-tools.js');
+  const requests = [];
+  const tools = createWebSearchAgentTools({
+    httpRequest: async ({ url }) => {
+      requests.push(url);
+      if (url.includes('api.duckduckgo.com')) {
+        return { status: 200, ok: true, headers: {}, body: JSON.stringify({ AbstractText: '', RelatedTopics: [] }) };
+      }
+      if (url.includes('html.duckduckgo.com')) {
+        return {
+          status: 200, ok: true, headers: {},
+          body: '<a class="result__a" href="/l/?uddg=https%3A%2F%2Fexample.com%2Ftifa">Tifa Lockhart</a><a class="result__snippet" href="#">FF7 heroine profile</a>',
+        };
+      }
+      throw new Error(`unexpected url ${url}`);
+    },
+    getSearchConfig: () => ({}),
+  });
+  const result = await tools.find(t => t.name === 'web.search').execute({ query: 'Tifa Lockhart' });
+  assert.equal(result.ok, true);
+  assert.equal(result.results[0].url, 'https://example.com/tifa');
+  assert.equal(result.results[0].source, 'duckduckgo_html');
+  assert.ok(requests.some(u => u.includes('html.duckduckgo.com')), 'Instant Answer 空结果应回落 HTML 版');
+  console.log('ok - web.search 在 Instant Answer 空结果时回落 DDG HTML 版');
+}
+
+{
+  const { createWebSearchAgentTools } = await import('../../src/scripts/agent/tools/web-search-tools.js');
+  const tools = createWebSearchAgentTools({
+    httpRequest: async ({ url }) => {
+      if (url.includes('bing.com/images/search')) {
+        const meta = JSON.stringify({ murl: 'https://img.example.com/tifa-bing.jpg', turl: 'https://img.example.com/t.jpg', t: 'Tifa art', purl: 'https://page.example.com' }).replace(/"/g, '&quot;');
+        return { status: 200, ok: true, headers: {}, body: `<a class="iusc" m="${meta}"></a>` };
+      }
+      throw new Error(`unexpected url ${url}`);
+    },
+    getSearchConfig: () => ({}),
+  });
+  const result = await tools.find(t => t.name === 'web.search_images').execute({ query: 'Tifa Lockhart avatar' });
+  assert.equal(result.ok, true);
+  assert.equal(result.provider, 'bing_images');
+  assert.equal(result.images[0].imageUrl, 'https://img.example.com/tifa-bing.jpg');
+  console.log('ok - web.search_images 优先 Bing HTML 解析 murl');
+}
+
+{
+  const { createWebSearchAgentTools } = await import('../../src/scripts/agent/tools/web-search-tools.js');
+  const tools = createWebSearchAgentTools({
+    httpRequest: async ({ url }) => {
+      if (url.includes('bing.com')) throw new Error('HTTP 403');
+      if (url.includes('duckduckgo.com/i.js')) {
+        assert.ok(url.includes('vqd=123-456'), 'i.js 请求应带 vqd');
+        return {
+          status: 200, ok: true, headers: {},
+          body: JSON.stringify({ results: [
+            { title: 'Tifa art', image: 'https://img.example.com/tifa.jpg', thumbnail: 'https://img.example.com/t.jpg', width: 800, height: 1200, url: 'https://page.example.com' },
+            { title: 'bad', image: 'not-a-url' },
+          ] }),
+        };
+      }
+      if (url.includes('duckduckgo.com/?q=')) {
+        return { status: 200, ok: true, headers: {}, body: 'window.vqd="123-456";' };
+      }
+      throw new Error(`unexpected url ${url}`);
+    },
+    getSearchConfig: () => ({}),
+  });
+  const result = await tools.find(t => t.name === 'web.search_images').execute({ query: 'Tifa Lockhart avatar' });
+  assert.equal(result.ok, true);
+  assert.equal(result.images.length, 1, '非法 imageUrl 应被过滤');
+  assert.equal(result.images[0].imageUrl, 'https://img.example.com/tifa.jpg');
+  assert.equal(result.images[0].width, 800);
+  console.log('ok - web.search_images Bing 失败时回落 DDG vqd 流程并过滤非法 URL');
+}

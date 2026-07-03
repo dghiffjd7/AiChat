@@ -185,6 +185,9 @@ const resolveReactStepBudget = ({
     recommended = 6;
   } else if (toolName === 'app.read_resource' || toolName === 'worldbook.read' || toolName === 'worldbook.list') {
     recommended = 10;
+  } else if (toolName === 'web.search_images' || toolName === 'media.fetch_image') {
+    // 联网找图设头像/壁纸：图源 403 换图重试是常态，多目标（头像+壁纸）步数翻倍。
+    recommended = 18;
   } else if (toolName === 'worldbook.create' || toolName === 'worldbook.update_entries' || toolName === 'worldbook.delete_entries') {
     const batchSize = Math.max(countArrayItems(args.entries), countArrayItems(args.updates), countArrayItems(args.deletes), 1);
     recommended = Math.min(40, 14 + (batchSize * 3));
@@ -221,12 +224,22 @@ const buildContinueHint = ({
   steps = [],
   reason = '',
 } = {}) => {
-  const lastStep = (Array.isArray(steps) ? steps : []).at(-1) || {};
+  const list = Array.isArray(steps) ? steps : [];
+  const lastStep = list.at(-1) || {};
   const pendingTool = trim(pendingPlan?.toolName);
   const lastTool = trim(lastStep.toolName);
+  // 恢复轮凭模糊记忆汇报会把已成功项误报为未完成；附准确的已完成/失败清单。
+  const summarizeStep = (step) => {
+    const summary = trim(step?.summary).slice(0, 60);
+    return `${trim(step?.toolName, '未知工具')}${summary ? `（${summary}）` : ''}`;
+  };
+  const completed = list.filter(step => step?.status === 'succeeded').slice(-8).map(summarizeStep);
+  const failed = list.filter(step => step?.status === 'failed').slice(-3).map(summarizeStep);
   return [
     `用户原始目标：${trim(input, '-')}`,
-    lastTool ? `上一轮最后完成工具：${lastTool}` : '',
+    completed.length ? `已完成步骤（恢复后不要重复执行，也不要报告为未完成）：${completed.join('；')}` : '',
+    failed.length ? `失败步骤：${failed.join('；')}` : '',
+    lastTool ? `上一轮最后执行工具：${lastTool}` : '',
     pendingTool ? `下一步建议工具：${pendingTool}` : '',
     reason ? `中断原因：${reason}` : '',
     '用户说“继续”时，应基于本轮历史继续执行、验证和修正，不要改成普通闲聊。',

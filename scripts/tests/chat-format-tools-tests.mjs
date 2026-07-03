@@ -103,4 +103,29 @@ const getTool = (tools, name) => tools.find(tool => tool.name === name);
   console.log('ok - temperature 不兼容时剥参重试一次，其他错误原样抛出');
 }
 
+{
+  const calls = [];
+  const tools = createChatFormatRepairTools({
+    optimizeMessage: async (args) => {
+      calls.push(args);
+      return { ok: true, applied: true, added: 3, removed: 5, summary: '精简重复描写' };
+    },
+  });
+  const tool = tools.find(t => t.name === 'chat.optimize_message');
+  const result = await tool.execute({ instruction: '更简洁', sessionName: '小美' });
+  assert.equal(result.applied, true);
+  assert.equal(calls[0].instruction, '更简洁');
+  assert.equal(calls[0].sessionName, '小美');
+  assert.equal(tool.summarizeResult(result), 'body optimize applied (+3/-5)');
+
+  const bare = createChatFormatRepairTools({});
+  const unavailable = await bare.find(t => t.name === 'chat.optimize_message').execute({});
+  assert.equal(unavailable.ok, false);
+  assert.equal(unavailable.reason, 'body_optimize_unavailable');
+
+  const cancelled = tool.summarizeResult({ ok: true, applied: false, userDecision: 'cancelled' });
+  assert.equal(cancelled, 'body optimize cancelled by user in diff preview');
+  console.log('ok - chat.optimize_message 工具透传参数、汇总与降级');
+}
+
 console.log('chat-format-tools-tests passed');

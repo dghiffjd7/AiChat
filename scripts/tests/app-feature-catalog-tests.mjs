@@ -44,7 +44,7 @@ const escapeRegex = value => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'
 {
   const results = searchAppFeatures('帮我联网搜索最新资讯', { limit: 3 });
   assert.equal(results[0].id, 'web.search');
-  assert.deepEqual(results[0].tools, ['web.search', 'web.fetch_url', 'web.research']);
+  assert.deepEqual(results[0].tools, ['web.search', 'web.fetch_url', 'web.research', 'web.search_images']);
   const doc = buildAppFeatureDoc('web.search');
   assert.match(doc.doc, /web\.search/);
   assert.match(doc.doc, /web\.fetch_url/);
@@ -299,6 +299,7 @@ const escapeRegex = value => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'
   });
   const formatTools = createChatFormatRepairTools({
     repairMessageFormat: async args => ({ ok: true, applied: true, formatHint: args.formatHint }),
+    optimizeMessage: async args => ({ ok: true, applied: true, instruction: args.instruction }),
   });
   const tools = [...navTools, ...sessionTools, ...contentTools, ...mediaTools, ...webTools, ...todoTools, ...formatTools];
   const maidAttachments = [{ id: 'catalog-image', kind: 'image', url: 'data:image/png;base64,AAAA', name: 'catalog.png' }];
@@ -475,6 +476,12 @@ const escapeRegex = value => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'
     }
     if (feature.id === 'chat.format.repair') {
       const result = await getTool(tools, 'chat.repair_message_format').execute({ formatHint: '状态栏格式' });
+      assert.equal(result.ok, true);
+      assert.equal(result.applied, true);
+      return;
+    }
+    if (feature.id === 'chat.message.optimize') {
+      const result = await getTool(tools, 'chat.optimize_message').execute({ instruction: '更简洁' });
       assert.equal(result.ok, true);
       assert.equal(result.applied, true);
       return;
