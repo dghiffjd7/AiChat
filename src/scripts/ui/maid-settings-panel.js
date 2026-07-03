@@ -144,6 +144,58 @@ const injectStyle = (documentRef) => {
   flex-direction: column;
   gap: 10px;
 }
+.maid-settings-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
+}
+.maid-settings-list-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--app-border-default, rgba(148, 163, 184, 0.24));
+  border-radius: 10px;
+  background: var(--app-surface-subtle, #f8fafc);
+  font-size: 13px;
+  line-height: 1.45;
+}
+.maid-settings-item-main {
+  flex: 1;
+  min-width: 0;
+}
+.maid-settings-item-title {
+  font-weight: 700;
+  word-break: break-word;
+}
+.maid-settings-item-meta {
+  color: var(--app-text-secondary, #6b7280);
+  font-size: 12px;
+  word-break: break-word;
+}
+.maid-settings-status-chip {
+  flex: 0 0 auto;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+  background: rgba(148, 163, 184, 0.16);
+}
+.maid-settings-status-chip.is-succeeded {
+  color: #047857;
+  background: rgba(16, 185, 129, 0.14);
+}
+.maid-settings-status-chip.is-failed {
+  color: #b91c1c;
+  background: rgba(239, 68, 68, 0.12);
+}
+.maid-settings-status-chip.is-interrupted {
+  color: #b45309;
+  background: rgba(245, 158, 11, 0.14);
+}
 .maid-settings-prompt-tabs {
   display: inline-flex;
   flex: 0 0 auto;
@@ -356,7 +408,38 @@ const ICONS = Object.freeze({
   table: iconSvg('<path d="M4 5h16v14H4z"/><path d="M4 10h16"/><path d="M4 15h16"/><path d="M10 5v14"/>'),
   request: iconSvg('<path d="M5 5h14v14H5z"/><path d="M8 9h8"/><path d="M8 13h5"/><path d="M8 17h7"/>'),
   response: iconSvg('<path d="M4 6h16v10H7l-3 3Z"/><path d="M8 10h8"/><path d="M8 14h5"/>'),
+  activity: iconSvg('<path d="M4 12h4l2-6 4 12 2-6h4"/>'),
+  shield: iconSvg('<path d="M12 3 5 6v5c0 4.4 3 8.1 7 9 4-.9 7-4.6 7-9V6Z"/><path d="m9.5 12 2 2 3.5-3.5"/>'),
 });
+
+const clearChildren = (el) => {
+  if (!el) return;
+  if (typeof el.replaceChildren === 'function') {
+    el.replaceChildren();
+    return;
+  }
+  if (Array.isArray(el.children)) {
+    el.children.length = 0;
+    return;
+  }
+  while (el.firstChild) el.removeChild(el.firstChild);
+};
+
+const formatRunTime = (timestamp = 0) => {
+  const value = Number(timestamp);
+  if (!Number.isFinite(value) || value <= 0) return '';
+  try {
+    return new Date(value).toLocaleString();
+  } catch {
+    return '';
+  }
+};
+
+const describeMaidRunStatus = (run = {}) => {
+  if (run?.status === 'succeeded') return { key: 'succeeded', label: '成功' };
+  if (run?.metadata?.maidStatus === 'interrupted') return { key: 'interrupted', label: '中断' };
+  return { key: 'failed', label: '失败' };
+};
 
 const setIconButtonContent = (button, icon = '', label = '') => {
   if (!button) return;
@@ -370,6 +453,9 @@ export const createMaidSettingsPanel = ({
   getAppKnowledgeText = () => '',
   getHistoryContextText = () => '',
   getMemoryTableText = () => '',
+  listRuns = null,
+  allowRulesStore = null,
+  onResumeRun = null,
   copyText = text => globalThis?.navigator?.clipboard?.writeText?.(text),
   logger = console,
 } = {}) => {
@@ -389,6 +475,8 @@ export const createMaidSettingsPanel = ({
   let lastPromptTextarea = null;
   let lastResponseTextarea = null;
   let statusEl = null;
+  let runListEl = null;
+  let ruleListEl = null;
   let isOpen = false;
 
   const setStatus = (message = '') => {
@@ -403,6 +491,102 @@ export const createMaidSettingsPanel = ({
   const getHistoryContext = () => trim(getHistoryContextText?.(), '尚未记录女仆历史上下文。');
   const getMemoryTable = () => trim(getMemoryTableText?.(), '尚未生成女仆记忆表格。');
 
+  const appendEmptyItem = (container, message = '') => {
+    const empty = documentRef.createElement?.('div');
+    empty.className = 'maid-settings-empty';
+    empty.textContent = message;
+    container.appendChild(empty);
+  };
+
+  const renderRuns = () => {
+    if (!runListEl) return;
+    clearChildren(runListEl);
+    let runs = [];
+    try {
+      runs = typeof listRuns === 'function' ? (listRuns({ limit: 20 }) || []) : [];
+    } catch (error) {
+      logger?.warn?.('maid settings list runs failed', error);
+    }
+    if (!runs.length) {
+      appendEmptyItem(runListEl, '还没有女仆任务记录。');
+      return;
+    }
+    runs.forEach((run) => {
+      const item = documentRef.createElement?.('div');
+      item.className = 'maid-settings-list-item';
+      const chip = documentRef.createElement?.('span');
+      const status = describeMaidRunStatus(run);
+      chip.className = `maid-settings-status-chip is-${status.key}`;
+      chip.textContent = status.label;
+      const main = documentRef.createElement?.('div');
+      main.className = 'maid-settings-item-main';
+      const title = documentRef.createElement?.('div');
+      title.className = 'maid-settings-item-title';
+      title.textContent = trim(run?.metadata?.goal || run?.title, '（无目标记录）');
+      const meta = documentRef.createElement?.('div');
+      meta.className = 'maid-settings-item-meta';
+      meta.textContent = [
+        trim(run?.summary),
+        run?.metadata?.failureCode ? `分类: ${run.metadata.failureCode}` : '',
+        run?.metadata?.stepCount ? `${run.metadata.stepCount} 步` : '',
+        run?.metadata?.continuable ? '可继续' : '',
+        formatRunTime(run?.updatedAt),
+      ].filter(Boolean).join(' · ');
+      main.append(title, meta);
+      item.append(chip, main);
+      if (run?.metadata?.continuable && typeof onResumeRun === 'function') {
+        const resumeBtn = createButton(documentRef, 'maid-settings-action is-primary', '继续');
+        resumeBtn.addEventListener?.('click', () => {
+          hide();
+          void onResumeRun({ ...run });
+        });
+        item.appendChild(resumeBtn);
+      }
+      runListEl.appendChild(item);
+    });
+  };
+
+  const renderRules = () => {
+    if (!ruleListEl) return;
+    clearChildren(ruleListEl);
+    let rules = [];
+    try {
+      rules = allowRulesStore?.list?.() || [];
+    } catch (error) {
+      logger?.warn?.('maid settings list allow rules failed', error);
+    }
+    if (!rules.length) {
+      appendEmptyItem(ruleListEl, '没有已保存的“始终允许”规则。危险操作每次都会重新确认。');
+      return;
+    }
+    rules.forEach((rule) => {
+      const item = documentRef.createElement?.('div');
+      item.className = 'maid-settings-list-item';
+      const main = documentRef.createElement?.('div');
+      main.className = 'maid-settings-item-main';
+      const title = documentRef.createElement?.('div');
+      title.className = 'maid-settings-item-title';
+      title.textContent = trim(rule?.title || rule?.toolName, rule?.key || '');
+      const meta = documentRef.createElement?.('div');
+      meta.className = 'maid-settings-item-meta';
+      meta.textContent = [
+        trim(rule?.toolName),
+        trim(rule?.operationType),
+        trim(rule?.riskLevel),
+        formatRunTime(rule?.updatedAt),
+      ].filter(Boolean).join(' · ');
+      main.append(title, meta);
+      const revokeBtn = createButton(documentRef, 'maid-settings-action', '撤销');
+      revokeBtn.addEventListener?.('click', () => {
+        const removed = allowRulesStore?.revoke?.(rule?.key);
+        setStatus(removed ? '已撤销该规则' : '撤销失败');
+        renderRules();
+      });
+      item.append(main, revokeBtn);
+      ruleListEl.appendChild(item);
+    });
+  };
+
   const refresh = () => {
     if (promptTextarea) promptTextarea.value = settingsStore?.getMaidPrompt?.() || settingsStore?.getPersonaPrompt?.() || '';
     if (appKnowledgeTextarea) appKnowledgeTextarea.value = getAppKnowledge();
@@ -411,6 +595,8 @@ export const createMaidSettingsPanel = ({
     if (lastAppContextTextarea) lastAppContextTextarea.value = getLastAppContextText();
     if (lastPromptTextarea) lastPromptTextarea.value = getLastPromptText();
     if (lastResponseTextarea) lastResponseTextarea.value = getLastResponseText();
+    renderRuns();
+    renderRules();
   };
 
   const switchPromptTab = (tab = 'persona') => {
@@ -430,7 +616,7 @@ export const createMaidSettingsPanel = ({
     const promptSubtab = tab === 'appKnowledge' || tab === 'historyContext' || tab === 'memoryTable' || tab === 'lastPrompt' || tab === 'lastResponse' || tab === 'persona'
       ? tab
       : '';
-    const next = promptSubtab ? 'prompt' : (['api', 'prompt'].includes(tab) ? tab : 'api');
+    const next = promptSubtab ? 'prompt' : (['api', 'prompt', 'activity', 'safety'].includes(tab) ? tab : 'api');
     activeTab = next;
     tabButtons.forEach((button, key) => {
       button.classList.toggle('is-active', key === activeTab);
@@ -513,6 +699,8 @@ export const createMaidSettingsPanel = ({
     [
       ['api', 'API', ICONS.api],
       ['prompt', '提示词', ICONS.prompt],
+      ['activity', '活动', ICONS.activity],
+      ['safety', '权限', ICONS.shield],
     ].forEach(([key, label, icon]) => {
       const button = createButton(documentRef, 'maid-settings-tab', label);
       setIconButtonContent(button, icon, label);
@@ -677,9 +865,29 @@ export const createMaidSettingsPanel = ({
       lastResponsePane,
     );
 
+    const activitySection = documentRef.createElement?.('section');
+    activitySection.className = 'maid-settings-section';
+    const activityLabel = documentRef.createElement?.('div');
+    activityLabel.className = 'maid-settings-label';
+    activityLabel.textContent = '最近女仆任务';
+    runListEl = documentRef.createElement?.('div');
+    runListEl.className = 'maid-settings-list';
+    activitySection.append(activityLabel, runListEl);
+
+    const safetySection = documentRef.createElement?.('section');
+    safetySection.className = 'maid-settings-section';
+    const safetyLabel = documentRef.createElement?.('div');
+    safetyLabel.className = 'maid-settings-label';
+    safetyLabel.textContent = '始终允许规则';
+    ruleListEl = documentRef.createElement?.('div');
+    ruleListEl.className = 'maid-settings-list';
+    safetySection.append(safetyLabel, ruleListEl);
+
     [
       ['api', apiSection],
       ['prompt', promptSection],
+      ['activity', activitySection],
+      ['safety', safetySection],
     ].forEach(([key, section]) => {
       sections.set(key, section);
       body.appendChild(section);
@@ -725,6 +933,8 @@ export const createMaidSettingsPanel = ({
       lastPromptTextarea,
       lastResponseTextarea,
       statusEl,
+      runListEl,
+      ruleListEl,
       tabButtons,
       sections,
       promptTabButtons,

@@ -196,3 +196,110 @@ const flushMicrotasks = () => new Promise(resolve => setTimeout(resolve, 0));
   assert.equal(panel.isOpen(), false);
   console.log('ok - maid settings panel saves prompt and exposes debug tabs');
 }
+
+{
+  const documentRef = new FakeDocument();
+  const runs = [
+    {
+      id: 'run-1',
+      status: 'succeeded',
+      summary: '已打开世界书。',
+      updatedAt: 1700000000000,
+      metadata: { goal: '打开世界书', stepCount: 1 },
+    },
+    {
+      id: 'run-2',
+      status: 'failed',
+      summary: '已达到本轮执行预算。',
+      updatedAt: 1700000001000,
+      metadata: { goal: '整理世界书', stepCount: 6, maidStatus: 'interrupted', continuable: true },
+    },
+  ];
+  let rules = [
+    {
+      key: 'worldbook.delete_entries|worldbook.delete|write',
+      toolName: 'worldbook.delete_entries',
+      title: '删除世界书条目',
+      operationType: 'write',
+      riskLevel: 'high',
+      updatedAt: 1700000000000,
+    },
+  ];
+  const revoked = [];
+  const panel = createMaidSettingsPanel({
+    documentRef,
+    settingsStore: { getMaidPrompt: () => '' },
+    listRuns: () => runs.map(run => ({ ...run, metadata: { ...run.metadata } })),
+    allowRulesStore: {
+      list: () => rules.map(rule => ({ ...rule })),
+      revoke: (key) => {
+        revoked.push(key);
+        const before = rules.length;
+        rules = rules.filter(rule => rule.key !== key);
+        return rules.length !== before;
+      },
+    },
+    logger: { warn() {} },
+  });
+  panel.show({ tab: 'activity' });
+  const elements = panel.getElements();
+  assert.equal(elements.tabButtons.get('activity').classList.contains('is-active'), true);
+  assert.equal(elements.runListEl.children.length, 2);
+  assert.ok(findByText(elements.runListEl, '打开世界书'), '活动列表应显示 run 目标');
+  assert.ok(findByText(elements.runListEl, '成功'), '成功 run 应有状态标签');
+  assert.ok(findByText(elements.runListEl, '中断'), '中断 run 应显示中断状态');
+  const interruptedMeta = findByText(elements.runListEl, '已达到本轮执行预算。 · 6 步 · 可继续 · ' + new Date(1700000001000).toLocaleString());
+  assert.ok(interruptedMeta, '中断 run 应显示摘要、步数和可继续标记');
+
+  panel.switchTab('safety');
+  assert.equal(elements.tabButtons.get('safety').classList.contains('is-active'), true);
+  assert.ok(findByText(elements.ruleListEl, '删除世界书条目'), '权限列表应显示规则标题');
+  const revokeBtn = findByText(elements.ruleListEl, '撤销');
+  assert.ok(revokeBtn, '规则应有撤销按钮');
+  revokeBtn.dispatchEvent('click', {});
+  assert.deepEqual(revoked, ['worldbook.delete_entries|worldbook.delete|write']);
+  assert.ok(findByText(elements.ruleListEl, '没有已保存的“始终允许”规则。危险操作每次都会重新确认。'), '撤销后应显示空状态');
+  console.log('ok - maid settings panel shows recent runs and revocable allow rules');
+}
+
+{
+  const documentRef = new FakeDocument();
+  const resumed = [];
+  const panel = createMaidSettingsPanel({
+    documentRef,
+    settingsStore: { getMaidPrompt: () => '' },
+    listRuns: () => [
+      {
+        id: 'run-cont',
+        status: 'failed',
+        summary: '已达到本轮执行预算。',
+        updatedAt: 1700000002000,
+        metadata: { goal: '整理世界书', continuable: true, continueHint: '继续整理' },
+      },
+      {
+        id: 'run-done',
+        status: 'succeeded',
+        summary: '已完成。',
+        updatedAt: 1700000003000,
+        metadata: { goal: '打开世界书' },
+      },
+    ],
+    onResumeRun: run => resumed.push(run.id),
+    logger: { warn() {} },
+  });
+  panel.show({ tab: 'activity' });
+  const elements = panel.getElements();
+  const resumeBtn = findByText(elements.runListEl, '继续');
+  assert.ok(resumeBtn, '可继续 run 应有继续按钮');
+  const buttons = [];
+  const collect = (root) => {
+    if (root.textContent === '继续') buttons.push(root);
+    (root.children || []).forEach(collect);
+  };
+  collect(elements.runListEl);
+  assert.equal(buttons.length, 1, '不可继续的 run 不应有继续按钮');
+  resumeBtn.dispatchEvent('click', {});
+  assert.deepEqual(resumed, ['run-cont']);
+  assert.equal(panel.isOpen(), false, '点击继续后面板应关闭');
+  console.log('ok - maid settings panel resumes continuable runs');
+}

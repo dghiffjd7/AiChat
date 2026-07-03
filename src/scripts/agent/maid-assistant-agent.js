@@ -2,6 +2,10 @@ import {
   findAppFeature,
   searchAppFeatures,
 } from './app-feature-catalog.js';
+import {
+  classifyMaidRunFailure,
+  classifyMaidToolFailure,
+} from './maid-failure-codes.js';
 
 const trim = (value, fallback = '') => {
   const text = String(value ?? '').trim();
@@ -75,6 +79,7 @@ const makeToolErrorOutput = (plan = {}, error = null) => ({
   status: 'failed',
   summary: error?.message || String(error || 'maid assistant tool failed'),
   errorMessage: error?.message || String(error || ''),
+  errorCode: trim(error?.code),
   result: {
     ok: false,
     reason: error?.message || String(error || 'maid assistant tool failed'),
@@ -82,6 +87,83 @@ const makeToolErrorOutput = (plan = {}, error = null) => ({
 });
 
 const countArrayItems = value => (Array.isArray(value) ? value.length : 0);
+
+const truncateForRun = (value = '', max = 200) => {
+  const text = trim(value);
+  return text.length > max ? `${text.slice(0, max)}...` : text;
+};
+
+const VALID_STEP_STATUSES = new Set(['succeeded', 'failed', 'skipped', 'cancelled']);
+
+// 一次 runPrompt 对应一个持久 run：目标、每个工具步骤、最终状态和 continueHint
+// 都写入 agent run store；没有执行任何工具的纯聊天回应不建 run。
+const createMaidRunTracker = ({ agentTaskRuntime = null, input = '', context = {} } = {}) => {
+  const canTrack = Boolean(
+    agentTaskRuntime &&
+    typeof agentTaskRuntime.startRun === 'function' &&
+    typeof agentTaskRuntime.finishRun === 'function' &&
+    typeof agentTaskRuntime.startStep === 'function' &&
+    typeof agentTaskRuntime.finishStep === 'function',
+  );
+  let run = null;
+  const ensureRun = () => {
+    if (!canTrack || run) return run;
+    run = agentTaskRuntime.startRun({
+      kind: 'maid_assistant',
+      source: 'maid-assistant',
+      trigger: 'manual',
+      sessionId: trim(context.sessionId),
+      title: truncateForRun(input, 80),
+      summary: truncateForRun(input, 200),
+      metadata: { goal: trim(input) },
+    });
+    return run;
+  };
+  const startToolStep = (plan = {}) => {
+    const current = ensureRun();
+    if (!current) return null;
+    return agentTaskRuntime.startStep(current.id, {
+      type: 'tool',
+      summary: trim(plan.title || plan.toolName),
+      input: {
+        toolName: trim(plan.toolName),
+        args: clone(plan.args || {}),
+      },
+    });
+  };
+  const finishToolStep = (step = null, patch = {}) => {
+    if (!run || !step?.id) return;
+    agentTaskRuntime.finishStep(run.id, step.id, patch);
+  };
+  const finish = (result = {}) => {
+    if (!run) return;
+    const ok = result?.ok === true;
+    agentTaskRuntime.finishRun(run.id, {
+      status: ok ? 'succeeded' : 'failed',
+      summary: truncateForRun(result?.message || result?.reason || (ok ? '女仆已完成。' : '女仆执行失败。')),
+      errorMessage: ok ? '' : truncateForRun(result?.reason || result?.message || ''),
+      metadata: {
+        goal: trim(input),
+        maidStatus: trim(result?.status),
+        responseType: trim(result?.responseType),
+        reason: trim(result?.reason),
+        failureCode: ok ? '' : classifyMaidRunFailure(result),
+        continuable: result?.continuable === true,
+        continueHint: trim(result?.continueHint),
+        stepCount: countArrayItems(result?.steps),
+        reactStoppedReason: trim(result?.reactStoppedReason),
+      },
+    });
+  };
+  return {
+    canTrack,
+    ensureRun,
+    startToolStep,
+    finishToolStep,
+    finish,
+    getRunId: () => trim(run?.id),
+  };
+};
 
 const resolveReactStepBudget = ({
   plan = {},
@@ -179,6 +261,50 @@ const shouldAttemptReactPlanRecovery = ({
   return /(刚失败|失败了|没生效|没有生效|没有更新|再试|重试|继续|确认|替换成|扩展版|重新)/u.test(text);
 };
 
+// 解析目录 verification.argsFrom 的取值路径，如 'result.worldbookId|args.name'。
+const resolveVerificationValue = (spec = '', { result = {}, args = {} } = {}) => {
+  for (const path of String(spec || '').split('|')) {
+    const segments = path.trim().split('.');
+    const root = segments.shift();
+    let node = root === 'result' ? result : (root === 'args' ? args : undefined);
+    for (const key of segments) {
+      node = isPlainObject(node) ? node[key] : undefined;
+    }
+    const value = trim(node);
+    if (value) return value;
+  }
+  return '';
+};
+
+// 按目录声明的 verification 元数据构建读回验证计划；worldbook 写入有专用分支
+// （按条目数决定是否读回正文），其余写工具走这里。
+const buildCatalogVerificationPlan = (plan = {}, result = {}) => {
+  const feature = findAppFeature(trim(plan?.featureId) || trim(plan?.toolName));
+  const verification = feature?.verification;
+  if (!verification?.tool) return null;
+  const args = isPlainObject(verification.args) ? clone(verification.args) : {};
+  const required = Array.isArray(verification.requiredArgs) ? verification.requiredArgs : [];
+  for (const [key, spec] of Object.entries(verification.argsFrom || {})) {
+    const value = resolveVerificationValue(spec, { result, args: plan?.args || {} });
+    if (value) args[key] = value;
+    else if (required.includes(key)) return null;
+  }
+  return {
+    ok: true,
+    action: 'tool',
+    toolName: verification.tool,
+    args,
+    featureId: trim(feature.id),
+    title: '验证执行结果',
+    response: '我再读回确认一下结果。',
+    metadata: {
+      verificationFor: trim(plan?.toolName),
+      verificationSuccess: trim(verification.success),
+    },
+    source: 'auto_verification',
+  };
+};
+
 const buildAutoVerificationPlan = (plan = {}, output = {}) => {
   const toolName = trim(plan?.toolName);
   const result = unwrapToolOutputResult(output);
@@ -208,7 +334,7 @@ const buildAutoVerificationPlan = (plan = {}, output = {}) => {
       source: 'auto_verification',
     };
   }
-  return null;
+  return buildCatalogVerificationPlan(plan, result);
 };
 
 const normalizeEntryTitle = (entry = {}) => compactText(
@@ -291,6 +417,11 @@ const buildReactStepSnapshot = ({
   output: clone(unwrapToolOutputResult(output)),
   metadata: clone(plan?.metadata || null),
   errorMessage: trim(output?.errorMessage || (!ok ? summarizeToolFailure(output) : '')),
+  failureCode: ok ? '' : classifyMaidToolFailure({
+    errorCode: output?.errorCode,
+    message: output?.errorMessage || summarizeToolFailure(output),
+    result: unwrapToolOutputResult(output),
+  }),
 });
 
 const buildSuccessMessage = ({ plan = {}, output = {}, execution = {} } = {}) => {
@@ -407,8 +538,9 @@ const extractChatMessageContent = (text = '') => {
   if (quoted) return quoted;
   const raw = String(text || '').trim();
   const match = raw.match(/(?:发送|发)(?:消息)?\s*([^，。,.!?！？]{1,120})/);
-  const value = stripTrailingPunctuation(match?.[1] || '');
-  if (value && !/(到|给|至)?(?:聊天室|会话)/.test(value)) return value;
+  const value = stripTrailingPunctuation(match?.[1] || '')
+    .replace(/^(一)?(个|条|点|句)\s*/u, '');
+  if (value && value !== '消息' && !/(到|给|至)?(?:聊天室|会话)/.test(value)) return value;
   if (/晚上好/i.test(raw)) return '晚上好';
   if (/\bhi\b/i.test(raw)) return 'hi';
   return '';
@@ -544,10 +676,13 @@ export const planMaidAssistantCommand = (input = '', context = {}) => {
     });
   }
 
-  if (
+  const worldbookWriteIntent = (
     /(创建|新建|新增|写|绑定).*(世界书)/.test(normalized) ||
     /(世界书).*(创建|新建|新增|写|绑定|条目)/.test(normalized)
-  ) {
+  ) &&
+    !/(删除|清理|去重|删掉|移除)/.test(normalized) &&
+    !(/绑定/.test(normalized) && /(聊天室|会话)/.test(normalized));
+  if (worldbookWriteIntent) {
     const name = extractNamedTarget(text, ['世界书'], '女仆创建的世界书');
     const personaName = extractQuotedAfter(text, ['角色卡', '角色']);
     const entries = extractWorldEntries(text);
@@ -727,7 +862,31 @@ export const createMaidAssistantAgent = ({
   repeatedFailureLimit = 3,
   logger = console,
 } = {}) => {
-  const runPlannedTool = async (plan, context = {}) => {
+  const runPlannedTool = async (plan, context = {}, tracker = null) => {
+    if (tracker?.canTrack && typeof agentTaskRuntime?.executeTool === 'function') {
+      const step = tracker.startToolStep(plan);
+      try {
+        const output = await agentTaskRuntime.executeTool(plan.toolName, plan.args || {}, {
+          ...context,
+          runId: tracker.getRunId(),
+          stepId: step?.id,
+          source: 'maid-assistant',
+        });
+        tracker.finishToolStep(step, {
+          status: VALID_STEP_STATUSES.has(trim(output?.status)) ? trim(output.status) : 'succeeded',
+          summary: output?.summary || plan.title || plan.toolName,
+          output,
+        });
+        return output;
+      } catch (error) {
+        tracker.finishToolStep(step, {
+          status: 'failed',
+          summary: error?.message || 'maid assistant tool failed',
+          errorMessage: error?.message || String(error || ''),
+        });
+        throw error;
+      }
+    }
     if (agentTaskRuntime && typeof agentTaskRuntime.enqueue === 'function') {
       const runResult = await agentTaskRuntime.enqueue({
         kind: 'maid_assistant',
@@ -771,15 +930,15 @@ export const createMaidAssistantAgent = ({
     return executeWithRegistry({ toolRegistry, plan, context });
   };
 
-  const executePlan = async (plan, context = {}) => {
+  const executePlan = async (plan, context = {}, tracker = null) => {
     if (guidedActionRuntime && typeof guidedActionRuntime.run === 'function') {
       return guidedActionRuntime.run({
         plan,
         context,
-        execute: () => runPlannedTool(plan, context),
+        execute: () => runPlannedTool(plan, context, tracker),
       });
     }
-    const output = await runPlannedTool(plan, context);
+    const output = await runPlannedTool(plan, context, tracker);
     return {
       output,
       guided: false,
@@ -788,7 +947,7 @@ export const createMaidAssistantAgent = ({
     };
   };
 
-  const runPrompt = async (input = '', context = {}) => {
+  const runPromptWithTracker = async (input = '', context = {}, tracker = null) => {
     let plan = await planner(input, context);
     if (!plan?.ok) {
       let reactRecoveryFailure = null;
@@ -928,7 +1087,7 @@ export const createMaidAssistantAgent = ({
 
         let execution = null;
         try {
-          execution = await executePlan(currentPlan, context);
+          execution = await executePlan(currentPlan, context, tracker);
         } catch (error) {
           logger?.warn?.('maid assistant tool execution failed', error);
           execution = {
@@ -964,7 +1123,7 @@ export const createMaidAssistantAgent = ({
             }
             let verificationExecution = null;
             try {
-              verificationExecution = await executePlan(verificationPlan, context);
+              verificationExecution = await executePlan(verificationPlan, context, tracker);
             } catch (error) {
               logger?.warn?.('maid assistant verification failed', error);
               verificationExecution = {
@@ -1235,6 +1394,23 @@ export const createMaidAssistantAgent = ({
         reason: error?.message || String(error || ''),
         message: error?.message || '女仆执行失败。',
       };
+    }
+  };
+
+  const runPrompt = async (input = '', context = {}) => {
+    const tracker = createMaidRunTracker({ agentTaskRuntime, input, context });
+    try {
+      const result = await runPromptWithTracker(input, context, tracker);
+      tracker.finish(result);
+      return result;
+    } catch (error) {
+      tracker.finish({
+        ok: false,
+        status: 'failed',
+        reason: error?.message || String(error || ''),
+        message: error?.message || '女仆执行失败。',
+      });
+      throw error;
     }
   };
 

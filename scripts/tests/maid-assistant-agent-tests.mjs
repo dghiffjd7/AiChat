@@ -826,3 +826,88 @@ import {
   assert.match(result.message, /读回/);
   console.log('ok - maid assistant agent lets ReAct recover invalid planner continuations');
 }
+
+{
+  const calls = [];
+  const agent = createMaidAssistantAgent({
+    planner: async () => ({
+      ok: true,
+      toolName: 'persona.create',
+      args: { name: '精灵女王', setActive: true },
+      featureId: 'persona.create',
+      title: '创建角色卡',
+      response: '我来创建角色卡。',
+    }),
+    reactPlanner: async () => ({
+      ok: true,
+      action: 'final',
+      message: '角色卡已创建并读回确认。',
+    }),
+    toolRegistry: {
+      executeTool: async (toolName, args) => {
+        calls.push({ toolName, args });
+        if (toolName === 'persona.create') {
+          return {
+            toolName,
+            status: 'succeeded',
+            result: { ok: true, personaId: 'p-1', name: '精灵女王' },
+            summary: 'created persona',
+          };
+        }
+        if (toolName === 'app.read_resource') {
+          return {
+            toolName,
+            status: 'succeeded',
+            result: { ok: true, resource: 'persona', items: [{ id: 'p-1', name: '精灵女王', active: true }] },
+            summary: 'read personas',
+          };
+        }
+        throw new Error(`unexpected tool ${toolName}`);
+      },
+    },
+    logger: { warn() {} },
+  });
+  const result = await agent.runPrompt('创建角色卡精灵女王');
+  assert.equal(result.ok, true);
+  assert.deepEqual(calls.map(call => call.toolName), ['persona.create', 'app.read_resource']);
+  assert.equal(calls[1].args.resource, 'persona');
+  assert.equal(result.steps.length, 2);
+  assert.equal(result.steps[1].metadata.verificationFor, 'persona.create');
+  assert.equal(result.steps[1].metadata.verificationSuccess, '角色卡列表包含新建的角色卡');
+  console.log('ok - maid assistant agent auto-verifies catalog-declared write tools');
+}
+
+{
+  const calls = [];
+  const agent = createMaidAssistantAgent({
+    planner: async () => ({
+      ok: true,
+      toolName: 'session.set_wallpaper',
+      args: { sessionId: 'A' },
+      featureId: 'session.wallpaper.set',
+      title: '设置聊天室壁纸',
+      response: '我来设置壁纸。',
+    }),
+    reactPlanner: async () => ({
+      ok: true,
+      action: 'final',
+      message: '壁纸已应用。',
+    }),
+    toolRegistry: {
+      executeTool: async (toolName, args) => {
+        calls.push({ toolName, args });
+        return {
+          toolName,
+          status: 'succeeded',
+          result: { ok: true, applied: true },
+          summary: 'wallpaper applied',
+        };
+      },
+    },
+    logger: { warn() {} },
+  });
+  const result = await agent.runPrompt('把这张图设为壁纸');
+  assert.equal(result.ok, true);
+  assert.deepEqual(calls.map(call => call.toolName), ['session.set_wallpaper'], 'verification: null 的工具不应触发读回');
+  console.log('ok - maid assistant agent skips auto-verification for result-authoritative tools');
+}

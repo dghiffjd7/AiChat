@@ -63,6 +63,7 @@ import { registerAppSessionAgentTools } from '../agent/tools/app-session-tools.j
 import { registerAppContentAgentTools } from '../agent/tools/app-content-tools.js';
 import { registerMaidMediaAssetTools } from '../agent/tools/media-asset-tools.js';
 import { registerWebSearchAgentTools } from '../agent/tools/web-search-tools.js';
+import { registerMaidTodoTools } from '../agent/tools/maid-todo-tools.js';
 import { AgentRunStore } from '../storage/agent-run-store.js';
 import { MaidGuideStore } from '../storage/maid-guide-store.js';
 import { MaidConversationStore } from '../storage/maid-conversation-store.js';
@@ -190,6 +191,11 @@ import {
 import { createAppGuidedActionRuntime } from './app-guided-action-runtime-utils.js';
 import { createMaidCommandInputRuntime } from './maid-command-input-runtime-utils.js';
 import { createMaidSettingsPanel } from './maid-settings-panel.js';
+import {
+  buildElementUiSummary,
+  isReadableElementVisible,
+} from './agent-ui-inspect-utils.js';
+import { buildMaidRunResumePrompt } from './maid-run-resume-utils.js';
 import { createAppBackNavigationRuntime } from './app-back-navigation-runtime-utils.js';
 import {
   requestTauriNativeExit,
@@ -2579,40 +2585,7 @@ const initApp = async () => {
   registerWorldbookAgentTools(agentToolRegistry, {
     getPreviewWorldbookActions: () => agentWritePreviewRuntimes.previewWorldbookActions,
   });
-  const isAgentReadableElementVisible = (element = null) => {
-    if (!element || element.hidden === true) return false;
-    if (element.classList?.contains?.('hidden')) return false;
-    const style = element.style || {};
-    if (style.display === 'none' || style.visibility === 'hidden') return false;
-    try {
-      const computed = window.getComputedStyle?.(element);
-      if (computed && (computed.display === 'none' || computed.visibility === 'hidden' || computed.opacity === '0')) return false;
-    } catch {}
-    const rect = element.getBoundingClientRect?.();
-    return !rect || rect.width > 0 || rect.height > 0 || style.display === 'block' || style.display === 'flex';
-  };
-  const readAgentVisibleText = (element = null, maxTextLength = 1800) => {
-    if (!element) return '';
-    const max = Math.max(120, Math.min(6000, Number(maxTextLength) || 1800));
-    const chunks = [];
-    const push = (value = '') => {
-      const text = String(value || '').replace(/\s+/g, ' ').trim();
-      if (text) chunks.push(text);
-    };
-    push(element.innerText || element.textContent || '');
-    const fields = Array.from(element.querySelectorAll?.('input, textarea, select') || []);
-    fields.slice(0, 80).forEach((field) => {
-      if (!isAgentReadableElementVisible(field)) return;
-      const type = String(field.type || '').toLowerCase();
-      const name = String(field.id || field.name || field.getAttribute?.('aria-label') || field.placeholder || '').toLowerCase();
-      if (type === 'password' || /api[-_ ]?key|token|secret|password|密钥|金鑰|密码/.test(name)) return;
-      const value = String(field.value || '').trim();
-      if (!value) return;
-      push(`${field.getAttribute?.('aria-label') || field.placeholder || field.name || field.id || 'field'}: ${value}`);
-    });
-    const text = Array.from(new Set(chunks)).join(' | ');
-    return text.length > max ? `${text.slice(0, max - 1)}…` : text;
-  };
+  const isAgentReadableElementVisible = (element = null) => isReadableElementVisible(element);
   const buildAgentVisiblePanelSummary = ({ panel = '', maxTextLength = 1800 } = {}) => {
     const wanted = String(panel || '').trim().toLowerCase().replace(/_/g, '-');
     const candidates = [
@@ -2634,12 +2607,17 @@ const initApp = async () => {
     const panels = candidates
       .filter(item => !wanted || item.id === wanted || item.aliases?.includes?.(wanted))
       .filter(item => isAgentReadableElementVisible(item.element))
-      .map(item => ({
-        id: item.id,
-        title: item.title,
-        text: readAgentVisibleText(item.element, maxTextLength),
-      }))
-      .filter(item => item.text);
+      .map((item) => {
+        const summary = buildElementUiSummary(item.element, { maxTextLength });
+        return {
+          id: item.id,
+          title: item.title,
+          text: summary.text,
+          buttons: summary.buttons,
+          fields: summary.fields,
+        };
+      })
+      .filter(item => item.text || item.buttons.length || item.fields.length);
     return {
       ok: true,
       activePage,
@@ -2688,6 +2666,22 @@ const initApp = async () => {
     }),
     getVisiblePanelSummary: buildAgentVisiblePanelSummary,
     readResource: readAgentAppResource,
+    listRecentErrors: ({ limit = 10 } = {}) => agentRunStore
+      .listRuns({ kind: 'maid_assistant', status: 'failed', limit })
+      .map(run => ({
+        kind: 'maid_run',
+        goal: run.metadata?.goal || run.title || '',
+        reason: run.errorMessage || run.summary || '',
+        maidStatus: run.metadata?.maidStatus || '',
+        continuable: run.metadata?.continuable === true,
+        at: run.updatedAt,
+        failedSteps: (run.steps || [])
+          .filter(step => step.status === 'failed')
+          .map(step => ({
+            toolName: step.input?.toolName || step.summary || '',
+            errorMessage: step.errorMessage || '',
+          })),
+      })),
   });
   registerAppSessionAgentTools(agentToolRegistry, {
     contactsStore,
@@ -2777,6 +2771,10 @@ const initApp = async () => {
       cancelText: String(request?.cancelText || '取消'),
       danger: request?.danger !== false,
     }),
+  });
+  registerMaidTodoTools(agentToolRegistry, {
+    getRun: runId => agentRunStore.getRun(runId),
+    updateRun: (runId, patch) => agentTaskRuntime.updateRun(runId, patch),
   });
   registerWebSearchAgentTools(agentToolRegistry, {
     httpRequest: payload => safeInvoke('http_request', payload),
@@ -21338,6 +21336,14 @@ Phase G（Frame 36）：循环衔接
     getAppKnowledgeText: () => buildAppFeatureKnowledgeText(),
     getHistoryContextText: () => maidConversationStore.getHistoryContextText(),
     getMemoryTableText: () => maidConversationStore.getMemoryTableText(),
+    listRuns: options => agentRunStore.listRuns({ ...(options || {}), kind: 'maid_assistant' }),
+    allowRulesStore: maidToolSafetyAllowStore,
+    onResumeRun: (run = {}) => {
+      maidCommandInputRuntime?.open?.({
+        initialText: buildMaidRunResumePrompt(run),
+      });
+      void maidCommandInputRuntime?.submit?.();
+    },
     onOpenApiConfig: () => openMaidApiConfigPanel({ reason: 'manual' }),
     logger,
   });

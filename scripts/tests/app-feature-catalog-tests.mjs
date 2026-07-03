@@ -16,6 +16,7 @@ import { createAppSessionAgentTools } from '../../src/scripts/agent/tools/app-se
 import { createAppContentAgentTools } from '../../src/scripts/agent/tools/app-content-tools.js';
 import { createMaidMediaAssetTools } from '../../src/scripts/agent/tools/media-asset-tools.js';
 import { createWebSearchAgentTools } from '../../src/scripts/agent/tools/web-search-tools.js';
+import { createMaidTodoTools } from '../../src/scripts/agent/tools/maid-todo-tools.js';
 
 const getTool = (tools, name) => tools.find(tool => tool.name === name);
 
@@ -140,6 +141,7 @@ const escapeRegex = value => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'
       resource: args.resource,
       sessionId: args.sessionId || current,
     }),
+    listRecentErrors: () => [],
   });
   const sessionTools = createAppSessionAgentTools({
     contactsStore: {
@@ -284,7 +286,16 @@ const escapeRegex = value => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'
     applyChatSettings: () => {},
     now: () => 1000,
   });
-  const tools = [...navTools, ...sessionTools, ...contentTools, ...mediaTools, ...webTools];
+  const todoRuns = new Map([['run-1', { id: 'run-1', metadata: { todos: [] } }]]);
+  const todoTools = createMaidTodoTools({
+    getRun: runId => todoRuns.get(runId) || null,
+    updateRun: (runId, patch) => {
+      const run = todoRuns.get(runId);
+      if (run) run.metadata = { ...run.metadata, ...(patch?.metadata || {}) };
+      return run;
+    },
+  });
+  const tools = [...navTools, ...sessionTools, ...contentTools, ...mediaTools, ...webTools, ...todoTools];
   const maidAttachments = [{ id: 'catalog-image', kind: 'image', url: 'data:image/png;base64,AAAA', name: 'catalog.png' }];
 
   for (const feature of listAppFeatures()) {
@@ -440,7 +451,7 @@ const escapeRegex = value => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'
       return;
     }
     if (feature.id === 'app.visible_panel.read') {
-      const result = await getTool(tools, 'app.read_visible_panel_summary').execute({});
+      const result = await getTool(tools, 'app.ui.inspect').execute({});
       assert.equal(result.ok, true);
       assert.equal(result.panels[0].id, 'chat');
       return;
@@ -455,6 +466,31 @@ const escapeRegex = value => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'
       const result = await getTool(tools, 'web.search').execute({ query: 'Catalog Web', limit: 1 });
       assert.equal(result.ok, true);
       assert.equal(result.results[0].url, 'https://example.com/catalog');
+      return;
+    }
+    if (feature.id === 'maid.todo') {
+      const wrote = await getTool(tools, 'maid.todo.write').execute(
+        { todos: [{ content: '创建聊天室', status: 'in_progress' }] },
+        { runId: 'run-1' },
+      );
+      assert.equal(wrote.ok, true);
+      const read = await getTool(tools, 'maid.todo.read').execute({}, { runId: 'run-1' });
+      assert.equal(read.ok, true);
+      assert.equal(read.todos[0].content, '创建聊天室');
+      return;
+    }
+    if (feature.id === 'app.errors.read') {
+      const result = await getTool(tools, 'app.read_recent_errors').execute({});
+      assert.equal(result.ok, true);
+      assert.ok(Array.isArray(result.errors));
+      return;
+    }
+    if (feature.id === 'app.capabilities.search') {
+      const result = await getTool(tools, 'app.search_feature').execute({ query: '世界书' });
+      assert.ok(result.features.length > 0);
+      const doc = await getTool(tools, 'app.read_feature_doc').execute({ featureId: result.features[0].id });
+      assert.equal(doc.ok, true);
+      assert.ok(doc.feature.doc.length > 0);
       return;
     }
     const panel = feature.panel;

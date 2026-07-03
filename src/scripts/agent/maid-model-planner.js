@@ -259,6 +259,7 @@ export const buildMaidModelReActMessages = ({
         '如果无法继续，输出：{"ok":false,"reason":"短原因","message":"给用户看的说明"}',
         '每次最多选择一个工具；不要发明工具；只能使用 APP 功能目录中 feature 允许的 tools。',
         '工具失败时，先根据错误、原始 args、功能 argsHint 修正参数；不要因为参数错误改用更高风险工具。',
+        '复杂多步任务可先用 maid.todo.write 记录任务清单，每完成一步更新状态；用户询问进度时用 maid.todo.read 查看。',
         MAID_OPERATION_SAFETY_PROMPT,
         '世界书写入必须默认追加或新建；不要使用 replace，除非用户明确要求覆盖，且 APP 会要求用户点击确认。',
         '如果历史中上一轮包含“可继续: 是”或“继续提示”，本轮用户要求继续时要接着该任务执行，不要重新开始，也不要输出普通闲聊。',

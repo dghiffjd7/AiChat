@@ -145,6 +145,16 @@ export const createAgentToolSafetyAllowStore = ({
     return nextRule ? { ...nextRule } : null;
   };
 
+  const revoke = (ruleKey = '') => {
+    const target = trim(ruleKey);
+    if (!target) return false;
+    const existingRules = load();
+    const nextRules = existingRules.filter(rule => rule.key !== target);
+    if (nextRules.length === existingRules.length) return false;
+    save(nextRules);
+    return true;
+  };
+
   const clear = () => {
     memoryRules = [];
     if (!targetStorage) return;
@@ -165,6 +175,7 @@ export const createAgentToolSafetyAllowStore = ({
     isAllowed,
     allowAlways,
     list,
+    revoke,
     clear,
   };
 };

@@ -87,3 +87,25 @@ const createMemoryStorage = (initial = {}) => {
   assert.equal(store.isAllowed(request), false);
   console.log('ok - agent tool safety allow store works without browser storage');
 }
+
+{
+  const store = createAgentToolSafetyAllowStore({ storage: null, now: () => 7000 });
+  const keep = {
+    toolName: 'persona.set_avatar',
+    kind: 'persona.avatar.replace',
+    operationType: 'replace_existing',
+  };
+  const target = {
+    toolName: 'worldbook.delete_entries',
+    kind: 'worldbook.delete',
+    operationType: 'write',
+  };
+  store.allowAlways(keep);
+  const rule = store.allowAlways(target);
+  assert.equal(store.revoke(rule.key), true);
+  assert.equal(store.isAllowed(target), false);
+  assert.equal(store.isAllowed(keep), true, '撤销单条规则不应影响其他规则');
+  assert.equal(store.revoke(rule.key), false, '重复撤销应返回 false');
+  assert.equal(store.revoke(''), false);
+  console.log('ok - agent tool safety allow store revokes single rules');
+}

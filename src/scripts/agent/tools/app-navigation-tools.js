@@ -70,12 +70,92 @@ const invokePanelAction = async (actions = {}, panel = '', args = {}) => {
   };
 };
 
+const createVisiblePanelInspectTool = ({
+  name = 'app.ui.inspect',
+  title = 'Inspect visible APP UI',
+  description = 'Read a structured summary of currently visible APP panels and active UI.',
+  getVisiblePanelSummary = null,
+} = {}) => ({
+  name,
+  title,
+  description,
+  source: 'maid-app-navigation',
+  permissions: [],
+  riskLevel: 'low',
+  capabilities: {
+    read: true,
+    write: false,
+    network: false,
+    cost: 'none',
+    undo: 'none',
+    modelContext: 'allowlist',
+    confirmation: 'allow_once',
+  },
+  schema: {
+    type: 'object',
+    additionalProperties: false,
+    properties: {
+      panel: { type: 'string', maxLength: 80 },
+      maxTextLength: { type: 'integer', minimum: 120, maximum: 6000 },
+    },
+  },
+  execute: async (args = {}) => {
+    if (typeof getVisiblePanelSummary !== 'function') {
+      return { ok: false, reason: 'visible_panel_summary_unavailable' };
+    }
+    const summary = await getVisiblePanelSummary(args);
+    return isPlainObject(summary) ? clone(summary) : { ok: true, summary };
+  },
+  summarizeResult: result => result?.ok === false
+    ? `visible panel summary failed: ${trim(result?.reason, 'unavailable')}`
+    : `visible panel summary panels=${Number(result?.panels?.length || 0)}`,
+});
+
 export const createAppNavigationAgentTools = ({
   actions = {},
   getCurrentState = () => ({}),
   getVisiblePanelSummary = null,
   readResource = null,
+  listRecentErrors = null,
 } = {}) => [
+  {
+    name: 'app.read_recent_errors',
+    title: 'Read recent errors',
+    description: 'Read recent maid run failures and tool errors so the assistant can explain what went wrong.',
+    source: 'maid-app-navigation',
+    permissions: [],
+    riskLevel: 'low',
+    capabilities: {
+      read: true,
+      write: false,
+      network: false,
+      cost: 'none',
+      undo: 'none',
+      modelContext: 'allowlist',
+      confirmation: 'allow_once',
+    },
+    schema: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        limit: { type: 'integer', minimum: 1, maximum: 20 },
+      },
+    },
+    execute: async (args = {}) => {
+      if (typeof listRecentErrors !== 'function') {
+        return { ok: false, reason: 'recent_errors_unavailable' };
+      }
+      const errors = (await listRecentErrors({ limit: Number(args.limit) || 10 })) || [];
+      return {
+        ok: true,
+        count: errors.length,
+        errors: clone(errors),
+      };
+    },
+    summarizeResult: result => (result?.ok === false
+      ? 'recent errors unavailable'
+      : `found ${Number(result?.count || 0)} recent error(s)`),
+  },
   {
     name: 'app.search_feature',
     title: 'Search APP features',
@@ -168,41 +248,13 @@ export const createAppNavigationAgentTools = ({
     execute: async (args = {}) => invokePanelAction(actions, args.panel, args),
     summarizeResult: result => result?.opened ? `opened ${trim(result.panel, 'panel')}` : `open panel failed: ${trim(result?.reason, 'unsupported panel')}`,
   },
-  {
+  createVisiblePanelInspectTool({ getVisiblePanelSummary }),
+  createVisiblePanelInspectTool({
     name: 'app.read_visible_panel_summary',
     title: 'Read visible APP panel summary',
-    description: 'Read a concise text summary of currently visible APP panels and active UI.',
-    source: 'maid-app-navigation',
-    permissions: [],
-    riskLevel: 'low',
-    capabilities: {
-      read: true,
-      write: false,
-      network: false,
-      cost: 'none',
-      undo: 'none',
-      modelContext: 'allowlist',
-      confirmation: 'allow_once',
-    },
-    schema: {
-      type: 'object',
-      additionalProperties: false,
-      properties: {
-        panel: { type: 'string', maxLength: 80 },
-        maxTextLength: { type: 'integer', minimum: 120, maximum: 6000 },
-      },
-    },
-    execute: async (args = {}) => {
-      if (typeof getVisiblePanelSummary !== 'function') {
-        return { ok: false, reason: 'visible_panel_summary_unavailable' };
-      }
-      const summary = await getVisiblePanelSummary(args);
-      return isPlainObject(summary) ? clone(summary) : { ok: true, summary };
-    },
-    summarizeResult: result => result?.ok === false
-      ? `visible panel summary failed: ${trim(result?.reason, 'unavailable')}`
-      : `visible panel summary panels=${Number(result?.panels?.length || 0)}`,
-  },
+    description: 'Legacy alias for app.ui.inspect. Read a structured summary of currently visible APP panels and active UI.',
+    getVisiblePanelSummary,
+  }),
   {
     name: 'app.read_resource',
     title: 'Read APP resource',

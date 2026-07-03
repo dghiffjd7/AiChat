@@ -39,9 +39,12 @@ const getTool = (tools, name) => tools.find(tool => tool.name === name);
   const state = await getTool(tools, 'app.get_current_state').execute({});
   assert.deepEqual(state, { activePage: 'chat', sessionId: 'A' });
 
-  const visible = await getTool(tools, 'app.read_visible_panel_summary').execute({});
+  const visible = await getTool(tools, 'app.ui.inspect').execute({});
   assert.equal(visible.ok, true);
   assert.equal(visible.panels[0].id, 'chat');
+  const legacyVisible = await getTool(tools, 'app.read_visible_panel_summary').execute({});
+  assert.equal(legacyVisible.ok, true);
+  assert.equal(legacyVisible.panels[0].id, 'chat');
 
   const resource = await getTool(tools, 'app.read_resource').execute({ resource: 'chat', sessionName: 'A' });
   assert.equal(resource.ok, true);
@@ -55,4 +58,34 @@ const getTool = (tools, name) => tools.find(tool => tool.name === name);
   assert.equal(doc.ok, true);
   assert.equal(doc.feature.panel, 'worldbook');
   console.log('ok - app navigation tools read state and feature catalog');
+}
+
+{
+  const tools = createAppNavigationAgentTools({
+    listRecentErrors: ({ limit }) => [
+      {
+        kind: 'maid_run',
+        goal: '整理世界书',
+        reason: 'args.name is required',
+        maidStatus: 'failed',
+        continuable: false,
+        at: 1700000000000,
+        failedSteps: [{ toolName: 'worldbook.update_entries', errorMessage: 'args.name is required' }],
+      },
+    ].slice(0, limit),
+  });
+  const result = await getTool(tools, 'app.read_recent_errors').execute({ limit: 5 });
+  assert.equal(result.ok, true);
+  assert.equal(result.count, 1);
+  assert.equal(result.errors[0].goal, '整理世界书');
+  assert.equal(result.errors[0].failedSteps[0].toolName, 'worldbook.update_entries');
+  console.log('ok - app.read_recent_errors returns recent maid run failures');
+}
+
+{
+  const tools = createAppNavigationAgentTools({});
+  const result = await getTool(tools, 'app.read_recent_errors').execute({});
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, 'recent_errors_unavailable');
+  console.log('ok - app.read_recent_errors reports unavailable without provider');
 }

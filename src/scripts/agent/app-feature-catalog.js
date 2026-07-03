@@ -28,7 +28,7 @@ export const APP_FEATURE_DEFINITIONS = Object.freeze([
     aliases: ['创建聊天室', '新建聊天室', '添加好友', '创建联系人', '新建联系人', '开一个聊天室'],
     summary: '创建一个私聊联系人和对应聊天室。',
     uiPath: ['顶部 +', '好友列表', '输入新好友名称', '添加'],
-    tools: ['session.create'],
+    tools: ['session.create', 'session.list'],
     argsHint: 'name 创建单个聊天室；names[] 创建多个聊天室',
     panel: 'session',
     riskLevel: 'low',
@@ -36,6 +36,11 @@ export const APP_FEATURE_DEFINITIONS = Object.freeze([
     confirmation: 'none_for_create',
     firstRunGuide: 'session.create.guide',
     directAction: 'session.create',
+    verification: {
+      tool: 'session.list',
+      args: {},
+      success: '新建聊天室出现在会话列表中',
+    },
   },
   {
     id: 'session.open',
@@ -71,13 +76,18 @@ export const APP_FEATURE_DEFINITIONS = Object.freeze([
     aliases: ['创建角色卡', '新建角色卡', '创建角色', '新建角色', '添加角色卡', '添加角色'],
     summary: '创建一个 APP 角色卡/角色档案，可作为当前角色启用。',
     uiPath: ['头像/角色入口', '角色卡', '管理角色卡', '新建'],
-    tools: ['persona.create'],
+    tools: ['persona.create', 'app.read_resource'],
     panel: 'persona',
     riskLevel: 'medium',
     writes: true,
     confirmation: 'allow_once',
     firstRunGuide: 'persona.create.guide',
     directAction: 'persona.create',
+    verification: {
+      tool: 'app.read_resource',
+      args: { resource: 'persona' },
+      success: '角色卡列表包含新建的角色卡',
+    },
   },
   {
     id: 'persona.switch',
@@ -85,7 +95,7 @@ export const APP_FEATURE_DEFINITIONS = Object.freeze([
     aliases: ['切换角色卡', '切换角色', '使用角色卡', '换成角色卡', '设为当前角色卡'],
     summary: '按名称或 id 切换当前 APP 角色卡。',
     uiPath: ['头像/角色入口', '角色卡', '选择角色卡'],
-    tools: ['persona.switch'],
+    tools: ['persona.switch', 'app.read_resource'],
     argsHint: 'target/name/personaId: 角色卡名称或 id',
     panel: 'persona',
     riskLevel: 'low',
@@ -93,11 +103,16 @@ export const APP_FEATURE_DEFINITIONS = Object.freeze([
     confirmation: 'allow_once',
     firstRunGuide: 'persona.switch.guide',
     directAction: 'persona.switch',
+    verification: {
+      tool: 'app.read_resource',
+      args: { resource: 'persona' },
+      success: '当前角色卡已切换为目标角色卡',
+    },
   },
   {
     id: 'persona.avatar.set',
     title: '设置角色卡头像',
-    aliases: ['设置角色头像', '设置角色卡头像', '把图片设为角色头像', '把这张图设为角色头像', '用这张图当角色头像', '更换角色头像'],
+    aliases: ['设置角色头像', '设置角色卡头像', '把图片设为角色头像', '把这张图设为角色头像', '用这张图当角色头像', '更换角色头像', '角色换头像', '换角色头像'],
     summary: '把本次女仆输入中附带的图片自动裁切压缩后设置为指定或当前角色卡头像。',
     uiPath: ['头像/角色入口', '角色卡', '编辑头像'],
     tools: ['media.prepare_image', 'persona.set_avatar'],
@@ -108,6 +123,8 @@ export const APP_FEATURE_DEFINITIONS = Object.freeze([
     confirmation: 'allow_once',
     firstRunGuide: '',
     directAction: 'persona.set_avatar',
+    // 工具结果即权威（applied/sent），无需读回验证。
+    verification: null,
   },
   {
     id: 'user.create',
@@ -115,13 +132,18 @@ export const APP_FEATURE_DEFINITIONS = Object.freeze([
     aliases: ['创建用户名称', '新建用户名称', '创建用户', '新建用户', '用户名称', '用户名'],
     summary: '创建一个用户档案/用户名称，可设为当前用户。',
     uiPath: ['头像/用户入口', '用户', '管理用户', '新建'],
-    tools: ['user.create'],
+    tools: ['user.create', 'app.read_resource'],
     panel: 'user',
     riskLevel: 'medium',
     writes: true,
     confirmation: 'allow_once',
     firstRunGuide: 'user.create.guide',
     directAction: 'user.create',
+    verification: {
+      tool: 'app.read_resource',
+      args: { resource: 'user' },
+      success: '用户列表包含新建的用户名称',
+    },
   },
   {
     id: 'user.switch',
@@ -129,7 +151,7 @@ export const APP_FEATURE_DEFINITIONS = Object.freeze([
     aliases: ['切换用户名称', '切换用户', '使用用户', '换成用户', '设为当前用户'],
     summary: '按名称或 id 切换当前 APP 用户档案/用户名称。',
     uiPath: ['头像/用户入口', '用户', '选择用户'],
-    tools: ['user.switch'],
+    tools: ['user.switch', 'app.read_resource'],
     argsHint: 'target/name/userId: 用户名称或 id',
     panel: 'user',
     riskLevel: 'low',
@@ -137,6 +159,11 @@ export const APP_FEATURE_DEFINITIONS = Object.freeze([
     confirmation: 'allow_once',
     firstRunGuide: 'user.switch.guide',
     directAction: 'user.switch',
+    verification: {
+      tool: 'app.read_resource',
+      args: { resource: 'user' },
+      success: '当前用户已切换为目标用户',
+    },
   },
   {
     id: 'user.avatar.set',
@@ -152,6 +179,8 @@ export const APP_FEATURE_DEFINITIONS = Object.freeze([
     confirmation: 'allow_once',
     firstRunGuide: '',
     directAction: 'user.set_avatar',
+    // 工具结果即权威（applied/sent），无需读回验证。
+    verification: null,
   },
   {
     id: 'contact.avatar.set',
@@ -167,6 +196,8 @@ export const APP_FEATURE_DEFINITIONS = Object.freeze([
     confirmation: 'allow_once',
     firstRunGuide: '',
     directAction: 'contact.set_avatar',
+    // 工具结果即权威（applied/sent），无需读回验证。
+    verification: null,
   },
   {
     id: 'session.wallpaper.set',
@@ -182,6 +213,8 @@ export const APP_FEATURE_DEFINITIONS = Object.freeze([
     confirmation: 'allow_once',
     firstRunGuide: '',
     directAction: 'session.set_wallpaper',
+    // 工具结果即权威（applied/sent），无需读回验证。
+    verification: null,
   },
   {
     id: 'worldbook.create',
@@ -197,6 +230,12 @@ export const APP_FEATURE_DEFINITIONS = Object.freeze([
     confirmation: 'allow_once',
     firstRunGuide: 'worldbook.create.guide',
     directAction: 'worldbook.create',
+    verification: {
+      tool: 'worldbook.read',
+      argsFrom: { name: 'result.worldbookId|args.name|args.worldbookId|args.id' },
+      requiredArgs: ['name'],
+      success: '写入的条目出现在世界书中且条目数符合预期',
+    },
   },
   {
     id: 'worldbook.update_entries',
@@ -212,6 +251,12 @@ export const APP_FEATURE_DEFINITIONS = Object.freeze([
     confirmation: 'allow_once',
     firstRunGuide: '',
     directAction: 'worldbook.update_entries',
+    verification: {
+      tool: 'worldbook.read',
+      argsFrom: { name: 'result.worldbookId|args.name|args.worldbookId|args.id' },
+      requiredArgs: ['name'],
+      success: '更新后的条目内容已读回确认',
+    },
   },
   {
     id: 'worldbook.delete_entries',
@@ -227,6 +272,12 @@ export const APP_FEATURE_DEFINITIONS = Object.freeze([
     confirmation: 'allow_once',
     firstRunGuide: '',
     directAction: 'worldbook.delete_entries',
+    verification: {
+      tool: 'worldbook.read',
+      argsFrom: { name: 'result.worldbookId|args.name|args.worldbookId|args.id' },
+      requiredArgs: ['name'],
+      success: '被删除条目不再出现且剩余条目数符合预期',
+    },
   },
   {
     id: 'worldbook.list',
@@ -257,6 +308,11 @@ export const APP_FEATURE_DEFINITIONS = Object.freeze([
     confirmation: 'allow_once',
     firstRunGuide: '',
     directAction: 'worldbook.bind_session',
+    verification: {
+      tool: 'worldbook.list',
+      argsFrom: { sessionId: 'args.sessionId|args.sessionName|result.sessionId' },
+      success: '目标世界书出现在该聊天室的绑定列表中',
+    },
   },
   {
     id: 'worldbook.read',
@@ -276,7 +332,7 @@ export const APP_FEATURE_DEFINITIONS = Object.freeze([
   {
     id: 'chat.send_message',
     title: '发送聊天消息',
-    aliases: ['发送聊天消息', '发送消息', '给聊天室发消息', '在聊天室发送', '发hi', '发晚上好'],
+    aliases: ['发送聊天消息', '发送消息', '发消息', '给聊天室发消息', '在聊天室发送', '发hi', '发晚上好'],
     summary: '向指定聊天室写入一条聊天消息，并可打开该聊天室。',
     uiPath: ['聊天室', '输入框', '发送'],
     tools: ['chat.send_message'],
@@ -287,6 +343,8 @@ export const APP_FEATURE_DEFINITIONS = Object.freeze([
     confirmation: 'allow_once',
     firstRunGuide: 'chat.send_message.guide',
     directAction: 'chat.send_message',
+    // 工具结果即权威（applied/sent），无需读回验证。
+    verification: null,
   },
   {
     id: 'config.api.open',
@@ -390,15 +448,15 @@ export const APP_FEATURE_DEFINITIONS = Object.freeze([
     id: 'app.visible_panel.read',
     title: '读取当前界面摘要',
     aliases: ['看当前界面', '看看页面上有什么', '读取界面信息', '界面摘要', '当前窗口内容'],
-    summary: '读取当前可见面板或聊天界面的文字摘要，帮助女仆理解用户正在看的页面。',
+    summary: '读取当前可见面板或聊天界面的结构化摘要（文字、按钮及激活状态、表单字段填写情况），帮助女仆理解用户正在看的页面；API key/密码类字段只标记不返回值。',
     uiPath: [],
-    tools: ['app.read_visible_panel_summary'],
+    tools: ['app.ui.inspect', 'app.read_visible_panel_summary'],
     panel: '',
     riskLevel: 'low',
     writes: false,
     confirmation: 'allow_once',
     firstRunGuide: '',
-    directAction: 'app.read_visible_panel_summary',
+    directAction: 'app.ui.inspect',
   },
   {
     id: 'app.resource.read',
@@ -430,6 +488,51 @@ export const APP_FEATURE_DEFINITIONS = Object.freeze([
     directAction: 'app.read_resource',
   },
   {
+    id: 'maid.todo',
+    title: '女仆任务清单',
+    aliases: ['任务清单', '任务进度', '待办清单', '进度怎么样', '做到哪一步了', '当前任务进度'],
+    summary: '记录和查看当前女仆任务的待办清单与进度；复杂多步任务应先写清单，每完成一步更新状态。',
+    uiPath: [],
+    tools: ['maid.todo.write', 'maid.todo.read'],
+    argsHint: 'maid.todo.write: todos[] 每项含 content 和 status(pending/in_progress/completed)，整体替换当前清单；maid.todo.read 无参数',
+    panel: '',
+    riskLevel: 'low',
+    writes: false,
+    confirmation: 'none',
+    firstRunGuide: '',
+    directAction: 'maid.todo.read',
+  },
+  {
+    id: 'app.errors.read',
+    title: '查看最近错误',
+    aliases: ['最近错误', '刚才为什么失败', '为什么失败', '失败原因', '为什么出错', '报错了', '哪里出错了', '执行失败原因', '刚才工具为什么失败'],
+    summary: '读取最近女仆任务失败记录和工具错误，用于解释刚才哪里出了问题。',
+    uiPath: [],
+    tools: ['app.read_recent_errors'],
+    argsHint: 'limit 可选，控制返回的失败记录数量（默认 10）',
+    panel: '',
+    riskLevel: 'low',
+    writes: false,
+    confirmation: 'none',
+    firstRunGuide: '',
+    directAction: 'app.read_recent_errors',
+  },
+  {
+    id: 'app.capabilities.search',
+    title: '检索女仆能力',
+    aliases: ['你能做什么', '有什么功能', '功能列表', '支持什么功能', '会做什么', '怎么用女仆', '能力列表'],
+    summary: '按用户说法检索 APP 功能目录，返回候选能力和对应工具；对不确定的请求应先检索能力再决定工具。',
+    uiPath: [],
+    tools: ['app.search_feature', 'app.read_feature_doc'],
+    argsHint: 'app.search_feature: query 必填、limit 可选，返回候选功能；app.read_feature_doc: featureId 必填，返回该功能的说明、工具、参数提示和风险等级',
+    panel: '',
+    riskLevel: 'low',
+    writes: false,
+    confirmation: 'none',
+    firstRunGuide: '',
+    directAction: 'app.search_feature',
+  },
+  {
     id: 'web.search',
     title: '联网搜索网页',
     aliases: ['联网搜索', '上网搜索', '搜索网页', '查最新消息', '查资料', '今天新闻', '最新资讯', '网页读取'],
@@ -446,6 +549,33 @@ export const APP_FEATURE_DEFINITIONS = Object.freeze([
   },
 ]);
 
+const buildBigramSet = (value = '') => {
+  const grams = new Set();
+  for (let i = 0; i < value.length - 1; i += 1) grams.add(value.slice(i, i + 2));
+  return grams;
+};
+
+// 别名与用户说法之间常有插入词（如“世界书重复了帮我清理”对“清理重复世界书”），
+// 子串匹配覆盖不到；按别名 bigram 覆盖率给部分分。为避免“删除世界书条目”这类别名
+// 借宾语命中创建类请求，要求别名首个 bigram（通常是动词）命中，或覆盖率达到 0.75。
+const scorePartialAliasMatch = (aliases = [], queryGrams = new Set()) => {
+  let best = 0;
+  aliases.forEach((alias) => {
+    if (alias.length < 4) return;
+    const aliasGrams = buildBigramSet(alias);
+    if (aliasGrams.size < 2) return;
+    let matched = 0;
+    aliasGrams.forEach((gram) => {
+      if (queryGrams.has(gram)) matched += 1;
+    });
+    const coverage = matched / aliasGrams.size;
+    if (matched < 2 || coverage < 0.5) return;
+    if (!queryGrams.has(alias.slice(0, 2)) && coverage < 0.75) return;
+    best = Math.max(best, Math.min(78, 55 + matched * 5));
+  });
+  return best;
+};
+
 const scoreFeature = (feature = {}, query = '') => {
   const q = normalizeToken(query);
   if (!q) return 0;
@@ -455,6 +585,8 @@ const scoreFeature = (feature = {}, query = '') => {
   if (id === q || title === q || aliases.includes(q)) return 100;
   if (id.includes(q) || title.includes(q)) return 80;
   if (aliases.some(alias => alias.includes(q) || q.includes(alias))) return 70;
+  const partial = scorePartialAliasMatch(aliases, buildBigramSet(q));
+  if (partial > 0) return partial;
   const haystack = normalizeToken([
     feature.id,
     feature.title,
@@ -508,6 +640,9 @@ export const buildAppFeatureDoc = (featureId = '') => {
       `风险等级：${feature.riskLevel || 'low'}`,
       feature.writes ? '会写入 APP 数据。' : '只读或只打开界面。',
       feature.confirmation && feature.confirmation !== 'none' ? `确认策略：${feature.confirmation}` : '',
+      feature.verification?.tool
+        ? `验证方式：执行后用 ${feature.verification.tool} 读回确认${feature.verification.success ? `（${feature.verification.success}）` : ''}`
+        : '',
     ].filter(Boolean).join('\n'),
   };
 };
