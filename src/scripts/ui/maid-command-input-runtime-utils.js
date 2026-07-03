@@ -29,6 +29,27 @@ const containsNode = (container, target) => {
   return false;
 };
 
+const isClassedNode = (node, className = '') => Boolean(
+  node &&
+  typeof node === 'object' &&
+  node.classList &&
+  typeof node.classList.contains === 'function' &&
+  node.classList.contains(className)
+);
+
+const isAppModalPointerTarget = (target, path = null) => {
+  const nodes = Array.isArray(path) && path.length ? path : [target];
+  return nodes.some(node => {
+    if (!node || typeof node !== 'object') return false;
+    if (typeof node.closest === 'function' && node.closest('.app-confirm-overlay, .app-confirm-modal, .maid-guide-step-bubble')) {
+      return true;
+    }
+    return isClassedNode(node, 'app-confirm-overlay') ||
+      isClassedNode(node, 'app-confirm-modal') ||
+      isClassedNode(node, 'maid-guide-step-bubble');
+  });
+};
+
 const iconSvg = body => `
   <svg class="maid-command-input-icon" viewBox="0 0 24 24" aria-hidden="true">
     ${body}
@@ -520,6 +541,7 @@ export const createMaidCommandInputRuntime = ({
         || containsNode(modeSwitchEl, target)) {
         return;
       }
+      if (isAppModalPointerTarget(target, path)) return;
       close();
     };
     documentRef.addEventListener('pointerdown', outsidePointerHandler, true);

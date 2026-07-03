@@ -311,6 +311,92 @@ const findWorldbookEntryIndex = (entries = [], update = {}) => {
   });
 };
 
+const readWorldEntryTitle = (entry = {}, index = 0) => trim(
+  entry?.title || entry?.comment || entry?.name || entry?.id,
+  `entry-${index + 1}`,
+);
+
+const normalizeWorldbookEntrySelector = (selector = {}) => {
+  if (isPlainObject(selector)) return selector;
+  const text = trim(selector);
+  return text ? { entryTitle: text } : {};
+};
+
+const buildWorldbookDeletePlan = (entries = [], args = {}) => {
+  const deleteIndexes = new Map();
+  const skippedDeletes = [];
+  const addDeleteIndex = (index, reason = 'matched_selector') => {
+    if (!Number.isInteger(index) || index < 0 || index >= entries.length) return;
+    if (deleteIndexes.has(index)) return;
+    deleteIndexes.set(index, {
+      index,
+      reason,
+      entry: normalizeWorldbookEntrySummary(entries[index], index),
+    });
+  };
+
+  const selectors = [
+    ...(Array.isArray(args.entries) ? args.entries : []),
+    ...(Array.isArray(args.deletes) ? args.deletes : []),
+  ];
+  selectors.forEach((selector, index) => {
+    const criteria = normalizeWorldbookEntrySelector(selector);
+    if (!Object.keys(criteria).length) {
+      skippedDeletes.push({ index, reason: 'invalid_selector' });
+      return;
+    }
+    const matchIndex = findWorldbookEntryIndex(entries, criteria);
+    if (matchIndex >= 0) {
+      addDeleteIndex(matchIndex, 'matched_selector');
+      return;
+    }
+    skippedDeletes.push({
+      index,
+      reason: 'entry_not_found',
+      target: trim(criteria.entryId || criteria.entryTitle || criteria.title || criteria.name || criteria.query, `delete-${index + 1}`),
+    });
+  });
+
+  if (args.dedupeByTitle === true) {
+    const keep = trim(args.keep, 'first') === 'last' ? 'last' : 'first';
+    const titleFilters = new Set(
+      normalizeStringList(args.duplicateTitles || args.titles)
+        .map(normalizeKey)
+        .filter(Boolean),
+    );
+    const groups = new Map();
+    entries.forEach((entry, index) => {
+      const title = readWorldEntryTitle(entry, index);
+      const key = normalizeKey(title);
+      if (!key || (titleFilters.size && !titleFilters.has(key))) return;
+      const group = groups.get(key) || {
+        title,
+        indexes: [],
+      };
+      group.indexes.push(index);
+      groups.set(key, group);
+    });
+    groups.forEach(group => {
+      if (group.indexes.length <= 1) return;
+      const keepIndex = keep === 'last'
+        ? group.indexes[group.indexes.length - 1]
+        : group.indexes[0];
+      group.indexes.forEach(index => {
+        if (index !== keepIndex) addDeleteIndex(index, 'duplicate_title');
+      });
+    });
+  }
+
+  const deletedEntries = Array.from(deleteIndexes.values())
+    .sort((a, b) => a.index - b.index);
+  return {
+    deleteIndexes: new Set(deletedEntries.map(item => item.index)),
+    deletedEntries,
+    skippedDeletes,
+    deleteCount: deletedEntries.length,
+  };
+};
+
 const applyWorldbookEntryUpdate = (entry = {}, update = {}, index = 0) => {
   const source = isPlainObject(update) ? update : {};
   const next = isPlainObject(entry) ? clone(entry) : {};
@@ -401,6 +487,7 @@ export const createAppContentAgentTools = ({
   getWorldIdsForSession = null,
   getGlobalWorldId = null,
   assignWorldToPersona = null,
+  bindWorldToSession = null,
   enterChatRoom = null,
   refreshChatAndContacts = null,
   setActiveSession = null,
@@ -480,6 +567,20 @@ export const createAppContentAgentTools = ({
     };
   };
 
+  const resolveWorldbookDeleteTarget = async (args = {}) => {
+    const worldbookId = await resolveWorldbookId(args);
+    const existing = worldbookId && typeof getWorldInfo === 'function'
+      ? await getWorldInfo(worldbookId)
+      : null;
+    const existingEntries = getWorldEntries(existing);
+    return {
+      worldbookId,
+      existing,
+      existingEntries,
+      deletePlan: buildWorldbookDeletePlan(existingEntries, args),
+    };
+  };
+
   const hasAllowedToolSafety = (context = {}, kind = '') => (
     context?.toolSafety?.decision === 'allow' &&
     (!kind || context?.toolSafety?.request?.kind === kind)
@@ -489,6 +590,7 @@ export const createAppContentAgentTools = ({
     (!kind || context?.toolSafety?.request?.kind === kind)
   );
   const isWorldbookUpdateAllowed = (context = {}) => hasAllowedToolSafety(context, 'worldbook.update_entries');
+  const isWorldbookDeleteAllowed = (context = {}) => hasAllowedToolSafety(context, 'worldbook.delete_entries');
 
   return [
   {
@@ -1011,6 +1113,143 @@ export const createAppContentAgentTools = ({
       : `updated worldbook ${trim(result?.worldbookId, '-')} (${Number(result?.updatedEntryCount || 0)} updated, ${Number(result?.createdEntryCount || 0)} created)`,
   },
   {
+    name: 'worldbook.delete_entries',
+    title: 'Delete worldbook entries',
+    description: 'Delete selected entries from an existing worldbook, including duplicate entries by title. Requires user confirmation.',
+    source: 'maid-app-content',
+    permissions: [],
+    riskLevel: 'high',
+    capabilities: {
+      read: true,
+      write: true,
+      network: false,
+      cost: 'none',
+      undo: 'manual_restore',
+      modelContext: 'none',
+      confirmation: 'allow_once',
+    },
+    schema: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        id: { type: 'string', maxLength: 160 },
+        worldbookId: { type: 'string', maxLength: 160 },
+        name: { type: 'string', maxLength: 160 },
+        sessionId: { type: 'string', maxLength: 160 },
+        entries: { type: 'array', minItems: 1, maxItems: 100 },
+        deletes: { type: 'array', minItems: 1, maxItems: 100 },
+        dedupeByTitle: { type: 'boolean' },
+        duplicateTitles: { type: 'array', maxItems: 50 },
+        titles: { type: 'array', maxItems: 50 },
+        keep: { type: 'string', enum: ['first', 'last'] },
+      },
+    },
+    safety: {
+      operationType: 'delete_worldbook_entries',
+      destructive: 'conditional',
+      preflight: async (args = {}) => {
+        const target = await resolveWorldbookDeleteTarget(args);
+        if (!target.worldbookId || !target.existingEntries.length || !target.deletePlan.deleteCount) {
+          return { destructive: false, operationType: 'delete_worldbook_entries' };
+        }
+        const titles = Array.from(new Set(
+          target.deletePlan.deletedEntries
+            .map(item => trim(item.entry?.title || item.entry?.id))
+            .filter(Boolean),
+        )).slice(0, 8);
+        return {
+          destructive: true,
+          kind: 'worldbook.delete_entries',
+          operationType: 'delete_entries',
+          title: '删除世界书条目',
+          message: `世界书「${target.worldbookId}」将删除 ${target.deletePlan.deleteCount} 个条目。删除后会保留未匹配条目，请确认目标正确。`,
+          confirmText: '删除',
+          cancelText: '取消',
+          danger: true,
+          details: {
+            worldbookId: target.worldbookId,
+            currentEntryCount: target.existingEntries.length,
+            deleteCount: target.deletePlan.deleteCount,
+            keep: trim(args.keep, 'first') === 'last' ? 'last' : 'first',
+            titles,
+          },
+          onDeny: {
+            action: 'skip',
+            reason: 'worldbook_delete_cancelled',
+          },
+        };
+      },
+    },
+    execute: async (args = {}, context = {}) => {
+      await waitForWorldStoreReady?.();
+      const target = await resolveWorldbookDeleteTarget(args);
+      if (!target.worldbookId) return { ok: false, deleted: false, reason: 'missing_worldbook_id' };
+      if (typeof getWorldInfo !== 'function' || typeof saveWorldInfo !== 'function') {
+        return { ok: false, deleted: false, reason: 'worldbook_store_unavailable', worldbookId: target.worldbookId };
+      }
+      if (!target.existing) {
+        return { ok: false, deleted: false, reason: 'worldbook_not_found', worldbookId: target.worldbookId };
+      }
+      if (!target.deletePlan.deleteCount) {
+        return {
+          ok: false,
+          deleted: false,
+          reason: 'no_matching_entries',
+          worldbookId: target.worldbookId,
+          skippedDeletes: target.deletePlan.skippedDeletes,
+        };
+      }
+      if (!isWorldbookDeleteAllowed(context)) {
+        const confirmed = typeof confirmDestructiveWrite === 'function'
+          ? await confirmDestructiveWrite({
+            kind: 'worldbook.delete_entries',
+            title: '删除世界书条目',
+            message: `世界书「${target.worldbookId}」将删除 ${target.deletePlan.deleteCount} 个条目。删除后会保留未匹配条目，请确认目标正确。`,
+            confirmText: '删除',
+            cancelText: '取消',
+            danger: true,
+            worldbookId: target.worldbookId,
+            currentEntryCount: target.existingEntries.length,
+            deleteCount: target.deletePlan.deleteCount,
+          })
+          : false;
+        if (confirmed !== true) {
+          return {
+            ok: false,
+            deleted: false,
+            skipped: true,
+            reason: 'worldbook_delete_cancelled',
+            worldbookId: target.worldbookId,
+          };
+        }
+      }
+      const nextEntries = target.existingEntries
+        .filter((entry, index) => !target.deletePlan.deleteIndexes.has(index))
+        .map(entry => clone(entry));
+      const payload = {
+        ...(isPlainObject(target.existing) ? target.existing : {}),
+        name: trim(target.existing?.name || target.worldbookId),
+        entries: nextEntries,
+        updatedBy: 'maid',
+        updatedAt: Number(now?.() || Date.now()) || Date.now(),
+      };
+      await saveWorldInfo(target.worldbookId, payload);
+      return {
+        ok: true,
+        deleted: true,
+        worldbookId: target.worldbookId,
+        previousEntryCount: target.existingEntries.length,
+        deletedEntryCount: target.deletePlan.deleteCount,
+        entryCount: nextEntries.length,
+        deletedEntries: target.deletePlan.deletedEntries,
+        skippedDeletes: target.deletePlan.skippedDeletes,
+      };
+    },
+    summarizeResult: result => result?.ok === false
+      ? `delete worldbook entries failed: ${trim(result?.reason, 'unknown')}`
+      : `deleted ${Number(result?.deletedEntryCount || 0)} worldbook entries from ${trim(result?.worldbookId, '-')}`,
+  },
+  {
     name: 'worldbook.list',
     title: 'List worldbooks',
     description: 'List saved APP worldbooks and mark current-session/global bindings when available.',
@@ -1057,6 +1296,83 @@ export const createAppContentAgentTools = ({
       };
     },
     summarizeResult: result => `listed ${Number(result?.worldbooks?.length || 0)} worldbook(s)`,
+  },
+  {
+    name: 'worldbook.bind_session',
+    title: 'Bind worldbook to chat session',
+    description: 'Enable a saved worldbook for a specific chat session without deleting or editing worldbook entries.',
+    source: 'maid-app-content',
+    permissions: [],
+    riskLevel: 'medium',
+    capabilities: {
+      read: true,
+      write: true,
+      network: false,
+      cost: 'none',
+      undo: 'manual_unbind',
+      modelContext: 'none',
+      confirmation: 'allow_once',
+    },
+    safety: {
+      operationType: 'bind_worldbook_to_session',
+      destructive: 'never',
+      description: 'Adds a worldbook binding to a chat session. Default mode preserves any existing session worldbook bindings.',
+    },
+    schema: {
+      type: 'object',
+      required: ['worldbookId'],
+      additionalProperties: false,
+      properties: {
+        worldbookId: { type: 'string', minLength: 1, maxLength: 160 },
+        id: { type: 'string', maxLength: 160 },
+        name: { type: 'string', maxLength: 160 },
+        sessionId: { type: 'string', maxLength: 160 },
+        sessionName: { type: 'string', maxLength: 160 },
+        target: { type: 'string', maxLength: 160 },
+        chatName: { type: 'string', maxLength: 160 },
+        mode: { type: 'string', enum: ['append', 'replace'] },
+      },
+    },
+    execute: async (args = {}) => {
+      await waitForWorldStoreReady?.();
+      const rawSessionId = trim(args.sessionId || args.sessionName || args.target || args.chatName || chatStore?.getCurrent?.());
+      const contact = findStoreItem(contactsStore, rawSessionId);
+      const sessionId = trim(contact?.id || rawSessionId);
+      if (!sessionId) return { ok: false, bound: false, reason: 'missing_session_id' };
+      if (!contact && contactsStore && typeof contactsStore.getContact === 'function') {
+        return { ok: false, bound: false, reason: 'session_not_found', sessionId };
+      }
+      const worldbookId = trim(args.worldbookId || args.id || args.name);
+      if (!worldbookId) return { ok: false, bound: false, reason: 'missing_worldbook_id', sessionId };
+      if (typeof bindWorldToSession !== 'function') {
+        return { ok: false, bound: false, reason: 'worldbook_session_binding_unavailable', sessionId, worldbookId };
+      }
+      if (typeof getWorldInfo === 'function') {
+        const world = await getWorldInfo(worldbookId);
+        if (!world) return { ok: false, bound: false, reason: 'worldbook_not_found', sessionId, worldbookId };
+      }
+      const currentIds = await getSessionWorldIds(sessionId);
+      const mode = trim(args.mode, 'append') === 'replace' ? 'replace' : 'append';
+      const nextIds = mode === 'replace'
+        ? [worldbookId]
+        : Array.from(new Set([...currentIds, worldbookId].filter(Boolean)));
+      await bindWorldToSession(sessionId, nextIds, { silent: false });
+      refreshChatAndContacts?.({ immediate: true });
+      return {
+        ok: true,
+        bound: true,
+        added: !currentIds.includes(worldbookId),
+        mode,
+        sessionId,
+        sessionName: trim(contact?.name || sessionId),
+        worldbookId,
+        previousWorldbookIds: currentIds,
+        worldbookIds: nextIds,
+      };
+    },
+    summarizeResult: result => result?.ok === false
+      ? `bind worldbook to session failed: ${trim(result?.reason, 'unknown')}`
+      : `bound worldbook ${trim(result?.worldbookId, '-')} to ${trim(result?.sessionName || result?.sessionId, '-')}`,
   },
   {
     name: 'worldbook.read',

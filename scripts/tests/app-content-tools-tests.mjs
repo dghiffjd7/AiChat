@@ -102,15 +102,22 @@ const createProfileStore = (prefix = 'profile') => {
   await personaStore.setActive(persona.id);
   const saved = new Map();
   const bound = [];
+  const boundSessions = [];
+  const sessionWorldIds = new Map([['chat-a', ['Role A World']]]);
   const tools = createAppContentAgentTools({
     personaStore,
     saveWorldInfo: async (id, data) => saved.set(id, data),
     getWorldInfo: async id => saved.get(id) || null,
     listWorlds: async () => Array.from(saved.keys()),
     waitForWorldStoreReady: async () => true,
-    getWorldIdsForSession: async () => ['Role A World'],
+    getWorldIdsForSession: async sessionId => sessionWorldIds.get(sessionId) || [],
     getGlobalWorldId: async () => 'Global World',
     assignWorldToPersona: async (personaId, worldId, options) => bound.push({ personaId, worldId, options }),
+    bindWorldToSession: async (sessionId, worldIds, options) => {
+      const list = Array.isArray(worldIds) ? worldIds : [worldIds].filter(Boolean);
+      sessionWorldIds.set(sessionId, list);
+      boundSessions.push({ sessionId, worldIds: list, options });
+    },
     now: () => 1000,
   });
 
@@ -155,6 +162,15 @@ const createProfileStore = (prefix = 'profile') => {
   assert.ok(listResult.worldbooks.some(item => item.id === 'Role A World' && item.boundToCurrentSession === true));
   assert.ok(listResult.worldbooks.some(item => item.id === 'Global World' && item.global === true));
 
+  const bindResult = await getTool(tools, 'worldbook.bind_session').execute({
+    sessionId: 'chat-b',
+    worldbookId: 'Role A World',
+  });
+  assert.equal(bindResult.ok, true);
+  assert.equal(bindResult.bound, true);
+  assert.deepEqual(sessionWorldIds.get('chat-b'), ['Role A World']);
+  assert.deepEqual(boundSessions.at(-1), { sessionId: 'chat-b', worldIds: ['Role A World'], options: { silent: false } });
+
   const readResult = await getTool(tools, 'worldbook.read').execute({ name: 'Role A World' });
   assert.equal(readResult.ok, true);
   assert.equal(readResult.name, 'Role A World');
@@ -192,6 +208,31 @@ const createProfileStore = (prefix = 'profile') => {
   assert.match(saved.get('Role A World').entries[0].content, /扩展后的温柔大姐姐/);
   assert.deepEqual(saved.get('Role A World').entries[0].key, ['姐姐', '大姐姐']);
   assert.equal(saved.get('Role A World').entries[1].content, '傲娇大小姐青梅竹马。');
+
+  saved.set('Duplicate World', {
+    name: 'Duplicate World',
+    entries: [
+      { id: 'a-1', comment: 'A', content: 'old A' },
+      { id: 'a-2', comment: 'A', content: 'latest A' },
+      { id: 'b-1', comment: 'B', content: 'old B' },
+      { id: 'b-2', comment: 'B', content: 'latest B' },
+    ],
+  });
+  const deduped = await getTool(tools, 'worldbook.delete_entries').execute({
+    name: 'Duplicate World',
+    dedupeByTitle: true,
+    duplicateTitles: ['A', 'B'],
+    keep: 'last',
+  }, {
+    toolSafety: {
+      decision: 'allow',
+      request: { kind: 'worldbook.delete_entries' },
+    },
+  });
+  assert.equal(deduped.ok, true);
+  assert.equal(deduped.deletedEntryCount, 2);
+  assert.equal(deduped.entryCount, 2);
+  assert.deepEqual(saved.get('Duplicate World').entries.map(entry => entry.id), ['a-2', 'b-2']);
 
   const currentRead = await getTool(tools, 'worldbook.read').execute({ sessionId: 'chat-a', maxEntries: 1 });
   assert.equal(currentRead.ok, true);
@@ -295,6 +336,47 @@ const createProfileStore = (prefix = 'profile') => {
   assert.equal(saved.get('Registry World (2)').entries[0].comment, '新条目');
   assert.equal(confirmations, 1);
   console.log('ok - app content tools use registry safety fallback for worldbook replace');
+}
+
+{
+  const saved = new Map([
+    ['Registry Delete World', {
+      name: 'Registry Delete World',
+      entries: [
+        { id: 'keep', comment: '重复条目', content: '保留' },
+        { id: 'delete', comment: '重复条目', content: '删除' },
+      ],
+    }],
+  ]);
+  const tools = createAppContentAgentTools({
+    saveWorldInfo: async (id, data) => saved.set(id, data),
+    getWorldInfo: async id => saved.get(id) || null,
+    listWorlds: async () => Array.from(saved.keys()),
+  });
+  const registry = createAgentToolRegistry({
+    permissionEvaluator: createAgentPermissionEvaluator({
+      defaultDecision: AGENT_PERMISSION_DECISIONS.allow,
+    }),
+    logger: { warn: () => {} },
+  });
+  registry.registerMany(tools);
+  const confirmations = [];
+  const result = await registry.executeTool('worldbook.delete_entries', {
+    name: 'Registry Delete World',
+    dedupeByTitle: true,
+    keep: 'first',
+  }, {
+    requestToolConfirmation: request => {
+      confirmations.push(request);
+      return true;
+    },
+  });
+  assert.equal(result.status, 'succeeded');
+  assert.equal(result.result.deletedEntryCount, 1);
+  assert.deepEqual(saved.get('Registry Delete World').entries.map(entry => entry.id), ['keep']);
+  assert.equal(confirmations.length, 1);
+  assert.equal(confirmations[0].kind, 'worldbook.delete_entries');
+  console.log('ok - app content tools require registry safety confirmation before deleting worldbook entries');
 }
 
 {

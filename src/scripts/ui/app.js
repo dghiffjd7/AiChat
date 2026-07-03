@@ -2715,10 +2715,11 @@ const initApp = async () => {
     getWorldIdsForSession: sessionId => window.appBridge.getWorldIdsForSession?.(sessionId),
     getGlobalWorldId: () => window.appBridge.getGlobalWorldId?.(),
     assignWorldToPersona: (personaId, worldId, options) => window.appBridge.assignRoleWorldToPersona?.(personaId, worldId, options || {}),
+    bindWorldToSession: (sessionId, worldIds, options) => window.appBridge.bindWorldToSession?.(sessionId, worldIds, options || {}),
     enterChatRoom: (...args) => enterChatRoom(...args),
     refreshChatAndContacts: (...args) => refreshChatAndContacts(...args),
     setActiveSession: sessionId => window.appBridge.setActiveSession(sessionId),
-    sendChatMessage: (content, options = {}) => {
+    sendChatMessage: async (content, options = {}) => {
       const sid = String(options?.sessionId || '').trim();
       if (sid && String(chatStore.getCurrent() || '').trim() !== sid) {
         chatStore.switchSession(sid);
@@ -2730,10 +2731,7 @@ const initApp = async () => {
         includeAttachments: false,
       });
       if (options?.waitForReply === false) {
-        Promise.resolve(sendTask).catch(error => {
-          logger.warn('maid send chat message failed', error);
-        });
-        return true;
+        return await sendTask;
       }
       return sendTask;
     },
@@ -2818,6 +2816,30 @@ const initApp = async () => {
     const tokenCount = Number(conversationContext?.tokenCount || 0) || 0;
     if (!tokenCount) return;
     void maidConversationStore.recordContextInjection(tokenCount);
+  };
+  const recordMaidTurnFromResult = async ({
+    input = '',
+    result = null,
+    context = {},
+  } = {}) => {
+    const safeResult = result || {};
+    try {
+      await maidConversationStore.appendTurn({
+        input,
+        status: safeResult.status || (safeResult.ok ? 'succeeded' : 'failed'),
+        responseType: safeResult.responseType || '',
+        message: safeResult.message || safeResult.reason || '',
+        toolName: safeResult.plan?.toolName || safeResult.output?.toolName || '',
+        featureId: safeResult.plan?.featureId || '',
+        title: safeResult.plan?.title || '',
+        continuable: safeResult.continuable === true,
+        continueHint: safeResult.continueHint || '',
+        reactStoppedReason: safeResult.reactStoppedReason || '',
+        context,
+      });
+    } catch (error) {
+      logger.warn('maid conversation turn save failed', error);
+    }
   };
   const resolveMaidRuntimeConfig = createMaidRuntimeConfigResolver({
     settingsStore: maidSettingsStore,
@@ -3295,15 +3317,24 @@ const initApp = async () => {
             sessionId: opts.sessionId || chatStore.getCurrent(),
           });
         },
-        runMaidAssistantPrompt: (options = {}) => {
+        runMaidAssistantPrompt: async (options = {}) => {
           const opts = options && typeof options === 'object' ? options : {};
           const input = String(opts.input || opts.prompt || opts.text || '').trim();
-          return maidAssistantAgent.runPrompt(input, {
+          const maidTurnContext = {
             sessionId: opts.sessionId || chatStore.getCurrent(),
             uiMode: opts.uiMode || uiMode,
             activePage: opts.activePage || activePage,
+          };
+          const result = await maidAssistantAgent.runPrompt(input, {
+            ...maidTurnContext,
             requestToolConfirmation: requestMaidToolConfirmation,
           });
+          await recordMaidTurnFromResult({
+            input,
+            result,
+            context: maidTurnContext,
+          });
+          return result;
         },
         exportAgentRuns: options => agentRunStore.exportState(options || {}),
         runContactProfileUpdate: options => contactProfilerAgent.runProfileUpdate({
@@ -21409,23 +21440,11 @@ Phase G（Frame 36）：循环衔接
           controls?.setStatus?.(message, status?.tone || 'thinking');
         },
       });
-      try {
-        await maidConversationStore.appendTurn({
-          input: text,
-          status: result?.status || (result?.ok ? 'succeeded' : 'failed'),
-          responseType: result?.responseType || '',
-          message: result?.message || result?.reason || '',
-          toolName: result?.plan?.toolName || result?.output?.toolName || '',
-          featureId: result?.plan?.featureId || '',
-          title: result?.plan?.title || '',
-          continuable: result?.continuable === true,
-          continueHint: result?.continueHint || '',
-          reactStoppedReason: result?.reactStoppedReason || '',
-          context: maidTurnContext,
-        });
-      } catch (error) {
-        logger.warn('maid conversation turn save failed', error);
-      }
+      await recordMaidTurnFromResult({
+        input: text,
+        result,
+        context: maidTurnContext,
+      });
       const latestExchange = maidSettingsStore.getLastExchange?.() || {};
       if (!String(latestExchange.requestPrompt || '').trim() || latestExchange.source === 'pending') {
         maidSettingsStore.setLastExchange({

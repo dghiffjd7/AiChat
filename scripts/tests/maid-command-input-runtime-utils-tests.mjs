@@ -312,6 +312,17 @@ class FakeDocument {
   documentRef.dispatchEvent('pointerdown', { target: modeSwitchEl });
   assert.equal(rootEl.classList.contains('is-open'), true);
 
+  const confirmBtn = new FakeElement('button');
+  const confirmModal = new FakeElement('div');
+  confirmModal.classList.add('app-confirm-modal');
+  confirmModal.appendChild(confirmBtn);
+  documentRef.dispatchEvent('pointerdown', {
+    target: confirmBtn,
+    composedPath: () => [confirmBtn, confirmModal, documentRef.body],
+  });
+  assert.equal(rootEl.classList.contains('is-open'), true);
+  assert.equal(modeSwitchEl.classList.contains('is-maid-input-open'), true);
+
   documentRef.dispatchEvent('pointerdown', { target: outsideEl });
   assert.equal(rootEl.classList.contains('is-open'), false);
   assert.equal(modeSwitchEl.classList.contains('is-maid-input-open'), false);

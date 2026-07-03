@@ -2467,7 +2467,11 @@ class AppBridge {
       const kv = await safeInvoke('load_kv', { name: this.getWorldSessionMapKey() });
       if (kv && typeof kv === 'object' && !kv._tooLarge && Object.keys(kv).length) {
         this.worldSessionMap = kv;
-        localStorage.setItem(this.getWorldSessionMapKey(), JSON.stringify(kv));
+        try {
+          localStorage.setItem(this.getWorldSessionMapKey(), JSON.stringify(kv));
+        } catch (err) {
+          logger.warn('world-session map hydrate -> localStorage failed', err);
+        }
         // 切换当前 session 的世界书
         if (this.activeSessionId && kv[this.activeSessionId]) {
           this.currentWorldIds = this.normalizeWorldIds(kv[this.activeSessionId]);
@@ -2520,8 +2524,12 @@ class AppBridge {
   }
 
   persistWorldSessionMap() {
-    localStorage.setItem(this.getWorldSessionMapKey(), JSON.stringify(this.worldSessionMap || {}));
-    safeInvoke('save_kv', { name: this.getWorldSessionMapKey(), data: this.worldSessionMap }).catch(() => {});
+    try {
+      localStorage.setItem(this.getWorldSessionMapKey(), JSON.stringify(this.worldSessionMap || {}));
+    } catch (err) {
+      logger.warn('world-session map persist -> localStorage failed', err);
+    }
+    safeInvoke('save_kv', { name: this.getWorldSessionMapKey(), data: this.worldSessionMap || {} }).catch(() => {});
   }
 
   getWorldSessionMap() {

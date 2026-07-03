@@ -81,11 +81,6 @@ const makeToolErrorOutput = (plan = {}, error = null) => ({
   },
 });
 
-const shouldSkipReactAfterSuccess = (plan = {}, output = {}) => {
-  const result = unwrapToolOutputResult(output);
-  return plan?.toolName === 'chat.send_message' && result?.requestTriggered === true;
-};
-
 const countArrayItems = value => (Array.isArray(value) ? value.length : 0);
 
 const resolveReactStepBudget = ({
@@ -105,8 +100,8 @@ const resolveReactStepBudget = ({
     recommended = 6;
   } else if (toolName === 'app.read_resource' || toolName === 'worldbook.read' || toolName === 'worldbook.list') {
     recommended = 10;
-  } else if (toolName === 'worldbook.create' || toolName === 'worldbook.update_entries') {
-    const batchSize = Math.max(countArrayItems(args.entries), countArrayItems(args.updates), 1);
+  } else if (toolName === 'worldbook.create' || toolName === 'worldbook.update_entries' || toolName === 'worldbook.delete_entries') {
+    const batchSize = Math.max(countArrayItems(args.entries), countArrayItems(args.updates), countArrayItems(args.deletes), 1);
     recommended = Math.min(40, 14 + (batchSize * 3));
   } else if (/^(persona|user|session|contact)\./.test(toolName)) {
     recommended = 10;
@@ -188,7 +183,7 @@ const buildAutoVerificationPlan = (plan = {}, output = {}) => {
   const toolName = trim(plan?.toolName);
   const result = unwrapToolOutputResult(output);
   if (!isPlainObject(result) || result.ok === false) return null;
-  if (toolName === 'worldbook.create' || toolName === 'worldbook.update_entries') {
+  if (toolName === 'worldbook.create' || toolName === 'worldbook.update_entries' || toolName === 'worldbook.delete_entries') {
     const worldbookName = trim(result.worldbookId || plan?.args?.worldbookId || plan?.args?.name || plan?.args?.id);
     if (!worldbookName) return null;
     const entryCount = Number(result.entryCount || 0) || 0;
@@ -214,6 +209,66 @@ const buildAutoVerificationPlan = (plan = {}, output = {}) => {
     };
   }
   return null;
+};
+
+const normalizeEntryTitle = (entry = {}) => compactText(
+  entry?.entryTitle ||
+  entry?.title ||
+  entry?.comment ||
+  entry?.name ||
+  entry?.id ||
+  ''
+);
+
+const extractEntryTitleSet = (entries = []) => new Set(
+  (Array.isArray(entries) ? entries : [])
+    .map(entry => normalizeEntryTitle(entry))
+    .filter(Boolean)
+);
+
+const sameWorldbookTarget = (a = '', b = '') => {
+  const left = compactText(a);
+  const right = compactText(b);
+  return Boolean(left && right && left === right);
+};
+
+const hasVerifiedWorldbookAfterStep = (steps = [], index = -1, worldbookId = '', minEntryCount = 0) => (
+  (Array.isArray(steps) ? steps : [])
+    .slice(Math.max(0, index + 1))
+    .some(step => (
+      step?.toolName === 'worldbook.read' &&
+      step?.status === 'succeeded' &&
+      sameWorldbookTarget(
+        step?.output?.id || step?.output?.name || step?.args?.name || step?.args?.worldbookId,
+        worldbookId,
+      ) &&
+      Number(step?.output?.entryCount || 0) >= Number(minEntryCount || 0)
+    ))
+);
+
+const shouldStopDuplicateWorldbookWriteAfterVerification = (decision = {}, steps = []) => {
+  const toolName = trim(decision?.toolName);
+  if (!['worldbook.create', 'worldbook.update_entries'].includes(toolName)) return false;
+  const args = isPlainObject(decision?.args) ? decision.args : {};
+  const targetName = trim(args.name || args.worldbookId || args.id);
+  if (!targetName) return false;
+  const nextTitles = extractEntryTitleSet(toolName === 'worldbook.create' ? args.entries : args.updates);
+  if (!nextTitles.size) return false;
+  const list = Array.isArray(steps) ? steps : [];
+  for (let index = list.length - 1; index >= 0; index -= 1) {
+    const step = list[index];
+    if (step?.toolName !== toolName || step?.status !== 'succeeded') continue;
+    const output = step.output || {};
+    const previousTarget = trim(output.worldbookId || output.name || step.args?.name || step.args?.worldbookId || step.args?.id);
+    if (!sameWorldbookTarget(previousTarget, targetName)) continue;
+    const previousTitles = extractEntryTitleSet(toolName === 'worldbook.create' ? step.args?.entries : step.args?.updates);
+    if (!previousTitles.size) continue;
+    const allAlreadyWritten = Array.from(nextTitles).every(title => previousTitles.has(title));
+    if (!allAlreadyWritten) continue;
+    const minEntryCount = Number(output.entryCount || 0) || previousTitles.size;
+    if (hasVerifiedWorldbookAfterStep(list, index, previousTarget, minEntryCount)) return true;
+  }
+  return false;
 };
 
 const buildReactStepSnapshot = ({
@@ -966,7 +1021,7 @@ export const createMaidAssistantAgent = ({
           };
         }
 
-        if (!reactPlanner || (ok && shouldSkipReactAfterSuccess(currentPlan, output))) {
+        if (!reactPlanner) {
           if (!ok) {
             return {
               ok: false,
@@ -1072,6 +1127,27 @@ export const createMaidAssistantAgent = ({
           };
         }
         if (decision.action === 'tool') {
+          if (shouldStopDuplicateWorldbookWriteAfterVerification(decision, steps)) {
+            return {
+              ok: true,
+              status: 'succeeded',
+              responseType: 'react',
+              input: trim(input),
+              plan: clone(plan),
+              finalDecision: {
+                ok: true,
+                action: 'final',
+                message: '已经写入并读回验证成功；为避免重复追加相同世界书条目，本轮未再次执行重复写入。',
+                source: 'duplicate_write_guard',
+              },
+              output: clone(observedOutput),
+              steps: clone(steps),
+              guided: Boolean(observedExecution?.guided),
+              guide: clone(observedExecution?.guide || null),
+              reason: '',
+              message: '已经写入并读回验证成功；为避免重复追加相同世界书条目，本轮未再次执行重复写入。',
+            };
+          }
           currentPlan = decision;
           continue;
         }

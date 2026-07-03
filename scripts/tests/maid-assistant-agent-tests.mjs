@@ -316,6 +316,96 @@ import {
     planner: async () => ({
       ok: true,
       toolName: 'app.read_resource',
+      args: { resource: 'chat', sessionId: '姐姐' },
+      featureId: 'app.resource.read',
+      title: '读取姐姐聊天',
+      response: '我先读取姐姐的聊天。',
+    }),
+    reactPlanner: async (input, context) => {
+      reactCalls.push({ input, context });
+      if (reactCalls.length === 1) {
+        return {
+          ok: true,
+          action: 'tool',
+          toolName: 'app.read_resource',
+          args: { resource: 'chat', sessionId: '发小' },
+          featureId: 'app.resource.read',
+          title: '读取发小聊天',
+          response: '我再读取发小的聊天。',
+        };
+      }
+      if (reactCalls.length === 2) {
+        return {
+          ok: true,
+          action: 'tool',
+          toolName: 'chat.send_message',
+          args: { sessionId: '姐姐', content: '我吃过了，你也早点睡。' },
+          featureId: 'chat.send_message',
+          title: '回复姐姐',
+          response: '我先回复姐姐。',
+        };
+      }
+      if (reactCalls.length === 3) {
+        return {
+          ok: true,
+          action: 'tool',
+          toolName: 'chat.send_message',
+          args: { sessionId: '发小', content: '在吗？' },
+          featureId: 'chat.send_message',
+          title: '回复发小',
+          response: '我再回复发小。',
+        };
+      }
+      return {
+        ok: true,
+        action: 'final',
+        message: '已经分别回复姐姐和发小。',
+      };
+    },
+    toolRegistry: {
+      executeTool: async (toolName, args) => {
+        calls.push({ toolName, args });
+        if (toolName === 'app.read_resource') {
+          return {
+            toolName,
+            status: 'succeeded',
+            result: { ok: true, resource: 'chat', sessionId: args.sessionId, messages: [] },
+            summary: 'read resource chat',
+          };
+        }
+        if (toolName === 'chat.send_message') {
+          return {
+            toolName,
+            status: 'succeeded',
+            result: { ok: true, sent: true, requestTriggered: true, sessionId: args.sessionId },
+            summary: `sent message to ${args.sessionId}`,
+          };
+        }
+        throw new Error(`unexpected tool ${toolName}`);
+      },
+    },
+    logger: { warn() {} },
+  });
+  const result = await agent.runPrompt('根据刚才读取到的回应，分别回复姐姐和发小');
+  assert.equal(result.ok, true);
+  assert.equal(result.message, '已经分别回复姐姐和发小。');
+  assert.deepEqual(calls.map(call => `${call.toolName}:${call.args.sessionId}`), [
+    'app.read_resource:姐姐',
+    'app.read_resource:发小',
+    'chat.send_message:姐姐',
+    'chat.send_message:发小',
+  ]);
+  assert.equal(reactCalls.length, 4);
+  console.log('ok - maid assistant agent continues ReAct after chat sends');
+}
+
+{
+  const calls = [];
+  const reactCalls = [];
+  const agent = createMaidAssistantAgent({
+    planner: async () => ({
+      ok: true,
+      toolName: 'app.read_resource',
       args: { resource: 'chat', sessionName: '精灵女王' },
       featureId: 'app.resource.read',
       title: '读取聊天消息',
@@ -516,6 +606,70 @@ import {
   assert.equal(statuses.some(status => status.stage === 'verifying'), true);
   assert.match(result.message, /读回确认/);
   console.log('ok - maid assistant agent verifies worldbook writes before final answer');
+}
+
+{
+  const calls = [];
+  const agent = createMaidAssistantAgent({
+    planner: async () => ({
+      ok: true,
+      toolName: 'worldbook.create',
+      args: {
+        name: '测试世界书',
+        entries: [
+          { title: '超级温柔大姐姐', content: '大姐姐设定。' },
+          { title: '傲娇大小姐青梅竹马', content: '青梅竹马设定。' },
+        ],
+      },
+      featureId: 'worldbook.create',
+      title: '创建测试世界书',
+      response: '我来创建测试世界书。',
+    }),
+    reactPlanner: async () => ({
+      ok: true,
+      action: 'tool',
+      toolName: 'worldbook.create',
+      args: {
+        name: '测试世界书',
+        entries: [
+          { title: '超级温柔大姐姐', content: '重复的大姐姐设定。' },
+          { title: '傲娇大小姐青梅竹马', content: '重复的青梅竹马设定。' },
+        ],
+      },
+      featureId: 'worldbook.create',
+      title: '再次创建测试世界书',
+      response: '我再创建一次。',
+    }),
+    toolRegistry: {
+      executeTool: async (toolName, args) => {
+        calls.push({ toolName, args });
+        if (toolName === 'worldbook.create') {
+          return {
+            toolName,
+            status: 'succeeded',
+            result: { ok: true, worldbookId: args.name, addedEntryCount: args.entries.length, entryCount: 2 },
+            summary: 'saved worldbook',
+          };
+        }
+        if (toolName === 'worldbook.read') {
+          return {
+            toolName,
+            status: 'succeeded',
+            result: { ok: true, name: args.name, entryCount: 2, entries: args.includeContent ? [] : [] },
+            summary: 'read worldbook',
+          };
+        }
+        throw new Error(`unexpected tool ${toolName}`);
+      },
+    },
+    logger: { warn() {} },
+  });
+  const result = await agent.runPrompt('创建测试世界书');
+  assert.equal(result.ok, true);
+  assert.deepEqual(calls.map(call => call.toolName), ['worldbook.create', 'worldbook.read']);
+  assert.equal(result.finalDecision.source, 'duplicate_write_guard');
+  assert.match(result.message, /避免重复追加/);
+  console.log('ok - maid assistant agent stops duplicate verified worldbook writes');
 }
 
 {

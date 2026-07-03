@@ -216,6 +216,7 @@ const escapeRegex = value => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'
     getWorldIdsForSession: async () => ['CatalogWorld'],
     getGlobalWorldId: async () => '',
     assignWorldToPersona: async (personaId, worldId, options) => boundWorlds.push({ personaId, worldId, options }),
+    bindWorldToSession: async (sessionId, worldIds, options) => boundWorlds.push({ sessionId, worldIds, options }),
     enterChatRoom: async id => {
       openedSessions.push(id);
       return { blocked: false };
@@ -384,10 +385,41 @@ const escapeRegex = value => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'
       assert.equal(result.updatedEntryCount, 1);
       return;
     }
+    if (feature.id === 'worldbook.delete_entries') {
+      savedWorlds.set('CatalogDeleteWorld', {
+        name: 'CatalogDeleteWorld',
+        entries: [
+          { id: 'old', comment: 'Duplicate', content: 'old' },
+          { id: 'latest', comment: 'Duplicate', content: 'latest' },
+        ],
+      });
+      const result = await getTool(tools, 'worldbook.delete_entries').execute({
+        name: 'CatalogDeleteWorld',
+        dedupeByTitle: true,
+        duplicateTitles: ['Duplicate'],
+        keep: 'last',
+      }, {
+        toolSafety: {
+          decision: 'allow',
+          request: { kind: 'worldbook.delete_entries' },
+        },
+      });
+      assert.equal(result.ok, true);
+      assert.equal(result.deletedEntryCount, 1);
+      assert.deepEqual(savedWorlds.get('CatalogDeleteWorld').entries.map(entry => entry.id), ['latest']);
+      return;
+    }
     if (feature.id === 'worldbook.list') {
       const result = await getTool(tools, 'worldbook.list').execute({ sessionId: current });
       assert.equal(result.ok, true);
       assert.ok(result.worldbooks.some(item => item.id === 'CatalogWorld'));
+      return;
+    }
+    if (feature.id === 'worldbook.bind_session') {
+      const result = await getTool(tools, 'worldbook.bind_session').execute({ sessionId: current, worldbookId: 'CatalogWorld' });
+      assert.equal(result.ok, true);
+      assert.equal(result.bound, true);
+      assert.deepEqual(boundWorlds.at(-1), { sessionId: current, worldIds: ['CatalogWorld'], options: { silent: false } });
       return;
     }
     if (feature.id === 'worldbook.read') {
