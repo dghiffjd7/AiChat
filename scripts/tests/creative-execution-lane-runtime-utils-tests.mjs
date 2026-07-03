@@ -143,3 +143,37 @@ import {
   assert.equal(normalized.label.length <= 29, true);
   console.log('ok - task normalization clamps invalid status and long labels');
 }
+
+{
+  const { createCreativeExecutionLaneRuntime } = await import('../../src/scripts/ui/chat/creative-execution-lane-runtime-utils.js');
+  const runtime = createCreativeExecutionLaneRuntime({
+    documentRef: null,
+    getUiMode: () => 'rp',
+    now: () => 5000,
+    logger: { warn() {}, debug() {} },
+  });
+  runtime.startRun({ runId: 'run-x', sessionId: 'rp:alice', text: '测试' });
+  const state = runtime.getState();
+  state.tasks.forEach(task => runtime.finishTask(task.id, 'succeeded', {}));
+  runtime.completeRun({ summary: '已完成' });
+  assert.equal(runtime.getState().run.status, 'succeeded');
+
+  // 关键回归：run 完成后追加 running 任务（如异步自动生图）必须重新打开 run，
+  // 泳道不能在生图仍在进行时显示“已完成”。
+  const appended = runtime.appendTask({
+    id: 'image-auto-1',
+    laneId: 'image',
+    label: '自动生图',
+    status: 'running',
+  });
+  assert.ok(appended, '应能追加生图任务');
+  assert.equal(runtime.getState().run.status, 'running', '追加 running 任务应重新打开 run');
+  assert.equal(runtime.getState().run.finishedAt, 0, '重新打开后 finishedAt 应清零');
+
+  runtime.finishTask('image-auto-1', 'succeeded', { summary: '图片生成完成' });
+  const tasks = runtime.getState().tasks;
+  assert.ok(tasks.every(task => isCreativeExecutionTerminalStatus(task.status)), '生图完成后所有任务应为终态');
+  runtime.completeRun({ summary: '已完成 · 查看流程' });
+  assert.equal(runtime.getState().run.status, 'succeeded');
+  console.log('ok - async image task reopens completed run and closes it after finishing');
+}

@@ -17262,10 +17262,14 @@ Phase G（Frame 36）：循环衔接
   const isCreativeExecutionTaskStatusTerminal = status => (
     status === 'succeeded' || status === 'failed' || status === 'cancelled' || status === 'skipped'
   );
-  const appendCreativeExecutionImageRetryTask = ({
+  const appendCreativeExecutionImageLaneTask = ({
     sessionId = '',
     messageId = '',
     prompt = '',
+    idPrefix = 'image-task',
+    label = '图片任务',
+    brief = '',
+    summary = '',
   } = {}) => {
     const state = creativeExecutionLaneRuntime?.getState?.();
     const sid = String(sessionId || '').trim();
@@ -17274,11 +17278,11 @@ Phase G（Frame 36）：循环衔接
     const maxBucket = tasks.reduce((max, task) => Math.max(max, Math.trunc(Number(task.timeBucket)) || 0), 0);
     const dependsOn = tasks.some(task => task.id === 'image') ? ['image'] : ['model'];
     const task = creativeExecutionLaneRuntime?.appendTask?.({
-      id: `image-regenerate-${Date.now()}`,
+      id: `${idPrefix}-${Date.now()}`,
       laneId: 'image',
-      label: '图片重生成',
-      brief: '用户手动重新生成图片',
-      summary: '图片重新生成中',
+      label,
+      brief,
+      summary,
       status: 'running',
       timeBucket: Math.max(4, maxBucket + 1),
       dependsOn,
@@ -17289,6 +17293,13 @@ Phase G（Frame 36）：循环衔接
     });
     return String(task?.id || '');
   };
+  const appendCreativeExecutionImageRetryTask = args => appendCreativeExecutionImageLaneTask({
+    ...(args || {}),
+    idPrefix: 'image-regenerate',
+    label: '图片重生成',
+    brief: '用户手动重新生成图片',
+    summary: '图片重新生成中',
+  });
   const completeCreativeExecutionIfIdle = () => {
     const state = creativeExecutionLaneRuntime?.getState?.();
     const tasks = Array.isArray(state?.tasks) ? state.tasks : [];
@@ -18177,6 +18188,15 @@ Phase G（Frame 36）：循环衔接
       at: Date.now(),
     });
     imagePrompts.forEach((prompt, index) => setTimeout(async () => {
+      const creativeTaskId = appendCreativeExecutionImageLaneTask({
+        sessionId,
+        messageId,
+        prompt,
+        idPrefix: 'image-auto',
+        label: imagePrompts.length > 1 ? `自动生图 ${index + 1}/${imagePrompts.length}` : '自动生图',
+        brief: '正文触发的自动图片生成',
+        summary: '图片生成中',
+      });
       try {
         patchAutoImagePromptSourceMeta(message, sessionId, {
           status: 'running',
@@ -18204,6 +18224,16 @@ Phase G（Frame 36）：循环衔接
           source,
           at: Date.now(),
         });
+        if (creativeTaskId) {
+          if (ok) {
+            creativeExecutionLaneRuntime?.finishTask?.(creativeTaskId, 'succeeded', {
+              summary: '图片生成完成',
+            });
+          } else {
+            creativeExecutionLaneRuntime?.failTask?.(creativeTaskId, '图片生成失败');
+          }
+          completeCreativeExecutionIfIdle();
+        }
       } catch (err) {
         patchAutoImagePromptSourceMeta(message, sessionId, {
           status: 'failed',
@@ -18215,6 +18245,10 @@ Phase G（Frame 36）：循环衔接
           error: String(err?.message || err || ''),
           at: Date.now(),
         });
+        if (creativeTaskId) {
+          creativeExecutionLaneRuntime?.failTask?.(creativeTaskId, err);
+          completeCreativeExecutionIfIdle();
+        }
         logger.warn('auto image prompt generation failed', err);
       }
     }, 0));
@@ -25887,9 +25921,8 @@ Phase G（Frame 36）：循环衔接
           }
           const completeCreativeExecutionRun = () => {
             if (!isCreativeExecutionRunCurrent()) return;
-            creativeExecutionLaneRuntime?.completeRun?.({
-              summary: '已完成 · 查看流程',
-            });
+            // 生图等异步任务可能仍在跑：全部终态才收尾，未完成的由对应任务完成时补收尾。
+            completeCreativeExecutionIfIdle();
           };
           if (creativeExecutionMemoryTask?.then) {
             creativeExecutionMemoryTask.then(completeCreativeExecutionRun, () => {});

@@ -146,6 +146,8 @@ import {
   buildChatFormatGuardianRetryPlan,
 } from './chat-format-guardian-action-utils.js';
 import { buildChatBodyQualityApplyPatchPayload } from './chat-body-quality-action-utils.js';
+import { resolveChatBodyQualityInputText } from './chat-body-quality-guardian-utils.js';
+import { showTextDiffConfirmDialog } from '../text-diff-view-utils.js';
 import { showProviderContinuationConfirmDialog } from './provider-continuation-confirm-ui-utils.js';
 import { commitProviderContinuationToMessage } from './provider-continuation-commit-utils.js';
 import {
@@ -1893,6 +1895,19 @@ export class ChatUI {
         return false;
       }
       try {
+        const original = resolveChatBodyQualityInputText(message);
+        const diffResult = await showTextDiffConfirmDialog({
+          title: '应用格式修复',
+          summary: String(payload.repairKind || '').trim(),
+          oldText: original.text,
+          newText: payload.text,
+          confirmText: '应用修复',
+        });
+        if (!diffResult.changed) {
+          toastOnce('修复候选与当前正文一致，无需应用', 'info', 3000);
+          return false;
+        }
+        if (!diffResult.confirmed) return false;
         await this.actionHandler('edit-assistant-raw', message, payload);
         await this.resolveAgentRunReviewFromPart({
           part,
@@ -1923,6 +1938,19 @@ export class ChatUI {
         return false;
       }
       try {
+        const original = resolveChatBodyQualityInputText(message);
+        const diffResult = await showTextDiffConfirmDialog({
+          title: '应用正文优化',
+          summary: String(payload.patchSummary || '').trim(),
+          oldText: original.text,
+          newText: payload.text,
+          confirmText: '应用优化',
+        });
+        if (!diffResult.changed) {
+          toastOnce('优化候选与当前正文一致，无需应用', 'info', 3000);
+          return false;
+        }
+        if (!diffResult.confirmed) return false;
         await this.actionHandler('edit-assistant-raw', message, payload);
         await this.resolveAgentRunReviewFromPart({
           part,
