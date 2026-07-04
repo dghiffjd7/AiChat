@@ -119,7 +119,12 @@ const defaults = {
   webSearchApiKey: '',
 };
 
-const readSettings = () => {
+// localStorage 配额满时 setItem 会静默失败（真机已发生）；kv（Tauri 本地文件）为权威通道，
+// localStorage 仅作同步读缓存。会话内以内存态为准，跨启动由 hydrate 以 __updatedAt 裁决新旧。
+let memorySettings = null;
+let kvChannel = null;
+
+const readLocalSettings = () => {
   try {
     const raw = localStorage.getItem(SETTINGS_KEY);
     if (!raw) return {};
@@ -130,10 +135,20 @@ const readSettings = () => {
   }
 };
 
+const readSettings = () => {
+  if (memorySettings) return memorySettings;
+  return readLocalSettings();
+};
+
 const writeSettings = (next) => {
+  const stamped = { ...next, __updatedAt: Date.now() };
+  memorySettings = stamped;
   try {
-    localStorage.setItem(SETTINGS_KEY, JSON.stringify(next));
+    localStorage.setItem(SETTINGS_KEY, JSON.stringify(stamped));
   } catch {}
+  if (kvChannel?.save) {
+    Promise.resolve(kvChannel.save(SETTINGS_KEY, stamped)).catch(() => {});
+  }
 };
 
 const migrateSettings = (settings = {}) => {
@@ -239,14 +254,33 @@ const migrateSettings = (settings = {}) => {
 };
 
 export const appSettings = {
+  // boot 早期调用：注入 kv 通道并用较新的一侧（__updatedAt）作为权威。
+  async hydrate({ loadKv = null, saveKv = null } = {}) {
+    kvChannel = { load: loadKv, save: saveKv };
+    if (typeof loadKv !== 'function') return this.get();
+    try {
+      const kvRaw = await loadKv(SETTINGS_KEY);
+      const kvData = kvRaw && typeof kvRaw === 'object' && !kvRaw._tooLarge ? kvRaw : null;
+      if (kvData && Object.keys(kvData).length) {
+        const localData = readLocalSettings();
+        memorySettings = Number(kvData.__updatedAt || 0) >= Number(localData.__updatedAt || 0)
+          ? kvData
+          : localData;
+      }
+    } catch {}
+    return this.get();
+  },
   get() {
-    return { ...defaults, ...migrateSettings(readSettings()) };
+    const { __updatedAt: _stamp, ...settings } = { ...defaults, ...migrateSettings(readSettings()) };
+    return settings;
   },
   getStored() {
-    return migrateSettings(readSettings());
+    const { __updatedAt: _stamp, ...settings } = migrateSettings(readSettings());
+    return settings;
   },
   update(patch = {}) {
     const next = { ...defaults, ...migrateSettings(readSettings()), ...patch };
+    delete next.__updatedAt;
     writeSettings(next);
     return next;
   },

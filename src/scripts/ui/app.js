@@ -266,6 +266,7 @@ import {
   buildChatBodyOptimizeModelPrompt,
   normalizeChatBodyOptimizeModelResult,
 } from './chat/chat-body-optimize-utils.js';
+import { createMaidFormatProfileStore } from '../storage/maid-format-profile-store.js';
 import { showTextDiffConfirmDialog } from './text-diff-view-utils.js';
 import {
   commitChatEmitContract,
@@ -2810,8 +2811,15 @@ const initApp = async () => {
     httpRequest: payload => safeInvoke('http_request', payload),
     getSearchConfig: () => appSettings.get(),
   });
-  const maidGuideStore = new MaidGuideStore();
-  maidGuideStore.load();
+  const maidGuideStore = new MaidGuideStore({
+    loadKv: name => safeInvoke('load_kv', { name }),
+    saveKv: (name, data) => safeInvoke('save_kv', { name, data }),
+  });
+  try {
+    await maidGuideStore.hydrate();
+  } catch (err) {
+    logger.debug('maid guide store hydrate skipped', err);
+  }
   let showMaidGuide = async (guide) => {
     if (guide?.message) window.toastr?.info?.(guide.message);
   };
@@ -2912,7 +2920,15 @@ const initApp = async () => {
     guidedActionRuntime: maidGuidedActionRuntime,
     logger,
   });
-  const maidToolSafetyAllowStore = createAgentToolSafetyAllowStore();
+  const maidToolSafetyAllowStore = createAgentToolSafetyAllowStore({
+    loadKv: name => safeInvoke('load_kv', { name }),
+    saveKv: (name, data) => safeInvoke('save_kv', { name, data }),
+  });
+  try {
+    await maidToolSafetyAllowStore.hydrate();
+  } catch (err) {
+    logger.debug('maid tool safety allow store hydrate skipped', err);
+  }
   const requestMaidToolConfirmation = async request => {
     if (maidToolSafetyAllowStore.isAllowed(request)) {
       return { decision: 'allow', remembered: true };
@@ -23602,6 +23618,17 @@ Phase G（Frame 36）：循环衔接
     };
   };
 
+  const maidFormatProfileStore = createMaidFormatProfileStore({
+    loadKv: name => safeInvoke('load_kv', { name }),
+    saveKv: (name, data) => safeInvoke('save_kv', { name, data }),
+    logger,
+  });
+  try {
+    await maidFormatProfileStore.hydrate();
+  } catch (err) {
+    logger.debug('maid format profile hydrate skipped', err);
+  }
+
   // §4.6 协议修复文本重新解析进消息流：复用最近一轮发送链装配的协议事件分发器
   // （协议事件自带目标名，跨会话安全；发送链尚未跑过时返回不可用并回落单条写回）。
   let lastProtocolRetryDispatcher = null;
@@ -23699,6 +23726,17 @@ Phase G（Frame 36）：循环衔接
     if (target.error) return target.error;
     const { sid, message, inputText } = target;
 
+    // 未显式传规范时自动取会话格式画像（女仆此前调查保存的自定义格式）。
+    let effectiveFormatHint = String(formatHint || '').trim();
+    let usedProfile = false;
+    if (!effectiveFormatHint) {
+      const profile = maidFormatProfileStore.get(sid);
+      if (profile?.guide) {
+        effectiveFormatHint = profile.guide;
+        usedProfile = true;
+      }
+    }
+
     const activeUser = getActiveUserProfile();
     const modelOptions = buildChatFormatGuardianModelReviewOptions(sid, activeUser, { force: true });
     if (modelOptions.enabled !== true || typeof modelOptions.backgroundChat !== 'function') {
@@ -23725,7 +23763,7 @@ Phase G（Frame 36）：循环衔接
     const prompt = buildChatFormatGuardianModelPrompt({
       assistantText: inputText,
       formatReminderText: selectChatFormatReminderTextForProfile(modelOptions, formatProfile),
-      customFormatGuide: String(formatHint || '').trim(),
+      customFormatGuide: effectiveFormatHint,
       enabledFormats: formatProfile.enabledFormats,
       parserReport: parserResult,
       userName: modelOptions.userName,
@@ -23815,6 +23853,7 @@ Phase G（Frame 36）：循环衔接
       await ui.actionHandler('edit-assistant-raw', message, {
         text: correctedText,
         regexEditMode: false,
+        sessionId: sid,
         source: 'maid_format_repair',
       });
     }
@@ -23822,6 +23861,7 @@ Phase G（Frame 36）：循环衔接
       ok: true,
       applied: true,
       reparsed,
+      ...(usedProfile ? { usedFormatProfile: true } : {}),
       ...(reparseFallbackReason ? { reparseFallbackReason } : {}),
       sessionId: sid,
       messageId: String(message.id || ''),
@@ -23921,6 +23961,7 @@ Phase G（Frame 36）：循环衔接
     await ui.actionHandler('edit-assistant-raw', message, {
       text: optimize.optimizedText,
       regexEditMode: false,
+      sessionId: sid,
       source: 'maid_body_optimize',
     });
     return {
@@ -23937,6 +23978,19 @@ Phase G（Frame 36）：循环衔接
   registerChatFormatRepairTools(agentToolRegistry, {
     repairMessageFormat: repairAssistantMessageFormatForMaid,
     optimizeMessage: optimizeAssistantMessageForMaid,
+    formatProfileStore: maidFormatProfileStore,
+    resolveSessionId: ({ sessionId = '', sessionName = '' } = {}) => {
+      const sid = String(sessionId || '').trim();
+      if (sid) return sid;
+      const wantedName = String(sessionName || '').trim();
+      if (wantedName) {
+        const contact = contactsStore.listContacts?.()
+          ?.find(item => String(item?.name || '').trim() === wantedName);
+        if (contact?.id) return String(contact.id);
+        return '';
+      }
+      return String(chatStore.getCurrent() || '').trim();
+    },
   });
 
   const buildManualChatFormatGuardianOptions = (targetSessionId = '') => {
@@ -26833,6 +26887,9 @@ Phase G（Frame 36）：循环衔接
       return true;
     }
     if (action === 'edit-assistant-raw' && message.role === 'assistant') {
+      // 女仆跨会话修复/优化经 payload.sessionId 指定目标会话；缺省当前会话（原行为不变）。
+      // eslint-disable-next-line no-shadow
+      const sessionId = String(payload?.sessionId || '').trim() || chatStore.getCurrent();
       message = ensureRenderedCancelledPartialPersisted(message) || message;
       const next = String(payload?.text ?? '');
       const regexEditMode = payload?.regexEditMode === true;
@@ -27063,7 +27120,7 @@ Phase G（Frame 36）：循环衔接
         } catch (err) {
           logger.warn('edit-assistant-raw: tableEdit parse/apply failed', err);
         }
-	        ui.updateMessage(message.id, finalMessage);
+	        if (isSessionActive(sessionId)) ui.updateMessage(message.id, finalMessage);
 	        const scheduleCandidates = [
 	          ['meta.autoImagePromptRawContent', finalMessage?.meta?.autoImagePromptRawContent],
 	          ['editAutoImagePromptRawText', editAutoImagePromptRawText],
@@ -28651,6 +28708,17 @@ Phase G（Frame 36）：循环衔接
 
 document.addEventListener('DOMContentLoaded', () => {
   (async () => {
+    // 尽早 hydrate：localStorage 配额满时 kv 才是设置/贴纸的权威通道（主题也读 settings）。
+    try {
+      const kvChannel = {
+        loadKv: name => safeInvoke('load_kv', { name }),
+        saveKv: (name, data) => safeInvoke('save_kv', { name, data }),
+      };
+      await appSettings.hydrate(kvChannel);
+      await stickerPackStore.hydrate(kvChannel);
+    } catch (err) {
+      console.warn('settings/sticker hydrate skipped', err);
+    }
     await themeManager.init();
     await initApp();
     finishAppBootTrace({

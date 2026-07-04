@@ -3,7 +3,9 @@ import { safeInvoke } from '../utils/tauri.js';
 import { makeScopedKey, normalizeScopeId } from './store-scope.js';
 
 const BASE_STORE_KEY = 'turn_checkpoint_v1';
-const LOCAL_BOOTSTRAP_JSON_SOFT_LIMIT = 320_000;
+// localStorage 镜像仅作启动缓存（kv 为权威）；镜像键会按会话累积，
+// 真机曾把 5MB 配额占满导致所有纯 localStorage 写入静默失败，故压低单键上限。
+const LOCAL_BOOTSTRAP_JSON_SOFT_LIMIT = 64_000;
 const MAX_BRANCH_TEXT_CHARS = 220_000;
 const COMPACT_RECENT_TURNS = 30;
 const ALLOWED_CHECKPOINT_STATES = new Set(['provisional', 'final']);

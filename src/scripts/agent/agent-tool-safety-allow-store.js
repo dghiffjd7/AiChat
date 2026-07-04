@@ -74,13 +74,18 @@ const normalizeRules = (value = {}, now = Date.now) => {
 
 export const createAgentToolSafetyAllowStore = ({
   storage = globalThis?.localStorage,
+  loadKv = null,
+  saveKv = null,
   key = AGENT_TOOL_SAFETY_ALLOW_STORAGE_KEY,
   now = Date.now,
 } = {}) => {
   const targetStorage = readStorage(storage);
   let memoryRules = [];
+  let hydrated = false;
 
   const load = () => {
+    // kv hydrate 后内存态为权威（localStorage 配额满时写入会静默失败，不能再作真值）。
+    if (hydrated) return memoryRules;
     if (!targetStorage) return memoryRules;
     try {
       const raw = targetStorage.getItem(key);
@@ -98,15 +103,34 @@ export const createAgentToolSafetyAllowStore = ({
 
   const save = (rules = []) => {
     memoryRules = normalizeRules(rules, now);
-    if (!targetStorage) return;
+    hydrated = true;
     try {
-      targetStorage.setItem(key, JSON.stringify({
+      targetStorage?.setItem(key, JSON.stringify({
         version: 1,
         rules: memoryRules,
       }));
     } catch {
       // Keep the in-memory rules for the current session when storage is unavailable.
     }
+    if (typeof saveKv === 'function') {
+      Promise.resolve(saveKv(key, { version: 1, rules: memoryRules })).catch(() => {});
+    }
+  };
+
+  // kv 为权威通道：优先取 kv，回落 localStorage 旧数据（并合并去重）。
+  const hydrate = async () => {
+    if (typeof loadKv !== 'function') return memoryRules;
+    try {
+      const kvRaw = await loadKv(key);
+      if (kvRaw && typeof kvRaw === 'object' && !kvRaw._tooLarge) {
+        const kvRules = normalizeRules(kvRaw, now);
+        const localRules = load();
+        const merged = normalizeRules([...kvRules, ...localRules], now);
+        memoryRules = merged;
+      }
+    } catch {}
+    hydrated = true;
+    return memoryRules;
   };
 
   load();
@@ -157,21 +181,23 @@ export const createAgentToolSafetyAllowStore = ({
 
   const clear = () => {
     memoryRules = [];
-    if (!targetStorage) return;
+    hydrated = true;
     try {
-      if (typeof targetStorage.removeItem === 'function') {
+      if (typeof targetStorage?.removeItem === 'function') {
         targetStorage.removeItem(key);
       } else {
-        targetStorage.setItem(key, JSON.stringify({ version: 1, rules: [] }));
+        targetStorage?.setItem(key, JSON.stringify({ version: 1, rules: [] }));
       }
-    } catch {
-      save([]);
+    } catch {}
+    if (typeof saveKv === 'function') {
+      Promise.resolve(saveKv(key, { version: 1, rules: [] })).catch(() => {});
     }
   };
 
   return {
     key,
     buildKey: buildAgentToolSafetyAllowKey,
+    hydrate,
     isAllowed,
     allowAlways,
     list,

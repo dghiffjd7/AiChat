@@ -110,11 +110,15 @@ export class MaidGuideStore {
   constructor({
     scopeId = '',
     storage = globalThis?.localStorage || null,
+    loadKv = null,
+    saveKv = null,
     now = Date.now,
     maxCompleted = DEFAULT_MAX_COMPLETED,
   } = {}) {
     this.scopeId = normalizeScopeId(scopeId);
     this.storage = storage;
+    this.loadKv = typeof loadKv === 'function' ? loadKv : null;
+    this.saveKv = typeof saveKv === 'function' ? saveKv : null;
     this.now = typeof now === 'function' ? now : Date.now;
     this.maxCompleted = Math.max(1, Math.trunc(Number(maxCompleted) || DEFAULT_MAX_COMPLETED));
     this.loaded = false;
@@ -141,10 +145,34 @@ export class MaidGuideStore {
     if (!this.loaded) this.load();
   }
 
+  // kv 为权威通道（localStorage 配额满时写入静默失败）：取 updatedAt 较新的一侧。
+  async hydrate() {
+    this.load();
+    if (!this.loadKv) return this.exportState();
+    try {
+      const kvRaw = await this.loadKv(this.storeKey);
+      if (kvRaw && typeof kvRaw === 'object' && !kvRaw._tooLarge) {
+        const kvState = normalizeMaidGuideStoreState(kvRaw, {
+          now: this.now,
+          maxCompleted: this.maxCompleted,
+        });
+        if (Number(kvState.updatedAt || 0) >= Number(this.state.updatedAt || 0)) {
+          this.state = kvState;
+        }
+      }
+    } catch {}
+    return this.exportState();
+  }
+
   write() {
     this.ensureLoaded();
     this.state.updatedAt = safeNow(this.now);
-    return writeLocalJson(this.storage, this.storeKey, this.state);
+    const localOk = writeLocalJson(this.storage, this.storeKey, this.state);
+    if (this.saveKv) {
+      Promise.resolve(this.saveKv(this.storeKey, clone(this.state))).catch(() => {});
+      return true;
+    }
+    return localOk;
   }
 
   isCompleted(guideId = '') {

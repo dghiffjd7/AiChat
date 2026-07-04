@@ -79,7 +79,11 @@ const normalizeState = (state) => {
   };
 };
 
-const readState = () => {
+// localStorage 配额满时 setItem 静默失败：kv 为权威通道，内存态在会话内为准。
+let memoryState = null;
+let kvChannel = null;
+
+const readLocalState = () => {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return { ...DEFAULT_STATE };
@@ -89,13 +93,37 @@ const readState = () => {
   }
 };
 
+const readState = () => {
+  if (memoryState) return memoryState;
+  return readLocalState();
+};
+
 const writeState = (state) => {
+  const stamped = { ...state, __updatedAt: Date.now() };
+  memoryState = stamped;
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(stamped));
   } catch {}
+  if (kvChannel?.save) {
+    Promise.resolve(kvChannel.save(STORAGE_KEY, stamped)).catch(() => {});
+  }
 };
 
 export const stickerPackStore = {
+  async hydrate({ loadKv = null, saveKv = null } = {}) {
+    kvChannel = { load: loadKv, save: saveKv };
+    if (typeof loadKv !== 'function') return readState();
+    try {
+      const kvRaw = await loadKv(STORAGE_KEY);
+      if (kvRaw && typeof kvRaw === 'object' && !kvRaw._tooLarge) {
+        const localRaw = readLocalState();
+        memoryState = Number(kvRaw.__updatedAt || 0) >= Number(localRaw.__updatedAt || 0)
+          ? normalizeState(kvRaw)
+          : localRaw;
+      }
+    } catch {}
+    return readState();
+  },
   getState() {
     return readState();
   },

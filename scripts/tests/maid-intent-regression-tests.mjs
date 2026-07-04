@@ -48,6 +48,9 @@ const RETRIEVAL_FIXTURES = [
   { input: '帮我润色一下这条回复', expect: 'chat.message.optimize' },
   { input: '这段写得太啰嗦了帮我精简', expect: 'chat.message.optimize' },
   { input: '删掉重复的句子', expect: 'chat.message.optimize' },
+  // 格式画像
+  { input: '记住这个格式', expect: 'chat.format.profile' },
+  { input: '这个卡是什么格式', expect: 'chat.format.profile' },
 ];
 
 for (const { input, expect } of RETRIEVAL_FIXTURES) {

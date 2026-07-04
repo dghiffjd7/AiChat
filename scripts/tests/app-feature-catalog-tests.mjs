@@ -297,9 +297,19 @@ const escapeRegex = value => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'
       return run;
     },
   });
+  const formatProfiles = new Map();
   const formatTools = createChatFormatRepairTools({
     repairMessageFormat: async args => ({ ok: true, applied: true, formatHint: args.formatHint }),
     optimizeMessage: async args => ({ ok: true, applied: true, instruction: args.instruction }),
+    formatProfileStore: {
+      get: sid => formatProfiles.get(sid) || null,
+      set: (sid, profile) => {
+        const saved = { sessionId: sid, guide: profile.guide, sources: profile.sources || [] };
+        formatProfiles.set(sid, saved);
+        return saved;
+      },
+    },
+    resolveSessionId: ({ sessionId, sessionName }) => sessionId || sessionName || current,
   });
   const tools = [...navTools, ...sessionTools, ...contentTools, ...mediaTools, ...webTools, ...todoTools, ...formatTools];
   const maidAttachments = [{ id: 'catalog-image', kind: 'image', url: 'data:image/png;base64,AAAA', name: 'catalog.png' }];
@@ -478,6 +488,13 @@ const escapeRegex = value => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'
       const result = await getTool(tools, 'chat.repair_message_format').execute({ formatHint: '状态栏格式' });
       assert.equal(result.ok, true);
       assert.equal(result.applied, true);
+      return;
+    }
+    if (feature.id === 'chat.format.profile') {
+      const saved = await getTool(tools, 'chat.save_format_profile').execute({ sessionId: 'B', guide: '状态块格式规范内容' });
+      assert.equal(saved.ok, true);
+      const read = await getTool(tools, 'chat.read_format_profile').execute({ sessionId: 'B' });
+      assert.equal(read.hasProfile, true);
       return;
     }
     if (feature.id === 'chat.message.optimize') {

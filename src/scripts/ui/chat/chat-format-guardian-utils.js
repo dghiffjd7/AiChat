@@ -475,7 +475,9 @@ export const buildChatFormatGuardianModelPrompt = ({
           : '优先补成当前目标格式要求的最小合法结构。',
         `若聊天行缺少时间字段，优先使用 repairFallbackTime（${repairFallbackTime}）；没有可用时间时使用 00:00。`,
       ].join('\n')
-      : '本地解析器没有发现可提交的完整协议内容。若原始回复为空、完全没有有效聊天/动态内容，或只有残缺片段，不要补写剧情；返回 canRepair=false、correctedText=""、linePatches=[]，并在 repairSummary 中建议用户重新生成。')
+      : (customGuide
+        ? '本地解析器没有发现聊天协议内容，但本次存在 Custom Format Guide：修复目标以该 Guide 为准——保留正文原样，按 Guide 补齐要求的结构（如状态块、结构标签），canRepair 应为 true；只有正文为空时才返回 canRepair=false。'
+        : '本地解析器没有发现可提交的完整协议内容。若原始回复为空、完全没有有效聊天/动态内容，或只有残缺片段，不要补写剧情；返回 canRepair=false、correctedText=""、linePatches=[]，并在 repairSummary 中建议用户重新生成。'))
     : '';
   const system = [
     '你是聊天回复格式修复 Agent。',
@@ -485,6 +487,7 @@ export const buildChatFormatGuardianModelPrompt = ({
     '禁止修改：不得改写正文语义，不得新增剧情内容，不得扩写角色台词。',
     hasPrivateFormat ? '私聊标签遵循现有协议：<{{user}}和联系人名的私聊>...</{{user}}和联系人名的私聊>；{{user}} 经过宏替换后也可能表现为“我和联系人名的私聊”或“用户名和联系人名的私聊”。' : '',
     hasChatFormat ? '如果原始回复没有任何外层标签，但包含“说话人--正文”或“说话人--正文--HH:mm”聊天行，应视为可修复的标签缺漏，优先补齐标签而不是建议重新生成。' : '',
+    customGuide ? '如果正文本身可读但不满足下方 Custom Format Guide 的要求（如缺少规定的状态块/结构标签），这同样属于可修复的格式缺失：保留正文并按 Custom Format Guide 补齐要求的结构，不要以“无协议内容”为由拒绝修复。' : '',
     '如果回复明显在末尾截断，不要补写新剧情；只保留已经完整成行的内容并补齐必要闭合标签。',
     '输出必须是一个完整 JSON 对象。禁止 Markdown 代码块，禁止解释，禁止省略号，禁止在 JSON 前后输出任何文字。',
     'JSON 字符串字段内部不要使用英文双引号；需要引用格式名时使用中文引号或直接写文字，避免破坏 JSON。',

@@ -128,4 +128,42 @@ const getTool = (tools, name) => tools.find(tool => tool.name === name);
   console.log('ok - chat.optimize_message 工具透传参数、汇总与降级');
 }
 
+{
+  const { createMaidFormatProfileStore } = await import('../../src/scripts/storage/maid-format-profile-store.js');
+  const storage = (() => { const m = new Map(); return { getItem: k => m.get(k) ?? null, setItem: (k, v) => m.set(k, String(v)), removeItem: k => m.delete(k) }; })();
+  const profileStore = createMaidFormatProfileStore({ storage, now: () => 1000 });
+  const tools = createChatFormatRepairTools({
+    formatProfileStore: profileStore,
+    resolveSessionId: ({ sessionId, sessionName }) => sessionId || (sessionName === '蒂法' ? '蒂法' : ''),
+  });
+  const saveTool = getTool(tools, 'chat.save_format_profile');
+  const readTool = getTool(tools, 'chat.read_format_profile');
+
+  const missing = await readTool.execute({ sessionName: '蒂法' });
+  assert.equal(missing.ok, true);
+  assert.equal(missing.hasProfile, false);
+
+  const saved = await saveTool.execute({
+    sessionName: '蒂法',
+    guide: '回复必须以 <status>...</status> 状态块结尾',
+    sources: [{ type: 'worldbook', ref: '蒂法' }],
+  });
+  assert.equal(saved.ok, true);
+  assert.equal(saved.sessionId, '蒂法');
+
+  const found = await readTool.execute({ sessionName: '蒂法' });
+  assert.equal(found.hasProfile, true);
+  assert.match(found.profile.guide, /status/);
+
+  const noSession = await saveTool.execute({ sessionName: '不存在', guide: '规范内容规范' });
+  assert.equal(noSession.ok, false);
+  assert.equal(noSession.reason, 'session_not_found');
+
+  const bare = createChatFormatRepairTools({});
+  const unavailable = await getTool(bare, 'chat.read_format_profile').execute({ sessionId: 'x' });
+  assert.equal(unavailable.ok, false);
+  assert.equal(unavailable.reason, 'format_profile_store_unavailable');
+  console.log('ok - 格式画像保存/读取工具与降级路径');
+}
+
 console.log('chat-format-tools-tests passed');

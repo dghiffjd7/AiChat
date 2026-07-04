@@ -109,3 +109,38 @@ const createMemoryStorage = (initial = {}) => {
   assert.equal(store.revoke(''), false);
   console.log('ok - agent tool safety allow store revokes single rules');
 }
+
+{
+  // localStorage 配额满时 kv 通道保证规则持久化与恢复。
+  const kvMap = new Map();
+  const quotaFullStorage = {
+    getItem: () => null,
+    setItem: () => { throw new Error('quota exceeded'); },
+    removeItem: () => {},
+  };
+  const store = createAgentToolSafetyAllowStore({
+    storage: quotaFullStorage,
+    loadKv: async key => kvMap.get(key) || null,
+    saveKv: async (key, data) => { kvMap.set(key, data); },
+    now: () => 8000,
+  });
+  await store.hydrate();
+  const request = { toolName: 'worldbook.delete_entries', kind: 'worldbook.delete', operationType: 'write' };
+  store.allowAlways(request);
+  await new Promise(r => setTimeout(r, 0));
+  assert.ok(kvMap.has('agent_tool_safety_allow_rules_v1'), '配额满时规则应写入 kv');
+
+  const reloaded = createAgentToolSafetyAllowStore({
+    storage: quotaFullStorage,
+    loadKv: async key => kvMap.get(key) || null,
+    saveKv: async (key, data) => { kvMap.set(key, data); },
+    now: () => 9000,
+  });
+  await reloaded.hydrate();
+  assert.equal(reloaded.isAllowed(request), true, 'kv hydrate 应恢复规则');
+
+  reloaded.clear();
+  await new Promise(r => setTimeout(r, 0));
+  assert.deepEqual(kvMap.get('agent_tool_safety_allow_rules_v1')?.rules, [], 'clear 应同步清空 kv');
+  console.log('ok - allow store 配额满时经 kv 持久化、恢复与清空');
+}

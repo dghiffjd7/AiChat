@@ -10,7 +10,124 @@ const trim = (value, fallback = '') => {
 export const createChatFormatRepairTools = ({
   repairMessageFormat = null,
   optimizeMessage = null,
-} = {}) => [
+  formatProfileStore = null,
+  resolveSessionId = null,
+} = {}) => {
+  const resolveSid = (args = {}) => {
+    if (typeof resolveSessionId === 'function') {
+      return trim(resolveSessionId({
+        sessionId: trim(args.sessionId),
+        sessionName: trim(args.sessionName || args.target),
+      }));
+    }
+    return trim(args.sessionId);
+  };
+  return [
+  {
+    name: 'chat.save_format_profile',
+    title: 'Save session format profile',
+    description: 'Cache the custom format spec found for a session (from regex/worldbook/persona investigation) so future repairs use it automatically.',
+    source: 'maid-chat-format',
+    permissions: [],
+    riskLevel: 'low',
+    capabilities: {
+      read: true,
+      write: false,
+      network: false,
+      cost: 'none',
+      undo: 'manual',
+      modelContext: 'allowlist',
+      confirmation: 'allow_once',
+    },
+    schema: {
+      type: 'object',
+      required: ['guide'],
+      additionalProperties: false,
+      properties: {
+        guide: { type: 'string', minLength: 8, maxLength: 6000 },
+        sessionId: { type: 'string', maxLength: 160 },
+        sessionName: { type: 'string', maxLength: 160 },
+        target: { type: 'string', maxLength: 160 },
+        sources: {
+          type: 'array',
+          items: {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              type: { type: 'string', maxLength: 40 },
+              ref: { type: 'string', maxLength: 160 },
+            },
+          },
+        },
+      },
+    },
+    execute: async (args = {}) => {
+      if (!formatProfileStore || typeof formatProfileStore.set !== 'function') {
+        return { ok: false, reason: 'format_profile_store_unavailable' };
+      }
+      const sid = resolveSid(args);
+      if (!sid) return { ok: false, reason: 'session_not_found', message: '没有找到目标会话。' };
+      const saved = formatProfileStore.set(sid, {
+        guide: trim(args.guide),
+        sources: Array.isArray(args.sources) ? args.sources : [],
+      });
+      if (!saved) return { ok: false, reason: 'format_profile_invalid', message: '格式规范内容为空或无效。' };
+      return {
+        ok: true,
+        sessionId: saved.sessionId,
+        guidePreview: saved.guide.slice(0, 120),
+        sourceCount: saved.sources.length,
+        message: `已保存「${saved.sessionId}」的格式画像，之后修复该会话格式时会自动使用。`,
+      };
+    },
+    summarizeResult: result => (result?.ok === false
+      ? `format profile save failed: ${trim(result?.reason, 'unknown')}`
+      : `format profile saved for ${trim(result?.sessionId)}`),
+  },
+  {
+    name: 'chat.read_format_profile',
+    title: 'Read session format profile',
+    description: 'Read the cached custom format spec of a session; check this before investigating regex/worldbook for format definitions.',
+    source: 'maid-chat-format',
+    permissions: [],
+    riskLevel: 'low',
+    capabilities: {
+      read: true,
+      write: false,
+      network: false,
+      cost: 'none',
+      undo: 'none',
+      modelContext: 'allowlist',
+      confirmation: 'allow_once',
+    },
+    schema: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        sessionId: { type: 'string', maxLength: 160 },
+        sessionName: { type: 'string', maxLength: 160 },
+        target: { type: 'string', maxLength: 160 },
+      },
+    },
+    execute: async (args = {}) => {
+      if (!formatProfileStore || typeof formatProfileStore.get !== 'function') {
+        return { ok: false, reason: 'format_profile_store_unavailable' };
+      }
+      const sid = resolveSid(args);
+      if (!sid) return { ok: false, reason: 'session_not_found', message: '没有找到目标会话。' };
+      const profile = formatProfileStore.get(sid);
+      return {
+        ok: true,
+        sessionId: sid,
+        hasProfile: Boolean(profile),
+        profile: profile || null,
+        message: profile ? '已读取该会话的格式画像。' : '该会话还没有保存过格式画像。',
+      };
+    },
+    summarizeResult: result => (result?.ok === false
+      ? `format profile read failed: ${trim(result?.reason, 'unknown')}`
+      : `format profile ${result?.hasProfile ? 'found' : 'absent'} for ${trim(result?.sessionId)}`),
+  },
   {
     name: 'chat.optimize_message',
     title: 'Optimize assistant message text',
@@ -113,7 +230,8 @@ export const createChatFormatRepairTools = ({
       return trim(result?.message, 'format repair finished without changes');
     },
   },
-];
+  ];
+};
 
 export const registerChatFormatRepairTools = (registry, deps = {}) => {
   const tools = createChatFormatRepairTools(deps);
