@@ -9,12 +9,14 @@ const STATUS_CHIP_CSS = `
     white-space: nowrap;
 }
 .agent-status-chip {
-    height: 28px;
-    max-width: 118px;
+    height: 26px;
+    min-width: 26px;
+    max-width: 72px;
     display: inline-flex;
     align-items: center;
-    gap: 5px;
-    padding: 0 8px;
+    justify-content: center;
+    gap: 4px;
+    padding: 0 7px;
     border: 1px solid rgba(15, 23, 42, 0.10);
     border-radius: 999px;
     background: var(--app-surface-card);
@@ -24,7 +26,6 @@ const STATUS_CHIP_CSS = `
     line-height: 1;
     cursor: pointer;
     flex: 0 1 auto;
-    min-width: 0;
     -webkit-tap-highlight-color: transparent;
     transition: background 0.16s ease, border-color 0.16s ease, color 0.16s ease, transform 0.16s ease;
 }
@@ -40,18 +41,31 @@ const STATUS_CHIP_CSS = `
 .agent-status-chip:active {
     transform: scale(0.96);
 }
-.agent-status-chip-dot {
-    width: 7px;
-    height: 7px;
-    border-radius: 50%;
-    background: rgba(148, 163, 184, 0.9);
+.agent-status-chip-mark {
+    font-family: Georgia, 'Palatino Linotype', 'Songti SC', 'Noto Serif SC', serif;
+    font-style: italic;
+    font-weight: 700;
+    font-size: 15px;
+    line-height: 1;
+    letter-spacing: 0.02em;
     flex-shrink: 0;
+    background: linear-gradient(160deg, currentColor 20%, color-mix(in srgb, currentColor 45%, transparent) 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+    transform: translateY(-0.5px);
 }
-.agent-status-chip-label {
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+@keyframes agent-status-mark-breathe {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.55; }
+}
+.agent-status-chip.is-active .agent-status-chip-mark {
+    animation: agent-status-mark-breathe 1.6s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+    .agent-status-chip.is-active .agent-status-chip-mark {
+        animation: none;
+    }
 }
 .agent-status-chip-count {
     min-width: 16px;
@@ -75,27 +89,15 @@ const STATUS_CHIP_CSS = `
     background: rgba(37, 99, 235, 0.10);
     color: #1d4ed8;
 }
-.agent-status-chip.is-pending .agent-status-chip-dot {
-    background: #2563eb;
-    box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.14);
-}
 .agent-status-chip.is-active {
     border-color: rgba(16, 185, 129, 0.24);
     background: rgba(16, 185, 129, 0.10);
     color: #047857;
 }
-.agent-status-chip.is-active .agent-status-chip-dot {
-    background: #10b981;
-    box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.13);
-}
 .agent-status-chip.is-failed {
     border-color: rgba(244, 63, 94, 0.24);
     background: rgba(244, 63, 94, 0.10);
     color: #be123c;
-}
-.agent-status-chip.is-failed .agent-status-chip-dot {
-    background: #f43f5e;
-    box-shadow: 0 0 0 3px rgba(244, 63, 94, 0.13);
 }
 .agent-status-chip.is-ready {
     border-color: rgba(99, 102, 241, 0.22);
@@ -141,14 +143,7 @@ body[data-theme-mode='dark'] .agent-status-chip.is-ready {
 }
 @media (max-width: 420px) {
     .agent-status-chip {
-        max-width: 92px;
-        padding: 0 7px;
-    }
-    .chat-room-topbar .agent-status-chip {
-        max-width: 48px;
-    }
-    .chat-room-topbar .agent-status-chip-label {
-        display: none;
+        max-width: 64px;
     }
 }
 @media (prefers-reduced-motion: reduce) {
@@ -216,19 +211,20 @@ export const buildAgentStatusChipView = (agentCenterView = {}, {
             title: `打开 Agent Center，${unreadFailedRuns} 个未读失败任务`,
         };
     }
+    // 空闲/就绪不显示数字（工具总数意义有限且噪音大），完整信息保留在 tooltip。
     if (sessionGateEnabled) {
         return {
             label: 'Agent 开启',
-            count: tools ? String(tools) : '',
+            count: '',
             tone: 'ready',
             tab: 'safety',
             activityStatus: '',
-            title: '打开 Agent Center，查看工具与安全状态',
+            title: tools ? `打开 Agent Center，Agent 已开启（${tools} 个工具已注册）` : '打开 Agent Center，查看工具与安全状态',
         };
     }
     return {
         label: idleLabel,
-        count: tools ? String(tools) : '',
+        count: '',
         tone: 'idle',
         tab: '',
         activityStatus: '',
@@ -261,7 +257,6 @@ export class AgentCenterStatusChip {
         this.refreshIntervalMs = Math.max(0, Number(refreshIntervalMs) || 0);
         this.viewOptions = { activityScope, idleLabel, showSessionGateState, showToolsCount };
         this.element = null;
-        this.labelElement = null;
         this.countElement = null;
         this.state = buildAgentStatusChipView({}, this.viewOptions);
         this.refreshTimer = null;
@@ -286,8 +281,7 @@ export class AgentCenterStatusChip {
         button.type = 'button';
         button.className = 'agent-status-chip';
         button.innerHTML = `
-            <span class="agent-status-chip-dot" aria-hidden="true"></span>
-            <span class="agent-status-chip-label"></span>
+            <span class="agent-status-chip-mark" aria-hidden="true">A</span>
             <span class="agent-status-chip-count"></span>
         `;
         button.addEventListener('click', () => {
@@ -309,7 +303,6 @@ export class AgentCenterStatusChip {
             root.appendChild(button);
         }
         this.element = button;
-        this.labelElement = button.querySelector('.agent-status-chip-label');
         this.countElement = button.querySelector('.agent-status-chip-count');
         this.render(this.state);
         this.refresh();
@@ -363,7 +356,6 @@ export class AgentCenterStatusChip {
         this.element.dataset.agentStatusTone = tone;
         this.element.title = state.title || '打开 Agent Center';
         this.element.setAttribute('aria-label', state.title || '打开 Agent Center');
-        if (this.labelElement) this.labelElement.textContent = state.label || 'Agent';
         if (this.countElement) this.countElement.textContent = count;
     }
 }

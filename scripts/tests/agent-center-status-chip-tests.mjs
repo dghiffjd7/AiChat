@@ -42,7 +42,7 @@ import {
     meta: { pending: 0, activeRuns: 0, failedRuns: 2, unreadFailedRuns: 0, tools: 6 },
   });
   assert.equal(readFailures.label, 'Agent');
-  assert.equal(readFailures.count, '6');
+  assert.equal(readFailures.count, '', '空闲态不显示工具数');
   assert.equal(readFailures.tone, 'idle');
 
   const unreadFailures = buildAgentStatusChipView({
@@ -104,7 +104,7 @@ import {
     meta: { pending: 0, activeRuns: 0, failedRuns: 0, tools: 6, sessionGateEnabled: true },
   });
   assert.equal(ready.label, 'Agent 开启');
-  assert.equal(ready.count, '6');
+  assert.equal(ready.count, '', '就绪态不显示工具数（tooltip 保留）');
   assert.equal(ready.tone, 'ready');
   assert.equal(ready.tab, 'safety');
 
@@ -112,7 +112,7 @@ import {
     meta: { pending: 0, activeRuns: 0, failedRuns: 0, tools: 6, sessionGateEnabled: false },
   });
   assert.equal(idle.label, 'Agent');
-  assert.equal(idle.count, '6');
+  assert.equal(idle.count, '', '空闲态不显示工具数（tooltip 保留）');
   assert.equal(idle.tone, 'idle');
   assert.equal(idle.tab, '');
   console.log('ok - agent status chip keeps idle tool state compact');

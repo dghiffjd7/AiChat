@@ -1,5 +1,17 @@
-(async () => {
-  const mod = await import('/scripts/utils/tauri.js');
-  const allowKv = await mod.safeInvoke('load_kv', { name: 'agent_tool_safety_allow_rules_v1' }).catch(e => ({ err: String(e) }));
-  return { type: typeof allowKv, keys: allowKv && typeof allowKv === 'object' ? Object.keys(allowKv) : null, value: allowKv };
+(() => {
+  const chip = document.querySelector('.agent-status-chip');
+  if (!chip) return { found: false };
+  const mark = chip.querySelector('.agent-status-chip-mark');
+  const count = chip.querySelector('.agent-status-chip-count');
+  const style = getComputedStyle(mark);
+  return {
+    found: true,
+    tone: chip.dataset.agentStatusTone,
+    markText: mark?.textContent,
+    markFont: style.fontFamily.slice(0, 40),
+    markItalic: style.fontStyle,
+    countVisible: count ? getComputedStyle(count).display !== 'none' : null,
+    chipWidth: Math.round(chip.getBoundingClientRect().width),
+    title: chip.title,
+  };
 })()
