@@ -1,12 +1,12 @@
 {
   "version": 1,
-  "generatedAt": "2026-07-03T08:42:34.838Z",
-  "scannedFiles": 317,
+  "generatedAt": "2026-07-05T16:39:50.735Z",
+  "scannedFiles": 321,
   "summary": {
-    "total": 78,
+    "total": 79,
     "byCategory": {
       "dark-text": 10,
-      "light-background": 66,
+      "light-background": 67,
       "light-border": 2
     },
     "byFile": {
@@ -21,6 +21,7 @@
       "src/scripts/ui/contact-group-renderer.js": 1,
       "src/scripts/ui/general-settings-panel.js": 4,
       "src/scripts/ui/group-panel.js": 2,
+      "src/scripts/ui/maid-selection-mode.js": 1,
       "src/scripts/ui/memory-table-editor.js": 1,
       "src/scripts/ui/memory-template-panel.js": 1,
       "src/scripts/ui/moment-summary-panel.js": 1,
@@ -96,6 +97,7 @@
     "src/scripts/ui/general-settings-panel.js|light-background|rgba(255, 255, 255|background: rgba(255, 255, 255, 0.96);",
     "src/scripts/ui/group-panel.js|light-background|rgba(248,250,252|<div style=\"padding:14px 16px; border-bottom:1px solid rgba(0,0,0,0.06); background:rgba(248,250,252,0.92); display:flex; align-items:center; justify-content:space-between; gap:10px;\">",
     "src/scripts/ui/group-panel.js|light-background|rgba(248,250,252|<div style=\"padding:14px 16px; border-top:1px solid rgba(0,0,0,0.06); background:rgba(248,250,252,0.92); display:flex; gap:10px;\">",
+    "src/scripts/ui/maid-selection-mode.js|light-background|#fff|background: #fff;",
     "src/scripts/ui/memory-table-editor.js|light-background|rgba(248,250,252|<div style=\"padding:12px 14px; border-top:1px solid rgba(0,0,0,0.06); background:rgba(248,250,252,0.92); display:flex; gap:10px;\">",
     "src/scripts/ui/memory-template-panel.js|light-background|rgba(248,250,252|<div style=\"padding:14px 16px; border-bottom:1px solid rgba(0,0,0,0.06); background:rgba(248,250,252,0.92); display:flex; align-items:center; justify-content:space-between; gap:10px;\">",
     "src/scripts/ui/moment-summary-panel.js|light-background|#f3f4f6|<div style=\"display:flex; align-items:center; gap:10px; padding:12px; background:#f3f4f6; border-bottom:1px solid var(--app-border-default);\">",

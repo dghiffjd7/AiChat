@@ -462,6 +462,7 @@ const createSessionReader = deps => async (args = {}) => {
       id,
       name: contact?.name || id,
       isGroup: contact?.isGroup === true,
+      hasAvatar: Boolean(contact?.avatar),
       messageCount: messages.length,
       settings: await callMethod(chatStore, 'getSessionSettings', id) || null,
     }));

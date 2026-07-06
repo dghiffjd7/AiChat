@@ -60,6 +60,7 @@ const ICONS = Object.freeze({
   attach: iconSvg('<path d="M12 5v14"/><path d="M5 12h14"/>'),
   settings: iconSvg('<path d="M12 8.5a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7Z"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.03.03a2.05 2.05 0 0 1-2.9 2.9l-.03-.03A1.7 1.7 0 0 0 15 19.4a1.7 1.7 0 0 0-1 .54V20a2 2 0 0 1-4 0v-.06a1.7 1.7 0 0 0-1-.54 1.7 1.7 0 0 0-1.88.34l-.03.03a2.05 2.05 0 0 1-2.9-2.9l.03-.03A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-.54-1H4a2 2 0 0 1 0-4h.06a1.7 1.7 0 0 0 .54-1 1.7 1.7 0 0 0-.34-1.88l-.03-.03a2.05 2.05 0 0 1 2.9-2.9l.03.03A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-.54V4a2 2 0 0 1 4 0v.06a1.7 1.7 0 0 0 1 .54 1.7 1.7 0 0 0 1.88-.34l.03-.03a2.05 2.05 0 0 1 2.9 2.9l-.03.03A1.7 1.7 0 0 0 19.4 9c.2.35.38.68.54 1H20a2 2 0 0 1 0 4h-.06a1.7 1.7 0 0 0-.54 1Z"/>'),
   send: iconSvg('<path d="M5 12h13"/><path d="m13 6 6 6-6 6"/>'),
+  selection: iconSvg('<circle cx="12" cy="12" r="7"/><path d="M12 2v3"/><path d="M12 19v3"/><path d="M2 12h3"/><path d="M19 12h3"/>'),
 });
 
 const injectStyle = (documentRef) => {
@@ -180,6 +181,34 @@ const injectStyle = (documentRef) => {
   line-height: 1;
   cursor: pointer;
 }
+.maid-command-input-selection {
+  position: relative;
+}
+.maid-command-input-selection.is-active {
+  border-color: rgba(37, 99, 235, 0.45);
+  background: rgba(37, 99, 235, 0.14);
+  color: #1d4ed8;
+}
+.maid-command-input-selection-count {
+  position: absolute;
+  top: -5px;
+  right: -5px;
+  min-width: 15px;
+  height: 15px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: #2563eb;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  display: none;
+  align-items: center;
+  justify-content: center;
+}
+.maid-command-input-selection.has-items .maid-command-input-selection-count {
+  display: inline-flex;
+}
+.maid-command-input-selection,
 .maid-command-input-attach,
 .maid-command-input-settings,
 .maid-command-input-submit {
@@ -207,6 +236,7 @@ const injectStyle = (documentRef) => {
   background: #2563eb;
   color: #fff;
 }
+.maid-command-input-selection:hover,
 .maid-command-input-attach:hover,
 .maid-command-input-settings:hover {
   background: rgba(37, 99, 235, 0.10);
@@ -215,11 +245,13 @@ const injectStyle = (documentRef) => {
 .maid-command-input-submit:hover {
   background: #1d4ed8;
 }
+.maid-command-input-selection:active,
 .maid-command-input-attach:active,
 .maid-command-input-settings:active,
 .maid-command-input-submit:active {
   transform: translateY(1px);
 }
+.maid-command-input-selection:focus-visible,
 .maid-command-input-attach:focus-visible,
 .maid-command-input-settings:focus-visible,
 .maid-command-input-submit:focus-visible {
@@ -320,6 +352,7 @@ export const createMaidCommandInputRuntime = ({
   onSubmit = async () => ({}),
   onSettings = null,
   onAttachFiles = null,
+  onToggleSelection = null,
   maxImageAttachments = DEFAULT_MAX_IMAGE_ATTACHMENTS,
   setTimeoutFn = globalThis?.setTimeout || null,
   clearTimeoutFn = globalThis?.clearTimeout || null,
@@ -330,6 +363,7 @@ export const createMaidCommandInputRuntime = ({
   let fileInputEl = null;
   let attachmentsEl = null;
   let settingsBtn = null;
+  let selectionBtn = null;
   let submitBtn = null;
   let resultEl = null;
   let closeTimer = null;
@@ -619,6 +653,12 @@ export const createMaidCommandInputRuntime = ({
     settingsBtn.type = 'button';
     settingsBtn.innerHTML = ICONS.settings;
     settingsBtn.setAttribute('aria-label', '女仆设置');
+    selectionBtn = documentRef.createElement?.('button');
+    selectionBtn.className = 'maid-command-input-selection';
+    selectionBtn.type = 'button';
+    selectionBtn.innerHTML = `${ICONS.selection}<span class="maid-command-input-selection-count"></span>`;
+    selectionBtn.setAttribute('aria-label', '圈选内容给女仆');
+    selectionBtn.title = '圈选内容给女仆';
     submitBtn = documentRef.createElement?.('button');
     submitBtn.className = 'maid-command-input-submit';
     submitBtn.type = 'submit';
@@ -627,6 +667,7 @@ export const createMaidCommandInputRuntime = ({
     if (fileInputEl) rootEl.appendChild(fileInputEl);
     if (attachmentsEl) rootEl.appendChild(attachmentsEl);
     rootEl.appendChild(attachBtn);
+    rootEl.appendChild(selectionBtn);
     rootEl.appendChild(inputEl);
     rootEl.appendChild(settingsBtn);
     rootEl.appendChild(submitBtn);
@@ -697,6 +738,10 @@ export const createMaidCommandInputRuntime = ({
       try {
         fileInputEl.value = '';
       } catch {}
+    });
+    selectionBtn.addEventListener?.('click', (event) => {
+      event.preventDefault?.();
+      try { onToggleSelection?.(); } catch {}
     });
     settingsBtn.addEventListener?.('click', (event) => {
       event.preventDefault?.();
@@ -781,7 +826,16 @@ export const createMaidCommandInputRuntime = ({
     }
   };
 
+  const setSelectionState = ({ active = false, count = 0 } = {}) => {
+    if (!selectionBtn) return;
+    selectionBtn.classList.toggle('is-active', Boolean(active));
+    selectionBtn.classList.toggle('has-items', Number(count) > 0);
+    const countEl = selectionBtn.querySelector?.('.maid-command-input-selection-count');
+    if (countEl) countEl.textContent = String(count || '');
+  };
+
   return {
+    setSelectionState,
     open,
     close,
     submit,

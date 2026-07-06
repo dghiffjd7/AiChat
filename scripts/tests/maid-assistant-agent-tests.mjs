@@ -922,15 +922,23 @@ import {
       title: '记录任务清单',
       response: '我先记录任务清单。',
     }),
-    reactPlanner: async () => ({
-      ok: true,
-      action: 'tool',
-      toolName: 'app.open_panel',
-      args: { panel: 'worldbook' },
-      featureId: 'worldbook.open',
-      title: '继续执行',
-      response: '继续。',
-    }),
+    reactPlanner: (() => {
+      let round = 0;
+      // 工具名与 args 每轮变化：预算测试需要跑满步数，不能触发重复/同工具 guard
+      const toolNames = ['app.open_panel', 'app.read_resource', 'app.get_current_state'];
+      return async () => {
+        round += 1;
+        return {
+          ok: true,
+          action: 'tool',
+          toolName: toolNames[round % toolNames.length],
+          args: { panel: `worldbook-${round}` },
+          featureId: 'worldbook.open',
+          title: '继续执行',
+          response: '继续。',
+        };
+      };
+    })(),
     toolRegistry: { executeTool: async () => ({ ok: true }) },
     logger: { warn() {} },
   });
@@ -939,6 +947,61 @@ import {
   assert.equal(result.reactStepBudget.maxSteps, 30, '4 项清单应获得 10+4*5=30 步预算');
   assert.equal(result.continuable, true);
   console.log('ok - maid.todo.write 开场的复合任务获得扩展步数预算（4 项 -> 30 步）');
+}
+
+{
+  // 同工具同参数连续成功 3 次 = 原地转圈，应中断且可继续
+  const agent = createMaidAssistantAgent({
+    planner: async () => ({
+      ok: true,
+      toolName: 'maid.todo.read',
+      args: {},
+      featureId: 'maid.todo',
+      title: '查看清单',
+      response: '我看看清单。',
+    }),
+    reactPlanner: async () => ({
+      ok: true,
+      action: 'tool',
+      toolName: 'maid.todo.read',
+      args: {},
+      featureId: 'maid.todo',
+      title: '再看清单',
+      response: '再核对一次。',
+    }),
+    toolRegistry: { executeTool: async toolName => ({ toolName, status: 'succeeded', result: { ok: true }, summary: 'todos listed' }) },
+    logger: { warn() {} },
+  });
+  const result = await agent.runPrompt('核对清单');
+  assert.equal(result.status, 'interrupted');
+  assert.equal(result.failureCode, 'repeated_tool_loop', '应以 repeated_tool_loop 中断');
+  assert.equal(result.continuable, true);
+  assert.ok((result.steps || []).length <= 4, '应在少量重复后即中断而不是耗尽预算');
+  console.log('ok - 同参数连续成功重复触发防转圈中断');
+}
+
+{
+  // 同工具连续（参数不同）超过 8 次 = 单工具打转，应中断可继续
+  let round = 0;
+  const agent = createMaidAssistantAgent({
+    planner: async () => ({
+      ok: true, toolName: 'web.search_images', args: { query: 'q0' },
+      featureId: 'web.search', title: '搜索', response: '搜。',
+    }),
+    reactPlanner: async () => ({
+      ok: true, action: 'tool', toolName: 'web.search_images',
+      args: { query: `q${round += 1}` },
+      featureId: 'web.search', title: '再搜', response: '再搜。',
+    }),
+    toolRegistry: { executeTool: async (toolName, args) => ({ toolName, status: 'succeeded', result: { ok: true, images: [] }, summary: `searched ${args?.query}` }) },
+    maxReactSteps: 40,
+    logger: { warn() {} },
+  });
+  const result = await agent.runPrompt('找图', { maxReactSteps: 40 });
+  assert.equal(result.failureCode, 'same_tool_overuse');
+  assert.ok((result.steps || []).length <= 10, '应在 8 次左右中断');
+  assert.equal(result.continuable, true);
+  console.log('ok - 同工具连续超限触发打转中断');
 }
 
 {
@@ -980,4 +1043,39 @@ import {
   assert.match(result.continueHint, /失败步骤：/);
   assert.match(result.continueHint, /memory panel busy/);
   console.log('ok - continueHint 附带已完成与失败步骤清单');
+}
+
+{
+  // 等待工具确认期间 run 应标记 waiting_permission，确认后恢复 running
+  const statusLog = [];
+  const runtimeMock = {
+    startRun: () => ({ id: 'run-1' }),
+    finishRun: () => {},
+    startStep: () => ({ id: 'step-1' }),
+    finishStep: () => {},
+    updateRun: (id, patch) => { statusLog.push(patch?.status); },
+    executeTool: async (toolName, args, context) => {
+      context.onToolConfirmationPending?.({ toolName });
+      await new Promise(r => setTimeout(r, 5));
+      context.onToolConfirmationResolved?.({ toolName });
+      return { toolName, status: 'succeeded', result: { ok: true }, summary: 'done' };
+    },
+  };
+  const agent = createMaidAssistantAgent({
+    planner: async () => ({
+      ok: true, toolName: 'session.set_wallpaper', args: { target: 'x' },
+      featureId: 'session.wallpaper.set', title: '设置', response: '我来设置。',
+    }),
+    reactPlanner: async () => ({ ok: true, action: 'final', message: '完成', response: '完成' }),
+    agentTaskRuntime: runtimeMock,
+    toolRegistry: { executeTool: async () => ({ ok: true }) },
+    logger: { warn() {} },
+  });
+  const result = await agent.runPrompt('设置壁纸');
+  assert.equal(result.ok, true);
+  assert.deepEqual(statusLog.filter(s => s === 'waiting_permission').length, 1, '确认等待应标记一次');
+  const waitIdx = statusLog.indexOf('waiting_permission');
+  const resumeIdx = statusLog.indexOf('running');
+  assert.ok(waitIdx >= 0 && resumeIdx > waitIdx, '确认后应恢复 running');
+  console.log('ok - 工具确认等待期间 run 标记 waiting_permission 并在确认后恢复');
 }

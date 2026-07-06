@@ -350,7 +350,21 @@ const performBingImageSearch = async (request, { query = '', limit = 6 } = {}) =
     timeoutMs: 20000,
   });
   const images = parseBingImageResults(body, limit);
-  return { ok: images.length > 0, images, provider: 'bing_images' };
+  // 高频请求会触发 Bing 限流降级（返回非搜索结果页，iusc 里是无关推荐内容）。
+  // 正常结果页 <title> 含查询词；不含则标记降级，避免把无关图当结果用。
+  const pageTitle = String(body.match(/<title>([^<]*)/)?.[1] || '');
+  const queryHead = trim(query).split(/\s+/)[0] || '';
+  const degraded = images.length > 0 && queryHead
+    && !pageTitle.toLowerCase().includes(queryHead.toLowerCase());
+  return {
+    ok: images.length > 0 && !degraded,
+    images: degraded ? [] : images,
+    provider: 'bing_images',
+    ...(degraded ? {
+      degraded: true,
+      message: '图片搜索服务疑似限流降级（返回了与查询无关的页面），请稍后再试或换用其他方式获取图片。',
+    } : {}),
+  };
 };
 
 // DDG 图片搜索（免 key）：先取 vqd token，再调 i.js 拿图片 JSON。

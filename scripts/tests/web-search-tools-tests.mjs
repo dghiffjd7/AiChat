@@ -196,7 +196,7 @@ const getTool = (tools, name) => tools.find(tool => tool.name === name);
     httpRequest: async ({ url }) => {
       if (url.includes('bing.com/images/search')) {
         const meta = JSON.stringify({ murl: 'https://img.example.com/tifa-bing.jpg', turl: 'https://img.example.com/t.jpg', t: 'Tifa art', purl: 'https://page.example.com' }).replace(/"/g, '&quot;');
-        return { status: 200, ok: true, headers: {}, body: `<a class="iusc" m="${meta}"></a>` };
+        return { status: 200, ok: true, headers: {}, body: `<title>Tifa Lockhart avatar - Search Images</title><a class="iusc" m="${meta}"></a>` };
       }
       throw new Error(`unexpected url ${url}`);
     },
@@ -207,6 +207,27 @@ const getTool = (tools, name) => tools.find(tool => tool.name === name);
   assert.equal(result.provider, 'bing_images');
   assert.equal(result.images[0].imageUrl, 'https://img.example.com/tifa-bing.jpg');
   console.log('ok - web.search_images 优先 Bing HTML 解析 murl');
+}
+
+{
+  // Bing 限流降级：页面 title 与查询无关时判定降级，不把无关图当结果
+  const tools = createWebSearchAgentTools({
+    httpRequest: async ({ url }) => {
+      if (url.includes('bing.com/images/search')) {
+        const meta = JSON.stringify({ murl: 'https://img.example.com/junk.jpg', t: '物理化学文章' }).replace(/"/g, '&quot;');
+        return { status: 200, ok: true, headers: {}, body: `<title>Bing</title><a class="iusc" m="${meta}"></a>` };
+      }
+      if (url.includes('duckduckgo.com')) {
+        return { status: 403, ok: false, headers: {}, body: '' };
+      }
+      throw new Error(`unexpected url ${url}`);
+    },
+    getSearchConfig: () => ({}),
+  });
+  const result = await tools.find(t => t.name === 'web.search_images').execute({ query: 'Tifa Lockhart avatar' });
+  assert.equal(result.ok, false, '降级页应判失败');
+  assert.equal((result.images || []).length, 0, '降级时不返回无关图');
+  console.log('ok - Bing 限流降级检测（title 与查询无关）');
 }
 
 {

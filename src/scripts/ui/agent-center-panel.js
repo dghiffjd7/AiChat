@@ -101,6 +101,12 @@ const PANEL_CSS = `
     border-radius: 13px;
     background: rgba(37, 99, 235, 0.10);
     color: #1d4ed8;
+    font-family: Georgia, 'Palatino Linotype', 'Songti SC', 'Noto Serif SC', serif;
+    font-style: italic;
+    font-weight: 700;
+    font-size: 21px;
+    line-height: 1;
+    background-image: linear-gradient(160deg, rgba(37, 99, 235, 0.10), rgba(37, 99, 235, 0.16));
 }
 .agent-center-title strong {
     display: block;
@@ -123,18 +129,21 @@ const PANEL_CSS = `
 }
 .agent-center-button {
     border: 1px solid var(--app-border-default);
-    border-radius: 10px;
+    border-radius: 999px;
     background: var(--app-surface-subtle);
     color: var(--app-text-primary);
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    gap: 7px;
-    min-height: 34px;
-    padding: 7px 10px;
-    font-weight: 800;
+    width: 34px;
+    height: 34px;
+    padding: 0;
     cursor: pointer;
     transition: background 120ms ease, border-color 120ms ease, transform 90ms ease, box-shadow 120ms ease;
+}
+.agent-center-button .agent-center-icon {
+    width: 16px;
+    height: 16px;
 }
 .agent-center-button:hover,
 .agent-center-card-action:hover,
@@ -165,8 +174,8 @@ const PANEL_CSS = `
 .agent-center-tabs {
     display: grid;
     grid-template-columns: repeat(5, minmax(0, 1fr));
-    gap: 7px;
-    padding: 10px 12px;
+    gap: 8px;
+    padding: 12px;
     border-bottom: 1px solid var(--app-border-default);
     flex-shrink: 0;
 }
@@ -182,7 +191,7 @@ const PANEL_CSS = `
     min-height: 36px;
     padding: 8px 7px;
     font-size: 12px;
-    font-weight: 800;
+    font-weight: 600;
     cursor: pointer;
     transition: background 120ms ease, border-color 120ms ease, color 120ms ease, transform 90ms ease;
 }
@@ -191,6 +200,9 @@ const PANEL_CSS = `
     background: rgba(59,130,246,0.10);
     color: #1d4ed8;
     box-shadow: inset 0 -2px 0 rgba(37, 99, 235, 0.38);
+}
+.agent-center-tab.is-active .agent-center-icon {
+    stroke-width: 2.4;
 }
 .agent-center-icon {
     width: 15px;
@@ -207,17 +219,17 @@ const PANEL_CSS = `
     flex: 1;
     overflow: auto;
     -webkit-overflow-scrolling: touch;
-    padding: 14px;
+    padding: 16px;
 }
 .agent-center-list {
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: 12px;
 }
 .agent-center-filter-row {
     display: flex;
-    gap: 6px;
-    margin-bottom: 10px;
+    gap: 8px;
+    margin-bottom: 12px;
     overflow-x: auto;
     -webkit-overflow-scrolling: touch;
 }
@@ -229,7 +241,7 @@ const PANEL_CSS = `
     color: var(--app-text-secondary);
     padding: 5px 9px;
     font-size: 12px;
-    font-weight: 800;
+    font-weight: 600;
     white-space: nowrap;
     cursor: pointer;
 }
@@ -247,7 +259,7 @@ const PANEL_CSS = `
     border: 1px solid var(--app-border-default);
     border-radius: 12px;
     background: color-mix(in srgb, var(--app-surface-card) 90%, var(--app-surface-subtle));
-    padding: 12px 13px;
+    padding: 12px 14px;
     box-shadow: 0 4px 16px rgba(15, 23, 42, 0.045);
     transition: border-color 160ms ease, background 160ms ease, box-shadow 160ms ease, transform 120ms ease;
 }
@@ -263,18 +275,18 @@ const PANEL_CSS = `
     display: flex;
     align-items: flex-start;
     justify-content: space-between;
-    gap: 10px;
+    gap: 8px;
 }
 .agent-center-card-title {
-    font-size: 13px;
-    font-weight: 900;
-    line-height: 1.35;
+    font-size: 14px;
+    font-weight: 700;
+    line-height: 1.4;
     word-break: break-word;
 }
 .agent-center-card-sub {
-    margin-top: 3px;
+    margin-top: 6px;
     font-size: 12px;
-    line-height: 1.45;
+    line-height: 1.55;
     color: var(--app-text-secondary);
     word-break: break-word;
 }
@@ -298,7 +310,7 @@ const PANEL_CSS = `
     list-style: none;
     color: var(--app-text-primary);
     font-size: 12px;
-    font-weight: 900;
+    font-weight: 700;
 }
 .agent-center-review-detail summary::-webkit-details-marker {
     display: none;
@@ -306,8 +318,8 @@ const PANEL_CSS = `
 .agent-center-review-detail summary::after {
     content: '展开';
     color: var(--app-text-secondary);
-    font-size: 11px;
-    font-weight: 800;
+    font-size: 12px;
+    font-weight: 600;
 }
 .agent-center-review-detail[open] summary::after {
     content: '收起';
@@ -319,8 +331,8 @@ const PANEL_CSS = `
     padding: 0 10px 10px;
 }
 .agent-center-review-label {
-    font-size: 11px;
-    font-weight: 900;
+    font-size: 12px;
+    font-weight: 700;
     color: var(--app-text-secondary);
 }
 .agent-center-review-code {
@@ -353,7 +365,7 @@ const PANEL_CSS = `
 .agent-center-review-expandable summary {
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto;
-    gap: 6px 8px;
+    gap: 8px;
     align-items: center;
     padding: 8px;
     cursor: pointer;
@@ -363,14 +375,14 @@ const PANEL_CSS = `
     display: none;
 }
 .agent-center-review-expandable-title {
-    font-size: 11px;
-    font-weight: 900;
+    font-size: 12px;
+    font-weight: 700;
     color: var(--app-text-secondary);
 }
 .agent-center-review-expandable-hint {
     color: var(--app-text-secondary);
-    font-size: 11px;
-    font-weight: 800;
+    font-size: 12px;
+    font-weight: 600;
 }
 .agent-center-review-expandable-preview {
     grid-column: 1 / -1;
@@ -555,7 +567,7 @@ const PANEL_CSS = `
     background: var(--agent-card-accent-soft, rgba(59,130,246,0.10));
     color: var(--app-text-primary);
     font-size: 18px;
-    font-weight: 900;
+    font-weight: 700;
 }
 .agent-center-agent-title-row {
     display: flex;
@@ -582,8 +594,8 @@ const PANEL_CSS = `
 }
 .agent-center-agent-section-title {
     color: var(--app-text-secondary);
-    font-size: 11px;
-    font-weight: 900;
+    font-size: 12px;
+    font-weight: 700;
 }
 .agent-center-agent-mini-list {
     display: flex;
@@ -599,12 +611,12 @@ const PANEL_CSS = `
     padding: 4px 7px;
     background: var(--app-surface-card);
     color: var(--app-text-primary);
-    font-size: 11px;
-    font-weight: 800;
+    font-size: 12px;
+    font-weight: 600;
 }
 .agent-center-agent-editor {
     display: grid;
-    gap: 7px;
+    gap: 8px;
 }
 .agent-center-agent-editor-row {
     display: grid;
@@ -627,8 +639,8 @@ const PANEL_CSS = `
 .agent-center-agent-field label,
 .agent-center-agent-check {
     color: var(--app-text-secondary);
-    font-size: 11px;
-    font-weight: 900;
+    font-size: 12px;
+    font-weight: 700;
 }
 .agent-center-agent-check {
     display: inline-flex;
@@ -656,7 +668,7 @@ const PANEL_CSS = `
     min-height: 92px;
     resize: vertical;
     padding: 8px;
-    line-height: 1.45;
+    line-height: 1.55;
 }
 .agent-center-agent-textarea.is-compact {
     min-height: 70px;
@@ -669,8 +681,8 @@ const PANEL_CSS = `
     background: color-mix(in srgb, var(--app-surface-card) 88%, transparent);
     color: var(--app-text-secondary);
     font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-    font-size: 11px;
-    line-height: 1.45;
+    font-size: 12px;
+    line-height: 1.55;
     white-space: pre-wrap;
 }
 .agent-center-agent-input:focus,
@@ -699,7 +711,7 @@ const PANEL_CSS = `
 .agent-center-setting-label {
     color: var(--app-text-secondary);
     font-size: 12px;
-    font-weight: 800;
+    font-weight: 600;
 }
 .agent-center-setting-value {
     min-width: 0;
@@ -708,7 +720,7 @@ const PANEL_CSS = `
     white-space: nowrap;
     color: var(--app-text-primary);
     font-size: 12px;
-    font-weight: 900;
+    font-weight: 700;
 }
 .agent-center-model-select {
     width: 100%;
@@ -720,7 +732,7 @@ const PANEL_CSS = `
     color: var(--app-text-primary);
     padding: 6px 8px;
     font-size: 12px;
-    font-weight: 800;
+    font-weight: 600;
     outline: none;
     cursor: pointer;
 }
@@ -745,7 +757,7 @@ const PANEL_CSS = `
     border-radius: 8px;
     background: var(--app-surface-subtle);
     font-size: 12px;
-    font-weight: 800;
+    font-weight: 600;
 }
 .agent-center-model-manage {
     min-height: 32px;
@@ -755,7 +767,7 @@ const PANEL_CSS = `
     color: var(--app-text-primary);
     padding: 6px 9px;
     font-size: 12px;
-    font-weight: 800;
+    font-weight: 600;
     cursor: pointer;
     white-space: nowrap;
 }
@@ -771,7 +783,7 @@ const PANEL_CSS = `
     color: var(--app-text-secondary);
     padding: 6px 10px;
     font-size: 12px;
-    font-weight: 900;
+    font-weight: 700;
     cursor: pointer;
 }
 .agent-center-switch.is-on {
@@ -788,9 +800,9 @@ const PANEL_CSS = `
     border-radius: 10px;
     background: var(--app-surface-card);
     color: var(--app-text-primary);
-    padding: 6px 9px;
+    padding: 6px 12px;
     font-size: 12px;
-    font-weight: 800;
+    font-weight: 600;
     cursor: pointer;
     transition: background 120ms ease, border-color 120ms ease, color 120ms ease, transform 90ms ease, box-shadow 120ms ease;
 }
@@ -812,8 +824,8 @@ const PANEL_CSS = `
     border-radius: 999px;
     border: 1px solid rgba(148,163,184,0.22);
     color: var(--app-text-secondary);
-    font-size: 11px;
-    font-weight: 800;
+    font-size: 12px;
+    font-weight: 600;
     white-space: nowrap;
 }
 .agent-center-resource-list {
@@ -838,8 +850,8 @@ const PANEL_CSS = `
 .agent-center-resource-group {
     margin-bottom: 2px;
     color: var(--app-text-secondary);
-    font-size: 11px;
-    font-weight: 900;
+    font-size: 12px;
+    font-weight: 700;
 }
 .agent-center-resource-main {
     min-width: 0;
@@ -862,7 +874,7 @@ const PANEL_CSS = `
     padding: 5px 8px;
     font: inherit;
     font-size: 12px;
-    font-weight: 800;
+    font-weight: 600;
     cursor: pointer;
     transition: background 120ms ease, border-color 120ms ease, transform 90ms ease, box-shadow 120ms ease;
 }
@@ -971,7 +983,7 @@ const PANEL_CSS = `
 }
 @media (max-width: 430px) {
     .agent-center-actions {
-        gap: 5px;
+        gap: 4px;
     }
     .agent-center-button span {
         display: none;
@@ -1314,6 +1326,7 @@ const PERMISSION_LABELS = Object.freeze({
 });
 
 const AGENT_KIND_LABELS = Object.freeze({
+    maid_assistant: '女仆任务',
     chat_format_guardian: '聊天格式检查',
     chat_body_quality_guardian: '正文检查',
     memory_update: '记忆更新',
@@ -1677,6 +1690,7 @@ export class AgentCenterPanel {
         this.tabsElement = null;
         this.activeTab = 'agents';
         this.activityStatus = '';
+        this.activityKind = '';
         this.surface = '';
         this.view = buildAgentCenterView();
         this.lastError = '';
@@ -1705,16 +1719,16 @@ export class AgentCenterPanel {
             <section class="agent-center-panel" role="dialog" aria-modal="true" aria-labelledby="agent-center-title">
                 <header class="agent-center-header">
                     <div class="agent-center-title">
-                        <span class="agent-center-title-mark">${ICONS.agent}</span>
+                        <span class="agent-center-title-mark" aria-hidden="true">A</span>
                         <div style="min-width:0;">
                             <strong id="agent-center-title">Agent Center</strong>
                             <div class="agent-center-meta"></div>
                         </div>
                     </div>
                     <div class="agent-center-actions">
-                        <button type="button" class="agent-center-button" data-action="refresh">${ICONS.refresh}<span>刷新</span></button>
-                        <button type="button" class="agent-center-button" data-action="export">${ICONS.export}<span>导出</span></button>
-                        <button type="button" class="agent-center-button" data-action="close">${ICONS.close}<span>关闭</span></button>
+                        <button type="button" class="agent-center-button" data-action="refresh" title="刷新" aria-label="刷新">${ICONS.refresh}</button>
+                        <button type="button" class="agent-center-button" data-action="export" title="导出" aria-label="导出">${ICONS.export}</button>
+                        <button type="button" class="agent-center-button" data-action="close" title="关闭" aria-label="关闭">${ICONS.close}</button>
                     </div>
                 </header>
                 <nav class="agent-center-tabs" aria-label="Agent Center tabs"></nav>
@@ -1787,10 +1801,12 @@ export class AgentCenterPanel {
             : this.activityStatus);
         const surface = normalizeSurface(hasSurface ? opts.surface : this.surface);
         const failureSeenAt = Number(this.getFailureSeenAt?.({ surface }) || 0) || 0;
+        const activityKind = String(this.activityKind || '').trim();
         const agentRunView = await this.callAction('listAgentRunView', {
             limit: 50,
             failureSeenAt,
             ...(activityStatus ? { status: activityStatus } : {}),
+            ...(activityKind ? { kind: activityKind } : {}),
             ...(surface ? { surface } : {}),
         }, null);
         const [
@@ -1896,6 +1912,12 @@ export class AgentCenterPanel {
         this.floatingAgentId = '';
         this.floatingAgentFlipped = false;
         this.activityStatus = normalizeActivityStatus(status);
+        this.refresh();
+    }
+
+    setActivityKind(kind = '') {
+        this.activeTab = 'activity';
+        this.activityKind = String(kind || '').trim();
         this.refresh();
     }
 
@@ -3219,13 +3241,21 @@ export class AgentCenterPanel {
             { status: 'failure', label: `失败 ${Number(this.surface ? (meta.scopedFailures ?? meta.failures ?? 0) : (meta.failures || 0))}`, tone: 'danger' },
             { status: 'succeeded', label: `完成 ${Number(statusCounts.succeeded || 0)}` },
         ];
+        const maidRunCount = Number(meta.kindCounts?.maid_assistant || 0);
+        const activeKind = String(this.activityKind || '').trim();
         const filterHtml = `<div class="agent-center-filter-row" aria-label="Agent activity filters">${filters.map(filter => `
             <button
                 type="button"
                 class="agent-center-filter${activeStatus === filter.status ? ' is-active' : ''}${filter.tone === 'danger' ? ' is-danger' : ''}"
                 data-activity-status="${escapeHtml(filter.status)}"
             >${escapeHtml(filter.label)}</button>
-        `).join('')}</div>`;
+        `).join('')}${maidRunCount ? `
+            <button
+                type="button"
+                class="agent-center-filter${activeKind === 'maid_assistant' ? ' is-active' : ''}"
+                data-activity-kind="${activeKind === 'maid_assistant' ? '' : 'maid_assistant'}"
+            >女仆 ${maidRunCount}</button>
+        ` : ''}</div>`;
         const intro = activeStatus === 'failure'
             ? renderNotice({
                 title: '失败记录',
@@ -3249,10 +3279,13 @@ export class AgentCenterPanel {
                     <span class="${escapeHtml(statusChipClass(run.status))}">${escapeHtml(displayRunStatusLabel(run))}</span>
                 </div>
                 <div class="agent-center-card-sub">${escapeHtml(displayRunSummary(run))}</div>
+                ${run.goal && run.goal !== run.title ? `<div class="agent-center-card-sub">目标：${escapeHtml(run.goal)}</div>` : ''}
                 ${failureDetail ? `<div class="agent-center-card-sub agent-center-card-error">错误：${escapeHtml(failureDetail)}</div>` : ''}
                 ${renderChips([
                     { label: `步骤 ${Number(run.stepCount || 0)}` },
                     { label: `工具 ${Number(run.toolCallCount || 0)}` },
+                    run.continuable ? { label: '可继续' } : null,
+                    run.failureCode ? { label: `原因：${run.failureCode}` } : null,
                     run.lastStep ? { label: `最近：${displayAgentKind(run.lastStep.type)}` } : null,
                 ])}
                 ${renderChatFormatReview(run.review)}
@@ -3461,6 +3494,9 @@ export class AgentCenterPanel {
         if (this.activeTab === 'activity') {
             this.contentElement.querySelectorAll('[data-activity-status]').forEach((button) => {
                 button.addEventListener('click', () => this.setActivityStatus(button.dataset.activityStatus || ''));
+            });
+            this.contentElement.querySelectorAll('[data-activity-kind]').forEach((button) => {
+                button.addEventListener('click', () => this.setActivityKind(button.dataset.activityKind || ''));
             });
             this.contentElement.querySelectorAll('[data-failure-read-action]').forEach((button) => {
                 button.addEventListener('click', () => this.handleFailureReadAction());

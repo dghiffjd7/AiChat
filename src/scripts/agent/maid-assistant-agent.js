@@ -155,12 +155,19 @@ const createMaidRunTracker = ({ agentTaskRuntime = null, input = '', context = {
       },
     });
   };
+  const markWaitingPermission = (pending = true) => {
+    if (!canTrack || !run || typeof agentTaskRuntime.updateRun !== 'function') return;
+    try {
+      agentTaskRuntime.updateRun(run.id, { status: pending ? 'waiting_permission' : 'running' });
+    } catch {}
+  };
   return {
     canTrack,
     ensureRun,
     startToolStep,
     finishToolStep,
     finish,
+    markWaitingPermission,
     getRunId: () => trim(run?.id),
   };
 };
@@ -216,6 +223,53 @@ const getConsecutiveRepeatedFailure = (steps = []) => {
     count += 1;
   }
   return { count, key, toolName: trim(last.toolName), args: clone(last.args || {}) };
+};
+
+// 同一工具同参数连续成功调用（如反复 maid.todo.read）说明模型在原地转圈，不产出实际进展。
+const getConsecutiveRepeatedSuccess = (steps = []) => {
+  const list = Array.isArray(steps) ? steps : [];
+  const last = list.at(-1);
+  if (!last || last.status !== 'succeeded') return { count: 0, key: '' };
+  const key = `${trim(last.toolName)}:${stableJsonStringify(last.args || {})}`;
+  let count = 0;
+  for (let index = list.length - 1; index >= 0; index -= 1) {
+    const step = list[index];
+    const stepKey = `${trim(step?.toolName)}:${stableJsonStringify(step?.args || {})}`;
+    if (step?.status !== 'succeeded' || stepKey !== key) break;
+    count += 1;
+  }
+  return { count, key, toolName: trim(last.toolName), args: clone(last.args || {}) };
+};
+
+// 同一工具连续调用（参数可不同）超过上限 = 在单一工具上打转（如反复换词搜索），无编排进展。
+const getConsecutiveSameToolCount = (steps = []) => {
+  const list = Array.isArray(steps) ? steps : [];
+  const last = list.at(-1);
+  const toolName = trim(last?.toolName);
+  if (!toolName) return { count: 0, toolName: '' };
+  let count = 0;
+  for (let index = list.length - 1; index >= 0; index -= 1) {
+    if (trim(list[index]?.toolName) !== toolName) break;
+    count += 1;
+  }
+  return { count, toolName };
+};
+
+const MAID_MODEL_CALL_TIMEOUT_MS = 240_000;
+
+// 模型请求可能无限挂起（API 端异常），包一层超时让 run 可失败、可继续，而不是永久 running。
+const callModelWithTimeout = async (invoke, { timeoutMs = MAID_MODEL_CALL_TIMEOUT_MS, label = 'model_call' } = {}) => {
+  let timer = null;
+  try {
+    return await Promise.race([
+      invoke(),
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`${label}_timeout`)), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 };
 
 const buildContinueHint = ({
@@ -887,6 +941,8 @@ export const createMaidAssistantAgent = ({
           runId: tracker.getRunId(),
           stepId: step?.id,
           source: 'maid-assistant',
+          onToolConfirmationPending: () => tracker.markWaitingPermission(true),
+          onToolConfirmationResolved: () => tracker.markWaitingPermission(false),
         });
         tracker.finishToolStep(step, {
           status: VALID_STEP_STATUSES.has(trim(output?.status)) ? trim(output.status) : 'succeeded',
@@ -964,18 +1020,18 @@ export const createMaidAssistantAgent = ({
   };
 
   const runPromptWithTracker = async (input = '', context = {}, tracker = null) => {
-    let plan = await planner(input, context);
+    let plan = await callModelWithTimeout(() => planner(input, context), { label: 'maid_planner' });
     if (!plan?.ok) {
       let reactRecoveryFailure = null;
       if (shouldAttemptReactPlanRecovery({ input, plan, reactPlanner })) {
         try {
-          const decision = await reactPlanner(input, {
+          const decision = await callModelWithTimeout(() => reactPlanner(input, {
             ...context,
             maidReactSteps: [],
             plannerFailure: clone(plan),
             lastPlan: clone(plan),
             lastToolOk: false,
-          });
+          }), { label: 'maid_react' });
           if (decision?.ok && decision.action === 'final') {
             return {
               ok: true,
@@ -1168,6 +1224,46 @@ export const createMaidAssistantAgent = ({
         lastOutput = observedOutput;
         lastOk = ok;
 
+        const sameTool = getConsecutiveSameToolCount(steps);
+        if (sameTool.count >= 8) {
+          const reason = 'same_tool_overuse';
+          const message = `工具「${sameTool.toolName}」已连续调用 ${sameTool.count} 次仍未推进到下一步，已停止；请检查上一步结果并改用其他工具继续。`;
+          return {
+            ok: false,
+            status: 'interrupted',
+            responseType: 'react',
+            reason,
+            input: trim(input),
+            plan: clone(observedPlan),
+            output: clone(observedOutput),
+            steps: clone(steps),
+            partial: true,
+            continuable: true,
+            failureCode: reason,
+            continueHint: buildContinueHint({ input, pendingPlan: null, steps, reason: message }),
+            message,
+          };
+        }
+        const repeatedSuccess = getConsecutiveRepeatedSuccess(steps);
+        if (repeatedSuccess.count >= 3) {
+          const reason = 'repeated_tool_loop';
+          const message = `同一工具「${repeatedSuccess.toolName || '未知工具'}」用相同参数连续调用 ${repeatedSuccess.count} 次没有产生新进展，已停止；说“继续”时请直接执行清单上的具体任务。`;
+          return {
+            ok: false,
+            status: 'interrupted',
+            responseType: 'react',
+            reason,
+            input: trim(input),
+            plan: clone(observedPlan),
+            output: clone(observedOutput),
+            steps: clone(steps),
+            partial: true,
+            continuable: true,
+            failureCode: reason,
+            continueHint: buildContinueHint({ input, pendingPlan: null, steps, reason: message }),
+            message,
+          };
+        }
         const repeatedFailure = getConsecutiveRepeatedFailure(steps);
         if (repeatedFailure.count >= failureLimit) {
           const reason = 'repeated_tool_failure';
@@ -1233,13 +1329,13 @@ export const createMaidAssistantAgent = ({
           });
         }
 
-        const decision = await reactPlanner(input, {
+        const decision = await callModelWithTimeout(() => reactPlanner(input, {
           ...context,
           maidReactSteps: clone(steps),
           lastPlan: clone(observedPlan),
           lastOutput: clone(observedOutput),
           lastToolOk: ok,
-        });
+        }), { label: 'maid_react' });
         if (!decision?.ok) {
           if (ok) {
             const stoppedReason = decision?.reason || 'react_stopped';

@@ -177,3 +177,39 @@ import {
   assert.equal(runtime.getState().run.status, 'succeeded');
   console.log('ok - async image task reopens completed run and closes it after finishing');
 }
+
+{
+  const { buildCreativeExecutionStackViewModel } = await import('../../src/scripts/ui/chat/creative-execution-lane-runtime-utils.js');
+  const state = {
+    run: { status: 'running', title: 'test' },
+    lanes: [
+      { id: 'model', label: '模型', shortLabel: '模型', icon: 'bolt' },
+      { id: 'memory', label: '记忆表', shortLabel: '记忆', icon: 'table' },
+      { id: 'image', label: '图片', shortLabel: '图片', icon: 'image' },
+    ],
+    tasks: [
+      { id: 'm1', laneId: 'model', label: '生成', status: 'succeeded', timeBucket: 0, updatedAt: 100 },
+      { id: 'm2', laneId: 'model', label: '续写', status: 'running', timeBucket: 1, updatedAt: 300 },
+      { id: 'mem1', laneId: 'memory', label: '记忆更新', status: 'succeeded', timeBucket: 1, updatedAt: 200 },
+      { id: 'img1', laneId: 'image', label: '生图', status: 'queued', timeBucket: 1, updatedAt: 150 },
+    ],
+  };
+  const view = buildCreativeExecutionStackViewModel(state);
+  assert.equal(view.allRows.length, 2, '排队中的行（image 仅 queued）与全终态行仍在 allRows（memory），queued-only 行过滤');
+  assert.equal(view.rows.length, 1, '运行期只显示有 running 任务的行');
+  assert.ok(!view.rows.some(row => row.lane.id === 'memory'), '全终态行不显示');
+  assert.ok(!view.rows.some(row => row.lane.id === 'image'), '仅排队的行不显示');
+  const modelRow = view.rows.find(row => row.lane.id === 'model');
+  assert.equal(modelRow.currentTask.id, 'm2', '行内当前任务为 running');
+  assert.equal(view.collapsedRow.lane.id, 'model', '折叠卡取最新活跃（running 且最新）');
+  assert.ok(Array.isArray(view.tasks), '保留 tasks 供详情上下游查找');
+
+  // 完成态回看：全部行与任务（除 skipped）可见
+  const finishedView = buildCreativeExecutionStackViewModel({
+    ...state,
+    run: { status: 'succeeded', title: 'test' },
+    tasks: state.tasks.map(t => ({ ...t, status: t.id === 'img1' ? 'skipped' : 'succeeded' })),
+  });
+  assert.equal(finishedView.rows.length, 2, '回看模式显示全部历史行（skipped-only 行除外）');
+  console.log('ok - 卡片栈视图：running 过滤/回看模式/折叠卡');
+}

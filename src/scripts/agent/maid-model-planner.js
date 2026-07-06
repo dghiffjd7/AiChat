@@ -9,6 +9,7 @@ import {
   getMaidImageAttachmentsFromContext,
 } from './maid-attachment-parts.js';
 import { DEFAULT_MAID_PROMPT, MAID_OPERATION_SAFETY_PROMPT } from './maid-prompt-defaults.js';
+import { buildMaidSelectionPromptBlock } from '../ui/maid-selection-utils.js';
 
 const trim = (value, fallback = '') => {
   const text = String(value ?? '').trim();
@@ -96,8 +97,10 @@ export const buildMaidModelPlannerMessages = ({
   const historyText = trim(conversationContext?.historyText);
   const imageAttachments = getMaidImageAttachmentsFromContext(context);
   const imageSummary = buildMaidImageAttachmentSummary(imageAttachments);
+  const selectionBlock = buildMaidSelectionPromptBlock(context?.userSelection);
   const userText = [
     `用户请求：${trim(input)}`,
+    selectionBlock,
     imageSummary ? `用户附图：\n${imageSummary}` : '',
     `当前会话：${trim(context?.sessionId, '-')}`,
     `UI 模式：${trim(context?.uiMode, '-')}`,
@@ -122,6 +125,7 @@ export const buildMaidModelPlannerMessages = ({
         '限制：不要发明工具；不要删除、覆盖或修改高风险数据；配置写入类动作只允许打开界面，不允许直接修改配置。',
         '工具 args 必须是完整、具体、可直接执行的 JSON；不要使用 "__keep_existing"、"同上"、"省略"、"待补" 等占位值。需要旧内容时先调用读取工具。',
         '如果用户询问当前、最新、公开网络资料，允许选择联网搜索工具；如果用户询问 APP 内资料，优先选择 APP 读取工具，不要联网。',
+        '任务规划判据：当任务涉及 3 个及以上不同功能域，或用户一句话列举多项要求时，第一个工具必须选 maid.todo.write 写任务清单；单一功能的简单任务直接选对应工具执行，不要写 todo。',
         '如果用户要求把附图设置为头像或壁纸，选择对应头像/壁纸工具；工具参数只传 target/name/sessionId/attachmentId 等小字段，不要把 base64 或图片 data URL 写进 args。省略 attachmentId 时工具会使用第一张附图。',
         '',
         '## 安全原则',
@@ -255,15 +259,30 @@ export const buildMaidModelReActMessages = ({
   const historyText = trim(conversationContext?.historyText);
   const imageAttachments = getMaidImageAttachmentsFromContext(context);
   const imageSummary = buildMaidImageAttachmentSummary(imageAttachments);
+  const selectionBlock = buildMaidSelectionPromptBlock(context?.userSelection);
+  // 步骤观察滚动窗口：早期步骤只留一行摘要，最近步骤保留完整观察——
+  // 防止长任务里 steps 序列化超限截断导致模型看不到最新工具结果（观察失明）。
+  const RECENT_STEP_WINDOW = 4;
+  const stepList = Array.isArray(steps) ? steps : [];
+  const olderSteps = stepList.slice(0, Math.max(0, stepList.length - RECENT_STEP_WINDOW));
+  const recentSteps = stepList.slice(-RECENT_STEP_WINDOW);
+  const olderText = olderSteps
+    .map((step, i) => `${i + 1}. ${trim(step?.toolName)}:${trim(step?.status)} ${truncate(trim(step?.summary), 90)}`)
+    .join('\n');
+  const stepsText = [
+    olderText ? `更早步骤（仅摘要）：\n${olderText}` : '',
+    `最近步骤与完整观察：\n${stringifyForPrompt(recentSteps, 12000) || '[]'}`,
+  ].filter(Boolean).join('\n');
   const userText = [
     `用户请求：${trim(input)}`,
+    selectionBlock,
     imageSummary ? `用户附图：\n${imageSummary}` : '',
     `当前会话：${trim(context?.sessionId, '-')}`,
     `UI 模式：${trim(context?.uiMode, '-')}`,
     `当前页面：${trim(context?.activePage, '-')}`,
     `女仆记忆表格：\n${memoryText || '（空）'}`,
     `女仆历史上下文：\n${historyText || '（空）'}`,
-    `已执行步骤与观察结果：\n${stringifyForPrompt(steps, 12000) || '[]'}`,
+    `已执行步骤与观察结果：\n${stepsText}`,
   ].filter(Boolean).join('\n');
   return [
     {
@@ -282,7 +301,10 @@ export const buildMaidModelReActMessages = ({
         '## 工具与参数规则',
         '每次最多选择一个工具；不要发明工具；只能使用 APP 功能目录中 feature 允许的 tools。',
         '工具失败时，先根据错误、原始 args、功能 argsHint 修正参数；不要因为参数错误改用更高风险工具。',
-        '复杂多步任务可先用 maid.todo.write 记录任务清单，每完成一步更新状态；用户询问进度时用 maid.todo.read 查看。',
+        '任务规划判据：当任务涉及 3 个及以上不同功能域（如 世界书+正则+图片），或用户一句话列举多项要求时，必须先用 maid.todo.write 写任务清单再执行，每完成一步更新状态；单一功能的简单任务不要写 todo，直接执行。',
+        '写过 todo 的任务，最终回答前先用 maid.todo.read 核对清单：逐项确认完成状态，不要漏项，也不要把未完成项报告为已完成；只要清单上还有未完成项，就必须继续执行对应工具，不能提前结束任务。用户询问进度时用 maid.todo.read 查看。',
+        '不要连续重复调用同一个只读工具（如连续多次 maid.todo.read）；读取过一次后，下一步必须是执行清单上具体任务的工具调用。',
+        '如果清单上的某一项在 APP 功能目录里找不到任何能完成它的工具，不要卡住：用 maid.todo.write 把该项标记为 cancelled（或在内容后注明“无对应工具”），跳过它继续做下一项，并在最终汇报中如实说明该项做不了及原因。',
         '工具 args 必须是完整、具体、可直接执行的 JSON；不要使用 "__keep_existing"、"同上"、"省略"、"待补" 等占位值。需要旧内容时先调用读取工具。',
         '处理附图时，继续使用本次请求的 attachmentId 或 preparedImageId；不要把 base64 或图片 data URL 写进 args。',
         '',

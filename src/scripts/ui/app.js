@@ -120,6 +120,7 @@ import {
 } from '../utils/media-assets.js';
 import { pickSavePath } from '../utils/save-dialog.js';
 import { safeInvoke } from '../utils/tauri.js';
+import { createMaidSelectionMode } from './maid-selection-mode.js';
 import './bridge.js';
 import {
   registerChatUiBridgeContract,
@@ -3368,6 +3369,7 @@ const initApp = async () => {
             sessionId: opts.sessionId || chatStore.getCurrent(),
             uiMode: opts.uiMode || uiMode,
             activePage: opts.activePage || activePage,
+            userSelection: Array.isArray(opts.userSelection) ? opts.userSelection : maidSelectionMode.getItems(),
           };
           const result = await maidAssistantAgent.runPrompt(input, {
             ...maidTurnContext,
@@ -8268,6 +8270,9 @@ Phase G（Frame 36）：循环衔接
       ? callback => requestAnimationFrame(callback)
       : null,
     logger,
+  });
+  patchDebugUiRegistry((registry) => {
+    registry.stores.creativeExecutionLaneRuntime = creativeExecutionLaneRuntime;
   });
   let chatInputGapTweak = 0;
   const syncChatInputOffset = () => {
@@ -15788,8 +15793,14 @@ Phase G（Frame 36）：循环衔接
     } catch {}
     target.classList.add('maid-guide-step-target');
   };
+  // 同类入口按钮在多个页面各有实例，取第一个会拿到隐藏页的（rect 全 0 -> 菜单飘到左上角）。
+  // 必须选当前可见的实例；没有可见实例说明不在对应界面，不硬开菜单。
+  const pickVisibleGuideAnchor = (...candidates) => {
+    const list = candidates.flatMap(item => (Array.isArray(item) || item instanceof NodeList ? Array.from(item) : [item]));
+    return list.find(el => el && isMaidGuideElementVisible(el)) || null;
+  };
   const openMaidPersonaSwitcherForGuide = () => {
-    const anchor = avatarBtns?.[0] || document.querySelector('[data-maid-guide-target="avatar-user-entry"]');
+    const anchor = pickVisibleGuideAnchor(avatarBtns, document.querySelectorAll('[data-maid-guide-target="avatar-user-entry"]'));
     if (!anchor || !personaSwitcherMenu) return false;
     hideMenus();
     renderPersonaSwitcher();
@@ -15802,13 +15813,13 @@ Phase G（Frame 36）：循环衔接
     personaSwitcherTab = normalizePersonaSwitcherTab(tab);
     persistPersonaSwitcherTab();
     renderPersonaSwitcher();
-    const anchor = avatarBtns?.[0] || document.querySelector('[data-maid-guide-target="avatar-user-entry"]');
+    const anchor = pickVisibleGuideAnchor(avatarBtns, document.querySelectorAll('[data-maid-guide-target="avatar-user-entry"]'));
     if (anchor) positionSheet(personaSwitcherMenu, anchor, 0, 4, false);
     personaSwitcherMenu?.classList.remove('hidden');
     await maidGuideDelay(80);
   };
   const openMaidSettingsMenuForGuide = async () => {
-    const anchor = settingsBtns?.[0] || document.querySelector('[data-maid-guide-target="settings-entry"]');
+    const anchor = pickVisibleGuideAnchor(settingsBtns, document.querySelectorAll('[data-maid-guide-target="settings-entry"]'));
     if (!anchor || !settingsMenu) return false;
     hideMenus();
     positionSheet(settingsMenu, anchor, 0, 4, true);
@@ -15817,7 +15828,7 @@ Phase G（Frame 36）：循环衔接
     return true;
   };
   const openMaidQuickMenuForGuide = async () => {
-    const anchor = plusBtns?.[0] || document.querySelector('[data-maid-guide-target="top-plus-entry"]');
+    const anchor = pickVisibleGuideAnchor(plusBtns, document.querySelectorAll('[data-maid-guide-target="top-plus-entry"]'));
     if (!anchor || !quickMenu) return false;
     hideMenus();
     positionSheet(quickMenu, anchor, 0, 4, true);
@@ -15826,7 +15837,7 @@ Phase G（Frame 36）：循环衔接
     return true;
   };
   const openMaidChatroomMenuForGuide = async () => {
-    const anchor = chatMenuBtn || document.querySelector('[data-maid-guide-target="chatroom-menu-entry"]');
+    const anchor = pickVisibleGuideAnchor(chatMenuBtn, document.querySelectorAll('[data-maid-guide-target="chatroom-menu-entry"]'));
     const menu = document.querySelector('#rp-chatroom-menu:not(.hidden), #chatroom-menu:not(.hidden)') || chatroomMenu || rpChatroomMenu;
     if (!anchor || !menu) return false;
     hideMenus();
@@ -15836,7 +15847,7 @@ Phase G（Frame 36）：循环衔接
     return true;
   };
   const openMaidChatTitleMenuForGuide = async () => {
-    const anchor = document.getElementById('current-chat-title');
+    const anchor = pickVisibleGuideAnchor(document.getElementById('current-chat-title'));
     const menu = document.getElementById('chat-title-menu');
     if (!anchor || !menu) return false;
     hideMenus();
@@ -15936,6 +15947,23 @@ Phase G（Frame 36）：循环衔接
       const onTargetClick = () => setTimeout(finish, 0);
       target.addEventListener('click', onTargetClick, true);
       cleanupFns.push(() => target.removeEventListener('click', onTargetClick, true));
+      // 「带我做」兜底：约 5 秒未点时浮出「帮我点」，代点目标（仍走真实点击流程）。
+      const assistTimer = setTimeout(() => {
+        if (done || !bubble || bubble.querySelector('[data-maid-guide-action="assist-click"]')) return;
+        const assistBtn = document.createElement('button');
+        assistBtn.type = 'button';
+        assistBtn.className = 'maid-guide-step-continue';
+        assistBtn.dataset.maidGuideAction = 'assist-click';
+        assistBtn.textContent = '帮我点';
+        assistBtn.addEventListener('click', (event) => {
+          event.preventDefault?.();
+          event.stopPropagation?.();
+          try { target.click(); } catch { finish(); }
+        });
+        bubble.appendChild(assistBtn);
+        positionMaidGuideBubble(bubble, target);
+      }, 5000);
+      cleanupFns.push(() => clearTimeout(assistTimer));
     }
     const continueBtn = bubble?.querySelector?.('[data-maid-guide-action="continue"]');
     if (continueBtn) {
@@ -21488,9 +21516,18 @@ Phase G（Frame 36）：循环衔接
     }
   };
 
+  const maidSelectionMode = createMaidSelectionMode({
+    documentRef: document,
+    getCurrentSessionId: () => chatStore.getCurrent(),
+    onChange: ({ active, items }) => {
+      maidCommandInputRuntime?.setSelectionState?.({ active, count: items.length });
+    },
+    logger,
+  });
   maidCommandInputRuntime = createMaidCommandInputRuntime({
     documentRef: document,
     modeSwitchEl: modeSwitch,
+    onToggleSelection: () => maidSelectionMode.toggle(),
     getViewportSize,
     maxImageAttachments: 4,
     onAttachFiles: buildMaidImageAttachments,
@@ -21515,6 +21552,7 @@ Phase G（Frame 36）：循环衔接
         sessionId: chatStore.getCurrent(),
         uiMode,
         activePage,
+        userSelection: maidSelectionMode.getItems(),
       };
       const result = await maidAssistantAgent.runPrompt(text, {
         ...maidTurnContext,
@@ -21590,6 +21628,10 @@ Phase G（Frame 36）：循环衔接
     },
   });
   modeSwitchInteractionRuntime.bind();
+  patchDebugUiRegistry((registry) => {
+    registry.actions.openMaidCommandInput = () => openMaidCommandOrSettings();
+    registry.stores.maidSelectionMode = maidSelectionMode;
+  });
 
   rpGreetingTrigger?.addEventListener('click', (e) => {
     e.stopPropagation();

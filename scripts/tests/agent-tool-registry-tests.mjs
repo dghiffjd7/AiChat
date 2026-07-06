@@ -434,3 +434,28 @@ const logger = { warn: () => {} };
   assert.equal(imageTool.summarizeResult(result), 'image generated: generated.png');
   console.log('ok - image agent tool delegates to media generation service contract');
 }
+
+{
+  // 确认 gate 前后应通知 onToolConfirmationPending/Resolved（run 可标 waiting_permission）
+  const registry = createAgentToolRegistry({ logger: { warn() {} } });
+  registry.register({
+    name: 'test.dangerous_write',
+    title: 'Dangerous write',
+    source: 'test',
+    riskLevel: 'high',
+    capabilities: { read: false, write: true, network: false, cost: 'none', undo: 'none', modelContext: 'allowlist', confirmation: 'always' },
+    safety: { destructive: 'always' },
+    schema: { type: 'object', additionalProperties: true, properties: {} },
+    execute: async () => ({ ok: true }),
+  });
+  const events = [];
+  const out = await registry.executeTool('test.dangerous_write', {}, {
+    requestPermission: () => ({ decision: 'allow' }),
+    requestToolConfirmation: async () => { events.push('confirm'); return { decision: 'allow' }; },
+    onToolConfirmationPending: () => events.push('pending'),
+    onToolConfirmationResolved: () => events.push('resolved'),
+  });
+  assert.equal(out.status, 'succeeded');
+  assert.deepEqual(events, ['pending', 'confirm', 'resolved'], '确认前后回调顺序');
+  console.log('ok - 确认 gate 通知 pending/resolved 回调');
+}

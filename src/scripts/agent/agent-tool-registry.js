@@ -398,9 +398,16 @@ export const createAgentToolRegistry = ({
       argsPreview: preflight.argsPreview,
       details: preflight.details,
     };
-    const allowed = typeof requestConfirmation === 'function'
-      ? isSafetyConfirmationAllowed(await requestConfirmation(request))
-      : false;
+    let allowed = false;
+    if (typeof requestConfirmation === 'function') {
+      // 等待用户确认期间通知调用方（run 可标记 waiting_permission，避免看起来像卡死）
+      try { context.onToolConfirmationPending?.(request); } catch {}
+      try {
+        allowed = isSafetyConfirmationAllowed(await requestConfirmation(request));
+      } finally {
+        try { context.onToolConfirmationResolved?.(request); } catch {}
+      }
+    }
     if (allowed) {
       return {
         args,

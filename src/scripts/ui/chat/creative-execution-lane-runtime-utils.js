@@ -473,6 +473,64 @@ export const buildCreativeExecutionLaneViewModel = (state = {}, { orientation = 
   };
 };
 
+// 竖式进程卡片栈视图（2026-07-06 重设计）：每个 lane 一行，行内横向滚动看历史，
+// 折叠态只显示最新活跃行的当前任务卡；已结束（全部终态）的行不显示。
+export const buildCreativeExecutionStackViewModel = (state = {}) => {
+  const base = buildCreativeExecutionLaneViewModel(state, { orientation: 'desktop' });
+  const lanes = (Array.isArray(state.lanes) && state.lanes.length
+    ? state.lanes
+    : CREATIVE_EXECUTION_DEFAULT_LANES).map(normalizeLane);
+  const laneIndex = new Map(lanes.map((lane, index) => [lane.id, index]));
+  const tasks = (Array.isArray(state.tasks) ? state.tasks : []).map(normalizeCreativeExecutionTask)
+    .filter(task => laneIndex.has(task.laneId))
+    .sort((a, b) => a.timeBucket - b.timeBucket || laneIndex.get(a.laneId) - laneIndex.get(b.laneId));
+  const byLane = new Map();
+  tasks.forEach((task) => {
+    if (!byLane.has(task.laneId)) byLane.set(task.laneId, []);
+    byLane.get(task.laneId).push(task);
+  });
+  const runFinished = ['succeeded', 'failed', 'cancelled'].includes(base.status);
+  const rows = lanes
+    .map((lane) => {
+      const allLaneTasks = byLane.get(lane.id) || [];
+      // 未执行的任务不进卡片流：跳过的永不显示；排队中的在运行期也不显示（只看已执行/执行中）
+      const laneTasks = allLaneTasks.filter(task => task.status !== 'skipped'
+        && (runFinished || task.status !== 'queued'));
+      if (!laneTasks.length) return null;
+      const done = allLaneTasks.every(task => isCreativeExecutionTerminalStatus(task.status));
+      const hasRunning = laneTasks.some(task => task.status === 'running');
+      const currentTask = laneTasks.find(task => task.status === 'running')
+        || laneTasks[laneTasks.length - 1];
+      return { lane, tasks: laneTasks, currentTask, done, hasRunning };
+    })
+    .filter(Boolean);
+  // run 结束后保留全部行供回看（"已完成·查看流程"点开有内容）；运行中只显示有执行中任务的行
+  const activeRows = runFinished ? rows : rows.filter(row => row.hasRunning);
+  const rankRow = row => (row.currentTask.status === 'running' ? 2 : row.currentTask.status === 'queued' ? 1 : 0);
+  const collapsedRow = activeRows
+    .slice()
+    .sort((a, b) => (rankRow(b) - rankRow(a))
+      || (toFiniteNumber(b.currentTask.updatedAt, 0) - toFiniteNumber(a.currentTask.updatedAt, 0)))[0]
+    || rows[rows.length - 1]
+    || null;
+  const runningTaskCount = tasks.filter(task => task.status === 'running').length;
+  return {
+    runningTaskCount,
+    status: base.status,
+    statusText: base.statusText,
+    displayTitle: base.displayTitle,
+    summary: base.summary,
+    progress: base.progress,
+    currentTaskId: base.currentTaskId,
+    selectedTask: base.selectedTask,
+    tasks: base.tasks,
+    rows: activeRows,
+    allRows: rows,
+    collapsedRow,
+    extraActiveCount: Math.max(0, activeRows.length - 1),
+  };
+};
+
 const iconSvg = name => {
   const common = 'viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"';
   const icons = {
@@ -495,59 +553,61 @@ const iconSvg = name => {
 
 const renderStripHtml = (view, state) => {
   const progress = `${view.progress.terminal}/${view.progress.total || 0}`;
+  const card = view.collapsedRow?.currentTask || null;
+  const lane = view.collapsedRow?.lane || null;
+  const title = card ? card.label : view.displayTitle;
+  const brief = card ? (card.summary || card.brief || view.summary) : view.summary;
   return `
-    <button type="button" class="creative-execution-strip" data-cel-toggle="1" aria-expanded="${state.expanded ? 'true' : 'false'}" aria-label="展开创意写作执行流程">
-      <span class="creative-execution-strip-icon" aria-hidden="true">${iconSvg('spark')}</span>
-      <span class="creative-execution-strip-copy">
-        <span class="creative-execution-strip-title">${escapeHtml(view.displayTitle)}</span>
-        <span class="creative-execution-strip-summary">${escapeHtml(view.summary)}</span>
+    <button type="button" class="creative-execution-chip is-${escapeHtml(view.status)}" data-cel-toggle="1" aria-expanded="${state.expanded ? 'true' : 'false'}" aria-label="展开创意写作执行流程">
+      <span class="creative-execution-chip-icon" aria-hidden="true">${iconSvg(lane?.icon || 'spark')}</span>
+      <span class="creative-execution-chip-copy">
+        <span class="creative-execution-chip-title">${escapeHtml(title)}</span>
+        <span class="creative-execution-chip-brief">${escapeHtml(brief)}</span>
       </span>
-      <span class="creative-execution-strip-progress" aria-label="执行进度">${escapeHtml(progress)}</span>
-      <span class="creative-execution-strip-chevron" aria-hidden="true">${iconSvg('chevron')}</span>
+      ${view.runningTaskCount > 0 ? `<span class="creative-execution-chip-more" title="运行中任务数">${view.runningTaskCount}</span>` : ''}
+      <span class="creative-execution-chip-progress">${escapeHtml(progress)}</span>
+      <span class="creative-execution-chip-chevron" aria-hidden="true">${iconSvg('chevron')}</span>
     </button>
   `;
 };
 
-const renderGraphHtml = view => {
-  const markerHtml = view.timeMarkers.map(marker => view.orientation === 'mobile'
-    ? `<div class="creative-execution-time-marker ${marker.active ? 'is-active' : ''}" style="--cel-y:${marker.y}px;"><span>${escapeHtml(marker.label)}</span></div>`
-    : `<div class="creative-execution-time-marker ${marker.active ? 'is-active' : ''}" style="--cel-x:${marker.x}px;"><span>${escapeHtml(marker.label)}</span></div>`).join('');
-  const laneHtml = view.laneLabels.map(lane => view.orientation === 'mobile'
-    ? `<div class="creative-execution-lane-label is-mobile" style="--cel-x:${lane.x}px; --cel-y:${lane.y}px;"><span>${iconSvg(lane.icon)}</span>${escapeHtml(lane.shortLabel)}</div>`
-    : `<div class="creative-execution-lane-label" style="--cel-x:${lane.x}px; --cel-y:${lane.y}px;"><span>${iconSvg(lane.icon)}</span>${escapeHtml(lane.shortLabel)}</div>`).join('');
-  const edgeHtml = view.edges.map(edge => `
-    <path class="creative-execution-edge ${edge.active ? 'is-active' : ''} ${edge.status === 'failed' ? 'is-failed' : ''}" d="${escapeHtml(edge.path)}" />
-    ${edge.active ? `<path class="creative-execution-edge-flow" d="${escapeHtml(edge.path)}" />` : ''}
-  `).join('');
-  const nodeHtml = view.tasks.map(task => {
-    const selected = view.selectedTask?.id === task.id;
-    return `
-    <button type="button"
-      class="creative-execution-node is-${escapeHtml(task.status)} ${task.isCurrent ? 'is-current' : ''} ${selected ? 'is-selected' : ''}"
-      data-cel-task-id="${escapeHtml(task.id)}"
-      aria-selected="${selected ? 'true' : 'false'}"
-      style="--cel-x:${task.x}px; --cel-y:${task.y}px;"
-      aria-label="${escapeHtml(`${task.label}，${CREATIVE_EXECUTION_STATUS_LABELS[task.status] || task.status}`)}">
-      <span class="creative-execution-node-head">
-        <span class="creative-execution-node-icon" aria-hidden="true">${iconSvg(task.lane?.icon || 'spark')}</span>
-        <span class="creative-execution-node-phase">T+${escapeHtml(task.timeBucket)}</span>
-      </span>
-      <span class="creative-execution-node-title">${escapeHtml(task.label)}</span>
-      <span class="creative-execution-node-brief">${escapeHtml(task.summary || task.brief || '等待状态')}</span>
-      <span class="creative-execution-node-status">${escapeHtml(CREATIVE_EXECUTION_STATUS_LABELS[task.status] || task.status)}</span>
-    </button>
-  `;
-  }).join('');
+const renderTaskCardHtml = (task, { lane = null, selected = false, isCurrent = false, entering = false, justDone = false } = {}) => `
+  <button type="button"
+    class="cel-card is-${escapeHtml(task.status)}${isCurrent ? ' is-current' : ''}${selected ? ' is-selected' : ''}${entering ? ' is-entering' : ''}${justDone ? ' is-just-done' : ''}"
+    data-cel-task-id="${escapeHtml(task.id)}"
+    aria-selected="${selected ? 'true' : 'false'}"
+    aria-label="${escapeHtml(`${task.label}，${CREATIVE_EXECUTION_STATUS_LABELS[task.status] || task.status}`)}">
+    <span class="cel-card-head">
+      ${lane ? `<span class="cel-card-kicker"><span aria-hidden="true">${iconSvg(lane.icon)}</span>${escapeHtml(lane.shortLabel)}</span>` : ''}
+      <span class="cel-card-status"><span class="cel-card-dot" aria-hidden="true"></span>${escapeHtml(CREATIVE_EXECUTION_STATUS_LABELS[task.status] || task.status)}</span>
+    </span>
+    <span class="cel-card-title">${escapeHtml(task.label)}</span>
+  </button>
+`;
+
+const renderStackRowsHtml = (view, { enteringTaskIds = new Set(), justDoneTaskIds = new Set(), windowStart = 0, windowSize = 3 } = {}) => {
+  if (!view.rows.length) {
+    return `<div class="cel-rows is-empty">${escapeHtml(view.summary || '流程已结束')}</div>`;
+  }
+  const start = Math.max(0, Math.min(windowStart, Math.max(0, view.rows.length - windowSize)));
+  const visibleRows = view.rows.slice(start, start + windowSize);
+  const moreAbove = start > 0;
+  const moreBelow = start + windowSize < view.rows.length;
   return `
-    <div class="creative-execution-graph-scroll" data-cel-graph-scroll="1">
-      <div class="creative-execution-scene" style="width:${view.scene.width}px; height:${view.scene.height}px;">
-        <svg class="creative-execution-edge-layer" width="${view.scene.width}" height="${view.scene.height}" viewBox="0 0 ${view.scene.width} ${view.scene.height}" aria-hidden="true">
-          ${edgeHtml}
-        </svg>
-        ${markerHtml}
-        ${laneHtml}
-        ${nodeHtml}
-      </div>
+    <div class="cel-rows${moreAbove ? ' has-more-above' : ''}${moreBelow ? ' has-more-below' : ''}" data-cel-rows="1">
+      ${visibleRows.map(row => `
+        <div class="cel-row" data-cel-row="${escapeHtml(row.lane.id)}">
+          <div class="cel-row-scroll" data-cel-row-scroll="${escapeHtml(row.lane.id)}">
+            ${row.tasks.map(task => renderTaskCardHtml(task, {
+              lane: row.lane,
+              selected: view.selectedTask?.id === task.id,
+              isCurrent: row.currentTask?.id === task.id,
+              entering: enteringTaskIds.has(task.id),
+              justDone: justDoneTaskIds.has(task.id),
+            })).join('')}
+          </div>
+        </div>
+      `).join('')}
     </div>
   `;
 };
@@ -600,26 +660,15 @@ const renderDetailsHtml = view => {
   `;
 };
 
-const renderPanelHtml = (view, state) => `
-  <section class="creative-execution-panel ${state.fullscreen ? 'is-fullscreen' : ''} ${view.selectedTask ? 'has-detail' : ''}" aria-label="创意写作执行泳道图">
-    <header class="creative-execution-panel-head">
-      <div class="creative-execution-panel-title">
-        <span aria-hidden="true">${iconSvg('panel')}</span>
-        <div>
-          <strong>${escapeHtml(view.displayTitle)}</strong>
-          <small>${escapeHtml(state.run?.title || '创意写作流程')} · ${escapeHtml(view.progress.terminal)}/${escapeHtml(view.progress.total)} · 时间${view.orientation === 'mobile' ? '纵轴' : '横轴'}</small>
-        </div>
-      </div>
-      <div class="creative-execution-panel-actions">
-        <button type="button" class="creative-execution-icon-btn" data-cel-fullscreen="1" aria-label="${state.fullscreen ? '退出全屏' : '全屏查看'}">${state.fullscreen ? iconSvg('collapse') : iconSvg('expand')}</button>
-        <button type="button" class="creative-execution-icon-btn" data-cel-toggle="1" aria-label="收起执行流程">${iconSvg('chevron')}</button>
-        <button type="button" class="creative-execution-icon-btn" data-cel-close="1" aria-label="关闭执行流程">${iconSvg('close')}</button>
-      </div>
-    </header>
-    <div class="creative-execution-panel-body">
-      <main class="creative-execution-graph" aria-label="执行泳道图">${renderGraphHtml(view)}</main>
-      ${renderDetailsHtml(view)}
+const renderPanelHtml = (view, state, options = {}) => `
+  <section class="creative-execution-stack ${view.selectedTask ? 'has-detail' : ''}${options.opening ? ' is-opening' : ''}" aria-label="创意写作执行流程">
+    <div class="creative-execution-stack-controls">
+      <span class="creative-execution-stack-progress">${escapeHtml(view.progress.terminal)}/${escapeHtml(view.progress.total)}</span>
+      <button type="button" class="creative-execution-icon-btn" data-cel-toggle="1" aria-label="收起执行流程">${iconSvg('chevron')}</button>
+      <button type="button" class="creative-execution-icon-btn" data-cel-close="1" aria-label="关闭执行流程">${iconSvg('close')}</button>
     </div>
+    ${renderStackRowsHtml(view, options)}
+    ${renderDetailsHtml(view)}
   </section>
 `;
 
@@ -652,16 +701,16 @@ export const createCreativeExecutionLaneRuntime = ({
     return 'desktop';
   };
 
-  const scrollActiveIntoView = () => {
-    if (!root || !state?.expanded || state.userPanned) return;
-    const activeId = buildCreativeExecutionLaneViewModel(state, { orientation: resolveOrientation() }).currentTaskId;
-    if (!activeId) return;
+  // 各进程行滚动到当前任务卡（新任务推入时产生向左滑动的观感）
+  const scrollRowsToCurrent = () => {
+    if (!root || !state?.expanded) return;
     const run = () => {
       try {
-        root.querySelector(`[data-cel-task-id="${activeId}"]`)?.scrollIntoView({
-          block: 'nearest',
-          inline: 'center',
-          behavior: 'smooth',
+        root.querySelectorAll('[data-cel-row-scroll]').forEach((row) => {
+          const current = row.querySelector('.cel-card.is-current');
+          if (!current) return;
+          const target = current.offsetLeft + current.offsetWidth - row.clientWidth;
+          row.scrollTo({ left: Math.max(0, target + 8), behavior: 'smooth' });
         });
       } catch {}
     };
@@ -669,31 +718,89 @@ export const createCreativeExecutionLaneRuntime = ({
     else run();
   };
 
+  // 上一次渲染时各进程行的当前任务（用于新任务推入动画标记）；
+  // 连续快速 render 会全量重绘，entering/just-done 标记按时间窗口保持避免动画被打断。
+  let prevRowCurrentIds = new Map();
+  const enteringUntil = new Map();
+  const ENTERING_WINDOW_MS = 420;
+  let prevTaskStatuses = new Map();
+  const justDoneUntil = new Map();
+  const JUST_DONE_WINDOW_MS = 520;
+  let prevExpanded = false;
+  // 步进滚动窗口：固定显示 3 行，滚动累计满一行高整体跳一格（瞬时替换）
+  const ROWS_WINDOW_SIZE = 3;
+  let rowWindowStart = 0;
+  let rowScrollAccum = 0;
+  let rowTouchY = null;
+  // 跳格方向与行高：render 时驱动"新卡从边缘挤入贴上"的整列位移动画（一次性）
+  let rowStepDirection = 0;
+  let rowStepPx = 48;
+
   const render = () => {
     if (!root || !mounted) return;
     const visible = Boolean(state?.visible) && shouldShowCreativeExecutionForUiMode(getUiMode());
     root.hidden = !visible;
     if (!visible || !state) return;
     const orientation = resolveOrientation();
-    const view = buildCreativeExecutionLaneViewModel(state, { orientation });
+    const view = buildCreativeExecutionStackViewModel(state);
+    const ts = toFiniteNumber(now(), Date.now());
+    const nextRowCurrentIds = new Map();
+    // 用 allRows 记录（含已结束行）：行短暂结束后追加新任务时仍能识别为“推入”而非新行
+    view.allRows.forEach((row) => {
+      const currentId = row.currentTask?.id || '';
+      nextRowCurrentIds.set(row.lane.id, currentId);
+      if (currentId && prevRowCurrentIds.has(row.lane.id) && prevRowCurrentIds.get(row.lane.id) !== currentId) {
+        enteringUntil.set(currentId, ts + ENTERING_WINDOW_MS);
+      }
+    });
+    prevRowCurrentIds = nextRowCurrentIds;
+    const enteringTaskIds = new Set();
+    enteringUntil.forEach((until, id) => {
+      if (until > ts) enteringTaskIds.add(id);
+      else enteringUntil.delete(id);
+    });
+    // 刚变为完成的任务：短暂闪光反馈
+    const nextTaskStatuses = new Map();
+    (view.tasks || []).forEach((task) => {
+      nextTaskStatuses.set(task.id, task.status);
+      if (task.status === 'succeeded' && prevTaskStatuses.has(task.id) && prevTaskStatuses.get(task.id) !== 'succeeded') {
+        justDoneUntil.set(task.id, ts + JUST_DONE_WINDOW_MS);
+      }
+    });
+    prevTaskStatuses = nextTaskStatuses;
+    const justDoneTaskIds = new Set();
+    justDoneUntil.forEach((until, id) => {
+      if (until > ts) justDoneTaskIds.add(id);
+      else justDoneUntil.delete(id);
+    });
+    const opening = state.expanded && !prevExpanded;
+    prevExpanded = Boolean(state.expanded);
+    rowWindowStart = Math.max(0, Math.min(rowWindowStart, Math.max(0, view.rows.length - ROWS_WINDOW_SIZE)));
     root.className = [
       'creative-execution-root',
       state.expanded ? 'is-expanded' : '',
-      state.fullscreen ? 'is-fullscreen' : '',
       `is-${view.status}`,
     ].filter(Boolean).join(' ');
     root.dataset.status = view.status;
     root.dataset.orientation = orientation;
-    root.innerHTML = `${renderStripHtml(view, state)}${state.expanded ? renderPanelHtml(view, state) : ''}`;
-    scrollActiveIntoView();
+    root.innerHTML = `${state.expanded ? renderPanelHtml(view, state, { enteringTaskIds, justDoneTaskIds, opening, windowStart: rowWindowStart, windowSize: ROWS_WINDOW_SIZE }) : renderStripHtml(view, state)}`;
+    if (rowStepDirection !== 0) {
+      const rowsEl = root.querySelector('[data-cel-rows]');
+      if (rowsEl) {
+        rowsEl.style.setProperty('--cel-step', `${rowStepDirection * rowStepPx}px`);
+        rowsEl.classList.add('is-stepping');
+      }
+      rowStepDirection = 0;
+    }
+    scrollRowsToCurrent();
   };
 
   const syncSelectedTaskDom = () => {
     if (!root || !state?.expanded) return false;
-    const panel = root.querySelector?.('.creative-execution-panel');
-    const body = root.querySelector?.('.creative-execution-panel-body');
+    const panel = root.querySelector?.('.creative-execution-stack');
+    const body = panel;
     if (!panel || !body) return false;
-    const view = buildCreativeExecutionLaneViewModel(state, { orientation: resolveOrientation() });
+    const view = buildCreativeExecutionStackViewModel(state);
     panel.classList.toggle('has-detail', Boolean(view.selectedTask));
     root.querySelectorAll?.('[data-cel-task-id]')?.forEach(node => {
       const selected = node.getAttribute('data-cel-task-id') === state.selectedTaskId;
@@ -797,6 +904,10 @@ export const createCreativeExecutionLaneRuntime = ({
   const mount = () => {
     if (!doc || !inputContainer) return false;
     if (mounted) return true;
+    // 防御：清理容器内残留的旧实例（热重载/异常中断遗留），避免多 root 叠加
+    try {
+      inputContainer.querySelectorAll?.(':scope > .creative-execution-root').forEach(el => el.remove());
+    } catch {}
     root = doc.createElement('div');
     root.className = 'creative-execution-root';
     root.hidden = true;
@@ -820,14 +931,6 @@ export const createCreativeExecutionLaneRuntime = ({
         if (!state) return;
         state.visible = false;
         state.expanded = false;
-        render();
-        return;
-      }
-      const fullscreen = target.closest?.('[data-cel-fullscreen]');
-      if (fullscreen) {
-        event.preventDefault();
-        if (!state) return;
-        state.fullscreen = !state.fullscreen;
         render();
         return;
       }
@@ -861,6 +964,48 @@ export const createCreativeExecutionLaneRuntime = ({
         if (task?.id) selectTask(task.id);
       }
     });
+    const measureRowStep = () => {
+      const row = root?.querySelector?.('.cel-row');
+      if (!row) return 48;
+      const styles = getWindowForDocument(doc)?.getComputedStyle?.(root.querySelector('.cel-rows'));
+      const gap = styles ? parseFloat(styles.rowGap || styles.gap || '5') || 5 : 5;
+      return row.offsetHeight + gap;
+    };
+    const applyRowScrollDelta = (delta) => {
+      if (!state?.expanded) return false;
+      const view = buildCreativeExecutionStackViewModel(state);
+      const maxStart = Math.max(0, view.rows.length - ROWS_WINDOW_SIZE);
+      if (maxStart <= 0) return false;
+      rowScrollAccum += delta;
+      const step = measureRowStep();
+      const shift = Math.trunc(rowScrollAccum / step);
+      if (!shift) return true;
+      rowScrollAccum -= shift * step;
+      const next = Math.max(0, Math.min(rowWindowStart + shift, maxStart));
+      if (next !== rowWindowStart) {
+        rowStepDirection = next > rowWindowStart ? 1 : -1;
+        rowStepPx = step;
+        rowWindowStart = next;
+        render();
+      }
+      return true;
+    };
+    root.addEventListener('wheel', (event) => {
+      if (!event.target?.closest?.('[data-cel-rows]')) return;
+      if (applyRowScrollDelta(event.deltaY)) event.preventDefault();
+    }, { passive: false });
+    root.addEventListener('touchstart', (event) => {
+      if (!event.target?.closest?.('[data-cel-rows]')) return;
+      rowTouchY = event.touches?.[0]?.clientY ?? null;
+    }, { passive: true });
+    root.addEventListener('touchmove', (event) => {
+      if (rowTouchY === null || !event.target?.closest?.('[data-cel-rows]')) return;
+      const y = event.touches?.[0]?.clientY ?? rowTouchY;
+      const delta = rowTouchY - y;
+      rowTouchY = y;
+      if (applyRowScrollDelta(delta)) event.preventDefault();
+    }, { passive: false });
+    root.addEventListener('touchend', () => { rowTouchY = null; }, { passive: true });
     root.addEventListener('keydown', event => {
       if (event.key !== 'Escape' || !state) return;
       if (state.selectedTaskId) {
@@ -868,11 +1013,6 @@ export const createCreativeExecutionLaneRuntime = ({
         if (syncSelectedTaskDom()) return;
       } else state.expanded = false;
       render();
-    });
-    ['wheel', 'pointerdown', 'touchstart'].forEach(type => {
-      root.addEventListener(type, event => {
-        if (event.target?.closest?.('[data-cel-graph-scroll]') && state) state.userPanned = true;
-      }, { passive: true });
     });
     mounted = true;
     render();

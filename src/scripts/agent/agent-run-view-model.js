@@ -279,6 +279,9 @@ export const buildAgentRunSummary = (run = {}, {
     stepStatusCounts: countBy(steps, step => step.status),
     lastStep,
     review: buildAgentReview(run),
+    goal: trim(run.metadata?.goal),
+    continuable: run.metadata?.continuable === true,
+    failureCode: trim(run.metadata?.failureCode),
   };
 };
 
