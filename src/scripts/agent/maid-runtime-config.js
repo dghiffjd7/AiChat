@@ -13,6 +13,7 @@ export const createMaidRuntimeConfigResolver = ({
   logger = console,
 } = {}) => async () => {
   const profileId = trim(settingsStore?.getBoundProfileId?.());
+  const modelOverride = trim(settingsStore?.getBoundModelOverride?.());
   const maidPrompt = trim(settingsStore?.getMaidPrompt?.() || settingsStore?.getPersonaPrompt?.());
   if (!profileId) {
     return {
@@ -27,7 +28,10 @@ export const createMaidRuntimeConfigResolver = ({
 
   try {
     await configManager?.ensureStores?.();
-    const config = await configManager?.getRuntimeConfigByProfileId?.(profileId);
+    let config = await configManager?.getRuntimeConfigByProfileId?.(profileId);
+    if (isPlainObject(config) && modelOverride) {
+      config = { ...config, model: modelOverride };
+    }
     if (!isPlainObject(config)) {
       return {
         configured: false,

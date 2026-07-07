@@ -188,3 +188,22 @@ const createStorage = () => {
   assert.match(memoryManager.summary, /只读检查空表/);
   console.log('ok - agent feature list merges product copy with saved state');
 }
+
+{
+  // 模型覆盖：可选保存、切档清除、不传保持
+  const withProfile = setAgentFeatureModel({}, 'reply_check', {
+    modelMode: 'profile', modelProfileId: 'p1', modelOverride: 'deepseek-v4-pro',
+  });
+  assert.equal(withProfile.features.reply_check.modelOverride, 'deepseek-v4-pro');
+
+  const keep = setAgentFeatureModel(withProfile, 'reply_check', {
+    modelMode: 'profile', modelProfileId: 'p1',
+  });
+  assert.equal(keep.features.reply_check.modelOverride, 'deepseek-v4-pro', '不传 modelOverride 应保持');
+
+  const cleared = setAgentFeatureModel(keep, 'reply_check', {
+    modelMode: 'profile', modelProfileId: 'p2', modelOverride: '',
+  });
+  assert.equal(cleared.features.reply_check.modelOverride, '', '传空串应清除');
+  console.log('ok - 模型覆盖字段：保存/保持/清除');
+}

@@ -259,3 +259,64 @@ const getTool = (tools, name) => tools.find(tool => tool.name === name);
   assert.equal(result.images[0].width, 800);
   console.log('ok - web.search_images Bing 失败时回落 DDG vqd 流程并过滤非法 URL');
 }
+
+{
+  // 多源网关：动漫头像走 Safebooru；壁纸走 Wallhaven；photo 走 Openverse；全空回落 Bing
+  const calls = [];
+  const tools = createWebSearchAgentTools({
+    httpRequest: async ({ url }) => {
+      calls.push(new URL(url).hostname);
+      if (url.includes('safebooru.org')) {
+        return { status: 200, ok: true, headers: {}, body: JSON.stringify([
+          { id: 1, directory: 'aa/bb', image: 'rem.jpg', tags: 'rem_(re:zero) blue_hair', width: 800, height: 1200 },
+        ]) };
+      }
+      if (url.includes('wallhaven.cc')) {
+        return { status: 200, ok: true, headers: {}, body: JSON.stringify({ data: [
+          { id: 'w1', path: 'https://w.wallhaven.cc/full/x1.jpg', thumbs: { small: 'https://th.wallhaven.cc/small/x1.jpg' }, resolution: '2560x1440', dimension_x: 2560, dimension_y: 1440, url: 'https://wallhaven.cc/w/x1' },
+        ] }) };
+      }
+      if (url.includes('api.openverse.org')) {
+        return { status: 200, ok: true, headers: {}, body: JSON.stringify({ results: [
+          { title: 'Mountain', url: 'https://img.example.com/mt.jpg', thumbnail: 'https://img.example.com/mt_t.jpg', width: 2000, height: 1200, foreign_landing_url: 'https://example.com/mt' },
+        ] }) };
+      }
+      throw new Error(`unexpected url ${url}`);
+    },
+    getSearchConfig: () => ({}),
+  });
+  const searchImages = tools.find(t => t.name === 'web.search_images');
+
+  const anime = await searchImages.execute({ query: 'Rem ReZero', tags: 'rem_(re:zero)', style: 'anime', purpose: 'avatar' });
+  assert.equal(anime.provider, 'safebooru');
+  assert.match(anime.images[0].imageUrl, /safebooru\.org\/images\/aa\/bb\/rem\.jpg/);
+
+  const wallpaper = await searchImages.execute({ query: 'Rem ReZero', purpose: 'wallpaper' });
+  assert.equal(wallpaper.provider, 'wallhaven');
+  assert.equal(wallpaper.images[0].width, 2560);
+
+  const photo = await searchImages.execute({ query: 'mountain sunrise', style: 'photo' });
+  assert.equal(photo.provider, 'openverse');
+  console.log('ok - 多源图搜网关按 purpose/style 路由（safebooru/wallhaven/openverse）');
+}
+
+{
+  // 专用源全空/失败时回落 Bing
+  const tools = createWebSearchAgentTools({
+    httpRequest: async ({ url }) => {
+      if (url.includes('safebooru.org') || url.includes('danbooru.donmai.us') || url.includes('api.openverse.org')) {
+        return { status: 200, ok: true, headers: {}, body: JSON.stringify([]) };
+      }
+      if (url.includes('bing.com/images/search')) {
+        const meta = JSON.stringify({ murl: 'https://img.example.com/fallback.jpg', t: 'Rem fallback art' }).replace(/"/g, '&quot;');
+        return { status: 200, ok: true, headers: {}, body: `<title>Rem - Search Images</title><a class="iusc" m="${meta}"></a>` };
+      }
+      throw new Error(`unexpected url ${url}`);
+    },
+    getSearchConfig: () => ({}),
+  });
+  const result = await tools.find(t => t.name === 'web.search_images').execute({ query: 'Rem obscure pose' });
+  assert.equal(result.provider, 'bing_images');
+  assert.ok(result.attemptedProviders.includes('safebooru'), '应记录尝试链');
+  console.log('ok - 专用源无结果时回落 Bing 并记录尝试链');
+}

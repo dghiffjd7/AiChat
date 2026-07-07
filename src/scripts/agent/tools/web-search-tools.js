@@ -335,6 +335,131 @@ const parseBingImageResults = (html = '', limit = 6) => {
   return out;
 };
 
+// —— 专用图库 API（稳定服务，非爬虫；多源图搜网关 2026-07-07）——
+
+// booru 标签化：优先显式 tags；否则 query 简单转换（小写、空格转下划线）
+const toBooruTags = (query = '', tags = '') => {
+  const explicit = trim(tags);
+  if (explicit) return explicit.replace(/\s+/g, ' ');
+  return trim(query).toLowerCase().replace(/\s+/g, '_');
+};
+
+// Safebooru（Gelbooru 系 API，全站 SFW，免 key）
+const performSafebooruImageSearch = async (request, { query = '', tags = '', limit = 6 } = {}) => {
+  const tagText = toBooruTags(query, tags);
+  const url = new URL('https://safebooru.org/index.php');
+  url.searchParams.set('page', 'dapi');
+  url.searchParams.set('s', 'post');
+  url.searchParams.set('q', 'index');
+  url.searchParams.set('json', '1');
+  url.searchParams.set('limit', String(Math.min(20, limit * 2)));
+  url.searchParams.set('tags', `${tagText} sort:score:desc`);
+  const body = await readHttpText(request, {
+    url: url.toString(),
+    method: 'GET',
+    headers: { accept: 'application/json' },
+    body: null,
+    timeoutMs: 20000,
+  });
+  const posts = parseJsonBody(body || '[]');
+  const images = (Array.isArray(posts) ? posts : [])
+    .filter(post => post?.image && post?.directory)
+    .slice(0, limit)
+    .map(post => ({
+      title: truncate(String(post.tags || '').split(' ').slice(0, 6).join(' '), 160),
+      imageUrl: `https://safebooru.org/images/${post.directory}/${post.image}`,
+      thumbnailUrl: `https://safebooru.org/thumbnails/${post.directory}/thumbnail_${String(post.image).replace(/\.[a-z0-9]+$/i, '.jpg')}`,
+      width: Number(post.width) || 0,
+      height: Number(post.height) || 0,
+      sourceUrl: `https://safebooru.org/index.php?page=post&s=view&id=${post.id}`,
+    }));
+  return { ok: images.length > 0, images, provider: 'safebooru' };
+};
+
+// Danbooru（匿名限 2 标签：主标签 + order:score）
+const performDanbooruImageSearch = async (request, { query = '', tags = '', limit = 6 } = {}) => {
+  const mainTag = toBooruTags(query, tags).split(' ')[0] || '';
+  const url = new URL('https://danbooru.donmai.us/posts.json');
+  url.searchParams.set('tags', `${mainTag} order:score`);
+  url.searchParams.set('limit', String(Math.min(20, limit * 2)));
+  const body = await readHttpText(request, {
+    url: url.toString(),
+    method: 'GET',
+    headers: { accept: 'application/json' },
+    body: null,
+    timeoutMs: 20000,
+  });
+  const posts = parseJsonBody(body || '[]');
+  const images = (Array.isArray(posts) ? posts : [])
+    .filter(post => /^https?:\/\//.test(String(post?.large_file_url || post?.file_url || '')))
+    .slice(0, limit)
+    .map(post => ({
+      title: truncate(String(post.tag_string_character || post.tag_string || '').split(' ').slice(0, 5).join(' '), 160),
+      imageUrl: String(post.large_file_url || post.file_url),
+      thumbnailUrl: String(post.preview_file_url || ''),
+      width: Number(post.image_width) || 0,
+      height: Number(post.image_height) || 0,
+      sourceUrl: `https://danbooru.donmai.us/posts/${post.id}`,
+    }));
+  return { ok: images.length > 0, images, provider: 'danbooru' };
+};
+
+// Wallhaven（壁纸站官方 API，免 key，45 次/分钟）
+const performWallhavenImageSearch = async (request, { query = '', limit = 6, animeOnly = true } = {}) => {
+  const url = new URL('https://wallhaven.cc/api/v1/search');
+  url.searchParams.set('q', trim(query));
+  url.searchParams.set('categories', animeOnly ? '010' : '111');
+  url.searchParams.set('purity', '100');
+  url.searchParams.set('sorting', 'relevance');
+  const body = await readHttpText(request, {
+    url: url.toString(),
+    method: 'GET',
+    headers: { accept: 'application/json' },
+    body: null,
+    timeoutMs: 20000,
+  });
+  const parsed = parseJsonBody(body || '{}');
+  const images = (Array.isArray(parsed?.data) ? parsed.data : [])
+    .filter(item => /^https?:\/\//.test(String(item?.path || '')))
+    .slice(0, limit)
+    .map(item => ({
+      title: truncate(`wallpaper ${item.resolution || ''}`.trim(), 160),
+      imageUrl: String(item.path),
+      thumbnailUrl: String(item.thumbs?.small || item.thumbs?.original || ''),
+      width: Number(item.dimension_x) || 0,
+      height: Number(item.dimension_y) || 0,
+      sourceUrl: String(item.url || ''),
+    }));
+  return { ok: images.length > 0, images, provider: 'wallhaven' };
+};
+
+// Openverse（开放版权图片聚合，免 key 匿名可用，429 时明确报错）——写实/通用照片
+const performOpenverseImageSearch = async (request, { query = '', limit = 6 } = {}) => {
+  const url = new URL('https://api.openverse.org/v1/images/');
+  url.searchParams.set('q', trim(query));
+  url.searchParams.set('page_size', String(Math.min(20, limit)));
+  const body = await readHttpText(request, {
+    url: url.toString(),
+    method: 'GET',
+    headers: { accept: 'application/json' },
+    body: null,
+    timeoutMs: 20000,
+  });
+  const parsed = parseJsonBody(body || '{}');
+  const images = (Array.isArray(parsed?.results) ? parsed.results : [])
+    .filter(item => /^https?:\/\//.test(String(item?.url || '')))
+    .slice(0, limit)
+    .map(item => ({
+      title: truncate(String(item.title || ''), 160),
+      imageUrl: String(item.url),
+      thumbnailUrl: String(item.thumbnail || ''),
+      width: Number(item.width) || 0,
+      height: Number(item.height) || 0,
+      sourceUrl: String(item.foreign_landing_url || ''),
+    }));
+  return { ok: images.length > 0, images, provider: 'openverse' };
+};
+
 const performBingImageSearch = async (request, { query = '', limit = 6 } = {}) => {
   const url = new URL('https://www.bing.com/images/search');
   url.searchParams.set('q', query);
@@ -350,12 +475,15 @@ const performBingImageSearch = async (request, { query = '', limit = 6 } = {}) =
     timeoutMs: 20000,
   });
   const images = parseBingImageResults(body, limit);
-  // 高频请求会触发 Bing 限流降级（返回非搜索结果页，iusc 里是无关推荐内容）。
-  // 正常结果页 <title> 含查询词；不含则标记降级，避免把无关图当结果用。
-  const pageTitle = String(body.match(/<title>([^<]*)/)?.[1] || '');
-  const queryHead = trim(query).split(/\s+/)[0] || '';
-  const degraded = images.length > 0 && queryHead
-    && !pageTitle.toLowerCase().includes(queryHead.toLowerCase());
+  // 高频请求会触发 Bing 限流降级，且存在两种形态：整页非搜索页，或页面正常但索引层
+  // 返回完全无关的结果（title 回显查询词但图是随机内容）。用结果级相关性判定：
+  // 所有结果 title 均不含查询任一词（≥2 字符）才判降级，避免把无关图当结果用。
+  const tokens = trim(query).toLowerCase().split(/\s+/).filter(word => word.length >= 2);
+  const anyRelevant = images.some((img) => {
+    const title = String(img?.title || '').toLowerCase();
+    return tokens.some(word => title.includes(word));
+  });
+  const degraded = images.length > 0 && tokens.length > 0 && !anyRelevant;
   return {
     ok: images.length > 0 && !degraded,
     images: degraded ? [] : images,
@@ -710,38 +838,62 @@ export const createWebSearchAgentTools = ({
         properties: {
           query: { type: 'string', minLength: 1, maxLength: 240 },
           limit: { type: 'integer', minimum: 1, maximum: 12 },
+          purpose: { type: 'string', enum: ['avatar', 'wallpaper', 'any'] },
+          style: { type: 'string', enum: ['anime', 'photo', 'any'] },
+          tags: { type: 'string', maxLength: 240 },
         },
       },
       execute: async (args = {}) => {
         const query = trim(args.query);
+        const tags = trim(args.tags);
         const limit = Math.max(1, Math.min(12, Math.trunc(Number(args.limit || 0)) || 6));
-        // Bing HTML 优先（免 key 且稳定）；失败或空结果回落 DDG i.js。
-        let result = null;
-        try {
-          result = await performBingImageSearch(request, { query, limit });
-        } catch {
-          result = { ok: false, images: [] };
+        const purpose = trim(args.purpose, 'any');
+        const style = trim(args.style, 'any');
+        // 多源网关：专用图库 API（稳定服务）优先，通用爬虫（Bing/DDG）回落。
+        const providers = [];
+        const preferAnime = style !== 'photo';
+        if (purpose === 'wallpaper') {
+          providers.push(['wallhaven', () => performWallhavenImageSearch(request, { query, limit, animeOnly: preferAnime })]);
+          if (preferAnime) providers.push(['safebooru', () => performSafebooruImageSearch(request, { query, tags, limit })]);
+          if (style === 'photo') providers.push(['openverse', () => performOpenverseImageSearch(request, { query, limit })]);
+        } else if (style === 'photo') {
+          providers.push(['openverse', () => performOpenverseImageSearch(request, { query, limit })]);
+        } else {
+          providers.push(['safebooru', () => performSafebooruImageSearch(request, { query, tags, limit })]);
+          providers.push(['danbooru', () => performDanbooruImageSearch(request, { query, tags, limit })]);
+          if (style === 'any') providers.push(['openverse', () => performOpenverseImageSearch(request, { query, limit })]);
         }
-        if (!result?.ok) {
+        providers.push(['bing_images', () => performBingImageSearch(request, { query, limit })]);
+        providers.push(['duckduckgo_images', () => performDuckDuckGoImageSearch(request, { query, limit })]);
+
+        const attempted = [];
+        let lastError = null;
+        for (const [name, run] of providers) {
+          attempted.push(name);
           try {
-            result = await performDuckDuckGoImageSearch(request, { query, limit });
+            const result = await run();
+            if (result?.ok && (result.images || []).length > 0) {
+              return {
+                ok: true,
+                query,
+                provider: result.provider || name,
+                attemptedProviders: attempted,
+                images: result.images,
+              };
+            }
+            if (result?.degraded) lastError = new Error(result.message || 'provider degraded');
           } catch (error) {
-            return {
-              ok: false,
-              query,
-              provider: 'bing_images+duckduckgo_images',
-              reason: error?.code || 'image_search_failed',
-              message: error?.message || '图片搜索请求失败。',
-              images: [],
-            };
+            lastError = error;
           }
         }
         return {
-          ok: result.ok !== false && (result.images || []).length > 0,
+          ok: false,
           query,
-          provider: result.provider || 'bing_images',
-          ...(result.reason ? { reason: result.reason, message: result.message } : {}),
-          images: result.images || [],
+          provider: attempted.join('+'),
+          attemptedProviders: attempted,
+          reason: lastError?.code || 'image_search_no_results',
+          message: lastError?.message || '所有图片源都没有返回结果，请换个关键词或稍后再试。',
+          images: [],
         };
       },
       summarizeResult: result => result?.ok === false

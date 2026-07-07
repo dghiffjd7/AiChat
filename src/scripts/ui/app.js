@@ -3158,6 +3158,7 @@ const initApp = async () => {
           {
             modelMode: options?.modelMode,
             modelProfileId: options?.modelProfileId,
+            ...(options?.modelOverride !== undefined ? { modelOverride: options.modelOverride } : {}),
           },
         ),
         setAgentFeatureTriggerMode: (options = {}) => agentFeatureSettingsStore.setTriggerMode(
@@ -14951,6 +14952,8 @@ Phase G（Frame 36）：循环衔接
     try {
       if (modelMode === 'profile' && String(featureState.modelProfileId || '').trim()) {
         config = await chatConfigManager.getRuntimeConfigByProfileId(featureState.modelProfileId);
+        const modelOverride = String(featureState.modelOverride || '').trim();
+        if (config && modelOverride) config = { ...config, model: modelOverride };
         configProfile.id = String(featureState.modelProfileId || '').trim();
       } else {
         const runtime = await window.appBridge.resolveRequestRuntimeConfig?.({ sessionId, uiMode });
@@ -21581,7 +21584,8 @@ Phase G（Frame 36）：循环衔接
       if (result?.ok === false) {
         window.toastr?.warning?.(result.message || result.reason || '女仆暂时无法执行这个请求');
       } else if (result?.message && result?.responseType !== 'chat') {
-        window.toastr?.success?.(result.message);
+        // 完整回复已在女仆气泡中展示；通知只提示任务结束，不重复全文
+        window.toastr?.success?.('女仆已完成任务 ✓');
       }
       return result;
     },
@@ -21631,6 +21635,7 @@ Phase G（Frame 36）：循环衔接
   patchDebugUiRegistry((registry) => {
     registry.actions.openMaidCommandInput = () => openMaidCommandOrSettings();
     registry.stores.maidSelectionMode = maidSelectionMode;
+    registry.stores.maidSettingsStore = maidSettingsStore;
   });
 
   rpGreetingTrigger?.addEventListener('click', (e) => {
@@ -23585,8 +23590,10 @@ Phase G（Frame 36）：循环衔接
       ? async (messages, options = {}) => {
         const config = await chatConfigManager.getRuntimeConfigByProfileId(featureState.modelProfileId);
         if (!config) throw new Error('Agent 指定模型配置不存在');
+        const modelOverride = String(featureState.modelOverride || '').trim();
+        const effectiveConfig = modelOverride ? { ...config, model: modelOverride } : config;
         const { presetContext: _presetContext, ...requestOptions } = options || {};
-        const client = new LLMClient(config);
+        const client = new LLMClient(effectiveConfig);
         return client.chat(messages, requestOptions);
       }
       : (...args) => window.appBridge.backgroundChat(...args);

@@ -227,6 +227,19 @@ export class MaidSettingsStore {
     return trim(this.state.boundProfileId);
   }
 
+  // 可选模型覆盖：连接沿用绑定档，仅替换 model；空 = 用档内保存的模型
+  getBoundModelOverride() {
+    this.ensureLoaded();
+    return trim(this.state.boundModelOverride);
+  }
+
+  async setBoundModelOverride(model = '') {
+    this.ensureLoaded();
+    this.state.boundModelOverride = trim(model);
+    await this.write();
+    return this.getBoundModelOverride();
+  }
+
   getPersonaPrompt() {
     return this.getMaidPrompt();
   }

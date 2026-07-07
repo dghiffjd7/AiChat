@@ -395,6 +395,7 @@ import {
     id: 'reply_check',
     modelMode: 'profile',
     modelProfileId: 'profile-a',
+    modelOverride: '',
   });
   console.log('ok - agent center agent model selector updates feature model');
 }

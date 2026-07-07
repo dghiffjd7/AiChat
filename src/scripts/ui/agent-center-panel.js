@@ -722,6 +722,21 @@ const PANEL_CSS = `
     font-size: 12px;
     font-weight: 700;
 }
+.agent-center-model-override {
+    margin-top: 6px;
+    width: 100%;
+    min-height: 30px;
+    padding: 5px 9px;
+    border: 1px solid var(--app-border-default);
+    border-radius: 8px;
+    background: var(--app-surface-card);
+    color: var(--app-text-primary);
+    font-size: 12px;
+    box-sizing: border-box;
+}
+.agent-center-model-override::placeholder {
+    color: var(--app-text-secondary);
+}
 .agent-center-model-select {
     width: 100%;
     min-width: 0;
@@ -2025,6 +2040,17 @@ export class AgentCenterPanel {
                     ${agent.supportsModel && agent.implemented ? '' : 'disabled'}
                 >管理</button>
             </div>
+            ${agent.modelMode === 'profile' && trim(agent.modelProfileId) ? `
+                <input
+                    type="text"
+                    class="agent-center-model-override"
+                    data-agent-feature-model-override="${escapeHtml(agent.id)}"
+                    value="${escapeHtml(agent.modelOverride || '')}"
+                    placeholder="模型覆盖（留空用该配置保存的模型）"
+                    aria-label="模型覆盖"
+                    ${disabled ? 'disabled' : ''}
+                />
+            ` : ''}
         `;
     }
 
@@ -3116,6 +3142,8 @@ export class AgentCenterPanel {
             id,
             modelMode,
             modelProfileId,
+            // 切换连线档时清除模型覆盖（旧覆盖针对旧档的模型名）
+            modelOverride: '',
         }, null);
         if (!result) {
             this.lastError = '当前环境不能更新 Agent 模型';
@@ -3566,6 +3594,21 @@ export class AgentCenterPanel {
                     button.dataset.agentFeatureId || '',
                     );
                 });
+            });
+            this.contentElement.querySelectorAll('[data-agent-feature-model-override]').forEach((input) => {
+                input.addEventListener('change', async () => {
+                    const id = input.dataset.agentFeatureModelOverride || '';
+                    const agent = this.getAgentCardById(id);
+                    if (!agent) return;
+                    await this.callAction('setAgentFeatureModel', {
+                        id,
+                        modelMode: 'profile',
+                        modelProfileId: agent.modelProfileId,
+                        modelOverride: input.value.trim(),
+                    }, null);
+                    await this.refresh();
+                });
+                input.addEventListener('click', event => event.stopPropagation());
             });
             this.contentElement.querySelectorAll('[data-agent-feature-model-select]').forEach((select) => {
                 const id = select.dataset.agentFeatureModelSelect || '';

@@ -156,6 +156,8 @@ export const normalizeAgentFeatureState = (state = {}, definition = {}, { now = 
     enabled: src.enabled === true,
     modelMode: normalizeAgentFeatureModelMode(src.modelMode, modelDefault),
     modelProfileId: trim(src.modelProfileId),
+    // 可选模型覆盖：连接沿用所选设定档，仅替换 model；空 = 用档内保存的模型
+    modelOverride: trim(src.modelOverride),
     triggerMode: normalizeAgentFeatureTriggerMode(src.triggerMode, triggerDefault),
     updatedAt: Number.isFinite(Number(src.updatedAt)) ? Number(src.updatedAt) : 0,
   };
@@ -218,6 +220,7 @@ export const setAgentFeatureEnabled = (settings = {}, featureId = '', enabled = 
 export const setAgentFeatureModel = (settings = {}, featureId = '', {
   modelMode = '',
   modelProfileId = '',
+  modelOverride,
 } = {}, {
   now = Date.now,
 } = {}) => {
@@ -230,6 +233,8 @@ export const setAgentFeatureModel = (settings = {}, featureId = '', {
     ...prev,
     modelMode: normalizeAgentFeatureModelMode(modelMode, prev.modelMode),
     modelProfileId: trim(modelProfileId),
+    // 未传 modelOverride 保持原值；传空串显式清除
+    modelOverride: modelOverride === undefined ? prev.modelOverride : trim(modelOverride),
     updatedAt: toTimestamp(now),
   };
   return normalized;

@@ -479,11 +479,13 @@ const normalizeAgentModelProfile = (profile = {}) => {
   };
 };
 
-const resolveAgentModelLabel = (modelMode = '', modelProfileId = '', modelProfiles = []) => {
+const resolveAgentModelLabel = (modelMode = '', modelProfileId = '', modelProfiles = [], modelOverride = '') => {
   const mode = trim(modelMode, 'follow_current');
   if (mode !== 'profile') return MODEL_MODE_LABELS[mode] || '跟随当前聊天模型';
   const profile = (Array.isArray(modelProfiles) ? modelProfiles : []).find(item => item.id === trim(modelProfileId));
-  return profile?.label || (modelProfileId ? `指定模型：${modelProfileId}` : '使用指定模型');
+  const base = profile?.label || (modelProfileId ? `指定模型：${modelProfileId}` : '使用指定模型');
+  const override = trim(modelOverride);
+  return override ? `${base} · ${override}` : base;
 };
 
 const normalizeAgentFeature = (feature = {}, { modelProfiles = [] } = {}) => {
@@ -491,6 +493,7 @@ const normalizeAgentFeature = (feature = {}, { modelProfiles = [] } = {}) => {
   const state = isPlainObject(src.state) ? src.state : {};
   const modelMode = trim(state.modelMode || src.modelDefault, 'none');
   const modelProfileId = trim(state.modelProfileId);
+  const modelOverride = trim(state.modelOverride);
   return {
     id: trim(src.id),
     title: trim(src.title, 'Agent'),
@@ -503,7 +506,8 @@ const normalizeAgentFeature = (feature = {}, { modelProfiles = [] } = {}) => {
     supportsTriggerMode: src.supportsTriggerMode === true,
     modelMode,
     modelProfileId,
-    modelLabel: resolveAgentModelLabel(modelMode, modelProfileId, modelProfiles),
+    modelOverride,
+    modelLabel: resolveAgentModelLabel(modelMode, modelProfileId, modelProfiles, modelOverride),
     triggerMode: trim(state.triggerMode || src.triggerDefault, 'auto'),
     triggerLabel: TRIGGER_MODE_LABELS[trim(state.triggerMode || src.triggerDefault, 'auto')] || '自动触发',
     updatedAt: toFiniteNumber(state.updatedAt, 0),
