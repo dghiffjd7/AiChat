@@ -472,6 +472,7 @@ const formatNowTime = () => {
 };
 
 export const createAppContentAgentTools = ({
+  generateWithSubAgent = null,
   personaStore = null,
   userStore = null,
   contactsStore = null,
@@ -492,6 +493,9 @@ export const createAppContentAgentTools = ({
   refreshChatAndContacts = null,
   setActiveSession = null,
   sendChatMessage = null,
+  generateChatImage = null,
+  listModelProfiles = null,
+  switchModelProfile = null,
   confirmDestructiveWrite = null,
   renderSessionNameHtml = (id, contact) => trim(contact?.name || id, id),
   getActiveUserName = () => '我',
@@ -802,6 +806,128 @@ export const createAppContentAgentTools = ({
     summarizeResult: result => result?.switched
       ? `switched character card to ${trim(result?.profile?.name, '-')}`
       : `switch character card failed: ${trim(result?.reason, 'unknown')}`,
+  },
+  {
+    name: 'worldbook.generate_entries',
+    title: 'Generate worldbook entries (sub-agent)',
+    description: 'Generate long worldbook entry content from outlines using a configured sub-agent model (or main model), then append to the worldbook. Maid passes outlines only, not full text.',
+    source: 'maid-app-content',
+    permissions: [],
+    riskLevel: 'medium',
+    capabilities: {
+      read: true,
+      write: true,
+      network: false,
+      cost: 'variable',
+      undo: 'manual',
+      modelContext: 'allowlist',
+      confirmation: 'always',
+    },
+    schema: {
+      type: 'object',
+      required: ['name', 'entries'],
+      additionalProperties: false,
+      properties: {
+        name: { type: 'string', minLength: 1, maxLength: 120 },
+        entries: {
+          type: 'array',
+          minItems: 1,
+          maxItems: 8,
+          items: {
+            type: 'object',
+            required: ['title', 'outline'],
+            additionalProperties: false,
+            properties: {
+              title: { type: 'string', minLength: 1, maxLength: 80 },
+              outline: { type: 'string', minLength: 4, maxLength: 1200 },
+              length: { type: 'integer', minimum: 50, maximum: 1200 },
+              keys: { type: 'array', items: { type: 'string', maxLength: 60 }, maxItems: 12 },
+            },
+          },
+        },
+        subAgentId: { type: 'string', maxLength: 80 },
+      },
+    },
+    execute: async (args = {}, context = {}) => {
+      if (typeof generateWithSubAgent !== 'function') {
+        return { ok: false, reason: 'generation_unavailable', message: '正文生成通道未接入。' };
+      }
+      if (typeof saveWorldInfo !== 'function') {
+        return { ok: false, reason: 'worldbook_store_unavailable' };
+      }
+      const worldbookName = trim(args.name);
+      const outlineEntries = (Array.isArray(args.entries) ? args.entries : []).slice(0, 8);
+      const generated = [];
+      let delegated = false;
+      let modelUsed = '';
+      let subAgentName = '';
+      for (const item of outlineEntries) {
+        const title = trim(item?.title);
+        const length = Math.max(50, Math.min(1200, Math.trunc(Number(item?.length)) || 220));
+        const prompt = [
+          `为世界书「${worldbookName}」生成条目正文。`,
+          `条目标题：${title}`,
+          `要点大纲：${trim(item?.outline)}`,
+          `要求：约 ${length} 字；只输出条目正文本身（纯文本，不要标题、不要解释、不要 markdown 代码块）。`,
+        ].join('\n');
+        const out = await generateWithSubAgent({
+          subAgentId: trim(args.subAgentId),
+          prompt,
+          purposeLabel: `生成世界书条目「${title}」`,
+          context,
+        });
+        if (!out?.ok || !trim(out.text)) {
+          return {
+            ok: false,
+            reason: out?.reason || 'generation_failed',
+            message: out?.message || `条目「${title}」生成失败。`,
+            generatedCount: generated.length,
+          };
+        }
+        delegated = out.delegated === true;
+        modelUsed = trim(out.modelUsed);
+        subAgentName = trim(out.subAgentName);
+        generated.push({
+          title,
+          content: trim(out.text),
+          keys: Array.isArray(item?.keys) ? item.keys : [],
+        });
+      }
+      // 写入：已有同名世界书则追加，否则新建（不做 replace，安全语义最窄）
+      await waitForWorldStoreReady?.();
+      const existing = typeof getWorldInfo === 'function' ? await getWorldInfo(worldbookName) : null;
+      const existingEntries = getWorldEntries(existing);
+      const reserved = existingEntries.map(entry => clone(entry));
+      const incoming = generated.map((entry, index) => {
+        const normalized = normalizeWorldEntry(entry, index);
+        normalized.id = makeUniqueWorldEntryId(normalized, reserved, index);
+        reserved.push(normalized);
+        return normalized;
+      });
+      const payload = {
+        ...(isPlainObject(existing) ? existing : {}),
+        name: worldbookName,
+        entries: [...existingEntries.map(entry => clone(entry)), ...incoming],
+        updatedBy: 'maid',
+        updatedAt: Number(now?.() || Date.now()) || Date.now(),
+      };
+      await saveWorldInfo(worldbookName, payload);
+      return {
+        ok: true,
+        created: !existing,
+        appended: Boolean(existing),
+        worldbook: worldbookName,
+        entryCount: payload.entries.length,
+        generatedCount: generated.length,
+        delegated,
+        ...(modelUsed ? { modelUsed } : {}),
+        ...(subAgentName ? { subAgentName } : {}),
+        generatedTitles: generated.map(entry => entry.title),
+      };
+    },
+    summarizeResult: result => (result?.ok === false
+      ? `worldbook generate failed: ${result?.reason || 'unknown'}`
+      : `generated ${Number(result?.generatedCount || 0)} entries into ${result?.worldbook}${result?.delegated ? ` (delegated to ${result?.subAgentName || result?.modelUsed || 'sub-agent'})` : ''}`),
   },
   {
     name: 'worldbook.create',
@@ -1510,6 +1636,8 @@ export const createAppContentAgentTools = ({
             requested: false,
             requestTriggered: false,
             reason: trim(sendResult?.reason || sendResult?.message, 'send_pipeline_failed'),
+            ...(sendResult?.cancelled === true ? { cancelled: true } : {}),
+            ...(trim(sendResult?.message) ? { message: trim(sendResult.message) } : {}),
             sessionId,
             role,
             content,
@@ -1561,6 +1689,193 @@ export const createAppContentAgentTools = ({
     summarizeResult: result => result?.sent
       ? `sent message to ${trim(result?.sessionId, '-')}`
       : `send message failed: ${trim(result?.reason, 'unknown')}`,
+  },
+  {
+    name: 'chat.generate_image',
+    title: 'Generate image into chat',
+    description: 'Generate an image with the configured image model and post it into a chat session as the user.',
+    source: 'maid-app-content',
+    permissions: [],
+    riskLevel: 'medium',
+    capabilities: {
+      read: false,
+      write: true,
+      network: true,
+      cost: 'variable',
+      undo: 'manual_delete',
+      modelContext: 'none',
+      confirmation: 'allow_once',
+    },
+    safety: {
+      operationType: 'append_message',
+      destructive: 'never',
+      description: 'Generates a new image and appends it as a chat message; it does not edit or delete existing content.',
+    },
+    timeoutMs: 180000,
+    schema: {
+      type: 'object',
+      required: ['prompt'],
+      additionalProperties: false,
+      properties: {
+        prompt: { type: 'string', minLength: 1, maxLength: 4000 },
+        sessionId: { type: 'string', maxLength: 160 },
+        sessionName: { type: 'string', maxLength: 160 },
+        target: { type: 'string', maxLength: 160 },
+        negativePrompt: { type: 'string', maxLength: 2000 },
+      },
+    },
+    execute: async (args = {}) => {
+      if (typeof generateChatImage !== 'function') {
+        return { ok: false, generated: false, reason: 'image_generation_unavailable' };
+      }
+      const prompt = trim(args.prompt);
+      if (!prompt) return { ok: false, generated: false, reason: 'missing_prompt' };
+      const rawSessionId = trim(args.sessionId || args.sessionName || args.target || chatStore?.getCurrent?.());
+      const contact = findStoreItem(contactsStore, rawSessionId);
+      const sessionId = trim(contact?.id || rawSessionId);
+      if (!sessionId) return { ok: false, generated: false, reason: 'missing_session_id' };
+      if (!contact && contactsStore && typeof contactsStore.getContact === 'function') {
+        return { ok: false, generated: false, reason: 'session_not_found', sessionId };
+      }
+      const result = await generateChatImage({
+        prompt,
+        sessionId,
+        negativePrompt: trim(args.negativePrompt),
+      });
+      if (result !== true && result?.ok !== true) {
+        return {
+          ok: false,
+          generated: false,
+          reason: trim(result?.reason || result?.message, 'image_generation_failed'),
+          sessionId,
+          prompt,
+        };
+      }
+      return { ok: true, generated: true, sessionId, prompt };
+    },
+    summarizeResult: result => result?.generated
+      ? `generated image into ${trim(result?.sessionId, '-')}`
+      : `generate image failed: ${trim(result?.reason, 'unknown')}`,
+  },
+  {
+    name: 'config.list_profiles',
+    title: 'List model profiles',
+    description: 'List saved model channel profiles (chat or image scope) with the currently active one.',
+    source: 'maid-app-content',
+    permissions: [],
+    riskLevel: 'low',
+    capabilities: {
+      read: true,
+      write: false,
+      network: false,
+      cost: 'none',
+      undo: 'none',
+      modelContext: 'none',
+      confirmation: 'none',
+    },
+    schema: {
+      type: 'object',
+      required: ['scope'],
+      additionalProperties: false,
+      properties: {
+        scope: { type: 'string', enum: ['chat', 'image'] },
+      },
+    },
+    execute: async (args = {}) => {
+      if (typeof listModelProfiles !== 'function') {
+        return { ok: false, reason: 'model_profiles_unavailable' };
+      }
+      const scope = trim(args.scope);
+      const data = await listModelProfiles({ scope });
+      if (!data) return { ok: false, reason: 'unsupported_scope', scope };
+      return {
+        ok: true,
+        scope,
+        activeProfileId: data.activeId || '',
+        profiles: (data.profiles || []).map(p => ({
+          ...p,
+          active: Boolean(p.id) && p.id === data.activeId,
+        })),
+      };
+    },
+    summarizeResult: result => result?.ok === false
+      ? `list profiles failed: ${trim(result?.reason, 'unknown')}`
+      : `listed ${Number(result?.profiles?.length || 0)} ${trim(result?.scope, '-')} profiles`,
+  },
+  {
+    name: 'config.switch_profile',
+    title: 'Switch model profile',
+    description: 'Switch the active model channel profile for chat or image generation.',
+    source: 'maid-app-content',
+    permissions: [],
+    riskLevel: 'medium',
+    capabilities: {
+      read: true,
+      write: true,
+      network: false,
+      cost: 'none',
+      undo: 'switch_back',
+      modelContext: 'none',
+      confirmation: 'allow_once',
+    },
+    safety: {
+      operationType: 'switch_profile',
+      destructive: 'never',
+      description: 'Changes which saved model profile is active; profiles themselves are not modified.',
+    },
+    schema: {
+      type: 'object',
+      required: ['scope'],
+      additionalProperties: false,
+      properties: {
+        scope: { type: 'string', enum: ['chat', 'image'] },
+        profileId: { type: 'string', maxLength: 160 },
+        profileName: { type: 'string', maxLength: 160 },
+      },
+    },
+    execute: async (args = {}) => {
+      if (typeof listModelProfiles !== 'function' || typeof switchModelProfile !== 'function') {
+        return { ok: false, switched: false, reason: 'model_profiles_unavailable' };
+      }
+      const scope = trim(args.scope);
+      const query = trim(args.profileId || args.profileName);
+      if (!query) return { ok: false, switched: false, reason: 'missing_profile', scope };
+      const data = await listModelProfiles({ scope });
+      if (!data) return { ok: false, switched: false, reason: 'unsupported_scope', scope };
+      const profiles = data.profiles || [];
+      const lowered = query.toLowerCase();
+      let matches = profiles.filter(p => p.id === query);
+      if (!matches.length) matches = profiles.filter(p => p.name === query);
+      if (!matches.length) matches = profiles.filter(p => p.name.toLowerCase() === lowered);
+      if (!matches.length) matches = profiles.filter(p => p.name.toLowerCase().includes(lowered) || p.model.toLowerCase().includes(lowered));
+      if (!matches.length) {
+        return { ok: false, switched: false, reason: 'profile_not_found', scope, query, available: profiles.map(p => p.name) };
+      }
+      if (matches.length > 1) {
+        return { ok: false, switched: false, reason: 'profile_ambiguous', scope, query, candidates: matches.map(p => p.name) };
+      }
+      const target = matches[0];
+      const from = profiles.find(p => p.id === data.activeId) || null;
+      if (target.id === data.activeId) {
+        return { ok: true, switched: false, alreadyActive: true, scope, active: { name: target.name, provider: target.provider, model: target.model } };
+      }
+      const result = await switchModelProfile({ scope, profileId: target.id });
+      if (result?.ok !== true) {
+        return { ok: false, switched: false, reason: trim(result?.reason, 'switch_failed'), scope, query };
+      }
+      return {
+        ok: true,
+        switched: true,
+        scope,
+        from: from ? { name: from.name, provider: from.provider, model: from.model } : null,
+        to: { name: target.name, provider: target.provider, model: target.model },
+      };
+    },
+    summarizeResult: result => {
+      if (result?.ok === false) return `switch profile failed: ${trim(result?.reason, 'unknown')}`;
+      if (result?.alreadyActive) return `profile already active: ${trim(result?.active?.name, '-')}`;
+      return `switched ${trim(result?.scope, '-')} profile to ${trim(result?.to?.name, '-')}`;
+    },
   },
   ];
 };

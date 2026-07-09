@@ -56,7 +56,7 @@ export const readVisibleText = (element = null, maxTextLength = 1800, { getCompu
   return text.length > max ? `${text.slice(0, max - 1)}…` : text;
 };
 
-const readVisibleButtons = (element, { maxControls, getComputedStyle }) => {
+const readVisibleButtons = (element, { maxControls, getComputedStyle, collectRef = null, refPrefix = '' }) => {
   const nodes = Array.from(element.querySelectorAll?.('button, [role="button"]') || []);
   const buttons = [];
   for (const node of nodes) {
@@ -67,8 +67,15 @@ const readVisibleButtons = (element, { maxControls, getComputedStyle }) => {
     const active = node.classList?.contains?.('is-active') ||
       node.classList?.contains?.('active') ||
       node.getAttribute?.('aria-selected') === 'true';
+    // ref：供 ui.click_element 以结构化引用点击（禁止坐标点击的安全前提）
+    let ref = '';
+    if (typeof collectRef === 'function') {
+      ref = `${refPrefix}btn-${buttons.length + 1}`;
+      collectRef(ref, node);
+    }
     buttons.push({
       label: label.slice(0, 60),
+      ...(ref ? { ref } : {}),
       ...(active ? { active: true } : {}),
       ...(node.disabled === true ? { disabled: true } : {}),
     });
@@ -106,12 +113,14 @@ export const buildElementUiSummary = (element = null, {
   maxTextLength = 1800,
   maxControls = 30,
   getComputedStyle = null,
+  collectRef = null,
+  refPrefix = '',
 } = {}) => {
   if (!element) return { text: '', buttons: [], fields: [] };
   const cap = Math.max(1, Math.min(80, Number(maxControls) || 30));
   return {
     text: readVisibleText(element, maxTextLength, { getComputedStyle }),
-    buttons: readVisibleButtons(element, { maxControls: cap, getComputedStyle }),
+    buttons: readVisibleButtons(element, { maxControls: cap, getComputedStyle, collectRef, refPrefix }),
     fields: readVisibleFields(element, { maxControls: cap, getComputedStyle }),
   };
 };

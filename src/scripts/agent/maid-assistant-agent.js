@@ -1020,6 +1020,18 @@ export const createMaidAssistantAgent = ({
   };
 
   const runPromptWithTracker = async (input = '', context = {}, tracker = null) => {
+    // 空指令直接拒绝：不进 planner，否则模型会按女仆历史重放上一条旧指令。
+    const hasAttachments = Array.isArray(context?.maidAttachments) && context.maidAttachments.length > 0;
+    const hasSelection = Array.isArray(context?.userSelection) && context.userSelection.length > 0;
+    if (!trim(input) && !hasAttachments && !hasSelection) {
+      return {
+        ok: false,
+        status: 'failed',
+        reason: 'empty_input',
+        input: '',
+        message: '这次没有收到指令内容，女仆先不行动～请告诉我需要做什么。',
+      };
+    }
     let plan = await callModelWithTimeout(() => planner(input, context), { label: 'maid_planner' });
     if (!plan?.ok) {
       let reactRecoveryFailure = null;
@@ -1147,7 +1159,11 @@ export const createMaidAssistantAgent = ({
       context.repeatedFailureLimit || repeatedFailureLimit,
     )) || 3));
     try {
+      const loopProbe = (stage) => {
+        try { globalThis.__maidLoopProbe = { stage, at: Date.now() }; } catch {}
+      };
       for (let stepIndex = 0; stepIndex < maxSteps; stepIndex += 1) {
+        loopProbe(`step-${stepIndex}:start`);
         if (trim(currentPlan.response) && typeof context?.onStatus === 'function') {
           context.onStatus({
             stage: stepIndex === 0 ? 'planned' : 'react_planned',
@@ -1159,7 +1175,9 @@ export const createMaidAssistantAgent = ({
 
         let execution = null;
         try {
+          loopProbe(`step-${stepIndex}:tool-exec`);
           execution = await executePlan(currentPlan, context, tracker);
+          loopProbe(`step-${stepIndex}:tool-done`);
         } catch (error) {
           logger?.warn?.('maid assistant tool execution failed', error);
           execution = {
@@ -1182,6 +1200,7 @@ export const createMaidAssistantAgent = ({
           ok,
         }));
         if (ok && reactPlanner) {
+          loopProbe(`step-${stepIndex}:verify-check`);
           const verificationPlan = buildAutoVerificationPlan(currentPlan, output, steps);
           if (verificationPlan) {
             if (typeof context?.onStatus === 'function') {
@@ -1329,6 +1348,7 @@ export const createMaidAssistantAgent = ({
           });
         }
 
+        loopProbe(`step-${stepIndex}:react-call`);
         const decision = await callModelWithTimeout(() => reactPlanner(input, {
           ...context,
           maidReactSteps: clone(steps),
@@ -1336,6 +1356,7 @@ export const createMaidAssistantAgent = ({
           lastOutput: clone(observedOutput),
           lastToolOk: ok,
         }), { label: 'maid_react' });
+        loopProbe(`step-${stepIndex}:react-done`);
         if (!decision?.ok) {
           if (ok) {
             const stoppedReason = decision?.reason || 'react_stopped';

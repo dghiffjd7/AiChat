@@ -1,0 +1,8 @@
+{
+  "chips": [],
+  "storeCounts": {
+    "total": 120,
+    "failed": 24,
+    "cancelled": 7
+  }
+}

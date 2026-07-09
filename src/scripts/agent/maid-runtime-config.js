@@ -14,6 +14,8 @@ export const createMaidRuntimeConfigResolver = ({
 } = {}) => async () => {
   const profileId = trim(settingsStore?.getBoundProfileId?.());
   const modelOverride = trim(settingsStore?.getBoundModelOverride?.());
+  const fallbackProfileId = trim(settingsStore?.getFallbackProfileId?.());
+  const subAgents = (settingsStore?.listSubAgents?.() || []).filter(item => item?.enabled !== false);
   const maidPrompt = trim(settingsStore?.getMaidPrompt?.() || settingsStore?.getPersonaPrompt?.());
   if (!profileId) {
     return {
@@ -43,12 +45,33 @@ export const createMaidRuntimeConfigResolver = ({
       };
     }
     const ready = Boolean(isConfigReady(config));
-    const client = ready && typeof createClient === 'function' ? createClient(config) : null;
+    // 女仆 planner/ReAct 输出为小 JSON，超时不应继承聊天档的超长配置（如 100 分钟）——
+    // 上限 240s 走 Rust 请求层，不受窗口后台 timer 冻结影响。
+    const cappedConfig = {
+      ...config,
+      timeout: Math.min(Number(config.timeout) > 0 ? Number(config.timeout) : 240000, 240000),
+    };
+    const client = ready && typeof createClient === 'function' ? createClient(cappedConfig) : null;
+    // 主档故障降级：配置了 fallback 档时提供备用 client（调用方在主档请求失败时重试一次）
+    let fallbackClient = null;
+    if (fallbackProfileId && fallbackProfileId !== profileId) {
+      try {
+        const fallbackConfig = await configManager?.getRuntimeConfigByProfileId?.(fallbackProfileId);
+        if (isPlainObject(fallbackConfig) && isConfigReady(fallbackConfig) && typeof createClient === 'function') {
+          fallbackClient = createClient({
+            ...fallbackConfig,
+            timeout: Math.min(Number(fallbackConfig.timeout) > 0 ? Number(fallbackConfig.timeout) : 240000, 240000),
+          });
+        }
+      } catch {}
+    }
     return {
       configured: Boolean(client),
       bound: true,
       config,
       client,
+      fallbackClient,
+      subAgents,
       profileId,
       maidPrompt,
       personaPrompt: maidPrompt,

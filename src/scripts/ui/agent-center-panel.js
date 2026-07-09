@@ -1,4 +1,5 @@
 import { buildAgentCenterView } from './agent-center-view-model.js';
+import { rankModelCandidates } from '../utils/model-candidates.js';
 import { findAgentCenterResource } from './agent-center-resource-contract.js';
 import { WRITE_PREVIEW_PROVIDER_MODEL_CONTEXT_TOOLS } from '../agent/provider-tool-request-schema.js';
 import { PROVIDER_TOOL_PERMISSION_ACTIONS } from '../agent/provider-tool-permission-actions.js';
@@ -722,8 +723,50 @@ const PANEL_CSS = `
     font-size: 12px;
     font-weight: 700;
 }
-.agent-center-model-override {
+.agent-center-model-override-row {
     margin-top: 6px;
+    display: flex;
+    gap: 6px;
+    align-items: center;
+}
+.agent-center-model-override-row .agent-center-card-action {
+    flex: 0 0 auto;
+}
+.agent-center-model-menu[hidden] {
+    display: none;
+}
+.agent-center-model-menu {
+    margin-top: 4px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    max-height: 180px;
+    overflow-y: auto;
+    border: 1px solid var(--app-border-default);
+    border-radius: 8px;
+    background: var(--app-surface-card);
+    padding: 4px;
+}
+.agent-center-model-menu-item {
+    border: none;
+    background: transparent;
+    color: var(--app-text-primary);
+    text-align: left;
+    padding: 6px 8px;
+    border-radius: 6px;
+    font-size: 12px;
+    cursor: pointer;
+}
+.agent-center-model-menu-item:hover {
+    background: var(--app-surface-subtle);
+}
+.agent-center-model-menu-item.is-loading {
+    color: var(--app-text-secondary);
+    cursor: default;
+}
+.agent-center-model-override {
+    flex: 1;
+    min-width: 0;
     width: 100%;
     min-height: 30px;
     padding: 5px 9px;
@@ -2040,17 +2083,25 @@ export class AgentCenterPanel {
                     ${agent.supportsModel && agent.implemented ? '' : 'disabled'}
                 >管理</button>
             </div>
-            ${agent.modelMode === 'profile' && trim(agent.modelProfileId) ? `
-                <input
-                    type="text"
-                    class="agent-center-model-override"
-                    data-agent-feature-model-override="${escapeHtml(agent.id)}"
-                    value="${escapeHtml(agent.modelOverride || '')}"
-                    placeholder="模型覆盖（留空用该配置保存的模型）"
-                    aria-label="模型覆盖"
-                    ${disabled ? 'disabled' : ''}
-                />
-            ` : ''}
+            ${agent.modelMode === 'profile' && trim(agent.modelProfileId) ? (() => {
+                const profile = profiles.find(item => item.id === trim(agent.modelProfileId));
+                const shownModel = agent.modelOverride || trim(profile?.model || '');
+                return `
+                <div class="agent-center-model-override-row">
+                    <input
+                        type="text"
+                        class="agent-center-model-override"
+                        data-agent-feature-model-override="${escapeHtml(agent.id)}"
+                        data-profile-model="${escapeHtml(trim(profile?.model || ''))}"
+                        value="${escapeHtml(shownModel)}"
+                        placeholder="模型（默认该配置保存的模型，可改）"
+                        aria-label="模型"
+                        ${disabled ? 'disabled' : ''}
+                    />
+                    <button type="button" class="agent-center-card-action" data-agent-model-pick="${escapeHtml(agent.id)}" ${disabled ? 'disabled' : ''}>▾</button>
+                </div>
+                <div class="agent-center-model-menu" data-agent-model-menu="${escapeHtml(agent.id)}" hidden></div>
+            `; })() : ''}
         `;
     }
 
@@ -3600,15 +3651,51 @@ export class AgentCenterPanel {
                     const id = input.dataset.agentFeatureModelOverride || '';
                     const agent = this.getAgentCardById(id);
                     if (!agent) return;
+                    const chosen = input.value.trim();
+                    const profileModel = (input.dataset.profileModel || '').trim();
                     await this.callAction('setAgentFeatureModel', {
                         id,
                         modelMode: 'profile',
                         modelProfileId: agent.modelProfileId,
-                        modelOverride: input.value.trim(),
+                        // 与配置保存的模型相同 = 维持原样（存空覆盖）
+                        modelOverride: chosen && chosen !== profileModel ? chosen : '',
                     }, null);
                     await this.refresh();
                 });
                 input.addEventListener('click', event => event.stopPropagation());
+            });
+            this.contentElement.querySelectorAll('[data-agent-model-pick]').forEach((btn) => {
+                btn.addEventListener('click', async (event) => {
+                    event.stopPropagation();
+                    const id = btn.dataset.agentModelPick || '';
+                    const agent = this.getAgentCardById(id);
+                    const menu = this.contentElement?.querySelector?.(`[data-agent-model-menu="${id}"]`);
+                    const input = this.contentElement?.querySelector?.(`[data-agent-feature-model-override="${id}"]`);
+                    if (!agent?.modelProfileId || !menu || !input) return;
+                    if (!menu.hidden) { menu.hidden = true; menu.innerHTML = ''; return; }
+                    menu.hidden = false;
+                    menu.innerHTML = '<div class="agent-center-model-menu-item is-loading">加载模型列表…</div>';
+                    const models = await this.callAction('listProfileModels', agent.modelProfileId, []);
+                    if (menu.hidden) return;
+                    const renderOptions = () => {
+                        if (menu.hidden) return;
+                        const ranked = rankModelCandidates(models || [], input.value || '');
+                        menu.innerHTML = ranked.length
+                            ? ranked.map(m => `<button type="button" class="agent-center-model-menu-item" data-model-option="${escapeHtml(String(m))}">${escapeHtml(String(m))}</button>`).join('')
+                            : '<div class="agent-center-model-menu-item is-loading">该渠道未返回模型列表，可手动输入</div>';
+                        menu.querySelectorAll('[data-model-option]').forEach((option) => {
+                            option.addEventListener('click', (ev) => {
+                                ev.stopPropagation();
+                                input.value = option.dataset.modelOption || '';
+                                menu.hidden = true;
+                                menu.innerHTML = '';
+                                input.dispatchEvent(new Event('change', { bubbles: false }));
+                            });
+                        });
+                    };
+                    input.addEventListener('input', renderOptions);
+                    renderOptions();
+                });
             });
             this.contentElement.querySelectorAll('[data-agent-feature-model-select]').forEach((select) => {
                 const id = select.dataset.agentFeatureModelSelect || '';

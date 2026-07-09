@@ -107,6 +107,8 @@ const escapeRegex = value => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'
   const openedConfigs = [];
   const activeSessions = [];
   const refreshed = [];
+  const generatedChatImages = [];
+  const switchedProfiles = [];
   const savedWorlds = new Map();
   const boundWorlds = [];
   const personas = new Map();
@@ -120,6 +122,7 @@ const escapeRegex = value => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'
   ]);
   const messages = new Map();
   const navTools = createAppNavigationAgentTools({
+    clickUiElement: async ({ ref, label }) => ({ ok: true, clicked: label || ref, after: { panels: [] } }),
     actions: {
       'agent-center': options => openedPanels.push(['agent-center', options]),
       config: options => openedPanels.push(['config', options]),
@@ -227,6 +230,23 @@ const escapeRegex = value => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'
     },
     refreshChatAndContacts: options => refreshed.push(options),
     setActiveSession: id => activeSessions.push(id),
+    generateChatImage: async ({ prompt, sessionId, negativePrompt = '' } = {}) => {
+      generatedChatImages.push({ prompt, sessionId, negativePrompt });
+      return true;
+    },
+    listModelProfiles: async ({ scope } = {}) => (scope === 'image'
+      ? {
+        activeId: 'img-bp',
+        profiles: [
+          { id: 'img-bp', name: 'byteplus', provider: 'custom', model: 'seedream' },
+          { id: 'img-nai', name: 'NAI', provider: 'novelai', model: 'nai-diffusion' },
+        ],
+      }
+      : { activeId: 'chat-1', profiles: [{ id: 'chat-1', name: '主档', provider: 'custom', model: 'm1' }] }),
+    switchModelProfile: async ({ scope, profileId } = {}) => {
+      switchedProfiles.push({ scope, profileId });
+      return { ok: true };
+    },
     renderSessionNameHtml: (id, contact) => contact?.name || id,
     getActiveUserName: () => 'CatalogUser',
     now: () => 1000,
@@ -461,6 +481,25 @@ const escapeRegex = value => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'
       assert.equal(result.sent, true);
       return;
     }
+    if (feature.id === 'config.model.switch') {
+      const listed = await getTool(tools, 'config.list_profiles').execute({ scope: 'image' });
+      assert.equal(listed.ok, true);
+      assert.equal(listed.profiles.length, 2);
+      assert.equal(listed.profiles.find(p => p.active)?.name, 'byteplus');
+      const switched = await getTool(tools, 'config.switch_profile').execute({ scope: 'image', profileName: 'NAI' });
+      assert.equal(switched.ok, true);
+      assert.equal(switched.switched, true);
+      assert.equal(switched.to.name, 'NAI');
+      assert.deepEqual(switchedProfiles[switchedProfiles.length - 1], { scope: 'image', profileId: 'img-nai' });
+      return;
+    }
+    if (feature.id === 'chat.image.generate') {
+      const result = await getTool(tools, 'chat.generate_image').execute({ sessionId: 'Beta', prompt: 'a cute cat' });
+      assert.equal(result.ok, true);
+      assert.equal(result.generated, true);
+      assert.deepEqual(generatedChatImages[generatedChatImages.length - 1], { prompt: 'a cute cat', sessionId: 'B', negativePrompt: '' });
+      return;
+    }
     if (feature.id === 'app.state.read') {
       const result = await getTool(tools, 'app.get_current_state').execute({});
       assert.equal(result.activePage, 'chat');
@@ -488,6 +527,12 @@ const escapeRegex = value => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'
       const result = await getTool(tools, 'chat.repair_message_format').execute({ formatHint: '状态栏格式' });
       assert.equal(result.ok, true);
       assert.equal(result.applied, true);
+      return;
+    }
+    if (feature.id === 'app.ui.click') {
+      const clicked = await getTool(tools, 'ui.click_element').execute({ label: '设置' }, {});
+      assert.equal(clicked.ok, true);
+      assert.equal(clicked.clicked, '设置');
       return;
     }
     if (feature.id === 'chat.format.profile') {

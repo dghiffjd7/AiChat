@@ -1,0 +1,24 @@
+{
+  "total": 25,
+  "last": [
+    {
+      "role": "assistant",
+      "type": "text",
+      "content": "该不会是想约雷姆出去吧~",
+      "hasMedia": false
+    },
+    {
+      "role": "user",
+      "type": "text",
+      "content": "雷姆，你今天有什么安排呀？",
+      "hasMedia": false
+    },
+    {
+      "role": "user",
+      "type": "image",
+      "content": "https://ark-acg-ap-southeast-1.tos-ap-southeast-1.volces.com/dola-seedream-5-0-p",
+      "hasMedia": true,
+      "mediaStatus": "succeeded"
+    }
+  ]
+}

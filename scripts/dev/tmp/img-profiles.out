@@ -1,0 +1,29 @@
+{
+  "current": {
+    "provider": "custom",
+    "model": "dola-seedream-5-0-pro-260628"
+  },
+  "profiles": [],
+  "mgrKeys": [
+    "constructor",
+    "load",
+    "save",
+    "get",
+    "set",
+    "reload",
+    "getDefault",
+    "ensureStores",
+    "migrateLegacyConfig",
+    "persistProfiles",
+    "persistKeyring",
+    "getProfiles",
+    "getActiveProfileId",
+    "getActiveProfile",
+    "getProfileById",
+    "setActiveProfile",
+    "createProfile",
+    "renameProfile",
+    "deleteProfile",
+    "listKeys"
+  ]
+}

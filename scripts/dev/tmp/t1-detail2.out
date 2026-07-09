@@ -1,0 +1,36 @@
+{
+  "done": {
+    "ok": true,
+    "result": "{\"ok\":true,\"status\":\"succeeded\",\"responseType\":\"react\",\"input\":\"\",\"plan\":{\"ok\":true,\"toolName\":\"chat.send_message\",\"args\":{\"target\":\"雷姆\",\"content\":\"雷姆，你好呀~\"},\"featureId\":\"chat.send_message\",\"title\":\"给雷姆发送消息\",\"response\":\"好的主人，这就帮您给「雷姆」打个招呼~🌸\",\"source\":\"model_planner\"},\"finalDecision\":{\"ok\":true,\"action\":\"final\",\"message\":\"主人，已经帮您给「雷姆」发了「雷姆，你好呀~」过去啦~她收到消息应该会马上回您的，去看看吧 🌸\",\"source\":\"model_react\"},\"output\":{\"toolName\":\"chat.send_message\",\"status\":\"succeeded\",\"result\":{\"ok\":true,\"sent\":true,\"request"
+  },
+  "runs": [
+    {
+      "id": "run:8ce55a6c-4fe",
+      "status": "succeeded",
+      "createdAt": 1783561408547,
+      "title": "",
+      "summary": "主人，已经帮您给「雷姆」发了「雷姆，你好呀~」过去啦~她收到消息应该会马上回您的，去看看吧 🌸",
+      "steps": [
+        {
+          "title": "",
+          "status": "succeeded",
+          "summary": "sent message to 雷姆"
+        }
+      ]
+    },
+    {
+      "id": "run:1dbd31be-3af",
+      "status": "succeeded",
+      "createdAt": 1783508891890,
+      "title": "Lineage layout",
+      "summary": "lineage layout succeeded",
+      "steps": [
+        {
+          "title": "Layout lineage graph",
+          "status": "succeeded",
+          "summary": "lineage layout succeeded"
+        }
+      ]
+    }
+  ]
+}

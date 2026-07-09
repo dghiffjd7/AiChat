@@ -494,3 +494,90 @@ const createProfileStore = (prefix = 'profile') => {
   assert.deepEqual(active, ['elf']);
   console.log('ok - app content tools can route user sends through the reply-triggering send pipeline');
 }
+
+{
+  // 用户点停止生成时，send 管线返回的中止标记要透传给女仆观察结果
+  const contacts = new Map([['elf', { id: 'elf', name: '精灵女王' }]]);
+  const tools = createAppContentAgentTools({
+    contactsStore: {
+      listContacts: () => Array.from(contacts.values()),
+      getContact: id => contacts.get(id) || null,
+    },
+    chatStore: { getCurrent: () => 'elf', switchSession: () => {}, appendMessage: () => {} },
+    enterChatRoom: async () => {},
+    setActiveSession: () => {},
+    sendChatMessage: async () => ({
+      ok: false,
+      sent: false,
+      cancelled: true,
+      reason: 'user_aborted',
+      message: '用户在生成过程中点击了停止，本次发送/回复被用户中止。',
+    }),
+  });
+  const result = await getTool(tools, 'chat.send_message').execute({
+    sessionName: '精灵女王',
+    message: '你好',
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, 'user_aborted');
+  assert.equal(result.cancelled, true);
+  assert.ok(String(result.message).includes('中止'));
+  console.log('ok - app content tools propagate user abort marker from send pipeline');
+}
+
+{
+  // 模型渠道档：列出 + 模糊匹配切换 + 歧义/不存在/已活跃分支
+  const switched = [];
+  const profiles = [
+    { id: 'p-bp', name: 'byteplus', provider: 'custom', model: 'dola-seedream-5-0-pro' },
+    { id: 'p-nai', name: 'NAI', provider: 'novelai', model: 'nai-diffusion-4-5-full' },
+    { id: 'p-oai', name: 'oai', provider: 'openai', model: 'gpt-image-2' },
+  ];
+  const tools = createAppContentAgentTools({
+    listModelProfiles: async ({ scope } = {}) => (scope === 'image' ? { activeId: 'p-bp', profiles } : null),
+    switchModelProfile: async ({ scope, profileId } = {}) => {
+      switched.push({ scope, profileId });
+      return { ok: true };
+    },
+  });
+
+  const listed = await getTool(tools, 'config.list_profiles').execute({ scope: 'image' });
+  assert.equal(listed.ok, true);
+  assert.equal(listed.activeProfileId, 'p-bp');
+  assert.equal(listed.profiles.find(p => p.active)?.name, 'byteplus');
+
+  const badScope = await getTool(tools, 'config.list_profiles').execute({ scope: 'chat' });
+  assert.equal(badScope.ok, false);
+  assert.equal(badScope.reason, 'unsupported_scope');
+
+  // 大小写不敏感的名称匹配
+  const byName = await getTool(tools, 'config.switch_profile').execute({ scope: 'image', profileName: 'nai' });
+  assert.equal(byName.ok, true);
+  assert.equal(byName.switched, true);
+  assert.equal(byName.from.name, 'byteplus');
+  assert.equal(byName.to.name, 'NAI');
+  assert.deepEqual(switched, [{ scope: 'image', profileId: 'p-nai' }]);
+
+  // 模型名包含匹配
+  const byModel = await getTool(tools, 'config.switch_profile').execute({ scope: 'image', profileName: 'gpt-image' });
+  assert.equal(byModel.to.name, 'oai');
+
+  // 歧义：'i' 同时命中多个
+  const ambiguous = await getTool(tools, 'config.switch_profile').execute({ scope: 'image', profileName: 'a' });
+  assert.equal(ambiguous.ok, false);
+  assert.equal(ambiguous.reason, 'profile_ambiguous');
+  assert.ok(ambiguous.candidates.length > 1);
+
+  // 不存在
+  const missing = await getTool(tools, 'config.switch_profile').execute({ scope: 'image', profileName: 'midjourney' });
+  assert.equal(missing.ok, false);
+  assert.equal(missing.reason, 'profile_not_found');
+  assert.deepEqual(missing.available, ['byteplus', 'NAI', 'oai']);
+
+  // 已是活跃档
+  const already = await getTool(tools, 'config.switch_profile').execute({ scope: 'image', profileId: 'p-bp' });
+  assert.equal(already.ok, true);
+  assert.equal(already.switched, false);
+  assert.equal(already.alreadyActive, true);
+  console.log('ok - app content tools list and switch model profiles with fuzzy matching');
+}

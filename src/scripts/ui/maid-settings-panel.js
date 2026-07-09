@@ -1,3 +1,6 @@
+import { MAID_SUB_AGENT_SKILLS } from '../storage/maid-settings-store.js';
+import { escapeHtml } from '../utils/name-badges.js';
+import { rankModelCandidates } from '../utils/model-candidates.js';
 const STYLE_ID = 'maid-settings-panel-style';
 
 const trim = (value, fallback = '') => {
@@ -143,6 +146,7 @@ const injectStyle = (documentRef) => {
   display: flex;
   flex-direction: column;
   gap: 10px;
+  overflow-y: auto;
 }
 .maid-settings-list {
   display: flex;
@@ -449,6 +453,8 @@ const setIconButtonContent = (button, icon = '', label = '') => {
 export const createMaidSettingsPanel = ({
   documentRef = globalThis?.document || null,
   settingsStore = null,
+  listModelProfiles = null,
+  listProfileModels = null,
   onOpenApiConfig = null,
   getAppKnowledgeText = () => '',
   getHistoryContextText = () => '',
@@ -612,11 +618,15 @@ export const createMaidSettingsPanel = ({
     setStatus('');
   };
 
+  let refreshApiSubSection = null;
   const switchTab = (tab = 'api') => {
     const promptSubtab = tab === 'appKnowledge' || tab === 'historyContext' || tab === 'memoryTable' || tab === 'lastPrompt' || tab === 'lastResponse' || tab === 'persona'
       ? tab
       : '';
     const next = promptSubtab ? 'prompt' : (['api', 'prompt', 'activity', 'safety'].includes(tab) ? tab : 'api');
+    if (next === 'api') {
+      try { refreshApiSubSection?.(); } catch {}
+    }
     activeTab = next;
     tabButtons.forEach((button, key) => {
       button.classList.toggle('is-active', key === activeTab);
@@ -714,18 +724,284 @@ export const createMaidSettingsPanel = ({
 
     const apiSection = documentRef.createElement?.('section');
     apiSection.className = 'maid-settings-section';
-    const apiRow = documentRef.createElement?.('div');
-    apiRow.className = 'maid-settings-api-row';
-    const apiText = documentRef.createElement?.('div');
-    apiText.className = 'maid-settings-empty';
-    apiText.textContent = 'API 配置由 APP 统一管理。';
-    const apiButton = createButton(documentRef, 'maid-settings-action is-primary', '打开 API 设定');
-    apiButton.addEventListener?.('click', () => {
-      hide();
-      void onOpenApiConfig?.({ source: 'maid_settings' });
-    });
-    apiRow.append(apiText, apiButton);
-    apiSection.append(apiRow);
+    // API 分页二级导航：一级为干净的入口列表，二级为各自配置表单（2026-07-08）
+    let apiPage = '';
+    let editingSubAgentId = '';
+    const renderApiSection = () => {
+      if (!apiSection || typeof apiSection.querySelector !== 'function') return;
+      const profiles = (typeof listModelProfiles === 'function' ? listModelProfiles() : []) || [];
+      const profileById = id => profiles.find(item => item.id === id) || null;
+      const profileOptions = selected => profiles.map(p => `<option value="${escapeHtml(p.id)}"${p.id === selected ? ' selected' : ''}>${escapeHtml(p.label || p.name || p.id)}</option>`).join('');
+      const boundId = settingsStore?.getBoundProfileId?.() || '';
+      const boundOverride = settingsStore?.getBoundModelOverride?.() || '';
+      const boundProfile = profileById(boundId);
+      const fallbackId = settingsStore?.getFallbackProfileId?.() || '';
+      const subAgents = settingsStore?.listSubAgents?.() || [];
+
+      if (apiPage === 'main') {
+        const shownModel = boundOverride || boundProfile?.model || '';
+        apiSection.innerHTML = `
+          <button type="button" class="maid-api-back" data-api-back>← 返回</button>
+          <div class="maid-api-group">
+            <div class="maid-api-group-title">女仆主配置</div>
+            <div class="maid-api-group-desc">女仆规划与执行使用的主模型。</div>
+            <label class="maid-api-field">
+              <span class="maid-api-field-label">连线配置</span>
+              <select class="maid-subagent-select" data-main-profile>
+                <option value="">未绑定</option>
+                ${profileOptions(boundId)}
+              </select>
+            </label>
+            <label class="maid-api-field">
+              <span class="maid-api-field-label">模型</span>
+              <span class="maid-subagent-model-row">
+                <input type="text" class="maid-subagent-input" data-main-model placeholder="${boundId ? '默认该配置保存的模型，可改' : '先选连线配置'}" maxlength="120" value="${escapeHtml(shownModel)}" ${boundId ? '' : 'disabled'} />
+                <button type="button" class="maid-settings-action" data-main-model-pick ${boundId ? '' : 'disabled'}>▾</button>
+              </span>
+            </label>
+            <div class="maid-subagent-model-menu" data-main-model-menu hidden></div>
+            <label class="maid-api-field">
+              <span class="maid-api-field-label">故障降级（主模型请求失败时自动用备用配置重试一次）</span>
+              <select class="maid-subagent-select" data-main-fallback>
+                <option value="">不降级</option>
+                ${profileOptions(fallbackId)}
+              </select>
+            </label>
+            <button type="button" class="maid-api-manage-link" data-api-open-config>管理连线配置（新增/编辑渠道）…</button>
+          </div>
+        `;
+      } else if (apiPage === 'subagent') {
+        const editing = editingSubAgentId ? subAgents.find(item => item.id === editingSubAgentId) : null;
+        const editingProfile = editing ? profileById(editing.modelProfileId) : null;
+        const formModelValue = editing ? (editing.modelOverride || editingProfile?.model || '') : '';
+        const skillChecks = MAID_SUB_AGENT_SKILLS.map(skill => `
+          <label class="maid-subagent-skill"><input type="checkbox" data-sub-skill="${escapeHtml(skill.id)}"${editing?.skills?.includes(skill.id) ? ' checked' : ''} />${escapeHtml(skill.label)}</label>
+        `).join('');
+        apiSection.innerHTML = `
+          <button type="button" class="maid-api-back" data-api-back>← 返回</button>
+          <div class="maid-api-group">
+            <div class="maid-api-group-title">Sub-agent 模型</div>
+            <div class="maid-api-group-desc">女仆按能力标签把重内容生成等任务委派给这些模型，调用前会请求确认。</div>
+            <div class="maid-subagent-list">
+              ${subAgents.length ? subAgents.map(item => `
+                <div class="maid-subagent-item${item.id === editingSubAgentId ? ' is-editing' : ''}">
+                  <div class="maid-subagent-item-main">
+                    <span class="maid-subagent-item-name">${escapeHtml(item.name)}</span>
+                    <span class="maid-subagent-item-meta">${escapeHtml(item.skills.map(id => MAID_SUB_AGENT_SKILLS.find(s => s.id === id)?.label || id).join('、') || '未设标签')}${item.modelOverride ? ` · ${escapeHtml(item.modelOverride)}` : ''}</span>
+                  </div>
+                  <button type="button" class="maid-settings-action" data-sub-edit="${escapeHtml(item.id)}">编辑</button>
+                  <button type="button" class="maid-settings-action" data-sub-remove="${escapeHtml(item.id)}">删除</button>
+                </div>
+              `).join('') : '<div class="maid-settings-empty">还没有配置 sub-agent 模型。</div>'}
+            </div>
+            <div class="maid-subagent-form">
+              <div class="maid-api-form-title">${editing ? `编辑「${escapeHtml(editing.name)}」` : '添加 Sub-agent'}</div>
+              <label class="maid-api-field">
+                <span class="maid-api-field-label">名称</span>
+                <input type="text" class="maid-subagent-input" data-sub-name placeholder="如：快手 flash" maxlength="40" value="${escapeHtml(editing?.name || '')}" />
+              </label>
+              <label class="maid-api-field">
+                <span class="maid-api-field-label">连线配置</span>
+                <select class="maid-subagent-select" data-sub-profile>
+                  <option value="">选择连线配置…</option>
+                  ${profileOptions(editing?.modelProfileId || '')}
+                </select>
+              </label>
+              <label class="maid-api-field">
+                <span class="maid-api-field-label">模型</span>
+                <span class="maid-subagent-model-row">
+                  <input type="text" class="maid-subagent-input" data-sub-model placeholder="${editing ? '默认该配置保存的模型，可改' : '先选连线配置'}" maxlength="120" value="${escapeHtml(formModelValue)}" ${editing ? '' : 'disabled'} />
+                  <button type="button" class="maid-settings-action" data-sub-model-pick ${editing ? '' : 'disabled'}>▾</button>
+                </span>
+              </label>
+              <div class="maid-subagent-model-menu" data-sub-model-menu hidden></div>
+              <div class="maid-api-field">
+                <span class="maid-api-field-label">能力标签</span>
+                <div class="maid-subagent-skills">${skillChecks}</div>
+              </div>
+              <label class="maid-api-field">
+                <span class="maid-api-field-label">备注</span>
+                <input type="text" class="maid-subagent-input" data-sub-note placeholder="可选，会展示给女仆" maxlength="200" value="${escapeHtml(editing?.note || '')}" />
+              </label>
+              <div class="maid-api-form-actions">
+                <button type="button" class="maid-settings-action is-primary" data-sub-add>${editing ? '保存修改' : '添加 Sub-agent'}</button>
+                ${editing ? '<button type="button" class="maid-settings-action" data-sub-cancel-edit>取消编辑</button>' : ''}
+              </div>
+            </div>
+          </div>
+        `;
+      } else {
+        // 一级：干净的入口列表 + 状态摘要
+        const mainSummary = boundProfile
+          ? `${boundProfile.name}${boundOverride || boundProfile.model ? ` · ${boundOverride || boundProfile.model}` : ''}${fallbackId ? ' · 已配降级' : ''}`
+          : '未绑定连线配置';
+        const subSummary = subAgents.length
+          ? subAgents.map(item => item.name).slice(0, 3).join('、') + (subAgents.length > 3 ? ` 等 ${subAgents.length} 个` : '')
+          : '未配置';
+        apiSection.innerHTML = `
+          <div class="maid-api-nav">
+            <button type="button" class="maid-api-nav-item" data-api-nav="main">
+              <span class="maid-api-nav-title">女仆主配置</span>
+              <span class="maid-api-nav-summary">${escapeHtml(mainSummary)}</span>
+              <span class="maid-api-nav-chevron">›</span>
+            </button>
+            <button type="button" class="maid-api-nav-item" data-api-nav="subagent">
+              <span class="maid-api-nav-title">Sub-agent 模型</span>
+              <span class="maid-api-nav-summary">${escapeHtml(subSummary)}</span>
+              <span class="maid-api-nav-chevron">›</span>
+            </button>
+          </div>
+        `;
+      }
+      bindApiSectionEvents();
+    };
+
+    const bindModelPicker = ({ inputSel, pickSel, menuSel, getProfileId }) => {
+      const input = apiSection.querySelector(inputSel);
+      const pickBtn = apiSection.querySelector(pickSel);
+      const menu = apiSection.querySelector(menuSel);
+      if (!input || !pickBtn || !menu) return { input };
+      const closeMenu = () => { menu.hidden = true; menu.innerHTML = ''; };
+      let candidates = [];
+      const renderOptions = () => {
+        if (menu.hidden) return;
+        const ranked = rankModelCandidates(candidates, input.value || '');
+        menu.innerHTML = ranked.length
+          ? ranked.map(m => `<button type="button" class="maid-subagent-model-option" data-model-opt="${escapeHtml(m)}">${escapeHtml(m)}</button>`).join('')
+          : '<div class="maid-subagent-model-option is-loading">该渠道未返回模型列表，可手动输入</div>';
+        menu.querySelectorAll('[data-model-opt]').forEach((btn) => {
+          btn.addEventListener('click', () => {
+            input.value = btn.dataset.modelOpt || '';
+            closeMenu();
+            input.dispatchEvent(new Event('change', { bubbles: false }));
+          });
+        });
+      };
+      input.addEventListener('input', renderOptions);
+      pickBtn.addEventListener('click', async () => {
+        const profileId = getProfileId();
+        if (!profileId) return;
+        if (!menu.hidden) { closeMenu(); return; }
+        menu.hidden = false;
+        menu.innerHTML = '<div class="maid-subagent-model-option is-loading">加载模型列表…</div>';
+        try {
+          candidates = (await listProfileModels?.(profileId)) || [];
+        } catch {
+          candidates = [];
+        }
+        renderOptions();
+      });
+      return { input, closeMenu };
+    };
+
+    const bindApiSectionEvents = () => {
+      const profiles = (typeof listModelProfiles === 'function' ? listModelProfiles() : []) || [];
+      apiSection.querySelectorAll('[data-api-nav]').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          apiPage = btn.dataset.apiNav || '';
+          renderApiSection();
+        });
+      });
+      apiSection.querySelector('[data-api-back]')?.addEventListener('click', () => {
+        apiPage = '';
+        editingSubAgentId = '';
+        renderApiSection();
+      });
+      apiSection.querySelector('[data-api-open-config]')?.addEventListener('click', () => {
+        hide();
+        void onOpenApiConfig?.({ source: 'maid_settings' });
+      });
+      // 主配置页
+      const mainProfileSelect = apiSection.querySelector('[data-main-profile]');
+      if (mainProfileSelect) {
+        const { input: mainModelInput } = bindModelPicker({
+          inputSel: '[data-main-model]',
+          pickSel: '[data-main-model-pick]',
+          menuSel: '[data-main-model-menu]',
+          getProfileId: () => mainProfileSelect.value,
+        });
+        mainProfileSelect.addEventListener('change', async () => {
+          const profileId = mainProfileSelect.value;
+          await settingsStore?.setBoundProfileId?.(profileId);
+          await settingsStore?.setBoundModelOverride?.('');
+          renderApiSection();
+        });
+        mainModelInput?.addEventListener('change', async () => {
+          const chosen = mainModelInput.value.trim();
+          const profileModel = (profiles.find(item => item.id === mainProfileSelect.value)?.model || '').trim();
+          await settingsStore?.setBoundModelOverride?.(chosen && chosen !== profileModel ? chosen : '');
+        });
+        apiSection.querySelector('[data-main-fallback]')?.addEventListener('change', (event) => {
+          void settingsStore?.setFallbackProfileId?.(event.target.value);
+        });
+      }
+      // sub-agent 页
+      apiSection.querySelectorAll('[data-sub-edit]').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          editingSubAgentId = btn.dataset.subEdit || '';
+          renderApiSection();
+        });
+      });
+      apiSection.querySelector('[data-sub-cancel-edit]')?.addEventListener('click', () => {
+        editingSubAgentId = '';
+        renderApiSection();
+      });
+      apiSection.querySelectorAll('[data-sub-remove]').forEach((btn) => {
+        btn.addEventListener('click', async () => {
+          if (btn.dataset.subRemove === editingSubAgentId) editingSubAgentId = '';
+          await settingsStore?.removeSubAgent?.(btn.dataset.subRemove);
+          renderApiSection();
+        });
+      });
+      const subProfileSelect = apiSection.querySelector('[data-sub-profile]');
+      if (subProfileSelect) {
+        const { input: subModelInput } = bindModelPicker({
+          inputSel: '[data-sub-model]',
+          pickSel: '[data-sub-model-pick]',
+          menuSel: '[data-sub-model-menu]',
+          getProfileId: () => subProfileSelect.value,
+        });
+        subProfileSelect.addEventListener('change', () => {
+          const profileId = subProfileSelect.value;
+          const profile = profiles.find(item => item.id === profileId);
+          if (subModelInput) {
+            subModelInput.disabled = !profileId;
+            subModelInput.value = profile?.model || '';
+            subModelInput.placeholder = '模型（默认该配置保存的模型，可改）';
+          }
+          const pick = apiSection.querySelector('[data-sub-model-pick]');
+          if (pick) pick.disabled = !profileId;
+        });
+        apiSection.querySelector('[data-sub-add]')?.addEventListener('click', async () => {
+          const name = apiSection.querySelector('[data-sub-name]')?.value?.trim();
+          const modelProfileId = subProfileSelect.value || '';
+          if (!modelProfileId) {
+            globalThis.toastr?.warning?.('请先选择连线配置');
+            return;
+          }
+          const skills = Array.from(apiSection.querySelectorAll('[data-sub-skill]:checked')).map(el => el.dataset.subSkill);
+          const existingCount = (settingsStore?.listSubAgents?.() || []).length;
+          const chosenModel = subModelInput?.value?.trim() || '';
+          const profileModel = (profiles.find(item => item.id === modelProfileId)?.model || '').trim();
+          await settingsStore?.upsertSubAgent?.({
+            ...(editingSubAgentId ? { id: editingSubAgentId } : {}),
+            name,
+            modelProfileId,
+            modelOverride: chosenModel && chosenModel !== profileModel ? chosenModel : '',
+            skills,
+            note: apiSection.querySelector('[data-sub-note]')?.value?.trim() || '',
+          });
+          if (!editingSubAgentId && existingCount >= 1) {
+            globalThis.toastr?.info?.('提示：配置多个模型时，女仆委派会带来相应的多份模型消耗。');
+          }
+          editingSubAgentId = '';
+          renderApiSection();
+        });
+      }
+    };
+
+    renderApiSection();
+    refreshApiSubSection = () => { apiPage = ''; editingSubAgentId = ''; renderApiSection(); };
 
     const promptSection = documentRef.createElement?.('section');
     promptSection.className = 'maid-settings-section';

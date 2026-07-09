@@ -1,0 +1,10 @@
+{
+  "steps": [
+    {
+      "tool": "chat.send_message",
+      "status": "failed",
+      "out": "{\"ok\":false,\"sent\":false,\"requested\":false,\"requestTriggered\":false,\"reason\":\"user_aborted\",\"cancelled\":true,\"message\":\"用户在生成过程中点击了停止，本次发送/回复被用户中止。\",\"sessionId\":\"雷姆\",\"role\":\"user\",\"content\":\"雷姆，你今天有什么安排呀？\"}"
+    }
+  ],
+  "clicks": []
+}

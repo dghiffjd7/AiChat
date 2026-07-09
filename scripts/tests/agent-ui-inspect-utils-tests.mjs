@@ -116,3 +116,28 @@ const makeElement = ({
 }
 
 console.log('agent-ui-inspect-utils-tests passed');
+
+{
+  // ref 收集：按钮带 ref 且注册表可回查
+  const refs = new Map();
+  const fakeBtn = (label) => ({
+    tagName: 'BUTTON',
+    innerText: label,
+    classList: { contains: () => false },
+    getAttribute: () => null,
+    disabled: false,
+  });
+  const btns = [fakeBtn('设置'), fakeBtn('删除条目')];
+  const element = {
+    querySelectorAll: sel => (sel.includes('button') ? btns : []),
+  };
+  const summary = buildElementUiSummary(element, {
+    getComputedStyle: () => ({ display: 'block', visibility: 'visible', opacity: '1' }),
+    collectRef: (ref, node) => refs.set(ref, node),
+    refPrefix: 'test:',
+  });
+  assert.equal(summary.buttons.length, 2);
+  assert.equal(summary.buttons[0].ref, 'test:btn-1');
+  assert.equal(refs.get('test:btn-2'), btns[1], '注册表应能回查到节点');
+  console.log('ok - inspect ref 收集与注册表回查');
+}

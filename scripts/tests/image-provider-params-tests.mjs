@@ -145,7 +145,7 @@ import {
     provider: 'custom',
     apiKey: 'test',
     baseUrl: 'https://example.com/v1',
-    model: 'image-model',
+    model: 'gpt-image-1',
   });
   let request = null;
   provider.requestJson = async nextRequest => {
@@ -169,7 +169,7 @@ import {
   assert.equal(request.bodyBase64.length > 0, true);
   assert.equal(Buffer.compare(Buffer.from(request.body), Buffer.from(request.bodyBase64, 'base64')), 0);
   const bodyText = Buffer.from(request.bodyBase64, 'base64').toString('utf8');
-  assert.match(bodyText, /name="model"\r\n\r\nimage-model/);
+  assert.match(bodyText, /name="model"\r\n\r\ngpt-image-1/);
   assert.match(bodyText, /name="prompt"\r\n\r\ncat/);
   assert.match(bodyText, /name="image\[\]"; filename="reference_1\.png"/);
   assert.match(bodyText, /Content-Type: image\/png/);
@@ -179,6 +179,105 @@ import {
   assert.match(bodyText, /name="output_compression"\r\n\r\n75/);
   assert.match(bodyText, /name="seed"\r\n\r\n42/);
   console.log('ok - custom image provider sends reference images as multipart image edits');
+}
+
+{
+  // 非 gpt-image/dall-e 模型（如 BytePlus Seedream）优先走 generations + image 字段
+  const provider = new CustomProvider({
+    provider: 'custom',
+    apiKey: 'test',
+    baseUrl: 'https://ark.example.com/v3',
+    model: 'seedream-4-5',
+  });
+  const requests = [];
+  provider.requestJson = async nextRequest => {
+    requests.push(nextRequest);
+    return { data: [{ b64_json: 'abc123' }] };
+  };
+  const images = await provider.generateImage('cat', {
+    referenceImages: ['data:image/png;base64,cmVmMQ=='],
+    size: '1024x1024',
+  });
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].url, 'https://ark.example.com/v3/images/generations');
+  const payload = JSON.parse(requests[0].body);
+  assert.equal(payload.image, 'data:image/png;base64,cmVmMQ==');
+  assert.equal(payload.size, '1024x1024');
+  assert.equal(images[0].dataUrl.startsWith('data:image/png;base64,'), true);
+  console.log('ok - custom image provider sends reference images via generations image field for non-openai models');
+}
+
+{
+  // 首选形态失败时回落到另一种，成功后缓存路由（下次直达）
+  const provider = new CustomProvider({
+    provider: 'custom',
+    apiKey: 'test',
+    baseUrl: 'https://relay.example.com/v1',
+    model: 'gpt-image-1',
+  });
+  const urls = [];
+  provider.requestJson = async nextRequest => {
+    urls.push(nextRequest.url);
+    if (nextRequest.url.endsWith('/images/edits')) {
+      const error = new Error('Custom API Error: 404 - no such endpoint');
+      error.status = 404;
+      throw error;
+    }
+    return { data: [{ url: 'https://relay.example.com/out.png' }] };
+  };
+  const refs = { referenceImages: ['data:image/png;base64,cmVmMQ=='] };
+  const first = await provider.generateImage('cat', refs);
+  assert.equal(first[0].url, 'https://relay.example.com/out.png');
+  assert.deepEqual(urls, [
+    'https://relay.example.com/v1/images/edits',
+    'https://relay.example.com/v1/images/generations',
+  ]);
+  await provider.generateImage('cat again', refs);
+  assert.equal(urls.length, 3);
+  assert.equal(urls[2], 'https://relay.example.com/v1/images/generations');
+  console.log('ok - custom image provider falls back between reference routes and caches the winner');
+}
+
+{
+  // 两种形态都失败时合并透出真实错误，而不是泛化的“未返回可用图片”
+  const provider = new CustomProvider({
+    provider: 'custom',
+    apiKey: 'test',
+    baseUrl: 'https://strict.example.com/v1',
+    model: 'some-image-model',
+  });
+  provider.requestJson = async nextRequest => {
+    if (nextRequest.url.endsWith('/images/generations')) {
+      return { error: { code: 'InvalidParameter', message: 'image param is not supported' } };
+    }
+    const error = new Error('Custom API Error: 404 - not found');
+    error.status = 404;
+    throw error;
+  };
+  await assert.rejects(
+    provider.generateImage('cat', { referenceImages: ['data:image/png;base64,cmVmMQ=='] }),
+    err => /InvalidParameter/.test(err.message) &&
+      /image param is not supported/.test(err.message) &&
+      /404/.test(err.message) &&
+      /两种接入方式都失败/.test(err.message),
+  );
+  console.log('ok - custom image provider surfaces real errors from both reference routes');
+}
+
+{
+  // 纯文生图空响应也要带出响应体信息
+  const provider = new CustomProvider({
+    provider: 'custom',
+    apiKey: 'test',
+    baseUrl: 'https://empty.example.com/v1',
+    model: 'some-image-model',
+  });
+  provider.requestJson = async () => ({ message: 'quota exceeded', code: 'RateLimit' });
+  await assert.rejects(
+    provider.generateImage('cat'),
+    err => /RateLimit/.test(err.message) && /quota exceeded/.test(err.message),
+  );
+  console.log('ok - custom image provider surfaces response detail when no image data returned');
 }
 
 {
@@ -536,7 +635,7 @@ import {
       provider: 'custom',
       apiKey: 'test',
       baseUrl: 'https://example.com/v1',
-      model: 'image-model',
+      model: 'gpt-image-1',
     });
     await provider.generateImage('cat', {
       referenceImages: ['data:image/png;base64,cmVm'],

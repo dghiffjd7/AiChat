@@ -69,6 +69,33 @@ export const normalizeAgentStatus = (status = '', fallback = 'queued') => {
   return STATUS_SET.has(fallback) ? fallback : 'queued';
 };
 
+// 深度截断存储值：长字符串、大数组、深嵌套裁剪——run store 用于展示/恢复提示，不是数据源
+export const truncateAgentValue = (value, {
+  maxString = 600,
+  maxArrayItems = 12,
+  maxKeys = 30,
+  maxDepth = 4,
+} = {}, depth = 0) => {
+  if (value == null) return value;
+  if (typeof value === 'string') {
+    return value.length > maxString ? `${value.slice(0, maxString)}…[truncated ${value.length}]` : value;
+  }
+  if (typeof value !== 'object') return value;
+  if (depth >= maxDepth) return '[nested…]';
+  if (Array.isArray(value)) {
+    const items = value.slice(0, maxArrayItems).map(item => truncateAgentValue(item, { maxString, maxArrayItems, maxKeys, maxDepth }, depth + 1));
+    if (value.length > maxArrayItems) items.push(`…[+${value.length - maxArrayItems} more]`);
+    return items;
+  }
+  const out = {};
+  const keys = Object.keys(value);
+  keys.slice(0, maxKeys).forEach((key) => {
+    out[key] = truncateAgentValue(value[key], { maxString, maxArrayItems, maxKeys, maxDepth }, depth + 1);
+  });
+  if (keys.length > maxKeys) out['…'] = `+${keys.length - maxKeys} keys`;
+  return out;
+};
+
 export const normalizeAgentStep = (raw = {}, {
   runId = '',
   stepId = '',
@@ -86,9 +113,9 @@ export const normalizeAgentStep = (raw = {}, {
     title: trimString(src.title, ''),
     status: normalizeAgentStatus(src.status, finishedAt == null ? 'running' : 'succeeded'),
     summary: trimString(src.summary, ''),
-    input: cloneAgentValue(src.input, null),
-    output: cloneAgentValue(src.output, null),
-    metadata: isPlainObject(src.metadata) ? cloneAgentValue(src.metadata, {}) : {},
+    input: truncateAgentValue(cloneAgentValue(src.input, null)),
+    output: truncateAgentValue(cloneAgentValue(src.output, null)),
+    metadata: isPlainObject(src.metadata) ? truncateAgentValue(cloneAgentValue(src.metadata, {})) : {},
     errorMessage: trimString(src.errorMessage || src.error, ''),
     startedAt,
     updatedAt: normalizeTimestamp(src.updatedAt, finishedAt ?? startedAt),

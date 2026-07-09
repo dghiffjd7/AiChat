@@ -1,0 +1,29 @@
+{
+  "activeId": "profile-1783565768270-62f1c5",
+  "profiles": [
+    {
+      "id": "profile-1783565768270-62f1c5",
+      "name": "byteplus",
+      "provider": "custom",
+      "model": "dola-seedream-5-0-pro-260628"
+    },
+    {
+      "id": "profile-1778658246478-7e0bdc",
+      "name": "NAI",
+      "provider": "novelai",
+      "model": "nai-diffusion-4-5-full"
+    },
+    {
+      "id": "profile-1778470102767-4d7404",
+      "name": "oai",
+      "provider": "openai",
+      "model": "gpt-image-2"
+    },
+    {
+      "id": "profile-1769099435136-f49eca",
+      "name": "默认",
+      "provider": "makersuite",
+      "model": "nano-banana-pro-preview"
+    }
+  ]
+}

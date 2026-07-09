@@ -1,0 +1,17 @@
+{
+  "ok": false,
+  "status": "failed",
+  "reason": "send message failed: user_aborted",
+  "message": "主人，刚才给雷姆发消息时被您中止了，消息没有发出去呢~😣 需要我再帮您重新发送一次吗？或者您想直接自己跟她说呢？🌸",
+  "steps": [
+    {
+      "i": 1,
+      "tool": "chat.send_message",
+      "feature": "chat.send_message",
+      "status": "failed",
+      "args": "{\"target\":\"雷姆\",\"content\":\"雷姆，你今天有什么安排呀？\"}"
+    }
+  ],
+  "clicks": [],
+  "uiLagMax": 4
+}

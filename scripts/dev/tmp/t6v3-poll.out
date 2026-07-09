@@ -1,0 +1,12 @@
+{
+  "pending": true,
+  "elapsed": 190160,
+  "loop": {
+    "stage": "step-1:tool-exec",
+    "at": 1783578299630
+  },
+  "model": {
+    "phase": "done",
+    "elapsedMs": 12614
+  }
+}

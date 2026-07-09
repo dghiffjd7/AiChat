@@ -16,8 +16,8 @@ export const AGENT_RUN_STORE_BASE_KEY = 'agent_run_store_v1';
 export const AGENT_RUN_STORE_VERSION = 1;
 
 const LOCAL_BOOTSTRAP_JSON_SOFT_LIMIT = 500_000;
-const DEFAULT_MAX_RUNS = 200;
-const DEFAULT_MAX_EVENTS = 1000;
+const DEFAULT_MAX_RUNS = 120;
+const DEFAULT_MAX_EVENTS = 400;
 
 const isPlainObject = value => Boolean(value && typeof value === 'object' && !Array.isArray(value));
 
@@ -152,6 +152,23 @@ export class AgentRunStore {
       maxRuns: this.maxRuns,
       maxEvents: this.maxEvents,
     });
+    // 僵尸 run 兜底：上一会话遗留的 running/waiting run（进程已死不可能再推进）标记为可继续的 interrupted，
+    // 避免 Agent Center/状态芯片永久显示"运行中"。
+    let staleFixed = 0;
+    const bootAt = Number(this.now?.() || Date.now()) || Date.now();
+    Object.values(this.state.runs || {}).forEach((run) => {
+      if (!run || !['queued', 'running', 'waiting_permission'].includes(String(run.status || ''))) return;
+      run.status = 'cancelled';
+      run.cancelReason = run.cancelReason || 'app_restarted';
+      run.finishedAt = run.finishedAt || bootAt;
+      run.updatedAt = bootAt;
+      run.metadata = { ...(run.metadata || {}), continuable: true, failureCode: run.metadata?.failureCode || 'app_restarted' };
+      staleFixed += 1;
+    });
+    if (staleFixed > 0) {
+      safeLog('debug', `agent run store: marked ${staleFixed} stale running run(s) as interrupted`);
+      void this.persist();
+    }
     this.loaded = true;
     return this.exportState({ includeNonExportable: true });
   }
@@ -178,6 +195,16 @@ export class AgentRunStore {
   }
 
   _schedulePersist() {
+    // 防抖合并：每步 start/finish 都触发变更，逐次全量 persist 会长时间占用主线程（大库实测秒级）。
+    if (this._persistTimer) clearTimeout(this._persistTimer);
+    this._persistTimer = setTimeout(() => {
+      this._persistTimer = null;
+      this._flushPersist();
+    }, 600);
+    return this.writeChain;
+  }
+
+  _flushPersist() {
     this.writeChain = this.writeChain
       .then(() => this.persist())
       .catch((err) => {
@@ -185,6 +212,14 @@ export class AgentRunStore {
         return false;
       });
     return this.writeChain;
+  }
+
+  flush() {
+    if (this._persistTimer) {
+      clearTimeout(this._persistTimer);
+      this._persistTimer = null;
+    }
+    return this._flushPersist();
   }
 
   _commit(mutator) {

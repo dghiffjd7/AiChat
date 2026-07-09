@@ -1,0 +1,24 @@
+{
+  "ok": true,
+  "status": "succeeded",
+  "reason": "",
+  "message": "主人，生图渠道的切换全部完成啦~✨\n\n1. ✅ **先切到 byteplus** — 从 NAI 切换到了 byteplus（dola-seedream-5-0-pro-260628），确认成功\n2. ✅ **再切回 NAI** — 从 byteplus 切回了 NAI（nai-diffusion-4-5-full），也确认成功\n\n现在生图渠道已经回到 NAI 了，和操作前一样~🌸",
+  "steps": [
+    {
+      "i": 1,
+      "tool": "config.switch_profile",
+      "feature": "config.model.switch",
+      "status": "succeeded",
+      "args": "{\"scope\":\"image\",\"profileName\":\"byteplus\"}"
+    },
+    {
+      "i": 2,
+      "tool": "config.switch_profile",
+      "feature": "config.model.switch",
+      "status": "succeeded",
+      "args": "{\"scope\":\"image\",\"profileName\":\"NAI\"}"
+    }
+  ],
+  "clicks": [],
+  "uiLagMax": 4
+}

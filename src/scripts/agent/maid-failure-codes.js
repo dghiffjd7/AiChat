@@ -2,6 +2,7 @@
 // run trace、修复循环和 UI 展示统一引用这里，不允许各处手写分类字符串。
 
 export const MAID_FAILURE_CODES = Object.freeze({
+  userAborted: 'user_aborted',
   invalidArgs: 'invalid_args',
   targetNotFound: 'target_not_found',
   permissionDenied: 'permission_denied',
@@ -59,6 +60,9 @@ export const classifyMaidToolFailure = ({
   }
   if (/permission|denied|权限|拒绝/.test(text)) {
     return MAID_FAILURE_CODES.permissionDenied;
+  }
+  if (result?.cancelled === true || /用户(点击了?)?(中止|停止|取消)|user[_ ](aborted|stopped|declined|cancelled)|aborted by user|stopped by user|generation (stopped|aborted)/.test(text)) {
+    return MAID_FAILURE_CODES.userAborted;
   }
   if (/destructive|未确认|危险操作|cancelled by user/.test(text)) {
     return MAID_FAILURE_CODES.safetyDenied;

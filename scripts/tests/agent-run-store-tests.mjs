@@ -114,7 +114,7 @@ const installLocalStorage = () => {
     const stats = store.getStats();
     assert.equal(stats.runCount, 1);
     assert.equal(stats.eventCount, 1);
-    await store.writeChain;
+    await store.flush(); // 持久化已改防抖，测试用 flush 立即落盘
     assert.ok(local.backing.get('agent_run_store_v1')?.includes('run-1'));
     console.log('ok - AgentRunStore records runs, steps, events, exports, and persists locally');
   } finally {

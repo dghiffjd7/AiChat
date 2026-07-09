@@ -191,3 +191,33 @@ const openPanelPlan = {
 }
 
 console.log('maid-run-persistence-tests passed');
+
+{
+  // 僵尸 run 兜底：boot 时上会话遗留的 running run 标为可继续 interrupted
+  const kvData = {
+    version: 1,
+    updatedAt: 500,
+    runs: {
+      'run-stale': { id: 'run-stale', kind: 'maid_assistant', status: 'running', createdAt: 400, updatedAt: 500, steps: [], metadata: { goal: '遗留任务' } },
+      'run-done': { id: 'run-done', kind: 'maid_assistant', status: 'succeeded', createdAt: 300, updatedAt: 400, steps: [], metadata: {} },
+    },
+    events: [],
+  };
+  globalThis.__TAURI_INVOKE__ = async (cmd, args) => {
+    if (cmd === 'load_kv') return kvData;
+    if (cmd === 'save_kv') return true;
+    return null;
+  };
+  const { AgentRunStore } = await import('../../src/scripts/storage/agent-run-store.js');
+  const store = new AgentRunStore({ now: () => 1000 });
+  await store.load();
+  const stale = store.getRun?.('run-stale') || store.exportState({ includeNonExportable: true }).runs['run-stale'];
+  assert.equal(stale.status, 'cancelled', '遗留 running 应标 cancelled（枚举内终态）');
+  assert.equal(stale.cancelReason, 'app_restarted');
+  assert.equal(stale.metadata.continuable, true);
+  assert.equal(stale.metadata.failureCode, 'app_restarted');
+  const done = store.exportState({ includeNonExportable: true }).runs['run-done'];
+  assert.equal(done.status, 'succeeded', '终态 run 不受影响');
+  delete globalThis.__TAURI_INVOKE__;
+  console.log('ok - 僵尸 running run 启动时标记为可继续 interrupted');
+}

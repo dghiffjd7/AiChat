@@ -189,8 +189,8 @@ import {
   const denied = normalizeMaidModelReActDecision({
     ok: true,
     action: 'tool',
-    toolName: 'session.create',
-    args: { name: 'A' },
+    toolName: 'media.fetch_image',
+    args: { url: 'https://example.com/a.png' },
     featureId: 'app.resource.read',
   });
   assert.equal(denied.ok, false);
@@ -222,12 +222,47 @@ import {
 
   const denied = normalizeMaidModelPlan({
     ok: true,
-    toolName: 'session.create',
+    toolName: 'media.fetch_image',
     featureId: 'worldbook.open',
   });
   assert.equal(denied.ok, false);
   assert.equal(denied.reason, 'tool_not_allowed');
+  assert.ok(denied.message.includes('media.fetch_image'));
   console.log('ok - maid model planner validates feature and tool allowlist');
+}
+
+{
+  // featureId 与 toolName 混搭：工具归属唯一时自动纠偏 feature
+  const remapped = normalizeMaidModelPlan({
+    ok: true,
+    toolName: 'ui.click_element',
+    args: { ref: 'agent-center:btn-3' },
+    featureId: 'agent.center.open',
+  });
+  assert.equal(remapped.ok, true);
+  assert.equal(remapped.featureId, 'app.ui.click');
+  assert.equal(remapped.toolName, 'ui.click_element');
+
+  // featureId 不存在但工具归属唯一：同样纠偏
+  const invented = normalizeMaidModelPlan({
+    ok: true,
+    toolName: 'ui.click_element',
+    args: { label: '失败' },
+    featureId: 'agent.center.filter',
+  });
+  assert.equal(invented.ok, true);
+  assert.equal(invented.featureId, 'app.ui.click');
+
+  // 工具多归属且 featureId 不存在：无法纠偏，拒绝并带上模型选择
+  const ambiguous = normalizeMaidModelPlan({
+    ok: true,
+    toolName: 'media.fetch_image',
+    featureId: 'no.such.feature',
+  });
+  assert.equal(ambiguous.ok, false);
+  assert.equal(ambiguous.reason, 'feature_not_found');
+  assert.ok(ambiguous.message.includes('no.such.feature'));
+  console.log('ok - maid model planner remaps mismatched feature by unique tool');
 }
 
 {
@@ -323,8 +358,8 @@ import {
       client: {
         chat: async () => JSON.stringify({
           ok: true,
-          toolName: 'session.create',
-          args: { name: 'A' },
+          toolName: 'media.fetch_image',
+          args: { url: 'https://example.com/a.png' },
           featureId: 'worldbook.open',
           response: 'bad plan',
         }),

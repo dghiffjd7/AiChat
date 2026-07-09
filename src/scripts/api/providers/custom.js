@@ -282,6 +282,37 @@ const buildEndpointUrl = (baseUrl, path) => {
     return `${base}/${nextPath}`;
 };
 
+// 参考图接入形态因渠道而异：OpenAI 官方走 multipart /images/edits；BytePlus、SiliconFlow 等
+// 走 /images/generations + image 字段。按 baseUrl+model 记住成功形态，避免每次双打。
+const customImageReferenceRouteCache = new Map();
+
+const describeImageResponseFailure = (data) => {
+    const message = String(
+        data?.error?.message || data?.error?.msg || data?.message || data?.msg || data?.error_msg || '',
+    ).trim();
+    const code = String(data?.error?.code || data?.code || '').trim();
+    if (message) return `${code ? `[${code}] ` : ''}${message}`.slice(0, 300);
+    try {
+        return JSON.stringify(data).slice(0, 300);
+    } catch (_e) {
+        return String(data).slice(0, 300);
+    }
+};
+
+const extractImageListFromResponse = (data) => {
+    const list = Array.isArray(data?.data) ? data.data : [];
+    return list
+        .map((item, index) => {
+            const b64 = item?.b64_json || item?.b64 || '';
+            if (b64) {
+                return { dataUrl: `data:image/png;base64,${b64}`, index };
+            }
+            const url = String(item?.url || '').trim();
+            return url ? { url, index } : null;
+        })
+        .filter(Boolean);
+};
+
 const isOfficialGeminiOpenAIEndpoint = (baseUrl) => {
     try {
         const url = new URL(String(baseUrl || '').trim());
@@ -674,35 +705,24 @@ export class CustomProvider {
         const { signal } = options || {};
         const referenceImages = normalizeImageReferenceInputs(options.referenceImages || options.reference_images);
         if (referenceImages.length) {
-            const multipart = buildCustomImageEditMultipart({
-                prompt,
-                model: this.model,
-                options,
-                referenceImages,
-            });
-            const data = await this.requestJson({
-                url: `${this.baseUrl}/images/edits`,
-                method: 'POST',
-                headers: {
-                    ...this.getHeaders(),
-                    'Content-Type': multipart.contentType,
-                },
-                body: multipart.body,
-                bodyBase64: multipart.bodyBase64,
-                signal,
-            });
-
-            const list = Array.isArray(data?.data) ? data.data : [];
-            return list.map((item, index) => {
-                const b64 = item?.b64_json || item?.b64 || '';
-                if (b64) {
-                    return { dataUrl: `data:image/png;base64,${b64}`, index };
-                }
-                const url = String(item?.url || '').trim();
-                return { url, index };
-            });
+            return await this.generateImageWithReferences(prompt, options, referenceImages, signal);
         }
 
+        const data = await this.requestJson({
+            url: `${this.baseUrl}/images/generations`,
+            method: 'POST',
+            headers: this.getHeaders(),
+            body: JSON.stringify(this.buildImageGenerationsPayload(prompt, options)),
+            signal,
+        });
+        const images = extractImageListFromResponse(data);
+        if (!images.length) {
+            throw new Error(`图片接口未返回图片数据：${describeImageResponseFailure(data)}`);
+        }
+        return images;
+    }
+
+    buildImageGenerationsPayload(prompt, options = {}) {
         const payload = {
             model: this.model,
             prompt: String(prompt || '').trim(),
@@ -715,7 +735,42 @@ export class CustomProvider {
         if (options.style) payload.style = options.style;
         const seed = normalizeNonNegativeSeed(options.seed);
         if (seed !== undefined) payload.seed = seed;
+        return payload;
+    }
 
+    // 带参考图：依次尝试两种主流 OpenAI 兼容形态，成功后按 baseUrl+model 缓存路由。
+    async generateImageWithReferences(prompt, options, referenceImages, signal) {
+        const attempts = {
+            generations: () => this.requestImageGenerationsWithImage(prompt, options, referenceImages, signal),
+            edits: () => this.requestImageEditsMultipart(prompt, options, referenceImages, signal),
+        };
+        const preferEdits = /gpt-image|dall[-. ]?e/i.test(String(this.model || ''));
+        let order = preferEdits ? ['edits', 'generations'] : ['generations', 'edits'];
+        const cacheKey = `${this.baseUrl}::${this.model}`;
+        const cached = customImageReferenceRouteCache.get(cacheKey);
+        if (cached && order.includes(cached)) {
+            order = [cached, ...order.filter(key => key !== cached)];
+        }
+        const failures = [];
+        for (const key of order) {
+            try {
+                const images = await attempts[key]();
+                customImageReferenceRouteCache.set(cacheKey, key);
+                return images;
+            } catch (error) {
+                if (error?.name === 'AbortError') throw error;
+                const label = key === 'edits' ? 'images/edits(multipart)' : 'images/generations+image';
+                failures.push(`${label} → ${error?.message || String(error || '')}`);
+            }
+        }
+        throw new Error(`参考图两种接入方式都失败：${failures.join('；')}`);
+    }
+
+    async requestImageGenerationsWithImage(prompt, options, referenceImages, signal) {
+        const payload = this.buildImageGenerationsPayload(prompt, options);
+        payload.image = referenceImages.length === 1
+            ? referenceImages[0].dataUrl
+            : referenceImages.map(item => item.dataUrl);
         const data = await this.requestJson({
             url: `${this.baseUrl}/images/generations`,
             method: 'POST',
@@ -723,16 +778,36 @@ export class CustomProvider {
             body: JSON.stringify(payload),
             signal,
         });
+        const images = extractImageListFromResponse(data);
+        if (!images.length) {
+            throw new Error(`图片接口未返回图片数据：${describeImageResponseFailure(data)}`);
+        }
+        return images;
+    }
 
-        const list = Array.isArray(data?.data) ? data.data : [];
-        return list.map((item, index) => {
-            const b64 = item?.b64_json || item?.b64 || '';
-            if (b64) {
-                return { dataUrl: `data:image/png;base64,${b64}`, index };
-            }
-            const url = String(item?.url || '').trim();
-            return { url, index };
+    async requestImageEditsMultipart(prompt, options, referenceImages, signal) {
+        const multipart = buildCustomImageEditMultipart({
+            prompt,
+            model: this.model,
+            options,
+            referenceImages,
         });
+        const data = await this.requestJson({
+            url: `${this.baseUrl}/images/edits`,
+            method: 'POST',
+            headers: {
+                ...this.getHeaders(),
+                'Content-Type': multipart.contentType,
+            },
+            body: multipart.body,
+            bodyBase64: multipart.bodyBase64,
+            signal,
+        });
+        const images = extractImageListFromResponse(data);
+        if (!images.length) {
+            throw new Error(`图片接口未返回图片数据：${describeImageResponseFailure(data)}`);
+        }
+        return images;
     }
 
     /**

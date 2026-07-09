@@ -95,3 +95,13 @@ import {
 }
 
 console.log('maid-failure-codes-tests passed');
+
+{
+  // 用户中止类失败识别（不与 safetyDenied 混淆）
+  assert.equal(classifyMaidToolFailure({ message: '用户点击了中止，生成已停止' }), 'user_aborted');
+  assert.equal(classifyMaidToolFailure({ message: 'generation stopped by user' }), 'user_aborted');
+  assert.equal(classifyMaidToolFailure({ result: { cancelled: true, reason: 'user_declined' } }), 'user_aborted');
+  assert.equal(classifyMaidToolFailure({ message: 'user_aborted' }), 'user_aborted');
+  assert.equal(classifyMaidToolFailure({ message: '危险操作未确认' }), 'safety_denied');
+  console.log('ok - user_aborted 失败分类');
+}

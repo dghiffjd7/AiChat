@@ -41,6 +41,40 @@ const emitDebugSnapshot = (callback, payload = {}, logger = console) => {
   }
 };
 
+// 主档故障降级：主模型请求失败（网络/5xx/403 等）时用备用档重试一次
+const chatWithFallback = async (client, fallbackClient, messages, options = {}, logger = console) => {
+  // 现场探针：挂起时读 globalThis.__maidModelProbe 定位——phase=calling 且 elapsed 大 = 请求发出后渠道 hang
+  const startedAt = Date.now();
+  const probe = { phase: 'calling', startedAt, options: { maxTokens: options?.maxTokens } };
+  try { globalThis.__maidModelProbe = probe; } catch {}
+  try {
+    const text = await client.chat(messages, options);
+    probe.phase = 'done';
+    probe.doneAt = Date.now();
+    probe.elapsedMs = probe.doneAt - startedAt;
+    return text;
+  } catch (error) {
+    probe.phase = 'failed';
+    probe.error = String(error?.message || error).slice(0, 120);
+    probe.elapsedMs = Date.now() - startedAt;
+    logger?.warn?.(`[maid-model] chat failed after ${probe.elapsedMs}ms: ${probe.error}`);
+    if (!fallbackClient || typeof fallbackClient.chat !== 'function') throw error;
+    probe.phase = 'fallback-calling';
+    logger?.warn?.('maid main model failed, retrying with fallback profile');
+    try {
+      const text = await fallbackClient.chat(messages, options);
+      probe.phase = 'fallback-done';
+      probe.elapsedMs = Date.now() - startedAt;
+      return text;
+    } catch (err2) {
+      probe.phase = 'fallback-failed';
+      probe.error = String(err2?.message || err2).slice(0, 120);
+      probe.elapsedMs = Date.now() - startedAt;
+      throw err2;
+    }
+  }
+};
+
 const unsupportedPlan = (reason = 'unsupported_intent', message = '这个请求还没有接入女仆工具。') => ({
   ok: false,
   status: 'unsupported',
@@ -60,6 +94,25 @@ const stringifyForPrompt = (value, max = 10000) => {
   } catch {
     return truncate(String(value ?? ''), max);
   }
+};
+
+// 可用 sub-agent 模型（能力标签制）：女仆看到的是能力描述而非模型名，按任务匹配选择。
+export const buildMaidSubAgentsPromptBlock = (subAgents = []) => {
+  const list = (Array.isArray(subAgents) ? subAgents : []).filter(item => item?.enabled !== false);
+  if (!list.length) return '';
+  const lines = list.map(item => [
+    `- id: ${item.id}`,
+    `  name: ${item.name}`,
+    item.skills?.length ? `  skills: [${item.skills.join(', ')}]` : '',
+    item.note ? `  note: ${item.note}` : '',
+    item.profileHint ? `  profile: ${item.profileHint}` : '',
+  ].filter(Boolean).join('\n')).join('\n');
+  return [
+    '<sub_agents>',
+    '以下是用户配置的 sub-agent 模型（按能力标签选择，委派型工具可传 subAgentId 使用；重内容生成类任务优先委派以节省主模型消耗）：',
+    lines,
+    '</sub_agents>',
+  ].join('\n');
 };
 
 // 功能目录用 YAML 列表呈现（层次清晰、便于模型定位字段），外层由 <app_features> 标签分隔。
@@ -98,9 +151,11 @@ export const buildMaidModelPlannerMessages = ({
   const imageAttachments = getMaidImageAttachmentsFromContext(context);
   const imageSummary = buildMaidImageAttachmentSummary(imageAttachments);
   const selectionBlock = buildMaidSelectionPromptBlock(context?.userSelection);
+  const subAgentsBlock = buildMaidSubAgentsPromptBlock(context?.subAgents);
   const userText = [
     `用户请求：${trim(input)}`,
     selectionBlock,
+    subAgentsBlock,
     imageSummary ? `用户附图：\n${imageSummary}` : '',
     `当前会话：${trim(context?.sessionId, '-')}`,
     `UI 模式：${trim(context?.uiMode, '-')}`,
@@ -224,14 +279,28 @@ export const normalizeMaidModelPlan = (raw = {}, {
     return unsupportedPlan(trim(raw.reason, 'unsupported_intent'), truncate(raw.message || '这个请求还没有接入女仆工具。', 160));
   }
   const featureId = trim(raw.featureId);
-  const feature = (typeof findFeature === 'function' ? findFeature(featureId) : null) ||
-    (Array.isArray(features) ? features.find(item => trim(item?.id) === featureId) : null);
-  if (!feature) return unsupportedPlan('feature_not_found', '模型选择了不存在的 APP 功能。');
-
   const toolName = trim(raw.toolName);
+  // 弱格式模型常把 featureId 和 toolName 混搭：工具归属唯一时按 toolName 纠偏 feature。
+  const featuresByTool = toolName && Array.isArray(features)
+    ? features.filter(item => list(item?.tools).includes(toolName))
+    : [];
+  let feature = (typeof findFeature === 'function' ? findFeature(featureId) : null) ||
+    (Array.isArray(features) ? features.find(item => trim(item?.id) === featureId) : null);
+  if (!feature) {
+    if (featuresByTool.length === 1) {
+      feature = featuresByTool[0];
+    } else {
+      return unsupportedPlan('feature_not_found', `模型选择了不存在的 APP 功能（featureId=${featureId || '空'}，toolName=${toolName || '空'}）。`);
+    }
+  }
+
   const allowedTools = new Set(list(feature.tools));
   if (!toolName || !allowedTools.has(toolName)) {
-    return unsupportedPlan('tool_not_allowed', '模型选择的工具不在功能白名单内。');
+    if (toolName && featuresByTool.length === 1) {
+      feature = featuresByTool[0];
+    } else {
+      return unsupportedPlan('tool_not_allowed', `模型选择的工具不在功能白名单内（featureId=${trim(feature.id)}，toolName=${toolName || '空'}，该功能可用：${list(feature.tools).join('、') || '无'}）。`);
+    }
   }
 
   return {
@@ -260,6 +329,7 @@ export const buildMaidModelReActMessages = ({
   const imageAttachments = getMaidImageAttachmentsFromContext(context);
   const imageSummary = buildMaidImageAttachmentSummary(imageAttachments);
   const selectionBlock = buildMaidSelectionPromptBlock(context?.userSelection);
+  const subAgentsBlock = buildMaidSubAgentsPromptBlock(context?.subAgents);
   // 步骤观察滚动窗口：早期步骤只留一行摘要，最近步骤保留完整观察——
   // 防止长任务里 steps 序列化超限截断导致模型看不到最新工具结果（观察失明）。
   const RECENT_STEP_WINDOW = 4;
@@ -276,6 +346,7 @@ export const buildMaidModelReActMessages = ({
   const userText = [
     `用户请求：${trim(input)}`,
     selectionBlock,
+    subAgentsBlock,
     imageSummary ? `用户附图：\n${imageSummary}` : '',
     `当前会话：${trim(context?.sessionId, '-')}`,
     `UI 模式：${trim(context?.uiMode, '-')}`,
@@ -300,7 +371,9 @@ export const buildMaidModelReActMessages = ({
         '',
         '## 工具与参数规则',
         '每次最多选择一个工具；不要发明工具；只能使用 APP 功能目录中 feature 允许的 tools。',
-        '工具失败时，先根据错误、原始 args、功能 argsHint 修正参数；不要因为参数错误改用更高风险工具。',
+        '工具失败时，先读取观察结果中的失败原因（reason/message/failureCode）再决定下一步，不要把失败一律当偶发问题直接重试：failureCode 为 user_aborted/safety_denied（用户中止、取消或拒绝确认）时绝不自动重试，停下向用户说明并询问是否继续；invalid_args 时修正参数重试；服务或网络类失败才值得换方式再试一次。',
+        '连续操作界面或对当前界面状态不确定时（如上一步涉及打开/切换/发送），先用 app.ui.inspect 查看当前实际状态再决定下一步，不要凭猜测行动。',
+        '最终回答只能陈述已执行工具步骤中真实完成的操作；用户要求的操作（如点击、切换、发送）如果没有对应的成功步骤，就不能说已完成——要么先用工具真正执行，要么如实说明你改用了什么方式（如“从页面统计直接读到了数字，没有切换过滤器”）。',
         '任务规划判据：当任务涉及 3 个及以上不同功能域（如 世界书+正则+图片），或用户一句话列举多项要求时，必须先用 maid.todo.write 写任务清单再执行，每完成一步更新状态；单一功能的简单任务不要写 todo，直接执行。',
         '写过 todo 的任务，最终回答前先用 maid.todo.read 核对清单：逐项确认完成状态，不要漏项，也不要把未完成项报告为已完成；只要清单上还有未完成项，就必须继续执行对应工具，不能提前结束任务。用户询问进度时用 maid.todo.read 查看。',
         '不要连续重复调用同一个只读工具（如连续多次 maid.todo.read）；读取过一次后，下一步必须是执行清单上具体任务的工具调用。',
@@ -432,7 +505,7 @@ export const createMaidModelBackedPlanner = ({
       : context?.maidConversationContext || null;
     const messages = buildMaidModelPlannerMessages({
       input,
-      context,
+      context: { ...context, subAgents: runtime?.subAgents || [] },
       conversationContext,
       features,
       maidPrompt: runtime?.maidPrompt || runtime?.personaPrompt,
@@ -442,11 +515,11 @@ export const createMaidModelBackedPlanner = ({
       input: trim(input),
       conversationContext,
     });
-    const responseText = await client.chat(messages, {
+    const responseText = await chatWithFallback(client, runtime?.fallbackClient, messages, {
       temperature: 0,
       maxTokens: 8000,
       max_tokens: 8000,
-    });
+    }, logger);
     emitDebugSnapshot(onDebugSnapshot, {
       source: 'maid_model_planner',
       input: trim(input),
@@ -524,7 +597,7 @@ export const createMaidModelBackedReActPlanner = ({
     const steps = Array.isArray(context?.maidReactSteps) ? context.maidReactSteps : [];
     const messages = buildMaidModelReActMessages({
       input,
-      context,
+      context: { ...context, subAgents: runtime?.subAgents || [] },
       conversationContext,
       features,
       maidPrompt: runtime?.maidPrompt || runtime?.personaPrompt,
@@ -535,11 +608,11 @@ export const createMaidModelBackedReActPlanner = ({
       input: trim(input),
       conversationContext,
     });
-    const responseText = await client.chat(messages, {
+    const responseText = await chatWithFallback(client, runtime?.fallbackClient, messages, {
       temperature: 0,
       maxTokens: 12000,
       max_tokens: 12000,
-    });
+    }, logger);
     emitDebugSnapshot(onDebugSnapshot, {
       source: 'maid_model_react',
       input: trim(input),

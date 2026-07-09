@@ -182,6 +182,8 @@ export const createAgentTaskRuntime = ({
     } catch (err) {
       logger?.warn?.('agent run store finish failed', err);
     }
+    // run 终态：立即落盘（防抖窗口内崩溃/关闭会丢最后状态）
+    try { store?.flush?.(); } catch {}
     if (!run) return null;
     runningTasks.delete(id);
     emit({

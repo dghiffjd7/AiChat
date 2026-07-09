@@ -98,12 +98,46 @@ const toPersistedMaidSettingsState = (state = {}, { now = Date.now } = {}) => {
     version: normalized.version,
     updatedAt: normalized.updatedAt,
     boundProfileId: normalized.boundProfileId,
+    boundModelOverride: normalized.boundModelOverride,
+    fallbackProfileId: normalized.fallbackProfileId,
+    subAgents: normalized.subAgents,
+    subAgentRemindAt: normalized.subAgentRemindAt,
     maidPrompt: normalized.maidPrompt,
     lastRequestPrompt: trimPersistedText(normalized.lastRequestPrompt),
     lastAppContext: trimPersistedText(normalized.lastAppContext, 60000),
     lastFullResponse: trimPersistedText(normalized.lastFullResponse),
     lastExchangeAt: normalized.lastExchangeAt,
     lastExchangeSource: normalized.lastExchangeSource,
+  };
+};
+
+export const MAID_SUB_AGENT_SKILLS = Object.freeze([
+  { id: 'tool_calling', label: '擅长调用工具' },
+  { id: 'persona_writing', label: '擅长写人物设定' },
+  { id: 'prose_writing', label: '擅长写正文' },
+  { id: 'summarization', label: '擅长归纳总结' },
+  { id: 'worldbuilding', label: '擅长世界观设定' },
+  { id: 'strict_format', label: '擅长格式严格任务' },
+]);
+const SUB_AGENT_SKILL_ID_SET = new Set(MAID_SUB_AGENT_SKILLS.map(item => item.id));
+
+let subAgentSeq = 0;
+export const normalizeMaidSubAgent = (raw = {}, { now = Date.now } = {}) => {
+  const src = isPlainObject(raw) ? raw : {};
+  const modelProfileId = trim(src.modelProfileId);
+  if (!modelProfileId) return null;
+  subAgentSeq += 1;
+  return {
+    id: trim(src.id) || `sub-${safeNow(now)}-${subAgentSeq}`,
+    name: trim(src.name).slice(0, 40) || `Sub-agent ${subAgentSeq}`,
+    modelProfileId,
+    modelOverride: trim(src.modelOverride).slice(0, 120),
+    skills: (Array.isArray(src.skills) ? src.skills : [])
+      .map(skill => trim(skill))
+      .filter(skill => SUB_AGENT_SKILL_ID_SET.has(skill))
+      .slice(0, 8),
+    note: trim(src.note).slice(0, 200),
+    enabled: src.enabled !== false,
   };
 };
 
@@ -114,6 +148,13 @@ export const normalizeMaidSettingsState = (raw = {}, { now = Date.now } = {}) =>
     version: MAID_SETTINGS_STORE_VERSION,
     updatedAt: Number(src.updatedAt || safeNow(now)) || safeNow(now),
     boundProfileId: trim(src.boundProfileId),
+    boundModelOverride: trim(src.boundModelOverride),
+    fallbackProfileId: trim(src.fallbackProfileId),
+    subAgents: (Array.isArray(src.subAgents) ? src.subAgents : [])
+      .map(item => normalizeMaidSubAgent(item, { now }))
+      .filter(Boolean)
+      .slice(0, 12),
+    subAgentRemindAt: Number(src.subAgentRemindAt || 0) || 0,
     maidPrompt,
     personaPrompt: maidPrompt,
     lastRequestPrompt: trim(src.lastRequestPrompt),
@@ -186,6 +227,18 @@ export class MaidSettingsStore {
       lastFullResponse: debugRaw?.lastFullResponse || '',
       lastExchangeAt: debugRaw?.lastExchangeAt || 0,
       lastExchangeSource: debugRaw?.lastExchangeSource || '',
+      // 新增字段必须进入合并列表，否则 load 会以默认空值重建并在写回时抹掉持久化数据
+      boundModelOverride: (readTimestamp(kvRaw) >= readTimestamp(localRaw) ? kvState : localState)?.boundModelOverride
+        || kvState?.boundModelOverride || localState.boundModelOverride || '',
+      fallbackProfileId: (readTimestamp(kvRaw) >= readTimestamp(localRaw) ? kvState : localState)?.fallbackProfileId
+        || kvState?.fallbackProfileId || localState.fallbackProfileId || '',
+      subAgents: (() => {
+        const newer = readTimestamp(kvRaw) >= readTimestamp(localRaw) ? kvState : localState;
+        if (Array.isArray(newer?.subAgents) && newer.subAgents.length) return newer.subAgents;
+        if (Array.isArray(kvState?.subAgents) && kvState.subAgents.length) return kvState.subAgents;
+        return localState.subAgents || [];
+      })(),
+      subAgentRemindAt: Math.max(Number(kvState?.subAgentRemindAt || 0), Number(localState.subAgentRemindAt || 0)),
     }, { now: this.now });
 
     if (shouldWriteBackup && this.saveKv) {
@@ -238,6 +291,57 @@ export class MaidSettingsStore {
     this.state.boundModelOverride = trim(model);
     await this.write();
     return this.getBoundModelOverride();
+  }
+
+  getFallbackProfileId() {
+    this.ensureLoaded();
+    return trim(this.state.fallbackProfileId);
+  }
+
+  async setFallbackProfileId(profileId = '') {
+    this.ensureLoaded();
+    this.state.fallbackProfileId = trim(profileId);
+    await this.write();
+    return this.getFallbackProfileId();
+  }
+
+  listSubAgents() {
+    this.ensureLoaded();
+    return (this.state.subAgents || []).map(item => ({ ...item, skills: [...item.skills] }));
+  }
+
+  async upsertSubAgent(subAgent = {}) {
+    this.ensureLoaded();
+    const normalized = normalizeMaidSubAgent(subAgent, { now: this.now });
+    if (!normalized) return null;
+    const list = this.state.subAgents || [];
+    const index = list.findIndex(item => item.id === normalized.id);
+    if (index >= 0) list[index] = normalized;
+    else list.push(normalized);
+    this.state.subAgents = list.slice(0, 12);
+    await this.write();
+    return { ...normalized };
+  }
+
+  async removeSubAgent(subAgentId = '') {
+    this.ensureLoaded();
+    const id = trim(subAgentId);
+    const before = (this.state.subAgents || []).length;
+    this.state.subAgents = (this.state.subAgents || []).filter(item => item.id !== id);
+    const removed = this.state.subAgents.length < before;
+    if (removed) await this.write();
+    return removed;
+  }
+
+  getSubAgentRemindAt() {
+    this.ensureLoaded();
+    return Number(this.state.subAgentRemindAt || 0) || 0;
+  }
+
+  async setSubAgentRemindAt(at = 0) {
+    this.ensureLoaded();
+    this.state.subAgentRemindAt = Number(at) || 0;
+    await this.write();
   }
 
   getPersonaPrompt() {

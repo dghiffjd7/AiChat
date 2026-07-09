@@ -7848,3 +7848,230 @@ body[data-theme-mode='dark'] .cel-card.is-current {
     scroll-behavior: auto !important;
   }
 }
+
+/* —— 女仆 Sub-agent 配置（API 分页） —— */
+.maid-settings-subagent {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 12px;
+}
+.maid-api-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.maid-api-nav-item {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  grid-template-areas: 'title chevron' 'summary chevron';
+  gap: 2px 10px;
+  align-items: center;
+  text-align: left;
+  padding: 14px;
+  border: 1px solid var(--app-border-default);
+  border-radius: 12px;
+  background: var(--app-surface-subtle);
+  color: var(--app-text-primary);
+  cursor: pointer;
+  transition: border-color 140ms ease, background 140ms ease;
+}
+.maid-api-nav-item:hover {
+  border-color: rgba(37, 99, 235, 0.35);
+  background: var(--app-surface-card);
+}
+.maid-api-nav-title {
+  grid-area: title;
+  font-size: 13px;
+  font-weight: 700;
+}
+.maid-api-nav-summary {
+  grid-area: summary;
+  font-size: 11px;
+  color: var(--app-text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.maid-api-nav-chevron {
+  grid-area: chevron;
+  font-size: 18px;
+  color: var(--app-text-secondary);
+}
+.maid-api-back {
+  align-self: flex-start;
+  border: none;
+  background: transparent;
+  color: var(--app-text-secondary);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 4px 2px;
+}
+.maid-api-back:hover {
+  color: var(--app-text-primary);
+}
+.maid-api-manage-link {
+  align-self: flex-start;
+  border: none;
+  background: transparent;
+  color: var(--app-text-secondary);
+  font-size: 11px;
+  text-decoration: underline;
+  cursor: pointer;
+  padding: 2px 0;
+}
+.maid-api-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--app-border-default);
+  border-radius: 12px;
+  background: var(--app-surface-subtle);
+}
+.maid-api-group-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--app-text-primary);
+}
+.maid-api-group-desc {
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--app-text-secondary);
+}
+.maid-api-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.maid-api-field-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--app-text-secondary);
+}
+.maid-api-form-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--app-text-primary);
+  padding-top: 8px;
+  border-top: 1px dashed var(--app-border-default);
+}
+.maid-api-form-actions {
+  display: flex;
+  gap: 8px;
+}
+.maid-subagent-item-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.maid-subagent-item.is-editing {
+  border-color: rgba(37, 99, 235, 0.4);
+}
+.maid-settings-subtitle {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--app-text-primary);
+}
+.maid-settings-hint {
+  font-size: 11px;
+  color: var(--app-text-secondary);
+}
+.maid-subagent-select,
+.maid-subagent-input {
+  width: 100%;
+  min-height: 32px;
+  padding: 6px 9px;
+  border: 1px solid var(--app-border-default);
+  border-radius: 8px;
+  background: var(--app-surface-card);
+  color: var(--app-text-primary);
+  font-size: 12px;
+  box-sizing: border-box;
+}
+.maid-subagent-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.maid-subagent-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border: 1px solid var(--app-border-default);
+  border-radius: 10px;
+  background: var(--app-surface-subtle);
+}
+.maid-subagent-item-name {
+  font-size: 12px;
+  font-weight: 600;
+}
+.maid-subagent-item-meta {
+  min-width: 0;
+  font-size: 11px;
+  color: var(--app-text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.maid-subagent-form {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.maid-subagent-model-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.maid-subagent-model-row .maid-subagent-input {
+  flex: 1;
+  min-width: 0;
+}
+.maid-subagent-model-menu[hidden] {
+  display: none;
+}
+.maid-subagent-model-menu {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 180px;
+  overflow-y: auto;
+  border: 1px solid var(--app-border-default);
+  border-radius: 8px;
+  background: var(--app-surface-card);
+  padding: 4px;
+}
+.maid-subagent-model-option {
+  border: none;
+  background: transparent;
+  color: var(--app-text-primary);
+  text-align: left;
+  padding: 6px 8px;
+  border-radius: 6px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.maid-subagent-model-option:hover {
+  background: var(--app-surface-subtle);
+}
+.maid-subagent-model-option.is-loading {
+  color: var(--app-text-secondary);
+  cursor: default;
+}
+.maid-subagent-skills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+}
+.maid-subagent-skill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--app-text-secondary);
+}

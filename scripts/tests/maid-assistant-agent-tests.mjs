@@ -724,6 +724,32 @@ import {
 }
 
 {
+  // 空指令（无附件/无选区）不得进 planner——否则模型会按女仆历史重放旧指令
+  let plannerCalls = 0;
+  const agent = createMaidAssistantAgent({
+    planner: async () => {
+      plannerCalls += 1;
+      return { ok: true, toolName: 'app.open_panel', args: { panel: 'worldbook' }, featureId: 'worldbook.open' };
+    },
+    toolRegistry: {
+      executeTool: async () => {
+        throw new Error('should not run');
+      },
+    },
+    logger: { warn() {} },
+  });
+  const result = await agent.runPrompt('', { sessionId: 's1' });
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, 'empty_input');
+  assert.equal(plannerCalls, 0);
+  // 有附件时空文字仍然放行（用户只发图给女仆的场景）
+  const withAttachment = await agent.runPrompt('', { maidAttachments: [{ id: 'att-1' }] });
+  assert.equal(plannerCalls, 1);
+  assert.notEqual(withAttachment.reason, 'empty_input');
+  console.log('ok - maid assistant agent rejects empty input before planner, allows attachment-only');
+}
+
+{
   const agent = createMaidAssistantAgent({
     toolRegistry: {
       executeTool: async () => {

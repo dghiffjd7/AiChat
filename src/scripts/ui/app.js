@@ -121,6 +121,7 @@ import {
 import { pickSavePath } from '../utils/save-dialog.js';
 import { safeInvoke } from '../utils/tauri.js';
 import { createMaidSelectionMode } from './maid-selection-mode.js';
+import { MAID_SUB_AGENT_SKILLS } from '../storage/maid-settings-store.js';
 import './bridge.js';
 import {
   registerChatUiBridgeContract,
@@ -145,7 +146,7 @@ import {
   registerWorldStoreBridgeContract,
   registerWorldSessionBridgeContract,
 } from './app-bridge-contract.js';
-import { isBridgeConfigured } from './config-runtime-utils.js';
+import { isBridgeConfigured, reloadBridgeConfig, syncChatRuntimeConfigToBridge } from './config-runtime-utils.js';
 import {
   patchDebugUiRegistry as patchDebugUiRegistryCore,
   recordDebugTraceEvent as recordDebugTraceEventCore,
@@ -2596,7 +2597,10 @@ const initApp = async () => {
     getPreviewWorldbookActions: () => agentWritePreviewRuntimes.previewWorldbookActions,
   });
   const isAgentReadableElementVisible = (element = null) => isReadableElementVisible(element);
+  // ui.click_element 的元素引用表：每次 inspect 重建，ref 只在最近一次 inspect 内有效
+  const uiClickRefs = new Map();
   const buildAgentVisiblePanelSummary = ({ panel = '', maxTextLength = 1800 } = {}) => {
+    uiClickRefs.clear();
     const wanted = String(panel || '').trim().toLowerCase().replace(/_/g, '-');
     const candidates = [
       { id: 'agent-center', title: 'Agent Center', element: agentCenterPanel?.panelElement },
@@ -2618,7 +2622,11 @@ const initApp = async () => {
       .filter(item => !wanted || item.id === wanted || item.aliases?.includes?.(wanted))
       .filter(item => isAgentReadableElementVisible(item.element))
       .map((item) => {
-        const summary = buildElementUiSummary(item.element, { maxTextLength });
+        const summary = buildElementUiSummary(item.element, {
+          maxTextLength,
+          refPrefix: `${item.id}:`,
+          collectRef: (ref, node) => uiClickRefs.set(ref, node),
+        });
         return {
           id: item.id,
           title: item.title,
@@ -2635,6 +2643,58 @@ const initApp = async () => {
       sessionId: chatStore.getCurrent(),
       panels,
     };
+  };
+  // 结构化点击执行体：只接受 inspect 产出的 ref 或按 label 唯一匹配，禁止坐标点击
+  const clickAgentUiElement = async ({ ref = '', label = '', panel = '' } = {}) => {
+    let node = null;
+    let matchedLabel = '';
+    const wantedRef = String(ref || '').trim();
+    if (wantedRef) {
+      node = uiClickRefs.get(wantedRef) || null;
+      if (!node) {
+        return { ok: false, reason: 'ref_not_found', message: '元素引用已失效，请先重新 app.ui.inspect 获取最新 ref。' };
+      }
+    } else {
+      const wantedLabel = String(label || '').trim();
+      if (!wantedLabel) return { ok: false, reason: 'missing_target', message: '需要 ref 或 label。' };
+      const summary = buildAgentVisiblePanelSummary({ panel });
+      const matches = [];
+      (summary.panels || []).forEach((item) => {
+        (item.buttons || []).forEach((btn) => {
+          if (String(btn.label || '') === wantedLabel || String(btn.label || '').includes(wantedLabel)) {
+            matches.push({ ...btn, panelId: item.id });
+          }
+        });
+      });
+      if (!matches.length) return { ok: false, reason: 'label_not_found', message: `当前可见界面没有「${wantedLabel}」按钮。` };
+      if (matches.length > 1) {
+        return {
+          ok: false,
+          reason: 'ambiguous_label',
+          message: `「${wantedLabel}」匹配到 ${matches.length} 个按钮，请改用 ref 指定。`,
+          candidates: matches.map(item => ({ ref: item.ref, label: item.label, panel: item.panelId })),
+        };
+      }
+      node = uiClickRefs.get(matches[0].ref) || null;
+      matchedLabel = matches[0].label;
+      if (!node) return { ok: false, reason: 'ref_not_found', message: '元素引用已失效。' };
+    }
+    if (!document.documentElement.contains(node)) {
+      return { ok: false, reason: 'element_detached', message: '目标元素已不在界面上，请重新 inspect。' };
+    }
+    if (node.disabled === true) {
+      return { ok: false, reason: 'element_disabled', message: '目标按钮当前不可用（disabled）。' };
+    }
+    const clickedLabel = matchedLabel || String(node.innerText || node.textContent || '').trim().slice(0, 60);
+    try {
+      node.click();
+    } catch (err) {
+      return { ok: false, reason: 'click_failed', message: err?.message || '点击执行失败。' };
+    }
+    await new Promise(resolve => setTimeout(resolve, 350));
+    // 点击后自动回带最新界面摘要（re-inspect），供女仆断言状态变化
+    const after = buildAgentVisiblePanelSummary({});
+    return { ok: true, clicked: clickedLabel, after };
   };
   const readAgentAppResource = createAppResourceReader({
     appBridge: window.appBridge,
@@ -2675,6 +2735,7 @@ const initApp = async () => {
       modeSwitchPos,
     }),
     getVisiblePanelSummary: buildAgentVisiblePanelSummary,
+    clickUiElement: clickAgentUiElement,
     readResource: readAgentAppResource,
     listRecentErrors: ({ limit = 10 } = {}) => agentRunStore
       .listRuns({ kind: 'maid_assistant', status: 'failed', limit })
@@ -2703,7 +2764,87 @@ const initApp = async () => {
     renderSessionNameHtml: (sessionId, contact) => renderSessionNameHtml(sessionId, contact),
     defaultAvatar: '',
   });
+  const subAgentSkillLabel = (skills = []) => skills
+    .map(id => MAID_SUB_AGENT_SKILLS.find(item => item.id === id)?.label || id)
+    .join('、');
+  // sub-agent 委派执行体：解析 sub 档 -> 委派确认（允许一次/始终允许）-> 单轮生成 -> 失败回退主模型
+  const generateWithSubAgent = async ({ subAgentId = '', prompt = '', purposeLabel = '生成内容', context = {} } = {}) => {
+    const runtime = await resolveMaidRuntimeConfig();
+    if (!runtime?.configured || !runtime.client) {
+      return { ok: false, reason: 'maid_api_not_configured', message: '女仆 API 未配置。' };
+    }
+    const subAgents = maidSettingsStore.listSubAgents().filter(item => item.enabled !== false);
+    let sub = subAgentId ? subAgents.find(item => item.id === subAgentId) : null;
+    if (!sub && !subAgentId && subAgents.length === 1) sub = subAgents[0];
+    let client = runtime.client;
+    let delegated = false;
+    let modelUsed = String(runtime.config?.model || '');
+    let subAgentName = '';
+    if (sub) {
+      const confirm = context?.requestToolConfirmation || requestMaidToolConfirmation;
+      let allowed = true;
+      try {
+        const decision = await confirm({
+          toolName: 'sub_agent.delegate',
+          kind: 'sub_agent.delegate',
+          operationType: 'model',
+          riskLevel: 'low',
+          danger: false,
+          title: '使用 Sub-agent 模型',
+          message: `女仆想使用「${sub.name}${sub.skills?.length ? `（${subAgentSkillLabel(sub.skills)}）` : ''}」执行：${purposeLabel}`,
+          confirmText: '允许',
+          cancelText: '用主模型',
+        });
+        allowed = decision === true || ['allow', 'allow_once', 'allow_always'].includes(String(decision?.decision || ''));
+      } catch {
+        allowed = false;
+      }
+      if (allowed) {
+        try {
+          const cfg = await chatConfigManager.getRuntimeConfigByProfileId(sub.modelProfileId);
+          if (cfg) {
+            const effective = {
+              ...(sub.modelOverride ? { ...cfg, model: sub.modelOverride } : cfg),
+              timeout: Math.min(Number(cfg.timeout) > 0 ? Number(cfg.timeout) : 240000, 240000),
+            };
+            client = new LLMClient(effective);
+            delegated = true;
+            modelUsed = String(effective.model || '');
+            subAgentName = sub.name;
+          }
+        } catch (err) {
+          logger.warn('resolve sub-agent config failed, using main model', err);
+        }
+      }
+    }
+    const runChat = c => c.chat([{ role: 'user', content: prompt }], { temperature: 0.7, maxTokens: 2400, max_tokens: 2400 });
+    try {
+      const text = String(await runChat(client) || '').trim();
+      if (!text) throw new Error('empty response');
+      return {
+        ok: true,
+        text,
+        delegated,
+        modelUsed,
+        subAgentName,
+        ...(subAgents.length ? {} : { hint: 'no_sub_agent_configured', hintMessage: '提示：可在女仆设置的 API 分页配置 sub-agent 模型，这类生成任务可交给便宜模型执行。' }),
+      };
+    } catch (error) {
+      if (delegated) {
+        // sub 档失败回退主模型一次
+        try {
+          const text = String(await runChat(runtime.client) || '').trim();
+          if (!text) throw new Error('empty response');
+          return { ok: true, text, delegated: false, fallbackUsed: true, modelUsed: String(runtime.config?.model || ''), subAgentName: '' };
+        } catch (err2) {
+          return { ok: false, reason: 'generation_failed', message: err2?.message || '生成失败（含主模型回退）。' };
+        }
+      }
+      return { ok: false, reason: 'generation_failed', message: error?.message || '生成失败。' };
+    }
+  };
   registerAppContentAgentTools(agentToolRegistry, {
+    generateWithSubAgent,
     personaStore,
     userStore,
     contactsStore,
@@ -2729,15 +2870,79 @@ const initApp = async () => {
         chatStore.switchSession(sid);
         window.appBridge.setActiveSession(sid);
       }
-      const sendTask = handleSend(null, {
+      if (activeGeneration && !activeGeneration.cancelled) {
+        return { ok: false, sent: false, reason: 'generation_busy', message: '当前会话正在生成回复，稍等片刻再发送。' };
+      }
+      const sendStartedAt = Date.now();
+      const result = await handleSend(null, {
         overrideText: String(content ?? ''),
         ignorePending: true,
         includeAttachments: false,
       });
-      if (options?.waitForReply === false) {
-        return await sendTask;
+      const sent = result === true || result?.ok === true || result?.sent === true;
+      if (!sent && lastUserGenerationCancelAt >= sendStartedAt) {
+        return { ok: false, sent: false, cancelled: true, reason: 'user_aborted', message: '用户在生成过程中点击了停止，本次发送/回复被用户中止。' };
       }
-      return sendTask;
+      return result;
+    },
+    generateChatImage: async ({ prompt, sessionId, negativePrompt = '' } = {}) => {
+      // autoGenerated:true 走「pending 消息 → 补丁成图片消息」路径，图片直接落进目标聊天室（用户身份）。
+      lastChatImageGenerationError = '';
+      const ok = await runChatImageGeneration({
+        prompt,
+        targetSessionId: String(sessionId || '').trim(),
+        negativePrompt,
+        autoGenerated: true,
+        reuseAutoImageSource: false,
+      });
+      if (ok !== true && lastChatImageGenerationError) {
+        return { ok: false, reason: lastChatImageGenerationError.slice(0, 300) };
+      }
+      return ok === true;
+    },
+    listModelProfiles: async ({ scope } = {}) => {
+      const mgr = scope === 'image' ? imageConfigManager : (scope === 'chat' ? chatConfigManager : null);
+      if (!mgr) return null;
+      await mgr.reload();
+      const profiles = await mgr.getProfiles();
+      const activeId = String(mgr.getActiveProfileId?.() || '').trim();
+      return {
+        activeId,
+        profiles: (Array.isArray(profiles) ? profiles : []).map(p => ({
+          id: String(p?.id || '').trim(),
+          name: String(p?.name || '').trim(),
+          provider: String(p?.provider || '').trim(),
+          model: String(p?.model || '').trim(),
+        })),
+      };
+    },
+    switchModelProfile: async ({ scope, profileId } = {}) => {
+      const mgr = scope === 'image' ? imageConfigManager : (scope === 'chat' ? chatConfigManager : null);
+      if (!mgr) return { ok: false, reason: 'unsupported_scope' };
+      const runtime = await mgr.setActiveProfile(profileId);
+      if (!runtime) return { ok: false, reason: 'profile_not_found' };
+      if (scope === 'image') {
+        imageConfigNeedsReload = true;
+      } else {
+        // 同步聊天运行时（镜像 config-panel 切档后的副作用）
+        try {
+          const nextRuntime = await reloadBridgeConfig(window.appBridge) || runtime;
+          syncChatRuntimeConfigToBridge({
+            bridge: window.appBridge,
+            runtime: nextRuntime || {},
+            canInitClient,
+            createClient: cfg => new LLMClient(cfg),
+          });
+        } catch (err) {
+          logger.warn('maid switch chat profile runtime sync failed', err);
+        }
+      }
+      try {
+        window.dispatchEvent(new CustomEvent('config-profile-changed', {
+          detail: { tab: scope, profileId: String(profileId || '') },
+        }));
+      } catch {}
+      return { ok: true };
     },
     confirmDestructiveWrite: request => appConfirm({
       title: String(request?.title || '确认覆盖'),
@@ -3256,6 +3461,24 @@ const initApp = async () => {
           presetId: String(options?.presetId || '').trim(),
           preset: options?.preset && typeof options.preset === 'object' ? options.preset : {},
         }),
+        listProfileModels: async (options = {}) => {
+          const profileId = String(options?.profileId || options || '').trim();
+          if (!profileId) return [];
+          window.__profileModelsCache = window.__profileModelsCache || new Map();
+          const cached = window.__profileModelsCache.get(profileId);
+          if (cached && Date.now() - cached.at < 600000) return cached.models;
+          try {
+            const config = await chatConfigManager.getRuntimeConfigByProfileId(profileId);
+            if (!config) return [];
+            const models = (await new LLMClient(config).listModels() || [])
+              .map(m => String(m || '').trim()).filter(Boolean).slice(0, 200);
+            window.__profileModelsCache.set(profileId, { models, at: Date.now() });
+            return models;
+          } catch (err) {
+            logger.debug('list profile models failed', err);
+            return [];
+          }
+        },
         listAgentModelProfiles: async () => {
           await chatConfigManager.reload();
           return (chatConfigManager.getProfiles?.() || []).map(profile => ({
@@ -6205,6 +6428,35 @@ Phase G（Frame 36）：循环衔接
         { forceStream: true },
       );
       return { path };
+    },
+    // 生成图的远程 URL（如 BytePlus TOS，约 24h 过期）用浏览器 fetch 会被 CORS 拦截，
+    // 走原生 http_request 下载才能持久化到本地。
+    fetchFn: async (url) => {
+      const response = await safeInvoke('http_request', {
+        url: String(url || ''),
+        method: 'GET',
+        headers: {
+          accept: 'image/*',
+          'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        },
+        body: null,
+        responseBase64: true,
+        response_base64: true,
+      });
+      const status = Number(response?.status || 0) || 0;
+      const base64 = String(response?.body || '').trim();
+      const headers = response?.headers || {};
+      const mime = String(headers['content-type'] || headers['Content-Type'] || 'image/png').split(';')[0].trim() || 'image/png';
+      return {
+        ok: status >= 200 && status < 300 && Boolean(base64),
+        status,
+        blob: async () => {
+          const bin = atob(base64);
+          const bytes = new Uint8Array(bin.length);
+          for (let i = 0; i < bin.length; i += 1) bytes[i] = bin.charCodeAt(i);
+          return new Blob([bytes], { type: mime });
+        },
+      };
     },
     agentTaskRuntime,
     logger,
@@ -15601,6 +15853,40 @@ Phase G（Frame 36）：循环衔接
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.maid-guide-step-bubble.is-below-target::before,
+.maid-guide-step-bubble.is-above-target::after {
+  content: '';
+  position: absolute;
+  left: var(--maid-guide-arrow-left, 24px);
+  transform: translateX(-50%);
+  border: 7px solid transparent;
+}
+.maid-guide-step-bubble.is-below-target::before {
+  top: -14px;
+  border-bottom-color: var(--app-surface-card, #fff);
+}
+.maid-guide-step-bubble.is-above-target::after {
+  bottom: -14px;
+  border-top-color: var(--app-surface-card, #fff);
+}
+.maid-guide-step-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 8px;
+}
+.maid-guide-step-skip {
+  border: none;
+  background: transparent;
+  color: var(--app-text-secondary, #64748b);
+  font-size: 11px;
+  text-decoration: underline;
+  cursor: pointer;
+  padding: 2px 0;
+}
+.maid-guide-step-skip:hover {
+  color: var(--app-text-primary, #0f172a);
+}
 .maid-guide-step-continue {
   margin-top: 9px;
   width: 100%;
@@ -15722,16 +16008,16 @@ Phase G（Frame 36）：循环衔接
   };
   const findMaidGuideTarget = (guide = {}, step = {}) => {
     const selectors = getMaidGuideStepSelectors(guide, step);
-    let fallback = null;
+    // 同类入口在多页面各有实例，必须遍历所有匹配找当前可见的（只取第一个会拿到隐藏页实例）
     for (const selector of selectors) {
       try {
-        const found = document.querySelector(selector);
-        if (!found) continue;
-        if (isMaidGuideElementVisible(found)) return found;
-        fallback = fallback || found;
+        const candidates = document.querySelectorAll(selector);
+        for (const found of candidates) {
+          if (isMaidGuideElementVisible(found)) return found;
+        }
       } catch {}
     }
-    return isMaidGuideElementVisible(fallback) ? fallback : null;
+    return null;
   };
   const positionMaidGuidePointer = (target = null) => {
     const pointer = getOrCreateMaidGuidePointer();
@@ -15749,10 +16035,12 @@ Phase G（Frame 36）：循环衔接
     pointer.style.display = 'block';
     pointer.style.left = `${Math.min(Math.max(viewportPad, rawLeft), Math.max(viewportPad, window.innerWidth - size - viewportPad))}px`;
     pointer.style.top = `${Math.min(Math.max(viewportPad, rawTop), Math.max(viewportPad, window.innerHeight - size - viewportPad))}px`;
-    pointer.classList.toggle('is-left', !placeRight);
+    // ☞ 字形默认朝右：指针位于目标右侧时需水平翻转（朝左指向目标）；位于左侧保持朝右。
+    pointer.classList.toggle('is-left', placeRight);
   };
   const positionMaidGuideBubble = (bubble, target = null) => {
     const viewportPad = 14;
+    bubble.classList.remove('is-below-target', 'is-above-target');
     if (!target || typeof target.getBoundingClientRect !== 'function') {
       bubble.style.left = `${viewportPad}px`;
       bubble.style.right = `${viewportPad}px`;
@@ -15760,16 +16048,29 @@ Phase G（Frame 36）：循环衔接
       bubble.style.bottom = 'calc(86px + env(safe-area-inset-bottom, 0px))';
       return;
     }
+    // 紧贴目标：实测气泡尺寸，上/下自适应，水平对齐目标中心，箭头指向目标
     const rect = target.getBoundingClientRect();
-    const width = Math.min(320, window.innerWidth - viewportPad * 2);
-    const left = Math.min(Math.max(viewportPad, rect.left), Math.max(viewportPad, window.innerWidth - width - viewportPad));
-    const top = rect.bottom + 12 + 86 < window.innerHeight
-      ? rect.bottom + 12
-      : Math.max(viewportPad, rect.top - 86);
+    const bubbleWidth = Math.min(300, window.innerWidth - viewportPad * 2);
+    bubble.style.width = `${bubbleWidth}px`;
+    const bubbleHeight = bubble.offsetHeight || 96;
+    const gap = 10;
+    const placeBelow = rect.bottom + gap + bubbleHeight <= window.innerHeight - viewportPad;
+    const top = placeBelow
+      ? rect.bottom + gap
+      : Math.max(viewportPad, rect.top - gap - bubbleHeight);
+    const targetCenter = rect.left + rect.width / 2;
+    const left = Math.min(
+      Math.max(viewportPad, targetCenter - bubbleWidth / 2),
+      Math.max(viewportPad, window.innerWidth - bubbleWidth - viewportPad),
+    );
     bubble.style.left = `${left}px`;
     bubble.style.right = 'auto';
     bubble.style.top = `${top}px`;
     bubble.style.bottom = 'auto';
+    bubble.classList.add(placeBelow ? 'is-below-target' : 'is-above-target');
+    // 箭头水平位置对准目标中心（相对气泡）
+    const arrowLeft = Math.min(Math.max(16, targetCenter - left), bubbleWidth - 16);
+    bubble.style.setProperty('--maid-guide-arrow-left', `${arrowLeft}px`);
   };
   const showMaidGuideStepBubble = (guide = {}, step = {}, index = 0, total = 1, target = null) => {
     const bubble = getOrCreateMaidGuideBubble();
@@ -15778,9 +16079,12 @@ Phase G（Frame 36）：循环衔接
     bubble.innerHTML = `
       <div class="maid-guide-step-title">${escapeHtml(guide?.title || '首次引导')} · ${index + 1}/${total}</div>
       <div class="maid-guide-step-label">${escapeHtml(label)}</div>
-      <div class="maid-guide-step-hint">${target ? '点击高亮处继续' : '完成这一步后继续'}</div>
+      <div class="maid-guide-step-hint">${target ? '点击这里继续' : '完成这一步后继续'}</div>
       ${pathText ? `<div class="maid-guide-step-path">${escapeHtml(pathText)}</div>` : ''}
-      ${target ? '' : '<button type="button" class="maid-guide-step-continue" data-maid-guide-action="continue">继续</button>'}
+      <div class="maid-guide-step-actions">
+        ${target ? '' : '<button type="button" class="maid-guide-step-continue" data-maid-guide-action="continue">继续</button>'}
+        <button type="button" class="maid-guide-step-skip" data-maid-guide-action="skip">跳过引导</button>
+      </div>
     `;
     positionMaidGuideBubble(bubble, target);
     positionMaidGuidePointer(target);
@@ -15933,11 +16237,12 @@ Phase G（Frame 36）：循环衔接
       });
       if (activeMaidGuideCleanup === cleanup) activeMaidGuideCleanup = null;
     };
+    let skippedAll = false;
     const finish = () => {
       if (done) return;
       done = true;
       cleanup();
-      resolve();
+      resolve({ skipped: skippedAll });
     };
     const updatePosition = () => {
       if (!done && bubble) {
@@ -15978,6 +16283,17 @@ Phase G（Frame 36）：循环衔接
       continueBtn.addEventListener('click', onContinue);
       cleanupFns.push(() => continueBtn.removeEventListener('click', onContinue));
     }
+    const skipBtn = bubble?.querySelector?.('[data-maid-guide-action="skip"]');
+    if (skipBtn) {
+      const onSkip = (event) => {
+        event.preventDefault?.();
+        event.stopPropagation?.();
+        skippedAll = true;
+        finish();
+      };
+      skipBtn.addEventListener('click', onSkip);
+      cleanupFns.push(() => skipBtn.removeEventListener('click', onSkip));
+    }
     const onKeydown = (event) => {
       if (event.key === 'Escape') finish();
       if (!target && event.key === 'Enter') finish();
@@ -16004,7 +16320,8 @@ Phase G（Frame 36）：循环衔接
       highlightMaidGuideTarget(target);
       if (target) await maidGuideDelay(140);
       const bubble = showMaidGuideStepBubble(guide, step, index, details.length, target);
-      await waitForMaidGuideStepAdvance(target, bubble);
+      const advance = await waitForMaidGuideStepAdvance(target, bubble);
+      if (advance?.skipped) break; // 用户跳过：中断教学，女仆直接执行
       await maidGuideDelay(120);
     }
     hideMaidGuideBubble();
@@ -17121,6 +17438,8 @@ Phase G（Frame 36）：循环衔接
     if (!hasPromptOnlySource) return false;
     return isAutoImagePromptPlaceholderRemainder(message?.content ?? message?.raw ?? '');
   };
+	  // 女仆 chat.generate_image 需要看到真实失败原因（runChatImageGeneration 对外仅返回 false）。
+	  let lastChatImageGenerationError = '';
 	  const runChatImageGeneration = async ({
 	    prompt,
 	    sourceMessage = null,
@@ -17309,6 +17628,7 @@ Phase G（Frame 36）：循环衔接
 	      const aborted = controller.signal.aborted || err?.name === 'AbortError';
 	      const briefError = getImageGenerationBriefError(err);
 	      const detailError = getImageGenerationErrorText(err);
+	      lastChatImageGenerationError = aborted ? '用户中止了图片生成' : (detailError || briefError || String(err?.message || err || ''));
 	      patchChatImageGenerationMessage(savedPending.id, {
 	        role: sender.role,
 	        type: 'text',
@@ -21444,6 +21764,13 @@ Phase G（Frame 36）：循环衔接
   const maidSettingsPanel = createMaidSettingsPanel({
     documentRef: document,
     settingsStore: maidSettingsStore,
+    listModelProfiles: () => (chatConfigManager.getProfiles?.() || []).map(profile => ({
+      id: String(profile?.id || '').trim(),
+      name: String(profile?.name || profile?.id || '').trim(),
+      model: String(profile?.model || '').trim(),
+      label: [String(profile?.name || profile?.id || '').trim(), String(profile?.model || '').trim()].filter(Boolean).join(' · '),
+    })).filter(profile => profile.id),
+    listProfileModels: profileId => window.appBridge?.debugUiRegistry?.actions?.listProfileModels?.(profileId),
     getAppKnowledgeText: () => buildAppFeatureKnowledgeText(),
     getHistoryContextText: () => maidConversationStore.getHistoryContextText(),
     getMemoryTableText: () => maidConversationStore.getMemoryTableDisplayText(),
@@ -21501,11 +21828,23 @@ Phase G（Frame 36）：循环衔接
     }
     return { ok: true, capability };
   };
+  const remindSubAgentUsage = () => {
+    try {
+      const subAgents = maidSettingsStore.listSubAgents().filter(item => item.enabled !== false);
+      if (subAgents.length < 2) return;
+      const last = maidSettingsStore.getSubAgentRemindAt();
+      const WEEK = 7 * 24 * 3600 * 1000;
+      if (Date.now() - last < WEEK) return;
+      window.toastr?.info?.(`当前配置了 ${subAgents.length} 个 sub-agent 模型，女仆会按能力自动调用（有相应模型消耗）。`);
+      void maidSettingsStore.setSubAgentRemindAt(Date.now());
+    } catch {}
+  };
   const openMaidCommandOrSettings = async () => {
     try {
       const runtime = await resolveMaidRuntimeConfig();
       if (runtime?.configured) {
         maidCommandInputRuntime?.open();
+        remindSubAgentUsage();
         return true;
       }
       maidCommandInputRuntime?.close();
@@ -23171,6 +23510,8 @@ Phase G（Frame 36）：循环衔接
   let generationSequence = 0;
   const isGenerationInterrupted = (generationId) =>
     Boolean(generationId) && (!activeGeneration || activeGeneration.id !== generationId || activeGeneration.cancelled);
+  // 女仆 chat.send_message 需要区分「用户点了停止」和管线故障：记录最近一次用户取消的时间。
+  let lastUserGenerationCancelAt = 0;
   const cancelActiveGeneration = (reason = 'user') => {
     const result = runActiveGenerationCancelFlow({
       generation: activeGeneration,
@@ -23189,6 +23530,7 @@ Phase G（Frame 36）：循环衔接
       setSendingState: value => ui.setSendingState(value),
     });
     if (!result.cancelled) return false;
+    if (reason === 'user') lastUserGenerationCancelAt = Date.now();
     creativeExecutionLaneRuntime?.cancelRun?.(reason);
     if (activeGeneration?.id === result.generation?.id) {
       activeGeneration = null;
@@ -23591,7 +23933,10 @@ Phase G（Frame 36）：循环衔接
         const config = await chatConfigManager.getRuntimeConfigByProfileId(featureState.modelProfileId);
         if (!config) throw new Error('Agent 指定模型配置不存在');
         const modelOverride = String(featureState.modelOverride || '').trim();
-        const effectiveConfig = modelOverride ? { ...config, model: modelOverride } : config;
+        const effectiveConfig = {
+          ...(modelOverride ? { ...config, model: modelOverride } : config),
+          timeout: Math.min(Number(config.timeout) > 0 ? Number(config.timeout) : 240000, 240000),
+        };
         const { presetContext: _presetContext, ...requestOptions } = options || {};
         const client = new LLMClient(effectiveConfig);
         return client.chat(messages, requestOptions);

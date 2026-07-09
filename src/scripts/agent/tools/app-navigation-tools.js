@@ -111,10 +111,13 @@ const createVisiblePanelInspectTool = ({
     : `visible panel summary panels=${Number(result?.panels?.length || 0)}`,
 });
 
+const UI_CLICK_DANGER_PATTERN = /删除|覆盖|清空|移除|解绑|重置|清除|发送|撤销|注销|卸载/;
+
 export const createAppNavigationAgentTools = ({
   actions = {},
   getCurrentState = () => ({}),
   getVisiblePanelSummary = null,
+  clickUiElement = null,
   readResource = null,
   listRecentErrors = null,
 } = {}) => [
@@ -249,6 +252,68 @@ export const createAppNavigationAgentTools = ({
     summarizeResult: result => result?.opened ? `opened ${trim(result.panel, 'panel')}` : `open panel failed: ${trim(result?.reason, 'unsupported panel')}`,
   },
   createVisiblePanelInspectTool({ getVisiblePanelSummary }),
+  {
+    name: 'ui.click_element',
+    title: 'Click UI element',
+    description: 'Click a visible UI element by ref (from app.ui.inspect) or unique label. Returns the updated UI summary after the click. Dangerous buttons (delete/replace/send etc.) require user confirmation.',
+    source: 'maid-app-navigation',
+    permissions: [],
+    riskLevel: 'medium',
+    capabilities: {
+      read: true,
+      write: true,
+      network: false,
+      cost: 'none',
+      undo: 'manual',
+      modelContext: 'allowlist',
+      confirmation: 'allow_once',
+    },
+    schema: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        ref: { type: 'string', maxLength: 120 },
+        label: { type: 'string', maxLength: 80 },
+        panel: { type: 'string', maxLength: 80 },
+      },
+    },
+    execute: async (args = {}, context = {}) => {
+      if (typeof clickUiElement !== 'function') {
+        return { ok: false, reason: 'ui_click_unavailable' };
+      }
+      const targetText = trim(args.label) || trim(args.ref);
+      // 危险按钮（删除/覆盖/发送等）必须经用户确认；只读导航类放行
+      if (UI_CLICK_DANGER_PATTERN.test(targetText)) {
+        const confirm = context?.requestToolConfirmation;
+        let allowed = false;
+        if (typeof confirm === 'function') {
+          try {
+            const decision = await confirm({
+              toolName: 'ui.click_element',
+              kind: 'ui.click_danger',
+              operationType: 'write',
+              riskLevel: 'medium',
+              danger: true,
+              title: '确认界面操作',
+              message: `女仆想点击「${targetText}」——这可能执行删除/覆盖/发送类操作。`,
+              confirmText: '允许点击',
+              cancelText: '取消',
+            });
+            allowed = decision === true || ['allow', 'allow_once', 'allow_always'].includes(String(decision?.decision || ''));
+          } catch {
+            allowed = false;
+          }
+        }
+        if (!allowed) {
+          return { ok: false, reason: 'user_declined', cancelled: true, message: `用户未允许点击「${targetText}」。` };
+        }
+      }
+      return clickUiElement({ ref: trim(args.ref), label: trim(args.label), panel: trim(args.panel) });
+    },
+    summarizeResult: result => (result?.ok === false
+      ? `ui click failed: ${trim(result?.reason, 'unknown')}`
+      : `clicked ${trim(result?.clicked, 'element')}; panels now: ${(result?.after?.panels || []).map(p => p.id).join(',') || 'unchanged'}`),
+  },
   createVisiblePanelInspectTool({
     name: 'app.read_visible_panel_summary',
     title: 'Read visible APP panel summary',
