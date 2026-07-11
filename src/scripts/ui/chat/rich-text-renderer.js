@@ -3826,6 +3826,27 @@ const bindIframeDocumentPressFallback = (iframe, iframeId) => {
     } catch {}
 };
 
+// 全屏应用式面板检测：body 直接子元素以 fixed/absolute 为主（不进文档流），scrollHeight 失真——
+// 这类面板（酒馆重前端常见）期待 iframe ≈ 宿主视口高度，而非内容自适应。
+const measureFullscreenAppHeight = (body) => {
+    try {
+        const children = Array.from(body?.children || [])
+            .filter(el => el.tagName !== 'SCRIPT' && el.tagName !== 'STYLE' && el.tagName !== 'LINK');
+        if (children.length < 2) return 0;
+        const win = body?.ownerDocument?.defaultView;
+        let overlayCount = 0;
+        children.forEach((el) => {
+            const pos = win ? win.getComputedStyle(el).position : '';
+            if (pos === 'fixed' || pos === 'absolute') overlayCount += 1;
+        });
+        if (overlayCount < Math.max(2, Math.ceil(children.length * 0.6))) return 0;
+        const hostViewport = Number(window.innerHeight) || 0;
+        return hostViewport > 0 ? Math.round(hostViewport * 0.85) : 0;
+    } catch {
+        return 0;
+    }
+};
+
 const adjustIframeHeight = (iframe) => {
     try {
         if (!iframe || !iframe.contentWindow) return;
@@ -3840,7 +3861,8 @@ const adjustIframeHeight = (iframe) => {
         const st = id ? getIframeState(id, { messageId: String(iframe.dataset.msgId || ''), createdAt: Date.now() }) : null;
         const bodyHeight = Math.max(body.scrollHeight || 0, body.offsetHeight || 0, body.clientHeight || 0);
         const docHeight = Math.max(docEl.scrollHeight || 0, docEl.offsetHeight || 0, docEl.clientHeight || 0);
-        const newHeight = Math.max(IFRAME_HEIGHT_MIN, bodyHeight, docHeight);
+        const fullscreenHeight = measureFullscreenAppHeight(body);
+        const newHeight = Math.max(IFRAME_HEIGHT_MIN, bodyHeight, docHeight, fullscreenHeight);
         const currentApplied = parseFloat(iframe.style.height || '') || 0;
         const selfMeasured = currentApplied > 0 && Math.abs(newHeight - currentApplied) <= 2;
         if (selfMeasured) {
@@ -3896,18 +3918,24 @@ const observeIframeContent = (iframe) => {
     } catch {}
 };
 
-const splitFencedCodeBlocks = (text) => {
+export const splitFencedCodeBlocks = (text) => {
     const src = String(text ?? '');
     const out = [];
-    const re = /```([^\n`]*)\r?\n([\s\S]*?)```/g;
+    // CommonMark 语义：开/闭围栏都必须在行首（≤3 空格缩进），闭围栏后只允许行尾空白；
+    // 未闭合围栏延伸到文本末尾（兼容流式截断）。行内 ```（如脚本字符串/正则字面量中的
+    // `match(/```html.../)`）不再被误判为边界——重前端卡 2.7MB 面板曾因此被拆碎显示为源码。
+    const re = /(^|\r?\n)[ \t]{0,3}```([^\n`]*)\r?\n([\s\S]*?)(\r?\n[ \t]{0,3}```[ \t]*(?=\r?\n|$)|$)/g;
     let last = 0;
     let m;
     while ((m = re.exec(src))) {
-        if (m.index > last) {
-            out.push({ type: 'text', text: src.slice(last, m.index) });
+        const leadLen = m[1] ? m[1].length : 0;
+        const blockStart = m.index + leadLen;
+        if (blockStart > last) {
+            out.push({ type: 'text', text: src.slice(last, blockStart) });
         }
-        out.push({ type: 'code', lang: String(m[1] || '').trim().toLowerCase(), code: String(m[2] || '') });
+        out.push({ type: 'code', lang: String(m[2] || '').trim().toLowerCase(), code: String(m[3] || '') });
         last = re.lastIndex;
+        if (m.index === re.lastIndex) re.lastIndex += 1;
     }
     if (last < src.length) out.push({ type: 'text', text: src.slice(last) });
     return out;
@@ -4901,6 +4929,7 @@ const buildIframeSrcDoc = (
         baseHref = '',
         bridgeScriptUrl = '',
         headPrepend = '',
+        vhViewportHeight = 0,
     } = {},
 ) => {
     const content = String(htmlBodyOrDocument ?? '');
@@ -4978,7 +5007,8 @@ const buildIframeSrcDoc = (
     const baseStyle = `
 <style id="__chatapp_base">
   html { color-scheme: ${themeColorScheme}; }
-  html, body { margin:0; padding:0; max-width:100% !important; width:100% !important; min-height:0 !important; height:auto !important; overflow-x:hidden !important; box-sizing:border-box; -webkit-user-select:text; user-select:text; -webkit-touch-callout:default; }
+  /* min-height/height 不用 !important：全屏应用式面板（酒馆助手 --viewport-height 约定）需要用自身样式覆盖 */
+  html, body { margin:0; padding:0; max-width:100% !important; width:100% !important; min-height:0; height:auto; overflow-x:hidden !important; box-sizing:border-box; -webkit-user-select:text; user-select:text; -webkit-touch-callout:default; }
   body { padding: 12px; background: transparent; color: ${isDarkMode ? '#e2e8f0' : 'inherit'}; transform-origin: top left; overflow-x:hidden !important; -webkit-user-select:text; user-select:text; -webkit-touch-callout:default; display:block !important; align-items:flex-start !important; justify-content:flex-start !important; }
   *, *::before, *::after { box-sizing: border-box; max-width: 100% !important; min-width: 0 !important; }
   button, input, textarea, select, summary, audio, video, canvas, [role="button"] { -webkit-user-select:none; user-select:none; -webkit-touch-callout:none; }
@@ -5735,8 +5765,11 @@ const buildIframeSrcDoc = (
 </script>`;
 
     // If user content uses 100vh, provide a stable CSS var like ST does
+    // 全屏面板场景 --viewport-height 必须等于 iframe 实际高度（酒馆助手语义），
+    // 否则面板按宿主整窗高布局，底部内容/滚动区会被裁切。
+    const vhHeight = Number(vhViewportHeight) > 0 ? Number(vhViewportHeight) : window.innerHeight;
     const vh = needsVhHandling
-        ? `<style>:root{--viewport-height:${window.innerHeight}px;--vh:${window.innerHeight * 0.01}px;}</style>`
+        ? `<style>:root{--viewport-height:${vhHeight}px;--vh:${vhHeight * 0.01}px;}</style>`
         : '';
     const viewportAdjust = needsVhHandling
         ? `<script>
@@ -5761,7 +5794,12 @@ window.addEventListener('message', (e) => {
 
     // Inject base style + scripts
     if (/<\/body>/i.test(doc)) {
-        // Try to put style inside <head> if present, otherwise before </body>
+        // base/reset 必须在用户样式之前（打底语义）：插到 <head> 开标签后；
+        // 插在 </head> 前会让同特异性的 reset（如 body{min-height:0}）覆盖面板自身样式。
+        if (/<head(\s[^>]*)?>/i.test(doc)) {
+            const withHead = doc.replace(/<head(\s[^>]*)?>/i, match => `${match}${headInject}`);
+            return withHead.replace(/<\/body>/i, `${bodyInject}</body>`);
+        }
         if (/<\/head>/i.test(doc)) {
             const withHead = doc.replace(/<\/head>/i, `${headInject}</head>`);
             return withHead.replace(/<\/body>/i, `${bodyInject}</body>`);
@@ -6351,6 +6389,9 @@ const buildDollarGlobalShim = ({
   const CHATAPP_MESSAGE_ID = ${serializeForInlineScript(mid)};
   const CHATAPP_MESSAGE_INDEX = ${midx === null ? 'null' : String(midx)};
   const CHATAPP_SEED_MESSAGES = ${serializeForInlineScript(seed)};
+  // MVU 变量助手必须随本 IIFE 自带：mvu bridge 的同名定义在其自身 IIFE 内，跨 script 块不可见。
+  // 缺失时 compat.getContext/getScopedVars 等分支一被面板调用即 ReferenceError，中断面板初始化（缺陷 #6）。
+  ${MVU_IFRAME_VARIABLE_COMPAT_SOURCE}
   const withTag = (msg) => CHATAPP_DEBUG_TAG ? ('tag=' + CHATAPP_DEBUG_TAG + ' ' + String(msg || '')) : String(msg || '');
   const log = (level, message) => {
     try {
@@ -7974,8 +8015,19 @@ const makeCodeBlock = ({
         }
         const hasMinVh = /min-height:\s*[^;]*vh/i.test(html);
         const hasJsVhUsage = /\d+vh/.test(html);
-        const needsVhHandling = hasMinVh || hasJsVhUsage;
+        // 酒馆助手约定变量：面板可能不用 vh 单位而直接引用 var(--viewport-height)
+        const hasViewportVarUsage = /var\(\s*--viewport-height/i.test(html);
+        const needsVhHandling = hasMinVh || hasJsVhUsage || hasViewportVarUsage;
         if (needsVhHandling) html = processAllVhUnits(html);
+        // 全屏应用式面板（酒馆助手 --viewport-height 约定 + 完整 HTML 文档，fixed overlay 布局不进文档流）：
+        // 内部按内容测高会陷入小视口反馈循环，注入显式 meta 策略让 iframe 直接取宿主视口高度。
+        const fullscreenPanelHeight = Math.round((Number(window.innerHeight) || 800) * 0.85);
+        const isFullscreenPanel = (hasViewportVarUsage || hasMinVh) && looksLikeHtmlDoc;
+        const fullscreenPanelMeta = isFullscreenPanel
+            ? `<meta name="chatapp-resize" content="viewport"><meta name="chatapp-height" content="${fullscreenPanelHeight}">`
+            : '';
+        // 面板内 --viewport-height 与 iframe 实际高度对齐（否则按宿主整窗高布局导致底部裁切）
+        const panelVhViewportHeight = isFullscreenPanel ? fullscreenPanelHeight : 0;
         const previewHtml = effectiveAllowScripts ? html : stripScriptsForPreview(html);
         const staticHtml = stripScriptsForPreview(html);
         const hostDoc = buildIframeSrcDoc(previewHtml, {
@@ -7984,6 +8036,8 @@ const makeCodeBlock = ({
             preserveNewlines: false,
             injectBridgeScript: false,
             styleInBody: true,
+            headPrepend: fullscreenPanelMeta,
+            vhViewportHeight: panelVhViewportHeight,
         });
         const fallbackDoc = buildIframeSrcDoc(previewHtml, {
             iframeId,
@@ -7991,6 +8045,8 @@ const makeCodeBlock = ({
             preserveNewlines: false,
             injectBridgeScript: true,
             styleInBody: false,
+            headPrepend: fullscreenPanelMeta,
+            vhViewportHeight: panelVhViewportHeight,
         });
         const staticDoc = buildIframeSrcDoc(staticHtml, {
             iframeId,
@@ -7999,6 +8055,7 @@ const makeCodeBlock = ({
             injectBridgeScript: false,
             styleInBody: false,
             baseHref: effectiveAllowScripts ? `${window.location.origin}/` : '',
+            vhViewportHeight: panelVhViewportHeight,
         });
         setIframeStaticFallbackDoc(iframeId, staticDoc);
         const bridgeScriptUrl = '';
@@ -8030,7 +8087,7 @@ const makeCodeBlock = ({
             emitDebugLog({ source: 'rich', type: 'info', message: modeMsg, force: true });
             logger.debug(`[rich] ${modeMsg}`);
         }
-        const scriptHeadPrepend = `${dollarShim}${reactShim}${frameworkShim}${mvuCompatBridge}`;
+        const scriptHeadPrepend = `${fullscreenPanelMeta}${dollarShim}${reactShim}${frameworkShim}${mvuCompatBridge}`;
         const scriptHostDoc = buildIframeSrcDoc(html, {
             iframeId,
             needsVhHandling,
@@ -8040,6 +8097,7 @@ const makeCodeBlock = ({
             baseHref,
             bridgeScriptUrl,
             headPrepend: scriptHeadPrepend,
+            vhViewportHeight: panelVhViewportHeight,
         });
         const scriptDoc = buildIframeSrcDoc(html, {
             iframeId,
@@ -8050,6 +8108,7 @@ const makeCodeBlock = ({
             baseHref,
             bridgeScriptUrl,
             headPrepend: scriptHeadPrepend,
+            vhViewportHeight: panelVhViewportHeight,
         });
         if (effectiveAllowScripts) {
             setIframeDynamicDoc(iframeId, scriptDoc, directBodyLoadUrl ? 'direct-scriptdoc' : 'inline-scriptdoc');
@@ -9131,7 +9190,14 @@ export const setupIframeResizeListener = () => {
                 emitDebugLog({ source: 'iframe', type: 'warn', message: diag, force: true });
                 warnIframe('diag', id, hint);
             }
-            const recoverableRuntimeError = shouldStaticFallbackForIframeError(message);
+            // 面板已就绪（加载完成/上报过高度）后的运行期错误是局部问题（如某子模块元素缺失的
+            // TypeError）——整页静态降级会毁掉已正常运行的面板；对齐酒馆行为：只记日志不降级。
+            const stForGate = getIframeState(id, { messageId: String(iframe.dataset.msgId || ''), createdAt: Date.now() });
+            const panelSettled = Boolean(stForGate?.loadedAt) && Number(stForGate?.resizeCount || 0) > 0;
+            const recoverableRuntimeError = !panelSettled && shouldStaticFallbackForIframeError(message);
+            if (panelSettled) {
+                warnIframe('runtime-error-no-fallback', id, `msg=${String(message || '').slice(0, 120)}`);
+            }
             let handled = false;
             if (
                 /VueRouter is not defined|Vue is not defined|Pinia is not defined|createPinia is not defined|ReactDOM is not defined|React is not defined|_ is not defined|unhandledrejection/i.test(message)

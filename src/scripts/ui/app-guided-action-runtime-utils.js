@@ -130,6 +130,111 @@ const GUIDE_STEP_SELECTOR_CANDIDATES = Object.freeze({
   ],
 });
 
+const GUIDE_CHAT_LIST_ENTRY_LABELS = new Set([
+  '顶部 +',
+  '好友列表',
+  '聊天列表',
+  '点击联系人或群组',
+  '设置',
+  '头像/用户入口',
+  '头像/角色入口',
+]);
+
+const GUIDE_CHAT_ROOM_ENTRY_LABELS = new Set([
+  '聊天室',
+  '聊天室标题',
+  '聊天室右上角菜单',
+  '输入框',
+  '发送',
+  '会话配置',
+]);
+
+const readFirstText = (source = {}, keys = []) => {
+  for (const key of keys) {
+    const value = trim(source?.[key]);
+    if (value) return value;
+  }
+  return '';
+};
+
+const getGuideFirstStep = (guide = {}) => {
+  if (Array.isArray(guide?.stepDetails) && guide.stepDetails.length) return guide.stepDetails[0];
+  const label = Array.isArray(guide?.steps) ? trim(guide.steps[0]) : '';
+  return label ? { index: 0, label, selectors: [] } : null;
+};
+
+export const prepareGuidedActionEntryNavigation = async ({
+  guide = {},
+  meta = {},
+  isTargetVisible = null,
+  isChatRoomVisible = null,
+  hideMenus = null,
+  exitChatRoom = null,
+  switchPage = null,
+  resolveSessionTarget = null,
+  getCurrentSessionId = null,
+  enterChatRoom = null,
+} = {}) => {
+  const step = getGuideFirstStep(guide);
+  const label = trim(step?.label || step);
+  if (!label) return { navigated: false, route: '', reason: 'missing_step' };
+
+  try {
+    if (typeof isTargetVisible === 'function' && await isTargetVisible(guide, step)) {
+      return { navigated: false, route: '', reason: 'target_visible' };
+    }
+
+    if (GUIDE_CHAT_LIST_ENTRY_LABELS.has(label)) {
+      await hideMenus?.();
+      if (isChatRoomVisible?.()) await exitChatRoom?.({ animate: false, source: 'maid-guide' });
+      await switchPage?.('chat', { animate: false });
+      return { navigated: true, route: 'chat_list', reason: 'navigated' };
+    }
+
+    if (GUIDE_CHAT_ROOM_ENTRY_LABELS.has(label)) {
+      const plan = isPlainObject(meta?.plan) ? meta.plan : {};
+      const args = isPlainObject(plan?.args) ? plan.args : {};
+      const context = isPlainObject(meta?.context) ? meta.context : {};
+      const sessionArgKeys = ['sessionId', 'sessionName', 'target', 'chatName'];
+      if (trim(plan.toolName) === 'session.open_config' || trim(plan.featureId) === 'session.config.open') {
+        sessionArgKeys.push('name');
+      }
+      const explicitQuery = readFirstText(args, sessionArgKeys);
+      const contextQuery = readFirstText(context, ['sessionId', 'sessionName', 'target', 'chatName']);
+      const query = explicitQuery || contextQuery || trim(getCurrentSessionId?.());
+      if (!query) return { navigated: false, route: 'chat_room', reason: 'missing_session_id' };
+      if (typeof resolveSessionTarget !== 'function') {
+        return { navigated: false, route: 'chat_room', reason: 'navigation_unavailable' };
+      }
+      const resolved = await resolveSessionTarget(query, { explicit: Boolean(explicitQuery) });
+      const sessionId = trim(typeof resolved === 'string' ? resolved : (resolved?.id || resolved?.sessionId));
+      if (!sessionId) return { navigated: false, route: 'chat_room', reason: 'session_not_found' };
+      const sessionName = trim(resolved?.name || resolved?.sessionName, sessionId);
+      await hideMenus?.();
+      await switchPage?.('chat', { animate: false });
+      const entered = await enterChatRoom?.(sessionId, sessionName);
+      if (entered?.blocked === true) {
+        return {
+          navigated: false,
+          route: 'chat_room',
+          reason: trim(entered?.reason, 'room_entry_blocked'),
+          sessionId,
+        };
+      }
+      return { navigated: true, route: 'chat_room', reason: 'navigated', sessionId };
+    }
+
+    return { navigated: false, route: '', reason: 'entry_not_required' };
+  } catch (error) {
+    return {
+      navigated: false,
+      route: '',
+      reason: 'navigation_failed',
+      errorMessage: trim(error?.message || error),
+    };
+  }
+};
+
 export const isGuidedActionOutputOk = (output = {}) => {
   if (output?.status && output.status !== 'succeeded') return false;
   const result = output !== null &&

@@ -1,0 +1,24 @@
+{
+  "workerAlive": true,
+  "uiRootExists": true,
+  "shadowChildren": 4,
+  "shadowSample": "<style>:host {\n  all: initial;\n  position: fixed;\n  inset: 0;\n  z-index: 2147483000;\n  pointer-events: none;\n  width: 100vw;\n  height: 100vh;\n  overflow: visible;\n}\n.chatapp-script-ui-surface {\n  posi",
+  "dispatchResults": {
+    "app_ready": "{\"test\":true}",
+    "chat_id_changed": "{\"test\":true}",
+    "message_received": "{\"test\":true}",
+    "generation_ended": "{\"test\":true}"
+  },
+  "recentLogs": [
+    {
+      "level": "log",
+      "text": "%c[2026-07-10T10:55:34.528Z] WARN: color: #ff9800; font-weight: bold [script] [worker-console] [BubbleDialogue] ⚠ 格式规则注入未生效：injectPrompts 和 setExtensionPrompt 均不可用。请检查酒馆助手是否已安装。",
+      "at": 1783680934528
+    },
+    {
+      "level": "log",
+      "text": "%c[2026-07-10T10:55:38.905Z] WARN: color: #ff9800; font-weight: bold [script] [worker-console] [BubbleDialogue] ⚠ 格式规则注入未生效：injectPrompts 和 setExtensionPrompt 均不可用。请检查酒馆助手是否已安装。",
+      "at": 1783680938905
+    }
+  ]
+}

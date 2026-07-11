@@ -1,0 +1,18 @@
+[
+  {
+    "at": 2221455,
+    "ctx": "location-btn\" class=\"finalize-action-card\"> <div class=\"action-icon\"><i class=\"fas fa-map-marked-alt\"></i></div> <div class=\"action-content\"> <h4>选择出生地</h4> <p class=\"action-hint\">点击选择地图并设定出生位置</p> "
+  },
+  {
+    "at": 2662096,
+    "ctx": "nagement-overlay\"> <div class=\"modal\" id=\"map-management-modal\"> <button class=\"modal-close-btn\">×</button> <h4 id=\"map-management-title\">选择出生地</h4> <p id=\"map-management-desc\" style=\"text-a"
+  },
+  {
+    "at": 2662255,
+    "ctx": ">选择出生地</h4> <p id=\"map-management-desc\" style=\"text-align: center; color: var(--text-secondary); margin-top: -10px\"> 第一步：选择你想使用的世界地图。选择后点击\"确认并选择出生地\"进入地图选点。 </p> <div id=\"map-li"
+  },
+  {
+    "at": 2662869,
+    "ctx": "p-btn\" style=\"background: linear-gradient(135deg, #4caf50, #388e3c); border-color: #4caf50;\"> <i class=\"fas fa-map-marker-alt\"> </i> 确认并选择出生地 </button> <button class=\"major-act"
+  }
+]

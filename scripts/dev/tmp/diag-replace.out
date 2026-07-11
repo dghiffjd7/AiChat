@@ -1,0 +1,12 @@
+{
+  "replaceHead": "```html\n<!DOCTYPE html>\n<html lang=\"zh-CN\">\n  <head>\n    <meta charset=\"utf-8\" />\n    <meta content=\"width=device-width, initial-scale=1.0\" name=\"view",
+  "replaceHasFence": 30,
+  "replaceHasScript": true,
+  "contentFences": 1,
+  "contentLen": 4001,
+  "contentLucklyCount": 1,
+  "appliedSample": {
+    "len": 2703257,
+    "replaced": false
+  }
+}

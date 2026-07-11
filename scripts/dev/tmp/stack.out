@@ -1,0 +1,4 @@
+{
+  "msg": "Uncaught TypeError: Cannot read properties of null (reading 'addEventListener')",
+  "stack": "TypeError: Cannot read properties of null (reading 'addEventListener') at HTMLDocument.<anonymous> (chatapp-script-8-pos-body-kind-inline-preview-const-SYSTEM_PROMPT_PREFIX-const-API_PRESE.js:51155:65) at dispatchSyntheticReadyEvents (http://127.0.0.1:1430/iframe-host.js:1198:16) at http://127.0.0.1:1430/iframe-host.js:2219:9 at <anonymous>"
+}

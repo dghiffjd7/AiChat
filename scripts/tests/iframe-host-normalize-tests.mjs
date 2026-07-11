@@ -21,6 +21,12 @@ const keywordPrevRe = extractRegex('keywordPrevRe');
 const loadingOverlaySignalRe = extractRegex('loadingOverlaySignalRe');
 const fontAwesomeCdnCssRe = extractRegex('fontAwesomeCdnCssRe');
 
+// 可选元素存在性检查是重前端卡常用的 feature detection。宿主不得把任意
+// 缺失 ID 伪造成 truthy 元素；需要的酒馆宿主节点应通过明确的 DOM proxy 提供。
+assert.doesNotMatch(source, /Document\.prototype\.getElementById\s*=/);
+assert.match(source, /textarea\.id = 'send_textarea'/);
+assert.match(source, /sendButton\.id = 'send_but'/);
+
 const normalizeExecutableScriptSource = (code) => {
   const lines = String(code || '').replace(/\r\n?/g, '\n').split('\n');
   const normalized = [];

@@ -13,6 +13,8 @@ import {
   describeRegionSelection,
   filterRectCoveredElements,
   normalizeMaidSelectionItem,
+  resolveMaidAnchoredViewportRect,
+  resolveMaidUnanchoredViewportRect,
 } from './maid-selection-utils.js';
 
 const STYLE_ID = 'maid-selection-mode-style';
@@ -189,6 +191,7 @@ const isTextLeaf = (element) => {
 export const createMaidSelectionMode = ({
   documentRef = globalThis?.document || null,
   getCurrentSessionId = () => '',
+  getCurrentPage = () => '',
   onChange = null,
   logger = console,
 } = {}) => {
@@ -205,12 +208,81 @@ export const createMaidSelectionMode = ({
   let suppressNextClick = false;
   // 点击已高亮文字段时唤出的取消按钮
   let textCloseEl = null;
+  let regionSeq = 0;
+  let viewportRevision = 0;
+  let viewportListenersBound = false;
 
   const doc = documentRef;
+  const view = doc?.defaultView || globalThis?.window || null;
+
+  const createRegionId = () => {
+    regionSeq += 1;
+    return `region-${Date.now()}-${regionSeq}`;
+  };
+
+  const readEntryRect = (entry) => {
+    if (!entry) return null;
+    if (entry.range) {
+      const container = entry.range.commonAncestorContainer;
+      const element = container?.nodeType === Node.TEXT_NODE ? container.parentElement : container;
+      if (element && element.isConnected === false) return null;
+      const rangeRect = entry.range.getBoundingClientRect?.();
+      if (!rangeRect || rangeRect.width <= 0 || rangeRect.height <= 0) return null;
+      entry.rect = {
+        left: rangeRect.left,
+        top: rangeRect.top,
+        width: rangeRect.width,
+        height: rangeRect.height,
+      };
+      return { ...entry.rect };
+    }
+    if (entry.anchorEl && entry.anchorOffset) {
+      if (entry.anchorEl.isConnected === false) return null;
+      const anchorRect = entry.anchorEl.getBoundingClientRect?.();
+      const anchoredRect = resolveMaidAnchoredViewportRect(entry.rect, anchorRect, entry.anchorOffset);
+      if (!anchoredRect) return null;
+      entry.rect = anchoredRect;
+    }
+    if (!entry.range && !entry.anchorEl) {
+      const unanchoredRect = resolveMaidUnanchoredViewportRect(
+        entry.rect,
+        entry.viewportRevision,
+        viewportRevision,
+      );
+      if (!unanchoredRect) return null;
+      entry.rect = unanchoredRect;
+    }
+    if (!entry.rect || entry.rect.width <= 0 || entry.rect.height <= 0) return null;
+    return { ...entry.rect };
+  };
+
+  const findStableRegionAnchor = (rect = null) => {
+    if (!doc || !rect) return null;
+    const x = rect.left + (rect.width / 2);
+    const y = rect.top + (rect.height / 2);
+    const elements = typeof doc.elementsFromPoint === 'function'
+      ? doc.elementsFromPoint(x, y)
+      : [doc.elementFromPoint?.(x, y)].filter(Boolean);
+    return elements.find((element) => {
+      if (!element || element === doc.body || element === doc.documentElement) return false;
+      return !element.closest?.('[data-maid-selection-ui], .maid-selection-bar, .maid-command-input');
+    }) || null;
+  };
+
+  const snapshotEntryItem = (entry) => {
+    const rect = readEntryRect(entry);
+    return {
+      ...entry.item,
+      regionId: rect ? String(entry.regionId || entry.item?.regionId || '') : '',
+      viewportRect: rect,
+    };
+  };
+
+  const getItems = () => entries.map(snapshotEntryItem);
 
   const emitChange = () => {
     try {
-      onChange?.({ active, items: entries.map(entry => ({ ...entry.item })) });
+      onChange?.({ active, items: getItems() });
     } catch (err) {
       logger?.debug?.('maid selection onChange failed', err);
     }
@@ -275,10 +347,21 @@ export const createMaidSelectionMode = ({
     const candidates = Array.from(doc.querySelectorAll(SEMANTIC_CONTAINER_SELECTOR))
       .filter(el => !el.closest('[data-maid-selection-ui], .maid-selection-bar, .maid-command-input'));
     const covered = filterRectCoveredElements(candidates, entry.rect);
-    entry.item = describeRegionSelection(covered, entry.rect, { getCurrentSessionId })
-      || normalizeMaidSelectionItem({ type: 'element', semanticSummary: `屏幕选区（${Math.round(entry.rect.width)}×${Math.round(entry.rect.height)}）` });
+    const described = describeRegionSelection(covered, entry.rect, {
+      getCurrentSessionId,
+      regionId: entry.regionId,
+    });
+    entry.item = normalizeMaidSelectionItem({
+      ...(described || {
+        type: 'element',
+        semanticSummary: `屏幕选区（${Math.round(entry.rect.width)}×${Math.round(entry.rect.height)}）`,
+      }),
+      id: entry.item?.id,
+      regionId: entry.regionId,
+      viewportRect: entry.rect,
+    });
     // 滚动锚定：以第一个覆盖元素为锚
-    const anchor = covered[0] || null;
+    const anchor = covered[0] || findStableRegionAnchor(entry.rect);
     if (anchor) {
       const anchorRect = anchor.getBoundingClientRect();
       entry.anchorEl = anchor;
@@ -286,6 +369,7 @@ export const createMaidSelectionMode = ({
     } else {
       entry.anchorEl = null;
       entry.anchorOffset = null;
+      entry.viewportRevision = viewportRevision;
     }
   };
 
@@ -303,7 +387,16 @@ export const createMaidSelectionMode = ({
 
   const addRegionEntry = (rect) => {
     if (entries.length >= MAX_ITEMS) return false;
-    const entry = { rect: { ...rect }, expand: null };
+    const entry = {
+      regionId: createRegionId(),
+      rect: { ...rect },
+      expand: null,
+      captureScope: {
+        sessionId: String(getCurrentSessionId?.() || '').trim(),
+        page: String(getCurrentPage?.() || '').trim(),
+      },
+      viewportRevision,
+    };
     rebuildRegionItem(entry);
     if (!entry.item) return false;
     entries.push(entry);
@@ -501,7 +594,21 @@ export const createMaidSelectionMode = ({
           sessionId: described?.item?.sessionId,
         });
         if (!item) return;
-        entries.push({ item, range: lastRange });
+        const rangeRect = lastRange.getBoundingClientRect?.();
+        const viewportRect = rangeRect && rangeRect.width > 0 && rangeRect.height > 0
+          ? { left: rangeRect.left, top: rangeRect.top, width: rangeRect.width, height: rangeRect.height }
+          : null;
+        const regionId = viewportRect ? createRegionId() : '';
+        entries.push({
+          item: normalizeMaidSelectionItem({ ...item, regionId, viewportRect }),
+          range: lastRange,
+          rect: viewportRect,
+          regionId,
+          captureScope: {
+            sessionId: String(getCurrentSessionId?.() || '').trim(),
+            page: String(getCurrentPage?.() || '').trim(),
+          },
+        });
         lastRange = null;
         try { selection.removeAllRanges(); } catch {}
         refreshHighlights();
@@ -623,21 +730,32 @@ export const createMaidSelectionMode = ({
 
   // 滚动/缩放：按锚元素重新定位选区（锚不可见则隐藏该选区框）
   const handleViewportShift = () => {
+    viewportRevision += 1;
     if (!active) return;
     entries.forEach((entry) => {
       if (!entry.overlayEl || !entry.rect) return;
-      if (entry.anchorEl && entry.anchorOffset) {
-        if (!entry.anchorEl.isConnected) {
-          entry.overlayEl.style.display = 'none';
-          return;
-        }
-        const anchorRect = entry.anchorEl.getBoundingClientRect();
-        entry.rect.left = anchorRect.left + entry.anchorOffset.dx;
-        entry.rect.top = anchorRect.top + entry.anchorOffset.dy;
-        entry.overlayEl.style.display = '';
-        positionOverlay(entry);
+      const rect = readEntryRect(entry);
+      if (!rect) {
+        entry.overlayEl.style.display = 'none';
+        return;
       }
+      entry.overlayEl.style.display = '';
+      positionOverlay(entry);
     });
+  };
+
+  const bindViewportListeners = () => {
+    if (viewportListenersBound) return;
+    view?.addEventListener?.('scroll', handleViewportShift, true);
+    view?.addEventListener?.('resize', handleViewportShift);
+    viewportListenersBound = true;
+  };
+
+  const unbindViewportListeners = () => {
+    if (!viewportListenersBound) return;
+    view?.removeEventListener?.('scroll', handleViewportShift, true);
+    view?.removeEventListener?.('resize', handleViewportShift);
+    viewportListenersBound = false;
   };
 
   const enter = () => {
@@ -650,8 +768,7 @@ export const createMaidSelectionMode = ({
     doc.addEventListener('pointerup', handlePointerUp, true);
     doc.addEventListener('click', handleCaptureClick, true);
     doc.addEventListener('selectionchange', captureSelectionRange);
-    window.addEventListener('scroll', handleViewportShift, true);
-    window.addEventListener('resize', handleViewportShift);
+    bindViewportListeners();
     emitChange();
   };
 
@@ -659,6 +776,7 @@ export const createMaidSelectionMode = ({
     entries.forEach(entry => entry.overlayEl?.remove());
     try { CSS?.highlights?.delete?.(HIGHLIGHT_NAME); } catch {}
     entries = [];
+    if (!active) unbindViewportListeners();
     emitChange();
   };
 
@@ -673,8 +791,6 @@ export const createMaidSelectionMode = ({
     doc.removeEventListener('pointerup', handlePointerUp, true);
     doc.removeEventListener('click', handleCaptureClick, true);
     doc.removeEventListener('selectionchange', captureSelectionRange);
-    window.removeEventListener('scroll', handleViewportShift, true);
-    window.removeEventListener('resize', handleViewportShift);
     barEl?.remove();
     barEl = null;
     closeListPopup();
@@ -694,13 +810,38 @@ export const createMaidSelectionMode = ({
     emitChange();
   };
 
+  const resolveCaptureRegion = (regionId = '') => {
+    const target = String(regionId || '').trim();
+    const entry = entries.find(item => String(item.regionId || item.item?.regionId || '').trim() === target);
+    if (!target || !entry) return { ok: false, reason: 'region_not_found', regionId: target };
+    const currentSessionId = String(getCurrentSessionId?.() || '').trim();
+    const currentPage = String(getCurrentPage?.() || '').trim();
+    if (entry.captureScope?.sessionId && entry.captureScope.sessionId !== currentSessionId) {
+      return { ok: false, reason: 'region_scope_changed', regionId: target };
+    }
+    if (entry.captureScope?.page && entry.captureScope.page !== currentPage) {
+      return { ok: false, reason: 'region_scope_changed', regionId: target };
+    }
+    const rect = readEntryRect(entry);
+    if (!rect) return { ok: false, reason: 'region_stale', regionId: target };
+    return {
+      ok: true,
+      regionId: target,
+      rect,
+      semanticSummary: String(entry.item?.semanticSummary || ''),
+      sessionId: currentSessionId,
+      page: currentPage,
+    };
+  };
+
   return {
     enter,
     exit,
     toggle: () => (active ? exit({ keepItems: true }) : enter()),
     isActive: () => active,
-    getItems: () => entries.map(entry => ({ ...entry.item })),
+    getItems,
+    resolveCaptureRegion,
     clear,
-    buildPromptBlock: () => buildMaidSelectionPromptBlock(entries.map(entry => entry.item)),
+    buildPromptBlock: () => buildMaidSelectionPromptBlock(getItems()),
   };
 };

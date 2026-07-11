@@ -396,6 +396,8 @@
     }));
   };
 
+  // 保留原生 DOM 查询语义：卡片常用 `if (getElementById(...))` 判断可选功能。
+  // 酒馆宿主节点兼容必须像 send_textarea/send_but 一样显式创建，不能让任意缺失 ID 变成 truthy。
   const ensureSillyTavernApiCompat = () => {
     exposeGlobalCompatFunction('getLorebooks', async () => {
       try {
@@ -519,6 +521,14 @@
           if (tag === 'img' && !attrSrc) return;
           if (src) {
             sendIframeError('resource-load-failed tag=' + tag + ' url=' + src);
+            // 取证：资源加载失败也持久化（缺陷 #6c：CDN 依赖加载状态排查）。
+            try {
+              const key = '__chatapp_iframe_script_errors';
+              const list = JSON.parse(localStorage.getItem(key) || '[]');
+              list.push({ at: Date.now(), message: 'resource-load-failed tag=' + tag, file: compactText(src, 160), line: 0, col: 0 });
+              while (list.length > 10) list.shift();
+              localStorage.setItem(key, JSON.stringify(list));
+            } catch {}
           }
           return;
         }
@@ -528,7 +538,8 @@
         const colno = Number(ev?.colno || 0);
         const file = String(ev?.filename || '');
         try {
-          if (file && externalizedBlobMeta.has(file)) {
+          const metaHit = Boolean(file && externalizedBlobMeta.has(file));
+          if (metaHit) {
             const meta = externalizedBlobMeta.get(file) || {};
             const excerpt = buildBlobDebugExcerpt(meta.code || '', lineno, colno);
             const parts = [
@@ -542,6 +553,26 @@
             ].filter(Boolean).join(' ');
             sendDebug('warn', parts);
           }
+          // 脚本错误现场持久化（同源 localStorage，跨 reload）：静态降级后仍可事后取证。
+          try {
+            const record = {
+              at: Date.now(),
+              message: compactText(message, 240),
+              file: compactText(file, 160),
+              line: lineno,
+              col: colno,
+              stack: compactText(String(ev?.error?.stack || ''), 900),
+              metaHit: metaHit ? 1 : 0,
+              metaKeys: Array.from(externalizedBlobMeta.keys()).slice(-4).map((k) => compactText(k, 90)),
+              excerpt: metaHit ? buildBlobDebugExcerpt((externalizedBlobMeta.get(file) || {}).code || '', lineno, colno).slice(0, 900) : '',
+              label: metaHit ? compactText((externalizedBlobMeta.get(file) || {}).label || '', 120) : '',
+            };
+            const key = '__chatapp_iframe_script_errors';
+            const list = JSON.parse(localStorage.getItem(key) || '[]');
+            list.push(record);
+            while (list.length > 10) list.shift();
+            localStorage.setItem(key, JSON.stringify(list));
+          } catch {}
         } catch {}
         const extra = [
           file ? ('file=' + file) : '',
@@ -756,9 +787,12 @@
     try {
       const mime = descriptor?.isModule ? 'text/javascript' : 'text/javascript';
       const source = String(code || '');
-      const trailer = `\n//# sourceURL=chatapp-${getBlobDebugName(descriptor)}.js`;
+      const debugName = `chatapp-${getBlobDebugName(descriptor)}.js`;
+      const trailer = `\n//# sourceURL=${debugName}`;
       const blobUrl = rememberBlobUrl(URL.createObjectURL(new Blob([source + trailer], { type: mime })), bucket);
       rememberBlobMeta(blobUrl, descriptor, source);
+      // 错误事件的 filename 是 sourceURL 名而非 blob URL：双键注册保证 excerpt 可命中。
+      rememberBlobMeta(debugName, descriptor, source);
       return blobUrl;
     } catch {
       return '';
@@ -896,11 +930,18 @@
       // Preserve valid continuations such as `value +\n(expr ? a : b)`.
       const safePrevEndRe = /(?:[;{[(,:?=><!&|/^~]|(?:\+\+|--|[+\-*%]))\s*$/;
       const keywordPrevRe = /\b(?:return|throw|case|delete|typeof|void|new|in|instanceof|await|yield)\s*$/;
+      // 行尾注释会挡住真实的行尾符号（如 `foo(), // state` 实际以逗号结尾）：
+      // 判断前粗剥 `//` 之后的内容。字符串内 '//'（如 URL）被误剥只会让判断偏向
+      // “safe 不插分号”——与“原代码本可运行”的事实一致，方向安全。
+      const stripLineComment = (line) => {
+        const idx = String(line || '').indexOf('//');
+        return idx >= 0 ? String(line || '').slice(0, idx) : String(line || '');
+      };
       lines.forEach((line) => {
         const trimmed = String(line || '').trim();
         if (trimmed && riskyStartRe.test(trimmed) && previousNonEmpty) {
-          const prev = previousNonEmpty.replace(/\s+$/, '');
-          if (!safePrevEndRe.test(prev) && !keywordPrevRe.test(prev)) {
+          const prev = stripLineComment(previousNonEmpty).replace(/\s+$/, '');
+          if (prev && !safePrevEndRe.test(prev) && !keywordPrevRe.test(prev)) {
             normalized.push(';');
           }
         }
@@ -1590,14 +1631,20 @@
     if (inHead) el.setAttribute('data-chatapp-head-node', '1');
     target.appendChild(el);
     Array.from(node.childNodes || []).forEach((child) => {
-      appendManagedNode(child, el, {
-        allowScripts,
-        inHead: false,
-        scriptTasks,
-        scriptStats,
-        inlineBehaviorBindings,
-        inlineBehaviorStats,
-      });
+      // 单个子节点重建失败不能殃及后续兄弟（否则同父级一整段 UI 连锁丢失）。
+      try {
+        appendManagedNode(child, el, {
+          allowScripts,
+          inHead: false,
+          scriptTasks,
+          scriptStats,
+          inlineBehaviorBindings,
+          inlineBehaviorStats,
+        });
+      } catch (err) {
+        const childTag = String(child?.tagName || child?.nodeName || 'unknown');
+        sendDebug('warn', 'managed-node-append-failed tag=' + childTag + ' err=' + compactText(String(err?.message || err || ''), 160));
+      }
     });
     return el;
   };

@@ -1,0 +1,9 @@
+{
+  "totalStaticIds": 933,
+  "present": 929,
+  "missing": 4,
+  "lastPresentAt": 2701375,
+  "firstMissingAt": 2644778,
+  "docLen": 2701425,
+  "aroundBoundary": "            <h5> <i class=\"fas fa-robot\"> </i> API 配置 (点击展开/折叠) </h5> </summary> <div style=\"margin-top: 15px\"> <label for=\"knowledge-search-api-url\"> API URL (需兼容OpenAI): </label> <input id=\"knowledge-search-api-url\" placeholder=\"例如: https://api.openai.com/v1\" type=\""
+}

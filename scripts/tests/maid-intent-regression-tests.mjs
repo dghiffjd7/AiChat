@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
 
-import { searchAppFeatures } from '../../src/scripts/agent/app-feature-catalog.js';
+import { createAgentToolRegistry } from '../../src/scripts/agent/agent-tool-registry.js';
+import { listAppFeatures, searchAppFeatures } from '../../src/scripts/agent/app-feature-catalog.js';
 import { planMaidAssistantCommand } from '../../src/scripts/agent/maid-assistant-agent.js';
+import { createMaidCapabilityRoutingRuntime } from '../../src/scripts/agent/maid-capability-routing.js';
 
 // 女仆意图回归基线（golden fixtures）。
 // 目的：固定“用户说法 -> 命中能力/工具”的行为，防止检索评分或 local planner 改动造成回归。
@@ -34,6 +36,12 @@ const RETRIEVAL_FIXTURES = [
   { input: '帮我搜一下今天的新闻', expect: 'web.search' },
   // 图片资产
   { input: '把这张图设为壁纸', expect: 'session.wallpaper.set' },
+  { input: '用这张图生成一张相似构图', expect: 'chat.image.generate' },
+  { input: '看看我圈选的这里为什么错位', expect: 'app.ui.capture_region' },
+  { input: '看看我圈选的图片是什么', expect: 'app.ui.capture_region' },
+  { input: '这里配色好看吗', expect: 'app.ui.capture_region' },
+  { input: '比较这两个圈选区域的布局', expect: 'app.ui.capture_region' },
+  { input: '这个区域的文字为什么被遮住', expect: 'app.ui.capture_region' },
   // 能力自描述
   { input: '你能做什么', expect: 'app.capabilities.search' },
   { input: '女仆有什么功能', expect: 'app.capabilities.search' },
@@ -63,6 +71,53 @@ for (const { input, expect } of RETRIEVAL_FIXTURES) {
   );
 }
 console.log(`ok - 功能检索基线 ${RETRIEVAL_FIXTURES.length} 条 top-1 命中`);
+
+{
+  const features = listAppFeatures();
+  const registry = createAgentToolRegistry({
+    permissionEvaluator: { evaluateTool: () => ({ decision: 'allow', checks: [] }) },
+    logger: { warn() {} },
+  });
+  const toolNames = new Set(features.flatMap(feature => feature.tools || []));
+  toolNames.forEach((name) => {
+    registry.register({
+      name,
+      schema: { type: 'object' },
+      execute: async () => ({ ok: true }),
+    });
+  });
+  const routing = createMaidCapabilityRoutingRuntime({
+    features,
+    toolRegistry: registry,
+    permissionEvaluator: { evaluateTool: () => ({ decision: 'allow', checks: [] }) },
+    logger: { debug() {} },
+  });
+  for (const { input, expect } of RETRIEVAL_FIXTURES) {
+    const request = routing.beginRequest({ input });
+    const snapshot = routing.prepareDecision({ requestId: request.id, input, phase: 'planner' });
+    assert.ok(
+      snapshot.candidateIds.has(expect),
+      `「${input}」的 Shadow Top-K 未包含 ${expect}，实际 ${Array.from(snapshot.candidateIds).join(', ')}`,
+    );
+    assert.ok(snapshot.candidateFeatures.length <= 8, '常规 Shadow 候选不得超过 8 项');
+    routing.finishRequest(request.id, { ok: true });
+  }
+  const multiIntentInput = '打开世界书、看看当前界面，然后帮我搜一下今天的新闻';
+  const multiIntentRequest = routing.beginRequest({ input: multiIntentInput });
+  const multiIntentSnapshot = routing.prepareDecision({
+    requestId: multiIntentRequest.id,
+    input: multiIntentInput,
+    phase: 'planner',
+  });
+  for (const expected of ['worldbook.open', 'app.visible_panel.read', 'web.search']) {
+    assert.ok(
+      multiIntentSnapshot.candidateIds.has(expected),
+      `复合任务候选缺少 ${expected}，实际 ${Array.from(multiIntentSnapshot.candidateIds).join(', ')}`,
+    );
+  }
+  routing.finishRequest(multiIntentRequest.id, { ok: true });
+  console.log(`ok - Shadow Retriever ${RETRIEVAL_FIXTURES.length} 条 golden fixtures 全部进入 Top-K`);
+}
 
 // 二、local planner 基线：无 API 时的规则规划结果。
 const PLANNER_FIXTURES = [

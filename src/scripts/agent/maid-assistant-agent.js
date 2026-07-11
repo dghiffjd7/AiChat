@@ -95,6 +95,22 @@ const truncateForRun = (value = '', max = 200) => {
 
 const VALID_STEP_STATUSES = new Set(['succeeded', 'failed', 'skipped', 'cancelled']);
 
+const buildCapabilityPlanTrace = (plan = {}) => ({
+  candidateSnapshotId: trim(plan?.candidateSnapshotId),
+  retrieverVersion: trim(plan?.retrieverVersion),
+  selectedCapabilityId: trim(plan?.selectedCapabilityId || plan?.featureId),
+  candidateHit: typeof plan?.candidateHit === 'boolean' ? plan.candidateHit : null,
+});
+
+const resolveTrackedToolStepStatus = (output = {}) => {
+  const outerStatus = trim(output?.status);
+  if (outerStatus === 'failed' || outerStatus === 'skipped' || outerStatus === 'cancelled') {
+    return outerStatus;
+  }
+  if (!isToolOutputOk(output)) return 'failed';
+  return VALID_STEP_STATUSES.has(outerStatus) ? outerStatus : 'succeeded';
+};
+
 // 一次 runPrompt 对应一个持久 run：目标、每个工具步骤、最终状态和 continueHint
 // 都写入 agent run store；没有执行任何工具的纯聊天回应不建 run。
 const createMaidRunTracker = ({ agentTaskRuntime = null, input = '', context = {} } = {}) => {
@@ -128,6 +144,7 @@ const createMaidRunTracker = ({ agentTaskRuntime = null, input = '', context = {
       input: {
         toolName: trim(plan.toolName),
         args: clone(plan.args || {}),
+        ...buildCapabilityPlanTrace(plan),
       },
     });
   };
@@ -152,6 +169,14 @@ const createMaidRunTracker = ({ agentTaskRuntime = null, input = '', context = {
         continueHint: trim(result?.continueHint),
         stepCount: countArrayItems(result?.steps),
         reactStoppedReason: trim(result?.reactStoppedReason),
+        lastCandidateSnapshotId: trim(result?.capabilityRouting?.lastCandidateSnapshotId),
+        candidateEffectiveMode: trim(result?.capabilityRouting?.effectiveMode),
+        candidateDecisionCount: Number(result?.capabilityRouting?.decisionCount || 0) || 0,
+        candidateValidSelectionCount: Number(result?.capabilityRouting?.validSelectionCount || 0) || 0,
+        candidateHitCount: Number(result?.capabilityRouting?.hitCount || 0) || 0,
+        candidateAllCovered: result?.capabilityRouting?.validSelectionCount > 0
+          ? result?.capabilityRouting?.allValidSelectionsCovered === true
+          : null,
       },
     });
   };
@@ -486,6 +511,7 @@ const buildReactStepSnapshot = ({
   summary: trim(output?.summary),
   output: clone(unwrapToolOutputResult(output)),
   metadata: clone(plan?.metadata || null),
+  ...buildCapabilityPlanTrace(plan),
   errorMessage: trim(output?.errorMessage || (!ok ? summarizeToolFailure(output) : '')),
   failureCode: ok ? '' : classifyMaidToolFailure({
     errorCode: output?.errorCode,
@@ -924,6 +950,7 @@ const executeWithRegistry = async ({
 export const createMaidAssistantAgent = ({
   toolRegistry = null,
   agentTaskRuntime = null,
+  capabilityRoutingRuntime = null,
   planner = requireAiPlanner,
   reactPlanner = null,
   chatResponder = null,
@@ -944,9 +971,11 @@ export const createMaidAssistantAgent = ({
           onToolConfirmationPending: () => tracker.markWaitingPermission(true),
           onToolConfirmationResolved: () => tracker.markWaitingPermission(false),
         });
+        const stepStatus = resolveTrackedToolStepStatus(output);
         tracker.finishToolStep(step, {
-          status: VALID_STEP_STATUSES.has(trim(output?.status)) ? trim(output.status) : 'succeeded',
+          status: stepStatus,
           summary: output?.summary || plan.title || plan.toolName,
+          errorMessage: stepStatus === 'failed' ? summarizeToolFailure(output) : '',
           output,
         });
         return output;
@@ -973,6 +1002,7 @@ export const createMaidAssistantAgent = ({
           input: {
             toolName: plan.toolName,
             args: plan.args,
+            ...buildCapabilityPlanTrace(plan),
           },
         });
         try {
@@ -982,9 +1012,11 @@ export const createMaidAssistantAgent = ({
             stepId: step?.id,
             source: 'maid-assistant',
           });
+          const stepStatus = resolveTrackedToolStepStatus(output);
           finishStep?.(step?.id, {
-            status: 'succeeded',
+            status: stepStatus,
             summary: output?.summary || plan.title || plan.toolName,
+            errorMessage: stepStatus === 'failed' ? summarizeToolFailure(output) : '',
             output,
           });
           return output;
@@ -1003,14 +1035,53 @@ export const createMaidAssistantAgent = ({
   };
 
   const executePlan = async (plan, context = {}, tracker = null) => {
+    let executablePlan = plan;
+    if (capabilityRoutingRuntime && typeof capabilityRoutingRuntime.validatePlan === 'function') {
+      let validation = null;
+      try {
+        validation = capabilityRoutingRuntime.validatePlan(plan, { context });
+      } catch (error) {
+        logger?.warn?.('maid capability validation failed', error);
+        validation = {
+          ok: false,
+          reason: error?.message || 'capability_validation_failed',
+          message: error?.message || '候选能力校验失败。',
+        };
+      }
+      if (validation?.ok === false) {
+        const error = new Error(validation.message || validation.reason || '候选能力校验失败。');
+        error.code = validation.reason || 'capability_validation_failed';
+        error.details = {
+          candidateSnapshotId: trim(plan?.candidateSnapshotId),
+          nearestCandidates: clone(validation.nearestCandidates || []),
+        };
+        if (tracker?.canTrack) {
+          const step = tracker.startToolStep(plan);
+          tracker.finishToolStep(step, {
+            status: 'failed',
+            summary: error.message,
+            errorMessage: error.message,
+            output: {
+              ok: false,
+              reason: error.code,
+              message: error.message,
+              candidateSnapshotId: trim(plan?.candidateSnapshotId),
+              nearestCandidates: clone(validation.nearestCandidates || []),
+            },
+          });
+        }
+        throw error;
+      }
+      executablePlan = validation?.plan || plan;
+    }
     if (guidedActionRuntime && typeof guidedActionRuntime.run === 'function') {
       return guidedActionRuntime.run({
-        plan,
+        plan: executablePlan,
         context,
-        execute: () => runPlannedTool(plan, context, tracker),
+        execute: () => runPlannedTool(executablePlan, context, tracker),
       });
     }
-    const output = await runPlannedTool(plan, context, tracker);
+    const output = await runPlannedTool(executablePlan, context, tracker);
     return {
       output,
       guided: false,
@@ -1020,6 +1091,12 @@ export const createMaidAssistantAgent = ({
   };
 
   const runPromptWithTracker = async (input = '', context = {}, tracker = null) => {
+    // 每轮独立的视觉附件池：工具可把截图加入同一轮 ReAct，但不会回写输入框或跨 run 留存。
+    context = {
+      ...(isPlainObject(context) ? context : {}),
+      maidAttachments: (Array.isArray(context?.maidAttachments) ? context.maidAttachments : [])
+        .map(item => (isPlainObject(item) ? { ...item } : item)),
+    };
     // 空指令直接拒绝：不进 planner，否则模型会按女仆历史重放上一条旧指令。
     const hasAttachments = Array.isArray(context?.maidAttachments) && context.maidAttachments.length > 0;
     const hasSelection = Array.isArray(context?.userSelection) && context.userSelection.length > 0;
@@ -1032,18 +1109,71 @@ export const createMaidAssistantAgent = ({
         message: '这次没有收到指令内容，女仆先不行动～请告诉我需要做什么。',
       };
     }
-    let plan = await callModelWithTimeout(() => planner(input, context), { label: 'maid_planner' });
+    const callRoutedPlanner = async ({
+      plannerFn,
+      phase = 'planner',
+      label = 'maid_planner',
+      extraContext = {},
+    } = {}) => {
+      const decisionContext = {
+        ...context,
+        ...(isPlainObject(extraContext) ? extraContext : {}),
+      };
+      let snapshot = null;
+      if (capabilityRoutingRuntime && typeof capabilityRoutingRuntime.prepareDecision === 'function') {
+        try {
+          snapshot = capabilityRoutingRuntime.prepareDecision({
+            requestId: trim(context?.capabilityRequestId),
+            input,
+            context: decisionContext,
+            steps: Array.isArray(decisionContext.maidReactSteps) ? decisionContext.maidReactSteps : [],
+            phase,
+          });
+          if (snapshot) decisionContext.capabilitySnapshot = snapshot;
+        } catch (error) {
+          logger?.debug?.('maid capability retrieval skipped', error);
+        }
+      }
+      let decision = null;
+      try {
+        decision = await callModelWithTimeout(() => plannerFn(input, decisionContext), { label });
+      } catch (error) {
+        if (snapshot && capabilityRoutingRuntime && typeof capabilityRoutingRuntime.observeDecision === 'function') {
+          try {
+            capabilityRoutingRuntime.observeDecision(snapshot, {
+              ok: false,
+              reason: 'model_call_failed',
+            }, { countForRecall: false });
+          } catch {}
+        }
+        throw error;
+      }
+      if (snapshot && capabilityRoutingRuntime && typeof capabilityRoutingRuntime.observeDecision === 'function') {
+        try {
+          return capabilityRoutingRuntime.observeDecision(snapshot, decision);
+        } catch (error) {
+          logger?.debug?.('maid capability decision observation skipped', error);
+        }
+      }
+      return decision;
+    };
+
+    let plan = await callRoutedPlanner({ plannerFn: planner, phase: 'planner', label: 'maid_planner' });
     if (!plan?.ok) {
       let reactRecoveryFailure = null;
       if (shouldAttemptReactPlanRecovery({ input, plan, reactPlanner })) {
         try {
-          const decision = await callModelWithTimeout(() => reactPlanner(input, {
-            ...context,
-            maidReactSteps: [],
-            plannerFailure: clone(plan),
-            lastPlan: clone(plan),
-            lastToolOk: false,
-          }), { label: 'maid_react' });
+          const decision = await callRoutedPlanner({
+            plannerFn: reactPlanner,
+            phase: 'react_recovery',
+            label: 'maid_react',
+            extraContext: {
+              maidReactSteps: [],
+              plannerFailure: clone(plan),
+              lastPlan: clone(plan),
+              lastToolOk: false,
+            },
+          });
           if (decision?.ok && decision.action === 'final') {
             return {
               ok: true,
@@ -1201,7 +1331,31 @@ export const createMaidAssistantAgent = ({
         }));
         if (ok && reactPlanner) {
           loopProbe(`step-${stepIndex}:verify-check`);
-          const verificationPlan = buildAutoVerificationPlan(currentPlan, output, steps);
+          let verificationPlan = buildAutoVerificationPlan(currentPlan, output, steps);
+          if (
+            verificationPlan &&
+            capabilityRoutingRuntime &&
+            typeof capabilityRoutingRuntime.authorizeVerification === 'function'
+          ) {
+            try {
+              verificationPlan = capabilityRoutingRuntime.authorizeVerification({
+                requestId: trim(context?.capabilityRequestId),
+                parentPlan: currentPlan,
+                verificationPlan,
+                context,
+              });
+            } catch (error) {
+              logger?.debug?.('maid verification capability snapshot skipped', error);
+              if (trim(currentPlan?.capabilityRoutingMode) === 'candidate') {
+                verificationPlan = {
+                  ...verificationPlan,
+                  candidateSnapshotId: trim(currentPlan?.candidateSnapshotId),
+                  retrieverVersion: trim(currentPlan?.retrieverVersion),
+                  capabilityRoutingMode: 'candidate',
+                };
+              }
+            }
+          }
           if (verificationPlan) {
             if (typeof context?.onStatus === 'function') {
               context.onStatus({
@@ -1349,13 +1503,17 @@ export const createMaidAssistantAgent = ({
         }
 
         loopProbe(`step-${stepIndex}:react-call`);
-        const decision = await callModelWithTimeout(() => reactPlanner(input, {
-          ...context,
-          maidReactSteps: clone(steps),
-          lastPlan: clone(observedPlan),
-          lastOutput: clone(observedOutput),
-          lastToolOk: ok,
-        }), { label: 'maid_react' });
+        const decision = await callRoutedPlanner({
+          plannerFn: reactPlanner,
+          phase: 'react',
+          label: 'maid_react',
+          extraContext: {
+            maidReactSteps: clone(steps),
+            lastPlan: clone(observedPlan),
+            lastOutput: clone(observedOutput),
+            lastToolOk: ok,
+          },
+        });
         loopProbe(`step-${stepIndex}:react-done`);
         if (!decision?.ok) {
           if (ok) {
@@ -1531,12 +1689,40 @@ export const createMaidAssistantAgent = ({
   };
 
   const runPrompt = async (input = '', context = {}) => {
-    const tracker = createMaidRunTracker({ agentTaskRuntime, input, context });
+    let capabilityRequest = null;
+    if (capabilityRoutingRuntime && typeof capabilityRoutingRuntime.beginRequest === 'function') {
+      try {
+        capabilityRequest = capabilityRoutingRuntime.beginRequest({ input, context });
+      } catch (error) {
+        logger?.debug?.('maid capability request start skipped', error);
+      }
+    }
+    const routedContext = capabilityRequest?.id
+      ? { ...(isPlainObject(context) ? context : {}), capabilityRequestId: capabilityRequest.id }
+      : context;
+    const tracker = createMaidRunTracker({ agentTaskRuntime, input, context: routedContext });
     try {
-      const result = await runPromptWithTracker(input, context, tracker);
-      tracker.finish(result);
-      return result;
+      const result = await runPromptWithTracker(input, routedContext, tracker);
+      let capabilityRouting = null;
+      if (capabilityRequest?.id && typeof capabilityRoutingRuntime?.finishRequest === 'function') {
+        try {
+          capabilityRouting = capabilityRoutingRuntime.finishRequest(capabilityRequest.id, result);
+        } catch (error) {
+          logger?.debug?.('maid capability request finish skipped', error);
+        }
+      }
+      const finalResult = capabilityRouting ? { ...result, capabilityRouting } : result;
+      tracker.finish(finalResult);
+      return finalResult;
     } catch (error) {
+      if (capabilityRequest?.id && typeof capabilityRoutingRuntime?.finishRequest === 'function') {
+        try {
+          capabilityRoutingRuntime.finishRequest(capabilityRequest.id, {
+            ok: false,
+            reason: error?.message || String(error || ''),
+          });
+        } catch {}
+      }
       tracker.finish({
         ok: false,
         status: 'failed',

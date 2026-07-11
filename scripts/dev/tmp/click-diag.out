@@ -1,0 +1,46 @@
+{
+  "iframePointerEvents": "auto",
+  "sandbox": null,
+  "hitAtCenter": [
+    "IFRAME",
+    "DIV",
+    "DIV.chat-codeblock",
+    "DIV.chat-message-content",
+    "DIV.QQ_chat_msgdiv",
+    "DIV.chat-bubble-stack"
+  ],
+  "hitIsIframe": true,
+  "parentPE": "auto",
+  "innerButtons": [
+    {
+      "text": "开始新人生",
+      "pe": "auto",
+      "z": "auto"
+    },
+    {
+      "text": "读取人生",
+      "pe": "auto",
+      "z": "auto"
+    },
+    {
+      "text": "创意工坊",
+      "pe": "auto",
+      "z": "auto"
+    },
+    {
+      "text": "",
+      "pe": "auto",
+      "z": "2001"
+    },
+    {
+      "text": "",
+      "pe": "auto",
+      "z": "2001"
+    },
+    {
+      "text": "",
+      "pe": "auto",
+      "z": "2001"
+    }
+  ]
+}

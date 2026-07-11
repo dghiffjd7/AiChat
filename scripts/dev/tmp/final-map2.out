@@ -1,0 +1,24 @@
+{
+  "back": [
+    {
+      "id": "knowledge-search-api-url",
+      "present": true
+    },
+    {
+      "id": "import-text-image-presets-btn",
+      "present": true
+    }
+  ],
+  "finalTabFound": true,
+  "birthBtnFound": true,
+  "canvasSize": {
+    "w": 300,
+    "h": 150,
+    "cssW": 285
+  },
+  "recentErrs": [
+    "resource-load-failed tag=video",
+    "resource-load-failed tag=video",
+    "Uncaught TypeError: Cannot read properties of null (reading 'replaceChild')"
+  ]
+}

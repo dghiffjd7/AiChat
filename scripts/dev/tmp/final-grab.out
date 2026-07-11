@@ -1,0 +1,10 @@
+{
+  "grabbedLen": 2818627,
+  "iframeError": "manual-button",
+  "errLine": 0,
+  "lineContext": "",
+  "debugEvents": [
+    "warn|dynamic-recover-applied id=msg-1783696138987-68da44-1783699305612-96e07b reason=manual-button",
+    "info|compat id=msg-1783696138987-68da44-1783699305612-96e07b tag=rp-greeting lodash-shim-fallback"
+  ]
+}

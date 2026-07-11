@@ -54,14 +54,16 @@ export const createMaidRuntimeConfigResolver = ({
     const client = ready && typeof createClient === 'function' ? createClient(cappedConfig) : null;
     // 主档故障降级：配置了 fallback 档时提供备用 client（调用方在主档请求失败时重试一次）
     let fallbackClient = null;
+    let fallbackConfig = null;
     if (fallbackProfileId && fallbackProfileId !== profileId) {
       try {
-        const fallbackConfig = await configManager?.getRuntimeConfigByProfileId?.(fallbackProfileId);
-        if (isPlainObject(fallbackConfig) && isConfigReady(fallbackConfig) && typeof createClient === 'function') {
-          fallbackClient = createClient({
-            ...fallbackConfig,
-            timeout: Math.min(Number(fallbackConfig.timeout) > 0 ? Number(fallbackConfig.timeout) : 240000, 240000),
-          });
+        const rawFallbackConfig = await configManager?.getRuntimeConfigByProfileId?.(fallbackProfileId);
+        if (isPlainObject(rawFallbackConfig) && isConfigReady(rawFallbackConfig) && typeof createClient === 'function') {
+          fallbackConfig = {
+            ...rawFallbackConfig,
+            timeout: Math.min(Number(rawFallbackConfig.timeout) > 0 ? Number(rawFallbackConfig.timeout) : 240000, 240000),
+          };
+          fallbackClient = createClient(fallbackConfig);
         }
       } catch {}
     }
@@ -71,6 +73,8 @@ export const createMaidRuntimeConfigResolver = ({
       config,
       client,
       fallbackClient,
+      fallbackConfig,
+      fallbackProfileId: fallbackClient ? fallbackProfileId : '',
       subAgents,
       profileId,
       maidPrompt,

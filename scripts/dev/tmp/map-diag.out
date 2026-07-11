@@ -1,0 +1,201 @@
+{
+  "mapEls": [
+    {
+      "tag": "I",
+      "id": "",
+      "cls": "fas fa-map-marked-alt category",
+      "w": 51,
+      "h": 46,
+      "display": "block",
+      "visible": true,
+      "bg": "none"
+    },
+    {
+      "tag": "DIV",
+      "id": "world-map-overlay",
+      "cls": "overlay",
+      "w": 1129,
+      "h": 684,
+      "display": "flex",
+      "visible": true,
+      "bg": "none"
+    },
+    {
+      "tag": "DIV",
+      "id": "world-map-modal",
+      "cls": "modal",
+      "w": 974,
+      "h": 684,
+      "display": "flex",
+      "visible": true,
+      "bg": "linear-gradient(135deg, rgba(30, 30, 30, 0.98), rgba(20, 20,"
+    },
+    {
+      "tag": "DIV",
+      "id": "",
+      "cls": "map-modal-header",
+      "w": 932,
+      "h": 29,
+      "display": "flex",
+      "visible": true,
+      "bg": "none"
+    },
+    {
+      "tag": "DIV",
+      "id": "",
+      "cls": "map-zoom-controls",
+      "w": 62,
+      "h": 29,
+      "display": "flex",
+      "visible": true,
+      "bg": "none"
+    },
+    {
+      "tag": "BUTTON",
+      "id": "",
+      "cls": "map-zoom-btn",
+      "w": 29,
+      "h": 29,
+      "display": "flex",
+      "visible": true,
+      "bg": "none"
+    },
+    {
+      "tag": "BUTTON",
+      "id": "",
+      "cls": "map-zoom-btn",
+      "w": 29,
+      "h": 29,
+      "display": "flex",
+      "visible": true,
+      "bg": "none"
+    },
+    {
+      "tag": "DIV",
+      "id": "mini-map-toggle-container",
+      "cls": "",
+      "w": 74,
+      "h": 19,
+      "display": "flex",
+      "visible": true,
+      "bg": "none"
+    },
+    {
+      "tag": "INPUT",
+      "id": "mini-map-toggle",
+      "cls": "",
+      "w": 0,
+      "h": 0,
+      "display": "inline-block",
+      "visible": false,
+      "bg": "none"
+    },
+    {
+      "tag": "DIV",
+      "id": "world-map-npc-carousel",
+      "cls": "hidden",
+      "w": 0,
+      "h": 0,
+      "display": "none",
+      "visible": false,
+      "bg": "linear-gradient(135deg, rgba(20, 20, 35, 0.95), rgba(35, 25,"
+    },
+    {
+      "tag": "DIV",
+      "id": "world-map-container",
+      "cls": "",
+      "w": 932,
+      "h": 515,
+      "display": "block",
+      "visible": true,
+      "bg": "none"
+    },
+    {
+      "tag": "CANVAS",
+      "id": "world-map-canvas",
+      "cls": "",
+      "w": 285,
+      "h": 143,
+      "display": "block",
+      "visible": true,
+      "bg": "none"
+    }
+  ],
+  "canvases": [
+    {
+      "w": 300,
+      "h": 150,
+      "visible": true
+    },
+    {
+      "w": 979,
+      "h": 543,
+      "visible": true
+    },
+    {
+      "w": 300,
+      "h": 150,
+      "visible": true
+    },
+    {
+      "w": 300,
+      "h": 150,
+      "visible": false
+    },
+    {
+      "w": 300,
+      "h": 150,
+      "visible": true
+    },
+    {
+      "w": 300,
+      "h": 150,
+      "visible": true
+    },
+    {
+      "w": 300,
+      "h": 150,
+      "visible": true
+    },
+    {
+      "w": 300,
+      "h": 150,
+      "visible": false
+    }
+  ],
+  "imgs": [
+    {
+      "src": "http://127.0.0.1:1430/",
+      "complete": true,
+      "natural": 0
+    },
+    {
+      "src": "http://127.0.0.1:1430/",
+      "complete": true,
+      "natural": 0
+    },
+    {
+      "src": "http://127.0.0.1:1430/",
+      "complete": true,
+      "natural": 0
+    }
+  ],
+  "recentErrs": [
+    {
+      "msg": "resource-load-failed tag=video",
+      "file": "http://127.0.0.1:1430/"
+    },
+    {
+      "msg": "Uncaught TypeError: Cannot read properties of null (reading 'addEventListener')",
+      "file": "chatapp-script-8-pos-body-kind-inline-preview-const-SYSTEM_PROMPT_PREFIX-const-A"
+    },
+    {
+      "msg": "Uncaught TypeError: Cannot read properties of undefined (reading 'forEach')",
+      "file": "chatapp-script-8-pos-body-kind-inline-preview-const-SYSTEM_PROMPT_PREFIX-const-A"
+    },
+    {
+      "msg": "Uncaught TypeError: Cannot read properties of undefined (reading 'forEach')",
+      "file": "chatapp-script-8-pos-body-kind-inline-preview-const-SYSTEM_PROMPT_PREFIX-const-A"
+    }
+  ]
+}

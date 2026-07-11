@@ -11,6 +11,8 @@ import {
   normalizeMaidModelReActDecision,
 } from '../../src/scripts/agent/maid-model-planner.js';
 
+const cloneJson = value => JSON.parse(JSON.stringify(value));
+
 {
   const featureList = buildMaidModelPlannerFeatureList([
     {
@@ -266,6 +268,30 @@ import {
 }
 
 {
+  const rejected = normalizeMaidModelPlan({
+    ok: true,
+    toolName: 'outside.tool',
+    featureId: 'outside.feature',
+  }, {
+    candidateMode: true,
+    candidateSnapshotId: 'candidate-1',
+    features: [{
+      id: 'app.state.read',
+      title: '读取状态',
+      tools: ['app.read_state'],
+      riskLevel: 'low',
+      writes: false,
+    }],
+  });
+  assert.equal(rejected.ok, false);
+  assert.equal(rejected.candidateViolation, true);
+  assert.equal(rejected.selectedCapabilityId, 'outside.feature');
+  assert.equal(rejected.selectedToolName, 'outside.tool');
+  assert.equal(rejected.candidateSnapshotId, 'candidate-1');
+  console.log('ok - candidate-mode rejections retain compact attempted-selection metrics');
+}
+
+{
   let runtimeCalls = 0;
   let chatCalls = 0;
   const injected = [];
@@ -342,6 +368,40 @@ import {
 }
 
 {
+  const context = {
+    capabilitySnapshot: {
+      id: 'fallback-cohort-snapshot',
+      useCandidates: false,
+      cohort: {},
+    },
+  };
+  const planner = createMaidModelBackedPlanner({
+    resolveRuntimeConfig: async () => ({
+      profileId: 'primary-profile',
+      fallbackProfileId: 'fallback-profile',
+      config: { provider: 'openai', model: 'primary-model' },
+      fallbackConfig: { provider: 'deepseek', model: 'fallback-model' },
+      client: { chat: async () => { throw new Error('primary offline'); } },
+      fallbackClient: {
+        chat: async () => JSON.stringify({
+          ok: true,
+          toolName: 'app.open_panel',
+          args: { panel: 'worldbook' },
+          featureId: 'worldbook.open',
+        }),
+      },
+    }),
+    logger: { warn() {}, debug() {} },
+  });
+  const plan = await planner('打开世界书', context);
+  assert.equal(plan.ok, true);
+  assert.equal(context.capabilitySnapshot.cohort.profileId, 'fallback-profile');
+  assert.equal(context.capabilitySnapshot.cohort.provider, 'deepseek');
+  assert.equal(context.capabilitySnapshot.cohort.model, 'fallback-model');
+  console.log('ok - fallback model decisions are attributed to the actual cohort');
+}
+
+{
   const planner = createMaidModelBackedPlanner({
     resolveRuntimeConfig: async () => ({ config: {} }),
     isConfigReady: () => false,
@@ -410,6 +470,25 @@ import {
 }
 
 {
+  let fallbackCalls = 0;
+  const reactPlanner = createMaidModelBackedReActPlanner({
+    resolveRuntimeConfig: async () => ({
+      client: { chat: async () => { throw new Error('primary unavailable'); } },
+      fallbackClient: { chat: async () => { fallbackCalls += 1; return '{}'; } },
+      fallbackConfig: { provider: 'deepseek', model: 'deepseek-chat' },
+    }),
+    logger: { warn: () => {}, debug: () => {} },
+  });
+  const decision = await reactPlanner('看看截图', {
+    maidAttachments: [{ kind: 'image', url: 'data:image/png;base64,AAAA', name: 'capture.png' }],
+    maidReactSteps: [],
+  });
+  assert.equal(decision.ok, false);
+  assert.equal(fallbackCalls, 0, 'text-only fallback must not receive screenshot image parts');
+  console.log('ok - maid model react planner suppresses text-only fallback for screenshots');
+}
+
+{
   const reactPlanner = createMaidModelBackedReActPlanner({
     resolveRuntimeConfig: async () => ({
       client: {
@@ -469,4 +548,109 @@ import {
   assert.match(system, /<app_features>\n- id: session\.create/);
   assert.match(system, /<\/app_features>/);
   console.log('ok - 功能目录以 YAML 列表呈现并用 app_features 标签分隔');
+}
+
+{
+  const features = [{
+    id: 'app.state.read',
+    title: '读取状态',
+    aliases: ['看看状态'],
+    tools: ['app.read_state'],
+    argsHint: '无参数',
+  }, {
+    id: 'app.resource.read',
+    title: '读取资源',
+    aliases: ['看看资源'],
+    tools: ['app.read_resource'],
+  }];
+  let capturedMessages = null;
+  const planner = createMaidModelBackedPlanner({
+    features,
+    resolveRuntimeConfig: async () => ({
+      profileId: 'weak-profile',
+      config: { provider: 'custom', model: 'weak-model' },
+      client: {
+        chat: async (messages) => {
+          capturedMessages = cloneJson(messages);
+          return JSON.stringify({
+            ok: true,
+            featureId: 'app.state.read',
+            toolName: 'app.read_state',
+            args: {},
+          });
+        },
+      },
+    }),
+  });
+  const context = {
+    sessionId: 's1',
+    uiMode: 'chat',
+    capabilitySnapshot: {
+      id: 'shadow-snapshot',
+      useCandidates: false,
+      promptFeatures: features,
+      cohort: {},
+    },
+  };
+  const expected = buildMaidModelPlannerMessages({
+    input: '看看状态',
+    context: { sessionId: 's1', uiMode: 'chat' },
+    features,
+  });
+  const result = await planner('看看状态', context);
+  assert.equal(result.ok, true);
+  assert.deepEqual(capturedMessages, expected, 'Shadow snapshot 不得改变发送给模型的 messages');
+  assert.equal(context.capabilitySnapshot.cohort.model, 'weak-model');
+  console.log('ok - Shadow capability snapshot keeps planner messages byte-equivalent and annotates model cohort');
+}
+
+{
+  const candidateFeatures = [{
+    id: 'app.state.read',
+    title: '读取状态',
+    aliases: ['看看状态'],
+    tools: ['app.read_state'],
+    riskLevel: 'low',
+    writes: false,
+    toolSchemas: {
+      'app.read_state': { type: 'object', properties: {} },
+    },
+  }];
+  let systemPrompt = '';
+  const planner = createMaidModelBackedPlanner({
+    features: [{
+      id: 'outside.feature',
+      title: '不应出现',
+      tools: ['outside.tool'],
+    }],
+    resolveRuntimeConfig: async () => ({
+      config: { provider: 'custom', model: 'weak-model' },
+      client: {
+        chat: async (messages) => {
+          systemPrompt = messages[0].content;
+          return JSON.stringify({
+            ok: true,
+            featureId: 'app.state.reed',
+            toolName: 'app.read_state',
+            args: {},
+          });
+        },
+      },
+    }),
+  });
+  const result = await planner('看看状态', {
+    capabilitySnapshot: {
+      id: 'candidate-snapshot',
+      useCandidates: true,
+      promptFeatures: candidateFeatures,
+      cohort: {},
+    },
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.featureId, 'app.state.read');
+  assert.equal(result.candidateSnapshotId, 'candidate-snapshot');
+  assert.equal(result.capabilityCorrection.rule, 'unique_tool_owner');
+  assert.match(systemPrompt, /schemas:/);
+  assert.doesNotMatch(systemPrompt, /outside\.feature/);
+  console.log('ok - candidate mode injects only hydrated schemas and corrects IDs inside the snapshot');
 }

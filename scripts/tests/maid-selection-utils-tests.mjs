@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import {
   buildMaidSelectionPromptBlock,
   normalizeMaidSelectionItem,
+  resolveMaidAnchoredViewportRect,
+  resolveMaidUnanchoredViewportRect,
 } from '../../src/scripts/ui/maid-selection-utils.js';
 import { buildMaidModelPlannerMessages } from '../../src/scripts/agent/maid-model-planner.js';
 
@@ -13,10 +15,14 @@ import { buildMaidModelPlannerMessages } from '../../src/scripts/agent/maid-mode
     semanticSummary: '选中文字（位于 聊天消息）',
     messageId: 'msg-1',
     sessionId: '蒂法',
+    regionId: 'region-text-1',
+    viewportRect: { left: 12.5, top: 20, width: 180, height: 42 },
   });
   assert.equal(item.type, 'text');
   assert.equal(item.text, '她把最后一杯酒擦干净。');
   assert.equal(item.messageId, 'msg-1');
+  assert.equal(item.regionId, 'region-text-1');
+  assert.deepEqual(item.viewportRect, { left: 12.5, top: 20, width: 180, height: 42 });
   assert.equal(normalizeMaidSelectionItem({}), null, '空项应拒绝');
   const longText = normalizeMaidSelectionItem({ text: 'x'.repeat(5000) });
   assert.ok(longText.text.length <= 1201, '超长文本截断');
@@ -24,14 +30,45 @@ import { buildMaidModelPlannerMessages } from '../../src/scripts/agent/maid-mode
 }
 
 {
+  const rect = { left: 20, top: 30, width: 160, height: 80 };
+  assert.deepEqual(resolveMaidAnchoredViewportRect(
+    rect,
+    { left: 100, top: 200, width: 300, height: 120 },
+    { dx: 5, dy: 8 },
+  ), { left: 105, top: 208, width: 160, height: 80 });
+  assert.equal(resolveMaidAnchoredViewportRect(
+    rect,
+    { left: 0, top: 0, width: 0, height: 0 },
+    { dx: 5, dy: 8 },
+  ), null, '仍 connected 但已隐藏的锚点应判 stale');
+  assert.deepEqual(resolveMaidUnanchoredViewportRect(rect, 4, 4), rect);
+  assert.equal(
+    resolveMaidUnanchoredViewportRect(rect, 4, 5),
+    null,
+    '没有稳定 DOM 锚点的选区在滚动或 resize 后应判 stale',
+  );
+  console.log('ok - 选区锚点跟随并拒绝隐藏元素');
+}
+
+{
   const block = buildMaidSelectionPromptBlock([
-    { type: 'text', text: '这段正文', semanticSummary: '选中文字（位于 聊天消息）', messageId: 'm1', sessionId: '蒂法' },
+    {
+      type: 'text',
+      text: '这段正文',
+      semanticSummary: '选中文字（位于 聊天消息）',
+      messageId: 'm1',
+      sessionId: '蒂法',
+      regionId: 'region-1',
+      viewportRect: { left: 20, top: 30, width: 200, height: 50 },
+    },
     { type: 'element', semanticSummary: 'Agent Center 卡片', text: '格式检查 已开启' },
   ]);
   assert.match(block, /<user_selection>/);
   assert.match(block, /1\. \[选中文字\]/);
   assert.match(block, /2\. \[界面元素\] Agent Center 卡片/);
   assert.match(block, /消息ID: m1/);
+  assert.match(block, /区域ID: region-1/);
+  assert.match(block, /ui\.capture_region/);
   assert.match(block, /内容: 这段正文/);
   assert.equal(buildMaidSelectionPromptBlock([]), '', '空选区返回空串');
   assert.equal(buildMaidSelectionPromptBlock(null), '', 'null 安全');

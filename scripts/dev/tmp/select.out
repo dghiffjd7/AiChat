@@ -1,0 +1,23 @@
+{
+  "inParsed": [
+    {
+      "id": "knowledge-search-api-url",
+      "inParsed": true
+    },
+    {
+      "id": "knowledge-search-api-key",
+      "inParsed": true
+    },
+    {
+      "id": "knowledge-search-api-model",
+      "inParsed": true
+    },
+    {
+      "id": "fetch-knowledge-search-models-btn",
+      "inParsed": true
+    }
+  ],
+  "selectOpens": 0,
+  "selectCloses": 0,
+  "lastOpenCtx": "(none)"
+}

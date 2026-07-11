@@ -1,0 +1,22 @@
+[
+  {
+    "id": "knowledge-search-api-url",
+    "at": 2644778,
+    "ctx": "        <label for=\"knowledge-search-api-url\"> API URL (需兼容OpenAI): </label> <input id=\"knowledge-search-api-url\" placeholder=\"例如: htt"
+  },
+  {
+    "id": "knowledge-search-api-key",
+    "at": 2644963,
+    "ctx": " /> <label for=\"knowledge-search-api-key\"> API Key: </label> <input id=\"knowledge-search-api-key\" placeholder=\"sk-...\""
+  },
+  {
+    "id": "knowledge-search-api-model",
+    "at": 2645135,
+    "ctx": "              <label for=\"knowledge-search-api-model\"> 模型 (Model): </label> <select id=\"knowledge-search-api-model\"></select> "
+  },
+  {
+    "id": "fetch-knowledge-search-models-btn",
+    "at": 2645265,
+    "ctx": "\"></select> <button class=\"major-action-button\" id=\"fetch-knowledge-search-models-btn\" "
+  }
+]

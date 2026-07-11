@@ -1,0 +1,18 @@
+{
+  "sid": "rp:persona_1783693120316_l99qc",
+  "bindings": [
+    {
+      "personaId": "persona_1783693120316_l99q",
+      "worldId": "《凡人修仙传V10.91》",
+      "enabled": true,
+      "isActive": true
+    }
+  ],
+  "roleIds": [
+    "《凡人修仙传V10.91》"
+  ],
+  "resolvedWorldIds": [
+    "《凡人修仙传V10.91》"
+  ],
+  "regexFanrenEnabled": true
+}

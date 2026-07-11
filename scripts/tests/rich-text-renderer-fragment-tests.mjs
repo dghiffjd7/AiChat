@@ -15,9 +15,67 @@ const {
   prepareRichFragmentDisplayHtmlForParsing,
   prepareRichFragmentHtmlForParsing,
   restoreRichDetailsOpenStates,
+  splitFencedCodeBlocks,
 } = await import('../../src/scripts/ui/chat/rich-text-renderer.js');
 
 const tests = [];
+
+tests.push({
+  name: 'splitFencedCodeBlocks keeps inline backticks inside a single fenced block',
+  fn: () => {
+    // 重前端面板场景：块内 JS 含行内 ```（正则/字符串字面量），不得截断
+    const inner = [
+      '<!DOCTYPE html>',
+      '<script>',
+      "const m = raw.match(/```html([\\s\\S]*?)```/);",
+      "const stored = '```html\\n' + finalHtml + '\\n```';",
+      '</script>',
+      '</html>',
+    ].join('\n');
+    const text = '```html\n' + inner + '\n```';
+    const parts = splitFencedCodeBlocks(text);
+    assert.equal(parts.length, 1);
+    assert.equal(parts[0].type, 'code');
+    assert.equal(parts[0].lang, 'html');
+    assert.ok(parts[0].code.includes('match(/```html'));
+    assert.ok(parts[0].code.endsWith('</html>'));
+  },
+});
+
+tests.push({
+  name: 'splitFencedCodeBlocks splits normal blocks and keeps surrounding text',
+  fn: () => {
+    const text = 'before\n```js\nconst a = 1;\n```\nmiddle\n```\nplain\n```\nafter';
+    const parts = splitFencedCodeBlocks(text);
+    assert.deepEqual(parts.map(p => p.type), ['text', 'code', 'text', 'code', 'text']);
+    assert.equal(parts[1].lang, 'js');
+    assert.equal(parts[1].code, 'const a = 1;');
+    assert.equal(parts[3].code, 'plain');
+    assert.ok(parts[4].text.includes('after'));
+  },
+});
+
+tests.push({
+  name: 'splitFencedCodeBlocks extends unclosed fence to end (streaming)',
+  fn: () => {
+    const text = 'intro\n```html\n<div>partial';
+    const parts = splitFencedCodeBlocks(text);
+    assert.equal(parts.length, 2);
+    assert.equal(parts[1].type, 'code');
+    assert.equal(parts[1].code, '<div>partial');
+  },
+});
+
+tests.push({
+  name: 'splitFencedCodeBlocks ignores non-line-start fence markers',
+  fn: () => {
+    const text = 'inline ```notafence``` text without real blocks';
+    const parts = splitFencedCodeBlocks(text);
+    assert.equal(parts.length, 1);
+    assert.equal(parts[0].type, 'text');
+  },
+});
+
 const test = (name, fn) => tests.push({ name, fn });
 
 test('keeps iframe diagnostic regex escapes inside generated srcdoc script', () => {

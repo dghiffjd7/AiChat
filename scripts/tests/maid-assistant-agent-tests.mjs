@@ -1105,3 +1105,129 @@ import {
   assert.ok(waitIdx >= 0 && resumeIdx > waitIdx, '确认后应恢复 running');
   console.log('ok - 工具确认等待期间 run 标记 waiting_permission 并在确认后恢复');
 }
+
+{
+  const snapshots = [];
+  const observed = [];
+  const routingRuntime = {
+    beginRequest: () => ({ id: 'request-1' }),
+    prepareDecision: ({ phase }) => {
+      const snapshot = {
+        id: `snapshot-${snapshots.length + 1}`,
+        phase,
+        useCandidates: false,
+        promptFeatures: [],
+      };
+      snapshots.push(snapshot);
+      return snapshot;
+    },
+    observeDecision: (snapshot, decision) => {
+      observed.push({ snapshot: snapshot.id, decision });
+      return {
+        ...decision,
+        candidateSnapshotId: snapshot.id,
+        retrieverVersion: 'test-v1',
+        selectedCapabilityId: decision.featureId || '',
+        candidateHit: Boolean(decision.toolName),
+      };
+    },
+    validatePlan: plan => ({ ok: true, plan }),
+    finishRequest: () => ({
+      requestId: 'request-1',
+      decisionCount: snapshots.length,
+      validSelectionCount: 1,
+      hitCount: 1,
+      allValidSelectionsCovered: true,
+      lastCandidateSnapshotId: snapshots.at(-1)?.id || '',
+    }),
+  };
+  const agent = createMaidAssistantAgent({
+    capabilityRoutingRuntime: routingRuntime,
+    planner: async (_input, context) => {
+      assert.equal(context.capabilitySnapshot.id, 'snapshot-1');
+      return {
+        ok: true,
+        toolName: 'app.open_panel',
+        args: { panel: 'worldbook' },
+        featureId: 'worldbook.open',
+        title: '打开世界书',
+      };
+    },
+    reactPlanner: async (_input, context) => {
+      assert.equal(context.capabilitySnapshot.id, 'snapshot-2');
+      assert.equal(context.maidReactSteps.length, 1);
+      return { ok: true, action: 'final', message: '完成。' };
+    },
+    toolRegistry: {
+      executeTool: async () => ({
+        toolName: 'app.open_panel',
+        status: 'succeeded',
+        result: { ok: true },
+        summary: 'opened',
+      }),
+    },
+    logger: { warn() {}, debug() {} },
+  });
+  const result = await agent.runPrompt('打开世界书', { sessionId: 's1' });
+  assert.equal(result.ok, true);
+  assert.deepEqual(snapshots.map(item => item.phase), ['planner', 'react']);
+  assert.equal(result.steps[0].candidateSnapshotId, 'snapshot-1');
+  assert.equal(result.steps[0].candidateHit, true);
+  assert.equal(result.capabilityRouting.allValidSelectionsCovered, true);
+  assert.equal(observed.length, 2);
+  console.log('ok - maid assistant creates a fresh capability snapshot for every Planner/ReAct decision');
+}
+
+{
+  const agent = createMaidAssistantAgent({
+    capabilityRoutingRuntime: {
+      beginRequest: () => ({ id: 'fallback-request' }),
+      prepareDecision: () => { throw new Error('retriever unavailable'); },
+      finishRequest: () => null,
+    },
+    planner: async () => ({
+      ok: true,
+      toolName: 'app.open_panel',
+      args: { panel: 'worldbook' },
+      featureId: 'worldbook.open',
+      title: '打开世界书',
+    }),
+    reactPlanner: async () => ({ ok: true, action: 'final', message: '完成。' }),
+    toolRegistry: {
+      executeTool: async () => ({
+        toolName: 'app.open_panel',
+        status: 'succeeded',
+        result: { ok: true },
+      }),
+    },
+    logger: { warn() {}, debug() {} },
+  });
+  const result = await agent.runPrompt('打开世界书');
+  assert.equal(result.ok, true);
+  assert.equal(result.steps[0].toolName, 'app.open_panel');
+  console.log('ok - retriever failures degrade to the existing full-catalog execution path');
+}
+
+{
+  const observed = [];
+  let finished = 0;
+  const agent = createMaidAssistantAgent({
+    capabilityRoutingRuntime: {
+      beginRequest: () => ({ id: 'failed-request' }),
+      prepareDecision: () => ({ id: 'failed-snapshot', useCandidates: false, promptFeatures: [] }),
+      observeDecision: (_snapshot, decision, options) => {
+        observed.push({ decision, options });
+        return decision;
+      },
+      finishRequest: () => { finished += 1; },
+    },
+    planner: async () => { throw new Error('planner offline'); },
+    logger: { warn() {}, debug() {} },
+  });
+  await assert.rejects(() => agent.runPrompt('看看状态'), /planner offline/);
+  assert.equal(observed.length, 1);
+  assert.equal(observed[0].decision.reason, 'model_call_failed');
+  assert.equal(observed[0].options.countForRecall, false);
+  assert.equal(finished, 1);
+  console.log('ok - failed model calls still record the shown candidate impression');
+}

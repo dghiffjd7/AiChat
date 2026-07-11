@@ -1,0 +1,16 @@
+{
+  "presetId": "preset-openai-1782195413072-8a6ff1",
+  "workerAlive": true,
+  "elapsedMs": 4875,
+  "listenerCount": null,
+  "uiRootFound": false,
+  "uiRootChildren": 0,
+  "uiRootHtmlSample": "",
+  "newLogs": [
+    {
+      "level": "log",
+      "text": "%c[2026-07-10T10:55:34.528Z] WARN: color: #ff9800; font-weight: bold [script] [worker-console] [BubbleDialogue] ⚠ 格式规则注入未生效：injectPrompts 和 setExtensionPrompt 均不可用。请检查酒馆助手是否已安装。",
+      "at": 1783680934528
+    }
+  ]
+}

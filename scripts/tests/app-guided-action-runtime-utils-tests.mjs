@@ -4,6 +4,7 @@ import {
   buildGuidedActionGuide,
   createAppGuidedActionRuntime,
   isGuidedActionOutputOk,
+  prepareGuidedActionEntryNavigation,
 } from '../../src/scripts/ui/app-guided-action-runtime-utils.js';
 
 {
@@ -130,4 +131,119 @@ import {
   });
   assert.deepEqual(order, ['guide-start', 'guide-end', 'execute']);
   console.log('ok - guided action runtime waits for interactive guides before executing');
+}
+
+{
+  const calls = [];
+  const result = await prepareGuidedActionEntryNavigation({
+    guide: { stepDetails: [{ label: '设置' }] },
+    isTargetVisible: () => true,
+    hideMenus: () => calls.push('hide'),
+    switchPage: page => calls.push(`switch:${page}`),
+  });
+  assert.equal(result.navigated, false);
+  assert.equal(result.reason, 'target_visible');
+  assert.deepEqual(calls, []);
+  console.log('ok - guided action entry navigation leaves an already visible target untouched');
+}
+
+{
+  const calls = [];
+  const result = await prepareGuidedActionEntryNavigation({
+    guide: { stepDetails: [{ label: '顶部 +' }] },
+    isTargetVisible: () => false,
+    isChatRoomVisible: () => true,
+    hideMenus: () => calls.push('hide'),
+    exitChatRoom: () => calls.push('exit'),
+    switchPage: (page, options) => calls.push(`switch:${page}:${options?.animate}`),
+  });
+  assert.equal(result.navigated, true);
+  assert.equal(result.route, 'chat_list');
+  assert.deepEqual(calls, ['hide', 'exit', 'switch:chat:false']);
+  console.log('ok - guided action entry navigation exits a room before opening the chat list shell');
+}
+
+{
+  const calls = [];
+  const result = await prepareGuidedActionEntryNavigation({
+    guide: { stepDetails: [{ label: '聊天室标题' }] },
+    meta: {
+      plan: { args: { sessionName: '目标会话' } },
+      context: { sessionId: 'context-session' },
+    },
+    isTargetVisible: () => false,
+    resolveSessionTarget: async query => {
+      calls.push(`resolve:${query}`);
+      return { id: 'target-session', name: '目标会话' };
+    },
+    hideMenus: () => calls.push('hide'),
+    switchPage: (page, options) => calls.push(`switch:${page}:${options?.animate}`),
+    enterChatRoom: async (id, name) => calls.push(`enter:${id}:${name}`),
+  });
+  assert.equal(result.navigated, true);
+  assert.equal(result.route, 'chat_room');
+  assert.equal(result.sessionId, 'target-session');
+  assert.deepEqual(calls, [
+    'resolve:目标会话',
+    'hide',
+    'switch:chat:false',
+    'enter:target-session:目标会话',
+  ]);
+  console.log('ok - guided action entry navigation prioritizes the explicit plan target and awaits room entry');
+}
+
+{
+  const calls = [];
+  const result = await prepareGuidedActionEntryNavigation({
+    guide: { stepDetails: [{ label: '聊天室右上角菜单' }] },
+    meta: {
+      plan: { toolName: 'worldbook.create', args: { name: '艾尔登世界书' } },
+      context: { sessionId: 'current-room' },
+    },
+    isTargetVisible: () => false,
+    resolveSessionTarget: async query => {
+      calls.push(`resolve:${query}`);
+      return query === 'current-room' ? { id: query, name: '当前会话' } : null;
+    },
+    switchPage: () => {},
+    enterChatRoom: async () => {},
+  });
+  assert.equal(result.navigated, true);
+  assert.equal(result.sessionId, 'current-room');
+  assert.deepEqual(calls, ['resolve:current-room']);
+  console.log('ok - guided action entry navigation does not treat resource names as session names');
+}
+
+{
+  const calls = [];
+  const result = await prepareGuidedActionEntryNavigation({
+    guide: { stepDetails: [{ label: '聊天室右上角菜单' }] },
+    meta: { plan: { args: { sessionId: 'missing-session' } } },
+    isTargetVisible: () => false,
+    resolveSessionTarget: async query => {
+      calls.push(`resolve:${query}`);
+      return null;
+    },
+    hideMenus: () => calls.push('hide'),
+    switchPage: page => calls.push(`switch:${page}`),
+    enterChatRoom: async id => calls.push(`enter:${id}`),
+  });
+  assert.equal(result.navigated, false);
+  assert.equal(result.reason, 'session_not_found');
+  assert.deepEqual(calls, ['resolve:missing-session']);
+  console.log('ok - guided action entry navigation does not enter a fallback room for an invalid explicit target');
+}
+
+{
+  const result = await prepareGuidedActionEntryNavigation({
+    guide: { stepDetails: [{ label: '设置' }] },
+    isTargetVisible: () => false,
+    isChatRoomVisible: () => false,
+    hideMenus: () => {
+      throw new Error('navigation failed');
+    },
+  });
+  assert.equal(result.navigated, false);
+  assert.equal(result.reason, 'navigation_failed');
+  console.log('ok - guided action entry navigation degrades without blocking the guide when navigation fails');
 }

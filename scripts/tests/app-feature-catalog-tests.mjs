@@ -15,6 +15,7 @@ import { createAppNavigationAgentTools } from '../../src/scripts/agent/tools/app
 import { createAppSessionAgentTools } from '../../src/scripts/agent/tools/app-session-tools.js';
 import { createAppContentAgentTools } from '../../src/scripts/agent/tools/app-content-tools.js';
 import { createMaidMediaAssetTools } from '../../src/scripts/agent/tools/media-asset-tools.js';
+import { createAppUiCaptureTools } from '../../src/scripts/agent/tools/app-ui-capture-tools.js';
 import { createWebSearchAgentTools } from '../../src/scripts/agent/tools/web-search-tools.js';
 import { createMaidTodoTools } from '../../src/scripts/agent/tools/maid-todo-tools.js';
 import { createChatFormatRepairTools } from '../../src/scripts/agent/tools/chat-format-tools.js';
@@ -230,8 +231,8 @@ const escapeRegex = value => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'
     },
     refreshChatAndContacts: options => refreshed.push(options),
     setActiveSession: id => activeSessions.push(id),
-    generateChatImage: async ({ prompt, sessionId, negativePrompt = '' } = {}) => {
-      generatedChatImages.push({ prompt, sessionId, negativePrompt });
+    generateChatImage: async ({ prompt, sessionId, negativePrompt = '', referenceImages = [] } = {}) => {
+      generatedChatImages.push({ prompt, sessionId, negativePrompt, referenceImages });
       return true;
     },
     listModelProfiles: async ({ scope } = {}) => (scope === 'image'
@@ -308,6 +309,17 @@ const escapeRegex = value => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'
     applyChatSettings: () => {},
     now: () => 1000,
   });
+  const captureTools = createAppUiCaptureTools({
+    checkVisionSupport: async () => ({ ok: true }),
+    captureRegion: async () => ({
+      dataUrl: 'data:image/png;base64,Q0FQVFVSRQ==',
+      mime: 'image/png',
+      width: 120,
+      height: 80,
+      bytes: 7,
+    }),
+    now: () => 1000,
+  });
   const todoRuns = new Map([['run-1', { id: 'run-1', metadata: { todos: [] } }]]);
   const todoTools = createMaidTodoTools({
     getRun: runId => todoRuns.get(runId) || null,
@@ -331,7 +343,7 @@ const escapeRegex = value => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'
     },
     resolveSessionId: ({ sessionId, sessionName }) => sessionId || sessionName || current,
   });
-  const tools = [...navTools, ...sessionTools, ...contentTools, ...mediaTools, ...webTools, ...todoTools, ...formatTools];
+  const tools = [...navTools, ...sessionTools, ...contentTools, ...mediaTools, ...captureTools, ...webTools, ...todoTools, ...formatTools];
   const maidAttachments = [{ id: 'catalog-image', kind: 'image', url: 'data:image/png;base64,AAAA', name: 'catalog.png' }];
 
   for (const feature of listAppFeatures()) {
@@ -341,6 +353,21 @@ const escapeRegex = value => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'
   }
 
   const runFeature = async (feature) => {
+    if (feature.id === 'app.ui.capture_region') {
+      const context = {
+        userSelection: [{
+          regionId: 'catalog-region',
+          semanticSummary: '目录测试选区',
+          viewportRect: { left: 10, top: 10, width: 120, height: 80 },
+        }],
+        maidAttachments: [],
+      };
+      const result = await getTool(tools, 'ui.capture_region').execute({ regionId: 'catalog-region' }, context);
+      assert.equal(result.ok, true);
+      assert.equal(result.imageInjected, true);
+      assert.equal(context.maidAttachments.length, 1);
+      return;
+    }
     if (feature.id === 'session.create') {
       const result = await getTool(tools, 'session.create').execute({ name: 'CatalogRoom', open: true });
       assert.equal(result.ok, true);
@@ -494,10 +521,27 @@ const escapeRegex = value => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'
       return;
     }
     if (feature.id === 'chat.image.generate') {
-      const result = await getTool(tools, 'chat.generate_image').execute({ sessionId: 'Beta', prompt: 'a cute cat' });
+      const result = await getTool(tools, 'chat.generate_image').execute({
+        sessionId: 'Beta',
+        prompt: 'a cute cat',
+        referenceImages: ['1'],
+      }, {
+        maidAttachments: [{
+          id: 'catalog-image',
+          kind: 'image',
+          name: 'catalog.png',
+          url: 'data:image/png;base64,AAAA',
+        }],
+      });
       assert.equal(result.ok, true);
       assert.equal(result.generated, true);
-      assert.deepEqual(generatedChatImages[generatedChatImages.length - 1], { prompt: 'a cute cat', sessionId: 'B', negativePrompt: '' });
+      assert.equal(result.referenceImageCount, 1);
+      assert.deepEqual(generatedChatImages[generatedChatImages.length - 1], {
+        prompt: 'a cute cat',
+        sessionId: 'B',
+        negativePrompt: '',
+        referenceImages: ['data:image/png;base64,AAAA'],
+      });
       return;
     }
     if (feature.id === 'app.state.read') {

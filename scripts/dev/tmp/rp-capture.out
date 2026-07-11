@@ -1,0 +1,18 @@
+{
+  "sid": "rp:persona_1783693120316_l99qc",
+  "msgCount": 1,
+  "contentHead": "```html\n<!DOCTYPE html>\n<html lang=\"zh-CN\">\n  <head>\n    <meta charset=\"utf-8\" />\n    <meta content=\"width=device-width, initial-scale=1.0\" name=\"viewport\" />\n    <title>lucklyjkop（禁止二改二创面板）</title>\n ",
+  "contentHasRawHtml": true,
+  "floorHtmlHead": "<div class=\"chat-codeblock\" data-rich-render-level=\"level2\" data-rich-render-execution=\"execute\" data-rich-render-kind=\"codeblock\" style=\"border: 1px solid rgba(0, 0, 0, 0.1); border-radius: 12px; overflow: hidden; margin: 8px 0px;\"><div data-rich-render-level=\"level2\" data-rich-render-execution=\"ex",
+  "renderedDivs": 430,
+  "fanrenSet": {
+    "enabled": true,
+    "manualEnabled": true,
+    "bind": {
+      "type": "world",
+      "worldId": "《凡人修仙传V10.91》"
+    },
+    "ruleCount": 3
+  },
+  "sessionRegex": "{\"enabled\":true,\"rules\":[]}"
+}

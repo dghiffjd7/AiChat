@@ -1,0 +1,62 @@
+[
+  {
+    "scopeId": "preset-openai-1777962800865-6b197c",
+    "presetExists": false,
+    "scriptCount": 2
+  },
+  {
+    "scopeId": "preset-openai-1778763140643-98c9c3",
+    "presetExists": false,
+    "scriptCount": 4
+  },
+  {
+    "scopeId": "preset-openai-1779067191083-884665",
+    "presetExists": false,
+    "scriptCount": 5
+  },
+  {
+    "scopeId": "preset-openai-1779680507588-e69bd2",
+    "presetExists": false,
+    "scriptCount": 5
+  },
+  {
+    "scopeId": "preset-openai-1780544387894-23a0d5",
+    "presetExists": false,
+    "scriptCount": 5
+  },
+  {
+    "scopeId": "preset-openai-1781089014708-991f72",
+    "presetExists": false,
+    "scriptCount": 1
+  },
+  {
+    "scopeId": "preset-openai-1781194497114-4716b4",
+    "presetExists": false,
+    "scriptCount": 5
+  },
+  {
+    "scopeId": "preset-openai-1781362572111-ea2e64",
+    "presetExists": false,
+    "scriptCount": 5
+  },
+  {
+    "scopeId": "preset-openai-1782129850157-c11ee1",
+    "presetExists": false,
+    "scriptCount": 5
+  },
+  {
+    "scopeId": "preset-openai-1782195413072-8a6ff1",
+    "presetExists": true,
+    "scriptCount": 5
+  },
+  {
+    "scopeId": "preset-openai-1782209237581-e5f35a",
+    "presetExists": true,
+    "scriptCount": 1
+  },
+  {
+    "scopeId": "preset-openai-1783349895372-5ebc34",
+    "presetExists": true,
+    "scriptCount": 2
+  }
+]

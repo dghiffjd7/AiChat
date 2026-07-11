@@ -2238,9 +2238,54 @@ const getContext = () => ({
   currentMessageId: currentContext.currentMessageId || '',
   ...buildCompatVariablesSnapshot(),
   powerUserSettings: self.powerUserSettings || {},
+  setExtensionPrompt,
 });
 
 const legacyMacros = new Map();
+
+// 酒馆脚本的 prompt 注入桥（缺陷 #1）：setExtensionPrompt / injectPrompts 转发到主线程注入表。
+// position 数字为 ST extension_prompt_types：-1 NONE / 0 IN_PROMPT / 1 IN_CHAT / 2 BEFORE_PROMPT。
+const normalizeCompatPromptPosition = (value) => {
+  const raw = String(value ?? '').trim().toLowerCase();
+  if (raw === '-1' || raw === 'none') return 'none';
+  if (raw === '0' || raw === 'in_prompt') return 'system_end';
+  if (raw === '1') return 'in_chat';
+  if (raw === '2') return 'before_prompt';
+  return raw;
+};
+
+const setExtensionPrompt = (key, value, position, depth, _scan, role) => {
+  const entryKey = String(key || '').trim();
+  if (!entryKey) return Promise.resolve(false);
+  return callRpc('prompt.setExtensionPrompt', {
+    key: entryKey,
+    value: String(value ?? ''),
+    position: normalizeCompatPromptPosition(position),
+    depth: Math.max(0, Math.trunc(Number(depth)) || 0),
+    role: String(role || 'system'),
+  }).catch(() => false);
+};
+
+const injectPrompts = (injects = []) => {
+  const list = (Array.isArray(injects) ? injects : [injects])
+    .filter(item => item && typeof item === 'object')
+    .map(item => ({
+      id: String(item.id || '').trim(),
+      content: String(item.content ?? item.prompt ?? ''),
+      position: normalizeCompatPromptPosition(item.position),
+      depth: Math.max(0, Math.trunc(Number(item.depth)) || 0),
+      role: String(item.role || 'system'),
+    }))
+    .filter(item => item.id);
+  if (!list.length) return Promise.resolve(false);
+  return callRpc('prompt.injectPrompts', { injects: list }).catch(() => false);
+};
+
+const uninjectPrompts = (ids = []) => {
+  const list = (Array.isArray(ids) ? ids : [ids]).map(id => String(id || '').trim()).filter(Boolean);
+  if (!list.length) return Promise.resolve(false);
+  return callRpc('prompt.uninjectPrompts', { ids: list }).catch(() => false);
+};
 
 const buildSillyTavern = () => {
   const st = {};
@@ -2258,6 +2303,7 @@ const buildSillyTavern = () => {
     parseToolCalls: () => {},
   };
   st.getRequestHeaders = () => ({});
+  st.setExtensionPrompt = setExtensionPrompt;
   st.getChatCompletionModel = () => '';
   st.getCurrentChatId = () => String(currentContext.sessionId || '');
   st.saveChat = () => Promise.resolve(true);
@@ -2410,6 +2456,9 @@ const ensureCompatGlobals = () => {
   helper.getCharWorldbookNames = helper.getCharWorldbookNames || getCharWorldbookNames;
   helper.getChatWorldbookName = helper.getChatWorldbookName || getChatWorldbookName;
   helper.getPreset = helper.getPreset || getPreset;
+  helper.injectPrompts = helper.injectPrompts || injectPrompts;
+  helper.uninjectPrompts = helper.uninjectPrompts || uninjectPrompts;
+  helper.setExtensionPrompt = helper.setExtensionPrompt || setExtensionPrompt;
   syncVirtualPromptManager();
 };
 
@@ -4042,6 +4091,10 @@ export class ScriptRuntime {
     this.pendingWorkerUiPayload = null;
     this.uiLayoutTimer = 0;
     this.uiViewportTimer = 0;
+    // worker 预热期（脚本编译中）：dispatch 超时放宽，避免大脚本冷启动触发超时重启风暴。
+    this.workerWarmingUp = false;
+    // 酒馆脚本 prompt 注入表：sessionId -> Map(entryKey -> block)；脚本每次 sync 全量重跑，表随 sync 清空。
+    this.scriptPromptInjections = new Map();
     this.context = {
       sessionId: '',
       personaId: '',
@@ -4560,6 +4613,7 @@ export class ScriptRuntime {
       const blob = new Blob([buildWorkerScript()], { type: 'application/javascript' });
       const url = URL.createObjectURL(blob);
       this.worker = new Worker(url);
+      this.workerWarmingUp = true;
       URL.revokeObjectURL(url);
       this.worker.onmessage = (e) => this.handleWorkerMessage(e?.data || {});
       this.worker.onerror = (err) => {
@@ -4747,11 +4801,40 @@ export class ScriptRuntime {
     return { scope: 'global', scopeId: 'global' };
   }
 
+  // 酒馆脚本注入表操作：写入当前 context 会话；content 为空即删除该条。
+  upsertScriptPromptInjection(entryKey, block = {}) {
+    const sid = String(this.context.sessionId || '').trim();
+    if (!sid || !entryKey) return;
+    const table = this.scriptPromptInjections.get(sid) || new Map();
+    const content = String(block?.content ?? '').trim();
+    if (!content) {
+      table.delete(entryKey);
+    } else {
+      table.set(entryKey, {
+        content,
+        role: String(block?.role || 'system'),
+        position: String(block?.position ?? ''),
+        depth: Math.max(0, Math.trunc(Number(block?.depth)) || 0),
+        source: 'script_prompt_injection',
+      });
+    }
+    this.scriptPromptInjections.set(sid, table);
+  }
+
+  getScriptPromptInjections(sessionId) {
+    const sid = String(sessionId || this.context.sessionId || '').trim();
+    if (!sid || !this.isEnabled(sid)) return [];
+    const table = this.scriptPromptInjections.get(sid);
+    return table ? Array.from(table.values()) : [];
+  }
+
   async syncScripts(contextOverride) {
     const context = contextOverride
       ? { ...this.buildContext(contextOverride.sessionId), ...contextOverride }
       : this.buildContext();
     this.context = { ...this.context, ...context };
+    // 脚本集变化（sync）后全量重跑，旧注入随之作废；脚本重跑时会重新注册。
+    if (this.context.sessionId) this.scriptPromptInjections.delete(String(this.context.sessionId).trim());
     const settings = appSettings.get();
     const runtimeSettings = {
       allowReadMessages: settings.scriptAllowReadMessages !== false,
@@ -4916,13 +4999,15 @@ export class ScriptRuntime {
   callWorker(type, payload, timeoutMs = 3000) {
     if (!this.worker) return Promise.resolve(payload?.payload);
     const id = `${Date.now()}-${++this.seq}`;
+    // 预热期（大脚本编译中）放宽超时，编译完成（sync_done）后恢复常规值。
+    const effectiveTimeoutMs = this.workerWarmingUp ? Math.max(timeoutMs, 15000) : timeoutMs;
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(id);
-        const err = new Error('script runtime timeout');
+        const err = new Error(`script runtime timeout (${payload?.event || type}, ${effectiveTimeoutMs}ms)`);
         reject(err);
-        this.restartWorker('脚本执行超时，运行器已重启');
-      }, timeoutMs);
+        this.restartWorker(`脚本执行超时（${payload?.event || type}），运行器已重启`);
+      }, effectiveTimeoutMs);
       this.pending.set(id, { resolve, reject, timer });
       this.worker.postMessage({ type, id, ...payload });
     });
@@ -4930,6 +5015,10 @@ export class ScriptRuntime {
 
   handleWorkerMessage(msg) {
     if (!msg || typeof msg !== 'object') return;
+    if (msg.type === 'sync_done') {
+      this.workerWarmingUp = false;
+      return;
+    }
     if (msg.type === 'listener_add') {
       this.recordListener(msg.event);
       return;
@@ -4955,8 +5044,14 @@ export class ScriptRuntime {
       if (!pending) return;
       clearTimeout(pending.timer);
       this.pending.delete(msg.id);
-      pending.reject(new Error(msg.error || 'script dispatch error'));
-      this.restartWorker('脚本结果过大，运行器已重启');
+      const errText = String(msg.error || 'script dispatch error');
+      pending.reject(new Error(errText));
+      // 只有结果过大才需要重启防护；普通派发错误已 reject，重启只会殃及其他 pending dispatch。
+      if (errText.includes('脚本结果过大')) {
+        this.restartWorker(`脚本派发失败（${errText}），运行器已重启`);
+      } else {
+        emitDebugLog({ message: `脚本派发失败：${errText}`, type: 'warn', source: 'script' });
+      }
       return;
     }
     if (msg.type === 'rpc') {
@@ -5336,6 +5431,38 @@ export class ScriptRuntime {
         scopeId = scopeId || foundScopeId;
       }
       await this.store?.updateScriptData?.(scope || 'global', scopeId || 'global', scriptId, data);
+      return true;
+    }
+    if (method === 'prompt.setExtensionPrompt') {
+      const key = String(params?.key || '').trim();
+      if (!key) return false;
+      this.upsertScriptPromptInjection(`ext:${key}`, {
+        content: String(params?.value ?? ''),
+        position: params?.position,
+        depth: params?.depth,
+        role: params?.role,
+      });
+      return true;
+    }
+    if (method === 'prompt.injectPrompts') {
+      const injects = Array.isArray(params?.injects) ? params.injects : [];
+      injects.forEach((item) => {
+        const id = String(item?.id || '').trim();
+        if (!id) return;
+        this.upsertScriptPromptInjection(`inject:${id}`, {
+          content: String(item?.content ?? ''),
+          position: item?.position,
+          depth: item?.depth,
+          role: item?.role,
+        });
+      });
+      return true;
+    }
+    if (method === 'prompt.uninjectPrompts') {
+      const ids = Array.isArray(params?.ids) ? params.ids : [];
+      const sid = String(this.context.sessionId || '').trim();
+      const table = this.scriptPromptInjections.get(sid);
+      if (table) ids.forEach(id => table.delete(`inject:${String(id || '').trim()}`));
       return true;
     }
     if (method === 'log') {

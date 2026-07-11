@@ -1,0 +1,13 @@
+{
+  "libs": {
+    "Dexie": "undefined",
+    "AV": "undefined",
+    "echarts": "undefined",
+    "React": "undefined",
+    "ReactDOM": "undefined"
+  },
+  "idb": "open-ok",
+  "scriptResources": [],
+  "fallback": "1",
+  "iframeError": "Uncaught TypeError: Cannot read properties of null (reading 'addEventListener') file=chatapp-script-"
+}

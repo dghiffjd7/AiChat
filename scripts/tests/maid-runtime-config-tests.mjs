@@ -47,5 +47,28 @@ import { createMaidRuntimeConfigResolver } from '../../src/scripts/agent/maid-ru
   assert.equal(runtime.maidPrompt, 'quiet');
   assert.equal(runtime.personaPrompt, 'quiet');
   assert.equal(typeof runtime.client.chat, 'function');
-  console.log('ok - maid runtime config resolver uses explicit maid profile');
+console.log('ok - maid runtime config resolver uses explicit maid profile');
+}
+
+{
+  const resolver = createMaidRuntimeConfigResolver({
+    settingsStore: {
+      getBoundProfileId: () => 'vision-main',
+      getFallbackProfileId: () => 'text-fallback',
+    },
+    configManager: {
+      ensureStores: async () => {},
+      getRuntimeConfigByProfileId: async profileId => (profileId === 'vision-main'
+        ? { provider: 'openai', model: 'gpt-4o', apiKey: 'main-key' }
+        : { provider: 'deepseek', model: 'deepseek-chat', apiKey: 'fallback-key' }),
+    },
+    isConfigReady: config => Boolean(config?.apiKey),
+    createClient: config => ({ chat: async () => config.model }),
+  });
+  const runtime = await resolver();
+  assert.equal(runtime.fallbackConfig.provider, 'deepseek');
+  assert.equal(runtime.fallbackConfig.model, 'deepseek-chat');
+  assert.equal(runtime.fallbackProfileId, 'text-fallback');
+  assert.equal(typeof runtime.fallbackClient.chat, 'function');
+  console.log('ok - maid runtime config exposes fallback capability metadata');
 }

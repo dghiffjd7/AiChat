@@ -1,3 +1,5 @@
+import { normalizeMaidImageAttachments } from '../maid-attachment-parts.js';
+
 const trim = (value, fallback = '') => {
   const text = String(value ?? '').trim();
   return text || fallback;
@@ -19,6 +21,37 @@ const clone = (value) => {
 };
 
 const normalizeKey = value => trim(value).toLowerCase().replace(/\s+/g, '');
+
+const resolveMaidReferenceImages = (requested = [], context = {}) => {
+  const references = (Array.isArray(requested) ? requested : []).map(item => trim(item)).filter(Boolean);
+  const attachments = normalizeMaidImageAttachments(context?.maidAttachments);
+  const urls = [];
+  const missing = [];
+  const seen = new Set();
+  references.forEach((reference) => {
+    const ordinal = reference.match(/^(?:图片|image)?\s*(\d+)$/i);
+    const key = normalizeKey(reference);
+    const attachment = (ordinal ? attachments[Number(ordinal[1]) - 1] : null) || attachments.find(item => (
+      normalizeKey(item.id) === key || normalizeKey(item.name) === key
+    ));
+    if (!attachment?.url) {
+      missing.push(reference);
+      return;
+    }
+    if (seen.has(attachment.url)) return;
+    seen.add(attachment.url);
+    urls.push(attachment.url);
+  });
+  return {
+    urls,
+    missing,
+    available: attachments.map((item, index) => ({
+      index: index + 1,
+      id: trim(item.id),
+      name: trim(item.name),
+    })),
+  };
+};
 
 const listStoreItems = store => (
   typeof store?.getAll === 'function'
@@ -1693,7 +1726,7 @@ export const createAppContentAgentTools = ({
   {
     name: 'chat.generate_image',
     title: 'Generate image into chat',
-    description: 'Generate an image with the configured image model and post it into a chat session as the user.',
+    description: 'Generate an image, optionally using referenced maid image attachments, and post it into a chat session as the user.',
     source: 'maid-app-content',
     permissions: [],
     riskLevel: 'medium',
@@ -1722,9 +1755,14 @@ export const createAppContentAgentTools = ({
         sessionName: { type: 'string', maxLength: 160 },
         target: { type: 'string', maxLength: 160 },
         negativePrompt: { type: 'string', maxLength: 2000 },
+        referenceImages: {
+          type: 'array',
+          maxItems: 4,
+          items: { type: ['string', 'integer'], minLength: 1, maxLength: 160, minimum: 1, maximum: 4 },
+        },
       },
     },
-    execute: async (args = {}) => {
+    execute: async (args = {}, context = {}) => {
       if (typeof generateChatImage !== 'function') {
         return { ok: false, generated: false, reason: 'image_generation_unavailable' };
       }
@@ -1737,10 +1775,22 @@ export const createAppContentAgentTools = ({
       if (!contact && contactsStore && typeof contactsStore.getContact === 'function') {
         return { ok: false, generated: false, reason: 'session_not_found', sessionId };
       }
+      const references = resolveMaidReferenceImages(args.referenceImages, context);
+      if (references.missing.length) {
+        return {
+          ok: false,
+          generated: false,
+          reason: 'reference_image_not_found',
+          sessionId,
+          missingReferenceImages: references.missing,
+          availableReferenceImages: references.available,
+        };
+      }
       const result = await generateChatImage({
         prompt,
         sessionId,
         negativePrompt: trim(args.negativePrompt),
+        referenceImages: references.urls,
       });
       if (result !== true && result?.ok !== true) {
         return {
@@ -1749,9 +1799,16 @@ export const createAppContentAgentTools = ({
           reason: trim(result?.reason || result?.message, 'image_generation_failed'),
           sessionId,
           prompt,
+          referenceImageCount: references.urls.length,
         };
       }
-      return { ok: true, generated: true, sessionId, prompt };
+      return {
+        ok: true,
+        generated: true,
+        sessionId,
+        prompt,
+        referenceImageCount: references.urls.length,
+      };
     },
     summarizeResult: result => result?.generated
       ? `generated image into ${trim(result?.sessionId, '-')}`

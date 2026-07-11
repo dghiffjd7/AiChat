@@ -3,6 +3,7 @@ import {
   findAppFeature,
   listAppFeatures,
 } from './app-feature-catalog.js';
+import { resolveCandidateCapabilitySelection } from './maid-capability-routing.js';
 import {
   buildMaidImageAttachmentSummary,
   buildMaidUserContentWithImages,
@@ -10,6 +11,7 @@ import {
 } from './maid-attachment-parts.js';
 import { DEFAULT_MAID_PROMPT, MAID_OPERATION_SAFETY_PROMPT } from './maid-prompt-defaults.js';
 import { buildMaidSelectionPromptBlock } from '../ui/maid-selection-utils.js';
+import { getVisionInputCapability } from '../api/vision-capabilities.js';
 
 const trim = (value, fallback = '') => {
   const text = String(value ?? '').trim();
@@ -42,7 +44,14 @@ const emitDebugSnapshot = (callback, payload = {}, logger = console) => {
 };
 
 // 主档故障降级：主模型请求失败（网络/5xx/403 等）时用备用档重试一次
-const chatWithFallback = async (client, fallbackClient, messages, options = {}, logger = console) => {
+const chatWithFallback = async (
+  client,
+  fallbackClient,
+  messages,
+  options = {},
+  logger = console,
+  onClientUsed = null,
+) => {
   // 现场探针：挂起时读 globalThis.__maidModelProbe 定位——phase=calling 且 elapsed 大 = 请求发出后渠道 hang
   const startedAt = Date.now();
   const probe = { phase: 'calling', startedAt, options: { maxTokens: options?.maxTokens } };
@@ -52,6 +61,7 @@ const chatWithFallback = async (client, fallbackClient, messages, options = {}, 
     probe.phase = 'done';
     probe.doneAt = Date.now();
     probe.elapsedMs = probe.doneAt - startedAt;
+    try { onClientUsed?.('primary'); } catch {}
     return text;
   } catch (error) {
     probe.phase = 'failed';
@@ -62,6 +72,7 @@ const chatWithFallback = async (client, fallbackClient, messages, options = {}, 
     probe.phase = 'fallback-calling';
     logger?.warn?.('maid main model failed, retrying with fallback profile');
     try {
+      try { onClientUsed?.('fallback'); } catch {}
       const text = await fallbackClient.chat(messages, options);
       probe.phase = 'fallback-done';
       probe.elapsedMs = Date.now() - startedAt;
@@ -75,11 +86,28 @@ const chatWithFallback = async (client, fallbackClient, messages, options = {}, 
   }
 };
 
-const unsupportedPlan = (reason = 'unsupported_intent', message = '这个请求还没有接入女仆工具。') => ({
+const hasImageParts = (messages = []) => (Array.isArray(messages) ? messages : []).some(message => (
+  Array.isArray(message?.content) && message.content.some(part => part?.type === 'image_url')
+));
+
+const resolveFallbackClientForMessages = (runtime = {}, messages = []) => {
+  const fallbackClient = runtime?.fallbackClient || null;
+  if (!fallbackClient || !hasImageParts(messages)) return fallbackClient;
+  const config = isPlainObject(runtime?.fallbackConfig) ? runtime.fallbackConfig : {};
+  const capability = getVisionInputCapability({
+    provider: config.provider,
+    model: config.model,
+    baseUrl: config.baseUrl,
+  });
+  return capability.supported ? fallbackClient : null;
+};
+
+const unsupportedPlan = (reason = 'unsupported_intent', message = '这个请求还没有接入女仆工具。', details = {}) => ({
   ok: false,
   status: 'unsupported',
   reason,
   message,
+  ...(isPlainObject(details) ? details : {}),
 });
 
 const truncate = (value = '', max = 240) => {
@@ -128,6 +156,9 @@ export const buildMaidModelPlannerFeatureList = (features = listAppFeatures()) =
       `- id: ${yamlText(feature.id)}`,
       `  title: ${yamlText(feature.title)}`,
       `  tools: [${list(feature.tools).map(yamlText).join(', ')}]`,
+      isPlainObject(feature.toolSchemas) && Object.keys(feature.toolSchemas).length
+        ? `  schemas: ${JSON.stringify(feature.toolSchemas)}`
+        : '',
       feature.argsHint ? `  args: ${yamlText(feature.argsHint)}` : '',
       trim(feature.panel) ? `  panel: ${yamlText(feature.panel)}` : '',
       list(feature.aliases).length ? `  aliases: [${list(feature.aliases).slice(0, 8).map(yamlText).join(', ')}]` : '',
@@ -182,6 +213,7 @@ export const buildMaidModelPlannerMessages = ({
         '如果用户询问当前、最新、公开网络资料，允许选择联网搜索工具；如果用户询问 APP 内资料，优先选择 APP 读取工具，不要联网。',
         '任务规划判据：当任务涉及 3 个及以上不同功能域，或用户一句话列举多项要求时，第一个工具必须选 maid.todo.write 写任务清单；单一功能的简单任务直接选对应工具执行，不要写 todo。',
         '如果用户要求把附图设置为头像或壁纸，选择对应头像/壁纸工具；工具参数只传 target/name/sessionId/attachmentId 等小字段，不要把 base64 或图片 data URL 写进 args。省略 attachmentId 时工具会使用第一张附图。',
+        '如果 <user_selection> 提供区域ID，且用户询问图片内容、布局、配色、错位、重叠或遮挡等视觉问题，优先调用 ui.capture_region 查看该区域截图；纯文字和结构化语义已经足够时不要截图。只能传区域ID，不能自行编造坐标。',
         '',
         '## 安全原则',
         MAID_OPERATION_SAFETY_PROMPT,
@@ -273,6 +305,8 @@ export const extractMaidModelPlannerJson = (text = '') => {
 export const normalizeMaidModelPlan = (raw = {}, {
   features = listAppFeatures(),
   findFeature = findAppFeature,
+  candidateMode = false,
+  candidateSnapshotId = '',
 } = {}) => {
   if (!isPlainObject(raw)) return unsupportedPlan('invalid_model_plan', '模型没有返回有效计划。');
   if (raw.ok === false) {
@@ -280,15 +314,58 @@ export const normalizeMaidModelPlan = (raw = {}, {
   }
   const featureId = trim(raw.featureId);
   const toolName = trim(raw.toolName);
+  if (candidateMode) {
+    const resolved = resolveCandidateCapabilitySelection({
+      featureId,
+      toolName,
+      features,
+      allowFuzzy: true,
+    });
+    if (!resolved.ok) {
+      const nearest = (resolved.nearestCandidates || []).map(item => item.id).filter(Boolean);
+      const suffix = nearest.length ? `，最接近候选：${nearest.join('、')}` : '';
+      const reason = resolved.reason === 'tool_not_allowed' ? 'tool_not_allowed' : 'feature_not_found';
+      return unsupportedPlan(
+        reason,
+        `模型选择不在当前候选快照内（featureId=${featureId || '空'}，toolName=${toolName || '空'}${suffix}）。`,
+        {
+          candidateSnapshotId: trim(candidateSnapshotId),
+          nearestCandidates: nearest,
+          selectedCapabilityId: featureId,
+          selectedToolName: toolName,
+          candidateViolation: true,
+        },
+      );
+    }
+    const feature = resolved.feature;
+    return {
+      ok: true,
+      toolName: resolved.toolName,
+      args: isPlainObject(raw.args) ? clone(raw.args) : {},
+      featureId: trim(feature.id),
+      title: truncate(raw.title || feature.title || feature.id, 80),
+      response: truncate(raw.response || '', 160),
+      source: 'model_planner',
+      candidateSnapshotId: trim(candidateSnapshotId),
+      ...(resolved.correction ? { capabilityCorrection: resolved.correction } : {}),
+    };
+  }
   // 弱格式模型常把 featureId 和 toolName 混搭：工具归属唯一时按 toolName 纠偏 feature。
   const featuresByTool = toolName && Array.isArray(features)
     ? features.filter(item => list(item?.tools).includes(toolName))
     : [];
+  let capabilityCorrection = null;
   let feature = (typeof findFeature === 'function' ? findFeature(featureId) : null) ||
     (Array.isArray(features) ? features.find(item => trim(item?.id) === featureId) : null);
   if (!feature) {
     if (featuresByTool.length === 1) {
       feature = featuresByTool[0];
+      capabilityCorrection = {
+        originalId: featureId,
+        resolvedId: trim(feature.id),
+        rule: 'unique_tool_owner',
+        confidence: 1,
+      };
     } else {
       return unsupportedPlan('feature_not_found', `模型选择了不存在的 APP 功能（featureId=${featureId || '空'}，toolName=${toolName || '空'}）。`);
     }
@@ -298,6 +375,12 @@ export const normalizeMaidModelPlan = (raw = {}, {
   if (!toolName || !allowedTools.has(toolName)) {
     if (toolName && featuresByTool.length === 1) {
       feature = featuresByTool[0];
+      capabilityCorrection = {
+        originalId: featureId,
+        resolvedId: trim(feature.id),
+        rule: 'unique_tool_owner',
+        confidence: 1,
+      };
     } else {
       return unsupportedPlan('tool_not_allowed', `模型选择的工具不在功能白名单内（featureId=${trim(feature.id)}，toolName=${toolName || '空'}，该功能可用：${list(feature.tools).join('、') || '无'}）。`);
     }
@@ -311,6 +394,7 @@ export const normalizeMaidModelPlan = (raw = {}, {
     title: truncate(raw.title || feature.title || feature.id, 80),
     response: truncate(raw.response || '', 160),
     source: 'model_planner',
+    ...(capabilityCorrection ? { capabilityCorrection } : {}),
   };
 };
 
@@ -380,6 +464,7 @@ export const buildMaidModelReActMessages = ({
         '如果清单上的某一项在 APP 功能目录里找不到任何能完成它的工具，不要卡住：用 maid.todo.write 把该项标记为 cancelled（或在内容后注明“无对应工具”），跳过它继续做下一项，并在最终汇报中如实说明该项做不了及原因。',
         '工具 args 必须是完整、具体、可直接执行的 JSON；不要使用 "__keep_existing"、"同上"、"省略"、"待补" 等占位值。需要旧内容时先调用读取工具。',
         '处理附图时，继续使用本次请求的 attachmentId 或 preparedImageId；不要把 base64 或图片 data URL 写进 args。',
+        'ui.capture_region 成功返回 imageInjected:true 后，本轮最新选区截图已经作为图片输入附在当前消息中；请直接查看图片并回答，不要无理由重复截取同一区域。只能使用 <user_selection> 给出的区域ID，不能传坐标。',
         '',
         '## 安全原则',
         MAID_OPERATION_SAFETY_PROMPT,
@@ -414,6 +499,8 @@ export const buildMaidModelReActMessages = ({
 export const normalizeMaidModelReActDecision = (raw = {}, {
   features = listAppFeatures(),
   findFeature = findAppFeature,
+  candidateMode = false,
+  candidateSnapshotId = '',
 } = {}) => {
   if (!isPlainObject(raw)) return unsupportedPlan('invalid_model_react_decision', '模型没有返回有效 ReAct 决策。');
   if (raw.ok === false) {
@@ -431,7 +518,12 @@ export const normalizeMaidModelReActDecision = (raw = {}, {
     };
   }
   if (action === 'tool' || action === 'act') {
-    const plan = normalizeMaidModelPlan(raw, { features, findFeature });
+    const plan = normalizeMaidModelPlan(raw, {
+      features,
+      findFeature,
+      candidateMode,
+      candidateSnapshotId,
+    });
     if (!plan.ok) return plan;
     return {
       ...plan,
@@ -442,11 +534,25 @@ export const normalizeMaidModelReActDecision = (raw = {}, {
   return unsupportedPlan('invalid_react_action', '模型返回了不支持的 ReAct 动作。');
 };
 
-const normalizeMaidModelReActResponseText = (responseText = '', { features = listAppFeatures() } = {}) => {
+const normalizeMaidModelReActResponseText = (responseText = '', {
+  features = listAppFeatures(),
+  candidateMode = false,
+  candidateSnapshotId = '',
+} = {}) => {
   const parsed = extractMaidModelPlannerJson(responseText);
-  if (parsed) return normalizeMaidModelReActDecision(parsed, { features });
+  if (parsed) return normalizeMaidModelReActDecision(parsed, {
+    features,
+    findFeature: candidateMode ? null : findAppFeature,
+    candidateMode,
+    candidateSnapshotId,
+  });
   const message = truncate(responseText, 1200);
-  if (!message) return normalizeMaidModelReActDecision(null, { features });
+  if (!message) return normalizeMaidModelReActDecision(null, {
+    features,
+    findFeature: candidateMode ? null : findAppFeature,
+    candidateMode,
+    candidateSnapshotId,
+  });
   if (/"toolName"\s*:|["']action["']\s*:\s*["']tool["']|["']featureId["']\s*:/i.test(message)) {
     return unsupportedPlan('invalid_model_react_decision', '模型返回了不完整的工具决策。');
   }
@@ -457,6 +563,31 @@ const normalizeMaidModelReActResponseText = (responseText = '', { features = lis
     source: 'model_react_text_fallback',
     parseWarning: 'invalid_json',
   };
+};
+
+const resolveCapabilityDecisionFeatures = (context = {}, fallbackFeatures = []) => {
+  const snapshot = context?.capabilitySnapshot;
+  return Array.isArray(snapshot?.promptFeatures) ? snapshot.promptFeatures : fallbackFeatures;
+};
+
+const annotateCapabilitySnapshotModel = (context = {}, runtime = {}, config = {}) => {
+  const snapshot = context?.capabilitySnapshot;
+  if (!snapshot || typeof snapshot !== 'object') return;
+  snapshot.cohort = {
+    ...(isPlainObject(snapshot.cohort) ? snapshot.cohort : {}),
+    profileId: trim(runtime?.profileId),
+    provider: trim(config?.provider),
+    model: trim(config?.model),
+  };
+};
+
+const annotateCapabilitySnapshotResolvedModel = (context = {}, runtime = {}, primaryConfig = {}, source = 'primary') => {
+  const fallback = source === 'fallback';
+  annotateCapabilitySnapshotModel(
+    context,
+    { profileId: fallback ? runtime?.fallbackProfileId : runtime?.profileId },
+    fallback && isPlainObject(runtime?.fallbackConfig) ? runtime.fallbackConfig : primaryConfig,
+  );
 };
 
 export const createMaidModelBackedPlanner = ({
@@ -487,6 +618,7 @@ export const createMaidModelBackedPlanner = ({
 
   let client = runtime?.client || null;
   const config = isPlainObject(runtime?.config) ? runtime.config : {};
+  annotateCapabilitySnapshotModel(context, runtime, config);
   if (!client && typeof createClient === 'function' && isConfigReady(config)) {
     try {
       client = createClient(config);
@@ -500,6 +632,8 @@ export const createMaidModelBackedPlanner = ({
   }
 
   try {
+    const decisionFeatures = resolveCapabilityDecisionFeatures(context, features);
+    const capabilitySnapshot = context?.capabilitySnapshot || null;
     const conversationContext = typeof getConversationContext === 'function'
       ? getConversationContext({ input, context, taskType: 'maid_assistant' })
       : context?.maidConversationContext || null;
@@ -507,7 +641,7 @@ export const createMaidModelBackedPlanner = ({
       input,
       context: { ...context, subAgents: runtime?.subAgents || [] },
       conversationContext,
-      features,
+      features: decisionFeatures,
       maidPrompt: runtime?.maidPrompt || runtime?.personaPrompt,
     });
     onContextInjected?.({
@@ -515,11 +649,18 @@ export const createMaidModelBackedPlanner = ({
       input: trim(input),
       conversationContext,
     });
-    const responseText = await chatWithFallback(client, runtime?.fallbackClient, messages, {
-      temperature: 0,
-      maxTokens: 8000,
-      max_tokens: 8000,
-    }, logger);
+    const responseText = await chatWithFallback(
+      client,
+      resolveFallbackClientForMessages(runtime, messages),
+      messages,
+      {
+        temperature: 0,
+        maxTokens: 8000,
+        max_tokens: 8000,
+      },
+      logger,
+      source => annotateCapabilitySnapshotResolvedModel(context, runtime, config, source),
+    );
     emitDebugSnapshot(onDebugSnapshot, {
       source: 'maid_model_planner',
       input: trim(input),
@@ -527,7 +668,12 @@ export const createMaidModelBackedPlanner = ({
       responseText,
     }, logger);
     const parsed = extractMaidModelPlannerJson(responseText);
-    const modelPlan = normalizeMaidModelPlan(parsed, { features });
+    const modelPlan = normalizeMaidModelPlan(parsed, {
+      features: decisionFeatures,
+      findFeature: capabilitySnapshot?.useCandidates ? null : findAppFeature,
+      candidateMode: capabilitySnapshot?.useCandidates === true,
+      candidateSnapshotId: capabilitySnapshot?.id || '',
+    });
     return modelPlan;
   } catch (error) {
     logger?.warn?.('maid model planner failed', error);
@@ -540,7 +686,7 @@ export const createMaidModelBackedPlanner = ({
         conversationContext: typeof getConversationContext === 'function'
           ? getConversationContext({ input, context, taskType: 'maid_assistant' })
           : context?.maidConversationContext || null,
-        features,
+        features: resolveCapabilityDecisionFeatures(context, features),
         maidPrompt: runtime?.maidPrompt || runtime?.personaPrompt,
       }),
       responseText: error?.message || 'maid model planner failed',
@@ -578,6 +724,7 @@ export const createMaidModelBackedReActPlanner = ({
 
   let client = runtime?.client || null;
   const config = isPlainObject(runtime?.config) ? runtime.config : {};
+  annotateCapabilitySnapshotModel(context, runtime, config);
   if (!client && typeof createClient === 'function' && isConfigReady(config)) {
     try {
       client = createClient(config);
@@ -591,6 +738,8 @@ export const createMaidModelBackedReActPlanner = ({
   }
 
   try {
+    const decisionFeatures = resolveCapabilityDecisionFeatures(context, features);
+    const capabilitySnapshot = context?.capabilitySnapshot || null;
     const conversationContext = typeof getConversationContext === 'function'
       ? getConversationContext({ input, context, taskType: 'maid_react' })
       : context?.maidConversationContext || null;
@@ -599,7 +748,7 @@ export const createMaidModelBackedReActPlanner = ({
       input,
       context: { ...context, subAgents: runtime?.subAgents || [] },
       conversationContext,
-      features,
+      features: decisionFeatures,
       maidPrompt: runtime?.maidPrompt || runtime?.personaPrompt,
       steps,
     });
@@ -608,18 +757,29 @@ export const createMaidModelBackedReActPlanner = ({
       input: trim(input),
       conversationContext,
     });
-    const responseText = await chatWithFallback(client, runtime?.fallbackClient, messages, {
-      temperature: 0,
-      maxTokens: 12000,
-      max_tokens: 12000,
-    }, logger);
+    const responseText = await chatWithFallback(
+      client,
+      resolveFallbackClientForMessages(runtime, messages),
+      messages,
+      {
+        temperature: 0,
+        maxTokens: 12000,
+        max_tokens: 12000,
+      },
+      logger,
+      source => annotateCapabilitySnapshotResolvedModel(context, runtime, config, source),
+    );
     emitDebugSnapshot(onDebugSnapshot, {
       source: 'maid_model_react',
       input: trim(input),
       messages,
       responseText,
     }, logger);
-    return normalizeMaidModelReActResponseText(responseText, { features });
+    return normalizeMaidModelReActResponseText(responseText, {
+      features: decisionFeatures,
+      candidateMode: capabilitySnapshot?.useCandidates === true,
+      candidateSnapshotId: capabilitySnapshot?.id || '',
+    });
   } catch (error) {
     logger?.warn?.('maid react planner failed', error);
     emitDebugSnapshot(onDebugSnapshot, {
@@ -631,7 +791,7 @@ export const createMaidModelBackedReActPlanner = ({
         conversationContext: typeof getConversationContext === 'function'
           ? getConversationContext({ input, context, taskType: 'maid_react' })
           : context?.maidConversationContext || null,
-        features,
+        features: resolveCapabilityDecisionFeatures(context, features),
         maidPrompt: runtime?.maidPrompt || runtime?.personaPrompt,
         steps: Array.isArray(context?.maidReactSteps) ? context.maidReactSteps : [],
       }),

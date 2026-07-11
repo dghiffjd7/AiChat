@@ -327,10 +327,14 @@ export const createAppSessionAgentTools = ({
         additionalProperties: false,
         properties: {
           sessionId: { type: 'string', maxLength: 160 },
+          sessionName: { type: 'string', maxLength: 160 },
+          target: { type: 'string', maxLength: 160 },
+          chatName: { type: 'string', maxLength: 160 },
+          name: { type: 'string', maxLength: 160 },
         },
       },
       execute: async (args = {}) => {
-        const raw = trim(args.sessionId);
+        const raw = trim(args.sessionId || args.sessionName || args.target || args.chatName || args.name);
         const contact = raw ? findContact(contactsStore, raw) : null;
         const sid = trim(contact?.id || raw || chatStore?.getCurrent?.());
         if (!sid) return { ok: false, opened: false, reason: 'missing_session_id' };

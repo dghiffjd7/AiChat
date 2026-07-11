@@ -1,0 +1,33 @@
+{
+  "personaId": "persona_1783693120316_l99qc",
+  "personaName": "《凡人修仙传V10.91》",
+  "personaWorldId": null,
+  "personaKeys": [],
+  "bridgeWorldFns": [
+    "worldStore",
+    "currentWorldId",
+    "currentWorldIds",
+    "globalWorldId",
+    "worldGlobalSettings",
+    "worldSessionMap",
+    "roleWorldResolver",
+    "worldLifecycleHandler",
+    "lastWorldBudgetWarningAt",
+    "lastWorldInjectionDebug"
+  ],
+  "worldNames": [
+    "- juus -",
+    "Lara croft",
+    "《凡人修仙传V10.91》",
+    "【Sgw】又看一集",
+    "仙侠雌竞：什么叫我是炉鼎体质？",
+    "信浓",
+    "千花",
+    "可畏",
+    "哆啦A梦",
+    "四万十",
+    "圣路易斯",
+    "大凤"
+  ],
+  "currentWorldIdsForSession": []
+}

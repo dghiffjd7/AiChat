@@ -1,0 +1,50 @@
+{
+  "iframeCount": 7,
+  "iframeInfo": [
+    {
+      "id": "msg-1783693934147-fa17e9-1783693934226-53c04f",
+      "h": 352,
+      "allowScripts": "1",
+      "srcdocLen": 510882
+    },
+    {
+      "id": "msg-1783693934147-fa17e9-1783693934242-c0646e",
+      "h": 682,
+      "allowScripts": "1",
+      "srcdocLen": 0
+    }
+  ],
+  "codeblocks": 15,
+  "blockInfo": [
+    {
+      "level": "level2",
+      "exec": "execute",
+      "hasIframe": true,
+      "hasPre": false,
+      "childTags": [
+        "DIV"
+      ],
+      "textHead": ""
+    },
+    {
+      "level": "level1",
+      "exec": "none",
+      "hasIframe": false,
+      "hasPre": false,
+      "childTags": [
+        "DIV.chat-rich-fragment"
+      ],
+      "textHead": "const cleanHtml = htmlMatch ? htmlMatch[1].trim() : log.dailyPaperHtml;\n\nreturn "
+    },
+    {
+      "level": "level0",
+      "exec": "none",
+      "hasIframe": false,
+      "hasPre": true,
+      "childTags": [
+        "DIV"
+      ],
+      "textHead": "\n            // --- 【修复】生成成功后，更新缓存的日期 ---\n            if (localStorage.getItem('"
+    }
+  ]
+}

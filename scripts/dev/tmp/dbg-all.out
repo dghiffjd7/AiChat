@@ -1,0 +1,8 @@
+{
+  "total": 13,
+  "hits": [
+    "iframe|info|compat id=msg-1783696138987-68da44-1783700405362-2faaee dom-snapshot title=lucklyjkop（禁止二改二创面板） scripts=11 textLen=6669 hasContentNode=0 contentTextLen=0 contentHasBr=0 narrationCount=0 hasStateBarNode=0 stateBarTextLen=0",
+    "iframe|info|compat id=msg-1783696138987-68da44-1783700405362-2faaee dom-script-src https://unpkg.com/dexie/dist/dexie.js | https://cdn.jsdelivr.net/npm/leancloud-storage/dist/av-min.js | https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js | https://testingcf.jsdelivr.net/npm/react@18/umd/react.production.min.js | https://testingcf.jsdelivr.net/npm/r",
+    "iframe|info|compat id=msg-1783696138987-68da44-1783700405362-2faaee dom-inline-script-preview (() => { const CHATAPP_IFRAME_ID = \"msg-1783696138987-68da44-1783700405362-2faaee\"; const CHATAPP_DEBUG_TAG = \"rp-greeting\"; const CHATAPP_MESSAGE_ID = \"1783696138987-68da44\"; const CHATAPP_MESSAGE_INDEX = 0; const CHATA..."
+  ]
+}

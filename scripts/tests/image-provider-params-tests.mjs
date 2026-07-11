@@ -599,8 +599,10 @@ import {
       caught = err;
     }
     assert.ok(caught, 'empty custom stream should throw');
-    assert.match(caught.message, /Custom API stream ended without content/);
+    assert.match(caught.message, /模型返回了空回复/);
     assert.match(caught.message, /semi.*strict/);
+    // 角色序列不再进入报错正文（只留调试字段），保证真实原因可读
+    assert.doesNotMatch(caught.message, /roles_tail|user>|assistant>/);
     assert.match(caught.requestMessageRoles, /assistant>system$/);
     assert.equal(closed, true);
   } finally {

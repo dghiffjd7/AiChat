@@ -1,0 +1,127 @@
+{
+  "total": 2697570,
+  "endsWithFence": true,
+  "tail": "\"></div>\\n    </div>\\n<div id=\"attr-detail-tooltip\"></div>\\n\\n  </body>\\n</html>\\n```\\n",
+  "fencePositions": [
+    {
+      "at": 0,
+      "ctx": "```html\\n<!DOCTYPE ht"
+    },
+    {
+      "at": 509672,
+      "ctx": "h = log.dailyPaperHtml.match(/```html([\\s\\S]*?)```"
+    },
+    {
+      "at": 509689,
+      "ctx": "Html.match(/```html([\\s\\S]*?)```/);\\n             "
+    },
+    {
+      "at": 518844,
+      "ctx": "  const htmlCodeForStorage = '```html\\n' + finalHt"
+    },
+    {
+      "at": 518872,
+      "ctx": "```html\\n' + finalHtml + '\\n```';\\n\\n            /"
+    },
+    {
+      "at": 536917,
+      "ctx": "  const htmlCodeForStorage = '```html\\n' + htmlCon"
+    },
+    {
+      "at": 536947,
+      "ctx": "`html\\n' + htmlContent + '\\n```';\\n\\n            i"
+    },
+    {
+      "at": 558253,
+      "ctx": "htmlMatch = aiResponse.match(/```html([\\s\\S]*?)```"
+    },
+    {
+      "at": 558270,
+      "ctx": "onse.match(/```html([\\s\\S]*?)```/);\\n            i"
+    },
+    {
+      "at": 610393,
+      "ctx": "ch = newLatestPaperRaw.match(/```html([\\s\\S]*?)```"
+    },
+    {
+      "at": 610410,
+      "ctx": "rRaw.match(/```html([\\s\\S]*?)```/);\\n            n"
+    },
+    {
+      "at": 612243,
+      "ctx": "rgetLog.dailyPaperHtml.match(/```html([\\s\\S]*?)```"
+    },
+    {
+      "at": 612260,
+      "ctx": "Html.match(/```html([\\s\\S]*?)```/);\\n            l"
+    },
+    {
+      "at": 848157,
+      "ctx": "      const codeBlockRegex = /```(?:json|worldbook"
+    },
+    {
+      "at": 848195,
+      "ctx": "n|worldbook)?\\s*([\\s\\S]*?)\\s*```/g;\\n          let"
+    },
+    {
+      "at": 1104815,
+      "ctx": "tate.activeTheaterHTML.match(/```html([\\s\\S]*?)```"
+    },
+    {
+      "at": 1104832,
+      "ctx": "HTML.match(/```html([\\s\\S]*?)```/);\\n             "
+    },
+    {
+      "at": 1110639,
+      "ctx": "  const htmlCodeForStorage = '```html\\n' + cleanHt"
+    },
+    {
+      "at": 1110667,
+      "ctx": "```html\\n' + cleanHtml + '\\n```';\\n\\n             "
+    },
+    {
+      "at": 1127089,
+      "ctx": "  const htmlCodeForStorage = '```html\\n' + current"
+    },
+    {
+      "at": 1127119,
+      "ctx": "``html\\n' + currentHtml + '\\n```';\\n              "
+    },
+    {
+      "at": 1129912,
+      "ctx": "  const htmlCodeForStorage = '```html\\n' + cleanHt"
+    },
+    {
+      "at": 1129940,
+      "ctx": "```html\\n' + cleanHtml + '\\n```';\\n\\n             "
+    },
+    {
+      "at": 1595113,
+      "ctx": "downMatch = rawContent.match(/```html([\\s\\S]*?)```"
+    },
+    {
+      "at": 1595130,
+      "ctx": "tent.match(/```html([\\s\\S]*?)```/);\\n          if "
+    },
+    {
+      "at": 1700199,
+      "ctx": "         return text.replace(/```worldbook\\s*([\\s\\"
+    },
+    {
+      "at": 1700227,
+      "ctx": "(/```worldbook\\s*([\\s\\S]*?)\\s*```/g, (match, jsonC"
+    },
+    {
+      "at": 2091447,
+      "ctx": "ch = restoredPaperHtml.match(/```html([\\s\\S]*?)```"
+    },
+    {
+      "at": 2091464,
+      "ctx": "Html.match(/```html([\\s\\S]*?)```/);\\nconst cleanHt"
+    },
+    {
+      "at": 2697566,
+      "ctx": "tail-tooltip\"></div>\\n\\n  </body>\\n</html>\\n```\\n"
+    }
+  ]
+}

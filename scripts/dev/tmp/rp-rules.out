@@ -1,0 +1,40 @@
+{
+  "rules": [
+    {
+      "name": "去除lucklyjkop",
+      "find": "lucklyjkop",
+      "replaceLen": 0,
+      "disabled": false,
+      "placement": [
+        2
+      ],
+      "markdownOnly": false,
+      "promptOnly": true
+    },
+    {
+      "name": "凡人修仙传v10.91（作者：lucklyjkop，学习/借鉴请联系）",
+      "find": "lucklyjkop",
+      "replaceLen": 2697570,
+      "disabled": false,
+      "placement": [
+        1,
+        2
+      ],
+      "markdownOnly": true,
+      "promptOnly": false
+    },
+    {
+      "name": "（酒馆局部正则）易容阁@感谢无名氏大佬",
+      "find": "let CUSTOM_EXTERNAL_IMAGES = \\{[\\s\\S]*?\\};",
+      "replaceLen": 605,
+      "disabled": false,
+      "placement": [
+        2
+      ],
+      "markdownOnly": true,
+      "promptOnly": false
+    }
+  ],
+  "sessionWorldIds": [],
+  "sid": "rp:persona_1783693120316_l99qc"
+}

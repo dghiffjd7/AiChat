@@ -14,11 +14,43 @@ const truncate = (value = '', max = 400) => {
 
 let selectionItemSeq = 0;
 
+export const normalizeMaidViewportRect = (raw = null) => {
+  if (!raw || typeof raw !== 'object') return null;
+  const left = Number(raw.left);
+  const top = Number(raw.top);
+  const width = Number(raw.width);
+  const height = Number(raw.height);
+  if (![left, top, width, height].every(Number.isFinite) || width <= 0 || height <= 0) return null;
+  return { left, top, width, height };
+};
+
+export const resolveMaidAnchoredViewportRect = (rect = null, anchorRect = null, offset = null) => {
+  const normalized = normalizeMaidViewportRect(rect);
+  if (!normalized || !anchorRect || !offset) return null;
+  const values = [anchorRect.left, anchorRect.top, anchorRect.width, anchorRect.height, offset.dx, offset.dy]
+    .map(Number);
+  if (!values.every(Number.isFinite) || values[2] <= 0 || values[3] <= 0) return null;
+  return {
+    ...normalized,
+    left: values[0] + values[4],
+    top: values[1] + values[5],
+  };
+};
+
+export const resolveMaidUnanchoredViewportRect = (rect = null, createdRevision = 0, currentRevision = 0) => {
+  const normalized = normalizeMaidViewportRect(rect);
+  const created = Number(createdRevision);
+  const current = Number(currentRevision);
+  if (!normalized || !Number.isFinite(created) || !Number.isFinite(current) || created !== current) return null;
+  return normalized;
+};
+
 export const normalizeMaidSelectionItem = (raw = {}) => {
   const type = raw?.type === 'element' ? 'element' : 'text';
   const text = truncate(raw?.text, 1200);
   const semanticSummary = truncate(raw?.semanticSummary, 200);
   if (!text && !semanticSummary) return null;
+  const viewportRect = normalizeMaidViewportRect(raw?.viewportRect);
   selectionItemSeq += 1;
   return {
     id: trim(raw?.id) || `sel-${selectionItemSeq}`,
@@ -28,6 +60,8 @@ export const normalizeMaidSelectionItem = (raw = {}) => {
     messageId: trim(raw?.messageId),
     sessionId: trim(raw?.sessionId),
     panel: trim(raw?.panel),
+    regionId: viewportRect ? trim(raw?.regionId) : '',
+    viewportRect,
   };
 };
 
@@ -103,6 +137,7 @@ export const buildMaidSelectionPromptBlock = (items = []) => {
       item.semanticSummary,
       item.messageId ? `消息ID: ${item.messageId}` : '',
       item.sessionId ? `会话: ${item.sessionId}` : '',
+      item.regionId ? `区域ID: ${item.regionId}（需要检查图片、布局、颜色、错位或遮挡时可调用 ui.capture_region）` : '',
     ].filter(Boolean).join(' ');
     return item.text ? `${head}\n   内容: ${item.text}` : head;
   });
@@ -134,6 +169,7 @@ export const filterRectCoveredElements = (candidates = [], rect = null, { covera
 
 export const describeRegionSelection = (coveredElements = [], rect = null, {
   getCurrentSessionId = null,
+  regionId = '',
 } = {}) => {
   const described = (Array.isArray(coveredElements) ? coveredElements : [])
     .map(el => describeElementForSelection(el, { getCurrentSessionId })?.item)
@@ -149,5 +185,7 @@ export const describeRegionSelection = (coveredElements = [], rect = null, {
     text: described.map(item => item.text).filter(Boolean).join('\n---\n'),
     messageId: messageIds.length === 1 ? messageIds[0] : '',
     sessionId: described.find(item => item.sessionId)?.sessionId || '',
+    regionId,
+    viewportRect: rect,
   });
 };

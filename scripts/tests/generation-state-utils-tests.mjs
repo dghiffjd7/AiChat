@@ -1,15 +1,31 @@
 import assert from 'node:assert/strict';
 
 import {
+  GENERATION_STALE_MS,
   buildCancelledAssistantPartial,
   buildCancelledAssistantPartialMessage,
   buildGenerationCancelTraceEvent,
   commitCancelledGenerationPartial,
   createActiveGenerationRecord,
+  isGenerationRecordStale,
   runActiveGenerationCancelFlow,
 } from '../../src/scripts/ui/chat/generation-state-utils.js';
 
 const tests = [];
+
+tests.push({
+  name: 'isGenerationRecordStale reclaims only over-age records',
+  fn: () => {
+    const record = createActiveGenerationRecord({ id: 1, sessionId: 's1' });
+    assert.equal(typeof record.startedAt, 'number');
+    assert.equal(isGenerationRecordStale(record), false);
+    const stale = { ...record, startedAt: Date.now() - GENERATION_STALE_MS - 1000 };
+    assert.equal(isGenerationRecordStale(stale), true);
+    // 无 startedAt 的旧记录不误判（宁可保持旧行为）
+    assert.equal(isGenerationRecordStale({ id: 2 }), false);
+    assert.equal(isGenerationRecordStale(null), false);
+  },
+});
 const test = (name, fn) => tests.push({ name, fn });
 
 test('buildGenerationCancelTraceEvent normalizes cancel trace metadata and details', () => {
@@ -57,7 +73,9 @@ test('createActiveGenerationRecord keeps caller ownership fields and initializes
     swipeTarget,
   });
 
-  assert.deepEqual(result, {
+  assert.equal(typeof result.startedAt, 'number');
+  const { startedAt: _startedAt, ...rest } = result;
+  assert.deepEqual(rest, {
     id: 3,
     sessionId: 'session-a',
     userMsgId: 'user-1',

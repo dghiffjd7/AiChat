@@ -1,0 +1,470 @@
+{
+  "global": [],
+  "character": {
+    "default": [],
+    "persona_1768666214455_sp": [],
+    "persona_1770257776830_c5": [],
+    "persona_1777634404111_xc": [],
+    "persona_1777634638068_7b": [],
+    "persona_1777634695123_dc": [],
+    "persona_1777634812080_3t": [],
+    "persona_1777635073973_pk": [],
+    "persona_1777635400735_e0": [],
+    "persona_1777723660585_k8": [],
+    "persona_1778774454987_e3": [],
+    "persona_1778774487050_vt": [],
+    "persona_1778841742225_g9": [],
+    "persona_1778861414248_0b": [],
+    "persona_1779073708148_b9": [],
+    "persona_1779098625898_6q": [],
+    "persona_1779102090269_tb": [],
+    "persona_1779847998172_81": [],
+    "persona_1779852901547_0z": [],
+    "persona_1780039769578_g3": [],
+    "persona_1780539390225_p7": []
+  },
+  "preset": {
+    "ChatML": [],
+    "DeepSeek": [],
+    "Default": [],
+    "Neutral - Chat": [],
+    "preset-openai-1769602790": [],
+    "preset-openai-1777562579": [],
+    "preset-openai-1777564901": [],
+    "preset-openai-1777771634": [],
+    "preset-openai-1777962800": [
+      {
+        "name": "悬浮窗V3（非授权盗用必究）",
+        "enabled": true,
+        "authorized": true,
+        "size": 53722,
+        "dom": true,
+        "net": false,
+        "st": true
+      },
+      {
+        "name": "防奶人",
+        "enabled": true,
+        "authorized": true,
+        "size": 535,
+        "dom": true,
+        "net": false,
+        "st": false
+      }
+    ],
+    "preset-openai-1777974383": [],
+    "preset-openai-1778571988": [],
+    "preset-openai-1778728725": [],
+    "preset-openai-1778763140": [
+      {
+        "name": "酒馆思维链清洗",
+        "enabled": true,
+        "authorized": true,
+        "size": 20966,
+        "dom": true,
+        "net": false,
+        "st": true
+      },
+      {
+        "name": "预设对比助手 v2.7.7",
+        "enabled": true,
+        "authorized": true,
+        "size": 353,
+        "dom": true,
+        "net": true,
+        "st": false
+      },
+      {
+        "name": "格式肘击大师v1.3",
+        "enabled": true,
+        "authorized": true,
+        "size": 141477,
+        "dom": true,
+        "net": true,
+        "st": true
+      },
+      {
+        "name": "双人成行悬浮窗 V6.0",
+        "enabled": true,
+        "authorized": true,
+        "size": 107579,
+        "dom": true,
+        "net": false,
+        "st": true
+      }
+    ],
+    "preset-openai-1779067191": [
+      {
+        "name": "双人成行悬浮窗",
+        "enabled": true,
+        "authorized": true,
+        "size": 65895,
+        "dom": true,
+        "net": false,
+        "st": true
+      },
+      {
+        "name": "酒馆思维链清洗",
+        "enabled": true,
+        "authorized": true,
+        "size": 20966,
+        "dom": true,
+        "net": false,
+        "st": true
+      },
+      {
+        "name": "预设对比助手 v2.7.7",
+        "enabled": true,
+        "authorized": true,
+        "size": 353,
+        "dom": true,
+        "net": true,
+        "st": false
+      },
+      {
+        "name": "格式肘击大师v1.3",
+        "enabled": true,
+        "authorized": true,
+        "size": 141477,
+        "dom": true,
+        "net": true,
+        "st": true
+      },
+      {
+        "name": "对话渲染系统 v7.1",
+        "enabled": true,
+        "authorized": true,
+        "size": 236871,
+        "dom": true,
+        "net": true,
+        "st": true
+      }
+    ],
+    "preset-openai-1779680507": [
+      {
+        "name": "酒馆思维链清洗",
+        "enabled": true,
+        "authorized": true,
+        "size": 20966,
+        "dom": true,
+        "net": false,
+        "st": true
+      },
+      {
+        "name": "预设对比助手 v2.7.7",
+        "enabled": true,
+        "authorized": true,
+        "size": 353,
+        "dom": true,
+        "net": true,
+        "st": false
+      },
+      {
+        "name": "格式肘击大师v1.3",
+        "enabled": true,
+        "authorized": true,
+        "size": 141477,
+        "dom": true,
+        "net": true,
+        "st": true
+      },
+      {
+        "name": "双人成行悬浮窗 V6.1",
+        "enabled": true,
+        "authorized": true,
+        "size": 247178,
+        "dom": true,
+        "net": false,
+        "st": true
+      },
+      {
+        "name": "对话渲染系统 v7.1",
+        "enabled": true,
+        "authorized": true,
+        "size": 236871,
+        "dom": true,
+        "net": true,
+        "st": true
+      }
+    ],
+    "preset-openai-1780544387": [
+      {
+        "name": "双人成行悬浮窗",
+        "enabled": true,
+        "authorized": true,
+        "size": 65895,
+        "dom": true,
+        "net": false,
+        "st": true
+      },
+      {
+        "name": "酒馆思维链清洗",
+        "enabled": true,
+        "authorized": true,
+        "size": 20966,
+        "dom": true,
+        "net": false,
+        "st": true
+      },
+      {
+        "name": "预设对比助手 v2.7.7",
+        "enabled": true,
+        "authorized": true,
+        "size": 353,
+        "dom": true,
+        "net": true,
+        "st": false
+      },
+      {
+        "name": "格式肘击大师v1.3",
+        "enabled": true,
+        "authorized": true,
+        "size": 141477,
+        "dom": true,
+        "net": true,
+        "st": true
+      },
+      {
+        "name": "对话渲染系统 v7.1",
+        "enabled": true,
+        "authorized": true,
+        "size": 236871,
+        "dom": true,
+        "net": true,
+        "st": true
+      }
+    ],
+    "preset-openai-1780986787": [],
+    "preset-openai-1781089014": [
+      {
+        "name": "历史重排",
+        "enabled": true,
+        "authorized": true,
+        "size": 28274,
+        "dom": true,
+        "net": false,
+        "st": true
+      }
+    ],
+    "preset-openai-1781194497": [
+      {
+        "name": "酒馆思维链清洗",
+        "enabled": true,
+        "authorized": true,
+        "size": 20966,
+        "dom": true,
+        "net": false,
+        "st": true
+      },
+      {
+        "name": "预设对比助手 v2.8.0",
+        "enabled": true,
+        "authorized": true,
+        "size": 353,
+        "dom": true,
+        "net": true,
+        "st": false
+      },
+      {
+        "name": "格式肘击大师v1.3",
+        "enabled": true,
+        "authorized": true,
+        "size": 141477,
+        "dom": true,
+        "net": true,
+        "st": true
+      },
+      {
+        "name": "对话渲染系统 v7.1",
+        "enabled": true,
+        "authorized": true,
+        "size": 236871,
+        "dom": true,
+        "net": true,
+        "st": true
+      },
+      {
+        "name": "三人成行悬浮窗 —凝嘤嘤",
+        "enabled": true,
+        "authorized": true,
+        "size": 223459,
+        "dom": true,
+        "net": false,
+        "st": true
+      }
+    ],
+    "preset-openai-1781362572": [
+      {
+        "name": "酒馆思维链清洗",
+        "enabled": true,
+        "authorized": true,
+        "size": 20966,
+        "dom": true,
+        "net": false,
+        "st": true
+      },
+      {
+        "name": "预设对比助手 v2.8.0",
+        "enabled": true,
+        "authorized": true,
+        "size": 353,
+        "dom": true,
+        "net": true,
+        "st": false
+      },
+      {
+        "name": "格式肘击大师v1.3",
+        "enabled": true,
+        "authorized": true,
+        "size": 141477,
+        "dom": true,
+        "net": true,
+        "st": true
+      },
+      {
+        "name": "对话渲染系统 v7.1",
+        "enabled": true,
+        "authorized": true,
+        "size": 236871,
+        "dom": true,
+        "net": true,
+        "st": true
+      },
+      {
+        "name": "三人成行悬浮窗 —凝嘤嘤",
+        "enabled": true,
+        "authorized": true,
+        "size": 223459,
+        "dom": true,
+        "net": false,
+        "st": true
+      }
+    ],
+    "preset-openai-1782129850": [
+      {
+        "name": "酒馆思维链清洗",
+        "enabled": true,
+        "authorized": true,
+        "size": 20966,
+        "dom": true,
+        "net": false,
+        "st": true
+      },
+      {
+        "name": "预设对比助手 v2.8.0",
+        "enabled": true,
+        "authorized": true,
+        "size": 353,
+        "dom": true,
+        "net": true,
+        "st": false
+      },
+      {
+        "name": "格式肘击大师v1.3",
+        "enabled": true,
+        "authorized": true,
+        "size": 141477,
+        "dom": true,
+        "net": true,
+        "st": true
+      },
+      {
+        "name": "对话渲染系统 v7.1",
+        "enabled": true,
+        "authorized": true,
+        "size": 236871,
+        "dom": true,
+        "net": true,
+        "st": true
+      },
+      {
+        "name": "三人成行悬浮窗 —凝嘤嘤",
+        "enabled": true,
+        "authorized": true,
+        "size": 223459,
+        "dom": true,
+        "net": false,
+        "st": true
+      }
+    ],
+    "preset-openai-1782195413": [
+      {
+        "name": "酒馆思维链清洗",
+        "enabled": true,
+        "authorized": true,
+        "size": 20966,
+        "dom": true,
+        "net": false,
+        "st": true
+      },
+      {
+        "name": "预设对比助手 v2.8.0",
+        "enabled": true,
+        "authorized": true,
+        "size": 353,
+        "dom": true,
+        "net": true,
+        "st": false
+      },
+      {
+        "name": "格式肘击大师v1.3",
+        "enabled": true,
+        "authorized": true,
+        "size": 141477,
+        "dom": true,
+        "net": true,
+        "st": true
+      },
+      {
+        "name": "对话渲染系统 v7.1",
+        "enabled": true,
+        "authorized": true,
+        "size": 236871,
+        "dom": true,
+        "net": true,
+        "st": true
+      },
+      {
+        "name": "三人成行悬浮窗 —凝嘤嘤",
+        "enabled": true,
+        "authorized": true,
+        "size": 223459,
+        "dom": true,
+        "net": false,
+        "st": true
+      }
+    ],
+    "preset-openai-1782202810": [],
+    "preset-openai-1782209237": [
+      {
+        "name": "双人成行悬浮窗",
+        "enabled": true,
+        "authorized": true,
+        "size": 222128,
+        "dom": true,
+        "net": false,
+        "st": true
+      }
+    ],
+    "preset-openai-1783349895": [
+      {
+        "name": "悬浮窗V3（非授权盗用必究）",
+        "enabled": true,
+        "authorized": true,
+        "size": 70495,
+        "dom": true,
+        "net": false,
+        "st": true
+      },
+      {
+        "name": "防奶人",
+        "enabled": true,
+        "authorized": true,
+        "size": 1303,
+        "dom": true,
+        "net": false,
+        "st": false
+      }
+    ]
+  }
+}

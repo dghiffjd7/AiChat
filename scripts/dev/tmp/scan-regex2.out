@@ -1,0 +1,12 @@
+{
+  "methods": [
+    "getState",
+    "getGlobal",
+    "listLocalSets",
+    "getLocalSet",
+    "getSession"
+  ],
+  "total": 0,
+  "sample": [],
+  "htmlRenderers": []
+}

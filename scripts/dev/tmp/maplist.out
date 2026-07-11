@@ -1,0 +1,19 @@
+{
+  "cardFound": true,
+  "cardId": "select-birth-location-btn",
+  "overlayVisibleAfter": "flex",
+  "listAfter": {
+    "children": 0,
+    "text": ""
+  },
+  "errsNow": [
+    {
+      "m": "resource-load-failed tag=video",
+      "ex": ""
+    },
+    {
+      "m": "Uncaught TypeError: Cannot read properties of null (reading 'addEventListener')",
+      "ex": "line=interactionChoicePanel.querySelector('.modal-close-btn').addEventListener('click', () => { next=interactionChoicePanel.classList.add('hidden'); c"
+    }
+  ]
+}

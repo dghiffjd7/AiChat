@@ -1,0 +1,7 @@
+{
+  "drawMapBody": "drawMap(); ⏎ } ⏎ setTransientEvents(events) { ⏎ this.transientEvents = events || []; ⏎ this.drawMap(); // 事件更新后立即重绘 ⏎ } ⏎ setPlayerData(playerData) { ⏎ this.playerData = playerData; ⏎ this.drawMap(); // 玩家数据更新后重绘 ⏎ } ⏎ setCharacters(chars) { ⏎ this.characters = chars; ⏎ this.drawMap(); // 角色数据更新后重绘 ⏎ } ⏎ clearSelection() { ⏎ this.selectedPoint = null; ⏎ this.selectedRegionInfo = null; ⏎ this.drawMap(); ⏎ if (this.infoPanel) this.updateInfoPanel(); ⏎ if (this.npcCarousel) this.npcCarousel.classLi",
+  "dataRefs": [
+    "WORLD_MAP_DATA"
+  ],
+  "worldMapDataCtx": "须是以下之一：\"main_region\", \"sub_region\", \"poi\" (兴趣点)。 ⏎ 地点数据对象: 包含新地点所有信息的JSON对象，结构必须符合WORLD_MAP_DATA中的定义。 ⏎ 示例: ⏎ createLocation({\"type\": \"poi\",\"data\": {\"name\": \"坠魔谷\",\"x\": 800,\"y\": 750,\"main_region\": \"天南\",\"sub_region\": \"元武国\",\"description\": \"上古修士大战的遗迹"
+}

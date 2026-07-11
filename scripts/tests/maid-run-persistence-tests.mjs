@@ -7,10 +7,11 @@ import { AgentRunStore } from '../../src/scripts/storage/agent-run-store.js';
 
 const allowAll = { evaluateTool: () => ({ decision: 'allow', checks: [] }) };
 
-const createHarness = ({ executeTool }) => {
+const createHarness = ({ executeTool, toolDefinition = {} }) => {
   const store = new AgentRunStore();
   const registry = createAgentToolRegistry({ permissionEvaluator: allowAll, logger: { warn() {} } });
   registry.register({
+    ...toolDefinition,
     name: 'app.open_panel',
     description: 'test panel opener',
     schema: { type: 'object' },
@@ -48,6 +49,136 @@ const openPanelPlan = {
   assert.equal(run.steps[0].input.toolName, 'app.open_panel');
   assert.equal(run.steps[0].status, 'succeeded');
   console.log('ok - 单工具执行产生一个含步骤的持久 run');
+}
+
+{
+  const { store, runtime } = createHarness({ executeTool: async () => ({ ok: true, opened: true }) });
+  const routingRuntime = {
+    beginRequest: () => ({ id: 'cap-request-1' }),
+    prepareDecision: () => ({ id: 'cap-snapshot-1', useCandidates: false, promptFeatures: [] }),
+    observeDecision: (_snapshot, decision) => ({
+      ...decision,
+      candidateSnapshotId: 'cap-snapshot-1',
+      retrieverVersion: 'test-v1',
+      selectedCapabilityId: decision.featureId,
+      candidateHit: true,
+    }),
+    validatePlan: plan => ({ ok: true, plan }),
+    finishRequest: () => ({
+      effectiveMode: 'shadow',
+      decisionCount: 1,
+      validSelectionCount: 1,
+      hitCount: 1,
+      allValidSelectionsCovered: true,
+      lastCandidateSnapshotId: 'cap-snapshot-1',
+    }),
+  };
+  const agent = createMaidAssistantAgent({
+    planner: async () => ({ ...openPanelPlan }),
+    capabilityRoutingRuntime: routingRuntime,
+    agentTaskRuntime: runtime,
+    logger: { warn() {}, debug() {} },
+  });
+  const result = await agent.runPrompt('打开世界书', { sessionId: 's1' });
+  assert.equal(result.ok, true);
+  const run = store.listRuns({ kind: 'maid_assistant' })[0];
+  assert.equal(run.steps[0].input.candidateSnapshotId, 'cap-snapshot-1');
+  assert.equal(run.steps[0].input.candidateHit, true);
+  assert.equal(Object.hasOwn(run.steps[0].input, 'candidates'), false);
+  assert.equal(run.metadata.lastCandidateSnapshotId, 'cap-snapshot-1');
+  assert.equal(run.metadata.candidateEffectiveMode, 'shadow');
+  assert.equal(run.metadata.candidateAllCovered, true);
+  console.log('ok - AgentRun only persists compact candidate snapshot references');
+}
+
+{
+  const { store, runtime } = createHarness({ executeTool: async () => ({ ok: true }) });
+  const routingRuntime = {
+    beginRequest: () => ({ id: 'cap-request-rejected' }),
+    prepareDecision: () => ({ id: 'cap-snapshot-rejected', useCandidates: true, promptFeatures: [] }),
+    observeDecision: (_snapshot, decision) => ({
+      ...decision,
+      candidateSnapshotId: 'cap-snapshot-rejected',
+      retrieverVersion: 'test-v1',
+    }),
+    validatePlan: () => ({
+      ok: false,
+      reason: 'feature_not_found',
+      message: '能力不属于当前候选快照。',
+      nearestCandidates: ['worldbook.open'],
+    }),
+    finishRequest: () => ({
+      decisionCount: 1,
+      validSelectionCount: 0,
+      hitCount: 0,
+      allValidSelectionsCovered: false,
+      lastCandidateSnapshotId: 'cap-snapshot-rejected',
+    }),
+  };
+  const agent = createMaidAssistantAgent({
+    planner: async () => ({ ...openPanelPlan }),
+    capabilityRoutingRuntime: routingRuntime,
+    agentTaskRuntime: runtime,
+    logger: { warn() {}, debug() {} },
+  });
+  const result = await agent.runPrompt('打开世界书', { sessionId: 's1' });
+  assert.equal(result.ok, false);
+  const run = store.listRuns({ kind: 'maid_assistant' })[0];
+  assert.equal(run.status, 'failed');
+  assert.equal(run.steps.length, 1);
+  assert.equal(run.steps[0].status, 'failed');
+  assert.equal(run.steps[0].input.candidateSnapshotId, 'cap-snapshot-rejected');
+  assert.match(run.steps[0].errorMessage, /候选快照/);
+  console.log('ok - candidate Validator rejection is persisted as a compact failed AgentRun step');
+}
+
+{
+  const { store, runtime } = createHarness({
+    executeTool: async () => ({ ok: true }),
+    toolDefinition: {
+      riskLevel: 'medium',
+      safety: {
+        destructive: 'always',
+        onDeny: { action: 'skip', reason: 'user_cancelled' },
+      },
+    },
+  });
+  const agent = createMaidAssistantAgent({
+    planner: async () => ({ ...openPanelPlan }),
+    agentTaskRuntime: runtime,
+    logger: { warn() {} },
+  });
+  const result = await agent.runPrompt('取消危险操作', {
+    sessionId: 's1',
+    requestToolConfirmation: () => false,
+  });
+  assert.equal(result.ok, false);
+  const run = store.listRuns({ kind: 'maid_assistant' })[0];
+  assert.equal(run.steps[0].status, 'skipped', '安全确认拒绝应保留 skipped，不应改成 failed');
+  assert.equal(run.steps[0].errorMessage, '');
+  console.log('ok - 工具业务失败归一化不覆盖安全 skipped 状态');
+}
+
+{
+  const { store, runtime } = createHarness({
+    executeTool: async () => ({
+      ok: false,
+      reason: 'maid_vision_not_supported',
+      message: '当前女仆模型不支持图片输入。',
+    }),
+  });
+  const agent = createMaidAssistantAgent({
+    planner: async () => ({ ...openPanelPlan }),
+    agentTaskRuntime: runtime,
+    logger: { warn() {} },
+  });
+  const result = await agent.runPrompt('查看选区截图', { sessionId: 's1' });
+  assert.equal(result.ok, false);
+  const run = store.listRuns({ kind: 'maid_assistant' })[0];
+  assert.equal(run.status, 'failed');
+  assert.equal(run.steps[0].status, 'failed', '业务层 ok:false 不应持久化成成功步骤');
+  assert.match(run.steps[0].errorMessage, /不支持图片输入/);
+  console.log('ok - 工具业务失败在 ReAct 与持久 run 中都记录为失败');
 }
 
 {

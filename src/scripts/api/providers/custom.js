@@ -104,11 +104,12 @@ const buildEmptyCustomStreamError = ({
         rawModel.includes('opus') ||
         rawModel.includes('sonnet');
     const roleHint = likelyClaudeCompat && (lastRole === 'system' || lastNonSystem === 'assistant')
-        ? '；当前 payload 尾部不是有效 user turn，Claude/OpenAI-compatible 网关可能会返回空流。请在该连线配置将「提示词后处理」设为 semi 或 strict'
+        ? '；可能原因：请求尾部不是有效 user 轮（如预填充/系统注入在最后），Claude/OpenAI-compatible 网关会返回空流。请在该连线配置将「提示词后处理」设为 semi 或 strict'
         : '';
-    const reasonText = finishReason ? ` finish_reason=${finishReason}` : '';
+    const reasonText = finishReason ? `，finish_reason=${finishReason}` : '';
+    // 报错正文只保留真实原因与可行动提示；请求角色序列留在 error 字段供调试面板/日志使用。
     const error = new Error(
-        `Custom API stream ended without content (status=${Number(status || 0) || 0}${reasonText}${roleTail ? ` roles_tail=${roleTail}` : ''})${roleHint}`
+        `模型返回了空回复（HTTP ${Number(status || 0) || 0}${reasonText}）${roleHint}`
     );
     error.status = Number(status || 0) || 0;
     error.finishReason = finishReason;

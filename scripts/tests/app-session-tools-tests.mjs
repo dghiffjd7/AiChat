@@ -93,7 +93,7 @@ const createHarness = () => {
   const open = await getTool(h.tools, 'session.open').execute({ sessionId: 'Beta' });
   assert.equal(open.ok, true);
   assert.equal(open.sessionId, 'B');
-  const config = await getTool(h.tools, 'session.open_config').execute({ sessionId: 'Beta' });
+  const config = await getTool(h.tools, 'session.open_config').execute({ target: 'Beta' });
   assert.equal(config.opened, true);
   assert.deepEqual(h.configs, [{ sessionId: 'B' }]);
   console.log('ok - session tools resolve display names for opening sessions and config');

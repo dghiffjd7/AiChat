@@ -2,6 +2,7 @@
 
 mod commands;
 mod memory_db;
+mod screenshot;
 mod storage;
 
 use commands::{AttachmentStreamState, HttpAbortState, HttpStreamState, WallpaperStreamState};
@@ -85,6 +86,7 @@ pub fn run() {
             commands::save_template,
             commands::get_templates,
             commands::delete_template,
+            screenshot::capture_viewport_region,
         ])
         .setup(|_app| {
             let handle = _app.handle();

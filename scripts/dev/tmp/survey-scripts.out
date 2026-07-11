@@ -1,0 +1,113 @@
+{
+  "presets": [],
+  "personas": [
+    {
+      "name": "薪炎",
+      "size": 34210,
+      "hasScriptTag": false,
+      "hasIframe": false,
+      "hasStScript": false,
+      "hasMvu": false
+    },
+    {
+      "name": "User",
+      "size": 247,
+      "hasScriptTag": false,
+      "hasIframe": false,
+      "hasStScript": false,
+      "hasMvu": false
+    },
+    {
+      "name": "清月师尊",
+      "size": 16578,
+      "hasScriptTag": false,
+      "hasIframe": false,
+      "hasStScript": false,
+      "hasMvu": true
+    },
+    {
+      "name": "苏晓彤",
+      "size": 17585,
+      "hasScriptTag": false,
+      "hasIframe": false,
+      "hasStScript": false,
+      "hasMvu": true
+    },
+    {
+      "name": "- juus -",
+      "size": 22294,
+      "hasScriptTag": false,
+      "hasIframe": false,
+      "hasStScript": false,
+      "hasMvu": true
+    },
+    {
+      "name": "精灵抱抱",
+      "size": 15442,
+      "hasScriptTag": false,
+      "hasIframe": false,
+      "hasStScript": false,
+      "hasMvu": true
+    },
+    {
+      "name": "皇后",
+      "size": 12606,
+      "hasScriptTag": false,
+      "hasIframe": false,
+      "hasStScript": false,
+      "hasMvu": true
+    },
+    {
+      "name": "user",
+      "size": 247,
+      "hasScriptTag": false,
+      "hasIframe": false,
+      "hasStScript": false,
+      "hasMvu": false
+    },
+    {
+      "name": "姐姐",
+      "size": 17662,
+      "hasScriptTag": false,
+      "hasIframe": false,
+      "hasStScript": false,
+      "hasMvu": true
+    },
+    {
+      "name": "青梅竹马",
+      "size": 13201,
+      "hasScriptTag": false,
+      "hasIframe": false,
+      "hasStScript": false,
+      "hasMvu": true
+    },
+    {
+      "name": "XX",
+      "size": 285,
+      "hasScriptTag": false,
+      "hasIframe": false,
+      "hasStScript": false,
+      "hasMvu": false
+    },
+    {
+      "name": "异世界",
+      "size": 374,
+      "hasScriptTag": false,
+      "hasIframe": false,
+      "hasStScript": false,
+      "hasMvu": false
+    },
+    {
+      "name": "女仆能力测试",
+      "size": 381,
+      "hasScriptTag": false,
+      "hasIframe": false,
+      "hasStScript": false,
+      "hasMvu": false
+    }
+  ],
+  "regex": [],
+  "settings": {
+    "keys": []
+  }
+}

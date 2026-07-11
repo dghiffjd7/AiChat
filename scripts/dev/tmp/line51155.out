@@ -1,0 +1,10 @@
+{
+  "blockLines": 52512,
+  "at51155": [
+    "51152: try {",
+    "51153: const presetData = {",
+    "51154: customBirths: (await dbGet(CUSTOM_BIRTHS_KEY)) || [],",
+    "51155: customRaces: (await dbGet(CUSTOM_RACES_KEY)) || [],",
+    "51156: customTraits: (await dbGet(CUSTOM_TRAITS_KEY)) || [],"
+  ]
+}

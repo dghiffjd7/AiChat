@@ -1,0 +1,57 @@
+{
+  "viewportVar": "800px",
+  "bodyScrollH": 393,
+  "bodyMinH": "0px",
+  "bodyH": 393,
+  "docScrollH": 393,
+  "children": [
+    {
+      "tag": "DIV",
+      "id": "splash-screen",
+      "cls": "",
+      "h": 299,
+      "minH": "0px",
+      "pos": "fixed"
+    },
+    {
+      "tag": "DIV",
+      "id": "splash-io-menu-overlay",
+      "cls": "overlay",
+      "h": 236,
+      "minH": "0px",
+      "pos": "fixed"
+    },
+    {
+      "tag": "DIV",
+      "id": "workshop-overlay",
+      "cls": "overlay",
+      "h": 1180,
+      "minH": "0px",
+      "pos": "fixed"
+    },
+    {
+      "tag": "DIV",
+      "id": "world-map-overlay",
+      "cls": "overlay",
+      "h": 179,
+      "minH": "0px",
+      "pos": "fixed"
+    },
+    {
+      "tag": "DIV",
+      "id": "map-selection-overlay",
+      "cls": "overlay",
+      "h": 177,
+      "minH": "0px",
+      "pos": "fixed"
+    },
+    {
+      "tag": "DIV",
+      "id": "character-creator-overlay",
+      "cls": "overlay",
+      "h": 156,
+      "minH": "0px",
+      "pos": "fixed"
+    }
+  ]
+}

@@ -1,0 +1,14 @@
+[
+  {
+    "at": 1782664,
+    "ctx": "entById('set-default-map-btn').addEventListener('click', async () => { const selectedRadio = document.querySelector('#map-list-container input[name=\"defaultMapSelection\"]:checked'); if (selectedRa"
+  },
+  {
+    "at": 2061147,
+    "ctx": "} } } async function openMapManagement() { const mapListContainer = document.getElementById('map-list-container'); mapListContainer.innerHTML = '<p style=\"text-align:center;"
+  },
+  {
+    "at": 2063448,
+    "ctx": "    // 【新增】设置默认地图（静默模式，不显示提示弹窗） async function setDefaultMap() { const selectedRadio = document.querySelector('#map-list-container input[name=\"defaultMapSelection\"]:checked'); if (!selectedRad"
+  }
+]

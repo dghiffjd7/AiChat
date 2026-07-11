@@ -63,6 +63,7 @@ export const APP_FEATURE_DEFINITIONS = Object.freeze([
     summary: '打开当前聊天室或指定聊天室的会话配置面板。',
     uiPath: ['聊天室标题', '会话配置'],
     tools: ['session.open_config'],
+    argsHint: 'sessionId/sessionName/target/chatName/name 可指定聊天室；省略时打开当前会话配置',
     panel: 'session-config',
     riskLevel: 'low',
     writes: false,
@@ -349,11 +350,11 @@ export const APP_FEATURE_DEFINITIONS = Object.freeze([
   {
     id: 'chat.image.generate',
     title: '生成图片发到聊天室',
-    aliases: ['生成图片', '生图', '画一张', '画图', '给我画', 'AI画图', '生成一张图', '生成图片发给'],
-    summary: '用当前配置的生图模型按提示词生成一张图片，并以用户身份发到指定聊天室。',
+    aliases: ['生成图片', '生图', '画一张', '画图', '给我画', 'AI画图', '生成一张图', '生成图片发给', '用这张图生成', '参考这张图生成', '图生图'],
+    summary: '用当前配置的生图模型按提示词生成图片，可引用本次女仆输入中的图片，并以用户身份发到指定聊天室。',
     uiPath: ['聊天室', '输入框', '+', '生成图片'],
     tools: ['chat.generate_image'],
-    argsHint: 'prompt 必填：完整的图片描述（主体外观、动作、风格），描述要具体；sessionId/sessionName/target 指定聊天室（缺省当前）；negativePrompt 可选。生成可能耗时超过 1 分钟，耐心等待工具返回；成功后图片会直接出现在聊天室里，不需要再调用 chat.send_message 发送图片。',
+    argsHint: 'prompt 必填：完整的图片描述（主体外观、动作、风格），描述要具体；sessionId/sessionName/target 指定聊天室（缺省当前）；negativePrompt 可选；referenceImages 可选，填写本次女仆附图的 ID、名称或序号数组（如 [1]），不要传 base64。生成可能耗时超过 1 分钟，耐心等待工具返回；成功后图片会直接出现在聊天室里，不需要再调用 chat.send_message 发送图片。',
     panel: 'chat',
     riskLevel: 'medium',
     writes: true,
@@ -542,6 +543,35 @@ export const APP_FEATURE_DEFINITIONS = Object.freeze([
     directAction: 'app.ui.inspect',
   },
   {
+    id: 'app.ui.capture_region',
+    title: '查看选区截图',
+    aliases: [
+      '截图选区',
+      '截取选区',
+      '看看这里的画面',
+      '看看这里为什么错位',
+      '看看圈选的图片是什么',
+      '选区图片内容',
+      '这里配色好看吗',
+      '比较圈选区域的布局',
+      '区域文字被遮住',
+      '视觉检查',
+      '检查遮挡',
+      '检查配色',
+      '检查布局',
+    ],
+    summary: '截取用户用圈选按钮明确选择的 APP 区域，并把截图仅注入本轮女仆视觉上下文，用于检查图片、布局、颜色、错位或遮挡。',
+    uiPath: ['女仆输入框', '圈选', '拖拽选择区域'],
+    tools: ['ui.capture_region'],
+    argsHint: 'regionId 必填，只能使用 <user_selection> 中给出的区域ID；语义文字足够时不要截图，涉及图片、布局、颜色、错位或遮挡时再调用；成功结果 imageInjected:true 表示下一轮已能直接看图，不要重复截图同一区域',
+    panel: '',
+    riskLevel: 'low',
+    writes: false,
+    confirmation: 'none',
+    firstRunGuide: '',
+    directAction: 'ui.capture_region',
+  },
+  {
     id: 'app.resource.read',
     title: '读取 APP 结构化资源',
     aliases: [
@@ -722,8 +752,8 @@ export const findAppFeature = (featureId = '') => {
   return found ? clone(found) : null;
 };
 
-export const searchAppFeatures = (query = '', { limit = 5 } = {}) => {
-  return searchFeatureList(APP_FEATURE_DEFINITIONS, query, { limit });
+export const searchAppFeatures = (query = '', { limit = 5, features = APP_FEATURE_DEFINITIONS } = {}) => {
+  return searchFeatureList(features, query, { limit });
 };
 
 export const buildAppFeatureDoc = (featureId = '') => {

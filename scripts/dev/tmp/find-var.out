@@ -1,0 +1,13 @@
+{
+  "viewportHeightAt": -1,
+  "ctx": "(none)",
+  "vhUnitCount": 90,
+  "minHeightSamples": [
+    "min-height: 87vh",
+    "min-height: 40px",
+    "min-height: 20px",
+    "min-height: 150px",
+    "min-height: 100px",
+    "min-height: 0"
+  ]
+}

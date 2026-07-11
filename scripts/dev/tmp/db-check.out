@@ -1,0 +1,10 @@
+{
+  "db": {
+    "Dexie": "function",
+    "dbType": "undefined"
+  },
+  "container": {
+    "children": 1,
+    "text": "初始默认地图\n内置的初始地图"
+  }
+}

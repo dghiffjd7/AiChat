@@ -504,3 +504,113 @@ const flushTimers = () => new Promise(resolve => setTimeout(resolve, 0));
   assert.equal(calls, 1);
   console.log('ok - script runtime skips variable changed dispatch when no script listens');
 }
+
+{
+  // 缺陷 #1 修复：worker 端 setExtensionPrompt / injectPrompts 通过 RPC 到达主线程
+  const { sandbox, messages } = createWorkerHarness();
+  const script = `
+    if (typeof SillyTavern.setExtensionPrompt !== 'function') throw new Error('missing SillyTavern.setExtensionPrompt');
+    if (typeof SillyTavern.getContext().setExtensionPrompt !== 'function') throw new Error('missing getContext().setExtensionPrompt');
+    if (typeof TavernHelper.injectPrompts !== 'function') throw new Error('missing TavernHelper.injectPrompts');
+    if (typeof TavernHelper.uninjectPrompts !== 'function') throw new Error('missing TavernHelper.uninjectPrompts');
+    SillyTavern.setExtensionPrompt('bubble_rules', '格式规则内容', 1, 2, false, 'system');
+    TavernHelper.injectPrompts([{ id: 'fmt-1', content: '注入内容', position: 'in_chat', depth: 3, role: 'user' }]);
+    TavernHelper.uninjectPrompts(['fmt-1']);
+  `;
+  await sandbox.self.onmessage({
+    data: {
+      type: 'sync',
+      settings: { allowNetwork: false },
+      context: { sessionId: 's1' },
+      scripts: [{ id: 'sc-1', name: 'inject test', enabled: true, authorized: true, content: script }],
+    },
+  });
+  await flushTimers();
+  const rpcs = messages.filter(msg => msg.type === 'rpc');
+  const setCall = rpcs.find(msg => msg.method === 'prompt.setExtensionPrompt');
+  assert.ok(setCall, 'setExtensionPrompt rpc missing');
+  assert.equal(setCall.params.key, 'bubble_rules');
+  assert.equal(setCall.params.position, 'in_chat');
+  assert.equal(setCall.params.depth, 2);
+  const injectCall = rpcs.find(msg => msg.method === 'prompt.injectPrompts');
+  assert.ok(injectCall, 'injectPrompts rpc missing');
+  assert.equal(injectCall.params.injects[0].id, 'fmt-1');
+  assert.equal(injectCall.params.injects[0].role, 'user');
+  const uninjectCall = rpcs.find(msg => msg.method === 'prompt.uninjectPrompts');
+  assert.ok(uninjectCall, 'uninjectPrompts rpc missing');
+  const loadErrors = messages.filter(msg => msg.type === 'rpc' && msg.method === 'log' && /脚本加载失败/.test(JSON.stringify(msg.params || {})));
+  assert.equal(loadErrors.length, 0, 'script should load without errors');
+  console.log('ok - worker exposes setExtensionPrompt/injectPrompts and forwards RPC');
+}
+
+{
+  // 缺陷 #1 修复：主线程注入表 upsert/删除/查询/sync 清空/isEnabled 门控
+  const runtime = new ScriptRuntime({ ready: Promise.resolve(), getScripts: () => [] });
+  await runtime.ready;
+  runtime.isEnabled = () => true;
+  runtime.context = { sessionId: 's1' };
+
+  await runtime.processRpc('prompt.setExtensionPrompt', { key: 'k1', value: '规则A', position: 'in_chat', depth: 2, role: 'system' });
+  await runtime.processRpc('prompt.injectPrompts', { injects: [{ id: 'i1', content: '注入B', position: 'before_prompt', depth: 0, role: 'user' }] });
+  let blocks = runtime.getScriptPromptInjections('s1');
+  assert.equal(blocks.length, 2);
+  assert.equal(blocks[0].content, '规则A');
+  assert.equal(blocks[0].position, 'in_chat');
+  assert.equal(blocks[1].role, 'user');
+
+  // 空 value = 删除；uninject 删除
+  await runtime.processRpc('prompt.setExtensionPrompt', { key: 'k1', value: '' });
+  await runtime.processRpc('prompt.uninjectPrompts', { ids: ['i1'] });
+  assert.equal(runtime.getScriptPromptInjections('s1').length, 0);
+
+  // 重新写入后：脚本禁用时不注入；sync 清空
+  await runtime.processRpc('prompt.setExtensionPrompt', { key: 'k2', value: '规则C' });
+  runtime.isEnabled = () => false;
+  assert.equal(runtime.getScriptPromptInjections('s1').length, 0);
+  runtime.isEnabled = () => true;
+  assert.equal(runtime.getScriptPromptInjections('s1').length, 1);
+  runtime.buildContext = () => ({ sessionId: 's1' });
+  runtime.worker = null;
+  await runtime.syncScripts();
+  assert.equal(runtime.getScriptPromptInjections('s1').length, 0);
+  console.log('ok - main thread script prompt injection table upsert/remove/gate/sync-clear');
+}
+
+{
+  // 缺陷 #2 修复：预热期超时放宽、sync_done 结束预热、dispatch_error 选择性重启
+  const runtime = new ScriptRuntime({ ready: Promise.resolve(), getScripts: () => [] });
+  await runtime.ready;
+  runtime.isEnabled = () => true;
+  runtime.context = { sessionId: 's1' };
+  // 预热期：timeout 放宽到 >=15000（用 fake worker 观察不触发 3s 超时）
+  runtime.workerWarmingUp = true;
+  const posted = [];
+  runtime.worker = { postMessage: msg => posted.push(msg), terminate: () => {} };
+  const slowCall = runtime.callWorker('dispatch', { event: 'test.slow', payload: {} }, 3000);
+  let settled = false;
+  slowCall.then(() => { settled = true; }, () => { settled = true; });
+  await new Promise(r => setTimeout(r, 3200));
+  assert.equal(settled, false, 'warmup call should not timeout at 3s');
+  // sync_done 结束预热
+  runtime.handleWorkerMessage({ type: 'sync_done' });
+  assert.equal(runtime.workerWarmingUp, false);
+  // 手动 resolve 挂起的调用（模拟 worker 回复）
+  runtime.handleWorkerMessage({ type: 'dispatch_result', id: posted[0].id, result: { ok: true } });
+  await slowCall;
+
+  // dispatch_error：普通错误不重启（其他 pending 不受殃及）
+  let restarts = 0;
+  runtime.restartWorker = () => { restarts += 1; };
+  const callA = runtime.callWorker('dispatch', { event: 'a', payload: {} }, 3000);
+  const callB = runtime.callWorker('dispatch', { event: 'b', payload: {} }, 3000);
+  const idA = posted[1].id;
+  runtime.handleWorkerMessage({ type: 'dispatch_error', id: idA, error: '某脚本抛出异常' });
+  await assert.rejects(callA, /某脚本抛出异常/);
+  assert.equal(restarts, 0, 'normal dispatch error must not restart worker');
+  // 结果过大才重启
+  const idB = posted[2].id;
+  runtime.handleWorkerMessage({ type: 'dispatch_error', id: idB, error: '脚本结果过大' });
+  await assert.rejects(callB, /脚本结果过大/);
+  assert.equal(restarts, 1, 'oversized result should restart worker');
+  console.log('ok - warmup grace, sync_done clears warmup, dispatch_error restarts selectively');
+}

@@ -1,0 +1,9 @@
+{
+  "sid": "rp:persona_1783693120316_l99qc",
+  "worldIds": [],
+  "iframes": 7,
+  "codeblocks": 15,
+  "rawJsBlocks": 8,
+  "bigIframeSrcdoc": 0,
+  "visibleText": "html([\\s\\S]*?)\n\nconst cleanHtml = htmlMatch ? htmlMatch[1].trim() : log.dailyPaperHtml;\n\nreturn `【历史日报 ${index + 1}/${targetLogs.length} (时间: ${new Da"
+}

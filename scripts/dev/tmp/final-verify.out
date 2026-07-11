@@ -1,0 +1,19 @@
+{
+  "sent": true,
+  "assistantDelta": 6,
+  "toasts": [
+    {
+      "level": "warning",
+      "msg": "未解析到有效对话标签，已丢弃；可在「本次 AI 回复」查看原始内容"
+    },
+    {
+      "level": "info",
+      "msg": "正在修复格式中"
+    },
+    {
+      "level": "warning",
+      "msg": "格式修复未能自动完成：原始回复无任何协议标签，无聊天行，无法修复"
+    }
+  ],
+  "scriptErrs": []
+}

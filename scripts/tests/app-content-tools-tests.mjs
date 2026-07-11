@@ -526,6 +526,52 @@ const createProfileStore = (prefix = 'profile') => {
 }
 
 {
+  const generated = [];
+  const contacts = new Map([['elf', { id: 'elf', name: '精灵女王' }]]);
+  const tools = createAppContentAgentTools({
+    contactsStore: {
+      listContacts: () => Array.from(contacts.values()),
+      getContact: id => contacts.get(id) || null,
+    },
+    chatStore: { getCurrent: () => 'elf' },
+    generateChatImage: async payload => {
+      generated.push(payload);
+      return true;
+    },
+  });
+  const tool = getTool(tools, 'chat.generate_image');
+  assert.ok(tool.schema.properties.referenceImages);
+  const maidAttachments = [
+    { id: 'ref-a', name: 'first.png', kind: 'image', llmUrl: 'data:image/png;base64,QUFB' },
+    { id: 'ref-b', name: 'second.png', kind: 'image', llmUrl: 'data:image/png;base64,QkJC' },
+  ];
+  const result = await tool.execute({
+    sessionId: 'elf',
+    prompt: '参考构图生成新图',
+    referenceImages: [2, 'ref-a', 2],
+  }, { maidAttachments });
+  assert.equal(result.ok, true);
+  assert.equal(result.referenceImageCount, 2);
+  assert.deepEqual(generated, [{
+    prompt: '参考构图生成新图',
+    sessionId: 'elf',
+    negativePrompt: '',
+    referenceImages: ['data:image/png;base64,QkJC', 'data:image/png;base64,QUFB'],
+  }]);
+
+  const missing = await tool.execute({
+    sessionId: 'elf',
+    prompt: '不要静默退化成文生图',
+    referenceImages: ['missing-ref'],
+  }, { maidAttachments });
+  assert.equal(missing.ok, false);
+  assert.equal(missing.reason, 'reference_image_not_found');
+  assert.deepEqual(missing.missingReferenceImages, ['missing-ref']);
+  assert.equal(generated.length, 1);
+  console.log('ok - chat.generate_image resolves referenced maid attachments and rejects missing references');
+}
+
+{
   // 模型渠道档：列出 + 模糊匹配切换 + 歧义/不存在/已活跃分支
   const switched = [];
   const profiles = [

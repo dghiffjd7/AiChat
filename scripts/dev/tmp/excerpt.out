@@ -1,0 +1,7 @@
+{
+  "line": 51155,
+  "col": 65,
+  "metaHit": 1,
+  "excerpt": "line=interactionChoicePanel.querySelector('.modal-close-btn').addEventListener('click', () => { next=interactionChoicePanel.classList.add('hidden'); col=65",
+  "label": "script#8 pos=body kind=inline preview=const SYSTEM_PROMPT_PR"
+}

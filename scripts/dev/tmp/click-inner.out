@@ -1,0 +1,17 @@
+{
+  "btnRect": {
+    "x": 404,
+    "y": 423,
+    "w": 160
+  },
+  "hitIsBtn": true,
+  "hitChain": [
+    "BUTTON#start-new-life-btn.splash-btn z=auto pe=auto",
+    "DIV#splash-buttons z=auto pe=auto",
+    "DIV#splash-content z=auto pe=auto",
+    "DIV#splash-screen z=2000 pe=auto",
+    "BODY.theme-night z=auto pe=auto",
+    "HTML z=auto pe=auto"
+  ],
+  "clickReachedBtn": true
+}

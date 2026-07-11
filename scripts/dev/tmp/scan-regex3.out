@@ -1,0 +1,4 @@
+page exception: TypeError: (globalList || []).map is not a function
+    at <anonymous>:18:110
+    at <anonymous>:19:3
+    at <anonymous>:20:3

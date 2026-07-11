@@ -93,7 +93,17 @@ export const createActiveGenerationRecord = ({
   partialCommitHandler,
   swipeTarget,
   cancelled: false,
+  startedAt: Date.now(),
 });
+
+// 生成记录超龄判定：Rust 层 240s 硬超时 + 缓冲；超过即视为流挂死残留的僵尸记录。
+export const GENERATION_STALE_MS = 300_000;
+export const isGenerationRecordStale = (generation = null, now = Date.now()) => {
+  if (!generation || typeof generation !== 'object') return false;
+  const startedAt = Number(generation.startedAt) || 0;
+  if (!startedAt) return false;
+  return now - startedAt > GENERATION_STALE_MS;
+};
 
 export const buildCancelledAssistantPartial = ({
   generation = null,

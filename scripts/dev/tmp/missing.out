@@ -1,0 +1,20 @@
+{
+  "totalListenerIds": 204,
+  "missing": [
+    "import-text-image-presets-btn",
+    "vector-auto-save-toggle",
+    "manual-generate-vector-index-btn",
+    "retry-failed-vector-btn",
+    "vector-auto-inject-toggle",
+    "vector-enable-rerank-toggle",
+    "fetch-vector-save-models-btn",
+    "fetch-vector-search-models-btn",
+    "btn-import-vectors",
+    "merged-import-txt-btn",
+    "merged-clear-db-btn",
+    "btn-export-vectors",
+    "btn-paste-vector",
+    "biography-search-input",
+    "add-text-image-wb-btn"
+  ]
+}
