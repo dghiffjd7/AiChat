@@ -46,6 +46,7 @@ import {
 } from '../memory/contact-profile-utils.js';
 import {
   PROMPT_SEGMENT_ANCHORS,
+  normalizePromptSegmentAnchor,
   sortPromptSegments,
   splitDepthPromptMessagesForLatest,
   toPromptSegment,

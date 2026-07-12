@@ -34,11 +34,12 @@ globalThis.setTimeout = (fn, delay, ...args) => {
 };
 const {
   buildScriptRuntimeWorkerSourceForTests,
+  isEsmLikeScriptForTests,
   ScriptRuntime,
 } = await import('../../src/scripts/plugins/script-runtime.js');
 globalThis.setTimeout = realSetTimeout;
 
-const createWorkerHarness = () => {
+const createWorkerHarness = ({ chatMessages = [], characterRegexes = [], fetchImpl } = {}) => {
   const messages = [];
   let sandbox = null;
   class FakeXhr {
@@ -74,6 +75,7 @@ const createWorkerHarness = () => {
     Number,
     Boolean,
     URL,
+    ...(fetchImpl ? { fetch: fetchImpl } : {}),
     XMLHttpRequest: FakeXhr,
     importScripts: () => {
       throw new Error('blocked in test');
@@ -82,7 +84,11 @@ const createWorkerHarness = () => {
       messages.push(msg);
       if (msg?.type === 'rpc' && msg.method === 'chat.getMessages') {
         queueMicrotask(() => {
-          sandbox.self.onmessage({ data: { type: 'rpc_result', id: msg.id, result: [] } });
+          sandbox.self.onmessage({ data: { type: 'rpc_result', id: msg.id, result: chatMessages } });
+        });
+      } else if (msg?.type === 'rpc' && msg.method === 'regex.getCharacter') {
+        queueMicrotask(() => {
+          sandbox.self.onmessage({ data: { type: 'rpc_result', id: msg.id, result: characterRegexes } });
         });
       } else if (msg?.type === 'rpc') {
         queueMicrotask(() => {
@@ -102,6 +108,129 @@ const createWorkerHarness = () => {
 };
 
 const flushTimers = () => new Promise(resolve => setTimeout(resolve, 0));
+
+assert.equal(isEsmLikeScriptForTests("import 'https://example.com/loader.js'"), true);
+assert.equal(isEsmLikeScriptForTests('export const value = 1;'), true);
+assert.equal(isEsmLikeScriptForTests('const important = true;'), false);
+assert.equal(isEsmLikeScriptForTests("import { ref } from 'vue';"), true);
+assert.equal(isEsmLikeScriptForTests(";import{a}from'x';"), true);
+assert.equal(isEsmLikeScriptForTests('}\nexport{helper}'), true);
+assert.equal(isEsmLikeScriptForTests('export default function() {}'), true);
+// 脚本内嵌 HTML/取值字符串不是模块语法（对话渲染系统 v7.1 误路由回归形态）
+assert.equal(isEsmLikeScriptForTests('const html = `<button id="bam-btn-import" style="x">导入</button>`;'), false);
+assert.equal(isEsmLikeScriptForTests("$('#bam-btn-import').addEventListener('click', () => {});"), false);
+assert.equal(isEsmLikeScriptForTests("const exportBtn = doc.getElementById('bam-btn-export');"), false);
+assert.equal(isEsmLikeScriptForTests('module.exports = {}; exports.foo = 1;'), false);
+assert.equal(isEsmLikeScriptForTests('const data = { import: fn, export: gn };'), false);
+console.log('ok - script runtime recognizes actual ESM import and export syntax');
+
+{
+  let fetchCalls = 0;
+  const { sandbox, messages } = createWorkerHarness({
+    fetchImpl: async () => {
+      fetchCalls += 1;
+      return { ok: true, text: async () => 'remote script' };
+    },
+  });
+  await sandbox.self.onmessage({
+    data: {
+      type: 'sync',
+      settings: { allowNetwork: false },
+      context: { sessionId: 's1' },
+      scripts: [{
+        id: 'network-disabled',
+        name: 'network disabled',
+        enabled: true,
+        content: `fetch('https://example.com/remote.js').catch(() => {});`,
+      }],
+    },
+  });
+  await flushTimers();
+  assert.equal(fetchCalls, 0, 'disabled script network permission must block direct fetch');
+  assert.equal(
+    messages.some(msg => msg.type === 'rpc' && msg.method === 'log' && /脚本网络已禁用/.test(JSON.stringify(msg.params || {}))),
+    true,
+    'blocked fetch should emit an explicit script warning',
+  );
+  const allowed = createWorkerHarness({
+    fetchImpl: async () => {
+      fetchCalls += 1;
+      return { ok: true, text: async () => 'remote script' };
+    },
+  });
+  await allowed.sandbox.self.onmessage({
+    data: {
+      type: 'sync',
+      settings: { allowNetwork: true },
+      context: { sessionId: 's1' },
+      scripts: [{
+        id: 'network-enabled',
+        name: 'network enabled',
+        enabled: true,
+        content: `fetch('https://example.com/remote.js').catch(() => {});`,
+      }],
+    },
+  });
+  await flushTimers();
+  assert.equal(fetchCalls, 1, 'enabled script network permission should preserve direct fetch');
+  console.log('ok - worker blocks direct fetch when script network permission is disabled');
+}
+
+{
+  const { sandbox, messages } = createWorkerHarness({
+    chatMessages: [
+      { id: 'm1', role: 'user', raw: 'hello' },
+      { id: 'm2', role: 'assistant', rawOriginal: 'world with update block', rawSource: 'world', raw: 'world' },
+    ],
+    characterRegexes: [
+      { id: 'r1', script_name: 'desktop', enabled: true, __chatappSetId: 'set-1' },
+    ],
+  });
+  const script = `
+    if (getLastMessageId() !== 1) throw new Error('missing last message id');
+    const messages = getChatMessages(1, { include_swipes: false });
+    if (messages[0]?.message !== 'world' || messages[0]?.role !== 'assistant') throw new Error('missing tavern message shape');
+    const latestAssistant = getChatMessages(-1, { role: 'assistant' });
+    if (latestAssistant.length !== 1 || latestAssistant[0]?.message !== 'world') throw new Error('missing negative latest-message selector');
+    const assistantRange = getChatMessages('0-{{lastMessageId}}', { role: 'assistant' });
+    if (assistantRange.length !== 1 || assistantRange[0]?.message_id !== 1) throw new Error('missing range macro or role filter');
+    if (tavern_events.GENERATION_ENDED !== 'message.after_receive') throw new Error('missing generation event alias');
+    if (tavern_events.CHARACTER_MESSAGE_RENDERED !== 'message.after_render') throw new Error('missing render event alias');
+    const regexes = getTavernRegexes({ scope: 'character' });
+    if (regexes[0]?.script_name !== 'desktop' || regexes[0]?.enabled !== true) throw new Error('missing character regexes');
+    regexes[0].enabled = false;
+    replaceTavernRegexes(regexes, { scope: 'character' });
+    setChatMessages([{ message_id: 1, message: 'world\\nmarker' }], { refresh: 'affected' });
+    replaceScriptButtons(getScriptId(), [{ name: 'Switch', visible: true }]);
+    eventOnButton('Switch', () => document.getElementById('chatapp-script-buttons-tavern-api')?.setAttribute('data-button-clicked', '1'));
+    eventOn(tavern_events.GENERATION_ENDED, () => {});
+  `;
+  await sandbox.self.onmessage({
+    data: {
+      type: 'sync',
+      settings: { allowNetwork: false },
+      context: { sessionId: 's1' },
+      scripts: [{ id: 'tavern-api', name: 'tavern api', enabled: true, content: script }],
+    },
+  });
+  await flushTimers();
+  assert.equal(messages.some(msg => msg.type === 'listener_add' && msg.event === 'message.after_receive'), true);
+  assert.equal(messages.some(msg => msg.type === 'rpc' && msg.method === 'chat.setMessages'), true);
+  assert.equal(messages.some(msg => msg.type === 'rpc' && msg.method === 'regex.replaceCharacter'), true);
+  const firstUpdate = messages.filter(msg => msg.type === 'ui_update').at(-1);
+  assert.ok(firstUpdate, 'missing script button ui update');
+  const html = firstUpdate.payload.roots.join('');
+  assert.match(html, />Switch</);
+  const nodeId = html.match(/<button[^>]*data-chatapp-virtual-node-id="([^"]+)"/)?.[1];
+  assert.ok(nodeId, 'missing script button node id');
+  await sandbox.self.onmessage({
+    data: { type: 'ui_event', nodeId, eventType: 'click', event: { bubbles: true, cancelable: true } },
+  });
+  await flushTimers();
+  const clicked = messages.filter(msg => msg.type === 'ui_update').at(-1)?.payload?.roots?.join('') || '';
+  assert.match(clicked, /data-button-clicked="1"/);
+  console.log('ok - script runtime exposes TavernHelper message, regex, event, and script-button contracts');
+}
 
 {
   const { sandbox, messages } = createWorkerHarness();
@@ -173,6 +302,8 @@ const flushTimers = () => new Promise(resolve => setTimeout(resolve, 0));
     if (promptName?.getAttribute('data-pm-name') !== 'Rule') throw new Error('missing virtual prompt name');
     promptRow.querySelector('.prompt-manager-toggle-action').click();
     if (promptRow.classList.contains('completion_prompt_manager_prompt_disabled')) throw new Error('virtual prompt toggle did not update local state');
+    const presetRegexNames = Array.from(document.querySelectorAll('#saved_preset_scripts .regex_script_name')).map(node => node.textContent);
+    if (!presetRegexNames.includes('TG-版本标记 V3.0.5')) throw new Error('missing virtual preset regex rows');
     const pwin = window.parent || window;
     pwin.$(document).off('keydown').on('keydown', () => {});
     const settingsRoot = document.createElement('div');
@@ -231,6 +362,9 @@ const flushTimers = () => new Promise(resolve => setTimeout(resolve, 0));
           prompt_order: [{ character_id: 100001, order: [{ identifier: 'rule', enabled: false }] }],
           prompts_unused: [],
         },
+        presetRegexes: [
+          { id: 'preset-regex-1', script_name: 'TG-版本标记 V3.0.5', enabled: false },
+        ],
       },
       scripts: [{ id: 'compat', name: 'compat', enabled: true, content: script }],
     },
@@ -280,6 +414,13 @@ const flushTimers = () => new Promise(resolve => setTimeout(resolve, 0));
     });
     root.style.left = '12px';
     document.body.appendChild(root);
+    const details = document.createElement('details');
+    details.id = 'native-details';
+    details.setAttribute('open', '');
+    const summary = document.createElement('summary');
+    summary.textContent = 'section';
+    details.appendChild(summary);
+    document.body.appendChild(details);
     const htmlRoot = document.createElement('div');
     htmlRoot.id = 'html-mounted-widget';
     htmlRoot.textContent = 'html mounted';
@@ -309,6 +450,8 @@ const flushTimers = () => new Promise(resolve => setTimeout(resolve, 0));
   assert.equal(initialHtml.includes('hidden adapter'), false);
   const nodeId = initialHtml.match(/data-chatapp-virtual-node-id="([^"]+)"/)?.[1];
   assert.ok(nodeId, 'missing mirrored node id');
+  const detailsNodeId = initialHtml.match(/<details[^>]*data-chatapp-virtual-node-id="([^"]+)"/)?.[1];
+  assert.ok(detailsNodeId, 'missing mirrored details node id');
 
   await sandbox.self.onmessage({
     data: {
@@ -333,6 +476,15 @@ const flushTimers = () => new Promise(resolve => setTimeout(resolve, 0));
       nodeId,
       eventType: 'click',
       event: { clientX: 42, bubbles: true, cancelable: true },
+    },
+  });
+  await sandbox.self.onmessage({
+    data: {
+      type: 'ui_event',
+      nodeId: detailsNodeId,
+      eventType: 'toggle',
+      nativeStateRevision: 1,
+      event: { open: false, bubbles: false, cancelable: false },
     },
   });
   await sandbox.self.onmessage({
@@ -369,7 +521,240 @@ const flushTimers = () => new Promise(resolve => setTimeout(resolve, 0));
   assert.match(clickedHtml, /data-doc-up="101,600"/);
   assert.match(clickedHtml, /data-resize="901x601"/);
   assert.match(clickedHtml, />clicked</);
+  assert.doesNotMatch(clickedHtml, /<details[^>]*\sopen(?:=|\s|>)/, 'native details state should sync back into the worker tree');
+  assert.equal(clickedUpdate.nativeStateRevision, 1, 'worker UI updates should acknowledge native state revisions');
+  assert.equal(
+    messages.some(msg => msg.type === 'ui_layout_interest' && msg.nodeIds?.includes(nodeId)),
+    true,
+    'getBoundingClientRect should subscribe the queried virtual node to future layout syncs',
+  );
   console.log('ok - script runtime mirrors virtual DOM UI generically and relays UI events');
+}
+
+{
+  const { sandbox, messages } = createWorkerHarness();
+  const script = `
+    const root = document.createElement('div');
+    document.body.appendChild(root);
+    for (let index = 0; index < 30; index += 1) {
+      root.innerHTML = '<button id="registry-button">pass ' + index + '</button>';
+    }
+    document.getElementById('registry-button').addEventListener('click', function () {
+      document.getElementById('registry-button').textContent = 'clicked';
+      document.querySelector('#registry-button');
+      document.body.querySelectorAll('button[id="registry-button"]');
+    });
+  `;
+  await sandbox.self.onmessage({
+    data: {
+      type: 'sync',
+      context: { sessionId: 'registry-test' },
+      scripts: [{ id: 'registry-test', name: 'registry test', enabled: true, content: script }],
+    },
+  });
+  await flushTimers();
+  const update = messages.filter(msg => msg.type === 'ui_update').at(-1);
+  const html = update?.payload?.roots?.join('') || '';
+  const buttonNodeId = html.match(/<button[^>]*data-chatapp-virtual-node-id="([^"]+)"/)?.[1];
+  assert.ok(buttonNodeId, 'missing final registry test button');
+  assert.ok(
+    Number(update?.perf?.registeredNodeCount || 0) < 25,
+    'worker event registry should only retain the current reachable virtual tree',
+  );
+  await sandbox.self.onmessage({
+    data: {
+      type: 'ui_event',
+      nodeId: buttonNodeId,
+      eventType: 'click',
+      traceStartedAt: 123,
+      event: { bubbles: true, cancelable: true },
+    },
+  });
+  await flushTimers();
+  const eventPerf = messages.filter(msg => msg.type === 'ui_event_perf').at(-1);
+  assert.equal(eventPerf?.eventType, 'click');
+  assert.equal(eventPerf?.traceStartedAt, 123);
+  assert.ok(Number(eventPerf?.workerDispatchMs) >= 0);
+  assert.ok(Number(eventPerf?.workerTotalMs) >= Number(eventPerf?.workerDispatchMs));
+  assert.ok(Number(eventPerf?.selectorIndexHits) >= 3, 'getElementById and exact id/attribute selectors should use the connected-node index');
+  console.log('ok - worker prunes detached virtual nodes and reports discrete UI event timing');
+}
+
+{
+  const runtime = new ScriptRuntime({ ready: Promise.resolve(), getScripts: () => [] });
+  await runtime.ready;
+  const posted = [];
+  runtime.worker = { postMessage: message => posted.push(message) };
+  runtime.uiRoot = {};
+  runtime.uiShadow = {};
+  runtime.postWorkerUiLayout = () => {};
+  runtime.scheduleWorkerUiLayoutSync = () => {};
+
+  runtime.beginUiPointerSequence({ type: 'pointerdown', clientX: 10, clientY: 10 });
+  runtime.beginUiPointerSequence({ type: 'mousedown', clientX: 10, clientY: 10 });
+  assert.equal(runtime.uiCaptureActive, true);
+
+  runtime.endUiPointerSequence({ type: 'pointerup' });
+  assert.equal(runtime.uiCaptureActive, true, 'pointerup must not end the paired mouse capture before mouseup');
+
+  const move = {
+    type: 'mousemove',
+    buttons: 1,
+    clientX: 20,
+    clientY: 20,
+    composedPath: () => [],
+  };
+  runtime.handleGlobalUiEvent(move);
+  runtime.handleGlobalUiEvent(move);
+  assert.equal(
+    posted.filter(message => message.type === 'ui_event' && message.eventType === 'mousemove').length,
+    1,
+    'the same document/window event must only be relayed once',
+  );
+
+  const mouseup = {
+    type: 'mouseup',
+    buttons: 0,
+    clientX: 20,
+    clientY: 20,
+    composedPath: () => [],
+  };
+  runtime.handleGlobalUiEvent(mouseup);
+  assert.equal(runtime.uiCaptureActive, false);
+  assert.equal(
+    posted.filter(message => message.type === 'ui_event' && message.eventType === 'mouseup').length,
+    1,
+    'mouseup outside the shadow UI must still reach the worker after pointerup',
+  );
+
+  const css = runtime.getWorkerUiBaseCss();
+  assert.match(css, /\.chatapp-script-ui-surface\s*>\s*\[data-chatapp-virtual-node-id\]/);
+  assert.doesNotMatch(
+    css,
+    /\[data-chatapp-has-ui-listener="1"\][^{]*\{\s*pointer-events:\s*auto/,
+    'host CSS must not override a script ancestor pointer-events:none contract',
+  );
+  assert.equal(runtime.collectUiEventPayload({ type: 'toggle' }, { open: false }).open, false);
+  console.log('ok - main script UI host preserves mouse terminal events, dedupes globals, and respects hidden ancestors');
+}
+
+{
+  const runtime = new ScriptRuntime({ ready: Promise.resolve(), getScripts: () => [] });
+  await runtime.ready;
+  const rendered = [];
+  runtime.renderWorkerUi = payload => rendered.push(payload);
+  runtime.pendingWorkerUiPayload = { roots: ['pending'] };
+
+  runtime.beginUiPointerSequence({ type: 'pointerdown', clientX: 1, clientY: 1 });
+  runtime.beginUiPointerSequence({ type: 'mousedown', clientX: 1, clientY: 1 });
+  runtime.endUiPointerSequence({ type: 'pointerup' });
+  assert.equal(rendered.length, 0, 'pointerup must not rebuild UI before the paired mouseup/click');
+  runtime.endUiPointerSequence({ type: 'mouseup' });
+  assert.equal(rendered.length, 0, 'mouseup must retain the click guard until click');
+  runtime.releaseUiClickGuardForClick();
+  await new Promise(resolve => setTimeout(resolve, 30));
+  assert.equal(rendered.length, 1, 'the newest deferred UI should render once after click');
+  console.log('ok - script UI render remains deferred for the full pointer/mouse click sequence');
+}
+
+{
+  const runtime = new ScriptRuntime({ ready: Promise.resolve(), getScripts: () => [] });
+  await runtime.ready;
+  const rendered = [];
+  runtime.renderWorkerUi = (payload, perf) => rendered.push({ payload, perf });
+  runtime.handleWorkerMessage({ type: 'ui_update', payload: { roots: ['first'] }, perf: { workerBuildMs: 3 } });
+  runtime.handleWorkerMessage({ type: 'ui_update', payload: { roots: ['second'] }, perf: { workerBuildMs: 5 } });
+  await new Promise(resolve => setTimeout(resolve, 30));
+  assert.equal(rendered.length, 1, 'same-frame worker UI updates should render only once');
+  assert.deepEqual(rendered[0].payload.roots, ['second']);
+  assert.equal(rendered[0].perf.workerBuildMs, 5);
+
+  for (let index = 0; index < 80; index += 1) {
+    runtime.recordUiPerformanceSample?.({ type: 'layout', durationMs: index, nodeCount: index + 1 });
+  }
+  const perf = runtime.getUiPerformanceSnapshot?.();
+  assert.ok(perf, 'missing script UI performance snapshot');
+  assert.ok(perf.samples.length <= 60, 'performance samples must remain bounded');
+  assert.equal(perf.latest.layout.nodeCount, 80);
+  console.log('ok - script UI host coalesces render frames and exposes bounded performance metrics');
+}
+
+{
+  const runtime = new ScriptRuntime({ ready: Promise.resolve(), getScripts: () => [] });
+  await runtime.ready;
+  const posted = [];
+  runtime.worker = { postMessage: message => posted.push(message) };
+  const traceStartedAt = runtime.getUiPerformanceNow();
+  runtime.handleWorkerMessage({
+    type: 'ui_event_perf',
+    eventType: 'click',
+    traceStartedAt,
+    workerDispatchMs: 4,
+    workerTotalMs: 7,
+  });
+  assert.equal(runtime.getUiPerformanceSnapshot().latest.event.eventType, 'click');
+  assert.equal(runtime.getUiPerformanceSnapshot().latest.event.workerDispatchMs, 4);
+  runtime.processRpc = async () => ({ ok: true });
+  await runtime.handleRpc({ id: 'rpc-perf', method: 'chat.getMessages', params: {} });
+  assert.deepEqual(posted.at(-1), { type: 'rpc_result', id: 'rpc-perf', result: { ok: true } });
+  assert.equal(runtime.getUiPerformanceSnapshot().latest.rpc.method, 'chat.getMessages');
+  console.log('ok - main script UI diagnostics record event roundtrip and RPC processing timing');
+}
+
+{
+  const runtime = new ScriptRuntime({ ready: Promise.resolve(), getScripts: () => [] });
+  await runtime.ready;
+  let removed = false;
+  runtime.uiRoot = { remove: () => { removed = true; } };
+  runtime.uiShadow = { replaceChildren: () => {} };
+  runtime.handleWorkerMessage({ type: 'ui_reset' });
+  assert.equal(removed, true, 'worker sync reset must remove the previous script UI surface');
+  assert.equal(runtime.uiRoot, null);
+  assert.equal(runtime.uiShadow, null);
+  console.log('ok - worker UI reset removes stale preset surfaces before the next script set mounts');
+}
+
+{
+  const runtime = new ScriptRuntime({ ready: Promise.resolve(), getScripts: () => [] });
+  await runtime.ready;
+  const details = { open: true, getAttribute: () => '9' };
+  const surface = { querySelectorAll: () => [details] };
+  runtime.uiNativeStatePending.set('9', { revision: 2, open: false });
+  runtime.applyPendingNativeUiState(surface, 1);
+  assert.equal(details.open, false, 'stale worker payload must not overwrite newer native details state');
+  assert.equal(runtime.uiNativeStatePending.has('9'), true);
+  details.open = false;
+  runtime.applyPendingNativeUiState(surface, 2);
+  assert.equal(runtime.uiNativeStatePending.has('9'), false, 'acknowledged native state should leave the pending barrier');
+  console.log('ok - native details state barrier survives stale full-tree worker renders until acknowledged');
+}
+
+{
+  const runtime = new ScriptRuntime({ ready: Promise.resolve(), getScripts: () => [] });
+  await runtime.ready;
+  const rectReads = [];
+  const makeNode = id => ({
+    getAttribute: name => (name === 'data-chatapp-virtual-node-id' ? id : ''),
+    getBoundingClientRect: () => {
+      rectReads.push(id);
+      return { left: Number(id), top: 0, right: Number(id) + 10, bottom: 10, width: 10, height: 10 };
+    },
+    clientWidth: 10,
+    clientHeight: 10,
+    scrollWidth: 10,
+    scrollHeight: 10,
+  });
+  const nodes = [makeNode('1'), makeNode('2'), makeNode('3')];
+  runtime.uiShadow = { querySelectorAll: () => nodes };
+  runtime.handleWorkerMessage({ type: 'ui_layout_interest', nodeIds: ['2'] });
+  const incremental = runtime.collectWorkerUiLayout();
+  assert.deepEqual(incremental.map(item => item.nodeId), ['2']);
+  assert.deepEqual(rectReads, ['2']);
+  rectReads.length = 0;
+  const full = runtime.collectWorkerUiLayout({ full: true });
+  assert.deepEqual(full.map(item => item.nodeId), ['1', '2', '3']);
+  assert.deepEqual(rectReads, ['1', '2', '3']);
+  console.log('ok - script UI layout sync keeps first full snapshot and filters later snapshots by queried node interest');
 }
 
 {

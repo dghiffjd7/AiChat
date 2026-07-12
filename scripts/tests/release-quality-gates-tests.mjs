@@ -121,6 +121,7 @@ const splitScriptSteps = script =>
     'node scripts/tests/transfer-package-contract-tests.mjs',
   ]);
   assert.deepEqual(splitScriptSteps(scripts['test:migration']), [
+    'node scripts/tests/app-settings-kv-tests.mjs',
     'node scripts/tests/storage-migration-contracts-tests.mjs',
     'node scripts/tests/chat-store-large-field-tests.mjs',
     'node scripts/tests/chat-store-scope-guard-tests.mjs',

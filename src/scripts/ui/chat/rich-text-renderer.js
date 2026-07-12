@@ -45,6 +45,39 @@ const DIRECT_LOAD_CACHE_LIMIT = 6;
 const COMPAT_SEND_TEXTAREA_ID = 'send_textarea';
 const COMPAT_SEND_BUTTON_ID = 'send_but';
 const RICH_IMAGE_TOKEN_RE = /\[(img-error|img)-([^\]\n]+)\]/gi;
+export const resolveCompatRpGreetingSwipeTarget = ({
+    sessionId = '',
+    message = null,
+    swipeId,
+    greetingState = null,
+} = {}) => {
+    const sid = String(sessionId || '').trim();
+    const index = Number(swipeId);
+    if (!Number.isInteger(index) || index < 0) {
+        return { ok: false, reason: 'invalid-swipe-id' };
+    }
+    if (!sid.startsWith('rp:') || message?.meta?.isGreeting !== true) {
+        return { ok: false, reason: 'unsupported-swipe-target', swipeId: index };
+    }
+    const greetings = Array.isArray(greetingState?.greetings) ? greetingState.greetings : [];
+    if (index >= greetings.length) {
+        return { ok: false, reason: 'swipe-out-of-range', swipeId: index, swipeCount: greetings.length };
+    }
+    if (greetingState?.locked === true) {
+        return { ok: false, reason: 'greeting-locked', swipeId: index, swipeCount: greetings.length };
+    }
+    const greetingId = String(greetings[index]?.id || '').trim();
+    if (!greetingId) {
+        return { ok: false, reason: 'missing-greeting-id', swipeId: index, swipeCount: greetings.length };
+    }
+    return {
+        ok: true,
+        greetingId,
+        swipeId: index,
+        swipeCount: greetings.length,
+        unchanged: greetingId === String(greetingState?.activeId || '').trim(),
+    };
+};
 const compatInputProxyState = {
     boundInput: null,
     boundSendButton: null,
@@ -848,7 +881,7 @@ const diagnoseIframeError = (message = '') => {
     if (/Unexpected token|Invalid regular expression|SyntaxError/i.test(msg)) return 'hint=user-script-syntax';
     return '';
 };
-const buildMvuCompatBridge = ({ iframeId, sessionId, debugTag, messageId, messageIndex, seedVars } = {}) => {
+export const buildMvuCompatBridge = ({ iframeId, sessionId, debugTag, messageId, messageIndex, seedVars } = {}) => {
     const id = String(iframeId || '');
     const sid = String(sessionId || '');
     const tag = String(debugTag || '');
@@ -1071,12 +1104,12 @@ const buildMvuCompatBridge = ({ iframeId, sessionId, debugTag, messageId, messag
         message_id: Number.isInteger(chatState.currentIndex) ? chatState.currentIndex : currentRef,
         role: 'assistant',
         message: '',
-        data: {},
+        data: cloneVars(state.vars),
         extra: {},
       });
     }
     const seededCurrent = currentRef ? chatState.entries.get(currentRef) : null;
-    log('info', 'tavern-helper-shim-seed-current has=' + (seededCurrent ? '1' : '0') + ' len=' + String(seededCurrent ? String(seededCurrent.message || '').length : 0));
+    postCompatLog('info', 'tavern-helper-shim-seed-current has=' + (seededCurrent ? '1' : '0') + ' len=' + String(seededCurrent ? String(seededCurrent.message || '').length : 0));
   }
   const ensureMvu = () => {
     if (!window.Mvu || typeof window.Mvu !== 'object') {
@@ -1111,6 +1144,8 @@ const buildMvuCompatBridge = ({ iframeId, sessionId, debugTag, messageId, messag
 
   const setVars = (vars) => {
     state.vars = normalizeVars(vars);
+    const currentRef = getCurrentCompatRef();
+    if (currentRef) applyCompatSetMessageCache(currentRef, { data: cloneVars(state.vars) });
     emit(window.Mvu?.events?.VARIABLE_UPDATE_ENDED || 'mag_variable_update_ended', state.vars);
   };
   const emitInitialVarEvents = () => {
@@ -1196,10 +1231,21 @@ const buildMvuCompatBridge = ({ iframeId, sessionId, debugTag, messageId, messag
       return true;
     });
     if (range === undefined || range === null || range === '') return applyFilters(all);
+    const getEntryIndex = (item) => {
+      const numericId = Number(item?.message_id);
+      if (Number.isFinite(numericId) && Number.isInteger(numericId)) return numericId;
+      if (
+        Number.isInteger(chatState.currentIndex)
+        && String(item?.message_id ?? '') === getCurrentCompatRef()
+      ) {
+        return chatState.currentIndex;
+      }
+      return null;
+    };
     const numericIds = all
-      .map((item) => Number(item?.message_id))
+      .map((item) => getEntryIndex(item))
       .filter((n) => Number.isFinite(n) && Number.isInteger(n));
-    const fallbackMax = Number.isInteger(state.currentIndex) ? state.currentIndex : -1;
+    const fallbackMax = Number.isInteger(chatState.currentIndex) ? chatState.currentIndex : -1;
     const maxId = numericIds.length ? Math.max(...numericIds) : fallbackMax;
     const clamp = (value) => {
       if (!Number.isFinite(value) || !Number.isInteger(value)) return null;
@@ -1213,12 +1259,12 @@ const buildMvuCompatBridge = ({ iframeId, sessionId, debugTag, messageId, messag
         return one === null ? null : { start: one, end: one };
       }
       const text = String(raw ?? '').trim();
-      const oneMatch = text.match(/^(-?\d+)$/);
+      const oneMatch = text.match(/^(-?\\d+)$/);
       if (oneMatch) {
         const one = clamp(Number(oneMatch[1]));
         return one === null ? null : { start: one, end: one };
       }
-      const rangeMatch = text.match(/^(-?\d+)\s*-\s*(-?\d+)$/);
+      const rangeMatch = text.match(/^(-?\\d+)\\s*-\\s*(-?\\d+)$/);
       if (!rangeMatch) return null;
       const a = clamp(Number(rangeMatch[1]));
       const b = clamp(Number(rangeMatch[2]));
@@ -1228,7 +1274,7 @@ const buildMvuCompatBridge = ({ iframeId, sessionId, debugTag, messageId, messag
     const parsed = parseRange(range);
     if (parsed) {
       const matched = all.filter((item) => {
-        const id = Number(item?.message_id);
+        const id = getEntryIndex(item);
         if (!Number.isFinite(id) || !Number.isInteger(id)) return false;
         return id >= parsed.start && id <= parsed.end;
       });
@@ -1726,7 +1772,7 @@ const buildMvuCompatBridge = ({ iframeId, sessionId, debugTag, messageId, messag
     const parseLoadTarget = (input) => {
       const raw = String(input || '').trim();
       if (!raw) return { url: '', selector: '' };
-      const m = raw.match(/^(\S+)\s+(.+)$/);
+      const m = raw.match(/^(\\S+)\\s+(.+)$/);
       if (!m) return { url: raw, selector: '' };
       return { url: String(m[1] || '').trim(), selector: String(m[2] || '').trim() };
     };
@@ -1763,7 +1809,7 @@ const buildMvuCompatBridge = ({ iframeId, sessionId, debugTag, messageId, messag
     };
     const mountRemoteFrame = (nodes, url, reason = '') => {
       const absUrl = toAbsUrl(url);
-      if (!absUrl || !/^https?:\/\//i.test(absUrl)) return false;
+      if (!absUrl || !/^https?:\\/\\//i.test(absUrl)) return false;
       let mounted = false;
       nodes.forEach((node) => {
         if (!(node instanceof Element)) return;
@@ -1841,12 +1887,12 @@ const buildMvuCompatBridge = ({ iframeId, sessionId, debugTag, messageId, messag
         return this;
       },
       addClass(cls) {
-        const list = String(cls || '').split(/\s+/).filter(Boolean);
+        const list = String(cls || '').split(/\\s+/).filter(Boolean);
         nodes.forEach(n => n.classList.add(...list));
         return this;
       },
       removeClass(cls) {
-        const list = String(cls || '').split(/\s+/).filter(Boolean);
+        const list = String(cls || '').split(/\\s+/).filter(Boolean);
         nodes.forEach(n => n.classList.remove(...list));
         return this;
       },
@@ -1898,8 +1944,8 @@ const buildMvuCompatBridge = ({ iframeId, sessionId, debugTag, messageId, messag
         const applyResponse = (responseText) => {
           let htmlText = String(responseText || '');
           if (selector) htmlText = pickHtmlBySelector(htmlText, selector);
-          const fullDoc = /<html[\s>]/i.test(htmlText) || /<body[\s>]/i.test(htmlText);
-          const hasScript = /<script[\s>]/i.test(htmlText);
+          const fullDoc = /<html[\\s>]/i.test(htmlText) || /<body[\\s>]/i.test(htmlText);
+          const hasScript = /<script[\\s>]/i.test(htmlText);
           if (!selector && fullDoc && hasScript) {
             if (mountRemoteFrame(nodes, absUrl, 'full-document-with-script')) {
               done('', 'success', null);
@@ -1913,7 +1959,7 @@ const buildMvuCompatBridge = ({ iframeId, sessionId, debugTag, messageId, messag
 
         const onFailed = (err) => {
           const msg = err?.message ? String(err.message) : String(err || 'unknown');
-          if (!selector && /^https?:\/\//i.test(absUrl) && mountRemoteFrame(nodes, absUrl, 'fetch-failed:' + msg)) {
+          if (!selector && /^https?:\\/\\//i.test(absUrl) && mountRemoteFrame(nodes, absUrl, 'fetch-failed:' + msg)) {
             done('', 'fallback', err || null);
             return;
           }
@@ -3173,7 +3219,9 @@ const buildIframeBridgeScript = () => `
         if (!body || !docEl) return;
         const vh = Math.max(docEl.clientHeight || 0, window.innerHeight || 0);
         if (!vh) return;
-        const nodes = body.querySelectorAll('*');
+        // Only normalize a document's outer shell. Rewriting every descendant
+        // collapses intentional fixed-size widgets such as maps and canvases.
+        const nodes = Array.from(body.children || []);
         nodes.forEach((el) => {
           const style = window.getComputedStyle(el);
           const display = String(style.display || '');
@@ -5010,7 +5058,8 @@ const buildIframeSrcDoc = (
   /* min-height/height 不用 !important：全屏应用式面板（酒馆助手 --viewport-height 约定）需要用自身样式覆盖 */
   html, body { margin:0; padding:0; max-width:100% !important; width:100% !important; min-height:0; height:auto; overflow-x:hidden !important; box-sizing:border-box; -webkit-user-select:text; user-select:text; -webkit-touch-callout:default; }
   body { padding: 12px; background: transparent; color: ${isDarkMode ? '#e2e8f0' : 'inherit'}; transform-origin: top left; overflow-x:hidden !important; -webkit-user-select:text; user-select:text; -webkit-touch-callout:default; display:block !important; align-items:flex-start !important; justify-content:flex-start !important; }
-  *, *::before, *::after { box-sizing: border-box; max-width: 100% !important; min-width: 0 !important; }
+  /* Keep explicit oversized/pannable surfaces intact; media and text blocks are constrained below. */
+  *, *::before, *::after { box-sizing: border-box; min-width: 0 !important; }
   button, input, textarea, select, summary, audio, video, canvas, [role="button"] { -webkit-user-select:none; user-select:none; -webkit-touch-callout:none; }
   details, summary { max-width: 100% !important; }
   details[open] { max-height: none !important; overflow: visible !important; }
@@ -5390,7 +5439,9 @@ const buildIframeSrcDoc = (
         if (!body || !docEl) return;
         const vh = Math.max(docEl.clientHeight || 0, window.innerHeight || 0);
         if (!vh) return;
-        const nodes = body.querySelectorAll('*');
+        // Only normalize a document's outer shell. Rewriting every descendant
+        // collapses intentional fixed-size widgets such as maps and canvases.
+        const nodes = Array.from(body.children || []);
         nodes.forEach((el) => {
           const style = window.getComputedStyle(el);
           const display = String(style.display || '');
@@ -6148,7 +6199,7 @@ const buildReactGlobalShim = ({ iframeId = '', debugTag = '' } = {}) => {
 </script>`;
 };
 
-const buildFrameworkGlobalShim = ({ iframeId = '', debugTag = '', vueMajor = 3, appOrigin = '' } = {}) => {
+export const buildFrameworkGlobalShim = ({ iframeId = '', debugTag = '', vueMajor = 3, appOrigin = '' } = {}) => {
     const id = String(iframeId || '');
     const tag = String(debugTag || '');
     const origin = String(appOrigin || '').trim();
@@ -6185,6 +6236,17 @@ const buildFrameworkGlobalShim = ({ iframeId = '', debugTag = '', vueMajor = 3, 
         'https://cdn.jsdelivr.net/npm/pinia@2/dist/pinia.iife.prod.js',
         'https://unpkg.com/pinia@2/dist/pinia.iife.prod.js',
     ];
+    const escapeAttr = (value) => String(value || '')
+        .replace(/&/g, '&amp;')
+        .replace(/"/g, '&quot;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
+    const parserScript = (kind, url) => url
+        ? `<script data-chatapp-framework="${kind}" src="${escapeAttr(url)}"></script>`
+        : '';
+    const localVueScript = parserScript('vue', vueUrls[0]);
+    const localRouterScript = parserScript('vue-router', routerUrls[0]);
+    const localPiniaScript = major === 3 ? parserScript('pinia', piniaUrls[0]) : '';
     return `<script>
 (() => {
   const CHATAPP_IFRAME_ID = ${serializeForInlineScript(id)};
@@ -6199,46 +6261,6 @@ const buildFrameworkGlobalShim = ({ iframeId = '', debugTag = '', vueMajor = 3, 
         message: withTag(message),
       }, '*');
     } catch {}
-  };
-  const ensureGlobal = (name, urls, readyMsg, missMsg) => {
-    if (window[name]) {
-      log('info', readyMsg + '-existing');
-      return;
-    }
-    const root = document.head || document.documentElement || document.body;
-    if (!root) {
-      log('warn', missMsg + '-no-root');
-      return;
-    }
-    const loadScript = (url) => new Promise((resolve) => {
-      try {
-        const s = document.createElement('script');
-        s.src = String(url || '');
-        s.async = false;
-        s.onload = () => resolve(true);
-        s.onerror = () => resolve(false);
-        root.appendChild(s);
-      } catch {
-        resolve(false);
-      }
-    });
-    Promise.resolve().then(async () => {
-      for (let i = 0; i < urls.length; i += 1) {
-        if (window[name]) break;
-        const u = String(urls[i] || '');
-        if (!u) continue;
-        log('info', 'compat-load-attempt-late name=' + name + ' url=' + u);
-        try { await loadScript(u); } catch {}
-        if (window[name]) {
-          log('info', readyMsg);
-          return;
-        }
-      }
-      if (window[name]) log('info', readyMsg);
-      else log('warn', missMsg);
-    }).catch(() => {
-      log('warn', missMsg);
-    });
   };
   const ensureGlobalAsync = async (name, urls, readyMsg, missMsg) => {
     if (window[name]) {
@@ -6282,40 +6304,66 @@ const buildFrameworkGlobalShim = ({ iframeId = '', debugTag = '', vueMajor = 3, 
   };
   const setupVueDemi = () => {
     try {
-      if (window.VueDemi || !window.Vue || typeof window.Vue !== 'object') return;
-      const api = { Vue: window.Vue, isVue2: false, isVue3: true, install() {} };
+      if (window.VueDemi) return true;
+      if (!window.Vue || typeof window.Vue !== 'object') return false;
+      const api = {
+        Vue: window.Vue,
+        isVue2: ${serializeForInlineScript(major)} === 2,
+        isVue3: ${serializeForInlineScript(major)} === 3,
+        install() {},
+      };
       try { Object.assign(api, window.Vue); } catch {}
       window.VueDemi = api;
       if (typeof window.VueDemi.set === 'undefined' && typeof window.Vue.set === 'function') window.VueDemi.set = window.Vue.set;
       if (typeof window.VueDemi.del === 'undefined' && typeof window.Vue.delete === 'function') window.VueDemi.del = window.Vue.delete;
       log('info', 'vue-demi-shim-ready');
+      return true;
     } catch {
       log('warn', 'vue-demi-shim-failed');
+      return false;
     }
   };
+  window.__chatappFrameworkCompat = { log, ensureGlobalAsync, setupVueDemi };
   log('info', 'vue-shim-mode major=' + ${serializeForInlineScript(major)});
-  ensureGlobal('Vue', ${serializeForInlineScript(vueUrls)}, 'vue-shim-ready', 'vue-shim-missing');
-  setupVueDemi();
-  ensureGlobal('VueRouter', ${serializeForInlineScript(routerUrls)}, 'vue-router-shim-ready', 'vue-router-shim-missing');
-  if (${serializeForInlineScript(major)} === 3) {
+})();
+</script>
+${localVueScript}
+<script data-chatapp-framework="vue-demi">
+window.__chatappFrameworkCompat?.setupVueDemi?.();
+</script>
+${localRouterScript}
+${localPiniaScript}
+<script data-chatapp-framework="ready">
+(() => {
+  const compat = window.__chatappFrameworkCompat || {};
+  const log = typeof compat.log === 'function' ? compat.log : () => {};
+  const ensureGlobalAsync = typeof compat.ensureGlobalAsync === 'function'
+    ? compat.ensureGlobalAsync
+    : async (name) => Boolean(window[name]);
+  const setupVueDemi = typeof compat.setupVueDemi === 'function'
+    ? compat.setupVueDemi
+    : () => Boolean(window.VueDemi);
+  window.__chatappFrameworkReady = (async () => {
+    let vueReady = Boolean(window.Vue);
+    if (!vueReady) {
+      vueReady = await ensureGlobalAsync('Vue', ${serializeForInlineScript(vueUrls.slice(1))}, 'vue-shim-ready-retry', 'vue-shim-missing-retry');
+    }
+    if (!vueReady) return false;
     setupVueDemi();
-    ensureGlobal('Pinia', ${serializeForInlineScript(piniaUrls)}, 'pinia-shim-ready', 'pinia-shim-missing');
-  }
-  setTimeout(async () => {
-    try {
-      log('info', 'vue-shim-late ' + (window.Vue ? 'ready' : 'missing'));
-      log('info', 'vue-router-shim-late ' + (window.VueRouter ? 'ready' : 'missing'));
-      if (${serializeForInlineScript(major)} === 3) {
-        log('info', 'pinia-shim-late ' + (window.Pinia ? 'ready' : 'missing'));
+
+    let routerReady = Boolean(window.VueRouter);
+    if (!routerReady) {
+      routerReady = await ensureGlobalAsync('VueRouter', ${serializeForInlineScript(routerUrls.slice(1))}, 'vue-router-shim-ready-retry', 'vue-router-shim-missing-retry');
+    }
+
+    let piniaReady = true;
+    if (${serializeForInlineScript(major)} === 3) {
+      setupVueDemi();
+      piniaReady = Boolean(window.Pinia);
+      if (!piniaReady) {
+        piniaReady = await ensureGlobalAsync('Pinia', ${serializeForInlineScript(piniaUrls.slice(1))}, 'pinia-shim-ready-retry', 'pinia-shim-missing-retry');
       }
-      if (window.Vue && !window.VueRouter) {
-        await ensureGlobalAsync('VueRouter', ${serializeForInlineScript(routerUrls)}, 'vue-router-shim-ready-retry', 'vue-router-shim-missing-retry');
-      }
-      if (${serializeForInlineScript(major)} === 3 && window.Vue && !window.Pinia) {
-        setupVueDemi();
-        await ensureGlobalAsync('Pinia', ${serializeForInlineScript(piniaUrls)}, 'pinia-shim-ready-retry', 'pinia-shim-missing-retry');
-      }
-      if (${serializeForInlineScript(major)} === 3 && !window.Pinia) {
+      if (!piniaReady) {
         const piniaFallback = {
           createPinia: () => ({}),
           defineStore: (_id, setupOrOpts) => {
@@ -6347,9 +6395,12 @@ const buildFrameworkGlobalShim = ({ iframeId = '', debugTag = '', vueMajor = 3, 
         if (typeof window.defineStore !== 'function') window.defineStore = piniaFallback.defineStore;
         if (typeof window.storeToRefs !== 'function') window.storeToRefs = piniaFallback.storeToRefs;
         log('warn', 'pinia-shim-fallback');
+        piniaReady = true;
       }
-    } catch {}
-  }, 1200);
+    }
+    log('info', 'vue-shim-ready-sequenced vue=' + (window.Vue ? '1' : '0') + ' router=' + (window.VueRouter ? '1' : '0') + ' pinia=' + (window.Pinia ? '1' : '0'));
+    return Boolean(vueReady && routerReady && piniaReady);
+  })().catch(() => false);
 })();
 </script>`;
 };
@@ -8452,7 +8503,9 @@ const makeCodeBlock = ({
                     iframe.srcdoc = fallbackDoc;
                 } catch {}
             }, 1200);
-        } else {
+        } else if (!directBodyLoadUrl) {
+            // direct-load 有独立的 fetch → host → remote-src 回退状态机；这里抢先切回
+            // 外层 $('body').load(...) scriptDoc 会让稍后取得的远程文档失去接收 host。
             setTimeout(() => {
                 if (!isLiveIframe(iframe, iframeId)) return;
                 if (iframe.dataset.iframeReady === '1') return;
@@ -8761,6 +8814,26 @@ export const setupIframeResizeListener = () => {
         if (!input || typeof input !== 'object') return {};
         return { ...input };
     };
+    const applyCompatSwipeSelection = async ({ sessionId, message, swipeId }) => {
+        const bridge = window.appBridge;
+        const sid = String(sessionId || '').trim();
+        const greetingState = bridge?.getRpGreetingState?.(sid) || null;
+        const target = resolveCompatRpGreetingSwipeTarget({
+            sessionId: sid,
+            message,
+            swipeId,
+            greetingState,
+        });
+        if (!target.ok || target.unchanged) return target;
+        if (typeof bridge?.setRpGreeting !== 'function') {
+            return { ...target, ok: false, reason: 'greeting-switch-unavailable' };
+        }
+        const changed = await bridge.setRpGreeting(target.greetingId, sid);
+        if (changed !== true) {
+            return { ...target, ok: false, reason: 'greeting-switch-rejected' };
+        }
+        return target;
+    };
     const applyCompatSetInputText = ({ text, options = {} } = {}) => {
         ensureCompatSendTextareaProxy();
         const mode = String(options?.mode || '').trim().toLowerCase() === 'append' ? 'append' : 'replace';
@@ -8821,7 +8894,19 @@ export const setupIframeResizeListener = () => {
         const fields = normalizeCompatFieldValues(fieldValues);
         const hasMessage = Object.prototype.hasOwnProperty.call(fields, 'message');
         const hasData = Object.prototype.hasOwnProperty.call(fields, 'data');
-        if (!hasMessage && !hasData) return { ok: true, messageId: targetId };
+        const hasSwipeId = Object.prototype.hasOwnProperty.call(fields, 'swipe_id')
+            || Object.prototype.hasOwnProperty.call(fields, 'swipeId');
+        if (!hasMessage && !hasData && !hasSwipeId) return { ok: true, messageId: targetId };
+        if (hasSwipeId) {
+            if (hasMessage || hasData) {
+                return { ok: false, reason: 'combined-swipe-patch-unsupported', messageId: targetId };
+            }
+            return applyCompatSwipeSelection({
+                sessionId: sid,
+                message: current,
+                swipeId: fields.swipe_id ?? fields.swipeId,
+            });
+        }
         if (hasMessage) {
             const nextRaw = String(fields.message ?? '');
             const handler = ui && typeof ui.actionHandler === 'function' ? ui.actionHandler : null;
@@ -8925,6 +9010,8 @@ export const setupIframeResizeListener = () => {
             const fields = {};
             if (Object.prototype.hasOwnProperty.call(item, 'message')) fields.message = item.message;
             if (Object.prototype.hasOwnProperty.call(item, 'data')) fields.data = item.data;
+            if (Object.prototype.hasOwnProperty.call(item, 'swipe_id')) fields.swipe_id = item.swipe_id;
+            else if (Object.prototype.hasOwnProperty.call(item, 'swipeId')) fields.swipeId = item.swipeId;
             const result = await applyCompatSetChatMessage({
                 iframe,
                 sessionId,

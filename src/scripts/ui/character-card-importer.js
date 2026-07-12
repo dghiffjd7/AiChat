@@ -7,6 +7,7 @@ import { safeInvoke } from '../utils/tauri.js';
 import { appSettings } from '../storage/app-settings.js';
 import { appConfirm, appChoice } from './app-confirm.js';
 import { MVUConverter } from '../import/mvu-converter.js';
+import { markMvuSchemaOnlyScripts } from '../import/mvu-script-classification.js';
 import { buildScriptAuthorizationMessage } from './script-authorization-utils.js';
 import { getPresetStore } from './preset-store-runtime-utils.js';
 import { createRegexStoreRuntimeAdapter } from './regex-store-runtime-utils.js';
@@ -493,34 +494,8 @@ export class CharacterCardImporter {
     if (options.importScripts && tavernScripts.length) {
       try {
         const scriptStore = await waitForScriptStoreReady(this.appBridge);
-        const zodSchemaScriptIds = new Set(
-          zodScriptsWithSchema.map(s => String(s?.id || s?.name || '').trim()).filter(Boolean)
-        );
-        const isMvuCard =
-          mvuVariableCount > 0 ||
-          zodScriptsWithSchema.length > 0 ||
-          MVUConverter.detect(rawCard);
-        const shouldForceSchemaOnly = (script) => {
-          if (!script || typeof script !== 'object') return false;
-          if (isMvuCard) return true;
-          const name = String(script?.name || '').toLowerCase();
-          const content = String(script?.content || '').toLowerCase();
-          return name.includes('mvu') || content.includes('mvu_') || content.includes('stat_data');
-        };
-        const markSchemaOnly = (list = []) => list.map((item) => {
-          if (!item || typeof item !== 'object') return item;
-          if (item.type === 'folder' && Array.isArray(item.scripts)) {
-            return { ...item, scripts: markSchemaOnly(item.scripts) };
-          }
-          const scriptId = String(item?.id || item?.name || '').trim();
-          const isZodSchema = zodSchemaScriptIds.has(scriptId) || MVUConverter.detectZodScript(item);
-          if (item.schemaOnly === true || isZodSchema || shouldForceSchemaOnly(item)) {
-            return { ...item, schemaOnly: true };
-          }
-          return item;
-        });
-        // 将 Zod Schema/MVU 相关脚本标记为 schemaOnly，避免执行时加载外部依赖（如 Vue）
-        const scriptsWithSchemaFlag = markSchemaOnly(tavernScripts);
+        // 原生变量层已接管 Schema 与 MVU 引擎；卡内其余行为脚本仍须正常执行。
+        const scriptsWithSchemaFlag = markMvuSchemaOnlyScripts(tavernScripts);
         const result = await scriptStore?.importTavernHelperScripts?.({
           scripts: scriptsWithSchemaFlag,
           scope: 'character',

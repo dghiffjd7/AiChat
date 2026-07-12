@@ -31,15 +31,33 @@ const normalizeExecutableScriptSource = (code) => {
   const lines = String(code || '').replace(/\r\n?/g, '\n').split('\n');
   const normalized = [];
   let previousNonEmpty = '';
+  let hasOpenTemplateLiteral = false;
+  const countUnescapedBackticks = (line) => {
+    const value = String(line || '');
+    let count = 0;
+    for (let index = 0; index < value.length; index += 1) {
+      if (value[index] !== '`') continue;
+      let slashCount = 0;
+      for (let cursor = index - 1; cursor >= 0 && value[cursor] === '\\'; cursor -= 1) {
+        slashCount += 1;
+      }
+      if (slashCount % 2 === 0) count += 1;
+    }
+    return count;
+  };
   lines.forEach((line) => {
     const trimmed = String(line || '').trim();
-    if (trimmed && riskyStartRe.test(trimmed) && previousNonEmpty) {
+    const closesOpenTemplateLiteral = hasOpenTemplateLiteral && trimmed.startsWith('`');
+    if (trimmed && riskyStartRe.test(trimmed) && previousNonEmpty && !closesOpenTemplateLiteral) {
       const prev = previousNonEmpty.replace(/\s+$/, '');
       if (!safePrevEndRe.test(prev) && !keywordPrevRe.test(prev)) {
         normalized.push(';');
       }
     }
     normalized.push(line);
+    if (countUnescapedBackticks(line) % 2 === 1) {
+      hasOpenTemplateLiteral = !hasOpenTemplateLiteral;
+    }
     if (trimmed) previousNonEmpty = line;
   });
   return normalized.join('\n');
@@ -64,6 +82,38 @@ const normalizeExecutableScriptSource = (code) => {
       'runSetup()',
       ';',
       '(function init() {})();',
+    ].join('\n'),
+  );
+}
+
+{
+  const code = [
+    'const messagesData = `',
+    '群聊|测试群聊|有一条新消息|10:20|2',
+    '私聊|测试角色|稍后联系|10:22|0',
+    '`;',
+  ].join('\n');
+  assert.equal(normalizeExecutableScriptSource(code), code);
+  assert.equal(
+    vm.runInNewContext(`${normalizeExecutableScriptSource(code)}\nmessagesData.trim()`),
+    [
+      '群聊|测试群聊|有一条新消息|10:20|2',
+      '私聊|测试角色|稍后联系|10:22|0',
+    ].join('\n'),
+  );
+}
+
+{
+  const code = [
+    'runSetup()',
+    '`next template`',
+  ].join('\n');
+  assert.equal(
+    normalizeExecutableScriptSource(code),
+    [
+      'runSetup()',
+      ';',
+      '`next template`',
     ].join('\n'),
   );
 }

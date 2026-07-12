@@ -10,15 +10,134 @@ globalThis.localStorage = {
 
 const {
   captureRichDetailsOpenStates,
+  buildFrameworkGlobalShim,
+  buildMvuCompatBridge,
   expandRichImageTokensForHtml,
   getRichDetailsStateKey,
   prepareRichFragmentDisplayHtmlForParsing,
   prepareRichFragmentHtmlForParsing,
+  resolveCompatRpGreetingSwipeTarget,
   restoreRichDetailsOpenStates,
   splitFencedCodeBlocks,
 } = await import('../../src/scripts/ui/chat/rich-text-renderer.js');
 
 const tests = [];
+
+tests.push({
+  name: 'framework shim orders Vue and VueDemi before Pinia',
+  fn: () => {
+    const html = buildFrameworkGlobalShim({
+      iframeId: 'framework-order-test',
+      vueMajor: 3,
+      appOrigin: 'http://127.0.0.1:1430',
+    });
+    const vueAt = html.indexOf('data-chatapp-framework="vue"');
+    const demiAt = html.indexOf('data-chatapp-framework="vue-demi"');
+    const routerAt = html.indexOf('data-chatapp-framework="vue-router"');
+    const piniaAt = html.indexOf('data-chatapp-framework="pinia"');
+    const readyAt = html.indexOf('data-chatapp-framework="ready"');
+    assert.ok(vueAt > 0);
+    assert.ok(vueAt < demiAt);
+    assert.ok(demiAt < routerAt);
+    assert.ok(routerAt < piniaAt);
+    assert.ok(piniaAt < readyAt);
+    assert.match(html, /window\.__chatappFrameworkCompat\?\.setupVueDemi/);
+    assert.match(html, /window\.__chatappFrameworkReady/);
+  },
+});
+
+tests.push({
+  name: 'Vue 2 framework shim does not inject Pinia',
+  fn: () => {
+    const html = buildFrameworkGlobalShim({
+      iframeId: 'framework-vue2-test',
+      vueMajor: 2,
+      appOrigin: 'http://127.0.0.1:1430',
+    });
+    assert.match(html, /data-chatapp-framework="vue"/);
+    assert.match(html, /data-chatapp-framework="vue-demi"/);
+    assert.doesNotMatch(html, /data-chatapp-framework="pinia"/);
+  },
+});
+
+tests.push({
+  name: 'enhanced MVU bridge keeps generated regexes valid and exposes seeded variables',
+  fn: async () => {
+    const html = buildMvuCompatBridge({
+      iframeId: 'mvu-bridge-test',
+      sessionId: 'rp:test',
+      messageId: 'message-1',
+      messageIndex: 0,
+      seedVars: {
+        stat_data: { '秦素霜.倾心值': 0, 秦素霜: { 倾心值: 0 } },
+        variables: { '秦素霜.倾心值': 0, 秦素霜: { 倾心值: 0 } },
+        global_variables: {},
+        local_variables: {},
+      },
+    });
+    const match = html.match(/^\s*<script>([\s\S]*)<\/script>\s*$/);
+    assert.ok(match, 'expected one generated script');
+    const script = match[1];
+    assert.doesNotThrow(() => new Function(script));
+    assert.match(script, /\^https\?:\\\/\\\//);
+    assert.match(script, /\(\\S\+\)\\s\+/);
+
+    const fakeWindow = {
+      location: { href: 'http://127.0.0.1:1430/' },
+      addEventListener: () => {},
+      eval: () => {},
+    };
+    fakeWindow.parent = fakeWindow;
+    fakeWindow.top = fakeWindow;
+    const fakeDocument = {
+      readyState: 'loading',
+      addEventListener: () => {},
+      querySelectorAll: () => [],
+    };
+    class FakeElement {}
+    class FakeNode {}
+    class FakeDomParser {}
+    class FakeFormData {}
+    const run = new Function(
+      'window',
+      'document',
+      'parent',
+      'Element',
+      'Node',
+      'DOMParser',
+      'FormData',
+      'fetch',
+      'setTimeout',
+      'structuredClone',
+      'console',
+      script,
+    );
+    run(
+      fakeWindow,
+      fakeDocument,
+      fakeWindow,
+      FakeElement,
+      FakeNode,
+      FakeDomParser,
+      FakeFormData,
+      async () => ({ ok: false }),
+      () => 0,
+      globalThis.structuredClone,
+      { log: () => {}, warn: () => {}, error: () => {} },
+    );
+    assert.deepEqual(fakeWindow.getVariables(), {
+      '秦素霜.倾心值': 0,
+      秦素霜: { 倾心值: 0 },
+    });
+    assert.equal(fakeWindow.getAllVariables().stat_data['秦素霜.倾心值'], 0);
+    assert.equal(fakeWindow.getChatMessages(0)[0].data.stat_data['秦素霜.倾心值'], 0);
+
+    await fakeWindow.Mvu.replaceMvuData({
+      stat_data: { '秦素霜.倾心值': 2, 秦素霜: { 倾心值: 2 } },
+    });
+    assert.equal(fakeWindow.getChatMessages(0)[0].data.stat_data['秦素霜.倾心值'], 2);
+  },
+});
 
 tests.push({
   name: 'splitFencedCodeBlocks keeps inline backticks inside a single fenced block',
@@ -83,6 +202,54 @@ test('keeps iframe diagnostic regex escapes inside generated srcdoc script', () 
   assert.ok(source.includes("replace(/\\\\s+/g, ' ').trim()"));
   assert.ok(source.includes('const contentHasBr = /<br\\\\s*\\\\/?>/i.test(contentHtml) ? 1 : 0;'));
   assert.ok(source.includes("match(/\\\\[旁白\\\\]\\\\|/g)"));
+  assert.match(source, /else if \(!directBodyLoadUrl\) \{\s*\/\/ direct-load/);
+  assert.equal((source.match(/const nodes = Array\.from\(body\.children \|\| \[\]\);/g) || []).length, 2);
+  assert.doesNotMatch(source, /const nodes = body\.querySelectorAll\('\*'\);/);
+  assert.ok(source.includes("hasOwnProperty.call(item, 'swipe_id')"));
+  assert.ok(source.includes('fields.swipe_id = item.swipe_id'));
+  assert.match(source, /\*, \*::before, \*::after \{ box-sizing: border-box; min-width: 0 !important; \}/);
+  assert.doesNotMatch(source, /\*, \*::before, \*::after \{[^}]*max-width/i);
+});
+
+test('maps Tavern swipe_id to RP alternate greetings without card-specific rules', () => {
+  const greetingState = {
+    greetings: [
+      { id: 'greeting_1', title: '开场白' },
+      { id: 'greeting_2', title: '开场白 2' },
+    ],
+    activeId: 'greeting_1',
+    locked: false,
+  };
+  assert.deepEqual(resolveCompatRpGreetingSwipeTarget({
+    sessionId: 'rp:persona_test',
+    message: { meta: { isGreeting: true } },
+    swipeId: 1,
+    greetingState,
+  }), {
+    ok: true,
+    greetingId: 'greeting_2',
+    swipeId: 1,
+    swipeCount: 2,
+    unchanged: false,
+  });
+  assert.equal(resolveCompatRpGreetingSwipeTarget({
+    sessionId: 'rp:persona_test',
+    message: { meta: { isGreeting: true } },
+    swipeId: 2,
+    greetingState,
+  }).reason, 'swipe-out-of-range');
+  assert.equal(resolveCompatRpGreetingSwipeTarget({
+    sessionId: 'normal-chat',
+    message: { meta: { isGreeting: true } },
+    swipeId: 1,
+    greetingState,
+  }).reason, 'unsupported-swipe-target');
+  assert.equal(resolveCompatRpGreetingSwipeTarget({
+    sessionId: 'rp:persona_test',
+    message: { meta: { isGreeting: true } },
+    swipeId: 1,
+    greetingState: { ...greetingState, locked: true },
+  }).reason, 'greeting-locked');
 });
 
 test('keeps balanced style scaffolds intact', () => {

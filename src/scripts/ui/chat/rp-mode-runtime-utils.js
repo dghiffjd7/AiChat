@@ -52,6 +52,66 @@ export const removeLegacySendModeState = ({
   }
 };
 
+export const applyRpGreetingUpdateVariables = ({
+  message = null,
+  sessionId = '',
+  resolveApply = () => null,
+  getMessage = () => null,
+  logger = console,
+} = {}) => {
+  const sid = normalizeSessionId(sessionId);
+  if (!message || message.role !== 'assistant' || !sid) return message;
+  const apply = typeof resolveApply === 'function' ? resolveApply() : null;
+  if (typeof apply !== 'function') return message;
+  try {
+    apply(message, sid);
+    return getMessage(message.id, sid) || message;
+  } catch (error) {
+    logger?.warn?.('[rp-greeting] UpdateVariable apply failed', error);
+    return message;
+  }
+};
+
+export const resolveRpInitVarWorldIds = ({
+  bridge = null,
+  sessionId = '',
+  uiMode = 'rp',
+} = {}) => {
+  const sid = normalizeSessionId(sessionId);
+  const normalizeIds = (value) => Array.from(new Set(
+    (Array.isArray(value) ? value : [])
+      .map(item => String(item || '').trim())
+      .filter(Boolean),
+  ));
+  if (typeof bridge?.getResolvedWorldState === 'function') {
+    try {
+      const resolved = bridge.getResolvedWorldState(sid, { uiMode: normalizeUiMode(uiMode) });
+      if (Array.isArray(resolved?.worldIds)) return normalizeIds(resolved.worldIds);
+    } catch {}
+  }
+  const fallback = [];
+  try {
+    fallback.push(bridge?.getGlobalWorldId?.());
+  } catch {}
+  try {
+    fallback.push(...(bridge?.getWorldIdsForSession?.(sid) || []));
+  } catch {}
+  return normalizeIds(fallback);
+};
+
+export const resetRpGreetingVariableState = ({
+  chatStore = null,
+  sessionId = '',
+  applyMvuSchemaDefaults = () => false,
+} = {}) => {
+  const sid = normalizeSessionId(sessionId);
+  if (!sid || !chatStore) return false;
+  chatStore.clearVariables?.(sid);
+  chatStore.clearInitialVariables?.(sid);
+  applyMvuSchemaDefaults?.(sid, { reason: 'rp_greeting_reset' });
+  return true;
+};
+
 export const runEnterRpModeFlow = async ({
   uiMode = 'chat',
   captureSocial = true,

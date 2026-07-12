@@ -1,7 +1,9 @@
 import { safeInvoke } from '../utils/tauri.js';
 import { logger } from '../utils/logger.js';
+import { shouldRestoreLegacyExecutableScript } from '../import/mvu-script-classification.js';
 
 const STORE_KEY = 'script_store_v1';
+const STORE_VERSION = 2;
 
 const genId = (prefix) => `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
 
@@ -55,6 +57,7 @@ const saveKv = async (name, data) => {
 
 const normalizeScript = (raw = {}, overrides = {}) => {
   const base = raw && typeof raw === 'object' ? raw : {};
+  const schemaOnly = base.schemaOnly === true;
   return {
     id: String(base.id || overrides.id || genId('script')),
     name: String(base.name || overrides.name || '未命名脚本').trim() || '未命名脚本',
@@ -62,7 +65,8 @@ const normalizeScript = (raw = {}, overrides = {}) => {
     info: String(base.info || ''),
     enabled: base.enabled === true,
     authorized: base.authorized === true,
-    schemaOnly: base.schemaOnly === true,
+    schemaOnly,
+    schemaOnlyReason: schemaOnly ? String(base.schemaOnlyReason || '') : '',
     data: base.data && typeof base.data === 'object' ? base.data : {},
     createdAt: Number.isFinite(Number(base.createdAt)) ? Number(base.createdAt) : Date.now(),
     updatedAt: Date.now(),
@@ -87,7 +91,7 @@ const flattenScriptTrees = (list = []) => {
 };
 
 const makeDefaultState = () => ({
-  version: 1,
+  version: STORE_VERSION,
   global: {
     scripts: [],
     variables: {},
@@ -143,7 +147,31 @@ export class ScriptStore {
     };
     normalizeBuckets(next.character, data.character);
     normalizeBuckets(next.preset, data.preset);
+    const storedVersion = Math.max(1, Number(data.version) || 1);
+    let restoredLegacyScripts = 0;
+    if (storedVersion < STORE_VERSION) {
+      const restoreBucket = (bucket) => {
+        (bucket?.scripts || []).forEach((script) => {
+          if (!shouldRestoreLegacyExecutableScript(script)) return;
+          script.schemaOnly = false;
+          script.schemaOnlyReason = '';
+          restoredLegacyScripts += 1;
+        });
+      };
+      restoreBucket(next.global);
+      Object.values(next.character || {}).forEach(restoreBucket);
+      Object.values(next.preset || {}).forEach(restoreBucket);
+    }
+    next.version = STORE_VERSION;
     this.state = next;
+    if (storedVersion < STORE_VERSION) {
+      const payload = clone(this.state);
+      const saved = await saveKv(STORE_KEY, payload);
+      if (!saved) writeLocalJson(STORE_KEY, payload);
+      if (restoredLegacyScripts > 0) {
+        logger.info(`[script-store] restored ${restoredLegacyScripts} executable card scripts from legacy schemaOnly flags`);
+      }
+    }
   }
 
   async persist() {

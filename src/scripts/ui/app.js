@@ -353,8 +353,11 @@ import {
 } from './chat/prompt-world-debug-utils.js';
 import { createReasoningRuntime } from './chat/reasoning-runtime-utils.js';
 import {
+  applyRpGreetingUpdateVariables,
   readUiMode,
   removeLegacySendModeState,
+  resetRpGreetingVariableState,
+  resolveRpInitVarWorldIds,
   runEnterRpModeFlow,
   runExitRpModeFlow,
   writeUiMode,
@@ -16598,6 +16601,40 @@ Phase G（Frame 36）：循环衔接
     markRead: (sessionId, messageId) => chatStore.markRead(sessionId, messageId),
   });
   const isSessionActive = (sessionId) => activeSessionRuntime.isSessionActive(sessionId);
+  const updateParser = buildUpdateVariableParser();
+  const applyUpdateVariableCommands = createUpdateVariableCommandApplier({
+    chatStore,
+    getAt: (obj, path) => getValueAtPath(obj, path, { allowDirectKey: false }),
+    setAt: (obj, path, value, options = {}) => setValueAtPath(obj, path, value, options),
+    deleteAt: (obj, path) => deleteValueAtPath(obj, path),
+    resolveExistingPath: (obj, path, options = {}) => resolveExistingVariablePath(obj, path, options),
+    shouldEmitMvuEvent,
+    emitStarted: emitMvuUpdateStarted,
+    emitEnded: emitMvuUpdateEnded,
+    logger,
+  });
+  const applyUpdateVariableFromMessage = createUpdateVariableMessageApplier({
+    getEffectivePersona,
+    listVariableSchemas: id => chatStore.listVariableSchemas?.(id),
+    extractBlocks: extractUpdateVariableBlocks,
+    parseCommands: block => updateParser.parseCommands(block),
+    applyCommands: applyUpdateVariableCommands,
+    resolveUseGlobalVariables: targetSessionId => isSharedVariableSession(targetSessionId),
+    transformStored: cleanedSource => applyOutputStoredRegexSafe(cleanedSource, {
+      appBridge: window.appBridge,
+      depth: 0,
+    }),
+    transformDisplay: nextStored => applyOutputDisplayRegexSafe(nextStored, {
+      appBridge: window.appBridge,
+      depth: 0,
+    }),
+    resolveForceRenderRich: targetSessionId => isRpSessionId(targetSessionId),
+    updateMessage: (messageId, updatePayload, sessionId) => chatStore.updateMessage(messageId, updatePayload, sessionId),
+    isSessionActive,
+    updateUiMessage: (messageId, updated) => ui.updateMessage(messageId, updated),
+    logger,
+  });
+  registerUpdateVariableApplyFn(applyUpdateVariableFromMessage);
   const autoMarkReadIfActive = (sessionId, messageId = '') =>
     activeSessionRuntime.autoMarkReadIfActive(sessionId, messageId);
   ui.setProviderContinuationCommitContext?.({
@@ -21573,17 +21610,8 @@ Phase G（Frame 36）：循环衔接
     };
     const extractInitVarFromWorldbooks = (sid, macroContext = {}) => {
       const app = window.appBridge;
-      const ids = new Set();
-      const globalId = String(app?.getGlobalWorldId?.() || '').trim();
-      if (globalId) ids.add(globalId);
-      const sessionIds = Array.isArray(app?.getWorldIdsForSession?.(sid))
-        ? app.getWorldIdsForSession(sid)
-        : [];
-      sessionIds.forEach((id) => {
-        const name = String(id || '').trim();
-        if (name) ids.add(name);
-      });
-      if (!ids.size) return null;
+      const ids = resolveRpInitVarWorldIds({ bridge: app, sessionId: sid, uiMode });
+      if (!ids.length) return null;
       let merged = null;
       ids.forEach((id) => {
         const world = app?.worldStore?.load?.(id);
@@ -21713,7 +21741,14 @@ Phase G（Frame 36）：循环衔接
       });
       return Boolean(result?.initVarData);
     }
-    const savedMsg = chatStore.appendMessage(msg, sid);
+    let savedMsg = chatStore.appendMessage(msg, sid);
+    savedMsg = applyRpGreetingUpdateVariables({
+      message: savedMsg || msg,
+      sessionId: sid,
+      resolveApply: resolveUpdateVariableApplyFn,
+      getMessage: (messageId, targetSessionId) => chatStore.findMessage?.(messageId, targetSessionId),
+      logger,
+    });
     logRpGreetingDebug('seed-appended', {
       session: sid,
       messageId: savedMsg?.id || msg?.id || '',
@@ -21730,6 +21765,7 @@ Phase G（Frame 36）：循环衔接
     const sid = String(sessionId || '').trim();
     if (!sid) return;
     chatStore.clear(sid);
+    resetRpGreetingVariableState({ chatStore, sessionId: sid, applyMvuSchemaDefaults });
     ui.clearMessages();
     chatRenderState.set(sid, { start: 0 });
     await seedRpGreetingIfNeeded(sid);
@@ -25600,40 +25636,6 @@ Phase G（Frame 36）：循环衔接
         logger,
       });
     };
-    const updateParser = buildUpdateVariableParser();
-    const applyUpdateVariableCommands = createUpdateVariableCommandApplier({
-      chatStore,
-      getAt: (obj, path) => getValueAtPath(obj, path, { allowDirectKey: false }),
-      setAt: (obj, path, value, options = {}) => setValueAtPath(obj, path, value, options),
-      deleteAt: (obj, path) => deleteValueAtPath(obj, path),
-      resolveExistingPath: (obj, path, options = {}) => resolveExistingVariablePath(obj, path, options),
-      shouldEmitMvuEvent,
-      emitStarted: emitMvuUpdateStarted,
-      emitEnded: emitMvuUpdateEnded,
-      logger,
-    });
-    const applyUpdateVariableFromMessage = createUpdateVariableMessageApplier({
-      getEffectivePersona,
-      listVariableSchemas: id => chatStore.listVariableSchemas?.(id),
-      extractBlocks: extractUpdateVariableBlocks,
-      parseCommands: block => updateParser.parseCommands(block),
-      applyCommands: applyUpdateVariableCommands,
-      resolveUseGlobalVariables: targetSessionId => isSharedVariableSession(targetSessionId),
-      transformStored: cleanedSource => applyOutputStoredRegexSafe(cleanedSource, {
-        appBridge: window.appBridge,
-        depth: 0,
-      }),
-      transformDisplay: nextStored => applyOutputDisplayRegexSafe(nextStored, {
-        appBridge: window.appBridge,
-        depth: 0,
-      }),
-      resolveForceRenderRich: targetSessionId => isRpSessionId(targetSessionId),
-      updateMessage: (messageId, updatePayload, sessionId) => chatStore.updateMessage(messageId, updatePayload, sessionId),
-      isSessionActive,
-      updateUiMessage: (messageId, updated) => ui.updateMessage(messageId, updated),
-      logger,
-    });
-    registerUpdateVariableApplyFn(applyUpdateVariableFromMessage);
     const applyChatFormatGuardianProtocolRepair = async ({ correctedText } = {}) => {
       const repairText = String(correctedText || '').trim();
       if (!repairText) {

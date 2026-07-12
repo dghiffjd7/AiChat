@@ -21,8 +21,17 @@ const listenedEvents = new Set();
 const ST_PROMPT_ORDER_DUMMY_ID = ${ST_PROMPT_ORDER_DUMMY_ID};
 let compatUiNodeSeq = 0;
 const compatUiNodes = new Map();
+const compatUiIdIndex = new Map();
+const compatUiExactAttributeIndex = new Map();
+let compatUiMeasureSelectors = false;
+let compatUiSelectorQueryCount = 0;
+let compatUiSelectorVisitedNodeCount = 0;
+let compatUiSelectorIndexHitCount = 0;
 let compatUiFlushTimer = 0;
 let compatUiLastSignature = '';
+let compatUiNativeStateRevision = 0;
+const compatUiLayoutInterest = new Set();
+let compatUiLayoutInterestTimer = 0;
 const COMPAT_UI_MAX_HTML = 400000;
 const COMPAT_UI_MAX_ROOTS = 80;
 const compatUiLayouts = new Map();
@@ -47,6 +56,22 @@ const DEFAULT_COMPAT_VIEWPORT = {
   },
 };
 let compatViewport = { ...DEFAULT_COMPAT_VIEWPORT, visualViewport: { ...DEFAULT_COMPAT_VIEWPORT.visualViewport } };
+
+const compatNow = () => {
+  try { return typeof performance !== 'undefined' && typeof performance.now === 'function' ? performance.now() : Date.now(); }
+  catch { return Date.now(); }
+};
+
+const requestCompatUiLayout = (nodeId) => {
+  const id = String(nodeId || '').trim();
+  if (!id || compatUiLayoutInterest.has(id)) return;
+  compatUiLayoutInterest.add(id);
+  if (compatUiLayoutInterestTimer) return;
+  compatUiLayoutInterestTimer = setTimeout(() => {
+    compatUiLayoutInterestTimer = 0;
+    try { postMessage({ type: 'ui_layout_interest', nodeIds: Array.from(compatUiLayoutInterest) }); } catch {}
+  }, 0);
+};
 
 const notifyListener = (eventName) => {
   const name = String(eventName || '').trim();
@@ -229,6 +254,22 @@ const isRemoteUrl = (value) => {
   const raw = String(value || '').trim();
   if (!raw) return false;
   return /^https?:\\/\\//i.test(raw) || raw.startsWith('//');
+};
+
+const nativeFetch = typeof self.fetch === 'function' ? self.fetch.bind(self) : null;
+const deniedFetchUrls = new Set();
+const guardedFetch = (...args) => {
+  const input = args[0];
+  const url = String(input?.url || input || '').trim();
+  if (currentSettings.allowNetwork !== true) {
+    if (!deniedFetchUrls.has(url)) {
+      deniedFetchUrls.add(url);
+      callRpc('log', { level: 'warn', args: ['脚本网络已禁用，阻止加载', url] }).catch(() => {});
+    }
+    return Promise.reject(new TypeError('脚本网络已禁用'));
+  }
+  if (!nativeFetch) return Promise.reject(new TypeError('fetch is unavailable'));
+  return nativeFetch(...args);
 };
 
 const resolveImportUrl = (value, baseUrl) => {
@@ -512,9 +553,8 @@ const makeCompatLocalStorage = () => ({
 const makeCompatToastr = () => {
   const notify = (level) => (...args) => {
     const text = args.map(item => String(item?.message || item || '')).filter(Boolean).join(' ');
-    if (currentSettings.debugExecutionLogs && text) {
-      callRpc('log', { level, args: ['[toastr]', text] }).catch(() => {});
-    }
+    if (!text) return;
+    callRpc('toast', { level, message: text, sessionId: currentContext.sessionId }).catch(() => {});
   };
   return {
     info: notify('info'),
@@ -852,6 +892,7 @@ const walkCompatTree = (root, includeRoot = false) => {
   const visit = (node) => {
     if (!node || typeof node !== 'object') return;
     out.push(node);
+    if (compatUiMeasureSelectors) compatUiSelectorVisitedNodeCount += 1;
     getCompatElementChildren(node).forEach(visit);
   };
   if (includeRoot) visit(root);
@@ -935,6 +976,126 @@ const getCompatAttribute = (node, name) => {
   return null;
 };
 
+const getCompatAttributeIndexKey = (tagName, name, value) => (
+  String(tagName || '').toLowerCase() + '\u0000' + String(name || '') + '\u0000' + String(value ?? '')
+);
+
+const addCompatIndexEntry = (index, key, node) => {
+  if (!key || !node) return;
+  const bucket = index.get(key) || new Set();
+  bucket.add(node);
+  index.set(key, bucket);
+};
+
+const removeCompatIndexEntry = (index, key, node) => {
+  const bucket = index.get(key);
+  if (!bucket) return;
+  bucket.delete(node);
+  if (!bucket.size) index.delete(key);
+};
+
+const listCompatIndexAttributes = (node) => {
+  const attrs = new Map();
+  Object.entries(node?.attributes || {}).forEach(([name, value]) => attrs.set(String(name), String(value ?? '')));
+  if (node?.id) attrs.set('id', String(node.id));
+  if (node?.className) attrs.set('class', String(node.className));
+  if (node?.dataset && typeof node.dataset === 'object') {
+    Object.entries(node.dataset).forEach(([key, value]) => {
+      attrs.set('data-' + String(key).replace(/[A-Z]/g, char => '-' + char.toLowerCase()), String(value ?? ''));
+    });
+  }
+  return attrs;
+};
+
+const indexCompatUiNode = (node) => {
+  if (!node || node.nodeType !== 1) return;
+  const id = String(node.id || '').trim();
+  if (id) addCompatIndexEntry(compatUiIdIndex, id, node);
+  const tag = String(node.tagName || '').toLowerCase();
+  listCompatIndexAttributes(node).forEach((value, name) => {
+    addCompatIndexEntry(compatUiExactAttributeIndex, getCompatAttributeIndexKey(tag, name, value), node);
+  });
+};
+
+const unindexCompatUiNode = (node) => {
+  if (!node || node.nodeType !== 1) return;
+  const id = String(node.id || '').trim();
+  if (id) removeCompatIndexEntry(compatUiIdIndex, id, node);
+  const tag = String(node.tagName || '').toLowerCase();
+  listCompatIndexAttributes(node).forEach((value, name) => {
+    removeCompatIndexEntry(compatUiExactAttributeIndex, getCompatAttributeIndexKey(tag, name, value), node);
+  });
+};
+
+const isCompatNodeWithinRoot = (node, root) => {
+  let cursor = node?.parentNode || null;
+  while (cursor) {
+    if (cursor === root) return true;
+    cursor = cursor.parentNode || null;
+  }
+  return false;
+};
+
+const isCompatNodeConnected = (node) => {
+  const documentElement = self.document?.documentElement;
+  return Boolean(documentElement && (node === documentElement || isCompatNodeWithinRoot(node, documentElement)));
+};
+
+const registerCompatUiSubtree = (node) => {
+  if (!node || !isCompatNodeConnected(node)) return;
+  const stack = [node];
+  while (stack.length) {
+    const item = stack.pop();
+    if (!item || typeof item !== 'object') continue;
+    const nodeId = String(item.__chatappNodeId || '').trim();
+    if (nodeId) compatUiNodes.set(nodeId, item);
+    indexCompatUiNode(item);
+    const children = Array.isArray(item.childNodes) ? item.childNodes : [];
+    for (let index = children.length - 1; index >= 0; index -= 1) stack.push(children[index]);
+  }
+};
+
+const unregisterCompatUiSubtree = (node) => {
+  const stack = [node];
+  while (stack.length) {
+    const item = stack.pop();
+    if (!item || typeof item !== 'object') continue;
+    const nodeId = String(item.__chatappNodeId || '').trim();
+    if (nodeId) {
+      compatUiNodes.delete(nodeId);
+      compatUiLayouts.delete(nodeId);
+      compatUiLayoutInterest.delete(nodeId);
+    }
+    unindexCompatUiNode(item);
+    const children = Array.isArray(item.childNodes) ? item.childNodes : [];
+    for (let index = children.length - 1; index >= 0; index -= 1) stack.push(children[index]);
+  }
+};
+
+const getCompatIndexedSelectorCandidates = (root, selector = '') => {
+  const text = String(selector || '').trim();
+  if (!text || /[\\s>,+~]/.test(text)) return null;
+  const buckets = [];
+  const idMatch = text.match(/#([^\\.\\[#:\\s]+)/);
+  if (idMatch) buckets.push(compatUiIdIndex.get(cssUnescape(idMatch[1])) || new Set());
+  const tagMatch = text.match(/^[a-zA-Z][\\w-]*/);
+  const tag = String(tagMatch?.[0] || '').toLowerCase();
+  const exactAttrs = Array.from(text.matchAll(/\\[([^\\]=~\\^\\$\\*\\|\\s]+)\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\]]+))\\]/g));
+  exactAttrs.forEach((match) => {
+    if (!tag) return;
+    const value = String(match[2] ?? match[3] ?? match[4] ?? '').trim();
+    buckets.push(compatUiExactAttributeIndex.get(getCompatAttributeIndexKey(tag, match[1], value)) || new Set());
+  });
+  if (!buckets.length) return null;
+  compatUiSelectorIndexHitCount += 1;
+  const smallest = buckets.reduce((best, bucket) => bucket.size < best.size ? bucket : best, buckets[0]);
+  return Array.from(smallest).filter(node => (
+    buckets.every(bucket => bucket.has(node))
+    && isCompatNodeWithinRoot(node, root)
+    && matchesCompatSimpleSelector(node, text)
+  ));
+};
+
 const matchesCompatSimpleSelector = (node, selector = '') => {
   if (!node || typeof node !== 'object') return false;
   let text = String(selector || '').trim();
@@ -959,8 +1120,14 @@ const matchesCompatSimpleSelector = (node, selector = '') => {
 };
 
 const queryCompatSelectorAll = (root, selector = '') => {
+  if (compatUiMeasureSelectors) compatUiSelectorQueryCount += 1;
   const found = [];
   splitSelectorGroups(selector).forEach((group) => {
+    const indexed = getCompatIndexedSelectorCandidates(root, group);
+    if (indexed) {
+      indexed.forEach(node => { if (!found.includes(node)) found.push(node); });
+      return;
+    }
     const directMatch = group.match(/^:scope\\s*>\\s*(.+)$/);
     if (directMatch) {
       getCompatElementChildren(root).forEach((child) => {
@@ -1197,6 +1364,34 @@ const buildCompatUiPayload = () => {
   return { styles, roots };
 };
 
+const rebuildCompatUiNodeRegistry = () => {
+  const next = new Map();
+  const seen = new Set();
+  const stack = [self.document?.documentElement, self.document?.head, self.document?.body].filter(Boolean);
+  while (stack.length) {
+    const node = stack.pop();
+    if (!node || typeof node !== 'object' || seen.has(node)) continue;
+    seen.add(node);
+    const nodeId = String(node.__chatappNodeId || '').trim();
+    if (nodeId) next.set(nodeId, node);
+    const children = Array.isArray(node.childNodes) ? node.childNodes : [];
+    for (let index = children.length - 1; index >= 0; index -= 1) stack.push(children[index]);
+  }
+  compatUiNodes.clear();
+  compatUiIdIndex.clear();
+  compatUiExactAttributeIndex.clear();
+  next.forEach((node, nodeId) => {
+    compatUiNodes.set(nodeId, node);
+    indexCompatUiNode(node);
+  });
+  Array.from(compatUiLayouts.keys()).forEach((nodeId) => {
+    if (!next.has(nodeId)) compatUiLayouts.delete(nodeId);
+  });
+  Array.from(compatUiLayoutInterest).forEach((nodeId) => {
+    if (!next.has(nodeId)) compatUiLayoutInterest.delete(nodeId);
+  });
+};
+
 const parseCompatPx = (value) => {
   const match = String(value || '').trim().match(/^(-?\\d+(?:\\.\\d+)?)px$/i);
   return match ? Number(match[1]) || 0 : 0;
@@ -1235,6 +1430,7 @@ const getCompatStyleRectFallback = (element) => {
 
 const getCompatElementRect = (element) => {
   const nodeId = String(element?.__chatappNodeId || '');
+  if (nodeId) requestCompatUiLayout(nodeId);
   if (nodeId && compatUiLayouts.has(nodeId)) return normalizeCompatRect(compatUiLayouts.get(nodeId));
   return getCompatStyleRectFallback(element);
 };
@@ -1259,12 +1455,24 @@ const updateCompatUiLayouts = (items = [], viewport = null) => {
 
 function flushCompatUi() {
   compatUiFlushTimer = 0;
+  const startedAt = compatNow();
+  rebuildCompatUiNodeRegistry();
   const payload = buildCompatUiPayload();
   const signature = JSON.stringify(payload);
   if (signature === compatUiLastSignature) return;
   compatUiLastSignature = signature;
   try {
-    postMessage({ type: 'ui_update', payload });
+    postMessage({
+      type: 'ui_update',
+      payload,
+      nativeStateRevision: compatUiNativeStateRevision,
+      perf: {
+        workerBuildMs: Math.max(0, compatNow() - startedAt),
+        registeredNodeCount: compatUiNodes.size,
+        rootCount: payload.roots.length,
+        htmlLength: payload.roots.reduce((sum, item) => sum + String(item || '').length, 0),
+      },
+    });
   } catch {}
 }
 
@@ -1287,13 +1495,23 @@ function resetCompatDocumentForSync() {
     compatUiFlushTimer = 0;
   }
   compatUiLastSignature = '';
+  compatUiNativeStateRevision = 0;
+  if (compatUiLayoutInterestTimer) {
+    clearTimeout(compatUiLayoutInterestTimer);
+    compatUiLayoutInterestTimer = 0;
+  }
+  compatUiLayoutInterest.clear();
   compatUiNodes.clear();
+  compatUiIdIndex.clear();
+  compatUiExactAttributeIndex.clear();
   compatUiLayouts.clear();
   compatUiNodeSeq = 0;
   self.document = makeCompatDocument();
+  rebuildCompatUiNodeRegistry();
 }
 
 function handleCompatUiEvent(msg = {}) {
+  const startedAt = compatNow();
   const data = msg.event && typeof msg.event === 'object' ? msg.event : {};
   const node = compatUiNodes.get(String(msg.nodeId || ''));
   let target = node;
@@ -1303,16 +1521,49 @@ function handleCompatUiEvent(msg = {}) {
   if (!target || typeof target.dispatchEvent !== 'function') return;
   if (node && 'value' in data) node.value = String(data.value ?? '');
   if (node && 'checked' in data) node.checked = data.checked === true;
+  if (node && 'open' in data) {
+    node.open = data.open === true;
+    if (node.open) node.setAttribute?.('open', '');
+    else node.removeAttribute?.('open');
+  }
   const eventType = msg.eventType || data.type || '';
+  compatUiNativeStateRevision = Math.max(
+    compatUiNativeStateRevision,
+    Number(msg.nativeStateRevision || 0) || 0,
+  );
+  const measureSelectors = Number.isFinite(Number(msg.traceStartedAt));
+  if (measureSelectors) {
+    compatUiSelectorQueryCount = 0;
+    compatUiSelectorVisitedNodeCount = 0;
+    compatUiSelectorIndexHitCount = 0;
+    compatUiMeasureSelectors = true;
+  }
+  const dispatchStartedAt = compatNow();
   target.dispatchEvent(makeCompatEvent(eventType, {
     ...data,
     bubbles: data.bubbles !== false,
     cancelable: data.cancelable === true,
   }));
-  if (['click', 'dblclick', 'input', 'change', 'submit', 'keydown', 'keyup'].includes(String(eventType))) {
+  const workerDispatchMs = Math.max(0, compatNow() - dispatchStartedAt);
+  compatUiMeasureSelectors = false;
+  if (['click', 'dblclick', 'input', 'change', 'toggle', 'submit', 'keydown', 'keyup'].includes(String(eventType))) {
     flushCompatUiNow();
   } else {
     scheduleCompatUiFlush();
+  }
+  if (Number.isFinite(Number(msg.traceStartedAt))) {
+    try {
+      postMessage({
+        type: 'ui_event_perf',
+        eventType: String(eventType || ''),
+        traceStartedAt: Number(msg.traceStartedAt),
+        workerDispatchMs,
+        workerTotalMs: Math.max(0, compatNow() - startedAt),
+        selectorQueries: compatUiSelectorQueryCount,
+        selectorVisitedNodes: compatUiSelectorVisitedNodeCount,
+        selectorIndexHits: compatUiSelectorIndexHitCount,
+      });
+    } catch {}
   }
 }
 
@@ -1473,6 +1724,7 @@ const makeCompatElement = (tagName = 'div') => {
         if (element.ownerDocument && !child.ownerDocument) child.ownerDocument = element.ownerDocument;
         childNodes.push(child);
         if (child.nodeType !== 3 && !element.children.includes(child)) element.children.push(child);
+        registerCompatUiSubtree(child);
         scheduleCompatUiFlush();
       }
       return child;
@@ -1491,10 +1743,12 @@ const makeCompatElement = (tagName = 'div') => {
         if (elementIdx >= 0) element.children.splice(elementIdx, 0, child);
         else if (!element.children.includes(child)) element.children.push(child);
       }
+      registerCompatUiSubtree(child);
       scheduleCompatUiFlush();
       return child;
     },
     removeChild(child) {
+      unregisterCompatUiSubtree(child);
       const nodeIdx = childNodes.indexOf(child);
       if (nodeIdx >= 0) childNodes.splice(nodeIdx, 1);
       element.children = element.children.filter(item => item !== child);
@@ -1518,6 +1772,8 @@ const makeCompatElement = (tagName = 'div') => {
     setAttribute(name, value) {
       const key = String(name || '').trim();
       if (!key) return;
+      const indexed = compatUiNodes.get(String(element.__chatappNodeId || '')) === element;
+      if (indexed) unindexCompatUiNode(element);
       const text = String(value ?? '');
       attrs[key] = text;
       if (key === 'id') element.id = text;
@@ -1531,6 +1787,7 @@ const makeCompatElement = (tagName = 'div') => {
       } else {
         element[key] = text;
       }
+      if (indexed) indexCompatUiNode(element);
       scheduleCompatUiFlush();
     },
     getAttribute(name) {
@@ -1539,6 +1796,8 @@ const makeCompatElement = (tagName = 'div') => {
     removeAttribute(name) {
       const key = String(name || '').trim();
       if (!key) return;
+      const indexed = compatUiNodes.get(String(element.__chatappNodeId || '')) === element;
+      if (indexed) unindexCompatUiNode(element);
       delete attrs[key];
       if (key === 'id') element.id = '';
       else if (key === 'class') element.className = '';
@@ -1548,6 +1807,7 @@ const makeCompatElement = (tagName = 'div') => {
       } else {
         delete element[key];
       }
+      if (indexed) indexCompatUiNode(element);
       scheduleCompatUiFlush();
     },
     hasAttribute(name) {
@@ -1628,9 +1888,12 @@ const makeCompatElement = (tagName = 'div') => {
         return idValue;
       },
       set(value) {
+        const indexed = compatUiNodes.get(String(element.__chatappNodeId || '')) === element;
+        if (indexed) unindexCompatUiNode(element);
         idValue = String(value ?? '');
         if (idValue) attrs.id = idValue;
         else delete attrs.id;
+        if (indexed) indexCompatUiNode(element);
         scheduleCompatUiFlush();
       },
     },
@@ -1641,9 +1904,12 @@ const makeCompatElement = (tagName = 'div') => {
         return classNameValue;
       },
       set(value) {
+        const indexed = compatUiNodes.get(String(element.__chatappNodeId || '')) === element;
+        if (indexed) unindexCompatUiNode(element);
         classNameValue = String(value ?? '');
         if (classNameValue) attrs.class = classNameValue;
         else delete attrs.class;
+        if (indexed) indexCompatUiNode(element);
         scheduleCompatUiFlush();
       },
     },
@@ -1797,7 +2063,6 @@ const makeCompatElement = (tagName = 'div') => {
   installCompatEventTarget(element);
   const nodeId = String(++compatUiNodeSeq);
   Object.defineProperty(element, '__chatappNodeId', { value: nodeId, configurable: true });
-  compatUiNodes.set(nodeId, element);
   return element;
 };
 
@@ -1832,6 +2097,15 @@ const makeCompatDocument = () => {
     getElementById(id = '') {
       const key = String(id || '').trim();
       if (!key) return null;
+      if (compatUiMeasureSelectors) compatUiSelectorQueryCount += 1;
+      const indexed = compatUiIdIndex.get(key);
+      if (indexed) {
+        if (compatUiMeasureSelectors) compatUiSelectorIndexHitCount += 1;
+        const match = Array.from(indexed).find(node => (
+          node === documentElement || isCompatNodeWithinRoot(node, documentElement)
+        ));
+        if (match) return match;
+      }
       return walkCompatTree(documentElement, true).find(node => String(node.id || '') === key) || null;
     },
     querySelector(selector = '') {
@@ -1974,8 +2248,218 @@ const EVENT_TYPES = {
   APP_READY: 'app.ready',
   CHAT_CHANGED: 'chat.changed',
   CHARACTER_SELECTED: 'character.selected',
+  GENERATION_ENDED: 'message.after_receive',
   MESSAGE_RECEIVED: 'message.after_receive',
   MESSAGE_SENT: 'message.after_send',
+  MESSAGE_SWIPED: 'message.swiped',
+  CHARACTER_MESSAGE_RENDERED: 'message.after_render',
+};
+
+Object.assign(self.tavern_events, EVENT_TYPES);
+
+const normalizeTavernMessage = (message = {}, index = 0) => {
+  const rawId = Number(message?.message_id);
+  const messageId = Number.isFinite(rawId) ? Math.trunc(rawId) : Math.max(0, Math.trunc(Number(index) || 0));
+  const role = String(message?.role || '').trim().toLowerCase();
+  const text = String(
+    message?.message ??
+    message?.mes ??
+    message?.rawSource ??
+    message?.raw ??
+    message?.rawOriginal ??
+    message?.content ??
+    ''
+  );
+  return {
+    id: String(message?.id || ''),
+    message_id: messageId,
+    role,
+    name: String(message?.name || ''),
+    message: text,
+    mes: text,
+    is_user: role === 'user',
+    is_system: role === 'system',
+    data: message?.data && typeof message.data === 'object' ? clone(message.data) : {},
+  };
+};
+
+const getTavernChatSnapshot = () => {
+  const list = Array.isArray(currentContext.chat) ? currentContext.chat : [];
+  return list.map((message, index) => normalizeTavernMessage(message, index));
+};
+
+const getLastMessageId = () => {
+  const list = getTavernChatSnapshot();
+  if (!list.length) return -1;
+  return list.reduce((max, message) => Math.max(max, Number(message.message_id) || 0), -1);
+};
+
+const getChatMessages = (selector, options = {}) => {
+  const role = String(options?.role || '').trim().toLowerCase();
+  const all = getTavernChatSnapshot();
+  const list = role ? all.filter(message => message.role === role) : all;
+  if (selector === undefined || selector === null || selector === '') return clone(list);
+  if (Array.isArray(selector)) {
+    const ids = new Set(selector.map(value => Math.trunc(Number(value))).filter(Number.isFinite));
+    return clone(list.filter(message => ids.has(message.message_id)));
+  }
+  const normalizedSelector = typeof selector === 'string'
+    ? selector.replace(/\\{\\{\\s*lastMessageId\\s*\\}\\}/gi, String(getLastMessageId()))
+    : selector;
+  if (typeof normalizedSelector === 'string' && /^\\s*-?\\d+\\s*-\\s*-?\\d+\\s*$/.test(normalizedSelector)) {
+    const parts = normalizedSelector.split('-', 2).map(value => Math.trunc(Number(value)));
+    if (parts.every(Number.isFinite)) {
+      const min = Math.min(parts[0], parts[1]);
+      const max = Math.max(parts[0], parts[1]);
+      return clone(list.filter(message => message.message_id >= min && message.message_id <= max));
+    }
+  }
+  const id = Math.trunc(Number(normalizedSelector));
+  if (!Number.isFinite(id)) return [];
+  if (id < 0) {
+    const item = list[list.length + id];
+    return item ? clone([item]) : [];
+  }
+  return clone(list.filter(message => message.message_id === id));
+};
+
+const setChatMessages = async (messages = [], options = {}) => {
+  const patches = Array.isArray(messages) ? messages : [];
+  if (!patches.length) return [];
+  const current = getTavernChatSnapshot();
+  patches.forEach((patch) => {
+    if (!patch || typeof patch !== 'object') return;
+    const rawId = Number(patch.message_id);
+    const item = Number.isFinite(rawId)
+      ? current.find(message => message.message_id === Math.trunc(rawId))
+      : current.find(message => message.id && message.id === String(patch.id || ''));
+    if (!item) return;
+    if (patch.message !== undefined || patch.mes !== undefined) {
+      const text = String(patch.message ?? patch.mes ?? '');
+      item.message = text;
+      item.mes = text;
+    }
+    if (patch.role !== undefined) item.role = String(patch.role || '');
+    if (patch.name !== undefined) item.name = String(patch.name || '');
+    if (patch.data && typeof patch.data === 'object') item.data = clone(patch.data);
+  });
+  currentContext.chat = current;
+  ensureSillyTavern().chat = clone(current);
+  const result = await callRpc('chat.setMessages', {
+    messages: patches,
+    options,
+    sessionId: currentContext.sessionId,
+  });
+  return Array.isArray(result) ? result.map(normalizeTavernMessage) : clone(current);
+};
+
+const getTavernRegexes = (options = {}) => {
+  const scope = String(options?.scope || 'character').trim().toLowerCase();
+  if (scope !== 'character') return [];
+  return clone(Array.isArray(currentContext.characterRegexes) ? currentContext.characterRegexes : []);
+};
+
+const replaceTavernRegexes = async (regexes = [], options = {}) => {
+  const scope = String(options?.scope || 'character').trim().toLowerCase();
+  if (scope !== 'character' || !Array.isArray(regexes)) return false;
+  currentContext.characterRegexes = clone(regexes);
+  return await callRpc('regex.replaceCharacter', {
+    regexes,
+    scope,
+    sessionId: currentContext.sessionId,
+  });
+};
+
+const scriptButtonHandlers = new Map();
+
+const matchesScriptButton = (matcher, name) => {
+  if (matcher instanceof RegExp) {
+    matcher.lastIndex = 0;
+    return matcher.test(name);
+  }
+  return String(matcher || '') === name;
+};
+
+const ensureScriptButtonRoot = () => {
+  const doc = self.document;
+  if (!doc?.body || typeof doc.createElement !== 'function') return null;
+  let root = doc.getElementById?.('chatapp-script-buttons');
+  if (root) return root;
+  root = doc.createElement('div');
+  root.id = 'chatapp-script-buttons';
+  root.setAttribute('id', root.id);
+  root.setAttribute('aria-label', '角色卡脚本操作');
+  root.style.position = 'fixed';
+  root.style.right = '16px';
+  root.style.bottom = '84px';
+  root.style.zIndex = '2147483000';
+  root.style.display = 'flex';
+  root.style.flexDirection = 'column';
+  root.style.gap = '6px';
+  root.style.alignItems = 'flex-end';
+  root.style.pointerEvents = 'auto';
+  doc.body.appendChild(root);
+  return root;
+};
+
+const makeScriptButtonApi = (record = {}) => {
+  const scriptId = String(record.id || '');
+  const groupId = 'chatapp-script-buttons-' + scriptId.replace(/[^a-zA-Z0-9_-]/g, '_');
+  const eventOnButton = (matcher, callback) => {
+    if ((!matcher && matcher !== '') || typeof callback !== 'function') return false;
+    const handlers = scriptButtonHandlers.get(scriptId) || [];
+    handlers.push({ matcher, callback });
+    scriptButtonHandlers.set(scriptId, handlers);
+    return true;
+  };
+  const replaceScriptButtons = (_targetScriptId, buttons = []) => {
+    const root = ensureScriptButtonRoot();
+    if (!root) return false;
+    let group = self.document.getElementById?.(groupId);
+    if (!group) {
+      group = self.document.createElement('div');
+      group.id = groupId;
+      group.setAttribute('id', groupId);
+      group.style.display = 'flex';
+      group.style.flexWrap = 'wrap';
+      group.style.justifyContent = 'flex-end';
+      group.style.gap = '6px';
+      group.style.maxWidth = 'min(520px, 82vw)';
+      root.appendChild(group);
+    }
+    group.replaceChildren?.();
+    (Array.isArray(buttons) ? buttons : []).forEach((descriptor) => {
+      if (!descriptor || descriptor.visible === false) return;
+      const name = String(descriptor.name || '').trim();
+      if (!name) return;
+      const button = self.document.createElement('button');
+      button.type = 'button';
+      button.textContent = name;
+      button.setAttribute('type', 'button');
+      button.setAttribute('title', name);
+      button.style.border = '1px solid rgba(128, 128, 128, 0.35)';
+      button.style.borderRadius = '10px';
+      button.style.padding = '7px 10px';
+      button.style.background = 'rgba(28, 28, 32, 0.92)';
+      button.style.color = '#fff';
+      button.style.fontSize = '12px';
+      button.style.boxShadow = '0 4px 14px rgba(0, 0, 0, 0.22)';
+      button.style.cursor = 'pointer';
+      button.addEventListener('click', () => {
+        const handlers = scriptButtonHandlers.get(scriptId) || [];
+        handlers.forEach((entry) => {
+          if (matchesScriptButton(entry.matcher, name)) runCompatCallback(entry.callback);
+        });
+      });
+      group.appendChild(button);
+    });
+    return true;
+  };
+  return {
+    getScriptId: () => scriptId,
+    eventOnButton,
+    replaceScriptButtons,
+  };
 };
 
 const eventSource = {
@@ -2193,6 +2677,38 @@ const syncVirtualPromptManager = () => {
   });
 };
 
+const syncVirtualPresetRegexManager = () => {
+  const doc = self.document;
+  if (!doc?.body || typeof doc.createElement !== 'function') return;
+  let list = doc.getElementById?.('saved_preset_scripts');
+  if (!list) {
+    list = doc.createElement('div');
+    list.id = 'saved_preset_scripts';
+    list.setAttribute('id', 'saved_preset_scripts');
+    list.setAttribute('data-chatapp-virtual', 'preset-regex-manager');
+    doc.body.appendChild(list);
+  }
+  if (list.getAttribute?.('data-chatapp-virtual') !== 'preset-regex-manager') return;
+  list.replaceChildren?.();
+  const regexes = Array.isArray(currentContext.presetRegexes) ? currentContext.presetRegexes : [];
+  regexes.forEach((rule) => {
+    const nameText = String(rule?.script_name || rule?.scriptName || rule?.name || '').trim();
+    if (!nameText) return;
+    const row = doc.createElement('div');
+    row.className = 'regex-script-label';
+    row.setAttribute('class', row.className);
+    row.setAttribute('data-chatapp-virtual', 'preset-regex-row');
+    row.setAttribute('data-regex-id', String(rule?.id || ''));
+    if (rule?.enabled === false || rule?.disabled === true) row.classList.add('disabled');
+    const name = doc.createElement('span');
+    name.className = 'regex_script_name';
+    name.setAttribute('class', name.className);
+    name.textContent = nameText;
+    row.appendChild(name);
+    list.appendChild(row);
+  });
+};
+
 const isPresetPlaceholderPrompt = (prompt = {}) => {
   const id = String(prompt.identifier || prompt.id || prompt.name || '').toLowerCase();
   return Boolean(prompt.placeholder || prompt.isPlaceholder || id.includes('placeholder'));
@@ -2322,7 +2838,16 @@ const buildSillyTavern = () => {
   st.unregisterFunctionTool = () => {};
   st.POPUP_TYPE = { TEXT: 'text', INPUT: 'input', CONFIRM: 'confirm' };
   st.POPUP_RESULT = { AFFIRMATIVE: 1, CANCELLED: 0, NEGATIVE: -1, CUSTOM1: 2 };
-  st.callGenericPopup = async () => null;
+  st.callGenericPopup = async (content, type, _defaultValue, options = {}) => {
+    const result = await callRpc('ui.confirm', {
+      content: String(content || ''),
+      type,
+      options,
+      sessionId: currentContext.sessionId,
+    });
+    return result === true ? st.POPUP_RESULT.AFFIRMATIVE : st.POPUP_RESULT.CANCELLED;
+  };
+  st.reloadCurrentChat = () => callRpc('chat.reloadCurrent', { sessionId: currentContext.sessionId });
   return st;
 };
 
@@ -2336,14 +2861,28 @@ const ensureSillyTavern = () => {
   self.SillyTavern.eventTypes = EVENT_TYPES;
   self.SillyTavern.event_types = EVENT_TYPES;
   self.SillyTavern.getContext = getContext;
+  self.SillyTavern.reloadCurrentChat = self.SillyTavern.reloadCurrentChat || (() => callRpc('chat.reloadCurrent', { sessionId: currentContext.sessionId }));
   return self.SillyTavern;
 };
 
 const refreshSillyTavernChat = async () => {
   try {
     const list = await callRpc('chat.getMessages', { sessionId: currentContext.sessionId });
-    if (Array.isArray(list)) ensureSillyTavern().chat = list;
+    if (Array.isArray(list)) {
+      const normalized = list.map(normalizeTavernMessage);
+      currentContext.chat = normalized;
+      ensureSillyTavern().chat = clone(normalized);
+    }
   } catch {}
+};
+
+const refreshTavernRegexes = async () => {
+  try {
+    const list = await callRpc('regex.getCharacter', { sessionId: currentContext.sessionId });
+    currentContext.characterRegexes = Array.isArray(list) ? clone(list) : [];
+  } catch {
+    currentContext.characterRegexes = [];
+  }
 };
 
 const ensureCompatGlobals = () => {
@@ -2362,6 +2901,7 @@ const ensureCompatGlobals = () => {
   self.document.defaultView = self.window || self;
   if (!self.navigator) self.navigator = { userAgent: 'ChatApp ScriptRuntime' };
   if (!self.location) self.location = { href: '', origin: '' };
+  self.fetch = guardedFetch;
   if (!self.toastr) self.toastr = makeCompatToastr();
   self.window.toastr = self.window.toastr || self.toastr;
   self.parent.toastr = self.parent.toastr || self.toastr;
@@ -2427,6 +2967,14 @@ const ensureCompatGlobals = () => {
   if (typeof self.waitGlobalInitialized !== 'function') self.waitGlobalInitialized = () => Promise.resolve(true);
   if (typeof self.errorCatched !== 'function') self.errorCatched = defaultErrorCatched;
   if (typeof self.getContext !== 'function') self.getContext = getContext;
+  if (typeof self.getLastMessageId !== 'function') self.getLastMessageId = getLastMessageId;
+  if (typeof self.getChatMessages !== 'function') self.getChatMessages = getChatMessages;
+  if (typeof self.setChatMessages !== 'function') self.setChatMessages = setChatMessages;
+  if (typeof self.getTavernRegexes !== 'function') self.getTavernRegexes = getTavernRegexes;
+  if (typeof self.replaceTavernRegexes !== 'function') self.replaceTavernRegexes = replaceTavernRegexes;
+  if (typeof self.alert !== 'function') {
+    self.alert = (message) => callRpc('ui.alert', { message: String(message || ''), sessionId: currentContext.sessionId });
+  }
   if (typeof self.getCurrentCharacterName !== 'function') self.getCurrentCharacterName = getCurrentCharacterName;
   if (typeof self.getGlobalWorldbookNames !== 'function') self.getGlobalWorldbookNames = getGlobalWorldbookNames;
   if (typeof self.getCharWorldbookNames !== 'function') self.getCharWorldbookNames = getCharWorldbookNames;
@@ -2451,6 +2999,11 @@ const ensureCompatGlobals = () => {
   helper.deleteVariable = helper.deleteVariable || deleteVariable;
   helper.replaceVariables = helper.replaceVariables || replaceVariables;
   helper.getContext = helper.getContext || getContext;
+  helper.getLastMessageId = helper.getLastMessageId || getLastMessageId;
+  helper.getChatMessages = helper.getChatMessages || getChatMessages;
+  helper.setChatMessages = helper.setChatMessages || setChatMessages;
+  helper.getTavernRegexes = helper.getTavernRegexes || getTavernRegexes;
+  helper.replaceTavernRegexes = helper.replaceTavernRegexes || replaceTavernRegexes;
   helper.getWorldbook = helper.getWorldbook || getWorldbook;
   helper.getGlobalWorldbookNames = helper.getGlobalWorldbookNames || getGlobalWorldbookNames;
   helper.getCharWorldbookNames = helper.getCharWorldbookNames || getCharWorldbookNames;
@@ -2460,6 +3013,7 @@ const ensureCompatGlobals = () => {
   helper.uninjectPrompts = helper.uninjectPrompts || uninjectPrompts;
   helper.setExtensionPrompt = helper.setExtensionPrompt || setExtensionPrompt;
   syncVirtualPromptManager();
+  syncVirtualPresetRegexManager();
 };
 
 let lastSchemaDebug = null;
@@ -3188,6 +3742,7 @@ const compileScript = (record) => {
     off(name, wrapped);
   };
   const api = makeApi(record.id);
+  const buttonApi = makeScriptButtonApi(record);
   const script = {
     id: record.id,
     name: record.name,
@@ -3216,12 +3771,32 @@ const compileScript = (record) => {
       'module',
       'exports',
       '__import',
+      'getScriptId',
+      'replaceScriptButtons',
+      'eventOnButton',
+      'getTavernRegexes',
+      'replaceTavernRegexes',
       code,
     );
     const __import = (url) => runImport(url, getOrigin());
     self.__chatappScriptOn = on;
     self.__chatappScriptOff = off;
-    runner(api, script, on, off, eventOn, eventRemoveListener, module, exports, __import);
+    runner(
+      api,
+      script,
+      on,
+      off,
+      eventOn,
+      eventRemoveListener,
+      module,
+      exports,
+      __import,
+      buttonApi.getScriptId,
+      buttonApi.replaceScriptButtons,
+      buttonApi.eventOnButton,
+      getTavernRegexes,
+      replaceTavernRegexes,
+    );
     if (typeof module.exports === 'function') defaultHandler = module.exports;
     else if (module.exports && typeof module.exports.default === 'function') defaultHandler = module.exports.default;
     else if (exports && typeof exports.default === 'function') defaultHandler = exports.default;
@@ -3324,7 +3899,10 @@ self.onmessage = async (e) => {
   if (msg.type === 'sync') {
     const list = Array.isArray(msg.scripts) ? msg.scripts : [];
     scripts.clear();
+    listenedEvents.clear();
+    scriptButtonHandlers.clear();
     resetCompatDocumentForSync();
+    postMessage({ type: 'ui_reset' });
     if (msg.settings && typeof msg.settings === 'object') {
       currentSettings = { ...currentSettings, ...msg.settings };
     }
@@ -3332,6 +3910,8 @@ self.onmessage = async (e) => {
       currentContext = { ...currentContext, ...msg.context };
     }
     ensureCompatGlobals();
+    await refreshSillyTavernChat();
+    await refreshTavernRegexes();
     list.forEach(item => {
       const record = { ...item };
       record.enabled = item.enabled === true;
@@ -3401,6 +3981,16 @@ const normalizeScriptWorldEntry = (entry = {}, index = 0) => {
     enabled: entry.enabled !== false && entry.disable !== true,
   };
 };
+
+const toTavernRegex = (rule = {}, setId = '') => ({
+  ...clonePlain(rule),
+  id: String(rule.id || ''),
+  script_name: String(rule.scriptName || rule.script_name || rule.name || ''),
+  find_regex: String(rule.findRegex || rule.find_regex || ''),
+  replace_string: String(rule.replaceString ?? rule.replace_string ?? ''),
+  enabled: rule.disabled !== true && rule.enabled !== false,
+  __chatappSetId: String(setId || ''),
+});
 
 const toPath = (key) => String(key || '').split('.').map(p => p.trim()).filter(Boolean);
 
@@ -3487,9 +4077,13 @@ const estimatePayloadSize = (value) => {
 const isEsmLikeScript = (content) => {
   const text = String(content || '');
   if (!text) return false;
-  return /(^|[^\\w$])import\\s*(?:['"]|\\{|\\*|[\\w$]+\\s+from)/m.test(text) ||
-    /(^|[^\\w$])export\\s+/m.test(text);
+  // 只认语句起点的模块语法：脚本内嵌 HTML/字符串里的 `id="btn-import"`、`bam-btn-export`
+  // 一类字面量不能把普通 worker 脚本改判进 iframe（iframe API 面更窄，误判会静默丢功能）。
+  return /(^|[;{}()\n])\s*import\s*(?:['"]|\{|\*|[\w$]+\s+from\s)/.test(text) ||
+    /(^|[;{}()\n])\s*export\s*(?:default\s|const\s|let\s|var\s|function[\s(*]|class\s|async\s|\{|\*)/.test(text);
 };
+
+export const isEsmLikeScriptForTests = isEsmLikeScript;
 
 class ScriptIframeRuntime {
   constructor(owner) {
@@ -4084,13 +4678,24 @@ export class ScriptRuntime {
     this.uiGlobalEventHandler = null;
     this.uiViewportHandler = null;
     this.uiCaptureActive = false;
+    this.uiCaptureKinds = { pointer: false, mouse: false, touch: false, drag: false };
+    this.uiGlobalEventsSeen = new WeakSet();
     this.uiDraggingActive = false;
     this.uiClickGuardActive = false;
     this.uiClickGuardTimer = 0;
     this.uiPointerStart = null;
     this.pendingWorkerUiPayload = null;
+    this.pendingWorkerUiPerf = null;
+    this.pendingWorkerUiNativeStateRevision = 0;
+    this.uiRenderTimer = 0;
     this.uiLayoutTimer = 0;
     this.uiViewportTimer = 0;
+    this.uiLayoutInterestIds = new Set();
+    this.uiLayoutPendingIds = new Set();
+    this.uiHasRendered = false;
+    this.uiNativeStateRevision = 0;
+    this.uiNativeStatePending = new Map();
+    this.uiPerformanceSamples = [];
     // worker 预热期（脚本编译中）：dispatch 超时放宽，避免大脚本冷启动触发超时重启风暴。
     this.workerWarmingUp = false;
     // 酒馆脚本 prompt 注入表：sessionId -> Map(entryKey -> block)；脚本每次 sync 全量重跑，表随 sync 清空。
@@ -4145,6 +4750,7 @@ export class ScriptRuntime {
         'mousemove',
         'pointerdown',
         'pointerup',
+        'pointercancel',
         'pointermove',
         'touchstart',
         'touchmove',
@@ -4161,6 +4767,7 @@ export class ScriptRuntime {
         'keyup',
         'input',
         'change',
+        'toggle',
         'submit',
       ].forEach(type => {
         this.uiShadow.addEventListener?.(type, this.uiEventHandler, true);
@@ -4180,6 +4787,7 @@ export class ScriptRuntime {
       'mouseup',
       'pointermove',
       'pointerup',
+      'pointercancel',
       'touchmove',
       'touchend',
       'touchcancel',
@@ -4192,7 +4800,7 @@ export class ScriptRuntime {
       window.addEventListener?.(type, this.uiGlobalEventHandler, true);
     });
     window.addEventListener?.('blur', () => {
-      this.uiCaptureActive = false;
+      this.cancelUiPointerSequence();
     }, true);
   }
 
@@ -4207,6 +4815,15 @@ export class ScriptRuntime {
   }
 
   clearWorkerUi() {
+    if (this.uiRenderTimer) {
+      try {
+        cancelAnimationFrame(this.uiRenderTimer);
+      } catch {}
+      try {
+        clearTimeout(this.uiRenderTimer);
+      } catch {}
+      this.uiRenderTimer = 0;
+    }
     if (this.uiLayoutTimer) {
       try {
         cancelAnimationFrame(this.uiLayoutTimer);
@@ -4226,10 +4843,19 @@ export class ScriptRuntime {
       this.uiViewportTimer = 0;
     }
     this.uiCaptureActive = false;
+    this.uiCaptureKinds = { pointer: false, mouse: false, touch: false, drag: false };
+    this.uiGlobalEventsSeen = new WeakSet();
     this.uiDraggingActive = false;
     this.uiClickGuardActive = false;
     this.uiPointerStart = null;
     this.pendingWorkerUiPayload = null;
+    this.pendingWorkerUiPerf = null;
+    this.pendingWorkerUiNativeStateRevision = 0;
+    this.uiLayoutInterestIds.clear();
+    this.uiLayoutPendingIds.clear();
+    this.uiHasRendered = false;
+    this.uiNativeStateRevision = 0;
+    this.uiNativeStatePending.clear();
     if (this.uiClickGuardTimer) {
       clearTimeout(this.uiClickGuardTimer);
       this.uiClickGuardTimer = 0;
@@ -4244,13 +4870,62 @@ export class ScriptRuntime {
     this.uiShadow = null;
   }
 
-  collectWorkerUiLayout() {
+  getUiPerformanceNow() {
+    try {
+      return typeof performance !== 'undefined' && typeof performance.now === 'function' ? performance.now() : Date.now();
+    } catch {
+      return Date.now();
+    }
+  }
+
+  recordUiPerformanceSample(sample = {}) {
+    const type = String(sample.type || '').trim();
+    if (!type) return;
+    const entry = {
+      ...sample,
+      type,
+      durationMs: Math.max(0, Number(sample.durationMs || 0) || 0),
+      at: Date.now(),
+    };
+    this.uiPerformanceSamples.push(entry);
+    if (this.uiPerformanceSamples.length > 60) {
+      this.uiPerformanceSamples.splice(0, this.uiPerformanceSamples.length - 60);
+    }
+  }
+
+  getUiPerformanceSnapshot() {
+    const samples = this.uiPerformanceSamples.map(item => ({ ...item }));
+    const latest = {};
+    const summary = {};
+    samples.forEach((sample) => {
+      latest[sample.type] = sample;
+      const bucket = summary[sample.type] || { count: 0, totalMs: 0, maxMs: 0 };
+      bucket.count += 1;
+      bucket.totalMs += sample.durationMs;
+      bucket.maxMs = Math.max(bucket.maxMs, sample.durationMs);
+      summary[sample.type] = bucket;
+    });
+    Object.values(summary).forEach((bucket) => {
+      bucket.averageMs = bucket.count ? bucket.totalMs / bucket.count : 0;
+      delete bucket.totalMs;
+    });
+    return { samples, latest, summary };
+  }
+
+  collectWorkerUiLayout({ full = false, nodeIds = [] } = {}) {
     const shadow = this.uiShadow;
     if (!shadow?.querySelectorAll) return [];
+    const requestedIds = new Set([
+      ...this.uiLayoutInterestIds,
+      ...this.uiLayoutPendingIds,
+      ...Array.from(nodeIds || []),
+    ].map(item => String(item || '').trim()).filter(Boolean));
     return Array.from(shadow.querySelectorAll('[data-chatapp-virtual-node-id]')).slice(0, 1500).map((node) => {
+      const nodeId = String(node.getAttribute('data-chatapp-virtual-node-id') || '');
+      if (!nodeId || (!full && !requestedIds.has(nodeId))) return null;
       const rect = node.getBoundingClientRect();
       return {
-        nodeId: String(node.getAttribute('data-chatapp-virtual-node-id') || ''),
+        nodeId,
         left: rect.left,
         top: rect.top,
         right: rect.right,
@@ -4262,7 +4937,7 @@ export class ScriptRuntime {
         scrollWidth: node.scrollWidth || node.clientWidth || rect.width,
         scrollHeight: node.scrollHeight || node.clientHeight || rect.height,
       };
-    }).filter(item => item.nodeId);
+    }).filter(Boolean);
   }
 
   getViewportSnapshot() {
@@ -4305,13 +4980,25 @@ export class ScriptRuntime {
     };
   }
 
-  postWorkerUiLayout() {
-    const items = this.collectWorkerUiLayout();
+  postWorkerUiLayout({ full = false, nodeIds = [] } = {}) {
     if (!this.worker) return;
+    const startedAt = this.getUiPerformanceNow();
+    const items = this.collectWorkerUiLayout({ full, nodeIds });
     this.worker.postMessage({ type: 'ui_layout', items, viewport: this.getViewportSnapshot() });
+    this.uiLayoutPendingIds.clear();
+    this.recordUiPerformanceSample({
+      type: 'layout',
+      durationMs: this.getUiPerformanceNow() - startedAt,
+      nodeCount: items.length,
+      full: full === true,
+    });
   }
 
-  scheduleWorkerUiLayoutSync() {
+  scheduleWorkerUiLayoutSync({ nodeIds = [] } = {}) {
+    Array.from(nodeIds || []).forEach((nodeId) => {
+      const id = String(nodeId || '').trim();
+      if (id) this.uiLayoutPendingIds.add(id);
+    });
     if (this.uiLayoutTimer) return;
     const schedule = typeof requestAnimationFrame === 'function'
       ? requestAnimationFrame
@@ -4352,11 +5039,28 @@ export class ScriptRuntime {
     return null;
   }
 
+  getUiCaptureKind(eventType = '') {
+    const type = String(eventType || '').toLowerCase();
+    if (type.startsWith('pointer')) return 'pointer';
+    if (type.startsWith('mouse')) return 'mouse';
+    if (type.startsWith('touch')) return 'touch';
+    if (type.startsWith('drag') || type === 'drop') return 'drag';
+    return '';
+  }
+
+  refreshUiCaptureActive() {
+    this.uiCaptureActive = Object.values(this.uiCaptureKinds || {}).some(Boolean);
+    return this.uiCaptureActive;
+  }
+
   beginUiPointerSequence(event) {
-    this.uiCaptureActive = true;
-    this.uiDraggingActive = false;
+    const wasActive = this.uiCaptureActive;
+    const kind = this.getUiCaptureKind(event?.type);
+    if (kind) this.uiCaptureKinds[kind] = true;
+    this.refreshUiCaptureActive();
+    if (!wasActive) this.uiDraggingActive = false;
     this.uiClickGuardActive = true;
-    this.uiPointerStart = this.getUiEventPoint(event);
+    if (!this.uiPointerStart || !wasActive) this.uiPointerStart = this.getUiEventPoint(event);
     if (this.uiClickGuardTimer) {
       clearTimeout(this.uiClickGuardTimer);
       this.uiClickGuardTimer = 0;
@@ -4374,14 +5078,27 @@ export class ScriptRuntime {
     this.flushDeferredWorkerUi();
   }
 
-  endUiPointerSequence() {
-    this.uiCaptureActive = false;
+  endUiPointerSequence(event = {}) {
+    const type = String(event?.type || '').toLowerCase();
+    const kind = this.getUiCaptureKind(type);
+    if (type === 'pointercancel') {
+      this.uiCaptureKinds.pointer = false;
+      this.uiCaptureKinds.mouse = false;
+    } else if (type === 'touchcancel') {
+      this.uiCaptureKinds.touch = false;
+      this.uiCaptureKinds.pointer = false;
+    } else if (type === 'dragend' || type === 'drop') {
+      Object.keys(this.uiCaptureKinds).forEach(key => { this.uiCaptureKinds[key] = false; });
+    } else if (kind) {
+      this.uiCaptureKinds[kind] = false;
+    }
+    if (this.refreshUiCaptureActive()) return false;
     if (this.uiDraggingActive) {
       this.uiDraggingActive = false;
       this.uiClickGuardActive = false;
       this.uiPointerStart = null;
       this.flushDeferredWorkerUi();
-      return;
+      return true;
     }
     this.uiClickGuardActive = true;
     if (this.uiClickGuardTimer) clearTimeout(this.uiClickGuardTimer);
@@ -4391,6 +5108,34 @@ export class ScriptRuntime {
       this.uiPointerStart = null;
       this.flushDeferredWorkerUi();
     }, 180);
+    return true;
+  }
+
+  cancelUiPointerSequence() {
+    const activeKinds = { ...(this.uiCaptureKinds || {}) };
+    const terminalEvents = [];
+    if (activeKinds.pointer) terminalEvents.push('pointercancel');
+    if (activeKinds.mouse) terminalEvents.push('mouseup');
+    if (activeKinds.touch) terminalEvents.push('touchcancel');
+    if (activeKinds.drag) terminalEvents.push('dragend');
+    terminalEvents.forEach((eventType) => {
+      this.worker?.postMessage({
+        type: 'ui_event',
+        targetType: 'document',
+        eventType,
+        event: { type: eventType, bubbles: true, cancelable: false, buttons: 0 },
+      });
+    });
+    Object.keys(this.uiCaptureKinds).forEach(key => { this.uiCaptureKinds[key] = false; });
+    this.uiCaptureActive = false;
+    this.uiDraggingActive = false;
+    this.uiClickGuardActive = false;
+    this.uiPointerStart = null;
+    if (this.uiClickGuardTimer) {
+      clearTimeout(this.uiClickGuardTimer);
+      this.uiClickGuardTimer = 0;
+    }
+    this.flushDeferredWorkerUi();
   }
 
   releaseUiClickGuardForClick() {
@@ -4408,11 +5153,34 @@ export class ScriptRuntime {
     return this.uiClickGuardActive && !this.uiDraggingActive;
   }
 
+  schedulePendingWorkerUiRender() {
+    if (this.uiRenderTimer || !this.pendingWorkerUiPayload || this.shouldDeferWorkerUiRender()) return;
+    const schedule = typeof requestAnimationFrame === 'function'
+      ? requestAnimationFrame
+      : (cb) => setTimeout(cb, 16);
+    this.uiRenderTimer = schedule(() => {
+      this.uiRenderTimer = 0;
+      if (!this.pendingWorkerUiPayload || this.shouldDeferWorkerUiRender()) return;
+      const payload = this.pendingWorkerUiPayload;
+      const perf = this.pendingWorkerUiPerf;
+      const nativeStateRevision = this.pendingWorkerUiNativeStateRevision;
+      this.pendingWorkerUiPayload = null;
+      this.pendingWorkerUiPerf = null;
+      this.pendingWorkerUiNativeStateRevision = 0;
+      this.renderWorkerUi(payload, perf, nativeStateRevision);
+    });
+  }
+
+  queueWorkerUiRender(payload = {}, perf = null, nativeStateRevision = 0) {
+    this.pendingWorkerUiPayload = payload || {};
+    this.pendingWorkerUiPerf = perf && typeof perf === 'object' ? { ...perf } : null;
+    this.pendingWorkerUiNativeStateRevision = Number(nativeStateRevision || 0) || 0;
+    this.schedulePendingWorkerUiRender();
+  }
+
   flushDeferredWorkerUi() {
     if (!this.pendingWorkerUiPayload) return;
-    const payload = this.pendingWorkerUiPayload;
-    this.pendingWorkerUiPayload = null;
-    this.renderWorkerUi(payload);
+    this.schedulePendingWorkerUiRender();
   }
 
   getWorkerUiBaseCss() {
@@ -4437,30 +5205,36 @@ export class ScriptRuntime {
   overflow: visible;
   color-scheme: light dark;
 }
+.chatapp-script-ui-surface > [data-chatapp-virtual-node-id] {
+  pointer-events: auto;
+}
 .chatapp-script-ui-surface *,
 .chatapp-script-ui-surface *::before,
 .chatapp-script-ui-surface *::after {
   box-sizing: border-box;
 }
-.chatapp-script-ui-surface button,
-.chatapp-script-ui-surface input,
-.chatapp-script-ui-surface textarea,
-.chatapp-script-ui-surface select,
-.chatapp-script-ui-surface option,
-.chatapp-script-ui-surface a,
-.chatapp-script-ui-surface label,
-.chatapp-script-ui-surface summary,
-.chatapp-script-ui-surface [role="button"],
-.chatapp-script-ui-surface [role="switch"],
-.chatapp-script-ui-surface [role="checkbox"],
-.chatapp-script-ui-surface [tabindex],
-.chatapp-script-ui-surface [data-chatapp-has-ui-listener="1"] {
-  pointer-events: auto;
-}
 `.trim();
   }
 
-  renderWorkerUi(payload = {}) {
+  applyPendingNativeUiState(surface, workerStateRevision = 0) {
+    if (!surface?.querySelectorAll || !this.uiNativeStatePending.size) return;
+    const nodes = new Map(Array.from(surface.querySelectorAll('[data-chatapp-virtual-node-id]')).map(node => [
+      String(node.getAttribute?.('data-chatapp-virtual-node-id') || ''),
+      node,
+    ]));
+    Array.from(this.uiNativeStatePending.entries()).forEach(([nodeId, state]) => {
+      if (Number(workerStateRevision || 0) >= Number(state?.revision || 0)) {
+        this.uiNativeStatePending.delete(nodeId);
+        return;
+      }
+      const node = nodes.get(nodeId);
+      if (!node) return;
+      if ('open' in (state || {}) && 'open' in node) node.open = state.open === true;
+    });
+  }
+
+  renderWorkerUi(payload = {}, workerPerf = null, workerStateRevision = 0) {
+    const startedAt = this.getUiPerformanceNow();
     const styles = Array.isArray(payload.styles)
       ? payload.styles.map(item => String(item || '')).filter(Boolean)
       : [];
@@ -4469,6 +5243,13 @@ export class ScriptRuntime {
       : [];
     if (!styles.length && !roots.length) {
       this.clearWorkerUi();
+      this.recordUiPerformanceSample({
+        type: 'render',
+        durationMs: this.getUiPerformanceNow() - startedAt,
+        nodeCount: 0,
+        htmlLength: 0,
+        workerBuildMs: Number(workerPerf?.workerBuildMs || 0) || 0,
+      });
       return;
     }
     const shadow = this.ensureUiRoot();
@@ -4486,8 +5267,20 @@ export class ScriptRuntime {
       const surface = document.createElement('div');
       surface.className = 'chatapp-script-ui-surface';
       surface.innerHTML = roots.join('');
+      this.applyPendingNativeUiState(surface, workerStateRevision);
       shadow.appendChild(surface);
-      this.postWorkerUiLayout();
+      const firstLayout = !this.uiHasRendered;
+      this.uiHasRendered = true;
+      this.recordUiPerformanceSample({
+        type: 'render',
+        durationMs: this.getUiPerformanceNow() - startedAt,
+        renderedNodeCount: surface.querySelectorAll('[data-chatapp-virtual-node-id]').length,
+        registeredNodeCount: Number(workerPerf?.registeredNodeCount || 0) || 0,
+        htmlLength: Number(workerPerf?.htmlLength || 0) || roots.reduce((sum, item) => sum + item.length, 0),
+        rootCount: roots.length,
+        workerBuildMs: Number(workerPerf?.workerBuildMs || 0) || 0,
+      });
+      this.postWorkerUiLayout({ full: firstLayout });
       this.scheduleWorkerUiLayoutSync();
     } catch (err) {
       logger.warn('script runtime ui render failed', err);
@@ -4542,7 +5335,19 @@ export class ScriptRuntime {
     if (event.targetTouches) payload.targetTouches = this.collectUiTouchList(event.targetTouches);
     if (target && 'value' in target) payload.value = target.value;
     if (target && 'checked' in target) payload.checked = target.checked === true;
+    if (target && 'open' in target) payload.open = target.open === true;
     return payload;
+  }
+
+  collectUiLayoutPathNodeIds(target) {
+    const nodeIds = [];
+    let node = target;
+    while (node && node !== this.uiShadow) {
+      const nodeId = String(node.getAttribute?.('data-chatapp-virtual-node-id') || '').trim();
+      if (nodeId && !nodeIds.includes(nodeId)) nodeIds.push(nodeId);
+      node = node.parentElement || null;
+    }
+    return nodeIds;
   }
 
   handleUiEvent(event) {
@@ -4553,16 +5358,34 @@ export class ScriptRuntime {
     if (!nodeId) return;
     event.stopPropagation?.();
     if (event.type === 'submit') event.preventDefault?.();
-    if (['mousedown', 'pointerdown', 'touchstart', 'dragstart'].includes(event.type)) this.beginUiPointerSequence(event);
+    const startsSequence = ['mousedown', 'pointerdown', 'touchstart', 'dragstart'].includes(event.type);
+    const needsImmediateLayout = startsSequence && !this.uiCaptureActive;
+    const layoutNodeIds = startsSequence ? this.collectUiLayoutPathNodeIds(target) : [];
+    if (startsSequence) this.beginUiPointerSequence(event);
     if (['mousemove', 'pointermove', 'touchmove', 'drag'].includes(event.type)) this.updateUiPointerSequence(event);
-    if (['mouseup', 'pointerup', 'touchend', 'touchcancel', 'dragend', 'drop'].includes(event.type)) this.endUiPointerSequence();
+    if (['mouseup', 'pointerup', 'pointercancel', 'touchend', 'touchcancel', 'dragend', 'drop'].includes(event.type)) this.endUiPointerSequence(event);
     if (['click', 'dblclick'].includes(event.type)) this.releaseUiClickGuardForClick();
-    this.postWorkerUiLayout();
+    if (needsImmediateLayout) this.postWorkerUiLayout({ nodeIds: layoutNodeIds });
+    else this.scheduleWorkerUiLayoutSync({ nodeIds: layoutNodeIds });
+    const eventPayload = this.collectUiEventPayload(event, target);
+    const traceStartedAt = ['click', 'dblclick', 'input', 'change', 'toggle', 'submit', 'keydown', 'keyup'].includes(event.type)
+      ? this.getUiPerformanceNow()
+      : null;
+    let nativeStateRevision = 0;
+    if (event.type === 'toggle' && 'open' in eventPayload) {
+      nativeStateRevision = ++this.uiNativeStateRevision;
+      this.uiNativeStatePending.set(nodeId, {
+        revision: nativeStateRevision,
+        open: eventPayload.open === true,
+      });
+    }
     this.worker?.postMessage({
       type: 'ui_event',
       nodeId,
       eventType: event.type,
-      event: this.collectUiEventPayload(event, target),
+      event: eventPayload,
+      nativeStateRevision,
+      ...(traceStartedAt == null ? {} : { traceStartedAt }),
     });
   }
 
@@ -4570,16 +5393,20 @@ export class ScriptRuntime {
     if (!this.uiCaptureActive) return;
     const path = typeof event.composedPath === 'function' ? event.composedPath() : [];
     if (path.includes(this.uiRoot) || path.includes(this.uiShadow)) return;
+    if (event && typeof event === 'object') {
+      if (this.uiGlobalEventsSeen.has(event)) return;
+      this.uiGlobalEventsSeen.add(event);
+    }
     if (['mousemove', 'pointermove', 'touchmove', 'drag'].includes(event.type)) this.updateUiPointerSequence(event);
-    this.postWorkerUiLayout();
+    this.scheduleWorkerUiLayoutSync();
     this.worker?.postMessage({
       type: 'ui_event',
       targetType: 'document',
       eventType: event.type,
       event: this.collectUiEventPayload(event, null),
     });
-    if (['mouseup', 'pointerup', 'touchend', 'touchcancel', 'dragend', 'drop'].includes(event.type)) {
-      this.endUiPointerSequence();
+    if (['mouseup', 'pointerup', 'pointercancel', 'touchend', 'touchcancel', 'dragend', 'drop'].includes(event.type)) {
+      this.endUiPointerSequence(event);
     }
   }
 
@@ -4777,6 +5604,7 @@ export class ScriptRuntime {
       worldbookNames,
       activePreset,
       presetPrompts: activePreset.prompts,
+      presetRegexes: this.getPresetTavernRegexes(activeOpenAiPresetId),
       presetName: activePreset.name,
       variables: clonePlain(variables) || {},
       localVariables: clonePlain(localVariables) || {},
@@ -4799,6 +5627,47 @@ export class ScriptRuntime {
       if (bucket?.scripts?.some?.(s => s.id === id)) return { scope: 'preset', scopeId };
     }
     return { scope: 'global', scopeId: 'global' };
+  }
+
+  getCharacterRegexSets(sessionId = '') {
+    const sid = String(sessionId || this.context.sessionId || this.chatStore?.getCurrent?.() || '').trim();
+    const regexStore = this.bridge?.getRegexStore?.() || this.bridge?.regex || null;
+    if (!regexStore) return [];
+    const persona = sid && this.getEffectivePersona ? this.getEffectivePersona(sid) : null;
+    const sourceSetId = String(persona?.source?.regexSetId || '').trim();
+    if (sourceSetId) {
+      const sourceSet = regexStore.getLocalSet?.(sourceSetId);
+      if (sourceSet) return [sourceSet];
+    }
+    const context = this.buildContext(sid);
+    const worldIds = new Set((context.worldIds || []).map(id => String(id || '').trim()).filter(Boolean));
+    return (regexStore.listLocalSets?.() || []).filter((set) => {
+      if (!set || set.bind?.type !== 'world') return false;
+      return worldIds.has(String(set.bind.worldId || '').trim());
+    });
+  }
+
+  getCharacterTavernRegexes(sessionId = '') {
+    return this.getCharacterRegexSets(sessionId).flatMap((set) => (
+      (Array.isArray(set?.rules) ? set.rules : []).map(rule => toTavernRegex(rule, set.id))
+    ));
+  }
+
+  getPresetTavernRegexes(presetId = '') {
+    const id = String(presetId || '').trim();
+    const regexStore = this.bridge?.getRegexStore?.() || this.bridge?.regex || null;
+    if (!id || !regexStore) return [];
+    return (regexStore.listLocalSets?.() || []).filter((set) => {
+      const bind = set?.bind;
+      if (!bind || bind.type !== 'preset' || String(bind.presetType || '').trim() !== 'openai') return false;
+      const ids = [
+        ...(Array.isArray(bind.presetIds) ? bind.presetIds : []),
+        bind.presetId,
+      ].map((value) => String(value || '').trim()).filter(Boolean);
+      return ids.includes(id);
+    }).flatMap((set) => (
+      (Array.isArray(set?.rules) ? set.rules : []).map(rule => toTavernRegex(rule, set.id))
+    ));
   }
 
   // 酒馆脚本注入表操作：写入当前 context 会话；content 为空即删除该条。
@@ -4833,6 +5702,7 @@ export class ScriptRuntime {
       ? { ...this.buildContext(contextOverride.sessionId), ...contextOverride }
       : this.buildContext();
     this.context = { ...this.context, ...context };
+    this.listenerEvents.clear();
     // 脚本集变化（sync）后全量重跑，旧注入随之作废；脚本重跑时会重新注册。
     if (this.context.sessionId) this.scriptPromptInjections.delete(String(this.context.sessionId).trim());
     const settings = appSettings.get();
@@ -5023,12 +5893,36 @@ export class ScriptRuntime {
       this.recordListener(msg.event);
       return;
     }
+    if (msg.type === 'ui_reset') {
+      this.clearWorkerUi();
+      return;
+    }
+    if (msg.type === 'ui_layout_interest') {
+      const nodeIds = Array.isArray(msg.nodeIds) ? msg.nodeIds : [];
+      nodeIds.forEach((nodeId) => {
+        const id = String(nodeId || '').trim();
+        if (id) this.uiLayoutInterestIds.add(id);
+      });
+      this.scheduleWorkerUiLayoutSync({ nodeIds });
+      return;
+    }
     if (msg.type === 'ui_update') {
-      if (this.shouldDeferWorkerUiRender()) {
-        this.pendingWorkerUiPayload = msg.payload || {};
-        return;
-      }
-      this.renderWorkerUi(msg.payload || {});
+      this.queueWorkerUiRender(msg.payload || {}, msg.perf || null, msg.nativeStateRevision || 0);
+      return;
+    }
+    if (msg.type === 'ui_event_perf') {
+      const traceStartedAt = Number(msg.traceStartedAt);
+      if (!Number.isFinite(traceStartedAt)) return;
+      this.recordUiPerformanceSample({
+        type: 'event',
+        durationMs: Math.max(0, this.getUiPerformanceNow() - traceStartedAt),
+        eventType: String(msg.eventType || ''),
+        workerDispatchMs: Math.max(0, Number(msg.workerDispatchMs || 0) || 0),
+        workerTotalMs: Math.max(0, Number(msg.workerTotalMs || 0) || 0),
+        selectorQueries: Math.max(0, Math.trunc(Number(msg.selectorQueries || 0)) || 0),
+        selectorVisitedNodes: Math.max(0, Math.trunc(Number(msg.selectorVisitedNodes || 0)) || 0),
+        selectorIndexHits: Math.max(0, Math.trunc(Number(msg.selectorIndexHits || 0)) || 0),
+      });
       return;
     }
     if (msg.type === 'dispatch_result') {
@@ -5064,8 +5958,17 @@ export class ScriptRuntime {
 
   async handleRpc(msg) {
     const { id, method, params } = msg;
-    const result = await this.processRpc(method, params || {});
-    this.worker?.postMessage({ type: 'rpc_result', id, result });
+    const startedAt = this.getUiPerformanceNow();
+    try {
+      const result = await this.processRpc(method, params || {});
+      this.worker?.postMessage({ type: 'rpc_result', id, result });
+    } finally {
+      this.recordUiPerformanceSample({
+        type: 'rpc',
+        durationMs: this.getUiPerformanceNow() - startedAt,
+        method: String(method || ''),
+      });
+    }
   }
 
   async processRpc(method, params) {
@@ -5244,6 +6147,43 @@ export class ScriptRuntime {
         : [];
       return list.map(m => ({ ...m }));
     }
+    if (method === 'chat.setMessages') {
+      if (!allowReadMessages || !this.chatStore || !sessionId) return [];
+      const list = Array.isArray(this.chatStore.getMessages?.(sessionId))
+        ? this.chatStore.getMessages(sessionId)
+        : [];
+      const patches = Array.isArray(params.messages) ? params.messages : [];
+      const updated = [];
+      patches.forEach((patch) => {
+        if (!patch || typeof patch !== 'object') return;
+        const numericId = Number(patch.message_id);
+        const existing = Number.isFinite(numericId)
+          ? list[Math.trunc(numericId)]
+          : list.find(message => String(message?.id || '') === String(patch.id || ''));
+        const id = String(existing?.id || '').trim();
+        if (!id) return;
+        const data = {};
+        if (patch.message !== undefined || patch.mes !== undefined) {
+          const text = String(patch.message ?? patch.mes ?? '');
+          data.raw = text;
+          data.rawSource = text;
+        }
+        if (patch.role !== undefined) data.role = String(patch.role || existing.role || '');
+        if (patch.name !== undefined) data.name = String(patch.name || '');
+        if (patch.data && typeof patch.data === 'object') {
+          data.meta = { ...(existing?.meta || {}), ...clonePlain(patch.data) };
+        }
+        if (!Object.keys(data).length) return;
+        const next = this.chatStore.updateMessage(id, data, sessionId);
+        if (!next) return;
+        updated.push(next);
+        const ui = this.bridge?.chatUI || null;
+        if (ui && typeof ui.updateMessage === 'function' && this.chatStore.getCurrent?.() === sessionId) {
+          ui.updateMessage(id, next);
+        }
+      });
+      return updated;
+    }
     if (method === 'chat.updateMessage') {
       if (!allowReadMessages) return null;
       if (!this.chatStore || !sessionId) return null;
@@ -5256,6 +6196,72 @@ export class ScriptRuntime {
         ui.updateMessage(id, updated);
       }
       return updated || null;
+    }
+    if (method === 'chat.reloadCurrent') {
+      if (!allowReadMessages || !sessionId) return false;
+      const list = Array.isArray(this.chatStore?.getMessages?.(sessionId))
+        ? this.chatStore.getMessages(sessionId)
+        : [];
+      const ui = this.bridge?.chatUI || null;
+      if (ui && typeof ui.preloadHistory === 'function' && this.chatStore?.getCurrent?.() === sessionId) {
+        ui.preloadHistory(list, { keepScroll: true });
+      }
+      return true;
+    }
+    if (method === 'regex.getCharacter') {
+      return this.getCharacterTavernRegexes(sessionId);
+    }
+    if (method === 'regex.replaceCharacter') {
+      if (!allowModifyVariables) return false;
+      const regexStore = this.bridge?.getRegexStore?.() || this.bridge?.regex || null;
+      if (!regexStore) return false;
+      const incoming = Array.isArray(params.regexes) ? params.regexes : [];
+      const sets = this.getCharacterRegexSets(sessionId);
+      let changed = false;
+      for (const set of sets) {
+        const setId = String(set?.id || '').trim();
+        if (!setId) continue;
+        const candidates = incoming.filter((rule) => {
+          const targetSetId = String(rule?.__chatappSetId || '').trim();
+          return !targetSetId || targetSetId === setId;
+        });
+        if (!candidates.length) continue;
+        const byId = new Map(candidates.map(rule => [String(rule?.id || '').trim(), rule]));
+        const byName = new Map(candidates.map(rule => [String(rule?.script_name || rule?.scriptName || '').trim(), rule]));
+        let setChanged = false;
+        const rules = (Array.isArray(set.rules) ? set.rules : []).map((rule) => {
+          const patch = byId.get(String(rule?.id || '').trim()) || byName.get(String(rule?.scriptName || '').trim());
+          if (!patch) return rule;
+          const disabled = patch.enabled === false;
+          if (rule.disabled === disabled) return rule;
+          setChanged = true;
+          changed = true;
+          return { ...rule, disabled };
+        });
+        if (setChanged) {
+          await regexStore.upsertLocalSet?.({
+            id: setId,
+            name: set.name,
+            enabled: set.manualEnabled !== false && set.enabled !== false,
+            bind: set.bind,
+            rules,
+          });
+        }
+      }
+      if (changed) {
+        try { window.dispatchEvent(new CustomEvent('regex-changed', { detail: { sessionId } })); } catch {}
+      }
+      return changed;
+    }
+    if (method === 'ui.confirm') {
+      const content = String(params.content || '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+      return typeof window?.confirm === 'function' ? window.confirm(content) : false;
+    }
+    if (method === 'ui.alert') {
+      const message = String(params.message || '');
+      if (typeof window?.alert === 'function') window.alert(message);
+      else window?.toastr?.info?.(message);
+      return true;
     }
     if (method === 'world.getEntry') {
       const worldId = String(params.world || this.context.worldId || '').trim();

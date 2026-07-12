@@ -3,13 +3,88 @@ import assert from 'node:assert/strict';
 import {
   LEGACY_SEND_MODE_STORAGE_KEY,
   UI_MODE_STORAGE_KEY,
+  applyRpGreetingUpdateVariables,
   normalizeUiMode,
   readUiMode,
   removeLegacySendModeState,
+  resetRpGreetingVariableState,
+  resolveRpInitVarWorldIds,
   runEnterRpModeFlow,
   runExitRpModeFlow,
   writeUiMode,
 } from '../../src/scripts/ui/chat/rp-mode-runtime-utils.js';
+
+{
+  const calls = [];
+  const stored = { id: 'g1', role: 'assistant', raw: 'cleaned greeting' };
+  const result = applyRpGreetingUpdateVariables({
+    message: { id: 'g1', role: 'assistant', rawOriginal: '<UpdateVariable>...</UpdateVariable>' },
+    sessionId: ' rp:hero ',
+    resolveApply: () => (message, sessionId) => calls.push(['apply', message.id, sessionId]),
+    getMessage: (messageId, sessionId) => {
+      calls.push(['get', messageId, sessionId]);
+      return stored;
+    },
+  });
+  assert.equal(result, stored);
+  assert.deepEqual(calls, [
+    ['apply', 'g1', 'rp:hero'],
+    ['get', 'g1', 'rp:hero'],
+  ]);
+  console.log('ok - rp greeting applies UpdateVariable before first render and reloads persisted message');
+}
+
+{
+  let legacyRead = false;
+  const ids = resolveRpInitVarWorldIds({
+    bridge: {
+      getResolvedWorldState(sessionId, options) {
+        assert.equal(sessionId, 'rp:hero');
+        assert.deepEqual(options, { uiMode: 'rp' });
+        return { worldIds: ['global-book', 'role-book', 'role-book', ''] };
+      },
+      getWorldIdsForSession() {
+        legacyRead = true;
+        return ['wrong-session-only-book'];
+      },
+    },
+    sessionId: ' rp:hero ',
+    uiMode: 'rp',
+  });
+  assert.deepEqual(ids, ['global-book', 'role-book']);
+  assert.equal(legacyRead, false);
+  console.log('ok - RP init variables resolve role worldbooks through unified world state');
+}
+
+{
+  const ids = resolveRpInitVarWorldIds({
+    bridge: {
+      getGlobalWorldId: () => 'global-book',
+      getWorldIdsForSession: () => ['session-book', 'global-book'],
+    },
+    sessionId: 'rp:legacy',
+  });
+  assert.deepEqual(ids, ['global-book', 'session-book']);
+  console.log('ok - RP init variable world resolution keeps legacy bridge fallback');
+}
+
+{
+  const calls = [];
+  assert.equal(resetRpGreetingVariableState({
+    chatStore: {
+      clearVariables: sessionId => calls.push(['clear-current', sessionId]),
+      clearInitialVariables: sessionId => calls.push(['clear-initial', sessionId]),
+    },
+    sessionId: ' rp:hero ',
+    applyMvuSchemaDefaults: (sessionId, options) => calls.push(['schema-defaults', sessionId, options]),
+  }), true);
+  assert.deepEqual(calls, [
+    ['clear-current', 'rp:hero'],
+    ['clear-initial', 'rp:hero'],
+    ['schema-defaults', 'rp:hero', { reason: 'rp_greeting_reset' }],
+  ]);
+  console.log('ok - RP greeting reset rebuilds current and initial variable state before seeding');
+}
 
 const createStorage = () => {
   const values = new Map();
