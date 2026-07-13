@@ -276,6 +276,66 @@ test('buildCreativeAssistantMessageParts hides content wrapper after display reg
   assert.equal(parts.display, '正文:display');
 });
 
+test('buildCreativeAssistantMessageParts leaves residual XML available to output regex and stored fields', () => {
+  const source = '<ztl>状态正常</ztl>';
+  const regexInputs = [];
+  const parts = buildCreativeAssistantMessageParts({
+    text: source,
+    normalizeCreativeLineBreaks: value => String(value ?? ''),
+    applyOutputRegexPairSafe: value => {
+      regexInputs.push(value);
+      return { stored: value, display: value };
+    },
+  });
+
+  assert.deepEqual(regexInputs, [source]);
+  assert.equal(parts.rawSource, source);
+  assert.equal(parts.finalSource, source);
+  assert.equal(parts.stored, source);
+  assert.equal(parts.display, source);
+});
+
+test('creative finalize keeps body when thinking contains a dangling tableEdit tag', async () => {
+  // 端到端创意语料：thinking 中途未闭合 <tableEdit> + 末尾完整块（预设常规要求），
+  // 按真实 finalize 顺序（先 memory 提取、再 builder），正文与 thinking 必须完整。
+  const { extractTableEditBlocks } = await import('../../src/scripts/memory/memory-edit-parser.js');
+  const { createReasoningRuntime } = await import('../../src/scripts/ui/chat/reasoning-runtime-utils.js');
+  const raw = [
+    '<thinking>',
+    '本轮剧情推进：主角进入藏经阁。需要更新表格：',
+    '<tableEdit>',
+    'insertRow(0, {"0":"藏经阁","1":"主角"})',
+    '（模型没有输出闭合标签，思考继续）',
+    '</thinking>',
+    '',
+    '楚寻踏入藏经阁，檀香扑面而来。',
+    '他翻开第一卷《太初真解》，字迹如龙蛇游走。',
+    '「这便是传说中的上古功法……」他低声呢喃。',
+    '',
+    '<tableEdit>',
+    '<!--',
+    'updateRow(0, 0, {"2":"藏经阁一层"})',
+    '-->',
+    '</tableEdit>',
+  ].join('\n');
+  const memoryParsed = extractTableEditBlocks(raw);
+  assert.equal(memoryParsed.actions.length, 2, '悬空命令与末尾完整块的动作都应提取');
+  const runtime = createReasoningRuntime({
+    getSettings: () => ({ reasoningAutoParse: true }),
+    getPreset: () => ({ prefix: '<thinking>', suffix: '</thinking>' }),
+    normalizeLineBreaks: value => String(value ?? ''),
+  });
+  const parts = buildCreativeAssistantMessageParts({
+    text: memoryParsed.text,
+    extractReasoningFromContent: runtime.extractReasoningFromContent,
+  });
+  assert.equal(parts.reasoningParsed.reasoning.includes('主角进入藏经阁'), true, '思考内容保留');
+  assert.equal(parts.stored.includes('楚寻踏入藏经阁'), true, '正文开头保留');
+  assert.equal(parts.stored.includes('他低声呢喃'), true, '正文结尾保留');
+  assert.equal(parts.display.includes('楚寻踏入藏经阁'), true, '显示副本保留正文');
+  assert.equal(parts.stored.includes('insertRow'), false, '表格命令不进正文');
+});
+
 test('buildCreativeAssistantMessage preserves incomplete image_prompt tags through output regex', async () => {
   const source = '正文\n<image_prompt>\n后续正文';
   const dangerousStrip = value => String(value ?? '').replace(/<\s*image_prompt\b[\s\S]*/i, '');

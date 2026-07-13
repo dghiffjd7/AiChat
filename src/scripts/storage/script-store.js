@@ -110,6 +110,26 @@ const ensureScopeBucket = (state, scope, scopeId) => {
   return bucket[key];
 };
 
+const getScopeBucket = (state, scope, scopeId) => {
+  if (scope === 'global') return state.global;
+  const buckets = scope === 'character' ? state.character : state.preset;
+  const key = String(scopeId || '').trim() || 'default';
+  return buckets?.[key] || null;
+};
+
+const removeEmptyScopeBucket = (state, scope, scopeId) => {
+  if (scope === 'global') return false;
+  const buckets = scope === 'character' ? state.character : state.preset;
+  const key = String(scopeId || '').trim() || 'default';
+  const bucket = buckets?.[key];
+  if (!bucket) return false;
+  const hasScripts = Array.isArray(bucket.scripts) && bucket.scripts.length > 0;
+  const hasVariables = bucket.variables && typeof bucket.variables === 'object' && Object.keys(bucket.variables).length > 0;
+  if (hasScripts || hasVariables) return false;
+  delete buckets[key];
+  return true;
+};
+
 const emitChanged = (detail) => {
   try {
     window.dispatchEvent(new CustomEvent('scripts-changed', { detail }));
@@ -174,16 +194,21 @@ export class ScriptStore {
     }
   }
 
-  async persist() {
+  async persist({ notifyScriptsChanged = true } = {}) {
     const payload = clone(this.state);
     const saved = await saveKv(STORE_KEY, payload);
     if (!saved) writeLocalJson(STORE_KEY, payload);
-    emitChanged({});
+    if (notifyScriptsChanged) emitChanged({});
   }
 
   getScripts(scope = 'global', scopeId = '') {
-    const bucket = ensureScopeBucket(this.state, scope, scopeId);
-    return Array.isArray(bucket.scripts) ? bucket.scripts.map(s => clone(s)) : [];
+    const bucket = getScopeBucket(this.state, scope, scopeId);
+    return Array.isArray(bucket?.scripts) ? bucket.scripts.map(s => clone(s)) : [];
+  }
+
+  getScopeVariables(scope = 'global', scopeId = '') {
+    const bucket = getScopeBucket(this.state, scope, scopeId);
+    return bucket?.variables && typeof bucket.variables === 'object' ? clone(bucket.variables) : {};
   }
 
   listScopes() {
@@ -196,7 +221,29 @@ export class ScriptStore {
   async setScripts(scope = 'global', scopeId = '', scripts = []) {
     const bucket = ensureScopeBucket(this.state, scope, scopeId);
     bucket.scripts = Array.isArray(scripts) ? scripts.map(s => normalizeScript(s)) : [];
+    removeEmptyScopeBucket(this.state, scope, scopeId);
     await this.persist();
+    return true;
+  }
+
+  async setScopeVariables(scope = 'global', scopeId = '', variables = {}) {
+    const bucket = ensureScopeBucket(this.state, scope, scopeId);
+    bucket.variables = variables && typeof variables === 'object' && !Array.isArray(variables)
+      ? clone(variables)
+      : {};
+    removeEmptyScopeBucket(this.state, scope, scopeId);
+    await this.persist({ notifyScriptsChanged: false });
+    return true;
+  }
+
+  async removeScope(scope = 'global', scopeId = '') {
+    if (scope === 'global') return false;
+    const buckets = scope === 'character' ? this.state.character : this.state.preset;
+    const key = String(scopeId || '').trim() || 'default';
+    if (!buckets?.[key]) return false;
+    delete buckets[key];
+    await this.persist();
+    return true;
   }
 
   async upsertScript(scope = 'global', scopeId = '', script = {}, { source = 'user', authorized = true } = {}) {
@@ -210,7 +257,8 @@ export class ScriptStore {
   }
 
   async toggleScript(scope = 'global', scopeId = '', scriptId = '', enabled = false) {
-    const bucket = ensureScopeBucket(this.state, scope, scopeId);
+    const bucket = getScopeBucket(this.state, scope, scopeId);
+    if (!bucket) return false;
     const item = bucket.scripts.find(s => s.id === scriptId);
     if (!item) return false;
     item.enabled = Boolean(enabled);
@@ -221,7 +269,8 @@ export class ScriptStore {
   }
 
   async updateScript(scope = 'global', scopeId = '', scriptId = '', patch = {}) {
-    const bucket = ensureScopeBucket(this.state, scope, scopeId);
+    const bucket = getScopeBucket(this.state, scope, scopeId);
+    if (!bucket) return false;
     const idx = bucket.scripts.findIndex(s => s.id === scriptId);
     if (idx === -1) return false;
     const next = normalizeScript({ ...bucket.scripts[idx], ...patch });
@@ -231,20 +280,23 @@ export class ScriptStore {
   }
 
   async updateScriptData(scope = 'global', scopeId = '', scriptId = '', data = {}) {
-    const bucket = ensureScopeBucket(this.state, scope, scopeId);
+    const bucket = getScopeBucket(this.state, scope, scopeId);
+    if (!bucket) return false;
     const item = bucket.scripts.find(s => s.id === scriptId);
     if (!item) return false;
     item.data = data && typeof data === 'object' ? data : {};
     item.updatedAt = Date.now();
-    await this.persist();
+    await this.persist({ notifyScriptsChanged: false });
     return true;
   }
 
   async deleteScript(scope = 'global', scopeId = '', scriptId = '') {
-    const bucket = ensureScopeBucket(this.state, scope, scopeId);
+    const bucket = getScopeBucket(this.state, scope, scopeId);
+    if (!bucket) return false;
     const prev = bucket.scripts.length;
     bucket.scripts = bucket.scripts.filter(s => s.id !== scriptId);
     if (bucket.scripts.length === prev) return false;
+    removeEmptyScopeBucket(this.state, scope, scopeId);
     await this.persist();
     return true;
   }

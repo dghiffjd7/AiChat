@@ -18,6 +18,7 @@ const {
   prepareRichFragmentHtmlForParsing,
   resolveCompatRpGreetingSwipeTarget,
   restoreRichDetailsOpenStates,
+  stripResidualXmlTagsForDisplay,
   splitFencedCodeBlocks,
 } = await import('../../src/scripts/ui/chat/rich-text-renderer.js');
 
@@ -288,6 +289,58 @@ test('hides escaped creative content wrapper before display fallback', () => {
   const input = '&lt;content type=&quot;story&quot;&gt;正文&lt;/content&gt;';
   const output = prepareRichFragmentDisplayHtmlForParsing(input);
   assert.equal(output, '正文');
+});
+
+test('unwraps residual XML tags only in the final display copy', () => {
+  const input = '<output mode="story"><ztl>状态正常</ztl><正文>继续前进</正文></output>';
+  assert.equal(stripResidualXmlTagsForDisplay(input), '状态正常继续前进');
+  assert.equal(prepareRichFragmentDisplayHtmlForParsing(input), '状态正常继续前进');
+});
+
+test('keeps supported HTML while unwrapping nested residual XML tags', () => {
+  const input = '<details><summary>状态</summary><ztl level="1"><strong>正常</strong></ztl></details>';
+  assert.equal(
+    stripResidualXmlTagsForDisplay(input),
+    '<details><summary>状态</summary><strong>正常</strong></details>',
+  );
+});
+
+test('keeps escaped and inline-code XML examples visible', () => {
+  const input = '字面量 &lt;ztl&gt;状态&lt;/ztl&gt;，代码 `<ztl>状态</ztl>`，协议 <ztl>状态</ztl>';
+  assert.equal(
+    stripResidualXmlTagsForDisplay(input),
+    '字面量 &lt;ztl&gt;状态&lt;/ztl&gt;，代码 `<ztl>状态</ztl>`，协议 状态',
+  );
+});
+
+test('keeps unpaired angle-bracket prose without closing evidence', () => {
+  assert.equal(
+    stripResidualXmlTagsForDisplay('他使出<全力一击>击退敌人'),
+    '他使出<全力一击>击退敌人',
+  );
+  assert.equal(
+    stripResidualXmlTagsForDisplay('若 a<x && y>b 则成立'),
+    '若 a<x && y>b 则成立',
+  );
+});
+
+test('strips residual tags once closing or self-closing evidence exists', () => {
+  assert.equal(stripResidualXmlTagsForDisplay('残留</正文>孤立闭合'), '残留孤立闭合');
+  assert.equal(stripResidualXmlTagsForDisplay('<pause/>自闭标记'), '自闭标记');
+  assert.equal(
+    stripResidualXmlTagsForDisplay('<全力一击>成对出现</全力一击>'),
+    '成对出现',
+  );
+  // 代码段里的闭合不构成剥除证据
+  assert.equal(
+    stripResidualXmlTagsForDisplay('示例 `</ztl>` 之外的 <ztl>保持原样'),
+    '示例 `</ztl>` 之外的 <ztl>保持原样',
+  );
+});
+
+test('treats common formatting tags as supported instead of residual XML', () => {
+  const input = '<b>粗体</b><dl><dt>词</dt><dd>释义</dd></dl><ruby>漢<rt>かん</rt></ruby><figure><figcaption>图注</figcaption></figure><q>引文</q><wbr>';
+  assert.equal(stripResidualXmlTagsForDisplay(input), input);
 });
 
 test('expands generated image tokens in sandbox html text nodes', () => {

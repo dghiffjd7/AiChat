@@ -4061,15 +4061,17 @@ const RICH_FRAGMENT_SCOPE_ATTR = 'data-chat-rich-scope';
 const RICH_FRAGMENT_CLASS_PREFIX = 'chat-rich-';
 const RICH_FRAGMENT_ID_PREFIX = 'chat-rich-id-';
 const RICH_FRAGMENT_TAG_NAMES = [
-    'a', 'article', 'blockquote', 'br', 'code', 'del', 'details', 'div', 'em', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
-    'hr', 'i', 'img', 'ins', 'kbd', 'li', 'main', 'mark', 'ol', 'p', 'pre', 's', 'section', 'small', 'span', 'strong',
-    'sub', 'summary', 'sup', 'table', 'tbody', 'td', 'th', 'thead', 'tr', 'u', 'ul', 'style',
+    'a', 'abbr', 'article', 'aside', 'b', 'bdi', 'bdo', 'blockquote', 'br', 'caption', 'cite', 'code', 'dd', 'del',
+    'details', 'dfn', 'div', 'dl', 'dt', 'em', 'figcaption', 'figure', 'footer', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
+    'header', 'hr', 'i', 'img', 'ins', 'kbd', 'li', 'main', 'mark', 'nav', 'ol', 'p', 'pre', 'q', 'rp', 'rt', 'ruby',
+    's', 'samp', 'section', 'small', 'span', 'strong', 'sub', 'summary', 'sup', 'table', 'tbody', 'td', 'tfoot', 'th',
+    'thead', 'time', 'tr', 'u', 'ul', 'var', 'wbr', 'style',
 ];
 const RICH_FRAGMENT_ALLOWED_TAGS = new Set(RICH_FRAGMENT_TAG_NAMES);
 const RICH_FRAGMENT_DROP_TAGS = new Set(['script', 'iframe', 'object', 'embed', 'link', 'meta', 'base', 'form', 'input', 'button', 'textarea', 'select', 'option']);
 const RICH_FRAGMENT_RAW_TEXT_TAGS = new Set(['pre', 'code']);
-const RICH_FRAGMENT_INLINE_MODE_TAGS = new Set(['a', 'code', 'del', 'em', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'i', 'ins', 'kbd', 'mark', 'p', 's', 'small', 'span', 'strong', 'sub', 'summary', 'sup', 'th', 'td', 'u']);
-const RICH_FRAGMENT_VOID_TAGS = new Set(['br', 'hr', 'img']);
+const RICH_FRAGMENT_INLINE_MODE_TAGS = new Set(['a', 'abbr', 'b', 'bdi', 'bdo', 'cite', 'code', 'del', 'dfn', 'em', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'i', 'ins', 'kbd', 'mark', 'p', 'q', 'rp', 'rt', 'ruby', 's', 'samp', 'small', 'span', 'strong', 'sub', 'summary', 'sup', 'th', 'td', 'time', 'u', 'var']);
+const RICH_FRAGMENT_VOID_TAGS = new Set(['br', 'hr', 'img', 'wbr']);
 const RICH_FRAGMENT_ALLOWED_STYLE_PROPS = new Set([
     'align-items',
     'align-self',
@@ -4333,6 +4335,60 @@ const RICH_FRAGMENT_SUPPORTED_TAGS = new Set([
     ...RICH_FRAGMENT_ALLOWED_TAGS,
     ...RICH_FRAGMENT_DROP_TAGS,
 ]);
+const RESIDUAL_XML_TAG_TOKEN_RE = /<\/?([^\s<>/]+)(?:\s[^<>]*?)?\s*\/?>/g;
+const RESIDUAL_XML_TAG_NAME_RE = /^(?:[A-Za-z_:]|[^\x00-\x7F])(?:[A-Za-z0-9_.:-]|[^\x00-\x7F])*$/;
+
+const resolveResidualXmlTagName = (token, tagName) => {
+    const rawTag = String(tagName || '');
+    if (!RESIDUAL_XML_TAG_NAME_RE.test(rawTag)) return '';
+    const tag = rawTag.toLowerCase();
+    if (RICH_FRAGMENT_SUPPORTED_TAGS.has(tag)) return '';
+    return tag;
+};
+
+// 配对证据：只有出现过闭合（</tag>）或自闭（<tag/>）形态的标签名才当协议残留剥除。
+// 孤立的开形态（如散文里的 <全力一击>、a<x && y>b）没有闭合证据，按字面文本保留。
+const collectResidualClosedXmlTagNames = (input, names) => {
+    const text = String(input ?? '');
+    for (const match of text.matchAll(RESIDUAL_XML_TAG_TOKEN_RE)) {
+        const tag = resolveResidualXmlTagName(match[0], match[1]);
+        if (!tag) continue;
+        if (match[0].startsWith('</') || /\/>$/.test(match[0])) names.add(tag);
+    }
+};
+
+const stripResidualXmlTagsOutsideCode = (input, closedNames, onStrip) => String(input ?? '').replace(
+    RESIDUAL_XML_TAG_TOKEN_RE,
+    (match, tagName) => {
+        const tag = resolveResidualXmlTagName(match, tagName);
+        if (!tag || !closedNames.has(tag)) return match;
+        try { onStrip?.(tag); } catch {}
+        return '';
+    },
+);
+
+export const stripResidualXmlTagsForDisplay = (input, { onStrip = null } = {}) => {
+    const raw = String(input ?? '');
+    if (!raw.includes('<')) return raw;
+    const inlineCodeRe = /(`+)([\s\S]*?)\1/g;
+    const segments = [];
+    let cursor = 0;
+    let match;
+    while ((match = inlineCodeRe.exec(raw))) {
+        segments.push({ text: raw.slice(cursor, match.index), code: false });
+        segments.push({ text: match[0], code: true });
+        cursor = inlineCodeRe.lastIndex;
+    }
+    segments.push({ text: raw.slice(cursor), code: false });
+    const closedNames = new Set();
+    segments.forEach((segment) => {
+        if (!segment.code) collectResidualClosedXmlTagNames(segment.text, closedNames);
+    });
+    if (!closedNames.size) return raw;
+    return segments
+        .map(segment => (segment.code ? segment.text : stripResidualXmlTagsOutsideCode(segment.text, closedNames, onStrip)))
+        .join('');
+};
 
 const escapeUnsupportedRichFragmentTags = (input) => {
     const raw = String(input ?? '');
@@ -4384,7 +4440,9 @@ export const prepareRichFragmentHtmlForParsing = (input) => (
 );
 
 export const prepareRichFragmentDisplayHtmlForParsing = (input) => (
-    prepareRichFragmentHtmlForParsing(hideCreativeContentTagsForDisplay(input))
+    prepareRichFragmentHtmlForParsing(
+        stripResidualXmlTagsForDisplay(hideCreativeContentTagsForDisplay(input)),
+    )
 );
 
 const hasInteractiveHtmlHint = (input) => {
@@ -9544,9 +9602,20 @@ export const renderRichText = (
 
         // Plain text: preserve newlines safely
         const chunk = String(p.text || '');
-        const chunkRoute = detectPlainTextRichRoute(chunk);
-        if (hasRichFragmentHint(chunk) && chunkRoute.level === RICH_RENDER_LEVELS.CARD) {
-            const rendered = renderScopedRichFragment(containerEl, chunk, {
+        const strippedTags = new Set();
+        const displayChunk = stripResidualXmlTagsForDisplay(
+            hideCreativeContentTagsForDisplay(chunk),
+            { onStrip: tag => strippedTags.add(tag) },
+        );
+        if (strippedTags.size && (Boolean(debugTag) || shouldLogRichDebug())) {
+            const tags = [...strippedTags].sort().join(',');
+            const msg = `display unwrapped residual tags=${tags} msg=${String(messageId || '')}${debugTag ? ` tag=${debugTag}` : ''}`;
+            emitDebugLog({ source: 'rich', type: 'debug', message: msg, force: true });
+            logger.debug(`[rich] ${msg}`);
+        }
+        const chunkRoute = detectPlainTextRichRoute(displayChunk);
+        if (hasRichFragmentHint(displayChunk) && chunkRoute.level === RICH_RENDER_LEVELS.CARD) {
+            const rendered = renderScopedRichFragment(containerEl, displayChunk, {
                 messageId,
                 resolveStatusCard,
                 allowStatusCards: true,
@@ -9556,14 +9625,13 @@ export const renderRichText = (
             });
             if (rendered) {
                 if (Boolean(debugTag) || shouldLogRichDebug()) {
-                    const msg = `text route=${chunkRoute.level} interactive=${chunkRoute.hasInteractiveHtml ? 1 : 0} len=${chunk.length}${debugTag ? ` tag=${debugTag}` : ''}`;
+                    const msg = `text route=${chunkRoute.level} interactive=${chunkRoute.hasInteractiveHtml ? 1 : 0} len=${displayChunk.length}${debugTag ? ` tag=${debugTag}` : ''}`;
                     emitDebugLog({ source: 'rich', type: 'info', message: msg, force: true });
                     logger.debug(`[rich] ${msg}`);
                 }
                 return;
             }
         }
-        const displayChunk = hideCreativeContentTagsForDisplay(chunk);
         const lines = displayChunk.split(/\n/);
         lines.forEach((line, idx) => {
             const statusSegments = line.split(STATUS_TOKEN);

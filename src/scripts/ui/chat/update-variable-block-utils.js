@@ -1,3 +1,7 @@
+import { splitDanglingBlockTail } from '../../utils/dangling-block-utils.js';
+
+export { splitDanglingBlockTail };
+
 export const stripUpdateVariableBlocks = (text) => {
   let out = String(text || '');
   if (!out) return out;
@@ -11,9 +15,12 @@ export const stripUpdateVariableBlocks = (text) => {
     const tail = out.slice(afterStart);
     const closeRe = new RegExp(`<\\s*\\/\\s*${tag}\\s*>`, 'i');
     const close = closeRe.exec(tail);
-    if (!close) {
-      out = out.slice(0, start);
-      break;
+    const nextOpen = openRe.exec(tail);
+    // 闭合缺失，或闭合其实属于后面另一个块（中间隔着新的开标签）：按悬空处理，不吞中间散文。
+    if (!close || (nextOpen && nextOpen.index < close.index)) {
+      const { rest } = splitDanglingBlockTail(tail);
+      out = out.slice(0, start) + rest;
+      continue;
     }
     const end = afterStart + close.index + close[0].length;
     out = out.slice(0, start) + out.slice(end);
@@ -38,10 +45,12 @@ export const extractUpdateVariableBlocks = (text) => {
     const tail = out.slice(afterStart);
     const closeRe = new RegExp(`<\\s*\\/\\s*${tag}\\s*>`, 'i');
     const close = closeRe.exec(tail);
-    if (!close) {
-      blocks.push(out.slice(afterStart));
-      out = out.slice(0, start);
-      break;
+    const nextOpen = openRe.exec(tail);
+    if (!close || (nextOpen && nextOpen.index < close.index)) {
+      const { block, rest } = splitDanglingBlockTail(tail);
+      if (block.trim()) blocks.push(block);
+      out = out.slice(0, start) + rest;
+      continue;
     }
     const end = afterStart + close.index + close[0].length;
     blocks.push(out.slice(afterStart, afterStart + close.index));

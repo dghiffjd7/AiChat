@@ -48,3 +48,31 @@ import {
   assert.equal(createPresetStoreRuntimeAdapter(null), null);
   console.log('ok - preset store runtime adapter tolerates missing bridge');
 }
+
+{
+  // setActive 对不存在的预设 ID 必须显式失败（返回 null），不能静默 no-op
+  const previousWindow = globalThis.window;
+  const previousLocalStorage = globalThis.localStorage;
+  try {
+    globalThis.localStorage = { getItem: () => null, setItem: () => {}, removeItem: () => {} };
+    globalThis.window = {
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      dispatchEvent: () => true,
+      __TAURI__: undefined,
+    };
+    const { PresetStore } = await import('../../src/scripts/storage/preset-store.js');
+    const store = new PresetStore();
+    await store.ready;
+    const missing = await store.setActive('openai', 'preset-does-not-exist');
+    assert.equal(missing, null, 'unknown preset id must return null');
+    const created = await store.upsert('openai', { name: '存在的预设', data: { name: '存在的预设' } });
+    const switched = await store.setActive('openai', created);
+    assert.equal(Boolean(switched), true, 'valid preset id must switch');
+    assert.equal(store.getActiveId('openai'), created);
+    console.log('ok - preset store setActive fails explicitly on unknown id and switches on valid id');
+  } finally {
+    globalThis.window = previousWindow;
+    globalThis.localStorage = previousLocalStorage;
+  }
+}

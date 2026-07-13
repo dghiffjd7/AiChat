@@ -1530,7 +1530,12 @@ export class PresetStore {
     async setActive(type, id) {
         await this.ready;
         const t = normalizeType(type);
-        if (!id || !this.state?.presets?.[t]?.[id]) return this.getState();
+        if (!id || !this.state?.presets?.[t]?.[id]) {
+            // 不存在的 ID 必须显式失败：静默 no-op 会让程序化调用方（脚本/工具/导入链）
+            // 误以为切换成功，后续脚本 sync 与 prompt 构建全部对着旧预设跑。
+            logger.warn(`[preset-store] setActive ignored: ${t} 预设不存在 id=${String(id || '')}`);
+            return null;
+        }
         this.state.active[t] = id;
         await this.persist();
         return this.getState();

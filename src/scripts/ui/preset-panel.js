@@ -3379,6 +3379,7 @@ export class PresetPanel {
         try {
             const scriptStore = await waitForScriptStoreReady(window.appBridge);
             const scripts = scriptStore?.getScripts?.('preset', id) || [];
+            const scopeVariables = scriptStore?.getScopeVariables?.('preset', id) || {};
             if (Array.isArray(scripts) && scripts.length) {
                 const delScripts = await appConfirm({
                     title: '删除脚本', danger: true,
@@ -3386,8 +3387,14 @@ export class PresetPanel {
                     confirmText: '一并删除', cancelText: '仅删除预设',
                 });
                 if (delScripts) {
-                    await scriptStore.setScripts('preset', id, []);
+                    if (typeof scriptStore.removeScope === 'function') {
+                        await scriptStore.removeScope('preset', id);
+                    } else {
+                        await scriptStore.setScripts('preset', id, []);
+                    }
                 }
+            } else if (Object.keys(scopeVariables).length && typeof scriptStore?.removeScope === 'function') {
+                await scriptStore.removeScope('preset', id);
             }
         } catch {}
 

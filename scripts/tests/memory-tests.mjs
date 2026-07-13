@@ -71,6 +71,47 @@ test('extractTableEditBlocks ignores incomplete tableEdit tags', () => {
   assert.equal(stripTableEditBlocks(input), input);
 });
 
+test('extractTableEditBlocks keeps prose between a dangling tag and a later block', () => {
+  // 创意写作真实形态：thinking 中途出现未闭合 <tableEdit>，消息末尾按预设要求输出完整块。
+  // 悬空开标签不得与末尾块的闭合错误配对——中间的 thinking 尾部与正文必须完整保留。
+  const input = [
+    '<thinking>',
+    '需要更新表格：',
+    '<tableEdit>',
+    'insertRow(0, {"0":"藏经阁"})',
+    '（未输出闭合，thinking 继续）',
+    '</thinking>',
+    '',
+    '楚寻踏入藏经阁，檀香扑面而来。',
+    '他翻开第一卷《太初真解》。',
+    '',
+    '<tableEdit>',
+    '<!--',
+    'updateRow(0, 0, {"1":"主角"})',
+    '-->',
+    '</tableEdit>',
+  ].join('\n');
+  const extracted = extractTableEditBlocks(input);
+  assert.equal(extracted.text.includes('楚寻踏入藏经阁'), true, '正文必须保留');
+  assert.equal(extracted.text.includes('（未输出闭合，thinking 继续）'), true, '悬空块后的散文必须保留');
+  assert.equal(extracted.text.includes('</thinking>'), true, 'thinking 结构必须保留');
+  assert.equal(extracted.text.includes('insertRow'), false, '悬空块命令行应被提取');
+  assert.equal(extracted.blocks.length, 2, '悬空命令前缀与末尾完整块都应提取');
+  assert.equal(extracted.actions.length, 2);
+});
+
+test('stripTableEditBlocks keeps body when dangling tag has no trailing close', () => {
+  const input = [
+    '<thinking>推进剧情<tableEdit>',
+    'insertRow(0, {"0":"v"})',
+    '</thinking>',
+    '正文继续。',
+  ].join('\n');
+  const stripped = stripTableEditBlocks(input);
+  assert.equal(stripped.includes('正文继续。'), true);
+  assert.equal(stripped.includes('</thinking>'), true);
+});
+
 test('extractTableEditBlocks keeps complete but invalid tableEdit blocks', () => {
   const input = 'before <tableEdit>not a valid action</tableEdit> after';
   const extracted = extractTableEditBlocks(input);

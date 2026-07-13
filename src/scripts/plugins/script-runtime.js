@@ -257,19 +257,74 @@ const isRemoteUrl = (value) => {
 };
 
 const nativeFetch = typeof self.fetch === 'function' ? self.fetch.bind(self) : null;
+const NativeXMLHttpRequest = typeof self.XMLHttpRequest === 'function' ? self.XMLHttpRequest : null;
+const NativeWebSocket = typeof self.WebSocket === 'function' ? self.WebSocket : null;
+const nativeImportScripts = typeof self.importScripts === 'function' ? self.importScripts.bind(self) : null;
 const deniedFetchUrls = new Set();
+const warnNetworkDenied = (kind, url = '') => {
+  const key = String(kind || '') + ':' + String(url || '');
+  if (deniedFetchUrls.has(key)) return;
+  deniedFetchUrls.add(key);
+  callRpc('log', { level: 'warn', args: ['脚本网络已禁用，阻止加载', kind, String(url || '')] }).catch(() => {});
+};
 const guardedFetch = (...args) => {
   const input = args[0];
   const url = String(input?.url || input || '').trim();
   if (currentSettings.allowNetwork !== true) {
-    if (!deniedFetchUrls.has(url)) {
-      deniedFetchUrls.add(url);
-      callRpc('log', { level: 'warn', args: ['脚本网络已禁用，阻止加载', url] }).catch(() => {});
-    }
+    warnNetworkDenied('fetch', url);
     return Promise.reject(new TypeError('脚本网络已禁用'));
   }
   if (!nativeFetch) return Promise.reject(new TypeError('fetch is unavailable'));
   return nativeFetch(...args);
+};
+
+const wrapNativeNetworkObject = (target, guardedConstructor) => new Proxy(target, {
+  get(obj, prop) {
+    if (prop === 'constructor') return guardedConstructor;
+    const value = Reflect.get(obj, prop, obj);
+    return typeof value === 'function' ? value.bind(obj) : value;
+  },
+  set(obj, prop, value) {
+    return Reflect.set(obj, prop, value, obj);
+  },
+  getPrototypeOf() {
+    return guardedConstructor.prototype;
+  },
+});
+
+const GuardedXMLHttpRequest = function XMLHttpRequest() {
+  if (currentSettings.allowNetwork !== true) {
+    warnNetworkDenied('XMLHttpRequest');
+    throw new TypeError('脚本网络已禁用');
+  }
+  if (!NativeXMLHttpRequest) throw new TypeError('XMLHttpRequest is unavailable');
+  return wrapNativeNetworkObject(new NativeXMLHttpRequest(), GuardedXMLHttpRequest);
+};
+
+const GuardedWebSocket = function WebSocket(url, protocols) {
+  if (currentSettings.allowNetwork !== true) {
+    warnNetworkDenied('WebSocket', url);
+    throw new TypeError('脚本网络已禁用');
+  }
+  if (!NativeWebSocket) throw new TypeError('WebSocket is unavailable');
+  const socket = protocols === undefined ? new NativeWebSocket(url) : new NativeWebSocket(url, protocols);
+  return wrapNativeNetworkObject(socket, GuardedWebSocket);
+};
+['CONNECTING', 'OPEN', 'CLOSING', 'CLOSED'].forEach((key) => {
+  if (NativeWebSocket && key in NativeWebSocket) GuardedWebSocket[key] = NativeWebSocket[key];
+});
+
+const guardedImportScripts = (...urls) => {
+  // 与 runImport 的禁网语义一致：只拦远程 URL；blob:/app: 等本地导入不受网络开关影响。
+  if (currentSettings.allowNetwork !== true) {
+    const remote = urls.find(url => isRemoteUrl(url));
+    if (remote !== undefined) {
+      warnNetworkDenied('importScripts', remote);
+      throw new TypeError('脚本网络已禁用');
+    }
+  }
+  if (!nativeImportScripts) throw new TypeError('importScripts is unavailable');
+  return nativeImportScripts(...urls);
 };
 
 const resolveImportUrl = (value, baseUrl) => {
@@ -294,7 +349,8 @@ const resolveImportUrl = (value, baseUrl) => {
 
 const loadScriptText = (url, baseUrl) => {
   const resolved = resolveImportUrl(url, baseUrl);
-  const xhr = new XMLHttpRequest();
+  if (!NativeXMLHttpRequest) throw new TypeError('XMLHttpRequest is unavailable');
+  const xhr = new NativeXMLHttpRequest();
   xhr.open('GET', resolved, false);
   xhr.send(null);
   if (xhr.status >= 200 && xhr.status < 300) return String(xhr.responseText || '');
@@ -303,9 +359,9 @@ const loadScriptText = (url, baseUrl) => {
 
 const safeImportScript = (url, baseUrl) => {
   const resolved = resolveImportUrl(url, baseUrl);
-  if (!resolved) return false;
+  if (!resolved || !nativeImportScripts) return false;
   try {
-    importScripts(resolved);
+    nativeImportScripts(resolved);
     return true;
   } catch {
     return false;
@@ -2131,12 +2187,29 @@ const defaultErrorCatched = (fn) => (...args) => {
   }
 };
 
+const deniedPermissionWarnings = new Set();
+const warnCompatPermissionDenied = (permission) => {
+  const name = String(permission || '未知权限');
+  if (deniedPermissionWarnings.has(name)) return;
+  deniedPermissionWarnings.add(name);
+  callRpc('log', { level: 'warn', args: ['脚本权限已禁用', name] }).catch(() => {});
+};
+
 const normalizeCompatVariableScope = (option = { type: 'message' }) => {
   const raw = option && typeof option === 'object'
     ? String(option.type || option.scope || option.name || '').trim().toLowerCase()
     : String(option || '').trim().toLowerCase();
   if (raw === 'global' || raw === 'world') return 'global';
+  if (raw === 'preset') return 'preset';
+  if (raw === 'character' || raw === 'char') return 'character';
   return 'chat';
+};
+
+const getCompatVariableContextKey = (scope) => {
+  if (scope === 'global') return 'globalVariables';
+  if (scope === 'preset') return 'presetVariables';
+  if (scope === 'character') return 'characterVariables';
+  return 'localVariables';
 };
 
 const getCompatBaseVariables = (option = { type: 'message' }) => {
@@ -2149,7 +2222,18 @@ const getCompatBaseVariables = (option = { type: 'message' }) => {
     : currentContext.variables && typeof currentContext.variables === 'object'
       ? currentContext.variables
       : {};
-  return scope === 'global' ? globalVars : localVars;
+  if (scope === 'global') return globalVars;
+  if (scope === 'preset') {
+    return currentContext.presetVariables && typeof currentContext.presetVariables === 'object'
+      ? currentContext.presetVariables
+      : {};
+  }
+  if (scope === 'character') {
+    return currentContext.characterVariables && typeof currentContext.characterVariables === 'object'
+      ? currentContext.characterVariables
+      : {};
+  }
+  return localVars;
 };
 
 const buildCompatVariablesSnapshot = () => {
@@ -2168,6 +2252,8 @@ const buildCompatVariablesSnapshot = () => {
     status_current_variables: clone(baseVars),
     global_variables: clone(globalVars),
     local_variables: clone(localVars),
+    preset_variables: clone(getCompatBaseVariables({ type: 'preset' })),
+    character_variables: clone(getCompatBaseVariables({ type: 'character' })),
   };
 };
 
@@ -2175,21 +2261,22 @@ const getVariables = (option = { type: 'message' }) => clone(getCompatBaseVariab
 const getAllVariables = () => buildCompatVariablesSnapshot();
 
 const setCompatVariables = (updates = {}, option = { type: 'message' }) => {
+  if (currentSettings.allowModifyVariables !== true) {
+    warnCompatPermissionDenied('修改变量');
+    return getVariables(option);
+  }
   const scope = normalizeCompatVariableScope(option);
   const payload = updates && typeof updates === 'object' ? updates : {};
-  const targetKey = scope === 'global' ? 'globalVariables' : 'localVariables';
+  const targetKey = getCompatVariableContextKey(scope);
   const current = currentContext[targetKey] && typeof currentContext[targetKey] === 'object' ? currentContext[targetKey] : {};
   const next = { ...current, ...payload };
   currentContext[targetKey] = next;
-  if (scope !== 'global') currentContext.variables = next;
-  Object.entries(payload).forEach(([key, value]) => {
-    callRpc('variables.set', {
-      key,
-      value,
-      options: { scope: scope === 'global' ? 'global' : 'local' },
-      sessionId: currentContext.sessionId,
-    }).catch(() => {});
-  });
+  if (scope === 'chat') currentContext.variables = next;
+  callRpc('variables.patch', {
+    patch: payload,
+    options: { scope: scope === 'chat' ? 'local' : scope },
+    sessionId: currentContext.sessionId,
+  }).catch(() => {});
   return getVariables(option);
 };
 
@@ -2219,16 +2306,20 @@ const deleteCompatValueAtPath = (obj, path = '') => {
 };
 
 const deleteVariable = (path, option = { type: 'message' }) => {
+  if (currentSettings.allowModifyVariables !== true) {
+    warnCompatPermissionDenied('修改变量');
+    return false;
+  }
   const scope = normalizeCompatVariableScope(option);
-  const targetKey = scope === 'global' ? 'globalVariables' : 'localVariables';
+  const targetKey = getCompatVariableContextKey(scope);
   const current = currentContext[targetKey] && typeof currentContext[targetKey] === 'object' ? clone(currentContext[targetKey]) : {};
   const changed = deleteCompatValueAtPath(current, path);
   currentContext[targetKey] = current;
-  if (scope !== 'global') currentContext.variables = current;
+  if (scope === 'chat') currentContext.variables = current;
   if (changed) {
     callRpc('variables.delete', {
       key: String(path || ''),
-      options: { scope: scope === 'global' ? 'global' : 'local' },
+      options: { scope: scope === 'chat' ? 'local' : scope },
       sessionId: currentContext.sessionId,
     }).catch(() => {});
   }
@@ -2284,6 +2375,10 @@ const normalizeTavernMessage = (message = {}, index = 0) => {
 };
 
 const getTavernChatSnapshot = () => {
+  if (currentSettings.allowReadMessages !== true) {
+    warnCompatPermissionDenied('读取消息');
+    return [];
+  }
   const list = Array.isArray(currentContext.chat) ? currentContext.chat : [];
   return list.map((message, index) => normalizeTavernMessage(message, index));
 };
@@ -2324,6 +2419,10 @@ const getChatMessages = (selector, options = {}) => {
 };
 
 const setChatMessages = async (messages = [], options = {}) => {
+  if (currentSettings.allowReadMessages !== true) {
+    warnCompatPermissionDenied('读取/修改消息');
+    return [];
+  }
   const patches = Array.isArray(messages) ? messages : [];
   if (!patches.length) return [];
   const current = getTavernChatSnapshot();
@@ -2866,6 +2965,12 @@ const ensureSillyTavern = () => {
 };
 
 const refreshSillyTavernChat = async () => {
+  if (currentSettings.allowReadMessages !== true) {
+    currentContext.chat = [];
+    ensureSillyTavern().chat = [];
+    warnCompatPermissionDenied('读取消息');
+    return;
+  }
   try {
     const list = await callRpc('chat.getMessages', { sessionId: currentContext.sessionId });
     if (Array.isArray(list)) {
@@ -2902,6 +3007,9 @@ const ensureCompatGlobals = () => {
   if (!self.navigator) self.navigator = { userAgent: 'ChatApp ScriptRuntime' };
   if (!self.location) self.location = { href: '', origin: '' };
   self.fetch = guardedFetch;
+  self.XMLHttpRequest = GuardedXMLHttpRequest;
+  self.WebSocket = GuardedWebSocket;
+  self.importScripts = guardedImportScripts;
   if (!self.toastr) self.toastr = makeCompatToastr();
   self.window.toastr = self.window.toastr || self.toastr;
   self.parent.toastr = self.parent.toastr || self.toastr;
@@ -3164,6 +3272,10 @@ const resolveSchemaDefaults = (schema) => {
 const registerVariableSchema = (schema, options = {}) => {
   try {
     ensureCompatGlobals();
+    if (currentSettings.allowModifyVariables !== true) {
+      warnCompatPermissionDenied('修改变量');
+      return false;
+    }
     const defaults = resolveSchemaDefaults(schema);
     if (!defaults || typeof defaults !== 'object') {
       callRpc('log', { level: 'warn', args: ['[MVU] registerVariableSchema: no defaults', JSON.stringify(lastSchemaDebug || {})] }).catch(() => {});
@@ -3809,7 +3921,12 @@ const compileScript = (record) => {
 const runHandlers = async (entry, eventName, payload, allowMutate) => {
   let data = payload;
   const base = data && typeof data === 'object' ? { ...data } : { value: data };
-  const handlerPayload = { ...base, event: eventName, context: currentContext, api: entry.api, script: entry.script };
+  const handlerPayload = { ...base, event: eventName };
+  Object.defineProperties(handlerPayload, {
+    context: { value: currentContext, enumerable: false, configurable: true },
+    api: { value: entry.api, enumerable: false, configurable: true },
+    script: { value: entry.script, enumerable: false, configurable: true },
+  });
   const list = entry.handlers.get(eventName) || entry.handlers.get('*') || [];
   if (!list.length && entry.defaultHandler) list.push(entry.defaultHandler);
   for (const fn of list) {
@@ -3832,7 +3949,7 @@ const syncCompatVariablesFromEvent = (eventName, payload = {}) => {
     const name = String(data.name || '').trim();
     if (!name) return;
     const scope = normalizeCompatVariableScope(data.scope || 'chat');
-    const targetKey = scope === 'global' ? 'globalVariables' : 'localVariables';
+    const targetKey = getCompatVariableContextKey(scope);
     const current = currentContext[targetKey] && typeof currentContext[targetKey] === 'object' ? currentContext[targetKey] : {};
     if (data.newValue === undefined) {
       delete current[name];
@@ -3840,7 +3957,7 @@ const syncCompatVariablesFromEvent = (eventName, payload = {}) => {
       current[name] = data.newValue;
     }
     currentContext[targetKey] = current;
-    if (scope !== 'global') currentContext.variables = current;
+    if (scope === 'chat') currentContext.variables = current;
     ensureCompatGlobals();
     return;
   }
@@ -3852,9 +3969,9 @@ const syncCompatVariablesFromEvent = (eventName, payload = {}) => {
         : null;
     if (!variables) return;
     const scope = normalizeCompatVariableScope(data.scope || 'chat');
-    if (scope === 'global') {
-      currentContext.globalVariables = clone(variables);
-    } else {
+    const targetKey = getCompatVariableContextKey(scope);
+    currentContext[targetKey] = clone(variables);
+    if (scope === 'chat') {
       currentContext.localVariables = clone(variables);
       currentContext.variables = clone(variables);
     }
@@ -4158,7 +4275,12 @@ ${allowNetwork ? `
   const scriptInfo = ${infoJson};
   const scriptScope = ${scopeJson};
   const scriptScopeId = ${scopeIdJson};
+  const scriptVariableData = ${dataJson};
   let currentContext = ${contextJson};
+  let currentSettings = {
+    allowReadMessages: ${settings?.allowReadMessages !== false ? 'true' : 'false'},
+    allowModifyVariables: ${settings?.allowModifyVariables !== false ? 'true' : 'false'},
+  };
   const pending = new Map();
   let seq = 0;
   const handlers = new Map();
@@ -4172,10 +4294,21 @@ ${allowNetwork ? `
     const raw = option && typeof option === 'object'
       ? String(option.type || option.scope || option.name || '').trim().toLowerCase()
       : String(option || '').trim().toLowerCase();
-    return raw === 'global' || raw === 'world' ? 'global' : 'chat';
+    if (raw === 'global' || raw === 'world') return 'global';
+    if (raw === 'preset') return 'preset';
+    if (raw === 'character' || raw === 'char') return 'character';
+    if (raw === 'script') return 'script';
+    return 'chat';
+  }
+  function getCompatVariableContextKey(scope) {
+    if (scope === 'global') return 'globalVariables';
+    if (scope === 'preset') return 'presetVariables';
+    if (scope === 'character') return 'characterVariables';
+    return 'localVariables';
   }
   function getCompatBaseVariables(option) {
     const scope = normalizeCompatVariableScope(option);
+    if (scope === 'script') return scriptVariableData;
     const globals = currentContext.globalVariables && typeof currentContext.globalVariables === 'object'
       ? currentContext.globalVariables
       : {};
@@ -4184,7 +4317,18 @@ ${allowNetwork ? `
       : currentContext.variables && typeof currentContext.variables === 'object'
         ? currentContext.variables
         : {};
-    return scope === 'global' ? globals : locals;
+    if (scope === 'global') return globals;
+    if (scope === 'preset') {
+      return currentContext.presetVariables && typeof currentContext.presetVariables === 'object'
+        ? currentContext.presetVariables
+        : {};
+    }
+    if (scope === 'character') {
+      return currentContext.characterVariables && typeof currentContext.characterVariables === 'object'
+        ? currentContext.characterVariables
+        : {};
+    }
+    return locals;
   }
   function buildCompatVariablesSnapshot() {
     const globals = currentContext.globalVariables && typeof currentContext.globalVariables === 'object'
@@ -4202,6 +4346,9 @@ ${allowNetwork ? `
       status_current_variables: cloneCompat(base),
       global_variables: cloneCompat(globals),
       local_variables: cloneCompat(locals),
+      preset_variables: cloneCompat(getCompatBaseVariables({ type: 'preset' })),
+      character_variables: cloneCompat(getCompatBaseVariables({ type: 'character' })),
+      script_variables: cloneCompat(scriptVariableData),
     };
   }
   function getVariables(option) {
@@ -4209,6 +4356,73 @@ ${allowNetwork ? `
   }
   function getAllVariables() {
     return buildCompatVariablesSnapshot();
+  }
+  function setVariables(updates, option) {
+    if (currentSettings.allowModifyVariables !== true) {
+      callParent('log', { level: 'warn', args: ['脚本权限已禁用', '修改变量'] }).catch(() => {});
+      return getVariables(option);
+    }
+    const scope = normalizeCompatVariableScope(option);
+    const payload = updates && typeof updates === 'object' ? updates : {};
+    const current = getCompatBaseVariables(option);
+    const next = Object.assign({}, current, payload);
+    if (scope === 'script') {
+      Object.keys(scriptVariableData).forEach(key => delete scriptVariableData[key]);
+      Object.assign(scriptVariableData, next);
+      callParent('script.updateData', { scriptId, data: cloneCompat(scriptVariableData), scope: scriptScope, scopeId: scriptScopeId });
+      return cloneCompat(scriptVariableData);
+    }
+    const targetKey = getCompatVariableContextKey(scope);
+    currentContext[targetKey] = next;
+    if (scope === 'chat') currentContext.variables = next;
+    callParent('variables.patch', {
+      patch: payload,
+      options: { scope: scope === 'chat' ? 'local' : scope },
+      sessionId: currentContext.sessionId,
+      scriptId,
+    }).catch(() => {});
+    return cloneCompat(next);
+  }
+  function updateVariablesWith(updates, option) {
+    if (typeof updates === 'function') {
+      const next = updates(getVariables(option));
+      return setVariables(next && typeof next === 'object' ? next : {}, option);
+    }
+    return setVariables(updates, option);
+  }
+  function deleteVariable(path, option) {
+    if (currentSettings.allowModifyVariables !== true) {
+      callParent('log', { level: 'warn', args: ['脚本权限已禁用', '修改变量'] }).catch(() => {});
+      return false;
+    }
+    const scope = normalizeCompatVariableScope(option);
+    const parts = String(path || '').split('.').map(part => part.trim()).filter(Boolean);
+    if (!parts.length) return false;
+    const current = cloneCompat(getCompatBaseVariables(option)) || {};
+    let cursor = current;
+    for (let index = 0; index < parts.length - 1; index += 1) {
+      cursor = cursor && typeof cursor === 'object' ? cursor[parts[index]] : null;
+      if (!cursor || typeof cursor !== 'object') return false;
+    }
+    const last = parts[parts.length - 1];
+    if (!Object.prototype.hasOwnProperty.call(cursor, last)) return false;
+    delete cursor[last];
+    if (scope === 'script') {
+      Object.keys(scriptVariableData).forEach(key => delete scriptVariableData[key]);
+      Object.assign(scriptVariableData, current);
+      callParent('script.updateData', { scriptId, data: cloneCompat(scriptVariableData), scope: scriptScope, scopeId: scriptScopeId });
+    } else {
+      const targetKey = getCompatVariableContextKey(scope);
+      currentContext[targetKey] = current;
+      if (scope === 'chat') currentContext.variables = current;
+      callParent('variables.delete', {
+        key: String(path || ''),
+        options: { scope: scope === 'chat' ? 'local' : scope },
+        sessionId: currentContext.sessionId,
+        scriptId,
+      }).catch(() => {});
+    }
+    return true;
   }
   function getContext() {
     return Object.assign({}, currentContext, buildCompatVariablesSnapshot(), {
@@ -4218,6 +4432,10 @@ ${allowNetwork ? `
   window.powerUserSettings = window.powerUserSettings || {};
   window.getVariables = window.getVariables || getVariables;
   window.getAllVariables = window.getAllVariables || getAllVariables;
+  window.setVariables = window.setVariables || setVariables;
+  window.updateVariablesWith = window.updateVariablesWith || updateVariablesWith;
+  window.insertOrAssignVariables = window.insertOrAssignVariables || setVariables;
+  window.deleteVariable = window.deleteVariable || deleteVariable;
   window.getContext = window.getContext || getContext;
   try {
     Object.defineProperty(window, 'Context', {
@@ -4230,6 +4448,10 @@ ${allowNetwork ? `
   }
   var getVariables = window.getVariables;
   var getAllVariables = window.getAllVariables;
+  var setVariables = window.setVariables;
+  var updateVariablesWith = window.updateVariablesWith;
+  var insertOrAssignVariables = window.insertOrAssignVariables;
+  var deleteVariable = window.deleteVariable;
   var getContext = window.getContext;
   var Context = window.Context;
   var powerUserSettings = window.powerUserSettings;
@@ -4240,6 +4462,10 @@ ${allowNetwork ? `
       if (typeof host.getContext !== 'function') host.getContext = () => window.getContext();
       if (typeof host.getVariables !== 'function') host.getVariables = (...args) => window.getVariables(...args);
       if (typeof host.getAllVariables !== 'function') host.getAllVariables = (...args) => window.getAllVariables(...args);
+      if (typeof host.setVariables !== 'function') host.setVariables = (...args) => window.setVariables(...args);
+      if (typeof host.updateVariablesWith !== 'function') host.updateVariablesWith = (...args) => window.updateVariablesWith(...args);
+      if (typeof host.insertOrAssignVariables !== 'function') host.insertOrAssignVariables = (...args) => window.insertOrAssignVariables(...args);
+      if (typeof host.deleteVariable !== 'function') host.deleteVariable = (...args) => window.deleteVariable(...args);
       try {
         Object.defineProperty(host, 'Context', {
           configurable: true,
@@ -4281,6 +4507,9 @@ ${allowNetwork ? `
     }
     if (msg.type === 'script-iframe-context' && msg.context) {
       currentContext = Object.assign({}, currentContext, msg.context);
+      if (msg.settings && typeof msg.settings === 'object') {
+        currentSettings = Object.assign({}, currentSettings, msg.settings);
+      }
       try { Context = window.Context; } catch {}
       return;
     }
@@ -4469,6 +4698,12 @@ ${allowNetwork ? `
   window.TavernHelper = window.TavernHelper || {
     getTavernHelperVersion: async () => '0.0.0',
   };
+  window.TavernHelper.getVariables = window.TavernHelper.getVariables || getVariables;
+  window.TavernHelper.getAllVariables = window.TavernHelper.getAllVariables || getAllVariables;
+  window.TavernHelper.setVariables = window.TavernHelper.setVariables || setVariables;
+  window.TavernHelper.updateVariablesWith = window.TavernHelper.updateVariablesWith || updateVariablesWith;
+  window.TavernHelper.insertOrAssignVariables = window.TavernHelper.insertOrAssignVariables || setVariables;
+  window.TavernHelper.deleteVariable = window.TavernHelper.deleteVariable || deleteVariable;
   var SillyTavern = window.SillyTavern;
   var TavernHelper = window.TavernHelper;
   if (!window._ && window.lodash) window._ = window.lodash;
@@ -4499,13 +4734,18 @@ ${allowNetwork ? `
   var toastr = window.toastr;
   const apiRef = makeApi();
   var api = apiRef;
-  const scriptRef = { id: scriptId, name: scriptName, info: scriptInfo, scope: scriptScope, scopeId: scriptScopeId, data: makeDataProxy(${dataJson}) };
+  const scriptRef = { id: scriptId, name: scriptName, info: scriptInfo, scope: scriptScope, scopeId: scriptScopeId, data: makeDataProxy(scriptVariableData) };
   var script = scriptRef;
   window.__chatappScript = scriptRef;
   window.__chatappApi = apiRef;
   window.api = apiRef;
   window.script = scriptRef;
   async function refreshSillyTavernChat() {
+    if (currentSettings.allowReadMessages !== true) {
+      window.SillyTavern.chat = [];
+      callParent('log', { level: 'warn', args: ['脚本权限已禁用', '读取消息'] }).catch(() => {});
+      return;
+    }
     try {
       const list = await callParent('chat.getMessages', { sessionId: currentContext.sessionId });
       if (Array.isArray(list)) {
@@ -4517,7 +4757,12 @@ ${allowNetwork ? `
     await refreshSillyTavernChat();
     const base = payload && typeof payload === 'object' ? Object.assign({}, payload) : { value: payload };
     let data = payload;
-    const handlerPayload = Object.assign({}, base, { event: eventName, context: currentContext, api, script });
+    const handlerPayload = Object.assign({}, base, { event: eventName });
+    Object.defineProperties(handlerPayload, {
+      context: { value: currentContext, enumerable: false, configurable: true },
+      api: { value: api, enumerable: false, configurable: true },
+      script: { value: script, enumerable: false, configurable: true },
+    });
     const list = handlers.get(eventName) || handlers.get('*') || [];
     const all = list.slice();
     if (!all.length && typeof defaultHandler === 'function') all.push(defaultHandler);
@@ -4643,6 +4888,9 @@ ${allowNetwork ? `
   async onMessage(e) {
     const msg = e?.data || {};
     if (!msg || typeof msg !== 'object') return;
+    const sourceScriptId = String(this.windowMap.get(e?.source) || '').trim();
+    const claimedScriptId = String(msg.scriptId || '').trim();
+    if (!sourceScriptId || !claimedScriptId || claimedScriptId !== sourceScriptId) return;
     if (msg.type === 'script-iframe-listener') {
       this.owner.recordListener?.(msg.event);
       return;
@@ -4669,6 +4917,7 @@ export class ScriptRuntime {
     this.worker = null;
     this.iframeRuntime = new ScriptIframeRuntime(this);
     this.pending = new Map();
+    this.variableScopeWriteQueues = new Map();
     this.seq = 0;
     this.oneTimeScripts = new Map();
     this.listenerEvents = new Set();
@@ -5590,6 +5839,12 @@ export class ScriptRuntime {
       ? (this.chatStore.listVariables(sid) || {})
       : {};
     const globalVariables = this.chatStore?.listGlobalVariables?.() || {};
+    const characterVariables = personaId && this.store?.getScopeVariables
+      ? this.store.getScopeVariables('character', personaId)
+      : {};
+    const presetVariables = activeOpenAiPresetId && this.store?.getScopeVariables
+      ? this.store.getScopeVariables('preset', activeOpenAiPresetId)
+      : {};
     const sharedVariables = this.bridge?.isSharedVariableSession?.(sid) === true;
     const variables = sharedVariables ? globalVariables : localVariables;
     return {
@@ -5609,6 +5864,8 @@ export class ScriptRuntime {
       variables: clonePlain(variables) || {},
       localVariables: clonePlain(localVariables) || {},
       globalVariables: clonePlain(globalVariables) || {},
+      characterVariables: clonePlain(characterVariables) || {},
+      presetVariables: clonePlain(presetVariables) || {},
       sharedVariables,
     };
   }
@@ -5976,9 +6233,72 @@ export class ScriptRuntime {
     const allowReadMessages = settings.scriptAllowReadMessages !== false;
     const allowModifyVariables = settings.scriptAllowModifyVariables !== false;
     const sessionId = String(params.sessionId || this.context.sessionId || this.chatStore?.getCurrent?.() || '').trim();
+    const denyScriptPermission = (name) => {
+      const error = new Error(`脚本权限已禁用：${name}`);
+      error.name = 'ScriptPermissionError';
+      throw error;
+    };
+    const normalizeRpcVariableScope = (value) => {
+      const raw = String(value || 'local').trim().toLowerCase();
+      if (raw === 'global' || raw === 'world') return 'global';
+      if (raw === 'preset') return 'preset';
+      if (raw === 'character' || raw === 'char') return 'character';
+      return 'local';
+    };
+    const resolveStoredVariableScopeId = (scope) => {
+      const explicit = String(params.options?.scopeId || params.scopeId || '').trim();
+      if (explicit) return explicit;
+      const matchesCurrent = !sessionId || String(this.context.sessionId || '') === sessionId;
+      const context = matchesCurrent ? this.context : this.buildContext(sessionId);
+      if (scope === 'preset') {
+        return String(context.openaiPresetId || context.activePreset?.id || '').trim();
+      }
+      if (scope === 'character') return String(context.personaId || '').trim();
+      return '';
+    };
+    const readStoredScopeVariables = (scope) => {
+      const scopeId = resolveStoredVariableScopeId(scope);
+      if (!scopeId || !this.store?.getScopeVariables) return { scopeId, variables: {} };
+      return {
+        scopeId,
+        variables: this.store.getScopeVariables(scope, scopeId) || {},
+      };
+    };
+    const writeStoredScopeVariables = async (scope, scopeId, variables) => {
+      if (!scopeId || !this.store?.setScopeVariables) return false;
+      const saved = await this.store.setScopeVariables(scope, scopeId, variables);
+      const contextKey = scope === 'preset' ? 'presetVariables' : 'characterVariables';
+      const currentScopeId = scope === 'preset'
+        ? String(this.context.openaiPresetId || this.context.activePreset?.id || '').trim()
+        : String(this.context.personaId || '').trim();
+      if (scopeId === currentScopeId) this.context[contextKey] = clonePlain(variables) || {};
+      return saved !== false;
+    };
+    const mutateStoredScopeVariables = async (scope, mutator) => {
+      const scopeId = resolveStoredVariableScopeId(scope);
+      if (!scopeId || !this.store?.getScopeVariables || !this.store?.setScopeVariables) return false;
+      if (!this.variableScopeWriteQueues) this.variableScopeWriteQueues = new Map();
+      const queueKey = `${scope}:${scopeId}`;
+      const previous = this.variableScopeWriteQueues.get(queueKey) || Promise.resolve();
+      const task = previous.catch(() => {}).then(async () => {
+        const current = this.store.getScopeVariables(scope, scopeId) || {};
+        const next = clonePlain(current) || {};
+        const changed = mutator(next);
+        if (changed === false) return false;
+        return writeStoredScopeVariables(scope, scopeId, next);
+      });
+      this.variableScopeWriteQueues.set(queueKey, task);
+      try {
+        return await task;
+      } finally {
+        if (this.variableScopeWriteQueues.get(queueKey) === task) {
+          this.variableScopeWriteQueues.delete(queueKey);
+        }
+      }
+    };
     if (method === 'variables.get') {
       const key = String(params.key || '').trim();
-      const scope = String(params.options?.scope || params.scope || 'local').toLowerCase();
+      const scope = normalizeRpcVariableScope(params.options?.scope || params.scope);
       if (!key) return undefined;
       const path = toPath(key);
       if (!path.length) return undefined;
@@ -5986,13 +6306,17 @@ export class ScriptRuntime {
         const base = this.chatStore?.getGlobalVariable?.(path[0]);
         return path.length === 1 ? base : getByPath(base, path.slice(1));
       }
+      if (scope === 'preset' || scope === 'character') {
+        const { variables } = readStoredScopeVariables(scope);
+        return getByPath(variables, path);
+      }
       const base = this.chatStore?.getVariable?.(path[0], sessionId);
       return path.length === 1 ? base : getByPath(base, path.slice(1));
     }
     if (method === 'variables.set') {
-      if (!allowModifyVariables) return false;
+      if (!allowModifyVariables) denyScriptPermission('修改变量');
       const key = String(params.key || '').trim();
-      const scope = String(params.options?.scope || params.scope || 'local').toLowerCase();
+      const scope = normalizeRpcVariableScope(params.options?.scope || params.scope);
       if (!key) return false;
       const path = toPath(key);
       if (!path.length) return false;
@@ -6002,15 +6326,21 @@ export class ScriptRuntime {
         const next = setByPath({ ...(base && typeof base === 'object' ? base : {}) }, path.slice(1), params.value);
         return this.chatStore?.setGlobalVariable?.(path[0], next);
       }
+      if (scope === 'preset' || scope === 'character') {
+        return mutateStoredScopeVariables(scope, (next) => {
+          setByPath(next, path, params.value);
+          return true;
+        });
+      }
       if (path.length === 1) return this.chatStore?.setVariable?.(path[0], params.value, sessionId);
       const base = this.chatStore?.getVariable?.(path[0], sessionId) || {};
       const next = setByPath({ ...(base && typeof base === 'object' ? base : {}) }, path.slice(1), params.value);
       return this.chatStore?.setVariable?.(path[0], next, sessionId);
     }
     if (method === 'variables.delete') {
-      if (!allowModifyVariables) return false;
+      if (!allowModifyVariables) denyScriptPermission('修改变量');
       const key = String(params.key || '').trim();
-      const scope = String(params.options?.scope || params.scope || 'local').toLowerCase();
+      const scope = normalizeRpcVariableScope(params.options?.scope || params.scope);
       if (!key) return false;
       const path = toPath(key);
       if (!path.length) return false;
@@ -6023,6 +6353,9 @@ export class ScriptRuntime {
         if (!changed) return false;
         return this.chatStore?.setGlobalVariable?.(path[0], next) ?? false;
       }
+      if (scope === 'preset' || scope === 'character') {
+        return mutateStoredScopeVariables(scope, next => deleteByPath(next, path));
+      }
       if (path.length === 1) return this.chatStore?.deleteVariable?.(path[0], sessionId) ?? false;
       const base = this.chatStore?.getVariable?.(path[0], sessionId) || {};
       if (!base || typeof base !== 'object') return false;
@@ -6032,9 +6365,25 @@ export class ScriptRuntime {
       return this.chatStore?.setVariable?.(path[0], next, sessionId) ?? false;
     }
     if (method === 'variables.patch') {
-      if (!allowModifyVariables) return false;
-      const scope = String(params.options?.scope || params.scope || 'local').toLowerCase();
+      if (!allowModifyVariables) denyScriptPermission('修改变量');
+      const scope = normalizeRpcVariableScope(params.options?.scope || params.scope);
       const patch = params.patch && typeof params.patch === 'object' ? params.patch : {};
+      if (scope === 'preset' || scope === 'character') {
+        return mutateStoredScopeVariables(scope, (next) => {
+          let changed = false;
+          Object.entries(patch).forEach(([key, value]) => {
+            const path = toPath(key);
+            if (!path.length) return;
+            if (value === undefined) {
+              changed = deleteByPath(next, path) || changed;
+            } else {
+              setByPath(next, path, value);
+              changed = true;
+            }
+          });
+          return changed;
+        });
+      }
       const results = await Promise.all(Object.entries(patch).map(([key, value]) => (
         value === undefined
           ? this.processRpc('variables.delete', { key, options: { scope }, sessionId })
@@ -6043,7 +6392,7 @@ export class ScriptRuntime {
       return results.some(Boolean);
     }
     if (method === 'variables.inc' || method === 'variables.dec') {
-      if (!allowModifyVariables) return false;
+      if (!allowModifyVariables) denyScriptPermission('修改变量');
       const key = String(params.key || '').trim();
       const delta = Number(params.delta || 1) || 0;
       const sign = method === 'variables.dec' ? -1 : 1;
@@ -6053,7 +6402,7 @@ export class ScriptRuntime {
       return next;
     }
     if (method === 'variables.registerSchema') {
-      if (!allowModifyVariables) return false;
+      if (!allowModifyVariables) denyScriptPermission('修改变量');
       const rawDefaults = params.defaults && typeof params.defaults === 'object' ? params.defaults : null;
       if (!rawDefaults) return false;
       const scope = String(params.options?.scope || params.scope || params.options?.type || '').toLowerCase();
@@ -6141,14 +6490,15 @@ export class ScriptRuntime {
       return true;
     }
     if (method === 'chat.getMessages') {
-      if (!allowReadMessages) return [];
+      if (!allowReadMessages) denyScriptPermission('读取消息');
       const list = Array.isArray(this.chatStore?.getMessages?.(sessionId))
         ? this.chatStore.getMessages(sessionId)
         : [];
       return list.map(m => ({ ...m }));
     }
     if (method === 'chat.setMessages') {
-      if (!allowReadMessages || !this.chatStore || !sessionId) return [];
+      if (!allowReadMessages) denyScriptPermission('读取/修改消息');
+      if (!this.chatStore || !sessionId) return [];
       const list = Array.isArray(this.chatStore.getMessages?.(sessionId))
         ? this.chatStore.getMessages(sessionId)
         : [];
@@ -6185,7 +6535,7 @@ export class ScriptRuntime {
       return updated;
     }
     if (method === 'chat.updateMessage') {
-      if (!allowReadMessages) return null;
+      if (!allowReadMessages) denyScriptPermission('读取/修改消息');
       if (!this.chatStore || !sessionId) return null;
       const id = String(params.id || '').trim();
       const data = params.data && typeof params.data === 'object' ? params.data : null;
@@ -6198,7 +6548,8 @@ export class ScriptRuntime {
       return updated || null;
     }
     if (method === 'chat.reloadCurrent') {
-      if (!allowReadMessages || !sessionId) return false;
+      if (!allowReadMessages) denyScriptPermission('读取消息');
+      if (!sessionId) return false;
       const list = Array.isArray(this.chatStore?.getMessages?.(sessionId))
         ? this.chatStore.getMessages(sessionId)
         : [];
@@ -6212,7 +6563,7 @@ export class ScriptRuntime {
       return this.getCharacterTavernRegexes(sessionId);
     }
     if (method === 'regex.replaceCharacter') {
-      if (!allowModifyVariables) return false;
+      if (!allowModifyVariables) denyScriptPermission('修改变量');
       const regexStore = this.bridge?.getRegexStore?.() || this.bridge?.regex || null;
       if (!regexStore) return false;
       const incoming = Array.isArray(params.regexes) ? params.regexes : [];
@@ -6348,7 +6699,7 @@ export class ScriptRuntime {
       return { name };
     }
     if (method === 'preset.setPromptEnabled') {
-      if (!allowModifyVariables) return false;
+      if (!allowModifyVariables) denyScriptPermission('修改变量');
       const presetType = String(params.presetType || 'openai').trim() || 'openai';
       if (presetType !== 'openai') return false;
       const identifier = String(params.identifier || params.id || params.name || '').trim();
@@ -6426,6 +6777,7 @@ export class ScriptRuntime {
       };
     }
     if (method === 'script.updateData') {
+      if (!allowModifyVariables) denyScriptPermission('修改变量');
       const scriptId = String(params.scriptId || '').trim();
       const data = params.data && typeof params.data === 'object' ? params.data : {};
       if (!scriptId) return false;

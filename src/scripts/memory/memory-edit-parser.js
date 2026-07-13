@@ -1,36 +1,60 @@
+import { splitDanglingBlockTail } from '../utils/dangling-block-utils.js';
+
 export const stripTableEditBlocks = (text) => {
   return extractTableEditBlocks(text).text.replace(/\n{3,}/g, '\n\n').trim();
 };
 
+const TABLE_EDIT_OPEN_RE = /<tableEdit\b[^>]*>/i;
+const TABLE_EDIT_CLOSE_RE = /<\/tableEdit\s*>/i;
+
 export const extractTableEditBlocks = (text) => {
   const raw = String(text ?? '');
-  const re = /<tableEdit\b[^>]*>([\s\S]*?)<\/tableEdit\s*>/gi;
-  const matches = [];
-  let m;
-  while ((m = re.exec(raw))) {
-    const block = m[1];
-    const actions = parseTableEditActions(block);
-    if (!actions.length) continue;
-    matches.push({
-      start: m.index,
-      end: re.lastIndex,
-      block,
-      actions,
-    });
-  }
-  if (!matches.length) return { text: raw, blocks: [], actions: [] };
-  let cursor = 0;
-  let stripped = '';
   const blocks = [];
   const actions = [];
-  for (const match of matches) {
-    stripped += raw.slice(cursor, match.start);
-    cursor = match.end;
-    blocks.push(match.block);
-    actions.push(...match.actions);
+  let out = raw;
+  let searchFrom = 0;
+  let mutated = false;
+  for (let i = 0; i < 20; i += 1) {
+    const open = TABLE_EDIT_OPEN_RE.exec(out.slice(searchFrom));
+    if (!open) break;
+    const start = searchFrom + open.index;
+    const afterStart = start + open[0].length;
+    const tail = out.slice(afterStart);
+    const close = TABLE_EDIT_CLOSE_RE.exec(tail);
+    const nextOpen = TABLE_EDIT_OPEN_RE.exec(tail);
+    // 闭合缺失，或闭合其实属于后面另一个块（中间隔着新的开标签）：
+    // 按悬空处理，只吞块语法前缀，中间/后续散文必须保留。
+    if (!close || (nextOpen && nextOpen.index < close.index)) {
+      const { block, rest } = splitDanglingBlockTail(tail);
+      const danglingActions = parseTableEditActions(block);
+      if (!danglingActions.length) {
+        // 悬空且无命令内容：当散文原样保留，跳过这个开标签继续向后找。
+        searchFrom = afterStart;
+        continue;
+      }
+      blocks.push(block);
+      actions.push(...danglingActions);
+      out = out.slice(0, start) + rest;
+      searchFrom = start;
+      mutated = true;
+      continue;
+    }
+    const block = tail.slice(0, close.index);
+    const end = afterStart + close.index + close[0].length;
+    const blockActions = parseTableEditActions(block);
+    if (!blockActions.length) {
+      // 空块保持原文不动（与既有语义一致），跳过继续找后面的块。
+      searchFrom = end;
+      continue;
+    }
+    blocks.push(block);
+    actions.push(...blockActions);
+    out = out.slice(0, start) + out.slice(end);
+    searchFrom = start;
+    mutated = true;
   }
-  stripped += raw.slice(cursor);
-  stripped = stripped.replace(/\n{3,}/g, '\n\n').trim();
+  if (!mutated) return { text: raw, blocks, actions };
+  const stripped = out.replace(/\n{3,}/g, '\n\n').trim();
   return { text: stripped, blocks, actions };
 };
 

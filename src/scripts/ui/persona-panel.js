@@ -1659,7 +1659,20 @@ export class PersonaPanel {
         if (options.deleteScripts) {
             try {
                 const scriptStore = await waitForScriptStoreReady(window.appBridge);
-                await scriptStore?.setScripts?.('character', persona.id, []);
+                if (typeof scriptStore?.removeScope === 'function') {
+                    await scriptStore.removeScope('character', persona.id);
+                } else {
+                    await scriptStore?.setScripts?.('character', persona.id, []);
+                }
+            } catch {}
+        } else {
+            try {
+                const scriptStore = await waitForScriptStoreReady(window.appBridge);
+                const scripts = scriptStore?.getScripts?.('character', persona.id) || [];
+                const variables = scriptStore?.getScopeVariables?.('character', persona.id) || {};
+                if (!scripts.length && Object.keys(variables).length && typeof scriptStore?.removeScope === 'function') {
+                    await scriptStore.removeScope('character', persona.id);
+                }
             } catch {}
         }
     }

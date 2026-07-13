@@ -37,13 +37,16 @@ const {
   isEsmLikeScriptForTests,
   ScriptRuntime,
 } = await import('../../src/scripts/plugins/script-runtime.js');
+const { appSettings } = await import('../../src/scripts/storage/app-settings.js');
 globalThis.setTimeout = realSetTimeout;
 
-const createWorkerHarness = ({ chatMessages = [], characterRegexes = [], fetchImpl } = {}) => {
+const createWorkerHarness = ({ chatMessages = [], characterRegexes = [], fetchImpl, importScriptsImpl } = {}) => {
   const messages = [];
+  const networkCalls = { xhr: 0, webSocket: 0, importScripts: 0 };
   let sandbox = null;
   class FakeXhr {
-    open() {
+    open(_method, url) {
+      if (/example\.com/.test(String(url || ''))) networkCalls.xhr += 1;
       this.status = 404;
       this.responseText = '';
     }
@@ -52,6 +55,14 @@ const createWorkerHarness = ({ chatMessages = [], characterRegexes = [], fetchIm
       this.status = 404;
       this.responseText = '';
     }
+  }
+  class FakeWebSocket {
+    constructor(url) {
+      if (/example\.com/.test(String(url || ''))) networkCalls.webSocket += 1;
+      this.url = url;
+    }
+
+    close() {}
   }
 
   sandbox = {
@@ -77,9 +88,11 @@ const createWorkerHarness = ({ chatMessages = [], characterRegexes = [], fetchIm
     URL,
     ...(fetchImpl ? { fetch: fetchImpl } : {}),
     XMLHttpRequest: FakeXhr,
-    importScripts: () => {
+    WebSocket: FakeWebSocket,
+    importScripts: importScriptsImpl || ((url) => {
+      if (/example\.com/.test(String(url || ''))) networkCalls.importScripts += 1;
       throw new Error('blocked in test');
-    },
+    }),
     postMessage: (msg) => {
       messages.push(msg);
       if (msg?.type === 'rpc' && msg.method === 'chat.getMessages') {
@@ -104,7 +117,7 @@ const createWorkerHarness = ({ chatMessages = [], characterRegexes = [], fetchIm
   vm.runInContext(buildScriptRuntimeWorkerSourceForTests(), sandbox, {
     filename: 'script-runtime-worker.js',
   });
-  return { sandbox, messages };
+  return { sandbox, messages, networkCalls };
 };
 
 const flushTimers = () => new Promise(resolve => setTimeout(resolve, 0));
@@ -177,6 +190,266 @@ console.log('ok - script runtime recognizes actual ESM import and export syntax'
 }
 
 {
+  let fetchCalls = 0;
+  const disabled = createWorkerHarness({
+    fetchImpl: async () => {
+      fetchCalls += 1;
+      return { ok: true };
+    },
+  });
+  const networkScript = `
+    try { const xhr = new XMLHttpRequest(); xhr.open('GET', 'https://example.com/xhr'); xhr.send(); } catch {}
+    try { const XhrCtor = XMLHttpRequest.prototype.constructor; const xhr = new XhrCtor(); xhr.open('GET', 'https://example.com/xhr-constructor'); xhr.send(); } catch {}
+    try { new WebSocket('wss://example.com/socket'); } catch {}
+    try { const SocketCtor = WebSocket.prototype.constructor; new SocketCtor('wss://example.com/socket-constructor'); } catch {}
+    try { importScripts('https://example.com/import.js'); } catch {}
+    try { new Function("return fetch('https://example.com/function')")().catch(() => {}); } catch {}
+  `;
+  await disabled.sandbox.self.onmessage({
+    data: {
+      type: 'sync',
+      settings: { allowNetwork: false },
+      context: { sessionId: 's1' },
+      scripts: [{ id: 'network-surfaces-disabled', name: 'network surfaces disabled', enabled: true, content: networkScript }],
+    },
+  });
+  await flushTimers();
+  assert.deepEqual(disabled.networkCalls, { xhr: 0, webSocket: 0, importScripts: 0 });
+  assert.equal(fetchCalls, 0);
+
+  const allowed = createWorkerHarness({
+    fetchImpl: async () => {
+      fetchCalls += 1;
+      return { ok: true };
+    },
+  });
+  await allowed.sandbox.self.onmessage({
+    data: {
+      type: 'sync',
+      settings: { allowNetwork: true },
+      context: { sessionId: 's1' },
+      scripts: [{ id: 'network-surfaces-enabled', name: 'network surfaces enabled', enabled: true, content: networkScript }],
+    },
+  });
+  await flushTimers();
+  assert.deepEqual(allowed.networkCalls, { xhr: 2, webSocket: 2, importScripts: 1 });
+  assert.equal(fetchCalls, 1);
+  console.log('ok - worker network permission covers XHR, WebSocket, importScripts, and new Function fetch');
+}
+
+{
+  // 禁网只拦远程：blob:/app: 本地导入不应触发网络拒绝警告（与 runImport 语义一致）
+  const localImports = [];
+  const { sandbox, messages } = createWorkerHarness({
+    importScriptsImpl: (url) => { localImports.push(String(url || '')); },
+  });
+  await sandbox.self.onmessage({
+    data: {
+      type: 'sync',
+      settings: { allowNetwork: false },
+      context: { sessionId: 's1' },
+      scripts: [{
+        id: 'local-import-net-off',
+        name: 'local import net off',
+        enabled: true,
+        content: `
+          try { importScripts('blob:http://127.0.0.1:1430/local-part'); } catch {}
+          try { importScripts('https://example.com/remote.js'); } catch {}
+        `,
+      }],
+    },
+  });
+  await flushTimers();
+  assert.equal(localImports.includes('blob:http://127.0.0.1:1430/local-part'), true, 'local blob import must pass through when network disabled');
+  assert.equal(localImports.some(url => /example\.com/.test(url)), false, 'remote import must not reach native importScripts when network disabled');
+  const deniedLogs = messages
+    .filter(msg => msg.type === 'rpc' && msg.method === 'log' && /脚本网络已禁用/.test(JSON.stringify(msg.params || {})))
+    .map(msg => JSON.stringify(msg.params));
+  assert.equal(deniedLogs.length, 1, 'only the remote import should be denied');
+  assert.equal(/example\.com/.test(deniedLogs[0]), true, 'denied warning should reference the remote url');
+  assert.equal(/blob:/.test(deniedLogs[0]), false, 'local blob import must not be reported as network denial');
+  console.log('ok - worker network permission blocks only remote importScripts and spares local blob imports');
+}
+
+{
+  const { sandbox, networkCalls } = createWorkerHarness();
+  await sandbox.self.onmessage({
+    data: {
+      type: 'sync',
+      settings: { allowNetwork: true },
+      context: { sessionId: 's1' },
+      scripts: [{
+        id: 'capture-network-constructors',
+        name: 'capture network constructors',
+        enabled: true,
+        content: `
+          const xhr = new XMLHttpRequest();
+          self.savedXhrCtor = xhr.constructor;
+          const socket = new WebSocket('wss://example.com/capture');
+          self.savedSocketCtor = socket.constructor;
+          socket.close();
+        `,
+      }],
+    },
+  });
+  assert.deepEqual(networkCalls, { xhr: 0, webSocket: 1, importScripts: 0 });
+  await sandbox.self.onmessage({
+    data: {
+      type: 'sync',
+      settings: { allowNetwork: false },
+      context: { sessionId: 's1' },
+      scripts: [{
+        id: 'reuse-network-constructors',
+        name: 'reuse network constructors',
+        enabled: true,
+        content: `
+          try { const xhr = new self.savedXhrCtor(); xhr.open('GET', 'https://example.com/reuse'); xhr.send(); } catch {}
+          try { new self.savedSocketCtor('wss://example.com/reuse'); } catch {}
+        `,
+      }],
+    },
+  });
+  assert.deepEqual(networkCalls, { xhr: 0, webSocket: 1, importScripts: 0 });
+  console.log('ok - native network constructors captured while allowed remain permission-aware after revocation');
+}
+
+{
+  const { sandbox, messages } = createWorkerHarness({
+    chatMessages: [{ id: 'm1', role: 'assistant', raw: 'must stay hidden' }],
+  });
+  const script = `
+    if (getChatMessages().length !== 0) throw new Error('read-disabled script received messages');
+    setVariables({ blockedWrite: true });
+    if (getVariables().blockedWrite === true) throw new Error('modify-disabled script changed its optimistic snapshot');
+  `;
+  await sandbox.self.onmessage({
+    data: {
+      type: 'sync',
+      settings: { allowReadMessages: false, allowModifyVariables: false, allowNetwork: false },
+      context: {
+        sessionId: 's1',
+        chat: [{ id: 'leaked', role: 'assistant', raw: 'cached secret' }],
+        variables: { mood: 'calm' },
+        localVariables: { mood: 'calm' },
+      },
+      scripts: [{ id: 'permissions-disabled', name: 'permissions disabled', enabled: true, content: script }],
+    },
+  });
+  await flushTimers();
+  assert.equal(messages.some(msg => msg.type === 'rpc' && msg.method === 'chat.getMessages'), false);
+  assert.equal(messages.some(msg => msg.type === 'rpc' && msg.method === 'variables.patch'), false);
+  assert.equal(
+    messages.some(msg => msg.type === 'rpc' && msg.method === 'log' && /脚本权限已禁用/.test(JSON.stringify(msg.params || {}))),
+    true,
+  );
+  assert.equal(
+    messages.some(msg => msg.type === 'rpc' && msg.method === 'log' && msg.params?.args?.[0] === '脚本加载失败'),
+    false,
+  );
+  console.log('ok - disabled read/modify permissions degrade explicitly without leaking or optimistic writes');
+}
+
+{
+  const combinations = [];
+  for (const allowReadMessages of [false, true]) {
+    for (const allowModifyVariables of [false, true]) {
+      for (const allowNetwork of [false, true]) {
+        combinations.push({ allowReadMessages, allowModifyVariables, allowNetwork });
+      }
+    }
+  }
+  for (const combination of combinations) {
+    let fetchCalls = 0;
+    const { sandbox, messages } = createWorkerHarness({
+      chatMessages: [{ id: 'm1', role: 'assistant', raw: 'visible only with read permission' }],
+      fetchImpl: async () => {
+        fetchCalls += 1;
+        return { ok: true };
+      },
+    });
+    const script = `
+      (async () => {
+        let networkAllowed = false;
+        try { await fetch('https://example.com/matrix'); networkAllowed = true; } catch {}
+        const messageCount = getChatMessages().length;
+        setVariables({ matrixWrite: true });
+        const variableChanged = getVariables().matrixWrite === true;
+        await api.log('PERMISSION_MATRIX', JSON.stringify({ networkAllowed, messageCount, variableChanged }));
+      })();
+    `;
+    await sandbox.self.onmessage({
+      data: {
+        type: 'sync',
+        settings: combination,
+        context: {
+          sessionId: 'matrix',
+          variables: {},
+          localVariables: {},
+          chat: [{ id: 'cached', role: 'assistant', raw: 'cached secret' }],
+        },
+        scripts: [{ id: 'permission-matrix', name: 'permission matrix', enabled: true, content: script }],
+      },
+    });
+    await flushTimers();
+    await flushTimers();
+    const log = messages.find(msg => msg.type === 'rpc' && msg.method === 'log' && msg.params?.args?.[0] === 'PERMISSION_MATRIX');
+    const observed = JSON.parse(log?.params?.args?.[1] || '{}');
+    assert.equal(observed.networkAllowed, combination.allowNetwork, JSON.stringify(combination));
+    assert.equal(observed.messageCount, combination.allowReadMessages ? 1 : 0, JSON.stringify(combination));
+    assert.equal(observed.variableChanged, combination.allowModifyVariables, JSON.stringify(combination));
+    assert.equal(fetchCalls, combination.allowNetwork ? 1 : 0, JSON.stringify(combination));
+    assert.equal(
+      messages.some(msg => msg.type === 'rpc' && msg.method === 'variables.patch'),
+      combination.allowModifyVariables,
+      JSON.stringify(combination),
+    );
+  }
+  console.log('ok - all eight read/modify/network permission combinations remain independent');
+}
+
+{
+  const { sandbox, messages } = createWorkerHarness();
+  await sandbox.self.onmessage({
+    data: {
+      type: 'sync',
+      settings: { allowReadMessages: true, allowModifyVariables: true, allowNetwork: false },
+      context: { sessionId: 's1' },
+      scripts: [
+        {
+          id: 'throws',
+          name: 'throws',
+          enabled: true,
+          content: `on('compat.crash', () => { throw new Error('intentional script failure'); });`,
+        },
+        {
+          id: 'survives',
+          name: 'survives',
+          enabled: true,
+          content: `on('compat.crash', payload => {
+            if (payload.script.id !== 'survives' || typeof payload.api.getvar !== 'function') throw new Error('missing handler runtime fields');
+            return { ...payload, survivorRan: true };
+          });`,
+        },
+      ],
+    },
+  });
+  await sandbox.self.onmessage({
+    data: { type: 'dispatch', id: 'crash-isolation', event: 'compat.crash', payload: { initial: true }, allowMutate: true },
+  });
+  await flushTimers();
+  const result = messages.find(msg => msg.type === 'dispatch_result' && msg.id === 'crash-isolation');
+  assert.equal(result?.result?.initial, true);
+  assert.equal(result?.result?.survivorRan, true);
+  assert.equal(result?.result?.script, undefined);
+  assert.equal(result?.result?.api, undefined);
+  assert.equal(
+    messages.some(msg => msg.type === 'rpc' && msg.method === 'log' && /intentional script failure/.test(JSON.stringify(msg.params || {}))),
+    true,
+  );
+  console.log('ok - one throwing script does not prevent sibling scripts from handling the same event');
+}
+
+{
   const { sandbox, messages } = createWorkerHarness({
     chatMessages: [
       { id: 'm1', role: 'user', raw: 'hello' },
@@ -237,9 +510,17 @@ console.log('ok - script runtime recognizes actual ESM import and export syntax'
   const script = `
     const localVars = getVariables();
     const globalVars = getVariables({ type: 'global' });
+    const presetVars = getVariables({ type: 'preset' });
+    const characterVars = getVariables({ type: 'character' });
     if (localVars.mood !== 'calm') throw new Error('missing local variables');
     if (globalVars.globalMood !== 'shared') throw new Error('missing global variables');
+    if (presetVars.tagFixerPreset !== 'preset-only') throw new Error('missing preset variables');
+    if (characterVars.cardSetting !== 'character-only') throw new Error('missing character variables');
     if (getAllVariables().stat_data.mood !== 'calm') throw new Error('missing variable snapshot');
+    setVariables({ tagFixerPreset: 'updated' }, { type: 'preset' });
+    setVariables({ cardSetting: 'updated' }, { type: 'character' });
+    if (getVariables({ type: 'preset' }).tagFixerPreset !== 'updated') throw new Error('preset variable snapshot did not update');
+    if (getVariables({ type: 'character' }).cardSetting !== 'updated') throw new Error('character variable snapshot did not update');
     localStorage.setItem('compat-key', 'compat-value');
     if (localStorage.getItem('compat-key') !== 'compat-value') throw new Error('missing localStorage shim');
     const node = document.createElement('section');
@@ -352,6 +633,8 @@ console.log('ok - script runtime recognizes actual ESM import and export syntax'
         variables: { mood: 'calm' },
         localVariables: { mood: 'calm' },
         globalVariables: { globalMood: 'shared' },
+        presetVariables: { tagFixerPreset: 'preset-only' },
+        characterVariables: { cardSetting: 'character-only' },
         personaName: 'Alice',
         worldId: 'World',
         worldIds: ['World', 'Extra'],
@@ -376,6 +659,14 @@ console.log('ok - script runtime recognizes actual ESM import and export syntax'
   );
   assert.equal(
     messages.some(msg => msg.type === 'rpc' && msg.method === 'preset.setPromptEnabled' && msg.params?.identifier === 'rule' && msg.params?.enabled === true),
+    true,
+  );
+  assert.equal(
+    messages.some(msg => msg.type === 'rpc' && msg.method === 'variables.patch' && msg.params?.options?.scope === 'preset' && msg.params?.patch?.tagFixerPreset === 'updated'),
+    true,
+  );
+  assert.equal(
+    messages.some(msg => msg.type === 'rpc' && msg.method === 'variables.patch' && msg.params?.options?.scope === 'character' && msg.params?.patch?.cardSetting === 'updated'),
     true,
   );
   console.log('ok - script runtime worker exposes legacy browser and variable globals before script load');
@@ -758,7 +1049,22 @@ console.log('ok - script runtime recognizes actual ESM import and export syntax'
 }
 
 {
-  const runtime = new ScriptRuntime({ ready: Promise.resolve(), getScripts: () => [] });
+  const scopedVariables = {
+    character: { 'character-1': { cardSetting: 'character-only' } },
+    preset: { 'preset-openai': { tagFixerPreset: 'preset-only', nested: { enabled: false } } },
+  };
+  const scopeWrites = [];
+  const runtime = new ScriptRuntime({
+    ready: Promise.resolve(),
+    getScripts: () => [],
+    getScopeVariables: (scope, scopeId) => structuredClone(scopedVariables[scope]?.[scopeId] || {}),
+    setScopeVariables: async (scope, scopeId, variables) => {
+      await new Promise(resolve => setTimeout(resolve, 1));
+      scopedVariables[scope][scopeId] = structuredClone(variables);
+      scopeWrites.push([scope, scopeId, structuredClone(variables)]);
+      return true;
+    },
+  });
   const calls = [];
   runtime.chatStore = {
     getCurrent: () => 's1',
@@ -794,21 +1100,32 @@ console.log('ok - script runtime recognizes actual ESM import and export syntax'
     } : {}),
     getActiveId: type => (type === 'openai' ? 'preset-openai' : ''),
   };
+  runtime.getEffectivePersona = () => ({ id: 'character-1', name: 'Alice' });
   const context = runtime.buildContext('s1');
   runtime.context = { ...runtime.context, ...context };
   assert.deepEqual(context.variables, { mood: 'calm', nested: { hp: 10 } });
   assert.deepEqual(context.globalVariables, { globalMood: 'shared' });
+  assert.deepEqual(context.presetVariables, { tagFixerPreset: 'preset-only', nested: { enabled: false } });
+  assert.deepEqual(context.characterVariables, { cardSetting: 'character-only' });
   assert.deepEqual(context.worldbookNames, ['World', 'Extra']);
   assert.equal(context.activePreset.prompts[0].name, 'Rule');
 
   const iframeHtml = runtime.iframeRuntime.buildIframeHtml(
-    { id: 'esm-compat', name: 'esm compat', content: 'export default function() {}' },
+    { id: 'esm-compat', name: 'esm compat', data: { scriptSetting: true }, content: 'export default function() {}' },
     context,
     { allowNetwork: false },
   );
   assert.match(iframeHtml, /window\.powerUserSettings/);
   assert.match(iframeHtml, /window\.tavern_events/);
   assert.match(iframeHtml, /bridgeCompatGlobalsToHost/);
+  assert.match(iframeHtml, /default-src 'none'; script-src 'unsafe-inline' blob:;/);
+  assert.doesNotMatch(iframeHtml, /connect-src https:/);
+  assert.match(iframeHtml, /script_variables/);
+  const classicInlineScripts = Array.from(iframeHtml.matchAll(/<script(?![^>]*type="module")[^>]*>([\s\S]*?)<\/script>/g))
+    .map(match => match[1])
+    .filter(Boolean);
+  assert.equal(classicInlineScripts.length, 1);
+  assert.doesNotThrow(() => new Function(classicInlineScripts[0]));
 
   const full = await runtime.processRpc('context.getContext', { sessionId: 's1' });
   assert.equal(full.stat_data.mood, 'calm');
@@ -826,11 +1143,128 @@ console.log('ok - script runtime recognizes actual ESM import and export syntax'
 
   assert.equal(await runtime.processRpc('variables.delete', { key: 'mood', sessionId: 's1' }), true);
   assert.equal(await runtime.processRpc('variables.delete', { key: 'nested.hp', sessionId: 's1' }), true);
+  assert.equal(await runtime.processRpc('variables.patch', {
+    patch: { firstSetting: 1, secondSetting: 2 },
+    options: { scope: 'preset' },
+    sessionId: 's1',
+  }), true);
+  assert.equal(await runtime.processRpc('variables.set', {
+    key: 'nested.enabled',
+    value: true,
+    options: { scope: 'preset' },
+    sessionId: 's1',
+  }), true);
+  assert.equal(await runtime.processRpc('variables.delete', {
+    key: 'cardSetting',
+    options: { scope: 'character' },
+    sessionId: 's1',
+  }), true);
   assert.deepEqual(calls, [
     ['delete', 'mood', 's1'],
     ['set', 'nested', {}, 's1'],
   ]);
+  assert.deepEqual(scopeWrites, [
+    ['preset', 'preset-openai', {
+      tagFixerPreset: 'preset-only',
+      nested: { enabled: false },
+      firstSetting: 1,
+      secondSetting: 2,
+    }],
+    ['preset', 'preset-openai', {
+      tagFixerPreset: 'preset-only',
+      nested: { enabled: true },
+      firstSetting: 1,
+      secondSetting: 2,
+    }],
+    ['character', 'character-1', {}],
+  ]);
+  await Promise.all([
+    runtime.processRpc('variables.patch', {
+      patch: { concurrentFirst: true },
+      options: { scope: 'preset' },
+      sessionId: 's1',
+    }),
+    runtime.processRpc('variables.patch', {
+      patch: { concurrentSecond: true },
+      options: { scope: 'preset' },
+      sessionId: 's1',
+    }),
+  ]);
+  assert.equal(scopedVariables.preset['preset-openai'].concurrentFirst, true);
+  assert.equal(scopedVariables.preset['preset-openai'].concurrentSecond, true);
   console.log('ok - script runtime context and variable RPC include snapshots and delete support');
+}
+
+{
+  const runtime = new ScriptRuntime({ ready: Promise.resolve(), getScripts: () => [] });
+  const trustedSource = { postMessage: () => {} };
+  const untrustedSource = { postMessage: () => {} };
+  const replies = [];
+  trustedSource.postMessage = message => replies.push(message);
+  runtime.iframeRuntime.windowMap.set(trustedSource, 'trusted-script');
+  const rpcCalls = [];
+  runtime.processRpc = async (method, params) => {
+    rpcCalls.push([method, params]);
+    return { ok: true };
+  };
+
+  await runtime.iframeRuntime.onMessage({
+    source: untrustedSource,
+    data: { type: 'script-iframe-rpc', id: 'untrusted', scriptId: 'trusted-script', method: 'chat.getMessages', params: {} },
+  });
+  await runtime.iframeRuntime.onMessage({
+    source: trustedSource,
+    data: { type: 'script-iframe-rpc', id: 'spoofed', scriptId: 'other-script', method: 'chat.getMessages', params: {} },
+  });
+  assert.deepEqual(rpcCalls, []);
+  assert.deepEqual(replies, []);
+
+  await runtime.iframeRuntime.onMessage({
+    source: trustedSource,
+    data: { type: 'script-iframe-rpc', id: 'trusted', scriptId: 'trusted-script', method: 'chat.getMessages', params: { sessionId: 's1' } },
+  });
+  assert.deepEqual(rpcCalls, [['chat.getMessages', { sessionId: 's1' }]]);
+  assert.deepEqual(replies, [{ type: 'script-iframe-rpc-result', id: 'trusted', result: { ok: true } }]);
+  console.log('ok - iframe RPC accepts only the registered contentWindow and matching script id');
+}
+
+{
+  const originalSettings = appSettings.get();
+  const variableWrites = [];
+  const runtime = new ScriptRuntime({ ready: Promise.resolve(), getScripts: () => [] });
+  runtime.context = { sessionId: 'permission-session' };
+  runtime.chatStore = {
+    getCurrent: () => 'permission-session',
+    getMessages: () => [{ id: 'm1', role: 'assistant', raw: 'secret' }],
+    setVariable: (key, value, sessionId) => {
+      variableWrites.push([key, value, sessionId]);
+      return true;
+    },
+  };
+  try {
+    appSettings.update({ scriptAllowReadMessages: false, scriptAllowModifyVariables: false });
+    await assert.rejects(
+      runtime.processRpc('chat.getMessages', { sessionId: 'permission-session' }),
+      /脚本权限已禁用：读取消息/,
+    );
+    await assert.rejects(
+      runtime.processRpc('variables.set', { key: 'blocked', value: true, sessionId: 'permission-session' }),
+      /脚本权限已禁用：修改变量/,
+    );
+    assert.deepEqual(variableWrites, []);
+
+    appSettings.update({ scriptAllowReadMessages: true, scriptAllowModifyVariables: true });
+    assert.equal((await runtime.processRpc('chat.getMessages', { sessionId: 'permission-session' })).length, 1);
+    assert.equal(await runtime.processRpc('variables.set', {
+      key: 'allowed',
+      value: true,
+      sessionId: 'permission-session',
+    }), true);
+    assert.deepEqual(variableWrites, [['allowed', true, 'permission-session']]);
+  } finally {
+    appSettings.update(originalSettings);
+  }
+  console.log('ok - main script RPC returns explicit permission errors and preserves allowed behavior');
 }
 
 {
@@ -997,5 +1431,11 @@ console.log('ok - script runtime recognizes actual ESM import and export syntax'
   runtime.handleWorkerMessage({ type: 'dispatch_error', id: idB, error: '脚本结果过大' });
   await assert.rejects(callB, /脚本结果过大/);
   assert.equal(restarts, 1, 'oversized result should restart worker');
+
+  // 卡死脚本不会回包时，主线程 watchdog 拒绝本次派发并重启隔离 worker。
+  runtime.workerWarmingUp = false;
+  const timedOut = runtime.callWorker('dispatch', { event: 'intentional.hang', payload: {} }, 20);
+  await assert.rejects(timedOut, /script runtime timeout \(intentional\.hang, 20ms\)/);
+  assert.equal(restarts, 2, 'dispatch timeout should restart the isolated worker');
   console.log('ok - warmup grace, sync_done clears warmup, dispatch_error restarts selectively');
 }

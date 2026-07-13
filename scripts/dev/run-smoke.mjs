@@ -1,6 +1,6 @@
 // 女仆/Agent 真机冒烟：对运行中的 dev APP（CDP 9222）依序执行 smoke-scenarios/ 下的场景。
 // 用法（Windows node）：node scripts/dev/run-smoke.mjs [--with-ai]
-//   默认只跑只读免 token 场景（01-06）；--with-ai 追加 ai- 前缀场景（会调用配置的模型）。
+//   默认跑数字前缀的免 token 场景；--with-ai 追加 ai- 前缀场景（会调用配置的模型）。
 // 每个场景文件是页面上下文表达式，约定返回 { pass: boolean, detail: any }。
 
 import { readdirSync, readFileSync } from 'node:fs';

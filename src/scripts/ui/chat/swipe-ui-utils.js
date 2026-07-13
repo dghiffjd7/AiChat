@@ -1,3 +1,5 @@
+import { splitDanglingBlockTail } from './update-variable-block-utils.js';
+
 export const SWIPE_REASONING_KEYS = ['reasoning', 'reasoningDisplay', 'reasoningSource', 'reasoningHidden', 'reasoningLabel'];
 
 const hasOwn = (obj, key) => Object.prototype.hasOwnProperty.call(obj || {}, key);
@@ -57,9 +59,12 @@ const stripTableEditBlocksLocal = value => {
     if (startIdx < 0) break;
     const afterStart = out.slice(startIdx + start[0].length);
     const end = afterStart.match(endRe);
-    if (!end) {
-      out = out.slice(0, startIdx);
-      break;
+    const nextStart = afterStart.match(startRe);
+    // 未闭合或闭合属于后面另一个块：只吞块语法前缀，散文归还正文
+    if (!end || (nextStart && (nextStart.index ?? 0) < (end.index ?? 0))) {
+      const { rest } = splitDanglingBlockTail(afterStart);
+      out = out.slice(0, startIdx) + rest;
+      continue;
     }
     const endIdx = startIdx + start[0].length + (end.index ?? 0);
     out = out.slice(0, startIdx) + out.slice(endIdx + end[0].length);
