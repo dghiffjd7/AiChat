@@ -447,7 +447,9 @@ const PANEL_CSS = `
     background: color-mix(in srgb, var(--app-accent-primary) 6%, var(--app-surface-card));
 }
 
-/* 三级区块编辑页：隐藏上方「预设方案」区，给提示词编辑让出最大空间 */
+/* 二级（detail/bindings）与三级（block）页：隐藏上方「预设方案」区，给编辑内容让出最大空间 */
+#preset-panel[data-view="detail"] .pp-manager,
+#preset-panel[data-view="bindings"] .pp-manager,
 #preset-panel[data-view="block"] .pp-manager {
     display: none;
 }
@@ -475,8 +477,13 @@ const PANEL_CSS = `
     color: var(--app-accent-strong, var(--app-accent-primary));
     font-weight: 700;
 }
-.pp-block-title.pp-hit-title {
+.pp-block-title mark,
+.pp-block-hit mark {
+    background: var(--app-accent-soft, rgba(25, 154, 255, 0.18));
     color: var(--app-accent-strong, var(--app-accent-primary));
+    border-radius: 3px;
+    padding: 0 1px;
+    font-weight: 700;
 }
 .pp-block-hit {
     padding: 6px 12px 10px;
@@ -3175,6 +3182,19 @@ export class PresetPanel {
         };
         let filterScope = 'all';
         const searchInput = searchRow.querySelector('#openai-block-search');
+        // 关键字高亮：转义后把命中片段包 <mark>
+        const highlightMatches = (text, q) => {
+            const lower = text.toLowerCase();
+            let out = '';
+            let pos = 0;
+            let idx;
+            while (q && (idx = lower.indexOf(q, pos)) >= 0) {
+                out += `${escapeHtml(text.slice(pos, idx))}<mark>${escapeHtml(text.slice(idx, idx + q.length))}</mark>`;
+                pos = idx + q.length;
+            }
+            out += escapeHtml(text.slice(pos));
+            return out;
+        };
         const applyFilter = () => {
             const q = String(searchInput.value || '').trim().toLowerCase();
             const filtering = q.length > 0;
@@ -3182,25 +3202,32 @@ export class PresetPanel {
             let hits = 0;
             list.querySelectorAll('.openai-block').forEach((card) => {
                 card.querySelector('.pp-block-hit')?.remove();
-                card.querySelector('.pp-block-title')?.classList.remove('pp-hit-title');
-                if (!filtering) { card.style.display = ''; return; }
                 const identifier = card.dataset.identifier || '';
                 const { title, content } = resolveBlockText(identifier);
+                const titleEl = card.querySelector('.pp-block-title');
+                if (!filtering) {
+                    card.style.display = '';
+                    if (titleEl && titleEl.querySelector('mark')) titleEl.textContent = title;
+                    return;
+                }
                 const titleHit = (filterScope !== 'content')
                     && (title.toLowerCase().includes(q) || identifier.toLowerCase().includes(q));
                 const contentIdx = (filterScope !== 'title') ? content.toLowerCase().indexOf(q) : -1;
                 const hit = titleHit || contentIdx >= 0;
                 card.style.display = hit ? '' : 'none';
+                if (titleEl) {
+                    if (hit && titleHit && title.toLowerCase().includes(q)) titleEl.innerHTML = highlightMatches(title, q);
+                    else if (titleEl.querySelector('mark')) titleEl.textContent = title;
+                }
                 if (!hit) return;
                 hits += 1;
-                if (titleHit) card.querySelector('.pp-block-title')?.classList.add('pp-hit-title');
                 if (contentIdx >= 0) {
                     const start = Math.max(0, contentIdx - 24);
                     const end = Math.min(content.length, contentIdx + q.length + 24);
-                    const snippet = `${start > 0 ? '…' : ''}${content.slice(start, end)}${end < content.length ? '…' : ''}`;
+                    const snippet = `${start > 0 ? '…' : ''}${content.slice(start, end)}${end < content.length ? '…' : ''}`.replace(/\s+/g, ' ');
                     const hitEl = document.createElement('div');
                     hitEl.className = 'pp-block-hit';
-                    hitEl.textContent = `正文：${snippet.replace(/\s+/g, ' ')}`;
+                    hitEl.innerHTML = `正文：${highlightMatches(snippet, q)}`;
                     card.appendChild(hitEl);
                 }
             });
