@@ -166,8 +166,8 @@ export const createContactMemoryShareRuntime = ({
             },
             getHintText: ({ isRpTarget }) => (
                 isRpTarget
-                    ? '真正全局的用户档案会自动共享；这里仅管理聊天 / 群聊注入到当前 RP 会话的额外记忆。'
-                    : '真正全局的用户档案会自动共享；这里仅管理当前角色的 RP 会话注入到本聊天的额外记忆。'
+                    ? '真正全局的用户档案会自动共享；这里仅管理聊天 / 群聊注入到当前创意写作会话的额外记忆。'
+                    : '真正全局的用户档案会自动共享；这里仅管理当前角色的创意写作会话注入到本聊天的额外记忆。'
             ),
             getPrimaryGroupLabel: ({ isRpTarget }) => (isRpTarget ? '聊天室' : '创意写作'),
             buildExtraMemoryShareGroups: async () => {

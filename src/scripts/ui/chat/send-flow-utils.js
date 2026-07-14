@@ -272,6 +272,8 @@ export const normalizeHandleSendOptions = (options = {}) => {
     skipTemplate: Boolean(raw.skipTemplate),
     skipScripts: Boolean(raw.skipScripts),
     previewOnly: Boolean(raw.previewOnly),
+    // 请求预览的场景覆盖（仅 previewOnly 时使用）：'chat' | 'rp'
+    previewUiMode: raw.previewUiMode === 'chat' || raw.previewUiMode === 'rp' ? raw.previewUiMode : '',
     suppressAssistantDom: Boolean(raw.suppressAssistantDom),
     assistantStreamFactory:
       typeof raw.createAssistantStream === 'function' ? raw.createAssistantStream : null,

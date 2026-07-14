@@ -5,6 +5,7 @@
  */
 
 import { logger } from '../utils/logger.js';
+import { createDragGhost } from './drag-ghost-utils.js';
 
 export class ContactDragManager {
     constructor({ groupStore, onDrop } = {}) {
@@ -109,6 +110,11 @@ export class ContactDragManager {
     }
 
     endDrag() {
+        if (this.pointerGhost) {
+            const rect = this.draggedElement?.getBoundingClientRect?.() || null;
+            this.pointerGhost.settle(rect);
+            this.pointerGhost = null;
+        }
         if (this.draggedElement) {
             this.draggedElement.classList.remove('dragging');
         }
@@ -228,7 +234,7 @@ export class ContactDragManager {
         this.pointerTarget = contact;
         this.pointerDragging = false;
         this.pointerOverZone = null;
-        contact.setPointerCapture?.(event.pointerId);
+        try { contact.setPointerCapture?.(event.pointerId); } catch {}
     }
 
     handlePointerMove(event) {
@@ -245,8 +251,11 @@ export class ContactDragManager {
                 return;
             }
             this.pointerDragging = true;
+            // 悬浮幽灵：克隆联系人卡跟随指针（抬升动画），原卡变淡作为来源占位
+            this.pointerGhost = createDragGhost(this.pointerTarget, event);
         }
         event.preventDefault();
+        this.pointerGhost?.move(event);
         const target = document.elementFromPoint(event.clientX, event.clientY);
         const dropZone = this.resolveDropZoneFromTarget(target);
         this.updateDropZoneHover(dropZone);
@@ -260,14 +269,14 @@ export class ContactDragManager {
             this.dropOnZone(dropZone);
             this.suppressClick = true;
         }
-        this.pointerTarget?.releasePointerCapture?.(event.pointerId);
+        try { this.pointerTarget?.releasePointerCapture?.(event.pointerId); } catch {}
         this.endDrag();
         this.resetPointerState();
     }
 
     handlePointerCancel(event) {
         if (event.pointerId !== this.pointerId) return;
-        this.pointerTarget?.releasePointerCapture?.(event.pointerId);
+        try { this.pointerTarget?.releasePointerCapture?.(event.pointerId); } catch {}
         this.endDrag();
         this.resetPointerState();
     }

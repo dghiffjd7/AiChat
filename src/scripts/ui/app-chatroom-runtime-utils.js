@@ -42,7 +42,7 @@ export function createAppChatroomRuntime({
   return {
     handleSticker(tag) {
       if (!isStickerAllowed()) {
-        showInfo?.('RP界面不支持贴图');
+        showInfo?.('创意写作界面不支持贴图');
         return null;
       }
       const sessionId = getCurrentSessionId?.();

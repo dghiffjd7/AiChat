@@ -1126,8 +1126,7 @@ export class SessionPanel {
     this.panel.innerHTML = `
             <div class="session-panel-header">
               <div>
-                <div class="session-panel-title">好友列表</div>
-                <div class="session-panel-subtitle">点击好友可切换聊天室</div>
+                <div class="session-panel-title has-help" data-help="点击好友可切换聊天室">好友列表</div>
               </div>
               <button class="session-panel-close" type="button" aria-label="关闭">×</button>
             </div>

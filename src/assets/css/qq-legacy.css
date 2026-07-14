@@ -7171,20 +7171,21 @@ body:not([data-ui-mode='rp']) .creative-execution-root {
 }
 
 .creative-execution-root {
-  --cel-surface: rgba(255, 255, 255, 0.94);
-  --cel-panel: rgba(248, 250, 252, 0.98);
-  --cel-panel-raised: rgba(255, 255, 255, 0.98);
-  --cel-border: rgba(15, 23, 42, 0.12);
-  --cel-border-strong: rgba(37, 99, 235, 0.42);
+  /* 全面走主题 token：跟随内建/自定义主题的表面、强调与状态色（阴影保持主题无关） */
+  --cel-surface: var(--app-surface-panel, rgba(255, 255, 255, 0.94));
+  --cel-panel: var(--app-surface-subtle, rgba(248, 250, 252, 0.98));
+  --cel-panel-raised: var(--app-surface-card, rgba(255, 255, 255, 0.98));
+  --cel-border: var(--app-border-subtle, rgba(15, 23, 42, 0.12));
+  --cel-border-strong: rgba(var(--app-accent-rgb, 37, 99, 235), 0.42);
   --cel-text: var(--app-text-primary, #0f172a);
   --cel-muted: var(--app-text-muted, #94a3b8);
   --cel-subtle: var(--app-text-secondary, #475569);
   --cel-accent: var(--app-accent-primary, #199aff);
-  --cel-accent-soft: rgba(25, 154, 255, 0.12);
-  --cel-success: #0f766e;
-  --cel-warning: #b45309;
+  --cel-accent-soft: rgba(var(--app-accent-rgb, 25, 154, 255), 0.12);
+  --cel-success: var(--app-success-text, #0f766e);
+  --cel-warning: var(--app-warning-text, #b45309);
   --cel-danger: var(--app-danger-text, #dc2626);
-  --cel-edge: rgba(100, 116, 139, 0.38);
+  --cel-edge: rgba(var(--app-tint-slate-rgb, 100, 116, 139), 0.38);
   --cel-shadow: 0 18px 42px rgba(15, 23, 42, 0.16);
   --cel-scan-highlight: color-mix(in srgb, var(--cel-panel-raised) 48%, transparent);
   position: absolute;
@@ -7198,20 +7199,11 @@ body:not([data-ui-mode='rp']) .creative-execution-root {
 }
 
 body[data-theme-mode='dark'] .creative-execution-root {
-  --cel-surface: rgba(15, 23, 42, 0.92);
-  --cel-panel: rgba(2, 6, 23, 0.96);
-  --cel-panel-raised: rgba(15, 23, 42, 0.98);
-  --cel-border: rgba(148, 163, 184, 0.22);
-  --cel-border-strong: rgba(56, 189, 248, 0.5);
-  --cel-text: var(--app-text-primary, #e2e8f0);
-  --cel-muted: rgba(148, 163, 184, 0.78);
-  --cel-subtle: rgba(203, 213, 225, 0.82);
-  --cel-accent: #38bdf8;
-  --cel-accent-soft: rgba(56, 189, 248, 0.14);
-  --cel-success: #2dd4bf;
-  --cel-warning: #fbbf24;
-  --cel-danger: #f87171;
-  --cel-edge: rgba(148, 163, 184, 0.34);
+  --cel-border: rgba(var(--app-tint-slate-rgb, 148, 163, 184), 0.22);
+  --cel-border-strong: rgba(var(--app-accent-rgb, 56, 189, 248), 0.5);
+  --cel-muted: rgba(var(--app-tint-slate-rgb, 148, 163, 184), 0.78);
+  --cel-accent-soft: rgba(var(--app-accent-rgb, 56, 189, 248), 0.14);
+  --cel-edge: rgba(var(--app-tint-slate-rgb, 148, 163, 184), 0.34);
   --cel-shadow: 0 22px 58px rgba(0, 0, 0, 0.38);
   --cel-scan-highlight: color-mix(in srgb, var(--cel-accent) 18%, transparent);
 }
@@ -7827,15 +7819,38 @@ body[data-theme-mode='dark'] .cel-card.is-current {
   overflow: auto;
 }
 
-@keyframes creative-execution-panel-in {
-  from {
-    opacity: 0;
-    transform: translateY(10px) scale(0.985);
+/* 根节点出入场：出现时轻微上浮淡入；收起由 JS 加 .is-leaving 渐隐后再 hidden */
+.creative-execution-root:not([hidden]) {
+  animation: cel-root-in 180ms ease-out;
+}
+.creative-execution-root.is-leaving {
+  animation: cel-root-out 180ms ease-in forwards;
+  pointer-events: none;
+}
+@keyframes cel-root-in {
+  from { opacity: 0; transform: translateX(-50%) translateY(6px); }
+  to { opacity: 1; transform: translateX(-50%) translateY(0); }
+}
+@keyframes cel-root-out {
+  from { opacity: 1; }
+  to { opacity: 0; transform: translateX(-50%) translateY(6px); }
+}
+@media (max-width: 720px) {
+  /* 移动端 root 无水平位移变换，出入场动画不带 translateX */
+  @keyframes cel-root-in {
+    from { opacity: 0; transform: translateY(6px); }
+    to { opacity: 1; transform: translateY(0); }
   }
-  to {
-    opacity: 1;
-    transform: translateY(0) scale(1);
+  @keyframes cel-root-out {
+    from { opacity: 1; }
+    to { opacity: 0; transform: translateY(6px); }
   }
+}
+
+/* 动画性能：仅在动画进行的元素上开 will-change */
+.cel-rows.is-stepping,
+.cel-card.is-entering {
+  will-change: transform;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -7847,6 +7862,16 @@ body[data-theme-mode='dark'] .cel-card.is-current {
     transition-duration: 0.01ms !important;
     scroll-behavior: auto !important;
   }
+}
+/* APP 内「降低动画强度」设定（body[data-reduced-motion]）与系统偏好同效 */
+body[data-reduced-motion='on'] .creative-execution-root,
+body[data-reduced-motion='on'] .creative-execution-root *,
+body[data-reduced-motion='on'] .creative-execution-root *::before,
+body[data-reduced-motion='on'] .creative-execution-root *::after {
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important;
+  scroll-behavior: auto !important;
 }
 
 /* —— 女仆 Sub-agent 配置（API 分页） —— */

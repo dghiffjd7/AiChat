@@ -118,6 +118,7 @@ const DEFAULT_TOKENS = Object.freeze({
     overlay: 'rgba(15, 23, 42, 0.42)',
     subtle: '#f8fafc',
     hover: '#f1f5f9',
+    elevated: '#eef2f7',
   },
   text: {
     primary: '#0f172a',
@@ -131,6 +132,22 @@ const DEFAULT_TOKENS = Object.freeze({
     primary: '#199aff',
     strong: '#0b66c2',
     soft: 'rgba(25, 154, 255, 0.14)',
+  },
+  tint: {
+    // 中性微调基色：深色规则用 rgba(var(--app-tint-neutral-rgb), α) 铺 subtle 表面/边框/hover。
+    neutral: '#94a3b8',
+    slate: '#64748b',
+  },
+  status: {
+    // 语义状态色（可被自定义主题覆盖，默认标准红/琥/绿/蓝）。fill 供 rgba(var(--app-x-rgb), α) 微调；text 为深色上的可读文字。
+    danger: '#dc2626',
+    dangerStrong: '#b91c1c',
+    warning: '#d97706',
+    warningText: '#b45309',
+    success: '#16a34a',
+    successText: '#15803d',
+    info: '#2563eb',
+    infoText: '#1d4ed8',
   },
   border: {
     subtle: 'rgba(15, 23, 42, 0.08)',
@@ -201,6 +218,7 @@ const BUILTIN_THEMES = Object.freeze([
         overlay: 'rgba(4, 8, 12, 0.76)',
         subtle: 'rgba(26, 32, 39, 0.92)',
         hover: 'rgba(34, 42, 51, 0.88)',
+        elevated: '#22272e',
       },
       text: {
         primary: '#f0f6fc',
@@ -214,6 +232,20 @@ const BUILTIN_THEMES = Object.freeze([
         primary: '#79c0ff',
         strong: '#6cb6ff',
         soft: 'rgba(121, 192, 255, 0.18)',
+      },
+      tint: {
+        neutral: '#cdd9e5',
+        slate: '#94a3b8',
+      },
+      status: {
+        danger: '#f85149',
+        dangerStrong: '#ffb4aa',
+        warning: '#fbbf24',
+        warningText: '#fcd34d',
+        success: '#2ea043',
+        successText: '#7ee787',
+        info: '#3b82f6',
+        infoText: '#8ecbff',
       },
       border: {
         subtle: 'rgba(240, 246, 252, 0.08)',

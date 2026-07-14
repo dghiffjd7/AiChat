@@ -104,7 +104,7 @@ export const createGroupMemoryShareRuntime = ({
             createModal: () => runtimeDeps.createSessionMemoryShareModal({
                 variant: 'group',
                 documentRef,
-                hintText: '真正全局的用户档案会自动共享；这里仅管理当前角色的 RP 会话注入到本群聊的额外记忆。',
+                hintText: '真正全局的用户档案会自动共享；这里仅管理当前角色的创意写作会话注入到本群聊的额外记忆。',
             }),
             bodyEl,
             getSourceStaticLabel: (sessionId) => {

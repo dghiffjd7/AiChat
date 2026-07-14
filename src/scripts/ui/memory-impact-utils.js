@@ -22,7 +22,7 @@ export const formatMemoryImpactScopeLabel = ({
   if (normalizedScope === 'global' || type === 'global') return '全局记忆（所有会话可共享）';
   if (mode === 'moments' || normalizedScope === 'moments' || sid === 'moments') return '动态记忆';
   if (normalizedScope === 'group' || type === 'group') return gid ? `群聊「${gid}」记忆` : '群聊记忆';
-  if (normalizedScope === 'rp' || type === 'rp') return cid || sid ? `创意写作/RP「${cid || sid}」记忆` : '创意写作/RP 记忆';
+  if (normalizedScope === 'rp' || type === 'rp') return cid || sid ? `创意写作「${cid || sid}」记忆` : '创意写作记忆';
   if (normalizedScope === 'contact' || type === 'contact') return cid || sid ? `聊天室「${cid || sid}」记忆` : '聊天室记忆';
   return sid ? `当前会话「${sid}」记忆` : '当前会话记忆';
 };

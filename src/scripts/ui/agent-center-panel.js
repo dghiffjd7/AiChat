@@ -2340,8 +2340,8 @@ export class AgentCenterPanel {
                 data-memory-agent-preset-id="${escapeHtml(profileView.presetId || '')}"
                 data-memory-agent-template-id="${escapeHtml(prompt.templateId || '')}"
             >
-                <div class="agent-center-agent-section-title">记忆提示词与注入</div>
-                <div class="agent-center-card-sub">${escapeHtml(prompt.templateName)} · 模板使用 {{tableData}} 插入表格内容</div>
+                <div class="agent-center-agent-section-title has-help" data-help="模板使用 {{tableData}} 插入表格内容">记忆提示词与注入</div>
+                <div class="agent-center-card-sub">${escapeHtml(prompt.templateName)}</div>
                 <div class="agent-center-agent-field-grid">
                     <div class="agent-center-agent-field">
                         <label>记忆数据提示词位置</label>
@@ -2445,8 +2445,7 @@ export class AgentCenterPanel {
         if (!agent?.implemented) return '';
         return `
             <div class="agent-center-agent-section">
-                <div class="agent-center-agent-section-title">完整请求预览</div>
-                <div class="agent-center-card-sub">根据该 Agent 的当前触发场景构建完整提示词和请求参数；只预览，不发送。</div>
+                <div class="agent-center-agent-section-title has-help" data-help="根据该 Agent 的当前触发场景构建完整提示词和请求参数；只预览，不发送。">完整请求预览</div>
                 <div class="agent-center-card-actions" style="margin-top:0;">
                     <button type="button" class="agent-center-card-action is-primary" data-agent-prompt-preview="${escapeHtml(agent.id || '')}">预览提示词</button>
                 </div>

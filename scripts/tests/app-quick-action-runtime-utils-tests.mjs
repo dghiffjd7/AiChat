@@ -75,7 +75,7 @@ import {
     ['generate-image'],
     ['action-open', false],
     ['action-open', false],
-    ['info', 'RP界面不支持贴图'],
+    ['info', '创意写作界面不支持贴图'],
     ['info', '快捷操作占位：unknown'],
     ['add', {
       role: 'user',

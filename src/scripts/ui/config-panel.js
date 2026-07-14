@@ -331,7 +331,7 @@ export class ConfigPanel {
 
                 <div style="margin-bottom: 15px;">
                     <label style="display: flex; align-items:center; justify-content:space-between; margin-bottom: 5px; font-weight: bold;">
-                        <span>连线设置档</span>
+                        <span class="has-help" data-help="保存多份连线配置，随时切换">连线设置档</span>
                         <div style="display:flex; gap:6px;">
                             <button id="profile-new" title="新建设置档" style="font-size:12px; border:none; background:var(--app-surface-subtle); padding:4px 8px; border-radius:6px; cursor:pointer;">＋</button>
                             <button id="profile-rename" title="重命名" style="font-size:12px; border:none; background:var(--app-surface-subtle); padding:4px 8px; border-radius:6px; cursor:pointer;">✎</button>
@@ -343,7 +343,6 @@ export class ConfigPanel {
                         <span class="config-custom-select-label">请选择设置档</span>
                         <span class="world-app-select-btn-chevron">▾</span>
                     </button>
-                    <small style="color: var(--app-text-secondary);">可保存多个配置并快速切换（清除缓存也不丢）</small>
                 </div>
 
                 <div style="margin-bottom: 15px;">
@@ -364,10 +363,9 @@ export class ConfigPanel {
                 </div>
 
                 <div id="config-baseurl-section" style="margin-bottom: 15px;">
-                    <label style="display: block; margin-bottom: 5px; font-weight: bold;">API Base URL</label>
+                    <label class="has-help" data-help="内建服务商自动使用默认地址；仅自定义 API 需填写" style="display: block; margin-bottom: 5px; font-weight: bold;">API Base URL</label>
                     <input type="text" id="config-baseurl" placeholder="https://api.openai.com/v1"
                            style="width: 100%; padding: 10px; border-radius: 5px; border: 1px solid var(--app-border-default); font-size: 14px; box-sizing: border-box;">
-                    <small style="color: var(--app-text-secondary);">仅自定义 API 需要填写；内建服务商会自动使用默认协议地址</small>
                 </div>
 
                 <div style="margin-bottom: 15px;">
@@ -385,7 +383,7 @@ export class ConfigPanel {
 
                 <div id="vertexai-fields" style="display: none;">
                     <div style="margin-bottom: 15px;">
-                        <label style="display: block; margin-bottom: 5px; font-weight: bold;">Region</label>
+                        <label class="has-help" data-help="Vertex AI 区域" style="display: block; margin-bottom: 5px; font-weight: bold;">Region</label>
                         <select id="config-region" style="display:none;">
                             <option value="us-central1">us-central1</option>
                             <option value="us-east1">us-east1</option>
@@ -397,17 +395,15 @@ export class ConfigPanel {
                             <span class="config-custom-select-label">请选择 Region</span>
                             <span class="world-app-select-btn-chevron">▾</span>
                         </button>
-                        <small style="color: var(--app-text-secondary);">Vertex AI 区域</small>
                     </div>
 
                     <div style="margin-bottom: 15px;">
                         <label style="display: flex; align-items:center; justify-content:space-between; margin-bottom: 5px; font-weight: bold;">
-                            <span>Service Account JSON</span>
+                            <span class="has-help" data-help="粘贴 Service Account JSON，Project ID 会自动识别；留空则用 API Key">Service Account JSON</span>
                             <button id="toggle-sa" style="font-size:12px; border:none; background:var(--app-surface-subtle); padding:4px 8px; border-radius:6px; cursor:pointer;">显示</button>
                         </label>
                         <textarea id="config-serviceaccount" placeholder='{"type": "service_account", "project_id": "your-project", ...}'
                                   style="width: 100%; padding: 10px; border-radius: 5px; border: 1px solid var(--app-border-default); font-size: 12px; box-sizing: border-box; font-family: monospace; min-height: 100px; resize: vertical;"></textarea>
-                        <small style="color: var(--app-text-secondary);">GCP Service Account JSON（Project ID 会自动从 JSON 中提取）。不填则使用 API Key（快速模式）</small>
                     </div>
                 </div>
 
@@ -432,13 +428,12 @@ export class ConfigPanel {
                 <div style="margin-bottom: 20px;">
                     <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
                         <input type="checkbox" id="config-stream" style="width: 18px; height: 18px;">
-                        <span style="font-weight: bold;">启用流式响应</span>
+                        <span class="has-help" data-help="实时显示 AI 的回复过程" data-help-mode="press" style="font-weight: bold;">启用流式响应</span>
                     </label>
-                    <small style="color: var(--app-text-secondary); margin-left: 26px;">实时显示 AI 的回复过程</small>
                 </div>
 
                 <div id="config-prompt-post-processing-section" style="margin-bottom: 18px;">
-                    <label style="display:block; margin-bottom:5px; font-weight:bold;">提示词后处理</label>
+                    <label class="has-help" data-help="仅聊天请求生效；越靠后兼容性越强，但对原始提示词改动越大。" style="display:block; margin-bottom:5px; font-weight:bold;">提示词后处理</label>
                     <select id="config-prompt-post-processing" style="display:none;">
                         <option value="none">不处理（默认）</option>
                         <option value="merge">合并连续同角色</option>
@@ -450,7 +445,6 @@ export class ConfigPanel {
                         <span class="config-custom-select-label">不处理（默认）</span>
                         <span class="world-app-select-btn-chevron">▾</span>
                     </button>
-                    <small style="color:var(--app-text-secondary);">仅聊天请求生效。越靠后的模式兼容性越强，但对原始提示词结构改动也越大。</small>
                 </div>
 
                 <div id="config-generation-param-filter-section" style="margin-bottom: 18px;">
@@ -466,11 +460,10 @@ export class ConfigPanel {
 
                 <div style="margin-bottom: 20px;">
                     <label style="display:flex; align-items:center; justify-content:space-between; gap:10px; font-weight:bold; margin-bottom:6px;">
-                        <span>请求超时（秒）</span>
+                        <span class="has-help" data-help="请求超过此时长将中止（10–9000 秒）">请求超时（秒）</span>
                         <input id="config-timeout" type="number" min="10" max="9000" step="5" value="60" inputmode="numeric"
                                style="width: 120px; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--app-border-default); font-size: 14px; text-align:right;">
                     </label>
-                    <small style="color:var(--app-text-secondary);">超过该时间将中止请求并报错（10–9000 秒）</small>
                 </div>
 
                 <div style="margin-bottom: 18px; border:1px solid var(--app-border-default); border-radius: 12px; background:var(--app-surface-subtle);">
@@ -484,7 +477,7 @@ export class ConfigPanel {
                     </button>
                     <div id="config-transport-content" style="display:none; padding:0 14px 14px;">
                         <div style="margin-bottom: 14px;">
-                            <label style="display:block; margin-bottom:5px; font-weight:bold;">连线模式</label>
+                            <label class="has-help" data-help="一般保持直连，需要走代理出口时再改。" style="display:block; margin-bottom:5px; font-weight:bold;">连线模式</label>
                             <select id="config-transport-mode" style="display:none;">
                                 <option value="direct">直连</option>
                                 <option value="reverse_proxy">反代出口</option>
@@ -493,43 +486,38 @@ export class ConfigPanel {
                                 <span class="config-custom-select-label">直连</span>
                                 <span class="world-app-select-btn-chevron">▾</span>
                             </button>
-                            <small style="color:var(--app-text-secondary);">大多数情况下保持直连；只有需要走代理出口时再改这里。</small>
                         </div>
 
                         <div id="config-proxy-fields" style="display:none;">
                             <div style="margin-bottom: 14px;">
-                                <label style="display:block; margin-bottom:5px; font-weight:bold;">反代 URL</label>
+                                <label class="has-help" data-help="填这里即可。API Key 照常填写，请求会保留原协议、改走此出口。" style="display:block; margin-bottom:5px; font-weight:bold;">反代 URL</label>
                                 <input type="text" id="config-proxy-baseurl" placeholder="https://proxy.example.com/llm"
                                        style="width:100%; padding:10px; border-radius:5px; border:1px solid var(--app-border-default); font-size:14px; box-sizing:border-box;">
-                                <small style="color:var(--app-text-secondary);">通常只需填写这里；上方 API Key 继续照原本方式填写，程序会保留当前服务商协议并改走这个出口。</small>
                             </div>
 
                             <div id="config-proxy-auth-header-row" style="margin-bottom: 14px; display:none;">
                                 <label style="display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:5px; font-weight:bold;">
-                                    <span>代理鉴权 Header</span>
+                                    <span class="has-help" data-help="如你的反代需要额外密钥，可填写自定义 Header 名。">代理鉴权 Header</span>
                                     <span style="font-size:12px; color:var(--app-text-muted); font-weight:600;">可选</span>
                                 </label>
                                 <input type="text" id="config-proxy-auth-header" placeholder="X-Proxy-Auth / Authorization"
                                        style="width:100%; padding:10px; border-radius:5px; border:1px solid var(--app-border-default); font-size:14px; box-sizing:border-box;">
-                                <small style="color:var(--app-text-secondary);">如你的反代需要额外密钥，可填写自定义 Header 名。</small>
                             </div>
 
                             <div id="config-proxy-auth-token-row" style="margin-bottom: 14px; display:none;">
                                 <label style="display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:5px; font-weight:bold;">
-                                    <span>代理鉴权 Token</span>
+                                    <span class="has-help" data-help="若反代不要求单独鉴权，这里留空即可。">代理鉴权 Token</span>
                                     <button id="toggle-proxy-token" type="button" style="font-size:12px; border:none; background:var(--app-surface-hover); padding:4px 8px; border-radius:6px; cursor:pointer;">显示</button>
                                 </label>
                                 <input type="password" id="config-proxy-auth-token" placeholder="可选"
                                        style="width:100%; padding:10px; border-radius:5px; border:1px solid var(--app-border-default); font-size:14px; box-sizing:border-box;">
-                                <small style="color:var(--app-text-secondary);">若反代不要求单独鉴权，这里留空即可。</small>
                             </div>
 
                             <div id="config-forward-provider-auth-row" style="margin-bottom: 2px; display:none;">
                                 <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
                                     <input type="checkbox" id="config-forward-provider-auth" checked style="width:18px; height:18px;">
-                                    <span style="font-weight:700;">同时转发原服务商鉴权信息</span>
+                                    <span class="has-help" data-help="关闭后，会移除原本的 API Key / Authorization，仅保留反代鉴权。" data-help-mode="press" style="font-weight:700;">同时转发原服务商鉴权信息</span>
                                 </label>
-                                <small style="color:var(--app-text-secondary); margin-left:26px;">关闭后，会移除原本的 API Key / Authorization，仅保留反代鉴权。</small>
                             </div>
                         </div>
                     </div>

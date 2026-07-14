@@ -131,10 +131,12 @@
     content: '松开以放置';
 }
 
-/* 联系人项拖拽状态 */
+/* 联系人项拖拽状态：原卡作为来源占位（悬浮幽灵由 drag-ghost-utils 跟随指针） */
 .contact-item.dragging {
-    opacity: 0.5;
-    transform: scale(0.98);
+    opacity: 0.35;
+    outline: 1.5px dashed var(--app-accent-primary, #199aff);
+    outline-offset: -1.5px;
+    border-radius: 10px;
 }
 
 .contact-item[draggable="true"] {

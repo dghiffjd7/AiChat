@@ -31,7 +31,7 @@ import {
   assert.equal(runtime.handleSticker('[bqb-hi]'), null);
   assert.equal(await runtime.handleDocumentFile(null), null);
   assert.deepEqual(calls, [
-    ['info', 'RP界面不支持贴图'],
+    ['info', '创意写作界面不支持贴图'],
     ['warn', '未选择文档'],
   ]);
   console.log('ok - createAppChatroomRuntime blocks stickers and warns on empty document input');

@@ -168,7 +168,7 @@ const createDocumentRef = () => ({
   assert.equal(Array.isArray(context.entries), true);
   assert.equal(sourceWrapEl.style.display, 'none');
   assert.equal(sourceStaticEl.style.display, 'block');
-  assert.equal(sourceStaticEl.textContent, '来源 RP 会话：来源会话 A');
+  assert.equal(sourceStaticEl.textContent, '来源创意写作会话：来源会话 A');
   assert.deepEqual(rowsEl.children, [emptyState]);
   console.log('ok - renderSessionMemoryShareManager renders static source label and empty state for non-RP mode');
 }

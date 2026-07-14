@@ -135,8 +135,7 @@ export class ScriptPanel {
     this.panel.innerHTML = `
       <div style="padding:14px 16px; border-bottom:1px solid rgba(0,0,0,0.06); background:var(--app-surface-subtle); display:flex; align-items:center; justify-content:space-between; gap:12px;">
         <div>
-          <div style="font-weight:800;color:var(--app-text-primary);">脚本管理</div>
-          <div style="font-size:12px;color:var(--app-text-muted);margin-top:2px;">管理全局 / 角色 / 预设脚本（默认关闭）</div>
+          <div class="has-help" data-help="管理全局 / 角色 / 预设脚本（默认关闭）" style="font-weight:800;color:var(--app-text-primary);">脚本管理</div>
         </div>
         <button id="script-panel-close" style="border:none;background:rgba(15,23,42,0.08);width:28px;height:28px;border-radius:10px;cursor:pointer;font-size:16px;">×</button>
       </div>

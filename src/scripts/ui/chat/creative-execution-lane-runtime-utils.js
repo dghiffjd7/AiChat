@@ -701,16 +701,27 @@ export const createCreativeExecutionLaneRuntime = ({
     return 'desktop';
   };
 
+  // 降低动画：跟随 APP 设定（body[data-reduced-motion]）与系统偏好双通道
+  const prefersReducedMotion = () => {
+    try {
+      if (doc?.body?.dataset?.reducedMotion === 'on') return true;
+      const win = getWindowForDocument(doc);
+      if (win?.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches) return true;
+    } catch {}
+    return false;
+  };
+
   // 各进程行滚动到当前任务卡（新任务推入时产生向左滑动的观感）
   const scrollRowsToCurrent = () => {
     if (!root || !state?.expanded) return;
     const run = () => {
       try {
+        const behavior = prefersReducedMotion() ? 'auto' : 'smooth';
         root.querySelectorAll('[data-cel-row-scroll]').forEach((row) => {
           const current = row.querySelector('.cel-card.is-current');
           if (!current) return;
           const target = current.offsetLeft + current.offsetWidth - row.clientWidth;
-          row.scrollTo({ left: Math.max(0, target + 8), behavior: 'smooth' });
+          row.scrollTo({ left: Math.max(0, target + 8), behavior });
         });
       } catch {}
     };
@@ -736,11 +747,120 @@ export const createCreativeExecutionLaneRuntime = ({
   let rowStepDirection = 0;
   let rowStepPx = 48;
 
+  // 结构指纹：不变时走「原位补丁」而非整棵 innerHTML 重建，避免打断进行中的 CSS 动画与布局抖动。
+  let prevStructureKey = '';
+  let prevDetailKey = '';
+  // 收起时先渐隐再 hidden，避免生硬消失
+  let hideTimer = null;
+  const HIDE_FADE_MS = 180;
+  const cancelPendingHide = () => {
+    if (hideTimer === null) return;
+    try { clearTimeout(hideTimer); } catch {}
+    hideTimer = null;
+    root?.classList?.remove?.('is-leaving');
+  };
+  const scheduleHide = () => {
+    if (!root || root.hidden) return;
+    if (hideTimer !== null) return;
+    if (prefersReducedMotion() || typeof setTimeout !== 'function') {
+      root.hidden = true;
+      return;
+    }
+    root.classList.add('is-leaving');
+    hideTimer = setTimeout(() => {
+      hideTimer = null;
+      root.classList.remove('is-leaving');
+      root.hidden = true;
+    }, HIDE_FADE_MS);
+  };
+
+  const computeStructureKey = (view, expanded) => {
+    const runId = state?.run?.id || '';
+    if (!expanded) {
+      return `chip|${runId}|${view.collapsedRow?.lane?.id || ''}|${view.collapsedRow?.currentTask?.id || ''}|${view.runningTaskCount > 0 ? 1 : 0}`;
+    }
+    const rows = view.rows.map(row => `${row.lane.id}:${row.tasks.map(t => t.id).join(',')}`).join(';');
+    return `panel|${runId}|${rowWindowStart}|${view.rows.length}|${rows}`;
+  };
+
+  const STATUS_CLASSES = ['is-queued', 'is-running', 'is-succeeded', 'is-failed', 'is-cancelled', 'is-skipped'];
+  const setStatusClass = (node, status) => {
+    STATUS_CLASSES.forEach(cls => node.classList.remove(cls));
+    node.classList.add(`is-${status}`);
+  };
+
+  // 原位补丁：结构未变时只更新文本/状态类，保留 DOM 节点（动画不中断）
+  const patchDom = (view, { enteringTaskIds, justDoneTaskIds }) => {
+    if (!state.expanded) {
+      const chip = root.querySelector('.creative-execution-chip');
+      if (!chip) return false;
+      setStatusClass(chip, view.status);
+      const card = view.collapsedRow?.currentTask || null;
+      const titleEl = chip.querySelector('.creative-execution-chip-title');
+      if (titleEl) titleEl.textContent = card ? card.label : view.displayTitle;
+      const briefEl = chip.querySelector('.creative-execution-chip-brief');
+      if (briefEl) briefEl.textContent = card ? (card.summary || card.brief || view.summary) : view.summary;
+      const progressEl = chip.querySelector('.creative-execution-chip-progress');
+      if (progressEl) progressEl.textContent = `${view.progress.terminal}/${view.progress.total || 0}`;
+      const moreEl = chip.querySelector('.creative-execution-chip-more');
+      if (moreEl) moreEl.textContent = String(view.runningTaskCount);
+      return true;
+    }
+    const panel = root.querySelector('.creative-execution-stack');
+    if (!panel) return false;
+    panel.classList.toggle('has-detail', Boolean(view.selectedTask));
+    const progressEl = panel.querySelector('.creative-execution-stack-progress');
+    if (progressEl) progressEl.textContent = `${view.progress.terminal}/${view.progress.total}`;
+    const taskById = new Map((view.tasks || []).map(task => [task.id, task]));
+    const currentIds = new Set(view.rows.map(row => row.currentTask?.id).filter(Boolean));
+    panel.querySelectorAll('[data-cel-task-id]').forEach((node) => {
+      const task = taskById.get(node.getAttribute('data-cel-task-id') || '');
+      if (!task) return;
+      setStatusClass(node, task.status);
+      node.classList.toggle('is-current', currentIds.has(task.id));
+      const selected = view.selectedTask?.id === task.id;
+      node.classList.toggle('is-selected', selected);
+      node.setAttribute('aria-selected', selected ? 'true' : 'false');
+      node.setAttribute('aria-label', `${task.label}，${CREATIVE_EXECUTION_STATUS_LABELS[task.status] || task.status}`);
+      if (!enteringTaskIds.has(task.id)) node.classList.remove('is-entering');
+      if (justDoneTaskIds.has(task.id)) {
+        if (!node.classList.contains('is-just-done')) node.classList.add('is-just-done');
+      } else {
+        node.classList.remove('is-just-done');
+      }
+      const statusEl = node.querySelector('.cel-card-status');
+      if (statusEl && statusEl.lastChild && statusEl.lastChild.nodeType === 3) {
+        statusEl.lastChild.nodeValue = CREATIVE_EXECUTION_STATUS_LABELS[task.status] || task.status;
+      }
+      const titleEl = node.querySelector('.cel-card-title');
+      if (titleEl) titleEl.textContent = task.label;
+    });
+    // 详情侧栏：仅在选中任务或其内容变化时重建
+    const sel = view.selectedTask;
+    const detailKey = sel ? `${sel.id}|${sel.status}|${sel.updatedAt || ''}|${sel.finishedAt || ''}` : '';
+    if (detailKey !== prevDetailKey) {
+      prevDetailKey = detailKey;
+      const currentDetail = panel.querySelector('.creative-execution-detail');
+      const template = doc.createElement('template');
+      template.innerHTML = renderDetailsHtml(view).trim();
+      const nextDetail = template.content.firstElementChild;
+      if (nextDetail) {
+        if (currentDetail) currentDetail.replaceWith(nextDetail);
+        else panel.appendChild(nextDetail);
+      }
+    }
+    return true;
+  };
+
   const render = () => {
     if (!root || !mounted) return;
     const visible = Boolean(state?.visible) && shouldShowCreativeExecutionForUiMode(getUiMode());
-    root.hidden = !visible;
-    if (!visible || !state) return;
+    if (!visible || !state) {
+      scheduleHide();
+      return;
+    }
+    cancelPendingHide();
+    root.hidden = false;
     const orientation = resolveOrientation();
     const view = buildCreativeExecutionStackViewModel(state);
     const ts = toFiniteNumber(now(), Date.now());
@@ -783,7 +903,14 @@ export const createCreativeExecutionLaneRuntime = ({
     ].filter(Boolean).join(' ');
     root.dataset.status = view.status;
     root.dataset.orientation = orientation;
-    root.innerHTML = `${state.expanded ? renderPanelHtml(view, state, { enteringTaskIds, justDoneTaskIds, opening, windowStart: rowWindowStart, windowSize: ROWS_WINDOW_SIZE }) : renderStripHtml(view, state)}`;
+    const structureKey = computeStructureKey(view, state.expanded);
+    const canPatch = structureKey === prevStructureKey && rowStepDirection === 0 && !opening && root.firstElementChild;
+    if (!canPatch || !patchDom(view, { enteringTaskIds, justDoneTaskIds })) {
+      root.innerHTML = `${state.expanded ? renderPanelHtml(view, state, { enteringTaskIds, justDoneTaskIds, opening, windowStart: rowWindowStart, windowSize: ROWS_WINDOW_SIZE }) : renderStripHtml(view, state)}`;
+      const sel = view.selectedTask;
+      prevDetailKey = sel ? `${sel.id}|${sel.status}|${sel.updatedAt || ''}|${sel.finishedAt || ''}` : '';
+    }
+    prevStructureKey = structureKey;
     if (rowStepDirection !== 0) {
       const rowsEl = root.querySelector('[data-cel-rows]');
       if (rowsEl) {
@@ -815,6 +942,8 @@ export const createCreativeExecutionLaneRuntime = ({
     if (!nextDetail) return false;
     if (currentDetail) currentDetail.replaceWith(nextDetail);
     else body.appendChild(nextDetail);
+    const sel = view.selectedTask;
+    prevDetailKey = sel ? `${sel.id}|${sel.status}|${sel.updatedAt || ''}|${sel.finishedAt || ''}` : '';
     return true;
   };
 

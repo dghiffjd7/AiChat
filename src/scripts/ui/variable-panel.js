@@ -555,8 +555,7 @@ export class VariablePanel {
         panel.addEventListener('click', (e) => e.stopPropagation());
         panel.innerHTML = `
             <div style="display:flex; align-items:center; gap:10px; padding:12px; background:var(--app-surface-subtle); border-bottom:1px solid var(--app-border-default);">
-                <div style="font-weight:900;">规则管理</div>
-                <div style="margin-left:auto; font-size:12px; color:var(--app-text-muted);">当前会话规则</div>
+                <div class="has-help" data-help="当前会话规则" style="font-weight:900;">规则管理</div>
                 <button id="rule-close" style="border:1px solid var(--app-border-default); background:var(--app-surface-card); border-radius:10px; padding:6px 10px;">关闭</button>
             </div>
             <div style="padding:12px; display:flex; gap:8px; align-items:center; border-bottom:1px solid rgba(0,0,0,0.06);">
@@ -905,8 +904,7 @@ export class VariablePanel {
         panel.addEventListener('click', (e) => e.stopPropagation());
         panel.innerHTML = `
             <div style="display:flex; align-items:center; gap:10px; padding:12px; background:var(--app-surface-subtle); border-bottom:1px solid var(--app-border-default);">
-                <div style="font-weight:900;">变量模板</div>
-                <div style="margin-left:auto; font-size:12px; color:var(--app-text-muted);">一键创建常用变量</div>
+                <div class="has-help" data-help="一键创建常用变量" style="font-weight:900;">变量模板</div>
                 <button id="tpl-close" style="border:1px solid var(--app-border-default); background:var(--app-surface-card); border-radius:10px; padding:6px 10px;">关闭</button>
             </div>
             <div id="tpl-list" style="padding:12px; overflow:auto; display:flex; flex-direction:column; gap:10px;"></div>

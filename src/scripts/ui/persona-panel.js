@@ -168,7 +168,7 @@ export class PersonaPanel {
 
         const ok = await appConfirm({
             title: '角色卡开启新聊天',
-            message: `将为「${name}」创建角色卡存档，并清空当前角色卡下的聊天室、创意写作/RP、动态和对应记忆表格。之后可在角色卡存档中整体切回。`,
+            message: `将为「${name}」创建角色卡存档，并清空当前角色卡下的聊天室、创意写作、动态和对应记忆表格。之后可在角色卡存档中整体切回。`,
             confirmText: '开启新聊天',
             cancelText: '取消',
             danger: true,
@@ -593,9 +593,8 @@ export class PersonaPanel {
                     </div>
 
                     <div style="margin-bottom: 15px;">
-                        <label style="display: block; font-size: 12px; color: var(--app-text-secondary); margin-bottom: 5px;">
+                        <label class="has-help" data-help="可用于手动补充角色卡设定" style="display: block; font-size: 12px; color: var(--app-text-secondary); margin-bottom: 5px;">
                             角色描述
-                            <span style="color:var(--app-text-muted); font-size:11px; margin-left:5px;">可用于手动补充角色卡设定</span>
                         </label>
                         <textarea id="edit-desc" style="
                             width: 100%; height: 120px; padding: 10px; border: 1px solid var(--app-border-default); 
@@ -604,7 +603,7 @@ export class PersonaPanel {
                     </div>
 
                     <div style="margin-bottom: 15px; padding: 12px; border: 1px solid rgba(0,0,0,0.06); border-radius: 10px; background: rgba(248,250,252,0.8);">
-                        <div style="font-size: 12px; font-weight: 700; color: var(--app-text-secondary); margin-bottom: 8px;">注入设置</div>
+                        <div class="has-help" data-help="当前仍沿用旧字段结构，后续会继续调整角色卡编辑内容。" style="font-size: 12px; font-weight: 700; color: var(--app-text-secondary); margin-bottom: 8px;">注入设置</div>
                         <div style="margin-bottom: 10px;">
                             <label style="display:block; font-size:12px; color:var(--app-text-secondary); margin-bottom:5px;">插入位置</label>
                             <select id="edit-position" style="display:none;">

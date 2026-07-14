@@ -74,7 +74,7 @@ export const buildWorldbookImpactText = ({
 };
 
 export class WorldPanel {
-    constructor({ contactsStore = null, getSessionId = null } = {}) {
+    constructor({ contactsStore = null, personaStore = null, getSessionId = null } = {}) {
         this.overlay = null;
         this.panel = null;
         this.listEl = null;
@@ -115,6 +115,7 @@ export class WorldPanel {
         this.fileNameEl = null;
         this.scope = 'session'; // session | global
         this.contactsStore = contactsStore;
+        this.personaStore = personaStore;
         this.getSessionId = typeof getSessionId === 'function' ? getSessionId : null;
         this.librarySearchTerm = '';
         this.librarySort = 'time';
@@ -171,11 +172,24 @@ export class WorldPanel {
         ).trim() || 'default';
     }
 
+    // 把内部会话 ID（如 rp:persona_xxx）解析为用户可读的名称（角色卡/联系人名），显示层统一用这个。
+    resolveSessionDisplayName(sessionId = '') {
+        const raw = String(sessionId || '').trim();
+        if (!raw) return raw;
+        const contactName = String(this.contactsStore?.getContact?.(raw)?.name || '').trim();
+        if (contactName && !contactName.startsWith('rp:')) return contactName;
+        if (raw.startsWith('rp:')) {
+            const personaName = String(this.personaStore?.get?.(raw.slice(3))?.name || '').trim();
+            if (personaName) return personaName;
+        }
+        return raw;
+    }
+
     setImpactText(action = 'manage', { sessionId = '', targetType = '' } = {}) {
         const sid = this.getActiveSessionKey(sessionId);
         const base = {
             scope: this.scope,
-            sessionId: sid,
+            sessionId: this.resolveSessionDisplayName(sid),
             targetType,
         };
         if (this.impactEl) {
@@ -203,7 +217,7 @@ export class WorldPanel {
         const normalizedTarget = this.normalizeLibraryTarget(target);
         const base = {
             scope: normalizedTarget.type,
-            sessionId: normalizedTarget.sessionId,
+            sessionId: this.resolveSessionDisplayName(normalizedTarget.sessionId),
             targetType: normalizedTarget.type,
         };
         const impactText = buildWorldbookImpactText({ ...base, action });
@@ -426,7 +440,7 @@ export class WorldPanel {
                 } else if (isGroupSession) {
                     indicator.textContent = `群聊 ${contact?.name || sessionKey}：角色 ${roleSummary} / 成员附加自动合并`;
                 } else if (isRpSession) {
-                    indicator.textContent = `RP 会话：角色 ${roleSummary} / 附加世界书不参与`;
+                    indicator.textContent = `创意写作会话：角色 ${roleSummary} / 附加世界书不参与`;
                 } else {
                     const extrasLabel = visibleSessionIds.length ? visibleSessionIds.join(' + ') : '未启用';
                     indicator.textContent = `私聊 ${contact?.name || sessionKey}：角色 ${roleSummary} / 附加 ${extrasLabel}`;
@@ -514,7 +528,7 @@ export class WorldPanel {
                     title: '删除世界书',
                     message: `确定要删除世界书「${displayName || worldId}」吗？此操作不可恢复。\n\n${buildWorldbookImpactText({
                         scope: this.scope,
-                        sessionId: sessionKey,
+                        sessionId: this.resolveSessionDisplayName(sessionKey),
                         targetType: this.scope === 'global' ? 'global' : 'session_manage',
                         action: 'delete',
                     })}`,
@@ -532,7 +546,6 @@ export class WorldPanel {
                 toggleLabelOn = '已启用',
                 toggleLabelOff = '未启用',
                 onToggle = null,
-                onDelete = null,
                 extraButtons = [],
             } = {}) => {
                 const worldData = await getWorldData(worldId);
@@ -564,6 +577,17 @@ export class WorldPanel {
                 actions.className = 'world-panel-world-card-actions';
                 actions.style.cssText = 'display:flex; align-items:center; gap:6px; flex-wrap:wrap; justify-content:flex-start;';
 
+                // 启用/禁用放最前并加显著（尺寸不变）；删除/解绑收进「更换」（世界书库）里操作。
+                if (typeof onToggle === 'function') {
+                    const toggle = buildToggle({
+                        enabled: Boolean(toggleEnabled),
+                        labelOn: toggleLabelOn,
+                        labelOff: toggleLabelOff,
+                        onClick: () => onToggle(),
+                    });
+                    toggle.style.fontWeight = '700';
+                    actions.appendChild(toggle);
+                }
                 const editBtn = createTextButton('编辑');
                 editBtn.onclick = async (event) => {
                     event.stopPropagation();
@@ -573,24 +597,6 @@ export class WorldPanel {
                 (Array.isArray(extraButtons) ? extraButtons : []).forEach((btn) => {
                     if (btn) actions.appendChild(btn);
                 });
-                if (typeof onToggle === 'function') {
-                    actions.appendChild(buildToggle({
-                        enabled: Boolean(toggleEnabled),
-                        labelOn: toggleLabelOn,
-                        labelOff: toggleLabelOff,
-                        onClick: () => onToggle(),
-                    }));
-                }
-                const deleteBtn = createTextButton('删除', 'danger');
-                deleteBtn.onclick = async (event) => {
-                    event.stopPropagation();
-                    if (typeof onDelete === 'function') {
-                        await onDelete();
-                    } else {
-                        await confirmDeleteWorld(worldId, displayName);
-                    }
-                };
-                actions.appendChild(deleteBtn);
 
                 const entriesWrap = document.createElement('div');
                 entriesWrap.className = 'world-panel-world-card-entries';
@@ -688,26 +694,25 @@ export class WorldPanel {
             if (this.scope === 'global') {
                 const globalSection = createSection({
                     title: '全局世界书',
-                    description: '全局世界书在聊天界面与 RP 界面共用，深度和预算配置由下面的全局设置统一控制。',
+                    description: '全局世界书在聊天界面与创意写作界面共用，深度和预算配置由下面的全局设置统一控制。',
                 });
                 if (!normalizedGlobalId) {
                     appendEmpty(globalSection.body, '尚未启用全局世界书。');
                 } else {
                     const card = await buildWorldCard(normalizedGlobalId, {
-                        subtitle: '聊天 / RP 共用',
+                        subtitle: '聊天 / 创意写作共用',
                         onToggle: async () => {
                             await window.appBridge.setGlobalWorld('');
                             window.toastr?.success?.('已停用全局世界书');
                             await this.refreshList();
                         },
-                        onDelete: () => confirmDeleteWorld(normalizedGlobalId, normalizedGlobalId),
                     });
                     globalSection.body.appendChild(card);
                 }
             } else if (isGroupSession) {
                 const roleSection = createSection({
                     title: '角色世界书',
-                    description: '当前角色卡的角色世界书在聊天界面与 RP 界面共用。',
+                    description: '当前角色卡的角色世界书在聊天界面与创意写作界面共用。',
                 });
                 const activeEmptyBinding = roleBindings.find((item) => item?.isActive && !item?.hasWorld);
                 if (activeEmptyBinding) {
@@ -755,13 +760,6 @@ export class WorldPanel {
                             event.stopPropagation();
                             this.openLibraryModal({ type: 'role', personaId: binding.personaId, sessionId: sessionKey });
                         };
-                        const unbindBtn = createTextButton('解绑', 'danger');
-                        unbindBtn.onclick = async (event) => {
-                            event.stopPropagation();
-                            await window.appBridge?.clearRoleWorldForPersona?.(binding.personaId);
-                            window.toastr?.success?.('已解绑角色世界书');
-                            await this.refreshList();
-                        };
                         const card = await buildWorldCard(binding.worldId, {
                             subtitle: `角色：${binding.personaName} · 当前角色卡`,
                             toggleEnabled: binding.enabled !== false,
@@ -772,8 +770,7 @@ export class WorldPanel {
                                 window.toastr?.success?.(binding.enabled === false ? '已启用角色世界书' : '已停用角色世界书');
                                 await this.refreshList();
                             },
-                            onDelete: () => confirmDeleteWorld(binding.worldId, binding.worldId),
-                            extraButtons: [chooseBtn, unbindBtn],
+                            extraButtons: [chooseBtn],
                         });
                         roleSection.body.appendChild(card);
                     }
@@ -839,7 +836,7 @@ export class WorldPanel {
             } else {
                 const roleSection = createSection({
                     title: '角色世界书',
-                    description: '当前角色卡的角色世界书在聊天界面与 RP 界面共用。',
+                    description: '当前角色卡的角色世界书在聊天界面与创意写作界面共用。',
                 });
                 const activeEmptyBinding = roleBindings.find((item) => item?.isActive && !item?.hasWorld);
                 if (activeEmptyBinding) {
@@ -887,13 +884,6 @@ export class WorldPanel {
                             event.stopPropagation();
                             this.openLibraryModal({ type: 'role', personaId: binding.personaId, sessionId: sessionKey });
                         };
-                        const unbindBtn = createTextButton('解绑', 'danger');
-                        unbindBtn.onclick = async (event) => {
-                            event.stopPropagation();
-                            await window.appBridge?.clearRoleWorldForPersona?.(binding.personaId);
-                            window.toastr?.success?.('已解绑角色世界书');
-                            await this.refreshList();
-                        };
                         const card = await buildWorldCard(binding.worldId, {
                             subtitle: `角色：${binding.personaName} · 当前角色卡`,
                             toggleEnabled: binding.enabled !== false,
@@ -904,8 +894,7 @@ export class WorldPanel {
                                 window.toastr?.success?.(binding.enabled === false ? '已启用角色世界书' : '已停用角色世界书');
                                 await this.refreshList();
                             },
-                            onDelete: () => confirmDeleteWorld(binding.worldId, binding.worldId),
-                            extraButtons: [chooseBtn, unbindBtn],
+                            extraButtons: [chooseBtn],
                         });
                         roleSection.body.appendChild(card);
                     }
@@ -913,11 +902,11 @@ export class WorldPanel {
                 const sessionSection = createSection({
                     title: '聊天室附加世界书',
                     description: isRpSession
-                        ? 'RP 会话不读取聊天室附加世界书。'
-                        : '只对当前聊天室生效；不会影响 RP 会话或其他聊天。',
+                        ? '创意写作会话不读取聊天室附加世界书。'
+                        : '只对当前聊天室生效；不会影响创意写作会话或其他聊天。',
                 });
                 if (isRpSession) {
-                    appendEmpty(sessionSection.body, '当前为 RP 会话，附加世界书暂停生效。');
+                    appendEmpty(sessionSection.body, '当前为创意写作会话，附加世界书暂停生效。');
                 } else if (!visibleSessionIds.length) {
                     appendEmpty(sessionSection.body, '当前聊天室还没有附加世界书。');
                 } else {
@@ -930,7 +919,6 @@ export class WorldPanel {
                                 window.toastr?.success?.('已停用附加世界书');
                                 await this.refreshList();
                             },
-                            onDelete: () => confirmDeleteWorld(worldId, worldId),
                         });
                         sessionSection.body.appendChild(card);
                     }
@@ -1153,7 +1141,7 @@ export class WorldPanel {
                     title: '删除世界书',
                     message: `确定要删除世界书「${item.name}」吗？此操作不可恢复。\n\n${buildWorldbookImpactText({
                         scope: scopeKey,
-                        sessionId: normalizedTarget.sessionId,
+                        sessionId: this.resolveSessionDisplayName(normalizedTarget.sessionId),
                         targetType: scopeKey,
                         action: 'delete',
                     })}`,
@@ -1686,7 +1674,7 @@ export class WorldPanel {
                         title: '导入正则',
                         message: `检测到世界书包含绑定的正规表达式（${boundSets.length} 组）。是否一并导入并绑定？\n\n${buildWorldbookImpactText({
                             scope: this.scope,
-                            sessionId,
+                            sessionId: this.resolveSessionDisplayName(sessionId),
                             targetType: this.scope === 'global' ? 'global' : 'session_manage',
                             action: 'regex_import',
                         })}`,

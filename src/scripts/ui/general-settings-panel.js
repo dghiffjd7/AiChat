@@ -730,22 +730,19 @@ export class GeneralSettingsPanel {
         <label style="display:flex; align-items:flex-start; gap:10px; cursor:pointer; padding:10px; border:1px solid var(--app-border-subtle); border-radius:10px;">
           <input type="checkbox" data-place="chat" style="width:18px; height:18px; margin-top:1px;">
           <span>
-            <span style="display:block; font-weight:800; color:var(--app-text-primary);">聊天</span>
-            <span style="display:block; font-size:12px; color:var(--app-text-muted); margin-top:3px;">私聊与群聊请求注入、自动写表。</span>
+            <span class="has-help" data-help="私聊与群聊请求注入、自动写表。" data-help-mode="press" style="display:block; font-weight:800; color:var(--app-text-primary);">聊天</span>
           </span>
         </label>
         <label style="display:flex; align-items:flex-start; gap:10px; cursor:pointer; padding:10px; border:1px solid var(--app-border-subtle); border-radius:10px;">
           <input type="checkbox" data-place="moments" style="width:18px; height:18px; margin-top:1px;">
           <span>
-            <span style="display:block; font-weight:800; color:var(--app-text-primary);">动态</span>
-            <span style="display:block; font-size:12px; color:var(--app-text-muted); margin-top:3px;">动态评论任务注入、动态记忆表格自动写入。</span>
+            <span class="has-help" data-help="动态评论时注入、自动写表。" data-help-mode="press" style="display:block; font-weight:800; color:var(--app-text-primary);">动态</span>
           </span>
         </label>
         <label style="display:flex; align-items:flex-start; gap:10px; cursor:pointer; padding:10px; border:1px solid var(--app-border-subtle); border-radius:10px;">
           <input type="checkbox" data-place="writing" style="width:18px; height:18px; margin-top:1px;">
           <span>
-            <span style="display:block; font-weight:800; color:var(--app-text-primary);">创意写作</span>
-            <span style="display:block; font-size:12px; color:var(--app-text-muted); margin-top:3px;">RP / 创意写作请求注入、自动写表。</span>
+            <span class="has-help" data-help="创意写作请求注入、自动写表。" data-help-mode="press" style="display:block; font-weight:800; color:var(--app-text-primary);">创意写作</span>
           </span>
         </label>
       </div>
@@ -1101,7 +1098,22 @@ export class GeneralSettingsPanel {
       #general-settings-panel {
         width: min(94vw, 460px);
       }
+      /* 电脑版适配：加宽面板，卡片流成两栏（不切分单卡），充分利用横向空间 */
+      @media (min-width: 840px) and (pointer: fine) {
+        #general-settings-panel {
+          width: min(92vw, 920px);
+        }
+        #general-settings-panel .general-settings-cards {
+          columns: 2;
+          column-gap: 16px;
+        }
+        #general-settings-panel .general-settings-cards .general-settings-card {
+          break-inside: avoid;
+          margin-top: 0;
+        }
+      }
       #general-settings-panel .general-settings-modal {
+        width: 100%;
         padding: 16px;
         background: linear-gradient(180deg, var(--app-surface-card) 0%, var(--app-surface-subtle) 100%);
         border: 1px solid var(--app-border-default);
@@ -1659,8 +1671,7 @@ export class GeneralSettingsPanel {
         <span class="general-settings-row-main">
           <span class="general-settings-row-icon" aria-hidden="true">${this.getSettingIcon(icon)}</span>
           <span class="general-settings-row-copy">
-            <span class="general-settings-row-title">${title}${risk ? '<span class="general-settings-risk">高风险</span>' : ''}</span>
-            ${description ? `<span class="general-settings-row-desc">${description}</span>` : ''}
+            <span class="general-settings-row-title${description ? ' has-help' : ''}"${description ? ` data-help="${(description || '').replace(/"/g, '&quot;')}" data-help-mode="press"` : ''}>${title}${risk ? '<span class="general-settings-risk">高风险</span>' : ''}</span>
           </span>
         </span>
         ${control}
@@ -1674,8 +1685,7 @@ export class GeneralSettingsPanel {
         <div class="general-settings-row-main">
           <span class="general-settings-row-icon" aria-hidden="true">${this.getSettingIcon(icon)}</span>
           <span class="general-settings-row-copy">
-            <span class="general-settings-row-title">${title}</span>
-            ${description ? `<span class="general-settings-row-desc">${description}</span>` : ''}
+            <span class="general-settings-row-title${description ? ' has-help' : ''}"${description ? ` data-help="${(description || '').replace(/"/g, '&quot;')}"` : ''}>${title}</span>
           </span>
         </div>
         <div class="general-settings-input-control-row">
@@ -1704,18 +1714,18 @@ export class GeneralSettingsPanel {
     this.element = document.createElement('div');
     this.element.id = 'general-settings-panel';
     this.element.innerHTML = `
-      <div class="general-settings-modal" style="width: 92vw; max-width: 420px;">
+      <div class="general-settings-modal">
         <div class="general-settings-header">
           <h2 class="general-settings-title">通用设定</h2>
           <button id="general-settings-close" class="general-settings-close">×</button>
         </div>
-        <div class="general-settings-subtitle">视觉与体验相关设定。</div>
+        <div class="general-settings-subtitle">外观、图片、记忆、脚本等设定。</div>
 
+        <div class="general-settings-cards">
         <div class="general-settings-card">
           <div class="general-settings-card-head">
             <div>
-              <div class="general-settings-card-title">外观与主题</div>
-              <div class="general-settings-card-note">内建明暗主题、主题导入导出，以及基础显示风格。</div>
+              <div class="general-settings-card-title has-help" data-help="内建明暗主题、主题导入导出，以及基础显示风格。">外观与主题</div>
             </div>
             ${this.renderFoldButton('general-theme-advanced-toggle', '更多外观')}
           </div>
@@ -1723,7 +1733,7 @@ export class GeneralSettingsPanel {
           <div class="general-settings-setting-list">
             ${this.renderInputRow({
               title: '当前主题',
-              description: '切换内建主题或已导入主题，导入 ST 主题会自动映射到当前 APP。',
+              description: '切换内建或已导入的主题；导入 ST 主题会自动适配。',
               icon: 'palette',
               control: `
                 <select id="general-theme-preset-select" class="general-settings-select" style="display:none;"></select>
@@ -1745,7 +1755,7 @@ export class GeneralSettingsPanel {
             <div class="general-settings-setting-list">
             ${this.renderInputRow({
               title: '头像样式',
-              description: '控制聊天、联系人等头像的圆角形态。',
+              description: '聊天、联系人等头像的圆角形态。',
               icon: 'sliders',
               control: `
                 <select id="general-theme-avatar-style-select" class="general-settings-select" style="display:none;"></select>
@@ -1759,7 +1769,7 @@ export class GeneralSettingsPanel {
             })}
             ${this.renderInputRow({
               title: '聊天风格',
-              description: '控制气泡型或更偏文档型的显示方式。',
+              description: '气泡式或更偏文档式的显示方式。',
               icon: 'expand',
               control: `
                 <select id="general-theme-chat-display-select" class="general-settings-select" style="display:none;"></select>
@@ -1773,7 +1783,7 @@ export class GeneralSettingsPanel {
             })}
             ${this.renderInputRow({
               title: '通知位置',
-              description: '控制 Toastr 提示消息出现的位置。',
+              description: '通知提示出现的位置。',
               icon: 'reply',
               control: `
                 <select id="general-theme-toast-position-select" class="general-settings-select" style="display:none;"></select>
@@ -1787,7 +1797,7 @@ export class GeneralSettingsPanel {
             })}
             ${this.renderInputRow({
               title: '字体缩放',
-              description: '调大或调小主要界面的字号比例。',
+              description: '整体界面的字号大小。',
               icon: 'history',
               control: `
                 <div class="general-settings-range-wrap">
@@ -1799,19 +1809,19 @@ export class GeneralSettingsPanel {
             ${this.renderSettingRow({
               id: 'general-theme-reduced-motion',
               title: '降低动画强度',
-              description: '减少过渡和动画，偏向更稳的视觉反馈。',
+              description: '减少过渡与动画，视觉更稳。',
               icon: 'reply',
             })}
             ${this.renderSettingRow({
               id: 'general-theme-compact-input',
               title: '紧凑输入区',
-              description: '压缩输入栏高度，接近 ST 的 compact input area 逻辑。',
+              description: '压缩输入栏高度，更紧凑。',
               icon: 'expand',
             })}
             ${this.renderSettingRow({
               id: 'general-theme-hide-avatars',
               title: '隐藏聊天头像',
-              description: '隐藏对话气泡中的头像，仅保留消息内容。',
+              description: '隐藏对话气泡里的头像，只留消息。',
               icon: 'palette',
             })}
             </div>
@@ -1821,8 +1831,7 @@ export class GeneralSettingsPanel {
         <div class="general-settings-card">
           <div class="general-settings-card-head">
             <div>
-              <div class="general-settings-card-title">AI 图片生成</div>
-              <div class="general-settings-card-note">控制回复后自动提取标签生成图片的行为。</div>
+              <div class="general-settings-card-title has-help" data-help="AI 回复后自动提取标签、生成配图。">AI 图片生成</div>
             </div>
             ${this.renderFoldButton('general-auto-image-prompt-advanced-toggle', '自动生图策略')}
           </div>
@@ -1831,18 +1840,18 @@ export class GeneralSettingsPanel {
             ${this.renderSettingRow({
               id: 'general-auto-image-prompt',
               title: 'AI 回复后自动生图',
-              description: '默认关闭。启用后会提示 AI 在合适时输出 &lt;image_prompt&gt; 标签，本地提取后自动生成图片。',
+              description: '开启后，AI 会在合适时机输出配图标签，本地据此自动生成图片。',
               icon: 'palette',
             })}
             ${this.renderSettingRow({
               id: 'general-auto-image-prompt-writing',
               title: '创意写作自动生图',
-              description: '启用后，创意写作也会注入生图标签规则，并按标签位置生成插图。',
+              description: '创意写作也按标签位置自动生成插图。',
               icon: 'book-open',
             })}
             ${this.renderInputRow({
               title: '生图提示词风格',
-              description: '控制发送给文字模型的标签提示词要求；实际生图仍使用当前图片模型配置。',
+              description: '调整生图标签的提示词要求；实际生图仍用当前图片模型。',
               icon: 'sliders',
               control: `
                 <select id="general-auto-image-prompt-style" class="general-settings-select">
@@ -1869,7 +1878,7 @@ export class GeneralSettingsPanel {
               })}
               ${this.renderInputRow({
                 title: '动态配图模式',
-                description: '控制动态内容里配图格式的提示方式。',
+                description: '动态内容的配图格式。',
                 icon: 'palette',
                 control: `
                   <select id="general-auto-image-prompt-moment-media-mode" class="general-settings-select">
@@ -1881,38 +1890,38 @@ export class GeneralSettingsPanel {
               })}
               ${this.renderInputRow({
                 title: '冷却轮数',
-                description: '自动生图成功后，至少间隔多少个助手回复才允许再次自动生图。0 表示不限制。',
+                description: '两次自动生图之间至少间隔几条回复；0 不限制。',
                 icon: 'history',
                 control: '<input type="number" id="general-auto-image-prompt-cooldown" class="general-settings-number-input" min="0" step="1" value="0">',
               })}
               ${this.renderInputRow({
                 title: '窗口轮数',
-                description: '频率限制的统计窗口。0 表示不启用窗口限制。',
+                description: '频率限制的统计窗口；0 不启用。',
                 icon: 'history',
                 control: '<input type="number" id="general-auto-image-prompt-window-rounds" class="general-settings-number-input" min="0" step="1" value="0">',
               })}
               ${this.renderInputRow({
                 title: '窗口内最多张数',
-                description: '在上述窗口轮数内最多允许自动生成多少张图。0 表示不限制。',
+                description: '窗口轮数内最多自动生成几张；0 不限制。',
                 icon: 'palette',
                 control: '<input type="number" id="general-auto-image-prompt-window-max" class="general-settings-number-input" min="0" step="1" value="0">',
               })}
               ${this.renderInputRow({
                 title: '最大并发数',
-                description: '自动标签生图同时运行的最大请求数，超出后进入队列。',
+                description: '同时进行的自动生图数，超出排队。',
                 icon: 'sliders',
                 control: '<input type="number" id="general-auto-image-prompt-max-concurrency" class="general-settings-number-input" min="1" step="1" value="1">',
               })}
               ${this.renderInputRow({
                 title: '单次最多图片标签',
-                description: '一次 AI 回复最多自动生成多少张图。0 表示不限制，超过上限的标签会显示为可重试占位。',
+                description: '单条回复最多自动生成几张；0 不限制，超出的显示为可重试占位。',
                 icon: 'image',
                 control: '<input type="number" id="general-auto-image-prompt-max-per-response" class="general-settings-number-input" min="0" step="1" value="0">',
               })}
               ${this.renderSettingRow({
                 id: 'general-auto-image-prompt-skip-repeated',
                 title: '跳过重复提示词',
-                description: '若新提示词和最近自动生图提示词相同，则不重复生成。',
+                description: '提示词与上次相同时不重复生成。',
                 icon: 'reply',
                 nested: true,
               })}
@@ -1923,8 +1932,7 @@ export class GeneralSettingsPanel {
         <div class="general-settings-card">
           <div class="general-settings-card-head">
             <div>
-              <div class="general-settings-card-title">界面与调试</div>
-              <div class="general-settings-card-note">显示、动画与调试辅助选项。</div>
+              <div class="general-settings-card-title has-help" data-help="显示、动画与调试辅助选项。">界面与调试</div>
             </div>
             ${this.renderFoldButton('general-ui-advanced-toggle', '调试选项')}
           </div>
@@ -1933,24 +1941,24 @@ export class GeneralSettingsPanel {
             ${this.renderSettingRow({
               id: 'general-typing-dots',
               title: '回复动画',
-              description: '控制回复时跳动小点动画的显示。',
+              description: '回复时显示跳动的小点动画。',
               icon: 'reply',
             })}
             ${this.renderSettingRow({
               id: 'general-creative-wide',
               title: '创意写作气泡加宽',
-              description: '让创意写作内容使用更舒展的宽气泡版式。',
+              description: '创意写作用更舒展的宽气泡版式。',
               icon: 'expand',
             })}
             ${this.renderInputRow({
               title: '聊天前文注入条数',
-              description: '控制发送请求时注入的历史消息条数；0 表示全部注入（由 token 预算自动裁剪）。',
+              description: '每次请求注入的历史消息条数；0 全部注入（按预算自动裁剪）。',
               icon: 'history',
               control: '<input type="number" id="general-chat-history-max" min="0" step="1" class="general-settings-number-input">',
             })}
             ${this.renderInputRow({
               title: '创意写作注入条数',
-              description: '控制 chat_history 中保留的创意写作历史轮数；0 表示全部注入。',
+              description: '创意写作注入的历史轮数；0 全部注入。',
               icon: 'history',
               control: '<input type="number" id="general-creative-history" min="0" step="1" class="general-settings-number-input">',
             })}
@@ -1958,13 +1966,12 @@ export class GeneralSettingsPanel {
 
           <div id="general-ui-advanced" class="general-settings-fold-content" style="display:none;">
             <div class="general-settings-subcard">
-              <div class="general-settings-subcard-title">调试与实验功能</div>
-              <div class="general-settings-subcard-note">只在需要排查问题或验证特殊渲染路径时开启。</div>
+              <div class="general-settings-subcard-title has-help" data-help="仅在排查问题或验证渲染时开启。">调试与实验功能</div>
               <div class="general-settings-setting-list general-settings-setting-list-sub">
                 ${this.renderSettingRow({
                   id: 'general-debug-toggle',
                   title: '显示诊断按钮',
-                  description: '在界面中显示诊断入口，用于导出资料包和错误日志信息。',
+                  description: '显示诊断入口，用于导出资料包和错误日志。',
                   icon: 'bug',
                   nested: true,
                 })}
@@ -1978,7 +1985,7 @@ export class GeneralSettingsPanel {
                 ${this.renderSettingRow({
                   id: 'general-rich-iframe-scripts',
                   title: '富文本 iframe 执行脚本',
-                  description: '允许 iframe 执行脚本并放宽安全限制，仅在信任来源时启用。',
+                  description: '允许 iframe 执行脚本、放宽安全限制；仅信任来源时开启。',
                   icon: 'code',
                   nested: true,
                   risk: true,
@@ -1986,7 +1993,7 @@ export class GeneralSettingsPanel {
                 ${this.renderSettingRow({
                   id: 'general-toast-enabled',
                   title: '显示通知提示',
-                  description: '关闭后将不再弹出右上角的通知消息。',
+                  description: '关闭后不再弹出右上角通知。',
                   icon: 'bell',
                   nested: true,
                 })}
@@ -1998,8 +2005,7 @@ export class GeneralSettingsPanel {
         <div class="general-settings-card">
           <div class="general-settings-card-head">
             <div>
-              <div class="general-settings-card-title">记忆与角色</div>
-              <div class="general-settings-card-note">角色绑定、时间上下文与记忆系统。</div>
+              <div class="general-settings-card-title has-help" data-help="角色绑定、时间上下文与记忆系统。">记忆与角色</div>
             </div>
             ${this.renderFoldButton('general-memory-advanced-toggle', '更多设置')}
           </div>
@@ -2008,13 +2014,13 @@ export class GeneralSettingsPanel {
             ${this.renderSettingRow({
               id: 'general-persona-bind',
               title: '角色卡绑定联系人 / 聊天记录',
-              description: '让不同角色卡保留各自的联系人与聊天上下文。',
+              description: '不同角色卡各自保留联系人与聊天上下文。',
               icon: 'link',
             })}
             ${this.renderSettingRow({
               id: 'general-prompt-time',
               title: '发送当前时间给 AI',
-              description: '将当前真实时间作为上下文发送给模型。',
+              description: '把当前真实时间一并发给模型。',
               icon: 'clock',
             })}
             ${this.renderSettingRow({
@@ -2032,8 +2038,7 @@ export class GeneralSettingsPanel {
           </div>
 
           <div class="general-settings-subcard">
-            <div class="general-settings-subcard-title">记忆存储方式</div>
-            <div class="general-settings-subcard-note">选择当前角色/会话默认使用的记忆结构。</div>
+            <div class="general-settings-subcard-title has-help" data-help="当前角色/会话默认的记忆结构。">记忆存储方式</div>
             <div class="general-settings-setting-list general-settings-setting-list-sub">
               ${this.renderSettingRow({
                 id: 'general-memory-mode-summary',
@@ -2067,8 +2072,7 @@ export class GeneralSettingsPanel {
             </div>
 
             <div style="margin-left: 26px; margin-top: 8px; margin-bottom: 10px;">
-              <button type="button" id="general-memory-places-btn" class="general-settings-manage-btn">生效位置</button>
-              <small style="color:var(--app-text-muted); display:block; margin-top:6px;">控制记忆表格在聊天、动态、创意写作中是否启用。</small>
+              <button type="button" id="general-memory-places-btn" class="general-settings-manage-btn has-help" data-help="记忆表格在聊天、动态、创意写作里是否启用。" data-help-mode="press">生效位置</button>
             </div>
 
             <div id="general-memory-auto-options" style="margin-left: 26px; margin-top: 6px; display: none;">
@@ -2088,17 +2092,15 @@ export class GeneralSettingsPanel {
               </label>
               <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
                 <input type="checkbox" id="general-memory-auto-step" style="width: 16px; height: 16px;">
-                <span>逐条执行（每条指令确认）</span>
+                <span class="has-help" data-help="逐条弹窗确认每条指令。" data-help-mode="press">逐条执行（每条指令确认）</span>
               </label>
-              <small style="color:var(--app-text-muted);">逐条执行会依次弹窗确认每条指令</small>
             </div>
             <div style="margin-top: 10px;">
               <label style="display:flex; align-items:center; justify-content:space-between; gap:8px; font-size:12px; font-weight:700; color:var(--app-text-primary);">
-                <span>每 N 轮填表一次</span>
+                <span class="has-help" data-help="默认 1（每轮都填）；设 3 则每 3 轮填一次。" data-help-mode="press">每 N 轮填表一次</span>
                 <input type="number" id="general-memory-fill-every-n" min="1" step="1"
                        style="width: 90px; padding: 4px 6px; border:1px solid var(--app-border-default); border-radius:8px; font-size:12px; text-align:right;">
               </label>
-              <small style="color:var(--app-text-muted); display:block; margin-top:4px;">默认 1（每轮对话都填写），设 3 表示每 3 轮对话填写一次</small>
             </div>
 
             <div id="general-memory-update-api" style="margin-top: 10px; padding: 8px; border: 1px dashed var(--app-border-default); border-radius: 10px; display: none;">
@@ -2109,7 +2111,7 @@ export class GeneralSettingsPanel {
               </label>
               <label style="display:flex; align-items:center; gap:8px; cursor:pointer; margin-bottom:6px;">
                 <input type="radio" name="general-memory-update-api" id="general-memory-update-profile" value="profile">
-                <span>选择 API 配置</span>
+                <span class="has-help" data-help="可在 API 配置里新增多个配置。" data-help-mode="press">选择 API 配置</span>
               </label>
               <select id="general-memory-update-profile-select" style="display:none;"></select>
               <div class="general-settings-inline-actions">
@@ -2119,14 +2121,12 @@ export class GeneralSettingsPanel {
                 </button>
                 <button type="button" id="general-memory-update-profile-manage" class="general-settings-manage-btn">管理</button>
               </div>
-              <small style="color:var(--app-text-muted); display:block; margin-top:6px;">可在 API 配置中新增多个配置</small>
               <div id="general-memory-update-context" style="margin-top: 10px;">
                 <label style="display:flex; align-items:center; justify-content:space-between; gap:8px; font-size:12px; font-weight:700; color:var(--app-text-primary);">
-                  <span>记忆更新上下文轮数</span>
+                  <span class="has-help" data-help="默认 6 轮（用户+助手）；0 不发送历史。" data-help-mode="press">记忆更新上下文轮数</span>
                   <input type="number" id="general-memory-update-context-rounds" min="0" step="1"
                          style="width: 90px; padding: 4px 6px; border:1px solid var(--app-border-default); border-radius:8px; font-size:12px; text-align:right;">
                 </label>
-                <small style="color:var(--app-text-muted); display:block; margin-top:4px;">默认 6 轮（用户+助手），0 表示不发送历史</small>
               </div>
             </div>
             </div>
@@ -2135,7 +2135,7 @@ export class GeneralSettingsPanel {
             <div style="font-size:12px; color:var(--app-text-muted); margin-bottom:8px;">记忆注入设置</div>
 
             <div style="margin-top: 10px;">
-              <div style="font-size:12px; color:var(--app-text-muted); margin-bottom:6px;">记忆表格内容注入位置</div>
+              <div class="has-help" data-help="仅作用于动态记忆表格；默认排在 History 后、最新输入前。" style="font-size:12px; color:var(--app-text-muted); margin-bottom:6px;">记忆表格内容注入位置</div>
               <select id="general-memory-inject-position" style="display:none;">
 	                <option value="after_persona">角色设定后</option>
 	                <option value="template">跟随记忆模板</option>
@@ -2154,24 +2154,22 @@ export class GeneralSettingsPanel {
                   <span class="world-app-select-btn-chevron">▾</span>
                 </button>
               </div>
-              <small style="color:var(--app-text-muted); display:block; margin-top:4px;">只控制动态记忆表格内容；默认排在 History 后、最新输入前</small>
             </div>
 
 	            <div id="general-memory-inject-depth-wrap" style="margin-top: 10px; display:none;">
 	              <label style="display:flex; align-items:center; justify-content:space-between; gap:8px; font-size:12px; font-weight:700; color:var(--app-text-primary);">
-	                <span>深度注入位置</span>
+	                <span class="has-help" data-help="距聊天末尾第 N 条插入；仅「深度注入」模式时生效。" data-help-mode="press">深度注入位置</span>
 	                <input type="number" id="general-memory-inject-depth" min="0" step="1"
 	                       style="width: 90px; padding: 4px 6px; border:1px solid var(--app-border-default); border-radius:8px; font-size:12px; text-align:right;">
 	              </label>
-	              <small style="color:var(--app-text-muted); display:block; margin-top:4px;">距聊天末尾 N 条插入；仅在“深度注入（插入到 History 内）”时生效</small>
 	            </div>
 	          </div>
 
               <div id="general-memory-bridge-block" style="margin-left: 26px; margin-top: 10px; padding: 8px; border: 1px dashed var(--app-border-default); border-radius: 10px; display: none;">
-                <small style="color:var(--app-text-muted); line-height:1.6; display:block;">聊天 / RP 会话之间的桥接请在各会话的「好友设置 → 记忆共享」中配置；动态桥接为全局设置。</small>
+                <small style="color:var(--app-text-muted); line-height:1.6; display:block;">聊天 / 创意写作会话之间的桥接请在各会话的「好友设置 → 记忆共享」中配置；动态桥接为全局设置。</small>
                 <div style="display:flex; flex-direction:column; gap:8px; margin-top:8px;">
                   <label style="display:flex; align-items:center; justify-content:space-between; gap:10px; color:var(--app-text-primary); font-size:12px;">
-                    <span>动态记忆注入聊天 / RP</span>
+                    <span>动态记忆注入聊天 / 创意写作</span>
                     <input type="checkbox" id="general-memory-bridge-moments-to-chat" style="width:16px; height:16px;">
                   </label>
                   <label style="display:flex; align-items:center; justify-content:space-between; gap:8px; color:var(--app-text-secondary); font-size:12px;">
@@ -2189,7 +2187,7 @@ export class GeneralSettingsPanel {
                            style="width: 90px; padding: 4px 6px; border:1px solid var(--app-border-default); border-radius:8px; font-size:12px; text-align:right;">
                   </label>
                   <label style="display:flex; align-items:center; justify-content:space-between; gap:10px; color:var(--app-text-primary); font-size:12px;">
-                    <span>RP 记忆注入动态</span>
+                    <span>创意写作记忆注入动态</span>
                     <input type="checkbox" id="general-memory-bridge-rp-to-moments" style="width:16px; height:16px;">
                   </label>
                   <label style="display:flex; align-items:center; justify-content:space-between; gap:8px; color:var(--app-text-secondary); font-size:12px;">
@@ -2205,16 +2203,14 @@ export class GeneralSettingsPanel {
         <div class="general-settings-card">
           <div class="general-settings-card-head">
             <div>
-              <div class="general-settings-card-title">模板与脚本</div>
-              <div class="general-settings-card-note">角色卡模板、脚本与扩展行为。</div>
+              <div class="general-settings-card-title has-help" data-help="角色卡模板、脚本与扩展行为。">模板与脚本</div>
             </div>
           </div>
 
           <div class="general-settings-subcard">
             <div class="general-settings-card-head" style="margin-bottom: 10px;">
               <div>
-                <div class="general-settings-subcard-title">模板处理</div>
-                <div class="general-settings-card-note" style="margin-top: 4px;">控制模板在生成前与渲染后的执行。</div>
+                <div class="general-settings-subcard-title has-help" data-help="模板在生成前、渲染后的执行开关。">模板处理</div>
               </div>
               ${this.renderFoldButton('general-template-advanced-toggle', '模板选项')}
             </div>
@@ -2222,7 +2218,7 @@ export class GeneralSettingsPanel {
               ${this.renderSettingRow({
                 id: 'general-template-enabled',
                 title: '启用模板处理',
-                description: '统一控制模板执行链路。',
+                description: '模板执行的总开关。',
                 icon: 'template',
               })}
             </div>
@@ -2247,8 +2243,7 @@ export class GeneralSettingsPanel {
           <div class="general-settings-subcard">
             <div class="general-settings-card-head" style="margin-bottom: 10px;">
               <div>
-                <div class="general-settings-subcard-title">角色卡脚本</div>
-                <div class="general-settings-card-note" style="margin-top: 4px;">控制角色卡脚本可用性与权限边界。</div>
+                <div class="general-settings-subcard-title has-help" data-help="角色卡脚本的可用范围与权限。">角色卡脚本</div>
               </div>
               ${this.renderFoldButton('general-script-advanced-toggle', '脚本选项')}
             </div>
@@ -2256,7 +2251,7 @@ export class GeneralSettingsPanel {
               ${this.renderSettingRow({
                 id: 'general-script-enabled',
                 title: '启用角色卡脚本',
-                description: '允许角色卡脚本参与运行时行为。',
+                description: '允许角色卡脚本参与运行时逻辑。',
                 icon: 'script',
               })}
             </div>
@@ -2326,6 +2321,8 @@ export class GeneralSettingsPanel {
               清理未引用旧文件
             </span>
           </div>
+        </div>
+
         </div>
 
         <div style="display: flex; justify-content: flex-end; gap: 8px;">

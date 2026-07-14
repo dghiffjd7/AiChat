@@ -320,7 +320,7 @@ export const buildRpToChatMemoryShareContext = async ({
         sourceLabel: sourceId ? getRpDisplayName?.(sourceId) : '',
         summarySourceText: sourceId
             ? `来源：${getRpDisplayName?.(sourceId) || sourceId}`
-            : '来源：当前角色 RP 会话（当前为空）',
+            : '来源：当前角色创意写作会话（当前为空）',
         entries,
     };
 };

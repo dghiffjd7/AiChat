@@ -226,8 +226,7 @@ export class PluginPanel {
     this.element.innerHTML = `
       <div class="plugin-panel-header" style="display:flex;align-items:center;justify-content:space-between;padding:14px 16px;border-bottom:1px solid rgba(15,23,42,0.08);">
         <div>
-          <div style="font-size:16px;font-weight:700;color:var(--app-text-primary);">插件管理</div>
-          <div style="font-size:12px;color:var(--app-text-muted);margin-top:2px;">管理已安装的插件</div>
+          <div class="has-help" data-help="管理已安装的插件" style="font-size:16px;font-weight:700;color:var(--app-text-primary);">插件管理</div>
         </div>
         <button id="plugin-panel-close" class="plugin-panel-button" type="button" aria-label="关闭插件管理" style="border:none;background:rgba(15,23,42,0.08);width:32px;height:32px;border-radius:10px;cursor:pointer;">${ICONS.close}</button>
       </div>

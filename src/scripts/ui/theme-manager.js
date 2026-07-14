@@ -62,6 +62,25 @@ const alphaFromRgba = (value, fallback = 1) => {
   return Number.isFinite(next) ? next : fallback;
 };
 
+// 把颜色（#hex / rgb() / rgba()）解析成 "r, g, b" 三元组，供 rgba(var(--x-rgb), α) 使用。
+const colorToRgbTriplet = (value, fallback = '148, 163, 184') => {
+  const s = String(value || '').trim();
+  if (s[0] === '#') {
+    let hex = s.slice(1);
+    if (hex.length === 3 || hex.length === 4) hex = hex.split('').map((c) => c + c).join('');
+    if (hex.length === 6 || hex.length === 8) {
+      const r = parseInt(hex.slice(0, 2), 16);
+      const g = parseInt(hex.slice(2, 4), 16);
+      const b = parseInt(hex.slice(4, 6), 16);
+      if ([r, g, b].every(Number.isFinite)) return `${r}, ${g}, ${b}`;
+    }
+    return fallback;
+  }
+  const m = s.match(/rgba?\(\s*([\d.]+)[\s,]+([\d.]+)[\s,]+([\d.]+)/i);
+  if (m) return `${Math.round(Number(m[1]))}, ${Math.round(Number(m[2]))}, ${Math.round(Number(m[3]))}`;
+  return fallback;
+};
+
 const scaleShadow = (width, color, fallback = '0 8px 18px rgba(15, 23, 42, 0.1)') => {
   const safeWidth = clamp(width, 0, 8, 1);
   if (safeWidth <= 0) return 'none';
@@ -162,6 +181,7 @@ export class ThemeManager {
     const bubble = tokens.bubble || {};
     const shadow = tokens.shadow || {};
     const radius = tokens.radius || {};
+    const tint = tokens.tint || {};
 
     setCssVar('--app-surface-page', surface.page);
     setCssVar('--app-surface-page-alt', surface.pageAlt || surface.page);
@@ -183,6 +203,25 @@ export class ThemeManager {
     setCssVar('--app-accent-primary', accent.primary);
     setCssVar('--app-accent-strong', accent.strong || accent.primary);
     setCssVar('--app-accent-soft', accent.soft || accent.primary);
+
+    // 派生 RGB 三元组：深色规则用 rgba(var(--x-rgb), α) 铺各 alpha 微调；作者只需设 hex，tint 自动跟随。
+    setCssVar('--app-accent-rgb', colorToRgbTriplet(accent.primary, '121, 192, 255'));
+    setCssVar('--app-text-muted-rgb', colorToRgbTriplet(text.muted, '139, 152, 167'));
+    setCssVar('--app-tint-neutral-rgb', colorToRgbTriplet(tint.neutral, '205, 217, 229'));
+    setCssVar('--app-tint-slate-rgb', colorToRgbTriplet(tint.slate, '148, 163, 184'));
+    setCssVar('--app-surface-topbar-rgb', colorToRgbTriplet(surface.topbar || surface.panel, '26, 30, 36'));
+    setCssVar('--app-surface-elevated-rgb', colorToRgbTriplet(surface.elevated || surface.card, '34, 39, 46'));
+
+    // 语义状态色（可覆盖，默认标准）：fill 派生 rgb 供微调，text 为深色上可读文字实色。
+    const status = tokens.status || {};
+    setCssVar('--app-danger-rgb', colorToRgbTriplet(status.danger, '248, 81, 73'));
+    setCssVar('--app-danger-text-strong', status.dangerStrong || '#ffb4aa');
+    setCssVar('--app-warning-rgb', colorToRgbTriplet(status.warning, '251, 191, 36'));
+    setCssVar('--app-warning-text', status.warningText || '#fcd34d');
+    setCssVar('--app-success-rgb', colorToRgbTriplet(status.success, '46, 160, 67'));
+    setCssVar('--app-success-text', status.successText || '#7ee787');
+    setCssVar('--app-info-rgb', colorToRgbTriplet(status.info, '59, 130, 246'));
+    setCssVar('--app-info-text', status.infoText || '#8ecbff');
 
     setCssVar('--app-border-subtle', border.subtle);
     setCssVar('--app-border-default', border.default || border.subtle);

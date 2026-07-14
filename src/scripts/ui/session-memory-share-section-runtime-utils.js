@@ -335,7 +335,7 @@ export const createSessionMemoryShareSectionRuntime = ({
             state.sourceStaticEl.style.display = group?.isPrimary && !isRpTarget ? 'block' : 'none';
             if (group?.isPrimary && !isRpTarget) {
                 const sourceLabel = String(getSourceStaticLabel(sessionId) || '').trim() || '当前为空';
-                state.sourceStaticEl.textContent = `来源 RP 会话：${sourceLabel}`;
+                state.sourceStaticEl.textContent = `来源创意写作会话：${sourceLabel}`;
             }
         }
         if (group?.isPrimary && isRpTarget && state.sourceSelectEl && documentRef?.createElement) {

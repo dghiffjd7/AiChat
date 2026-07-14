@@ -196,7 +196,7 @@ export class UserPanel {
                         </div>
                     </div>
                     <div style="margin-bottom:15px;">
-                        <label style="display:block; font-size:12px; color:var(--app-text-secondary); margin-bottom:5px;">用户字体颜色</label>
+                        <label class="has-help" data-help="仅影响“我”的气泡字体颜色" style="display:block; font-size:12px; color:var(--app-text-secondary); margin-bottom:5px;">用户字体颜色</label>
                         <div class="chat-setting-color-field">
                             <div class="chat-setting-color-inputs" style="display:flex; align-items:center; gap:10px;">
                                 <input type="text" id="edit-text-color-input" value="${DEFAULT_USER_TEXT_COLOR}" style="flex:1; padding:10px; border:1px solid var(--app-border-default); border-radius:8px; box-sizing:border-box;">
@@ -204,12 +204,10 @@ export class UserPanel {
                             </div>
                             <div id="edit-text-color-swatches" class="chat-setting-color-swatches" aria-label="用户字体颜色快速切换"></div>
                         </div>
-                        <div style="margin-top:6px; font-size:11px; color:var(--app-text-muted);">仅影响“我”的气泡字体颜色</div>
                     </div>
                     <div style="margin-bottom:15px;">
-                        <label style="display:block; font-size:12px; color:var(--app-text-secondary); margin-bottom:5px;">
+                        <label class="has-help" data-help="注入到 System Prompt 或 Character Card 中" style="display:block; font-size:12px; color:var(--app-text-secondary); margin-bottom:5px;">
                             用户人设 ({{persona}})
-                            <span style="color:var(--app-text-muted); font-size:11px; margin-left:5px;">注入到 System Prompt 或 Character Card 中</span>
                         </label>
                         <textarea id="edit-desc" style="
                             width:100%;

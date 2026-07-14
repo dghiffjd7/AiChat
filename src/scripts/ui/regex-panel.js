@@ -522,10 +522,7 @@ export class RegexPanel {
         this.element.innerHTML = `
             <div style="${PANEL_HEADER_STYLE}">
                 <div style="min-width:0;">
-                    <div style="font-weight:800; color:var(--app-text-primary);">正规表达式</div>
-                    <div style="color:var(--app-text-muted); font-size:12px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">
-                        按规则替换输入/输出文本；全局始终生效，角色/预设按绑定对象生效
-                    </div>
+                    <div class="has-help" data-help="按规则替换输入/输出文本；全局始终生效，角色/预设按绑定对象生效" style="font-weight:800; color:var(--app-text-primary);">正规表达式</div>
                 </div>
                 <button id="regex-close" style="border:none; background:transparent; font-size:22px; cursor:pointer; color:var(--app-text-primary);">×</button>
             </div>
@@ -636,9 +633,8 @@ export class RegexPanel {
 
             <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:10px;">
                 <div style="flex:1; min-width: 260px;">
-                    <div style="font-weight:700; color:var(--app-text-primary); margin-bottom:6px;">Replace With</div>
+                    <div class="has-help" data-help="支持 {{match}}、$1/$2…、$&lt;name&gt;。" style="font-weight:700; color:var(--app-text-primary); margin-bottom:6px;">Replace With</div>
                     <textarea class="re-repl" rows="3" spellcheck="false" style="width:100%; padding:10px; border:1px solid var(--app-border-default); border-radius:10px; font-size:13px; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;"></textarea>
-                    <div style="color:var(--app-text-muted); font-size:12px; margin-top:6px;">支持 {{match}}、$1/$2…、$&lt;name&gt;。</div>
                 </div>
                 <div style="flex:1; min-width: 260px;">
                     <div style="font-weight:700; color:var(--app-text-primary); margin-bottom:6px;">Trim Out（每行一个）</div>
@@ -657,10 +653,9 @@ export class RegexPanel {
                         <label style="display:flex; gap:6px; align-items:center; cursor:pointer;"><input type="checkbox" class="re-place" value="6">推理</label>
                     </div>
                     <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:10px; align-items:center;">
-                        <div style="font-size:13px; color:var(--app-text-secondary); font-weight:700;">深度</div>
+                        <div class="has-help" data-help="0=最后一条，1=倒数第二条…" style="font-size:13px; color:var(--app-text-secondary); font-weight:700;">深度</div>
                         <input class="re-min-depth" type="number" min="-1" max="9999" placeholder="Min" style="width:120px; padding:8px 10px; border:1px solid var(--app-border-default); border-radius:10px;">
                         <input class="re-max-depth" type="number" min="0" max="9999" placeholder="Max" style="width:120px; padding:8px 10px; border:1px solid var(--app-border-default); border-radius:10px;">
-                        <div style="color:var(--app-text-muted); font-size:12px;">0=最后一条，1=倒数第二条…</div>
                     </div>
                 </div>
 
@@ -836,11 +831,10 @@ export class RegexPanel {
                 </div>
             </div>
             <div class="regex-editor-meta-row">
-                <label class="regex-inline-toggle">
+                <label class="regex-inline-toggle has-help" data-help="全局规则始终参与匹配；关闭后全部全局规则都不会执行。" data-help-mode="press">
                     <input id="re-global-enabled" type="checkbox" style="width:16px; height:16px;">
                     启用全局正则
                 </label>
-                <span style="color:var(--app-text-muted); font-size:12px;">全局规则始终参与匹配；关闭后全部全局规则都不会执行。</span>
             </div>
         `;
         head.querySelector('#re-global-enabled').checked = g.enabled !== false;

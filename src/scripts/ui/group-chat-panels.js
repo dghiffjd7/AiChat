@@ -469,9 +469,8 @@ export class GroupSettingsPanel {
                         <img id="group-settings-avatar-preview" alt="" style="${coverImageStyle}">
                     </button>
                     <div style="flex:1; min-width:220px;">
-                        <div style="${fieldLabelStyle}">群组名称</div>
+                        <div class="has-help" data-help="修改名称不会改变聊天室 ID。" style="${fieldLabelStyle}">群组名称</div>
                         <input id="group-settings-name" style="${nameInputStyle}">
-                        <div style="${helperTextStyle}">修改名称不会改变聊天室 ID。</div>
                     </div>
                 </div>
 
@@ -496,7 +495,7 @@ export class GroupSettingsPanel {
                     </div>
 
                     <div id="group-memory-features-section" style="${sectionStyle}">
-                        <div style="${fieldLabelStyle}; margin-bottom:10px;">聊天 / RP 桥接（当前会话）</div>
+                        <div style="${fieldLabelStyle}; margin-bottom:10px;">聊天 / 创意写作桥接（当前会话）</div>
                         <div id="group-rp-bridge-section" style="display:none;"></div>
                         <div id="group-memory-share-section">
                             <button id="group-memory-share-manage" type="button" style="${memoryShareButtonStyle}">
@@ -508,13 +507,12 @@ export class GroupSettingsPanel {
 
                     <div id="group-summary-section" style="${sectionStyle}">
                         <div style="${headerRowStyle}">
-                            <div style="${fieldLabelStyle}; margin-bottom:0;">摘要</div>
+                            <div class="has-help" data-help="该群聊每次互动保存一条摘要（与聊天存档绑定）" style="${fieldLabelStyle}; margin-bottom:0;">摘要</div>
                             <div style="${actionsRowStyle}">
                                 <button id="group-summaries-batch" type="button" title="批量操作" style="${toolbarIconButtonStyle}">☰</button>
                                 <button id="group-summaries-clear" type="button" style="${clearTextButtonStyle}">清空</button>
                             </div>
                         </div>
-                        <div style="${summaryHelperStyle}">该群聊每次互动保存一条摘要（与聊天存档绑定）</div>
                         <div id="group-summaries-batchbar" style="${batchBarStyle}">
                             <button id="group-summaries-batch-edit" type="button" title="批量编辑" style="${batchEditButtonStyle}">✎</button>
                             <button id="group-summaries-batch-delete" type="button" title="批量删除" style="${batchDeleteButtonStyle}">🗑</button>
@@ -524,7 +522,7 @@ export class GroupSettingsPanel {
 
 	                    <div style="margin-top:14px;">
 	                        <div style="${headerRowStyle}">
-	                            <div style="${fieldLabelStyle}; margin-bottom:0;">大总结</div>
+	                            <div class="has-help" data-help="摘要总字数超过阈值会自动生成大总结（与聊天存档绑定）" style="${fieldLabelStyle}; margin-bottom:0;">大总结</div>
 	                            <div style="${actionsRowStyle}">
 	                                <button id="group-compacted-raw" type="button" title="查看原始回复" style="${toolbarIconButtonStyle}">📄</button>
 	                                <button id="group-compacted-edit" type="button" title="编辑" style="${toolbarIconButtonStyle}">✎</button>
@@ -532,7 +530,6 @@ export class GroupSettingsPanel {
 	                                <button id="group-compacted-clear" type="button" title="删除" style="${compactedDangerButtonStyle}">🗑</button>
 	                            </div>
 	                        </div>
-	                        <div style="${summaryHelperStyle}">摘要总字数超过阈值会自动生成大总结（与聊天存档绑定）</div>
 	                        <div id="group-compacted-summary" style="${compactedListStyle}"></div>
 	                    </div>
                     </div>

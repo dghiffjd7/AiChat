@@ -303,7 +303,7 @@ const buildChatFormatGuardianDecisionActions = ({
       id: 'swipe_retry',
       label: '重试生成',
       enabled: true,
-      description: 'RP 模式会创建新的右滑候选；其他模式走现有重新生成链路。',
+      description: '创意写作模式会创建新的右滑候选；其他模式走现有重新生成链路。',
     },
     {
       id: 'review_original',

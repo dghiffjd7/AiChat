@@ -45,7 +45,8 @@ export const computeTooltipPlacement = (anchorRect, tipSize, viewport, gap = EDG
     top = anchorRect.top - gap - th;
     placement = 'top';
   }
-  let left = anchorRect.left + anchorRect.width / 2 - tw / 2;
+  // 左对齐到锚点左边缘（标题文字起点）：整行 block 标签与窄 span 都自然贴着标题，不会漂到界面中间。
+  let left = anchorRect.left;
   left = Math.max(gap, Math.min(left, vw - tw - gap));
   return { left, top, placement };
 };

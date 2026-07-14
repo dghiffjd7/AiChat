@@ -67,7 +67,7 @@ test('placement: 靠底部放不下 → 翻到 top', () => {
   assert.equal(p.top, 760 - 8 - 60); // top - gap - tipHeight
 });
 
-test('placement: 水平居中并夹进视口左右边', () => {
+test('placement: 左对齐锚点左边、并夹进视口左右边', () => {
   // 锚点在最右，浮层会顶到右边界并被夹住
   const r = { left: 380, top: 100, bottom: 120, width: 20, height: 20 };
   const p = computeTooltipPlacement(r, { width: 200, height: 60 }, vp);
@@ -76,6 +76,12 @@ test('placement: 水平居中并夹进视口左右边', () => {
   const r2 = { left: 0, top: 100, bottom: 120, width: 20, height: 20 };
   const p2 = computeTooltipPlacement(r2, { width: 200, height: 60 }, vp);
   assert.equal(p2.left, 8); // 夹在左边距 gap
+});
+
+test('placement: 宽 block 标签 → 左对齐锚点左边缘（不居中飘到中间）', () => {
+  const r = { left: 100, top: 100, bottom: 120, width: 300, height: 20 }; // 整行标签
+  const p = computeTooltipPlacement(r, { width: 200, height: 60 }, vp);
+  assert.equal(p.left, 100); // 左对齐 100，而非居中 (100+150-100=150)
 });
 
 test('placement: 顶部和底部都放不下 → 仍回落 bottom（不越界翻上）', () => {

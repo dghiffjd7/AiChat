@@ -187,16 +187,14 @@ export class MemoryTemplatePanel {
     this.panel.innerHTML = `
       <div style="padding:14px 16px; border-bottom:1px solid rgba(0,0,0,0.06); background:rgba(248,250,252,0.92); display:flex; align-items:center; justify-content:space-between; gap:10px;">
         <div>
-          <div style="font-weight:800; color:var(--app-text-primary);">记忆表格管理</div>
-          <div style="color:var(--app-text-muted); font-size:12px;">模板导入 / 导出与默认模板切换</div>
+          <div class="has-help" data-help="模板导入 / 导出与默认模板切换" style="font-weight:800; color:var(--app-text-primary);">记忆表格管理</div>
         </div>
         <button id="memory-template-close" style="border:none; background:transparent; font-size:22px; cursor:pointer; color:var(--app-text-primary);">×</button>
       </div>
       <div style="padding:14px 16px; overflow:auto; flex:1; min-height:0; -webkit-overflow-scrolling:touch;">
         <div id="memory-template-impact" class="memory-scope-badge" style="margin-bottom:12px; ${MEMORY_SCOPE_BADGE_STYLE}"></div>
         <div style="border:1px solid var(--app-border-default); border-radius:12px; padding:12px; background:var(--app-surface-card);">
-          <div style="font-weight:700; color:var(--app-text-primary); margin-bottom:6px;">全局记忆</div>
-          <div style="font-size:12px; color:var(--app-text-muted); margin-bottom:8px;">全局表格仅在此处编辑</div>
+          <div class="has-help" data-help="全局表格仅在此处编辑" style="font-weight:700; color:var(--app-text-primary); margin-bottom:6px;">全局记忆</div>
           <div id="memory-template-global-editor"></div>
         </div>
         <div style="border:1px solid var(--app-border-default); border-radius:12px; padding:12px; background:var(--app-surface-subtle);">
@@ -2077,9 +2075,8 @@ export class MemoryTemplatePanel {
 
       const tplWrap = document.createElement('div');
       tplWrap.innerHTML = `
-        <div style="font-size:12px; color:var(--app-text-muted); margin-bottom:4px;">导出模板</div>
+        <div class="has-help" data-help="支持 {{tableName}} / {{tableId}} / {{tableData}} / {{rowText}} / {{rowIndex}}" data-help-mode="press" style="font-size:12px; color:var(--app-text-muted); margin-bottom:4px;">导出模板</div>
         <textarea rows="3" class="export-template" style="width:100%; padding:6px 8px; border:1px solid var(--app-border-default); border-radius:8px; font-size:12px;"></textarea>
-        <small style="color:var(--app-text-muted);">支持 {{tableName}} / {{tableId}} / {{tableData}} / {{rowText}} / {{rowIndex}}</small>
       `;
       const tplInput = tplWrap.querySelector('.export-template');
       if (tplInput) tplInput.value = String(table.exportConfig?.injectionTemplate || '');

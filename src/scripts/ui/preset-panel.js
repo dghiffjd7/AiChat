@@ -15,6 +15,7 @@ import { pickSavePath as pickNativeSavePath } from '../utils/save-dialog.js';
 import { safeInvoke } from '../utils/tauri.js';
 import { appConfirm, appChoice } from './app-confirm.js';
 import { buildScriptAuthorizationMessage } from './script-authorization-utils.js';
+import { createDragGhost } from './drag-ghost-utils.js';
 import {
     REGEX_CUSTOM_PROMPT_PRESET_TYPE,
     resolveImportedRegexPresetBindTarget,
@@ -146,6 +147,14 @@ const PANEL_CSS = `
     color: var(--app-text-primary);
     --pp-panel-margin: 10px;
     --pp-footer-height: 58px;
+}
+
+/* 电脑版：面板不再全出血铺满，居中封顶（left/right 固定 + max-width + margin:auto 即居中） */
+@media (min-width: 900px) and (pointer: fine) {
+    #preset-panel {
+        max-width: 860px;
+        margin: 0 auto;
+    }
 }
 
 /* ── header ── */
@@ -422,11 +431,64 @@ const PANEL_CSS = `
 }
 .pp-pages[data-view="root"] .pp-page[data-panel-page="root"],
 .pp-pages[data-view="detail"] .pp-page[data-panel-page="detail"],
-.pp-pages[data-view="bindings"] .pp-page[data-panel-page="bindings"] {
+.pp-pages[data-view="bindings"] .pp-page[data-panel-page="bindings"],
+.pp-pages[data-view="block"] .pp-page[data-panel-page="block"] {
     opacity: 1;
     visibility: visible;
     pointer-events: auto;
     transform: translateY(0);
+}
+
+/* 区块拖拽中：原卡变虚线占位（悬浮幽灵由 drag-ghost-utils 跟随指针） */
+.pp-block.pp-block-dragging {
+    opacity: 0.4;
+    border-style: dashed;
+    border-color: var(--app-accent-primary);
+    background: color-mix(in srgb, var(--app-accent-primary) 6%, var(--app-surface-card));
+}
+
+/* 三级区块编辑页：隐藏上方「预设方案」区，给提示词编辑让出最大空间 */
+#preset-panel[data-view="block"] .pp-manager {
+    display: none;
+}
+
+/* 区块搜索：范围切换（全部/标题/正文）与命中样式 */
+.pp-search-scope {
+    display: inline-flex;
+    border: 1px solid var(--app-border-default);
+    border-radius: 10px;
+    overflow: hidden;
+}
+.pp-search-scope button {
+    padding: 6px 10px;
+    border: none;
+    background: var(--app-surface-subtle);
+    color: var(--app-text-secondary);
+    font-size: 12px;
+    cursor: pointer;
+}
+.pp-search-scope button + button {
+    border-left: 1px solid var(--app-border-default);
+}
+.pp-search-scope button.is-active {
+    background: var(--app-accent-soft, rgba(25, 154, 255, 0.14));
+    color: var(--app-accent-strong, var(--app-accent-primary));
+    font-weight: 700;
+}
+.pp-block-title.pp-hit-title {
+    color: var(--app-accent-strong, var(--app-accent-primary));
+}
+.pp-block-hit {
+    padding: 6px 12px 10px;
+    font-size: 12px;
+    color: var(--app-text-muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+/* 搜索过滤中隐藏拖拽柄：过滤视图下重排易误跨隐藏区块 */
+#openai-blocks[data-filtering="1"] .pp-block-drag {
+    display: none;
 }
 .pp-page-scroll {
     flex: 1 1 0;
@@ -1100,6 +1162,9 @@ export class PresetPanel {
         this.runtimeContext.contactsStore = context.contactsStore || this.runtimeContext.contactsStore || null;
         this.runtimeContext.personaStore = context.personaStore || this.runtimeContext.personaStore || null;
         this.runtimeContext.configPanel = context.configPanel || this.runtimeContext.configPanel || null;
+        this.runtimeContext.showScenePromptPreview = typeof context.showScenePromptPreview === 'function'
+            ? context.showScenePromptPreview
+            : this.runtimeContext.showScenePromptPreview;
         this.runtimeContext.getUiMode = typeof context.getUiMode === 'function'
             ? context.getUiMode
             : this.runtimeContext.getUiMode;
@@ -1481,8 +1546,7 @@ export class PresetPanel {
             <style>${PANEL_CSS}</style>
             <div class="pp-header">
                 <div style="min-width:0;">
-                    <div class="pp-header-title">预设（Preset）</div>
-                    <div class="pp-header-sub">选择/编辑提示词与生成参数</div>
+                    <div class="pp-header-title has-help" data-help="选择/编辑提示词与生成参数">预设（Preset）</div>
                 </div>
                 <div class="pp-header-actions">
                     <button id="preset-import">导入</button>
@@ -1525,6 +1589,19 @@ export class PresetPanel {
                                 <div class="pp-section-editor" id="preset-binding-editor"></div>
                             </div>
                         </section>
+                        <section class="pp-page" data-panel-page="block">
+                            <div class="pp-detail-topbar">
+                                <button type="button" class="pp-back-btn" id="preset-block-back">
+                                    ${chevronLeftSvg}
+                                    <span>返回</span>
+                                </button>
+                                <div class="pp-detail-heading" id="preset-block-title"></div>
+                                <div class="pp-detail-subheading" id="preset-block-subtitle"></div>
+                            </div>
+                            <div class="pp-page-scroll" id="preset-block-scroll">
+                                <div class="pp-section-editor" id="preset-block-editor"></div>
+                            </div>
+                        </section>
                     </div>
                 </div>
             </div>
@@ -1550,11 +1627,15 @@ export class PresetPanel {
         this.bindingSubtitleEl = this.element.querySelector('#preset-binding-subtitle');
         this.bindingEditorEl = this.element.querySelector('#preset-binding-editor');
         this.bindingScrollEl = this.element.querySelector('#preset-binding-scroll');
+        this.blockTitleEl = this.element.querySelector('#preset-block-title');
+        this.blockSubtitleEl = this.element.querySelector('#preset-block-subtitle');
+        this.blockEditorEl = this.element.querySelector('#preset-block-editor');
         this.element.querySelector('#preset-close').onclick = () => this.hide();
         this.element.querySelector('#preset-cancel').onclick = () => this.hide();
         this.element.querySelector('#preset-save').onclick = () => this.onSave();
         this.element.querySelector('#preset-back').onclick = () => this.showRootPage();
         this.element.querySelector('#preset-binding-back').onclick = () => this.showDetailPage();
+        this.element.querySelector('#preset-block-back').onclick = () => this.showDetailPage();
 
         /* hidden file input for import */
         const importInput = document.createElement('input');
@@ -1591,6 +1672,8 @@ export class PresetPanel {
         if (!this.element) return;
         this.renderManager();
         this.renderMainList();
+        // 区块编辑页绑定的卡片会在重建后失效，回退到所属 section 的 detail 页
+        if (this.currentPage === 'block') this.currentPage = 'detail';
         if (this.currentSectionId) {
             const sec = this.getSectionById(this.currentSectionId);
             if (sec) {
@@ -1816,7 +1899,7 @@ export class PresetPanel {
 
     setPageView(view) {
         if (!this.pagesEl) return;
-        const next = view === 'bindings' ? 'bindings' : (view === 'detail' ? 'detail' : 'root');
+        const next = ['bindings', 'detail', 'block'].includes(view) ? view : 'root';
         this.pagesEl.dataset.view = next;
         if (this.element) this.element.dataset.view = next;
     }
@@ -2086,11 +2169,12 @@ export class PresetPanel {
     }
 
     /* ── helpers ── */
-    renderTextarea(label, id, value, placeholder = '') {
+    renderTextarea(label, id, value, placeholder = '', help = '') {
         const block = document.createElement('div');
         block.style.marginTop = '10px';
+        const helpAttr = help ? ` class="pp-field-label has-help" data-help="${help}"` : ' class="pp-field-label"';
         block.innerHTML = `
-            <div class="pp-field-label">${label}</div>
+            <div${helpAttr}>${label}</div>
             <textarea id="${id}" spellcheck="false" class="pp-textarea" placeholder="${placeholder}"></textarea>
         `;
         setValue(block.querySelector(`#${id}`), value || '');
@@ -2499,12 +2583,8 @@ export class PresetPanel {
     /* ── Context ── */
     renderContextEditor(p) {
         const wrap = document.createElement('div');
-        const desc = document.createElement('div');
-        desc.style.cssText = 'color:var(--app-text-muted); font-size:12px; margin-bottom:4px;';
-        desc.textContent = 'ST 的 story_string 模板，支持 {{#if}} 与变量';
-        wrap.appendChild(desc);
 
-        wrap.appendChild(this.renderTextarea('Story String', 'context-story', p.story_string || '', '{{#if description}}{{description}}{{/if}} ...'));
+        wrap.appendChild(this.renderTextarea('Story String', 'context-story', p.story_string || '', '{{#if description}}{{description}}{{/if}} ...', 'ST 的 story_string 模板，支持 {{#if}} 与变量'));
 
         const pos = document.createElement('select');
         pos.id = 'context-position'; pos.className = 'pp-input';
@@ -2575,7 +2655,7 @@ export class PresetPanel {
         const wrap = document.createElement('div');
         const desc = document.createElement('div');
         desc.style.cssText = 'color:var(--app-text-muted); font-size:12px; margin-bottom:4px;';
-        desc.textContent = '控制序列/包裹/宏（目前仅保存，暂未用于 prompt 构建）';
+        desc.textContent = '序列 / 包裹 / 宏（目前仅保存，暂未用于构建）';
         wrap.appendChild(desc);
 
         const make = (id, val) => { const el = document.createElement('input'); el.id = id; el.type = 'text'; el.className = 'pp-input'; el.value = val ?? ''; return el; };
@@ -2709,12 +2789,11 @@ export class PresetPanel {
         const ctxBlock = document.createElement('div');
         ctxBlock.style.marginTop = '4px';
         ctxBlock.innerHTML = `
-            <div class="pp-field-label">最大上下文长度（max_context）</div>
+            <div class="pp-field-label has-help" data-help="用于限制可用上下文窗口。">最大上下文长度（max_context）</div>
             <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
                 <div style="flex:2; min-width:200px;" id="gen-max-context-range-wrap"></div>
                 <div style="flex:1; min-width:140px;" id="gen-max-context-num-wrap"></div>
             </div>
-            <div style="color:var(--app-text-muted); font-size:12px; margin-top:4px;">用于限制可用上下文窗口。</div>
         `;
         ctxBlock.querySelector('#gen-max-context-range-wrap').appendChild(maxContext);
         ctxBlock.querySelector('#gen-max-context-num-wrap').appendChild(maxContextNum);
@@ -2764,11 +2843,10 @@ export class PresetPanel {
             const requestText = document.createElement('div');
             requestText.style.cssText = 'font-weight:700; color:var(--app-text-primary);';
             requestText.textContent = '请求推理';
+            requestText.className = 'has-help';
+            requestText.setAttribute('data-help', '按当前模型的接口显式附加推理参数；关闭则不额外请求。');
+            requestText.setAttribute('data-help-mode', 'press');
             requestTextWrap.appendChild(requestText);
-            const requestDesc = document.createElement('div');
-            requestDesc.style.cssText = 'color:var(--app-text-muted); font-size:12px; line-height:1.5; margin-top:4px;';
-            requestDesc.textContent = '按当前模型支持的接口显式附加推理参数；关闭时不额外请求。';
-            requestTextWrap.appendChild(requestDesc);
             requestLabel.appendChild(requestTextWrap);
             reasoningCard.appendChild(requestLabel);
 
@@ -2864,7 +2942,7 @@ export class PresetPanel {
 
         const viewHint = document.createElement('div');
         viewHint.style.cssText = 'color:var(--app-text-muted); font-size:12px; margin:10px 0 4px;';
-        viewHint.textContent = '默认回复视角。聊天界面与 RP（创意写作）界面分开保存；不额外增加聊天区按钮。';
+        viewHint.textContent = '默认回复视角。聊天界面与创意写作界面分开保存；不额外增加聊天区按钮。';
         wrap.appendChild(viewHint);
 
         const makeTargetSelect = (id, value, fallback) => {
@@ -2886,7 +2964,7 @@ export class PresetPanel {
         const rpTargetWrap = this.wrapSelectWithCustomUI(rpTarget, '回复视角');
         const targetRow = this.renderInputRow([
             { label: '聊天界面回复视角', el: chatTargetWrap },
-            { label: 'RP界面回复视角', el: rpTargetWrap },
+            { label: '创意写作界面回复视角', el: rpTargetWrap },
         ]);
         wrap.appendChild(targetRow);
         this.bindCustomSelect('gen-response-target-chat', targetRow);
@@ -2907,6 +2985,10 @@ export class PresetPanel {
         const prompts = Array.isArray(p.prompts) ? p.prompts : [];
         const promptById = new Map();
         prompts.forEach(pr => { if (pr?.identifier) promptById.set(pr.identifier, pr); });
+        // 懒渲染数据载体：列表只建轻量卡（重型预设百余区块秒开），编辑草稿进 Map，
+        // 保存时由 collectSectionData 合并（capture 总先于重渲染，render 起点清空防跨预设污染）。
+        this.openaiBlockDrafts = new Map();
+        this.openaiBlockBase = promptById;
         const orderBlock = pickPromptOrderBlock();
         const order = Array.isArray(orderBlock?.order) ? orderBlock.order : [];
 
@@ -2915,16 +2997,90 @@ export class PresetPanel {
             : prompts.filter(pr => pr?.identifier).map(pr => ({ identifier: pr.identifier, enabled: true }));
 
         const headRow = document.createElement('div');
-        headRow.style.cssText = 'display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:8px;';
+        headRow.style.cssText = 'display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:8px; flex-wrap:wrap;';
         headRow.innerHTML = `
-            <div style="color:var(--app-text-muted); font-size:12px;">区块默认折叠，点击展开；可拖拽排序</div>
-            <button type="button" id="openai-add-block" style="padding:6px 10px; border:1px solid var(--app-border-default); border-radius:10px; background:var(--app-surface-card); cursor:pointer; font-size:12px;">+ 新增区块</button>
+            <div style="color:var(--app-text-muted); font-size:12px;">点击区块进入编辑；按住 ☰ 拖动排序</div>
+            <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
+                <span class="has-help" data-help="按当前会话与已保存的预设，构建最终发给模型的完整请求（只预览，不发送；未保存的修改不计入）。「创意写作」不含聊天格式等聊天专属注入；跨场景预览不携带当前会话历史。" style="font-size:12px; color:var(--app-text-secondary); font-weight:700;">请求预览</span>
+                <button type="button" id="openai-preview-chat" style="padding:6px 10px; border:1px solid var(--app-border-default); border-radius:10px; background:var(--app-surface-subtle); cursor:pointer; font-size:12px;">聊天</button>
+                <button type="button" id="openai-preview-rp" style="padding:6px 10px; border:1px solid var(--app-border-default); border-radius:10px; background:var(--app-surface-subtle); cursor:pointer; font-size:12px;">创意写作</button>
+                <button type="button" id="openai-add-block" style="padding:6px 10px; border:1px solid var(--app-border-default); border-radius:10px; background:var(--app-surface-card); cursor:pointer; font-size:12px;">+ 新增区块</button>
+            </div>
         `;
+        const runScenePreview = async (mode) => {
+            const fn = this.runtimeContext.showScenePromptPreview;
+            if (typeof fn !== 'function') {
+                window.toastr?.warning?.('请求预览暂不可用');
+                return;
+            }
+            await fn(mode);
+        };
+        headRow.querySelector('#openai-preview-chat').onclick = () => runScenePreview('chat');
+        headRow.querySelector('#openai-preview-rp').onclick = () => runScenePreview('rp');
         wrap.appendChild(headRow);
+
+        // 搜索/过滤：可查标题与提示词正文；范围切换（全部/标题/正文）代替命中排序——
+        // 区块顺序即注入顺序（数据），过滤保持原序不重排；搜索中隐藏拖拽柄防误排。
+        const searchRow = document.createElement('div');
+        searchRow.style.cssText = 'display:flex; align-items:center; gap:6px; margin-bottom:8px; flex-wrap:wrap;';
+        searchRow.innerHTML = `
+            <input type="search" id="openai-block-search" class="pp-input" placeholder="搜索区块标题 / 提示词正文…" style="flex:1; min-width:180px;">
+            <div class="pp-search-scope" role="group" aria-label="搜索范围">
+                <button type="button" data-scope="all" class="is-active">全部</button>
+                <button type="button" data-scope="title">标题</button>
+                <button type="button" data-scope="content">正文</button>
+            </div>
+        `;
+        wrap.appendChild(searchRow);
 
         const list = document.createElement('div');
         list.id = 'openai-blocks';
         list.style.cssText = 'display:flex; flex-direction:column; gap:10px;';
+
+        // 按住 ☰ 拖动排序（Pointer Events 鼠标/触摸通用）：克隆悬浮幽灵跟随指针，
+        // 原卡变虚线占位实时挪动（落点一目了然）；边缘自动滚动；拖后抑制一次点击。
+        const dragState = { suppressClick: false };
+        const beginBlockDrag = (e, card) => {
+            e.preventDefault();
+            e.stopPropagation();
+            const pid = e.pointerId;
+            const scroller = list.closest('.pp-page-scroll') || list;
+            const ghost = createDragGhost(card, e);
+            card.classList.add('pp-block-dragging');
+            const onMove = (ev) => {
+                if (ev.pointerId !== pid) return;
+                dragState.suppressClick = true;
+                ghost?.move(ev);
+                const y = ev.clientY;
+                const sr = scroller.getBoundingClientRect();
+                if (y < sr.top + 40) scroller.scrollTop -= 9;
+                else if (y > sr.bottom - 40) scroller.scrollTop += 9;
+                let before = null;
+                for (const el of list.querySelectorAll('.openai-block')) {
+                    if (el === card) continue;
+                    const cr = el.getBoundingClientRect();
+                    if (y < cr.top + cr.height / 2) { before = el; break; }
+                }
+                if (before) {
+                    if (card.nextElementSibling !== before) list.insertBefore(card, before);
+                } else if (list.lastElementChild !== card) {
+                    list.appendChild(card);
+                }
+            };
+            const onUp = (ev) => {
+                if (ev.pointerId !== pid) return;
+                document.removeEventListener('pointermove', onMove);
+                document.removeEventListener('pointerup', onUp);
+                document.removeEventListener('pointercancel', onUp);
+                const finish = () => card.classList.remove('pp-block-dragging');
+                if (ghost) ghost.settle(card.getBoundingClientRect(), finish);
+                else finish();
+                setTimeout(() => { dragState.suppressClick = false; }, 0);
+            };
+            document.addEventListener('pointermove', onMove);
+            document.addEventListener('pointerup', onUp);
+            document.addEventListener('pointercancel', onUp);
+        };
 
         const makeBlockEl = ({ identifier, enabled }) => {
             const pr = promptById.get(identifier);
@@ -2933,20 +3089,17 @@ export class PresetPanel {
             const canEdit = !isMarker && (typeof pr?.content === 'string' || !pr);
             const title = pr?.name || known?.label || identifier;
             const roleName = roleIdToName(pr?.role || 'system');
-            const sysPrompt = (typeof pr?.system_prompt === 'boolean') ? pr.system_prompt : true;
 
             const card = document.createElement('div');
             card.className = `pp-block openai-block ${enabled === false ? 'pp-block-disabled' : ''}`;
-            card.draggable = true;
             card.dataset.identifier = identifier;
-            card.dataset.collapsed = 'true';
+            card.dataset.marker = isMarker ? 'true' : 'false';
 
             const header = document.createElement('div');
             header.className = 'pp-block-header';
             header.innerHTML = `
                 <div class="pp-block-left">
-                    <div class="pp-block-toggle">&#9656;</div>
-                    <div class="pp-block-drag">&#9776;</div>
+                    <div class="pp-block-drag" aria-label="按住拖动排序">&#9776;</div>
                     <div style="min-width:0;">
                         <div class="pp-block-title">${title}</div>
                         <div class="pp-block-sub">${isMarker ? 'marker（自动填充）' : `role: ${roleName}`}</div>
@@ -2971,7 +3124,7 @@ export class PresetPanel {
                 const del = document.createElement('button');
                 del.type = 'button'; del.className = 'block-delete';
                 del.textContent = '删除';
-                del.style.cssText = 'padding:6px 10px; border:1px solid #fecaca; border-radius:10px; background:#fee2e2; color:#b91c1c; cursor:pointer; font-size:12px;';
+                del.style.cssText = 'padding:6px 10px; border:1px solid var(--app-danger-border, #fecaca); border-radius:10px; background:var(--app-danger-soft, #fee2e2); color:var(--app-danger-text, #b91c1c); cursor:pointer; font-size:12px;';
                 del.onclick = async (e) => {
                     e.stopPropagation();
                     const ok = await appConfirm({ title: '删除区块', message: `删除区块「${identifier}」？`, danger: true });
@@ -2983,91 +3136,88 @@ export class PresetPanel {
             header.appendChild(right);
             card.appendChild(header);
 
-            const setCollapsed = (collapsed) => {
-                card.dataset.collapsed = collapsed ? 'true' : 'false';
-                const toggle = header.querySelector('.pp-block-toggle');
-                if (toggle) toggle.innerHTML = collapsed ? '&#9656;' : '&#9662;';
-                const body = card.querySelector('.pp-block-body');
-                if (body) body.style.display = collapsed ? 'none' : 'block';
-            };
-            header.addEventListener('click', () => setCollapsed(card.dataset.collapsed !== 'true'));
+            // 懒渲染：列表只有轻量头部卡，名称/role/正文等重内容进入编辑页时才按需构建（数据在 openaiBlockDrafts）
 
-            if (canEdit) {
-                const body = document.createElement('div');
-                body.className = 'pp-block-body';
+            // 点击卡片（非控件区）进入区块编辑页
+            header.addEventListener('click', (e) => {
+                if (dragState.suppressClick) return;
+                if (e.target && (e.target.closest?.('.block-delete') || e.target.closest?.('label') || e.target.closest?.('.pp-block-drag'))) return;
+                this.openOpenAIBlockEditor(card);
+            });
 
-                const nameInput = document.createElement('input');
-                nameInput.type = 'text'; nameInput.className = 'block-name pp-input';
-                nameInput.placeholder = '区块名称'; nameInput.value = pr?.name || title;
-
-                const roleSelId = `openai-block-role-${identifier.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
-                const roleSel = document.createElement('select');
-                roleSel.id = roleSelId;
-                roleSel.className = 'block-role pp-input';
-                roleSel.innerHTML = `<option value="system">system</option><option value="user">user</option><option value="assistant">assistant</option>`;
-                roleSel.value = roleName;
-                const roleSelWrapped = this.wrapSelectWithCustomUI(roleSel, 'role');
-
-                const sysChkWrap = document.createElement('label');
-                sysChkWrap.style.cssText = 'display:flex; align-items:center; gap:8px; font-size:13px; color:var(--app-text-secondary); cursor:pointer;';
-                sysChkWrap.innerHTML = `<input type="checkbox" class="block-system" style="width:16px; height:16px;">system_prompt`;
-                sysChkWrap.querySelector('input').checked = sysPrompt;
-
-                const metaRow = document.createElement('div');
-                metaRow.style.cssText = 'display:flex; gap:10px; flex-wrap:wrap;';
-                const leftCell = document.createElement('div');
-                leftCell.style.cssText = 'flex:1; min-width:180px;';
-                leftCell.appendChild(nameInput);
-                const rightCell = document.createElement('div');
-                rightCell.style.cssText = 'flex:1; min-width:180px; display:flex; flex-direction:column; gap:8px;';
-                rightCell.appendChild(roleSelWrapped);
-                rightCell.appendChild(sysChkWrap);
-                metaRow.appendChild(leftCell);
-                metaRow.appendChild(rightCell);
-                body.appendChild(metaRow);
-                this.bindCustomSelect(roleSelId, metaRow);
-
-                const taId = `openai-block-content-${identifier.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
-                const taBlock = this.renderTextarea(identifier, taId, pr?.content || '', '');
-                const ta = taBlock.querySelector(`#${taId}`);
-                if (ta) { ta.dataset.promptIdentifier = identifier; ta.classList.add('block-content'); ta.style.minHeight = '120px'; }
-                body.appendChild(taBlock);
-                card.appendChild(body);
-            } else {
-                const hint = document.createElement('div');
-                hint.className = 'pp-block-body';
-                hint.style.cssText = 'display:none; padding:10px 12px; color:var(--app-text-muted); font-size:12px;';
-                hint.textContent = '该区块为 marker，将在构建 prompt 时自动填充内容。';
-                card.appendChild(hint);
+            // 按住 ☰ 拖动排序（Pointer Events，鼠标/触摸通用；保存按 DOM 顺序）
+            const handle = header.querySelector('.pp-block-drag');
+            if (handle) {
+                handle.style.touchAction = 'none';
+                handle.style.cursor = 'grab';
+                handle.addEventListener('pointerdown', (e) => beginBlockDrag(e, card));
             }
 
-            /* Drag reorder */
-            card.addEventListener('dragstart', (e) => {
-                e.dataTransfer?.setData('text/plain', identifier);
-                e.dataTransfer?.setDragImage(card, 20, 20);
-                card.style.opacity = '0.6';
-            });
-            card.addEventListener('dragend', () => {
-                card.style.opacity = '';
-                list.querySelectorAll('.openai-block').forEach(el => el.classList.remove('drop-target'));
-            });
-            card.addEventListener('dragover', (e) => { e.preventDefault(); card.classList.add('drop-target'); });
-            card.addEventListener('dragleave', () => { card.classList.remove('drop-target'); });
-            card.addEventListener('drop', (e) => {
-                e.preventDefault();
-                const fromId = e.dataTransfer?.getData('text/plain');
-                if (!fromId || fromId === identifier) return;
-                const fromEl = list.querySelector(`.openai-block[data-identifier="${CSS.escape(fromId)}"]`);
-                if (fromEl) list.insertBefore(fromEl, card);
-                card.classList.remove('drop-target');
-            });
-
-            setCollapsed(true);
             return card;
         };
 
         blocks.forEach(b => { if (b?.identifier) list.appendChild(makeBlockEl(b)); });
         wrap.appendChild(list);
+
+        const emptyHint = document.createElement('div');
+        emptyHint.style.cssText = 'display:none; padding:14px; text-align:center; color:var(--app-text-muted); font-size:12px;';
+        emptyHint.textContent = '没有匹配的区块';
+        wrap.appendChild(emptyHint);
+
+        const resolveBlockText = (identifier) => {
+            const d = this.openaiBlockDrafts.get(identifier);
+            const base = promptById.get(identifier);
+            const known = OPENAI_KNOWN_BLOCKS[identifier];
+            return {
+                title: String(d?.name ?? base?.name ?? known?.label ?? identifier),
+                content: String(d?.content ?? base?.content ?? ''),
+            };
+        };
+        let filterScope = 'all';
+        const searchInput = searchRow.querySelector('#openai-block-search');
+        const applyFilter = () => {
+            const q = String(searchInput.value || '').trim().toLowerCase();
+            const filtering = q.length > 0;
+            list.dataset.filtering = filtering ? '1' : '0';
+            let hits = 0;
+            list.querySelectorAll('.openai-block').forEach((card) => {
+                card.querySelector('.pp-block-hit')?.remove();
+                card.querySelector('.pp-block-title')?.classList.remove('pp-hit-title');
+                if (!filtering) { card.style.display = ''; return; }
+                const identifier = card.dataset.identifier || '';
+                const { title, content } = resolveBlockText(identifier);
+                const titleHit = (filterScope !== 'content')
+                    && (title.toLowerCase().includes(q) || identifier.toLowerCase().includes(q));
+                const contentIdx = (filterScope !== 'title') ? content.toLowerCase().indexOf(q) : -1;
+                const hit = titleHit || contentIdx >= 0;
+                card.style.display = hit ? '' : 'none';
+                if (!hit) return;
+                hits += 1;
+                if (titleHit) card.querySelector('.pp-block-title')?.classList.add('pp-hit-title');
+                if (contentIdx >= 0) {
+                    const start = Math.max(0, contentIdx - 24);
+                    const end = Math.min(content.length, contentIdx + q.length + 24);
+                    const snippet = `${start > 0 ? '…' : ''}${content.slice(start, end)}${end < content.length ? '…' : ''}`;
+                    const hitEl = document.createElement('div');
+                    hitEl.className = 'pp-block-hit';
+                    hitEl.textContent = `正文：${snippet.replace(/\s+/g, ' ')}`;
+                    card.appendChild(hitEl);
+                }
+            });
+            emptyHint.style.display = filtering && hits === 0 ? 'block' : 'none';
+        };
+        let filterTimer = null;
+        searchInput.addEventListener('input', () => {
+            if (filterTimer) clearTimeout(filterTimer);
+            filterTimer = setTimeout(applyFilter, 150);
+        });
+        searchRow.querySelectorAll('.pp-search-scope button').forEach((btn) => {
+            btn.onclick = () => {
+                filterScope = btn.dataset.scope || 'all';
+                searchRow.querySelectorAll('.pp-search-scope button').forEach(b => b.classList.toggle('is-active', b === btn));
+                applyFilter();
+            };
+        });
 
         headRow.querySelector('#openai-add-block').onclick = () => {
             const identifier = prompt('区块 identifier（唯一）', `custom_${Date.now()}`);
@@ -3080,10 +3230,106 @@ export class PresetPanel {
             const role = (prompt('role: system/user/assistant', 'system') || 'system').toLowerCase();
             const content = prompt('区块内容（可稍后再改）', '') ?? '';
             promptById.set(identifier, { identifier, name, role, system_prompt: true, marker: false, content });
+            // 新区块必须进草稿 Map，保存合并才不会丢
+            this.openaiBlockDrafts.set(identifier, { name, role, system_prompt: true, content });
             list.appendChild(makeBlockEl({ identifier, enabled: true }));
         };
 
         return wrap;
+    }
+
+    /* 区块独立编辑页：点击列表中的区块进入；对卡内隐藏表单 write-through，保存/草稿链路不变 */
+    openOpenAIBlockEditor(card) {
+        if (!card || !this.blockEditorEl) return;
+        const identifier = card.dataset.identifier || '';
+        const isMarker = card.dataset.marker === 'true';
+        const cardTitleEl = card.querySelector('.pp-block-title');
+        const cardSubEl = card.querySelector('.pp-block-sub');
+        if (this.blockTitleEl) this.blockTitleEl.textContent = cardTitleEl?.textContent || identifier;
+        if (this.blockSubtitleEl) this.blockSubtitleEl.textContent = identifier;
+        const host = this.blockEditorEl;
+        host.innerHTML = '';
+        const mkLabel = (text) => {
+            const d = document.createElement('div');
+            d.className = 'pp-field-label';
+            d.textContent = text;
+            return d;
+        };
+        if (isMarker) {
+            const p = document.createElement('div');
+            p.style.cssText = 'color:var(--app-text-muted); font-size:13px; line-height:1.7; padding:4px 2px;';
+            p.textContent = '该区块为 marker：构建 prompt 时由系统自动填充内容（如世界书、聊天记录等），没有可编辑的正文。可在列表中启用/停用，或按住 ☰ 拖动调整插入顺序。';
+            host.appendChild(p);
+        } else {
+            // 懒渲染：编辑草稿存 openaiBlockDrafts（首次进入时按需从预设数据播种），保存时统一合并
+            if (!(this.openaiBlockDrafts instanceof Map)) this.openaiBlockDrafts = new Map();
+            const base = this.openaiBlockBase?.get?.(identifier) || null;
+            const known = OPENAI_KNOWN_BLOCKS[identifier];
+            if (!this.openaiBlockDrafts.has(identifier)) {
+                this.openaiBlockDrafts.set(identifier, {
+                    name: String(base?.name || known?.label || identifier),
+                    role: roleIdToName(base?.role || 'system'),
+                    system_prompt: (typeof base?.system_prompt === 'boolean') ? base.system_prompt : true,
+                    content: String(base?.content ?? ''),
+                });
+            }
+            const draft = this.openaiBlockDrafts.get(identifier);
+
+            const metaRow = document.createElement('div');
+            metaRow.style.cssText = 'display:flex; gap:10px; flex-wrap:wrap; margin-bottom:10px;';
+            const nameCell = document.createElement('div');
+            nameCell.style.cssText = 'flex:2; min-width:200px;';
+            nameCell.appendChild(mkLabel('名称'));
+            const nameInput = document.createElement('input');
+            nameInput.type = 'text';
+            nameInput.className = 'pp-input';
+            nameInput.placeholder = '区块名称';
+            nameInput.value = draft.name || '';
+            nameInput.addEventListener('input', () => {
+                draft.name = nameInput.value;
+                const next = nameInput.value || identifier;
+                if (cardTitleEl) cardTitleEl.textContent = next;
+                if (this.blockTitleEl) this.blockTitleEl.textContent = next;
+            });
+            nameCell.appendChild(nameInput);
+            const roleCell = document.createElement('div');
+            roleCell.style.cssText = 'flex:1; min-width:140px;';
+            roleCell.appendChild(mkLabel('role'));
+            const roleSel = document.createElement('select');
+            roleSel.className = 'pp-input';
+            roleSel.innerHTML = '<option value="system">system</option><option value="user">user</option><option value="assistant">assistant</option>';
+            roleSel.value = draft.role || 'system';
+            roleSel.addEventListener('change', () => {
+                draft.role = roleSel.value;
+                if (cardSubEl) cardSubEl.textContent = `role: ${roleSel.value}`;
+            });
+            roleCell.appendChild(roleSel);
+            metaRow.appendChild(nameCell);
+            metaRow.appendChild(roleCell);
+            host.appendChild(metaRow);
+
+            const sysWrap = document.createElement('label');
+            sysWrap.style.cssText = 'display:flex; align-items:center; gap:8px; font-size:13px; color:var(--app-text-secondary); cursor:pointer; margin-bottom:10px;';
+            const sysChk = document.createElement('input');
+            sysChk.type = 'checkbox';
+            sysChk.style.cssText = 'width:16px; height:16px;';
+            sysChk.checked = Boolean(draft.system_prompt);
+            sysChk.addEventListener('change', () => { draft.system_prompt = sysChk.checked; });
+            sysWrap.appendChild(sysChk);
+            sysWrap.appendChild(document.createTextNode('system_prompt'));
+            host.appendChild(sysWrap);
+
+            host.appendChild(mkLabel('提示词正文'));
+            const ta = document.createElement('textarea');
+            ta.className = 'pp-textarea';
+            ta.spellcheck = false;
+            ta.style.cssText = 'width:100%; min-height: max(320px, calc(var(--app-visual-height, 100vh) - 420px)); resize: vertical;';
+            ta.value = draft.content || '';
+            ta.addEventListener('input', () => { draft.content = ta.value; });
+            host.appendChild(ta);
+        }
+        this.currentPage = 'block';
+        this.setPageView('block');
     }
 
     /* ════════════════════════════════════════
@@ -3227,21 +3473,17 @@ export class PresetPanel {
             const promptById = new Map();
             prompts.forEach(pr => { if (pr?.identifier) promptById.set(pr.identifier, pr); });
 
-            const textareas = root.querySelectorAll('textarea[data-prompt-identifier]');
-            textareas.forEach((ta) => {
-                const ident = ta.dataset.promptIdentifier;
+            // 懒渲染后区块编辑草稿在 openaiBlockDrafts（列表卡不再携带隐藏表单），此处合并
+            const blockDrafts = this.openaiBlockDrafts instanceof Map ? this.openaiBlockDrafts : new Map();
+            blockDrafts.forEach((draft, ident) => {
                 if (!ident) return;
-                const container = ta.closest('.openai-block');
-                const name = container?.querySelector('.block-name')?.value;
-                const role = container?.querySelector('.block-role')?.value;
-                const systemPrompt = container?.querySelector('.block-system')?.checked;
                 const existing = promptById.get(ident) || { identifier: ident };
                 promptById.set(ident, {
                     ...existing, identifier: ident,
-                    name: (name || existing.name || ident),
-                    role: roleIdToName(role || existing.role || 'system'),
-                    system_prompt: typeof systemPrompt === 'boolean' ? systemPrompt : (existing.system_prompt ?? true),
-                    marker: false, content: String(ta.value || ''),
+                    name: (draft.name || existing.name || ident),
+                    role: roleIdToName(draft.role || existing.role || 'system'),
+                    system_prompt: typeof draft.system_prompt === 'boolean' ? draft.system_prompt : (existing.system_prompt ?? true),
+                    marker: false, content: String(draft.content ?? existing.content ?? ''),
                 });
             });
 

@@ -370,24 +370,22 @@ export class ContactSettingsPanel {
                         <img id="contact-avatar-preview" alt="" style="${coverImageStyle}">
                     </button>
                     <div style="flex:1; min-width:220px;">
-                        <div style="${fieldLabelStyle}">名称</div>
+                        <div class="has-help" data-help="仅修改显示名称，不会改变聊天室 ID。" style="${fieldLabelStyle}">名称</div>
                         <input id="contact-name-input" style="${fieldInputStyle}">
-                        <div style="${helperTextStyle}">仅修改显示名称，不会改变聊天室 ID。</div>
                     </div>
                 </div>
 
                 <div style="margin-top:12px;">
-                    <div style="${fieldLabelStyle}">标签</div>
+                    <div class="has-help" data-help="用于展示标签；不设置则界面保持原样。" style="${fieldLabelStyle}">标签</div>
                     <input
                         id="contact-labels-input"
                         placeholder="用逗号分隔，如：重制版, SG线"
                         style="${fieldInputStyle}"
                     >
-                    <div style="${helperTextStyle}">用于展示标签；不设置则界面保持原样。</div>
                 </div>
 
 	                <div style="${featuresSectionStyle}">
-	                    <div style="${bridgeTitleStyle}">模板与脚本（本会话）</div>
+	                    <div class="has-help" data-help="正则与变量属于高级脚本配置；重置仅清空本会话 local 变量，不影响全局变量。" style="${bridgeTitleStyle}">模板与脚本（本会话）</div>
                     <label style="${checkboxRowStyle}">
                         <input type="checkbox" id="contact-template-enabled" style="${checkboxInputStyle}">
                         <span>启用模板处理</span>
@@ -407,17 +405,15 @@ export class ContactSettingsPanel {
                     <button id="contact-reset-vars" type="button" style="${utilitySmallButtonStyle}">
                         重置本会话变量
                     </button>
-	                    <div style="${helperTextStyle}">正则与变量属于高级脚本配置；重置仅清空本会话 local 变量，不影响全局变量。</div>
 	                </div>
 
                     <div id="contact-memory-features-section" style="margin-top:16px; border-top:1px solid var(--app-border-subtle); padding-top:14px;">
-                        <div id="contact-bridge-block-title" style="${bridgeTitleStyle}">聊天 / RP 桥接（当前会话）</div>
+                        <div id="contact-bridge-block-title" style="${bridgeTitleStyle}">聊天 / 创意写作桥接（当前会话）</div>
                         <div id="contact-rp-bridge-section" style="${bridgeCardStyle}">
                             <label style="${buildSessionCheckboxLabelStyle({ justify: 'space-between', gap: 10 })}">
-                                <span style="${fieldLabelStyle}">注入 RP 总体大纲</span>
+                                <span class="has-help" data-help="默认来源为当前角色的创意写作会话。" data-help-mode="press" style="${fieldLabelStyle}">注入创意写作总体大纲</span>
                                 <input type="checkbox" id="contact-rp-bridge-enabled" style="${checkboxInputStyle}">
                             </label>
-                            <div style="${helperTextStyle}">默认来源为当前角色的 RP 会话。</div>
                             <div id="contact-rp-bridge-source-note" style="${bridgeNoteStyle}"></div>
                             <label style="${bridgeLimitRowStyle}">
                                 <span>注入条数（0=全部）</span>

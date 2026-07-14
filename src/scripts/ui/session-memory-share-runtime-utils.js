@@ -68,7 +68,7 @@ export const renderSessionMemoryShareManager = async ({
   getSourceSessionLabel = (id) => id,
   getSourceStaticLabel = () => '',
   getHintText = () => '',
-  sourceStaticPrefix = '来源 RP 会话：',
+  sourceStaticPrefix = '来源创意写作会话：',
   defaultSourceButtonLabel = '所有聊天室（默认仅注入大纲）',
   refreshSourceButton = () => {},
   createEmptyState = createMemoryShareEmptyState,

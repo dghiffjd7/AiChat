@@ -1,6 +1,6 @@
 const normalizeArchiveQuery = value => String(value || '').trim().toLowerCase();
 
-const archiveMatchesQuery = ({ archive = {}, dateText = '', messageCount = 0, isCurrent = false } = {}, query = '') => {
+const archiveMatchesQuery = ({ archive = {}, dateText = '', messageCount = 0, isCurrent = false } = {}, query = '', contentText = '') => {
   const q = normalizeArchiveQuery(query);
   if (!q) return true;
   const fields = [
@@ -11,7 +11,9 @@ const archiveMatchesQuery = ({ archive = {}, dateText = '', messageCount = 0, is
     `${messageCount}条消息`,
     isCurrent ? '当前' : '',
   ];
-  return fields.some(value => String(value || '').toLowerCase().includes(q));
+  if (fields.some(value => String(value || '').toLowerCase().includes(q))) return true;
+  // 正文命中（懒加载索引，见 renderSessionArchivesSection）
+  return Boolean(contentText) && contentText.includes(q);
 };
 
 const createArchiveManagementControls = ({
@@ -27,7 +29,7 @@ const createArchiveManagementControls = ({
   const input = documentRef.createElement('input');
   input.type = 'search';
   input.value = query;
-  input.placeholder = '搜索存档名称 / 日期 / ID';
+  input.placeholder = '搜索存档名称 / 正文内容…';
   input.setAttribute?.('aria-label', '搜索存档');
   input.style.cssText = 'flex:1; min-width:0; height:30px; padding:0 9px; border:1px solid var(--app-border-default); border-radius:8px; background:var(--app-surface-input); color:var(--app-text-primary); font-size:12px;';
 
@@ -128,18 +130,65 @@ export const renderSessionArchivesSection = ({
     filteredEmpty.textContent = '没有匹配的存档';
   }
 
+  // 正文索引：首次搜索时懒加载各存档消息（exportThreadMessages 纯读、无副作用），缓存本次渲染生命周期
+  const contentIndex = new Map();
+  let contentIndexPromise = null;
+  const canIndexContent = typeof chatStore?.exportThreadMessages === 'function';
+  const ensureContentIndex = () => {
+    if (!canIndexContent) return null;
+    if (contentIndexPromise) return contentIndexPromise;
+    contentIndexPromise = (async () => {
+      for (const archive of archives) {
+        const aid = String(archive?.id || '').trim();
+        if (!aid || contentIndex.has(aid)) continue;
+        try {
+          const msgs = await chatStore.exportThreadMessages(sessionId, aid);
+          const text = (Array.isArray(msgs) ? msgs : [])
+            .map(m => String(m?.content || ''))
+            .join('\n');
+          contentIndex.set(aid, { raw: text, lower: text.toLowerCase() });
+        } catch {
+          contentIndex.set(aid, { raw: '', lower: '' });
+        }
+      }
+    })();
+    return contentIndexPromise;
+  };
+
   const applySearch = (query = '') => {
+    const q = normalizeArchiveQuery(query);
+    // 有查询且索引未建 → 后台建索引，就绪后按当前输入重跑一次
+    if (q && canIndexContent && !contentIndexPromise) {
+      ensureContentIndex()?.then?.(() => {
+        applySearch(management?.input?.value ?? query);
+      });
+    }
     let visible = 0;
     for (const entry of entries) {
-      const matched = archiveMatchesQuery(entry, query);
+      const indexed = contentIndex.get(String(entry.archive?.id || '').trim()) || null;
+      const matched = archiveMatchesQuery(entry, query, indexed?.lower || '');
       if (matched) visible += 1;
       if (entry.row?.style) entry.row.style.display = matched ? '' : 'none';
+      if (entry.row) {
+        // 正文命中时用 title 提示片段，帮助定位是哪份存档
+        let hint = '';
+        if (q && matched && indexed?.lower) {
+          const idx = indexed.lower.indexOf(q);
+          if (idx >= 0) {
+            const start = Math.max(0, idx - 24);
+            const end = Math.min(indexed.raw.length, idx + q.length + 24);
+            hint = `正文：${start > 0 ? '…' : ''}${indexed.raw.slice(start, end).replace(/\s+/g, ' ')}${end < indexed.raw.length ? '…' : ''}`;
+          }
+        }
+        if (hint) entry.row.title = hint;
+        else if (entry.row.title) entry.row.removeAttribute?.('title');
+      }
     }
     if (management?.count) {
-      management.count.textContent = normalizeArchiveQuery(query) ? `${visible} / ${archives.length}` : `${archives.length} 份`;
+      management.count.textContent = q ? `${visible} / ${archives.length}` : `${archives.length} 份`;
     }
     if (management?.clearButton?.style) {
-      management.clearButton.style.visibility = normalizeArchiveQuery(query) ? 'visible' : 'hidden';
+      management.clearButton.style.visibility = q ? 'visible' : 'hidden';
     }
     if (filteredEmpty?.style) {
       filteredEmpty.style.display = visible ? 'none' : 'block';

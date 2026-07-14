@@ -1241,7 +1241,7 @@ const initApp = async () => {
   });
   let lastMomentRawReply = '';
   let lastMomentRawMeta = null;
-  const worldPanel = new WorldPanel({ contactsStore, getSessionId: () => chatStore.getCurrent() });
+  const worldPanel = new WorldPanel({ contactsStore, personaStore, getSessionId: () => chatStore.getCurrent() });
   const scriptPanel = new ScriptPanel({ store: scriptStore, personaStore, presetStore, appBridge: window.appBridge });
   presetPanel.setRuntimeContext({
     chatStore,
@@ -1249,6 +1249,8 @@ const initApp = async () => {
     personaStore,
     configPanel,
     getUiMode: () => (uiMode === 'rp' ? 'rp' : 'chat'),
+    // 请求预览（previewOnly 构建不发送）：按指定场景（聊天/创意写作）预览最终送模型的 prompt
+    showScenePromptPreview: mode => showDraftPromptPreview({ previewUiMode: mode === 'rp' ? 'rp' : 'chat' }),
   });
   sessionConfigPanel.setRuntimeContext({
     chatStore,
@@ -15178,11 +15180,12 @@ Phase G（Frame 36）：循环衔接
     notifyError: (message) => window.toastr?.error?.(message),
     logger,
   });
-  const showDraftPromptPreview = async () => {
+  const showDraftPromptPreview = async ({ previewUiMode = '' } = {}) => {
     try {
       const request = await handleSend(null, {
         previewOnly: true,
         ignorePending: true,
+        previewUiMode,
       });
       if (!request || !Array.isArray(request.messages) || !request.messages.length) {
         window.toastr?.warning?.('暂无可预览的 Prompt');
@@ -24901,6 +24904,7 @@ Phase G（Frame 36）：循环衔接
       skipTemplate,
       skipScripts,
       previewOnly,
+      previewUiMode,
       suppressAssistantDom,
       assistantStreamFactory,
       continueTarget,
@@ -24910,7 +24914,11 @@ Phase G（Frame 36）：循环衔接
       includeAttachments,
     } = normalizeHandleSendOptions(options);
     const excludeMessageIds = new Set(excludedMessageIds);
-    const rpUiMode = uiMode === 'rp';
+    // 请求预览可指定场景（仅 previewOnly 生效）：聊天/创意写作的格式注入差异由 rpUiMode 派生
+    const sceneUiMode = (previewOnly && previewUiMode) ? previewUiMode : uiMode;
+    const rpUiMode = sceneUiMode === 'rp';
+    // 跨场景预览（如在创意会话里预览聊天形态）：当前会话历史/摘要属于另一场景，不携带以免误导
+    const previewSceneMismatch = Boolean(previewOnly) && sceneUiMode !== uiMode;
     const attachmentQueue = includeAttachments ? composerAttachments.slice() : [];
     const resendAttachmentParts = rawResendAttachmentParts.filter(part => {
       if (!part || typeof part !== 'object') return false;
@@ -25030,7 +25038,7 @@ Phase G（Frame 36）：循环衔接
       message => message?.type === 'image' && message?.meta?.source === 'generated-image',
     );
     const contact = contactsStore.getContact(sessionId);
-    const isRpMode = uiMode === 'rp';
+    const isRpMode = sceneUiMode === 'rp';
     const sharedVariables = isSharedVariableSession(sessionId);
     const activeUser = getActiveUserProfile();
     const activePersona = getEffectivePersona(sessionId);
@@ -26083,7 +26091,7 @@ Phase G（Frame 36）：循环衔接
     });
     const buildHistoryForLLM = createLlmHistoryBuilder({
       sessionId,
-      getMessages: sid => chatStore.getMessages(sid),
+      getMessages: sid => (previewSceneMismatch ? [] : chatStore.getMessages(sid)),
       getSettings: () => appSettings.get(),
       getOpenAIPreset: getOpenAIPreset,
       getReasoningPreset,
@@ -26091,8 +26099,8 @@ Phase G（Frame 36）：循环衔接
       isRpMode,
       isGroupChat,
       rpUiMode,
-      getCompactedSummary: sid => chatStore.getCompactedSummary?.(sid),
-      getSummaries: sid => chatStore.getSummaries?.(sid),
+      getCompactedSummary: sid => (previewSceneMismatch ? null : chatStore.getCompactedSummary?.(sid)),
+      getSummaries: sid => (previewSceneMismatch ? [] : chatStore.getSummaries?.(sid)),
       isAttachmentExpired,
       resolvePlainText: (message, options) => resolveMessagePlainText(message, options),
       resolveStickerKeyword: resolveStickerKeywordForMessage,

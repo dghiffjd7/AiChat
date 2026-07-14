@@ -84,7 +84,7 @@ const AGENT_CARD_DEFINITIONS = Object.freeze([
     runtimeKinds: ['creative_execution_lane'],
     promptRefs: [],
     resourceRefs: [],
-    settingRefs: ['RP 创作泳道', '异步任务显示'],
+    settingRefs: ['创意写作泳道', '异步任务显示'],
   },
   {
     id: 'summary_agent',

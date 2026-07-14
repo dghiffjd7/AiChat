@@ -287,8 +287,7 @@ export class ExtensionsPanel {
           <div class="extensions-heading">
             <span class="extensions-title-icon">${icons.puzzle}</span>
             <div style="min-width:0;">
-              <h2 class="extensions-title">扩展</h2>
-              <div class="extensions-subtitle">正规表达式、脚本、插件统一管理。</div>
+              <h2 class="extensions-title has-help" data-help="正规表达式、脚本、插件统一管理。">扩展</h2>
             </div>
           </div>
           <button id="extensions-close" class="extensions-close" type="button" aria-label="关闭扩展">${icons.close}</button>

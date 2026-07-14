@@ -87,7 +87,7 @@ export const createQuickActionRuntime = ({
     },
     sticker: async () => {
       if (!isStickerAllowed?.()) {
-        notifyInfo?.('RP界面不支持贴图');
+        notifyInfo?.('创意写作界面不支持贴图');
         return;
       }
       setStickerPanelOpen?.(true);
