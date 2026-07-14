@@ -10,6 +10,7 @@ import {
     extractOpenAICompatibleStreamParts,
 } from '../native-reasoning.js';
 import { prepareTransportRequest } from '../transport.js';
+import { reportProviderUsage } from '../provider-usage.js';
 
 const DEFAULT_IMAGE_MIME = 'image/png';
 
@@ -501,6 +502,13 @@ export class CustomProvider {
             requestId: request.requestId,
         });
 
+        reportProviderUsage(options, {
+            body: data,
+            model: this.model,
+            provider: this.provider,
+            finishReason: pickOpenAICompatibleFinishReason(data),
+        });
+
         if (data.choices && data.choices[0]) {
             return data.choices[0].message?.content || data.choices[0].text || '';
         } else if (data.response) {
@@ -549,8 +557,13 @@ export class CustomProvider {
             let reasoningChars = 0;
             let toolDeltaCount = 0;
             let finishReason = '';
+            let lastUsage = null;
+            const reportUsage = () => reportProviderUsage(options, {
+                body: lastUsage, model: this.model, provider: this.provider, finishReason,
+            });
             const emitParsed = function* (data) {
                 notifyProviderToolCallDelta(data);
+                if (data?.usage && typeof data.usage === 'object') lastUsage = data;
                 if (hasOpenAICompatibleToolDelta(data)) toolDeltaCount += 1;
                 const nextFinishReason = pickOpenAICompatibleFinishReason(data);
                 if (nextFinishReason) finishReason = nextFinishReason;
@@ -605,6 +618,7 @@ export class CustomProvider {
                             for (const data of parsed.events) yield* emitParsed(data);
                             if (parsed.done) {
                                 throwIfEmptyStream();
+                                reportUsage();
                                 return;
                             }
                         }
@@ -630,6 +644,7 @@ export class CustomProvider {
                         const parsed = parseSSEBuffer(sseBuffer, { final: true });
                         for (const data of parsed.events) yield* emitParsed(data);
                         throwIfEmptyStream();
+                        reportUsage();
                         return;
                     }
 
@@ -670,8 +685,10 @@ export class CustomProvider {
             let reasoningChars = 0;
             let toolDeltaCount = 0;
             let finishReason = '';
+            let lastUsage = null;
             for await (const data of handleSSE(response)) {
                 notifyProviderToolCallDelta(data);
+                if (data?.usage && typeof data.usage === 'object') lastUsage = data;
                 if (hasOpenAICompatibleToolDelta(data)) toolDeltaCount += 1;
                 const nextFinishReason = pickOpenAICompatibleFinishReason(data);
                 if (nextFinishReason) finishReason = nextFinishReason;
@@ -694,6 +711,9 @@ export class CustomProvider {
                     model: this.model,
                 });
             }
+            reportProviderUsage(options, {
+                body: lastUsage, model: this.model, provider: this.provider, finishReason,
+            });
         } finally {
             cleanup();
         }

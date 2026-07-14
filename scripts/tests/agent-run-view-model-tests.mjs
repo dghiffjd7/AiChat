@@ -5,8 +5,34 @@ import {
   buildAgentRunDiagnosticsMeta,
   buildAgentRunListView,
   buildAgentRunSummary,
+  buildAgentUsageProfile,
   formatAgentRunDiagnostics,
 } from '../../src/scripts/agent/agent-run-view-model.js';
+
+{
+  // Phase B 只读用量画像：recorded 求和求均，unknown 只计数不参与 token 统计
+  const profile = buildAgentUsageProfile([
+    { id: 'r1', kind: 'maid_assistant', usage: { status: 'recorded', promptTokens: 1000, completionTokens: 200, totalTokens: 1200, latencyMs: 3000, toolCallCount: 2, degraded: false, aborted: false } },
+    { id: 'r2', kind: 'maid_assistant', usage: { status: 'recorded', promptTokens: 500, completionTokens: 100, totalTokens: 600, latencyMs: 1000, toolCallCount: 1, degraded: true, aborted: false } },
+    { id: 'r3', kind: 'maid_assistant', usage: { status: 'unknown', latencyMs: 800, toolCallCount: 1, aborted: true } },
+    { id: 'r4', kind: 'memory_update', usage: { status: 'recorded', promptTokens: 300, completionTokens: 50, totalTokens: 350, latencyMs: 600, toolCallCount: 0 } },
+  ]);
+  assert.equal(profile.overall.runCount, 4);
+  assert.equal(profile.overall.recordedCount, 3);
+  assert.equal(profile.overall.unknownCount, 1);
+  assert.equal(profile.overall.totalTokens, 2150); // 1200+600+350，unknown 的 r3 不计
+  assert.equal(profile.overall.degradedCount, 1);
+  assert.equal(profile.overall.abortedCount, 1);
+  assert.equal(profile.overall.avgTotalTokens, Math.round(2150 / 3));
+  const maid = profile.byKind.find(b => b.kind === 'maid_assistant');
+  assert.equal(maid.runCount, 3);
+  assert.equal(maid.recordedCount, 2);
+  assert.equal(maid.unknownCount, 1);
+  assert.equal(maid.totalTokens, 1800);
+  assert.equal(maid.toolCalls, 4);
+  assert.equal(maid.avgLatencyMs, Math.round((3000 + 1000 + 800) / 3));
+  console.log('ok - buildAgentUsageProfile aggregates recorded usage per kind and excludes unknown tokens');
+}
 
 const runs = [
   {

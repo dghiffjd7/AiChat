@@ -1,4 +1,4 @@
-import { buildAgentRunListView } from '../agent/agent-run-view-model.js';
+import { buildAgentRunListView, buildAgentUsageProfile } from '../agent/agent-run-view-model.js';
 import {
   AGENT_PERMISSION_LAYERS,
   normalizeAgentPermissionRule,
@@ -671,6 +671,10 @@ export const buildAgentCenterView = ({
       meta: runView?.meta || {},
       filters: runView?.filters || {},
       runs: Array.isArray(runView?.runs) ? runView.runs : [],
+      // 原始 runs 未直传时退回已建列表视图的 runs（summary 已带 usage/kind），只读画像用当前可见集
+      usageProfile: buildAgentUsageProfile(
+        Array.isArray(agentRuns) && agentRuns.length ? agentRuns : (Array.isArray(runView?.runs) ? runView.runs : []),
+      ),
     },
     agents: agentCards,
     agentCards,

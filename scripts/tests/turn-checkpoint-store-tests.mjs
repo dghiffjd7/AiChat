@@ -35,6 +35,9 @@ const {
   TurnCheckpointStore,
   buildTurnCheckpointSessionSuffix,
   collectCheckpointSnapshotIds,
+  collectCheckpointVariableSnapshotIds,
+  normalizeCheckpointBranch,
+  normalizeArchivePointer,
 } = await import('../../src/scripts/storage/turn-checkpoint-store.js');
 const { MemorySnapshotStore } = await import('../../src/scripts/storage/memory-snapshot-store.js');
 globalThis.setTimeout = originalSetTimeout;
@@ -378,6 +381,37 @@ test('writeLocalJson should skip oversized data and clean up old entry', async (
     const state = await store.getSessionState(sessionId);
     assert.ok(state.checkpoints['asst-5'], 'checkpoint should still be in memory cache');
   });
+});
+
+test('normalizeCheckpointBranch carries variable snapshot fields and stays backward compatible', () => {
+  const withVars = normalizeCheckpointBranch({
+    swipeIndex: 0, variableSnapshotId: 'var_abc', variableUpdateEntry: { changed: { hp: 5 } },
+    memorySnapshotId: 'mem_x',
+  });
+  assert.equal(withVars.variableSnapshotId, 'var_abc');
+  assert.deepEqual(withVars.variableUpdateEntry, { changed: { hp: 5 } });
+  assert.equal(withVars.memorySnapshotId, 'mem_x');
+  const legacy = normalizeCheckpointBranch({ swipeIndex: 1, memorySnapshotId: 'mem_y' });
+  assert.equal(legacy.variableSnapshotId, '');
+  assert.equal(legacy.variableUpdateEntry, null);
+});
+
+test('normalizeArchivePointer carries variableSnapshotId (archive variable restore)', () => {
+  const p = normalizeArchivePointer({ archiveId: 'a1', memorySnapshotId: 'mem_1', variableSnapshotId: 'var_9' });
+  assert.equal(p.variableSnapshotId, 'var_9');
+  assert.equal(p.memorySnapshotId, 'mem_1');
+  assert.equal(normalizeArchivePointer({ archiveId: 'a2' }).variableSnapshotId, ''); // 旧归档向后兼容
+});
+
+test('collectCheckpointVariableSnapshotIds gathers from branches and archive pointers', () => {
+  const state = {
+    checkpoints: {
+      m1: { branches: [{ variableSnapshotId: 'var_1', memorySnapshotId: 'mem_1' }, { variableSnapshotId: 'var_2' }, { variableSnapshotId: '' }] },
+    },
+    archivePointers: { a1: { variableSnapshotId: 'var_3' } },
+  };
+  assert.deepEqual(collectCheckpointVariableSnapshotIds(state).sort(), ['var_1', 'var_2', 'var_3']);
+  assert.deepEqual(collectCheckpointSnapshotIds(state).sort(), ['mem_1']);
 });
 
 let failed = 0;

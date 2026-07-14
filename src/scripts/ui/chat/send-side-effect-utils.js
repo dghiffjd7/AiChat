@@ -564,6 +564,7 @@ export const finalizeLegacyStreamAssistantResponse = async (
     summaryEnabled = false,
     extractSummaryBlock = null,
     addSummary = null,
+    appBridge = null,
     buildChatModeAssistantMessageParts = null,
     buildChatModeAssistantMessage = null,
     applyChatModeAssistantRegex = null,
@@ -625,6 +626,7 @@ export const finalizeLegacyStreamAssistantResponse = async (
         avatar,
         formatTime,
         parseSpecialMessage,
+        usage: appBridge?.consumeLastGenerationUsage?.() ?? null,
       })
     : {
         role: 'assistant',
@@ -864,6 +866,7 @@ export const finalizeCreativeStreamAssistantResponse = async (
         isGroupChat,
         captureAssistantMemoryState,
         attachAssistantMemoryStateToMeta,
+        usage: appBridge?.consumeLastGenerationUsage?.() ?? null,
       })
     : {
         role: 'assistant',
@@ -991,6 +994,7 @@ export const finalizeBufferedCreativeAssistantResponse = async (
         autoImagePromptPlaceholderOptions,
         captureAssistantMemoryState,
         attachAssistantMemoryStateToMeta,
+        usage: appBridge?.consumeLastGenerationUsage?.() ?? null,
       })
     : {
         role: 'assistant',
@@ -1067,6 +1071,7 @@ export const finalizeBufferedLegacyAssistantResponse = (
   {
     addSummary = null,
     requestSummaryCompaction = null,
+    appBridge = null,
     buildChatModeAssistantMessage = null,
     applyChatModeAssistantRegex = null,
     parseSpecialMessage = null,
@@ -1101,6 +1106,7 @@ export const finalizeBufferedLegacyAssistantResponse = (
         formatTime,
         applyChatModeAssistantRegex,
         parseSpecialMessage,
+        usage: appBridge?.consumeLastGenerationUsage?.() ?? null,
       })
     : {
         role: 'assistant',
@@ -1293,6 +1299,7 @@ export const runLegacyStreamAssistantResponseFlow = async (
     summaryEnabled = false,
     extractSummaryBlock = null,
     addSummary = null,
+    appBridge = null,
     buildChatModeAssistantMessageParts = null,
     buildChatModeAssistantMessage = null,
     applyChatModeAssistantRegex = null,
@@ -1345,6 +1352,7 @@ export const runLegacyStreamAssistantResponseFlow = async (
     summaryEnabled,
     extractSummaryBlock,
     addSummary,
+    appBridge,
     buildChatModeAssistantMessageParts,
     buildChatModeAssistantMessage,
     applyChatModeAssistantRegex,
@@ -1511,6 +1519,7 @@ export const runBufferedAssistantResponseFlow = async (
   }, {
     addSummary,
     requestSummaryCompaction,
+    appBridge,
     buildChatModeAssistantMessage,
     applyChatModeAssistantRegex,
     parseSpecialMessage,

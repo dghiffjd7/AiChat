@@ -1,0 +1,1 @@
+(async()=>{const s=window.appBridge.debugUiRegistry.stores; const ts=s?.themeStore; let list=[]; try{ list=(await (ts?.listThemes?.()||[]))||[]; }catch(e){} return { hasProbe: JSON.stringify(list).includes('__probe_purple__'), themeMode: document.body.dataset.themeMode }; })()

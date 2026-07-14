@@ -72,6 +72,41 @@ const deepMerge = (base, patch) => {
   return next;
 };
 
+// 解析颜色为 [r,g,b]（0-255），支持 #rgb/#rrggbb/#rrggbbaa 与 rgb()/rgba()；失败返回 null。
+const parseRgb = (value) => {
+  const s = String(value || '').trim();
+  if (!s) return null;
+  if (s[0] === '#') {
+    let hex = s.slice(1);
+    if (hex.length === 3 || hex.length === 4) hex = hex.split('').map((c) => c + c).join('');
+    if (hex.length !== 6 && hex.length !== 8) return null;
+    const r = parseInt(hex.slice(0, 2), 16);
+    const g = parseInt(hex.slice(2, 4), 16);
+    const b = parseInt(hex.slice(4, 6), 16);
+    return [r, g, b].every(Number.isFinite) ? [r, g, b] : null;
+  }
+  const m = s.match(/rgba?\(\s*([\d.]+)[\s,]+([\d.]+)[\s,]+([\d.]+)/i);
+  if (m) {
+    const rgb = [Number(m[1]), Number(m[2]), Number(m[3])];
+    return rgb.every(Number.isFinite) ? rgb : null;
+  }
+  return null;
+};
+
+// 表面色是否偏暗（感知亮度 < 0.5，忽略 alpha）；无法解析返回 null。
+const surfaceIsDark = (value) => {
+  const rgb = parseRgb(value);
+  if (!rgb) return null;
+  const [r, g, b] = rgb;
+  return (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255 < 0.5;
+};
+
+// 从 surface token 取一个代表色（优先 page，其次 panel/card）判断明暗。
+const resolveTokensDark = (tokens) => {
+  const surface = isObj(tokens) && isObj(tokens.surface) ? tokens.surface : {};
+  return surfaceIsDark(surface.page || surface.panel || surface.card);
+};
+
 const DEFAULT_TOKENS = Object.freeze({
   surface: {
     page: '#f4f5f6',
@@ -216,20 +251,31 @@ const BUILTIN_THEMES = Object.freeze([
 ]);
 
 const BUILTIN_ID_SET = new Set(BUILTIN_THEMES.map((item) => item.id));
+const BUILTIN_DARK = BUILTIN_THEMES.find((item) => item.mode === 'dark') || BUILTIN_THEMES[0];
 
 const genThemeId = () => `theme-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
 
 const normalizeThemePreset = (input = {}, fallback = null) => {
-  const base = fallback ? clone(fallback) : clone(BUILTIN_THEMES[0]);
   const raw = isObj(input) ? input : {};
-  const mode = String(raw.mode || base.mode || 'light').trim().toLowerCase() === 'dark' ? 'dark' : 'light';
+  // 从 raw 提供的 surface 色推导初步明暗，用于选 merge base（拿不到才退回作者标注的 mode）。
+  const declaredDark = String(raw.mode || '').trim().toLowerCase() === 'dark';
+  const rawDark = resolveTokensDark(raw.tokens);
+  const preliminaryDark = rawDark === null ? declaredDark : rawDark;
+  // 深色主题以 classic-dark 为 merge 底：修「自定义深色主题漏给 text/border 等 token 时继承浅色默认→深底深字」。
+  const base = fallback
+    ? clone(fallback)
+    : clone(preliminaryDark ? BUILTIN_DARK : BUILTIN_THEMES[0]);
+  const tokens = deepMerge(base.tokens || DEFAULT_TOKENS, raw.tokens || {});
+  // 最终 mode 从合并后的实际 surface 亮度推导，而非盲信作者 mode 字段：根除 mode 与色调不同步导致的深浅混。
+  const mergedDark = resolveTokensDark(tokens);
+  const mode = (mergedDark === null ? preliminaryDark : mergedDark) ? 'dark' : 'light';
   const next = {
     id: String(raw.id || base.id || genThemeId()).trim() || genThemeId(),
     name: String(raw.name || base.name || 'Untitled Theme').trim() || 'Untitled Theme',
     version: 1,
     source: String(raw.source || base.source || 'chat-app').trim() || 'chat-app',
     mode,
-    tokens: deepMerge(base.tokens || DEFAULT_TOKENS, raw.tokens || {}),
+    tokens,
     appearance: normalizeAppearance(raw.appearance, base.appearance || DEFAULT_APPEARANCE),
     meta: {
       builtin: raw?.meta?.builtin === true || base?.meta?.builtin === true,

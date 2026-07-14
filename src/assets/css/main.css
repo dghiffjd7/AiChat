@@ -6362,3 +6362,62 @@ body.is-android .bottom-nav {
     font-size: 36px !important;
   }
 }
+
+/* 渐进式说明浮层（data-help / help-tooltip.js）：半透明、主题自适应、按需浮现 */
+.app-help-tip {
+  position: fixed;
+  left: 0;
+  top: 0;
+  z-index: 100000;
+  max-width: min(280px, calc(100vw - 24px));
+  padding: 8px 11px;
+  border-radius: var(--app-radius-md, 10px);
+  border: 1px solid var(--app-border-default, rgba(120, 120, 120, 0.28));
+  background: color-mix(in srgb, var(--app-surface-panel, #2a2a2e) 92%, transparent);
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+  box-shadow: var(--app-shadow-md, 0 6px 20px rgba(0, 0, 0, 0.24));
+  color: var(--app-text-primary, #f2f2f2);
+  font-size: 12.5px;
+  line-height: 1.5;
+  pointer-events: none;
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(-2px);
+  transition: opacity 0.14s ease, transform 0.14s ease, visibility 0.14s;
+}
+
+.app-help-tip.is-visible {
+  opacity: 1;
+  visibility: visible;
+  transform: translateY(0);
+}
+
+.app-help-tip__title {
+  font-weight: 600;
+  font-size: 13px;
+  margin-bottom: 2px;
+  color: var(--app-text-primary, #f2f2f2);
+}
+
+.app-help-tip__body {
+  color: var(--app-text-secondary, #cfcfcf);
+  white-space: pre-line;
+  word-break: break-word;
+}
+
+/* 有说明的标题/标签的可发现性：持久淡虚线下划（跨端可见），hover 时加强 */
+.has-help {
+  text-decoration-line: underline;
+  text-decoration-style: dotted;
+  text-underline-offset: 3px;
+  text-decoration-color: color-mix(in srgb, var(--app-text-muted, #999) 55%, transparent);
+  text-decoration-thickness: from-font;
+  cursor: help;
+}
+
+@media (hover: hover) {
+  .has-help:hover {
+    text-decoration-color: var(--app-text-muted, rgba(150, 150, 150, 0.8));
+  }
+}

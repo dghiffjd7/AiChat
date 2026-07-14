@@ -438,7 +438,7 @@ body[data-theme-mode='dark'] .moment-comment-input::placeholder {
 }
 
 body[data-theme-mode='dark'] .bottom-nav {
-  background: rgba(26, 30, 36, 0.96) !important;
+  background: var(--app-surface-topbar) !important;
   border-top-color: var(--app-border-subtle) !important;
   box-shadow: 0 -6px 18px rgba(0, 0, 0, 0.18) !important;
 }
@@ -4625,7 +4625,7 @@ body[data-theme-mode='dark'] .world-block-dot {
 }
 
 body[data-theme-mode='dark'] .world-block-dot.active {
-  background: #79c0ff !important;
+  background: var(--app-accent-primary) !important;
 }
 
 body[data-theme-mode='dark'] .world-content-title {

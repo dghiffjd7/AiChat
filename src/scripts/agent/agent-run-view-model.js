@@ -282,6 +282,7 @@ export const buildAgentRunSummary = (run = {}, {
     goal: trim(run.metadata?.goal),
     continuable: run.metadata?.continuable === true,
     failureCode: trim(run.metadata?.failureCode),
+    usage: isPlainObject(run.usage) ? run.usage : null,
   };
 };
 
@@ -403,6 +404,49 @@ export const buildAgentRunCacheStats = ({
     )).length,
     oldestUpdatedAt: updatedTimes[0] || 0,
     newestUpdatedAt: updatedTimes[updatedTimes.length - 1] || 0,
+  };
+};
+
+// Phase B 只读用量画像：按任务类型(kind)聚合 AgentRun.usage，只呈现真实计量，不做任何自动决策。
+// recorded 与 unknown 分别计数；token/latency 只对 recorded 的 run 求和求均，unknown 不参与，绝不估算。
+export const buildAgentUsageProfile = (runs = []) => {
+  const list = normalizeRuns(runs);
+  const byKind = {};
+  const overall = { runCount: 0, recordedCount: 0, unknownCount: 0, degradedCount: 0, abortedCount: 0, promptTokens: 0, completionTokens: 0, totalTokens: 0, latencyMsSum: 0, toolCalls: 0 };
+  list.forEach((run) => {
+    const usage = isPlainObject(run.usage) ? run.usage : {};
+    const kind = trim(run.kind, 'task');
+    if (!byKind[kind]) {
+      byKind[kind] = { kind, runCount: 0, recordedCount: 0, unknownCount: 0, degradedCount: 0, abortedCount: 0, promptTokens: 0, completionTokens: 0, totalTokens: 0, latencyMsSum: 0, toolCalls: 0 };
+    }
+    const bucket = byKind[kind];
+    const recorded = trim(usage.status) === 'recorded';
+    const bump = (target) => {
+      target.runCount += 1;
+      if (recorded) {
+        target.recordedCount += 1;
+        target.promptTokens += toFiniteNumber(usage.promptTokens, 0);
+        target.completionTokens += toFiniteNumber(usage.completionTokens, 0);
+        target.totalTokens += toFiniteNumber(usage.totalTokens, 0);
+      } else {
+        target.unknownCount += 1;
+      }
+      if (Number.isFinite(Number(usage.latencyMs))) target.latencyMsSum += toFiniteNumber(usage.latencyMs, 0);
+      target.toolCalls += toFiniteNumber(usage.toolCallCount, 0);
+      if (usage.degraded === true) target.degradedCount += 1;
+      if (usage.aborted === true) target.abortedCount += 1;
+    };
+    bump(bucket);
+    bump(overall);
+  });
+  const finalize = (b) => ({
+    ...b,
+    avgLatencyMs: b.runCount ? Math.round(b.latencyMsSum / b.runCount) : null,
+    avgTotalTokens: b.recordedCount ? Math.round(b.totalTokens / b.recordedCount) : null,
+  });
+  return {
+    overall: finalize(overall),
+    byKind: Object.values(byKind).map(finalize).sort((a, b) => b.runCount - a.runCount),
   };
 };
 

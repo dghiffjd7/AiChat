@@ -1347,6 +1347,7 @@ export const dispatchAfterReceiveEffects = ({
   logger = console,
   applyUpdateVariable,
   handleVariableRules,
+  onVariablesSettled = null,
   useGlobalVariables = false,
   recordTraceEvent = null,
   chatFormatGuardian = null,
@@ -1417,6 +1418,10 @@ export const dispatchAfterReceiveEffects = ({
     else logger?.warn?.('[update-variable] apply function unavailable');
   } catch (err) {
     logger?.warn?.('UpdateVariable parse failed', err);
+  }
+  // C 计划 M1：UpdateVariable 应用后变量已就位——把本楼层最终变量态快照挂到该消息 meta（严格楼层绑定）。
+  if (typeof onVariablesSettled === 'function') {
+    try { onVariablesSettled(message, sessionId); } catch (err) { logger?.warn?.('variable snapshot capture failed', err); }
   }
   if (typeof handleVariableRules === 'function') {
     catchAsync(

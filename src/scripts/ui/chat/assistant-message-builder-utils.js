@@ -5,6 +5,14 @@ import {
   stripAutoImagePromptTags,
 } from './auto-image-prompt-utils.js';
 import { hideCreativeContentTagsForDisplay } from './creative-content-display-utils.js';
+import { normalizeAgentUsage } from '../../agent/agent-events.js';
+
+// Phase B 主任务计量：把本次回复的真实 provider usage 归一化后挂到消息 meta.usage。
+// 复用 AgentRun 的 usage 契约（token 不可得 → status:unknown，不估算）；主任务无工具调用故 toolCallCount 恒 0。
+export const buildAssistantReplyUsage = (usage) => {
+  if (!usage || typeof usage !== 'object') return null;
+  return normalizeAgentUsage({ ...usage, toolCallCount: 0 });
+};
 
 export const applyChatModeAssistantRegex = (
   text,
@@ -60,6 +68,7 @@ export const buildAssistantMessageFromText = async (
     logger = null,
     templateContext = null,
     templateInjectionContext = null,
+    usage = null,
   } = {},
 ) => {
   const sessionKey = String(sessionId || '').trim();
@@ -145,6 +154,8 @@ export const buildAssistantMessageFromText = async (
     meta.reasoning = reasoningParsed.reasoning;
     meta.reasoningDisplay = reasoningParsed.reasoningDisplay;
   }
+  const replyUsage = buildAssistantReplyUsage(usage);
+  if (replyUsage) meta.usage = replyUsage;
 
   let resolvedAvatar = '';
   if (isGroupSession && resolvedSpeakerName && typeof resolveGroupSpeakerAvatar === 'function') {
@@ -242,6 +253,7 @@ export const buildCreativeAssistantMessageFromParts = async ({
   isGroupChat = false,
   captureAssistantMemoryState = null,
   attachAssistantMemoryStateToMeta = meta => meta,
+  usage = null,
 } = {}) => {
   const nextParts = parts && typeof parts === 'object' ? parts : {};
   const resolvedReasoning = nextParts.resolvedReasoning || {};
@@ -270,6 +282,8 @@ export const buildCreativeAssistantMessageFromParts = async ({
     if (resolvedReasoning.reasoningLabel) meta.reasoningLabel = resolvedReasoning.reasoningLabel;
     if (resolvedReasoning.reasoningSource) meta.reasoningSource = resolvedReasoning.reasoningSource;
   }
+  const replyUsage = buildAssistantReplyUsage(usage);
+  if (replyUsage) meta.usage = replyUsage;
   const resolvedTime = time || (typeof formatTime === 'function' ? formatTime() : '');
 
   const message = {
@@ -332,6 +346,7 @@ export const buildChatModeAssistantMessageFromParts = ({
   time = '',
   formatTime = null,
   parseSpecialMessage = value => ({ type: 'text', content: String(value ?? ''), meta: {} }),
+  usage = null,
 } = {}) => {
   const nextParts = parts && typeof parts === 'object' ? parts : {};
   const resolvedReasoning = nextParts.resolvedReasoning || {};
@@ -343,6 +358,8 @@ export const buildChatModeAssistantMessageFromParts = ({
     if (resolvedReasoning.reasoningLabel) meta.reasoningLabel = resolvedReasoning.reasoningLabel;
     if (resolvedReasoning.reasoningSource) meta.reasoningSource = resolvedReasoning.reasoningSource;
   }
+  const replyUsage = buildAssistantReplyUsage(usage);
+  if (replyUsage) meta.usage = replyUsage;
   const message = {
     role: 'assistant',
     name: '助手',

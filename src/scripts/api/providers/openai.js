@@ -9,6 +9,7 @@ import {
   extractOpenAICompatibleStreamParts,
 } from '../native-reasoning.js';
 import { prepareTransportRequest } from '../transport.js';
+import { reportProviderUsage } from '../provider-usage.js';
 import { emitDebugLog } from '../../utils/debug-log.js';
 import {
   ensureTailAssistantPrefillUserTurn,
@@ -630,6 +631,13 @@ export class OpenAIProvider {
       usageBody: data,
     });
 
+    reportProviderUsage(options, {
+      body: data,
+      model: this.model,
+      provider: this.provider,
+      finishReason: pickOpenAICompatibleFinishReason(data),
+    });
+
     return content;
   }
 
@@ -795,6 +803,12 @@ export class OpenAIProvider {
               deltaCount,
               usageBody: lastUsage,
             });
+            reportProviderUsage(options, {
+              body: lastUsage,
+              model: this.model,
+              provider: this.provider,
+              finishReason: lastFinishReason,
+            });
             return;
           }
 
@@ -897,6 +911,12 @@ export class OpenAIProvider {
         reasoningChars,
         deltaCount,
         usageBody: lastUsage,
+      });
+      reportProviderUsage(options, {
+        body: lastUsage,
+        model: this.model,
+        provider: this.provider,
+        finishReason: lastFinishReason,
       });
     } catch (error) {
       emitOpenAIResponseDiagnostics({

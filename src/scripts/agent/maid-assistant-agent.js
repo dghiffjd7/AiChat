@@ -93,6 +93,42 @@ const truncateForRun = (value = '', max = 200) => {
   return text.length > max ? `${text.slice(0, max)}...` : text;
 };
 
+// Phase B 真实计量：把一次 run 里所有 ReAct 模型调用的 provider usage 聚合成 AgentRun.usage。
+// token 类只在至少一次调用真实返回 token 时才 recorded 并求和，否则 status=unknown、token 为 null（不估算）。
+// latencyMs 求和为本轮模型总耗时；toolCallCount/aborted 是本地可得事实。
+export const aggregateMaidModelUsage = (entries = [], { toolCallCount = 0, aborted = false } = {}) => {
+  const list = (Array.isArray(entries) ? entries : []).filter(e => e && typeof e === 'object');
+  const finite = (value) => {
+    const n = Number(value);
+    return Number.isFinite(n) ? n : null;
+  };
+  const hasTokens = list.some(e => finite(e.promptTokens) != null || finite(e.completionTokens) != null || finite(e.totalTokens) != null);
+  const sum = (key) => list.reduce((acc, e) => {
+    const v = finite(e[key]);
+    return v != null ? acc + v : acc;
+  }, 0);
+  const lastWith = (key) => {
+    for (let i = list.length - 1; i >= 0; i -= 1) {
+      if (trim(list[i][key])) return trim(list[i][key]);
+    }
+    return '';
+  };
+  return {
+    status: hasTokens ? 'recorded' : 'unknown',
+    provider: lastWith('provider'),
+    model: lastWith('model'),
+    promptTokens: hasTokens ? sum('promptTokens') : null,
+    completionTokens: hasTokens ? sum('completionTokens') : null,
+    // total = prompt 和 + completion 和，避免个别轮缺 total 字段导致与分项不自洽
+    totalTokens: hasTokens ? sum('promptTokens') + sum('completionTokens') : null,
+    latencyMs: list.length ? sum('latencyMs') : null,
+    toolCallCount: Math.max(0, Math.trunc(Number(toolCallCount)) || 0),
+    degraded: list.some(e => e.degraded === true),
+    aborted: aborted === true,
+    finishReason: lastWith('finishReason'),
+  };
+};
+
 const VALID_STEP_STATUSES = new Set(['succeeded', 'failed', 'skipped', 'cancelled']);
 
 const buildCapabilityPlanTrace = (plan = {}) => ({
@@ -152,19 +188,25 @@ const createMaidRunTracker = ({ agentTaskRuntime = null, input = '', context = {
     if (!run || !step?.id) return;
     agentTaskRuntime.finishStep(run.id, step.id, patch);
   };
-  const finish = (result = {}) => {
+  const finish = (result = {}, usage = null) => {
     if (!run) return;
     const ok = result?.ok === true;
+    const failureCode = ok ? '' : classifyMaidRunFailure(result);
+    const runUsage = aggregateMaidModelUsage(Array.isArray(usage) ? usage : [], {
+      toolCallCount: countArrayItems(result?.steps),
+      aborted: failureCode === 'user_aborted',
+    });
     agentTaskRuntime.finishRun(run.id, {
       status: ok ? 'succeeded' : 'failed',
       summary: truncateForRun(result?.message || result?.reason || (ok ? '女仆已完成。' : '女仆执行失败。')),
       errorMessage: ok ? '' : truncateForRun(result?.reason || result?.message || ''),
+      usage: runUsage,
       metadata: {
         goal: trim(input),
         maidStatus: trim(result?.status),
         responseType: trim(result?.responseType),
         reason: trim(result?.reason),
-        failureCode: ok ? '' : classifyMaidRunFailure(result),
+        failureCode,
         continuable: result?.continuable === true,
         continueHint: trim(result?.continueHint),
         stepCount: countArrayItems(result?.steps),
@@ -1697,9 +1739,13 @@ export const createMaidAssistantAgent = ({
         logger?.debug?.('maid capability request start skipped', error);
       }
     }
-    const routedContext = capabilityRequest?.id
-      ? { ...(isPlainObject(context) ? context : {}), capabilityRequestId: capabilityRequest.id }
-      : context;
+    // Phase B 计量：run 级 usage 收集器，经 context 穿透到 planner 的 chatWithFallback（按引用累加）。
+    const modelUsageEntries = [];
+    const routedContext = {
+      ...(isPlainObject(context) ? context : {}),
+      ...(capabilityRequest?.id ? { capabilityRequestId: capabilityRequest.id } : {}),
+      onModelUsage: (usage) => { if (usage && typeof usage === 'object') modelUsageEntries.push(usage); },
+    };
     const tracker = createMaidRunTracker({ agentTaskRuntime, input, context: routedContext });
     try {
       const result = await runPromptWithTracker(input, routedContext, tracker);
@@ -1712,7 +1758,7 @@ export const createMaidAssistantAgent = ({
         }
       }
       const finalResult = capabilityRouting ? { ...result, capabilityRouting } : result;
-      tracker.finish(finalResult);
+      tracker.finish(finalResult, modelUsageEntries);
       return finalResult;
     } catch (error) {
       if (capabilityRequest?.id && typeof capabilityRoutingRuntime?.finishRequest === 'function') {
@@ -1728,7 +1774,7 @@ export const createMaidAssistantAgent = ({
         status: 'failed',
         reason: error?.message || String(error || ''),
         message: error?.message || '女仆执行失败。',
-      });
+      }, modelUsageEntries);
       throw error;
     }
   };

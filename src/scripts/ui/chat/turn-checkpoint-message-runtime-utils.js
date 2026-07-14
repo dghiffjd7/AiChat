@@ -51,6 +51,10 @@ export const normalizeCheckpointSwipeState = (
   if (meta.memoryUpdateEntry && swipes[0]?.memoryUpdateEntry === undefined) {
     swipes[0].memoryUpdateEntry = cloneMemoryUpdateEntry(meta.memoryUpdateEntry);
   }
+  // C 计划 M1：变量快照 meta→swipes[0] 回填（与记忆平行）。
+  if (meta.variableSnapshot && !swipes[0]?.variableSnapshot) {
+    swipes[0].variableSnapshot = clonePlainObject(meta.variableSnapshot);
+  }
   const rawActive = Math.trunc(Number(meta.activeSwipe));
   const activeSwipeIndex = Number.isFinite(rawActive)
     ? Math.min(Math.max(0, rawActive), Math.max(0, swipes.length - 1))

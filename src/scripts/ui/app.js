@@ -59,6 +59,7 @@ import {
   createMaidModelBackedReActPlanner,
 } from '../agent/maid-model-planner.js';
 import { createMaidRuntimeConfigResolver } from '../agent/maid-runtime-config.js';
+import { createAgentRegistry, createSubAgentRegistryProvider } from '../agent/agent-registry.js';
 import { registerAppNavigationAgentTools } from '../agent/tools/app-navigation-tools.js';
 import { registerAppSessionAgentTools } from '../agent/tools/app-session-tools.js';
 import { registerAppContentAgentTools } from '../agent/tools/app-content-tools.js';
@@ -82,6 +83,7 @@ import { GroupStore } from '../storage/group-store.js';
 import { getImageGenerationParamsStore } from '../storage/image-generation-params-store.js';
 import { MemoryTableStore } from '../storage/memory-table-store.js';
 import { MemorySnapshotStore } from '../storage/memory-snapshot-store.js';
+import { VariableSnapshotStore } from '../storage/variable-snapshot-store.js';
 import { MemoryTemplateStore } from '../storage/memory-template-store.js';
 import { MomentSummaryStore } from '../storage/moment-summary-store.js';
 import { MomentsStore } from '../storage/moments-store.js';
@@ -89,7 +91,7 @@ import { PersonaArchiveStore } from '../storage/persona-archive-store.js';
 import { PersonaStore } from '../storage/persona-store.js';
 import { PluginStore } from '../storage/plugin-store.js';
 import { RpSessionStore } from '../storage/rp-session-store.js';
-import { TurnCheckpointStore, collectCheckpointSnapshotIds } from '../storage/turn-checkpoint-store.js';
+import { TurnCheckpointStore, collectCheckpointSnapshotIds, collectCheckpointVariableSnapshotIds } from '../storage/turn-checkpoint-store.js';
 import { UserStore } from '../storage/user-store.js';
 import { stickerPackStore } from '../storage/sticker-pack-store.js';
 import { normalizeScopeId } from '../storage/store-scope.js';
@@ -284,6 +286,7 @@ import {
 import { createChatEmitPendingCommitActions } from './chat/chat-emit-pending-commit-actions.js';
 import {
   applyChatModeAssistantRegex as applyChatModeAssistantRegexCore,
+  buildAssistantReplyUsage,
   buildAssistantMessageFromText as buildAssistantMessageFromTextCore,
   buildChatModeAssistantMessage as buildChatModeAssistantMessageCore,
   buildChatModeAssistantMessageFromParts as buildChatModeAssistantMessageFromPartsCore,
@@ -455,6 +458,12 @@ import {
   captureAssistantMemoryState as captureAssistantMemoryStateCore,
   persistSwipeBranchMemoryState as persistSwipeBranchMemoryStateCore,
 } from './chat/swipe-memory-state-utils.js';
+import {
+  applySwipeBranchVariableState as applySwipeBranchVariableStateCore,
+  attachAssistantVariableStateToMeta as attachAssistantVariableStateToMetaCore,
+  captureAssistantVariableState as captureAssistantVariableStateCore,
+  persistSwipeBranchVariableState as persistSwipeBranchVariableStateCore,
+} from './chat/swipe-variable-state-utils.js';
 import {
   SWIPE_REASONING_KEYS,
   applySwipeReasoningStateToMeta,
@@ -677,6 +686,7 @@ import { bindCustomSelectButton, createCustomSelectWrapper, refreshCustomSelectB
 import { PluginRuntime } from '../plugins/plugin-runtime.js';
 import { themeManager } from './theme-manager.js';
 import { getDefaultAppIcon } from '../utils/default-icon.js';
+import { initHelpTooltips } from './help-tooltip.js';
 
 let appRuntimeReady = false;
 
@@ -1158,6 +1168,7 @@ const initApp = async () => {
     window.appBridge.setContactProfileStore?.(contactProfileStore);
   } catch {}
   const memorySnapshotStore = new MemorySnapshotStore();
+  const variableSnapshotStore = new VariableSnapshotStore();
   registerRuntimeServiceBridgeContract(window.appBridge, {
     memorySnapshotStore,
   });
@@ -1286,6 +1297,7 @@ const initApp = async () => {
       contactProfileStore.setScope?.(initialScopeKey),
       memoryTemplateStore.setScope?.(initialScopeKey),
       memorySnapshotStore.setScope?.(initialScopeKey),
+      variableSnapshotStore.setScope?.(initialScopeKey),
       turnCheckpointStore.setScope?.(initialScopeKey),
     ]);
     const failed = results.filter(item => item?.status === 'rejected');
@@ -1908,6 +1920,7 @@ const initApp = async () => {
       contactProfileStore.setScope?.(nextKey),
       memoryTemplateStore.setScope?.(nextKey),
       memorySnapshotStore.setScope?.(nextKey),
+      variableSnapshotStore.setScope?.(nextKey),
       turnCheckpointStore.setScope?.(nextKey),
     ]);
     try {
@@ -2433,6 +2446,7 @@ const initApp = async () => {
       return buildAssistantMessageFromTextCore(content, {
         sessionId: sid,
         time: time || formatNowTime(),
+        usage: window.appBridge?.consumeLastGenerationUsage?.() ?? null,
         name,
         avatar,
         showName,
@@ -2790,7 +2804,14 @@ const initApp = async () => {
     if (!runtime?.configured || !runtime.client) {
       return { ok: false, reason: 'maid_api_not_configured', message: '女仆 API 未配置。' };
     }
-    const subAgents = maidSettingsStore.listSubAgents().filter(item => item.enabled !== false);
+    // Phase B：委派也从统一 Agent Registry 取（capabilityTags=skills，modelProfileRef=modelProfileId）。
+    const subAgents = agentRegistry.listEnabledAgents().map(cap => ({
+      id: cap.id,
+      name: cap.name,
+      skills: cap.capabilityTags,
+      modelProfileId: cap.modelProfileRef,
+      modelOverride: cap.modelOverride,
+    }));
     let sub = subAgentId ? subAgents.find(item => item.id === subAgentId) : null;
     if (!sub && !subAgentId && subAgents.length === 1) sub = subAgents[0];
     let client = runtime.client;
@@ -3084,6 +3105,11 @@ const initApp = async () => {
   });
   const maidSettingsStore = new MaidSettingsStore();
   await maidSettingsStore.load();
+  // Phase B：统一 Agent Registry，第一种来源 = 女仆 Sub-agent 配置（投影为统一 Agent capability）。
+  // planner prompt 与委派执行都从这里取，行为与直接读 store 一致；后续领域/用户/MCP Agent 复用同接口。
+  const agentRegistry = createAgentRegistry({
+    providers: [createSubAgentRegistryProvider(() => maidSettingsStore.listSubAgents())],
+  });
   const maidConversationStore = new MaidConversationStore();
   await maidConversationStore.load();
   const recordMaidDebugSnapshot = ({
@@ -3137,6 +3163,7 @@ const initApp = async () => {
     configManager: chatConfigManager,
     createClient: config => new LLMClient(config),
     isConfigReady: canInitClient,
+    getSubAgents: () => agentRegistry.listPromptShapes(),
     logger,
   });
   const maidCapabilityRoutingRuntime = createMaidCapabilityRoutingRuntime({
@@ -22112,6 +22139,7 @@ Phase G（Frame 36）：循环衔接
     registry.actions.openMaidCommandInput = () => openMaidCommandOrSettings();
     registry.stores.maidSelectionMode = maidSelectionMode;
     registry.stores.maidSettingsStore = maidSettingsStore;
+    registry.stores.agentRegistry = agentRegistry;
     registry.stores.capabilityRetrievalStore = capabilityRetrievalStore;
     registry.stores.maidCapabilityRoutingRuntime = maidCapabilityRoutingRuntime;
   });
@@ -22335,6 +22363,118 @@ Phase G（Frame 36）：循环衔接
       cloneEntry: cloneSwipeMemoryUpdateEntry,
     });
   };
+  // ── C 计划 M1：变量 swipe 联动（与上方记忆侧平行；不受记忆模式门控，按会话变量活动决定）──
+  const buildSessionVariableSnapshot = async (sessionId) => {
+    const sid = String(sessionId || '').trim();
+    if (!sid) return null;
+    const variables = chatStore.listVariables?.(sid) || {};
+    return { scope: 'session', variables: cloneSwipePlainObject(variables), capturedAt: Date.now() };
+  };
+  const applySessionVariableSnapshot = async (sessionId, snapshot) => {
+    const sid = String(sessionId || '').trim();
+    if (!sid || !snapshot || typeof snapshot !== 'object') return false;
+    const vars = (snapshot.variables && typeof snapshot.variables === 'object' && !Array.isArray(snapshot.variables)) ? snapshot.variables : {};
+    const ok = chatStore.replaceVariables?.(vars, sid);
+    if (ok) { try { window.dispatchEvent(new CustomEvent('variables-changed', { detail: { sessionId: sid } })); } catch {} }
+    return ok === true;
+  };
+  // 门控：会话当前有变量、或任一分支已存变量快照，才纳入变量 swipe 联动，避免打扰纯无变量会话。
+  const hasSessionVariableActivity = (sessionId, branches = []) => {
+    const sid = String(sessionId || '').trim();
+    if (!sid) return false;
+    if (Object.keys(chatStore.listVariables?.(sid) || {}).length > 0) return true;
+    return (Array.isArray(branches) ? branches : []).some(b => b && typeof b === 'object' && b.variableSnapshot);
+  };
+  const persistSwipeBranchVariableState = async (branches, index, sessionId) =>
+    persistSwipeBranchVariableStateCore({
+      branches, index, sessionId,
+      buildSnapshot: sid => buildSessionVariableSnapshot(sid),
+      cloneEntry: cloneSwipePlainObject,
+      getVariableUpdateEntry: () => null,
+    });
+  const applySwipeBranchVariableState = async (sessionId, branch) =>
+    applySwipeBranchVariableStateCore({
+      sessionId, branch,
+      applySnapshot: (sid, snapshot) => applySessionVariableSnapshot(sid, snapshot),
+      cloneEntry: cloneSwipePlainObject,
+      setVariableUpdateEntry: () => {},
+    });
+  const captureAssistantVariableState = async (sessionId) =>
+    captureAssistantVariableStateCore({
+      sessionId,
+      buildSnapshot: sid => buildSessionVariableSnapshot(sid),
+      cloneSnapshot: cloneSwipePlainObject,
+      cloneEntry: cloneSwipePlainObject,
+      getVariableUpdateEntry: () => null,
+    });
+  const attachAssistantVariableStateToMeta = (meta, variableState) =>
+    attachAssistantVariableStateToMetaCore({ meta, variableState, cloneSnapshot: cloneSwipePlainObject, cloneEntry: cloneSwipePlainObject });
+  // C 计划 M1：把「本楼层最终变量态」快照挂到该 assistant 消息 meta（+活动 swipe 分支），模式无关。
+  // 在 UpdateVariable 应用后调用（见 dispatchAfterReceiveEffects.onVariablesSettled）；delete/regenerate 时据此回滚到上一楼。
+  const captureVariableSnapshotToMessage = (sessionId, messageOrId) => {
+    const sid = String(sessionId || '').trim();
+    if (!sid) return false;
+    const message = typeof messageOrId === 'string' ? chatStore.findMessage(messageOrId, sid) : messageOrId;
+    const messageId = String(message?.id || '').trim();
+    if (!messageId || message?.role !== 'assistant') return false;
+    const variables = chatStore.listVariables?.(sid) || {};
+    const meta = message.meta && typeof message.meta === 'object' ? message.meta : {};
+    // 无变量活动的会话不写快照（除非已有），零打扰。
+    if (Object.keys(variables).length === 0 && !meta.variableSnapshot) return false;
+    const snapshot = { scope: 'session', variables: cloneSwipePlainObject(variables), capturedAt: Date.now() };
+    const nextMeta = { ...meta, variableSnapshot: snapshot };
+    if (Array.isArray(nextMeta.swipes) && nextMeta.swipes.length) {
+      const active = Math.min(Math.max(0, Number(nextMeta.activeSwipe || 0)), nextMeta.swipes.length - 1);
+      if (nextMeta.swipes[active] && typeof nextMeta.swipes[active] === 'object') {
+        nextMeta.swipes = nextMeta.swipes.map((b, i) => (i === active && b && typeof b === 'object'
+          ? { ...b, variableSnapshot: cloneSwipePlainObject(snapshot) } : b));
+      }
+    }
+    chatStore.updateMessage(messageId, { meta: nextMeta }, sid);
+    return true;
+  };
+  // 删除/重新生成最新楼后：把变量回滚到当前 tail assistant 楼层的变量快照（严格楼层绑定）。
+  const restoreVariablesForActiveThread = async (sessionId) => {
+    const sid = String(sessionId || '').trim();
+    if (!sid) return false;
+    const messages = chatStore.getMessages?.(sid) || [];
+    let tail = null;
+    for (let i = messages.length - 1; i >= 0; i -= 1) {
+      if (messages[i]?.role === 'assistant') { tail = messages[i]; break; }
+    }
+    if (!tail) return false;
+    const meta = tail.meta && typeof tail.meta === 'object' ? tail.meta : {};
+    let snapshot = null;
+    if (Array.isArray(meta.swipes) && meta.swipes.length) {
+      const active = Math.min(Math.max(0, Number(meta.activeSwipe || 0)), meta.swipes.length - 1);
+      snapshot = meta.swipes[active]?.variableSnapshot || null;
+    }
+    if (!snapshot) snapshot = meta.variableSnapshot || null;
+    if (!snapshot) return false;
+    return applySessionVariableSnapshot(sid, snapshot);
+  };
+  // 重新生成某楼层前：把变量回滚到「该楼层之下最近 assistant 楼层」的快照，让新生成的 UpdateVariable 在正确基线上应用。
+  const restoreVariablesToFloorBelow = async (sessionId, msgId) => {
+    const sid = String(sessionId || '').trim();
+    const targetId = String(msgId || '').trim();
+    if (!sid || !targetId) return false;
+    const messages = chatStore.getMessages?.(sid) || [];
+    const idx = messages.findIndex(m => String(m?.id || '') === targetId);
+    if (idx < 0) return false;
+    let prev = null;
+    for (let i = idx - 1; i >= 0; i -= 1) {
+      if (messages[i]?.role === 'assistant') { prev = messages[i]; break; }
+    }
+    const meta = prev?.meta && typeof prev.meta === 'object' ? prev.meta : {};
+    let snapshot = null;
+    if (Array.isArray(meta.swipes) && meta.swipes.length) {
+      const active = Math.min(Math.max(0, Number(meta.activeSwipe || 0)), meta.swipes.length - 1);
+      snapshot = meta.swipes[active]?.variableSnapshot || null;
+    }
+    if (!snapshot) snapshot = meta.variableSnapshot || null;
+    if (!snapshot) return false; // 第一楼无上楼快照 → 不动
+    return applySessionVariableSnapshot(sid, snapshot);
+  };
   const isTurnCheckpointSessionEnabled = sessionId => {
     const sid = String(sessionId || '').trim();
     if (!sid) return false;
@@ -22429,8 +22569,15 @@ Phase G（Frame 36）：循环衔接
     const baselineId = String(state?.baselineSnapshotId || '').trim();
     if (baselineId) reachable.add(baselineId);
     const ids = Array.from(reachable);
-    if (prune) return memorySnapshotStore.pruneUnreachable(sid, ids);
+    // C 计划 M1：变量快照与记忆快照平行做可达性/回收，防泄漏。
+    const variableIds = Array.from(new Set(collectCheckpointVariableSnapshotIds(state)));
+    if (prune) {
+      const removed = await memorySnapshotStore.pruneUnreachable(sid, ids);
+      try { await variableSnapshotStore.pruneUnreachable(sid, variableIds); } catch (err) { logger.debug('variable snapshot prune skipped', err); }
+      return removed;
+    }
     await memorySnapshotStore.markReachable(sid, ids);
+    try { await variableSnapshotStore.markReachable(sid, variableIds); } catch (err) { logger.debug('variable snapshot markReachable skipped', err); }
     return ids;
   };
   const ensureSessionBaselineCheckpointSnapshot = async (sessionId, { force = false, snapshot = null } = {}) => {
@@ -22608,6 +22755,8 @@ Phase G（Frame 36）：循环衔接
     );
     let currentSnapshot = null;
     let currentMemoryEntry = null;
+    // C 计划 M1：变量捕获与记忆平行——此点在 UpdateVariable 应用之后，拿到的是本分支最终变量态。
+    const variableCaptureActive = hasSessionVariableActivity(sid, nextSwipes);
     if (captureCurrentActiveState) {
       currentSnapshot = await buildSwipeMemoryTableSnapshot(sid, { isGroup });
       currentMemoryEntry = cloneSwipeMemoryUpdateEntry(getLastMemoryUpdate(window.appBridge, sid));
@@ -22617,6 +22766,13 @@ Phase G（Frame 36）：循环衔接
         if (activeSwipeIndex === 0) {
           nextMeta.memoryTableSnapshot = cloneSwipePlainObject(currentSnapshot);
           nextMeta.memoryUpdateEntry = cloneSwipeMemoryUpdateEntry(currentMemoryEntry);
+        }
+      }
+      if (variableCaptureActive && nextSwipes[activeSwipeIndex]) {
+        const currentVarSnapshot = await buildSessionVariableSnapshot(sid);
+        if (currentVarSnapshot) {
+          nextSwipes[activeSwipeIndex].variableSnapshot = cloneSwipePlainObject(currentVarSnapshot);
+          if (activeSwipeIndex === 0) nextMeta.variableSnapshot = cloneSwipePlainObject(currentVarSnapshot);
         }
       }
     }
@@ -22643,6 +22799,20 @@ Phase G（Frame 36）：循环衔接
       if (branch.memoryTableSnapshot && index === 0) {
         nextMeta.memoryTableSnapshot = cloneSwipePlainObject(branch.memoryTableSnapshot);
       }
+      // C 计划 M1：变量快照持久化到 variableSnapshotStore，branch 记 variableSnapshotId。
+      if (branch.variableSnapshot) {
+        try {
+          const persistedVar = await variableSnapshotStore.persistSnapshot(sid, branch.variableSnapshot);
+          const varSnapshotId = String(persistedVar?.id || '').trim();
+          if (varSnapshotId) {
+            branch.variableSnapshotId = varSnapshotId;
+            if (index === 0) nextMeta.variableSnapshotId = varSnapshotId;
+          }
+        } catch (err) {
+          logger.warn('persist turn checkpoint variable snapshot failed', err);
+        }
+        if (index === 0) nextMeta.variableSnapshot = cloneSwipePlainObject(branch.variableSnapshot);
+      }
     }
     nextMeta.swipes = nextSwipes;
     nextMeta.activeSwipe = activeSwipeIndex;
@@ -22661,6 +22831,8 @@ Phase G（Frame 36）：循环衔接
         messageRaw: typeof branch?.raw === 'string' ? branch.raw : String(branch?.content ?? ''),
         memorySnapshotId: String(branch?.memorySnapshotId || '').trim(),
         memoryUpdateEntry: cloneSwipeMemoryUpdateEntry(branch?.memoryUpdateEntry),
+        variableSnapshotId: String(branch?.variableSnapshotId || '').trim(),
+        variableUpdateEntry: cloneSwipePlainObject(branch?.variableUpdateEntry),
         updatedAt: Date.now(),
       }));
     const userMessageId = findPreviousUserMessageIdForAssistant(sid, messageId);
@@ -22693,6 +22865,7 @@ Phase G（Frame 36）：循环衔接
           tailAssistantMessageId: messageId,
           tailSwipeIndex: activeSwipeIndex,
           memorySnapshotId: String(activeBranch?.memorySnapshotId || nextMeta.memorySnapshotId || '').trim(),
+          variableSnapshotId: String(activeBranch?.variableSnapshotId || nextMeta.variableSnapshotId || '').trim(),
           restoredAt: Date.now(),
           source: forcePointer ? 'archive_explicit_sync' : 'archive_tail_sync',
         });
@@ -22836,6 +23009,7 @@ Phase G（Frame 36）：循环衔接
     if (!sid) return false;
     await turnCheckpointStore.clearSession(sid);
     await memorySnapshotStore.clearSession(sid);
+    try { await variableSnapshotStore.clearSession(sid); } catch (err) { logger.debug('variable snapshot clearSession skipped', err); }
     return true;
   };
   const renameSessionTurnCheckpointState = async (oldSessionId, newSessionId) => {
@@ -22844,6 +23018,7 @@ Phase G（Frame 36）：循环衔接
     if (!from || !to || from === to) return false;
     await turnCheckpointStore.renameSession(from, to);
     await memorySnapshotStore.renameSession(from, to);
+    try { await variableSnapshotStore.renameSession(from, to); } catch (err) { logger.debug('variable snapshot renameSession skipped', err); }
     return true;
   };
   const deleteArchiveTurnCheckpointState = async (sessionId, archiveId) => {
@@ -22926,6 +23101,16 @@ Phase G（Frame 36）：循环衔接
     const archiveId = getCurrentArchiveIdForSession(sid);
     if (!sid || !archiveId) return null;
     return setArchivePointerForArchive(sid, archiveId, null, { fallbackSnapshot, source });
+  };
+  // C 计划 M1：归档恢复时按指针的 variableSnapshotId 还原会话变量（与记忆恢复平行；旧归档无此字段则 no-op）。
+  const restoreVariablesFromArchivePointer = async (sid, pointer) => {
+    const varSnapId = String(pointer?.variableSnapshotId || '').trim();
+    if (!varSnapId) return false;
+    try {
+      const snap = await variableSnapshotStore.getSnapshot(varSnapId);
+      if (snap) return await applySessionVariableSnapshot(sid, snap);
+    } catch (err) { logger.debug('restore variables from archive pointer skipped', err); }
+    return false;
   };
   const restoreArchivePointerForLoadedThread = async (sessionId, {
     refreshBaselineWhenNoTail = true,
@@ -23010,6 +23195,7 @@ Phase G（Frame 36）：循环衔接
               restoredAt: Date.now(),
               source,
             });
+            await restoreVariablesFromArchivePointer(sid, pointer);
             return true;
           }
         }
@@ -23032,6 +23218,7 @@ Phase G（Frame 36）：循环衔接
               restoredAt: Date.now(),
               source,
             });
+            await restoreVariablesFromArchivePointer(sid, pointer);
             return true;
           }
         }
@@ -23113,6 +23300,8 @@ Phase G（Frame 36）：循环衔接
       ? Math.min(Math.max(0, previousRaw), Math.max(0, swipes.length - 1))
       : -1;
     const previousBranch = previousSafe !== -1 ? swipes[previousSafe] : null;
+    // C 计划 M1：变量与记忆平行——切走前 persist 前分支变量、切到后 apply 当前分支变量（有变量活动才处理）。
+    const variableSwipeActive = hasSessionVariableActivity(sid, swipes);
     if (
       previousSafe !== -1 &&
       previousSafe !== index &&
@@ -23122,6 +23311,13 @@ Phase G（Frame 36）：循环衔接
         await persistSwipeBranchMemoryState(swipes, previousSafe, sid, { isGroup: isGroupScope });
       } catch (err) {
         logger.warn('persist swipe memory state failed', err);
+      }
+      if (variableSwipeActive && previousBranch && previousBranch.draft !== true) {
+        try {
+          await persistSwipeBranchVariableState(swipes, previousSafe, sid);
+        } catch (err) {
+          logger.warn('persist swipe variable state failed', err);
+        }
       }
     }
     if (!isDraftBranch) {
@@ -23139,6 +23335,13 @@ Phase G（Frame 36）：循环衔接
         }
       } catch (err) {
         logger.warn('apply swipe memory state failed', err);
+      }
+      if (variableSwipeActive) {
+        try {
+          await applySwipeBranchVariableState(sid, activeBranch);
+        } catch (err) {
+          logger.warn('apply swipe variable state failed', err);
+        }
       }
     }
 	    let nextMeta = applySwipeReasoningStateToMeta({ ...sourceMeta, swipes, activeSwipe: index }, activeBranch || {}, index);
@@ -23484,6 +23687,12 @@ Phase G（Frame 36）：循环衔接
       } catch (err) {
         logger.warn('rollback swipe memory state failed', err);
       }
+    }
+    // C 计划 M1：重新生成前把变量回滚到上一楼（模式无关），新生成的 UpdateVariable 在正确基线上应用。
+    try {
+      await restoreVariablesToFloorBelow(sid, msgId);
+    } catch (err) {
+      logger.warn('rollback swipe variable state failed', err);
     }
     swipeStreamCtrl = ui.startSwipeGenerationStream?.(msgId, {
       id: streamId,
@@ -24657,6 +24866,7 @@ Phase G（Frame 36）：循环衔接
       logger,
       applyUpdateVariable: resolveUpdateVariableApplyFn(applyUpdateVariable),
       handleVariableRules: payload => variableRuleEngine?.handleAfterReceive?.(payload),
+      onVariablesSettled: (msg, sid) => captureVariableSnapshotToMessage(sid, msg),
       useGlobalVariables: isSharedVariableSession(targetSessionId),
       recordTraceEvent: recordDebugTraceEvent,
       chatFormatGuardian: buildChatFormatGuardianOptions(targetSessionId),
@@ -25593,6 +25803,7 @@ Phase G（Frame 36）：循环衔接
       return buildAssistantMessageFromTextCore(rawText, {
         sessionId: sessionKey,
         time: time || formatNowTime(),
+        usage: window.appBridge?.consumeLastGenerationUsage?.() ?? null,
         name,
         avatar,
         showName,
@@ -26495,6 +26706,26 @@ Phase G（Frame 36）：循环衔接
         });
       }
     }
+    // Phase B 主任务计量兜底：部分 provider 把 usage 放在内容之后的尾部 SSE chunk，
+    // 消息在内容结束时已 finalize（consume 时 usage 尚未到）。生成完全结束后再兜底 patch 末条回复。
+    // 非竞态路径已在构建时 consume（此时 bridge usage 为 null → 空操作，不重复挂）。
+    const patchTrailingAssistantUsage = (patchSid) => {
+      try {
+        const usage = window.appBridge?.consumeLastGenerationUsage?.();
+        const replyUsage = buildAssistantReplyUsage(usage);
+        if (!replyUsage) return;
+        const sid = String(patchSid || '').trim();
+        const msgs = chatStore.getMessages(sid) || [];
+        for (let i = msgs.length - 1; i >= 0; i -= 1) {
+          const m = msgs[i];
+          if (m?.role !== 'assistant') continue;
+          if (m?.meta?.usage) return; // 末条已带 usage → 不动
+          chatStore.updateMessage(m.id, { meta: { ...(m.meta || {}), usage: replyUsage } }, sid);
+          if (isSessionActive(sid)) ui.updateMessage(m.id, chatStore.findMessage?.(m.id, sid) || m);
+          return;
+        }
+      } catch {}
+    };
     try {
       if (config.stream) {
         if (rpUiMode) {
@@ -26659,6 +26890,7 @@ Phase G（Frame 36）：循环衔接
             summaryEnabled: isSummaryMemoryEnabled,
             extractSummaryBlock,
             addSummary: summary => chatStore.addSummary(summary, sessionId),
+            appBridge: window.appBridge,
             buildChatModeAssistantMessageParts: buildChatModeAssistantMessagePartsCore,
             buildChatModeAssistantMessage: buildChatModeAssistantMessageFromPartsCore,
             applyChatModeAssistantRegex,
@@ -26761,6 +26993,8 @@ Phase G（Frame 36）：循环衔接
           );
         }
       }
+      // 生成成功完成后兜底挂 usage（覆盖 usage 尾部到达的流式协议路径）
+      patchTrailingAssistantUsage(sessionId);
     } catch (error) {
       const catchResult = runSendCatchFlow({
         error,
@@ -27128,6 +27362,7 @@ Phase G（Frame 36）：循环衔接
         refreshChatAndContacts,
         getMemoryStorageMode,
         restoreMemoryForActiveThread,
+        restoreVariablesForActiveThread,
         getMessageSendText,
         buildStickerToken,
         buildResendAttachmentParts: ({ messages: sourceMessages, userIdx: sourceUserIdx }) =>
@@ -27159,6 +27394,9 @@ Phase G（Frame 36）：循环衔接
         source: 'delete_message',
       }).catch(err => {
         logger.warn('restore memory after delete failed', err);
+      });
+      await restoreVariablesForActiveThread(sessionId).catch(err => {
+        logger.warn('restore variables after delete failed', err);
       });
       refreshChatAndContacts();
       return true;
@@ -27360,6 +27598,9 @@ Phase G（Frame 36）：循环衔接
       }).catch(err => {
         logger.warn('restore memory after delete-selected failed', err);
       });
+      await restoreVariablesForActiveThread(sessionId).catch(err => {
+        logger.warn('restore variables after delete-selected failed', err);
+      });
       refreshChatAndContacts();
       return;
     }
@@ -27385,6 +27626,9 @@ Phase G（Frame 36）：循环衔接
         source: 'retract_user_message',
       }).catch(err => {
         logger.warn('restore memory after retract failed', err);
+      });
+      await restoreVariablesForActiveThread(sessionId).catch(err => {
+        logger.warn('restore variables after retract failed', err);
       });
       refreshChatAndContacts();
       return;
@@ -27613,6 +27857,11 @@ Phase G（Frame 36）：循环衔接
             `[edit-assistant-raw] update-variable messageId=${String(message?.id || '')} session=${String(sessionId || '')} changed=${changed ? 1 : 0}`,
           );
           finalMessage = chatStore.findMessage(message.id, sessionId) || finalMessage;
+          // C 计划 M1：编辑含有效变量标签后变量已更新——把该楼层最终变量态快照落到 meta（严格楼层绑定）。
+          if (changed) {
+            captureVariableSnapshotToMessage(sessionId, finalMessage);
+            finalMessage = chatStore.findMessage(message.id, sessionId) || finalMessage;
+          }
         } catch (err) {
           logger.warn('edit-assistant-raw: UpdateVariable parse failed', err);
 	        }
@@ -29240,6 +29489,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     await themeManager.init();
     await initApp();
+    initHelpTooltips();
     finishAppBootTrace({
       traceTimeline: appBootTraceTimeline,
       eventId: appBootTraceEvent?.eventId,

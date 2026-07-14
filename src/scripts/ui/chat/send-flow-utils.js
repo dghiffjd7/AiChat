@@ -644,6 +644,7 @@ export const runRegenerateFromUserIndexFlow = async ({
   refreshChatAndContacts = () => {},
   getMemoryStorageMode = () => '',
   restoreMemoryForActiveThread = async () => {},
+  restoreVariablesForActiveThread = async () => {},
   getMessageSendText = () => '',
   buildStickerToken = value => value,
   buildResendAttachmentParts = async () => [],
@@ -706,6 +707,12 @@ export const runRegenerateFromUserIndexFlow = async ({
     } catch (err) {
       logger?.warn?.('restore memory after regenerate failed', err);
     }
+  }
+  // C 计划 M1：变量严格楼层绑定、模式无关——删除待重生成楼层后回滚到新 tail 楼层变量快照。
+  try {
+    await restoreVariablesForActiveThread(sessionId);
+  } catch (err) {
+    logger?.warn?.('restore variables after regenerate failed', err);
   }
 
   let resendAttachmentParts = [];

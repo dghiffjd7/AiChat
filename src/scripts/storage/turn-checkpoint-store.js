@@ -101,6 +101,7 @@ export const normalizeArchivePointer = (raw = {}, fallback = {}) => {
     tailAssistantMessageId: String(src.tailAssistantMessageId || src.assistantMessageId || fallback.tailAssistantMessageId || '').trim(),
     tailSwipeIndex: Number.isFinite(swipeIndexRaw) && swipeIndexRaw >= 0 ? swipeIndexRaw : 0,
     memorySnapshotId: String(src.memorySnapshotId || fallback.memorySnapshotId || '').trim(),
+    variableSnapshotId: String(src.variableSnapshotId || fallback.variableSnapshotId || '').trim(),
     restoredAt: Number(src.restoredAt || src.updatedAt || fallback.restoredAt || Date.now()) || Date.now(),
     source: String(src.source || fallback.source || 'archive_pointer').trim() || 'archive_pointer',
   };
@@ -119,6 +120,9 @@ export const normalizeCheckpointBranch = (raw = {}, fallback = {}) => {
     messageRaw: clampText(src.messageRaw ?? src.raw ?? fallback.messageRaw ?? ''),
     memorySnapshotId: String(src.memorySnapshotId || fallback.memorySnapshotId || '').trim(),
     memoryUpdateEntry: clone(src.memoryUpdateEntry ?? fallback.memoryUpdateEntry ?? null),
+    // C 计划 M1：变量快照与记忆快照平行，指向 variable-snapshot-store；旧 branch 无此字段 → 空，向后兼容。
+    variableSnapshotId: String(src.variableSnapshotId || fallback.variableSnapshotId || '').trim(),
+    variableUpdateEntry: clone(src.variableUpdateEntry ?? fallback.variableUpdateEntry ?? null),
     createdAt: Number(src.createdAt || fallback.createdAt || Date.now()) || Date.now(),
     updatedAt: Number(src.updatedAt || fallback.updatedAt || Date.now()) || Date.now(),
   };
@@ -178,23 +182,30 @@ const normalizeSessionState = (sessionId = '', input = {}) => {
   };
 };
 
-export const collectCheckpointSnapshotIds = (state = {}) => {
+const collectCheckpointSnapshotIdsByField = (state = {}, field = 'memorySnapshotId') => {
   const ids = new Set();
   const checkpoints = state?.checkpoints && typeof state.checkpoints === 'object' ? state.checkpoints : {};
   Object.values(checkpoints).forEach(checkpoint => {
     const branches = Array.isArray(checkpoint?.branches) ? checkpoint.branches : [];
     branches.forEach(branch => {
-      const id = String(branch?.memorySnapshotId || '').trim();
+      const id = String(branch?.[field] || '').trim();
       if (id) ids.add(id);
     });
   });
   const archivePointers = state?.archivePointers && typeof state.archivePointers === 'object' ? state.archivePointers : {};
   Object.values(archivePointers).forEach(pointer => {
-    const id = String(pointer?.memorySnapshotId || '').trim();
+    const id = String(pointer?.[field] || '').trim();
     if (id) ids.add(id);
   });
   return Array.from(ids);
 };
+
+export const collectCheckpointSnapshotIds = (state = {}) =>
+  collectCheckpointSnapshotIdsByField(state, 'memorySnapshotId');
+
+// C 计划 M1：变量快照可达集，供 variable-snapshot-store prune 用（与记忆侧同构）。
+export const collectCheckpointVariableSnapshotIds = (state = {}) =>
+  collectCheckpointSnapshotIdsByField(state, 'variableSnapshotId');
 
 export class TurnCheckpointStore {
   constructor({ scopeId = '' } = {}) {

@@ -1,9 +1,52 @@
 import assert from 'node:assert/strict';
 
 import {
+  aggregateMaidModelUsage,
   createMaidAssistantAgent,
   planMaidAssistantCommand,
 } from '../../src/scripts/agent/maid-assistant-agent.js';
+
+{
+  // 多轮 ReAct usage 求和：至少一轮返回 token → recorded 且各项相加；latency 求和为模型总耗时
+  const usage = aggregateMaidModelUsage([
+    { provider: 'deepseek', model: 'v4-pro', promptTokens: 1000, completionTokens: 200, latencyMs: 3000, finishReason: 'stop' },
+    { provider: 'deepseek', model: 'v4-pro', promptTokens: 1500, completionTokens: 400, totalTokens: 1900, latencyMs: 2500, degraded: true, finishReason: 'stop' },
+  ], { toolCallCount: 2, aborted: false });
+  assert.equal(usage.status, 'recorded');
+  assert.equal(usage.provider, 'deepseek');
+  assert.equal(usage.promptTokens, 2500);
+  assert.equal(usage.completionTokens, 600);
+  assert.equal(usage.totalTokens, 3100); // = promptSum + completionSum，自洽于分项
+  assert.equal(usage.latencyMs, 5500);
+  assert.equal(usage.toolCallCount, 2);
+  assert.equal(usage.degraded, true);
+  assert.equal(usage.aborted, false);
+  console.log('ok - aggregateMaidModelUsage sums real token usage across ReAct calls');
+}
+
+{
+  // 无任何 token（provider 未返回 usage）→ unknown、token 为 null，但本地事实保留
+  const usage = aggregateMaidModelUsage([
+    { provider: 'anthropic', model: 'opus', latencyMs: 900 },
+  ], { toolCallCount: 1, aborted: true });
+  assert.equal(usage.status, 'unknown');
+  assert.equal(usage.promptTokens, null);
+  assert.equal(usage.completionTokens, null);
+  assert.equal(usage.totalTokens, null);
+  assert.equal(usage.latencyMs, 900);
+  assert.equal(usage.toolCallCount, 1);
+  assert.equal(usage.aborted, true);
+  console.log('ok - aggregateMaidModelUsage marks unknown without inventing tokens');
+}
+
+{
+  // 无任何模型调用（纯规则命中/空）→ latencyMs 也为 null，不伪造
+  const usage = aggregateMaidModelUsage([], { toolCallCount: 0 });
+  assert.equal(usage.status, 'unknown');
+  assert.equal(usage.latencyMs, null);
+  assert.equal(usage.toolCallCount, 0);
+  console.log('ok - aggregateMaidModelUsage keeps null latency when no model call happened');
+}
 
 {
   const plan = planMaidAssistantCommand('创建一个叫「A」的聊天室');

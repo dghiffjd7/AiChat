@@ -117,6 +117,11 @@ test('buildPromptPreviewSnapshot formats meta header and prompt body', () => {
   assert.match(snapshot.head, /options: temperature=0.7/);
   assert.equal(snapshot.body, 'system:\nrules\n\nuser:\nhello');
   assert.equal(snapshot.messages.length, 2);
+  // 预览含本地估算 token（标注非精确），且返回结构化字段
+  assert.match(snapshot.head, /估算输入 token: ~\d+/);
+  assert.match(snapshot.head, /非精确/);
+  assert.equal(typeof snapshot.estimatedInputTokens, 'number');
+  assert.ok(snapshot.estimatedInputTokens > 0);
 });
 
 let failed = 0;

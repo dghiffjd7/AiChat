@@ -51,17 +51,29 @@ const chatWithFallback = async (
   options = {},
   logger = console,
   onClientUsed = null,
+  onModelUsage = null,
 ) => {
   // 现场探针：挂起时读 globalThis.__maidModelProbe 定位——phase=calling 且 elapsed 大 = 请求发出后渠道 hang
   const startedAt = Date.now();
   const probe = { phase: 'calling', startedAt, options: { maxTokens: options?.maxTokens } };
   try { globalThis.__maidModelProbe = probe; } catch {}
+  // Phase B 计量：out-of-band 采集 provider usage，不改 client.chat 返回契约（仍返回文本）。
+  const wantUsage = typeof onModelUsage === 'function';
+  let capturedUsage = null;
+  const chatOptions = wantUsage
+    ? { ...options, onProviderUsage: (u) => { capturedUsage = u; } }
+    : options;
+  const reportUsage = (degraded) => {
+    if (!wantUsage) return;
+    try { onModelUsage({ ...(capturedUsage || {}), latencyMs: Date.now() - startedAt, degraded }); } catch {}
+  };
   try {
-    const text = await client.chat(messages, options);
+    const text = await client.chat(messages, chatOptions);
     probe.phase = 'done';
     probe.doneAt = Date.now();
     probe.elapsedMs = probe.doneAt - startedAt;
     try { onClientUsed?.('primary'); } catch {}
+    reportUsage(false);
     return text;
   } catch (error) {
     probe.phase = 'failed';
@@ -71,11 +83,13 @@ const chatWithFallback = async (
     if (!fallbackClient || typeof fallbackClient.chat !== 'function') throw error;
     probe.phase = 'fallback-calling';
     logger?.warn?.('maid main model failed, retrying with fallback profile');
+    capturedUsage = null;
     try {
       try { onClientUsed?.('fallback'); } catch {}
-      const text = await fallbackClient.chat(messages, options);
+      const text = await fallbackClient.chat(messages, chatOptions);
       probe.phase = 'fallback-done';
       probe.elapsedMs = Date.now() - startedAt;
+      reportUsage(true);
       return text;
     } catch (err2) {
       probe.phase = 'fallback-failed';
@@ -660,6 +674,7 @@ export const createMaidModelBackedPlanner = ({
       },
       logger,
       source => annotateCapabilitySnapshotResolvedModel(context, runtime, config, source),
+      typeof context?.onModelUsage === 'function' ? context.onModelUsage : null,
     );
     emitDebugSnapshot(onDebugSnapshot, {
       source: 'maid_model_planner',
@@ -768,6 +783,7 @@ export const createMaidModelBackedReActPlanner = ({
       },
       logger,
       source => annotateCapabilitySnapshotResolvedModel(context, runtime, config, source),
+      typeof context?.onModelUsage === 'function' ? context.onModelUsage : null,
     );
     emitDebugSnapshot(onDebugSnapshot, {
       source: 'maid_model_react',

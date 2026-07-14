@@ -486,12 +486,12 @@ export class WorldPanel {
                 titleEl.className = 'world-panel-section-title';
                 titleEl.textContent = title;
                 titleEl.style.cssText = 'font-weight:800; color:var(--app-text-primary);';
-                const descEl = document.createElement('div');
-                descEl.className = 'world-panel-section-desc';
-                descEl.textContent = description;
-                descEl.style.cssText = 'font-size:12px; color:var(--app-text-muted); margin-top:4px;';
+                // 说明搬进 data-help：桌面 hover、手机点一下浮现（标题非交互，用 tap 触发）
+                if (description) {
+                    titleEl.setAttribute('data-help', description);
+                    titleEl.classList.add('has-help');
+                }
                 titleWrap.appendChild(titleEl);
-                if (description) titleWrap.appendChild(descEl);
 
                 const actions = document.createElement('div');
                 actions.className = 'world-panel-section-actions';
@@ -1276,24 +1276,20 @@ export class WorldPanel {
                 </div>
                 <div id="world-global-settings-body" style="display:none; margin-top:8px;">
                     <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
-                        <span style="font-size:12px; color:var(--app-text-secondary);">扫描深度</span>
+                        <span class="has-help" data-help="0 = 不扫描历史。控制向上回溯多少条历史消息做关键词扫描。" style="font-size:12px; color:var(--app-text-secondary);">扫描深度</span>
                         <input id="world-global-scan-depth" type="number" min="0" step="1" placeholder="默认2" style="width:120px; padding:6px 8px; border:1px solid var(--app-border-default); border-radius:8px; font-size:12px;">
-                        <span style="font-size:11px; color:var(--app-text-muted);">0 = 不扫描历史</span>
                     </div>
                     <div style="display:flex; gap:8px; align-items:center; margin-top:8px; flex-wrap:wrap;">
-                        <span style="font-size:12px; color:var(--app-text-secondary);">上下文百分比</span>
+                        <span class="has-help" data-help="%（用于世界书预算）。世界书注入内容最多占用上下文的百分比。" style="font-size:12px; color:var(--app-text-secondary);">上下文百分比</span>
                         <input id="world-global-context-percent" type="number" min="0" max="100" step="1" placeholder="默认" style="width:120px; padding:6px 8px; border:1px solid var(--app-border-default); border-radius:8px; font-size:12px;">
-                        <span style="font-size:11px; color:var(--app-text-muted);">%（用于世界书预算）</span>
                     </div>
                     <div style="display:flex; gap:8px; align-items:center; margin-top:8px; flex-wrap:wrap;">
-                        <span style="font-size:12px; color:var(--app-text-secondary);">预算上限</span>
+                        <span class="has-help" data-help="tokens（优先级高于百分比）。世界书预算的绝对上限；设了此值时优先于上下文百分比。" style="font-size:12px; color:var(--app-text-secondary);">预算上限</span>
                         <input id="world-global-budget-cap" type="number" min="0" step="1" placeholder="0 = 不限制" style="width:120px; padding:6px 8px; border:1px solid var(--app-border-default); border-radius:8px; font-size:12px;">
-                        <span style="font-size:11px; color:var(--app-text-muted);">tokens（优先级高于百分比）</span>
                     </div>
                     <div style="display:flex; gap:8px; align-items:center; margin-top:8px; flex-wrap:wrap;">
-                        <span style="font-size:12px; color:var(--app-text-secondary);">最小启动次数</span>
+                        <span class="has-help" data-help="自动加深扫描。命中条目少于该次数时自动加大扫描深度，直到满足或触达最大深度。" style="font-size:12px; color:var(--app-text-secondary);">最小启动次数</span>
                         <input id="world-global-min-activations" type="number" min="0" step="1" placeholder="0 = 关闭" style="width:120px; padding:6px 8px; border:1px solid var(--app-border-default); border-radius:8px; font-size:12px;">
-                        <span style="font-size:11px; color:var(--app-text-muted);">自动加深扫描</span>
                     </div>
                     <div style="display:flex; gap:8px; align-items:center; margin-top:8px; flex-wrap:wrap;">
                         <span style="font-size:12px; color:var(--app-text-secondary);">最大深度</span>
@@ -1365,13 +1361,12 @@ export class WorldPanel {
                     </div>
                 </div>
                 <div style="flex:1 1 100%; min-width: 0;">
-                    <div style="font-weight:700; margin-bottom:6px;">导入世界书</div>
+                    <div class="has-help" data-help="名称将取自 JSON 的 name 或文件名（无需手动填写）。同名内容会被新文件覆盖；含绑定正则时需再次确认才一并导入。" style="font-weight:700; margin-bottom:6px;">导入世界书</div>
                     <div style="display:flex; gap:8px; align-items:center; margin-bottom:8px;">
                         <button id="world-file-btn" type="button" style="padding:6px 10px; border-radius:8px; border:1px solid var(--app-border-default); background:var(--app-surface-subtle); cursor:pointer;">选择文件</button>
                         <span id="world-file-name" style="font-size:12px; color:var(--app-text-muted);">未选择文件</span>
                     </div>
                     <input id="world-file" type="file" accept=".json,application/json" style="display:none;">
-                    <div style="color:var(--app-text-muted); font-size:12px; margin:6px 0;">名称将取自 JSON 的 name 或文件名（无需手动填写）</div>
                     <div id="world-import-impact" class="world-panel-scope-badge" style="margin:6px 0 0; ${SCOPE_BADGE_STYLE}"></div>
                     <div style="display:flex; gap:8px; margin-top:8px; justify-content:flex-end;">
                         <button id="world-import" style="padding:8px 14px; border-radius:8px; border:1px solid var(--app-border-default); background:var(--app-surface-subtle);">导入</button>

@@ -1,4 +1,43 @@
-export const AGENT_RUN_SCHEMA_VERSION = 1;
+export const AGENT_RUN_SCHEMA_VERSION = 2;
+
+// Phase B 真实计量：AgentRun 的 provider usage/延迟/降级/中止画像。
+// 硬约束——token 类指标 provider 不返回时 status='unknown' 且各字段为 null，绝不自行估算。
+// toolCallCount/latencyMs/aborted/degraded 是本地可得事实，与 provider usage 是否可用无关。
+export const AGENT_USAGE_STATUSES = Object.freeze(['unknown', 'recorded']);
+const USAGE_STATUS_SET = new Set(AGENT_USAGE_STATUSES);
+
+const toNullableTokenCount = (value) => {
+  if (value == null) return null;
+  const numeric = Number(value);
+  return Number.isFinite(numeric) && numeric >= 0 ? Math.trunc(numeric) : null;
+};
+
+export const normalizeAgentUsage = (raw = {}) => {
+  const src = isPlainObject(raw) ? raw : {};
+  const promptTokens = toNullableTokenCount(src.promptTokens ?? src.prompt_tokens ?? src.inputTokens ?? src.input_tokens);
+  const completionTokens = toNullableTokenCount(src.completionTokens ?? src.completion_tokens ?? src.outputTokens ?? src.output_tokens);
+  const totalTokensRaw = toNullableTokenCount(src.totalTokens ?? src.total_tokens);
+  const totalTokens = totalTokensRaw != null
+    ? totalTokensRaw
+    : (promptTokens != null || completionTokens != null ? (promptTokens || 0) + (completionTokens || 0) : null);
+  const hasTokens = promptTokens != null || completionTokens != null || totalTokens != null;
+  // status 显式声明优先；否则由是否拿到 token 推断，不猜。
+  const declared = trimString(src.status, '').toLowerCase();
+  const status = USAGE_STATUS_SET.has(declared) ? declared : (hasTokens ? 'recorded' : 'unknown');
+  return {
+    status,
+    provider: trimString(src.provider, ''),
+    model: trimString(src.model, ''),
+    promptTokens,
+    completionTokens,
+    totalTokens,
+    latencyMs: toNullableTokenCount(src.latencyMs ?? src.latency_ms),
+    toolCallCount: Math.max(0, Math.trunc(Number(src.toolCallCount ?? src.tool_call_count)) || 0),
+    degraded: src.degraded === true,
+    aborted: src.aborted === true,
+    finishReason: trimString(src.finishReason ?? src.finish_reason, ''),
+  };
+};
 
 export const AGENT_STATUSES = Object.freeze([
   'queued',
@@ -174,6 +213,7 @@ export const normalizeAgentRun = (raw = {}, {
     errorMessage: trimString(src.errorMessage || src.error, ''),
     cancelReason: trimString(src.cancelReason, ''),
     exportable: src.exportable !== false,
+    usage: normalizeAgentUsage(src.usage),
     metadata: isPlainObject(src.metadata) ? cloneAgentValue(src.metadata, {}) : {},
     steps: (Array.isArray(src.steps) ? src.steps : [])
       .map(step => normalizeAgentStep(step, { runId: id, now })),

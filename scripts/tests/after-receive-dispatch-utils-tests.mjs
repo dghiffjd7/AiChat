@@ -344,6 +344,9 @@ test('dispatchAfterReceiveEffects dispatches runtimes, update apply, and variabl
     applyUpdateVariable(message, sessionId) {
       calls.push(['update', message.id, sessionId]);
     },
+    onVariablesSettled(message, sessionId) {
+      calls.push(['var-settled', message.id, sessionId]);
+    },
     handleVariableRules(payload) {
       calls.push(['rules', payload.message.id, payload.sessionId, payload.useGlobalVariables]);
       return Promise.resolve();
@@ -354,10 +357,12 @@ test('dispatchAfterReceiveEffects dispatches runtimes, update apply, and variabl
   });
   await flushMicrotasks();
   assert.equal(handled, true);
+  // onVariablesSettled 必须在 applyUpdateVariable 之后、handleVariableRules 之前（变量已就位再拍快照）
   assert.deepEqual(calls, [
     ['script', 'message.after_receive', 's2', 'm1'],
     ['plugin', 'message.after_receive', 's2', 'm1'],
     ['update', 'm1', 's2'],
+    ['var-settled', 'm1', 's2'],
     ['rules', 'm1', 's2', true],
   ]);
   assert.deepEqual(

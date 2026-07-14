@@ -368,6 +368,32 @@ const cloneJson = value => JSON.parse(JSON.stringify(value));
 }
 
 {
+  // Phase B 计量：client 经 options.onProviderUsage 上报 usage → planner 经 context.onModelUsage 冒泡（含延迟）
+  const usageEntries = [];
+  const planner = createMaidModelBackedPlanner({
+    resolveRuntimeConfig: async () => ({
+      client: {
+        chat: async (messages, options) => {
+          options?.onProviderUsage?.({ provider: 'deepseek', model: 'v4-pro', promptTokens: 800, completionTokens: 120, totalTokens: 920, finishReason: 'stop' });
+          return JSON.stringify({ ok: true, toolName: 'app.open_panel', args: { panel: 'variables' }, featureId: 'variables.open' });
+        },
+      },
+    }),
+    isConfigReady: () => true,
+  });
+  const context = { onModelUsage: (u) => usageEntries.push(u) };
+  const plan = await planner('打开变量面板', context);
+  assert.equal(plan.ok, true);
+  assert.equal(usageEntries.length, 1);
+  assert.equal(usageEntries[0].provider, 'deepseek');
+  assert.equal(usageEntries[0].promptTokens, 800);
+  assert.equal(usageEntries[0].completionTokens, 120);
+  assert.equal(usageEntries[0].degraded, false);
+  assert.equal(typeof usageEntries[0].latencyMs, 'number');
+  console.log('ok - planner bubbles provider usage through context.onModelUsage');
+}
+
+{
   const context = {
     capabilitySnapshot: {
       id: 'fallback-cohort-snapshot',
@@ -375,6 +401,9 @@ const cloneJson = value => JSON.parse(JSON.stringify(value));
       cohort: {},
     },
   };
+  // 计量：主档失败走 fallback 时 usage 归 fallback 且 degraded=true
+  const usageEntries = [];
+  context.onModelUsage = (u) => usageEntries.push(u);
   const planner = createMaidModelBackedPlanner({
     resolveRuntimeConfig: async () => ({
       profileId: 'primary-profile',
@@ -383,12 +412,15 @@ const cloneJson = value => JSON.parse(JSON.stringify(value));
       fallbackConfig: { provider: 'deepseek', model: 'fallback-model' },
       client: { chat: async () => { throw new Error('primary offline'); } },
       fallbackClient: {
-        chat: async () => JSON.stringify({
-          ok: true,
-          toolName: 'app.open_panel',
-          args: { panel: 'worldbook' },
-          featureId: 'worldbook.open',
-        }),
+        chat: async (messages, options) => {
+          options?.onProviderUsage?.({ provider: 'deepseek', model: 'fallback-model', promptTokens: 500, completionTokens: 90, totalTokens: 590 });
+          return JSON.stringify({
+            ok: true,
+            toolName: 'app.open_panel',
+            args: { panel: 'worldbook' },
+            featureId: 'worldbook.open',
+          });
+        },
       },
     }),
     logger: { warn() {}, debug() {} },
@@ -398,6 +430,10 @@ const cloneJson = value => JSON.parse(JSON.stringify(value));
   assert.equal(context.capabilitySnapshot.cohort.profileId, 'fallback-profile');
   assert.equal(context.capabilitySnapshot.cohort.provider, 'deepseek');
   assert.equal(context.capabilitySnapshot.cohort.model, 'fallback-model');
+  assert.equal(usageEntries.length, 1);
+  assert.equal(usageEntries[0].provider, 'deepseek');
+  assert.equal(usageEntries[0].promptTokens, 500);
+  assert.equal(usageEntries[0].degraded, true);
   console.log('ok - fallback model decisions are attributed to the actual cohort');
 }
 

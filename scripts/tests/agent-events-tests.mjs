@@ -62,7 +62,7 @@ import {
     now: () => 2000,
   });
   assert.equal(run.id, 'run-1');
-  assert.equal(run.version, 1);
+  assert.equal(run.version, 2);
   assert.equal(run.kind, 'memory_update');
   assert.equal(run.sessionId, 's1');
   assert.equal(run.status, 'running');
@@ -70,7 +70,58 @@ import {
   assert.deepEqual(run.metadata, { checkpointMessageId: 'm1' });
   assert.equal(run.steps[0].runId, 'run-1');
   assert.equal(run.steps[0].status, 'running');
+  // 未提供 usage：默认 unknown 且 token 字段为 null（绝不估算）
+  assert.equal(run.usage.status, 'unknown');
+  assert.equal(run.usage.promptTokens, null);
+  assert.equal(run.usage.completionTokens, null);
+  assert.equal(run.usage.totalTokens, null);
+  assert.equal(run.usage.toolCallCount, 0);
+  assert.equal(run.usage.degraded, false);
+  assert.equal(run.usage.aborted, false);
   console.log('ok - normalizeAgentRun builds exportable run records with normalized nested steps');
+}
+
+{
+  // provider 返回 token → status recorded，total 缺失时由 prompt+completion 推导
+  const run = normalizeAgentRun({
+    id: 'run-usage',
+    kind: 'maid_assistant',
+    status: 'succeeded',
+    usage: {
+      provider: 'deepseek', model: 'deepseek-v4-pro',
+      promptTokens: 1200, completionTokens: 300,
+      latencyMs: 4200, toolCallCount: 3, finishReason: 'stop',
+    },
+  }, { now: () => 5000 });
+  assert.equal(run.usage.status, 'recorded');
+  assert.equal(run.usage.provider, 'deepseek');
+  assert.equal(run.usage.model, 'deepseek-v4-pro');
+  assert.equal(run.usage.promptTokens, 1200);
+  assert.equal(run.usage.completionTokens, 300);
+  assert.equal(run.usage.totalTokens, 1500);
+  assert.equal(run.usage.latencyMs, 4200);
+  assert.equal(run.usage.toolCallCount, 3);
+  assert.equal(run.usage.finishReason, 'stop');
+  console.log('ok - normalizeAgentRun records real provider usage and derives missing total');
+}
+
+{
+  // 显式 unknown + 中止/降级：本地事实字段仍保留，token 保持 null
+  const run = normalizeAgentRun({
+    id: 'run-aborted',
+    kind: 'maid_assistant',
+    status: 'cancelled',
+    usage: { status: 'unknown', provider: 'anthropic', latencyMs: 900, toolCallCount: 1, aborted: true, degraded: true },
+  }, { now: () => 6000 });
+  assert.equal(run.usage.status, 'unknown');
+  assert.equal(run.usage.promptTokens, null);
+  assert.equal(run.usage.totalTokens, null);
+  assert.equal(run.usage.provider, 'anthropic');
+  assert.equal(run.usage.latencyMs, 900);
+  assert.equal(run.usage.toolCallCount, 1);
+  assert.equal(run.usage.aborted, true);
+  assert.equal(run.usage.degraded, true);
+  console.log('ok - normalizeAgentRun keeps local facts when provider usage is unknown');
 }
 
 {

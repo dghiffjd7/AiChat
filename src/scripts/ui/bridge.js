@@ -3123,6 +3123,14 @@ class AppBridge {
     }
   }
 
+  // Phase B：取走本次生成的真实 usage 并清空（consume-once），供 finalize 消息挂到 meta.usage。
+  // 只挂首条：一次生成 emit 多条时，usage 属于整次生成，重复挂会误导每条的计量。
+  consumeLastGenerationUsage() {
+    const usage = this.lastGenerationUsage || null;
+    this.lastGenerationUsage = null;
+    return usage;
+  }
+
   /**
    * 生成 AI 回复
    * @param {string} userMessage - 用户消息
@@ -3419,6 +3427,17 @@ class AppBridge {
         nativeRequestId,
         ...(providerToolBridgeLoopPlan.requestOptions || {}),
       });
+      // Phase B 主任务计量：本次生成的真实 provider usage（chat/stream 均经 onProviderUsage 上报）。
+      // 在 param filter 之后注入回调，避免被参数过滤剥掉；主流程 finalize 消息时 consume 一次挂到 meta.usage。
+      // consume-once：协议路径一次生成可 emit 多条消息，usage 属于整次生成，只挂到首条，避免重复计量。
+      this.lastGenerationUsage = null;
+      const generationStartedAt = Date.now();
+      requestOptions.onProviderUsage = (usage) => {
+        this.lastGenerationUsage = {
+          ...(usage && typeof usage === 'object' ? usage : {}),
+          latencyMs: Date.now() - generationStartedAt,
+        };
+      };
       const preparedRequest = requestClient?.prepareChatRequest?.(messages, requestOptions) || null;
       const responsePrefix = String(preparedRequest?.responsePrefix || '');
 

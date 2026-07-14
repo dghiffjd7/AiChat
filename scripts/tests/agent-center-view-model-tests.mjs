@@ -238,7 +238,28 @@ import {
   assert.equal(view.meta.activeRuns, 2);
   assert.equal(view.meta.unreadFailedRuns, 1);
   assert.equal(view.meta.tools, 0);
+  // 只读用量画像随 activity 视图一并构建（此处 run 无 usage → unknown 计数）
+  assert.ok(view.activity.usageProfile && view.activity.usageProfile.overall);
+  assert.equal(view.activity.usageProfile.overall.runCount, 1);
   console.log('ok - agent center accepts prebuilt agent run views');
+}
+
+{
+  // usage 画像从带 usage 的 run 汇总：recorded 求和，unknown 只计数
+  const view = buildAgentCenterView({
+    agentRuns: [
+      { id: 'u1', kind: 'maid_assistant', usage: { status: 'recorded', promptTokens: 1000, completionTokens: 200, totalTokens: 1200, latencyMs: 3000, toolCallCount: 2 } },
+      { id: 'u2', kind: 'maid_assistant', usage: { status: 'unknown', latencyMs: 500, toolCallCount: 1 } },
+    ],
+    tools: null,
+    pendingPermissions: null,
+  });
+  const profile = view.activity.usageProfile;
+  assert.equal(profile.overall.runCount, 2);
+  assert.equal(profile.overall.recordedCount, 1);
+  assert.equal(profile.overall.unknownCount, 1);
+  assert.equal(profile.overall.totalTokens, 1200);
+  console.log('ok - agent center activity view aggregates read-only usage profile');
 }
 
 {

@@ -646,6 +646,7 @@ test('runRegenerateFromUserIndexFlow deletes regen messages restores table memor
     refreshChatAndContacts: () => calls.push(['refresh']),
     getMemoryStorageMode: () => 'table',
     restoreMemoryForActiveThread: async (sessionId, options) => calls.push(['restore-memory', sessionId, options]),
+    restoreVariablesForActiveThread: async sessionId => calls.push(['restore-variables', sessionId]),
     getMessageSendText: message => `send:${message.raw}`,
     handleSend: async (targetMessageId, options) => {
       calls.push(['handle-send', targetMessageId, options]);
@@ -670,6 +671,7 @@ test('runRegenerateFromUserIndexFlow deletes regen messages restores table memor
       refreshBaselineWhenNoTail: false,
       source: 'regenerate_from_user_index',
     }],
+    ['restore-variables', 'session-regen'],
     ['handle-send', null, {
       overrideText: 'send:原始用户消息',
       ignorePending: true,
@@ -686,6 +688,35 @@ test('runRegenerateFromUserIndexFlow deletes regen messages restores table memor
       resent: true,
     }],
   ]);
+});
+
+test('runRegenerateFromUserIndexFlow restores variables even when memory mode is not table (变量模式无关)', async () => {
+  const calls = [];
+  const result = await runRegenerateFromUserIndexFlow({
+    messages: [
+      { id: 'u1', role: 'user', raw: 'hi' },
+      { id: 'a1', role: 'assistant' },
+    ],
+    userIdx: 0,
+    sessionId: 'session-novar',
+    chatStore: {
+      deleteMessage: () => {},
+      removeLastSummary: () => {},
+    },
+    ui: { removeMessage: () => {} },
+    removeTurnCheckpointsForMessages: async () => {},
+    refreshChatAndContacts: () => {},
+    getMemoryStorageMode: () => 'legacy',
+    restoreMemoryForActiveThread: async () => calls.push('restore-memory'),
+    restoreVariablesForActiveThread: async sessionId => calls.push(`restore-variables:${sessionId}`),
+    getMessageSendText: () => 'send',
+    handleSend: async () => true,
+  });
+
+  assert.equal(result.started, true);
+  // 记忆非 table 模式：记忆回滚被跳过，但变量回滚仍执行（严格楼层绑定、模式无关）。
+  assert.ok(!calls.includes('restore-memory'));
+  assert.ok(calls.includes('restore-variables:session-novar'));
 });
 
 test('runRegenerateFromUserIndexFlow warns on invalid plans and traces empty resend skips', async () => {

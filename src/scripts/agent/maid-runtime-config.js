@@ -10,12 +10,18 @@ export const createMaidRuntimeConfigResolver = ({
   configManager = null,
   createClient = null,
   isConfigReady = () => false,
+  // Phase B：Sub-agent 来源改由统一 Agent Registry 提供（投影为 planner 兼容形状）；
+  // 缺省回退到直接读 settingsStore，保持既有行为与单测不变。
+  getSubAgents = null,
   logger = console,
 } = {}) => async () => {
   const profileId = trim(settingsStore?.getBoundProfileId?.());
   const modelOverride = trim(settingsStore?.getBoundModelOverride?.());
   const fallbackProfileId = trim(settingsStore?.getFallbackProfileId?.());
-  const subAgents = (settingsStore?.listSubAgents?.() || []).filter(item => item?.enabled !== false);
+  const rawSubAgents = typeof getSubAgents === 'function'
+    ? (getSubAgents() || [])
+    : (settingsStore?.listSubAgents?.() || []);
+  const subAgents = rawSubAgents.filter(item => item?.enabled !== false);
   const maidPrompt = trim(settingsStore?.getMaidPrompt?.() || settingsStore?.getPersonaPrompt?.());
   if (!profileId) {
     return {

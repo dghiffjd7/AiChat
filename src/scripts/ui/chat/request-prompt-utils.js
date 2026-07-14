@@ -1,3 +1,5 @@
+import { estimateTokens, normalizeTokenMode } from '../../memory/memory-prompt-utils.js';
+
 const describeMediaToken = (raw) => {
   const text = String(raw || '').trim();
   if (!text) return '';
@@ -87,11 +89,17 @@ export const buildPromptPreviewSnapshot = ({
         .map(message => String(message?.content ?? ''))
         .filter(text => text.trim().length > 0)
         .join('\n\n');
+  // 发送前 token 估算：预览不发请求，无 provider 真实 usage，只能本地启发式（CJK 近似、不分模型）。
+  // 明确标注「估算」——真实精确值在生成后由 provider 返回并记入本次回复。
+  const tokenMode = normalizeTokenMode('rough');
+  const estTokens = estimateTokens(body, tokenMode);
+  const tokenLine = `估算输入 token: ~${estTokens}（本地估算·非精确，真实值以生成后模型返回为准）`;
   return {
     meta,
-    head,
+    head: head ? `${head}\n${tokenLine}` : tokenLine,
     body,
     messages,
+    estimatedInputTokens: estTokens,
   };
 };
 

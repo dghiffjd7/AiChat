@@ -966,6 +966,32 @@ const PANEL_CSS = `
     background: rgba(59,130,246,0.10);
     color: #1d4ed8;
 }
+.agent-center-chip.is-usage {
+    border-color: rgba(16,185,129,0.24);
+    background: rgba(16,185,129,0.10);
+    color: #047857;
+}
+.agent-center-chip.is-danger {
+    border-color: rgba(244,63,94,0.22);
+    background: rgba(244,63,94,0.10);
+    color: #be123c;
+}
+.agent-center-chip.is-muted {
+    opacity: 0.72;
+}
+.agent-center-usage-summary {
+    margin: 4px 0 10px;
+    padding: 10px 12px;
+    border: 1px solid rgba(148,163,184,0.20);
+    border-radius: 12px;
+    background: var(--app-surface-card);
+}
+.agent-center-usage-summary-title {
+    margin-bottom: 4px;
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--app-text-secondary);
+}
 .agent-center-empty {
     padding: 28px 12px;
     color: var(--app-text-secondary);
@@ -1143,6 +1169,62 @@ const renderChips = (chips = []) => {
 };
 
 const renderEmpty = message => `<div class="agent-center-empty">${escapeHtml(message)}</div>`;
+
+// Phase B 只读用量：token/延迟的紧凑格式化，仅呈现真实计量，无估算。
+const formatTokenCount = (value) => {
+    const n = Number(value);
+    if (!Number.isFinite(n) || n < 0) return '-';
+    if (n >= 1000000) return `${(n / 1000000).toFixed(1)}M`;
+    if (n >= 1000) return `${(n / 1000).toFixed(1)}k`;
+    return String(Math.trunc(n));
+};
+
+const formatLatencyMs = (value) => {
+    const n = Number(value);
+    if (!Number.isFinite(n) || n < 0) return '-';
+    return n >= 1000 ? `${(n / 1000).toFixed(1)}s` : `${Math.trunc(n)}ms`;
+};
+
+// 单个 run 的 usage chip：recorded 显示 token/延迟；unknown 只在有本地事实时显示延迟，不伪造 token。
+const buildRunUsageChips = (usage = null) => {
+    if (!usage || typeof usage !== 'object') return [];
+    const chips = [];
+    if (usage.status === 'recorded' && Number.isFinite(Number(usage.totalTokens))) {
+        chips.push({ label: `Token ${formatTokenCount(usage.totalTokens)}`, className: 'agent-center-chip is-usage' });
+    } else if (usage.status !== 'recorded') {
+        chips.push({ label: 'Token 未计量', className: 'agent-center-chip is-muted' });
+    }
+    if (Number.isFinite(Number(usage.latencyMs)) && Number(usage.latencyMs) > 0) {
+        chips.push({ label: `模型 ${formatLatencyMs(usage.latencyMs)}`, className: 'agent-center-chip' });
+    }
+    if (usage.degraded === true) chips.push({ label: '降级', className: 'agent-center-chip is-danger' });
+    return chips;
+};
+
+// 活动页顶部的只读用量画像摘要（overall + 主要任务类型），不含任何自动决策。
+const renderUsageProfileSummary = (profile = null) => {
+    const overall = profile?.overall;
+    if (!overall || !Number(overall.runCount)) return '';
+    const parts = [
+        `运行 ${Number(overall.runCount)}`,
+        `已计量 ${Number(overall.recordedCount)}`,
+        overall.unknownCount ? `未计量 ${Number(overall.unknownCount)}` : '',
+        overall.recordedCount ? `Token 合计 ${formatTokenCount(overall.totalTokens)}` : '',
+        overall.avgTotalTokens != null ? `均 ${formatTokenCount(overall.avgTotalTokens)}/次` : '',
+        overall.avgLatencyMs != null ? `均延迟 ${formatLatencyMs(overall.avgLatencyMs)}` : '',
+        overall.degradedCount ? `降级 ${Number(overall.degradedCount)}` : '',
+    ].filter(Boolean);
+    const topKinds = (Array.isArray(profile.byKind) ? profile.byKind : [])
+        .filter(k => Number(k.runCount) > 0)
+        .slice(0, 3)
+        .map(k => `${displayAgentKind(k.kind)} ${Number(k.runCount)}${k.recordedCount ? `（Token ${formatTokenCount(k.totalTokens)}）` : ''}`);
+    return `
+        <div class="agent-center-usage-summary">
+            <div class="agent-center-usage-summary-title">用量画像（当前活动列表 · 只读）</div>
+            <div class="agent-center-card-sub">${escapeHtml(formatMeta(parts))}</div>
+            ${topKinds.length ? `<div class="agent-center-card-sub">${escapeHtml(topKinds.join(' · '))}</div>` : ''}
+        </div>`;
+};
 
 const renderNotice = ({
     title = '',
@@ -3343,10 +3425,11 @@ export class AgentCenterPanel {
                 actionAttr: 'data-failure-read-action="mark"',
             })
             : '';
+        const usageSummary = renderUsageProfileSummary(activity.usageProfile);
         if (!runs.length) {
-            return `${filterHtml}${intro}${renderEmpty(activeStatus ? `没有${activityStatusLabel(activeStatus)} Agent 活动` : '还没有 Agent 活动记录。AI 检查、候选和后台任务会显示在这里。')}`;
+            return `${filterHtml}${usageSummary}${intro}${renderEmpty(activeStatus ? `没有${activityStatusLabel(activeStatus)} Agent 活动` : '还没有 Agent 活动记录。AI 检查、候选和后台任务会显示在这里。')}`;
         }
-        return `${filterHtml}${intro}<div class="agent-center-list">${runs.map(run => {
+        return `${filterHtml}${usageSummary}${intro}<div class="agent-center-list">${runs.map(run => {
             const failureDetail = trim(run.errorMessage || run.cancelReason || run.lastStep?.errorMessage);
             return `
             <article class="${escapeHtml(activityCardClass(run))}">
@@ -3363,6 +3446,7 @@ export class AgentCenterPanel {
                 ${renderChips([
                     { label: `步骤 ${Number(run.stepCount || 0)}` },
                     { label: `工具 ${Number(run.toolCallCount || 0)}` },
+                    ...buildRunUsageChips(run.usage),
                     run.continuable ? { label: '可继续' } : null,
                     run.failureCode ? { label: `原因：${run.failureCode}` } : null,
                     run.lastStep ? { label: `最近：${displayAgentKind(run.lastStep.type)}` } : null,

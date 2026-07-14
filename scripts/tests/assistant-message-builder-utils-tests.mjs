@@ -477,6 +477,37 @@ test('buildChatModeAssistantMessage uses parsed reasoning and omits meta when em
   assert.equal(withoutReasoning.meta, undefined);
 });
 
+test('chat/creative builders record real provider usage on meta.usage (Phase B main-task metering)', async () => {
+  const { buildCreativeAssistantMessageFromParts } = await import('../../src/scripts/ui/chat/assistant-message-builder-utils.js');
+  // 聊天模式：provider 返回 token → meta.usage recorded，toolCallCount 恒 0（主任务无工具）
+  const chatMsg = buildChatModeAssistantMessageFromParts({
+    parts: { finalSource: 's', stored: 'st', display: 'd', resolvedReasoning: {} },
+    parseSpecialMessage: value => ({ type: 'text', content: value }),
+    usage: { provider: 'custom', model: 'claude-fable-5', promptTokens: 8500, completionTokens: 120, totalTokens: 8620, latencyMs: 4200, finishReason: 'stop' },
+  });
+  assert.equal(chatMsg.meta.usage.status, 'recorded');
+  assert.equal(chatMsg.meta.usage.provider, 'custom');
+  assert.equal(chatMsg.meta.usage.promptTokens, 8500);
+  assert.equal(chatMsg.meta.usage.totalTokens, 8620);
+  assert.equal(chatMsg.meta.usage.latencyMs, 4200);
+  assert.equal(chatMsg.meta.usage.toolCallCount, 0);
+
+  // 创意写作：无 usage 时不加 meta.usage（保持既有 meta 形状）
+  const creativeNoUsage = await buildCreativeAssistantMessageFromParts({
+    parts: { finalSource: 's', stored: 'st', display: 'd', resolvedReasoning: {} },
+  });
+  assert.equal(creativeNoUsage.meta.usage, undefined);
+
+  // 创意写作：有 usage 时挂到 meta.usage
+  const creativeMsg = await buildCreativeAssistantMessageFromParts({
+    parts: { finalSource: 's', stored: 'st', display: 'd', resolvedReasoning: {} },
+    usage: { provider: 'openai', model: 'gpt', promptTokens: 1000, completionTokens: 500 },
+  });
+  assert.equal(creativeMsg.meta.usage.status, 'recorded');
+  assert.equal(creativeMsg.meta.usage.totalTokens, 1500);
+  assert.equal(creativeMsg.meta.renderRich, true);
+});
+
 let failed = 0;
 for (const t of tests) {
   try {

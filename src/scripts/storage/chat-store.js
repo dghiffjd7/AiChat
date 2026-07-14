@@ -2532,6 +2532,23 @@ export class ChatStore {
     return true;
   }
 
+  // C 计划 M1：整表替换会话变量（swipe 快照还原用），单次 persist，应用 schema coerce（与 setVariable 一致）。
+  replaceVariables(map = {}, id = this.currentId) {
+    const sid = String(id || '').trim();
+    if (!sid) return false;
+    this._ensureSession(sid);
+    const next = (map && typeof map === 'object' && !Array.isArray(map)) ? map : {};
+    const schemas = this.state.sessions[sid].variableSchemas || {};
+    const out = {};
+    Object.entries(next).forEach(([key, value]) => {
+      const schema = schemas[String(key || '')];
+      out[key] = schema ? coerceVariableValue(value, schema) : value;
+    });
+    this.state.sessions[sid].variables = out;
+    this._persist();
+    return true;
+  }
+
   getDraft(id = this.currentId) {
     const sid = String(id || '').trim();
     if (!sid) return '';

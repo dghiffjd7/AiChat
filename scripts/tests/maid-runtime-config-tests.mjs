@@ -72,3 +72,29 @@ console.log('ok - maid runtime config resolver uses explicit maid profile');
   assert.equal(typeof runtime.fallbackClient.chat, 'function');
   console.log('ok - maid runtime config exposes fallback capability metadata');
 }
+
+{
+  // Phase B：getSubAgents（来自 Agent Registry）替代直接读 store，subAgents 结果与来源一致且过 enabled
+  const resolver = createMaidRuntimeConfigResolver({
+    settingsStore: {
+      getBoundProfileId: () => 'maid-profile',
+      getMaidPrompt: () => 'p',
+      // 若 registry 路径生效，此方法不应被调用
+      listSubAgents: () => { throw new Error('should use getSubAgents, not settingsStore.listSubAgents'); },
+    },
+    configManager: {
+      ensureStores: async () => {},
+      getRuntimeConfigByProfileId: async () => ({ provider: 'openai', model: 'm', apiKey: 'k' }),
+    },
+    isConfigReady: () => true,
+    createClient: () => ({ chat: async () => 'ok' }),
+    getSubAgents: () => ([
+      { id: 's1', name: 'A', skills: ['x'], note: '', enabled: true, profileHint: '' },
+      { id: 's2', name: 'B', skills: [], note: '', enabled: false, profileHint: '' },
+    ]),
+  });
+  const runtime = await resolver();
+  assert.equal(runtime.subAgents.length, 1);
+  assert.equal(runtime.subAgents[0].id, 's1');
+  console.log('ok - maid runtime config sources sub-agents from registry provider when supplied');
+}
