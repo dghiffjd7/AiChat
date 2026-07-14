@@ -13,9 +13,10 @@ import { canInitClient } from '../api/client-config-utils.js';
 import { logger } from '../utils/logger.js';
 import { pickSavePath as pickNativeSavePath } from '../utils/save-dialog.js';
 import { safeInvoke } from '../utils/tauri.js';
-import { appConfirm, appChoice } from './app-confirm.js';
+import { appConfirm, appChoice, appPromptText } from './app-confirm.js';
 import { buildScriptAuthorizationMessage } from './script-authorization-utils.js';
 import { createDragGhost } from './drag-ghost-utils.js';
+import { estimateTokens } from '../memory/memory-prompt-utils.js';
 import {
     REGEX_CUSTOM_PROMPT_PRESET_TYPE,
     resolveImportedRegexPresetBindTarget,
@@ -189,7 +190,7 @@ const PANEL_CSS = `
 .pp-footer button:hover,
 .pp-back-btn:hover,
 .pp-nav-item:hover {
-    border-color: rgba(37,99,235,0.30);
+    border-color: rgba(var(--app-accent-rgb),0.30);
     box-shadow: 0 6px 16px rgba(15,23,42,0.07);
 }
 .pp-header-actions button:active,
@@ -208,7 +209,7 @@ const PANEL_CSS = `
 .pp-input:focus-visible,
 .pp-textarea:focus-visible,
 .pp-switch input:focus-visible + .pp-switch-track {
-    outline: 2px solid rgba(37,99,235,0.34);
+    outline: 2px solid rgba(var(--app-accent-rgb),0.34);
     outline-offset: 2px;
 }
 .pp-close {
@@ -232,7 +233,7 @@ const PANEL_CSS = `
     flex-shrink: 0;
 }
 .pp-manager-card {
-    border: 1px solid rgba(37,99,235,0.18);
+    border: 1px solid rgba(var(--app-accent-rgb),0.18);
     border-radius: 16px;
     background: var(--app-surface-card);
     box-shadow: 0 8px 24px rgba(15,23,42,0.07);
@@ -257,7 +258,7 @@ const PANEL_CSS = `
     padding: 8px 10px;
     border-radius: 12px;
     background: var(--app-surface-subtle);
-    border: 1px solid rgba(59,130,246,0.12);
+    border: 1px solid rgba(var(--app-accent-rgb),0.12);
     font-size: 12px;
     color: var(--app-text-secondary);
     line-height: 1.5;
@@ -273,16 +274,16 @@ const PANEL_CSS = `
     padding: 6px 10px;
     border-radius: 999px;
     background: var(--app-surface-subtle);
-    border: 1px solid rgba(59,130,246,0.12);
+    border: 1px solid rgba(var(--app-accent-rgb),0.12);
 }
 .pp-enabled-chip.pp-readonly {
-    background: rgba(248,250,252,0.98);
+    background: var(--app-surface-subtle, rgba(248,250,252,0.98));
     border-color: rgba(148,163,184,0.28);
 }
 .pp-enabled-text {
     font-size: 12px;
     font-weight: 700;
-    color: #1e40af;
+    color: var(--app-accent-strong);
 }
 .pp-enabled-chip.pp-readonly .pp-enabled-text {
     color: var(--app-text-muted);
@@ -325,7 +326,7 @@ const PANEL_CSS = `
     transition: transform 180ms ease;
 }
 .pp-switch input:checked + .pp-switch-track {
-    background: #3b82f6;
+    background: var(--app-accent-primary);
 }
 .pp-switch input:checked + .pp-switch-track::after {
     transform: translateX(18px);
@@ -341,7 +342,7 @@ const PANEL_CSS = `
 }
 .pp-enabled-chip.pp-readonly .pp-switch-track::after {
     background: var(--app-surface-subtle);
-    box-shadow: 0 1px 2px rgba(100,116,139,0.22);
+    box-shadow: 0 1px 2px rgba(var(--app-tint-slate-rgb),0.22);
 }
 .pp-manager-select-row {
     display: flex;
@@ -383,7 +384,7 @@ const PANEL_CSS = `
     -webkit-appearance: none;
     min-height: 36px;
     padding: 8px 12px;
-    border: 1px solid #dbe2ea;
+    border: 1px solid var(--app-border-default);
     border-radius: 10px;
     background: var(--app-surface-card);
     color: var(--app-text-secondary);
@@ -397,9 +398,9 @@ const PANEL_CSS = `
     cursor: not-allowed;
 }
 .pp-manager-btn.pp-danger {
-    border-color: #fecaca;
-    background: #fff5f5;
-    color: #b91c1c;
+    border-color: var(--app-danger-border, #fecaca);
+    background: var(--app-danger-soft, #fff5f5);
+    color: var(--app-danger-text, #b91c1c);
 }
 
 /* ── nav pages ── */
@@ -473,13 +474,13 @@ const PANEL_CSS = `
     border-left: 1px solid var(--app-border-default);
 }
 .pp-search-scope button.is-active {
-    background: var(--app-accent-soft, rgba(25, 154, 255, 0.14));
+    background: var(--app-accent-soft, rgba(var(--app-accent-rgb), 0.14));
     color: var(--app-accent-strong, var(--app-accent-primary));
     font-weight: 700;
 }
 .pp-block-title mark,
 .pp-block-hit mark {
-    background: var(--app-accent-soft, rgba(25, 154, 255, 0.18));
+    background: var(--app-accent-soft, rgba(var(--app-accent-rgb), 0.18));
     color: var(--app-accent-strong, var(--app-accent-primary));
     border-radius: 3px;
     padding: 0 1px;
@@ -496,6 +497,239 @@ const PANEL_CSS = `
 /* 搜索过滤中隐藏拖拽柄：过滤视图下重排易误跨隐藏区块 */
 #openai-blocks[data-filtering="1"] .pp-block-drag {
     display: none;
+}
+
+/* 未保存更改指示（footer 左侧 chip + 保存钮注意态） */
+.pp-unsaved-chip[hidden] { display: none; }
+.pp-unsaved-chip {
+    margin-right: auto;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    color: var(--app-warning-text, #b45309);
+}
+.pp-unsaved-chip::before {
+    content: '';
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: rgba(var(--app-warning-rgb, 245, 158, 11), 0.9);
+}
+.pp-btn-save.pp-save-attention {
+    box-shadow: 0 0 0 2px rgba(var(--app-warning-rgb, 245, 158, 11), 0.35);
+}
+
+/* 三级页上下滑切换：拉扯提示胶囊（.pp-page 本身 absolute，已是定位上下文；
+   切勿再写 position:relative 覆盖——会让页面脱离 inset:0 而高度塌陷） */
+.pp-swipe-hint {
+    position: absolute;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 3;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 12px;
+    border-radius: 999px;
+    border: 1px solid var(--app-border-default);
+    background: var(--app-surface-card);
+    box-shadow: 0 6px 18px rgba(15, 23, 42, 0.14);
+    font-size: 12px;
+    color: var(--app-text-secondary);
+    max-width: 78%;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    opacity: 0;
+    pointer-events: none;
+}
+.pp-swipe-hint-prev { top: 56px; }
+.pp-swipe-hint-next { bottom: 10px; }
+.pp-swipe-hint.is-armed {
+    color: var(--app-accent-strong, var(--app-accent-primary));
+    border-color: var(--app-accent-primary);
+}
+#preset-block-editor { will-change: transform; }
+
+/* ── 分栏请求预览 ── */
+.pp-main {
+    flex: 1 1 0;
+    min-height: 0;
+    display: flex;
+    position: relative;
+}
+.pp-main > .pp-shell { flex: 1 1 auto; min-width: 0; }
+.pp-preview-pane {
+    position: relative;
+    flex: 0 0 0%;
+    width: 0;
+    min-width: 0;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    border-left: 1px solid var(--app-border-default);
+    background: var(--app-surface-subtle);
+    transition: flex-basis 300ms cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+#preset-panel[data-preview="split"] .pp-preview-pane { flex-basis: 46%; }
+#preset-panel[data-preview="full"] .pp-preview-pane {
+    position: absolute;
+    inset: 0;
+    z-index: 5;
+    flex-basis: auto;
+    width: auto;
+}
+#preset-panel[data-preview="full"] .pp-shell { visibility: hidden; }
+.pp-preview-head {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    flex-wrap: wrap;
+    padding: 10px 12px 10px 26px;
+    border-bottom: 1px solid var(--app-border-default);
+    background: var(--app-surface-card);
+}
+.pp-preview-title { font-weight: 800; font-size: 13px; color: var(--app-text-primary); white-space: nowrap; }
+.pp-preview-est { margin-left: 8px; font-weight: 400; font-size: 11px; color: var(--app-text-muted); }
+.pp-preview-actions { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+.pp-preview-toggle {
+    padding: 5px 9px;
+    border: 1px solid var(--app-border-default);
+    border-radius: 8px;
+    background: var(--app-surface-card);
+    color: var(--app-text-secondary);
+    font-size: 12px;
+    cursor: pointer;
+}
+.pp-preview-toggle.is-on {
+    background: var(--app-accent-soft, rgba(25, 154, 255, 0.14));
+    color: var(--app-accent-strong, var(--app-accent-primary));
+    border-color: var(--app-accent-primary);
+}
+.pp-preview-scroll { flex: 1 1 0; min-height: 0; overflow-y: auto; padding: 12px 14px 24px 26px; }
+.pp-preview-msg {
+    margin-bottom: 12px;
+    border: 1px solid var(--app-border-subtle);
+    border-radius: 12px;
+    background: var(--app-surface-card);
+    overflow: hidden;
+}
+.pp-preview-msg-role {
+    padding: 5px 10px;
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--app-text-muted);
+    border-bottom: 1px dashed var(--app-border-subtle);
+}
+.pp-preview-msg-text {
+    padding: 10px 12px;
+    font-size: 12.5px;
+    line-height: 1.6;
+    white-space: pre-wrap;
+    word-break: break-word;
+    color: var(--app-text-secondary);
+}
+.pp-prev-block {
+    background: rgba(var(--app-accent-rgb, 25, 154, 255), 0.07);
+    border-radius: 4px;
+    box-shadow: inset 2px 0 0 rgba(var(--app-accent-rgb, 25, 154, 255), 0.5);
+}
+.pp-prev-block.is-current { background: rgba(var(--app-accent-rgb, 25, 154, 255), 0.14); }
+.pp-prev-history-chip {
+    margin: 10px 0;
+    padding: 9px 12px;
+    border: 1px dashed var(--app-border-default);
+    border-radius: 10px;
+    text-align: center;
+    color: var(--app-text-muted);
+    font-size: 12px;
+}
+.pp-preview-loading { padding: 30px 12px; text-align: center; color: var(--app-text-muted); font-size: 12px; }
+/* 编辑页右缘邀请把手（轻微呼吸光，hover/触碰放大） */
+.pp-preview-edge {
+    position: absolute;
+    right: 0;
+    top: 50%;
+    transform: translateY(-50%);
+    z-index: 4;
+    width: 22px;
+    height: 74px;
+    border: 1px solid var(--app-border-default);
+    border-right: none;
+    border-radius: 12px 0 0 12px;
+    background: var(--app-surface-card);
+    color: var(--app-text-muted);
+    font-size: 13px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: -4px 0 14px rgba(15, 23, 42, 0.10);
+    animation: pp-edge-breathe 3.2s ease-in-out infinite;
+    transition: width 140ms ease, color 140ms ease;
+    touch-action: none;
+}
+.pp-preview-edge:hover { width: 30px; color: var(--app-accent-strong, var(--app-accent-primary)); animation-play-state: paused; }
+@keyframes pp-edge-breathe {
+    0%, 100% { box-shadow: -4px 0 14px rgba(15, 23, 42, 0.10); }
+    50% { box-shadow: -4px 0 18px rgba(var(--app-accent-rgb, 25, 154, 255), 0.40); }
+}
+#preset-panel[data-preview="split"] .pp-preview-edge,
+#preset-panel[data-preview="full"] .pp-preview-edge { display: none; }
+/* 分栏时 pane 左缘把手（点击/左拉→全屏）；全屏时对称的「编辑」返回把手 */
+.pp-pane-handle {
+    position: absolute;
+    left: 0;
+    top: 50%;
+    transform: translateY(-50%);
+    z-index: 6;
+    width: 18px;
+    height: 74px;
+    border: 1px solid var(--app-border-default);
+    border-left: none;
+    border-radius: 0 12px 12px 0;
+    background: var(--app-surface-card);
+    color: var(--app-text-muted);
+    cursor: pointer;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    font-size: 12px;
+    touch-action: none;
+}
+#preset-panel[data-preview="split"] .pp-pane-handle { display: flex; }
+.pp-editor-handle {
+    position: absolute;
+    left: 0;
+    top: 50%;
+    transform: translateY(-50%);
+    z-index: 6;
+    width: 24px;
+    height: 88px;
+    border: 1px solid var(--app-border-default);
+    border-left: none;
+    border-radius: 0 12px 12px 0;
+    background: var(--app-surface-card);
+    color: var(--app-text-muted);
+    cursor: pointer;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    font-size: 12px;
+    writing-mode: vertical-rl;
+    letter-spacing: 3px;
+    animation: pp-edge-breathe 3.2s ease-in-out infinite;
+    touch-action: none;
+}
+#preset-panel[data-preview="full"] .pp-editor-handle { display: flex; }
+body[data-reduced-motion='on'] .pp-preview-edge,
+body[data-reduced-motion='on'] .pp-editor-handle { animation: none; }
+.pp-block-linked {
+    outline: 2px solid rgba(var(--app-accent-rgb, 25, 154, 255), 0.55);
+    outline-offset: -2px;
 }
 .pp-page-scroll {
     flex: 1 1 0;
@@ -577,10 +811,10 @@ const PANEL_CSS = `
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    border: 1px solid rgba(37,99,235,0.16);
+    border: 1px solid rgba(var(--app-accent-rgb),0.16);
     border-radius: 11px;
-    background: rgba(37,99,235,0.09);
-    color: #1d4ed8;
+    background: rgba(var(--app-accent-rgb),0.09);
+    color: var(--app-accent-strong);
     flex-shrink: 0;
 }
 .pp-nav-item-icon-svg {
@@ -665,8 +899,8 @@ const PANEL_CSS = `
     min-height: 24px;
     padding: 0 10px;
     border-radius: 999px;
-    background: #eff6ff;
-    color: #1d4ed8;
+    background: var(--app-accent-soft, #eff6ff);
+    color: var(--app-accent-strong);
     font-size: 11px;
     font-weight: 800;
     white-space: nowrap;
@@ -683,7 +917,7 @@ const PANEL_CSS = `
     min-height: 34px;
     padding: 8px 12px;
     border-radius: 10px;
-    border: 1px solid #dbe2ea;
+    border: 1px solid var(--app-border-default);
     background: var(--app-surface-card);
     color: var(--app-text-secondary);
     font-size: 12px;
@@ -691,9 +925,9 @@ const PANEL_CSS = `
     cursor: pointer;
 }
 .pp-binding-btn.is-primary {
-    background: #eff6ff;
-    border-color: #bfdbfe;
-    color: #1d4ed8;
+    background: var(--app-accent-soft, #eff6ff);
+    border-color: rgba(var(--app-accent-rgb), 0.35);
+    color: var(--app-accent-strong);
 }
 .pp-binding-btn.is-muted {
     background: var(--app-surface-subtle);
@@ -767,8 +1001,8 @@ const PANEL_CSS = `
 }
 .pp-input:focus,
 .pp-textarea:focus {
-    border-color: rgba(37,99,235,0.42);
-    box-shadow: 0 0 0 3px rgba(37,99,235,0.10);
+    border-color: rgba(var(--app-accent-rgb),0.42);
+    box-shadow: 0 0 0 3px rgba(var(--app-accent-rgb),0.10);
     outline: none;
 }
 .pp-row { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 10px; }
@@ -781,9 +1015,9 @@ const PANEL_CSS = `
 .pp-flags input[type="checkbox"] { width: 16px; height: 16px; }
 .pp-reasoning-card {
     margin-top: 12px;
-    border: 1px solid rgba(37,99,235,0.18);
+    border: 1px solid rgba(var(--app-accent-rgb),0.18);
     border-radius: 14px;
-    background: color-mix(in srgb, var(--app-surface-card) 90%, rgba(37,99,235,0.10));
+    background: color-mix(in srgb, var(--app-surface-card) 90%, rgba(var(--app-accent-rgb),0.10));
     padding: 12px;
 }
 
@@ -795,13 +1029,13 @@ const PANEL_CSS = `
     transition: transform 120ms ease, border-color 160ms ease, box-shadow 160ms ease, background 160ms ease;
 }
 .pp-block:hover {
-    border-color: rgba(37,99,235,0.24);
+    border-color: rgba(var(--app-accent-rgb),0.24);
     box-shadow: 0 8px 22px rgba(15,23,42,0.08);
 }
 .pp-block.is-jump-target {
-    border-color: rgba(14,165,233,0.38);
-    background: rgba(14,165,233,0.05);
-    box-shadow: 0 0 0 3px rgba(14,165,233,0.12);
+    border-color: rgba(var(--app-accent-rgb),0.38);
+    background: rgba(var(--app-accent-rgb),0.05);
+    box-shadow: 0 0 0 3px rgba(var(--app-accent-rgb),0.12);
 }
 .pp-block-header {
     display: flex; align-items: center; justify-content: space-between;
@@ -845,9 +1079,9 @@ const PANEL_CSS = `
     white-space: nowrap;
 }
 .pp-meta-chip.is-scope {
-    background: rgba(59,130,246,0.10);
-    border-color: rgba(59,130,246,0.16);
-    color: #1d4ed8;
+    background: rgba(var(--app-accent-rgb),0.10);
+    border-color: rgba(var(--app-accent-rgb),0.16);
+    color: var(--app-accent-strong);
 }
 .pp-meta-chip.is-placement {
     background: rgba(148,163,184,0.12);
@@ -855,13 +1089,13 @@ const PANEL_CSS = `
     color: var(--app-text-secondary);
 }
 .pp-meta-chip.is-dynamic {
-    background: rgba(245,158,11,0.12);
-    border-color: rgba(245,158,11,0.2);
+    background: rgba(var(--app-warning-rgb),0.12);
+    border-color: rgba(var(--app-warning-rgb),0.2);
     color: #b45309;
 }
 .pp-meta-chip.is-replace {
-    background: rgba(244,63,94,0.10);
-    border-color: rgba(244,63,94,0.18);
+    background: rgba(var(--app-danger-rgb),0.10);
+    border-color: rgba(var(--app-danger-rgb),0.18);
     color: #be123c;
 }
 .pp-block-right { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
@@ -890,8 +1124,8 @@ const PANEL_CSS = `
     transition: transform 120ms ease, border-color 160ms ease, background 160ms ease, box-shadow 160ms ease;
 }
 .pp-btn-cancel { border: 1px solid var(--app-border-default); background: var(--app-surface-subtle); color: var(--app-text-secondary); }
-.pp-btn-save { border: none; background: #3b82f6; color: var(--app-text-inverse); font-weight: 700; }
-.pp-btn-save:active { background: #2563eb; }
+.pp-btn-save { border: none; background: var(--app-accent-primary); color: var(--app-text-inverse); font-weight: 700; }
+.pp-btn-save:active { background: var(--app-accent-strong); }
 
 @media (max-width: 520px), (max-height: 720px) {
     #preset-panel {
@@ -1100,9 +1334,9 @@ const PANEL_CSS = `
 }
 
 body[data-theme-mode='dark'] #preset-panel .pp-nav-item-icon {
-    color: #8ecbff;
-    border-color: rgba(121, 192, 255, 0.24);
-    background: rgba(121, 192, 255, 0.10);
+    color: var(--app-accent-primary);
+    border-color: rgba(var(--app-accent-rgb), 0.24);
+    background: rgba(var(--app-accent-rgb), 0.10);
 }
 
 body[data-theme-mode='dark'] #preset-panel .pp-manager-card,
@@ -1172,6 +1406,9 @@ export class PresetPanel {
         this.runtimeContext.showScenePromptPreview = typeof context.showScenePromptPreview === 'function'
             ? context.showScenePromptPreview
             : this.runtimeContext.showScenePromptPreview;
+        this.runtimeContext.buildScenePromptPreviewRequest = typeof context.buildScenePromptPreviewRequest === 'function'
+            ? context.buildScenePromptPreviewRequest
+            : this.runtimeContext.buildScenePromptPreviewRequest;
         this.runtimeContext.getUiMode = typeof context.getUiMode === 'function'
             ? context.getUiMode
             : this.runtimeContext.getUiMode;
@@ -1510,6 +1747,8 @@ export class PresetPanel {
         this.bindingPresetId = '';
         this.renderAllSections();
         this.setPageView(this.currentPage);
+        // 预览不跨开合残留：每次打开都从收起状态开始（一级页无预览）
+        this.closePreview({ animate: false });
         if (section && this.detailScrollEl) this.detailScrollEl.scrollTop = 0;
         this.element.style.display = 'flex';
         this.overlayElement.style.display = 'block';
@@ -1561,6 +1800,7 @@ export class PresetPanel {
                     <button class="pp-close" id="preset-close">&times;</button>
                 </div>
             </div>
+            <div class="pp-main">
             <div class="pp-shell">
                 <div class="pp-manager" id="preset-manager"></div>
                 <div class="pp-nav-shell">
@@ -1579,6 +1819,7 @@ export class PresetPanel {
                                 <div class="pp-detail-heading" id="preset-detail-title"></div>
                                 <div class="pp-detail-subheading" id="preset-detail-subtitle"></div>
                             </div>
+                            <button type="button" class="pp-preview-edge" data-pp-preview-open aria-label="展开请求预览">⟨</button>
                             <div class="pp-page-scroll" id="preset-detail-scroll">
                                 <div class="pp-section-editor" id="preset-detail-editor"></div>
                             </div>
@@ -1605,15 +1846,36 @@ export class PresetPanel {
                                 <div class="pp-detail-heading" id="preset-block-title"></div>
                                 <div class="pp-detail-subheading" id="preset-block-subtitle"></div>
                             </div>
+                            <div class="pp-swipe-hint pp-swipe-hint-prev" aria-hidden="true"><span>↑</span><span class="pp-swipe-hint-label"></span></div>
+                            <button type="button" class="pp-preview-edge" data-pp-preview-open aria-label="展开请求预览">⟨</button>
                             <div class="pp-page-scroll" id="preset-block-scroll">
                                 <div class="pp-section-editor" id="preset-block-editor"></div>
                             </div>
+                            <div class="pp-swipe-hint pp-swipe-hint-next" aria-hidden="true"><span>↓</span><span class="pp-swipe-hint-label"></span></div>
                         </section>
                     </div>
                 </div>
             </div>
+            <aside class="pp-preview-pane" id="preset-preview-pane">
+                <button type="button" class="pp-pane-handle" id="preset-preview-expand" aria-label="拉出全屏预览">⟨</button>
+                <div class="pp-preview-head">
+                    <div class="pp-preview-title">请求预览<span class="pp-preview-est" id="preset-preview-est"></span></div>
+                    <div class="pp-preview-actions">
+                        <button type="button" id="preset-preview-toggle-chatfmt" class="pp-preview-toggle has-help" data-help="加入聊天格式等聊天专属注入（默认按创意写作组装，不含）。" data-help-mode="press">聊天格式</button>
+                        <button type="button" id="preset-preview-toggle-history" class="pp-preview-toggle has-help" data-help="加入当前会话的聊天记录（默认折叠为占位符）。" data-help-mode="press">聊天记录</button>
+                        <button type="button" id="preset-preview-refresh" class="pp-preview-toggle" aria-label="重新构建">↻</button>
+                        <button type="button" id="preset-preview-close" class="pp-preview-toggle" aria-label="关闭预览">×</button>
+                    </div>
+                </div>
+                <div class="pp-preview-scroll" id="preset-preview-scroll">
+                    <div class="pp-preview-body" id="preset-preview-body"></div>
+                </div>
+                <button type="button" class="pp-editor-handle" id="preset-editor-return" aria-label="返回编辑">编辑</button>
+            </aside>
+            </div>
             <div class="pp-status" id="preset-status"></div>
             <div class="pp-footer">
+                <span class="pp-unsaved-chip" id="preset-unsaved-chip" hidden></span>
                 <button class="pp-btn-cancel" id="preset-cancel">取消</button>
                 <button class="pp-btn-save" id="preset-save">保存</button>
             </div>
@@ -1643,6 +1905,8 @@ export class PresetPanel {
         this.element.querySelector('#preset-back').onclick = () => this.showRootPage();
         this.element.querySelector('#preset-binding-back').onclick = () => this.showDetailPage();
         this.element.querySelector('#preset-block-back').onclick = () => this.showDetailPage();
+        this.setupBlockSwipeNav();
+        this.setupPreviewPane();
 
         /* hidden file input for import */
         const importInput = document.createElement('input');
@@ -1863,7 +2127,8 @@ export class PresetPanel {
         this.captureCurrentDetailDraft();
         this.currentSectionId = sec.id;
         this.currentPage = 'detail';
-        this.renderAllSections();
+        // 重建收敛：进入 section 只构建该 detail 编辑器（manager/首页列表未变，不整体重建）
+        this.renderDetailSection(sec);
         this.setPageView('detail');
         if (this.detailScrollEl) this.detailScrollEl.scrollTop = 0;
     }
@@ -1885,11 +2150,14 @@ export class PresetPanel {
 
     showRootPage({ capture = true } = {}) {
         if (capture) this.captureCurrentDetailDraft();
+        // 一级页没有预览：返回时随手收起
+        this.closePreview();
         this.currentSectionId = null;
         this.currentPage = 'root';
         this.bindingStoreType = '';
         this.bindingPresetId = '';
-        this.renderAllSections();
+        // 重建收敛：返回首页只刷新导航列表（小标题/计数可能随编辑变化），manager 与 detail 不重建
+        this.renderMainList();
         this.setPageView('root');
     }
 
@@ -1900,7 +2168,8 @@ export class PresetPanel {
             return;
         }
         this.currentPage = 'detail';
-        this.renderAllSections();
+        // 重建收敛：从三级区块页/绑定页返回时 detail 编辑器还在 DOM 中（区块编辑已 write-through 同步），
+        // 不重建——同时保住列表滚动位置。
         this.setPageView('detail');
     }
 
@@ -1966,7 +2235,10 @@ export class PresetPanel {
                 ? this.drafts.get(key)
                 : deepClone(this.store.getActive(storeType) || {});
             const next = this.collectSectionData(sec.id, this.detailEditorEl, base);
-            this.drafts.set(key, next);
+            // 与已保存基线一致的草稿直接丢弃：避免「未保存更改」误报，也减少无谓写盘
+            const baseline = this.store.getActive(storeType) || {};
+            if (JSON.stringify(next) === JSON.stringify(baseline)) this.drafts.delete(key);
+            else this.drafts.set(key, next);
         } catch (err) {
             logger.debug('capture detail draft failed', sec.id, err);
         }
@@ -3007,23 +3279,8 @@ export class PresetPanel {
         headRow.style.cssText = 'display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:8px; flex-wrap:wrap;';
         headRow.innerHTML = `
             <div style="color:var(--app-text-muted); font-size:12px;">点击区块进入编辑；按住 ☰ 拖动排序</div>
-            <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
-                <span class="has-help" data-help="按当前会话与已保存的预设，构建最终发给模型的完整请求（只预览，不发送；未保存的修改不计入）。「创意写作」不含聊天格式等聊天专属注入；跨场景预览不携带当前会话历史。" style="font-size:12px; color:var(--app-text-secondary); font-weight:700;">请求预览</span>
-                <button type="button" id="openai-preview-chat" style="padding:6px 10px; border:1px solid var(--app-border-default); border-radius:10px; background:var(--app-surface-subtle); cursor:pointer; font-size:12px;">聊天</button>
-                <button type="button" id="openai-preview-rp" style="padding:6px 10px; border:1px solid var(--app-border-default); border-radius:10px; background:var(--app-surface-subtle); cursor:pointer; font-size:12px;">创意写作</button>
-                <button type="button" id="openai-add-block" style="padding:6px 10px; border:1px solid var(--app-border-default); border-radius:10px; background:var(--app-surface-card); cursor:pointer; font-size:12px;">+ 新增区块</button>
-            </div>
+            <button type="button" id="openai-add-block" style="padding:6px 10px; border:1px solid var(--app-border-default); border-radius:10px; background:var(--app-surface-card); cursor:pointer; font-size:12px;">+ 新增区块</button>
         `;
-        const runScenePreview = async (mode) => {
-            const fn = this.runtimeContext.showScenePromptPreview;
-            if (typeof fn !== 'function') {
-                window.toastr?.warning?.('请求预览暂不可用');
-                return;
-            }
-            await fn(mode);
-        };
-        headRow.querySelector('#openai-preview-chat').onclick = () => runScenePreview('chat');
-        headRow.querySelector('#openai-preview-rp').onclick = () => runScenePreview('rp');
         wrap.appendChild(headRow);
 
         // 搜索/过滤：可查标题与提示词正文；范围切换（全部/标题/正文）代替命中排序——
@@ -3131,10 +3388,11 @@ export class PresetPanel {
                 const del = document.createElement('button');
                 del.type = 'button'; del.className = 'block-delete';
                 del.textContent = '删除';
-                del.style.cssText = 'padding:6px 10px; border:1px solid var(--app-danger-border, #fecaca); border-radius:10px; background:var(--app-danger-soft, #fee2e2); color:var(--app-danger-text, #b91c1c); cursor:pointer; font-size:12px;';
+                del.style.cssText = 'padding:6px 10px; border:1px solid var(--app-danger-border, var(--app-danger-border, #fecaca)); border-radius:10px; background:var(--app-danger-soft, var(--app-danger-soft, #fee2e2)); color:var(--app-danger-text, var(--app-danger-text, #b91c1c)); cursor:pointer; font-size:12px;';
                 del.onclick = async (e) => {
                     e.stopPropagation();
-                    const ok = await appConfirm({ title: '删除区块', message: `删除区块「${identifier}」？`, danger: true });
+                    const blockName = card.querySelector('.pp-block-title')?.textContent?.trim() || identifier;
+                    const ok = await appConfirm({ title: '删除区块', message: `删除区块「${blockName}」？`, danger: true });
                     if (ok) card.remove();
                 };
                 right.appendChild(del);
@@ -3246,20 +3504,28 @@ export class PresetPanel {
             };
         });
 
-        headRow.querySelector('#openai-add-block').onclick = () => {
-            const identifier = prompt('区块 identifier（唯一）', `custom_${Date.now()}`);
-            if (!identifier) return;
-            if (list.querySelector(`.openai-block[data-identifier="${CSS.escape(identifier)}"]`)) {
-                window.toastr?.warning?.('identifier 已存在');
-                return;
+        headRow.querySelector('#openai-add-block').onclick = async () => {
+            // 应用内弹窗：只填名称即可创建；identifier 自动生成（用户无需理解），role 默认 system、内容留空
+            const name = await appPromptText({
+                title: '新增区块',
+                placeholder: '区块名称',
+                confirmText: '创建',
+            });
+            if (name === null) return;
+            const finalName = String(name).trim() || '未命名区块';
+            let identifier = `custom_${Date.now()}`;
+            while (list.querySelector(`.openai-block[data-identifier="${CSS.escape(identifier)}"]`)) {
+                identifier = `custom_${Date.now()}_${Math.random().toString(16).slice(2, 6)}`;
             }
-            const name = prompt('区块名称', identifier) || identifier;
-            const role = (prompt('role: system/user/assistant', 'system') || 'system').toLowerCase();
-            const content = prompt('区块内容（可稍后再改）', '') ?? '';
-            promptById.set(identifier, { identifier, name, role, system_prompt: true, marker: false, content });
+            promptById.set(identifier, { identifier, name: finalName, role: 'system', system_prompt: true, marker: false, content: '' });
             // 新区块必须进草稿 Map，保存合并才不会丢
-            this.openaiBlockDrafts.set(identifier, { name, role, system_prompt: true, content });
-            list.appendChild(makeBlockEl({ identifier, enabled: true }));
+            this.openaiBlockDrafts.set(identifier, { name: finalName, role: 'system', system_prompt: true, content: '' });
+            const card = makeBlockEl({ identifier, enabled: true });
+            // 插到列表最上方（注入顺序最前），并直接进入区块编辑页方便继续填写
+            list.insertBefore(card, list.firstChild);
+            const scroller = list.closest('.pp-page-scroll');
+            if (scroller) scroller.scrollTop = 0;
+            this.openOpenAIBlockEditor(card);
         };
 
         return wrap;
@@ -3268,12 +3534,17 @@ export class PresetPanel {
     /* 区块独立编辑页：点击列表中的区块进入；对卡内隐藏表单 write-through，保存/草稿链路不变 */
     openOpenAIBlockEditor(card) {
         if (!card || !this.blockEditorEl) return;
+        this.currentBlockCard = card;
         const identifier = card.dataset.identifier || '';
         const isMarker = card.dataset.marker === 'true';
         const cardTitleEl = card.querySelector('.pp-block-title');
         const cardSubEl = card.querySelector('.pp-block-sub');
         if (this.blockTitleEl) this.blockTitleEl.textContent = cardTitleEl?.textContent || identifier;
-        if (this.blockSubtitleEl) this.blockSubtitleEl.textContent = identifier;
+        if (this.blockSubtitleEl) {
+            const cards = this.getBlockCards();
+            const pos = cards.indexOf(card);
+            this.blockSubtitleEl.textContent = pos >= 0 ? `${pos + 1} / ${cards.length} · ${identifier}` : identifier;
+        }
         const host = this.blockEditorEl;
         host.innerHTML = '';
         const mkLabel = (text) => {
@@ -3314,6 +3585,7 @@ export class PresetPanel {
             nameInput.value = draft.name || '';
             nameInput.addEventListener('input', () => {
                 draft.name = nameInput.value;
+                this.scheduleUnsavedIndicatorUpdate();
                 const next = nameInput.value || identifier;
                 if (cardTitleEl) cardTitleEl.textContent = next;
                 if (this.blockTitleEl) this.blockTitleEl.textContent = next;
@@ -3328,6 +3600,7 @@ export class PresetPanel {
             roleSel.value = draft.role || 'system';
             roleSel.addEventListener('change', () => {
                 draft.role = roleSel.value;
+                this.scheduleUnsavedIndicatorUpdate();
                 if (cardSubEl) cardSubEl.textContent = `role: ${roleSel.value}`;
             });
             roleCell.appendChild(roleSel);
@@ -3341,22 +3614,602 @@ export class PresetPanel {
             sysChk.type = 'checkbox';
             sysChk.style.cssText = 'width:16px; height:16px;';
             sysChk.checked = Boolean(draft.system_prompt);
-            sysChk.addEventListener('change', () => { draft.system_prompt = sysChk.checked; });
+            sysChk.addEventListener('change', () => { draft.system_prompt = sysChk.checked; this.scheduleUnsavedIndicatorUpdate(); });
             sysWrap.appendChild(sysChk);
             sysWrap.appendChild(document.createTextNode('system_prompt'));
             host.appendChild(sysWrap);
 
-            host.appendChild(mkLabel('提示词正文'));
+            const bodyLabelRow = document.createElement('div');
+            bodyLabelRow.style.cssText = 'display:flex; align-items:center; justify-content:space-between; gap:8px;';
+            bodyLabelRow.appendChild(mkLabel('提示词正文'));
+            const restoreBtn = document.createElement('button');
+            restoreBtn.type = 'button';
+            restoreBtn.textContent = '还原此区块';
+            restoreBtn.className = 'has-help';
+            restoreBtn.setAttribute('data-help', '丢弃此区块未保存的修改，恢复到上次保存的内容。');
+            restoreBtn.setAttribute('data-help-mode', 'press');
+            restoreBtn.style.cssText = 'padding:4px 10px; border:1px solid var(--app-border-default); border-radius:8px; background:var(--app-surface-subtle); color:var(--app-text-secondary); cursor:pointer; font-size:12px; flex:none;';
+            restoreBtn.onclick = () => {
+                this.openaiBlockDrafts.delete(identifier);
+                const restoredTitle = base?.name || known?.label || identifier;
+                if (cardTitleEl) cardTitleEl.textContent = restoredTitle;
+                if (cardSubEl) cardSubEl.textContent = `role: ${roleIdToName(base?.role || 'system')}`;
+                this.openOpenAIBlockEditor(card);
+                this.updateUnsavedIndicator();
+                window.toastr?.info?.('已还原此区块');
+            };
+            bodyLabelRow.appendChild(restoreBtn);
+            host.appendChild(bodyLabelRow);
             const ta = document.createElement('textarea');
             ta.className = 'pp-textarea';
             ta.spellcheck = false;
             ta.style.cssText = 'width:100%; min-height: max(320px, calc(var(--app-visual-height, 100vh) - 420px)); resize: vertical;';
             ta.value = draft.content || '';
-            ta.addEventListener('input', () => { draft.content = ta.value; });
+            ta.addEventListener('input', () => {
+                draft.content = ta.value;
+                this.scheduleUnsavedIndicatorUpdate();
+                this.schedulePreviewLiveUpdate(identifier);
+            });
+            // 光标位置 → 预览滚动联动
+            const caretSync = () => this.syncPreviewToCaret(identifier, ta);
+            ta.addEventListener('click', caretSync);
+            ta.addEventListener('keyup', caretSync);
             host.appendChild(ta);
         }
         this.currentPage = 'block';
         this.setPageView('block');
+        // 预览开着时定位到该区块段落
+        if (this.previewState && this.previewState !== 'closed') {
+            const taEl = this.blockEditorEl?.querySelector('textarea');
+            this.syncPreviewToCaret(identifier, taEl || null);
+        }
+    }
+
+    getBlockCards() {
+        return Array.from(this.element?.querySelectorAll('#openai-blocks .openai-block') || []);
+    }
+
+    /* 三级页上下滑/滚轮切换到相邻区块（编辑内容已 write-through 进草稿 Map，切换零丢失） */
+    switchBlockBy(delta) {
+        const cards = this.getBlockCards();
+        if (!cards.length) return false;
+        let idx = cards.indexOf(this.currentBlockCard);
+        if (idx < 0) idx = 0;
+        const next = cards[idx + delta];
+        if (!next) return false;
+        const host = this.blockEditorEl;
+        const scroll = this.element?.querySelector('#preset-block-scroll');
+        const reduced = document.body?.dataset?.reducedMotion === 'on'
+            || window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches;
+        const doOpen = () => {
+            this.openOpenAIBlockEditor(next);
+            if (scroll) scroll.scrollTop = 0;
+            if (!reduced && host?.animate) {
+                host.animate([
+                    { transform: `translateY(${delta > 0 ? 34 : -34}px)`, opacity: 0.2 },
+                    { transform: 'translateY(0)', opacity: 1 },
+                ], { duration: 190, easing: 'cubic-bezier(0.22, 0.61, 0.36, 1)' });
+            }
+        };
+        if (!reduced && host?.animate) {
+            host.style.transform = '';
+            const out = host.animate([
+                { transform: 'translateY(0)', opacity: 1 },
+                { transform: `translateY(${delta > 0 ? -34 : 34}px)`, opacity: 0.15 },
+            ], { duration: 130, easing: 'ease-in' });
+            out.onfinish = doOpen;
+            out.oncancel = doOpen;
+        } else {
+            doOpen();
+        }
+        return true;
+    }
+
+    /* 上下滑切换：滚动到边缘后继续拉产生带阻尼的位移（拉扯感防误触），过阈松手切换；桌面滚轮同理 */
+    setupBlockSwipeNav() {
+        const section = this.element?.querySelector('.pp-page[data-panel-page="block"]');
+        const scroll = this.element?.querySelector('#preset-block-scroll');
+        if (!section || !scroll) return;
+        const prevHint = section.querySelector('.pp-swipe-hint-prev');
+        const nextHint = section.querySelector('.pp-swipe-hint-next');
+        const PULL_MAX = 120;
+        const TRIGGER = 78;
+        const reduced = () => document.body?.dataset?.reducedMotion === 'on'
+            || window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches;
+        const setHintLabels = () => {
+            const cards = this.getBlockCards();
+            const idx = cards.indexOf(this.currentBlockCard);
+            const titleOf = c => c?.querySelector('.pp-block-title')?.textContent?.trim() || '';
+            const prev = idx > 0 ? titleOf(cards[idx - 1]) : '';
+            const next = idx >= 0 && idx < cards.length - 1 ? titleOf(cards[idx + 1]) : '';
+            const pl = prevHint?.querySelector('.pp-swipe-hint-label');
+            const nl = nextHint?.querySelector('.pp-swipe-hint-label');
+            if (pl) pl.textContent = prev ? `上一区块 · ${prev}` : '';
+            if (nl) nl.textContent = next ? `下一区块 · ${next}` : '';
+            return { prev: Boolean(prev), next: Boolean(next) };
+        };
+        const renderPull = (pull) => {
+            const host = this.blockEditorEl;
+            if (host) host.style.transform = pull ? `translateY(${pull}px)` : '';
+            const prevP = Math.max(0, Math.min(1, pull / TRIGGER));
+            const nextP = Math.max(0, Math.min(1, -pull / TRIGGER));
+            if (prevHint) {
+                prevHint.style.opacity = String(prevP);
+                prevHint.classList.toggle('is-armed', prevP >= 1);
+            }
+            if (nextHint) {
+                nextHint.style.opacity = String(nextP);
+                nextHint.classList.toggle('is-armed', nextP >= 1);
+            }
+        };
+        const springBack = () => {
+            const host = this.blockEditorEl;
+            if (host) {
+                if (!reduced()) {
+                    host.style.transition = 'transform 240ms cubic-bezier(0.22, 1.2, 0.36, 1)';
+                    setTimeout(() => { if (host) host.style.transition = ''; }, 260);
+                }
+            }
+            renderPull(0);
+        };
+        // 事件目标链上是否还有可滚动余量（textarea/滚动容器优先消费滚动）
+        const canScrollFurther = (target, wantsUp) => {
+            let el = target instanceof Element ? target : null;
+            while (el && el !== section) {
+                if (el.scrollHeight - el.clientHeight > 1) {
+                    if (wantsUp && el.scrollTop > 0) return true;
+                    if (!wantsUp && el.scrollTop + el.clientHeight < el.scrollHeight - 1) return true;
+                }
+                el = el.parentElement;
+            }
+            return false;
+        };
+        let startY = null;
+        let pull = 0;
+        let touching = false;
+        let hintAvail = { prev: false, next: false };
+        scroll.addEventListener('touchstart', (e) => {
+            if (this.currentPage !== 'block') return;
+            startY = e.touches?.[0]?.clientY ?? null;
+            pull = 0;
+            touching = true;
+            hintAvail = setHintLabels();
+        }, { passive: true });
+        scroll.addEventListener('touchmove', (e) => {
+            if (!touching || startY === null) return;
+            const y = e.touches?.[0]?.clientY ?? startY;
+            const dy = y - startY;
+            if (!pull) {
+                if (Math.abs(dy) < 10) return;
+                if (canScrollFurther(e.target, dy > 0)) { startY = y; return; }
+            }
+            pull = Math.max(-PULL_MAX, Math.min(PULL_MAX, dy * 0.38));
+            if ((pull > 0 && !hintAvail.prev) || (pull < 0 && !hintAvail.next)) pull *= 0.4;
+            renderPull(pull);
+            e.preventDefault();
+        }, { passive: false });
+        const endTouch = () => {
+            if (!touching) return;
+            touching = false;
+            if (pull >= TRIGGER && hintAvail.prev) { renderPull(0); this.switchBlockBy(-1); }
+            else if (pull <= -TRIGGER && hintAvail.next) { renderPull(0); this.switchBlockBy(1); }
+            else springBack();
+            pull = 0;
+            startY = null;
+        };
+        scroll.addEventListener('touchend', endTouch);
+        scroll.addEventListener('touchcancel', endTouch);
+        // 桌面滚轮：到边缘后继续滚累积，同样的拉扯指示
+        let wheelAccum = 0;
+        let wheelTimer = null;
+        scroll.addEventListener('wheel', (e) => {
+            if (this.currentPage !== 'block') return;
+            if (canScrollFurther(e.target, e.deltaY < 0)) {
+                if (wheelAccum) { wheelAccum = 0; springBack(); }
+                return;
+            }
+            if (!wheelAccum) hintAvail = setHintLabels();
+            if ((e.deltaY < 0 && !hintAvail.prev) || (e.deltaY > 0 && !hintAvail.next)) return;
+            wheelAccum += e.deltaY;
+            const pullV = Math.max(-PULL_MAX, Math.min(PULL_MAX, -wheelAccum * 0.18));
+            renderPull(pullV);
+            if (wheelTimer) clearTimeout(wheelTimer);
+            if (pullV >= TRIGGER) { wheelAccum = 0; renderPull(0); this.switchBlockBy(-1); return; }
+            if (pullV <= -TRIGGER) { wheelAccum = 0; renderPull(0); this.switchBlockBy(1); return; }
+            wheelTimer = setTimeout(() => { wheelAccum = 0; springBack(); }, 420);
+        }, { passive: true });
+    }
+
+    /* 未保存更改指示：区块草稿 Map 与基线逐项比对 + 其它分区草稿数（capture 已丢弃与基线一致的草稿） */
+    countUnsavedBlockChanges() {
+        const base = this.openaiBlockBase;
+        let n = 0;
+        if (this.openaiBlockDrafts instanceof Map) {
+            this.openaiBlockDrafts.forEach((d, id) => {
+                const b = base?.get?.(id) || null;
+                if (!b) { n += 1; return; }
+                const baseRole = roleIdToName(b.role || 'system');
+                const baseSys = typeof b.system_prompt === 'boolean' ? b.system_prompt : true;
+                const baseName = b.name || id;
+                if (String(d.name ?? '') !== String(baseName)
+                    || d.role !== baseRole
+                    || Boolean(d.system_prompt) !== baseSys
+                    || String(d.content ?? '') !== String(b.content ?? '')) n += 1;
+            });
+        }
+        return n;
+    }
+
+    updateUnsavedIndicator() {
+        const el = this.element?.querySelector('#preset-unsaved-chip');
+        if (!el) return;
+        const n = this.countUnsavedBlockChanges() + (this.drafts?.size || 0);
+        el.hidden = n <= 0;
+        if (n > 0) el.textContent = `${n} 处更改尚未保存`;
+        this.element?.querySelector('.pp-btn-save')?.classList.toggle('pp-save-attention', n > 0);
+    }
+
+    scheduleUnsavedIndicatorUpdate() {
+        if (this._unsavedTimer) clearTimeout(this._unsavedTimer);
+        this._unsavedTimer = setTimeout(() => this.updateUnsavedIndicator(), 300);
+    }
+
+    /* ════════════════════════════════════════
+       分栏请求预览（草稿实时）：
+       骨架用 previewOnly 管线构建一次（注入用已保存状态），自定义区块段落用未保存草稿实时替换；
+       左右强联动：编辑光标→预览滚动定位，预览滚动→编辑器切块/列表跟随。
+       状态机：closed →（桌面）split → full；手机直接 closed→full（对称把手收回）。
+       ════════════════════════════════════════ */
+    isPreviewPhoneLayout() {
+        try { return window.matchMedia?.('(max-width: 899px)')?.matches === true; } catch { return false; }
+    }
+
+    setPreviewState(state, { animate = true } = {}) {
+        const prev = this.previewState || 'closed';
+        if (prev === state) return;
+        this.previewState = state;
+        const el = this.element;
+        if (!el) return;
+        const apply = (s) => {
+            if (s === 'closed') el.removeAttribute('data-preview');
+            else el.dataset.preview = s;
+        };
+        const pane = this.previewPaneEl;
+        const shell = el.querySelector('.pp-shell');
+        const reduced = document.body?.dataset?.reducedMotion === 'on'
+            || window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches;
+        if (!animate || reduced || typeof pane?.animate !== 'function') { apply(state); return; }
+        /* PPT slide 编排：closed↔split 靠宽度过渡推开/收拢 + 内容滑入滑出；
+           涉及 full 的先切/后切布局，pane 整体 transform 滑盖，编辑器在下层轻推（视差）。 */
+        try { this._previewAnims?.forEach(a => a.cancel()); } catch {}
+        this._previewAnims = [];
+        const run = (target, keyframes, opts) => {
+            const anim = target.animate(keyframes, opts);
+            this._previewAnims.push(anim);
+            return anim;
+        };
+        const easeOut = 'cubic-bezier(0.22, 0.61, 0.36, 1)';
+        const easeIn = 'cubic-bezier(0.5, 0, 0.75, 0.4)';
+        const paneContent = [pane.querySelector('.pp-preview-head'), pane.querySelector('.pp-preview-scroll')].filter(Boolean);
+        if (prev === 'closed' && state === 'split') {
+            // 推入：flex-basis 过渡负责推开编辑器，内容从右滑入补上入场感
+            apply('split');
+            paneContent.forEach(t => run(t, [
+                { transform: 'translateX(56px)', opacity: 0.25 },
+                { transform: 'translateX(0)', opacity: 1 },
+            ], { duration: 320, easing: easeOut }));
+        } else if (prev === 'split' && state === 'closed') {
+            // 收拢：内容先向右滑出淡走，宽度过渡随后合拢
+            const anims = paneContent.map(t => run(t, [
+                { transform: 'translateX(0)', opacity: 1 },
+                { transform: 'translateX(40px)', opacity: 0 },
+            ], { duration: 200, easing: easeIn, fill: 'forwards' }));
+            apply('closed');
+            setTimeout(() => anims.forEach(a => { try { a.cancel(); } catch {} }), 340);
+        } else if (state === 'full') {
+            // split/closed → full：切到覆盖布局后从右滑盖进来，编辑器在下层向左轻推
+            const fromX = prev === 'split' ? '54%' : '100%';
+            if (shell) shell.style.visibility = 'visible';
+            apply('full');
+            if (shell) run(shell, [
+                { transform: 'translateX(0)', opacity: 1 },
+                { transform: 'translateX(-48px)', opacity: 0.8 },
+            ], { duration: 340, easing: easeOut });
+            const slide = run(pane, [
+                { transform: `translateX(${fromX})` },
+                { transform: 'translateX(0)' },
+            ], { duration: 340, easing: easeOut });
+            const settle = () => { if (shell) shell.style.visibility = ''; };
+            slide.onfinish = settle;
+            slide.oncancel = settle;
+        } else if (prev === 'full') {
+            // full → split/closed：先滑出让位，落定后才切回布局（避免瞬跳）
+            if (shell) shell.style.visibility = 'visible';
+            const toX = state === 'split' ? '54%' : '100%';
+            if (shell) run(shell, [
+                { transform: 'translateX(-48px)', opacity: 0.8 },
+                { transform: 'translateX(0)', opacity: 1 },
+            ], { duration: 300, easing: easeOut });
+            const slide = run(pane, [
+                { transform: 'translateX(0)' },
+                { transform: `translateX(${toX})` },
+            ], { duration: 300, easing: easeIn, fill: 'forwards' });
+            let done = false;
+            const finish = () => {
+                if (done) return;
+                done = true;
+                if (shell) shell.style.visibility = '';
+                apply(state);
+                try { slide.cancel(); } catch {}
+            };
+            slide.onfinish = finish;
+            slide.oncancel = () => { if (shell) shell.style.visibility = ''; };
+        } else {
+            apply(state);
+        }
+    }
+
+    setupPreviewPane() {
+        const pane = this.element?.querySelector('#preset-preview-pane');
+        if (!pane) return;
+        this.previewPaneEl = pane;
+        this.previewScrollEl = pane.querySelector('#preset-preview-scroll');
+        this.previewBodyEl = pane.querySelector('#preset-preview-body');
+        this.previewEstEl = pane.querySelector('#preset-preview-est');
+        this.previewState = 'closed';
+        this.previewMode = 'rp';
+        this.previewIncludeHistory = false;
+        this.previewSkeleton = null;
+        this.previewBlockMap = new Map();
+        const bindDrag = (el, onLeft, onRight) => {
+            if (!el) return;
+            el.addEventListener('pointerdown', (e) => {
+                const startX = e.clientX;
+                const pid = e.pointerId;
+                let fired = false;
+                const onMove = (ev) => {
+                    if (ev.pointerId !== pid || fired) return;
+                    const dx = ev.clientX - startX;
+                    if (dx <= -36 && onLeft) { fired = true; onLeft(); }
+                    else if (dx >= 36 && onRight) { fired = true; onRight(); }
+                };
+                const onUp = (ev) => {
+                    if (ev.pointerId !== pid) return;
+                    document.removeEventListener('pointermove', onMove);
+                    document.removeEventListener('pointerup', onUp);
+                    document.removeEventListener('pointercancel', onUp);
+                };
+                document.addEventListener('pointermove', onMove);
+                document.addEventListener('pointerup', onUp);
+                document.addEventListener('pointercancel', onUp);
+            });
+        };
+        // 编辑页右缘把手：点击/左拉展开
+        this.element.querySelectorAll('.pp-preview-edge').forEach((edge) => {
+            edge.addEventListener('click', () => this.openPreview());
+            bindDrag(edge, () => this.openPreview(), null);
+        });
+        // 分栏 pane 左缘把手：点击/左拉→全屏，右拉→关闭
+        const paneHandle = pane.querySelector('#preset-preview-expand');
+        if (paneHandle) {
+            paneHandle.addEventListener('click', () => this.setPreviewState('full'));
+            bindDrag(paneHandle, () => this.setPreviewState('full'), () => this.closePreview());
+        }
+        // 全屏时左缘「编辑」把手：桌面回分栏、手机收回编辑器
+        const editorReturn = pane.querySelector('#preset-editor-return');
+        if (editorReturn) {
+            const back = () => this.setPreviewState(this.isPreviewPhoneLayout() ? 'closed' : 'split');
+            editorReturn.addEventListener('click', back);
+            bindDrag(editorReturn, null, back);
+        }
+        pane.querySelector('#preset-preview-close')?.addEventListener('click', () => this.closePreview());
+        pane.querySelector('#preset-preview-refresh')?.addEventListener('click', () => this.rebuildPreviewSkeleton());
+        const chatBtn = pane.querySelector('#preset-preview-toggle-chatfmt');
+        chatBtn?.addEventListener('click', () => {
+            this.previewMode = this.previewMode === 'chat' ? 'rp' : 'chat';
+            chatBtn.classList.toggle('is-on', this.previewMode === 'chat');
+            this.rebuildPreviewSkeleton();
+        });
+        const histBtn = pane.querySelector('#preset-preview-toggle-history');
+        histBtn?.addEventListener('click', () => {
+            this.previewIncludeHistory = !this.previewIncludeHistory;
+            histBtn.classList.toggle('is-on', this.previewIncludeHistory);
+            this.rebuildPreviewSkeleton();
+        });
+        let scrollTimer = null;
+        this.previewScrollEl?.addEventListener('scroll', () => {
+            if (scrollTimer) return;
+            scrollTimer = setTimeout(() => { scrollTimer = null; this.onPreviewScroll(); }, 160);
+        }, { passive: true });
+    }
+
+    openPreview() {
+        if (!this.previewPaneEl) return;
+        this.setPreviewState(this.isPreviewPhoneLayout() ? 'full' : 'split');
+        if (!this.previewSkeleton) this.rebuildPreviewSkeleton();
+        else this.renderPreviewBody();
+    }
+
+    closePreview({ animate = true } = {}) {
+        this.setPreviewState('closed', { animate });
+    }
+
+    async rebuildPreviewSkeleton() {
+        const buildFn = this.runtimeContext?.buildScenePromptPreviewRequest;
+        if (typeof buildFn !== 'function' || !this.previewBodyEl) return;
+        this.previewBodyEl.innerHTML = '<div class="pp-preview-loading">正在构建预览…</div>';
+        const request = await buildFn({ previewUiMode: this.previewMode, includeHistory: this.previewIncludeHistory });
+        if (!request) {
+            this.previewBodyEl.innerHTML = '<div class="pp-preview-loading">构建失败：请确认当前有可用会话。</div>';
+            return;
+        }
+        this.previewSkeleton = request;
+        this.mapBlocksToPreview();
+        this.renderPreviewBody();
+    }
+
+    previewMessageText(message) {
+        const c = message?.content;
+        if (typeof c === 'string') return c;
+        if (Array.isArray(c)) return c.map(part => (typeof part === 'string' ? part : String(part?.text ?? ''))).join('');
+        return String(c ?? '');
+    }
+
+    /* 用「已保存基线」内容在骨架消息里定位各区块的段落（骨架由已保存状态构建，必然可命中） */
+    mapBlocksToPreview() {
+        this.previewBlockMap = new Map();
+        const messages = Array.isArray(this.previewSkeleton?.messages) ? this.previewSkeleton.messages : [];
+        const texts = messages.map(m => this.previewMessageText(m));
+        const claimed = texts.map(() => []);
+        this.getBlockCards().forEach((card) => {
+            const id = card.dataset.identifier || '';
+            if (!id || card.dataset.marker === 'true') return;
+            if (card.querySelector('.block-enabled')?.checked === false) return;
+            const baseContent = String(this.openaiBlockBase?.get?.(id)?.content ?? '').trim();
+            if (baseContent.length < 6) return;
+            for (let i = 0; i < texts.length; i += 1) {
+                const start = texts[i].indexOf(baseContent);
+                if (start < 0) continue;
+                const overlap = claimed[i].some(([s0, e0]) => start < e0 && start + baseContent.length > s0);
+                if (overlap) continue;
+                claimed[i].push([start, start + baseContent.length]);
+                this.previewBlockMap.set(id, { msg: i, start, len: baseContent.length });
+                break;
+            }
+        });
+    }
+
+    renderPreviewMessageHtml(index) {
+        const messages = Array.isArray(this.previewSkeleton?.messages) ? this.previewSkeleton.messages : [];
+        const message = messages[index];
+        if (!message) return '';
+        const text = this.previewMessageText(message);
+        const spans = [];
+        this.previewBlockMap.forEach((loc, id) => { if (loc.msg === index) spans.push({ id, ...loc }); });
+        spans.sort((a, b) => a.start - b.start);
+        let html = '';
+        let pos = 0;
+        for (const span of spans) {
+            html += escapeHtml(text.slice(pos, span.start));
+            const draft = this.openaiBlockDrafts?.get?.(span.id);
+            const liveContent = draft ? String(draft.content ?? '') : text.slice(span.start, span.start + span.len);
+            html += `<span class="pp-prev-block" data-pp-prev-block="${escapeHtml(span.id)}">${escapeHtml(liveContent)}</span>`;
+            pos = span.start + span.len;
+        }
+        html += escapeHtml(text.slice(pos));
+        return `
+            <div class="pp-preview-msg" data-pp-prev-msg="${index}">
+                <div class="pp-preview-msg-role">${escapeHtml(String(message.role || ''))} #${index}</div>
+                <div class="pp-preview-msg-text">${html}</div>
+            </div>
+        `;
+    }
+
+    renderPreviewBody() {
+        if (!this.previewBodyEl || !this.previewSkeleton) return;
+        const messages = Array.isArray(this.previewSkeleton.messages) ? this.previewSkeleton.messages : [];
+        let lastUserIdx = -1;
+        for (let i = messages.length - 1; i >= 0; i -= 1) {
+            if (messages[i]?.role === 'user') { lastUserIdx = i; break; }
+        }
+        let html = '';
+        for (let i = 0; i < messages.length; i += 1) {
+            if (!this.previewIncludeHistory && i === lastUserIdx) {
+                html += '<div class="pp-prev-history-chip">聊天记录已折叠为占位（点右上「聊天记录」加入实际内容）</div>';
+            }
+            html += this.renderPreviewMessageHtml(i);
+        }
+        this.previewBodyEl.innerHTML = html;
+        this.updatePreviewEstimate();
+        this.markPreviewCurrentBlock(this.currentBlockCard?.dataset?.identifier || '');
+    }
+
+    updatePreviewEstimate() {
+        if (!this.previewEstEl || !this.previewSkeleton) return;
+        try {
+            const joined = Array.from(this.previewBodyEl?.querySelectorAll('.pp-preview-msg-text') || [])
+                .map(el => el.textContent || '')
+                .join('\n');
+            this.previewEstEl.textContent = `~${estimateTokens(joined, 'rough')} tokens（估算）`;
+        } catch {
+            this.previewEstEl.textContent = '';
+        }
+    }
+
+    markPreviewCurrentBlock(identifier) {
+        this.previewBodyEl?.querySelectorAll('.pp-prev-block.is-current')?.forEach(el => el.classList.remove('is-current'));
+        if (!identifier) return;
+        try {
+            this.previewBodyEl?.querySelector(`[data-pp-prev-block="${CSS.escape(identifier)}"]`)?.classList.add('is-current');
+        } catch {}
+    }
+
+    /* 区块内容编辑 → 只重渲染受影响的消息卡（草稿实时替换） */
+    schedulePreviewLiveUpdate(identifier) {
+        if (this.previewState === 'closed' || !this.previewSkeleton) return;
+        if (this._previewLiveTimer) clearTimeout(this._previewLiveTimer);
+        this._previewLiveTimer = setTimeout(() => {
+            const loc = this.previewBlockMap?.get?.(identifier);
+            if (!loc || !this.previewBodyEl) return;
+            const cardEl = this.previewBodyEl.querySelector(`[data-pp-prev-msg="${loc.msg}"]`);
+            if (!cardEl) return;
+            const template = document.createElement('template');
+            template.innerHTML = this.renderPreviewMessageHtml(loc.msg).trim();
+            const next = template.content.firstElementChild;
+            if (next) cardEl.replaceWith(next);
+            this.updatePreviewEstimate();
+            this.markPreviewCurrentBlock(identifier);
+        }, 350);
+    }
+
+    /* 编辑光标 → 预览滚动定位（按光标在区块内的相对位置比例映射） */
+    syncPreviewToCaret(identifier, textarea) {
+        if (this.previewState === 'closed' || !this.previewScrollEl || !identifier) return;
+        if (Date.now() - (this._previewScrollGuard || 0) < 450) return;
+        let span = null;
+        try { span = this.previewBodyEl?.querySelector(`[data-pp-prev-block="${CSS.escape(identifier)}"]`); } catch {}
+        if (!span) return;
+        const pane = this.previewScrollEl;
+        const ratio = textarea?.value?.length
+            ? Math.min(1, Math.max(0, (textarea.selectionStart || 0) / textarea.value.length))
+            : 0;
+        const paneRect = pane.getBoundingClientRect();
+        const spanRect = span.getBoundingClientRect();
+        const target = pane.scrollTop + (spanRect.top - paneRect.top) + ratio * spanRect.height - pane.clientHeight * 0.33;
+        this._editorScrollGuard = Date.now();
+        const reduced = document.body?.dataset?.reducedMotion === 'on'
+            || window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches;
+        pane.scrollTo({ top: Math.max(0, target), behavior: reduced ? 'auto' : 'smooth' });
+        this.markPreviewCurrentBlock(identifier);
+    }
+
+    /* 预览滚动 → 编辑器跟随（三级：切到对应区块；二级：列表滚到对应卡并短暂高亮） */
+    onPreviewScroll() {
+        if (this.previewState === 'closed' || !this.previewScrollEl) return;
+        if (Date.now() - (this._editorScrollGuard || 0) < 450) return;
+        const pane = this.previewScrollEl;
+        const paneRect = pane.getBoundingClientRect();
+        const lineY = paneRect.top + pane.clientHeight * 0.33;
+        let currentId = '';
+        for (const span of this.previewBodyEl?.querySelectorAll('[data-pp-prev-block]') || []) {
+            const r = span.getBoundingClientRect();
+            if (r.top <= lineY && r.bottom >= paneRect.top) currentId = span.getAttribute('data-pp-prev-block') || currentId;
+            if (r.top > lineY) break;
+        }
+        if (!currentId) return;
+        const card = this.getBlockCards().find(c => c.dataset.identifier === currentId);
+        if (!card) return;
+        this._previewScrollGuard = Date.now();
+        if (this.currentPage === 'block') {
+            if (card !== this.currentBlockCard) this.openOpenAIBlockEditor(card);
+            this.markPreviewCurrentBlock(currentId);
+        } else if (this.currentPage === 'detail') {
+            card.scrollIntoView({ block: 'center', behavior: 'smooth' });
+            card.classList.add('pp-block-linked');
+            if (this._linkFlashTimer) clearTimeout(this._linkFlashTimer);
+            this._linkFlashTimer = setTimeout(() => card.classList.remove('pp-block-linked'), 900);
+            this.markPreviewCurrentBlock(currentId);
+        }
     }
 
     /* ════════════════════════════════════════
@@ -3567,7 +4420,9 @@ export class PresetPanel {
                 await this.store.upsert(item.storeType, { id: item.presetId, name: item.name, data: item.data });
             }
 
+            this.drafts.clear();
             this.renderAllSections();
+            this.updateUnsavedIndicator();
             this.showStatus('保存成功', 'success');
             window.dispatchEvent(new CustomEvent('preset-changed'));
         } catch (err) {
@@ -3679,9 +4534,9 @@ export class PresetPanel {
         const el = this.statusEl;
         if (!el) return;
         const colors = {
-            success: { bg: '#dcfce7', fg: '#166534' },
-            error: { bg: '#fee2e2', fg: '#991b1b' },
-            info: { bg: '#dbeafe', fg: '#1e40af' },
+            success: { bg: 'rgba(var(--app-success-rgb), 0.16)', fg: 'var(--app-success-text, #166534)' },
+            error: { bg: 'var(--app-danger-soft, #fee2e2)', fg: 'var(--app-danger-text, #991b1b)' },
+            info: { bg: 'var(--app-accent-soft, #dbeafe)', fg: 'var(--app-accent-strong)' },
         };
         const c = colors[type] || colors.info;
         el.style.display = 'block';

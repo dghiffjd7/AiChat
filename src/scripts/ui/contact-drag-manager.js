@@ -111,10 +111,16 @@ export class ContactDragManager {
 
     endDrag() {
         if (this.pointerGhost) {
-            const rect = this.draggedElement?.getBoundingClientRect?.() || null;
-            this.pointerGhost.settle(rect);
+            if (this.lastDropMoved) {
+                // 放置成功：原地淡出（原卡位置即将由重渲染更新，飞回原位是错误暗示）
+                this.pointerGhost.fadeOut();
+            } else {
+                // 取消/无效放置：飞回来源位置，暗示"没有发生移动"
+                this.pointerGhost.settle(this.draggedElement?.getBoundingClientRect?.() || null);
+            }
             this.pointerGhost = null;
         }
+        this.lastDropMoved = false;
         if (this.draggedElement) {
             this.draggedElement.classList.remove('dragging');
         }
@@ -138,6 +144,7 @@ export class ContactDragManager {
 
         try {
             this.groupStore?.moveContact?.(this.draggedContactId, targetGroupId);
+            this.lastDropMoved = true;
             if (this.onDrop) {
                 this.onDrop({
                     contactId: this.draggedContactId,

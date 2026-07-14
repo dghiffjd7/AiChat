@@ -42,6 +42,22 @@ export const createDragGhost = (el, event, { scale = 1.045 } = {}) => {
     removed = true;
     try { ghost.remove(); } catch {}
   };
+  // 放置成功：原地淡出消失（不飞回来源位置）
+  const fadeOut = (done) => {
+    if (removed) { done?.(); return; }
+    if (reduced || typeof ghost.animate !== 'function') {
+      destroy();
+      done?.();
+      return;
+    }
+    const anim = ghost.animate([
+      { opacity: 0.96, transform: `scale(${scale})` },
+      { opacity: 0, transform: 'scale(0.97)' },
+    ], { duration: 130, easing: 'ease-out' });
+    const finish = () => { destroy(); done?.(); };
+    anim.onfinish = finish;
+    anim.oncancel = finish;
+  };
   // 松手：幽灵滑落到目标矩形处再消失（reduced-motion 时立即）
   const settle = (targetRect, done) => {
     if (removed) { done?.(); return; }
@@ -59,5 +75,5 @@ export const createDragGhost = (el, event, { scale = 1.045 } = {}) => {
     anim.onfinish = finish;
     anim.oncancel = finish;
   };
-  return { ghost, move, settle, destroy };
+  return { ghost, move, settle, fadeOut, destroy };
 };

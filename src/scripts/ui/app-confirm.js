@@ -232,3 +232,115 @@ export const appChoice = (options = {}) => {
     });
   });
 };
+
+/* 应用内文本输入弹窗（替代原生 prompt()）：返回输入字符串，取消返回 null */
+let promptOverlay = null;
+let promptModal = null;
+let promptTitleEl = null;
+let promptMessageEl = null;
+let promptInputEl = null;
+let promptResolve = null;
+let promptKeyHandler = null;
+
+const closePromptText = (submitted) => {
+  if (!promptResolve) return;
+  const resolve = promptResolve;
+  promptResolve = null;
+  const value = submitted ? String(promptInputEl?.value ?? '') : null;
+  if (promptOverlay) promptOverlay.style.display = 'none';
+  if (promptModal) promptModal.style.display = 'none';
+  if (promptKeyHandler) {
+    document.removeEventListener('keydown', promptKeyHandler);
+    promptKeyHandler = null;
+  }
+  resolve(value);
+};
+
+const ensurePromptUI = () => {
+  if (promptOverlay && promptModal) return;
+  promptOverlay = document.createElement('div');
+  promptOverlay.className = 'app-confirm-overlay';
+  promptOverlay.style.display = 'none';
+  promptOverlay.addEventListener('click', () => closePromptText(false));
+
+  promptModal = document.createElement('div');
+  promptModal.className = 'app-confirm-modal';
+  promptModal.style.display = 'none';
+  promptModal.innerHTML = `
+    <div class="app-confirm-header">
+      <div class="app-confirm-title">请输入</div>
+      <button type="button" class="app-confirm-close" aria-label="关闭">×</button>
+    </div>
+    <div class="app-confirm-body">
+      <div class="app-prompt-message" style="margin-bottom:8px;"></div>
+      <input type="text" class="app-prompt-input" style="width:100%; box-sizing:border-box; padding:9px 10px; border:1px solid var(--app-border-default); border-radius:10px; background:var(--app-surface-input, var(--app-surface-card)); color:var(--app-text-primary); font-size:14px;">
+    </div>
+    <div class="app-confirm-actions">
+      <button type="button" class="app-confirm-btn app-confirm-cancel">取消</button>
+      <button type="button" class="app-confirm-btn app-confirm-ok">确定</button>
+    </div>
+  `;
+  promptModal.addEventListener('click', (event) => event.stopPropagation());
+
+  promptTitleEl = promptModal.querySelector('.app-confirm-title');
+  promptMessageEl = promptModal.querySelector('.app-prompt-message');
+  promptInputEl = promptModal.querySelector('.app-prompt-input');
+  promptModal.querySelector('.app-confirm-close')?.addEventListener('click', () => closePromptText(false));
+  promptModal.querySelector('.app-confirm-cancel')?.addEventListener('click', () => closePromptText(false));
+  promptModal.querySelector('.app-confirm-ok')?.addEventListener('click', () => closePromptText(true));
+
+  document.body.appendChild(promptOverlay);
+  document.body.appendChild(promptModal);
+};
+
+export const appPromptText = (options = {}) => {
+  const {
+    title = '请输入',
+    message = '',
+    placeholder = '',
+    defaultValue = '',
+    confirmText = '确定',
+    cancelText = '取消',
+  } = options || {};
+
+  return new Promise((resolve) => {
+    ensurePromptUI();
+    if (promptResolve) {
+      promptResolve(null);
+      promptResolve = null;
+    }
+    promptResolve = resolve;
+
+    if (promptTitleEl) promptTitleEl.textContent = String(title || '请输入');
+    if (promptMessageEl) {
+      promptMessageEl.textContent = String(message || '');
+      promptMessageEl.style.display = message ? '' : 'none';
+    }
+    if (promptInputEl) {
+      promptInputEl.value = String(defaultValue ?? '');
+      promptInputEl.placeholder = String(placeholder ?? '');
+    }
+    const cancelBtn = promptModal?.querySelector('.app-confirm-cancel');
+    const okBtn = promptModal?.querySelector('.app-confirm-ok');
+    if (cancelBtn) cancelBtn.textContent = String(cancelText || '取消');
+    if (okBtn) okBtn.textContent = String(confirmText || '确定');
+
+    promptKeyHandler = (event) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        closePromptText(false);
+      } else if (event.key === 'Enter') {
+        event.preventDefault();
+        closePromptText(true);
+      }
+    };
+    document.addEventListener('keydown', promptKeyHandler);
+
+    if (promptOverlay) promptOverlay.style.display = 'block';
+    if (promptModal) promptModal.style.display = 'flex';
+    requestAnimationFrame(() => {
+      promptInputEl?.focus();
+      promptInputEl?.select?.();
+    });
+  });
+};

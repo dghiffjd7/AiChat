@@ -274,6 +274,8 @@ export const normalizeHandleSendOptions = (options = {}) => {
     previewOnly: Boolean(raw.previewOnly),
     // 请求预览的场景覆盖（仅 previewOnly 时使用）：'chat' | 'rp'
     previewUiMode: raw.previewUiMode === 'chat' || raw.previewUiMode === 'rp' ? raw.previewUiMode : '',
+    // 请求预览：不携带当前会话历史/摘要（预设预览默认以占位符展示 chat_history）
+    previewSuppressHistory: Boolean(raw.previewSuppressHistory),
     suppressAssistantDom: Boolean(raw.suppressAssistantDom),
     assistantStreamFactory:
       typeof raw.createAssistantStream === 'function' ? raw.createAssistantStream : null,

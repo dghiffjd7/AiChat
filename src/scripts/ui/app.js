@@ -1251,6 +1251,8 @@ const initApp = async () => {
     getUiMode: () => (uiMode === 'rp' ? 'rp' : 'chat'),
     // 请求预览（previewOnly 构建不发送）：按指定场景（聊天/创意写作）预览最终送模型的 prompt
     showScenePromptPreview: mode => showDraftPromptPreview({ previewUiMode: mode === 'rp' ? 'rp' : 'chat' }),
+    // 分栏预览骨架：只构建请求不弹窗（草稿实时替换在预设面板内完成）
+    buildScenePromptPreviewRequest: opts => buildScenePromptPreviewRequest(opts || {}),
   });
   sessionConfigPanel.setRuntimeContext({
     chatStore,
@@ -15180,6 +15182,22 @@ Phase G（Frame 36）：循环衔接
     notifyError: (message) => window.toastr?.error?.(message),
     logger,
   });
+  // 只构建不弹窗：预设面板分栏预览用（草稿实时渲染的骨架）
+  const buildScenePromptPreviewRequest = async ({ previewUiMode = '', includeHistory = false } = {}) => {
+    try {
+      const request = await handleSend(null, {
+        previewOnly: true,
+        ignorePending: true,
+        previewUiMode,
+        previewSuppressHistory: !includeHistory,
+      });
+      if (!request || !Array.isArray(request.messages)) return null;
+      return request;
+    } catch (err) {
+      logger.warn('build scene preview request failed', err);
+      return null;
+    }
+  };
   const showDraftPromptPreview = async ({ previewUiMode = '' } = {}) => {
     try {
       const request = await handleSend(null, {
@@ -24905,6 +24923,7 @@ Phase G（Frame 36）：循环衔接
       skipScripts,
       previewOnly,
       previewUiMode,
+      previewSuppressHistory,
       suppressAssistantDom,
       assistantStreamFactory,
       continueTarget,
@@ -24917,8 +24936,10 @@ Phase G（Frame 36）：循环衔接
     // 请求预览可指定场景（仅 previewOnly 生效）：聊天/创意写作的格式注入差异由 rpUiMode 派生
     const sceneUiMode = (previewOnly && previewUiMode) ? previewUiMode : uiMode;
     const rpUiMode = sceneUiMode === 'rp';
-    // 跨场景预览（如在创意会话里预览聊天形态）：当前会话历史/摘要属于另一场景，不携带以免误导
+    // 跨场景预览（如在创意会话里预览聊天形态）：当前会话历史/摘要属于另一场景，不携带以免误导；
+    // 预设预览面板亦可显式要求不携带历史（以占位符展示）。
     const previewSceneMismatch = Boolean(previewOnly) && sceneUiMode !== uiMode;
+    const previewHistorySuppressed = previewSceneMismatch || (Boolean(previewOnly) && Boolean(previewSuppressHistory));
     const attachmentQueue = includeAttachments ? composerAttachments.slice() : [];
     const resendAttachmentParts = rawResendAttachmentParts.filter(part => {
       if (!part || typeof part !== 'object') return false;
@@ -26091,7 +26112,7 @@ Phase G（Frame 36）：循环衔接
     });
     const buildHistoryForLLM = createLlmHistoryBuilder({
       sessionId,
-      getMessages: sid => (previewSceneMismatch ? [] : chatStore.getMessages(sid)),
+      getMessages: sid => (previewHistorySuppressed ? [] : chatStore.getMessages(sid)),
       getSettings: () => appSettings.get(),
       getOpenAIPreset: getOpenAIPreset,
       getReasoningPreset,
@@ -26099,8 +26120,8 @@ Phase G（Frame 36）：循环衔接
       isRpMode,
       isGroupChat,
       rpUiMode,
-      getCompactedSummary: sid => (previewSceneMismatch ? null : chatStore.getCompactedSummary?.(sid)),
-      getSummaries: sid => (previewSceneMismatch ? [] : chatStore.getSummaries?.(sid)),
+      getCompactedSummary: sid => (previewHistorySuppressed ? null : chatStore.getCompactedSummary?.(sid)),
+      getSummaries: sid => (previewHistorySuppressed ? [] : chatStore.getSummaries?.(sid)),
       isAttachmentExpired,
       resolvePlainText: (message, options) => resolveMessagePlainText(message, options),
       resolveStickerKeyword: resolveStickerKeywordForMessage,
