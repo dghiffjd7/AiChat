@@ -27,6 +27,14 @@ assert.match(source, /class="pp-block-title">\$\{escapeHtml\(title\)\}/, '导入
 assert.match(source, /pp-nav-item-sub">\$\{escapeHtml\(this\.getSectionBadge\(sec\)/, '预设名称徽标必须转义后再写入 HTML');
 assert.match(source, /escapeHtml\(boundItems\.map\(\(i\) => i\.name\)\.join\('、'\)\)/, '绑定会话名称必须转义后再写入 HTML');
 assert.match(source, /isPreviewHistoryIncluded\(\)/, '聊天记录按钮与占位提示必须共用实际生效状态');
+assert.match(source, /const presetMaximizeSvg = `<svg class="pp-maximize-icon"/, '预设放大按钮应使用独立 SVG');
+assert.match(source, /class="pp-maximize-expand"[\s\S]*class="pp-maximize-restore"/, '放大 SVG 应同时提供放大与还原状态');
+assert.match(source, /id="preset-maximize"[^>]*aria-label="放大预设面板"[^>]*aria-pressed="false"[^>]*>\$\{presetMaximizeSvg\}<\/button>/, '放大按钮应渲染 SVG 并声明初始状态');
+assert.doesNotMatch(source, /id="preset-maximize"[^>]*>⛶<\/button>/, '放大按钮不应退回字体符号');
+assert.match(source, /\.pp-maximize-icon-main\s*\{[\s\S]*stroke:\s*currentColor;/, '放大图标主线应继承主题文字颜色');
+assert.match(source, /\.pp-maximize-icon-accent\s*\{[\s\S]*stroke:\s*var\(--app-accent-primary\)/, '放大图标点缀应继承主题强调色');
+assert.match(source, /#preset-maximize\.is-on \.pp-maximize-expand[\s\S]*#preset-maximize\.is-on \.pp-maximize-restore/, '放大与还原图形应随状态切换');
+assert.match(source, /maxBtn\.setAttribute\('aria-pressed', on \? 'true' : 'false'\)/, '放大状态应同步给辅助技术');
 
 const previewHandleButtons = Array.from(source.matchAll(
     /<button[^>]*class="(?:pp-preview-edge|pp-pane-handle[^\"]*|pp-editor-handle)"[^>]*>([\s\S]*?)<\/button>/g,

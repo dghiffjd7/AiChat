@@ -132,6 +132,18 @@ const REASONING_EFFORT_LABELS = Object.freeze({
 /* ── icons ── */
 const chevronRightSvg = `<svg viewBox="0 0 24 24" style="width:16px;height:16px;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;fill:none;"><polyline points="9 6 15 12 9 18"/></svg>`;
 const chevronLeftSvg = `<svg viewBox="0 0 24 24" style="width:16px;height:16px;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;fill:none;"><polyline points="15 6 9 12 15 18"/></svg>`;
+const presetMaximizeSvg = `<svg class="pp-maximize-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+    <g class="pp-maximize-expand">
+        <path class="pp-maximize-icon-depth" d="M9 4.5H6.25A1.75 1.75 0 0 0 4.5 6.25V9M15 4.5h2.75a1.75 1.75 0 0 1 1.75 1.75V9M4.5 15v2.75a1.75 1.75 0 0 0 1.75 1.75H9M19.5 15v2.75a1.75 1.75 0 0 1-1.75 1.75H15"/>
+        <path class="pp-maximize-icon-main" d="M9 4.5H6.25A1.75 1.75 0 0 0 4.5 6.25V9M15 4.5h2.75a1.75 1.75 0 0 1 1.75 1.75V9M4.5 15v2.75a1.75 1.75 0 0 0 1.75 1.75H9M19.5 15v2.75a1.75 1.75 0 0 1-1.75 1.75H15"/>
+        <path class="pp-maximize-icon-accent" d="m8.2 8.2-2.8-2.8m10.4 2.8 2.8-2.8M8.2 15.8l-2.8 2.8m10.4-2.8 2.8 2.8"/>
+    </g>
+    <g class="pp-maximize-restore">
+        <path class="pp-maximize-icon-depth" d="M9.25 6.25h7.5a1.5 1.5 0 0 1 1.5 1.5v7.5a1.5 1.5 0 0 1-1.5 1.5h-1M14.75 8.75h-7.5a1.5 1.5 0 0 0-1.5 1.5v7.5a1.5 1.5 0 0 0 1.5 1.5h7.5a1.5 1.5 0 0 0 1.5-1.5v-7.5a1.5 1.5 0 0 0-1.5-1.5Z"/>
+        <path class="pp-maximize-icon-main" d="M9.25 6.25h7.5a1.5 1.5 0 0 1 1.5 1.5v7.5a1.5 1.5 0 0 1-1.5 1.5h-1M14.75 8.75h-7.5a1.5 1.5 0 0 0-1.5 1.5v7.5a1.5 1.5 0 0 0 1.5 1.5h7.5a1.5 1.5 0 0 0 1.5-1.5v-7.5a1.5 1.5 0 0 0-1.5-1.5Z"/>
+        <path class="pp-maximize-icon-accent" d="M9.25 11.75h4v4"/>
+    </g>
+</svg>`;
 const diffAcceptSvg = `<svg class="pp-diff-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false">
     <path class="pp-diff-icon-depth" d="m3.9 10.15 4.1 4.05 8.1-8.35"/>
     <path class="pp-diff-icon-mark" d="m3.9 10.15 4.1 4.05 8.1-8.35"/>
@@ -823,7 +835,52 @@ body[data-reduced-motion='on'] .pp-prev-block.pp-prev-flash {
     max-width: none !important;
     margin: 0 !important;
 }
-#preset-maximize.is-on { color: var(--app-accent-strong, var(--app-accent-primary)) !important; }
+#preset-maximize {
+    width: 36px;
+    height: 30px;
+    padding: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: color-mix(in srgb, var(--app-text-secondary) 82%, var(--app-accent-primary));
+    border-color: color-mix(in srgb, var(--app-border-default) 78%, var(--app-accent-primary));
+    background: color-mix(in srgb, var(--app-surface-card) 94%, var(--app-accent-primary));
+}
+.pp-maximize-icon {
+    display: block;
+    width: 20px;
+    height: 20px;
+    overflow: visible;
+    filter: drop-shadow(0 0 2px rgba(var(--app-accent-rgb, 25, 154, 255), 0.22));
+}
+.pp-maximize-icon-depth,
+.pp-maximize-icon-main,
+.pp-maximize-icon-accent {
+    fill: none;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+}
+.pp-maximize-icon-depth { stroke: currentColor; stroke-width: 4; opacity: 0.12; }
+.pp-maximize-icon-main { stroke: currentColor; stroke-width: 1.65; }
+.pp-maximize-icon-accent { stroke: var(--app-accent-primary); stroke-width: 1.15; opacity: 0.82; }
+.pp-maximize-expand,
+.pp-maximize-restore {
+    transform-box: fill-box;
+    transform-origin: center;
+    transition: opacity 180ms ease, transform 220ms cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+.pp-maximize-restore { opacity: 0; transform: scale(0.72) rotate(-8deg); }
+#preset-maximize.is-on .pp-maximize-expand { opacity: 0; transform: scale(0.72) rotate(8deg); }
+#preset-maximize.is-on .pp-maximize-restore { opacity: 1; transform: scale(1) rotate(0deg); }
+#preset-maximize:hover,
+#preset-maximize.is-on {
+    color: var(--app-accent-strong, var(--app-accent-primary)) !important;
+    border-color: rgba(var(--app-accent-rgb, 25, 154, 255), 0.42);
+    background: var(--app-accent-soft, rgba(var(--app-accent-rgb, 25, 154, 255), 0.12));
+}
+#preset-maximize.is-on .pp-maximize-icon {
+    filter: drop-shadow(0 0 3px rgba(var(--app-accent-rgb, 25, 154, 255), 0.38));
+}
 /* 底部统一批量条（Cursor 式接受全部/全部取消） */
 .pp-btn-acceptall, .pp-btn-rejectall {
     padding: 8px 12px; border-radius: 10px; border: 1px solid; cursor: pointer; font-size: 13px;
@@ -976,7 +1033,9 @@ body[data-reduced-motion='on'] .pp-editor-handle,
 body[data-reduced-motion='on'] .pp-pull-handle-svg,
 body[data-reduced-motion='on'] .pp-diff-accept,
 body[data-reduced-motion='on'] .pp-diff-reject,
-body[data-reduced-motion='on'] .pp-diff-icon { animation: none; transition: none; }
+body[data-reduced-motion='on'] .pp-diff-icon,
+body[data-reduced-motion='on'] .pp-maximize-expand,
+body[data-reduced-motion='on'] .pp-maximize-restore { animation: none; transition: none; }
 .pp-block-linked {
     outline: 2px solid rgba(var(--app-accent-rgb, 25, 154, 255), 0.55);
     outline-offset: -2px;
@@ -1602,7 +1661,9 @@ body[data-theme-mode='dark'] #preset-panel .pp-binding-card {
     #preset-panel .pp-pull-handle-svg,
     #preset-panel .pp-diff-accept,
     #preset-panel .pp-diff-reject,
-    #preset-panel .pp-diff-icon {
+    #preset-panel .pp-diff-icon,
+    #preset-panel .pp-maximize-expand,
+    #preset-panel .pp-maximize-restore {
         animation: none !important;
         transition: none !important;
     }
@@ -2105,7 +2166,7 @@ export class PresetPanel {
                     <div class="pp-header-title has-help" data-help="选择/编辑提示词与生成参数">预设（Preset）</div>
                 </div>
                 <div class="pp-header-actions">
-                    <button id="preset-maximize" title="放大占满 / 还原">⛶</button>
+                    <button type="button" id="preset-maximize" aria-label="放大预设面板" aria-pressed="false" title="放大占满">${presetMaximizeSvg}</button>
                     <button id="preset-import">导入</button>
                     <button id="preset-export">导出</button>
                     <button class="pp-close" id="preset-close">&times;</button>
@@ -2223,6 +2284,9 @@ export class PresetPanel {
             const applyMax = (on) => {
                 this.element.dataset.maximized = on ? '1' : '0';
                 maxBtn.classList.toggle('is-on', on);
+                maxBtn.setAttribute('aria-pressed', on ? 'true' : 'false');
+                maxBtn.setAttribute('aria-label', on ? '还原预设面板' : '放大预设面板');
+                maxBtn.title = on ? '还原面板' : '放大占满';
                 try { localStorage.setItem('preset-panel-maximized', on ? '1' : '0'); } catch {}
             };
             maxBtn.onclick = () => applyMax(this.element.dataset.maximized !== '1');
