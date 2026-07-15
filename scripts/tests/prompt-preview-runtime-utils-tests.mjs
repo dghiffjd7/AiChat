@@ -66,6 +66,23 @@ import { createPromptPreviewRuntime } from '../../src/scripts/ui/chat/prompt-pre
 }
 
 {
+  const fallbackRequest = { messages: [{ role: 'user', content: '旧请求' }] };
+  const previewRequest = { messages: [{ role: 'user', content: '只读预览' }] };
+  let receivedRequest = null;
+  const runtime = createPromptPreviewRuntime({
+    getLastRequest: () => fallbackRequest,
+    buildPromptPreview: ({ request }) => {
+      receivedRequest = request;
+      return { meta: '', head: '', body: 'preview', messages: request.messages };
+    },
+    showPromptPreviewModal: () => {},
+  });
+  assert.equal(runtime(previewRequest), true);
+  assert.equal(receivedRequest, previewRequest, '只读预览应直接传请求快照，不得覆写全局 lastRequest');
+  console.log('ok - createPromptPreviewRuntime supports an isolated request override');
+}
+
+{
   const warnings = [];
   const errors = [];
   const runtime = createPromptPreviewRuntime({

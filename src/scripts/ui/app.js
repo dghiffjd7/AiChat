@@ -1255,7 +1255,7 @@ const initApp = async () => {
     // 分栏预览骨架：只构建请求不弹窗（草稿实时替换在预设面板内完成）
     buildScenePromptPreviewRequest: opts => buildScenePromptPreviewRequest(opts || {}),
     // 预览宏 token 悬停求值（只读；写变量类/EJS 不执行）
-    evalScenePreviewMacro: token => evalScenePreviewMacro(token),
+    evalScenePreviewMacro: (token, options) => evalScenePreviewMacro(token, options),
   });
   sessionConfigPanel.setRuntimeContext({
     chatStore,
@@ -15195,6 +15195,7 @@ Phase G（Frame 36）：循环衔接
         previewUiMode,
         previewSuppressHistory: !includeHistory,
         previewRawBlocks: Boolean(rawBlocks),
+        skipScripts: true,
       });
       if (!request || !Array.isArray(request.messages)) return null;
       return request;
@@ -15204,10 +15205,10 @@ Phase G（Frame 36）：循环衔接
     }
   };
   // 预览里单个宏 token 的悬停求值：写变量类只描述，其他宏也在隔离变量状态中运行。
-  const evalScenePreviewMacro = (token = '') => {
+  const evalScenePreviewMacro = (token = '', { previewUiMode = '' } = {}) => {
     return evaluateScenePreviewMacro(token, {
       processTextMacros: (text, context) => window.appBridge.processTextMacros(text, context),
-      context: { sessionId: chatStore.getCurrent(), uiMode },
+      context: { sessionId: chatStore.getCurrent(), uiMode: previewUiMode || uiMode },
     });
   };
   const showDraftPromptPreview = async ({ previewUiMode = '' } = {}) => {
@@ -15221,7 +15222,7 @@ Phase G（Frame 36）：循环衔接
         window.toastr?.warning?.('暂无可预览的 Prompt');
         return false;
       }
-      return showPromptPreview();
+      return showPromptPreview(request);
     } catch (err) {
       logger.warn('draft prompt preview failed', err);
       window.toastr?.error?.('构建本次 Prompt 预览失败');
@@ -26204,9 +26205,11 @@ Phase G（Frame 36）：循环衔接
       getContactName: id => contactsStore.getContact(id)?.name || '',
       buildHistory: buildHistoryForLLM,
     });
-    try {
-      window.appBridge.setContextBuilder?.(llmContext);
-    } catch {}
+    if (!previewOnly) {
+      try {
+        window.appBridge.setContextBuilder?.(llmContext);
+      } catch {}
+    }
 
     const currentDraftReplyTarget = getReplyTargetForSession(sessionId);
     let consumedDraftReplyTarget = false;

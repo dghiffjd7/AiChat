@@ -14,12 +14,12 @@ export const createPromptPreviewRuntime = ({
   notifyWarning = () => {},
   notifyError = () => {},
   logger = null,
-} = {}) => () => {
+} = {}) => (requestOverride = null) => {
   try {
     const sid = String(getCurrentSessionId?.() || '').trim();
     const contact = getContactBySessionId?.(sid);
     const name = contact?.name || sid;
-    const req = getLastRequest?.();
+    const req = requestOverride || getLastRequest?.();
     const {
       meta,
       head,

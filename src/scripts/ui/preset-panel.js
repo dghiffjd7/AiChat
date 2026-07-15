@@ -857,12 +857,13 @@ body[data-reduced-motion='on'] .pp-prev-block.pp-prev-flash {
     position: absolute; top: 50%;
     transform: translate(var(--pp-handle-x), -50%);
     display: none; align-items: center; justify-content: center;
-    width: 14px; height: 24px; padding: 0;
+    width: 28px; height: 56px; padding: 0;
     border: 0;
     border-radius: 0;
     background: transparent;
     box-shadow: none;
     color: color-mix(in srgb, var(--app-text-muted) 72%, var(--app-accent-primary));
+    opacity: 0.5;
     cursor: grab;
     transition: color 150ms ease, opacity 150ms ease;
     touch-action: none; overflow: visible; isolation: isolate;
@@ -874,7 +875,7 @@ body[data-reduced-motion='on'] .pp-prev-block.pp-prev-flash {
 }
 .pp-pull-handle-svg {
     position: relative; z-index: 1;
-    display: block; width: 24px; height: 14px; overflow: visible;
+    display: block; width: 56px; height: 28px; overflow: visible;
     transform: rotate(var(--pp-pull-rotation));
     transform-origin: center;
     transition: filter 150ms ease;
@@ -897,6 +898,10 @@ body[data-reduced-motion='on'] .pp-prev-block.pp-prev-flash {
 .pp-pane-handle:hover,
 .pp-editor-handle:hover {
     color: var(--app-accent-strong, var(--app-accent-primary));
+}
+.pp-preview-edge.is-opaque,
+.pp-pane-handle.is-opaque,
+.pp-editor-handle.is-opaque {
     opacity: 1;
 }
 .pp-preview-edge:hover .pp-pull-handle-svg,
@@ -919,7 +924,6 @@ body[data-reduced-motion='on'] .pp-prev-block.pp-prev-flash {
 .pp-pane-handle:active,
 .pp-editor-handle:active {
     cursor: grabbing;
-    opacity: 0.72;
 }
 
 /* 环顶指向拉动方向；环底分别贴住自身所在区域的边缘，不使用连接线。 */
@@ -935,10 +939,37 @@ body[data-reduced-motion='on'] .pp-prev-block.pp-prev-flash {
 /* 分栏提环分居分隔线两侧：左向环在编辑侧，右向环在预览侧。 */
 .pp-pane-handle { left: 54%; z-index: 7; }
 #preset-panel[data-preview="split"] .pp-pane-handle { display: flex; }
-.pp-pane-handle-expand { --pp-handle-x: -100%; top: calc(50% - 20px); }
-.pp-pane-handle-collapse { --pp-handle-x: 0%; top: calc(50% + 20px); }
+#preset-panel[data-preview-motion="opening-split"] .pp-pane-handle-collapse {
+    opacity: 0;
+    pointer-events: none;
+}
+.pp-pane-handle-expand { --pp-handle-x: -100%; top: calc(50% - 34px); }
+.pp-pane-handle-collapse { --pp-handle-x: 0%; top: calc(50% + 34px); }
 .pp-editor-handle { left: 0; z-index: 7; }
 #preset-panel[data-preview="full"] .pp-editor-handle { display: flex; }
+/* 开合过程中只保留贴边移动的主提环；抵达后再交接给目标状态提环。 */
+#preset-panel[data-preview-motion="opening-split"] .pp-pane-handle-expand,
+#preset-panel[data-preview-motion="expanding-full"] .pp-pane-handle-expand,
+#preset-panel[data-preview-motion="returning-split"] .pp-editor-handle,
+#preset-panel[data-preview-motion="closing-split"] .pp-pane-handle-collapse,
+#preset-panel[data-preview-motion="opening-full"] .pp-preview-edge,
+#preset-panel[data-preview-motion="closing-full"] .pp-editor-handle {
+    pointer-events: none;
+}
+#preset-panel[data-preview-motion="expanding-full"] .pp-pane-handle-expand,
+#preset-panel[data-preview-motion="closing-split"] .pp-pane-handle-collapse,
+#preset-panel[data-preview-motion="opening-full"] .pp-preview-edge,
+#preset-panel[data-preview-motion="closing-full"] .pp-editor-handle {
+    display: flex;
+}
+#preset-panel[data-preview-motion="returning-split"] .pp-pane-handle-expand,
+#preset-panel[data-preview-motion="expanding-full"] .pp-editor-handle,
+#preset-panel[data-preview-motion="opening-full"] .pp-editor-handle,
+#preset-panel[data-preview-motion="closing-split"] .pp-preview-edge,
+#preset-panel[data-preview-motion="closing-full"] .pp-preview-edge {
+    opacity: 0;
+    pointer-events: none;
+}
 body[data-reduced-motion='on'] .pp-preview-edge,
 body[data-reduced-motion='on'] .pp-pane-handle,
 body[data-reduced-motion='on'] .pp-editor-handle,
@@ -1619,6 +1650,9 @@ export class PresetPanel {
         this.openaiBlockDraftsScope = '';
         this.openaiBlockBase = new Map();
         this.openaiDeletedBlockIds = new Set();
+        this._presetMutationTail = Promise.resolve();
+        this._presetMutationPending = 0;
+        this._presetMutationBusy = false;
         this.customSelectMenuEl = null;
         this.customSelectMenuCleanup = null;
         this.customSelectMenuAnchor = null;
@@ -1985,6 +2019,7 @@ export class PresetPanel {
         this.setPageView(this.currentPage);
         // 预览不跨开合残留：每次打开都从收起状态开始（一级页无预览）
         this.closePreview({ animate: false });
+        this.syncPreviewHistoryToggle?.();
         // 区块草稿跨开合缓存：重新打开时恢复未保存计数提示
         this.updateUnsavedIndicator();
         if (section && this.detailScrollEl) this.detailScrollEl.scrollTop = 0;
@@ -1994,6 +2029,10 @@ export class PresetPanel {
 
     /* 取消 = 确认后回滚未保存编辑；×/遮罩关闭 = 缓存编辑（发送始终用已保存内容，保存才更新） */
     async onCancel() {
+        if (this.isPresetMutationBusy()) {
+            this.showStatus('正在保存上一处修改，请稍候', 'info');
+            return false;
+        }
         this.captureCurrentDetailDraft();
         const n = this.countUnsavedChanges();
         if (n > 0) {
@@ -2210,7 +2249,12 @@ export class PresetPanel {
         };
         importInput.onchange = async () => {
             const file = importInput.files?.[0];
-            if (file) await this.importFromFile(file);
+            if (file) {
+                await this.enqueuePresetMutation(
+                    () => this.importFromFile(file),
+                    { rejectIfBusy: true },
+                );
+            }
         };
         this.element.querySelector('#preset-export').onclick = () => this.exportCurrent();
 
@@ -2247,6 +2291,7 @@ export class PresetPanel {
             this.clearBindingSection();
         }
         this.setPageView(this.currentPage);
+        if (this.isPresetMutationBusy()) this.setPresetMutationBusy(true);
     }
 
     getSectionById(id) {
@@ -2363,33 +2408,56 @@ export class PresetPanel {
         deleteBtn.disabled = !activeId;
 
         select.onchange = async () => {
-            // 切换 openai 预设会清区块草稿：先确认（拒绝则复位选择）
-            if (storeType === 'openai' && select.value !== this.store.getActiveId('openai')) {
-                const ok = await this.confirmDiscardBlockDrafts('切换预设');
-                if (!ok) { this.renderManager(); return; }
-                this.discardOpenAIDrafts({ presetId: this.store.getActiveId('openai') });
-            } else {
-                this.captureCurrentDetailDraft();
+            if (this.isPresetMutationBusy()) {
+                this.showStatus('正在保存上一处修改，请稍候', 'info');
+                this.renderManager();
+                return;
             }
-            await this.store.setActive(storeType, select.value);
-            this.renderAllSections();
-            window.dispatchEvent(new CustomEvent('preset-changed'));
+            await this.enqueuePresetMutation(async () => {
+                // 切换 openai 预设会清区块草稿：先确认（拒绝则复位选择）
+                if (storeType === 'openai' && select.value !== this.store.getActiveId('openai')) {
+                    const ok = await this.confirmDiscardBlockDrafts('切换预设');
+                    if (!ok) { this.renderManager(); return; }
+                    this.discardOpenAIDrafts({ presetId: this.store.getActiveId('openai') });
+                } else {
+                    this.captureCurrentDetailDraft();
+                }
+                await this.store.setActive(storeType, select.value);
+                this.renderAllSections();
+                window.dispatchEvent(new CustomEvent('preset-changed'));
+            });
         };
         this.bindCustomSelect('preset-manager-select', this.managerEl);
 
         if (!enabledReadonly) {
             enabledCb.onchange = async () => {
-                await this.store.setEnabled(storeType, !!enabledCb.checked);
-                this.renderAllSections();
-                this.showStatus('已更新启用状态', 'success');
-                window.dispatchEvent(new CustomEvent('preset-changed'));
+                if (this.isPresetMutationBusy()) {
+                    this.showStatus('正在保存上一处修改，请稍候', 'info');
+                    this.renderManager();
+                    return;
+                }
+                await this.enqueuePresetMutation(async () => {
+                    await this.store.setEnabled(storeType, !!enabledCb.checked);
+                    this.renderAllSections();
+                    this.showStatus('已更新启用状态', 'success');
+                    window.dispatchEvent(new CustomEvent('preset-changed'));
+                });
             };
         }
 
-        this.managerEl.querySelector('#preset-manager-new').onclick = () => this.onNewForStoreType(storeType);
-        renameBtn.onclick = () => this.onRenameForStoreType(storeType);
+        this.managerEl.querySelector('#preset-manager-new').onclick = () => this.enqueuePresetMutation(
+            () => this.onNewForStoreType(storeType),
+            { rejectIfBusy: true },
+        );
+        renameBtn.onclick = () => this.enqueuePresetMutation(
+            () => this.onRenameForStoreType(storeType),
+            { rejectIfBusy: true },
+        );
         bindingsBtn.onclick = () => this.openBindingsPage(storeType, activeId);
-        deleteBtn.onclick = () => this.onDeleteForStoreType(storeType);
+        deleteBtn.onclick = () => this.enqueuePresetMutation(
+            () => this.onDeleteForStoreType(storeType),
+            { rejectIfBusy: true },
+        );
     }
 
     renderMainList() {
@@ -2408,7 +2476,7 @@ export class PresetPanel {
             <div class="pp-nav-item-left">
                 <span class="pp-nav-item-icon">${SECTION_ICONS[sec.id] || SECTION_ICONS.custom}</span>
                 <div class="pp-nav-item-title">${sec.label}</div>
-                <div class="pp-nav-item-sub">${this.getSectionBadge(sec) || '进入后编辑该分类内容'}</div>
+                <div class="pp-nav-item-sub">${escapeHtml(this.getSectionBadge(sec) || '进入后编辑该分类内容')}</div>
             </div>
             <span class="pp-nav-item-arrow">${chevronRightSvg}</span>
         `;
@@ -2560,15 +2628,19 @@ export class PresetPanel {
     }
 
     async commitBindingChange(task, message = '已更新使用位置') {
-        try {
-            await task();
-            this.renderAllSections();
-            this.showStatus(message, 'success');
-            window.dispatchEvent(new CustomEvent('preset-changed'));
-        } catch (err) {
-            logger.warn('更新预设使用位置失败', err);
-            this.showStatus(err?.message || '更新使用位置失败', 'error');
-        }
+        return this.enqueuePresetMutation(async () => {
+            try {
+                await task();
+                this.renderAllSections();
+                this.showStatus(message, 'success');
+                window.dispatchEvent(new CustomEvent('preset-changed'));
+                return true;
+            } catch (err) {
+                logger.warn('更新预设使用位置失败', err);
+                this.showStatus(err?.message || '更新使用位置失败', 'error');
+                return false;
+            }
+        }, { rejectIfBusy: true });
     }
 
     renderBindingEditor({ storeType, presetId, presetName }, root) {
@@ -2713,9 +2785,9 @@ export class PresetPanel {
             head.className = 'pp-binding-card-head';
             head.innerHTML = `
                 <div>
-                    <div class="pp-binding-card-title">${title}</div>
+                    <div class="pp-binding-card-title">${escapeHtml(title)}</div>
                     <div class="pp-binding-card-sub">${boundItems.length
-                        ? `已绑定 ${boundItems.length} 个会话：${boundItems.map((i) => i.name).join('、')}`
+                        ? `已绑定 ${boundItems.length} 个会话：${escapeHtml(boundItems.map((i) => i.name).join('、'))}`
                         : '暂无会话绑定此预设'}</div>
                 </div>
             `;
@@ -3611,6 +3683,7 @@ export class PresetPanel {
         // 原卡变虚线占位实时挪动（落点一目了然）；边缘自动滚动；拖后抑制一次点击。
         const dragState = { suppressClick: false };
         const beginBlockDrag = (e, card) => {
+            if (this.isPresetMutationBusy()) return;
             e.preventDefault();
             e.stopPropagation();
             const initialOrder = Array.from(list.querySelectorAll('.openai-block'))
@@ -4291,15 +4364,67 @@ export class PresetPanel {
         }
     }
 
+    isPresetMutationBusy() {
+        return this._presetMutationBusy === true;
+    }
+
+    setPresetMutationBusy(busy) {
+        this._presetMutationBusy = busy === true;
+        const controls = this.element?.querySelectorAll?.(
+            '#preset-save, #preset-cancel, #preset-import, #preset-accept-all, #preset-reject-all, '
+            + '#preset-manager-select, [data-select-id="preset-manager-select"], #preset-manager-enabled, '
+            + '#preset-manager-new, #preset-manager-rename, #preset-manager-bindings, #preset-manager-delete, '
+            + '#preset-detail-editor input, #preset-detail-editor textarea, #preset-detail-editor select, #preset-detail-editor button, '
+            + '#preset-block-editor input, #preset-block-editor textarea, #preset-block-editor select, #preset-block-editor button, '
+            + '.pp-binding-btn, .pp-diff-accept, .pp-diff-reject',
+        ) || [];
+        controls.forEach((control) => {
+            if (this._presetMutationBusy) {
+                if (!Object.prototype.hasOwnProperty.call(control.dataset, 'ppMutationWasDisabled')) {
+                    control.dataset.ppMutationWasDisabled = control.disabled ? '1' : '0';
+                }
+                control.disabled = true;
+            } else if (Object.prototype.hasOwnProperty.call(control.dataset, 'ppMutationWasDisabled')) {
+                control.disabled = control.dataset.ppMutationWasDisabled === '1';
+                delete control.dataset.ppMutationWasDisabled;
+            }
+        });
+    }
+
+    enqueuePresetMutation(task, { rejectIfBusy = false } = {}) {
+        if (typeof task !== 'function') return Promise.resolve(false);
+        if (rejectIfBusy && this.isPresetMutationBusy()) {
+            this.showStatus('正在保存上一处修改，请稍候', 'info');
+            return Promise.resolve(false);
+        }
+        const previous = this._presetMutationTail || Promise.resolve();
+        this._presetMutationPending = (Number(this._presetMutationPending) || 0) + 1;
+        this.setPresetMutationBusy(true);
+        const run = previous.catch(() => {}).then(() => task());
+        const settled = run.finally(() => {
+            this._presetMutationPending = Math.max(0, (Number(this._presetMutationPending) || 1) - 1);
+            if (this._presetMutationPending === 0) this.setPresetMutationBusy(false);
+        });
+        this._presetMutationTail = settled.catch(() => {});
+        return run;
+    }
+
     /* ✔ 接受：把指定区块草稿立即合并入当前预设并入库（快捷、无确认） */
     async acceptBlockDraft(identifier) {
-        if (!identifier || !this.isBlockDraftModified(identifier)) return;
-        await this.applyBlockDraftsToStore([identifier]);
+        if (!identifier || !this.isBlockDraftModified(identifier)) return false;
+        return this.enqueuePresetMutation(
+            () => this.applyBlockDraftsToStore([identifier]),
+            { rejectIfBusy: true },
+        );
     }
 
     async acceptAllBlockDrafts() {
         const ids = this.modifiedBlockDraftIds();
-        if (ids.length) await this.applyBlockDraftsToStore(ids);
+        if (!ids.length) return false;
+        return this.enqueuePresetMutation(
+            () => this.applyBlockDraftsToStore(ids),
+            { rejectIfBusy: true },
+        );
     }
 
     async applyBlockDraftsToStore(ids) {
@@ -4344,7 +4469,8 @@ export class PresetPanel {
             await this.store.upsert('openai', { id: activeId, name, data });
             // 就地更新基线与卡片（不整体重建，保住编辑位置/滚动）
             merged.forEach((next, ident) => {
-                this.openaiBlockBase?.set?.(ident, next);
+                this.openaiBlockBase?.set?.(ident, deepClone(next));
+                this.restoreOpenAIDraftSnapshotBlock(ident, next);
                 this.openaiBlockDrafts?.delete?.(ident);
                 const card = this.getBlockCards().find(c => c.dataset.identifier === ident);
                 if (card) {
@@ -4365,16 +4491,24 @@ export class PresetPanel {
 
     /* ✔ hunk 级接受：只把该处修改并入基线并入库，其它修改保持草稿态 */
     async acceptBlockHunk(identifier, hunkIdx) {
-        const draft = this.openaiBlockDrafts?.get?.(identifier);
-        if (!draft || !Number.isFinite(hunkIdx)) return;
-        const base = String(this.openaiBlockBase?.get?.(identifier)?.content ?? '');
-        const newBase = this.applyBlockHunk(base, String(draft.content ?? ''), hunkIdx, 'accept');
-        const saved = await this.applyBlockContentToStore(identifier, newBase);
-        if (saved) this.showStatus('已接受该处修改并保存', 'success');
+        if (!identifier || !Number.isFinite(hunkIdx)) return false;
+        return this.enqueuePresetMutation(async () => {
+            const draft = this.openaiBlockDrafts?.get?.(identifier);
+            if (!draft) return false;
+            const base = String(this.openaiBlockBase?.get?.(identifier)?.content ?? '');
+            const newBase = this.applyBlockHunk(base, String(draft.content ?? ''), hunkIdx, 'accept');
+            const saved = await this.applyBlockContentToStore(identifier, newBase);
+            if (saved) this.showStatus('已接受该处修改并保存', 'success');
+            return saved;
+        }, { rejectIfBusy: true });
     }
 
     /* × hunk 级回滚：只回滚该处修改（草稿里恢复基线行），其它修改保留 */
     rejectBlockHunk(identifier, hunkIdx) {
+        if (this.isPresetMutationBusy()) {
+            this.showStatus('正在保存上一处修改，请稍候', 'info');
+            return false;
+        }
         const draft = this.openaiBlockDrafts?.get?.(identifier);
         if (!draft || !Number.isFinite(hunkIdx)) return;
         const base = String(this.openaiBlockBase?.get?.(identifier)?.content ?? '');
@@ -4418,7 +4552,9 @@ export class PresetPanel {
             pr.content = String(content ?? '');
             const name = String(data?.name || '').trim() || activeId;
             await this.store.upsert('openai', { id: activeId, name, data });
-            this.openaiBlockBase?.set?.(identifier, deepClone(pr));
+            const savedBlock = deepClone(pr);
+            this.openaiBlockBase?.set?.(identifier, savedBlock);
+            this.restoreOpenAIDraftSnapshotBlock(identifier, savedBlock);
             this.dropCurrentOpenAIDraftSnapshotIfSaved();
             window.dispatchEvent(new CustomEvent('preset-changed')); // 骨架重建由监听统一处理
             this.updateUnsavedIndicator();
@@ -4432,6 +4568,10 @@ export class PresetPanel {
 
     /* × 舍弃：丢掉指定区块草稿，界面回基线（快捷、无确认） */
     rejectBlockDraft(identifier) {
+        if (this.isPresetMutationBusy()) {
+            this.showStatus('正在保存上一处修改，请稍候', 'info');
+            return false;
+        }
         if (!identifier || !this.openaiBlockDrafts?.has?.(identifier)) return;
         this.openaiBlockDrafts.delete(identifier);
         const base = this.openaiBlockBase?.get?.(identifier);
@@ -4455,6 +4595,10 @@ export class PresetPanel {
 
     /* 全部取消 = 批量舍弃 → 需确认（与「舍弃草稿要确认」的约定一致；单处 × 快捷免确认） */
     async rejectAllBlockDrafts() {
+        if (this.isPresetMutationBusy()) {
+            this.showStatus('正在保存上一处修改，请稍候', 'info');
+            return false;
+        }
         const ids = this.modifiedBlockDraftIds();
         if (!ids.length) return;
         const ok = await appConfirm({
@@ -4560,13 +4704,15 @@ export class PresetPanel {
         };
         const pane = this.previewPaneEl;
         const shell = el.querySelector('.pp-shell');
+        try { this._previewMotionCleanup?.(); } catch {}
+        this._previewMotionCleanup = null;
+        try { this._previewAnims?.forEach(a => a.cancel()); } catch {}
+        this._previewAnims = [];
         const reduced = document.body?.dataset?.reducedMotion === 'on'
             || window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches;
         if (!animate || reduced || typeof pane?.animate !== 'function') { apply(state); return; }
         /* PPT slide 编排：closed↔split 靠宽度过渡推开/收拢 + 内容滑入滑出；
            涉及 full 的先切/后切布局，pane 整体 transform 滑盖，编辑器在下层轻推（视差）。 */
-        try { this._previewAnims?.forEach(a => a.cancel()); } catch {}
-        this._previewAnims = [];
         const run = (target, keyframes, opts) => {
             const anim = target.animate(keyframes, opts);
             this._previewAnims.push(anim);
@@ -4575,27 +4721,163 @@ export class PresetPanel {
         const easeOut = 'cubic-bezier(0.22, 0.61, 0.36, 1)';
         const easeIn = 'cubic-bezier(0.5, 0, 0.75, 0.4)';
         const paneContent = [pane.querySelector('.pp-preview-head'), pane.querySelector('.pp-preview-scroll')].filter(Boolean);
+        const startPreviewMotion = (name, { settle = null } = {}) => {
+            let active = true;
+            el.dataset.previewMotion = name;
+            const cleanup = () => {
+                if (!active) return;
+                active = false;
+                try { settle?.(); } catch {}
+                if (el.dataset.previewMotion === name) delete el.dataset.previewMotion;
+                if (this._previewMotionCleanup === cleanup) this._previewMotionCleanup = null;
+            };
+            this._previewMotionCleanup = cleanup;
+            return {
+                cleanup,
+                isActive: () => active && el.dataset.previewMotion === name,
+            };
+        };
+        const fadeHandleHandoff = ({ incoming, outgoing = null, incomingOpacity = 1, motion, heldAnimations = [] }) => {
+            const held = heldAnimations.filter(Boolean);
+            const release = (animations = []) => {
+                [...animations, ...held].forEach((animation) => {
+                    if (!animation) return;
+                    animation.onfinish = null;
+                    animation.oncancel = null;
+                    try { animation.cancel(); } catch {}
+                });
+            };
+            if (!motion?.isActive()) { release(); return; }
+            if (!incoming) {
+                motion.cleanup();
+                release();
+                return;
+            }
+            const fadeIn = run(incoming, [
+                { opacity: 0 },
+                { opacity: incomingOpacity },
+            ], { duration: 180, easing: easeOut, fill: 'both' });
+            const outgoingOpacity = outgoing?.classList.contains('is-opaque') ? 1 : 0.5;
+            const fadeOut = outgoing
+                ? run(outgoing, [
+                    { opacity: outgoingOpacity },
+                    { opacity: 0 },
+                ], { duration: 180, easing: easeOut, fill: 'both' })
+                : null;
+            let done = false;
+            const finish = () => {
+                if (done) return;
+                done = true;
+                motion.cleanup();
+                release([fadeIn, fadeOut]);
+            };
+            fadeIn.onfinish = finish;
+            fadeIn.oncancel = () => {
+                if (!done && motion.isActive()) {
+                    done = true;
+                    motion.cleanup();
+                }
+            };
+        };
+        const visiblePreviewEdge = () => {
+            const pageView = el.querySelector('#preset-pages')?.dataset.view;
+            const pageHandle = pageView
+                ? el.querySelector(`.pp-page[data-panel-page="${pageView}"] .pp-preview-edge`)
+                : null;
+            return pageHandle
+                || Array.from(el.querySelectorAll('.pp-preview-edge')).find(handle => handle.getClientRects().length > 0)
+                || el.querySelector('.pp-preview-edge');
+        };
         if (prev === 'closed' && state === 'split') {
-            // 推入：flex-basis 过渡负责推开编辑器，内容从右滑入补上入场感
+            // 推入：第一个提环从原右缘紧贴分隔线随面板移动；落位后第二个提环才淡入。
+            const previewMotion = 'opening-split';
+            const motion = startPreviewMotion('opening-split');
+            const expandHandle = el.querySelector('#preset-preview-expand');
+            const collapseHandle = el.querySelector('#preset-preview-collapse');
+            collapseHandle?.classList.remove('is-opaque');
+            this.revealPreviewHandleTemporarily?.(expandHandle);
             apply('split');
             paneContent.forEach(t => run(t, [
                 { transform: 'translateX(56px)', opacity: 0.25 },
                 { transform: 'translateX(0)', opacity: 1 },
             ], { duration: 320, easing: easeOut }));
+            let leadHandleAnimation = null;
+            const revealSecondHandle = () => {
+                if (el.dataset.previewMotion !== previewMotion || !motion.isActive()) return;
+                fadeHandleHandoff({
+                    incoming: collapseHandle,
+                    incomingOpacity: 0.5,
+                    motion,
+                    heldAnimations: [leadHandleAnimation],
+                });
+            };
+            leadHandleAnimation = expandHandle
+                ? run(expandHandle, [
+                    { left: '100%', top: '50%' },
+                    { left: '54%', top: 'calc(50% - 34px)' },
+                ], { duration: 300, easing: easeOut, fill: 'both' })
+                : null;
+            if (leadHandleAnimation) {
+                leadHandleAnimation.onfinish = revealSecondHandle;
+                leadHandleAnimation.oncancel = () => {
+                    if (motion.isActive()) motion.cleanup();
+                };
+            } else {
+                revealSecondHandle();
+            }
         } else if (prev === 'split' && state === 'closed') {
-            // 收拢：内容先向右滑出淡走，宽度过渡随后合拢
+            // 收拢：右向提环随预览边界回到右缘，再交接给编辑页的左向提环。
+            const motion = startPreviewMotion('closing-split');
+            const collapseHandle = el.querySelector('#preset-preview-collapse');
+            const edgeHandle = visiblePreviewEdge();
+            edgeHandle?.classList.remove('is-opaque');
             const anims = paneContent.map(t => run(t, [
                 { transform: 'translateX(0)', opacity: 1 },
                 { transform: 'translateX(40px)', opacity: 0 },
             ], { duration: 200, easing: easeIn, fill: 'forwards' }));
             apply('closed');
             setTimeout(() => anims.forEach(a => { try { a.cancel(); } catch {} }), 340);
+            let leadHandleAnimation = null;
+            const finish = () => {
+                if (!motion.isActive()) return;
+                this.revealPreviewHandleTemporarily?.(edgeHandle);
+                fadeHandleHandoff({
+                    incoming: edgeHandle,
+                    outgoing: collapseHandle,
+                    motion,
+                    heldAnimations: [leadHandleAnimation],
+                });
+            };
+            leadHandleAnimation = collapseHandle
+                ? run(collapseHandle, [
+                    { left: '54%', top: 'calc(50% + 34px)' },
+                    { left: '100%', top: '50%' },
+                ], { duration: 300, easing: easeOut, fill: 'both' })
+                : null;
+            if (leadHandleAnimation) {
+                leadHandleAnimation.onfinish = finish;
+                leadHandleAnimation.oncancel = () => {
+                    if (motion.isActive()) motion.cleanup();
+                };
+            } else {
+                finish();
+            }
         } else if (state === 'full') {
-            // split/closed → full：切到覆盖布局后从右滑盖进来，编辑器在下层向左轻推
+            // split/closed → full：当前提环随预览左边界到位，再交接给全屏返回提环。
+            const fromSplit = prev === 'split';
+            const motion = fromSplit
+                ? startPreviewMotion('expanding-full')
+                : startPreviewMotion('opening-full');
             const fromX = prev === 'split' ? '54%' : '100%';
+            const leadHandle = fromSplit
+                ? el.querySelector('#preset-preview-expand')
+                : visiblePreviewEdge();
+            const editorHandle = el.querySelector('#preset-editor-return');
+            editorHandle?.classList.remove('is-opaque');
             if (shell) shell.style.visibility = 'visible';
             apply('full');
-            if (shell) run(shell, [
+            // 手机的主提环位于 shell 内；此路径不做父层视差，避免提环偏离 pane 边界。
+            if (shell && fromSplit) run(shell, [
                 { transform: 'translateX(0)', opacity: 1 },
                 { transform: 'translateX(-48px)', opacity: 0.8 },
             ], { duration: 340, easing: easeOut });
@@ -4603,11 +4885,62 @@ export class PresetPanel {
                 { transform: `translateX(${fromX})` },
                 { transform: 'translateX(0)' },
             ], { duration: 340, easing: easeOut });
+            const leadHandleAnimation = leadHandle
+                ? run(leadHandle, fromSplit ? [
+                    { left: '54%', top: 'calc(50% - 34px)' },
+                    { left: '0%', top: '50%' },
+                ] : [
+                    { right: '0%', top: '50%' },
+                    { right: '100%', top: '50%' },
+                ], { duration: 340, easing: easeOut, fill: 'both' })
+                : null;
+            let slideDone = false;
+            let handleDone = !leadHandleAnimation;
+            let handedOff = false;
             const settle = () => { if (shell) shell.style.visibility = ''; };
-            slide.onfinish = settle;
-            slide.oncancel = settle;
+            const finish = () => {
+                if (handedOff || !slideDone || !handleDone || !motion.isActive()) return;
+                handedOff = true;
+                this.revealPreviewHandleTemporarily?.(editorHandle);
+                fadeHandleHandoff({
+                    incoming: editorHandle,
+                    outgoing: leadHandle,
+                    motion,
+                    heldAnimations: [leadHandleAnimation],
+                });
+            };
+            slide.onfinish = () => {
+                slideDone = true;
+                settle();
+                finish();
+            };
+            slide.oncancel = () => {
+                settle();
+                if (motion.isActive()) motion.cleanup();
+            };
+            if (leadHandleAnimation) {
+                leadHandleAnimation.onfinish = () => {
+                    handleDone = true;
+                    finish();
+                };
+                leadHandleAnimation.oncancel = () => {
+                    if (motion.isActive()) motion.cleanup();
+                };
+            } else {
+                finish();
+            }
         } else if (prev === 'full') {
-            // full → split/closed：先滑出让位，落定后才切回布局（避免瞬跳）
+            // full → split/closed：返回提环随左边界移走，落定后交接给目标状态提环。
+            const toSplit = state === 'split';
+            const motion = toSplit
+                ? startPreviewMotion('returning-split', { settle: () => apply('split') })
+                : startPreviewMotion('closing-full', { settle: () => apply('closed') });
+            const editorHandle = el.querySelector('#preset-editor-return');
+            const collapseHandle = el.querySelector('#preset-preview-collapse');
+            const expandHandle = el.querySelector('#preset-preview-expand');
+            const edgeHandle = visiblePreviewEdge();
+            if (toSplit) expandHandle?.classList.remove('is-opaque');
+            else edgeHandle?.classList.remove('is-opaque');
             if (shell) shell.style.visibility = 'visible';
             const toX = state === 'split' ? '54%' : '100%';
             if (shell) run(shell, [
@@ -4618,16 +4951,61 @@ export class PresetPanel {
                 { transform: 'translateX(0)' },
                 { transform: `translateX(${toX})` },
             ], { duration: 300, easing: easeIn, fill: 'forwards' });
-            let done = false;
+            const leadHandleAnimation = editorHandle
+                ? run(editorHandle, toSplit ? [
+                    { left: '0%', top: '50%' },
+                    { left: '54%', top: 'calc(50% + 34px)' },
+                ] : [
+                    { left: '0%', top: '50%' },
+                    { left: '100%', top: '50%' },
+                ], { duration: 300, easing: easeIn, fill: 'both' })
+                : null;
+            let slideDone = false;
+            let handleDone = !leadHandleAnimation;
             const finish = () => {
-                if (done) return;
-                done = true;
+                if (!slideDone || !handleDone || !motion.isActive()) return;
                 if (shell) shell.style.visibility = '';
-                apply(state);
+                slide.onfinish = null;
+                slide.oncancel = null;
                 try { slide.cancel(); } catch {}
+                apply(state);
+                if (toSplit) {
+                    this.revealPreviewHandleTemporarily?.(collapseHandle);
+                    fadeHandleHandoff({
+                        incoming: expandHandle,
+                        incomingOpacity: 0.5,
+                        motion,
+                        heldAnimations: [leadHandleAnimation],
+                    });
+                } else {
+                    this.revealPreviewHandleTemporarily?.(edgeHandle);
+                    fadeHandleHandoff({
+                        incoming: edgeHandle,
+                        outgoing: editorHandle,
+                        motion,
+                        heldAnimations: [leadHandleAnimation],
+                    });
+                }
             };
-            slide.onfinish = finish;
-            slide.oncancel = () => { if (shell) shell.style.visibility = ''; };
+            slide.onfinish = () => {
+                slideDone = true;
+                finish();
+            };
+            slide.oncancel = () => {
+                if (shell) shell.style.visibility = '';
+                if (motion.isActive()) motion.cleanup();
+            };
+            if (leadHandleAnimation) {
+                leadHandleAnimation.onfinish = () => {
+                    handleDone = true;
+                    finish();
+                };
+                leadHandleAnimation.oncancel = () => {
+                    if (motion.isActive()) motion.cleanup();
+                };
+            } else {
+                finish();
+            }
         } else {
             apply(state);
         }
@@ -4688,6 +5066,26 @@ export class PresetPanel {
                 document.addEventListener('pointercancel', onUp);
             });
         };
+        // 提环平时半透明；最后一次进入、点击或聚焦后亮起 3 秒，再自动淡回。
+        const handleOpacityTimers = new WeakMap();
+        const revealHandleTemporarily = (handle) => {
+            if (!handle) return;
+            const previousTimer = handleOpacityTimers.get(handle);
+            if (previousTimer) clearTimeout(previousTimer);
+            handle.classList.add('is-opaque');
+            const timer = setTimeout(() => {
+                handle.classList.remove('is-opaque');
+                handleOpacityTimers.delete(handle);
+            }, 3000);
+            handleOpacityTimers.set(handle, timer);
+        };
+        this.revealPreviewHandleTemporarily = revealHandleTemporarily;
+        this.element.querySelectorAll('.pp-preview-edge, .pp-pane-handle, .pp-editor-handle').forEach((handle) => {
+            handle.addEventListener('pointerenter', () => revealHandleTemporarily(handle));
+            handle.addEventListener('pointerdown', () => revealHandleTemporarily(handle));
+            handle.addEventListener('click', () => revealHandleTemporarily(handle));
+            handle.addEventListener('focus', () => revealHandleTemporarily(handle));
+        });
         // 编辑页右缘把手：点击/左拉展开
         this.element.querySelectorAll('.pp-preview-edge').forEach((edge) => {
             edge.addEventListener('click', () => this.openPreview());
@@ -4717,12 +5115,21 @@ export class PresetPanel {
         chatBtn?.addEventListener('click', () => {
             this.previewMode = this.previewMode === 'chat' ? 'rp' : 'chat';
             chatBtn.classList.toggle('is-on', this.previewMode === 'chat');
+            this.syncPreviewHistoryToggle();
             this.rebuildPreviewSkeleton();
         });
         const histBtn = pane.querySelector('#preset-preview-toggle-history');
+        this.previewHistoryBtnEl = histBtn;
+        this.syncPreviewHistoryToggle();
         histBtn?.addEventListener('click', () => {
+            if (!this.isPreviewSceneMatchingCurrent()) {
+                this.previewIncludeHistory = false;
+                this.syncPreviewHistoryToggle();
+                this.showStatus('跨场景预览不会混入当前会话历史', 'info');
+                return;
+            }
             this.previewIncludeHistory = !this.previewIncludeHistory;
-            histBtn.classList.toggle('is-on', this.previewIncludeHistory);
+            this.syncPreviewHistoryToggle();
             this.rebuildPreviewSkeleton();
         });
         const macroBtn = pane.querySelector('#preset-preview-toggle-macroeval');
@@ -4740,7 +5147,7 @@ export class PresetPanel {
         const showTip = (target) => {
             const evalFn = this.runtimeContext?.evalScenePreviewMacro;
             if (typeof evalFn !== 'function' || !target) return;
-            const res = evalFn(target.textContent || '') || {};
+            const res = evalFn(target.textContent || '', { previewUiMode: this.previewMode }) || {};
             if (!res.text) { tip.hidden = true; return; }
             tip.textContent = res.text;
             tip.dataset.kind = res.kind || '';
@@ -4855,12 +5262,36 @@ export class PresetPanel {
         this.setPreviewState('closed', { animate });
     }
 
+    isPreviewSceneMatchingCurrent() {
+        const currentMode = this.getCurrentPresetContext().uiMode;
+        return currentMode === this.previewMode;
+    }
+
+    isPreviewHistoryIncluded() {
+        return this.previewIncludeHistory === true && this.isPreviewSceneMatchingCurrent();
+    }
+
+    syncPreviewHistoryToggle() {
+        const button = this.previewHistoryBtnEl;
+        if (!button) return;
+        const sceneMatches = this.isPreviewSceneMatchingCurrent();
+        if (!sceneMatches) this.previewIncludeHistory = false;
+        const included = this.isPreviewHistoryIncluded();
+        button.disabled = !sceneMatches;
+        button.classList.toggle('is-on', included);
+        button.setAttribute('aria-pressed', included ? 'true' : 'false');
+        button.title = sceneMatches
+            ? '切换是否加入当前会话聊天记录'
+            : '跨场景预览不会加入当前会话历史';
+    }
+
     rebuildPreviewSkeleton() {
         const buildFn = this.runtimeContext?.buildScenePromptPreviewRequest;
         if (typeof buildFn !== 'function' || !this.previewBodyEl) return;
+        this.syncPreviewHistoryToggle();
         return this.previewBuildQueue?.request?.({
             previewUiMode: this.previewMode,
-            includeHistory: this.previewIncludeHistory,
+            includeHistory: this.isPreviewHistoryIncluded(),
             rawBlocks: this.previewRawBlocks !== false,
         });
     }
@@ -5010,7 +5441,7 @@ export class PresetPanel {
         }
         let html = '';
         for (let i = 0; i < messages.length; i += 1) {
-            if (!this.previewIncludeHistory && i === lastUserIdx) {
+            if (!this.isPreviewHistoryIncluded() && i === lastUserIdx) {
                 html += '<div class="pp-prev-history-chip">聊天记录已折叠为占位（点右上「聊天记录」加入实际内容）</div>';
             }
             html += this.renderPreviewMessageHtml(i);
@@ -5452,43 +5883,47 @@ export class PresetPanel {
        Save / New / Rename / Delete
        ════════════════════════════════════════ */
     async onSave() {
-        await this.store.ready;
-        try {
-            this.captureDraftsFromDOM();
+        return this.enqueuePresetMutation(async () => {
+            await this.store.ready;
+            try {
+                this.captureDraftsFromDOM();
 
-            const toSave = [];
-            for (const [key, data] of this.drafts.entries()) {
-                const [storeType, presetId] = String(key).split(':');
-                if (!storeType || !presetId) continue;
-                const name = String(data?.name || '').trim() || presetId || '未命名';
-                toSave.push({ storeType, presetId, name, data: { ...(data || {}), name } });
+                const toSave = [];
+                for (const [key, data] of this.drafts.entries()) {
+                    const [storeType, presetId] = String(key).split(':');
+                    if (!storeType || !presetId) continue;
+                    const name = String(data?.name || '').trim() || presetId || '未命名';
+                    toSave.push({ storeType, presetId, name, data: { ...(data || {}), name } });
+                }
+
+                for (const st of ['sysprompt', 'context', 'instruct', 'openai', 'reasoning']) {
+                    const activeId = this.store.getActiveId(st);
+                    if (!activeId) continue;
+                    const key = this.getDraftKey(st, activeId);
+                    if (key && this.drafts.has(key)) continue;
+                    const data = deepClone(this.store.getActive(st) || {});
+                    const name = String(data?.name || '').trim() || activeId || '未命名';
+                    toSave.push({ storeType: st, presetId: activeId, name, data: { ...(data || {}), name } });
+                }
+
+                for (const item of toSave) {
+                    await this.store.upsert(item.storeType, { id: item.presetId, name: item.name, data: item.data });
+                }
+
+                this.drafts.clear();
+                this.openaiBlockDrafts?.clear?.();
+                this.openaiDeletedBlockIds?.clear?.();
+                this.renderAllSections();
+                this.updateUnsavedIndicator();
+                this.showStatus('保存成功', 'success');
+                window.dispatchEvent(new CustomEvent('preset-changed'));
+            } catch (err) {
+                logger.error('保存预设失败', err);
+                this.showStatus(err.message || '保存失败', 'error');
+                return false;
             }
-
-            for (const st of ['sysprompt', 'context', 'instruct', 'openai', 'reasoning']) {
-                const activeId = this.store.getActiveId(st);
-                if (!activeId) continue;
-                const key = this.getDraftKey(st, activeId);
-                if (key && this.drafts.has(key)) continue;
-                const data = deepClone(this.store.getActive(st) || {});
-                const name = String(data?.name || '').trim() || activeId || '未命名';
-                toSave.push({ storeType: st, presetId: activeId, name, data: { ...(data || {}), name } });
-            }
-
-            for (const item of toSave) {
-                await this.store.upsert(item.storeType, { id: item.presetId, name: item.name, data: item.data });
-            }
-
-            this.drafts.clear();
-            this.openaiBlockDrafts?.clear?.();
-            this.openaiDeletedBlockIds?.clear?.();
-            this.renderAllSections();
-            this.updateUnsavedIndicator();
-            this.showStatus('保存成功', 'success');
-            window.dispatchEvent(new CustomEvent('preset-changed'));
-        } catch (err) {
-            logger.error('保存预设失败', err);
-            this.showStatus(err.message || '保存失败', 'error');
-        }
+            return true;
+        });
     }
 
     async onNewForStoreType(storeType) {

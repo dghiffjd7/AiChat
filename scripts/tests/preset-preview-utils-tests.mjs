@@ -64,3 +64,44 @@ import {
   console.log('ok - 预览异步重建保持 latest-wins');
 }
 
+{
+  const calls = [];
+  let queue;
+  queue = createLatestPreviewBuildQueue({
+    build: async ({ marker }) => {
+      calls.push(marker);
+      return { marker };
+    },
+    onResult: result => {
+      if (result.marker === 'first') {
+        queueMicrotask(() => queue.request({ marker: 'late' }));
+      }
+    },
+  });
+
+  await queue.request({ marker: 'first' });
+  assert.deepEqual(calls, ['first', 'late'], '完成回调微任务排入的请求也必须在同一轮 drain 中执行');
+  console.log('ok - 预览队列不会遗留完成窗口中的微任务请求');
+}
+
+{
+  const calls = [];
+  let queue;
+  queue = createLatestPreviewBuildQueue({
+    build: async ({ marker }) => {
+      calls.push(marker);
+      return { marker };
+    },
+    onResult: result => {
+      if (result.marker === 'first') {
+        queueMicrotask(() => queueMicrotask(() => queue.request({ marker: 'nested-late' })));
+      }
+    },
+  });
+
+  await queue.request({ marker: 'first' });
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.deepEqual(calls, ['first', 'nested-late'], '任意微任务深度的尾端请求都必须触发新一轮 drain');
+  console.log('ok - 预览队列完成窗口具备最终重启保障');
+}

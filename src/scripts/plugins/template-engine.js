@@ -967,11 +967,16 @@ const compileTemplate = (template) => {
   return fn;
 };
 
-const createRuntime = ({ chatStore, sessionId, messageVars, initialVars, state, context }) => {
-  const globals = chatStore?.listGlobalVariables?.() || {};
-  const locals = chatStore?.listVariables?.(sessionId) || {};
-  const initials = initialVars || chatStore?.listInitialVariables?.(sessionId) || {};
-  const msgVars = messageVars || {};
+const createRuntime = ({ chatStore, sessionId, messageVars, initialVars, state, context, readOnly = false }) => {
+  const sourceGlobals = chatStore?.listGlobalVariables?.() || {};
+  const sourceLocals = chatStore?.listVariables?.(sessionId) || {};
+  const sourceInitials = initialVars || chatStore?.listInitialVariables?.(sessionId) || {};
+  const sourceMessageVars = messageVars || {};
+  const globals = readOnly ? cloneValue(sourceGlobals) : sourceGlobals;
+  const locals = readOnly ? cloneValue(sourceLocals) : sourceLocals;
+  const initials = readOnly ? cloneValue(sourceInitials) : sourceInitials;
+  const msgVars = readOnly ? cloneValue(sourceMessageVars) : sourceMessageVars;
+  const runtimeContext = readOnly ? cloneValue(context || {}) : (context || {});
   const shared = state || { defines: Object.create(null) };
   const appBridge = (typeof window !== 'undefined' && window.appBridge) ? window.appBridge : null;
 
@@ -1010,7 +1015,7 @@ const createRuntime = ({ chatStore, sessionId, messageVars, initialVars, state, 
     }
     if (scope === 'initial') {
       setByPath(initials, path, value);
-      if (chatStore?.setInitialVariable) {
+      if (!readOnly && chatStore?.setInitialVariable) {
         const root = path[0];
         if (root) chatStore.setInitialVariable(root, initials[root], sessionId);
       }
@@ -1021,14 +1026,14 @@ const createRuntime = ({ chatStore, sessionId, messageVars, initialVars, state, 
       if (!root) return false;
       if (path.length === 1) {
         globals[root] = value;
-        chatStore?.setGlobalVariable?.(root, value);
+        if (!readOnly) chatStore?.setGlobalVariable?.(root, value);
         return true;
       }
       const next = cloneValue(globals[root]);
       const base = (next && typeof next === 'object') ? next : {};
       setByPath(base, path.slice(1), value);
       globals[root] = base;
-      chatStore?.setGlobalVariable?.(root, base);
+      if (!readOnly) chatStore?.setGlobalVariable?.(root, base);
       return true;
     }
     if (scope === 'local') {
@@ -1036,14 +1041,14 @@ const createRuntime = ({ chatStore, sessionId, messageVars, initialVars, state, 
       if (!root) return false;
       if (path.length === 1) {
         locals[root] = value;
-        chatStore?.setVariable?.(root, value, sessionId);
+        if (!readOnly) chatStore?.setVariable?.(root, value, sessionId);
         return true;
       }
       const next = cloneValue(locals[root]);
       const base = (next && typeof next === 'object') ? next : {};
       setByPath(base, path.slice(1), value);
       locals[root] = base;
-      chatStore?.setVariable?.(root, base, sessionId);
+      if (!readOnly) chatStore?.setVariable?.(root, base, sessionId);
       return true;
     }
     return false;
@@ -1165,14 +1170,18 @@ const createRuntime = ({ chatStore, sessionId, messageVars, initialVars, state, 
 
   const resolveWorldData = (nameRaw) => {
     if (!appBridge) return null;
+    const loadWorld = (id) => {
+      const loaded = appBridge.worldStore?.load?.(id) || null;
+      return readOnly && loaded ? cloneValue(loaded) : loaded;
+    };
     const name = String(nameRaw || '').trim();
     if (name) {
-      return appBridge.worldStore?.load?.(name) || null;
+      return loadWorld(name);
     }
     const current = String(appBridge.currentWorldId || '').trim();
-    if (current) return appBridge.worldStore?.load?.(current) || null;
+    if (current) return loadWorld(current);
     const globalId = String(appBridge.globalWorldId || '').trim();
-    if (globalId) return appBridge.worldStore?.load?.(globalId) || null;
+    if (globalId) return loadWorld(globalId);
     return null;
   };
 
@@ -1219,8 +1228,9 @@ const createRuntime = ({ chatStore, sessionId, messageVars, initialVars, state, 
           stage: 'generate',
           chatStore,
           sessionId,
-          context: { ...(context || {}), data: payload },
+          context: { ...runtimeContext, data: payload },
           state: shared,
+          readOnly,
         });
         return String(res.text ?? '');
       } catch {
@@ -1251,7 +1261,7 @@ const createRuntime = ({ chatStore, sessionId, messageVars, initialVars, state, 
     if (forceFlag) entry.constant = true;
     try {
       const worldId = String(worldData.name || targetWorld || appBridge?.currentWorldId || '').trim();
-      if (worldId && appBridge?.worldStore?.save) {
+      if (!readOnly && worldId && appBridge?.worldStore?.save) {
         appBridge.worldStore.save(worldId, { ...worldData, entries: worldData.entries });
       }
     } catch {}
@@ -1259,7 +1269,7 @@ const createRuntime = ({ chatStore, sessionId, messageVars, initialVars, state, 
   };
 
   const getchar = (name) => {
-    const char = context?.character || {};
+    const char = runtimeContext?.character || {};
     if (name && typeof name === 'string' && String(char.name || '').trim() !== String(name).trim()) {
       return { name: String(name), description: '' };
     }
@@ -1315,14 +1325,14 @@ const createRuntime = ({ chatStore, sessionId, messageVars, initialVars, state, 
     getpreset,
     getPresetPrompt: getpreset,
     getContext: () => ({}),
-    context: context || {},
+    context: runtimeContext,
     globals,
     locals,
     initials,
-    messages: context?.messages || [],
-    user: context?.user || {},
-    character: context?.character || {},
-    session: context?.session || {},
+    messages: runtimeContext?.messages || [],
+    user: runtimeContext?.user || {},
+    character: runtimeContext?.character || {},
+    session: runtimeContext?.session || {},
   };
 
   Object.entries(shared.defines || {}).forEach(([key, value]) => {
@@ -1522,6 +1532,7 @@ export const renderTemplateText = (rawText, options = {}) => {
     initialVars: options.initialVars,
     state,
     context: options.context,
+    readOnly: options.readOnly === true,
   });
   const startAt = nowMs();
   const timeoutMs = TEMPLATE_TIMEOUT_MS;
@@ -1634,7 +1645,7 @@ export const renderTemplateTextAsync = async (rawText, options = {}) => {
     const worker = getTemplateWorker();
     const result = await worker.render(payload, TEMPLATE_TIMEOUT_MS);
     const durationMs = Math.round(nowMs() - startAt);
-    if (result?.globals && options.chatStore) {
+    if (options.readOnly !== true && result?.globals && options.chatStore) {
       applyVariableUpdates({
         chatStore: options.chatStore,
         sessionId: options.sessionId,
@@ -1643,7 +1654,7 @@ export const renderTemplateTextAsync = async (rawText, options = {}) => {
         scope: 'global',
       });
     }
-    if (result?.locals && options.chatStore) {
+    if (options.readOnly !== true && result?.locals && options.chatStore) {
       applyVariableUpdates({
         chatStore: options.chatStore,
         sessionId: options.sessionId,
@@ -1652,7 +1663,7 @@ export const renderTemplateTextAsync = async (rawText, options = {}) => {
         scope: 'local',
       });
     }
-    if (result?.initials && options.chatStore) {
+    if (options.readOnly !== true && result?.initials && options.chatStore) {
       applyVariableUpdates({
         chatStore: options.chatStore,
         sessionId: options.sessionId,
@@ -1661,7 +1672,7 @@ export const renderTemplateTextAsync = async (rawText, options = {}) => {
         scope: 'initial',
       });
     }
-    if (Array.isArray(result?.worldUpdates) && result.worldUpdates.length) {
+    if (options.readOnly !== true && Array.isArray(result?.worldUpdates) && result.worldUpdates.length) {
       applyWorldUpdates(result.worldUpdates);
     }
     if (state && result?.defines && typeof result.defines === 'object') {

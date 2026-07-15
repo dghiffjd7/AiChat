@@ -70,6 +70,8 @@ const {
 {
   const repoRoot = path.resolve(fileURLToPath(new URL('../..', import.meta.url)));
   const appSource = await readFile(path.join(repoRoot, 'src/scripts/ui/app.js'), 'utf8');
+  const bridgeSource = await readFile(path.join(repoRoot, 'src/scripts/ui/bridge.js'), 'utf8');
+  const panelSource = await readFile(path.join(repoRoot, 'src/scripts/ui/preset-panel.js'), 'utf8');
   const handleSendStart = appSource.indexOf('const handleSend = async');
   const handleSendEnd = appSource.indexOf('const sendMessageFromPlugin', handleSendStart);
   assert.ok(handleSendStart >= 0 && handleSendEnd > handleSendStart, '应能定位 handleSend 实现');
@@ -83,6 +85,61 @@ const {
     handleSendSource,
     /getResolvedActiveId\?\.\('openai', requestPresetContext\)\?\.presetId/,
     '创意写作执行记录应使用本次场景实际解析的 OpenAI 预设 ID',
+  );
+  assert.match(
+    appSource,
+    /buildScenePromptPreviewRequest[\s\S]*?skipScripts:\s*true/,
+    '场景预览必须显式跳过会产生真实副作用的脚本钩子',
+  );
+  assert.match(
+    appSource,
+    /if\s*\(!previewOnly\)\s*\{[\s\S]*?setContextBuilder\?\.\(llmContext\)/,
+    'previewOnly 不得覆盖正式发送链保存的 contextBuilder',
+  );
+  assert.match(
+    appSource,
+    /evalScenePreviewMacro\s*=\s*\(token\s*=\s*'',\s*\{\s*previewUiMode\s*=\s*''\s*\}\s*=\s*\{\}\)[\s\S]*?uiMode:\s*previewUiMode\s*\|\|\s*uiMode/,
+    '悬停宏必须优先使用预览场景 uiMode',
+  );
+  assert.match(
+    panelSource,
+    /evalFn\(target\.textContent\s*\|\|\s*'',\s*\{\s*previewUiMode:\s*this\.previewMode\s*\}\)/,
+    '预设面板必须把当前预览模式传给悬停宏求值器',
+  );
+  assert.match(
+    bridgeSource,
+    /if\s*\(!previewOnly\s*&&\s*pluginRuntime\)/,
+    'previewOnly 不得执行插件 prompt hook',
+  );
+  assert.match(
+    bridgeSource,
+    /readOnly:\s*previewOnly/,
+    'EJS 预览必须以只读模式执行',
+  );
+  assert.match(
+    bridgeSource,
+    /previewRawBlocks\s*!==\s*true/,
+    '区块原样预览不得再被后置 EJS 渲染改写',
+  );
+  assert.match(
+    bridgeSource,
+    /previewBuildPromise/,
+    '预览构建应使用独立于正式 isGenerating 的等待通道',
+  );
+  assert.match(
+    bridgeSource,
+    /previousLastPromptSegmentDebug[\s\S]*?this\.lastPromptSegmentDebug\s*=\s*previousLastPromptSegmentDebug/,
+    'previewOnly 完成后必须恢复正式请求的 Prompt 分段诊断快照',
+  );
+  assert.match(
+    bridgeSource,
+    /previewOnly\s*\?\s*buildPromptCacheDebugSnapshot\([\s\S]*?:\s*this\.emitPromptCacheDebug\(/,
+    'previewOnly 不得写入正式请求的 Prompt cache 调试基线',
+  );
+  assert.match(
+    bridgeSource,
+    /if\s*\(!previewOnly\s*&&\s*!this\.isConfigured\(\)\)/,
+    '本地 Prompt 预览不得依赖 API 已配置状态',
   );
   console.log('ok - handleSend 使用场景预设上下文记录实际预设 ID');
 }

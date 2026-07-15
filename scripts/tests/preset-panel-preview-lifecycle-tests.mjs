@@ -10,6 +10,12 @@ globalThis.window = {
   addEventListener: () => {},
   dispatchEvent: () => {},
 };
+globalThis.CustomEvent = class CustomEvent {
+  constructor(type, options = {}) {
+    this.type = type;
+    this.detail = options.detail;
+  }
+};
 
 const { PresetPanel } = await import('../../src/scripts/ui/preset-panel.js');
 
@@ -92,4 +98,126 @@ const makePanel = () => {
   await panel.acceptBlockHunk('block', 0);
   assert.deepEqual(statuses, [['write failed', 'error']], 'hunk 写入失败不得追加成功提示');
   console.log('ok - hunk 保存失败只报告错误');
+}
+
+{
+  const clone = value => JSON.parse(JSON.stringify(value));
+  let active = {
+    name: 'Preset A',
+    temperature: 1,
+    prompts: [{
+      identifier: 'block', name: 'Block', role: 'system', system_prompt: true, content: 'saved',
+    }],
+    prompt_order: [{ character_id: 100001, order: [{ identifier: 'block', enabled: true }] }],
+  };
+  const writes = [];
+  const card = {
+    dataset: { identifier: 'block' },
+    querySelector: selector => (selector === '.block-enabled' ? { checked: true } : null),
+  };
+  const panel = makePanel();
+  panel.element = { querySelectorAll: () => [] };
+  panel.currentSectionId = 'custom';
+  panel.detailEditorEl = {
+    children: [{}],
+    querySelectorAll: selector => (selector === '.openai-block' ? [card] : []),
+    querySelector: () => null,
+  };
+  panel.drafts.set('openai:preset-a', {
+    ...clone(active),
+    temperature: 0.5,
+    prompts: [{ ...clone(active.prompts[0]), content: 'older-snapshot' }],
+  });
+  panel.openaiBlockDrafts.set('block', {
+    name: 'Block', role: 'system', system_prompt: true, content: 'accepted-now',
+  });
+  panel.openaiBlockBase.set('block', clone(active.prompts[0]));
+  panel.store = {
+    ready: Promise.resolve(),
+    getActiveId: type => (type === 'openai' ? 'preset-a' : ''),
+    getActive: () => active,
+    upsert: async (_type, { data }) => {
+      active = clone(data);
+      writes.push(active.prompts[0].content);
+    },
+  };
+  panel.getBlockCards = () => [];
+  panel.updateUnsavedIndicator = () => {};
+  panel.renderAllSections = () => {};
+  panel.showStatus = () => {};
+
+  await panel.acceptBlockDraft('block');
+  assert.equal(active.prompts[0].content, 'accepted-now');
+  assert.equal(
+    panel.drafts.get('openai:preset-a').prompts[0].content,
+    'accepted-now',
+    '立即接受区块后必须同步仍待保存的完整快照',
+  );
+  await panel.onSave();
+  assert.equal(active.prompts[0].content, 'accepted-now', '整体保存不得用旧快照覆盖已接受内容');
+  assert.deepEqual(writes, ['accepted-now', 'accepted-now']);
+  console.log('ok - 区块接受结果不会被旧分区快照覆盖');
+}
+
+{
+  const clone = value => JSON.parse(JSON.stringify(value));
+  const baseText = 'a\nb\nc\nd\ne\nf\ng\nh\ni\nj';
+  const draftText = 'a\nB\nc\nd\ne\nf\ng\nh\nI\nj';
+  let active = {
+    name: 'Preset A',
+    prompts: [{
+      identifier: 'block', name: 'Block', role: 'system', system_prompt: true, content: baseText,
+    }],
+    prompt_order: [{ character_id: 100001, order: [{ identifier: 'block', enabled: true }] }],
+  };
+  const statuses = [];
+  const panel = makePanel();
+  panel.openaiBlockDrafts.set('block', {
+    name: 'Block', role: 'system', system_prompt: true, content: draftText,
+  });
+  panel.openaiBlockBase.set('block', clone(active.prompts[0]));
+  panel.store = {
+    ready: Promise.resolve(),
+    getActiveId: type => (type === 'openai' ? 'preset-a' : ''),
+    getActive: () => active,
+    upsert: async (_type, { data }) => {
+      active = clone(data);
+      await new Promise(resolve => setTimeout(resolve, 30));
+    },
+  };
+  panel.updateUnsavedIndicator = () => {};
+  panel.showStatus = (message, kind) => statuses.push([message, kind]);
+
+  const first = panel.acceptBlockHunk('block', 0);
+  await new Promise(resolve => setTimeout(resolve, 0));
+  const secondAccepted = await panel.acceptBlockHunk('block', 1);
+  await first;
+
+  assert.equal(secondAccepted, false, '持久化期间的旧 hunk 点击必须明确拒绝，不能排队后覆盖新基线');
+  assert.equal(active.prompts[0].content, 'a\nB\nc\nd\ne\nf\ng\nh\ni\nj', '第一处已接受修改不得丢失');
+  assert.equal(panel.isBlockDraftModified('block'), true, '未处理的第二处修改必须继续保留为草稿');
+  assert.ok(statuses.some(([message]) => /正在保存/.test(message)), '被拒绝的快速点击应给出明确状态提示');
+  console.log('ok - 快速连续接受不会发生旧基线覆盖');
+}
+
+{
+  const panel = makePanel();
+  const trackedDisabled = {
+    disabled: true,
+    dataset: { ppMutationWasDisabled: '1' },
+  };
+  const newlyRenderedDisabled = {
+    disabled: true,
+    dataset: {},
+  };
+  panel.element = {
+    querySelectorAll: () => [trackedDisabled, newlyRenderedDisabled],
+  };
+  panel._presetMutationBusy = true;
+
+  panel.setPresetMutationBusy(false);
+
+  assert.equal(trackedDisabled.disabled, true, '解锁应恢复进入队列前已禁用的控件');
+  assert.equal(newlyRenderedDisabled.disabled, true, '解锁不得误启用队列期间新渲染且本就禁用的控件');
+  console.log('ok - 预设写入解锁保留新旧控件的原始禁用状态');
 }

@@ -94,30 +94,47 @@ export const createLatestPreviewBuildQueue = ({
   let running = null;
 
   const drain = async () => {
-    while (queuedJob) {
-      const job = queuedJob;
-      queuedJob = null;
-      onStart?.(job);
-      let result = null;
-      let error = null;
-      try {
-        result = await build?.(job.options);
-      } catch (err) {
-        error = err;
+    while (true) {
+      while (queuedJob) {
+        const job = queuedJob;
+        queuedJob = null;
+        onStart?.(job);
+        let result = null;
+        let error = null;
+        try {
+          result = await build?.(job.options);
+        } catch (err) {
+          error = err;
+        }
+        if (job.revision !== revision) continue;
+        if (result) onResult?.(result, job);
+        else onFailure?.(error, job);
       }
-      if (job.revision !== revision) continue;
-      if (result) onResult?.(result, job);
-      else onFailure?.(error, job);
+      // onResult/onFailure 可能以 queueMicrotask 再排一次重建；留一轮微任务后
+      // 再确认队列稳定，避免 job 卡在 drain 完成与 running 清空之间。
+      await Promise.resolve();
+      if (!queuedJob) break;
     }
+  };
+
+  const ensureDrain = () => {
+    if (running) return running;
+    let tracked = null;
+    tracked = drain().finally(() => {
+      if (running === tracked) running = null;
+      // request 可能恰好落在 drain 结束与 finally 清锁之间；最终再检查一次，
+      // 让这个窗口里的 job 自动开启下一轮，而不是永久滞留在 queuedJob。
+      if (queuedJob) return ensureDrain();
+      return undefined;
+    });
+    running = tracked;
+    return tracked;
   };
 
   return {
     request(options = {}) {
       queuedJob = { revision: ++revision, options };
-      if (!running) {
-        running = drain().finally(() => { running = null; });
-      }
-      return running;
+      return ensureDrain();
     },
     invalidate() {
       revision += 1;
@@ -125,4 +142,3 @@ export const createLatestPreviewBuildQueue = ({
     },
   };
 };
-

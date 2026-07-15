@@ -487,6 +487,7 @@ class AppBridge {
     this.currentWorldIds = this.normalizeWorldIds(this.worldSessionMap[this.activeSessionId]);
     this.currentWorldId = this.currentWorldIds[0] || null;
     this.isGenerating = false;
+    this.previewBuildPromise = null;
     this.abortController = null;
     this.abortReason = '';
     this.activeNativeRequestId = '';
@@ -3141,38 +3142,40 @@ class AppBridge {
    */
   async generate(userMessage, context = {}) {
     const previewOnly = context?.meta?.previewOnly === true;
-    if (!this.initialized) {
-      await this.init();
+    let previewBuildPromise = null;
+    let releasePreviewBuild = null;
+    if (previewOnly) {
+      while (this.previewBuildPromise) await this.previewBuildPromise;
+      if (this.isGenerating) {
+        throw new Error('正在生成中，请稍候...');
+      }
+      previewBuildPromise = new Promise(resolve => { releasePreviewBuild = resolve; });
+      this.previewBuildPromise = previewBuildPromise;
+    } else {
+      while (this.previewBuildPromise) await this.previewBuildPromise;
+      if (this.isGenerating) {
+        throw new Error('正在生成中，请稍候...');
+      }
+      this.isGenerating = true;
     }
-    if (this.worldStore?.ready) {
-      await this.worldStore.ready;
-    }
-    if (!this.worldBootstrapCompleted) {
-      await this.runDeferredWorldBootstrap();
-    }
-
-    if (!this.isConfigured()) {
-      throw new Error('请先配置 API 信息');
-    }
-
-    if (!previewOnly && typeof navigator !== 'undefined' && !navigator.onLine) {
-      throw new Error('当前离线，请连接网络后再试');
-    }
-
-    if (this.isGenerating) {
-      throw new Error('正在生成中，请稍候...');
-    }
-
-    this.isGenerating = true;
-    const generationToken = (Number(this.activeGenerationToken) || 0) + 1;
-    this.activeGenerationToken = generationToken;
+    const generationToken = previewOnly ? 0 : (Number(this.activeGenerationToken) || 0) + 1;
+    if (!previewOnly) this.activeGenerationToken = generationToken;
     const abortController = new AbortController();
-    this.abortController = abortController;
-    this.abortReason = '';
+    if (!previewOnly) {
+      this.abortController = abortController;
+      this.abortReason = '';
+    }
     const nativeRequestId = `http_${Date.now().toString(36)}_${Math.random().toString(16).slice(2, 10)}`;
-    this.activeNativeRequestId = nativeRequestId;
+    if (!previewOnly) this.activeNativeRequestId = nativeRequestId;
     let streaming = false;
     const releaseGenerationLock = () => {
+      if (previewOnly) {
+        if (this.previewBuildPromise === previewBuildPromise) this.previewBuildPromise = null;
+        const release = releasePreviewBuild;
+        releasePreviewBuild = null;
+        release?.();
+        return;
+      }
       if (this.activeGenerationToken === generationToken) {
         this.isGenerating = false;
         if (this.abortController === abortController) {
@@ -3187,7 +3190,33 @@ class AppBridge {
     };
 
     const previousLastMemoryPlan = this.lastMemoryPlan;
+    const previousLastRequest = this.lastRequest;
+    const previousLastGenerationUsage = this.lastGenerationUsage;
+    const previousLastWorldInjectionDebug = this.lastWorldInjectionDebug;
+    const previousLastDeepSeekFormatDebug = this.lastDeepSeekFormatDebug;
+    const previousLastPromptSegmentDebug = this.lastPromptSegmentDebug;
+    const previewSessionId = String(context?.session?.id || this.activeSessionId || 'default').trim() || 'default';
+    const hadPreviousPromptCacheDebug = this.lastPromptCacheDebugBySession?.has?.(previewSessionId) === true;
+    const previousPromptCacheDebug = this.lastPromptCacheDebugBySession?.get?.(previewSessionId);
     try {
+      if (!this.initialized) {
+        await this.init();
+      }
+      if (this.worldStore?.ready) {
+        await this.worldStore.ready;
+      }
+      if (!this.worldBootstrapCompleted) {
+        await this.runDeferredWorldBootstrap();
+      }
+
+      if (!previewOnly && !this.isConfigured()) {
+        throw new Error('请先配置 API 信息');
+      }
+
+      if (!previewOnly && typeof navigator !== 'undefined' && !navigator.onLine) {
+        throw new Error('当前离线，请连接网络后再试');
+      }
+
       const originalInput = userMessage;
       // ST semantics:
       // - direct scripts (non-ephemeral) may alter stored chat content
@@ -3251,7 +3280,7 @@ class AppBridge {
       }
       const recordPromptHookTraceEvent = event => recordDebugTraceEvent(this, event);
       const scriptRuntime = this.scriptRuntime;
-      if (scriptRuntime && nextContext?.meta?.skipScripts !== true) {
+      if (!previewOnly && scriptRuntime && nextContext?.meta?.skipScripts !== true) {
         const beforePromptInput = promptInput;
         const beforePromptContext = nextContext;
         const { result: updated } = await runRuntimeHookLifecycleEvent({
@@ -3283,7 +3312,7 @@ class AppBridge {
         }
       }
       const pluginRuntime = this.pluginRuntime;
-      if (pluginRuntime) {
+      if (!previewOnly && pluginRuntime) {
         const beforePromptInput = promptInput;
         const beforePromptContext = nextContext;
         const { result: updated } = await runRuntimeHookLifecycleEvent({
@@ -3330,13 +3359,13 @@ class AppBridge {
       const requestRuntime = await this.resolveRequestRuntimeConfig(presetContext);
       const config = requestRuntime?.config || this.config.get();
       const requestClient = requestRuntime?.client || (canInitClient(config) ? new LLMClient(config) : null);
-      if (!requestClient) {
+      if (!previewOnly && !requestClient) {
         throw new Error('请先配置 API 信息');
       }
       let messages = this.buildMessages(promptInput, nextContext, {
         requestConfig: config,
       });
-      if (scriptRuntime && nextContext?.meta?.skipScripts !== true) {
+      if (!previewOnly && scriptRuntime && nextContext?.meta?.skipScripts !== true) {
         const beforePrompt = messages;
         const { result: updated } = await runRuntimeHookLifecycleEvent({
           runtime: scriptRuntime,
@@ -3364,7 +3393,7 @@ class AppBridge {
           messages = updated.prompt;
         }
       }
-      if (pluginRuntime) {
+      if (!previewOnly && pluginRuntime) {
         const beforePrompt = messages;
         const { result: updated } = await runRuntimeHookLifecycleEvent({
           runtime: pluginRuntime,
@@ -3392,7 +3421,10 @@ class AppBridge {
           messages = updated.prompt;
         }
       }
-      if (templateSettings.shouldRun('generate', nextContext)) {
+      if (
+        templateSettings.shouldRun('generate', nextContext)
+        && (!previewOnly || nextContext?.meta?.previewRawBlocks !== true)
+      ) {
         const sessionId = String(nextContext?.session?.id || this.activeSessionId || '').trim();
         try {
           const rendered = await renderTemplateMessages(messages, {
@@ -3403,6 +3435,7 @@ class AppBridge {
               ...(nextContext || {}),
               messages,
             },
+            readOnly: previewOnly,
           });
           if (rendered && Array.isArray(rendered.messages)) {
             messages = rendered.messages;
@@ -3455,7 +3488,7 @@ class AppBridge {
       const preparedRequest = requestClient?.prepareChatRequest?.(messages, requestOptions) || null;
       const responsePrefix = String(preparedRequest?.responsePrefix || '');
 
-      logger.debug('发送消息到 LLM:', { messageCount: messages.length, stream: config.stream });
+      logger.debug('发送消息到 LLM:', { messageCount: messages.length, stream: Boolean(config?.stream) });
       // Debug: keep the exact request payload used for the latest generation
       this.lastRequest = {
         at: Date.now(),
@@ -3504,21 +3537,22 @@ class AppBridge {
         requestId: nativeRequestId,
         scopeId: this.scopeId || sessionId,
       });
-      this.lastRequest.promptCacheDebug = this.emitPromptCacheDebug(
-        sessionId,
-        preparedRequest?.messages || messages,
-        {
-          provider: config?.provider,
-          model: config?.model,
-          stream: Boolean(config?.stream),
-          requestId: nativeRequestId,
-        },
-      );
+      this.lastRequest.promptCacheDebug = previewOnly
+        ? buildPromptCacheDebugSnapshot(preparedRequest?.messages || messages)
+        : this.emitPromptCacheDebug(
+            sessionId,
+            preparedRequest?.messages || messages,
+            {
+              provider: config?.provider,
+              model: config?.model,
+              stream: Boolean(config?.stream),
+              requestId: nativeRequestId,
+            },
+          );
 
       if (previewOnly) {
         this.lastRequest.previewOnly = true;
         this.lastRequest.source = 'prompt_preview';
-        this.lastMemoryPlan = previousLastMemoryPlan;
         return this.lastRequest;
       }
 
@@ -3557,6 +3591,19 @@ class AppBridge {
       logger.error('生成失败:', error);
       throw error;
     } finally {
+      if (previewOnly) {
+        this.lastMemoryPlan = previousLastMemoryPlan;
+        this.lastRequest = previousLastRequest;
+        this.lastGenerationUsage = previousLastGenerationUsage;
+        this.lastWorldInjectionDebug = previousLastWorldInjectionDebug;
+        this.lastDeepSeekFormatDebug = previousLastDeepSeekFormatDebug;
+        this.lastPromptSegmentDebug = previousLastPromptSegmentDebug;
+        if (hadPreviousPromptCacheDebug) {
+          this.lastPromptCacheDebugBySession?.set?.(previewSessionId, previousPromptCacheDebug);
+        } else {
+          this.lastPromptCacheDebugBySession?.delete?.(previewSessionId);
+        }
+      }
       if (!streaming) {
         releaseGenerationLock();
       }
