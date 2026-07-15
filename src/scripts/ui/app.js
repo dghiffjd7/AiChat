@@ -332,6 +332,7 @@ import {
   buildReplyPromptHint as buildReplyPromptHintCore,
   resolveEnabledPreset,
 } from './chat/prompt-context-utils.js';
+import { createScenePresetAccess, evaluateScenePreviewMacro } from './scene-prompt-preview-utils.js';
 import {
   LINEAGE_EDGE_STATUS,
   LINEAGE_EDGE_TYPES,
@@ -15202,32 +15203,12 @@ Phase G（Frame 36）：循环衔接
       return null;
     }
   };
-  // 预览里单个宏 token 的悬停求值：写变量类不执行只描述，EJS 不执行，其余走真实宏引擎（只读类安全）
+  // 预览里单个宏 token 的悬停求值：写变量类只描述，其他宏也在隔离变量状态中运行。
   const evalScenePreviewMacro = (token = '') => {
-    const t = String(token || '').trim();
-    if (!t) return { kind: 'empty', text: '' };
-    const setLike = t.match(/^\{\{\s*(setvar|setglobalvar|addvar|addglobalvar|incvar|decvar|incglobalvar|decglobalvar)::([^:}]+)(?:::([\s\S]*?))?\}\}$/i);
-    if (setLike) {
-      const cmd = setLike[1].toLowerCase();
-      const key = setLike[2].trim();
-      const val = setLike[3] ?? '';
-      const verb = cmd.startsWith('set') ? `设为「${val}」`
-        : cmd.startsWith('add') ? `增加「${val}」`
-        : cmd.startsWith('inc') ? '自增 1' : '自减 1';
-      return { kind: 'effect', text: `写变量：「${key}」${verb}（输出为空；预览悬停不执行）` };
-    }
-    if (/^<%/.test(t)) {
-      return { kind: 'script', text: 'EJS 模板脚本：可能有副作用，悬停不执行。关闭「区块原样」并 ↻ 重建可看整体求值效果。' };
-    }
-    try {
-      const out = window.appBridge.processTextMacros(t, { sessionId: chatStore.getCurrent(), uiMode });
-      const s = String(out ?? '');
-      if (s === t) return { kind: 'raw', text: '（无法求值，保持原样）' };
-      return { kind: 'value', text: s === '' ? '（求值为空）' : s };
-    } catch (err) {
-      logger.warn('preview macro eval failed', err);
-      return { kind: 'error', text: '（求值失败）' };
-    }
+    return evaluateScenePreviewMacro(token, {
+      processTextMacros: (text, context) => window.appBridge.processTextMacros(text, context),
+      context: { sessionId: chatStore.getCurrent(), uiMode },
+    });
   };
   const showDraftPromptPreview = async ({ previewUiMode = '' } = {}) => {
     try {
@@ -24982,6 +24963,12 @@ Phase G（Frame 36）：循环衔接
     const hasAttachments = attachmentQueue.length > 0;
     const hasRequestAttachments = hasAttachments || resendAttachmentParts.length > 0;
     const sessionId = chatStore.getCurrent();
+    const {
+      context: requestPresetContext,
+      getOpenAIPreset: getRequestOpenAIPreset,
+      getReasoningPreset: getRequestReasoningPreset,
+    } = createScenePresetAccess({ appBridge: window.appBridge, sessionId, uiMode: sceneUiMode });
+    const previewMacroVariableState = previewOnly ? new Map() : null;
     let outgoingReplyContexts = [];
     let generationId = 0;
     let sendTraceStarted = false;
@@ -26146,8 +26133,8 @@ Phase G（Frame 36）：循环衔接
       sessionId,
       getMessages: sid => (previewHistorySuppressed ? [] : chatStore.getMessages(sid)),
       getSettings: () => appSettings.get(),
-      getOpenAIPreset: getOpenAIPreset,
-      getReasoningPreset,
+      getOpenAIPreset: getRequestOpenAIPreset,
+      getReasoningPreset: getRequestReasoningPreset,
       excludeMessageIds,
       isRpMode,
       isGroupChat,
@@ -26160,7 +26147,12 @@ Phase G（Frame 36）：循环衔接
       buildStickerToken,
       applyMacros: (value) => {
         try {
-          return window.appBridge.processTextMacros(String(value ?? ''), { sessionId, useGlobalVariables: sharedVariables });
+          return window.appBridge.processTextMacros(String(value ?? ''), {
+            sessionId,
+            uiMode: sceneUiMode,
+            useGlobalVariables: sharedVariables,
+            ...(previewMacroVariableState ? { macroVariableState: previewMacroVariableState } : {}),
+          });
         } catch {
           return String(value ?? '');
         }
@@ -26189,7 +26181,7 @@ Phase G（Frame 36）：循环衔接
       skipInputRegex,
       continueTarget,
       rpUiMode,
-      getUiMode: getEffectivePresetUiMode,
+      getUiMode: () => sceneUiMode,
       sharedVariables,
       isRpMode,
       getRpBridgeSessionId: () => getRpSessionId(getEffectivePersona(sessionId)?.id || activePersonaId),
@@ -26198,7 +26190,7 @@ Phase G（Frame 36）：循环衔接
       isMemoryAutoExtractInline,
       getAutoImagePromptModelHint: () => imagePromptModelHintCache,
       attachmentParts,
-      getOpenAIPreset: getOpenAIPreset,
+      getOpenAIPreset: getRequestOpenAIPreset,
       getSettings: () => appSettings.get(),
       getReplyPromptHint: () => buildReplyPromptHint(outgoingReplyContexts),
       getStagePromptBlocks: () => stageManager?.getPromptBlocks?.(sessionId) || [],
@@ -26244,8 +26236,7 @@ Phase G（Frame 36）：循环衔接
         }
       }
       outgoingReplyContexts = buildOutgoingReplyContexts(previewUserMsg ? [previewUserMsg] : previewAttachmentMessages);
-      const presetContext = getPresetContext();
-      const sysp = resolveEnabledPreset(window.appBridge, 'sysprompt', presetContext);
+      const sysp = resolveEnabledPreset(window.appBridge, 'sysprompt', requestPresetContext);
       const protocolFlags = resolveSyspromptProtocolFlags({
         sysp,
         rpUiMode,
@@ -26267,6 +26258,7 @@ Phase G（Frame 36）：循环衔接
                 ...(nextContext.meta || {}),
                 previewOnly: true,
                 previewRawBlocks: Boolean(previewRawBlocks),
+                macroVariableState: previewMacroVariableState,
               },
             });
           },
@@ -26547,11 +26539,10 @@ Phase G（Frame 36）：循环衔接
     // 显示已送出状态（对 pending 消息在 flush 后也生效）
     ui.showDeliveryStatus();
 
-    const presetContext = getPresetContext();
-    const requestRuntimeConfig = await window.appBridge.resolveRequestRuntimeConfig?.(presetContext);
+    const requestRuntimeConfig = await window.appBridge.resolveRequestRuntimeConfig?.(requestPresetContext);
     const config = requestRuntimeConfig?.config || window.appBridge.getConfig();
     const assistantAvatar = getAssistantAvatarForSession(sessionId);
-    const sysp = resolveEnabledPreset(window.appBridge, 'sysprompt', presetContext);
+    const sysp = resolveEnabledPreset(window.appBridge, 'sysprompt', requestPresetContext);
     const protocolFlags = resolveSyspromptProtocolFlags({
       sysp,
       rpUiMode,
@@ -26755,7 +26746,9 @@ Phase G（Frame 36）：循环衔接
             stream: Boolean(config.stream),
             protocolEnabled,
             rpUiMode,
-            preset: String(presetContext?.presetId || presetContext?.id || ''),
+            preset: String(
+              presetStore?.getResolvedActiveId?.('openai', requestPresetContext)?.presetId || '',
+            ),
           },
         });
         creativeExecutionLaneRuntime?.activateTask?.('model', {

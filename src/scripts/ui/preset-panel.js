@@ -19,6 +19,12 @@ import { createDragGhost } from './drag-ghost-utils.js';
 import { estimateTokens } from '../memory/memory-prompt-utils.js';
 import { buildLineDiff } from '../utils/line-diff-utils.js';
 import {
+    applyPresetBlockHunk,
+    buildPresetPreviewBlockMap,
+    createLatestPreviewBuildQueue,
+    presetBlockContentChanged,
+} from './preset-preview-utils.js';
+import {
     REGEX_CUSTOM_PROMPT_PRESET_TYPE,
     resolveImportedRegexPresetBindTarget,
 } from './regex-preset-binding-utils.js';
@@ -126,6 +132,21 @@ const REASONING_EFFORT_LABELS = Object.freeze({
 /* ── icons ── */
 const chevronRightSvg = `<svg viewBox="0 0 24 24" style="width:16px;height:16px;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;fill:none;"><polyline points="9 6 15 12 9 18"/></svg>`;
 const chevronLeftSvg = `<svg viewBox="0 0 24 24" style="width:16px;height:16px;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;fill:none;"><polyline points="15 6 9 12 15 18"/></svg>`;
+const diffAcceptSvg = `<svg class="pp-diff-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false">
+    <path class="pp-diff-icon-depth" d="m3.9 10.15 4.1 4.05 8.1-8.35"/>
+    <path class="pp-diff-icon-mark" d="m3.9 10.15 4.1 4.05 8.1-8.35"/>
+</svg>`;
+const diffRejectSvg = `<svg class="pp-diff-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false">
+    <path class="pp-diff-icon-depth" d="m5 5 10 10m0-10L5 15"/>
+    <path class="pp-diff-icon-mark" d="m5 5 10 10m0-10L5 15"/>
+</svg>`;
+const previewPullHandleSvg = `<svg class="pp-pull-handle-svg" viewBox="0 0 28 16" aria-hidden="true" focusable="false">
+    <path class="pp-pull-handle-depth" d="M4.5 14.75C4.5 6.9 8.25 2.25 14 2.25s9.5 4.65 9.5 12.5"/>
+    <path class="pp-pull-handle-rail" d="M4.5 14.75C4.5 6.9 8.25 2.25 14 2.25s9.5 4.65 9.5 12.5"/>
+    <path class="pp-pull-handle-glint" d="M8.4 5.45C9.95 4.2 11.8 3.58 14 3.58"/>
+    <circle class="pp-pull-handle-anchor" cx="4.5" cy="14.75" r="1.25"/>
+    <circle class="pp-pull-handle-anchor" cx="23.5" cy="14.75" r="1.25"/>
+</svg>`;
 const panelIconSvg = (body) => `<svg class="pp-nav-item-icon-svg" viewBox="0 0 24 24" aria-hidden="true">${body}</svg>`;
 const SECTION_ICONS = Object.freeze({
     openai: panelIconSvg('<path d="M4 7h16"/><path d="M7 12h10"/><path d="M10 17h4"/><circle cx="7" cy="7" r="2"/><circle cx="17" cy="12" r="2"/><circle cx="12" cy="17" r="2"/>'),
@@ -702,29 +723,57 @@ body[data-reduced-motion='on'] .pp-prev-block.pp-prev-flash {
     opacity: 0.82;
 }
 .pp-prev-block.is-modified { cursor: text; }
-/* 每处修改旁的快捷 ✔/×（无确认；✔=接受该块并保存，×=舍弃该块草稿） */
+/* 每处修改旁的快捷操作（无确认；勾=接受该块并保存，叉=舍弃该块草稿） */
 .pp-diff-actions { display: inline-flex; gap: 4px; margin: 0 4px; vertical-align: middle; user-select: none; }
 .pp-diff-accept, .pp-diff-reject {
+    --pp-diff-action-rgb: var(--pp-diff-add-rgb);
+    appearance: none;
+    -webkit-appearance: none;
     display: inline-flex; align-items: center; justify-content: center;
-    min-width: 20px; height: 20px; padding: 0 5px;
-    border-radius: 6px; border: 1px solid; cursor: pointer;
-    font-size: 12px; line-height: 1;
+    width: 24px; min-width: 24px; height: 24px; padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+    cursor: pointer;
+    line-height: 1; position: relative; overflow: visible;
+    opacity: 0.84;
+    transition: transform 120ms ease, opacity 150ms ease;
 }
-.pp-diff-accept {
-    border-color: rgba(var(--pp-diff-add-rgb), 0.5);
-    background: rgba(var(--pp-diff-add-rgb), 0.12);
-    color: var(--app-success-text, #15803d);
-}
+.pp-diff-accept { color: var(--app-success-text, #15803d); }
 .pp-diff-reject {
-    border-color: rgba(var(--pp-diff-del-rgb), 0.5);
-    background: rgba(var(--pp-diff-del-rgb), 0.10);
+    --pp-diff-action-rgb: var(--pp-diff-del-rgb);
     color: var(--app-danger-text, #b91c1c);
 }
-/* 预览内 hunk 级 ✔/×：更小、紧跟修改行尾 */
+.pp-diff-icon {
+    display: block; width: 19px; height: 19px;
+    fill: none; stroke: currentColor;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    filter: drop-shadow(0 1px 2px rgba(var(--pp-diff-action-rgb), 0.22));
+    transition: transform 120ms ease;
+}
+.pp-diff-icon-depth { stroke-width: 4.4; opacity: 0.13; }
+.pp-diff-icon-mark { stroke-width: 2.25; }
+.pp-diff-accept:hover, .pp-diff-reject:hover {
+    transform: translateY(-1px);
+    opacity: 1;
+}
+.pp-diff-accept:hover .pp-diff-icon, .pp-diff-reject:hover .pp-diff-icon { transform: scale(1.06); }
+.pp-diff-accept:active, .pp-diff-reject:active { transform: translateY(0) scale(0.94); box-shadow: none; }
+.pp-diff-accept:focus-visible, .pp-diff-reject:focus-visible {
+    outline: none;
+    opacity: 1;
+}
+.pp-diff-accept:focus-visible .pp-diff-icon, .pp-diff-reject:focus-visible .pp-diff-icon {
+    filter: drop-shadow(0 0 3px rgba(var(--app-accent-rgb), 0.48));
+}
+/* 预览内 hunk 级操作：更小、紧跟修改行尾 */
 .pp-preview-msg .pp-diff-actions { margin: 0 0 0 6px; vertical-align: baseline; }
 .pp-preview-msg .pp-diff-accept, .pp-preview-msg .pp-diff-reject {
-    min-width: 18px; height: 18px; padding: 0 4px; font-size: 11px; border-radius: 5px;
+    width: 20px; min-width: 20px; height: 20px;
 }
+.pp-preview-msg .pp-diff-icon { width: 16px; height: 16px; }
 /* 三级页左侧红绿镜像层：textarea 背后按逻辑行铺底色（新增绿、删除处红线） */
 .pp-ta-diffwrap { position: relative; }
 #preset-panel .pp-ta-diffwrap > .pp-textarea { position: relative; z-index: 1; background: transparent; }
@@ -756,7 +805,7 @@ body[data-reduced-motion='on'] .pp-prev-block.pp-prev-flash {
     box-shadow: inset 2px 0 0 rgba(var(--pp-diff-add-rgb), 0.6);
 }
 .pp-ta-delmark { height: 0; border-top: 2px solid rgba(var(--pp-diff-del-rgb), 0.7); }
-/* 二级卡片上的快捷 ✔/×：仅已修改的卡显示 */
+/* 二级卡片上的快捷操作：仅已修改的卡显示 */
 .pp-block .pp-block-quick { display: none; gap: 4px; margin-right: 2px; }
 .pp-block.is-modified .pp-block-quick { display: inline-flex; }
 .pp-block.is-modified { border-color: rgba(var(--app-warning-rgb, 245, 158, 11), 0.55); }
@@ -799,89 +848,104 @@ body[data-reduced-motion='on'] .pp-prev-block.pp-prev-flash {
     font-size: 12px;
 }
 .pp-preview-loading { padding: 30px 12px; text-align: center; color: var(--app-text-muted); font-size: 12px; }
-/* 编辑页右缘邀请把手（轻微呼吸光，hover/触碰放大） */
-.pp-preview-edge {
-    position: absolute;
-    right: 0;
-    top: 50%;
-    transform: translateY(-50%);
-    z-index: 4;
-    width: 22px;
-    height: 74px;
-    border: 1px solid var(--app-border-default);
-    border-right: none;
-    border-radius: 12px 0 0 12px;
-    background: var(--app-surface-card);
-    color: var(--app-text-muted);
-    font-size: 13px;
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    box-shadow: -4px 0 14px rgba(15, 23, 42, 0.10);
-    animation: pp-edge-breathe 3.2s ease-in-out infinite;
-    transition: width 140ms ease, color 140ms ease;
-    touch-action: none;
+/* 请求预览提环：仅保留发光 SVG；按钮本体透明，触控区在视觉之外扩展。 */
+.pp-preview-edge,
+.pp-pane-handle,
+.pp-editor-handle {
+    --pp-handle-x: 0%;
+    appearance: none; -webkit-appearance: none;
+    position: absolute; top: 50%;
+    transform: translate(var(--pp-handle-x), -50%);
+    display: none; align-items: center; justify-content: center;
+    width: 14px; height: 24px; padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+    color: color-mix(in srgb, var(--app-text-muted) 72%, var(--app-accent-primary));
+    cursor: grab;
+    transition: color 150ms ease, opacity 150ms ease;
+    touch-action: none; overflow: visible; isolation: isolate;
 }
-.pp-preview-edge:hover { width: 30px; color: var(--app-accent-strong, var(--app-accent-primary)); animation-play-state: paused; }
-@keyframes pp-edge-breathe {
-    0%, 100% { box-shadow: -4px 0 14px rgba(15, 23, 42, 0.10); }
-    50% { box-shadow: -4px 0 18px rgba(var(--app-accent-rgb, 25, 154, 255), 0.40); }
+.pp-preview-edge::before,
+.pp-pane-handle::before,
+.pp-editor-handle::before {
+    content: ''; position: absolute; inset: -6px -10px; z-index: 0;
+}
+.pp-pull-handle-svg {
+    position: relative; z-index: 1;
+    display: block; width: 24px; height: 14px; overflow: visible;
+    transform: rotate(var(--pp-pull-rotation));
+    transform-origin: center;
+    transition: filter 150ms ease;
+    filter: drop-shadow(0 0 2px rgba(var(--app-accent-rgb), 0.34)) drop-shadow(0 1px 1px rgba(15,23,42,0.16));
+}
+.pp-pull-handle-depth,
+.pp-pull-handle-rail,
+.pp-pull-handle-glint {
+    fill: none;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+}
+.pp-pull-handle-depth { stroke: currentColor; stroke-width: 4.2; opacity: 0.14; }
+.pp-pull-handle-rail { stroke: currentColor; stroke-width: 1.7; }
+.pp-pull-handle-glint { stroke: rgba(255,255,255,0.82); stroke-width: 1.05; }
+.pp-pull-handle-anchor {
+    fill: currentColor; stroke: color-mix(in srgb, var(--app-surface-card) 82%, transparent); stroke-width: 0.75;
+}
+.pp-preview-edge:hover,
+.pp-pane-handle:hover,
+.pp-editor-handle:hover {
+    color: var(--app-accent-strong, var(--app-accent-primary));
+    opacity: 1;
+}
+.pp-preview-edge:hover .pp-pull-handle-svg,
+.pp-pane-handle:hover .pp-pull-handle-svg,
+.pp-editor-handle:hover .pp-pull-handle-svg {
+    filter: drop-shadow(0 0 3.5px rgba(var(--app-accent-rgb), 0.58)) drop-shadow(0 1px 1px rgba(15,23,42,0.18));
+}
+.pp-preview-edge:focus-visible,
+.pp-pane-handle:focus-visible,
+.pp-editor-handle:focus-visible {
+    outline: none;
+    color: var(--app-accent-strong, var(--app-accent-primary));
+}
+.pp-preview-edge:focus-visible .pp-pull-handle-svg,
+.pp-pane-handle:focus-visible .pp-pull-handle-svg,
+.pp-editor-handle:focus-visible .pp-pull-handle-svg {
+    filter: drop-shadow(0 0 3.5px rgba(var(--app-accent-rgb), 0.58));
+}
+.pp-preview-edge:active,
+.pp-pane-handle:active,
+.pp-editor-handle:active {
+    cursor: grabbing;
+    opacity: 0.72;
+}
+
+/* 环顶指向拉动方向；环底分别贴住自身所在区域的边缘，不使用连接线。 */
+.pp-preview-edge,
+.pp-pane-handle-expand { --pp-pull-rotation: -90deg; }
+.pp-pane-handle-collapse,
+.pp-editor-handle { --pp-pull-rotation: 90deg; }
+.pp-preview-edge {
+    right: 0; z-index: 4; display: flex;
 }
 #preset-panel[data-preview="split"] .pp-preview-edge,
 #preset-panel[data-preview="full"] .pp-preview-edge { display: none; }
-/* 分栏时 pane 左缘把手（点击/左拉→全屏）；全屏时对称的「编辑」返回把手 */
-.pp-pane-handle {
-    position: absolute;
-    left: 0;
-    top: 50%;
-    transform: translateY(-50%);
-    z-index: 6;
-    width: 18px;
-    height: 74px;
-    border: 1px solid var(--app-border-default);
-    border-left: none;
-    border-radius: 0 12px 12px 0;
-    background: var(--app-surface-card);
-    color: var(--app-text-muted);
-    cursor: pointer;
-    display: none;
-    align-items: center;
-    justify-content: center;
-    font-size: 12px;
-    touch-action: none;
-}
+/* 分栏提环分居分隔线两侧：左向环在编辑侧，右向环在预览侧。 */
+.pp-pane-handle { left: 54%; z-index: 7; }
 #preset-panel[data-preview="split"] .pp-pane-handle { display: flex; }
-/* 分栏时上下成对：上=拉全屏（⟨），下=收合回把手（⟩） */
-.pp-pane-handle-expand { top: calc(50% - 46px); }
-.pp-pane-handle-collapse { top: calc(50% + 46px); }
-.pp-pane-handle:hover { color: var(--app-accent-strong, var(--app-accent-primary)); }
-.pp-editor-handle {
-    position: absolute;
-    left: 0;
-    top: 50%;
-    transform: translateY(-50%);
-    z-index: 6;
-    width: 24px;
-    height: 88px;
-    border: 1px solid var(--app-border-default);
-    border-left: none;
-    border-radius: 0 12px 12px 0;
-    background: var(--app-surface-card);
-    color: var(--app-text-muted);
-    cursor: pointer;
-    display: none;
-    align-items: center;
-    justify-content: center;
-    font-size: 12px;
-    writing-mode: vertical-rl;
-    letter-spacing: 3px;
-    animation: pp-edge-breathe 3.2s ease-in-out infinite;
-    touch-action: none;
-}
+.pp-pane-handle-expand { --pp-handle-x: -100%; top: calc(50% - 20px); }
+.pp-pane-handle-collapse { --pp-handle-x: 0%; top: calc(50% + 20px); }
+.pp-editor-handle { left: 0; z-index: 7; }
 #preset-panel[data-preview="full"] .pp-editor-handle { display: flex; }
 body[data-reduced-motion='on'] .pp-preview-edge,
-body[data-reduced-motion='on'] .pp-editor-handle { animation: none; }
+body[data-reduced-motion='on'] .pp-pane-handle,
+body[data-reduced-motion='on'] .pp-editor-handle,
+body[data-reduced-motion='on'] .pp-pull-handle-svg,
+body[data-reduced-motion='on'] .pp-diff-accept,
+body[data-reduced-motion='on'] .pp-diff-reject,
+body[data-reduced-motion='on'] .pp-diff-icon { animation: none; transition: none; }
 .pp-block-linked {
     outline: 2px solid rgba(var(--app-accent-rgb, 25, 154, 255), 0.55);
     outline-offset: -2px;
@@ -1501,6 +1565,16 @@ body[data-theme-mode='dark'] #preset-panel .pp-binding-card {
 }
 
 @media (prefers-reduced-motion: reduce) {
+    #preset-panel .pp-preview-edge,
+    #preset-panel .pp-pane-handle,
+    #preset-panel .pp-editor-handle,
+    #preset-panel .pp-pull-handle-svg,
+    #preset-panel .pp-diff-accept,
+    #preset-panel .pp-diff-reject,
+    #preset-panel .pp-diff-icon {
+        animation: none !important;
+        transition: none !important;
+    }
     #preset-panel .pp-page,
     #preset-panel .pp-header-actions button,
     #preset-panel .pp-manager-btn,
@@ -1541,6 +1615,10 @@ export class PresetPanel {
         this.bindingPresetId = '';
         this.pendingOpenOptions = null;
         this.drafts = new Map();
+        this.openaiBlockDrafts = new Map();
+        this.openaiBlockDraftsScope = '';
+        this.openaiBlockBase = new Map();
+        this.openaiDeletedBlockIds = new Set();
         this.customSelectMenuEl = null;
         this.customSelectMenuCleanup = null;
         this.customSelectMenuAnchor = null;
@@ -1916,7 +1994,8 @@ export class PresetPanel {
 
     /* 取消 = 确认后回滚未保存编辑；×/遮罩关闭 = 缓存编辑（发送始终用已保存内容，保存才更新） */
     async onCancel() {
-        const n = this.countUnsavedBlockChanges() + (this.drafts?.size || 0);
+        this.captureCurrentDetailDraft();
+        const n = this.countUnsavedChanges();
         if (n > 0) {
             const ok = await appConfirm({
                 title: '放弃未保存的更改',
@@ -1925,6 +2004,7 @@ export class PresetPanel {
             });
             if (!ok) return;
             this.openaiBlockDrafts?.clear?.();
+            this.openaiDeletedBlockIds?.clear?.();
             this.drafts.clear();
             this.renderAllSections();
             this.updateUnsavedIndicator();
@@ -1934,17 +2014,18 @@ export class PresetPanel {
     }
 
     /* 会清掉区块草稿的操作（切换/新建预设、导入）前确认 */
-    async confirmDiscardBlockDrafts(actionLabel = '此操作') {
-        const n = this.countUnsavedBlockChanges();
+    async confirmDiscardBlockDrafts(actionLabel = '此操作', { all = false } = {}) {
+        const n = all ? this.countUnsavedChanges() : this.countUnsavedOpenAIChanges();
         if (n <= 0) return true;
         return appConfirm({
             title: '未保存的更改',
-            message: `${actionLabel}会丢弃 ${n} 处未保存的区块修改。确定继续吗？`,
+            message: `${actionLabel}会丢弃 ${n} 处未保存修改。确定继续吗？`,
             danger: true,
         });
     }
 
     hide() {
+        this.captureCurrentDetailDraft();
         this.closeCustomSelectMenu();
         if (this.element) this.element.style.display = 'none';
         if (this.overlayElement) this.overlayElement.style.display = 'none';
@@ -2010,7 +2091,7 @@ export class PresetPanel {
                                 <div class="pp-detail-heading" id="preset-detail-title"></div>
                                 <div class="pp-detail-subheading" id="preset-detail-subtitle"></div>
                             </div>
-                            <button type="button" class="pp-preview-edge" data-pp-preview-open aria-label="展开请求预览">⟨</button>
+                            <button type="button" class="pp-preview-edge" data-pp-preview-open aria-label="展开请求预览" title="点击或向左拉，展开请求预览">${previewPullHandleSvg}</button>
                             <div class="pp-page-scroll" id="preset-detail-scroll">
                                 <div class="pp-section-editor" id="preset-detail-editor"></div>
                             </div>
@@ -2038,7 +2119,7 @@ export class PresetPanel {
                                 <div class="pp-detail-subheading" id="preset-block-subtitle"></div>
                             </div>
                             <div class="pp-swipe-hint pp-swipe-hint-prev" aria-hidden="true"><span>↑</span><span class="pp-swipe-hint-label"></span></div>
-                            <button type="button" class="pp-preview-edge" data-pp-preview-open aria-label="展开请求预览">⟨</button>
+                            <button type="button" class="pp-preview-edge" data-pp-preview-open aria-label="展开请求预览" title="点击或向左拉，展开请求预览">${previewPullHandleSvg}</button>
                             <div class="pp-page-scroll" id="preset-block-scroll">
                                 <div class="pp-section-editor" id="preset-block-editor"></div>
                             </div>
@@ -2048,8 +2129,6 @@ export class PresetPanel {
                 </div>
             </div>
             <aside class="pp-preview-pane" id="preset-preview-pane">
-                <button type="button" class="pp-pane-handle pp-pane-handle-expand" id="preset-preview-expand" aria-label="拉出全屏预览">⟨</button>
-                <button type="button" class="pp-pane-handle pp-pane-handle-collapse" id="preset-preview-collapse" aria-label="收起预览">⟩</button>
                 <div class="pp-preview-head">
                     <div class="pp-preview-title">请求预览<span class="pp-preview-est" id="preset-preview-est"></span></div>
                     <div class="pp-preview-actions">
@@ -2063,8 +2142,10 @@ export class PresetPanel {
                 <div class="pp-preview-scroll" id="preset-preview-scroll">
                     <div class="pp-preview-body" id="preset-preview-body"></div>
                 </div>
-                <button type="button" class="pp-editor-handle" id="preset-editor-return" aria-label="返回编辑">编辑</button>
             </aside>
+            <button type="button" class="pp-pane-handle pp-pane-handle-expand" id="preset-preview-expand" aria-label="拉出全屏预览" title="点击或向左拉，拉满预览">${previewPullHandleSvg}</button>
+            <button type="button" class="pp-pane-handle pp-pane-handle-collapse" id="preset-preview-collapse" aria-label="收起预览" title="点击或向右拉，收起预览">${previewPullHandleSvg}</button>
+            <button type="button" class="pp-editor-handle" id="preset-editor-return" aria-label="返回编辑" title="点击或向右拉，返回编辑">${previewPullHandleSvg}</button>
             </div>
             <div class="pp-status" id="preset-status"></div>
             <div class="pp-footer">
@@ -2286,8 +2367,10 @@ export class PresetPanel {
             if (storeType === 'openai' && select.value !== this.store.getActiveId('openai')) {
                 const ok = await this.confirmDiscardBlockDrafts('切换预设');
                 if (!ok) { this.renderManager(); return; }
+                this.discardOpenAIDrafts({ presetId: this.store.getActiveId('openai') });
+            } else {
+                this.captureCurrentDetailDraft();
             }
-            this.captureCurrentDetailDraft();
             await this.store.setActive(storeType, select.value);
             this.renderAllSections();
             window.dispatchEvent(new CustomEvent('preset-changed'));
@@ -3468,6 +3551,11 @@ export class PresetPanel {
     renderOpenAIBlocksEditor(p) {
         const wrap = document.createElement('div');
 
+        const savedPreset = this.store.getActive('openai') || {};
+        const savedPrompts = Array.isArray(savedPreset.prompts) ? savedPreset.prompts : [];
+        const savedPromptById = new Map();
+        savedPrompts.forEach(pr => { if (pr?.identifier) savedPromptById.set(pr.identifier, pr); });
+
         const pickPromptOrderBlock = () => {
             const arr = Array.isArray(p.prompt_order) ? p.prompt_order : [];
             const byId = (id) => arr.find(b => b && typeof b === 'object' && String(b.character_id) === String(id));
@@ -3482,9 +3570,10 @@ export class PresetPanel {
         const draftScope = `openai:${this.store.getActiveId('openai') || ''}`;
         if (this.openaiBlockDraftsScope !== draftScope || !(this.openaiBlockDrafts instanceof Map)) {
             this.openaiBlockDrafts = new Map();
+            this.openaiDeletedBlockIds = new Set();
             this.openaiBlockDraftsScope = draftScope;
         }
-        this.openaiBlockBase = promptById;
+        this.openaiBlockBase = savedPromptById;
         const orderBlock = pickPromptOrderBlock();
         const order = Array.isArray(orderBlock?.order) ? orderBlock.order : [];
 
@@ -3524,6 +3613,9 @@ export class PresetPanel {
         const beginBlockDrag = (e, card) => {
             e.preventDefault();
             e.stopPropagation();
+            const initialOrder = Array.from(list.querySelectorAll('.openai-block'))
+                .map(el => el.dataset.identifier || '')
+                .join('\u0000');
             const pid = e.pointerId;
             const scroller = list.closest('.pp-page-scroll') || list;
             const ghost = createDragGhost(card, e);
@@ -3556,6 +3648,13 @@ export class PresetPanel {
                 const finish = () => card.classList.remove('pp-block-dragging');
                 if (ghost) ghost.settle(card.getBoundingClientRect(), finish);
                 else finish();
+                const nextOrder = Array.from(list.querySelectorAll('.openai-block'))
+                    .map(el => el.dataset.identifier || '')
+                    .join('\u0000');
+                if (nextOrder !== initialOrder) {
+                    this.captureCurrentDetailDraft();
+                    this.updateUnsavedIndicator();
+                }
                 setTimeout(() => { dragState.suppressClick = false; }, 0);
             };
             document.addEventListener('pointermove', onMove);
@@ -3565,11 +3664,12 @@ export class PresetPanel {
 
         const makeBlockEl = ({ identifier, enabled }) => {
             const pr = promptById.get(identifier);
+            const blockDraft = this.openaiBlockDrafts.get(identifier);
             const known = OPENAI_KNOWN_BLOCKS[identifier];
             const isMarker = Boolean(pr?.marker) || Boolean(known?.marker);
             const canEdit = !isMarker && (typeof pr?.content === 'string' || !pr);
-            const title = pr?.name || known?.label || identifier;
-            const roleName = roleIdToName(pr?.role || 'system');
+            const title = blockDraft?.name || pr?.name || known?.label || identifier;
+            const roleName = roleIdToName(blockDraft?.role || pr?.role || 'system');
 
             const card = document.createElement('div');
             card.className = `pp-block openai-block ${enabled === false ? 'pp-block-disabled' : ''}`;
@@ -3582,7 +3682,7 @@ export class PresetPanel {
                 <div class="pp-block-left">
                     <div class="pp-block-drag" aria-label="按住拖动排序">&#9776;</div>
                     <div style="min-width:0;">
-                        <div class="pp-block-title">${title}</div>
+                        <div class="pp-block-title">${escapeHtml(title)}</div>
                         <div class="pp-block-sub">${isMarker ? 'marker（自动填充）' : `role: ${roleName}`}</div>
                     </div>
                 </div>
@@ -3598,13 +3698,15 @@ export class PresetPanel {
             enabledInput.addEventListener('click', (e) => e.stopPropagation());
             enabledInput.addEventListener('change', () => {
                 card.classList.toggle('pp-block-disabled', !enabledInput.checked);
+                this.captureCurrentDetailDraft();
+                this.updateUnsavedIndicator();
             });
-            // 已修改卡的快捷 ✔/×（.is-modified 时显示）
+            // 已修改卡的快捷接受/舍弃操作（.is-modified 时显示）
             const quick = document.createElement('span');
             quick.className = 'pp-block-quick';
             quick.innerHTML = `
-                <button type="button" class="pp-diff-accept" title="接受此区块修改并保存">✔</button>
-                <button type="button" class="pp-diff-reject" title="舍弃此区块草稿">×</button>
+                <button type="button" class="pp-diff-accept" aria-label="接受此区块修改并保存" title="接受此区块修改并保存">${diffAcceptSvg}</button>
+                <button type="button" class="pp-diff-reject" aria-label="舍弃此区块草稿" title="舍弃此区块草稿">${diffRejectSvg}</button>
             `;
             quick.querySelector('.pp-diff-accept').addEventListener('click', (e) => { e.stopPropagation(); this.acceptBlockDraft(identifier); });
             quick.querySelector('.pp-diff-reject').addEventListener('click', (e) => { e.stopPropagation(); this.rejectBlockDraft(identifier); });
@@ -3620,7 +3722,13 @@ export class PresetPanel {
                     e.stopPropagation();
                     const blockName = card.querySelector('.pp-block-title')?.textContent?.trim() || identifier;
                     const ok = await appConfirm({ title: '删除区块', message: `删除区块「${blockName}」？`, danger: true });
-                    if (ok) card.remove();
+                    if (ok) {
+                        this.openaiDeletedBlockIds.add(identifier);
+                        this.openaiBlockDrafts.delete(identifier);
+                        card.remove();
+                        this.captureCurrentDetailDraft();
+                        this.updateUnsavedIndicator();
+                    }
                 };
                 right.appendChild(del);
             }
@@ -3745,11 +3853,14 @@ export class PresetPanel {
                 identifier = `custom_${Date.now()}_${Math.random().toString(16).slice(2, 6)}`;
             }
             promptById.set(identifier, { identifier, name: finalName, role: 'system', system_prompt: true, marker: false, content: '' });
+            this.openaiDeletedBlockIds.delete(identifier);
             // 新区块必须进草稿 Map，保存合并才不会丢
             this.openaiBlockDrafts.set(identifier, { name: finalName, role: 'system', system_prompt: true, content: '' });
             const card = makeBlockEl({ identifier, enabled: true });
             // 插到列表最上方（注入顺序最前），并直接进入区块编辑页方便继续填写
             list.insertBefore(card, list.firstChild);
+            this.captureCurrentDetailDraft();
+            this.updateUnsavedIndicator();
             const scroller = list.closest('.pp-page-scroll');
             if (scroller) scroller.scrollTop = 0;
             this.openOpenAIBlockEditor(card);
@@ -4091,7 +4202,15 @@ export class PresetPanel {
         return String(d.name ?? '') !== String(baseName)
             || d.role !== baseRole
             || Boolean(d.system_prompt) !== baseSys
-            || String(d.content ?? '') !== String(b.content ?? '');
+            || presetBlockContentChanged(b.content, d.content);
+    }
+
+    isBlockDraftContentModified(identifier) {
+        const draft = this.openaiBlockDrafts?.get?.(identifier);
+        if (!draft) return false;
+        const base = this.openaiBlockBase?.get?.(identifier);
+        if (!base) return true;
+        return presetBlockContentChanged(base.content, draft.content);
     }
 
     modifiedBlockDraftIds() {
@@ -4103,6 +4222,73 @@ export class PresetPanel {
     /* 未保存更改指示：区块草稿 Map 与基线逐项比对 + 其它分区草稿数（capture 已丢弃与基线一致的草稿） */
     countUnsavedBlockChanges() {
         return this.modifiedBlockDraftIds().length;
+    }
+
+    countUnsavedChanges() {
+        const blockCount = this.countUnsavedBlockChanges();
+        const currentOpenAIKey = this.getDraftKey('openai', this.store.getActiveId('openai'));
+        let sectionCount = 0;
+        for (const key of this.drafts?.keys?.() || []) {
+            if (key !== currentOpenAIKey) sectionCount += 1;
+        }
+        if (currentOpenAIKey && this.drafts?.has?.(currentOpenAIKey) && blockCount === 0) {
+            sectionCount += 1;
+        }
+        return blockCount + sectionCount;
+    }
+
+    countUnsavedOpenAIChanges() {
+        const blockCount = this.countUnsavedBlockChanges();
+        const currentOpenAIKey = this.getDraftKey('openai', this.store.getActiveId('openai'));
+        const structuralCount = currentOpenAIKey && this.drafts?.has?.(currentOpenAIKey) && blockCount === 0 ? 1 : 0;
+        return blockCount + structuralCount;
+    }
+
+    discardOpenAIDrafts({ presetId = '', all = false } = {}) {
+        if (all) {
+            for (const key of Array.from(this.drafts?.keys?.() || [])) {
+                if (String(key).startsWith('openai:')) this.drafts.delete(key);
+            }
+        } else {
+            const key = this.getDraftKey('openai', presetId || this.store.getActiveId('openai'));
+            if (key) this.drafts.delete(key);
+        }
+        this.openaiBlockDrafts?.clear?.();
+        this.openaiDeletedBlockIds?.clear?.();
+        this.openaiBlockDraftsScope = '';
+    }
+
+    restoreOpenAIDraftSnapshotBlock(identifier, savedBlock = null) {
+        const key = this.getDraftKey('openai', this.store.getActiveId('openai'));
+        if (!key || !this.drafts?.has?.(key)) return;
+        const snapshot = deepClone(this.drafts.get(key) || {});
+        const prompts = Array.isArray(snapshot.prompts) ? snapshot.prompts : [];
+        const index = prompts.findIndex(item => item?.identifier === identifier);
+        if (savedBlock) {
+            if (index >= 0) prompts[index] = deepClone(savedBlock);
+            else prompts.push(deepClone(savedBlock));
+        } else if (index >= 0) {
+            prompts.splice(index, 1);
+        }
+        snapshot.prompts = prompts;
+        if (!savedBlock && Array.isArray(snapshot.prompt_order)) {
+            snapshot.prompt_order.forEach((block) => {
+                if (Array.isArray(block?.order)) {
+                    block.order = block.order.filter(item => item?.identifier !== identifier);
+                }
+            });
+        }
+        const baseline = this.store.getActive('openai') || {};
+        if (JSON.stringify(snapshot) === JSON.stringify(baseline)) this.drafts.delete(key);
+        else this.drafts.set(key, snapshot);
+    }
+
+    dropCurrentOpenAIDraftSnapshotIfSaved() {
+        const key = this.getDraftKey('openai', this.store.getActiveId('openai'));
+        if (!key || !this.drafts?.has?.(key)) return;
+        if (JSON.stringify(this.drafts.get(key)) === JSON.stringify(this.store.getActive('openai') || {})) {
+            this.drafts.delete(key);
+        }
     }
 
     /* ✔ 接受：把指定区块草稿立即合并入当前预设并入库（快捷、无确认） */
@@ -4166,6 +4352,7 @@ export class PresetPanel {
                     const s = card.querySelector('.pp-block-sub'); if (s) s.textContent = `role: ${next.role || 'system'}`;
                 }
             });
+            this.dropCurrentOpenAIDraftSnapshotIfSaved();
             window.dispatchEvent(new CustomEvent('preset-changed'));
             this.updateUnsavedIndicator();
             this.showStatus(ids.length > 1 ? `已接受 ${merged.size} 处修改并保存` : '已接受修改并保存', 'success');
@@ -4182,8 +4369,8 @@ export class PresetPanel {
         if (!draft || !Number.isFinite(hunkIdx)) return;
         const base = String(this.openaiBlockBase?.get?.(identifier)?.content ?? '');
         const newBase = this.applyBlockHunk(base, String(draft.content ?? ''), hunkIdx, 'accept');
-        await this.applyBlockContentToStore(identifier, newBase);
-        this.showStatus('已接受该处修改并保存', 'success');
+        const saved = await this.applyBlockContentToStore(identifier, newBase);
+        if (saved) this.showStatus('已接受该处修改并保存', 'success');
     }
 
     /* × hunk 级回滚：只回滚该处修改（草稿里恢复基线行），其它修改保留 */
@@ -4204,7 +4391,7 @@ export class PresetPanel {
     async applyBlockContentToStore(identifier, content) {
         await this.store.ready;
         const activeId = this.store.getActiveId('openai');
-        if (!activeId || !identifier) return;
+        if (!activeId || !identifier) return false;
         try {
             const data = deepClone(this.store.getActive('openai') || {});
             if (!Array.isArray(data.prompts)) data.prompts = [];
@@ -4232,11 +4419,14 @@ export class PresetPanel {
             const name = String(data?.name || '').trim() || activeId;
             await this.store.upsert('openai', { id: activeId, name, data });
             this.openaiBlockBase?.set?.(identifier, deepClone(pr));
+            this.dropCurrentOpenAIDraftSnapshotIfSaved();
             window.dispatchEvent(new CustomEvent('preset-changed')); // 骨架重建由监听统一处理
             this.updateUnsavedIndicator();
+            return true;
         } catch (err) {
             logger.error('接受该处修改失败', err);
             this.showStatus(err.message || '保存失败', 'error');
+            return false;
         }
     }
 
@@ -4246,7 +4436,15 @@ export class PresetPanel {
         this.openaiBlockDrafts.delete(identifier);
         const base = this.openaiBlockBase?.get?.(identifier);
         const card = this.getBlockCards().find(c => c.dataset.identifier === identifier);
+        this.restoreOpenAIDraftSnapshotBlock(identifier, base || null);
         if (card) {
+            if (!base) {
+                card.remove();
+                if (this.currentPage === 'block' && this.currentBlockCard === card) this.showDetailPage();
+                this.updateUnsavedIndicator();
+                if (this.previewState !== 'closed') this.refreshPreviewMessageFor(identifier);
+                return;
+            }
             const t = card.querySelector('.pp-block-title'); if (t) t.textContent = base?.name || identifier;
             const s = card.querySelector('.pp-block-sub'); if (s) s.textContent = `role: ${roleIdToName(base?.role || 'system')}`;
             if (this.currentPage === 'block' && this.currentBlockCard === card) this.openOpenAIBlockEditor(card);
@@ -4322,7 +4520,7 @@ export class PresetPanel {
         const el = this.element?.querySelector('#preset-unsaved-chip');
         if (!el) return;
         const blockN = this.countUnsavedBlockChanges();
-        const n = blockN + (this.drafts?.size || 0);
+        const n = this.countUnsavedChanges();
         el.hidden = n <= 0;
         if (n > 0) el.textContent = `${n} 处更改尚未保存`;
         this.element?.querySelector('.pp-btn-save')?.classList.toggle('pp-save-attention', n > 0);
@@ -4449,6 +4647,24 @@ export class PresetPanel {
         this.previewRawBlocks = true;
         this.previewSkeleton = null;
         this.previewBlockMap = new Map();
+        this.previewBuildQueue = createLatestPreviewBuildQueue({
+            build: options => this.runtimeContext?.buildScenePromptPreviewRequest?.(options),
+            onStart: () => {
+                if (this.previewBodyEl) this.previewBodyEl.innerHTML = '<div class="pp-preview-loading">正在构建预览…</div>';
+            },
+            onResult: (request) => {
+                this.previewSkeleton = request;
+                this.mapBlocksToPreview();
+                this.renderPreviewBody();
+                this.positionPreviewToCurrentBlock();
+            },
+            onFailure: (error) => {
+                if (error) logger.warn('构建预设预览失败', error);
+                if (this.previewBodyEl) {
+                    this.previewBodyEl.innerHTML = '<div class="pp-preview-loading">构建失败：请确认当前有可用会话。</div>';
+                }
+            },
+        });
         const bindDrag = (el, onLeft, onRight) => {
             if (!el) return;
             el.addEventListener('pointerdown', (e) => {
@@ -4477,19 +4693,19 @@ export class PresetPanel {
             edge.addEventListener('click', () => this.openPreview());
             bindDrag(edge, () => this.openPreview(), null);
         });
-        // 分栏 pane 左缘成对把手：上=点击/左拉→全屏，下=点击/右拉→收合（两者拖拽语义一致）
-        const paneHandle = pane.querySelector('#preset-preview-expand');
+        // 分栏线两侧提环：编辑侧左拉→全屏，预览侧右拉→收合（两者拖拽语义一致）
+        const paneHandle = this.element.querySelector('#preset-preview-expand');
         if (paneHandle) {
             paneHandle.addEventListener('click', () => this.setPreviewState('full'));
             bindDrag(paneHandle, () => this.setPreviewState('full'), () => this.closePreview());
         }
-        const paneCollapse = pane.querySelector('#preset-preview-collapse');
+        const paneCollapse = this.element.querySelector('#preset-preview-collapse');
         if (paneCollapse) {
             paneCollapse.addEventListener('click', () => this.closePreview());
             bindDrag(paneCollapse, () => this.setPreviewState('full'), () => this.closePreview());
         }
         // 全屏时左缘「编辑」把手：桌面回分栏、手机收回编辑器
-        const editorReturn = pane.querySelector('#preset-editor-return');
+        const editorReturn = this.element.querySelector('#preset-editor-return');
         if (editorReturn) {
             const back = () => this.setPreviewState(this.isPreviewPhoneLayout() ? 'closed' : 'split');
             editorReturn.addEventListener('click', back);
@@ -4559,7 +4775,10 @@ export class PresetPanel {
                 if (!this.element) return;
                 const panelVisible = this.element.style.display !== 'none';
                 if (panelVisible && this.previewState && this.previewState !== 'closed') this.rebuildPreviewSkeleton();
-                else this.previewSkeleton = null;
+                else {
+                    this.previewBuildQueue?.invalidate?.();
+                    this.previewSkeleton = null;
+                }
             }, 200);
         });
         let scrollTimer = null;
@@ -4636,23 +4855,14 @@ export class PresetPanel {
         this.setPreviewState('closed', { animate });
     }
 
-    async rebuildPreviewSkeleton() {
+    rebuildPreviewSkeleton() {
         const buildFn = this.runtimeContext?.buildScenePromptPreviewRequest;
         if (typeof buildFn !== 'function' || !this.previewBodyEl) return;
-        this.previewBodyEl.innerHTML = '<div class="pp-preview-loading">正在构建预览…</div>';
-        const request = await buildFn({
+        return this.previewBuildQueue?.request?.({
             previewUiMode: this.previewMode,
             includeHistory: this.previewIncludeHistory,
             rawBlocks: this.previewRawBlocks !== false,
         });
-        if (!request) {
-            this.previewBodyEl.innerHTML = '<div class="pp-preview-loading">构建失败：请确认当前有可用会话。</div>';
-            return;
-        }
-        this.previewSkeleton = request;
-        this.mapBlocksToPreview();
-        this.renderPreviewBody();
-        this.positionPreviewToCurrentBlock();
     }
 
     /* 三级页展开/重建预览后定位到正在编辑的区块（延迟等分栏宽度过渡结束，几何才准）；从第一行对齐 */
@@ -4680,43 +4890,15 @@ export class PresetPanel {
        整段命中 → exact（可编辑/草稿替换/diff）；含宏被改写的块退而求其次：
        取宏切分后最长的字面片段做模糊锚定（仅参与滚动联动，不做内容替换）。 */
     mapBlocksToPreview() {
-        this.previewBlockMap = new Map();
         const messages = Array.isArray(this.previewSkeleton?.messages) ? this.previewSkeleton.messages : [];
         const texts = messages.map(m => this.previewMessageText(m));
-        const claimed = texts.map(() => []);
-        const tryClaim = (id, needle, exact) => {
-            for (let i = 0; i < texts.length; i += 1) {
-                const start = texts[i].indexOf(needle);
-                if (start < 0) continue;
-                const end = start + needle.length;
-                if (claimed[i].some(([s0, e0]) => start < e0 && end > s0)) continue;
-                claimed[i].push([start, end]);
-                this.previewBlockMap.set(id, { msg: i, start, len: needle.length, exact });
-                return true;
-            }
-            return false;
-        };
-        const fuzzyPass = [];
-        this.getBlockCards().forEach((card) => {
-            const id = card.dataset.identifier || '';
-            if (!id || card.dataset.marker === 'true') return;
-            if (card.querySelector('.block-enabled')?.checked === false) return;
-            const baseContent = String(this.openaiBlockBase?.get?.(id)?.content ?? '').trim();
-            if (baseContent.length < 6) return;
-            if (!tryClaim(id, baseContent, true)) fuzzyPass.push({ id, baseContent });
-        });
-        // 第二遍模糊锚定（exact 全部占位后再跑，避免抢占整段命中的区间）
-        for (const { id, baseContent } of fuzzyPass) {
-            const segs = baseContent
-                .split(/\{\{[^{}]*\}\}|<%[\s\S]*?%>/)
-                .map(s => s.trim())
-                .filter(s => s.length >= 24)
-                .sort((a, b) => b.length - a.length)
-                .slice(0, 3);
-            for (const seg of segs) {
-                if (tryClaim(id, seg, false)) break;
-            }
-        }
+        const blocks = this.getBlockCards().map(card => ({
+            id: card.dataset.identifier || '',
+            marker: card.dataset.marker === 'true',
+            enabled: card.querySelector('.block-enabled')?.checked !== false,
+            content: String(this.openaiBlockBase?.get?.(card.dataset.identifier || '')?.content ?? ''),
+        }));
+        this.previewBlockMap = buildPresetPreviewBlockMap({ messageTexts: texts, blocks });
     }
 
     /* 原样区块正文渲染：宏 token（{{...}} / <% %>）包成可悬停/点按求值的小段 */
@@ -4736,7 +4918,7 @@ export class PresetPanel {
     }
 
     /* 区块 diff（红删绿增，行级；复用格式修复的 line-diff-utils）。
-       连续变更行为一个 hunk，hunk 末行右侧紧跟小 ✔/×（hunk 级接受/回滚）。 */
+       连续变更行为一个 hunk，hunk 末行右侧紧跟小型 SVG 操作（hunk 级接受/回滚）。 */
     renderBlockDiffHtml(baseText, draftText, blockIdAttr = '') {
         const { rows } = buildLineDiff(baseText, draftText, { collapseContext: false });
         const isChanged = r => r?.type === 'del' || r?.type === 'add';
@@ -4750,11 +4932,11 @@ export class PresetPanel {
             const body = r.type === 'del'
                 ? `<del class="pp-diff-del">${escapeHtml(r.text)}</del>`
                 : `<ins class="pp-diff-ins">${escapeHtml(r.text)}</ins>`;
-            // hunk 末行：换行前插紧跟的小 ✔/×
+            // hunk 末行：换行前插紧跟的小型接受/回滚操作
             const actions = !isChanged(rows[i + 1])
                 ? `<span class="pp-diff-actions" contenteditable="false">`
-                    + `<button type="button" class="pp-diff-accept" data-pp-accept-hunk="${hunk}" data-pp-block="${blockIdAttr}" title="接受此处修改并保存">✔</button>`
-                    + `<button type="button" class="pp-diff-reject" data-pp-reject-hunk="${hunk}" data-pp-block="${blockIdAttr}" title="回滚此处修改">×</button>`
+                    + `<button type="button" class="pp-diff-accept" data-pp-accept-hunk="${hunk}" data-pp-block="${blockIdAttr}" aria-label="接受此处修改并保存" title="接受此处修改并保存">${diffAcceptSvg}</button>`
+                    + `<button type="button" class="pp-diff-reject" data-pp-reject-hunk="${hunk}" data-pp-block="${blockIdAttr}" aria-label="回滚此处修改" title="回滚此处修改">${diffRejectSvg}</button>`
                     + `</span>`
                 : '';
             html += `${body}${actions}${nl}`;
@@ -4764,22 +4946,7 @@ export class PresetPanel {
 
     /* hunk 级结果计算：accept=基线只应用第 k 个 hunk；reject=草稿只回滚第 k 个 hunk */
     applyBlockHunk(baseText, draftText, hunkIdx, mode) {
-        const { rows } = buildLineDiff(baseText, draftText, { collapseContext: false });
-        const isChanged = r => r?.type === 'del' || r?.type === 'add';
-        let h = -1;
-        const lines = [];
-        for (let i = 0; i < rows.length; i += 1) {
-            const r = rows[i];
-            if (isChanged(r) && !isChanged(rows[i - 1])) h += 1;
-            if (r.type === 'context') { lines.push(r.text); continue; }
-            const inHunk = h === hunkIdx;
-            if (mode === 'accept') {
-                if (r.type === 'del' ? !inHunk : inHunk) lines.push(r.text);
-            } else {
-                if (r.type === 'del' ? inHunk : !inHunk) lines.push(r.text);
-            }
-        }
-        return lines.join('\n');
+        return applyPresetBlockHunk(baseText, draftText, hunkIdx, mode);
     }
 
     renderPreviewMessageHtml(index) {
@@ -4796,13 +4963,12 @@ export class PresetPanel {
             html += escapeHtml(text.slice(pos, span.start));
             const idAttr = escapeHtml(span.id);
             const baseSlice = text.slice(span.start, span.start + span.len);
-            // 映射搜索用 trim 后基线，渲染用完整基线——保证 span 文本与编辑器逐字一致（行锚定/选区/预览编辑的前提）
             const baseFullRaw = this.openaiBlockBase?.get?.(span.id)?.content;
-            const baseFull = typeof baseFullRaw === 'string' && baseFullRaw.trim() === baseSlice.trim() ? baseFullRaw : baseSlice;
+            const baseFull = typeof baseFullRaw === 'string' && baseFullRaw === baseSlice ? baseFullRaw : baseSlice;
             if (span.exact === false) {
                 // 模糊锚定：只做滚动联动，内容按骨架原样展示
                 html += `<span class="pp-prev-block pp-prev-anchor" data-pp-prev-block="${idAttr}">${escapeHtml(baseSlice)}</span>`;
-            } else if (this.isBlockDraftModified(span.id)) {
+            } else if (this.isBlockDraftContentModified(span.id)) {
                 // 有未保存修改：红删绿增 diff，每处 hunk 末行紧跟小 ✔/×（点击正文可切换为直接编辑）
                 const draft = this.openaiBlockDrafts.get(span.id);
                 html += `<span class="pp-prev-block is-modified" data-pp-prev-block="${idAttr}">${this.renderBlockDiffHtml(baseFull, String(draft?.content ?? ''), idAttr)}</span>`;
@@ -5257,6 +5423,7 @@ export class PresetPanel {
                     marker: false, content: String(draft.content ?? existing.content ?? ''),
                 });
             });
+            this.openaiDeletedBlockIds?.forEach?.(ident => promptById.delete(ident));
 
             const blockEls = Array.from(root.querySelectorAll('.openai-block'));
             const order = blockEls.map((el) => {
@@ -5313,6 +5480,7 @@ export class PresetPanel {
 
             this.drafts.clear();
             this.openaiBlockDrafts?.clear?.();
+            this.openaiDeletedBlockIds?.clear?.();
             this.renderAllSections();
             this.updateUnsavedIndicator();
             this.showStatus('保存成功', 'success');
@@ -5325,11 +5493,17 @@ export class PresetPanel {
 
     async onNewForStoreType(storeType) {
         await this.store.ready;
-        if (storeType === 'openai' && !(await this.confirmDiscardBlockDrafts('新建并切换预设'))) return;
         const name = prompt('新建预设名称', '新预设');
         if (!name) return;
-        this.captureDraftsFromDOM();
-        const base = this.getActivePresetSnapshot(storeType) || {};
+        if (storeType === 'openai' && !(await this.confirmDiscardBlockDrafts('新建并切换预设'))) return;
+        let base = null;
+        if (storeType === 'openai') {
+            base = this.store.getActive('openai') || {};
+            this.discardOpenAIDrafts({ presetId: this.store.getActiveId('openai') });
+        } else {
+            this.captureDraftsFromDOM();
+            base = this.getActivePresetSnapshot(storeType) || {};
+        }
         const data = { ...deepClone(base), name };
         const id = await this.store.upsert(storeType, { name, data });
         await this.store.setActive(storeType, id);
@@ -5709,11 +5883,11 @@ export class PresetPanel {
 
     async importFromFile(file) {
         await this.store.ready;
-        if (!(await this.confirmDiscardBlockDrafts('导入'))) return;
         let text = '';
         try { text = await file.text(); } catch { this.showStatus('读取文件失败', 'error'); return; }
         let json = null;
         try { json = JSON.parse(text); } catch { this.showStatus('JSON 格式错误', 'error'); return; }
+        this.captureCurrentDetailDraft();
 
         const detected = this.detectPresetType(json);
         if (detected === 'store') {
@@ -5722,6 +5896,9 @@ export class PresetPanel {
                 message: '检测到「整套预设设定档」。确定要导入并覆盖当前设置吗？（取消=合并导入）',
                 confirmText: '覆盖导入', cancelText: '合并导入',
             });
+            if (!(await this.confirmDiscardBlockDrafts('导入整套预设', { all: true }))) return;
+            this.drafts.clear();
+            this.discardOpenAIDrafts({ all: true });
             await this.store.importState(json, { mode: replace ? 'replace' : 'merge' });
             this.renderAllSections();
             this.showStatus('已导入预设设定档', 'success');
@@ -5739,6 +5916,11 @@ export class PresetPanel {
                 confirmText: `导入到「${this.getTypeLabel(detectedType)}」`, cancelText: '导入到生成参数',
             });
             importType = ok ? detectedType : 'openai';
+        }
+
+        if (importType === 'openai') {
+            if (!(await this.confirmDiscardBlockDrafts('导入并切换生成参数预设'))) return;
+            this.discardOpenAIDrafts({ presetId: this.store.getActiveId('openai') });
         }
 
         const fileBaseName = String(file?.name || '').replace(/\.[^/.]+$/, '').trim();

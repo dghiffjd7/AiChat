@@ -29,6 +29,37 @@ export class MacroEngine {
         return String(context?.sessionId || 'default').trim() || 'default';
     }
 
+    getVariableAccess(context, { useGlobal = false } = {}) {
+        const sessionId = this.getSessionId(context);
+        const simulated = context?.macroVariableState instanceof Map
+            ? context.macroVariableState
+            : null;
+        const stateKey = key => `${useGlobal ? 'global' : `session:${sessionId}`}\u0000${String(key ?? '')}`;
+        const readStore = key => (
+            useGlobal
+                ? this.chatStore?.getGlobalVariable?.(key)
+                : this.chatStore?.getVariable?.(key, sessionId)
+        );
+        const writeStore = (key, value) => (
+            useGlobal
+                ? this.chatStore?.setGlobalVariable?.(key, value)
+                : this.chatStore?.setVariable?.(key, value, sessionId)
+        );
+        return {
+            get: (key) => {
+                if (!simulated) return readStore(key);
+                const scopedKey = stateKey(key);
+                if (!simulated.has(scopedKey)) simulated.set(scopedKey, readStore(key));
+                return simulated.get(scopedKey);
+            },
+            set: (key, value) => {
+                if (!simulated) return writeStore(key, value);
+                simulated.set(stateKey(key), value);
+                return value;
+            },
+        };
+    }
+
     getLastByRole(role, sessionId) {
         try {
             const msgs = this.chatStore?.getMessages?.(sessionId) || [];
@@ -81,20 +112,12 @@ export class MacroEngine {
     }
 
     applyVariableMacros(text, context) {
-        const sessionId = this.getSessionId(context);
         const useGlobal =
             context?.useGlobalVariables === true ||
             String(context?.uiMode || '').trim().toLowerCase() === 'rp';
-        const getVar = (key) => (
-            useGlobal
-                ? this.chatStore?.getGlobalVariable?.(key)
-                : this.chatStore?.getVariable?.(key, sessionId)
-        );
-        const setVar = (key, value) => (
-            useGlobal
-                ? this.chatStore?.setGlobalVariable?.(key, value)
-                : this.chatStore?.setVariable?.(key, value, sessionId)
-        );
+        const variableAccess = this.getVariableAccess(context, { useGlobal });
+        const getVar = key => variableAccess.get(key);
+        const setVar = (key, value) => variableAccess.set(key, value);
         let out = String(text || '');
         const overrideLastUserMessage = (() => {
             const v = context?.lastUserMessage;
@@ -223,7 +246,7 @@ export class MacroEngine {
         // （避免必须塞到 extraMacros 才能替换）
         try {
             for (const [k, v] of Object.entries(context || {})) {
-                if (!k || k === 'sessionId' || k === 'user' || k === 'char' || k === 'extraMacros') continue;
+                if (!k || k === 'sessionId' || k === 'user' || k === 'char' || k === 'extraMacros' || k === 'macroVariableState') continue;
                 const normalized = this.normalizeMacroValue(v);
                 baseVars[k] = normalized;
             }
@@ -309,7 +332,9 @@ export class MacroEngine {
     }
 
     executeCommand(cmd, args, context) {
-        const sessionId = context.sessionId || 'default';
+        // executeCommand 的既有语义是本地变量；常规 set/get 宏会先由
+        // applyVariableMacros 依 uiMode/useGlobalVariables 处理。
+        const variableAccess = this.getVariableAccess(context, { useGlobal: false });
 
         switch (cmd) {
             // --- 变量操作 ---
@@ -319,14 +344,14 @@ export class MacroEngine {
                 const key = args[0];
                 // 重新组合剩余部分，防止 value 内部还有 ::
                 const val = args.slice(1).join('::'); 
-                this.chatStore.setVariable(key, val, sessionId);
+                variableAccess.set(key, val);
                 return ''; // setvar 消耗掉标签，输出为空
             }
             case 'getvar': {
                 // {{getvar::key::default}}
                 const key = args[0];
                 const def = args[1] || '';
-                const val = this.chatStore.getVariable(key, sessionId);
+                const val = variableAccess.get(key);
                 return (val !== undefined && val !== null) ? val : def;
             }
             case 'addvar': {
@@ -334,29 +359,29 @@ export class MacroEngine {
                 if (args.length < 2) return '';
                 const key = args[0];
                 const addRaw = args.slice(1).join('::');
-                const curRaw = this.chatStore.getVariable(key, sessionId);
+                const curRaw = variableAccess.get(key);
                 const curNum = Number(curRaw);
                 const addNum = Number(addRaw);
                 const next = (Number.isFinite(curNum) && Number.isFinite(addNum)) ? String(curNum + addNum) : `${String(curRaw ?? '')}${String(addRaw ?? '')}`;
-                this.chatStore.setVariable(key, next, sessionId);
+                variableAccess.set(key, next);
                 return '';
             }
             case 'incvar': {
                 // {{incvar::key::amount}}
                 const key = args[0];
                 const amt = Number(args[1]) || 1;
-                let val = Number(this.chatStore.getVariable(key, sessionId)) || 0;
+                let val = Number(variableAccess.get(key)) || 0;
                 val += amt;
-                this.chatStore.setVariable(key, val, sessionId);
+                variableAccess.set(key, val);
                 return '';
             }
             case 'decvar': {
                 // {{decvar::key::amount}}
                 const key = args[0];
                 const amt = Number(args[1]) || 1;
-                let val = Number(this.chatStore.getVariable(key, sessionId)) || 0;
+                let val = Number(variableAccess.get(key)) || 0;
                 val -= amt;
-                this.chatStore.setVariable(key, val, sessionId);
+                variableAccess.set(key, val);
                 return '';
             }
 
@@ -392,7 +417,7 @@ export class MacroEngine {
                 const checkVal = args[1];
                 const thenVal = args[2] || '';
                 const elseVal = args[3] || '';
-                const current = String(this.chatStore.getVariable(key, sessionId) || '');
+                const current = String(variableAccess.get(key) || '');
                 return current === checkVal ? thenVal : elseVal;
             }
 

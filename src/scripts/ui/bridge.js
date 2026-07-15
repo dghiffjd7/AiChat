@@ -3047,6 +3047,7 @@ class AppBridge {
         members: Array.isArray(context?.group?.memberNames) ? context.group.memberNames.map(String).filter(Boolean).join(',') : '',
         lastUserMessage: String(context?.meta?.overrideLastUserMessage || context?.meta?.rawUserMessage || ''),
         useGlobalVariables: context?.meta?.useGlobalVariables === true,
+        macroVariableState: context?.meta?.macroVariableState,
       };
       let postfix = postfixRaw;
       try {
@@ -3071,6 +3072,7 @@ class AppBridge {
       members: Array.isArray(context?.group?.memberNames) ? context.group.memberNames.map(String).filter(Boolean).join(',') : '',
       lastUserMessage: String(context?.meta?.overrideLastUserMessage || context?.meta?.rawUserMessage || ''),
       useGlobalVariables: context?.meta?.useGlobalVariables === true,
+      macroVariableState: context?.meta?.macroVariableState,
     };
     let assistantPrefill = assistantPrefillRaw;
     try {
@@ -3311,6 +3313,18 @@ class AppBridge {
           if (typeof updated.input === 'string') promptInput = updated.input;
           if (updated.context && typeof updated.context === 'object') nextContext = updated.context;
         }
+      }
+      if (previewOnly) {
+        const macroVariableState = nextContext?.meta?.macroVariableState instanceof Map
+          ? nextContext.meta.macroVariableState
+          : new Map();
+        nextContext = {
+          ...(nextContext || {}),
+          meta: {
+            ...(nextContext?.meta || {}),
+            macroVariableState,
+          },
+        };
       }
       const presetContext = this.getRequestPresetContext(nextContext);
       const requestRuntime = await this.resolveRequestRuntimeConfig(presetContext);
@@ -4084,6 +4098,7 @@ class AppBridge {
             uiMode: macroUiMode,
             lastUserMessage: effectiveLastUserMessage,
             useGlobalVariables: macroUseGlobalVariables,
+            macroVariableState: context?.meta?.macroVariableState,
           })
         : '';
     };
