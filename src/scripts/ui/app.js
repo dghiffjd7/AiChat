@@ -1253,6 +1253,8 @@ const initApp = async () => {
     showScenePromptPreview: mode => showDraftPromptPreview({ previewUiMode: mode === 'rp' ? 'rp' : 'chat' }),
     // 分栏预览骨架：只构建请求不弹窗（草稿实时替换在预设面板内完成）
     buildScenePromptPreviewRequest: opts => buildScenePromptPreviewRequest(opts || {}),
+    // 预览宏 token 悬停求值（只读；写变量类/EJS 不执行）
+    evalScenePreviewMacro: token => evalScenePreviewMacro(token),
   });
   sessionConfigPanel.setRuntimeContext({
     chatStore,
@@ -15182,20 +15184,49 @@ Phase G（Frame 36）：循环衔接
     notifyError: (message) => window.toastr?.error?.(message),
     logger,
   });
-  // 只构建不弹窗：预设面板分栏预览用（草稿实时渲染的骨架）
-  const buildScenePromptPreviewRequest = async ({ previewUiMode = '', includeHistory = false } = {}) => {
+  // 只构建不弹窗：预设面板分栏预览用（草稿实时渲染的骨架）。
+  // rawBlocks=true 时自定义区块正文不做宏求值（原样显示 → 预览可逐字映射、无 setvar 副作用）。
+  const buildScenePromptPreviewRequest = async ({ previewUiMode = '', includeHistory = false, rawBlocks = false } = {}) => {
     try {
       const request = await handleSend(null, {
         previewOnly: true,
         ignorePending: true,
         previewUiMode,
         previewSuppressHistory: !includeHistory,
+        previewRawBlocks: Boolean(rawBlocks),
       });
       if (!request || !Array.isArray(request.messages)) return null;
       return request;
     } catch (err) {
       logger.warn('build scene preview request failed', err);
       return null;
+    }
+  };
+  // 预览里单个宏 token 的悬停求值：写变量类不执行只描述，EJS 不执行，其余走真实宏引擎（只读类安全）
+  const evalScenePreviewMacro = (token = '') => {
+    const t = String(token || '').trim();
+    if (!t) return { kind: 'empty', text: '' };
+    const setLike = t.match(/^\{\{\s*(setvar|setglobalvar|addvar|addglobalvar|incvar|decvar|incglobalvar|decglobalvar)::([^:}]+)(?:::([\s\S]*?))?\}\}$/i);
+    if (setLike) {
+      const cmd = setLike[1].toLowerCase();
+      const key = setLike[2].trim();
+      const val = setLike[3] ?? '';
+      const verb = cmd.startsWith('set') ? `设为「${val}」`
+        : cmd.startsWith('add') ? `增加「${val}」`
+        : cmd.startsWith('inc') ? '自增 1' : '自减 1';
+      return { kind: 'effect', text: `写变量：「${key}」${verb}（输出为空；预览悬停不执行）` };
+    }
+    if (/^<%/.test(t)) {
+      return { kind: 'script', text: 'EJS 模板脚本：可能有副作用，悬停不执行。关闭「区块原样」并 ↻ 重建可看整体求值效果。' };
+    }
+    try {
+      const out = window.appBridge.processTextMacros(t, { sessionId: chatStore.getCurrent(), uiMode });
+      const s = String(out ?? '');
+      if (s === t) return { kind: 'raw', text: '（无法求值，保持原样）' };
+      return { kind: 'value', text: s === '' ? '（求值为空）' : s };
+    } catch (err) {
+      logger.warn('preview macro eval failed', err);
+      return { kind: 'error', text: '（求值失败）' };
     }
   };
   const showDraftPromptPreview = async ({ previewUiMode = '' } = {}) => {
@@ -24924,6 +24955,7 @@ Phase G（Frame 36）：循环衔接
       previewOnly,
       previewUiMode,
       previewSuppressHistory,
+      previewRawBlocks,
       suppressAssistantDom,
       assistantStreamFactory,
       continueTarget,
@@ -26234,6 +26266,7 @@ Phase G（Frame 36）：循环衔接
               meta: {
                 ...(nextContext.meta || {}),
                 previewOnly: true,
+                previewRawBlocks: Boolean(previewRawBlocks),
               },
             });
           },

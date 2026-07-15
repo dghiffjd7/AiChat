@@ -6055,7 +6055,11 @@ const stringifyMessageContent = (content) => {
           else if (context.systemPrompt) content = context.systemPrompt;
         }
         const rawHadLastUser = lastUserMessageRe.test(String(content || ''));
-        content = processTextMacrosWithPendingFlag(content, macroContext);
+        // 预设分栏预览「区块原样」：跳过自定义区块正文的宏求值（预览可逐字映射、无 setvar 副作用），
+        // 周边注入（人设/世界书/记忆等）照常求值；pending-user 记账用上面的原文测试，不受影响。
+        content = context?.meta?.previewRawBlocks === true
+          ? String(content || '')
+          : processTextMacrosWithPendingFlag(content, macroContext);
         const isMainPrompt = identifier === 'main';
         if (isMainPrompt && suppressGenericReplyPrompt && !hasExplicitPromptContent) {
           appendWorldBucket('beforeScenario');

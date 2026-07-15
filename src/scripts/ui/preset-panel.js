@@ -17,6 +17,7 @@ import { appConfirm, appChoice, appPromptText } from './app-confirm.js';
 import { buildScriptAuthorizationMessage } from './script-authorization-utils.js';
 import { createDragGhost } from './drag-ghost-utils.js';
 import { estimateTokens } from '../memory/memory-prompt-utils.js';
+import { buildLineDiff } from '../utils/line-diff-utils.js';
 import {
     REGEX_CUSTOM_PROMPT_PRESET_TYPE,
     resolveImportedRegexPresetBindTarget,
@@ -632,12 +633,162 @@ const PANEL_CSS = `
     word-break: break-word;
     color: var(--app-text-secondary);
 }
-.pp-prev-block {
-    background: rgba(var(--app-accent-rgb, 25, 154, 255), 0.07);
-    border-radius: 4px;
-    box-shadow: inset 2px 0 0 rgba(var(--app-accent-rgb, 25, 154, 255), 0.5);
+/* 区块段落无常驻高亮（视觉减负）：联动定位时缓慢闪烁两下后恢复；可编辑段 hover 有极淡提示 */
+.pp-prev-block { border-radius: 4px; }
+.pp-prev-block[contenteditable]:hover { background: rgba(var(--app-accent-rgb, 25, 154, 255), 0.05); }
+.pp-prev-block.pp-prev-flash { animation: pp-prev-flash 1.05s ease-in-out 2; }
+@keyframes pp-prev-flash {
+    0%, 100% { background: transparent; box-shadow: none; }
+    50% {
+        background: rgba(var(--app-accent-rgb, 25, 154, 255), 0.18);
+        box-shadow: inset 2px 0 0 rgba(var(--app-accent-rgb, 25, 154, 255), 0.6);
+    }
 }
-.pp-prev-block.is-current { background: rgba(var(--app-accent-rgb, 25, 154, 255), 0.14); }
+body[data-reduced-motion='on'] .pp-prev-block.pp-prev-flash {
+    animation: none;
+    background: rgba(var(--app-accent-rgb, 25, 154, 255), 0.14);
+}
+/* 预览内可直接编辑（写回草稿）：聚焦时描边提示 */
+.pp-prev-block[contenteditable] {
+    cursor: text;
+    caret-color: var(--app-accent-primary);
+    user-select: text;
+    -webkit-user-select: text;
+}
+.pp-prev-block[contenteditable]:focus {
+    outline: 1.5px dashed rgba(var(--app-accent-rgb, 25, 154, 255), 0.6);
+    outline-offset: 1px;
+}
+/* 模糊锚定段（宏改写块）：仅参与滚动联动，不可编辑、样式更淡 */
+.pp-prev-block.pp-prev-anchor { box-shadow: inset 2px 0 0 rgba(var(--app-accent-rgb, 25, 154, 255), 0.22); background: transparent; }
+/* 宏 token：原样显示时的可求值小段（悬停/点按出气泡） */
+.pp-macro {
+    background: rgba(var(--app-accent-rgb, 25, 154, 255), 0.10);
+    border-bottom: 1px dashed rgba(var(--app-accent-rgb, 25, 154, 255), 0.55);
+    border-radius: 3px;
+    cursor: help;
+}
+.pp-macro-tip {
+    position: fixed;
+    z-index: 21500;
+    max-width: min(340px, 80vw);
+    padding: 8px 10px;
+    border: 1px solid var(--app-border-default);
+    border-radius: 10px;
+    background: var(--app-surface-card);
+    color: var(--app-text-primary);
+    font-size: 12px;
+    line-height: 1.55;
+    white-space: pre-wrap;
+    word-break: break-word;
+    box-shadow: 0 10px 28px rgba(15, 23, 42, 0.22);
+    pointer-events: none;
+}
+.pp-macro-tip[data-kind="effect"], .pp-macro-tip[data-kind="script"] { color: var(--app-text-secondary); }
+/* diff 色 token：默认挂靠语义状态色（随主题走），可用 --app-diff-*-rgb 定向覆盖 */
+#preset-panel {
+    --pp-diff-add-rgb: var(--app-diff-add-rgb, var(--app-success-rgb, 46, 160, 67));
+    --pp-diff-del-rgb: var(--app-diff-del-rgb, var(--app-danger-rgb, 248, 81, 73));
+}
+.pp-diff-ins {
+    text-decoration: none;
+    background: rgba(var(--pp-diff-add-rgb), 0.16);
+    box-shadow: inset 2px 0 0 rgba(var(--pp-diff-add-rgb), 0.65);
+}
+.pp-diff-del {
+    text-decoration: line-through;
+    background: rgba(var(--pp-diff-del-rgb), 0.14);
+    box-shadow: inset 2px 0 0 rgba(var(--pp-diff-del-rgb), 0.6);
+    opacity: 0.82;
+}
+.pp-prev-block.is-modified { cursor: text; }
+/* 每处修改旁的快捷 ✔/×（无确认；✔=接受该块并保存，×=舍弃该块草稿） */
+.pp-diff-actions { display: inline-flex; gap: 4px; margin: 0 4px; vertical-align: middle; user-select: none; }
+.pp-diff-accept, .pp-diff-reject {
+    display: inline-flex; align-items: center; justify-content: center;
+    min-width: 20px; height: 20px; padding: 0 5px;
+    border-radius: 6px; border: 1px solid; cursor: pointer;
+    font-size: 12px; line-height: 1;
+}
+.pp-diff-accept {
+    border-color: rgba(var(--pp-diff-add-rgb), 0.5);
+    background: rgba(var(--pp-diff-add-rgb), 0.12);
+    color: var(--app-success-text, #15803d);
+}
+.pp-diff-reject {
+    border-color: rgba(var(--pp-diff-del-rgb), 0.5);
+    background: rgba(var(--pp-diff-del-rgb), 0.10);
+    color: var(--app-danger-text, #b91c1c);
+}
+/* 预览内 hunk 级 ✔/×：更小、紧跟修改行尾 */
+.pp-preview-msg .pp-diff-actions { margin: 0 0 0 6px; vertical-align: baseline; }
+.pp-preview-msg .pp-diff-accept, .pp-preview-msg .pp-diff-reject {
+    min-width: 18px; height: 18px; padding: 0 4px; font-size: 11px; border-radius: 5px;
+}
+/* 三级页左侧红绿镜像层：textarea 背后按逻辑行铺底色（新增绿、删除处红线） */
+.pp-ta-diffwrap { position: relative; }
+#preset-panel .pp-ta-diffwrap > .pp-textarea { position: relative; z-index: 1; background: transparent; }
+.pp-ta-difflayer {
+    position: absolute;
+    inset: 1px;
+    border-radius: 10px;
+    overflow: hidden;
+    background: var(--app-surface-card);
+    pointer-events: none;
+    z-index: 0;
+}
+.pp-ta-mirror {
+    position: absolute;
+    top: 0;
+    left: 0;
+    box-sizing: border-box;
+    padding: 10px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
+    font-size: 12px;
+    line-height: 1.45;
+    white-space: pre-wrap;
+    overflow-wrap: break-word;
+    color: transparent;
+}
+.pp-ta-line { min-height: 1.45em; }
+.pp-ta-add {
+    background: rgba(var(--pp-diff-add-rgb), 0.15);
+    box-shadow: inset 2px 0 0 rgba(var(--pp-diff-add-rgb), 0.6);
+}
+.pp-ta-delmark { height: 0; border-top: 2px solid rgba(var(--pp-diff-del-rgb), 0.7); }
+/* 二级卡片上的快捷 ✔/×：仅已修改的卡显示 */
+.pp-block .pp-block-quick { display: none; gap: 4px; margin-right: 2px; }
+.pp-block.is-modified .pp-block-quick { display: inline-flex; }
+.pp-block.is-modified { border-color: rgba(var(--app-warning-rgb, 245, 158, 11), 0.55); }
+/* 左侧 textarea 选区 → 预览同步高亮 */
+::highlight(pp-preview-sel) { background: rgba(var(--app-accent-rgb, 25, 154, 255), 0.32); }
+/* 面板放大占满 */
+#preset-panel[data-maximized="1"] {
+    top: env(safe-area-inset-top, 0px) !important;
+    left: env(safe-area-inset-left, 0px) !important;
+    right: env(safe-area-inset-right, 0px) !important;
+    bottom: 0 !important;
+    height: auto !important;
+    max-height: none !important;
+    border-radius: 0 !important;
+    max-width: none !important;
+    margin: 0 !important;
+}
+#preset-maximize.is-on { color: var(--app-accent-strong, var(--app-accent-primary)) !important; }
+/* 底部统一批量条（Cursor 式接受全部/全部取消） */
+.pp-btn-acceptall, .pp-btn-rejectall {
+    padding: 8px 12px; border-radius: 10px; border: 1px solid; cursor: pointer; font-size: 13px;
+}
+.pp-btn-acceptall {
+    border-color: rgba(var(--pp-diff-add-rgb), 0.55);
+    background: rgba(var(--pp-diff-add-rgb), 0.12);
+    color: var(--app-success-text, #15803d);
+}
+.pp-btn-rejectall {
+    border-color: rgba(var(--pp-diff-del-rgb), 0.5);
+    background: rgba(var(--pp-diff-del-rgb), 0.08);
+    color: var(--app-danger-text, #b91c1c);
+}
 .pp-prev-history-chip {
     margin: 10px 0;
     padding: 9px 12px;
@@ -701,6 +852,10 @@ const PANEL_CSS = `
     touch-action: none;
 }
 #preset-panel[data-preview="split"] .pp-pane-handle { display: flex; }
+/* 分栏时上下成对：上=拉全屏（⟨），下=收合回把手（⟩） */
+.pp-pane-handle-expand { top: calc(50% - 46px); }
+.pp-pane-handle-collapse { top: calc(50% + 46px); }
+.pp-pane-handle:hover { color: var(--app-accent-strong, var(--app-accent-primary)); }
 .pp-editor-handle {
     position: absolute;
     left: 0;
@@ -1409,6 +1564,9 @@ export class PresetPanel {
         this.runtimeContext.buildScenePromptPreviewRequest = typeof context.buildScenePromptPreviewRequest === 'function'
             ? context.buildScenePromptPreviewRequest
             : this.runtimeContext.buildScenePromptPreviewRequest;
+        this.runtimeContext.evalScenePreviewMacro = typeof context.evalScenePreviewMacro === 'function'
+            ? context.evalScenePreviewMacro
+            : this.runtimeContext.evalScenePreviewMacro;
         this.runtimeContext.getUiMode = typeof context.getUiMode === 'function'
             ? context.getUiMode
             : this.runtimeContext.getUiMode;
@@ -1749,9 +1907,41 @@ export class PresetPanel {
         this.setPageView(this.currentPage);
         // 预览不跨开合残留：每次打开都从收起状态开始（一级页无预览）
         this.closePreview({ animate: false });
+        // 区块草稿跨开合缓存：重新打开时恢复未保存计数提示
+        this.updateUnsavedIndicator();
         if (section && this.detailScrollEl) this.detailScrollEl.scrollTop = 0;
         this.element.style.display = 'flex';
         this.overlayElement.style.display = 'block';
+    }
+
+    /* 取消 = 确认后回滚未保存编辑；×/遮罩关闭 = 缓存编辑（发送始终用已保存内容，保存才更新） */
+    async onCancel() {
+        const n = this.countUnsavedBlockChanges() + (this.drafts?.size || 0);
+        if (n > 0) {
+            const ok = await appConfirm({
+                title: '放弃未保存的更改',
+                message: `有 ${n} 处未保存的更改，取消将全部回滚。确定放弃吗？`,
+                danger: true,
+            });
+            if (!ok) return;
+            this.openaiBlockDrafts?.clear?.();
+            this.drafts.clear();
+            this.renderAllSections();
+            this.updateUnsavedIndicator();
+            window.toastr?.info?.('已放弃未保存的更改');
+        }
+        this.hide();
+    }
+
+    /* 会清掉区块草稿的操作（切换/新建预设、导入）前确认 */
+    async confirmDiscardBlockDrafts(actionLabel = '此操作') {
+        const n = this.countUnsavedBlockChanges();
+        if (n <= 0) return true;
+        return appConfirm({
+            title: '未保存的更改',
+            message: `${actionLabel}会丢弃 ${n} 处未保存的区块修改。确定继续吗？`,
+            danger: true,
+        });
     }
 
     hide() {
@@ -1795,6 +1985,7 @@ export class PresetPanel {
                     <div class="pp-header-title has-help" data-help="选择/编辑提示词与生成参数">预设（Preset）</div>
                 </div>
                 <div class="pp-header-actions">
+                    <button id="preset-maximize" title="放大占满 / 还原">⛶</button>
                     <button id="preset-import">导入</button>
                     <button id="preset-export">导出</button>
                     <button class="pp-close" id="preset-close">&times;</button>
@@ -1857,12 +2048,14 @@ export class PresetPanel {
                 </div>
             </div>
             <aside class="pp-preview-pane" id="preset-preview-pane">
-                <button type="button" class="pp-pane-handle" id="preset-preview-expand" aria-label="拉出全屏预览">⟨</button>
+                <button type="button" class="pp-pane-handle pp-pane-handle-expand" id="preset-preview-expand" aria-label="拉出全屏预览">⟨</button>
+                <button type="button" class="pp-pane-handle pp-pane-handle-collapse" id="preset-preview-collapse" aria-label="收起预览">⟩</button>
                 <div class="pp-preview-head">
                     <div class="pp-preview-title">请求预览<span class="pp-preview-est" id="preset-preview-est"></span></div>
                     <div class="pp-preview-actions">
                         <button type="button" id="preset-preview-toggle-chatfmt" class="pp-preview-toggle has-help" data-help="加入聊天格式等聊天专属注入（默认按创意写作组装，不含）。" data-help-mode="press">聊天格式</button>
                         <button type="button" id="preset-preview-toggle-history" class="pp-preview-toggle has-help" data-help="加入当前会话的聊天记录（默认折叠为占位符）。" data-help-mode="press">聊天记录</button>
+                        <button type="button" id="preset-preview-toggle-macroeval" class="pp-preview-toggle has-help" data-help="默认区块原样显示（宏语法可见、左右逐字联动，悬停/点按宏可看求值）。开启后区块整体求值，展示实际送模型的效果。" data-help-mode="press">宏求值</button>
                         <button type="button" id="preset-preview-refresh" class="pp-preview-toggle" aria-label="重新构建">↻</button>
                         <button type="button" id="preset-preview-close" class="pp-preview-toggle" aria-label="关闭预览">×</button>
                     </div>
@@ -1876,6 +2069,8 @@ export class PresetPanel {
             <div class="pp-status" id="preset-status"></div>
             <div class="pp-footer">
                 <span class="pp-unsaved-chip" id="preset-unsaved-chip" hidden></span>
+                <button type="button" class="pp-btn-acceptall" id="preset-accept-all" hidden>✔ 接受全部</button>
+                <button type="button" class="pp-btn-rejectall" id="preset-reject-all" hidden>× 全部取消</button>
                 <button class="pp-btn-cancel" id="preset-cancel">取消</button>
                 <button class="pp-btn-save" id="preset-save">保存</button>
             </div>
@@ -1900,7 +2095,19 @@ export class PresetPanel {
         this.blockSubtitleEl = this.element.querySelector('#preset-block-subtitle');
         this.blockEditorEl = this.element.querySelector('#preset-block-editor');
         this.element.querySelector('#preset-close').onclick = () => this.hide();
-        this.element.querySelector('#preset-cancel').onclick = () => this.hide();
+        this.element.querySelector('#preset-cancel').onclick = () => this.onCancel();
+        this.element.querySelector('#preset-accept-all').onclick = () => this.acceptAllBlockDrafts();
+        this.element.querySelector('#preset-reject-all').onclick = () => this.rejectAllBlockDrafts();
+        const maxBtn = this.element.querySelector('#preset-maximize');
+        if (maxBtn) {
+            const applyMax = (on) => {
+                this.element.dataset.maximized = on ? '1' : '0';
+                maxBtn.classList.toggle('is-on', on);
+                try { localStorage.setItem('preset-panel-maximized', on ? '1' : '0'); } catch {}
+            };
+            maxBtn.onclick = () => applyMax(this.element.dataset.maximized !== '1');
+            try { if (localStorage.getItem('preset-panel-maximized') === '1') applyMax(true); } catch {}
+        }
         this.element.querySelector('#preset-save').onclick = () => this.onSave();
         this.element.querySelector('#preset-back').onclick = () => this.showRootPage();
         this.element.querySelector('#preset-binding-back').onclick = () => this.showDetailPage();
@@ -2075,6 +2282,11 @@ export class PresetPanel {
         deleteBtn.disabled = !activeId;
 
         select.onchange = async () => {
+            // 切换 openai 预设会清区块草稿：先确认（拒绝则复位选择）
+            if (storeType === 'openai' && select.value !== this.store.getActiveId('openai')) {
+                const ok = await this.confirmDiscardBlockDrafts('切换预设');
+                if (!ok) { this.renderManager(); return; }
+            }
             this.captureCurrentDetailDraft();
             await this.store.setActive(storeType, select.value);
             this.renderAllSections();
@@ -3265,8 +3477,13 @@ export class PresetPanel {
         const promptById = new Map();
         prompts.forEach(pr => { if (pr?.identifier) promptById.set(pr.identifier, pr); });
         // 懒渲染数据载体：列表只建轻量卡（重型预设百余区块秒开），编辑草稿进 Map，
-        // 保存时由 collectSectionData 合并（capture 总先于重渲染，render 起点清空防跨预设污染）。
-        this.openaiBlockDrafts = new Map();
+        // 保存时由 collectSectionData 合并。草稿跨面板开合缓存（关掉界面不丢；发送始终用已保存内容），
+        // 仅在切换预设（防跨预设污染）、点保存（已入库）或点取消（回滚）时清空。
+        const draftScope = `openai:${this.store.getActiveId('openai') || ''}`;
+        if (this.openaiBlockDraftsScope !== draftScope || !(this.openaiBlockDrafts instanceof Map)) {
+            this.openaiBlockDrafts = new Map();
+            this.openaiBlockDraftsScope = draftScope;
+        }
         this.openaiBlockBase = promptById;
         const orderBlock = pickPromptOrderBlock();
         const order = Array.isArray(orderBlock?.order) ? orderBlock.order : [];
@@ -3382,6 +3599,16 @@ export class PresetPanel {
             enabledInput.addEventListener('change', () => {
                 card.classList.toggle('pp-block-disabled', !enabledInput.checked);
             });
+            // 已修改卡的快捷 ✔/×（.is-modified 时显示）
+            const quick = document.createElement('span');
+            quick.className = 'pp-block-quick';
+            quick.innerHTML = `
+                <button type="button" class="pp-diff-accept" title="接受此区块修改并保存">✔</button>
+                <button type="button" class="pp-diff-reject" title="舍弃此区块草稿">×</button>
+            `;
+            quick.querySelector('.pp-diff-accept').addEventListener('click', (e) => { e.stopPropagation(); this.acceptBlockDraft(identifier); });
+            quick.querySelector('.pp-diff-reject').addEventListener('click', (e) => { e.stopPropagation(); this.rejectBlockDraft(identifier); });
+            right.appendChild(quick);
             right.appendChild(enabledWrap);
 
             if (canEdit) {
@@ -3560,18 +3787,7 @@ export class PresetPanel {
             host.appendChild(p);
         } else {
             // 懒渲染：编辑草稿存 openaiBlockDrafts（首次进入时按需从预设数据播种），保存时统一合并
-            if (!(this.openaiBlockDrafts instanceof Map)) this.openaiBlockDrafts = new Map();
-            const base = this.openaiBlockBase?.get?.(identifier) || null;
-            const known = OPENAI_KNOWN_BLOCKS[identifier];
-            if (!this.openaiBlockDrafts.has(identifier)) {
-                this.openaiBlockDrafts.set(identifier, {
-                    name: String(base?.name || known?.label || identifier),
-                    role: roleIdToName(base?.role || 'system'),
-                    system_prompt: (typeof base?.system_prompt === 'boolean') ? base.system_prompt : true,
-                    content: String(base?.content ?? ''),
-                });
-            }
-            const draft = this.openaiBlockDrafts.get(identifier);
+            const draft = this.ensureBlockDraft(identifier);
 
             const metaRow = document.createElement('div');
             metaRow.style.cssText = 'display:flex; gap:10px; flex-wrap:wrap; margin-bottom:10px;';
@@ -3619,27 +3835,7 @@ export class PresetPanel {
             sysWrap.appendChild(document.createTextNode('system_prompt'));
             host.appendChild(sysWrap);
 
-            const bodyLabelRow = document.createElement('div');
-            bodyLabelRow.style.cssText = 'display:flex; align-items:center; justify-content:space-between; gap:8px;';
-            bodyLabelRow.appendChild(mkLabel('提示词正文'));
-            const restoreBtn = document.createElement('button');
-            restoreBtn.type = 'button';
-            restoreBtn.textContent = '还原此区块';
-            restoreBtn.className = 'has-help';
-            restoreBtn.setAttribute('data-help', '丢弃此区块未保存的修改，恢复到上次保存的内容。');
-            restoreBtn.setAttribute('data-help-mode', 'press');
-            restoreBtn.style.cssText = 'padding:4px 10px; border:1px solid var(--app-border-default); border-radius:8px; background:var(--app-surface-subtle); color:var(--app-text-secondary); cursor:pointer; font-size:12px; flex:none;';
-            restoreBtn.onclick = () => {
-                this.openaiBlockDrafts.delete(identifier);
-                const restoredTitle = base?.name || known?.label || identifier;
-                if (cardTitleEl) cardTitleEl.textContent = restoredTitle;
-                if (cardSubEl) cardSubEl.textContent = `role: ${roleIdToName(base?.role || 'system')}`;
-                this.openOpenAIBlockEditor(card);
-                this.updateUnsavedIndicator();
-                window.toastr?.info?.('已还原此区块');
-            };
-            bodyLabelRow.appendChild(restoreBtn);
-            host.appendChild(bodyLabelRow);
+            host.appendChild(mkLabel('提示词正文'));
             const ta = document.createElement('textarea');
             ta.className = 'pp-textarea';
             ta.spellcheck = false;
@@ -3650,11 +3846,54 @@ export class PresetPanel {
                 this.scheduleUnsavedIndicatorUpdate();
                 this.schedulePreviewLiveUpdate(identifier);
             });
-            // 光标位置 → 预览滚动联动
-            const caretSync = () => this.syncPreviewToCaret(identifier, ta);
+            // 光标位置 / 正文滚动 / 选区 → 预览联动
+            const caretSync = () => {
+                this.syncPreviewToCaret(identifier, ta);
+                this.syncSelectionToPreview(identifier, ta);
+            };
             ta.addEventListener('click', caretSync);
             ta.addEventListener('keyup', caretSync);
-            host.appendChild(ta);
+            ta.addEventListener('mouseup', () => this.syncSelectionToPreview(identifier, ta));
+            ta.addEventListener('select', () => this.syncSelectionToPreview(identifier, ta));
+            // 红绿高亮镜像层：textarea 背后按逻辑行镜像草稿，新增行绿底、删除处红线（无按钮，仅提示）
+            const taWrap = document.createElement('div');
+            taWrap.className = 'pp-ta-diffwrap';
+            const taLayer = document.createElement('div');
+            taLayer.className = 'pp-ta-difflayer';
+            taLayer.setAttribute('aria-hidden', 'true');
+            const taMirror = document.createElement('div');
+            taMirror.className = 'pp-ta-mirror';
+            taLayer.appendChild(taMirror);
+            taWrap.appendChild(taLayer);
+            taWrap.appendChild(ta);
+            const syncLayerScroll = () => { taMirror.style.transform = `translateY(${-ta.scrollTop}px)`; };
+            const updateTaDiffLayer = () => {
+                if (!ta.isConnected) return;
+                const baseC = String(this.openaiBlockBase?.get?.(identifier)?.content ?? '');
+                if (String(ta.value ?? '') === baseC) { taMirror.innerHTML = ''; return; }
+                const { rows } = buildLineDiff(baseC, ta.value, { collapseContext: false });
+                let html = '';
+                for (const r of rows) {
+                    if (r.type === 'del') { html += '<div class="pp-ta-delmark"></div>'; continue; }
+                    html += `<div class="pp-ta-line${r.type === 'add' ? ' pp-ta-add' : ''}">${escapeHtml(r.text)}</div>`;
+                }
+                taMirror.style.width = `${ta.clientWidth}px`;
+                taMirror.innerHTML = html;
+                syncLayerScroll();
+            };
+            this._updateTaDiffLayer = updateTaDiffLayer;
+            let taScrollTimer = null;
+            ta.addEventListener('scroll', () => {
+                syncLayerScroll();
+                if (this._taAutoScroll) { this._taAutoScroll = false; return; } // 程序滚动回声
+                if (taScrollTimer) return;
+                taScrollTimer = setTimeout(() => {
+                    taScrollTimer = null;
+                    this.syncPreviewToEditorScroll(identifier, ta);
+                }, 90);
+            }, { passive: true });
+            host.appendChild(taWrap);
+            updateTaDiffLayer();
         }
         this.currentPage = 'block';
         this.setPageView('block');
@@ -3820,33 +4059,277 @@ export class PresetPanel {
         }, { passive: true });
     }
 
-    /* 未保存更改指示：区块草稿 Map 与基线逐项比对 + 其它分区草稿数（capture 已丢弃与基线一致的草稿） */
-    countUnsavedBlockChanges() {
-        const base = this.openaiBlockBase;
-        let n = 0;
-        if (this.openaiBlockDrafts instanceof Map) {
-            this.openaiBlockDrafts.forEach((d, id) => {
-                const b = base?.get?.(id) || null;
-                if (!b) { n += 1; return; }
-                const baseRole = roleIdToName(b.role || 'system');
-                const baseSys = typeof b.system_prompt === 'boolean' ? b.system_prompt : true;
-                const baseName = b.name || id;
-                if (String(d.name ?? '') !== String(baseName)
-                    || d.role !== baseRole
-                    || Boolean(d.system_prompt) !== baseSys
-                    || String(d.content ?? '') !== String(b.content ?? '')) n += 1;
+    /* 区块草稿播种：首次触碰（编辑页/预览内编辑）时从已保存基线复制一份 */
+    ensureBlockDraft(identifier) {
+        if (!identifier) return null;
+        if (!(this.openaiBlockDrafts instanceof Map)) this.openaiBlockDrafts = new Map();
+        if (!this.openaiBlockDrafts.has(identifier)) {
+            const base = this.openaiBlockBase?.get?.(identifier) || null;
+            const known = OPENAI_KNOWN_BLOCKS[identifier];
+            this.openaiBlockDrafts.set(identifier, {
+                name: String(base?.name || known?.label || identifier),
+                role: roleIdToName(base?.role || 'system'),
+                system_prompt: (typeof base?.system_prompt === 'boolean') ? base.system_prompt : true,
+                content: String(base?.content ?? ''),
             });
         }
-        return n;
+        return this.openaiBlockDrafts.get(identifier);
+    }
+
+    /* 草稿与基线的逐字段比对（未保存计数、diff 徽标、预览 diff 共用同一判定） */
+    isBlockDraftModified(identifier) {
+        const d = this.openaiBlockDrafts?.get?.(identifier);
+        if (!d) return false;
+        const b = this.openaiBlockBase?.get?.(identifier) || null;
+        if (!b) return true;
+        const baseRole = roleIdToName(b.role || 'system');
+        const baseSys = typeof b.system_prompt === 'boolean' ? b.system_prompt : true;
+        const baseName = b.name || identifier;
+        return String(d.name ?? '') !== String(baseName)
+            || d.role !== baseRole
+            || Boolean(d.system_prompt) !== baseSys
+            || String(d.content ?? '') !== String(b.content ?? '');
+    }
+
+    modifiedBlockDraftIds() {
+        const ids = [];
+        this.openaiBlockDrafts?.forEach?.((d, id) => { if (this.isBlockDraftModified(id)) ids.push(id); });
+        return ids;
+    }
+
+    /* 未保存更改指示：区块草稿 Map 与基线逐项比对 + 其它分区草稿数（capture 已丢弃与基线一致的草稿） */
+    countUnsavedBlockChanges() {
+        return this.modifiedBlockDraftIds().length;
+    }
+
+    /* ✔ 接受：把指定区块草稿立即合并入当前预设并入库（快捷、无确认） */
+    async acceptBlockDraft(identifier) {
+        if (!identifier || !this.isBlockDraftModified(identifier)) return;
+        await this.applyBlockDraftsToStore([identifier]);
+    }
+
+    async acceptAllBlockDrafts() {
+        const ids = this.modifiedBlockDraftIds();
+        if (ids.length) await this.applyBlockDraftsToStore(ids);
+    }
+
+    async applyBlockDraftsToStore(ids) {
+        await this.store.ready;
+        const activeId = this.store.getActiveId('openai');
+        if (!activeId || !Array.isArray(ids) || !ids.length) return;
+        try {
+            const data = deepClone(this.store.getActive('openai') || {});
+            if (!Array.isArray(data.prompts)) data.prompts = [];
+            const byId = new Map(data.prompts.map(pr => [pr?.identifier, pr]).filter(([k]) => k));
+            const newOnes = [];
+            const merged = new Map();
+            for (const ident of ids) {
+                const draft = this.openaiBlockDrafts?.get?.(ident);
+                if (!draft) continue;
+                const existing = byId.get(ident) || null;
+                const next = {
+                    ...(existing || {}), identifier: ident,
+                    name: draft.name || existing?.name || ident,
+                    role: roleIdToName(draft.role || existing?.role || 'system'),
+                    system_prompt: typeof draft.system_prompt === 'boolean' ? draft.system_prompt : (existing?.system_prompt ?? true),
+                    marker: false,
+                    content: String(draft.content ?? existing?.content ?? ''),
+                };
+                if (existing) Object.assign(existing, next);
+                else { data.prompts.push(next); newOnes.push(ident); }
+                merged.set(ident, next);
+            }
+            // 新区块补 prompt_order（与「新增区块插到顶部」一致）
+            if (newOnes.length) {
+                if (!Array.isArray(data.prompt_order) || !data.prompt_order.length) {
+                    data.prompt_order = [{ character_id: 100001, order: [] }];
+                }
+                const ob = data.prompt_order.find(b => String(b?.character_id) === '100001') || data.prompt_order[0];
+                if (ob && Array.isArray(ob.order)) {
+                    for (const ident of newOnes) {
+                        if (!ob.order.some(o => o?.identifier === ident)) ob.order.unshift({ identifier: ident, enabled: true });
+                    }
+                }
+            }
+            const name = String(data?.name || '').trim() || activeId;
+            await this.store.upsert('openai', { id: activeId, name, data });
+            // 就地更新基线与卡片（不整体重建，保住编辑位置/滚动）
+            merged.forEach((next, ident) => {
+                this.openaiBlockBase?.set?.(ident, next);
+                this.openaiBlockDrafts?.delete?.(ident);
+                const card = this.getBlockCards().find(c => c.dataset.identifier === ident);
+                if (card) {
+                    const t = card.querySelector('.pp-block-title'); if (t) t.textContent = next.name || ident;
+                    const s = card.querySelector('.pp-block-sub'); if (s) s.textContent = `role: ${next.role || 'system'}`;
+                }
+            });
+            window.dispatchEvent(new CustomEvent('preset-changed'));
+            this.updateUnsavedIndicator();
+            this.showStatus(ids.length > 1 ? `已接受 ${merged.size} 处修改并保存` : '已接受修改并保存', 'success');
+            // 骨架重建由 preset-changed 监听统一处理（上面已 dispatch）
+        } catch (err) {
+            logger.error('接受区块修改失败', err);
+            this.showStatus(err.message || '保存失败', 'error');
+        }
+    }
+
+    /* ✔ hunk 级接受：只把该处修改并入基线并入库，其它修改保持草稿态 */
+    async acceptBlockHunk(identifier, hunkIdx) {
+        const draft = this.openaiBlockDrafts?.get?.(identifier);
+        if (!draft || !Number.isFinite(hunkIdx)) return;
+        const base = String(this.openaiBlockBase?.get?.(identifier)?.content ?? '');
+        const newBase = this.applyBlockHunk(base, String(draft.content ?? ''), hunkIdx, 'accept');
+        await this.applyBlockContentToStore(identifier, newBase);
+        this.showStatus('已接受该处修改并保存', 'success');
+    }
+
+    /* × hunk 级回滚：只回滚该处修改（草稿里恢复基线行），其它修改保留 */
+    rejectBlockHunk(identifier, hunkIdx) {
+        const draft = this.openaiBlockDrafts?.get?.(identifier);
+        if (!draft || !Number.isFinite(hunkIdx)) return;
+        const base = String(this.openaiBlockBase?.get?.(identifier)?.content ?? '');
+        draft.content = this.applyBlockHunk(base, String(draft.content ?? ''), hunkIdx, 'reject');
+        if (this.currentPage === 'block' && this.currentBlockCard?.dataset?.identifier === identifier) {
+            const ta = this.blockEditorEl?.querySelector('textarea');
+            if (ta && ta.value !== draft.content) ta.value = draft.content;
+        }
+        this.updateUnsavedIndicator();
+        this.refreshPreviewMessageFor(identifier);
+    }
+
+    /* 单区块内容写库（hunk 接受用）：只动 content，name/role 等其它字段留在草稿等整体保存 */
+    async applyBlockContentToStore(identifier, content) {
+        await this.store.ready;
+        const activeId = this.store.getActiveId('openai');
+        if (!activeId || !identifier) return;
+        try {
+            const data = deepClone(this.store.getActive('openai') || {});
+            if (!Array.isArray(data.prompts)) data.prompts = [];
+            let pr = data.prompts.find(x => x?.identifier === identifier);
+            if (!pr) {
+                const draft = this.openaiBlockDrafts?.get?.(identifier);
+                pr = {
+                    identifier,
+                    name: draft?.name || identifier,
+                    role: roleIdToName(draft?.role || 'system'),
+                    system_prompt: typeof draft?.system_prompt === 'boolean' ? draft.system_prompt : true,
+                    marker: false,
+                    content: '',
+                };
+                data.prompts.push(pr);
+                if (!Array.isArray(data.prompt_order) || !data.prompt_order.length) {
+                    data.prompt_order = [{ character_id: 100001, order: [] }];
+                }
+                const ob = data.prompt_order.find(b => String(b?.character_id) === '100001') || data.prompt_order[0];
+                if (ob && Array.isArray(ob.order) && !ob.order.some(o => o?.identifier === identifier)) {
+                    ob.order.unshift({ identifier, enabled: true });
+                }
+            }
+            pr.content = String(content ?? '');
+            const name = String(data?.name || '').trim() || activeId;
+            await this.store.upsert('openai', { id: activeId, name, data });
+            this.openaiBlockBase?.set?.(identifier, deepClone(pr));
+            window.dispatchEvent(new CustomEvent('preset-changed')); // 骨架重建由监听统一处理
+            this.updateUnsavedIndicator();
+        } catch (err) {
+            logger.error('接受该处修改失败', err);
+            this.showStatus(err.message || '保存失败', 'error');
+        }
+    }
+
+    /* × 舍弃：丢掉指定区块草稿，界面回基线（快捷、无确认） */
+    rejectBlockDraft(identifier) {
+        if (!identifier || !this.openaiBlockDrafts?.has?.(identifier)) return;
+        this.openaiBlockDrafts.delete(identifier);
+        const base = this.openaiBlockBase?.get?.(identifier);
+        const card = this.getBlockCards().find(c => c.dataset.identifier === identifier);
+        if (card) {
+            const t = card.querySelector('.pp-block-title'); if (t) t.textContent = base?.name || identifier;
+            const s = card.querySelector('.pp-block-sub'); if (s) s.textContent = `role: ${roleIdToName(base?.role || 'system')}`;
+            if (this.currentPage === 'block' && this.currentBlockCard === card) this.openOpenAIBlockEditor(card);
+        }
+        this.updateUnsavedIndicator();
+        if (this.previewState !== 'closed') this.refreshPreviewMessageFor(identifier);
+    }
+
+    /* 全部取消 = 批量舍弃 → 需确认（与「舍弃草稿要确认」的约定一致；单处 × 快捷免确认） */
+    async rejectAllBlockDrafts() {
+        const ids = this.modifiedBlockDraftIds();
+        if (!ids.length) return;
+        const ok = await appConfirm({
+            title: '全部取消',
+            message: `将舍弃 ${ids.length} 处未保存的区块修改，确定？`,
+            danger: true,
+        });
+        if (!ok) return;
+        ids.forEach(id => this.rejectBlockDraft(id));
+        window.toastr?.info?.('已舍弃全部未保存修改');
+    }
+
+    /* 预览 diff 段点击 → 切换为直接编辑（blur 后回 diff 视图） */
+    enterPreviewBlockEdit(span) {
+        const id = span?.getAttribute?.('data-pp-prev-block') || '';
+        const draft = this.openaiBlockDrafts?.get?.(id);
+        if (!draft) return;
+        span.classList.add('is-editing');
+        span.textContent = String(draft.content ?? '');
+        span.setAttribute('contenteditable', 'plaintext-only');
+        span.setAttribute('spellcheck', 'false');
+        try { span.focus(); } catch {}
+        const onBlur = () => {
+            span.removeEventListener('blur', onBlur);
+            span.classList.remove('is-editing');
+            this.refreshPreviewMessageFor(id);
+        };
+        span.addEventListener('blur', onBlur);
+    }
+
+    /* 左侧选区 → 预览同步高亮（CSS Custom Highlight；span 为纯文本态且内容一致时才可映射） */
+    syncSelectionToPreview(identifier, textarea) {
+        const registry = (typeof CSS !== 'undefined' && CSS.highlights) ? CSS.highlights : null;
+        const HighlightCtor = typeof Highlight !== 'undefined' ? Highlight : null;
+        if (!registry || !HighlightCtor) return;
+        const clear = () => registry.delete('pp-preview-sel');
+        if (this.previewState === 'closed' || !textarea || !identifier) { clear(); return; }
+        const s = textarea.selectionStart ?? 0;
+        const e = textarea.selectionEnd ?? 0;
+        let span = null;
+        try { span = this.previewBodyEl?.querySelector(`[data-pp-prev-block="${CSS.escape(identifier)}"]`); } catch {}
+        if (!span || e <= s || span.textContent !== textarea.value) { clear(); return; }
+        const from = this.locateTextOffsetInSpan(span, s);
+        const to = this.locateTextOffsetInSpan(span, e);
+        if (!from || !to) { clear(); return; }
+        try {
+            const range = document.createRange();
+            range.setStart(from[0], from[1]);
+            range.setEnd(to[0], to[1]);
+            registry.set('pp-preview-sel', new HighlightCtor(range));
+        } catch { clear(); }
+    }
+
+    /* 二级卡片「已修改」徽标 + 快捷 ✔/× 显隐 */
+    updateBlockCardModifiedBadges() {
+        const modified = new Set(this.modifiedBlockDraftIds());
+        this.element?.querySelectorAll('#openai-blocks .openai-block').forEach((card) => {
+            card.classList.toggle('is-modified', modified.has(card.dataset.identifier || ''));
+        });
     }
 
     updateUnsavedIndicator() {
         const el = this.element?.querySelector('#preset-unsaved-chip');
         if (!el) return;
-        const n = this.countUnsavedBlockChanges() + (this.drafts?.size || 0);
+        const blockN = this.countUnsavedBlockChanges();
+        const n = blockN + (this.drafts?.size || 0);
         el.hidden = n <= 0;
         if (n > 0) el.textContent = `${n} 处更改尚未保存`;
         this.element?.querySelector('.pp-btn-save')?.classList.toggle('pp-save-attention', n > 0);
+        // 批量条：只针对区块草稿（分区草稿走整体「保存」）
+        const acceptAll = this.element?.querySelector('#preset-accept-all');
+        const rejectAll = this.element?.querySelector('#preset-reject-all');
+        if (acceptAll) { acceptAll.hidden = blockN <= 0; acceptAll.textContent = `✔ 接受全部(${blockN})`; }
+        if (rejectAll) rejectAll.hidden = blockN <= 0;
+        this.updateBlockCardModifiedBadges();
+        this._updateTaDiffLayer?.(); // 三级页左侧红绿镜像层随草稿变化刷新
     }
 
     scheduleUnsavedIndicatorUpdate() {
@@ -3959,6 +4442,8 @@ export class PresetPanel {
         this.previewState = 'closed';
         this.previewMode = 'rp';
         this.previewIncludeHistory = false;
+        // 默认「区块原样」：宏语法可见、100% 逐字映射；关闭后整体求值展示最终效果
+        this.previewRawBlocks = true;
         this.previewSkeleton = null;
         this.previewBlockMap = new Map();
         const bindDrag = (el, onLeft, onRight) => {
@@ -3989,11 +4474,16 @@ export class PresetPanel {
             edge.addEventListener('click', () => this.openPreview());
             bindDrag(edge, () => this.openPreview(), null);
         });
-        // 分栏 pane 左缘把手：点击/左拉→全屏，右拉→关闭
+        // 分栏 pane 左缘成对把手：上=点击/左拉→全屏，下=点击/右拉→收合（两者拖拽语义一致）
         const paneHandle = pane.querySelector('#preset-preview-expand');
         if (paneHandle) {
             paneHandle.addEventListener('click', () => this.setPreviewState('full'));
             bindDrag(paneHandle, () => this.setPreviewState('full'), () => this.closePreview());
+        }
+        const paneCollapse = pane.querySelector('#preset-preview-collapse');
+        if (paneCollapse) {
+            paneCollapse.addEventListener('click', () => this.closePreview());
+            bindDrag(paneCollapse, () => this.setPreviewState('full'), () => this.closePreview());
         }
         // 全屏时左缘「编辑」把手：桌面回分栏、手机收回编辑器
         const editorReturn = pane.querySelector('#preset-editor-return');
@@ -4016,18 +4506,127 @@ export class PresetPanel {
             histBtn.classList.toggle('is-on', this.previewIncludeHistory);
             this.rebuildPreviewSkeleton();
         });
+        const macroBtn = pane.querySelector('#preset-preview-toggle-macroeval');
+        macroBtn?.addEventListener('click', () => {
+            this.previewRawBlocks = !this.previewRawBlocks;
+            macroBtn.classList.toggle('is-on', !this.previewRawBlocks);
+            this.rebuildPreviewSkeleton();
+        });
+        // 宏 token 悬停（桌面）/点按（手机）求值气泡
+        const tip = document.createElement('div');
+        tip.className = 'pp-macro-tip';
+        tip.hidden = true;
+        this.element.appendChild(tip);
+        this.macroTipEl = tip;
+        const showTip = (target) => {
+            const evalFn = this.runtimeContext?.evalScenePreviewMacro;
+            if (typeof evalFn !== 'function' || !target) return;
+            const res = evalFn(target.textContent || '') || {};
+            if (!res.text) { tip.hidden = true; return; }
+            tip.textContent = res.text;
+            tip.dataset.kind = res.kind || '';
+            tip.hidden = false;
+            tip.style.left = '0px';
+            tip.style.top = '0px';
+            const r = target.getBoundingClientRect();
+            const tw = tip.offsetWidth;
+            const th = tip.offsetHeight;
+            const left = Math.max(8, Math.min(r.left, window.innerWidth - tw - 8));
+            const top = r.top - th - 6 >= 8 ? r.top - th - 6 : r.bottom + 6;
+            tip.style.left = `${left}px`;
+            tip.style.top = `${top}px`;
+        };
+        const hideTip = () => { tip.hidden = true; };
+        this.hideMacroTip = hideTip;
+        this.previewBodyEl?.addEventListener('mouseover', (e) => {
+            if (!window.matchMedia?.('(pointer: fine)')?.matches) return;
+            const mk = e.target?.closest?.('.pp-macro');
+            if (mk) showTip(mk);
+        });
+        this.previewBodyEl?.addEventListener('mouseout', (e) => {
+            if (e.target?.closest?.('.pp-macro')) hideTip();
+        });
+        this.showMacroTip = showTip;
+        /* 回声抑制：程序发起的滚动（联动跟随）不得再触发反向联动。
+           程序滚动前打标记（目标位置+时限），滚动事件先消化标记；用户 wheel/触摸接管立即清标。 */
+        // 预设变更（切换/保存/新建/导入/启停）→ 骨架失效：预览开着就重建，关着标记下次展开重建
+        window.addEventListener('preset-changed', () => {
+            if (this._previewInvalidateTimer) clearTimeout(this._previewInvalidateTimer);
+            this._previewInvalidateTimer = setTimeout(() => {
+                if (!this.element) return;
+                const panelVisible = this.element.style.display !== 'none';
+                if (panelVisible && this.previewState && this.previewState !== 'closed') this.rebuildPreviewSkeleton();
+                else this.previewSkeleton = null;
+            }, 200);
+        });
         let scrollTimer = null;
         this.previewScrollEl?.addEventListener('scroll', () => {
+            this.hideMacroTip?.();
+            const auto = this._paneAutoScroll;
+            if (auto) {
+                // 只按超时/用户接管解除：抵达目标附近后 smooth 仍有拖尾帧，提早清标会漏回声
+                if (Date.now() > auto.until) this._paneAutoScroll = null;
+                return;
+            }
             if (scrollTimer) return;
-            scrollTimer = setTimeout(() => { scrollTimer = null; this.onPreviewScroll(); }, 160);
+            scrollTimer = setTimeout(() => { scrollTimer = null; this.onPreviewScroll(); }, 90);
         }, { passive: true });
+        ['wheel', 'touchstart', 'pointerdown'].forEach((evt) => {
+            this.previewScrollEl?.addEventListener(evt, () => { this._paneAutoScroll = null; }, { passive: true });
+        });
+        // 二级列表滚动 → 预览跟随（反向联动的对称边）
+        let listScrollTimer = null;
+        this.detailScrollEl?.addEventListener('scroll', () => {
+            if (Date.now() < (this._listAutoScrollUntil || 0)) return;
+            if (listScrollTimer) return;
+            listScrollTimer = setTimeout(() => { listScrollTimer = null; this.onEditorListScroll(); }, 90);
+        }, { passive: true });
+        ['wheel', 'touchstart', 'pointerdown'].forEach((evt) => {
+            this.detailScrollEl?.addEventListener(evt, () => { this._listAutoScrollUntil = 0; }, { passive: true });
+        });
+        // 预览内直接编辑区块段落（contenteditable）→ 写回草稿
+        this.previewBodyEl?.addEventListener('input', (e) => {
+            const span = e.target?.closest?.('[data-pp-prev-block]');
+            if (span) this.onPreviewBlockEdited(span);
+        });
+        // 普通段落在预览内编辑后失焦 → 若已偏离基线，转为 diff 视图（编辑态 blur 由 enterPreviewBlockEdit 自收口）
+        this.previewBodyEl?.addEventListener('focusout', (e) => {
+            const span = e.target?.closest?.('[data-pp-prev-block]');
+            if (!span || span.classList.contains('is-editing')) return;
+            const id = span.getAttribute('data-pp-prev-block') || '';
+            if (id && this.isBlockDraftModified(id)) this.refreshPreviewMessageFor(id);
+        });
+        // 每处修改（hunk）旁 ✔/×（快捷、无确认）；点击 diff 正文切换为直接编辑；点按宏 token 看求值（手机主通道）
+        this.previewBodyEl?.addEventListener('click', (e) => {
+            const acc = e.target?.closest?.('[data-pp-accept-hunk]');
+            if (acc) {
+                e.preventDefault();
+                this.acceptBlockHunk(acc.getAttribute('data-pp-block') || '', Number(acc.getAttribute('data-pp-accept-hunk')));
+                return;
+            }
+            const rej = e.target?.closest?.('[data-pp-reject-hunk]');
+            if (rej) {
+                e.preventDefault();
+                this.rejectBlockHunk(rej.getAttribute('data-pp-block') || '', Number(rej.getAttribute('data-pp-reject-hunk')));
+                return;
+            }
+            const mk = e.target?.closest?.('.pp-macro');
+            if (mk) { this.macroTipEl?.hidden === false ? this.hideMacroTip?.() : this.showMacroTip?.(mk); return; }
+            this.hideMacroTip?.();
+            const mod = e.target?.closest?.('.pp-prev-block.is-modified');
+            if (mod && !mod.classList.contains('is-editing')) this.enterPreviewBlockEdit(mod);
+        });
     }
 
     openPreview() {
         if (!this.previewPaneEl) return;
+        this._lastFlashBlockId = ''; // 重新展开时首次定位允许闪一次
         this.setPreviewState(this.isPreviewPhoneLayout() ? 'full' : 'split');
         if (!this.previewSkeleton) this.rebuildPreviewSkeleton();
-        else this.renderPreviewBody();
+        else {
+            this.renderPreviewBody();
+            this.positionPreviewToCurrentBlock();
+        }
     }
 
     closePreview({ animate = true } = {}) {
@@ -4038,7 +4637,11 @@ export class PresetPanel {
         const buildFn = this.runtimeContext?.buildScenePromptPreviewRequest;
         if (typeof buildFn !== 'function' || !this.previewBodyEl) return;
         this.previewBodyEl.innerHTML = '<div class="pp-preview-loading">正在构建预览…</div>';
-        const request = await buildFn({ previewUiMode: this.previewMode, includeHistory: this.previewIncludeHistory });
+        const request = await buildFn({
+            previewUiMode: this.previewMode,
+            includeHistory: this.previewIncludeHistory,
+            rawBlocks: this.previewRawBlocks !== false,
+        });
         if (!request) {
             this.previewBodyEl.innerHTML = '<div class="pp-preview-loading">构建失败：请确认当前有可用会话。</div>';
             return;
@@ -4046,6 +4649,17 @@ export class PresetPanel {
         this.previewSkeleton = request;
         this.mapBlocksToPreview();
         this.renderPreviewBody();
+        this.positionPreviewToCurrentBlock();
+    }
+
+    /* 三级页展开/重建预览后定位到正在编辑的区块（延迟等分栏宽度过渡结束，几何才准） */
+    positionPreviewToCurrentBlock() {
+        if (this._previewPosTimer) clearTimeout(this._previewPosTimer);
+        this._previewPosTimer = setTimeout(() => {
+            if (this.previewState === 'closed' || this.currentPage !== 'block') return;
+            const id = this.currentBlockCard?.dataset?.identifier || '';
+            if (id) this.syncPreviewToCaret(id, this.blockEditorEl?.querySelector('textarea') || null);
+        }, 380);
     }
 
     previewMessageText(message) {
@@ -4055,28 +4669,110 @@ export class PresetPanel {
         return String(c ?? '');
     }
 
-    /* 用「已保存基线」内容在骨架消息里定位各区块的段落（骨架由已保存状态构建，必然可命中） */
+    /* 用「已保存基线」内容在骨架消息里定位各区块的段落。
+       整段命中 → exact（可编辑/草稿替换/diff）；含宏被改写的块退而求其次：
+       取宏切分后最长的字面片段做模糊锚定（仅参与滚动联动，不做内容替换）。 */
     mapBlocksToPreview() {
         this.previewBlockMap = new Map();
         const messages = Array.isArray(this.previewSkeleton?.messages) ? this.previewSkeleton.messages : [];
         const texts = messages.map(m => this.previewMessageText(m));
         const claimed = texts.map(() => []);
+        const tryClaim = (id, needle, exact) => {
+            for (let i = 0; i < texts.length; i += 1) {
+                const start = texts[i].indexOf(needle);
+                if (start < 0) continue;
+                const end = start + needle.length;
+                if (claimed[i].some(([s0, e0]) => start < e0 && end > s0)) continue;
+                claimed[i].push([start, end]);
+                this.previewBlockMap.set(id, { msg: i, start, len: needle.length, exact });
+                return true;
+            }
+            return false;
+        };
+        const fuzzyPass = [];
         this.getBlockCards().forEach((card) => {
             const id = card.dataset.identifier || '';
             if (!id || card.dataset.marker === 'true') return;
             if (card.querySelector('.block-enabled')?.checked === false) return;
             const baseContent = String(this.openaiBlockBase?.get?.(id)?.content ?? '').trim();
             if (baseContent.length < 6) return;
-            for (let i = 0; i < texts.length; i += 1) {
-                const start = texts[i].indexOf(baseContent);
-                if (start < 0) continue;
-                const overlap = claimed[i].some(([s0, e0]) => start < e0 && start + baseContent.length > s0);
-                if (overlap) continue;
-                claimed[i].push([start, start + baseContent.length]);
-                this.previewBlockMap.set(id, { msg: i, start, len: baseContent.length });
-                break;
-            }
+            if (!tryClaim(id, baseContent, true)) fuzzyPass.push({ id, baseContent });
         });
+        // 第二遍模糊锚定（exact 全部占位后再跑，避免抢占整段命中的区间）
+        for (const { id, baseContent } of fuzzyPass) {
+            const segs = baseContent
+                .split(/\{\{[^{}]*\}\}|<%[\s\S]*?%>/)
+                .map(s => s.trim())
+                .filter(s => s.length >= 24)
+                .sort((a, b) => b.length - a.length)
+                .slice(0, 3);
+            for (const seg of segs) {
+                if (tryClaim(id, seg, false)) break;
+            }
+        }
+    }
+
+    /* 原样区块正文渲染：宏 token（{{...}} / <% %>）包成可悬停/点按求值的小段 */
+    renderRawBlockContentHtml(text) {
+        const s = String(text ?? '');
+        const re = /\{\{[^{}]*\}\}|<%[\s\S]*?%>/g;
+        let html = '';
+        let pos = 0;
+        let m;
+        while ((m = re.exec(s))) {
+            html += escapeHtml(s.slice(pos, m.index));
+            html += `<span class="pp-macro">${escapeHtml(m[0])}</span>`;
+            pos = m.index + m[0].length;
+        }
+        html += escapeHtml(s.slice(pos));
+        return html;
+    }
+
+    /* 区块 diff（红删绿增，行级；复用格式修复的 line-diff-utils）。
+       连续变更行为一个 hunk，hunk 末行右侧紧跟小 ✔/×（hunk 级接受/回滚）。 */
+    renderBlockDiffHtml(baseText, draftText, blockIdAttr = '') {
+        const { rows } = buildLineDiff(baseText, draftText, { collapseContext: false });
+        const isChanged = r => r?.type === 'del' || r?.type === 'add';
+        let html = '';
+        let hunk = -1;
+        for (let i = 0; i < rows.length; i += 1) {
+            const r = rows[i];
+            const nl = i < rows.length - 1 ? '\n' : '';
+            if (!isChanged(r)) { html += `${escapeHtml(r.text)}${nl}`; continue; }
+            if (!isChanged(rows[i - 1])) hunk += 1;
+            const body = r.type === 'del'
+                ? `<del class="pp-diff-del">${escapeHtml(r.text)}</del>`
+                : `<ins class="pp-diff-ins">${escapeHtml(r.text)}</ins>`;
+            // hunk 末行：换行前插紧跟的小 ✔/×
+            const actions = !isChanged(rows[i + 1])
+                ? `<span class="pp-diff-actions" contenteditable="false">`
+                    + `<button type="button" class="pp-diff-accept" data-pp-accept-hunk="${hunk}" data-pp-block="${blockIdAttr}" title="接受此处修改并保存">✔</button>`
+                    + `<button type="button" class="pp-diff-reject" data-pp-reject-hunk="${hunk}" data-pp-block="${blockIdAttr}" title="回滚此处修改">×</button>`
+                    + `</span>`
+                : '';
+            html += `${body}${actions}${nl}`;
+        }
+        return html;
+    }
+
+    /* hunk 级结果计算：accept=基线只应用第 k 个 hunk；reject=草稿只回滚第 k 个 hunk */
+    applyBlockHunk(baseText, draftText, hunkIdx, mode) {
+        const { rows } = buildLineDiff(baseText, draftText, { collapseContext: false });
+        const isChanged = r => r?.type === 'del' || r?.type === 'add';
+        let h = -1;
+        const lines = [];
+        for (let i = 0; i < rows.length; i += 1) {
+            const r = rows[i];
+            if (isChanged(r) && !isChanged(rows[i - 1])) h += 1;
+            if (r.type === 'context') { lines.push(r.text); continue; }
+            const inHunk = h === hunkIdx;
+            if (mode === 'accept') {
+                if (r.type === 'del' ? !inHunk : inHunk) lines.push(r.text);
+            } else {
+                if (r.type === 'del' ? inHunk : !inHunk) lines.push(r.text);
+            }
+        }
+        return lines.join('\n');
     }
 
     renderPreviewMessageHtml(index) {
@@ -4091,9 +4787,23 @@ export class PresetPanel {
         let pos = 0;
         for (const span of spans) {
             html += escapeHtml(text.slice(pos, span.start));
-            const draft = this.openaiBlockDrafts?.get?.(span.id);
-            const liveContent = draft ? String(draft.content ?? '') : text.slice(span.start, span.start + span.len);
-            html += `<span class="pp-prev-block" data-pp-prev-block="${escapeHtml(span.id)}">${escapeHtml(liveContent)}</span>`;
+            const idAttr = escapeHtml(span.id);
+            const baseSlice = text.slice(span.start, span.start + span.len);
+            // 映射搜索用 trim 后基线，渲染用完整基线——保证 span 文本与编辑器逐字一致（行锚定/选区/预览编辑的前提）
+            const baseFullRaw = this.openaiBlockBase?.get?.(span.id)?.content;
+            const baseFull = typeof baseFullRaw === 'string' && baseFullRaw.trim() === baseSlice.trim() ? baseFullRaw : baseSlice;
+            if (span.exact === false) {
+                // 模糊锚定：只做滚动联动，内容按骨架原样展示
+                html += `<span class="pp-prev-block pp-prev-anchor" data-pp-prev-block="${idAttr}">${escapeHtml(baseSlice)}</span>`;
+            } else if (this.isBlockDraftModified(span.id)) {
+                // 有未保存修改：红删绿增 diff，每处 hunk 末行紧跟小 ✔/×（点击正文可切换为直接编辑）
+                const draft = this.openaiBlockDrafts.get(span.id);
+                html += `<span class="pp-prev-block is-modified" data-pp-prev-block="${idAttr}">${this.renderBlockDiffHtml(baseFull, String(draft?.content ?? ''), idAttr)}</span>`;
+            } else {
+                const draft = this.openaiBlockDrafts?.get?.(span.id);
+                const liveContent = draft ? String(draft.content ?? '') : baseFull;
+                html += `<span class="pp-prev-block" data-pp-prev-block="${idAttr}" contenteditable="plaintext-only" spellcheck="false">${this.renderRawBlockContentHtml(liveContent)}</span>`;
+            }
             pos = span.start + span.len;
         }
         html += escapeHtml(text.slice(pos));
@@ -4103,6 +4813,19 @@ export class PresetPanel {
                 <div class="pp-preview-msg-text">${html}</div>
             </div>
         `;
+    }
+
+    /* 重渲染某区块所在的预览消息卡（编辑防抖、blur 收编辑态、接受/舍弃后共用） */
+    refreshPreviewMessageFor(identifier) {
+        const loc = this.previewBlockMap?.get?.(identifier);
+        if (!loc || !this.previewBodyEl) return;
+        const cardEl = this.previewBodyEl.querySelector(`[data-pp-prev-msg="${loc.msg}"]`);
+        if (!cardEl) return;
+        const template = document.createElement('template');
+        template.innerHTML = this.renderPreviewMessageHtml(loc.msg).trim();
+        const next = template.content.firstElementChild;
+        if (next) cardEl.replaceWith(next);
+        this.updatePreviewEstimate();
     }
 
     renderPreviewBody() {
@@ -4121,7 +4844,6 @@ export class PresetPanel {
         }
         this.previewBodyEl.innerHTML = html;
         this.updatePreviewEstimate();
-        this.markPreviewCurrentBlock(this.currentBlockCard?.dataset?.identifier || '');
     }
 
     updatePreviewEstimate() {
@@ -4136,51 +4858,213 @@ export class PresetPanel {
         }
     }
 
-    markPreviewCurrentBlock(identifier) {
-        this.previewBodyEl?.querySelectorAll('.pp-prev-block.is-current')?.forEach(el => el.classList.remove('is-current'));
-        if (!identifier) return;
-        try {
-            this.previewBodyEl?.querySelector(`[data-pp-prev-block="${CSS.escape(identifier)}"]`)?.classList.add('is-current');
-        } catch {}
+    /* 联动定位提示：单个区块缓慢闪烁两下后恢复（无常驻高亮）。
+       同一区块内滚动不重复闪，换区块才闪。 */
+    flashPreviewBlock(identifier) {
+        if (!identifier || !this.previewBodyEl) return;
+        if (identifier === this._lastFlashBlockId) return;
+        this._lastFlashBlockId = identifier;
+        this.previewBodyEl.querySelectorAll('.pp-prev-flash').forEach(el => el.classList.remove('pp-prev-flash'));
+        let span = null;
+        try { span = this.previewBodyEl.querySelector(`[data-pp-prev-block="${CSS.escape(identifier)}"]`); } catch {}
+        if (!span) return;
+        void span.offsetWidth; // 重启动画
+        span.classList.add('pp-prev-flash');
+        const clear = () => span.classList.remove('pp-prev-flash');
+        span.addEventListener('animationend', clear, { once: true });
+        if (this._prevFlashTimer) clearTimeout(this._prevFlashTimer);
+        this._prevFlashTimer = setTimeout(clear, 2500); // reduced-motion / 动画被打断的兜底
     }
 
-    /* 区块内容编辑 → 只重渲染受影响的消息卡（草稿实时替换） */
+    /* 区块内容编辑 → 只重渲染受影响的消息卡（草稿实时替换/diff 实时刷新） */
     schedulePreviewLiveUpdate(identifier) {
         if (this.previewState === 'closed' || !this.previewSkeleton) return;
         if (this._previewLiveTimer) clearTimeout(this._previewLiveTimer);
         this._previewLiveTimer = setTimeout(() => {
-            const loc = this.previewBlockMap?.get?.(identifier);
-            if (!loc || !this.previewBodyEl) return;
-            const cardEl = this.previewBodyEl.querySelector(`[data-pp-prev-msg="${loc.msg}"]`);
-            if (!cardEl) return;
-            const template = document.createElement('template');
-            template.innerHTML = this.renderPreviewMessageHtml(loc.msg).trim();
-            const next = template.content.firstElementChild;
-            if (next) cardEl.replaceWith(next);
-            this.updatePreviewEstimate();
-            this.markPreviewCurrentBlock(identifier);
+            // 预览内正在编辑时不重渲染（会打断光标）
+            if (this.previewBodyEl?.querySelector('.pp-prev-block.is-editing:focus')) return;
+            this.refreshPreviewMessageFor(identifier);
         }, 350);
     }
 
-    /* 编辑光标 → 预览滚动定位（按光标在区块内的相对位置比例映射） */
-    syncPreviewToCaret(identifier, textarea) {
+    /* 预览滚动到某区块段落内的相对位置（0=段首，1=段尾）；编辑光标/正文滚动/列表滚动共用 */
+    scrollPreviewToBlockRatio(identifier, ratio = 0) {
         if (this.previewState === 'closed' || !this.previewScrollEl || !identifier) return;
         if (Date.now() - (this._previewScrollGuard || 0) < 450) return;
         let span = null;
         try { span = this.previewBodyEl?.querySelector(`[data-pp-prev-block="${CSS.escape(identifier)}"]`); } catch {}
         if (!span) return;
         const pane = this.previewScrollEl;
-        const ratio = textarea?.value?.length
-            ? Math.min(1, Math.max(0, (textarea.selectionStart || 0) / textarea.value.length))
-            : 0;
+        const r = Math.min(1, Math.max(0, Number(ratio) || 0));
         const paneRect = pane.getBoundingClientRect();
         const spanRect = span.getBoundingClientRect();
-        const target = pane.scrollTop + (spanRect.top - paneRect.top) + ratio * spanRect.height - pane.clientHeight * 0.33;
+        const target = pane.scrollTop + (spanRect.top - paneRect.top) + r * spanRect.height - pane.clientHeight * 0.33;
         this._editorScrollGuard = Date.now();
-        const reduced = document.body?.dataset?.reducedMotion === 'on'
-            || window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches;
-        pane.scrollTo({ top: Math.max(0, target), behavior: reduced ? 'auto' : 'smooth' });
-        this.markPreviewCurrentBlock(identifier);
+        const dest = Math.min(Math.max(0, target), Math.max(0, pane.scrollHeight - pane.clientHeight));
+        if (Math.abs(dest - pane.scrollTop) >= 2) {
+            // 程序滚动标记：预览 scroll 事件吞掉回声，抵达目标或超时/用户接管后解除
+            this._paneAutoScroll = { target: dest, until: Date.now() + 1600 };
+            const reduced = document.body?.dataset?.reducedMotion === 'on'
+                || window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches;
+            pane.scrollTo({ top: dest, behavior: reduced ? 'auto' : 'smooth' });
+        }
+        this.flashPreviewBlock(identifier);
+    }
+
+    /* span 内文本节点游标：把字符偏移定位到 [textNode, innerOffset]（选区/行锚定共用） */
+    locateTextOffsetInSpan(span, offset) {
+        if (!span) return null;
+        const walker = document.createTreeWalker(span, NodeFilter.SHOW_TEXT);
+        let acc = 0;
+        let node = walker.nextNode();
+        while (node) {
+            const len = node.textContent.length;
+            if (offset <= acc + len) return [node, offset - acc];
+            acc += len;
+            node = walker.nextNode();
+        }
+        return null;
+    }
+
+    taLineHeightPx(textarea) {
+        try {
+            const cs = getComputedStyle(textarea);
+            const lh = parseFloat(cs.lineHeight);
+            if (Number.isFinite(lh) && lh > 0) return lh;
+            const fs = parseFloat(cs.fontSize);
+            return Number.isFinite(fs) ? fs * 1.45 : 0;
+        } catch { return 0; }
+    }
+
+    /* 行锚定：预览滚到区块段内第 line 逻辑行（VS Code diff 式精确联动）。
+       要求段落为逐字态（span 文本 === 编辑器文本）；否则返回 false 由调用方回退比例法。 */
+    scrollPreviewToBlockLine(identifier, lineIdx, taValue) {
+        if (this.previewState === 'closed' || !this.previewScrollEl || !identifier) return false;
+        if (Date.now() - (this._previewScrollGuard || 0) < 450) return true; // guard 期内视为已处理
+        let span = null;
+        try { span = this.previewBodyEl?.querySelector(`[data-pp-prev-block="${CSS.escape(identifier)}"]`); } catch {}
+        if (!span) return false;
+        const spanText = span.textContent || '';
+        if (String(taValue ?? '') !== spanText) return false;
+        const lines = spanText.split('\n');
+        const li = Math.max(0, Math.min(lines.length - 1, Number(lineIdx) || 0));
+        let off = 0;
+        for (let i = 0; i < li; i += 1) off += lines[i].length + 1;
+        const found = this.locateTextOffsetInSpan(span, off);
+        if (!found) return false;
+        let lineTop = 0;
+        try {
+            const range = document.createRange();
+            range.setStart(found[0], found[1]);
+            range.collapse(true);
+            const rect = range.getBoundingClientRect();
+            if (!rect || (rect.top === 0 && rect.bottom === 0)) return false;
+            lineTop = rect.top;
+        } catch { return false; }
+        const pane = this.previewScrollEl;
+        const paneRect = pane.getBoundingClientRect();
+        const target = pane.scrollTop + (lineTop - paneRect.top) - pane.clientHeight * 0.33;
+        this._editorScrollGuard = Date.now();
+        const dest = Math.min(Math.max(0, target), Math.max(0, pane.scrollHeight - pane.clientHeight));
+        if (Math.abs(dest - pane.scrollTop) >= 2) {
+            // 程序滚动标记：预览 scroll 事件吞掉回声，抵达目标或超时/用户接管后解除
+            this._paneAutoScroll = { target: dest, until: Date.now() + 1600 };
+            const reduced = document.body?.dataset?.reducedMotion === 'on'
+                || window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches;
+            pane.scrollTo({ top: dest, behavior: reduced ? 'auto' : 'smooth' });
+        }
+        this.flashPreviewBlock(identifier);
+        return true;
+    }
+
+    /* 编辑光标 → 预览定位：行锚定优先，非逐字态回退比例法 */
+    syncPreviewToCaret(identifier, textarea) {
+        const val = textarea?.value ?? '';
+        const caret = textarea?.selectionStart || 0;
+        const line = val ? val.slice(0, caret).split('\n').length - 1 : 0;
+        if (this.scrollPreviewToBlockLine(identifier, line, val)) return;
+        this.scrollPreviewToBlockRatio(identifier, val.length ? caret / val.length : 0);
+    }
+
+    /* 三级正文滚动 → 预览跟随：行锚定优先（取编辑器视口 1/3 处的行，与反向基准对称），回退比例法 */
+    syncPreviewToEditorScroll(identifier, textarea) {
+        if (!textarea) return;
+        const lh = this.taLineHeightPx(textarea);
+        if (lh > 0) {
+            const line = Math.floor((textarea.scrollTop + textarea.clientHeight * 0.33) / lh);
+            if (this.scrollPreviewToBlockLine(identifier, line, textarea.value)) return;
+        }
+        const denom = Math.max(1, textarea.scrollHeight - textarea.clientHeight);
+        this.scrollPreviewToBlockRatio(identifier, textarea.scrollTop / denom);
+    }
+
+    /* 预览滚动 → 编辑器行跟随：取预览基准线落点的字符偏移换算行号，textarea 滚到对应行 */
+    syncEditorToPreviewLine(identifier) {
+        const ta = this.blockEditorEl?.querySelector('textarea');
+        if (!ta || !this.previewScrollEl) return;
+        let span = null;
+        try { span = this.previewBodyEl?.querySelector(`[data-pp-prev-block="${CSS.escape(identifier)}"]`); } catch {}
+        if (!span || span.textContent !== ta.value) return;
+        const pane = this.previewScrollEl;
+        const paneRect = pane.getBoundingClientRect();
+        const spanRect = span.getBoundingClientRect();
+        const y = Math.max(spanRect.top + 1, Math.min(spanRect.bottom - 1, paneRect.top + pane.clientHeight * 0.33));
+        const x = Math.max(spanRect.left + 1, Math.min(spanRect.right - 1, (paneRect.left + paneRect.right) / 2));
+        let range = null;
+        try { range = document.caretRangeFromPoint?.(x, y) || null; } catch {}
+        if (!range || !span.contains(range.startContainer)) return;
+        let off = 0;
+        const walker = document.createTreeWalker(span, NodeFilter.SHOW_TEXT);
+        let node = walker.nextNode();
+        while (node && node !== range.startContainer) { off += node.textContent.length; node = walker.nextNode(); }
+        if (node !== range.startContainer) return;
+        off += range.startOffset;
+        const line = ta.value.slice(0, off).split('\n').length - 1;
+        const lh = this.taLineHeightPx(ta);
+        if (!(lh > 0)) return;
+        const top = Math.max(0, line * lh - ta.clientHeight * 0.33);
+        if (Math.abs(top - ta.scrollTop) > 1) {
+            this._taAutoScroll = true; // 编辑器 scroll 监听吞掉这次程序滚动，防回声
+            ta.scrollTo({ top, behavior: 'auto' });
+        }
+    }
+
+    /* 二级列表滚动 → 预览跟随：对齐左侧视口正中的已映射卡（单块定位+闪烁提示） */
+    onEditorListScroll() {
+        if (this.previewState === 'closed' || this.currentPage !== 'detail' || this.currentSectionId !== 'custom') return;
+        if (Date.now() - (this._previewScrollGuard || 0) < 450) return;
+        const scroller = this.detailScrollEl;
+        if (!scroller) return;
+        const rect = scroller.getBoundingClientRect();
+        const centerY = rect.top + scroller.clientHeight * 0.5;
+        let id = '';
+        let fallback = '';
+        for (const card of this.getBlockCards()) {
+            const r = card.getBoundingClientRect();
+            if (r.top > centerY) break;
+            const cid = card.dataset.identifier || '';
+            if (!cid || !this.previewBlockMap?.has?.(cid)) continue;
+            fallback = cid; // 中线上方最近的已映射卡（中线卡未映射时兜底）
+            if (r.bottom >= centerY) id = cid; // 正压中线
+        }
+        const pick = id || fallback;
+        if (pick) this.scrollPreviewToBlockRatio(pick, 0);
+    }
+
+    /* 预览内直接编辑区块段落 → 写回草稿并同步左侧编辑器 */
+    onPreviewBlockEdited(span) {
+        const id = span?.getAttribute?.('data-pp-prev-block') || '';
+        const draft = this.ensureBlockDraft(id);
+        if (!draft) return;
+        draft.content = String(span.textContent ?? '');
+        this.scheduleUnsavedIndicatorUpdate();
+        if (this.currentPage === 'block' && this.currentBlockCard?.dataset?.identifier === id) {
+            const ta = this.blockEditorEl?.querySelector('textarea');
+            if (ta && ta.value !== draft.content && document.activeElement !== ta) ta.value = draft.content;
+        }
+        // 只防抖刷新估算，不重渲染（避免打断预览内的输入光标）
+        if (this._previewEstTimer) clearTimeout(this._previewEstTimer);
+        this._previewEstTimer = setTimeout(() => this.updatePreviewEstimate(), 500);
     }
 
     /* 预览滚动 → 编辑器跟随（三级：切到对应区块；二级：列表滚到对应卡并短暂高亮） */
@@ -4202,13 +5086,13 @@ export class PresetPanel {
         this._previewScrollGuard = Date.now();
         if (this.currentPage === 'block') {
             if (card !== this.currentBlockCard) this.openOpenAIBlockEditor(card);
-            this.markPreviewCurrentBlock(currentId);
+            this.syncEditorToPreviewLine(currentId);
         } else if (this.currentPage === 'detail') {
+            this._listAutoScrollUntil = Date.now() + 1000; // 列表 scroll 监听吞掉这次程序滚动
             card.scrollIntoView({ block: 'center', behavior: 'smooth' });
             card.classList.add('pp-block-linked');
             if (this._linkFlashTimer) clearTimeout(this._linkFlashTimer);
             this._linkFlashTimer = setTimeout(() => card.classList.remove('pp-block-linked'), 900);
-            this.markPreviewCurrentBlock(currentId);
         }
     }
 
@@ -4421,6 +5305,7 @@ export class PresetPanel {
             }
 
             this.drafts.clear();
+            this.openaiBlockDrafts?.clear?.();
             this.renderAllSections();
             this.updateUnsavedIndicator();
             this.showStatus('保存成功', 'success');
@@ -4433,6 +5318,7 @@ export class PresetPanel {
 
     async onNewForStoreType(storeType) {
         await this.store.ready;
+        if (storeType === 'openai' && !(await this.confirmDiscardBlockDrafts('新建并切换预设'))) return;
         const name = prompt('新建预设名称', '新预设');
         if (!name) return;
         this.captureDraftsFromDOM();
@@ -4816,6 +5702,7 @@ export class PresetPanel {
 
     async importFromFile(file) {
         await this.store.ready;
+        if (!(await this.confirmDiscardBlockDrafts('导入'))) return;
         let text = '';
         try { text = await file.text(); } catch { this.showStatus('读取文件失败', 'error'); return; }
         let json = null;
