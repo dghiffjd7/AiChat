@@ -3897,10 +3897,13 @@ export class PresetPanel {
         }
         this.currentPage = 'block';
         this.setPageView('block');
-        // 预览开着时定位到该区块段落
+        // 预览开着时定位到该区块段落：从第一行开始对齐
+        // （勿用 caret——textarea 赋值后光标默认在末尾，会先对到区块底部）
         if (this.previewState && this.previewState !== 'closed') {
             const taEl = this.blockEditorEl?.querySelector('textarea');
-            this.syncPreviewToCaret(identifier, taEl || null);
+            if (!this.scrollPreviewToBlockLine(identifier, 0, taEl?.value ?? '')) {
+                this.scrollPreviewToBlockRatio(identifier, 0);
+            }
         }
     }
 
@@ -4652,13 +4655,17 @@ export class PresetPanel {
         this.positionPreviewToCurrentBlock();
     }
 
-    /* 三级页展开/重建预览后定位到正在编辑的区块（延迟等分栏宽度过渡结束，几何才准） */
+    /* 三级页展开/重建预览后定位到正在编辑的区块（延迟等分栏宽度过渡结束，几何才准）；从第一行对齐 */
     positionPreviewToCurrentBlock() {
         if (this._previewPosTimer) clearTimeout(this._previewPosTimer);
         this._previewPosTimer = setTimeout(() => {
             if (this.previewState === 'closed' || this.currentPage !== 'block') return;
             const id = this.currentBlockCard?.dataset?.identifier || '';
-            if (id) this.syncPreviewToCaret(id, this.blockEditorEl?.querySelector('textarea') || null);
+            if (!id) return;
+            const taEl = this.blockEditorEl?.querySelector('textarea');
+            if (!this.scrollPreviewToBlockLine(id, 0, taEl?.value ?? '')) {
+                this.scrollPreviewToBlockRatio(id, 0);
+            }
         }, 380);
     }
 
