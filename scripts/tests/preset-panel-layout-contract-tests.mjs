@@ -26,7 +26,8 @@ assert.match(source, /\.pp-manager-actions\s*\{[\s\S]*grid-template-columns:\s*r
 assert.match(source, /class="pp-block-title">\$\{escapeHtml\(title\)\}/, '导入的区块标题必须转义后再写入 HTML');
 assert.match(source, /pp-nav-item-sub">\$\{escapeHtml\(this\.getSectionBadge\(sec\)/, '预设名称徽标必须转义后再写入 HTML');
 assert.match(source, /escapeHtml\(boundItems\.map\(\(i\) => i\.name\)\.join\('、'\)\)/, '绑定会话名称必须转义后再写入 HTML');
-assert.match(source, /isPreviewHistoryIncluded\(\)/, '聊天记录按钮与占位提示必须共用实际生效状态');
+assert.match(source, /includeHistory:\s*false/, '预设预览固定折叠聊天记录（面板从通用设定打开，无会话历史语境）');
+assert.match(source, /pp-prev-history-chip/, '聊天记录占位提示必须保留在实际展开位置');
 assert.match(source, /const presetMaximizeSvg = `<svg class="pp-maximize-icon"/, '预设放大按钮应使用独立 SVG');
 assert.match(source, /class="pp-maximize-expand"[\s\S]*class="pp-maximize-restore"/, '放大 SVG 应同时提供放大与还原状态');
 assert.match(source, /id="preset-maximize"[^>]*aria-label="放大预设面板"[^>]*aria-pressed="false"[^>]*>\$\{presetMaximizeSvg\}<\/button>/, '放大按钮应渲染 SVG 并声明初始状态');

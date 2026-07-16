@@ -61,6 +61,7 @@ import {
 const SECTIONS = [
     { id: 'custom',       storeType: 'openai',    label: '自定义提示词区块', primary: true },
     { id: 'openai',       storeType: 'openai',    label: '生成参数',        primary: true },
+    { id: 'taskprompts',  storeType: 'sysprompt',  label: '任务提示词' },
     { id: 'sysprompt',    storeType: 'sysprompt',  label: '系统提示词' },
     { id: 'context',      storeType: 'context',    label: '上下文模板' },
     { id: 'instruct',     storeType: 'instruct',   label: 'Instruct 模板' },
@@ -2487,6 +2488,9 @@ export class PresetPanel {
             const prompts = Array.isArray(p.prompts) ? p.prompts : [];
             return `${prompts.length} 区块`;
         }
+        if (sec.id === 'taskprompts') {
+            return '动态评论 · 格式检查（独立组装，只读）';
+        }
         const name = p?.name || this.store.getActive(sec.storeType)?.name;
         return name || '';
     }
@@ -2769,6 +2773,7 @@ export class PresetPanel {
             case 'openai': root.appendChild(this.renderOpenAIParamsEditor(p)); break;
             case 'custom': root.appendChild(this.renderOpenAIBlocksEditor(p)); break;
             case 'sysprompt': root.appendChild(this.renderSyspromptEditor(p)); break;
+            case 'taskprompts': root.appendChild(this.renderTaskPromptsViewer()); break;
             case 'chatprompts': root.appendChild(this.renderChatPromptsEditor(p)); break;
             case 'context': root.appendChild(this.renderContextEditor(p)); break;
             case 'instruct': root.appendChild(this.renderInstructEditor(p)); break;
@@ -4253,6 +4258,104 @@ export class PresetPanel {
 
     getBlockCards() {
         return Array.from(this.element?.querySelectorAll('#openai-blocks .openai-block') || []);
+    }
+
+    /* ════════════════════════════════════════
+       任务提示词只读预览（一级列表「任务提示词」）
+       动态评论/发布后评论走独立任务组装（触发时关闭手机格式、压掉聊天注入）；
+       格式检查完全不经 buildMessages。均不参与自定义区块与注入选择条。
+       ════════════════════════════════════════ */
+    renderTaskPromptsViewer() {
+        const wrap = document.createElement('div');
+        const intro = document.createElement('div');
+        intro.style.cssText = 'color:var(--app-text-muted); font-size:12px; line-height:1.7; margin-bottom:12px;';
+        intro.textContent = '以下提示词只在对应任务触发时独立组装，不参与自定义提示词区块与注入选择条；动态类内容可在 Agent Center 的动态 Agent 卡编辑。';
+        wrap.appendChild(intro);
+        const { sysp } = this.getInjectSyspromptResolved();
+        const posLabel = (position, depth, role) => {
+            const pos = Math.trunc(Number(position)) || 0;
+            const opt = PROMPT_POSITION_OPTIONS.find(o => o.value === pos);
+            const roleText = ['SYSTEM', 'USER', 'ASSISTANT'][Math.trunc(Number(role)) || 0] || 'SYSTEM';
+            const depthText = pos === 1 ? ` D${Math.max(0, Math.trunc(Number(depth)) || 0)}` : '';
+            return `${opt?.label || pos}${depthText} · ${roleText}`;
+        };
+        const mkCard = ({ title, chips = [], body = '', foot = '' }) => {
+            const card = document.createElement('div');
+            card.className = 'pp-block';
+            card.dataset.collapsed = 'true';
+            const header = document.createElement('div');
+            header.className = 'pp-block-header';
+            header.style.cursor = 'pointer';
+            header.innerHTML = `
+                <div class="pp-block-left">
+                    <div class="pp-block-toggle">&#9656;</div>
+                    <div style="min-width:0;">
+                        <div class="pp-block-title">${escapeHtml(title)}</div>
+                    </div>
+                </div>
+                <div class="pp-block-right">${chips.map(c => `<span class="pp-meta-chip is-${escapeHtml(c.tone)}">${escapeHtml(c.label)}</span>`).join('')}</div>
+            `;
+            const bodyEl = document.createElement('div');
+            bodyEl.className = 'pp-block-body';
+            bodyEl.style.display = 'none';
+            const pre = document.createElement('pre');
+            pre.className = 'pp-code-preview';
+            pre.style.cssText = 'margin:0; padding:12px; border:1px solid var(--app-border-default); border-radius:12px; background:var(--app-surface-hover); color:var(--app-text-primary); white-space:pre-wrap; font-size:12px; line-height:1.6;';
+            pre.textContent = body || '（空）';
+            bodyEl.appendChild(pre);
+            if (foot) {
+                const f = document.createElement('div');
+                f.style.cssText = 'color:var(--app-text-muted); font-size:12px; line-height:1.6; margin-top:8px;';
+                f.textContent = foot;
+                bodyEl.appendChild(f);
+            }
+            card.appendChild(header);
+            card.appendChild(bodyEl);
+            header.addEventListener('click', () => {
+                const collapsed = card.dataset.collapsed !== 'true';
+                card.dataset.collapsed = collapsed ? 'true' : 'false';
+                header.querySelector('.pp-block-toggle').innerHTML = collapsed ? '&#9656;' : '&#9662;';
+                bodyEl.style.display = collapsed ? 'none' : 'block';
+            });
+            return card;
+        };
+        const list = document.createElement('div');
+        list.style.cssText = 'display:flex; flex-direction:column; gap:10px;';
+        list.appendChild(mkCard({
+            title: '动态评论回复提示词',
+            chips: [
+                { label: sysp?.moment_comment_enabled ? '启用' : '已停用', tone: sysp?.moment_comment_enabled ? 'dynamic' : 'replace' },
+                { label: posLabel(sysp?.moment_comment_position, sysp?.moment_comment_depth, sysp?.moment_comment_role), tone: 'placement' },
+            ],
+            body: typeof sysp?.moment_comment_rules === 'string' ? sysp.moment_comment_rules : '',
+            foot: '触发：用户在动态下评论 / 楼中楼回复。任务组装时关闭手机格式并压掉私聊/群聊等聊天注入，仅注入本规则与动态任务数据块。',
+        }));
+        list.appendChild(mkCard({
+            title: '发布后评论提示词',
+            chips: [
+                { label: sysp?.moment_publish_comment_enabled ? '启用' : '已停用', tone: sysp?.moment_publish_comment_enabled ? 'dynamic' : 'replace' },
+                { label: posLabel(sysp?.moment_publish_comment_position, sysp?.moment_publish_comment_depth, sysp?.moment_publish_comment_role), tone: 'placement' },
+            ],
+            body: typeof sysp?.moment_publish_comment_rules === 'string' ? sysp.moment_publish_comment_rules : '',
+            foot: '触发：用户发布动态后的自动评论任务。组装方式同上。',
+        }));
+        list.appendChild(mkCard({
+            title: '格式检查提示词（固定）',
+            chips: [{ label: '独立管线', tone: 'scope' }],
+            body: [
+                '固定检查指令：只修复标签、顺序、闭合、缺失字段和时间等格式问题；不改写剧情或正文语义。',
+                '',
+                '运行时按触发目标选择最小格式规则：',
+                '- 私聊：QQ聊天格式 + 私聊格式',
+                '- 群聊：QQ聊天格式 + 群聊格式',
+                '- 动态：动态发布或动态评论格式',
+                '- 生图 / 记忆表格：只使用对应标签格式',
+                '- 创意写作：默认不注入聊天格式',
+            ].join('\n'),
+            foot: '格式检查不经过预设组装：自建 system+user 两条消息、要求 JSON 输出；与自定义提示词区块和注入选择条无关。',
+        }));
+        wrap.appendChild(list);
+        return wrap;
     }
 
     /* ════════════════════════════════════════
