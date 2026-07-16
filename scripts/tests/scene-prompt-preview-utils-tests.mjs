@@ -103,8 +103,8 @@ const {
   );
   assert.match(
     panelSource,
-    /evalFn\(target\.textContent\s*\|\|\s*'',\s*\{\s*previewUiMode:\s*this\.previewMode\s*\}\)/,
-    '预设面板必须把当前预览模式传给悬停宏求值器',
+    /evalFn\(target\.textContent\s*\|\|\s*'',\s*\{\s*previewUiMode:\s*this\.getPreviewUiMode\(\)\s*\}\)/,
+    '预设面板必须把当前预览场景（注入选择条驱动）传给悬停宏求值器',
   );
   assert.match(
     bridgeSource,

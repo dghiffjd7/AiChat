@@ -355,23 +355,54 @@ const applyOpenAIPresetMigration = (settings, presetId = '', preset = {}, { now 
   return settings;
 };
 
+/* 注入整合语义澄清（2026-07-16）：注入选择条只管预览/列表展示，不动功能开关。
+   此前 presetInjectDefaultOffV1 曾把私聊/群聊/动态发布/生图的 prompt 级启用压为 false，
+   这里一次性回滚私聊/群聊/生图（动态发布在 v1 之前默认即关闭，不回滚）。 */
+const INJECT_DEFAULT_OFF_ROLLBACK_PROMPTS = Object.freeze([
+  { agentId: 'dialogue_agent', promptId: 'dialogue' },
+  { agentId: 'group_agent', promptId: 'group' },
+  { agentId: 'image_director', promptId: 'auto-image-prompt' },
+]);
+
+const applyInjectDefaultOffRollback = (settings, { now = Date.now } = {}) => {
+  if (!settings.migrations?.presetInjectDefaultOffV1?.completed) return settings;
+  if (settings.migrations?.presetInjectDefaultOffV1Rollback?.completed) return settings;
+  Object.values(settings.profiles || {}).forEach((profile) => {
+    if (trim(profile?.profileType) !== 'sysprompt') return;
+    INJECT_DEFAULT_OFF_ROLLBACK_PROMPTS.forEach(({ agentId, promptId }) => {
+      const prompt = profile?.agents?.[agentId]?.prompts?.[promptId];
+      if (prompt && prompt.enabled === false) {
+        prompt.enabled = true;
+        prompt.updatedAt = toTimestamp(now);
+      }
+    });
+  });
+  settings.migrations.presetInjectDefaultOffV1Rollback = {
+    completed: true,
+    migratedAt: toTimestamp(now),
+  };
+  return settings;
+};
+
 export const migratePresetStateToAgentCenterSettings = (settings = {}, presetState = {}, {
   now = Date.now,
   force = false,
 } = {}) => {
   const next = normalizeAgentCenterSettings(settings);
-  if (next.migrations?.presetPromptV1?.completed && !force) return next;
   const state = isPlainObject(presetState) ? presetState : {};
-  Object.entries(state.presets?.sysprompt || {}).forEach(([presetId, preset]) => {
-    applySyspromptPresetMigration(next, presetId, preset, { now });
-  });
-  Object.entries(state.presets?.openai || {}).forEach(([presetId, preset]) => {
-    applyOpenAIPresetMigration(next, presetId, preset, { now });
-  });
-  next.migrations.presetPromptV1 = {
-    completed: true,
-    migratedAt: toTimestamp(now),
-  };
+  if (!next.migrations?.presetPromptV1?.completed || force) {
+    Object.entries(state.presets?.sysprompt || {}).forEach(([presetId, preset]) => {
+      applySyspromptPresetMigration(next, presetId, preset, { now });
+    });
+    Object.entries(state.presets?.openai || {}).forEach(([presetId, preset]) => {
+      applyOpenAIPresetMigration(next, presetId, preset, { now });
+    });
+    next.migrations.presetPromptV1 = {
+      completed: true,
+      migratedAt: toTimestamp(now),
+    };
+  }
+  applyInjectDefaultOffRollback(next, { now });
   return normalizeAgentCenterSettings(next);
 };
 

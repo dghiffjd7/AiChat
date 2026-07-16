@@ -206,3 +206,62 @@ import {
   assert.equal(merged.profiles['sysprompt:oldSysp'], undefined);
   console.log('ok - imported agent center settings remap profile ids');
 }
+
+/* 注入整合语义澄清（2026-07-16）：chip 只管预览展示；此前 presetInjectDefaultOffV1
+   压掉的私聊/群聊/生图启用位一次性回滚（动态发布 v1 前默认即关闭，不回滚） */
+{
+  // 带 v1 标记 + 被压掉的启用位 → 回滚恢复 true，动态发布保持 false
+  const v1State = migratePresetStateToAgentCenterSettings({
+    migrations: { presetPromptV1: { completed: true, migratedAt: 1 }, presetInjectDefaultOffV1: { completed: true, migratedAt: 1 } },
+    profiles: {
+      'sysprompt:alpha': {
+        profileType: 'sysprompt',
+        presetId: 'alpha',
+        agents: {
+          dialogue_agent: { prompts: { dialogue: { enabled: false, rules: 'dialogue rules' } } },
+          group_agent: { prompts: { group: { enabled: false, rules: 'group rules' } } },
+          moment_agent: { prompts: { moment: { enabled: false, rules: 'moment rules' } } },
+          image_director: { prompts: { 'auto-image-prompt': { enabled: false, rules: 'image rules' } } },
+        },
+      },
+    },
+  }, { presets: { sysprompt: {}, openai: {} } }, { now: () => 2000 });
+  assert.equal(v1State.migrations.presetInjectDefaultOffV1Rollback.completed, true);
+  const agents = v1State.profiles['sysprompt:alpha'].agents;
+  assert.equal(agents.dialogue_agent.prompts.dialogue.enabled, true);
+  assert.equal(agents.group_agent.prompts.group.enabled, true);
+  assert.equal(agents.image_director.prompts['auto-image-prompt'].enabled, true);
+  assert.equal(agents.moment_agent.prompts.moment.enabled, false, '动态发布不回滚');
+  assert.equal(agents.dialogue_agent.prompts.dialogue.rules, 'dialogue rules', '只动启用位不动规则');
+
+  // 回滚只跑一次：之后用户手动停用不得再被翻回
+  const disabled = setAgentPromptConfig(v1State, {
+    profileType: 'sysprompt',
+    presetId: 'alpha',
+    agentId: 'dialogue_agent',
+    promptId: 'dialogue',
+    config: { enabled: false },
+  }, { now: () => 3000 });
+  const reMigrated = migratePresetStateToAgentCenterSettings(disabled, { presets: { sysprompt: {}, openai: {} } }, { now: () => 4000 });
+  assert.equal(reMigrated.profiles['sysprompt:alpha'].agents.dialogue_agent.prompts.dialogue.enabled, false);
+  console.log('ok - 注入项启用位一次性回滚（尊重后续手动停用）');
+}
+
+{
+  // 无 v1 标记（新用户）→ 不产生回滚动作也不误改；种子默认全部 true
+  const fresh = migratePresetStateToAgentCenterSettings({}, {
+    presets: { sysprompt: { alpha: { name: 'Alpha' } }, openai: {} },
+  }, { now: () => 1000 });
+  assert.equal(fresh.migrations.presetInjectDefaultOffV1Rollback, undefined, 'v1 未发生则无需回滚标记');
+  const seeded = lazyMigratePresetProfileToAgentCenterSettings({}, {
+    profileType: 'sysprompt',
+    presetId: 'fresh',
+    preset: { name: 'Fresh' },
+    now: () => 1000,
+  });
+  const agents = seeded.profiles['sysprompt:fresh'].agents;
+  assert.equal(agents.dialogue_agent.prompts.dialogue.enabled, true);
+  assert.equal(agents.group_agent.prompts.group.enabled, true);
+  assert.equal(agents.image_director.prompts['auto-image-prompt'].enabled, true);
+  console.log('ok - 新用户无回滚动作、种子默认启用');
+}

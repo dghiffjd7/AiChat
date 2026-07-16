@@ -274,6 +274,13 @@ export const normalizeHandleSendOptions = (options = {}) => {
     previewOnly: Boolean(raw.previewOnly),
     // 请求预览的场景覆盖（仅 previewOnly 时使用）：'chat' | 'rp'
     previewUiMode: raw.previewUiMode === 'chat' || raw.previewUiMode === 'rp' ? raw.previewUiMode : '',
+    // 请求预览的私聊/群聊场景覆盖（仅 previewOnly + chat 场景使用）：覆盖 isGroupChat 组装分支
+    previewScenario: raw.previewScenario === 'private' || raw.previewScenario === 'group' ? raw.previewScenario : '',
+    // 请求预览按注入选择条抑制未加入项（缺省 true 不影响其他预览入口）
+    previewChatFormat: raw.previewChatFormat !== false,
+    previewInjectMemory: raw.previewInjectMemory !== false,
+    previewInjectImage: raw.previewInjectImage !== false,
+    previewInjectMomentCreate: raw.previewInjectMomentCreate !== false,
     // 请求预览：不携带当前会话历史/摘要（预设预览默认以占位符展示 chat_history）
     previewSuppressHistory: Boolean(raw.previewSuppressHistory),
     // 请求预览：自定义区块正文不做宏求值（原样显示，预览可逐字映射）

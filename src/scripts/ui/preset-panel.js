@@ -43,10 +43,24 @@ import {
 import { getRegexImportSetName } from '../utils/regex-transfer.js';
 import { getPresetStore } from './preset-store-runtime-utils.js';
 import { waitForScriptStoreReady } from './script-runtime-utils.js';
+import {
+    applyInjectChipTap,
+    buildInjectCardDefs,
+    buildPresetInjectChipStates,
+    buildPreviewInjectFlags,
+    describeInjectFeatureBlocker,
+    describeMemoryChipBlocker,
+    getInjectItem,
+    isInjectFeatureEnabled,
+    MEMORY_POSITION_OPTIONS,
+    PROMPT_POSITION_OPTIONS,
+    PROMPT_ROLE_OPTIONS,
+    readInjectItemConfig,
+} from './preset-prompt-inject-utils.js';
 /* Section definitions — order matters for rendering */
 const SECTIONS = [
-    { id: 'openai',       storeType: 'openai',    label: '生成参数',        primary: true },
     { id: 'custom',       storeType: 'openai',    label: '自定义提示词区块', primary: true },
+    { id: 'openai',       storeType: 'openai',    label: '生成参数',        primary: true },
     { id: 'sysprompt',    storeType: 'sysprompt',  label: '系统提示词' },
     { id: 'context',      storeType: 'context',    label: '上下文模板' },
     { id: 'instruct',     storeType: 'instruct',   label: 'Instruct 模板' },
@@ -512,6 +526,70 @@ const PANEL_CSS = `
     color: var(--app-accent-strong, var(--app-accent-primary));
     font-weight: 700;
 }
+/* 注入选择条：连体分段胶囊（记忆表格/私聊/群聊/聊天记录/图片/动态发布） */
+.pp-inject-bar {
+    display: inline-flex;
+    align-items: stretch;
+    max-width: 100%;
+    margin: 0 0 8px;
+    border: 1px solid var(--app-border-default);
+    border-radius: 999px;
+    background: var(--app-surface-subtle);
+    overflow-x: auto;
+    scrollbar-width: none;
+}
+.pp-inject-bar::-webkit-scrollbar { display: none; }
+.pp-inject-chip {
+    appearance: none;
+    border: none;
+    background: transparent;
+    padding: 6px 12px;
+    font-size: 12px;
+    color: var(--app-text-muted);
+    cursor: pointer;
+    white-space: nowrap;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    transition: background 0.18s ease, color 0.18s ease;
+}
+.pp-inject-chip + .pp-inject-chip {
+    border-left: 1px solid var(--app-border-default);
+}
+.pp-inject-chip .pp-inject-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: currentColor;
+    opacity: 0;
+    transition: opacity 0.18s ease;
+}
+.pp-inject-chip.is-on {
+    background: var(--app-accent-soft, rgba(var(--app-accent-rgb), 0.12));
+    color: var(--app-accent-strong, var(--app-accent-primary));
+    font-weight: 600;
+}
+.pp-inject-chip.is-on .pp-inject-dot { opacity: 1; }
+.pp-inject-chip.is-previewing {
+    background: rgba(var(--app-accent-rgb), 0.22);
+}
+.pp-inject-chip.is-warn .pp-inject-warn {
+    color: var(--app-warning-strong, rgba(var(--app-warning-rgb), 0.95));
+    font-weight: 700;
+    padding: 0 4px;
+    margin: -2px -4px -2px -2px;
+    cursor: pointer;
+}
+/* 动态发布焦点预览：其他 chip 隐藏（紧跟隐藏项的分隔线一并去掉） */
+.pp-inject-chip.is-hidden { display: none; }
+.pp-inject-chip.is-hidden + .pp-inject-chip { border-left: none; }
+/* 系统注入卡：由 chip 启用、锚定在组装位置附近，不参与保存/拖拽 */
+.pp-block.pp-inject-block {
+    background: rgba(var(--app-accent-rgb), 0.04);
+    border: 1px dashed rgba(var(--app-accent-rgb), 0.35);
+}
+.pp-block.pp-inject-block .pp-block-header { cursor: pointer; }
+
 .pp-block-title mark,
 .pp-block-hit mark {
     background: var(--app-accent-soft, rgba(var(--app-accent-rgb), 0.18));
@@ -1717,12 +1795,19 @@ export class PresetPanel {
         this.customSelectMenuEl = null;
         this.customSelectMenuCleanup = null;
         this.customSelectMenuAnchor = null;
+        this.injectBarEl = null;
+        this.openaiBlocksListEl = null;
+        this.previewScenario = '';
+        this.injectAdded = new Set();
+        this.injectStateScope = null;
+        this.currentInjectEditor = '';
         this.runtimeContext = {
             chatStore: null,
             contactsStore: null,
             personaStore: null,
             configPanel: null,
             getUiMode: null,
+            promptInject: null,
         };
     }
 
@@ -1743,6 +1828,9 @@ export class PresetPanel {
         this.runtimeContext.getUiMode = typeof context.getUiMode === 'function'
             ? context.getUiMode
             : this.runtimeContext.getUiMode;
+        this.runtimeContext.promptInject = context.promptInject && typeof context.promptInject === 'object'
+            ? context.promptInject
+            : this.runtimeContext.promptInject;
     }
 
     getCurrentPresetContext() {
@@ -2080,7 +2168,6 @@ export class PresetPanel {
         this.setPageView(this.currentPage);
         // 预览不跨开合残留：每次打开都从收起状态开始（一级页无预览）
         this.closePreview({ animate: false });
-        this.syncPreviewHistoryToggle?.();
         // 区块草稿跨开合缓存：重新打开时恢复未保存计数提示
         this.updateUnsavedIndicator();
         if (section && this.detailScrollEl) this.detailScrollEl.scrollTop = 0;
@@ -2232,9 +2319,7 @@ export class PresetPanel {
                 <div class="pp-preview-head">
                     <div class="pp-preview-title">请求预览<span class="pp-preview-est" id="preset-preview-est"></span></div>
                     <div class="pp-preview-actions">
-                        <button type="button" id="preset-preview-toggle-chatfmt" class="pp-preview-toggle has-help" data-help="加入聊天格式等聊天专属注入（默认按创意写作组装，不含）。" data-help-mode="press">聊天格式</button>
-                        <button type="button" id="preset-preview-toggle-history" class="pp-preview-toggle has-help" data-help="加入当前会话的聊天记录（默认折叠为占位符）。" data-help-mode="press">聊天记录</button>
-                        <button type="button" id="preset-preview-toggle-macroeval" class="pp-preview-toggle has-help" data-help="默认区块原样显示（宏语法可见、左右逐字联动，悬停/点按宏可看求值）。开启后区块整体求值，展示实际送模型的效果。" data-help-mode="press">宏求值</button>
+                        <button type="button" id="preset-preview-toggle-macroeval" class="pp-preview-toggle has-help" data-help="默认区块原样显示（宏语法可见、左右逐字联动，悬停/点按宏可看求值）。开启后区块整体求值，展示实际送模型的效果。聊天格式/聊天记录等注入改由自定义提示词页顶部的注入选择条控制。" data-help-mode="press">宏求值</button>
                         <button type="button" id="preset-preview-refresh" class="pp-preview-toggle" aria-label="重新构建">↻</button>
                         <button type="button" id="preset-preview-close" class="pp-preview-toggle" aria-label="关闭预览">×</button>
                     </div>
@@ -3725,6 +3810,14 @@ export class PresetPanel {
         `;
         wrap.appendChild(headRow);
 
+        // 注入选择条：聊天场景系统注入（记忆表格/私聊/群聊/聊天记录/图片/动态发布）
+        // 的启用与预览开关；开关本体在 agent-center settings / 通用设定，点亮即写入并同步预览
+        const injectBar = document.createElement('div');
+        injectBar.className = 'pp-inject-bar';
+        injectBar.id = 'pp-inject-bar';
+        this.injectBarEl = injectBar;
+        wrap.appendChild(injectBar);
+
         // 搜索/过滤：可查标题与提示词正文；范围切换（全部/标题/正文）代替命中排序——
         // 区块顺序即注入顺序（数据），过滤保持原序不重排；搜索中隐藏拖拽柄防误排。
         const searchRow = document.createElement('div');
@@ -3895,6 +3988,8 @@ export class PresetPanel {
 
         blocks.forEach(b => { if (b?.identifier) list.appendChild(makeBlockEl(b)); });
         wrap.appendChild(list);
+        this.openaiBlocksListEl = list;
+        this.refreshInjectUi();
 
         const emptyHint = document.createElement('div');
         emptyHint.style.cssText = 'display:none; padding:14px; text-align:center; color:var(--app-text-muted); font-size:12px;';
@@ -4009,6 +4104,7 @@ export class PresetPanel {
     /* 区块独立编辑页：点击列表中的区块进入；对卡内隐藏表单 write-through，保存/草稿链路不变 */
     openOpenAIBlockEditor(card) {
         if (!card || !this.blockEditorEl) return;
+        this.currentInjectEditor = '';
         this.currentBlockCard = card;
         const identifier = card.dataset.identifier || '';
         const isMarker = card.dataset.marker === 'true';
@@ -4159,8 +4255,523 @@ export class PresetPanel {
         return Array.from(this.element?.querySelectorAll('#openai-blocks .openai-block') || []);
     }
 
+    /* ════════════════════════════════════════
+       注入选择条（chip 条）与系统注入卡
+       开关本体：sysprompt 类走 agent-center settings（resolve 时覆盖预设键），
+       记忆表格走通用设定（memoryTableEnabledChat），聊天记录仅预览态。
+       ════════════════════════════════════════ */
+    getInjectActions() {
+        return window.appBridge?.debugUiRegistry?.actions || {};
+    }
+
+    /* 聊天场景下实际生效的 sysprompt 预设（agent-center 覆盖后） */
+    getInjectSyspromptResolved() {
+        const context = { ...this.getCurrentPresetContext(), uiMode: 'chat' };
+        const resolved = this.store?.getResolvedActive?.('sysprompt', context) || null;
+        const presetId = String(resolved?.presetId || '').trim();
+        const preset = resolved?.preset && typeof resolved.preset === 'object' ? resolved.preset : {};
+        const actions = this.getInjectActions();
+        let sysp = preset;
+        try {
+            sysp = actions.resolveAgentSyspromptPresetSync?.({ presetId, preset }) || preset;
+        } catch { sysp = preset; }
+        return { presetId, preset, sysp };
+    }
+
+    /* 聊天场景下实际生效的 openai 预设（记忆位置覆盖后），供记忆卡副标题/编辑页用 */
+    getInjectOpenAIResolved() {
+        const context = { ...this.getCurrentPresetContext(), uiMode: 'chat' };
+        const resolved = this.store?.getResolvedActive?.('openai', context) || null;
+        const presetId = String(resolved?.presetId || '').trim();
+        const preset = resolved?.preset && typeof resolved.preset === 'object' ? resolved.preset : {};
+        const actions = this.getInjectActions();
+        let openp = preset;
+        try {
+            openp = actions.resolveAgentOpenAIPresetSync?.({ presetId, preset }) || preset;
+        } catch { openp = preset; }
+        return { presetId, preset, openp };
+    }
+
+    getInjectSettingsState() {
+        return this.runtimeContext.promptInject?.getSettingsState?.() || {};
+    }
+
+    isCurrentSessionGroup() {
+        const sessionId = String(this.runtimeContext.chatStore?.getCurrent?.() || '').trim();
+        if (sessionId.startsWith('group:')) return true;
+        return Boolean(this.runtimeContext.contactsStore?.getContact?.(sessionId)?.isGroup);
+    }
+
+    /* 展示态持久化：按 openai 预设分别记「加入了哪些项 + 预览场景」（纯 UI 状态，不入预设数据） */
+    ensureInjectStateLoaded() {
+        const presetId = String(this.store?.getActiveId?.('openai') || '').trim();
+        if (this.injectStateScope === presetId) return;
+        this.injectStateScope = presetId;
+        let entry = null;
+        try {
+            const map = JSON.parse(localStorage.getItem('preset_inject_added_v1') || '{}');
+            entry = map && typeof map === 'object' ? map[presetId] : null;
+        } catch { entry = null; }
+        const items = Array.isArray(entry?.items) ? entry.items : [];
+        this.injectAdded = new Set(items.filter(id => ['memory', 'image', 'moment'].includes(id)));
+        this.previewScenario = entry?.scenario === 'private' || entry?.scenario === 'group' ? entry.scenario : '';
+    }
+
+    saveInjectState() {
+        const presetId = String(this.injectStateScope || '').trim();
+        if (!presetId) return;
+        try {
+            const map = JSON.parse(localStorage.getItem('preset_inject_added_v1') || '{}');
+            const next = map && typeof map === 'object' ? map : {};
+            next[presetId] = { items: Array.from(this.injectAdded || []), scenario: this.previewScenario || '' };
+            localStorage.setItem('preset_inject_added_v1', JSON.stringify(next));
+        } catch {}
+    }
+
+    buildInjectChipStatesNow(sysp = null) {
+        this.ensureInjectStateLoaded();
+        const resolved = sysp || this.getInjectSyspromptResolved().sysp;
+        return buildPresetInjectChipStates({
+            sysp: resolved,
+            settingsState: this.getInjectSettingsState(),
+            added: Array.from(this.injectAdded || []),
+            previewScenario: this.previewScenario,
+        });
+    }
+
+    /* 重绘 chip 条 + 系统注入卡（列表内就地更新，不整体重建二级页）。
+       注意：二级页构建期间元素尚未挂载，不能用 isConnected 门控 */
+    refreshInjectUi() {
+        const bar = this.injectBarEl;
+        if (bar) {
+            const { sysp } = this.getInjectSyspromptResolved();
+            const states = this.buildInjectChipStatesNow(sysp);
+            bar.innerHTML = states.map(s => `
+                <button type="button"
+                    class="pp-inject-chip${s.on ? ' is-on' : ''}${s.warnText ? ' is-warn' : ''}${s.hidden ? ' is-hidden' : ''}"
+                    data-inject-chip="${escapeHtml(s.id)}"
+                    aria-pressed="${s.on ? 'true' : 'false'}"
+                    ${s.warnText ? `title="${escapeHtml(s.warnText)}"` : ''}>
+                    <span class="pp-inject-dot"></span><span>${escapeHtml(s.label)}</span>${s.warnText ? `<span class="pp-inject-warn" data-inject-enable="${escapeHtml(s.id)}" title="${escapeHtml(s.warnText)}（点击开启）">!</span>` : ''}
+                </button>
+            `).join('');
+            if (!bar.dataset.bound) {
+                bar.dataset.bound = '1';
+                bar.addEventListener('click', (e) => {
+                    // ! 角标 = 启用入口；chip 本体 = 加入/移除（关闭优先，不被启用弹窗挡住）
+                    const warn = e.target?.closest?.('[data-inject-enable]');
+                    if (warn) {
+                        e.stopPropagation();
+                        this.showInjectFeatureDialog(warn.dataset.injectEnable || '');
+                        return;
+                    }
+                    const btn = e.target?.closest?.('[data-inject-chip]');
+                    if (btn) this.onInjectChipTap(btn.dataset.injectChip || '');
+                });
+            }
+            this.renderInjectCards(sysp);
+        }
+    }
+
+    renderInjectCards(sysp = null) {
+        const list = this.openaiBlocksListEl;
+        if (!list) return;
+        list.querySelectorAll('.pp-inject-block').forEach(el => el.remove());
+        this.ensureInjectStateLoaded();
+        const resolved = sysp || this.getInjectSyspromptResolved().sysp;
+        const { openp } = this.getInjectOpenAIResolved();
+        const defs = buildInjectCardDefs({
+            sysp: resolved,
+            settingsState: this.getInjectSettingsState(),
+            added: Array.from(this.injectAdded || []),
+            previewScenario: this.previewScenario,
+            memoryPlacement: {
+                guidePosition: openp?.memory_guide_position,
+                guideDepth: openp?.memory_guide_depth,
+                dataPosition: openp?.memory_data_position,
+                dataDepth: openp?.memory_data_depth,
+            },
+        });
+        if (!defs.length) return;
+        const mainCard = list.querySelector('.openai-block[data-identifier="main"]');
+        const historyCard = list.querySelector('.openai-block[data-identifier="chatHistory"]');
+        const insertAfter = (node, ref) => {
+            if (ref && ref.parentNode === list) list.insertBefore(node, ref.nextSibling);
+            else list.insertBefore(node, list.firstChild);
+        };
+        const cursors = { after_main: mainCard, history: historyCard || mainCard };
+        defs.forEach((def) => {
+            const el = this.makeInjectCardEl(def);
+            if (def.anchor === 'before_main' && mainCard) {
+                list.insertBefore(el, mainCard);
+                return;
+            }
+            if (def.anchor === 'after_main' || !cursors.history) {
+                insertAfter(el, cursors.after_main);
+                cursors.after_main = el;
+                return;
+            }
+            insertAfter(el, cursors.history);
+            cursors.history = el;
+        });
+    }
+
+    makeInjectCardEl(def) {
+        const card = document.createElement('div');
+        card.className = 'pp-block pp-inject-block';
+        card.dataset.inject = def.cardId;
+        card.innerHTML = `
+            <div class="pp-block-header">
+                <div class="pp-block-left">
+                    <div style="min-width:0;">
+                        <div class="pp-block-title">${escapeHtml(def.title)}</div>
+                        <div class="pp-block-sub">系统注入 · ${escapeHtml(def.sub)}</div>
+                    </div>
+                </div>
+                <div class="pp-block-right"><span class="pp-meta-chip ${def.featureOff ? 'is-replace' : 'is-dynamic'}"${def.featureOff ? ` data-inject-enable="${escapeHtml(def.itemId)}" title="功能未启用（点击开启）" style="cursor:pointer;"` : ''}>${def.featureOff ? '未启用' : '注入'}</span></div>
+            </div>
+        `;
+        card.querySelector('.pp-block-header').addEventListener('click', (e) => {
+            const warn = e.target?.closest?.('[data-inject-enable]');
+            if (warn) {
+                e.stopPropagation();
+                this.showInjectFeatureDialog(warn.dataset.injectEnable || '');
+                return;
+            }
+            this.openInjectBlockEditor(def.cardId);
+        });
+        return card;
+    }
+
+    /* chip 点击：只动展示态（加入/移除、预览场景择一）；加入项功能未启用时点击弹启用界面 */
+    async onInjectChipTap(itemId) {
+        const item = getInjectItem(itemId);
+        if (!item) return;
+        this.ensureInjectStateLoaded();
+        const { sysp } = this.getInjectSyspromptResolved();
+        const chipStates = this.buildInjectChipStatesNow(sysp);
+        const result = applyInjectChipTap({ itemId, chipStates, previewScenario: this.previewScenario });
+        if (result.action === 'add') {
+            this.injectAdded.add(itemId);
+            if (!isInjectFeatureEnabled(itemId, { sysp, settingsState: this.getInjectSettingsState() })) {
+                this.showStatus('该功能未启用（仅预览展示）：点 ! 角标可开启', 'info');
+            }
+        } else if (result.action === 'remove') {
+            this.injectAdded.delete(itemId);
+        } else if (result.action === 'set-scenario' || result.action === 'remove-scenario') {
+            this.previewScenario = result.nextScenario;
+        } else {
+            return;
+        }
+        this.saveInjectState();
+        this.refreshInjectUi();
+        this.invalidateOrRebuildPreview();
+    }
+
+    /* 加入项功能未启用时的启用界面：说明原因，能直接开的给「启用」，需去通用设定的只说明 */
+    async showInjectFeatureDialog(itemId) {
+        const item = getInjectItem(itemId);
+        if (!item) return;
+        const { presetId, preset, sysp } = this.getInjectSyspromptResolved();
+        const settingsState = this.getInjectSettingsState();
+        const blocker = describeInjectFeatureBlocker(itemId, { sysp, settingsState });
+        if (!blocker) return;
+        const labels = {
+            memory: '记忆表格', dialogue: '私聊格式', group: '群聊格式', image: '自动生图', moment: '动态发布决策',
+        };
+        // 记忆功能被通用设定级关闭（记忆总开关/摘要模式）：无法在此直接开，只说明
+        if (itemId === 'memory') {
+            const generalBlocker = describeMemoryChipBlocker(settingsState);
+            if (generalBlocker) {
+                await appConfirm({ title: '记忆表格未启用', message: generalBlocker, confirmText: '知道了' });
+                return;
+            }
+        }
+        const ok = await appConfirm({
+            title: `${labels[itemId] || item.label}未启用`,
+            message: `${blocker}。现在启用该功能？`,
+            confirmText: '启用',
+        });
+        if (!ok) return;
+        try {
+            if (itemId === 'memory') {
+                this.runtimeContext.promptInject?.setMemoryTableChatEnabled?.(true);
+            } else if (itemId === 'image') {
+                if (settingsState.autoImagePromptEnabled !== true) {
+                    this.runtimeContext.promptInject?.setAutoImagePromptEnabled?.(true);
+                }
+                if (sysp?.auto_image_prompt_enabled === false) {
+                    await this.setInjectSyspromptEnabled(item, true, { presetId, preset });
+                }
+            } else {
+                await this.setInjectSyspromptEnabled(item, true, { presetId, preset });
+            }
+            this.showStatus('已启用', 'success');
+        } catch (err) {
+            logger.warn('注入功能启用失败', err);
+            this.showStatus('启用失败', 'error');
+        }
+        this.refreshInjectUi();
+        this.invalidateOrRebuildPreview();
+    }
+
+    async setInjectSyspromptEnabled(item, enabled, { presetId = '', preset = {} } = {}) {
+        const actions = this.getInjectActions();
+        if (typeof actions.setAgentPromptConfig !== 'function') {
+            this.showStatus('注入开关不可用：缺少 agent-center 通道', 'error');
+            return false;
+        }
+        try {
+            if (enabled) {
+                // 卡片总开关关着会压掉 prompt 级启用：点亮 chip 时顺带恢复卡片
+                const settings = actions.getAgentCenterSettings?.() || {};
+                if (settings?.cards?.[item.agentId]?.enabled === false) {
+                    await actions.setAgentCardEnabled?.({ id: item.agentId, enabled: true });
+                }
+            }
+            await actions.setAgentPromptConfig({
+                profileType: 'sysprompt',
+                presetId,
+                preset,
+                agentId: item.agentId,
+                promptId: item.promptId,
+                config: { enabled: enabled === true },
+            });
+            return true;
+        } catch (err) {
+            logger.warn('注入开关写入失败', err);
+            this.showStatus('注入开关写入失败', 'error');
+            return false;
+        }
+    }
+
+    invalidateOrRebuildPreview() {
+        const panelVisible = this.element && this.element.style.display !== 'none';
+        if (panelVisible && this.previewState && this.previewState !== 'closed') {
+            this.rebuildPreviewSkeleton();
+        } else {
+            this.previewBuildQueue?.invalidate?.();
+            this.previewSkeleton = null;
+        }
+    }
+
+    /* 系统注入卡编辑页：保存即写入 agent-center / 记忆模板（不走预设草稿） */
+    openInjectBlockEditor(cardId) {
+        const host = this.blockEditorEl;
+        if (!host) return;
+        this.currentBlockCard = null;
+        this.currentInjectEditor = String(cardId || '');
+        host.innerHTML = '';
+        const mkLabel = (text) => {
+            const d = document.createElement('div');
+            d.className = 'pp-field-label';
+            d.textContent = text;
+            return d;
+        };
+        const mkSelect = (options, value) => {
+            const sel = document.createElement('select');
+            sel.className = 'pp-input';
+            sel.innerHTML = options.map(o => `<option value="${escapeHtml(String(o.value))}">${escapeHtml(o.label)}</option>`).join('');
+            sel.value = String(value ?? '');
+            return sel;
+        };
+        const mkNumber = (value) => {
+            const input = document.createElement('input');
+            input.type = 'number';
+            input.min = '0';
+            input.inputMode = 'numeric';
+            input.className = 'pp-input';
+            input.value = String(Math.max(0, Math.trunc(Number(value)) || 0));
+            return input;
+        };
+        const mkRow = (cells) => {
+            const row = document.createElement('div');
+            row.style.cssText = 'display:flex; gap:10px; flex-wrap:wrap; margin-bottom:10px;';
+            cells.forEach(([labelText, el]) => {
+                const cell = document.createElement('div');
+                cell.style.cssText = 'flex:1; min-width:140px;';
+                cell.appendChild(mkLabel(labelText));
+                cell.appendChild(el);
+                row.appendChild(cell);
+            });
+            return row;
+        };
+        const mkSaveBtn = (onSave) => {
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'pp-btn-save';
+            btn.textContent = '保存';
+            btn.style.cssText = 'margin-top:12px; padding:8px 18px;';
+            btn.onclick = async () => {
+                btn.disabled = true;
+                try {
+                    await onSave();
+                    this.showStatus('已保存', 'success');
+                    this.refreshInjectUi();
+                    this.invalidateOrRebuildPreview();
+                } catch (err) {
+                    logger.warn('系统注入保存失败', err);
+                    this.showStatus('保存失败', 'error');
+                } finally {
+                    btn.disabled = false;
+                }
+            };
+            return btn;
+        };
+        const note = (text) => {
+            const p = document.createElement('div');
+            p.style.cssText = 'color:var(--app-text-muted); font-size:12px; line-height:1.7; margin-bottom:10px;';
+            p.textContent = text;
+            return p;
+        };
+
+        if (cardId === 'memory_guide' || cardId === 'memory_data') {
+            this.renderMemoryInjectEditor(host, cardId, { mkLabel, mkSelect, mkNumber, mkRow, mkSaveBtn, note });
+        } else {
+            const item = getInjectItem(cardId);
+            if (!item || item.kind !== 'sysprompt') return;
+            const { presetId, preset, sysp } = this.getInjectSyspromptResolved();
+            const cfg = readInjectItemConfig(sysp, cardId) || {};
+            if (this.blockTitleEl) {
+                this.blockTitleEl.textContent = {
+                    dialogue: '私聊格式提示词',
+                    group: '群聊格式提示词',
+                    image: '自动生图提示词',
+                    moment: '动态发布决策提示词',
+                }[cardId] || item.label;
+            }
+            if (this.blockSubtitleEl) this.blockSubtitleEl.textContent = '系统注入 · 保存即生效';
+            host.appendChild(note('该提示词按位置/深度锚定注入，不参与区块拖拽排序；与 Agent Center 内对应编辑器为同一份数据。'));
+            const posSel = mkSelect(PROMPT_POSITION_OPTIONS, cfg.position ?? 0);
+            const depthInput = mkNumber(cfg.depth ?? 0);
+            const roleSel = mkSelect(PROMPT_ROLE_OPTIONS, cfg.role ?? 0);
+            host.appendChild(mkRow([['注入位置', posSel], ['深度', depthInput], ['角色', roleSel]]));
+            host.appendChild(mkLabel('规则内容'));
+            const ta = document.createElement('textarea');
+            ta.className = 'pp-textarea';
+            ta.spellcheck = false;
+            ta.style.cssText = 'width:100%; min-height: max(260px, calc(var(--app-visual-height, 100vh) - 480px)); resize: vertical;';
+            ta.value = cfg.rules || '';
+            host.appendChild(ta);
+            host.appendChild(mkSaveBtn(async () => {
+                const actions = this.getInjectActions();
+                await actions.setAgentPromptConfig?.({
+                    profileType: 'sysprompt',
+                    presetId,
+                    preset,
+                    agentId: item.agentId,
+                    promptId: item.promptId,
+                    config: {
+                        rules: String(ta.value ?? ''),
+                        position: Math.trunc(Number(posSel.value)) || 0,
+                        depth: Math.max(0, Math.trunc(Number(depthInput.value)) || 0),
+                        role: Math.trunc(Number(roleSel.value)) || 0,
+                    },
+                });
+            }));
+        }
+        this.currentPage = 'block';
+        this.setPageView('block');
+    }
+
+    /* 记忆表格注入编辑：指导（位置/深度）与表格记忆（位置/深度 + 内容/包裹模板） */
+    renderMemoryInjectEditor(host, cardId, helpers) {
+        const { mkSelect, mkNumber, mkRow, mkSaveBtn, note, mkLabel } = helpers;
+        const isGuide = cardId === 'memory_guide';
+        if (this.blockTitleEl) this.blockTitleEl.textContent = isGuide ? '记忆表格 · 写表指导' : '记忆表格 · 表格记忆';
+        if (this.blockSubtitleEl) this.blockSubtitleEl.textContent = '系统注入 · 保存即生效';
+        const actions = this.getInjectActions();
+        const { presetId, preset } = this.getInjectOpenAIResolved();
+        const settings = actions.getAgentCenterSettings?.() || {};
+        const agentSettings = settings?.profiles?.[`openai:${presetId}`]?.agents?.memory_table_agent?.settings || {};
+        const { openp } = this.getInjectOpenAIResolved();
+        const current = {
+            dataPosition: String(agentSettings.dataPosition ?? openp?.memory_data_position ?? ''),
+            dataDepth: Math.max(0, Math.trunc(Number(agentSettings.dataDepth ?? openp?.memory_data_depth)) || 0),
+            guidePosition: String(agentSettings.guidePosition ?? openp?.memory_guide_position ?? ''),
+            guideDepth: Math.max(0, Math.trunc(Number(agentSettings.guideDepth ?? openp?.memory_guide_depth)) || 0),
+        };
+        host.appendChild(note(isGuide
+            ? '写表指导提示词由记忆模板生成（指导模型如何更新表格），此处调整它的注入位置与深度。'
+            : '表格记忆为当前会话的记忆表数据，按模板渲染后注入。模板使用 {{tableData}} 插入表格内容。'));
+        const posSel = mkSelect(MEMORY_POSITION_OPTIONS, isGuide ? current.guidePosition : current.dataPosition);
+        const depthInput = mkNumber(isGuide ? current.guideDepth : current.dataDepth);
+        host.appendChild(mkRow([[isGuide ? '指导位置' : '数据位置', posSel], ['深度', depthInput]]));
+
+        let templateTa = null;
+        let wrapperTa = null;
+        let templatePosSel = null;
+        let promptCfg = null;
+        const finishSave = async () => {
+            const config = {
+                dataPosition: current.dataPosition,
+                dataDepth: current.dataDepth,
+                guidePosition: current.guidePosition,
+                guideDepth: current.guideDepth,
+            };
+            if (isGuide) {
+                config.guidePosition = String(posSel.value ?? '');
+                config.guideDepth = Math.max(0, Math.trunc(Number(depthInput.value)) || 0);
+            } else {
+                config.dataPosition = String(posSel.value ?? '');
+                config.dataDepth = Math.max(0, Math.trunc(Number(depthInput.value)) || 0);
+            }
+            await actions.setMemoryAgentSettings?.({ presetId, preset, config });
+            if (!isGuide && templateTa && promptCfg) {
+                await actions.setMemoryAgentPromptConfig?.({
+                    templateId: promptCfg.templateId,
+                    config: {
+                        template: String(templateTa.value ?? ''),
+                        wrapper: String(wrapperTa?.value ?? ''),
+                        position: String(templatePosSel?.value ?? promptCfg.position ?? 'before_latest_user'),
+                    },
+                });
+            }
+        };
+        if (isGuide) {
+            host.appendChild(mkSaveBtn(finishSave));
+            return;
+        }
+        // 表格记忆：异步加载模板注入配置（SQLite），加载完成再补模板编辑区
+        const loading = note('正在加载记忆模板…');
+        host.appendChild(loading);
+        Promise.resolve(actions.getMemoryAgentPromptConfig?.()).then((cfg) => {
+            if (!host.isConnected || this.currentInjectEditor !== cardId) return;
+            loading.remove();
+            promptCfg = cfg && typeof cfg === 'object' ? cfg : null;
+            if (!promptCfg) {
+                host.appendChild(note('记忆模板不可用：仅可调整注入位置。'));
+                host.appendChild(mkSaveBtn(finishSave));
+                return;
+            }
+            host.appendChild(note(`模板：${promptCfg.templateName || '默认记忆模板'}`));
+            templatePosSel = mkSelect(MEMORY_POSITION_OPTIONS.filter(o => o.value !== ''), promptCfg.position || 'before_latest_user');
+            host.appendChild(mkRow([['表格内容模板位置', templatePosSel]]));
+            host.appendChild(mkLabel('表格内容模板'));
+            templateTa = document.createElement('textarea');
+            templateTa.className = 'pp-textarea';
+            templateTa.spellcheck = false;
+            templateTa.style.cssText = 'width:100%; min-height:120px; resize:vertical; margin-bottom:10px;';
+            templateTa.value = promptCfg.template || '';
+            host.appendChild(templateTa);
+            host.appendChild(mkLabel('包裹模板'));
+            wrapperTa = document.createElement('textarea');
+            wrapperTa.className = 'pp-textarea';
+            wrapperTa.spellcheck = false;
+            wrapperTa.style.cssText = 'width:100%; min-height:120px; resize:vertical;';
+            wrapperTa.value = promptCfg.wrapper || '';
+            host.appendChild(wrapperTa);
+            host.appendChild(mkSaveBtn(finishSave));
+        }).catch(() => {
+            if (!host.isConnected) return;
+            loading.textContent = '记忆模板加载失败：仅可调整注入位置。';
+            host.appendChild(mkSaveBtn(finishSave));
+        });
+    }
+
     /* 三级页上下滑/滚轮切换到相邻区块（编辑内容已 write-through 进草稿 Map，切换零丢失） */
     switchBlockBy(delta) {
+        if (this.currentInjectEditor) return false; // 系统注入卡编辑页不参与相邻区块切换
         const cards = this.getBlockCards();
         if (!cards.length) return false;
         let idx = cards.indexOf(this.currentBlockCard);
@@ -5083,8 +5694,6 @@ export class PresetPanel {
         this.previewBodyEl = pane.querySelector('#preset-preview-body');
         this.previewEstEl = pane.querySelector('#preset-preview-est');
         this.previewState = 'closed';
-        this.previewMode = 'rp';
-        this.previewIncludeHistory = false;
         // 默认「区块原样」：宏语法可见、100% 逐字映射；关闭后整体求值展示最终效果
         this.previewRawBlocks = true;
         this.previewSkeleton = null;
@@ -5175,27 +5784,6 @@ export class PresetPanel {
         }
         pane.querySelector('#preset-preview-close')?.addEventListener('click', () => this.closePreview());
         pane.querySelector('#preset-preview-refresh')?.addEventListener('click', () => this.rebuildPreviewSkeleton());
-        const chatBtn = pane.querySelector('#preset-preview-toggle-chatfmt');
-        chatBtn?.addEventListener('click', () => {
-            this.previewMode = this.previewMode === 'chat' ? 'rp' : 'chat';
-            chatBtn.classList.toggle('is-on', this.previewMode === 'chat');
-            this.syncPreviewHistoryToggle();
-            this.rebuildPreviewSkeleton();
-        });
-        const histBtn = pane.querySelector('#preset-preview-toggle-history');
-        this.previewHistoryBtnEl = histBtn;
-        this.syncPreviewHistoryToggle();
-        histBtn?.addEventListener('click', () => {
-            if (!this.isPreviewSceneMatchingCurrent()) {
-                this.previewIncludeHistory = false;
-                this.syncPreviewHistoryToggle();
-                this.showStatus('跨场景预览不会混入当前会话历史', 'info');
-                return;
-            }
-            this.previewIncludeHistory = !this.previewIncludeHistory;
-            this.syncPreviewHistoryToggle();
-            this.rebuildPreviewSkeleton();
-        });
         const macroBtn = pane.querySelector('#preset-preview-toggle-macroeval');
         macroBtn?.addEventListener('click', () => {
             this.previewRawBlocks = !this.previewRawBlocks;
@@ -5211,7 +5799,7 @@ export class PresetPanel {
         const showTip = (target) => {
             const evalFn = this.runtimeContext?.evalScenePreviewMacro;
             if (typeof evalFn !== 'function' || !target) return;
-            const res = evalFn(target.textContent || '', { previewUiMode: this.previewMode }) || {};
+            const res = evalFn(target.textContent || '', { previewUiMode: this.getPreviewUiMode() }) || {};
             if (!res.text) { tip.hidden = true; return; }
             tip.textContent = res.text;
             tip.dataset.kind = res.kind || '';
@@ -5326,36 +5914,27 @@ export class PresetPanel {
         this.setPreviewState('closed', { animate });
     }
 
-    isPreviewSceneMatchingCurrent() {
-        const currentMode = this.getCurrentPresetContext().uiMode;
-        return currentMode === this.previewMode;
-    }
-
-    isPreviewHistoryIncluded() {
-        return this.previewIncludeHistory === true && this.isPreviewSceneMatchingCurrent();
-    }
-
-    syncPreviewHistoryToggle() {
-        const button = this.previewHistoryBtnEl;
-        if (!button) return;
-        const sceneMatches = this.isPreviewSceneMatchingCurrent();
-        if (!sceneMatches) this.previewIncludeHistory = false;
-        const included = this.isPreviewHistoryIncluded();
-        button.disabled = !sceneMatches;
-        button.classList.toggle('is-on', included);
-        button.setAttribute('aria-pressed', included ? 'true' : 'false');
-        button.title = sceneMatches
-            ? '切换是否加入当前会话聊天记录'
-            : '跨场景预览不会加入当前会话历史';
+    /* 预览组装场景由注入选择条驱动：选了私聊/群聊或加入了聊天类项 → chat，否则创意写作 */
+    getPreviewUiMode() {
+        this.ensureInjectStateLoaded();
+        return buildPreviewInjectFlags({
+            added: Array.from(this.injectAdded || []),
+            previewScenario: this.previewScenario,
+        }).previewUiMode;
     }
 
     rebuildPreviewSkeleton() {
         const buildFn = this.runtimeContext?.buildScenePromptPreviewRequest;
         if (typeof buildFn !== 'function' || !this.previewBodyEl) return;
-        this.syncPreviewHistoryToggle();
+        this.ensureInjectStateLoaded();
+        const flags = buildPreviewInjectFlags({
+            added: Array.from(this.injectAdded || []),
+            previewScenario: this.previewScenario,
+        });
         return this.previewBuildQueue?.request?.({
-            previewUiMode: this.previewMode,
-            includeHistory: this.isPreviewHistoryIncluded(),
+            ...flags,
+            // 预设面板从通用设定打开、无会话历史语境：聊天记录固定折叠为占位
+            includeHistory: false,
             rawBlocks: this.previewRawBlocks !== false,
         });
     }
@@ -5505,8 +6084,8 @@ export class PresetPanel {
         }
         let html = '';
         for (let i = 0; i < messages.length; i += 1) {
-            if (!this.isPreviewHistoryIncluded() && i === lastUserIdx) {
-                html += '<div class="pp-prev-history-chip">聊天记录已折叠为占位（点右上「聊天记录」加入实际内容）</div>';
+            if (i === lastUserIdx) {
+                html += '<div class="pp-prev-history-chip">聊天记录占位：实际发送时在此展开当前会话记录</div>';
             }
             html += this.renderPreviewMessageHtml(i);
         }

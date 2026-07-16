@@ -4579,7 +4579,8 @@ class AppBridge {
     // 自动标签生图提示词：总开关在通用设定，具体文案和注入位置放在“聊天提示词”预设中管理。
     const autoImagePromptPresetEnabled = useSysprompt && sysp?.auto_image_prompt_enabled !== false;
     const autoImagePromptRulesRaw = typeof sysp?.auto_image_prompt_rules === 'string' ? sysp.auto_image_prompt_rules : '';
-    const autoImagePromptInjectGuard = autoImagePromptSettingEnabled
+    // 请求预览不受频率闸门影响：预览应稳定展示启用中的生图提示词
+    const autoImagePromptInjectGuard = (autoImagePromptSettingEnabled && !context?.meta?.previewOnly)
       ? shouldAllowAutoImagePromptByRateLimit({
         messages: this.chatStore?.getMessages?.(sessionId) || [],
         settings: settingsSnapshot,
@@ -4590,7 +4591,8 @@ class AppBridge {
     if (autoImagePromptSettingEnabled && !autoImagePromptInjectGuard.ok) {
       logger.debug?.(`auto image prompt injection skipped: ${autoImagePromptInjectGuard.reason}`);
     }
-    autoImagePromptRules = (autoImagePromptSettingEnabled && autoImagePromptPresetEnabled && autoImagePromptInjectGuard.ok)
+    autoImagePromptRules = (autoImagePromptSettingEnabled && autoImagePromptPresetEnabled && autoImagePromptInjectGuard.ok
+      && !context?.meta?.previewSuppressAutoImagePrompt)
       ? buildAutoImagePromptInstruction({
         uiMode,
         isGroupChat,
@@ -4848,14 +4850,17 @@ const stringifyMessageContent = (content) => {
 	        promptParts.push(trimmed);
 	      };
 	      const groupSystemHint = '系统消息：内容';
-	      if (!summaryOnly && !isMomentCommentTask && !isGroupChat && dialogueEnabled && dialogueRules) {
+	      // 请求预览可按注入选择条抑制聊天格式/动态发布（仅 previewOnly 链路设置这些 meta）
+	      const suppressChatFormatGuide = Boolean(context?.meta?.previewSuppressChatFormatGuide);
+	      const suppressMomentCreate = Boolean(context?.meta?.previewSuppressMomentCreate);
+	      if (!summaryOnly && !isMomentCommentTask && !isGroupChat && dialogueEnabled && dialogueRules && !suppressChatFormatGuide) {
 	        pushByPosition(dialogueRules, dialoguePosition, dialogueDepth, dialogueRole, 'chat_guide');
 	      }
-	      if (!summaryOnly && !isMomentCommentTask && isGroupChat && groupEnabled && groupRules) {
+	      if (!summaryOnly && !isMomentCommentTask && isGroupChat && groupEnabled && groupRules && !suppressChatFormatGuide) {
 	        const combined = joinPromptBlocks([groupRules, groupSystemHint]);
 	        pushByPosition(combined, groupPosition, groupDepth, groupRole, 'chat_guide');
 	      }
-	      if (!summaryOnly && !isMomentCommentTask && momentCreateEnabled && momentCreateRules && !shouldEmbedMomentCreateInPhoneFormat) {
+	      if (!summaryOnly && !isMomentCommentTask && momentCreateEnabled && momentCreateRules && !shouldEmbedMomentCreateInPhoneFormat && !suppressMomentCreate) {
 	        pushByPosition(momentCreateRules, momentCreatePosition, momentCreateDepth, momentCreateRole, 'moment_create');
 	      }
 	      if (!summaryOnly && isMomentCommentTask) {

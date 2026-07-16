@@ -231,6 +231,12 @@ const migrateSettings = (settings = {}) => {
   next.autoImagePromptWritingEnabled = next.autoImagePromptWritingEnabled !== false;
   next.momentCommentSideEffectsEnabled = next.momentCommentSideEffectsEnabled !== false;
   next.memoryTableEnabledChat = next.memoryTableEnabledChat !== false;
+  // 注入整合语义澄清（2026-07-16）：注入选择条只管预览展示，不动功能开关；
+  // 一次性回滚此前 presetInjectMemoryChatDefaultOffMigrated 对聊天位的默认关闭
+  if (next.presetInjectMemoryChatDefaultOffMigrated === true && next.presetInjectMemoryChatOffRolledBack !== true) {
+    next.memoryTableEnabledChat = true;
+  }
+  next.presetInjectMemoryChatOffRolledBack = true;
   next.memoryTableEnabledMoments = next.memoryTableEnabledMoments !== false;
   next.memoryTableEnabledWriting = next.memoryTableEnabledWriting !== false;
   next.memoryBridgeMomentsToChatEnabled = next.memoryBridgeMomentsToChatEnabled !== false;

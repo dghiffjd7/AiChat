@@ -1256,6 +1256,20 @@ const initApp = async () => {
     buildScenePromptPreviewRequest: opts => buildScenePromptPreviewRequest(opts || {}),
     // 预览宏 token 悬停求值（只读；写变量类/EJS 不执行）
     evalScenePreviewMacro: (token, options) => evalScenePreviewMacro(token, options),
+    // 注入选择条（记忆表格 chip）读写通用设定；sysprompt 类 chip 走 debugUiRegistry actions
+    promptInject: {
+      getSettingsState: () => {
+        const settings = appSettings.get();
+        return {
+          memoryEnabled: settings.memoryEnabled !== false,
+          memoryStorageMode: String(settings.memoryStorageMode || 'table').toLowerCase(),
+          memoryTableEnabledChat: settings.memoryTableEnabledChat !== false,
+          autoImagePromptEnabled: settings.autoImagePromptEnabled === true,
+        };
+      },
+      setMemoryTableChatEnabled: (enabled) => appSettings.update({ memoryTableEnabledChat: enabled === true }),
+      setAutoImagePromptEnabled: (enabled) => appSettings.update({ autoImagePromptEnabled: enabled === true }),
+    },
   });
   sessionConfigPanel.setRuntimeContext({
     chatStore,
@@ -15187,12 +15201,26 @@ Phase G（Frame 36）：循环衔接
   });
   // 只构建不弹窗：预设面板分栏预览用（草稿实时渲染的骨架）。
   // rawBlocks=true 时自定义区块正文不做宏求值（原样显示 → 预览可逐字映射、无 setvar 副作用）。
-  const buildScenePromptPreviewRequest = async ({ previewUiMode = '', includeHistory = false, rawBlocks = false } = {}) => {
+  const buildScenePromptPreviewRequest = async ({
+    previewUiMode = '',
+    previewScenario = '',
+    previewChatFormat = true,
+    previewInjectMemory = true,
+    previewInjectImage = true,
+    previewInjectMomentCreate = true,
+    includeHistory = false,
+    rawBlocks = false,
+  } = {}) => {
     try {
       const request = await handleSend(null, {
         previewOnly: true,
         ignorePending: true,
         previewUiMode,
+        previewScenario,
+        previewChatFormat,
+        previewInjectMemory,
+        previewInjectImage,
+        previewInjectMomentCreate,
         previewSuppressHistory: !includeHistory,
         previewRawBlocks: Boolean(rawBlocks),
         skipScripts: true,
@@ -24936,6 +24964,11 @@ Phase G（Frame 36）：循环衔接
       skipScripts,
       previewOnly,
       previewUiMode,
+      previewScenario,
+      previewChatFormat,
+      previewInjectMemory,
+      previewInjectImage,
+      previewInjectMomentCreate,
       previewSuppressHistory,
       previewRawBlocks,
       suppressAssistantDom,
@@ -24953,7 +24986,8 @@ Phase G（Frame 36）：循环衔接
     // 跨场景预览（如在创意会话里预览聊天形态）：当前会话历史/摘要属于另一场景，不携带以免误导；
     // 预设预览面板亦可显式要求不携带历史（以占位符展示）。
     const previewSceneMismatch = Boolean(previewOnly) && sceneUiMode !== uiMode;
-    const previewHistorySuppressed = previewSceneMismatch || (Boolean(previewOnly) && Boolean(previewSuppressHistory));
+    // 私聊/群聊场景覆盖与会话真实类型不符时也会追加抑制（见下方 previewScenarioOverride）
+    let previewHistorySuppressed = previewSceneMismatch || (Boolean(previewOnly) && Boolean(previewSuppressHistory));
     const attachmentQueue = includeAttachments ? composerAttachments.slice() : [];
     const resendAttachmentParts = rawResendAttachmentParts.filter(part => {
       if (!part || typeof part !== 'object') return false;
@@ -25089,7 +25123,13 @@ Phase G（Frame 36）：循环衔接
       ? (String(getRpCharacterName(activePersona) || '').trim() || '角色')
       : (contact?.name || (sessionId.startsWith('group:') ? sessionId.replace(/^group:/, '') : sessionId) || 'assistant');
     const userEchoGuard = createUserEchoGuard(text, promptUserName);
-    const isGroupChat = Boolean(contact?.isGroup) || sessionId.startsWith('group:');
+    const realIsGroupChat = Boolean(contact?.isGroup) || sessionId.startsWith('group:');
+    // 请求预览可指定私聊/群聊场景（注入选择条）：覆盖组装分支；场景与会话真实类型不符时历史不携带
+    const previewScenarioOverride = previewOnly && previewScenario ? previewScenario : '';
+    const isGroupChat = previewScenarioOverride ? previewScenarioOverride === 'group' : realIsGroupChat;
+    if (previewScenarioOverride && (previewScenarioOverride === 'group') !== realIsGroupChat) {
+      previewHistorySuppressed = true;
+    }
     const groupMembers = isGroupChat ? (Array.isArray(contact?.members) ? contact.members : []) : [];
     const maybePromptTemplateGate = ({ sampleText = '' } = {}) => maybePromptTemplateEnable({
       skipTemplate,
@@ -26262,6 +26302,11 @@ Phase G（Frame 36）：循环衔接
                 previewOnly: true,
                 previewRawBlocks: Boolean(previewRawBlocks),
                 macroVariableState: previewMacroVariableState,
+                // 注入选择条：未加入的项在预览组装中抑制（不影响正式发送）
+                ...(previewChatFormat === false ? { disablePhoneFormat: true, previewSuppressChatFormatGuide: true } : {}),
+                ...(previewInjectMemory === false ? { memoryStorageMode: 'off' } : {}),
+                ...(previewInjectImage === false ? { previewSuppressAutoImagePrompt: true } : {}),
+                ...(previewInjectMomentCreate === false ? { previewSuppressMomentCreate: true } : {}),
               },
             });
           },

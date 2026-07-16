@@ -1277,7 +1277,7 @@ export class PresetStore {
             for (const p of Object.values(state.presets.sysprompt || {})) {
                 if (!p || typeof p !== 'object') continue;
                 ensurePhoneFormatPromptFields(p);
-                if (typeof p.dialogue_enabled !== 'boolean') p.dialogue_enabled = true; // 聊天室自动启用
+                if (typeof p.dialogue_enabled !== 'boolean') p.dialogue_enabled = true;
                 // 私聊提示词：默认使用 ST IN_PROMPT；用户可改为 IN_CHAT depth/role。
                 if (typeof p.dialogue_position !== 'number') p.dialogue_position = 0;
                 if (typeof p.dialogue_depth !== 'number') p.dialogue_depth = 1;
