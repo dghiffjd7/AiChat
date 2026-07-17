@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   buildCreativeExecutionDefaultTasks,
   buildCreativeExecutionLaneViewModel,
+  buildCreativeExecutionProjectionSnapshot,
   createCreativeExecutionInitialState,
   isCreativeExecutionTerminalStatus,
   normalizeCreativeExecutionTask,
@@ -211,5 +212,28 @@ import {
     tasks: state.tasks.map(t => ({ ...t, status: t.id === 'img1' ? 'skipped' : 'succeeded' })),
   });
   assert.equal(finishedView.rows.length, 2, '回看模式显示全部历史行（skipped-only 行除外）');
+  assert.equal(modelRow.flowStatus, 'running', '行连接线应继承当前任务状态');
   console.log('ok - 卡片栈视图：running 过滤/回看模式/折叠卡');
+}
+
+{
+  const state = createCreativeExecutionInitialState({ runId: 'creative-projection', now: 9000 });
+  state.expanded = true;
+  const snapshot = buildCreativeExecutionProjectionSnapshot(state, { uiMode: 'rp' });
+  assert.deepEqual(snapshot, {
+    kind: 'creative',
+    visible: true,
+    expanded: true,
+    runId: 'creative-projection',
+    status: 'running',
+    terminal: false,
+    startedAt: 9000,
+    updatedAt: 9000,
+  });
+  assert.equal(
+    buildCreativeExecutionProjectionSnapshot(state, { uiMode: 'chat' }).visible,
+    false,
+    '非创意写作模式不得参与共享容器仲裁',
+  );
+  console.log('ok - 创意泳道向共享容器提供独立投影快照');
 }

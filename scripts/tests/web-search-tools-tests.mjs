@@ -320,3 +320,56 @@ const getTool = (tools, name) => tools.find(tool => tool.name === name);
   assert.ok(result.attemptedProviders.includes('safebooru'), '应记录尝试链');
   console.log('ok - 专用源无结果时回落 Bing 并记录尝试链');
 }
+
+{
+  // 2026-07-17 搜图 403 排查回归：逗号/顿号 tags 归一化为 booru 空格分隔；
+  // 失败信息按源逐个汇报，不把个别源的 403 汇总成"全部 403"
+  const requests = [];
+  const tools = createWebSearchAgentTools({
+    httpRequest: async (payload) => {
+      requests.push(payload);
+      const url = String(payload.url || '');
+      if (url.includes('safebooru.org')) {
+        return { ok: true, status: 200, headers: {}, body: '[]' }; // 无结果
+      }
+      if (url.includes('danbooru.donmai.us')) {
+        return { ok: false, status: 403, headers: {}, body: 'blocked' }; // IP 级 403
+      }
+      return { ok: false, status: 403, headers: {}, body: '' };
+    },
+  });
+  const searchImages = getTool(tools, 'web.search_images');
+  const result = await searchImages.execute({
+    query: 'ojou-sama tsundere anime girl',
+    tags: 'ojou-sama, blonde、twintails，large breasts',
+    style: 'anime',
+    limit: 6,
+  });
+
+  const sbUrl = decodeURIComponent(String(requests.find(r => String(r.url).includes('safebooru'))?.url || ''));
+  assert.match(sbUrl, /tags=ojou-sama\+blonde\+twintails\+large_breasts\+sort:score:desc/, '逗号/顿号/中文逗号分隔与词内空格全部归一化');
+  assert.doesNotMatch(sbUrl, /,|，|、/, '发出的 booru 请求不含任何逗号');
+
+  assert.equal(result.ok, false);
+  assert.ok(Array.isArray(result.providerOutcomes) && result.providerOutcomes.length >= 2, '按源汇报结果');
+  assert.match(result.message, /safebooru:无结果/, '主源空结果如实呈现');
+  assert.match(result.message, /danbooru:HTTP 403/, '次源 403 单独标注');
+  assert.match(result.message, /blonde_hair twintails 1girl/, '失败信息附标签格式示例供模型自我修正');
+  console.log('ok - 图搜网关 booru 标签归一化与按源失败汇报');
+}
+
+{
+  // query 回退：自然词组拆成独立 tag（整句转单 tag 必然无结果）
+  const requests = [];
+  const tools = createWebSearchAgentTools({
+    httpRequest: async (payload) => {
+      requests.push(payload);
+      return { ok: true, status: 200, headers: {}, body: '[]' };
+    },
+  });
+  const searchImages = getTool(tools, 'web.search_images');
+  await searchImages.execute({ query: 'Anime Rich Girl', style: 'anime', limit: 4 });
+  const sbUrl = decodeURIComponent(String(requests.find(r => String(r.url).includes('safebooru'))?.url || ''));
+  assert.match(sbUrl, /tags=anime\+rich\+girl\+sort:score:desc/, 'query 回退按词拆 tag 且小写化');
+  console.log('ok - 图搜 query 回退拆词');
+}

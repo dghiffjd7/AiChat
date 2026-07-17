@@ -350,6 +350,7 @@ import {
   summarizeLineageGraph,
 } from './chat/lineage-graph-view-utils.js';
 import { createCreativeExecutionLaneRuntime } from './chat/creative-execution-lane-runtime-utils.js';
+import { createExecutionFlowRuntime } from './chat/execution-flow-runtime-utils.js';
 import { createPromptPreviewRuntime } from './chat/prompt-preview-runtime-utils.js';
 import {
   buildWorldDebugLocatorCandidates,
@@ -8558,6 +8559,7 @@ Phase G（Frame 36）：循环衔接
   let modeSwitchPos = null;
   let modeSwitchDimTimer = null;
   let creativeExecutionLaneRuntime = null;
+  let executionFlowRuntime = null;
   const MODE_SWITCH_DIM_DELAY = 30_000;
   const loadModeSwitchPos = () => readModeSwitchPosition();
   const saveModeSwitchPos = () => writeModeSwitchPosition(modeSwitchPos);
@@ -8636,8 +8638,9 @@ Phase G（Frame 36）：循环衔接
   pluginUiManager.mount({ chatRoom, chatInputContainer });
   creativeExecutionLaneRuntime = createCreativeExecutionLaneRuntime({
     documentRef: document,
-    inputContainer: chatInputContainer,
+    inputContainer: null,
     getUiMode: () => uiMode,
+    onStateChange: snapshot => executionFlowRuntime?.adoptCreativeState?.(snapshot),
     now: () => Date.now(),
     requestAnimationFrameFn: typeof requestAnimationFrame === 'function'
       ? callback => requestAnimationFrame(callback)
@@ -22096,6 +22099,8 @@ Phase G（Frame 36）：循环衔接
     modeSwitchEl: modeSwitch,
     onToggleSelection: () => maidSelectionMode.toggle(),
     getViewportSize,
+    // 指令条盖住悬浮球：非交互区按下转发球拖拽（运行中也可挪开）
+    getBallDragRuntime: () => modeSwitchInteractionRuntime,
     maxImageAttachments: 4,
     onAttachFiles: buildMaidImageAttachments,
     onSubmit: async (text, controls = {}) => {
@@ -22172,6 +22177,9 @@ Phase G（Frame 36）：循环衔接
     normalizeModeSwitchPos,
     setModeSwitchPos: value => {
       modeSwitchPos = value;
+      // 球在拖拽/弹跳中移动时，打开着的女仆指令条与执行流面板跟随重定位
+      if (maidCommandInputRuntime?.isOpen?.()) maidCommandInputRuntime.position?.();
+      executionFlowRuntime?.position?.();
     },
     setModeSwitchPinned: value => {
       modeSwitchPinned = Boolean(value);
@@ -22197,8 +22205,23 @@ Phase G（Frame 36）：循环衔接
     },
   });
   modeSwitchInteractionRuntime.bind();
+  // 执行流面板：贴球的女仆 ReAct 与创意写作泳道双投影宿主
+  executionFlowRuntime = createExecutionFlowRuntime({
+    documentRef: document,
+    modeSwitchEl: modeSwitch,
+    agentTaskRuntime,
+    getViewportSize,
+    getBallDragRuntime: () => modeSwitchInteractionRuntime,
+    // 女仆流首选画布 = 指令条白色结果流（结构化 trace 卡原位并入，避免双流）
+    onMaidTrace: view => maidCommandInputRuntime?.applyTraceView?.(view) === true,
+  });
+  executionFlowRuntime.attachCreativeLane?.(creativeExecutionLaneRuntime);
+  executionFlowRuntime.bind();
   patchDebugUiRegistry((registry) => {
+    registry.stores.executionFlowRuntime = executionFlowRuntime;
+    registry.stores.agentTaskRuntime = agentTaskRuntime;
     registry.actions.openMaidCommandInput = () => openMaidCommandOrSettings();
+    registry.stores.maidCommandInputRuntime = maidCommandInputRuntime;
     registry.stores.maidSelectionMode = maidSelectionMode;
     registry.stores.maidSettingsStore = maidSettingsStore;
     registry.stores.agentRegistry = agentRegistry;

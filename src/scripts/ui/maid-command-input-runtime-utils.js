@@ -77,7 +77,7 @@ const injectStyle = (documentRef) => {
   display: flex;
   align-items: flex-end;
   gap: 8px;
-  padding: 6px 7px 6px 14px;
+  padding: 6px 7px 6px 9px;
   box-sizing: border-box;
   border: 1px solid var(--app-border-default, rgba(148, 163, 184, 0.30));
   border-radius: 999px;
@@ -93,6 +93,33 @@ const injectStyle = (documentRef) => {
 .maid-command-input.is-dragover {
   border-color: rgba(37, 99, 235, 0.42);
   box-shadow: 0 16px 40px rgba(15, 23, 42, 0.20), 0 0 0 3px rgba(37, 99, 235, 0.12);
+}
+.maid-command-input-drag {
+  flex: 0 0 auto;
+  align-self: stretch;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  width: 20px;
+  margin: 0 2px 0 0;
+  border-radius: 10px;
+  cursor: grab;
+  touch-action: none;
+}
+.maid-command-input-drag:hover {
+  background: var(--app-surface-subtle, rgba(148, 163, 184, 0.12));
+}
+.maid-command-input-drag span {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--app-text-muted, rgba(100, 116, 139, 0.55));
+  opacity: 0.7;
+}
+.maid-command-input-drag:active {
+  cursor: grabbing;
 }
 .maid-command-input.is-open {
   opacity: 1;
@@ -321,6 +348,148 @@ const injectStyle = (documentRef) => {
   border-color: rgba(239, 68, 68, 0.30);
   background: color-mix(in srgb, var(--app-surface-card, #fff) 90%, rgba(239, 68, 68, 0.12));
 }
+/* 女仆执行流结构化卡：在白色结果流内原位呈现 计/行/成/败 铭牌与状态 */
+.maid-command-input-result-item.is-trace {
+  padding: 8px 11px;
+}
+.mci-trace-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+.mci-trace-glyph {
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  background: rgba(var(--app-accent-rgb, 59, 130, 246), 0.10);
+  color: var(--app-text-primary, #111827);
+  font-family: Georgia, 'Songti SC', 'Noto Serif SC', serif;
+  font-size: 11px;
+  font-weight: 700;
+}
+.maid-command-input-result-item.is-trace[data-tone="success"] .mci-trace-glyph { background: rgba(var(--app-success-rgb, 34, 197, 94), 0.12); }
+.maid-command-input-result-item.is-trace[data-tone="danger"] .mci-trace-glyph { background: rgba(var(--app-danger-rgb, 239, 68, 68), 0.12); }
+.maid-command-input-result-item.is-trace[data-tone="warning"] .mci-trace-glyph { background: rgba(var(--app-warning-rgb, 245, 158, 11), 0.14); }
+.mci-trace-label {
+  flex: 0 0 auto;
+  font-family: ui-monospace, 'IBM Plex Mono', 'JetBrains Mono', Menlo, monospace;
+  font-size: 9px;
+  letter-spacing: 0.2em;
+  color: var(--app-text-muted, rgba(100, 116, 139, 0.8));
+}
+.mci-trace-title {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 12px;
+  font-weight: 600;
+}
+.mci-trace-status {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 10px;
+  color: var(--app-text-secondary, #475569);
+}
+.mci-trace-status::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--app-text-muted, rgba(100, 116, 139, 0.8));
+}
+/* 执行中/等待中：状态点换成小转圈 */
+.mci-trace-status.is-live::before {
+  width: 9px;
+  height: 9px;
+  background: transparent;
+  border: 1.5px solid rgba(var(--app-accent-rgb, 59, 130, 246), 0.25);
+  border-top-color: rgb(var(--app-accent-rgb, 59, 130, 246));
+  animation: mciTraceSpin 0.8s linear infinite;
+  box-shadow: none;
+}
+.maid-command-input-result-item.is-trace[data-tone="warning"] .mci-trace-status.is-live::before {
+  border-color: rgba(var(--app-warning-rgb, 245, 158, 11), 0.30);
+  border-top-color: rgb(var(--app-warning-rgb, 245, 158, 11));
+}
+@keyframes mciTraceSpin {
+  to { transform: rotate(360deg); }
+}
+/* 新卡一张一张推出（进场用 backwards 配合逐卡 delay） */
+.maid-command-input-result-item.is-entering {
+  animation: mciCardIn 0.26s cubic-bezier(0.2, 0.8, 0.2, 1) backwards;
+}
+@keyframes mciCardIn {
+  from { opacity: 0; transform: translateY(8px) scale(0.98); }
+  to { opacity: 1; transform: none; }
+}
+.maid-command-input-result-item.is-trace[data-tone="accent"] .mci-trace-status::before {
+  background: rgb(var(--app-accent-rgb, 59, 130, 246));
+  animation: mciTracePulse 1.4s ease-in-out infinite;
+}
+.maid-command-input-result-item.is-trace[data-tone="success"] .mci-trace-status::before { background: rgb(var(--app-success-rgb, 34, 197, 94)); }
+.maid-command-input-result-item.is-trace[data-tone="danger"] .mci-trace-status::before { background: rgb(var(--app-danger-rgb, 239, 68, 68)); }
+.maid-command-input-result-item.is-trace[data-tone="warning"] .mci-trace-status::before {
+  background: rgb(var(--app-warning-rgb, 245, 158, 11));
+  animation: mciTracePulse 1.1s ease-in-out infinite;
+}
+@keyframes mciTracePulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(var(--app-accent-rgb, 59, 130, 246), 0.30); }
+  50% { box-shadow: 0 0 0 4px rgba(var(--app-accent-rgb, 59, 130, 246), 0.10); }
+}
+/* 过程叙述单行状态：转圈 + 文本原位替换（"我已取得结果，正在整理给你"这类不再各占气泡）。
+   刻意做小、做淡、宽度收敛为内容宽——一眼与真正的结果气泡区分开 */
+.maid-command-input-result-item.mci-live-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  align-self: flex-start;
+  width: fit-content;
+  max-width: 100%;
+  min-height: 0;
+  padding: 4px 10px 4px 8px;
+  color: var(--app-text-muted, rgba(100, 116, 139, 0.85));
+  background: color-mix(in srgb, var(--app-surface-card, #fff) 55%, transparent);
+  border-style: dashed;
+  border-color: color-mix(in srgb, var(--app-border-default, rgba(148, 163, 184, 0.30)) 65%, transparent);
+  border-radius: 999px;
+  box-shadow: none;
+  opacity: 0.88;
+}
+.mci-live-spinner {
+  flex: 0 0 auto;
+  width: 10px;
+  height: 10px;
+  border: 1.5px solid rgba(var(--app-accent-rgb, 59, 130, 246), 0.22);
+  border-top-color: rgba(var(--app-accent-rgb, 59, 130, 246), 0.85);
+  border-radius: 50%;
+  animation: mciTraceSpin 0.8s linear infinite;
+}
+.mci-live-text {
+  min-width: 0;
+  font-size: 11px;
+  line-height: 1.45;
+  word-break: break-word;
+}
+.mci-trace-sub {
+  margin-top: 3px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--app-text-secondary, #475569);
+  word-break: break-word;
+}
+.mci-trace-sub.is-error { color: rgb(var(--app-danger-rgb, 239, 68, 68)); }
+.maid-command-input-result-item.is-trace[data-tone="danger"] {
+  border-color: rgba(var(--app-danger-rgb, 239, 68, 68), 0.35);
+}
 .maid-command-input[data-bubble-side="top"] .maid-command-input-result {
   left: 0;
   bottom: calc(100% + 8px);
@@ -340,6 +509,17 @@ const injectStyle = (documentRef) => {
   .maid-command-input {
     transition: none;
   }
+  .maid-command-input-result-item.is-entering,
+  .mci-trace-status.is-live::before,
+  .mci-live-spinner {
+    animation: none !important;
+  }
+  .mci-trace-status.is-live::before {
+    background: rgb(var(--app-accent-rgb, 59, 130, 246));
+    border: 0;
+    width: 6px;
+    height: 6px;
+  }
 }
 `;
   documentRef.head.appendChild(style);
@@ -356,9 +536,12 @@ export const createMaidCommandInputRuntime = ({
   maxImageAttachments = DEFAULT_MAX_IMAGE_ATTACHMENTS,
   setTimeoutFn = globalThis?.setTimeout || null,
   clearTimeoutFn = globalThis?.clearTimeout || null,
+  // 指令条盖住悬浮球时的拖拽通道：非交互区按下即转发给球的拖拽运行时（运行中也可拖）
+  getBallDragRuntime = null,
 } = {}) => {
   let rootEl = null;
   let inputEl = null;
+  let dragHandleEl = null;
   let attachBtn = null;
   let fileInputEl = null;
   let attachmentsEl = null;
@@ -372,6 +555,9 @@ export const createMaidCommandInputRuntime = ({
   let outsidePointerHandler = null;
   let imageAttachments = [];
   let resultMessages = [];
+  let resultSeq = 0;
+  let resultEnterPaceUntil = 0; // 跨渲染的逐卡推出节拍（相邻新卡 ≥150ms，积压封顶 1.2s）
+  let liveStatus = null; // 过程叙述（thinking）单行状态：转圈+可替换文本，不各占气泡
   let restoreResultOnNextOpen = false;
 
   const createAttachmentId = () => {
@@ -486,13 +672,19 @@ export const createMaidCommandInputRuntime = ({
   const scrollResultToBottom = () => {
     if (!resultEl) return;
     try {
+      if (typeof resultEl.scrollTo === 'function') {
+        resultEl.scrollTo({ top: Number(resultEl.scrollHeight || 0) || 0, behavior: 'smooth' });
+        return;
+      }
+    } catch {}
+    try {
       resultEl.scrollTop = Number(resultEl.scrollHeight || 0) || 0;
     } catch {}
   };
 
   const renderResultMessages = ({ forceBottom = false } = {}) => {
     if (!rootEl || !documentRef) return;
-    if (!resultMessages.length) {
+    if (!resultMessages.length && !liveStatus) {
       resultEl?.remove?.();
       resultEl = null;
       rootEl.classList.remove('has-result');
@@ -508,15 +700,103 @@ export const createMaidCommandInputRuntime = ({
       rootEl.appendChild(resultEl);
     }
     rootEl.classList.add('has-result');
-    resultEl.innerHTML = '';
-    resultMessages.forEach((item) => {
-      const bubble = documentRef.createElement?.('div');
-      if (!bubble) return;
-      bubble.className = 'maid-command-input-result-item';
-      bubble.dataset.tone = item.tone;
-      bubble.textContent = item.message;
-      resultEl.appendChild(bubble);
+    const buildResultItemContent = (bubble, item) => {
+      bubble.innerHTML = '';
+      if (item.kind === 'trace') {
+        bubble.className = `maid-command-input-result-item is-trace${bubble.classList?.contains?.('is-entering') ? ' is-entering' : ''}`;
+        bubble.dataset.tone = item.tone || 'muted';
+        const head = documentRef.createElement?.('div');
+        head.className = 'mci-trace-head';
+        const glyph = documentRef.createElement?.('span');
+        glyph.className = 'mci-trace-glyph';
+        glyph.textContent = item.glyph || '行';
+        const label = documentRef.createElement?.('span');
+        label.className = 'mci-trace-label';
+        label.textContent = item.label || '';
+        const title = documentRef.createElement?.('span');
+        title.className = 'mci-trace-title';
+        title.textContent = item.title || '';
+        head.appendChild(glyph);
+        head.appendChild(label);
+        head.appendChild(title);
+        if (item.statusLabel) {
+          const status = documentRef.createElement?.('span');
+          const live = item.tone === 'accent' || item.tone === 'warning';
+          status.className = `mci-trace-status${live ? ' is-live' : ''}`;
+          status.textContent = item.statusLabel;
+          head.appendChild(status);
+        }
+        bubble.appendChild(head);
+        const subText = trim(item.error) || trim(item.sub);
+        if (subText) {
+          const sub = documentRef.createElement?.('div');
+          sub.className = `mci-trace-sub${item.error ? ' is-error' : ''}`;
+          sub.textContent = subText;
+          bubble.appendChild(sub);
+        }
+      } else {
+        bubble.className = `maid-command-input-result-item${bubble.classList?.contains?.('is-entering') ? ' is-entering' : ''}`;
+        bubble.dataset.tone = item.tone;
+        bubble.textContent = item.message;
+      }
+    };
+    // 键控 reconcile：既有卡原位补丁（状态原地翻转、不重播进场），新卡逐张推出（stagger 进场）
+    const existingNodes = new Map();
+    Array.from(resultEl.children || []).forEach((node) => {
+      const key = node?.dataset?.key;
+      if (key) existingNodes.set(key, node);
+      else if (!node?.dataset?.mciLive) node.remove?.();
     });
+    resultMessages.forEach((item, index) => {
+      const key = trim(item.id, `idx_${index}`);
+      let node = existingNodes.get(key) || null;
+      if (node) {
+        existingNodes.delete(key);
+        buildResultItemContent(node, item);
+        return; // 追加式列表：既有节点位置不变
+      }
+      node = documentRef.createElement?.('div');
+      if (!node) return;
+      node.dataset.key = key;
+      node.classList?.add?.('is-entering');
+      // 跨渲染节拍：同批与快速连发的事件都一张一张推出
+      const nowTs = Date.now();
+      const delayMs = Math.min(1200, Math.max(0, resultEnterPaceUntil - nowTs));
+      resultEnterPaceUntil = Math.max(nowTs, resultEnterPaceUntil) + 150;
+      if (node.style) node.style.animationDelay = `${delayMs}ms`;
+      node.addEventListener?.('animationend', () => {
+        node.classList?.remove?.('is-entering');
+        if (node.style) node.style.animationDelay = '';
+      }, { once: true });
+      buildResultItemContent(node, item);
+      resultEl.appendChild(node);
+    });
+    existingNodes.forEach(node => node.remove?.());
+    // live 状态行：常驻底部单行（转圈+文本原位替换），随每次渲染挪到最末
+    let liveEl = Array.from(resultEl.children || []).find(node => node?.dataset?.mciLive) || null;
+    if (liveStatus) {
+      if (!liveEl) {
+        liveEl = documentRef.createElement?.('div');
+        if (liveEl) {
+          liveEl.dataset.mciLive = '1';
+          liveEl.className = 'maid-command-input-result-item mci-live-row';
+          const spinner = documentRef.createElement?.('span');
+          spinner.className = 'mci-live-spinner';
+          const text = documentRef.createElement?.('span');
+          text.className = 'mci-live-text';
+          liveEl.appendChild(spinner);
+          liveEl.appendChild(text);
+        }
+      }
+      if (liveEl) {
+        const textEl = (liveEl.children || []).find?.(child => String(child?.className || '').includes('mci-live-text'))
+          || liveEl.querySelector?.('.mci-live-text');
+        if (textEl) textEl.textContent = liveStatus.message;
+        resultEl.appendChild(liveEl);
+      }
+    } else if (liveEl) {
+      liveEl.remove?.();
+    }
     const latest = resultMessages[resultMessages.length - 1] || {};
     resultEl.dataset.tone = latest.tone || 'info';
     resultEl.dataset.count = String(resultMessages.length);
@@ -526,6 +806,7 @@ export const createMaidCommandInputRuntime = ({
 
   const clearResult = () => {
     resultMessages = [];
+    liveStatus = null;
     restoreResultOnNextOpen = false;
     renderResultMessages();
   };
@@ -536,11 +817,23 @@ export const createMaidCommandInputRuntime = ({
       clearResult();
       return;
     }
-    if (options?.replace) resultMessages = [];
+    if (options?.replace) {
+      resultMessages = [];
+      liveStatus = null;
+    }
     const normalizedTone = trim(tone, 'info');
+    // 写死的过程提示（progress）不各占气泡：收进底部单行 live 状态（转圈 + 文本原位替换）。
+    // 模型生成的女仆话语（thinking）保持正常气泡。
+    if (normalizedTone === 'progress') {
+      liveStatus = { message: text };
+      renderResultMessages({ forceBottom: options?.forceBottom !== false });
+      return;
+    }
     const latest = resultMessages[resultMessages.length - 1];
     if (!latest || latest.message !== text || latest.tone !== normalizedTone) {
+      resultSeq += 1;
       resultMessages.push({
+        id: `text_${resultSeq}`,
         message: text,
         tone: normalizedTone,
       });
@@ -548,8 +841,61 @@ export const createMaidCommandInputRuntime = ({
     renderResultMessages({ forceBottom: options?.forceBottom !== false });
   };
 
+  /* 女仆执行流投影：结构化 trace 卡按 id 原位更新、按时间与叙述气泡交错追加。
+     返回 true 表示指令条已承载女仆流（执行流面板据此不再自开，避免双流）。 */
+  const upsertResultItem = (id, payload = {}) => {
+    const index = resultMessages.findIndex(item => item.id === id);
+    if (index >= 0) resultMessages[index] = { ...resultMessages[index], ...payload, id };
+    else resultMessages.push({ ...payload, id });
+  };
+
+  const applyTraceView = (view = null) => {
+    if (!view || !trim(view.runId)) return false;
+    if (!rootEl) return false; // 指令条从未打开（如 CDP 直发）→ 交回执行流面板兜底
+    const runId = trim(view.runId);
+    upsertResultItem(`plan:${runId}`, {
+      kind: 'trace',
+      glyph: '计',
+      label: 'PLAN',
+      title: trim(view.title, '女仆任务'),
+      tone: 'accent',
+      statusLabel: '',
+    });
+    (Array.isArray(view.steps) ? view.steps : []).forEach((step) => {
+      upsertResultItem(`step:${runId}:${step.id}`, {
+        kind: 'trace',
+        glyph: step.glyph || '行',
+        label: `TOOL·${String(step.seq || 0).padStart(2, '0')}`,
+        title: trim(step.title),
+        sub: step.toolName && step.toolName !== step.title ? step.toolName : '',
+        error: trim(step.error),
+        tone: step.tone || 'muted',
+        statusLabel: trim(step.statusLabel),
+      });
+    });
+    if (view.terminal) {
+      liveStatus = null; // run 终态：过程叙述行退场，终态卡接棒
+      upsertResultItem(`done:${runId}`, {
+        kind: 'trace',
+        glyph: view.status === 'succeeded' ? '成' : view.status === 'cancelled' ? '止' : '败',
+        label: view.status === 'succeeded' ? 'DONE' : String(view.status || '').toUpperCase(),
+        title: trim(view.statusLabel),
+        sub: trim(view.doneSummary),
+        error: trim(view.failureCode),
+        tone: view.tone || 'muted',
+        statusLabel: '',
+      });
+    }
+    renderResultMessages({ forceBottom: view.terminal !== true });
+    return true;
+  };
+
   const setSubmitting = (next) => {
     isSubmitting = next === true;
+    if (!isSubmitting && liveStatus) {
+      liveStatus = null; // 提交结束：过程叙述行退场（终态由 success/error 气泡与终态卡呈现）
+      renderResultMessages({ forceBottom: false });
+    }
     rootEl?.classList.toggle('is-submitting', isSubmitting);
     if (attachBtn) attachBtn.disabled = isSubmitting;
     if (fileInputEl) fileInputEl.disabled = isSubmitting;
@@ -664,6 +1010,14 @@ export const createMaidCommandInputRuntime = ({
     submitBtn.type = 'submit';
     submitBtn.innerHTML = ICONS.send;
     submitBtn.setAttribute('aria-label', '发送给女仆');
+    dragHandleEl = documentRef.createElement?.('div');
+    if (dragHandleEl) {
+      dragHandleEl.className = 'maid-command-input-drag';
+      dragHandleEl.setAttribute('aria-hidden', 'true');
+      dragHandleEl.title = '拖动女仆';
+      dragHandleEl.innerHTML = '<span></span><span></span><span></span>';
+    }
+    if (dragHandleEl) rootEl.appendChild(dragHandleEl);
     if (fileInputEl) rootEl.appendChild(fileInputEl);
     if (attachmentsEl) rootEl.appendChild(attachmentsEl);
     rootEl.appendChild(attachBtn);
@@ -671,6 +1025,18 @@ export const createMaidCommandInputRuntime = ({
     rootEl.appendChild(inputEl);
     rootEl.appendChild(settingsBtn);
     rootEl.appendChild(submitBtn);
+    // 指令条以球心定位、整体盖住悬浮球：非交互区/拖柄按下即转发球拖拽，
+    // 运行中（控件全禁用）整条可拖，不再出现"跑任务时挪不开"的遮挡。
+    rootEl.addEventListener?.('pointerdown', (event) => {
+      const target = event?.target || null;
+      const interactive = typeof target?.closest === 'function'
+        ? target.closest('textarea:not(:disabled), button:not(:disabled), input, a, .maid-command-input-result')
+        : null;
+      if (interactive) return;
+      const ballDrag = typeof getBallDragRuntime === 'function' ? getBallDragRuntime() : null;
+      if (!ballDrag?.startDrag) return;
+      ballDrag.startDrag(event, { suppressLongPress: true });
+    });
     rootEl.addEventListener?.('submit', (event) => {
       event.preventDefault?.();
       void submit();
@@ -757,7 +1123,7 @@ export const createMaidCommandInputRuntime = ({
     const el = ensure();
     if (!el) return false;
     clearCloseTimer();
-    const shouldRestoreResult = restoreResultOnNextOpen && resultMessages.length > 0;
+    const shouldRestoreResult = restoreResultOnNextOpen && (resultMessages.length > 0 || Boolean(liveStatus));
     isOpen = true;
     if (!isSubmitting) setSubmitting(false);
     if (!shouldRestoreResult && !isSubmitting) clearResult();
@@ -779,7 +1145,7 @@ export const createMaidCommandInputRuntime = ({
 
   const close = () => {
     clearCloseTimer();
-    const shouldPreserveResult = isSubmitting && resultMessages.length > 0;
+    const shouldPreserveResult = isSubmitting && (resultMessages.length > 0 || Boolean(liveStatus));
     isOpen = false;
     if (!isSubmitting) setSubmitting(false);
     rootEl?.classList.remove('is-open');
@@ -802,7 +1168,7 @@ export const createMaidCommandInputRuntime = ({
     clearCloseTimer();
     restoreResultOnNextOpen = false;
     setSubmitting(true);
-    setResult('女仆正在回复...', 'thinking', { replace: true });
+    setResult('女仆正在回复...', 'progress', { replace: true });
     try {
       const effectiveText = text || '请看这张图片。';
       const result = await onSubmit(effectiveText, {
@@ -822,7 +1188,7 @@ export const createMaidCommandInputRuntime = ({
       return { ok: false, error };
     } finally {
       setSubmitting(false);
-      if (!isOpen && resultMessages.length > 0) restoreResultOnNextOpen = true;
+      if (!isOpen && (resultMessages.length > 0 || Boolean(liveStatus))) restoreResultOnNextOpen = true;
     }
   };
 
@@ -841,10 +1207,12 @@ export const createMaidCommandInputRuntime = ({
     submit,
     position,
     setStatus: (message = '', tone = 'info') => setResult(message, tone),
+    applyTraceView,
     addFiles,
     clearAttachments,
     getAttachments: () => imageAttachments.slice(),
     getResultMessages: () => resultMessages.map(item => ({ ...item })),
+    getLiveStatus: () => (liveStatus ? { ...liveStatus } : null),
     isOpen: () => isOpen,
     isSubmitting: () => isSubmitting,
     getElements: () => ({ rootEl, inputEl, attachBtn, fileInputEl, attachmentsEl, settingsBtn, submitBtn, resultEl }),

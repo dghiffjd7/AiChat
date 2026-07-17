@@ -279,6 +279,23 @@ const resolveRunStatus = state => {
   return 'queued';
 };
 
+export const buildCreativeExecutionProjectionSnapshot = (state = null, { uiMode = '' } = {}) => {
+  const runStatus = normalizeId(state?.run?.status);
+  const status = CREATIVE_EXECUTION_STATUS_LABELS[runStatus]
+    ? runStatus
+    : (state?.run ? resolveRunStatus(state) : 'queued');
+  return {
+    kind: 'creative',
+    visible: Boolean(state?.run && state?.visible && shouldShowCreativeExecutionForUiMode(uiMode)),
+    expanded: Boolean(state?.expanded),
+    runId: normalizeId(state?.run?.id),
+    status,
+    terminal: status === 'succeeded' || status === 'failed' || status === 'cancelled',
+    startedAt: Math.max(0, Math.trunc(toFiniteNumber(state?.run?.startedAt, 0))),
+    updatedAt: Math.max(0, Math.trunc(toFiniteNumber(state?.run?.updatedAt, 0))),
+  };
+};
+
 const resolveCurrentTask = tasks => {
   const running = tasks
     .filter(task => task.status === 'running')
@@ -501,7 +518,7 @@ export const buildCreativeExecutionStackViewModel = (state = {}) => {
       const hasRunning = laneTasks.some(task => task.status === 'running');
       const currentTask = laneTasks.find(task => task.status === 'running')
         || laneTasks[laneTasks.length - 1];
-      return { lane, tasks: laneTasks, currentTask, done, hasRunning };
+      return { lane, tasks: laneTasks, currentTask, done, hasRunning, flowStatus: currentTask.status };
     })
     .filter(Boolean);
   // run 结束后保留全部行供回看（"已完成·查看流程"点开有内容）；运行中只显示有执行中任务的行
@@ -554,19 +571,14 @@ const iconSvg = name => {
 const renderStripHtml = (view, state) => {
   const progress = `${view.progress.terminal}/${view.progress.total || 0}`;
   const card = view.collapsedRow?.currentTask || null;
-  const lane = view.collapsedRow?.lane || null;
   const title = card ? card.label : view.displayTitle;
-  const brief = card ? (card.summary || card.brief || view.summary) : view.summary;
   return `
     <button type="button" class="creative-execution-chip is-${escapeHtml(view.status)}" data-cel-toggle="1" aria-expanded="${state.expanded ? 'true' : 'false'}" aria-label="展开创意写作执行流程">
-      <span class="creative-execution-chip-icon" aria-hidden="true">${iconSvg(lane?.icon || 'spark')}</span>
-      <span class="creative-execution-chip-copy">
-        <span class="creative-execution-chip-title">${escapeHtml(title)}</span>
-        <span class="creative-execution-chip-brief">${escapeHtml(brief)}</span>
-      </span>
+      <span class="creative-execution-chip-mark" aria-hidden="true">创</span>
+      <span class="creative-execution-chip-title">${escapeHtml(title)}</span>
       ${view.runningTaskCount > 0 ? `<span class="creative-execution-chip-more" title="运行中任务数">${view.runningTaskCount}</span>` : ''}
       <span class="creative-execution-chip-progress">${escapeHtml(progress)}</span>
-      <span class="creative-execution-chip-chevron" aria-hidden="true">${iconSvg('chevron')}</span>
+      <span class="creative-execution-chip-dot" aria-hidden="true"></span>
     </button>
   `;
 };
@@ -596,7 +608,8 @@ const renderStackRowsHtml = (view, { enteringTaskIds = new Set(), justDoneTaskId
   return `
     <div class="cel-rows${moreAbove ? ' has-more-above' : ''}${moreBelow ? ' has-more-below' : ''}" data-cel-rows="1">
       ${visibleRows.map(row => `
-        <div class="cel-row" data-cel-row="${escapeHtml(row.lane.id)}">
+        <div class="cel-row" data-cel-row="${escapeHtml(row.lane.id)}" data-cel-flow-status="${escapeHtml(row.flowStatus)}">
+          <span class="cel-row-flow" aria-hidden="true"><span></span></span>
           <div class="cel-row-scroll" data-cel-row-scroll="${escapeHtml(row.lane.id)}">
             ${row.tasks.map(task => renderTaskCardHtml(task, {
               lane: row.lane,
@@ -662,13 +675,23 @@ const renderDetailsHtml = view => {
 
 const renderPanelHtml = (view, state, options = {}) => `
   <section class="creative-execution-stack ${view.selectedTask ? 'has-detail' : ''}${options.opening ? ' is-opening' : ''}" aria-label="创意写作执行流程">
-    <div class="creative-execution-stack-controls">
-      <span class="creative-execution-stack-progress">${escapeHtml(view.progress.terminal)}/${escapeHtml(view.progress.total)}</span>
-      <button type="button" class="creative-execution-icon-btn" data-cel-toggle="1" aria-label="收起执行流程">${iconSvg('chevron')}</button>
-      <button type="button" class="creative-execution-icon-btn" data-cel-close="1" aria-label="关闭执行流程">${iconSvg('close')}</button>
+    <div class="creative-execution-stack-head">
+      <span class="creative-execution-chip-mark" aria-hidden="true">创</span>
+      <div class="creative-execution-stack-kicker">
+        <span class="creative-execution-stack-label">CREATIVE · FLOW</span>
+        <span class="creative-execution-stack-title">${escapeHtml(view.displayTitle)}</span>
+      </div>
+      <span class="creative-execution-stack-status is-${escapeHtml(view.status)}"><span aria-hidden="true"></span>${escapeHtml(view.statusText)}</span>
+      <div class="creative-execution-stack-controls">
+        <span class="creative-execution-stack-progress">${escapeHtml(view.progress.terminal)}/${escapeHtml(view.progress.total)}</span>
+        <button type="button" class="creative-execution-icon-btn" data-cel-toggle="1" aria-label="收起执行流程">${iconSvg('chevron')}</button>
+        <button type="button" class="creative-execution-icon-btn" data-cel-close="1" aria-label="关闭执行流程">${iconSvg('close')}</button>
+      </div>
     </div>
-    ${renderStackRowsHtml(view, options)}
-    ${renderDetailsHtml(view)}
+    <div class="creative-execution-stack-body" data-ef-scroll="1">
+      ${renderStackRowsHtml(view, options)}
+      ${renderDetailsHtml(view)}
+    </div>
   </section>
 `;
 
@@ -683,6 +706,7 @@ export const createCreativeExecutionLaneRuntime = ({
   documentRef,
   inputContainer,
   getUiMode = () => '',
+  onStateChange = null,
   now = () => Date.now(),
   requestAnimationFrameFn = null,
   logger = console,
@@ -690,8 +714,16 @@ export const createCreativeExecutionLaneRuntime = ({
   let root = null;
   let state = null;
   let mounted = false;
+  let mountContainer = inputContainer || null;
   const doc = documentRef || (typeof document !== 'undefined' ? document : null);
   const raf = requestAnimationFrameFn || getWindowForDocument(doc)?.requestAnimationFrame?.bind(getWindowForDocument(doc));
+  const isFlowAttached = () => mountContainer?.classList?.contains?.('exec-flow-creative-host') === true;
+  const notifyStateChange = () => {
+    if (typeof onStateChange !== 'function') return;
+    try {
+      onStateChange(buildCreativeExecutionProjectionSnapshot(state, { uiMode: getUiMode() }));
+    } catch {}
+  };
 
   const resolveOrientation = () => {
     const win = getWindowForDocument(doc);
@@ -811,6 +843,18 @@ export const createCreativeExecutionLaneRuntime = ({
     panel.classList.toggle('has-detail', Boolean(view.selectedTask));
     const progressEl = panel.querySelector('.creative-execution-stack-progress');
     if (progressEl) progressEl.textContent = `${view.progress.terminal}/${view.progress.total}`;
+    const panelTitleEl = panel.querySelector('.creative-execution-stack-title');
+    if (panelTitleEl) panelTitleEl.textContent = view.displayTitle;
+    const panelStatusEl = panel.querySelector('.creative-execution-stack-status');
+    if (panelStatusEl) {
+      panelStatusEl.className = `creative-execution-stack-status is-${view.status}`;
+      panelStatusEl.innerHTML = `<span aria-hidden="true"></span>${escapeHtml(view.statusText)}`;
+    }
+    const rowByLane = new Map(view.rows.map(row => [row.lane.id, row]));
+    panel.querySelectorAll('[data-cel-row]').forEach((node) => {
+      const row = rowByLane.get(node.getAttribute('data-cel-row') || '');
+      if (row) node.setAttribute('data-cel-flow-status', row.flowStatus);
+    });
     const taskById = new Map((view.tasks || []).map(task => [task.id, task]));
     const currentIds = new Set(view.rows.map(row => row.currentTask?.id).filter(Boolean));
     panel.querySelectorAll('[data-cel-task-id]').forEach((node) => {
@@ -853,10 +897,11 @@ export const createCreativeExecutionLaneRuntime = ({
   };
 
   const render = () => {
-    if (!root || !mounted) return;
+    if (!root || !mounted) { notifyStateChange(); return; }
     const visible = Boolean(state?.visible) && shouldShowCreativeExecutionForUiMode(getUiMode());
     if (!visible || !state) {
       scheduleHide();
+      notifyStateChange();
       return;
     }
     cancelPendingHide();
@@ -898,6 +943,7 @@ export const createCreativeExecutionLaneRuntime = ({
     rowWindowStart = Math.max(0, Math.min(rowWindowStart, Math.max(0, view.rows.length - ROWS_WINDOW_SIZE)));
     root.className = [
       'creative-execution-root',
+      isFlowAttached() ? 'is-flow-attached' : '',
       state.expanded ? 'is-expanded' : '',
       `is-${view.status}`,
     ].filter(Boolean).join(' ');
@@ -920,12 +966,13 @@ export const createCreativeExecutionLaneRuntime = ({
       rowStepDirection = 0;
     }
     scrollRowsToCurrent();
+    notifyStateChange();
   };
 
   const syncSelectedTaskDom = () => {
     if (!root || !state?.expanded) return false;
     const panel = root.querySelector?.('.creative-execution-stack');
-    const body = panel;
+    const body = panel?.querySelector?.('.creative-execution-stack-body') || panel;
     if (!panel || !body) return false;
     const view = buildCreativeExecutionStackViewModel(state);
     panel.classList.toggle('has-detail', Boolean(view.selectedTask));
@@ -1030,19 +1077,34 @@ export const createCreativeExecutionLaneRuntime = ({
     });
   };
 
+  const collapseOneLevel = () => {
+    if (!state) return false;
+    if (state.selectedTaskId) {
+      state.selectedTaskId = '';
+      if (!syncSelectedTaskDom()) render();
+      return true;
+    }
+    if (state.expanded) {
+      state.expanded = false;
+      render();
+      return true;
+    }
+    return false;
+  };
+
   const mount = () => {
-    if (!doc || !inputContainer) return false;
+    if (!doc || !mountContainer) return false;
     if (mounted) return true;
     // 防御：清理容器内残留的旧实例（热重载/异常中断遗留），避免多 root 叠加
     try {
-      inputContainer.querySelectorAll?.(':scope > .creative-execution-root').forEach(el => el.remove());
+      mountContainer.querySelectorAll?.(':scope > .creative-execution-root').forEach(el => el.remove());
     } catch {}
     root = doc.createElement('div');
-    root.className = 'creative-execution-root';
+    root.className = `creative-execution-root${isFlowAttached() ? ' is-flow-attached' : ''}`;
     root.hidden = true;
-    const inputRow = inputContainer.querySelector?.('.chat-input-row') || null;
-    if (inputRow?.parentNode === inputContainer) inputContainer.insertBefore(root, inputRow);
-    else inputContainer.appendChild(root);
+    const inputRow = mountContainer.querySelector?.('.chat-input-row') || null;
+    if (!isFlowAttached() && inputRow?.parentNode === mountContainer) mountContainer.insertBefore(root, inputRow);
+    else mountContainer.appendChild(root);
     root.addEventListener('click', event => {
       const target = event.target;
       const toggle = target.closest?.('[data-cel-toggle]');
@@ -1137,11 +1199,7 @@ export const createCreativeExecutionLaneRuntime = ({
     root.addEventListener('touchend', () => { rowTouchY = null; }, { passive: true });
     root.addEventListener('keydown', event => {
       if (event.key !== 'Escape' || !state) return;
-      if (state.selectedTaskId) {
-        state.selectedTaskId = '';
-        if (syncSelectedTaskDom()) return;
-      } else state.expanded = false;
-      render();
+      if (collapseOneLevel()) event.stopPropagation?.();
     });
     mounted = true;
     render();
@@ -1285,6 +1343,17 @@ export const createCreativeExecutionLaneRuntime = ({
       });
     },
     selectTask,
+    collapseOneLevel,
+    getProjectionSnapshot: () => buildCreativeExecutionProjectionSnapshot(state, { uiMode: getUiMode() }),
+    getElement: () => root,
+    setMountContainer(container) {
+      if (!container) return false;
+      mountContainer = container;
+      if (!mounted) return mount();
+      if (root?.parentNode !== mountContainer) mountContainer.appendChild(root);
+      render();
+      return true;
+    },
     hide() {
       if (!state) return;
       state.visible = false;

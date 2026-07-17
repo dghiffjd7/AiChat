@@ -138,8 +138,12 @@ class FakeDocument {
     getViewportSize: () => ({ w: 360, h: 640 }),
     onSubmit: async (text, controls) => {
       submissions.push(text);
-      controls.setStatus('模型生成的执行前回应', 'thinking');
-      statusSnapshots.push(runtime.getResultMessages().map(item => item.message));
+      controls.setStatus('模型生成的执行前回应', 'thinking'); // 模型话语 → 正常气泡
+      controls.setStatus('我已经取得结果，正在整理给你。', 'progress'); // 写死过程提示 → live 行
+      statusSnapshots.push({
+        live: runtime.getLiveStatus()?.message || '',
+        messages: runtime.getResultMessages().map(item => item.message),
+      });
       return { ok: true, message: `done ${text}` };
     },
     setTimeoutFn: (fn) => {
@@ -178,13 +182,14 @@ class FakeDocument {
   const result = await runtime.submit();
   assert.equal(result.ok, true);
   assert.deepEqual(submissions, ['打开世界书']);
-  assert.deepEqual(statusSnapshots, [['女仆正在回复...', '模型生成的执行前回应']]);
+  // 写死过程提示（progress）在 live 单行原位替换；模型话语（thinking）保持气泡
+  assert.deepEqual(statusSnapshots, [{ live: '我已经取得结果，正在整理给你。', messages: ['模型生成的执行前回应'] }]);
   assert.deepEqual(runtime.getResultMessages().map(item => item.message), [
-    '女仆正在回复...',
     '模型生成的执行前回应',
     'done 打开世界书',
   ]);
-  assert.equal(runtime.getElements().resultEl.children.length, 3);
+  assert.equal(runtime.getLiveStatus(), null, '提交结束 live 行退场');
+  assert.equal(runtime.getElements().resultEl.children.length, 2);
   assert.equal(runtime.getElements().resultEl.dataset.tone, 'success');
   assert.equal(rootEl.classList.contains('has-result'), true);
   assert.equal(rootEl.classList.contains('is-open'), true);
@@ -203,11 +208,11 @@ class FakeDocument {
     modeSwitchEl,
     getViewportSize: () => ({ w: 360, h: 640 }),
     onSubmit: async (text, controls) => {
-      controls.setStatus('步骤 1：读取资料', 'thinking');
+      controls.setStatus('步骤 1：读取资料', 'progress');
       await new Promise(resolve => {
         finishSubmit = resolve;
       });
-      controls.setStatus('步骤 2：整理结果', 'thinking');
+      controls.setStatus('步骤 2：整理结果', 'progress');
       return { ok: true, message: `完成 ${text}` };
     },
     setTimeoutFn: () => 1,
@@ -219,36 +224,28 @@ class FakeDocument {
   inputEl.value = '检查世界书';
   const pending = runtime.submit();
   assert.equal(runtime.isSubmitting(), true);
-  assert.deepEqual(runtime.getResultMessages().map(item => item.message), [
-    '女仆正在回复...',
-    '步骤 1：读取资料',
-  ]);
+  // 过程叙述在 live 单行内原位替换，不进消息列表
+  assert.deepEqual(runtime.getResultMessages(), []);
+  assert.equal(runtime.getLiveStatus()?.message, '步骤 1：读取资料');
 
   documentRef.dispatchEvent('pointerdown', { target: outsideEl });
   assert.equal(rootEl.classList.contains('is-open'), false);
   assert.equal(modeSwitchEl.classList.contains('is-maid-input-open'), false);
-  assert.equal(runtime.getElements().resultEl.children.length, 2);
 
   assert.equal(runtime.open(), true);
   assert.equal(rootEl.classList.contains('is-open'), true);
-  assert.equal(runtime.getElements().resultEl.children.length, 2);
-  assert.deepEqual(runtime.getResultMessages().map(item => item.message), [
-    '女仆正在回复...',
-    '步骤 1：读取资料',
-  ]);
+  assert.equal(runtime.getLiveStatus()?.message, '步骤 1：读取资料', '重开后 live 行仍在');
 
   finishSubmit();
   const result = await pending;
   assert.equal(result.ok, true);
   assert.equal(runtime.isSubmitting(), false);
   assert.deepEqual(runtime.getResultMessages().map(item => item.message), [
-    '女仆正在回复...',
-    '步骤 1：读取资料',
-    '步骤 2：整理结果',
     '完成 检查世界书',
   ]);
-  assert.equal(runtime.getElements().resultEl.children.length, 4);
-  console.log('ok - maid command input restores in-progress reply bubbles after closing');
+  assert.equal(runtime.getLiveStatus(), null, '提交结束 live 行退场');
+  assert.equal(runtime.getElements().resultEl.children.length, 1);
+  console.log('ok - maid command input keeps live progress line across close/reopen');
 }
 
 {
@@ -350,4 +347,138 @@ class FakeDocument {
   assert.equal(settingsCalls.length, 1);
   assert.equal(settingsCalls[0].source, 'command_input');
   console.log('ok - maid command input settings button forwards callback');
+}
+
+{
+  // 指令条盖住悬浮球：非交互区按下 → 转发球拖拽（运行中控件禁用时整条可拖）；交互控件不转发
+  const documentRef = new FakeDocument();
+  const modeSwitchEl = new FakeElement('div');
+  const dragCalls = [];
+  const runtime = createMaidCommandInputRuntime({
+    documentRef,
+    modeSwitchEl,
+    getViewportSize: () => ({ w: 360, h: 640 }),
+    onSubmit: async () => ({ ok: true }),
+    setTimeoutFn: () => 0,
+    clearTimeoutFn: () => {},
+    getBallDragRuntime: () => ({
+      startDrag: (event, options) => {
+        dragCalls.push({ event, options });
+        return true;
+      },
+    }),
+  });
+  assert.equal(runtime.open(), true);
+  const { rootEl } = runtime.getElements();
+  assert.equal(
+    rootEl.children.some(child => child.className === 'maid-command-input-drag'),
+    true,
+    '指令条带常驻拖柄（touch-action:none 保移动端可拖）',
+  );
+  rootEl.dispatchEvent('pointerdown', { target: { closest: () => null } });
+  assert.equal(dragCalls.length, 1, '非交互区按下转发球拖拽');
+  assert.equal(dragCalls[0].options.suppressLongPress, true, '转发拖拽抑制长按');
+  rootEl.dispatchEvent('pointerdown', {
+    target: { closest: selector => (String(selector).includes('textarea') ? {} : null) },
+  });
+  assert.equal(dragCalls.length, 1, '可用交互控件按下不转发拖拽');
+  console.log('ok - maid command input 非交互区拖拽转发与控件豁免');
+}
+
+{
+  // 执行流 trace 卡并入白色结果流：按 id 原位更新、与叙述气泡交错、未打开时不消费
+  const documentRef = new FakeDocument();
+  const modeSwitchEl = new FakeElement('div');
+  const runtime = createMaidCommandInputRuntime({
+    documentRef,
+    modeSwitchEl,
+    getViewportSize: () => ({ w: 360, h: 640 }),
+    onSubmit: async () => ({ ok: true }),
+    setTimeoutFn: () => 0,
+    clearTimeoutFn: () => {},
+  });
+  const view = (steps, terminal = false, status = 'running') => ({
+    runId: 'run_1',
+    title: '整理房间',
+    status,
+    statusLabel: terminal ? '完成' : '执行中',
+    tone: terminal ? 'success' : 'accent',
+    terminal,
+    doneSummary: terminal ? '搞定了' : '',
+    failureCode: '',
+    steps,
+  });
+  const step = (id, seq, status, tone, statusLabel, glyph) => ({
+    id, seq, title: `步骤${seq}`, toolName: `tool.${id}`, status, tone, statusLabel, glyph, error: '',
+  });
+
+  assert.equal(runtime.applyTraceView(view([])), false, '指令条未打开 → 不消费（面板兜底）');
+  assert.equal(runtime.open(), true);
+  assert.equal(runtime.applyTraceView(view([step('a', 1, 'running', 'accent', '执行中', '行')])), true);
+  runtime.setStatus('我先看看有哪些会话～', 'thinking'); // 模型话语 → 气泡
+  runtime.setStatus('我已经取得结果，正在整理给你。', 'progress'); // 写死提示 → live 行
+  assert.equal(runtime.getLiveStatus()?.message, '我已经取得结果，正在整理给你。', '写死过程提示进 live 行');
+  assert.equal(runtime.applyTraceView(view([step('a', 1, 'succeeded', 'success', '完成', '成')])), true);
+  let items = runtime.getResultMessages();
+  assert.deepEqual(items.map(item => item.kind || 'text'), ['trace', 'trace', 'text'], '模型话语气泡与 trace 卡交错保留');
+  assert.equal(items[1].glyph, '成', '同 id 步骤原位更新为完成');
+  assert.equal(items[1].statusLabel, '完成');
+
+  runtime.applyTraceView(view([step('a', 1, 'succeeded', 'success', '完成', '成')], true, 'succeeded'));
+  items = runtime.getResultMessages();
+  assert.equal(items[items.length - 1].glyph, '成', '终态卡追加在末尾');
+  assert.equal(items[items.length - 1].sub, '搞定了');
+  assert.equal(runtime.getLiveStatus(), null, 'run 终态 live 行退场');
+  console.log('ok - maid command input 承载执行流 trace 卡（原位更新/交错/未开不消费）');
+}
+
+{
+  // 逐卡推出：同批新卡按序错峰进场；原位补丁不重播进场；live 态状态点带转圈 class
+  const documentRef = new FakeDocument();
+  const modeSwitchEl = new FakeElement('div');
+  const runtime = createMaidCommandInputRuntime({
+    documentRef,
+    modeSwitchEl,
+    getViewportSize: () => ({ w: 360, h: 640 }),
+    onSubmit: async () => ({ ok: true }),
+    setTimeoutFn: () => 0,
+    clearTimeoutFn: () => {},
+  });
+  runtime.open();
+  const mkStep = (id, seq, status, tone, statusLabel, glyph) => ({
+    id, seq, title: `步骤${seq}`, toolName: '', status, tone, statusLabel, glyph, error: '',
+  });
+  const mkView = (steps) => ({
+    runId: 'run_s', title: '任务', status: 'running', statusLabel: '执行中', tone: 'accent',
+    terminal: false, doneSummary: '', failureCode: '', steps,
+  });
+
+  runtime.applyTraceView(mkView([
+    mkStep('a', 1, 'running', 'accent', '执行中', '行'),
+    mkStep('b', 2, 'queued', 'muted', '排队', '行'),
+  ]));
+  const { resultEl } = runtime.getElements();
+  assert.equal(resultEl.children.length, 3, 'plan + 2 步骤');
+  assert.ok(resultEl.children.every(node => node.classList.contains('is-entering')), '首批全部走进场');
+  assert.deepEqual(
+    resultEl.children.map(node => node.style.animationDelay),
+    ['0ms', '150ms', '300ms'],
+    '同批新卡按序错峰推出',
+  );
+  const findStatus = (bubble) => {
+    const head = bubble.children[0];
+    return (head?.children || []).find(child => String(child.className || '').includes('mci-trace-status')) || null;
+  };
+  assert.ok(String(findStatus(resultEl.children[1])?.className).includes('is-live'), '执行中带转圈 class');
+
+  const stepNodeBefore = resultEl.children[1];
+  runtime.applyTraceView(mkView([
+    mkStep('a', 1, 'succeeded', 'success', '完成', '成'),
+    mkStep('b', 2, 'running', 'accent', '执行中', '行'),
+  ]));
+  assert.equal(resultEl.children.length, 3, '原位补丁不新增节点');
+  assert.equal(resultEl.children[1], stepNodeBefore, '既有卡节点身份不变（不重播进场）');
+  assert.equal(String(findStatus(resultEl.children[1])?.className).includes('is-live'), false, '完成后转圈移除');
+  assert.ok(String(findStatus(resultEl.children[2])?.className).includes('is-live'), '轮到的步骤转圈');
+  console.log('ok - maid command input 逐卡推出与 live 转圈');
 }

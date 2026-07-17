@@ -242,3 +242,40 @@ class FakeDocument {
   assert.equal(enterCalls, 1);
   console.log('ok - createModeSwitchInteractionRuntime triggers long press and suppresses mode toggle click');
 }
+
+{
+  // 指令条转发的拖拽（suppressLongPress）不得再触发长按呼出
+  const modeSwitchEl = new FakeElement('div');
+  const buttonEl = new FakeElement('button');
+  const scheduled = [];
+  const longPresses = [];
+  const runtime = createModeSwitchInteractionRuntime({
+    modeSwitchEl,
+    modeSwitchBtnEl: buttonEl,
+    setTimeoutFn: (fn) => {
+      scheduled.push(fn);
+      return scheduled.length;
+    },
+    clearTimeoutFn: () => {},
+    nowFn: () => 1000,
+    onLongPress: payload => {
+      longPresses.push(payload);
+      return true;
+    },
+  });
+
+  const started = runtime.startDrag({
+    pointerType: 'mouse',
+    button: 0,
+    pointerId: 7,
+    clientX: 100,
+    clientY: 200,
+    preventDefault() {},
+    stopPropagation() {},
+  }, { suppressLongPress: true });
+  assert.equal(started, true);
+  assert.equal(runtime.hasLongPressTimer(), false, '转发拖拽不注册长按计时器');
+  assert.equal(longPresses.length, 0);
+  assert.equal(Boolean(runtime.getDragState()), true, '拖拽状态照常建立');
+  console.log('ok - createModeSwitchInteractionRuntime suppressLongPress 转发拖拽不触发长按');
+}

@@ -241,7 +241,7 @@ export function createModeSwitchInteractionRuntime({
     return true;
   };
 
-  const startDrag = (event) => {
+  const startDrag = (event, options = {}) => {
     if (!modeSwitchEl || !modeSwitchBtnEl) return false;
     if (event.pointerType === 'mouse' && event.button !== 0) return false;
     event.preventDefault?.();
@@ -268,7 +268,8 @@ export function createModeSwitchInteractionRuntime({
       longPressActivated: false,
     };
     clearLongPressTimer();
-    if (typeof onLongPress === 'function' && Number(longPressMs) > 0) {
+    // 指令条转发的拖拽不参与长按（长按语义=呼出指令条，转发方已处于打开态）
+    if (typeof onLongPress === 'function' && Number(longPressMs) > 0 && options?.suppressLongPress !== true) {
       longPressTimer = setTimeoutFn?.(() => {
         longPressTimer = null;
         if (!modeSwitchDrag || modeSwitchDrag.moved) return;

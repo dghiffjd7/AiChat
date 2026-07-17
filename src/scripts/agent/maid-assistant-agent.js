@@ -1538,7 +1538,8 @@ export const createMaidAssistantAgent = ({
         if (typeof context?.onStatus === 'function') {
           context.onStatus({
             stage: ok ? 'observed' : 'repairing',
-            tone: 'thinking',
+            // 写死的过程提示用 progress（UI 收进轻量 live 行）；模型生成的话语保持 thinking（正常气泡）
+            tone: 'progress',
             message: ok ? '我已经取得结果，正在整理给你。' : '工具遇到错误，我正在尝试修正参数。',
             steps: clone(steps),
           });

@@ -337,43 +337,67 @@ const parseBingImageResults = (html = '', limit = 6) => {
 
 // —— 专用图库 API（稳定服务，非爬虫；多源图搜网关 2026-07-07）——
 
-// booru 标签化：优先显式 tags；否则 query 简单转换（小写、空格转下划线）
+// booru 标签化：优先显式 tags。容忍模型常见给法——逗号/中文逗号/顿号分隔、tag 内空格，
+// 逐个 tag 下划线化后按 booru 约定用空格连接（2026-07-17：逗号原样透传曾让 safebooru 全部空结果）。
 const toBooruTags = (query = '', tags = '') => {
   const explicit = trim(tags);
-  if (explicit) return explicit.replace(/\s+/g, ' ');
-  return trim(query).toLowerCase().replace(/\s+/g, '_');
+  if (explicit) {
+    return explicit
+      .split(/[,，、]+/)
+      .map(part => trim(part).replace(/\s+/g, '_'))
+      .filter(Boolean)
+      .slice(0, 6)
+      .join(' ');
+  }
+  // query 回退：自然词组按词拆成独立 tag（整句转单 tag 必然无结果）
+  return trim(query)
+    .toLowerCase()
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 6)
+    .join(' ');
 };
 
-// Safebooru（Gelbooru 系 API，全站 SFW，免 key）
+// Safebooru（Gelbooru 系 API，全站 SFW，免 key）。
+// 多个具体 tag AND 极易交集为空（2026-07-17 实测 ojou-sama+blonde+twintails=0 而 ojou-sama 单独有图）：
+// 无结果时按 全量 → 前2个 → 第1个 逐级放宽重试。
 const performSafebooruImageSearch = async (request, { query = '', tags = '', limit = 6 } = {}) => {
-  const tagText = toBooruTags(query, tags);
-  const url = new URL('https://safebooru.org/index.php');
-  url.searchParams.set('page', 'dapi');
-  url.searchParams.set('s', 'post');
-  url.searchParams.set('q', 'index');
-  url.searchParams.set('json', '1');
-  url.searchParams.set('limit', String(Math.min(20, limit * 2)));
-  url.searchParams.set('tags', `${tagText} sort:score:desc`);
-  const body = await readHttpText(request, {
-    url: url.toString(),
-    method: 'GET',
-    headers: { accept: 'application/json' },
-    body: null,
-    timeoutMs: 20000,
+  const allTags = toBooruTags(query, tags).split(' ').filter(Boolean);
+  const candidates = [];
+  [allTags, allTags.slice(0, 2), allTags.slice(0, 1)].forEach((list) => {
+    const text = list.join(' ');
+    if (text && !candidates.includes(text)) candidates.push(text);
   });
-  const posts = parseJsonBody(body || '[]');
-  const images = (Array.isArray(posts) ? posts : [])
-    .filter(post => post?.image && post?.directory)
-    .slice(0, limit)
-    .map(post => ({
-      title: truncate(String(post.tags || '').split(' ').slice(0, 6).join(' '), 160),
-      imageUrl: `https://safebooru.org/images/${post.directory}/${post.image}`,
-      thumbnailUrl: `https://safebooru.org/thumbnails/${post.directory}/thumbnail_${String(post.image).replace(/\.[a-z0-9]+$/i, '.jpg')}`,
-      width: Number(post.width) || 0,
-      height: Number(post.height) || 0,
-      sourceUrl: `https://safebooru.org/index.php?page=post&s=view&id=${post.id}`,
-    }));
-  return { ok: images.length > 0, images, provider: 'safebooru' };
+  for (const tagText of candidates) {
+    const url = new URL('https://safebooru.org/index.php');
+    url.searchParams.set('page', 'dapi');
+    url.searchParams.set('s', 'post');
+    url.searchParams.set('q', 'index');
+    url.searchParams.set('json', '1');
+    url.searchParams.set('limit', String(Math.min(20, limit * 2)));
+    url.searchParams.set('tags', `${tagText} sort:score:desc`);
+    const body = await readHttpText(request, {
+      url: url.toString(),
+      method: 'GET',
+      headers: { accept: 'application/json' },
+      body: null,
+      timeoutMs: 20000,
+    });
+    const posts = parseJsonBody(body || '[]');
+    const images = (Array.isArray(posts) ? posts : [])
+      .filter(post => post?.image && post?.directory)
+      .slice(0, limit)
+      .map(post => ({
+        title: truncate(String(post.tags || '').split(' ').slice(0, 6).join(' '), 160),
+        imageUrl: `https://safebooru.org/images/${post.directory}/${post.image}`,
+        thumbnailUrl: `https://safebooru.org/thumbnails/${post.directory}/thumbnail_${String(post.image).replace(/\.[a-z0-9]+$/i, '.jpg')}`,
+        width: Number(post.width) || 0,
+        height: Number(post.height) || 0,
+        sourceUrl: `https://safebooru.org/index.php?page=post&s=view&id=${post.id}`,
+      }));
+    if (images.length > 0) return { ok: true, images, provider: 'safebooru', usedTags: tagText };
+  }
+  return { ok: false, images: [], provider: 'safebooru', reason: '无结果（已含降级重试）' };
 };
 
 // Danbooru（匿名限 2 标签：主标签 + order:score）
@@ -840,7 +864,11 @@ export const createWebSearchAgentTools = ({
           limit: { type: 'integer', minimum: 1, maximum: 12 },
           purpose: { type: 'string', enum: ['avatar', 'wallpaper', 'any'] },
           style: { type: 'string', enum: ['anime', 'photo', 'any'] },
-          tags: { type: 'string', maxLength: 240 },
+          tags: {
+            type: 'string',
+            maxLength: 240,
+            description: 'Booru tags for anime sources: space-separated, underscores inside a tag, e.g. "blonde_hair twintails 1girl". Do NOT use commas.',
+          },
         },
       },
       execute: async (args = {}) => {
@@ -867,6 +895,7 @@ export const createWebSearchAgentTools = ({
         providers.push(['duckduckgo_images', () => performDuckDuckGoImageSearch(request, { query, limit })]);
 
         const attempted = [];
+        const outcomes = [];
         let lastError = null;
         for (const [name, run] of providers) {
           attempted.push(name);
@@ -881,18 +910,22 @@ export const createWebSearchAgentTools = ({
                 images: result.images,
               };
             }
+            outcomes.push(`${name}:${trim(result?.reason || result?.message, '无结果')}`);
             if (result?.degraded) lastError = new Error(result.message || 'provider degraded');
           } catch (error) {
+            outcomes.push(`${name}:${trim(error?.message, 'error')}`);
             lastError = error;
           }
         }
+        // 按源逐个汇报（勿把个别源的 403 汇总成"全部 403"）；提示标签格式便于模型自我修正
         return {
           ok: false,
           query,
           provider: attempted.join('+'),
           attemptedProviders: attempted,
+          providerOutcomes: outcomes,
           reason: lastError?.code || 'image_search_no_results',
-          message: lastError?.message || '所有图片源都没有返回结果，请换个关键词或稍后再试。',
+          message: `各图源均未返回图片（${outcomes.join('；')}）。动漫图建议改用英文 booru 标签重试：空格分隔、词内下划线，如 tags="blonde_hair twintails 1girl"。`,
           images: [],
         };
       },
