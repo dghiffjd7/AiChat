@@ -10,6 +10,7 @@ import { registerAppUiCaptureTools } from '../../src/scripts/agent/tools/app-ui-
 import { registerMaidTodoTools } from '../../src/scripts/agent/tools/maid-todo-tools.js';
 import { registerChatFormatRepairTools } from '../../src/scripts/agent/tools/chat-format-tools.js';
 import { registerWebSearchAgentTools } from '../../src/scripts/agent/tools/web-search-tools.js';
+import { registerMomentsAgentTools } from '../../src/scripts/agent/tools/moments-tools.js';
 
 // 已注册但不进入功能目录的元工具/本地工具。
 // 新工具默认必须进目录；确需豁免时在这里登记并写明原因。
@@ -24,6 +25,7 @@ registerAppUiCaptureTools(registry, {});
 registerMaidTodoTools(registry, {});
 registerChatFormatRepairTools(registry, {});
 registerWebSearchAgentTools(registry, {});
+registerMomentsAgentTools(registry, {});
 
 const registeredNames = new Set(registry.listTools().map(tool => tool.name));
 const features = listAppFeatures();

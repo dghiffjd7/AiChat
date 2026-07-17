@@ -66,6 +66,7 @@ import { registerAppContentAgentTools } from '../agent/tools/app-content-tools.j
 import { registerMaidMediaAssetTools } from '../agent/tools/media-asset-tools.js';
 import { registerAppUiCaptureTools } from '../agent/tools/app-ui-capture-tools.js';
 import { registerWebSearchAgentTools } from '../agent/tools/web-search-tools.js';
+import { registerMomentsAgentTools } from '../agent/tools/moments-tools.js';
 import { registerMaidTodoTools } from '../agent/tools/maid-todo-tools.js';
 import { AgentRunStore } from '../storage/agent-run-store.js';
 import { CapabilityRetrievalStore } from '../storage/capability-retrieval-store.js';
@@ -343,11 +344,17 @@ import {
   formatPromptTraceText,
 } from './chat/context-lineage-graph-utils.js';
 import {
-  formatLineageEdgeDetails,
-  formatLineageNodeDetails,
+  buildLineageMapMiniViewport,
+  centerLineageMapCamera,
+  findLineageMapNodes,
+  fitLineageMapCamera,
   getLineageGraphItem,
+  renderLineageMapDetailHtml,
+  renderLineageMapDockHtml,
   renderLineageMapSceneHtmlAsync,
+  renderLineageMapSearchResultsHtml,
   summarizeLineageGraph,
+  zoomLineageMapCameraAtPoint,
 } from './chat/lineage-graph-view-utils.js';
 import { createCreativeExecutionLaneRuntime } from './chat/creative-execution-lane-runtime-utils.js';
 import { createExecutionFlowRuntime } from './chat/execution-flow-runtime-utils.js';
@@ -4069,6 +4076,57 @@ const initApp = async () => {
     recordLifecycleEvent: recordMomentLifecycleTraceEvent,
   });
 
+  // 女仆工具：以用户身份发布动态（复用手动发布同款链路：normalize → persist → 可选发布后评论）
+  registerMomentsAgentTools(agentToolRegistry, {
+    publishMoment: async ({ content = '', generateComments = true } = {}) => {
+      const text = String(content || '').trim();
+      if (!text) return { ok: false, reason: 'moments_publish_empty', message: '动态正文为空。' };
+      const user = getActiveUserProfile();
+      const timestamp = Date.now();
+      const mentions = buildMomentStructuredMentions({
+        text,
+        selectedMentions: [],
+        contactsStore,
+      });
+      const record = normalizeMomentRecordForStore({
+        authorId: String(user?.id || '').trim(),
+        author: getActiveUserName(),
+        authorAvatar: getActiveUserAvatar(),
+        originSessionId: String(user?.id || '').trim(),
+        content: text,
+        mentions,
+        time: formatNowTime(),
+        timestamp,
+        regexMode: 'input',
+        views: 0,
+        likes: 0,
+        comments: [],
+        signature: `maid:${String(user?.id || 'me')}:${timestamp}`,
+      }, { regexMode: 'input', depth: 0, appBridge: window.appBridge });
+      const persisted = persistComposedMomentRecord({
+        momentsStore,
+        record,
+        assets: [],
+        normalizeGeneratedImageAsset: normalizeMomentGeneratedImageAsset,
+      });
+      const momentId = String(persisted?.momentId || '').trim();
+      if (!persisted?.ok || !momentId) {
+        return {
+          ok: false,
+          reason: String(persisted?.reason || 'persist_failed').trim() || 'persist_failed',
+          message: '动态发布失败：未能建立动态记录。',
+        };
+      }
+      momentsPanel?.render?.({ preserveScroll: true });
+      if (generateComments) {
+        void momentCommentRuntime(momentId, '', { mode: 'moment_publish', publishedMoment: true }).catch((err) => {
+          logger.warn('maid moment publish comment generation failed', err);
+        });
+      }
+      return { ok: true, momentId, commentsRequested: generateComments === true };
+    },
+  });
+
   const momentSummaryPanel = new MomentSummaryPanel({
     store: momentSummaryStore,
     onRunCompaction: opts => requestMomentSummaryCompaction(opts),
@@ -4081,6 +4139,7 @@ const initApp = async () => {
   });
   patchDebugUiRegistry((registry) => {
     registry.panels.momentSummaryPanel = momentSummaryPanel;
+    registry.stores.momentsStore = momentsStore;
   });
 
   const formatTime = ts => {
@@ -14448,6 +14507,17 @@ Phase G（Frame 36）：循环衔接
     let lineageCanvasEl = null;
     let lineageInspectorEl = null;
     let lineageSummaryEl = null;
+    let lineageDockEl = null;
+    let lineageSearchEl = null;
+    let lineageSearchResultsEl = null;
+    let lineageNodeCountEl = null;
+    let lineageEdgeCountEl = null;
+    let lineageLayerCountEl = null;
+    let lineageZoomValueEl = null;
+    let lineageMiniMapEl = null;
+    let lineageMiniViewportEl = null;
+    let lineageEmptyHintEl = null;
+    let lineageEdgeTooltipEl = null;
     let lineageTextarea = null;
     let activeTab = 'prompt';
     let apiPlainText = '';
@@ -14463,6 +14533,15 @@ Phase G（Frame 36）：循环衔接
     let lineagePendingCenterSelector = '';
     let lineageDrag = null;
     let lineageRenderSeq = 0;
+    let lineageCameraTimer = null;
+    let lineageAutoFitPending = false;
+    let lineageMiniWorld = { width: 1, height: 1 };
+    let lineageMiniDrag = null;
+    let lineageResizeObserver = null;
+    let lineageLastViewport = { width: 0, height: 0 };
+    let lineageCategoryItemLimits = new Map();
+    const lineageFrameIds = new Set();
+    const LINEAGE_CATEGORY_PAGE_SIZE = 12;
 
     const escHtml = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
@@ -14582,6 +14661,64 @@ Phase G（Frame 36）：循环衔接
       return trace?.graph && typeof trace.graph === 'object' ? trace.graph : null;
     };
 
+    const isPromptPreviewVisible = () => Boolean(
+      overlay
+      && overlay.isConnected
+      && overlay.style.display !== 'none'
+    );
+
+    const cancelLineageFrames = () => {
+      if (typeof cancelAnimationFrame === 'function') {
+        lineageFrameIds.forEach(frameId => cancelAnimationFrame(frameId));
+      }
+      lineageFrameIds.clear();
+    };
+
+    const scheduleLineageFrame = (callback) => {
+      if (typeof callback !== 'function') return null;
+      const expectedRenderSeq = lineageRenderSeq;
+      if (typeof requestAnimationFrame !== 'function') {
+        if (expectedRenderSeq === lineageRenderSeq && isPromptPreviewVisible()) callback();
+        return null;
+      }
+      const frameId = requestAnimationFrame(() => {
+        lineageFrameIds.delete(frameId);
+        if (expectedRenderSeq !== lineageRenderSeq || !isPromptPreviewVisible()) return;
+        callback();
+      });
+      lineageFrameIds.add(frameId);
+      return frameId;
+    };
+
+    const clearLineageCameraTimer = () => {
+      if (lineageCameraTimer) clearTimeout(lineageCameraTimer);
+      lineageCameraTimer = null;
+      lineageCanvasEl?.classList?.remove?.('is-camera-smooth');
+    };
+
+    const getLineageViewport = () => {
+      if (!lineageCanvasWrap || activeTab !== 'lineage' || !isPromptPreviewVisible()) return null;
+      const rawWidth = Number(lineageCanvasWrap.clientWidth) || 0;
+      const rawHeight = Number(lineageCanvasWrap.clientHeight) || 0;
+      if (rawWidth <= 1 || rawHeight <= 1) return null;
+      // The theme reserves inspector space by physically shrinking this wrapper.
+      // Camera math must use its measured size directly; the body delta is only
+      // useful for overlays (for example, keeping a tooltip out of the inspector).
+      const body = lineageCanvasWrap.closest('.lineage-map-body');
+      const bodyRect = body?.getBoundingClientRect?.();
+      const canvasRect = lineageCanvasWrap.getBoundingClientRect?.();
+      const reservedRight = bodyRect && canvasRect ? Math.max(0, bodyRect.right - canvasRect.right) : 0;
+      const reservedBottom = bodyRect && canvasRect ? Math.max(0, bodyRect.bottom - canvasRect.bottom) : 0;
+      return {
+        width: rawWidth,
+        height: rawHeight,
+        rawWidth,
+        rawHeight,
+        reservedRight,
+        reservedBottom,
+      };
+    };
+
     const updateLineageScopeHint = () => {
       if (!lineageScopeEl) return;
       const label = lineageOnlyMode ? '只读 · 关系图预览' : '只读 · 本次 Prompt';
@@ -14593,15 +14730,43 @@ Phase G（Frame 36）：循环衔接
       lineageScopeEl.setAttribute('aria-label', title);
     };
 
-    const updateLineageTransform = () => {
+    const updateLineageMiniViewport = () => {
+      const cameraViewport = getLineageViewport();
+      if (!lineageMiniViewportEl || !cameraViewport) return;
+      const viewport = buildLineageMapMiniViewport({
+        camera: { x: lineagePanX, y: lineagePanY, scale: lineageScale },
+        viewport: { width: cameraViewport.width, height: cameraViewport.height },
+        world: lineageMiniWorld,
+      });
+      lineageMiniViewportEl.setAttribute('x', String(viewport.x));
+      lineageMiniViewportEl.setAttribute('y', String(viewport.y));
+      lineageMiniViewportEl.setAttribute('width', String(viewport.width));
+      lineageMiniViewportEl.setAttribute('height', String(viewport.height));
+    };
+
+    const updateLineageTransform = ({ smooth = false } = {}) => {
       if (!lineageCanvasEl) return;
+      clearLineageCameraTimer();
+      lineageCanvasEl.classList.toggle('is-camera-smooth', Boolean(smooth));
       if (lineageCanvasEl.classList.contains('is-readable-view')) {
         lineageCanvasEl.style.transform = 'none';
         lineageCanvasEl.style.transformOrigin = '0 0';
         return;
       }
-      lineageCanvasEl.style.transform = `translate(${lineagePanX}px, ${lineagePanY}px) scale(${lineageScale})`;
+      lineageCanvasEl.style.transform = `translate3d(${lineagePanX}px, ${lineagePanY}px, 0) scale(${lineageScale})`;
       lineageCanvasEl.style.transformOrigin = '0 0';
+      if (lineageCanvasWrap) {
+        lineageCanvasWrap.scrollLeft = 0;
+        lineageCanvasWrap.scrollTop = 0;
+      }
+      if (lineageZoomValueEl) lineageZoomValueEl.textContent = `${Math.round(lineageScale * 100)}%`;
+      updateLineageMiniViewport();
+      if (smooth) {
+        lineageCameraTimer = setTimeout(() => {
+          lineageCanvasEl?.classList.remove('is-camera-smooth');
+          lineageCameraTimer = null;
+        }, 680);
+      }
     };
 
     const escapeCssValue = globalThis.CSS && typeof globalThis.CSS.escape === 'function'
@@ -14609,42 +14774,205 @@ Phase G（Frame 36）：循环衔接
       : (value) => String(value || '').replace(/["\\]/g, '\\$&');
 
     const centerLineageMapTarget = (selector = '') => {
-      if (!lineageCanvasWrap || !lineageCanvasEl || !selector) return;
+      const cameraViewport = getLineageViewport();
+      if (!lineageCanvasEl || !selector || !cameraViewport) return false;
       const target = lineageCanvasEl.querySelector(selector);
-      if (!(target instanceof HTMLElement)) return;
-      const left = Math.max(0, target.offsetLeft - lineageCanvasWrap.clientWidth / 2 + target.offsetWidth / 2);
-      const top = Math.max(0, target.offsetTop - lineageCanvasWrap.clientHeight / 2 + target.offsetHeight / 2);
-      lineageCanvasWrap.scrollTo({ left, top, behavior: 'smooth' });
+      if (!(target instanceof HTMLElement)) return false;
+      const camera = centerLineageMapCamera({
+        viewport: { width: cameraViewport.width, height: cameraViewport.height },
+        point: { x: target.offsetLeft, y: target.offsetTop },
+        scale: Math.max(lineageScale, 0.82),
+      });
+      lineagePanX = camera.x;
+      lineagePanY = camera.y;
+      lineageScale = camera.scale;
+      updateLineageTransform({ smooth: true });
+      return true;
     };
 
     const scheduleLineageMapCenter = (selector = '') => {
       lineagePendingCenterSelector = String(selector || '');
     };
 
-    const buildLineageCompactDetailsHtml = (kind = '', item = null, graph = null) => {
-      if (!item) return '';
-      const fullText = kind === 'edge'
-        ? formatLineageEdgeDetails(item, graph)
-        : formatLineageNodeDetails(item);
-      const lines = String(fullText || '').split('\n').filter(Boolean);
-      const title = String(lines[0] || '').replace(/^(节点|边)：/, '') || '详情';
-      const meta = lines.slice(1, 4).map(line => line.replace(/^(类型|关系|状态|原因)：/, '')).filter(Boolean);
-      return `
-        <div class="lineage-map-detail-card">
-          <strong>${escHtml(title)}</strong>
-          ${meta.length ? `<div class="lineage-map-detail-meta">${meta.map(text => `<span>${escHtml(text)}</span>`).join('')}</div>` : ''}
-          <details class="lineage-map-detail-full">
-            <summary>完整资料</summary>
-            <pre>${escHtml(fullText)}</pre>
-          </details>
-        </div>
-      `;
+    const fitLineageMap = ({ smooth = true } = {}) => {
+      const scene = lineageCanvasEl?.querySelector?.('.lineage-map-scene');
+      const cameraViewport = getLineageViewport();
+      if (!(scene instanceof HTMLElement) || !cameraViewport) return false;
+      const world = {
+        width: Math.max(1, scene.offsetWidth || Number.parseFloat(scene.style.width) || 1),
+        height: Math.max(1, scene.offsetHeight || Number.parseFloat(scene.style.height) || 1),
+      };
+      const camera = fitLineageMapCamera({
+        viewport: { width: cameraViewport.width, height: cameraViewport.height },
+        world,
+        padding: cameraViewport.rawWidth < 760 ? 26 : 72,
+      });
+      lineagePanX = camera.x;
+      lineagePanY = camera.y;
+      lineageScale = camera.scale;
+      updateLineageTransform({ smooth });
+      return true;
+    };
+
+    const fitLineageFocusBounds = ({ smooth = true } = {}) => {
+      const cameraViewport = getLineageViewport();
+      if (!lineageCanvasEl || !cameraViewport || lineageSelection?.kind !== 'node') return false;
+      const targets = Array.from(lineageCanvasEl.querySelectorAll(
+        '.lineage-map-node:is(.is-lineage-self, .is-lineage-up, .is-lineage-down, .is-lineage-both)',
+      )).filter(target => target instanceof HTMLElement && target.offsetWidth > 0 && target.offsetHeight > 0);
+      if (!targets.length) return false;
+      const bounds = targets.reduce((result, target) => {
+        const halfWidth = target.offsetWidth / 2;
+        const halfHeight = target.offsetHeight / 2;
+        return {
+          left: Math.min(result.left, target.offsetLeft - halfWidth),
+          top: Math.min(result.top, target.offsetTop - halfHeight),
+          right: Math.max(result.right, target.offsetLeft + halfWidth),
+          bottom: Math.max(result.bottom, target.offsetTop + halfHeight),
+        };
+      }, { left: Infinity, top: Infinity, right: -Infinity, bottom: -Infinity });
+      if (![bounds.left, bounds.top, bounds.right, bounds.bottom].every(Number.isFinite)) return false;
+      const camera = fitLineageMapCamera({
+        viewport: { width: cameraViewport.width, height: cameraViewport.height },
+        world: {
+          width: Math.max(1, bounds.right - bounds.left),
+          height: Math.max(1, bounds.bottom - bounds.top),
+        },
+        padding: cameraViewport.rawWidth < 760 ? 26 : 58,
+      });
+      lineageScale = camera.scale;
+      lineagePanX = Number((camera.x - bounds.left * camera.scale).toFixed(4));
+      lineagePanY = Number((camera.y - bounds.top * camera.scale).toFixed(4));
+      updateLineageTransform({ smooth });
+      return true;
+    };
+
+    const syncLineageCameraWhenVisible = ({ smooth = false, force = false } = {}) => {
+      if (!getLineageViewport()) return false;
+      if (lineagePendingCenterSelector) {
+        const selector = lineagePendingCenterSelector;
+        const positioned = lineageSelection?.kind === 'node'
+          ? fitLineageFocusBounds({ smooth: true })
+          : centerLineageMapTarget(selector);
+        if (positioned) {
+          lineagePendingCenterSelector = '';
+          lineageAutoFitPending = false;
+          return true;
+        }
+      }
+      if (!lineageAutoFitPending && !force) {
+        updateLineageMiniViewport();
+        return true;
+      }
+      if (force && lineageSelection?.kind === 'node' && fitLineageFocusBounds({ smooth })) {
+        lineageAutoFitPending = false;
+        return true;
+      }
+      if (!fitLineageMap({ smooth })) return false;
+      lineageAutoFitPending = false;
+      return true;
+    };
+
+    const mountLineageMinimap = () => {
+      if (!lineageCanvasEl || !lineageMiniMapEl) return;
+      lineageMiniDrag = null;
+      const template = lineageCanvasEl.querySelector('template[data-lineage-minimap-template]');
+      if (!(template instanceof HTMLTemplateElement)) {
+        lineageMiniMapEl.replaceChildren();
+        lineageMiniViewportEl = null;
+        return;
+      }
+      lineageMiniWorld = {
+        width: Math.max(1, Number(template.dataset.lineageWorldWidth) || 1),
+        height: Math.max(1, Number(template.dataset.lineageWorldHeight) || 1),
+      };
+      lineageMiniMapEl.replaceChildren(template.content.cloneNode(true));
+      lineageMiniViewportEl = lineageMiniMapEl.querySelector('.lineage-minimap-viewport');
+      updateLineageMiniViewport();
+    };
+
+    const getLineageMinimapWorldPoint = (svg, clientX, clientY) => {
+      if (!(svg instanceof SVGSVGElement)) return null;
+      const rect = svg.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) return null;
+      const viewBoxValues = String(svg.getAttribute('viewBox') || '')
+        .trim()
+        .split(/[\s,]+/)
+        .map(Number);
+      const viewX = Number.isFinite(viewBoxValues[0]) ? viewBoxValues[0] : 0;
+      const viewY = Number.isFinite(viewBoxValues[1]) ? viewBoxValues[1] : 0;
+      const viewWidth = Math.max(1, Number.isFinite(viewBoxValues[2]) ? viewBoxValues[2] : lineageMiniWorld.width);
+      const viewHeight = Math.max(1, Number.isFinite(viewBoxValues[3]) ? viewBoxValues[3] : lineageMiniWorld.height);
+      const localX = Number(clientX) - rect.left;
+      const localY = Number(clientY) - rect.top;
+      const preserve = String(svg.getAttribute('preserveAspectRatio') || 'xMidYMid meet').trim();
+      let worldX = viewX;
+      let worldY = viewY;
+      if (/^none(?:\s|$)/i.test(preserve)) {
+        worldX += localX / rect.width * viewWidth;
+        worldY += localY / rect.height * viewHeight;
+      } else {
+        const tokens = preserve.split(/\s+/);
+        const alignment = tokens.find(token => /^x(?:Min|Mid|Max)Y(?:Min|Mid|Max)$/i.test(token)) || 'xMidYMid';
+        const slice = tokens.some(token => token.toLowerCase() === 'slice');
+        const scale = slice
+          ? Math.max(rect.width / viewWidth, rect.height / viewHeight)
+          : Math.min(rect.width / viewWidth, rect.height / viewHeight);
+        const renderedWidth = viewWidth * scale;
+        const renderedHeight = viewHeight * scale;
+        const offsetX = /xMax/i.test(alignment) ? rect.width - renderedWidth : (/xMid/i.test(alignment) ? (rect.width - renderedWidth) / 2 : 0);
+        const offsetY = /YMax/i.test(alignment) ? rect.height - renderedHeight : (/YMid/i.test(alignment) ? (rect.height - renderedHeight) / 2 : 0);
+        worldX += (localX - offsetX) / scale;
+        worldY += (localY - offsetY) / scale;
+      }
+      return {
+        x: Math.max(viewX, Math.min(viewX + viewWidth, worldX)),
+        y: Math.max(viewY, Math.min(viewY + viewHeight, worldY)),
+      };
+    };
+
+    const moveLineageCameraFromMinimap = (event) => {
+      const svg = lineageMiniMapEl?.querySelector?.('.lineage-minimap-svg');
+      const cameraViewport = getLineageViewport();
+      const point = getLineageMinimapWorldPoint(svg, event?.clientX, event?.clientY);
+      if (!point || !cameraViewport) return false;
+      const camera = centerLineageMapCamera({
+        viewport: { width: cameraViewport.width, height: cameraViewport.height },
+        point,
+        scale: lineageScale,
+      });
+      lineagePanX = camera.x;
+      lineagePanY = camera.y;
+      updateLineageTransform();
+      return true;
+    };
+
+    const updateLineageSearch = () => {
+      if (!lineageSearchEl || !lineageSearchResultsEl || !lineageCanvasEl) return;
+      const query = String(lineageSearchEl.value || '').trim();
+      const results = findLineageMapNodes(getPreviewLineageGraph(), query);
+      lineageSearchResultsEl.hidden = !query;
+      lineageSearchResultsEl.innerHTML = query ? renderLineageMapSearchResultsHtml(results) : '';
+      const ids = new Set(results.map(item => item.id));
+      lineageCanvasEl.querySelectorAll('[data-lineage-node-id]').forEach((node) => {
+        const id = String(node.dataset.lineageNodeId || '');
+        node.classList.toggle('is-search-match', Boolean(query && ids.has(id)));
+        node.classList.toggle('is-search-dim', Boolean(query && !ids.has(id)));
+      });
+    };
+
+    const updateLineageDock = () => {
+      if (!lineageDockEl) return;
+      lineageDockEl.innerHTML = renderLineageMapDockHtml(getPreviewLineageGraph(), {
+        expandedIds: Array.from(lineageExpandedIds),
+      });
     };
 
     const setLineageInspector = (kind = '', id = '') => {
       const graph = getPreviewLineageGraph();
       if (!lineageInspectorEl) return;
       if (!graph) {
+        lineageSelection = null;
         lineageInspectorEl.classList.add('is-empty');
         lineageInspectorEl.innerHTML = '';
         return;
@@ -14652,17 +14980,19 @@ Phase G（Frame 36）：循环衔接
       const item = getLineageGraphItem(graph, kind, id);
       lineageSelection = item ? { kind, id } : null;
       if (!item) {
+        lineageSelection = null;
         lineageInspectorEl.classList.add('is-empty');
         lineageInspectorEl.innerHTML = '';
         return;
       }
       lineageInspectorEl.classList.remove('is-empty');
-      lineageInspectorEl.innerHTML = buildLineageCompactDetailsHtml(kind, item, graph);
+      lineageInspectorEl.innerHTML = renderLineageMapDetailHtml(kind, item, graph);
     };
 
     const markLineageSelection = () => {
       if (!lineageCanvasEl) return;
       lineageCanvasEl.querySelectorAll('.is-selected').forEach(el => el.classList.remove('is-selected'));
+      if (lineageEmptyHintEl) lineageEmptyHintEl.hidden = Boolean(lineageSelection);
       if (!lineageSelection) return;
       const attr = lineageSelection.kind === 'edge' ? 'data-lineage-edge-id' : 'data-lineage-node-id';
       const selector = `[${attr}="${escapeCssValue(lineageSelection.id)}"]`;
@@ -14674,10 +15004,19 @@ Phase G（Frame 36）：循环衔接
       const renderSeq = ++lineageRenderSeq;
       if (!lineageGraphEl || !lineageCanvasEl) return;
       if (!graph) {
+        lineageAutoFitPending = false;
+        lineagePendingCenterSelector = '';
         if (lineageSummaryEl) lineageSummaryEl.textContent = '';
+        if (lineageNodeCountEl) lineageNodeCountEl.textContent = '0';
+        if (lineageEdgeCountEl) lineageEdgeCountEl.textContent = '0';
+        if (lineageLayerCountEl) lineageLayerCountEl.textContent = '0';
+        if (lineageDockEl) lineageDockEl.innerHTML = '';
+        if (lineageMiniMapEl) lineageMiniMapEl.replaceChildren();
         lineageCanvasEl.classList.remove('is-readable-view');
         lineageCanvasEl.classList.add('is-map-scene-view');
         lineageCanvasEl.innerHTML = '<div class="lineage-graph-empty">暂无上下文血缘图记录</div>';
+        lineageMiniViewportEl = null;
+        lineageSelection = null;
         updateLineageTransform();
         setLineageInspector();
         return;
@@ -14685,6 +15024,8 @@ Phase G（Frame 36）：循环衔接
       if (lineageSummaryEl) {
         const summary = summarizeLineageGraph(graph);
         lineageSummaryEl.textContent = summary.riskCount ? `${summary.riskCount} 风险` : '';
+        if (lineageNodeCountEl) lineageNodeCountEl.textContent = String(summary.nodeCount);
+        if (lineageEdgeCountEl) lineageEdgeCountEl.textContent = String(summary.edgeCount);
       }
       if (lineageSelection && !getLineageGraphItem(graph, lineageSelection.kind, lineageSelection.id)) lineageSelection = null;
       lineageCanvasEl.classList.remove('is-readable-view');
@@ -14692,25 +15033,40 @@ Phase G（Frame 36）：循环衔接
       if (!lineageCanvasEl.querySelector('.lineage-map-scene')) {
         lineageCanvasEl.innerHTML = '<div class="lineage-graph-empty">排版中…</div>';
       }
-      const html = await lineageAgentRuntime.renderMapScene({
-        graph,
-        sessionId: previewRequest?.session?.id || chatStore.getCurrent() || '',
-        trigger: lineageOnlyMode ? 'lineage_overview' : 'prompt_preview',
-        options: {
-          focusId: lineageSelection?.kind === 'node' ? lineageSelection.id : '',
-          expandedIds: Array.from(lineageExpandedIds),
-        },
-      });
+      let html = '';
+      try {
+        html = await lineageAgentRuntime.renderMapScene({
+          graph,
+          sessionId: previewRequest?.session?.id || chatStore.getCurrent() || '',
+          trigger: lineageOnlyMode ? 'lineage_overview' : 'prompt_preview',
+          options: {
+            focusId: lineageSelection?.kind === 'node' ? lineageSelection.id : '',
+            expandedIds: Array.from(lineageExpandedIds),
+            categoryItemLimits: Object.fromEntries(lineageCategoryItemLimits),
+          },
+        });
+      } catch (err) {
+        if (renderSeq !== lineageRenderSeq || !lineageCanvasEl || !isPromptPreviewVisible()) return;
+        logger.warn('render prompt lineage graph failed', err);
+        lineageAutoFitPending = false;
+        lineagePendingCenterSelector = '';
+        lineageMiniViewportEl = null;
+        if (lineageMiniMapEl) lineageMiniMapEl.replaceChildren();
+        lineageCanvasEl.innerHTML = '<div class="lineage-graph-empty" role="alert">血缘图排版失败，请稍后重试</div>';
+        updateLineageDock();
+        setLineageInspector();
+        return;
+      }
       if (renderSeq !== lineageRenderSeq || !lineageCanvasEl) return;
       lineageCanvasEl.innerHTML = html;
+      mountLineageMinimap();
+      updateLineageDock();
+      if (lineageLayerCountEl) lineageLayerCountEl.textContent = String(lineageDockEl?.querySelectorAll?.('[data-lineage-map-category]').length || 0);
       updateLineageTransform();
       markLineageSelection();
+      updateLineageSearch();
       setLineageInspector(lineageSelection?.kind || '', lineageSelection?.id || '');
-      if (lineagePendingCenterSelector) {
-        const selector = lineagePendingCenterSelector;
-        lineagePendingCenterSelector = '';
-        requestAnimationFrame(() => centerLineageMapTarget(selector));
-      }
+      scheduleLineageFrame(() => syncLineageCameraWhenVisible({ smooth: false }));
     };
 
     const switchTab = (tab) => {
@@ -14720,6 +15076,7 @@ Phase G（Frame 36）：循环衔接
         if (apiView) apiView.style.display = 'none';
         if (lineageView) lineageView.style.display = '';
         if (locateBtn) locateBtn.style.display = 'none';
+        scheduleLineageFrame(() => syncLineageCameraWhenVisible({ smooth: false }));
         return;
       }
       activeTab = tab;
@@ -14749,6 +15106,7 @@ Phase G（Frame 36）：循环衔接
         applyBtn(tabApiBtn, inactive);
         applyBtn(tabLineageBtn, active);
         if (locateBtn) locateBtn.style.display = 'none';
+        scheduleLineageFrame(() => syncLineageCameraWhenVisible({ smooth: false }));
       } else {
         promptView.style.display = 'none';
         apiView.style.display = '';
@@ -14771,6 +15129,63 @@ Phase G（Frame 36）：循环衔接
       const { html, plain } = buildApiPayloadHtml(req);
       if (apiContentEl) apiContentEl.innerHTML = html;
       apiPlainText = plain;
+    };
+
+    const clearLineageSelectionAndRender = () => {
+      if (!lineageSelection) return false;
+      lineageSelection = null;
+      lineagePendingCenterSelector = '';
+      lineageAutoFitPending = true;
+      setLineageInspector();
+      markLineageSelection();
+      if (lineageMiniMapEl) lineageMiniMapEl.replaceChildren();
+      lineageMiniViewportEl = null;
+      if (lineageCanvasEl) lineageCanvasEl.innerHTML = '<div class="lineage-graph-empty">恢复完整图谱…</div>';
+      void renderLineageGraph();
+      return true;
+    };
+
+    const isLineageEditableTarget = (target) => Boolean(
+      target instanceof Element
+      && (target.matches('input, textarea, select') || target.closest('[contenteditable="true"]'))
+    );
+
+    const handleLineageModalShortcut = (event) => {
+      if (!isPromptPreviewVisible() || activeTab !== 'lineage' || event.defaultPrevented) return;
+      const target = event.target;
+      const editable = isLineageEditableTarget(target);
+      const key = String(event.key || '');
+      if (key === 'Escape') {
+        if (lineageSearchEl?.value || (lineageSearchResultsEl && !lineageSearchResultsEl.hidden)) {
+          event.preventDefault();
+          event.stopPropagation();
+          lineageSearchEl.value = '';
+          updateLineageSearch();
+          lineageSearchEl.blur?.();
+          return;
+        }
+        if (clearLineageSelectionAndRender()) {
+          event.preventDefault();
+          event.stopPropagation();
+          return;
+        }
+        event.preventDefault();
+        event.stopPropagation();
+        hide();
+        return;
+      }
+      if (editable || event.ctrlKey || event.metaKey || event.altKey) return;
+      if (key === '/') {
+        event.preventDefault();
+        event.stopPropagation();
+        lineageSearchEl?.focus?.();
+        return;
+      }
+      if (key.toLowerCase() === 'f') {
+        event.preventDefault();
+        event.stopPropagation();
+        fitLineageMap();
+      }
     };
 
     const ensure = () => {
@@ -14831,12 +15246,65 @@ Phase G（Frame 36）：循环衔接
                 </div>
                 <div id="prompt-view-lineage" class="lineage-preview-view" style="flex:1; min-height:0; overflow:auto; -webkit-overflow-scrolling:touch; padding:10px; display:none;">
                     <div id="prompt-lineage-graph" class="lineage-graph-panel">
-                        <div id="prompt-lineage-summary" class="lineage-graph-summary"></div>
-                        <div id="prompt-lineage-scope" class="lineage-scope-hint"></div>
+                        <div class="lineage-graph-ambient" aria-hidden="true">
+                            <span class="lineage-ambient-glow is-one"></span>
+                            <span class="lineage-ambient-glow is-two"></span>
+                            <span class="lineage-ambient-glow is-three"></span>
+                            <span class="lineage-ambient-grid"></span>
+                            <span class="lineage-ambient-scanline"></span>
+                            <span class="lineage-ambient-vignette"></span>
+                        </div>
+                        <header class="lineage-graph-hud">
+                            <div class="lineage-hud-brand">
+                                <span class="lineage-hud-logo" aria-hidden="true">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v4M12 17v4M3 12h4M17 12h4"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1.8"/></svg>
+                                </span>
+                                <span class="lineage-hud-title"><strong>上下文血缘图谱</strong><small>CONTEXT LINEAGE GRAPH</small></span>
+                            </div>
+                            <div class="lineage-hud-search">
+                                <span class="lineage-hud-search-box">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="11" cy="11" r="6"/><path d="m16 16 4 4"/></svg>
+                                    <input id="prompt-lineage-search" type="search" autocomplete="off" placeholder="搜索节点 / 类型 / scope…" aria-label="搜索血缘节点">
+                                    <kbd>/</kbd>
+                                </span>
+                                <span id="prompt-lineage-search-results" class="lineage-search-results lineage-glass" hidden></span>
+                            </div>
+                            <div class="lineage-hud-stats lineage-glass">
+                                <span class="lineage-hud-stat is-layer-contacts"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="4" y="5" width="16" height="14" rx="2"/><path d="M4 10h16M9 5v14"/></svg>节点 <b id="prompt-lineage-node-count">0</b></span>
+                                <i class="lineage-hud-divider"></i>
+                                <span class="lineage-hud-stat is-layer-worldbooks"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 12h4l3-5 3 10 3-5h3"/></svg>关系 <b id="prompt-lineage-edge-count">0</b></span>
+                                <i class="lineage-hud-divider"></i>
+                                <span class="lineage-hud-stat is-layer-moments"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M5 5h14v4H5zM5 11h14v4H5zM5 17h14v2H5z"/></svg>分层 <b id="prompt-lineage-layer-count">0</b></span>
+                            </div>
+                            <button type="button" class="lineage-hud-action" data-lineage-camera-action="fit" title="适配全图" aria-label="适配全图">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M8 3H3v5M16 3h5v5M3 16v5h5M21 16v5h-5"/></svg>
+                            </button>
+                            <span class="lineage-hud-state"><i></i>图谱就绪</span>
+                            <div id="prompt-lineage-summary" class="lineage-graph-summary"></div>
+                            <div id="prompt-lineage-scope" class="lineage-scope-hint"></div>
+                        </header>
                         <div class="lineage-map-body">
                             <div id="prompt-lineage-canvas-wrap" class="lineage-graph-canvas-wrap">
                                 <div id="prompt-lineage-canvas" class="lineage-graph-canvas"></div>
                             </div>
+                            <aside id="prompt-lineage-dock" class="lineage-layer-dock"></aside>
+                            <div id="prompt-lineage-empty-hint" class="lineage-map-empty-hint lineage-glass">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M8 3l8 8-4 1 3 6-2 1-3-6-3 3z"/></svg>
+                                点击任意节点，追踪它的<b>上游溯源</b>与<b>下游影响</b>
+                            </div>
+                            <div id="prompt-lineage-edge-tooltip" class="lineage-edge-tooltip lineage-glass" hidden></div>
+                            <div id="prompt-lineage-minimap" class="lineage-minimap lineage-glass" aria-label="血缘图小地图"></div>
+                            <div class="lineage-map-controls lineage-glass">
+                                <button type="button" data-lineage-camera-action="zoom-out" aria-label="缩小" title="缩小"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M5 12h14"/></svg></button>
+                                <button id="prompt-lineage-zoom-value" type="button" class="lineage-map-zoom-value" data-lineage-camera-action="reset" title="重置为 100%">100%</button>
+                                <button type="button" data-lineage-camera-action="zoom-in" aria-label="放大" title="放大"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M5 12h14M12 5v14"/></svg></button>
+                                <i></i>
+                                <button type="button" data-lineage-camera-action="fit" aria-label="适配全图" title="适配全图"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M8 3H3v5M16 3h5v5M3 16v5h5M21 16v5h-5"/></svg></button>
+                            </div>
+                            <div class="lineage-map-bottom-hints lineage-glass">
+                                <span><kbd>滚轮</kbd>缩放</span><span><kbd>拖拽</kbd>平移</span><span><kbd>双击</kbd>复位</span><span><kbd>悬停连线</kbd>查看关系</span><span><kbd>ESC</kbd>取消选中</span>
+                            </div>
+                            <div class="lineage-map-build-mark">CONTEXT LINEAGE · LIVE GRAPH</div>
                             <div id="prompt-lineage-inspector" class="lineage-graph-inspector is-empty"></div>
                         </div>
                     </div>
@@ -14873,6 +15341,17 @@ Phase G（Frame 36）：循环衔接
       lineageCanvasEl = panel.querySelector('#prompt-lineage-canvas');
       lineageInspectorEl = panel.querySelector('#prompt-lineage-inspector');
       lineageSummaryEl = panel.querySelector('#prompt-lineage-summary');
+      lineageDockEl = panel.querySelector('#prompt-lineage-dock');
+      lineageSearchEl = panel.querySelector('#prompt-lineage-search');
+      lineageSearchResultsEl = panel.querySelector('#prompt-lineage-search-results');
+      lineageNodeCountEl = panel.querySelector('#prompt-lineage-node-count');
+      lineageEdgeCountEl = panel.querySelector('#prompt-lineage-edge-count');
+      lineageLayerCountEl = panel.querySelector('#prompt-lineage-layer-count');
+      lineageZoomValueEl = panel.querySelector('#prompt-lineage-zoom-value');
+      lineageMiniMapEl = panel.querySelector('#prompt-lineage-minimap');
+      if (lineageMiniMapEl) lineageMiniMapEl.style.touchAction = 'none';
+      lineageEmptyHintEl = panel.querySelector('#prompt-lineage-empty-hint');
+      lineageEdgeTooltipEl = panel.querySelector('#prompt-lineage-edge-tooltip');
       lineageTextarea = panel.querySelector('#prompt-lineage-text');
       apiContentEl = panel.querySelector('#prompt-view-api');
       metaEl = panel.querySelector('#prompt-preview-meta');
@@ -14887,11 +15366,100 @@ Phase G（Frame 36）：循环衔接
       titleEl = panel.querySelector('#prompt-preview-title');
       copyBtn = panel.querySelector('#prompt-preview-copy');
 
+      document.addEventListener('keydown', handleLineageModalShortcut, true);
+      if (typeof ResizeObserver !== 'undefined' && lineageCanvasWrap) {
+        lineageResizeObserver = new ResizeObserver((entries) => {
+          const entry = entries.find(item => item.target === lineageCanvasWrap) || entries[0];
+          const width = Math.max(0, Math.round(Number(entry?.contentRect?.width) || lineageCanvasWrap.clientWidth || 0));
+          const height = Math.max(0, Math.round(Number(entry?.contentRect?.height) || lineageCanvasWrap.clientHeight || 0));
+          const previous = lineageLastViewport;
+          lineageLastViewport = { width, height };
+          if (!isPromptPreviewVisible() || activeTab !== 'lineage' || width <= 1 || height <= 1) return;
+          const resizedWhileVisible = previous.width > 1
+            && previous.height > 1
+            && (Math.abs(previous.width - width) > 1 || Math.abs(previous.height - height) > 1);
+          scheduleLineageFrame(() => {
+            updateLineageMiniViewport();
+            if (lineageAutoFitPending || resizedWhileVisible) {
+              syncLineageCameraWhenVisible({ smooth: false, force: resizedWhileVisible });
+            }
+          });
+        });
+        lineageResizeObserver.observe(lineageCanvasWrap);
+      }
+
       tabPromptBtn?.addEventListener('click', () => switchTab('prompt'));
       tabApiBtn?.addEventListener('click', () => switchTab('api'));
       tabLineageBtn?.addEventListener('click', () => switchTab('lineage'));
+      lineageSearchEl?.addEventListener('input', updateLineageSearch);
+      lineageSearchEl?.addEventListener('focus', updateLineageSearch);
+      lineageSearchEl?.addEventListener('keydown', (event) => {
+        if (event.key !== 'Enter') return;
+        const first = lineageSearchResultsEl?.querySelector?.('[data-lineage-jump-node-id]');
+        if (!first) return;
+        event.preventDefault();
+        first.click?.();
+      });
 
       lineageGraphEl?.addEventListener('click', (event) => {
+        if (!event.target?.closest?.('.lineage-hud-search') && lineageSearchResultsEl) lineageSearchResultsEl.hidden = true;
+        const cameraActionEl = event.target?.closest?.('[data-lineage-camera-action]');
+        if (cameraActionEl) {
+          const action = String(cameraActionEl.dataset.lineageCameraAction || '');
+          if (action === 'fit') {
+            fitLineageMap();
+            return;
+          }
+          const cameraViewport = getLineageViewport();
+          if (cameraViewport) {
+            const targetScale = action === 'reset'
+              ? 1
+              : Math.max(0.24, Math.min(2.4, lineageScale * (action === 'zoom-in' ? 1.25 : 0.8)));
+            const camera = zoomLineageMapCameraAtPoint({
+              camera: { x: lineagePanX, y: lineagePanY, scale: lineageScale },
+              point: { x: cameraViewport.width / 2, y: cameraViewport.height / 2 },
+              scale: targetScale,
+            });
+            lineagePanX = camera.x;
+            lineagePanY = camera.y;
+            lineageScale = camera.scale;
+            updateLineageTransform({ smooth: true });
+          }
+          return;
+        }
+        const showMoreEl = event.target?.closest?.('[data-lineage-show-more-category]');
+        if (showMoreEl) {
+          const categoryId = String(showMoreEl.dataset.lineageShowMoreCategory || '').trim();
+          if (categoryId) {
+            const currentLimit = Math.max(
+              LINEAGE_CATEGORY_PAGE_SIZE,
+              Number(lineageCategoryItemLimits.get(categoryId)) || LINEAGE_CATEGORY_PAGE_SIZE,
+            );
+            lineageCategoryItemLimits.set(categoryId, currentLimit + LINEAGE_CATEGORY_PAGE_SIZE);
+            lineageSelection = null;
+            scheduleLineageMapCenter(`[data-lineage-map-category="${escapeCssValue(categoryId)}"]`);
+            void renderLineageGraph();
+          }
+          return;
+        }
+        if (event.target?.closest?.('[data-lineage-detail-close]')) {
+          clearLineageSelectionAndRender();
+          return;
+        }
+        const jumpEl = event.target?.closest?.('[data-lineage-jump-node-id]');
+        if (jumpEl) {
+          const nodeId = String(jumpEl.dataset.lineageJumpNodeId || '').trim();
+          const layerId = String(jumpEl.dataset.lineageLayerId || '').trim();
+          if (layerId) lineageExpandedIds.add(layerId);
+          if (nodeId) {
+            lineageSelection = { kind: 'node', id: nodeId };
+            scheduleLineageMapCenter(`[data-lineage-node-id="${escapeCssValue(nodeId)}"]`);
+            if (lineageSearchEl) lineageSearchEl.value = '';
+            if (lineageSearchResultsEl) lineageSearchResultsEl.hidden = true;
+            void renderLineageGraph();
+          }
+          return;
+        }
         const categoryEl = event.target?.closest?.('[data-lineage-map-category]');
         if (categoryEl) {
           const categoryId = String(categoryEl.dataset.lineageMapCategory || '').trim();
@@ -14901,7 +15469,7 @@ Phase G（Frame 36）：循环衔接
             scheduleLineageMapCenter(`[data-lineage-map-category="${escapeCssValue(categoryId)}"]`);
           }
           lineageSelection = null;
-          renderLineageGraph();
+          void renderLineageGraph();
           return;
         }
         const edgeEl = event.target?.closest?.('[data-lineage-edge-id]');
@@ -14909,55 +15477,134 @@ Phase G（Frame 36）：循环衔接
           lineageSelection = { kind: 'edge', id: String(edgeEl.dataset.lineageEdgeId || '') };
           setLineageInspector(lineageSelection.kind, lineageSelection.id);
           markLineageSelection();
+          scheduleLineageFrame(() => fitLineageMap({ smooth: true }));
           return;
         }
         const nodeEl = event.target?.closest?.('[data-lineage-node-id]');
         if (nodeEl) {
           lineageSelection = { kind: 'node', id: String(nodeEl.dataset.lineageNodeId || '') };
           scheduleLineageMapCenter(`[data-lineage-node-id="${escapeCssValue(lineageSelection.id)}"]`);
-          renderLineageGraph();
+          void renderLineageGraph();
           return;
         }
       });
       lineageGraphEl?.addEventListener('keydown', (event) => {
         if (event.key !== 'Enter' && event.key !== ' ') return;
-        const target = event.target?.closest?.('[data-lineage-node-id], [data-lineage-map-category]');
+        const target = event.target?.closest?.('[data-lineage-node-id], [data-lineage-edge-id], [data-lineage-map-category], [data-lineage-show-more-category]');
         if (!target) return;
         event.preventDefault();
         target.click?.();
       });
       lineageCanvasWrap?.addEventListener('wheel', (event) => {
-        if (!event.ctrlKey && !event.metaKey) return;
         if (lineageCanvasEl?.classList.contains('is-readable-view')) return;
         event.preventDefault();
-        const direction = event.deltaY > 0 ? -1 : 1;
-        lineageScale = Math.max(0.45, Math.min(2.2, Number((lineageScale + direction * 0.08).toFixed(2))));
+        const rect = lineageCanvasWrap.getBoundingClientRect();
+        const point = { x: event.clientX - rect.left, y: event.clientY - rect.top };
+        const targetScale = Math.max(0.24, Math.min(2.4, lineageScale * Math.exp(-event.deltaY * 0.0014)));
+        const camera = zoomLineageMapCameraAtPoint({
+          camera: { x: lineagePanX, y: lineagePanY, scale: lineageScale },
+          point,
+          scale: targetScale,
+        });
+        lineagePanX = camera.x;
+        lineagePanY = camera.y;
+        lineageScale = camera.scale;
         updateLineageTransform();
       }, { passive: false });
       lineageCanvasWrap?.addEventListener('pointerdown', (event) => {
-        if (event.button !== 0 || event.target?.closest?.('[data-lineage-node-id], [data-lineage-edge-id], [data-lineage-map-category], details, summary')) return;
+        if (event.button !== 0 || event.target?.closest?.('[data-lineage-node-id], [data-lineage-edge-id], [data-lineage-map-category], [data-lineage-show-more-category], details, summary')) return;
         lineageDrag = {
           pointerId: event.pointerId,
           x: event.clientX,
           y: event.clientY,
           panX: lineagePanX,
           panY: lineagePanY,
+          moved: false,
         };
         lineageCanvasWrap.setPointerCapture?.(event.pointerId);
       });
       lineageCanvasWrap?.addEventListener('pointermove', (event) => {
         if (!lineageDrag || lineageDrag.pointerId !== event.pointerId) return;
-        lineagePanX = lineageDrag.panX + (event.clientX - lineageDrag.x);
-        lineagePanY = lineageDrag.panY + (event.clientY - lineageDrag.y);
+        const deltaX = event.clientX - lineageDrag.x;
+        const deltaY = event.clientY - lineageDrag.y;
+        if (Math.abs(deltaX) + Math.abs(deltaY) > 4) lineageDrag.moved = true;
+        if (!lineageDrag.moved) return;
+        lineagePanX = lineageDrag.panX + deltaX;
+        lineagePanY = lineageDrag.panY + deltaY;
         updateLineageTransform();
       });
       const stopLineageDrag = (event) => {
         if (!lineageDrag || lineageDrag.pointerId !== event.pointerId) return;
+        const clearSelection = !lineageDrag.moved && Boolean(lineageSelection);
         lineageCanvasWrap?.releasePointerCapture?.(event.pointerId);
         lineageDrag = null;
+        if (clearSelection) {
+          clearLineageSelectionAndRender();
+        }
       };
       lineageCanvasWrap?.addEventListener('pointerup', stopLineageDrag);
       lineageCanvasWrap?.addEventListener('pointercancel', stopLineageDrag);
+      lineageCanvasWrap?.addEventListener('dblclick', (event) => {
+        if (event.target?.closest?.('[data-lineage-node-id], [data-lineage-edge-id], [data-lineage-map-category], [data-lineage-show-more-category]')) return;
+        fitLineageMap();
+      });
+      lineageMiniMapEl?.addEventListener('pointerdown', (event) => {
+        if (event.button !== 0) return;
+        const svg = lineageMiniMapEl.querySelector('.lineage-minimap-svg');
+        if (!(svg instanceof SVGSVGElement) || !getLineageViewport()) return;
+        event.preventDefault();
+        event.stopPropagation();
+        lineageMiniDrag = { pointerId: event.pointerId };
+        lineageMiniMapEl.setPointerCapture?.(event.pointerId);
+        moveLineageCameraFromMinimap(event);
+      });
+      lineageMiniMapEl?.addEventListener('pointermove', (event) => {
+        if (!lineageMiniDrag || lineageMiniDrag.pointerId !== event.pointerId) return;
+        event.preventDefault();
+        moveLineageCameraFromMinimap(event);
+      });
+      const stopLineageMiniDrag = (event) => {
+        if (!lineageMiniDrag || lineageMiniDrag.pointerId !== event.pointerId) return;
+        lineageMiniMapEl?.releasePointerCapture?.(event.pointerId);
+        lineageMiniDrag = null;
+      };
+      lineageMiniMapEl?.addEventListener('pointerup', stopLineageMiniDrag);
+      lineageMiniMapEl?.addEventListener('pointercancel', stopLineageMiniDrag);
+      lineageCanvasWrap?.addEventListener('pointermove', (event) => {
+        const edge = event.target?.closest?.('.lineage-map-edge-group[data-lineage-edge-label]');
+        if (!edge || !lineageEdgeTooltipEl) {
+          if (lineageEdgeTooltipEl) lineageEdgeTooltipEl.hidden = true;
+          return;
+        }
+        const boundsEl = lineageEdgeTooltipEl.offsetParent || lineageEdgeTooltipEl.closest('.lineage-map-body') || lineageGraphEl;
+        const rect = boundsEl?.getBoundingClientRect?.();
+        const label = String(edge.dataset.lineageEdgeLabel || '').trim();
+        if (!rect || !label) return;
+        lineageEdgeTooltipEl.innerHTML = `<strong>血缘关系</strong>${escHtml(label)}`;
+        lineageEdgeTooltipEl.hidden = false;
+        const tooltipWidth = Math.max(1, lineageEdgeTooltipEl.offsetWidth || 310);
+        const tooltipHeight = Math.max(1, lineageEdgeTooltipEl.offsetHeight || 72);
+        const margin = 12;
+        const cssTransformOffset = 14;
+        const cameraViewport = getLineageViewport();
+        const reservedRight = cameraViewport?.reservedRight || 0;
+        const reservedBottom = cameraViewport?.reservedBottom || 0;
+        const usableWidth = Math.max(1, rect.width - reservedRight);
+        const usableHeight = Math.max(1, rect.height - reservedBottom);
+        const visualLeft = Math.max(
+          margin,
+          Math.min(event.clientX - rect.left + 14, Math.max(margin, usableWidth - tooltipWidth - margin)),
+        );
+        const visualTop = Math.max(
+          margin,
+          Math.min(event.clientY - rect.top + 14, Math.max(margin, usableHeight - tooltipHeight - margin)),
+        );
+        lineageEdgeTooltipEl.style.left = `${visualLeft - cssTransformOffset}px`;
+        lineageEdgeTooltipEl.style.top = `${visualTop - cssTransformOffset}px`;
+      });
+      lineageCanvasWrap?.addEventListener('pointerleave', () => {
+        if (lineageEdgeTooltipEl) lineageEdgeTooltipEl.hidden = true;
+      });
 
       locateBtn?.addEventListener('click', async () => {
         if (typeof locateHandler !== 'function') {
@@ -15012,6 +15659,12 @@ Phase G（Frame 36）：循环衔接
     const show = (text, meta = '', { onLocate = null, initialTab = 'api', request = null, lineageText = '', lineageTrace = null, lineageOnly = false } = {}) => {
       ensure();
       if (!overlay || !panel || !textarea) return;
+      lineageRenderSeq += 1;
+      cancelLineageFrames();
+      clearLineageCameraTimer();
+      if (lineageResizeObserver && lineageCanvasWrap) lineageResizeObserver.observe(lineageCanvasWrap);
+      if (lineageDrag?.pointerId != null) lineageCanvasWrap?.releasePointerCapture?.(lineageDrag.pointerId);
+      if (lineageMiniDrag?.pointerId != null) lineageMiniMapEl?.releasePointerCapture?.(lineageMiniDrag.pointerId);
       lineageOnlyMode = Boolean(lineageOnly);
       previewRequest = request && typeof request === 'object' ? request : null;
       previewLineageTrace = lineageTrace && typeof lineageTrace === 'object'
@@ -15023,28 +15676,69 @@ Phase G（Frame 36）：循环衔接
       lineagePanY = 0;
       lineageSelection = null;
       lineagePendingCenterSelector = '';
+      lineageAutoFitPending = true;
+      lineageMiniWorld = { width: 1, height: 1 };
+      lineageMiniDrag = null;
+      lineageDrag = null;
+      lineageLastViewport = { width: 0, height: 0 };
+      lineageCategoryItemLimits = new Map();
+      if (lineageSearchEl) lineageSearchEl.value = '';
+      if (lineageSearchResultsEl) {
+        lineageSearchResultsEl.hidden = true;
+        lineageSearchResultsEl.innerHTML = '';
+      }
+      if (lineageEmptyHintEl) lineageEmptyHintEl.hidden = false;
+      if (lineageEdgeTooltipEl) lineageEdgeTooltipEl.hidden = true;
+      if (lineageSummaryEl) lineageSummaryEl.textContent = '';
+      if (lineageNodeCountEl) lineageNodeCountEl.textContent = '0';
+      if (lineageEdgeCountEl) lineageEdgeCountEl.textContent = '0';
+      if (lineageLayerCountEl) lineageLayerCountEl.textContent = '0';
+      if (lineageZoomValueEl) lineageZoomValueEl.textContent = '100%';
+      if (lineageMiniMapEl) lineageMiniMapEl.replaceChildren();
+      lineageMiniViewportEl = null;
+      if (lineageDockEl) lineageDockEl.replaceChildren();
+      if (lineageInspectorEl) {
+        lineageInspectorEl.classList.add('is-empty');
+        lineageInspectorEl.replaceChildren();
+      }
+      if (lineageCanvasEl) {
+        lineageCanvasEl.classList.remove('is-readable-view');
+        lineageCanvasEl.classList.add('is-map-scene-view');
+        lineageCanvasEl.innerHTML = getPreviewLineageGraph()
+          ? '<div class="lineage-graph-empty">排版中…</div>'
+          : '<div class="lineage-graph-empty">暂无上下文血缘图记录</div>';
+        lineageCanvasEl.style.transform = 'translate3d(0, 0, 0) scale(1)';
+        lineageCanvasEl.style.transformOrigin = '0 0';
+      }
       locateHandler = typeof onLocate === 'function' ? onLocate : null;
       if (locateBtn) {
         locateBtn.disabled = typeof locateHandler !== 'function';
         locateBtn.style.opacity = locateBtn.disabled ? '0.6' : '1';
         locateBtn.style.cursor = locateBtn.disabled ? 'not-allowed' : 'pointer';
       }
+      panel.classList.toggle('is-lineage-only', lineageOnlyMode);
       if (tabsEl) tabsEl.style.display = lineageOnlyMode ? 'none' : 'flex';
-      if (titleEl) titleEl.textContent = lineageOnlyMode ? '关系地图' : '本次请求';
+      if (titleEl) titleEl.textContent = lineageOnlyMode ? '上下文血缘图谱' : '本次请求';
       if (copyBtn) copyBtn.textContent = lineageOnlyMode ? '复制 Trace' : '复制';
       updateLineageScopeHint();
       textarea.value = String(text || '');
       lineagePlainText = String(lineageText || '').trim() || '暂无上下文血缘图记录';
-      renderLineageGraph();
       if (lineageTextarea) lineageTextarea.value = lineagePlainText;
       if (metaEl) metaEl.textContent = meta || '';
       overlay.style.display = 'block';
       switchTab(initialTab);
+      scheduleLineageFrame(() => { void renderLineageGraph(); });
     };
 
     const hide = () => {
       if (!overlay) return;
       overlay.style.display = 'none';
+      lineageRenderSeq += 1;
+      cancelLineageFrames();
+      clearLineageCameraTimer();
+      lineageResizeObserver?.disconnect?.();
+      if (lineageDrag?.pointerId != null) lineageCanvasWrap?.releasePointerCapture?.(lineageDrag.pointerId);
+      if (lineageMiniDrag?.pointerId != null) lineageMiniMapEl?.releasePointerCapture?.(lineageMiniDrag.pointerId);
       locateHandler = null;
       previewRequest = null;
       previewLineageTrace = null;
@@ -15052,6 +15746,32 @@ Phase G（Frame 36）：循环衔接
       lineagePlainText = '';
       lineagePendingCenterSelector = '';
       lineageDrag = null;
+      lineageMiniDrag = null;
+      lineageAutoFitPending = false;
+      lineageSelection = null;
+      lineageExpandedIds = new Set();
+      lineageCategoryItemLimits = new Map();
+      lineageMiniWorld = { width: 1, height: 1 };
+      lineageLastViewport = { width: 0, height: 0 };
+      lineageMiniViewportEl = null;
+      if (lineageMiniMapEl) lineageMiniMapEl.replaceChildren();
+      if (lineageDockEl) lineageDockEl.replaceChildren();
+      if (lineageSummaryEl) lineageSummaryEl.textContent = '';
+      if (lineageNodeCountEl) lineageNodeCountEl.textContent = '0';
+      if (lineageEdgeCountEl) lineageEdgeCountEl.textContent = '0';
+      if (lineageLayerCountEl) lineageLayerCountEl.textContent = '0';
+      if (lineageZoomValueEl) lineageZoomValueEl.textContent = '100%';
+      if (lineageInspectorEl) {
+        lineageInspectorEl.classList.add('is-empty');
+        lineageInspectorEl.replaceChildren();
+      }
+      if (lineageCanvasEl) lineageCanvasEl.replaceChildren();
+      if (lineageSearchResultsEl) {
+        lineageSearchResultsEl.hidden = true;
+        lineageSearchResultsEl.replaceChildren();
+      }
+      if (lineageEdgeTooltipEl) lineageEdgeTooltipEl.hidden = true;
+      panel?.classList.remove('is-lineage-only');
     };
 
     return { show, hide };

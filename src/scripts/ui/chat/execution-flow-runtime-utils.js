@@ -557,7 +557,7 @@ export const createExecutionFlowRuntime = ({
       if (interactive) return;
       const ballDrag = typeof getBallDragRuntime === 'function' ? getBallDragRuntime() : null;
       if (!ballDrag?.startDrag) return;
-      ballDrag.startDrag(event, { suppressLongPress: true });
+      ballDrag.startDrag(event, { suppressLongPress: true, suppressClick: true });
     });
     documentRef.addEventListener?.('keydown', (event) => {
       if (event?.key !== 'Escape' || !state.activeKind) return;

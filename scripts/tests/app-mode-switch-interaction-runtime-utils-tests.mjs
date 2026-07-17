@@ -279,3 +279,43 @@ class FakeDocument {
   assert.equal(Boolean(runtime.getDragState()), true, '拖拽状态照常建立');
   console.log('ok - createModeSwitchInteractionRuntime suppressLongPress 转发拖拽不触发长按');
 }
+
+{
+  // 外部标题/拖柄转发给模式球的按压，即使没有移动，也不能落成模式切换 click。
+  const modeSwitchEl = new FakeElement('div');
+  const buttonEl = new FakeElement('button');
+  const scheduled = [];
+  let enterCalls = 0;
+  const runtime = createModeSwitchInteractionRuntime({
+    modeSwitchEl,
+    modeSwitchBtnEl: buttonEl,
+    setTimeoutFn: (fn) => {
+      scheduled.push(fn);
+      return scheduled.length;
+    },
+    clearTimeoutFn: () => {},
+    nowFn: () => 1000,
+    getUiMode: () => 'chat',
+    enterRpMode: () => {
+      enterCalls += 1;
+    },
+  });
+
+  runtime.startDrag({
+    pointerType: 'mouse',
+    button: 0,
+    pointerId: 9,
+    clientX: 100,
+    clientY: 200,
+    preventDefault() {},
+    stopPropagation() {},
+  }, { suppressLongPress: true, suppressClick: true });
+  runtime.endDrag({ pointerId: 9 });
+  assert.equal(runtime.isSuppressingClick(), true, '外部转发的静止按压应抑制下一次模式球 click');
+  assert.equal(runtime.handleClick(), false);
+  assert.equal(enterCalls, 0, '标题单击不得进入创意写作');
+  scheduled.splice(0).forEach(fn => fn());
+  assert.equal(runtime.handleClick(), true, '抑制窗口结束后直接点击小球仍可切换模式');
+  assert.equal(enterCalls, 1);
+  console.log('ok - createModeSwitchInteractionRuntime 外部拖拽标题单击不切换模式');
+}

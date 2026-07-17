@@ -7623,6 +7623,38 @@ body[data-theme-mode='dark'] .creative-execution-root {
 @keyframes cel-flow-dash {
   to { -webkit-mask-position: 0 18px; mask-position: 0 18px; }
 }
+.cel-row[data-cel-flow-status='running']:not(:last-child) .cel-row-flow::after {
+  content: '';
+  position: absolute;
+  z-index: 2;
+  left: 5px;
+  top: 50%;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--cel-flow-color) 88%, var(--cel-panel-raised));
+  box-shadow:
+    0 0 5px var(--cel-flow-color),
+    0 0 10px color-mix(in srgb, var(--cel-flow-color) 62%, transparent);
+  transform: translate(-50%, -50%) scale(0.65);
+  pointer-events: none;
+  animation: cel-flow-particle 1.65s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+  will-change: top, opacity, transform;
+}
+@keyframes cel-flow-particle {
+  0% {
+    top: 50%;
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(0.55);
+  }
+  14% { opacity: 1; }
+  82% { opacity: 1; }
+  100% {
+    top: 150%;
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(1);
+  }
+}
 .cel-row-scroll {
   flex: 1;
   min-width: 0;
@@ -7634,6 +7666,7 @@ body[data-theme-mode='dark'] .creative-execution-root {
 }
 .cel-card {
   position: relative;
+  isolation: isolate;
   flex: 0 0 auto;
   min-width: 132px;
   max-width: 210px;
@@ -7647,11 +7680,16 @@ body[data-theme-mode='dark'] .creative-execution-root {
   color: var(--cel-text);
   text-align: left;
   cursor: pointer;
+  overflow: hidden;
   /* 历史/排队卡淡化后置，当前卡在 is-current 提升 */
   box-shadow: 0 6px 18px rgba(15, 23, 42, 0.10);
   opacity: 0.85;
   filter: saturate(0.85);
   transition: opacity 160ms ease, box-shadow 160ms ease, filter 160ms ease;
+}
+.cel-card > * {
+  position: relative;
+  z-index: 1;
 }
 .cel-card::before {
   content: '';
@@ -7662,6 +7700,39 @@ body[data-theme-mode='dark'] .creative-execution-root {
   width: 3px;
   border-radius: 999px;
   background: var(--cel-muted);
+  z-index: 2;
+}
+.cel-card.is-running::after {
+  content: '';
+  position: absolute;
+  z-index: 0;
+  top: -25%;
+  bottom: -25%;
+  left: -55%;
+  width: 42%;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    color-mix(in srgb, var(--cel-accent) 16%, transparent),
+    color-mix(in srgb, var(--cel-panel-raised) 42%, transparent),
+    transparent
+  );
+  transform: translateX(-160%) skewX(-18deg);
+  pointer-events: none;
+  animation: cel-card-sheen 2.2s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+  will-change: transform, opacity;
+}
+@keyframes cel-card-sheen {
+  0%, 18% {
+    opacity: 0;
+    transform: translateX(-160%) skewX(-18deg);
+  }
+  28% { opacity: 0.72; }
+  72% { opacity: 0.72; }
+  100% {
+    opacity: 0;
+    transform: translateX(520%) skewX(-18deg);
+  }
 }
 .cel-card.is-running::before { background: var(--cel-accent); }
 .cel-card.is-succeeded::before { background: var(--cel-success); }
@@ -7778,7 +7849,9 @@ body[data-theme-mode='dark'] .cel-card.is-current {
   .cel-card.is-running .cel-card-dot,
   .creative-execution-stack.is-opening { animation: none; }
   .creative-execution-root.is-running .creative-execution-chip::after { animation: none; }
-  .cel-row-flow::before { animation: none !important; }
+  .cel-card.is-running::after,
+  .cel-row-flow::before,
+  .cel-row-flow::after { animation: none !important; }
   .cel-row-scroll { scroll-behavior: auto; }
 }
 

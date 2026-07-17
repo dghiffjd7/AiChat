@@ -1,22 +1,32 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 
 import {
+  buildLineageMapMiniViewport,
   buildLineageMapSceneModelWithElk,
   buildLineageMapSceneModel,
   buildLineageGraphViewModel,
+  centerLineageMapCamera,
   detectLineageCycles,
   exportLineageGraphDot,
   exportLineageGraphMermaid,
+  findLineageMapNodes,
   findLineagePaths,
+  fitLineageMapCamera,
   formatLineageEdgeDetails,
   formatLineageNodeDetails,
   formatLineagePathDiagnostics,
   renderLineageGraphSvg,
+  renderLineageMapDetailHtml,
+  renderLineageMapDockHtml,
   renderLineageMapSceneHtml,
+  renderLineageMapSearchResultsHtml,
   renderLineageOverviewHtml,
   renderLineagePipelineHtml,
   summarizeLineageGraph,
+  traceLineageNodeRelations,
+  zoomLineageMapCameraAtPoint,
 } from '../../src/scripts/ui/chat/lineage-graph-view-utils.js';
 
 const require = createRequire(import.meta.url);
@@ -84,6 +94,29 @@ const buildDenseGraph = () => ({
   ],
 });
 
+const buildPagedGraph = () => ({
+  ...graph,
+  nodes: [
+    graph.nodes[4],
+    ...Array.from({ length: 30 }, (_, index) => ({
+      id: `contact:paged:${index}`,
+      type: 'contact',
+      label: `分页联系人 ${index + 1}`,
+      status: 'active',
+      scopeId: 'persona:1',
+    })),
+  ],
+  edges: Array.from({ length: 30 }, (_, index) => ({
+    id: `edge:paged:${index}`,
+    source: `contact:paged:${index}`,
+    target: 'prompt:req-1',
+    type: 'candidate_for',
+    status: 'candidate',
+    sourceScopeId: 'persona:1',
+    targetScopeId: 'persona:1',
+  })),
+});
+
 const collectNodeOverlaps = (nodes = []) => {
   const overlaps = [];
   const visibleNodes = nodes.filter(node => node.kind !== 'root');
@@ -143,6 +176,12 @@ const collectNodeOverlaps = (nodes = []) => {
   assert.match(scene, /lineage-map-scene/);
   assert.match(scene, /data-lineage-map-category="contacts"/);
   assert.match(scene, /联系人/);
+  assert.match(scene, /lineage-map-layer-guide/);
+  assert.match(scene, /lineage-map-link-hit/);
+  assert.match(scene, /<animateMotion/);
+  assert.match(scene, /data-lineage-minimap-template/);
+  assert.match(scene, /lineage-node-topline/);
+  assert.match(scene, /--lineage-node-delay:/);
   assert.doesNotMatch(scene, /NaN/);
   assert.doesNotMatch(scene, /Alice 画像/);
   const expandedCategory = renderLineageMapSceneHtml(graph, { expandedIds: ['contacts'] });
@@ -151,7 +190,118 @@ const collectNodeOverlaps = (nodes = []) => {
   assert.match(expanded, /data-lineage-node-id="contact:a"/);
   assert.match(expanded, /Alice/);
   assert.match(expanded, /is-contains/);
+  assert.match(expanded, /data-lineage-edge-id="e1"/);
+  assert.match(expanded, /is-lineage-down/);
+  assert.match(expanded, /is-layer-contacts is-lineage-self/);
+  assert.doesNotMatch(expanded, /is-layer-[^"\s]+is-lineage-/);
+  assert.doesNotMatch(expanded, /is-(?:active|candidate|blocked|trimmed|disabled|unknown)is-(?:aggregate|contains|related)/);
+  assert.match(expanded, /M1,1 L8,4 L1,7/);
+  const more = renderLineageMapSceneHtml(buildDenseGraph(), {
+    expandedIds: ['contacts'],
+    maxItemsPerCategory: 3,
+  });
+  assert.match(more, /data-lineage-show-more-category="contacts"/);
   console.log('ok - lineage map scene renders first-layer categories and expands on demand');
+}
+
+{
+  const lineage = traceLineageNodeRelations(graph, 'contact:a');
+  assert.deepEqual(Array.from(lineage.directDownstreamIds), ['profile:a']);
+  assert.equal(lineage.downstreamIds.has('prompt:req-1'), true);
+  assert.equal(lineage.upstreamIds.size, 1);
+
+  const model = buildLineageMapSceneModel(graph, {
+    expandedIds: ['contacts'],
+    focusId: 'contact:a',
+  });
+  const graphNodeIds = model.nodes.map(node => node.nodeId).filter(Boolean);
+  assert.equal(new Set(graphNodeIds).size, graphNodeIds.length);
+  const nodeByGraphId = new Map(model.nodes.filter(node => node.nodeId).map(node => [node.nodeId, node.id]));
+  const e1 = model.edges.find(edge => edge.edgeId === 'e1');
+  const e3 = model.edges.find(edge => edge.edgeId === 'e3');
+  assert.equal(e1.sourceId, nodeByGraphId.get('contact:a'));
+  assert.equal(e1.targetId, nodeByGraphId.get('profile:a'));
+  assert.equal(e1.lineageState, 'down');
+  assert.equal(e3.sourceId, nodeByGraphId.get('row:a:1'));
+  assert.equal(e3.targetId, nodeByGraphId.get('prompt:req-1'));
+  const contactAggregate = model.edges.find(edge => edge.id === 'map-edge-root-contacts-in');
+  assert.equal(contactAggregate.sourceId, 'category:contacts');
+  assert.equal(contactAggregate.targetId, 'node:prompt:req-1');
+  assert.equal(model.edges.some(edge => edge.id === 'map-edge-root-contacts-out'), false);
+  console.log('ok - lineage focus preserves real graph direction, transitive closure, and node identity');
+}
+
+{
+  const results = findLineageMapNodes(graph, 'Alice');
+  assert.equal(results.length, 2);
+  assert.deepEqual(results.map(item => item.categoryId).sort(), ['contacts', 'profiles']);
+  const resultHtml = renderLineageMapSearchResultsHtml(results);
+  assert.match(resultHtml, /data-lineage-jump-node-id="contact:a"/);
+  assert.match(resultHtml, /lineage-search-result-dot/);
+
+  const dock = renderLineageMapDockHtml(graph, { expandedIds: ['contacts'] });
+  assert.match(dock, /lineage-layer-dock-card/);
+  assert.match(dock, /data-lineage-map-category="contacts"/);
+  assert.match(dock, /data-lineage-expanded="true"/);
+  assert.match(dock, /lineage-impact-list/);
+
+  const detail = renderLineageMapDetailHtml('node', graph.nodes[0], graph);
+  assert.match(detail, /lineage-detail-impact-grid/);
+  assert.match(detail, /lineage-detail-accent/);
+  assert.match(detail, /data-lineage-jump-node-id="profile:a"/);
+  assert.match(detail, /下游影响<\/span><strong>3/);
+  const riskDetail = renderLineageMapDetailHtml('edge', graph.edges[3], graph);
+  assert.match(riskDetail, />风险<\/i>/);
+  console.log('ok - lineage map HUD search dock and glass detail preserve graph navigation');
+}
+
+{
+  const fitted = fitLineageMapCamera({
+    viewport: { width: 1000, height: 600 },
+    world: { width: 1200, height: 800 },
+    padding: 40,
+  });
+  assert.deepEqual(fitted, { x: 110, y: 40, scale: 0.65 });
+
+  const zoomed = zoomLineageMapCameraAtPoint({
+    camera: { x: 10, y: 20, scale: 1 },
+    point: { x: 100, y: 100 },
+    scale: 2,
+  });
+  assert.deepEqual(zoomed, { x: -80, y: -60, scale: 2 });
+
+  const centered = centerLineageMapCamera({
+    viewport: { width: 1000, height: 600 },
+    point: { x: 300, y: 200 },
+    scale: 0.8,
+  });
+  assert.deepEqual(centered, { x: 260, y: 140, scale: 0.8 });
+
+  const miniViewport = buildLineageMapMiniViewport({
+    camera: centered,
+    viewport: { width: 1000, height: 600 },
+    world: { width: 1400, height: 900 },
+  });
+  assert.deepEqual(miniViewport, { x: 0, y: 0, width: 1250, height: 750 });
+  console.log('ok - lineage map camera helpers preserve cursor zoom fit center and minimap viewport');
+}
+
+{
+  const css = readFileSync(new URL('../../src/assets/css/theme.css', import.meta.url), 'utf8');
+  assert.match(css, /@keyframes lineage-node-in/);
+  assert.match(css, /@keyframes lineage-flow-dash/);
+  assert.match(css, /@keyframes lineage-glow-drift/);
+  assert.match(css, /@keyframes lineage-scanline/);
+  assert.match(css, /@keyframes lineage-detail-in/);
+  assert.match(css, /\.lineage-map-particle/);
+  assert.match(css, /:not\(\.lineage-graph-panel \*\)/);
+  assert.match(css, /\.lineage-map-link-hit\s*\{[^}]*vector-effect:\s*non-scaling-stroke/s);
+  assert.match(css, /\.lineage-map-arrow\s*\{[^}]*fill:\s*none/s);
+  assert.match(css, /\.lineage-map-node\.is-lineage-self/);
+  assert.match(css, /\.lineage-map-node\.is-lineage-dim/);
+  assert.match(css, /body\[data-theme-mode='dark'\] \.lineage-graph-panel/);
+  assert.match(css, /body\[data-reduced-motion='on'\] \.lineage-graph-panel/);
+  console.log('ok - lineage visual contract includes reference atmosphere motion and theme fallbacks');
 }
 
 {
@@ -162,15 +312,33 @@ const collectNodeOverlaps = (nodes = []) => {
 }
 
 {
+  const firstPage = buildLineageMapSceneModel(buildPagedGraph(), { expandedIds: ['contacts'] });
+  assert.equal(firstPage.nodes.filter(node => node.kind === 'item').length, 12);
+  assert.equal(firstPage.nodes.find(node => node.moreCategoryId === 'contacts')?.label, '+18');
+  const secondPage = buildLineageMapSceneModel(buildPagedGraph(), {
+    expandedIds: ['contacts'],
+    categoryItemLimits: { contacts: 24 },
+  });
+  assert.equal(secondPage.nodes.filter(node => node.kind === 'item').length, 24);
+  assert.equal(secondPage.nodes.find(node => node.moreCategoryId === 'contacts')?.label, '+6');
+  const finalPage = buildLineageMapSceneModel(buildPagedGraph(), {
+    expandedIds: ['contacts'],
+    categoryItemLimits: new Map([['contacts', 36]]),
+  });
+  assert.equal(finalPage.nodes.filter(node => node.kind === 'item').length, 30);
+  assert.equal(finalPage.nodes.some(node => node.moreCategoryId === 'contacts'), false);
+  console.log('ok - lineage category paging expands by configured object or Map limits');
+}
+
+{
   const model = await buildLineageMapSceneModelWithElk(buildDenseGraph(), {
     expandedIds: ['contacts', 'memories'],
     elkConstructor: ELK,
   });
   assert.equal(model.layoutEngine, 'elk');
   assert.deepEqual(collectNodeOverlaps(model.nodes), []);
-  assert.ok(model.edges.filter(edge => edge.kind === 'aggregate').every(edge => /C/.test(edge.path)));
-  assert.ok(model.edges.filter(edge => edge.kind !== 'aggregate').every(edge => /L/.test(edge.path)));
-  console.log('ok - lineage map scene uses ELK layered orthogonal layout without node overlap');
+  assert.ok(model.edges.every(edge => /C/.test(edge.path)));
+  console.log('ok - lineage map scene uses ELK layered layout and smooth curves without node overlap');
 }
 
 {

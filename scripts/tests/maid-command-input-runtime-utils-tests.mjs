@@ -378,6 +378,7 @@ class FakeDocument {
   rootEl.dispatchEvent('pointerdown', { target: { closest: () => null } });
   assert.equal(dragCalls.length, 1, '非交互区按下转发球拖拽');
   assert.equal(dragCalls[0].options.suppressLongPress, true, '转发拖拽抑制长按');
+  assert.equal(dragCalls[0].options.suppressClick, true, '转发区静止单击不得误触模式切换');
   rootEl.dispatchEvent('pointerdown', {
     target: { closest: selector => (String(selector).includes('textarea') ? {} : null) },
   });

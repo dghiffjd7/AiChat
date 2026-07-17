@@ -19,6 +19,7 @@ import { createAppUiCaptureTools } from '../../src/scripts/agent/tools/app-ui-ca
 import { createWebSearchAgentTools } from '../../src/scripts/agent/tools/web-search-tools.js';
 import { createMaidTodoTools } from '../../src/scripts/agent/tools/maid-todo-tools.js';
 import { createChatFormatRepairTools } from '../../src/scripts/agent/tools/chat-format-tools.js';
+import { createMomentsAgentTools } from '../../src/scripts/agent/tools/moments-tools.js';
 
 const getTool = (tools, name) => tools.find(tool => tool.name === name);
 
@@ -343,7 +344,14 @@ const escapeRegex = value => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'
     },
     resolveSessionId: ({ sessionId, sessionName }) => sessionId || sessionName || current,
   });
-  const tools = [...navTools, ...sessionTools, ...contentTools, ...mediaTools, ...captureTools, ...webTools, ...todoTools, ...formatTools];
+  const publishedMoments = [];
+  const momentsTools = createMomentsAgentTools({
+    publishMoment: async (payload) => {
+      publishedMoments.push(payload);
+      return { ok: true, momentId: 'catalog-moment', commentsRequested: payload.generateComments === true };
+    },
+  });
+  const tools = [...navTools, ...sessionTools, ...contentTools, ...mediaTools, ...captureTools, ...webTools, ...todoTools, ...formatTools, ...momentsTools];
   const maidAttachments = [{ id: 'catalog-image', kind: 'image', url: 'data:image/png;base64,AAAA', name: 'catalog.png' }];
 
   for (const feature of listAppFeatures()) {
@@ -506,6 +514,14 @@ const escapeRegex = value => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'
       const result = await getTool(tools, 'chat.send_message').execute({ sessionId: 'Beta', content: 'hi' });
       assert.equal(result.ok, true);
       assert.equal(result.sent, true);
+      return;
+    }
+    if (feature.id === 'moments.publish') {
+      const result = await getTool(tools, 'moments.publish').execute({ content: '今天也被女仆照顾得很好 @大小姐', generateComments: false });
+      assert.equal(result.ok, true);
+      assert.equal(result.momentId, 'catalog-moment');
+      assert.equal(result.commentsRequested, false);
+      assert.equal(publishedMoments[0].content, '今天也被女仆照顾得很好 @大小姐');
       return;
     }
     if (feature.id === 'config.model.switch') {

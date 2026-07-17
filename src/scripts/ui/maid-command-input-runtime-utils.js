@@ -747,6 +747,8 @@ export const createMaidCommandInputRuntime = ({
       if (key) existingNodes.set(key, node);
       else if (!node?.dataset?.mciLive) node.remove?.();
     });
+    // 单次渲染取一次时钟：同批新卡的节拍必须相对同一基准（逐节点取时会因毫秒推进产生 149ms 类漂移）
+    const renderNowTs = Date.now();
     resultMessages.forEach((item, index) => {
       const key = trim(item.id, `idx_${index}`);
       let node = existingNodes.get(key) || null;
@@ -760,9 +762,8 @@ export const createMaidCommandInputRuntime = ({
       node.dataset.key = key;
       node.classList?.add?.('is-entering');
       // 跨渲染节拍：同批与快速连发的事件都一张一张推出
-      const nowTs = Date.now();
-      const delayMs = Math.min(1200, Math.max(0, resultEnterPaceUntil - nowTs));
-      resultEnterPaceUntil = Math.max(nowTs, resultEnterPaceUntil) + 150;
+      const delayMs = Math.min(1200, Math.max(0, resultEnterPaceUntil - renderNowTs));
+      resultEnterPaceUntil = Math.max(renderNowTs, resultEnterPaceUntil) + 150;
       if (node.style) node.style.animationDelay = `${delayMs}ms`;
       node.addEventListener?.('animationend', () => {
         node.classList?.remove?.('is-entering');
@@ -1035,7 +1036,7 @@ export const createMaidCommandInputRuntime = ({
       if (interactive) return;
       const ballDrag = typeof getBallDragRuntime === 'function' ? getBallDragRuntime() : null;
       if (!ballDrag?.startDrag) return;
-      ballDrag.startDrag(event, { suppressLongPress: true });
+      ballDrag.startDrag(event, { suppressLongPress: true, suppressClick: true });
     });
     rootEl.addEventListener?.('submit', (event) => {
       event.preventDefault?.();

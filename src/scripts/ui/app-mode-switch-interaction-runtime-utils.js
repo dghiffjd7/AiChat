@@ -266,9 +266,10 @@ export function createModeSwitchInteractionRuntime({
       lastY: originY,
       lastTime: now,
       longPressActivated: false,
+      suppressClickOnEnd: options?.suppressClick === true,
     };
     clearLongPressTimer();
-    // 指令条转发的拖拽不参与长按（长按语义=呼出指令条，转发方已处于打开态）
+    // 外部标题/拖柄转发的拖拽不参与长按（长按语义只属于模式球本体）。
     if (typeof onLongPress === 'function' && Number(longPressMs) > 0 && options?.suppressLongPress !== true) {
       longPressTimer = setTimeoutFn?.(() => {
         longPressTimer = null;
@@ -337,6 +338,9 @@ export function createModeSwitchInteractionRuntime({
         saveModeSwitchPos();
         scheduleSettling(modeSwitchEl, setTimeoutFn);
       }
+      scheduleSuppressClickRelease();
+    } else if (modeSwitchDrag.suppressClickOnEnd) {
+      modeSwitchSuppressClick = true;
       scheduleSuppressClickRelease();
     }
     modeSwitchDrag = null;

@@ -365,6 +365,23 @@ export const APP_FEATURE_DEFINITIONS = Object.freeze([
     verification: null,
   },
   {
+    id: 'moments.publish',
+    title: '发布动态',
+    aliases: ['发动态', '发布动态', '帮我发条动态', '发个动态', '发一条动态', '发朋友圈', '发说说', '替我发动态'],
+    summary: '以用户身份在动态页发布一条动态；发布后角色们可自动前来评论。',
+    uiPath: ['动态', '发布动态'],
+    tools: ['moments.publish'],
+    argsHint: 'content 必填：动态正文（以用户口吻撰写，不要写成女仆的口吻；文内可用 @联系人名 提及联系人）；generateComments 默认 true 会让角色们自动评论（调用模型），用户明确说不要评论时传 false。发布成功即完成，不需要跳转页面或再次确认。',
+    panel: '',
+    riskLevel: 'medium',
+    writes: true,
+    confirmation: 'allow_once',
+    firstRunGuide: '',
+    directAction: 'moments.publish',
+    // 工具结果即权威（persist 返回 momentId），无需读回验证。
+    verification: null,
+  },
+  {
     id: 'chat.format.profile',
     title: '会话格式画像',
     aliases: ['格式画像', '记住这个格式', '这个卡是什么格式', '查看格式规范', '这个角色卡的输出格式', '保存格式规范'],

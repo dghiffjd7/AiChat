@@ -129,12 +129,20 @@ const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '
     '共享容器应提供创意泳道插槽');
   assert.match(flowSource, /data-ef-switch="\$\{kind\}"/,
     '双投影同时可见时应提供 chip 切换入口');
+  assert.match(flowSource, /startDrag\(event,\s*\{\s*suppressLongPress:\s*true,\s*suppressClick:\s*true\s*\}\)/,
+    '执行流标题转发拖拽时应消费静止单击，避免误触模式切换');
   assert.doesNotMatch(cssSource, /\.creative-execution-root\s*\{[\s\S]*?bottom:\s*calc\(100% \+ 6px\)/,
     '创意泳道不得继续定位在输入框上方');
   assert.match(cssSource, /\.creative-execution-chip\s*\{[\s\S]*?border-radius:\s*999px;/,
     '创意泳道缩略态应与女仆投影使用同型 chip');
   assert.match(cssSource, /\.cel-row-flow[\s\S]*repeating-linear-gradient[\s\S]*@keyframes cel-flow-dash/,
     '展开泳道应有状态渐变与流动虚线');
+  assert.match(cssSource, /\.cel-card\.is-running::after[\s\S]*animation:\s*cel-card-sheen/,
+    '运行中的泳道卡应有低强度横向扫光');
+  assert.match(cssSource, /\.cel-row\[data-cel-flow-status='running'\]:not\(:last-child\) \.cel-row-flow::after[\s\S]*animation:\s*cel-flow-particle/,
+    '运行中的连接线应有沿线移动的微光点');
+  assert.match(cssSource, /@keyframes cel-card-sheen/);
+  assert.match(cssSource, /@keyframes cel-flow-particle/);
   console.log('ok - Phase 2 接线、旧定位移除与新视觉契约');
 }
 
