@@ -675,6 +675,86 @@ console.log('ok - script runtime recognizes actual ESM import and export syntax'
 {
   const { sandbox, messages } = createWorkerHarness();
   const script = `
+    const ctx = SillyTavern.getContext();
+    if (typeof ctx.saveSettingsDebounced !== 'function') throw new Error('missing context saveSettingsDebounced');
+    ctx.chatCompletionSettings.temperature = 0.25;
+    ctx.chatCompletionSettings.prompts[0].content = 'updated prompt';
+    ctx.saveSettingsDebounced();
+  `;
+  await sandbox.self.onmessage({
+    data: {
+      type: 'sync',
+      settings: { allowNetwork: false },
+      context: {
+        sessionId: 's1',
+        openaiPresetId: 'preset-openai',
+        chatCompletionSettings: { temperature: 0.7 },
+        activePreset: {
+          id: 'preset-openai',
+          name: 'Preset',
+          prompts: [{ identifier: 'rule', content: 'original prompt', enabled: true, role: 'system' }],
+          prompt_order: [],
+        },
+      },
+      scripts: [{ id: 'preset-save', name: 'preset save', enabled: true, content: script }],
+    },
+  });
+  await flushTimers();
+  const saveCall = messages.find(msg => msg.type === 'rpc' && msg.method === 'preset.saveChatCompletionSettings');
+  assert.ok(saveCall, 'context saveSettingsDebounced must persist the mutated preset settings');
+  assert.equal(saveCall.params.presetId, 'preset-openai');
+  assert.equal(saveCall.params.settings.temperature, 0.25);
+  assert.equal(saveCall.params.settings.prompts[0].content, 'updated prompt');
+  assert.equal(
+    messages.some(msg => msg.type === 'rpc' && msg.method === 'log' && /脚本加载失败/.test(JSON.stringify(msg.params || {}))),
+    false,
+  );
+  console.log('ok - worker context saveSettingsDebounced forwards mutated completion settings');
+}
+
+{
+  const { sandbox, messages } = createWorkerHarness();
+  const script = `
+    if (typeof generateRaw !== 'function') throw new Error('missing generateRaw');
+    generateRaw({
+      should_silence: true,
+      ordered_prompts: [
+        { role: 'system', content: 'repair format' },
+        { role: 'user', content: 'raw text' },
+      ],
+      custom_api: {
+        apiurl: 'https://llm.example/v1',
+        source: 'openai',
+        key: 'test-key',
+        model: 'small-model',
+        temperature: 0,
+        max_tokens: 65000,
+      },
+    });
+  `;
+  await sandbox.self.onmessage({
+    data: {
+      type: 'sync',
+      settings: { allowNetwork: true },
+      context: { sessionId: 's1' },
+      scripts: [{ id: 'generate-raw', name: 'generate raw', enabled: true, content: script }],
+    },
+  });
+  await flushTimers();
+  const generateCall = messages.find(msg => msg.type === 'rpc' && msg.method === 'generation.generateRaw');
+  assert.ok(generateCall, 'generateRaw must forward its compatibility payload');
+  assert.equal(generateCall.params.config.custom_api.apiurl, 'https://llm.example/v1');
+  assert.equal(generateCall.params.config.ordered_prompts[1].content, 'raw text');
+  assert.equal(
+    messages.some(msg => msg.type === 'rpc' && msg.method === 'log' && /脚本加载失败/.test(JSON.stringify(msg.params || {}))),
+    false,
+  );
+  console.log('ok - worker exposes generateRaw and forwards role prompts plus custom API settings');
+}
+
+{
+  const { sandbox, messages } = createWorkerHarness();
+  const script = `
     if (window.innerWidth !== 777 || window.innerHeight !== 555) throw new Error('missing viewport globals');
     if (!window.visualViewport || window.visualViewport.width !== 777) throw new Error('missing visualViewport shim');
     const style = document.createElement('style');
@@ -1095,6 +1175,7 @@ console.log('ok - script runtime recognizes actual ESM import and export syntax'
   runtime.presets = {
     getActive: type => (type === 'openai' ? {
       name: 'Preset',
+      temperature: 0.4,
       prompts: [{ id: 'rule', name: 'Rule', content: 'content', enabled: true, role: 'system' }],
       prompt_order: [{ character_id: 100001, order: [{ identifier: 'rule', enabled: true }] }],
     } : {}),
@@ -1109,6 +1190,7 @@ console.log('ok - script runtime recognizes actual ESM import and export syntax'
   assert.deepEqual(context.characterVariables, { cardSetting: 'character-only' });
   assert.deepEqual(context.worldbookNames, ['World', 'Extra']);
   assert.equal(context.activePreset.prompts[0].name, 'Rule');
+  assert.equal(context.chatCompletionSettings.temperature, 0.4);
 
   const iframeHtml = runtime.iframeRuntime.buildIframeHtml(
     { id: 'esm-compat', name: 'esm compat', data: { scriptSetting: true }, content: 'export default function() {}' },
@@ -1300,6 +1382,145 @@ console.log('ok - script runtime recognizes actual ESM import and export syntax'
   assert.equal(upserts[0].payload.data.prompts[0].enabled, false);
   assert.equal(upserts[0].payload.data.prompt_order[0].order[0].enabled, false);
   console.log('ok - script runtime controlled prompt manager RPC updates active openai preset without switching');
+}
+
+{
+  const originalSettings = appSettings.get();
+  let storedPreset = {
+    name: 'Preset',
+    temperature: 0.7,
+    prompts: [{ identifier: 'rule', name: 'Rule', content: 'original', enabled: true, role: 'system' }],
+    prompt_order: [{ character_id: 100001, order: [{ identifier: 'rule', enabled: true }] }],
+  };
+  const upserts = [];
+  const runtime = new ScriptRuntime({ ready: Promise.resolve(), getScripts: () => [] });
+  await runtime.ready;
+  runtime.context = { sessionId: 's1', openaiPresetId: 'preset-openai' };
+  runtime.presets = {
+    getResolvedActive: () => ({ presetId: 'preset-openai', preset: structuredClone(storedPreset) }),
+    getResolvedActiveId: () => ({ presetId: 'preset-openai' }),
+    getActiveId: () => 'preset-openai',
+    getActive: () => structuredClone(storedPreset),
+    upsert: async (type, payload) => {
+      if (payload.data.temperature === 0.1) await new Promise(resolve => setTimeout(resolve, 10));
+      upserts.push({ type, payload: structuredClone(payload) });
+      storedPreset = structuredClone(payload.data);
+      return payload.id;
+    },
+  };
+  try {
+    appSettings.update({ scriptAllowModifyVariables: true });
+    await Promise.all([
+      runtime.processRpc('preset.saveChatCompletionSettings', {
+        sessionId: 's1',
+        presetId: 'preset-openai',
+        settings: { ...structuredClone(storedPreset), temperature: 0.1 },
+      }),
+      runtime.processRpc('preset.saveChatCompletionSettings', {
+        sessionId: 's1',
+        presetId: 'preset-openai',
+        settings: {
+          ...structuredClone(storedPreset),
+          name: 'must not replace identity',
+          apiKey: 'must-not-be-persisted',
+          function_calling: false,
+          temperature: 0.2,
+          prompts: [{ identifier: 'rule', name: 'Rule', content: 'updated', enabled: true, role: 'system' }],
+        },
+      }),
+    ]);
+    assert.equal(upserts.length, 2);
+    assert.equal(storedPreset.name, 'Preset');
+    assert.equal(storedPreset.temperature, 0.2, 'later save must win even when an earlier write is slower');
+    assert.equal(storedPreset.prompts[0].content, 'updated');
+    assert.equal(Object.hasOwn(storedPreset, 'apiKey'), false);
+    assert.equal(Object.hasOwn(storedPreset, 'function_calling'), false);
+
+    const beforeMismatch = upserts.length;
+    assert.equal(await runtime.processRpc('preset.saveChatCompletionSettings', {
+      sessionId: 's1',
+      presetId: 'another-preset',
+      settings: { temperature: 0.9 },
+    }), false);
+    assert.equal(upserts.length, beforeMismatch, 'a script must not save through a stale/different preset id');
+
+    appSettings.update({ scriptAllowModifyVariables: false });
+    await assert.rejects(
+      runtime.processRpc('preset.saveChatCompletionSettings', {
+        sessionId: 's1',
+        presetId: 'preset-openai',
+        settings: { temperature: 0.9 },
+      }),
+      /脚本权限已禁用：修改变量/,
+    );
+  } finally {
+    appSettings.update(originalSettings);
+  }
+  console.log('ok - preset settings RPC persists safe active-preset edits in call order and respects permissions');
+}
+
+{
+  const originalSettings = appSettings.get();
+  const calls = [];
+  const runtime = new ScriptRuntime({ ready: Promise.resolve(), getScripts: () => [] });
+  await runtime.ready;
+  runtime.context = { sessionId: 's1' };
+  runtime.bridge = {
+    backgroundChat: async (messages, options) => {
+      calls.push({ messages, options });
+      return 'fixed response';
+    },
+  };
+  const params = {
+    sessionId: 's1',
+    config: {
+      should_silence: true,
+      ordered_prompts: [
+        { role: 'system', content: 'repair format' },
+        { role: 'user', content: 'raw text' },
+      ],
+      custom_api: {
+        apiurl: 'https://llm.example/v1/chat/completions',
+        source: 'openai',
+        key: 'test-key',
+        model: 'small-model',
+        temperature: 0,
+        max_tokens: 65000,
+      },
+    },
+  };
+  try {
+    appSettings.update({ scriptAllowNetwork: false });
+    await assert.rejects(
+      runtime.processRpc('generation.generateRaw', params),
+      /脚本权限已禁用：访问网络/,
+    );
+    assert.equal(calls.length, 0);
+
+    appSettings.update({ scriptAllowNetwork: true });
+    assert.equal(await runtime.processRpc('generation.generateRaw', params), 'fixed response');
+    assert.equal(calls.length, 1);
+    assert.deepEqual(calls[0].messages, [
+      { role: 'system', content: 'repair format' },
+      { role: 'user', content: 'raw text' },
+    ]);
+    assert.equal(calls[0].options.runtimeConfigOverride.provider, 'custom');
+    assert.equal(calls[0].options.runtimeConfigOverride.baseUrl, 'https://llm.example/v1');
+    assert.equal(calls[0].options.runtimeConfigOverride.apiKey, 'test-key');
+    assert.equal(calls[0].options.runtimeConfigOverride.model, 'small-model');
+    assert.equal(calls[0].options.runtimeConfigOverride.connectionMode, 'direct');
+    assert.equal(calls[0].options.runtimeConfigOverride.proxyAuthToken, '');
+    assert.equal(calls[0].options.temperature, 0);
+    assert.equal(calls[0].options.max_tokens, 65000);
+
+    const anonymousParams = structuredClone(params);
+    delete anonymousParams.config.custom_api.key;
+    assert.equal(await runtime.processRpc('generation.generateRaw', anonymousParams), 'fixed response');
+    assert.equal(calls[1].options.runtimeConfigOverride.apiKey, '');
+  } finally {
+    appSettings.update(originalSettings);
+  }
+  console.log('ok - generateRaw RPC uses explicit role prompts, a transient custom API, and network permission');
 }
 
 {

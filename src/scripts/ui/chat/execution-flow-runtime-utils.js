@@ -9,6 +9,9 @@ const STYLE_ID = 'execution-flow-runtime-style';
 const MAID_RUN_KIND = 'maid_assistant';
 const PANEL_WIDTH = 332;
 const CREATIVE_PANEL_WIDTH = 420;
+const VIEWPORT_GUTTER = 12;
+const BALL_PANEL_GAP = 10;
+const ANCHOR_EDGE_PADDING = 12;
 
 const trim = (value, fallback = '') => {
   const text = String(value ?? '').trim();
@@ -98,7 +101,7 @@ export const projectMaidRunToTraceView = (run = null) => {
   };
 };
 
-/* 面板贴球定位（纯函数）：放在空间更充裕的一侧；指令条同侧结果气泡占用时翻到对侧 */
+/* 面板贴球定位（纯函数）：优先正下/正上，越界只平移面板，锚点仍朝向球心。 */
 export const resolveExecFlowPlacement = ({
   ballRect = { left: 0, top: 0, width: 26, height: 26 },
   viewport = { w: 0, h: 0 },
@@ -107,19 +110,38 @@ export const resolveExecFlowPlacement = ({
 } = {}) => {
   const w = Number(viewport.w) || 0;
   const h = Number(viewport.h) || 0;
-  const cx = ballRect.left + ballRect.width / 2;
-  const cy = ballRect.top + ballRect.height / 2;
-  const gap = ballRect.height / 2 + 14;
-  const width = Math.min(panelSize.width, Math.max(220, (w || panelSize.width + 24) - 24));
-  const bottomSpace = h ? h - cy - gap - 12 : panelSize.height;
-  const topSpace = h ? cy - gap - 12 : panelSize.height;
-  let side = bottomSpace >= panelSize.height || bottomSpace >= topSpace ? 'bottom' : 'top';
+  const ballLeft = Number(ballRect.left) || 0;
+  const ballTop = Number(ballRect.top) || 0;
+  const ballWidth = Math.max(0, Number(ballRect.width) || 0);
+  const ballHeight = Math.max(0, Number(ballRect.height) || 0);
+  const panelWidth = Math.max(1, Number(panelSize.width) || PANEL_WIDTH);
+  const panelHeight = Math.max(1, Number(panelSize.height) || 1);
+  const cx = ballLeft + ballWidth / 2;
+  const ballBottom = ballTop + ballHeight;
+  const width = Math.min(panelWidth, w ? Math.max(1, w - VIEWPORT_GUTTER * 2) : panelWidth);
+  const bottomSpace = h ? h - ballBottom - BALL_PANEL_GAP - VIEWPORT_GUTTER : panelHeight;
+  const topSpace = h ? ballTop - BALL_PANEL_GAP - VIEWPORT_GUTTER : panelHeight;
+  let side = bottomSpace >= panelHeight || bottomSpace >= topSpace ? 'bottom' : 'top';
   if (occupiedSide === side) side = side === 'bottom' ? 'top' : 'bottom';
-  const left = w ? clamp(cx - width / 2, 12, Math.max(12, w - width - 12)) : cx - width / 2;
+  const left = w
+    ? clamp(cx - width / 2, VIEWPORT_GUTTER, Math.max(VIEWPORT_GUTTER, w - width - VIEWPORT_GUTTER))
+    : cx - width / 2;
   const top = side === 'bottom'
-    ? (h ? clamp(cy + gap, 12, Math.max(12, h - panelSize.height - 12)) : cy + gap)
-    : (h ? clamp(cy - gap - panelSize.height, 12, Math.max(12, h - panelSize.height - 12)) : cy - gap - panelSize.height);
-  return { left: Math.round(left), top: Math.round(top), width: Math.round(width), side };
+    ? (h
+      ? clamp(ballBottom + BALL_PANEL_GAP, VIEWPORT_GUTTER, Math.max(VIEWPORT_GUTTER, h - panelHeight - VIEWPORT_GUTTER))
+      : ballBottom + BALL_PANEL_GAP)
+    : (h
+      ? clamp(ballTop - BALL_PANEL_GAP - panelHeight, VIEWPORT_GUTTER, Math.max(VIEWPORT_GUTTER, h - panelHeight - VIEWPORT_GUTTER))
+      : ballTop - BALL_PANEL_GAP - panelHeight);
+  const anchorPadding = Math.min(ANCHOR_EDGE_PADDING, width / 2);
+  const anchorX = clamp(cx - left, anchorPadding, Math.max(anchorPadding, width - anchorPadding));
+  return {
+    left: Math.round(left),
+    top: Math.round(top),
+    width: Math.round(width),
+    anchorX: Math.round(anchorX),
+    side,
+  };
 };
 
 const injectStyle = (documentRef) => {
@@ -133,6 +155,7 @@ const injectStyle = (documentRef) => {
   z-index: 26080;
   display: none;
   font-family: inherit;
+  --ef-anchor-x: 50%;
   --ef-surface: var(--app-surface-card, #fff);
   --ef-subtle: var(--app-surface-subtle, #f8fafc);
   --ef-border: var(--app-border-default, rgba(148, 163, 184, 0.30));
@@ -143,6 +166,45 @@ const injectStyle = (documentRef) => {
   --ef-success-rgb: var(--app-success-rgb, 34, 197, 94);
   --ef-danger-rgb: var(--app-danger-rgb, 239, 68, 68);
   --ef-warning-rgb: var(--app-warning-rgb, 245, 158, 11);
+}
+.exec-flow-root::before,
+.exec-flow-root::after {
+  content: '';
+  position: absolute;
+  left: var(--ef-anchor-x);
+  z-index: -1;
+  pointer-events: none;
+}
+.exec-flow-root::before {
+  width: 2px;
+  height: ${BALL_PANEL_GAP}px;
+  margin-left: -1px;
+  border-radius: 999px;
+  opacity: 0.68;
+  box-shadow: 0 0 7px rgba(var(--ef-accent-rgb), 0.36);
+}
+.exec-flow-root::after {
+  width: 5px;
+  height: 5px;
+  margin-left: -2.5px;
+  border-radius: 50%;
+  background: rgb(var(--ef-accent-rgb));
+  box-shadow: 0 0 0 2px rgba(var(--ef-accent-rgb), 0.10), 0 0 8px rgba(var(--ef-accent-rgb), 0.62);
+  animation: efAnchorBreathe 1.8s ease-in-out infinite;
+}
+.exec-flow-root[data-side='bottom']::before {
+  top: -${BALL_PANEL_GAP}px;
+  background: linear-gradient(to bottom, rgba(var(--ef-accent-rgb), 0.18), rgba(var(--ef-accent-rgb), 0.82));
+}
+.exec-flow-root[data-side='bottom']::after { top: -12.5px; }
+.exec-flow-root[data-side='top']::before {
+  bottom: -${BALL_PANEL_GAP}px;
+  background: linear-gradient(to top, rgba(var(--ef-accent-rgb), 0.18), rgba(var(--ef-accent-rgb), 0.82));
+}
+.exec-flow-root[data-side='top']::after { bottom: -12.5px; }
+@keyframes efAnchorBreathe {
+  0%, 100% { opacity: 0.48; }
+  50% { opacity: 0.96; }
 }
 .exec-flow-root.is-visible {
   display: flex;
@@ -408,6 +470,13 @@ const injectStyle = (documentRef) => {
 body[data-reduced-motion='on'] .exec-flow-dot,
 body[data-reduced-motion='on'] .exec-step::before { animation: none !important; }
 body[data-reduced-motion='on'] .exec-step { animation: none !important; }
+body[data-reduced-motion='on'] .exec-flow-root::after { animation: none !important; opacity: 0.72; }
+@media (prefers-reduced-motion: reduce) {
+  .exec-flow-root::after,
+  .exec-flow-dot,
+  .exec-step,
+  .exec-step::before { animation: none !important; }
+}
 `;
   documentRef.head.appendChild(style);
 };
@@ -587,9 +656,18 @@ export const createExecutionFlowRuntime = ({
     const w = Number(viewport.w || globalThis?.innerWidth || 0) || 0;
     const h = Number(viewport.h || globalThis?.innerHeight || 0) || 0;
     const ballRect = modeSwitchEl?.getBoundingClientRect?.() || { left: 24, top: 24, width: 26, height: 26 };
-    const rect = rootEl.getBoundingClientRect?.() || {};
     const isExpanded = activeExpanded();
     const desiredWidth = state.activeKind === 'creative' ? CREATIVE_PANEL_WIDTH : PANEL_WIDTH;
+    if (isExpanded) {
+      const availableWidth = w ? Math.max(1, w - VIEWPORT_GUTTER * 2) : desiredWidth;
+      rootEl.style.width = `${Math.round(Math.min(desiredWidth, availableWidth))}px`;
+    } else {
+      // 展开态留下的 inline width 会污染缩略态量测；先还原自适应宽度再读取实际胶囊尺寸。
+      rootEl.style.width = 'auto';
+    }
+    const rect = rootEl.getBoundingClientRect?.() || {};
+    const measuredWidth = Math.max(40, Number(rect.width || 0)
+      || (isExpanded ? desiredWidth : Math.min(desiredWidth, 320)));
     const panelHeight = Math.max(40, Number(rect.height || 0) || (isExpanded ? 260 : 36));
     // 指令条打开时其结果气泡占用一侧，翻到对侧避让
     const pill = documentRef?.querySelector?.('.maid-command-input.is-open');
@@ -597,11 +675,13 @@ export const createExecutionFlowRuntime = ({
     const placed = resolveExecFlowPlacement({
       ballRect,
       viewport: { w, h },
-      panelSize: { width: isExpanded ? desiredWidth : Math.min(desiredWidth, 320), height: panelHeight },
+      panelSize: { width: measuredWidth, height: panelHeight },
       occupiedSide,
     });
     rootEl.style.left = `${placed.left}px`;
     rootEl.style.top = `${placed.top}px`;
+    rootEl.dataset.side = placed.side;
+    rootEl.style.setProperty('--ef-anchor-x', `${placed.anchorX}px`);
     if (isExpanded) rootEl.style.width = `${placed.width}px`;
     else rootEl.style.width = 'auto';
     if (panelEl) panelEl.style.width = state.activeKind === 'maid' && isExpanded ? '100%' : 'auto';

@@ -107,6 +107,11 @@ test('generation applies connection parameter filter to final request options', 
   assert.match(generateBody, /requestOptions: \{\s*...applyRuntimeParamFilter\(\{\s*...\(genOptions \|\| \{\}\),/);
 
   const backgroundBody = source.slice(backgroundStart, streamStart);
+  assert.match(backgroundBody, /const \{ presetContext = null, runtimeConfigOverride = null, \.\.\.requestOverrides \} = options \|\| \{\};/);
+  assert.match(backgroundBody, /const hasRuntimeConfigOverride = runtimeConfigOverride && typeof runtimeConfigOverride === 'object';/);
+  assert.match(backgroundBody, /const config = hasRuntimeConfigOverride\s*\? \{ \.\.\.baseConfig, \.\.\.runtimeConfigOverride \}\s*: baseConfig;/);
+  assert.match(backgroundBody, /canUseAnonymousCustomApi/);
+  assert.doesNotMatch(backgroundBody, /if \(!this\.isConfigured\(\)\)/);
   assert.match(backgroundBody, /const genOptions = applyGenerationParamFilter\(\{\s*...this\.getGenerationOptions\(resolvedPresetContext, config\),\s*...requestOverrides,\s*\}, config\?\.excludedGenerationParams,\s*\{\s*protectedParams: \['signal', 'nativeRequestId'\],\s*\}\);/);
 });
 

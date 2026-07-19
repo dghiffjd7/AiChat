@@ -3618,9 +3618,6 @@ class AppBridge {
     if (!this.initialized) {
       await this.init();
     }
-    if (!this.isConfigured()) {
-      throw new Error('请先配置 API 信息');
-    }
     if (typeof navigator !== 'undefined' && !navigator.onLine) {
       throw new Error('当前离线，请连接网络后再试');
     }
@@ -3628,14 +3625,23 @@ class AppBridge {
     if (!msgs.length) throw new Error('messages 不能为空');
 
     // Use the same generation options mapping as normal chat, but allow caller overrides.
-    const { presetContext = null, ...requestOverrides } = options || {};
+    const { presetContext = null, runtimeConfigOverride = null, ...requestOverrides } = options || {};
     const resolvedPresetContext = presetContext || {
       sessionId: String(this.activeSessionId || '').trim(),
       uiMode: String(this.activeSessionId || '').trim().startsWith('rp:') ? 'rp' : 'chat',
     };
-    const requestRuntime = await this.resolveRequestRuntimeConfig(resolvedPresetContext);
-    const config = requestRuntime?.config || this.config.get?.() || {};
-    const requestClient = requestRuntime?.client || (canInitClient(config) ? new LLMClient(config) : null);
+    const hasRuntimeConfigOverride = runtimeConfigOverride && typeof runtimeConfigOverride === 'object';
+    const requestRuntime = hasRuntimeConfigOverride
+      ? null
+      : await this.resolveRequestRuntimeConfig(resolvedPresetContext);
+    const baseConfig = requestRuntime?.config || this.config.get?.() || {};
+    const config = hasRuntimeConfigOverride
+      ? { ...baseConfig, ...runtimeConfigOverride }
+      : baseConfig;
+    const canUseAnonymousCustomApi = config.provider === 'custom' && Boolean(String(config.baseUrl || '').trim());
+    const requestClient = hasRuntimeConfigOverride
+      ? ((canInitClient(config) || canUseAnonymousCustomApi) ? new LLMClient(config) : null)
+      : (requestRuntime?.client || (canInitClient(config) ? new LLMClient(config) : null));
     if (!requestClient) {
       throw new Error('请先配置 API 信息');
     }

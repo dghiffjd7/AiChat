@@ -2826,6 +2826,36 @@ const buildCompatChatCompletionSettings = () => ({
   prompts: getPreset().prompts,
 });
 
+const saveCompatChatCompletionSettings = (settings) => {
+  if (currentSettings.allowModifyVariables !== true) {
+    warnCompatPermissionDenied('修改变量');
+    return Promise.resolve(false);
+  }
+  const source = settings && typeof settings === 'object'
+    ? settings
+    : buildCompatChatCompletionSettings();
+  const snapshot = clone(source);
+  const preset = getPreset();
+  currentContext.chatCompletionSettings = snapshot;
+  currentContext.activePreset = {
+    ...preset,
+    ...snapshot,
+    id: preset.id || currentContext.openaiPresetId || '',
+    name: preset.name || currentContext.presetName || '',
+  };
+  currentContext.presetPrompts = Array.isArray(snapshot.prompts)
+    ? snapshot.prompts
+    : preset.prompts;
+  return callRpc('preset.saveChatCompletionSettings', {
+    presetId: currentContext.openaiPresetId || preset.id || '',
+    settings: snapshot,
+    sessionId: currentContext.sessionId,
+  }).catch((error) => {
+    console.warn('[preset] saveSettingsDebounced failed', String(error?.message || error));
+    return false;
+  });
+};
+
 const buildCompatStContext = () => ({
   characterId: 0,
   characters: buildCompatCharacters(),
@@ -2845,16 +2875,22 @@ const buildCompatStContext = () => ({
   },
 });
 
-const getContext = () => ({
-  ...currentContext,
-  ...buildCompatStContext(),
-  chat: ensureSillyTavern().chat || [],
-  messages: ensureSillyTavern().chat || [],
-  currentMessageId: currentContext.currentMessageId || '',
-  ...buildCompatVariablesSnapshot(),
-  powerUserSettings: self.powerUserSettings || {},
-  setExtensionPrompt,
-});
+const getContext = () => {
+  const compatContext = buildCompatStContext();
+  const chatCompletionSettings = compatContext.chatCompletionSettings;
+  const chat = ensureSillyTavern().chat || [];
+  return {
+    ...currentContext,
+    ...compatContext,
+    chat,
+    messages: chat,
+    currentMessageId: currentContext.currentMessageId || '',
+    ...buildCompatVariablesSnapshot(),
+    powerUserSettings: self.powerUserSettings || {},
+    setExtensionPrompt,
+    saveSettingsDebounced: () => saveCompatChatCompletionSettings(chatCompletionSettings),
+  };
+};
 
 const legacyMacros = new Map();
 
@@ -2902,6 +2938,11 @@ const uninjectPrompts = (ids = []) => {
   return callRpc('prompt.uninjectPrompts', { ids: list }).catch(() => false);
 };
 
+const generateRaw = (config = {}) => callRpc('generation.generateRaw', {
+  config: config && typeof config === 'object' ? clone(config) : {},
+  sessionId: currentContext.sessionId,
+});
+
 const buildSillyTavern = () => {
   const st = {};
   st.chat = [];
@@ -2919,10 +2960,11 @@ const buildSillyTavern = () => {
   };
   st.getRequestHeaders = () => ({});
   st.setExtensionPrompt = setExtensionPrompt;
+  st.generateRaw = generateRaw;
   st.getChatCompletionModel = () => '';
   st.getCurrentChatId = () => String(currentContext.sessionId || '');
   st.saveChat = () => Promise.resolve(true);
-  st.saveSettingsDebounced = () => {};
+  st.saveSettingsDebounced = () => saveCompatChatCompletionSettings(st.chatCompletionSettings);
   st.registerMacro = (name, fn) => {
     const key = String(name || '').trim();
     if (!key || typeof fn !== 'function') return;
@@ -2960,6 +3002,8 @@ const ensureSillyTavern = () => {
   self.SillyTavern.eventTypes = EVENT_TYPES;
   self.SillyTavern.event_types = EVENT_TYPES;
   self.SillyTavern.getContext = getContext;
+  self.SillyTavern.generateRaw = generateRaw;
+  self.SillyTavern.saveSettingsDebounced = () => saveCompatChatCompletionSettings(self.SillyTavern.chatCompletionSettings);
   self.SillyTavern.reloadCurrentChat = self.SillyTavern.reloadCurrentChat || (() => callRpc('chat.reloadCurrent', { sessionId: currentContext.sessionId }));
   return self.SillyTavern;
 };
@@ -3089,6 +3133,7 @@ const ensureCompatGlobals = () => {
   if (typeof self.getChatWorldbookName !== 'function') self.getChatWorldbookName = getChatWorldbookName;
   if (typeof self.getWorldbook !== 'function') self.getWorldbook = getWorldbook;
   if (typeof self.getPreset !== 'function') self.getPreset = getPreset;
+  if (typeof self.generateRaw !== 'function') self.generateRaw = generateRaw;
   if (typeof self.isPresetPlaceholderPrompt !== 'function') self.isPresetPlaceholderPrompt = isPresetPlaceholderPrompt;
   if (typeof self.isPresetSystemPrompt !== 'function') self.isPresetSystemPrompt = isPresetSystemPrompt;
   self.eventSource = self.eventSource || eventSource;
@@ -3117,6 +3162,7 @@ const ensureCompatGlobals = () => {
   helper.getCharWorldbookNames = helper.getCharWorldbookNames || getCharWorldbookNames;
   helper.getChatWorldbookName = helper.getChatWorldbookName || getChatWorldbookName;
   helper.getPreset = helper.getPreset || getPreset;
+  helper.generateRaw = helper.generateRaw || generateRaw;
   helper.injectPrompts = helper.injectPrompts || injectPrompts;
   helper.uninjectPrompts = helper.uninjectPrompts || uninjectPrompts;
   helper.setExtensionPrompt = helper.setExtensionPrompt || setExtensionPrompt;
@@ -4191,6 +4237,46 @@ const estimatePayloadSize = (value) => {
   }
 };
 
+const normalizeScriptCustomApiBaseUrl = (value) => {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  let url;
+  try {
+    url = new URL(raw);
+  } catch {
+    return '';
+  }
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') return '';
+  if (url.username || url.password) return '';
+  url.search = '';
+  url.hash = '';
+  let path = url.pathname.replace(/\/+$/, '');
+  path = path.replace(/\/(?:chat\/completions|models)$/i, '').replace(/\/+$/, '');
+  if (!/\/v1$/i.test(path)) path = `${path}/v1`;
+  url.pathname = path.replace(/^\/?/, '/');
+  return `${url.origin}${url.pathname}`.replace(/\/+$/, '');
+};
+
+const normalizeScriptGenerationRole = (value) => {
+  const role = String(value || '').trim().toLowerCase();
+  if (role === 'human') return 'user';
+  if (role === 'bot' || role === 'char' || role === 'character') return 'assistant';
+  if (role === 'system' || role === 'user' || role === 'assistant' || role === 'developer' || role === 'tool') {
+    return role;
+  }
+  return 'user';
+};
+
+const toScriptGenerationMessage = (entry) => {
+  if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return null;
+  const content = entry.content ?? entry.message ?? entry.mes;
+  if (content === undefined || content === null) return null;
+  return {
+    role: normalizeScriptGenerationRole(entry.role),
+    content: String(content),
+  };
+};
+
 const isEsmLikeScript = (content) => {
   const text = String(content || '');
   if (!text) return false;
@@ -4918,6 +5004,7 @@ export class ScriptRuntime {
     this.iframeRuntime = new ScriptIframeRuntime(this);
     this.pending = new Map();
     this.variableScopeWriteQueues = new Map();
+    this.presetSettingsWriteQueues = new Map();
     this.seq = 0;
     this.oneTimeScripts = new Map();
     this.listenerEvents = new Set();
@@ -5821,6 +5908,7 @@ export class ScriptRuntime {
     ].map(item => String(item || '').trim()).filter(Boolean)));
     const activeOpenAiPreset = resolvedOpenAiState?.preset || this.presets?.getActive?.('openai') || {};
     const activeOpenAiPresetId = String(resolvedOpenAiState?.presetId || resolvedOpenAI?.presetId || this.presets?.getActiveId?.('openai') || '').trim();
+    const chatCompletionSettings = clonePlain(activeOpenAiPreset) || {};
     const activePresetPrompts = Array.isArray(activeOpenAiPreset?.prompts)
       ? clonePlain(activeOpenAiPreset.prompts)
       : [];
@@ -5858,6 +5946,7 @@ export class ScriptRuntime {
       worldIds,
       worldbookNames,
       activePreset,
+      chatCompletionSettings,
       presetPrompts: activePreset.prompts,
       presetRegexes: this.getPresetTavernRegexes(activeOpenAiPresetId),
       presetName: activePreset.name,
@@ -6232,6 +6321,7 @@ export class ScriptRuntime {
     const settings = appSettings.get();
     const allowReadMessages = settings.scriptAllowReadMessages !== false;
     const allowModifyVariables = settings.scriptAllowModifyVariables !== false;
+    const allowNetwork = settings.scriptAllowNetwork === true;
     const sessionId = String(params.sessionId || this.context.sessionId || this.chatStore?.getCurrent?.() || '').trim();
     const denyScriptPermission = (name) => {
       const error = new Error(`脚本权限已禁用：${name}`);
@@ -6559,6 +6649,109 @@ export class ScriptRuntime {
       }
       return true;
     }
+    if (method === 'generation.generateRaw') {
+      if (!allowNetwork) denyScriptPermission('访问网络');
+      const config = params.config && typeof params.config === 'object' && !Array.isArray(params.config)
+        ? params.config
+        : {};
+      if (estimatePayloadSize(config) > SCRIPT_PAYLOAD_LIMIT) {
+        throw new Error('生成请求过大，拒绝发送');
+      }
+      if (config.image || (Array.isArray(config.images) && config.images.length)) {
+        throw new Error('当前 generateRaw 兼容暂不支持图片输入');
+      }
+      const orderedPrompts = Array.isArray(config.ordered_prompts) ? config.ordered_prompts : [];
+      const messages = [];
+      orderedPrompts.forEach((entry) => {
+        const direct = toScriptGenerationMessage(entry);
+        if (direct) {
+          messages.push(direct);
+          return;
+        }
+        const builtin = String(entry || '').trim().toLowerCase();
+        if (builtin === 'user_input') {
+          const content = String(config.user_input || '').trim();
+          if (content) messages.push({ role: 'user', content });
+          return;
+        }
+        if (builtin !== 'chat_history') return;
+        if (!allowReadMessages) denyScriptPermission('读取消息');
+        const history = Array.isArray(this.chatStore?.getMessages?.(sessionId))
+          ? this.chatStore.getMessages(sessionId)
+          : [];
+        const limit = Number.isFinite(Number(config.max_chat_history))
+          ? Math.max(0, Math.trunc(Number(config.max_chat_history)))
+          : history.length;
+        const selectedHistory = limit > 0 ? history.slice(-limit) : [];
+        selectedHistory.forEach((message) => {
+          const normalized = toScriptGenerationMessage({
+            role: message?.role,
+            content: message?.rawSource ?? message?.raw ?? message?.message ?? message?.mes ?? message?.content,
+          });
+          if (normalized) messages.push(normalized);
+        });
+      });
+      if (!messages.length) {
+        const userInput = String(config.user_input || '').trim();
+        if (userInput) messages.push({ role: 'user', content: userInput });
+      }
+      if (!messages.length) throw new Error('generateRaw 的 ordered_prompts 不能为空');
+      if (estimatePayloadSize(messages) > SCRIPT_PAYLOAD_LIMIT) {
+        throw new Error('生成消息过大，拒绝发送');
+      }
+
+      const customApi = config.custom_api && typeof config.custom_api === 'object' && !Array.isArray(config.custom_api)
+        ? config.custom_api
+        : null;
+      let runtimeConfigOverride = null;
+      const generationOptions = {};
+      if (customApi) {
+        const source = String(customApi.source || 'openai').trim().toLowerCase();
+        if (source !== 'openai' && source !== 'custom') {
+          throw new Error(`当前 generateRaw 不支持 custom_api.source=${source || 'unknown'}`);
+        }
+        const baseUrl = normalizeScriptCustomApiBaseUrl(customApi.apiurl || customApi.baseUrl || customApi.base_url);
+        if (!baseUrl) throw new Error('generateRaw 的自定义 API 地址无效');
+        const model = String(customApi.model || '').trim();
+        runtimeConfigOverride = {
+          provider: 'custom',
+          baseUrl,
+          apiKey: String(customApi.key || customApi.apiKey || ''),
+          excludedGenerationParams: [],
+          connectionMode: 'direct',
+          proxyBaseUrl: '',
+          proxyAuthHeaderName: '',
+          proxyAuthToken: '',
+          ...(model ? { model } : {}),
+        };
+        [
+          'temperature',
+          'frequency_penalty',
+          'presence_penalty',
+          'top_p',
+          'top_k',
+          'max_tokens',
+          'seed',
+          'n',
+        ].forEach((key) => {
+          const value = customApi[key];
+          if (value === 'unset') {
+            generationOptions[key] = undefined;
+          } else if (typeof value === 'number' && Number.isFinite(value)) {
+            generationOptions[key] = value;
+          }
+        });
+      }
+      if (!this.bridge?.backgroundChat) throw new Error('后台生成服务尚未就绪');
+      return this.bridge.backgroundChat(messages, {
+        presetContext: {
+          sessionId,
+          uiMode: sessionId.startsWith('rp:') ? 'rp' : 'chat',
+        },
+        ...(runtimeConfigOverride ? { runtimeConfigOverride } : {}),
+        ...generationOptions,
+      });
+    }
     if (method === 'regex.getCharacter') {
       return this.getCharacterTavernRegexes(sessionId);
     }
@@ -6697,6 +6890,69 @@ export class ScriptRuntime {
         return { name: String(active?.name || '') };
       }
       return { name };
+    }
+    if (method === 'preset.saveChatCompletionSettings') {
+      if (!allowModifyVariables) denyScriptPermission('修改变量');
+      const incoming = params.settings;
+      if (!incoming || typeof incoming !== 'object' || Array.isArray(incoming)) return false;
+      if (estimatePayloadSize(incoming) > SCRIPT_PAYLOAD_LIMIT) {
+        throw new Error('预设设置过大，拒绝保存');
+      }
+      const uiMode = sessionId.startsWith('rp:') ? 'rp' : 'chat';
+      const resolved = this.presets?.getResolvedActive?.('openai', { sessionId, uiMode }) || null;
+      const activePresetId = String(
+        resolved?.presetId ||
+        this.context.openaiPresetId ||
+        this.presets?.getActiveId?.('openai') ||
+        ''
+      ).trim();
+      const requestedPresetId = String(params.presetId || '').trim();
+      if (!activePresetId || (requestedPresetId && requestedPresetId !== activePresetId) || !this.presets?.upsert) {
+        return false;
+      }
+      const snapshot = clonePlain(incoming);
+      const blockedKeys = new Set([
+        '__proto__', 'prototype', 'constructor', 'id', 'name',
+        'key', 'apikey', 'authorization', 'accesstoken', 'secrettoken',
+      ]);
+      if (!this.presetSettingsWriteQueues) this.presetSettingsWriteQueues = new Map();
+      const previous = this.presetSettingsWriteQueues.get(activePresetId) || Promise.resolve();
+      const task = previous.catch(() => {}).then(async () => {
+        const latestResolved = this.presets?.getResolvedActive?.('openai', { sessionId, uiMode }) || null;
+        const latestPresetId = String(
+          latestResolved?.presetId ||
+          this.presets?.getActiveId?.('openai') ||
+          ''
+        ).trim();
+        if (latestPresetId !== activePresetId) return false;
+        const currentPreset = clonePlain(latestResolved?.preset || this.presets?.getActive?.('openai') || null);
+        if (!currentPreset || typeof currentPreset !== 'object' || Array.isArray(currentPreset)) return false;
+        const nextPreset = clonePlain(currentPreset) || {};
+        Object.entries(snapshot).forEach(([key, value]) => {
+          const normalizedKey = String(key || '').replace(/[_\-\s]/g, '').toLowerCase();
+          if (blockedKeys.has(key) || blockedKeys.has(normalizedKey)) return;
+          if (key === 'function_calling' && !Object.hasOwn(currentPreset, key)) return;
+          if ((key === 'prompts' || key === 'prompt_order' || key === 'prompts_unused') && !Array.isArray(value)) return;
+          nextPreset[key] = clonePlain(value);
+        });
+        nextPreset.name = String(currentPreset.name || activePresetId);
+        await this.presets.upsert('openai', {
+          id: activePresetId,
+          name: nextPreset.name,
+          data: nextPreset,
+          makeActive: false,
+        });
+        this.context = { ...this.context, ...this.buildContext(sessionId) };
+        return true;
+      });
+      this.presetSettingsWriteQueues.set(activePresetId, task);
+      try {
+        return await task;
+      } finally {
+        if (this.presetSettingsWriteQueues.get(activePresetId) === task) {
+          this.presetSettingsWriteQueues.delete(activePresetId);
+        }
+      }
     }
     if (method === 'preset.setPromptEnabled') {
       if (!allowModifyVariables) denyScriptPermission('修改变量');

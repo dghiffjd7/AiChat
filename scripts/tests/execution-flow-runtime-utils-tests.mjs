@@ -62,7 +62,7 @@ const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '
 }
 
 {
-  // 球在上半屏 → 面板放下方；下方被指令条气泡占用 → 翻到上方；越界被 clamp
+  // 球在上半屏 → 面板放正下方；下方被指令条气泡占用 → 翻到正上方；越界被 clamp
   const base = {
     ballRect: { left: 200, top: 100, width: 26, height: 26 },
     viewport: { w: 400, h: 800 },
@@ -82,6 +82,39 @@ const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '
   });
   assert.ok(placed.top + base.panelSize.height <= 800 - 12 + 1, '底部越界被 clamp');
   console.log('ok - 面板贴球定位与避让');
+}
+
+{
+  const centered = resolveExecFlowPlacement({
+    ballRect: { left: 587, top: 167, width: 26, height: 26 },
+    viewport: { w: 1200, h: 800 },
+    panelSize: { width: 162, height: 34 },
+  });
+  assert.equal(centered.side, 'bottom');
+  assert.equal(centered.left + centered.width / 2, 600,
+    '空间足够时应使用缩略图真实宽度与球心正对，不得按展开态宽度向左偏');
+  assert.equal(centered.anchorX, centered.width / 2,
+    '未触边时锚点应位于缩略图正中央');
+  assert.equal(centered.top, 203, '缩略图应贴在球的正下方并保留 10px 呼吸间距');
+
+  const leftEdge = resolveExecFlowPlacement({
+    ballRect: { left: 8, top: 387, width: 26, height: 26 },
+    viewport: { w: 1200, h: 800 },
+    panelSize: { width: 162, height: 34 },
+  });
+  assert.equal(leftEdge.left, 12, '靠左时浮层本体保持安全边距');
+  assert.ok(Math.abs((leftEdge.left + leftEdge.anchorX) - 21) <= 3,
+    '浮层被约束时锚点仍应贴近球心，避免视觉断联');
+
+  const rightEdge = resolveExecFlowPlacement({
+    ballRect: { left: 1166, top: 387, width: 26, height: 26 },
+    viewport: { w: 1200, h: 800 },
+    panelSize: { width: 162, height: 34 },
+  });
+  assert.equal(rightEdge.left + rightEdge.width, 1188, '靠右时浮层本体保持安全边距');
+  assert.ok(Math.abs((rightEdge.left + rightEdge.anchorX) - 1179) <= 3,
+    '靠右约束时锚点仍应贴近球心');
+  console.log('ok - 缩略态真实宽度居中与贴边锚点跟随');
 }
 
 {
@@ -131,6 +164,12 @@ const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '
     '双投影同时可见时应提供 chip 切换入口');
   assert.match(flowSource, /startDrag\(event,\s*\{\s*suppressLongPress:\s*true,\s*suppressClick:\s*true\s*\}\)/,
     '执行流标题转发拖拽时应消费静止单击，避免误触模式切换');
+  assert.match(flowSource, /rootEl\.style\.width = 'auto';[\s\S]*?const rect = rootEl\.getBoundingClientRect/,
+    '缩略态定位前应先清除展开态固定宽度，再量测真实宽度');
+  assert.match(flowSource, /--ef-anchor-x/,
+    '共享容器应把动态锚点坐标传给视觉层');
+  assert.match(flowSource, /\.exec-flow-root\[data-side='bottom'\]::before[\s\S]*\.exec-flow-root\[data-side='top'\]::before/,
+    '共享容器应按上/下方向绘制贴球连接锚点');
   assert.doesNotMatch(cssSource, /\.creative-execution-root\s*\{[\s\S]*?bottom:\s*calc\(100% \+ 6px\)/,
     '创意泳道不得继续定位在输入框上方');
   assert.match(cssSource, /\.creative-execution-chip\s*\{[\s\S]*?border-radius:\s*999px;/,
