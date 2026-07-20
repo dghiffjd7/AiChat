@@ -43,7 +43,7 @@ const projectionStartedAt = projection => (
   Number(projection?.startedAt) || Number(projection?.updatedAt) || 0
 );
 
-/* 双投影仲裁（纯函数）：活跃优先；新 run 到达时按启动时间；其余时间保持用户选择。 */
+/* 双投影仲裁（纯函数）：新 run 到达时按活跃启动时间；其余时间保持用户选择。 */
 export const resolveExecutionFlowActiveKind = ({
   maid = null,
   creative = null,
@@ -55,9 +55,9 @@ export const resolveExecutionFlowActiveKind = ({
     ['creative', creative],
   ].filter(([, projection]) => projection?.visible === true);
   if (!visible.length) return '';
+  if (!preferLatestActive && visible.some(([kind]) => kind === preferredKind)) return preferredKind;
   const active = visible.filter(([, projection]) => projection?.terminal !== true);
   const candidates = active.length ? active : visible;
-  if (!preferLatestActive && candidates.some(([kind]) => kind === preferredKind)) return preferredKind;
   return candidates
     .slice()
     .sort((a, b) => projectionStartedAt(b[1]) - projectionStartedAt(a[1]))[0]?.[0] || '';
@@ -502,6 +502,8 @@ export const createExecutionFlowRuntime = ({
   let switcherEl = null;
   let creativeRuntime = null;
   let unsubscribe = null;
+  let keydownHandler = null;
+  let maidTraceConsumerRunId = '';
   const state = {
     visible: false,
     expanded: false,
@@ -628,7 +630,7 @@ export const createExecutionFlowRuntime = ({
       if (!ballDrag?.startDrag) return;
       ballDrag.startDrag(event, { suppressLongPress: true, suppressClick: true });
     });
-    documentRef.addEventListener?.('keydown', (event) => {
+    keydownHandler = (event) => {
       if (event?.key !== 'Escape' || !state.activeKind) return;
       if (state.activeKind === 'creative') {
         creativeRuntime?.collapseOneLevel?.();
@@ -638,7 +640,8 @@ export const createExecutionFlowRuntime = ({
         state.expanded = false;
         render();
       }
-    });
+    };
+    documentRef.addEventListener?.('keydown', keydownHandler);
     documentRef.body.appendChild(rootEl);
     return rootEl;
   };
@@ -816,6 +819,7 @@ export const createExecutionFlowRuntime = ({
         consumed = onMaidTrace(view) === true;
       } catch {}
       if (consumed) {
+        maidTraceConsumerRunId = runId;
         state.runId = runId;
         state.view = view;
         state.visible = false; // 指令条已承载女仆流，本面板保持隐藏
@@ -825,10 +829,12 @@ export const createExecutionFlowRuntime = ({
         return;
       }
     }
+    const wasConsumedByMaidTrace = maidTraceConsumerRunId === runId;
+    if (wasConsumedByMaidTrace) maidTraceConsumerRunId = '';
     const isNewRun = runId !== state.runId;
     state.runId = runId;
     state.view = view;
-    if (isNewRun) {
+    if (isNewRun || wasConsumedByMaidTrace) {
       state.signature = '';
       state.visible = true;
       state.expanded = true; // 女仆投影实时显示：运行即展开
@@ -845,6 +851,9 @@ export const createExecutionFlowRuntime = ({
   const destroy = () => {
     unsubscribe?.();
     unsubscribe = null;
+    if (keydownHandler) documentRef?.removeEventListener?.('keydown', keydownHandler);
+    keydownHandler = null;
+    maidTraceConsumerRunId = '';
     rootEl?.remove?.();
     rootEl = null;
   };

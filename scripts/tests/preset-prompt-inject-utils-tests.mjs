@@ -11,13 +11,26 @@ import {
   describeMemoryPlacement,
   isInjectFeatureEnabled,
   isMemoryChatInjectActive,
+  PROMPT_POSITION_OPTIONS,
   PRESET_INJECT_ITEMS,
   readInjectItemConfig,
   resolveInjectCardAnchor,
+  resolveSelectValueWithFallback,
+  withCurrentSelectOption,
 } from '../../src/scripts/ui/preset-prompt-inject-utils.js';
 
 const CHAT_SETTINGS = { memoryEnabled: true, memoryStorageMode: 'table', memoryTableEnabledChat: true, autoImagePromptEnabled: true };
 const FULL_SYSP = { dialogue_enabled: true, group_enabled: true, moment_create_enabled: true, auto_image_prompt_enabled: true };
+
+{
+  assert.ok(PROMPT_POSITION_OPTIONS.some(option => option.value === 3),
+    'legacy position=3 必须能在编辑器下拉中原样选中');
+  assert.equal(resolveSelectValueWithFallback('', 3), '3', '未枚举值导致空选项时回退原值');
+  assert.equal(resolveSelectValueWithFallback('', 'history_before+system_end'), 'history_before+system_end',
+    '记忆位置的非标准组合不得在保存时被清空');
+  assert.equal(resolveSelectValueWithFallback('0', 3), '0', '用户明确选择的非空值优先');
+  console.log('ok - 注入位置下拉保留 legacy 与非标准原值');
+}
 
 {
   const ids = PRESET_INJECT_ITEMS.map(i => i.id);
@@ -207,6 +220,17 @@ const FULL_SYSP = { dialogue_enabled: true, group_enabled: true, moment_create_e
   assert.equal(readInjectItemConfig({}, 'image').position, 4, '生图默认位置取映射 defaults');
   assert.equal(readInjectItemConfig({}, 'memory'), null, '非 sysprompt 项返回 null');
   console.log('ok - 注入项配置读取');
+}
+
+{
+  const options = [{ value: '', label: '跟随通用设置' }, { value: 'system_end', label: '系统末尾' }];
+  assert.equal(withCurrentSelectOption(options, 'system_end'), options, '现值已枚举 → 原样返回');
+  assert.equal(withCurrentSelectOption(options, ''), options, '空现值 → 不注入');
+  const injected = withCurrentSelectOption(options, 'history_before+system_end');
+  assert.equal(injected.length, options.length + 1, 'legacy 现值 → 追加保值选项');
+  assert.deepEqual(injected[injected.length - 1],
+    { value: 'history_before+system_end', label: '保持当前（history_before+system_end）' });
+  console.log('ok - select 保值选项注入');
 }
 
 console.log('preset-prompt-inject-utils tests passed');

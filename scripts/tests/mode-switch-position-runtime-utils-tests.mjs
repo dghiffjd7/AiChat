@@ -130,6 +130,7 @@ const createStorage = () => {
 {
   const modeSwitchEl = createModeSwitchEl();
   let scheduled = 0;
+  const positionSnapshots = [];
   const runtime = createModeSwitchPositionRuntime({
     modeSwitchEl,
     getSafeInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
@@ -146,11 +147,19 @@ const createStorage = () => {
       scheduled += 1;
       fn();
     },
+    onPositionChange: () => {
+      positionSnapshots.push({
+        left: modeSwitchEl.style.left,
+        top: modeSwitchEl.style.top,
+      });
+    },
   });
   runtime.scheduleSync();
   assert.equal(scheduled, 1);
   assert.equal(modeSwitchEl.style.left, '140px');
   assert.equal(modeSwitchEl.style.top, '479px');
+  assert.deepEqual(positionSnapshots, [{ left: '140px', top: '479px' }],
+    '位置同步回调应在悬浮球坐标写入后触发，供贴靠浮层跟随');
   console.log('ok - createModeSwitchPositionRuntime schedules sync through animation frame and uses input anchor in rp/chat-room contexts');
 }
 

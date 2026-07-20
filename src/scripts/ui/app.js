@@ -4119,7 +4119,22 @@ const initApp = async () => {
       }
       momentsPanel?.render?.({ preserveScroll: true });
       if (generateComments) {
-        void momentCommentRuntime(momentId, '', { mode: 'moment_publish', publishedMoment: true }).catch((err) => {
+        void momentCommentRuntime(momentId, '', {
+          mode: 'moment_publish',
+          publishedMoment: true,
+          suppressMissingConfigUi: true,
+        }).then((result) => {
+          if (result?.ok) {
+            logger.info('maid moment publish comment generation finished', JSON.stringify({
+              momentId,
+              status: result.status || 'success',
+              sawMomentReply: Boolean(result.sawMomentReply),
+            }));
+            return;
+          }
+          const reason = String(result?.reason || result?.status || 'unknown').trim() || 'unknown';
+          logger.warn('maid moment publish comment generation skipped', JSON.stringify({ momentId, reason }));
+        }).catch((err) => {
           logger.warn('maid moment publish comment generation failed', err);
         });
       }
@@ -4236,10 +4251,10 @@ const initApp = async () => {
     const guards = [];
     const masked = raw.replace(CREATIVE_FENCE_RE, (block) => {
       guards.push(block);
-      return ` CFENCE${guards.length - 1} `;
+      return `\u0000CFENCE${guards.length - 1}\u0000`;
     });
     const normalized = normalizeCreativeLineBreaksBase(masked);
-    return normalized.replace(/ CFENCE(\d+) /g, (_m, i) => guards[Number(i)] ?? '');
+    return normalized.replace(/\u0000CFENCE(\d+)\u0000/g, (_m, i) => guards[Number(i)] ?? '');
   };
   const normalizeCreativeLineBreaksForDisplay = text =>
     stripAutoImagePromptTags(normalizeCreativeLineBreaks(text));
@@ -8619,6 +8634,7 @@ Phase G（Frame 36）：循环衔接
   let modeSwitchDimTimer = null;
   let creativeExecutionLaneRuntime = null;
   let executionFlowRuntime = null;
+  let maidCommandInputRuntime = null;
   const MODE_SWITCH_DIM_DELAY = 30_000;
   const loadModeSwitchPos = () => readModeSwitchPosition();
   const saveModeSwitchPos = () => writeModeSwitchPosition(modeSwitchPos);
@@ -14022,6 +14038,10 @@ Phase G（Frame 36）：循环衔接
     getViewportSize,
     requestAnimationFrameFn: typeof requestAnimationFrame === 'function' ? requestAnimationFrame : null,
     setTimeoutFn: typeof setTimeout === 'function' ? setTimeout : null,
+    onPositionChange: () => {
+      if (maidCommandInputRuntime?.isOpen?.()) maidCommandInputRuntime.position?.();
+      executionFlowRuntime?.position?.();
+    },
   });
   const normalizeModeSwitchPos = modeSwitchPositionRuntime.normalizeModeSwitchPos;
   syncModeSwitchPosition = modeSwitchPositionRuntime.syncPosition;
@@ -14543,7 +14563,7 @@ Phase G（Frame 36）：循环衔接
     const lineageFrameIds = new Set();
     const LINEAGE_CATEGORY_PAGE_SIZE = 12;
 
-    const escHtml = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const escHtml = (s) => escapeHtml(s);
 
     const truncateBase64 = (str) => {
       if (typeof str !== 'string') return str;
@@ -22691,7 +22711,6 @@ Phase G（Frame 36）：循环衔接
     exitChatRoom();
   });
 
-  let maidCommandInputRuntime = null;
   const bindMaidToSavedApiProfile = async ({ profileId = '', profile = null } = {}) => {
     const savedProfileId = String(profileId || profile?.id || '').trim();
     if (!savedProfileId) return false;

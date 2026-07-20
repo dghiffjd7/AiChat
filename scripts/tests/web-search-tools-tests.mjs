@@ -341,7 +341,7 @@ const getTool = (tools, name) => tools.find(tool => tool.name === name);
   const searchImages = getTool(tools, 'web.search_images');
   const result = await searchImages.execute({
     query: 'ojou-sama tsundere anime girl',
-    tags: 'ojou-sama, blonde、twintails，large breasts',
+    tags: 'OJOU-SAMA, BLONDE、TwinTails，Large Breasts',
     style: 'anime',
     limit: 6,
   });
@@ -372,4 +372,81 @@ const getTool = (tools, name) => tools.find(tool => tool.name === name);
   const sbUrl = decodeURIComponent(String(requests.find(r => String(r.url).includes('safebooru'))?.url || ''));
   assert.match(sbUrl, /tags=anime\+rich\+girl\+sort:score:desc/, 'query 回退按词拆 tag 且小写化');
   console.log('ok - 图搜 query 回退拆词');
+}
+
+{
+  const safebooruRequests = [];
+  const tools = createWebSearchAgentTools({
+    httpRequest: async (payload) => {
+      const url = String(payload.url || '');
+      if (!url.includes('safebooru.org')) throw new Error(`unexpected url ${url}`);
+      safebooruRequests.push(payload);
+      if (safebooruRequests.length === 1) throw new Error('temporary network failure');
+      return {
+        ok: true,
+        status: 200,
+        headers: {},
+        body: JSON.stringify([
+          { id: 7, directory: 'aa/bb', image: 'retry.jpg', tags: 'tag_one tag_two', width: 640, height: 960 },
+        ]),
+      };
+    },
+  });
+  const result = await getTool(tools, 'web.search_images').execute({
+    query: 'fallback query',
+    tags: 'TAG ONE, TAG TWO, TAG THREE',
+    style: 'anime',
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.provider, 'safebooru');
+  assert.equal(safebooruRequests.length, 2, '瞬时网络错误后应继续尝试较宽松标签');
+  assert.match(decodeURIComponent(safebooruRequests[1].url), /tags=tag_one\+tag_two\+sort:score:desc/);
+  console.log('ok - Safebooru 瞬时网络错误继续逐级降级');
+}
+
+{
+  // 仅 tags：booru 用 tags，通用图源用 tags 还原的自然词组当 query
+  const requests = [];
+  const tools = createWebSearchAgentTools({
+    httpRequest: async (payload) => {
+      requests.push(String(payload.url || ''));
+      return {
+        ok: true,
+        status: 200,
+        headers: {},
+        body: JSON.stringify([
+          { id: 3, directory: 'cc/dd', image: 'tags-only.jpg', tags: 'blonde_hair 1girl', width: 640, height: 960 },
+        ]),
+      };
+    },
+  });
+  const result = await getTool(tools, 'web.search_images').execute({
+    query: '   ',
+    tags: 'BLONDE_HAIR, 1girl',
+    style: 'anime',
+  });
+  assert.equal(result.ok, true, '空白 query + 有效 tags 应可正常搜索');
+  assert.equal(result.provider, 'safebooru');
+  assert.equal(result.query, 'blonde hair 1girl', '通用图源 query 应由 tags 还原为自然词组');
+  assert.match(decodeURIComponent(requests[0]), /tags=blonde_hair\+1girl\+sort:score:desc/);
+  console.log('ok - 图搜仅 tags 时正常走 booru 并还原 query');
+}
+
+{
+  let requestCount = 0;
+  const tools = createWebSearchAgentTools({
+    httpRequest: async () => {
+      requestCount += 1;
+      return { ok: true, status: 200, headers: {}, body: '[]' };
+    },
+  });
+  const result = await getTool(tools, 'web.search_images').execute({
+    query: '   ',
+    tags: '  ',
+    style: 'anime',
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, 'image_search_query_missing');
+  assert.equal(requestCount, 0, 'query 与 tags 均空白不得触发外部请求');
+  console.log('ok - 图搜拒绝全空输入且不触发外部请求');
 }

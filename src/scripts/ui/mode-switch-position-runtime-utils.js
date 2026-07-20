@@ -65,6 +65,7 @@ export const createModeSwitchPositionRuntime = ({
   getViewportSize = null,
   requestAnimationFrameFn = null,
   setTimeoutFn = null,
+  onPositionChange = null,
 } = {}) => {
   let modeSwitchSize = initialSize;
   let modeSwitchSlot = initialSlot;
@@ -128,6 +129,7 @@ export const createModeSwitchPositionRuntime = ({
         modeSwitchEl.style.top = `${Math.round(pinned.y)}px`;
         modeSwitchEl.style.pointerEvents = 'auto';
         modeSwitchEl.classList.remove('is-hidden');
+        onPositionChange?.();
         return;
       }
       setModeSwitchPinned?.(false);
@@ -148,6 +150,7 @@ export const createModeSwitchPositionRuntime = ({
     modeSwitchEl.style.top = `${Math.round(y)}px`;
     modeSwitchEl.style.pointerEvents = 'auto';
     modeSwitchEl.classList.remove('is-hidden');
+    onPositionChange?.();
   };
 
   const scheduleSync = () => {

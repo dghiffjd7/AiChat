@@ -430,6 +430,8 @@ class FakeDocument {
   assert.equal(items[items.length - 1].glyph, '成', '终态卡追加在末尾');
   assert.equal(items[items.length - 1].sub, '搞定了');
   assert.equal(runtime.getLiveStatus(), null, 'run 终态 live 行退场');
+  runtime.close();
+  assert.equal(runtime.applyTraceView(view([])), false, '指令条曾打开但已关闭 → 不再消费后台 run');
   console.log('ok - maid command input 承载执行流 trace 卡（原位更新/交错/未开不消费）');
 }
 

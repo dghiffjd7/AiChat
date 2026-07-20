@@ -339,20 +339,16 @@ const parseBingImageResults = (html = '', limit = 6) => {
 
 // booru 标签化：优先显式 tags。容忍模型常见给法——逗号/中文逗号/顿号分隔、tag 内空格，
 // 逐个 tag 下划线化后按 booru 约定用空格连接（2026-07-17：逗号原样透传曾让 safebooru 全部空结果）。
+const normalizeBooruTag = value => trim(value).toLowerCase().replace(/\s+/g, '_');
+
 const toBooruTags = (query = '', tags = '') => {
   const explicit = trim(tags);
-  if (explicit) {
-    return explicit
-      .split(/[,，、]+/)
-      .map(part => trim(part).replace(/\s+/g, '_'))
-      .filter(Boolean)
-      .slice(0, 6)
-      .join(' ');
-  }
-  // query 回退：自然词组按词拆成独立 tag（整句转单 tag 必然无结果）
-  return trim(query)
-    .toLowerCase()
-    .split(/\s+/)
+  const parts = explicit
+    ? explicit.split(/[,，、]+/)
+    // query 回退：自然词组按词拆成独立 tag（整句转单 tag 必然无结果）
+    : trim(query).split(/\s+/);
+  return parts
+    .map(normalizeBooruTag)
     .filter(Boolean)
     .slice(0, 6)
     .join(' ');
@@ -368,6 +364,8 @@ const performSafebooruImageSearch = async (request, { query = '', tags = '', lim
     const text = list.join(' ');
     if (text && !candidates.includes(text)) candidates.push(text);
   });
+  let completedAttempts = 0;
+  let lastError = null;
   for (const tagText of candidates) {
     const url = new URL('https://safebooru.org/index.php');
     url.searchParams.set('page', 'dapi');
@@ -376,33 +374,46 @@ const performSafebooruImageSearch = async (request, { query = '', tags = '', lim
     url.searchParams.set('json', '1');
     url.searchParams.set('limit', String(Math.min(20, limit * 2)));
     url.searchParams.set('tags', `${tagText} sort:score:desc`);
-    const body = await readHttpText(request, {
-      url: url.toString(),
-      method: 'GET',
-      headers: { accept: 'application/json' },
-      body: null,
-      timeoutMs: 20000,
-    });
-    const posts = parseJsonBody(body || '[]');
-    const images = (Array.isArray(posts) ? posts : [])
-      .filter(post => post?.image && post?.directory)
-      .slice(0, limit)
-      .map(post => ({
-        title: truncate(String(post.tags || '').split(' ').slice(0, 6).join(' '), 160),
-        imageUrl: `https://safebooru.org/images/${post.directory}/${post.image}`,
-        thumbnailUrl: `https://safebooru.org/thumbnails/${post.directory}/thumbnail_${String(post.image).replace(/\.[a-z0-9]+$/i, '.jpg')}`,
-        width: Number(post.width) || 0,
-        height: Number(post.height) || 0,
-        sourceUrl: `https://safebooru.org/index.php?page=post&s=view&id=${post.id}`,
-      }));
-    if (images.length > 0) return { ok: true, images, provider: 'safebooru', usedTags: tagText };
+    try {
+      const body = await readHttpText(request, {
+        url: url.toString(),
+        method: 'GET',
+        headers: { accept: 'application/json' },
+        body: null,
+        timeoutMs: 20000,
+      });
+      const posts = parseJsonBody(body || '[]');
+      completedAttempts += 1;
+      const images = (Array.isArray(posts) ? posts : [])
+        .filter(post => post?.image && post?.directory)
+        .slice(0, limit)
+        .map(post => ({
+          title: truncate(String(post.tags || '').split(' ').slice(0, 6).join(' '), 160),
+          imageUrl: `https://safebooru.org/images/${post.directory}/${post.image}`,
+          thumbnailUrl: `https://safebooru.org/thumbnails/${post.directory}/thumbnail_${String(post.image).replace(/\.[a-z0-9]+$/i, '.jpg')}`,
+          width: Number(post.width) || 0,
+          height: Number(post.height) || 0,
+          sourceUrl: `https://safebooru.org/index.php?page=post&s=view&id=${post.id}`,
+        }));
+      if (images.length > 0) return { ok: true, images, provider: 'safebooru', usedTags: tagText };
+    } catch (error) {
+      lastError = error;
+    }
   }
-  return { ok: false, images: [], provider: 'safebooru', reason: '无结果（已含降级重试）' };
+  return {
+    ok: false,
+    images: [],
+    provider: 'safebooru',
+    reason: completedAttempts > 0
+      ? '无结果（已含降级重试）'
+      : `请求失败（已含降级重试）：${trim(lastError?.message, 'unknown')}`,
+  };
 };
 
 // Danbooru（匿名限 2 标签：主标签 + order:score）
 const performDanbooruImageSearch = async (request, { query = '', tags = '', limit = 6 } = {}) => {
   const mainTag = toBooruTags(query, tags).split(' ')[0] || '';
+  if (!mainTag) return { ok: false, images: [], provider: 'danbooru', reason: '缺少有效标签' };
   const url = new URL('https://danbooru.donmai.us/posts.json');
   url.searchParams.set('tags', `${mainTag} order:score`);
   url.searchParams.set('limit', String(Math.min(20, limit * 2)));
@@ -872,8 +883,28 @@ export const createWebSearchAgentTools = ({
         },
       },
       execute: async (args = {}) => {
-        const query = trim(args.query);
+        let query = trim(args.query);
         const tags = trim(args.tags);
+        if (!query && !tags) {
+          return {
+            ok: false,
+            query: '',
+            provider: '',
+            attemptedProviders: [],
+            providerOutcomes: [],
+            reason: 'image_search_query_missing',
+            message: '图片搜索需要 query 或 tags 至少一项。',
+            images: [],
+          };
+        }
+        // 仅给 tags：booru 直接用 tags；通用图源（wallhaven/openverse/bing/ddg）用 tags 还原自然词组当 query
+        if (!query) {
+          query = tags
+            .split(/[,，、\s]+/)
+            .map(part => trim(part).replace(/_/g, ' ').toLowerCase())
+            .filter(Boolean)
+            .join(' ');
+        }
         const limit = Math.max(1, Math.min(12, Math.trunc(Number(args.limit || 0)) || 6));
         const purpose = trim(args.purpose, 'any');
         const style = trim(args.style, 'any');

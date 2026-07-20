@@ -35,6 +35,150 @@ const makePanel = () => {
 
 {
   const panel = makePanel();
+  const savedSettings = [];
+  const savedPrompts = [];
+  panel.currentInjectEditor = 'memory_data';
+  panel.getInjectOpenAIResolved = () => ({ presetId: 'preset-a', preset: {}, openp: {} });
+  panel.getInjectActions = () => ({
+    getAgentCenterSettings: () => ({
+      profiles: {
+        'openai:preset-a': {
+          agents: {
+            memory_table_agent: {
+              settings: {
+                dataPosition: 'history_before+system_end',
+                dataDepth: 2,
+                guidePosition: 'system_end',
+                guideDepth: 1,
+              },
+            },
+          },
+        },
+      },
+    }),
+    getMemoryAgentPromptConfig: () => ({
+      templateId: 'memory-template-a',
+      templateName: 'A',
+      template: '{{tableData}}',
+      wrapper: '<memory>{{tableData}}</memory>',
+      position: 'before_chat+history_after',
+    }),
+    setMemoryAgentSettings: async payload => savedSettings.push(payload),
+    setMemoryAgentPromptConfig: async payload => savedPrompts.push(payload),
+  });
+  const host = { isConnected: true, appendChild: () => {} };
+  let save = null;
+  const previousDocument = globalThis.document;
+  globalThis.document = { createElement: () => ({}) };
+  try {
+    panel.renderMemoryInjectEditor(host, 'memory_data', {
+      // 仿真 select：现值在选项表内时取现值，否则空值（与真实 DOM 行为一致）
+      mkSelect: (options, value) => ({
+        value: options.some(option => String(option.value) === String(value)) ? String(value) : '',
+      }),
+      mkNumber: value => ({ value: String(value) }),
+      mkRow: () => ({}),
+      mkSaveBtn: onSave => {
+        save = onSave;
+        return {};
+      },
+      note: () => ({ remove: () => {} }),
+      mkLabel: () => ({}),
+    });
+    await new Promise(resolve => setTimeout(resolve, 0));
+    assert.equal(typeof save, 'function', '异步模板编辑区应完成装配');
+    await save();
+  } finally {
+    if (previousDocument === undefined) delete globalThis.document;
+    else globalThis.document = previousDocument;
+  }
+  assert.equal(savedSettings[0].config.dataPosition, 'history_before+system_end',
+    '数据位置不在选项表内时保存必须沿用原值');
+  assert.equal(savedPrompts[0].config.position, 'before_chat+history_after',
+    '模板位置不在选项表内时保存必须沿用原值');
+  console.log('ok - 记忆编辑器保存保留非标准组合位置');
+}
+
+{
+  const panel = makePanel();
+  let saved = null;
+  let save = null;
+  panel.getInjectOpenAIResolved = () => ({ presetId: 'preset-a', preset: {}, openp: {} });
+  panel.getInjectActions = () => ({
+    getAgentCenterSettings: () => ({
+      profiles: {
+        'openai:preset-a': {
+          agents: { memory_table_agent: { settings: { guidePosition: 'system_end' } } },
+        },
+      },
+    }),
+    setMemoryAgentSettings: async payload => { saved = payload; },
+  });
+  panel.renderMemoryInjectEditor({ appendChild: () => {} }, 'memory_guide', {
+    mkSelect: () => ({ value: '' }),
+    mkNumber: value => ({ value: String(value) }),
+    mkRow: () => ({}),
+    mkSaveBtn: onSave => {
+      save = onSave;
+      return {};
+    },
+    note: () => ({}),
+    mkLabel: () => ({}),
+  });
+  await save();
+  assert.equal(saved.config.guidePosition, '', '已枚举位置仍应允许用户明确改为“跟随通用设置”');
+  console.log('ok - 记忆编辑器保留显式跟随通用设置选项');
+}
+
+{
+  // legacy 组合 token 现值 + 用户主动改回「跟随通用设置」：注入保值选项后空值恒为主动选择
+  const panel = makePanel();
+  let saved = null;
+  let save = null;
+  let posSel = null;
+  let selectOptions = null;
+  panel.getInjectOpenAIResolved = () => ({ presetId: 'preset-a', preset: {}, openp: {} });
+  panel.getInjectActions = () => ({
+    getAgentCenterSettings: () => ({
+      profiles: {
+        'openai:preset-a': {
+          agents: { memory_table_agent: { settings: { guidePosition: 'history_before+system_end' } } },
+        },
+      },
+    }),
+    setMemoryAgentSettings: async payload => { saved = payload; },
+  });
+  panel.renderMemoryInjectEditor({ appendChild: () => {} }, 'memory_guide', {
+    mkSelect: (options, value) => {
+      selectOptions = options;
+      posSel = {
+        value: options.some(option => String(option.value) === String(value)) ? String(value) : '',
+      };
+      return posSel;
+    },
+    mkNumber: value => ({ value: String(value) }),
+    mkRow: () => ({}),
+    mkSaveBtn: onSave => {
+      save = onSave;
+      return {};
+    },
+    note: () => ({}),
+    mkLabel: () => ({}),
+  });
+  assert.equal(posSel.value, 'history_before+system_end', 'legacy 现值应经注入选项直接选中');
+  assert.equal(
+    selectOptions.some(option => option.value === 'history_before+system_end'),
+    true,
+    'legacy 现值应作为保值选项出现在下拉中',
+  );
+  posSel.value = '';
+  await save();
+  assert.equal(saved.config.guidePosition, '', 'legacy 现值下用户仍可主动改为“跟随通用设置”');
+  console.log('ok - 记忆编辑器 legacy 位置可显式改回跟随通用设置');
+}
+
+{
+  const panel = makePanel();
   panel.openaiBlockBase.set('block', {
     identifier: 'block', name: 'Block', role: 'system', system_prompt: true, content: 'a\r\nb',
   });
@@ -98,6 +242,35 @@ const makePanel = () => {
   await panel.acceptBlockHunk('block', 0);
   assert.deepEqual(statuses, [['write failed', 'error']], 'hunk 写入失败不得追加成功提示');
   console.log('ok - hunk 保存失败只报告错误');
+}
+
+{
+  const panel = makePanel();
+  const statuses = [];
+  let refreshCount = 0;
+  let previewCount = 0;
+  panel.runtimeContext = { promptInject: null };
+  panel.getInjectSyspromptResolved = () => ({
+    presetId: 'sys-a',
+    preset: {},
+    sysp: { dialogue_enabled: false },
+  });
+  panel.getInjectSettingsState = () => ({});
+  panel.getInjectActions = () => ({
+    getAgentCenterSettings: () => ({}),
+    setAgentPromptConfig: async () => { throw new Error('write failed'); },
+  });
+  panel.showStatus = (message, kind) => statuses.push([message, kind]);
+  panel.refreshInjectUi = () => { refreshCount += 1; };
+  panel.invalidateOrRebuildPreview = () => { previewCount += 1; };
+
+  await panel.showInjectFeatureDialog('dialogue', async () => true);
+
+  assert.deepEqual(statuses, [['注入开关写入失败', 'error']],
+    '注入开关写入失败时不得再追加“已启用”成功提示');
+  assert.equal(refreshCount, 1, '失败后仍应刷新警示角标');
+  assert.equal(previewCount, 1, '失败后仍应重建或失效预览');
+  console.log('ok - 注入启用失败只报告错误并保留警示态');
 }
 
 {

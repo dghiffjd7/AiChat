@@ -1502,7 +1502,7 @@ export const createMomentCommentLifecycleRuntime = ({
         momentId: id,
         reason: 'not-configured',
       }));
-      showMissingConfig();
+      if (meta?.suppressMissingConfigUi !== true) showMissingConfig();
       return { ok: false, reason: 'not-configured' };
     }
 

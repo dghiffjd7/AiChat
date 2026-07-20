@@ -604,6 +604,16 @@ export const mergeImportedAgentCenterSettings = (settings = {}, imported = {}, {
     ...(incoming.migrations || {}),
     importedAgentCenterSettingsAt: timestamp,
   };
+  // migration 是设备级历史；旧导出缺少 rollback 标记时，导入边界即视为已处理，
+  // 避免下次启动把旧 default-off 历史放大到本机全部 profile。
+  if (incoming.migrations?.presetInjectDefaultOffV1?.completed
+    && !incoming.migrations?.presetInjectDefaultOffV1Rollback?.completed
+    && !current.migrations?.presetInjectDefaultOffV1Rollback?.completed) {
+    current.migrations.presetInjectDefaultOffV1Rollback = {
+      completed: true,
+      migratedAt: timestamp,
+    };
+  }
   return normalizeAgentCenterSettings(current);
 };
 

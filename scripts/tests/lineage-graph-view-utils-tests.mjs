@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 
 import {
+  buildLineageImpactNodes,
   buildLineageMapMiniViewport,
   buildLineageMapSceneModelWithElk,
   buildLineageMapSceneModel,
@@ -232,6 +233,22 @@ const collectNodeOverlaps = (nodes = []) => {
 }
 
 {
+  let edgeReads = 0;
+  const measuredGraph = {
+    ...graph,
+    get edges() {
+      edgeReads += 1;
+      return graph.edges;
+    },
+  };
+  const impacts = buildLineageImpactNodes(measuredGraph, 5);
+  assert.equal(edgeReads, 1, '影响面排行应只构建一次邻接表');
+  assert.equal(impacts[0].node.id, 'contact:a');
+  assert.equal(impacts[0].score, 3);
+  console.log('ok - lineage 影响面排行复用单次邻接表构建');
+}
+
+{
   const results = findLineageMapNodes(graph, 'Alice');
   assert.equal(results.length, 2);
   assert.deepEqual(results.map(item => item.categoryId).sort(), ['contacts', 'profiles']);
@@ -288,6 +305,7 @@ const collectNodeOverlaps = (nodes = []) => {
 
 {
   const css = readFileSync(new URL('../../src/assets/css/theme.css', import.meta.url), 'utf8');
+  const appSource = readFileSync(new URL('../../src/scripts/ui/app.js', import.meta.url), 'utf8');
   assert.match(css, /@keyframes lineage-node-in/);
   assert.match(css, /@keyframes lineage-flow-dash/);
   assert.match(css, /@keyframes lineage-glow-drift/);
@@ -301,6 +319,8 @@ const collectNodeOverlaps = (nodes = []) => {
   assert.match(css, /\.lineage-map-node\.is-lineage-dim/);
   assert.match(css, /body\[data-theme-mode='dark'\] \.lineage-graph-panel/);
   assert.match(css, /body\[data-reduced-motion='on'\] \.lineage-graph-panel/);
+  assert.match(appSource, /const escHtml = \(s\) => escapeHtml\(s\);/,
+    'Prompt/血缘预览应复用含引号转义的共享 escapeHtml');
   console.log('ok - lineage visual contract includes reference atmosphere motion and theme fallbacks');
 }
 
@@ -372,6 +392,64 @@ const collectNodeOverlaps = (nodes = []) => {
   assert.match(formatLineagePathDiagnostics(risk, graph), /风险路径诊断/);
   assert.deepEqual(detectLineageCycles(graph), []);
   console.log('ok - lineage path diagnostics finds query and risk paths');
+}
+
+{
+  const cyclicGraph = {
+    nodes: [{ id: 'a' }, { id: 'b' }, { id: 'c' }],
+    edges: [
+      { source: 'a', target: 'b' },
+      { source: 'b', target: 'c' },
+      { source: 'c', target: 'a' },
+    ],
+  };
+  assert.deepEqual(detectLineageCycles(cyclicGraph, { maxDepth: 1 }), [],
+    '深度预算应截断超出范围的环检测');
+  assert.deepEqual(detectLineageCycles(cyclicGraph, { maxVisits: 1 }), [],
+    '访问预算应截断高复杂度遍历');
+  assert.equal(detectLineageCycles(cyclicGraph, { maxDepth: 4, maxVisits: 32 }).length > 0, true,
+    '预算充足时仍应检出环');
+  console.log('ok - lineage 环检测受深度与访问预算约束');
+}
+
+{
+  const previousDocument = globalThis.document;
+  const previousElk = globalThis.ELK;
+  const scripts = [];
+  globalThis.document = {
+    createElement: () => ({
+      dataset: {},
+      remove() { this.removed = true; },
+    }),
+    querySelector: () => scripts.find(script => !script.removed) || null,
+    head: {
+      appendChild(script) {
+        scripts.push(script);
+        queueMicrotask(() => {
+          if (scripts.length === 1) {
+            script.onerror?.(new Error('load failed'));
+            return;
+          }
+          globalThis.ELK = ELK;
+          script.onload?.();
+        });
+      },
+    },
+  };
+  try {
+    delete globalThis.ELK;
+    const fallback = await buildLineageMapSceneModelWithElk(graph);
+    assert.equal(fallback.layoutEngine, 'fallback');
+    const retried = await buildLineageMapSceneModelWithElk(graph);
+    assert.equal(scripts.length, 2, 'ELK 首次加载失败后应在后续调用重新加载');
+    assert.equal(retried.layoutEngine, 'elk');
+  } finally {
+    if (previousDocument === undefined) delete globalThis.document;
+    else globalThis.document = previousDocument;
+    if (previousElk === undefined) delete globalThis.ELK;
+    else globalThis.ELK = previousElk;
+  }
+  console.log('ok - lineage ELK 加载失败后可在同一会话重试');
 }
 
 {

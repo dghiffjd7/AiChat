@@ -178,6 +178,7 @@ export const MEMORY_POSITION_OPTIONS = Object.freeze([
 export const PROMPT_POSITION_OPTIONS = Object.freeze([
   { value: 0, label: 'IN_PROMPT' },
   { value: 1, label: 'IN_CHAT' },
+  { value: 3, label: '聊天内 · 深度 1' },
   { value: 4, label: '最新输入前' },
   { value: 5, label: '最新输入后' },
   { value: 2, label: 'BEFORE_PROMPT' },
@@ -189,6 +190,19 @@ export const PROMPT_ROLE_OPTIONS = Object.freeze([
   { value: 1, label: 'USER' },
   { value: 2, label: 'ASSISTANT' },
 ]);
+
+export const resolveSelectValueWithFallback = (selectedValue, originalValue = '') => {
+  const selected = String(selectedValue ?? '');
+  return selected === '' ? String(originalValue ?? '') : selected;
+};
+
+/* select 的空值同时承担「未匹配」与「跟随通用设置」两种含义；现值不在选项表时
+   注入保值选项，空值即恒为用户主动选择，legacy 组合 token 也能显式改回空值。 */
+export const withCurrentSelectOption = (options = [], currentValue = '') => {
+  const value = String(currentValue ?? '');
+  if (!value || options.some(option => String(option.value) === value)) return options;
+  return [...options, { value, label: `保持当前（${value}）` }];
+};
 
 const MEMORY_POSITION_LABELS = Object.freeze({
   '': '跟随通用设置',

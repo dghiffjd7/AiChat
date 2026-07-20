@@ -350,18 +350,8 @@ const uniqueNodesById = (nodes = []) => {
   });
 };
 
-export const traceLineageNodeRelations = (graph = null, nodeId = '') => {
-  const focusId = normalizeString(nodeId);
+const buildLineageRelationAdjacency = (graph = null) => {
   const nodes = nodeByIdMap(graph);
-  if (!focusId || !nodes.has(focusId)) {
-    return {
-      focusId: '',
-      upstreamIds: new Set(),
-      downstreamIds: new Set(),
-      directUpstreamIds: new Set(),
-      directDownstreamIds: new Set(),
-    };
-  }
   const incoming = new Map();
   const outgoing = new Map();
   listOf(graph?.edges).forEach((edge) => {
@@ -373,6 +363,26 @@ export const traceLineageNodeRelations = (graph = null, nodeId = '') => {
     outgoing.get(source).add(target);
     incoming.get(target).add(source);
   });
+  return { nodes, incoming, outgoing };
+};
+
+export const traceLineageNodeRelations = (graph = null, nodeId = '', relationAdjacency = null) => {
+  const focusId = normalizeString(nodeId);
+  const adjacency = relationAdjacency?.nodes instanceof Map
+    && relationAdjacency?.incoming instanceof Map
+    && relationAdjacency?.outgoing instanceof Map
+    ? relationAdjacency
+    : buildLineageRelationAdjacency(graph);
+  const { nodes, incoming, outgoing } = adjacency;
+  if (!focusId || !nodes.has(focusId)) {
+    return {
+      focusId: '',
+      upstreamIds: new Set(),
+      downstreamIds: new Set(),
+      directUpstreamIds: new Set(),
+      directDownstreamIds: new Set(),
+    };
+  }
   const walk = (adjacency) => {
     const visited = new Set([focusId]);
     const queue = [focusId];
@@ -493,12 +503,13 @@ export const renderLineageMapSearchResultsHtml = (results = []) => {
   `).join('');
 };
 
-const buildLineageImpactNodes = (graph = null, limit = 5) => {
+export const buildLineageImpactNodes = (graph = null, limit = 5) => {
   const rootId = normalizeString(graph?.rootId);
+  const relationAdjacency = buildLineageRelationAdjacency(graph);
   return listOf(graph?.nodes)
     .filter(node => normalizeString(node?.id) && normalizeString(node?.id) !== rootId)
     .map((node) => {
-      const lineage = traceLineageNodeRelations(graph, node?.id);
+      const lineage = traceLineageNodeRelations(graph, node?.id, relationAdjacency);
       return { node, score: Math.max(0, lineage.downstreamIds.size - 1) };
     })
     .filter(item => item.score > 0)
@@ -745,22 +756,35 @@ const loadLineageElkConstructor = async () => {
   if (!doc?.createElement) return null;
   if (!lineageElkConstructorPromise) {
     lineageElkConstructorPromise = new Promise((resolve) => {
+      const finish = (script = null) => {
+        const ElkCtor = typeof globalThis.ELK === 'function' ? globalThis.ELK : null;
+        if (!ElkCtor) script?.remove?.();
+        resolve(ElkCtor);
+      };
       const existing = doc.querySelector('script[data-lineage-elk-loader="true"]');
       if (existing) {
-        existing.addEventListener('load', () => resolve(typeof globalThis.ELK === 'function' ? globalThis.ELK : null), { once: true });
-        existing.addEventListener('error', () => resolve(null), { once: true });
+        existing.addEventListener('load', () => finish(existing), { once: true });
+        existing.addEventListener('error', () => finish(existing), { once: true });
         return;
       }
       const script = doc.createElement('script');
       script.src = new URL(LINEAGE_ELK_SCRIPT_URL, import.meta.url).href;
       script.async = true;
       script.dataset.lineageElkLoader = 'true';
-      script.onload = () => resolve(typeof globalThis.ELK === 'function' ? globalThis.ELK : null);
-      script.onerror = () => resolve(null);
+      script.onload = () => finish(script);
+      script.onerror = () => finish(script);
       doc.head.appendChild(script);
     });
   }
-  return lineageElkConstructorPromise;
+  const pending = lineageElkConstructorPromise;
+  let ElkCtor = null;
+  try {
+    ElkCtor = await pending;
+  } catch {}
+  if (lineageElkConstructorPromise === pending && typeof ElkCtor !== 'function') {
+    lineageElkConstructorPromise = null;
+  }
+  return ElkCtor;
 };
 
 const getLineageElkInstance = async (elkConstructor = null) => {
@@ -1911,7 +1935,11 @@ export const findLineagePaths = (graph = null, {
   };
 };
 
-export const detectLineageCycles = (graph = null, { maxCycles = 8 } = {}) => {
+export const detectLineageCycles = (graph = null, {
+  maxCycles = 8,
+  maxDepth = 64,
+  maxVisits = 10000,
+} = {}) => {
   const edges = listOf(graph?.edges);
   const outEdges = new Map();
   edges.forEach((edge) => {
@@ -1923,8 +1951,12 @@ export const detectLineageCycles = (graph = null, { maxCycles = 8 } = {}) => {
   });
   const cycles = [];
   const limit = Math.max(1, Math.trunc(Number(maxCycles) || 8));
+  const depthLimit = Math.max(1, Math.trunc(Number(maxDepth) || 64));
+  const visitLimit = Math.max(1, Math.trunc(Number(maxVisits) || 10000));
+  let visits = 0;
   const dfs = (nodeId, stack = [], seen = new Set()) => {
-    if (cycles.length >= limit) return;
+    if (cycles.length >= limit || visits >= visitLimit || stack.length > depthLimit) return;
+    visits += 1;
     if (seen.has(nodeId)) {
       const start = stack.findIndex(edge => normalizeString(edge?.source) === nodeId);
       if (start >= 0) cycles.push(stack.slice(start));
@@ -1932,9 +1964,15 @@ export const detectLineageCycles = (graph = null, { maxCycles = 8 } = {}) => {
     }
     const nextSeen = new Set(seen);
     nextSeen.add(nodeId);
-    (outEdges.get(nodeId) || []).forEach(edge => dfs(normalizeString(edge?.target), [...stack, edge], nextSeen));
+    for (const edge of outEdges.get(nodeId) || []) {
+      if (cycles.length >= limit || visits >= visitLimit) break;
+      dfs(normalizeString(edge?.target), [...stack, edge], nextSeen);
+    }
   };
-  Array.from(outEdges.keys()).forEach(nodeId => dfs(nodeId));
+  for (const nodeId of outEdges.keys()) {
+    if (cycles.length >= limit || visits >= visitLimit) break;
+    dfs(nodeId);
+  }
   return cycles.slice(0, limit).map(edgesInCycle => ({
     edges: edgesInCycle,
     text: edgesInCycle.map(edge => `${normalizeString(edge?.source)} -> ${normalizeString(edge?.target)}`).join(' -> '),

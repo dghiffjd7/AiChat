@@ -56,6 +56,8 @@ import {
     PROMPT_POSITION_OPTIONS,
     PROMPT_ROLE_OPTIONS,
     readInjectItemConfig,
+    resolveSelectValueWithFallback,
+    withCurrentSelectOption,
 } from './preset-prompt-inject-utils.js';
 /* Section definitions — order matters for rendering */
 const SECTIONS = [
@@ -4572,7 +4574,7 @@ export class PresetPanel {
     }
 
     /* 加入项功能未启用时的启用界面：说明原因，能直接开的给「启用」，需去通用设定的只说明 */
-    async showInjectFeatureDialog(itemId) {
+    async showInjectFeatureDialog(itemId, confirmFn = appConfirm) {
         const item = getInjectItem(itemId);
         if (!item) return;
         const { presetId, preset, sysp } = this.getInjectSyspromptResolved();
@@ -4586,17 +4588,18 @@ export class PresetPanel {
         if (itemId === 'memory') {
             const generalBlocker = describeMemoryChipBlocker(settingsState);
             if (generalBlocker) {
-                await appConfirm({ title: '记忆表格未启用', message: generalBlocker, confirmText: '知道了' });
+                await confirmFn({ title: '记忆表格未启用', message: generalBlocker, confirmText: '知道了' });
                 return;
             }
         }
-        const ok = await appConfirm({
+        const ok = await confirmFn({
             title: `${labels[itemId] || item.label}未启用`,
             message: `${blocker}。现在启用该功能？`,
             confirmText: '启用',
         });
         if (!ok) return;
         try {
+            let enabled = true;
             if (itemId === 'memory') {
                 this.runtimeContext.promptInject?.setMemoryTableChatEnabled?.(true);
             } else if (itemId === 'image') {
@@ -4604,12 +4607,12 @@ export class PresetPanel {
                     this.runtimeContext.promptInject?.setAutoImagePromptEnabled?.(true);
                 }
                 if (sysp?.auto_image_prompt_enabled === false) {
-                    await this.setInjectSyspromptEnabled(item, true, { presetId, preset });
+                    enabled = await this.setInjectSyspromptEnabled(item, true, { presetId, preset });
                 }
             } else {
-                await this.setInjectSyspromptEnabled(item, true, { presetId, preset });
+                enabled = await this.setInjectSyspromptEnabled(item, true, { presetId, preset });
             }
-            this.showStatus('已启用', 'success');
+            if (enabled) this.showStatus('已启用', 'success');
         } catch (err) {
             logger.warn('注入功能启用失败', err);
             this.showStatus('启用失败', 'error');
@@ -4766,7 +4769,7 @@ export class PresetPanel {
                     promptId: item.promptId,
                     config: {
                         rules: String(ta.value ?? ''),
-                        position: Math.trunc(Number(posSel.value)) || 0,
+                        position: Math.trunc(Number(resolveSelectValueWithFallback(posSel.value, cfg.position ?? 0))),
                         depth: Math.max(0, Math.trunc(Number(depthInput.value)) || 0),
                         role: Math.trunc(Number(roleSel.value)) || 0,
                     },
@@ -4797,7 +4800,8 @@ export class PresetPanel {
         host.appendChild(note(isGuide
             ? '写表指导提示词由记忆模板生成（指导模型如何更新表格），此处调整它的注入位置与深度。'
             : '表格记忆为当前会话的记忆表数据，按模板渲染后注入。模板使用 {{tableData}} 插入表格内容。'));
-        const posSel = mkSelect(MEMORY_POSITION_OPTIONS, isGuide ? current.guidePosition : current.dataPosition);
+        const currentPosition = isGuide ? current.guidePosition : current.dataPosition;
+        const posSel = mkSelect(withCurrentSelectOption(MEMORY_POSITION_OPTIONS, currentPosition), currentPosition);
         const depthInput = mkNumber(isGuide ? current.guideDepth : current.dataDepth);
         host.appendChild(mkRow([[isGuide ? '指导位置' : '数据位置', posSel], ['深度', depthInput]]));
 
@@ -4826,7 +4830,10 @@ export class PresetPanel {
                     config: {
                         template: String(templateTa.value ?? ''),
                         wrapper: String(wrapperTa?.value ?? ''),
-                        position: String(templatePosSel?.value ?? promptCfg.position ?? 'before_latest_user'),
+                        position: resolveSelectValueWithFallback(
+                            templatePosSel?.value,
+                            promptCfg.position ?? 'before_latest_user',
+                        ),
                     },
                 });
             }
@@ -4848,7 +4855,10 @@ export class PresetPanel {
                 return;
             }
             host.appendChild(note(`模板：${promptCfg.templateName || '默认记忆模板'}`));
-            templatePosSel = mkSelect(MEMORY_POSITION_OPTIONS.filter(o => o.value !== ''), promptCfg.position || 'before_latest_user');
+            templatePosSel = mkSelect(
+                withCurrentSelectOption(MEMORY_POSITION_OPTIONS.filter(o => o.value !== ''), promptCfg.position || 'before_latest_user'),
+                promptCfg.position || 'before_latest_user',
+            );
             host.appendChild(mkRow([['表格内容模板位置', templatePosSel]]));
             host.appendChild(mkLabel('表格内容模板'));
             templateTa = document.createElement('textarea');

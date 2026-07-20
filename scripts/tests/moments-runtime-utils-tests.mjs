@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 
 import { DialogueStreamParser } from '../../src/scripts/ui/chat/dialogue-stream-parser.js';
 
@@ -831,6 +832,32 @@ import {
     ['comment.skipped', 'skipped', 'not-configured'],
   ]);
   console.log('ok - createMomentCommentLifecycleRuntime gates unconfigured comment generation before side effects');
+}
+
+{
+  const warnings = [];
+  const runtime = createMomentCommentLifecycleRuntime({
+    getIsConfigured: () => false,
+    isOnline: () => true,
+    showMissingConfig: () => warnings.push('config'),
+  });
+  const result = await runtime('m1', '', {
+    mode: 'moment_publish',
+    publishedMoment: true,
+    suppressMissingConfigUi: true,
+  });
+  assert.deepEqual(result, { ok: false, reason: 'not-configured' });
+  assert.deepEqual(warnings, [], '后台女仆发布路径不得弹出主 API 配置面板');
+
+  const appSource = readFileSync(new URL('../../src/scripts/ui/app.js', import.meta.url), 'utf8');
+  const maidPublishStart = appSource.indexOf('registerMomentsAgentTools(agentToolRegistry');
+  const maidPublishEnd = appSource.indexOf('const momentSummaryPanel', maidPublishStart);
+  const maidPublishSource = appSource.slice(maidPublishStart, maidPublishEnd);
+  assert.match(maidPublishSource, /suppressMissingConfigUi:\s*true/,
+    '女仆发布评论请求应显式抑制缺配置 UI 副作用');
+  assert.match(maidPublishSource, /momentCommentRuntime[\s\S]*?\.then\(\(result\)[\s\S]*?result\?\.ok[\s\S]*?generation skipped/,
+    '女仆发布路径必须消费 { ok:false, reason } 并记录跳过原因');
+  console.log('ok - 女仆动态评论失败仅记日志且不弹配置面板');
 }
 
 {

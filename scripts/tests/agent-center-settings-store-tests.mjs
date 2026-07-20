@@ -265,3 +265,59 @@ import {
   assert.equal(agents.image_director.prompts['auto-image-prompt'].enabled, true);
   console.log('ok - 新用户无回滚动作、种子默认启用');
 }
+
+{
+  // 旧版导出可能只有 default-off v1 标记、没有本机已经执行过的 rollback 标记。
+  // 导入不得把这段历史迁移重新放大到本机全部 profile。
+  const current = {
+    migrations: {
+      presetPromptV1: { completed: true, migratedAt: 10 },
+    },
+    profiles: {
+      'sysprompt:local': {
+        profileType: 'sysprompt',
+        presetId: 'local',
+        agents: {
+          dialogue_agent: { prompts: { dialogue: { enabled: false, rules: '本机手动停用' } } },
+        },
+      },
+    },
+  };
+  const imported = {
+    migrations: {
+      presetPromptV1: { completed: true, migratedAt: 1 },
+      presetInjectDefaultOffV1: { completed: true, migratedAt: 1 },
+    },
+    profiles: {
+      'sysprompt:legacy': {
+        profileType: 'sysprompt',
+        presetId: 'legacy',
+        agents: {
+          group_agent: { prompts: { group: { enabled: false, rules: '旧版导出状态' } } },
+        },
+      },
+    },
+  };
+  const merged = mergeImportedAgentCenterSettings(current, imported, { now: () => 5000 });
+  assert.equal(
+    merged.migrations.presetInjectDefaultOffV1Rollback?.completed,
+    true,
+    '导入旧版 default-off 标记时应同时写入 rollback 屏障',
+  );
+  const migrated = migratePresetStateToAgentCenterSettings(
+    merged,
+    { presets: { sysprompt: {}, openai: {} } },
+    { now: () => 6000 },
+  );
+  assert.equal(
+    migrated.profiles['sysprompt:local'].agents.dialogue_agent.prompts.dialogue.enabled,
+    false,
+    '导入后不得把本机手动停用翻回启用',
+  );
+  assert.equal(
+    migrated.profiles['sysprompt:legacy'].agents.group_agent.prompts.group.enabled,
+    false,
+    '导入内容本身也应按导出值保留',
+  );
+  console.log('ok - 旧版设置导入不会放大 default-off 回滚迁移');
+}

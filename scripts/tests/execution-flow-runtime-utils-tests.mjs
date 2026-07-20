@@ -132,8 +132,13 @@ const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '
   );
   assert.equal(
     resolveExecutionFlowActiveKind({ maid: { ...maid, terminal: true }, creative, preferredKind: 'maid' }),
+    'maid',
+    '用户手动选择的终态投影应可在另一投影活跃时回看',
+  );
+  assert.equal(
+    resolveExecutionFlowActiveKind({ maid: { ...maid, terminal: true }, creative }),
     'creative',
-    '终态投影不得压住仍活跃的投影',
+    '没有用户选择时仍应优先显示活跃投影',
   );
   assert.equal(
     resolveExecutionFlowActiveKind({
@@ -158,6 +163,10 @@ const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '
     '创意泳道不得再挂到输入框，应把状态投影给共享容器');
   assert.match(appSource, /executionFlowRuntime\.attachCreativeLane\?\.\(creativeExecutionLaneRuntime\)/,
     '共享执行流容器应接管创意泳道 DOM 宿主');
+  assert.match(appSource, /createModeSwitchPositionRuntime\(\{[\s\S]*onPositionChange:[\s\S]*maidCommandInputRuntime\.position[\s\S]*executionFlowRuntime\?\.position/,
+    '悬浮球位置同步完成后应立即重定位指令条与执行流面板');
+  assert.doesNotMatch(appSource, /\u0000/,
+    'app.js 不应含字面 NUL，围栏哨兵应使用可搜索的转义写法');
   assert.match(flowSource, /class="exec-flow-creative-host"/,
     '共享容器应提供创意泳道插槽');
   assert.match(flowSource, /data-ef-switch="\$\{kind\}"/,
@@ -226,7 +235,46 @@ const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '
   fallback.emit({ runId: 'run_x' });
   assert.equal(fallback.rt.getState().visible, true, '未消费 → 面板兜底自开');
   assert.equal(fallback.rt.getState().expanded, true);
+
+  let shouldConsume = true;
+  const handedOff = makeRt(() => shouldConsume);
+  handedOff.emit({ runId: 'run_x' });
+  assert.equal(handedOff.rt.getState().visible, false, '首帧由打开的指令条消费');
+  shouldConsume = false;
+  handedOff.emit({ runId: 'run_x' });
+  assert.equal(handedOff.rt.getState().visible, true, '同一 run 在指令条关闭后应转交面板兜底');
+  assert.equal(handedOff.rt.getState().expanded, true);
   console.log('ok - onMaidTrace 消费语义（指令条优先、面板兜底）');
+}
+
+{
+  const { createExecutionFlowRuntime } = await import('../../src/scripts/ui/chat/execution-flow-runtime-utils.js');
+  const listeners = new Map();
+  const removed = [];
+  const root = {
+    className: '',
+    innerHTML: '',
+    classList: { toggle: () => {} },
+    dataset: {},
+    querySelector: () => null,
+    addEventListener: () => {},
+    remove: () => {},
+  };
+  const documentRef = {
+    body: { appendChild: () => {} },
+    head: {},
+    getElementById: () => ({}),
+    createElement: () => root,
+    addEventListener: (type, handler) => listeners.set(type, handler),
+    removeEventListener: (type, handler) => removed.push([type, handler]),
+  };
+  const runtime = createExecutionFlowRuntime({ documentRef });
+  runtime.render();
+  const escapeHandler = listeners.get('keydown');
+  assert.equal(typeof escapeHandler, 'function');
+  runtime.destroy();
+  assert.deepEqual(removed, [['keydown', escapeHandler]], 'destroy 必须移除 document Escape 监听');
+  console.log('ok - execution flow destroy 清理 Escape 监听');
 }
 
 console.log('execution-flow-runtime-utils tests passed');

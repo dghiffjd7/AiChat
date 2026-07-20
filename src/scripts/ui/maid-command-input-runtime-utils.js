@@ -852,7 +852,7 @@ export const createMaidCommandInputRuntime = ({
 
   const applyTraceView = (view = null) => {
     if (!view || !trim(view.runId)) return false;
-    if (!rootEl) return false; // 指令条从未打开（如 CDP 直发）→ 交回执行流面板兜底
+    if (!rootEl || !isOpen) return false; // 从未打开或已经关闭 → 交回执行流面板兜底
     const runId = trim(view.runId);
     upsertResultItem(`plan:${runId}`, {
       kind: 'trace',
