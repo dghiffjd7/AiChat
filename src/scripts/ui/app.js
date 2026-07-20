@@ -208,7 +208,10 @@ import {
   isReadableElementVisible,
 } from './agent-ui-inspect-utils.js';
 import { buildMaidRunResumePrompt } from './maid-run-resume-utils.js';
-import { createAppBackNavigationRuntime } from './app-back-navigation-runtime-utils.js';
+import {
+  createAppBackNavigationRuntime,
+  isAppBackLayerVisible as isBackLayerVisible,
+} from './app-back-navigation-runtime-utils.js';
 import {
   requestTauriNativeExit,
   resolveTauriNativeBackButtonRegistrar,
@@ -30143,16 +30146,6 @@ Phase G（Frame 36）：循环衔接
     clearWallpaperSelection();
   });
 
-  const isBackLayerVisible = (element) => {
-    if (!element) return false;
-    try {
-      const style = getComputedStyle(element);
-      if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') return false;
-      return element.getClientRects?.().length > 0 || style.position === 'fixed';
-    } catch {
-      return false;
-    }
-  };
   const closeVisibleBySelector = (selector, closer = null, { dryRun = false } = {}) => {
     const matches = Array.from(document.querySelectorAll(selector));
     const element = matches.reverse().find(isBackLayerVisible);

@@ -12,6 +12,7 @@
   --app-text-secondary: #475569;
   --app-text-muted: #94a3b8;
   --app-text-inverse: #ffffff;
+  --app-text-on-accent: #ffffff;
   --app-text-quote: #475569;
   --app-text-link: #2563eb;
   --app-accent-primary: #199aff;
@@ -1351,21 +1352,56 @@ body[data-theme-mode='dark'] #extensions-panel .extensions-modal {
   border-color: var(--app-border-subtle) !important;
 }
 
-body[data-theme-mode='dark'] #extensions-panel :is(.extensions-title, .extensions-toggle, .extensions-close) {
+body[data-theme-mode='dark'] #extensions-panel .extensions-header {
+  background: rgba(var(--app-surface-topbar-rgb), 0.98) !important;
+  border-bottom-color: var(--app-border-subtle) !important;
+}
+
+body[data-theme-mode='dark'] #extensions-panel .extensions-title-icon {
+  box-shadow:
+    0 9px 20px rgba(var(--app-accent-rgb), 0.24),
+    0 0 0 4px rgba(var(--app-tint-neutral-rgb), 0.14) !important;
+}
+
+body[data-theme-mode='dark'] #extensions-panel :is(.extensions-title, .extensions-section-title, .extensions-toggle, .extensions-close) {
   color: var(--app-text-primary) !important;
 }
 
-body[data-theme-mode='dark'] #extensions-panel :is(.extensions-subtitle, .extensions-loading) {
+body[data-theme-mode='dark'] #extensions-panel :is(.extensions-subtitle, .extensions-section-description, .extensions-loading, .extensions-footer) {
   color: var(--app-text-secondary) !important;
 }
 
-body[data-theme-mode='dark'] #extensions-panel :is(.extensions-item, .extensions-body, .extensions-embedded-root) {
+body[data-theme-mode='dark'] #extensions-panel :is(.extensions-item, .extensions-embedded-root) {
   background: rgba(var(--app-tint-neutral-rgb), 0.05) !important;
   border-color: var(--app-border-default) !important;
 }
 
+body[data-theme-mode='dark'] #extensions-panel .extensions-body {
+  background: rgba(var(--app-tint-neutral-rgb), 0.035) !important;
+  border-top-color: transparent !important;
+}
+
+body[data-theme-mode='dark'] #extensions-panel .extensions-body.is-expanded {
+  border-top-color: var(--app-border-subtle) !important;
+}
+
 body[data-theme-mode='dark'] #extensions-panel .extensions-toggle {
-  background: rgba(var(--app-tint-neutral-rgb), 0.04) !important;
+  background: transparent !important;
+}
+
+body[data-theme-mode='dark'] #extensions-panel .extensions-toggle:hover {
+  background: rgba(var(--app-tint-neutral-rgb), 0.06) !important;
+}
+
+body[data-theme-mode='dark'] #extensions-panel :is(.extensions-section-chip, .extensions-chevron) {
+  background: rgba(var(--app-tint-neutral-rgb), 0.08) !important;
+  color: var(--app-text-secondary) !important;
+  border-color: var(--app-border-default) !important;
+}
+
+body[data-theme-mode='dark'] #extensions-panel .extensions-toggle[data-expanded='1'] .extensions-chevron {
+  background: var(--app-text-primary) !important;
+  color: var(--app-text-inverse) !important;
 }
 
 body[data-theme-mode='dark'] #extensions-panel .extensions-close {
@@ -1373,10 +1409,28 @@ body[data-theme-mode='dark'] #extensions-panel .extensions-close {
   border-color: var(--app-border-default) !important;
 }
 
-body[data-theme-mode='dark'] #extensions-panel #extensions-done {
-  background: var(--app-accent-primary) !important;
-  border-color: var(--app-accent-primary) !important;
-  color: var(--app-text-inverse) !important;
+body[data-theme-mode='dark'] #extensions-panel .extensions-runtime-status {
+  background: rgba(var(--app-success-rgb), 0.12) !important;
+  border-color: rgba(var(--app-success-rgb), 0.24) !important;
+  color: var(--app-success-text) !important;
+}
+
+body[data-theme-mode='dark'] #plugin-panel .plugin-empty-icon {
+  box-shadow:
+    0 12px 24px rgba(var(--app-warning-rgb), 0.18),
+    0 0 0 4px rgba(var(--app-tint-neutral-rgb), 0.14) !important;
+}
+
+body[data-theme-mode='dark'] #plugin-panel .plugin-empty-glow {
+  opacity: 0.18 !important;
+}
+
+body[data-theme-mode='dark'] #plugin-panel .plugin-empty-glow--one {
+  background: rgba(var(--app-warning-rgb), 0.28) !important;
+}
+
+body[data-theme-mode='dark'] #plugin-panel .plugin-empty-glow--two {
+  background: rgba(var(--app-accent-rgb), 0.22) !important;
 }
 
 body[data-theme-mode='dark'] #preset-panel {

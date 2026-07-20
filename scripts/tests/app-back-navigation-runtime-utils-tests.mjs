@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 
 import {
   createAppBackNavigationRuntime,
+  isAppBackLayerVisible,
   resolveAppBackNavigationAction,
 } from '../../src/scripts/ui/app-back-navigation-runtime-utils.js';
 import {
@@ -17,6 +18,27 @@ const createInput = () => ({
     this.blurred = true;
   },
 });
+
+{
+  const styleFor = element => element.style;
+  const visibleLayer = {
+    classList: { contains: () => false },
+    style: { display: 'flex', visibility: 'visible', opacity: '1', position: 'fixed' },
+    getClientRects: () => [{}],
+  };
+  const embeddedLayer = {
+    ...visibleLayer,
+    classList: { contains: name => name === 'extensions-embedded-root' },
+  };
+  const hiddenLayer = {
+    ...visibleLayer,
+    style: { ...visibleLayer.style, display: 'none' },
+  };
+  assert.equal(isAppBackLayerVisible(visibleLayer, { getComputedStyleFn: styleFor }), true);
+  assert.equal(isAppBackLayerVisible(embeddedLayer, { getComputedStyleFn: styleFor }), false);
+  assert.equal(isAppBackLayerVisible(hiddenLayer, { getComputedStyleFn: styleFor }), false);
+  console.log('ok - Android back visibility ignores extension-embedded child panels');
+}
 
 {
   assert.equal(resolveAppBackNavigationAction({ hasFocusedEditable: true }), 'blur-active-element');

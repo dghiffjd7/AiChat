@@ -13,6 +13,21 @@ const isEditableElement = (element) => {
   return Boolean(element.isContentEditable);
 };
 
+export const isAppBackLayerVisible = (
+  element,
+  { getComputedStyleFn = globalThis.getComputedStyle } = {},
+) => {
+  if (!element || element.classList?.contains?.('extensions-embedded-root')) return false;
+  if (typeof getComputedStyleFn !== 'function') return false;
+  try {
+    const style = getComputedStyleFn(element);
+    if (style.display === 'none' || style.visibility === 'hidden' || Number(style.opacity) === 0) return false;
+    return element.getClientRects?.().length > 0 || style.position === 'fixed';
+  } catch {
+    return false;
+  }
+};
+
 export const resolveAppBackNavigationAction = ({
   hasFocusedEditable = false,
   hasClosableLayer = false,

@@ -36,6 +36,48 @@ const deepClone = (v) => {
     }
 };
 
+const REGEX_TAB_MOTION_MS = 220;
+const REGEX_COLLECTION_MOTION_MS = 250;
+const REGEX_RULE_MOTION_MS = 250;
+
+const isRegexMotionReduced = () => {
+    if (typeof document !== 'undefined' && document.body?.dataset?.reducedMotion === 'on') return true;
+    return globalThis.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches === true;
+};
+
+const playRegexMotionClass = (element, className, duration) => {
+    if (!element) return Promise.resolve();
+    if (isRegexMotionReduced()) {
+        element.classList.remove(className);
+        return Promise.resolve();
+    }
+    const shouldRestart = element.classList.contains(className);
+    if (shouldRestart) {
+        element.classList.remove(className);
+        // Only a rapid repeat needs a synchronous restart. Normal transitions
+        // can start without forcing layout across the full embedded editor.
+        void element.offsetWidth;
+    }
+    element.classList.add(className);
+    return new Promise((resolve) => {
+        let settled = false;
+        let timer = null;
+        const finish = () => {
+            if (settled) return;
+            settled = true;
+            if (timer) clearTimeout(timer);
+            element.removeEventListener?.('animationend', onAnimationEnd);
+            element.classList.remove(className);
+            resolve();
+        };
+        const onAnimationEnd = (event) => {
+            if (event.target === element) finish();
+        };
+        element.addEventListener?.('animationend', onAnimationEnd);
+        timer = setTimeout(finish, duration + 80);
+    });
+};
+
 const placementLabels = {
     [regex_placement.USER_INPUT]: '用户输入',
     [regex_placement.AI_OUTPUT]: 'AI输出',
@@ -66,7 +108,38 @@ const ensureRegexPanelStyles = () => {
     const style = document.createElement('style');
     style.id = REGEX_PANEL_STYLE_ID;
     style.textContent = `
+        #regex-panel .regex-tabs {
+            --regex-tab-index: 0;
+            position: relative;
+            display: inline-grid;
+            grid-template-columns: repeat(3, minmax(64px, 1fr));
+            gap: 2px;
+            padding: 3px;
+            border: 1px solid var(--app-border-default);
+            border-radius: 12px;
+            background: var(--app-surface-subtle);
+        }
+        #regex-panel .regex-tab-indicator {
+            position: absolute;
+            z-index: 0;
+            top: 3px;
+            bottom: 3px;
+            left: 3px;
+            width: calc((100% - 10px) / 3);
+            border: 1px solid color-mix(in srgb, var(--app-border-default) 70%, transparent);
+            border-radius: 9px;
+            background: var(--app-surface-card);
+            box-shadow: 0 1px 3px rgba(15, 23, 42, 0.10), 0 1px 2px rgba(15, 23, 42, 0.06);
+            transform: translate3d(calc(var(--regex-tab-index) * (100% + 2px)), 0, 0);
+            will-change: transform;
+            pointer-events: none;
+        }
+        #regex-panel .regex-tabs[data-motion-ready='true'] .regex-tab-indicator {
+            transition: transform 320ms cubic-bezier(0.22, 1, 0.36, 1);
+        }
         #regex-panel .regex-tab {
+            position: relative;
+            z-index: 1;
             border: none;
             background: transparent;
             padding: 8px 12px;
@@ -75,11 +148,33 @@ const ensureRegexPanelStyles = () => {
             font-size: 13px;
             color: var(--app-text-secondary);
             font-weight: 700;
+            transition: color 150ms ease, transform 120ms ease;
         }
         #regex-panel .regex-tab.is-active {
-            background: var(--app-border-default);
+            background: transparent;
             color: var(--app-text-primary);
             font-weight: 900;
+        }
+        #regex-panel .regex-tab:active {
+            transform: scale(0.96);
+        }
+        #regex-panel .regex-execution-hint {
+            color: var(--app-text-muted);
+            font-size: 12px;
+        }
+        #regex-panel #regex-body {
+            position: relative;
+        }
+        #regex-panel .regex-tab-view.is-tab-leaving {
+            animation: regex-tab-view-out 220ms ease both;
+            will-change: transform, opacity;
+            backface-visibility: hidden;
+            pointer-events: none;
+        }
+        #regex-panel .regex-tab-view.is-tab-entering {
+            animation: regex-tab-view-in 220ms ease both;
+            will-change: transform, opacity;
+            backface-visibility: hidden;
         }
         #regex-panel .regex-btn {
             padding: 8px 10px;
@@ -91,6 +186,10 @@ const ensureRegexPanelStyles = () => {
             font-size: 13px;
             font-weight: 700;
             white-space: nowrap;
+            transition: transform 120ms ease, color 150ms ease, background 150ms ease, border-color 150ms ease, box-shadow 150ms ease;
+        }
+        #regex-panel .regex-btn:active {
+            transform: scale(0.96);
         }
         #regex-panel .regex-btn-primary {
             border: none;
@@ -135,11 +234,29 @@ const ensureRegexPanelStyles = () => {
             gap: 8px;
         }
         #regex-panel .regex-editor-panel {
+            position: relative;
             min-width: 0;
             contain: paint;
         }
         #regex-panel .regex-editor-panel.is-entering {
-            animation: regex-editor-in 160ms ease-out;
+            animation: regex-collection-view-in 250ms ease both;
+        }
+        #regex-panel .regex-editor-stage {
+            position: relative;
+        }
+        #regex-panel .regex-editor-view.is-collection-leaving {
+            position: absolute;
+            inset: 0;
+            width: 100%;
+            animation: regex-collection-view-out 250ms ease both;
+            will-change: transform, opacity;
+            backface-visibility: hidden;
+            pointer-events: none;
+        }
+        #regex-panel .regex-editor-view.is-collection-entering {
+            animation: regex-collection-view-in 250ms ease both;
+            will-change: transform, opacity;
+            backface-visibility: hidden;
         }
         #regex-panel .regex-search-input {
             width: 100%;
@@ -168,6 +285,10 @@ const ensureRegexPanelStyles = () => {
             padding: 5px 9px;
             font-size: 12px;
             font-weight: 800;
+            transition: transform 120ms ease, color 150ms ease, background 150ms ease, border-color 150ms ease, box-shadow 150ms ease;
+        }
+        #regex-panel .regex-filter-chip:active {
+            transform: scale(0.96);
         }
         #regex-panel .regex-filter-chip.is-active {
             border-color: var(--app-border-strong, var(--app-border-default));
@@ -187,13 +308,33 @@ const ensureRegexPanelStyles = () => {
             text-align: right;
         }
         #regex-panel .regex-set-list {
+            position: relative;
             border: 1px solid var(--app-border-default);
             border-radius: 8px;
             overflow: hidden;
             background: var(--app-surface-card);
             contain: layout paint;
         }
+        #regex-panel .regex-set-indicator {
+            position: absolute;
+            z-index: 3;
+            top: 0;
+            left: 0;
+            width: 3px;
+            height: 34px;
+            border-radius: 999px;
+            background: #6366f1;
+            box-shadow: 0 2px 8px rgba(99, 102, 241, 0.30);
+            transform: translate3d(0, 10px, 0);
+            will-change: transform;
+            pointer-events: none;
+        }
+        #regex-panel .regex-set-indicator[data-motion-ready='true'] {
+            transition: transform 320ms cubic-bezier(0.22, 1, 0.36, 1), height 320ms cubic-bezier(0.22, 1, 0.36, 1);
+        }
         #regex-panel .regex-set-row {
+            position: relative;
+            z-index: 1;
             width: 100%;
             min-height: 54px;
             text-align: left;
@@ -214,7 +355,6 @@ const ensureRegexPanelStyles = () => {
         }
         #regex-panel .regex-set-row.is-active {
             background: var(--app-surface-subtle);
-            box-shadow: inset 3px 0 0 var(--regex-state-color, #10b981);
         }
         #regex-panel .regex-set-row.is-muted {
             opacity: 0.68;
@@ -355,12 +495,113 @@ const ensureRegexPanelStyles = () => {
             font-weight: 700;
             cursor: pointer;
         }
+        #regex-panel input[type='checkbox'] {
+            display: inline-grid;
+            width: 18px !important;
+            height: 18px !important;
+            flex: 0 0 auto;
+            appearance: none;
+            -webkit-appearance: none;
+            place-content: center;
+            border: 1px solid var(--app-border-strong, var(--app-border-default));
+            border-radius: 6px;
+            background: var(--app-surface-card);
+            cursor: pointer;
+            transition: transform 120ms ease, border-color 200ms ease, background 200ms ease, box-shadow 200ms ease;
+        }
+        #regex-panel input[type='checkbox']::before {
+            content: '';
+            box-sizing: content-box;
+            width: 5px;
+            height: 9px;
+            margin-top: -2px;
+            border: solid var(--app-text-on-accent);
+            border-width: 0 2.5px 2.5px 0;
+            opacity: 0;
+            filter: drop-shadow(0 1px 1px rgba(15, 23, 42, 0.28));
+            transform: rotate(45deg) scale(0.3);
+            transform-origin: center;
+            transition: transform 240ms cubic-bezier(0.22, 1, 0.36, 1), opacity 150ms ease;
+        }
+        #regex-panel input[type='checkbox']:checked {
+            border-color: #4f46e5;
+            background: #4f46e5;
+            box-shadow:
+                inset 0 0 0 1px color-mix(in srgb, var(--app-text-on-accent) 24%, transparent),
+                0 2px 6px -1px rgba(79, 70, 229, 0.50);
+        }
+        #regex-panel input[type='checkbox']:checked::before {
+            opacity: 1;
+            transform: rotate(45deg) scale(1);
+        }
+        #regex-panel input[type='checkbox']:active {
+            transform: scale(0.88);
+        }
         #regex-panel .regex-rules-head {
             display: flex;
             align-items: center;
             justify-content: space-between;
             gap: 10px;
             flex-wrap: wrap;
+        }
+        #regex-panel .regex-rule {
+            transition: border-color 200ms ease, box-shadow 200ms ease, opacity 200ms ease;
+        }
+        #regex-panel .regex-rule[data-collapsed='false'] {
+            border-color: rgba(99, 102, 241, 0.42) !important;
+            box-shadow: 0 8px 24px -12px rgba(15, 23, 42, 0.20);
+        }
+        #regex-panel .re-toggle {
+            display: inline-flex;
+            width: 18px;
+            height: 18px;
+            flex: 0 0 auto;
+            align-items: center;
+            justify-content: center;
+            color: var(--app-text-muted);
+        }
+        #regex-panel .re-toggle svg {
+            width: 16px;
+            height: 16px;
+            fill: none;
+            stroke: currentColor;
+            stroke-width: 2;
+            stroke-linecap: round;
+            stroke-linejoin: round;
+            transition: transform 200ms ease;
+        }
+        #regex-panel .regex-rule[data-collapsed='false'] .re-toggle svg {
+            transform: rotate(90deg);
+        }
+        #regex-panel .re-body {
+            display: grid;
+            grid-template-rows: 0fr;
+            overflow: hidden;
+            padding: 0;
+            opacity: 0;
+            transition: grid-template-rows 300ms cubic-bezier(0.32, 0.72, 0, 1), opacity 200ms ease;
+        }
+        #regex-panel .regex-rule[data-collapsed='false'] .re-body {
+            grid-template-rows: 1fr;
+            opacity: 1;
+        }
+        #regex-panel .re-body-inner {
+            min-height: 0;
+            overflow: hidden;
+            padding: 0 12px;
+            transition: padding-block 300ms cubic-bezier(0.32, 0.72, 0, 1);
+        }
+        #regex-panel .regex-rule[data-collapsed='false'] .re-body-inner {
+            padding-block: 12px;
+        }
+        #regex-panel .regex-rule.is-rule-entering {
+            animation: regex-rule-in 250ms ease both;
+            will-change: transform, opacity;
+            backface-visibility: hidden;
+        }
+        #regex-panel .regex-rule.is-rule-leaving {
+            animation: regex-rule-out 250ms ease both;
+            pointer-events: none;
         }
         .regex-preset-bind-modal .app-confirm-body {
             display: flex;
@@ -429,15 +670,29 @@ const ensureRegexPanelStyles = () => {
             font-size: 13px;
             font-weight: 800;
         }
-        @keyframes regex-editor-in {
-            from {
-                opacity: 0.72;
-                transform: translateY(4px);
-            }
-            to {
-                opacity: 1;
-                transform: translateY(0);
-            }
+        @keyframes regex-tab-view-out {
+            from { opacity: 1; transform: translateY(0); }
+            to { opacity: 0; transform: translateY(-6px); }
+        }
+        @keyframes regex-tab-view-in {
+            from { opacity: 0; transform: translateY(8px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        @keyframes regex-collection-view-out {
+            from { opacity: 1; transform: translateY(0); }
+            to { opacity: 0; transform: translateY(-6px); }
+        }
+        @keyframes regex-collection-view-in {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        @keyframes regex-rule-in {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        @keyframes regex-rule-out {
+            from { height: var(--regex-rule-exit-height); opacity: 1; margin-top: 0; }
+            to { height: 0; opacity: 0; margin-top: -12px; }
         }
         @media (max-width: 760px) {
             #regex-panel .regex-workbench {
@@ -447,12 +702,18 @@ const ensureRegexPanelStyles = () => {
                 grid-template-columns: 1fr;
             }
         }
+        body[data-reduced-motion='on'] #regex-panel *,
+        body[data-reduced-motion='on'] #regex-panel *::before,
+        body[data-reduced-motion='on'] #regex-panel *::after {
+            animation: none !important;
+            transition: none !important;
+        }
         @media (prefers-reduced-motion: reduce) {
-            #regex-panel .regex-editor-panel.is-entering {
-                animation: none;
-            }
-            #regex-panel .regex-set-row {
-                transition: none;
+            #regex-panel *,
+            #regex-panel *::before,
+            #regex-panel *::after {
+                animation: none !important;
+                transition: none !important;
             }
         }
     `;
@@ -476,7 +737,22 @@ export class RegexPanel {
         this.batchMode = { world: false, preset: false };
         this.batchSelection = { world: new Set(), preset: new Set() };
         this.pendingEditorAnimation = false;
+        this.tabTransitionToken = 0;
+        this.scopedEditorTransitionToken = 0;
+        this.editorDirty = false;
         this.statusEl = null;
+    }
+
+    hasUnsavedChanges() {
+        return this.editorDirty === true;
+    }
+
+    markEditorDirty() {
+        this.editorDirty = true;
+    }
+
+    clearEditorDirty() {
+        this.editorDirty = false;
     }
 
     async show() {
@@ -528,12 +804,13 @@ export class RegexPanel {
             </div>
 
             <div style="${PANEL_SUBHEADER_STYLE}">
-                <div style="display:flex; gap:8px; flex-wrap:wrap;">
-                    <button class="regex-tab" data-tab="global">全局</button>
-                    <button class="regex-tab" data-tab="character">角色</button>
-                    <button class="regex-tab" data-tab="preset">预设</button>
+                <div class="regex-tabs" role="tablist" aria-label="正则作用域">
+                    <span class="regex-tab-indicator" aria-hidden="true"></span>
+                    <button class="regex-tab" type="button" role="tab" data-tab="global">全局</button>
+                    <button class="regex-tab" type="button" role="tab" data-tab="character">角色</button>
+                    <button class="regex-tab" type="button" role="tab" data-tab="preset">预设</button>
                 </div>
-                <div id="regex-tools" style="display:flex; gap:8px; flex-wrap:wrap;"></div>
+                <div id="regex-tools" class="regex-execution-hint">规则按「全局 → 角色 → 预设」顺序依次执行</div>
             </div>
 
             <div id="regex-scroll" style="padding:14px 16px; overflow:auto; flex:1; min-height:0; -webkit-overflow-scrolling:touch;">
@@ -549,17 +826,70 @@ export class RegexPanel {
         this.element.querySelector('#regex-close').onclick = () => this.hide();
         this.element.querySelectorAll('.regex-tab').forEach(btn => {
             btn.addEventListener('click', async () => {
-                this.activeTab = btn.dataset.tab || 'global';
-                await this.refreshAll();
+                await this.setActiveTab(btn.dataset.tab || 'global');
             });
         });
     }
 
-    setActiveTabStyles() {
+    setActiveTabStyles({ animate = false } = {}) {
+        const tabs = this.element?.querySelector('.regex-tabs');
+        const tabOrder = ['global', 'character', 'preset'];
+        const activeIndex = Math.max(0, tabOrder.indexOf(this.activeTab));
+        if (tabs) {
+            if (!animate) tabs.dataset.motionReady = 'false';
+            else tabs.dataset.motionReady = 'true';
+            tabs.style.setProperty('--regex-tab-index', String(activeIndex));
+            if (!animate) {
+                const markReady = () => {
+                    if (tabs.isConnected) tabs.dataset.motionReady = 'true';
+                };
+                if (typeof requestAnimationFrame === 'function') requestAnimationFrame(markReady);
+                else markReady();
+            }
+        }
         this.element?.querySelectorAll('.regex-tab')?.forEach(btn => {
             const isActive = btn.dataset.tab === this.activeTab;
             btn.classList.toggle('is-active', isActive);
+            btn.setAttribute('aria-selected', isActive ? 'true' : 'false');
+            btn.setAttribute('aria-controls', 'regex-body');
+            btn.tabIndex = isActive ? 0 : -1;
         });
+    }
+
+    renderActiveTabView() {
+        let view = null;
+        if (this.activeTab === 'global') view = this.renderGlobal();
+        else if (this.activeTab === 'character') view = this.renderScoped('world');
+        else if (this.activeTab === 'preset') view = this.renderScoped('preset');
+        if (view) {
+            view.classList.add('regex-tab-view');
+            view.dataset.tabView = this.activeTab;
+        }
+        return view;
+    }
+
+    async setActiveTab(nextTab) {
+        const normalized = ['global', 'character', 'preset'].includes(nextTab) ? nextTab : 'global';
+        if (normalized === this.activeTab) return;
+        await this.store.ready;
+        this.activeTab = normalized;
+        if (!this.element) return;
+
+        const body = this.element.querySelector('#regex-body');
+        const transitionToken = ++this.tabTransitionToken;
+        this.setActiveTabStyles({ animate: true });
+        if (!body) return;
+
+        body.setAttribute('aria-busy', 'true');
+        const previousView = body.firstElementChild;
+        await playRegexMotionClass(previousView, 'is-tab-leaving', REGEX_TAB_MOTION_MS);
+        if (transitionToken !== this.tabTransitionToken) return;
+
+        const nextView = this.renderActiveTabView();
+        body.replaceChildren(...(nextView ? [nextView] : []));
+        this.clearEditorDirty();
+        await playRegexMotionClass(nextView, 'is-tab-entering', REGEX_TAB_MOTION_MS);
+        if (transitionToken === this.tabTransitionToken) body.removeAttribute('aria-busy');
     }
 
     showStatus(message, type = 'info') {
@@ -578,7 +908,7 @@ export class RegexPanel {
         setTimeout(() => { try { el.style.display = 'none'; } catch {} }, 2200);
     }
 
-    renderRuleCard(rule) {
+    renderRuleCard(rule, { initiallyExpanded = false } = {}) {
         const r = normalizeRegexScript(rule);
         const card = document.createElement('div');
         card.className = 'regex-rule';
@@ -593,7 +923,7 @@ export class RegexPanel {
         const left = document.createElement('div');
         left.style.cssText = 'display:flex; align-items:center; gap:10px; min-width:0;';
         left.innerHTML = `
-            <div class="re-toggle" style="font-size:16px; color:var(--app-text-muted); user-select:none; width:18px;">▸</div>
+            <span class="re-toggle" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></svg></span>
             <div style="min-width:0;">
                 <div class="re-title" style="font-weight:800; color:var(--app-text-primary); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;"></div>
                 <div class="re-sub" style="color:var(--app-text-muted); font-size:12px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;"></div>
@@ -617,7 +947,7 @@ export class RegexPanel {
 
         const body = document.createElement('div');
         body.className = 're-body';
-        body.style.cssText = 'display:none; padding:12px; gap:10px;';
+        body.style.cssText = 'display:grid; padding:0;';
 
         body.innerHTML = `
             <div style="display:flex; gap:10px; flex-wrap:wrap;">
@@ -691,6 +1021,11 @@ export class RegexPanel {
             </div>
         `;
 
+        const bodyInner = document.createElement('div');
+        bodyInner.className = 're-body-inner';
+        while (body.firstChild) bodyInner.appendChild(body.firstChild);
+        body.appendChild(bodyInner);
+
         const enabledInput = enabledWrap.querySelector('input');
         enabledInput.checked = !r.disabled;
         body.querySelector('.re-name').value = r.scriptName || '';
@@ -734,12 +1069,22 @@ export class RegexPanel {
 
         const setCollapsed = (collapsed) => {
             card.dataset.collapsed = collapsed ? 'true' : 'false';
-            header.querySelector('.re-toggle').textContent = collapsed ? '▸' : '▾';
-            body.style.display = collapsed ? 'none' : 'block';
+            header.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+            body.setAttribute('aria-hidden', collapsed ? 'true' : 'false');
+            body.toggleAttribute('inert', collapsed);
         };
-        setCollapsed(true);
+        header.setAttribute('role', 'button');
+        header.tabIndex = 0;
+        setCollapsed(!initiallyExpanded);
 
         header.addEventListener('click', () => {
+            const collapsed = card.dataset.collapsed === 'true';
+            setCollapsed(!collapsed);
+        });
+        header.addEventListener('keydown', (event) => {
+            if (event.target !== event.currentTarget) return;
+            if (event.key !== 'Enter' && event.key !== ' ') return;
+            event.preventDefault();
             const collapsed = card.dataset.collapsed === 'true';
             setCollapsed(!collapsed);
         });
@@ -747,20 +1092,47 @@ export class RegexPanel {
         card.querySelectorAll('input,select,button').forEach(el => {
             el.addEventListener('click', (e) => e.stopPropagation());
         });
+        del.addEventListener('click', (event) => {
+            event.stopPropagation();
+            void this.removeRuleCard(card);
+        });
         enabledInput.addEventListener('change', () => {
             body.querySelector('.re-disabled').checked = !enabledInput.checked;
             updateHeader();
+            this.markEditorDirty();
         });
-        body.querySelectorAll('input,select,textarea').forEach(el => el.addEventListener('input', updateHeader));
+        body.querySelectorAll('input,select,textarea').forEach(el => {
+            const handleEdit = () => {
+                updateHeader();
+                this.markEditorDirty();
+            };
+            el.addEventListener('input', handleEdit);
+            el.addEventListener('change', handleEdit);
+        });
 
         card.appendChild(header);
         card.appendChild(body);
         return card;
     }
 
+    animateRuleCardIn(card) {
+        const start = () => { void playRegexMotionClass(card, 'is-rule-entering', REGEX_RULE_MOTION_MS); };
+        if (typeof requestAnimationFrame === 'function') requestAnimationFrame(start);
+        else start();
+    }
+
+    async removeRuleCard(card) {
+        if (!card || card.dataset.removing === 'true') return;
+        card.dataset.removing = 'true';
+        card.style.setProperty('--regex-rule-exit-height', `${Math.max(0, card.offsetHeight || 0)}px`);
+        await playRegexMotionClass(card, 'is-rule-leaving', REGEX_RULE_MOTION_MS);
+        card.remove();
+        this.markEditorDirty();
+    }
+
     collectRules(container) {
         const rules = [];
-        container.querySelectorAll('.regex-rule').forEach(el => {
+        container.querySelectorAll('.regex-rule:not([data-removing="true"])').forEach(el => {
             const id = el.dataset.ruleId || genRegexId('re');
             const placement = Array.from(el.querySelectorAll('.re-place'))
                 .filter(cb => cb.checked)
@@ -790,20 +1162,14 @@ export class RegexPanel {
     async refreshAll() {
         await this.store.ready;
         if (!this.element) return;
+        this.tabTransitionToken += 1;
         this.setActiveTabStyles();
-        const tools = this.element.querySelector('#regex-tools');
         const body = this.element.querySelector('#regex-body');
-        if (!tools || !body) return;
-        tools.innerHTML = '';
-        body.innerHTML = '';
-
-        if (this.activeTab === 'global') {
-            body.appendChild(this.renderGlobal());
-        } else if (this.activeTab === 'character') {
-            body.appendChild(this.renderScoped('world'));
-        } else if (this.activeTab === 'preset') {
-            body.appendChild(this.renderScoped('preset'));
-        }
+        if (!body) return;
+        body.removeAttribute('aria-busy');
+        const view = this.renderActiveTabView();
+        body.replaceChildren(...(view ? [view] : []));
+        this.clearEditorDirty();
     }
 
     renderGlobal() {
@@ -838,6 +1204,7 @@ export class RegexPanel {
             </div>
         `;
         head.querySelector('#re-global-enabled').checked = g.enabled !== false;
+        head.querySelector('#re-global-enabled').addEventListener('change', () => this.markEditorDirty());
         wrap.appendChild(head);
 
         const list = document.createElement('div');
@@ -847,12 +1214,15 @@ export class RegexPanel {
         wrap.appendChild(list);
 
         head.querySelector('#re-global-add').onclick = () => {
-            list.appendChild(this.renderRuleCard({
+            const card = this.renderRuleCard({
                 placement: [regex_placement.USER_INPUT],
                 markdownOnly: true,
                 runOnEdit: true,
                 disabled: false,
-            }));
+            }, { initiallyExpanded: true });
+            list.appendChild(card);
+            this.animateRuleCardIn(card);
+            this.markEditorDirty();
         };
         head.querySelector('#re-global-import').onclick = async () => {
             try {
@@ -861,7 +1231,12 @@ export class RegexPanel {
                 const parsed = parseRegexImportText(text);
                 const rules = flattenRegexImportRules(parsed);
                 if (!rules.length) { this.showStatus('未找到可导入的正则规则', 'info'); return; }
-                rules.forEach(r => list.appendChild(this.renderRuleCard(r)));
+                rules.forEach((rule) => {
+                    const card = this.renderRuleCard(rule);
+                    list.appendChild(card);
+                    this.animateRuleCardIn(card);
+                });
+                this.markEditorDirty();
                 this.showStatus(`已导入 ${rules.length} 条规则（请点保存确认）`, 'success');
             } catch (err) {
                 logger.error('导入正则失败', err);
@@ -881,17 +1256,12 @@ export class RegexPanel {
                 this.showStatus(err.message || '导出失败', 'error');
             }
         };
-        list.addEventListener('click', (e) => {
-            const del = e.target.closest('.re-del');
-            if (!del) return;
-            const card = del.closest('.regex-rule');
-            if (card) card.remove();
-        });
         head.querySelector('#re-global-save').onclick = async () => {
             try {
                 const enabled = head.querySelector('#re-global-enabled')?.checked !== false;
                 const rules = this.collectRules(list);
                 await this.store.setGlobal({ enabled, rules });
+                this.clearEditorDirty();
                 this.showStatus('已保存全局正则', 'success');
                 window.dispatchEvent(new CustomEvent('regex-changed'));
             } catch (err) {
@@ -1177,7 +1547,7 @@ export class RegexPanel {
         return haystack.includes(query);
     }
 
-    renderScopedSetItem(setObj, { activeId, scope, batchMode = false, selected = false, context = null }) {
+    renderScopedSetItem(setObj, { activeId, scope, batchMode = false, selected = false, context = null, onActivate = null }) {
         const item = document.createElement('div');
         const s = setObj && typeof setObj === 'object' ? setObj : {};
         const isActive = s.id === activeId;
@@ -1187,7 +1557,9 @@ export class RegexPanel {
         const muted = visual.kind !== 'active';
         const dimmed = visual.kind === 'disabled' || visual.kind === 'unbound';
         item.title = name;
+        item.dataset.setId = String(s.id || '');
         item.setAttribute('aria-label', `${name}，${visual.label}`);
+        item.setAttribute('aria-pressed', isActive ? 'true' : 'false');
         item.setAttribute('role', 'button');
         item.tabIndex = 0;
         item.className = [
@@ -1246,6 +1618,10 @@ export class RegexPanel {
                 await this.refreshAll();
                 return;
             }
+            if (typeof onActivate === 'function') {
+                await onActivate(s.id);
+                return;
+            }
             if (s.id !== activeId) this.pendingEditorAnimation = true;
             this.setActiveSetIdForScope(scope, s.id);
             await this.refreshAll();
@@ -1257,6 +1633,56 @@ export class RegexPanel {
             await activateOrSelect();
         };
         return item;
+    }
+
+    syncScopedSetIndicator(setlist, indicator, activeId, { animate = false } = {}) {
+        if (!setlist || !indicator) return;
+        const row = Array.from(setlist.querySelectorAll('.regex-set-row'))
+            .find(candidate => candidate.dataset.setId === String(activeId || ''));
+        if (!row) {
+            indicator.hidden = true;
+            return;
+        }
+        indicator.hidden = false;
+        indicator.dataset.motionReady = animate ? 'true' : 'false';
+        const top = Math.max(0, row.offsetTop + 10);
+        const height = Math.max(18, row.offsetHeight - 20);
+        indicator.style.height = `${height}px`;
+        indicator.style.transform = `translate3d(0, ${top}px, 0)`;
+        if (!animate) {
+            const markReady = () => {
+                if (indicator.isConnected) indicator.dataset.motionReady = 'true';
+            };
+            if (typeof requestAnimationFrame === 'function') requestAnimationFrame(markReady);
+            else markReady();
+        }
+    }
+
+    async transitionScopedEditor(editor, setObj, scope) {
+        if (!editor) return;
+        const transitionToken = ++this.scopedEditorTransitionToken;
+        this.clearEditorDirty();
+        const currentView = editor.lastElementChild;
+        Array.from(editor.children).forEach(child => {
+            if (child !== currentView) child.remove();
+        });
+
+        const nextView = this.renderScopedEditor(setObj, scope);
+        nextView.classList.add('regex-editor-view');
+        if (!currentView || isRegexMotionReduced()) {
+            editor.replaceChildren(nextView);
+            return;
+        }
+
+        currentView.classList.add('regex-editor-view');
+        editor.appendChild(nextView);
+        await Promise.all([
+            playRegexMotionClass(currentView, 'is-collection-leaving', REGEX_COLLECTION_MOTION_MS),
+            playRegexMotionClass(nextView, 'is-collection-entering', REGEX_COLLECTION_MOTION_MS),
+        ]);
+        if (transitionToken !== this.scopedEditorTransitionToken) return;
+        currentView.remove();
+        nextView.classList.remove('is-collection-entering');
     }
 
     renderScoped(scope) {
@@ -1349,6 +1775,9 @@ export class RegexPanel {
         const setlistEl = document.createElement('div');
         setlistEl.id = 're-scoped-setlist';
         setlistEl.className = 'regex-set-list';
+        const setIndicator = document.createElement('span');
+        setIndicator.className = 'regex-set-indicator';
+        setIndicator.setAttribute('aria-hidden', 'true');
 
         left.appendChild(top);
         left.appendChild(search);
@@ -1358,6 +1787,7 @@ export class RegexPanel {
 
         const editorEl = document.createElement('div');
         editorEl.id = 're-scoped-editor';
+        editorEl.className = 'regex-editor-stage';
 
         const right = document.createElement('div');
         right.className = 'regex-editor-panel';
@@ -1375,9 +1805,28 @@ export class RegexPanel {
         const setlist = setlistEl;
         const editor = editorEl;
 
+        const updateSelectedRows = () => {
+            setlist.querySelectorAll('.regex-set-row').forEach((row) => {
+                const isActive = row.dataset.setId === String(activeId || '');
+                row.classList.toggle('is-active', isActive);
+                row.setAttribute('aria-pressed', isActive ? 'true' : 'false');
+            });
+        };
+
+        const activateSet = async (nextId) => {
+            const normalizedId = String(nextId || '');
+            if (!normalizedId || normalizedId === String(activeId || '')) return;
+            activeId = normalizedId;
+            this.setActiveSetIdForScope(scope, activeId);
+            updateSelectedRows();
+            this.syncScopedSetIndicator(setlist, setIndicator, activeId, { animate: true });
+            await this.transitionScopedEditor(editor, this.store.getLocalSet(activeId), scope);
+        };
+
         const renderSetList = () => {
-            setlist.innerHTML = '';
+            setlist.replaceChildren(setIndicator);
             if (!baseSets.length) {
+                setIndicator.hidden = true;
                 const empty = document.createElement('div');
                 empty.style.cssText = 'padding:12px; color:var(--app-text-muted); text-align:center;';
                 empty.textContent = `暂无${scopeLabel}正则集合`;
@@ -1385,6 +1834,7 @@ export class RegexPanel {
                 return;
             }
             if (!visibleSets.length) {
+                setIndicator.hidden = true;
                 const empty = document.createElement('div');
                 empty.style.cssText = 'padding:12px; color:var(--app-text-muted); text-align:center;';
                 empty.textContent = '没有符合当前筛选的正则集合';
@@ -1398,20 +1848,27 @@ export class RegexPanel {
                     batchMode: isBatchMode,
                     selected: selection.has(s.id),
                     context: activeContext,
+                    onActivate: activateSet,
                 }));
             });
+            if (isBatchMode) setIndicator.hidden = true;
+            else {
+                const positionIndicator = () => this.syncScopedSetIndicator(setlist, setIndicator, activeId);
+                if (typeof requestAnimationFrame === 'function') requestAnimationFrame(positionIndicator);
+                else positionIndicator();
+            }
         };
         renderSetList();
 
         const setObj = activeId ? this.store.getLocalSet(activeId) : null;
-        editor.innerHTML = '';
-        editor.appendChild(this.renderScopedEditor(setObj, scope));
+        const initialEditor = this.renderScopedEditor(setObj, scope);
+        initialEditor.classList.add('regex-editor-view');
+        editor.replaceChildren(initialEditor);
         if (this.pendingEditorAnimation) {
             this.pendingEditorAnimation = false;
-            right.classList.add('is-entering');
-            setTimeout(() => {
-                try { right.classList.remove('is-entering'); } catch {}
-            }, 220);
+            const enter = () => { void playRegexMotionClass(right, 'is-entering', REGEX_COLLECTION_MOTION_MS); };
+            if (typeof requestAnimationFrame === 'function') requestAnimationFrame(enter);
+            else enter();
         }
 
         if (this.pendingSearchFocusScope === scope) {
@@ -1739,6 +2196,7 @@ export class RegexPanel {
         enabledEl.type = 'checkbox';
         enabledEl.style.cssText = 'width:16px; height:16px;';
         enabledEl.checked = s.manualEnabled !== false;
+        enabledEl.addEventListener('change', () => this.markEditorDirty());
         enabledLabel.appendChild(enabledEl);
         enabledLabel.appendChild(document.createTextNode('启用集合'));
 
@@ -1789,19 +2247,16 @@ export class RegexPanel {
         wrap.appendChild(list);
 
         btnAdd.onclick = () => {
-            list.appendChild(this.renderRuleCard({
+            const card = this.renderRuleCard({
                 placement: [regex_placement.USER_INPUT],
                 markdownOnly: true,
                 runOnEdit: true,
                 disabled: false,
-            }));
+            }, { initiallyExpanded: true });
+            list.appendChild(card);
+            this.animateRuleCardIn(card);
+            this.markEditorDirty();
         };
-        list.addEventListener('click', (e) => {
-            const del = e.target.closest('.re-del');
-            if (!del) return;
-            const card = del.closest('.regex-rule');
-            if (card) card.remove();
-        });
 
         btnExport.onclick = async () => {
             try {
@@ -1834,6 +2289,7 @@ export class RegexPanel {
                 const rules = this.collectRules(list);
                 const nextName = getRegexImportSetName(s.name, rules, displayName || `${scopeLabel}正则`);
                 await this.store.upsertLocalSet({ id: s.id, name: nextName, enabled, bind: s.bind, rules });
+                this.clearEditorDirty();
                 this.showStatus(`已保存${scopeLabel}正则`, 'success');
                 window.dispatchEvent(new CustomEvent('regex-changed'));
             } catch (err) {

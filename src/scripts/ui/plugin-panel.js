@@ -21,6 +21,7 @@ const ICONS = Object.freeze({
   link: iconSvg('<path d="M10 13a5 5 0 0 0 7.1 0l2-2a5 5 0 0 0-7.1-7.1l-1.1 1.1"/><path d="M14 11a5 5 0 0 0-7.1 0l-2 2a5 5 0 0 0 7.1 7.1l1.1-1.1"/>'),
   lock: iconSvg('<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>'),
   more: iconSvg('<circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/>'),
+  puzzle: iconSvg('<path d="M19.4 7.3a2.9 2.9 0 1 0-2.7-2.7H14a2 2 0 0 0-2 2v2.7a2.9 2.9 0 1 0 0 5.4v2.7a2 2 0 0 0 2 2h2.7a2.9 2.9 0 1 1 2.7-2.7V14a2 2 0 0 0 2-2V9.3a2 2 0 0 0-2-2Z"/><path d="M12 9.3H9.3a2 2 0 0 0-2 2V14H4.6a2.9 2.9 0 1 0 2.7 2.7v2.7a2 2 0 0 0 2 2H12"/>'),
   refresh: iconSvg('<path d="M3 12a9 9 0 0 1 15.5-6.2"/><path d="M18 3v5h-5"/><path d="M21 12a9 9 0 0 1-15.5 6.2"/><path d="M6 21v-5h5"/>'),
   rollback: iconSvg('<path d="M3 7v6h6"/><path d="M21 17a9 9 0 0 0-15-6.7L3 13"/>'),
   trash: iconSvg('<path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v5"/><path d="M14 11v5"/>'),
@@ -81,6 +82,106 @@ const ensurePanelStyles = () => {
       border-radius: 14px !important;
       background: color-mix(in srgb, var(--app-surface-card) 92%, var(--app-surface-subtle)) !important;
       box-shadow: 0 5px 18px rgba(15, 23, 42, 0.055) !important;
+      transition: border-color 180ms ease, box-shadow 180ms ease, transform 180ms ease;
+    }
+    #plugin-panel .plugin-card.is-entering {
+      animation: plugin-card-in 220ms ease backwards;
+    }
+    #plugin-panel .plugin-card:hover {
+      border-color: var(--app-border-strong, var(--app-border-default)) !important;
+      box-shadow: 0 10px 26px -14px rgba(15, 23, 42, 0.24) !important;
+      transform: translateY(-1px);
+    }
+    #plugin-panel .plugin-panel-empty {
+      position: relative;
+      display: grid;
+      min-height: min(400px, 48vh);
+      place-items: center;
+      overflow: hidden;
+      padding: 32px 20px !important;
+      border: 2px dashed var(--app-border-default);
+      border-radius: 16px;
+      background: color-mix(in srgb, var(--app-surface-card) 72%, transparent);
+      color: var(--app-text-muted);
+      text-align: center;
+    }
+    #plugin-panel .plugin-panel-empty.is-entering {
+      animation: plugin-empty-in 300ms ease backwards;
+    }
+    #plugin-panel .plugin-empty-glow {
+      position: absolute;
+      width: 230px;
+      height: 230px;
+      border-radius: 999px;
+      filter: blur(48px);
+      opacity: 0.46;
+      pointer-events: none;
+    }
+    #plugin-panel .plugin-empty-glow--one {
+      top: -110px;
+      left: -90px;
+      background: rgba(253, 230, 138, 0.66);
+    }
+    #plugin-panel .plugin-empty-glow--two {
+      right: -80px;
+      bottom: -120px;
+      background: rgba(254, 215, 170, 0.58);
+    }
+    #plugin-panel .plugin-empty-content {
+      position: relative;
+      display: flex;
+      max-width: 420px;
+      flex-direction: column;
+      align-items: center;
+    }
+    #plugin-panel .plugin-empty-icon {
+      display: inline-flex;
+      width: 64px;
+      height: 64px;
+      align-items: center;
+      justify-content: center;
+      border-radius: 18px;
+      background: linear-gradient(135deg, #fbbf24, #fb923c);
+      color: #fff;
+      box-shadow: 0 12px 24px rgba(245, 158, 11, 0.28), 0 0 0 4px rgba(254, 243, 199, 0.92);
+      animation: plugin-empty-float 3.2s ease-in-out infinite;
+    }
+    #plugin-panel .plugin-empty-icon .plugin-panel-icon {
+      width: 32px;
+      height: 32px;
+      stroke-width: 1.8;
+    }
+    #plugin-panel .plugin-empty-title {
+      margin-top: 20px;
+      color: var(--app-text-primary);
+      font-size: 14px;
+      font-weight: 650;
+    }
+    #plugin-panel .plugin-empty-copy {
+      margin-top: 6px;
+      color: var(--app-text-muted);
+      font-size: 12.5px;
+      line-height: 1.65;
+    }
+    #plugin-panel .plugin-empty-support {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      margin-top: 18px;
+      padding: 6px 12px;
+      border: 1px solid var(--app-border-default);
+      border-radius: 999px;
+      background: var(--app-surface-subtle);
+      color: var(--app-text-secondary);
+      font-size: 11.5px;
+      font-weight: 600;
+    }
+    #plugin-panel .plugin-empty-support-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 999px;
+      background: #10b981;
+      box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.10);
     }
     .plugin-panel-icon {
       width: 15px;
@@ -92,6 +193,18 @@ const ensurePanelStyles = () => {
       stroke-linejoin: round;
       flex: 0 0 auto;
     }
+    @keyframes plugin-card-in {
+      from { opacity: 0; transform: translateY(8px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    @keyframes plugin-empty-in {
+      from { opacity: 0; transform: scale(0.99); }
+      to { opacity: 1; transform: scale(1); }
+    }
+    @keyframes plugin-empty-float {
+      0%, 100% { transform: translateY(0); }
+      50% { transform: translateY(-7px); }
+    }
     @media (max-width: 680px) {
       #plugin-panel.plugin-panel-shell {
         inset: calc(8px + env(safe-area-inset-top, 0px)) calc(8px + env(safe-area-inset-right, 0px)) calc(8px + env(safe-area-inset-bottom, 0px)) calc(8px + env(safe-area-inset-left, 0px)) !important;
@@ -100,12 +213,46 @@ const ensurePanelStyles = () => {
       #plugin-list {
         padding: 12px !important;
       }
+      #plugin-panel .plugin-panel-actionbar {
+        padding: 10px !important;
+      }
+      #plugin-panel .plugin-panel-button {
+        min-height: 40px;
+      }
+      #plugin-panel .plugin-panel-empty {
+        min-height: min(300px, 42dvh);
+        padding: 24px 14px !important;
+      }
+      #plugin-panel .plugin-empty-icon {
+        width: 56px;
+        height: 56px;
+        border-radius: 16px;
+      }
+      #plugin-panel .plugin-empty-copy {
+        font-size: 12px;
+      }
+    }
+    body[data-reduced-motion='on'] #plugin-panel .plugin-panel-button,
+    body[data-reduced-motion='on'] .plugin-ui-panel .plugin-panel-button,
+    body[data-reduced-motion='on'] .plugin-import-menu .import-menu-item,
+    body[data-reduced-motion='on'] .plugin-more-menu .plugin-more-menu-item,
+    body[data-reduced-motion='on'] #plugin-panel .plugin-card,
+    body[data-reduced-motion='on'] #plugin-panel .plugin-panel-empty,
+    body[data-reduced-motion='on'] #plugin-panel .plugin-empty-icon {
+      animation: none !important;
+      transition: none !important;
     }
     @media (prefers-reduced-motion: reduce) {
       #plugin-panel .plugin-panel-button,
       .plugin-ui-panel .plugin-panel-button,
       .plugin-import-menu .import-menu-item,
       .plugin-more-menu .plugin-more-menu-item {
+        transition: none !important;
+      }
+      #plugin-panel .plugin-card,
+      #plugin-panel .plugin-panel-empty,
+      #plugin-panel .plugin-empty-icon {
+        animation: none !important;
         transition: none !important;
       }
     }
@@ -1031,21 +1178,34 @@ export class PluginPanel {
   async renderList() {
     if (!this.listEl) return;
     const items = this.store?.list?.() || [];
+    const shouldAnimateList = this.listEl.dataset.motionInitialized !== 'true';
     this.listEl.innerHTML = '';
+    this.listEl.dataset.motionInitialized = 'true';
     if (!items.length) {
       const empty = document.createElement('div');
       empty.className = 'plugin-panel-empty';
-      empty.style.cssText = 'padding:24px;text-align:center;color:var(--app-text-muted);font-size:13px;';
-      empty.textContent = this.isAndroid
-        ? '暂无插件，点击上方“导入插件 ZIP”开始。'
-        : '暂无插件，点击上方“导入插件文件夹”开始。';
+      if (shouldAnimateList) empty.classList.add('is-entering');
+      const emptyCopy = this.isAndroid
+        ? '点击上方「导入插件」选择 ZIP 文件开始，也可以通过链接安装。'
+        : '点击上方「导入插件」选择文件夹或 ZIP 开始，也可以通过链接安装。';
+      empty.innerHTML = `
+        <span class="plugin-empty-glow plugin-empty-glow--one"></span>
+        <span class="plugin-empty-glow plugin-empty-glow--two"></span>
+        <div class="plugin-empty-content">
+          <span class="plugin-empty-icon">${ICONS.puzzle}</span>
+          <div class="plugin-empty-title">暂无插件</div>
+          <div class="plugin-empty-copy">${emptyCopy}</div>
+          <div class="plugin-empty-support"><span class="plugin-empty-support-dot"></span>支持 manifest.json 标准插件结构</div>
+        </div>
+      `;
       this.listEl.appendChild(empty);
       return;
     }
 
-    items.forEach(item => {
+    items.forEach((item, index) => {
       const card = document.createElement('div');
       card.className = 'plugin-card';
+      if (shouldAnimateList) card.classList.add('is-entering');
       card.style.cssText = `
         border: 1px solid rgba(148,163,184,0.2);
         border-radius: 12px;
@@ -1056,6 +1216,7 @@ export class PluginPanel {
         flex-direction: column;
         gap: 10px;
       `;
+      if (shouldAnimateList) card.style.animationDelay = `${Math.min(index * 24, 120)}ms`;
       const manifest = item.manifest || {};
       const enabled = Boolean(item.enabled);
       const isPower = String(manifest.mode || '').toLowerCase() === 'power';
