@@ -64,6 +64,25 @@ import {
 }
 
 {
+  const message = { role: 'assistant', type: 'text', meta: { renderRich: true } };
+  const actions = buildContextMenuActions(message, {
+    hasCode: false,
+    hasRpMessageActions: true,
+  });
+  assert.deepEqual(actions.map(item => item.key), ['generate-image', 'delete']);
+
+  const codeActions = buildContextMenuActions(message, {
+    hasCode: true,
+    hasRpMessageActions: true,
+  });
+  assert.equal(codeActions.some(item => item.key === 'view-code'), true);
+  assert.equal(codeActions.find(item => item.key === 'view-code')?.label, '查看代码');
+  assert.equal(codeActions.some(item => item.key === 'copy-text'), false);
+  assert.equal(codeActions.some(item => item.key === 'regenerate'), false);
+  console.log('ok - buildContextMenuActions deduplicates RP quick actions while preserving targeted code viewing');
+}
+
+{
   const message = {
     role: 'assistant',
     type: 'text',

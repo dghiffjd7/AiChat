@@ -164,3 +164,23 @@ const createWrapper = (message = {}) => {
   }), false);
   console.log('ok - tryPatchMessageElement patches chrome only when render signature stays stable');
 }
+
+{
+  const runtime = createMessagePatchUiRuntime({
+    normalizeReplyTarget: value => value ?? null,
+    normalizeReactionEntries: value => value ?? [],
+    resolveActiveSwipeMessage: message => message,
+    applyCreativeBubbleState: () => {},
+    resolveRpAssistantName: () => '莉莉丝',
+  });
+  const wrapper = createWrapper({ id: 'rp-name' });
+  wrapper.classList.add('has-rp-message-chrome');
+  runtime.patchMessageChrome(wrapper, {
+    id: 'rp-name',
+    role: 'assistant',
+    name: '助手',
+    time: '12:00',
+  });
+  assert.equal(wrapper.__testRefs.nameEl.textContent, '莉莉丝');
+  console.log('ok - patchMessageChrome preserves the resolved rp character name during chrome-only updates');
+}

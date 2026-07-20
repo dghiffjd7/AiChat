@@ -116,6 +116,8 @@ const createFakeDocument = () => {
   const indicator = createSwipeIndicatorElement(documentLike, message);
   assert.equal(indicator.dataset.msgId, 'm1');
   assert.equal(indicator.querySelector('.rp-swipe-counter').textContent, '1/2');
+  assert.equal(indicator.querySelector('.rp-swipe-prev').innerHTML.includes('<svg'), true);
+  assert.equal(indicator.querySelector('.rp-swipe-next').innerHTML.includes('<svg'), true);
   assert.equal(indicator.querySelector('.rp-swipe-prev').disabled, true);
   assert.equal(indicator.querySelector('.rp-swipe-next').disabled, true);
   syncSwipeIndicatorElement(indicator, 1, 2, { generating: false });

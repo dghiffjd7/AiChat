@@ -44,7 +44,7 @@ import { createSelectionModeUiRuntime } from './selection-mode-ui-utils.js';
 import { createMessagePatchUiRuntime } from './message-patch-ui-utils.js';
 import { createMessageClipboardUiRuntime } from './message-clipboard-ui-utils.js';
 import { createCodeViewerUiRuntime } from './code-viewer-ui-utils.js';
-import { buildContextMenuActions, positionContextMenu, resolveViewCodeText } from './context-menu-ui-utils.js';
+import { buildContextMenuActions, positionContextMenu } from './context-menu-ui-utils.js';
 import { createContextMenuActionButton, createContextMenuDivider, createContextMenuReactionRow } from './context-menu-dom-utils.js';
 import { dispatchContextMenuAction } from './context-menu-action-runtime-utils.js';
 import { createContextMenuShell, resolveContextMenuContext } from './context-menu-runtime-utils.js';
@@ -79,6 +79,7 @@ import {
   syncSwipeIndicatorElement,
 } from './swipe-ui-utils.js';
 import { createSwipeUiRuntime } from './swipe-runtime-utils.js';
+import { createRpMessageActionsUiRuntime } from './rp-message-actions-ui-utils.js';
 import {
   applyJumpFocusState,
   clearJumpFocusState,
@@ -384,6 +385,7 @@ export class ChatUI {
       normalizeReactionEntries,
       resolveActiveSwipeMessage: message => this.resolveActiveSwipeMessage(message),
       applyCreativeBubbleState: (wrapper, message) => this.applyCreativeBubbleState(wrapper, message),
+      resolveRpAssistantName: message => this.resolveRpAssistantDisplayName(message),
     });
     this.rpFloorUiRuntime = createRpFloorUiRuntime({
       documentLike: document,
@@ -408,7 +410,11 @@ export class ChatUI {
     this.inlineEditRuntime = createInlineEditUiRuntime({
       documentLike: document,
       schedule: cb => setTimeout(cb, 0),
-      onConfirmEdit: (message, text) => this.actionHandler?.('edit-confirm', message, { text }),
+      onConfirmEdit: (message, text) => this.actionHandler?.(
+        message?.role === 'assistant' ? 'edit-assistant-raw' : 'edit-confirm',
+        message,
+        { text, regexEditMode: false },
+      ),
     });
     this.feedbackOverlayRuntime = createFeedbackOverlayUiRuntime({
       documentLike: document,
@@ -445,6 +451,10 @@ export class ChatUI {
       cancelFrame: typeof cancelAnimationFrame === 'function'
         ? cancelAnimationFrame
         : (handle => clearTimeout(handle)),
+    });
+    this.rpMessageActionsRuntime = createRpMessageActionsUiRuntime({
+      schedule: (handler, delay = 0) => setTimeout(handler, delay),
+      clearSchedule: timerId => clearTimeout(timerId),
     });
     this.assistantStreamUiRuntime = createAssistantStreamUiRuntime({
       windowLike: typeof window !== 'undefined' ? window : null,
@@ -493,6 +503,19 @@ export class ChatUI {
     this._swipeRegenHandler = null;
     this._swipeChangeHandler = null;
     this._bindSwipeEvents();
+    this._bindRpMessageActions();
+  }
+
+  _bindRpMessageActions() {
+    this._unbindRpMessageActions?.();
+    this._unbindRpMessageActions = this.rpMessageActionsRuntime.bind({
+      scrollEl: this.scrollEl,
+      onAction: (action, { wrapper, message }) => {
+        const actionKey = action === 'copy' ? 'copy-text' : action;
+        return this.actionHandler?.(actionKey, message, { wrapper });
+      },
+      onError: error => logger.warn('rp message action failed', error),
+    });
   }
 
   _bindSwipeEvents() {
@@ -682,6 +705,19 @@ export class ChatUI {
     return String(this.providerContinuationCommitContext?.chatStore?.getCurrent?.() || '').trim();
   }
 
+  resolveRpAssistantDisplayName(message = null) {
+    const fallback = String(message?.name || '').trim() || '角色';
+    try {
+      const bridge = typeof window !== 'undefined' ? window.appBridge : null;
+      const name = String(
+        bridge?.getRpCharacterNameForSession?.(this.resolveMessageSessionId(message)) || '',
+      ).trim();
+      return name || fallback;
+    } catch {
+      return fallback;
+    }
+  }
+
   getReasoningText(message) {
     return this.messageHeaderRuntime.getReasoningText(message);
   }
@@ -797,6 +833,9 @@ export class ChatUI {
         }
 
         if (phase === 'down') {
+          if (this.rpMessageActionsRuntime?.isTouchLike?.({})) {
+            this.rpMessageActionsRuntime.reveal?.(wrapper);
+          }
           this.clearLongPress();
           return;
         }
@@ -1726,7 +1765,10 @@ export class ChatUI {
       buildReactionSummaryElement: nextMessage => this.buildReactionSummaryElement(nextMessage),
       createReactionTriggerButton,
       buildBubbleStack: payload => buildBubbleStackCore(payload),
-      appendStandardMessageLayout: payload => appendStandardMessageLayoutCore(payload),
+      appendStandardMessageLayout: payload => appendStandardMessageLayoutCore({
+        ...payload,
+        resolveRpCharacterName: nextMessage => this.resolveRpAssistantDisplayName(nextMessage),
+      }),
       isThreadingEnabledForMessage: nextMessage => this.isThreadingEnabledForMessage(nextMessage),
       showReactionPicker: (button, nextMessage) => this.showReactionPicker(button, nextMessage),
       createSwipeIndicatorElement,
@@ -2772,10 +2814,11 @@ export class ChatUI {
     });
   }
 
-  startInlineEdit(message) {
+  startInlineEdit(message, { initialText } = {}) {
     return this.inlineEditRuntime.startInlineEdit({
       scrollEl: this.scrollEl,
       message,
+      initialText,
     });
   }
 

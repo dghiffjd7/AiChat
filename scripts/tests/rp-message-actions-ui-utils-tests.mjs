@@ -1,0 +1,151 @@
+import assert from 'node:assert/strict';
+
+import {
+  createRpMessageActionsElement,
+  createRpMessageActionsUiRuntime,
+} from '../../src/scripts/ui/chat/rp-message-actions-ui-utils.js';
+
+const createClassList = (...initial) => {
+  const classes = new Set(initial);
+  return {
+    add: (...tokens) => tokens.forEach(token => classes.add(token)),
+    remove: (...tokens) => tokens.forEach(token => classes.delete(token)),
+    contains: token => classes.has(token),
+  };
+};
+
+const createFakeDocument = () => {
+  class FakeElement {
+    constructor(tagName) {
+      this.tagName = String(tagName || '').toUpperCase();
+      this.className = '';
+      this.children = [];
+      this.dataset = {};
+      this.attributes = new Map();
+      this.innerHTML = '';
+    }
+    appendChild(child) {
+      this.children.push(child);
+      child.parentElement = this;
+      return child;
+    }
+    setAttribute(name, value) {
+      this.attributes.set(name, String(value));
+    }
+  }
+  return {
+    createElement(tagName) {
+      return new FakeElement(tagName);
+    },
+  };
+};
+
+{
+  const documentLike = createFakeDocument();
+  const swipe = documentLike.createElement('div');
+  const actions = createRpMessageActionsElement({
+    documentLike,
+    message: { id: 'm-actions' },
+    createSwipeIndicatorElement: () => swipe,
+  });
+  assert.equal(actions.className, 'rp-message-actions');
+  assert.equal(actions.dataset.msgId, 'm-actions');
+  assert.equal(actions.children[0], swipe);
+  const buttons = actions.children[1].children;
+  assert.deepEqual(buttons.map(button => button.dataset.rpMessageAction), ['regenerate', 'view-code', 'copy']);
+  assert.equal(buttons.every(button => button.innerHTML.includes('<svg')), true);
+  assert.deepEqual(
+    buttons.map(button => button.attributes.get('aria-label')),
+    ['重新生成', '编辑原回复', '复制'],
+  );
+  console.log('ok - createRpMessageActionsElement builds swipe and svg action controls in the requested order');
+}
+
+const createWrapper = id => ({
+  classList: createClassList('QQ_chat_charmsg', 'has-rp-message-chrome'),
+  __chatappMessage: { id, role: 'assistant' },
+});
+
+const createActionTarget = (wrapper, action) => ({
+  dataset: { rpMessageAction: action },
+  disabled: false,
+  closest(selector) {
+    if (selector === '[data-rp-message-action]') return this;
+    if (selector === '.QQ_chat_charmsg.has-rp-message-chrome') return wrapper;
+    return null;
+  },
+});
+
+const createBubbleTarget = wrapper => {
+  const bubble = {
+    closest(selector) {
+      return selector === '.QQ_chat_charmsg.has-rp-message-chrome' ? wrapper : null;
+    },
+  };
+  return {
+    closest(selector) {
+      if (selector === '[data-rp-message-action]') return null;
+      if (selector === 'a, button, input, textarea, select, audio, video, [contenteditable="true"]') return null;
+      if (selector === '.QQ_chat_msgdiv') return bubble;
+      return null;
+    },
+  };
+};
+
+{
+  const listeners = new Map();
+  const scheduled = [];
+  const cleared = [];
+  const calls = [];
+  const first = createWrapper('a1');
+  const second = createWrapper('a2');
+  const scrollEl = {
+    addEventListener(type, handler) { listeners.set(type, handler); },
+    removeEventListener(type, handler) {
+      if (listeners.get(type) === handler) listeners.delete(type);
+    },
+  };
+  const runtime = createRpMessageActionsUiRuntime({
+    schedule(handler, delay) {
+      const id = scheduled.length + 1;
+      scheduled.push({ id, handler, delay });
+      return id;
+    },
+    clearSchedule: id => cleared.push(id),
+    isTouchLike: event => event?.pointerType === 'touch',
+  });
+  assert.equal(runtime.reveal({ classList: createClassList('QQ_chat_charmsg') }), false);
+  const unbind = runtime.bind({
+    scrollEl,
+    onAction: (action, context) => calls.push([action, context.message.id, context.wrapper]),
+  });
+  const click = listeners.get('click');
+  click({ target: createActionTarget(first, 'copy'), pointerType: 'mouse' });
+  click({ target: createActionTarget(first, 'regenerate'), pointerType: 'mouse' });
+  click({ target: createActionTarget(first, 'view-code'), pointerType: 'mouse' });
+  assert.deepEqual(calls.map(([action, id]) => [action, id]), [
+    ['copy', 'a1'],
+    ['regenerate', 'a1'],
+    ['view-code', 'a1'],
+  ]);
+
+  click({ target: createBubbleTarget(first), pointerType: 'mouse' });
+  assert.equal(first.classList.contains('is-rp-actions-visible'), false);
+  click({ target: createBubbleTarget(first), pointerType: 'touch' });
+  assert.equal(first.classList.contains('is-rp-actions-visible'), true);
+  assert.equal(scheduled[0].delay, 5000);
+
+  click({ target: createBubbleTarget(second), pointerType: 'touch' });
+  assert.equal(first.classList.contains('is-rp-actions-visible'), false);
+  assert.equal(second.classList.contains('is-rp-actions-visible'), true);
+  assert.deepEqual(cleared, [1]);
+  scheduled[1].handler();
+  assert.equal(second.classList.contains('is-rp-actions-visible'), false);
+
+  click({ target: createBubbleTarget(first), pointerType: 'touch' });
+  unbind();
+  assert.equal(listeners.has('click'), false);
+  assert.equal(first.classList.contains('is-rp-actions-visible'), false);
+  assert.deepEqual(cleared, [1, 3]);
+  console.log('ok - delegated rp actions route existing behavior and touch reveal expires after five seconds');
+}

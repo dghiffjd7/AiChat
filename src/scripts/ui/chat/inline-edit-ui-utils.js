@@ -3,12 +3,18 @@ export const createInlineEditUiRuntime = ({
   schedule,
   onConfirmEdit,
 } = {}) => ({
-  startInlineEdit({ scrollEl, message } = {}) {
+  startInlineEdit({ scrollEl, message, initialText } = {}) {
     const wrapper = scrollEl?.querySelector?.(`[data-msg-id="${message?.id}"]`);
     const bubble = wrapper?.querySelector?.('.QQ_chat_msgdiv');
     if (!bubble || !documentLike?.createElement) return false;
+    if (wrapper?.classList?.contains?.('is-inline-editing')) return false;
 
-    const originalText = String(message?.content || '');
+    const originalText = initialText == null
+      ? String(message?.content || '')
+      : String(initialText);
+    const originalNodes = Array.from(bubble.childNodes || []);
+    const originalWhiteSpace = bubble.style?.whiteSpace || '';
+    let settled = false;
     wrapper?.classList?.add?.('is-inline-editing');
     bubble.classList?.add?.('is-inline-editing');
     const ta = documentLike.createElement('textarea');
@@ -39,9 +45,17 @@ export const createInlineEditUiRuntime = ({
     };
 
     const restoreOriginal = () => {
+      if (settled) return;
+      settled = true;
       cleanupEditState();
-      bubble.textContent = originalText;
-      bubble.style.whiteSpace = 'pre-wrap';
+      bubble.innerHTML = '';
+      if (originalNodes.length) {
+        originalNodes.forEach(node => bubble.appendChild?.(node));
+        bubble.style.whiteSpace = originalWhiteSpace;
+      } else {
+        bubble.textContent = originalText;
+        bubble.style.whiteSpace = 'pre-wrap';
+      }
     };
 
     const resize = () => {
@@ -51,9 +65,11 @@ export const createInlineEditUiRuntime = ({
     ta.addEventListener('input', resize);
 
     const save = () => {
+      if (settled) return;
       const newText = ta.value.trim();
-      cleanupEditState();
       if (newText && newText !== originalText) {
+        settled = true;
+        cleanupEditState();
         onConfirmEdit?.(message, newText);
       } else {
         restoreOriginal();

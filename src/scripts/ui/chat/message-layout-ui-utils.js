@@ -1,3 +1,5 @@
+import { createRpMessageActionsElement } from './rp-message-actions-ui-utils.js';
+
 export const buildBubbleStackCore = ({
   documentLike,
   bubble,
@@ -32,6 +34,7 @@ export const appendStandardMessageLayoutCore = ({
   isUser = false,
   uiMode = '',
   createSwipeIndicatorElement = null,
+  resolveRpCharacterName = null,
 } = {}) => {
   const timeEl = createMessageTimeElement(documentLike, message?.time || '');
   if (isUser) {
@@ -62,6 +65,39 @@ export const appendStandardMessageLayoutCore = ({
   contentWrap.className = 'chat-message-stack';
   contentWrap.style.cssText =
     'grid-column: 2; display:flex; flex-direction:column; align-items:flex-start; gap:4px; min-width:0;';
+
+  const useRpAssistantChrome =
+    uiMode === 'rp' &&
+    message?.role === 'assistant' &&
+    !message?.meta?.isGreeting;
+  if (useRpAssistantChrome) {
+    wrapper.classList?.add?.('has-rp-message-chrome');
+    const header = documentLike.createElement('div');
+    header.className = 'rp-message-header';
+
+    const nameEl = documentLike.createElement('div');
+    nameEl.className = 'QQ_chat_name rp-message-name';
+    let resolvedName = '';
+    try {
+      resolvedName = String(resolveRpCharacterName?.(message) || '').trim();
+    } catch {}
+    nameEl.textContent = resolvedName || String(message?.name || '').trim() || '角色';
+    header.appendChild?.(nameEl);
+    header.appendChild?.(timeEl);
+    contentWrap.appendChild?.(header);
+    contentWrap.appendChild?.(bubbleStack);
+
+    const actions = createRpMessageActionsElement({
+      documentLike,
+      message,
+      createSwipeIndicatorElement,
+    });
+    if (actions) contentWrap.appendChild?.(actions);
+    wrapper.appendChild?.(avatarImg);
+    wrapper.appendChild?.(contentWrap);
+    return wrapper;
+  }
+
   if (message?.meta?.showName && message?.name) {
     const nameEl = documentLike.createElement('div');
     nameEl.className = 'QQ_chat_name';
@@ -69,11 +105,6 @@ export const appendStandardMessageLayoutCore = ({
     contentWrap.appendChild?.(nameEl);
   }
   contentWrap.appendChild?.(bubbleStack);
-
-  if (uiMode === 'rp' && message?.role === 'assistant' && !message?.meta?.isGreeting) {
-    const indicator = createSwipeIndicatorElement?.(documentLike, message);
-    if (indicator) contentWrap.appendChild?.(indicator);
-  }
 
   contentWrap.appendChild?.(timeEl);
   wrapper.appendChild?.(avatarImg);

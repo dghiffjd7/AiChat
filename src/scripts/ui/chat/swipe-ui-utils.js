@@ -1,4 +1,5 @@
 import { splitDanglingBlockTail } from './update-variable-block-utils.js';
+import { createRpMessageIconMarkup } from './rp-message-actions-ui-utils.js';
 
 export const SWIPE_REASONING_KEYS = ['reasoning', 'reasoningDisplay', 'reasoningSource', 'reasoningHidden', 'reasoningLabel'];
 
@@ -106,7 +107,7 @@ export const createSwipeIndicatorElement = (documentLike, message) => {
   const prevBtn = documentLike.createElement('button');
   prevBtn.type = 'button';
   prevBtn.className = 'rp-swipe-prev';
-  prevBtn.textContent = '◀';
+  prevBtn.innerHTML = createRpMessageIconMarkup('chevron-left', { size: 14 });
   prevBtn.disabled = generating || active <= 0;
   prevBtn.setAttribute('aria-label', '上一条回复');
   prevBtn.title = '上一条回复';
@@ -118,7 +119,7 @@ export const createSwipeIndicatorElement = (documentLike, message) => {
   const nextBtn = documentLike.createElement('button');
   nextBtn.type = 'button';
   nextBtn.className = 'rp-swipe-next';
-  nextBtn.textContent = '▶';
+  nextBtn.innerHTML = createRpMessageIconMarkup('chevron-right', { size: 14 });
   nextBtn.disabled = generating;
   nextBtn.setAttribute('aria-label', nextLabel);
   nextBtn.title = nextLabel;

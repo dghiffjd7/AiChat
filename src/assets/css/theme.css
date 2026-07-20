@@ -116,6 +116,10 @@ body[data-hide-chat-avatars='on'] .QQ_chat_mymsg {
   grid-template-columns: 1fr !important;
 }
 
+body[data-hide-chat-avatars='on'] .QQ_chat_charmsg.has-rp-message-chrome .chat-message-stack {
+  grid-column: 1 !important;
+}
+
 body[data-compact-input='on'] .chat-input-container {
   padding-top: 4px !important;
   padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 4px) !important;
@@ -734,13 +738,23 @@ body[data-theme-mode='dark'] .rp-greeting-editor-field textarea {
 }
 
 body[data-theme-mode='dark'] .rp-swipe-prev,
-body[data-theme-mode='dark'] .rp-swipe-next {
-  background: rgba(var(--app-tint-neutral-rgb), 0.08) !important;
+body[data-theme-mode='dark'] .rp-swipe-next,
+body[data-theme-mode='dark'] .rp-message-action {
+  background: transparent !important;
 }
 
 body[data-theme-mode='dark'] .rp-swipe-prev:active,
-body[data-theme-mode='dark'] .rp-swipe-next:active {
+body[data-theme-mode='dark'] .rp-swipe-next:active,
+body[data-theme-mode='dark'] .rp-message-action:active {
   background: rgba(var(--app-tint-neutral-rgb), 0.16) !important;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  body[data-theme-mode='dark'] .rp-swipe-prev:hover,
+  body[data-theme-mode='dark'] .rp-swipe-next:hover,
+  body[data-theme-mode='dark'] .rp-message-action:hover {
+    background: color-mix(in srgb, var(--app-accent-primary) 14%, transparent) !important;
+  }
 }
 
 body[data-theme-mode='dark'] .rp-continue-btn {

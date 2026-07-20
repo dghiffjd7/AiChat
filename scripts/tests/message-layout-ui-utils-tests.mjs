@@ -16,6 +16,7 @@ const createFakeDocument = () => {
       this.childNodes = this.children;
       this.style = {};
       this.dataset = {};
+      this.attributes = new Map();
       this.classList = {
         add: (...tokens) => {
           const next = new Set(String(this.className || '').split(/\s+/).filter(Boolean));
@@ -28,6 +29,9 @@ const createFakeDocument = () => {
       this.children.push(child);
       child.parentNode = this;
       return child;
+    }
+    setAttribute(name, value) {
+      this.attributes.set(name, String(value));
     }
   }
   return {
@@ -105,19 +109,79 @@ const createFakeDocument = () => {
     wrapper,
     avatarImg: avatar,
     bubbleStack,
-    message: { role: 'assistant', name: 'Bot', time: '11:00', meta: { showName: true } },
+    message: { id: 'a1', role: 'assistant', name: '助手', time: '11:00', meta: {} },
     isUser: false,
     uiMode: 'rp',
     createSwipeIndicatorElement: () => swipeIndicator,
+    resolveRpCharacterName: () => '莉莉丝',
   });
   assert.equal(wrapper.children.length, 2);
+  assert.equal(wrapper.className.includes('has-rp-message-chrome'), true);
+  const contentWrap = wrapper.children[1];
+  const header = contentWrap.children[0];
+  assert.equal(header.className, 'rp-message-header');
+  assert.equal(header.children[0].className, 'QQ_chat_name rp-message-name');
+  assert.equal(header.children[0].textContent, '莉莉丝');
+  assert.equal(header.children[1].className, 'QQ_chat_time');
+  assert.equal(header.children[1].textContent, '11:00');
+  assert.equal(contentWrap.children[1], bubbleStack);
+  const actions = contentWrap.children[2];
+  assert.equal(actions.className, 'rp-message-actions');
+  assert.equal(actions.children[0], swipeIndicator);
+  assert.deepEqual(
+    actions.children[1].children.map(button => button.dataset.rpMessageAction),
+    ['regenerate', 'view-code', 'copy'],
+  );
+  assert.equal(contentWrap.children.length, 3);
+  console.log('ok - appendStandardMessageLayoutCore builds compact rp assistant chrome with character header and actions');
+}
+
+{
+  const documentLike = createFakeDocument();
+  const wrapper = documentLike.createElement('div');
+  const avatar = documentLike.createElement('img');
+  const bubbleStack = documentLike.createElement('div');
+  appendStandardMessageLayoutCore({
+    documentLike,
+    wrapper,
+    avatarImg: avatar,
+    bubbleStack,
+    message: { role: 'assistant', name: 'Bot', time: '11:10', meta: { showName: true, isGreeting: true } },
+    isUser: false,
+    uiMode: 'rp',
+    createSwipeIndicatorElement: () => {
+      throw new Error('greeting should not build rp actions');
+    },
+  });
+  assert.equal(wrapper.className.includes('has-rp-message-chrome'), false);
   const contentWrap = wrapper.children[1];
   assert.equal(contentWrap.children[0].className, 'QQ_chat_name');
+  assert.equal(contentWrap.children[1], bubbleStack);
+  assert.equal(contentWrap.children[2].className, 'QQ_chat_time');
+  console.log('ok - appendStandardMessageLayoutCore leaves the rp greeting card chrome unchanged');
+}
+
+{
+  const documentLike = createFakeDocument();
+  const wrapper = documentLike.createElement('div');
+  const avatar = documentLike.createElement('img');
+  const bubbleStack = documentLike.createElement('div');
+  appendStandardMessageLayoutCore({
+    documentLike,
+    wrapper,
+    avatarImg: avatar,
+    bubbleStack,
+    message: { role: 'assistant', name: 'Bot', time: '11:20', meta: { showName: true } },
+    isUser: false,
+    uiMode: 'chat',
+    resolveRpCharacterName: () => 'should not be used',
+  });
+  const contentWrap = wrapper.children[1];
+  assert.equal(wrapper.className.includes('has-rp-message-chrome'), false);
   assert.equal(contentWrap.children[0].textContent, 'Bot');
   assert.equal(contentWrap.children[1], bubbleStack);
-  assert.equal(contentWrap.children[2], swipeIndicator);
-  assert.equal(contentWrap.children[3].textContent, '11:00');
-  console.log('ok - appendStandardMessageLayoutCore builds assistant stack with optional name and rp swipe indicator');
+  assert.equal(contentWrap.children[2].textContent, '11:20');
+  console.log('ok - appendStandardMessageLayoutCore does not change ordinary chat assistant messages');
 }
 
 {

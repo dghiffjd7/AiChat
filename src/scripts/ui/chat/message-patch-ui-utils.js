@@ -5,6 +5,7 @@ export const createMessagePatchUiRuntime = ({
   normalizeReactionEntries,
   resolveActiveSwipeMessage,
   applyCreativeBubbleState,
+  resolveRpAssistantName = null,
 } = {}) => ({
   getMessageRenderSignature(message) {
     const msg = resolveActiveSwipeMessage?.(message && typeof message === 'object' ? message : {}) || {};
@@ -70,7 +71,9 @@ export const createMessagePatchUiRuntime = ({
 
     const nameEl = existing.querySelector('.QQ_chat_name');
     if (nameEl && typeof next.name === 'string') {
-      nameEl.textContent = next.name;
+      nameEl.textContent = existing.classList?.contains?.('has-rp-message-chrome')
+        ? (resolveRpAssistantName?.(next) || next.name)
+        : next.name;
     }
 
     const timeEls = existing.querySelectorAll('.QQ_chat_time');

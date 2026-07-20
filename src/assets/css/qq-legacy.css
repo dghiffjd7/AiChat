@@ -361,7 +361,7 @@ body[data-ui-mode='rp'] .bottom-nav {
 
 .rp-greeting-trigger-label {
   font-size: 11px;
-  color: var(--app-text-muted, #999);
+  color: var(--app-text-muted);
   white-space: nowrap;
 }
 
@@ -1002,6 +1002,11 @@ body[data-ui-mode='rp'] .QQ_chat_charmsg {
   margin-left: 8px;
 }
 
+body[data-ui-mode='rp'] .QQ_chat_charmsg.has-rp-message-chrome {
+  grid-template-columns: 32px minmax(0, 1fr);
+  column-gap: 10px;
+}
+
 body[data-ui-mode='rp'] .QQ_chat_charmsg .chat-message-stack,
 body[data-ui-mode='rp'] .QQ_chat_charmsg .chat-bubble-stack {
   width: 100%;
@@ -1057,6 +1062,55 @@ body[data-ui-mode='rp'] .qq-avatar {
   display: none;
 }
 
+body[data-ui-mode='rp'] .QQ_chat_charmsg.has-rp-message-chrome > .QQ_chat_head {
+  display: block;
+  width: 32px;
+  height: 32px;
+  min-width: 32px;
+  min-height: 32px;
+  margin-top: 4px;
+  border: 1px solid var(--app-border-default);
+  background: var(--app-surface-card);
+  box-shadow: var(--app-shadow-sm);
+  box-sizing: border-box;
+}
+
+.rp-message-header {
+  width: 100%;
+  min-height: 18px;
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  padding: 0 2px;
+  box-sizing: border-box;
+}
+
+.rp-message-header .rp-message-name {
+  min-width: 0;
+  max-width: min(52vw, 320px);
+  margin: 0;
+  overflow: hidden;
+  color: var(--app-text-primary, var(--qq-color-text-primary));
+  font-size: 13px;
+  font-weight: 650;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rp-message-header .QQ_chat_time {
+  flex: 0 0 auto;
+  margin: 0;
+  color: var(--app-text-muted, var(--qq-color-text-secondary));
+  font-size: 10.5px;
+  line-height: 1.25;
+  opacity: 0.8;
+}
+
+body[data-ui-mode='rp'] .QQ_chat_charmsg.has-rp-message-chrome .QQ_chat_msgdiv {
+  border-radius: 4px 20px 20px 20px;
+}
+
 /* RP 楼层标记 */
 .rp-floor-marker {
   display: none;
@@ -1095,9 +1149,9 @@ body[data-ui-mode='rp'] .rp-floor-marker::after {
 body[data-ui-mode='rp'] .rp-swipe-indicator {
   display: flex;
   align-items: center;
-  justify-content: center;
-  gap: 12px;
-  padding: 4px 0 2px;
+  justify-content: flex-end;
+  gap: 1px;
+  padding: 0;
   user-select: none;
 }
 
@@ -1106,8 +1160,8 @@ body[data-ui-mode='rp'] .rp-swipe-indicator {
   width: 28px;
   height: 28px;
   border: none;
-  border-radius: 50%;
-  background: rgba(15, 23, 42, 0.05);
+  border-radius: 8px;
+  background: transparent;
   color: var(--app-text-muted, #999);
   font-size: 11px;
   cursor: pointer;
@@ -1115,12 +1169,20 @@ body[data-ui-mode='rp'] .rp-swipe-indicator {
   align-items: center;
   justify-content: center;
   -webkit-tap-highlight-color: transparent;
-  transition: background 0.15s ease, color 0.15s ease;
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+.rp-swipe-prev:hover,
+.rp-swipe-next:hover,
+.rp-message-action:hover {
+  color: var(--app-accent-primary);
+  background: color-mix(in srgb, var(--app-accent-primary) 9%, transparent);
 }
 
 .rp-swipe-prev:active,
-.rp-swipe-next:active {
-  background: rgba(15, 23, 42, 0.12);
+.rp-swipe-next:active,
+.rp-message-action:active {
+  background: color-mix(in srgb, var(--app-text-primary) 12%, transparent);
   color: var(--app-text-primary);
 }
 
@@ -1132,10 +1194,70 @@ body[data-ui-mode='rp'] .rp-swipe-indicator {
 
 .rp-swipe-counter {
   font-size: 11px;
-  color: var(--app-text-muted, #999);
+  color: var(--app-text-muted);
   font-variant-numeric: tabular-nums;
   min-width: 28px;
   text-align: center;
+}
+
+.rp-message-actions {
+  width: 100%;
+  min-height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 3px;
+  margin-top: 2px;
+  padding: 0 2px;
+  box-sizing: border-box;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-2px);
+  transition: opacity 0.16s ease, transform 0.16s ease;
+}
+
+.rp-message-action-buttons {
+  display: inline-flex;
+  align-items: center;
+  gap: 1px;
+}
+
+.rp-message-action {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  color: var(--app-text-muted);
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+.rp-message-action svg,
+.rp-swipe-prev svg,
+.rp-swipe-next svg {
+  display: block;
+  pointer-events: none;
+}
+
+.QQ_chat_charmsg.has-rp-message-chrome.is-rp-actions-visible .rp-message-actions {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(0);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .QQ_chat_charmsg.has-rp-message-chrome:focus-within .rp-message-actions,
+  .QQ_chat_charmsg.has-rp-message-chrome:hover .rp-message-actions {
+    opacity: 1;
+    pointer-events: auto;
+    transform: translateY(0);
+  }
 }
 
 .QQ_chat_charmsg.is-rp-regenerating .QQ_chat_msgdiv {

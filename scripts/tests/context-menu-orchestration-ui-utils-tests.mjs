@@ -22,6 +22,7 @@ import { showContextMenuCore } from '../../src/scripts/ui/chat/context-menu-orch
     },
   };
   let positioned = null;
+  let actionOptions = null;
   const actionButtons = [];
   const shown = showContextMenuCore({
     event: { target: {}, clientX: 12, clientY: 34 },
@@ -32,15 +33,21 @@ import { showContextMenuCore } from '../../src/scripts/ui/chat/context-menu-orch
     scrollEl: {},
     hideReactionPicker() {},
     resolveContextMenuContext: () => ({
-      wrapper: { id: 'wrap' },
+      wrapper: {
+        id: 'wrap',
+        classList: { contains: token => token === 'has-rp-message-chrome' },
+      },
       message: { id: 'm1', meta: { reactions: [] } },
       codeBlock: null,
       hasCode: false,
     }),
-    buildContextMenuActions: () => ([
-      { key: 'copy', label: '复制' },
-      { key: 'reply', label: '回复' },
-    ]),
+    buildContextMenuActions: (nextMessage, options) => {
+      actionOptions = options;
+      return [
+        { key: 'copy', label: '复制' },
+        { key: 'reply', label: '回复' },
+      ];
+    },
     isThreadingEnabledForMessage: () => true,
     normalizeReactionEntries: value => value || [],
     createContextMenuReactionRow: payload => ({ kind: 'reaction-row', payload }),
@@ -73,6 +80,7 @@ import { showContextMenuCore } from '../../src/scripts/ui/chat/context-menu-orch
   assert.equal(appended.length, 3);
   assert.equal(appended[0].kind, 'reaction-row');
   assert.equal(actionButtons.length, 2);
+  assert.equal(actionOptions.hasRpMessageActions, true);
   assert.equal(positioned.point.x, 12);
 
   await actionButtons[0].payload.onClick({ stopPropagation() {} });

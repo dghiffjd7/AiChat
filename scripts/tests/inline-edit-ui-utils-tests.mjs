@@ -118,9 +118,10 @@ const createFakeDocument = () => {
 
 {
   const documentLike = createFakeDocument();
+  const renderedNode = { kind: 'rendered-rich-content' };
   const bubble = {
-    children: [],
-    style: {},
+    children: [renderedNode],
+    style: { whiteSpace: '' },
     classList: {
       add(value) { this.value = value; },
       remove(value) { if (this.value === value) this.value = ''; },
@@ -128,9 +129,15 @@ const createFakeDocument = () => {
       value: '',
     },
     textContent: '',
-    innerHTML: '',
+    _innerHTML: '<article>rendered</article>',
+    get childNodes() { return this.children; },
+    get innerHTML() { return this._innerHTML; },
+    set innerHTML(value) {
+      this._innerHTML = value;
+      if (value === '') this.children = [];
+    },
     appendChild(child) {
-      this.children = [child];
+      this.children.push(child);
       this.lastChild = child;
       return child;
     },
@@ -160,14 +167,17 @@ const createFakeDocument = () => {
   runtime.startInlineEdit({
     scrollEl,
     message: { id: 'm2', content: 'origin' },
+    initialText: '<status>raw origin</status>',
   });
   const textarea = bubble.lastChild;
+  assert.equal(textarea.value, '<status>raw origin</status>');
   textarea.value = 'changed';
   textarea.emit('keydown', {
     key: 'Escape',
     preventDefault() {},
   });
-  assert.equal(bubble.textContent, 'origin');
-  assert.equal(bubble.style.whiteSpace, 'pre-wrap');
-  console.log('ok - startInlineEdit restores original text on escape');
+  textarea.emit('blur');
+  assert.deepEqual(bubble.children, [renderedNode]);
+  assert.equal(bubble.style.whiteSpace, '');
+  console.log('ok - startInlineEdit uses raw initial text while restoring the original rendered nodes on escape');
 }

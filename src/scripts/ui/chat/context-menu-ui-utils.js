@@ -51,6 +51,7 @@ const compactStringValues = values => values
 
 export const buildContextMenuActions = (message, {
   hasCode = false,
+  hasRpMessageActions = false,
   isThreadingEnabled = false,
   inlineGeneratedImage = null,
   canCheckFormat = false,
@@ -60,7 +61,11 @@ export const buildContextMenuActions = (message, {
   if (isThreadingEnabled) {
     actions.push({ key: 'reply', label: '回复', group: 'main' });
   }
-  const canViewSource = hasCode || (message?.role === 'assistant' && message?.meta?.renderRich === true);
+  const canViewSource = hasCode || (
+    hasRpMessageActions !== true &&
+    message?.role === 'assistant' &&
+    message?.meta?.renderRich === true
+  );
   if (canViewSource) {
     actions.push({ key: 'view-code', label: hasCode ? '查看代码' : '查看源码', group: 'main' });
   }
@@ -91,8 +96,10 @@ export const buildContextMenuActions = (message, {
     if (canCheckFormat === true) {
       actions.push({ key: 'check-format', label: '检查格式', group: 'main' });
     }
-    actions.push({ key: 'copy-text', label: '复制', group: 'main' });
-    actions.push({ key: 'regenerate', label: '重新生成', group: 'main' });
+    if (hasRpMessageActions !== true) {
+      actions.push({ key: 'copy-text', label: '复制', group: 'main' });
+      actions.push({ key: 'regenerate', label: '重新生成', group: 'main' });
+    }
     actions.push({ key: 'delete', label: '删除', group: 'danger', tone: 'danger' });
   } else if (message?.role === 'user') {
     if (message?.status === 'pending') {
