@@ -1,6 +1,27 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 
 import { createMaidSettingsPanel } from '../../src/scripts/ui/maid-settings-panel.js';
+
+const maidSettingsSource = fs.readFileSync(
+  new URL('../../src/scripts/ui/maid-settings-panel.js', import.meta.url),
+  'utf8',
+);
+
+{
+  assert.match(maidSettingsSource, /\.maid-settings-panel\s*\{[\s\S]*?width:\s*min\(920px,\s*94vw\)[\s\S]*?border-radius:\s*28px/);
+  assert.match(maidSettingsSource, /\.maid-settings-tabs\s*\{[\s\S]*?grid-template-columns:\s*repeat\(4,\s*minmax\(0,\s*1fr\)\)/);
+  assert.match(maidSettingsSource, /\.maid-settings-overlay\s*\{[\s\S]*?backdrop-filter:\s*blur\(7px\)/);
+  assert.match(maidSettingsSource, /\.maid-settings-overlay\.is-open\s+\.maid-settings-panel\s*\{/);
+  assert.match(maidSettingsSource, /body\[data-reduced-motion=['"]on['"]\]\s+\.maid-settings-overlay/);
+  assert.match(maidSettingsSource, /@media\s*\(max-width:\s*640px\)[\s\S]*?\.maid-settings-panel\s*\{[\s\S]*?border-radius:\s*0/);
+  assert.match(maidSettingsSource, /maid-settings-header-copy/);
+  assert.match(maidSettingsSource, /ARIA Assistant/);
+  assert.match(maidSettingsSource, /maid-settings-section-caption/);
+  assert.match(maidSettingsSource, /maid-settings-empty-state/);
+  assert.doesNotMatch(maidSettingsSource, /animation[^;]*infinite/);
+  console.log('ok - maid settings redesign keeps reference proportions, responsive motion, and semantic visual structure');
+}
 
 const createClassList = () => {
   const set = new Set();
@@ -135,7 +156,12 @@ const flushMicrotasks = () => new Promise(resolve => setTimeout(resolve, 0));
   assert.equal(elements.promptTabButtons.has('memoryTable'), true);
   assert.equal(elements.promptTabButtons.has('lastResponse'), true);
   assert.equal(elements.promptTextarea.value, '旧提示词');
+  assert.equal(elements.promptCountEl.textContent, '4 字');
+  assert.equal(elements.overlay.attributes['aria-hidden'], 'false');
+  assert.equal(elements.panel.attributes.role, 'dialog');
   elements.promptTextarea.value = '新提示词';
+  elements.promptTextarea.dispatchEvent('input', {});
+  assert.equal(elements.promptCountEl.textContent, '4 字');
   findByText(elements.sections.get('prompt'), '保存').dispatchEvent('click', {});
   await flushMicrotasks();
   assert.equal(store.maidPrompt, '新提示词');
@@ -242,12 +268,16 @@ const flushMicrotasks = () => new Promise(resolve => setTimeout(resolve, 0));
   panel.show({ tab: 'activity' });
   const elements = panel.getElements();
   assert.equal(elements.tabButtons.get('activity').classList.contains('is-active'), true);
+  assert.equal(elements.tabButtons.get('activity').attributes['aria-selected'], 'true');
+  assert.equal(elements.runCountEl.textContent, '2');
   assert.equal(elements.runListEl.children.length, 2);
   assert.ok(findByText(elements.runListEl, '打开世界书'), '活动列表应显示 run 目标');
   assert.ok(findByText(elements.runListEl, '成功'), '成功 run 应有状态标签');
   assert.ok(findByText(elements.runListEl, '中断'), '中断 run 应显示中断状态');
-  const interruptedMeta = findByText(elements.runListEl, '已达到本轮执行预算。 · 6 步 · 可继续 · ' + new Date(1700000001000).toLocaleString());
-  assert.ok(interruptedMeta, '中断 run 应显示摘要、步数和可继续标记');
+  assert.ok(findByText(elements.runListEl, '已达到本轮执行预算。'), '中断 run 应显示摘要');
+  assert.ok(findByText(elements.runListEl, '6 步'), '中断 run 应显示步数');
+  assert.ok(findByText(elements.runListEl, '可继续'), '中断 run 应显示可继续标记');
+  assert.ok(findByText(elements.runListEl, new Date(1700000001000).toLocaleString()), '中断 run 应显示更新时间');
 
   panel.switchTab('safety');
   assert.equal(elements.tabButtons.get('safety').classList.contains('is-active'), true);

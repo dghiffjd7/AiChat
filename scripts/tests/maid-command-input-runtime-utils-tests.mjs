@@ -390,11 +390,13 @@ class FakeDocument {
   // 执行流 trace 卡并入白色结果流：按 id 原位更新、与叙述气泡交错、未打开时不消费
   const documentRef = new FakeDocument();
   const modeSwitchEl = new FakeElement('div');
+  const openStates = [];
   const runtime = createMaidCommandInputRuntime({
     documentRef,
     modeSwitchEl,
     getViewportSize: () => ({ w: 360, h: 640 }),
     onSubmit: async () => ({ ok: true }),
+    onOpenStateChange: state => openStates.push({ ...state }),
     setTimeoutFn: () => 0,
     clearTimeoutFn: () => {},
   });
@@ -415,6 +417,7 @@ class FakeDocument {
 
   assert.equal(runtime.applyTraceView(view([])), false, '指令条未打开 → 不消费（面板兜底）');
   assert.equal(runtime.open(), true);
+  assert.deepEqual(openStates, [{ open: true, submitting: false }], '打开后应通知执行流重新仲裁');
   assert.equal(runtime.applyTraceView(view([step('a', 1, 'running', 'accent', '执行中', '行')])), true);
   runtime.setStatus('我先看看有哪些会话～', 'thinking'); // 模型话语 → 气泡
   runtime.setStatus('我已经取得结果，正在整理给你。', 'progress'); // 写死提示 → live 行
@@ -431,8 +434,69 @@ class FakeDocument {
   assert.equal(items[items.length - 1].sub, '搞定了');
   assert.equal(runtime.getLiveStatus(), null, 'run 终态 live 行退场');
   runtime.close();
+  assert.deepEqual(openStates, [
+    { open: true, submitting: false },
+    { open: false, submitting: false },
+  ], '关闭后应通知执行流立即接管');
   assert.equal(runtime.applyTraceView(view([])), false, '指令条曾打开但已关闭 → 不再消费后台 run');
   console.log('ok - maid command input 承载执行流 trace 卡（原位更新/交错/未开不消费）');
+}
+
+{
+  // 终态 trace 与 submit success 可能先后到达；同文最终回复只保留 success 气泡一份。
+  const terminalView = runId => ({
+    runId,
+    title: '查看当前页面',
+    status: 'succeeded',
+    statusLabel: '完成',
+    tone: 'success',
+    terminal: true,
+    doneSummary: '现在打开的是联系人页面。',
+    failureCode: '',
+    steps: [],
+  });
+  let runtime;
+  runtime = createMaidCommandInputRuntime({
+    documentRef: new FakeDocument(),
+    modeSwitchEl: new FakeElement('div'),
+    getViewportSize: () => ({ w: 360, h: 640 }),
+    onSubmit: async () => {
+      runtime.applyTraceView(terminalView('run_trace_first'));
+      return { ok: true, message: '现在打开的是联系人页面。' };
+    },
+    setTimeoutFn: () => 0,
+    clearTimeoutFn: () => {},
+  });
+  runtime.open();
+  runtime.getElements().inputEl.value = '帮我看看现在打开的是哪个页面';
+  await runtime.submit();
+  let items = runtime.getResultMessages();
+  assert.equal(
+    items.flatMap(item => [item.message, item.sub]).filter(text => text === '现在打开的是联系人页面。').length,
+    1,
+    'DONE 先到时 success 气泡应清掉卡片里的同文 summary',
+  );
+  assert.equal(items.find(item => item.id === 'done:run_trace_first')?.sub, '');
+
+  const replayRuntime = createMaidCommandInputRuntime({
+    documentRef: new FakeDocument(),
+    modeSwitchEl: new FakeElement('div'),
+    getViewportSize: () => ({ w: 360, h: 640 }),
+    onSubmit: async () => ({ ok: true }),
+    setTimeoutFn: () => 0,
+    clearTimeoutFn: () => {},
+  });
+  replayRuntime.open();
+  replayRuntime.setStatus('现在打开的是联系人页面。', 'success');
+  replayRuntime.applyTraceView(terminalView('run_result_first'));
+  items = replayRuntime.getResultMessages();
+  assert.equal(items.find(item => item.id === 'done:run_result_first')?.sub, '');
+  assert.equal(
+    items.flatMap(item => [item.message, item.sub]).filter(text => text === '现在打开的是联系人页面。').length,
+    1,
+    '终态回放晚到时也不应重新写入重复 summary',
+  );
+  console.log('ok - maid command input terminal summary dedupes against the final result bubble');
 }
 
 {

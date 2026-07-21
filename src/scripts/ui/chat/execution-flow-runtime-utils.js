@@ -805,6 +805,39 @@ export const createExecutionFlowRuntime = ({
     return mounted;
   };
 
+  const consumeMaidTraceView = (view = null) => {
+    const runId = trim(view?.runId);
+    if (!runId || typeof onMaidTrace !== 'function') return false;
+    let consumed = false;
+    try {
+      consumed = onMaidTrace(view) === true;
+    } catch {}
+    if (!consumed) return false;
+    maidTraceConsumerRunId = runId;
+    state.runId = runId;
+    state.view = view;
+    state.visible = false;
+    state.expanded = false;
+    reconcileActiveKind();
+    render();
+    return true;
+  };
+
+  /* 指令条开合也参与仲裁：重开时主动重放当前完整视图；关闭时进行中的 run 立即交给面板。 */
+  const rearbitrateMaidTrace = ({ commandInputOpen = false } = {}) => {
+    const view = state.view;
+    if (!view || !trim(view.runId)) return false;
+    if (commandInputOpen) return state.visible ? consumeMaidTraceView(view) : false;
+    maidTraceConsumerRunId = '';
+    if (view.terminal) return false;
+    state.signature = '';
+    state.visible = true;
+    state.expanded = true;
+    reconcileActiveKind();
+    render();
+    return true;
+  };
+
   const adoptEvent = (event = {}) => {
     const runId = trim(event?.runId);
     if (!runId) return;
@@ -813,22 +846,7 @@ export const createExecutionFlowRuntime = ({
     if (!run || trim(run.kind) !== MAID_RUN_KIND) return;
     const view = projectMaidRunToTraceView(run);
     if (!view) return;
-    if (typeof onMaidTrace === 'function') {
-      let consumed = false;
-      try {
-        consumed = onMaidTrace(view) === true;
-      } catch {}
-      if (consumed) {
-        maidTraceConsumerRunId = runId;
-        state.runId = runId;
-        state.view = view;
-        state.visible = false; // 指令条已承载女仆流，本面板保持隐藏
-        state.expanded = false;
-        reconcileActiveKind();
-        render();
-        return;
-      }
-    }
+    if (consumeMaidTraceView(view)) return;
     const wasConsumedByMaidTrace = maidTraceConsumerRunId === runId;
     if (wasConsumedByMaidTrace) maidTraceConsumerRunId = '';
     const isNewRun = runId !== state.runId;
@@ -864,6 +882,7 @@ export const createExecutionFlowRuntime = ({
     position,
     render,
     setVisible,
+    rearbitrateMaidTrace,
     adoptCreativeState,
     attachCreativeLane,
     getState: () => ({

@@ -22863,6 +22863,9 @@ Phase G（Frame 36）：循环衔接
     documentRef: document,
     modeSwitchEl: modeSwitch,
     onToggleSelection: () => maidSelectionMode.toggle(),
+    onOpenStateChange: ({ open }) => {
+      executionFlowRuntime?.rearbitrateMaidTrace?.({ commandInputOpen: open });
+    },
     getViewportSize,
     // 指令条盖住悬浮球：非交互区按下转发球拖拽（运行中也可挪开）
     getBallDragRuntime: () => modeSwitchInteractionRuntime,
@@ -30156,6 +30159,7 @@ Phase G（Frame 36）：循环衔接
   wallpaperPreview?.addEventListener('pointermove', handleWallpaperDragMove);
   wallpaperPreview?.addEventListener('pointerup', handleWallpaperDragEnd);
   wallpaperPreview?.addEventListener('pointerleave', handleWallpaperDragEnd);
+  wallpaperPreview?.addEventListener('pointercancel', handleWallpaperDragEnd);
 
   wallpaperZoomInput?.addEventListener('input', e => {
     wallpaperState.zoom = Number(e.target?.value || 1);
@@ -30206,6 +30210,7 @@ Phase G（Frame 36）：循环衔接
     return true;
   };
   const panelBackClosers = [
+    () => maidSettingsPanel.hide(),
     () => closeChatSettings(),
     () => rawReplyModal.hide(),
     () => promptPreviewModal.hide(),
@@ -30233,6 +30238,7 @@ Phase G（Frame 36）：循环衔接
     () => momentSummaryPanel.hide(),
   ];
   const panelBackOpenChecks = [
+    () => isBackLayerVisible(maidSettingsPanel.getElements?.().overlay),
     () => isBackLayerVisible(chatSettingsOverlay) || isBackLayerVisible(chatSettingsModal),
     () => isBackLayerVisible(document.getElementById('raw-reply-overlay')),
     () => isBackLayerVisible(document.getElementById('prompt-preview-overlay')),

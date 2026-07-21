@@ -533,6 +533,7 @@ export const createMaidCommandInputRuntime = ({
   onSettings = null,
   onAttachFiles = null,
   onToggleSelection = null,
+  onOpenStateChange = null,
   maxImageAttachments = DEFAULT_MAX_IMAGE_ATTACHMENTS,
   setTimeoutFn = globalThis?.setTimeout || null,
   clearTimeoutFn = globalThis?.clearTimeout || null,
@@ -559,6 +560,12 @@ export const createMaidCommandInputRuntime = ({
   let resultEnterPaceUntil = 0; // 跨渲染的逐卡推出节拍（相邻新卡 ≥150ms，积压封顶 1.2s）
   let liveStatus = null; // 过程叙述（thinking）单行状态：转圈+可替换文本，不各占气泡
   let restoreResultOnNextOpen = false;
+
+  const notifyOpenStateChange = () => {
+    try {
+      onOpenStateChange?.({ open: isOpen, submitting: isSubmitting });
+    } catch {}
+  };
 
   const createAttachmentId = () => {
     if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') return crypto.randomUUID();
@@ -812,6 +819,28 @@ export const createMaidCommandInputRuntime = ({
     renderResultMessages();
   };
 
+  const getNonDuplicateDoneSummary = (summary = '') => {
+    const text = trim(summary);
+    if (!text) return '';
+    for (let index = resultMessages.length - 1; index >= 0; index -= 1) {
+      const item = resultMessages[index];
+      if (item.kind === 'trace' || !trim(item.message)) continue;
+      return trim(item.message) === text ? '' : text;
+    }
+    return text;
+  };
+
+  const clearMatchingDoneSummary = (message = '') => {
+    const text = trim(message);
+    if (!text) return;
+    for (let index = resultMessages.length - 1; index >= 0; index -= 1) {
+      const item = resultMessages[index];
+      if (item.kind !== 'trace' || !String(item.id || '').startsWith('done:')) continue;
+      if (trim(item.sub) === text) item.sub = '';
+      break;
+    }
+  };
+
   const setResult = (message = '', tone = 'info', options = {}) => {
     const text = trim(message);
     if (!text) {
@@ -830,6 +859,7 @@ export const createMaidCommandInputRuntime = ({
       renderResultMessages({ forceBottom: options?.forceBottom !== false });
       return;
     }
+    if (normalizedTone === 'success' || normalizedTone === 'error') clearMatchingDoneSummary(text);
     const latest = resultMessages[resultMessages.length - 1];
     if (!latest || latest.message !== text || latest.tone !== normalizedTone) {
       resultSeq += 1;
@@ -881,7 +911,7 @@ export const createMaidCommandInputRuntime = ({
         glyph: view.status === 'succeeded' ? '成' : view.status === 'cancelled' ? '止' : '败',
         label: view.status === 'succeeded' ? 'DONE' : String(view.status || '').toUpperCase(),
         title: trim(view.statusLabel),
-        sub: trim(view.doneSummary),
+        sub: getNonDuplicateDoneSummary(view.doneSummary),
         error: trim(view.failureCode),
         tone: view.tone || 'muted',
         statusLabel: '',
@@ -1124,6 +1154,7 @@ export const createMaidCommandInputRuntime = ({
     const el = ensure();
     if (!el) return false;
     clearCloseTimer();
+    const wasOpen = isOpen;
     const shouldRestoreResult = restoreResultOnNextOpen && (resultMessages.length > 0 || Boolean(liveStatus));
     isOpen = true;
     if (!isSubmitting) setSubmitting(false);
@@ -1136,6 +1167,7 @@ export const createMaidCommandInputRuntime = ({
     el.classList.add('is-open');
     modeSwitchEl?.classList.add?.('is-maid-input-open');
     bindOutsidePointer();
+    if (!wasOpen) notifyOpenStateChange();
     setTimeoutFn?.(() => {
       try {
         inputEl?.focus?.();
@@ -1146,6 +1178,7 @@ export const createMaidCommandInputRuntime = ({
 
   const close = () => {
     clearCloseTimer();
+    const wasOpen = isOpen;
     const shouldPreserveResult = isSubmitting && (resultMessages.length > 0 || Boolean(liveStatus));
     isOpen = false;
     if (!isSubmitting) setSubmitting(false);
@@ -1159,6 +1192,7 @@ export const createMaidCommandInputRuntime = ({
       clearAttachments();
     }
     unbindOutsidePointer();
+    if (wasOpen) notifyOpenStateChange();
     return true;
   };
 

@@ -165,6 +165,8 @@ const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '
     '共享执行流容器应接管创意泳道 DOM 宿主');
   assert.match(appSource, /createModeSwitchPositionRuntime\(\{[\s\S]*onPositionChange:[\s\S]*maidCommandInputRuntime\.position[\s\S]*executionFlowRuntime\?\.position/,
     '悬浮球位置同步完成后应立即重定位指令条与执行流面板');
+  assert.match(appSource, /onOpenStateChange:\s*\(\{\s*open\s*\}\)\s*=>\s*\{[\s\S]*?rearbitrateMaidTrace\?\.\(\{\s*commandInputOpen:\s*open\s*\}\)/,
+    '指令条开合必须通知执行流重新仲裁，不能只等下一条 trace 事件');
   assert.doesNotMatch(appSource, /\u0000/,
     'app.js 不应含字面 NUL，围栏哨兵应使用可搜索的转义写法');
   assert.match(flowSource, /class="exec-flow-creative-host"/,
@@ -241,9 +243,45 @@ const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '
   handedOff.emit({ runId: 'run_x' });
   assert.equal(handedOff.rt.getState().visible, false, '首帧由打开的指令条消费');
   shouldConsume = false;
-  handedOff.emit({ runId: 'run_x' });
-  assert.equal(handedOff.rt.getState().visible, true, '同一 run 在指令条关闭后应转交面板兜底');
+  assert.equal(
+    handedOff.rt.rearbitrateMaidTrace({ commandInputOpen: false }),
+    true,
+    '指令条关闭应立即触发再仲裁，不等待下一条 trace',
+  );
+  assert.equal(handedOff.rt.getState().visible, true, '执行中的同一 run 应立即转交面板兜底');
   assert.equal(handedOff.rt.getState().expanded, true);
+  shouldConsume = true;
+  assert.equal(
+    handedOff.rt.rearbitrateMaidTrace({ commandInputOpen: true }),
+    true,
+    '指令条重开应主动重放当前完整 trace',
+  );
+  assert.equal(handedOff.rt.getState().visible, false, '重放被指令条消费后面板立即让位');
+
+  fakeRun.status = 'succeeded';
+  fakeRun.summary = '任务完成';
+  shouldConsume = false;
+  handedOff.emit({ runId: 'run_x' });
+  assert.equal(handedOff.rt.getState().visible, true, '关闭期间到达终态时面板继续承载');
+  assert.equal(handedOff.rt.getState().view.terminal, true);
+  shouldConsume = true;
+  assert.equal(
+    handedOff.rt.rearbitrateMaidTrace({ commandInputOpen: true }),
+    true,
+    '终态后即使不再有事件，重开也必须回收完整 trace',
+  );
+  assert.equal(handedOff.rt.getState().visible, false, '终态 trace 回收后不得永久双窗');
+  assert.equal(
+    handedOff.rt.rearbitrateMaidTrace({ commandInputOpen: false }),
+    false,
+    '终态指令条关闭不应重新弹出兜底面板',
+  );
+  assert.equal(
+    handedOff.rt.rearbitrateMaidTrace({ commandInputOpen: true }),
+    false,
+    '终态已回收并关闭后，全新打开不得反复复活上一条 trace',
+  );
+  assert.equal(handedOff.rt.getState().visible, false);
   console.log('ok - onMaidTrace 消费语义（指令条优先、面板兜底）');
 }
 
