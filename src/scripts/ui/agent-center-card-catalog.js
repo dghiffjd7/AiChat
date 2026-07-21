@@ -221,7 +221,7 @@ const classifyCatalogCard = (id = '') => {
 const cardMatchesMemoryMode = (card = {}, memoryMode = 'table') => {
   const mode = normalizeMemoryMode(memoryMode);
   const id = trim(card.id);
-  if (id === 'memory_table_agent') return mode === 'table';
+  if (id === 'memory_table_agent') return true;
   if (id === 'summary_agent') return mode === 'summary';
   return true;
 };

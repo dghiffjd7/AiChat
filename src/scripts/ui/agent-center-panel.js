@@ -3,11 +3,16 @@ import { rankModelCandidates } from '../utils/model-candidates.js';
 import { findAgentCenterResource } from './agent-center-resource-contract.js';
 import { WRITE_PREVIEW_PROVIDER_MODEL_CONTEXT_TOOLS } from '../agent/provider-tool-request-schema.js';
 import { PROVIDER_TOOL_PERMISSION_ACTIONS } from '../agent/provider-tool-permission-actions.js';
+import { appSettings } from '../storage/app-settings.js';
 import { appChoice, appConfirm } from './app-confirm.js';
 import { bindCustomSelectButton, closeCustomSelectMenu } from './custom-select.js';
 import { buildDebugTextFilename } from './debug-panel-utils.js';
 import { exportDebugTextFile } from './debug-panel-export-utils.js';
 import { exportDebugTextFlow } from './debug-panel-runtime-utils.js';
+import {
+    applyMemoryStorageMode,
+    deriveMemoryStorageMode,
+} from './memory-storage-mode-utils.js';
 
 const STYLE_ID = 'agent-center-panel-style';
 
@@ -25,6 +30,7 @@ const ICONS = Object.freeze({
     pending: iconSvg('<path d="M12 6v6l4 2"/><circle cx="12" cy="12" r="9"/>'),
     prompts: iconSvg('<path d="M4 5h16"/><path d="M4 9h10"/><path d="M4 15h16"/><path d="M4 19h12"/>'),
     diagnostics: iconSvg('<path d="M4 19V5"/><path d="M4 19h16"/><path d="m7 16 4-4 3 3 5-7"/><path d="M17 8h2v2"/>'),
+    chevron: iconSvg('<path d="m9 18 6-6-6-6"/>'),
     refresh: iconSvg('<path d="M3 12a9 9 0 0 1 15.5-6.2"/><path d="M18 3v5h-5"/><path d="M21 12a9 9 0 0 1-15.5 6.2"/><path d="M6 21v-5h5"/>'),
     resources: iconSvg('<path d="M4 5h16"/><path d="M4 12h16"/><path d="M4 19h16"/><path d="M7 5v14"/>'),
     safety: iconSvg('<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z"/><path d="m9 12 2 2 4-5"/>'),
@@ -41,48 +47,72 @@ const tabIcon = (id = '') => ({
 }[trim(id)] || ICONS.agent);
 
 const PANEL_CSS = `
+@keyframes agent-center-overlay-in {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+@keyframes agent-center-panel-in {
+    from { opacity: 0; transform: translate3d(0, 30px, 0) scale(0.96); }
+    to { opacity: 1; transform: translate3d(0, 0, 0) scale(1); }
+}
+@keyframes agent-center-panel-mobile-in {
+    from { opacity: 0; transform: translate3d(0, 24px, 0) scale(0.985); }
+    to { opacity: 1; transform: translate3d(0, 0, 0) scale(1); }
+}
+@keyframes agent-center-card-in {
+    from { opacity: 0; transform: translate3d(0, 16px, 0) scale(0.97); }
+    to { opacity: 1; transform: translate3d(0, 0, 0) scale(1); }
+}
+@keyframes agent-center-floating-in {
+    from { opacity: 0; transform: translate3d(76px, 0, 0) scale(0.975); }
+    to { opacity: 1; transform: translate3d(0, 0, 0) scale(1); }
+}
+@keyframes agent-center-floating-mobile-in {
+    from { opacity: 0; transform: translate3d(0, 28px, 0) scale(0.985); }
+    to { opacity: 1; transform: translate3d(0, 0, 0) scale(1); }
+}
 .agent-center-overlay {
     position: fixed;
     inset: 0;
     z-index: 22000;
     display: none;
-    align-items: stretch;
+    align-items: flex-start;
     justify-content: flex-end;
     box-sizing: border-box;
-    padding: max(10px, env(safe-area-inset-top, 0px)) max(10px, env(safe-area-inset-right, 0px)) max(10px, env(safe-area-inset-bottom, 0px)) max(10px, env(safe-area-inset-left, 0px));
-    background: rgba(15,23,42,0.34);
+    padding: max(4vh, env(safe-area-inset-top, 0px)) max(2.4vw, env(safe-area-inset-right, 0px)) max(4vh, env(safe-area-inset-bottom, 0px)) max(2.4vw, env(safe-area-inset-left, 0px));
+    background: rgba(15, 23, 42, 0.28);
     opacity: 0;
-    transition: opacity 180ms ease;
 }
 .agent-center-overlay[style*="flex"] {
     opacity: 1;
+    animation: agent-center-overlay-in 180ms ease-out backwards;
 }
 .agent-center-panel {
-    width: min(680px, 100vw);
-    height: calc(var(--app-visual-height, 100dvh) - max(8px, env(safe-area-inset-top, 0px)) - max(8px, env(safe-area-inset-bottom, 0px)));
-    max-height: calc(100vh - max(8px, env(safe-area-inset-top, 0px)) - max(8px, env(safe-area-inset-bottom, 0px)));
+    width: clamp(660px, 57vw, 1040px);
+    max-width: calc(100vw - max(4.8vw, 20px));
+    height: calc(var(--app-visual-height, 100dvh) - 8vh);
+    max-height: calc(100vh - 8vh);
     display: flex;
     flex-direction: column;
-    background: var(--app-surface-card);
+    background: color-mix(in srgb, var(--app-surface-card) 95%, transparent);
     color: var(--app-text-primary);
-    border: 1px solid var(--app-border-default);
-    border-radius: 16px;
-    box-shadow: -18px 0 46px rgba(15,23,42,0.22);
+    border: 1px solid color-mix(in srgb, var(--app-border-default) 62%, rgba(255, 255, 255, 0.72));
+    border-radius: 24px;
+    box-shadow: 0 44px 120px -28px rgba(30, 41, 59, 0.50), 0 0 0 1px rgba(15, 23, 42, 0.04);
     overflow: hidden;
-    transform: translateX(18px);
-    transition: transform 180ms ease-out;
+    isolation: isolate;
+    text-rendering: optimizeLegibility;
 }
 .agent-center-overlay[style*="flex"] .agent-center-panel {
-    transform: translateX(0);
+    animation: agent-center-panel-in 440ms cubic-bezier(0.16, 1, 0.3, 1) backwards;
 }
 .agent-center-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
     gap: 12px;
-    padding: 15px 16px;
-    border-bottom: 1px solid var(--app-border-default);
-    background: color-mix(in srgb, var(--app-surface-card) 90%, var(--app-surface-subtle));
+    padding: 16px 20px 0;
+    background: transparent;
     flex-shrink: 0;
 }
 .agent-center-title {
@@ -92,61 +122,110 @@ const PANEL_CSS = `
     gap: 12px;
 }
 .agent-center-title-mark {
-    width: 38px;
-    height: 38px;
+    width: 40px;
+    height: 40px;
     display: inline-flex;
     align-items: center;
     justify-content: center;
     flex: 0 0 auto;
-    border: 1px solid rgba(37, 99, 235, 0.18);
-    border-radius: 13px;
-    background: rgba(37, 99, 235, 0.10);
-    color: #1d4ed8;
-    font-family: Georgia, 'Palatino Linotype', 'Songti SC', 'Noto Serif SC', serif;
-    font-style: italic;
-    font-weight: 700;
-    font-size: 21px;
+    border: 1px solid rgba(255, 255, 255, 0.30);
+    border-radius: 14px;
+    background: linear-gradient(145deg, #6366f1 0%, #3b82f6 56%, #22d3ee 100%);
+    color: #fff;
+    font-family: Inter, ui-sans-serif, system-ui, -apple-system, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+    font-weight: 800;
+    font-size: 17px;
     line-height: 1;
-    background-image: linear-gradient(160deg, rgba(37, 99, 235, 0.10), rgba(37, 99, 235, 0.16));
+    box-shadow: 0 10px 26px -6px rgba(59, 130, 246, 0.65), inset 0 0 0 1px rgba(255, 255, 255, 0.12);
 }
 .agent-center-title strong {
     display: block;
-    font-size: 18px;
+    font-size: 17px;
+    font-weight: 800;
+    letter-spacing: -0.02em;
     line-height: 1.2;
 }
 .agent-center-meta {
-    margin-top: 4px;
-    font-size: 12px;
+    margin-top: 3px;
+    display: flex;
+    align-items: center;
+    min-width: 0;
+    font-size: 10.5px;
     color: var(--app-text-secondary);
     white-space: nowrap;
+    overflow: hidden;
+}
+.agent-center-meta-item {
+    display: inline-flex;
+    align-items: center;
+    flex: 0 0 auto;
+}
+.agent-center-meta-item b {
+    margin-left: 2px;
+    color: color-mix(in srgb, var(--app-text-primary) 72%, var(--app-text-secondary));
+    font-weight: 700;
+}
+.agent-center-meta-separator {
+    margin: 0 6px;
+    color: color-mix(in srgb, var(--app-text-secondary) 42%, transparent);
+}
+.agent-center-meta-dot {
+    width: 4px;
+    height: 4px;
+    margin-right: 4px;
+    border-radius: 999px;
+    background: #94a3b8;
+}
+.agent-center-meta-dot.is-active { background: #38bdf8; }
+.agent-center-meta-dot.is-danger { background: #fb7185; }
+.agent-center-meta-dot.is-agent { background: #818cf8; }
+.agent-center-meta-dot.is-prompt { background: #a78bfa; }
+.agent-center-meta-dot.is-diagnostic { background: #fbbf24; }
+.agent-center-meta-dot.is-resource { background: #34d399; }
+.agent-center-meta-dot.is-tool { background: #22d3ee; }
+.agent-center-meta-item.is-danger b { color: var(--app-danger-text, #f43f5e); }
+.agent-center-meta-item.is-on b { color: var(--app-success-text, #059669); }
+.agent-center-meta-tail {
     overflow: hidden;
     text-overflow: ellipsis;
 }
 .agent-center-actions {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 2px;
     flex-shrink: 0;
 }
 .agent-center-button {
-    border: 1px solid var(--app-border-default);
+    border: 1px solid transparent;
     border-radius: 999px;
-    background: var(--app-surface-subtle);
-    color: var(--app-text-primary);
+    background: transparent;
+    color: var(--app-text-secondary);
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 34px;
-    height: 34px;
+    width: 32px;
+    height: 32px;
     padding: 0;
     cursor: pointer;
-    transition: background 120ms ease, border-color 120ms ease, transform 90ms ease, box-shadow 120ms ease;
+    transition: background 180ms ease, color 180ms ease, transform 120ms ease;
 }
 .agent-center-button .agent-center-icon {
-    width: 16px;
-    height: 16px;
+    width: 15px;
+    height: 15px;
 }
-.agent-center-button:hover,
+.agent-center-button:hover {
+    border-color: transparent;
+    background: var(--app-surface-subtle);
+    color: var(--app-text-primary);
+    box-shadow: none;
+}
+.agent-center-button[data-action="close"]:hover {
+    background: var(--app-danger-soft, rgba(244, 63, 94, 0.09));
+    color: var(--app-danger-text, #f43f5e);
+}
+.agent-center-button:active {
+    transform: scale(0.90);
+}
 .agent-center-card-action:hover,
 .agent-center-switch:hover,
 .agent-center-filter:hover,
@@ -155,7 +234,6 @@ const PANEL_CSS = `
     border-color: rgba(59,130,246,0.28);
     box-shadow: 0 1px 0 rgba(15,23,42,0.06);
 }
-.agent-center-button:active,
 .agent-center-card-action:active,
 .agent-center-switch:active,
 .agent-center-filter:active,
@@ -173,12 +251,20 @@ const PANEL_CSS = `
     outline-offset: 2px;
 }
 .agent-center-tabs {
-    display: grid;
-    grid-template-columns: repeat(5, minmax(0, 1fr));
-    gap: 8px;
-    padding: 12px;
-    border-bottom: 1px solid var(--app-border-default);
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin: 12px 20px 0;
+    padding: 12px 0 14px;
+    border-top: 1px solid color-mix(in srgb, var(--app-border-default) 72%, transparent);
     flex-shrink: 0;
+}
+.agent-center-tab-divider {
+    width: 1px;
+    height: 20px;
+    margin: 0 2px;
+    background: color-mix(in srgb, var(--app-border-default) 84%, transparent);
 }
 .agent-center-tab {
     display: inline-flex;
@@ -186,21 +272,22 @@ const PANEL_CSS = `
     justify-content: center;
     gap: 6px;
     border: 1px solid transparent;
-    border-radius: 10px;
+    border-radius: 999px;
     background: transparent;
     color: var(--app-text-secondary);
-    min-height: 36px;
-    padding: 8px 7px;
+    min-height: 32px;
+    padding: 6px 12px;
     font-size: 12px;
-    font-weight: 600;
+    font-weight: 500;
     cursor: pointer;
-    transition: background 120ms ease, border-color 120ms ease, color 120ms ease, transform 90ms ease;
+    transition: background 200ms ease, border-color 200ms ease, color 200ms ease, transform 120ms ease, box-shadow 200ms ease;
 }
 .agent-center-tab.is-active {
-    border-color: rgba(59,130,246,0.24);
-    background: rgba(59,130,246,0.10);
-    color: #1d4ed8;
-    box-shadow: inset 0 -2px 0 rgba(37, 99, 235, 0.38);
+    border-color: rgba(99, 102, 241, 0.23);
+    background: rgba(99, 102, 241, 0.09);
+    color: #4f46e5;
+    box-shadow: 0 5px 16px -5px rgba(99, 102, 241, 0.44);
+    font-weight: 650;
 }
 .agent-center-tab.is-active .agent-center-icon {
     stroke-width: 2.4;
@@ -220,7 +307,20 @@ const PANEL_CSS = `
     flex: 1;
     overflow: auto;
     -webkit-overflow-scrolling: touch;
-    padding: 16px;
+    overscroll-behavior: contain;
+    padding: 16px 20px 20px;
+    scrollbar-width: thin;
+    scrollbar-color: color-mix(in srgb, var(--app-text-secondary) 22%, transparent) transparent;
+}
+.agent-center-content::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+.agent-center-content::-webkit-scrollbar-thumb {
+    border: 2px solid transparent;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--app-text-secondary) 20%, transparent);
+    background-clip: padding-box;
 }
 .agent-center-list {
     display: flex;
@@ -258,11 +358,11 @@ const PANEL_CSS = `
 }
 .agent-center-card {
     border: 1px solid var(--app-border-default);
-    border-radius: 12px;
-    background: color-mix(in srgb, var(--app-surface-card) 90%, var(--app-surface-subtle));
-    padding: 12px 14px;
-    box-shadow: 0 4px 16px rgba(15, 23, 42, 0.045);
-    transition: border-color 160ms ease, background 160ms ease, box-shadow 160ms ease, transform 120ms ease;
+    border-radius: 16px;
+    background: color-mix(in srgb, var(--app-surface-card) 97%, var(--app-surface-subtle));
+    padding: 14px 16px;
+    box-shadow: 0 1px 3px rgba(15, 23, 42, 0.05);
+    transition: border-color 240ms ease, background 240ms ease, box-shadow 240ms ease, transform 220ms ease;
 }
 .agent-center-card.is-failure {
     border-color: rgba(244,63,94,0.24);
@@ -279,15 +379,16 @@ const PANEL_CSS = `
     gap: 8px;
 }
 .agent-center-card-title {
-    font-size: 14px;
-    font-weight: 700;
+    font-size: 14.5px;
+    font-weight: 750;
+    letter-spacing: -0.012em;
     line-height: 1.4;
     word-break: break-word;
 }
 .agent-center-card-sub {
     margin-top: 6px;
-    font-size: 12px;
-    line-height: 1.55;
+    font-size: 12.5px;
+    line-height: 1.58;
     color: var(--app-text-secondary);
     word-break: break-word;
 }
@@ -437,24 +538,54 @@ const PANEL_CSS = `
 .agent-center-agent-list {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 12px;
+    gap: 16px;
+}
+.agent-center-agent-list.is-entering .agent-center-agent-card {
+    animation: agent-center-card-in 430ms cubic-bezier(0.16, 1, 0.3, 1) backwards;
+    animation-delay: calc(var(--agent-card-index, 0) * 48ms);
 }
 .agent-center-agent-card {
-    min-height: 210px;
+    position: relative;
+    min-height: 198px;
     cursor: pointer;
     display: flex;
     flex-direction: column;
-    gap: 10px;
-    background:
-        linear-gradient(135deg, var(--agent-card-accent-soft, rgba(59,130,246,0.10)), transparent 46%),
-        color-mix(in srgb, var(--app-surface-card) 94%, var(--app-surface-subtle));
+    gap: 9px;
+    overflow: hidden;
+    background: color-mix(in srgb, var(--app-surface-card) 98%, var(--app-surface-subtle));
+    transition: border-color 300ms ease, box-shadow 300ms ease, transform 300ms ease;
+}
+.agent-center-agent-card::before {
+    content: '';
+    position: absolute;
+    z-index: 0;
+    top: -58px;
+    right: -48px;
+    width: 144px;
+    height: 144px;
+    border-radius: 999px;
+    background: var(--agent-card-accent-soft, rgba(59, 130, 246, 0.10));
+    filter: blur(24px);
+    opacity: 0.70;
+    pointer-events: none;
+    transition: opacity 300ms ease;
+}
+.agent-center-agent-card > * {
+    position: relative;
+    z-index: 1;
 }
 .agent-center-agent-card.is-agent-on {
     border-color: var(--agent-card-accent-border, rgba(34,197,94,0.24));
 }
 .agent-center-agent-card:hover {
-    transform: translateY(-1px);
-    box-shadow: 0 10px 26px rgba(15, 23, 42, 0.10);
+    transform: translateY(-4px);
+    box-shadow: 0 20px 46px -16px rgba(15, 23, 42, 0.24);
+}
+.agent-center-agent-card:hover::before {
+    opacity: 1;
+}
+.agent-center-agent-card:active {
+    transform: translateY(-1px) scale(0.982);
 }
 .agent-center-agent-card[data-agent-accent="image"],
 .agent-center-floating-card[data-agent-accent="image"] {
@@ -494,81 +625,129 @@ const PANEL_CSS = `
     inset: 0;
     z-index: 22030;
     display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 20px;
-    background: rgba(15, 23, 42, 0.22);
+    align-items: stretch;
+    justify-content: flex-end;
+    padding: 7.5vh 3.6vw 6.5vh;
+    background: rgba(15, 23, 42, 0.18);
 }
 .agent-center-floating-card {
-    width: min(620px, calc(100vw - 32px));
-    height: min(720px, calc(100vh - 40px));
-    perspective: 1400px;
+    position: relative;
+    width: clamp(600px, 47vw, 860px);
+    max-width: calc(100vw - 7.2vw);
+    height: 100%;
+    overflow: hidden;
+    border: 1px solid color-mix(in srgb, var(--agent-card-accent-border, var(--app-border-default)) 76%, rgba(255, 255, 255, 0.72));
+    border-radius: 22px;
+    background: color-mix(in srgb, var(--app-surface-card) 98%, var(--app-surface-subtle));
+    box-shadow: 0 48px 110px -24px rgba(30, 41, 59, 0.55), 0 0 0 1px rgba(15, 23, 42, 0.04);
+}
+.agent-center-floating-card.is-entering {
+    animation: agent-center-floating-in 430ms cubic-bezier(0.16, 1, 0.3, 1) backwards;
+}
+.agent-center-floating-card::before {
+    content: '';
+    position: absolute;
+    z-index: 0;
+    inset: 0 0 auto;
+    height: 116px;
+    background: linear-gradient(to bottom, var(--agent-card-accent-soft, rgba(99, 102, 241, 0.10)), transparent);
+    pointer-events: none;
 }
 .agent-center-floating-inner {
     position: relative;
+    z-index: 1;
     width: 100%;
     height: 100%;
-    transform: rotateY(0deg);
-    transform-style: preserve-3d;
-    transition: transform 520ms cubic-bezier(0.16, 1, 0.3, 1);
-    will-change: transform;
-}
-.agent-center-floating-card.is-flipped .agent-center-floating-inner {
-    transform: rotateY(180deg);
+    overflow: hidden;
 }
 .agent-center-floating-face {
     position: absolute;
     inset: 0;
     display: flex;
     flex-direction: column;
-    gap: 12px;
+    gap: 14px;
     overflow: auto;
-    padding: 16px;
-    border: 1px solid var(--agent-card-accent-border, var(--app-border-default));
-    border-radius: 12px;
-    background:
-        linear-gradient(135deg, var(--agent-card-accent-soft, rgba(59,130,246,0.10)), transparent 44%),
-        color-mix(in srgb, var(--app-surface-card) 96%, var(--app-surface-subtle));
-    box-shadow: 0 22px 70px rgba(15, 23, 42, 0.24);
-    backface-visibility: hidden;
+    overscroll-behavior: contain;
+    padding: 14px 16px 18px;
+    background: transparent;
+    scrollbar-width: thin;
+    transition: opacity 240ms ease, transform 240ms cubic-bezier(0.32, 0.72, 0.24, 1), visibility 0s linear 0s;
 }
 .agent-center-floating-face-back {
-    transform: rotateY(180deg);
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+    transform: translateX(44px);
+    transition: opacity 240ms ease, transform 240ms cubic-bezier(0.32, 0.72, 0.24, 1), visibility 0s linear 240ms;
+}
+.agent-center-floating-card.is-flipped .agent-center-floating-face-front {
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+    transform: translateX(-44px);
+    transition: opacity 240ms ease, transform 240ms cubic-bezier(0.32, 0.72, 0.24, 1), visibility 0s linear 240ms;
+}
+.agent-center-floating-card.is-flipped .agent-center-floating-face-back {
+    opacity: 1;
+    visibility: visible;
+    pointer-events: auto;
+    transform: translateX(0);
+    transition-delay: 0s;
 }
 .agent-center-floating-toolbar {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 2px;
 }
 .agent-center-icon-button {
-    width: 34px;
-    height: 34px;
+    width: 32px;
+    height: 32px;
     display: inline-flex;
     align-items: center;
     justify-content: center;
     flex: 0 0 auto;
-    border: 1px solid var(--app-border-default);
-    border-radius: 8px;
-    background: var(--app-surface-card);
-    color: var(--app-text-primary);
+    border: 1px solid transparent;
+    border-radius: 999px;
+    background: transparent;
+    color: var(--app-text-secondary);
     cursor: pointer;
+    transition: background 180ms ease, color 180ms ease, transform 120ms ease;
 }
 .agent-center-icon-button:hover {
-    background: var(--app-surface-hover);
+    background: var(--app-surface-subtle);
+    color: var(--app-text-primary);
+}
+.agent-center-icon-button:active {
+    transform: scale(0.90);
+}
+.agent-center-icon-button[data-agent-float-close]:hover {
+    background: var(--app-danger-soft, rgba(244, 63, 94, 0.09));
+    color: var(--app-danger-text, #f43f5e);
+}
+.agent-center-icon-button[data-agent-float-flip] .agent-center-icon {
+    transition: transform 240ms cubic-bezier(0.32, 0.72, 0.24, 1);
+}
+.agent-center-floating-card.is-flipped .agent-center-icon-button[data-agent-float-flip] .agent-center-icon {
+    transform: rotate(180deg);
 }
 .agent-center-agent-badge {
-    width: 38px;
-    height: 38px;
+    width: 44px;
+    height: 44px;
     display: inline-flex;
     align-items: center;
     justify-content: center;
     flex: 0 0 auto;
     border: 1px solid var(--agent-card-accent-border, rgba(59,130,246,0.24));
-    border-radius: 8px;
+    border-radius: 14px;
     background: var(--agent-card-accent-soft, rgba(59,130,246,0.10));
     color: var(--app-text-primary);
-    font-size: 18px;
-    font-weight: 700;
+    box-shadow: 0 8px 20px -9px var(--agent-card-accent-border, rgba(59, 130, 246, 0.38));
+    font-size: 17px;
+    font-weight: 750;
+    transition: transform 300ms ease;
+}
+.agent-center-agent-card:hover .agent-center-agent-badge {
+    transform: scale(1.05) rotate(-3deg);
 }
 .agent-center-agent-title-row {
     display: flex;
@@ -579,19 +758,55 @@ const PANEL_CSS = `
 .agent-center-agent-title-main {
     min-width: 0;
     display: flex;
-    gap: 10px;
-    align-items: flex-start;
+    gap: 12px;
+    align-items: center;
+}
+.agent-center-agent-card-description {
+    flex: 1;
+    min-height: 38px;
+}
+.agent-center-agent-card-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin-top: auto;
+    padding-top: 10px;
+    border-top: 1px solid color-mix(in srgb, var(--app-border-default) 68%, transparent);
+    color: var(--app-text-secondary);
+    font-size: 11.5px;
+}
+.agent-center-agent-card-footer span:last-child {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    color: color-mix(in srgb, var(--agent-card-accent-border, #6366f1) 78%, var(--app-text-primary));
+    font-size: 11px;
+    font-weight: 700;
+    opacity: 0;
+    transform: translateX(-4px);
+    transition: opacity 260ms ease, transform 260ms ease;
+}
+.agent-center-agent-card:hover .agent-center-agent-card-footer span:last-child,
+.agent-center-agent-card:focus-visible .agent-center-agent-card-footer span:last-child {
+    opacity: 1;
+    transform: translateX(0);
+}
+.agent-center-agent-card-footer .agent-center-icon {
+    width: 12px;
+    height: 12px;
 }
 .agent-center-agent-face-back .agent-center-card-title {
     font-size: 13px;
 }
 .agent-center-agent-section {
     display: grid;
-    gap: 6px;
-    padding: 8px;
-    border: 1px solid rgba(148,163,184,0.16);
-    border-radius: 8px;
-    background: color-mix(in srgb, var(--app-surface-card) 82%, transparent);
+    gap: 8px;
+    padding: 14px;
+    border: 1px solid color-mix(in srgb, var(--app-border-default) 88%, transparent);
+    border-radius: 16px;
+    background: color-mix(in srgb, var(--app-surface-card) 94%, transparent);
+    box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04);
 }
 .agent-center-agent-section-title {
     color: var(--app-text-secondary);
@@ -608,7 +823,7 @@ const PANEL_CSS = `
     display: inline-flex;
     align-items: center;
     border: 1px solid rgba(148,163,184,0.20);
-    border-radius: 8px;
+    border-radius: 10px;
     padding: 4px 7px;
     background: var(--app-surface-card);
     color: var(--app-text-primary);
@@ -654,7 +869,7 @@ const PANEL_CSS = `
     width: 100%;
     min-width: 0;
     border: 1px solid var(--app-border-default);
-    border-radius: 8px;
+    border-radius: 12px;
     background: var(--app-surface-card);
     color: var(--app-text-primary);
     font: inherit;
@@ -678,7 +893,7 @@ const PANEL_CSS = `
     min-height: 86px;
     padding: 8px;
     border: 1px solid var(--app-border-default);
-    border-radius: 8px;
+    border-radius: 12px;
     background: color-mix(in srgb, var(--app-surface-card) 88%, transparent);
     color: var(--app-text-secondary);
     font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
@@ -695,6 +910,40 @@ const PANEL_CSS = `
     display: grid;
     gap: 6px;
 }
+.agent-center-memory-mode-setting {
+    display: grid;
+    gap: 7px;
+    padding: 10px;
+    border: 1px solid rgba(148,163,184,0.16);
+    border-radius: 12px;
+    background: color-mix(in srgb, var(--app-surface-card) 96%, var(--app-surface-subtle));
+}
+.agent-center-memory-mode-control {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 3px;
+    padding: 3px;
+    border-radius: 11px;
+    background: var(--app-surface-subtle);
+}
+.agent-center-memory-mode-button {
+    min-width: 0;
+    min-height: 30px;
+    border: 0;
+    border-radius: 8px;
+    background: transparent;
+    color: var(--app-text-secondary);
+    font: inherit;
+    font-size: 12px;
+    font-weight: 700;
+    cursor: pointer;
+    transition: background 160ms ease, color 160ms ease, box-shadow 160ms ease;
+}
+.agent-center-memory-mode-button[aria-pressed="true"] {
+    background: var(--app-surface-card);
+    color: var(--app-accent-primary);
+    box-shadow: 0 2px 8px rgba(15, 23, 42, 0.10);
+}
 .agent-center-setting-row {
     display: grid;
     grid-template-columns: 72px minmax(0, 1fr) auto;
@@ -703,11 +952,14 @@ const PANEL_CSS = `
     min-height: 34px;
     padding: 7px 8px;
     border: 1px solid rgba(148,163,184,0.16);
-    border-radius: 8px;
-    background: var(--app-surface-card);
+    border-radius: 12px;
+    background: color-mix(in srgb, var(--app-surface-card) 96%, var(--app-surface-subtle));
 }
 .agent-center-setting-row.is-model {
     grid-template-columns: 72px minmax(0, 1fr);
+}
+.agent-center-setting-row.is-model > :not(.agent-center-setting-label) {
+    grid-column: 2;
 }
 .agent-center-setting-label {
     color: var(--app-text-secondary);
@@ -743,7 +995,7 @@ const PANEL_CSS = `
     max-height: 180px;
     overflow-y: auto;
     border: 1px solid var(--app-border-default);
-    border-radius: 8px;
+    border-radius: 12px;
     background: var(--app-surface-card);
     padding: 4px;
 }
@@ -771,7 +1023,7 @@ const PANEL_CSS = `
     min-height: 30px;
     padding: 5px 9px;
     border: 1px solid var(--app-border-default);
-    border-radius: 8px;
+    border-radius: 12px;
     background: var(--app-surface-card);
     color: var(--app-text-primary);
     font-size: 12px;
@@ -785,7 +1037,7 @@ const PANEL_CSS = `
     min-width: 0;
     min-height: 32px;
     border: 1px solid var(--app-border-default);
-    border-radius: 8px;
+    border-radius: 12px;
     background: var(--app-surface-subtle);
     color: var(--app-text-primary);
     padding: 6px 8px;
@@ -812,7 +1064,7 @@ const PANEL_CSS = `
 .agent-center-model-control .world-app-select-btn {
     min-height: 32px;
     padding: 6px 8px;
-    border-radius: 8px;
+    border-radius: 12px;
     background: var(--app-surface-subtle);
     font-size: 12px;
     font-weight: 600;
@@ -820,7 +1072,7 @@ const PANEL_CSS = `
 .agent-center-model-manage {
     min-height: 32px;
     border: 1px solid var(--app-border-default);
-    border-radius: 8px;
+    border-radius: 12px;
     background: var(--app-surface-subtle);
     color: var(--app-text-primary);
     padding: 6px 9px;
@@ -834,24 +1086,74 @@ const PANEL_CSS = `
     opacity: 0.58;
 }
 .agent-center-switch {
-    min-width: 76px;
-    border: 1px solid var(--app-border-default);
+    width: 44px;
+    min-width: 44px;
+    height: 40px;
+    min-height: 40px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 auto;
+    border: 0;
     border-radius: 999px;
-    background: var(--app-surface-card);
-    color: var(--app-text-secondary);
-    padding: 6px 10px;
-    font-size: 12px;
-    font-weight: 700;
+    background: transparent;
+    padding: 9px 3px;
     cursor: pointer;
+    box-shadow: none;
+    transition: opacity 120ms ease;
 }
-.agent-center-switch.is-on {
-    border-color: rgba(34,197,94,0.30);
-    background: rgba(34,197,94,0.12);
-    color: #047857;
+.agent-center-switch-track {
+    position: relative;
+    width: 38px;
+    height: 22px;
+    display: block;
+    border: 1px solid color-mix(in srgb, var(--app-border-default) 86%, transparent);
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--app-text-tertiary, var(--app-text-secondary)) 20%, var(--app-surface-subtle));
+    transition: background 180ms ease, border-color 180ms ease;
+}
+.agent-center-switch-thumb {
+    position: absolute;
+    top: 1px;
+    left: 1px;
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    background: var(--app-surface-card);
+    box-shadow: 0 1px 4px rgba(15, 23, 42, 0.22);
+    transition: transform 180ms cubic-bezier(0.32, 0.72, 0.24, 1);
+}
+.agent-center-switch[aria-checked="true"] .agent-center-switch-track {
+    border-color: color-mix(in srgb, var(--app-accent-primary, #2563eb) 78%, transparent);
+    background: var(--app-accent-primary, #2563eb);
+}
+.agent-center-switch[aria-checked="true"] .agent-center-switch-thumb {
+    transform: translateX(16px);
+}
+.agent-center-switch:hover {
+    box-shadow: none;
+}
+.agent-center-switch:hover .agent-center-switch-track {
+    border-color: color-mix(in srgb, var(--app-accent-primary, #2563eb) 48%, var(--app-border-default));
+}
+.agent-center-switch:active {
+    transform: none;
+}
+.agent-center-switch:active .agent-center-switch-thumb {
+    transform: scale(0.88);
+}
+.agent-center-switch[aria-checked="true"]:active .agent-center-switch-thumb {
+    transform: translateX(16px) scale(0.88);
+}
+.agent-center-switch[aria-busy="true"] {
+    opacity: 0.68;
 }
 .agent-center-switch:disabled {
     cursor: not-allowed;
     opacity: 0.58;
+}
+.agent-center-memory-mode-badge {
+    flex: 0 0 auto;
 }
 .agent-center-card-action {
     border: 1px solid var(--app-border-default);
@@ -1016,31 +1318,71 @@ const PANEL_CSS = `
     }
     .agent-center-panel {
         width: 100%;
+        max-width: none;
         height: min(92dvh, calc(var(--app-visual-height, 100dvh) - max(16px, env(safe-area-inset-top, 0px)) - max(8px, env(safe-area-inset-bottom, 0px))));
-        border-radius: 16px 16px 12px 12px;
-        transform: translateY(18px);
-        box-shadow: 0 -16px 42px rgba(15,23,42,0.22);
+        max-height: none;
+        border-radius: 22px 22px 14px 14px;
+        box-shadow: 0 -18px 54px -16px rgba(15, 23, 42, 0.36);
     }
     .agent-center-overlay[style*="flex"] .agent-center-panel {
-        transform: translateY(0);
+        animation-name: agent-center-panel-mobile-in;
     }
     .agent-center-header {
-        padding: 12px;
+        padding: 13px 12px 0;
     }
     .agent-center-title-mark {
-        width: 34px;
-        height: 34px;
-        border-radius: 11px;
+        width: 36px;
+        height: 36px;
+        border-radius: 12px;
+        font-size: 15px;
     }
     .agent-center-tabs {
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-        padding: 9px 10px;
+        flex-wrap: nowrap;
+        gap: 5px;
+        margin: 10px 12px 0;
+        padding: 10px 0 11px;
+        overflow-x: auto;
+        overscroll-behavior-x: contain;
+        scrollbar-width: none;
+        -webkit-overflow-scrolling: touch;
+    }
+    .agent-center-tabs::-webkit-scrollbar {
+        display: none;
+    }
+    .agent-center-tab,
+    .agent-center-tab-divider {
+        flex: 0 0 auto;
+    }
+    .agent-center-tab {
+        min-height: 32px;
+        padding: 6px 11px;
     }
     .agent-center-content {
-        padding: 10px;
+        padding: 12px;
     }
     .agent-center-agent-list {
         grid-template-columns: minmax(0, 1fr);
+        gap: 12px;
+    }
+    .agent-center-agent-card {
+        min-height: 188px;
+    }
+    .agent-center-floating-layer {
+        align-items: flex-end;
+        justify-content: center;
+        padding: max(10px, env(safe-area-inset-top, 0px)) max(8px, env(safe-area-inset-right, 0px)) max(8px, env(safe-area-inset-bottom, 0px)) max(8px, env(safe-area-inset-left, 0px));
+    }
+    .agent-center-floating-card {
+        width: 100%;
+        max-width: none;
+        height: min(88dvh, calc(var(--app-visual-height, 100dvh) - max(20px, env(safe-area-inset-top, 0px)) - max(8px, env(safe-area-inset-bottom, 0px))));
+        border-radius: 22px 22px 12px 12px;
+    }
+    .agent-center-floating-card.is-entering {
+        animation-name: agent-center-floating-mobile-in;
+    }
+    .agent-center-floating-face {
+        padding: 13px 12px max(16px, env(safe-area-inset-bottom, 0px));
     }
     .agent-center-setting-row {
         grid-template-columns: 64px minmax(0, 1fr);
@@ -1048,7 +1390,7 @@ const PANEL_CSS = `
     .agent-center-setting-row.is-model {
         grid-template-columns: 64px minmax(0, 1fr);
     }
-    .agent-center-setting-row .agent-center-card-action {
+    .agent-center-setting-row > .agent-center-card-action {
         grid-column: 1 / -1;
         width: 100%;
     }
@@ -1067,46 +1409,115 @@ const PANEL_CSS = `
 }
 @media (max-width: 430px) {
     .agent-center-actions {
-        gap: 4px;
+        gap: 0;
     }
-    .agent-center-button span {
-        display: none;
+    .agent-center-title {
+        gap: 9px;
     }
-    .agent-center-button {
-        width: 34px;
-        padding: 0;
+    .agent-center-title strong {
+        font-size: 16px;
+    }
+    .agent-center-meta {
+        max-width: calc(100vw - 190px);
+    }
+    .agent-center-agent-badge {
+        width: 40px;
+        height: 40px;
+        border-radius: 13px;
+    }
+    .agent-center-floating-face .agent-center-agent-title-main {
+        gap: 9px;
     }
 }
 body[data-theme-mode='dark'] .agent-center-title-mark {
-    color: #8ecbff;
-    border-color: rgba(121, 192, 255, 0.26);
-    background: rgba(121, 192, 255, 0.12);
+    color: #fff;
+    border-color: rgba(255, 255, 255, 0.22);
+    background: linear-gradient(145deg, #6366f1 0%, #3b82f6 56%, #22d3ee 100%);
 }
 body[data-theme-mode='dark'] .agent-center-card,
 body[data-theme-mode='dark'] .agent-center-agent-card.is-agent-on {
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.24);
+    box-shadow: 0 8px 28px rgba(0, 0, 0, 0.24);
+}
+body[data-theme-mode='dark'] .agent-center-panel,
+body[data-theme-mode='dark'] .agent-center-floating-card {
+    border-color: color-mix(in srgb, var(--app-border-default) 86%, rgba(255, 255, 255, 0.10));
 }
 body[data-theme-mode='dark'] .agent-center-tab.is-active {
     color: #8ecbff;
     border-color: rgba(121, 192, 255, 0.32);
     background: rgba(121, 192, 255, 0.13);
-    box-shadow: inset 0 -2px 0 rgba(121, 192, 255, 0.36);
+    box-shadow: 0 5px 16px -5px rgba(121, 192, 255, 0.36);
+}
+@media (hover: none) {
+    .agent-center-agent-card:hover {
+        transform: none;
+        box-shadow: 0 1px 3px rgba(15, 23, 42, 0.05);
+    }
+    .agent-center-agent-card:hover .agent-center-agent-badge {
+        transform: none;
+    }
+    .agent-center-agent-card .agent-center-agent-card-footer span:last-child {
+        opacity: 1;
+        transform: none;
+    }
 }
 @media (prefers-reduced-motion: reduce) {
     .agent-center-overlay,
     .agent-center-panel,
     .agent-center-button,
     .agent-center-card,
-    .agent-center-floating-inner,
+    .agent-center-agent-card::before,
+    .agent-center-agent-badge,
+    .agent-center-floating-card,
+    .agent-center-floating-face,
+    .agent-center-icon-button,
+    .agent-center-icon-button .agent-center-icon,
     .agent-center-card-action,
+    .agent-center-memory-mode-button,
     .agent-center-resource-shortcut,
     .agent-center-switch,
     .agent-center-filter,
     .agent-center-tab,
     .agent-center-model-manage {
+        animation: none !important;
         transition: none !important;
+    }
+    .agent-center-panel,
+    .agent-center-card,
+    .agent-center-agent-badge,
+    .agent-center-floating-card,
+    .agent-center-icon-button,
+    .agent-center-icon-button .agent-center-icon {
         transform: none !important;
     }
+}
+body[data-reduced-motion='on'] .agent-center-overlay,
+body[data-reduced-motion='on'] .agent-center-panel,
+body[data-reduced-motion='on'] .agent-center-button,
+body[data-reduced-motion='on'] .agent-center-card,
+body[data-reduced-motion='on'] .agent-center-agent-card::before,
+body[data-reduced-motion='on'] .agent-center-agent-badge,
+body[data-reduced-motion='on'] .agent-center-floating-card,
+body[data-reduced-motion='on'] .agent-center-floating-face,
+body[data-reduced-motion='on'] .agent-center-icon-button,
+body[data-reduced-motion='on'] .agent-center-icon-button .agent-center-icon,
+body[data-reduced-motion='on'] .agent-center-card-action,
+body[data-reduced-motion='on'] .agent-center-memory-mode-button,
+body[data-reduced-motion='on'] .agent-center-resource-shortcut,
+body[data-reduced-motion='on'] .agent-center-switch,
+body[data-reduced-motion='on'] .agent-center-filter,
+body[data-reduced-motion='on'] .agent-center-tab,
+body[data-reduced-motion='on'] .agent-center-model-manage {
+    animation: none !important;
+    transition: none !important;
+}
+body[data-reduced-motion='on'] .agent-center-panel,
+body[data-reduced-motion='on'] .agent-center-card,
+body[data-reduced-motion='on'] .agent-center-agent-badge,
+body[data-reduced-motion='on'] .agent-center-floating-card,
+body[data-reduced-motion='on'] .agent-center-icon-button,
+body[data-reduced-motion='on'] .agent-center-icon-button .agent-center-icon {
+    transform: none !important;
 }
 `;
 
@@ -1546,6 +1957,14 @@ const FEATURE_AGENT_CARD_IDS = new Set([
     'memory_manager',
 ]);
 
+const AGENT_CARD_INTERACTIVE_SELECTOR = 'a, button, input, textarea, select, [contenteditable="true"], [role="switch"]';
+
+const MEMORY_STORAGE_MODE_LABELS = Object.freeze({
+    off: '关闭',
+    summary: '摘要',
+    table: '表格',
+});
+
 const isFeatureAgentCard = agent => (
     trim(agent?.toggleKind) === 'feature' ||
     trim(agent?.cardType) === 'feature' ||
@@ -1806,6 +2225,8 @@ export class AgentCenterPanel {
         choice = appChoice,
         openConfig = (options = {}) => globalThis.window?.appBridge?.debugUiRegistry?.panels?.configPanel?.show?.(options),
         openResourceTarget = openDefaultAgentResourceTarget,
+        notifySuccess = (message) => globalThis.window?.toastr?.success?.(message),
+        notifyError = (message) => globalThis.window?.toastr?.error?.(message),
         exportTextFile = (text, filename, successLabel) => exportDebugTextFile({
             text,
             filename,
@@ -1820,6 +2241,8 @@ export class AgentCenterPanel {
         this.choice = choice;
         this.openConfig = openConfig;
         this.openResourceTarget = openResourceTarget;
+        this.notifySuccess = notifySuccess;
+        this.notifyError = notifyError;
         this.exportTextFile = exportTextFile;
         this.getFailureSeenAt = getFailureSeenAt;
         this.markFailureSeen = markFailureSeen;
@@ -1836,8 +2259,12 @@ export class AgentCenterPanel {
         this.lastError = '';
         this.boundConfigProfileChanged = null;
         this.boundMemoryStorageModeChanged = null;
+        this.boundAgentFeatureSettingsChanged = null;
         this.floatingAgentId = '';
         this.floatingAgentFlipped = false;
+        this.floatingAgentEntryPending = false;
+        this.cardEntryAnimationUntil = 0;
+        this.cardEntryAnimationTimer = null;
         this.replyCheckPreviewTarget = 'auto';
     }
 
@@ -1866,7 +2293,6 @@ export class AgentCenterPanel {
                         </div>
                     </div>
                     <div class="agent-center-actions">
-                        <button type="button" class="agent-center-button" data-action="refresh" title="刷新" aria-label="刷新">${ICONS.refresh}</button>
                         <button type="button" class="agent-center-button" data-action="export" title="导出" aria-label="导出">${ICONS.export}</button>
                         <button type="button" class="agent-center-button" data-action="close" title="关闭" aria-label="关闭">${ICONS.close}</button>
                     </div>
@@ -1879,7 +2305,6 @@ export class AgentCenterPanel {
             if (event.target === overlay) this.hide();
         });
         overlay.querySelector('[data-action="close"]')?.addEventListener('click', () => this.hide());
-        overlay.querySelector('[data-action="refresh"]')?.addEventListener('click', () => this.refresh());
         overlay.querySelector('[data-action="export"]')?.addEventListener('click', () => this.handleExport());
         this.overlayElement = overlay;
         this.panelElement = overlay.querySelector('.agent-center-panel');
@@ -1893,6 +2318,8 @@ export class AgentCenterPanel {
             if (this.isVisible()) this.refresh();
         };
         globalThis.window?.addEventListener?.('memory-storage-mode-changed', this.boundMemoryStorageModeChanged);
+        this.boundAgentFeatureSettingsChanged = () => this.handleAgentFeatureSettingsChanged();
+        globalThis.window?.addEventListener?.('agent-feature-settings-changed', this.boundAgentFeatureSettingsChanged);
     }
 
     async callAction(name, args = undefined, fallback = null) {
@@ -2003,9 +2430,15 @@ export class AgentCenterPanel {
         const opts = options && typeof options === 'object' ? options : {};
         const tab = Object.prototype.hasOwnProperty.call(opts, 'tab') ? opts.tab : this.activeTab;
         this.ensureDom();
+        const wasVisible = this.isVisible();
         this.activeTab = trim(tab, 'agents');
         this.activityStatus = normalizeActivityStatus(opts.activityStatus || opts.status || '');
         this.surface = normalizeSurface(opts.surface || '');
+        if (!wasVisible) {
+            clearTimeout(this.cardEntryAnimationTimer);
+            this.cardEntryAnimationTimer = null;
+            this.cardEntryAnimationUntil = Number.POSITIVE_INFINITY;
+        }
         if (this.overlayElement) this.overlayElement.style.display = 'flex';
         this.refresh();
     }
@@ -2014,7 +2447,26 @@ export class AgentCenterPanel {
         closeCustomSelectMenu();
         this.floatingAgentId = '';
         this.floatingAgentFlipped = false;
+        this.floatingAgentEntryPending = false;
         if (this.overlayElement) this.overlayElement.style.display = 'none';
+    }
+
+    destroy() {
+        const target = globalThis.window;
+        target?.removeEventListener?.('config-profile-changed', this.boundConfigProfileChanged);
+        target?.removeEventListener?.('memory-storage-mode-changed', this.boundMemoryStorageModeChanged);
+        target?.removeEventListener?.('agent-feature-settings-changed', this.boundAgentFeatureSettingsChanged);
+        this.boundConfigProfileChanged = null;
+        this.boundMemoryStorageModeChanged = null;
+        this.boundAgentFeatureSettingsChanged = null;
+        clearTimeout(this.cardEntryAnimationTimer);
+        this.cardEntryAnimationTimer = null;
+        this.overlayElement?.remove?.();
+        this.overlayElement = null;
+        this.panelElement = null;
+        this.contentElement = null;
+        this.metaElement = null;
+        this.tabsElement = null;
     }
 
     isVisible() {
@@ -2025,6 +2477,11 @@ export class AgentCenterPanel {
         const tab = trim(event?.detail?.tab || 'chat');
         if (tab && tab !== 'chat') return null;
         if (this.activeTab !== 'agents' || !this.isVisible()) return null;
+        return this.refresh();
+    }
+
+    handleAgentFeatureSettingsChanged() {
+        if (!this.isVisible()) return null;
         return this.refresh();
     }
 
@@ -2043,6 +2500,7 @@ export class AgentCenterPanel {
         this.activeTab = next;
         this.floatingAgentId = '';
         this.floatingAgentFlipped = false;
+        this.floatingAgentEntryPending = false;
         if (resetActivityStatus) this.activityStatus = '';
         this.render();
     }
@@ -2051,6 +2509,7 @@ export class AgentCenterPanel {
         this.activeTab = 'activity';
         this.floatingAgentId = '';
         this.floatingAgentFlipped = false;
+        this.floatingAgentEntryPending = false;
         this.activityStatus = normalizeActivityStatus(status);
         this.refresh();
     }
@@ -2077,6 +2536,7 @@ export class AgentCenterPanel {
     renderTabs() {
         if (!this.tabsElement) return;
         this.tabsElement.innerHTML = this.view.tabs.map((tab) => `
+            ${tab.id === 'activity' ? '<span class="agent-center-tab-divider" aria-hidden="true"></span>' : ''}
             <button
                 type="button"
                 class="agent-center-tab${tab.id === this.activeTab ? ' is-active' : ''}"
@@ -2093,18 +2553,25 @@ export class AgentCenterPanel {
     renderMeta() {
         if (!this.metaElement) return;
         const meta = this.view.meta || {};
-        this.metaElement.textContent = formatMeta([
-            `待确认 ${Number(meta.pending || 0)}`,
-            `活动中 ${Number(meta.activeRuns || 0)}`,
-            `失败 ${Number(meta.failedRuns || 0)}`,
-            `Agent ${Number(meta.enabledAgents || 0)}/${Number(meta.agents || 0)}`,
-            `提示词 ${Number(meta.enabledPromptModules || 0)}/${Number(meta.promptModules || 0)}`,
-            `诊断 ${Number(meta.diagnosticViews || 0)}`,
-            `资源 ${Number(meta.resources || 0)}`,
-            `工具 ${Number(meta.tools || 0)}`,
-            this.surface ? `范围 ${this.surface}` : '',
-            meta.sessionGateEnabled ? '当前会话已开启' : '当前会话未开启',
-        ]);
+        const items = [
+            { label: '待确认', value: Number(meta.pending || 0), tone: 'muted' },
+            { label: '活动中', value: Number(meta.activeRuns || 0), tone: 'active' },
+            { label: '失败', value: Number(meta.failedRuns || 0), tone: 'danger' },
+            { label: 'Agent', value: `${Number(meta.enabledAgents || 0)}/${Number(meta.agents || 0)}`, tone: 'agent' },
+            { label: '提示词', value: `${Number(meta.enabledPromptModules || 0)}/${Number(meta.promptModules || 0)}`, tone: 'prompt' },
+            { label: '诊断', value: Number(meta.diagnosticViews || 0), tone: 'diagnostic' },
+            { label: '资源', value: Number(meta.resources || 0), tone: 'resource' },
+            { label: '工具', value: Number(meta.tools || 0), tone: 'tool' },
+            this.surface ? { label: '范围', value: this.surface, tone: 'muted', tail: true } : null,
+            { label: '当前会话', value: meta.sessionGateEnabled ? '已开启' : '未开启', tone: meta.sessionGateEnabled ? 'on' : 'muted', tail: true },
+        ].filter(Boolean);
+        this.metaElement.innerHTML = items.map((item, index) => `
+            ${index ? '<span class="agent-center-meta-separator" aria-hidden="true">·</span>' : ''}
+            <span class="agent-center-meta-item is-${escapeHtml(item.tone)}${item.tail ? ' agent-center-meta-tail' : ''}">
+                <i class="agent-center-meta-dot is-${escapeHtml(item.tone)}" aria-hidden="true"></i>
+                ${escapeHtml(item.label)} <b>${escapeHtml(item.value)}</b>
+            </span>
+        `).join('');
     }
 
     getAgentModelSelectValue(agent = {}) {
@@ -2333,6 +2800,7 @@ export class AgentCenterPanel {
         const profileView = this.view?.agentProfileView?.openai || {};
         const settings = this.getMemoryAgentSettings();
         const prompt = this.getMemoryAgentPromptConfig();
+        const memoryMode = deriveMemoryStorageMode(appSettings.get());
         return `
             <div
                 class="agent-center-agent-section agent-center-agent-editor"
@@ -2342,6 +2810,23 @@ export class AgentCenterPanel {
             >
                 <div class="agent-center-agent-section-title has-help" data-help="模板使用 {{tableData}} 插入表格内容">记忆提示词与注入</div>
                 <div class="agent-center-card-sub">${escapeHtml(prompt.templateName)}</div>
+                <div class="agent-center-memory-mode-setting">
+                    <span class="agent-center-setting-label">记忆存储模式</span>
+                    <div class="agent-center-memory-mode-control" role="group" aria-label="记忆存储模式">
+                        ${[
+                            ['off', '关闭'],
+                            ['summary', '摘要'],
+                            ['table', '表格'],
+                        ].map(([value, label]) => `
+                            <button
+                                type="button"
+                                class="agent-center-memory-mode-button"
+                                data-memory-storage-mode="${value}"
+                                aria-pressed="${memoryMode === value}"
+                            >${label}</button>
+                        `).join('')}
+                    </div>
+                </div>
                 <div class="agent-center-agent-field-grid">
                     <div class="agent-center-agent-field">
                         <label>记忆数据提示词位置</label>
@@ -2477,32 +2962,34 @@ export class AgentCenterPanel {
     renderAgentFront(agent = {}) {
         const title = agent.title || displayAgentFeature(agent.id);
         const isDiagnosticView = trim(agent.cardGroup || agent.category) === 'diagnostic';
-        const enableButton = isDiagnosticView || agent.enabled === true
-            ? ''
-            : isFeatureAgentCard(agent)
-                ? `
-                    <button
-                        type="button"
-                        class="agent-center-switch"
-                        data-agent-feature-action="enable"
-                        data-agent-feature-id="${escapeHtml(agent.id)}"
-                        ${agent.implemented ? '' : 'disabled'}
-                    >${escapeHtml(agent.implemented ? '开启' : '规划中')}</button>
-                `
-                : `
-                    <button
-                        type="button"
-                        class="agent-center-switch"
-                        data-agent-card-action="enable"
-                        data-agent-card-id="${escapeHtml(agent.id)}"
-                        ${agent.implemented ? '' : 'disabled'}
-                    >${escapeHtml(agent.implemented ? '开启' : '规划中')}</button>
-                `;
-        const stateBadge = isDiagnosticView
+        const isMemoryModeCard = trim(agent.id) === 'memory_table_agent';
+        const memoryMode = isMemoryModeCard ? deriveMemoryStorageMode(appSettings.get()) : '';
+        const memoryModeLabel = MEMORY_STORAGE_MODE_LABELS[memoryMode] || MEMORY_STORAGE_MODE_LABELS.table;
+        const action = agent.enabled === true ? 'disable' : 'enable';
+        const switchLabel = `${action === 'enable' ? '开启' : '关闭'}${title}`;
+        const quickSwitch = !isDiagnosticView && !isMemoryModeCard && agent.implemented
+            ? `
+                <button
+                    type="button"
+                    class="agent-center-switch${agent.enabled ? ' is-on' : ''}"
+                    role="switch"
+                    aria-checked="${agent.enabled === true}"
+                    aria-label="${escapeHtml(switchLabel)}"
+                    title="${escapeHtml(switchLabel)}"
+                    data-agent-card-interactive
+                    ${isFeatureAgentCard(agent)
+                        ? `data-agent-feature-action="${action}" data-agent-feature-id="${escapeHtml(agent.id)}"`
+                        : `data-agent-card-action="${action}" data-agent-card-id="${escapeHtml(agent.id)}"`}
+                ><span class="agent-center-switch-track" aria-hidden="true"><span class="agent-center-switch-thumb"></span></span></button>
+            `
+            : '';
+        const titleAccessory = isDiagnosticView
             ? `<span class="${escapeHtml(statusChipClass('succeeded'))}">诊断视图</span>`
-            : agent.enabled
-                ? `<span class="${escapeHtml(statusChipClass('running'))}">已开启</span>`
-                : '';
+            : isMemoryModeCard
+                ? `<span class="${escapeHtml(statusChipClass(memoryMode === 'off' ? 'denied' : memoryMode === 'summary' ? 'pending' : 'running'))} agent-center-memory-mode-badge" data-memory-mode-badge="${escapeHtml(memoryMode)}">记忆：${escapeHtml(memoryModeLabel)}</span>`
+                : quickSwitch || (!agent.implemented
+                    ? `<span class="${escapeHtml(statusChipClass('pending'))}">规划中</span>`
+                    : '');
         const promptCount = Array.isArray(agent.promptRefs) ? agent.promptRefs.length : 0;
         const runtimeState = agent.runtimeState || null;
         return `
@@ -2514,15 +3001,19 @@ export class AgentCenterPanel {
                         <div class="agent-center-card-sub">${escapeHtml(agent.summary || '')}</div>
                     </div>
                 </div>
-                ${enableButton || stateBadge}
+                ${titleAccessory}
             </div>
             ${renderChips([
                 { label: agent.implemented ? '可使用' : '规划中', className: statusChipClass(agent.implemented ? 'succeeded' : 'pending') },
-                isDiagnosticView ? null : { label: agent.enabled ? '已开启' : '已关闭', className: statusChipClass(agent.enabled ? 'running' : 'denied') },
+                isDiagnosticView || isMemoryModeCard ? null : { label: agent.enabled ? '已开启' : '已关闭', className: statusChipClass(agent.enabled ? 'running' : 'denied') },
                 promptCount ? { label: `提示词 ${promptCount}` } : null,
                 runtimeState ? { label: displayStatusLabel(runtimeState.status), className: statusChipClass(runtimeState.status) } : null,
             ])}
-            <div class="agent-center-card-sub">${escapeHtml((Array.isArray(agent.detail) ? agent.detail[0] : '') || agent.summary || '')}</div>
+            <div class="agent-center-card-sub agent-center-agent-card-description">${escapeHtml((Array.isArray(agent.detail) ? agent.detail[0] : '') || agent.summary || '')}</div>
+            <div class="agent-center-agent-card-footer">
+                <span>${escapeHtml(displayCardCategory(agent.category) || 'Agent')}</span>
+                <span>详情 ${ICONS.chevron}</span>
+            </div>
         `;
     }
 
@@ -2566,7 +3057,7 @@ export class AgentCenterPanel {
                     </div>
                 </div>
                 <div class="agent-center-floating-toolbar">
-                    <button type="button" class="agent-center-icon-button" data-agent-float-flip title="翻转" aria-label="翻转">${ICONS.refresh}</button>
+                    <button type="button" class="agent-center-icon-button" data-agent-float-flip title="切换到配置" aria-label="切换到配置" aria-pressed="false">${ICONS.refresh}</button>
                     <button type="button" class="agent-center-icon-button" data-agent-float-close title="关闭" aria-label="关闭">${ICONS.close}</button>
                 </div>
             </div>
@@ -2589,12 +3080,15 @@ export class AgentCenterPanel {
     renderFloatingAgentBack(agent = {}) {
         return `
             <div class="agent-center-agent-title-row">
-                <div>
-                    <div class="agent-center-card-title">${escapeHtml(agent.title || displayAgentFeature(agent.id))}</div>
-                    <div class="agent-center-card-sub">配置</div>
+                <div class="agent-center-agent-title-main">
+                    <span class="agent-center-agent-badge">${escapeHtml(displayAgentCardGlyph(agent))}</span>
+                    <div>
+                        <div class="agent-center-card-title">${escapeHtml(agent.title || displayAgentFeature(agent.id))}</div>
+                        <div class="agent-center-card-sub">配置 · 修改后即时生效</div>
+                    </div>
                 </div>
                 <div class="agent-center-floating-toolbar">
-                    <button type="button" class="agent-center-icon-button" data-agent-float-flip title="翻转" aria-label="翻转">${ICONS.refresh}</button>
+                    <button type="button" class="agent-center-icon-button" data-agent-float-flip title="切换到详情" aria-label="切换到详情" aria-pressed="true">${ICONS.refresh}</button>
                     <button type="button" class="agent-center-icon-button" data-agent-float-close title="关闭" aria-label="关闭">${ICONS.close}</button>
                 </div>
             </div>
@@ -2616,7 +3110,7 @@ export class AgentCenterPanel {
         return `
             <div class="agent-center-floating-layer" data-agent-float-layer>
                 <section
-                    class="agent-center-floating-card${this.floatingAgentFlipped ? ' is-flipped' : ''}"
+                    class="agent-center-floating-card${this.floatingAgentEntryPending ? ' is-entering' : ''}${this.floatingAgentFlipped ? ' is-flipped' : ''}"
                     data-agent-accent="${escapeHtml(agent.accent || '')}"
                     role="dialog"
                     aria-modal="true"
@@ -2638,11 +3132,16 @@ export class AgentCenterPanel {
     renderCardList(cards = [], emptyMessage = '还没有可用卡片。') {
         const agents = Array.isArray(cards) ? cards : [];
         if (!agents.length) return renderEmpty(emptyMessage);
-        return `<div class="agent-center-agent-list">${agents.map(agent => `
+        if (this.cardEntryAnimationUntil === Number.POSITIVE_INFINITY) {
+            this.cardEntryAnimationUntil = Date.now() + 650;
+        }
+        const animate = Date.now() < this.cardEntryAnimationUntil;
+        return `<div class="agent-center-agent-list${animate ? ' is-entering' : ''}">${agents.map((agent, index) => `
             <article
                 class="agent-center-card agent-center-agent-card${agent.enabled ? ' is-agent-on' : ''}"
                 data-agent-accent="${escapeHtml(agent.accent || '')}"
                 data-agent-card-open="${escapeHtml(agent.id)}"
+                style="--agent-card-index:${index};"
                 role="button"
                 tabindex="0"
             >
@@ -3028,28 +3527,6 @@ export class AgentCenterPanel {
         }
     }
 
-    async setWritePreviewModelContextEnabled(enabling = false) {
-        const gate = this.view?.safety?.sessionGate || {};
-        const writePreviewTools = Array.from(WRITE_PREVIEW_PROVIDER_MODEL_CONTEXT_TOOLS);
-        const currentTools = list(gate.allowedTools);
-        const nextTools = Array.from(new Set(enabling
-            ? currentTools.concat(writePreviewTools)
-            : currentTools.filter(tool => !writePreviewTools.includes(tool))));
-        const actions = this.getActions?.() || {};
-        if (typeof actions.setProviderToolSessionGate !== 'function') return false;
-        await Promise.resolve(actions.setProviderToolSessionGate({
-            enabled: enabling ? true : gate.enabled === true,
-            allowedTools: nextTools,
-            networkAllowed: false,
-            realRunnerAllowed: false,
-            source: 'agent_center',
-            reason: enabling
-                ? 'write preview agent enabled from Agent Center'
-                : 'write preview agent disabled from Agent Center',
-        }));
-        return true;
-    }
-
     handleAgentCardFlip(agentId = '') {
         this.openFloatingAgentCard(agentId);
     }
@@ -3057,6 +3534,8 @@ export class AgentCenterPanel {
     openFloatingAgentCard(agentId = '') {
         const id = trim(agentId);
         if (!id || !this.getAgentCardById(id)) return;
+        const mountedCard = this.contentElement?.querySelector?.('.agent-center-floating-card');
+        this.floatingAgentEntryPending = !mountedCard || this.floatingAgentId !== id;
         this.floatingAgentId = id;
         this.floatingAgentFlipped = false;
         this.render();
@@ -3065,6 +3544,7 @@ export class AgentCenterPanel {
     closeFloatingAgentCard() {
         this.floatingAgentId = '';
         this.floatingAgentFlipped = false;
+        this.floatingAgentEntryPending = false;
         this.render();
     }
 
@@ -3074,28 +3554,75 @@ export class AgentCenterPanel {
         const card = this.contentElement?.querySelector?.('.agent-center-floating-card');
         if (card) {
             card.classList?.toggle?.('is-flipped', this.floatingAgentFlipped);
+            card.querySelectorAll?.('[data-agent-float-flip]')?.forEach?.((button) => {
+                const nextLabel = this.floatingAgentFlipped ? '切换到详情' : '切换到配置';
+                button.setAttribute?.('aria-label', nextLabel);
+                button.setAttribute?.('title', nextLabel);
+                button.setAttribute?.('aria-pressed', String(this.floatingAgentFlipped));
+            });
             return;
         }
         this.render();
     }
 
-    async handleAgentCardToggle(action = '', cardId = '') {
-        const id = trim(cardId);
-        const enabling = trim(action) === 'enable';
-        if (!id) return;
-        const agent = this.getAgentCardById(id);
-        if (!agent?.implemented) return;
-        const result = await this.callAction('setAgentCardEnabled', {
-            id,
-            enabled: enabling,
-            reason: 'agent center card toggle',
-        }, null);
-        if (!result) {
-            this.lastError = '当前环境不能切换这个卡片';
-            this.render();
+    setAgentQuickToggleVisual(button = null, enabled = false, agentTitle = 'Agent') {
+        if (!button) return;
+        const nextAction = enabled ? 'disable' : 'enable';
+        const nextLabel = `${enabled ? '关闭' : '开启'}${trim(agentTitle, 'Agent')}`;
+        button.setAttribute?.('aria-checked', String(enabled));
+        button.setAttribute?.('aria-label', nextLabel);
+        button.setAttribute?.('title', nextLabel);
+        button.classList?.toggle?.('is-on', enabled);
+        if (button.dataset && 'agentFeatureId' in button.dataset) {
+            button.dataset.agentFeatureAction = nextAction;
+        }
+        if (button.dataset && 'agentCardId' in button.dataset) {
+            button.dataset.agentCardAction = nextAction;
+        }
+    }
+
+    setAgentQuickTogglePending(button = null, pending = false) {
+        if (!button) return;
+        if (pending) {
+            button.dataset.agentTogglePending = 'true';
+            button.setAttribute?.('aria-busy', 'true');
             return;
         }
-        await this.refresh();
+        delete button.dataset.agentTogglePending;
+        button.removeAttribute?.('aria-busy');
+    }
+
+    async handleAgentCardToggle(action = '', cardId = '', button = null) {
+        const id = trim(cardId);
+        const normalizedAction = trim(action);
+        const enabling = normalizedAction === 'enable';
+        if (!id || !['enable', 'disable'].includes(normalizedAction)) return false;
+        const agent = this.getAgentCardById(id);
+        if (!agent?.implemented || id === 'memory_table_agent') return false;
+        if (button?.dataset?.agentTogglePending === 'true') return false;
+        const originalEnabled = agent.enabled === true;
+        this.setAgentQuickTogglePending(button, true);
+        this.setAgentQuickToggleVisual(button, enabling, agent.title);
+        try {
+            const result = await this.callAction('setAgentCardEnabled', {
+                id,
+                enabled: enabling,
+                reason: 'agent center card toggle',
+            }, null);
+            if (result === null || result === false || result?.ok === false) {
+                this.setAgentQuickToggleVisual(button, originalEnabled, agent.title);
+                const reason = trim(result?.message || result?.reason || this.lastError, '当前环境不能切换这个卡片');
+                this.lastError = reason;
+                this.notifyError?.(`${agent.title || 'Agent'}切换失败：${reason}`);
+                this.render();
+                return false;
+            }
+            this.notifySuccess?.(`${agent.title || 'Agent'}已${enabling ? '开启' : '关闭'}`);
+            await this.refresh();
+            return true;
+        } finally {
+            this.setAgentQuickTogglePending(button, false);
+        }
     }
 
     async handleAgentPromptSave(promptId = '', button = null) {
@@ -3164,6 +3691,14 @@ export class AgentCenterPanel {
         await this.refresh();
     }
 
+    handleMemoryStorageMode(mode = 'table') {
+        return applyMemoryStorageMode({
+            mode,
+            appSettings,
+            dispatchEvent: event => globalThis.window?.dispatchEvent?.(event),
+        });
+    }
+
     handleReplyCheckPreviewTargetChange(value = 'auto') {
         const normalized = trim(value, 'auto');
         const allowed = new Set(REPLY_CHECK_PREVIEW_TARGET_OPTIONS.map(option => option.value));
@@ -3184,55 +3719,64 @@ export class AgentCenterPanel {
         }
     }
 
-    async handleAgentFeatureToggle(action = '', featureId = '') {
+    async handleAgentFeatureToggle(action = '', featureId = '', button = null) {
         const id = trim(featureId);
-        const enabling = trim(action) === 'enable';
-        if (!id) return;
+        const normalizedAction = trim(action);
+        const enabling = normalizedAction === 'enable';
+        if (!id || !['enable', 'disable'].includes(normalizedAction)) return false;
         const agent = this.getAgentCardById(id);
-        if (!agent?.implemented) return;
-        const ok = await this.confirm({
-            title: enabling ? `开启${agent.title}` : `关闭${agent.title}`,
-            message: enabling
-                ? `开启后：${agent.summary || agent.title}\n\n${id === 'write_preview' ? '影响范围：当前会话。预览工具会加入可请求范围；真正提交仍需要再次确认。' : '解析失败且聊天室没有输出时会自动尝试修复；其他结果会显示在消息旁或 Agent Center。'}`
-                : `关闭后：${agent.summary || agent.title}\n\n已有活动记录不会删除。`,
-            confirmText: enabling ? '开启' : '关闭',
-            danger: !enabling,
-        });
-        if (!ok) return;
-        const result = await this.callAction('setAgentFeatureEnabled', {
-            id,
-            enabled: enabling,
-            reason: 'agent center feature toggle',
-        }, null);
-        if (!result) {
-            this.lastError = '当前环境不能切换 Agent';
-            this.render();
-            return;
-        }
-        if (id === 'write_preview') {
-            try {
-                await this.setWritePreviewModelContextEnabled(enabling);
-            } catch (err) {
-                this.lastError = trim(err?.message || err, '调整预览工具失败');
+        if (!agent?.implemented) return false;
+        if (button?.dataset?.agentTogglePending === 'true') return false;
+        const originalEnabled = agent.enabled === true;
+        this.setAgentQuickTogglePending(button, true);
+        try {
+            if (id === 'write_preview') {
+                const ok = await this.confirm({
+                    title: enabling ? `开启${agent.title}` : `关闭${agent.title}`,
+                    message: enabling
+                        ? `开启后：${agent.summary || agent.title}\n\n影响范围：当前会话。预览工具会加入可请求范围；真正提交仍需要再次确认。`
+                        : `关闭后：${agent.summary || agent.title}\n\n已有活动记录不会删除。`,
+                    confirmText: enabling ? '开启' : '关闭',
+                    danger: !enabling,
+                });
+                if (!ok) return false;
             }
-        }
-        await this.refresh();
-        if (enabling && id === 'reply_check' && trim(agent.modelMode, 'none') === 'none') {
-            const selected = await this.choice({
-                title: '配置检查模型',
-                message: '默认只做本地格式检测。选择模型后，发现格式问题时可让 AI 再复核一次。',
-                defaultActionId: 'select_model',
-                actions: [
-                    { id: 'select_model', label: '现在选择模型', primary: true },
-                    { id: 'manage_api', label: '管理 API 配置' },
-                    { id: 'keep_local', label: '暂时只本地检测' },
-                ],
-            });
-            if (selected === 'select_model') {
-                this.openAgentModelSelect(id);
-            } else if (selected === 'manage_api') {
-                this.handleAgentFeatureModelManage(id);
+            this.setAgentQuickToggleVisual(button, enabling, agent.title);
+            const result = await this.callAction('setAgentFeatureEnabled', {
+                id,
+                enabled: enabling,
+                reason: 'agent center feature toggle',
+            }, null);
+            if (result === null || result === false || result?.ok === false) {
+                this.setAgentQuickToggleVisual(button, originalEnabled, agent.title);
+                const reason = trim(result?.message || result?.reason || this.lastError, '当前环境不能切换 Agent');
+                this.lastError = reason;
+                this.notifyError?.(`${agent.title || 'Agent'}切换失败：${reason}`);
+                this.render();
+                return false;
             }
+            this.notifySuccess?.(`${agent.title || 'Agent'}已${enabling ? '开启' : '关闭'}`);
+            await this.refresh();
+            if (enabling && id === 'reply_check' && trim(agent.modelMode, 'none') === 'none') {
+                const selected = await this.choice({
+                    title: '配置检查模型',
+                    message: '默认只做本地格式检测。选择模型后，发现格式问题时可让 AI 再复核一次。',
+                    defaultActionId: 'select_model',
+                    actions: [
+                        { id: 'select_model', label: '现在选择模型', primary: true },
+                        { id: 'manage_api', label: '管理 API 配置' },
+                        { id: 'keep_local', label: '暂时只本地检测' },
+                    ],
+                });
+                if (selected === 'select_model') {
+                    this.openAgentModelSelect(id);
+                } else if (selected === 'manage_api') {
+                    this.handleAgentFeatureModelManage(id);
+                }
+            }
+            return true;
+        } finally {
+            this.setAgentQuickTogglePending(button, false);
         }
     }
 
@@ -3627,6 +4171,16 @@ export class AgentCenterPanel {
                                 ? this.renderActivity()
                                 : this.renderSafety();
         this.contentElement.innerHTML = `${error}${body}${this.renderFloatingAgentCard()}`;
+        this.floatingAgentEntryPending = false;
+        const enteringList = this.contentElement.querySelector('.agent-center-agent-list.is-entering');
+        if (enteringList) {
+            clearTimeout(this.cardEntryAnimationTimer);
+            this.cardEntryAnimationTimer = setTimeout(() => {
+                enteringList.classList?.remove?.('is-entering');
+                this.cardEntryAnimationUntil = 0;
+                this.cardEntryAnimationTimer = null;
+            }, Math.max(0, this.cardEntryAnimationUntil - Date.now()));
+        }
         if (this.activeTab === 'pending') {
             this.contentElement.querySelectorAll('[data-profile-action]').forEach((button) => {
                 button.addEventListener('click', () => this.handleProfilePendingAction(
@@ -3684,10 +4238,11 @@ export class AgentCenterPanel {
             this.contentElement.querySelectorAll('[data-agent-card-open]').forEach((card) => {
                 const open = () => this.openFloatingAgentCard(card.dataset.agentCardOpen || '');
                 card.addEventListener('click', (event) => {
-                    if (event.target?.closest?.('button, input, textarea, select, a')) return;
+                    if (event.target?.closest?.(AGENT_CARD_INTERACTIVE_SELECTOR)) return;
                     open();
                 });
                 card.addEventListener('keydown', (event) => {
+                    if (event.target !== card) return;
                     if (event.key !== 'Enter' && event.key !== ' ') return;
                     event.preventDefault();
                     open();
@@ -3699,6 +4254,7 @@ export class AgentCenterPanel {
                     this.handleAgentCardToggle(
                     button.dataset.agentCardAction || '',
                     button.dataset.agentCardId || '',
+                    button,
                     );
                 });
             });
@@ -3714,6 +4270,9 @@ export class AgentCenterPanel {
             this.contentElement.querySelectorAll('[data-memory-agent-save]').forEach((button) => {
                 button.addEventListener('click', () => this.handleMemoryAgentSave(button));
             });
+            this.contentElement.querySelectorAll('[data-memory-storage-mode]').forEach((button) => {
+                button.addEventListener('click', () => this.handleMemoryStorageMode(button.dataset.memoryStorageMode || 'table'));
+            });
             this.contentElement.querySelectorAll('[data-agent-prompt-preview]').forEach((button) => {
                 button.addEventListener('click', () => this.handleAgentPromptPreview(button.dataset.agentPromptPreview || ''));
             });
@@ -3726,6 +4285,7 @@ export class AgentCenterPanel {
                     this.handleAgentFeatureToggle(
                     button.dataset.agentFeatureAction || '',
                     button.dataset.agentFeatureId || '',
+                    button,
                     );
                 });
             });

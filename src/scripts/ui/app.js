@@ -25,6 +25,7 @@ import {
   readProviderToolSessionGate,
   writeProviderToolSessionGate,
 } from '../agent/provider-tool-session-gate.js';
+import { resolveWritePreviewGatePatch } from '../agent/write-preview-gate-utils.js';
 import {
   ALL_PROVIDER_MODEL_CONTEXT_TOOLS,
   buildProviderToolRequestSchema,
@@ -2199,7 +2200,9 @@ const initApp = async () => {
   } catch (err) {
     logger.debug('capability retrieval store load skipped', err);
   }
-  const agentFeatureSettingsStore = createAgentFeatureSettingsStore();
+  const agentFeatureSettingsStore = createAgentFeatureSettingsStore({
+    onChange: detail => window.dispatchEvent(new CustomEvent('agent-feature-settings-changed', { detail })),
+  });
   try {
     await agentFeatureSettingsStore.hydrate?.();
   } catch (err) {
@@ -3477,10 +3480,27 @@ const initApp = async () => {
         },
         getAgentFeatureSettings: () => agentFeatureSettingsStore.getSettings(),
         listAgentFeatures: () => agentFeatureSettingsStore.listFeatures(),
-        setAgentFeatureEnabled: (options = {}) => agentFeatureSettingsStore.setEnabled(
-          options?.id,
-          options?.enabled === true,
-        ),
+        setAgentFeatureEnabled: async (options = {}) => {
+          const id = String(options?.id || '').trim();
+          const enabling = options?.enabled === true;
+          const result = await agentFeatureSettingsStore.setEnabled(id, enabling);
+          if (id === AGENT_FEATURE_IDS.writePreview) {
+            const gatePatch = resolveWritePreviewGatePatch({
+              gate: readCurrentProviderToolSessionGate(),
+              enabling,
+            });
+            writeCurrentProviderToolSessionGate({
+              ...gatePatch,
+              networkAllowed: false,
+              realRunnerAllowed: false,
+              source: 'agent_feature_toggle',
+              reason: enabling
+                ? 'write preview agent enabled'
+                : 'write preview agent disabled',
+            });
+          }
+          return result;
+        },
         setAgentFeatureModel: (options = {}) => agentFeatureSettingsStore.setModel(
           options?.id,
           {

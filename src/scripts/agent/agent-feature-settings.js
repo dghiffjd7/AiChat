@@ -321,6 +321,7 @@ export const createAgentFeatureSettingsStore = ({
   key = AGENT_FEATURE_SETTINGS_STORAGE_KEY,
   loadKv = safeInvoke,
   saveKv = safeInvoke,
+  onChange = null,
 } = {}) => {
   let current = readAgentFeatureSettings({ storage, key });
   let kvWrite = Promise.resolve(false);
@@ -330,18 +331,47 @@ export const createAgentFeatureSettingsStore = ({
       .then(() => writeAgentFeatureSettingsKv(next, { key, saveKv }));
     return kvWrite;
   };
-  const save = (next) => {
-    current = writeAgentFeatureSettings(next, { storage, key });
+  const save = (next, { id = '', fields = [] } = {}) => {
+    const normalizedNext = normalizeAgentFeatureSettings(next);
+    const featureId = trim(id);
+    const previousFeature = current.features?.[featureId] || {};
+    const nextFeature = normalizedNext.features?.[featureId] || {};
+    const patch = featureId
+      ? fields.reduce((result, field) => {
+          if (!Object.is(previousFeature[field], nextFeature[field])) result[field] = nextFeature[field];
+          return result;
+        }, {})
+      : null;
+    if (patch && !Object.keys(patch).length) {
+      return Promise.resolve(normalizeAgentFeatureSettings(current));
+    }
+    current = writeAgentFeatureSettings(normalizedNext, { storage, key });
     const snapshot = current;
-    return persistKv(snapshot).then(() => normalizeAgentFeatureSettings(snapshot));
+    return persistKv(snapshot).then(() => {
+      if (patch && typeof onChange === 'function') {
+        try {
+          onChange({ id: featureId, patch: { ...patch } });
+        } catch {}
+      }
+      return normalizeAgentFeatureSettings(snapshot);
+    });
   };
   return {
     getSettings: () => normalizeAgentFeatureSettings(current),
     listFeatures: () => buildAgentFeatureList(current),
     isEnabled: featureId => isAgentFeatureEnabled(current, featureId),
-    setEnabled: (featureId, enabled, options = {}) => save(setAgentFeatureEnabled(current, featureId, enabled, options)),
-    setModel: (featureId, options = {}, meta = {}) => save(setAgentFeatureModel(current, featureId, options, meta)),
-    setTriggerMode: (featureId, triggerMode, meta = {}) => save(setAgentFeatureTriggerMode(current, featureId, triggerMode, meta)),
+    setEnabled: (featureId, enabled, options = {}) => save(
+      setAgentFeatureEnabled(current, featureId, enabled, options),
+      { id: featureId, fields: ['enabled'] },
+    ),
+    setModel: (featureId, options = {}, meta = {}) => save(
+      setAgentFeatureModel(current, featureId, options, meta),
+      { id: featureId, fields: ['modelMode', 'modelProfileId', 'modelOverride'] },
+    ),
+    setTriggerMode: (featureId, triggerMode, meta = {}) => save(
+      setAgentFeatureTriggerMode(current, featureId, triggerMode, meta),
+      { id: featureId, fields: ['triggerMode'] },
+    ),
     replace: settings => save(settings),
     hydrate: async () => {
       const disk = await readAgentFeatureSettingsKv({ key, loadKv });

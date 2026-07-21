@@ -142,6 +142,41 @@ const createStorage = () => {
 }
 
 {
+  const changes = [];
+  const saved = [];
+  const store = createAgentFeatureSettingsStore({
+    storage: createStorage(),
+    saveKv: async (cmd, args) => saved.push([cmd, args.data.features.reply_check.updatedAt]),
+    onChange: detail => changes.push(detail),
+  });
+
+  await store.setEnabled(AGENT_FEATURE_IDS.replyCheck, true, { now: () => 601 });
+  await store.setModel(AGENT_FEATURE_IDS.replyCheck, {
+    modelMode: 'profile',
+    modelProfileId: 'profile-a',
+  }, { now: () => 602 });
+  await store.setTriggerMode(AGENT_FEATURE_IDS.replyCheck, AGENT_FEATURE_TRIGGER_MODES.manual, { now: () => 603 });
+
+  await store.setEnabled(AGENT_FEATURE_IDS.replyCheck, true, { now: () => 604 });
+  await store.setModel(AGENT_FEATURE_IDS.replyCheck, {
+    modelMode: 'profile',
+    modelProfileId: 'profile-a',
+  }, { now: () => 605 });
+  await store.setTriggerMode(AGENT_FEATURE_IDS.replyCheck, AGENT_FEATURE_TRIGGER_MODES.manual, { now: () => 606 });
+
+  assert.deepEqual(changes, [
+    { id: AGENT_FEATURE_IDS.replyCheck, patch: { enabled: true } },
+    {
+      id: AGENT_FEATURE_IDS.replyCheck,
+      patch: { modelMode: 'profile', modelProfileId: 'profile-a' },
+    },
+    { id: AGENT_FEATURE_IDS.replyCheck, patch: { triggerMode: AGENT_FEATURE_TRIGGER_MODES.manual } },
+  ]);
+  assert.equal(saved.length, 3, 'no-op setter 不应重复写入 KV');
+  console.log('ok - agent feature settings store broadcasts effective setter patches once and skips no-op writes');
+}
+
+{
   const storage = createStorage();
   const disk = setAgentFeatureEnabled({}, AGENT_FEATURE_IDS.replyCheck, true, { now: () => 333 });
   const saved = [];

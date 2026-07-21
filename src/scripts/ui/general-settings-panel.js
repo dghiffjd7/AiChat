@@ -5,6 +5,10 @@ import { safeInvoke } from '../utils/tauri.js';
 import { appConfirm } from './app-confirm.js';
 import { resolveImportKindFromZipEntries } from './import-package-kind-utils.js';
 import {
+  applyMemoryStorageMode,
+  deriveMemoryStorageMode,
+} from './memory-storage-mode-utils.js';
+import {
   THEME_AVATAR_STYLE_OPTIONS,
   THEME_CHAT_DISPLAY_OPTIONS,
   THEME_TOAST_POSITION_OPTIONS,
@@ -420,8 +424,8 @@ export class GeneralSettingsPanel {
     if (this.autoImagePromptSkipRepeatedToggle) {
       this.autoImagePromptSkipRepeatedToggle.checked = settings.autoImagePromptSkipRepeated !== false;
     }
-    const memoryEnabled = settings.memoryEnabled !== false;
-    const memoryMode = String(settings.memoryStorageMode || 'table').toLowerCase();
+    const memoryMode = deriveMemoryStorageMode(settings);
+    const memoryEnabled = memoryMode !== 'off';
     if (this.memoryEnabledToggle) {
       this.memoryEnabledToggle.checked = memoryEnabled;
     }
@@ -639,8 +643,8 @@ export class GeneralSettingsPanel {
 
   updateMemoryAutoVisibility() {
     const settings = appSettings.get();
-    const memoryEnabled = settings.memoryEnabled !== false;
-    const memoryMode = memoryEnabled ? String(settings.memoryStorageMode || 'table').toLowerCase() : 'off';
+    const memoryMode = deriveMemoryStorageMode(settings);
+    const memoryEnabled = memoryMode !== 'off';
     const showMemoryTable = memoryEnabled && memoryMode === 'table';
     const enabled = settings.memoryAutoExtract === true;
     const mode = String(settings.memoryAutoExtractMode || 'inline').toLowerCase();
@@ -2881,20 +2885,17 @@ export class GeneralSettingsPanel {
     });
 
     const applyMemoryMode = (mode) => {
-      const next = mode === 'table' ? 'table' : 'summary';
-      appSettings.update({ memoryEnabled: true, memoryStorageMode: next });
-      window.dispatchEvent(new CustomEvent('memory-storage-mode-changed', { detail: { mode: next } }));
-      window.dispatchEvent(new CustomEvent('app-settings-changed', { detail: { key: 'memoryEnabled', value: true } }));
-      window.dispatchEvent(new CustomEvent('app-settings-changed', { detail: { key: 'memoryStorageMode', value: next } }));
+      applyMemoryStorageMode({
+        mode,
+        appSettings,
+        dispatchEvent: event => window.dispatchEvent(event),
+      });
       this.updateMemoryAutoVisibility();
     };
     this.memoryEnabledToggle?.addEventListener('change', (e) => {
       const enabled = Boolean(e?.target?.checked);
-      appSettings.update({ memoryEnabled: enabled });
       const nextMode = enabled ? (this.memoryModeTable?.checked ? 'table' : 'summary') : 'off';
-      window.dispatchEvent(new CustomEvent('memory-storage-mode-changed', { detail: { mode: nextMode } }));
-      window.dispatchEvent(new CustomEvent('app-settings-changed', { detail: { key: 'memoryEnabled', value: enabled } }));
-      this.updateMemoryAutoVisibility();
+      applyMemoryMode(nextMode);
     });
     this.memoryModeSummary?.addEventListener('change', (e) => {
       const checked = Boolean(e?.target?.checked);

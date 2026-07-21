@@ -1,9 +1,15 @@
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 
 import {
   AgentCenterPanel,
   formatAgentCenterExportText,
 } from '../../src/scripts/ui/agent-center-panel.js';
+
+const agentCenterPanelSource = await readFile(
+  new URL('../../src/scripts/ui/agent-center-panel.js', import.meta.url),
+  'utf8',
+);
 
 {
   const panel = new AgentCenterPanel();
@@ -18,6 +24,22 @@ import {
   assert.equal(panel.activeTab, 'activity');
   assert.equal(panel.activityStatus, 'failure');
   console.log('ok - agent center panel restores the last tab unless a tab is explicit');
+}
+
+{
+  const panel = new AgentCenterPanel();
+  let refreshCalls = 0;
+  panel.refresh = () => {
+    refreshCalls += 1;
+  };
+  panel.overlayElement = { style: { display: 'none' } };
+  panel.handleAgentFeatureSettingsChanged();
+  panel.overlayElement.style.display = 'flex';
+  panel.handleAgentFeatureSettingsChanged();
+  assert.equal(refreshCalls, 1);
+  assert.match(agentCenterPanelSource, /addEventListener\?\.\('agent-feature-settings-changed', this\.boundAgentFeatureSettingsChanged\)/);
+  assert.match(agentCenterPanelSource, /removeEventListener\?\.\('agent-feature-settings-changed', this\.boundAgentFeatureSettingsChanged\)/);
+  console.log('ok - visible Agent Center refreshes for feature store broadcasts and owns its listener lifecycle');
 }
 
 {
@@ -110,6 +132,10 @@ import {
   assert.match(html, /data-agent-card-open="reply_check"/);
   assert.match(html, /data-agent-feature-action="enable"/);
   assert.match(html, /data-agent-feature-id="reply_check"/);
+  assert.match(html, /role="switch"/);
+  assert.match(html, /aria-checked="false"/);
+  assert.equal((html.match(/role="switch"/g) || []).length, 1);
+  assert.doesNotMatch(html, /data-agent-feature-id="text_completion"/);
   assert.doesNotMatch(html, /data-agent-feature-action="disable"/);
   assert.doesNotMatch(html, /data-agent-card-action="disable"/);
   assert.doesNotMatch(html, /data-agent-feature-detail/);
@@ -120,7 +146,6 @@ import {
   assert.doesNotMatch(html, /value="profile:profile-a" selected/);
   assert.doesNotMatch(html, /data-agent-feature-trigger="reply_check"/);
   assert.match(html, /文本补全/);
-  assert.match(html, /disabled/);
   assert.match(html, /规划中/);
   panel.openFloatingAgentCard('reply_check');
   panel.floatingAgentFlipped = true;
@@ -168,6 +193,126 @@ import {
   assert.equal(classes.has('is-flipped'), false);
   assert.equal(renderCalls, 0);
   console.log('ok - floating agent card flips by toggling the existing card class');
+}
+
+{
+  const panel = new AgentCenterPanel();
+  panel.view = {
+    agents: [{
+      id: 'reply_check',
+      title: '检查回复格式',
+      summary: '检查格式问题。',
+      enabled: true,
+      implemented: true,
+    }],
+  };
+  panel.contentElement = {
+    innerHTML: '',
+    querySelector: () => null,
+    querySelectorAll: () => [],
+  };
+  panel.openFloatingAgentCard('reply_check');
+  assert.match(panel.contentElement.innerHTML, /agent-center-floating-card is-entering/);
+  assert.equal(panel.floatingAgentEntryPending, false);
+  panel.render();
+  assert.doesNotMatch(panel.contentElement.innerHTML, /agent-center-floating-card is-entering/);
+  assert.match(
+    agentCenterPanelSource,
+    /\.agent-center-floating-card\.is-entering\s*\{[^}]*animation:\s*agent-center-floating-in/s,
+    '浮层入场动画只应在首次打开时启用',
+  );
+  const floatingCardBaseRule = agentCenterPanelSource.match(/\.agent-center-floating-card\s*\{[^}]*\}/s)?.[0] || '';
+  assert.doesNotMatch(floatingCardBaseRule, /animation:/);
+  assert.doesNotMatch(agentCenterPanelSource, /agent-center-floating-refresh|is-refreshing/);
+  console.log('ok - floating agent refresh does not replay the entry animation');
+}
+
+{
+  assert.match(
+    agentCenterPanelSource,
+    /\.agent-center-setting-row\.is-model\s*>\s*:not\(\.agent-center-setting-label\)\s*\{[^}]*grid-column:\s*2;/s,
+    '模型配置的第二行及菜单应与第一组选单共用完整内容列',
+  );
+  assert.match(
+    agentCenterPanelSource,
+    /@media\s*\(max-width:\s*680px\)[\s\S]*?\.agent-center-setting-row\s*>\s*\.agent-center-card-action\s*\{[^}]*width:\s*100%;/s,
+    '手机版整行按钮规则不应吞到模型输入内部的下拉箭头',
+  );
+  console.log('ok - floating agent model sub-controls stay in the full-width settings column');
+}
+
+{
+  assert.match(
+    agentCenterPanelSource,
+    /\.agent-center-panel\s*\{[^}]*width:\s*clamp\(660px,\s*57vw,\s*1040px\);[^}]*border-radius:\s*24px;/s,
+    '桌面 Agent Center 应采用参考稿的浮动工作窗比例与圆角',
+  );
+  assert.match(
+    agentCenterPanelSource,
+    /\.agent-center-agent-list\s*\{[^}]*grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\);[^}]*gap:\s*16px;/s,
+    'Agent 卡片网格应保留参考稿的双列留白',
+  );
+  assert.match(
+    agentCenterPanelSource,
+    /\.agent-center-agent-list\.is-entering\s+\.agent-center-agent-card\s*\{[^}]*animation:[^;}]*agent-center-card-in[^;}]*backwards;/s,
+    '卡片入场动画应只由一次性 entering 状态触发，并使用 backwards 避免持有合成层',
+  );
+  assert.doesNotMatch(
+    agentCenterPanelSource,
+    /\.agent-center-floating-inner\s*\{[^}]*rotateY/s,
+    '详情与配置切换不应继续使用整卡 3D 翻牌',
+  );
+  assert.match(
+    agentCenterPanelSource,
+    /\.agent-center-floating-face-back\s*\{[^}]*opacity:\s*0;[^}]*translateX\(44px\)/s,
+    '配置页应从参考稿的右侧 44px 淡入',
+  );
+  assert.match(
+    agentCenterPanelSource,
+    /\.agent-center-floating-card\.is-flipped\s+\.agent-center-floating-face-front\s*\{[^}]*opacity:\s*0;[^}]*translateX\(-44px\)/s,
+    '详情页切出时应向左淡出',
+  );
+  assert.match(
+    agentCenterPanelSource,
+    /\.agent-center-icon-button\s*\{[^}]*width:\s*32px;[^}]*height:\s*32px;[^}]*border-radius:\s*999px;/s,
+    '卡片右上角切换图标应呈现为参考稿的圆形按钮',
+  );
+  assert.match(
+    agentCenterPanelSource,
+    /body\[data-reduced-motion='on'\][\s\S]*\.agent-center-floating-face/s,
+    'App 内减速开关应覆盖 Agent Center 的新动画',
+  );
+  assert.match(
+    agentCenterPanelSource,
+    /\.agent-center-switch\s*\{[^}]*min-width:\s*44px;[^}]*height:\s*40px;/s,
+    '卡面快捷开关的触屏命中区域不应小于 40px',
+  );
+  assert.match(
+    agentCenterPanelSource,
+    /AGENT_CARD_INTERACTIVE_SELECTOR[^;]*\[role="switch"\]/,
+    '整卡点击应显式豁免卡面快捷开关',
+  );
+  assert.match(
+    agentCenterPanelSource,
+    /card\.addEventListener\('keydown',[\s\S]*?if \(event\.target !== card\) return;/,
+    '快捷开关的 Enter/Space 不应冒泡触发整卡详情',
+  );
+  assert.doesNotMatch(
+    agentCenterPanelSource,
+    /animation:[^;\n]*infinite/,
+    'Agent Center 不应迁入持续占用合成器的无限动画',
+  );
+  assert.match(agentCenterPanelSource, /aria-label="切换到配置"/);
+  assert.match(agentCenterPanelSource, /aria-label="切换到详情"/);
+  assert.doesNotMatch(
+    agentCenterPanelSource,
+    /data-action="refresh"/,
+    '主窗口头部不应保留无明确反馈的刷新转圈按钮',
+  );
+  assert.match(agentCenterPanelSource, /data-action="export"/);
+  assert.match(agentCenterPanelSource, /data-action="close"/);
+  assert.match(agentCenterPanelSource, /data-agent-float-flip/);
+  console.log('ok - agent center redesign keeps the reference layout and performant pane motion contract');
 }
 
 {
@@ -302,7 +447,10 @@ import {
   };
   const html = panel.renderAgents();
   assert.match(html, /生图 Agent/);
-  assert.doesNotMatch(html, /data-agent-card-action="disable"/);
+  assert.match(html, /data-agent-card-action="disable"/);
+  assert.match(html, /data-agent-card-id="image_director"/);
+  assert.match(html, /role="switch"/);
+  assert.match(html, /aria-checked="true"/);
   assert.doesNotMatch(html, /data-agent-feature-detail/);
   assert.doesNotMatch(html, /data-agent-prompt-save="auto-image-prompt"/);
   panel.openFloatingAgentCard('image_director');
@@ -354,6 +502,11 @@ import {
       },
     },
   };
+  const html = panel.renderAgents();
+  assert.match(html, /data-memory-mode-badge="table"/);
+  assert.match(html, /记忆：表格/);
+  assert.doesNotMatch(html, /data-agent-card-id="memory_table_agent"/);
+  assert.doesNotMatch(html, /data-agent-feature-id="memory_table_agent"/);
   panel.openFloatingAgentCard('memory_table_agent');
   panel.floatingAgentFlipped = true;
   const floatingHtml = panel.renderFloatingAgentCard();
@@ -365,6 +518,10 @@ import {
   assert.match(floatingHtml, /&lt;memories&gt;/);
   assert.match(floatingHtml, /data-memory-prompt-position/);
   assert.match(floatingHtml, /value="history_depth" selected/);
+  assert.match(floatingHtml, /data-memory-storage-mode="off"/);
+  assert.match(floatingHtml, /data-memory-storage-mode="summary"/);
+  assert.match(floatingHtml, /data-memory-storage-mode="table"/);
+  assert.match(floatingHtml, /记忆存储模式/);
   assert.match(floatingHtml, /data-agent-resource-open="memory_center"/);
   console.log('ok - memory table agent back renders editable prompt template settings');
 }
@@ -439,8 +596,12 @@ import {
   let updatePayload = null;
   let guideChoice = null;
   let openedConfig = null;
+  let confirmCalls = 0;
   const panel = new AgentCenterPanel({
-    confirm: async () => true,
+    confirm: async () => {
+      confirmCalls += 1;
+      return true;
+    },
     choice: async (options) => {
       guideChoice = options;
       return 'manage_api';
@@ -473,6 +634,7 @@ import {
     enabled: true,
     reason: 'agent center feature toggle',
   });
+  assert.equal(confirmCalls, 0);
   assert.equal(guideChoice.title, '配置检查模型');
   assert.deepEqual(guideChoice.actions.map(action => action.id), ['select_model', 'manage_api', 'keep_local']);
   assert.equal(openedConfig.tab, 'chat');
@@ -500,8 +662,12 @@ import {
 {
   let updatePayload = null;
   let gatePayload = null;
+  let confirmOptions = null;
   const panel = new AgentCenterPanel({
-    confirm: async () => true,
+    confirm: async (options) => {
+      confirmOptions = options;
+      return true;
+    },
     getActions: () => ({
       setAgentFeatureEnabled: payload => {
         updatePayload = payload;
@@ -535,14 +701,57 @@ import {
     enabled: true,
     reason: 'agent center feature toggle',
   });
-  assert.equal(gatePayload.enabled, true);
-  assert.deepEqual(gatePayload.allowedTools, [
-    'contact_profile.list',
-    'memory.preview_actions',
-    'variable.preview_commands',
-    'worldbook.preview_actions',
-  ]);
-  console.log('ok - agent center agent toggle can enable write preview tools as a shortcut');
+  assert.match(confirmOptions.message, /当前会话/);
+  assert.equal(confirmOptions.confirmText, '开启');
+  assert.equal(gatePayload, null);
+  assert.doesNotMatch(agentCenterPanelSource, /setWritePreviewModelContextEnabled/);
+  console.log('ok - agent center delegates write preview gate side effects to the registry action layer');
+}
+
+{
+  let resolveToggle = null;
+  const notices = [];
+  const attributes = new Map([['aria-checked', 'false']]);
+  const button = {
+    dataset: {
+      agentCardAction: 'enable',
+      agentCardId: 'image_director',
+    },
+    classList: { toggle() {} },
+    setAttribute(name, value) {
+      attributes.set(name, String(value));
+    },
+    removeAttribute(name) {
+      attributes.delete(name);
+    },
+  };
+  const panel = new AgentCenterPanel({
+    notifyError: message => notices.push(message),
+    getActions: () => ({
+      setAgentCardEnabled: () => new Promise(resolve => {
+        resolveToggle = resolve;
+      }),
+    }),
+  });
+  panel.view = {
+    agents: [{
+      id: 'image_director',
+      title: '生图 Agent',
+      enabled: false,
+      implemented: true,
+    }],
+  };
+  panel.render = () => {};
+  panel.refresh = async () => {};
+  const pending = panel.handleAgentCardToggle('enable', 'image_director', button);
+  assert.equal(attributes.get('aria-checked'), 'true');
+  assert.equal(button.dataset.agentCardAction, 'disable');
+  resolveToggle({ ok: false, reason: 'save_failed' });
+  await pending;
+  assert.equal(attributes.get('aria-checked'), 'false');
+  assert.equal(button.dataset.agentCardAction, 'enable');
+  assert.match(notices[0], /切换失败/);
+  console.log('ok - agent card quick toggle updates immediately and rolls back on failure');
 }
 
 {

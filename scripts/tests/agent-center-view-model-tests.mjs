@@ -138,11 +138,19 @@ import {
   const view = buildAgentCenterView({
     memoryMode: 'summary',
   });
-  assert.equal(view.agents.find(agent => agent.id === 'memory_table_agent'), undefined);
+  assert.equal(view.agents.find(agent => agent.id === 'memory_table_agent').title, '记忆表格 Agent');
   assert.equal(view.agents.find(agent => agent.id === 'summary_agent').title, '摘要 Agent');
-  assert.equal(view.tabs.find(tab => tab.id === 'agents').count, 5);
+  assert.equal(view.tabs.find(tab => tab.id === 'agents').count, 6);
   assert.equal(view.meta.memoryMode, 'summary');
-  console.log('ok - agent center view shows summary agent instead of memory table in summary mode');
+  console.log('ok - agent center keeps the memory mode hub reachable while showing summary agent in summary mode');
+}
+
+{
+  const view = buildAgentCenterView({ memoryMode: 'off' });
+  assert.equal(view.agents.find(agent => agent.id === 'memory_table_agent').title, '记忆表格 Agent');
+  assert.equal(view.agents.find(agent => agent.id === 'summary_agent'), undefined);
+  assert.equal(view.tabs.find(tab => tab.id === 'agents').count, 5);
+  console.log('ok - agent center keeps the memory mode hub reachable while memory is off');
 }
 
 {
