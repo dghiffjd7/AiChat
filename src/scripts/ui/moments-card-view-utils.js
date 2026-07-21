@@ -7,7 +7,7 @@ const momentIconSvg = (body) => `
 const MOMENT_ICONS = Object.freeze({
   comment: momentIconSvg('<path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4Z"></path>'),
   eye: momentIconSvg('<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z"></path><circle cx="12" cy="12" r="3"></circle>'),
-  like: momentIconSvg('<path d="M7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3"></path><path d="M7 11l4-8a3 3 0 0 1 3 3v4h4.5a2.5 2.5 0 0 1 2.45 3l-1.2 6A3 3 0 0 1 16.8 22H7Z"></path>'),
+  like: momentIconSvg('<path d="M12 21s-7.5-4.35-9.5-8.55C.8 8.88 2.63 5 6.35 5c2.1 0 3.43 1.18 4.15 2.24C11.22 6.18 12.55 5 14.65 5c3.72 0 5.55 3.88 3.85 7.45C16.5 16.65 12 21 12 21Z"></path>'),
   more: momentIconSvg('<circle cx="5" cy="12" r="1.6"></circle><circle cx="12" cy="12" r="1.6"></circle><circle cx="19" cy="12" r="1.6"></circle>'),
   send: momentIconSvg('<path d="M22 2 11 13"></path><path d="m22 2-7 20-4-9-9-4Z"></path>'),
 });
@@ -64,6 +64,7 @@ export const buildMomentThreadedCommentsHtml = ({
 export const buildMomentCardMarkup = ({
   moment,
   avatar = '',
+  userAvatar = '',
   comments = [],
   hiddenCount = 0,
   expanded = false,
@@ -108,17 +109,22 @@ export const buildMomentCardMarkup = ({
                     ${threadedHtml}
                 </div>
                 <div class="moment-comment-composer${showComposer ? ' is-open' : ''}">
-                    <div class="moment-replying${replyTarget ? '' : ' hidden'}">
-                        <div class="moment-replying-body">
-                            <div class="moment-replying-text">
-                                回复 <b>${escapeHtml(replyTarget?.author || '')}</b>：${escapeHtml(resolveMomentDisplayText(replyTarget).slice(0, 120))}
+                    <div class="moment-comment-composer-inner">
+                        <div class="moment-replying${replyTarget ? '' : ' hidden'}">
+                            <div class="moment-replying-body">
+                                <div class="moment-replying-text">
+                                    回复 <b>${escapeHtml(replyTarget?.author || '')}</b>：${escapeHtml(resolveMomentDisplayText(replyTarget).slice(0, 120))}
+                                </div>
+                                <button class="moment-reply-cancel" data-action="cancel-reply" type="button">×</button>
                             </div>
-                            <button class="moment-reply-cancel" data-action="cancel-reply" type="button">×</button>
                         </div>
-                    </div>
-                    <div class="moment-comment-input-row">
-                        <input class="moment-comment-input" type="text" placeholder="${replyTarget ? `回复 ${escapeHtml(replyTarget.author || '')}…` : '写评论…'}" ${pending ? 'disabled' : ''} />
-                        <button class="moment_comment" data-action="send" ${pending ? 'disabled' : ''}>${MOMENT_ICONS.send}<span>${pending ? '发送中…' : '发送'}</span></button>
+                        <div class="moment-comment-compose-main">
+                            <img class="moment-comment-avatar" src="${escapeHtml(userAvatar)}" alt="" aria-hidden="true">
+                            <div class="moment-comment-input-row">
+                                <input class="moment-comment-input" type="text" placeholder="${replyTarget ? `回复 ${escapeHtml(replyTarget.author || '')}…` : '写评论…'}" ${pending ? 'disabled' : ''} />
+                                <button class="moment_comment" data-action="send" ${pending ? 'disabled' : ''}>${MOMENT_ICONS.send}<span>${pending ? '发送中…' : '发送'}</span></button>
+                            </div>
+                        </div>
                     </div>
                 </div>
             `;
@@ -170,6 +176,7 @@ export const renderMomentCardContent = ({
   cardEl,
   moment,
   avatar = '',
+  userAvatar = '',
   expanded = false,
   showComposer = false,
   replyTarget = null,
@@ -200,6 +207,7 @@ export const renderMomentCardContent = ({
   cardEl.innerHTML = buildMomentCardMarkup({
     moment,
     avatar,
+    userAvatar,
     comments,
     hiddenCount,
     expanded,

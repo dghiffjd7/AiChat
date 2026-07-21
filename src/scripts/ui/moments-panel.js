@@ -86,6 +86,7 @@ export class MomentsPanel {
     this.openComposer = new Set();
     this.pendingComment = new Set();
     this.replyTargets = new Map(); // momentId -> { id, author, content }
+    this.likeBurstTimers = new WeakMap();
     this.commentMenuEl = null;
     this.mentionDropdown = null;
     this.visibleCount = 5;
@@ -215,17 +216,29 @@ export class MomentsPanel {
     const likes = Math.max(0, Number(saved.likes || 0) || 0);
     const liked = Boolean(saved.userLiked);
     if (buttonEl) {
+      const previousBurst = this.likeBurstTimers.get(buttonEl);
+      if (previousBurst && previousBurst.timer !== null && typeof clearTimeout === 'function') {
+        clearTimeout(previousBurst.timer);
+      }
       buttonEl.classList?.toggle?.('is-liked', liked);
-      buttonEl.classList?.add?.('is-burst');
+      buttonEl.classList?.remove?.('is-burst');
+      const playBurst = () => buttonEl.classList?.add?.('is-burst');
+      if (typeof requestAnimationFrame === 'function') requestAnimationFrame(playBurst);
+      else playBurst();
       buttonEl.dataset.likeDelta = liked ? '+1' : '-1';
       buttonEl.setAttribute?.('aria-pressed', liked ? 'true' : 'false');
       buttonEl.setAttribute?.('aria-label', `${liked ? '已点赞' : '点赞'}，当前 ${likes} 人已赞`);
       buttonEl.setAttribute?.('title', liked ? '已点赞' : '点赞');
       const countEl = buttonEl.querySelector?.('.moment-like-count');
       if (countEl) countEl.textContent = String(likes);
+      const burst = { timer: null };
+      this.likeBurstTimers.set(buttonEl, burst);
+      burst.timer = setTimeout(() => {
+        if (this.likeBurstTimers.get(buttonEl) !== burst) return;
+        buttonEl.classList?.remove?.('is-burst');
+        this.likeBurstTimers.delete(buttonEl);
+      }, 560);
     }
-    const delay = buttonEl ? 360 : 0;
-    setTimeout(() => this.render({ preserveScroll: true }), delay);
     return true;
   }
 
@@ -307,6 +320,7 @@ export class MomentsPanel {
         cardEl: card,
         moment: m,
         avatar,
+        userAvatar: this.userAvatar || this.defaultAvatar,
         expanded,
         showComposer,
         replyTarget,

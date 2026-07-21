@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 
 import {
   bindAppChatMenuToggle,
@@ -42,6 +43,15 @@ const createMenu = (buttons = []) => ({
     },
   },
 });
+
+{
+  const html = fs.readFileSync(new URL('../../src/index.html', import.meta.url), 'utf8');
+  const rpMenuMarkup = html.match(/<div id="rp-chatroom-menu"[\s\S]*?<\/div>\s*<!-- Chat title menu/)?.[0] || '';
+  assert.match(rpMenuMarkup, /data-action="preset"[^>]*>🎛 预设<\/button>/);
+  assert.match(rpMenuMarkup, /data-action="extensions"[^>]*>🧩 扩展<\/button>/);
+  assert.match(rpMenuMarkup, /data-action="config"[^>]*>🔌 API设定<\/button>/);
+  console.log('ok - creative writing room menu exposes preset extensions and API settings entries');
+}
 
 {
   const calls = [];
@@ -171,6 +181,9 @@ const createMenu = (buttons = []) => ({
     createButton('chat-settings'),
     createButton('prompt-preview'),
     createButton('raw-reply'),
+    createButton('preset'),
+    createButton('extensions'),
+    createButton('config'),
   ]);
   bindChatroomMenuActions({
     menuEl: menu,
@@ -182,6 +195,9 @@ const createMenu = (buttons = []) => ({
     openChatSettings: () => calls.push('chat-settings'),
     openPromptPreview: () => calls.push('prompt-preview'),
     openRawReply: () => calls.push('raw-reply'),
+    openPreset: () => calls.push('preset'),
+    openExtensions: () => calls.push('extensions'),
+    openConfig: () => calls.push('config'),
     hideMenus: () => calls.push('hide'),
   });
   menu.querySelectorAll('button').forEach((button) => button.trigger());
@@ -194,6 +210,9 @@ const createMenu = (buttons = []) => ({
     'chat-settings', 'hide',
     'prompt-preview', 'hide',
     'raw-reply', 'hide',
+    'preset', 'hide',
+    'extensions', 'hide',
+    'config', 'hide',
   ]);
   console.log('ok - bindChatroomMenuActions dispatches chatroom menu actions then hides menus');
 }
@@ -201,6 +220,7 @@ const createMenu = (buttons = []) => ({
 {
   const calls = [];
   const currentChatTitle = createButton();
+  const currentChatAvatarButton = createButton();
   const chatTitleMenu = createMenu([
     createButton('contact-settings'),
     createButton('session-config'),
@@ -214,6 +234,7 @@ const createMenu = (buttons = []) => ({
   };
   bindChatTitleMenuActions({
     currentChatTitle,
+    currentChatAvatarButton,
     chatTitleMenu,
     getCurrentSessionMeta: () => ({ sessionId: 'group:1', isGroup: true }),
     hideMenus: () => calls.push('hide'),
@@ -222,14 +243,14 @@ const createMenu = (buttons = []) => ({
     openContactSettings: () => calls.push('contact-settings'),
     openSessionConfig: () => calls.push('session-config'),
   });
-  currentChatTitle.trigger();
+  currentChatAvatarButton.trigger();
   chatTitleMenu.querySelectorAll('button').forEach((button) => button.trigger());
   globalThis.document = originalDocument;
   assert.deepEqual(calls, [
     'hide',
-    ['group', 'group:1', currentChatTitle],
+    ['group', 'group:1', currentChatAvatarButton],
     'contact-settings', 'hide',
     'session-config', 'hide',
   ]);
-  console.log('ok - bindChatTitleMenuActions routes group title clicks and title-menu actions');
+  console.log('ok - bindChatTitleMenuActions routes title/avatar clicks and title-menu actions');
 }

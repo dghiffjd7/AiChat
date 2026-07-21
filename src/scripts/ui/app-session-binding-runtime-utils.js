@@ -32,6 +32,7 @@ export const bindAppSessionEntryNavigation = ({
   getActivePage = () => 'chat',
   switchPage = () => {},
   enterChatRoom = () => {},
+  onSelectContact = null,
 } = {}) => {
   chatListEl?.addEventListener?.('click', (event) => {
     const item = event?.target?.closest?.('.chat-list-item');
@@ -49,6 +50,10 @@ export const bindAppSessionEntryNavigation = ({
       const id = item.dataset.session;
       const name = item.dataset?.name || id;
       const origin = getActivePage();
+      if (typeof onSelectContact === 'function') {
+        onSelectContact({ id, name, item, originPage: origin });
+        return;
+      }
       switchPage('chat', { animate: false });
       enterChatRoom(id, name, origin);
     });

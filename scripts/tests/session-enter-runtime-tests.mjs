@@ -24,6 +24,7 @@ import {
   reconcileHydratedStoreUiState,
   renderSessionChangedHistoryStage,
   renderSessionEnterInitialHistory,
+  restartSessionSwitchAnimation,
   restoreSessionShellState,
   runHydratedUiRestoreFlow,
   runSessionEnterFlow,
@@ -194,6 +195,69 @@ import {
 
 {
   const calls = [];
+  const listeners = new Map();
+  const timers = [];
+  const room = {
+    classList: {
+      remove: name => calls.push(['remove', name]),
+      add: name => calls.push(['add', name]),
+    },
+    addEventListener: (name, handler) => listeners.set(name, handler),
+    removeEventListener: (name, handler) => {
+      if (listeners.get(name) === handler) listeners.delete(name);
+    },
+  };
+  const scheduled = [];
+  assert.equal(restartSessionSwitchAnimation({
+    chatRoomEl: room,
+    requestAnimationFrameFn: fn => scheduled.push(fn),
+    setTimeoutFn: fn => {
+      timers.push(fn);
+      return timers.length;
+    },
+    clearTimeoutFn: () => {},
+  }), true);
+  assert.deepEqual(calls, [['remove', 'is-session-switching']]);
+  scheduled[0]?.();
+  assert.deepEqual(calls, [
+    ['remove', 'is-session-switching'],
+    ['add', 'is-session-switching'],
+  ]);
+  listeners.get('animationend')?.({ animationName: 'social-session-header-in' });
+  assert.equal(calls.length, 2);
+  listeners.get('animationend')?.({ animationName: 'social-session-content-in' });
+  assert.deepEqual(calls.at(-1), ['remove', 'is-session-switching']);
+  assert.equal(listeners.has('animationend'), false);
+
+  const fallbackCalls = [];
+  const fallbackTimers = [];
+  const fallbackRoom = {
+    classList: {
+      remove: name => fallbackCalls.push(['remove', name]),
+      add: name => fallbackCalls.push(['add', name]),
+    },
+  };
+  restartSessionSwitchAnimation({
+    chatRoomEl: fallbackRoom,
+    requestAnimationFrameFn: fn => fn(),
+    setTimeoutFn: fn => {
+      fallbackTimers.push(fn);
+      return fallbackTimers.length;
+    },
+    clearTimeoutFn: () => {},
+  });
+  fallbackTimers[0]?.();
+  assert.deepEqual(fallbackCalls, [
+    ['remove', 'is-session-switching'],
+    ['add', 'is-session-switching'],
+    ['remove', 'is-session-switching'],
+  ]);
+  assert.equal(restartSessionSwitchAnimation({ chatRoomEl: null }), false);
+  console.log('ok - restartSessionSwitchAnimation replays room transitions and clears its compositor class');
+}
+
+{
+  const calls = [];
   const makeClassList = (label) => ({
     add(name) {
       calls.push([label, 'add', name]);
@@ -228,6 +292,9 @@ import {
     ['cancel'],
     ['list', 'add', 'hidden'],
     ['room', 'remove', 'hidden'],
+    ['room', 'remove', 'is-session-switching'],
+    ['raf'],
+    ['room', 'add', 'is-session-switching'],
     ['page', 'add', 'chat-room-active'],
     ['body', 'add', 'chat-room-active'],
     ['gap', 0],

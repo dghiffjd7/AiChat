@@ -182,6 +182,92 @@ const emitSessionEnterTrace = (recordTraceEvent, event) => {
   emitLifecycleTraceEvent(recordTraceEvent, buildSessionEnterTraceEvent(event));
 };
 
+const sessionSwitchAnimationState = new WeakMap();
+
+export const restartSessionSwitchAnimation = ({
+  chatRoomEl = null,
+  requestAnimationFrameFn = null,
+  setTimeoutFn = null,
+  clearTimeoutFn = typeof globalThis.clearTimeout === 'function' ? globalThis.clearTimeout : null,
+} = {}) => {
+  if (!chatRoomEl?.classList) return false;
+  const previous = sessionSwitchAnimationState.get(chatRoomEl);
+  previous?.cancel?.();
+  try {
+    chatRoomEl.classList.remove('is-session-switching');
+  } catch {
+    return false;
+  }
+
+  const state = {
+    timer: null,
+    onAnimationEnd: null,
+    cancel: null,
+  };
+  const finish = () => {
+    if (sessionSwitchAnimationState.get(chatRoomEl) !== state) return;
+    if (state.onAnimationEnd) {
+      try {
+        chatRoomEl.removeEventListener?.('animationend', state.onAnimationEnd);
+      } catch {}
+    }
+    if (state.timer !== null && typeof clearTimeoutFn === 'function') {
+      try {
+        clearTimeoutFn(state.timer);
+      } catch {}
+    }
+    try {
+      chatRoomEl.classList.remove('is-session-switching');
+    } catch {}
+    sessionSwitchAnimationState.delete(chatRoomEl);
+  };
+  state.cancel = () => {
+    if (state.onAnimationEnd) {
+      try {
+        chatRoomEl.removeEventListener?.('animationend', state.onAnimationEnd);
+      } catch {}
+    }
+    if (state.timer !== null && typeof clearTimeoutFn === 'function') {
+      try {
+        clearTimeoutFn(state.timer);
+      } catch {}
+    }
+    if (sessionSwitchAnimationState.get(chatRoomEl) === state) {
+      sessionSwitchAnimationState.delete(chatRoomEl);
+    }
+  };
+  sessionSwitchAnimationState.set(chatRoomEl, state);
+
+  const start = () => {
+    if (sessionSwitchAnimationState.get(chatRoomEl) !== state) return;
+    try {
+      chatRoomEl.classList.add('is-session-switching');
+    } catch {}
+    state.onAnimationEnd = event => {
+      if (String(event?.animationName || '') !== 'social-session-content-in') return;
+      finish();
+    };
+    try {
+      chatRoomEl.addEventListener?.('animationend', state.onAnimationEnd);
+    } catch {}
+    if (typeof setTimeoutFn === 'function') {
+      try {
+        state.timer = setTimeoutFn(finish, 320);
+      } catch {}
+    }
+  };
+  if (typeof requestAnimationFrameFn === 'function') {
+    try {
+      requestAnimationFrameFn(start);
+    } catch {
+      start();
+    }
+  } else {
+    start();
+  }
+  return true;
+};
+
 export const activateSessionEnterView = ({
   originPage = '',
   setChatOriginPage = null,
@@ -212,6 +298,7 @@ export const activateSessionEnterView = ({
   try {
     chatRoomEl?.classList?.remove?.('hidden');
   } catch {}
+  restartSessionSwitchAnimation({ chatRoomEl, requestAnimationFrameFn, setTimeoutFn });
   try {
     chatPageEl?.classList?.add?.('chat-room-active');
   } catch {}

@@ -92,6 +92,7 @@
     <link rel="stylesheet" href="./assets/css/legacy-card.css" />
     <link rel="stylesheet" href="./assets/css/contact-groups.css" />
     <link rel="stylesheet" href="./assets/css/theme.css" />
+    <link rel="stylesheet" href="./assets/css/social-desktop-redesign.css" />
   </head>
   <body class="bg-legacy">
     <div id="app-splash" style="
@@ -154,12 +155,32 @@
           <div class="skeleton-item"><div class="skeleton-avatar"></div><div class="skeleton-lines"><div class="skeleton-line"></div><div class="skeleton-line"></div></div></div>
         </div>
 
+        <div id="desktop-chat-placeholder" class="desktop-chat-placeholder" aria-hidden="true">
+          <div class="desktop-chat-placeholder-icon">
+            <svg viewBox="0 0 24 24"><path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4Z"></path><path d="M8 9h8M8 13h5"></path></svg>
+          </div>
+          <strong>选择一个聊天室</strong>
+          <span>从左侧列表继续最近的对话</span>
+        </div>
+
         <!-- QQ 风格聊天室 - 使用原版结构 -->
         <div id="chat-room" class="QQ_chat_page hidden qq-scrollable">
           <!-- 聊天室顶部 - 返回 + 会话名 + 菜单 -->
           <div class="chat-room-topbar">
             <button id="back-to-list" class="chat-back-btn">‹</button>
-            <div class="chat-room-title" id="current-chat-title">default</div>
+            <button
+              id="current-chat-avatar-button"
+              class="chat-room-avatar-button"
+              type="button"
+              aria-label="打开当前会话资料"
+              title="打开当前会话资料"
+            >
+              <img id="current-chat-avatar" class="chat-room-avatar" src="./assets/external/feather-default.png" alt="">
+            </button>
+            <div class="chat-room-heading">
+              <div class="chat-room-title" id="current-chat-title">default</div>
+              <div class="chat-room-presence"><span class="chat-room-presence-dot" aria-hidden="true"></span><span id="current-chat-presence">在线 · AI 角色</span></div>
+            </div>
             <button id="chat-menu-btn" class="chat-menu-btn">≡</button>
           </div>
           <div id="rp-toolbar" class="rp-toolbar" style="display:none;">
@@ -255,6 +276,8 @@
             <div id="contacts-ungrouped-list"></div>
           </div>
         </div>
+
+        <aside id="contact-detail" class="contact-detail" aria-label="联系人详情" aria-hidden="true"></aside>
       </section>
 
       <section id="moments-page" class="page">
@@ -301,10 +324,16 @@
       <div id="rp-chatroom-menu" class="sheet hidden">
         <div class="sheet-header">会话快捷</div>
         <div class="sheet-desc">当前聊天相关操作</div>
+        <div class="sheet-section-label">当前会话</div>
         <button data-action="world">🌐 角色世界书</button>
         <button data-action="chat-settings">🎨 聊天设置</button>
+        <div class="sheet-section-label">本次生成</div>
         <button data-action="prompt-preview">🧩 本次 Prompt</button>
         <button data-action="raw-reply">📄 本次 AI 回复</button>
+        <div class="sheet-section-label">全局工具</div>
+        <button data-action="preset">🎛 预设</button>
+        <button data-action="extensions">🧩 扩展</button>
+        <button data-action="config">🔌 API设定</button>
       </div>
 
       <!-- Chat title menu (click title) -->
@@ -430,6 +459,10 @@
 
       <!-- Bottom nav -->
       <nav class="bottom-nav" aria-label="主导航">
+        <button type="button" class="desktop-rail-brand" aria-label="切换当前用户或角色卡" title="切换当前用户或角色卡">
+          <img src="./assets/external/feather-default.png" alt="">
+          <span></span>
+        </button>
         <button type="button" class="nav-btn active" data-page="chat" aria-current="page">
           <span class="nav-icon" aria-hidden="true">
             <svg class="nav-svg" viewBox="0 0 24 24" focusable="false">
@@ -461,6 +494,7 @@
           </span>
           <span class="nav-label">动态</span>
         </button>
+        <div class="desktop-rail-wordmark" aria-hidden="true">ARIA</div>
       </nav>
     </div>
 

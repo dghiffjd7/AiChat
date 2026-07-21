@@ -38,6 +38,47 @@ import {
 }
 
 {
+  const selectCalls = [];
+  const contactListeners = {};
+  bindAppSessionEntryNavigation({
+    contactsUngroupedEl: {
+      addEventListener(type, handler) {
+        contactListeners[type] = handler;
+      },
+    },
+    getActivePage: () => 'contacts',
+    switchPage: (...args) => selectCalls.push(['page', ...args]),
+    enterChatRoom: (...args) => selectCalls.push(['enter', ...args]),
+    onSelectContact: (payload) => selectCalls.push(['select', payload]),
+  });
+
+  const item = {
+    dataset: {
+      session: 'contact:detail',
+      name: '详情联系人',
+    },
+  };
+  contactListeners.click({
+    target: {
+      closest(selector) {
+        return selector === '.contact-item' ? item : null;
+      },
+    },
+  });
+
+  assert.deepEqual(selectCalls, [[
+    'select',
+    {
+      id: 'contact:detail',
+      name: '详情联系人',
+      item,
+      originPage: 'contacts',
+    },
+  ]]);
+  console.log('ok - contact selection can open a profile without entering its chat');
+}
+
+{
   const contactCalls = [];
   const contactListeners = {};
   bindAppSessionEntryNavigation({

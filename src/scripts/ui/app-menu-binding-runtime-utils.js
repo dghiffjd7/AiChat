@@ -114,6 +114,9 @@ export const bindChatroomMenuActions = ({
   openChatSettings = () => {},
   openPromptPreview = () => {},
   openRawReply = () => {},
+  openPreset = () => {},
+  openExtensions = () => {},
+  openConfig = () => {},
   hideMenus = () => {},
 } = {}) => {
   menuEl?.querySelectorAll?.('button').forEach((button) => {
@@ -127,6 +130,9 @@ export const bindChatroomMenuActions = ({
       if (action === 'chat-settings') openChatSettings();
       if (action === 'prompt-preview') openPromptPreview();
       if (action === 'raw-reply') openRawReply();
+      if (action === 'preset') openPreset();
+      if (action === 'extensions') openExtensions();
+      if (action === 'config') openConfig();
       hideMenus();
     });
   });
@@ -134,6 +140,7 @@ export const bindChatroomMenuActions = ({
 
 export const bindChatTitleMenuActions = ({
   currentChatTitle = null,
+  currentChatAvatarButton = null,
   chatTitleMenu = null,
   getCurrentSessionMeta = () => ({ sessionId: '', contact: null, isGroup: false }),
   hideMenus = () => {},
@@ -142,18 +149,21 @@ export const bindChatTitleMenuActions = ({
   openContactSettings = () => {},
   openSessionConfig = () => {},
 } = {}) => {
-  currentChatTitle?.addEventListener?.('click', (event) => {
+  const handleIdentityClick = (event) => {
     event.stopPropagation?.();
     const { sessionId, isGroup } = getCurrentSessionMeta() || {};
     if (isGroup) {
       const dropdown = globalThis.document?.getElementById?.('group-management-dropdown');
       const showing = dropdown && dropdown.style.display !== 'none';
       hideMenus();
-      if (!showing) renderGroupDropdown(sessionId, currentChatTitle);
+      if (!showing) renderGroupDropdown(sessionId, event.currentTarget || currentChatTitle);
       return;
     }
     toggleTitleMenu();
-  });
+  };
+
+  currentChatTitle?.addEventListener?.('click', handleIdentityClick);
+  currentChatAvatarButton?.addEventListener?.('click', handleIdentityClick);
 
   chatTitleMenu?.querySelectorAll?.('button').forEach((button) => {
     button.addEventListener('click', () => {

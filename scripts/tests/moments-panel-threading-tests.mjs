@@ -74,6 +74,62 @@ test('buildThreadedComments keeps idless comments as roots but excludes them fro
   assert.equal(byId.has('c1'), true);
 });
 
+test('likeMoment updates one button without rebuilding the moments list', () => {
+  const scheduled = [];
+  const cancelled = [];
+  const previousTimer = globalThis.setTimeout;
+  const previousClearTimer = globalThis.clearTimeout;
+  globalThis.setTimeout = fn => {
+    scheduled.push(fn);
+    return scheduled.length;
+  };
+  globalThis.clearTimeout = id => cancelled.push(id);
+  try {
+    const classes = new Set();
+    const countEl = { textContent: '' };
+    const attributes = new Map();
+    const panel = new MomentsPanel({
+      momentsStore: {
+        get: id => id === 'm1' ? { id, likes: 2, userLiked: false } : null,
+        likeMoment: id => ({ id, likes: 3, userLiked: true }),
+      },
+    });
+    let renderCount = 0;
+    panel.render = () => {
+      renderCount += 1;
+    };
+    const buttonEl = {
+      dataset: {},
+      classList: {
+        add: name => classes.add(name),
+        remove: name => classes.delete(name),
+        toggle(name, force) {
+          if (force) classes.add(name);
+          else classes.delete(name);
+        },
+      },
+      setAttribute: (name, value) => attributes.set(name, value),
+      querySelector: selector => selector === '.moment-like-count' ? countEl : null,
+    };
+
+    assert.equal(panel.likeMoment({ momentId: 'm1', buttonEl }), true);
+    assert.equal(renderCount, 0);
+    assert.equal(countEl.textContent, '3');
+    assert.equal(classes.has('is-liked'), true);
+    assert.equal(classes.has('is-burst'), true);
+    assert.equal(attributes.get('aria-pressed'), 'true');
+    assert.equal(panel.likeMoment({ momentId: 'm1', buttonEl }), true);
+    assert.deepEqual(cancelled, [1]);
+    scheduled[0]?.();
+    assert.equal(classes.has('is-burst'), true);
+    scheduled[1]?.();
+    assert.equal(classes.has('is-burst'), false);
+  } finally {
+    globalThis.setTimeout = previousTimer;
+    globalThis.clearTimeout = previousClearTimer;
+  }
+});
+
 let failed = 0;
 for (const t of tests) {
   try {

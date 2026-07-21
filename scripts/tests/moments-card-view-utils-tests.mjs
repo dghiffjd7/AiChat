@@ -36,6 +36,7 @@ import {
   const html = buildMomentCardMarkup({
     moment: { author: '角色A', time: '刚刚', views: 12, likes: 3, comments: [{ id: 'c1' }] },
     avatar: 'https://example.com/a.png',
+    userAvatar: 'https://example.com/me.png',
     comments: [{ id: 'c1' }],
     hiddenCount: 2,
     expanded: false,
@@ -47,6 +48,10 @@ import {
     resolveMomentDisplayText: (value) => String(value?.content ?? ''),
   });
   assert.equal(html.includes('https://example.com/a.png'), true);
+  assert.equal(html.includes('class="moment-comment-avatar"'), true);
+  assert.equal(html.includes('https://example.com/me.png'), true);
+  assert.equal(html.includes('class="moment-comment-composer-inner"'), true);
+  assert.equal(html.includes('M12 21'), true);
   assert.equal(html.includes('展开查看更多评论 (2条)'), true);
   assert.equal(html.includes('data-action="like"'), true);
   assert.equal(html.includes('<span class="moment-like-count">3</span>'), true);

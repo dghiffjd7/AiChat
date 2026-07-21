@@ -183,6 +183,7 @@ import {
   bindAppSessionEntryNavigation,
   registerAppSessionEventListeners,
 } from './app-session-binding-runtime-utils.js';
+import { createContactDetailRuntime } from './contact-detail-runtime-utils.js';
 import {
   applyMemoryTablePushEvent,
   rerenderCurrentSessionHistory,
@@ -1906,6 +1907,13 @@ const initApp = async () => {
       btn.style.setProperty('--persona-accent-soft', accent.soft);
       btn.title = `当前用户：${name}`;
       const img = btn.querySelector('img');
+      if (img) img.src = url;
+    });
+    document.querySelectorAll('.desktop-rail-brand').forEach(brand => {
+      brand.style.setProperty('--persona-accent', accent.color);
+      brand.title = `当前用户：${name}；点击切换用户或角色卡`;
+      brand.setAttribute('aria-label', `当前用户：${name}；切换用户或角色卡`);
+      const img = brand.querySelector('img');
       if (img) img.src = url;
     });
     document.querySelectorAll('.user-nickname').forEach(el => {
@@ -7906,6 +7914,8 @@ Phase G（Frame 36）：循环衔接
     scheduleModeSwitchSync();
   };
 
+  let contactDetailRuntime = null;
+
   const renderChatList = () => {
     const el = document.getElementById('chat-list');
     if (!el) return;
@@ -7944,7 +7954,7 @@ Phase G（Frame 36）：循环衔接
           : '';
 
       const item = document.createElement('div');
-      item.className = 'chat-list-item';
+      item.className = id === chatStore.getCurrent() ? 'chat-list-item is-active' : 'chat-list-item';
       item.dataset.session = id;
       item.dataset.name = displayName;
       item.innerHTML = `
@@ -8068,25 +8078,29 @@ Phase G（Frame 36）：循环衔接
     });
   };
 
-  const refreshChatAndContactsNow = () => refreshChatAndContactsListNow({
-    chatScopeId: chatStore.scopeId,
-    contactsScopeId: contactsStore.scopeId,
-    logger,
-    listSessions: () => chatStore.listSessions(),
-    isRpSessionId,
-    shouldSyncSessionToContacts: sessionId => (
-      chatStore.hasMessages?.(sessionId) ||
-      (chatStore.getMessages(sessionId) || []).some(isConversationMessage)
-    ),
-    ensureContactsFromSessions: (sessions, options) => contactsStore.ensureFromSessions(sessions, options),
-    defaultAvatar: FEATHER_DEFAULT,
-    renderChatList,
-    renderGroupsList,
-    renderContactsUngrouped,
-    contactsSearchTerm: contactsSearch.term,
-    applyContactsSearchFilter,
-    updateChatContentSearchVisibility,
-  });
+  const refreshChatAndContactsNow = () => {
+    const result = refreshChatAndContactsListNow({
+      chatScopeId: chatStore.scopeId,
+      contactsScopeId: contactsStore.scopeId,
+      logger,
+      listSessions: () => chatStore.listSessions(),
+      isRpSessionId,
+      shouldSyncSessionToContacts: sessionId => (
+        chatStore.hasMessages?.(sessionId) ||
+        (chatStore.getMessages(sessionId) || []).some(isConversationMessage)
+      ),
+      ensureContactsFromSessions: (sessions, options) => contactsStore.ensureFromSessions(sessions, options),
+      defaultAvatar: FEATHER_DEFAULT,
+      renderChatList,
+      renderGroupsList,
+      renderContactsUngrouped,
+      contactsSearchTerm: contactsSearch.term,
+      applyContactsSearchFilter,
+      updateChatContentSearchVisibility,
+    });
+    contactDetailRuntime?.refresh?.();
+    return result;
+  };
   const refreshChatAndContactsRuntime = createChatAndContactsRefreshRuntime({
     refreshNow: refreshChatAndContactsNow,
     requestAnimationFrameFn: typeof window !== 'undefined' ? window.requestAnimationFrame?.bind(window) : null,
@@ -16423,7 +16437,7 @@ Phase G（Frame 36）：循环衔接
   let personaSwitcherTab = readPersonaSwitcherTab();
   const persistPersonaSwitcherTab = () => writePersonaSwitcherTab(personaSwitcherTab);
   // 顶部头像/＋按钮在「消息」与「联系人」页共用同样外观
-  const avatarBtns = document.querySelectorAll('.qq-message-topbar .user-avatar-btn');
+  const avatarBtns = document.querySelectorAll('.desktop-rail-brand, .qq-message-topbar .user-avatar-btn');
   const settingsBtns = document.querySelectorAll('.qq-message-topbar .user-settings-btn');
   const plusBtns = document.querySelectorAll('.qq-message-topbar .topbar-plus-btn');
   avatarBtns.forEach(btn => btn.setAttribute('data-maid-guide-target', 'avatar-user-entry'));
@@ -17378,12 +17392,16 @@ Phase G（Frame 36）：循环衔接
 	    openChatSettings,
     openPromptPreview: () => showPromptPreview(),
     openRawReply: openRawReplyFromMenu,
+    openPreset: () => presetPanel.show(),
+    openExtensions: () => extensionsPanel.show(),
+    openConfig: () => configPanel.show(),
     hideMenus,
   });
 
   // Chat title menu (click current title)
   const chatTitleMenu = document.getElementById('chat-title-menu');
   const currentChatTitle = document.getElementById('current-chat-title');
+  const currentChatAvatarButton = document.getElementById('current-chat-avatar-button');
   const renderGroupDropdown = (groupId, anchorEl) => renderGroupManagementDropdown({
     groupId,
     anchorEl,
@@ -17400,6 +17418,7 @@ Phase G（Frame 36）：循环衔接
 
   bindChatTitleMenuActions({
     currentChatTitle,
+    currentChatAvatarButton,
     chatTitleMenu,
     getCurrentSessionMeta: () => {
       const sessionId = chatStore.getCurrent();
@@ -21562,7 +21581,11 @@ Phase G（Frame 36）：循环衔接
     }
     const enterRequest = beginChatEnterRequest(sid);
     const contact = contactsStore.getContact(sid);
+    const chatAvatarEl = document.getElementById('current-chat-avatar');
+    if (chatAvatarEl) chatAvatarEl.src = resolveAvatarForContact(sid, contact) || FEATHER_DEFAULT;
     const isGroupSession = Boolean(contact?.isGroup) || sid.startsWith('group:');
+    const chatPresenceEl = document.getElementById('current-chat-presence');
+    if (chatPresenceEl) chatPresenceEl.textContent = isGroupSession ? `${contact?.members?.length || 0} 位成员` : '在线 · AI 角色';
 	    const result = await runSessionEnterFlow({
       sessionId: sid,
       sessionName,
@@ -23013,6 +23036,28 @@ Phase G（Frame 36）：循环衔接
 
   const contactsUngroupedEl = document.getElementById('contacts-ungrouped-list');
   const contactsGroupsEl = document.getElementById('contacts-groups-list');
+  contactDetailRuntime = createContactDetailRuntime({
+    containerEl: document.getElementById('contact-detail'),
+    contactListRoots: [contactsUngroupedEl, contactsGroupsEl],
+    getContact: id => contactsStore.getContact(id),
+    resolveAvatar: (id, contact) => resolveAvatarForContact(id, contact) || FEATHER_DEFAULT,
+    getMessageCount: id => (chatStore.getMessages(id) || []).length,
+    getPersonaRows: async (id) => {
+      const templateId = await resolveDefaultMemoryTemplateId({ memoryTemplateStore });
+      if (!templateId || !memoryTableStore?.getMemories) return [];
+      return memoryTableStore.getMemories({
+        scope: 'contact',
+        contact_id: id,
+        template_id: templateId,
+      });
+    },
+    eventTarget: window,
+    onMessage: ({ id, name }) => {
+      switchPage('chat', { animate: false });
+      enterChatRoom(id, name, 'contacts');
+    },
+  });
+  contactDetailRuntime.mount();
   bindAppSessionEntryNavigation({
     chatListEl: chatList,
     contactsUngroupedEl,
@@ -23020,6 +23065,7 @@ Phase G（Frame 36）：循环衔接
     getActivePage: () => activePage,
     switchPage,
     enterChatRoom,
+    onSelectContact: ({ id }) => contactDetailRuntime?.select?.(id),
   });
 
   // Quick action buttons
@@ -30214,6 +30260,11 @@ Phase G（Frame 36）：循环衔接
     () => isBackLayerVisible(momentSummaryPanel.overlay) || isBackLayerVisible(momentSummaryPanel.panel),
   ];
   const closeTopAppLayer = ({ dryRun = false } = {}) => {
+    if (closeVisibleBySelector(
+      '#contact-detail.is-active',
+      () => contactDetailRuntime?.clear?.(),
+      { dryRun },
+    )) return true;
     const activeSelectors = [
       '.sticker-ai-zoom-overlay.is-active',
       '.sticker-bind-overlay.is-active',
