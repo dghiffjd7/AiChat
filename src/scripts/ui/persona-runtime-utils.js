@@ -20,6 +20,40 @@ export const normalizePersonaSwitcherTab = (value = '') => {
   return raw === 'character' ? 'character' : 'user';
 };
 
+export const resolvePersonaSwitcherEntryPresentation = ({
+  tab = 'user',
+  user = null,
+  character = null,
+  fallbackAvatar = '',
+} = {}) => {
+  const activeTab = normalizePersonaSwitcherTab(tab);
+  const isCharacter = activeTab === 'character';
+  const current = isCharacter ? character : user;
+  return {
+    tab: activeTab,
+    kindLabel: isCharacter ? '角色卡' : '用户',
+    name: String(current?.name || '').trim() || (isCharacter ? '角色卡' : '我'),
+    avatar: String(current?.avatar || '').trim() || String(fallbackAvatar || '').trim(),
+  };
+};
+
+export const resolveRpSessionPersonaAvatar = ({
+  sessionId = '',
+  prefix = 'rp:',
+  getPersona = () => null,
+} = {}) => {
+  const sid = String(sessionId || '').trim();
+  const normalizedPrefix = String(prefix || 'rp:');
+  if (!sid.startsWith(normalizedPrefix)) return '';
+  const personaId = sid.slice(normalizedPrefix.length).trim();
+  if (!personaId || typeof getPersona !== 'function') return '';
+  try {
+    return String(getPersona(personaId)?.avatar || '').trim();
+  } catch {
+    return '';
+  }
+};
+
 export const readPersonaSwitcherTab = ({
   storage = getDefaultLocalStorage(),
   key = PERSONA_SWITCHER_TAB_STORAGE_KEY,

@@ -7,6 +7,8 @@ import {
   getCurrentCharacterId,
   normalizePersonaSwitcherTab,
   readPersonaSwitcherTab,
+  resolvePersonaSwitcherEntryPresentation,
+  resolveRpSessionPersonaAvatar,
   writePersonaSwitcherTab,
 } from '../../src/scripts/ui/persona-runtime-utils.js';
 
@@ -30,6 +32,80 @@ const createStorage = () => {
   assert.equal(normalizePersonaSwitcherTab('user'), 'user');
   assert.equal(normalizePersonaSwitcherTab('bad'), 'user');
   console.log('ok - persona switcher tab helpers preserve legacy key and normalization');
+}
+
+{
+  const user = { name: '阿兰', avatar: 'user.png' };
+  const character = { name: '清月师尊', avatar: 'character.webp' };
+  assert.deepEqual(
+    resolvePersonaSwitcherEntryPresentation({ tab: 'user', user, character, fallbackAvatar: 'fallback.png' }),
+    {
+      tab: 'user',
+      kindLabel: '用户',
+      name: '阿兰',
+      avatar: 'user.png',
+    },
+  );
+  assert.deepEqual(
+    resolvePersonaSwitcherEntryPresentation({ tab: 'character', user, character, fallbackAvatar: 'fallback.png' }),
+    {
+      tab: 'character',
+      kindLabel: '角色卡',
+      name: '清月师尊',
+      avatar: 'character.webp',
+    },
+  );
+  console.log('ok - persona switcher entry follows the visible user or character tab');
+}
+
+{
+  assert.deepEqual(
+    resolvePersonaSwitcherEntryPresentation({
+      tab: 'character',
+      user: { name: '阿兰', avatar: 'user.png' },
+      character: { name: '', avatar: '' },
+      fallbackAvatar: 'fallback.png',
+    }),
+    {
+      tab: 'character',
+      kindLabel: '角色卡',
+      name: '角色卡',
+      avatar: 'fallback.png',
+    },
+  );
+  console.log('ok - persona switcher entry keeps character fallbacks separate from the user avatar');
+}
+
+{
+  const personas = new Map([
+    ['persona-a', { id: 'persona-a', avatar: 'character-a.webp' }],
+    ['persona-empty', { id: 'persona-empty', avatar: '' }],
+  ]);
+  const getPersona = id => personas.get(id) || null;
+  assert.equal(
+    resolveRpSessionPersonaAvatar({ sessionId: 'rp:persona-a', getPersona }),
+    'character-a.webp',
+  );
+  assert.equal(
+    resolveRpSessionPersonaAvatar({ sessionId: 'rp:persona-empty', getPersona }),
+    '',
+  );
+  assert.equal(
+    resolveRpSessionPersonaAvatar({ sessionId: 'contact-a', getPersona }),
+    '',
+  );
+  console.log('ok - rp assistant avatar resolves only from the matching character card');
+}
+
+{
+  assert.equal(
+    resolveRpSessionPersonaAvatar({
+      sessionId: 'rp:persona-a',
+      getPersona() { throw new Error('read failed'); },
+    }),
+    '',
+  );
+  console.log('ok - rp assistant avatar resolution tolerates missing character data');
 }
 
 {

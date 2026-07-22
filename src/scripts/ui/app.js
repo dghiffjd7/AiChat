@@ -164,6 +164,8 @@ import { getPresetStore } from './preset-store-runtime-utils.js';
 import {
   normalizePersonaSwitcherTab,
   readPersonaSwitcherTab,
+  resolvePersonaSwitcherEntryPresentation,
+  resolveRpSessionPersonaAvatar,
   writePersonaSwitcherTab,
 } from './persona-runtime-utils.js';
 import {
@@ -1896,27 +1898,43 @@ const initApp = async () => {
     chatRoom.style.setProperty('--chat-user-text-color', getUserTextColor(sessionId));
   };
 
+  const syncPersonaSwitcherEntryUI = (
+    sessionId = chatStore.getCurrent(),
+    { tab = readPersonaSwitcherTab() } = {},
+  ) => {
+    const user = getActiveUserProfile();
+    const character = getEffectivePersona(sessionId);
+    const view = resolvePersonaSwitcherEntryPresentation({
+      tab,
+      user: {
+        name: getActiveUserName(),
+        avatar: getActiveUserAvatar(),
+      },
+      character: {
+        name: getCharacterCardName(character, '角色卡'),
+        avatar: String(character?.avatar || '').trim(),
+      },
+      fallbackAvatar: getDefaultAppIcon(),
+    });
+    const accent = getPersonaAccent(view.tab === 'character' ? character : user);
+    document.querySelectorAll('.desktop-rail-brand, .qq-message-topbar .user-avatar-btn').forEach(btn => {
+      btn.dataset.personaAccent = '1';
+      btn.style.setProperty('--persona-accent', accent.color);
+      btn.style.setProperty('--persona-accent-soft', accent.soft);
+      btn.title = `当前${view.kindLabel}：${view.name}；点击切换用户或角色卡`;
+      btn.setAttribute('aria-label', `当前${view.kindLabel}：${view.name}；切换用户或角色卡`);
+      const img = btn.querySelector('img');
+      if (img) img.src = view.avatar;
+    });
+  };
+
   const syncUserPersonaUI = (sessionId = chatStore.getCurrent()) => {
     const user = getActiveUserProfile();
     const url = getActiveUserAvatar();
     const name = getActiveUserName();
     const accent = getPersonaAccent(user);
     avatars.user = url;
-    document.querySelectorAll('.user-avatar-btn').forEach(btn => {
-      btn.dataset.personaAccent = '1';
-      btn.style.setProperty('--persona-accent', accent.color);
-      btn.style.setProperty('--persona-accent-soft', accent.soft);
-      btn.title = `当前用户：${name}`;
-      const img = btn.querySelector('img');
-      if (img) img.src = url;
-    });
-    document.querySelectorAll('.desktop-rail-brand').forEach(brand => {
-      brand.style.setProperty('--persona-accent', accent.color);
-      brand.title = `当前用户：${name}；点击切换用户或角色卡`;
-      brand.setAttribute('aria-label', `当前用户：${name}；切换用户或角色卡`);
-      const img = brand.querySelector('img');
-      if (img) img.src = url;
-    });
+    syncPersonaSwitcherEntryUI(sessionId);
     document.querySelectorAll('.user-nickname').forEach(el => {
       el.textContent = name;
       el.dataset.personaAccent = '1';
@@ -2050,6 +2068,11 @@ const initApp = async () => {
       await syncBoundUserForCharacterCard(personaStore.getActive?.());
       syncUserPersonaUI(chatStore.getCurrent());
       refreshChatAndContacts();
+      const currentSessionId = String(chatStore.getCurrent() || '').trim();
+      if (isRpSessionId(currentSessionId)) {
+        clearMessageDecorationCache();
+        refreshRenderedMessageAvatars(currentSessionId);
+      }
     },
     onRoleNewChatFinished: async () => {
       try {
@@ -5265,6 +5288,12 @@ const initApp = async () => {
   };
 
   const getAssistantAvatarForSession = sessionId => {
+    const rpAvatar = resolveRpSessionPersonaAvatar({
+      sessionId,
+      prefix: RP_SESSION_PREFIX,
+      getPersona: personaId => personaStore.get?.(personaId),
+    });
+    if (rpAvatar) return rpAvatar;
     const c = contactsStore.getContact(sessionId);
     return resolveAvatarForContact(sessionId, c);
   };
@@ -16534,6 +16563,7 @@ Phase G（Frame 36）：循环衔接
       if (tabBtn) {
         personaSwitcherTab = normalizePersonaSwitcherTab(tabBtn.dataset.tab);
         persistPersonaSwitcherTab();
+        syncPersonaSwitcherEntryUI(chatStore.getCurrent(), { tab: personaSwitcherTab });
         renderPersonaSwitcher();
         const lastPersonaAnchor = getLastSheetAnchor('persona');
         if (lastPersonaAnchor) positionSheet(menu, lastPersonaAnchor, 0, 4, false);
@@ -17060,6 +17090,7 @@ Phase G（Frame 36）：循环衔接
     openMaidPersonaSwitcherForGuide();
     personaSwitcherTab = normalizePersonaSwitcherTab(tab);
     persistPersonaSwitcherTab();
+    syncPersonaSwitcherEntryUI(chatStore.getCurrent(), { tab: personaSwitcherTab });
     renderPersonaSwitcher();
     const anchor = pickVisibleGuideAnchor(avatarBtns, document.querySelectorAll('[data-maid-guide-target="avatar-user-entry"]'));
     if (anchor) positionSheet(personaSwitcherMenu, anchor, 0, 4, false);
