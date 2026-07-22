@@ -23078,16 +23078,6 @@ Phase G（Frame 36）：循环衔接
     await resetRpHistory(getRpSessionId(activePersonaId));
   });
 
-  quickMenu?.querySelectorAll('button').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const action = btn.dataset.action;
-      if (action === 'add-friend') sessionPanel.show();
-      if (action === 'create-group') groupCreatePanel.show();
-      if (action === 'new-group') groupPanel.show();
-      hideMenus();
-    });
-  });
-
   const contactsUngroupedEl = document.getElementById('contacts-ungrouped-list');
   const contactsGroupsEl = document.getElementById('contacts-groups-list');
   contactDetailRuntime = createContactDetailRuntime({

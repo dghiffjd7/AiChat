@@ -5352,9 +5352,21 @@ body[data-ui-mode='rp'] .QQ_chat_page.sticker-preview-active .msgcontent {
   z-index: 20000;
 }
 
+.session-panel-overlay.is-opening {
+  animation: session-panel-overlay-in 220ms ease-out both;
+}
+
+.session-panel-overlay.is-closing {
+  pointer-events: none;
+  animation: session-panel-overlay-out 180ms ease-in both;
+}
+
 .session-panel {
   display: flex;
+  position: relative;
   width: min(520px, 94vw);
+  height: min(84vh, 640px);
+  min-height: min(420px, 92vh);
   max-height: 92vh;
   background: var(--app-surface-card);
   border-radius: 16px;
@@ -5362,6 +5374,59 @@ body[data-ui-mode='rp'] .QQ_chat_page.sticker-preview-active .msgcontent {
   overflow: hidden;
   display: flex;
   flex-direction: column;
+  transform-origin: center;
+}
+
+.session-panel.is-opening {
+  animation: session-panel-dialog-in 380ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.session-panel.is-closing {
+  animation: session-panel-dialog-out 220ms cubic-bezier(0.4, 0, 1, 1) both;
+}
+
+.session-panel-overlay.is-opening,
+.session-panel-overlay.is-closing {
+  will-change: opacity;
+}
+
+.session-panel.is-opening,
+.session-panel.is-closing {
+  will-change: opacity, transform;
+}
+
+@keyframes session-panel-overlay-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes session-panel-overlay-out {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+
+@keyframes session-panel-dialog-in {
+  from {
+    opacity: 0;
+    transform: translateY(42px) scale(0.93);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes session-panel-dialog-out {
+  from {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+
+  to {
+    opacity: 0;
+    transform: translateY(26px) scale(0.95);
+  }
 }
 
 .session-panel-header {
@@ -5392,6 +5457,7 @@ body[data-ui-mode='rp'] .QQ_chat_page.sticker-preview-active .msgcontent {
   border-radius: 10px;
   cursor: pointer;
   font-size: 16px;
+  transition: transform 180ms cubic-bezier(0.22, 1, 0.36, 1), background 160ms ease, color 160ms ease;
 }
 
 .session-panel-form {
@@ -5439,6 +5505,12 @@ body[data-ui-mode='rp'] .QQ_chat_page.sticker-preview-active .msgcontent {
   font-size: 12px;
   cursor: pointer;
   color: var(--app-text-primary);
+  transition: transform 150ms ease, border-color 160ms ease, background 160ms ease;
+}
+
+.session-btn:active,
+.session-row-delete:active {
+  transform: scale(0.94);
 }
 
 .session-btn.danger {
@@ -5470,7 +5542,8 @@ body[data-ui-mode='rp'] .QQ_chat_page.sticker-preview-active .msgcontent {
 
 .session-panel:not(.has-shared) .session-list-split,
 .session-panel:not(.has-shared) .session-list-section {
-  flex: 0 0 auto;
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
 .session-panel:not(.has-shared) .session-list-section.session-list-other {
@@ -5482,14 +5555,9 @@ body[data-ui-mode='rp'] .QQ_chat_page.sticker-preview-active .msgcontent {
 }
 
 .session-panel:not(.has-shared) .session-list-pane {
-  flex: 0 0 auto;
-  max-height: 56vh;
+  flex: 1 1 auto;
+  max-height: none;
   overflow-y: auto;
-}
-
-.session-panel.has-shared {
-  height: min(84vh, 640px);
-  min-height: 420px;
 }
 
 .session-panel.has-shared .session-list-split {
@@ -5522,6 +5590,7 @@ body[data-ui-mode='rp'] .QQ_chat_page.sticker-preview-active .msgcontent {
 }
 
 .session-list-other .session-row {
+  --session-row-rest-opacity: 0.3;
   opacity: 0.3;
 }
 
@@ -5530,7 +5599,24 @@ body[data-ui-mode='rp'] .QQ_chat_page.sticker-preview-active .msgcontent {
 }
 
 .session-row {
+  --session-row-rest-opacity: 1;
   background: var(--app-surface-subtle);
+}
+
+.session-list-split .session-row {
+  animation: session-contact-row-in 360ms cubic-bezier(0.22, 1, 0.36, 1) backwards;
+}
+
+@keyframes session-contact-row-in {
+  from {
+    opacity: 0;
+    transform: translateY(12px) scale(0.97);
+  }
+
+  to {
+    opacity: var(--session-row-rest-opacity);
+    transform: translateY(0) scale(1);
+  }
 }
 
 .session-row.is-current {
@@ -5552,6 +5638,7 @@ body[data-ui-mode='rp'] .QQ_chat_page.sticker-preview-active .msgcontent {
   padding: 4px 10px;
   font-size: 11px;
   cursor: pointer;
+  transition: transform 150ms ease;
 }
 
 /* 推荐好友模式：输入框 focus 时展示推荐列表，隐藏原联系人分块 */
@@ -5572,6 +5659,53 @@ body[data-ui-mode='rp'] .QQ_chat_page.sticker-preview-active .msgcontent {
   display: flex;
 }
 
+.session-panel.is-recommend-transitioning :is(.session-list-split, .session-recommend-section) {
+  pointer-events: none;
+}
+
+.session-list-split.is-session-view-leaving {
+  animation: session-contacts-view-out 160ms ease-in both;
+}
+
+.session-list-split.is-session-view-entering {
+  animation: session-contacts-view-in 320ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.session-recommend-section.is-session-view-leaving {
+  animation: session-recommend-view-out 160ms ease-in both;
+}
+
+.session-recommend-section.is-session-view-entering {
+  animation: session-recommend-view-in 320ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.session-list-split.is-session-view-leaving,
+.session-list-split.is-session-view-entering,
+.session-recommend-section.is-session-view-leaving,
+.session-recommend-section.is-session-view-entering {
+  will-change: opacity, transform;
+}
+
+@keyframes session-contacts-view-in {
+  from { opacity: 0; transform: translateX(-26px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes session-contacts-view-out {
+  from { opacity: 1; transform: translateX(0); }
+  to { opacity: 0; transform: translateX(22px); }
+}
+
+@keyframes session-recommend-view-in {
+  from { opacity: 0; transform: translateX(26px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes session-recommend-view-out {
+  from { opacity: 1; transform: translateX(0); }
+  to { opacity: 0; transform: translateX(-22px); }
+}
+
 .session-recommend-list {
   flex: 1 1 auto;
   min-height: 0;
@@ -5582,7 +5716,25 @@ body[data-ui-mode='rp'] .QQ_chat_page.sticker-preview-active .msgcontent {
   gap: 10px;
   background: var(--app-surface-card);
   -webkit-overflow-scrolling: touch;
-  transition: transform 160ms ease;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(148, 163, 184, 0.38) transparent;
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 10px, #000 calc(100% - 16px), transparent 100%);
+  mask-image: linear-gradient(to bottom, transparent 0, #000 10px, #000 calc(100% - 16px), transparent 100%);
+  transition: transform 260ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.session-recommend-list::-webkit-scrollbar {
+  width: 6px;
+}
+
+.session-recommend-list::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.session-recommend-list::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: linear-gradient(180deg, rgba(148, 163, 184, 0.48), rgba(203, 213, 225, 0.42));
 }
 
 .session-recommend-list.is-pulling {
@@ -5647,7 +5799,11 @@ body[data-ui-mode='rp'] .QQ_chat_page.sticker-preview-active .msgcontent {
 }
 
 .session-recommend-empty {
-  padding: 18px 10px;
+  margin: 28px 8px;
+  padding: 24px 12px;
+  border: 1px dashed var(--app-border-default);
+  border-radius: 18px;
+  background: var(--app-surface-subtle);
   text-align: center;
   color: var(--app-text-muted);
   font-size: 13px;
@@ -5656,7 +5812,7 @@ body[data-ui-mode='rp'] .QQ_chat_page.sticker-preview-active .msgcontent {
 
 .session-recommend-block {
   border: 1px solid var(--app-border-default);
-  border-radius: 14px;
+  border-radius: 20px;
   background: var(--app-surface-card);
   overflow: hidden;
 }
@@ -5691,34 +5847,32 @@ body[data-ui-mode='rp'] .QQ_chat_page.sticker-preview-active .msgcontent {
 .session-recommend-row {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 11px 12px;
-  min-height: 72px;
+  gap: 14px;
+  padding: 14px;
+  min-height: 76px;
   max-height: none;
   overflow: hidden;
   border: 1px solid var(--app-border-default);
-  border-radius: 14px;
+  border-radius: 20px;
   background: var(--app-surface-card);
   cursor: pointer;
   transition:
-    background 120ms ease,
+    background 160ms ease,
     border-color 160ms ease,
-    box-shadow 160ms ease,
+    box-shadow 200ms ease,
     opacity 180ms ease,
-    transform 180ms ease;
-  opacity: 0;
-  transform: translateY(16px);
-  animation: session-recommend-fade-in-up 320ms ease-out forwards;
+    transform 180ms cubic-bezier(0.22, 1, 0.36, 1);
+  opacity: 1;
+  transform: none;
+}
+
+.session-recommend-row.is-entering {
+  animation: session-recommend-fade-in-up 360ms cubic-bezier(0.22, 1, 0.36, 1) backwards;
+  will-change: opacity, transform;
 }
 
 .session-recommend-row:last-child {
   border-bottom: 1px solid var(--app-border-default);
-}
-
-.session-recommend-row:hover {
-  border-color: rgba(37, 99, 235, 0.28);
-  background: var(--app-surface-subtle);
-  box-shadow: 0 8px 22px rgba(15, 23, 42, 0.08);
 }
 
 .session-recommend-row:focus-within {
@@ -5728,23 +5882,26 @@ body[data-ui-mode='rp'] .QQ_chat_page.sticker-preview-active .msgcontent {
 
 .session-recommend-row:active {
   background: rgba(14, 165, 233, 0.08);
+  transform: scale(0.985);
 }
 
 .session-recommend-row.is-removing {
+  animation: none;
   opacity: 0;
-  transform: translateY(-6px);
+  transform: scale(0.96);
   max-height: 0;
   padding-top: 0;
   padding-bottom: 0;
   margin: 0;
   border-bottom-color: transparent;
   pointer-events: none;
+  will-change: opacity, transform;
 }
 
 @keyframes session-recommend-fade-in-up {
   from {
     opacity: 0;
-    transform: translateY(16px);
+    transform: translateY(14px);
   }
 
   to {
@@ -5768,18 +5925,20 @@ body[data-ui-mode='rp'] .QQ_chat_page.sticker-preview-active .msgcontent {
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 5px;
+  gap: 0;
 }
 
 .session-recommend-name {
-  font-size: 14px;
+  font-size: 14.5px;
   font-weight: 900;
   color: var(--app-text-primary);
   min-width: 0;
 }
 
 .session-recommend-meta {
-  font-size: 12px;
+  margin-top: 5px;
+  font-size: 11.5px;
+  font-weight: 500;
   color: var(--app-text-muted);
   min-width: 0;
   overflow: hidden;
@@ -5789,7 +5948,8 @@ body[data-ui-mode='rp'] .QQ_chat_page.sticker-preview-active .msgcontent {
 
 .session-recommend-row-tags {
   display: flex;
-  gap: 5px;
+  gap: 6px;
+  margin-top: 8px;
   min-width: 0;
   overflow: hidden;
 }
@@ -5805,14 +5965,14 @@ body[data-ui-mode='rp'] .QQ_chat_page.sticker-preview-active .msgcontent {
   background: var(--app-surface-subtle);
   color: var(--app-text-secondary);
   font-size: 11px;
-  font-weight: 800;
+  font-weight: 700;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .session-recommend-add {
-  min-height: 32px;
+  min-height: 40px;
   display: inline-flex;
   align-items: center;
   gap: 5px;
@@ -5820,12 +5980,12 @@ body[data-ui-mode='rp'] .QQ_chat_page.sticker-preview-active .msgcontent {
   background: rgba(37, 99, 235, 0.10);
   color: var(--app-accent-strong);
   border-radius: 999px;
-  padding: 6px 12px;
+  padding: 8px 13px;
   font-size: 12px;
   font-weight: 900;
   cursor: pointer;
   flex-shrink: 0;
-  transition: transform 120ms ease, border-color 160ms ease, background 160ms ease;
+  transition: transform 160ms cubic-bezier(0.22, 1, 0.36, 1), border-color 160ms ease, background 160ms ease, color 160ms ease, box-shadow 180ms ease;
 }
 
 .session-recommend-add-icon {
@@ -5838,13 +5998,8 @@ body[data-ui-mode='rp'] .QQ_chat_page.sticker-preview-active .msgcontent {
   stroke-linejoin: round;
 }
 
-.session-recommend-add:hover {
-  border-color: rgba(37, 99, 235, 0.46);
-  background: rgba(37, 99, 235, 0.14);
-}
-
 .session-recommend-add:active {
-  transform: translateY(1px);
+  transform: scale(0.92);
 }
 
 .session-recommend-add:focus-visible {
@@ -5852,7 +6007,550 @@ body[data-ui-mode='rp'] .QQ_chat_page.sticker-preview-active .msgcontent {
   outline-offset: 2px;
 }
 
+@media (hover: hover) {
+  .session-recommend-row:hover {
+    border-color: rgba(var(--app-accent-rgb), 0.28);
+    background: var(--app-surface-card);
+    box-shadow: 0 18px 40px -16px rgba(var(--app-accent-rgb), 0.32);
+    transform: translateY(-1px);
+  }
+
+  .session-recommend-add:hover {
+    border-color: transparent;
+    background: linear-gradient(135deg, var(--app-accent-primary), var(--app-accent-strong));
+    color: var(--app-text-on-accent);
+    box-shadow: 0 12px 26px -10px rgba(var(--app-accent-rgb), 0.7);
+    transform: scale(1.05);
+  }
+
+  .session-panel-close:hover {
+    color: var(--app-danger-text);
+    background: var(--app-danger-soft);
+    transform: rotate(90deg) scale(1.08);
+  }
+
+  .session-btn:hover,
+  .session-row-delete:hover {
+    transform: scale(1.04);
+  }
+}
+
+/* 添加推荐角色：确认视窗与完成操作条 */
+.session-add-confirm-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 38800;
+  background: var(--app-surface-overlay);
+  -webkit-backdrop-filter: blur(3px);
+  backdrop-filter: blur(3px);
+}
+
+.session-add-confirm-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 38801;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+}
+
+.session-add-confirm-overlay.is-entering {
+  animation: session-add-confirm-overlay-in 180ms ease-out both;
+}
+
+.session-add-confirm-overlay.is-leaving {
+  pointer-events: none;
+  animation: session-add-confirm-overlay-out 180ms ease-in both;
+}
+
+.session-add-confirm-layer.is-entering .session-add-confirm-card {
+  animation: session-add-confirm-card-in 420ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.session-add-confirm-layer.is-leaving {
+  pointer-events: none;
+}
+
+.session-add-confirm-layer.is-leaving .session-add-confirm-card {
+  animation: session-add-confirm-card-out 200ms cubic-bezier(0.4, 0, 1, 1) both;
+}
+
+.session-add-confirm-overlay:is(.is-entering, .is-leaving),
+.session-add-confirm-layer:is(.is-entering, .is-leaving) .session-add-confirm-card {
+  will-change: opacity, transform;
+}
+
+@keyframes session-add-confirm-overlay-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes session-add-confirm-overlay-out {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+
+@keyframes session-add-confirm-card-in {
+  from {
+    opacity: 0;
+    transform: translateY(26px) scale(0.9);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes session-add-confirm-card-out {
+  from {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+
+  to {
+    opacity: 0;
+    transform: translateY(16px) scale(0.94);
+  }
+}
+
+.session-add-confirm-card {
+  position: relative;
+  width: min(400px, calc(100vw - 32px));
+  max-height: calc(var(--app-visual-height, 100dvh) - max(32px, env(safe-area-inset-top, 0px)) - max(32px, env(safe-area-inset-bottom, 0px)));
+  overflow: auto;
+  padding: 24px;
+  border: 1px solid var(--app-border-subtle);
+  border-radius: 26px;
+  background: var(--app-surface-card);
+  color: var(--app-text-primary);
+  box-shadow: 0 44px 110px -24px var(--app-shadow-color);
+}
+
+.session-add-confirm-accent {
+  position: absolute;
+  inset: 0 0 auto;
+  height: 4px;
+  background: linear-gradient(
+    90deg,
+    var(--app-accent-primary),
+    color-mix(in srgb, var(--app-accent-primary) 55%, var(--app-danger-text)),
+    var(--app-danger-text)
+  );
+}
+
+.session-add-confirm-close {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: var(--app-surface-subtle);
+  color: var(--app-text-muted);
+  cursor: pointer;
+  transition: transform 180ms cubic-bezier(0.22, 1, 0.36, 1), color 160ms ease, background 160ms ease;
+}
+
+.session-add-confirm-close svg,
+.session-add-confirm-info-icon svg,
+.session-add-confirm-action-icon svg,
+.session-add-success-icon svg {
+  width: 15px;
+  height: 15px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.session-add-confirm-identity {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-width: 0;
+  padding-right: 34px;
+}
+
+.session-add-confirm-avatar-ring {
+  width: 61px;
+  height: 61px;
+  flex: 0 0 61px;
+  display: grid;
+  place-items: center;
+  padding: 2.5px;
+  border-radius: 20px;
+  background: conic-gradient(
+    from 210deg,
+    var(--app-accent-primary),
+    color-mix(in srgb, var(--app-accent-primary) 62%, var(--app-danger-text)),
+    var(--app-danger-text),
+    var(--app-accent-primary)
+  );
+}
+
+.session-add-confirm-avatar {
+  width: 56px;
+  height: 56px;
+  display: block;
+  object-fit: cover;
+  border: 2px solid var(--app-surface-card);
+  border-radius: 17px;
+  background: var(--app-surface-subtle);
+}
+
+.session-add-confirm-identity-copy,
+.session-add-confirm-name-line,
+.session-add-success-copy {
+  min-width: 0;
+}
+
+.session-add-confirm-eyebrow {
+  color: var(--app-text-muted);
+  font-size: 10.5px;
+  font-weight: 900;
+  letter-spacing: 0.2em;
+}
+
+.session-add-confirm-name-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.session-add-confirm-name {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--app-text-primary);
+  font-size: 17px;
+  font-weight: 900;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-add-confirm-source {
+  max-width: 120px;
+  overflow: hidden;
+  flex-shrink: 1;
+  padding: 3px 6px;
+  border: 1px solid rgba(var(--app-accent-rgb), 0.22);
+  border-radius: 6px;
+  background: var(--app-accent-soft);
+  color: var(--app-accent-strong);
+  font-size: 9.5px;
+  font-weight: 900;
+  line-height: 1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-add-confirm-question {
+  margin: 20px 0 0;
+  color: var(--app-text-secondary);
+  font-size: 13.5px;
+  font-weight: 700;
+  line-height: 1.65;
+}
+
+.session-add-confirm-info {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin-top: 12px;
+  padding: 14px;
+  border: 1px solid rgba(var(--app-accent-rgb), 0.16);
+  border-radius: 16px;
+  background: linear-gradient(135deg, rgba(var(--app-accent-rgb), 0.12), rgba(var(--app-accent-rgb), 0.05));
+}
+
+.session-add-confirm-info-icon {
+  width: 28px;
+  height: 28px;
+  flex: 0 0 28px;
+  display: grid;
+  place-items: center;
+  border-radius: 8px;
+  background: var(--app-surface-card);
+  color: var(--app-accent-primary);
+  box-shadow: var(--app-shadow-sm);
+}
+
+.session-add-confirm-info-text {
+  margin: 0;
+  color: var(--app-accent-strong);
+  font-size: 11.5px;
+  font-weight: 600;
+  line-height: 1.65;
+}
+
+.session-add-confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 24px;
+}
+
+.session-add-confirm-action {
+  min-width: 96px;
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 9px 20px;
+  border: 0;
+  border-radius: 16px;
+  font-size: 13px;
+  font-weight: 800;
+  cursor: pointer;
+  transition: transform 150ms ease, filter 160ms ease, background 160ms ease, opacity 160ms ease;
+}
+
+.session-add-confirm-action.is-cancel {
+  background: var(--app-surface-subtle);
+  color: var(--app-text-secondary);
+}
+
+.session-add-confirm-action.is-confirm {
+  min-width: 112px;
+  background: linear-gradient(135deg, var(--app-accent-primary), var(--app-accent-strong));
+  color: var(--app-text-on-accent);
+  box-shadow: 0 16px 32px -12px rgba(var(--app-accent-rgb), 0.7);
+}
+
+.session-add-confirm-action:active,
+.session-add-success-action:active {
+  transform: scale(0.95);
+}
+
+.session-add-confirm-action:disabled,
+.session-add-confirm-close:disabled {
+  cursor: wait;
+  opacity: 0.48;
+}
+
+.session-add-confirm-card.is-busy .session-add-confirm-action-icon {
+  animation: session-add-confirm-spin 0.8s linear infinite;
+}
+
+@keyframes session-add-confirm-spin {
+  to { transform: rotate(360deg); }
+}
+
+.session-add-success-viewport {
+  position: fixed;
+  inset: auto 16px max(36px, calc(18px + env(safe-area-inset-bottom, 0px)));
+  z-index: 39200;
+  display: flex;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.session-add-success-toast {
+  max-width: min(520px, calc(100vw - 32px));
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px 12px 12px;
+  border: 1px solid var(--app-border-subtle);
+  border-radius: 16px;
+  background: var(--app-surface-panel);
+  color: var(--app-text-primary);
+  box-shadow: 0 24px 60px -18px var(--app-shadow-color);
+  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px);
+  pointer-events: auto;
+}
+
+.session-add-success-toast.is-entering {
+  animation: session-add-success-in 420ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  will-change: opacity, transform;
+}
+
+.session-add-success-viewport.is-leaving .session-add-success-toast {
+  pointer-events: none;
+  animation: session-add-success-out 200ms ease-in both;
+  will-change: opacity, transform;
+}
+
+@keyframes session-add-success-in {
+  from {
+    opacity: 0;
+    transform: translateY(28px) scale(0.92);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes session-add-success-out {
+  from {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+
+  to {
+    opacity: 0;
+    transform: translateY(14px) scale(0.94);
+  }
+}
+
+.session-add-success-icon {
+  width: 32px;
+  height: 32px;
+  flex: 0 0 32px;
+  display: grid;
+  place-items: center;
+  border-radius: 12px;
+  background: linear-gradient(135deg, var(--app-success-text, var(--app-accent-primary)), var(--app-accent-strong));
+  color: var(--app-text-on-accent);
+  box-shadow: var(--app-shadow-sm);
+}
+
+.session-add-success-title {
+  overflow: hidden;
+  color: var(--app-text-primary);
+  font-size: 13px;
+  font-weight: 800;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-add-success-subtitle {
+  margin-top: 3px;
+  color: var(--app-text-muted);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.3;
+}
+
+.session-add-success-action {
+  min-width: 72px;
+  min-height: 40px;
+  margin-left: 8px;
+  padding: 8px 13px;
+  border: 0;
+  border-radius: 999px;
+  background: linear-gradient(135deg, var(--app-accent-primary), var(--app-accent-strong));
+  color: var(--app-text-on-accent);
+  font-size: 11px;
+  font-weight: 800;
+  white-space: nowrap;
+  cursor: pointer;
+  box-shadow: 0 8px 20px -10px rgba(var(--app-accent-rgb), 0.75);
+  transition: transform 150ms ease, filter 160ms ease;
+}
+
+@media (hover: hover) {
+  .session-add-confirm-close:hover {
+    color: var(--app-danger-text);
+    background: var(--app-danger-soft);
+    transform: rotate(90deg);
+  }
+
+  .session-add-confirm-action:not(:disabled):hover,
+  .session-add-success-action:hover {
+    filter: brightness(1.08);
+    transform: scale(1.03);
+  }
+}
+
+body[data-reduced-motion='on'] .session-panel-overlay,
+body[data-reduced-motion='on'] .session-panel,
+body[data-reduced-motion='on'] .session-panel *,
+body[data-reduced-motion='on'] .session-add-confirm-overlay,
+body[data-reduced-motion='on'] .session-add-confirm-layer,
+body[data-reduced-motion='on'] .session-add-confirm-layer *,
+body[data-reduced-motion='on'] .session-add-success-viewport,
+body[data-reduced-motion='on'] .session-add-success-viewport * {
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important;
+  scroll-behavior: auto !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .session-panel-overlay,
+  .session-panel,
+  .session-panel *,
+  .session-add-confirm-overlay,
+  .session-add-confirm-layer,
+  .session-add-confirm-layer *,
+  .session-add-success-viewport,
+  .session-add-success-viewport * {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
 @media (max-width: 520px) {
+  .session-add-confirm-layer {
+    padding: 16px;
+  }
+
+  .session-add-confirm-card {
+    width: min(400px, calc(100vw - 24px));
+    padding: 22px 18px 18px;
+    border-radius: 22px;
+  }
+
+  .session-add-confirm-actions {
+    display: grid;
+    grid-template-columns: 1fr 1.2fr;
+  }
+
+  .session-add-confirm-action {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .session-add-success-viewport {
+    inset-inline: 10px;
+  }
+
+  .session-add-success-toast {
+    width: 100%;
+    max-width: none;
+    gap: 10px;
+    padding-right: 10px;
+  }
+
+  .session-add-success-subtitle {
+    max-width: 50vw;
+  }
+
+  .session-add-success-action {
+    margin-left: auto;
+  }
+
+  .session-recommend-list {
+    padding: 12px;
+    gap: 8px;
+  }
+
+  .session-recommend-row {
+    gap: 10px;
+    padding: 12px;
+    border-radius: 18px;
+  }
+
+  .session-recommend-add {
+    min-width: 44px;
+    min-height: 40px;
+    padding-inline: 10px;
+  }
+
   .sticker-pack-editor {
     grid-template-columns: 1fr;
   }

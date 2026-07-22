@@ -10,6 +10,8 @@ import {
   bindSettingsMenuActions,
 } from '../../src/scripts/ui/app-menu-binding-runtime-utils.js';
 
+const appSource = fs.readFileSync(new URL('../../src/scripts/ui/app.js', import.meta.url), 'utf8');
+
 const createButton = (action = '') => {
   const listeners = {};
   return {
@@ -168,6 +170,13 @@ const createMenu = (buttons = []) => ({
     'new-group', 'hide',
   ]);
   console.log('ok - bindQuickMenuActions dispatches quick menu actions then hides menus');
+}
+
+{
+  const quickMenuBindingCalls = appSource.match(/\bbindQuickMenuActions\s*\(/g) || [];
+  assert.equal(quickMenuBindingCalls.length, 1);
+  assert.doesNotMatch(appSource, /quickMenu\?\.querySelectorAll\('button'\)\.forEach/);
+  console.log('ok - app assembly binds quick-menu actions exactly once through the runtime util');
 }
 
 {

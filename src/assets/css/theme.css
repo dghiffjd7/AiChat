@@ -650,6 +650,20 @@ body[data-theme-mode='dark'] .session-panel .session-recommend-add {
   border-color: rgba(var(--app-accent-rgb), 0.28) !important;
 }
 
+@media (hover: hover) {
+  body[data-theme-mode='dark'] .session-panel .session-recommend-row:hover {
+    background: rgba(var(--app-tint-neutral-rgb), 0.08) !important;
+    border-color: rgba(var(--app-accent-rgb), 0.34) !important;
+    box-shadow: 0 18px 40px -16px rgba(var(--app-accent-rgb), 0.36) !important;
+  }
+
+  body[data-theme-mode='dark'] .session-panel .session-recommend-add:hover {
+    background: linear-gradient(135deg, var(--app-accent-primary), var(--app-accent-strong)) !important;
+    color: var(--app-text-on-accent) !important;
+    border-color: transparent !important;
+  }
+}
+
 body[data-theme-mode='dark'] .rp-toolbar {
   background: rgba(29, 34, 41, 0.94) !important;
   border-bottom-color: var(--app-border-subtle) !important;
