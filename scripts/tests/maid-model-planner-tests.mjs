@@ -213,6 +213,16 @@ const cloneJson = value => JSON.parse(JSON.stringify(value));
   assert.equal(plan.args.panel, 'worldbook');
   assert.equal(plan.response, '我来打开世界书。');
 
+  const guidePlan = normalizeMaidModelPlan({
+    ok: true,
+    toolName: 'guide.start_flow',
+    args: { flowId: 'setup-api' },
+    featureId: 'maid.onboarding',
+    response: '我来带主人完成配置。',
+  });
+  assert.equal(guidePlan.ok, true);
+  assert.equal(guidePlan.toolName, 'guide.start_flow');
+
   const noResponse = normalizeMaidModelPlan({
     ok: true,
     toolName: 'app.open_panel',

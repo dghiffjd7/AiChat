@@ -199,6 +199,35 @@ class FakeDocument {
 
 {
   const documentRef = new FakeDocument();
+  let actionRuns = 0;
+  const runtime = createMaidCommandInputRuntime({
+    documentRef,
+    getViewportSize: () => ({ w: 360, h: 640 }),
+    onSubmit: async () => ({
+      ok: true,
+      message: '主人还没给我接上大脑呢～',
+      actions: [{ label: '带我配置 API', onClick: () => { actionRuns += 1; } }],
+    }),
+    setTimeoutFn: () => 1,
+    clearTimeoutFn: () => {},
+  });
+  runtime.open();
+  const { inputEl, settingsBtn } = runtime.getElements();
+  assert.equal(inputEl.dataset.maidGuideTarget, 'maid-command-input');
+  assert.equal(settingsBtn.dataset.maidGuideTarget, 'maid-command-settings');
+  inputEl.value = '你好';
+  await runtime.submit();
+  const bubble = runtime.getElements().resultEl.children[0];
+  const actionRow = bubble.children.find(child => child.className === 'mci-result-actions');
+  assert.ok(actionRow, 'local reply should render action chips');
+  assert.equal(actionRow.children[0].textContent, '带我配置 API');
+  actionRow.children[0].dispatchEvent('click', { preventDefault() {}, stopPropagation() {} });
+  assert.equal(actionRuns, 1);
+  console.log('ok - maid command input renders actionable local reply chips');
+}
+
+{
+  const documentRef = new FakeDocument();
   const modeSwitchEl = new FakeElement('div');
   const outsideEl = new FakeElement('main');
   documentRef.body.appendChild(outsideEl);
@@ -319,6 +348,16 @@ class FakeDocument {
   });
   assert.equal(rootEl.classList.contains('is-open'), true);
   assert.equal(modeSwitchEl.classList.contains('is-maid-input-open'), true);
+
+  const guideCard = new FakeElement('section');
+  const guideRoot = new FakeElement('div');
+  guideRoot.classList.add('maid-spotlight-root');
+  guideRoot.appendChild(guideCard);
+  documentRef.dispatchEvent('pointerdown', {
+    target: guideCard,
+    composedPath: () => [guideCard, guideRoot, documentRef.body],
+  });
+  assert.equal(rootEl.classList.contains('is-open'), true, 'spotlight controls must not close the guided command input');
 
   documentRef.dispatchEvent('pointerdown', { target: outsideEl });
   assert.equal(rootEl.classList.contains('is-open'), false);

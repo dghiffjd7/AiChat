@@ -69,6 +69,7 @@ import { registerAppUiCaptureTools } from '../agent/tools/app-ui-capture-tools.j
 import { registerWebSearchAgentTools } from '../agent/tools/web-search-tools.js';
 import { registerMomentsAgentTools } from '../agent/tools/moments-tools.js';
 import { registerMaidTodoTools } from '../agent/tools/maid-todo-tools.js';
+import { registerGuideStartFlowTools } from '../agent/tools/guide-start-flow-tools.js';
 import { AgentRunStore } from '../storage/agent-run-store.js';
 import { CapabilityRetrievalStore } from '../storage/capability-retrieval-store.js';
 import { MaidGuideStore } from '../storage/maid-guide-store.js';
@@ -207,6 +208,13 @@ import {
 } from './app-guided-action-runtime-utils.js';
 import { createMaidCommandInputRuntime } from './maid-command-input-runtime-utils.js';
 import { createMaidSettingsPanel } from './maid-settings-panel.js';
+import { createMaidOnboardingRuntime, maidGuideEmit } from './maid-onboarding-runtime.js';
+import {
+  MAID_ONBOARDING_TARGET_SELECTORS,
+  getMaidOnboardingFlow,
+} from './maid-onboarding-flows.js';
+import { matchMaidIntent } from './maid-intent-presets.js';
+import { createMaidOnboardingAppAdapter } from './maid-onboarding-app-adapter.js';
 import {
   buildElementUiSummary,
   isReadableElementVisible,
@@ -743,6 +751,8 @@ const recordAppDebugTraceEvent = event => recordDebugTraceEventCore(window.appBr
 
 const initApp = async () => {
   const ui = new ChatUI();
+  let maidOnboardingRuntime = null;
+  let hasConfiguredMaidProfile = () => false;
   const applyTypingDotsSetting = () => {
     const enabled = appSettings.get().typingDotsEnabled !== false;
     if (!document?.body) return;
@@ -837,7 +847,15 @@ const initApp = async () => {
   };
   let stageManager = null;
   let stageTimeline = null;
-  const configPanel = new ConfigPanel();
+  const configPanel = new ConfigPanel({
+    onSaved: (payload = {}) => {
+      if (payload.tab !== 'chat') return;
+      maidGuideEmit(window, 'config-profile-saved', {
+        profileId: String(payload.profileId || '').trim(),
+        profileCount: configPanel.chatConfigManager.getProfiles?.().length || 0,
+      });
+    },
+  });
   const chatConfigManager = new ConfigManager();
   const imageConfigManager = new ConfigManager({ scope: 'image' });
   const imageGenerationParamsStore = getImageGenerationParamsStore();
@@ -1381,7 +1399,11 @@ const initApp = async () => {
     applyReasoningStoredRegex: window.appBridge.applyReasoningStoredRegex?.bind(window.appBridge),
     applyReasoningDisplayRegex: window.appBridge.applyReasoningDisplayRegex?.bind(window.appBridge),
   });
-  const sessionPanel = new SessionPanel(chatStore, contactsStore, ui, { personaStore, getPersonaScopeKey });
+  const sessionPanel = new SessionPanel(chatStore, contactsStore, ui, {
+    personaStore,
+    getPersonaScopeKey,
+    onFriendAdded: detail => maidGuideEmit(window, 'friend-added', detail),
+  });
   try {
     window.__sessionPanel = sessionPanel;
   } catch {}
@@ -3148,6 +3170,9 @@ const initApp = async () => {
   registerMaidTodoTools(agentToolRegistry, {
     getRun: runId => agentRunStore.getRun(runId),
     updateRun: (runId, patch) => agentTaskRuntime.updateRun(runId, patch),
+  });
+  registerGuideStartFlowTools(agentToolRegistry, {
+    startFlow: flowId => maidOnboardingRuntime?.startFlow?.(flowId) === true,
   });
   registerWebSearchAgentTools(agentToolRegistry, {
     httpRequest: payload => safeInvoke('http_request', payload),
@@ -16502,6 +16527,9 @@ Phase G（Frame 36）：循环衔接
   settingsMenu?.querySelector?.('button[data-action="session-config"]')?.setAttribute('data-maid-guide-target', 'settings-session-config');
   settingsMenu?.querySelector?.('button[data-action="config"]')?.setAttribute('data-maid-guide-target', 'settings-api-config');
   quickMenu?.querySelector?.('button[data-action="add-friend"]')?.setAttribute('data-maid-guide-target', 'quick-add-friend');
+  document.getElementById('composer-input')?.setAttribute('data-maid-guide-target', 'chat-input');
+  document.getElementById('send-button')?.setAttribute('data-maid-guide-target', 'chat-send');
+  document.getElementById('chat-messages')?.setAttribute('data-maid-guide-target', 'chat-body');
   chatroomMenu?.querySelector?.('button[data-action="world"]')?.setAttribute('data-maid-guide-target', 'chatroom-world');
   rpChatroomMenu?.querySelector?.('button[data-action="world"]')?.setAttribute('data-maid-guide-target', 'chatroom-world');
   document.querySelector('#chat-title-menu button[data-action="session-config"]')?.setAttribute('data-maid-guide-target', 'chat-title-session-config');
@@ -16632,7 +16660,8 @@ Phase G（Frame 36）：循环衔接
   const chatSettingOpenRegexBtn = document.getElementById('chat-setting-open-regex');
   const chatSettingOpenVarsBtn = document.getElementById('chat-setting-open-vars');
 
-  const hideMenus = () => {
+  const hideMenus = (options = {}) => {
+    if (document.body?.dataset?.maidSpotlight === 'on' && options?.force !== true) return false;
     personaSwitcherMenu?.classList.add('hidden');
     settingsMenu?.classList.add('hidden');
     quickMenu?.classList.add('hidden');
@@ -16645,6 +16674,7 @@ Phase G（Frame 36）：循环衔接
     pendingFloatMenu?.classList.add('hidden');
     rpGreetingOverlay?.classList.add('hidden');
     rpGreetingSheet?.classList.add('hidden');
+    return true;
   };
   patchDebugUiRegistry((registry) => {
     registry.actions.hideMenus = hideMenus;
@@ -16786,168 +16816,18 @@ Phase G（Frame 36）：循环衔接
 
   const maidGuideDelay = ms => new Promise(resolve => setTimeout(resolve, Math.max(0, Number(ms) || 0)));
   let activeMaidGuideCleanup = null;
-  const ensureMaidGuideStyle = () => {
-    if (document.getElementById('maid-guide-step-style')) return;
-    const style = document.createElement('style');
-    style.id = 'maid-guide-step-style';
-    style.textContent = `
-.maid-guide-step-bubble {
-  position: fixed;
-  z-index: 26080;
-  max-width: min(320px, calc(100vw - 28px));
-  padding: 11px 12px;
-  border: 1px solid rgba(37, 99, 235, 0.22);
-  border-radius: 12px;
-  background: color-mix(in srgb, var(--app-surface-card, #fff) 94%, transparent);
-  color: var(--app-text-primary, #111827);
-  box-shadow: 0 14px 40px rgba(15, 23, 42, 0.18);
-  font-size: 12px;
-  line-height: 1.45;
-  pointer-events: auto;
-  backdrop-filter: blur(12px);
-}
-.maid-guide-step-title {
-  font-weight: 900;
-  margin-bottom: 3px;
-}
-.maid-guide-step-label {
-  font-weight: 700;
-}
-.maid-guide-step-hint {
-  margin-top: 5px;
-  color: var(--app-text-muted, #64748b);
-}
-.maid-guide-step-path {
-  margin-top: 4px;
-  color: var(--app-text-muted, #64748b);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.maid-guide-step-bubble.is-below-target::before,
-.maid-guide-step-bubble.is-above-target::after {
-  content: '';
-  position: absolute;
-  left: var(--maid-guide-arrow-left, 24px);
-  transform: translateX(-50%);
-  border: 7px solid transparent;
-}
-.maid-guide-step-bubble.is-below-target::before {
-  top: -14px;
-  border-bottom-color: var(--app-surface-card, #fff);
-}
-.maid-guide-step-bubble.is-above-target::after {
-  bottom: -14px;
-  border-top-color: var(--app-surface-card, #fff);
-}
-.maid-guide-step-actions {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-top: 8px;
-}
-.maid-guide-step-skip {
-  border: none;
-  background: transparent;
-  color: var(--app-text-secondary, #64748b);
-  font-size: 11px;
-  text-decoration: underline;
-  cursor: pointer;
-  padding: 2px 0;
-}
-.maid-guide-step-skip:hover {
-  color: var(--app-text-primary, #0f172a);
-}
-.maid-guide-step-continue {
-  margin-top: 9px;
-  width: 100%;
-  height: 30px;
-  border: 0;
-  border-radius: 8px;
-  background: #2563eb;
-  color: #fff;
-  font-size: 12px;
-  font-weight: 800;
-  cursor: pointer;
-}
-.maid-guide-step-pointer {
-  position: fixed;
-  z-index: 26081;
-  width: 46px;
-  height: 46px;
-  color: #2563eb;
-  pointer-events: none;
-}
-.maid-guide-step-pointer svg {
-  width: 100%;
-  height: 100%;
-  display: block;
-  filter: drop-shadow(0 8px 14px rgba(15, 23, 42, 0.28));
-  transform-origin: center;
-  animation: maidGuidePointerNudge 880ms ease-in-out infinite;
-}
-.maid-guide-step-pointer.is-left svg {
-  animation-name: maidGuidePointerNudgeLeft;
-  transform: scaleX(-1);
-}
-.maid-guide-step-target {
-  position: relative;
-  z-index: 26079 !important;
-  outline: 3px solid rgba(37, 99, 235, 0.55) !important;
-  outline-offset: 4px !important;
-  box-shadow: 0 0 0 8px rgba(37, 99, 235, 0.16) !important;
-  transition: outline-color 120ms ease, box-shadow 120ms ease, transform 120ms ease;
-  transform: translateY(-1px);
-}
-@keyframes maidGuidePointerNudge {
-  0%, 100% { transform: translateX(0); }
-  50% { transform: translateX(7px); }
-}
-@keyframes maidGuidePointerNudgeLeft {
-  0%, 100% { transform: scaleX(-1) translateX(0); }
-  50% { transform: scaleX(-1) translateX(7px); }
-}
-`;
-    document.head?.appendChild(style);
-  };
-  const getOrCreateMaidGuidePointer = () => {
-    ensureMaidGuideStyle();
-    let pointer = document.getElementById('maid-guide-step-pointer');
-    if (!pointer) {
-      pointer = document.createElement('div');
-      pointer.id = 'maid-guide-step-pointer';
-      pointer.className = 'maid-guide-step-pointer';
-      pointer.setAttribute('aria-hidden', 'true');
-      pointer.innerHTML = `
-        <svg viewBox="0 0 64 64" focusable="false">
-          <text x="6" y="47" font-size="46" font-weight="900" fill="currentColor">☞</text>
-        </svg>
-      `;
-      document.body.appendChild(pointer);
-    }
-    return pointer;
-  };
-  const getOrCreateMaidGuideBubble = () => {
-    ensureMaidGuideStyle();
-    let bubble = document.getElementById('maid-guide-step-bubble');
-    if (!bubble) {
-      bubble = document.createElement('div');
-      bubble.id = 'maid-guide-step-bubble';
-      bubble.className = 'maid-guide-step-bubble';
-      document.body.appendChild(bubble);
-    }
-    return bubble;
-  };
+  let legacyMaidGuideSpotlightActive = false;
+  let activeLegacyGuideAdvance = null;
+  let activeLegacyGuideSkip = null;
   const hideMaidGuideBubble = () => {
     if (typeof activeMaidGuideCleanup === 'function') {
       activeMaidGuideCleanup();
       activeMaidGuideCleanup = null;
     }
-    document.getElementById('maid-guide-step-bubble')?.remove();
-    document.getElementById('maid-guide-step-pointer')?.remove();
-    document.querySelectorAll('.maid-guide-step-target').forEach(el => {
-      el.classList.remove('maid-guide-step-target');
-    });
+    if (legacyMaidGuideSpotlightActive) maidOnboardingRuntime?.getSpotlight?.()?.hide?.();
+    legacyMaidGuideSpotlightActive = false;
+    activeLegacyGuideAdvance = null;
+    activeLegacyGuideSkip = null;
   };
   const getMaidGuideStepSelectors = (guide = {}, step = {}) => {
     const featureId = String(guide?.featureId || '').trim();
@@ -16990,86 +16870,38 @@ Phase G（Frame 36）：循环衔接
     }
     return null;
   };
-  const positionMaidGuidePointer = (target = null) => {
-    const pointer = getOrCreateMaidGuidePointer();
-    if (!target || typeof target.getBoundingClientRect !== 'function') {
-      pointer.style.display = 'none';
-      return;
-    }
-    const rect = target.getBoundingClientRect();
-    const viewportPad = 8;
-    const size = 46;
-    const gap = 9;
-    const placeRight = rect.right + gap + size <= window.innerWidth - viewportPad || rect.left < size + gap + viewportPad;
-    const rawLeft = placeRight ? rect.right + gap : rect.left - size - gap;
-    const rawTop = rect.top + rect.height / 2 - size / 2;
-    pointer.style.display = 'block';
-    pointer.style.left = `${Math.min(Math.max(viewportPad, rawLeft), Math.max(viewportPad, window.innerWidth - size - viewportPad))}px`;
-    pointer.style.top = `${Math.min(Math.max(viewportPad, rawTop), Math.max(viewportPad, window.innerHeight - size - viewportPad))}px`;
-    // ☞ 字形默认朝右：指针位于目标右侧时需水平翻转（朝左指向目标）；位于左侧保持朝右。
-    pointer.classList.toggle('is-left', placeRight);
-  };
-  const positionMaidGuideBubble = (bubble, target = null) => {
-    const viewportPad = 14;
-    bubble.classList.remove('is-below-target', 'is-above-target');
-    if (!target || typeof target.getBoundingClientRect !== 'function') {
-      bubble.style.left = `${viewportPad}px`;
-      bubble.style.right = `${viewportPad}px`;
-      bubble.style.top = 'auto';
-      bubble.style.bottom = 'calc(86px + env(safe-area-inset-bottom, 0px))';
-      return;
-    }
-    // 紧贴目标：实测气泡尺寸，上/下自适应，水平对齐目标中心，箭头指向目标
-    const rect = target.getBoundingClientRect();
-    const bubbleWidth = Math.min(300, window.innerWidth - viewportPad * 2);
-    bubble.style.width = `${bubbleWidth}px`;
-    const bubbleHeight = bubble.offsetHeight || 96;
-    const gap = 10;
-    const placeBelow = rect.bottom + gap + bubbleHeight <= window.innerHeight - viewportPad;
-    const top = placeBelow
-      ? rect.bottom + gap
-      : Math.max(viewportPad, rect.top - gap - bubbleHeight);
-    const targetCenter = rect.left + rect.width / 2;
-    const left = Math.min(
-      Math.max(viewportPad, targetCenter - bubbleWidth / 2),
-      Math.max(viewportPad, window.innerWidth - bubbleWidth - viewportPad),
-    );
-    bubble.style.left = `${left}px`;
-    bubble.style.right = 'auto';
-    bubble.style.top = `${top}px`;
-    bubble.style.bottom = 'auto';
-    bubble.classList.add(placeBelow ? 'is-below-target' : 'is-above-target');
-    // 箭头水平位置对准目标中心（相对气泡）
-    const arrowLeft = Math.min(Math.max(16, targetCenter - left), bubbleWidth - 16);
-    bubble.style.setProperty('--maid-guide-arrow-left', `${arrowLeft}px`);
-  };
   const showMaidGuideStepBubble = (guide = {}, step = {}, index = 0, total = 1, target = null) => {
-    const bubble = getOrCreateMaidGuideBubble();
     const label = String(step?.label || step || '').trim() || `步骤 ${index + 1}`;
     const pathText = String(guide?.pathText || (Array.isArray(guide?.steps) ? guide.steps.join(' -> ') : '') || '').trim();
-    bubble.innerHTML = `
-      <div class="maid-guide-step-title">${escapeHtml(guide?.title || '首次引导')} · ${index + 1}/${total}</div>
-      <div class="maid-guide-step-label">${escapeHtml(label)}</div>
-      <div class="maid-guide-step-hint">${target ? '点击这里继续' : '完成这一步后继续'}</div>
-      ${pathText ? `<div class="maid-guide-step-path">${escapeHtml(pathText)}</div>` : ''}
-      <div class="maid-guide-step-actions">
-        ${target ? '' : '<button type="button" class="maid-guide-step-continue" data-maid-guide-action="continue">继续</button>'}
-        <button type="button" class="maid-guide-step-skip" data-maid-guide-action="skip">跳过引导</button>
-      </div>
-    `;
-    positionMaidGuideBubble(bubble, target);
-    positionMaidGuidePointer(target);
-    return bubble;
-  };
-  const highlightMaidGuideTarget = (target = null) => {
-    document.querySelectorAll('.maid-guide-step-target').forEach(el => {
-      if (el !== target) el.classList.remove('maid-guide-step-target');
+    const steps = Array.from({ length: Math.max(1, Number(total) || 1) }, (_, stepIndex) => ({
+      action: 'observe',
+      text: stepIndex === index ? label : '',
+    }));
+    steps[index] = {
+      action: target ? 'click' : 'observe',
+      text: pathText ? `${label} · 路径：${pathText}` : label,
+      hint: target ? '点击高亮位置继续' : '完成后继续',
+      ...(target ? { fallback: { kind: 'click-target' } } : {}),
+    };
+    const spotlight = maidOnboardingRuntime?.getSpotlight?.();
+    if (!spotlight) return null;
+    legacyMaidGuideSpotlightActive = true;
+    spotlight.show({
+      flow: {
+        id: `first-run:${String(guide?.guideId || guide?.featureId || 'guide')}`,
+        title: String(guide?.title || '首次引导'),
+        steps,
+      },
+      index,
+      onNext: () => activeLegacyGuideAdvance?.(),
+      onSkip: () => activeLegacyGuideSkip?.(),
+      onFallback: () => {
+        const liveTarget = findMaidGuideTarget(guide, step) || target;
+        try { liveTarget?.click?.(); } catch { activeLegacyGuideAdvance?.(); }
+      },
+      resolveStepTarget: () => findMaidGuideTarget(guide, step),
     });
-    if (!target) return;
-    try {
-      target.scrollIntoView?.({ block: 'center', inline: 'center', behavior: 'smooth' });
-    } catch {}
-    target.classList.add('maid-guide-step-target');
+    return spotlight.getElements?.().cardEl || null;
   };
   // 同类入口按钮在多个页面各有实例，取第一个会拿到隐藏页的（rect 全 0 -> 菜单飘到左上角）。
   // 必须选当前可见的实例；没有可见实例说明不在对应界面，不硬开菜单。
@@ -17080,7 +16912,7 @@ Phase G（Frame 36）：循环衔接
   const openMaidPersonaSwitcherForGuide = () => {
     const anchor = pickVisibleGuideAnchor(avatarBtns, document.querySelectorAll('[data-maid-guide-target="avatar-user-entry"]'));
     if (!anchor || !personaSwitcherMenu) return false;
-    hideMenus();
+    hideMenus({ force: true });
     renderPersonaSwitcher();
     positionSheet(personaSwitcherMenu, anchor, 0, 4, false);
     personaSwitcherMenu.classList.remove('hidden');
@@ -17100,7 +16932,7 @@ Phase G（Frame 36）：循环衔接
   const openMaidSettingsMenuForGuide = async () => {
     const anchor = pickVisibleGuideAnchor(settingsBtns, document.querySelectorAll('[data-maid-guide-target="settings-entry"]'));
     if (!anchor || !settingsMenu) return false;
-    hideMenus();
+    hideMenus({ force: true });
     positionSheet(settingsMenu, anchor, 0, 4, true);
     settingsMenu.classList.remove('hidden');
     await maidGuideDelay(80);
@@ -17109,7 +16941,7 @@ Phase G（Frame 36）：循环衔接
   const openMaidQuickMenuForGuide = async () => {
     const anchor = pickVisibleGuideAnchor(plusBtns, document.querySelectorAll('[data-maid-guide-target="top-plus-entry"]'));
     if (!anchor || !quickMenu) return false;
-    hideMenus();
+    hideMenus({ force: true });
     positionSheet(quickMenu, anchor, 0, 4, true);
     quickMenu.classList.remove('hidden');
     await maidGuideDelay(80);
@@ -17119,7 +16951,7 @@ Phase G（Frame 36）：循环衔接
     const anchor = pickVisibleGuideAnchor(chatMenuBtn, document.querySelectorAll('[data-maid-guide-target="chatroom-menu-entry"]'));
     const menu = document.querySelector('#rp-chatroom-menu:not(.hidden), #chatroom-menu:not(.hidden)') || chatroomMenu || rpChatroomMenu;
     if (!anchor || !menu) return false;
-    hideMenus();
+    hideMenus({ force: true });
     positionSheet(menu, anchor, 0, 4, true);
     menu.classList.remove('hidden');
     await maidGuideDelay(80);
@@ -17129,7 +16961,7 @@ Phase G（Frame 36）：循环衔接
     const anchor = pickVisibleGuideAnchor(document.getElementById('current-chat-title'));
     const menu = document.getElementById('chat-title-menu');
     if (!anchor || !menu) return false;
-    hideMenus();
+    hideMenus({ force: true });
     positionSheet(menu, anchor, 0, 4, false);
     menu.classList.remove('hidden');
     await maidGuideDelay(80);
@@ -17159,7 +16991,7 @@ Phase G（Frame 36）：循环衔接
     }
     if (label === '新建' && featureId === 'user.create') {
       if (!findMaidGuideTarget(guide, step)) {
-        hideMenus();
+        hideMenus({ force: true });
         await userPanel.show();
         await maidGuideDelay(120);
       }
@@ -17167,7 +16999,7 @@ Phase G（Frame 36）：循环衔接
     }
     if (label === '新建' && featureId === 'persona.create') {
       if (!findMaidGuideTarget(guide, step)) {
-        hideMenus();
+        hideMenus({ force: true });
         await personaPanel.show();
         await maidGuideDelay(120);
       }
@@ -17199,7 +17031,7 @@ Phase G（Frame 36）：循环衔接
       return;
     }
   };
-  const waitForMaidGuideStepAdvance = (target = null, bubble = null) => new Promise(resolve => {
+  const waitForMaidGuideStepAdvance = (target = null) => new Promise(resolve => {
     if (typeof activeMaidGuideCleanup === 'function') activeMaidGuideCleanup();
     let done = false;
     const cleanupFns = [];
@@ -17208,6 +17040,8 @@ Phase G（Frame 36）：循环衔接
         try { fn(); } catch {}
       });
       if (activeMaidGuideCleanup === cleanup) activeMaidGuideCleanup = null;
+      if (activeLegacyGuideAdvance === finish) activeLegacyGuideAdvance = null;
+      if (activeLegacyGuideSkip === skip) activeLegacyGuideSkip = null;
     };
     let skippedAll = false;
     const finish = () => {
@@ -17216,65 +17050,22 @@ Phase G（Frame 36）：循环衔接
       cleanup();
       resolve({ skipped: skippedAll });
     };
-    const updatePosition = () => {
-      if (!done && bubble) {
-        const liveTarget = target && isMaidGuideElementVisible(target) ? target : null;
-        positionMaidGuideBubble(bubble, liveTarget);
-        positionMaidGuidePointer(liveTarget);
-      }
+    const skip = () => {
+      skippedAll = true;
+      finish();
     };
+    activeLegacyGuideAdvance = finish;
+    activeLegacyGuideSkip = skip;
     if (target) {
       const onTargetClick = () => setTimeout(finish, 0);
       target.addEventListener('click', onTargetClick, true);
       cleanupFns.push(() => target.removeEventListener('click', onTargetClick, true));
-      // 「带我做」兜底：约 5 秒未点时浮出「帮我点」，代点目标（仍走真实点击流程）。
-      const assistTimer = setTimeout(() => {
-        if (done || !bubble || bubble.querySelector('[data-maid-guide-action="assist-click"]')) return;
-        const assistBtn = document.createElement('button');
-        assistBtn.type = 'button';
-        assistBtn.className = 'maid-guide-step-continue';
-        assistBtn.dataset.maidGuideAction = 'assist-click';
-        assistBtn.textContent = '帮我点';
-        assistBtn.addEventListener('click', (event) => {
-          event.preventDefault?.();
-          event.stopPropagation?.();
-          try { target.click(); } catch { finish(); }
-        });
-        bubble.appendChild(assistBtn);
-        positionMaidGuideBubble(bubble, target);
-      }, 5000);
-      cleanupFns.push(() => clearTimeout(assistTimer));
-    }
-    const continueBtn = bubble?.querySelector?.('[data-maid-guide-action="continue"]');
-    if (continueBtn) {
-      const onContinue = (event) => {
-        event.preventDefault?.();
-        event.stopPropagation?.();
-        finish();
-      };
-      continueBtn.addEventListener('click', onContinue);
-      cleanupFns.push(() => continueBtn.removeEventListener('click', onContinue));
-    }
-    const skipBtn = bubble?.querySelector?.('[data-maid-guide-action="skip"]');
-    if (skipBtn) {
-      const onSkip = (event) => {
-        event.preventDefault?.();
-        event.stopPropagation?.();
-        skippedAll = true;
-        finish();
-      };
-      skipBtn.addEventListener('click', onSkip);
-      cleanupFns.push(() => skipBtn.removeEventListener('click', onSkip));
     }
     const onKeydown = (event) => {
-      if (event.key === 'Escape') finish();
+      if (event.key === 'Escape') skip();
       if (!target && event.key === 'Enter') finish();
     };
-    window.addEventListener('resize', updatePosition);
-    document.addEventListener('scroll', updatePosition, true);
     document.addEventListener('keydown', onKeydown, true);
-    cleanupFns.push(() => window.removeEventListener('resize', updatePosition));
-    cleanupFns.push(() => document.removeEventListener('scroll', updatePosition, true));
     cleanupFns.push(() => document.removeEventListener('keydown', onKeydown, true));
     activeMaidGuideCleanup = cleanup;
   });
@@ -17296,6 +17087,7 @@ Phase G（Frame 36）：循环衔接
       ? guide.stepDetails
       : (Array.isArray(guide?.steps) ? guide.steps.map((label, index) => ({ label, index })) : []);
     if (!details.length) return;
+    maidOnboardingRuntime?.skip?.();
     const navigation = await prepareGuidedActionEntryNavigation({
       guide,
       meta,
@@ -17314,15 +17106,13 @@ Phase G（Frame 36）：循环衔接
       ),
     });
     if (navigation.navigated) await maidGuideDelay(120);
-    ensureMaidGuideStyle();
     for (let index = 0; index < details.length; index += 1) {
       const step = details[index];
       await prepareMaidGuideStep(guide, step);
       const target = findMaidGuideTarget(guide, step);
-      highlightMaidGuideTarget(target);
       if (target) await maidGuideDelay(140);
-      const bubble = showMaidGuideStepBubble(guide, step, index, details.length, target);
-      const advance = await waitForMaidGuideStepAdvance(target, bubble);
+      showMaidGuideStepBubble(guide, step, index, details.length, target);
+      const advance = await waitForMaidGuideStepAdvance(target);
       if (advance?.skipped) break; // 用户跳过：中断教学，女仆直接执行
       await maidGuideDelay(120);
     }
@@ -21771,6 +21561,9 @@ Phase G（Frame 36）：循环衔接
 	      uiLog,
 	    });
 	    chatGeneratedImagePreview.revealPendingForSession(sessionId);
+    if (!result?.stale && String(chatStore.getCurrent?.() || '').trim() === sid) {
+      maidGuideEmit(window, 'chat-room-entered', { sessionId: sid });
+    }
 	    return result;
 	  };
 
@@ -22826,6 +22619,9 @@ Phase G（Frame 36）：循环衔接
       void maidCommandInputRuntime?.submit?.();
     },
     onOpenApiConfig: () => openMaidApiConfigPanel({ reason: 'manual' }),
+    guideStore: maidGuideStore,
+    onStartOnboardingFlow: flowId => maidOnboardingRuntime?.startFlow?.(flowId),
+    isApiConfigured: () => hasConfiguredMaidProfile(),
     logger,
   });
   const buildMaidImageAttachments = async (files = [], { source = 'maid-image-input' } = {}) => {
@@ -22883,21 +22679,16 @@ Phase G（Frame 36）：循环衔接
     } catch {}
   };
   const openMaidCommandOrSettings = async () => {
+    maidCommandInputRuntime?.open();
     try {
       const runtime = await resolveMaidRuntimeConfig();
       if (runtime?.configured) {
-        maidCommandInputRuntime?.open();
         remindSubAgentUsage();
-        return true;
       }
-      maidCommandInputRuntime?.close();
-      await openMaidApiConfigPanel({ reason: 'required' });
-      return false;
+      return true;
     } catch (error) {
       logger.warn('open maid command input failed', error);
-      maidCommandInputRuntime?.close();
-      await openMaidApiConfigPanel({ reason: 'required' });
-      return false;
+      return true;
     }
   };
 
@@ -22916,6 +22707,7 @@ Phase G（Frame 36）：循环衔接
     onToggleSelection: () => maidSelectionMode.toggle(),
     onOpenStateChange: ({ open }) => {
       executionFlowRuntime?.rearbitrateMaidTrace?.({ commandInputOpen: open });
+      if (open) maidGuideEmit(window, 'maid-command-opened', {});
     },
     getViewportSize,
     // 指令条盖住悬浮球：非交互区按下转发球拖拽（运行中也可挪开）
@@ -22923,6 +22715,41 @@ Phase G（Frame 36）：循环衔接
     maxImageAttachments: 4,
     onAttachFiles: buildMaidImageAttachments,
     onSubmit: async (text, controls = {}) => {
+      const intent = matchMaidIntent(text);
+      if (intent) {
+        if (intent.kind === 'skip') maidOnboardingRuntime?.skip?.();
+        let flowId = String(intent.flowId || '').trim();
+        if (flowId === 'first-chat' && !hasConfiguredMaidProfile()) flowId = 'setup-api';
+        if (flowId) maidOnboardingRuntime?.startFlow?.(flowId);
+        return {
+          ok: true,
+          responseType: 'local',
+          message: flowId === 'setup-api' && intent.flowId === 'first-chat'
+            ? '主人还没给我接上大脑呢～先把 API 接好，我就陪你完成第一次对话。'
+            : intent.reply,
+          actions: (Array.isArray(intent.chips) ? intent.chips : []).map(chip => ({
+            label: chip.label,
+            onClick: () => maidOnboardingRuntime?.startFlow?.(chip.flowId),
+          })),
+        };
+      }
+      let runtimeConfig = null;
+      try {
+        runtimeConfig = await resolveMaidRuntimeConfig();
+      } catch (error) {
+        logger.debug('maid runtime config unavailable for command input', error);
+      }
+      if (!runtimeConfig?.configured) {
+        return {
+          ok: true,
+          responseType: 'local',
+          message: '主人还没给我接上大脑呢～要我带你把 API 配好吗？',
+          actions: [{
+            label: '带我配置 API',
+            onClick: () => maidOnboardingRuntime?.startFlow?.('setup-api'),
+          }],
+        };
+      }
       const attachments = Array.isArray(controls?.attachments) ? controls.attachments : [];
       const visionCheck = await checkMaidVisionInput(attachments);
       if (!visionCheck.ok) {
@@ -22978,7 +22805,15 @@ Phase G（Frame 36）：循环衔接
       }
       return result;
     },
-    onSettings: () => {
+    onSettings: async () => {
+      const guideState = maidOnboardingRuntime?.getState?.() || {};
+      const guideStep = getMaidOnboardingFlow(guideState.flowId)?.steps?.[guideState.idx] || null;
+      if (guideState.phase === 'steps' && guideStep?.target === 'maid-command-settings') {
+        maidCommandInputRuntime?.close();
+        await agentCenterPanel.show();
+        maidGuideEmit(window, 'agent-center-opened', {});
+        return;
+      }
       maidCommandInputRuntime?.close();
       maidSettingsPanel.show({ tab: 'api' });
     },
@@ -23036,6 +22871,48 @@ Phase G（Frame 36）：循环衔接
   });
   executionFlowRuntime.attachCreativeLane?.(creativeExecutionLaneRuntime);
   executionFlowRuntime.bind();
+
+  const maidOnboardingAdapter = createMaidOnboardingAppAdapter({
+    documentRef: document,
+    targetSelectors: MAID_ONBOARDING_TARGET_SELECTORS,
+    isElementVisible: isMaidGuideElementVisible,
+    delay: maidGuideDelay,
+    openSettingsMenu: openMaidSettingsMenuForGuide,
+    openApiConfig: options => openMaidApiConfigPanel(options),
+    openQuickMenu: openMaidQuickMenuForGuide,
+    openAddFriend: async () => {
+      await sessionPanel.show();
+      return sessionPanel;
+    },
+    isChatRoomVisible,
+    exitChatRoom,
+    switchPage,
+    openMaidCommand: () => maidCommandInputRuntime?.open?.(),
+    closeMaidCommand: () => maidCommandInputRuntime?.close?.(),
+    openAgentCenter: () => agentCenterPanel.show(),
+    closeAgentCenter: () => agentCenterPanel.hide(),
+    emit: (event, payload) => maidGuideEmit(window, event, payload),
+    configManager: {
+      getProfiles: () => window.appBridge?.getConfigProfiles?.() || chatConfigManager.getProfiles?.() || [],
+      listKeys: profileId => chatConfigManager.listKeys?.(profileId) || [],
+    },
+  });
+  hasConfiguredMaidProfile = maidOnboardingAdapter.hasConfiguredProfile;
+  maidOnboardingRuntime = createMaidOnboardingRuntime({
+    documentRef: document,
+    windowRef: window,
+    guideStore: maidGuideStore,
+    resolveTarget: maidOnboardingAdapter.resolveTarget,
+    prepareStep: maidOnboardingAdapter.prepareStep,
+    runFallback: maidOnboardingAdapter.runFallback,
+    hasConfiguredProfile: hasConfiguredMaidProfile,
+    onOpenTaskList: () => maidSettingsPanel.show({ tab: 'tasks' }),
+    onFlowEnd: () => hideMenus({ force: true }),
+    logger,
+  });
+  maidOnboardingRuntime.bind();
+  maidOnboardingRuntime.maybeOfferSetupHint();
+
   patchDebugUiRegistry((registry) => {
     registry.stores.executionFlowRuntime = executionFlowRuntime;
     registry.stores.agentTaskRuntime = agentTaskRuntime;
@@ -23043,6 +22920,8 @@ Phase G（Frame 36）：循环衔接
     registry.stores.maidCommandInputRuntime = maidCommandInputRuntime;
     registry.stores.maidSelectionMode = maidSelectionMode;
     registry.stores.maidSettingsStore = maidSettingsStore;
+    registry.stores.maidOnboardingRuntime = maidOnboardingRuntime;
+    registry.actions.startMaidOnboardingFlow = flowId => maidOnboardingRuntime.startFlow(flowId);
     registry.stores.agentRegistry = agentRegistry;
     registry.stores.capabilityRetrievalStore = capabilityRetrievalStore;
     registry.stores.maidCapabilityRoutingRuntime = maidCapabilityRoutingRuntime;
@@ -26845,6 +26724,13 @@ Phase G（Frame 36）：循环衔接
       return changed;
     };
     const emitPluginAfterReceive = (message, targetSessionId, { skipScripts: skipThisScripts } = {}) => {
+      if (message?.role === 'assistant') {
+        maidGuideEmit(window, 'chat-message-received', {
+          sessionId: String(targetSessionId || sessionId || '').trim(),
+          messageId: String(message?.id || '').trim(),
+          role: 'assistant',
+        });
+      }
       emitPluginAfterReceiveEffects(message, targetSessionId, {
         skipScripts: skipThisScripts,
         defaultSkipScripts: skipScripts,
@@ -27405,6 +27291,10 @@ Phase G（Frame 36）：循环衔接
           skipScripts,
           logger,
           recordTraceEvent: recordDebugTraceEvent,
+        });
+        maidGuideEmit(window, 'chat-message-sent', {
+          sessionId,
+          messageId: String((savedUser || userMsg)?.id || '').trim(),
         });
         appendedUserOutput = true;
       }
@@ -30251,6 +30141,7 @@ Phase G（Frame 36）：循环衔接
     return true;
   };
   const panelBackClosers = [
+    () => legacyMaidGuideSpotlightActive ? activeLegacyGuideSkip?.() : maidOnboardingRuntime?.skip?.(),
     () => maidSettingsPanel.hide(),
     () => closeChatSettings(),
     () => rawReplyModal.hide(),
@@ -30279,6 +30170,7 @@ Phase G（Frame 36）：循环衔接
     () => momentSummaryPanel.hide(),
   ];
   const panelBackOpenChecks = [
+    () => legacyMaidGuideSpotlightActive || maidOnboardingRuntime?.isActive?.() === true,
     () => isBackLayerVisible(maidSettingsPanel.getElements?.().overlay),
     () => isBackLayerVisible(chatSettingsOverlay) || isBackLayerVisible(chatSettingsModal),
     () => isBackLayerVisible(document.getElementById('raw-reply-overlay')),

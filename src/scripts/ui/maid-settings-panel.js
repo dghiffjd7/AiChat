@@ -1,6 +1,7 @@
 import { MAID_SUB_AGENT_SKILLS } from '../storage/maid-settings-store.js';
 import { escapeHtml } from '../utils/name-badges.js';
 import { rankModelCandidates } from '../utils/model-candidates.js';
+import { ONBOARDING_TASKS } from './maid-onboarding-flows.js';
 const STYLE_ID = 'maid-settings-panel-style';
 
 const trim = (value, fallback = '') => {
@@ -505,7 +506,7 @@ const injectStyle = (documentRef) => {
   height: 18px;
 }
 .maid-settings-tabs {
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 4px;
   margin: 0 28px 16px;
   padding: 4px;
@@ -615,6 +616,166 @@ const injectStyle = (documentRef) => {
 .maid-settings-list {
   gap: 12px;
   padding: 1px;
+}
+.maid-settings-task-summary {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 9px 16px;
+  padding: 14px 16px;
+  border: 1px solid color-mix(in srgb, var(--app-accent-primary, #2563eb) 14%, var(--app-border-default));
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--app-accent-primary, #2563eb) 4%, var(--app-surface-card));
+}
+.maid-settings-task-summary-copy {
+  color: var(--app-text-primary, #111827);
+  font-size: 13px;
+  font-weight: 800;
+}
+.maid-settings-task-progress-text {
+  color: var(--app-accent-primary, #2563eb);
+  font: 800 12px/1 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+.maid-settings-task-progress-track {
+  grid-column: 1 / -1;
+  height: 8px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--app-accent-primary, #2563eb) 11%, var(--app-surface-subtle));
+}
+.maid-settings-task-progress-bar {
+  width: var(--maid-task-progress, 0%);
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--app-accent-primary, #2563eb), var(--app-accent-secondary, #7c3aed));
+  box-shadow: 0 0 12px -4px color-mix(in srgb, var(--app-accent-primary, #2563eb) 68%, transparent);
+  transition: width 420ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+.maid-settings-task-completion {
+  display: none;
+  align-items: center;
+  gap: 6px;
+  margin-top: -2px;
+  color: var(--app-warning-text, #b45309);
+  font-size: 11.5px;
+  font-weight: 750;
+}
+.maid-settings-task-completion[aria-hidden='false'] {
+  display: flex;
+  animation: maid-settings-task-complete-in 320ms cubic-bezier(.22,1,.36,1) backwards;
+}
+.maid-settings-task-completion .maid-settings-icon {
+  width: 15px;
+  height: 15px;
+}
+.maid-settings-task-list {
+  display: grid;
+  gap: 8px;
+}
+.maid-settings-task-item {
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  min-height: 68px;
+  padding: 11px 13px;
+  border: 1px solid color-mix(in srgb, var(--app-border-default) 72%, transparent);
+  border-radius: 16px;
+  background: var(--app-surface-card, #fff);
+  box-shadow: 0 2px 8px -7px rgba(15, 23, 42, 0.28);
+  transition: border-color 180ms ease, box-shadow 180ms ease, transform 180ms cubic-bezier(.22,1,.36,1), background 180ms ease;
+}
+.maid-settings-task-item.is-entering {
+  animation: maid-settings-task-item-in 320ms cubic-bezier(.22,1,.36,1) backwards;
+  animation-delay: calc(var(--maid-task-index, 0) * 42ms);
+}
+.maid-settings-task-item.is-done {
+  border-color: color-mix(in srgb, var(--app-success-text, #059669) 22%, var(--app-border-default));
+  background: color-mix(in srgb, var(--app-success-text, #059669) 5%, var(--app-surface-card));
+}
+.maid-settings-task-item.is-locked {
+  opacity: 0.68;
+}
+.maid-settings-task-icon {
+  width: 38px;
+  height: 38px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 13px;
+  background: color-mix(in srgb, var(--app-accent-primary, #2563eb) 9%, var(--app-surface-card));
+  color: var(--app-accent-primary, #2563eb);
+  transition: color 180ms ease, background 180ms ease, transform 180ms cubic-bezier(.22,1,.36,1);
+}
+.maid-settings-task-item.is-done .maid-settings-task-icon {
+  background: color-mix(in srgb, var(--app-success-text, #059669) 12%, var(--app-surface-card));
+  color: var(--app-success-text, #059669);
+}
+.maid-settings-task-icon .maid-settings-icon {
+  width: 19px;
+  height: 19px;
+}
+.maid-settings-task-main {
+  min-width: 0;
+  display: grid;
+  gap: 5px;
+}
+.maid-settings-task-heading {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+.maid-settings-task-title {
+  color: var(--app-text-primary, #111827);
+  font-size: 13.5px;
+  font-weight: 800;
+}
+.maid-settings-task-reward {
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--app-text-muted, #64748b) 8%, var(--app-surface-card));
+  color: var(--app-text-muted, #64748b);
+  font-size: 10.5px;
+  font-weight: 700;
+}
+.maid-settings-task-item.is-done .maid-settings-task-reward {
+  background: color-mix(in srgb, var(--app-warning-text, #b45309) 10%, var(--app-surface-card));
+  color: var(--app-warning-text, #b45309);
+}
+.maid-settings-task-description {
+  color: var(--app-text-secondary, #64748b);
+  font-size: 12px;
+  line-height: 1.45;
+}
+.maid-settings-task-action {
+  min-width: 76px;
+  min-height: 40px;
+  padding: 0 12px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  border: 0;
+  border-radius: 999px;
+  background: linear-gradient(135deg, var(--app-accent-primary, #2563eb), var(--app-accent-secondary, #7c3aed));
+  color: var(--app-text-inverse, #fff);
+  box-shadow: 0 10px 18px -13px color-mix(in srgb, var(--app-accent-primary, #2563eb) 72%, transparent);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 800;
+  touch-action: manipulation;
+  transition: transform 180ms cubic-bezier(.22,1,.36,1), box-shadow 180ms ease, opacity 180ms ease;
+}
+.maid-settings-task-action .maid-settings-icon {
+  width: 15px;
+  height: 15px;
+}
+.maid-settings-task-item.is-done .maid-settings-task-action {
+  border: 1px solid color-mix(in srgb, var(--app-success-text, #059669) 20%, var(--app-border-default));
+  background: color-mix(in srgb, var(--app-success-text, #059669) 7%, var(--app-surface-card));
+  color: var(--app-success-text, #059669);
+  box-shadow: none;
 }
 .maid-settings-list-item {
   position: relative;
@@ -1136,6 +1297,18 @@ const injectStyle = (documentRef) => {
     box-shadow: 0 16px 38px -24px rgba(var(--app-accent-rgb, 37, 99, 235), 0.34);
     transform: translateY(-2px);
   }
+  .maid-settings-task-item:not(.is-locked):hover {
+    border-color: color-mix(in srgb, var(--app-accent-primary, #2563eb) 26%, var(--app-border-default));
+    box-shadow: 0 14px 30px -24px color-mix(in srgb, var(--app-accent-primary, #2563eb) 58%, transparent);
+    transform: translateY(-1px);
+  }
+  .maid-settings-task-item:not(.is-locked):hover .maid-settings-task-icon {
+    transform: translateY(-1px) scale(1.03);
+  }
+  .maid-settings-task-action:hover {
+    box-shadow: 0 13px 24px -13px color-mix(in srgb, var(--app-accent-primary, #2563eb) 82%, transparent);
+    transform: scale(1.035);
+  }
   .maid-api-nav-item:hover .maid-api-nav-chevron {
     color: var(--app-accent-primary, #2563eb);
     transform: translateX(3px);
@@ -1161,6 +1334,16 @@ const injectStyle = (documentRef) => {
   from { opacity: 0; transform: translate3d(0, 8px, 0); }
   to { opacity: 1; transform: translate3d(0, 0, 0); }
 }
+@keyframes maid-settings-task-item-in {
+  from { opacity: 0; transform: translate3d(0, 7px, 0); }
+  to { opacity: 1; transform: translate3d(0, 0, 0); }
+}
+@keyframes maid-settings-task-complete-in {
+  from { opacity: 0; transform: translate3d(0, 5px, 0); }
+  to { opacity: 1; transform: translate3d(0, 0, 0); }
+}
+
+.maid-settings-task-action:active { transform: scale(.96); }
 
 @media (max-width: 640px) {
   .maid-settings-overlay {
@@ -1197,7 +1380,7 @@ const injectStyle = (documentRef) => {
     height: 38px;
   }
   .maid-settings-tabs {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+    grid-template-columns: repeat(5, minmax(0, 1fr));
     gap: 3px;
     margin: 0 12px 12px;
     padding: 3px;
@@ -1211,6 +1394,19 @@ const injectStyle = (documentRef) => {
     padding: 0 5px;
     border-radius: 11px;
     font-size: 11.5px;
+  }
+  .maid-settings-task-item {
+    grid-template-columns: 34px minmax(0, 1fr);
+    gap: 10px;
+    padding: 11px 12px;
+  }
+  .maid-settings-task-icon {
+    width: 34px;
+    height: 34px;
+  }
+  .maid-settings-task-action {
+    grid-column: 1 / -1;
+    width: 100%;
   }
   .maid-settings-tab .maid-settings-icon {
     width: 14px;
@@ -1371,6 +1567,12 @@ const ICONS = Object.freeze({
   request: iconSvg('<path d="M5 5h14v14H5z"/><path d="M8 9h8"/><path d="M8 13h5"/><path d="M8 17h7"/>'),
   response: iconSvg('<path d="M4 6h16v10H7l-3 3Z"/><path d="M8 10h8"/><path d="M8 14h5"/>'),
   activity: iconSvg('<path d="M4 12h4l2-6 4 12 2-6h4"/>'),
+  tasks: iconSvg('<path d="M9 5h11"/><path d="M9 12h11"/><path d="M9 19h11"/><path d="m3.5 5 1 1 2-2"/><path d="m3.5 12 1 1 2-2"/><path d="m3.5 19 1 1 2-2"/>'),
+  plug: iconSvg('<path d="M8 12V5"/><path d="M16 12V5"/><path d="M6 9h12v3a6 6 0 0 1-12 0Z"/><path d="M12 18v3"/>'),
+  userPlus: iconSvg('<circle cx="9" cy="8" r="3"/><path d="M3.5 19a5.5 5.5 0 0 1 11 0"/><path d="M18 8v6"/><path d="M15 11h6"/>'),
+  message: iconSvg('<path d="M4 5h16v11H8l-4 4Z"/><path d="M8 9h8"/><path d="M8 13h5"/>'),
+  sparkles: iconSvg('<path d="m12 3 1.2 3.8L17 8l-3.8 1.2L12 13l-1.2-3.8L7 8l3.8-1.2Z"/><path d="m18.5 14 .7 2.3 2.3.7-2.3.7-.7 2.3-.7-2.3-2.3-.7 2.3-.7Z"/><path d="m5 13 .8 2.2L8 16l-2.2.8L5 19l-.8-2.2L2 16l2.2-.8Z"/>'),
+  trophy: iconSvg('<path d="M8 21h8"/><path d="M12 17v4"/><path d="M7 4h10v5a5 5 0 0 1-10 0Z"/><path d="M7 6H4v2a3 3 0 0 0 3 3"/><path d="M17 6h3v2a3 3 0 0 1-3 3"/>'),
   shield: iconSvg('<path d="M12 3 5 6v5c0 4.4 3 8.1 7 9 4-.9 7-4.6 7-9V6Z"/><path d="m9.5 12 2 2 3.5-3.5"/>'),
   bolt: iconSvg('<path d="m13 2-8 12h7l-1 8 8-12h-7Z"/>'),
   chevron: iconSvg('<path d="m9 18 6-6-6-6"/>'),
@@ -1427,6 +1629,10 @@ export const createMaidSettingsPanel = ({
   listRuns = null,
   allowRulesStore = null,
   onResumeRun = null,
+  guideStore = null,
+  onboardingTasks = ONBOARDING_TASKS,
+  onStartOnboardingFlow = null,
+  isApiConfigured = () => false,
   copyText = text => globalThis?.navigator?.clipboard?.writeText?.(text),
   logger = console,
 } = {}) => {
@@ -1449,6 +1655,11 @@ export const createMaidSettingsPanel = ({
   let runListEl = null;
   let runCountEl = null;
   let ruleListEl = null;
+  let taskListEl = null;
+  let taskProgressEl = null;
+  let taskProgressBarEl = null;
+  let taskCompletionEl = null;
+  let taskListHasEntered = false;
   let promptCountEl = null;
   let isOpen = false;
 
@@ -1594,6 +1805,72 @@ export const createMaidSettingsPanel = ({
     });
   };
 
+  const renderTasks = () => {
+    if (!taskListEl) return;
+    clearChildren(taskListEl);
+    const tasks = Array.isArray(onboardingTasks) ? onboardingTasks : [];
+    const doneFlowIds = new Set(
+      tasks
+        .filter(task => guideStore?.isTaskDone?.(task?.id))
+        .map(task => trim(task?.flowId))
+        .filter(Boolean),
+    );
+    const completed = tasks.filter(task => guideStore?.isTaskDone?.(task?.id)).length;
+    if (taskProgressEl) taskProgressEl.textContent = `${completed}/${tasks.length}`;
+    taskProgressBarEl?.style?.setProperty?.('--maid-task-progress', tasks.length ? `${(completed / tasks.length) * 100}%` : '0%');
+    const allDone = tasks.length > 0 && completed === tasks.length;
+    taskCompletionEl?.setAttribute?.('aria-hidden', allDone ? 'false' : 'true');
+    const animateRows = activeTab === 'tasks' && !taskListHasEntered;
+
+    tasks.forEach((task, taskIndex) => {
+      const isDone = Boolean(guideStore?.isTaskDone?.(task?.id));
+      const requiredFlow = trim(task?.requires);
+      const requirementMet = requiredFlow === 'setup-api'
+        ? isApiConfigured?.() === true
+        : doneFlowIds.has(requiredFlow);
+      const isLocked = Boolean(requiredFlow && !requirementMet);
+      const item = documentRef.createElement?.('div');
+      item.className = `maid-settings-task-item${isDone ? ' is-done' : ''}${isLocked ? ' is-locked' : ''}${animateRows ? ' is-entering' : ''}`;
+      item.style?.setProperty?.('--maid-task-index', String(Math.min(taskIndex, 6)));
+
+      const icon = documentRef.createElement?.('span');
+      icon.className = 'maid-settings-task-icon';
+      const taskIcon = task?.icon === 'user-plus' ? ICONS.userPlus : ICONS[task?.icon] || ICONS.tasks;
+      icon.innerHTML = taskIcon;
+      icon.setAttribute?.('aria-hidden', 'true');
+
+      const main = documentRef.createElement?.('div');
+      main.className = 'maid-settings-task-main';
+      const heading = documentRef.createElement?.('div');
+      heading.className = 'maid-settings-task-heading';
+      const title = documentRef.createElement?.('span');
+      title.className = 'maid-settings-task-title';
+      title.textContent = trim(task?.label, task?.flowId);
+      const reward = documentRef.createElement?.('span');
+      reward.className = 'maid-settings-task-reward';
+      reward.textContent = `${isDone ? '成就·' : '奖励·'}${trim(task?.reward, '待解锁')}`;
+      heading.append(title, reward);
+      const description = documentRef.createElement?.('div');
+      description.className = 'maid-settings-task-description';
+      description.textContent = trim(task?.description);
+      main.append(heading, description);
+
+      const action = createButton(
+        documentRef,
+        'maid-settings-task-action',
+        isLocked ? '先接 API' : (isDone ? '重温' : '开始'),
+      );
+      setIconButtonContent(action, isLocked ? ICONS.plug : (isDone ? ICONS.checkCircle : ICONS.sparkles), isLocked ? '先接 API' : (isDone ? '重温' : '开始'));
+      action.addEventListener?.('click', () => {
+        hide();
+        onStartOnboardingFlow?.(isLocked ? requiredFlow : trim(task?.flowId));
+      });
+      item.append(icon, main, action);
+      taskListEl.appendChild(item);
+    });
+    if (animateRows) taskListHasEntered = true;
+  };
+
   const refresh = () => {
     if (promptTextarea) promptTextarea.value = settingsStore?.getMaidPrompt?.() || settingsStore?.getPersonaPrompt?.() || '';
     if (promptCountEl) promptCountEl.textContent = `${promptTextarea?.value?.length || 0} 字`;
@@ -1605,6 +1882,7 @@ export const createMaidSettingsPanel = ({
     if (lastResponseTextarea) lastResponseTextarea.value = getLastResponseText();
     renderRuns();
     renderRules();
+    renderTasks();
   };
 
   const switchPromptTab = (tab = 'persona') => {
@@ -1627,7 +1905,7 @@ export const createMaidSettingsPanel = ({
     const promptSubtab = tab === 'appKnowledge' || tab === 'historyContext' || tab === 'memoryTable' || tab === 'lastPrompt' || tab === 'lastResponse' || tab === 'persona'
       ? tab
       : '';
-    const next = promptSubtab ? 'prompt' : (['api', 'prompt', 'activity', 'safety'].includes(tab) ? tab : 'api');
+    const next = promptSubtab ? 'prompt' : (['api', 'prompt', 'tasks', 'activity', 'safety'].includes(tab) ? tab : 'api');
     if (next === 'api') {
       try { refreshApiSubSection?.(); } catch {}
     }
@@ -1742,6 +2020,7 @@ export const createMaidSettingsPanel = ({
     [
       ['api', 'API', ICONS.api],
       ['prompt', '提示词', ICONS.prompt],
+      ['tasks', '任务', ICONS.tasks],
       ['activity', '活动', ICONS.activity],
       ['safety', '权限', ICONS.shield],
     ].forEach(([key, label, icon]) => {
@@ -2243,6 +2522,42 @@ export const createMaidSettingsPanel = ({
     runListEl.className = 'maid-settings-list';
     activitySection.append(activityHead, runListEl);
 
+    const tasksSection = documentRef.createElement?.('section');
+    tasksSection.className = 'maid-settings-section';
+    const tasksCaption = documentRef.createElement?.('div');
+    tasksCaption.className = 'maid-settings-section-caption';
+    const tasksCaptionLabel = documentRef.createElement?.('span');
+    tasksCaptionLabel.textContent = '新手上路';
+    const tasksCaptionCode = documentRef.createElement?.('small');
+    tasksCaptionCode.textContent = 'ONBOARDING';
+    tasksCaption.append(tasksCaptionLabel, tasksCaptionCode);
+    const taskSummary = documentRef.createElement?.('div');
+    taskSummary.className = 'maid-settings-task-summary';
+    const taskSummaryCopy = documentRef.createElement?.('div');
+    taskSummaryCopy.className = 'maid-settings-task-summary-copy';
+    taskSummaryCopy.textContent = '新手上路 · 上手指引';
+    taskProgressEl = documentRef.createElement?.('span');
+    taskProgressEl.className = 'maid-settings-task-progress-text';
+    taskProgressEl.textContent = `0/${Array.isArray(onboardingTasks) ? onboardingTasks.length : 0}`;
+    const taskProgressTrack = documentRef.createElement?.('div');
+    taskProgressTrack.className = 'maid-settings-task-progress-track';
+    taskProgressBarEl = documentRef.createElement?.('div');
+    taskProgressBarEl.className = 'maid-settings-task-progress-bar';
+    taskProgressTrack.appendChild(taskProgressBarEl);
+    taskSummary.append(taskSummaryCopy, taskProgressEl, taskProgressTrack);
+    taskCompletionEl = documentRef.createElement?.('div');
+    taskCompletionEl.className = 'maid-settings-task-completion';
+    taskCompletionEl.setAttribute?.('aria-hidden', 'true');
+    const taskCompletionIcon = documentRef.createElement?.('span');
+    taskCompletionIcon.innerHTML = ICONS.trophy;
+    taskCompletionIcon.setAttribute?.('aria-hidden', 'true');
+    const taskCompletionText = documentRef.createElement?.('span');
+    taskCompletionText.textContent = '全部课程毕业！主人已经是熟练工了';
+    taskCompletionEl.append(taskCompletionIcon, taskCompletionText);
+    taskListEl = documentRef.createElement?.('div');
+    taskListEl.className = 'maid-settings-task-list';
+    tasksSection.append(tasksCaption, taskSummary, taskCompletionEl, taskListEl);
+
     const safetySection = documentRef.createElement?.('section');
     safetySection.className = 'maid-settings-section';
     const safetyCaption = documentRef.createElement?.('div');
@@ -2259,6 +2574,7 @@ export const createMaidSettingsPanel = ({
     [
       ['api', apiSection],
       ['prompt', promptSection],
+      ['tasks', tasksSection],
       ['activity', activitySection],
       ['safety', safetySection],
     ].forEach(([key, section]) => {
@@ -2315,6 +2631,10 @@ export const createMaidSettingsPanel = ({
       runListEl,
       runCountEl,
       ruleListEl,
+      taskListEl,
+      taskProgressEl,
+      taskProgressBarEl,
+      taskCompletionEl,
       promptCountEl,
       tabButtons,
       sections,

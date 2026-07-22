@@ -10,7 +10,7 @@ const maidSettingsSource = fs.readFileSync(
 
 {
   assert.match(maidSettingsSource, /\.maid-settings-panel\s*\{[\s\S]*?width:\s*min\(920px,\s*94vw\)[\s\S]*?border-radius:\s*28px/);
-  assert.match(maidSettingsSource, /\.maid-settings-tabs\s*\{[\s\S]*?grid-template-columns:\s*repeat\(4,\s*minmax\(0,\s*1fr\)\)/);
+  assert.match(maidSettingsSource, /\.maid-settings-tabs\s*\{[\s\S]*?grid-template-columns:\s*repeat\(5,\s*minmax\(0,\s*1fr\)\)/);
   assert.match(maidSettingsSource, /\.maid-settings-overlay\s*\{[\s\S]*?backdrop-filter:\s*blur\(7px\)/);
   assert.match(maidSettingsSource, /\.maid-settings-overlay\.is-open\s+\.maid-settings-panel\s*\{/);
   assert.match(maidSettingsSource, /body\[data-reduced-motion=['"]on['"]\]\s+\.maid-settings-overlay/);
@@ -19,8 +19,12 @@ const maidSettingsSource = fs.readFileSync(
   assert.match(maidSettingsSource, /ARIA Assistant/);
   assert.match(maidSettingsSource, /maid-settings-section-caption/);
   assert.match(maidSettingsSource, /maid-settings-empty-state/);
+  assert.match(maidSettingsSource, /maid-settings-task-completion/);
+  assert.match(maidSettingsSource, /maid-settings-task-item\.is-entering/);
+  assert.match(maidSettingsSource, /taskListHasEntered/);
+  assert.match(maidSettingsSource, /linear-gradient\([^;]*var\(--app-accent-primary/);
   assert.doesNotMatch(maidSettingsSource, /animation[^;]*infinite/);
-  console.log('ok - maid settings redesign keeps reference proportions, responsive motion, and semantic visual structure');
+  console.log('ok - maid settings redesign keeps reference proportions, onboarding visuals, responsive motion, and semantic structure');
 }
 
 const createClassList = () => {
@@ -330,4 +334,54 @@ const flushMicrotasks = () => new Promise(resolve => setTimeout(resolve, 0));
   assert.deepEqual(resumed, ['run-cont']);
   assert.equal(panel.isOpen(), false, '点击继续后面板应关闭');
   console.log('ok - maid settings panel resumes continuable runs');
+}
+
+{
+  const documentRef = new FakeDocument();
+  const completed = new Set();
+  const started = [];
+  const panel = createMaidSettingsPanel({
+    documentRef,
+    settingsStore: { getMaidPrompt: () => '' },
+    guideStore: {
+      isTaskDone: taskId => completed.has(taskId),
+      listTasks: () => Array.from(completed).map(taskId => ({ taskId })),
+    },
+    onStartOnboardingFlow: flowId => started.push(flowId),
+    logger: { warn() {} },
+  });
+
+  panel.show({ tab: 'tasks' });
+  const elements = panel.getElements();
+  assert.equal(elements.tabButtons.get('tasks').classList.contains('is-active'), true);
+  assert.equal(elements.taskListEl.children.length, 4);
+  assert.equal(elements.taskProgressEl.textContent, '0/4');
+  assert.equal(elements.taskCompletionEl.attributes['aria-hidden'], 'true');
+  assert.ok(findByText(elements.taskListEl, '先接 API'), 'first-chat should be locked before setup-api');
+
+  const firstStart = findByText(elements.taskListEl, '开始');
+  firstStart.dispatchEvent('click', {});
+  assert.deepEqual(started, ['setup-api']);
+
+  completed.add('task-setup-api');
+  panel.refresh();
+  assert.equal(elements.taskProgressEl.textContent, '1/4');
+  assert.ok(findByText(elements.taskListEl, '成就·初次接线'));
+  assert.ok(findByText(elements.taskListEl, '先接 API'), 'completed history must not unlock chat after credentials are removed');
+
+  ['task-add-friend', 'task-first-chat', 'task-meet-maid'].forEach(taskId => completed.add(taskId));
+  panel.refresh();
+  assert.equal(elements.taskProgressEl.textContent, '4/4');
+  assert.equal(elements.taskCompletionEl.attributes['aria-hidden'], 'false');
+
+  const configuredPanel = createMaidSettingsPanel({
+    documentRef: new FakeDocument(),
+    settingsStore: { getMaidPrompt: () => '' },
+    guideStore: { isTaskDone: () => false },
+    isApiConfigured: () => true,
+    logger: { warn() {} },
+  });
+  configuredPanel.show({ tab: 'tasks' });
+  assert.equal(findByText(configuredPanel.getElements().taskListEl, '先接 API'), null);
+  console.log('ok - maid settings task tab renders progress, dependency locks, and flow actions');
 }

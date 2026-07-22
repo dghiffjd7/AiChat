@@ -57,6 +57,23 @@ const GUIDE_STEP_SELECTOR_CANDIDATES = Object.freeze({
     '[data-maid-guide-target="settings-api-config"]',
     '#settings-menu button[data-action="config"]',
   ],
+  '服务商': [
+    '[data-maid-guide-target="config-provider-select"]',
+    '#config-provider-btn',
+    '#config-provider',
+  ],
+  'API Key': [
+    '[data-maid-guide-target="config-api-key-input"]',
+    '#config-apikey',
+  ],
+  '模型': [
+    '[data-maid-guide-target="config-model-select"]',
+    '#config-model',
+  ],
+  '保存配置': [
+    '[data-maid-guide-target="config-save-btn"]',
+    '#config-save',
+  ],
   'Agent Center': [
     '[data-maid-guide-target="settings-agent-center"]',
     '#settings-menu button[data-action="agent-center"]',

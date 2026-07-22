@@ -197,6 +197,7 @@ export const createSessionAddFriendFeedbackUi = ({
     cancelButton.type = 'button';
     confirmButton = createElement(documentRef, 'button', 'session-add-confirm-action is-confirm');
     confirmButton.type = 'button';
+    confirmButton.dataset.maidGuideTarget = 'add-friend-confirm';
     confirmButtonIcon = createElement(documentRef, 'span', 'session-add-confirm-action-icon');
     confirmButtonText = createElement(documentRef, 'span', '', '确定');
     appendIcon(confirmButtonIcon, ICONS.check);

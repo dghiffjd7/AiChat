@@ -61,7 +61,7 @@ const normalizePromptPostProcessingForForm = (value) => {
 };
 
 export class ConfigPanel {
-    constructor() {
+    constructor({ onSaved = null } = {}) {
         this.chatConfigManager = new ConfigManager();
         this.imageConfigManager = new ConfigManager({ scope: 'image' });
         this.activeTab = 'chat';
@@ -80,6 +80,7 @@ export class ConfigPanel {
         this.transportExpanded = false;
         this.excludedGenerationParams = [];
         this.openOptions = {};
+        this.onSaved = typeof onSaved === 'function' ? onSaved : null;
         this.currentPage = 'main';
         this.imageGenerationParamsPanel = new ImageGenerationParamsPanel({
             getImageConfig: async () => {
@@ -307,7 +308,7 @@ export class ConfigPanel {
                     <h2 id="config-title" style="margin: 0; color: var(--app-text-primary);">聊天模型配置</h2>
                     <span style="color:var(--app-text-muted); font-size:12px;">(保存后立即生效)</span>
                 </div>
-                <div id="config-main-page">
+                <div id="config-main-page" data-maid-guide-target="config-connection-fields">
                 <div style="display:flex; gap:8px; margin: 8px 0 16px;">
                     <button type="button" class="config-tab is-active" data-tab="chat"
                             style="border:1px solid var(--app-border-default); background:var(--app-surface-card); padding:6px 12px; border-radius:999px; font-size:12px; cursor:pointer;">
@@ -347,7 +348,7 @@ export class ConfigPanel {
 
                 <div style="margin-bottom: 15px;">
                     <label style="display: block; margin-bottom: 5px; font-weight: bold;">服务商</label>
-                    <select id="config-provider" style="display:none;">
+                    <select id="config-provider" data-maid-guide-target="config-provider-select" style="display:none;">
                         <option value="openai">OpenAI</option>
                         <option value="makersuite">Google AI Studio (Makersuite)</option>
                         <option value="vertexai">Google Vertex AI</option>
@@ -356,7 +357,7 @@ export class ConfigPanel {
                         <option value="anthropic">Anthropic (Claude)</option>
                         <option value="custom">自定义 API</option>
                     </select>
-                    <button type="button" id="config-provider-btn" class="world-app-select-btn" data-select-id="config-provider" style="margin-top:2px;">
+                    <button type="button" id="config-provider-btn" class="world-app-select-btn" data-select-id="config-provider" data-maid-guide-target="config-provider-select" style="margin-top:2px;">
                         <span class="config-custom-select-label">请选择服务商</span>
                         <span class="world-app-select-btn-chevron">▾</span>
                     </button>
@@ -376,7 +377,7 @@ export class ConfigPanel {
                             <button id="manage-keys" title="管理已保存的 Key" style="font-size:12px; border:none; background:var(--app-surface-subtle); padding:4px 8px; border-radius:6px; cursor:pointer;">🔑</button>
                         </div>
                     </label>
-                    <input type="password" id="config-apikey" placeholder="sk-..."
+                    <input type="password" id="config-apikey" data-maid-guide-target="config-api-key-input" placeholder="sk-..."
                            style="width: 100%; padding: 10px; border-radius: 5px; border: 1px solid var(--app-border-default); font-size: 14px; box-sizing: border-box;">
                     <small id="apikey-help" style="color: var(--app-text-secondary);">保存后 Key 以遮罩显示（不可复制）；用 🔑 管理多个 Key</small>
                 </div>
@@ -415,7 +416,7 @@ export class ConfigPanel {
                         </button>
                     </label>
                     <div style="position: relative; display: flex; flex-direction: column; gap: 8px;">
-                        <input type="text" id="config-model" list="model-list" placeholder="gpt-3.5-turbo"
+                        <input type="text" id="config-model" data-maid-guide-target="config-model-select" list="model-list" placeholder="gpt-3.5-turbo"
                                style="width: 100%; padding: 10px 12px; border-radius: 5px; border: 1px solid var(--app-border-default); font-size: 14px; box-sizing: border-box;">
                         <datalist id="model-list"></datalist>
                         <div id="model-options"
@@ -534,7 +535,7 @@ export class ConfigPanel {
                                                        background: var(--app-surface-subtle); cursor: pointer; font-size: 14px; color: var(--app-text-secondary); min-width: 70px;">
                         取消
                     </button>
-                    <button id="config-save" style="padding: 10px 16px; border-radius: 8px; border: none;
+                    <button id="config-save" data-maid-guide-target="config-save-btn" style="padding: 10px 16px; border-radius: 8px; border: none;
                                                      background: #019aff; color: var(--app-text-inverse); cursor: pointer; font-size: 14px; font-weight: 600; min-width: 70px;">
                         保存
                     </button>
@@ -1928,14 +1929,16 @@ export class ConfigPanel {
             this.showStatus('配置保存成功！', 'success');
             logger.info('配置保存成功');
             this.emitProfileChanged();
-            if (typeof this.openOptions?.onSaved === 'function') {
+            const savedPayload = {
+                tab: this.activeTab,
+                profileId: this.configManager.getActiveProfileId?.() || '',
+                profile: this.configManager.getActiveProfile?.() || null,
+                config: this.configManager.get?.() || null,
+            };
+            const callbacks = new Set([this.onSaved, this.openOptions?.onSaved].filter(callback => typeof callback === 'function'));
+            for (const callback of callbacks) {
                 try {
-                    await this.openOptions.onSaved({
-                        tab: this.activeTab,
-                        profileId: this.configManager.getActiveProfileId?.() || '',
-                        profile: this.configManager.getActiveProfile?.() || null,
-                        config: this.configManager.get?.() || null,
-                    });
+                    await callback(savedPayload);
                 } catch (callbackError) {
                     logger.warn('config panel onSaved failed', callbackError);
                 }

@@ -1,7 +1,7 @@
 import { makeScopedKey, normalizeScopeId } from './store-scope.js';
 
 export const MAID_GUIDE_STORE_BASE_KEY = 'maid_guide_store_v1';
-export const MAID_GUIDE_STORE_VERSION = 1;
+export const MAID_GUIDE_STORE_VERSION = 2;
 
 const DEFAULT_MAX_COMPLETED = 300;
 
@@ -77,6 +77,19 @@ const normalizeGuideRecord = (guideId = '', raw = {}, { now = Date.now } = {}) =
   };
 };
 
+const normalizeTaskRecord = (taskId = '', raw = {}, { now = Date.now } = {}) => {
+  const src = isPlainObject(raw) ? raw : {};
+  const id = trim(src.taskId || taskId);
+  if (!id) return null;
+  const completedAt = Number(src.completedAt);
+  return {
+    taskId: id,
+    flowId: trim(src.flowId),
+    reward: trim(src.reward),
+    completedAt: Number.isFinite(completedAt) && completedAt > 0 ? completedAt : safeNow(now),
+  };
+};
+
 export const normalizeMaidGuideStoreState = (raw = {}, {
   now = Date.now,
   maxCompleted = DEFAULT_MAX_COMPLETED,
@@ -99,10 +112,28 @@ export const normalizeMaidGuideStoreState = (raw = {}, {
     if (!keep.has(guideId)) delete completed[guideId];
   });
 
+  const tasksRaw = isPlainObject(src.tasks) ? src.tasks : {};
+  const tasks = {};
+  Object.entries(tasksRaw).forEach(([taskId, record]) => {
+    const normalized = normalizeTaskRecord(taskId, record, { now });
+    if (normalized) tasks[normalized.taskId] = normalized;
+  });
+
+  const hintsRaw = isPlainObject(src.hints) ? src.hints : {};
+  const hints = {};
+  Object.entries(hintsRaw).forEach(([hintId, value]) => {
+    const id = trim(hintId);
+    if (!id) return;
+    const dismissedAt = Number(isPlainObject(value) ? value.dismissedAt : value);
+    if (Number.isFinite(dismissedAt) && dismissedAt > 0) hints[id] = dismissedAt;
+  });
+
   return {
     version: MAID_GUIDE_STORE_VERSION,
     updatedAt: Number(src.updatedAt || safeNow(now)) || safeNow(now),
     completed,
+    tasks,
+    hints,
   };
 };
 
@@ -209,6 +240,54 @@ export class MaidGuideStore {
     this.state.completed[id] = record;
     this.write();
     return clone(record);
+  }
+
+  isTaskDone(taskId = '') {
+    this.ensureLoaded();
+    return Boolean(this.state.tasks[trim(taskId)]);
+  }
+
+  getTask(taskId = '') {
+    this.ensureLoaded();
+    const record = this.state.tasks[trim(taskId)] || null;
+    return record ? clone(record) : null;
+  }
+
+  listTasks() {
+    this.ensureLoaded();
+    return Object.values(this.state.tasks)
+      .sort((a, b) => Number(b.completedAt || 0) - Number(a.completedAt || 0))
+      .map(clone);
+  }
+
+  markTaskDone(taskId = '', details = {}) {
+    this.ensureLoaded();
+    const id = trim(taskId);
+    if (!id) return null;
+    const existing = this.state.tasks[id] || null;
+    if (existing) return clone(existing);
+    const record = normalizeTaskRecord(id, {
+      ...(isPlainObject(details) ? details : {}),
+      taskId: id,
+      completedAt: safeNow(this.now),
+    }, { now: this.now });
+    this.state.tasks[id] = record;
+    this.write();
+    return clone(record);
+  }
+
+  isHintDismissed(hintId = '') {
+    this.ensureLoaded();
+    return Number(this.state.hints[trim(hintId)] || 0) > 0;
+  }
+
+  dismissHint(hintId = '') {
+    this.ensureLoaded();
+    const id = trim(hintId);
+    if (!id || this.isHintDismissed(id)) return false;
+    this.state.hints[id] = safeNow(this.now);
+    this.write();
+    return true;
   }
 
   resetGuide(guideId = '') {

@@ -18,6 +18,7 @@ import { createMaidMediaAssetTools } from '../../src/scripts/agent/tools/media-a
 import { createAppUiCaptureTools } from '../../src/scripts/agent/tools/app-ui-capture-tools.js';
 import { createWebSearchAgentTools } from '../../src/scripts/agent/tools/web-search-tools.js';
 import { createMaidTodoTools } from '../../src/scripts/agent/tools/maid-todo-tools.js';
+import { createGuideStartFlowTools } from '../../src/scripts/agent/tools/guide-start-flow-tools.js';
 import { createChatFormatRepairTools } from '../../src/scripts/agent/tools/chat-format-tools.js';
 import { createMomentsAgentTools } from '../../src/scripts/agent/tools/moments-tools.js';
 
@@ -61,6 +62,13 @@ const escapeRegex = value => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'
   assert.equal(wallpaper.id, 'session.wallpaper.set');
   assert.ok(wallpaper.tools.includes('session.set_wallpaper'));
   console.log('ok - app feature catalog exposes maid image asset features');
+}
+
+{
+  const feature = findAppFeature('女仆新手任务');
+  assert.equal(feature.id, 'maid.onboarding');
+  assert.deepEqual(feature.tools, ['guide.start_flow']);
+  console.log('ok - app feature catalog exposes built-in maid onboarding');
 }
 
 {
@@ -330,6 +338,10 @@ const escapeRegex = value => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'
       return run;
     },
   });
+  const startedGuideFlows = [];
+  const guideTools = createGuideStartFlowTools({
+    startFlow: flowId => startedGuideFlows.push(flowId),
+  });
   const formatProfiles = new Map();
   const formatTools = createChatFormatRepairTools({
     repairMessageFormat: async args => ({ ok: true, applied: true, formatHint: args.formatHint }),
@@ -351,7 +363,7 @@ const escapeRegex = value => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'
       return { ok: true, momentId: 'catalog-moment', commentsRequested: payload.generateComments === true };
     },
   });
-  const tools = [...navTools, ...sessionTools, ...contentTools, ...mediaTools, ...captureTools, ...webTools, ...todoTools, ...formatTools, ...momentsTools];
+  const tools = [...navTools, ...sessionTools, ...contentTools, ...mediaTools, ...captureTools, ...webTools, ...todoTools, ...guideTools, ...formatTools, ...momentsTools];
   const maidAttachments = [{ id: 'catalog-image', kind: 'image', url: 'data:image/png;base64,AAAA', name: 'catalog.png' }];
 
   for (const feature of listAppFeatures()) {
@@ -617,6 +629,12 @@ const escapeRegex = value => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'
       const read = await getTool(tools, 'maid.todo.read').execute({}, { runId: 'run-1' });
       assert.equal(read.ok, true);
       assert.equal(read.todos[0].content, '创建聊天室');
+      return;
+    }
+    if (feature.id === 'maid.onboarding') {
+      const result = await getTool(tools, 'guide.start_flow').execute({ flowId: 'setup-api' });
+      assert.equal(result.ok, true);
+      assert.deepEqual(startedGuideFlows, ['setup-api']);
       return;
     }
     if (feature.id === 'app.errors.read') {

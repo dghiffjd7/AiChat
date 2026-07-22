@@ -2294,7 +2294,7 @@ export class AgentCenterPanel {
                     </div>
                     <div class="agent-center-actions">
                         <button type="button" class="agent-center-button" data-action="export" title="导出" aria-label="导出">${ICONS.export}</button>
-                        <button type="button" class="agent-center-button" data-action="close" title="关闭" aria-label="关闭">${ICONS.close}</button>
+                        <button type="button" class="agent-center-button" data-action="close" data-maid-guide-target="agent-center-close" title="关闭" aria-label="关闭">${ICONS.close}</button>
                     </div>
                 </header>
                 <nav class="agent-center-tabs" aria-label="Agent Center tabs"></nav>
@@ -3058,7 +3058,7 @@ export class AgentCenterPanel {
                 </div>
                 <div class="agent-center-floating-toolbar">
                     <button type="button" class="agent-center-icon-button" data-agent-float-flip title="切换到配置" aria-label="切换到配置" aria-pressed="false">${ICONS.refresh}</button>
-                    <button type="button" class="agent-center-icon-button" data-agent-float-close title="关闭" aria-label="关闭">${ICONS.close}</button>
+                    <button type="button" class="agent-center-icon-button" data-agent-float-close data-maid-guide-target="agent-center-close" title="关闭" aria-label="关闭">${ICONS.close}</button>
                 </div>
             </div>
             ${renderChips([
@@ -3089,7 +3089,7 @@ export class AgentCenterPanel {
                 </div>
                 <div class="agent-center-floating-toolbar">
                     <button type="button" class="agent-center-icon-button" data-agent-float-flip title="切换到详情" aria-label="切换到详情" aria-pressed="true">${ICONS.refresh}</button>
-                    <button type="button" class="agent-center-icon-button" data-agent-float-close title="关闭" aria-label="关闭">${ICONS.close}</button>
+                    <button type="button" class="agent-center-icon-button" data-agent-float-close data-maid-guide-target="agent-center-close" title="关闭" aria-label="关闭">${ICONS.close}</button>
                 </div>
             </div>
             ${this.renderAgentFeatureSettings(agent)}
@@ -3141,6 +3141,7 @@ export class AgentCenterPanel {
                 class="agent-center-card agent-center-agent-card${agent.enabled ? ' is-agent-on' : ''}"
                 data-agent-accent="${escapeHtml(agent.accent || '')}"
                 data-agent-card-open="${escapeHtml(agent.id)}"
+                data-maid-guide-target="agent-center-card"
                 style="--agent-card-index:${index};"
                 role="button"
                 tabindex="0"

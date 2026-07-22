@@ -28,6 +28,7 @@ const createStorage = () => {
 
 {
   const state = normalizeMaidGuideStoreState({
+    version: 1,
     completed: {
       a: { guideId: 'a', completedAt: 10 },
       b: { guideId: 'b', completedAt: 20 },
@@ -36,8 +37,11 @@ const createStorage = () => {
     now: () => 100,
     maxCompleted: 1,
   });
+  assert.equal(state.version, 2);
   assert.deepEqual(Object.keys(state.completed), ['b']);
-  console.log('ok - maid guide store normalization trims old guide records');
+  assert.deepEqual(state.tasks, {});
+  assert.deepEqual(state.hints, {});
+  console.log('ok - maid guide store migrates v1 state and trims old guide records');
 }
 
 {
@@ -68,4 +72,38 @@ const createStorage = () => {
   assert.equal(restored.resetGuide('session.config.open.guide'), true);
   assert.equal(restored.isCompleted('session.config.open.guide'), false);
   console.log('ok - MaidGuideStore persists, reads, and resets completed guides');
+}
+
+{
+  let now = 2000;
+  const storage = createStorage();
+  const store = new MaidGuideStore({ storage, now: () => now });
+  store.load();
+
+  const task = store.markTaskDone('task-setup-api', {
+    flowId: 'setup-api',
+    reward: '初次接线',
+  });
+  assert.deepEqual(task, {
+    taskId: 'task-setup-api',
+    flowId: 'setup-api',
+    reward: '初次接线',
+    completedAt: 2000,
+  });
+  assert.equal(store.isTaskDone('task-setup-api'), true);
+  assert.deepEqual(store.listTasks(), [task]);
+
+  now = 2100;
+  const sameTask = store.markTaskDone('task-setup-api', { reward: '不会覆盖首次完成' });
+  assert.deepEqual(sameTask, task, 'task completion should be idempotent');
+
+  assert.equal(store.dismissHint('setup-api-pill'), true);
+  assert.equal(store.isHintDismissed('setup-api-pill'), true);
+  assert.equal(store.dismissHint('setup-api-pill'), false, 'dismissed hints are no-op writes');
+
+  const restored = new MaidGuideStore({ storage, now: () => 2200 });
+  restored.load();
+  assert.equal(restored.isTaskDone('task-setup-api'), true);
+  assert.equal(restored.isHintDismissed('setup-api-pill'), true);
+  console.log('ok - MaidGuideStore v2 persists tasks and dismissed hints idempotently');
 }

@@ -41,12 +41,13 @@ const isAppModalPointerTarget = (target, path = null) => {
   const nodes = Array.isArray(path) && path.length ? path : [target];
   return nodes.some(node => {
     if (!node || typeof node !== 'object') return false;
-    if (typeof node.closest === 'function' && node.closest('.app-confirm-overlay, .app-confirm-modal, .maid-guide-step-bubble')) {
+    if (typeof node.closest === 'function' && node.closest('.app-confirm-overlay, .app-confirm-modal, .maid-guide-step-bubble, .maid-spotlight-root')) {
       return true;
     }
     return isClassedNode(node, 'app-confirm-overlay') ||
       isClassedNode(node, 'app-confirm-modal') ||
-      isClassedNode(node, 'maid-guide-step-bubble');
+      isClassedNode(node, 'maid-guide-step-bubble') ||
+      isClassedNode(node, 'maid-spotlight-root');
   });
 };
 
@@ -347,6 +348,26 @@ const injectStyle = (documentRef) => {
 .maid-command-input-result-item[data-tone="error"] {
   border-color: rgba(239, 68, 68, 0.30);
   background: color-mix(in srgb, var(--app-surface-card, #fff) 90%, rgba(239, 68, 68, 0.12));
+}
+.mci-result-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+.mci-result-action {
+  min-height: 40px;
+  padding: 0 11px;
+  border: 1px solid color-mix(in srgb, var(--app-accent-primary, #2563eb) 22%, var(--app-border-default));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--app-accent-primary, #2563eb) 8%, var(--app-surface-card));
+  color: var(--app-accent-primary, #2563eb);
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1;
+  touch-action: manipulation;
 }
 /* 女仆执行流结构化卡：在白色结果流内原位呈现 计/行/成/败 铭牌与状态 */
 .maid-command-input-result-item.is-trace {
@@ -744,7 +765,28 @@ export const createMaidCommandInputRuntime = ({
       } else {
         bubble.className = `maid-command-input-result-item${bubble.classList?.contains?.('is-entering') ? ' is-entering' : ''}`;
         bubble.dataset.tone = item.tone;
-        bubble.textContent = item.message;
+        const message = documentRef.createElement?.('div');
+        message.className = 'mci-result-message';
+        message.textContent = item.message;
+        bubble.appendChild(message);
+        const actions = Array.isArray(item.actions) ? item.actions : [];
+        if (actions.length) {
+          const actionRow = documentRef.createElement?.('div');
+          actionRow.className = 'mci-result-actions';
+          actions.forEach((action) => {
+            const button = documentRef.createElement?.('button');
+            button.type = 'button';
+            button.className = 'mci-result-action';
+            button.textContent = trim(action?.label, '继续');
+            button.addEventListener?.('click', (event) => {
+              event.preventDefault?.();
+              event.stopPropagation?.();
+              action?.onClick?.();
+            });
+            actionRow.appendChild(button);
+          });
+          bubble.appendChild(actionRow);
+        }
       }
     };
     // 键控 reconcile：既有卡原位补丁（状态原地翻转、不重播进场），新卡逐张推出（stagger 进场）
@@ -867,6 +909,7 @@ export const createMaidCommandInputRuntime = ({
         id: `text_${resultSeq}`,
         message: text,
         tone: normalizedTone,
+        actions: Array.isArray(options?.actions) ? options.actions : [],
       });
     }
     renderResultMessages({ forceBottom: options?.forceBottom !== false });
@@ -1022,11 +1065,13 @@ export const createMaidCommandInputRuntime = ({
     attachBtn.setAttribute('aria-label', '附加图片');
     inputEl = documentRef.createElement?.('textarea');
     inputEl.className = 'maid-command-input-field';
+    inputEl.dataset.maidGuideTarget = 'maid-command-input';
     inputEl.placeholder = '问女仆...';
     inputEl.autocomplete = 'off';
     inputEl.rows = 1;
     settingsBtn = documentRef.createElement?.('button');
     settingsBtn.className = 'maid-command-input-settings';
+    settingsBtn.dataset.maidGuideTarget = 'maid-command-settings';
     settingsBtn.type = 'button';
     settingsBtn.innerHTML = ICONS.settings;
     settingsBtn.setAttribute('aria-label', '女仆设置');
@@ -1211,7 +1256,11 @@ export const createMaidCommandInputRuntime = ({
         attachments,
       });
       const ok = result?.ok !== false;
-      setResult(result?.message || result?.summary || (ok ? '已完成。' : '执行失败。'), ok ? 'success' : 'error');
+      setResult(
+        result?.message || result?.summary || (ok ? '已完成。' : '执行失败。'),
+        ok ? 'success' : 'error',
+        { actions: result?.actions },
+      );
       if (ok && inputEl) {
         inputEl.value = '';
         clearAttachments();

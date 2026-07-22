@@ -153,7 +153,14 @@ const summarizeCharacterMeta = (character = {}) => {
 };
 
 export class SessionPanel {
-  constructor(chatStore, contactsStore, ui, { onUpdated, personaStore, getPersonaScopeKey, getChatSessionId, getSocialSessionId } = {}) {
+  constructor(chatStore, contactsStore, ui, {
+    onUpdated,
+    onFriendAdded,
+    personaStore,
+    getPersonaScopeKey,
+    getChatSessionId,
+    getSocialSessionId,
+  } = {}) {
     this.store = chatStore;
     this.contactsStore = contactsStore;
     this.ui = ui;
@@ -164,6 +171,7 @@ export class SessionPanel {
     this.listElShared = null;
     this.nameInput = null;
     this.onUpdated = typeof onUpdated === 'function' ? onUpdated : null;
+    this.onFriendAdded = typeof onFriendAdded === 'function' ? onFriendAdded : null;
     this.personaStore = personaStore || null;
     this.getPersonaScopeKey = typeof getPersonaScopeKey === 'function' ? getPersonaScopeKey : null;
     this.getChatSessionId =
@@ -1012,6 +1020,7 @@ export class SessionPanel {
     const row = document.createElement('div');
     row.className = 'sticker-bind-row session-row session-recommend-row is-entering';
     row.dataset.characterId = id;
+    row.dataset.maidGuideTarget = 'add-friend-recommendation';
     const finishEntryMotion = event => {
       if (event?.target !== row || String(event?.animationName || '') !== 'session-recommend-fade-in-up') return;
       row.removeEventListener('animationend', finishEntryMotion);
@@ -1245,6 +1254,7 @@ export class SessionPanel {
     this.jumpToContactsOnClose = true;
     this.refresh();
     this.onUpdated?.();
+    this.onFriendAdded?.({ sessionId, name, characterId: id });
     const currentList = Array.isArray(this.recommendCharacters) ? this.recommendCharacters : [];
     this.recommendCharacters = currentList.filter(item => String(item?.id || '').trim() !== id);
     if (this.recommendMode) {
@@ -1306,7 +1316,7 @@ export class SessionPanel {
                 <button id="session-avatar-btn" type="button" title="设置好友头像" class="session-avatar-btn">
                     <img id="session-avatar-preview" alt="" class="session-avatar-preview" src="${getDefaultAppIcon()}">
                 </button>
-                <input id="session-name" placeholder="新好友名称" class="session-name-input">
+                <input id="session-name" data-maid-guide-target="add-friend-search-input" placeholder="新好友名称" class="session-name-input">
                 <button id="session-add" class="session-btn">添加</button>
                 <button id="session-clear" class="session-btn danger">清空聊天</button>
             </div>
