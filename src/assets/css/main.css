@@ -785,7 +785,7 @@ body.chat-room-active .bottom-nav {
   border-radius: 50%;
   background: var(--app-surface-card);
   box-shadow: 0 1px 2px rgba(15, 23, 42, 0.24);
-  transition: transform 0.18s ease;
+  transition: transform 0.28s cubic-bezier(0.2, 0.9, 0.25, 1.15);
 }
 
 .world-entry-enable-toggle.is-on {
@@ -938,12 +938,19 @@ body.chat-room-active .bottom-nav {
 
 .world-entry-advanced > summary::after {
   content: "▾";
+  display: inline-block;
   font-size: 12px;
   color: var(--app-text-muted);
+  transform: rotate(0deg);
+  transition: transform 0.25s ease;
 }
 
-.world-entry-advanced[open] > summary::after {
-  content: "▴";
+.world-entry-advanced.is-expanded > summary::after {
+  transform: rotate(180deg);
+}
+
+.world-entry-advanced-clip {
+  overflow: hidden;
 }
 
 .world-entry-advanced-body {
@@ -1263,6 +1270,357 @@ body.chat-room-active .bottom-nav {
   min-width: 12px;
   color: var(--app-accent-strong);
   font-weight: 700;
+}
+
+/* 世界书管理：仅迁移参考项目的开合与切换动效 */
+@keyframes world-layer-backdrop-in {
+  from { background-color: transparent; }
+}
+
+@keyframes world-layer-backdrop-out {
+  to { background-color: transparent; }
+}
+
+/* 纯背景遮罩（面板与内容块：弹窗不是其子节点）改动 opacity 走合成器，避免每帧全屏重绘 */
+@keyframes world-sibling-backdrop-in {
+  from { opacity: 0; }
+}
+
+@keyframes world-sibling-backdrop-out {
+  to { opacity: 0; }
+}
+
+@keyframes world-panel-shell-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, calc(-50% + 18px)) scale(0.965);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1);
+  }
+}
+
+@keyframes world-panel-shell-out {
+  from {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: translate(-50%, calc(-50% + 10px)) scale(0.975);
+  }
+}
+
+@keyframes world-layer-modal-in {
+  from {
+    opacity: 0;
+    transform: translateY(18px) scale(0.965);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes world-layer-modal-out {
+  from {
+    opacity: 1;
+    transform: none;
+  }
+  to {
+    opacity: 0;
+    transform: translateY(10px) scale(0.975);
+  }
+}
+
+@keyframes world-manager-row-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes world-library-row-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes world-editor-entry-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes world-editor-content-in {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes world-content-layer-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, calc(-50% + 18px)) scale(0.965);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1);
+  }
+}
+
+@keyframes world-content-layer-out {
+  from {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: translate(-50%, calc(-50% + 10px)) scale(0.975);
+  }
+}
+
+@keyframes world-content-corner-in {
+  from {
+    opacity: 0;
+    transform: rotate(-90deg) scale(0.6);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes world-select-menu-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.world-library-overlay.is-opening,
+#world-editor-overlay.is-opening {
+  animation: world-layer-backdrop-in 0.22s ease-out backwards;
+}
+
+.world-library-overlay.is-closing,
+#world-editor-overlay.is-closing {
+  animation: world-layer-backdrop-out 0.2s ease-in forwards;
+}
+
+.world-panel-overlay.is-opening {
+  animation: world-sibling-backdrop-in 0.22s ease-out backwards;
+}
+
+.world-panel-overlay.is-closing {
+  animation: world-sibling-backdrop-out 0.2s ease-in forwards;
+}
+
+.world-panel-shell.is-opening {
+  animation: world-panel-shell-in 0.36s cubic-bezier(0.16, 1, 0.3, 1) backwards;
+}
+
+.world-panel-shell.is-closing {
+  pointer-events: none;
+  animation: world-panel-shell-out 0.2s ease-in forwards;
+}
+
+.world-library-overlay.is-closing {
+  display: flex;
+}
+
+.world-library-modal.is-opening,
+#world-editor-modal.is-opening {
+  animation: world-layer-modal-in 0.36s cubic-bezier(0.16, 1, 0.3, 1) backwards;
+}
+
+.world-library-modal.is-closing,
+#world-editor-modal.is-closing {
+  pointer-events: none;
+  animation: world-layer-modal-out 0.2s ease-in forwards;
+}
+
+.world-panel-world-card.is-entering {
+  animation: world-manager-row-in 0.32s cubic-bezier(0.16, 1, 0.3, 1) backwards;
+}
+
+.world-library-row.is-entering {
+  animation: world-library-row-in 0.36s cubic-bezier(0.16, 1, 0.3, 1) backwards;
+  animation-delay: calc(var(--world-motion-order, 0) * 30ms);
+}
+
+.world-entry-item.is-entering {
+  animation: world-editor-entry-in 0.34s cubic-bezier(0.16, 1, 0.3, 1) backwards;
+  animation-delay: calc(var(--world-motion-order, 0) * 24ms);
+}
+
+.world-entry-empty.is-entering,
+.sticker-bind-empty.is-entering {
+  animation: world-manager-row-in 0.22s ease-out backwards;
+}
+
+.world-entry-form.is-entering {
+  animation: world-editor-content-in 0.22s ease-out backwards;
+}
+
+.world-block-overlay.show.is-entering {
+  animation: world-sibling-backdrop-in 0.22s ease-out backwards;
+}
+
+.world-content-card.is-expanded.is-entering {
+  animation: world-content-layer-in 0.36s cubic-bezier(0.16, 1, 0.3, 1) backwards;
+}
+
+.world-content-card.is-expanded.is-entering .world-block-corner-btn {
+  animation: world-content-corner-in 0.38s cubic-bezier(0.16, 1, 0.3, 1) 0.15s backwards;
+}
+
+.world-block-overlay.show.is-closing {
+  animation: world-sibling-backdrop-out 0.2s ease-in forwards;
+}
+
+.world-content-card.is-expanded.is-closing {
+  pointer-events: none;
+  animation: world-content-layer-out 0.2s ease-in forwards;
+}
+
+.world-app-select-menu {
+  transform-origin: top center;
+  animation: world-select-menu-in 0.16s ease-out backwards;
+}
+
+#world-global-settings-toggle {
+  display: inline-block;
+  transform: rotate(0deg);
+  transition: transform 0.25s ease;
+}
+
+#world-global-settings.is-expanded #world-global-settings-toggle {
+  transform: rotate(180deg);
+}
+
+.world-panel-world-card-entries.is-world-disclosing,
+#world-global-settings-body.is-world-disclosing,
+.world-entry-advanced-clip.is-world-disclosing {
+  contain: layout paint;
+}
+
+.world-panel-shell .sticker-ai-toggle,
+.world-library-shell .sticker-ai-toggle {
+  transition: transform 0.15s ease, background-color 0.2s ease, border-color 0.2s ease, color 0.2s ease;
+}
+
+.world-panel-shell .sticker-ai-toggle:active,
+.world-library-shell .sticker-ai-toggle:active {
+  transform: scale(0.96);
+}
+
+@media (hover: hover) {
+  .world-library-row {
+    transition: transform 0.15s ease, border-color 0.15s ease, background-color 0.15s ease;
+  }
+
+  .world-library-row:hover {
+    transform: translateY(-1px);
+  }
+
+  .world-content-card.is-expanded .world-block-corner-btn {
+    transition: transform 0.18s ease, border-color 0.16s ease, color 0.16s ease;
+  }
+
+  .world-content-card.is-expanded .world-block-corner-btn:hover {
+    transform: rotate(90deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :is(
+    .world-panel-overlay,
+    .world-panel-shell,
+    .world-library-overlay,
+    .world-library-modal,
+    #world-editor-overlay,
+    #world-editor-modal,
+    .world-panel-world-card,
+    .world-library-row,
+    .world-entry-item,
+    .world-entry-empty,
+    .sticker-bind-empty,
+    .world-entry-form,
+    .world-block-overlay,
+    .world-content-card,
+    .world-block-corner-btn,
+    .world-app-select-menu
+  ) {
+    animation: none !important;
+    transition-duration: 0.01ms !important;
+  }
+
+  :is(
+    #world-global-settings-toggle,
+    .world-entry-advanced > summary::after,
+    .world-entry-enable-toggle::after,
+    .world-panel-shell .sticker-ai-toggle,
+    .world-library-shell .sticker-ai-toggle
+  ) {
+    transition-duration: 0.01ms !important;
+  }
+}
+
+body[data-reduced-motion='on'] :is(
+  .world-panel-overlay,
+  .world-panel-shell,
+  .world-library-overlay,
+  .world-library-modal,
+  #world-editor-overlay,
+  #world-editor-modal,
+  .world-panel-world-card,
+  .world-library-row,
+  .world-entry-item,
+  .world-entry-empty,
+  .sticker-bind-empty,
+  .world-entry-form,
+  .world-block-overlay,
+  .world-content-card,
+  .world-block-corner-btn,
+  .world-app-select-menu
+) {
+  animation: none !important;
+  transition-duration: 0.01ms !important;
+}
+
+body[data-reduced-motion='on'] :is(
+  #world-global-settings-toggle,
+  .world-entry-advanced > summary::after,
+  .world-entry-enable-toggle::after,
+  .world-panel-shell .sticker-ai-toggle,
+  .world-library-shell .sticker-ai-toggle
+) {
+  transition-duration: 0.01ms !important;
 }
 
 .world-block-toolbar {

@@ -13,6 +13,7 @@ import { safeInvoke } from '../utils/tauri.js';
 import { WorldEditorModal } from './world-editor.js';
 import { appConfirm } from './app-confirm.js';
 import { bindCustomSelectButton, closeCustomSelectMenu, refreshCustomSelectButton } from './custom-select.js';
+import { isWorldMotionReduced, setWorldDisclosureState } from './world-management-motion-utils.js';
 import {
     listRegexLocalSets,
     syncWorldRegexBindings,
@@ -121,6 +122,10 @@ export class WorldPanel {
         this.librarySort = 'time';
         this.librarySortDir = 'desc';
         this.libraryTarget = { type: 'session_extra', sessionId: '', personaId: '' };
+        this.panelCloseTimer = null;
+        this.libraryCloseTimer = null;
+        this.panelEntryMotionPending = false;
+        this.libraryEntryMotionPending = false;
         this.editor = new WorldEditorModal({
             onSaved: async () => {
                 await this.refreshList();
@@ -133,16 +138,46 @@ export class WorldPanel {
         if (!this.panel) {
             this.createUI();
         }
+        const wasClosing = this.panel?.classList.contains('is-closing');
+        const wasVisible = this.panel?.style.display !== 'none';
+        this.panelEntryMotionPending = !wasVisible || wasClosing;
         await this.refreshList();
+        if (this.panelCloseTimer) {
+            clearTimeout(this.panelCloseTimer);
+            this.panelCloseTimer = null;
+        }
+        this.overlay.classList.remove('is-closing', 'is-opening');
+        this.panel.classList.remove('is-closing', 'is-opening');
         this.overlay.style.display = 'block';
         this.panel.style.display = 'block';
+        if ((!wasVisible || wasClosing) && !isWorldMotionReduced()) {
+            this.overlay.classList.add('is-opening');
+            this.panel.classList.add('is-opening');
+        }
     }
 
     hide() {
         closeCustomSelectMenu();
-        if (this.overlay) this.overlay.style.display = 'none';
-        if (this.panel) this.panel.style.display = 'none';
-        this.libraryOverlay?.classList.remove('is-active');
+        this.closeLibraryModal?.();
+        if (!this.overlay || !this.panel || this.panel.style.display === 'none') return;
+        if (this.panel.classList.contains('is-closing')) return;
+
+        const finish = () => {
+            this.panelCloseTimer = null;
+            this.overlay.style.display = 'none';
+            this.panel.style.display = 'none';
+            this.overlay.classList.remove('is-opening', 'is-closing');
+            this.panel.classList.remove('is-opening', 'is-closing');
+        };
+        if (isWorldMotionReduced()) {
+            finish();
+            return;
+        }
+        this.overlay.classList.remove('is-opening');
+        this.panel.classList.remove('is-opening');
+        this.overlay.classList.add('is-closing');
+        this.panel.classList.add('is-closing');
+        this.panelCloseTimer = setTimeout(finish, 220);
     }
 
     buildToggle({ enabled, disabled = false, labelOn = '已启用', labelOff = '未启用', onClick } = {}) {
@@ -331,6 +366,9 @@ export class WorldPanel {
     async refreshList() {
         if (!this.listEl) return;
         this.listEl.innerHTML = '';
+        const animatePanelRows = this.panelEntryMotionPending;
+        this.panelEntryMotionPending = false;
+        let panelMotionIndex = 0;
         try {
             const sessionId = this.getSessionId ? this.getSessionId() : (window.appBridge?.getActiveSessionId?.() || 'default');
             const sessionKey = String(sessionId || 'default').trim() || 'default';
@@ -553,6 +591,11 @@ export class WorldPanel {
                 const card = document.createElement('div');
                 card.className = 'world-panel-world-card';
                 card.style.cssText = 'padding:10px; border:1px solid var(--app-border-default); border-radius:12px; background:var(--app-surface-card);';
+                if (animatePanelRows) {
+                    card.classList.add('is-entering');
+                    card.style.setProperty('--world-motion-order', String(Math.min(panelMotionIndex, 8)));
+                    panelMotionIndex += 1;
+                }
 
                 const header = document.createElement('div');
                 header.className = 'world-panel-world-card-head';
@@ -600,7 +643,11 @@ export class WorldPanel {
 
                 const entriesWrap = document.createElement('div');
                 entriesWrap.className = 'world-panel-world-card-entries';
-                entriesWrap.style.cssText = 'display:none; margin-top:8px; padding-top:8px; border-top:1px dashed var(--app-border-default); max-height:220px; overflow:auto;';
+                entriesWrap.style.cssText = 'display:none; overflow:hidden;';
+                const entriesInner = document.createElement('div');
+                entriesInner.className = 'world-panel-world-card-entries-inner';
+                entriesInner.style.cssText = 'margin-top:8px; padding-top:8px; border-top:1px dashed var(--app-border-default); max-height:220px; overflow:auto;';
+                entriesWrap.appendChild(entriesInner);
                 let entriesLoaded = false;
 
                 const renderEntries = async () => {
@@ -611,7 +658,7 @@ export class WorldPanel {
                         const entries = latest ? await this.resolveWorldEntries(latest, { worldId }) : [];
                         meta.textContent = latest ? `共 ${entries.length} 条目${subtitle ? ` · ${subtitle}` : ''}` : '世界书不存在或已删除';
                         if (!entries.length) {
-                            appendEmpty(entriesWrap, latest ? '（无条目）' : '（无法读取条目）');
+                            appendEmpty(entriesInner, latest ? '（无条目）' : '（无法读取条目）');
                             return;
                         }
                         entries.forEach((entry, idx) => {
@@ -666,22 +713,25 @@ export class WorldPanel {
                             });
                             row.appendChild(nameEl);
                             row.appendChild(entryToggle);
-                            entriesWrap.appendChild(row);
+                            entriesInner.appendChild(row);
                         });
                     } catch (err) {
                         meta.textContent = '条目读取失败';
-                        appendEmpty(entriesWrap, '（读取条目失败）');
+                        appendEmpty(entriesInner, '（读取条目失败）');
                     }
                 };
 
+                title.setAttribute('aria-expanded', 'false');
                 title.onclick = async (event) => {
                     event.stopPropagation();
-                    if (entriesWrap.style.display === 'none') {
+                    const shouldOpen = !entriesWrap.classList.contains('is-open');
+                    entriesWrap.classList.toggle('is-open', shouldOpen);
+                    title.setAttribute('aria-expanded', shouldOpen ? 'true' : 'false');
+                    if (shouldOpen) {
                         await renderEntries();
-                        entriesWrap.style.display = 'block';
-                    } else {
-                        entriesWrap.style.display = 'none';
+                        if (!entriesWrap.classList.contains('is-open')) return;
                     }
+                    setWorldDisclosureState(entriesWrap, shouldOpen, { duration: 320 });
                 };
 
                 header.appendChild(titleWrap);
@@ -950,6 +1000,8 @@ export class WorldPanel {
         if (!this.libraryListEl) return;
         const listEl = this.libraryListEl;
         listEl.innerHTML = '';
+        const animateRows = this.libraryEntryMotionPending;
+        this.libraryEntryMotionPending = false;
         const scopeKey = ['global', 'role', 'session_extra'].includes(String(scope || '').trim())
             ? String(scope || '').trim()
             : 'session_extra';
@@ -987,6 +1039,7 @@ export class WorldPanel {
         const renderEmpty = (text) => {
             const empty = document.createElement('div');
             empty.className = 'sticker-bind-empty';
+            if (animateRows) empty.classList.add('is-entering');
             empty.textContent = text;
             listEl.appendChild(empty);
         };
@@ -1041,11 +1094,15 @@ export class WorldPanel {
             return;
         }
 
-        filtered.forEach(item => {
+        filtered.forEach((item, motionIndex) => {
             const row = document.createElement('div');
             row.className = 'sticker-bind-row world-library-row';
             row.style.justifyContent = 'space-between';
             row.style.alignItems = 'center';
+            if (animateRows && motionIndex < 12) {
+                row.classList.add('is-entering');
+                row.style.setProperty('--world-motion-order', String(Math.min(motionIndex, 8)));
+            }
             if (boundSet.has(item.name)) {
                 row.classList.add('is-bound');
             }
@@ -1524,12 +1581,15 @@ export class WorldPanel {
         if (globalHeader && this.globalSettingsBody && this.globalSettingsToggle) {
             const toggleGlobalSettings = () => {
                 this.globalSettingsOpen = !this.globalSettingsOpen;
-                this.globalSettingsBody.style.display = this.globalSettingsOpen ? '' : 'none';
-                this.globalSettingsToggle.textContent = this.globalSettingsOpen ? '▲' : '▼';
+                this.globalSettingsEl?.classList.toggle('is-expanded', this.globalSettingsOpen);
+                globalHeader.setAttribute('aria-expanded', this.globalSettingsOpen ? 'true' : 'false');
+                setWorldDisclosureState(this.globalSettingsBody, this.globalSettingsOpen, { duration: 320 });
             };
             globalHeader.onclick = () => toggleGlobalSettings();
-            this.globalSettingsBody.style.display = this.globalSettingsOpen ? '' : 'none';
-            this.globalSettingsToggle.textContent = this.globalSettingsOpen ? '▲' : '▼';
+            this.globalSettingsEl?.classList.toggle('is-expanded', this.globalSettingsOpen);
+            globalHeader.setAttribute('aria-expanded', this.globalSettingsOpen ? 'true' : 'false');
+            this.globalSettingsBody.style.display = this.globalSettingsOpen ? 'block' : 'none';
+            this.globalSettingsToggle.textContent = '▼';
         }
 
         this.libraryOverlay = document.createElement('div');
@@ -1596,13 +1656,41 @@ export class WorldPanel {
 
         const closeLibrary = () => {
             closeCustomSelectMenu();
-            this.libraryOverlay?.classList.remove('is-active');
+            if (!this.libraryOverlay || !this.libraryModal) return;
+            if (this.libraryOverlay.classList.contains('is-closing')) return;
+
+            const wasActive = this.libraryOverlay.classList.contains('is-active');
+            const finish = () => {
+                this.libraryCloseTimer = null;
+                this.libraryOverlay.classList.remove('is-active', 'is-opening', 'is-closing');
+                this.libraryModal.classList.remove('is-opening', 'is-closing');
+            };
+            if (!wasActive || isWorldMotionReduced()) {
+                finish();
+                return;
+            }
+            this.libraryOverlay.classList.remove('is-active', 'is-opening');
+            this.libraryModal.classList.remove('is-opening');
+            this.libraryOverlay.classList.add('is-closing');
+            this.libraryModal.classList.add('is-closing');
+            this.libraryCloseTimer = setTimeout(finish, 220);
         };
 
         const openLibrary = async (target = null) => {
             if (!this.libraryOverlay) return;
             if (target) this.libraryTarget = this.normalizeLibraryTarget(target);
+            if (this.libraryCloseTimer) {
+                clearTimeout(this.libraryCloseTimer);
+                this.libraryCloseTimer = null;
+            }
+            this.libraryOverlay.classList.remove('is-closing', 'is-opening');
+            this.libraryModal?.classList.remove('is-closing', 'is-opening');
             this.libraryOverlay.classList.add('is-active');
+            this.libraryEntryMotionPending = true;
+            if (!isWorldMotionReduced()) {
+                this.libraryOverlay.classList.add('is-opening');
+                this.libraryModal?.classList.add('is-opening');
+            }
             await this.refreshList();
         };
 

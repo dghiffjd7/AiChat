@@ -70,6 +70,7 @@ import {
     resolveWorldEditorBridgeContext,
     saveWorldInfoWithName,
 } from './world-editor/world-editor-bridge-utils.js';
+import { isWorldMotionReduced, setWorldDisclosureState } from './world-management-motion-utils.js';
 import {
     ensureWorldVariableInStore,
     getWorldVariableOptions,
@@ -689,6 +690,8 @@ export class WorldEditorModal {
         this.entryBlockPageMap = new Map();
         this.blockFlipMap = new Map();
         this.blockExpandMap = new Map();
+        this.blockExpandMotionPending = '';
+        this.blockCollapseTimer = null;
         this.blockBackViewMap = new Map();
         this.blockEditorFocusMap = new Map();
         this.blockManageOverlay = null;
@@ -705,6 +708,9 @@ export class WorldEditorModal {
         this.variableGuideRepositionHandler = null;
         this.variableGuideResizeHandler = null;
         this.nodeEditorCleanup = null;
+        this.closeMotionTimer = null;
+        this.entryListMotionPending = false;
+        this.editorMotionEntryId = '';
     }
 
     applyDebugFocus({ entryId = '', blockId = '', nodeId = '' } = {}) {
@@ -734,6 +740,8 @@ export class WorldEditorModal {
         if (!this.modal) {
             this.createUI();
         }
+        const wasClosing = this.modal?.classList.contains('is-closing');
+        const wasVisible = this.modal?.style.display !== 'none';
         this.worldName = name;
         this.originalName = name;
         this.data = deepClone(data || { name, entries: [] });
@@ -762,6 +770,11 @@ export class WorldEditorModal {
         this.selectedEntries.clear();
         this.blockFlipMap.clear();
         this.blockExpandMap.clear();
+        this.blockExpandMotionPending = '';
+        if (this.blockCollapseTimer) {
+            clearTimeout(this.blockCollapseTimer);
+            this.blockCollapseTimer = null;
+        }
         this.blockManageEntryId = '';
         this.entrySearchTerm = '';
         this.entryPageIndex = 0;
@@ -772,20 +785,30 @@ export class WorldEditorModal {
         }
         if (this.entrySearchEl) this.entrySearchEl.value = '';
         this.currentIndex = 0;
+        this.entryListMotionPending = !wasVisible || wasClosing;
+        this.editorMotionEntryId = '';
         this.renderList();
         this.selectEntry(0);
         this.applyDebugFocus(options);
         this.updateRefModeUI();
+        if (this.closeMotionTimer) {
+            clearTimeout(this.closeMotionTimer);
+            this.closeMotionTimer = null;
+        }
+        this.overlay.classList.remove('is-closing', 'is-opening');
+        this.modal.classList.remove('is-closing', 'is-opening');
         this.overlay.style.display = 'flex';
         this.modal.style.display = 'flex';
+        if ((!wasVisible || wasClosing) && !isWorldMotionReduced()) {
+            this.overlay.classList.add('is-opening');
+            this.modal.classList.add('is-opening');
+        }
     }
 
     hide() {
         this.cleanupNodeEditor();
         this.closeCustomSelectMenu();
         this.finishVariableGuide({ markSeen: false });
-        if (this.overlay) this.overlay.style.display = 'none';
-        if (this.modal) this.modal.style.display = 'none';
         this.hideManageModal();
         this.hideAiModal();
         this.closeVariableModal(null);
@@ -795,6 +818,29 @@ export class WorldEditorModal {
             clearTimeout(this.refSyncTimer);
             this.refSyncTimer = null;
         }
+        if (this.blockCollapseTimer) {
+            clearTimeout(this.blockCollapseTimer);
+            this.blockCollapseTimer = null;
+        }
+        if (!this.overlay || !this.modal || this.modal.style.display === 'none') return;
+        if (this.modal.classList.contains('is-closing')) return;
+
+        const finish = () => {
+            this.closeMotionTimer = null;
+            this.overlay.style.display = 'none';
+            this.modal.style.display = 'none';
+            this.overlay.classList.remove('is-opening', 'is-closing');
+            this.modal.classList.remove('is-opening', 'is-closing');
+        };
+        if (isWorldMotionReduced()) {
+            finish();
+            return;
+        }
+        this.overlay.classList.remove('is-opening');
+        this.modal.classList.remove('is-opening');
+        this.overlay.classList.add('is-closing');
+        this.modal.classList.add('is-closing');
+        this.closeMotionTimer = setTimeout(finish, 220);
     }
 
     cleanupNodeEditor() {
@@ -2481,7 +2527,28 @@ export class WorldEditorModal {
         const id = String(blockId || '').trim();
         if (!id) return;
         const next = Boolean(expanded);
+        if (this.blockCollapseTimer) {
+            clearTimeout(this.blockCollapseTimer);
+            this.blockCollapseTimer = null;
+        }
+        if (!next && this.blockExpandMap.get(id) === true && !isWorldMotionReduced()) {
+            const shell = this.editorEl?.querySelector?.('#we-block-shell.is-expanded');
+            const overlay = this.editorEl?.querySelector?.('#we-block-overlay.show');
+            if (shell) {
+                shell.classList.add('is-closing');
+                overlay?.classList.add('is-closing');
+                this.blockCollapseTimer = setTimeout(() => {
+                    this.blockCollapseTimer = null;
+                    this.blockExpandMap.set(id, false);
+                    this.blockFlipMap.set(id, false);
+                    this.blockBackViewMap.set(id, 'summary');
+                    this.renderEditor();
+                }, 220);
+                return;
+            }
+        }
         this.blockExpandMap.set(id, next);
+        if (next) this.blockExpandMotionPending = id;
         if (!next) {
             this.blockFlipMap.set(id, false);
             this.blockBackViewMap.set(id, 'summary');
@@ -3391,6 +3458,9 @@ export class WorldEditorModal {
         if (!this.entriesListEl) return;
         this.updateBatchBar();
         this.entriesListEl.innerHTML = '';
+        const animateRows = this.entryListMotionPending;
+        this.entryListMotionPending = false;
+        let motionIndex = 0;
         const searchTerm = this.getEntrySearchTerm();
         const filtered = this.getFilteredEntries(searchTerm);
 
@@ -3412,6 +3482,11 @@ export class WorldEditorModal {
             });
             const item = document.createElement('div');
             item.className = `world-entry-item ${i === this.currentIndex ? 'active' : ''}`;
+            if (animateRows && motionIndex < 12) {
+                item.classList.add('is-entering');
+                item.style.setProperty('--world-motion-order', String(Math.min(motionIndex, 8)));
+            }
+            if (animateRows) motionIndex += 1;
             item.dataset.entryIndex = String(i);
             item.dataset.entryId = entryId;
             if (this.batchMode && isSelected) item.classList.add('is-selected');
@@ -3486,6 +3561,7 @@ export class WorldEditorModal {
             list.className = 'world-entry-page-list';
             const empty = document.createElement('div');
             empty.className = 'world-entry-empty';
+            if (animateRows) empty.classList.add('is-entering');
             empty.textContent = searchTerm ? '没有匹配的条目' : '（无条目）';
             list.appendChild(empty);
             pageEl.appendChild(list);
@@ -3644,11 +3720,15 @@ export class WorldEditorModal {
 
         const blocks = this.ensureEntryPromptBlocks(entry);
         const entryId = this.getEntryId(entry, this.currentIndex);
+        const animateEditorEntry = entryId !== this.editorMotionEntryId;
+        this.editorMotionEntryId = entryId;
         const blockPage = this.getEntryBlockPage(entry, entryId);
         const activeBlock = blocks[blockPage] || blocks[0];
         const activeBlockId = String(activeBlock?.id || '').trim();
         const blockFlipped = this.isBlockFlipped(activeBlock?.id);
         const blockExpanded = this.isBlockExpanded(activeBlock?.id);
+        const blockExpandEntering = blockExpanded && this.blockExpandMotionPending === activeBlockId;
+        if (blockExpandEntering) this.blockExpandMotionPending = '';
         const blockBackView = this.getBlockBackView(activeBlock?.id);
         const aiBusy = this.aiBusy && entryId === String(this.aiPendingEntryId || '').trim();
         const aiLockTarget = aiBusy && activeBlockId && activeBlockId === String(this.aiTargetBlockId || '').trim();
@@ -3676,7 +3756,7 @@ export class WorldEditorModal {
             });
         }
         this.editorEl.innerHTML = `
-            <div class="world-entry-form">
+            <div class="world-entry-form${animateEditorEntry ? ' is-entering' : ''}">
                 <div class="world-entry-card${blockVariableStatus.hasVariable ? ' has-variable-condition' : ''}${blockVariableStatus.isActive ? ' is-variable-active' : ''}">
                     ${blockVariableStatus.hasVariable ? `
                         <div class="world-entry-variable-state ${blockVariableStatus.isActive ? 'is-active' : 'is-configured'}">
@@ -3696,8 +3776,8 @@ export class WorldEditorModal {
                     </div>
 
                     <div class="world-content-title">内容</div>
-                    <div class="world-block-overlay ${blockExpanded ? 'show' : ''}" id="we-block-overlay"></div>
-                    <div class="world-flip-card world-content-card ${blockFlipped ? 'is-flipped' : ''} ${blockExpanded ? 'is-expanded' : ''}" id="we-block-shell">
+                    <div class="world-block-overlay ${blockExpanded ? 'show' : ''}${blockExpandEntering ? ' is-entering' : ''}" id="we-block-overlay"></div>
+                    <div class="world-flip-card world-content-card ${blockFlipped ? 'is-flipped' : ''} ${blockExpanded ? 'is-expanded' : ''}${blockExpandEntering ? ' is-entering' : ''}" id="we-block-shell">
                         <button type="button" class="world-block-corner-btn" id="we-block-corner-btn" aria-label="${blockExpanded ? '翻转' : '展开'}">
                             ${blockExpanded ? BLOCK_FLIP_ICON_SVG : BLOCK_EXPAND_ICON_SVG}
                         </button>
@@ -3792,7 +3872,8 @@ export class WorldEditorModal {
 
                 <details class="world-entry-advanced">
                     <summary>高级设置</summary>
-                    <div class="world-entry-advanced-body">
+                    <div class="world-entry-advanced-clip">
+                      <div class="world-entry-advanced-body">
                         <div class="world-entry-group">
                             <div class="world-entry-group-title">关键词与角色</div>
                             <div class="world-entry-grid world-entry-grid-2">
@@ -3877,6 +3958,7 @@ export class WorldEditorModal {
                             <label style="margin-top:6px;">扫描深度覆盖（scanDepth，可空）</label>
                             <input type="number" id="we-scanDepth" min="0" max="1000" value="${entry.scanDepth ?? ''}" placeholder="留空使用全局设置">
                         </div>
+                      </div>
                     </div>
                 </details>
 
@@ -3888,6 +3970,28 @@ export class WorldEditorModal {
         `;
 
         const q = (sel) => this.editorEl.querySelector(sel);
+        const advancedDetails = q('.world-entry-advanced');
+        const advancedSummary = advancedDetails?.querySelector('summary');
+        const advancedClip = q('.world-entry-advanced-clip');
+        if (advancedDetails && advancedSummary && advancedClip) {
+            advancedSummary.setAttribute('aria-expanded', 'false');
+            advancedSummary.addEventListener('click', (event) => {
+                event.preventDefault();
+                const shouldOpen = !advancedDetails.classList.contains('is-expanded');
+                advancedDetails.classList.toggle('is-expanded', shouldOpen);
+                advancedSummary.setAttribute('aria-expanded', shouldOpen ? 'true' : 'false');
+                if (shouldOpen) {
+                    advancedClip.style.display = 'none';
+                    advancedDetails.open = true;
+                }
+                setWorldDisclosureState(advancedClip, shouldOpen, {
+                    duration: 340,
+                    onFinish: () => {
+                        if (!shouldOpen) advancedDetails.open = false;
+                    },
+                });
+            });
+        }
         const markRefDirty = () => {
             if (this.refMode) this.scheduleRefSync();
         };
