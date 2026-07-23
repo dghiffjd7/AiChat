@@ -38,6 +38,9 @@ export const appendStandardMessageLayoutCore = ({
 } = {}) => {
   const timeEl = createMessageTimeElement(documentLike, message?.time || '');
   if (isUser) {
+    const useUserActions =
+      (uiMode === 'rp' || uiMode === 'chat') &&
+      message?.role === 'user';
     const contentWrap = documentLike.createElement('div');
     contentWrap.className = 'chat-message-stack';
     contentWrap.style.cssText =
@@ -46,6 +49,15 @@ export const appendStandardMessageLayoutCore = ({
 
     const timeRow = documentLike.createElement('div');
     timeRow.className = 'chat-time-row';
+    if (useUserActions) {
+      wrapper.classList?.add?.('has-rp-message-actions');
+      const actions = createRpMessageActionsElement({
+        documentLike,
+        message,
+        kind: 'user',
+      });
+      if (actions) timeRow.appendChild?.(actions);
+    }
     const statusEl = documentLike.createElement('span');
     statusEl.className = 'chat-delivery-status';
     if (message?.status !== 'pending' && message?.status !== 'sending') {
@@ -70,8 +82,15 @@ export const appendStandardMessageLayoutCore = ({
     uiMode === 'rp' &&
     message?.role === 'assistant' &&
     !message?.meta?.isGreeting;
+  if (
+    uiMode === 'rp' &&
+    message?.role === 'assistant' &&
+    message?.meta?.isGreeting === true
+  ) {
+    wrapper.classList?.add?.('is-rp-greeting-message');
+  }
   if (useRpAssistantChrome) {
-    wrapper.classList?.add?.('has-rp-message-chrome');
+    wrapper.classList?.add?.('has-rp-message-chrome', 'has-rp-message-actions');
     const header = documentLike.createElement('div');
     header.className = 'rp-message-header';
 
@@ -106,7 +125,23 @@ export const appendStandardMessageLayoutCore = ({
   }
   contentWrap.appendChild?.(bubbleStack);
 
-  contentWrap.appendChild?.(timeEl);
+  const useChatAssistantActions =
+    uiMode === 'chat' &&
+    message?.role === 'assistant';
+  if (useChatAssistantActions) {
+    wrapper.classList?.add?.('has-rp-message-actions');
+    const footer = documentLike.createElement('div');
+    footer.className = 'chat-time-row is-assistant';
+    footer.appendChild?.(timeEl);
+    const actions = createRpMessageActionsElement({
+      documentLike,
+      message,
+    });
+    if (actions) footer.appendChild?.(actions);
+    contentWrap.appendChild?.(footer);
+  } else {
+    contentWrap.appendChild?.(timeEl);
+  }
   wrapper.appendChild?.(avatarImg);
   wrapper.appendChild?.(contentWrap);
   return wrapper;
@@ -123,7 +158,7 @@ export const scheduleSelectionModeApplyCore = ({
   if (!selectionMode || !messageId) return false;
   schedule(() => {
     try {
-      const wrapper = scrollEl?.querySelector?.(`[data-msg-id="${messageId}"]`);
+      const wrapper = scrollEl?.querySelector?.(`[data-msg-id="${messageId}"][data-role]`);
       if (wrapper) markWrapperSelectable?.(wrapper, messageId);
       setSelectionBarVisible?.(true);
     } catch {}

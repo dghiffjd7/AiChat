@@ -94,10 +94,8 @@ const createFakeDocument = () => ({
       return 'agent-sidecar';
     },
     buildReactionSummaryElement: () => 'summary',
-    createReactionTriggerButton: (_message, options) => {
-      calls.push(['reaction-btn', options.isThreadingEnabled]);
-      options.onShowPicker?.('btn', { id: 'm1' });
-      return 'button';
+    createReactionTriggerButton: () => {
+      throw new Error('assistant messages should not build the hover reaction trigger');
     },
     buildBubbleStack: payload => {
       calls.push(['stack', payload.isUser, payload.messageSidecarEl, payload.reactionSummaryEl, payload.reactionButton]);
@@ -125,12 +123,41 @@ const createFakeDocument = () => ({
     ['wrapper', 'm1', false],
     ['bubble', 'm1', 'chat:1', bubble],
     ['sidecar', 'm1'],
-    ['reaction-btn', true],
-    ['show-picker', 'btn', 'm1'],
-    ['stack', false, 'agent-sidecar', 'summary', 'button'],
+    ['stack', false, 'agent-sidecar', 'summary', null],
     ['layout', standardWrapper, avatar, bubbleStack, 'chat'],
     ['bind', standardWrapper, 'm1'],
     ['selection', true, 'm1'],
   ]);
-  console.log('ok - buildMessageElementCore orchestrates standard message wrapper bubble reactions layout binding and selection scheduling');
+  console.log('ok - buildMessageElementCore omits the assistant hover reaction trigger while keeping reaction summaries');
+}
+
+{
+  let reactionButton = null;
+  buildMessageElementCore({
+    message: { id: 'u1', role: 'user', type: 'text', content: 'hello' },
+    resolveActiveSwipeMessage: value => value,
+    resolveMessageSessionId: () => 'chat:1',
+    createMessageId: () => 'generated',
+    createStandardMessageWrapper: () => ({ kind: 'user-wrapper' }),
+    createMessageAvatarImage: () => ({ kind: 'avatar' }),
+    defaultAvatar: '/default.png',
+    documentLike: createFakeDocument(),
+    createBubble: () => ({ kind: 'bubble' }),
+    renderMessageBubbleContent() {},
+    buildReactionSummaryElement: () => null,
+    createReactionTriggerButton: (_message, options) => {
+      assert.equal(options.isThreadingEnabled, true);
+      return 'user-reaction-button';
+    },
+    buildBubbleStack: payload => {
+      reactionButton = payload.reactionButton;
+      return { kind: 'bubble-stack' };
+    },
+    appendStandardMessageLayout() {},
+    isThreadingEnabledForMessage: () => true,
+    getUiMode: () => 'chat',
+    bindMessageContextInteractions: ({ wrapper }) => wrapper,
+  });
+  assert.equal(reactionButton, 'user-reaction-button');
+  console.log('ok - buildMessageElementCore keeps the user reaction trigger available');
 }

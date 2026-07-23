@@ -103,6 +103,33 @@ const createFakeDocument = () => {
   const wrapper = documentLike.createElement('div');
   const avatar = documentLike.createElement('img');
   const bubbleStack = documentLike.createElement('div');
+  appendStandardMessageLayoutCore({
+    documentLike,
+    wrapper,
+    avatarImg: avatar,
+    bubbleStack,
+    message: { id: 'u1', role: 'user', time: '10:05', status: 'sent', meta: {} },
+    isUser: true,
+    uiMode: 'rp',
+  });
+  assert.equal(wrapper.className.includes('has-rp-message-actions'), true);
+  const timeRow = wrapper.children[0].children[1];
+  const actions = timeRow.children[0];
+  assert.equal(actions.className.includes('is-user'), true);
+  assert.equal(timeRow.children[1].className, 'chat-delivery-status');
+  assert.equal(timeRow.children[2].className, 'QQ_chat_time');
+  assert.deepEqual(
+    actions.children[0].children.map(button => button.dataset.rpMessageAction),
+    ['copy', 'edit'],
+  );
+  console.log('ok - creative user actions stay left of the right-aligned delivery metadata');
+}
+
+{
+  const documentLike = createFakeDocument();
+  const wrapper = documentLike.createElement('div');
+  const avatar = documentLike.createElement('img');
+  const bubbleStack = documentLike.createElement('div');
   const swipeIndicator = documentLike.createElement('div');
   appendStandardMessageLayoutCore({
     documentLike,
@@ -117,6 +144,7 @@ const createFakeDocument = () => {
   });
   assert.equal(wrapper.children.length, 2);
   assert.equal(wrapper.className.includes('has-rp-message-chrome'), true);
+  assert.equal(wrapper.className.includes('has-rp-message-actions'), true);
   const contentWrap = wrapper.children[1];
   const header = contentWrap.children[0];
   assert.equal(header.className, 'rp-message-header');
@@ -154,6 +182,7 @@ const createFakeDocument = () => {
     },
   });
   assert.equal(wrapper.className.includes('has-rp-message-chrome'), false);
+  assert.equal(wrapper.className.includes('is-rp-greeting-message'), true);
   const contentWrap = wrapper.children[1];
   assert.equal(contentWrap.children[0].className, 'QQ_chat_name');
   assert.equal(contentWrap.children[1], bubbleStack);
@@ -174,14 +203,51 @@ const createFakeDocument = () => {
     message: { role: 'assistant', name: 'Bot', time: '11:20', meta: { showName: true } },
     isUser: false,
     uiMode: 'chat',
+    createSwipeIndicatorElement: () => {
+      throw new Error('ordinary chat quick actions must not build a swipe indicator');
+    },
     resolveRpCharacterName: () => 'should not be used',
   });
   const contentWrap = wrapper.children[1];
   assert.equal(wrapper.className.includes('has-rp-message-chrome'), false);
+  assert.equal(wrapper.className.includes('has-rp-message-actions'), true);
   assert.equal(contentWrap.children[0].textContent, 'Bot');
   assert.equal(contentWrap.children[1], bubbleStack);
-  assert.equal(contentWrap.children[2].textContent, '11:20');
-  console.log('ok - appendStandardMessageLayoutCore does not change ordinary chat assistant messages');
+  const footer = contentWrap.children[2];
+  assert.equal(footer.className.includes('is-assistant'), true);
+  assert.equal(footer.children[0].textContent, '11:20');
+  const actions = footer.children[1];
+  assert.equal(actions.children.length, 1);
+  assert.deepEqual(
+    actions.children[0].children.map(button => button.dataset.rpMessageAction),
+    ['regenerate', 'view-code', 'copy'],
+  );
+  console.log('ok - ordinary chat assistant messages expose quick actions without swipe controls');
+}
+
+{
+  const documentLike = createFakeDocument();
+  const wrapper = documentLike.createElement('div');
+  const avatar = documentLike.createElement('img');
+  const bubbleStack = documentLike.createElement('div');
+  appendStandardMessageLayoutCore({
+    documentLike,
+    wrapper,
+    avatarImg: avatar,
+    bubbleStack,
+    message: { id: 'chat-user', role: 'user', time: '11:30', status: 'sent', meta: {} },
+    isUser: true,
+    uiMode: 'chat',
+  });
+  assert.equal(wrapper.className.includes('has-rp-message-actions'), true);
+  const timeRow = wrapper.children[0].children[1];
+  assert.deepEqual(
+    timeRow.children[0].children[0].children.map(button => button.dataset.rpMessageAction),
+    ['copy', 'edit'],
+  );
+  assert.equal(timeRow.children[1].className, 'chat-delivery-status');
+  assert.equal(timeRow.children[2].className, 'QQ_chat_time');
+  console.log('ok - ordinary chat user messages share copy and edit quick actions');
 }
 
 {
@@ -191,7 +257,7 @@ const createFakeDocument = () => {
   const wrapper = { id: 'wrapper' };
   const scrollEl = {
     querySelector(selector) {
-      return selector === '[data-msg-id="m-select"]' ? wrapper : null;
+      return selector === '[data-msg-id="m-select"][data-role]' ? wrapper : null;
     },
   };
   const scheduledOk = scheduleSelectionModeApplyCore({

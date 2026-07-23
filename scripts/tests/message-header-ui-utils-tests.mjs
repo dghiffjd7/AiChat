@@ -71,14 +71,40 @@ const createFakeDocument = () => {
         get: () => innerHtml,
         set: (value) => {
           innerHtml = String(value || '');
+          this.children.forEach((child) => {
+            child.parentNode = null;
+          });
           this.children = [];
         },
       });
+      Object.defineProperty(this, 'parentElement', {
+        get: () => this.parentNode,
+      });
     }
     appendChild(child) {
+      child.parentNode?.removeChild?.(child);
       this.children.push(child);
       child.parentNode = this;
       return child;
+    }
+    insertBefore(child, reference) {
+      if (!reference) return this.appendChild(child);
+      const referenceIndex = this.children.indexOf(reference);
+      if (referenceIndex < 0) return this.appendChild(child);
+      child.parentNode?.removeChild?.(child);
+      this.children.splice(referenceIndex, 0, child);
+      child.parentNode = this;
+      return child;
+    }
+    removeChild(child) {
+      const index = this.children.indexOf(child);
+      if (index < 0) return child;
+      this.children.splice(index, 1);
+      child.parentNode = null;
+      return child;
+    }
+    remove() {
+      this.parentNode?.removeChild?.(this);
     }
     addEventListener(type, handler) {
       this.listeners.set(type, handler);
@@ -121,6 +147,7 @@ const createRuntime = (overrides = {}) => {
   const actionCalls = overrides.actionCalls || [];
   const scrollCalls = overrides.scrollCalls || [];
   const greetingCalls = overrides.greetingCalls || [];
+  const greetingSheetCalls = overrides.greetingSheetCalls || [];
   const bridge =
     overrides.bridge || {
       activeSessionId: 'session-rp',
@@ -140,6 +167,7 @@ const createRuntime = (overrides = {}) => {
     actionCalls,
     scrollCalls,
     greetingCalls,
+    greetingSheetCalls,
     runtime: createMessageHeaderUiRuntime({
       documentLike,
       appSettings: overrides.appSettings || {
@@ -161,6 +189,7 @@ const createRuntime = (overrides = {}) => {
       getDefaultReplyAvatar: overrides.getDefaultReplyAvatar || (() => 'reply-fallback.png'),
       getBridge: overrides.getBridge || (() => bridge),
       getUiMode: overrides.getUiMode || (() => documentLike.body.dataset.uiMode || ''),
+      openRpGreetingSheet: overrides.openRpGreetingSheet || (() => greetingSheetCalls.push('open')),
       onAction: overrides.onAction || (async (...args) => {
         actionCalls.push(args);
         return false;
@@ -218,20 +247,24 @@ const createRuntime = (overrides = {}) => {
 }
 
 {
-  const { runtime, documentLike, greetingCalls } = createRuntime();
+  const { runtime, documentLike, greetingSheetCalls } = createRuntime();
   documentLike.body.dataset.uiMode = 'rp';
   const el = runtime.buildGreetingSwitch({
     sessionId: 'session-rp',
     meta: { isGreeting: true },
   });
-  assert.equal(el.className, 'rp-greeting-switch');
-  const select = el.querySelector('select');
-  const button = el.querySelector('button');
-  assert.equal(button.boundFallback, '选择开场白');
-  select.value = 'greeting-2';
-  select.emit('change');
-  assert.deepEqual(greetingCalls, [['greeting-2', 'session-rp']]);
-  console.log('ok - buildGreetingSwitch renders selector and forwards greeting changes');
+  assert.equal(el.className, 'rp-greeting-switch rp-greeting-card-header');
+  assert.equal(el.querySelector('.rp-greeting-card-seal').textContent, '序');
+  assert.equal(el.querySelector('.rp-greeting-card-kicker').textContent, '序　幕');
+  assert.equal(el.querySelector('.rp-greeting-card-title').textContent, '默认开场白');
+  const button = el.querySelector('.rp-greeting-card-change');
+  assert.equal(button.textContent, '更换');
+  button.emit('click', {
+    preventDefault() {},
+    stopPropagation() {},
+  });
+  assert.deepEqual(greetingSheetCalls, ['open']);
+  console.log('ok - buildGreetingSwitch renders the opening-card masthead and opens the full greeting sheet');
 }
 
 {
@@ -252,7 +285,12 @@ const createRuntime = (overrides = {}) => {
   const bubble = documentLike.createElement('div');
   const content = runtime.prepareTextContainer(bubble, message);
   assert.equal(content.className, 'chat-message-content');
-  assert.equal(bubble.children.length, 4);
+  assert.equal(bubble.children.length, 5);
+  assert.equal(bubble.children[1].className, 'rp-greeting-switch rp-greeting-card-header');
+  assert.equal(bubble.children[2].className, 'chat-reasoning');
+  assert.equal(bubble.children[3], content);
+  assert.equal(bubble.children[4].className, 'rp-greeting-card-footer');
+  assert.equal(bubble.children[4].textContent, '—— 幕 启 ——');
   const replyButton = bubble.children[0];
   await replyButton.emit('click', {
     preventDefault() {},
@@ -274,6 +312,7 @@ const createRuntime = (overrides = {}) => {
   };
   const bubble = documentLike.createElement('div');
   const firstContent = runtime.prepareTextContainer(bubble, message);
+  const firstReasoning = bubble.children[0];
   firstContent.textContent = 'rendered body';
   const secondContent = runtime.prepareTextContainer(bubble, {
     meta: {
@@ -283,9 +322,19 @@ const createRuntime = (overrides = {}) => {
   assert.equal(secondContent, firstContent);
   assert.equal(secondContent.textContent, 'rendered body');
   assert.equal(bubble.children.length, 2);
-  assert.equal(bubble.children[0].className, 'chat-reasoning');
+  assert.equal(bubble.children[0], firstReasoning);
+  assert.equal(firstReasoning.open, true);
+  assert.equal(firstReasoning.children[1].textContent, 'updated chain');
   assert.equal(bubble.children[1], firstContent);
-  console.log('ok - prepareTextContainer reuses existing body node while rebuilding message headers');
+  firstReasoning.open = false;
+  runtime.prepareTextContainer(bubble, {
+    meta: {
+      reasoning: 'closing should survive the next stream frame',
+      reasoningExpanded: true,
+    },
+  });
+  assert.equal(firstReasoning.open, false);
+  console.log('ok - prepareTextContainer keeps the reasoning disclosure stable while streaming updates its text');
 }
 
 {

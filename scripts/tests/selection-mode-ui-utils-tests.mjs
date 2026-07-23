@@ -62,6 +62,13 @@ const createFakeDocument = () => {
 
 const createFakeScrollEl = (wrappers) => ({
   querySelectorAll(selector) {
+    if (selector === '[data-msg-id][data-role]') {
+      return wrappers.filter(
+        wrapper =>
+          String(wrapper?.dataset?.msgId || '') !== ''
+          && String(wrapper?.dataset?.role || '') !== '',
+      );
+    }
     if (selector === '[data-msg-id]') {
       return wrappers.filter(wrapper => String(wrapper?.dataset?.msgId || '') !== '');
     }
@@ -73,10 +80,14 @@ const createFakeScrollEl = (wrappers) => ({
     return [];
   },
   querySelector(selector) {
-    const match = /^\[data-msg-id="(.+)"\]$/.exec(String(selector || ''));
+    const match = /^\[data-msg-id="(.+)"\](\[data-role\])?$/.exec(String(selector || ''));
     if (!match) return null;
-    const [, id] = match;
-    return wrappers.find(wrapper => String(wrapper?.dataset?.msgId || '') === id) || null;
+    const [, id, requiresRole] = match;
+    return wrappers.find(
+      wrapper =>
+        String(wrapper?.dataset?.msgId || '') === id
+        && (!requiresRole || String(wrapper?.dataset?.role || '') !== ''),
+    ) || null;
   },
 });
 
@@ -124,6 +135,7 @@ const createFakeScrollEl = (wrappers) => ({
   });
   const wrapper = documentLike.createElement('div');
   wrapper.dataset.msgId = 'm2';
+  wrapper.dataset.role = 'assistant';
   runtime.markWrapperSelectable(wrapper, 'm2');
   assert.equal(wrapper.classList.contains('chat-selectable'), true);
   assert.equal(wrapper.__chatappSelectDot.textContent, '✓');
@@ -133,6 +145,25 @@ const createFakeScrollEl = (wrappers) => ({
   });
   assert.deepEqual(toggles, ['m2']);
   console.log('ok - markWrapperSelectable adds selection dot and forwards selection toggles');
+}
+
+{
+  const documentLike = createFakeDocument();
+  const runtime = createSelectionModeUiRuntime({
+    documentLike,
+    getSelectionMode: () => true,
+    getSelectedMessageIds: () => new Set(),
+    onExitSelectionMode: () => {},
+    onDeleteSelected: () => {},
+    onToggleMessageSelection: () => {},
+    toastInfo: () => {},
+  });
+  const actionsRow = documentLike.createElement('div');
+  actionsRow.dataset.msgId = 'm2';
+  runtime.markWrapperSelectable(actionsRow, 'm2');
+  assert.equal(actionsRow.classList.contains('chat-selectable'), false);
+  assert.equal(actionsRow.__chatappSelectDot, undefined);
+  console.log('ok - markWrapperSelectable rejects nested RP controls that share a message id but have no role');
 }
 
 {
@@ -178,7 +209,9 @@ const createFakeScrollEl = (wrappers) => ({
     wrapper.dataset.role = 'assistant';
     return wrapper;
   });
-  const scrollEl = createFakeScrollEl(wrappers);
+  const actionsRow = documentLike.createElement('div');
+  actionsRow.dataset.msgId = 'm2';
+  const scrollEl = createFakeScrollEl([...wrappers, actionsRow]);
   runtime.enterSelectionMode({
     initialMsgId: 'm2',
     scrollEl,
@@ -195,6 +228,7 @@ const createFakeScrollEl = (wrappers) => ({
   assert.deepEqual([...selected], ['m2']);
   assert.deepEqual(visibleCalls, [true, true]);
   assert.equal(wrappers.every(wrapper => wrapper.classList.contains('chat-selectable')), true);
+  assert.equal(actionsRow.classList.contains('chat-selectable'), false);
   console.log('ok - enterSelectionMode seeds selection state and marks existing wrappers selectable');
 }
 

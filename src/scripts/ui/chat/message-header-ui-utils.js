@@ -51,12 +51,11 @@ export const resolveReasoningOpenState = (message, { appSettings } = {}) => {
 export const createMessageHeaderUiRuntime = ({
   documentLike,
   appSettings,
-  createCustomSelectWrapper,
-  bindCustomSelectButton,
   normalizeReplyTarget,
   getDefaultReplyAvatar,
   getBridge,
   getUiMode,
+  openRpGreetingSheet,
   onAction,
   scrollToMessage,
   resolveMessageSessionId,
@@ -69,89 +68,117 @@ export const createMessageHeaderUiRuntime = ({
     resolveReasoningOpenState(message) {
       return resolveReasoningOpenState(message, { appSettings });
     },
-    buildReasoningElement(message) {
+    syncReasoningElement(details, message) {
       const meta = message?.meta;
       if (!meta || typeof meta !== 'object' || !documentLike?.createElement) return null;
       const text = getReasoningText(message);
       const label = String(meta.reasoningLabel || '').trim() || '推理';
       if (!text) return null;
-      const details = documentLike.createElement('details');
-      details.className = 'chat-reasoning';
-      if (meta.reasoningHidden === true) details.dataset.hidden = '1';
-      details.open = runtime.resolveReasoningOpenState(message);
-      const summary = documentLike.createElement('summary');
-      summary.className = 'chat-reasoning-summary';
+      const reasoningEl = details || documentLike.createElement('details');
+      const isNew = !details;
+      reasoningEl.className = 'chat-reasoning';
+      if (meta.reasoningHidden === true) reasoningEl.dataset.hidden = '1';
+      else delete reasoningEl.dataset.hidden;
+      reasoningEl.__chatappReasoningMessage = message;
+      let summary = reasoningEl.querySelector?.('.chat-reasoning-summary') || null;
+      if (!summary) {
+        summary = documentLike.createElement('summary');
+        summary.className = 'chat-reasoning-summary';
+        reasoningEl.appendChild(summary);
+      }
       summary.textContent = label;
-      const content = documentLike.createElement('div');
-      content.className = 'chat-reasoning-content';
+      let content = reasoningEl.querySelector?.('.chat-reasoning-content') || null;
+      if (!content) {
+        content = documentLike.createElement('div');
+        content.className = 'chat-reasoning-content';
+        reasoningEl.appendChild(content);
+      }
       content.textContent = text;
-      details.appendChild(summary);
-      details.appendChild(content);
-      details.addEventListener('toggle', () => {
-        const host =
-          typeof details.closest === 'function'
-            ? details.closest('.QQ_chat_charmsg, .QQ_chat_mymsg')
-            : null;
-        const targetMessage =
-          host?.__chatappMessage && typeof host.__chatappMessage === 'object'
-            ? host.__chatappMessage
-            : message;
-        if (!targetMessage || typeof targetMessage !== 'object') return;
-        if (!targetMessage.meta || typeof targetMessage.meta !== 'object') targetMessage.meta = {};
-        targetMessage.meta.reasoningExpanded = details.open === true;
-        targetMessage.meta.reasoningCollapsed = details.open !== true;
-      });
-      return details;
+      if (isNew) {
+        reasoningEl.open = runtime.resolveReasoningOpenState(message);
+      }
+      if (isNew) {
+        reasoningEl.addEventListener('toggle', () => {
+          const host =
+            typeof reasoningEl.closest === 'function'
+              ? reasoningEl.closest('.QQ_chat_charmsg, .QQ_chat_mymsg')
+              : null;
+          const fallbackMessage = reasoningEl.__chatappReasoningMessage;
+          const targetMessage =
+            host?.__chatappMessage && typeof host.__chatappMessage === 'object'
+              ? host.__chatappMessage
+              : fallbackMessage;
+          if (!targetMessage || typeof targetMessage !== 'object') return;
+          if (!targetMessage.meta || typeof targetMessage.meta !== 'object') targetMessage.meta = {};
+          targetMessage.meta.reasoningExpanded = reasoningEl.open === true;
+          targetMessage.meta.reasoningCollapsed = reasoningEl.open !== true;
+        });
+      }
+      return reasoningEl;
+    },
+    buildReasoningElement(message) {
+      return runtime.syncReasoningElement(null, message);
     },
     buildGreetingSwitch(message) {
       const meta = message?.meta;
       if (!meta || meta.isGreeting !== true || !documentLike?.createElement) return null;
       if (String(getUiMode?.() || '').trim() !== 'rp') return null;
       const bridge = getBridge?.();
-      if (!bridge?.getRpGreetingState || !bridge?.setRpGreeting) return null;
+      if (!bridge?.getRpGreetingState) return null;
       const activeSessionId = bridge.getActiveSessionId?.();
       const state = bridge.getRpGreetingState(activeSessionId || message?.sessionId);
       const list = Array.isArray(state?.greetings) ? state.greetings : [];
-      if (list.length <= 1) return null;
+      const activeId = String(state?.activeId || meta.greetingId || '').trim();
+      const active = list.find(item => String(item?.id || '').trim() === activeId) || list[0] || null;
+      const titleText = String(active?.title || meta.greetingTitle || '开场白').trim() || '开场白';
 
       const wrap = documentLike.createElement('div');
-      wrap.className = 'rp-greeting-switch';
-      const label = documentLike.createElement('span');
-      label.className = 'rp-greeting-switch-label';
-      label.textContent = '开场白';
-      const select = documentLike.createElement('select');
-      select.className = 'rp-greeting-switch-select';
-      list.forEach((g, idx) => {
-        const opt = documentLike.createElement('option');
-        opt.value = g.id;
-        opt.textContent = g.title || `开场白 ${idx + 1}`;
-        select.appendChild(opt);
+      wrap.className = 'rp-greeting-switch rp-greeting-card-header';
+
+      const changeButton = documentLike.createElement('button');
+      changeButton.type = 'button';
+      changeButton.className = 'rp-greeting-card-change';
+      changeButton.textContent = '更换';
+      changeButton.setAttribute?.('aria-label', '更换开场白');
+      changeButton.addEventListener?.('click', (event) => {
+        event?.preventDefault?.();
+        event?.stopPropagation?.();
+        openRpGreetingSheet?.({ message, state });
       });
-      const activeId = String(state?.activeId || '').trim();
-      if (activeId) select.value = activeId;
-      select.disabled = state?.locked === true;
-      select.addEventListener('change', () => {
-        const nextId = String(select.value || '').trim();
-        if (!nextId) return;
-        bridge.setRpGreeting?.(nextId, state?.sessionId || activeSessionId);
-      });
-      wrap.appendChild(label);
-      const selectWrap = createCustomSelectWrapper?.(select, {
-        placeholder: '选择开场白',
-        wrapperStyle: 'min-width:160px;',
-        buttonStyle: 'min-width:160px;',
-      });
-      if (selectWrap) {
-        const button = selectWrap.querySelector?.('button');
-        bindCustomSelectButton?.({
-          buttonEl: button,
-          selectEl: select,
-          fallback: '选择开场白',
-        });
-        wrap.appendChild(selectWrap);
-      } else {
-        wrap.appendChild(select);
+      wrap.appendChild(changeButton);
+
+      const ornament = documentLike.createElement('div');
+      ornament.className = 'rp-greeting-card-ornament';
+      const lineBefore = documentLike.createElement('span');
+      lineBefore.className = 'rp-greeting-card-line';
+      const seal = documentLike.createElement('span');
+      seal.className = 'rp-greeting-card-seal';
+      seal.textContent = '序';
+      const lineAfter = documentLike.createElement('span');
+      lineAfter.className = 'rp-greeting-card-line is-after';
+      ornament.appendChild(lineBefore);
+      ornament.appendChild(seal);
+      ornament.appendChild(lineAfter);
+      wrap.appendChild(ornament);
+
+      const kicker = documentLike.createElement('div');
+      kicker.className = 'rp-greeting-card-kicker';
+      kicker.textContent = '序　幕';
+      wrap.appendChild(kicker);
+
+      const title = documentLike.createElement('div');
+      title.className = 'rp-greeting-card-title';
+      title.textContent = titleText;
+      wrap.appendChild(title);
+
+      const diamonds = documentLike.createElement('div');
+      diamonds.className = 'rp-greeting-card-diamonds';
+      for (let index = 0; index < 3; index += 1) {
+        const diamond = documentLike.createElement('span');
+        if (index === 1) diamond.className = 'is-accent';
+        diamonds.appendChild(diamond);
       }
+      wrap.appendChild(diamonds);
       return wrap;
     },
     buildReplyPreviewElement(message) {
@@ -196,17 +223,33 @@ export const createMessageHeaderUiRuntime = ({
       if (!bubble) return bubble;
       const replyEl = runtime.buildReplyPreviewElement(message);
       const greetingEl = runtime.buildGreetingSwitch(message);
-      const reasoningEl = runtime.buildReasoningElement(message);
+      const greetingFooter = greetingEl ? documentLike.createElement('div') : null;
+      if (greetingFooter) {
+        greetingFooter.className = 'rp-greeting-card-footer';
+        greetingFooter.textContent = '—— 幕 启 ——';
+      }
+      const existingReasoning = Array.from(bubble.children || [])
+        .find(child => String(child?.className || '').split(/\s+/).includes('chat-reasoning')) || null;
+      const reasoningEl = runtime.syncReasoningElement(existingReasoning, message);
       if (!replyEl && !greetingEl && !reasoningEl) return bubble;
       const existingContent = Array.from(bubble.children || [])
         .find(child => String(child?.className || '').split(/\s+/).includes('chat-message-content')) || null;
-      bubble.innerHTML = '';
-      if (replyEl) bubble.appendChild(replyEl);
-      if (greetingEl) bubble.appendChild(greetingEl);
-      if (reasoningEl) bubble.appendChild(reasoningEl);
       const content = existingContent || documentLike.createElement('div');
       content.className = 'chat-message-content';
-      bubble.appendChild(content);
+      const retained = new Set([reasoningEl, content].filter(Boolean));
+      Array.from(bubble.children || []).forEach((child) => {
+        if (retained.has(child)) return;
+        if (typeof child?.remove === 'function') child.remove();
+        else bubble.removeChild?.(child);
+      });
+      if (content.parentNode !== bubble) bubble.appendChild(content);
+      if (reasoningEl && reasoningEl.parentNode !== bubble) {
+        bubble.insertBefore?.(reasoningEl, content);
+      }
+      const headerAnchor = reasoningEl || content;
+      if (replyEl) bubble.insertBefore?.(replyEl, headerAnchor);
+      if (greetingEl) bubble.insertBefore?.(greetingEl, headerAnchor);
+      if (greetingFooter) bubble.appendChild?.(greetingFooter);
       return content;
     },
   };

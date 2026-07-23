@@ -105,11 +105,17 @@ export const buildContextMenuActions = (message, {
     if (message?.status === 'pending') {
       actions.push({ key: 'send-to-here', label: '发送到这里', group: 'main' });
     }
-    actions.push({ key: 'copy-text', label: '复制', group: 'main' });
+    if (hasRpMessageActions !== true) {
+      actions.push({ key: 'copy-text', label: '复制', group: 'main' });
+    }
     if (message?.status !== 'pending' && message?.status !== 'sending' && !message?.meta?.generatedByAssistant) {
       actions.push({ key: 'regenerate', label: '重新生成', group: 'main' });
     }
-    if (message?.status !== 'pending' && message?.status !== 'sending') {
+    if (
+      hasRpMessageActions !== true &&
+      message?.status !== 'pending' &&
+      message?.status !== 'sending'
+    ) {
       actions.push({ key: 'edit', label: '编辑', group: 'main' });
     }
     actions.push({ key: 'delete', label: '删除', group: 'danger', tone: 'danger' });

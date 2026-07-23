@@ -1,0 +1,2012 @@
+/* 创意写作与共享聊天阅读视觉层：参考 rpg-app-interface-optimization。 */
+
+.rp-reading-settings-btn {
+  display: none;
+}
+
+body[data-ui-mode='rp'] #chat-room .chat-room-topbar {
+  min-height: 60px;
+  justify-content: flex-start;
+  gap: 8px;
+  padding: 0 max(14px, calc((100% - 768px) / 2));
+  border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+  background: color-mix(in srgb, var(--app-surface-card) 75%, transparent);
+  -webkit-backdrop-filter: blur(16px);
+  backdrop-filter: blur(16px);
+}
+
+body[data-ui-mode='rp'] #chat-room .chat-back-btn {
+  display: none;
+}
+
+body[data-ui-mode='rp'] #chat-room .chat-room-avatar-button {
+  position: relative;
+  width: 40px;
+  height: 40px;
+  display: inline-flex;
+  flex: 0 0 40px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+body[data-ui-mode='rp'] #chat-room .chat-room-avatar-button::after {
+  content: '';
+  position: absolute;
+  right: -1px;
+  bottom: -1px;
+  width: 10px;
+  height: 10px;
+  border: 2px solid rgba(255, 255, 255, 0.96);
+  border-radius: 50%;
+  background: #34c759;
+  pointer-events: none;
+}
+
+body[data-ui-mode='rp'] #chat-room .chat-room-avatar {
+  width: 100%;
+  height: 100%;
+  display: block;
+  box-sizing: border-box;
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  border-radius: 50%;
+  object-fit: cover;
+  background: var(--app-surface-subtle);
+  box-shadow:
+    0 1px 2px rgba(16, 24, 40, 0.04),
+    0 10px 30px -14px rgba(16, 24, 40, 0.12);
+}
+
+body[data-ui-mode='rp'] #chat-room .chat-room-heading {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+}
+
+body[data-ui-mode='rp'] #chat-room .chat-room-title {
+  position: static;
+  width: auto;
+  max-width: 100%;
+  transform: none;
+  color: #262626;
+  font-family: 'Noto Serif SC', 'Songti SC', STSong, SimSun, serif;
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  line-height: 1.3;
+  text-align: left;
+  cursor: pointer;
+}
+
+body[data-ui-mode='rp'] #chat-room .chat-room-presence {
+  display: none;
+}
+
+body[data-ui-mode='rp'] #chat-room :is(
+  .rp-reading-settings-btn,
+  .chat-menu-btn,
+  .agent-status-chip
+) {
+  width: 36px;
+  height: 36px;
+  min-width: 36px;
+  max-width: 36px;
+  flex: 0 0 36px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: #a3a3a3;
+  box-shadow: none;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition:
+    color 160ms ease,
+    background-color 160ms ease,
+    transform 120ms ease;
+}
+
+body[data-ui-mode='rp'] #chat-room .rp-reading-settings-btn {
+  display: inline-flex;
+}
+
+body[data-ui-mode='chat'] #chat-room .rp-reading-settings-btn {
+  width: 36px;
+  height: 36px;
+  min-width: 36px;
+  max-width: 36px;
+  display: inline-flex;
+  flex: 0 0 36px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--app-text-muted);
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition:
+    color 160ms ease,
+    background-color 160ms ease,
+    transform 120ms ease;
+}
+
+body[data-ui-mode='rp'] #chat-room .rp-reading-settings-btn svg,
+body[data-ui-mode='chat'] #chat-room .rp-reading-settings-btn svg {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  pointer-events: none;
+}
+
+body[data-ui-mode='chat'] #chat-room .rp-reading-settings-btn:hover,
+body[data-ui-mode='chat'] #chat-room .rp-reading-settings-btn.is-active {
+  background: var(--app-surface-subtle);
+  color: var(--app-text-primary);
+}
+
+body[data-ui-mode='chat'] #chat-room .rp-reading-settings-btn:active {
+  transform: scale(0.88);
+}
+
+body[data-ui-mode='rp'] #chat-room :is(
+  .rp-reading-settings-btn,
+  .chat-menu-btn,
+  .agent-status-chip
+):hover,
+body[data-ui-mode='rp'] #chat-room .rp-reading-settings-btn.is-active {
+  background: var(--app-surface-subtle);
+  color: #525252;
+}
+
+body[data-ui-mode='rp'] #chat-room :is(
+  .rp-reading-settings-btn,
+  .chat-menu-btn,
+  .agent-status-chip
+):active {
+  transform: scale(0.88);
+}
+
+.rp-reading-settings-menu {
+  width: min(248px, calc(100vw - 24px));
+  min-width: 0;
+  box-sizing: border-box;
+  padding: 12px;
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--app-surface-card) 96%, transparent);
+  box-shadow:
+    0 2px 6px rgba(16, 24, 40, 0.06),
+    0 18px 48px -16px rgba(16, 24, 40, 0.22);
+  animation: rp-reading-popover-in 160ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.rp-reading-settings-label {
+  margin: 0 0 7px;
+  color: #a3a3a3;
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.12em;
+}
+
+.rp-narrative-font-label {
+  margin-top: 14px;
+}
+
+.rp-reading-size-options {
+  --rp-reading-option-index: 1;
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 4px;
+  padding: 4px;
+  overflow: hidden;
+  border-radius: 12px;
+  background: var(--app-surface-subtle);
+}
+
+.rp-reading-settings-menu[data-rp-reading-size='compact'] .rp-reading-size-options {
+  --rp-reading-option-index: 0;
+}
+
+.rp-reading-settings-menu[data-rp-reading-size='relaxed'] .rp-reading-size-options {
+  --rp-reading-option-index: 2;
+}
+
+.rp-reading-size-options::before {
+  content: '';
+  position: absolute;
+  top: 4px;
+  bottom: 4px;
+  left: 4px;
+  width: calc((100% - 16px) / 3);
+  border-radius: 8px;
+  background: var(--app-surface-card);
+  box-shadow: 0 1px 3px rgba(16, 24, 40, 0.1);
+  transform: translateX(calc(var(--rp-reading-option-index) * (100% + 4px)));
+  transition: transform 230ms cubic-bezier(0.22, 1, 0.36, 1);
+  pointer-events: none;
+}
+
+.rp-reading-settings-menu .rp-reading-size-options button {
+  position: relative;
+  z-index: 1;
+  min-width: 0;
+  padding: 7px 5px;
+  border-radius: 8px;
+  color: #a3a3a3;
+  font-size: 12px;
+  line-height: 1;
+  text-align: center;
+  transition: color 160ms ease;
+}
+
+.rp-reading-settings-menu .rp-reading-size-options button:hover {
+  background: transparent;
+  color: #525252;
+}
+
+.rp-reading-settings-menu .rp-reading-size-options button.is-active {
+  color: #262626;
+  font-weight: 650;
+}
+
+.rp-narrative-font-options {
+  --rp-narrative-font-index: 0;
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px;
+  padding: 4px;
+  overflow: hidden;
+  border-radius: 12px;
+  background: var(--app-surface-subtle);
+}
+
+.rp-reading-settings-menu[data-rp-narrative-font='sans'] .rp-narrative-font-options {
+  --rp-narrative-font-index: 1;
+}
+
+.rp-narrative-font-options::before {
+  content: '';
+  position: absolute;
+  top: 4px;
+  bottom: 4px;
+  left: 4px;
+  width: calc((100% - 12px) / 2);
+  border-radius: 8px;
+  background: var(--app-surface-card);
+  box-shadow: 0 1px 3px rgba(16, 24, 40, 0.1);
+  transform: translateX(calc(var(--rp-narrative-font-index) * (100% + 4px)));
+  transition: transform 230ms cubic-bezier(0.22, 1, 0.36, 1);
+  pointer-events: none;
+}
+
+.rp-reading-settings-menu .rp-narrative-font-options button {
+  position: relative;
+  z-index: 1;
+  min-width: 0;
+  padding: 7px 4px;
+  border-radius: 8px;
+  color: #a3a3a3;
+  font-size: 11px;
+  line-height: 1.1;
+  text-align: center;
+  white-space: nowrap;
+  transition: color 160ms ease;
+}
+
+.rp-reading-settings-menu .rp-narrative-font-options button:hover {
+  background: transparent;
+  color: #525252;
+}
+
+.rp-reading-settings-menu .rp-narrative-font-options button.is-active {
+  color: #262626;
+  font-weight: 650;
+}
+
+body[data-ui-mode='rp'][data-rp-reading-size='compact']
+  .QQ_chat_charmsg.has-rp-message-chrome
+  .QQ_chat_msgdiv {
+  font-size: calc(13.5px * var(--app-font-scale, 1));
+  line-height: 1.72;
+}
+
+body[data-ui-mode='rp'][data-rp-reading-size='standard']
+  .QQ_chat_charmsg.has-rp-message-chrome
+  .QQ_chat_msgdiv {
+  font-size: calc(14.5px * var(--app-font-scale, 1));
+  line-height: 1.82;
+}
+
+body[data-ui-mode='rp'][data-rp-reading-size='relaxed']
+  .QQ_chat_charmsg.has-rp-message-chrome
+  .QQ_chat_msgdiv {
+  font-size: calc(16px * var(--app-font-scale, 1));
+  line-height: 1.94;
+}
+
+body[data-ui-mode='chat'][data-rp-reading-size='compact']
+  .QQ_chat_charmsg
+  .QQ_chat_msgdiv {
+  font-size: calc(13.5px * var(--app-font-scale, 1));
+  line-height: 1.72;
+}
+
+body[data-ui-mode='chat'][data-rp-reading-size='standard']
+  .QQ_chat_charmsg
+  .QQ_chat_msgdiv {
+  font-size: calc(14.5px * var(--app-font-scale, 1));
+  line-height: 1.82;
+}
+
+body[data-ui-mode='chat'][data-rp-reading-size='relaxed']
+  .QQ_chat_charmsg
+  .QQ_chat_msgdiv {
+  font-size: calc(16px * var(--app-font-scale, 1));
+  line-height: 1.94;
+}
+
+body[data-ui-mode='rp'][data-rp-narrative-font='serif']
+  .QQ_chat_charmsg.has-rp-message-chrome
+  .QQ_chat_msgdiv {
+  font-family: 'Noto Serif SC', 'Songti SC', STSong, SimSun, serif;
+}
+
+body[data-ui-mode='rp'][data-rp-narrative-font='sans']
+  .QQ_chat_charmsg.has-rp-message-chrome
+  .QQ_chat_msgdiv {
+  font-family:
+    'Noto Sans SC',
+    'PingFang SC',
+    'Microsoft YaHei',
+    system-ui,
+    -apple-system,
+    sans-serif;
+}
+
+body[data-ui-mode='chat'][data-rp-narrative-font='serif']
+  .QQ_chat_charmsg
+  .QQ_chat_msgdiv {
+  font-family: 'Noto Serif SC', 'Songti SC', STSong, SimSun, serif;
+}
+
+body[data-ui-mode='chat'][data-rp-narrative-font='sans']
+  .QQ_chat_charmsg
+  .QQ_chat_msgdiv {
+  font-family:
+    'Noto Sans SC',
+    'PingFang SC',
+    'Microsoft YaHei',
+    system-ui,
+    -apple-system,
+    sans-serif;
+}
+
+body[data-ui-mode='rp']
+  .QQ_chat_charmsg.has-rp-message-chrome
+  .QQ_chat_msgdiv
+  :is(.chat-reasoning, .chat-reply-preview, .rp-greeting-switch) {
+  font-family:
+    'Noto Sans SC',
+    'PingFang SC',
+    'Microsoft YaHei',
+    system-ui,
+    -apple-system,
+    sans-serif;
+}
+
+body[data-ui-mode='chat']
+  .QQ_chat_charmsg
+  .QQ_chat_msgdiv
+  :is(.chat-reasoning, .chat-reply-preview) {
+  font-family:
+    'Noto Sans SC',
+    'PingFang SC',
+    'Microsoft YaHei',
+    system-ui,
+    -apple-system,
+    sans-serif;
+}
+
+body:not([data-theme-mode='dark'])[data-ui-mode='rp']
+  .QQ_chat_charmsg.has-rp-message-chrome
+  .QQ_chat_msgdiv {
+  border: 1px solid rgba(0, 0, 0, 0.05);
+  background: var(--app-surface-card);
+  box-shadow:
+    0 1px 2px rgba(16, 24, 40, 0.04),
+    0 10px 30px -14px rgba(16, 24, 40, 0.12);
+}
+
+body:not([data-theme-mode='dark'])[data-ui-mode='chat']
+  .QQ_chat_charmsg
+  .QQ_chat_msgdiv {
+  border: 1px solid rgba(0, 0, 0, 0.05);
+  background: var(--app-surface-card);
+  box-shadow:
+    0 1px 2px rgba(16, 24, 40, 0.04),
+    0 10px 30px -14px rgba(16, 24, 40, 0.12);
+}
+
+body[data-theme-mode='dark'][data-ui-mode='rp'] #chat-room .chat-room-avatar-button::after {
+  border-color: var(--app-surface-topbar);
+}
+
+body[data-theme-mode='dark'][data-ui-mode='rp'] #chat-room .chat-room-title {
+  color: var(--app-text-primary);
+}
+
+body[data-theme-mode='dark'][data-ui-mode='rp'] #chat-room :is(
+  .rp-reading-settings-btn,
+  .chat-menu-btn,
+  .agent-status-chip
+) {
+  color: var(--app-text-muted);
+}
+
+body[data-theme-mode='dark'][data-ui-mode='rp'] #chat-room :is(
+  .rp-reading-settings-btn,
+  .chat-menu-btn,
+  .agent-status-chip
+):hover,
+body[data-theme-mode='dark'][data-ui-mode='rp'] #chat-room .rp-reading-settings-btn.is-active {
+  background: rgba(var(--app-tint-neutral-rgb), 0.1);
+  color: var(--app-text-primary);
+}
+
+body[data-theme-mode='dark'][data-ui-mode='chat'] #chat-room .rp-reading-settings-btn:hover,
+body[data-theme-mode='dark'][data-ui-mode='chat'] #chat-room .rp-reading-settings-btn.is-active {
+  background: rgba(var(--app-tint-neutral-rgb), 0.1);
+  color: var(--app-text-primary);
+}
+
+body[data-theme-mode='dark'] .rp-reading-settings-menu {
+  border-color: var(--app-border-subtle);
+  background: var(--app-surface-panel);
+  box-shadow: var(--app-shadow-md);
+}
+
+body[data-theme-mode='dark'] :is(.rp-reading-size-options, .rp-narrative-font-options) {
+  background: rgba(var(--app-tint-neutral-rgb), 0.08);
+}
+
+body[data-theme-mode='dark'] :is(.rp-reading-size-options, .rp-narrative-font-options)::before {
+  background: var(--app-surface-subtle);
+  box-shadow: var(--app-shadow-sm);
+}
+
+body[data-theme-mode='dark']
+  .rp-reading-settings-menu
+  :is(.rp-reading-size-options, .rp-narrative-font-options)
+  button.is-active {
+  color: var(--app-text-primary);
+}
+
+@keyframes rp-reading-popover-in {
+  from {
+    opacity: 0;
+    transform: translateY(-5px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@media (max-width: 480px) {
+  body[data-ui-mode='rp'] #chat-room .chat-room-topbar {
+    gap: 5px;
+    padding-inline: 12px;
+  }
+
+  body[data-ui-mode='rp'] #chat-room .chat-room-avatar-button {
+    width: 36px;
+    height: 36px;
+    flex-basis: 36px;
+  }
+
+  body[data-ui-mode='rp'] #chat-room .chat-room-title {
+    font-size: 15.5px;
+  }
+
+  body[data-ui-mode='rp'] #chat-room :is(
+    .rp-reading-settings-btn,
+    .chat-menu-btn,
+    .agent-status-chip
+  ) {
+    width: 34px;
+    height: 34px;
+    min-width: 34px;
+    max-width: 34px;
+    flex-basis: 34px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rp-reading-settings-menu {
+    animation: none !important;
+  }
+
+  .rp-reading-size-options::before,
+  .rp-narrative-font-options::before,
+  body[data-ui-mode='rp'] #chat-room :is(
+    .rp-reading-settings-btn,
+    .chat-menu-btn,
+    .agent-status-chip
+  ) {
+    transition: none !important;
+  }
+
+  body[data-ui-mode='rp'] #chat-room :is(
+    .rp-reading-settings-btn,
+    .chat-menu-btn,
+    .agent-status-chip
+  ):active {
+    transform: none !important;
+  }
+
+  body[data-ui-mode='chat'] #chat-room .rp-reading-settings-btn {
+    transition: none !important;
+  }
+
+  body[data-ui-mode='chat'] #chat-room .rp-reading-settings-btn:active {
+    transform: none !important;
+  }
+}
+
+body[data-reduced-motion='on'] .rp-reading-settings-menu {
+  animation: none !important;
+}
+
+body[data-reduced-motion='on'] .rp-reading-size-options::before,
+body[data-reduced-motion='on'] .rp-narrative-font-options::before,
+body[data-reduced-motion='on'][data-ui-mode='rp'] #chat-room :is(
+  .rp-reading-settings-btn,
+  .chat-menu-btn,
+  .agent-status-chip
+) {
+  transition: none !important;
+}
+
+body[data-reduced-motion='on'][data-ui-mode='rp'] #chat-room :is(
+  .rp-reading-settings-btn,
+  .chat-menu-btn,
+  .agent-status-chip
+):active {
+  transform: none !important;
+}
+
+body[data-reduced-motion='on'][data-ui-mode='chat'] #chat-room .rp-reading-settings-btn {
+  transition: none !important;
+}
+
+body[data-reduced-motion='on'][data-ui-mode='chat'] #chat-room .rp-reading-settings-btn:active {
+  transform: none !important;
+}
+
+/* 聊天模式气泡尖角：朝向各自头像，文档布局仍保持统一圆角。 */
+body[data-ui-mode='chat']:not([data-chat-display='document'])
+  .QQ_chat_charmsg
+  .QQ_chat_msgdiv {
+  border-radius: 4px 22px 22px 22px !important;
+}
+
+body[data-ui-mode='chat']:not([data-chat-display='document'])
+  .QQ_chat_mymsg
+  .QQ_chat_msgdiv {
+  border-radius: 22px 4px 22px 22px !important;
+}
+
+/* 开场白：书页入口 */
+body[data-ui-mode='rp'] .rp-toolbar {
+  justify-content: center;
+  padding: 12px max(14px, calc((100% - 768px) / 2)) 5px;
+  border-bottom: 0;
+  background: transparent;
+}
+
+.rp-greeting-trigger {
+  width: fit-content;
+  max-width: min(100%, 520px);
+  min-height: 40px;
+  gap: 9px;
+  padding: 5px 10px 5px 6px;
+  overflow: hidden;
+  border: 1px solid rgba(28, 25, 23, 0.1);
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--app-surface-card) 96%, transparent);
+  box-shadow:
+    0 1px 2px rgba(16, 24, 40, 0.04),
+    0 10px 30px -14px rgba(16, 24, 40, 0.12);
+  color: var(--app-text-primary);
+  transition:
+    border-color 180ms ease,
+    box-shadow 180ms ease,
+    transform 120ms ease;
+}
+
+.rp-greeting-trigger:hover,
+.rp-greeting-trigger[aria-expanded='true'] {
+  border-color: rgba(194, 72, 47, 0.28);
+  box-shadow:
+    0 1px 2px rgba(16, 24, 40, 0.04),
+    0 12px 32px -14px rgba(16, 24, 40, 0.16);
+}
+
+.rp-greeting-trigger:active {
+  background: color-mix(in srgb, var(--app-surface-card) 94%, #faf9f6);
+  transform: scale(0.98);
+}
+
+.rp-greeting-trigger:focus-visible,
+.rp-greeting-sheet button:focus-visible,
+.rp-greeting-editor button:focus-visible,
+.rp-greeting-editor :is(input, textarea):focus-visible {
+  outline: 2px solid color-mix(in srgb, #c2482f 50%, transparent);
+  outline-offset: 2px;
+}
+
+.rp-greeting-seal,
+.rp-greeting-card-seal {
+  width: 27px;
+  height: 27px;
+  display: inline-grid;
+  flex: 0 0 27px;
+  place-items: center;
+  border-radius: 6px;
+  background: #c2482f;
+  box-shadow:
+    inset 0 0 0 1.5px rgba(255, 255, 255, 0.45),
+    inset 0 -1px 2px rgba(0, 0, 0, 0.2);
+  color: #fff6ee;
+  font-family: 'Noto Serif SC', 'Songti SC', STSong, SimSun, serif;
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1;
+  transform: rotate(-2deg);
+  user-select: none;
+}
+
+.rp-greeting-trigger-label {
+  color: #78716c;
+  font-family: 'Noto Serif SC', 'Songti SC', STSong, SimSun, serif;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+}
+
+.rp-greeting-trigger-divider {
+  width: 1px;
+  height: 15px;
+  flex: 0 0 1px;
+  background: rgba(120, 113, 108, 0.18);
+}
+
+.rp-greeting-trigger-name {
+  flex: 0 1 auto;
+  max-width: min(320px, 45vw);
+  color: #44403c;
+  font-family: 'Noto Serif SC', 'Songti SC', STSong, SimSun, serif;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.rp-greeting-trigger-name::before {
+  content: '《';
+}
+
+.rp-greeting-trigger-name::after {
+  content: '》';
+}
+
+.rp-greeting-trigger-count {
+  flex: 0 0 auto;
+  color: #d6d3d1;
+  font-family: 'Noto Serif SC', 'Songti SC', STSong, SimSun, serif;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.rp-greeting-trigger-arrow {
+  width: 18px;
+  height: 18px;
+  display: grid;
+  flex: 0 0 18px;
+  place-items: center;
+  color: #c4c0bd;
+  transition:
+    color 160ms ease,
+    transform 260ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.rp-greeting-trigger:hover .rp-greeting-trigger-arrow {
+  color: #78716c;
+}
+
+.rp-greeting-trigger[aria-expanded='true'] .rp-greeting-trigger-arrow {
+  transform: rotate(180deg);
+}
+
+.rp-greeting-trigger-arrow svg,
+.rp-greeting-sheet svg,
+.rp-greeting-editor svg {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  pointer-events: none;
+}
+
+/* 开场白：底部目录面板 */
+.rp-greeting-overlay {
+  z-index: 20040;
+  background: rgba(28, 25, 23, 0.25);
+  -webkit-backdrop-filter: blur(2px);
+  backdrop-filter: blur(2px);
+  transition: opacity 180ms ease;
+}
+
+.rp-greeting-sheet {
+  left: 50%;
+  right: auto;
+  z-index: 20041;
+  width: min(100%, 672px);
+  max-height: min(80dvh, 760px);
+  border: 1px solid rgba(28, 25, 23, 0.05);
+  border-bottom: 0;
+  border-radius: 28px 28px 0 0;
+  background: var(--app-surface-card, #fff);
+  box-shadow: 0 -12px 48px -16px rgba(16, 24, 40, 0.25);
+  transform: translate(-50%, var(--rp-greeting-drag-y, 0px));
+  transition: transform 300ms cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+.rp-greeting-sheet.is-opening {
+  animation: rp-greeting-sheet-in 380ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.rp-greeting-sheet.hidden {
+  transform: translate(-50%, 104%);
+}
+
+.rp-greeting-sheet.is-dragging {
+  animation: none !important;
+  transition: none;
+}
+
+.rp-greeting-sheet.is-settling {
+  transition: transform 280ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.rp-greeting-sheet-handle {
+  width: 36px;
+  height: 4px;
+  margin: 12px auto 5px;
+  border-radius: 999px;
+  background: #e7e5e4;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+
+.rp-greeting-sheet.is-dragging .rp-greeting-sheet-handle {
+  cursor: grabbing;
+}
+
+.rp-greeting-sheet-header {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 5px 26px 16px;
+  text-align: left;
+}
+
+.rp-greeting-sheet-heading {
+  min-width: 0;
+  flex: 1;
+}
+
+.rp-greeting-sheet-title-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.rp-greeting-sheet-title-row h2 {
+  margin: 0;
+  color: #292524;
+  font-family: 'Noto Serif SC', 'Songti SC', STSong, SimSun, serif;
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+#rp-greeting-sheet-count {
+  padding-top: 1px;
+  color: #a8a29e;
+  font-family: 'Noto Serif SC', 'Songti SC', STSong, SimSun, serif;
+  font-size: 11.5px;
+  letter-spacing: 0.08em;
+}
+
+.rp-greeting-sheet-heading p {
+  margin: 7px 0 0 1px;
+  color: #a8a29e;
+  font-size: 12px;
+  font-weight: 400;
+}
+
+#rp-greeting-sheet-close {
+  width: 40px;
+  height: 40px;
+  display: grid;
+  flex: 0 0 40px;
+  place-items: center;
+  margin: -4px -5px 0 0;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: #a8a29e;
+  transition:
+    background-color 160ms ease,
+    color 160ms ease,
+    transform 120ms ease;
+}
+
+#rp-greeting-sheet-close:hover {
+  background: #f5f5f4;
+  color: #57534e;
+}
+
+#rp-greeting-sheet-close:active {
+  transform: scale(0.9);
+}
+
+.rp-greeting-sheet-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 0 24px 18px;
+  overscroll-behavior: contain;
+}
+
+.rp-greeting-sheet-row {
+  display: flex;
+  align-items: stretch;
+  gap: 7px;
+  margin: 0;
+}
+
+.rp-greeting-sheet:not(.hidden) .rp-greeting-sheet-row {
+  animation: rp-greeting-item-in 320ms cubic-bezier(0.22, 1, 0.36, 1) backwards;
+  animation-delay: calc(var(--rp-greeting-row-index, 0) * 24ms + 70ms);
+}
+
+.rp-greeting-sheet-item {
+  position: relative;
+  min-height: 94px;
+  display: flex;
+  flex: 1 1 auto;
+  align-items: flex-start;
+  gap: 13px;
+  padding: 15px 15px 14px 18px;
+  overflow: hidden;
+  border: 1px solid rgba(120, 113, 108, 0.18);
+  border-radius: 16px;
+  background: var(--app-surface-card, #fff);
+  text-align: left;
+  transition:
+    border-color 180ms ease,
+    background-color 180ms ease,
+    transform 120ms ease;
+}
+
+.rp-greeting-sheet-item:hover {
+  border-color: rgba(120, 113, 108, 0.3);
+  background: #faf9f6;
+}
+
+.rp-greeting-sheet-item:active {
+  background: #f7f5f1;
+  transform: scale(0.995);
+}
+
+.rp-greeting-sheet-item.active {
+  border-color: rgba(194, 72, 47, 0.3);
+  background: #faf9f6;
+}
+
+.rp-greeting-sheet-item.active::before {
+  content: '';
+  position: absolute;
+  top: 15px;
+  bottom: 15px;
+  left: 0;
+  width: 3px;
+  border-radius: 0 99px 99px 0;
+  background: #c2482f;
+  animation: rp-greeting-active-mark-in 260ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.rp-greeting-sheet-item[disabled] {
+  opacity: 0.74;
+  cursor: default;
+  pointer-events: none;
+}
+
+.rp-greeting-sheet-item-index {
+  width: 24px;
+  flex: 0 0 24px;
+  padding-top: 2px;
+  color: #d6d3d1;
+  font-family: 'Noto Serif SC', 'Songti SC', STSong, SimSun, serif;
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 1;
+  text-align: center;
+  transition: color 180ms ease;
+}
+
+.rp-greeting-sheet-item:hover .rp-greeting-sheet-item-index {
+  color: #a8a29e;
+}
+
+.rp-greeting-sheet-item.active .rp-greeting-sheet-item-index {
+  color: #c2482f;
+}
+
+.rp-greeting-sheet-item-copy {
+  min-width: 0;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+}
+
+.rp-greeting-sheet-item-title-row {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.rp-greeting-sheet-item-text {
+  min-width: 0;
+  overflow: hidden;
+  color: #44403c;
+  font-family: 'Noto Serif SC', 'Songti SC', STSong, SimSun, serif;
+  font-size: 15px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rp-greeting-sheet-item.active .rp-greeting-sheet-item-text {
+  color: #292524;
+}
+
+.rp-greeting-sheet-current {
+  flex: 0 0 auto;
+  padding: 2px 6px 1px;
+  border: 1px solid rgba(194, 72, 47, 0.3);
+  border-radius: 5px;
+  color: #c2482f;
+  font-family: 'Noto Serif SC', 'Songti SC', STSong, SimSun, serif;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.rp-greeting-sheet-item-preview {
+  display: -webkit-box;
+  margin-top: 5px;
+  overflow: hidden;
+  color: #a8a29e;
+  font-size: 12.5px;
+  line-height: 1.55;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.rp-greeting-sheet-item-meta {
+  margin-top: 5px;
+  color: #d6d3d1;
+  font-family: 'Noto Serif SC', 'Songti SC', STSong, SimSun, serif;
+  font-size: 10.5px;
+  letter-spacing: 0.06em;
+}
+
+.rp-greeting-sheet-item-radio {
+  width: 18px;
+  height: 18px;
+  display: grid;
+  flex: 0 0 18px;
+  place-items: center;
+  margin-top: 1px;
+  border: 1.5px solid #e7e5e4;
+  border-radius: 50%;
+  transition: border-color 180ms ease;
+}
+
+.rp-greeting-sheet-item:hover .rp-greeting-sheet-item-radio {
+  border-color: #d6d3d1;
+}
+
+.rp-greeting-sheet-item.active .rp-greeting-sheet-item-radio {
+  border-color: #c2482f;
+}
+
+.rp-greeting-sheet-item-radio > span {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #c2482f;
+  transform: scale(0);
+  transition: transform 220ms cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.rp-greeting-sheet-item.active .rp-greeting-sheet-item-radio > span {
+  transform: scale(1);
+}
+
+.rp-greeting-sheet-edit {
+  width: 40px;
+  min-width: 40px;
+  height: 40px;
+  display: grid;
+  align-self: center;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 11px;
+  background: transparent;
+  color: #c4c0bd;
+  opacity: 0;
+  transform: translateX(-4px);
+  transition:
+    background-color 160ms ease,
+    color 160ms ease,
+    opacity 160ms ease,
+    transform 180ms ease;
+}
+
+.rp-greeting-sheet-row:hover .rp-greeting-sheet-edit,
+.rp-greeting-sheet-edit:focus-visible {
+  opacity: 1;
+  transform: translateX(0);
+}
+
+.rp-greeting-sheet-edit:hover {
+  background: #f5f5f4;
+  color: #57534e;
+}
+
+.rp-greeting-sheet-empty {
+  min-height: 170px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 26px;
+  border: 1px dashed #e7e5e4;
+  border-radius: 16px;
+  color: #d6d3d1;
+  text-align: center;
+}
+
+.rp-greeting-sheet-empty-icon {
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: #fafaf9;
+}
+
+.rp-greeting-sheet-empty-icon svg {
+  width: 21px;
+  height: 21px;
+}
+
+.rp-greeting-sheet-empty strong {
+  color: #78716c;
+  font-family: 'Noto Serif SC', 'Songti SC', STSong, SimSun, serif;
+  font-size: 14px;
+}
+
+.rp-greeting-sheet-empty > span:last-child {
+  font-size: 11.5px;
+}
+
+.rp-greeting-sheet-footer {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  padding: 14px 24px calc(14px + env(safe-area-inset-bottom, 0px));
+  border-top: 1px solid rgba(28, 25, 23, 0.05);
+  background: #faf9f6;
+}
+
+.rp-greeting-sheet-footer button {
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 10px 16px;
+  border: 0;
+  border-radius: 15px;
+  font-size: 13px;
+  font-weight: 650;
+  transition:
+    background-color 160ms ease,
+    color 160ms ease,
+    transform 120ms ease;
+}
+
+.rp-greeting-sheet-footer button svg {
+  width: 17px;
+  height: 17px;
+}
+
+#rp-greeting-sheet-add {
+  background: #1c1917;
+  color: #fff;
+}
+
+#rp-greeting-sheet-add:hover {
+  background: #292524;
+}
+
+#rp-greeting-sheet-reset {
+  background: #f1efec;
+  color: #78716c;
+}
+
+#rp-greeting-sheet-reset:hover {
+  background: rgba(194, 72, 47, 0.1);
+  color: #a33724;
+}
+
+.rp-greeting-sheet-footer button:active {
+  transform: scale(0.97);
+}
+
+/* 开场白：消息流内的序幕故事卡 */
+body[data-ui-mode='rp'] .QQ_chat_charmsg.is-rp-greeting-message {
+  width: min(calc(100% - 32px), 768px);
+  max-width: 768px;
+  grid-template-columns: minmax(0, 1fr);
+  margin: 10px auto 20px;
+}
+
+body[data-ui-mode='rp'] .is-rp-greeting-message > .QQ_chat_head,
+body[data-ui-mode='rp'] .is-rp-greeting-message .QQ_chat_name,
+body[data-ui-mode='rp'] .is-rp-greeting-message .QQ_chat_time {
+  display: none !important;
+}
+
+body[data-ui-mode='rp'] .is-rp-greeting-message .chat-message-stack,
+body[data-ui-mode='rp'] .is-rp-greeting-message .chat-bubble-stack {
+  width: 100%;
+  min-width: 0;
+  grid-column: 1 !important;
+  align-items: stretch !important;
+}
+
+body[data-ui-mode='rp'] .is-rp-greeting-message .QQ_chat_msgdiv {
+  width: 100%;
+  max-width: 100%;
+  padding: 0 !important;
+  overflow: hidden;
+  border: 1px solid rgba(28, 25, 23, 0.1);
+  border-radius: 26px !important;
+  background: var(--app-surface-card, #fff);
+  box-shadow:
+    0 1px 2px rgba(16, 24, 40, 0.04),
+    0 10px 30px -14px rgba(16, 24, 40, 0.12);
+  animation: rp-greeting-card-in 380ms cubic-bezier(0.22, 1, 0.36, 1) backwards;
+}
+
+.rp-greeting-card-header {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  margin: 0;
+  padding: 27px 28px 0;
+  border: 0;
+}
+
+.rp-greeting-card-change {
+  position: absolute;
+  top: 11px;
+  right: 11px;
+  min-width: 56px;
+  min-height: 40px;
+  padding: 0 12px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: transparent;
+  color: #d6d3d1;
+  font-size: 11px;
+  font-weight: 600;
+  transition:
+    border-color 160ms ease,
+    color 160ms ease,
+    background-color 160ms ease,
+    transform 120ms ease;
+}
+
+.rp-greeting-card-change:hover {
+  border-color: #e7e5e4;
+  background: rgba(250, 249, 246, 0.74);
+  color: #78716c;
+}
+
+.rp-greeting-card-change:active {
+  transform: scale(0.94);
+}
+
+.rp-greeting-card-ornament {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+}
+
+.rp-greeting-card-line {
+  width: 48px;
+  height: 1px;
+  background: linear-gradient(to right, transparent, #e7e5e4);
+}
+
+.rp-greeting-card-line.is-after {
+  background: linear-gradient(to left, transparent, #e7e5e4);
+}
+
+.rp-greeting-card-header .rp-greeting-card-seal {
+  width: 24px;
+  height: 24px;
+  flex-basis: 24px;
+  border-radius: 5px;
+  font-size: 14px;
+}
+
+.rp-greeting-card-kicker {
+  margin-top: 12px;
+  color: #a8a29e;
+  font-family: 'Noto Serif SC', 'Songti SC', STSong, SimSun, serif;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.55em;
+}
+
+.rp-greeting-card-title {
+  margin-top: 6px;
+  color: #292524;
+  font-family: 'Noto Serif SC', 'Songti SC', STSong, SimSun, serif;
+  font-size: 19px;
+  font-weight: 700;
+  line-height: 1.4;
+  text-align: center;
+}
+
+.rp-greeting-card-diamonds {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  margin: 19px 0 20px;
+}
+
+.rp-greeting-card-diamonds span {
+  width: 4px;
+  height: 4px;
+  border-radius: 1px;
+  background: rgba(168, 162, 158, 0.7);
+  transform: rotate(45deg);
+}
+
+.rp-greeting-card-diamonds span.is-accent {
+  width: 5px;
+  height: 5px;
+  background: #c2482f;
+}
+
+.is-rp-greeting-message .chat-message-content {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 0 36px;
+  color: #44403c;
+  font-family: 'Noto Serif SC', 'Songti SC', STSong, SimSun, serif;
+  font-size: calc(14.5px * var(--app-font-scale, 1));
+  line-height: 1.9;
+}
+
+.is-rp-greeting-message .chat-message-content > p:first-child::first-letter,
+.is-rp-greeting-message .chat-message-content .chat-rich-fragment > p:first-child::first-letter {
+  float: left;
+  margin: 0.1em 0.12em 0 0;
+  color: #c2482f;
+  font-size: 2.7em;
+  font-weight: 700;
+  line-height: 0.82;
+}
+
+.rp-greeting-card-footer {
+  padding: 20px 28px 25px;
+  color: #d6d3d1;
+  font-family: 'Noto Serif SC', 'Songti SC', STSong, SimSun, serif;
+  font-size: 10.5px;
+  letter-spacing: 0.38em;
+  text-align: center;
+}
+
+/* 开场白：新增/修订弹层 */
+.rp-greeting-editor-overlay {
+  z-index: 20050;
+  padding: 16px;
+  background: rgba(28, 25, 23, 0.3);
+  -webkit-backdrop-filter: blur(3px);
+  backdrop-filter: blur(3px);
+}
+
+.rp-greeting-editor-overlay:not(.is-closing) {
+  animation: rp-greeting-editor-overlay-in 160ms ease both;
+}
+
+.rp-greeting-editor-overlay.is-closing {
+  animation: rp-greeting-editor-overlay-out 160ms ease both;
+}
+
+.rp-greeting-editor {
+  width: min(100%, 576px);
+  max-height: min(86dvh, 720px);
+  border: 1px solid rgba(28, 25, 23, 0.05);
+  border-radius: 24px;
+  background: var(--app-surface-card, #fff);
+  box-shadow:
+    0 2px 8px rgba(16, 24, 40, 0.05),
+    0 20px 48px -16px rgba(16, 24, 40, 0.22);
+}
+
+.rp-greeting-editor-overlay:not(.is-closing) .rp-greeting-editor {
+  animation: rp-greeting-editor-in 320ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.rp-greeting-editor-overlay.is-closing .rp-greeting-editor {
+  animation: rp-greeting-editor-out 150ms ease both;
+}
+
+.rp-greeting-editor-header {
+  justify-content: flex-start;
+  gap: 12px;
+  padding: 16px 20px;
+  border-bottom-color: rgba(28, 25, 23, 0.06);
+}
+
+.rp-greeting-editor-icon {
+  width: 36px;
+  height: 36px;
+  display: grid;
+  flex: 0 0 36px;
+  place-items: center;
+  border-radius: 12px;
+  background: #f5f5f4;
+  color: #78716c;
+}
+
+.rp-greeting-editor-icon svg {
+  width: 17px;
+  height: 17px;
+}
+
+.rp-greeting-editor-heading {
+  min-width: 0;
+  flex: 1;
+}
+
+.rp-greeting-editor-title {
+  color: #292524;
+  font-family: 'Noto Serif SC', 'Songti SC', STSong, SimSun, serif;
+  font-size: 17px;
+  font-weight: 700;
+}
+
+.rp-greeting-editor-subtitle {
+  margin: 3px 0 0;
+  color: #a8a29e;
+  font-size: 11px;
+  font-weight: 400;
+}
+
+.rp-greeting-editor-close {
+  width: 40px;
+  height: 40px;
+  display: grid;
+  flex: 0 0 40px;
+  place-items: center;
+  padding: 0;
+  border-radius: 50%;
+  color: #a8a29e;
+  transition:
+    background-color 160ms ease,
+    color 160ms ease,
+    transform 120ms ease;
+}
+
+.rp-greeting-editor-close:hover {
+  background: #f5f5f4;
+  color: #57534e;
+}
+
+.rp-greeting-editor-close:active {
+  transform: scale(0.9);
+}
+
+.rp-greeting-editor-body {
+  min-height: 0;
+  flex: 1;
+  overflow-y: auto;
+  padding: 18px 20px 20px;
+}
+
+.rp-greeting-editor-field {
+  gap: 7px;
+  padding: 0;
+  color: #78716c;
+  font-family: 'Noto Serif SC', 'Songti SC', STSong, SimSun, serif;
+  font-size: 12px;
+  letter-spacing: 0.06em;
+}
+
+.rp-greeting-editor-field + .rp-greeting-editor-field {
+  margin-top: 17px;
+}
+
+.rp-greeting-editor-field input,
+.rp-greeting-editor-field textarea {
+  border-color: #e7e5e4;
+  border-radius: 12px;
+  background: var(--app-surface-card, #fff);
+  color: #44403c;
+  box-shadow: none;
+  transition:
+    border-color 180ms ease,
+    box-shadow 180ms ease;
+}
+
+.rp-greeting-editor-field input {
+  min-height: 42px;
+  padding: 10px 13px;
+  font-family:
+    'Noto Sans SC',
+    'PingFang SC',
+    'Microsoft YaHei',
+    system-ui,
+    sans-serif;
+  font-size: 14px;
+}
+
+.rp-greeting-editor-field textarea {
+  min-height: 230px;
+  max-height: 44dvh;
+  padding: 14px 14px 30px;
+  resize: none;
+  font-family: 'Noto Serif SC', 'Songti SC', STSong, SimSun, serif;
+  font-size: 14px;
+  line-height: 1.9;
+}
+
+.rp-greeting-editor-field :is(input, textarea):focus {
+  border-color: #a8a29e;
+  box-shadow: 0 0 0 4px rgba(120, 113, 108, 0.08);
+}
+
+.rp-greeting-editor-content-label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.rp-greeting-editor-macros {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.rp-greeting-editor-macros > svg {
+  width: 13px;
+  height: 13px;
+  margin-right: 1px;
+  color: #d6d3d1;
+}
+
+.rp-greeting-editor-macros button {
+  min-height: 30px;
+  padding: 4px 8px;
+  border: 1px solid #e7e5e4;
+  border-radius: 7px;
+  background: var(--app-surface-card, #fff);
+  color: #a8a29e;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 10.5px;
+  font-weight: 500;
+  letter-spacing: 0;
+  transition:
+    border-color 160ms ease,
+    color 160ms ease,
+    transform 120ms ease;
+}
+
+.rp-greeting-editor-macros button:hover {
+  border-color: #a8a29e;
+  color: #57534e;
+}
+
+.rp-greeting-editor-macros button:active {
+  transform: scale(0.94);
+}
+
+.rp-greeting-editor-content-wrap {
+  position: relative;
+  display: block;
+}
+
+.rp-greeting-editor-count {
+  position: absolute;
+  right: 12px;
+  bottom: 9px;
+  color: #d6d3d1;
+  font-family: 'Noto Serif SC', 'Songti SC', STSong, SimSun, serif;
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0;
+  pointer-events: none;
+}
+
+.rp-greeting-editor-status {
+  min-height: 18px;
+  padding: 7px 1px 0;
+  color: #c2482f;
+  font-size: 12px;
+}
+
+.rp-greeting-editor-actions {
+  align-items: center;
+  gap: 9px;
+  padding: 14px 20px calc(14px + env(safe-area-inset-bottom, 0px));
+  border-top: 1px solid rgba(28, 25, 23, 0.05);
+  background: #faf9f6;
+}
+
+.rp-greeting-editor-shortcut {
+  margin-right: auto;
+  color: #d6d3d1;
+  font-size: 10.5px;
+}
+
+.rp-greeting-editor-actions button {
+  min-height: 40px;
+  padding: 9px 15px;
+  border-radius: 12px;
+  font-size: 13px;
+  transition:
+    background-color 160ms ease,
+    color 160ms ease,
+    transform 120ms ease;
+}
+
+.rp-greeting-editor-cancel {
+  background: transparent;
+  color: #78716c;
+}
+
+.rp-greeting-editor-cancel:hover {
+  background: #f1efec;
+}
+
+.rp-greeting-editor-submit {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  background: #1c1917;
+  color: #fff;
+}
+
+.rp-greeting-editor-submit:hover {
+  background: #292524;
+}
+
+.rp-greeting-editor-submit:active {
+  transform: scale(0.96);
+}
+
+.rp-greeting-editor-submit svg {
+  width: 16px;
+  height: 16px;
+  stroke-width: 2.5;
+}
+
+/* 开场白暗色适配 */
+body[data-theme-mode='dark'] .rp-greeting-trigger {
+  border-color: var(--app-border-subtle);
+  background: color-mix(in srgb, var(--app-surface-card) 94%, transparent);
+}
+
+body[data-theme-mode='dark'] .rp-greeting-trigger:hover,
+body[data-theme-mode='dark'] .rp-greeting-trigger[aria-expanded='true'] {
+  border-color: rgba(219, 113, 91, 0.42);
+}
+
+body[data-theme-mode='dark'] :is(
+  .rp-greeting-trigger-label,
+  .rp-greeting-trigger-name
+) {
+  color: var(--app-text-primary);
+}
+
+body[data-theme-mode='dark'] :is(
+  .rp-greeting-trigger-count,
+  .rp-greeting-trigger-arrow
+) {
+  color: var(--app-text-muted);
+}
+
+body[data-theme-mode='dark'] .rp-greeting-trigger-divider {
+  background: var(--app-border-subtle);
+}
+
+body[data-theme-mode='dark'] .rp-greeting-overlay,
+body[data-theme-mode='dark'] .rp-greeting-editor-overlay {
+  background: rgba(0, 0, 0, 0.46);
+}
+
+body[data-theme-mode='dark'] :is(.rp-greeting-sheet, .rp-greeting-editor) {
+  border-color: var(--app-border-subtle);
+  background: var(--app-surface-panel);
+}
+
+body[data-theme-mode='dark'] .rp-greeting-sheet-handle {
+  background: rgba(var(--app-text-muted-rgb), 0.32);
+}
+
+body[data-theme-mode='dark'] :is(
+  .rp-greeting-sheet-title-row h2,
+  .rp-greeting-sheet-item-text,
+  .rp-greeting-card-title,
+  .rp-greeting-editor-title
+) {
+  color: var(--app-text-primary);
+}
+
+body[data-theme-mode='dark'] :is(
+  #rp-greeting-sheet-count,
+  .rp-greeting-sheet-heading p,
+  .rp-greeting-sheet-item-preview,
+  .rp-greeting-sheet-item-meta,
+  .rp-greeting-card-kicker,
+  .rp-greeting-card-footer,
+  .rp-greeting-editor-subtitle,
+  .rp-greeting-editor-shortcut
+) {
+  color: var(--app-text-muted);
+}
+
+body[data-theme-mode='dark'] .rp-greeting-sheet-item {
+  border-color: var(--app-border-subtle);
+  background: var(--app-surface-card);
+}
+
+body[data-theme-mode='dark'] .rp-greeting-sheet-item:hover,
+body[data-theme-mode='dark'] .rp-greeting-sheet-item.active {
+  border-color: rgba(219, 113, 91, 0.34);
+  background: rgba(var(--app-tint-neutral-rgb), 0.07);
+}
+
+body[data-theme-mode='dark'] :is(
+  #rp-greeting-sheet-close,
+  .rp-greeting-sheet-edit,
+  .rp-greeting-editor-close
+):hover {
+  background: rgba(var(--app-tint-neutral-rgb), 0.1);
+  color: var(--app-text-primary);
+}
+
+body[data-theme-mode='dark'] :is(
+  .rp-greeting-sheet-footer,
+  .rp-greeting-editor-actions
+) {
+  border-color: var(--app-border-subtle);
+  background: var(--app-surface-subtle);
+}
+
+body[data-theme-mode='dark'] #rp-greeting-sheet-add,
+body[data-theme-mode='dark'] .rp-greeting-editor-submit {
+  background: #f5f5f4;
+  color: #1c1917;
+}
+
+body[data-theme-mode='dark'] #rp-greeting-sheet-reset,
+body[data-theme-mode='dark'] .rp-greeting-editor-icon,
+body[data-theme-mode='dark'] .rp-greeting-sheet-empty-icon {
+  background: rgba(var(--app-tint-neutral-rgb), 0.09);
+  color: var(--app-text-secondary);
+}
+
+body[data-theme-mode='dark'][data-ui-mode='rp']
+  .is-rp-greeting-message
+  .QQ_chat_msgdiv {
+  border-color: var(--app-border-subtle);
+  background: var(--app-surface-card);
+}
+
+body[data-theme-mode='dark'] .is-rp-greeting-message .chat-message-content {
+  color: var(--app-text-primary);
+}
+
+body[data-theme-mode='dark'] .rp-greeting-card-change:hover {
+  border-color: var(--app-border-subtle);
+  background: rgba(var(--app-tint-neutral-rgb), 0.08);
+  color: var(--app-text-primary);
+}
+
+body[data-theme-mode='dark'] .rp-greeting-card-line {
+  background: linear-gradient(to right, transparent, var(--app-border-default));
+}
+
+body[data-theme-mode='dark'] .rp-greeting-card-line.is-after {
+  background: linear-gradient(to left, transparent, var(--app-border-default));
+}
+
+body[data-theme-mode='dark'] .rp-greeting-editor-field :is(input, textarea),
+body[data-theme-mode='dark'] .rp-greeting-editor-macros button {
+  border-color: var(--app-border-default);
+  background: var(--app-surface-input);
+  color: var(--app-text-primary);
+}
+
+@keyframes rp-greeting-sheet-in {
+  from {
+    opacity: 0.7;
+    transform: translate(-50%, 104%);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+}
+
+@keyframes rp-greeting-item-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes rp-greeting-active-mark-in {
+  from {
+    opacity: 0;
+    transform: scaleY(0);
+  }
+  to {
+    opacity: 1;
+    transform: scaleY(1);
+  }
+}
+
+@keyframes rp-greeting-card-in {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes rp-greeting-editor-overlay-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes rp-greeting-editor-overlay-out {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+
+@keyframes rp-greeting-editor-in {
+  from {
+    opacity: 0;
+    transform: translateY(26px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes rp-greeting-editor-out {
+  from {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(12px) scale(0.97);
+  }
+}
+
+@media (max-width: 600px) {
+  body[data-ui-mode='rp'] .rp-toolbar {
+    padding: 9px 12px 4px;
+  }
+
+  .rp-greeting-trigger {
+    max-width: 100%;
+  }
+
+  .rp-greeting-trigger-name {
+    max-width: 38vw;
+  }
+
+  .rp-greeting-trigger-count {
+    display: none;
+  }
+
+  .rp-greeting-sheet-header {
+    padding-inline: 19px;
+  }
+
+  .rp-greeting-sheet-list {
+    padding-inline: 14px;
+  }
+
+  .rp-greeting-sheet-footer {
+    padding-inline: 14px;
+  }
+
+  .rp-greeting-sheet-item {
+    min-height: 88px;
+    padding: 14px 12px 13px 14px;
+  }
+
+  .rp-greeting-sheet-edit {
+    opacity: 1;
+    transform: none;
+  }
+
+  body[data-ui-mode='rp'] .QQ_chat_charmsg.is-rp-greeting-message {
+    width: calc(100% - 20px);
+    margin-top: 8px;
+  }
+
+  .rp-greeting-card-header {
+    padding: 25px 18px 0;
+  }
+
+  .is-rp-greeting-message .chat-message-content {
+    padding-inline: 22px;
+  }
+
+  .rp-greeting-card-change {
+    top: 7px;
+    right: 7px;
+  }
+
+  .rp-greeting-editor-overlay {
+    align-items: flex-end;
+    padding: 0;
+  }
+
+  .rp-greeting-editor {
+    width: 100%;
+    max-height: min(92dvh, 760px);
+    border-radius: 24px 24px 0 0;
+  }
+
+  .rp-greeting-editor-header,
+  .rp-greeting-editor-body,
+  .rp-greeting-editor-actions {
+    padding-inline: 16px;
+  }
+
+  .rp-greeting-editor-content-label {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .rp-greeting-editor-macros {
+    width: 100%;
+  }
+
+  .rp-greeting-editor-macros button {
+    min-height: 36px;
+  }
+
+  .rp-greeting-editor-shortcut {
+    display: none;
+  }
+
+  .rp-greeting-editor-actions {
+    justify-content: flex-end;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rp-greeting-sheet.is-opening,
+  .rp-greeting-sheet:not(.hidden) .rp-greeting-sheet-row,
+  .rp-greeting-sheet-item.active::before,
+  .is-rp-greeting-message .QQ_chat_msgdiv,
+  .rp-greeting-editor-overlay,
+  .rp-greeting-editor-overlay .rp-greeting-editor {
+    animation: none !important;
+  }
+
+  .rp-greeting-trigger,
+  .rp-greeting-trigger-arrow,
+  .rp-greeting-overlay,
+  .rp-greeting-sheet,
+  .rp-greeting-sheet-item,
+  .rp-greeting-sheet-item-radio,
+  .rp-greeting-sheet-item-radio > span,
+  .rp-greeting-sheet-edit,
+  .rp-greeting-card-change,
+  .rp-greeting-editor button,
+  .rp-greeting-editor :is(input, textarea) {
+    transition: none !important;
+  }
+}
+
+body[data-reduced-motion='on'] .rp-greeting-sheet.is-opening,
+body[data-reduced-motion='on'] .rp-greeting-sheet:not(.hidden) .rp-greeting-sheet-row,
+body[data-reduced-motion='on'] .rp-greeting-sheet-item.active::before,
+body[data-reduced-motion='on'] .is-rp-greeting-message .QQ_chat_msgdiv,
+body[data-reduced-motion='on'] .rp-greeting-editor-overlay,
+body[data-reduced-motion='on'] .rp-greeting-editor-overlay .rp-greeting-editor {
+  animation: none !important;
+}
+
+body[data-reduced-motion='on'] :is(
+  .rp-greeting-trigger,
+  .rp-greeting-trigger-arrow,
+  .rp-greeting-overlay,
+  .rp-greeting-sheet,
+  .rp-greeting-sheet-item,
+  .rp-greeting-sheet-item-radio,
+  .rp-greeting-sheet-item-radio > span,
+  .rp-greeting-sheet-edit,
+  .rp-greeting-card-change,
+  .rp-greeting-editor button,
+  .rp-greeting-editor input,
+  .rp-greeting-editor textarea
+) {
+  transition: none !important;
+}

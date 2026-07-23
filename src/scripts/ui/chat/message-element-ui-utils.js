@@ -83,11 +83,13 @@ export const buildMessageElementCore = ({
   }) || null;
 
   const reactionSummaryEl = buildReactionSummaryElement?.(nextMessage);
-  const reactionButton = createReactionTriggerButton?.(nextMessage, {
-    documentLike,
-    isThreadingEnabled: isThreadingEnabledForMessage?.(nextMessage),
-    onShowPicker: (button, messageValue) => showReactionPicker?.(button, messageValue),
-  });
+  const reactionButton = nextMessage?.role === 'assistant'
+    ? null
+    : createReactionTriggerButton?.(nextMessage, {
+      documentLike,
+      isThreadingEnabled: isThreadingEnabledForMessage?.(nextMessage),
+      onShowPicker: (button, messageValue) => showReactionPicker?.(button, messageValue),
+    });
   const bubbleStack = buildBubbleStack?.({
     documentLike,
     bubble,

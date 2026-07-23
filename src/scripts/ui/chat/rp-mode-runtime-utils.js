@@ -115,6 +115,7 @@ export const resetRpGreetingVariableState = ({
 export const runEnterRpModeFlow = async ({
   uiMode = 'chat',
   captureSocial = true,
+  forceSessionSync = false,
   activePage = 'chat',
   currentSessionId = '',
   isChatRoomVisible = () => false,
@@ -142,25 +143,32 @@ export const runEnterRpModeFlow = async ({
   refreshRpToolbar = () => {},
   setBackToListVisible = () => {},
 } = {}) => {
-  if (uiMode === 'rp') return { entered: false, rpSessionId: '' };
-  if (captureSocial) {
-    setLastChatState({
-      activePage,
-      sessionId: currentSessionId,
-      inChatRoom: Boolean(isChatRoomVisible?.()),
-    });
+  const alreadyInRpMode = uiMode === 'rp';
+  if (alreadyInRpMode && forceSessionSync !== true) {
+    return { entered: false, rpSessionId: '' };
   }
-  setUiMode('rp');
-  try { vibrate?.(10); } catch {}
-  persistUiMode?.();
-  applyUiModeUI?.();
+  if (!alreadyInRpMode) {
+    if (captureSocial) {
+      setLastChatState({
+        activePage,
+        sessionId: currentSessionId,
+        inChatRoom: Boolean(isChatRoomVisible?.()),
+      });
+    }
+    setUiMode('rp');
+    try { vibrate?.(10); } catch {}
+    persistUiMode?.();
+    applyUiModeUI?.();
+  }
   try {
     await waitForRpSessionReady?.();
   } catch {}
-  setStickerPanelOpen?.(false);
-  setActionPanelOpen?.(false);
-  if (activePage !== 'chat') {
-    switchPage?.('chat', { animate: false });
+  if (!alreadyInRpMode) {
+    setStickerPanelOpen?.(false);
+    setActionPanelOpen?.(false);
+    if (activePage !== 'chat') {
+      switchPage?.('chat', { animate: false });
+    }
   }
   const rpSessionId = normalizeSessionId(getRpSessionId?.(activePersonaId));
   if (rpSessionId) {
@@ -183,7 +191,7 @@ export const runEnterRpModeFlow = async ({
     refreshRpToolbar?.(rpSessionId);
   }
   setBackToListVisible?.(false);
-  return { entered: true, rpSessionId };
+  return { entered: !alreadyInRpMode, rpSessionId };
 };
 
 export const runExitRpModeFlow = ({

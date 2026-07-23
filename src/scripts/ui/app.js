@@ -315,6 +315,7 @@ import {
 import { commitContinuationMessageToStore } from './chat/continuation-message-utils.js';
 import { createProviderContinuationCommitPolicyStore } from './chat/provider-continuation-policy.js';
 import { hideCreativeContentTagsForDisplay } from './chat/creative-content-display-utils.js';
+import { bindCreativeReadingSettings } from './chat/creative-reading-settings-runtime-utils.js';
 import { CreativeStreamProcessor } from './chat/creative-stream-processor.js';
 import { normalizeDialogueMessage as normalizeDialogueMessageCore } from './chat/dialogue-message-utils.js';
 import { DialogueStreamParser } from './chat/dialogue-stream-parser.js';
@@ -2019,32 +2020,40 @@ const initApp = async () => {
     try {
       window.appBridge?.setPersonaScope?.(nextKey);
     } catch {}
-    const currentSession = resolvePersonaScopedCurrentSession({
-      scopeId: nextKey,
-      chatStore,
-      contactsStore,
-    });
+    const isRpScopeSwitch = uiMode === 'rp';
+    const currentSession = isRpScopeSwitch
+      ? { sessionId: '', known: false, foreignRp: false, source: 'rp-mode' }
+      : resolvePersonaScopedCurrentSession({
+        scopeId: nextKey,
+        chatStore,
+        contactsStore,
+        allowRpSession: false,
+      });
     const sid = currentSession.sessionId;
-    try {
-      window.appBridge?.setActiveSession?.(sid);
-    } catch {}
-    if (sid) applyMvuSchemaDefaults(sid, { reason: 'persona' });
+    if (!isRpScopeSwitch) {
+      try {
+        window.appBridge?.setActiveSession?.(sid);
+      } catch {}
+      if (sid) applyMvuSchemaDefaults(sid, { reason: 'persona' });
+    }
     const rpSessionId = getRpSessionId(pid);
     if (chatStore.hasSession?.(rpSessionId)) {
       applyMvuSchemaDefaults(rpSessionId, { reason: 'persona_rp' });
     }
-    if (typeof isChatRoomVisible === 'function' && isChatRoomVisible()) {
-      if (sid) {
-        const contact = contactsStore.getContact(sid);
-        enterChatRoom(sid, contact?.name || sid, chatOriginPage);
+    if (!isRpScopeSwitch) {
+      if (typeof isChatRoomVisible === 'function' && isChatRoomVisible()) {
+        if (sid) {
+          const contact = contactsStore.getContact(sid);
+          enterChatRoom(sid, contact?.name || sid, chatOriginPage);
+        } else {
+          try {
+            exitChatRoom({ animate: false });
+          } catch {}
+          refreshChatAndContacts({ immediate: true });
+        }
       } else {
-        try {
-          exitChatRoom({ animate: false });
-        } catch {}
         refreshChatAndContacts({ immediate: true });
       }
-    } else {
-      refreshChatAndContacts({ immediate: true });
     }
     try {
       if (activePage === 'moments') momentsPanel.render({ preserveScroll: false });
@@ -2054,11 +2063,15 @@ const initApp = async () => {
         chatStore.listSessions?.().length || 0
       } contacts=${contactsStore.listContacts?.().length || 0}`,
     );
-    if (uiMode === 'rp') {
-      enterRpMode({ captureSocial: false });
+    if (isRpScopeSwitch) {
+      await enterRpMode({
+        captureSocial: false,
+        forceSessionSync: true,
+        personaId: pid,
+      });
     }
     activePersonaId = pid;
-    if (uiMode === 'rp') {
+    if (isRpScopeSwitch) {
       refreshRpToolbar(getRpSessionId(pid));
     }
     return true;
@@ -8782,8 +8795,12 @@ Phase G（Frame 36）：循环衔接
   const rpToolbar = document.getElementById('rp-toolbar');
   const rpGreetingTrigger = document.getElementById('rp-greeting-trigger');
   const rpGreetingName = document.getElementById('rp-greeting-name');
+  const rpGreetingCount = document.getElementById('rp-greeting-count');
   const rpGreetingOverlay = document.getElementById('rp-greeting-overlay');
   const rpGreetingSheet = document.getElementById('rp-greeting-sheet');
+  const rpGreetingSheetCount = document.getElementById('rp-greeting-sheet-count');
+  const rpGreetingSheetClose = document.getElementById('rp-greeting-sheet-close');
+  const rpGreetingSheetHandle = rpGreetingSheet?.querySelector('.rp-greeting-sheet-handle');
   const rpGreetingSheetList = document.getElementById('rp-greeting-sheet-list');
   const rpGreetingSheetAdd = document.getElementById('rp-greeting-sheet-add');
   const rpGreetingSheetReset = document.getElementById('rp-greeting-sheet-reset');
@@ -16525,6 +16542,8 @@ Phase G（Frame 36）：循环衔接
   document.getElementById('current-chat-title')?.setAttribute('data-maid-guide-target', 'chat-title-entry');
 	  const chatroomMenu = document.getElementById('chatroom-menu');
 	  const rpChatroomMenu = document.getElementById('rp-chatroom-menu');
+  const rpReadingSettingsBtn = document.getElementById('rp-reading-settings-btn');
+  const rpReadingSettingsMenu = document.getElementById('rp-reading-settings-menu');
   settingsMenu?.querySelector?.('button[data-action="agent-center"]')?.setAttribute('data-maid-guide-target', 'settings-agent-center');
   settingsMenu?.querySelector?.('button[data-action="world-global"]')?.setAttribute('data-maid-guide-target', 'settings-world-global');
   settingsMenu?.querySelector?.('button[data-action="session-config"]')?.setAttribute('data-maid-guide-target', 'settings-session-config');
@@ -16672,11 +16691,15 @@ Phase G（Frame 36）：循环衔接
     rpChatroomMenu?.classList.add('hidden');
     momentsMenu?.classList.add('hidden');
     document.getElementById('chat-title-menu')?.classList.add('hidden');
+    rpReadingSettingsMenu?.classList.add('hidden');
+    rpReadingSettingsBtn?.classList.remove('is-active');
     const gd = document.getElementById('group-management-dropdown');
     if (gd) gd.style.display = 'none';
     pendingFloatMenu?.classList.add('hidden');
     rpGreetingOverlay?.classList.add('hidden');
     rpGreetingSheet?.classList.add('hidden');
+    rpGreetingTrigger?.setAttribute('aria-expanded', 'false');
+    rpGreetingSheet?.setAttribute('aria-hidden', 'true');
     return true;
   };
   patchDebugUiRegistry((registry) => {
@@ -16690,6 +16713,16 @@ Phase G（Frame 36）：循环衔接
     hideMenus,
     getViewportWidth: () => window.innerWidth,
     getViewportHeight: () => window.innerHeight,
+  });
+  bindCreativeReadingSettings({
+    bodyEl: document.body,
+    buttonEl: rpReadingSettingsBtn,
+    menuEl: rpReadingSettingsMenu,
+    readSetting: () => appSettings.get().creativeReadingSize,
+    writeSetting: value => appSettings.update({ creativeReadingSize: value }),
+    readNarrativeFont: () => appSettings.get().creativeNarrativeFont,
+    writeNarrativeFont: value => appSettings.update({ creativeNarrativeFont: value }),
+    toggleSheetAt,
   });
 
   const renderPersonaSwitcher = () => {
@@ -17345,6 +17378,17 @@ Phase G（Frame 36）：循环衔接
     hideMenus,
     renderGroupDropdown,
     toggleTitleMenu: () => toggleSheetAt(chatTitleMenu, currentChatTitle, { kind: 'title' }),
+    onAvatarClick: (event) => {
+      if (uiMode !== 'rp') return false;
+      event.stopPropagation?.();
+      renderPersonaSwitcher();
+      toggleSheetAt(
+        personaSwitcherMenu,
+        event.currentTarget || currentChatAvatarButton,
+        { kind: 'persona' },
+      );
+      return true;
+    },
     openContactSettings: () => contactSettingsPanel.show(),
     openSessionConfig: () => sessionConfigPanel.show({ sessionId: chatStore.getCurrent() }),
   });
@@ -21495,7 +21539,14 @@ Phase G（Frame 36）：循环衔接
     const enterRequest = beginChatEnterRequest(sid);
     const contact = contactsStore.getContact(sid);
     const chatAvatarEl = document.getElementById('current-chat-avatar');
-    if (chatAvatarEl) chatAvatarEl.src = resolveAvatarForContact(sid, contact) || FEATHER_DEFAULT;
+    if (chatAvatarEl) {
+      const rpAvatar = resolveRpSessionPersonaAvatar({
+        sessionId: sid,
+        prefix: RP_SESSION_PREFIX,
+        getPersona: personaId => personaStore.get?.(personaId),
+      });
+      chatAvatarEl.src = rpAvatar || resolveAvatarForContact(sid, contact) || FEATHER_DEFAULT;
+    }
     const isGroupSession = Boolean(contact?.isGroup) || sid.startsWith('group:');
     const chatPresenceEl = document.getElementById('current-chat-presence');
     if (chatPresenceEl) chatPresenceEl.textContent = isGroupSession ? `${contact?.members?.length || 0} 位成员` : '在线 · AI 角色';
@@ -21779,15 +21830,22 @@ Phase G（Frame 36）：循环衔接
   const renderRpToolbar = () => {
     if (!rpGreetingName) return;
     const list = getRpGreetings();
+    if (rpGreetingCount) rpGreetingCount.textContent = `${list.length} 篇`;
     if (!list.length) {
       rpGreetingName.textContent = '无开场白';
-      if (rpGreetingTrigger) rpGreetingTrigger.disabled = false;
+      if (rpGreetingTrigger) {
+        rpGreetingTrigger.disabled = false;
+        rpGreetingTrigger.title = '管理开场白 · 当前无开场白';
+      }
       return;
     }
     const active = ensureRpGreetingActive();
     const idx = list.findIndex(g => String(g?.id || '') === String(active?.id || ''));
     rpGreetingName.textContent = active?.title || `开场白 ${idx >= 0 ? idx + 1 : 1}`;
-    if (rpGreetingTrigger) rpGreetingTrigger.disabled = false;
+    if (rpGreetingTrigger) {
+      rpGreetingTrigger.disabled = false;
+      rpGreetingTrigger.title = `管理开场白 · ${rpGreetingName.textContent}`;
+    }
   };
 
   const refreshRpToolbar = (sessionId = getRpSessionId(activePersonaId)) => {
@@ -21803,30 +21861,62 @@ Phase G（Frame 36）：循环衔接
     }
   };
 
+  let rpGreetingSheetOpeningTimer = null;
   const openRpGreetingSheet = () => {
     if (!rpGreetingSheet || !rpGreetingSheetList) return;
     const list = getRpGreetings();
+    const cnIndex = ['壹', '贰', '叁', '肆', '伍', '陆', '柒', '捌', '玖', '拾'];
     const activeId = String(rpSessionStore.getActiveGreetingId?.() || '').trim();
     const sessionId = getRpSessionId(activePersonaId);
     const locked = hasRpConversation(sessionId);
+    if (rpGreetingSheetCount) rpGreetingSheetCount.textContent = `共 ${list.length} 篇`;
     rpGreetingSheetList.innerHTML = '';
     list.forEach((g, idx) => {
       const id = String(g?.id || '').trim();
       const isActive = id === activeId;
+      const rawContent = String(g?.content || '');
+      const preview = rawContent.replace(/\s+/g, ' ').trim();
       const row = document.createElement('div');
       row.className = 'rp-greeting-sheet-row';
+      row.style.setProperty('--rp-greeting-row-index', String(Math.min(idx, 7)));
       const btn = document.createElement('button');
       btn.type = 'button';
       btn.className = 'rp-greeting-sheet-item' + (isActive ? ' active' : '');
       if (locked) btn.disabled = true;
-      const check = document.createElement('span');
-      check.className = 'rp-greeting-sheet-item-check';
-      check.textContent = isActive ? '✓' : '';
+      const indexEl = document.createElement('span');
+      indexEl.className = 'rp-greeting-sheet-item-index';
+      indexEl.textContent = cnIndex[idx] || String(idx + 1);
+      const copy = document.createElement('span');
+      copy.className = 'rp-greeting-sheet-item-copy';
+      const titleRow = document.createElement('span');
+      titleRow.className = 'rp-greeting-sheet-item-title-row';
       const text = document.createElement('span');
       text.className = 'rp-greeting-sheet-item-text';
       text.textContent = g?.title || `开场白 ${idx + 1}`;
-      btn.appendChild(check);
-      btn.appendChild(text);
+      titleRow.appendChild(text);
+      if (isActive) {
+        const current = document.createElement('span');
+        current.className = 'rp-greeting-sheet-current';
+        current.textContent = '当前';
+        titleRow.appendChild(current);
+      }
+      const previewEl = document.createElement('span');
+      previewEl.className = 'rp-greeting-sheet-item-preview';
+      previewEl.textContent = preview || '这页尚未写下内容';
+      const metaEl = document.createElement('span');
+      metaEl.className = 'rp-greeting-sheet-item-meta';
+      metaEl.textContent = `${preview.length} 字`;
+      copy.appendChild(titleRow);
+      copy.appendChild(previewEl);
+      copy.appendChild(metaEl);
+      const radio = document.createElement('span');
+      radio.className = 'rp-greeting-sheet-item-radio';
+      radio.setAttribute('aria-hidden', 'true');
+      const radioDot = document.createElement('span');
+      radio.appendChild(radioDot);
+      btn.appendChild(indexEl);
+      btn.appendChild(copy);
+      btn.appendChild(radio);
       btn.addEventListener('click', async () => {
         if (locked || isActive) { closeRpGreetingSheet(); return; }
         closeRpGreetingSheet();
@@ -21835,8 +21925,14 @@ Phase G（Frame 36）：循环衔接
       const editBtn = document.createElement('button');
       editBtn.type = 'button';
       editBtn.className = 'rp-greeting-sheet-edit';
-      editBtn.textContent = '编辑';
       editBtn.setAttribute('aria-label', `编辑${g?.title || `开场白 ${idx + 1}`}`);
+      editBtn.title = '编辑';
+      editBtn.innerHTML = `
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M12 20h9"></path>
+          <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L8 18l-4 1 1-4Z"></path>
+        </svg>
+      `;
       editBtn.addEventListener('click', async (event) => {
         event.preventDefault();
         event.stopPropagation();
@@ -21846,14 +21942,46 @@ Phase G（Frame 36）：循环衔接
       row.appendChild(editBtn);
       rpGreetingSheetList.appendChild(row);
     });
+    if (!list.length) {
+      const empty = document.createElement('div');
+      empty.className = 'rp-greeting-sheet-empty';
+      empty.innerHTML = `
+        <span class="rp-greeting-sheet-empty-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24">
+            <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path>
+            <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2Z"></path>
+          </svg>
+        </span>
+        <strong>扉页尚是空白</strong>
+        <span>点击下方「新增开场白」，为故事写下第一句</span>
+      `;
+      rpGreetingSheetList.appendChild(empty);
+    }
     if (rpGreetingSheetReset) rpGreetingSheetReset.style.display = locked ? '' : 'none';
+    rpGreetingTrigger?.setAttribute('aria-expanded', 'true');
     rpGreetingOverlay?.classList.remove('hidden');
-    rpGreetingSheet.classList.remove('hidden');
+    rpGreetingSheet.classList.remove('hidden', 'is-dragging', 'is-settling', 'is-opening');
+    rpGreetingSheet.style.removeProperty('--rp-greeting-drag-y');
+    void rpGreetingSheet.offsetWidth;
+    rpGreetingSheet.classList.add('is-opening');
+    if (rpGreetingSheetOpeningTimer) clearTimeout(rpGreetingSheetOpeningTimer);
+    rpGreetingSheetOpeningTimer = setTimeout(() => {
+      rpGreetingSheet?.classList.remove('is-opening');
+      rpGreetingSheetOpeningTimer = null;
+    }, 420);
+    rpGreetingSheet.setAttribute('aria-hidden', 'false');
   };
 
   const closeRpGreetingSheet = () => {
+    if (rpGreetingSheetOpeningTimer) {
+      clearTimeout(rpGreetingSheetOpeningTimer);
+      rpGreetingSheetOpeningTimer = null;
+    }
+    rpGreetingTrigger?.setAttribute('aria-expanded', 'false');
     rpGreetingOverlay?.classList.add('hidden');
+    rpGreetingSheet?.classList.remove('is-opening', 'is-dragging', 'is-settling');
     rpGreetingSheet?.classList.add('hidden');
+    rpGreetingSheet?.setAttribute('aria-hidden', 'true');
   };
 
   const promptRpGreetingEditor = ({
@@ -21867,37 +21995,104 @@ Phase G（Frame 36）：循环衔接
     overlay.innerHTML = `
       <div class="rp-greeting-editor" role="dialog" aria-modal="true" aria-labelledby="rp-greeting-editor-title">
         <div class="rp-greeting-editor-header">
-          <div id="rp-greeting-editor-title" class="rp-greeting-editor-title"></div>
-          <button type="button" class="rp-greeting-editor-close" aria-label="关闭">×</button>
+          <span class="rp-greeting-editor-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24">
+              <path d="M12 20h9"></path>
+              <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L8 18l-4 1 1-4Z"></path>
+            </svg>
+          </span>
+          <div class="rp-greeting-editor-heading">
+            <div id="rp-greeting-editor-title" class="rp-greeting-editor-title"></div>
+            <p class="rp-greeting-editor-subtitle"></p>
+          </div>
+          <button type="button" class="rp-greeting-editor-close" aria-label="关闭">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M18 6 6 18M6 6l12 12"></path>
+            </svg>
+          </button>
         </div>
-        <label class="rp-greeting-editor-field">
-          <span>标题</span>
-          <input class="rp-greeting-editor-title-input" type="text" placeholder="例如：开场白 2">
-        </label>
-        <label class="rp-greeting-editor-field">
-          <span>内容</span>
-          <textarea class="rp-greeting-editor-content" placeholder="输入开场白内容，支持角色卡里的宏和富文本"></textarea>
-        </label>
-        <div class="rp-greeting-editor-status"></div>
+        <div class="rp-greeting-editor-body">
+          <label class="rp-greeting-editor-field">
+            <span>标题</span>
+            <input class="rp-greeting-editor-title-input" type="text" placeholder="例如：开场白 2">
+          </label>
+          <label class="rp-greeting-editor-field">
+            <span class="rp-greeting-editor-content-label">
+              <span>内容</span>
+              <span class="rp-greeting-editor-macros" aria-label="插入宏">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M4 9h16M4 15h16M10 3 8 21M16 3l-2 18"></path>
+                </svg>
+                <button type="button" data-rp-greeting-macro="{{user}}">{{user}}</button>
+                <button type="button" data-rp-greeting-macro="{{char}}">{{char}}</button>
+                <button type="button" data-rp-greeting-macro="{{time}}">{{time}}</button>
+              </span>
+            </span>
+            <span class="rp-greeting-editor-content-wrap">
+              <textarea class="rp-greeting-editor-content" rows="9" placeholder="输入开场白内容，支持角色卡里的宏和富文本&#10;&#10;引号开头的一行会被渲染为对白&#10;**名字：** 开头的一行会渲染为角色小节标题"></textarea>
+              <span class="rp-greeting-editor-count">0 字</span>
+            </span>
+          </label>
+          <div class="rp-greeting-editor-status" role="alert"></div>
+        </div>
         <div class="rp-greeting-editor-actions">
+          <span class="rp-greeting-editor-shortcut">Ctrl / ⌘ + Enter 快速保存</span>
           <button type="button" class="rp-greeting-editor-cancel">取消</button>
-          <button type="button" class="rp-greeting-editor-submit"></button>
+          <button type="button" class="rp-greeting-editor-submit">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="m5 12 4 4L19 6"></path>
+            </svg>
+            <span></span>
+          </button>
         </div>
       </div>
     `;
-    const close = (value = null) => {
+    let closing = false;
+    let closeTimer = null;
+    const finishClose = (value) => {
+      if (closeTimer) clearTimeout(closeTimer);
+      document.removeEventListener('keydown', onKeyDown);
       overlay.remove();
       resolve(value);
+    };
+    const close = (value = null) => {
+      if (closing) return;
+      closing = true;
+      overlay.classList.add('is-closing');
+      const reducedMotion =
+        document.body?.dataset?.reducedMotion === 'on' ||
+        window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches === true;
+      if (reducedMotion) {
+        finishClose(value);
+        return;
+      }
+      closeTimer = setTimeout(() => finishClose(value), 170);
+    };
+    const onKeyDown = (event) => {
+      if (event.key === 'Escape') close(null);
     };
     const titleInput = overlay.querySelector('.rp-greeting-editor-title-input');
     const contentInput = overlay.querySelector('.rp-greeting-editor-content');
     const statusEl = overlay.querySelector('.rp-greeting-editor-status');
     const dialogTitleEl = overlay.querySelector('.rp-greeting-editor-title');
+    const dialogSubtitleEl = overlay.querySelector('.rp-greeting-editor-subtitle');
+    const countEl = overlay.querySelector('.rp-greeting-editor-count');
     const submitBtn = overlay.querySelector('.rp-greeting-editor-submit');
+    const submitTextEl = submitBtn?.querySelector('span');
     if (dialogTitleEl) dialogTitleEl.textContent = dialogTitle;
-    if (submitBtn) submitBtn.textContent = submitText;
+    if (dialogSubtitleEl) {
+      dialogSubtitleEl.textContent = initialContent
+        ? '落笔即生效'
+        : '写一段故事的开端，她将以它开启剧情';
+    }
+    if (submitTextEl) submitTextEl.textContent = submitText;
     if (titleInput) titleInput.value = String(initialTitle || '').trim();
     if (contentInput) contentInput.value = String(initialContent || '').trim();
+    const updateCount = () => {
+      if (countEl) countEl.textContent = `${String(contentInput?.value || '').length} 字`;
+      if (statusEl?.textContent) statusEl.textContent = '';
+    };
+    updateCount();
     const submit = () => {
       const content = String(contentInput?.value || '').trim();
       if (!content) {
@@ -21913,15 +22108,32 @@ Phase G（Frame 36）：循环衔接
     overlay.querySelector('.rp-greeting-editor-close')?.addEventListener('click', () => close(null));
     overlay.querySelector('.rp-greeting-editor-cancel')?.addEventListener('click', () => close(null));
     overlay.querySelector('.rp-greeting-editor-submit')?.addEventListener('click', submit);
+    overlay.querySelectorAll('[data-rp-greeting-macro]').forEach((button) => {
+      button.addEventListener('click', () => {
+        if (!contentInput) return;
+        const macro = String(button.dataset.rpGreetingMacro || '');
+        const start = Number.isFinite(contentInput.selectionStart)
+          ? contentInput.selectionStart
+          : contentInput.value.length;
+        const end = Number.isFinite(contentInput.selectionEnd)
+          ? contentInput.selectionEnd
+          : start;
+        contentInput.setRangeText(macro, start, end, 'end');
+        contentInput.focus();
+        updateCount();
+      });
+    });
     overlay.addEventListener('click', event => {
       if (event.target === overlay) close(null);
     });
+    contentInput?.addEventListener('input', updateCount);
     contentInput?.addEventListener('keydown', event => {
       if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
         event.preventDefault();
         submit();
       }
     });
+    document.addEventListener('keydown', onKeyDown);
     document.body.appendChild(overlay);
     setTimeout(() => titleInput?.focus?.(), 0);
   });
@@ -22476,7 +22688,13 @@ Phase G（Frame 36）：循环衔接
       storedPreview: previewLogText(stored, 90),
       displayPreview: previewLogText(display, 90),
     });
-    const meta = { ...(parsed.meta || {}), isGreeting: true, renderRich: true };
+    const meta = {
+      ...(parsed.meta || {}),
+      isGreeting: true,
+      renderRich: true,
+      greetingId,
+      greetingTitle: String(greeting?.title || '').trim(),
+    };
     return {
       message: {
         role: 'assistant',
@@ -22576,10 +22794,15 @@ Phase G（Frame 36）：循环衔接
     }
   }
 
-  const enterRpMode = async ({ captureSocial = true } = {}) => {
+  const enterRpMode = async ({
+    captureSocial = true,
+    forceSessionSync = false,
+    personaId = activePersonaId,
+  } = {}) => {
     return runEnterRpModeFlow({
       uiMode,
       captureSocial,
+      forceSessionSync,
       activePage,
       currentSessionId: chatStore.getCurrent(),
       isChatRoomVisible,
@@ -22599,7 +22822,7 @@ Phase G（Frame 36）：循环衔接
       setActionPanelOpen,
       switchPage,
       getRpSessionId,
-      activePersonaId,
+      activePersonaId: personaId,
       ensureSession: (sessionId) => chatStore._ensureSession?.(sessionId),
       getSessionSettings: (sessionId) => chatStore.getSessionSettings?.(sessionId),
       setSessionSettings: (sessionId, settings) => chatStore.setSessionSettings?.(sessionId, settings),
@@ -23008,6 +23231,79 @@ Phase G（Frame 36）：循环衔接
   });
 
   rpGreetingOverlay?.addEventListener('click', () => closeRpGreetingSheet());
+  rpGreetingSheetClose?.addEventListener('click', () => closeRpGreetingSheet());
+  if (rpGreetingSheetHandle && rpGreetingSheet) {
+    let dragState = null;
+    let settleTimer = null;
+    const finishRpGreetingSheetDrag = (event, { cancelled = false } = {}) => {
+      if (!dragState || event.pointerId !== dragState.pointerId) return;
+      const elapsed = Math.max(1, performance.now() - dragState.startedAt);
+      const velocity = (dragState.distance / elapsed) * 1000;
+      const shouldClose = !cancelled && (dragState.distance > 110 || velocity > 550);
+      try {
+        rpGreetingSheetHandle.releasePointerCapture?.(dragState.pointerId);
+      } catch {}
+      dragState = null;
+      rpGreetingSheet.classList.remove('is-dragging');
+      rpGreetingOverlay?.style.removeProperty('opacity');
+      if (shouldClose) {
+        closeRpGreetingSheet();
+        setTimeout(() => rpGreetingSheet.style.removeProperty('--rp-greeting-drag-y'), 320);
+        return;
+      }
+      rpGreetingSheet.classList.add('is-settling');
+      requestAnimationFrame(() => {
+        rpGreetingSheet.style.setProperty('--rp-greeting-drag-y', '0px');
+      });
+      if (settleTimer) clearTimeout(settleTimer);
+      settleTimer = setTimeout(() => {
+        rpGreetingSheet.classList.remove('is-settling');
+        rpGreetingSheet.style.removeProperty('--rp-greeting-drag-y');
+        settleTimer = null;
+      }, 320);
+    };
+    rpGreetingSheetHandle.addEventListener('pointerdown', (event) => {
+      if (rpGreetingSheet.classList.contains('hidden')) return;
+      if (event.isPrimary === false || (event.pointerType === 'mouse' && event.button !== 0)) return;
+      if (settleTimer) {
+        clearTimeout(settleTimer);
+        settleTimer = null;
+      }
+      if (rpGreetingSheetOpeningTimer) {
+        clearTimeout(rpGreetingSheetOpeningTimer);
+        rpGreetingSheetOpeningTimer = null;
+      }
+      rpGreetingSheet.classList.remove('is-opening', 'is-settling');
+      rpGreetingSheet.classList.add('is-dragging');
+      dragState = {
+        pointerId: event.pointerId,
+        startY: event.clientY,
+        distance: 0,
+        startedAt: performance.now(),
+      };
+      try {
+        rpGreetingSheetHandle.setPointerCapture?.(event.pointerId);
+      } catch {}
+      event.preventDefault();
+    });
+    rpGreetingSheetHandle.addEventListener('pointermove', (event) => {
+      if (!dragState || event.pointerId !== dragState.pointerId) return;
+      const distance = Math.max(0, event.clientY - dragState.startY);
+      dragState.distance = distance;
+      rpGreetingSheet.style.setProperty('--rp-greeting-drag-y', `${distance}px`);
+      if (rpGreetingOverlay) {
+        const progress = Math.min(0.72, distance / Math.max(1, rpGreetingSheet.offsetHeight));
+        rpGreetingOverlay.style.opacity = String(1 - progress);
+      }
+      event.preventDefault();
+    });
+    rpGreetingSheetHandle.addEventListener('pointerup', event => {
+      finishRpGreetingSheetDrag(event);
+    });
+    rpGreetingSheetHandle.addEventListener('pointercancel', event => {
+      finishRpGreetingSheetDrag(event, { cancelled: true });
+    });
+  }
 
   rpGreetingSheetAdd?.addEventListener('click', async (event) => {
     event.stopPropagation();

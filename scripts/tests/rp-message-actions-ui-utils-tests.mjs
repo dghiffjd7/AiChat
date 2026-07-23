@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   createRpMessageActionsElement,
   createRpMessageActionsUiRuntime,
+  dispatchRpMessageQuickAction,
 } from '../../src/scripts/ui/chat/rp-message-actions-ui-utils.js';
 
 const createClassList = (...initial) => {
@@ -61,9 +62,51 @@ const createFakeDocument = () => {
   console.log('ok - createRpMessageActionsElement builds swipe and svg action controls in the requested order');
 }
 
-const createWrapper = id => ({
-  classList: createClassList('QQ_chat_charmsg', 'has-rp-message-chrome'),
-  __chatappMessage: { id, role: 'assistant' },
+{
+  const documentLike = createFakeDocument();
+  const actions = createRpMessageActionsElement({
+    documentLike,
+    message: { id: 'u-actions', role: 'user' },
+    kind: 'user',
+  });
+  assert.equal(actions.className.includes('is-user'), true);
+  assert.deepEqual(
+    actions.children[0].children.map(button => button.dataset.rpMessageAction),
+    ['copy', 'edit'],
+  );
+  console.log('ok - createRpMessageActionsElement builds the compact user copy/edit action pair');
+}
+
+{
+  const calls = [];
+  const message = { id: 'u-edit', role: 'user' };
+  assert.equal(await dispatchRpMessageQuickAction({
+    action: 'edit',
+    message,
+    startInlineEdit: nextMessage => calls.push(['edit', nextMessage.id]),
+    actionHandler: (...args) => calls.push(['action', ...args]),
+  }), true);
+  assert.equal(await dispatchRpMessageQuickAction({
+    action: 'copy',
+    message,
+    wrapper: { id: 'wrapper' },
+    startInlineEdit: () => {},
+    actionHandler: (...args) => calls.push(['action', ...args]),
+  }), true);
+  assert.deepEqual(calls, [
+    ['edit', 'u-edit'],
+    ['action', 'copy-text', message, { wrapper: { id: 'wrapper' } }],
+  ]);
+  console.log('ok - creative user pencil opens inline editing while copy reuses the shared action handler');
+}
+
+const createWrapper = (id, role = 'assistant') => ({
+  classList: createClassList(
+    role === 'user' ? 'QQ_chat_mymsg' : 'QQ_chat_charmsg',
+    'has-rp-message-actions',
+    ...(role === 'assistant' ? ['has-rp-message-chrome'] : []),
+  ),
+  __chatappMessage: { id, role },
 });
 
 const createActionTarget = (wrapper, action) => ({
@@ -71,7 +114,7 @@ const createActionTarget = (wrapper, action) => ({
   disabled: false,
   closest(selector) {
     if (selector === '[data-rp-message-action]') return this;
-    if (selector === '.QQ_chat_charmsg.has-rp-message-chrome') return wrapper;
+    if (selector === '.has-rp-message-actions') return wrapper;
     return null;
   },
 });
@@ -79,7 +122,7 @@ const createActionTarget = (wrapper, action) => ({
 const createBubbleTarget = wrapper => {
   const bubble = {
     closest(selector) {
-      return selector === '.QQ_chat_charmsg.has-rp-message-chrome' ? wrapper : null;
+      return selector === '.has-rp-message-actions' ? wrapper : null;
     },
   };
   return {
@@ -98,7 +141,7 @@ const createBubbleTarget = wrapper => {
   const cleared = [];
   const calls = [];
   const first = createWrapper('a1');
-  const second = createWrapper('a2');
+  const second = createWrapper('u2', 'user');
   const scrollEl = {
     addEventListener(type, handler) { listeners.set(type, handler); },
     removeEventListener(type, handler) {

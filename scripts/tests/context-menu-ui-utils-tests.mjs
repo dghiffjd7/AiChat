@@ -83,6 +83,22 @@ import {
 }
 
 {
+  const actions = buildContextMenuActions({
+    role: 'user',
+    type: 'text',
+    status: 'sent',
+    meta: {},
+  }, {
+    hasRpMessageActions: true,
+  });
+  assert.equal(actions.some(item => item.key === 'copy-text'), false);
+  assert.equal(actions.some(item => item.key === 'edit'), false);
+  assert.equal(actions.some(item => item.key === 'regenerate'), true);
+  assert.equal(actions.some(item => item.key === 'delete'), true);
+  console.log('ok - creative user context menu omits copy and edit once inline quick actions are present');
+}
+
+{
   const message = {
     role: 'assistant',
     type: 'text',

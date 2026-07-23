@@ -3,6 +3,7 @@ const RP_ACTION_ICON_PATHS = Object.freeze({
   'chevron-right': '<path d="m9 18 6-6-6-6"/>',
   regenerate: '<path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/>',
   'view-code': '<path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/>',
+  edit: '<path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/>',
   copy: '<rect width="14" height="14" x="8" y="8" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/>',
 });
 
@@ -26,25 +27,52 @@ export const createRpMessageActionsElement = ({
   documentLike,
   message,
   createSwipeIndicatorElement = null,
+  kind = 'assistant',
 } = {}) => {
   if (!documentLike?.createElement) return null;
+  const isUser = kind === 'user';
   const actions = documentLike.createElement('div');
-  actions.className = 'rp-message-actions';
+  actions.className = `rp-message-actions${isUser ? ' is-user' : ''}`;
   actions.dataset.msgId = String(message?.id || '');
 
-  const swipeIndicator = createSwipeIndicatorElement?.(documentLike, message);
-  if (swipeIndicator) actions.appendChild?.(swipeIndicator);
+  if (!isUser) {
+    const swipeIndicator = createSwipeIndicatorElement?.(documentLike, message);
+    if (swipeIndicator) actions.appendChild?.(swipeIndicator);
+  }
 
   const buttons = documentLike.createElement('div');
   buttons.className = 'rp-message-action-buttons';
-  buttons.appendChild?.(createActionButton(documentLike, 'regenerate', '重新生成'));
-  buttons.appendChild?.(createActionButton(documentLike, 'view-code', '编辑原回复'));
-  buttons.appendChild?.(createActionButton(documentLike, 'copy', '复制'));
+  if (isUser) {
+    buttons.appendChild?.(createActionButton(documentLike, 'copy', '复制'));
+    buttons.appendChild?.(createActionButton(documentLike, 'edit', '编辑'));
+  } else {
+    buttons.appendChild?.(createActionButton(documentLike, 'regenerate', '重新生成'));
+    buttons.appendChild?.(createActionButton(documentLike, 'view-code', '编辑原回复'));
+    buttons.appendChild?.(createActionButton(documentLike, 'copy', '复制'));
+  }
   actions.appendChild?.(buttons);
   return actions;
 };
 
+export const dispatchRpMessageQuickAction = async ({
+  action = '',
+  message = null,
+  wrapper = null,
+  startInlineEdit = null,
+  actionHandler = null,
+} = {}) => {
+  if (action === 'edit' && message?.role === 'user') {
+    startInlineEdit?.(message);
+    return true;
+  }
+  const actionKey = action === 'copy' ? 'copy-text' : action;
+  if (!actionKey || typeof actionHandler !== 'function') return false;
+  await actionHandler(actionKey, message, { wrapper });
+  return true;
+};
+
 const INTERACTIVE_TAP_SELECTOR = 'a, button, input, textarea, select, audio, video, [contenteditable="true"]';
+const RP_MESSAGE_ACTIONS_WRAPPER_SELECTOR = '.has-rp-message-actions';
 
 const getClosestElement = target => (
   typeof target?.closest === 'function' ? target : target?.parentElement
@@ -82,7 +110,7 @@ export const createRpMessageActionsUiRuntime = ({
   };
 
   const reveal = wrapper => {
-    if (!wrapper?.classList?.contains?.('has-rp-message-chrome')) return false;
+    if (!wrapper?.classList?.contains?.('has-rp-message-actions')) return false;
     if (visibleWrapper && visibleWrapper !== wrapper) {
       visibleWrapper.classList?.remove?.('is-rp-actions-visible');
     }
@@ -110,7 +138,7 @@ export const createRpMessageActionsUiRuntime = ({
 
       const actionButton = target.closest?.('[data-rp-message-action]');
       if (actionButton && !actionButton.disabled) {
-        const wrapper = actionButton.closest?.('.QQ_chat_charmsg.has-rp-message-chrome');
+        const wrapper = actionButton.closest?.(RP_MESSAGE_ACTIONS_WRAPPER_SELECTOR);
         const message = wrapper?.__chatappMessage;
         const action = String(actionButton.dataset?.rpMessageAction || '').trim();
         if (!wrapper || !message || !action) return;
@@ -126,7 +154,7 @@ export const createRpMessageActionsUiRuntime = ({
       if (!isTouchLike(event)) return;
       if (target.closest?.(INTERACTIVE_TAP_SELECTOR)) return;
       const bubble = target.closest?.('.QQ_chat_msgdiv');
-      const wrapper = bubble?.closest?.('.QQ_chat_charmsg.has-rp-message-chrome');
+      const wrapper = bubble?.closest?.(RP_MESSAGE_ACTIONS_WRAPPER_SELECTOR);
       if (wrapper) reveal(wrapper);
     };
 

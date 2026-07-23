@@ -20,7 +20,6 @@ import { logger } from '../../utils/logger.js';
 import { getDefaultAppIcon } from '../../utils/default-icon.js';
 import { getPluginRuntime } from '../app-runtime-service-utils.js';
 import { recordDebugTraceEvent } from '../debug-ui-registry-utils.js';
-import { bindCustomSelectButton, createCustomSelectWrapper } from '../custom-select.js';
 import {
   DEFAULT_REACTION_EMOJIS,
   SELF_REACTION_ACTOR,
@@ -79,7 +78,10 @@ import {
   syncSwipeIndicatorElement,
 } from './swipe-ui-utils.js';
 import { createSwipeUiRuntime } from './swipe-runtime-utils.js';
-import { createRpMessageActionsUiRuntime } from './rp-message-actions-ui-utils.js';
+import {
+  createRpMessageActionsUiRuntime,
+  dispatchRpMessageQuickAction,
+} from './rp-message-actions-ui-utils.js';
 import {
   applyJumpFocusState,
   clearJumpFocusState,
@@ -354,12 +356,11 @@ export class ChatUI {
     this.messageHeaderRuntime = createMessageHeaderUiRuntime({
       documentLike: document,
       appSettings,
-      createCustomSelectWrapper,
-      bindCustomSelectButton,
       normalizeReplyTarget,
       getDefaultReplyAvatar,
       getBridge: () => window.appBridge || null,
       getUiMode: () => document?.body?.dataset?.uiMode || '',
+      openRpGreetingSheet: () => document.getElementById('rp-greeting-trigger')?.click?.(),
       onAction: (...args) => this.actionHandler?.(...args),
       scrollToMessage: (messageId, options) => this.scrollToMessage(messageId, options),
       resolveMessageSessionId: message => this.resolveMessageSessionId(message),
@@ -511,8 +512,13 @@ export class ChatUI {
     this._unbindRpMessageActions = this.rpMessageActionsRuntime.bind({
       scrollEl: this.scrollEl,
       onAction: (action, { wrapper, message }) => {
-        const actionKey = action === 'copy' ? 'copy-text' : action;
-        return this.actionHandler?.(actionKey, message, { wrapper });
+        return dispatchRpMessageQuickAction({
+          action,
+          message,
+          wrapper,
+          startInlineEdit: nextMessage => this.startInlineEdit(nextMessage),
+          actionHandler: (...args) => this.actionHandler?.(...args),
+        });
       },
       onError: error => logger.warn('rp message action failed', error),
     });

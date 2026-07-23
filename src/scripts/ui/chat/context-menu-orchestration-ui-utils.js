@@ -61,7 +61,7 @@ export const showContextMenuCore = ({
     ...(buildContextMenuActions?.(resolvedMessage, {
       hasCode,
       hasRpMessageActions:
-        wrapper?.classList?.contains?.('has-rp-message-chrome') === true,
+        wrapper?.classList?.contains?.('has-rp-message-actions') === true,
       isThreadingEnabled: threadingEnabled,
       inlineGeneratedImage,
       canCheckFormat: canCheckFormatForMessage?.(resolvedMessage) === true,

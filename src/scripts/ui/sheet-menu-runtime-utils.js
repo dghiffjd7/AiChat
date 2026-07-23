@@ -8,6 +8,7 @@ export const createSheetMenuRuntime = ({
     persona: null,
     quick: null,
     moments: null,
+    reading: null,
   };
 
   const positionSheet = (menuEl, anchorEl, offsetX = 0, offsetY = 0, alignRight = false) => {

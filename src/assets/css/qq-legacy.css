@@ -1216,6 +1216,14 @@ body[data-ui-mode='rp'] .rp-swipe-indicator {
   transition: opacity 0.16s ease, transform 0.16s ease;
 }
 
+.rp-message-actions.is-user {
+  width: auto;
+  min-height: 28px;
+  margin: 0;
+  padding: 0;
+  flex: 0 0 auto;
+}
+
 .rp-message-action-buttons {
   display: inline-flex;
   align-items: center;
@@ -1245,15 +1253,15 @@ body[data-ui-mode='rp'] .rp-swipe-indicator {
   pointer-events: none;
 }
 
-.QQ_chat_charmsg.has-rp-message-chrome.is-rp-actions-visible .rp-message-actions {
+.has-rp-message-actions.is-rp-actions-visible .rp-message-actions {
   opacity: 1;
   pointer-events: auto;
   transform: translateY(0);
 }
 
 @media (hover: hover) and (pointer: fine) {
-  .QQ_chat_charmsg.has-rp-message-chrome:focus-within .rp-message-actions,
-  .QQ_chat_charmsg.has-rp-message-chrome:hover .rp-message-actions {
+  .has-rp-message-actions:focus-within .rp-message-actions,
+  .has-rp-message-actions:hover .rp-message-actions {
     opacity: 1;
     pointer-events: auto;
     transform: translateY(0);
@@ -1589,6 +1597,35 @@ body[data-ui-mode='rp'] .rp-swipe-indicator {
   display: flex;
   align-items: center;
   gap: 6px;
+}
+
+.QQ_chat_mymsg.has-rp-message-actions .chat-time-row,
+.QQ_chat_charmsg.has-rp-message-actions .chat-time-row.is-assistant {
+  width: 100%;
+  min-height: 28px;
+  box-sizing: border-box;
+}
+
+.QQ_chat_mymsg.has-rp-message-actions .chat-time-row {
+  justify-content: flex-end;
+}
+
+.QQ_chat_mymsg.has-rp-message-actions .chat-time-row .rp-message-actions.is-user {
+  margin-right: auto;
+}
+
+.QQ_chat_charmsg.has-rp-message-actions .chat-time-row.is-assistant {
+  justify-content: flex-start;
+}
+
+.QQ_chat_charmsg.has-rp-message-actions
+  .chat-time-row.is-assistant
+  > .rp-message-actions {
+  width: auto;
+  min-height: 28px;
+  flex: 0 0 auto;
+  margin: 0 0 0 auto;
+  padding: 0;
 }
 
 .chat-delivery-status {

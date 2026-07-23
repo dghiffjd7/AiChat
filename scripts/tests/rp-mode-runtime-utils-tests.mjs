@@ -233,6 +233,37 @@ const createStorage = () => {
 
 {
   const calls = [];
+  const result = await runEnterRpModeFlow({
+    uiMode: 'rp',
+    forceSessionSync: true,
+    captureSocial: false,
+    activePage: 'chat',
+    getRpSessionId: personaId => `rp:${personaId}`,
+    activePersonaId: 'new-hero',
+    ensureSession: sessionId => calls.push(['ensure', sessionId]),
+    enterChatRoom: async (sessionId, title, origin) => calls.push(['enter', sessionId, title, origin]),
+    getRpTitle: () => '新角色',
+    setCurrentChatTitle: title => calls.push(['title', title]),
+    setUiMode: () => calls.push(['mode']),
+    vibrate: () => calls.push(['vibrate']),
+    persistUiMode: () => calls.push(['persist']),
+    applyUiModeUI: () => calls.push(['apply-ui']),
+    setBackToListVisible: visible => calls.push(['back', visible]),
+  });
+
+  assert.equal(result.entered, false);
+  assert.equal(result.rpSessionId, 'rp:new-hero');
+  assert.deepEqual(calls, [
+    ['ensure', 'rp:new-hero'],
+    ['enter', 'rp:new-hero', '新角色', 'chat'],
+    ['title', '新角色'],
+    ['back', false],
+  ]);
+  console.log('ok - forced RP session sync rebinds an already-open creative room without replaying mode entry');
+}
+
+{
+  const calls = [];
   let nextMode = 'rp';
   const result = runExitRpModeFlow({
     uiMode: 'rp',

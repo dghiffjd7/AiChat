@@ -93,6 +93,7 @@
     <link rel="stylesheet" href="./assets/css/contact-groups.css" />
     <link rel="stylesheet" href="./assets/css/theme.css" />
     <link rel="stylesheet" href="./assets/css/social-desktop-redesign.css" />
+    <link rel="stylesheet" href="./assets/css/creative-writing-redesign.css" />
   </head>
   <body class="bg-legacy">
     <div id="app-splash" style="
@@ -181,24 +182,83 @@
               <div class="chat-room-title" id="current-chat-title">default</div>
               <div class="chat-room-presence"><span class="chat-room-presence-dot" aria-hidden="true"></span><span id="current-chat-presence">在线 · AI 角色</span></div>
             </div>
+            <button
+              id="rp-reading-settings-btn"
+              class="rp-reading-settings-btn"
+              type="button"
+              aria-label="聊天室阅读设置"
+              title="聊天室阅读设置"
+            >
+              <svg aria-hidden="true" viewBox="0 0 24 24">
+                <path d="m15 16 2.536-7.328a1.02 1.02 0 0 1 1.928 0L22 16"></path>
+                <path d="M15.697 14h5.606"></path>
+                <path d="m2 16 4.039-9.69a.5.5 0 0 1 .923 0L11 16"></path>
+                <path d="M3.304 13h6.392"></path>
+              </svg>
+            </button>
             <button id="chat-menu-btn" class="chat-menu-btn">≡</button>
           </div>
           <div id="rp-toolbar" class="rp-toolbar" style="display:none;">
-            <button type="button" id="rp-greeting-trigger" class="rp-greeting-trigger">
+            <button
+              type="button"
+              id="rp-greeting-trigger"
+              class="rp-greeting-trigger"
+              aria-controls="rp-greeting-sheet"
+              aria-expanded="false"
+            >
+              <span class="rp-greeting-seal" aria-hidden="true">序</span>
               <span class="rp-greeting-trigger-label">开场白</span>
+              <span class="rp-greeting-trigger-divider" aria-hidden="true"></span>
               <span class="rp-greeting-trigger-name" id="rp-greeting-name">未选择</span>
-              <span class="rp-greeting-trigger-arrow">▾</span>
+              <span class="rp-greeting-trigger-count" id="rp-greeting-count">0 篇</span>
+              <span class="rp-greeting-trigger-arrow" aria-hidden="true">
+                <svg viewBox="0 0 24 24">
+                  <path d="m6 9 6 6 6-6"></path>
+                </svg>
+              </span>
             </button>
           </div>
           <!-- RP 开场白选择底部面板 -->
           <div id="rp-greeting-overlay" class="rp-greeting-overlay hidden"></div>
-          <div id="rp-greeting-sheet" class="rp-greeting-sheet hidden">
+          <div
+            id="rp-greeting-sheet"
+            class="rp-greeting-sheet hidden"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="rp-greeting-sheet-title"
+            aria-hidden="true"
+          >
             <div class="rp-greeting-sheet-handle"></div>
-            <div class="rp-greeting-sheet-header">选择开场白</div>
+            <div class="rp-greeting-sheet-header">
+              <div class="rp-greeting-sheet-heading">
+                <div class="rp-greeting-sheet-title-row">
+                  <span class="rp-greeting-seal" aria-hidden="true">序</span>
+                  <h2 id="rp-greeting-sheet-title">开场白</h2>
+                  <span id="rp-greeting-sheet-count">共 0 篇</span>
+                </div>
+                <p>扉页 · 每一篇开场白，都是一种故事的开端</p>
+              </div>
+              <button type="button" id="rp-greeting-sheet-close" aria-label="关闭开场白面板">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M18 6 6 18M6 6l12 12"></path>
+                </svg>
+              </button>
+            </div>
             <div id="rp-greeting-sheet-list" class="rp-greeting-sheet-list"></div>
             <div class="rp-greeting-sheet-footer">
-              <button type="button" id="rp-greeting-sheet-add">新增开场白</button>
-              <button type="button" id="rp-greeting-sheet-reset">重置剧情</button>
+              <button type="button" id="rp-greeting-sheet-add">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M12 5v14M5 12h14"></path>
+                </svg>
+                <span>新增开场白</span>
+              </button>
+              <button type="button" id="rp-greeting-sheet-reset">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M3 12a9 9 0 1 0 3-6.7L3 8"></path>
+                  <path d="M3 3v5h5"></path>
+                </svg>
+                <span>重置剧情</span>
+              </button>
             </div>
           </div>
 
@@ -342,6 +402,20 @@
         <div class="sheet-desc">当前好友/群组设置</div>
         <button data-action="contact-settings">⚙ 设置</button>
         <button data-action="session-config">📋 会话配置</button>
+      </div>
+
+      <div id="rp-reading-settings-menu" class="sheet hidden rp-reading-settings-menu">
+        <div class="rp-reading-settings-label">字号</div>
+        <div class="rp-reading-size-options" role="group" aria-label="聊天室字号">
+          <button type="button" data-rp-reading-size="compact" aria-pressed="false">紧凑</button>
+          <button type="button" data-rp-reading-size="standard" aria-pressed="true">标准</button>
+          <button type="button" data-rp-reading-size="relaxed" aria-pressed="false">宽松</button>
+        </div>
+        <div class="rp-reading-settings-label rp-narrative-font-label">叙事字体</div>
+        <div class="rp-narrative-font-options" role="group" aria-label="聊天室叙事字体">
+          <button type="button" data-rp-narrative-font="serif" aria-pressed="true">宋体 · 小说感</button>
+          <button type="button" data-rp-narrative-font="sans" aria-pressed="false">黑体 · 清爽</button>
+        </div>
       </div>
 
       <!-- Plus quick menu -->

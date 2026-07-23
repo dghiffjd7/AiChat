@@ -42,6 +42,8 @@ const defaults = {
   chatHistoryMax: 0,
   creativeHistoryMax: 0,
   creativeWideBubble: true,
+  creativeReadingSize: 'standard',
+  creativeNarrativeFont: 'serif',
   reasoningAutoParse: false,
   reasoningAutoExpand: false,
   reasoningShowHidden: false,

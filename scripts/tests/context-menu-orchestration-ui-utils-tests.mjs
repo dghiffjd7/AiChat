@@ -35,7 +35,7 @@ import { showContextMenuCore } from '../../src/scripts/ui/chat/context-menu-orch
     resolveContextMenuContext: () => ({
       wrapper: {
         id: 'wrap',
-        classList: { contains: token => token === 'has-rp-message-chrome' },
+        classList: { contains: token => token === 'has-rp-message-actions' },
       },
       message: { id: 'm1', meta: { reactions: [] } },
       codeBlock: null,

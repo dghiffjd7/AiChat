@@ -95,7 +95,7 @@ export const createSelectionModeUiRuntime = ({
   markWrapperSelectable(wrapper, msgId) {
     if (!wrapper || !msgId) return;
     const role = String(wrapper.dataset?.role || '');
-    if (role === 'system') return;
+    if (!role || role === 'system') return;
     wrapper.style.position = 'relative';
     wrapper.classList.add('chat-selectable');
 
@@ -155,7 +155,7 @@ export const createSelectionModeUiRuntime = ({
     setSelectedMessageIds?.(nextSelected);
     setSelectionBarVisible?.(true);
 
-    const wrappers = scrollEl?.querySelectorAll?.('[data-msg-id]') || [];
+    const wrappers = scrollEl?.querySelectorAll?.('[data-msg-id][data-role]') || [];
     wrappers.forEach(wrapper => {
       const id = String(wrapper?.dataset?.msgId || '');
       if (!id) return;
@@ -203,7 +203,7 @@ export const createSelectionModeUiRuntime = ({
     if (!id || !(selectedMessageIds instanceof Set)) return;
     if (selectedMessageIds.has(id)) selectedMessageIds.delete(id);
     else selectedMessageIds.add(id);
-    const wrapper = scrollEl?.querySelector?.(`[data-msg-id="${id}"]`);
+    const wrapper = scrollEl?.querySelector?.(`[data-msg-id="${id}"][data-role]`);
     if (wrapper) updateWrapperSelectionState?.(wrapper, id);
     setSelectionBarVisible?.(true);
   },

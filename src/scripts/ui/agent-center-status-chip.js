@@ -138,6 +138,72 @@ body[data-theme-mode='dark'] .agent-status-chip.is-ready {
     background: rgba(99, 102, 241, 0.20);
     color: #c4b5fd;
 }
+.chat-room-topbar .agent-status-chip,
+body[data-theme-mode='dark'] .chat-room-topbar .agent-status-chip {
+    position: relative;
+    width: 36px;
+    height: 36px;
+    min-width: 36px;
+    max-width: 36px;
+    flex: 0 0 36px;
+    padding: 6px;
+    overflow: visible;
+    border: 0;
+    background: transparent;
+    box-shadow: none;
+}
+.chat-room-topbar .agent-status-chip-mark {
+    position: relative;
+    width: 24px;
+    height: 24px;
+    display: inline-grid;
+    place-items: center;
+    overflow: hidden;
+    border-radius: 50%;
+    background: linear-gradient(135deg, #6366f1, #8b5cf6);
+    background-clip: border-box;
+    -webkit-background-clip: border-box;
+    color: #fff;
+    -webkit-text-fill-color: #fff;
+    box-shadow: 0 6px 16px -6px rgba(99, 102, 241, 0.64);
+    transform: translateY(-0.5px);
+    transition: transform 180ms ease, box-shadow 180ms ease;
+}
+.chat-room-topbar .agent-status-chip-mark::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    background: linear-gradient(
+        115deg,
+        transparent 22%,
+        rgba(255, 255, 255, 0.42) 48%,
+        transparent 72%
+    );
+    transform: translateX(-145%);
+    transition: transform 420ms cubic-bezier(0.22, 1, 0.36, 1);
+    pointer-events: none;
+}
+.chat-room-topbar .agent-status-chip:hover .agent-status-chip-mark {
+    box-shadow: 0 7px 18px -5px rgba(99, 102, 241, 0.72);
+    transform: translateY(-1px) scale(1.045);
+}
+.chat-room-topbar .agent-status-chip:hover .agent-status-chip-mark::after {
+    transform: translateX(145%);
+}
+.chat-room-topbar .agent-status-chip-count {
+    position: absolute;
+    top: 0;
+    right: -1px;
+    min-width: 14px;
+    height: 14px;
+    padding: 0 3px;
+    border: 2px solid var(--app-surface-topbar, var(--app-surface-card));
+    background: var(--app-surface-card);
+    box-sizing: border-box;
+    font-size: 8px;
+    box-shadow: 0 2px 7px rgba(15, 23, 42, 0.14);
+}
 .moments-actions .agent-status-chip {
     max-width: 96px;
 }
@@ -154,6 +220,29 @@ body[data-theme-mode='dark'] .agent-status-chip.is-ready {
     .agent-status-chip:active {
         transform: none !important;
     }
+    .chat-room-topbar .agent-status-chip-mark,
+    .chat-room-topbar .agent-status-chip-mark::after {
+        transition: none !important;
+    }
+    .chat-room-topbar .agent-status-chip:hover .agent-status-chip-mark {
+        transform: none !important;
+    }
+    .chat-room-topbar .agent-status-chip-mark::after {
+        display: none;
+    }
+}
+body[data-reduced-motion='on'] .chat-room-topbar .agent-status-chip,
+body[data-reduced-motion='on'] .chat-room-topbar .agent-status-chip-mark,
+body[data-reduced-motion='on'] .chat-room-topbar .agent-status-chip-mark::after {
+    animation: none !important;
+    transition: none !important;
+}
+body[data-reduced-motion='on'] .chat-room-topbar .agent-status-chip:hover,
+body[data-reduced-motion='on'] .chat-room-topbar .agent-status-chip:hover .agent-status-chip-mark {
+    transform: none !important;
+}
+body[data-reduced-motion='on'] .chat-room-topbar .agent-status-chip-mark::after {
+    display: none;
 }
 `;
 

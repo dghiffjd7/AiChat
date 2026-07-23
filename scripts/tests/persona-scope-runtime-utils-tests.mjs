@@ -58,6 +58,26 @@ import {
 }
 
 {
+  const chatStore = {
+    getCurrent: () => 'rp:persona_1',
+    hasSession: id => id === 'rp:persona_1',
+  };
+  const contactsStore = { getContact: () => null };
+  assert.deepEqual(resolvePersonaScopedCurrentSession({
+    scopeId: 'persona_1',
+    chatStore,
+    contactsStore,
+    allowRpSession: false,
+  }), {
+    sessionId: '',
+    known: false,
+    foreignRp: false,
+    source: 'rp-excluded',
+  });
+  console.log('ok - social session resolution excludes the active persona creative-writing room');
+}
+
+{
   const chatStore = { scopeId: 'default', hasSession: id => id === '海伦娜' };
   const contactsStore = { scopeId: 'default', getContact: id => (id === '海伦娜' ? { id } : null) };
   assert.equal(arePersonaScopedStoresReady({ scopeId: 'persona_1', chatStore, contactsStore }), false);

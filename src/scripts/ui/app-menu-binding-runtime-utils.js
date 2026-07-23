@@ -146,6 +146,7 @@ export const bindChatTitleMenuActions = ({
   hideMenus = () => {},
   renderGroupDropdown = () => {},
   toggleTitleMenu = () => {},
+  onAvatarClick = null,
   openContactSettings = () => {},
   openSessionConfig = () => {},
 } = {}) => {
@@ -162,8 +163,13 @@ export const bindChatTitleMenuActions = ({
     toggleTitleMenu();
   };
 
+  const handleAvatarClick = (event) => {
+    if (typeof onAvatarClick === 'function' && onAvatarClick(event) === true) return;
+    handleIdentityClick(event);
+  };
+
   currentChatTitle?.addEventListener?.('click', handleIdentityClick);
-  currentChatAvatarButton?.addEventListener?.('click', handleIdentityClick);
+  currentChatAvatarButton?.addEventListener?.('click', handleAvatarClick);
 
   chatTitleMenu?.querySelectorAll?.('button').forEach((button) => {
     button.addEventListener('click', () => {

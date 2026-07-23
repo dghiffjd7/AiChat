@@ -66,11 +66,15 @@ export const resolvePersonaScopedCurrentSession = ({
   scopeId = '',
   chatStore = null,
   contactsStore = null,
+  allowRpSession = true,
 } = {}) => {
   const sid = String(chatStore?.getCurrent?.() || '').trim();
   const foreignRp = isForeignRpSessionForScope(sid, scopeId);
   if (!sid || foreignRp) {
     return { sessionId: '', known: false, foreignRp, source: sid ? 'foreign-rp' : 'empty' };
+  }
+  if (allowRpSession !== true && sid.startsWith('rp:')) {
+    return { sessionId: '', known: false, foreignRp: false, source: 'rp-excluded' };
   }
   let hasChat = false;
   let hasContact = false;

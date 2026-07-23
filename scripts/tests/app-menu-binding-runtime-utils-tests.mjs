@@ -263,3 +263,27 @@ const createMenu = (buttons = []) => ({
   ]);
   console.log('ok - bindChatTitleMenuActions routes title/avatar clicks and title-menu actions');
 }
+
+{
+  const calls = [];
+  const currentChatTitle = createButton();
+  const currentChatAvatarButton = createButton();
+  bindChatTitleMenuActions({
+    currentChatTitle,
+    currentChatAvatarButton,
+    chatTitleMenu: createMenu(),
+    getCurrentSessionMeta: () => ({ sessionId: 'rp:hero', isGroup: false }),
+    toggleTitleMenu: () => calls.push('title-menu'),
+    onAvatarClick: event => {
+      calls.push(['persona-menu', event.currentTarget]);
+      return true;
+    },
+  });
+  currentChatTitle.trigger();
+  currentChatAvatarButton.trigger();
+  assert.deepEqual(calls, [
+    'title-menu',
+    ['persona-menu', currentChatAvatarButton],
+  ]);
+  console.log('ok - bindChatTitleMenuActions lets creative avatar open the persona selector without changing title behavior');
+}
