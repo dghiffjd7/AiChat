@@ -1,6 +1,7 @@
 import {
   buildAppFeatureSearchContextText,
   findAppFeature,
+  getMaidModelFeatureContext,
   listAppFeatures,
 } from './app-feature-catalog.js';
 import { resolveCandidateCapabilitySelection } from './maid-capability-routing.js';
@@ -165,7 +166,7 @@ const yamlText = (value = '') => {
 };
 
 export const buildMaidModelPlannerFeatureList = (features = listAppFeatures()) => (
-  (Array.isArray(features) ? features : [])
+  getMaidModelFeatureContext(features).features
     .map(feature => [
       `- id: ${yamlText(feature.id)}`,
       `  title: ${yamlText(feature.title)}`,
@@ -188,8 +189,12 @@ export const buildMaidModelPlannerMessages = ({
   features = listAppFeatures(),
   maidPrompt = DEFAULT_MAID_PROMPT,
 } = {}) => {
-  const featureList = buildMaidModelPlannerFeatureList(features);
-  const searchContext = buildAppFeatureSearchContextText(input, { features, limit: 5 });
+  const modelFeatureContext = getMaidModelFeatureContext(features);
+  const featureList = buildMaidModelPlannerFeatureList(modelFeatureContext.features);
+  const searchContext = buildAppFeatureSearchContextText(input, {
+    features: modelFeatureContext.features,
+    limit: 5,
+  });
   const prompt = trim(maidPrompt, DEFAULT_MAID_PROMPT);
   const memoryText = trim(conversationContext?.memoryText);
   const historyText = trim(conversationContext?.historyText);
@@ -214,6 +219,7 @@ export const buildMaidModelPlannerMessages = ({
       role: 'system',
       content: [
         '你是这个 APP 内的女仆助手规划器。',
+        modelFeatureContext.awareness,
         '',
         '## 输出协议',
         '你只能从给定 APP 功能目录中选择一个功能，并输出严格 JSON，不能输出解释文字。',
@@ -326,13 +332,14 @@ export const normalizeMaidModelPlan = (raw = {}, {
   if (raw.ok === false) {
     return unsupportedPlan(trim(raw.reason, 'unsupported_intent'), truncate(raw.message || '这个请求还没有接入女仆工具。', 160));
   }
+  const modelFeatures = getMaidModelFeatureContext(features).features;
   const featureId = trim(raw.featureId);
   const toolName = trim(raw.toolName);
   if (candidateMode) {
     const resolved = resolveCandidateCapabilitySelection({
       featureId,
       toolName,
-      features,
+      features: modelFeatures,
       allowFuzzy: true,
     });
     if (!resolved.ok) {
@@ -365,12 +372,13 @@ export const normalizeMaidModelPlan = (raw = {}, {
     };
   }
   // 弱格式模型常把 featureId 和 toolName 混搭：工具归属唯一时按 toolName 纠偏 feature。
-  const featuresByTool = toolName && Array.isArray(features)
-    ? features.filter(item => list(item?.tools).includes(toolName))
+  const featuresByTool = toolName
+    ? modelFeatures.filter(item => list(item?.tools).includes(toolName))
     : [];
   let capabilityCorrection = null;
-  let feature = (typeof findFeature === 'function' ? findFeature(featureId) : null) ||
-    (Array.isArray(features) ? features.find(item => trim(item?.id) === featureId) : null);
+  let feature = typeof findFeature === 'function' ? findFeature(featureId) : null;
+  if (feature?.maidModelContext === 'awareness_only') feature = null;
+  feature ||= modelFeatures.find(item => trim(item?.id) === featureId) || null;
   if (!feature) {
     if (featuresByTool.length === 1) {
       feature = featuresByTool[0];
@@ -420,7 +428,8 @@ export const buildMaidModelReActMessages = ({
   maidPrompt = DEFAULT_MAID_PROMPT,
   steps = [],
 } = {}) => {
-  const featureList = buildMaidModelPlannerFeatureList(features);
+  const modelFeatureContext = getMaidModelFeatureContext(features);
+  const featureList = buildMaidModelPlannerFeatureList(modelFeatureContext.features);
   const prompt = trim(maidPrompt, DEFAULT_MAID_PROMPT);
   const memoryText = trim(conversationContext?.memoryText);
   const historyText = trim(conversationContext?.historyText);
@@ -458,6 +467,7 @@ export const buildMaidModelReActMessages = ({
       role: 'system',
       content: [
         '你是这个 APP 内女仆助手的 ReAct 控制器。',
+        modelFeatureContext.awareness,
         '',
         '## 输出协议',
         '你要在内部完成 Reason -> Act -> Observe 判断，但不要输出思考过程。',
@@ -646,7 +656,8 @@ export const createMaidModelBackedPlanner = ({
   }
 
   try {
-    const decisionFeatures = resolveCapabilityDecisionFeatures(context, features);
+    const promptFeatures = resolveCapabilityDecisionFeatures(context, features);
+    const decisionFeatures = getMaidModelFeatureContext(promptFeatures).features;
     const capabilitySnapshot = context?.capabilitySnapshot || null;
     const conversationContext = typeof getConversationContext === 'function'
       ? getConversationContext({ input, context, taskType: 'maid_assistant' })
@@ -655,7 +666,7 @@ export const createMaidModelBackedPlanner = ({
       input,
       context: { ...context, subAgents: runtime?.subAgents || [] },
       conversationContext,
-      features: decisionFeatures,
+      features: promptFeatures,
       maidPrompt: runtime?.maidPrompt || runtime?.personaPrompt,
     });
     onContextInjected?.({
@@ -753,7 +764,8 @@ export const createMaidModelBackedReActPlanner = ({
   }
 
   try {
-    const decisionFeatures = resolveCapabilityDecisionFeatures(context, features);
+    const promptFeatures = resolveCapabilityDecisionFeatures(context, features);
+    const decisionFeatures = getMaidModelFeatureContext(promptFeatures).features;
     const capabilitySnapshot = context?.capabilitySnapshot || null;
     const conversationContext = typeof getConversationContext === 'function'
       ? getConversationContext({ input, context, taskType: 'maid_react' })
@@ -763,7 +775,7 @@ export const createMaidModelBackedReActPlanner = ({
       input,
       context: { ...context, subAgents: runtime?.subAgents || [] },
       conversationContext,
-      features: decisionFeatures,
+      features: promptFeatures,
       maidPrompt: runtime?.maidPrompt || runtime?.personaPrompt,
       steps,
     });

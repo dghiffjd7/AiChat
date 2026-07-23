@@ -220,8 +220,8 @@ const cloneJson = value => JSON.parse(JSON.stringify(value));
     featureId: 'maid.onboarding',
     response: '我来带主人完成配置。',
   });
-  assert.equal(guidePlan.ok, true);
-  assert.equal(guidePlan.toolName, 'guide.start_flow');
+  assert.equal(guidePlan.ok, false);
+  assert.equal(guidePlan.reason, 'feature_not_found');
 
   const noResponse = normalizeMaidModelPlan({
     ok: true,
@@ -594,6 +594,21 @@ const cloneJson = value => JSON.parse(JSON.stringify(value));
   assert.match(system, /<app_features>\n- id: session\.create/);
   assert.match(system, /<\/app_features>/);
   console.log('ok - 功能目录以 YAML 列表呈现并用 app_features 标签分隔');
+}
+
+{
+  const messages = buildMaidModelPlannerMessages({
+    input: '查看最近任务',
+  });
+  const reactMessages = buildMaidModelReActMessages({
+    input: '查看最近任务',
+    steps: [],
+  });
+  for (const system of [messages[0].content, reactMessages[0].content]) {
+    assert.match(system, /APP 存在由本地界面直接处理的内建新手任务/);
+    assert.doesNotMatch(system, /maid\.onboarding|女仆新手引导|guide\.start_flow|setup-api|add-friend|first-chat|meet-maid/);
+  }
+  console.log('ok - model planner only receives awareness of local onboarding, not flow details or tools');
 }
 
 {

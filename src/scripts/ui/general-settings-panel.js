@@ -2281,7 +2281,7 @@ export class GeneralSettingsPanel {
         <div class="general-settings-card">
           <div class="general-settings-shortcut-grid">
             <button id="general-open-session" class="general-settings-shortcut-btn">💬 会话</button>
-            <button id="general-open-memory-templates" class="general-settings-shortcut-btn">🧠 记忆表格</button>
+            <button id="general-open-memory-templates" data-maid-guide-target="general-memory-templates" class="general-settings-shortcut-btn">🧠 记忆表格</button>
           </div>
         </div>
 

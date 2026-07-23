@@ -1165,7 +1165,7 @@ export class WorldEditorModal {
                     <input id="world-editor-name" type="text" placeholder="名称" style="font-weight:700; font-size:14px; color:var(--app-text-primary); border:1px solid var(--app-border-default); border-radius:8px; padding:4px 8px; min-width:140px; max-width:260px;">
                 </div>
                 <div class="world-editor-actions">
-                    <button id="world-editor-save">保存</button>
+                    <button id="world-editor-save" data-maid-guide-target="worldbook-save">保存</button>
                     <button id="world-editor-export">导出</button>
                     <button id="world-editor-manage">管理</button>
                     <button id="world-editor-close" class="world-editor-close">×</button>
@@ -1174,7 +1174,7 @@ export class WorldEditorModal {
             <div class="world-editor-body">
                 <div class="world-entries-column">
                     <div class="world-entries-toolbar">
-                        <button id="world-entry-add">＋ 新条目</button>
+                        <button id="world-entry-add" data-maid-guide-target="worldbook-entry-add">＋ 新条目</button>
                         <div class="world-entries-search">
                             <input id="world-entry-search" type="search" placeholder="搜索条目">
                         </div>

@@ -15,7 +15,10 @@ import { registerMomentsAgentTools } from '../../src/scripts/agent/tools/moments
 
 // 已注册但不进入功能目录的元工具/本地工具。
 // 新工具默认必须进目录；确需豁免时在这里登记并写明原因。
-const CATALOG_EXEMPT_TOOLS = new Set([]);
+const CATALOG_EXEMPT_TOOLS = new Set([
+  // 四项内建新手流程由本地意图路由直接启动，不进入女仆模型上下文。
+  'guide.start_flow',
+]);
 
 const registry = createAgentToolRegistry();
 registerAppNavigationAgentTools(registry, {});

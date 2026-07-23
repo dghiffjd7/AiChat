@@ -3,9 +3,12 @@ import assert from 'node:assert/strict';
 import {
   buildGuidedActionGuide,
   createAppGuidedActionRuntime,
+  dismissGuidedActionObstructions,
+  isGuidedActionElementVisible,
   isGuidedActionOutputOk,
   prepareGuidedActionEntryNavigation,
 } from '../../src/scripts/ui/app-guided-action-runtime-utils.js';
+import { listAppFeatures } from '../../src/scripts/agent/app-feature-catalog.js';
 
 {
   const guide = buildGuidedActionGuide({
@@ -37,6 +40,98 @@ import {
   assert.ok(guide.stepDetails[2].selectors.some(selector => selector.includes('manage-users')));
   assert.ok(guide.stepDetails[3].selectors.some(selector => selector.includes('create-user')));
   console.log('ok - guided action runtime exposes selectors for step playback');
+}
+
+{
+  const expectedPaths = new Map([
+    ['worldbook.create', ['聊天室右上角菜单', '世界书', '新增世界书', '新增条目', '保存世界书']],
+    ['memory.open', ['设置', '设定', '记忆表格']],
+    ['variables.open', ['聊天室右上角菜单', '聊天设置', '变量管理器']],
+    ['regex.open', ['聊天室右上角菜单', '聊天设置', '正规表达式']],
+  ]);
+  for (const [featureId, expectedPath] of expectedPaths) {
+    const feature = listAppFeatures().find(item => item.id === featureId);
+    assert.deepEqual(feature?.uiPath, expectedPath, `${featureId} must follow the current UI route`);
+  }
+
+  const firstRunFeatures = listAppFeatures().filter(feature => feature.firstRunGuide);
+  const missing = firstRunFeatures.flatMap((feature) => {
+    const guide = buildGuidedActionGuide(feature);
+    return guide.stepDetails
+      .filter(step => step.selectors.length === 0)
+      .map(step => `${feature.id}:${step.label}`);
+  });
+  assert.deepEqual(missing, [], `first-run guide steps missing UI selectors: ${missing.join(', ')}`);
+  console.log('ok - every first-run guide follows current UI routes with resolvable selectors');
+}
+
+{
+  const parent = {
+    parentElement: null,
+    closest: () => null,
+    styleState: { display: 'block', visibility: 'visible', opacity: '0', pointerEvents: 'auto' },
+  };
+  const target = {
+    parentElement: parent,
+    closest: () => null,
+    getBoundingClientRect: () => ({ width: 28, height: 28 }),
+    styleState: { display: 'flex', visibility: 'visible', opacity: '1', pointerEvents: 'none' },
+  };
+  const options = {
+    documentElement: { contains: element => element === target || element === parent },
+    getComputedStyle: element => element.styleState,
+  };
+  assert.equal(
+    isGuidedActionElementVisible(target, options),
+    false,
+    'a target inside an idle/transparent shell must not be treated as clickable',
+  );
+  parent.styleState.opacity = '1';
+  target.styleState.pointerEvents = 'auto';
+  assert.equal(isGuidedActionElementVisible(target, options), true);
+
+  const blocker = { closest: () => null };
+  assert.equal(
+    isGuidedActionElementVisible(target, {
+      ...options,
+      elementsFromPoint: () => [blocker, target],
+      viewportWidth: 360,
+      viewportHeight: 640,
+    }),
+    false,
+    'a panel covered by another app layer must not be exposed as a clickable guide target',
+  );
+  target.getBoundingClientRect = () => ({ left: 0, top: 900, width: 28, height: 28 });
+  assert.equal(
+    isGuidedActionElementVisible(target, {
+      ...options,
+      elementsFromPoint: () => {
+        throw new Error('offscreen targets should be scrolled instead of hit-tested');
+      },
+      viewportWidth: 360,
+      viewportHeight: 640,
+    }),
+    true,
+  );
+  console.log('ok - guided action visibility rejects hidden ancestors and non-interactive targets');
+}
+
+{
+  let remainingLayers = 2;
+  const calls = [];
+  const result = await dismissGuidedActionObstructions({
+    isTargetVisible: () => remainingLayers === 0,
+    closeTopLayer: ({ dryRun }) => {
+      calls.push(dryRun ? 'check' : 'close');
+      if (dryRun) return remainingLayers > 0;
+      remainingLayers -= 1;
+      return true;
+    },
+    wait: ms => calls.push(`wait:${ms}`),
+  });
+  assert.deepEqual(result, { closed: 2, targetVisible: true });
+  assert.deepEqual(calls, ['check', 'close', 'wait:120', 'check', 'close', 'wait:120']);
+  console.log('ok - guided action startup dismisses only layers obstructing its first target');
 }
 
 {

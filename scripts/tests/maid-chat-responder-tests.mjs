@@ -33,6 +33,20 @@ import {
 
 {
   const messages = buildMaidChatResponderMessages({
+    input: '新手任务有哪些',
+  });
+  const prompt = messages.map(message => (
+    typeof message.content === 'string'
+      ? message.content
+      : JSON.stringify(message.content)
+  )).join('\n');
+  assert.match(prompt, /APP 存在由本地界面直接处理的内建新手任务/);
+  assert.doesNotMatch(prompt, /maid\.onboarding|女仆新手引导|guide\.start_flow|setup-api|add-friend|first-chat|meet-maid/);
+  console.log('ok - maid chat responder does not receive built-in onboarding flow details');
+}
+
+{
+  const messages = buildMaidChatResponderMessages({
     input: '你好啊',
     maidPrompt: '自定义女仆 system prompt',
   });

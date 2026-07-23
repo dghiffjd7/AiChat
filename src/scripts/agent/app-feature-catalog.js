@@ -222,7 +222,7 @@ export const APP_FEATURE_DEFINITIONS = Object.freeze([
     title: '创建世界书',
     aliases: ['创建世界书', '新建世界书', '写世界书', '世界书条目', '绑定世界书'],
     summary: '创建世界书或向现有世界书追加条目，并可绑定到指定角色卡；默认不覆盖旧条目。长正文条目优先用 worldbook.generate_entries 只传大纲。',
-    uiPath: ['聊天室右上角菜单', '世界书', '新建/编辑条目', '保存', '绑定角色卡'],
+    uiPath: ['聊天室右上角菜单', '世界书', '新增世界书', '新增条目', '保存世界书'],
     tools: ['worldbook.create', 'worldbook.generate_entries'],
     argsHint: 'worldbook.create: entries[] 必填（含完整 content）；name 可省略，缺省时使用当前角色卡世界书；mode 默认 append 保留旧条目；create_new 强制新建副本；replace 只有用户点击确认后才会覆盖。生成较长条目正文（约 100 字以上）时优先用 worldbook.generate_entries：只传 name 和 entries[]（每项 title+outline 要点大纲+length 目标字数+keys 可选），正文由 sub-agent 模型（<sub_agents> 中按能力选 subAgentId，无配置则主模型）生成后自动追加写入，不要自己在 JSON 里写长正文',
     panel: 'worldbook',
@@ -463,18 +463,18 @@ export const APP_FEATURE_DEFINITIONS = Object.freeze([
   },
   {
     id: 'maid.onboarding',
-    title: '女仆新手引导',
-    aliases: ['女仆新手任务', '新手引导', '带我上手', '教我配置API', '带我添加好友', '第一次聊天教学', '认识女仆和Agent Center'],
-    summary: '启动零 AI 依赖的内建分步教学，可带用户配置 API、添加好友、完成第一次对话或认识女仆与 Agent Center。',
-    uiPath: ['女仆指令条', '新手任务'],
-    tools: ['guide.start_flow'],
-    argsHint: 'flowId 必填，只能是 setup-api、add-friend、first-chat、meet-maid 之一；用户想学习这些功能时优先启动教学，不要代替用户完成步骤',
+    title: '内建新手任务',
+    aliases: ['女仆新手任务', '新手引导'],
+    summary: 'APP 内存在由本地界面直接处理的新手任务。',
+    uiPath: [],
+    tools: [],
     panel: '',
     riskLevel: 'low',
     writes: false,
     confirmation: 'none',
     firstRunGuide: '',
-    directAction: 'guide.start_flow',
+    directAction: '',
+    maidModelContext: 'awareness_only',
   },
   {
     id: 'agent.center.open',
@@ -509,7 +509,7 @@ export const APP_FEATURE_DEFINITIONS = Object.freeze([
     title: '打开记忆',
     aliases: ['记忆', '记忆表格', '打开记忆', 'memory', '记忆管理'],
     summary: '打开记忆表格和模板管理界面。',
-    uiPath: ['设置', '记忆'],
+    uiPath: ['设置', '设定', '记忆表格'],
     tools: ['app.open_panel'],
     panel: 'memory',
     riskLevel: 'low',
@@ -523,7 +523,7 @@ export const APP_FEATURE_DEFINITIONS = Object.freeze([
     title: '打开变量',
     aliases: ['变量', '打开变量', '变量面板', 'mvu变量', '状态变量'],
     summary: '打开当前会话变量和全局变量界面。',
-    uiPath: ['聊天室右上角菜单', '变量'],
+    uiPath: ['聊天室右上角菜单', '聊天设置', '变量管理器'],
     tools: ['app.open_panel'],
     panel: 'variables',
     riskLevel: 'low',
@@ -537,7 +537,7 @@ export const APP_FEATURE_DEFINITIONS = Object.freeze([
     title: '打开正则',
     aliases: ['正则', '正则规则', '后处理', 'regex', '打开正则'],
     summary: '打开正则和后处理规则管理界面。',
-    uiPath: ['设置', '正则 / 后处理'],
+    uiPath: ['聊天室右上角菜单', '聊天设置', '正规表达式'],
     tools: ['app.open_panel'],
     panel: 'regex',
     riskLevel: 'low',
@@ -770,6 +770,17 @@ const searchFeatureList = (features = APP_FEATURE_DEFINITIONS, query = '', { lim
 };
 
 export const listAppFeatures = () => APP_FEATURE_DEFINITIONS.map(clone);
+
+export const getMaidModelFeatureContext = (features = listAppFeatures()) => {
+  const source = Array.isArray(features) ? features : [];
+  const hasLocalOnboarding = source.some(feature => feature?.maidModelContext === 'awareness_only');
+  return {
+    features: source.filter(feature => feature?.maidModelContext !== 'awareness_only'),
+    awareness: hasLocalOnboarding
+      ? 'APP 存在由本地界面直接处理的内建新手任务；该流程由应用本地执行，不向模型提供具体步骤、状态、参数或调用工具。'
+      : '',
+  };
+};
 
 export const findAppFeature = (featureId = '') => {
   const id = trim(featureId);

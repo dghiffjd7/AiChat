@@ -204,6 +204,8 @@ import {
 } from './app-mode-switch-interaction-runtime-utils.js';
 import {
   createAppGuidedActionRuntime,
+  dismissGuidedActionObstructions,
+  isGuidedActionElementVisible,
   prepareGuidedActionEntryNavigation,
 } from './app-guided-action-runtime-utils.js';
 import { createMaidCommandInputRuntime } from './maid-command-input-runtime-utils.js';
@@ -16848,15 +16850,13 @@ Phase G（Frame 36）：循环衔接
     return Array.isArray(step?.selectors) ? step.selectors : [];
   };
   const isMaidGuideElementVisible = (element = null) => {
-    if (!element || !document.documentElement?.contains?.(element)) return false;
-    if (element.closest?.('.hidden,[hidden],[aria-hidden="true"]')) return false;
-    const rect = element.getBoundingClientRect?.();
-    if (!rect || rect.width <= 0 || rect.height <= 0) return false;
-    const style = window.getComputedStyle?.(element);
-    if (!style) return true;
-    if (style.display === 'none' || style.visibility === 'hidden') return false;
-    if (Number(style.opacity) === 0) return false;
-    return true;
+    return isGuidedActionElementVisible(element, {
+      documentElement: document.documentElement,
+      getComputedStyle: target => window.getComputedStyle(target),
+      elementsFromPoint: (x, y) => document.elementsFromPoint(x, y),
+      viewportWidth: window.innerWidth,
+      viewportHeight: window.innerHeight,
+    });
   };
   const findMaidGuideTarget = (guide = {}, step = {}) => {
     const selectors = getMaidGuideStepSelectors(guide, step);
@@ -17016,8 +17016,26 @@ Phase G（Frame 36）：循环衔接
       if (!findMaidGuideTarget(guide, step)) await openMaidQuickMenuForGuide();
       return;
     }
-    if (label === 'API / 模型配置' || label === 'Agent Center' || label === '记忆') {
+    if (label === '输入新好友名称' || label === '添加') {
+      if (!findMaidGuideTarget(guide, step)) {
+        await sessionPanel.show();
+        await maidGuideDelay(80);
+      }
+      return;
+    }
+    if (label === 'API / 模型配置' || label === 'Agent Center') {
       if (!findMaidGuideTarget(guide, step)) await openMaidSettingsMenuForGuide();
+      return;
+    }
+    if (label === '设定') {
+      if (!findMaidGuideTarget(guide, step)) await openMaidSettingsMenuForGuide();
+      return;
+    }
+    if (label === '记忆表格') {
+      if (!findMaidGuideTarget(guide, step)) {
+        await generalSettingsPanel.show();
+        await maidGuideDelay(80);
+      }
       return;
     }
     if (label === '会话配置') {
@@ -17027,10 +17045,28 @@ Phase G（Frame 36）：循环衔接
       }
       return;
     }
-    if (label === '世界书' || label === '变量' || label === '正则 / 后处理') {
+    if (label === '世界书') {
       if (!findMaidGuideTarget(guide, step)) {
         await openMaidChatroomMenuForGuide();
-        if (!findMaidGuideTarget(guide, step) && label === '世界书') await openMaidSettingsMenuForGuide();
+        if (!findMaidGuideTarget(guide, step)) await openMaidSettingsMenuForGuide();
+      }
+      return;
+    }
+    if (label === '聊天设置') {
+      if (!findMaidGuideTarget(guide, step)) await openMaidChatroomMenuForGuide();
+      return;
+    }
+    if (label === '变量管理器' || label === '正规表达式') {
+      if (!findMaidGuideTarget(guide, step)) {
+        openChatSettings();
+        await maidGuideDelay(80);
+      }
+      return;
+    }
+    if (label === '新增世界书') {
+      if (!findMaidGuideTarget(guide, step)) {
+        await worldPanel.show();
+        await maidGuideDelay(80);
       }
       return;
     }
@@ -17093,13 +17129,33 @@ Phase G（Frame 36）：循环衔接
     ));
     return contact?.id ? { id: contact.id, name: contact.name || contact.id } : null;
   };
+  const restoreMaidCommandInputAfterRun = async () => {
+    // 教学结束时女仆本轮 run 往往还在执行（会打开面板）；等 run 收尾再恢复，结果栈才不会盖住刚打开的面板
+    const deadline = Date.now() + 120000;
+    while (maidCommandInputRuntime?.isSubmitting?.() === true && Date.now() < deadline) {
+      await maidGuideDelay(300);
+    }
+    if (maidCommandInputRuntime?.isSubmitting?.() === true) return;
+    maidCommandInputRuntime?.open?.({ autoFocus: false });
+  };
   const showMaidGuideSteps = async (guide = {}, meta = {}) => {
     if (guide?.message) window.toastr?.info?.(guide.message);
     const details = Array.isArray(guide?.stepDetails) && guide.stepDetails.length
       ? guide.stepDetails
       : (Array.isArray(guide?.steps) ? guide.steps.map((label, index) => ({ label, index })) : []);
     if (!details.length) return;
+    const restoreMaidCommandInput = maidCommandInputRuntime?.isOpen?.() === true;
     maidOnboardingRuntime?.skip?.();
+    maidCommandInputRuntime?.close?.();
+    if (chatRoom?.classList.contains('wallpaper-idle')) {
+      registerWallpaperActivity({ force: true });
+      await maidGuideDelay(280);
+    }
+    await dismissGuidedActionObstructions({
+      isTargetVisible: () => Boolean(findMaidGuideTarget(guide, details[0])),
+      closeTopLayer: options => closeTopAppLayer(options),
+      wait: maidGuideDelay,
+    });
     const navigation = await prepareGuidedActionEntryNavigation({
       guide,
       meta,
@@ -17132,6 +17188,7 @@ Phase G（Frame 36）：循环衔接
       await maidGuideDelay(120);
     }
     hideMaidGuideBubble();
+    if (restoreMaidCommandInput) void restoreMaidCommandInputAfterRun();
   };
   showMaidGuide = showMaidGuideSteps;
 

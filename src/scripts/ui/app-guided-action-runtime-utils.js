@@ -31,6 +31,14 @@ const GUIDE_STEP_SELECTOR_CANDIDATES = Object.freeze({
     '[data-maid-guide-target="quick-add-friend"]',
     '#quick-menu button[data-action="add-friend"]',
   ],
+  '输入新好友名称': [
+    '[data-maid-guide-target="add-friend-search-input"]',
+    '#session-name',
+  ],
+  '添加': [
+    '[data-maid-guide-target="session-add-submit"]',
+    '#session-add',
+  ],
   '聊天列表': [
     '[data-maid-guide-target="chat-list"]',
     '#chat-list',
@@ -52,6 +60,14 @@ const GUIDE_STEP_SELECTOR_CANDIDATES = Object.freeze({
   '设置': [
     '[data-maid-guide-target="settings-entry"]',
     '.qq-message-topbar .user-settings-btn',
+  ],
+  '设定': [
+    '[data-maid-guide-target="settings-general"]',
+    '#settings-menu button[data-action="settings"]',
+  ],
+  '记忆表格': [
+    '[data-maid-guide-target="general-memory-templates"]',
+    '#general-open-memory-templates',
   ],
   'API / 模型配置': [
     '[data-maid-guide-target="settings-api-config"]',
@@ -85,15 +101,30 @@ const GUIDE_STEP_SELECTOR_CANDIDATES = Object.freeze({
     '#rp-chatroom-menu button[data-action="world"]',
     '#settings-menu button[data-action="world-global"]',
   ],
-  '变量': [
-    '[data-maid-guide-target="chatroom-vars"]',
-    '#chatroom-menu button[data-action="vars"]',
-    '#rp-chatroom-menu button[data-action="vars"]',
+  '新增世界书': [
+    '[data-maid-guide-target="worldbook-new"]',
+    '#world-new',
   ],
-  '正则 / 后处理': [
-    '[data-maid-guide-target="chatroom-regex"]',
-    '#chatroom-menu button[data-action="regex"]',
-    '#rp-chatroom-menu button[data-action="regex"]',
+  '新增条目': [
+    '[data-maid-guide-target="worldbook-entry-add"]',
+    '#world-entry-add',
+  ],
+  '保存世界书': [
+    '[data-maid-guide-target="worldbook-save"]',
+    '#world-editor-save',
+  ],
+  '聊天设置': [
+    '[data-maid-guide-target="chatroom-chat-settings"]',
+    '#chatroom-menu button[data-action="chat-settings"]',
+    '#rp-chatroom-menu button[data-action="chat-settings"]',
+  ],
+  '变量管理器': [
+    '[data-maid-guide-target="chat-settings-variables"]',
+    '#chat-setting-open-vars',
+  ],
+  '正规表达式': [
+    '[data-maid-guide-target="chat-settings-regex"]',
+    '#chat-setting-open-regex',
   ],
   '聊天室标题': [
     '[data-maid-guide-target="chat-title-entry"]',
@@ -178,6 +209,71 @@ const getGuideFirstStep = (guide = {}) => {
   if (Array.isArray(guide?.stepDetails) && guide.stepDetails.length) return guide.stepDetails[0];
   const label = Array.isArray(guide?.steps) ? trim(guide.steps[0]) : '';
   return label ? { index: 0, label, selectors: [] } : null;
+};
+
+export const isGuidedActionElementVisible = (element = null, {
+  documentElement = globalThis.document?.documentElement || null,
+  getComputedStyle = globalThis.getComputedStyle,
+  elementsFromPoint = globalThis.document?.elementsFromPoint?.bind?.(globalThis.document),
+  viewportWidth = globalThis.innerWidth,
+  viewportHeight = globalThis.innerHeight,
+} = {}) => {
+  if (!element || !documentElement?.contains?.(element)) return false;
+  if (element.closest?.('.hidden,[hidden],[aria-hidden="true"]')) return false;
+  const rect = element.getBoundingClientRect?.();
+  if (!rect || rect.width <= 0 || rect.height <= 0) return false;
+  if (typeof getComputedStyle !== 'function') return true;
+
+  let targetStyle = null;
+  for (let current = element; current; current = current.parentElement) {
+    const style = getComputedStyle(current);
+    if (current === element) targetStyle = style;
+    if (
+      style?.display === 'none' ||
+      style?.visibility === 'hidden' ||
+      style?.visibility === 'collapse' ||
+      Number(style?.opacity) <= 0.001
+    ) {
+      return false;
+    }
+    if (current === documentElement) break;
+  }
+  if (targetStyle?.pointerEvents === 'none') return false;
+
+  const centerX = Number(rect.left || 0) + (Number(rect.width) / 2);
+  const centerY = Number(rect.top || 0) + (Number(rect.height) / 2);
+  const centerIsInViewport = (
+    centerX >= 0 &&
+    centerY >= 0 &&
+    centerX < Number(viewportWidth || 0) &&
+    centerY < Number(viewportHeight || 0)
+  );
+  if (centerIsInViewport && typeof elementsFromPoint === 'function') {
+    const hit = Array.from(elementsFromPoint(centerX, centerY) || [])
+      .find(candidate => !candidate?.closest?.('.maid-spotlight-root'));
+    if (hit && hit !== element && !element.contains?.(hit)) return false;
+  }
+  return true;
+};
+
+export const dismissGuidedActionObstructions = async ({
+  isTargetVisible = null,
+  closeTopLayer = null,
+  wait = null,
+  maxClosures = 8,
+} = {}) => {
+  let closed = 0;
+  const targetVisible = async () => (
+    typeof isTargetVisible === 'function' && await isTargetVisible()
+  );
+  for (let index = 0; index < Math.max(0, Number(maxClosures) || 0); index += 1) {
+    if (await targetVisible()) return { closed, targetVisible: true };
+    if (typeof closeTopLayer !== 'function' || !await closeTopLayer({ dryRun: true })) break;
+    await closeTopLayer({ dryRun: false });
+    closed += 1;
+    if (typeof wait === 'function') await wait(120);
+  }
+  return { closed, targetVisible: Boolean(await targetVisible()) };
 };
 
 export const prepareGuidedActionEntryNavigation = async ({

@@ -163,9 +163,11 @@ const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '
     '创意泳道不得再挂到输入框，应把状态投影给共享容器');
   assert.match(appSource, /executionFlowRuntime\.attachCreativeLane\?\.\(creativeExecutionLaneRuntime\)/,
     '共享执行流容器应接管创意泳道 DOM 宿主');
-  assert.match(appSource, /createModeSwitchPositionRuntime\(\{[\s\S]*onPositionChange:[\s\S]*maidCommandInputRuntime\.position[\s\S]*executionFlowRuntime\?\.position/,
+  assert.match(appSource, /const refreshModeSwitchAnchoredUi = \(\) => \{[\s\S]*maidCommandInputRuntime\.position\?\.\(\)[\s\S]*executionFlowRuntime\?\.position\?\.\(\)[\s\S]*\};/,
+    '悬浮球锚定 UI 刷新函数应同时重定位指令条与执行流面板');
+  assert.match(appSource, /createModeSwitchPositionRuntime\(\{[\s\S]*onPositionChange:\s*refreshModeSwitchAnchoredUi/,
     '悬浮球位置同步完成后应立即重定位指令条与执行流面板');
-  assert.match(appSource, /onOpenStateChange:\s*\(\{\s*open\s*\}\)\s*=>\s*\{[\s\S]*?rearbitrateMaidTrace\?\.\(\{\s*commandInputOpen:\s*open\s*\}\)/,
+  assert.match(appSource, /onOpenStateChange:\s*\(\{\s*open(?:,\s*rootEl)?\s*\}\)\s*=>\s*\{[\s\S]*?rearbitrateMaidTrace\?\.\(\{\s*commandInputOpen:\s*open\s*\}\)/,
     '指令条开合必须通知执行流重新仲裁，不能只等下一条 trace 事件');
   assert.doesNotMatch(appSource, /\u0000/,
     'app.js 不应含字面 NUL，围栏哨兵应使用可搜索的转义写法');

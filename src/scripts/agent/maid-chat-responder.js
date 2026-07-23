@@ -1,5 +1,9 @@
 import { DEFAULT_MAID_PROMPT, MAID_OPERATION_SAFETY_PROMPT } from './maid-prompt-defaults.js';
-import { buildAppFeatureSearchContextText, listAppFeatures } from './app-feature-catalog.js';
+import {
+  buildAppFeatureSearchContextText,
+  getMaidModelFeatureContext,
+  listAppFeatures,
+} from './app-feature-catalog.js';
 import { extractMaidModelPlannerJson } from './maid-model-planner.js';
 import {
   buildMaidImageAttachmentSummary,
@@ -64,7 +68,11 @@ export const buildMaidChatResponderMessages = ({
   features = listAppFeatures(),
   maidPrompt = DEFAULT_MAID_PROMPT,
 } = {}) => {
-  const appContext = buildAppFeatureSearchContextText(input, { features, limit: 5 });
+  const modelFeatureContext = getMaidModelFeatureContext(features);
+  const appContext = buildAppFeatureSearchContextText(input, {
+    features: modelFeatureContext.features,
+    limit: 5,
+  });
   const memoryText = trim(conversationContext?.memoryText);
   const historyText = trim(conversationContext?.historyText);
   const observationText = context?.maidToolObservation
@@ -89,6 +97,7 @@ export const buildMaidChatResponderMessages = ({
       content: [
         trim(maidPrompt, DEFAULT_MAID_PROMPT),
         MAID_OPERATION_SAFETY_PROMPT,
+        modelFeatureContext.awareness,
         '你可以参考女仆记忆表格和历史上下文来延续对话、理解“刚才那个”等省略指代；不要编造不存在的历史。',
         observationText ? '如果提供了工具观察结果，请基于观察结果直接回答用户本次问题；不要只说已查看，也不要输出 JSON。' : '',
       ].filter(Boolean).join('\n'),

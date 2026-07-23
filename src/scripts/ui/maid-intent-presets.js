@@ -19,7 +19,8 @@ export const matchMaidIntent = (raw = '') => {
     };
   }
 
-  if (includesAny(text, ['新手', '引导', '教程', '教学', '上手', '带我逛', '怎么开始'])) {
+  // 不用裸「引导」做判定：「请引导我打开世界书」这类功能引导请求要落给真实女仆
+  if (includesAny(text, ['新手', '教程', '教学', '上手', '带我逛', '怎么开始'])) {
     return {
       kind: 'catalog',
       reply: '欢迎回家，主人～我备好了 4 堂新手小课，选一堂就能跟着聚光灯一步步完成：',

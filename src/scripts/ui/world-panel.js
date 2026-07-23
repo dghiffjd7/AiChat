@@ -1401,7 +1401,7 @@ export class WorldPanel {
                     <div id="world-list-title" style="font-weight:700; margin-bottom:6px;">已绑定</div>
                     <ul id="world-list" style="list-style:none; padding:0; border:none; border-radius:0; max-height:none; overflow:visible; margin:0; display:flex; flex-direction:column; gap:10px;"></ul>
                     <div style="display:flex; gap:8px; margin-top:8px; flex-wrap: wrap;">
-                        <button id="world-new" style="flex:1; min-width:120px; padding:8px 10px; border:1px solid var(--app-border-default); border-radius:8px; background:#019aff; color:var(--app-text-inverse); font-weight:700;">新增</button>
+                        <button id="world-new" data-maid-guide-target="worldbook-new" style="flex:1; min-width:120px; padding:8px 10px; border:1px solid var(--app-border-default); border-radius:8px; background:#019aff; color:var(--app-text-inverse); font-weight:700;">新增</button>
                         <button id="world-library-toggle" style="flex:1; min-width:120px; padding:8px 10px; border:1px solid var(--app-border-default); border-radius:8px; background:var(--app-surface-subtle);">世界书库</button>
                     </div>
                 </div>

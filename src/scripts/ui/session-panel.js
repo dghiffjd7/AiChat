@@ -1317,7 +1317,7 @@ export class SessionPanel {
                     <img id="session-avatar-preview" alt="" class="session-avatar-preview" src="${getDefaultAppIcon()}">
                 </button>
                 <input id="session-name" data-maid-guide-target="add-friend-search-input" placeholder="新好友名称" class="session-name-input">
-                <button id="session-add" class="session-btn">添加</button>
+                <button id="session-add" data-maid-guide-target="session-add-submit" class="session-btn">添加</button>
                 <button id="session-clear" class="session-btn danger">清空聊天</button>
             </div>
             <div class="session-list-split">

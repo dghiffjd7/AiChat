@@ -67,8 +67,12 @@ const escapeRegex = value => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'
 {
   const feature = findAppFeature('女仆新手任务');
   assert.equal(feature.id, 'maid.onboarding');
-  assert.deepEqual(feature.tools, ['guide.start_flow']);
-  console.log('ok - app feature catalog exposes built-in maid onboarding');
+  assert.deepEqual(feature.tools, []);
+  assert.equal(feature.maidModelContext, 'awareness_only');
+  const knowledge = buildAppFeatureKnowledgeText([feature]);
+  assert.match(knowledge, /内建新手任务/);
+  assert.doesNotMatch(knowledge, /guide\.start_flow|setup-api|add-friend|first-chat|meet-maid/);
+  console.log('ok - app feature catalog exposes only awareness of local built-in onboarding');
 }
 
 {
@@ -632,9 +636,9 @@ const escapeRegex = value => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'
       return;
     }
     if (feature.id === 'maid.onboarding') {
-      const result = await getTool(tools, 'guide.start_flow').execute({ flowId: 'setup-api' });
-      assert.equal(result.ok, true);
-      assert.deepEqual(startedGuideFlows, ['setup-api']);
+      assert.equal(feature.maidModelContext, 'awareness_only');
+      assert.deepEqual(feature.tools, []);
+      assert.deepEqual(startedGuideFlows, []);
       return;
     }
     if (feature.id === 'app.errors.read') {

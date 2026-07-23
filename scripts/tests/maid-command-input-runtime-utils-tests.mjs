@@ -157,6 +157,11 @@ class FakeDocument {
   const { rootEl, inputEl } = runtime.getElements();
   assert.match(documentRef.head.children[0].textContent, /\.maid-command-input:focus-within/);
   assert.doesNotMatch(documentRef.head.children[0].textContent, /\.maid-command-input-field:focus-visible/);
+  assert.match(
+    documentRef.head.children[0].textContent,
+    /\.maid-command-input\.is-open\.is-submitting\s*\{\s*opacity:\s*0\.92;/,
+    'submitting opacity must not keep a closed command bar visible behind a guide',
+  );
   assert.equal(rootEl.classList.contains('is-open'), true);
   assert.equal(inputEl.tagName, 'TEXTAREA');
   assert.equal(rootEl.dataset.bubbleSide, 'bottom');

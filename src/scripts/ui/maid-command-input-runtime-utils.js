@@ -127,7 +127,7 @@ const injectStyle = (documentRef) => {
   transform: scale(1);
   pointer-events: auto;
 }
-.maid-command-input.is-submitting {
+.maid-command-input.is-open.is-submitting {
   opacity: 0.92;
 }
 .maid-command-input.has-result {
