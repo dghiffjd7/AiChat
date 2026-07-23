@@ -389,6 +389,22 @@ class FakeDocument {
 }
 
 {
+  const documentRef = new FakeDocument();
+  let scheduled = 0;
+  const runtime = createMaidCommandInputRuntime({
+    documentRef,
+    modeSwitchEl: new FakeElement('div'),
+    getViewportSize: () => ({ w: 360, h: 640 }),
+    setTimeoutFn: () => { scheduled += 1; return scheduled; },
+    clearTimeoutFn: () => {},
+  });
+  runtime.open({ autoFocus: false });
+  assert.equal(scheduled, 0);
+  assert.equal(runtime.getElements().inputEl.focused, false);
+  console.log('ok - first-run command welcome can open without forcing the mobile keyboard');
+}
+
+{
   // 指令条盖住悬浮球：非交互区按下 → 转发球拖拽（运行中控件禁用时整条可拖）；交互控件不转发
   const documentRef = new FakeDocument();
   const modeSwitchEl = new FakeElement('div');
@@ -422,6 +438,10 @@ class FakeDocument {
     target: { closest: selector => (String(selector).includes('textarea') ? {} : null) },
   });
   assert.equal(dragCalls.length, 1, '可用交互控件按下不转发拖拽');
+  rootEl.dispatchEvent('pointerdown', {
+    target: { closest: selector => (String(selector).includes('maid-onboarding-welcome') ? {} : null) },
+  });
+  assert.equal(dragCalls.length, 1, '新手任务卡滚动或点击不得转发成悬浮球拖拽');
   console.log('ok - maid command input 非交互区拖拽转发与控件豁免');
 }
 
@@ -456,7 +476,12 @@ class FakeDocument {
 
   assert.equal(runtime.applyTraceView(view([])), false, '指令条未打开 → 不消费（面板兜底）');
   assert.equal(runtime.open(), true);
-  assert.deepEqual(openStates, [{ open: true, submitting: false }], '打开后应通知执行流重新仲裁');
+  assert.equal(openStates.length, 1, '打开后应通知执行流重新仲裁');
+  assert.deepEqual(
+    { open: openStates[0].open, submitting: openStates[0].submitting },
+    { open: true, submitting: false },
+  );
+  assert.equal(openStates[0].rootEl, runtime.getElements().rootEl, '打开通知应携带指令条锚点');
   assert.equal(runtime.applyTraceView(view([step('a', 1, 'running', 'accent', '执行中', '行')])), true);
   runtime.setStatus('我先看看有哪些会话～', 'thinking'); // 模型话语 → 气泡
   runtime.setStatus('我已经取得结果，正在整理给你。', 'progress'); // 写死提示 → live 行
@@ -473,10 +498,11 @@ class FakeDocument {
   assert.equal(items[items.length - 1].sub, '搞定了');
   assert.equal(runtime.getLiveStatus(), null, 'run 终态 live 行退场');
   runtime.close();
-  assert.deepEqual(openStates, [
+  assert.deepEqual(openStates.map(state => ({ open: state.open, submitting: state.submitting })), [
     { open: true, submitting: false },
     { open: false, submitting: false },
   ], '关闭后应通知执行流立即接管');
+  assert.equal(openStates[1].rootEl, runtime.getElements().rootEl, '关闭通知沿用同一锚点');
   assert.equal(runtime.applyTraceView(view([])), false, '指令条曾打开但已关闭 → 不再消费后台 run');
   console.log('ok - maid command input 承载执行流 trace 卡（原位更新/交错/未开不消费）');
 }

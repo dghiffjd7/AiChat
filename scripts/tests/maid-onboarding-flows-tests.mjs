@@ -37,6 +37,24 @@ import {
   assert.equal(firstChat.steps[1].canAdvance('chat-room-entered', { sessionId: 'Aria' }), true);
   assert.equal(firstChat.steps.at(-1).canAdvance('chat-message-received', { role: 'assistant' }), true);
   const meetMaid = getMaidOnboardingFlow('meet-maid');
+  assert.deepEqual(
+    meetMaid.steps.map(step => step.target || ''),
+    [
+      '',
+      'maid-ball',
+      'maid-command-input',
+      'agent-center-entry',
+      'agent-center-card',
+      'agent-center-detail-close',
+      'agent-center-close',
+    ],
+  );
+  assert.equal(meetMaid.steps[3].canAdvance('target-click', { target: 'settings-agent-center' }), true);
+  assert.equal(meetMaid.steps[3].canAdvance('target-click', { target: 'agent-center-entry' }), true);
+  assert.equal(meetMaid.steps[4].canAdvance('target-click', { target: 'agent-center-card' }), true);
+  assert.equal(meetMaid.steps[5].canAdvance('target-click', { target: 'agent-center-detail-close' }), true);
   assert.equal(meetMaid.steps.at(-1).canAdvance('agent-center-closed'), true);
+  assert.ok(MAID_ONBOARDING_TARGET_SELECTORS['agent-center-entry'].includes('.agent-status-chip'));
+  assert.ok(MAID_ONBOARDING_TARGET_SELECTORS['agent-center-detail-close'].includes('[data-agent-float-close]'));
   console.log('ok - add-friend, first-chat, and meet-maid flows use completion events');
 }

@@ -4,7 +4,8 @@ import { createMaidOnboardingEntryUi } from './maid-onboarding-entry-ui.js';
 import { getMaidOnboardingFlow, ONBOARDING_TASKS } from './maid-onboarding-flows.js';
 
 export const MAID_GUIDE_EVENT = 'maid-guide-event';
-export const MAID_SETUP_HINT_ID = 'setup-api-first-run';
+export const MAID_ONBOARDING_WELCOME_HINT_ID = 'maid-onboarding-welcome-v2';
+export const MAID_SETUP_HINT_ID = MAID_ONBOARDING_WELCOME_HINT_ID;
 
 const trim = (value, fallback = '') => {
   const text = String(value ?? '').trim();
@@ -49,6 +50,8 @@ export const createMaidOnboardingRuntime = ({
   prepareStep = null,
   runFallback = null,
   hasConfiguredProfile = () => true,
+  getMaidBallElement = null,
+  onFirstRunTaskStart = null,
   onOpenTaskList = null,
   onFlowEnd = null,
   spotlight = null,
@@ -69,6 +72,7 @@ export const createMaidOnboardingRuntime = ({
   });
   const entry = entryUi || createMaidOnboardingEntryUi({
     documentRef,
+    windowRef,
     setTimeoutFn: windowRef?.setTimeout?.bind?.(windowRef) || globalThis?.setTimeout,
     clearTimeoutFn: windowRef?.clearTimeout?.bind?.(windowRef) || globalThis?.clearTimeout,
   });
@@ -79,6 +83,36 @@ export const createMaidOnboardingRuntime = ({
   let pendingCompletion = null;
 
   const taskForFlow = flowId => taskList.find(task => trim(task?.flowId) === trim(flowId)) || null;
+
+  const areAllOnboardingTasksDone = () => (
+    taskList.length > 0
+    && taskList.every(task => guideStore?.isTaskDone?.(task?.id) === true)
+  );
+
+  const isFirstRunPending = () => (
+    !areAllOnboardingTasksDone()
+    && !guideStore?.isHintDismissed?.(MAID_ONBOARDING_WELCOME_HINT_ID)
+  );
+
+  const buildFirstRunTaskViews = () => taskList.map((task) => {
+    const requiredFlow = trim(task?.requires);
+    const requiredTask = taskForFlow(requiredFlow);
+    const requirementMet = !requiredFlow
+      || (requiredFlow === 'setup-api'
+        ? hasConfiguredProfile?.() === true
+        : Boolean(requiredTask && guideStore?.isTaskDone?.(requiredTask.id)));
+    const locked = Boolean(requiredFlow && !requirementMet);
+    const done = Boolean(guideStore?.isTaskDone?.(task?.id));
+    return {
+      ...task,
+      done,
+      locked,
+      startFlowId: locked ? requiredFlow : trim(task?.flowId),
+      actionLabel: locked ? '先接 API' : (done ? '重温' : '开始'),
+    };
+  });
+
+  const dismissFirstRun = () => guideStore?.dismissHint?.(MAID_ONBOARDING_WELCOME_HINT_ID);
 
   let engine = null;
   const emitConfigCredentialsReady = () => {
@@ -208,11 +242,33 @@ export const createMaidOnboardingRuntime = ({
   };
 
   const maybeOfferSetupHint = () => {
-    if (hintOffered || hasConfiguredProfile?.() || guideStore?.listTasks?.().length || guideStore?.isHintDismissed?.(MAID_SETUP_HINT_ID)) return false;
+    if (hintOffered || !isFirstRunPending()) return false;
     hintOffered = true;
     return entry.showHint?.({
-      onStart: () => engine.start('setup-api'),
-      onDismiss: () => guideStore?.dismissHint?.(MAID_SETUP_HINT_ID),
+      anchorEl: getMaidBallElement?.() || null,
+      onDismiss: dismissFirstRun,
+    }) === true;
+  };
+
+  const handleCommandInputOpen = ({ open = false, anchorEl = null } = {}) => {
+    if (!open) {
+      entry.hideWelcome?.();
+      return false;
+    }
+    entry.hideHint?.();
+    if (!isFirstRunPending() || engine.getState().phase !== 'idle') return false;
+    return entry.showWelcome?.({
+      anchorEl,
+      tasks: buildFirstRunTaskViews(),
+      onStartTask: (task) => {
+        try { onFirstRunTaskStart?.(task); } catch {}
+        pendingCompletion = null;
+        engine.start(trim(task?.startFlowId));
+      },
+      onDismiss: dismissFirstRun,
+      onOpenTasks: () => {
+        onOpenTaskList?.();
+      },
     }) === true;
   };
 
@@ -229,12 +285,15 @@ export const createMaidOnboardingRuntime = ({
     emit: (event, payload) => engine.emit(event, payload),
     finish: () => engine.skip(),
     getState: () => engine.getState(),
+    handleCommandInputOpen,
+    isFirstRunPending,
     isActive: () => engine.getState().phase !== 'idle',
     maybeOfferSetupHint,
     refresh: () => void renderState(engine.getState()),
     skip: () => engine.skip(),
     startFlow(flowId) {
       entry.hideHint?.();
+      entry.hideWelcome?.();
       pendingCompletion = null;
       return engine.start(flowId);
     },

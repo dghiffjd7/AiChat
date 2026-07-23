@@ -4,10 +4,13 @@ import { createMaidOnboardingRuntime, MAID_SETUP_HINT_ID } from '../../src/scrip
 
 const flush = () => new Promise(resolve => setTimeout(resolve, 0));
 
+assert.equal(MAID_SETUP_HINT_ID, 'maid-onboarding-welcome-v2', 'new dismissal semantics must not inherit task-start writes from v1');
+
 {
   const shown = [];
   const completed = new Map();
   const completionToasts = [];
+  const dismissed = [];
   const flow = {
     id: 'test-flow',
     title: '测试流程',
@@ -29,6 +32,7 @@ const flush = () => new Promise(resolve => setTimeout(resolve, 0));
       isTaskDone: id => completed.has(id),
       markTaskDone: (id, value) => completed.set(id, value),
       listTasks: () => [],
+      dismissHint: id => dismissed.push(id),
     },
     prepareStep: async ({ index }) => shown.push({ prepared: index }),
     spotlight,
@@ -40,6 +44,7 @@ const flush = () => new Promise(resolve => setTimeout(resolve, 0));
   });
 
   assert.equal(runtime.startFlow('test-flow'), true);
+  assert.deepEqual(dismissed, [], 'starting a guide must not permanently dismiss unfinished onboarding tasks');
   await flush();
   assert.equal(shown.at(-1).index, 0);
   shown.at(-1).onNext();
@@ -62,6 +67,7 @@ const flush = () => new Promise(resolve => setTimeout(resolve, 0));
 {
   let hintOptions = null;
   const dismissed = [];
+  const maidBall = { id: 'mode-switch' };
   const runtime = createMaidOnboardingRuntime({
     getFlow: id => id === 'setup-api' ? { id, title: '接线', steps: [{ action: 'observe', text: '开始' }] } : null,
     guideStore: {
@@ -69,7 +75,8 @@ const flush = () => new Promise(resolve => setTimeout(resolve, 0));
       isHintDismissed: () => false,
       dismissHint: id => dismissed.push(id),
     },
-    hasConfiguredProfile: () => false,
+    hasConfiguredProfile: () => true,
+    getMaidBallElement: () => maidBall,
     spotlight: { show() {}, hide() {}, destroy() {} },
     entryUi: {
       showHint: options => { hintOptions = options; return true; },
@@ -79,9 +86,88 @@ const flush = () => new Promise(resolve => setTimeout(resolve, 0));
   });
   assert.equal(runtime.maybeOfferSetupHint(), true);
   assert.equal(runtime.maybeOfferSetupHint(), false, 'one runtime session should offer the hint once');
+  assert.equal(hintOptions.anchorEl, maidBall);
   hintOptions.onDismiss();
   assert.deepEqual(dismissed, [MAID_SETUP_HINT_ID]);
-  console.log('ok - onboarding runtime offers and persists the first-run setup hint');
+  console.log('ok - onboarding runtime offers an anchored first-run hint even when API is configured');
+}
+
+{
+  let welcomeOptions = null;
+  let welcomeHidden = 0;
+  let hintHidden = 0;
+  let firstRunTaskStarted = '';
+  let taskListOpened = 0;
+  const dismissed = [];
+  const commandRoot = { id: 'maid-command-input' };
+  const runtime = createMaidOnboardingRuntime({
+    guideStore: {
+      listTasks: () => [],
+      isTaskDone: () => false,
+      isHintDismissed: () => false,
+      dismissHint: id => dismissed.push(id),
+    },
+    hasConfiguredProfile: () => false,
+    onFirstRunTaskStart: task => { firstRunTaskStarted = task?.startFlowId || ''; },
+    onOpenTaskList: () => { taskListOpened += 1; },
+    spotlight: { show() {}, hide() {}, destroy() {} },
+    entryUi: {
+      hideHint: () => { hintHidden += 1; },
+      hideWelcome: () => { welcomeHidden += 1; },
+      showWelcome: options => { welcomeOptions = options; return true; },
+      destroy() {},
+    },
+  });
+
+  assert.equal(runtime.isFirstRunPending(), true);
+  assert.equal(runtime.handleCommandInputOpen({ open: true, anchorEl: commandRoot }), true);
+  assert.equal(hintHidden, 1);
+  assert.equal(welcomeOptions.anchorEl, commandRoot);
+  assert.equal(welcomeOptions.tasks.length, 4);
+  const firstChat = welcomeOptions.tasks.find(task => task.flowId === 'first-chat');
+  assert.equal(firstChat.locked, true);
+  assert.equal(firstChat.startFlowId, 'setup-api');
+  assert.equal(firstChat.actionLabel, '先接 API');
+  welcomeOptions.onStartTask(firstChat);
+  assert.equal(firstRunTaskStarted, 'setup-api');
+  assert.equal(runtime.getState().flowId, 'setup-api');
+  assert.deepEqual(dismissed, [], 'starting the first task must keep the welcome list available next time');
+  runtime.skip();
+  welcomeOptions.onOpenTasks();
+  assert.equal(taskListOpened, 1);
+  assert.deepEqual(dismissed, [], 'opening the full task page is not an opt-out');
+  welcomeOptions.onDismiss();
+  assert.deepEqual(dismissed, [MAID_SETUP_HINT_ID], 'only the explicit close action persists the opt-out');
+  runtime.handleCommandInputOpen({ open: false, anchorEl: commandRoot });
+  assert.ok(welcomeHidden >= 1);
+  console.log('ok - command input first open renders four tasks and routes locked chat through API setup');
+}
+
+{
+  const tasks = [
+    { id: 'task-one', flowId: 'one' },
+    { id: 'task-two', flowId: 'two' },
+  ];
+  const done = new Set(['task-one']);
+  let dismissed = false;
+  const runtime = createMaidOnboardingRuntime({
+    tasks,
+    guideStore: {
+      isTaskDone: id => done.has(id),
+      isHintDismissed: id => id === 'maid-onboarding-welcome-v1' || (id === MAID_SETUP_HINT_ID && dismissed),
+      dismissHint: () => { dismissed = true; },
+    },
+    spotlight: { show() {}, hide() {}, destroy() {} },
+    entryUi: { destroy() {} },
+  });
+
+  assert.equal(runtime.isFirstRunPending(), true, 'one completed task must not suppress the remaining task list');
+  done.add('task-two');
+  assert.equal(runtime.isFirstRunPending(), false, 'the welcome list should retire after all tasks are done');
+  done.delete('task-two');
+  dismissed = true;
+  assert.equal(runtime.isFirstRunPending(), false, 'manual close should persist before all tasks are complete');
+  console.log('ok - onboarding welcome persists between partial completions and retires only on all-done or explicit close');
 }
 
 {

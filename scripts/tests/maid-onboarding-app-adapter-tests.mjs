@@ -22,6 +22,7 @@ const adapter = createMaidOnboardingAppAdapter({
   openAddFriend: () => calls.push('friend'),
   openAgentCenter: () => calls.push('agent:open'),
   closeMaidCommand: () => calls.push('maid:close'),
+  switchPage: page => calls.push(`page:${page}`),
   emit: (event, payload) => {
     calls.push(`emit:${event}`);
     emissions.push({ event, payload });
@@ -60,6 +61,8 @@ assert.equal(await adapter.runFallback({
   },
 }), true);
 assert.deepEqual(calls.slice(-2), ['focus:key', 'focus:key']);
+await adapter.prepareStep({ step: { target: 'agent-center-entry' } });
+assert.deepEqual(calls.slice(-3), ['maid:close', 'settings', 'page:moments']);
 await adapter.runFallback({ step: { fallback: { kind: 'open-agent-center' } } });
 assert.deepEqual(calls.slice(-3), ['maid:close', 'agent:open', 'emit:agent-center-opened']);
 assert.equal(adapter.hasConfiguredProfile(), true);

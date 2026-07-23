@@ -72,9 +72,22 @@ export const MAID_ONBOARDING_TARGET_SELECTORS = Object.freeze({
   'maid-ball': ['#mode-switch'],
   'maid-command-input': ['.maid-command-input-field'],
   'maid-command-settings': ['.maid-command-input-settings'],
+  'settings-agent-center': [
+    '[data-maid-guide-target="settings-agent-center"]',
+    '#settings-menu button[data-action="agent-center"]',
+  ],
+  'agent-center-entry': [
+    '[data-maid-guide-target="settings-agent-center"]',
+    '[data-maid-guide-target="agent-center-entry"]',
+    '.agent-status-chip',
+  ],
   'agent-center-card': [
     '[data-maid-guide-target="agent-center-card"]',
     '[data-agent-card-open]',
+  ],
+  'agent-center-detail-close': [
+    '[data-maid-guide-target="agent-center-detail-close"]',
+    '[data-agent-float-close]',
   ],
   'agent-center-close': [
     '[data-maid-guide-target="agent-center-close"]',
@@ -263,29 +276,56 @@ export const MAID_ONBOARDING_FLOWS = Object.freeze([
         canAdvance: event => event === 'maid-command-opened',
       },
       {
-        target: 'maid-command-settings',
+        target: 'maid-command-input',
         placement: 'bottom',
-        action: 'wait-event',
-        text: '在本次教学里，小齿轮会直接带主人去 Agent Center。',
-        hint: '点击指令条齿轮',
+        action: 'observe',
+        text: '这就是女仆指令条。右侧齿轮只负责女仆自己的设定；Agent Center 有独立入口。',
+        primaryLabel: '去看 Agent Center',
+      },
+      {
+        target: 'agent-center-entry',
+        placement: 'bottom',
+        action: 'click',
+        text: '从设置菜单进入 Agent Center；在聊天室或动态页，也可以直接点右上角的「A」。',
+        hint: '打开 Agent Center',
         fallback: { kind: 'open-agent-center' },
-        canAdvance: event => event === 'agent-center-opened',
+        canAdvance: (event, payload) => (
+          event === 'agent-center-opened'
+          || (
+            event === 'target-click'
+            && ['settings-agent-center', 'agent-center-entry'].includes(payload?.target)
+          )
+        ),
       },
       {
         target: 'agent-center-card',
         placement: 'bottom',
-        action: 'observe',
-        text: '这些卡片就是不同的小帮手。卡面快捷开关负责启停，点击卡片可以查看配置与详情。',
-        primaryLabel: '我知道了',
+        action: 'click',
+        text: '这些卡片就是不同的小帮手。点开任意卡片，可以查看说明与配置。',
+        hint: '点击任意 Agent 卡片',
+        fallback: { kind: 'click-target' },
+        canAdvance: clicked('agent-center-card'),
+      },
+      {
+        target: 'agent-center-detail-close',
+        placement: 'left',
+        action: 'click',
+        text: '卡片详情会从右侧展开。看完后先关闭详情，回到 Agent 列表。',
+        hint: '关闭卡片详情',
+        fallback: { kind: 'click-target' },
+        canAdvance: clicked('agent-center-detail-close'),
       },
       {
         target: 'agent-center-close',
         placement: 'left',
-        action: 'wait-event',
+        action: 'click',
         text: '点右上角关闭 Agent Center，巡视就完成了。',
         hint: '关闭 Agent Center',
         fallback: { kind: 'close-agent-center' },
-        canAdvance: event => event === 'agent-center-closed',
+        canAdvance: (event, payload) => (
+          event === 'agent-center-closed'
+          || (event === 'target-click' && payload?.target === 'agent-center-close')
+        ),
       },
     ],
   },

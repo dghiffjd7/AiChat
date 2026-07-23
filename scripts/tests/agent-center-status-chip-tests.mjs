@@ -195,6 +195,7 @@ import {
   assert.equal(root.children[0], element);
   assert.deepEqual(opened, { tab: 'activity', activityStatus: 'active' });
   assert.equal(element.dataset.agentStatusTone, 'active');
+  assert.equal(element.dataset.maidGuideTarget, 'agent-center-entry');
   console.log('ok - agent status chip mounts before chat menu and opens Agent Center');
 }
 

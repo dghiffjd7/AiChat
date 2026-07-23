@@ -584,7 +584,7 @@ export const createMaidCommandInputRuntime = ({
 
   const notifyOpenStateChange = () => {
     try {
-      onOpenStateChange?.({ open: isOpen, submitting: isSubmitting });
+      onOpenStateChange?.({ open: isOpen, submitting: isSubmitting, rootEl });
     } catch {}
   };
 
@@ -1106,7 +1106,7 @@ export const createMaidCommandInputRuntime = ({
     rootEl.addEventListener?.('pointerdown', (event) => {
       const target = event?.target || null;
       const interactive = typeof target?.closest === 'function'
-        ? target.closest('textarea:not(:disabled), button:not(:disabled), input, a, .maid-command-input-result')
+        ? target.closest('textarea:not(:disabled), button:not(:disabled), input, a, .maid-command-input-result, .maid-onboarding-welcome')
         : null;
       if (interactive) return;
       const ballDrag = typeof getBallDragRuntime === 'function' ? getBallDragRuntime() : null;
@@ -1195,7 +1195,7 @@ export const createMaidCommandInputRuntime = ({
     return rootEl;
   };
 
-  const open = ({ initialText = '' } = {}) => {
+  const open = ({ initialText = '', autoFocus = true } = {}) => {
     const el = ensure();
     if (!el) return false;
     clearCloseTimer();
@@ -1213,11 +1213,13 @@ export const createMaidCommandInputRuntime = ({
     modeSwitchEl?.classList.add?.('is-maid-input-open');
     bindOutsidePointer();
     if (!wasOpen) notifyOpenStateChange();
-    setTimeoutFn?.(() => {
-      try {
-        inputEl?.focus?.();
-      } catch {}
-    }, 0);
+    if (autoFocus !== false) {
+      setTimeoutFn?.(() => {
+        try {
+          inputEl?.focus?.();
+        } catch {}
+      }, 0);
+    }
     return true;
   };
 

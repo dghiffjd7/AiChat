@@ -280,6 +280,7 @@ export class AgentCenterStatusChip {
         const button = doc.createElement('button');
         button.type = 'button';
         button.className = 'agent-status-chip';
+        button.dataset.maidGuideTarget = 'agent-center-entry';
         button.innerHTML = `
             <span class="agent-status-chip-mark" aria-hidden="true">A</span>
             <span class="agent-status-chip-count"></span>

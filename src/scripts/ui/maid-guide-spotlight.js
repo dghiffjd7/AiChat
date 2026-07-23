@@ -1,3 +1,8 @@
+import {
+  applyMaidGuideExpression,
+  resolveMaidGuideExpressionState,
+} from './maid-guide-expression-utils.js';
+
 const STYLE_ID = 'maid-guide-spotlight-style';
 const CARD_WIDTH = 384;
 const CARD_ESTIMATED_HEIGHT = 236;
@@ -7,14 +12,60 @@ const MOBILE_PAD = 12;
 const MOBILE_TOP_PAD = 62;
 const HOLE_PAD = 10;
 const CARD_TARGET_GAP = 16;
+const CARD_MIN_USABLE_HEIGHT = 132;
 const TARGET_RESOLVE_GRACE_MS = 1000;
 const TARGET_RESOLVE_RETRY_MS = 100;
+const GEOMETRY_FOLLOW_TIME_CONSTANT_MS = 90;
+const GEOMETRY_SETTLE_THRESHOLD = 0.5;
+const GEOMETRY_STABLE_FRAME_COUNT = 3;
+const GEOMETRY_DEFAULT_FRAME_MS = 1000 / 60;
+const GEOMETRY_MAX_FRAME_MS = 32;
 
 const clamp = (value, min, max) => Math.min(Math.max(Number(value) || 0, min), Math.max(min, max));
 
 const rectValue = (rect, key, fallback = 0) => {
   const value = Number(rect?.[key]);
   return Number.isFinite(value) ? value : fallback;
+};
+
+const hasRectChanged = (previous = null, next = null, threshold = 0.5) => (
+  ['left', 'top', 'width', 'height'].some(
+    key => Math.abs(rectValue(next, key) - rectValue(previous, key)) > threshold,
+  )
+);
+
+export const advanceMaidSpotlightBox = ({
+  current = null,
+  target = null,
+  deltaMs = GEOMETRY_DEFAULT_FRAME_MS,
+  reducedMotion = false,
+} = {}) => {
+  const destination = {
+    left: rectValue(target, 'left'),
+    top: rectValue(target, 'top'),
+    width: Math.max(0, rectValue(target, 'width')),
+    height: Math.max(0, rectValue(target, 'height')),
+  };
+  if (!current || reducedMotion) return { box: destination, settled: true };
+  const elapsed = Number(deltaMs);
+  const safeDelta = Number.isFinite(elapsed) && elapsed > 0
+    ? Math.min(GEOMETRY_MAX_FRAME_MS, elapsed)
+    : GEOMETRY_DEFAULT_FRAME_MS;
+  const alpha = 1 - Math.exp(-safeDelta / GEOMETRY_FOLLOW_TIME_CONSTANT_MS);
+  let settled = true;
+  const box = {};
+  ['left', 'top', 'width', 'height'].forEach((key) => {
+    const from = rectValue(current, key);
+    const to = destination[key];
+    const next = from + (to - from) * alpha;
+    if (Math.abs(to - next) <= GEOMETRY_SETTLE_THRESHOLD) {
+      box[key] = to;
+      return;
+    }
+    settled = false;
+    box[key] = next;
+  });
+  return { box, settled };
 };
 
 export const isMaidGuideMotionReduced = (
@@ -87,15 +138,17 @@ export const calculateMaidSpotlightLayout = ({
   }
 
   if (mobile) {
+    const topBound = Math.min(MOBILE_TOP_PAD, Math.max(MOBILE_PAD, h - MOBILE_PAD - bottomInset));
+    const bottomBound = Math.max(topBound, h - MOBILE_PAD - bottomInset);
     const topCard = {
       left: MOBILE_PAD,
-      top: Math.min(MOBILE_TOP_PAD, Math.max(MOBILE_PAD, h - cardHeight - MOBILE_PAD - bottomInset)),
+      top: Math.min(topBound, Math.max(MOBILE_PAD, bottomBound - cardHeight)),
       width: cardWidth,
       height: cardHeight,
     };
     const bottomCard = {
       left: MOBILE_PAD,
-      top: Math.max(MOBILE_PAD, h - cardHeight - MOBILE_PAD - bottomInset),
+      top: Math.max(MOBILE_PAD, bottomBound - cardHeight),
       width: cardWidth,
       height: cardHeight,
     };
@@ -107,6 +160,40 @@ export const calculateMaidSpotlightLayout = ({
         - Math.max(card.top, rect.top - CARD_TARGET_GAP));
       return horizontal * vertical;
     };
+    if (hole) {
+      const capacities = {
+        top: Math.max(0, hole.top - CARD_TARGET_GAP - topBound),
+        bottom: Math.max(0, bottomBound - hole.top - hole.height - CARD_TARGET_GAP),
+      };
+      const minimumHeight = Math.min(cardHeight, CARD_MIN_USABLE_HEIGHT);
+      const preferredSide = placement === 'top' ? 'top' : placement === 'bottom' ? 'bottom' : '';
+      const fullSides = ['bottom', 'top'].filter(side => capacities[side] >= cardHeight);
+      const readableSides = ['bottom', 'top'].filter(side => capacities[side] >= minimumHeight);
+      let side = '';
+      if (preferredSide && fullSides.includes(preferredSide)) side = preferredSide;
+      else if (fullSides.length) side = fullSides[0];
+      else if (readableSides.length) {
+        side = readableSides.sort((a, b) => capacities[b] - capacities[a])[0];
+      }
+      if (side) {
+        const constrainedMaxHeight = Math.max(1, Math.min(maxCardHeight, capacities[side]));
+        const constrainedHeight = Math.min(cardHeight, constrainedMaxHeight);
+        return {
+          mobile,
+          hole,
+          placement: `${side}-fixed`,
+          card: {
+            left: MOBILE_PAD,
+            top: side === 'top'
+              ? hole.top - CARD_TARGET_GAP - constrainedHeight
+              : hole.top + hole.height + CARD_TARGET_GAP,
+            width: cardWidth,
+            height: constrainedHeight,
+            maxHeight: constrainedMaxHeight,
+          },
+        };
+      }
+    }
     const bottomOverlap = overlapArea(bottomCard, hole);
     const topOverlap = overlapArea(topCard, hole);
     const useTop = Boolean(hole) && bottomOverlap > 0 && topOverlap < bottomOverlap;
@@ -157,7 +244,16 @@ export const calculateMaidSpotlightLayout = ({
     if (side === 'left' || side === 'right' || fullyClamp) {
       top = clamp(top, VIEWPORT_PAD, h - cardHeight - VIEWPORT_PAD);
     }
-    return { left, top, width: cardWidth, height: cardHeight, maxHeight: maxCardHeight };
+    const sideCapacity = side === 'top' || side === 'bottom'
+      ? Math.max(1, available[side] - CARD_TARGET_GAP)
+      : maxCardHeight;
+    return {
+      left,
+      top,
+      width: cardWidth,
+      height: cardHeight,
+      maxHeight: fullyClamp ? maxCardHeight : Math.min(maxCardHeight, sideCapacity),
+    };
   };
   const fitsViewport = card => (
     card.left >= VIEWPORT_PAD && card.top >= VIEWPORT_PAD
@@ -173,7 +269,39 @@ export const calculateMaidSpotlightLayout = ({
     card = candidate;
     break;
   }
-  if (!card) card = makeCandidate(resolvedPlacement, true);
+  if (!card) {
+    const minimumHeight = Math.min(cardHeight, CARD_MIN_USABLE_HEIGHT);
+    for (const side of order.filter(value => value === 'top' || value === 'bottom')) {
+      const capacity = Math.max(0, available[side] - CARD_TARGET_GAP);
+      if (capacity < minimumHeight) continue;
+      const constrainedHeight = Math.min(cardHeight, capacity);
+      resolvedPlacement = side;
+      card = {
+        left: clamp(hole.left + hole.width / 2 - cardWidth / 2, VIEWPORT_PAD, w - cardWidth - VIEWPORT_PAD),
+        top: side === 'top'
+          ? hole.top - CARD_TARGET_GAP - constrainedHeight
+          : hole.top + hole.height + CARD_TARGET_GAP,
+        width: cardWidth,
+        height: constrainedHeight,
+        maxHeight: Math.min(maxCardHeight, capacity),
+      };
+      break;
+    }
+  }
+  if (!card) {
+    const overlapArea = (candidate) => {
+      const horizontal = Math.max(0, Math.min(candidate.left + candidate.width, hole.left + hole.width)
+        - Math.max(candidate.left, hole.left));
+      const vertical = Math.max(0, Math.min(candidate.top + candidate.height, hole.top + hole.height)
+        - Math.max(candidate.top, hole.top));
+      return horizontal * vertical;
+    };
+    const fallback = order
+      .map(side => ({ side, card: makeCandidate(side, true) }))
+      .sort((a, b) => overlapArea(a.card) - overlapArea(b.card))[0];
+    resolvedPlacement = fallback?.side || resolvedPlacement;
+    card = fallback?.card || makeCandidate(resolvedPlacement, true);
+  }
   return {
     mobile,
     hole,
@@ -203,7 +331,7 @@ const injectStyle = (documentRef) => {
   position: absolute;
   background: color-mix(in srgb, var(--app-overlay-backdrop, #0f172a) 48%, transparent);
   pointer-events: auto;
-  transition: left 360ms cubic-bezier(.22,1,.36,1), top 360ms cubic-bezier(.22,1,.36,1), width 360ms cubic-bezier(.22,1,.36,1), height 360ms cubic-bezier(.22,1,.36,1), opacity 180ms ease;
+  transition: opacity 180ms ease;
 }
 .maid-spotlight-dim-top,
 .maid-spotlight-dim-bottom,
@@ -216,7 +344,7 @@ const injectStyle = (documentRef) => {
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--app-surface-card, #fff) 62%, transparent), 0 0 28px 6px color-mix(in srgb, var(--app-accent-primary, #2563eb) 42%, transparent);
   opacity: 0;
   pointer-events: none;
-  transition: left 360ms cubic-bezier(.22,1,.36,1), top 360ms cubic-bezier(.22,1,.36,1), width 360ms cubic-bezier(.22,1,.36,1), height 360ms cubic-bezier(.22,1,.36,1), opacity 180ms ease;
+  transition: opacity 180ms ease;
 }
 .maid-spotlight-root.has-target .maid-spotlight-hole { opacity: 1; }
 .maid-spotlight-hole::after {
@@ -257,32 +385,9 @@ const injectStyle = (documentRef) => {
   background: var(--app-surface-card, #fff);
   pointer-events: none;
   transform: rotate(45deg);
-  transition: left 360ms cubic-bezier(.22,1,.36,1), top 360ms cubic-bezier(.22,1,.36,1), opacity 180ms ease;
-}
-.maid-spotlight-root.has-card-arrow .maid-spotlight-arrow { display: block; }
-.maid-spotlight-root.is-tracking .maid-spotlight-dim,
-.maid-spotlight-root.is-tracking .maid-spotlight-hole,
-.maid-spotlight-root.is-tracking .maid-spotlight-arrow {
   transition: opacity 180ms ease;
 }
-.maid-spotlight-status {
-  position: absolute;
-  top: max(14px, env(safe-area-inset-top, 0px));
-  left: 14px;
-  z-index: 4;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  max-width: calc(100vw - 28px);
-  min-height: 36px;
-  box-sizing: border-box;
-  padding: 4px 6px 4px 4px;
-  border: 1px solid var(--app-border-subtle, rgba(148,163,184,.22));
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--app-surface-card, #fff) 94%, transparent);
-  box-shadow: 0 16px 34px -22px rgba(15,23,42,.42);
-  pointer-events: auto;
-}
+.maid-spotlight-root.has-card-arrow .maid-spotlight-arrow { display: block; }
 .maid-spotlight-escape-hint {
   position: absolute;
   top: max(16px, env(safe-area-inset-top, 0px));
@@ -311,34 +416,6 @@ const injectStyle = (documentRef) => {
   font: 750 10px/1.2 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   text-align: center;
 }
-.maid-spotlight-avatar {
-  width: 28px;
-  height: 28px;
-  flex: 0 0 28px;
-  border-radius: 50%;
-  object-fit: cover;
-  background: var(--app-surface-subtle, #f8fafc);
-}
-.maid-spotlight-status-title {
-  min-width: 0;
-  overflow: hidden;
-  color: var(--app-text-primary, #111827);
-  font-size: 12px;
-  font-weight: 800;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.maid-spotlight-status-count {
-  flex: 0 0 auto;
-  padding: 2px 7px;
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--app-accent-primary, #2563eb) 10%, transparent);
-  color: var(--app-accent-primary, #2563eb);
-  font-size: 10.5px;
-  font-weight: 800;
-  font-variant-numeric: tabular-nums;
-}
-.maid-spotlight-close,
 .maid-spotlight-icon-btn,
 .maid-spotlight-primary,
 .maid-spotlight-skip {
@@ -346,16 +423,6 @@ const injectStyle = (documentRef) => {
   cursor: pointer;
   font: inherit;
   touch-action: manipulation;
-}
-.maid-spotlight-close {
-  width: 28px;
-  height: 28px;
-  display: inline-grid;
-  place-items: center;
-  flex: 0 0 28px;
-  border-radius: 50%;
-  background: transparent;
-  color: var(--app-text-muted, #64748b);
 }
 .maid-spotlight-card {
   position: absolute;
@@ -380,9 +447,13 @@ const injectStyle = (documentRef) => {
   border-radius: 999px;
   background: color-mix(in srgb, var(--app-text-muted, #64748b) 34%, transparent);
 }
-.maid-spotlight-root.is-rendering .maid-spotlight-card {
+.maid-spotlight-root.is-rendering.is-opening .maid-spotlight-card {
   animation: maid-spotlight-card-in 360ms cubic-bezier(.22,1,.36,1) both;
   will-change: transform, opacity;
+}
+.maid-spotlight-root.is-rendering.is-stepping .maid-spotlight-card {
+  animation: maid-spotlight-card-step-in 260ms cubic-bezier(.22,1,.36,1) backwards;
+  will-change: transform;
 }
 .maid-spotlight-root.is-rendering .maid-spotlight-done-icon {
   animation: maid-spotlight-done-icon-in 420ms 90ms cubic-bezier(.22,1,.36,1) backwards;
@@ -395,18 +466,18 @@ const injectStyle = (documentRef) => {
 }
 .maid-spotlight-card-avatar-wrap {
   position: relative;
-  width: 36px;
-  height: 36px;
-  flex: 0 0 36px;
+  width: 42px;
+  height: 42px;
+  flex: 0 0 42px;
 }
 .maid-spotlight-card-avatar {
-  width: 36px;
-  height: 36px;
+  width: 42px;
+  height: 42px;
   display: block;
+  overflow: hidden;
   border: 2px solid color-mix(in srgb, var(--app-accent-secondary, #db2777) 18%, transparent);
   border-radius: 50%;
-  object-fit: cover;
-  background: var(--app-surface-subtle, #f8fafc);
+  background-color: var(--app-surface-subtle, #f8fafc);
 }
 .maid-spotlight-card-avatar-status {
   position: absolute;
@@ -470,9 +541,15 @@ const injectStyle = (documentRef) => {
   font-size: 11px;
   font-weight: 750;
 }
+.maid-spotlight-hint.has-text {
+  display: inline-flex;
+  visibility: hidden;
+  opacity: 0;
+}
 .maid-spotlight-hint svg { width: 13px; height: 13px; flex: 0 0 13px; }
 .maid-spotlight-card.is-typed .maid-spotlight-hint.has-text {
-  display: inline-flex;
+  visibility: visible;
+  opacity: 1;
   animation: maid-spotlight-hint-in 220ms cubic-bezier(.22,1,.36,1) backwards;
 }
 .maid-spotlight-actions {
@@ -527,17 +604,36 @@ const injectStyle = (documentRef) => {
 .maid-spotlight-primary:disabled { opacity: .48; cursor: default; }
 .maid-spotlight-card.is-done { text-align: center; }
 .maid-spotlight-card.is-done .maid-spotlight-card-head { justify-content: center; padding-top: 22px; }
+.maid-spotlight-done-visual {
+  position: relative;
+  width: 68px;
+  height: 64px;
+}
+.maid-spotlight-done-avatar {
+  width: 64px;
+  height: 64px;
+  display: block;
+  overflow: hidden;
+  border: 2px solid color-mix(in srgb, var(--app-warning-text, #b45309) 24%, transparent);
+  border-radius: 20px;
+  background-color: var(--app-surface-subtle, #f8fafc);
+  box-shadow: 0 14px 30px -20px color-mix(in srgb, var(--app-warning-text, #b45309) 70%, transparent);
+}
 .maid-spotlight-done-icon {
-  width: 54px;
-  height: 54px;
+  position: absolute;
+  right: -2px;
+  bottom: -3px;
+  width: 27px;
+  height: 27px;
   display: grid;
   place-items: center;
-  margin: 0 auto;
-  border-radius: 18px;
+  border: 2px solid var(--app-surface-card, #fff);
+  border-radius: 10px;
   background: linear-gradient(135deg, var(--app-warning-text, #b45309), var(--app-accent-secondary, #db2777));
   color: var(--app-text-inverse, #fff);
-  box-shadow: 0 14px 30px -16px color-mix(in srgb, var(--app-warning-text, #b45309) 70%, transparent);
+  box-shadow: 0 10px 20px -12px color-mix(in srgb, var(--app-warning-text, #b45309) 70%, transparent);
 }
+.maid-spotlight-done-icon svg { width: 14px; height: 14px; }
 .maid-spotlight-done-title { margin-top: 12px; font-size: 15px; font-weight: 900; }
 .maid-spotlight-done-copy { margin: 7px 20px 0; color: var(--app-text-secondary, #475569); font-size: 12px; line-height: 1.6; }
 .maid-spotlight-reward {
@@ -563,7 +659,6 @@ const injectStyle = (documentRef) => {
   animation: maid-spotlight-confetti 980ms cubic-bezier(.15,.6,.4,1) both;
   animation-delay: var(--piece-delay, 0ms);
 }
-.maid-spotlight-root.is-mobile .maid-spotlight-status { right: 12px; left: 12px; }
 .maid-spotlight-root.is-mobile .maid-spotlight-card {
   max-height: calc(var(--app-visual-height, 100dvh) - 74px - env(safe-area-inset-bottom, 0px));
   border-radius: 22px;
@@ -571,7 +666,6 @@ const injectStyle = (documentRef) => {
 .maid-spotlight-root.is-mobile .maid-spotlight-hand { display: none; }
 .maid-spotlight-root.is-mobile .maid-spotlight-escape-hint { display: none; }
 @media (hover:hover) and (pointer:fine) {
-  .maid-spotlight-close:hover,
   .maid-spotlight-icon-btn:hover { background: var(--app-surface-subtle, #f8fafc); color: var(--app-text-primary, #111827); }
   .maid-spotlight-primary:not(:disabled):hover { transform: translateY(-1px) scale(1.025); box-shadow: 0 16px 28px -14px color-mix(in srgb, var(--app-accent-primary, #2563eb) 82%, transparent); }
   .maid-spotlight-skip:hover { color: var(--app-danger-text, #b91c1c); }
@@ -581,6 +675,7 @@ const injectStyle = (documentRef) => {
 @keyframes maid-spotlight-ring-pulse { 0% { opacity:.85; transform:scale(1); } 72%,100% { opacity:0; transform:scale(1.14); } }
 @keyframes maid-spotlight-hand-float { 0%,100% { transform:translateY(0); } 50% { transform:translateY(-4px); } }
 @keyframes maid-spotlight-card-in { from { opacity:0; transform:translate3d(0,16px,0) scale(.96); } to { opacity:1; transform:translate3d(0,0,0) scale(1); } }
+@keyframes maid-spotlight-card-step-in { from { transform:translate3d(0,8px,0) scale(.985); } to { transform:translate3d(0,0,0) scale(1); } }
 @keyframes maid-spotlight-hint-in { from { opacity:0; transform:translate3d(0,5px,0); } to { opacity:1; transform:translate3d(0,0,0); } }
 @keyframes maid-spotlight-done-icon-in { from { opacity:0; transform:scale(.55) rotate(-20deg); } to { opacity:1; transform:scale(1) rotate(0); } }
 @keyframes maid-spotlight-caret { 0%,48% { opacity:1; } 49%,100% { opacity:0; } }
@@ -609,7 +704,6 @@ const createElement = (documentRef, tag, className = '', text = '') => {
 
 const iconSvg = body => `<svg viewBox="0 0 24 24" aria-hidden="true" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${body}</svg>`;
 const ICONS = Object.freeze({
-  close: iconSvg('<path d="M18 6 6 18"/><path d="m6 6 12 12"/>'),
   back: iconSvg('<path d="m15 18-6-6 6-6"/>'),
   hand: iconSvg('<path d="M7 11V5a2 2 0 0 1 4 0v5-7a2 2 0 0 1 4 0v7-5a2 2 0 0 1 4 0v8c0 5-3 8-8 8h-1c-3 0-5-2-6-4l-2-4a2 2 0 0 1 3-2l2 2"/>'),
   wand: iconSvg('<path d="m15 4 5 5L8 21l-5-5Z"/><path d="m6 14 5 5"/><path d="M14 2v3"/><path d="M22 10h-3"/>'),
@@ -635,11 +729,7 @@ export const createMaidGuideSpotlight = ({
   let holeEl = null;
   let arrowEl = null;
   let handEl = null;
-  let statusEl = null;
   let escapeHintEl = null;
-  let statusTitleEl = null;
-  let statusCountEl = null;
-  let closeBtn = null;
   let cardEl = null;
   let active = false;
   let current = null;
@@ -652,9 +742,13 @@ export const createMaidGuideSpotlight = ({
   let scrollRequestedTarget = null;
   let shownCharacters = 0;
   let typedDone = false;
-  let firstGeometryRefresh = true;
   let targetRetryTimer = null;
   let targetResolveDeadline = 0;
+  let renderedHole = null;
+  let renderedArrow = null;
+  let lastGeometryFrameAt = 0;
+  let geometryStableFrames = 0;
+  let lastTrackedTargetRect = null;
   let lastLayout = null;
 
   const clearTypeTimer = () => {
@@ -711,24 +805,12 @@ export const createMaidGuideSpotlight = ({
     arrowEl = createElement(documentRef, 'div', 'maid-spotlight-arrow');
     handEl = createElement(documentRef, 'div', 'maid-spotlight-hand');
     handEl.innerHTML = `${ICONS.hand}<span></span>`;
-    statusEl = createElement(documentRef, 'div', 'maid-spotlight-status');
-    const avatar = createElement(documentRef, 'img', 'maid-spotlight-avatar');
-    avatar.src = './assets/media/maid-tumble.webp';
-    avatar.alt = '';
-    avatar.draggable = false;
-    statusTitleEl = createElement(documentRef, 'div', 'maid-spotlight-status-title');
-    statusCountEl = createElement(documentRef, 'div', 'maid-spotlight-status-count');
-    closeBtn = createElement(documentRef, 'button', 'maid-spotlight-close');
-    closeBtn.type = 'button';
-    closeBtn.setAttribute?.('aria-label', '跳过女仆引导');
-    closeBtn.innerHTML = ICONS.close;
-    closeBtn.addEventListener?.('click', () => current?.onSkip?.());
-    statusEl.append(avatar, statusTitleEl, statusCountEl, closeBtn);
     escapeHintEl = createElement(documentRef, 'div', 'maid-spotlight-escape-hint');
     escapeHintEl.setAttribute?.('aria-hidden', 'true');
     escapeHintEl.innerHTML = '<span>按</span><kbd>Esc</kbd><span>可随时让女仆收工</span>';
-    root.append(...dims, holeEl, arrowEl, handEl, statusEl, escapeHintEl);
+    root.append(...dims, holeEl, arrowEl, handEl, escapeHintEl);
     documentRef.body.appendChild(root);
+    resetGeometry();
     return root;
   };
 
@@ -768,9 +850,7 @@ export const createMaidGuideSpotlight = ({
         if (initialResizeDelivery) {
           initialResizeDelivery = false;
           const nextRect = target.getBoundingClientRect?.() || null;
-          const targetGeometryChanged = ['left', 'top', 'width', 'height'].some(
-            key => Math.abs(rectValue(nextRect, key) - rectValue(initialRect, key)) > 0.5,
-          );
+          const targetGeometryChanged = hasRectChanged(initialRect, nextRect);
           if (!targetGeometryChanged) return;
         }
         scheduleRefresh();
@@ -781,29 +861,48 @@ export const createMaidGuideSpotlight = ({
     }
   };
 
-  const applyBox = (element, box = {}) => {
+  const applyStyleValue = (element, property, value) => {
     if (!element?.style) return;
-    element.style.left = `${Math.round(Number(box.left) || 0)}px`;
-    element.style.top = `${Math.round(Number(box.top) || 0)}px`;
-    element.style.width = `${Math.max(0, Math.round(Number(box.width) || 0))}px`;
-    element.style.height = `${Math.max(0, Math.round(Number(box.height) || 0))}px`;
+    if (element.style[property] !== value) element.style[property] = value;
+  };
+
+  const geometryPx = value => `${Math.round((Number(value) || 0) * 100) / 100}px`;
+
+  const applyBox = (element, box = {}) => {
+    applyStyleValue(element, 'left', geometryPx(box.left));
+    applyStyleValue(element, 'top', geometryPx(box.top));
+    applyStyleValue(element, 'width', geometryPx(Math.max(0, Number(box.width) || 0)));
+    applyStyleValue(element, 'height', geometryPx(Math.max(0, Number(box.height) || 0)));
   };
 
   const applyCardBox = (element, box = {}) => {
-    if (!element?.style) return;
-    element.style.left = `${Math.round(Number(box.left) || 0)}px`;
-    element.style.top = `${Math.round(Number(box.top) || 0)}px`;
-    element.style.width = `${Math.max(1, Math.round(Number(box.width) || CARD_WIDTH))}px`;
-    element.style.height = 'auto';
-    element.style.maxHeight = `${Math.max(1, Math.round(Number(box.maxHeight) || 1))}px`;
+    applyStyleValue(element, 'left', `${Math.round(Number(box.left) || 0)}px`);
+    applyStyleValue(element, 'top', `${Math.round(Number(box.top) || 0)}px`);
+    applyStyleValue(element, 'width', `${Math.max(1, Math.round(Number(box.width) || CARD_WIDTH))}px`);
+    applyStyleValue(element, 'height', 'auto');
+    applyStyleValue(element, 'maxHeight', `${Math.max(1, Math.round(Number(box.maxHeight) || 1))}px`);
   };
 
-  const positionArrow = (layout, hole) => {
+  const resetGeometry = () => {
+    if (!root) return;
+    const viewport = getViewport();
+    const full = { left: 0, top: 0, width: viewport.w, height: viewport.h };
+    renderedHole = { left: 0, top: 0, width: 0, height: 0 };
+    renderedArrow = { left: 0, top: 0, width: 14, height: 14 };
+    lastGeometryFrameAt = 0;
+    geometryStableFrames = 0;
+    lastTrackedTargetRect = null;
+    applyBox(dims[0], full);
+    dims.slice(1).forEach(dim => applyBox(dim, { left: 0, top: 0, width: 0, height: 0 }));
+    applyBox(holeEl, renderedHole);
+    applyBox(arrowEl, renderedArrow);
+  };
+
+  const resolveArrowGeometry = (layout, hole) => {
     const placement = String(layout?.placement || '');
     const card = layout?.card || {};
     const showArrow = Boolean(hole && !layout?.mobile && ['top', 'bottom', 'left', 'right'].includes(placement));
-    root?.classList?.toggle?.('has-card-arrow', showArrow);
-    if (!showArrow || !arrowEl) return;
+    if (!showArrow) return { show: false, placement: '', box: renderedArrow };
     const size = 14;
     const targetCenterX = hole.left + hole.width / 2;
     const targetCenterY = hole.top + hole.height / 2;
@@ -816,16 +915,21 @@ export const createMaidGuideSpotlight = ({
       left = placement === 'right' ? card.left - size / 2 : card.left + card.width - size / 2;
       top = clamp(targetCenterY - size / 2, card.top + 24, card.top + card.height - size - 24);
     }
-    arrowEl.dataset.placement = placement;
-    applyBox(arrowEl, { left, top, width: size, height: size });
+    return {
+      show: true,
+      placement,
+      box: { left, top, width: size, height: size },
+    };
   };
 
-  const refresh = () => {
+  const refresh = (frameTime = null) => {
     frameId = null;
     if (!active || !root || !current) return;
     const viewport = getViewport();
     const target = current.phase === 'done' ? null : resolveLiveTarget();
-    const expectsTarget = current.phase !== 'done' && Boolean(String(current.step?.target || '').trim());
+    // 目标在场时滑动续期宽限：步内目标短暂消失（如浮层关闭、面板切换）走保持几何分支，而不是追向全屏 dim
+    if (target) targetResolveDeadline = Date.now() + TARGET_RESOLVE_GRACE_MS;
+    const expectsTarget = current.phase !== 'done' && current.expectsTarget === true;
     const waitingForTarget = expectsTarget && !target && Date.now() < targetResolveDeadline;
     if (waitingForTarget && lastLayout?.card) {
       applyCardBox(cardEl, lastLayout.card);
@@ -834,10 +938,8 @@ export const createMaidGuideSpotlight = ({
     }
     if (waitingForTarget) scheduleTargetRetry();
     else clearTargetRetryTimer();
-    root?.classList?.toggle?.('is-tracking', !firstGeometryRefresh);
-    if (!expectsTarget || target) firstGeometryRefresh = false;
-    observeTarget(target);
     const targetRect = target?.getBoundingClientRect?.() || null;
+    observeTarget(target);
     if (
       target &&
       target !== scrollRequestedTarget &&
@@ -863,28 +965,92 @@ export const createMaidGuideSpotlight = ({
       placement: current.step?.placement,
       safeBottom: Number.parseFloat(windowRef?.getComputedStyle?.(documentRef?.documentElement)?.getPropertyValue?.('--app-safe-bottom') || '') || 0,
     });
-    const full = { left: 0, top: 0, width: viewport.w, height: viewport.h };
-    const hole = layout.hole;
-    if (hole) {
-      applyBox(dims[0], { left: 0, top: 0, width: viewport.w, height: hole.top });
-      applyBox(dims[1], { left: 0, top: hole.top + hole.height, width: viewport.w, height: Math.max(0, viewport.h - hole.top - hole.height) });
-      applyBox(dims[2], { left: 0, top: hole.top, width: hole.left, height: hole.height });
-      applyBox(dims[3], { left: hole.left + hole.width, top: hole.top, width: Math.max(0, viewport.w - hole.left - hole.width), height: hole.height });
-      applyBox(holeEl, hole);
-      if (handEl?.style) {
-        handEl.style.left = `${Math.round(clamp(hole.left + hole.width - 18, 8, viewport.w - 116))}px`;
-        handEl.style.top = `${Math.round(clamp(hole.top - 15, 8, viewport.h - 34))}px`;
+    const destinationHole = layout.hole || { left: 0, top: 0, width: 0, height: 0 };
+    const reducedMotion = isMaidGuideMotionReduced(documentRef, matchMediaFn);
+    const sampledFrameTime = Number(frameTime);
+    const now = Number.isFinite(sampledFrameTime)
+      ? sampledFrameTime
+      : Number(windowRef?.performance?.now?.() || Date.now());
+    const elapsed = lastGeometryFrameAt > 0 ? now - lastGeometryFrameAt : GEOMETRY_DEFAULT_FRAME_MS;
+    const deltaMs = elapsed > 0 && elapsed < 120 ? elapsed : GEOMETRY_DEFAULT_FRAME_MS;
+    lastGeometryFrameAt = now;
+    const targetMoved = Boolean(
+      targetRect
+      && lastTrackedTargetRect
+      && hasRectChanged(lastTrackedTargetRect, targetRect, 0.25),
+    );
+    lastTrackedTargetRect = targetRect
+      ? {
+        left: rectValue(targetRect, 'left'),
+        top: rectValue(targetRect, 'top'),
+        width: rectValue(targetRect, 'width'),
+        height: rectValue(targetRect, 'height'),
       }
-    } else {
-      applyBox(dims[0], full);
-      dims.slice(1).forEach(dim => applyBox(dim, { left: 0, top: 0, width: 0, height: 0 }));
-      applyBox(holeEl, { left: 0, top: 0, width: 0, height: 0 });
+      : null;
+
+    const holeStep = advanceMaidSpotlightBox({
+      current: renderedHole,
+      target: destinationHole,
+      deltaMs,
+      reducedMotion,
+    });
+    renderedHole = holeStep.box;
+    applyBox(dims[0], { left: 0, top: 0, width: viewport.w, height: renderedHole.top });
+    applyBox(dims[1], {
+      left: 0,
+      top: renderedHole.top + renderedHole.height,
+      width: viewport.w,
+      height: Math.max(0, viewport.h - renderedHole.top - renderedHole.height),
+    });
+    applyBox(dims[2], {
+      left: 0,
+      top: renderedHole.top,
+      width: renderedHole.left,
+      height: renderedHole.height,
+    });
+    applyBox(dims[3], {
+      left: renderedHole.left + renderedHole.width,
+      top: renderedHole.top,
+      width: Math.max(0, viewport.w - renderedHole.left - renderedHole.width),
+      height: renderedHole.height,
+    });
+    applyBox(holeEl, renderedHole);
+    if (layout.hole) {
+      if (handEl?.style) {
+        applyStyleValue(handEl, 'left', geometryPx(clamp(renderedHole.left + renderedHole.width - 18, 8, viewport.w - 116)));
+        applyStyleValue(handEl, 'top', geometryPx(clamp(renderedHole.top - 15, 8, viewport.h - 34)));
+      }
     }
-    root.classList?.toggle?.('has-target', Boolean(hole));
+    root.classList?.toggle?.('has-target', Boolean(layout.hole));
     root.classList?.toggle?.('is-mobile', layout.mobile);
     applyCardBox(cardEl, layout.card);
-    positionArrow(layout, hole);
+    const arrowGeometry = resolveArrowGeometry(layout, layout.hole);
+    root.classList?.toggle?.('has-card-arrow', arrowGeometry.show);
+    let arrowSettled = true;
+    if (arrowGeometry.show) {
+      arrowEl.dataset.placement = arrowGeometry.placement;
+      const arrowStep = advanceMaidSpotlightBox({
+        current: renderedArrow,
+        target: arrowGeometry.box,
+        deltaMs,
+        reducedMotion,
+      });
+      renderedArrow = arrowStep.box;
+      arrowSettled = arrowStep.settled;
+      applyBox(arrowEl, renderedArrow);
+    }
     lastLayout = layout;
+    const boxesSettled = holeStep.settled && arrowSettled;
+    if (reducedMotion) {
+      geometryStableFrames = GEOMETRY_STABLE_FRAME_COUNT;
+    } else if (boxesSettled && !targetMoved) {
+      geometryStableFrames += 1;
+    } else {
+      geometryStableFrames = 0;
+    }
+    const geometrySettled = reducedMotion
+      || (boxesSettled && geometryStableFrames >= GEOMETRY_STABLE_FRAME_COUNT);
+    if (!geometrySettled) scheduleRefresh();
   };
 
   const scheduleRefresh = () => {
@@ -918,6 +1084,9 @@ export const createMaidGuideSpotlight = ({
     typedDone = !text;
     cardEl?.classList?.toggle?.('is-typed', typedDone);
     if (!textEl) return;
+    textEl.textContent = text;
+    const reservedTextHeight = Math.ceil(Number(textEl.scrollHeight) || 0);
+    if (reservedTextHeight > 0) textEl.style.minHeight = `${reservedTextHeight}px`;
     textEl.textContent = '';
     if (!text || isMaidGuideMotionReduced(documentRef, matchMediaFn) || typeof setIntervalFn !== 'function') {
       finishTyping();
@@ -963,9 +1132,14 @@ export const createMaidGuideSpotlight = ({
     const confetti = createElement(documentRef, 'div', 'maid-spotlight-confetti');
     appendConfetti(confetti);
     const head = createElement(documentRef, 'div', 'maid-spotlight-card-head');
+    const visual = createElement(documentRef, 'div', 'maid-spotlight-done-visual');
+    const avatar = createElement(documentRef, 'span', 'maid-spotlight-done-avatar');
+    applyMaidGuideExpression(avatar, 'complete');
+    avatar.setAttribute?.('aria-hidden', 'true');
     const icon = createElement(documentRef, 'div', 'maid-spotlight-done-icon');
     icon.innerHTML = ICONS.trophy;
-    head.appendChild(icon);
+    visual.append(avatar, icon);
+    head.appendChild(visual);
     const title = createElement(documentRef, 'div', 'maid-spotlight-done-title', current.flow.doneText || `${current.flow.title} · 完成`);
     const copy = createElement(documentRef, 'div', 'maid-spotlight-done-copy');
     copy.append('主人真是一点就通～获得成就 ');
@@ -983,10 +1157,13 @@ export const createMaidGuideSpotlight = ({
     cardEl.className = 'maid-spotlight-card';
     const head = createElement(documentRef, 'div', 'maid-spotlight-card-head');
     const avatarWrap = createElement(documentRef, 'div', 'maid-spotlight-card-avatar-wrap');
-    const avatar = createElement(documentRef, 'img', 'maid-spotlight-card-avatar');
-    avatar.src = './assets/media/maid-tumble.webp';
-    avatar.alt = '';
-    avatar.draggable = false;
+    const avatar = createElement(documentRef, 'span', 'maid-spotlight-card-avatar');
+    applyMaidGuideExpression(avatar, resolveMaidGuideExpressionState({
+      phase: current.phase,
+      step,
+      index,
+    }));
+    avatar.setAttribute?.('aria-hidden', 'true');
     const avatarStatus = createElement(documentRef, 'span', 'maid-spotlight-card-avatar-status');
     avatarStatus.setAttribute?.('aria-hidden', 'true');
     avatarWrap.append(avatar, avatarStatus);
@@ -1044,14 +1221,16 @@ export const createMaidGuideSpotlight = ({
     startTyping();
   };
 
-  const render = () => {
+  const render = ({ animationKind = 'none' } = {}) => {
     if (!ensure() || !current) return false;
     clearTypeTimer();
     clearRenderTimer();
     clearTargetRetryTimer();
     targetResolveDeadline = Date.now() + TARGET_RESOLVE_GRACE_MS;
-    firstGeometryRefresh = true;
-    root?.classList?.remove?.('is-tracking');
+    lastGeometryFrameAt = 0;
+    geometryStableFrames = 0;
+    lastTrackedTargetRect = null;
+    root?.classList?.remove?.('is-rendering', 'is-opening', 'is-stepping');
     cardEl?.remove?.();
     cardEl = createElement(documentRef, 'section', 'maid-spotlight-card');
     cardEl.setAttribute?.('role', 'dialog');
@@ -1060,22 +1239,18 @@ export const createMaidGuideSpotlight = ({
     root.appendChild(cardEl);
     root.classList?.toggle?.('has-action', current.phase !== 'done' && current.step?.action !== 'observe');
     root.classList?.toggle?.('is-done', current.phase === 'done');
-    root.classList?.add?.('is-rendering');
     if (current.phase === 'done') renderDoneCard();
     else renderStepCard();
-    statusTitleEl.textContent = `正在引导 · ${current.flow.title}`;
-    statusCountEl.textContent = current.phase === 'done'
-      ? `${current.flow.steps.length}/${current.flow.steps.length}`
-      : `${current.index + 1}/${current.flow.steps.length}`;
     const handText = handEl?.querySelector?.('span');
     if (handText) handText.textContent = current.step?.action === 'type' ? '在这里输入' : '点击这里';
-    if (!isMaidGuideMotionReduced(documentRef, matchMediaFn)) {
+    if (!isMaidGuideMotionReduced(documentRef, matchMediaFn) && animationKind !== 'none') {
+      root.classList?.add?.('is-rendering', animationKind === 'opening' ? 'is-opening' : 'is-stepping');
       renderTimer = setTimeoutFn?.(() => {
         renderTimer = null;
-        root?.classList?.remove?.('is-rendering');
+        root?.classList?.remove?.('is-rendering', 'is-opening', 'is-stepping');
       }, 420);
     } else {
-      root.classList?.remove?.('is-rendering');
+      root.classList?.remove?.('is-rendering', 'is-opening', 'is-stepping');
     }
     scheduleRefresh();
     return true;
@@ -1129,11 +1304,11 @@ export const createMaidGuideSpotlight = ({
     disconnectTargetObserver();
     currentTarget = null;
     scrollRequestedTarget = null;
-    firstGeometryRefresh = true;
     targetResolveDeadline = 0;
     lastLayout = null;
     unbind();
-    root?.classList?.remove?.('is-active', 'is-rendering', 'has-target', 'has-action', 'has-card-arrow', 'is-tracking', 'is-done', 'is-mobile');
+    root?.classList?.remove?.('is-active', 'is-rendering', 'is-opening', 'is-stepping', 'has-target', 'has-action', 'has-card-arrow', 'is-done', 'is-mobile');
+    resetGeometry();
     root?.setAttribute?.('aria-hidden', 'true');
     if (documentRef?.body?.dataset) delete documentRef.body.dataset.maidSpotlight;
     current = null;
@@ -1150,17 +1325,23 @@ export const createMaidGuideSpotlight = ({
     onFallback = null,
     onFinish = null,
     resolveStepTarget = null,
+    expectsTarget = null,
   } = {}) => {
     const steps = Array.isArray(flow?.steps) ? flow.steps : [];
     if (!flow || !steps.length) return false;
     const safeIndex = clamp(Math.trunc(Number(index) || 0), 0, steps.length - 1);
     const firstShow = !active;
+    const normalizedPhase = phase === 'done' ? 'done' : 'steps';
+    const sameView = active
+      && current?.flow?.id === flow?.id
+      && current?.index === safeIndex
+      && current?.phase === normalizedPhase;
     active = true;
     scrollRequestedTarget = null;
     current = {
       flow,
       index: safeIndex,
-      phase: phase === 'done' ? 'done' : 'steps',
+      phase: normalizedPhase,
       step: steps[safeIndex],
       onNext,
       onPrev,
@@ -1168,13 +1349,16 @@ export const createMaidGuideSpotlight = ({
       onFallback,
       onFinish,
       resolveStepTarget,
+      expectsTarget: expectsTarget == null
+        ? Boolean(String(steps[safeIndex]?.target || '').trim())
+        : expectsTarget === true,
     };
     ensure();
     if (firstShow) bind();
     root.classList?.add?.('is-active');
     root.setAttribute?.('aria-hidden', 'false');
     if (documentRef?.body?.dataset) documentRef.body.dataset.maidSpotlight = 'on';
-    return render();
+    return render({ animationKind: firstShow ? 'opening' : sameView ? 'none' : 'stepping' });
   };
 
   const destroy = () => {
@@ -1185,7 +1369,6 @@ export const createMaidGuideSpotlight = ({
     holeEl = null;
     arrowEl = null;
     handEl = null;
-    statusEl = null;
     escapeHintEl = null;
     cardEl = null;
   };
@@ -1197,6 +1380,6 @@ export const createMaidGuideSpotlight = ({
     refresh: scheduleRefresh,
     show,
     getCurrentTarget: () => currentTarget,
-    getElements: () => ({ root, dims, holeEl, arrowEl, handEl, statusEl, escapeHintEl, cardEl }),
+    getElements: () => ({ root, dims, holeEl, arrowEl, handEl, escapeHintEl, cardEl }),
   };
 };

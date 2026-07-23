@@ -3058,7 +3058,7 @@ export class AgentCenterPanel {
                 </div>
                 <div class="agent-center-floating-toolbar">
                     <button type="button" class="agent-center-icon-button" data-agent-float-flip title="切换到配置" aria-label="切换到配置" aria-pressed="false">${ICONS.refresh}</button>
-                    <button type="button" class="agent-center-icon-button" data-agent-float-close data-maid-guide-target="agent-center-close" title="关闭" aria-label="关闭">${ICONS.close}</button>
+                    <button type="button" class="agent-center-icon-button" data-agent-float-close data-maid-guide-target="agent-center-detail-close" title="关闭" aria-label="关闭">${ICONS.close}</button>
                 </div>
             </div>
             ${renderChips([
@@ -3089,7 +3089,7 @@ export class AgentCenterPanel {
                 </div>
                 <div class="agent-center-floating-toolbar">
                     <button type="button" class="agent-center-icon-button" data-agent-float-flip title="切换到详情" aria-label="切换到详情" aria-pressed="true">${ICONS.refresh}</button>
-                    <button type="button" class="agent-center-icon-button" data-agent-float-close data-maid-guide-target="agent-center-close" title="关闭" aria-label="关闭">${ICONS.close}</button>
+                    <button type="button" class="agent-center-icon-button" data-agent-float-close data-maid-guide-target="agent-center-detail-close" title="关闭" aria-label="关闭">${ICONS.close}</button>
                 </div>
             </div>
             ${this.renderAgentFeatureSettings(agent)}

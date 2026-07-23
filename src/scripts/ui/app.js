@@ -211,7 +211,6 @@ import { createMaidSettingsPanel } from './maid-settings-panel.js';
 import { createMaidOnboardingRuntime, maidGuideEmit } from './maid-onboarding-runtime.js';
 import {
   MAID_ONBOARDING_TARGET_SELECTORS,
-  getMaidOnboardingFlow,
 } from './maid-onboarding-flows.js';
 import { matchMaidIntent } from './maid-intent-presets.js';
 import { createMaidOnboardingAppAdapter } from './maid-onboarding-app-adapter.js';
@@ -14102,6 +14101,11 @@ Phase G（Frame 36）：循环衔接
       return { w: 0, h: 0 };
     }
   };
+  const refreshModeSwitchAnchoredUi = () => {
+    if (maidCommandInputRuntime?.isOpen?.()) maidCommandInputRuntime.position?.();
+    executionFlowRuntime?.position?.();
+    maidOnboardingRuntime?.getEntryUi?.()?.refreshPosition?.();
+  };
   const modeSwitchPositionRuntime = createModeSwitchPositionRuntime({
     modeSwitchEl: modeSwitch,
     readCssVarPx,
@@ -14129,10 +14133,7 @@ Phase G（Frame 36）：循环衔接
     getViewportSize,
     requestAnimationFrameFn: typeof requestAnimationFrame === 'function' ? requestAnimationFrame : null,
     setTimeoutFn: typeof setTimeout === 'function' ? setTimeout : null,
-    onPositionChange: () => {
-      if (maidCommandInputRuntime?.isOpen?.()) maidCommandInputRuntime.position?.();
-      executionFlowRuntime?.position?.();
-    },
+    onPositionChange: refreshModeSwitchAnchoredUi,
   });
   const normalizeModeSwitchPos = modeSwitchPositionRuntime.normalizeModeSwitchPos;
   syncModeSwitchPosition = modeSwitchPositionRuntime.syncPosition;
@@ -16873,15 +16874,16 @@ Phase G（Frame 36）：循环衔接
   const showMaidGuideStepBubble = (guide = {}, step = {}, index = 0, total = 1, target = null) => {
     const label = String(step?.label || step || '').trim() || `步骤 ${index + 1}`;
     const pathText = String(guide?.pathText || (Array.isArray(guide?.steps) ? guide.steps.join(' -> ') : '') || '').trim();
+    const targetExpected = Boolean(target || getMaidGuideStepSelectors(guide, step).length);
     const steps = Array.from({ length: Math.max(1, Number(total) || 1) }, (_, stepIndex) => ({
       action: 'observe',
       text: stepIndex === index ? label : '',
     }));
     steps[index] = {
-      action: target ? 'click' : 'observe',
+      action: targetExpected ? 'click' : 'observe',
       text: pathText ? `${label} · 路径：${pathText}` : label,
-      hint: target ? '点击高亮位置继续' : '完成后继续',
-      ...(target ? { fallback: { kind: 'click-target' } } : {}),
+      hint: targetExpected ? '点击高亮位置继续' : '完成后继续',
+      ...(targetExpected ? { fallback: { kind: 'click-target' } } : {}),
     };
     const spotlight = maidOnboardingRuntime?.getSpotlight?.();
     if (!spotlight) return null;
@@ -16897,9 +16899,14 @@ Phase G（Frame 36）：循环衔接
       onSkip: () => activeLegacyGuideSkip?.(),
       onFallback: () => {
         const liveTarget = findMaidGuideTarget(guide, step) || target;
-        try { liveTarget?.click?.(); } catch { activeLegacyGuideAdvance?.(); }
+        if (!liveTarget) {
+          activeLegacyGuideAdvance?.();
+          return;
+        }
+        try { liveTarget.click?.(); } catch { activeLegacyGuideAdvance?.(); }
       },
-      resolveStepTarget: () => findMaidGuideTarget(guide, step),
+      resolveStepTarget: () => findMaidGuideTarget(guide, step) || (isMaidGuideElementVisible(target) ? target : null),
+      expectsTarget: targetExpected,
     });
     return spotlight.getElements?.().cardEl || null;
   };
@@ -17031,7 +17038,7 @@ Phase G（Frame 36）：循环衔接
       return;
     }
   };
-  const waitForMaidGuideStepAdvance = (target = null) => new Promise(resolve => {
+  const waitForMaidGuideStepAdvance = (resolveTarget = null) => new Promise(resolve => {
     if (typeof activeMaidGuideCleanup === 'function') activeMaidGuideCleanup();
     let done = false;
     const cleanupFns = [];
@@ -17056,14 +17063,19 @@ Phase G（Frame 36）：循环衔接
     };
     activeLegacyGuideAdvance = finish;
     activeLegacyGuideSkip = skip;
-    if (target) {
-      const onTargetClick = () => setTimeout(finish, 0);
-      target.addEventListener('click', onTargetClick, true);
-      cleanupFns.push(() => target.removeEventListener('click', onTargetClick, true));
+    if (typeof resolveTarget === 'function') {
+      const onTargetClick = (event) => {
+        const target = resolveTarget();
+        const clicked = event?.target || null;
+        if (!target || (clicked !== target && !target.contains?.(clicked))) return;
+        setTimeout(finish, 0);
+      };
+      document.addEventListener('click', onTargetClick, true);
+      cleanupFns.push(() => document.removeEventListener('click', onTargetClick, true));
     }
     const onKeydown = (event) => {
       if (event.key === 'Escape') skip();
-      if (!target && event.key === 'Enter') finish();
+      if (typeof resolveTarget !== 'function' && event.key === 'Enter') finish();
     };
     document.addEventListener('keydown', onKeydown, true);
     cleanupFns.push(() => document.removeEventListener('keydown', onKeydown, true));
@@ -17112,7 +17124,10 @@ Phase G（Frame 36）：循环衔接
       const target = findMaidGuideTarget(guide, step);
       if (target) await maidGuideDelay(140);
       showMaidGuideStepBubble(guide, step, index, details.length, target);
-      const advance = await waitForMaidGuideStepAdvance(target);
+      const targetExpected = Boolean(target || getMaidGuideStepSelectors(guide, step).length);
+      const advance = await waitForMaidGuideStepAdvance(targetExpected
+        ? () => findMaidGuideTarget(guide, step) || (isMaidGuideElementVisible(target) ? target : null)
+        : null);
       if (advance?.skipped) break; // 用户跳过：中断教学，女仆直接执行
       await maidGuideDelay(120);
     }
@@ -22678,8 +22693,8 @@ Phase G（Frame 36）：循环衔接
       void maidSettingsStore.setSubAgentRemindAt(Date.now());
     } catch {}
   };
-  const openMaidCommandOrSettings = async () => {
-    maidCommandInputRuntime?.open();
+  const openMaidCommandOrSettings = async ({ autoFocus = true } = {}) => {
+    maidCommandInputRuntime?.open({ autoFocus });
     try {
       const runtime = await resolveMaidRuntimeConfig();
       if (runtime?.configured) {
@@ -22705,8 +22720,9 @@ Phase G（Frame 36）：循环衔接
     documentRef: document,
     modeSwitchEl: modeSwitch,
     onToggleSelection: () => maidSelectionMode.toggle(),
-    onOpenStateChange: ({ open }) => {
+    onOpenStateChange: ({ open, rootEl }) => {
       executionFlowRuntime?.rearbitrateMaidTrace?.({ commandInputOpen: open });
+      maidOnboardingRuntime?.handleCommandInputOpen?.({ open, anchorEl: rootEl });
       if (open) maidGuideEmit(window, 'maid-command-opened', {});
     },
     getViewportSize,
@@ -22806,14 +22822,6 @@ Phase G（Frame 36）：循环衔接
       return result;
     },
     onSettings: async () => {
-      const guideState = maidOnboardingRuntime?.getState?.() || {};
-      const guideStep = getMaidOnboardingFlow(guideState.flowId)?.steps?.[guideState.idx] || null;
-      if (guideState.phase === 'steps' && guideStep?.target === 'maid-command-settings') {
-        maidCommandInputRuntime?.close();
-        await agentCenterPanel.show();
-        maidGuideEmit(window, 'agent-center-opened', {});
-        return;
-      }
       maidCommandInputRuntime?.close();
       maidSettingsPanel.show({ tab: 'api' });
     },
@@ -22832,8 +22840,7 @@ Phase G（Frame 36）：循环衔接
     setModeSwitchPos: value => {
       modeSwitchPos = value;
       // 球在拖拽/弹跳中移动时，打开着的女仆指令条与执行流面板跟随重定位
-      if (maidCommandInputRuntime?.isOpen?.()) maidCommandInputRuntime.position?.();
-      executionFlowRuntime?.position?.();
+      refreshModeSwitchAnchoredUi();
     },
     setModeSwitchPinned: value => {
       modeSwitchPinned = Boolean(value);
@@ -22854,7 +22861,9 @@ Phase G（Frame 36）：循环衔接
     vibrate: value => navigator.vibrate?.(value),
     onLongPress: () => {
       wakeModeSwitch();
-      void openMaidCommandOrSettings();
+      void openMaidCommandOrSettings({
+        autoFocus: maidOnboardingRuntime?.isFirstRunPending?.() !== true,
+      });
       return true;
     },
   });
@@ -22906,7 +22915,12 @@ Phase G（Frame 36）：循环衔接
     prepareStep: maidOnboardingAdapter.prepareStep,
     runFallback: maidOnboardingAdapter.runFallback,
     hasConfiguredProfile: hasConfiguredMaidProfile,
-    onOpenTaskList: () => maidSettingsPanel.show({ tab: 'tasks' }),
+    getMaidBallElement: () => modeSwitch,
+    onFirstRunTaskStart: () => maidCommandInputRuntime?.close?.(),
+    onOpenTaskList: () => {
+      maidCommandInputRuntime?.close?.();
+      maidSettingsPanel.show({ tab: 'tasks' });
+    },
     onFlowEnd: () => hideMenus({ force: true }),
     logger,
   });

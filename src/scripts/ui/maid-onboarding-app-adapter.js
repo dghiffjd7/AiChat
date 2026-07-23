@@ -56,6 +56,14 @@ export const createMaidOnboardingAppAdapter = ({
       await switchPage?.('chat', { animate: false });
       return;
     }
+    if (target === 'agent-center-entry') {
+      await closeMaidCommand?.();
+      if (resolveTarget('settings-agent-center')) return;
+      await openSettingsMenu?.();
+      if (resolveTarget('settings-agent-center') || resolveTarget(target)) return;
+      await switchPage?.('moments', { animate: false });
+      return;
+    }
     if (target === 'maid-command-settings' && !resolveTarget(target)) {
       await openMaidCommand?.();
       return;
