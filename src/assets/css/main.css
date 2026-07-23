@@ -1241,6 +1241,10 @@ body.chat-room-active .bottom-nav {
   padding: 6px;
 }
 
+.world-app-select-menu.is-maid-guide-menu {
+  z-index: 40100;
+}
+
 .world-app-select-item {
   width: 100%;
   border: none;

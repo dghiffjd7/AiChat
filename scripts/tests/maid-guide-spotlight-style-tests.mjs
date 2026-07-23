@@ -32,6 +32,7 @@ const source = fs.readFileSync(
   assert.match(source, /applyMaidGuideExpression/);
   assert.match(source, /resolveMaidGuideExpressionState/);
   assert.match(source, /maid-spotlight-done-avatar/);
+  assert.match(source, /step\.primaryLabel \|\| '帮主人来'/);
   assert.doesNotMatch(source, /maid-spotlight-status/);
   assert.doesNotMatch(source, /statusAvatarEl/);
   assert.doesNotMatch(source, /maid-tumble\.webp/);

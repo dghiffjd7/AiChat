@@ -339,8 +339,8 @@ export class ConfigPanel {
                             <button id="profile-delete" title="删除" style="font-size:12px; border:none; background:#fee2e2; color:#b91c1c; padding:4px 8px; border-radius:6px; cursor:pointer;">🗑</button>
                         </div>
                     </label>
-                    <select id="config-profile" style="display:none;"></select>
-                    <button type="button" id="config-profile-btn" class="world-app-select-btn" data-select-id="config-profile" style="margin-top:2px;">
+                    <select id="config-profile" data-maid-guide-target="config-profile-select" style="display:none;"></select>
+                    <button type="button" id="config-profile-btn" class="world-app-select-btn" data-select-id="config-profile" data-maid-guide-target="config-profile-select" style="margin-top:2px;">
                         <span class="config-custom-select-label">请选择设置档</span>
                         <span class="world-app-select-btn-chevron">▾</span>
                     </button>
@@ -363,9 +363,10 @@ export class ConfigPanel {
                     </button>
                 </div>
 
+                <div id="config-custom-fields" data-maid-guide-target="config-custom-fields">
                 <div id="config-baseurl-section" style="margin-bottom: 15px;">
                     <label class="has-help" data-help="内建服务商自动使用默认地址；仅自定义 API 需填写" style="display: block; margin-bottom: 5px; font-weight: bold;">API Base URL</label>
-                    <input type="text" id="config-baseurl" placeholder="https://api.openai.com/v1"
+                    <input type="text" id="config-baseurl" data-maid-guide-target="config-base-url-input" placeholder="https://api.openai.com/v1"
                            style="width: 100%; padding: 10px; border-radius: 5px; border: 1px solid var(--app-border-default); font-size: 14px; box-sizing: border-box;">
                 </div>
 
@@ -380,6 +381,7 @@ export class ConfigPanel {
                     <input type="password" id="config-apikey" data-maid-guide-target="config-api-key-input" placeholder="sk-..."
                            style="width: 100%; padding: 10px; border-radius: 5px; border: 1px solid var(--app-border-default); font-size: 14px; box-sizing: border-box;">
                     <small id="apikey-help" style="color: var(--app-text-secondary);">保存后 Key 以遮罩显示（不可复制）；用 🔑 管理多个 Key</small>
+                </div>
                 </div>
 
                 <div id="vertexai-fields" style="display: none;">
@@ -403,19 +405,19 @@ export class ConfigPanel {
                             <span class="has-help" data-help="粘贴 Service Account JSON，Project ID 会自动识别；留空则用 API Key">Service Account JSON</span>
                             <button id="toggle-sa" style="font-size:12px; border:none; background:var(--app-surface-subtle); padding:4px 8px; border-radius:6px; cursor:pointer;">显示</button>
                         </label>
-                        <textarea id="config-serviceaccount" placeholder='{"type": "service_account", "project_id": "your-project", ...}'
+                        <textarea id="config-serviceaccount" data-maid-guide-target="config-service-account-input" placeholder='{"type": "service_account", "project_id": "your-project", ...}'
                                   style="width: 100%; padding: 10px; border-radius: 5px; border: 1px solid var(--app-border-default); font-size: 12px; box-sizing: border-box; font-family: monospace; min-height: 100px; resize: vertical;"></textarea>
                     </div>
                 </div>
 
-                <div style="margin-bottom: 15px;">
+                <div id="config-model-section" data-maid-guide-target="config-model-section" style="margin-bottom: 15px;">
                     <label style="display: flex; align-items:center; justify-content:space-between; margin-bottom: 5px; font-weight: bold;">
                         <span>模型</span>
-                        <button id="refresh-models" style="font-size:12px; border:none; background:#e3f2fd; color:#1976d2; padding:4px 8px; border-radius:6px; cursor:pointer;">
+                        <button id="refresh-models" data-maid-guide-target="config-refresh-models" style="font-size:12px; border:none; background:#e3f2fd; color:#1976d2; padding:4px 8px; border-radius:6px; cursor:pointer;">
                             ⟳ 刷新列表
                         </button>
                     </label>
-                    <div style="position: relative; display: flex; flex-direction: column; gap: 8px;">
+                    <div id="config-model-picker" data-maid-guide-target="config-model-picker" style="position: relative; display: flex; flex-direction: column; gap: 8px;">
                         <input type="text" id="config-model" data-maid-guide-target="config-model-select" list="model-list" placeholder="gpt-3.5-turbo"
                                style="width: 100%; padding: 10px 12px; border-radius: 5px; border: 1px solid var(--app-border-default); font-size: 14px; box-sizing: border-box;">
                         <datalist id="model-list"></datalist>
@@ -655,6 +657,8 @@ export class ConfigPanel {
         if (this.customSelectMenuEl) {
             this.customSelectMenuEl.style.display = 'none';
             this.customSelectMenuEl.innerHTML = '';
+            this.customSelectMenuEl.classList.remove('is-maid-guide-menu');
+            delete this.customSelectMenuEl.dataset.selectId;
         }
     }
 
@@ -669,6 +673,8 @@ export class ConfigPanel {
             return;
         }
         const menu = this.ensureCustomSelectMenu();
+        menu.classList.toggle('is-maid-guide-menu', Boolean(anchorEl.dataset.maidGuideTarget));
+        menu.dataset.selectId = String(anchorEl.dataset.selectId || '');
         const current = String(currentValue ?? '').trim();
         const opts = Array.isArray(options) ? options : [];
         menu.innerHTML = opts.map((opt) => {
@@ -773,8 +779,9 @@ export class ConfigPanel {
                 options,
                 currentValue: select.value,
                 onSelect: (value) => {
-                    if (select.value !== value) {
-                        select.value = value;
+                    const changed = select.value !== value;
+                    select.value = value;
+                    if (changed || selectId === 'config-provider') {
                         select.dispatchEvent(new Event('change', { bubbles: true }));
                     } else {
                         this.refreshCustomSelect(select);
@@ -2090,6 +2097,15 @@ export class ConfigPanel {
                 datalist.appendChild(option);
             });
             this.renderModelOptions(models);
+            try {
+                window.dispatchEvent(new CustomEvent('config-models-refreshed', {
+                    detail: {
+                        tab: this.activeTab,
+                        provider: formData.provider,
+                        count: models.length,
+                    },
+                }));
+            } catch {}
 
             // 成功提示
             this.showStatus(`✓ 成功获取 ${models.length} 个可用模型`, 'success');

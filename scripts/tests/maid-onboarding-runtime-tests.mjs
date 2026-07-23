@@ -171,36 +171,255 @@ assert.equal(MAID_SETUP_HINT_ID, 'maid-onboarding-welcome-v2', 'new dismissal se
 }
 
 {
-  const flow = {
-    id: 'configured-replay',
-    title: '重温配置',
-    steps: [
-      { action: 'observe', text: '开始' },
-      {
-        target: 'config-connection-fields',
-        action: 'type',
-        text: '检查配置',
-        canAdvance: (event, payload) => event === 'config-credentials-ready' && payload?.hasKey && payload?.hasModel,
-      },
-    ],
+  const values = {
+    provider: { value: 'openai' },
+    apiKey: { value: 'sk••saved', dataset: { hasKey: 'true' } },
+    serviceAccount: { value: '' },
+    baseUrl: { value: 'https://api.openai.com/v1' },
+    model: { value: 'gpt-saved' },
   };
   const documentRef = {
-    querySelector: selector => ({ value: selector.includes('api-key') ? '••••' : 'saved-model' }),
+    querySelector: (selector) => {
+      if (selector.includes('config-provider')) return values.provider;
+      if (selector.includes('config-api-key')) return values.apiKey;
+      if (selector.includes('config-service-account') || selector.includes('config-serviceaccount')) return values.serviceAccount;
+      if (selector.includes('config-base-url') || selector.includes('config-baseurl')) return values.baseUrl;
+      if (selector.includes('config-model-select') || selector.includes('config-model')) return values.model;
+      return null;
+    },
   };
   const shown = [];
   const runtime = createMaidOnboardingRuntime({
     documentRef,
-    getFlow: id => id === flow.id ? flow : null,
     tasks: [],
+    hasConfiguredProfile: () => true,
     spotlight: { show: value => shown.push(value), hide() {}, destroy() {} },
-    entryUi: { hideHint() {}, destroy() {} },
+    entryUi: { hideHint() {}, hideWelcome() {}, destroy() {} },
   });
-  runtime.startFlow(flow.id);
+  runtime.startFlow('setup-api');
   await flush();
   shown.at(-1).onNext();
   await flush();
+  runtime.emit('target-click', { target: 'settings-entry' });
+  await flush();
+  runtime.emit('target-click', { target: 'settings-api-config' });
+  for (let i = 0; i < 8; i += 1) await flush();
+  const state = runtime.getState();
+  assert.equal(state.phase, 'steps');
+  assert.equal(shown.at(-1).flow.steps[shown.at(-1).index].target, 'config-save-btn');
+  console.log('ok - onboarding runtime skips fulfilled API setup fields when replaying a configured profile');
+}
+
+{
+  const values = {
+    provider: { value: 'openai' },
+    apiKey: { value: 'sk••saved', dataset: { hasKey: 'true' } },
+    serviceAccount: { value: '' },
+    baseUrl: { value: 'https://api.openai.com/v1' },
+    model: { value: 'gpt-saved' },
+  };
+  const documentRef = {
+    querySelector: (selector) => {
+      if (selector.includes('config-provider')) return values.provider;
+      if (selector.includes('config-api-key')) return values.apiKey;
+      if (selector.includes('config-service-account') || selector.includes('config-serviceaccount')) return values.serviceAccount;
+      if (selector.includes('config-base-url') || selector.includes('config-baseurl')) return values.baseUrl;
+      if (selector.includes('config-model-select') || selector.includes('config-model')) return values.model;
+      return null;
+    },
+  };
+  const shown = [];
+  const fallbacks = [];
+  const completed = new Set();
+  const runtime = createMaidOnboardingRuntime({
+    documentRef,
+    tasks: [{ id: 'task-setup-api', flowId: 'setup-api' }],
+    guideStore: {
+      isTaskDone: id => completed.has(id),
+      markTaskDone: id => completed.add(id),
+    },
+    hasConfiguredProfile: () => true,
+    runFallback: context => fallbacks.push(context),
+    spotlight: { show: value => shown.push(value), hide() {}, destroy() {} },
+    entryUi: { hideHint() {}, hideWelcome() {}, destroy() {} },
+  });
+  runtime.startFlow('setup-api');
+  await flush();
+  shown.at(-1).onNext();
+  await flush();
+  runtime.emit('target-click', { target: 'settings-entry' });
+  await flush();
+  runtime.emit('target-click', { target: 'settings-api-config' });
+  await flush();
+  assert.equal(
+    shown.at(-1).flow.steps[shown.at(-1).index].target,
+    'config-profile-select',
+    'an upgrade user must explicitly review the connection profile',
+  );
+  shown.at(-1).onNext();
+  await flush();
+  const modelView = shown.at(-1).flow.steps[shown.at(-1).index];
+  assert.equal(modelView.target, 'config-model-picker');
+  assert.equal(runtime.emit('config-model-selected', { model: 'gpt-saved' }), false, 'model selection stays optional');
+  shown.at(-1).onFallback();
+  assert.equal(fallbacks.at(-1).step.fallback.target, 'config-save-btn');
+  assert.equal(runtime.getState().phase, 'steps', 'clicking the save assist must wait for the real save callback');
+  assert.equal(runtime.emit('config-profile-saved', { profileCount: 1 }), true);
+  await flush();
   assert.equal(runtime.getState().phase, 'done');
-  console.log('ok - onboarding runtime recognizes already populated API fields when replaying setup');
+  assert.equal(completed.has('task-setup-api'), true);
+  console.log('ok - configured upgrade users confirm profile/model and finish only after a real save');
+}
+
+{
+  const values = {
+    provider: { value: 'custom' },
+    apiKey: { value: '', dataset: { hasKey: 'false' } },
+    serviceAccount: { value: '' },
+    baseUrl: { value: 'http://localhost:8000/v1' },
+    model: { value: 'default' },
+  };
+  const documentRef = {
+    querySelector: (selector) => {
+      if (selector.includes('config-provider')) return values.provider;
+      if (selector.includes('config-api-key')) return values.apiKey;
+      if (selector.includes('config-service-account') || selector.includes('config-serviceaccount')) return values.serviceAccount;
+      if (selector.includes('config-base-url') || selector.includes('config-baseurl')) return values.baseUrl;
+      if (selector.includes('config-model-select') || selector.includes('config-model')) return values.model;
+      return null;
+    },
+  };
+  const shown = [];
+  const runtime = createMaidOnboardingRuntime({
+    documentRef,
+    tasks: [],
+    hasConfiguredProfile: () => false,
+    spotlight: { show: value => shown.push(value), hide() {}, destroy() {} },
+    entryUi: { hideHint() {}, hideWelcome() {}, destroy() {} },
+  });
+  runtime.startFlow('setup-api');
+  await flush();
+  shown.at(-1).onNext();
+  await flush();
+  runtime.emit('target-click', { target: 'settings-entry' });
+  await flush();
+  runtime.emit('target-click', { target: 'settings-api-config' });
+  await flush();
+  assert.equal(shown.at(-1).flow.steps[shown.at(-1).index].target, 'config-provider-select');
+  runtime.emit('config-provider-confirmed', { provider: 'custom' });
+  await flush();
+  const credentialsView = shown.at(-1).flow.steps[shown.at(-1).index];
+  assert.equal(credentialsView.target, 'config-custom-fields');
+  assert.match(credentialsView.text, /Base URL/);
+  assert.equal(runtime.emit('config-credentials-ready', { ready: false }), false);
+  assert.equal(runtime.emit('config-credentials-ready', { ready: true }), true);
+  await flush();
+  assert.equal(shown.at(-1).flow.steps[shown.at(-1).index].target, 'config-model-section');
+  assert.equal(runtime.emit('config-models-refreshed', { tab: 'chat', count: 0 }), false);
+  assert.equal(runtime.emit('config-models-refreshed', { tab: 'chat', count: 3 }), true);
+  await flush();
+  assert.equal(shown.at(-1).flow.steps[shown.at(-1).index].target, 'config-model-picker');
+  assert.equal(runtime.emit('config-model-selected', { model: '' }), false);
+  assert.equal(runtime.emit('config-model-selected', { model: 'custom-model' }), true);
+  await flush();
+  assert.equal(shown.at(-1).flow.steps[shown.at(-1).index].target, 'config-save-btn');
+  console.log('ok - onboarding runtime keeps fresh custom API setup on each required interaction');
+}
+
+{
+  const listeners = new Map();
+  const values = {
+    provider: { value: 'custom' },
+    apiKey: {
+      value: '',
+      dataset: { maidGuideTarget: 'config-api-key-input', hasKey: 'false' },
+    },
+    serviceAccount: {
+      value: '',
+      dataset: { maidGuideTarget: 'config-service-account-input', hasKey: 'false' },
+    },
+    baseUrl: {
+      value: 'http://localhost:8000/v1',
+      dataset: { maidGuideTarget: 'config-base-url-input' },
+    },
+    model: { value: 'default', dataset: { maidGuideTarget: 'config-model-select' } },
+  };
+  const documentRef = {
+    querySelector: (selector) => {
+      if (selector.includes('config-provider')) return values.provider;
+      if (selector.includes('config-api-key')) return values.apiKey;
+      if (selector.includes('config-service-account') || selector.includes('config-serviceaccount')) return values.serviceAccount;
+      if (selector.includes('config-baseurl')) return values.baseUrl;
+      if (selector.includes('config-model-select') || selector.includes('config-model')) return values.model;
+      return null;
+    },
+    addEventListener: (type, handler) => listeners.set(type, handler),
+    removeEventListener: type => listeners.delete(type),
+  };
+  const windowRef = {
+    addEventListener() {},
+    removeEventListener() {},
+  };
+  const shown = [];
+  const runtime = createMaidOnboardingRuntime({
+    documentRef,
+    windowRef,
+    tasks: [],
+    hasConfiguredProfile: () => false,
+    spotlight: { show: value => shown.push(value), hide() {}, destroy() {} },
+    entryUi: { hideHint() {}, hideWelcome() {}, destroy() {} },
+  });
+  runtime.bind();
+  runtime.startFlow('setup-api');
+  await flush();
+  shown.at(-1).onNext();
+  await flush();
+  runtime.emit('target-click', { target: 'settings-entry' });
+  await flush();
+  runtime.emit('target-click', { target: 'settings-api-config' });
+  await flush();
+  runtime.emit('config-provider-confirmed', { provider: 'custom' });
+  await flush();
+
+  values.apiKey.value = 'sk-new';
+  listeners.get('input')?.({ target: values.apiKey, composedPath: () => [values.apiKey] });
+  await flush();
+  assert.equal(
+    shown.at(-1).flow.steps[shown.at(-1).index].target,
+    'config-custom-fields',
+    'the custom default URL must not silently count as user-confirmed',
+  );
+  values.baseUrl.value = 'https://example.test/v1';
+  listeners.get('input')?.({ target: values.baseUrl, composedPath: () => [values.baseUrl] });
+  await flush();
+  assert.equal(shown.at(-1).flow.steps[shown.at(-1).index].target, 'config-model-section');
+
+  // 兜底：服务商不支持模型列表时，手动填写模型直接越过刷新与选模步，落到保存
+  values.model.value = 'my-local-model';
+  listeners.get('input')?.({ target: values.model, composedPath: () => [values.model] });
+  await flush();
+  assert.equal(shown.at(-1).flow.steps[shown.at(-1).index].target, 'config-save-btn');
+
+  runtime.skip();
+  values.provider.value = 'vertexai';
+  values.serviceAccount.value = '';
+  runtime.startFlow('setup-api');
+  await flush();
+  shown.at(-1).onNext();
+  await flush();
+  runtime.emit('target-click', { target: 'settings-entry' });
+  await flush();
+  runtime.emit('target-click', { target: 'settings-api-config' });
+  await flush();
+  runtime.emit('config-provider-confirmed', { provider: 'vertexai' });
+  await flush();
+  assert.equal(shown.at(-1).flow.steps[shown.at(-1).index].target, 'config-service-account-input');
+  values.serviceAccount.value = '{"type":"service_account"}';
+  listeners.get('input')?.({ target: values.serviceAccount, composedPath: () => [values.serviceAccount] });
+  await flush();
+  assert.equal(shown.at(-1).flow.steps[shown.at(-1).index].target, 'config-model-section');
+  runtime.destroy();
+  console.log('ok - custom Base URL confirmation and Vertex service-account input drive the real guide listeners');
 }
 
 {

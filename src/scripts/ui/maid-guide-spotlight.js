@@ -1208,7 +1208,7 @@ export const createMaidGuideSpotlight = ({
     primary.innerHTML = observe
       ? `<span>${step.primaryLabel || '下一步'}</span>`
       : hasFallback
-        ? `${ICONS.wand}<span>帮主人来</span>`
+        ? `${ICONS.wand}<span>${step.primaryLabel || '帮主人来'}</span>`
         : '<span>等待主人操作</span>';
     primary.addEventListener?.('click', () => {
       if (!typedDone) return;

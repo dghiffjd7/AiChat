@@ -9,6 +9,11 @@ export const MAID_ONBOARDING_TARGET_SELECTORS = Object.freeze({
     '[data-maid-guide-target="settings-api-config"]',
     '#settings-menu button[data-action="config"]',
   ],
+  'config-profile-select': [
+    '[data-maid-guide-target="config-profile-select"]',
+    '#config-profile-btn',
+    '#config-profile',
+  ],
   'config-provider-select': [
     '[data-maid-guide-target="config-provider-select"]',
     '#config-provider-btn',
@@ -21,6 +26,30 @@ export const MAID_ONBOARDING_TARGET_SELECTORS = Object.freeze({
   'config-api-key-input': [
     '[data-maid-guide-target="config-api-key-input"]',
     '#config-apikey',
+  ],
+  'config-custom-fields': [
+    '[data-maid-guide-target="config-custom-fields"]',
+    '#config-custom-fields',
+  ],
+  'config-base-url-input': [
+    '[data-maid-guide-target="config-base-url-input"]',
+    '#config-baseurl',
+  ],
+  'config-service-account-input': [
+    '[data-maid-guide-target="config-service-account-input"]',
+    '#config-serviceaccount',
+  ],
+  'config-refresh-models': [
+    '[data-maid-guide-target="config-refresh-models"]',
+    '#refresh-models',
+  ],
+  'config-model-section': [
+    '[data-maid-guide-target="config-model-section"]',
+    '#config-model-section',
+  ],
+  'config-model-picker': [
+    '[data-maid-guide-target="config-model-picker"]',
+    '#config-model-picker',
   ],
   'config-model-select': [
     '[data-maid-guide-target="config-model-select"]',
@@ -127,13 +156,51 @@ export const MAID_ONBOARDING_FLOWS = Object.freeze([
         canAdvance: clicked('settings-api-config'),
       },
       {
-        target: 'config-connection-fields',
+        target: 'config-provider-select',
+        placement: 'right',
+        action: 'wait-event',
+        configRequirement: 'provider',
+        text: '先选择主人要使用的服务商。即使继续使用默认的 OpenAI，也请在列表里确认一次。',
+        hint: '打开列表并选择服务商',
+        fallback: { kind: 'click-target', target: 'config-provider-select' },
+        canAdvance: (event, payload) => event === 'config-provider-confirmed' && Boolean(payload?.provider),
+      },
+      {
+        target: 'config-api-key-input',
         placement: 'right',
         action: 'type',
-        text: '选择服务商后，在这里贴上 API Key，再确认模型名称。Key 只留在本机配置里，引导事件不会读取它的内容。',
-        hint: '选择服务商并填写 API Key',
+        configRequirement: 'credentials',
+        text: '把服务商要求的连接资料填在这里。Key 只留在本机配置里，引导事件只检查是否填写，不会读取内容。',
+        hint: '填写必要的连接资料',
         fallback: { kind: 'focus-target', target: 'config-api-key-input' },
-        canAdvance: (event, payload) => event === 'config-credentials-ready' && payload?.hasKey === true && payload?.hasModel === true,
+        canAdvance: (event, payload) => event === 'config-credentials-ready' && payload?.ready === true,
+      },
+      {
+        target: 'config-model-section',
+        placement: 'left',
+        action: 'wait-event',
+        configRequirement: 'model-refresh',
+        text: '连接资料齐了。点击刷新拉取可用模型；如果服务商不支持列表，也可以直接手动填写模型 ID。',
+        hint: '刷新列表，或手动填写模型',
+        fallback: { kind: 'click-target', target: 'config-refresh-models' },
+        canAdvance: (event, payload) => (
+          (
+            event === 'config-models-refreshed'
+            && payload?.tab === 'chat'
+            && Number(payload?.count || 0) > 0
+          )
+          || (event === 'config-model-selected' && Boolean(String(payload?.model || '').trim()))
+        ),
+      },
+      {
+        target: 'config-model-picker',
+        placement: 'left',
+        action: 'type',
+        configRequirement: 'model-selection',
+        text: '从刚拉取的候选模型中选一个。也可以手动填写服务商支持的模型 ID。',
+        hint: '选择一个模型',
+        fallback: { kind: 'focus-target', target: 'config-model-select' },
+        canAdvance: (event, payload) => event === 'config-model-selected' && Boolean(String(payload?.model || '').trim()),
       },
       {
         target: 'config-save-btn',
@@ -334,6 +401,42 @@ export const MAID_ONBOARDING_FLOWS = Object.freeze([
 const FLOW_BY_ID = new Map(MAID_ONBOARDING_FLOWS.map(flow => [flow.id, flow]));
 
 export const getMaidOnboardingFlow = flowId => FLOW_BY_ID.get(String(flowId || '').trim()) || null;
+
+export const createMaidExistingApiReviewFlow = (
+  baseFlow = getMaidOnboardingFlow('setup-api'),
+) => {
+  if (baseFlow?.id !== 'setup-api' || !Array.isArray(baseFlow.steps) || baseFlow.steps.length < 3) {
+    return null;
+  }
+  return {
+    ...baseFlow,
+    goal: '确认女仆使用的连线设置档与模型',
+    steps: [
+      ...baseFlow.steps.slice(0, 3),
+      {
+        target: 'config-profile-select',
+        placement: 'right',
+        action: 'observe',
+        text: '主人已有可用配置。请确认女仆要使用哪一份「连线设置档」；可以展开改选，也可以直接沿用当前这份。',
+        hint: '可改选设置档，或沿用当前',
+        primaryLabel: '沿用当前连线',
+      },
+      {
+        target: 'config-model-picker',
+        placement: 'left',
+        action: 'wait-event',
+        text: '再确认这份设置档里的模型。模型可以改选或手动填写；若当前值就是主人要的，直接保存即可。',
+        hint: '模型可选；保存才会绑定女仆',
+        primaryLabel: '保存并绑定女仆',
+        fallback: { kind: 'click-target', target: 'config-save-btn' },
+        canAdvance: (event, payload) => (
+          event === 'config-profile-saved'
+          && Number(payload?.profileCount || 0) > 0
+        ),
+      },
+    ],
+  };
+};
 
 export const ONBOARDING_TASKS = Object.freeze([
   {

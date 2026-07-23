@@ -11,15 +11,26 @@ const agentStatusSource = read('../../src/scripts/ui/agent-center-status-chip.js
 
 for (const target of [
   'config-connection-fields',
+  'config-profile-select',
   'config-provider-select',
+  'config-custom-fields',
+  'config-base-url-input',
   'config-api-key-input',
+  'config-service-account-input',
+  'config-refresh-models',
+  'config-model-section',
+  'config-model-picker',
   'config-model-select',
   'config-save-btn',
 ]) {
   assert.match(configSource, new RegExp(`data-maid-guide-target=["']${target}["']`));
 }
+assert.match(configSource, /config-models-refreshed/);
+assert.match(configSource, /world-app-select-menu[\s\S]*?is-maid-guide-menu/);
 assert.match(appSource, /document\.body\?\.dataset\?\.maidSpotlight === 'on'/);
 assert.match(appSource, /maidGuideEmit\(window, 'config-profile-saved'/);
+assert.match(appSource, /const bindMaidToSavedApiProfile[\s\S]*?maidSettingsStore\.setBoundProfileId\(savedProfileId\)/);
+assert.match(appSource, /const openMaidApiConfigPanel[\s\S]*?onSaved:\s*bindMaidToSavedApiProfile/);
 assert.match(appSource, /maidGuideEmit\(window, 'chat-message-sent'/);
 assert.match(appSource, /maidGuideEmit\(window, 'chat-message-received'/);
 assert.match(appSource, /maidGuideEmit\(window, 'chat-room-entered'/);
