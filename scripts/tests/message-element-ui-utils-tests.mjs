@@ -133,6 +133,7 @@ const createFakeDocument = () => ({
 
 {
   let reactionButton = null;
+  let reactionSummary = null;
   buildMessageElementCore({
     message: { id: 'u1', role: 'user', type: 'text', content: 'hello' },
     resolveActiveSwipeMessage: value => value,
@@ -144,13 +145,13 @@ const createFakeDocument = () => ({
     documentLike: createFakeDocument(),
     createBubble: () => ({ kind: 'bubble' }),
     renderMessageBubbleContent() {},
-    buildReactionSummaryElement: () => null,
-    createReactionTriggerButton: (_message, options) => {
-      assert.equal(options.isThreadingEnabled, true);
-      return 'user-reaction-button';
+    buildReactionSummaryElement: () => 'user-reaction-summary',
+    createReactionTriggerButton: () => {
+      throw new Error('chat user messages should not build the hover emoji trigger');
     },
     buildBubbleStack: payload => {
       reactionButton = payload.reactionButton;
+      reactionSummary = payload.reactionSummaryEl;
       return { kind: 'bubble-stack' };
     },
     appendStandardMessageLayout() {},
@@ -158,6 +159,7 @@ const createFakeDocument = () => ({
     getUiMode: () => 'chat',
     bindMessageContextInteractions: ({ wrapper }) => wrapper,
   });
-  assert.equal(reactionButton, 'user-reaction-button');
-  console.log('ok - buildMessageElementCore keeps the user reaction trigger available');
+  assert.equal(reactionButton, null);
+  assert.equal(reactionSummary, 'user-reaction-summary');
+  console.log('ok - buildMessageElementCore omits the chat user hover emoji trigger while keeping reaction summaries');
 }

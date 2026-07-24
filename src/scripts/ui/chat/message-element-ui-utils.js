@@ -82,8 +82,9 @@ export const buildMessageElementCore = ({
     resolvedSessionId,
   }) || null;
 
+  const uiMode = getUiMode?.() || '';
   const reactionSummaryEl = buildReactionSummaryElement?.(nextMessage);
-  const reactionButton = nextMessage?.role === 'assistant'
+  const reactionButton = nextMessage?.role === 'assistant' || uiMode === 'chat'
     ? null
     : createReactionTriggerButton?.(nextMessage, {
       documentLike,
@@ -106,7 +107,7 @@ export const buildMessageElementCore = ({
     bubbleStack,
     message: nextMessage,
     isUser,
-    uiMode: getUiMode?.() || '',
+    uiMode,
     createSwipeIndicatorElement,
   });
 

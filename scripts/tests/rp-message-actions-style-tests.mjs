@@ -37,6 +37,51 @@ assert.match(
   creativeCss,
   /body\[data-ui-mode='chat'\]:not\(\[data-chat-display='document'\]\)\s+\.QQ_chat_mymsg\s+\.QQ_chat_msgdiv\s*\{[^}]*border-radius:\s*22px 4px 22px 22px\s*!important/s,
 );
+assert.match(
+  creativeCss,
+  /body\[data-ui-mode='chat'\]\s+\.QQ_chat_charmsg\.has-rp-message-actions\s+\.chat-time-row\.is-assistant\s*>\s*\.rp-message-actions\s*\{[^}]*margin-left:\s*0/s,
+);
+assert.match(
+  creativeCss,
+  /body:is\(\[data-ui-mode='chat'\],\s*\[data-ui-mode='rp'\]\)\s+\.QQ_chat_mymsg\.has-rp-message-actions\s+\.chat-time-row\s*>\s*\.rp-message-actions\.is-user\s*\{[^}]*margin-right:\s*0/s,
+);
+assert.match(
+  creativeCss,
+  /body\[data-ui-mode='chat'\]\s+\.QQ_chat_charmsg\.has-rp-message-actions\s+\.chat-time-row\.is-assistant,\s*body:is\(\[data-ui-mode='chat'\],\s*\[data-ui-mode='rp'\]\)\s+\.QQ_chat_mymsg\.has-rp-message-actions\s+\.chat-time-row\s*\{[^}]*width:\s*max-content[^}]*display:\s*grid/s,
+);
+assert.match(
+  creativeCss,
+  /body:is\(\[data-ui-mode='chat'\],\s*\[data-ui-mode='rp'\]\)\s+\.has-rp-message-actions\s+\.chat-time-row\s+\.rp-message-actions\s*\{[^}]*grid-area:\s*1\s*\/\s*1[^}]*padding:\s*0[^}]*border:\s*0[^}]*background:\s*transparent[^}]*box-shadow:\s*none/s,
+);
+assert.match(
+  creativeCss,
+  /body:is\(\[data-ui-mode='chat'\],\s*\[data-ui-mode='rp'\]\)\s+\.has-rp-message-actions\s+\.chat-time-row\s*>\s*:is\(\.QQ_chat_time,\s*\.chat-delivery-status\)\s*\{[^}]*pointer-events:\s*none/s,
+);
+// metadata/操作条基础样式必须锁定在带操作条的消息内：无操作条的时间行不能被清 margin 或改 hit-test
+assert.doesNotMatch(
+  creativeCss,
+  /\[data-ui-mode='rp'\]\)\s+\.chat-time-row/,
+);
+assert.match(
+  creativeCss,
+  /body:is\(\[data-ui-mode='chat'\],\s*\[data-ui-mode='rp'\]\)\s+\.has-rp-message-actions\.is-rp-actions-visible\s+\.chat-time-row\s*>\s*:is\(\.QQ_chat_time,\s*\.chat-delivery-status\)\s*\{[^}]*opacity:\s*0/s,
+);
+assert.match(
+  creativeCss,
+  /body:is\(\[data-ui-mode='chat'\],\s*\[data-ui-mode='rp'\]\)\s+\.has-rp-message-actions\.is-rp-actions-visible\s+\.chat-time-row\s+\.rp-message-actions\s*\{[^}]*opacity:\s*1[^}]*pointer-events:\s*auto/s,
+);
+assert.match(
+  creativeCss,
+  /@media\s*\(hover:\s*hover\)\s*and\s*\(pointer:\s*fine\)[\s\S]*body:is\(\[data-ui-mode='chat'\],\s*\[data-ui-mode='rp'\]\)[\s\S]*\.chat-time-row\s*>\s*:is\(\.QQ_chat_time,\s*\.chat-delivery-status\)[\s\S]*opacity:\s*0/s,
+);
+assert.match(
+  creativeCss,
+  /@media\s*\(prefers-reduced-motion:\s*reduce\)[\s\S]*body:is\(\[data-ui-mode='chat'\],\s*\[data-ui-mode='rp'\]\)\s+\.has-rp-message-actions\s+\.chat-time-row\s+\.rp-message-actions[\s\S]*transition:\s*none\s*!important/s,
+);
+assert.match(
+  creativeCss,
+  /body\[data-reduced-motion='on'\]:is\(\[data-ui-mode='chat'\],\s*\[data-ui-mode='rp'\]\)[\s\S]*\.has-rp-message-actions\s+\.chat-time-row\s+\.rp-message-actions[\s\S]*transition:\s*none\s*!important/s,
+);
 assert.match(html, /id="rp-greeting-trigger"[\s\S]*class="rp-greeting-seal"[\s\S]*id="rp-greeting-count"[\s\S]*class="rp-greeting-trigger-arrow"[\s\S]*<svg/s);
 assert.match(html, /id="rp-greeting-sheet-count"[\s\S]*扉页 · 每一篇开场白，都是一种故事的开端[\s\S]*id="rp-greeting-sheet-close"/s);
 assert.match(creativeCss, /\.rp-greeting-sheet\.is-opening\s*\{[^}]*animation:\s*rp-greeting-sheet-in/s);
