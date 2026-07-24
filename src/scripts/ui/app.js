@@ -152,6 +152,7 @@ import {
   registerScriptRuntimeBridgeContract,
   registerTurnCheckpointBridgeContract,
   registerUiUtilityBridgeContract,
+  registerVariableRuntimeBridgeContract,
   registerWorldStoreBridgeContract,
   registerWorldSessionBridgeContract,
 } from './app-bridge-contract.js';
@@ -677,6 +678,8 @@ import {
 } from './sticker-storage-utils.js';
 import { UserPanel } from './user-panel.js';
 import { VariablePanel } from './variable-panel.js';
+import { applyMvuSchemaDefaultsToStore } from '../variables/mvu-variable-defaults-utils.js';
+import { createMvuVariableRecoveryAction } from '../variables/mvu-variable-recovery-utils.js';
 import {
   buildVariableContext,
   deleteValueAtPath,
@@ -1808,43 +1811,48 @@ const initApp = async () => {
     }),
   });
 
-  const applyMvuSchemaDefaults = (sessionId, { reason = '' } = {}) => {
+  const initializeMvuVariables = (sessionId, { reason = '' } = {}) => {
     const sid = String(sessionId || chatStore.getCurrent() || '').trim();
-    if (!sid) return false;
-    const schemas = chatStore.listVariableSchemas?.(sid) || {};
-    const keys = Object.keys(schemas);
-    if (!keys.length) return false;
+    if (!sid) {
+      return { ok: false, applied: false, keys: [], useGlobal: false };
+    }
     const useGlobal = isSharedVariableSession(sid);
-    const vars = useGlobal ? (chatStore.listGlobalVariables?.() || {}) : (chatStore.listVariables?.(sid) || {});
-    const hasNestedValue = (key) => getValueAtPath(vars, key) !== undefined;
-    const updates = {};
-    keys.forEach((name) => {
-      const key = String(name || '').trim();
-      if (!key) return;
-      const schema = schemas[key];
-      if (!schema || schema.default === undefined) return;
-      if (hasNestedValue(key)) return;
-      updates[key] = schema.default;
+    const result = applyMvuSchemaDefaultsToStore({
+      chatStore,
+      sessionId: sid,
+      useGlobal,
     });
-    const updateKeys = Object.keys(updates);
-    if (!updateKeys.length) return false;
-    updateKeys.forEach((key) => {
-      const value = updates[key];
-      if (useGlobal) {
-        chatStore.setGlobalVariable?.(key, value);
-      } else {
-        chatStore.setVariable?.(key, value, sid);
-        if (chatStore.getInitialVariable?.(key, sid) === undefined) {
-          chatStore.setInitialVariable?.(key, value, sid);
-        }
-      }
-    });
-    emitMvuInitialized(sid, 0, { useGlobal });
-    if (reason) {
+    const updateKeys = result.keys;
+    if (updateKeys.length) {
+      emitMvuInitialized(sid, 0, { useGlobal });
+    }
+    if (reason && updateKeys.length) {
       logger.debug(`[MVU] defaults applied=${updateKeys.length} reason=${reason} session=${sid}`);
     }
-    return true;
+    return result;
   };
+  const applyMvuSchemaDefaults = (sessionId, options = {}) => {
+    return initializeMvuVariables(sessionId, options).applied;
+  };
+  const runMvuVariableRecovery = createMvuVariableRecoveryAction({
+    chatStore,
+    personaStore,
+    loadPersonaCard: personaId => window.appBridge?.loadPersonaCard?.(personaId),
+    isSharedVariableSession,
+  });
+  const reconvertMvuVariables = async (options = {}) => {
+    const result = await runMvuVariableRecovery(options);
+    if (result.ok && result.filledKeys?.length) {
+      emitMvuInitialized(result.sessionId, 0, {
+        useGlobal: isSharedVariableSession(result.sessionId),
+      });
+    }
+    return result;
+  };
+  registerVariableRuntimeBridgeContract(window.appBridge, {
+    initializeMvuVariables,
+    reconvertMvuVariables,
+  });
 
   const DEFAULT_USER_BUBBLE_COLOR = '#E8F0FE';
   const DEFAULT_USER_TEXT_COLOR = '#1F2937'; // theme-audit-ignore: light-mode default token
@@ -1980,6 +1988,9 @@ const initApp = async () => {
     if (!force && nextKey === activePersonaScopeKey) {
       activePersonaId = pid;
       return false;
+    }
+    if (uiMode === 'rp' && nextKey !== activePersonaScopeKey) {
+      lastChatState = { activePage: 'chat', sessionId: '', inChatRoom: false };
     }
     try {
       const prevId = activePersonaId || 'default';
@@ -22842,6 +22853,28 @@ Phase G（Frame 36）：循环衔接
     });
   };
 
+  const clearCurrentChatSessionState = () => {
+    chatStore.setCurrent('');
+    try {
+      window.appBridge?.setActiveSession?.('');
+    } catch {}
+    try {
+      ui.setSessionLabel?.('');
+    } catch {}
+  };
+
+  const resetChatRoomState = () => {
+    if (currentChatTitle) currentChatTitle.textContent = '';
+    if (chatRoom) delete chatRoom.dataset.session;
+    refreshChatAndContacts({ immediate: true });
+  };
+
+  const detachChatModeRpSession = () => {
+    exitChatRoom({ animate: false });
+    clearCurrentChatSessionState();
+    resetChatRoomState();
+  };
+
   const exitRpMode = () => {
     return runExitRpModeFlow({
       uiMode,
@@ -22862,6 +22895,8 @@ Phase G（Frame 36）：循环衔接
         chatOriginPage = value;
       },
       exitChatRoom,
+      clearCurrentSession: clearCurrentChatSessionState,
+      resetChatRoomState,
       getContact: (sessionId) => contactsStore.getContact(sessionId),
       switchPage,
       enterChatRoom,
@@ -29331,7 +29366,9 @@ Phase G（Frame 36）：循环衔接
     isPageActive: page => Boolean(pages[page]?.classList.contains('active')),
     switchPage,
     uiLog,
+    getUiMode: () => uiMode,
     getCurrentSessionId: () => chatStore.getCurrent(),
+    detachChatModeRpSession,
     isChatRoomVisible: () => Boolean(chatRoom ? !chatRoom.classList.contains('hidden') : false),
     applyMvuSchemaDefaults,
     updateWorldIndicator,
@@ -30533,7 +30570,7 @@ Phase G（Frame 36）：循环衔接
     () => groupPanel.hide(),
     () => personaPanel.hide(),
     () => userPanel.hide(),
-    () => variablePanel.hide(),
+    () => variablePanel.closeTopLayer(),
     () => momentSummaryPanel.hide(),
   ];
   const panelBackOpenChecks = [
@@ -30562,7 +30599,7 @@ Phase G（Frame 36）：循环衔接
     () => isBackLayerVisible(groupPanel.overlay) || isBackLayerVisible(groupPanel.panel),
     () => isBackLayerVisible(personaPanel.overlay) || isBackLayerVisible(personaPanel.panel),
     () => isBackLayerVisible(userPanel.overlay) || isBackLayerVisible(userPanel.panel),
-    () => isBackLayerVisible(variablePanel.overlay),
+    () => variablePanel.hasVisibleLayer(),
     () => isBackLayerVisible(momentSummaryPanel.overlay) || isBackLayerVisible(momentSummaryPanel.panel),
   ];
   const closeTopAppLayer = ({ dryRun = false } = {}) => {

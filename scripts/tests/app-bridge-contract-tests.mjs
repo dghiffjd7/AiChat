@@ -25,9 +25,38 @@ import {
   registerScriptRuntimeBridgeContract,
   registerTurnCheckpointBridgeContract,
   registerUiUtilityBridgeContract,
+  registerVariableRuntimeBridgeContract,
   registerWorldStoreBridgeContract,
   registerWorldSessionBridgeContract,
 } from '../../src/scripts/ui/app-bridge-contract.js';
+
+{
+  const appBridge = {};
+  const ok = registerVariableRuntimeBridgeContract(appBridge, {
+    initializeMvuVariables: sessionId => ({ sessionId, applied: true }),
+    reconvertMvuVariables: async options => ({ ...options, recovered: true }),
+  });
+  assert.equal(ok, true);
+  assert.deepEqual(appBridge.initializeMvuVariables('rp:hero'), {
+    sessionId: 'rp:hero',
+    applied: true,
+  });
+  assert.deepEqual(await appBridge.reconvertMvuVariables({ sessionId: 'rp:hero' }), {
+    sessionId: 'rp:hero',
+    recovered: true,
+  });
+  const registry = getBridgeContractRegistry(appBridge);
+  assert.equal(
+    registry.contracts.initializeMvuVariables.domain,
+    BRIDGE_CONTRACT_DOMAINS.variableRuntime,
+  );
+  assert.equal(
+    registry.contracts.reconvertMvuVariables.domain,
+    BRIDGE_CONTRACT_DOMAINS.variableRuntime,
+  );
+  assert.equal(registry.contracts.reconvertMvuVariables.status, 'covered');
+  console.log('ok - registerVariableRuntimeBridgeContract assigns variable recovery actions');
+}
 
 {
   const appBridge = {};

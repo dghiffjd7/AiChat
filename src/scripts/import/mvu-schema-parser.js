@@ -417,14 +417,17 @@ const flattenSchema = (schema, prefix = '', results = { variables: {}, schemas: 
     const varName = prefix || 'value';
 
     // 变量初始值
-    results.variables[varName] = schema.default !== undefined ? schema.default : getDefaultValue(type, schema);
+    const hasExplicitDefault = schema.default !== undefined;
+    const defaultValue = hasExplicitDefault ? schema.default : getDefaultValue(type, schema);
+    results.variables[varName] = defaultValue;
 
     // 变量 Schema
     results.schemas[varName] = {
       id: varName,
       name: varName.split('.').pop() || varName,
       type: type,
-      default: schema.default,
+      default: defaultValue,
+      defaultSource: hasExplicitDefault ? 'schema' : 'fallback',
       range: schema.range,
       options: schema.options,
       ui: inferUI(varName, type, schema),

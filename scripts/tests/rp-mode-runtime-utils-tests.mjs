@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 
 import {
   LEGACY_SEND_MODE_STORAGE_KEY,
@@ -265,6 +266,7 @@ const createStorage = () => {
 {
   const calls = [];
   let nextMode = 'rp';
+  let currentSession = 'rp:persona_b';
   const result = runExitRpModeFlow({
     uiMode: 'rp',
     lastChatState: {
@@ -283,13 +285,22 @@ const createStorage = () => {
     setBackToListVisible: (visible) => calls.push(['back', visible]),
     setChatOriginPage: (value) => calls.push(['origin', value]),
     exitChatRoom: (options) => calls.push(['exit-room', options]),
+    clearCurrentSession: () => {
+      currentSession = '';
+      calls.push(['clear-current']);
+    },
+    resetChatRoomState: () => calls.push(['reset-room']),
     getContact: () => ({ name: '好友九' }),
     switchPage: (page, options) => calls.push(['page', page, options]),
-    enterChatRoom: (sessionId, name, origin) => calls.push(['enter', sessionId, name, origin]),
+    enterChatRoom: (sessionId, name, origin) => {
+      currentSession = sessionId;
+      calls.push(['enter', sessionId, name, origin]);
+    },
   });
 
   assert.equal(result.exited, true);
   assert.equal(nextMode, 'chat');
+  assert.equal(currentSession, 'contact:9');
   assert.deepEqual(calls, [
     ['mode', 'chat'],
     ['vibrate', 10],
@@ -299,8 +310,125 @@ const createStorage = () => {
     ['back', true],
     ['origin', 'contacts'],
     ['exit-room', { animate: false }],
+    ['clear-current'],
+    ['reset-room'],
     ['page', 'contacts', { animate: false }],
     ['enter', 'contact:9', '好友九', 'contacts'],
   ]);
   console.log('ok - runExitRpModeFlow restores previous room and page after leaving rp mode');
+}
+
+{
+  const calls = [];
+  let currentSession = 'rp:persona_b';
+  const result = runExitRpModeFlow({
+    uiMode: 'rp',
+    lastChatState: {
+      activePage: 'chat',
+      sessionId: 'contact:from-persona-a',
+      inChatRoom: true,
+    },
+    setUiMode: value => calls.push(['mode', value]),
+    setChatOriginPage: value => calls.push(['origin', value]),
+    exitChatRoom: options => calls.push(['exit-room', options]),
+    clearCurrentSession: () => {
+      currentSession = '';
+      calls.push(['clear-current']);
+    },
+    resetChatRoomState: () => calls.push(['reset-room']),
+    getContact: sessionId => {
+      calls.push(['contact', sessionId]);
+      return null;
+    },
+    switchPage: (page, options) => calls.push(['page', page, options]),
+    enterChatRoom: (...args) => calls.push(['enter', ...args]),
+  });
+
+  assert.equal(result.exited, true);
+  assert.equal(currentSession, '');
+  assert.deepEqual(calls, [
+    ['mode', 'chat'],
+    ['origin', 'chat'],
+    ['exit-room', { animate: false }],
+    ['clear-current'],
+    ['reset-room'],
+    ['contact', 'contact:from-persona-a'],
+    ['page', 'chat', { animate: false }],
+  ]);
+  console.log('ok - runExitRpModeFlow falls back to the list and detaches stale RP current when restore contact is absent');
+}
+
+{
+  let currentSession = 'rp:persona_b';
+  const calls = [];
+  runExitRpModeFlow({
+    uiMode: 'rp',
+    lastChatState: {
+      activePage: 'contacts',
+      sessionId: 'contact:9',
+      inChatRoom: true,
+    },
+    exitChatRoom: () => calls.push('exit-room'),
+    clearCurrentSession: () => {
+      currentSession = '';
+      calls.push('clear-current');
+    },
+    resetChatRoomState: () => calls.push('reset-room'),
+    getContact: () => ({ name: '好友九' }),
+    switchPage: () => calls.push('page'),
+    enterChatRoom: () => {
+      calls.push('blocked-enter');
+      return { blocked: true, reason: 'unknown-session' };
+    },
+  });
+
+  assert.equal(currentSession, '');
+  assert.deepEqual(calls, [
+    'exit-room',
+    'clear-current',
+    'reset-room',
+    'page',
+    'blocked-enter',
+  ]);
+  console.log('ok - runExitRpModeFlow keeps a safe empty current when the scoped enter guard rejects restoration');
+}
+
+{
+  const appSource = await readFile(
+    new URL('../../src/scripts/ui/app.js', import.meta.url),
+    'utf8',
+  );
+  const scopeFlowStart = appSource.indexOf('const applyPersonaScopeNow = async');
+  const scopeFlowEnd = appSource.indexOf('const applyPersonaScope =', scopeFlowStart);
+  assert.ok(scopeFlowStart >= 0 && scopeFlowEnd > scopeFlowStart);
+  const scopeFlowSource = appSource.slice(scopeFlowStart, scopeFlowEnd);
+  const invalidateIndex = scopeFlowSource.indexOf(
+    "if (uiMode === 'rp' && nextKey !== activePersonaScopeKey)",
+  );
+  const hydrateIndex = scopeFlowSource.indexOf('await Promise.all([');
+  assert.ok(invalidateIndex >= 0);
+  assert.ok(hydrateIndex > invalidateIndex);
+  assert.match(
+    scopeFlowSource.slice(invalidateIndex, hydrateIndex),
+    /lastChatState\s*=\s*\{\s*activePage:\s*'chat',\s*sessionId:\s*'',\s*inChatRoom:\s*false\s*\}/,
+  );
+
+  const exitFlowStart = appSource.indexOf('const clearCurrentChatSessionState = () =>');
+  const exitFlowEnd = appSource.indexOf("backToListBtn?.addEventListener('click'", exitFlowStart);
+  assert.ok(exitFlowStart >= 0 && exitFlowEnd > exitFlowStart);
+  const exitFlowSource = appSource.slice(exitFlowStart, exitFlowEnd);
+  assert.ok(exitFlowSource.indexOf("chatStore.setCurrent('')") >= 0);
+  assert.ok(exitFlowSource.indexOf("setActiveSession?.('')") >= 0);
+  assert.ok(exitFlowSource.indexOf('delete chatRoom.dataset.session') >= 0);
+  assert.ok(exitFlowSource.indexOf('refreshChatAndContacts({ immediate: true })') >= 0);
+  assert.ok(exitFlowSource.indexOf('clearCurrentSession: clearCurrentChatSessionState') >= 0);
+  assert.ok(exitFlowSource.indexOf('resetChatRoomState,') >= 0);
+
+  const bootFlowStart = appSource.indexOf('await runAppBootRestoreFlow({');
+  const bootFlowEnd = appSource.indexOf('registerHydratedUiRestoreListener({', bootFlowStart);
+  assert.ok(bootFlowStart >= 0 && bootFlowEnd > bootFlowStart);
+  const bootFlowSource = appSource.slice(bootFlowStart, bootFlowEnd);
+  assert.ok(bootFlowSource.indexOf('getUiMode: () => uiMode') >= 0);
+  assert.ok(bootFlowSource.indexOf('detachChatModeRpSession,') >= 0);
+  console.log('ok - app invalidates cross-scope restore state before hydration and wires safe RP exit cleanup');
 }

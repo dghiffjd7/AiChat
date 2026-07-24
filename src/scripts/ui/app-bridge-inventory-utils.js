@@ -13,6 +13,7 @@ export const BRIDGE_CONTRACT_REGISTER_DOMAINS = Object.freeze({
   registerRegexTransformBridgeContract: 'regex-transform',
   registerRegexStoreBridgeContract: 'regex-store',
   registerSharedSessionBridgeContract: 'shared-session',
+  registerVariableRuntimeBridgeContract: 'variable-runtime',
   registerRuntimeServiceBridgeContract: 'runtime-service',
   registerTurnCheckpointBridgeContract: 'turn-checkpoint',
   registerMemoryUpdateBridgeContract: 'memory-update',

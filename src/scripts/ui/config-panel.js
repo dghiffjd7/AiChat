@@ -12,6 +12,7 @@ import {
     splitGenerationParamFilterInput,
 } from '../utils/generation-param-filter-utils.js';
 import { appConfirm } from './app-confirm.js';
+import { rankModelCandidates } from '../utils/model-candidates.js';
 import {
     reloadBridgeConfig,
     syncChatRuntimeConfigToBridge,
@@ -24,6 +25,41 @@ const escapeHtml = (value) => String(value ?? '').replace(/[&<>"]/g, (ch) => ({
     '>': '&gt;',
     '"': '&quot;',
 }[ch]));
+
+const apiConfigIconSvg = (content, className = '') => `
+    <svg class="api-config-svg ${className}" viewBox="0 0 24 24" aria-hidden="true">
+        ${content}
+    </svg>
+`;
+
+const API_CONFIG_ICONS = Object.freeze({
+    chat: apiConfigIconSvg('<path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z"/>'),
+    image: apiConfigIconSvg('<rect x="3" y="5" width="18" height="14" rx="3"/><circle cx="8.5" cy="10.5" r="1.5"/><path d="m21 15-4.2-4.2a2 2 0 0 0-2.8 0L6 18"/>'),
+    images: apiConfigIconSvg('<rect x="4" y="4" width="16" height="14" rx="3"/><path d="M8 20h9a3 3 0 0 0 3-3V9"/><circle cx="9" cy="9" r="1.4"/><path d="m20 14-3.4-3.4a2 2 0 0 0-2.8 0L7 17"/>'),
+    close: apiConfigIconSvg('<path d="M18 6 6 18"/><path d="m6 6 12 12"/>'),
+    plus: apiConfigIconSvg('<path d="M12 5v14"/><path d="M5 12h14"/>'),
+    pencil: apiConfigIconSvg('<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/>'),
+    trash: apiConfigIconSvg('<path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="m19 6-1 14H6L5 6"/><path d="M10 11v5"/><path d="M14 11v5"/>'),
+    key: apiConfigIconSvg('<circle cx="7.5" cy="15.5" r="4.5"/><path d="m11 12 9-9"/><path d="m15 8 3 3"/><path d="m17 6 3 3"/>'),
+    eye: apiConfigIconSvg('<path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12Z"/><circle cx="12" cy="12" r="2.5"/>'),
+    eyeOff: apiConfigIconSvg('<path d="m3 3 18 18"/><path d="M10.6 6.2A11 11 0 0 1 12 6c6.5 0 10 6 10 6a16 16 0 0 1-2.2 2.8"/><path d="M6.6 6.6C3.6 8.4 2 12 2 12s3.5 6 10 6a10 10 0 0 0 4.4-1"/><path d="M10.6 10.6a2 2 0 0 0 2.8 2.8"/>'),
+    refresh: apiConfigIconSvg('<path d="M20 6v5h-5"/><path d="M4 18v-5h5"/><path d="M18.5 9A7 7 0 0 0 6 6.5L4 9"/><path d="M5.5 15A7 7 0 0 0 18 17.5l2-2.5"/>'),
+    filter: apiConfigIconSvg('<path d="M22 3H2l8 9.5V19l4 2v-8.5L22 3Z"/>'),
+    chevronRight: apiConfigIconSvg('<path d="m9 18 6-6-6-6"/>'),
+    chevronDown: apiConfigIconSvg('<path d="m6 9 6 6 6-6"/>'),
+    cable: apiConfigIconSvg('<path d="M17 19h1a4 4 0 0 0 4-4V5"/><path d="M2 10v5a4 4 0 0 0 4 4h1"/><path d="M7 9h10v10H7z"/><path d="M9 9V5"/><path d="M15 9V5"/>'),
+    zap: apiConfigIconSvg('<path d="M13 2 3 14h9l-1 8 10-12h-9l1-8Z"/>'),
+    save: apiConfigIconSvg('<path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2Z"/><path d="M17 21v-8H7v8"/><path d="M7 3v5h8"/>'),
+    check: apiConfigIconSvg('<path d="m20 6-11 11-5-5"/>'),
+    loader: apiConfigIconSvg('<path d="M21 12a9 9 0 1 1-6.2-8.6"/>', 'is-spinning'),
+});
+
+const setApiButtonContent = (button, icon, label) => {
+    if (!button) return;
+    button.innerHTML = `${icon || ''}<span>${escapeHtml(label)}</span>`;
+};
+
+const MODEL_FILTER_DEBOUNCE_MS = 80;
 
 const CHAT_PROVIDER_OPTIONS = [
     { value: 'openai', label: 'OpenAI' },
@@ -71,6 +107,7 @@ export class ConfigPanel {
         this.saveButton = null;
         this.testButton = null;
         this.modelOptions = [];
+        this.modelFilterDebounceTimer = null;
         this.keyOverlay = null;
         this.keyModal = null;
         this.isRefreshingProfile = false; // 防止刷新时触发 onchange
@@ -115,17 +152,28 @@ export class ConfigPanel {
         this.populateForm(config);
         this.hideImageParamsPage();
 
-        this.element.style.display = 'block';
+        this.element.classList.remove('is-open');
+        this.overlayElement.classList.remove('is-open');
+        this.element.style.display = 'flex';
         this.overlayElement.style.display = 'block';
+        void this.element.offsetWidth;
+        this.element.classList.add('is-open');
+        this.overlayElement.classList.add('is-open');
     }
 
     /**
      * 隐藏配置面板
      */
     hide() {
+        if (this.modelFilterDebounceTimer !== null) {
+            clearTimeout(this.modelFilterDebounceTimer);
+            this.modelFilterDebounceTimer = null;
+        }
         this.hideImageParamsPage();
         this.imageGenerationParamsPanel.hide();
         if (this.element) {
+            this.element.classList.remove('is-open');
+            this.overlayElement.classList.remove('is-open');
             this.element.style.display = 'none';
             this.overlayElement.style.display = 'none';
         }
@@ -227,15 +275,7 @@ export class ConfigPanel {
         tabs.forEach(btn => {
             const tab = btn?.dataset?.tab || '';
             btn.classList.toggle('is-active', tab === this.activeTab);
-            if (tab === this.activeTab) {
-                btn.style.background = '#e0f2fe';
-                btn.style.borderColor = '#38bdf8';
-                btn.style.color = '#0369a1';
-            } else {
-                btn.style.background = 'var(--app-surface-card)';
-                btn.style.borderColor = 'var(--app-border-default)';
-                btn.style.color = 'var(--app-text-primary)';
-            }
+            btn.setAttribute('aria-selected', String(tab === this.activeTab));
         });
         const imageParamsEntry = this.element.querySelector('#image-params-entry');
         if (imageParamsEntry) {
@@ -261,6 +301,7 @@ export class ConfigPanel {
         const paramsPage = this.element.querySelector('#config-image-params-page');
         if (!mainPage || !paramsPage) return;
         this.currentPage = 'imageParams';
+        this.element.classList.add('is-image-params-page');
         mainPage.style.display = 'none';
         paramsPage.style.display = 'block';
         await this.imageGenerationParamsPanel.showEmbedded({
@@ -274,8 +315,9 @@ export class ConfigPanel {
         const mainPage = this.element.querySelector('#config-main-page');
         const paramsPage = this.element.querySelector('#config-image-params-page');
         this.currentPage = 'main';
+        this.element.classList.remove('is-image-params-page');
         this.imageGenerationParamsPanel.hide();
-        if (mainPage) mainPage.style.display = 'block';
+        if (mainPage) mainPage.style.display = 'flex';
         if (paramsPage) paramsPage.style.display = 'none';
     }
 
@@ -286,14 +328,10 @@ export class ConfigPanel {
         // 创建遮罩层
         this.overlayElement = document.createElement('div');
         this.overlayElement.id = 'config-overlay';
+        this.overlayElement.className = 'api-config-overlay';
         this.overlayElement.style.cssText = `
             display: none;
             position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background: rgba(0, 0, 0, 0.5);
             z-index: 23000;
         `;
         this.overlayElement.onclick = () => this.hide();
@@ -301,53 +339,66 @@ export class ConfigPanel {
         // 创建配置面板
         this.element = document.createElement('div');
         this.element.id = 'config-panel';
+        this.element.className = 'api-config-panel';
         this.element.innerHTML = `
-            <div class="config-modal" style="padding: 20px; background-color: rgb(255, 255, 255); color: var(--app-text-primary); opacity: 1; border: 1px solid var(--app-border-default); border-radius: 10px; box-shadow: 0 4px 20px rgba(0,0,0,0.3);
-                        width: 96vw; max-width: 760px; max-height: calc(100vh - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px) - 20px); overflow-y: auto;">
-                <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:6px;">
-                    <h2 id="config-title" style="margin: 0; color: var(--app-text-primary);">聊天模型配置</h2>
-                    <span style="color:var(--app-text-muted); font-size:12px;">(保存后立即生效)</span>
-                </div>
-                <div id="config-main-page" data-maid-guide-target="config-connection-fields">
-                <div style="display:flex; gap:8px; margin: 8px 0 16px;">
-                    <button type="button" class="config-tab is-active" data-tab="chat"
-                            style="border:1px solid var(--app-border-default); background:var(--app-surface-card); padding:6px 12px; border-radius:999px; font-size:12px; cursor:pointer;">
+            <div class="config-modal api-config-modal" role="dialog" aria-modal="true" aria-labelledby="config-title">
+                <header class="api-config-header">
+                    <div class="api-config-heading">
+                        <div class="api-config-kicker">Aria / API Connection</div>
+                        <h2 id="config-title">聊天模型配置</h2>
+                    </div>
+                    <div class="api-config-header-actions">
+                        <span class="api-config-live-note">保存后立即生效</span>
+                        <button type="button" id="config-close" class="api-config-close" aria-label="关闭 API 配置" title="关闭">
+                            ${API_CONFIG_ICONS.close}
+                        </button>
+                    </div>
+                </header>
+                <div id="config-main-page" class="api-config-main-page" data-maid-guide-target="config-connection-fields">
+                <div class="api-config-tabs-shell">
+                    <div class="api-config-tabs" role="tablist" aria-label="API 配置类型">
+                    <button type="button" class="config-tab api-config-tab is-active" data-tab="chat" role="tab" aria-selected="true">
+                        ${API_CONFIG_ICONS.chat}
                         聊天模型
                     </button>
-                    <button type="button" class="config-tab" data-tab="image"
-                            style="border:1px solid var(--app-border-default); background:var(--app-surface-card); padding:6px 12px; border-radius:999px; font-size:12px; cursor:pointer;">
+                    <button type="button" class="config-tab api-config-tab" data-tab="image" role="tab" aria-selected="false">
+                        ${API_CONFIG_ICONS.image}
                         图片模型
                     </button>
+                    </div>
                 </div>
-                <div id="image-params-entry" style="display:none; margin: -4px 0 16px;">
-                    <button type="button" id="open-image-generation-params"
-                            style="width:100%; display:flex; align-items:center; justify-content:space-between; gap:12px; padding:12px 14px; border:1px solid var(--app-border-default); border-radius:12px; background:var(--app-surface-subtle); color:var(--app-text-primary); cursor:pointer; text-align:left;">
-                        <span style="display:flex; flex-direction:column; gap:3px;">
-                            <span style="font-weight:800;">图片生成参数</span>
-                            <span style="font-size:12px; color:var(--app-text-muted);">质量、尺寸、输出格式等；所有生图入口共享</span>
+                <div class="api-config-scroll">
+                <div id="image-params-entry" class="api-config-field" style="display:none;">
+                    <button type="button" id="open-image-generation-params" class="api-config-row-card">
+                        <span class="api-config-row-main">
+                            <span class="api-config-row-icon">${API_CONFIG_ICONS.images}</span>
+                            <span class="api-config-row-copy">
+                                <strong>图片生成参数</strong>
+                                <small>质量、尺寸、输出格式等；所有生图入口共享</small>
+                            </span>
                         </span>
-                        <span style="color:var(--app-text-muted);">›</span>
+                        ${API_CONFIG_ICONS.chevronRight}
                     </button>
                 </div>
 
-                <div style="margin-bottom: 15px;">
-                    <label style="display: flex; align-items:center; justify-content:space-between; margin-bottom: 5px; font-weight: bold;">
+                <div class="api-config-field">
+                    <label class="api-config-field-label">
                         <span class="has-help" data-help="保存多份连线配置，随时切换">连线设置档</span>
-                        <div style="display:flex; gap:6px;">
-                            <button id="profile-new" title="新建设置档" style="font-size:12px; border:none; background:var(--app-surface-subtle); padding:4px 8px; border-radius:6px; cursor:pointer;">＋</button>
-                            <button id="profile-rename" title="重命名" style="font-size:12px; border:none; background:var(--app-surface-subtle); padding:4px 8px; border-radius:6px; cursor:pointer;">✎</button>
-                            <button id="profile-delete" title="删除" style="font-size:12px; border:none; background:#fee2e2; color:#b91c1c; padding:4px 8px; border-radius:6px; cursor:pointer;">🗑</button>
+                        <div class="api-config-field-tools">
+                            <button id="profile-new" class="api-config-icon-action" title="新建设置档" aria-label="新建设置档">${API_CONFIG_ICONS.plus}</button>
+                            <button id="profile-rename" class="api-config-icon-action" title="重命名" aria-label="重命名设置档">${API_CONFIG_ICONS.pencil}</button>
+                            <button id="profile-delete" class="api-config-icon-action is-danger" title="删除" aria-label="删除设置档">${API_CONFIG_ICONS.trash}</button>
                         </div>
                     </label>
                     <select id="config-profile" data-maid-guide-target="config-profile-select" style="display:none;"></select>
-                    <button type="button" id="config-profile-btn" class="world-app-select-btn" data-select-id="config-profile" data-maid-guide-target="config-profile-select" style="margin-top:2px;">
+                    <button type="button" id="config-profile-btn" class="world-app-select-btn" data-select-id="config-profile" data-maid-guide-target="config-profile-select">
                         <span class="config-custom-select-label">请选择设置档</span>
-                        <span class="world-app-select-btn-chevron">▾</span>
+                        <span class="world-app-select-btn-chevron">${API_CONFIG_ICONS.chevronDown}</span>
                     </button>
                 </div>
 
-                <div style="margin-bottom: 15px;">
-                    <label style="display: block; margin-bottom: 5px; font-weight: bold;">服务商</label>
+                <div class="api-config-field">
+                    <label class="api-config-field-label">服务商</label>
                     <select id="config-provider" data-maid-guide-target="config-provider-select" style="display:none;">
                         <option value="openai">OpenAI</option>
                         <option value="makersuite">Google AI Studio (Makersuite)</option>
@@ -357,36 +408,36 @@ export class ConfigPanel {
                         <option value="anthropic">Anthropic (Claude)</option>
                         <option value="custom">自定义 API</option>
                     </select>
-                    <button type="button" id="config-provider-btn" class="world-app-select-btn" data-select-id="config-provider" data-maid-guide-target="config-provider-select" style="margin-top:2px;">
+                    <button type="button" id="config-provider-btn" class="world-app-select-btn" data-select-id="config-provider" data-maid-guide-target="config-provider-select">
                         <span class="config-custom-select-label">请选择服务商</span>
-                        <span class="world-app-select-btn-chevron">▾</span>
+                        <span class="world-app-select-btn-chevron">${API_CONFIG_ICONS.chevronDown}</span>
                     </button>
                 </div>
 
                 <div id="config-custom-fields" data-maid-guide-target="config-custom-fields">
-                <div id="config-baseurl-section" style="margin-bottom: 15px;">
-                    <label class="has-help" data-help="内建服务商自动使用默认地址；仅自定义 API 需填写" style="display: block; margin-bottom: 5px; font-weight: bold;">API Base URL</label>
+                <div id="config-baseurl-section" class="api-config-field">
+                    <label class="api-config-field-label has-help" data-help="内建服务商自动使用默认地址；仅自定义 API 需填写">API Base URL</label>
                     <input type="text" id="config-baseurl" data-maid-guide-target="config-base-url-input" placeholder="https://api.openai.com/v1"
                            style="width: 100%; padding: 10px; border-radius: 5px; border: 1px solid var(--app-border-default); font-size: 14px; box-sizing: border-box;">
                 </div>
 
-                <div style="margin-bottom: 15px;">
-                    <label style="display: flex; align-items:center; justify-content:space-between; margin-bottom: 5px; font-weight: bold;">
+                <div class="api-config-field">
+                    <label class="api-config-field-label">
                         <span>API Key</span>
-                        <div style="display:flex; gap:6px; align-items:center;">
-                            <button id="toggle-apikey" style="font-size:12px; border:none; background:var(--app-surface-subtle); padding:4px 8px; border-radius:6px; cursor:pointer;">显示</button>
-                            <button id="manage-keys" title="管理已保存的 Key" style="font-size:12px; border:none; background:var(--app-surface-subtle); padding:4px 8px; border-radius:6px; cursor:pointer;">🔑</button>
+                        <div class="api-config-field-tools">
+                            <button id="toggle-apikey" class="api-config-text-action">${API_CONFIG_ICONS.eye}<span>显示</span></button>
+                            <button id="manage-keys" class="api-config-icon-action" title="管理已保存的 Key" aria-label="管理已保存的 Key">${API_CONFIG_ICONS.key}</button>
                         </div>
                     </label>
                     <input type="password" id="config-apikey" data-maid-guide-target="config-api-key-input" placeholder="sk-..."
                            style="width: 100%; padding: 10px; border-radius: 5px; border: 1px solid var(--app-border-default); font-size: 14px; box-sizing: border-box;">
-                    <small id="apikey-help" style="color: var(--app-text-secondary);">保存后 Key 以遮罩显示（不可复制）；用 🔑 管理多个 Key</small>
+                    <small id="apikey-help" style="color: var(--app-text-secondary);">保存后 Key 以遮罩显示（不可复制）；可在 Key 管理中保存多个</small>
                 </div>
                 </div>
 
                 <div id="vertexai-fields" style="display: none;">
-                    <div style="margin-bottom: 15px;">
-                        <label class="has-help" data-help="Vertex AI 区域" style="display: block; margin-bottom: 5px; font-weight: bold;">Region</label>
+                    <div class="api-config-field">
+                        <label class="api-config-field-label has-help" data-help="Vertex AI 区域">Region</label>
                         <select id="config-region" style="display:none;">
                             <option value="us-central1">us-central1</option>
                             <option value="us-east1">us-east1</option>
@@ -394,49 +445,49 @@ export class ConfigPanel {
                             <option value="europe-west1">europe-west1</option>
                             <option value="asia-southeast1">asia-southeast1</option>
                         </select>
-                        <button type="button" id="config-region-btn" class="world-app-select-btn" data-select-id="config-region" style="margin-top:2px;">
+                        <button type="button" id="config-region-btn" class="world-app-select-btn" data-select-id="config-region">
                             <span class="config-custom-select-label">请选择 Region</span>
-                            <span class="world-app-select-btn-chevron">▾</span>
+                            <span class="world-app-select-btn-chevron">${API_CONFIG_ICONS.chevronDown}</span>
                         </button>
                     </div>
 
-                    <div style="margin-bottom: 15px;">
-                        <label style="display: flex; align-items:center; justify-content:space-between; margin-bottom: 5px; font-weight: bold;">
+                    <div class="api-config-field">
+                        <label class="api-config-field-label">
                             <span class="has-help" data-help="粘贴 Service Account JSON，Project ID 会自动识别；留空则用 API Key">Service Account JSON</span>
-                            <button id="toggle-sa" style="font-size:12px; border:none; background:var(--app-surface-subtle); padding:4px 8px; border-radius:6px; cursor:pointer;">显示</button>
+                            <button id="toggle-sa" class="api-config-text-action">${API_CONFIG_ICONS.eye}<span>显示</span></button>
                         </label>
                         <textarea id="config-serviceaccount" data-maid-guide-target="config-service-account-input" placeholder='{"type": "service_account", "project_id": "your-project", ...}'
                                   style="width: 100%; padding: 10px; border-radius: 5px; border: 1px solid var(--app-border-default); font-size: 12px; box-sizing: border-box; font-family: monospace; min-height: 100px; resize: vertical;"></textarea>
                     </div>
                 </div>
 
-                <div id="config-model-section" data-maid-guide-target="config-model-section" style="margin-bottom: 15px;">
-                    <label style="display: flex; align-items:center; justify-content:space-between; margin-bottom: 5px; font-weight: bold;">
+                <div id="config-model-section" class="api-config-field" data-maid-guide-target="config-model-section">
+                    <label class="api-config-field-label">
                         <span>模型</span>
-                        <button id="refresh-models" data-maid-guide-target="config-refresh-models" style="font-size:12px; border:none; background:#e3f2fd; color:#1976d2; padding:4px 8px; border-radius:6px; cursor:pointer;">
-                            ⟳ 刷新列表
+                        <button id="refresh-models" class="api-config-refresh-action" data-maid-guide-target="config-refresh-models">
+                            ${API_CONFIG_ICONS.refresh}<span>刷新列表</span>
                         </button>
                     </label>
-                    <div id="config-model-picker" data-maid-guide-target="config-model-picker" style="position: relative; display: flex; flex-direction: column; gap: 8px;">
-                        <input type="text" id="config-model" data-maid-guide-target="config-model-select" list="model-list" placeholder="gpt-3.5-turbo"
+                    <div id="config-model-picker" data-maid-guide-target="config-model-picker">
+                        <input type="text" id="config-model" data-maid-guide-target="config-model-select" placeholder="gpt-3.5-turbo"
                                style="width: 100%; padding: 10px 12px; border-radius: 5px; border: 1px solid var(--app-border-default); font-size: 14px; box-sizing: border-box;">
-                        <datalist id="model-list"></datalist>
-                        <div id="model-options"
-                             style="display:none; max-height: 180px; overflow-y: auto; padding:8px; border:1px solid var(--app-border-default); border-radius:6px; background:var(--app-surface-subtle); gap:6px; flex-wrap: wrap;">
-                        </div>
+                        <div id="model-options" class="api-config-model-options" aria-label="可用模型列表" style="display:none;"></div>
                     </div>
                     <small id="model-help" style="color: var(--app-text-secondary);">要使用的模型 ID（可输入或从列表选择）</small>
                 </div>
 
-                <div style="margin-bottom: 20px;">
-                    <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                <div class="api-config-stream-card">
+                    <label>
                         <input type="checkbox" id="config-stream" style="width: 18px; height: 18px;">
-                        <span class="has-help" data-help="实时显示 AI 的回复过程" data-help-mode="press" style="font-weight: bold;">启用流式响应</span>
+                        <span>
+                            <strong class="has-help" data-help="实时显示 AI 的回复过程" data-help-mode="press">启用流式响应</strong>
+                            <small>逐字流式输出，角色回复更自然</small>
+                        </span>
                     </label>
                 </div>
 
-                <div id="config-prompt-post-processing-section" style="margin-bottom: 18px;">
-                    <label class="has-help" data-help="仅聊天请求生效；越靠后兼容性越强，但对原始提示词改动越大。" style="display:block; margin-bottom:5px; font-weight:bold;">提示词后处理</label>
+                <div id="config-prompt-post-processing-section" class="api-config-field">
+                    <label class="api-config-field-label has-help" data-help="仅聊天请求生效；越靠后兼容性越强，但对原始提示词改动越大。">提示词后处理</label>
                     <select id="config-prompt-post-processing" style="display:none;">
                         <option value="none">不处理（默认）</option>
                         <option value="merge">合并连续同角色</option>
@@ -444,41 +495,47 @@ export class ConfigPanel {
                         <option value="strict">严格（强制 user 最先、角色交替）</option>
                         <option value="single">单一用户消息</option>
                     </select>
-                    <button type="button" id="config-prompt-post-processing-btn" class="world-app-select-btn" data-select-id="config-prompt-post-processing" style="margin-top:2px;">
+                    <button type="button" id="config-prompt-post-processing-btn" class="world-app-select-btn" data-select-id="config-prompt-post-processing">
                         <span class="config-custom-select-label">不处理（默认）</span>
-                        <span class="world-app-select-btn-chevron">▾</span>
+                        <span class="world-app-select-btn-chevron">${API_CONFIG_ICONS.chevronDown}</span>
                     </button>
                 </div>
 
-                <div id="config-generation-param-filter-section" style="margin-bottom: 18px;">
-                    <button type="button" id="open-generation-param-filter"
-                            style="width:100%; display:flex; align-items:center; justify-content:space-between; gap:12px; padding:12px 14px; border:1px solid var(--app-border-default); border-radius:12px; background:var(--app-surface-subtle); color:var(--app-text-primary); cursor:pointer; text-align:left;">
-                        <span style="display:flex; flex-direction:column; gap:3px; min-width:0;">
-                            <span style="font-weight:800;">请求参数过滤</span>
-                            <span id="generation-param-filter-summary" style="font-size:12px; color:var(--app-text-muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">未排除生成参数</span>
+                <div id="config-generation-param-filter-section" class="api-config-field">
+                    <button type="button" id="open-generation-param-filter" class="api-config-row-card">
+                        <span class="api-config-row-main">
+                            <span class="api-config-row-icon">${API_CONFIG_ICONS.filter}</span>
+                            <span class="api-config-row-copy">
+                                <strong>请求参数过滤</strong>
+                                <small id="generation-param-filter-summary">未排除生成参数</small>
+                            </span>
                         </span>
-                        <span style="color:var(--app-text-muted); flex:none;">›</span>
+                        ${API_CONFIG_ICONS.chevronRight}
                     </button>
                 </div>
 
-                <div style="margin-bottom: 20px;">
-                    <label style="display:flex; align-items:center; justify-content:space-between; gap:10px; font-weight:bold; margin-bottom:6px;">
-                        <span class="has-help" data-help="请求超过此时长将中止（10–9000 秒）">请求超时（秒）</span>
+                <div class="api-config-timeout-row">
+                    <label>
+                        <span>
+                            <strong class="has-help" data-help="请求超过此时长将中止（10–9000 秒）">请求超时（秒）</strong>
+                            <small>长上下文推理或生图任务建议适当放宽</small>
+                        </span>
                         <input id="config-timeout" type="number" min="10" max="9000" step="5" value="60" inputmode="numeric"
                                style="width: 120px; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--app-border-default); font-size: 14px; text-align:right;">
                     </label>
                 </div>
 
-                <div style="margin-bottom: 18px; border:1px solid var(--app-border-default); border-radius: 12px; background:var(--app-surface-subtle);">
-                    <button type="button" id="config-transport-toggle"
-                            style="width:100%; display:flex; align-items:center; justify-content:space-between; gap:12px; border:none; background:transparent; padding:12px 14px; cursor:pointer; text-align:left;">
+                <div id="config-transport-section" class="api-config-accordion">
+                    <button type="button" id="config-transport-toggle" aria-expanded="false">
+                        <span class="api-config-row-icon">${API_CONFIG_ICONS.cable}</span>
                         <div style="display:flex; flex-direction:column; gap:2px;">
                             <span style="font-weight:800; color:var(--app-text-primary);">高级连线与反代</span>
                             <span id="config-transport-summary" style="font-size:12px; color:var(--app-text-muted);">默认直连，只有需要代理出口时再展开</span>
                         </div>
-                        <span id="config-transport-chevron" style="color:var(--app-text-muted); font-size:12px;">▾</span>
+                        <span id="config-transport-chevron" aria-hidden="true">${API_CONFIG_ICONS.chevronDown}</span>
                     </button>
-                    <div id="config-transport-content" style="display:none; padding:0 14px 14px;">
+                    <div id="config-transport-content" class="api-config-accordion-content" aria-hidden="true">
+                    <div class="api-config-accordion-inner">
                         <div style="margin-bottom: 14px;">
                             <label class="has-help" data-help="一般保持直连，需要走代理出口时再改。" style="display:block; margin-bottom:5px; font-weight:bold;">连线模式</label>
                             <select id="config-transport-mode" style="display:none;">
@@ -487,7 +544,7 @@ export class ConfigPanel {
                             </select>
                             <button type="button" id="config-transport-mode-btn" class="world-app-select-btn" data-select-id="config-transport-mode" style="margin-top:2px;">
                                 <span class="config-custom-select-label">直连</span>
-                                <span class="world-app-select-btn-chevron">▾</span>
+                                <span class="world-app-select-btn-chevron">${API_CONFIG_ICONS.chevronDown}</span>
                             </button>
                         </div>
 
@@ -510,7 +567,7 @@ export class ConfigPanel {
                             <div id="config-proxy-auth-token-row" style="margin-bottom: 14px; display:none;">
                                 <label style="display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:5px; font-weight:bold;">
                                     <span class="has-help" data-help="若反代不要求单独鉴权，这里留空即可。">代理鉴权 Token</span>
-                                    <button id="toggle-proxy-token" type="button" style="font-size:12px; border:none; background:var(--app-surface-hover); padding:4px 8px; border-radius:6px; cursor:pointer;">显示</button>
+                                    <button id="toggle-proxy-token" type="button" class="api-config-text-action">${API_CONFIG_ICONS.eye}<span>显示</span></button>
                                 </label>
                                 <input type="password" id="config-proxy-auth-token" placeholder="可选"
                                        style="width:100%; padding:10px; border-radius:5px; border:1px solid var(--app-border-default); font-size:14px; box-sizing:border-box;">
@@ -525,23 +582,22 @@ export class ConfigPanel {
                         </div>
                     </div>
                 </div>
-
-                <div id="config-status" style="margin-bottom: 15px; padding: 10px; border-radius: 5px; display: none;"></div>
-                <!-- 主要操作按钮 -->
-                <div style="display: flex; gap: 8px; justify-content: flex-end;">
-                    <button id="config-test" style="padding: 10px 16px; border-radius: 8px; border: 1px solid var(--app-border-default);
-                                                     background: var(--app-surface-card); cursor: pointer; font-size: 14px; color: var(--app-text-secondary); min-width: 90px;">
-                        测试连接
+                </div>
+                </div>
+                <footer class="api-config-footer">
+                <div id="config-status" class="api-config-status" style="display:none;"></div>
+                <div class="api-config-footer-actions">
+                    <button id="config-test" class="api-config-button is-secondary">
+                        ${API_CONFIG_ICONS.zap}<span>测试连接</span>
                     </button>
-                    <button id="config-cancel" style="padding: 10px 16px; border-radius: 8px; border: 1px solid var(--app-border-default);
-                                                       background: var(--app-surface-subtle); cursor: pointer; font-size: 14px; color: var(--app-text-secondary); min-width: 70px;">
+                    <button id="config-cancel" class="api-config-button is-secondary">
                         取消
                     </button>
-                    <button id="config-save" data-maid-guide-target="config-save-btn" style="padding: 10px 16px; border-radius: 8px; border: none;
-                                                     background: #019aff; color: var(--app-text-inverse); cursor: pointer; font-size: 14px; font-weight: 600; min-width: 70px;">
-                        保存
+                    <button id="config-save" class="api-config-button is-primary" data-maid-guide-target="config-save-btn">
+                        ${API_CONFIG_ICONS.save}<span>保存</span>
                     </button>
                 </div>
+                </footer>
                 </div>
                 <div id="config-image-params-page" style="display:none;"></div>
             </div>
@@ -549,9 +605,6 @@ export class ConfigPanel {
         this.element.style.cssText = `
             display: none;
             position: fixed;
-            top: calc(env(safe-area-inset-top, 0px) + 10px);
-            left: 50%;
-            transform: translateX(-50%);
             z-index: 23010;
         `;
 
@@ -573,6 +626,7 @@ export class ConfigPanel {
 
         this.saveButton.onclick = () => this.onSave();
         this.element.querySelector('#config-cancel').onclick = () => this.hide();
+        this.element.querySelector('#config-close').onclick = () => this.hide();
         this.testButton.onclick = () => this.onTest();
         this.element.querySelector('#toggle-apikey').onclick = () => this.toggleApiKey();
         this.element.querySelector('#manage-keys').onclick = () => this.openKeyManager();
@@ -628,7 +682,10 @@ export class ConfigPanel {
         this.element.querySelector('#config-prompt-post-processing').onchange = async () => {
             this.emitDraftChange();
         };
-        this.element.querySelector('#config-model')?.addEventListener('input', () => this.emitDraftChange());
+        this.element.querySelector('#config-model')?.addEventListener('input', () => {
+            this.emitDraftChange();
+            this.scheduleModelOptionsRender();
+        });
         this.element.querySelector('#config-baseurl')?.addEventListener('input', () => this.emitDraftChange());
 
         this.initCustomSelects();
@@ -684,7 +741,7 @@ export class ConfigPanel {
             return `
                 <button type="button" class="world-app-select-item ${selected ? 'is-selected' : ''}" data-value="${value.replace(/"/g, '&quot;')}">
                     <span class="world-app-select-item-label">${label}</span>
-                    <span class="world-app-select-item-check">${selected ? '✓' : ''}</span>
+                    <span class="world-app-select-item-check">${selected ? API_CONFIG_ICONS.check : ''}</span>
                 </button>
             `;
         }).join('');
@@ -802,10 +859,12 @@ export class ConfigPanel {
     setTransportSectionExpanded(expanded) {
         this.transportExpanded = Boolean(expanded);
         const panel = this.element || document;
+        const section = panel.querySelector('#config-transport-section');
+        const toggle = panel.querySelector('#config-transport-toggle');
         const content = panel.querySelector('#config-transport-content');
-        const chevron = panel.querySelector('#config-transport-chevron');
-        if (content) content.style.display = this.transportExpanded ? 'block' : 'none';
-        if (chevron) chevron.textContent = this.transportExpanded ? '▴' : '▾';
+        section?.classList.toggle('is-expanded', this.transportExpanded);
+        toggle?.setAttribute('aria-expanded', String(this.transportExpanded));
+        content?.setAttribute('aria-hidden', String(!this.transportExpanded));
     }
 
     toggleTransportSection() {
@@ -841,10 +900,10 @@ export class ConfigPanel {
         if (!input || !btn) return;
         if (input.type === 'password') {
             input.type = 'text';
-            btn.textContent = '隐藏';
+            setApiButtonContent(btn, API_CONFIG_ICONS.eyeOff, '隐藏');
         } else {
             input.type = 'password';
-            btn.textContent = '显示';
+            setApiButtonContent(btn, API_CONFIG_ICONS.eye, '显示');
         }
     }
 
@@ -873,62 +932,55 @@ export class ConfigPanel {
         const initial = normalizeGenerationParamFilterList(this.excludedGenerationParams);
         let draft = initial.slice();
         const overlay = document.createElement('div');
-        overlay.style.cssText = `
-            position: fixed;
-            inset: 0;
-            z-index: 24050;
-            background: rgba(0,0,0,.42);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            padding: 16px;
-            box-sizing: border-box;
-        `;
+        overlay.className = 'api-param-filter-overlay';
         overlay.innerHTML = `
-            <div role="dialog" aria-modal="true" aria-label="请求参数过滤" style="
-                width: min(560px, 100%);
-                max-height: min(720px, calc(100vh - 32px));
-                overflow: auto;
-                background: var(--app-surface-card);
-                color: var(--app-text-primary);
-                border: 1px solid var(--app-border-default);
-                border-radius: 12px;
-                box-shadow: 0 18px 48px rgba(15, 23, 42, .28);
-                padding: 18px;
-                box-sizing: border-box;
-            ">
-                <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:12px; margin-bottom:14px;">
+            <div class="api-param-filter-dialog" role="dialog" aria-modal="true" aria-labelledby="api-param-filter-title">
+                <header class="api-param-filter-header">
                     <div>
-                        <div style="font-size:18px; font-weight:800;">请求参数过滤</div>
-                        <div style="font-size:12px; color:var(--app-text-muted); margin-top:4px;">保存后仅作用于当前连线设置档</div>
+                        <h3 id="api-param-filter-title">请求参数过滤</h3>
+                        <p>保存后仅作用于当前连线设置档</p>
                     </div>
-                    <button type="button" data-param-filter-action="cancel" aria-label="关闭" style="border:none; background:var(--app-surface-subtle); color:var(--app-text-secondary); width:32px; height:32px; border-radius:8px; cursor:pointer; font-size:18px; line-height:1;">×</button>
+                    <button type="button" class="api-param-filter-icon-button" data-param-filter-action="cancel" aria-label="关闭">
+                        ${API_CONFIG_ICONS.close}
+                    </button>
+                </header>
+                <div class="api-param-filter-body">
+                    <div class="api-param-filter-section-heading">
+                        <span>常用参数</span>
+                        <span class="api-param-filter-count">${COMMON_GENERATION_PARAM_FILTERS.length} 项</span>
+                    </div>
+                    <div class="api-param-filter-common" data-role="common"></div>
+                    <div class="api-param-filter-custom">
+                        <input class="api-param-filter-input" data-role="custom-input" type="text"
+                               placeholder="输入参数名，例如 response_format">
+                        <button type="button" class="api-param-filter-button is-primary" data-param-filter-action="add">
+                            ${API_CONFIG_ICONS.plus}<span>加入</span>
+                        </button>
+                    </div>
+                    <div class="api-param-filter-error" data-role="input-error" aria-live="polite"></div>
+                    <div class="api-param-filter-section-heading is-selected-heading">
+                        <span>已排除</span>
+                        <span class="api-param-filter-hint">请求发出前将剥除这些字段</span>
+                    </div>
+                    <div class="api-param-filter-selected" data-role="selected"></div>
                 </div>
-                <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; margin:0 0 8px;">
-                    <div style="font-weight:800; font-size:13px;">常用参数</div>
-                    <div data-role="count" style="font-size:12px; color:var(--app-text-muted);"></div>
-                </div>
-                <div data-role="common" style="display:flex; flex-wrap:wrap; gap:8px; margin-bottom:16px;"></div>
-                <div style="display:flex; gap:8px; margin-bottom:10px;">
-                    <input data-role="custom-input" type="text" placeholder="输入参数名，例如 response_format"
-                           style="flex:1; min-width:0; padding:10px 12px; border:1px solid var(--app-border-default); border-radius:8px; background:var(--app-surface-card); color:var(--app-text-primary); font-size:14px;">
-                    <button type="button" data-param-filter-action="add" style="padding:0 14px; border:none; border-radius:8px; background:#019aff; color:var(--app-text-inverse); font-weight:700; cursor:pointer;">加入</button>
-                </div>
-                <div data-role="input-error" style="min-height:18px; font-size:12px; color:#b91c1c; margin-bottom:8px;"></div>
-                <div style="font-weight:800; font-size:13px; margin-bottom:8px;">已排除</div>
-                <div data-role="selected" style="display:flex; flex-wrap:wrap; gap:8px; min-height:42px; padding:10px; border:1px solid var(--app-border-default); border-radius:10px; background:var(--app-surface-subtle);"></div>
-                <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:18px;">
-                    <button type="button" data-param-filter-action="clear" style="padding:9px 12px; border:1px solid var(--app-border-default); border-radius:8px; background:var(--app-surface-card); color:var(--app-text-secondary); cursor:pointer;">清空</button>
-                    <button type="button" data-param-filter-action="cancel" style="padding:9px 12px; border:1px solid var(--app-border-default); border-radius:8px; background:var(--app-surface-subtle); color:var(--app-text-secondary); cursor:pointer;">取消</button>
-                    <button type="button" data-param-filter-action="apply" style="padding:9px 14px; border:none; border-radius:8px; background:#019aff; color:var(--app-text-inverse); font-weight:700; cursor:pointer;">完成</button>
-                </div>
+                <footer class="api-param-filter-footer">
+                    <button type="button" class="api-param-filter-button is-clear" data-param-filter-action="clear">清空</button>
+                    <div class="api-param-filter-footer-actions">
+                        <button type="button" class="api-param-filter-button is-secondary" data-param-filter-action="cancel">取消</button>
+                        <button type="button" class="api-param-filter-button is-primary is-apply" data-param-filter-action="apply">
+                            <span>完成</span><span class="api-param-filter-apply-count" data-role="apply-count"></span>
+                        </button>
+                    </div>
+                </footer>
             </div>
         `;
         const commonEl = overlay.querySelector('[data-role="common"]');
         const selectedEl = overlay.querySelector('[data-role="selected"]');
         const inputEl = overlay.querySelector('[data-role="custom-input"]');
         const errorEl = overlay.querySelector('[data-role="input-error"]');
-        const countEl = overlay.querySelector('[data-role="count"]');
+        const applyCountEl = overlay.querySelector('[data-role="apply-count"]');
+        const clearButton = overlay.querySelector('[data-param-filter-action="clear"]');
         const hasParam = name => draft.includes(name);
         const addParams = (items = []) => {
             draft = normalizeGenerationParamFilterList([...draft, ...items]);
@@ -937,14 +989,16 @@ export class ConfigPanel {
             draft = draft.filter(item => item !== name);
         };
         const render = () => {
-            if (countEl) countEl.textContent = draft.length ? `${draft.length} 项` : '未启用';
+            if (applyCountEl) applyCountEl.textContent = draft.length ? `· ${draft.length}` : '';
+            if (clearButton) clearButton.disabled = draft.length === 0;
             if (commonEl) {
                 commonEl.innerHTML = COMMON_GENERATION_PARAM_FILTERS.map((name) => {
                     const active = hasParam(name);
                     return `
                         <button type="button" data-param-filter-action="toggle" data-param="${escapeHtml(name)}"
-                                style="padding:7px 10px; border-radius:999px; border:1px solid ${active ? '#0284c7' : 'var(--app-border-default)'}; background:${active ? '#e0f2fe' : 'var(--app-surface-card)'}; color:${active ? '#0369a1' : 'var(--app-text-primary)'}; cursor:pointer; font-size:12px; font-weight:${active ? '800' : '600'};">
-                            ${escapeHtml(name)}
+                                class="api-param-filter-common-chip${active ? ' is-active' : ''}"
+                                aria-pressed="${active}">
+                            <span>${escapeHtml(name)}</span>${active ? API_CONFIG_ICONS.check : ''}
                         </button>
                     `;
                 }).join('');
@@ -952,13 +1006,15 @@ export class ConfigPanel {
             if (selectedEl) {
                 selectedEl.innerHTML = draft.length
                     ? draft.map(name => `
-                        <button type="button" data-param-filter-action="remove" data-param="${escapeHtml(name)}"
-                                title="移除 ${escapeHtml(name)}"
-                                style="display:inline-flex; align-items:center; gap:6px; padding:7px 10px; border-radius:999px; border:1px solid var(--app-border-default); background:var(--app-surface-card); color:var(--app-text-primary); cursor:pointer; font-size:12px;">
-                            <span>${escapeHtml(name)}</span><span style="color:var(--app-text-muted);">×</span>
-                        </button>
+                        <span class="api-param-filter-selected-chip">
+                            <span>${escapeHtml(name)}</span>
+                            <button type="button" data-param-filter-action="remove" data-param="${escapeHtml(name)}"
+                                    aria-label="移除 ${escapeHtml(name)}" title="移除 ${escapeHtml(name)}">
+                                ${API_CONFIG_ICONS.close}
+                            </button>
+                        </span>
                     `).join('')
-                    : '<span style="font-size:12px; color:var(--app-text-muted); align-self:center;">未排除任何生成参数</span>';
+                    : '<div class="api-param-filter-empty">暂无排除项 · 点击上方参数或手动输入加入</div>';
             }
         };
         const close = (apply = false) => {
@@ -969,9 +1025,11 @@ export class ConfigPanel {
             const items = splitGenerationParamFilterInput(inputEl?.value || '');
             if (!items.length) {
                 if (errorEl) errorEl.textContent = '请输入有效参数名：以字母或下划线开头，只包含字母、数字、下划线、点、冒号或短横线。';
+                inputEl?.classList?.add('is-invalid');
                 return;
             }
             if (errorEl) errorEl.textContent = '';
+            inputEl?.classList?.remove('is-invalid');
             addParams(items);
             if (inputEl) inputEl.value = '';
             render();
@@ -990,6 +1048,7 @@ export class ConfigPanel {
                 if (hasParam(param)) removeParam(param);
                 else addParams([param]);
                 if (errorEl) errorEl.textContent = '';
+                inputEl?.classList?.remove('is-invalid');
                 render();
             } else if (action === 'remove') {
                 removeParam(param);
@@ -999,6 +1058,7 @@ export class ConfigPanel {
             } else if (action === 'clear') {
                 draft = [];
                 if (errorEl) errorEl.textContent = '';
+                inputEl?.classList?.remove('is-invalid');
                 render();
             } else if (action === 'apply') {
                 close(true);
@@ -1011,6 +1071,10 @@ export class ConfigPanel {
                 event.preventDefault();
                 addFromInput();
             }
+        });
+        inputEl?.addEventListener?.('input', () => {
+            if (errorEl) errorEl.textContent = '';
+            inputEl.classList.remove('is-invalid');
         });
         render();
         document.body.appendChild(overlay);
@@ -1108,7 +1172,6 @@ export class ConfigPanel {
         const promptPostProcessingEl = panel.querySelector('#config-prompt-post-processing');
         const regionEl = panel.querySelector('#config-region');
         const saEl = panel.querySelector('#config-serviceaccount');
-        const datalist = panel.querySelector('#model-list');
 
         const defaults = this.getProviderDefaults(provider, { region: regionEl?.value || 'us-central1' });
 
@@ -1140,14 +1203,29 @@ export class ConfigPanel {
             saEl.dataset.originalKey = '';
             saEl.style.webkitTextSecurity = 'none';
         }
-        if (datalist) {
-            datalist.innerHTML = '';
-        }
         this.clearModelOptions();
         this.refreshAllCustomSelects();
     }
 
+    scheduleModelOptionsRender() {
+        if (this.modelFilterDebounceTimer !== null) {
+            clearTimeout(this.modelFilterDebounceTimer);
+            this.modelFilterDebounceTimer = null;
+        }
+        if (!this.modelOptions.length) return;
+        this.modelFilterDebounceTimer = setTimeout(() => {
+            this.modelFilterDebounceTimer = null;
+            if (this.modelOptions.length) {
+                this.renderModelOptions(this.modelOptions);
+            }
+        }, MODEL_FILTER_DEBOUNCE_MS);
+    }
+
     clearModelOptions() {
+        if (this.modelFilterDebounceTimer !== null) {
+            clearTimeout(this.modelFilterDebounceTimer);
+            this.modelFilterDebounceTimer = null;
+        }
         const container = (this.element || document).querySelector('#model-options');
         if (container) {
             container.innerHTML = '';
@@ -1157,7 +1235,12 @@ export class ConfigPanel {
     }
 
     renderModelOptions(models = []) {
-        const container = (this.element || document).querySelector('#model-options');
+        if (this.modelFilterDebounceTimer !== null) {
+            clearTimeout(this.modelFilterDebounceTimer);
+            this.modelFilterDebounceTimer = null;
+        }
+        const panel = this.element || document;
+        const container = panel.querySelector('#model-options');
         if (!container) return;
 
         if (!models.length) {
@@ -1165,25 +1248,27 @@ export class ConfigPanel {
             return;
         }
 
-        this.modelOptions = models;
+        this.modelOptions = Array.from(models);
+        const modelInput = panel.querySelector('#config-model');
+        const query = String(modelInput?.value || '').trim();
+        const normalizedQuery = query.toLowerCase();
+        const rankedModels = rankModelCandidates(this.modelOptions, query);
         container.innerHTML = '';
         container.style.display = 'flex';
 
-        models.forEach(modelId => {
+        rankedModels.forEach(modelId => {
+            const normalizedModelId = String(modelId).toLowerCase();
+            const isMatch = Boolean(normalizedQuery && normalizedModelId.includes(normalizedQuery));
+            const isSelected = String(modelInput?.value || '').trim() === modelId;
             const chip = document.createElement('button');
             chip.textContent = modelId;
             chip.type = 'button';
-            chip.style.cssText = `
-                border: 1px solid var(--app-border-strong);
-                background: var(--app-surface-card);
-                border-radius: 6px;
-                padding: 6px 10px;
-                font-size: 12px;
-                cursor: pointer;
-                white-space: nowrap;
-            `;
+            chip.className = 'api-config-model-chip';
+            chip.classList.toggle('is-match', isMatch);
+            chip.classList.toggle('is-selected', isSelected);
+            chip.ariaPressed = String(isSelected);
+            chip.title = isMatch ? `匹配“${query}”` : modelId;
             chip.onclick = () => {
-                const modelInput = (this.element || document).querySelector('#config-model');
                 if (modelInput) {
                     modelInput.value = modelId;
                     modelInput.dispatchEvent(new Event('input', { bubbles: true }));
@@ -1355,7 +1440,7 @@ export class ConfigPanel {
             proxyTokenEl.value = config.proxyAuthToken || '';
         }
         const proxyToggleBtn = panel.querySelector('#toggle-proxy-token');
-        if (proxyToggleBtn) proxyToggleBtn.textContent = '显示';
+        setApiButtonContent(proxyToggleBtn, API_CONFIG_ICONS.eye, '显示');
         if (forwardProviderAuthEl) forwardProviderAuthEl.checked = config.forwardProviderAuth !== false;
         const timeoutEl = panel.querySelector('#config-timeout');
         if (timeoutEl) {
@@ -1369,6 +1454,8 @@ export class ConfigPanel {
 
         // API Key：仅显示遮罩（不把明文塞进 DOM / dataset）
         const masked = this.getMaskedActiveKey();
+        apiKeyInput.type = 'password';
+        setApiButtonContent(panel.querySelector('#toggle-apikey'), API_CONFIG_ICONS.eye, '显示');
         if (masked) {
             apiKeyInput.value = masked;
             apiKeyInput.dataset.hasKey = 'true';
@@ -1402,6 +1489,7 @@ export class ConfigPanel {
 
             // Mask Service Account JSON
             if (saInput) {
+                setApiButtonContent(panel.querySelector('#toggle-sa'), API_CONFIG_ICONS.eye, '显示');
                 if (config.vertexaiServiceAccount) {
                     saInput.value = '••••••••••••••••';
                     saInput.dataset.hasKey = 'true';
@@ -1545,7 +1633,7 @@ export class ConfigPanel {
         } else {
             vertexaiFields.style.display = 'none';
             if (apiKeyHelp) {
-                apiKeyHelp.textContent = '保存后 Key 以遮罩显示（不可复制）；用 🔑 管理多个 Key';
+                apiKeyHelp.textContent = '保存后 Key 以遮罩显示（不可复制）；可在 Key 管理中保存多个';
             }
         }
         this.refreshAllCustomSelects();
@@ -1619,7 +1707,7 @@ export class ConfigPanel {
     }
 
     isOpen() {
-        return this.element?.style?.display === 'block';
+        return Boolean(this.element && this.element.style.display !== 'none');
     }
 
     getActiveTab() {
@@ -1638,10 +1726,10 @@ export class ConfigPanel {
         const btn = panel.querySelector('#toggle-apikey');
         if (input.type === 'password') {
             input.type = 'text';
-            btn.textContent = '隱藏';
+            setApiButtonContent(btn, API_CONFIG_ICONS.eyeOff, '隐藏');
         } else {
             input.type = 'password';
-            btn.textContent = '显示';
+            setApiButtonContent(btn, API_CONFIG_ICONS.eye, '显示');
         }
     }
 
@@ -1653,10 +1741,10 @@ export class ConfigPanel {
 
         if (input.style.webkitTextSecurity === 'disc' || input.style.webkitTextSecurity === '') {
             input.style.webkitTextSecurity = 'none';
-            btn.textContent = '隱藏';
+            setApiButtonContent(btn, API_CONFIG_ICONS.eyeOff, '隐藏');
         } else {
             input.style.webkitTextSecurity = 'disc';
-            btn.textContent = '显示';
+            setApiButtonContent(btn, API_CONFIG_ICONS.eye, '显示');
         }
     }
 
@@ -1739,10 +1827,10 @@ export class ConfigPanel {
         this.keyModal.innerHTML = `
             <div style="display:flex; align-items:center; justify-content:space-between; gap:8px;">
                 <div>
-                    <div style="font-weight:800; color:var(--app-text-primary);">🔑 Key 管理</div>
+                    <div style="display:flex; align-items:center; gap:7px; font-weight:800; color:var(--app-text-primary);">${API_CONFIG_ICONS.key}<span>Key 管理</span></div>
                     <div style="color:var(--app-text-muted); font-size:12px;">Key 以遮罩显示，不可复制；可保存多个并切换当前使用</div>
                 </div>
-                <button id="keymgr-close" style="font-size:18px; border:none; background:transparent; cursor:pointer;">×</button>
+                <button id="keymgr-close" aria-label="关闭 Key 管理" style="width:32px; height:32px; display:inline-flex; align-items:center; justify-content:center; border:none; border-radius:8px; background:var(--app-surface-subtle); color:var(--app-text-secondary); cursor:pointer;">${API_CONFIG_ICONS.close}</button>
             </div>
             <div style="margin-top:12px; border-top:1px solid var(--app-border-subtle); padding-top:12px;">
                 <div style="font-weight:700; margin-bottom:6px;">已保存的 Keys</div>
@@ -1866,20 +1954,11 @@ export class ConfigPanel {
     showStatus(message, type = 'info') {
         const statusEl = (this.element || document).querySelector('#config-status');
         if (!statusEl) return;
-        const colors = {
-            success: '#d4edda',
-            error: '#f8d7da',
-            info: '#d1ecf1'
-        };
-        const textColors = {
-            success: '#155724',
-            error: '#721c24',
-            info: '#0c5460'
-        };
-
-        statusEl.style.display = 'block';
-        statusEl.style.background = colors[type];
-        statusEl.style.color = textColors[type];
+        const state = ['success', 'error', 'info'].includes(type) ? type : 'info';
+        statusEl.className = `api-config-status is-${state}`;
+        statusEl.style.display = 'flex';
+        statusEl.style.background = '';
+        statusEl.style.color = '';
         statusEl.textContent = message;
 
         setTimeout(() => {
@@ -1899,13 +1978,13 @@ export class ConfigPanel {
                 return;
             }
 
-            // Key：允許「已保存 Key（🔑）」但输入框仍显示遮罩（formData.apiKey 会是 null）
+            // 已保存 Key 存在时，输入框仍显示遮罩（formData.apiKey 会是 null）。
             const active = this.configManager.getActiveProfile?.();
             const keys = this.configManager.listKeys?.(active?.id) || [];
             const hasTypedKey = typeof formData.apiKey === 'string' && formData.apiKey.trim().length > 0;
             const hasSavedKey = keys.length > 0;
             if (!hasTypedKey && !hasSavedKey && this.providerRequiresApiKey(formData.provider)) {
-                this.showStatus('请先用 🔑 保存至少一个 API Key，或在此栏贴上 Key 后保存', 'error');
+                this.showStatus('请先在 Key 管理中保存至少一个 API Key，或在此栏贴上 Key 后保存', 'error');
                 return;
             }
             this.setLoading(true);
@@ -1928,7 +2007,7 @@ export class ConfigPanel {
 
                 // 若保存后仍拿不到 key（解密/保存失败），給出明確提示并不自動关闭
                 if (!syncResult.configured) {
-                    this.showStatus('已保存，但当前 Key 不可用（请用 🔑 重新保存 Key）', 'error');
+                    this.showStatus('已保存，但当前 Key 不可用（请在 Key 管理中重新保存）', 'error');
                     return;
                 }
             }
@@ -1965,10 +2044,9 @@ export class ConfigPanel {
      */
     async onTest() {
         const formData = this.getFormData();
-        const originalText = this.testButton.textContent;
 
         try {
-            this.testButton.textContent = '测试中...';
+            setApiButtonContent(this.testButton, API_CONFIG_ICONS.loader, '测试中...');
             this.testButton.disabled = true;
 
             if (formData.provider === 'vertexai') {
@@ -1979,7 +2057,7 @@ export class ConfigPanel {
                 const tempClient = new LLMClient({ ...formData, apiKey: '' });
                 const result = await tempClient.healthCheck();
                 if (result.ok) {
-                    this.showStatus('✓ 连接成功！', 'success');
+                    this.showStatus('连接成功！', 'success');
                     logger.info('API 连接测试成功');
                 } else {
                     this.showStatus(`连接失败: ${result.error}`, 'error');
@@ -1992,14 +2070,14 @@ export class ConfigPanel {
             const existingKey = (runtime?.apiKey || '').trim();
             const keyToUse = (typeof formData.apiKey === 'string') ? formData.apiKey.trim() : existingKey;
             if (!keyToUse && this.providerRequiresApiKey(formData.provider)) {
-                this.showStatus('请先用 🔑 保存至少一个 API Key，或在此栏贴上 Key', 'error');
+                this.showStatus('请先在 Key 管理中保存至少一个 API Key，或在此栏贴上 Key', 'error');
                 return;
             }
             const tempClient = new LLMClient({ ...formData, apiKey: keyToUse });
             const result = await tempClient.healthCheck();
 
             if (result.ok) {
-                this.showStatus('✓ 连接成功！', 'success');
+                this.showStatus('连接成功！', 'success');
                 logger.info('API 连接测试成功');
             } else {
                 this.showStatus(`连接失败: ${result.error}`, 'error');
@@ -2009,7 +2087,7 @@ export class ConfigPanel {
             this.showStatus(`测试失败: ${e.message}`, 'error');
             logger.error('API 连接测试异常:', e);
         } finally {
-            this.testButton.textContent = originalText;
+            setApiButtonContent(this.testButton, API_CONFIG_ICONS.zap, '测试连接');
             this.testButton.disabled = false;
         }
     }
@@ -2018,7 +2096,11 @@ export class ConfigPanel {
         if (!this.saveButton) return;
         this.saveButton.disabled = isLoading;
         this.testButton.disabled = isLoading;
-        this.saveButton.textContent = isLoading ? '保存中...' : '保存';
+        setApiButtonContent(
+            this.saveButton,
+            isLoading ? API_CONFIG_ICONS.loader : API_CONFIG_ICONS.save,
+            isLoading ? '保存中...' : '保存',
+        );
     }
 
     /**
@@ -2028,7 +2110,6 @@ export class ConfigPanel {
         const formData = this.getFormData();
         const refreshBtn = document.getElementById('refresh-models');
         const modelHelp = document.getElementById('model-help');
-        const originalText = refreshBtn.textContent;
         const originalHelpText = modelHelp.textContent;
 
         try {
@@ -2041,7 +2122,7 @@ export class ConfigPanel {
             const existingKey = (runtime?.apiKey || '').trim();
             const keyToUse = (typeof formData.apiKey === 'string') ? formData.apiKey.trim() : existingKey;
             if (!keyToUse && formData.provider !== 'vertexai') {
-                this.showStatus('请先用 🔑 保存至少一个 API Key，或在此栏贴上 Key', 'error');
+                this.showStatus('请先在 Key 管理中保存至少一个 API Key，或在此栏贴上 Key', 'error');
                 return;
             }
             if (formData.provider === 'vertexai') {
@@ -2052,10 +2133,10 @@ export class ConfigPanel {
             }
 
             // 设置加载状态
-            refreshBtn.textContent = '⟳ 获取中...';
+            setApiButtonContent(refreshBtn, API_CONFIG_ICONS.loader, '获取中...');
             refreshBtn.disabled = true;
             modelHelp.textContent = '正在从服务器获取可用模型列表...';
-            modelHelp.style.color = '#1976d2';
+            modelHelp.style.color = 'var(--app-accent-strong)';
 
             // 创建临时客户端
             const tempClient = new LLMClient({ ...formData, apiKey: formData.provider === 'vertexai' ? '' : keyToUse });
@@ -2087,15 +2168,6 @@ export class ConfigPanel {
                 throw new Error('未获取到模型列表');
             }
 
-            // 填充到 datalist
-            const datalist = document.getElementById('model-list');
-            datalist.innerHTML = '';
-
-            models.forEach(modelId => {
-                const option = document.createElement('option');
-                option.value = modelId;
-                datalist.appendChild(option);
-            });
             this.renderModelOptions(models);
             try {
                 window.dispatchEvent(new CustomEvent('config-models-refreshed', {
@@ -2108,9 +2180,9 @@ export class ConfigPanel {
             } catch {}
 
             // 成功提示
-            this.showStatus(`✓ 成功获取 ${models.length} 个可用模型`, 'success');
+            this.showStatus(`成功获取 ${models.length} 个可用模型`, 'success');
             modelHelp.textContent = `已加载 ${models.length} 个模型（可输入或从列表选择）`;
-            modelHelp.style.color = '#155724';
+            modelHelp.style.color = 'var(--app-accent-strong)';
             logger.info(`成功获取 ${models.length} 个模型:`, models);
 
             // 3秒后恢复原始提示
@@ -2123,7 +2195,7 @@ export class ConfigPanel {
             this.showStatus(`获取模型列表失败: ${e.message}`, 'error');
             logger.error('获取模型列表失败:', e);
             modelHelp.textContent = '获取失败，请检查配置后重试';
-            modelHelp.style.color = '#721c24';
+            modelHelp.style.color = 'var(--app-danger-text)';
 
             // 5秒后恢复原始提示
             setTimeout(() => {
@@ -2131,7 +2203,7 @@ export class ConfigPanel {
                 modelHelp.style.color = 'var(--app-text-secondary)';
             }, 5000);
         } finally {
-            refreshBtn.textContent = originalText;
+            setApiButtonContent(refreshBtn, API_CONFIG_ICONS.refresh, '刷新列表');
             refreshBtn.disabled = false;
         }
     }

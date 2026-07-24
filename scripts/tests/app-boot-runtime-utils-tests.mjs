@@ -12,6 +12,7 @@ import {
   registerHydratedUiRestoreListener,
   registerUiLifecycleDiagnostics,
   runAppBootRestoreFlow,
+  shouldDetachRpSessionFromChatMode,
   startAppBootTrace,
 } from '../../src/scripts/ui/app-boot-runtime-utils.js';
 
@@ -217,6 +218,72 @@ const createDocumentLike = () => {
     [{ message: 'reject' }, 'Unhandled rejection'],
   ]);
   console.log('ok - registerGlobalRuntimeIssueHandlers wires error and rejection reporting');
+}
+
+{
+  assert.equal(shouldDetachRpSessionFromChatMode({
+    uiMode: 'chat',
+    sessionId: 'rp:persona_a',
+  }), true);
+  assert.equal(shouldDetachRpSessionFromChatMode({
+    uiMode: 'rp',
+    sessionId: 'rp:persona_a',
+  }), false);
+  assert.equal(shouldDetachRpSessionFromChatMode({
+    uiMode: 'chat',
+    sessionId: 'contact:a',
+  }), false);
+  assert.equal(shouldDetachRpSessionFromChatMode({
+    uiMode: 'chat',
+    sessionId: '',
+  }), false);
+  console.log('ok - chat mode identifies only persisted RP current sessions as stale');
+}
+
+{
+  let uiMode = 'chat';
+  let currentSession = 'rp:stale';
+  const calls = [];
+  await runAppBootRestoreFlow({
+    restoreUiState: async () => calls.push('restore'),
+    getActivePage: () => 'chat',
+    hasPage: page => page === 'chat',
+    isPageActive: () => true,
+    getUiMode: () => uiMode,
+    getCurrentSessionId: () => currentSession,
+    detachChatModeRpSession: async details => {
+      calls.push(['detach', details]);
+      currentSession = '';
+    },
+    isChatRoomVisible: () => false,
+    applyMvuSchemaDefaults: (sessionId, payload) => calls.push(['mvu', sessionId, payload]),
+    updateWorldIndicator: () => calls.push('world'),
+    refreshChatAndContacts: () => calls.push('refresh'),
+    applyUiModeUI: () => calls.push('applyUiModeUI'),
+    getInitialUiMode: () => 'chat',
+    setUiMode: value => {
+      uiMode = value;
+      calls.push(['setUiMode', value]);
+    },
+    setUiStateArmed: value => calls.push(['uiStateArmed', value]),
+    saveUiState: () => calls.push('saveUiState'),
+    uiLog: (event, payload) => calls.push([event, payload]),
+  });
+
+  assert.equal(currentSession, '');
+  assert.deepEqual(calls, [
+    ['setUiMode', 'chat'],
+    'restore',
+    ['detach', { uiMode: 'chat', sessionId: 'rp:stale' }],
+    ['boot: after restore', { activePage: 'chat', sessionId: '', inChatRoom: false }],
+    ['mvu', '', { reason: 'boot' }],
+    'world',
+    'refresh',
+    'applyUiModeUI',
+    ['uiStateArmed', true],
+    'saveUiState',
+  ]);
+  console.log('ok - boot restore detaches a persisted RP current before chat mode becomes interactive');
 }
 
 {

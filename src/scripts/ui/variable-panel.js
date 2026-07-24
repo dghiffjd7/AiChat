@@ -1,2261 +1,1083 @@
 import { appConfirm } from './app-confirm.js';
-import { bindCustomSelectButton, closeCustomSelectMenu, refreshCustomSelectButton } from './custom-select.js';
-import { applyTemplate, listVariableTemplates } from '../variables/variable-templates.js';
+import { VariablePanel as VariablePanelRuntime } from './variable-panel-runtime.js';
 import {
-    buildRuleConditionDiagnostics,
-    formatUnsupportedExpressionMessage,
-} from '../variables/expression-compat-diagnostics.js';
-import { validateExpressionSyntax } from '../variables/safe-expression-evaluator.js';
+    buildVariableListRows,
+    buildVariableScopeImpactText,
+    formatVariableScopeLabel,
+    getVariableRenderSlice,
+    isVariableValueFilled,
+} from './variable-panel-state-utils.js';
+import {
+    renderVariableListView,
+    renderVariableSummaryCards,
+    renderVariableTreeView,
+} from './variable-panel-views.js';
+import {
+    renderVariableRulesPage,
+    renderVariableTemplatesPage,
+} from './variable-manager-pages.js';
+import { VariableSchemaEditor } from './variable-schema-editor.js';
+import {
+    applyTemplate,
+    listVariableTemplates,
+} from '../variables/variable-templates.js';
 
-const TREE_LIMITS = {
-    maxDepth: 8,
-    maxNodes: 2000,
-    maxArray: 120,
+export {
+    buildVariableScopeImpactText,
+    formatVariableScopeLabel,
 };
 
-const createTreeNode = (name, path, order = 0) => ({
-    name,
-    path,
-    order,
-    children: new Map(),
-    hasValue: false,
-    value: undefined,
-});
+export const VARIABLE_LIST_BATCH_SIZE = 80;
 
-const formatTreeValue = (value) => {
-    if (value === undefined) return '';
-    if (value === null) return 'null';
-    if (typeof value === 'string') {
-        const trimmed = value.replace(/\s+/g, ' ').trim();
-        return trimmed.length > 80 ? `${trimmed.slice(0, 77)}...` : trimmed;
+const VARIABLE_MANAGER_PAGES = new Set(['variables', 'templates', 'rules']);
+const VARIABLE_UNDO_TTL_MS = 6500;
+
+const isReducedMotion = () => (
+    globalThis.document?.body?.dataset?.reducedMotion === 'on'
+    || globalThis.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches === true
+);
+
+const isVisible = element => Boolean(
+    element
+    && element.hidden !== true
+    && element.style?.display !== 'none'
+);
+
+const isTextEntry = element => {
+    const tagName = String(element?.tagName || '').toLowerCase();
+    return (
+        tagName === 'input'
+        || tagName === 'textarea'
+        || tagName === 'select'
+        || element?.isContentEditable === true
+    );
+};
+
+const cloneValue = (value) => {
+    if (value === undefined || value === null || typeof value !== 'object') return value;
+    if (typeof structuredClone === 'function') {
+        try {
+            return structuredClone(value);
+        } catch {}
     }
-    if (typeof value === 'number' || typeof value === 'boolean') return String(value);
-    if (Array.isArray(value)) return `[${value.length}]`;
-    if (typeof value === 'object') return `{${Object.keys(value).length}}`;
-    return String(value);
-};
-
-const buildVariableTree = (vars = {}) => {
-    const root = createTreeNode('', '');
-    let nodeCount = 0;
-
-    const ensureChild = (parent, name, path, order = 0) => {
-        if (!parent) return null;
-        let child = parent.children.get(name);
-        if (!child) {
-            if (nodeCount >= TREE_LIMITS.maxNodes) return null;
-            child = createTreeNode(name, path, order);
-            parent.children.set(name, child);
-            nodeCount += 1;
-        } else if (Number.isFinite(order)) {
-            child.order = order;
-        }
-        return child;
-    };
-
-    const assignValue = (node, value, override = false) => {
-        if (!node) return;
-        if (override || !node.hasValue) {
-            node.value = value;
-            node.hasValue = true;
-        }
-    };
-
-    const expandValue = (node, value, depth = 0) => {
-        if (!node || value == null) return;
-        if (depth >= TREE_LIMITS.maxDepth) return;
-        if (Array.isArray(value)) {
-            const limit = Math.min(value.length, TREE_LIMITS.maxArray);
-            for (let i = 0; i < limit; i += 1) {
-                const name = `[${i}]`;
-                const path = node.path ? `${node.path}${name}` : name;
-                const child = ensureChild(node, name, path, i);
-                if (!child) break;
-                assignValue(child, value[i], false);
-                expandValue(child, value[i], depth + 1);
-            }
-            return;
-        }
-        if (typeof value === 'object') {
-            const entries = Object.entries(value);
-            for (let i = 0; i < entries.length; i += 1) {
-                const [key, val] = entries[i];
-                const name = String(key);
-                const path = node.path ? `${node.path}.${name}` : name;
-                const child = ensureChild(node, name, path, i);
-                if (!child) break;
-                assignValue(child, val, false);
-                expandValue(child, val, depth + 1);
-            }
-        }
-    };
-
-    const addPath = (path, value) => {
-        const raw = String(path || '').trim();
-        if (!raw) return;
-        const parts = raw.split('.').filter(Boolean);
-        let node = root;
-        let currentPath = '';
-        for (let i = 0; i < parts.length; i += 1) {
-            const part = parts[i];
-            currentPath = currentPath ? `${currentPath}.${part}` : part;
-            node = ensureChild(node, part, currentPath, i);
-            if (!node) return;
-        }
-        assignValue(node, value, true);
-        expandValue(node, value, parts.length);
-    };
-
-    Object.entries(vars || {}).forEach(([key, value]) => addPath(key, value));
-    return root;
-};
-
-const getSortedChildren = (node) => {
-    const list = Array.from(node?.children?.values?.() || []);
-    return list.sort((a, b) => {
-        if (a.order !== b.order) return a.order - b.order;
-        return String(a.name || '').localeCompare(String(b.name || ''));
-    });
-};
-
-const treeNodeMatches = (node, term) => {
-    if (!term) return true;
-    const text = `${node.path} ${node.name} ${formatTreeValue(node.value)}`.toLowerCase();
-    if (text.includes(term)) return true;
-    for (const child of node.children.values()) {
-        if (treeNodeMatches(child, term)) return true;
+    try {
+        return JSON.parse(JSON.stringify(value));
+    } catch {
+        return value;
     }
-    return false;
 };
 
-const renderTreeNode = (node, term, depth = 0) => {
-    if (!node) return null;
-    if (!treeNodeMatches(node, term)) return null;
-    const hasChildren = node.children && node.children.size > 0;
-    const valueText = node.hasValue ? formatTreeValue(node.value) : '';
+const makeButton = (className, label, action, { danger = false } = {}) => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = `${className}${danger ? ' is-danger' : ''}`;
+    button.textContent = label;
+    button.addEventListener('click', action);
+    return button;
+};
 
-    if (hasChildren) {
-        const wrap = document.createElement('details');
-        wrap.open = Boolean(term) || depth < 1;
-        wrap.style.cssText = `margin-left:${depth ? 12 : 0}px; padding:2px 0;`;
+const recoveryErrorMessage = (code = '') => {
+    const messages = {
+        persona_not_found: '当前会话没有可重新转换的角色卡',
+        not_character_card: '当前角色不是从角色卡导入，无法重新转换',
+        card_unavailable: '找不到原始角色卡数据',
+        card_invalid: '原始角色卡数据无效',
+        no_variables: '角色卡中没有检测到 MVU 变量',
+        invalid_target: '当前会话不可用',
+    };
+    return messages[String(code || '')] || '重新转换变量失败';
+};
 
-        const summary = document.createElement('summary');
-        summary.style.cssText = 'cursor:pointer; display:flex; align-items:center; gap:8px; font-size:13px; color:var(--app-text-primary);';
+export class VariablePanel extends VariablePanelRuntime {
+    constructor(options) {
+        super(options);
+        this.page = 'variables';
+        this.filter = 'all';
+        this.sort = 'name';
+        this.visibleLimit = VARIABLE_LIST_BATCH_SIZE;
+        this.updatedAtByKey = Object.create(null);
+        this.selectedKey = '';
+        this.currentRows = [];
+        this.templateTerm = '';
+        this.graveyard = [];
+        this.graveyardTimer = null;
+        this.visibilityRevision = 0;
+        this.keyboardHandler = event => this.handleKeyboard(event);
+        this.elements = null;
 
-        const nameEl = document.createElement('span');
-        nameEl.textContent = node.name || '(root)';
-        nameEl.style.cssText = 'font-weight:700;';
-        summary.appendChild(nameEl);
-
-        if (valueText) {
-            const valueEl = document.createElement('span');
-            valueEl.textContent = valueText;
-            valueEl.style.cssText = 'font-size:11px; color:var(--app-text-muted);';
-            summary.appendChild(valueEl);
-        }
-
-        const countEl = document.createElement('span');
-        countEl.textContent = `(${node.children.size})`;
-        countEl.style.cssText = 'font-size:11px; color:var(--app-text-muted);';
-        summary.appendChild(countEl);
-
-        wrap.appendChild(summary);
-
-        const body = document.createElement('div');
-        body.style.cssText = 'display:flex; flex-direction:column; gap:4px; padding:4px 0 4px 8px;';
-        getSortedChildren(node).forEach((child) => {
-            const childEl = renderTreeNode(child, term, depth + 1);
-            if (childEl) body.appendChild(childEl);
+        this.schemaEditor = new VariableSchemaEditor({
+            getContext: () => this.resolveScope(),
+            getSchema: key => this.getSchema(key),
+            getValue: key => this.listVars()?.[key],
+            getInitialValue: key => this.getInitialValue(key),
+            setSchema: (key, schema) => this.setSchema(key, schema),
+            deleteSchema: key => this.deleteSchema(key),
+            setVariable: (key, value) => this.setVar(key, value),
+            isGlobalScope: () => this.isGlobalScope(),
+            restoreInitialValue: (key, value) => this.setVar(key, value),
+            onChange: detail => {
+                if (detail?.key) this.markVariableUpdated(detail.key);
+                this.visibleLimit = VARIABLE_LIST_BATCH_SIZE;
+                this.renderList();
+            },
+            onDelete: key => this.deleteKey(key),
+            getMountRoot: () => this.panel || document.body,
         });
-        wrap.appendChild(body);
-        return wrap;
-    }
-
-    const row = document.createElement('div');
-    row.style.cssText = `display:flex; gap:10px; align-items:flex-start; margin-left:${depth ? 12 : 0}px; padding:2px 0;`;
-    row.title = node.path || node.name || '';
-
-    const nameEl = document.createElement('span');
-    nameEl.textContent = node.name || '';
-    nameEl.style.cssText = 'flex:1; min-width:0; font-size:13px; color:var(--app-text-primary);';
-    row.appendChild(nameEl);
-
-    const valueEl = document.createElement('span');
-    valueEl.textContent = valueText || '（空）';
-    valueEl.style.cssText = 'font-size:12px; color:var(--app-text-muted); white-space:nowrap;';
-    row.appendChild(valueEl);
-
-    return row;
-};
-
-const normalizeScope = value => (String(value || '').trim() === 'global' ? 'global' : 'session');
-const SCOPE_BADGE_STYLE = 'display:inline-flex; align-items:center; width:max-content; max-width:100%; padding:4px 8px; border:1px solid var(--app-border-default); border-radius:999px; background:var(--app-surface-subtle); color:var(--app-text-secondary); font-size:11px; line-height:1.3; cursor:help;';
-
-export const formatVariableScopeLabel = ({ scope = 'session', sessionId = '' } = {}) => {
-    const normalizedScope = normalizeScope(scope);
-    const sid = String(sessionId || '').trim();
-    if (normalizedScope === 'global') return '全局变量（所有会话共享）';
-    return sid ? `当前会话「${sid}」` : '当前会话';
-};
-
-export const buildVariableScopeImpactText = ({
-    scope = 'session',
-    sessionId = '',
-    action = 'manage',
-} = {}) => {
-    const normalizedScope = normalizeScope(scope);
-    const target = formatVariableScopeLabel({ scope: normalizedScope, sessionId });
-    const storesRules = normalizedScope !== 'global';
-    if (action === 'edit') {
-        return `影响范围：${target}。保存会立即写入变量值${storesRules ? '和配置' : ''}；取消或关闭不会保存本次编辑。已保存后可再次编辑、删除，或用导入备份回退。`;
-    }
-    if (action === 'rules') {
-        return `影响范围：${target}。启用的规则可能在后续消息中自动修改变量、切换角色或注入提示词；关闭窗口不会运行规则，停用或删除规则可停止后续影响。`;
-    }
-    if (action === 'templates') {
-        return `影响范围：${target}。应用模板会一次写入多项会话变量；取消覆盖确认不会写入，应用前可先导出备份。`;
-    }
-    if (action === 'import') {
-        const extra = storesRules ? '、Schema 与规则' : '';
-        return `影响范围：${target}。合并导入会写入同名变量${extra}；覆盖导入会先清空当前范围再写入。建议先导出备份，关闭窗口或取消确认不会写入。`;
-    }
-    if (action === 'export') {
-        return `影响范围：${target}。导出为只读复制，不会修改变量；可作为导入或覆盖前的回退备份。`;
-    }
-    if (action === 'delete') {
-        return `影响范围：${target}。删除后相关提示词、世界书条件和脚本读取会失去该变量；取消确认不会删除，可通过导入备份恢复。`;
-    }
-    if (action === 'clear') {
-        return `影响范围：${target}。清空会删除当前范围内的变量值；取消确认不会删除，建议先导出备份。`;
-    }
-    return `影响范围：${target}。变量会影响后续提示词、世界书条件和脚本读取；关闭面板不会撤销已保存内容，导出可作为回退备份。`;
-};
-
-export class VariablePanel {
-    constructor({ chatStore, getSessionId, getVariableScope }) {
-        this.chatStore = chatStore;
-        this.getSessionId = typeof getSessionId === 'function' ? getSessionId : () => '';
-        this.getVariableScope = typeof getVariableScope === 'function' ? getVariableScope : null;
-        this.overlay = null;
-        this.panel = null;
-        this.schemaOverlay = null;
-        this.schemaPanel = null;
-        this.schemaFields = null;
-        this.ruleOverlay = null;
-        this.rulePanel = null;
-        this.ruleList = null;
-        this.ruleEditorOverlay = null;
-        this.ruleEditorPanel = null;
-        this.ruleFields = null;
-        this.editingRuleId = '';
-        this.templateOverlay = null;
-        this.templatePanel = null;
-        this.dataOverlay = null;
-        this.dataPanel = null;
-        this.dataTextarea = null;
-        this.dataCopyBtn = null;
-        this.dataMergeBtn = null;
-        this.dataOverwriteBtn = null;
-        this.term = '';
-        this.editingKey = '';
-        this.moreMenuCloseHandler = null;
-        this.viewMode = 'list';
-        this.viewButtons = null;
     }
 
     ensureUI() {
         if (this.overlay) return;
 
         const overlay = document.createElement('div');
-        overlay.className = 'app-themed-overlay variable-panel-overlay';
-        overlay.style.cssText = `
-            display:none; position:fixed; inset:0;
-            background: rgba(0,0,0,0.38);
-            z-index: 22050;
-            padding: calc(10px + env(safe-area-inset-top, 0px)) 10px calc(10px + env(safe-area-inset-bottom, 0px)) 10px;
-            box-sizing: border-box;
-        `;
-        overlay.addEventListener('click', (e) => {
-            if (e.target === overlay) this.hide();
+        overlay.className = 'app-themed-overlay variable-panel-overlay variable-manager-overlay';
+        overlay.style.display = 'none';
+        overlay.addEventListener('click', event => {
+            if (event.target === overlay) this.hide();
         });
 
         const panel = document.createElement('div');
-        panel.className = 'app-themed-panel variable-panel-shell';
-        panel.style.cssText = `
-            width: min(96vw, 520px);
-            height: min(86vh, 720px);
-            background: var(--app-surface-card);
-            border-radius: 14px;
-            overflow: hidden;
-            display:flex;
-            flex-direction:column;
-            box-shadow: 0 10px 40px rgba(0,0,0,0.18);
-        `;
-        panel.addEventListener('click', (e) => e.stopPropagation());
-
+        panel.className = 'app-themed-panel variable-panel-shell variable-manager-shell';
+        panel.addEventListener('click', event => event.stopPropagation());
         panel.innerHTML = `
-            <div style="display:flex; align-items:center; gap:10px; padding:12px 14px; background:#f3f4f6; border-bottom:1px solid var(--app-border-default);">
-                <div style="font-weight:900; font-size:15px;">变量管理器</div>
-                <div id="var-meta" style="margin-left:auto; font-size:12px; color:var(--app-text-muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:160px;"></div>
-                <button id="var-close" style="border:1px solid var(--app-border-default); background:var(--app-surface-card); border-radius:10px; padding:6px 12px; cursor:pointer;">关闭</button>
-            </div>
+            <nav class="variable-manager-rail" aria-label="变量管理器页面">
+                <div class="variable-manager-mark" aria-hidden="true">{ }</div>
+                <button type="button" class="variable-rail-button is-active" data-variable-page="variables" aria-label="变量">
+                    <span aria-hidden="true">◆</span>
+                    <span class="variable-rail-label">变量</span>
+                    <span class="variable-page-count" data-count="variables">0</span>
+                </button>
+                <button type="button" class="variable-rail-button" data-variable-page="templates" aria-label="模板">
+                    <span aria-hidden="true">▦</span>
+                    <span class="variable-rail-label">模板</span>
+                </button>
+                <button type="button" class="variable-rail-button" data-variable-page="rules" aria-label="规则">
+                    <span aria-hidden="true">⌁</span>
+                    <span class="variable-rail-label">规则</span>
+                    <span class="variable-page-count" data-count="rules">0</span>
+                </button>
+                <button type="button" class="variable-rail-button variable-manager-close" data-action="close" aria-label="关闭变量管理器">
+                    <span aria-hidden="true">×</span>
+                    <span class="variable-rail-label">关闭</span>
+                </button>
+            </nav>
 
-            <div style="padding:10px 12px; border-bottom:1px solid rgba(0,0,0,0.06);">
-                <div class="variable-panel-search-box" style="display:flex; align-items:center; gap:8px; padding:10px 12px; border:1px solid var(--app-border-default); border-radius:14px; background:var(--app-surface-card);">
-                    <span class="variable-panel-search-icon" style="color:var(--app-text-muted);">🔍</span>
-                    <input id="var-search" type="text" placeholder="搜索变量名..." style="flex:1; border:none; outline:none; font-size:14px; background:transparent;">
-                    <button id="var-clear-search" type="button" aria-label="清除搜索" style="display:none; width:28px; height:28px; border:none; border-radius:8px; background:var(--app-surface-panel); cursor:pointer; font-size:14px; color:var(--app-text-primary);">×</button>
-                </div>
-                <div style="margin-top:10px; display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
-                    <button id="var-add" style="border:none; background:#2563eb; color:var(--app-text-inverse); border-radius:10px; padding:8px 14px; font-size:13px; cursor:pointer; display:flex; align-items:center; gap:6px;">
-                        <span style="font-size:14px;">+</span>新增
-                    </button>
-                    <button id="var-templates" style="border:1px solid var(--app-border-default); background:var(--app-surface-card); border-radius:10px; padding:8px 12px; font-size:13px; cursor:pointer;">模板</button>
-                    <button id="var-rules" style="border:1px solid var(--app-border-default); background:var(--app-surface-card); border-radius:10px; padding:8px 12px; font-size:13px; cursor:pointer;">规则</button>
-                    <button id="var-more" style="border:1px solid var(--app-border-default); background:var(--app-surface-card); border-radius:10px; padding:8px 12px; font-size:13px; cursor:pointer;" title="更多操作">⋮ 更多</button>
-                </div>
-                <div class="variable-panel-usage-hint" style="margin-top:10px; padding:8px 10px; background:var(--app-surface-panel); border-radius:8px; font-size:11px; color:var(--app-text-secondary);">
-                    💡 提示词中使用 <code class="variable-panel-inline-code" style="padding:2px 6px; border-radius:4px;">{{getvar::name}}</code> 引用变量
-                </div>
-                <div id="var-impact" class="variable-panel-scope-badge" style="margin-top:8px; ${SCOPE_BADGE_STYLE}"></div>
-                <div style="margin-top:10px; display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
-                    <div style="font-size:12px; color:var(--app-text-muted);">视图</div>
-                    <div id="var-view-toggle" style="display:flex; gap:6px; padding:2px; background:var(--app-surface-hover); border-radius:999px;">
-                        <button id="var-view-list" type="button" style="border:1px solid var(--app-border-default); background:var(--app-text-primary); color:var(--app-text-inverse); border-radius:999px; padding:4px 10px; font-size:12px; cursor:pointer;">文本</button>
-                        <button id="var-view-tree" type="button" style="border:1px solid var(--app-border-default); background:var(--app-surface-card); color:var(--app-text-primary); border-radius:999px; padding:4px 10px; font-size:12px; cursor:pointer;">树状</button>
+            <main class="variable-manager-workspace">
+                <header class="variable-manager-mobile-header">
+                    <div>
+                        <div class="variable-manager-kicker">ROLEPLAY STATE</div>
+                        <h1>变量管理器</h1>
                     </div>
-                </div>
-            </div>
-            <div id="var-scroll" style="flex:1; min-height:0; overflow:auto; -webkit-overflow-scrolling:touch;">
-                <div id="var-cards" style="padding:10px 12px; border-bottom:1px solid rgba(0,0,0,0.06); display:flex; flex-wrap:wrap; gap:8px;"></div>
-                <div id="var-list" style="padding:10px 12px;"></div>
-            </div>
+                    <button type="button" class="variable-icon-button" data-action="close" aria-label="关闭">×</button>
+                </header>
+                <nav class="variable-manager-mobile-tabs" aria-label="变量管理页面">
+                    <button type="button" class="is-active" data-variable-page="variables">变量 <span data-count="variables">0</span></button>
+                    <button type="button" data-variable-page="templates">模板</button>
+                    <button type="button" data-variable-page="rules">规则 <span data-count="rules">0</span></button>
+                </nav>
+
+                <section class="variable-manager-page is-active" data-page-panel="variables">
+                    <header class="variable-manager-toolbar">
+                        <div class="variable-toolbar-heading">
+                            <div>
+                                <h2>变量</h2>
+                                <p id="var-meta">当前会话</p>
+                            </div>
+                            <span id="var-impact" class="variable-panel-scope-badge"></span>
+                        </div>
+                        <div class="variable-toolbar-controls">
+                            <label class="variable-panel-search-box">
+                                <span class="variable-panel-search-icon" aria-hidden="true">⌕</span>
+                                <input id="var-search" type="search" placeholder="搜索变量…" autocomplete="off">
+                                <kbd>/</kbd>
+                                <button id="var-clear-search" type="button" aria-label="清除搜索" hidden>×</button>
+                            </label>
+                            <div class="variable-view-switch" id="var-view-toggle" role="group" aria-label="变量视图">
+                                <span class="variable-view-pill" aria-hidden="true"></span>
+                                <button type="button" class="is-active" data-view-mode="list">列表</button>
+                                <button type="button" data-view-mode="tree">树状</button>
+                            </div>
+                            <label class="variable-compact-select">
+                                <span>筛选</span>
+                                <select id="var-filter">
+                                    <option value="all">全部</option>
+                                    <option value="filled">已填</option>
+                                    <option value="empty">空值</option>
+                                </select>
+                            </label>
+                            <label class="variable-compact-select">
+                                <span>排序</span>
+                                <select id="var-sort">
+                                    <option value="name">名称</option>
+                                    <option value="updated">更新时间</option>
+                                </select>
+                            </label>
+                            <button id="var-add" type="button" class="variable-primary-button">＋ 新增</button>
+                            <button id="var-more" type="button" class="variable-icon-button" aria-label="更多操作" title="更多操作">⋮</button>
+                        </div>
+                    </header>
+
+                    <div id="var-cards" class="variable-summary-strip"></div>
+                    <section id="var-empty-recovery" class="variable-recovery-card" hidden>
+                        <div class="variable-recovery-icon" aria-hidden="true">↻</div>
+                        <div>
+                            <h3>变量配置存在，但当前值为空</h3>
+                            <p>可先从 Schema 默认值初始化；若角色卡旧数据缺少默认值，再重新转换角色卡变量。</p>
+                        </div>
+                        <div class="variable-recovery-actions">
+                            <button type="button" class="variable-secondary-button" data-action="initialize-variables">初始化变量</button>
+                            <button type="button" class="variable-primary-button" data-action="reconvert-variables">重新转换</button>
+                        </div>
+                    </section>
+
+                    <div class="variable-list-meta">
+                        <span data-field="list-count">0 个变量</span>
+                        <span>提示词中使用 <code class="variable-panel-inline-code">{{getvar::name}}</code></span>
+                    </div>
+                    <div id="var-list-scroll" class="variable-manager-scroll">
+                        <div id="var-list" class="variable-list-view"></div>
+                        <button id="var-load-more" type="button" class="variable-load-more" hidden>加载更多</button>
+                    </div>
+                </section>
+
+                <section class="variable-manager-page" data-page-panel="templates" hidden>
+                    <header class="variable-manager-toolbar">
+                        <div class="variable-toolbar-heading">
+                            <div>
+                                <h2>变量模板</h2>
+                                <p>快速建立常用的角色状态组合</p>
+                            </div>
+                            <span class="variable-panel-scope-badge" data-field="template-impact"></span>
+                        </div>
+                        <div class="variable-toolbar-controls">
+                            <label class="variable-panel-search-box variable-template-search">
+                                <span class="variable-panel-search-icon" aria-hidden="true">⌕</span>
+                                <input id="var-template-search" type="search" placeholder="搜索模板或变量…" autocomplete="off">
+                            </label>
+                        </div>
+                    </header>
+                    <div class="variable-manager-scroll">
+                        <div id="var-template-grid" class="variable-template-grid"></div>
+                    </div>
+                </section>
+
+                <section class="variable-manager-page" data-page-panel="rules" hidden>
+                    <header class="variable-manager-toolbar">
+                        <div class="variable-toolbar-heading">
+                            <div>
+                                <h2>变量规则</h2>
+                                <p data-field="rule-count">0 条规则已启用</p>
+                            </div>
+                            <span class="variable-panel-scope-badge" data-field="rule-impact"></span>
+                        </div>
+                        <div class="variable-toolbar-controls">
+                            <button type="button" class="variable-secondary-button" data-action="run-rules">立即运行</button>
+                            <button type="button" class="variable-primary-button" data-action="add-rule">＋ 新建规则</button>
+                        </div>
+                    </header>
+                    <div class="variable-rule-banner">
+                        <span aria-hidden="true">⌁</span>
+                        <div>
+                            <strong>规则会在对话进行中自动修改变量</strong>
+                            <p>关闭规则后不会再触发；手动规则可从卡片立即运行。</p>
+                        </div>
+                    </div>
+                    <div class="variable-manager-scroll">
+                        <div id="var-rule-list" class="variable-rule-list"></div>
+                    </div>
+                </section>
+            </main>
+            <div id="variable-undo-host" class="variable-undo-host" aria-live="polite"></div>
         `;
+
+        const query = selector => panel.querySelector(selector);
+        this.elements = {
+            pagePanels: Array.from(panel.querySelectorAll('[data-page-panel]')),
+            pageButtons: Array.from(panel.querySelectorAll('[data-variable-page]')),
+            search: query('#var-search'),
+            clearSearch: query('#var-clear-search'),
+            filter: query('#var-filter'),
+            sort: query('#var-sort'),
+            viewSwitch: query('#var-view-toggle'),
+            viewPill: query('.variable-view-pill'),
+            viewButtons: Array.from(panel.querySelectorAll('[data-view-mode]')),
+            list: query('#var-list'),
+            listScroll: query('#var-list-scroll'),
+            loadMore: query('#var-load-more'),
+            listCount: query('[data-field="list-count"]'),
+            cards: query('#var-cards'),
+            recovery: query('#var-empty-recovery'),
+            meta: query('#var-meta'),
+            templateSearch: query('#var-template-search'),
+            templateGrid: query('#var-template-grid'),
+            templateImpact: query('[data-field="template-impact"]'),
+            ruleList: query('#var-rule-list'),
+            ruleCount: query('[data-field="rule-count"]'),
+            ruleImpact: query('[data-field="rule-impact"]'),
+            undoHost: query('#variable-undo-host'),
+        };
+        this.viewButtons = {
+            list: this.elements.viewButtons.find(button => button.dataset.viewMode === 'list'),
+            tree: this.elements.viewButtons.find(button => button.dataset.viewMode === 'tree'),
+        };
+        this.templatePanel = this.elements.pagePanels.find(
+            pagePanel => pagePanel.dataset.pagePanel === 'templates',
+        ) || null;
+        this.rulePanel = this.elements.pagePanels.find(
+            pagePanel => pagePanel.dataset.pagePanel === 'rules',
+        ) || null;
+        this.ruleList = this.elements.ruleList;
+
+        panel.querySelectorAll('[data-action="close"]').forEach(button => {
+            button.addEventListener('click', () => this.hide());
+        });
+        this.elements.pageButtons.forEach(button => {
+            button.addEventListener('click', () => this.switchPage(button.dataset.variablePage));
+        });
+        this.elements.search?.addEventListener('input', event => {
+            this.term = String(event.target?.value || '');
+            this.elements.clearSearch.hidden = !this.term;
+            this.visibleLimit = VARIABLE_LIST_BATCH_SIZE;
+            this.renderList();
+        });
+        this.elements.clearSearch?.addEventListener('click', () => {
+            this.term = '';
+            this.elements.search.value = '';
+            this.elements.clearSearch.hidden = true;
+            this.visibleLimit = VARIABLE_LIST_BATCH_SIZE;
+            this.renderList();
+            this.elements.search.focus();
+        });
+        this.elements.filter?.addEventListener('change', event => {
+            this.filter = String(event.target?.value || 'all');
+            this.visibleLimit = VARIABLE_LIST_BATCH_SIZE;
+            this.renderList();
+        });
+        this.elements.sort?.addEventListener('change', event => {
+            this.sort = String(event.target?.value || 'name');
+            this.visibleLimit = VARIABLE_LIST_BATCH_SIZE;
+            this.renderList();
+        });
+        this.elements.viewButtons.forEach(button => {
+            button.addEventListener('click', () => this.setViewMode(button.dataset.viewMode));
+        });
+        query('#var-add')?.addEventListener('click', () => this.promptAdd());
+        query('#var-more')?.addEventListener('click', event => this.showMoreMenu(event.currentTarget));
+        this.elements.loadMore?.addEventListener('click', () => this.loadMoreVariables());
+        this.elements.listScroll?.addEventListener('scroll', () => {
+            const scroll = this.elements.listScroll;
+            if (!scroll || scroll.scrollTop + scroll.clientHeight < scroll.scrollHeight - 120) return;
+            this.loadMoreVariables();
+        }, { passive: true });
+        query('[data-action="initialize-variables"]')?.addEventListener('click', () => this.initializeVariables());
+        query('[data-action="reconvert-variables"]')?.addEventListener('click', () => this.reconvertVariables());
+        this.elements.templateSearch?.addEventListener('input', event => {
+            this.templateTerm = String(event.target?.value || '');
+            this.renderTemplatesPage();
+        });
+        query('[data-action="run-rules"]')?.addEventListener('click', () => this.runRules());
+        query('[data-action="add-rule"]')?.addEventListener('click', () => this.showRuleEditor(null));
 
         overlay.appendChild(panel);
         document.body.appendChild(overlay);
-
-        const q = (sel) => panel.querySelector(sel);
-        q('#var-close')?.addEventListener('click', () => this.hide());
-        q('#var-add')?.addEventListener('click', () => this.promptAdd());
-        q('#var-templates')?.addEventListener('click', () => this.showTemplateModal());
-        q('#var-rules')?.addEventListener('click', () => this.showRules());
-        q('#var-more')?.addEventListener('click', (e) => this.showMoreMenu(e.currentTarget));
-
-        const searchEl = q('#var-search');
-        const clearEl = q('#var-clear-search');
-        const updateSearch = (val) => {
-            this.term = String(val || '');
-            const has = this.term.trim().length > 0;
-            if (clearEl) clearEl.style.display = has ? 'block' : 'none';
-            this.renderList();
-        };
-        searchEl?.addEventListener('input', (e) => updateSearch(e.target.value));
-        searchEl?.addEventListener('keydown', (e) => {
-            if (e.key === 'Escape') {
-                e.preventDefault();
-                if (searchEl) searchEl.value = '';
-                updateSearch('');
-            }
-        });
-        clearEl?.addEventListener('click', () => {
-            if (searchEl) searchEl.value = '';
-            updateSearch('');
-            searchEl?.focus?.();
-        });
-
-        const viewListBtn = q('#var-view-list');
-        const viewTreeBtn = q('#var-view-tree');
-        this.viewButtons = { list: viewListBtn, tree: viewTreeBtn };
-        viewListBtn?.addEventListener('click', () => this.setViewMode('list'));
-        viewTreeBtn?.addEventListener('click', () => this.setViewMode('tree'));
-        this.updateViewToggle();
-
+        document.addEventListener('keydown', this.keyboardHandler);
         this.overlay = overlay;
         this.panel = panel;
-    }
-
-    ensureSchemaUI() {
-        if (this.schemaOverlay) return;
-
-        const overlay = document.createElement('div');
-        overlay.className = 'app-themed-overlay variable-panel-overlay variable-schema-overlay';
-        overlay.style.cssText = `
-            display:none; position:fixed; inset:0;
-            background: rgba(0,0,0,0.45);
-            z-index: 22080;
-            padding: calc(12px + env(safe-area-inset-top, 0px)) 12px calc(12px + env(safe-area-inset-bottom, 0px)) 12px;
-            box-sizing: border-box;
-        `;
-        overlay.addEventListener('click', (e) => {
-            if (e.target === overlay) this.hideSchemaModal();
-        });
-
-        const panel = document.createElement('div');
-        panel.className = 'app-themed-panel variable-panel-shell variable-schema-panel';
-        panel.style.cssText = `
-            width: min(94vw, 520px);
-            max-height: 86vh;
-            background: var(--app-surface-card);
-            border-radius: 14px;
-            overflow: hidden;
-            display:flex;
-            flex-direction:column;
-            box-shadow: 0 12px 40px rgba(0,0,0,0.25);
-        `;
-        panel.addEventListener('click', (e) => e.stopPropagation());
-
-        panel.innerHTML = `
-            <div style="display:flex; align-items:center; gap:10px; padding:12px; background:var(--app-surface-subtle); border-bottom:1px solid var(--app-border-default);">
-                <div style="font-weight:900;">变量配置</div>
-                <div id="schema-title" style="margin-left:auto; font-size:12px; color:var(--app-text-muted);"></div>
-                <button id="schema-close" style="border:1px solid var(--app-border-default); background:var(--app-surface-card); border-radius:10px; padding:6px 10px;">关闭</button>
-            </div>
-            <div style="padding:12px; overflow:auto; display:flex; flex-direction:column; gap:10px;">
-                <label style="font-size:12px; color:var(--app-text-muted);">变量名</label>
-                <input id="schema-key" type="text" style="padding:8px 10px; border:1px solid var(--app-border-default); border-radius:10px;">
-
-                <div id="schema-impact" class="variable-panel-scope-badge" style="${SCOPE_BADGE_STYLE}"></div>
-
-                <label style="font-size:12px; color:var(--app-text-muted);">当前值</label>
-                <input id="schema-value" type="text" style="padding:8px 10px; border:1px solid var(--app-border-default); border-radius:10px;">
-
-                <label style="font-size:12px; color:var(--app-text-muted);">类型</label>
-                <select id="schema-type" style="display:none;">
-                    <option value="">（无）</option>
-                    <option value="number">number</option>
-                    <option value="string">string</option>
-                    <option value="boolean">boolean</option>
-                    <option value="enum">enum</option>
-                    <option value="array">array</option>
-                    <option value="object">object</option>
-                </select>
-                <button id="schema-type-btn" type="button" class="world-app-select-btn" style="width:100%;">
-                    <span class="pp-custom-select-label" data-custom-select-label>（无）</span>
-                    <span class="world-app-select-btn-chevron">▾</span>
-                </button>
-
-                <label style="font-size:12px; color:var(--app-text-muted);">默认值</label>
-                <input id="schema-default" type="text" style="padding:8px 10px; border:1px solid var(--app-border-default); border-radius:10px;">
-
-                <div id="schema-range" style="display:none; gap:8px;">
-                    <div style="flex:1;">
-                        <label style="font-size:12px; color:var(--app-text-muted);">最小值</label>
-                        <input id="schema-min" type="number" style="padding:8px 10px; border:1px solid var(--app-border-default); border-radius:10px; width:100%;">
-                    </div>
-                    <div style="flex:1;">
-                        <label style="font-size:12px; color:var(--app-text-muted);">最大值</label>
-                        <input id="schema-max" type="number" style="padding:8px 10px; border:1px solid var(--app-border-default); border-radius:10px; width:100%;">
-                    </div>
-                </div>
-
-                <div id="schema-options" style="display:none;">
-                    <label style="font-size:12px; color:var(--app-text-muted);">枚举选项（逗号分隔）</label>
-                    <input id="schema-options-input" type="text" style="padding:8px 10px; border:1px solid var(--app-border-default); border-radius:10px; width:100%;">
-                </div>
-
-                <label style="font-size:12px; color:var(--app-text-muted);">展示</label>
-                <select id="schema-display" style="display:none;">
-                    <option value="card">card</option>
-                    <option value="badge">badge</option>
-                    <option value="progress">progress</option>
-                    <option value="hidden">hidden</option>
-                </select>
-                <button id="schema-display-btn" type="button" class="world-app-select-btn" style="width:100%;">
-                    <span class="pp-custom-select-label" data-custom-select-label>card</span>
-                    <span class="world-app-select-btn-chevron">▾</span>
-                </button>
-
-                <label style="font-size:12px; color:var(--app-text-muted);">颜色</label>
-                <input id="schema-color" type="text" placeholder="#ff6b6b" style="padding:8px 10px; border:1px solid var(--app-border-default); border-radius:10px;">
-
-                <label style="font-size:12px; color:var(--app-text-muted);">格式（例：{value}/100）</label>
-                <input id="schema-format" type="text" style="padding:8px 10px; border:1px solid var(--app-border-default); border-radius:10px;">
-            </div>
-            <div style="display:flex; gap:8px; padding:12px; border-top:1px solid #eef2f7;">
-                <button id="schema-delete" style="border:1px solid rgba(239,68,68,0.35); background:var(--app-surface-card); color:#b91c1c; border-radius:10px; padding:8px 10px;">删除配置</button>
-                <div style="flex:1;"></div>
-                <button id="schema-cancel" style="border:1px solid var(--app-border-default); background:var(--app-surface-card); border-radius:10px; padding:8px 10px;">取消</button>
-                <button id="schema-save" style="border:none; background:#0ea5e9; color:var(--app-text-inverse); border-radius:10px; padding:8px 12px;">保存</button>
-            </div>
-        `;
-
-        const q = (sel) => panel.querySelector(sel);
-        const fields = {
-            title: q('#schema-title'),
-            key: q('#schema-key'),
-            value: q('#schema-value'),
-            type: q('#schema-type'),
-            typeBtn: q('#schema-type-btn'),
-            def: q('#schema-default'),
-            rangeWrap: q('#schema-range'),
-            min: q('#schema-min'),
-            max: q('#schema-max'),
-            optionsWrap: q('#schema-options'),
-            options: q('#schema-options-input'),
-            display: q('#schema-display'),
-            displayBtn: q('#schema-display-btn'),
-            color: q('#schema-color'),
-            format: q('#schema-format'),
-            save: q('#schema-save'),
-            cancel: q('#schema-cancel'),
-            close: q('#schema-close'),
-            del: q('#schema-delete'),
-        };
-        bindCustomSelectButton({ buttonEl: fields.typeBtn, selectEl: fields.type, fallback: '（无）' });
-        bindCustomSelectButton({ buttonEl: fields.displayBtn, selectEl: fields.display, fallback: 'card' });
-
-        const updateTypeUI = () => {
-            const type = String(fields.type?.value || '').trim();
-            if (fields.rangeWrap) fields.rangeWrap.style.display = type === 'number' ? 'flex' : 'none';
-            if (fields.optionsWrap) fields.optionsWrap.style.display = type === 'enum' ? 'block' : 'none';
-        };
-        fields.type?.addEventListener('change', updateTypeUI);
-        fields.close?.addEventListener('click', () => this.hideSchemaModal());
-        fields.cancel?.addEventListener('click', () => this.hideSchemaModal());
-        fields.save?.addEventListener('click', () => this.saveSchemaModal());
-        fields.del?.addEventListener('click', () => this.deleteSchemaModal());
-
-        overlay.appendChild(panel);
-        document.body.appendChild(overlay);
-
-        this.schemaOverlay = overlay;
-        this.schemaPanel = panel;
-        this.schemaFields = fields;
-    }
-
-    ensureRuleUI() {
-        if (this.ruleOverlay) return;
-
-        const overlay = document.createElement('div');
-        overlay.className = 'app-themed-overlay variable-panel-overlay variable-rules-overlay';
-        overlay.style.cssText = `
-            display:none; position:fixed; inset:0;
-            background: rgba(0,0,0,0.45);
-            z-index: 22090;
-            padding: calc(12px + env(safe-area-inset-top, 0px)) 12px calc(12px + env(safe-area-inset-bottom, 0px)) 12px;
-            box-sizing: border-box;
-        `;
-        overlay.addEventListener('click', (e) => {
-            if (e.target === overlay) this.hideRules();
-        });
-
-        const panel = document.createElement('div');
-        panel.className = 'app-themed-panel variable-panel-shell variable-rules-panel';
-        panel.style.cssText = `
-            width: min(94vw, 560px);
-            max-height: 86vh;
-            background: var(--app-surface-card);
-            border-radius: 14px;
-            overflow: hidden;
-            display:flex;
-            flex-direction:column;
-            box-shadow: 0 12px 40px rgba(0,0,0,0.25);
-        `;
-        panel.addEventListener('click', (e) => e.stopPropagation());
-        panel.innerHTML = `
-            <div style="display:flex; align-items:center; gap:10px; padding:12px; background:var(--app-surface-subtle); border-bottom:1px solid var(--app-border-default);">
-                <div class="has-help" data-help="当前会话规则" style="font-weight:900;">规则管理</div>
-                <button id="rule-close" style="border:1px solid var(--app-border-default); background:var(--app-surface-card); border-radius:10px; padding:6px 10px;">关闭</button>
-            </div>
-            <div style="padding:12px; display:flex; gap:8px; align-items:center; border-bottom:1px solid rgba(0,0,0,0.06);">
-                <button id="rule-add" style="border:1px solid var(--app-border-default); background:var(--app-surface-card); border-radius:10px; padding:8px 10px; font-size:13px;">新增规则</button>
-                <button id="rule-json" style="border:1px solid var(--app-border-default); background:var(--app-surface-card); border-radius:10px; padding:8px 10px; font-size:13px;">JSON</button>
-                <button id="rule-run" style="border:1px solid var(--app-border-default); background:var(--app-surface-card); border-radius:10px; padding:8px 10px; font-size:13px;">运行规则</button>
-            </div>
-            <div id="rule-impact" class="variable-panel-scope-badge" style="margin:12px 12px 0; ${SCOPE_BADGE_STYLE}"></div>
-            <div id="rule-list" style="padding:12px; overflow:auto; flex:1; display:flex; flex-direction:column; gap:10px;"></div>
-        `;
-
-        panel.querySelector('#rule-close')?.addEventListener('click', () => this.hideRules());
-        panel.querySelector('#rule-add')?.addEventListener('click', () => this.openRuleEditor());
-        panel.querySelector('#rule-json')?.addEventListener('click', () => this.promptRulesJson());
-        panel.querySelector('#rule-run')?.addEventListener('click', () => this.runRules());
-
-        overlay.appendChild(panel);
-        document.body.appendChild(overlay);
-        this.ruleOverlay = overlay;
-        this.rulePanel = panel;
-        this.ruleList = panel.querySelector('#rule-list');
-    }
-
-    ensureRuleEditorUI() {
-        if (this.ruleEditorOverlay) return;
-        const overlay = document.createElement('div');
-        overlay.className = 'app-themed-overlay variable-panel-overlay variable-rule-editor-overlay';
-        overlay.style.cssText = `
-            display:none; position:fixed; inset:0;
-            background: rgba(0,0,0,0.52);
-            z-index: 22120;
-            padding: calc(12px + env(safe-area-inset-top, 0px)) 12px calc(12px + env(safe-area-inset-bottom, 0px)) 12px;
-            box-sizing: border-box;
-        `;
-        overlay.addEventListener('click', (e) => {
-            if (e.target === overlay) this.hideRuleEditor();
-        });
-
-        const panel = document.createElement('div');
-        panel.className = 'app-themed-panel variable-panel-shell variable-rule-editor-panel';
-        panel.style.cssText = `
-            width: min(94vw, 560px);
-            max-height: 88vh;
-            background: var(--app-surface-card);
-            border-radius: 14px;
-            overflow: hidden;
-            display:flex;
-            flex-direction:column;
-            box-shadow: 0 12px 40px rgba(0,0,0,0.25);
-        `;
-        panel.addEventListener('click', (e) => e.stopPropagation());
-        panel.innerHTML = `
-            <div style="display:flex; align-items:center; gap:10px; padding:12px; background:var(--app-surface-subtle); border-bottom:1px solid var(--app-border-default);">
-                <div style="font-weight:900;">规则编辑</div>
-                <div id="rule-title" style="margin-left:auto; font-size:12px; color:var(--app-text-muted);"></div>
-                <button id="rule-editor-close" style="border:1px solid var(--app-border-default); background:var(--app-surface-card); border-radius:10px; padding:6px 10px;">关闭</button>
-            </div>
-            <div style="padding:12px; overflow:auto; display:flex; flex-direction:column; gap:10px;">
-                <div id="rule-editor-impact" class="variable-panel-scope-badge" style="${SCOPE_BADGE_STYLE}"></div>
-
-                <label style="font-size:12px; color:var(--app-text-muted);">规则名</label>
-                <input id="rule-name" type="text" style="padding:8px 10px; border:1px solid var(--app-border-default); border-radius:10px;">
-
-                <div style="display:flex; gap:12px; align-items:center;">
-                    <label style="font-size:12px; color:var(--app-text-muted);">
-                        <input id="rule-enabled" type="checkbox" style="margin-right:6px;">启用
-                    </label>
-                    <label style="font-size:12px; color:var(--app-text-muted);">
-                        优先级
-                        <input id="rule-priority" type="number" value="0" style="margin-left:6px; padding:6px 8px; width:90px; border:1px solid var(--app-border-default); border-radius:8px;">
-                    </label>
-                </div>
-
-                <label style="font-size:12px; color:var(--app-text-muted);">触发类型</label>
-                <select id="rule-trigger-type" style="display:none;">
-                    <option value="every_turn">每轮</option>
-                    <option value="every_n_turns">每 N 轮</option>
-                    <option value="keyword">关键词</option>
-                    <option value="condition">条件表达式</option>
-                    <option value="manual">手动</option>
-                </select>
-                <button id="rule-trigger-type-btn" type="button" class="world-app-select-btn" style="width:100%;">
-                    <span class="pp-custom-select-label" data-custom-select-label>每轮</span>
-                    <span class="world-app-select-btn-chevron">▾</span>
-                </button>
-
-                <div id="rule-trigger-n-wrap" style="display:none;">
-                    <label style="font-size:12px; color:var(--app-text-muted);">N（每 N 轮）</label>
-                    <input id="rule-trigger-n" type="number" min="1" value="1" style="padding:8px 10px; border:1px solid var(--app-border-default); border-radius:10px; width:100%;">
-                </div>
-
-                <div id="rule-trigger-keywords-wrap" style="display:none;">
-                    <label style="font-size:12px; color:var(--app-text-muted);">关键词（逗号分隔）</label>
-                    <input id="rule-trigger-keywords" type="text" style="padding:8px 10px; border:1px solid var(--app-border-default); border-radius:10px;">
-                    <label style="font-size:12px; color:var(--app-text-muted); margin-top:6px;">
-                        <input id="rule-trigger-case" type="checkbox" style="margin-right:6px;">区分大小写
-                    </label>
-                </div>
-
-                <div id="rule-trigger-expr-wrap" style="display:none;">
-                    <label style="font-size:12px; color:var(--app-text-muted);">条件表达式（安全子集：变量、括号、逻辑/比较/四则运算）</label>
-                    <textarea id="rule-trigger-expr" rows="2" style="padding:8px 10px; border:1px solid var(--app-border-default); border-radius:10px;"></textarea>
-                    <div id="rule-trigger-expr-status" style="display:none; font-size:12px; line-height:1.4; margin-top:6px;"></div>
-                </div>
-
-                <label style="font-size:12px; color:var(--app-text-muted);">动作类型</label>
-                <select id="rule-action-type" style="display:none;">
-                    <option value="set_value">设置数值</option>
-                    <option value="increment">递增</option>
-                    <option value="decrement">递减</option>
-                    <option value="toggle">切换布尔</option>
-                    <option value="push">数组追加</option>
-                    <option value="remove">数组移除</option>
-                    <option value="ai_evaluate">AI 评估</option>
-                    <option value="notify">通知提示</option>
-                    <option value="switch_persona">切换角色卡</option>
-                    <option value="inject_prompt">注入提示词</option>
-                </select>
-                <button id="rule-action-type-btn" type="button" class="world-app-select-btn" style="width:100%;">
-                    <span class="pp-custom-select-label" data-custom-select-label>设置数值</span>
-                    <span class="world-app-select-btn-chevron">▾</span>
-                </button>
-
-                <label style="font-size:12px; color:var(--app-text-muted);">目标变量</label>
-                <input id="rule-action-target" list="rule-target-list" type="text" style="padding:8px 10px; border:1px solid var(--app-border-default); border-radius:10px;">
-                <datalist id="rule-target-list"></datalist>
-
-                <div id="rule-action-value-wrap">
-                    <label id="rule-action-value-label" style="font-size:12px; color:var(--app-text-muted);">设置值</label>
-                    <input id="rule-action-value" type="text" style="padding:8px 10px; border:1px solid var(--app-border-default); border-radius:10px;">
-                </div>
-
-                <div id="rule-action-delta-wrap" style="display:none;">
-                    <label style="font-size:12px; color:var(--app-text-muted);">增量</label>
-                    <input id="rule-action-delta" type="number" value="1" style="padding:8px 10px; border:1px solid var(--app-border-default); border-radius:10px;">
-                </div>
-
-                <div id="rule-action-ai-wrap" style="display:none;">
-                    <label style="font-size:12px; color:var(--app-text-muted);">AI 评估提示词</label>
-                    <textarea id="rule-action-prompt" rows="4" style="padding:8px 10px; border:1px solid var(--app-border-default); border-radius:10px;"></textarea>
-                    <label style="font-size:12px; color:var(--app-text-muted);">应用方式</label>
-                    <select id="rule-action-mode" style="display:none;">
-                        <option value="delta">增量</option>
-                        <option value="set">直接赋值</option>
-                    </select>
-                    <button id="rule-action-mode-btn" type="button" class="world-app-select-btn" style="width:100%;">
-                        <span class="pp-custom-select-label" data-custom-select-label>增量</span>
-                        <span class="world-app-select-btn-chevron">▾</span>
-                    </button>
-                </div>
-
-                <div id="rule-action-message-wrap" style="display:none;">
-                    <label style="font-size:12px; color:var(--app-text-muted);">通知内容</label>
-                    <input id="rule-action-message" type="text" style="padding:8px 10px; border:1px solid var(--app-border-default); border-radius:10px;">
-                    <label style="font-size:12px; color:var(--app-text-muted);">通知级别</label>
-                    <select id="rule-action-message-style" style="display:none;">
-                        <option value="info">info</option>
-                        <option value="success">success</option>
-                        <option value="warning">warning</option>
-                        <option value="error">error</option>
-                    </select>
-                    <button id="rule-action-message-style-btn" type="button" class="world-app-select-btn" style="width:100%;">
-                        <span class="pp-custom-select-label" data-custom-select-label>info</span>
-                        <span class="world-app-select-btn-chevron">▾</span>
-                    </button>
-                </div>
-
-                <div id="rule-action-persona-wrap" style="display:none;">
-                    <label style="font-size:12px; color:var(--app-text-muted);">角色卡 ID / 名称</label>
-                    <input id="rule-action-persona" type="text" style="padding:8px 10px; border:1px solid var(--app-border-default); border-radius:10px;">
-                </div>
-
-                <div id="rule-action-inject-wrap" style="display:none;">
-                    <label style="font-size:12px; color:var(--app-text-muted);">注入提示词</label>
-                    <textarea id="rule-action-inject" rows="4" style="padding:8px 10px; border:1px solid var(--app-border-default); border-radius:10px;"></textarea>
-                    <label style="font-size:12px; color:var(--app-text-muted);">注入角色</label>
-                    <select id="rule-action-inject-role" style="display:none;">
-                        <option value="system">system</option>
-                        <option value="user">user</option>
-                        <option value="assistant">assistant</option>
-                    </select>
-	                    <button id="rule-action-inject-role-btn" type="button" class="world-app-select-btn" style="width:100%;">
-	                        <span class="pp-custom-select-label" data-custom-select-label>system</span>
-	                        <span class="world-app-select-btn-chevron">▾</span>
-	                    </button>
-	                    <label style="font-size:12px; color:var(--app-text-muted);">注入位置</label>
-	                    <select id="rule-action-inject-position" style="display:none;">
-	                        <option value="before_latest_user">最新输入前</option>
-	                        <option value="after_latest_user">最新输入后</option>
-	                        <option value="history_depth">History 内（按深度）</option>
-	                        <option value="before_chat">对话前</option>
-	                        <option value="history_before">History 前</option>
-	                        <option value="history_after">History 后</option>
-	                        <option value="system_end">系统提示末尾</option>
-	                        <option value="after_persona">角色设定后</option>
-	                    </select>
-	                    <button id="rule-action-inject-position-btn" type="button" class="world-app-select-btn" style="width:100%;">
-	                        <span class="pp-custom-select-label" data-custom-select-label>最新输入前</span>
-	                        <span class="world-app-select-btn-chevron">▾</span>
-	                    </button>
-	                    <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px;">
-	                        <div style="display:flex; flex-direction:column; gap:4px;">
-	                            <label style="font-size:12px; color:var(--app-text-muted);">深度</label>
-	                            <input id="rule-action-inject-depth" type="number" min="0" value="0" style="padding:8px 10px; border:1px solid var(--app-border-default); border-radius:10px;">
-	                        </div>
-	                        <div style="display:flex; flex-direction:column; gap:4px;">
-	                            <label style="font-size:12px; color:var(--app-text-muted);">顺序 / Order</label>
-	                            <input id="rule-action-inject-order" type="number" value="3500" style="padding:8px 10px; border:1px solid var(--app-border-default); border-radius:10px;">
-	                        </div>
-	                    </div>
-	                </div>
-            </div>
-            <div style="display:flex; gap:8px; padding:12px; border-top:1px solid #eef2f7;">
-                <button id="rule-delete" style="border:1px solid rgba(239,68,68,0.35); background:var(--app-surface-card); color:#b91c1c; border-radius:10px; padding:8px 10px;">删除</button>
-                <div style="flex:1;"></div>
-                <button id="rule-cancel" style="border:1px solid var(--app-border-default); background:var(--app-surface-card); border-radius:10px; padding:8px 10px;">取消</button>
-                <button id="rule-save" style="border:none; background:#0ea5e9; color:var(--app-text-inverse); border-radius:10px; padding:8px 12px;">保存</button>
-            </div>
-        `;
-
-        const q = (sel) => panel.querySelector(sel);
-        const fields = {
-            title: q('#rule-title'),
-            name: q('#rule-name'),
-            enabled: q('#rule-enabled'),
-            priority: q('#rule-priority'),
-            triggerType: q('#rule-trigger-type'),
-            triggerTypeBtn: q('#rule-trigger-type-btn'),
-            triggerNWrap: q('#rule-trigger-n-wrap'),
-            triggerN: q('#rule-trigger-n'),
-            triggerKeywordsWrap: q('#rule-trigger-keywords-wrap'),
-            triggerKeywords: q('#rule-trigger-keywords'),
-            triggerCase: q('#rule-trigger-case'),
-            triggerExprWrap: q('#rule-trigger-expr-wrap'),
-            triggerExpr: q('#rule-trigger-expr'),
-            triggerExprStatus: q('#rule-trigger-expr-status'),
-            actionType: q('#rule-action-type'),
-            actionTypeBtn: q('#rule-action-type-btn'),
-            actionTarget: q('#rule-action-target'),
-            actionValueWrap: q('#rule-action-value-wrap'),
-            actionValueLabel: q('#rule-action-value-label'),
-            actionValue: q('#rule-action-value'),
-            actionDeltaWrap: q('#rule-action-delta-wrap'),
-            actionDelta: q('#rule-action-delta'),
-            actionAiWrap: q('#rule-action-ai-wrap'),
-            actionPrompt: q('#rule-action-prompt'),
-            actionMode: q('#rule-action-mode'),
-            actionModeBtn: q('#rule-action-mode-btn'),
-            actionMessageWrap: q('#rule-action-message-wrap'),
-            actionMessage: q('#rule-action-message'),
-            actionMessageStyle: q('#rule-action-message-style'),
-            actionMessageStyleBtn: q('#rule-action-message-style-btn'),
-            actionPersonaWrap: q('#rule-action-persona-wrap'),
-            actionPersona: q('#rule-action-persona'),
-            actionInjectWrap: q('#rule-action-inject-wrap'),
-	            actionInject: q('#rule-action-inject'),
-	            actionInjectRole: q('#rule-action-inject-role'),
-	            actionInjectRoleBtn: q('#rule-action-inject-role-btn'),
-	            actionInjectPosition: q('#rule-action-inject-position'),
-	            actionInjectPositionBtn: q('#rule-action-inject-position-btn'),
-	            actionInjectDepth: q('#rule-action-inject-depth'),
-	            actionInjectOrder: q('#rule-action-inject-order'),
-	            targetList: q('#rule-target-list'),
-            save: q('#rule-save'),
-            cancel: q('#rule-cancel'),
-            close: q('#rule-editor-close'),
-            del: q('#rule-delete'),
-        };
-        bindCustomSelectButton({ buttonEl: fields.triggerTypeBtn, selectEl: fields.triggerType, fallback: '每轮' });
-        bindCustomSelectButton({ buttonEl: fields.actionTypeBtn, selectEl: fields.actionType, fallback: '设置数值' });
-        bindCustomSelectButton({ buttonEl: fields.actionModeBtn, selectEl: fields.actionMode, fallback: '增量' });
-	        bindCustomSelectButton({ buttonEl: fields.actionMessageStyleBtn, selectEl: fields.actionMessageStyle, fallback: 'info' });
-	        bindCustomSelectButton({ buttonEl: fields.actionInjectRoleBtn, selectEl: fields.actionInjectRole, fallback: 'system' });
-	        bindCustomSelectButton({ buttonEl: fields.actionInjectPositionBtn, selectEl: fields.actionInjectPosition, fallback: '最新输入前' });
-
-        const updateTriggerUI = () => {
-            const type = String(fields.triggerType?.value || '');
-            if (fields.triggerNWrap) fields.triggerNWrap.style.display = type === 'every_n_turns' ? 'block' : 'none';
-            if (fields.triggerKeywordsWrap) fields.triggerKeywordsWrap.style.display = type === 'keyword' ? 'block' : 'none';
-            if (fields.triggerExprWrap) fields.triggerExprWrap.style.display = type === 'condition' ? 'block' : 'none';
-            this.updateRuleTriggerExprFeedback();
-        };
-        const updateActionUI = () => {
-            const type = String(fields.actionType?.value || '');
-            const needsTarget = !['notify', 'switch_persona', 'inject_prompt'].includes(type);
-            if (fields.actionTarget) {
-                fields.actionTarget.disabled = !needsTarget;
-                fields.actionTarget.style.opacity = needsTarget ? '1' : '0.6';
-            }
-            const needsValue = type === 'set_value' || type === 'push' || type === 'remove';
-            if (fields.actionValueWrap) fields.actionValueWrap.style.display = needsValue ? 'block' : 'none';
-            if (fields.actionValueLabel) {
-                if (type === 'push') fields.actionValueLabel.textContent = '追加值';
-                else if (type === 'remove') fields.actionValueLabel.textContent = '移除值';
-                else fields.actionValueLabel.textContent = '设置值';
-            }
-            if (fields.actionDeltaWrap) fields.actionDeltaWrap.style.display = (type === 'increment' || type === 'decrement') ? 'block' : 'none';
-            if (fields.actionAiWrap) fields.actionAiWrap.style.display = type === 'ai_evaluate' ? 'block' : 'none';
-            if (fields.actionMessageWrap) fields.actionMessageWrap.style.display = type === 'notify' ? 'block' : 'none';
-            if (fields.actionPersonaWrap) fields.actionPersonaWrap.style.display = type === 'switch_persona' ? 'block' : 'none';
-            if (fields.actionInjectWrap) fields.actionInjectWrap.style.display = type === 'inject_prompt' ? 'block' : 'none';
-        };
-        fields.triggerType?.addEventListener('change', updateTriggerUI);
-        fields.triggerExpr?.addEventListener('input', () => this.updateRuleTriggerExprFeedback());
-        fields.triggerExpr?.addEventListener('blur', () => this.updateRuleTriggerExprFeedback());
-        fields.actionType?.addEventListener('change', updateActionUI);
-        fields.close?.addEventListener('click', () => this.hideRuleEditor());
-        fields.cancel?.addEventListener('click', () => this.hideRuleEditor());
-        fields.save?.addEventListener('click', () => this.saveRuleEditor());
-        fields.del?.addEventListener('click', () => this.deleteRuleEditor());
-
-        overlay.appendChild(panel);
-        document.body.appendChild(overlay);
-        this.ruleEditorOverlay = overlay;
-        this.ruleEditorPanel = panel;
-        this.ruleFields = fields;
-    }
-
-    ensureTemplateUI() {
-        if (this.templateOverlay) return;
-        const overlay = document.createElement('div');
-        overlay.className = 'app-themed-overlay variable-panel-overlay variable-template-overlay';
-        overlay.style.cssText = `
-            display:none; position:fixed; inset:0;
-            background: rgba(0,0,0,0.45);
-            z-index: 22140;
-            padding: calc(12px + env(safe-area-inset-top, 0px)) 12px calc(12px + env(safe-area-inset-bottom, 0px)) 12px;
-            box-sizing: border-box;
-        `;
-        overlay.addEventListener('click', (e) => {
-            if (e.target === overlay) this.hideTemplateModal();
-        });
-
-        const panel = document.createElement('div');
-        panel.className = 'app-themed-panel variable-panel-shell variable-template-panel';
-        panel.style.cssText = `
-            width: min(92vw, 520px);
-            max-height: 86vh;
-            background: var(--app-surface-card);
-            border-radius: 14px;
-            overflow: hidden;
-            display:flex;
-            flex-direction:column;
-            box-shadow: 0 12px 40px rgba(0,0,0,0.25);
-        `;
-        panel.addEventListener('click', (e) => e.stopPropagation());
-        panel.innerHTML = `
-            <div style="display:flex; align-items:center; gap:10px; padding:12px; background:var(--app-surface-subtle); border-bottom:1px solid var(--app-border-default);">
-                <div class="has-help" data-help="一键创建常用变量" style="font-weight:900;">变量模板</div>
-                <button id="tpl-close" style="border:1px solid var(--app-border-default); background:var(--app-surface-card); border-radius:10px; padding:6px 10px;">关闭</button>
-            </div>
-            <div id="tpl-list" style="padding:12px; overflow:auto; display:flex; flex-direction:column; gap:10px;"></div>
-            <div id="tpl-impact" class="variable-panel-scope-badge" style="margin:0 12px 12px; ${SCOPE_BADGE_STYLE}"></div>
-        `;
-        panel.querySelector('#tpl-close')?.addEventListener('click', () => this.hideTemplateModal());
-
-        overlay.appendChild(panel);
-        document.body.appendChild(overlay);
-        this.templateOverlay = overlay;
-        this.templatePanel = panel;
-    }
-
-    ensureDataUI() {
-        if (this.dataOverlay) return;
-        const overlay = document.createElement('div');
-        overlay.className = 'app-themed-overlay variable-panel-overlay variable-data-overlay';
-        overlay.style.cssText = `
-            display:none; position:fixed; inset:0;
-            background: rgba(0,0,0,0.45);
-            z-index: 22160;
-            padding: calc(12px + env(safe-area-inset-top, 0px)) 12px calc(12px + env(safe-area-inset-bottom, 0px)) 12px;
-            box-sizing: border-box;
-        `;
-        overlay.addEventListener('click', (e) => {
-            if (e.target === overlay) this.hideDataModal();
-        });
-
-        const panel = document.createElement('div');
-        panel.className = 'app-themed-panel variable-panel-shell variable-data-panel';
-        panel.style.cssText = `
-            width: min(94vw, 620px);
-            max-height: 88vh;
-            background: var(--app-surface-card);
-            border-radius: 14px;
-            overflow: hidden;
-            display:flex;
-            flex-direction:column;
-            box-shadow: 0 12px 40px rgba(0,0,0,0.25);
-        `;
-        panel.addEventListener('click', (e) => e.stopPropagation());
-        panel.innerHTML = `
-            <div style="display:flex; align-items:center; gap:10px; padding:12px; background:var(--app-surface-subtle); border-bottom:1px solid var(--app-border-default);">
-                <div id="data-title" style="font-weight:900;">导入/导出</div>
-                <div style="margin-left:auto;"></div>
-                <button id="data-close" style="border:1px solid var(--app-border-default); background:var(--app-surface-card); border-radius:10px; padding:6px 10px;">关闭</button>
-            </div>
-            <div style="padding:12px; flex:1; display:flex; flex-direction:column; gap:10px;">
-                <div id="data-impact" class="variable-panel-scope-badge" style="${SCOPE_BADGE_STYLE}"></div>
-                <textarea id="data-text" rows="12" style="flex:1; min-height:200px; padding:10px; border:1px solid var(--app-border-default); border-radius:12px; font-size:12px; line-height:1.5;"></textarea>
-            </div>
-            <div style="display:flex; gap:8px; padding:12px; border-top:1px solid #eef2f7;">
-                <button id="data-copy" style="border:1px solid var(--app-border-default); background:var(--app-surface-card); border-radius:10px; padding:8px 10px;">复制</button>
-                <div style="flex:1;"></div>
-                <button id="data-merge" style="border:1px solid #0ea5e9; background:var(--app-surface-card); color:#0284c7; border-radius:10px; padding:8px 10px;">合并导入</button>
-                <button id="data-overwrite" style="border:none; background:#0ea5e9; color:var(--app-text-inverse); border-radius:10px; padding:8px 12px;">覆盖导入</button>
-            </div>
-        `;
-
-        const copyBtn = panel.querySelector('#data-copy');
-        const mergeBtn = panel.querySelector('#data-merge');
-        const overwriteBtn = panel.querySelector('#data-overwrite');
-        panel.querySelector('#data-close')?.addEventListener('click', () => this.hideDataModal());
-        copyBtn?.addEventListener('click', () => this.copyDataModal());
-        mergeBtn?.addEventListener('click', () => this.applyImportModal(true));
-        overwriteBtn?.addEventListener('click', () => this.applyImportModal(false));
-
-        overlay.appendChild(panel);
-        document.body.appendChild(overlay);
-        this.dataOverlay = overlay;
-        this.dataPanel = panel;
-        this.dataTextarea = panel.querySelector('#data-text');
-        this.dataCopyBtn = copyBtn;
-        this.dataMergeBtn = mergeBtn;
-        this.dataOverwriteBtn = overwriteBtn;
+        this.updateViewToggle({ animate: false });
     }
 
     show() {
         this.ensureUI();
-        const { sid, scope } = this.getVars();
-        const meta = this.panel?.querySelector?.('#var-meta');
-        if (meta) meta.textContent = scope === 'global' ? '全局变量（共享）' : (sid ? `会话：${sid}` : '未选择会话');
-        this.setImpactText('#var-impact', 'manage', this.panel);
+        const { sid, scope } = this.resolveScope();
         this.term = '';
-        const searchEl = this.panel?.querySelector?.('#var-search');
-        if (searchEl) searchEl.value = '';
-        this.renderList();
-        this.overlay.style.display = 'block';
+        this.templateTerm = '';
+        this.visibleLimit = VARIABLE_LIST_BATCH_SIZE;
+        if (this.elements?.search) this.elements.search.value = '';
+        if (this.elements?.templateSearch) this.elements.templateSearch.value = '';
+        if (this.elements?.clearSearch) this.elements.clearSearch.hidden = true;
+        if (this.elements?.meta) {
+            this.elements.meta.textContent = formatVariableScopeLabel({ scope, sessionId: sid });
+        }
+        this.setImpactText('#var-impact', 'manage', this.panel);
+        this.switchPage('variables', { force: true });
+        const visibilityRevision = ++this.visibilityRevision;
+        this.overlay.style.display = '';
+        requestAnimationFrame(() => {
+            if (
+                this.visibilityRevision !== visibilityRevision
+                || this.overlay?.style?.display === 'none'
+            ) return;
+            this.overlay.classList.add('is-open');
+            this.updateViewToggle({ animate: false });
+        });
     }
 
     hide() {
-        closeCustomSelectMenu();
-        if (this.overlay) this.overlay.style.display = 'none';
-        this.closeMoreMenu();
-    }
-
-    setImpactText(selector, action = 'manage', root = this.panel) {
-        const el = root?.querySelector?.(selector);
-        if (!el) return;
-        const { sid, scope } = this.getVars();
-        const impactText = buildVariableScopeImpactText({ scope, sessionId: sid, action });
-        el.textContent = `作用域：${formatVariableScopeLabel({ scope, sessionId: sid })}`;
-        el.title = impactText;
-        el.setAttribute('aria-label', impactText);
-    }
-
-    closeMoreMenu() {
-        const existing = document.querySelector('.var-more-menu');
-        if (existing) existing.remove();
-        if (this.moreMenuCloseHandler) {
-            document.removeEventListener('pointerdown', this.moreMenuCloseHandler, true);
-            this.moreMenuCloseHandler = null;
-        }
-    }
-
-    showRules() {
-        const { sid, scope } = this.getVars();
-        if (!sid) {
-            window.toastr?.warning?.('请先进入聊天室');
-            return;
-        }
-        if (scope === 'global') {
-            window.toastr?.info?.('全局变量暂不支持规则');
-            return;
-        }
-        this.ensureRuleUI();
-        this.setImpactText('#rule-impact', 'rules', this.rulePanel);
-        this.renderRuleList();
-        if (this.ruleOverlay) this.ruleOverlay.style.display = 'block';
-    }
-
-    hideRules() {
-        closeCustomSelectMenu();
-        if (this.ruleOverlay) this.ruleOverlay.style.display = 'none';
-    }
-
-    showRuleEditor(rule) {
-        this.ensureRuleEditorUI();
-        const fields = this.ruleFields;
-        if (!fields) return;
-        this.setImpactText('#rule-editor-impact', 'rules', this.ruleEditorPanel);
-        const normalized = this.normalizeRule(rule);
-        this.editingRuleId = normalized.id;
-        if (fields.title) fields.title.textContent = normalized.name || normalized.id || '新规则';
-        if (fields.name) fields.name.value = normalized.name || '';
-        if (fields.enabled) fields.enabled.checked = normalized.enabled !== false;
-        if (fields.priority) fields.priority.value = Number(normalized.priority || 0);
-        if (fields.triggerType) fields.triggerType.value = normalized.trigger.type || 'every_turn';
-        refreshCustomSelectButton(fields.triggerTypeBtn, fields.triggerType, '每轮');
-        if (fields.triggerN) fields.triggerN.value = normalized.trigger.n || 1;
-        if (fields.triggerKeywords) fields.triggerKeywords.value = (normalized.trigger.keywords || []).join(', ');
-        if (fields.triggerCase) fields.triggerCase.checked = Boolean(normalized.trigger.caseSensitive);
-        if (fields.triggerExpr) fields.triggerExpr.value = normalized.trigger.expr || '';
-        if (fields.actionType) fields.actionType.value = normalized.action.type || 'set_value';
-        refreshCustomSelectButton(fields.actionTypeBtn, fields.actionType, '设置数值');
-        if (fields.actionTarget) fields.actionTarget.value = normalized.action.target || '';
-        if (fields.actionValue) fields.actionValue.value =
-            normalized.action.value === undefined || normalized.action.value === null
-                ? ''
-                : (typeof normalized.action.value === 'object' ? JSON.stringify(normalized.action.value) : String(normalized.action.value));
-        if (fields.actionDelta) fields.actionDelta.value = Number.isFinite(Number(normalized.action.value)) ? Number(normalized.action.value) : 1;
-        if (fields.actionPrompt) fields.actionPrompt.value = normalized.action.prompt || '';
-        if (fields.actionMode) fields.actionMode.value = normalized.action.mode || 'delta';
-        refreshCustomSelectButton(fields.actionModeBtn, fields.actionMode, '增量');
-        if (fields.actionMessage) fields.actionMessage.value = normalized.action.message || '';
-        if (fields.actionMessageStyle) fields.actionMessageStyle.value = normalized.action.style || 'info';
-        refreshCustomSelectButton(fields.actionMessageStyleBtn, fields.actionMessageStyle, 'info');
-        if (fields.actionPersona) fields.actionPersona.value = normalized.action.persona || '';
-	        if (fields.actionInject) fields.actionInject.value = normalized.action.prompt || '';
-	        if (fields.actionInjectRole) fields.actionInjectRole.value = normalized.action.role || 'system';
-	        refreshCustomSelectButton(fields.actionInjectRoleBtn, fields.actionInjectRole, 'system');
-	        if (fields.actionInjectPosition) fields.actionInjectPosition.value = normalized.action.position || 'before_latest_user';
-	        refreshCustomSelectButton(fields.actionInjectPositionBtn, fields.actionInjectPosition, '最新输入前');
-	        if (fields.actionInjectDepth) fields.actionInjectDepth.value = Number.isFinite(Number(normalized.action.depth)) ? Math.max(0, Math.trunc(Number(normalized.action.depth))) : 0;
-	        if (fields.actionInjectOrder) fields.actionInjectOrder.value = Number.isFinite(Number(normalized.action.order)) ? Number(normalized.action.order) : 3500;
-
-        const { vars } = this.getVars();
-        if (fields.targetList) {
-            fields.targetList.innerHTML = '';
-            Object.keys(vars || {}).forEach((name) => {
-                const opt = document.createElement('option');
-                opt.value = name;
-                fields.targetList.appendChild(opt);
-            });
-        }
-
-        fields.triggerType?.dispatchEvent(new Event('change'));
-        fields.actionType?.dispatchEvent(new Event('change'));
-        this.updateRuleTriggerExprFeedback();
-        if (this.ruleEditorOverlay) this.ruleEditorOverlay.style.display = 'block';
-    }
-
-    hideRuleEditor() {
-        closeCustomSelectMenu();
-        if (this.ruleEditorOverlay) this.ruleEditorOverlay.style.display = 'none';
-        this.editingRuleId = '';
-    }
-
-    validateRuleTriggerExpr(rawInput = null) {
-        const expr = rawInput === null
-            ? String(this.ruleFields?.triggerExpr?.value || '').trim()
-            : String(rawInput || '').trim();
-        if (!expr) return { ok: false, error: '条件表达式不能为空' };
-        const result = validateExpressionSyntax(expr);
-        if (result.ok) return { ok: true, error: '' };
-        return {
-            ok: false,
-            error: result.error || '表达式语法无效',
-        };
-    }
-
-    updateRuleTriggerExprFeedback() {
-        const fields = this.ruleFields;
-        if (!fields?.triggerExpr || !fields?.triggerExprStatus) return { ok: true, error: '' };
-        const isCondition = String(fields.triggerType?.value || '') === 'condition';
-        if (!isCondition) {
-            fields.triggerExpr.style.borderColor = 'var(--app-border-default)';
-            fields.triggerExprStatus.style.display = 'none';
-            fields.triggerExprStatus.textContent = '';
-            return { ok: true, error: '' };
-        }
-        const expr = String(fields.triggerExpr.value || '').trim();
-        if (!expr) {
-            fields.triggerExpr.style.borderColor = '#f59e0b';
-            fields.triggerExprStatus.style.display = 'block';
-            fields.triggerExprStatus.style.color = '#b45309';
-            fields.triggerExprStatus.textContent = '请输入条件表达式';
-            return { ok: false, error: '条件表达式不能为空' };
-        }
-        const result = this.validateRuleTriggerExpr(expr);
-        if (result.ok) {
-            fields.triggerExpr.style.borderColor = '#10b981';
-            fields.triggerExprStatus.style.display = 'block';
-            fields.triggerExprStatus.style.color = '#047857';
-            fields.triggerExprStatus.textContent = '语法通过';
-            return result;
-        }
-        fields.triggerExpr.style.borderColor = '#ef4444';
-        fields.triggerExprStatus.style.display = 'block';
-        fields.triggerExprStatus.style.color = '#b91c1c';
-        fields.triggerExprStatus.textContent = formatUnsupportedExpressionMessage(result.error);
-        return result;
-    }
-
-    saveRuleEditor() {
-        const fields = this.ruleFields;
-        if (!fields) return;
-        const { sid } = this.getVars();
-        if (!sid) {
-            window.toastr?.warning?.('请先进入聊天室');
-            return;
-        }
-        const rules = this.getRules().rules;
-        const id = this.editingRuleId || `vr_${Date.now()}_${Math.random().toString(16).slice(2, 8)}`;
-        const name = String(fields.name?.value || '').trim();
-        const enabled = fields.enabled?.checked !== false;
-        const priority = Number(fields.priority?.value || 0) || 0;
-        const triggerType = String(fields.triggerType?.value || 'every_turn');
-        const trigger = { type: triggerType };
-        if (triggerType === 'every_n_turns') {
-            const n = Number(fields.triggerN?.value || 0);
-            trigger.n = Number.isFinite(n) && n > 0 ? Math.trunc(n) : 1;
-        }
-        if (triggerType === 'keyword') {
-            const keywords = String(fields.triggerKeywords?.value || '').split(',').map(s => s.trim()).filter(Boolean);
-            trigger.keywords = keywords;
-            trigger.caseSensitive = Boolean(fields.triggerCase?.checked);
-        }
-        if (triggerType === 'condition') {
-            const expr = String(fields.triggerExpr?.value || '').trim();
-            const validation = this.validateRuleTriggerExpr(expr);
-            this.updateRuleTriggerExprFeedback();
-            if (!validation.ok) {
-                window.toastr?.warning?.('当前不支持这类条件语法，请按下方提示改写');
-                return;
-            }
-            trigger.expr = expr;
-        }
-        const actionType = String(fields.actionType?.value || 'set_value');
-        const action = { type: actionType };
-        const needsTarget = !['notify', 'switch_persona', 'inject_prompt'].includes(actionType);
-        action.target = String(fields.actionTarget?.value || '').trim();
-        if (needsTarget && !action.target) {
-            window.toastr?.warning?.('目标变量不能为空');
-            return;
-        }
-        if (actionType === 'set_value' || actionType === 'push' || actionType === 'remove') {
-            action.value = this.parseValue(fields.actionValue?.value || '');
-        } else if (actionType === 'increment' || actionType === 'decrement') {
-            const delta = Number(fields.actionDelta?.value || 0);
-            action.value = Number.isFinite(delta) ? delta : 1;
-        } else if (actionType === 'ai_evaluate') {
-            action.prompt = String(fields.actionPrompt?.value || '').trim();
-            action.mode = String(fields.actionMode?.value || 'delta');
-        } else if (actionType === 'notify') {
-            action.message = String(fields.actionMessage?.value || '').trim();
-            action.style = String(fields.actionMessageStyle?.value || 'info');
-        } else if (actionType === 'switch_persona') {
-            action.persona = String(fields.actionPersona?.value || '').trim();
-	        } else if (actionType === 'inject_prompt') {
-	            action.prompt = String(fields.actionInject?.value || '').trim();
-	            action.role = String(fields.actionInjectRole?.value || 'system');
-	            action.position = String(fields.actionInjectPosition?.value || 'before_latest_user');
-	            const depth = Math.trunc(Number(fields.actionInjectDepth?.value));
-	            action.depth = Number.isFinite(depth) ? Math.max(0, depth) : 0;
-	            const order = Number(fields.actionInjectOrder?.value);
-	            action.order = Number.isFinite(order) ? order : 3500;
-	        }
-
-        const next = { id, name, enabled, priority, trigger, action };
-        const idx = rules.findIndex(r => String(r?.id || '') === id);
-        if (idx >= 0) rules[idx] = next;
-        else rules.push(next);
-        this.setRules(rules);
-        this.renderRuleList();
+        this.visibilityRevision += 1;
+        this.schemaEditor.hide();
         this.hideRuleEditor();
-        window.toastr?.success?.('规则已保存');
-    }
-
-    deleteRuleEditor() {
-        if (!this.editingRuleId) return;
-        this.deleteRuleById(this.editingRuleId);
-        this.hideRuleEditor();
-    }
-
-    showTemplateModal() {
-        const { sid, scope } = this.getVars();
-        if (!sid) {
-            window.toastr?.warning?.('请先进入聊天室');
-            return;
-        }
-        if (scope === 'global') {
-            window.toastr?.info?.('全局变量暂不支持模板');
-            return;
-        }
-        this.ensureTemplateUI();
-        this.setImpactText('#tpl-impact', 'templates', this.templatePanel);
-        this.renderTemplateList();
-        if (this.templateOverlay) this.templateOverlay.style.display = 'block';
-    }
-
-    hideTemplateModal() {
-        if (this.templateOverlay) this.templateOverlay.style.display = 'none';
-    }
-
-    showExportModal() {
-        const { sid, vars } = this.getVars();
-        if (!sid) {
-            window.toastr?.warning?.('请先进入聊天室');
-            return;
-        }
-        const schemas = this.listSchemas();
-        const rules = this.listRules();
-        const payload = {
-            version: 1,
-            sessionId: sid,
-            variables: vars || {},
-            schemas: schemas || {},
-            rules: Array.isArray(rules) ? rules : [],
-        };
-        this.ensureDataUI();
-        this.setImpactText('#data-impact', 'export', this.dataPanel);
-        if (this.dataPanel) {
-            const title = this.dataPanel.querySelector('#data-title');
-            if (title) title.textContent = '导出变量与规则';
-        }
-        if (this.dataTextarea) {
-            this.dataTextarea.value = JSON.stringify(payload, null, 2);
-            this.dataTextarea.readOnly = true;
-        }
-        if (this.dataMergeBtn) this.dataMergeBtn.style.display = 'none';
-        if (this.dataOverwriteBtn) this.dataOverwriteBtn.style.display = 'none';
-        if (this.dataCopyBtn) this.dataCopyBtn.style.display = 'inline-flex';
-        if (this.dataOverlay) this.dataOverlay.style.display = 'block';
-    }
-
-    showImportModal() {
-        const { sid } = this.getVars();
-        if (!sid) {
-            window.toastr?.warning?.('请先进入聊天室');
-            return;
-        }
-        this.ensureDataUI();
-        this.setImpactText('#data-impact', 'import', this.dataPanel);
-        if (this.dataPanel) {
-            const title = this.dataPanel.querySelector('#data-title');
-            if (title) title.textContent = '导入变量与规则';
-        }
-        if (this.dataTextarea) {
-            this.dataTextarea.value = '';
-            this.dataTextarea.readOnly = false;
-        }
-        if (this.dataMergeBtn) this.dataMergeBtn.style.display = 'inline-flex';
-        if (this.dataOverwriteBtn) this.dataOverwriteBtn.style.display = 'inline-flex';
-        if (this.dataCopyBtn) this.dataCopyBtn.style.display = 'inline-flex';
-        if (this.dataOverlay) this.dataOverlay.style.display = 'block';
-    }
-
-    hideDataModal() {
-        if (this.dataOverlay) this.dataOverlay.style.display = 'none';
-    }
-
-    async copyDataModal() {
-        if (!this.dataTextarea) return;
-        const text = String(this.dataTextarea.value || '');
-        if (!text) return;
-        try {
-            await navigator.clipboard?.writeText?.(text);
-            window.toastr?.success?.('已复制');
-        } catch {
-            window.toastr?.warning?.('复制失败');
-        }
-    }
-
-    async applyImportModal(merge = false) {
-        const { sid, scope } = this.getVars();
-        if (!sid || !this.dataTextarea) return;
-        const raw = String(this.dataTextarea.value || '').trim();
-        if (!raw) {
-            window.toastr?.warning?.('请输入 JSON');
-            return;
-        }
-        let parsed = null;
-        try {
-            parsed = JSON.parse(raw);
-        } catch (err) {
-            window.toastr?.error?.(`JSON 解析失败：${err?.message || err}`);
-            return;
-        }
-        const data = parsed && typeof parsed === 'object' ? parsed : {};
-        const nextVars = data.variables && typeof data.variables === 'object' ? data.variables : {};
-        const nextSchemas = data.schemas && typeof data.schemas === 'object' ? data.schemas : {};
-        const nextRules = Array.isArray(data.rules) ? data.rules : [];
-
-        if (!merge) {
-            const ok = await appConfirm({
-                title: '覆盖导入',
-                message: `将覆盖当前变量/规则，是否继续？\n\n${buildVariableScopeImpactText({ scope, sessionId: sid, action: 'import' })}`,
-                danger: true,
-            });
-            if (!ok) return;
-            this.clearVars();
-            if (scope !== 'global') {
-                this.clearSchemas();
-                this.setRules(nextRules);
-            }
-        } else {
-            const currentSchemas = scope === 'global' ? {} : this.listSchemas();
-            const currentVars = this.listVars();
-            const currentRules = scope === 'global' ? [] : this.listRules();
-            const mergedRules = Array.isArray(currentRules) ? currentRules.slice() : [];
-            if (scope !== 'global') {
-                nextRules.forEach((rule) => {
-                    const id = String(rule?.id || '');
-                    if (!id || mergedRules.some(r => String(r?.id || '') === id)) {
-                        mergedRules.push({ ...rule, id: `vr_${Date.now()}_${Math.random().toString(16).slice(2, 8)}` });
-                    } else {
-                        mergedRules.push(rule);
-                    }
-                });
-                this.setRules(mergedRules);
-                Object.entries({ ...(currentSchemas || {}), ...(nextSchemas || {}) }).forEach(([key, schema]) => {
-                    this.setSchema(key, schema);
-                });
-            }
-            Object.entries({ ...(currentVars || {}), ...(nextVars || {}) }).forEach(([key, value]) => {
-                this.setVar(key, value);
-            });
-        }
-
-        if (!merge) {
-            if (scope !== 'global') {
-                Object.entries(nextSchemas || {}).forEach(([key, schema]) => {
-                    this.setSchema(key, schema);
-                });
-            }
-            Object.entries(nextVars || {}).forEach(([key, value]) => {
-                this.setVar(key, value);
-            });
-        }
-
-        this.renderList();
         this.hideDataModal();
-        window.toastr?.success?.('导入完成');
-    }
-
-    showSchemaModal({ key = '', value = '', schema = null, mode = 'create' } = {}) {
-        this.ensureSchemaUI();
-        const fields = this.schemaFields;
-        if (!fields) return;
-        const name = String(key || '').trim();
-        const schemaObj = schema || this.getSchema(name) || {};
-        const isEdit = mode !== 'create' && name;
-        this.setImpactText('#schema-impact', 'edit', this.schemaPanel);
-
-        if (fields.title) fields.title.textContent = name ? `变量：${name}` : '新建变量';
-        if (fields.key) {
-            fields.key.value = name;
-            fields.key.disabled = isEdit;
-        }
-        if (fields.value) {
-            fields.value.value = value ?? '';
-        }
-        const type = schemaObj?.type ? String(schemaObj.type) : '';
-        if (fields.type) fields.type.value = type;
-        refreshCustomSelectButton(fields.typeBtn, fields.type, '（无）');
-
-        if (fields.def) {
-            const defVal = schemaObj?.default;
-            if (defVal === undefined || defVal === null) {
-                fields.def.value = '';
-            } else if (typeof defVal === 'object') {
-                try {
-                    fields.def.value = JSON.stringify(defVal);
-                } catch {
-                    fields.def.value = '';
-                }
-            } else {
-                fields.def.value = String(defVal);
+        this.closeMoreMenu();
+        if (!this.overlay) return;
+        this.overlay.classList.remove('is-open');
+        const finish = () => {
+            if (this.overlay && !this.overlay.classList.contains('is-open')) {
+                this.overlay.style.display = 'none';
             }
-        }
-        if (fields.min) fields.min.value = schemaObj?.range?.min ?? '';
-        if (fields.max) fields.max.value = schemaObj?.range?.max ?? '';
-        if (fields.options) fields.options.value = Array.isArray(schemaObj?.options) ? schemaObj.options.join(',') : '';
-        if (fields.display) fields.display.value = schemaObj?.ui?.display || 'card';
-        refreshCustomSelectButton(fields.displayBtn, fields.display, 'card');
-        if (fields.color) fields.color.value = schemaObj?.ui?.color || '';
-        if (fields.format) fields.format.value = schemaObj?.ui?.format || '';
-        if (fields.del) fields.del.style.display = schemaObj?.type ? 'inline-flex' : 'none';
-
-        const updateTypeUI = () => {
-            const currentType = String(fields.type?.value || '').trim();
-            if (fields.rangeWrap) fields.rangeWrap.style.display = currentType === 'number' ? 'flex' : 'none';
-            if (fields.optionsWrap) fields.optionsWrap.style.display = currentType === 'enum' ? 'block' : 'none';
         };
-        updateTypeUI();
-
-        this.schemaOverlay.style.display = 'block';
-        setTimeout(() => fields.key?.focus?.(), 0);
+        if (isReducedMotion()) finish();
+        else setTimeout(finish, 190);
     }
 
-    hideSchemaModal() {
-        closeCustomSelectMenu();
-        if (this.schemaOverlay) this.schemaOverlay.style.display = 'none';
+    hasVisibleLayer() {
+        return Boolean(
+            isVisible(this.dataOverlay)
+            || isVisible(this.ruleEditorOverlay)
+            || this.schemaEditor.isVisible()
+            || isVisible(this.overlay)
+        );
     }
 
-    saveSchemaModal() {
-        const fields = this.schemaFields;
-        if (!fields) return;
-        const { sid } = this.getVars();
-        if (!sid) {
-            window.toastr?.warning?.('请先进入聊天室');
-            return;
+    closeTopLayer() {
+        if (isVisible(this.dataOverlay)) {
+            this.hideDataModal();
+            return true;
         }
-        const key = String(fields.key?.value || '').trim();
-        if (!key) {
-            window.toastr?.warning?.('变量名不能为空');
-            return;
+        if (isVisible(this.ruleEditorOverlay)) {
+            this.hideRuleEditor();
+            return true;
         }
-        const valueRaw = fields.value?.value ?? '';
-        const type = String(fields.type?.value || '').trim().toLowerCase();
-
-        if (type) {
-            const allowed = new Set(['number', 'string', 'boolean', 'enum', 'array', 'object']);
-            if (!allowed.has(type)) {
-                window.toastr?.warning?.('类型记号无效');
-                return;
-            }
-            const schema = { id: key, name: key, type };
-
-            const defInput = fields.def?.value ?? '';
-            if (defInput !== '') {
-                if (type === 'number') {
-                    const n = Number(defInput);
-                    if (!Number.isFinite(n)) {
-                        window.toastr?.warning?.('默认值必须是数字');
-                        return;
-                    }
-                    schema.default = n;
-                } else if (type === 'boolean') {
-                    const s = String(defInput).trim().toLowerCase();
-                    if (s === 'true' || s === '1' || s === 'yes' || s === 'on') schema.default = true;
-                    else if (s === 'false' || s === '0' || s === 'no' || s === 'off') schema.default = false;
-                    else {
-                        window.toastr?.warning?.('默认值必须是 true/false');
-                        return;
-                    }
-                } else if (type === 'array' || type === 'object') {
-                    try {
-                        schema.default = JSON.parse(defInput);
-                    } catch {
-                        window.toastr?.warning?.('默认值需为合法 JSON');
-                        return;
-                    }
-                } else {
-                    schema.default = String(defInput);
-                }
-            }
-
-            if (type === 'number') {
-                const minRaw = fields.min?.value ?? '';
-                const maxRaw = fields.max?.value ?? '';
-                const minText = String(minRaw ?? '').trim();
-                const maxText = String(maxRaw ?? '').trim();
-                const hasMin = minText.length > 0;
-                const hasMax = maxText.length > 0;
-                if (hasMin || hasMax) {
-                    const min = hasMin ? Number(minText) : null;
-                    const max = hasMax ? Number(maxText) : null;
-                    schema.range = {
-                        min: Number.isFinite(min) ? min : null,
-                        max: Number.isFinite(max) ? max : null,
-                    };
-                }
-            }
-            if (type === 'enum') {
-                const options = String(fields.options?.value || '').split(',').map(s => s.trim()).filter(Boolean);
-                schema.options = options;
-            }
-
-            schema.ui = {
-                display: String(fields.display?.value || 'card').trim(),
-                color: String(fields.color?.value || '').trim(),
-                format: String(fields.format?.value || '').trim(),
-            };
-
-            if (!this.isGlobalScope()) {
-                this.setSchema(key, schema);
-            }
-        } else {
-            if (!this.isGlobalScope()) {
-                this.deleteSchema(key);
-            }
+        if (this.schemaEditor.isVisible()) {
+            this.hideSchemaModal();
+            return true;
         }
-
-        this.setVar(key, valueRaw);
-        this.renderList();
-        this.hideSchemaModal();
-    }
-
-    async deleteSchemaModal() {
-        const fields = this.schemaFields;
-        if (!fields) return;
-        const { sid, scope } = this.getVars();
-        if (!sid) return;
-        const key = String(fields.key?.value || '').trim();
-        if (!key) return;
-        const ok = await appConfirm({
-            title: '删除变量配置',
-            message: `删除变量 "${key}" 的显示/类型配置？变量值会保留。\n\n${buildVariableScopeImpactText({ scope, sessionId: sid, action: 'edit' })}`,
-            danger: true,
-        });
-        if (!ok) return;
-        this.deleteSchema(key);
-        this.renderList();
-        this.hideSchemaModal();
-    }
-
-    resolveScope() {
-        const sid = String(this.getSessionId() || '').trim();
-        const rawScope = this.getVariableScope ? this.getVariableScope(sid) : 'session';
-        const scope = rawScope === 'global' ? 'global' : 'session';
-        return { sid, scope };
-    }
-
-    isGlobalScope() {
-        return this.resolveScope().scope === 'global';
-    }
-
-    listVars() {
-        const { sid, scope } = this.resolveScope();
-        if (scope === 'global') {
-            return this.chatStore?.listGlobalVariables?.() || {};
+        if (document.querySelector('.var-more-menu')) {
+            this.closeMoreMenu();
+            return true;
         }
-        return sid ? (this.chatStore?.listVariables?.(sid) || {}) : {};
+        if (this.page !== 'variables') {
+            this.switchPage('variables');
+            return true;
+        }
+        if (isVisible(this.overlay)) {
+            this.hide();
+            return true;
+        }
+        return false;
     }
 
-    setVar(key, value) {
-        const name = String(key || '').trim();
-        if (!name) return false;
-        const { sid, scope } = this.resolveScope();
-        if (scope === 'global') return this.chatStore?.setGlobalVariable?.(name, value);
-        if (!sid) return false;
-        return this.chatStore?.setVariable?.(name, value, sid);
-    }
-
-    deleteVar(key) {
-        const name = String(key || '').trim();
-        if (!name) return false;
-        const { sid, scope } = this.resolveScope();
-        if (scope === 'global') return this.chatStore?.deleteGlobalVariable?.(name);
-        if (!sid) return false;
-        return this.chatStore?.deleteVariable?.(name, sid);
-    }
-
-    clearVars() {
-        const { sid, scope } = this.resolveScope();
-        if (scope === 'global') return this.chatStore?.clearGlobalVariables?.();
-        if (!sid) return false;
-        return this.chatStore?.clearVariables?.(sid);
-    }
-
-    listSchemas() {
-        const { sid, scope } = this.resolveScope();
-        if (scope === 'global') return {};
-        return sid ? (this.chatStore?.listVariableSchemas?.(sid) || {}) : {};
-    }
-
-    setSchema(key, schema) {
-        if (this.isGlobalScope()) {
-            window.toastr?.info?.('全局变量暂不支持 Schema');
+    switchPage(rawPage, { force = false } = {}) {
+        this.ensureUI();
+        const page = VARIABLE_MANAGER_PAGES.has(rawPage) ? rawPage : 'variables';
+        if (!force && page !== 'variables' && this.isGlobalScope()) {
+            window.toastr?.info?.(
+                page === 'rules'
+                    ? '全局变量暂不支持规则'
+                    : '全局变量暂不支持模板',
+            );
             return false;
         }
-        const name = String(key || '').trim();
-        if (!name) return false;
-        const { sid } = this.resolveScope();
-        if (!sid) return false;
-        return this.chatStore?.setVariableSchema?.(name, schema, sid);
+        this.page = page;
+        this.elements.pageButtons.forEach(button => {
+            const active = button.dataset.variablePage === page;
+            button.classList.toggle('is-active', active);
+            button.setAttribute('aria-current', active ? 'page' : 'false');
+        });
+        this.elements.pagePanels.forEach(pagePanel => {
+            const active = pagePanel.dataset.pagePanel === page;
+            pagePanel.hidden = !active;
+            pagePanel.classList.toggle('is-active', active);
+            if (active) {
+                pagePanel.classList.remove('is-page-entering');
+                void pagePanel.offsetWidth;
+                pagePanel.classList.add('is-page-entering');
+            }
+        });
+        this.renderCurrentPage();
+        return true;
     }
 
-    deleteSchema(key) {
-        if (this.isGlobalScope()) return false;
-        const name = String(key || '').trim();
-        if (!name) return false;
-        const { sid } = this.resolveScope();
-        if (!sid) return false;
-        return this.chatStore?.deleteVariableSchema?.(name, sid);
-    }
-
-    clearSchemas() {
-        if (this.isGlobalScope()) return false;
-        const { sid } = this.resolveScope();
-        if (!sid) return false;
-        return this.chatStore?.clearVariableSchemas?.(sid);
-    }
-
-    listRules() {
-        const { sid, scope } = this.resolveScope();
-        if (scope === 'global') return [];
-        return sid ? (this.chatStore?.listVariableRules?.(sid) || []) : [];
-    }
-
-    setRules(list) {
-        if (this.isGlobalScope()) {
-            window.toastr?.info?.('全局变量暂不支持规则');
-            return false;
-        }
-        const { sid } = this.resolveScope();
-        if (!sid) return false;
-        return this.chatStore?.setVariableRules?.(list, sid);
-    }
-
-    getVars() {
-        const { sid, scope } = this.resolveScope();
-        const vars = this.listVars();
-        return { sid, vars, scope };
-    }
-
-    getSchemas() {
-        const { sid, scope } = this.resolveScope();
-        const schemas = this.listSchemas();
-        return { sid, schemas, scope };
-    }
-
-    getSchema(key) {
-        const { sid, schemas } = this.getSchemas();
-        if (!sid) return null;
-        const name = String(key || '').trim();
-        if (!name) return null;
-        return schemas?.[name] || null;
-    }
-
-    getRules() {
-        const { sid, scope } = this.resolveScope();
-        const rules = this.listRules();
-        return { sid, rules: Array.isArray(rules) ? rules : [], scope };
-    }
-
-    normalizeRule(rule) {
-        const raw = rule && typeof rule === 'object' ? rule : {};
-        const trigger = raw.trigger && typeof raw.trigger === 'object' ? raw.trigger : {};
-        const action = raw.action && typeof raw.action === 'object' ? raw.action : {};
-        return {
-            id: String(raw.id || `vr_${Date.now()}_${Math.random().toString(16).slice(2, 8)}`),
-            name: String(raw.name || ''),
-            enabled: raw.enabled !== false,
-            priority: Number.isFinite(Number(raw.priority)) ? Number(raw.priority) : 0,
-            trigger: {
-                type: String(trigger.type || 'every_turn'),
-                n: Number.isFinite(Number(trigger.n)) ? Math.max(1, Math.trunc(Number(trigger.n))) : 1,
-                keywords: Array.isArray(trigger.keywords)
-                    ? trigger.keywords.map(k => String(k)).filter(Boolean)
-                    : (typeof trigger.keywords === 'string' ? trigger.keywords.split(',').map(s => s.trim()).filter(Boolean) : []),
-                caseSensitive: Boolean(trigger.caseSensitive),
-                expr: String(trigger.expr || ''),
-            },
-            action: {
-                type: String(action.type || 'set_value'),
-                target: String(action.target || ''),
-                value: action.value,
-                prompt: String(action.prompt || ''),
-                message: String(action.message || ''),
-                style: String(action.style || ''),
-	                persona: String(action.persona || ''),
-	                role: String(action.role || ''),
-	                position: String(action.position || ''),
-	                depth: Number.isFinite(Number(action.depth)) ? Math.max(0, Math.trunc(Number(action.depth))) : 0,
-	                order: Number.isFinite(Number(action.order)) ? Number(action.order) : 3500,
-	                mode: String(action.mode || 'delta'),
-            },
-        };
-    }
-
-    parseValue(rawInput) {
-        const raw = String(rawInput ?? '').trim();
-        if (!raw) return '';
-        if (raw === 'true' || raw === 'false') return raw === 'true';
-        if (/^-?\d+(\.\d+)?$/.test(raw)) return Number(raw);
-        if (raw.startsWith('{') || raw.startsWith('[')) {
-            try {
-                return JSON.parse(raw);
-            } catch {}
-        }
-        return raw;
-    }
-
-    describeRuleTrigger(rule) {
-        const t = rule?.trigger || {};
-        const type = String(t.type || 'every_turn');
-        if (type === 'every_n_turns') return `每 ${t.n || 1} 轮`;
-        if (type === 'keyword') {
-            const list = Array.isArray(t.keywords) ? t.keywords.join(', ') : '';
-            return list ? `关键词: ${list}` : '关键词触发';
-        }
-        if (type === 'condition') return `条件: ${t.expr || ''}`.trim();
-        if (type === 'manual') return '手动触发';
-        return '每轮触发';
-    }
-
-    describeRuleAction(rule) {
-        const a = rule?.action || {};
-        const target = a.target ? String(a.target) : '未设置';
-        if (a.type === 'increment') return `递增 ${target} (+${a.value ?? 1})`;
-        if (a.type === 'decrement') return `递减 ${target} (-${a.value ?? 1})`;
-        if (a.type === 'toggle') return `切换 ${target}`;
-        if (a.type === 'push') return `追加 ${target}`;
-        if (a.type === 'remove') return `移除 ${target}`;
-        if (a.type === 'ai_evaluate') return `AI 评估 ${target}`;
-        if (a.type === 'notify') return `通知: ${String(a.message || a.value || '').trim() || '提示'}`;
-        if (a.type === 'switch_persona') return `切换角色卡: ${String(a.persona || a.value || '').trim() || '未设置'}`;
-        if (a.type === 'inject_prompt') return `注入提示词 (${String(a.role || 'system')})`;
-        return `设置 ${target}`;
-    }
-
-    renderRuleList() {
-        if (!this.ruleList) return;
-        const { rules } = this.getRules();
-        const list = rules.map(r => this.normalizeRule(r));
-        const diagnosticsByRuleId = buildRuleConditionDiagnostics(list);
-        this.ruleList.innerHTML = '';
-        if (!list.length) {
-            const empty = document.createElement('div');
-            empty.style.cssText = 'padding:16px; color:var(--app-text-muted); text-align:center;';
-            empty.textContent = '暂无规则';
-            this.ruleList.appendChild(empty);
+    renderCurrentPage() {
+        if (this.page === 'templates') {
+            this.renderTemplatesPage();
             return;
         }
-
-        list.forEach(rule => {
-            const row = document.createElement('div');
-            row.className = 'var-rule-card';
-            row.style.cssText = `
-                padding:10px 12px;
-                border:1px solid rgba(15,23,42,0.08);
-                border-radius:12px;
-                background:var(--app-surface-card);
-                display:flex;
-                flex-direction:column;
-                gap:6px;
-            `;
-            const title = document.createElement('div');
-            title.style.cssText = 'display:flex; align-items:center; gap:8px;';
-            const name = document.createElement('div');
-            name.textContent = rule.name || rule.id;
-            name.style.cssText = 'font-weight:700; color:var(--app-text-primary); font-size:13px;';
-            const diagnostic = diagnosticsByRuleId[rule.id] || null;
-            const warning = diagnostic ? document.createElement('span') : null;
-            if (warning) {
-                warning.textContent = '条件需改写';
-                warning.title = diagnostic.error || '';
-                warning.style.cssText = 'font-size:11px; color:#b45309; background:#fef3c7; border:1px solid #fcd34d; border-radius:999px; padding:2px 7px;';
-            }
-            const toggle = document.createElement('label');
-            toggle.style.cssText = 'margin-left:auto; font-size:12px; color:var(--app-text-muted);';
-            toggle.innerHTML = `<input type="checkbox" ${rule.enabled ? 'checked' : ''} style="margin-right:6px;">启用`;
-            toggle.querySelector('input')?.addEventListener('change', (e) => {
-                const enabled = e.target.checked;
-                const { sid, rules: current } = this.getRules();
-                if (!sid) return;
-                const next = current.map(item => {
-                    if (String(item?.id || '') !== rule.id) return item;
-                    return { ...item, enabled };
-                });
-                this.setRules(next);
-                this.renderRuleList();
-            });
-            title.appendChild(name);
-            if (warning) title.appendChild(warning);
-            title.appendChild(toggle);
-
-            const summary = document.createElement('div');
-            summary.style.cssText = 'font-size:12px; color:var(--app-text-secondary);';
-            summary.textContent = `${this.describeRuleTrigger(rule)} → ${this.describeRuleAction(rule)}`;
-            if (diagnostic) summary.title = formatUnsupportedExpressionMessage(diagnostic, { prefix: '当前不支持这条条件语法' });
-
-            const warningText = diagnostic ? document.createElement('div') : null;
-            if (warningText) {
-                warningText.style.cssText = 'font-size:12px; color:#b45309;';
-                warningText.textContent = formatUnsupportedExpressionMessage(diagnostic, { prefix: '这条规则的条件需要改写' });
-            }
-
-            const actions = document.createElement('div');
-            actions.style.cssText = 'display:flex; gap:8px; flex-wrap:wrap;';
-            const editBtn = document.createElement('button');
-            editBtn.textContent = '编辑';
-            editBtn.style.cssText = 'border:1px solid var(--app-border-default); background:var(--app-surface-card); border-radius:10px; padding:6px 10px; cursor:pointer;';
-            editBtn.addEventListener('click', () => this.showRuleEditor(rule));
-            const delBtn = document.createElement('button');
-            delBtn.textContent = '删除';
-            delBtn.style.cssText = 'border:1px solid rgba(239,68,68,0.35); background:var(--app-surface-card); color:#b91c1c; border-radius:10px; padding:6px 10px; cursor:pointer;';
-            delBtn.addEventListener('click', () => this.deleteRuleById(rule.id));
-            actions.appendChild(editBtn);
-            actions.appendChild(delBtn);
-
-            if (String(rule.trigger?.type || '') === 'manual') {
-                const runBtn = document.createElement('button');
-                runBtn.textContent = '运行';
-                runBtn.style.cssText = 'border:1px solid var(--app-border-default); background:var(--app-surface-card); border-radius:10px; padding:6px 10px; cursor:pointer;';
-                runBtn.addEventListener('click', () => this.runRule(rule.id));
-                actions.appendChild(runBtn);
-            }
-
-            row.appendChild(title);
-            row.appendChild(summary);
-            if (warningText) row.appendChild(warningText);
-            row.appendChild(actions);
-            this.ruleList.appendChild(row);
-        });
-    }
-
-    async deleteRuleById(ruleId) {
-        const { sid, rules, scope } = this.getRules();
-        if (!sid) return;
-        const targetId = String(ruleId || '').trim();
-        if (!targetId) return;
-        const ok = await appConfirm({
-            title: '删除规则',
-            message: `确定删除该规则？\n\n${buildVariableScopeImpactText({ scope, sessionId: sid, action: 'rules' })}`,
-            danger: true,
-        });
-        if (!ok) return;
-        const next = rules.filter(r => String(r?.id || '') !== targetId);
-        this.setRules(next);
-        this.renderRuleList();
-    }
-
-    runRule(ruleId) {
-        const { sid } = this.getRules();
-        if (!sid) return;
-        if (window.appBridge?.runVariableRules) {
-            window.appBridge.runVariableRules(sid, ruleId);
-            window.toastr?.info?.('已触发规则');
+        if (this.page === 'rules') {
+            this.renderRulesPage();
+            return;
         }
-    }
-
-    renderTemplateList() {
-        const wrap = this.templatePanel?.querySelector?.('#tpl-list');
-        if (!wrap) return;
-        wrap.innerHTML = '';
-        const templates = listVariableTemplates();
-        const { sid, vars } = this.getVars();
-        templates.forEach(tpl => {
-            const card = document.createElement('div');
-            card.className = 'var-template-card';
-            card.style.cssText = 'border:1px solid rgba(15,23,42,0.08); border-radius:12px; padding:10px; background:var(--app-surface-card); display:flex; align-items:center; gap:10px;';
-            const meta = document.createElement('div');
-            meta.style.cssText = 'flex:1;';
-            const count = Array.isArray(tpl.variables) ? tpl.variables.length : 0;
-            const desc = tpl.desc ? `${tpl.desc}${count ? ` · ${count} 变量` : ''}` : (count ? `${count} 变量` : '');
-            meta.innerHTML = `<div style="font-weight:700; color:var(--app-text-primary);">${tpl.name}</div><div style="font-size:12px; color:var(--app-text-muted); margin-top:4px;">${desc}</div>`;
-            const btn = document.createElement('button');
-            btn.textContent = '应用';
-            btn.style.cssText = 'border:1px solid var(--app-border-default); background:var(--app-surface-card); border-radius:10px; padding:6px 10px; cursor:pointer;';
-            btn.addEventListener('click', async () => {
-                if (!sid) return;
-                const keys = Array.isArray(tpl.variables) ? tpl.variables.map(v => String(v?.id || v?.name || '').trim()).filter(Boolean) : [];
-                const exists = keys.filter(k => Object.prototype.hasOwnProperty.call(vars || {}, k));
-                let overwrite = true;
-            if (exists.length) {
-                const ok = await appConfirm({
-                    title: '覆盖变量',
-                    message: `已存在变量：${exists.join('、')}\n是否覆盖？\n\n${buildVariableScopeImpactText({ scope: 'session', sessionId: sid, action: 'templates' })}`,
-                    danger: true,
-                });
-                    if (!ok) return;
-                } else {
-                    overwrite = true;
-                }
-                const res = applyTemplate(this.chatStore, sid, tpl.id, { overwrite });
-                if (res?.ok) {
-                    this.renderList();
-                    window.toastr?.success?.('模板已应用');
-                } else {
-                    window.toastr?.error?.('模板应用失败');
-                }
-            });
-            card.appendChild(meta);
-            card.appendChild(btn);
-            wrap.appendChild(card);
-        });
+        this.renderList();
     }
 
     setViewMode(mode) {
         const next = mode === 'tree' ? 'tree' : 'list';
         if (this.viewMode === next) return;
         this.viewMode = next;
-        this.updateViewToggle();
+        this.visibleLimit = VARIABLE_LIST_BATCH_SIZE;
+        this.updateViewToggle({ animate: true });
         this.renderList();
     }
 
-    updateViewToggle() {
-        if (!this.viewButtons) return;
-        const { list, tree } = this.viewButtons;
-        const applyStyle = (btn, active) => {
-            if (!btn) return;
-            btn.style.background = active ? 'var(--app-text-primary)' : 'var(--app-surface-card)';
-            btn.style.color = active ? 'var(--app-text-inverse)' : 'var(--app-text-primary)';
-            btn.style.border = active ? '1px solid var(--app-text-primary)' : '1px solid var(--app-border-default)';
-        };
-        applyStyle(list, this.viewMode === 'list');
-        applyStyle(tree, this.viewMode === 'tree');
+    updateViewToggle({ animate = false } = {}) {
+        const container = this.elements?.viewSwitch;
+        const pill = this.elements?.viewPill;
+        const activeButton = this.elements?.viewButtons?.find(
+            button => button.dataset.viewMode === this.viewMode,
+        );
+        if (!container || !pill || !activeButton) return;
+        const first = animate && !isReducedMotion() ? pill.getBoundingClientRect() : null;
+        this.elements.viewButtons.forEach(button => {
+            const active = button === activeButton;
+            button.classList.toggle('is-active', active);
+            button.setAttribute('aria-pressed', active ? 'true' : 'false');
+        });
+        const containerRect = container.getBoundingClientRect();
+        const activeRect = activeButton.getBoundingClientRect();
+        pill.style.left = `${activeRect.left - containerRect.left}px`;
+        pill.style.width = `${activeRect.width}px`;
+        if (!first || typeof pill.animate !== 'function') return;
+        const last = pill.getBoundingClientRect();
+        const deltaX = first.left - last.left;
+        const scaleX = last.width > 0 ? first.width / last.width : 1;
+        pill.animate(
+            [
+                { transform: `translateX(${deltaX}px) scaleX(${scaleX})`, transformOrigin: 'left center' },
+                { transform: 'translateX(0) scaleX(1)', transformOrigin: 'left center' },
+            ],
+            {
+                duration: 260,
+                easing: 'cubic-bezier(.22, 1, .36, 1)',
+            },
+        );
     }
 
-    renderTreeList(listEl) {
-        const { vars } = this.getVars();
-        const term = this.term.trim().toLowerCase();
-        const tree = buildVariableTree(vars || {});
-        const nodes = getSortedChildren(tree);
-
-        listEl.innerHTML = '';
-        if (!nodes.length) {
-            const empty = document.createElement('div');
-            empty.style.cssText = 'padding:18px 10px; color:var(--app-text-muted); text-align:center;';
-            empty.textContent = this.getVars().sid ? '暂无变量' : '未选择会话';
-            listEl.appendChild(empty);
-            return;
-        }
-
-        const fragment = document.createDocumentFragment();
-        nodes.forEach((node) => {
-            const nodeEl = renderTreeNode(node, term, 0);
-            if (nodeEl) fragment.appendChild(nodeEl);
-        });
-        listEl.appendChild(fragment);
+    markVariableUpdated(key) {
+        const name = String(key || '').trim();
+        if (name) this.updatedAtByKey[name] = Date.now();
     }
 
-    renderList() {
-        this.renderCards();
-        const listEl = this.panel?.querySelector?.('#var-list');
-        if (!listEl) return;
-        if (this.viewMode === 'tree') {
-            this.renderTreeList(listEl);
-            return;
-        }
-        const { vars } = this.getVars();
-        const term = this.term.trim().toLowerCase();
-        const entries = Object.entries(vars || {})
-            .map(([k, v]) => ({ k: String(k), v: (v === null || v === undefined) ? '' : String(v) }))
-            .filter(({ k, v }) => {
-                if (!term) return true;
-                return k.toLowerCase().includes(term) || v.toLowerCase().includes(term);
-            })
-            .sort((a, b) => a.k.localeCompare(b.k));
-
-        listEl.innerHTML = '';
-        if (!entries.length) {
-            const empty = document.createElement('div');
-            empty.style.cssText = 'padding:18px 10px; color:var(--app-text-muted); text-align:center;';
-            empty.textContent = this.getVars().sid ? '暂无变量' : '未选择会话';
-            listEl.appendChild(empty);
-            return;
-        }
-
-        entries.forEach(({ k, v }) => {
-            const row = document.createElement('div');
-            row.className = 'var-row-card';
-            row.style.cssText = `
-                padding:10px 10px;
-                border: 1px solid rgba(0,0,0,0.06);
-                border-radius: 12px;
-                margin-bottom: 8px;
-                background: var(--app-surface-card);
-            `;
-            const schema = this.getSchema(k);
-            const typeLabel = schema?.type ? String(schema.type) : '';
-            row.innerHTML = `
-                <div style="display:flex; align-items:center; gap:10px;">
-                    <div style="flex:1; min-width:0;">
-                        <div style="display:flex; align-items:center; gap:6px; font-weight:900; color:var(--app-text-primary); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">
-                            <span>${k}</span>
-                            ${typeLabel ? `<span style="font-size:10px; padding:2px 6px; border-radius:999px; background:rgba(14,165,233,0.12); color:#0369a1;">${typeLabel}</span>` : ''}
-                        </div>
-                        <div style="color:var(--app-text-muted); font-size:12px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${v || '（空）'}</div>
-                    </div>
-                    <button class="var-schema" style="border:1px solid var(--app-border-default); background:var(--app-surface-card); border-radius:10px; padding:6px 10px; cursor:pointer;">配置</button>
-                    <button class="var-edit" style="border:1px solid var(--app-border-default); background:var(--app-surface-card); border-radius:10px; padding:6px 10px; cursor:pointer;">编辑</button>
-                    <button class="var-del" style="border:1px solid rgba(239,68,68,0.35); background:var(--app-surface-card); color:#b91c1c; border-radius:10px; padding:6px 10px; cursor:pointer;">删除</button>
-                </div>
-                <div style="margin-top:8px; font-size:12px; color:var(--app-text-secondary);">
-                    <code class="variable-panel-inline-code" style="padding:2px 6px; border-radius:4px;">{{getvar::${k}}}</code>
-                </div>
-            `;
-            row.querySelector('.var-schema')?.addEventListener('click', () => this.promptSchema(k));
-            row.querySelector('.var-edit')?.addEventListener('click', () => this.promptEdit(k, v));
-            row.querySelector('.var-del')?.addEventListener('click', () => this.deleteKey(k));
-            listEl.appendChild(row);
-        });
+    getInitialValue(key) {
+        const { sid } = this.resolveScope();
+        if (!sid) return undefined;
+        return this.chatStore?.getInitialVariable?.(String(key || '').trim(), sid);
     }
 
     renderCards() {
-        const cardsEl = this.panel?.querySelector?.('#var-cards');
-        if (!cardsEl) return;
+        if (!this.elements?.cards) return;
         const { vars } = this.getVars();
-        const { schemas } = this.getSchemas();
-        const entries = Object.entries(schemas || {}).filter(([, schema]) => {
-            const display = String(schema?.ui?.display || 'card').toLowerCase();
-            return display && display !== 'hidden';
-        });
-        cardsEl.innerHTML = '';
-        if (!entries.length) {
-            cardsEl.style.display = 'none';
-            return;
-        }
-        cardsEl.style.display = 'flex';
-        entries.forEach(([key, schema]) => {
-            const display = String(schema?.ui?.display || 'card').toLowerCase();
-            const label = schema?.ui?.label || schema?.name || key;
-            const rawValue = (vars && Object.prototype.hasOwnProperty.call(vars, key)) ? vars[key] : schema?.default;
-            const valueText = typeof rawValue === 'string' ? rawValue : (rawValue == null ? '' : JSON.stringify(rawValue));
-            const format = schema?.ui?.format ? String(schema.ui.format) : '';
-            const rendered = format ? format.replace(/\{value\}/g, valueText) : valueText;
-            const color = schema?.ui?.color ? String(schema.ui.color) : '#0ea5e9';
-
-            if (display === 'progress') {
-                const min = Number(schema?.range?.min ?? 0);
-                const max = Number(schema?.range?.max ?? 100);
-                const num = Number(rawValue);
-                const clamped = Number.isFinite(num) ? Math.max(min, Math.min(max, num)) : min;
-                const percent = max > min ? Math.round(((clamped - min) / (max - min)) * 100) : 0;
-                const card = document.createElement('div');
-                card.className = 'var-summary-card';
-                card.style.cssText = 'flex:1 1 140px; min-width:120px; padding:10px; border-radius:12px; border:1px solid rgba(15,23,42,0.08); background:var(--app-surface-card);';
-                card.innerHTML = `
-                    <div style="font-size:12px; color:var(--app-text-muted); margin-bottom:6px;">${label}</div>
-                    <div style="font-size:14px; font-weight:700; color:var(--app-text-primary); margin-bottom:6px;">${rendered || clamped}</div>
-                    <div style="height:6px; background:rgba(15,23,42,0.08); border-radius:999px; overflow:hidden;">
-                        <div style="height:100%; width:${percent}%; background:${color};"></div>
-                    </div>
-                `;
-                cardsEl.appendChild(card);
-                return;
-            }
-
-            if (display === 'badge') {
-                const badge = document.createElement('div');
-                badge.style.cssText = `padding:6px 10px; border-radius:999px; background:${color}22; color:${color}; font-size:12px; display:flex; gap:6px; align-items:center;`;
-                badge.innerHTML = `<span>${label}</span><strong style="font-weight:700;">${rendered || '-'}</strong>`;
-                cardsEl.appendChild(badge);
-                return;
-            }
-
-            const card = document.createElement('div');
-            card.className = 'var-summary-card';
-            card.style.cssText = 'flex:1 1 140px; min-width:120px; padding:10px; border-radius:12px; border:1px solid rgba(15,23,42,0.08); background:var(--app-surface-card);';
-            card.innerHTML = `
-                <div style="font-size:12px; color:var(--app-text-muted);">${label}</div>
-                <div style="font-size:14px; font-weight:700; color:var(--app-text-primary); margin-top:4px;">${rendered || '-'}</div>
-            `;
-            cardsEl.appendChild(card);
+        return renderVariableSummaryCards({
+            cardsEl: this.elements.cards,
+            vars,
+            schemas: this.listSchemas(),
         });
     }
 
-    promptAdd() {
-        this.showSchemaModal({ mode: 'create' });
-    }
-
-    promptEdit(key, curValue) {
-        this.showSchemaModal({ key, value: curValue, mode: 'edit' });
-    }
-
-    async deleteKey(key) {
-        const { sid, scope } = this.getVars();
-        if (!sid) {
-            window.toastr?.warning?.('请先进入聊天室');
-            return;
-        }
-        const ok = await appConfirm({
-            title: '删除变量',
-            message: `删除变量 "${key}"？\n\n${buildVariableScopeImpactText({ scope, sessionId: sid, action: 'delete' })}`,
-            danger: true,
+    renderList() {
+        if (!this.elements?.list) return;
+        this.renderCards();
+        const { sid, vars, scope } = this.getVars();
+        const schemas = this.listSchemas();
+        const allRows = buildVariableListRows({
+            vars,
+            schemas,
+            term: this.term,
+            filter: this.filter,
+            sort: this.sort,
+            updatedAtByKey: this.updatedAtByKey,
         });
-        if (!ok) return;
-        this.deleteVar(String(key).trim());
-        this.deleteSchema(String(key).trim());
-        this.renderList();
-    }
+        this.currentRows = allRows;
+        if (this.elements.meta) {
+            this.elements.meta.textContent = formatVariableScopeLabel({ scope, sessionId: sid });
+        }
+        if (this.elements.listCount) {
+            const total = Object.keys(vars || {}).length;
+            this.elements.listCount.textContent = `${allRows.length}/${total} 个变量`;
+        }
+        const allValuesMissing = (
+            Object.keys(schemas).length > 0
+            && Object.values(vars || {}).every(value => !isVariableValueFilled(value))
+        );
+        this.elements.recovery.hidden = !allValuesMissing || scope === 'global';
+        this.elements.list.classList.toggle('is-tree-view', this.viewMode === 'tree');
 
-    async clearAll() {
-        const { sid, scope } = this.getVars();
-        if (!sid) {
-            window.toastr?.warning?.('请先进入聊天室');
-            return;
-        }
-        const ok = await appConfirm({
-            title: '清空变量',
-            message: `清空当前范围的所有变量？\n\n${buildVariableScopeImpactText({ scope, sessionId: sid, action: 'clear' })}`,
-            danger: true,
-        });
-        if (!ok) return;
-        this.clearVars();
-        this.renderList();
-    }
-
-    promptSchema(key) {
-        this.showSchemaModal({ key, value: this.getVars().vars?.[key], schema: this.getSchema(key), mode: 'edit' });
-    }
-
-    promptRulesJson() {
-        const { sid, scope } = this.getVars();
-        if (!sid) {
-            window.toastr?.warning?.('请先进入聊天室');
-            return;
-        }
-        if (scope === 'global') {
-            window.toastr?.info?.('全局变量暂不支持规则');
-            return;
-        }
-        const current = this.listRules();
-        const draft = JSON.stringify(current, null, 2);
-        const input = prompt('编辑规则 JSON（数组）', draft);
-        if (input === null) return;
-        try {
-            const parsed = JSON.parse(input || '[]');
-            if (!Array.isArray(parsed)) throw new Error('必须是数组');
-            this.setRules(parsed);
-            window.toastr?.success?.('规则已保存');
-        } catch (err) {
-            window.toastr?.error?.(`规则解析失败：${err?.message || err}`);
-        }
-    }
-
-    async runRules() {
-        const { sid, scope } = this.getVars();
-        if (!sid) {
-            window.toastr?.warning?.('请先进入聊天室');
-            return;
-        }
-        const ok = await appConfirm({
-            title: '运行变量规则',
-            message: `立即运行当前启用的变量规则？\n\n${buildVariableScopeImpactText({ scope, sessionId: sid, action: 'rules' })}`,
-            danger: true,
-        });
-        if (!ok) return;
-        if (window.appBridge?.runVariableRules) {
-            window.appBridge.runVariableRules(sid);
-            window.toastr?.info?.('已触发手动规则');
+        if (this.viewMode === 'tree') {
+            const filteredVars = Object.fromEntries(allRows.map(row => [row.key, row.value]));
+            renderVariableTreeView({
+                listEl: this.elements.list,
+                vars: filteredVars,
+                schemas,
+                term: this.term,
+                hasSession: Boolean(sid),
+                onConfigure: key => this.promptSchema(key),
+                onCopy: key => this.copyReference(key),
+            });
+            this.elements.loadMore.hidden = true;
         } else {
-            window.toastr?.warning?.('规则引擎未就绪');
+            const slice = getVariableRenderSlice({
+                rows: allRows,
+                limit: this.visibleLimit,
+                batchSize: VARIABLE_LIST_BATCH_SIZE,
+            });
+            renderVariableListView({
+                listEl: this.elements.list,
+                rows: slice.rows,
+                hasSession: Boolean(sid),
+                onConfigure: key => this.promptSchema(key),
+                onEdit: (key, value) => this.promptEdit(key, value),
+                onDelete: key => this.deleteKey(key),
+                onCopy: key => this.copyReference(key),
+                onChangeValue: (key, value) => {
+                    if (this.setVar(key, value) === false) return;
+                    this.markVariableUpdated(key);
+                    this.renderList();
+                },
+                onSelect: key => {
+                    this.selectedKey = key;
+                },
+            });
+            this.elements.loadMore.hidden = !slice.hasMore;
+            if (slice.hasMore) {
+                this.elements.loadMore.textContent = `加载更多（剩余 ${slice.total - slice.rendered}）`;
+            }
         }
+        this.updatePageCounts();
+        this.syncSelectedRow();
+    }
+
+    loadMoreVariables() {
+        if (this.viewMode !== 'list' || this.visibleLimit >= this.currentRows.length) return;
+        this.visibleLimit = Math.min(
+            this.currentRows.length,
+            this.visibleLimit + VARIABLE_LIST_BATCH_SIZE,
+        );
+        this.renderList();
+    }
+
+    updatePageCounts() {
+        const variableCount = Object.keys(this.listVars() || {}).length;
+        const ruleCount = this.listRules().length;
+        this.panel?.querySelectorAll?.('[data-count="variables"]')?.forEach?.(element => {
+            element.textContent = String(variableCount);
+        });
+        this.panel?.querySelectorAll?.('[data-count="rules"]')?.forEach?.(element => {
+            element.textContent = String(ruleCount);
+        });
+    }
+
+    syncSelectedRow() {
+        const rows = Array.from(this.elements?.list?.querySelectorAll?.('[data-variable-key]') || []);
+        rows.forEach(row => row.classList.toggle(
+            'is-selected',
+            row.dataset.variableKey === this.selectedKey,
+        ));
+    }
+
+    moveSelection(delta) {
+        if (!this.currentRows.length) return;
+        let index = this.currentRows.findIndex(row => row.key === this.selectedKey);
+        if (index < 0) index = delta > 0 ? -1 : 0;
+        index = (index + delta + this.currentRows.length) % this.currentRows.length;
+        this.selectedKey = this.currentRows[index].key;
+        if (index >= this.visibleLimit) {
+            this.visibleLimit = Math.min(
+                this.currentRows.length,
+                Math.ceil((index + 1) / VARIABLE_LIST_BATCH_SIZE) * VARIABLE_LIST_BATCH_SIZE,
+            );
+            this.renderList();
+        }
+        this.syncSelectedRow();
+        const selected = this.elements?.list?.querySelector?.(
+            `[data-variable-key="${CSS.escape(this.selectedKey)}"]`,
+        );
+        selected?.scrollIntoView?.({ block: 'nearest' });
+    }
+
+    showSchemaModal({ key = '', value = undefined, schema = null, mode = 'create' } = {}) {
+        this.ensureUI();
+        const name = String(key || '').trim();
+        this.selectedKey = name;
+        this.schemaEditor.show({
+            key: name,
+            value: value !== undefined ? value : this.listVars()?.[name],
+            schema: schema || this.getSchema(name),
+            mode,
+        });
+        this.schemaOverlay = this.schemaEditor.overlay;
+        this.schemaPanel = this.schemaEditor.panel;
+    }
+
+    hideSchemaModal() {
+        this.schemaEditor.hide();
+    }
+
+    showTemplateModal() {
+        return this.switchPage('templates');
+    }
+
+    hideTemplateModal() {
+        if (this.page === 'templates') this.switchPage('variables');
+    }
+
+    showRules() {
+        return this.switchPage('rules');
+    }
+
+    hideRules() {
+        if (this.page === 'rules') this.switchPage('variables');
+    }
+
+    renderTemplatesPage() {
+        if (!this.elements?.templateGrid) return;
+        const { sid, vars, scope } = this.getVars();
+        if (this.elements.templateImpact) {
+            const impact = buildVariableScopeImpactText({
+                scope,
+                sessionId: sid,
+                action: 'templates',
+            });
+            this.elements.templateImpact.textContent = formatVariableScopeLabel({ scope, sessionId: sid });
+            this.elements.templateImpact.title = impact;
+        }
+        renderVariableTemplatesPage({
+            container: this.elements.templateGrid,
+            templates: listVariableTemplates(),
+            vars,
+            term: this.templateTerm,
+            onApply: template => this.applyVariableTemplate(template),
+        });
+        this.updatePageCounts();
+    }
+
+    async applyVariableTemplate(template) {
+        const { sid, vars, scope } = this.getVars();
+        if (!sid || scope === 'global') return false;
+        const keys = (template?.variables || [])
+            .map(variable => String(variable?.id || variable?.name || '').trim())
+            .filter(Boolean);
+        const existing = keys.filter(key => Object.prototype.hasOwnProperty.call(vars || {}, key));
+        if (existing.length) {
+            const confirmed = await appConfirm({
+                title: '覆盖模板变量',
+                message: `已存在变量：${existing.join('、')}\n模板会覆盖这些值，是否继续？\n\n${buildVariableScopeImpactText({
+                    scope,
+                    sessionId: sid,
+                    action: 'templates',
+                })}`,
+                danger: true,
+            });
+            if (!confirmed) return false;
+        }
+        const result = applyTemplate(this.chatStore, sid, template.id, { overwrite: true });
+        if (!result?.ok) {
+            window.toastr?.error?.('模板应用失败');
+            return false;
+        }
+        (template.variables || []).forEach(variable => {
+            const key = String(variable?.id || variable?.name || '').trim();
+            if (!key || !Object.prototype.hasOwnProperty.call(variable || {}, 'default')) return;
+            this.chatStore?.setInitialVariable?.(key, cloneValue(variable.default), sid);
+            this.markVariableUpdated(key);
+        });
+        window.toastr?.success?.('模板已应用');
+        this.renderTemplatesPage();
+        return true;
+    }
+
+    renderRulesPage() {
+        if (!this.elements?.ruleList) return;
+        const { sid, scope, rules } = this.getRules();
+        if (this.elements.ruleImpact) {
+            const impact = buildVariableScopeImpactText({
+                scope,
+                sessionId: sid,
+                action: 'rules',
+            });
+            this.elements.ruleImpact.textContent = formatVariableScopeLabel({ scope, sessionId: sid });
+            this.elements.ruleImpact.title = impact;
+        }
+        const result = renderVariableRulesPage({
+            container: this.elements.ruleList,
+            rules,
+            normalizeRule: rule => this.normalizeRule(rule),
+            describeTrigger: rule => this.describeRuleTrigger(rule),
+            describeAction: rule => this.describeRuleAction(rule),
+            onToggle: (ruleId, enabled) => this.toggleRule(ruleId, enabled),
+            onEdit: rule => this.showRuleEditor(rule),
+            onDelete: ruleId => this.deleteRuleById(ruleId),
+            onRun: ruleId => this.runRule(ruleId),
+        });
+        if (this.elements.ruleCount) {
+            this.elements.ruleCount.textContent = `${result.enabled} / ${result.rendered} 条规则已启用`;
+        }
+        this.updatePageCounts();
+    }
+
+    renderRuleList() {
+        this.renderRulesPage();
+    }
+
+    toggleRule(ruleId, enabled) {
+        const { rules } = this.getRules();
+        const targetId = String(ruleId || '');
+        this.setRules(rules.map(rule => (
+            String(rule?.id || '') === targetId ? { ...rule, enabled: Boolean(enabled) } : rule
+        )));
+        this.renderRulesPage();
+    }
+
+    runRules() {
+        const { sid } = this.getRules();
+        if (!sid) {
+            window.toastr?.warning?.('请先进入聊天室');
+            return false;
+        }
+        if (typeof window.appBridge?.runVariableRules !== 'function') {
+            window.toastr?.warning?.('规则引擎未就绪');
+            return false;
+        }
+        window.appBridge.runVariableRules(sid);
+        window.toastr?.info?.('已触发当前启用规则');
+        return true;
+    }
+
+    deleteRuleById(ruleId) {
+        const { sid, rules } = this.getRules();
+        const id = String(ruleId || '').trim();
+        const index = rules.findIndex(rule => String(rule?.id || '') === id);
+        if (!sid || index < 0) return false;
+        const rule = cloneValue(rules[index]);
+        this.setRules(rules.filter((_, currentIndex) => currentIndex !== index));
+        this.pushGraveyard({
+            kind: 'rule',
+            label: rule?.name || id,
+            rule,
+            index,
+        });
+        this.renderRulesPage();
+        return true;
+    }
+
+    deleteKey(rawKey) {
+        const key = String(rawKey || '').trim();
+        const { sid, vars } = this.getVars();
+        if (!sid || !key || !Object.prototype.hasOwnProperty.call(vars || {}, key)) return false;
+        const schema = this.getSchema(key);
+        const record = {
+            kind: 'variable',
+            label: key,
+            key,
+            value: cloneValue(vars[key]),
+            schema: cloneValue(schema),
+            hasSchema: Boolean(schema),
+        };
+        this.deleteVar(key);
+        this.deleteSchema(key);
+        this.pushGraveyard(record);
+        if (this.selectedKey === key) this.selectedKey = '';
+        this.renderList();
+        return true;
+    }
+
+    pushGraveyard(entry) {
+        const record = {
+            ...entry,
+            id: `variable-grave-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`,
+            deletedAt: Date.now(),
+        };
+        this.graveyard.push(record);
+        if (this.graveyard.length > 20) this.graveyard.shift();
+        this.showUndoToast(record);
+        return record.id;
+    }
+
+    showUndoToast(record) {
+        const host = this.elements?.undoHost;
+        if (!host) return;
+        if (this.graveyardTimer) clearTimeout(this.graveyardTimer);
+        host.replaceChildren();
+        const toast = document.createElement('div');
+        toast.className = 'variable-undo-toast';
+        const message = document.createElement('span');
+        message.textContent = record.kind === 'rule'
+            ? `已删除规则「${record.label}」`
+            : `已删除变量「${record.label}」`;
+        const undo = makeButton('variable-undo-button', '撤销', () => this.undoGraveyard(record.id));
+        const close = makeButton('variable-undo-close', '×', () => host.replaceChildren());
+        close.setAttribute('aria-label', '关闭');
+        toast.appendChild(message);
+        toast.appendChild(undo);
+        toast.appendChild(close);
+        host.appendChild(toast);
+        requestAnimationFrame(() => toast.classList.add('is-visible'));
+        this.graveyardTimer = setTimeout(() => {
+            toast.classList.remove('is-visible');
+            setTimeout(() => {
+                if (host.contains(toast)) toast.remove();
+            }, isReducedMotion() ? 0 : 180);
+            this.graveyard = this.graveyard.filter(item => item.id !== record.id);
+        }, VARIABLE_UNDO_TTL_MS);
+    }
+
+    undoGraveyard(recordId) {
+        const index = this.graveyard.findIndex(record => record.id === recordId);
+        if (index < 0) return false;
+        const [record] = this.graveyard.splice(index, 1);
+        if (record.kind === 'variable') {
+            this.setVar(record.key, cloneValue(record.value));
+            if (record.hasSchema) this.setSchema(record.key, cloneValue(record.schema));
+            this.markVariableUpdated(record.key);
+            this.renderList();
+        } else if (record.kind === 'rule') {
+            const { rules } = this.getRules();
+            const next = rules.slice();
+            next.splice(Math.min(record.index, next.length), 0, cloneValue(record.rule));
+            this.setRules(next);
+            this.renderRulesPage();
+        }
+        if (this.graveyardTimer) clearTimeout(this.graveyardTimer);
+        this.elements?.undoHost?.replaceChildren();
+        window.toastr?.success?.('已撤销删除');
+        return true;
+    }
+
+    async copyReference(key) {
+        const name = String(key || '').trim();
+        if (!name) return false;
+        const reference = `{{getvar::${name}}}`;
+        try {
+            await navigator.clipboard?.writeText?.(reference);
+            window.toastr?.success?.('变量引用已复制');
+            return true;
+        } catch {
+            window.toastr?.warning?.('复制失败');
+            return false;
+        }
+    }
+
+    async initializeVariables() {
+        const { sid } = this.resolveScope();
+        const initializeMvuVariables = window.appBridge?.initializeMvuVariables;
+        if (!sid || typeof initializeMvuVariables !== 'function') {
+            window.toastr?.warning?.('变量初始化服务未就绪');
+            return null;
+        }
+        const result = await Promise.resolve(initializeMvuVariables(sid, {
+            reason: 'variable_manager_empty_state',
+        }));
+        this.renderList();
+        if (result?.applied || result?.keys?.length) {
+            window.toastr?.success?.(`已初始化 ${result.keys.length} 个变量`);
+        } else {
+            window.toastr?.info?.('Schema 中没有可用默认值，可尝试「重新转换」');
+        }
+        return result;
+    }
+
+    async reconvertVariables() {
+        const { sid, scope } = this.resolveScope();
+        const reconvertMvuVariables = window.appBridge?.reconvertMvuVariables;
+        if (!sid || typeof reconvertMvuVariables !== 'function') {
+            window.toastr?.warning?.('变量重新转换服务未就绪');
+            return null;
+        }
+        const confirmed = await appConfirm({
+            title: '从角色卡重新转换变量',
+            message: `将重新读取原始角色卡，刷新 Schema 默认值与初始值；当前变量只会填补空缺，0、false、数组、对象及已有文本均不会被覆盖。\n\n${buildVariableScopeImpactText({
+                scope,
+                sessionId: sid,
+                action: 'edit',
+            })}`,
+            danger: false,
+        });
+        if (!confirmed) return null;
+        const result = await reconvertMvuVariables({ sessionId: sid });
+        this.renderList();
+        if (!result?.ok) {
+            window.toastr?.warning?.(recoveryErrorMessage(result?.code));
+            return result;
+        }
+        window.toastr?.success?.(
+            `重新转换完成：填补 ${result.filledKeys?.length || 0} 项，保留 ${result.preservedKeys?.length || 0} 项`,
+        );
+        return result;
     }
 
     showMoreMenu(anchor) {
-        // 如果菜单已存在，则关闭并返回
-        const existing = document.querySelector('.var-more-menu');
-        if (existing) {
+        if (document.querySelector('.var-more-menu')) {
             this.closeMoreMenu();
             return;
         }
         const menu = document.createElement('div');
-        menu.className = 'var-more-menu';
-        menu.style.cssText = `
-            position: absolute;
-            background: var(--app-surface-card);
-            border: 1px solid rgba(15,23,42,0.1);
-            border-radius: 12px;
-            box-shadow: 0 8px 24px rgba(15,23,42,0.15);
-            padding: 6px;
-            z-index: 25000;
-            min-width: 140px;
-        `;
-
-        const menuItems = [
-            { icon: '📤', label: '导出', action: () => this.showExportModal() },
-            { icon: '📥', label: '导入', action: () => this.showImportModal() },
-            { icon: '▶️', label: '运行规则', action: () => this.runRules() },
-            { icon: '🗑️', label: '清空全部', danger: true, action: () => this.clearAll() },
+        menu.className = 'var-more-menu variable-manager-menu';
+        const items = [
+            ['导出', () => this.showExportModal()],
+            ['导入', () => this.showImportModal()],
+            ['重新转换变量', () => this.reconvertVariables()],
+            ['清空当前变量', () => this.clearAll(), { danger: true }],
         ];
-
-        menuItems.forEach(({ icon, label, danger, action }) => {
-            const btn = document.createElement('button');
-            btn.style.cssText = `
-                display: flex;
-                align-items: center;
-                gap: 10px;
-                width: 100%;
-                padding: 10px 12px;
-                border: none;
-                background: transparent;
-                border-radius: 8px;
-                cursor: pointer;
-                font-size: 13px;
-                text-align: left;
-                color: ${danger ? '#ef4444' : 'var(--app-text-secondary)'};
-            `;
-            btn.innerHTML = `<span style="font-size:14px;">${icon}</span><span>${label}</span>`;
-            btn.addEventListener('mouseenter', () => btn.style.background = danger ? 'rgba(239,68,68,0.08)' : 'var(--app-surface-hover)');
-            btn.addEventListener('mouseleave', () => btn.style.background = 'transparent');
-            btn.addEventListener('click', () => {
-                this.closeMoreMenu();
-                action();
-            });
-            menu.appendChild(btn);
+        items.forEach(([label, action, options]) => {
+            menu.appendChild(makeButton(
+                'variable-manager-menu-item',
+                label,
+                () => {
+                    this.closeMoreMenu();
+                    action();
+                },
+                options,
+            ));
         });
-
-        // 定位到按钮下方
-        const rect = anchor.getBoundingClientRect();
-        menu.style.top = `${rect.bottom + 4}px`;
-        menu.style.left = `${rect.left}px`;
         document.body.appendChild(menu);
-
-        // 点击外部关闭
-        const closeMenu = (e) => {
-            if (!menu.contains(e.target) && e.target !== anchor) {
-                this.closeMoreMenu();
-            }
+        const rect = anchor?.getBoundingClientRect?.() || {
+            left: globalThis.innerWidth - 180,
+            right: globalThis.innerWidth - 16,
+            bottom: 56,
+        };
+        const menuWidth = 184;
+        const left = Math.max(8, Math.min(
+            globalThis.innerWidth - menuWidth - 8,
+            rect.right - menuWidth,
+        ));
+        menu.style.left = `${left}px`;
+        menu.style.top = `${Math.min(globalThis.innerHeight - menu.offsetHeight - 8, rect.bottom + 6)}px`;
+        const closeMenu = event => {
+            if (!menu.contains(event.target) && event.target !== anchor) this.closeMoreMenu();
         };
         this.moreMenuCloseHandler = closeMenu;
-        setTimeout(() => {
-            if (this.moreMenuCloseHandler !== closeMenu) return;
-            if (!document.body.contains(menu)) return;
-            document.addEventListener('pointerdown', closeMenu, true);
-        }, 0);
+        setTimeout(() => document.addEventListener('pointerdown', closeMenu, true), 0);
+    }
+
+    handleKeyboard(event) {
+        if (!isVisible(this.overlay)) return;
+        if (event.key === 'Escape') {
+            event.preventDefault();
+            this.closeTopLayer();
+            return;
+        }
+        if ((globalThis.innerWidth || 0) < 768 || this.schemaEditor.isVisible()) return;
+        const typing = isTextEntry(event.target || document.activeElement);
+        if (event.key === '/' && !typing) {
+            event.preventDefault();
+            this.switchPage('variables');
+            this.elements?.search?.focus?.();
+            return;
+        }
+        if (event.key.toLowerCase() === 'n' && !typing) {
+            event.preventDefault();
+            if (this.page === 'rules') this.showRuleEditor(null);
+            else {
+                this.switchPage('variables');
+                this.promptAdd();
+            }
+            return;
+        }
+        if (this.page !== 'variables' || typing) return;
+        if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+            event.preventDefault();
+            this.moveSelection(event.key === 'ArrowDown' ? 1 : -1);
+            return;
+        }
+        if (event.key === 'Enter' && this.selectedKey) {
+            event.preventDefault();
+            this.promptSchema(this.selectedKey);
+        }
     }
 }

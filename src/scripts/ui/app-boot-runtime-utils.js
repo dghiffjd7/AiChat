@@ -3,6 +3,14 @@ import {
   normalizeLifecycleTraceText,
 } from './chat/lifecycle-trace-utils.js';
 
+export const shouldDetachRpSessionFromChatMode = ({
+  uiMode = 'chat',
+  sessionId = '',
+} = {}) => (
+  String(uiMode || '').trim().toLowerCase() !== 'rp'
+  && String(sessionId || '').trim().startsWith('rp:')
+);
+
 export const runAppBootRestoreFlow = async ({
   restoreUiState = null,
   getActivePage = null,
@@ -11,7 +19,9 @@ export const runAppBootRestoreFlow = async ({
   isPageActive = null,
   switchPage = null,
   uiLog = null,
+  getUiMode = null,
   getCurrentSessionId = null,
+  detachChatModeRpSession = null,
   isChatRoomVisible = null,
   applyMvuSchemaDefaults = null,
   updateWorldIndicator = null,
@@ -30,6 +40,21 @@ export const runAppBootRestoreFlow = async ({
   try {
     await restoreUiState?.();
   } catch {}
+  const restoredUiMode = String(getUiMode?.() || initialUiMode).trim().toLowerCase() === 'rp'
+    ? 'rp'
+    : 'chat';
+  const restoredSessionId = String(getCurrentSessionId?.() || '').trim();
+  if (shouldDetachRpSessionFromChatMode({
+    uiMode: restoredUiMode,
+    sessionId: restoredSessionId,
+  })) {
+    try {
+      await detachChatModeRpSession?.({
+        uiMode: restoredUiMode,
+        sessionId: restoredSessionId,
+      });
+    } catch {}
+  }
   let activePage = String(getActivePage?.() || '').trim();
   if (!activePage) {
     activePage = 'chat';

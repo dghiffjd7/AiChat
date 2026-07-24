@@ -95,7 +95,12 @@ const hasMvuMarker = (entry) => {
 };
 
 const inferSchema = (key, value) => {
-  const schema = { type: 'string', ui: { display: 'card', label: String(key || '').trim() } };
+  const schema = {
+    type: 'string',
+    default: value,
+    defaultSource: 'stat_data',
+    ui: { display: 'card', label: String(key || '').trim() },
+  };
   if (typeof value === 'number' && Number.isFinite(value)) {
     schema.type = 'number';
     if (value >= 0 && value <= 100) {

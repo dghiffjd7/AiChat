@@ -205,6 +205,8 @@ export const runExitRpModeFlow = ({
   setBackToListVisible = () => {},
   setChatOriginPage = () => {},
   exitChatRoom = () => {},
+  clearCurrentSession = () => {},
+  resetChatRoomState = () => {},
   getContact = () => null,
   switchPage = () => {},
   enterChatRoom = () => {},
@@ -230,13 +232,15 @@ export const runExitRpModeFlow = ({
 
   setChatOriginPage?.(restorePage);
   exitChatRoom?.({ animate: false });
+  clearCurrentSession?.();
+  resetChatRoomState?.();
 
-  if (restoreInRoom && restoreSession) {
-    const contact = getContact?.(restoreSession);
-    switchPage?.(restorePage, { animate: false });
-    enterChatRoom?.(restoreSession, contact?.name || restoreSession, restorePage);
-  } else {
-    switchPage?.(restorePage, { animate: false });
+  const contact = restoreInRoom && restoreSession
+    ? getContact?.(restoreSession)
+    : null;
+  switchPage?.(restorePage, { animate: false });
+  if (contact) {
+    enterChatRoom?.(restoreSession, contact.name || restoreSession, restorePage);
   }
 
   return {

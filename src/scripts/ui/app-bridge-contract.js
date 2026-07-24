@@ -15,6 +15,7 @@ export const BRIDGE_CONTRACT_DOMAINS = Object.freeze({
   regexTransform: 'regex-transform',
   regexStore: 'regex-store',
   sharedSession: 'shared-session',
+  variableRuntime: 'variable-runtime',
   runtimeService: 'runtime-service',
   turnCheckpoint: 'turn-checkpoint',
   memoryUpdate: 'memory-update',
@@ -25,6 +26,36 @@ export const BRIDGE_CONTRACT_DOMAINS = Object.freeze({
 });
 
 export const BRIDGE_CONTRACT_METHOD_METADATA = Object.freeze({
+  [BRIDGE_CONTRACT_DOMAINS.variableRuntime]: {
+    initializeMvuVariables: {
+      params: ['sessionId?: string', 'options?: { reason?: string }'],
+      returns: 'MVU initialization result',
+      sideEffects: [
+        'fills missing current values from schema defaults',
+        'backfills initial values for restored session variables',
+        'emits MVU initialized lifecycle event when values changed',
+      ],
+      tests: [
+        'app-bridge-contract-tests.mjs',
+        'mvu-variable-initialization-tests.mjs',
+      ],
+      status: 'covered',
+    },
+    reconvertMvuVariables: {
+      params: ['options?: { sessionId?: string, personaId?: string }'],
+      returns: 'Promise<MVU recovery result>',
+      sideEffects: [
+        'loads the source character card',
+        'refreshes variable schema defaults and initial values',
+        'fills only missing current values',
+      ],
+      tests: [
+        'app-bridge-contract-tests.mjs',
+        'mvu-variable-recovery-tests.mjs',
+      ],
+      status: 'covered',
+    },
+  },
   [BRIDGE_CONTRACT_DOMAINS.generation]: {
     generate: {
       params: ['userMessage: string', 'context?: generation context'],
@@ -345,6 +376,10 @@ export const registerRegexStoreBridgeContract = (appBridge, methods = {}) => {
 
 export const registerSharedSessionBridgeContract = (appBridge, methods = {}) => {
   return assignBridgeMethods(appBridge, methods, BRIDGE_CONTRACT_DOMAINS.sharedSession);
+};
+
+export const registerVariableRuntimeBridgeContract = (appBridge, methods = {}) => {
+  return assignBridgeMethods(appBridge, methods, BRIDGE_CONTRACT_DOMAINS.variableRuntime);
 };
 
 export const registerRuntimeServiceBridgeContract = (appBridge, methods = {}) => {

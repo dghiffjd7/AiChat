@@ -160,7 +160,7 @@ const normalizeVariableSchema = (raw) => {
   }
   if (input.ui && typeof input.ui === 'object') {
     const display = String(input.ui.display || '').trim().toLowerCase();
-    const allowed = new Set(['card', 'chart', 'badge', 'progress', 'hidden']);
+    const allowed = new Set(['card', 'chart', 'badge', 'progress', 'ring', 'hidden']);
     schema.ui = {
       display: allowed.has(display) ? display : 'card',
       label: input.ui.label ? String(input.ui.label) : '',
@@ -2426,7 +2426,7 @@ export class ChatStore {
     return out;
   }
 
-  setVariableSchema(key, schema, id = this.currentId) {
+  setVariableSchema(key, schema, id = this.currentId, options = {}) {
     const sid = String(id || '').trim();
     const name = String(key || '').trim();
     if (!sid || !name) return false;
@@ -2437,6 +2437,8 @@ export class ChatStore {
     if (existing === undefined || existing === null) {
       const nextValue = normalized.default !== undefined ? normalized.default : '';
       this.state.sessions[sid].variables[name] = coerceVariableValue(nextValue, normalized);
+    } else if (options?.preserveExistingValue === true) {
+      this.state.sessions[sid].variables[name] = existing;
     } else {
       this.state.sessions[sid].variables[name] = coerceVariableValue(existing, normalized);
     }

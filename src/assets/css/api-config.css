@@ -1,0 +1,1072 @@
+/* API 配置：迁移 roleplay-app-api-design 的纸张卡片、层级与轻动效。 */
+
+#config-overlay.api-config-overlay {
+  position: fixed;
+  inset: 0;
+  background: color-mix(in srgb, var(--app-surface-overlay) 92%, transparent);
+  backdrop-filter: blur(3px);
+  -webkit-backdrop-filter: blur(3px);
+  opacity: 0;
+}
+
+#config-overlay.api-config-overlay.is-open {
+  animation: api-config-overlay-in 0.2s ease both;
+}
+
+#config-panel.api-config-panel {
+  position: fixed;
+  inset: 0;
+  width: auto;
+  height: auto;
+  align-items: center;
+  justify-content: center;
+  padding:
+    calc(20px + env(safe-area-inset-top, 0px))
+    calc(20px + env(safe-area-inset-right, 0px))
+    calc(20px + env(safe-area-inset-bottom, 0px))
+    calc(20px + env(safe-area-inset-left, 0px));
+  box-sizing: border-box;
+  pointer-events: none;
+}
+
+#config-panel.api-config-panel > .api-config-modal {
+  width: min(672px, 100%);
+  max-height: min(
+    90dvh,
+    calc(100vh - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px) - 40px)
+  );
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+  box-sizing: border-box;
+  pointer-events: auto;
+  color: var(--app-text-primary);
+  background: var(--app-surface-card) !important;
+  border: 1px solid color-mix(in srgb, var(--app-border-strong) 55%, transparent) !important;
+  border-radius: 20px;
+  box-shadow:
+    0 1px 2px color-mix(in srgb, var(--app-shadow-color) 45%, transparent),
+    0 24px 56px -12px color-mix(in srgb, var(--app-shadow-color) 82%, transparent),
+    0 64px 120px -32px color-mix(in srgb, var(--app-shadow-color) 90%, transparent) !important;
+  opacity: 1 !important;
+}
+
+#config-panel.api-config-panel.is-open > .api-config-modal {
+  animation: api-config-modal-in 0.3s cubic-bezier(0.22, 1.2, 0.36, 1) both;
+}
+
+#config-panel.api-config-panel *,
+#config-panel.api-config-panel *::before,
+#config-panel.api-config-panel *::after {
+  box-sizing: border-box;
+}
+
+.api-config-svg {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.api-config-svg.is-spinning {
+  animation: api-config-spin 0.8s linear infinite;
+}
+
+.api-config-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+  flex: 0 0 auto;
+  padding: 24px 28px 0;
+}
+
+.api-config-heading {
+  min-width: 0;
+}
+
+.api-config-kicker {
+  overflow: hidden;
+  color: var(--app-text-muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1.4;
+  letter-spacing: 0.24em;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+#config-panel.api-config-panel #config-title {
+  margin: 6px 0 0;
+  color: var(--app-text-primary) !important;
+  font-size: 20px;
+  font-weight: 750;
+  line-height: 1.25;
+  letter-spacing: -0.01em;
+}
+
+.api-config-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: 0 0 auto;
+  padding-top: 2px;
+}
+
+.api-config-live-note {
+  color: var(--app-text-muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+#config-panel.api-config-panel .api-config-close {
+  width: 34px;
+  height: 34px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  padding: 0;
+  border: 1px solid color-mix(in srgb, var(--app-border-default) 78%, transparent);
+  border-radius: 10px;
+  background: var(--app-surface-subtle);
+  color: var(--app-text-secondary);
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--app-shadow-color) 28%, transparent);
+  cursor: pointer;
+  transition:
+    color 150ms ease,
+    border-color 150ms ease,
+    background 150ms ease,
+    box-shadow 150ms ease,
+    transform 150ms ease;
+}
+
+.api-config-close .api-config-svg {
+  width: 17px;
+  height: 17px;
+  stroke-width: 2.2;
+}
+
+#config-panel.api-config-panel .api-config-close:hover {
+  border-color: color-mix(in srgb, var(--app-accent-primary) 30%, var(--app-border-default));
+  background: var(--app-accent-soft);
+  color: var(--app-accent-strong);
+  box-shadow:
+    0 0 0 3px color-mix(in srgb, var(--app-accent-primary) 9%, transparent),
+    0 4px 12px color-mix(in srgb, var(--app-shadow-color) 38%, transparent);
+  transform: rotate(4deg) scale(1.04);
+}
+
+#config-panel.api-config-panel .api-config-close:active {
+  transform: scale(0.92);
+}
+
+#config-panel.api-config-panel :is(button, input, textarea):focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--app-accent-primary) 64%, transparent);
+  outline-offset: 2px;
+}
+
+.api-config-main-page {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.api-config-tabs-shell {
+  flex: 0 0 auto;
+  padding: 16px 28px 20px;
+  border-bottom: 1px solid var(--app-border-subtle);
+}
+
+.api-config-tabs {
+  display: inline-flex;
+  gap: 2px;
+  padding: 4px;
+  border-radius: 11px;
+  background: var(--app-surface-subtle);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--app-border-strong) 24%, transparent);
+}
+
+body #config-panel.api-config-panel .api-config-tab {
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 16px;
+  border: 0 !important;
+  border-radius: 8px;
+  background: transparent !important;
+  color: var(--app-text-muted) !important;
+  box-shadow: none;
+  font-size: 13px;
+  font-weight: 550;
+  line-height: 1;
+  cursor: pointer;
+  transition:
+    color 150ms ease,
+    background 150ms ease,
+    box-shadow 150ms ease,
+    transform 150ms ease;
+}
+
+.api-config-tab svg {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2;
+}
+
+body #config-panel.api-config-panel .api-config-tab:hover {
+  color: var(--app-text-secondary) !important;
+}
+
+.api-config-tab.is-active {
+  box-shadow:
+    0 1px 3px color-mix(in srgb, var(--app-shadow-color) 48%, transparent),
+    0 0 0 1px color-mix(in srgb, var(--app-border-strong) 22%, transparent);
+}
+
+body #config-panel.api-config-panel .api-config-tab.is-active {
+  background: var(--app-surface-card) !important;
+  color: var(--app-text-primary) !important;
+}
+
+.api-config-tab.is-active svg {
+  color: var(--app-accent-strong);
+}
+
+.api-config-tab:active {
+  transform: scale(0.97);
+}
+
+.api-config-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 24px 28px 4px;
+  scrollbar-color: color-mix(in srgb, var(--app-border-strong) 72%, transparent) transparent;
+  scrollbar-width: thin;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+.api-config-scroll::-webkit-scrollbar,
+.api-config-model-options::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.api-config-scroll::-webkit-scrollbar-track,
+.api-config-model-options::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.api-config-scroll::-webkit-scrollbar-thumb,
+.api-config-model-options::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--app-border-strong) 72%, transparent);
+  background-clip: content-box;
+}
+
+#config-panel.api-config-panel .api-config-field {
+  margin: 0 0 24px !important;
+}
+
+.api-config-field-label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0 0 8px;
+  color: var(--app-text-primary);
+  font-size: 13.5px;
+  font-weight: 650;
+  line-height: 1.35;
+  letter-spacing: -0.01em;
+}
+
+.api-config-field-tools {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+#config-panel.api-config-panel :is(.api-config-icon-action, .api-config-text-action, .api-config-refresh-action) {
+  min-width: 30px;
+  height: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--app-text-muted);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    color 150ms ease,
+    background 150ms ease,
+    transform 150ms ease;
+}
+
+#config-panel.api-config-panel .api-config-icon-action {
+  width: 30px;
+  padding: 0;
+}
+
+#config-panel.api-config-panel :is(.api-config-icon-action, .api-config-text-action):hover {
+  background: var(--app-surface-hover);
+  color: var(--app-text-primary);
+}
+
+#config-panel.api-config-panel .api-config-icon-action.is-danger:hover {
+  background: var(--app-danger-soft);
+  color: var(--app-danger-text);
+}
+
+#config-panel.api-config-panel .api-config-refresh-action {
+  color: var(--app-accent-strong);
+}
+
+#config-panel.api-config-panel .api-config-refresh-action:hover {
+  background: var(--app-accent-soft);
+}
+
+#config-panel.api-config-panel :is(.api-config-icon-action, .api-config-text-action, .api-config-refresh-action):active {
+  transform: scale(0.94);
+}
+
+#config-panel.api-config-panel :is(
+  input:not([type='checkbox']):not([type='radio']),
+  textarea
+) {
+  min-height: 40px;
+  border: 1px solid var(--app-border-default) !important;
+  border-radius: 10px !important;
+  background: var(--app-surface-input) !important;
+  color: var(--app-text-primary) !important;
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--app-shadow-color) 20%, transparent);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12.5px !important;
+  line-height: 1.4;
+  transition:
+    border-color 150ms ease,
+    box-shadow 150ms ease,
+    background 150ms ease;
+}
+
+#config-panel.api-config-panel input:not([type='checkbox']):not([type='radio']):not(#config-timeout) {
+  width: 100% !important;
+  padding: 0 12px !important;
+}
+
+#config-panel.api-config-panel textarea {
+  width: 100% !important;
+  padding: 10px 12px !important;
+}
+
+#config-panel.api-config-panel :is(
+  input:not([type='checkbox']):not([type='radio']),
+  textarea
+):hover {
+  border-color: color-mix(in srgb, var(--app-text-muted) 62%, var(--app-border-default)) !important;
+}
+
+#config-panel.api-config-panel :is(
+  input:not([type='checkbox']):not([type='radio']),
+  textarea
+):focus {
+  border-color: var(--app-accent-primary) !important;
+  box-shadow:
+    0 0 0 3px color-mix(in srgb, var(--app-accent-primary) 10%, transparent),
+    0 1px 2px color-mix(in srgb, var(--app-shadow-color) 20%, transparent);
+  outline: none;
+}
+
+#config-panel.api-config-panel :is(input, textarea)::placeholder {
+  color: var(--app-text-muted) !important;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}
+
+#config-panel.api-config-panel .world-app-select-btn {
+  min-height: 40px;
+  margin: 0 !important;
+  padding: 0 12px;
+  border-color: var(--app-border-default);
+  border-radius: 10px;
+  background: var(--app-surface-input);
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--app-shadow-color) 20%, transparent);
+  font-size: 13.5px;
+  transition:
+    border-color 150ms ease,
+    box-shadow 150ms ease,
+    background 150ms ease;
+}
+
+#config-panel.api-config-panel .world-app-select-btn:hover {
+  border-color: color-mix(in srgb, var(--app-text-muted) 62%, var(--app-border-default));
+  background: var(--app-surface-card);
+}
+
+#config-panel.api-config-panel .world-app-select-btn-chevron,
+.world-app-select-menu[data-select-id^='config-'] .world-app-select-item-check {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+#config-panel.api-config-panel .world-app-select-btn-chevron .api-config-svg {
+  width: 14px;
+  height: 14px;
+}
+
+.world-app-select-menu[data-select-id^='config-'] .world-app-select-item-check .api-config-svg {
+  width: 13px;
+  height: 13px;
+  stroke-width: 2.5;
+}
+
+#config-panel.api-config-panel small {
+  color: var(--app-text-muted) !important;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+#config-panel.api-config-panel .api-config-field > small {
+  display: block;
+  margin-top: 8px;
+}
+
+.api-config-row-card {
+  width: 100%;
+  min-height: 62px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--app-border-default) !important;
+  border-radius: 14px !important;
+  background: var(--app-surface-card) !important;
+  color: var(--app-text-primary) !important;
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--app-shadow-color) 18%, transparent);
+  text-align: left;
+  cursor: pointer;
+  transition:
+    border-color 160ms ease,
+    background 160ms ease,
+    box-shadow 160ms ease,
+    transform 150ms ease;
+}
+
+.api-config-row-card:hover {
+  border-color: color-mix(in srgb, var(--app-accent-primary) 26%, var(--app-border-default)) !important;
+  background: color-mix(in srgb, var(--app-accent-soft) 32%, var(--app-surface-card)) !important;
+  box-shadow: 0 8px 20px -12px color-mix(in srgb, var(--app-shadow-color) 65%, transparent);
+}
+
+.api-config-row-card:active {
+  transform: scale(0.985);
+}
+
+.api-config-row-main {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.api-config-row-icon {
+  width: 36px;
+  height: 36px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  border: 1px solid var(--app-border-subtle);
+  border-radius: 10px;
+  background: var(--app-surface-subtle);
+  color: var(--app-text-secondary);
+  transition:
+    color 160ms ease,
+    border-color 160ms ease,
+    background 160ms ease;
+}
+
+.api-config-row-card:hover .api-config-row-icon,
+#config-panel.api-config-panel #config-transport-toggle:hover .api-config-row-icon {
+  border-color: color-mix(in srgb, var(--app-accent-primary) 24%, var(--app-border-default));
+  background: var(--app-accent-soft);
+  color: var(--app-accent-strong);
+}
+
+.api-config-row-copy {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.api-config-row-copy strong {
+  color: var(--app-text-primary);
+  font-size: 13.5px;
+  font-weight: 650;
+}
+
+.api-config-row-copy small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.api-config-row-card > .api-config-svg {
+  width: 17px;
+  height: 17px;
+  color: var(--app-text-muted);
+}
+
+#config-model-picker {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.api-config-model-options {
+  max-height: 150px;
+  overflow-y: auto;
+  padding: 8px;
+  border: 1px solid var(--app-border-default);
+  border-radius: 12px;
+  background: var(--app-surface-subtle);
+  align-content: flex-start;
+  flex-wrap: wrap;
+  gap: 6px;
+  animation: api-config-fade-in 0.2s ease both;
+}
+
+#config-panel.api-config-panel .api-config-model-chip {
+  max-width: 100%;
+  min-height: 29px;
+  overflow: hidden;
+  padding: 5px 9px;
+  border: 1px solid var(--app-border-default);
+  border-radius: 8px;
+  background: var(--app-surface-card);
+  color: var(--app-text-secondary);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 11.5px;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    color 130ms ease,
+    border-color 130ms ease,
+    background 130ms ease,
+    box-shadow 130ms ease,
+    transform 130ms ease;
+}
+
+#config-panel.api-config-panel .api-config-model-chip:hover {
+  border-color: color-mix(in srgb, var(--app-accent-primary) 34%, var(--app-border-default));
+  color: var(--app-text-primary);
+  transform: translateY(-1px);
+}
+
+.api-config-model-chip.is-match {
+  border-color: color-mix(in srgb, var(--app-accent-primary) 34%, var(--app-border-default)) !important;
+  background: var(--app-accent-soft) !important;
+  color: var(--app-accent-strong) !important;
+}
+
+#config-panel.api-config-panel .api-config-model-chip.is-selected {
+  border-color: var(--app-accent-primary) !important;
+  background: var(--app-accent-primary) !important;
+  color: var(--app-text-on-accent) !important;
+  box-shadow: 0 3px 10px color-mix(in srgb, var(--app-accent-primary) 24%, transparent);
+}
+
+.api-config-stream-card {
+  margin: 0 0 24px;
+  padding: 12px 16px;
+  border: 1px solid var(--app-border-subtle);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--app-surface-subtle) 76%, transparent);
+}
+
+.api-config-stream-card > label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  cursor: pointer;
+}
+
+.api-config-stream-card input {
+  order: 2;
+  flex: 0 0 auto;
+  accent-color: var(--app-accent-primary);
+}
+
+.api-config-stream-card span {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.api-config-stream-card strong,
+.api-config-timeout-row strong {
+  color: var(--app-text-primary);
+  font-size: 13.5px;
+  font-weight: 650;
+}
+
+.api-config-timeout-row {
+  margin: 0 0 24px;
+}
+
+.api-config-timeout-row > label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+}
+
+.api-config-timeout-row > label > span {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+#config-panel.api-config-panel #config-timeout {
+  width: 120px !important;
+  flex: 0 0 120px;
+  padding: 0 12px !important;
+  text-align: right;
+}
+
+.api-config-accordion {
+  margin: 0 0 20px;
+  overflow: hidden;
+  border: 1px solid var(--app-border-default);
+  border-radius: 14px;
+  background: var(--app-surface-card);
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--app-shadow-color) 18%, transparent);
+}
+
+#config-panel.api-config-panel #config-transport-toggle {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 13px 16px;
+  border: 0;
+  border-bottom: 1px solid transparent;
+  background: transparent;
+  color: var(--app-text-primary);
+  text-align: left;
+  cursor: pointer;
+  transition:
+    border-color 300ms ease,
+    background 180ms ease;
+}
+
+#config-panel.api-config-panel #config-transport-toggle:hover {
+  background: var(--app-surface-subtle);
+}
+
+#config-transport-toggle > div {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+#config-transport-summary {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#config-transport-chevron {
+  flex: 0 0 auto;
+  color: var(--app-text-muted);
+  font-size: 18px;
+  transition: color 200ms ease, transform 200ms ease;
+}
+
+.api-config-accordion-content {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 300ms cubic-bezier(0.3, 1, 0.4, 1);
+}
+
+.api-config-accordion-inner {
+  min-height: 0;
+  overflow: hidden;
+  padding: 0 16px;
+}
+
+.api-config-accordion-inner > div:first-child {
+  margin-top: 16px !important;
+  margin-bottom: 16px !important;
+}
+
+.api-config-accordion-inner #config-proxy-fields {
+  padding-bottom: 16px;
+}
+
+.api-config-accordion.is-expanded #config-transport-toggle {
+  border-bottom-color: var(--app-border-subtle);
+}
+
+.api-config-accordion.is-expanded .api-config-accordion-content {
+  grid-template-rows: 1fr;
+}
+
+.api-config-accordion.is-expanded #config-transport-chevron {
+  color: var(--app-text-secondary);
+  transform: rotate(180deg);
+}
+
+.api-config-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  flex: 0 0 auto;
+  padding: 16px 28px;
+  border-top: 1px solid var(--app-border-subtle);
+  background: var(--app-surface-card);
+}
+
+.api-config-status {
+  min-width: 0;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 10px;
+  border: 1px solid var(--app-border-default);
+  border-radius: 999px;
+  color: var(--app-text-secondary);
+  background: var(--app-surface-subtle);
+  font-size: 12px;
+  line-height: 1.3;
+}
+
+.api-config-status::before {
+  content: '';
+  width: 7px;
+  height: 7px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.api-config-status.is-success {
+  border-color: color-mix(in srgb, var(--app-accent-primary) 26%, var(--app-border-default));
+  background: var(--app-accent-soft);
+  color: var(--app-accent-strong);
+}
+
+.api-config-status.is-error {
+  border-color: var(--app-danger-border);
+  background: var(--app-danger-soft);
+  color: var(--app-danger-text);
+}
+
+.api-config-footer-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex: 0 0 auto;
+  margin-left: auto;
+}
+
+#config-panel.api-config-panel .api-config-button {
+  min-width: 76px;
+  height: 40px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 16px;
+  border-radius: 10px;
+  font-family: inherit;
+  font-size: 13.5px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    color 150ms ease,
+    border-color 150ms ease,
+    background 150ms ease,
+    box-shadow 150ms ease,
+    transform 150ms ease;
+}
+
+#config-panel.api-config-panel .api-config-button.is-secondary {
+  border: 1px solid var(--app-border-default);
+  background: var(--app-surface-card);
+  color: var(--app-text-secondary);
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--app-shadow-color) 20%, transparent);
+}
+
+#config-panel.api-config-panel .api-config-button.is-secondary:hover {
+  border-color: color-mix(in srgb, var(--app-text-muted) 62%, var(--app-border-default));
+  background: var(--app-surface-subtle);
+  color: var(--app-text-primary);
+}
+
+#config-panel.api-config-panel .api-config-button.is-primary {
+  min-width: 88px;
+  border: 1px solid var(--app-accent-primary);
+  background: var(--app-accent-primary);
+  color: var(--app-text-on-accent);
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, var(--app-text-on-accent) 12%, transparent),
+    0 2px 5px color-mix(in srgb, var(--app-accent-primary) 28%, transparent);
+}
+
+#config-panel.api-config-panel .api-config-button.is-primary:hover {
+  border-color: var(--app-accent-strong);
+  background: var(--app-accent-strong);
+}
+
+#config-panel.api-config-panel .api-config-button:active {
+  transform: scale(0.975);
+}
+
+#config-panel.api-config-panel .api-config-button:disabled,
+#config-panel.api-config-panel .api-config-refresh-action:disabled {
+  pointer-events: none;
+  opacity: 0.45;
+}
+
+#config-image-params-page {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 22px 28px 24px;
+}
+
+.world-app-select-menu[data-select-id^='config-'] {
+  border-radius: 12px;
+  background: var(--app-surface-card) !important;
+  box-shadow:
+    0 2px 6px color-mix(in srgb, var(--app-shadow-color) 25%, transparent),
+    0 16px 40px -12px color-mix(in srgb, var(--app-shadow-color) 72%, transparent);
+  animation: api-config-pop-in 0.15s cubic-bezier(0.2, 0.9, 0.35, 1) both;
+  transform-origin: top left;
+}
+
+.world-app-select-menu[data-select-id^='config-'] .world-app-select-item {
+  border-radius: 8px;
+}
+
+.world-app-select-menu[data-select-id^='config-'] .world-app-select-item.is-selected {
+  background: var(--app-accent-soft);
+  color: var(--app-accent-strong);
+}
+
+body[data-theme-mode='dark'] #config-panel.api-config-panel > .api-config-modal {
+  background: var(--app-surface-panel) !important;
+  border-color: var(--app-border-default) !important;
+}
+
+body[data-theme-mode='dark'] #config-panel.api-config-panel .api-config-tab {
+  background: transparent !important;
+  border-color: transparent !important;
+  color: var(--app-text-muted) !important;
+}
+
+body[data-theme-mode='dark'] #config-panel.api-config-panel .api-config-tab.is-active {
+  background: var(--app-surface-input) !important;
+  color: var(--app-text-primary) !important;
+}
+
+body[data-theme-mode='dark'] #config-panel.api-config-panel :is(
+  .api-config-model-options,
+  .api-config-stream-card
+) {
+  background: color-mix(in srgb, var(--app-surface-subtle) 72%, transparent) !important;
+}
+
+@keyframes api-config-overlay-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes api-config-modal-in {
+  from {
+    opacity: 0;
+    transform: translateY(14px) scale(0.982);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes api-config-pop-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes api-config-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes api-config-spin {
+  to { transform: rotate(1turn); }
+}
+
+@media (max-width: 700px) {
+  #config-panel.api-config-panel {
+    padding:
+      calc(12px + env(safe-area-inset-top, 0px))
+      calc(12px + env(safe-area-inset-right, 0px))
+      calc(12px + env(safe-area-inset-bottom, 0px))
+      calc(12px + env(safe-area-inset-left, 0px));
+  }
+
+  #config-panel.api-config-panel > .api-config-modal {
+    max-height: calc(
+      100dvh - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px) - 24px
+    );
+  }
+
+  .api-config-header {
+    padding: 20px 20px 0;
+  }
+
+  .api-config-tabs-shell {
+    padding: 14px 20px 18px;
+  }
+
+  .api-config-scroll {
+    padding: 20px 20px 2px;
+  }
+
+  .api-config-footer {
+    padding: 14px 20px;
+  }
+
+  #config-image-params-page {
+    padding: 18px 20px 20px;
+  }
+}
+
+@media (max-width: 480px) {
+  #config-panel.api-config-panel {
+    padding:
+      calc(8px + env(safe-area-inset-top, 0px))
+      calc(8px + env(safe-area-inset-right, 0px))
+      calc(8px + env(safe-area-inset-bottom, 0px))
+      calc(8px + env(safe-area-inset-left, 0px));
+  }
+
+  #config-panel.api-config-panel > .api-config-modal {
+    max-height: calc(
+      100dvh - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px) - 16px
+    );
+    border-radius: 18px;
+  }
+
+  .api-config-live-note {
+    display: none;
+  }
+
+  .api-config-header-actions {
+    gap: 6px;
+  }
+
+  .api-config-tabs {
+    display: flex;
+    width: 100%;
+  }
+
+  body #config-panel.api-config-panel .api-config-tab {
+    min-width: 0;
+    flex: 1 1 50%;
+    padding: 0 10px;
+  }
+
+  .api-config-timeout-row > label {
+    gap: 12px;
+  }
+
+  #config-panel.api-config-panel #config-timeout {
+    width: 104px !important;
+    flex-basis: 104px;
+  }
+
+  .api-config-footer {
+    align-items: flex-end;
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+
+  .api-config-status {
+    width: 100%;
+  }
+
+  .api-config-footer-actions {
+    width: 100%;
+  }
+
+  #config-panel.api-config-panel .api-config-button {
+    min-width: 0;
+    flex: 1 1 auto;
+    padding: 0 10px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #config-overlay.api-config-overlay,
+  #config-panel.api-config-panel .api-config-modal,
+  #config-panel.api-config-panel :is(button, input, textarea),
+  #config-panel.api-config-panel .api-config-accordion-content,
+  .world-app-select-menu[data-select-id^='config-'] {
+    animation: none !important;
+    scroll-behavior: auto !important;
+    transition: none !important;
+  }
+}
+
+body[data-reduced-motion='on'] #config-overlay.api-config-overlay,
+body[data-reduced-motion='on'] #config-panel.api-config-panel .api-config-modal,
+body[data-reduced-motion='on'] #config-panel.api-config-panel :is(button, input, textarea),
+body[data-reduced-motion='on'] #config-panel.api-config-panel .api-config-accordion-content,
+body[data-reduced-motion='on'] .world-app-select-menu[data-select-id^='config-'] {
+  animation: none !important;
+  scroll-behavior: auto !important;
+  transition: none !important;
+}

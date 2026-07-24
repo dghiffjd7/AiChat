@@ -40,7 +40,7 @@ const encodeFrame = (payload) => {
   return Buffer.concat([header, mask, masked]);
 };
 
-const createWsClient = (wsUrl, { onMessage, onOpen, onError }) => {
+export const createWsClient = (wsUrl, { onMessage, onOpen, onError }) => {
   const url = new URL(wsUrl);
   const socket = connect(Number(url.port), url.hostname);
   const key = randomBytes(16).toString('base64');
