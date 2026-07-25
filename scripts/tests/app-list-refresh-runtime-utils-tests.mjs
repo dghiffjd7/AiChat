@@ -113,3 +113,25 @@ import {
   assert.deepEqual(calls, ['refresh']);
   console.log('ok - createChatAndContactsRefreshRuntime falls back to timeout scheduling without RAF');
 }
+
+{
+  // 孤儿群会话守卫：本 scope 无联系人的 group: 会话不得进入聊天列表与内容搜索
+  const fs = await import('node:fs');
+  const appSource = fs.readFileSync(
+    new URL('../../src/scripts/ui/app.js', import.meta.url),
+    'utf8',
+  );
+  assert.match(
+    appSource,
+    /const isOrphanGroupSessionId = \(sessionId\) => \{[\s\S]{0,200}?startsWith\('group:'\)[\s\S]{0,120}?!contactsStore\.getContact\(/,
+  );
+  const renderChatListBlock = appSource.slice(
+    appSource.indexOf('const renderChatList = () => {'),
+    appSource.indexOf('const renderChatList = () => {') + 600,
+  );
+  assert.match(renderChatListBlock, /isOrphanGroupSessionId/);
+  const searchCollectorAt = appSource.indexOf('const sessionIds = chatStore');
+  const searchBlock = appSource.slice(searchCollectorAt, searchCollectorAt + 400);
+  assert.match(searchBlock, /isOrphanGroupSessionId/);
+  console.log('ok - orphan group sessions are excluded from chat list and content search');
+}

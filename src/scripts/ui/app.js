@@ -8040,12 +8040,18 @@ Phase G（Frame 36）：循环衔接
 
   let contactDetailRuntime = null;
 
+  // 孤儿群会话（本 scope 无联系人，多为跨 scope 泄漏残留）：无名无头像也进不了房，直接不进列表
+  const isOrphanGroupSessionId = (sessionId) => {
+    const sid = String(sessionId || '').trim();
+    return sid.startsWith('group:') && !contactsStore.getContact(sid);
+  };
   const renderChatList = () => {
     const el = document.getElementById('chat-list');
     if (!el) return;
     const ids = chatStore
       .listSessions()
       .filter(id => !isRpSessionId(id))
+      .filter(id => !isOrphanGroupSessionId(id))
       .filter(id => chatStore.hasMessages?.(id) || (chatStore.getMessages(id) || []).some(isConversationMessage))
       .slice(0, 50);
     el.innerHTML = '';
@@ -8612,6 +8618,7 @@ Phase G（Frame 36）：循环衔接
     const sessionIds = chatStore
       .listSessions()
       .filter(id => !isRpSessionId(id))
+      .filter(id => !isOrphanGroupSessionId(id))
       .filter(id => chatStore.hasMessages?.(id) || (chatStore.getMessages(id) || []).some(isConversationMessage));
     const results = [];
 
