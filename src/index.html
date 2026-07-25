@@ -97,6 +97,7 @@
     <link rel="stylesheet" href="./assets/css/api-config-secondary.css" />
     <link rel="stylesheet" href="./assets/css/social-desktop-redesign.css" />
     <link rel="stylesheet" href="./assets/css/creative-writing-redesign.css" />
+    <link rel="stylesheet" href="./assets/css/group-creation-redesign.css" />
   </head>
   <body class="bg-legacy">
     <div id="app-splash" style="
@@ -131,7 +132,9 @@
             </div>
           </div>
           <div class="topbar-actions">
-            <button id="plus-button" class="icon-button topbar-plus-btn">＋</button>
+            <button id="plus-button" class="icon-button topbar-plus-btn" type="button" aria-label="新建" aria-expanded="false">
+              <span class="topbar-plus-glyph" aria-hidden="true"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14"/><path d="M5 12h14"/></svg></span>
+            </button>
             <button type="button" class="user-settings-btn" aria-label="打开设置">⚙</button>
           </div>
         </div>
@@ -304,7 +307,9 @@
             </div>
           </div>
           <div class="topbar-actions">
-            <button class="icon-button topbar-plus-btn">＋</button>
+            <button class="icon-button topbar-plus-btn" type="button" aria-label="新建" aria-expanded="false">
+              <span class="topbar-plus-glyph" aria-hidden="true"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14"/><path d="M5 12h14"/></svg></span>
+            </button>
             <button type="button" class="user-settings-btn" aria-label="打开设置">⚙</button>
           </div>
         </div>
@@ -422,10 +427,45 @@
       </div>
 
       <!-- Plus quick menu -->
-      <div id="quick-menu" class="sheet hidden">
-        <button data-action="add-friend">添加好友</button>
-        <button data-action="create-group">创建群组</button>
-        <button data-action="new-group">新建分组</button>
+      <div id="quick-menu" class="sheet quick-create-menu hidden" aria-hidden="true">
+        <button type="button" class="quick-menu-item" data-action="add-friend">
+          <span class="quick-menu-icon is-friend" aria-hidden="true">
+            <svg viewBox="0 0 24 24">
+              <path d="M15 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"></path>
+              <circle cx="8.5" cy="7" r="4"></circle>
+              <path d="M19 8v6M22 11h-6"></path>
+            </svg>
+          </span>
+          <span class="quick-menu-copy">
+            <span class="quick-menu-label">添加好友</span>
+            <span class="quick-menu-description">输入昵称或 ID 找到 TA</span>
+          </span>
+        </button>
+        <button type="button" class="quick-menu-item" data-action="create-group">
+          <span class="quick-menu-icon is-group" aria-hidden="true">
+            <svg viewBox="0 0 24 24">
+              <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"></path>
+              <circle cx="9" cy="7" r="4"></circle>
+              <path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"></path>
+            </svg>
+          </span>
+          <span class="quick-menu-copy">
+            <span class="quick-menu-label">创建群组</span>
+            <span class="quick-menu-description">拉几位伙伴一起开聊</span>
+          </span>
+        </button>
+        <button type="button" class="quick-menu-item" data-action="new-group">
+          <span class="quick-menu-icon is-folder" aria-hidden="true">
+            <svg viewBox="0 0 24 24">
+              <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"></path>
+              <path d="M12 11v6M9 14h6"></path>
+            </svg>
+          </span>
+          <span class="quick-menu-copy">
+            <span class="quick-menu-label">新建分组</span>
+            <span class="quick-menu-description">给联系人归个好类</span>
+          </span>
+        </button>
       </div>
 
       <!-- Chat settings modal -->

@@ -10,8 +10,10 @@ import { FEATHER_DEFAULT, resolveLineAvatar } from '../utils/line-avatar.js';
 import { appSettings } from '../storage/app-settings.js';
 import { MemoryTableEditor } from './memory-table-editor.js';
 import { appChoice, appConfirm } from './app-confirm.js';
-import { createSessionContactPickerModal } from './session-contact-picker-modal-utils.js';
 import { createGroupCreateRuntime } from './group-create-runtime-utils.js';
+import { createContactAvatarElement } from './group-avatar-view-utils.js';
+import { createGroupPanelMotionRuntime } from './group-panel-motion-runtime-utils.js';
+import { resolveContactGroupColor } from '../storage/contact-group-color-utils.js';
 import { createGroupMemoryShareRuntime } from './group-memory-share-runtime-utils.js';
 import { createGroupMemberManagementRuntime } from './group-member-management-runtime-utils.js';
 import { runGroupSettingsSaveFlow } from './group-settings-save-runtime-utils.js';
@@ -133,17 +135,20 @@ const resolveContactAvatar = (contact, fallbackName = '') => {
 };
 
 export class GroupCreatePanel {
-    constructor({ contactsStore, chatStore, onCreated } = {}) {
+    constructor({ contactsStore, chatStore, groupStore = null, onCreated } = {}) {
         this.contactsStore = contactsStore;
         this.chatStore = chatStore;
+        this.groupStore = groupStore;
         this.onCreated = typeof onCreated === 'function' ? onCreated : null;
 
         this.overlay = null;
         this.panel = null;
         this.fileInput = null;
+        this.motion = null;
 
         this.avatar = '';
         this.selected = new Set();
+        this.validationAttempted = false;
         this.createRuntime = null;
     }
 
@@ -151,18 +156,19 @@ export class GroupCreatePanel {
         if (!this.panel) this.createUI();
         this.avatar = '';
         this.selected.clear();
+        this.validationAttempted = false;
         this.panel.querySelector('#group-name').value = '';
         this.panel.querySelector('#group-search').value = '';
+        this.updateHeaderCopy();
         this.renderContacts();
         this.updateAvatarPreview();
         this.updateCreateEnabled();
-        this.overlay.style.display = 'block';
-        this.panel.style.display = 'flex';
+        this.motion?.show();
+        setTimeout(() => this.panel?.querySelector?.('#group-name')?.focus?.(), 100);
     }
 
     hide() {
-        if (this.overlay) this.overlay.style.display = 'none';
-        if (this.panel) this.panel.style.display = 'none';
+        this.motion?.hide();
     }
 
     ensureCreateRuntime() {
@@ -179,57 +185,90 @@ export class GroupCreatePanel {
             genGroupId,
             hide: () => this.hide(),
             onCreated: this.onCreated,
+            onSelectionChanged: () => this.syncSelectionUI(),
+            onValidationError: (validation) => this.showValidationMotion(validation),
             notifySuccess: (message) => window.toastr?.success?.(message),
             notifyError: (message) => window.toastr?.error?.(message),
             logger,
+            deps: {
+                createSelectableContactEmptyState: () => this.createEmptyContactState(),
+                createSelectableContactRow: (payload) => this.createMemberRow(payload),
+            },
         });
         return this.createRuntime;
     }
 
     createUI() {
-        const avatarButtonStyle = buildSessionAvatarButtonStyle();
-        const coverImageStyle = buildSessionCoverImageStyle();
-        const topRowStyle = buildSessionFlexRowStyle({ gap: 14, wrap: true, margin: '0 0 14px' });
-        const fieldLabelStyle = buildSessionFieldLabelStyle();
-        const fieldInputStyle = buildSessionTextInputStyle();
-        const helperTextStyle = buildSessionHelperTextStyle({ marginTop: 6 });
-        const topContent = document.createElement('div');
-        topContent.innerHTML = `
-            <div style="${topRowStyle}">
-                <button id="group-avatar-btn" type="button" style="${avatarButtonStyle}">
-                    <img id="group-avatar-preview" alt="" style="${coverImageStyle}">
+        this.overlay = document.createElement('div');
+        this.overlay.id = 'group-create-overlay';
+        this.overlay.className = 'app-themed-overlay group-redesign-overlay group-create-overlay';
+        this.overlay.style.display = 'none';
+
+        this.panel = document.createElement('div');
+        this.panel.id = 'group-create-panel';
+        this.panel.className = 'app-themed-panel group-redesign-panel group-create-panel';
+        this.panel.style.display = 'none';
+        this.panel.setAttribute('role', 'dialog');
+        this.panel.setAttribute('aria-modal', 'true');
+        this.panel.setAttribute('aria-labelledby', 'group-create-title');
+        this.panel.addEventListener('click', (event) => event.stopPropagation());
+        this.panel.innerHTML = `
+            <header class="group-redesign-header group-create-header">
+                <button id="group-avatar-btn" class="group-create-avatar-button" type="button" title="选择群组头像" aria-label="选择群组头像">
+                    <span id="group-avatar-preview" class="group-create-avatar-preview"></span>
+                    <span class="group-create-avatar-edit" aria-hidden="true">
+                        <svg viewBox="0 0 24 24"><path d="M14.5 5 13 3h-2L9.5 5H6a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2Z"></path><circle cx="12" cy="12" r="3.2"></circle></svg>
+                    </span>
                 </button>
-                <div style="flex:1; min-width:220px;">
-                    <div style="${fieldLabelStyle}">群组名称</div>
-                    <input id="group-name" style="${fieldInputStyle}" placeholder="请输入群组名称">
-                    <div id="group-name-hint" style="${helperTextStyle}"></div>
+                <div class="group-redesign-heading">
+                    <h2 id="group-create-title">创建群组</h2>
+                    <p id="group-create-subtitle">给新群组起个名字，再挑几位聊得来的伙伴</p>
                 </div>
+                <button id="group-close" class="group-redesign-close" type="button" aria-label="关闭">
+                    <svg viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"></path></svg>
+                </button>
+            </header>
+
+            <div class="group-create-body">
+                <section class="group-create-name-section">
+                    <label class="group-create-label" for="group-name">群组名称<span class="group-required-dot" aria-hidden="true"></span></label>
+                    <div id="group-name-field" class="group-create-input-shell">
+                        <input id="group-name" maxlength="20" placeholder="例如：周五奶茶拼单群" autocomplete="off">
+                        <span id="group-name-count" class="group-create-count">0/20</span>
+                    </div>
+                    <div id="group-name-hint" class="group-create-validation" aria-live="polite"></div>
+                </section>
+
+                <section id="group-selected-section" class="group-selected-section" hidden>
+                    <div class="group-create-section-heading">
+                        <span>已选成员</span>
+                        <span id="group-selected-count" class="group-selected-count">0</span>
+                        <button id="group-selected-clear" type="button">清空</button>
+                    </div>
+                    <div id="group-selected-chips" class="group-selected-chips"></div>
+                </section>
+
+                <section class="group-create-members-section">
+                    <div class="group-create-member-toolbar">
+                        <span class="group-create-label">选择成员</span>
+                        <label class="group-create-search">
+                            <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><path d="m20 20-4-4"></path></svg>
+                            <input id="group-search" placeholder="搜索联系人…" autocomplete="off">
+                        </label>
+                    </div>
+                    <div id="group-contacts" class="group-create-contact-list"></div>
+                    <div id="group-member-hint" class="group-create-validation" aria-live="polite"></div>
+                </section>
             </div>
+
+            <footer class="group-create-footer">
+                <div id="group-footer-selected" class="group-footer-selected"></div>
+                <div class="group-create-footer-actions">
+                    <button id="group-cancel" class="group-redesign-cancel" type="button">取消</button>
+                    <button id="group-create" class="group-redesign-primary" type="button" aria-disabled="true">创建群组</button>
+                </div>
+            </footer>
         `;
-        const modal = createSessionContactPickerModal({
-            documentRef: document,
-            overlayId: 'group-create-overlay',
-            panelId: 'group-create-panel',
-            title: '创建群组',
-            subtitle: '从联系人中选择成员',
-            closeId: 'group-close',
-            cancelId: 'group-cancel',
-            confirmId: 'group-create',
-            confirmLabel: '创建',
-            searchId: 'group-search',
-            listId: 'group-contacts',
-            searchPlaceholder: '搜索联系人...',
-            sectionTitle: '选择成员',
-            topContent,
-            headerBackground: 'linear-gradient(135deg, rgba(25,154,255,0.10), rgba(0,102,204,0.08))',
-            overlayOpacity: 0.45,
-            overlayZIndex: 20000,
-            panelZIndex: 21000,
-            inset: 10,
-            radius: 14,
-        });
-        this.overlay = modal.overlay;
-        this.panel = modal.panel;
         this.overlay.addEventListener('click', () => this.hide());
 
         this.fileInput = document.createElement('input');
@@ -251,6 +290,13 @@ export class GroupCreatePanel {
         document.body.appendChild(this.overlay);
         document.body.appendChild(this.panel);
         document.body.appendChild(this.fileInput);
+        this.motion = createGroupPanelMotionRuntime({
+            overlayEl: this.overlay,
+            panelEl: this.panel,
+            isReducedMotion: () =>
+                document.body?.dataset?.reducedMotion === 'on' ||
+                window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches === true,
+        });
 
         this.panel.querySelector('#group-close').onclick = () => this.hide();
         this.panel.querySelector('#group-cancel').onclick = () => this.hide();
@@ -258,26 +304,74 @@ export class GroupCreatePanel {
             this.fileInput.value = '';
             this.fileInput.click();
         };
-        this.panel.querySelector('#group-name').addEventListener('input', () => this.updateCreateEnabled());
+        this.panel.querySelector('#group-name').addEventListener('input', () => {
+            this.updateHeaderCopy();
+            this.updateAvatarPreview();
+            this.updateCreateEnabled();
+        });
+        this.panel.querySelector('#group-name').addEventListener('keydown', (event) => {
+            if (event.key !== 'Enter') return;
+            event.preventDefault();
+            this.createGroup();
+        });
         this.panel.querySelector('#group-search').addEventListener('input', () => this.renderContacts());
         this.panel.querySelector('#group-create').onclick = () => this.createGroup();
-    }
-
-    updateAvatarPreview() {
-        const img = this.panel?.querySelector('#group-avatar-preview');
-        if (!img) return;
-        const nameInput = this.panel?.querySelector('#group-name');
-        const name = String(nameInput?.value || '群聊').trim() || '群聊';
-        img.src = resolveLineAvatar({
-            avatar: this.avatar || defaultAvatar,
-            name,
-            tags: [],
-            size: 96,
+        this.panel.querySelector('#group-selected-clear').onclick = () => {
+            this.selected.clear();
+            this.ensureCreateRuntime().syncRenderedSelection();
+        };
+        window.addEventListener('keydown', (event) => {
+            if (event.key === 'Escape' && this.motion?.isVisible?.()) this.hide();
         });
     }
 
+    updateAvatarPreview() {
+        const preview = this.panel?.querySelector('#group-avatar-preview');
+        if (!preview) return;
+        const nameInput = this.panel?.querySelector('#group-name');
+        const name = String(nameInput?.value || '群聊').trim() || '群聊';
+        const avatar = createContactAvatarElement({
+            documentRef: document,
+            sessionId: 'group:preview',
+            contact: {
+                id: 'group:preview',
+                name,
+                avatar: this.avatar,
+                isGroup: true,
+                members: [...this.selected],
+            },
+            getContact: (id) => this.contactsStore?.getContact?.(id),
+            resolveAvatar: (id, contact) => resolveContactAvatar(contact, id),
+            className: 'group-create-avatar-art',
+        });
+        preview.replaceChildren(avatar);
+        this.panel?.querySelector?.('#group-avatar-btn')?.classList?.toggle?.('has-manual-avatar', Boolean(this.avatar));
+    }
+
     updateCreateEnabled() {
-        return this.ensureCreateRuntime().updateCreateEnabled();
+        const state = this.ensureCreateRuntime().updateCreateEnabled();
+        const revealValidation = this.validationAttempted;
+        const nameHint = this.panel?.querySelector?.('#group-name-hint');
+        const memberHint = this.panel?.querySelector?.('#group-member-hint');
+        this.panel?.querySelector?.('#group-name-field')?.classList?.toggle?.(
+            'is-invalid',
+            Boolean(revealValidation && state?.nameError),
+        );
+        this.panel?.querySelector?.('.group-create-members-section')?.classList?.toggle?.(
+            'is-invalid',
+            Boolean(revealValidation && state?.memberError),
+        );
+        if (!revealValidation) {
+            if (nameHint) {
+                nameHint.textContent = '';
+                nameHint.style.color = 'var(--app-text-muted)';
+            }
+            if (memberHint) {
+                memberHint.textContent = `已选择 ${state?.membersCount || 0} 位成员`;
+                memberHint.style.color = 'var(--app-text-muted)';
+            }
+        }
+        return state;
     }
 
     renderContacts() {
@@ -286,6 +380,205 @@ export class GroupCreatePanel {
 
     createGroup() {
         return this.ensureCreateRuntime().createGroup();
+    }
+
+    updateHeaderCopy() {
+        const input = this.panel?.querySelector?.('#group-name');
+        const name = String(input?.value || '').trim();
+        const subtitle = this.panel?.querySelector?.('#group-create-subtitle');
+        const counter = this.panel?.querySelector?.('#group-name-count');
+        if (subtitle) {
+            subtitle.textContent = name
+                ? `「${name}」即将诞生`
+                : '给新群组起个名字，再挑几位聊得来的伙伴';
+        }
+        if (counter) counter.textContent = `${String(input?.value || '').length}/20`;
+    }
+
+    getSelectedContacts() {
+        return [...this.selected]
+            .map((id) => this.contactsStore?.getContact?.(id) || null)
+            .filter(Boolean);
+    }
+
+    syncSelectionUI() {
+        if (!this.panel) return;
+        const contacts = this.getSelectedContacts();
+        const section = this.panel.querySelector('#group-selected-section');
+        const count = this.panel.querySelector('#group-selected-count');
+        const chips = this.panel.querySelector('#group-selected-chips');
+        const footer = this.panel.querySelector('#group-footer-selected');
+        if (section) section.hidden = contacts.length === 0;
+        if (count) count.textContent = String(contacts.length);
+
+        if (chips) {
+            const rendered = new Map(
+                [...chips.querySelectorAll('.group-selected-chip[data-contact-id]')]
+                    .map((chip) => [chip.dataset.contactId, chip]),
+            );
+            // 只追加新 chip：appendChild 移动既有节点会重放入场动画，整条已选栏跟着闪
+            let appendedInBatch = 0;
+            contacts.forEach((contact) => {
+                let chip = rendered.get(contact.id);
+                if (!chip) {
+                    chip = document.createElement('span');
+                    chip.className = 'group-selected-chip';
+                    chip.dataset.contactId = contact.id;
+                    const image = document.createElement('img');
+                    image.alt = '';
+                    const name = document.createElement('span');
+                    const remove = document.createElement('button');
+                    remove.type = 'button';
+                    remove.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 7 10 10M17 7 7 17"></path></svg>';
+                    chip.append(image, name, remove);
+                }
+                rendered.delete(contact.id);
+                if (chip._groupChipRemovalTimer) {
+                    clearTimeout(chip._groupChipRemovalTimer);
+                    chip._groupChipRemovalTimer = null;
+                }
+                chip.classList.remove('is-leaving');
+                const image = chip.querySelector('img');
+                image.src = resolveContactAvatar(contact, contact.id);
+                const name = chip.querySelector(':scope > span');
+                name.textContent = contact.name || contact.id;
+                const remove = chip.querySelector('button');
+                remove.setAttribute('aria-label', `移除 ${contact.name || contact.id}`);
+                remove.onclick = () => {
+                    this.selected.delete(contact.id);
+                    this.ensureCreateRuntime().syncRenderedSelection();
+                };
+                if (!chip.isConnected) {
+                    // 交错延迟只按本批新增计数：整面板首次填充有阶梯感，单个勾选零延迟
+                    chip.style.setProperty('--group-chip-index', String(Math.min(appendedInBatch, 8)));
+                    appendedInBatch += 1;
+                    chips.appendChild(chip);
+                }
+            });
+            rendered.forEach((chip) => {
+                chip.classList.add('is-leaving');
+                chip._groupChipRemovalTimer = setTimeout(() => chip.remove(), 140);
+            });
+        }
+
+        if (footer) {
+            if (!contacts.length) {
+                if (!footer.querySelector('.group-footer-empty')) {
+                    const empty = document.createElement('span');
+                    empty.className = 'group-footer-empty';
+                    empty.innerHTML = `
+                        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M22 21v-2a4 4 0 0 0-3-3.87"></path></svg>
+                        从上方挑几位聊得来的伙伴
+                    `;
+                    footer.replaceChildren(empty);
+                }
+            } else {
+                let stack = footer.querySelector('.group-avatar-stack');
+                let text = footer.querySelector('.group-footer-count');
+                if (!stack || !text) {
+                    stack = document.createElement('span');
+                    stack.className = 'group-avatar-stack';
+                    text = document.createElement('span');
+                    text.className = 'group-footer-count';
+                    footer.replaceChildren(stack, text);
+                }
+                const rendered = new Map(
+                    [...stack.querySelectorAll('img[data-contact-id]')]
+                        .map((image) => [image.dataset.contactId, image]),
+                );
+                contacts.slice(0, 5).forEach((contact) => {
+                    let image = rendered.get(contact.id);
+                    if (!image) {
+                        image = document.createElement('img');
+                        image.dataset.contactId = contact.id;
+                        image.alt = '';
+                    }
+                    rendered.delete(contact.id);
+                    image.src = resolveContactAvatar(contact, contact.id);
+                    stack.appendChild(image);
+                });
+                rendered.forEach((image) => image.remove());
+                stack.querySelectorAll('img:not([data-contact-id])').forEach((image) => image.remove());
+                const total = document.createElement('b');
+                total.textContent = String(contacts.length);
+                text.replaceChildren('已选 ', total, ' 位伙伴');
+            }
+        }
+        this.updateCreateEnabled();
+        this.updateAvatarPreview();
+    }
+
+    createEmptyContactState() {
+        const empty = document.createElement('div');
+        empty.className = 'group-create-empty';
+        const query = String(this.panel?.querySelector?.('#group-search')?.value || '').trim();
+        empty.innerHTML = `
+            <span><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><path d="m20 20-4-4M8.5 8.5l5 5M13.5 8.5l-5 5"></path></svg></span>
+            <p>${query ? '没有找到相关联系人' : '暂无可选联系人'}</p>
+        `;
+        return empty;
+    }
+
+    createMemberRow({ id, name, avatar, contact = {}, index = 0, selected = false, onClick } = {}) {
+        const row = document.createElement('button');
+        row.type = 'button';
+        row.className = `group-create-member-row${selected ? ' is-selected' : ''}`;
+        row.dataset.contactId = id;
+        row.setAttribute('aria-pressed', selected ? 'true' : 'false');
+        row.style.setProperty('--group-member-index', String(Math.min(index, 12)));
+        row.onclick = onClick;
+
+        const check = document.createElement('span');
+        check.className = 'group-create-member-check';
+        check.innerHTML = '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2.2 6.4 4.7 8.8 9.8 3.4"></path></svg>';
+
+        const image = document.createElement('img');
+        image.className = 'group-create-member-avatar';
+        image.src = avatar || defaultAvatar;
+        image.alt = '';
+
+        const info = document.createElement('span');
+        info.className = 'group-create-member-info';
+        const memberName = document.createElement('span');
+        memberName.className = 'group-create-member-name';
+        memberName.textContent = name || id;
+        const description = document.createElement('span');
+        description.className = 'group-create-member-description';
+        description.textContent = String(contact?.description || contact?.signature || contact?.remark || '准备好一起聊天').trim();
+        info.append(memberName, description);
+
+        const organization = (this.groupStore?.listGroups?.() || [])
+            .find((group) => Array.isArray(group?.contacts) && group.contacts.includes(id));
+        if (organization) {
+            const color = resolveContactGroupColor(organization.color);
+            const badge = document.createElement('span');
+            badge.className = 'group-create-member-group';
+            badge.style.setProperty('--group-badge-color', color.value);
+            badge.innerHTML = `<i></i><span></span>`;
+            badge.lastElementChild.textContent = organization.name;
+            row.append(check, image, info, badge);
+        } else {
+            row.append(check, image, info);
+        }
+
+        const selectedText = document.createElement('span');
+        selectedText.className = 'group-create-member-selected';
+        selectedText.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 4 4L19 6"></path></svg><span>已选</span>';
+        row.appendChild(selectedText);
+        return { row };
+    }
+
+    showValidationMotion(validation = {}) {
+        this.validationAttempted = true;
+        this.updateCreateEnabled();
+        const target = validation?.nameError
+            ? this.panel?.querySelector?.('.group-create-name-section')
+            : this.panel?.querySelector?.('.group-create-members-section');
+        if (!target) return;
+        target.classList.remove('is-shaking');
+        void target.offsetWidth;
+        target.classList.add('is-shaking');
+        setTimeout(() => target.classList.remove('is-shaking'), 420);
     }
 }
 
@@ -466,7 +759,7 @@ export class GroupSettingsPanel {
         shell.body.innerHTML = `
                 <div style="${topRowStyle}">
                     <button id="group-settings-avatar-btn" type="button" style="${avatarButtonStyle}">
-                        <img id="group-settings-avatar-preview" alt="" style="${coverImageStyle}">
+                        <span id="group-settings-avatar-preview" class="group-settings-avatar-preview" style="${coverImageStyle}"></span>
                     </button>
                     <div style="flex:1; min-width:220px;">
                         <div class="has-help" data-help="修改名称不会改变聊天室 ID。" style="${fieldLabelStyle}">群组名称</div>
@@ -1014,6 +1307,7 @@ export class GroupSettingsPanel {
             getMembers: () => this.members,
             setMembers: (nextMembers) => {
                 this.members = Array.isArray(nextMembers) ? nextMembers : [];
+                this.updateAvatarPreview();
             },
             getContactsStore: () => this.contactsStore,
             getAddOverlay: () => this.addOverlay,
@@ -1036,15 +1330,26 @@ export class GroupSettingsPanel {
     }
 
     updateAvatarPreview() {
-        const img = this.panel?.querySelector('#group-settings-avatar-preview');
-        if (!img) return;
-        const name = String(this.name || '群聊').trim() || '群聊';
-        img.src = resolveLineAvatar({
-            avatar: this.avatar || defaultAvatar,
-            name,
-            tags: [],
-            size: 96,
+        const preview = this.panel?.querySelector('#group-settings-avatar-preview');
+        if (!preview) return;
+        const group = this.contactsStore?.getContact?.(this.groupId) || {};
+        const name = String(this.panel?.querySelector?.('#group-settings-name')?.value || group?.name || '群聊').trim() || '群聊';
+        const avatar = createContactAvatarElement({
+            documentRef: document,
+            sessionId: this.groupId || 'group:settings-preview',
+            contact: {
+                ...group,
+                id: this.groupId || 'group:settings-preview',
+                name,
+                avatar: this.avatar,
+                isGroup: true,
+                members: this.members,
+            },
+            getContact: (id) => this.contactsStore?.getContact?.(id),
+            resolveAvatar: (id, contact) => resolveContactAvatar(contact, id),
+            className: 'group-settings-avatar-art',
         });
+        preview.replaceChildren(avatar);
     }
 
     renderMembers() {

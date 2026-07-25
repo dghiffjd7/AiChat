@@ -46,6 +46,7 @@ export const bindAppChatMenuToggle = ({
   positionSheet = () => {},
   settingsMenu = null,
   quickMenu = null,
+  hideQuickMenu = null,
 } = {}) => {
   chatMenuBtn?.addEventListener?.('click', (event) => {
     event.stopPropagation?.();
@@ -54,7 +55,8 @@ export const bindAppChatMenuToggle = ({
     positionSheet(menu, chatMenuBtn, 0, 4, true);
     menu.classList.toggle('hidden');
     settingsMenu?.classList.add?.('hidden');
-    quickMenu?.classList.add?.('hidden');
+    if (typeof hideQuickMenu === 'function') hideQuickMenu();
+    else quickMenu?.classList.add?.('hidden');
   });
 };
 

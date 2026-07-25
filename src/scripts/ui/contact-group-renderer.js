@@ -7,6 +7,7 @@
 
 import { logger } from '../utils/logger.js';
 import { FEATHER_DEFAULT, resolveLineAvatar } from '../utils/line-avatar.js';
+import { resolveContactGroupColor } from '../storage/contact-group-color-utils.js';
 
 export class ContactGroupRenderer {
     constructor({ groupStore, contactsStore, renderContactFn, filterContactFn, dragManager, onGroupChanged } = {}) {
@@ -82,10 +83,14 @@ export class ContactGroupRenderer {
         const contactsInGroup = allContacts.filter(c => (group.contacts || []).includes(c.id));
         const childGroups = tree?.byParent?.get?.(group.id) || [];
         const countLabel = childGroups.length ? `${contactsInGroup.length} · ${childGroups.length}组` : `${contactsInGroup.length}`;
+        const groupColor = resolveContactGroupColor(group?.color);
+        div.style.setProperty('--contact-group-color', groupColor.value);
+        div.style.setProperty('--contact-group-color-soft', groupColor.soft);
 
         div.innerHTML = `
             <div class="contact-group-header" data-group-id="${group.id}">
                 <span class="group-toggle ${isCollapsed ? 'collapsed' : ''}">▼</span>
+                <span class="group-color-dot" aria-hidden="true"></span>
                 <span class="group-name-label">${this.escapeHtml(group.name)}</span>
                 <span class="group-contact-count">${countLabel}</span>
             </div>

@@ -6,6 +6,7 @@
 
 import { logger } from '../utils/logger.js';
 import { makeScopedKey, normalizeScopeId } from './store-scope.js';
+import { normalizeContactGroupColor } from './contact-group-color-utils.js';
 
 const safeInvoke = async (cmd, args) => {
     const g = typeof globalThis !== 'undefined' ? globalThis : window;
@@ -143,7 +144,7 @@ export class GroupStore {
     /**
      * 创建新分组
      */
-    createGroup(name, parentId = '') {
+    createGroup(name, parentId = '', color = 'sky') {
         if (!name || !name.trim()) {
             throw new Error('分组名称不能为空');
         }
@@ -161,6 +162,7 @@ export class GroupStore {
             name: trimmed,
             contacts: [],
             parentId: nextParentId || '',
+            color: normalizeContactGroupColor(color),
             collapsed: false,
             order: (this.state.groups || []).length,
             createdAt: Date.now(),
@@ -197,6 +199,9 @@ export class GroupStore {
         }
         if (Array.isArray(updates.contacts)) {
             group.contacts = updates.contacts;
+        }
+        if (Object.prototype.hasOwnProperty.call(updates, 'color')) {
+            group.color = normalizeContactGroupColor(updates.color);
         }
         if (Object.prototype.hasOwnProperty.call(updates, 'parentId')) {
             const nextParentId = String(updates.parentId || '').trim();

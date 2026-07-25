@@ -22,7 +22,15 @@ const createContainer = () => {
 
 {
   const listEl = createContainer();
-  const createButton = {};
+  const createButton = {
+    attributes: {},
+    setAttribute(name, value) {
+      this.attributes[name] = String(value);
+    },
+    classList: {
+      toggle() {},
+    },
+  };
   const hint = { style: {} };
   const nameInput = { value: '新群聊' };
   const searchInput = { value: '' };
@@ -60,13 +68,27 @@ const createContainer = () => {
 
   runtime.renderContacts();
   assert.deepEqual(listEl.children.map((child) => child.id), ['friend:1', 'friend:2']);
-  assert.equal(createButton.disabled, true);
-  assert.equal(hint.textContent, '请至少选择 2 位成员');
+  assert.equal(createButton.disabled, false);
+  assert.equal(createButton.attributes['aria-disabled'], 'true');
+  assert.equal(hint.textContent, '再挑至少 2 位伙伴，群组才热闹得起来');
 
-  listEl.children[0].onClick();
+  const firstRow = listEl.children[0];
+  firstRow.onClick();
+  assert.equal(
+    listEl.children[0],
+    firstRow,
+    'selecting a member must update the existing keyed row instead of rebuilding the list',
+  );
+  firstRow.onClick();
+  assert.equal(listEl.children[0], firstRow);
+  assert.equal(firstRow.selected, false);
+  firstRow.onClick();
+  assert.equal(listEl.children[0], firstRow);
+  assert.equal(firstRow.selected, true);
   listEl.children[1].onClick();
   assert.deepEqual([...selected], ['friend:1', 'friend:2']);
   assert.equal(createButton.disabled, false);
+  assert.equal(createButton.attributes['aria-disabled'], 'false');
   assert.equal(hint.textContent, '已选择 2 位成员');
 
   nameInput.value = '重复群聊';
@@ -82,8 +104,8 @@ const createContainer = () => {
     normalizeKey: (value) => String(value || '').trim().toLowerCase(),
   });
   duplicateRuntime.updateCreateEnabled();
-  assert.equal(createButton.disabled, true);
-  assert.equal(hint.textContent, '已存在同名群组');
+  assert.equal(createButton.attributes['aria-disabled'], 'true');
+  assert.equal(hint.textContent, '这个群组名已经存在啦，换一个试试');
   console.log('ok - createGroupCreateRuntime renders selectable contacts and updates create-state hints');
 }
 

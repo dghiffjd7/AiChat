@@ -1,103 +1,154 @@
 /**
- * Group panel - manage contact groups
- * - 创建新分组
- * - 编辑/删除分组
- * - 显示分组列表
+ * Contact grouping manager
+ * - Create nested contact groups
+ * - Rename, move and delete groups
+ * - Keep the redesign view separate from the persisted GroupStore model
  */
 
 import { logger } from '../utils/logger.js';
-import { appConfirm } from './app-confirm.js';
-import { bindCustomSelectButton, closeCustomSelectMenu, refreshCustomSelectButton } from './custom-select.js';
+import { FEATHER_DEFAULT, resolveLineAvatar } from '../utils/line-avatar.js';
+import {
+    CONTACT_GROUP_COLORS,
+    normalizeContactGroupColor,
+    resolveContactGroupColor,
+} from '../storage/contact-group-color-utils.js';
+import {
+    bindCustomSelectButton,
+    closeCustomSelectMenu,
+    openCustomSelectMenu,
+    refreshCustomSelectButton,
+} from './custom-select.js';
+import { createGroupPanelMotionRuntime } from './group-panel-motion-runtime-utils.js';
 
 export class GroupPanel {
-    constructor({ groupStore, onGroupChanged } = {}) {
+    constructor({ groupStore, contactsStore = null, onGroupChanged } = {}) {
         this.groupStore = groupStore;
+        this.contactsStore = contactsStore;
         this.onGroupChanged = typeof onGroupChanged === 'function' ? onGroupChanged : null;
         this.overlay = null;
         this.panel = null;
+        this.motion = null;
         this.nameInput = null;
         this.parentSelect = null;
         this.parentSelectButton = null;
-        this.parentPickerOverlay = null;
-        this.parentPickerPanel = null;
-        this.parentPickerTitle = null;
-        this.parentPickerSelect = null;
-        this.parentPickerSelectButton = null;
-        this.parentPickerGroupId = '';
+        this.selectedColor = 'sky';
+        this.editingGroupId = '';
+        this.deletingGroupId = '';
     }
 
     show() {
         if (!this.panel) this.createUI();
+        this.editingGroupId = '';
+        this.deletingGroupId = '';
+        this.selectedColor = 'sky';
+        this.syncColorChoices();
+        this.clearCreateError();
         this.refresh();
-        this.overlay.style.display = 'block';
-        this.panel.style.display = 'flex';
-        setTimeout(() => {
-            if (this.nameInput) this.nameInput.focus();
-        }, 100);
+        this.motion?.show();
+        setTimeout(() => this.nameInput?.focus?.(), 100);
     }
 
     hide() {
         closeCustomSelectMenu();
-        if (this.overlay) this.overlay.style.display = 'none';
-        if (this.panel) this.panel.style.display = 'none';
+        this.motion?.hide();
     }
 
     createUI() {
         this.overlay = document.createElement('div');
-        this.overlay.className = 'app-themed-overlay group-panel-overlay';
-        this.overlay.style.cssText = 'display:none; position:fixed; inset:0; background:rgba(0,0,0,0.4); z-index:20000;';
-        this.overlay.onclick = () => this.hide();
+        this.overlay.className = 'app-themed-overlay group-redesign-overlay group-panel-overlay';
+        this.overlay.style.display = 'none';
+        this.overlay.addEventListener('click', () => this.hide());
 
         this.panel = document.createElement('div');
-        this.panel.className = 'app-themed-panel group-panel-shell';
-        this.panel.style.cssText = `
-            display:none; position:fixed;
-            top: calc(10px + env(safe-area-inset-top, 0px));
-            left: calc(10px + env(safe-area-inset-left, 0px));
-            right: calc(10px + env(safe-area-inset-right, 0px));
-            height: calc(100vh - 20px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
-            height: calc(100dvh - 20px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
-            background:var(--app-surface-card); border-radius:12px; box-shadow:0 10px 40px rgba(0,0,0,0.25);
-            z-index:21000;
-            overflow:hidden;
-            display:flex; flex-direction:column;
-        `;
-        this.panel.onclick = (e) => e.stopPropagation();
+        this.panel.id = 'group-panel';
+        this.panel.className = 'app-themed-panel group-redesign-panel group-panel-shell';
+        this.panel.style.display = 'none';
+        this.panel.setAttribute('role', 'dialog');
+        this.panel.setAttribute('aria-modal', 'true');
+        this.panel.setAttribute('aria-labelledby', 'group-panel-title');
+        this.panel.addEventListener('click', (event) => event.stopPropagation());
+
+        const colorChoices = Object.values(CONTACT_GROUP_COLORS)
+            .map((color) => `
+                <button
+                    type="button"
+                    class="group-color-choice${color.key === this.selectedColor ? ' is-selected' : ''}"
+                    data-group-color="${color.key}"
+                    title="${color.label}"
+                    aria-label="标识色 ${color.label}"
+                    aria-pressed="${color.key === this.selectedColor ? 'true' : 'false'}"
+                    style="--group-choice-color:${color.value};"
+                ></button>
+            `)
+            .join('');
 
         this.panel.innerHTML = `
-            <div style="padding:14px 16px; border-bottom:1px solid rgba(0,0,0,0.06); background:rgba(248,250,252,0.92); display:flex; align-items:center; justify-content:space-between; gap:10px;">
-                <div style="min-width:0;">
-                    <div style="font-weight:800; color:var(--app-text-primary);">联系人分组</div>
-                    <div style="color:var(--app-text-muted); font-size:12px;">管理你的联系人分组</div>
+            <header class="group-redesign-header group-manager-header">
+                <span class="group-manager-header-icon" aria-hidden="true">
+                    <svg viewBox="0 0 24 24">
+                        <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"></path>
+                        <path d="M7 5V3h4l2 2M8 11h8M8 15h5"></path>
+                    </svg>
+                </span>
+                <div class="group-redesign-heading">
+                    <h2 id="group-panel-title">联系人分组</h2>
+                    <p>把联系人收进不同的小格子，找人不再抓瞎</p>
                 </div>
-                <button id="group-panel-close" style="border:none; background:transparent; font-size:22px; cursor:pointer; color:var(--app-text-primary);">×</button>
-            </div>
+                <button id="group-panel-close" class="group-redesign-close" type="button" aria-label="关闭">
+                    <svg viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"></path></svg>
+                </button>
+            </header>
 
-            <div style="padding:14px 16px; border-bottom:1px solid rgba(0,0,0,0.06); background:var(--app-surface-subtle);">
-                <div style="font-weight:700; color:var(--app-text-primary); margin-bottom:8px;">新建分组</div>
-                <div style="display:flex; gap:8px;">
-                    <input id="group-name-input" type="text" placeholder="输入分组名称" maxlength="15" style="flex:1; padding:10px; border:1px solid var(--app-border-default); border-radius:10px; font-size:14px;">
-                    <button id="group-create-btn" style="padding:10px 18px; border:none; border-radius:10px; background:#019aff; color:var(--app-text-inverse); cursor:pointer; font-weight:700; white-space:nowrap;">创建</button>
-                </div>
-                <div style="margin-top:10px;">
-                    <div style="font-size:12px; color:var(--app-text-muted); margin-bottom:6px;">上级分组（可选）</div>
-                    <select id="group-parent-select" style="display:none;"></select>
-                    <button type="button" id="group-parent-select-btn" class="world-app-select-btn" style="width:100%;">
-                        <span class="pp-custom-select-label" data-custom-select-label>无上级</span>
-                        <span class="world-app-select-btn-chevron">▾</span>
-                    </button>
-                </div>
-            </div>
+            <div class="group-manager-body">
+                <section id="group-manager-create-card" class="group-manager-create-card">
+                    <div class="group-manager-create-row">
+                        <label class="group-manager-name-field">
+                            <input id="group-name-input" type="text" placeholder="给分组起个名字，比如「饭搭子」" maxlength="16" autocomplete="off">
+                            <span id="group-manager-name-count">0/16</span>
+                        </label>
+                        <button id="group-create-btn" class="group-redesign-primary group-manager-create-button" type="button">
+                            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg>
+                            创建分组
+                        </button>
+                    </div>
+                    <div class="group-manager-options">
+                        <div class="group-manager-option">
+                            <span>标识色</span>
+                            <div class="group-color-choices" role="group" aria-label="分组标识色">${colorChoices}</div>
+                        </div>
+                        <div class="group-manager-option group-manager-parent-option">
+                            <span>上级分组</span>
+                            <select id="group-parent-select" hidden></select>
+                            <button type="button" id="group-parent-select-btn" class="world-app-select-btn group-parent-select-button">
+                                <span class="pp-custom-select-label" data-custom-select-label>无上级</span>
+                                <span class="world-app-select-btn-chevron" aria-hidden="true">⇅</span>
+                            </button>
+                        </div>
+                    </div>
+                    <div id="group-manager-create-error" class="group-manager-create-error" aria-live="polite"></div>
+                </section>
 
-            <div style="flex:1; overflow:auto; -webkit-overflow-scrolling:touch; padding:14px 16px;">
-                <div style="font-weight:700; color:var(--app-text-primary); margin-bottom:10px;">已有分组</div>
-                <div id="group-list"></div>
+                <section class="group-manager-existing">
+                    <div class="group-manager-existing-heading">
+                        <span>已有分组</span>
+                        <span id="group-manager-total" class="group-manager-total">0</span>
+                        <span class="group-manager-existing-note">支持多级分组 · 悬停卡片管理</span>
+                    </div>
+                    <div id="group-list" class="group-manager-list"></div>
+                </section>
             </div>
         `;
 
         document.body.appendChild(this.overlay);
         document.body.appendChild(this.panel);
 
+        this.motion = createGroupPanelMotionRuntime({
+            overlayEl: this.overlay,
+            panelEl: this.panel,
+            isReducedMotion: () =>
+                document.body?.dataset?.reducedMotion === 'on' ||
+                window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches === true,
+        });
         this.nameInput = this.panel.querySelector('#group-name-input');
         this.parentSelect = this.panel.querySelector('#group-parent-select');
         this.parentSelectButton = this.panel.querySelector('#group-parent-select-btn');
@@ -109,26 +160,86 @@ export class GroupPanel {
 
         this.panel.querySelector('#group-panel-close').onclick = () => this.hide();
         this.panel.querySelector('#group-create-btn').onclick = () => this.createGroup();
-
-        this.nameInput.addEventListener('keydown', (e) => {
-            if (e.key === 'Enter') {
-                e.preventDefault();
+        this.panel.querySelectorAll('[data-group-color]').forEach((button) => {
+            button.addEventListener('click', () => {
+                this.selectedColor = normalizeContactGroupColor(button.dataset.groupColor);
+                this.syncColorChoices();
+            });
+        });
+        this.nameInput.addEventListener('input', () => {
+            const count = this.panel.querySelector('#group-manager-name-count');
+            if (count) count.textContent = `${this.nameInput.value.length}/16`;
+            this.clearCreateError();
+        });
+        this.nameInput.addEventListener('keydown', (event) => {
+            if (event.key === 'Enter') {
+                event.preventDefault();
                 this.createGroup();
-            } else if (e.key === 'Escape') {
-                e.preventDefault();
+            } else if (event.key === 'Escape') {
+                event.preventDefault();
                 this.hide();
             }
         });
+        window.addEventListener('keydown', (event) => {
+            if (event.key !== 'Escape' || !this.motion?.isVisible?.()) return;
+            const customSelectMenu = document.querySelector('.world-app-select-menu');
+            if (customSelectMenu && getComputedStyle(customSelectMenu).display !== 'none') {
+                event.preventDefault();
+                closeCustomSelectMenu();
+                return;
+            }
+            this.hide();
+        });
+    }
+
+    syncColorChoices() {
+        this.panel?.querySelectorAll?.('[data-group-color]').forEach((button) => {
+            const selected = button.dataset.groupColor === this.selectedColor;
+            button.classList.toggle('is-selected', selected);
+            button.setAttribute('aria-pressed', selected ? 'true' : 'false');
+        });
+    }
+
+    clearCreateError() {
+        const error = this.panel?.querySelector?.('#group-manager-create-error');
+        const card = this.panel?.querySelector?.('#group-manager-create-card');
+        if (error) error.textContent = '';
+        card?.classList?.remove?.('has-error');
+    }
+
+    showCreateError(message) {
+        const error = this.panel?.querySelector?.('#group-manager-create-error');
+        const card = this.panel?.querySelector?.('#group-manager-create-card');
+        if (error) {
+            error.innerHTML = `
+                <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><path d="M12 7v6M12 17h.01"></path></svg>
+                <span></span>
+            `;
+            error.lastElementChild.textContent = message;
+        }
+        if (card) {
+            card.classList.remove('has-error', 'is-shaking');
+            void card.offsetWidth;
+            card.classList.add('has-error', 'is-shaking');
+            setTimeout(() => card.classList.remove('is-shaking'), 420);
+        }
     }
 
     refresh() {
         const listEl = this.panel?.querySelector('#group-list');
         if (!listEl) return;
-
         const groups = this.groupStore?.listGroups?.() || [];
+        const total = this.panel.querySelector('#group-manager-total');
+        if (total) total.textContent = String(groups.length);
 
-        if (groups.length === 0) {
-            listEl.innerHTML = '<div style="color:var(--app-text-muted); text-align:center; padding:20px;">暂无分组</div>';
+        if (!groups.length) {
+            listEl.innerHTML = `
+                <div class="group-manager-empty">
+                    <span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"></path><path d="M12 11v5M9.5 13.5h5"></path></svg></span>
+                    <strong>还没有分组</strong>
+                    <p>在上方创建第一个，把联系人归归类</p>
+                </div>
+            `;
             this.refreshParentSelect();
             return;
         }
@@ -137,127 +248,245 @@ export class GroupPanel {
         const items = [];
         const pushGroup = (group, depth) => {
             items.push(this.renderGroupItem(group, depth, tree));
-            const children = tree.byParent.get(group.id) || [];
-            children.forEach(child => pushGroup(child, depth + 1));
+            (tree.byParent.get(group.id) || []).forEach(child => pushGroup(child, depth + 1));
         };
-        (tree.roots || []).forEach(g => pushGroup(g, 0));
+        tree.roots.forEach(group => pushGroup(group, 0));
         listEl.innerHTML = items.join('');
-
-        // 绑定事件
-        listEl.querySelectorAll('[data-group-edit]').forEach(btn => {
-            btn.onclick = () => this.editGroup(btn.dataset.groupEdit);
-        });
-        listEl.querySelectorAll('[data-group-delete]').forEach(btn => {
-            btn.onclick = () => this.deleteGroup(btn.dataset.groupDelete);
-        });
-        listEl.querySelectorAll('[data-group-parent]').forEach(btn => {
-            btn.onclick = () => this.openParentPicker(btn.dataset.groupParent);
-        });
+        this.bindGroupItemActions(listEl);
         this.refreshParentSelect();
     }
 
     renderGroupItem(group, depth, tree) {
-        const count = group.contacts?.length || 0;
-        const indent = Math.min(depth * 14, 56);
-        const parentId = String(group.parentId || '').trim();
+        const count = Array.isArray(group?.contacts) ? group.contacts.length : 0;
+        const color = resolveContactGroupColor(group?.color);
+        const parentId = String(group?.parentId || '').trim();
         const parentName = parentId ? (tree.byId.get(parentId)?.name || parentId) : '';
-        const parentLabel = parentName ? ` · 上级：${this.escapeHtml(parentName)}` : '';
-        return `
-            <div style="display:flex; align-items:center; gap:10px; padding:12px; border:1px solid var(--app-border-default); border-radius:10px; margin-bottom:8px; background:var(--app-surface-subtle); margin-left:${indent}px;">
-                <div style="flex:1; min-width:0;">
-                    <div style="font-weight:600; color:var(--app-text-primary);">${this.escapeHtml(group.name)}</div>
-                    <div style="font-size:12px; color:var(--app-text-muted);">${count} 个联系人${parentLabel}</div>
+        const idAttr = this.escapeAttribute(group.id);
+        const cardStyle = `--group-card-color:${color.value};--group-card-soft:${color.soft};--group-depth:${Math.min(depth, 4)};`;
+        const folderIcon = `
+            <span class="group-manager-folder" aria-hidden="true">
+                <svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"></path></svg>
+            </span>
+        `;
+
+        if (this.editingGroupId === group.id) {
+            return `
+                <div class="group-manager-card is-editing" style="${cardStyle}" data-group-id="${idAttr}">
+                    ${folderIcon}
+                    <div class="group-manager-inline-edit">
+                        <input data-group-rename-input="${idAttr}" maxlength="16" value="${this.escapeAttribute(group.name)}" aria-label="分组名称">
+                        <button type="button" class="is-save" data-group-rename-save="${idAttr}" aria-label="保存">
+                            <svg viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"></path></svg>
+                        </button>
+                        <button type="button" class="is-cancel" data-group-inline-cancel="${idAttr}" aria-label="取消">
+                            <svg viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"></path></svg>
+                        </button>
+                    </div>
                 </div>
-                <button data-group-parent="${group.id}" style="padding:6px 12px; border:1px solid var(--app-border-default); border-radius:8px; background:var(--app-surface-card); cursor:pointer; font-size:12px;">上级</button>
-                <button data-group-edit="${group.id}" style="padding:6px 12px; border:1px solid var(--app-border-default); border-radius:8px; background:var(--app-surface-card); cursor:pointer; font-size:12px;">重命名</button>
-                <button data-group-delete="${group.id}" style="padding:6px 12px; border:1px solid #fca5a5; border-radius:8px; background:#fef2f2; color:#dc2626; cursor:pointer; font-size:12px;">删除</button>
+            `;
+        }
+
+        if (this.deletingGroupId === group.id) {
+            const childCount = (tree.byParent.get(group.id) || []).length;
+            return `
+                <div class="group-manager-card is-deleting" style="${cardStyle}" data-group-id="${idAttr}">
+                    ${folderIcon}
+                    <div class="group-manager-inline-delete">
+                        <p>删除后 ${count} 位联系人将移入「未分组」${childCount ? `，${childCount} 个子分组移至上一级` : ''}</p>
+                        <div>
+                            <button type="button" data-group-inline-cancel="${idAttr}">手滑了</button>
+                            <button type="button" class="is-danger" data-group-delete-confirm="${idAttr}">确认删除</button>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        return `
+            <div class="group-manager-card" style="${cardStyle}" data-group-id="${idAttr}">
+                ${folderIcon}
+                <div class="group-manager-card-copy">
+                    <strong>${this.escapeHtml(group.name)}</strong>
+                    <span>${count} 位成员${parentName ? ` · 上级「${this.escapeHtml(parentName)}」` : ''}</span>
+                </div>
+                ${this.buildAvatarStack(group.contacts)}
+                <div class="group-manager-card-actions">
+                    <button type="button" data-group-edit="${idAttr}" aria-label="重命名" title="重命名">
+                        <svg viewBox="0 0 24 24"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L8 18l-4 1 1-4Z"></path></svg>
+                    </button>
+                    <button type="button" class="is-parent" data-group-parent="${idAttr}" aria-label="设置上级分组" title="设置上级分组">
+                        <svg viewBox="0 0 24 24"><path d="M6 3v12M18 9v12M6 9h12M3 15h6M15 21h6"></path></svg>
+                    </button>
+                    <button type="button" class="is-delete" data-group-delete="${idAttr}" aria-label="删除分组" title="删除分组">
+                        <svg viewBox="0 0 24 24"><path d="M4 7h16M9 7V4h6v3M7 7l1 13h8l1-13M10 11v5M14 11v5"></path></svg>
+                    </button>
+                </div>
             </div>
         `;
     }
 
+    buildAvatarStack(contactIds = []) {
+        const contacts = (Array.isArray(contactIds) ? contactIds : [])
+            .map(id => this.contactsStore?.getContact?.(id))
+            .filter(Boolean);
+        if (!contacts.length) return '';
+        const shown = contacts.slice(0, 4);
+        const images = shown.map((contact) => {
+            const name = String(contact?.name || contact?.id || '联系人').trim();
+            const tags = Array.isArray(contact?.libraryTags) && contact.libraryTags.length
+                ? contact.libraryTags
+                : Array.isArray(contact?.labels)
+                    ? contact.labels
+                    : [];
+            const avatar = resolveLineAvatar({
+                avatar: contact?.avatar || FEATHER_DEFAULT,
+                name,
+                tags,
+                size: 64,
+            });
+            return `<img src="${this.escapeAttribute(avatar)}" alt="">`;
+        }).join('');
+        const rest = contacts.length - shown.length;
+        return `<span class="group-manager-avatar-stack">${images}${rest > 0 ? `<i>+${rest}</i>` : ''}</span>`;
+    }
+
+    bindGroupItemActions(listEl) {
+        listEl.querySelectorAll('[data-group-edit]').forEach((button) => {
+            button.onclick = () => this.editGroup(button.dataset.groupEdit);
+        });
+        listEl.querySelectorAll('[data-group-delete]').forEach((button) => {
+            button.onclick = () => {
+                this.deletingGroupId = button.dataset.groupDelete;
+                this.editingGroupId = '';
+                this.refresh();
+            };
+        });
+        listEl.querySelectorAll('[data-group-parent]').forEach((button) => {
+            button.onclick = () => this.openParentPicker(button.dataset.groupParent, button);
+        });
+        listEl.querySelectorAll('[data-group-inline-cancel]').forEach((button) => {
+            button.onclick = () => {
+                this.editingGroupId = '';
+                this.deletingGroupId = '';
+                this.refresh();
+            };
+        });
+        listEl.querySelectorAll('[data-group-rename-save]').forEach((button) => {
+            button.onclick = () => this.saveRename(button.dataset.groupRenameSave);
+        });
+        listEl.querySelectorAll('[data-group-rename-input]').forEach((input) => {
+            input.addEventListener('keydown', (event) => {
+                if (event.key === 'Enter') this.saveRename(input.dataset.groupRenameInput);
+                if (event.key === 'Escape') {
+                    this.editingGroupId = '';
+                    this.refresh();
+                }
+            });
+        });
+        listEl.querySelectorAll('[data-group-delete-confirm]').forEach((button) => {
+            button.onclick = () => this.confirmDeleteGroup(button.dataset.groupDeleteConfirm);
+        });
+    }
+
     createGroup() {
         const name = this.nameInput?.value?.trim();
+        const groups = this.groupStore?.listGroups?.() || [];
         if (!name) {
-            window.toastr?.warning?.('请输入分组名称');
-            return;
+            this.showCreateError('先给分组写个名字吧');
+            return false;
+        }
+        if (groups.some(group => String(group?.name || '').trim() === name)) {
+            this.showCreateError('这个名字已经被占用啦，换一个试试');
+            return false;
         }
 
         try {
             const parentId = String(this.parentSelect?.value || '').trim();
-            const group = this.groupStore?.createGroup?.(name, parentId);
+            const group = this.groupStore?.createGroup?.(name, parentId, this.selectedColor);
             window.toastr?.success?.(`分组「${group.name}」创建成功`);
             this.nameInput.value = '';
+            const count = this.panel?.querySelector?.('#group-manager-name-count');
+            if (count) count.textContent = '0/16';
             if (this.parentSelect) this.parentSelect.value = '';
+            this.selectedColor = 'sky';
+            this.syncColorChoices();
+            this.clearCreateError();
             this.refresh();
             this.onGroupChanged?.({ type: 'create', group });
-        } catch (err) {
-            logger.error('创建分组失败', err);
-            window.toastr?.error?.(err.message || '创建分组失败');
+            return group;
+        } catch (error) {
+            logger.error('创建分组失败', error);
+            this.showCreateError(error?.message || '创建分组失败');
+            return false;
         }
     }
 
     editGroup(groupId) {
+        if (!this.groupStore?.getGroup?.(groupId)) return;
+        this.editingGroupId = groupId;
+        this.deletingGroupId = '';
+        this.refresh();
+        const input = Array.from(this.panel?.querySelectorAll?.('[data-group-rename-input]') || [])
+            .find(element => element.dataset.groupRenameInput === groupId);
+        input?.focus?.();
+        input?.select?.();
+    }
+
+    saveRename(groupId) {
         const group = this.groupStore?.getGroup?.(groupId);
-        if (!group) return;
-
-        const newName = prompt('输入新的分组名称', group.name);
-        if (!newName || newName.trim() === '') return;
-        if (newName.trim() === group.name) return;
-
+        if (!group) return false;
+        const input = Array.from(this.panel?.querySelectorAll?.('[data-group-rename-input]') || [])
+            .find(element => element.dataset.groupRenameInput === groupId);
+        const name = String(input?.value || '').trim();
+        if (!name || name === group.name) {
+            this.editingGroupId = '';
+            this.refresh();
+            return false;
+        }
         try {
-            this.groupStore?.updateGroup?.(groupId, { name: newName.trim() });
-            window.toastr?.success?.(`分组重命名为「${newName.trim()}」`);
+            this.groupStore?.updateGroup?.(groupId, { name });
+            window.toastr?.success?.(`分组重命名为「${name}」`);
+            this.editingGroupId = '';
             this.refresh();
             this.onGroupChanged?.({ type: 'update', group: this.groupStore.getGroup(groupId) });
-        } catch (err) {
-            logger.error('重命名分组失败', err);
-            window.toastr?.error?.(err.message || '重命名失败');
+            return true;
+        } catch (error) {
+            logger.error('重命名分组失败', error);
+            window.toastr?.error?.(error?.message || '重命名失败');
+            input?.focus?.();
+            return false;
         }
     }
 
-    async deleteGroup(groupId) {
+    confirmDeleteGroup(groupId) {
         const group = this.groupStore?.getGroup?.(groupId);
-        if (!group) return;
-
-        const count = group.contacts?.length || 0;
-        const children = (this.groupStore?.listGroups?.() || []).filter(g => String(g.parentId || '').trim() === groupId);
-        const childMsg = children.length > 0
-            ? `\n${children.length} 个子分组将移动到上一级。`
-            : '';
-        const msg = count > 0
-            ? `确定要删除分组「${group.name}」吗？\n分组中的 ${count} 个联系人将移动到未分组区域。${childMsg}`
-            : `确定要删除分组「${group.name}」吗？${childMsg}`;
-
-        const ok = await appConfirm({
-            title: '删除分组',
-            message: msg,
-            danger: true,
-        });
-        if (!ok) return;
-
+        if (!group) return false;
         try {
             this.groupStore?.deleteGroup?.(groupId);
             window.toastr?.success?.(`分组「${group.name}」已删除`);
+            this.deletingGroupId = '';
             this.refresh();
             this.onGroupChanged?.({ type: 'delete', groupId });
-        } catch (err) {
-            logger.error('删除分组失败', err);
+            return true;
+        } catch (error) {
+            logger.error('删除分组失败', error);
             window.toastr?.error?.('删除分组失败');
+            return false;
         }
     }
 
     buildGroupTree(groups) {
         const byParent = new Map();
         const byId = new Map();
-        (groups || []).forEach(g => {
-            if (g?.id) byId.set(g.id, g);
+        (groups || []).forEach(group => {
+            if (group?.id) byId.set(group.id, group);
         });
-        (groups || []).forEach(g => {
-            if (!g?.id) return;
-            const rawParent = String(g.parentId || '').trim();
-            const parentId = rawParent && byId.has(rawParent) && rawParent !== g.id ? rawParent : '';
+        (groups || []).forEach(group => {
+            if (!group?.id) return;
+            const rawParent = String(group.parentId || '').trim();
+            const parentId = rawParent && byId.has(rawParent) && rawParent !== group.id ? rawParent : '';
             if (!byParent.has(parentId)) byParent.set(parentId, []);
-            byParent.get(parentId).push(g);
+            byParent.get(parentId).push(group);
         });
         for (const list of byParent.values()) {
             list.sort((a, b) => (a.order || 0) - (b.order || 0));
@@ -272,138 +501,72 @@ export class GroupPanel {
         const options = ['<option value="">无上级</option>'];
         const pushOption = (group, depth) => {
             const prefix = depth > 0 ? `${'—'.repeat(depth)} ` : '';
-            options.push(`<option value="${group.id}">${prefix}${this.escapeHtml(group.name)}</option>`);
-            const children = tree.byParent.get(group.id) || [];
-            children.forEach(child => pushOption(child, depth + 1));
+            options.push(`<option value="${this.escapeAttribute(group.id)}">${prefix}${this.escapeHtml(group.name)}</option>`);
+            (tree.byParent.get(group.id) || []).forEach(child => pushOption(child, depth + 1));
         };
-        (tree.roots || []).forEach(g => pushOption(g, 0));
+        tree.roots.forEach(group => pushOption(group, 0));
         this.parentSelect.innerHTML = options.join('');
         refreshCustomSelectButton(this.parentSelectButton, this.parentSelect, '无上级');
     }
 
-    openParentPicker(groupId) {
+    openParentPicker(groupId, anchorEl) {
         const group = this.groupStore?.getGroup?.(groupId);
-        if (!group) return;
-        this.ensureParentPicker();
-        this.parentPickerGroupId = groupId;
-        if (this.parentPickerTitle) {
-            this.parentPickerTitle.textContent = `设置上级分组：${group.name}`;
-        }
-        this.populateParentPicker(groupId, String(group.parentId || '').trim());
-        if (this.parentPickerOverlay) this.parentPickerOverlay.style.display = 'block';
-        if (this.parentPickerPanel) this.parentPickerPanel.style.display = 'flex';
-    }
-
-    closeParentPicker() {
-        closeCustomSelectMenu();
-        if (this.parentPickerOverlay) this.parentPickerOverlay.style.display = 'none';
-        if (this.parentPickerPanel) this.parentPickerPanel.style.display = 'none';
-    }
-
-    ensureParentPicker() {
-        if (this.parentPickerPanel) return;
-        this.parentPickerOverlay = document.createElement('div');
-        this.parentPickerOverlay.className = 'app-themed-overlay group-parent-overlay';
-        this.parentPickerOverlay.style.cssText = 'display:none; position:fixed; inset:0; background:rgba(0,0,0,0.45); z-index:22000;';
-        this.parentPickerOverlay.addEventListener('click', () => this.closeParentPicker());
-
-        this.parentPickerPanel = document.createElement('div');
-        this.parentPickerPanel.className = 'app-themed-panel group-parent-panel';
-        this.parentPickerPanel.style.cssText = `
-            display:none; position:fixed;
-            top: calc(30px + env(safe-area-inset-top, 0px));
-            left: calc(22px + env(safe-area-inset-left, 0px));
-            right: calc(22px + env(safe-area-inset-right, 0px));
-            background:var(--app-surface-card); border-radius:14px; box-shadow:0 10px 40px rgba(0,0,0,0.25);
-            z-index:23000;
-            overflow:hidden;
-        `;
-        this.parentPickerPanel.addEventListener('click', (e) => e.stopPropagation());
-        this.parentPickerPanel.innerHTML = `
-            <div style="padding:14px 16px; border-bottom:1px solid rgba(0,0,0,0.06); background:rgba(248,250,252,0.92); display:flex; align-items:center; justify-content:space-between; gap:10px;">
-                <div style="min-width:0;">
-                    <div id="group-parent-title" style="font-weight:800; color:var(--app-text-primary);">设置上级分组</div>
-                    <div style="color:var(--app-text-muted); font-size:12px;">选择一个上级分组（可选）</div>
-                </div>
-                <button id="group-parent-close" style="border:none; background:transparent; font-size:22px; cursor:pointer; color:var(--app-text-primary);">×</button>
-            </div>
-            <div style="padding:14px 16px;">
-                <select id="group-parent-select-modal" style="display:none;"></select>
-                <button type="button" id="group-parent-select-modal-btn" class="world-app-select-btn" style="width:100%;">
-                    <span class="pp-custom-select-label" data-custom-select-label>无上级</span>
-                    <span class="world-app-select-btn-chevron">▾</span>
-                </button>
-            </div>
-            <div style="padding:14px 16px; border-top:1px solid rgba(0,0,0,0.06); background:rgba(248,250,252,0.92); display:flex; gap:10px;">
-                <button id="group-parent-cancel" style="flex:1; padding:10px 14px; border:1px solid var(--app-border-default); border-radius:10px; background:var(--app-surface-card); cursor:pointer;">取消</button>
-                <button id="group-parent-confirm" style="flex:1; padding:10px 14px; border:none; border-radius:10px; background:#019aff; color:var(--app-text-inverse); cursor:pointer; font-weight:800;">保存</button>
-            </div>
-        `;
-
-        document.body.appendChild(this.parentPickerOverlay);
-        document.body.appendChild(this.parentPickerPanel);
-
-        this.parentPickerTitle = this.parentPickerPanel.querySelector('#group-parent-title');
-        this.parentPickerSelect = this.parentPickerPanel.querySelector('#group-parent-select-modal');
-        this.parentPickerSelectButton = this.parentPickerPanel.querySelector('#group-parent-select-modal-btn');
-        bindCustomSelectButton({
-            buttonEl: this.parentPickerSelectButton,
-            selectEl: this.parentPickerSelect,
-            fallback: '无上级',
-        });
-
-        this.parentPickerPanel.querySelector('#group-parent-close').onclick = () => this.closeParentPicker();
-        this.parentPickerPanel.querySelector('#group-parent-cancel').onclick = () => this.closeParentPicker();
-        this.parentPickerPanel.querySelector('#group-parent-confirm').onclick = () => {
-            const groupId = this.parentPickerGroupId;
-            if (!groupId) return;
-            const nextParentId = String(this.parentPickerSelect?.value || '').trim();
-            try {
-                this.groupStore?.updateGroup?.(groupId, { parentId: nextParentId });
-                window.toastr?.success?.('已更新上级分组');
-                this.closeParentPicker();
-                this.refresh();
-                this.onGroupChanged?.({ type: 'update', group: this.groupStore.getGroup(groupId) });
-            } catch (err) {
-                logger.error('更新上级分组失败', err);
-                window.toastr?.error?.(err.message || '更新失败');
-            }
-        };
-    }
-
-    populateParentPicker(groupId, currentParentId) {
-        if (!this.parentPickerSelect) return;
+        if (!group || !anchorEl) return;
         const groups = this.groupStore?.listGroups?.() || [];
         const tree = this.buildGroupTree(groups);
-        const descendants = new Set();
+        const excluded = new Set([groupId]);
         const queue = [groupId];
         while (queue.length) {
-            const cur = queue.shift();
-            const children = tree.byParent.get(cur) || [];
-            children.forEach(child => {
-                if (!descendants.has(child.id)) {
-                    descendants.add(child.id);
-                    queue.push(child.id);
-                }
+            const current = queue.shift();
+            (tree.byParent.get(current) || []).forEach((child) => {
+                if (excluded.has(child.id)) return;
+                excluded.add(child.id);
+                queue.push(child.id);
             });
         }
-        const options = ['<option value="">无上级</option>'];
-        const pushOption = (group, depth) => {
-            if (group.id === groupId || descendants.has(group.id)) return;
-            const prefix = depth > 0 ? `${'—'.repeat(depth)} ` : '';
-            options.push(`<option value="${group.id}">${prefix}${this.escapeHtml(group.name)}</option>`);
-            const children = tree.byParent.get(group.id) || [];
-            children.forEach(child => pushOption(child, depth + 1));
+        const options = [{ value: '', label: '无上级' }];
+        const pushOption = (candidate, depth) => {
+            if (excluded.has(candidate.id)) return;
+            options.push({
+                value: candidate.id,
+                label: `${depth ? `${'—'.repeat(depth)} ` : ''}${candidate.name}`,
+            });
+            (tree.byParent.get(candidate.id) || []).forEach(child => pushOption(child, depth + 1));
         };
-        (tree.roots || []).forEach(g => pushOption(g, 0));
-        this.parentPickerSelect.innerHTML = options.join('');
-        this.parentPickerSelect.value = currentParentId || '';
-        refreshCustomSelectButton(this.parentPickerSelectButton, this.parentPickerSelect, '无上级');
+        tree.roots.forEach(candidate => pushOption(candidate, 0));
+        openCustomSelectMenu({
+            anchorEl,
+            options,
+            currentValue: String(group.parentId || '').trim(),
+            onSelect: (parentId) => {
+                try {
+                    this.groupStore?.updateGroup?.(groupId, { parentId });
+                    window.toastr?.success?.('已更新上级分组');
+                    this.refresh();
+                    this.onGroupChanged?.({ type: 'update', group: this.groupStore.getGroup(groupId) });
+                } catch (error) {
+                    logger.error('更新上级分组失败', error);
+                    window.toastr?.error?.(error?.message || '更新失败');
+                }
+            },
+        });
     }
 
-    escapeHtml(str) {
-        const div = document.createElement('div');
-        div.textContent = str;
-        return div.innerHTML;
+    escapeHtml(value) {
+        return String(value ?? '').replace(/[&<>]/g, character => ({
+            '&': '&amp;',
+            '<': '&lt;',
+            '>': '&gt;',
+        })[character]);
+    }
+
+    escapeAttribute(value) {
+        return String(value ?? '').replace(/[&<>"']/g, character => ({
+            '&': '&amp;',
+            '<': '&lt;',
+            '>': '&gt;',
+            '"': '&quot;',
+            "'": '&#39;',
+        })[character]);
     }
 }

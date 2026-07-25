@@ -15,6 +15,8 @@ export const createGroupCreateRuntime = ({
   genGroupId,
   hide = () => {},
   onCreated = null,
+  onSelectionChanged = () => {},
+  onValidationError = () => {},
   notifySuccess = () => {},
   notifyError = () => {},
   logger = console,
@@ -22,31 +24,79 @@ export const createGroupCreateRuntime = ({
 } = {}) => {
   const createEmptyState = deps.createSelectableContactEmptyState || createSelectableContactEmptyState;
   const createSelectableRow = deps.createSelectableContactRow || createSelectableContactRow;
+  const syncSelectableRow = deps.syncSelectableContactRow || ((row, selected) => {
+    const nextSelected = Boolean(selected);
+    row?.classList?.toggle?.('is-selected', nextSelected);
+    row?.setAttribute?.('aria-pressed', nextSelected ? 'true' : 'false');
+    if (row && Object.prototype.hasOwnProperty.call(row, 'selected')) row.selected = nextSelected;
+  });
 
-  const updateCreateEnabled = () => {
+  const listFriends = () =>
+    (getContactsStore?.()?.listFriends?.() || [])
+      .filter((friend) => !String(friend?.id || '').startsWith('rp:'));
+
+  const emitSelectionChanged = (friends = listFriends()) => {
+    const selected = getSelected?.();
+    updateCreateEnabled();
+    onSelectionChanged?.({ selected: [...(selected || [])], friends });
+  };
+
+  const getValidationState = () => {
     const panel = getPanel?.();
-    if (!panel) return;
-    const button = panel.querySelector?.('#group-create');
-    const hint = panel.querySelector?.('#group-name-hint');
+    if (!panel) return { valid: false, error: '', nameError: '', memberError: '', membersCount: 0 };
     const name = normalize(panel.querySelector?.('#group-name')?.value);
     const selected = getSelected?.();
     const membersCount = selected?.size || 0;
     const nameKey = normalizeKey(name);
 
-    let error = '';
-    if (!name) error = '请输入群组名称';
+    let nameError = '';
+    if (!name) nameError = '给群组起个名字吧，伙伴们才好认出它';
     else {
       const groups = getContactsStore?.()?.listGroups?.() || [];
       const dup = groups.find((group) => normalizeKey(group?.name) === nameKey);
-      if (dup) error = '已存在同名群组';
+      if (dup) nameError = '这个群组名已经存在啦，换一个试试';
     }
-    if (!error && membersCount < 2) error = '请至少选择 2 位成员';
+    const memberError = membersCount < 2
+      ? '再挑至少 2 位伙伴，群组才热闹得起来'
+      : '';
+    const error = nameError || memberError;
+    return {
+      valid: !error,
+      error,
+      nameError,
+      memberError,
+      membersCount,
+    };
+  };
+
+  const updateCreateEnabled = () => {
+    const panel = getPanel?.();
+    if (!panel) return getValidationState();
+    const button = panel.querySelector?.('#group-create');
+    const hint = panel.querySelector?.('#group-name-hint');
+    const memberHint = panel.querySelector?.('#group-member-hint');
+    const state = getValidationState();
 
     if (hint) {
-      hint.textContent = error || `已选择 ${membersCount} 位成员`;
-      hint.style.color = error ? '#ef4444' : 'var(--app-text-muted)';
+      hint.textContent = memberHint
+        ? state.nameError
+        : (state.error || `已选择 ${state.membersCount} 位成员`);
+      hint.style.color = state.nameError || (!memberHint && state.error)
+        ? 'var(--app-danger-text, #ef4444)'
+        : 'var(--app-text-muted)';
     }
-    if (button) button.disabled = Boolean(error);
+    if (memberHint) {
+      memberHint.textContent = state.memberError || `已选择 ${state.membersCount} 位成员`;
+      memberHint.style.color = state.memberError
+        ? 'var(--app-danger-text, #ef4444)'
+        : 'var(--app-text-muted)';
+    }
+    if (button) {
+      button.disabled = false;
+      button.setAttribute?.('aria-disabled', state.valid ? 'false' : 'true');
+      button.classList?.toggle?.('is-disabled', !state.valid);
+    }
+    return state;
   };
 
   const renderContacts = () => {
@@ -56,7 +106,7 @@ export const createGroupCreateRuntime = ({
 
     const query = normalizeKey(panel.querySelector?.('#group-search')?.value);
     const selected = getSelected?.();
-    const friends = (getContactsStore?.()?.listFriends?.() || []).filter((friend) => !String(friend?.id || '').startsWith('rp:'));
+    const friends = listFriends();
     const filtered = query
       ? friends.filter((friend) => normalizeKey(friend?.name || friend?.id).includes(query))
       : friends;
@@ -64,39 +114,57 @@ export const createGroupCreateRuntime = ({
     listEl.innerHTML = '';
     if (!filtered.length) {
       listEl.appendChild(createEmptyState());
-      updateCreateEnabled();
+      emitSelectionChanged(friends);
       return;
     }
 
-    filtered.forEach((friend) => {
+    filtered.forEach((friend, index) => {
       const id = normalize(friend?.id);
       if (!id) return;
-      const { row } = createSelectableRow({
+      let row = null;
+      ({ row } = createSelectableRow({
         id,
         name: friend?.name || id,
         avatar: resolveContactAvatar?.(friend, id),
+        contact: friend,
+        index,
         selected: selected?.has?.(id),
         selectedText: '已选',
         onClick: () => {
           if (selected?.has?.(id)) selected.delete(id);
           else selected?.add?.(id);
-          renderContacts();
+          syncSelectableRow(row, selected?.has?.(id));
+          emitSelectionChanged(friends);
         },
-      });
+      }));
+      syncSelectableRow(row, selected?.has?.(id));
       listEl.appendChild(row);
     });
-    updateCreateEnabled();
+    emitSelectionChanged(friends);
+  };
+
+  const syncRenderedSelection = () => {
+    const panel = getPanel?.();
+    const listEl = panel?.querySelector?.('#group-contacts');
+    const selected = getSelected?.();
+    listEl?.querySelectorAll?.('[data-contact-id]')?.forEach?.((row) => {
+      syncSelectableRow(row, selected?.has?.(normalize(row?.dataset?.contactId)));
+    });
+    emitSelectionChanged();
   };
 
   const createGroup = () => {
     try {
       const panel = getPanel?.();
       const name = normalize(panel?.querySelector?.('#group-name')?.value);
-      if (!name) return false;
+      const validation = updateCreateEnabled();
+      if (!validation?.valid) {
+        onValidationError?.(validation);
+        return false;
+      }
 
       const selected = getSelected?.();
       const members = [...(selected || [])].map(normalize).filter(Boolean);
-      if (members.length < 2) return false;
 
       const id = genGroupId?.();
       logger?.info?.(
@@ -134,7 +202,9 @@ export const createGroupCreateRuntime = ({
 
   return {
     createGroup,
+    getValidationState,
     renderContacts,
+    syncRenderedSelection,
     updateCreateEnabled,
   };
 };

@@ -648,6 +648,7 @@ import {
   normalizeMemoryTimelineAutoRepairState,
 } from '../memory/memory-timeline-repair-utils.js';
 import { GroupCreatePanel, GroupSettingsPanel } from './group-chat-panels.js';
+import { createContactAvatarElement } from './group-avatar-view-utils.js';
 import { GroupPanel } from './group-panel.js';
 import { MediaPicker } from './media-picker.js';
 import { MemoryTemplatePanel } from './memory-template-panel.js';
@@ -667,6 +668,7 @@ import { RegexSessionPanel } from './regex-session-panel.js';
 import { SessionConfigPanel } from './session-config-panel.js';
 import { SessionPanel } from './session-panel.js';
 import { createSheetMenuRuntime } from './sheet-menu-runtime-utils.js';
+import { createQuickMenuMotionRuntime } from './quick-menu-motion-runtime-utils.js';
 import { StickerPicker } from './sticker-picker.js';
 import {
   readStickerAiState,
@@ -1526,6 +1528,7 @@ const initApp = async () => {
   const groupCreatePanel = new GroupCreatePanel({
     contactsStore,
     chatStore,
+    groupStore,
     onCreated: ({ id, name }) => {
       try {
         refreshChatAndContacts();
@@ -1548,6 +1551,14 @@ const initApp = async () => {
       const c = contactsStore.getContact(id);
       const cur = chatStore.getCurrent();
       if (cur === id && currentChatTitle) currentChatTitle.innerHTML = renderSessionNameHtml(id, c);
+      if (cur === id) {
+        document.getElementById('current-chat-avatar')?.replaceWith(
+          buildContactAvatarElement(id, c, {
+            id: 'current-chat-avatar',
+            className: 'chat-room-avatar',
+          }),
+        );
+      }
       if (cur === id) refreshRenderedMessageAvatars(id);
       if (forceRefresh && cur === id) {
         const msgs = await chatStore.ensureRecentMessagesLoaded(id);
@@ -1570,6 +1581,7 @@ const initApp = async () => {
 
   const groupPanel = new GroupPanel({
     groupStore,
+    contactsStore,
     onGroupChanged: () => {
       try {
         refreshChatAndContacts();
@@ -5426,6 +5438,19 @@ const initApp = async () => {
     });
   };
 
+  const buildContactAvatarElement = (sessionId, contact, {
+    className = '',
+    id = '',
+  } = {}) => createContactAvatarElement({
+    documentRef: document,
+    sessionId,
+    contact,
+    getContact: memberId => contactsStore.getContact(memberId),
+    resolveAvatar: (memberId, memberContact) => resolveAvatarForContact(memberId, memberContact),
+    className,
+    id,
+  });
+
   const getPendingCountForSession = sessionId => {
     const sid = String(sessionId || '').trim();
     if (!sid) return 0;
@@ -8035,7 +8060,6 @@ Phase G（Frame 36）：循环衔接
       const contact = contactsStore.getContact(id);
       const displayName = formatSessionName(id, contact);
       const displayNameHtml = renderSessionNameHtml(id, contact);
-      const avatar = resolveAvatarForContact(id, contact);
       const last = getLastVisibleMessage(id);
       const preview = snippetFromMessage(last);
       const time = last?.timestamp ? formatTime(last.timestamp) : '';
@@ -8057,7 +8081,7 @@ Phase G（Frame 36）：循环衔接
       item.dataset.session = id;
       item.dataset.name = displayName;
       item.innerHTML = `
-	                <img src="${avatar}" alt="" class="chat-item-avatar">
+	                <span data-contact-avatar-slot></span>
 	                <div class="chat-item-content">
 	                    <div class="chat-item-header">
 	                        <div class="chat-item-name">${displayNameHtml}${unreadBadge}${pendingBadge}</div>
@@ -8066,6 +8090,9 @@ Phase G（Frame 36）：循环衔接
 	                    <div class="chat-item-preview">${preview}</div>
 	                </div>
 	            `;
+      item.querySelector('[data-contact-avatar-slot]')?.replaceWith(
+        buildContactAvatarElement(id, contact, { className: 'chat-item-avatar' }),
+      );
       el.appendChild(item);
     });
   };
@@ -8153,7 +8180,6 @@ Phase G（Frame 36）：循环衔接
       const time = last?.timestamp ? formatTime(last.timestamp) : '';
       const name = formatSessionName(id, g);
       const nameHtml = renderSessionNameHtml(id, g);
-      const avatar = resolveAvatarForContact(id, g);
       const count = Array.isArray(g.members) ? g.members.length : 0;
       const unread = chatStore.getUnreadCount(id);
       const unreadBadge =
@@ -8166,13 +8192,16 @@ Phase G（Frame 36）：循环衔接
       item.dataset.session = id;
       item.dataset.name = name;
       item.innerHTML = `
-	                <img src="${avatar}" alt="" class="contact-avatar">
+	                <span data-contact-avatar-slot></span>
 	                <div class="contact-info">
 	                    <div class="contact-name">${nameHtml}${unreadBadge}</div>
 	                    <div class="contact-desc">${preview || `群成员：${count}人`}</div>
 	                </div>
 	                <div class="contact-time">${time || String(count).padStart(2, '0') + '人'}</div>
 	            `;
+      item.querySelector('[data-contact-avatar-slot]')?.replaceWith(
+        buildContactAvatarElement(id, g, { className: 'contact-avatar' }),
+      );
       el.appendChild(item);
     });
   };
@@ -8454,6 +8483,14 @@ Phase G（Frame 36）：循环衔接
       })
       .join('');
     chatSearchRootEl.innerHTML = `${summary}${items}`;
+    chatSearchRootEl.querySelectorAll('[data-search-session]').forEach((row) => {
+      const sid = String(row.dataset.searchSession || '').trim();
+      const contact = contactsStore.getContact(sid);
+      if (!contact?.isGroup && !sid.startsWith('group:')) return;
+      row.querySelector('.chat-item-avatar')?.replaceWith(
+        buildContactAvatarElement(sid, contact, { className: 'chat-item-avatar' }),
+      );
+    });
   };
 
   const renderChatContentSearchDetail = sessionId => {
@@ -16539,6 +16576,7 @@ Phase G（Frame 36）：循环衔接
   /* ---------------- 头像设置菜单 ---------------- */
   const settingsMenu = document.getElementById('settings-menu');
   const quickMenu = document.getElementById('quick-menu');
+  let quickMenuMotion = null;
   let personaSwitcherTab = readPersonaSwitcherTab();
   const persistPersonaSwitcherTab = () => writePersonaSwitcherTab(personaSwitcherTab);
   // 顶部头像/＋按钮在「消息」与「联系人」页共用同样外观
@@ -16697,7 +16735,10 @@ Phase G（Frame 36）：循环衔接
     if (document.body?.dataset?.maidSpotlight === 'on' && options?.force !== true) return false;
     personaSwitcherMenu?.classList.add('hidden');
     settingsMenu?.classList.add('hidden');
-    quickMenu?.classList.add('hidden');
+    if (options?.skipQuickMenu !== true) {
+      if (quickMenuMotion) quickMenuMotion.close({ immediate: options?.immediate === true });
+      else quickMenu?.classList.add('hidden');
+    }
     chatroomMenu?.classList.add('hidden');
     rpChatroomMenu?.classList.add('hidden');
     momentsMenu?.classList.add('hidden');
@@ -16725,6 +16766,26 @@ Phase G（Frame 36）：循环衔接
     getViewportWidth: () => window.innerWidth,
     getViewportHeight: () => window.innerHeight,
   });
+  quickMenuMotion = createQuickMenuMotionRuntime({
+    menuEl: quickMenu,
+    triggerEls: plusBtns,
+    windowRef: window,
+  });
+  const toggleSheetAtWithQuickMenuMotion = (menuEl, anchorEl, options = {}) => {
+    if (menuEl !== quickMenu || options?.kind !== 'quick') {
+      return toggleSheetAt(menuEl, anchorEl, options);
+    }
+    const wasOpen = quickMenuMotion.isOpen();
+    const sameAnchor = quickMenuMotion.getActiveTrigger() === anchorEl;
+    hideMenus({ skipQuickMenu: true });
+    if (wasOpen && sameAnchor) {
+      quickMenuMotion.close();
+      return true;
+    }
+    positionSheet(quickMenu, anchorEl, 0, 4, options?.alignRight === true);
+    quickMenuMotion.open(anchorEl);
+    return true;
+  };
   bindCreativeReadingSettings({
     bodyEl: document.body,
     buttonEl: rpReadingSettingsBtn,
@@ -16994,7 +17055,7 @@ Phase G（Frame 36）：循环衔接
     if (!anchor || !quickMenu) return false;
     hideMenus({ force: true });
     positionSheet(quickMenu, anchor, 0, 4, true);
-    quickMenu.classList.remove('hidden');
+    quickMenuMotion.open(anchor);
     await maidGuideDelay(80);
     return true;
   };
@@ -17242,7 +17303,7 @@ Phase G（Frame 36）：循环衔接
     plusBtns,
     momentsSettingsBtn,
     renderPersonaSwitcher,
-    toggleSheetAt,
+    toggleSheetAt: toggleSheetAtWithQuickMenuMotion,
     personaSwitcherMenu,
     settingsMenu,
     quickMenu,
@@ -17261,6 +17322,7 @@ Phase G（Frame 36）：循环衔接
     positionSheet,
     settingsMenu,
     quickMenu,
+    hideQuickMenu: () => quickMenuMotion.close(),
   });
   const mountAgentStatusChip = ({
     rootElement,
@@ -21556,7 +21618,13 @@ Phase G（Frame 36）：循环衔接
         prefix: RP_SESSION_PREFIX,
         getPersona: personaId => personaStore.get?.(personaId),
       });
-      chatAvatarEl.src = rpAvatar || resolveAvatarForContact(sid, contact) || FEATHER_DEFAULT;
+      const avatarContact = rpAvatar
+        ? { ...(contact || {}), id: sid, avatar: rpAvatar, isGroup: false }
+        : contact;
+      chatAvatarEl.replaceWith(buildContactAvatarElement(sid, avatarContact, {
+        id: 'current-chat-avatar',
+        className: 'chat-room-avatar',
+      }));
     }
     const isGroupSession = Boolean(contact?.isGroup) || sid.startsWith('group:');
     const chatPresenceEl = document.getElementById('current-chat-presence');

@@ -96,18 +96,21 @@ const createMenu = (buttons = []) => ({
   const settingsMenu = createMenu();
   const quickMenu = createMenu();
   const chatMenuBtn = createButton();
+  const quickMenuHideCalls = [];
   bindAppChatMenuToggle({
     chatMenuBtn,
     getActiveMenu: () => menu,
     positionSheet: (...args) => calls.push(['position', ...args]),
     settingsMenu,
     quickMenu,
+    hideQuickMenu: () => quickMenuHideCalls.push('hide'),
   });
   chatMenuBtn.trigger();
   assert.deepEqual(calls, [['position', menu, chatMenuBtn, 0, 4, true]]);
   assert.deepEqual(menu.classList.toggled, ['hidden']);
   assert.deepEqual(settingsMenu.classList.added, ['hidden']);
-  assert.deepEqual(quickMenu.classList.added, ['hidden']);
+  assert.deepEqual(quickMenu.classList.added, []);
+  assert.deepEqual(quickMenuHideCalls, ['hide']);
   console.log('ok - bindAppChatMenuToggle positions active menu and hides sibling menus');
 }
 

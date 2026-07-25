@@ -1316,6 +1316,14 @@ export class ChatStore {
   _ensureSession(id) {
     const sid = String(id || '').trim();
     if (!sid) return null;
+    // TEMP-GHOST-TRACE: 幽灵会话溯源探针，定位后删除
+    if (sid === 'group:1768668321145-6210c5' && !this.state.sessions[sid]) {
+      (globalThis.__ghostTrace = globalThis.__ghostTrace || []).push({
+        scope: this.scopeId,
+        at: Date.now(),
+        stack: new Error('ghost').stack,
+      });
+    }
     const defaults = getGlobalChatColorDefaults();
     if (!this.state.sessions[sid]) {
       this.state.sessions[sid] = {
