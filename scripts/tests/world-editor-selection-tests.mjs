@@ -9,6 +9,7 @@ globalThis.localStorage = globalThis.localStorage || {
 };
 
 const { WorldEditorModal } = await import('../../src/scripts/ui/world-editor.js');
+const { evaluateConditionTree } = await import('../../src/scripts/variables/world-condition-core.js');
 
 {
   const editor = new WorldEditorModal();
@@ -61,4 +62,33 @@ const { WorldEditorModal } = await import('../../src/scripts/ui/world-editor.js'
   assert.equal(refreshSelectionCalls, 1);
   assert.equal(renderEditorCalls, 3);
   console.log('ok - world editor selects entries without rerendering the list on the same page');
+}
+
+{
+  const editor = new WorldEditorModal();
+  editor.data = {
+    name: 'entry-gate',
+    entries: [{
+      id: 'gate-entry',
+      constant: true,
+      content: '常驻内容',
+      when: {
+        left: 'enabled',
+        op: '==',
+        right: true,
+        rightType: 'boolean',
+      },
+    }],
+  };
+  const payload = editor.prepareForSave('entry-gate');
+  const saved = payload.entries[0];
+  assert.ok(saved.when && typeof saved.when === 'object');
+  assert.ok(saved.nodeGraph && Array.isArray(saved.nodeGraph.nodes));
+  assert.equal(evaluateConditionTree(saved.when, {
+    resolvePathValue: path => (path === 'enabled' ? false : undefined),
+  }), false);
+  assert.equal(evaluateConditionTree(saved.when, {
+    resolvePathValue: path => (path === 'enabled' ? true : undefined),
+  }), true);
+  console.log('ok - world editor preserves entry-level variable gate with the shared node graph format');
 }

@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
 
-import { reportProviderUsage } from '../../src/scripts/api/provider-usage.js';
+import {
+  reportProviderUsage,
+  resolveProviderPromptTokens,
+} from '../../src/scripts/api/provider-usage.js';
 
 const tests = [];
 const test = (name, fn) => tests.push({ name, fn });
@@ -28,6 +31,21 @@ test('falls back to input/output token field names', () => {
   assert.equal(seen.promptTokens, 500);
   assert.equal(seen.completionTokens, 90);
   assert.equal(seen.totalTokens, null); // 无 total 字段时不推导，留给上层 aggregator/normalizer
+});
+
+test('does not double count OpenAI cached prompt tokens', () => {
+  assert.equal(resolveProviderPromptTokens({
+    prompt_tokens: 1200,
+    prompt_tokens_details: { cached_tokens: 800 },
+  }), 1200);
+});
+
+test('adds Anthropic cache read and creation tokens to input tokens', () => {
+  assert.equal(resolveProviderPromptTokens({
+    input_tokens: 500,
+    cache_read_input_tokens: 400,
+    cache_creation_input_tokens: 100,
+  }), 1000);
 });
 
 test('emits null tokens (unknown) when body has no usage', () => {

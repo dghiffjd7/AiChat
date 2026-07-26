@@ -202,6 +202,12 @@ export class GeneralSettingsPanel {
     this.memoryUpdateApiBlock = null;
     this.memoryUpdateContextInput = null;
     this.memoryBudgetBlock = null;
+    this.memoryBudgetModeSelect = null;
+    this.memoryTokenBudgetWrap = null;
+    this.memoryInputBudgetInput = null;
+    this.memoryRowsBudgetWrap = null;
+    this.memoryMaxRowsInput = null;
+    this.memoryMaxTokensInput = null;
     this.memoryInjectPositionSelect = null;
     this.memoryInjectPositionButton = null;
     this.memoryInjectDepthWrap = null;
@@ -213,6 +219,8 @@ export class GeneralSettingsPanel {
     this.memoryBridgeChatToMomentsLimitInput = null;
     this.memoryBridgeRpToMomentsToggle = null;
     this.memoryBridgeRpToMomentsLimitInput = null;
+    this.memoryGroupMemberReferenceToggle = null;
+    this.memoryGroupMemberReferenceLimitInput = null;
     this.memoryAutoConfirmToggle = null;
     this.memoryAutoStepToggle = null;
     this.memoryFillEveryNInput = null;
@@ -472,6 +480,26 @@ export class GeneralSettingsPanel {
       const safeN = Number.isFinite(rawN) && rawN >= 1 ? rawN : 1;
       this.memoryFillEveryNInput.value = String(safeN);
     }
+    const budgetMode = String(settings.memoryBudgetMode || '').trim().toLowerCase() === 'rows'
+      ? 'rows'
+      : 'token';
+    if (this.memoryBudgetModeSelect) this.memoryBudgetModeSelect.value = budgetMode;
+    const syncNonNegativeNumber = (input, value, fallback) => {
+      if (!input) return;
+      const raw = Math.trunc(Number(value));
+      input.value = String(Number.isFinite(raw) ? Math.max(0, raw) : fallback);
+    };
+    syncNonNegativeNumber(this.memoryInputBudgetInput, settings.memoryInputBudgetTokens, 100000);
+    syncNonNegativeNumber(this.memoryMaxRowsInput, settings.memoryMaxRows, 1000);
+    syncNonNegativeNumber(this.memoryMaxTokensInput, settings.memoryMaxTokens, 100000);
+    if (this.memoryGroupMemberReferenceToggle) {
+      this.memoryGroupMemberReferenceToggle.checked = settings.memoryGroupMemberReferenceEnabled !== false;
+    }
+    syncNonNegativeNumber(
+      this.memoryGroupMemberReferenceLimitInput,
+      settings.memoryGroupMemberReferenceLimit,
+      5,
+    );
     this.refreshMemoryPlacesDialog(settings);
     if (this.memoryInjectPositionSelect) {
       const raw = String(settings.memoryInjectPosition || 'before_latest_user').toLowerCase();
@@ -680,6 +708,32 @@ export class GeneralSettingsPanel {
     }
     if (this.memoryBudgetBlock) {
       this.memoryBudgetBlock.style.display = showMemoryTable ? 'block' : 'none';
+    }
+    const budgetMode = String(settings.memoryBudgetMode || '').trim().toLowerCase() === 'rows'
+      ? 'rows'
+      : 'token';
+    if (this.memoryBudgetModeSelect) this.memoryBudgetModeSelect.disabled = !showMemoryTable;
+    if (this.memoryTokenBudgetWrap) {
+      this.memoryTokenBudgetWrap.style.display = showMemoryTable && budgetMode === 'token' ? 'block' : 'none';
+    }
+    if (this.memoryInputBudgetInput) {
+      this.memoryInputBudgetInput.disabled = !showMemoryTable || budgetMode !== 'token';
+    }
+    if (this.memoryRowsBudgetWrap) {
+      this.memoryRowsBudgetWrap.style.display = showMemoryTable && budgetMode === 'rows' ? 'block' : 'none';
+    }
+    if (this.memoryMaxRowsInput) {
+      this.memoryMaxRowsInput.disabled = !showMemoryTable;
+    }
+    if (this.memoryMaxTokensInput) {
+      this.memoryMaxTokensInput.disabled = !showMemoryTable;
+    }
+    if (this.memoryGroupMemberReferenceToggle) {
+      this.memoryGroupMemberReferenceToggle.disabled = !showMemoryTable;
+    }
+    if (this.memoryGroupMemberReferenceLimitInput) {
+      this.memoryGroupMemberReferenceLimitInput.disabled = !showMemoryTable
+        || this.memoryGroupMemberReferenceToggle?.checked === false;
     }
     if (this.memoryInjectPositionSelect) {
       this.memoryInjectPositionSelect.disabled = !showMemoryTable;
@@ -2136,10 +2190,55 @@ export class GeneralSettingsPanel {
             </div>
 
             <div id="general-memory-budget-block" style="margin-left: 26px; margin-top: 10px; padding: 8px; border: 1px dashed var(--app-border-default); border-radius: 10px; display: none;">
-            <div style="font-size:12px; color:var(--app-text-muted); margin-bottom:8px;">记忆注入设置</div>
+            <div style="font-size:12px; color:var(--app-text-muted); margin-bottom:8px;">记忆注入与统一预算</div>
+
+            <div style="display:flex; align-items:center; justify-content:space-between; gap:10px;">
+              <label class="has-help" data-help="Token 模式按统一输入预算自动分配世界书、记忆、前文和召回配额；条数模式保留直观条数限制，并在模型上下文已知时使用 Token 安全硬顶。" data-help-mode="press"
+                     for="general-memory-budget-mode" style="font-size:12px; font-weight:700; color:var(--app-text-primary);">预算模式</label>
+              <select id="general-memory-budget-mode" class="general-settings-select" style="min-width:150px;">
+                <option value="token">Token 模式（推荐）</option>
+                <option value="rows">条数模式</option>
+              </select>
+            </div>
+
+            <div id="general-memory-token-budget-wrap" style="margin-top:10px;">
+              <label style="display:flex; align-items:center; justify-content:space-between; gap:8px; font-size:12px; font-weight:700; color:var(--app-text-primary);">
+                <span class="has-help" data-help="整次请求的输入总预算 B，包含人设、世界书、记忆、前文与召回；最终仍受模型上下文上限约束。" data-help-mode="press">统一输入总预算</span>
+                <input type="number" id="general-memory-input-budget-tokens" min="1" step="1000"
+                       style="width:110px; padding:4px 6px; border:1px solid var(--app-border-default); border-radius:8px; font-size:12px; text-align:right;">
+              </label>
+              <small style="display:block; margin-top:4px; color:var(--app-text-muted);">单位：Token；默认 100000</small>
+            </div>
+
+            <div id="general-memory-rows-budget-wrap" style="margin-top:10px; display:none;">
+              <small style="display:block; color:var(--app-text-muted); line-height:1.5;">条数模式沿用聊天前文条数和各桥接条数；模型上下文未知时不会擅自套用小上下文硬顶。</small>
+            </div>
+
+            <div style="margin-top:10px; display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:center; gap:8px;">
+              <span class="has-help" data-help="记忆表格的后备行数上限。Token 模式下通常只在异常规模时触发。" data-help-mode="press"
+                    style="font-size:12px; color:var(--app-text-secondary);">表格后备行数上限</span>
+              <input type="number" id="general-memory-max-rows" min="1" step="10"
+                     style="width:110px; padding:4px 6px; border:1px solid var(--app-border-default); border-radius:8px; font-size:12px; text-align:right;">
+              <span class="has-help" data-help="记忆表格旧管线的安全 Token 上限；统一预算可用时以统一预算为准。" data-help-mode="press"
+                    style="font-size:12px; color:var(--app-text-secondary);">表格安全 Token 上限</span>
+              <input type="number" id="general-memory-max-tokens" min="1" step="1000"
+                     style="width:110px; padding:4px 6px; border:1px solid var(--app-border-default); border-radius:8px; font-size:12px; text-align:right;">
+            </div>
+
+            <div style="margin-top:10px; padding-top:10px; border-top:1px solid var(--app-border-default);">
+              <label style="display:flex; align-items:center; justify-content:space-between; gap:10px; color:var(--app-text-primary); font-size:12px;">
+                <span class="has-help" data-help="群聊中按需参考各成员私聊记忆；关闭后不会走这条隐式跨会话通道。" data-help-mode="press">群聊参考成员私聊记忆</span>
+                <input type="checkbox" id="general-memory-group-member-reference" style="width:16px; height:16px;">
+              </label>
+              <label style="display:flex; align-items:center; justify-content:space-between; gap:8px; margin-top:8px; color:var(--app-text-secondary); font-size:12px;">
+                <span>每张表最多注入行数</span>
+                <input type="number" id="general-memory-group-member-reference-limit" min="0" step="1"
+                       style="width:90px; padding:4px 6px; border:1px solid var(--app-border-default); border-radius:8px; font-size:12px; text-align:right;">
+              </label>
+            </div>
 
             <div style="margin-top: 10px;">
-              <div class="has-help" data-help="仅作用于动态记忆表格；默认排在 History 后、最新输入前。" style="font-size:12px; color:var(--app-text-muted); margin-bottom:6px;">记忆表格内容注入位置</div>
+              <div class="has-help" data-help="作用于当前聊天、动态或创意写作中启用的记忆表格；默认排在最新输入前。" style="font-size:12px; color:var(--app-text-muted); margin-bottom:6px;">记忆表格内容注入位置</div>
               <select id="general-memory-inject-position" style="display:none;">
 	                <option value="after_persona">角色设定后</option>
 	                <option value="template">跟随记忆模板</option>
@@ -2410,6 +2509,12 @@ export class GeneralSettingsPanel {
     this.memoryUpdateApiBlock = this.element.querySelector('#general-memory-update-api');
     this.memoryUpdateContextInput = this.element.querySelector('#general-memory-update-context-rounds');
     this.memoryBudgetBlock = this.element.querySelector('#general-memory-budget-block');
+    this.memoryBudgetModeSelect = this.element.querySelector('#general-memory-budget-mode');
+    this.memoryTokenBudgetWrap = this.element.querySelector('#general-memory-token-budget-wrap');
+    this.memoryInputBudgetInput = this.element.querySelector('#general-memory-input-budget-tokens');
+    this.memoryRowsBudgetWrap = this.element.querySelector('#general-memory-rows-budget-wrap');
+    this.memoryMaxRowsInput = this.element.querySelector('#general-memory-max-rows');
+    this.memoryMaxTokensInput = this.element.querySelector('#general-memory-max-tokens');
     this.memoryInjectPositionSelect = this.element.querySelector('#general-memory-inject-position');
     this.memoryInjectPositionButton = this.element.querySelector('#general-memory-inject-position-btn');
     this.memoryInjectDepthWrap = this.element.querySelector('#general-memory-inject-depth-wrap');
@@ -2421,6 +2526,8 @@ export class GeneralSettingsPanel {
     this.memoryBridgeChatToMomentsLimitInput = this.element.querySelector('#general-memory-bridge-chat-to-moments-limit');
     this.memoryBridgeRpToMomentsToggle = this.element.querySelector('#general-memory-bridge-rp-to-moments');
     this.memoryBridgeRpToMomentsLimitInput = this.element.querySelector('#general-memory-bridge-rp-to-moments-limit');
+    this.memoryGroupMemberReferenceToggle = this.element.querySelector('#general-memory-group-member-reference');
+    this.memoryGroupMemberReferenceLimitInput = this.element.querySelector('#general-memory-group-member-reference-limit');
     this.memoryAutoConfirmToggle = this.element.querySelector('#general-memory-auto-confirm');
     this.memoryAutoStepToggle = this.element.querySelector('#general-memory-auto-step');
     this.memoryFillEveryNInput = this.element.querySelector('#general-memory-fill-every-n');
@@ -3272,6 +3379,45 @@ export class GeneralSettingsPanel {
       appSettings.update({ memoryInjectDepth: safe });
       window.dispatchEvent(new CustomEvent('app-settings-changed', { detail: { key: 'memoryInjectDepth', value: safe } }));
     });
+    this.memoryBudgetModeSelect?.addEventListener('change', (e) => {
+      const value = String(e?.target?.value || '').trim().toLowerCase() === 'rows'
+        ? 'rows'
+        : 'token';
+      if (e?.target) e.target.value = value;
+      appSettings.update({ memoryBudgetMode: value });
+      window.dispatchEvent(new CustomEvent('app-settings-changed', {
+        detail: { key: 'memoryBudgetMode', value },
+      }));
+      this.updateMemoryAutoVisibility();
+    });
+    const bindMemoryBudgetNumber = (input, key, fallback, min = 0) => {
+      input?.addEventListener('input', (e) => {
+        const raw = Math.trunc(Number(e?.target?.value));
+        const value = Number.isFinite(raw) ? Math.max(min, raw) : fallback;
+        if (e?.target) e.target.value = String(value);
+        appSettings.update({ [key]: value });
+        window.dispatchEvent(new CustomEvent('app-settings-changed', {
+          detail: { key, value },
+        }));
+      });
+    };
+    bindMemoryBudgetNumber(this.memoryInputBudgetInput, 'memoryInputBudgetTokens', 100000, 1);
+    bindMemoryBudgetNumber(this.memoryMaxRowsInput, 'memoryMaxRows', 1000, 1);
+    bindMemoryBudgetNumber(this.memoryMaxTokensInput, 'memoryMaxTokens', 100000, 1);
+    this.memoryGroupMemberReferenceToggle?.addEventListener('change', (e) => {
+      const value = e?.target?.checked !== false;
+      appSettings.update({ memoryGroupMemberReferenceEnabled: value });
+      window.dispatchEvent(new CustomEvent('app-settings-changed', {
+        detail: { key: 'memoryGroupMemberReferenceEnabled', value },
+      }));
+      this.updateMemoryAutoVisibility();
+    });
+    bindMemoryBudgetNumber(
+      this.memoryGroupMemberReferenceLimitInput,
+      'memoryGroupMemberReferenceLimit',
+      5,
+      0,
+    );
     const bindMemoryBridgeToggle = (input, key) => {
       input?.addEventListener('change', (e) => {
         const enabled = e?.target?.checked !== false;

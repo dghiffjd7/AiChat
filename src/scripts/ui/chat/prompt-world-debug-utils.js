@@ -128,6 +128,7 @@ export const formatPromptWorldDebug = (worldDebug) => {
   const dynamicProfiles = worldDebug?.dynamicProfiles && typeof worldDebug.dynamicProfiles === 'object'
     ? worldDebug.dynamicProfiles
     : null;
+  const downgradeSuggestions = listOf(worldDebug?.downgradeSuggestions);
   const dynamicCandidates = listOf(dynamicWorld?.candidates);
   const dynamicSelected = listOf(dynamicWorld?.selectedSources);
   const profileCandidates = listOf(dynamicProfiles?.candidates);
@@ -139,7 +140,7 @@ export const formatPromptWorldDebug = (worldDebug) => {
   const strategy = String(worldDebug?.insertionStrategy || '').trim() || 'role_first';
   const variableStrategyRaw = String(worldDebug?.variableDefineStrategy || '').trim();
   const variableStrategy = (() => {
-    if (variableStrategyRaw === 'first_hit') return 'first_hit（命中后建立）';
+    if (variableStrategyRaw === 'first_hit') return 'first_hit（命中后建立；条目门控变量预先建立）';
     if (variableStrategyRaw === 'off') return 'off（关闭自动建立）';
     return 'legacy_eager（请求前建立）';
   })();
@@ -151,6 +152,7 @@ export const formatPromptWorldDebug = (worldDebug) => {
     `- 激活命中: 内置 ${builtinEntries.length} / 全局 ${globalEntries.length} / 角色 ${roleEntries.length} / 会话 ${sessionEntries.length}`,
     `- 合并后条目: ${mergedEntries.length}（预算前）`,
     `- 实际注入: 普通 ${injectedEntries.length} / 模板 ${templateEntries.length} / 仅变量初始化 ${initialVariableEntries.length}`,
+    `- 常驻降级建议: ${downgradeSuggestions.length} 条（仅提示，不自动修改）`,
     budgetTokens != null
       ? `- 预算: ${usedTokens}/${budgetTokens} tokens${worldDebug?.overflowed ? `，裁掉 ${trimmedEntries.length} 条` : ''}`
       : '- 预算: 未限制',
@@ -195,6 +197,16 @@ export const formatPromptWorldDebug = (worldDebug) => {
       .slice(0, 2)
       .join(' / ');
     return `- ${name}${contactId ? ` (${contactId})` : ''} | ${status} | score=${score}${reason ? ` | ${reason}` : ''}${terms ? ` | ${terms}` : ''}${rows ? ` | ${rows}` : ''}`;
+  }));
+
+  pushSection('常驻条目降级建议', downgradeSuggestions.map((suggestion) => {
+    const title = String(suggestion?.title || suggestion?.entryId || '').trim() || '未命名条目';
+    const worldId = String(suggestion?.worldId || '').trim();
+    const entryId = String(suggestion?.entryId || '').trim();
+    const terms = listOf(suggestion?.matchedTerms).join('、');
+    const rows = Number(suggestion?.coveredRowCount) || 0;
+    const reason = String(suggestion?.reason || '').trim();
+    return `- ${title}${worldId || entryId ? ` [${worldId || 'unknown'} / ${entryId || 'unknown'}]` : ''} | 覆盖 ${rows} 行${terms ? ` | ${terms}` : ''}${reason ? ` | ${reason}` : ''}`;
   }));
 
   pushSection('激活条目', [

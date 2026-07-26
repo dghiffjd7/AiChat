@@ -1,6 +1,9 @@
 export const createSessionSummaryCompactionRuntime = ({
   chatStore = null,
   getIsSummaryMemoryEnabled = () => false,
+  getIsCompactionEnabled = null,
+  getDefaultPlace = () => 'chat',
+  createAdapter = null,
   getIsConfigured = () => true,
   buildMessages = null,
   backgroundChat = null,
@@ -18,28 +21,53 @@ export const createSessionSummaryCompactionRuntime = ({
 } = {}) => {
   const compacting = new Set();
 
-  return (sid, { force = false } = {}) => {
-    if (!getIsSummaryMemoryEnabled()) return Promise.resolve(false);
+  const createLegacyAdapter = (sessionId) => {
+    if (!chatStore?.getSummaries || !chatStore?.setCompactedSummary) return null;
+    return {
+      kind: 'summary_store',
+      getItems: () => chatStore.getSummaries(sessionId) || [],
+      getCompactedText: () => String(chatStore.getCompactedSummary(sessionId)?.text || '').trim(),
+      setRaw: raw => chatStore.setCompactedSummaryRaw?.(raw, sessionId),
+      persist: ({ text, raw, keepItems }) => {
+        chatStore.setCompactedSummary(text, sessionId, { raw });
+        chatStore.setSummaries(keepItems, sessionId);
+      },
+    };
+  };
+
+  return async (sid, { force = false, place = '' } = {}) => {
     const sessionId = String(sid || '').trim();
-    if (!sessionId) return Promise.resolve(false);
-    if (compacting.has(sessionId)) return Promise.resolve(false);
-    if (!chatStore?.getSummaries || !chatStore?.setCompactedSummary) return Promise.resolve(false);
+    if (!sessionId) return false;
+    const resolvedPlace = String(place || getDefaultPlace?.() || 'chat').trim().toLowerCase() || 'chat';
+    const enabled = typeof getIsCompactionEnabled === 'function'
+      ? getIsCompactionEnabled({ sessionId, place: resolvedPlace, force })
+      : getIsSummaryMemoryEnabled(resolvedPlace);
+    if (!enabled) return false;
+    const compactKey = `${resolvedPlace}:${sessionId}`;
+    if (compacting.has(compactKey)) return false;
     if (typeof buildMessages !== 'function' || typeof backgroundChat !== 'function') {
-      return Promise.resolve(false);
+      return false;
     }
-    if (!getIsConfigured()) return Promise.resolve(false);
+    if (!getIsConfigured()) return false;
 
-    const list = chatStore.getSummaries(sessionId) || [];
-    if (!shouldCompact({ items: list, force })) return Promise.resolve(false);
+    let adapter = null;
+    try {
+      adapter = await createAdapter?.({ sessionId, place: resolvedPlace }) || createLegacyAdapter(sessionId);
+    } catch (error) {
+      logger?.debug?.('summary compaction adapter init failed', error);
+      return false;
+    }
+    if (!adapter?.getItems || !adapter?.persist) return false;
+    const list = await adapter.getItems();
+    if (!shouldCompact({ items: list, force })) return false;
 
-    compacting.add(sessionId);
+    compacting.add(compactKey);
     return new Promise((resolve) => {
       setTimeoutFn(async () => {
         try {
-          const current = chatStore.getSummaries(sessionId) || [];
+          const current = await adapter.getItems();
           const arr = Array.isArray(current) ? current : [];
-          const compactedPrev = chatStore.getCompactedSummary(sessionId);
-          const compactedText = String(compactedPrev?.text || '').trim();
+          const compactedText = String(await adapter.getCompactedText?.() || '').trim();
           const context = buildSessionContext(sessionId);
           const raw = await requestCompactionRaw({
             items: arr,
@@ -50,7 +78,7 @@ export const createSessionSummaryCompactionRuntime = ({
           });
           if (!raw) return resolve(false);
           try {
-            chatStore.setCompactedSummaryRaw(raw, sessionId);
+            await adapter.setRaw?.(raw);
           } catch {}
 
           const { text, valid } = parseCompactionResult(raw);
@@ -68,13 +96,19 @@ export const createSessionSummaryCompactionRuntime = ({
             return resolve(false);
           }
 
-          try {
-            chatStore.setCompactedSummary(text, sessionId, { raw });
-          } catch {}
-          try {
-            const keep = normalizeItems(chatStore.getSummaries(sessionId)).slice(-2);
-            chatStore.setSummaries(keep, sessionId);
-          } catch {}
+          const latestItems = await adapter.getItems();
+          const normalizedItems = typeof adapter.normalizeItems === 'function'
+            ? adapter.normalizeItems(latestItems)
+            : normalizeItems(latestItems);
+          const keep = (Array.isArray(normalizedItems) ? normalizedItems : []).slice(-2);
+          await adapter.persist({
+            text,
+            raw,
+            items: arr,
+            keepItems: keep,
+            sessionId,
+            place: resolvedPlace,
+          });
 
           try {
             refreshChatAndContacts();
@@ -89,7 +123,7 @@ export const createSessionSummaryCompactionRuntime = ({
           } catch {}
           resolve(false);
         } finally {
-          compacting.delete(sessionId);
+          compacting.delete(compactKey);
         }
       }, Number(delayMs || 0));
     });

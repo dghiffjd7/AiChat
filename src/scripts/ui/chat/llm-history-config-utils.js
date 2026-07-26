@@ -30,6 +30,7 @@ export const buildLlmHistoryFinalizeOptions = ({
   openaiPreset: openaiPreset || {},
   rpUiMode: Boolean(rpUiMode),
   creativeHistoryLimit: clampNonNegativeInt(settings?.creativeHistoryMax, 0),
+  deferHistoryTokenBudget: true,
   reasoning: buildLlmHistoryReasoningConfig({
     reasoningSettings: settings,
     reasoningPreset,

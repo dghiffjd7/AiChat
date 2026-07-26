@@ -170,6 +170,65 @@ test('analyzeWorldEntryActivation matches green-light entries against group memb
   );
 });
 
+test('entry-level variable gate runs before constant and excludes blocked entries from recursion and groups', () => {
+  const baseEntries = prepareWorldEntries({
+    worldId: 'world_entry_gate',
+    data: {
+      entries: [
+        {
+          id: 'blocked_constant',
+          constant: true,
+          content: 'dragon signal',
+          when: { left: 'enabled', op: '==', right: true, rightType: 'boolean' },
+          group: 'gate-group',
+          groupWeight: 100,
+        },
+        {
+          id: 'allowed_keyword',
+          key: ['hero'],
+          content: 'safe path',
+          group: 'gate-group',
+          groupWeight: 1,
+        },
+        {
+          id: 'recursive_from_blocked',
+          key: ['dragon'],
+          content: 'should stay hidden',
+        },
+      ],
+    },
+    loadWorld: () => null,
+  });
+
+  const activation = analyzeWorldEntryActivation({
+    baseEntries,
+    matchText: 'hero arrives',
+    settings: {
+      globalRecursiveScan: true,
+      globalUseGroupScoring: true,
+    },
+    targetEntryId: 'blocked_constant',
+    evaluateEntryWhen: () => ({
+      configured: true,
+      passed: false,
+      explanation: { result: false },
+    }),
+  });
+
+  assert.equal(activation.directExplain.variableConditionConfigured, true);
+  assert.equal(activation.directExplain.variableConditionPassed, false);
+  assert.deepEqual(activation.directExplain.reasons, ['被条目级变量条件挡住']);
+  assert.deepEqual(
+    activation.activeEntries.map(entry => entry._entryId),
+    ['allowed_keyword'],
+  );
+  assert.equal(activation.beforeGroupEntryIds.has('blocked_constant'), false);
+  assert.equal(
+    activation.activeEntries.some(entry => entry._entryId === 'recursive_from_blocked'),
+    false,
+  );
+});
+
 let failed = 0;
 for (const t of tests) {
   try {

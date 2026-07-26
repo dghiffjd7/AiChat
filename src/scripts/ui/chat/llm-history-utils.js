@@ -1,3 +1,10 @@
+import { resolveInputTokenBudget } from '../../memory/input-token-budget-utils.js';
+import {
+  estimateTokens,
+  normalizeTokenMode,
+  resolveTokenEstimateCoefficient,
+} from '../../memory/memory-prompt-utils.js';
+
 const clampNonNegativeInt = (value, fallback = 0) => {
   const next = Math.trunc(Number(value));
   if (!Number.isFinite(next)) return fallback;
@@ -26,48 +33,169 @@ export const applyChatHistoryLimit = (history = [], limit = 0) => {
   return list;
 };
 
-export const applyHistoryCharBudget = (
+const estimateHistoryMessageTokens = (message, tokenMode = 'rough') => {
+  const content = message?.content;
+  if (Array.isArray(content)) {
+    return content.reduce((sum, part) => {
+      if (part?.type === 'text') return sum + estimateTokens(String(part.text || ''), tokenMode);
+      if (part?.type === 'image_url') return sum + 1;
+      if (part?.type === 'input_audio') return sum + 1;
+      return sum;
+    }, 0);
+  }
+  return estimateTokens(String(content ?? ''), tokenMode);
+};
+
+const truncateTextToTokenBudget = (value, budgetTokens, tokenMode = 'rough') => {
+  const text = String(value ?? '');
+  const budget = clampNonNegativeInt(budgetTokens, 0);
+  if (!text || budget <= 0) return '';
+  if (estimateTokens(text, tokenMode) <= budget) return text;
+  const suffix = '…';
+  let low = 0;
+  let high = text.length;
+  while (low < high) {
+    const mid = Math.ceil((low + high) / 2);
+    const candidate = `${text.slice(0, mid)}${suffix}`;
+    if (estimateTokens(candidate, tokenMode) <= budget) low = mid;
+    else high = mid - 1;
+  }
+  return low > 0 ? `${text.slice(0, low)}${suffix}` : '';
+};
+
+export const limitHistoryByTokenBudget = (
   history = [],
   {
     maxContext = 0,
     maxOut = 0,
     reserveTokens = 512,
-    fallbackInputTokens = 8000,
-    minInputTokens = 2000,
-    minChars = 30000,
-    maxCharsCap = 140000,
-    capPerMessage = 40000,
+    inputBudgetTokens = null,
+    capPerMessageTokens = null,
+    tokenMode = 'rough',
+    protectedMessageIndexes = [],
   } = {},
 ) => {
-  const list = (Array.isArray(history) ? history : []).map(item => (
-    item && typeof item === 'object' ? { ...item } : item
-  ));
-
-  const ctxTokens = clampNonNegativeInt(maxContext, 0);
-  const outTokens = clampNonNegativeInt(maxOut, 0);
-  const inputBudgetTokens = Math.max(
-    minInputTokens,
-    ctxTokens ? ctxTokens - outTokens - reserveTokens : fallbackInputTokens,
+  const protectedIndexes = new Set(
+    (Array.isArray(protectedMessageIndexes) ? protectedMessageIndexes : [])
+      .map(value => Math.trunc(Number(value)))
+      .filter(value => Number.isFinite(value) && value >= 0),
   );
-  const maxChars = Math.min(maxCharsCap, Math.max(minChars, inputBudgetTokens * 4));
+  const entries = (Array.isArray(history) ? history : []).map((item, originalIndex) => ({
+    originalIndex,
+    protected: protectedIndexes.has(originalIndex),
+    message: item && typeof item === 'object' ? { ...item } : item,
+  }));
+  const budget = resolveInputTokenBudget({
+    maxContextTokens: maxContext,
+    maxOutputTokens: maxOut,
+    safetyReserveTokens: reserveTokens,
+    userBudgetTokens: inputBudgetTokens,
+  });
+  const quota = budget.inputBudgetTokens;
+  const explicitPerMessage = Math.trunc(Number(capPerMessageTokens));
+  const perMessageLimit = Number.isFinite(explicitPerMessage) && explicitPerMessage > 0
+    ? (quota === null ? explicitPerMessage : Math.min(explicitPerMessage, quota))
+    : quota;
+  let truncatedMessageCount = 0;
 
-  for (const message of list) {
-    if (!message || typeof message.content !== 'string') continue;
-    if (message.content.length > capPerMessage) {
-      message.content = `${message.content.slice(0, capPerMessage)}…`;
+  // 每条 token 估算只做一次并缓存在 entry 上，淘汰时维护差量和；
+  // 数千楼×千字的会话若每删一条就全量重算会拖到秒级。
+  let totalTokens = 0;
+  for (const entry of entries) {
+    const message = entry.message;
+    if (
+      perMessageLimit !== null
+      && !entry.protected
+      && message
+      && typeof message.content === 'string'
+      && estimateHistoryMessageTokens(message, tokenMode) > perMessageLimit
+    ) {
+      message.content = truncateTextToTokenBudget(message.content, perMessageLimit, tokenMode);
+      truncatedMessageCount += 1;
+    }
+    entry.tokens = estimateHistoryMessageTokens(entry.message, tokenMode);
+    totalTokens += entry.tokens;
+  }
+  let droppedMessageCount = 0;
+  if (quota !== null) {
+    let scanIndex = 0;
+    while (entries.length > 1 && totalTokens > quota) {
+      while (scanIndex < entries.length && entries[scanIndex].protected) scanIndex += 1;
+      if (scanIndex >= entries.length) break;
+      totalTokens -= entries[scanIndex].tokens;
+      entries.splice(scanIndex, 1);
+      droppedMessageCount += 1;
+    }
+    if (
+      entries.length === 1
+      && totalTokens > quota
+      && !entries[0].protected
+      && typeof entries[0].message?.content === 'string'
+    ) {
+      entries[0].message.content = truncateTextToTokenBudget(entries[0].message.content, quota, tokenMode);
+      truncatedMessageCount += 1;
+      entries[0].tokens = estimateHistoryMessageTokens(entries[0].message, tokenMode);
+      totalTokens = entries[0].tokens;
     }
   }
 
-  let total = 0;
-  for (const message of list) {
-    total += typeof message?.content === 'string' ? message.content.length : 0;
-  }
-  while (list.length > 1 && total > maxChars) {
-    const dropped = list.shift();
-    total -= typeof dropped?.content === 'string' ? dropped.content.length : 0;
-  }
-  return list;
+  return {
+    messages: entries.map(entry => entry.message),
+    stats: {
+      ...budget,
+      usedTokens: totalTokens,
+      originalMessageCount: Array.isArray(history) ? history.length : 0,
+      keptMessageCount: entries.length,
+      droppedMessageCount,
+      truncatedMessageCount,
+      protectedMessageCount: entries.filter(entry => entry.protected).length,
+      keptOriginalIndexes: entries.map(entry => entry.originalIndex),
+      overflowed: quota !== null && totalTokens > quota,
+      tokenMode: normalizeTokenMode(tokenMode),
+      tokenEstimateCoefficient: resolveTokenEstimateCoefficient(tokenMode),
+    },
+  };
 };
+
+export const mapHistoryMessagesToTurns = (history = [], { lastTurn = 0 } = {}) => {
+  const list = Array.isArray(history) ? history : [];
+  const userCount = list.filter(message => message?.role === 'user').length;
+  const normalizedLastTurn = Math.max(userCount, Math.trunc(Number(lastTurn)) || userCount);
+  let currentTurn = Math.max(0, normalizedLastTurn - userCount);
+  return list.map((message, index) => {
+    if (message?.role === 'user') currentTurn += 1;
+    return {
+      index,
+      turn: currentTurn > 0 ? currentTurn : null,
+      role: String(message?.role || ''),
+    };
+  });
+};
+
+export const resolveCoverageProtectedHistoryIndexes = ({
+  history = [],
+  holes = [],
+  lastTurn = 0,
+} = {}) => {
+  const ranges = (Array.isArray(holes) ? holes : [])
+    .map((hole) => {
+      const from = Math.trunc(Number(hole?.from));
+      const to = Math.trunc(Number(hole?.to));
+      if (!Number.isFinite(from) || !Number.isFinite(to) || from <= 0 || to <= 0) return null;
+      return { from: Math.min(from, to), to: Math.max(from, to) };
+    })
+    .filter(Boolean);
+  if (!ranges.length) return [];
+  return mapHistoryMessagesToTurns(history, { lastTurn })
+    .filter(item => item.turn !== null && ranges.some(range => item.turn >= range.from && item.turn <= range.to))
+    .map(item => item.index);
+};
+
+export const applyHistoryTokenBudget = (history = [], options = {}) =>
+  limitHistoryByTokenBudget(history, options).messages;
+
+// 兼容旧调用名；实现已经改为 token 量纲。
+export const applyHistoryCharBudget = applyHistoryTokenBudget;
 
 export const limitCreativeAssistantHistory = (history = [], creativeLimit = 0) => {
   const list = Array.isArray(history) ? [...history] : [];
@@ -144,15 +272,23 @@ export const finalizeLlmHistory = (
     openaiPreset = null,
     rpUiMode = false,
     creativeHistoryLimit = 0,
+    historyTokenBudget = null,
+    deferHistoryTokenBudget = false,
+    onHistoryBudgetApplied = null,
     reasoning = null,
   } = {},
 ) => {
   let next = dropTrailingPendingUserEcho(history, pendingUserText);
   next = applyChatHistoryLimit(next, chatHistoryLimit);
-  next = applyHistoryCharBudget(next, {
-    maxContext: openaiPreset?.openai_max_context,
-    maxOut: openaiPreset?.openai_max_tokens,
-  });
+  if (!deferHistoryTokenBudget) {
+    const limited = limitHistoryByTokenBudget(next, {
+      maxContext: openaiPreset?.openai_max_context,
+      maxOut: openaiPreset?.openai_max_tokens,
+      inputBudgetTokens: historyTokenBudget,
+    });
+    next = limited.messages;
+    if (typeof onHistoryBudgetApplied === 'function') onHistoryBudgetApplied(limited.stats);
+  }
   if (rpUiMode) {
     next = limitCreativeAssistantHistory(next, creativeHistoryLimit);
   }

@@ -70,6 +70,7 @@ export const createLlmContextBuilder = ({
   attachmentParts = [],
   getOpenAIPreset = null,
   getSettings = null,
+  getMemoryTotalTurns = null,
   getReplyPromptHint = null,
   getStagePromptBlocks = null,
   getInjectedPromptBlocks = null,
@@ -83,7 +84,9 @@ export const createLlmContextBuilder = ({
   return (pendingUserText = '') => {
     const resolvedUiMode = getUiMode?.() || 'chat';
     const memoryPlace = resolveMemoryTablePlace(resolvedUiMode);
-    return buildLlmContextPayload({
+    const openaiPreset = getOpenAIPreset?.() || {};
+    const settings = getSettings?.() || {};
+    const payload = buildLlmContextPayload({
       promptUserName,
       activeUser,
       characterName,
@@ -103,8 +106,8 @@ export const createLlmContextBuilder = ({
       memoryStorageMode: getMemoryStorageMode?.(memoryPlace) || '',
       memoryAutoExtract: isMemoryAutoExtractInline?.(memoryPlace) === true,
       autoImagePromptModelHint: getAutoImagePromptModelHint?.() || '',
-      openaiPreset: getOpenAIPreset?.() || {},
-      settings: getSettings?.() || {},
+      openaiPreset,
+      settings,
       attachmentParts,
       replyPromptHint: getReplyPromptHint?.() || '',
       stagePromptBlocks: getStagePromptBlocks?.() || [],
@@ -116,5 +119,23 @@ export const createLlmContextBuilder = ({
       buildHistory,
       pendingUserText,
     });
+    const maxContextTokens = Math.trunc(Number(openaiPreset?.openai_max_context));
+    const maxOutputTokens = Math.trunc(Number(openaiPreset?.openai_max_tokens));
+    payload.meta = {
+      ...(payload.meta || {}),
+      inputBudgetContext: {
+        maxContextTokens: Number.isFinite(maxContextTokens) && maxContextTokens > 0
+          ? maxContextTokens
+          : null,
+        maxOutputTokens: Number.isFinite(maxOutputTokens) && maxOutputTokens > 0
+          ? maxOutputTokens
+          : 0,
+      },
+    };
+    const totalTurns = Math.trunc(Number(getMemoryTotalTurns?.(sid)));
+    if (Number.isFinite(totalTurns) && totalTurns > 0) {
+      payload.meta.memoryTotalTurns = totalTurns;
+    }
+    return payload;
   };
 };

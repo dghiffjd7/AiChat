@@ -555,6 +555,19 @@ const normalizeEntry = (entry = {}, index = 0, options = {}) => {
         ? promptBlocksRaw.map((block, idx) => normalizePromptBlock(block, idx, e.content))
         : [normalizePromptBlock({ content: e.content, title: e.comment || `内容 ${index + 1}` }, 0, e.content)];
     e.promptMode = normalizeWorldPromptMode(e.promptMode, { fallback: 'hybrid' });
+    const entryWhenRaw = e.when && typeof e.when === 'object' ? e.when : null;
+    if (!isTrivialConditionTree(entryWhenRaw)) {
+        const normalizedWhenTree = normalizeConditionTree(entryWhenRaw, createDefaultPromptClause());
+        const primaryClause = getPrimaryClauseFromConditionTree(normalizedWhenTree, createDefaultPromptClause());
+        e.nodeGraph = normalizeNodeGraph(e.nodeGraph, normalizedWhenTree, primaryClause);
+        e.when = normalizeConditionTree(
+            buildWhenFromNodeGraph(e.nodeGraph, primaryClause),
+            primaryClause,
+        );
+    } else {
+        e.nodeGraph = null;
+        e.when = null;
+    }
     const firstContent = String(e.promptBlocks?.[0]?.content || '').trim();
     if (firstContent) e.content = firstContent;
     return e;
@@ -693,6 +706,7 @@ export class WorldEditorModal {
         this.blockExpandMotionPending = '';
         this.blockCollapseTimer = null;
         this.blockBackViewMap = new Map();
+        this.blockConditionTargetMap = new Map();
         this.blockEditorFocusMap = new Map();
         this.blockManageOverlay = null;
         this.blockManageModal = null;
@@ -2837,7 +2851,8 @@ export class WorldEditorModal {
             : (Array.isArray(entry.promptBlocks) && entry.promptBlocks.length
                 ? entry.promptBlocks
                 : this.ensureEntryPromptBlocks(entry));
-        const hasVariable = resolvedBlocks.some(block => this.hasConfiguredVariableInBlock(block));
+        const hasVariable = this.hasConfiguredVariableInBlock(entry)
+            || resolvedBlocks.some(block => this.hasConfiguredVariableInBlock(block));
         if (!hasVariable) {
             return {
                 hasVariable: false,
@@ -3730,6 +3745,11 @@ export class WorldEditorModal {
         const blockExpandEntering = blockExpanded && this.blockExpandMotionPending === activeBlockId;
         if (blockExpandEntering) this.blockExpandMotionPending = '';
         const blockBackView = this.getBlockBackView(activeBlock?.id);
+        const conditionTargetKind = this.blockConditionTargetMap.get(activeBlockId) === 'entry'
+            ? 'entry'
+            : 'block';
+        const conditionTarget = conditionTargetKind === 'entry' ? entry : activeBlock;
+        const entryGateConfigured = this.hasConfiguredVariableInBlock(entry);
         const aiBusy = this.aiBusy && entryId === String(this.aiPendingEntryId || '').trim();
         const aiLockTarget = aiBusy && activeBlockId && activeBlockId === String(this.aiTargetBlockId || '').trim();
         const triggerStrategy = this.getEntryTriggerStrategy(entry);
@@ -3789,15 +3809,28 @@ export class WorldEditorModal {
                                 ${blockBackView === 'editor' ? `
                                     <div class="world-block-back-tool-group">
                                         <button type="button" class="world-block-back-nav-btn" id="we-block-editor-back">概览</button>
+                                        <span class="world-block-settings-subtitle">正在编辑：${conditionTargetKind === 'entry' ? '条目级门控' : '当前分页条件'}</span>
                                     </div>
                                     <button type="button" class="world-block-back-save-btn" id="we-block-editor-save">保存</button>
                                 ` : `
                                     <div class="world-block-back-tool-group">
-                                        <button type="button" class="world-block-back-nav-btn primary" id="we-block-open-node">${BLOCK_MODE_NODE_ICON_SVG}<span>节点编辑</span></button>
+                                        <button type="button" class="world-block-back-nav-btn primary" id="we-block-open-node">${BLOCK_MODE_NODE_ICON_SVG}<span>分页条件</span></button>
+                                        <button type="button" class="world-block-back-nav-btn ${entryGateConfigured ? 'primary' : ''}" id="we-entry-open-node">${BLOCK_MODE_NODE_ICON_SVG}<span>条目门控${entryGateConfigured ? ' · 已配置' : ''}</span></button>
                                     </div>
                                 `}
                             </div>
-                            ${this.renderBlockSettingsPanel(activeBlock, blockPage)}
+                            ${conditionTargetKind === 'entry' && blockBackView === 'editor'
+                                ? `
+                                    <div class="world-block-settings-card">
+                                        <div class="world-block-settings-head">
+                                            <div>
+                                                <div class="world-block-settings-title">条目级变量门控</div>
+                                                <div class="world-block-settings-subtitle">先判断此条件；未通过时，常驻、关键词、递归和分组竞争都不会继续。</div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                `
+                                : this.renderBlockSettingsPanel(activeBlock, blockPage)}
                             ${blockBackView === 'editor' ? `
                                 <div class="world-node-editor" id="we-node-editor">
                                     <div class="world-node-toolbar">
@@ -4279,19 +4312,28 @@ export class WorldEditorModal {
         const openNodeBtn = q('#we-block-open-node');
         if (openNodeBtn) {
             openNodeBtn.addEventListener('click', () => {
+                this.blockConditionTargetMap.set(activeBlockId, 'block');
+                this.openBlockConditionEditor(activeBlock?.id);
+            });
+        }
+        const openEntryNodeBtn = q('#we-entry-open-node');
+        if (openEntryNodeBtn) {
+            openEntryNodeBtn.addEventListener('click', () => {
+                this.blockConditionTargetMap.set(activeBlockId, 'entry');
                 this.openBlockConditionEditor(activeBlock?.id);
             });
         }
         const editorBackBtn = q('#we-block-editor-back');
         if (editorBackBtn) {
             editorBackBtn.addEventListener('click', () => {
+                this.blockConditionTargetMap.set(activeBlockId, 'block');
                 this.setBlockBackView(activeBlock?.id, 'summary');
             });
         }
         const editorSaveBtn = q('#we-block-editor-save');
         if (editorSaveBtn) {
             editorSaveBtn.addEventListener('click', () => {
-                void this.saveBlockConditionEditor(activeBlock?.id, activeBlock);
+                void this.saveBlockConditionEditor(activeBlock?.id, conditionTarget);
             });
         }
         this.editorEl.querySelectorAll('.world-cond-overview-pending-main').forEach((btn) => {
@@ -4326,7 +4368,7 @@ export class WorldEditorModal {
             });
         });
         if (blockBackView === 'editor') {
-            this.mountNodeEditor({ entry, block: activeBlock, markRefDirty });
+            this.mountNodeEditor({ entry, block: conditionTarget, markRefDirty });
             window.requestAnimationFrame(() => this.maybeStartVariableGuide());
         } else if (this.variableGuideActive) {
             this.finishVariableGuide({ markSeen: false });

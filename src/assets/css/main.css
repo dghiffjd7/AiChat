@@ -6783,3 +6783,102 @@ body.is-android .bottom-nav {
     text-decoration-color: var(--app-text-muted, rgba(150, 150, 150, 0.8));
   }
 }
+
+/* 请求预览：本次记忆 / 世界书 / 前文注入构成（只读） */
+.memory-injection-audit-card {
+  margin: 12px;
+  padding: 14px;
+  border: 1px solid color-mix(in srgb, var(--app-accent-primary) 30%, transparent);
+  border-radius: var(--app-radius-md, 10px);
+  background: color-mix(in srgb, var(--app-accent-primary) 8%, transparent);
+  color: var(--app-text-on-accent, #fff);
+}
+
+.memory-injection-audit-card > header,
+.memory-injection-audit-row-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.memory-injection-audit-card > header span {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.memory-injection-audit-card > header small,
+.memory-injection-audit-row small,
+.memory-injection-audit-empty {
+  color: color-mix(in srgb, var(--app-text-on-accent, #fff) 66%, transparent);
+}
+
+.memory-injection-audit-card > header b,
+.memory-injection-audit-row-head span {
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.memory-injection-audit-list {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.memory-injection-audit-row {
+  padding-top: 10px;
+  border-top: 1px solid color-mix(in srgb, var(--app-text-on-accent, #fff) 12%, transparent);
+}
+
+.memory-injection-audit-row-head {
+  font-size: 12px;
+}
+
+.memory-injection-audit-meter {
+  height: 4px;
+  margin: 6px 0 4px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--app-text-on-accent, #fff) 12%, transparent);
+}
+
+.memory-injection-audit-meter i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--app-accent-primary);
+}
+
+.memory-injection-audit-warning {
+  margin-top: 10px;
+  padding: 7px 9px;
+  border-radius: var(--app-radius-sm, 6px);
+  background: color-mix(in srgb, var(--app-danger, #d84a4a) 22%, transparent);
+  color: var(--app-text-on-accent, #fff);
+  font-size: 12px;
+}
+
+.memory-injection-audit-coverage {
+  margin-top: 8px;
+  padding: 7px 9px;
+  border-radius: 8px;
+  color: var(--app-text-secondary);
+  background: color-mix(in srgb, var(--app-accent) 8%, transparent);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.memory-injection-audit-coverage.has-holes {
+  color: var(--app-warning-text, #b45309);
+  background: color-mix(in srgb, var(--app-warning, #f59e0b) 12%, transparent);
+}
+
+@media (max-width: 640px) {
+  .memory-injection-audit-card > header,
+  .memory-injection-audit-row-head {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 4px;
+  }
+}

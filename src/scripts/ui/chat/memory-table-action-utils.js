@@ -6,6 +6,16 @@ import {
 } from '../../memory/memory-row-order.js';
 import { isSummaryTableId, normalizeMemoryUpdateMode } from '../../memory/memory-prompt-utils.js';
 import {
+  buildLegacyOutlineMigrationPlan,
+  findOutlineSectionRow,
+  isOutlineTableId,
+  normalizeOutlinePatchData,
+} from '../../memory/outline-section-utils.js';
+import {
+  normalizeMemoryCoverageInterval,
+  stampMemoryCoverage,
+} from '../../memory/memory-coverage-utils.js';
+import {
   normalizeMemoryCellValue,
   normalizeTableRowData,
   rowDataEquals,
@@ -124,6 +134,7 @@ export const resolveMemoryActionTableContext = ({
   if (tableScope === 'group' && !isGroup) return null;
   if (tableScope === 'contact' && isGroup) return null;
   const isSummaryTable = isSummaryTableId(tableId);
+  const isOutlineTable = isOutlineTableId(tableId);
   if ((isSummaryTable && !allowSummaryTables) || (!isSummaryTable && !allowStandardTables)) {
     return null;
   }
@@ -136,6 +147,7 @@ export const resolveMemoryActionTableContext = ({
     contactId: contactId ?? null,
     groupId: groupId ?? null,
     isSummaryTable,
+    ...(isOutlineTable ? { isOutlineTable: true } : {}),
   };
 };
 
@@ -233,6 +245,7 @@ export const queueMemoryInsert = ({
   groupId = null,
   data = null,
   currentTurnNumber = 0,
+  coverage = null,
   allowDuplicate = false,
 } = {}) => {
   const countKey = buildMemoryRowBucketKey(tableId, scopeKey);
@@ -244,6 +257,7 @@ export const queueMemoryInsert = ({
     tableId,
     rowData: data,
     currentTurnNumber,
+    coverage,
   });
   if (maxRows && existingRows.length >= maxRows) {
     return { queued: false, skipped: true, reason: 'maxRows' };
@@ -404,10 +418,45 @@ export const resolveMemoryActionMutationPlan = ({
   const contactId = actionContext?.contactId ?? null;
   const groupId = actionContext?.groupId ?? null;
   const isSummaryTable = Boolean(actionContext?.isSummaryTable);
+  const isOutlineTable = Boolean(actionContext?.isOutlineTable);
 
   if (!tableId || !scopeKey || !table) return { kind: 'skip', reason: 'missingContext' };
   if ((actionType === 'insert' || actionType === 'init' || actionType === 'update') && !Object.keys(data || {}).length) {
     return { kind: 'skip', reason: 'emptyData' };
+  }
+
+  if (isOutlineTable && (actionType === 'insert' || actionType === 'init' || actionType === 'update')) {
+    const bucketKey = buildMemoryRowBucketKey(tableId, scopeKey);
+    const rows = rowsByTableScope?.get?.(bucketKey) || [];
+    const sectionRow = findOutlineSectionRow(rows, data?.section);
+    if (sectionRow?.id) {
+      const { changed, merged } = buildMemoryRowMergeResult({
+        row: sectionRow,
+        data,
+      });
+      if (!changed) return { kind: 'skip', reason: 'unchanged' };
+      return {
+        kind: 'updateRow',
+        rowId: String(sectionRow.id),
+        row: sectionRow,
+        tableId,
+        merged,
+      };
+    }
+    return {
+      kind: 'queueInsert',
+      tableId,
+      table,
+      scopeKey,
+      contactId,
+      groupId,
+      data,
+      allowDuplicate: false,
+    };
+  }
+
+  if (isOutlineTable && actionType === 'delete') {
+    return { kind: 'skip', reason: 'outlineDeleteForbidden' };
   }
 
   if (actionType === 'insert' || actionType === 'init') {
@@ -508,6 +557,7 @@ export const executeMemoryActionMutationPlan = async ({
   rowsByTableScope = null,
   templateId = '',
   currentTurnNumber = 0,
+  coverage = null,
 } = {}) => {
   if (!plan || typeof plan !== 'object') {
     return { inserted: 0, updated: 0, deleted: 0, skipped: 1 };
@@ -525,6 +575,7 @@ export const executeMemoryActionMutationPlan = async ({
       groupId: plan.groupId,
       data: plan.data,
       currentTurnNumber,
+      coverage,
       allowDuplicate: plan.allowDuplicate,
     });
     return {
@@ -543,6 +594,7 @@ export const executeMemoryActionMutationPlan = async ({
       tableId: plan.tableId,
       rowData: plan.merged,
       currentTurnNumber,
+      coverage,
     });
     const sortOrder = isTimelineMemoryTableId(plan.tableId)
       ? extractMemoryTimelineRound(rowData?.time)
@@ -594,6 +646,7 @@ export const executeMemoryActionBatchMutation = async ({
   memoryTableStore = null,
   createMemories = async () => 0,
   currentTurnNumber = 0,
+  coverage = null,
   isGroup = false,
 } = {}) => {
   const list = Array.isArray(actions) ? actions : [];
@@ -636,6 +689,65 @@ export const executeMemoryActionBatchMutation = async ({
     isGroup,
   });
 
+  const migratedOutlineBuckets = new Set();
+  for (const action of list) {
+    const actionType = String(action?.action || '').trim().toLowerCase();
+    if (!['insert', 'init', 'update'].includes(actionType)) continue;
+    const context = resolveActionContext({
+      action,
+      allowSummaryTables: permissions.allowSummaryTables,
+      allowStandardTables: permissions.allowStandardTables,
+    });
+    if (!context?.isOutlineTable) continue;
+    const bucketKey = buildMemoryRowBucketKey(context.tableId, context.scopeKey);
+    if (migratedOutlineBuckets.has(bucketKey)) continue;
+    migratedOutlineBuckets.add(bucketKey);
+    const bucketRows = rowsByTableScope?.get?.(bucketKey) || [];
+    const migration = buildLegacyOutlineMigrationPlan({ rows: bucketRows });
+    if (!migration.needed) continue;
+    for (const row of migration.legacyRows) {
+      const rowId = String(row?.id || '').trim();
+      if (!rowId || !memoryTableStore?.updateMemory) continue;
+      const archivedRowData = row?.row_data && typeof row.row_data === 'object'
+        ? { ...row.row_data, _archived_by: 'outline_migration' }
+        : null;
+      await memoryTableStore.updateMemory({
+        id: rowId,
+        is_active: false,
+        ...(archivedRowData ? { row_data: archivedRowData } : {}),
+      });
+      const nextRow = archivedRowData
+        ? { ...row, is_active: false, row_data: archivedRowData }
+        : { ...row, is_active: false };
+      rowsById?.set?.(rowId, nextRow);
+      const currentRows = rowsByTableScope?.get?.(bucketKey) || [];
+      rowsByTableScope?.set?.(
+        bucketKey,
+        currentRows.map(item => (String(item?.id || '') === rowId ? nextRow : item)),
+      );
+      totals.updated += 1;
+    }
+    createInputs.push({
+      template_id: templateId,
+      table_id: context.tableId,
+      contact_id: context.contactId,
+      group_id: context.groupId,
+      row_data: migration.archiveData,
+      is_active: true,
+      sort_order: Date.now(),
+    });
+    const currentRows = rowsByTableScope?.get?.(bucketKey) || [];
+    currentRows.push({
+      table_id: context.tableId,
+      contact_id: context.contactId,
+      group_id: context.groupId,
+      row_data: migration.archiveData,
+      is_active: true,
+      sort_order: Date.now(),
+    });
+    rowsByTableScope?.set?.(bucketKey, currentRows);
+  }
+
   for (const action of list) {
     const context = resolveActionContext({
       action,
@@ -646,7 +758,16 @@ export const executeMemoryActionBatchMutation = async ({
       totals.skipped += 1;
       continue;
     }
-    const data = normalizeTableRowData(action?.data, context.table?.columns || []);
+    let data = normalizeTableRowData(action?.data, context.table?.columns || []);
+    if (context.isOutlineTable) {
+      const outlineField = context.table?.columns?.some?.(column => String(column?.id || '') === 'outline')
+        ? 'outline'
+        : String(context.table?.columns?.find?.(column => String(column?.id || '') !== 'section')?.id || 'outline');
+      data = {
+        ...data,
+        ...normalizeOutlinePatchData(action?.data, { outlineField }),
+      };
+    }
     const plan = resolveMemoryActionMutationPlan({
       action,
       actionContext: context,
@@ -664,6 +785,7 @@ export const executeMemoryActionBatchMutation = async ({
       rowsByTableScope,
       templateId,
       currentTurnNumber,
+      coverage,
     });
     totals.updated += Number(result?.updated || 0);
     totals.deleted += Number(result?.deleted || 0);
@@ -773,6 +895,7 @@ export const buildMemoryActionBatchPreview = ({
   actionContext = null,
   updateMode = 'full',
   currentTurnNumber = 0,
+  coverage = null,
   isGroup = false,
 } = {}) => {
   const list = Array.isArray(actions) ? actions : [];
@@ -820,6 +943,62 @@ export const buildMemoryActionBatchPreview = ({
   const shadow = cloneRowsIndexForPreview({ rowsById, rowsByTableScope });
   const createInputs = [];
   const entries = [];
+  const migratedOutlineBuckets = new Set();
+
+  list.forEach((action) => {
+    const actionType = String(action?.action || '').trim().toLowerCase();
+    if (!['insert', 'init', 'update'].includes(actionType)) return;
+    const context = resolveActionContext({
+      action,
+      allowSummaryTables: permissions.allowSummaryTables,
+      allowStandardTables: permissions.allowStandardTables,
+    });
+    if (!context?.isOutlineTable) return;
+    const bucketKey = buildMemoryRowBucketKey(context.tableId, context.scopeKey);
+    if (migratedOutlineBuckets.has(bucketKey)) return;
+    migratedOutlineBuckets.add(bucketKey);
+    const bucketRows = shadow.rowsByTableScope.get(bucketKey) || [];
+    const migration = buildLegacyOutlineMigrationPlan({ rows: bucketRows });
+    if (!migration.needed) return;
+    const legacyIds = new Set(migration.legacyRows.map(row => String(row?.id || '')).filter(Boolean));
+    const migratedRows = bucketRows.map((row) => {
+      const rowId = String(row?.id || '');
+      if (!legacyIds.has(rowId)) return row;
+      const nextRow = row?.row_data && typeof row.row_data === 'object'
+        ? { ...row, is_active: false, row_data: { ...row.row_data, _archived_by: 'outline_migration' } }
+        : { ...row, is_active: false };
+      if (rowId) shadow.rowsById.set(rowId, nextRow);
+      return nextRow;
+    });
+    const archiveInput = {
+      template_id: templateId,
+      table_id: context.tableId,
+      contact_id: context.contactId,
+      group_id: context.groupId,
+      row_data: migration.archiveData,
+      is_active: true,
+      sort_order: Date.now(),
+    };
+    createInputs.push(archiveInput);
+    migratedRows.push(archiveInput);
+    shadow.rowsByTableScope.set(bucketKey, migratedRows);
+    totals.updated += migration.legacyRows.length;
+    totals.inserted += 1;
+    entries.push({
+      index: -1,
+      action: 'migrate',
+      tableId: context.tableId,
+      scope: context.scopeKey,
+      rowId: '',
+      kind: 'migrate_outline',
+      skipped: false,
+      legacyCount: migration.legacyRows.length,
+      diff: {
+        before: migration.legacyRows.map(row => row?.row_data || {}),
+        after: migration.archiveData,
+      },
+    });
+  });
 
   list.forEach((action, index) => {
     const context = resolveActionContext({
@@ -836,7 +1015,16 @@ export const buildMemoryActionBatchPreview = ({
       }));
       return;
     }
-    const data = normalizeTableRowData(action?.data, context.table?.columns || []);
+    let data = normalizeTableRowData(action?.data, context.table?.columns || []);
+    if (context.isOutlineTable) {
+      const outlineField = context.table?.columns?.some?.(column => String(column?.id || '') === 'outline')
+        ? 'outline'
+        : String(context.table?.columns?.find?.(column => String(column?.id || '') !== 'section')?.id || 'outline');
+      data = {
+        ...data,
+        ...normalizeOutlinePatchData(action?.data, { outlineField }),
+      };
+    }
     const plan = resolveMemoryActionMutationPlan({
       action,
       actionContext: context,
@@ -858,6 +1046,7 @@ export const buildMemoryActionBatchPreview = ({
         groupId: plan.groupId,
         data: plan.data,
         currentTurnNumber,
+        coverage,
         allowDuplicate: plan.allowDuplicate,
       });
       if (previewResult.skipped) totals.skipped += 1;
@@ -877,6 +1066,7 @@ export const buildMemoryActionBatchPreview = ({
         tableId: plan.tableId,
         rowData: plan.merged,
         currentTurnNumber,
+        coverage,
       });
       const sortOrder = isTimelineMemoryTableId(plan.tableId)
         ? extractMemoryTimelineRound(rowData?.time)
@@ -1165,19 +1355,32 @@ export const normalizeTimelineMemoryActionData = ({
   tableId = '',
   rowData = null,
   currentTurnNumber = 0,
+  coverage = null,
 } = {}) => {
   const next = rowData && typeof rowData === 'object' ? { ...rowData } : {};
   if (!isTimelineMemoryTableId(tableId)) return next;
+  const interval = normalizeMemoryCoverageInterval(coverage || {});
+  const stamped = interval
+    ? stampMemoryCoverage(next, {
+        ...interval,
+        messageId: coverage?.messageId,
+        source: coverage?.source || 'app',
+      })
+    : next;
+  if (interval) {
+    stamped.time = buildMemoryTimelineLabel(interval.from, interval.to);
+    return stamped;
+  }
   if (currentTurnNumber > 0) {
-    next.time = buildMemoryTimelineLabel(currentTurnNumber);
-    return next;
+    stamped.time = buildMemoryTimelineLabel(currentTurnNumber);
+    return stamped;
   }
-  const round = extractMemoryTimelineRound(next.time);
+  const round = extractMemoryTimelineRound(stamped.time);
   if (round !== null) {
-    next.time = buildMemoryTimelineLabel(round);
-    return next;
+    stamped.time = buildMemoryTimelineLabel(round);
+    return stamped;
   }
-  return next;
+  return stamped;
 };
 
 export const resolveMemoryInsertSortOrder = ({

@@ -2,7 +2,7 @@ export const DEFAULT_MEMORY_TEMPLATE = {
   meta: {
     id: 'default-v1',
     name: '通用记忆模板',
-    version: '1.1.3',
+    version: '1.3.0',
     author: '官方',
     description: '适用于聊天界面、动态界面与 RP 界面的基础记忆表格模板。',
     tags: ['通用', '聊天', '动态', 'RP'],
@@ -107,6 +107,7 @@ export const DEFAULT_MEMORY_TEMPLATE = {
         { id: 'items', name: '重要物品', type: 'multiline' },
         { id: 'present', name: '是否在场', type: 'select', options: ['是', '否'] },
         { id: 'notes', name: '过往经历/状态', type: 'multiline' },
+        { id: 'keywords', name: '召回关键词', type: 'text' },
       ],
     },
     {
@@ -139,6 +140,7 @@ export const DEFAULT_MEMORY_TEMPLATE = {
         { id: 'impression', name: '对方印象', type: 'multiline' },
         { id: 'names', name: '互相称呼', type: 'text' },
         { id: 'stage', name: '关系阶段', type: 'text' },
+        { id: 'keywords', name: '召回关键词', type: 'text' },
       ],
     },
     {
@@ -171,6 +173,7 @@ export const DEFAULT_MEMORY_TEMPLATE = {
         { id: 'description', name: '事件描述', type: 'multiline' },
         { id: 'impact', name: '影响', type: 'multiline' },
         { id: 'importance', name: '重要程度', type: 'select', options: ['低', '中', '高', '极高'] },
+        { id: 'keywords', name: '召回关键词', type: 'text' },
       ],
     },
     {
@@ -203,6 +206,7 @@ export const DEFAULT_MEMORY_TEMPLATE = {
         { id: 'description', name: '描述', type: 'multiline' },
         { id: 'owner', name: '持有者', type: 'text' },
         { id: 'source', name: '来源', type: 'text' },
+        { id: 'keywords', name: '召回关键词', type: 'text' },
       ],
     },
     {
@@ -234,6 +238,7 @@ export const DEFAULT_MEMORY_TEMPLATE = {
         { id: 'content', name: '共识内容', type: 'multiline' },
         { id: 'established_at', name: '确立时间', type: 'text' },
         { id: 'participants', name: '参与者', type: 'text' },
+        { id: 'keywords', name: '召回关键词', type: 'text' },
       ],
     },
     {
@@ -264,6 +269,7 @@ export const DEFAULT_MEMORY_TEMPLATE = {
       columns: [
         { id: 'time', name: '时间/轮次', type: 'text' },
         { id: 'summary', name: '摘要', type: 'multiline' },
+        { id: 'keywords', name: '召回关键词', type: 'text' },
       ],
     },
     {
@@ -272,11 +278,11 @@ export const DEFAULT_MEMORY_TEMPLATE = {
       scope: 'contact',
       usage: 'chat',
       sourceData: {
-        note: '记录每次私聊后的总体大纲（精简摘要）。每次对话必须新增一行，禁止用 update 覆盖旧行。内容需精炼到关键事件与关系变化；按手机对话模式写纯文本，禁止输出 <details>/<summary> 等标签。仅记录该私聊内容，避免泄露群聊或其他角色的私密信息。',
-        initNode: '首次对话后插入一条总体大纲。',
-        insertNode: '每轮对话新增一条总体大纲（必须）。',
-        updateNode: '禁止使用 update 覆盖旧大纲；如需修正请手动编辑。',
-        deleteNode: '一般不删除，除非大纲明显错误或需要合并重写。',
+        note: '覆盖式总体大纲。按 current / plot / relationships / open_threads 分节维护；每轮只更新发生变化的分节，禁止逐轮追加。仅记录该私聊内容，避免泄露其他会话隐私。',
+        initNode: '首次需要某个分节时插入该分节。',
+        insertNode: '仅在分节尚不存在时插入。',
+        updateNode: '剧情或关系变化时覆盖对应分节，不改未变化分节。',
+        deleteNode: '禁止模型删除大纲分节。',
       },
       updateConfig: {
         contextDepth: 6,
@@ -292,7 +298,7 @@ export const DEFAULT_MEMORY_TEMPLATE = {
         injectionTemplate: '',
       },
       columns: [
-        { id: 'time', name: '时间/轮次', type: 'text' },
+        { id: 'section', name: '大纲分节', type: 'select', options: ['current', 'plot', 'relationships', 'open_threads', 'history'] },
         { id: 'outline', name: '总体大纲', type: 'multiline' },
       ],
     },
@@ -324,6 +330,7 @@ export const DEFAULT_MEMORY_TEMPLATE = {
       columns: [
         { id: 'time', name: '时间/轮次', type: 'text' },
         { id: 'summary', name: '摘要', type: 'multiline' },
+        { id: 'keywords', name: '召回关键词', type: 'text' },
       ],
     },
     {
@@ -332,11 +339,11 @@ export const DEFAULT_MEMORY_TEMPLATE = {
       scope: 'group',
       usage: 'chat',
       sourceData: {
-        note: '记录群聊每次互动的总体大纲（精简摘要）。每次对话必须新增一行，禁止用 update 覆盖旧行。内容需精炼到关键事件与关系变化；按手机对话模式写纯文本，禁止输出 <details>/<summary> 等标签。仅记录群聊公开信息，不包含成员私聊或敏感隐私。',
-        initNode: '群聊首次互动后插入一条总体大纲。',
-        insertNode: '每轮互动新增一条总体大纲（必须）。',
-        updateNode: '禁止使用 update 覆盖旧大纲；如需修正请手动编辑。',
-        deleteNode: '一般不删除，除非大纲明显错误或需要合并重写。',
+        note: '覆盖式群聊总体大纲。按 current / plot / relationships / open_threads 分节维护；每轮只更新变化分节，禁止逐轮追加。仅记录群聊公开信息，不包含成员私聊或敏感隐私。',
+        initNode: '首次需要某个分节时插入该分节。',
+        insertNode: '仅在分节尚不存在时插入。',
+        updateNode: '群聊局面或关系变化时覆盖对应分节。',
+        deleteNode: '禁止模型删除大纲分节。',
       },
       updateConfig: {
         contextDepth: 6,
@@ -352,7 +359,7 @@ export const DEFAULT_MEMORY_TEMPLATE = {
         injectionTemplate: '',
       },
       columns: [
-        { id: 'time', name: '时间/轮次', type: 'text' },
+        { id: 'section', name: '大纲分节', type: 'select', options: ['current', 'plot', 'relationships', 'open_threads', 'history'] },
         { id: 'outline', name: '总体大纲', type: 'multiline' },
       ],
     },
@@ -383,6 +390,7 @@ export const DEFAULT_MEMORY_TEMPLATE = {
       },
       columns: [
         { id: 'summary', name: '动态摘要', type: 'multiline' },
+        { id: 'keywords', name: '召回关键词', type: 'text' },
       ],
     },
     {
@@ -391,11 +399,11 @@ export const DEFAULT_MEMORY_TEMPLATE = {
       scope: 'global',
       usage: 'moments',
       sourceData: {
-        note: '记录动态区每次有效互动后的总体大纲。每次动态发布、动态评论回复或相关公开互动后必须新增一行，禁止用 update 覆盖旧行。内容需精炼到关键动态、关系变化与后续可延续话题；禁止输出 <details>/<summary> 等标签。',
-        initNode: '动态区首次有效互动后插入一条总体大纲。',
-        insertNode: '每次动态互动新增一条总体大纲（必须）。',
-        updateNode: '禁止使用 update 覆盖旧大纲；如需修正请手动编辑。',
-        deleteNode: '一般不删除，除非大纲明显错误或需要合并重写。',
+        note: '覆盖式动态总体大纲。按 current / plot / relationships / open_threads 分节维护，只更新发生变化的分节，禁止逐条动态追加。',
+        initNode: '首次需要某个分节时插入该分节。',
+        insertNode: '仅在分节尚不存在时插入。',
+        updateNode: '公开互动或关系变化时覆盖对应分节。',
+        deleteNode: '禁止模型删除大纲分节。',
       },
       updateConfig: {
         contextDepth: 6,
@@ -411,6 +419,7 @@ export const DEFAULT_MEMORY_TEMPLATE = {
         injectionTemplate: '',
       },
       columns: [
+        { id: 'section', name: '大纲分节', type: 'select', options: ['current', 'plot', 'relationships', 'open_threads', 'history'] },
         { id: 'outline', name: '动态总体大纲', type: 'multiline' },
       ],
     },
@@ -447,6 +456,7 @@ export const DEFAULT_MEMORY_TEMPLATE = {
         { id: 'key_events', name: '重要事件', type: 'multiline' },
         { id: 'status', name: '当前状态', type: 'multiline' },
         { id: 'notes', name: '备注', type: 'multiline' },
+        { id: 'keywords', name: '召回关键词', type: 'text' },
       ],
     },
     {
@@ -482,6 +492,7 @@ export const DEFAULT_MEMORY_TEMPLATE = {
         { id: 'clues', name: '关键线索', type: 'multiline' },
         { id: 'risk_reward', name: '奖励/风险', type: 'multiline' },
         { id: 'notes', name: '备注', type: 'multiline' },
+        { id: 'keywords', name: '召回关键词', type: 'text' },
       ],
     },
     {
@@ -512,6 +523,7 @@ export const DEFAULT_MEMORY_TEMPLATE = {
       columns: [
         { id: 'time', name: '时间/章节', type: 'text' },
         { id: 'summary', name: '摘要', type: 'multiline' },
+        { id: 'keywords', name: '召回关键词', type: 'text' },
       ],
     },
     {
@@ -520,11 +532,11 @@ export const DEFAULT_MEMORY_TEMPLATE = {
       scope: 'contact',
       usage: 'rp',
       sourceData: {
-        note: '记录 RP 每轮推进后的关键剧情大纲。每次推进必须新增一行，禁止用 update 覆盖旧行。内容需精炼到剧情进展、状态变化与关键人物。',
-        initNode: '首次推进后插入一条总体大纲。',
-        insertNode: '每轮推进新增一条总体大纲（必须）。',
-        updateNode: '禁止使用 update 覆盖旧大纲；如需修正请手动编辑。',
-        deleteNode: '一般不删除，除非大纲明显错误或需要合并重写。',
+        note: '覆盖式创作总体大纲。按 current / plot / relationships / open_threads 分节维护；每轮只更新变化分节，禁止逐轮追加。大纲记录当前全局视图，逐轮历史由摘要表负责。',
+        initNode: '首次需要某个分节时插入该分节。',
+        insertNode: '仅在分节尚不存在时插入。',
+        updateNode: '剧情、关系或伏笔变化时覆盖对应分节。',
+        deleteNode: '禁止模型删除大纲分节。',
       },
       updateConfig: {
         contextDepth: 6,
@@ -540,7 +552,7 @@ export const DEFAULT_MEMORY_TEMPLATE = {
         injectionTemplate: '',
       },
       columns: [
-        { id: 'time', name: '时间/章节', type: 'text' },
+        { id: 'section', name: '大纲分节', type: 'select', options: ['current', 'plot', 'relationships', 'open_threads', 'history'] },
         { id: 'outline', name: '总体大纲', type: 'multiline' },
       ],
     },

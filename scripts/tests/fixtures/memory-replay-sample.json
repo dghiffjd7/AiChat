@@ -1,0 +1,77 @@
+{
+  "source": "sample-contact",
+  "config": {
+    "recallBudgetTokens": 500,
+    "recallMaxRows": 5,
+    "recentTurns": 1
+  },
+  "tables": [
+    {
+      "id": "chat_summary",
+      "name": "私聊摘要",
+      "columns": [
+        { "id": "time", "name": "时间/轮次" },
+        { "id": "summary", "name": "摘要" },
+        { "id": "keywords", "name": "召回关键词" }
+      ]
+    },
+    {
+      "id": "events",
+      "name": "重要事件",
+      "columns": [
+        { "id": "description", "name": "事件描述" },
+        { "id": "keywords", "name": "召回关键词" }
+      ]
+    }
+  ],
+  "messages": [
+    { "role": "user", "content": "你好", "turn": 1 },
+    { "role": "assistant", "content": "你好。", "turn": 1 },
+    { "role": "user", "content": "林家的账本后来呢？", "turn": 2 },
+    { "role": "assistant", "content": "那本账本来自旧仓库。", "turn": 2 },
+    { "role": "user", "content": "今天天气如何？", "turn": 3 },
+    { "role": "assistant", "content": "林家的账本仍在旧仓库。", "turn": 3 }
+  ],
+  "memoryRows": [
+    {
+      "id": "summary-1",
+      "table_id": "chat_summary",
+      "is_active": true,
+      "row_data": {
+        "time": "第1轮",
+        "summary": "双方打招呼。",
+        "_coverage": { "from": 1, "to": 1, "source": "app" }
+      }
+    },
+    {
+      "id": "event-ledger",
+      "table_id": "events",
+      "is_active": false,
+      "row_data": {
+        "description": "林家的账本在旧仓库被发现。",
+        "keywords": "林家,账本,旧仓库"
+      }
+    }
+  ],
+  "cases": [
+    {
+      "id": "recall-hit",
+      "turn": 2,
+      "messageIndex": 2,
+      "trimmedFromTurn": 1,
+      "trimmedToTurn": 1,
+      "expectedRecallRowIds": ["event-ledger"],
+      "assistantReferencedRowIds": ["event-ledger"]
+    },
+    {
+      "id": "continuity-conflict",
+      "turn": 3,
+      "messageIndex": 4,
+      "historyDepth": 0,
+      "trimmedFromTurn": 1,
+      "trimmedToTurn": 1,
+      "expectedRecallRowIds": [],
+      "assistantReferencedRowIds": ["event-ledger"]
+    }
+  ]
+}

@@ -85,14 +85,39 @@ import {
   buildMemoryTablePlan,
   estimateTokens,
   getMemoryBridgeTablePromptLabel,
-  isSummaryLimitTableId,
   isSummaryTableId,
+  isSummaryLimitTableId,
+  limitSummaryRowsForPrompt,
   formatMemoryRowText,
   normalizeMemoryCell,
   normalizeMemoryUpdateMode,
   normalizeTokenMode,
   parseMemoryPromptPositions,
 } from '../memory/memory-prompt-utils.js';
+import { tokenCalibrationStore } from '../memory/token-calibration-utils.js';
+import {
+  buildMemoryPlanAudit,
+  buildRequestInjectionAudit,
+  estimatePromptMessagesTokens,
+} from '../memory/memory-injection-audit-utils.js';
+import { isOutlineTableId } from '../memory/outline-section-utils.js';
+import {
+  reflowUnusedRecallToRecent,
+  resolveMemoryBudgetEnvelope,
+} from '../memory/memory-budget-allocator-utils.js';
+import {
+  buildSegmentedMemoryTablePlan,
+  estimateMemorySegmentDemands,
+  isMemoryRowRecallEligible,
+  partitionMemoryRowsForPrompt,
+} from '../memory/memory-segment-plan-utils.js';
+import { buildMemoryKeywordRecallPlan } from '../memory/memory-keyword-recall-utils.js';
+import {
+  buildWorldbookDowngradeSuggestion,
+  buildWorldbookDowngradeSuggestions,
+} from '../memory/worldbook-downgrade-suggestion-utils.js';
+import { buildMemoryCoverageLine } from '../memory/memory-coverage-utils.js';
+import { resolveRecentHistoryQuota } from '../memory/input-token-budget-utils.js';
 import { resolveMemoryRowOrderKey } from '../memory/memory-row-order.js';
 import {
   getMemoryContextType,
@@ -101,6 +126,11 @@ import {
   resolveMemorySessionMode,
   tableMatchesMemoryContext,
 } from '../memory/memory-context-utils.js';
+import {
+  limitHistoryByTokenBudget,
+  mapHistoryMessagesToTurns,
+  resolveCoverageProtectedHistoryIndexes,
+} from './chat/llm-history-utils.js';
 import {
   getChatToMomentsBridgeTableIds,
   getChatToRpBridgeSourceMeta,
@@ -135,6 +165,7 @@ import {
   collectConditionDefineSpecs,
   createDefaultPromptClause,
   evaluateConditionTree,
+  explainConditionTree,
   isTrivialConditionTree,
   normalizeConditionTree,
   normalizeWorldPromptMode,
@@ -461,9 +492,9 @@ const formatSinceInParens = (ts) => {
 };
 
 const DEFAULT_MEMORY_BUDGET = {
-  maxRows: Number.POSITIVE_INFINITY,
-  maxTokens: Number.POSITIVE_INFINITY,
-  safetyRatio: 0.9,
+  maxRows: 1000,
+  maxTokens: 100000,
+  safetyRatio: 1,
 };
 
 class AppBridge {
@@ -492,6 +523,8 @@ class AppBridge {
     this.abortReason = '';
     this.activeNativeRequestId = '';
     this.activeGenerationToken = 0;
+    this.activeInputBudgetPlan = null;
+    this.activeTokenEstimateMode = { mode: 'rough', coefficient: 1 };
     this.chatStore = null; // Injected
     this.macroEngine = null; // Initialized on setChatStore
     this.contactsStore = null; // Injected
@@ -846,17 +879,29 @@ class AppBridge {
     const memoryMode = String(context?.meta?.memoryStorageMode || '').trim().toLowerCase();
     const autoExtract = Boolean(context?.meta?.memoryAutoExtract);
     const updateMode = normalizeMemoryUpdateMode(context?.meta?.memoryUpdateMode, 'full');
+    const globalSettings = appSettings.get();
+    const configuredMaxRows = Math.trunc(Number(globalSettings.memoryMaxRows));
+    const configuredMaxTokens = Math.trunc(Number(globalSettings.memoryMaxTokens));
+    const memoryBudget = {
+      maxRows: Number.isFinite(configuredMaxRows) && configuredMaxRows > 0
+        ? configuredMaxRows
+        : DEFAULT_MEMORY_BUDGET.maxRows,
+      maxTokens: Number.isFinite(configuredMaxTokens) && configuredMaxTokens > 0
+        ? configuredMaxTokens
+        : DEFAULT_MEMORY_BUDGET.maxTokens,
+      safetyRatio: DEFAULT_MEMORY_BUDGET.safetyRatio,
+    };
     const disabledPlan = (reason) => ({
       enabled: false,
       reason,
       items: [],
       truncated: [],
       tokenTotal: 0,
-      tokenBudget: DEFAULT_MEMORY_BUDGET.maxTokens,
-      tokenBudgetSafety: Math.floor(DEFAULT_MEMORY_BUDGET.maxTokens * DEFAULT_MEMORY_BUDGET.safetyRatio),
-      tokenBudgetData: Math.floor(DEFAULT_MEMORY_BUDGET.maxTokens * DEFAULT_MEMORY_BUDGET.safetyRatio),
+      tokenBudget: memoryBudget.maxTokens,
+      tokenBudgetSafety: Math.floor(memoryBudget.maxTokens * memoryBudget.safetyRatio),
+      tokenBudgetData: Math.floor(memoryBudget.maxTokens * memoryBudget.safetyRatio),
       overheadTokens: 0,
-      maxRows: DEFAULT_MEMORY_BUDGET.maxRows,
+      maxRows: memoryBudget.maxRows,
       position: 'before_latest_user',
       injectDepth: 0,
       promptText: '',
@@ -875,6 +920,7 @@ class AppBridge {
       autoExtract,
       tableOrder: [],
       rowIndexMap: {},
+      audit: { version: 1, segments: [], usedTokens: 0 },
     });
 
     if (memoryMode !== 'table') return disabledPlan('memory_mode');
@@ -977,12 +1023,15 @@ class AppBridge {
       tableOrder.push(id);
     });
 
-    const maxRows = DEFAULT_MEMORY_BUDGET.maxRows;
-    const maxTokens = DEFAULT_MEMORY_BUDGET.maxTokens;
+    const maxRows = memoryBudget.maxRows;
+    const maxTokens = memoryBudget.maxTokens;
     const tokenBudgetSafety = Number.isFinite(maxTokens)
-      ? Math.max(0, Math.floor(maxTokens * DEFAULT_MEMORY_BUDGET.safetyRatio))
+      ? Math.max(0, Math.floor(maxTokens * memoryBudget.safetyRatio))
       : maxTokens;
-    const tokenMode = 'rough';
+    const tokenMode = {
+      mode: 'rough',
+      coefficient: Number(context?.meta?.tokenEstimateCalibration?.coefficient) || 1,
+    };
     const injectDepthRaw = Math.trunc(Number(context?.meta?.memoryInjectDepth));
     const injectDepth = Number.isFinite(injectDepthRaw) ? Math.max(0, injectDepthRaw) : 0;
 
@@ -1000,8 +1049,13 @@ class AppBridge {
       } else if (updateMode === 'standard') {
         lines.push('本轮仅允许更新非摘要类表格，摘要/总体大纲类表格禁止写入。');
       }
-      if (tableOrder.some(tableId => isSummaryTableId(tableId))) {
-        lines.push('摘要/总体大纲表格只允许 insert；禁止 update/delete。');
+      if (tableOrder.some(tableId => isSummaryTableId(tableId) && !isOutlineTableId(tableId))) {
+        lines.push('摘要表格只允许 insert；禁止 update/delete。');
+      }
+      if (tableOrder.some(tableId => isOutlineTableId(tableId))) {
+        lines.push('总体大纲采用分节覆盖：section 只允许 current、plot、relationships、open_threads；每轮只输出发生变化的分节。');
+        lines.push('大纲分节已存在时使用 update，不存在时使用 insert；不要逐轮新增大纲，也不要删除分节。');
+        lines.push('若无法判断分节，使用 section:"current" 作为全量重写兜底。');
       }
       lines.push('##在每次回复的末尾，按要求以规定格式，输出完整xml标签包裹tableEdit：');
       lines.push('（格式示例）');
@@ -1015,6 +1069,16 @@ class AppBridge {
       lines.push('仅当 row_index 对应现有行时才使用 update/delete。');
       lines.push('row_index 对应表格中每行前的编号；table_id 见下表。');
       lines.push('无修改则输出空 <tableEdit></tableEdit>。');
+      lines.push('世界书负责“设定是什么”；记忆表格只记录“当前状态如何、发生过什么”，不要把静态设定整段抄入表格。');
+      const keywordTableIds = tableOrder.filter((tableId) => (
+        (tableById.get(tableId)?.columns || []).some(
+          column => String(column?.id || '').trim() === 'keywords',
+        )
+      ));
+      if (keywordTableIds.length) {
+        lines.push('带 keywords 列的表格在 insert 时必须填写召回关键词，update 时按内容变化同步维护；使用人物、地点、物品、事件等稳定名词，以逗号分隔，禁止写“这个/那件事”等模糊指代。');
+        lines.push('keywords 仅供本地按需召回，不要把它写成摘要正文；旧行缺少 keywords 时由 app 在本地懒生成索引。');
+      }
       lines.push('表格索引:');
       tableOrder.forEach((tableId, index) => {
         const table = tableById.get(tableId) || { id: tableId, name: tableId, columns: [] };
@@ -1114,7 +1178,7 @@ class AppBridge {
       const outlineTable = tableById.get(outlineTableId);
       if (outlineTable) {
         const outlineLabel = String(outlineTable?.name || outlineTableId).trim() || outlineTableId;
-        hints.push(`本轮必须新增${outlineLabel}（精简摘要；仅使用 insert）。`);
+        hints.push(`请检查${outlineLabel}各分节；仅对本轮发生变化的分节执行 update/insert，禁止逐轮追加。`);
       }
       return hints;
     };
@@ -1154,59 +1218,88 @@ class AppBridge {
       if (tableScope === 'contact') return rowScope === 'contact';
       return true;
     };
-    const rows = [...(Array.isArray(globalRows) ? globalRows : []), ...(Array.isArray(scopedRows) ? scopedRows : [])]
-      .filter(row => row && row.is_active !== false)
+    const matchingRows = [...(Array.isArray(globalRows) ? globalRows : []), ...(Array.isArray(scopedRows) ? scopedRows : [])]
+      .filter(Boolean)
       .filter(row => {
         const tableId = String(row?.table_id || '').trim();
         if (!activeTableIds.has(tableId)) return false;
         const table = tableById.get(tableId);
         return table ? rowMatchesTableScope(row, table) : false;
       });
+    const rows = matchingRows.filter(row => row?.is_active !== false);
+    const rowLayers = partitionMemoryRowsForPrompt(matchingRows);
+    const workingRows = rowLayers.workingRows.filter(row => row?.is_active !== false);
     const resolveRowSortKey = (row, tableId = '', fallback = 0) => resolveMemoryRowOrderKey(row, tableId, fallback);
-    const limitedRows = (() => {
-      const grouped = new Map();
-      const kept = [];
-      rows.forEach((row, index) => {
-        const tableId = String(row?.table_id || '').trim();
-        if (!isSummaryLimitTableId(tableId)) {
-          kept.push(row);
-          return;
-        }
-        if (!grouped.has(tableId)) grouped.set(tableId, []);
-        grouped.get(tableId).push({ row, index });
-      });
-      grouped.forEach((list) => {
-        if (!list.length) return;
-        if (list.length <= 10) {
-          list.forEach(item => kept.push(item.row));
-          return;
-        }
-        list.sort((a, b) => {
-          const tableId = String(a.row?.table_id || b.row?.table_id || '').trim();
-          const ak = resolveRowSortKey(a.row, tableId, a.index);
-          const bk = resolveRowSortKey(b.row, tableId, b.index);
-          if (ak !== bk) return ak - bk;
-          return a.index - b.index;
-        });
-        list.slice(-10).forEach(item => kept.push(item.row));
-      });
-      return kept;
-    })();
+    const limitedRows = limitSummaryRowsForPrompt(workingRows, 10);
+    const limitedRowRefs = new Set(limitedRows);
+    const archiveRowRefs = new Set(rowLayers.archiveRows);
+    const recallCandidateRows = matchingRows.filter((row) => {
+      if (archiveRowRefs.has(row)) return isMemoryRowRecallEligible(row);
+      const tableId = String(row?.table_id || '').trim();
+      return row?.is_active !== false
+        && isSummaryLimitTableId(tableId)
+        && !limitedRowRefs.has(row);
+    });
 
-    const planResult = buildMemoryTablePlan({
+    const localDemands = estimateMemorySegmentDemands({
+      rows: limitedRows,
+      tableById,
+      tableOrder,
+      autoExtract,
+      tokenMode,
+    });
+    const inputBudgetContext = context?.meta?.inputBudgetContext || {};
+    const worldSettings = this.getWorldGlobalSettings?.() || this.worldGlobalSettings || {};
+    const budgetEnvelope = resolveMemoryBudgetEnvelope({
+      settings: globalSettings,
+      maxContextTokens: inputBudgetContext?.maxContextTokens,
+      maxOutputTokens: inputBudgetContext?.maxOutputTokens,
+      place: sessionMode,
+      worldContextPercent: worldSettings?.contextPercent,
+      worldBudgetCap: worldSettings?.budgetCap,
+      demands: {
+        state: localDemands.state,
+        recent: estimatePromptMessagesTokens(context?.history || [], tokenMode),
+        mid: localDemands.mid,
+        far: localDemands.far,
+        recall: Number.POSITIVE_INFINITY,
+      },
+    });
+    let allocatedQuotas = budgetEnvelope?.allocation?.allocations
+      ? { ...budgetEnvelope.allocation.allocations }
+      : null;
+    const planResult = buildSegmentedMemoryTablePlan({
       rows: limitedRows,
       tableById,
       tableOrder,
       autoExtract,
       maxRows,
-      tokenBudgetData,
+      tokenQuotas: allocatedQuotas,
       tokenMode,
+      preserveState: true,
     });
     const selected = planResult.items || [];
     const truncated = planResult.truncated || [];
     const tableData = planResult.tableData || '';
     const rowIndexMap = planResult.rowIndexMap || {};
     const tableOrderNext = planResult.tableOrder || tableOrder;
+    const { summaryTableId: coverageSummaryTableId } = getSummaryTableIdsForContext({
+      uiMode: context?.meta?.uiMode,
+      sessionId,
+      contextType,
+      isGroup,
+    });
+    const coverageRows = rows
+      .filter(row => String(row?.table_id || '').trim() === coverageSummaryTableId)
+      .map(row => ({
+        is_active: row?.is_active !== false,
+        row_data: row?.row_data && typeof row.row_data === 'object' ? { ...row.row_data } : {},
+      }));
+    const coverageSource = {
+      summaryTableId: coverageSummaryTableId,
+      rows: coverageRows,
+      totalTurns: Math.max(0, Math.trunc(Number(context?.meta?.memoryTotalTurns)) || 0),
+    };
     let dynamicProfileDebug = null;
     const buildDynamicWeakTriggerText = () => {
       const historyLines = (Array.isArray(context?.history) ? context.history : [])
@@ -1224,9 +1317,42 @@ class AppBridge {
     };
 
     const buildCrossScopeExtraText = async (budgetTokens) => {
-      if (!this.memoryTableStore || budgetTokens <= 0) return { text: '', tokens: 0 };
+      if (!this.memoryTableStore || budgetTokens <= 0) return { text: '', tokens: 0, segments: [] };
       const parts = [];
       let used = 0;
+      const auditById = new Map();
+      let activeAuditSegment = null;
+      const setAuditSegment = (id, label) => {
+        const key = String(id || '').trim();
+        if (!key) {
+          activeAuditSegment = null;
+          return;
+        }
+        if (!auditById.has(key)) {
+          auditById.set(key, {
+            id: key,
+            label: String(label || key).trim(),
+            lines: [],
+            usedTokens: 0,
+            rowCount: 0,
+          });
+        }
+        activeAuditSegment = auditById.get(key);
+      };
+      const getAuditSegments = () => Array.from(auditById.values())
+        .filter(segment => segment.usedTokens > 0 || segment.rowCount > 0)
+        .map(segment => ({
+          id: segment.id,
+          label: segment.label,
+          text: segment.lines.join('\n').trim(),
+          usedTokens: segment.usedTokens,
+          rowCount: segment.rowCount,
+        }));
+      const buildCrossScopeResult = (text = parts.join('\n').trim()) => ({
+        text: String(text || '').trim(),
+        tokens: used,
+        segments: getAuditSegments(),
+      });
       const pushLine = (line) => {
         if (line === null || line === undefined) return true;
         const text = String(line);
@@ -1238,6 +1364,11 @@ class AppBridge {
         if (used + cost > budgetTokens) return false;
         parts.push(text);
         used += cost;
+        if (activeAuditSegment) {
+          activeAuditSegment.lines.push(text);
+          activeAuditSegment.usedTokens += cost;
+          if (/^\s*-\s+\S/.test(text)) activeAuditSegment.rowCount += 1;
+        }
         return true;
       };
       const pushSpacer = () => {
@@ -1597,12 +1728,13 @@ class AppBridge {
       };
 
       if (sessionMode === 'chat' && !isGroup) {
+        setAuditSegment('memory_hardcoded_group_outline', '硬编码参考：所在群聊大纲');
         const contactId = sessionId;
         const groups = this.contactsStore?.listGroups?.() || [];
         const memberGroups = groups.filter(g => Array.isArray(g?.members) && g.members.includes(contactId));
         const outlineTable = tableByIdAll.get('group_outline');
         if (outlineTable && memberGroups.length) {
-          if (!pushLine('【跨会话参考｜群聊大纲】')) return { text: '', tokens: used };
+          if (!pushLine('【跨会话参考｜群聊大纲】')) return buildCrossScopeResult('');
           pushLine('（仅供当前私聊参考，不在本会话记忆表格中更新）');
           for (const group of memberGroups) {
             const groupId = String(group?.id || '').trim();
@@ -1626,7 +1758,12 @@ class AppBridge {
             }
           }
         }
-      } else if (sessionMode === 'chat') {
+      } else if (sessionMode === 'chat' && globalSettings.memoryGroupMemberReferenceEnabled !== false) {
+        setAuditSegment('memory_hardcoded_member_private', '硬编码参考：群成员私聊');
+        const groupMemberReferenceLimit = clampBridgeLimit(
+          globalSettings.memoryGroupMemberReferenceLimit,
+          5,
+        );
         const groupContact = this.contactsStore?.getContact?.(sessionId);
         const members = Array.isArray(groupContact?.members)
           ? groupContact.members.map(item => normalizeId(item)).filter(Boolean)
@@ -1635,7 +1772,7 @@ class AppBridge {
         const outlineTableId = 'chat_outline';
         const outlineTable = tableByIdAll.get(outlineTableId);
         if (members.length) {
-          if (!pushLine('【跨会话参考｜成员私聊记忆】')) return { text: '', tokens: used };
+          if (!pushLine('【跨会话参考｜成员私聊记忆】')) return buildCrossScopeResult('');
           pushLine('（以下为用户与各成员的私聊关系记忆，群内其他人不应知道；仅供模型掌握，勿在群聊中泄露）');
           for (const memberId of members) {
             const memberRows = await this.memoryTableStore.getMemories({
@@ -1668,29 +1805,34 @@ class AppBridge {
               if (!table) continue;
               const label = String(table?.name || tableId).trim() || tableId;
               const header = autoExtract ? `【${label}｜${tableId}】` : `【${label}】`;
-              if (!pushLine(header)) return { text: parts.join('\n').trim(), tokens: used };
-              const orderedRows = sortRowsForPrompt(tableRows, tableId);
+              if (!pushLine(header)) return buildCrossScopeResult();
+              const orderedRows = pickNewestRows(tableRows, groupMemberReferenceLimit, tableId);
               for (const row of orderedRows) {
                 const rowText = getRowText(row, table);
                 if (!rowText) continue;
-                if (!pushLine(`- ${rowText}`)) return { text: parts.join('\n').trim(), tokens: used };
+                if (!pushLine(`- ${rowText}`)) return buildCrossScopeResult();
               }
             }
             if (outlineTable && outlineRows.length) {
               const outlineLabel = String(outlineTable?.name || outlineTableId).trim() || outlineTableId;
               const header = autoExtract ? `【${outlineLabel}｜${outlineTableId}】` : `【${outlineLabel}】`;
-              if (!pushLine(header)) return { text: parts.join('\n').trim(), tokens: used };
-              const orderedOutlineRows = sortRowsForPrompt(outlineRows, outlineTableId);
+              if (!pushLine(header)) return buildCrossScopeResult();
+              const orderedOutlineRows = pickNewestRows(
+                outlineRows,
+                groupMemberReferenceLimit,
+                outlineTableId,
+              );
               for (const row of orderedOutlineRows) {
                 const rowText = getRowText(row, outlineTable);
                 if (!rowText) continue;
-                if (!pushLine(`- ${rowText}`)) return { text: parts.join('\n').trim(), tokens: used };
+                if (!pushLine(`- ${rowText}`)) return buildCrossScopeResult();
               }
             }
           }
         }
         const groupOutlineTable = tableByIdAll.get('group_outline');
         if (groupOutlineTable && members.length) {
+          setAuditSegment('memory_hardcoded_related_group', '硬编码参考：相关群聊大纲');
           const groups = this.contactsStore?.listGroups?.() || [];
           const relatedGroups = groups
             .map(group => {
@@ -1703,7 +1845,7 @@ class AppBridge {
             .filter(item => item.gid && item.gid !== normalizeId(sessionId))
             .filter(item => item.groupMembers.some(memberId => memberSet.has(memberId)));
           if (relatedGroups.length) {
-            if (!pushLine('【跨群聊参考｜相关群聊大纲】')) return { text: '', tokens: used };
+            if (!pushLine('【跨群聊参考｜相关群聊大纲】')) return buildCrossScopeResult('');
             pushLine('（以下为与当前群成员重叠的群聊大纲，仅共享成员知情）');
             for (const item of relatedGroups) {
               const groupId = item.gid;
@@ -1713,9 +1855,9 @@ class AppBridge {
                 group_id: groupId,
                 template_id: templateId,
               }).catch(() => []);
-              const outlineRows = sortRowsForPrompt((Array.isArray(groupRows) ? groupRows : [])
+              const outlineRows = pickNewestRows((Array.isArray(groupRows) ? groupRows : [])
                 .filter(row => row && row.is_active !== false)
-                .filter(row => normalizeId(row?.table_id) === 'group_outline'), 'group_outline');
+                .filter(row => normalizeId(row?.table_id) === 'group_outline'), groupMemberReferenceLimit, 'group_outline');
               if (!outlineRows.length) continue;
               const unknownMembers = members.filter(memberId => !item.groupMembers.includes(memberId));
               const unknownNames = unknownMembers.map(memberId => resolveContactName(memberId) || memberId).filter(Boolean);
@@ -1734,8 +1876,8 @@ class AppBridge {
         }
       }
 
-      const globalSettings = appSettings.get();
       if (sessionMode === 'chat') {
+        setAuditSegment('memory_bridge_writing_to_chat', '记忆共享：创意写作 → 聊天');
         const rpBridgeSourceId = String(sessionSettings?.rpBridgeSourceSessionId || context?.meta?.defaultRpBridgeSessionId || '').trim();
         const rpTableSettings = resolveRpToChatBridgeTableSettings({
           sessionSettings,
@@ -1767,6 +1909,7 @@ class AppBridge {
           });
         }
       } else if (sessionMode === 'rp') {
+        setAuditSegment('memory_bridge_chat_to_writing', '记忆共享：社交 → 创意写作');
         const rawChatBridgeSourceId = String(sessionSettings?.chatBridgeSourceSessionId || '').trim();
         const {
           sourceMode: chatBridgeSourceMode,
@@ -1778,7 +1921,7 @@ class AppBridge {
           sourceIsGroup,
           sourceMode: chatBridgeSourceMode,
           fallbackEnabled: globalSettings.memoryBridgeChatToRpEnabled !== false,
-          fallbackLimit: 0,
+          fallbackLimit: clampBridgeLimit(globalSettings.memoryBridgeChatToRpLimit, 5),
         });
         const enabledTableIds = getChatToRpBridgeTableIds({
           sourceIsGroup,
@@ -1840,6 +1983,7 @@ class AppBridge {
         globalSettings.memoryTableEnabledMoments !== false &&
         globalSettings.memoryBridgeMomentsToChatEnabled !== false
       ) {
+        setAuditSegment('memory_bridge_moments_to_scene', '记忆共享：动态 → 当前场景');
         const momentsTableSettings = resolveMomentsToChatBridgeTableSettings({
           settings: globalSettings,
           fallbackEnabled: globalSettings.memoryBridgeMomentsToChatEnabled !== false,
@@ -1866,11 +2010,13 @@ class AppBridge {
         });
       }
       if (sessionMode === 'moments') {
+        setAuditSegment('memory_dynamic_weak_recall', '动态弱触发召回');
         await appendMomentWeakContactMemoryBlock();
         if (
           globalSettings.memoryTableEnabledChat !== false &&
           globalSettings.memoryBridgeChatToMomentsEnabled !== false
         ) {
+          setAuditSegment('memory_bridge_chat_to_moments', '记忆共享：社交 → 动态');
           const chatToMomentsTableSettings = resolveChatToMomentsBridgeTableSettings({
             settings: globalSettings,
             fallbackEnabled: globalSettings.memoryBridgeChatToMomentsEnabled !== false,
@@ -1891,6 +2037,7 @@ class AppBridge {
           globalSettings.memoryTableEnabledWriting !== false &&
           globalSettings.memoryBridgeRpToMomentsEnabled !== false
         ) {
+          setAuditSegment('memory_bridge_writing_to_moments', '记忆共享：创意写作 → 动态');
           const rpToMomentsTableSettings = resolveRpToMomentsBridgeTableSettings({
             settings: globalSettings,
             fallbackEnabled: globalSettings.memoryBridgeRpToMomentsEnabled !== false,
@@ -1910,14 +2057,118 @@ class AppBridge {
           });
         }
       }
-      return { text: parts.join('\n').trim(), tokens: used };
+      return buildCrossScopeResult();
     };
 
     const baseTokens = tableData ? estimateTokens(tableData, tokenMode) : 0;
-    const remainingBudget = Math.max(0, tokenBudgetData - baseTokens);
+    const recallQuotaBeforeReflow = allocatedQuotas
+      ? Math.max(0, Math.trunc(Number(allocatedQuotas.recall)) || 0)
+      : Math.max(0, tokenBudgetData - baseTokens);
+    const localRecallResult = buildMemoryKeywordRecallPlan({
+      rows: recallCandidateRows,
+      tableById,
+      queryText: buildDynamicWeakTriggerText(),
+      tokenBudget: recallQuotaBeforeReflow,
+      maxRows: Math.max(0, maxRows - selected.length),
+      tokenMode,
+    });
+    const remainingBudget = Math.max(0, recallQuotaBeforeReflow - localRecallResult.tokens);
     const extraResult = await buildCrossScopeExtraText(remainingBudget);
     const extraText = String(extraResult?.text || '').trim();
-    const combinedTableData = [tableData, extraText].filter(Boolean).join('\n\n').trim();
+    const localRecallText = String(localRecallResult?.text || '').trim();
+    const crossScopeAuditSegments = [
+      ...(localRecallText || localRecallResult?.truncated?.length
+        ? [{
+            id: 'memory_keyword_recall',
+            label: '关键词按需召回',
+            text: localRecallText,
+            usedTokens: localRecallResult.tokens,
+            rowCount: localRecallResult.items.length,
+            trimmedCount: localRecallResult.truncated.length,
+            overflowed: localRecallResult.overflowed,
+            detail: localRecallResult.detail || (
+              localRecallResult.truncated.length
+                ? `命中 ${localRecallResult.candidates.length} 条，但 Q_recall 配额不足`
+                : ''
+            ),
+          }]
+        : []),
+      ...(Array.isArray(extraResult?.segments) ? extraResult.segments : []),
+    ];
+    const combinedTableData = [tableData, localRecallText, extraText].filter(Boolean).join('\n\n').trim();
+    const recallUsedTokens = Math.min(
+      recallQuotaBeforeReflow,
+      Math.max(0, localRecallResult.tokens + (Number(extraResult?.tokens) || 0)),
+    );
+    if (allocatedQuotas) {
+      allocatedQuotas = reflowUnusedRecallToRecent(
+        allocatedQuotas,
+        recallUsedTokens,
+      ).allocations;
+    }
+    const buildPlanAudit = (dataPromptText = '', guidePromptText = '') => buildMemoryPlanAudit({
+      localTableText: tableData,
+      localRowCount: selected.length,
+      localTrimmedCount: truncated.length,
+      localSegments: planResult?.segments,
+      crossScopeSegments: crossScopeAuditSegments,
+      recallQuotaTokens: recallQuotaBeforeReflow,
+      dataPromptText,
+      guidePromptText,
+      tokenMode,
+    });
+    const resolvedInputBudgetTokens = Number.isFinite(Number(budgetEnvelope?.inputBudgetTokens))
+      ? Math.max(0, Math.trunc(Number(budgetEnvelope.inputBudgetTokens)))
+      : null;
+    const localAllocatedTokens = allocatedQuotas
+      ? ['state', 'mid', 'far', 'recall'].reduce(
+          (sum, segment) => sum + Math.max(0, Math.trunc(Number(allocatedQuotas[segment])) || 0),
+          0,
+        )
+      : null;
+    const planBudgetFields = {
+      tokenBudget: resolvedInputBudgetTokens,
+      tokenBudgetSafety: budgetEnvelope?.distributableTokens ?? null,
+      tokenBudgetData: localAllocatedTokens,
+      budget: {
+        mode: budgetEnvelope?.mode || 'token',
+        place: budgetEnvelope?.place || sessionMode,
+        inputBudgetTokens: resolvedInputBudgetTokens,
+        outputReserveTokens: budgetEnvelope?.input?.maxOutputTokens ?? null,
+        safetyReserveTokens: budgetEnvelope?.input?.safetyReserveTokens ?? 512,
+        fixedReserveTokens: budgetEnvelope?.fixedReserveTokens ?? 0,
+        worldBudgetTokens: budgetEnvelope?.worldBudgetTokens ?? null,
+        distributableTokens: budgetEnvelope?.distributableTokens ?? null,
+        ratios: budgetEnvelope?.allocation?.ratios || null,
+        baseQuotas: budgetEnvelope?.allocation?.baseQuotas || null,
+        allocations: allocatedQuotas,
+        overQuotaSegments: Array.from(new Set([
+          ...(budgetEnvelope?.allocation?.overQuotaSegments || []),
+          ...(localRecallResult.overflowed ? ['recall'] : []),
+        ])),
+      },
+      coverageSource,
+      segmentStats: Object.fromEntries(
+        [
+          ...Object.entries(planResult?.segments || {}),
+          ['recall', {
+            demandTokens: localRecallResult.demandTokens,
+            quotaTokens: recallQuotaBeforeReflow,
+            usedTokens: recallUsedTokens,
+            items: localRecallResult.items,
+            truncated: localRecallResult.truncated,
+            overflowed: localRecallResult.overflowed,
+          }],
+        ].map(([segment, stats]) => [segment, {
+          demandTokens: stats?.demandTokens ?? 0,
+          quotaTokens: stats?.quotaTokens ?? null,
+          usedTokens: stats?.usedTokens ?? 0,
+          rowCount: Array.isArray(stats?.items) ? stats.items.length : 0,
+          trimmedCount: Array.isArray(stats?.truncated) ? stats.truncated.length : 0,
+          overflowed: stats?.overflowed === true,
+        }]),
+      ),
+    };
 
     if (!selected.length && !truncated.length && !combinedTableData) {
       const promptText = autoExtract ? buildPromptText('') : '';
@@ -1930,9 +2181,7 @@ class AppBridge {
         items: [],
         truncated: [],
         tokenTotal,
-        tokenBudget: maxTokens,
-        tokenBudgetSafety,
-        tokenBudgetData,
+        ...planBudgetFields,
         overheadTokens,
         maxRows,
         position,
@@ -1953,6 +2202,7 @@ class AppBridge {
         autoExtract,
         tableOrder: tableOrderNext,
         rowIndexMap: {},
+        audit: buildPlanAudit(dataPromptText, guidePromptText),
       };
     }
 
@@ -1967,9 +2217,7 @@ class AppBridge {
         items: [],
         truncated,
         tokenTotal,
-        tokenBudget: maxTokens,
-        tokenBudgetSafety,
-        tokenBudgetData,
+        ...planBudgetFields,
         overheadTokens,
         maxRows,
         position,
@@ -1990,6 +2238,7 @@ class AppBridge {
         autoExtract,
         tableOrder: tableOrderNext,
         rowIndexMap: {},
+        audit: buildPlanAudit(dataPromptText, guidePromptText),
       };
     }
 
@@ -2002,11 +2251,17 @@ class AppBridge {
       enabled: true,
       reason: '',
       items: selected,
+      recallItems: localRecallResult.items,
+      recallDebug: {
+        queryTerms: localRecallResult.queryTerms,
+        candidateCount: localRecallResult.candidates.length,
+        matchedCount: localRecallResult.items.length,
+        trimmedCount: localRecallResult.truncated.length,
+        detail: localRecallResult.detail,
+      },
       truncated,
       tokenTotal,
-      tokenBudget: maxTokens,
-      tokenBudgetSafety,
-      tokenBudgetData,
+      ...planBudgetFields,
       overheadTokens,
       maxRows,
       position,
@@ -2027,6 +2282,7 @@ class AppBridge {
       autoExtract,
       tableOrder: tableOrderNext,
       rowIndexMap,
+      audit: buildPlanAudit(dataPromptText, guidePromptText),
     };
   }
 
@@ -3134,6 +3390,15 @@ class AppBridge {
     return usage;
   }
 
+  getTokenCalibration(provider = '', model = '') {
+    return tokenCalibrationStore.get(provider, model);
+  }
+
+  getActiveTokenCalibration() {
+    const config = this.config?.get?.() || {};
+    return this.getTokenCalibration(config?.provider, config?.model);
+  }
+
   /**
    * 生成 AI 回复
    * @param {string} userMessage - 用户消息
@@ -3195,6 +3460,8 @@ class AppBridge {
     const previousLastWorldInjectionDebug = this.lastWorldInjectionDebug;
     const previousLastDeepSeekFormatDebug = this.lastDeepSeekFormatDebug;
     const previousLastPromptSegmentDebug = this.lastPromptSegmentDebug;
+    const previousActiveInputBudgetPlan = this.activeInputBudgetPlan;
+    const previousActiveTokenEstimateMode = this.activeTokenEstimateMode;
     const previewSessionId = String(context?.session?.id || this.activeSessionId || 'default').trim() || 'default';
     const hadPreviousPromptCacheDebug = this.lastPromptCacheDebugBySession?.has?.(previewSessionId) === true;
     const previousPromptCacheDebug = this.lastPromptCacheDebugBySession?.get?.(previewSessionId);
@@ -3249,9 +3516,135 @@ class AppBridge {
           userMessageProcessed: true,
         },
       };
+      let preliminaryConfig = this.config?.get?.() || {};
       try {
-        const memoryPlan = await this.buildMemoryPromptPlan(nextContext);
+        const preliminaryRuntime = await this.resolveRequestRuntimeConfig(
+          this.getRequestPresetContext(nextContext),
+        );
+        preliminaryConfig = preliminaryRuntime?.config || preliminaryConfig;
+      } catch {}
+      const preliminaryCalibration = this.getTokenCalibration(
+        preliminaryConfig?.provider,
+        preliminaryConfig?.model,
+      );
+      const preliminaryTokenMode = {
+        mode: 'rough',
+        coefficient: preliminaryCalibration.coefficient,
+      };
+      this.activeTokenEstimateMode = preliminaryTokenMode;
+      nextContext.meta = {
+        ...(nextContext.meta || {}),
+        tokenEstimateCalibration: {
+          ...preliminaryCalibration,
+          provider: String(preliminaryConfig?.provider || preliminaryCalibration.provider || ''),
+          model: String(preliminaryConfig?.model || preliminaryCalibration.model || ''),
+        },
+      };
+      try {
+        let memoryPlan = await this.buildMemoryPromptPlan(nextContext);
+        if (!memoryPlan?.budget) {
+          const inputBudgetContext = nextContext?.meta?.inputBudgetContext || {};
+          const worldSettings = this.getWorldGlobalSettings?.() || this.worldGlobalSettings || {};
+          const globalSettings = appSettings.get();
+          const fallbackEnvelope = resolveMemoryBudgetEnvelope({
+            settings: globalSettings,
+            maxContextTokens: inputBudgetContext?.maxContextTokens,
+            maxOutputTokens: inputBudgetContext?.maxOutputTokens,
+            place: nextContext?.meta?.uiMode,
+            worldContextPercent: worldSettings?.contextPercent,
+            worldBudgetCap: worldSettings?.budgetCap,
+            demands: {
+              state: 0,
+              recent: estimatePromptMessagesTokens(nextContext?.history || [], preliminaryTokenMode),
+              mid: 0,
+              far: 0,
+              recall: 0,
+            },
+          });
+          memoryPlan = {
+            ...(memoryPlan || {}),
+            budget: {
+              mode: fallbackEnvelope?.mode || 'token',
+              place: fallbackEnvelope?.place || 'chat',
+              inputBudgetTokens: fallbackEnvelope?.inputBudgetTokens ?? null,
+              outputReserveTokens: fallbackEnvelope?.input?.maxOutputTokens ?? null,
+              safetyReserveTokens: fallbackEnvelope?.input?.safetyReserveTokens ?? 512,
+              fixedReserveTokens: fallbackEnvelope?.fixedReserveTokens ?? 0,
+              worldBudgetTokens: fallbackEnvelope?.worldBudgetTokens ?? null,
+              distributableTokens: fallbackEnvelope?.distributableTokens ?? null,
+              ratios: fallbackEnvelope?.allocation?.ratios || null,
+              baseQuotas: fallbackEnvelope?.allocation?.baseQuotas || null,
+              allocations: fallbackEnvelope?.allocation?.allocations || null,
+              overQuotaSegments: fallbackEnvelope?.allocation?.overQuotaSegments || [],
+            },
+          };
+        }
+        const recentQuota = resolveRecentHistoryQuota(memoryPlan?.budget?.allocations?.recent);
+        if (
+          recentQuota !== null
+          && Array.isArray(nextContext?.history)
+        ) {
+          const originalHistory = nextContext.history;
+          const firstPass = limitHistoryByTokenBudget(originalHistory, {
+            inputBudgetTokens: recentQuota,
+            tokenMode: preliminaryTokenMode,
+          });
+          let finalHistory = firstPass;
+          let coverageLine = null;
+          let oldestRecentTurn = null;
+          let protectedMessageIndexes = [];
+          if (memoryPlan?.enabled) {
+            const totalTurns = Math.max(
+              0,
+              Math.trunc(Number(memoryPlan?.coverageSource?.totalTurns)) || 0,
+            );
+            const historyLastTurn = Math.max(
+              0,
+              totalTurns - (nextContext?.meta?.suppressPendingUserTurn === true ? 0 : 1),
+            );
+            const turnMap = mapHistoryMessagesToTurns(originalHistory, {
+              lastTurn: historyLastTurn,
+            });
+            const keptTurns = firstPass.stats.keptOriginalIndexes
+              .map(index => turnMap[index]?.turn)
+              .filter(turn => Number.isFinite(turn) && turn > 0);
+            oldestRecentTurn = keptTurns.length ? Math.min(...keptTurns) : historyLastTurn + 1;
+            coverageLine = buildMemoryCoverageLine({
+              summaryRows: memoryPlan?.coverageSource?.rows || [],
+              fromTurn: 1,
+              toTurn: Math.max(0, oldestRecentTurn - 1),
+            });
+            protectedMessageIndexes = resolveCoverageProtectedHistoryIndexes({
+              history: originalHistory,
+              holes: coverageLine.holes,
+              lastTurn: historyLastTurn,
+            });
+            if (protectedMessageIndexes.length) {
+              finalHistory = limitHistoryByTokenBudget(originalHistory, {
+                inputBudgetTokens: recentQuota,
+                protectedMessageIndexes,
+                tokenMode: preliminaryTokenMode,
+              });
+            }
+          }
+          nextContext = {
+            ...(nextContext || {}),
+            history: finalHistory.messages,
+          };
+          memoryPlan = {
+            ...memoryPlan,
+            historyBudgetStats: finalHistory.stats,
+            coverageLine: coverageLine
+              ? {
+                  ...coverageLine,
+                  oldestRecentTurn,
+                  protectedMessageCount: protectedMessageIndexes.length,
+                }
+              : null,
+          };
+        }
         this.lastMemoryPlan = memoryPlan;
+        this.activeInputBudgetPlan = memoryPlan?.budget || null;
         if (memoryPlan?.enabled && (memoryPlan.dataPromptText || memoryPlan.guidePromptText || memoryPlan.dynamicProfileDebug)) {
           const nextMeta = {
             ...(nextContext.meta || {}),
@@ -3358,6 +3751,12 @@ class AppBridge {
       const presetContext = this.getRequestPresetContext(nextContext);
       const requestRuntime = await this.resolveRequestRuntimeConfig(presetContext);
       const config = requestRuntime?.config || this.config.get();
+      const requestCalibration = this.getTokenCalibration(config?.provider, config?.model);
+      const requestTokenMode = {
+        mode: 'rough',
+        coefficient: requestCalibration.coefficient,
+      };
+      this.activeTokenEstimateMode = requestTokenMode;
       const requestClient = requestRuntime?.client || (canInitClient(config) ? new LLMClient(config) : null);
       if (!previewOnly && !requestClient) {
         throw new Error('请先配置 API 信息');
@@ -3479,14 +3878,60 @@ class AppBridge {
       // consume-once：协议路径一次生成可 emit 多条消息，usage 属于整次生成，只挂到首条，避免重复计量。
       this.lastGenerationUsage = null;
       const generationStartedAt = Date.now();
+      let rawEstimatedPromptTokens = 0;
+      let calibrationRecorded = false;
       requestOptions.onProviderUsage = (usage) => {
+        let calibration = this.getTokenCalibration(config?.provider, config?.model);
+        const actualPromptTokens = Math.trunc(Number(usage?.promptTokens));
+        if (
+          !calibrationRecorded
+          && Number.isFinite(actualPromptTokens)
+          && actualPromptTokens > 0
+          && rawEstimatedPromptTokens > 0
+        ) {
+          calibration = tokenCalibrationStore.update({
+            provider: usage?.provider || config?.provider,
+            model: usage?.model || config?.model,
+            estimatedTokens: rawEstimatedPromptTokens,
+            actualPromptTokens,
+          });
+          calibrationRecorded = true;
+        }
         this.lastGenerationUsage = {
           ...(usage && typeof usage === 'object' ? usage : {}),
           latencyMs: Date.now() - generationStartedAt,
+          estimatedPromptTokens: rawEstimatedPromptTokens,
+          tokenCalibrationCoefficient: calibration.coefficient,
+          tokenCalibrationSamples: calibration.samples,
         };
+        // 只允许回写到本请求自己的 audit：lastRequest 可能已被并发的后台请求
+        // （agent/压缩/图片）换成别的请求，盖过去会把别档模型的系数展示到错误面板上。
+        if (this.lastRequest?.injectionAudit && this.lastRequest.requestId === nativeRequestId) {
+          this.lastRequest.injectionAudit.calibration = { ...calibration };
+        }
       };
       const preparedRequest = requestClient?.prepareChatRequest?.(messages, requestOptions) || null;
       const responsePrefix = String(preparedRequest?.responsePrefix || '');
+      const finalRequestMessages = preparedRequest?.messages || messages;
+      rawEstimatedPromptTokens = estimatePromptMessagesTokens(finalRequestMessages, 'rough');
+      const injectionAudit = buildRequestInjectionAudit({
+        memoryPlan: this.lastMemoryPlan,
+        history: nextContext?.history,
+        worldDebug: this.lastWorldInjectionDebug,
+        messages: finalRequestMessages,
+        budget: this.lastMemoryPlan?.budget,
+        mode: this.lastMemoryPlan?.budget?.mode,
+        tokenMode: requestTokenMode,
+      });
+      injectionAudit.calibration = { ...requestCalibration };
+      injectionAudit.coverageLine = this.lastMemoryPlan?.coverageLine || null;
+      injectionAudit.historyBudgetStats = this.lastMemoryPlan?.historyBudgetStats || null;
+      if (this.lastMemoryPlan && typeof this.lastMemoryPlan === 'object') {
+        this.lastMemoryPlan = {
+          ...this.lastMemoryPlan,
+          requestAudit: injectionAudit,
+        };
+      }
 
       logger.debug('发送消息到 LLM:', { messageCount: messages.length, stream: Boolean(config?.stream) });
       // Debug: keep the exact request payload used for the latest generation
@@ -3528,10 +3973,11 @@ class AppBridge {
         },
         providerToolRequestSchema: providerToolRequestSchema.diagnostics,
         providerToolBridgeLoop: providerToolBridgeLoopPlan.diagnostics,
-        messages: preparedRequest?.messages || messages,
+        messages: finalRequestMessages,
         responsePrefix,
         worldDebug: this.lastWorldInjectionDebug || null,
         deepSeekFormatDebug: this.lastDeepSeekFormatDebug || null,
+        injectionAudit,
       };
       this.lastRequest.lineageTrace = buildPromptTraceFromRequest(this.lastRequest, {
         requestId: nativeRequestId,
@@ -3598,6 +4044,8 @@ class AppBridge {
         this.lastWorldInjectionDebug = previousLastWorldInjectionDebug;
         this.lastDeepSeekFormatDebug = previousLastDeepSeekFormatDebug;
         this.lastPromptSegmentDebug = previousLastPromptSegmentDebug;
+        this.activeInputBudgetPlan = previousActiveInputBudgetPlan;
+        this.activeTokenEstimateMode = previousActiveTokenEstimateMode;
         if (hadPreviousPromptCacheDebug) {
           this.lastPromptCacheDebugBySession?.set?.(previewSessionId, previousPromptCacheDebug);
         } else {
@@ -5258,7 +5706,7 @@ const stringifyMessageContent = (content) => {
             const sessionBudgetTokens = resolveMomentSessionWorldBudgetTokens(this.getWorldBudgetTokens?.());
             const limitedSessionEntries = limitMomentWorldEntriesByBudget(rawSessionEntries, {
               budgetTokens: sessionBudgetTokens,
-              tokenMode: 'rough',
+              tokenMode: this.activeTokenEstimateMode || 'rough',
             });
             sessionEntries = limitedSessionEntries.entries;
             worldDebugRaw.dynamicWorld = {
@@ -5461,6 +5909,9 @@ const stringifyMessageContent = (content) => {
             blockTitle: sanitizeWorldDebugBlockTitle(entry),
             focusNodeId: resolveWorldDebugFocusNodeId(entry),
             title: sanitizeWorldDebugTitle(entry),
+            constant: entry?.constant === true,
+            disabled: entry?.disable === true,
+            keys: normalizeWorldEntryKeys(entry),
             role: roleMap[entry?.role] || 'system',
             position,
             positionLabel: bucketLabels[String(item?.bucket || '')] || bucketLabels.defaultPrompt,
@@ -5535,23 +5986,33 @@ const stringifyMessageContent = (content) => {
           })).filter(item => item.regex && item.messages.length > 0),
           hasTemplateTags: templateInject.hasTemplateTags,
         };
+        const mappedMergedEntries = mapWorldDebugEntries(worldDebugRaw.mergedEntries);
+        const downgradeMemoryItems = [
+          ...(Array.isArray(this.lastMemoryPlan?.items) ? this.lastMemoryPlan.items : []),
+          ...(Array.isArray(this.lastMemoryPlan?.recallItems) ? this.lastMemoryPlan.recallItems : []),
+        ];
         const worldDebug = {
           insertionStrategy: worldDebugRaw.insertionStrategy,
           variableDefineStrategy: worldDebugRaw.variableDefineStrategy,
           budgetTokens: worldDebugRaw.budgetTokens,
-          usedTokens: worldDebugRaw.usedTokens,
-          overflowed: worldDebugRaw.overflowed,
+	          usedTokens: worldDebugRaw.usedTokens,
+	          overflowed: worldDebugRaw.overflowed,
+	          tokenEstimateCoefficient: Number(this.activeTokenEstimateMode?.coefficient) || 1,
           builtinEntries: mapWorldDebugEntries(worldDebugRaw.builtinEntries),
           globalEntries: mapWorldDebugEntries(worldDebugRaw.globalEntries),
           roleEntries: mapWorldDebugEntries(worldDebugRaw.roleEntries),
           sessionEntries: mapWorldDebugEntries(worldDebugRaw.sessionEntries),
-          mergedEntries: mapWorldDebugEntries(worldDebugRaw.mergedEntries),
+          mergedEntries: mappedMergedEntries,
           trimmedEntries: mapWorldDebugEntries(worldDebugRaw.trimmedEntries),
           injectedEntries: mapWorldDebugEntries(worldDebugRaw.injectedEntries),
 	          templateEntries: mapWorldDebugEntries(worldDebugRaw.templateEntries),
 	          initialVariableEntries: mapWorldDebugEntries(worldDebugRaw.initialVariableEntries),
 	          dynamicWorld: worldDebugRaw.dynamicWorld,
 	          dynamicProfiles: worldDebugRaw.dynamicProfiles,
+	          downgradeSuggestions: buildWorldbookDowngradeSuggestions({
+	            entries: mappedMergedEntries,
+	            memoryItems: downgradeMemoryItems,
+	          }),
 	        };
 
         return {
@@ -7227,7 +7688,29 @@ const stringifyMessageContent = (content) => {
     this.emitWorldInfoChanged();
   }
 
+  buildWorldConditionRuntimeContext(sessionId = '') {
+    const sid = String(sessionId || this.activeSessionId || '').trim();
+    const useGlobalVariables = Boolean(
+      sid
+      && typeof this.isSharedVariableSession === 'function'
+      && this.isSharedVariableSession(sid),
+    );
+    const localVars = this.chatStore?.listVariables?.(sid) || {};
+    const globalVars = this.chatStore?.listGlobalVariables?.() || {};
+    const baseVars = useGlobalVariables ? globalVars : localVars;
+    return buildVariableContext({ baseVars, globalVars, localVars });
+  }
+
   getWorldBudgetTokens() {
+    if (
+      this.activeInputBudgetPlan
+      && Object.prototype.hasOwnProperty.call(this.activeInputBudgetPlan, 'worldBudgetTokens')
+    ) {
+      const active = this.activeInputBudgetPlan.worldBudgetTokens;
+      if (active === null || active === undefined) return null;
+      const normalized = Math.trunc(Number(active));
+      return Number.isFinite(normalized) ? Math.max(0, normalized) : null;
+    }
     const settings = this.getWorldGlobalSettings?.() || this.worldGlobalSettings || {};
     const budgetCapRaw = Number(settings.budgetCap);
     if (Number.isFinite(budgetCapRaw) && budgetCapRaw > 0) return Math.max(0, Math.trunc(budgetCapRaw));
@@ -7236,9 +7719,10 @@ const stringifyMessageContent = (content) => {
     const preset = this.presets?.getActive?.('openai') || {};
     const maxContext = Number(preset?.openai_max_context);
     const maxOut = Number(preset?.openai_max_tokens);
-    const ctxTokens = Number.isFinite(maxContext) && maxContext > 0 ? maxContext : 8000;
+    const ctxTokens = Number.isFinite(maxContext) && maxContext > 0 ? maxContext : null;
     const outTokens = Number.isFinite(maxOut) && maxOut > 0 ? maxOut : 0;
-    const inputBudgetTokens = Math.max(2000, ctxTokens ? ctxTokens - outTokens - 512 : 8000);
+    if (ctxTokens === null) return null;
+    const inputBudgetTokens = Math.max(0, ctxTokens - outTokens - 512);
     return Math.max(0, Math.floor(inputBudgetTokens * (percentRaw / 100)));
   }
 
@@ -7281,20 +7765,25 @@ const stringifyMessageContent = (content) => {
       typeof this.isSharedVariableSession === 'function' &&
       this.isSharedVariableSession(runtimeSessionId),
     );
-    let runtimeConditionContext = buildVariableContext({
-      baseVars: {},
-      globalVars: {},
-    });
+    let runtimeConditionContext = this.buildWorldConditionRuntimeContext(runtimeSessionId);
     const refreshRuntimeConditionContext = () => {
-      const localVars = this.chatStore?.listVariables?.(runtimeSessionId) || {};
-      const globalVars = this.chatStore?.listGlobalVariables?.() || {};
-      const baseVars = useGlobalVariables ? globalVars : localVars;
-      runtimeConditionContext = buildVariableContext({ baseVars, globalVars, localVars });
+      runtimeConditionContext = this.buildWorldConditionRuntimeContext(runtimeSessionId);
     };
     refreshRuntimeConditionContext();
     const evalConditionGroup = (when) => {
       if (!when || typeof when !== 'object') return true;
       return evaluateConditionTree(when, runtimeConditionContext);
+    };
+    const evaluateEntryWhen = (when) => {
+      if (!when || typeof when !== 'object' || isTrivialConditionTree(when)) {
+        return { configured: false, passed: true, explanation: null };
+      }
+      const explanation = explainConditionTree(when, runtimeConditionContext);
+      return {
+        configured: true,
+        passed: explanation?.runtimeResult === true,
+        explanation,
+      };
     };
     const resolveBlockFocusNodeId = (graphRaw) => {
       const graph = graphRaw && typeof graphRaw === 'object' ? graphRaw : null;
@@ -7373,6 +7862,8 @@ const stringifyMessageContent = (content) => {
       }
     };
     const syncPromptBlockVariableSchemas = (entry) => {
+      const entrySpecs = collectConditionDefineSpecs(entry?.when, []);
+      entrySpecs.forEach(spec => ensureDefinedVariable(spec));
       const blocks = normalizePromptBlocks(entry);
       blocks.forEach((block) => {
         const specs = collectConditionDefineSpecs(block?.when, []);
@@ -7387,6 +7878,14 @@ const stringifyMessageContent = (content) => {
       });
       return true;
     };
+    const syncEntryGateVariableSchemasForEntries = (entryList = []) => {
+      const list = Array.isArray(entryList) ? entryList : [];
+      if (!list.length) return false;
+      list.forEach((entry) => {
+        collectConditionDefineSpecs(entry?.when, []).forEach(spec => ensureDefinedVariable(spec));
+      });
+      return true;
+    };
 
     const baseEntries = prepareWorldEntries({
       worldId: id,
@@ -7396,6 +7895,10 @@ const stringifyMessageContent = (content) => {
     if (!baseEntries.length) return [];
     if (variableDefineStrategy === 'legacy_eager') {
       const changed = syncPromptBlockVariableSchemasForEntries(baseEntries);
+      if (changed) refreshRuntimeConditionContext();
+    } else if (variableDefineStrategy === 'first_hit') {
+      // 条目门控先于“命中”运行；其变量若也等命中后才建立会形成永远无法命中的循环。
+      const changed = syncEntryGateVariableSchemasForEntries(baseEntries);
       if (changed) refreshRuntimeConditionContext();
     }
 
@@ -7413,6 +7916,7 @@ const stringifyMessageContent = (content) => {
         maxRecursionStepsSetting,
       },
       applyProbability: true,
+      evaluateEntryWhen,
     });
     if (variableDefineStrategy === 'first_hit') {
       const changed = syncPromptBlockVariableSchemasForEntries(activation.activeEntries);
@@ -7640,6 +8144,21 @@ const stringifyMessageContent = (content) => {
       },
       targetEntryId,
       applyProbability: false,
+      evaluateEntryWhen: (when) => {
+        if (!when || typeof when !== 'object' || isTrivialConditionTree(when)) {
+          return { configured: false, passed: true, explanation: null };
+        }
+        const runtimeSessionId = String(matchContext?.sessionId || this.activeSessionId || '').trim();
+        const explanation = explainConditionTree(
+          when,
+          this.buildWorldConditionRuntimeContext(runtimeSessionId),
+        );
+        return {
+          configured: true,
+          passed: explanation?.runtimeResult === true,
+          explanation,
+        };
+      },
     });
     const targetEntry = activation.targetEntry;
     if (!targetEntry) return null;
@@ -7673,12 +8192,34 @@ const stringifyMessageContent = (content) => {
     const filteredByGroup = activation.beforeGroupEntryIds.has(targetEntryId) && !active;
     const keys = normalizeWorldEntryKeys(targetEntry);
     const secondaryKeys = normalizeWorldEntrySecondaryKeys(targetEntry);
+    const explanationSessionId = String(matchContext?.sessionId || this.activeSessionId || '').trim();
+    const suggestionMemoryPlan = (
+      explanationSessionId
+      && String(this.lastMemoryPlan?.targetId || '').trim() === explanationSessionId
+    ) ? this.lastMemoryPlan : null;
+    const downgradeSuggestion = buildWorldbookDowngradeSuggestion({
+      entry: {
+        worldId: id,
+        entryId: targetEntryId,
+        title: String(targetEntry?.comment || targetEntry?.title || targetEntryId).trim() || targetEntryId,
+        keys,
+        constant: targetEntry?.constant === true,
+        disabled: targetEntry?.disable === true,
+      },
+      memoryItems: [
+        ...(Array.isArray(suggestionMemoryPlan?.items) ? suggestionMemoryPlan.items : []),
+        ...(Array.isArray(suggestionMemoryPlan?.recallItems) ? suggestionMemoryPlan.recallItems : []),
+      ],
+    });
     return {
       entryId: targetEntryId,
       active,
       activationSource: active ? sourceInfo.source : 'inactive',
       recursionStep: active ? sourceInfo.recursionStep : null,
       directMatch: directExplain.passed,
+      variableConditionConfigured: directExplain.variableConditionConfigured === true,
+      variableConditionPassed: directExplain.variableConditionPassed !== false,
+      variableConditionExplanation: directExplain.variableConditionExplanation || null,
       filteredByGroup,
       disabled: Boolean(targetEntry?.disable),
       constant: Boolean(targetEntry?.constant),
@@ -7701,6 +8242,7 @@ const stringifyMessageContent = (content) => {
       selectiveLogic: selectiveLogicValue,
       selectiveLogicLabel: selectiveLogicLabelMap[selectiveLogicValue] || '自定义',
       reasons: directExplain.reasons,
+      downgradeSuggestion,
       sourceFields,
       entryTextPreview: String(directExplain.entryText || '').slice(0, 240),
       groups: Array.isArray(targetEntry?._groups) ? targetEntry._groups : [],
@@ -7812,20 +8354,42 @@ const stringifyMessageContent = (content) => {
       return true;
     });
     const budgetTokens = this.getWorldBudgetTokens?.();
-    if (!Number.isFinite(Number(budgetTokens)) || Number(budgetTokens) <= 0) {
+    if (!Number.isFinite(Number(budgetTokens))) {
       return {
         entries: deduped,
         trimmedEntries: [],
-        budgetTokens: Number.isFinite(Number(budgetTokens)) ? Number(budgetTokens) : null,
-        usedTokens: 0,
+        budgetTokens: null,
+        usedTokens: deduped.reduce(
+          (sum, entry) => sum + estimateTokens(
+            String(entry?.content || ''),
+            this.activeTokenEstimateMode || 'rough',
+          ),
+          0,
+        ),
         overflowed: false,
+      };
+    }
+    if (Number(budgetTokens) <= 0) {
+      if (deduped.length) {
+        const settings = this.getWorldGlobalSettings?.() || this.worldGlobalSettings || {};
+        if (settings.alertOnOverflow === true) this.warnWorldBudgetOverflow?.();
+      }
+      return {
+        entries: [],
+        trimmedEntries: deduped,
+        budgetTokens: 0,
+        usedTokens: 0,
+        overflowed: deduped.length > 0,
       };
     }
     let used = 0;
     let overflowed = false;
     const trimmedEntries = [];
     const filtered = deduped.filter((entry) => {
-      const cost = estimateTokens(String(entry?.content || ''), 'rough');
+      const cost = estimateTokens(
+        String(entry?.content || ''),
+        this.activeTokenEstimateMode || 'rough',
+      );
       if (used + cost > budgetTokens) {
         overflowed = true;
         trimmedEntries.push(entry);

@@ -7,6 +7,7 @@ import { createLinkedAbortController, splitRequestOptions } from '../abort.js';
 import { createReasoningStreamEvent, extractAnthropicStreamParts } from '../native-reasoning.js';
 import { prepareTransportRequest } from '../transport.js';
 import { emitDebugLog } from '../../utils/debug-log.js';
+import { reportProviderUsage } from '../provider-usage.js';
 
 const getTauriInvoker = () => {
     const g = typeof globalThis !== 'undefined' ? globalThis : undefined;
@@ -112,6 +113,14 @@ const ANTHROPIC_EMPTY_TEXT_PLACEHOLDER = '\u200b';
 const normalizeAnthropicTextBlock = (value) => {
     const text = String(value ?? '');
     return text.trim().length ? text : ANTHROPIC_EMPTY_TEXT_PLACEHOLDER;
+};
+
+// Anthropic 流式 usage 分散在事件里：message_start 带 input_tokens 与 cache 字段，
+// message_delta 带 output_tokens；逐事件合并成完整 usage 供计量上报。
+export const collectAnthropicStreamUsage = (data, current = null) => {
+    const eventUsage = data?.type === 'message_start' ? data?.message?.usage : data?.usage;
+    if (!eventUsage || typeof eventUsage !== 'object') return current;
+    return { ...(current || {}), ...eventUsage };
 };
 
 export class AnthropicProvider {
@@ -309,6 +318,13 @@ export class AnthropicProvider {
             requestId,
         });
 
+        reportProviderUsage(options, {
+            body: data,
+            model: this.model,
+            provider: 'anthropic',
+            finishReason: String(data?.stop_reason || ''),
+        });
+
         const textBlocks = Array.isArray(data?.content)
             ? data.content.filter((block) => block?.type === 'text' && typeof block?.text === 'string')
             : [];
@@ -344,15 +360,25 @@ export class AnthropicProvider {
         let deltaCount = 0;
         let totalChars = 0;
         let sawFirstDelta = false;
+        let streamUsage = null;
+        let streamStopReason = '';
         const blockKinds = new Map();
         const notifyProviderToolCallDelta = data => {
             try {
                 onProviderToolCallDelta?.(data, { provider: 'anthropic', model: this.model });
             } catch {}
         };
+        const reportStreamUsage = () => reportProviderUsage(options, {
+            body: { usage: streamUsage },
+            model: this.model,
+            provider: 'anthropic',
+            finishReason: streamStopReason,
+        });
 
         const emitDelta = function* (data, transportLabel) {
             notifyProviderToolCallDelta(data);
+            streamUsage = collectAnthropicStreamUsage(data, streamUsage);
+            if (data?.delta?.stop_reason) streamStopReason = String(data.delta.stop_reason);
             const parts = extractAnthropicStreamParts(data, blockKinds);
             if (parts.reasoning) {
                 yield createReasoningStreamEvent(parts.reasoning, { provider: 'anthropic' });
@@ -451,6 +477,7 @@ export class AnthropicProvider {
                         logStreamDebug(
                             `complete transport=native-stream mode=${prepared.connectionMode || 'direct'} deltas=${deltaCount} chars=${totalChars}`,
                         );
+                        reportStreamUsage();
                         return;
                     }
 
@@ -499,6 +526,7 @@ export class AnthropicProvider {
             logStreamDebug(
                 `complete transport=fetch mode=${prepared.connectionMode || 'direct'} deltas=${deltaCount} chars=${totalChars}`,
             );
+            reportStreamUsage();
             return;
         } catch (error) {
             if (useFetchStreaming && isFetchNetworkFailure(error)) {

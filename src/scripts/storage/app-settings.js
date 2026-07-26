@@ -88,6 +88,12 @@ const defaults = {
   memoryUpdateContextRounds: 6,
   memoryInjectPosition: 'before_latest_user',
   memoryInjectDepth: 0,
+  memoryBudgetMode: 'token',
+  memoryInputBudgetTokens: 100000,
+  memoryMaxRows: 1000,
+  memoryMaxTokens: 100000,
+  memoryGroupMemberReferenceEnabled: true,
+  memoryGroupMemberReferenceLimit: 5,
   memoryBridgeRpToChatEnabled: true,
   memoryBridgeRpToChatLimit: 0,
   memoryBridgeChatToRpEnabled: true,
@@ -244,10 +250,24 @@ const migrateSettings = (settings = {}) => {
   next.memoryBridgeMomentsToChatEnabled = next.memoryBridgeMomentsToChatEnabled !== false;
   next.memoryBridgeChatToMomentsEnabled = next.memoryBridgeChatToMomentsEnabled !== false;
   next.memoryBridgeRpToMomentsEnabled = next.memoryBridgeRpToMomentsEnabled !== false;
-  ['memoryBridgeMomentsToChatLimit', 'memoryBridgeChatToMomentsLimit', 'memoryBridgeRpToMomentsLimit'].forEach((key) => {
+  next.memoryBudgetMode = String(next.memoryBudgetMode || '').trim().toLowerCase() === 'rows'
+    ? 'rows'
+    : defaults.memoryBudgetMode;
+  [
+    'memoryInputBudgetTokens',
+    'memoryMaxRows',
+    'memoryMaxTokens',
+    'memoryGroupMemberReferenceLimit',
+    'memoryBridgeRpToChatLimit',
+    'memoryBridgeChatToRpLimit',
+    'memoryBridgeMomentsToChatLimit',
+    'memoryBridgeChatToMomentsLimit',
+    'memoryBridgeRpToMomentsLimit',
+  ].forEach((key) => {
     const raw = Math.trunc(Number(next[key]));
     next[key] = Number.isFinite(raw) ? Math.max(0, raw) : defaults[key];
   });
+  next.memoryGroupMemberReferenceEnabled = next.memoryGroupMemberReferenceEnabled !== false;
   ['memoryBridgeMomentsToChatTableSettings', 'memoryBridgeChatToMomentsTableSettings', 'memoryBridgeRpToMomentsTableSettings'].forEach((key) => {
     if (!next[key] || typeof next[key] !== 'object' || Array.isArray(next[key])) next[key] = {};
   });

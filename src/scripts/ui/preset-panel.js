@@ -1810,6 +1810,7 @@ export class PresetPanel {
             personaStore: null,
             configPanel: null,
             getUiMode: null,
+            getTokenCalibration: null,
             promptInject: null,
         };
     }
@@ -1831,6 +1832,9 @@ export class PresetPanel {
         this.runtimeContext.getUiMode = typeof context.getUiMode === 'function'
             ? context.getUiMode
             : this.runtimeContext.getUiMode;
+        this.runtimeContext.getTokenCalibration = typeof context.getTokenCalibration === 'function'
+            ? context.getTokenCalibration
+            : this.runtimeContext.getTokenCalibration;
         this.runtimeContext.promptInject = context.promptInject && typeof context.promptInject === 'object'
             ? context.promptInject
             : this.runtimeContext.promptInject;
@@ -6212,7 +6216,17 @@ export class PresetPanel {
             const joined = Array.from(this.previewBodyEl?.querySelectorAll('.pp-preview-msg-text') || [])
                 .map(el => el.textContent || '')
                 .join('\n');
-            this.previewEstEl.textContent = `~${estimateTokens(joined, 'rough')} tokens（估算）`;
+            const calibration = this.runtimeContext?.getTokenCalibration?.() || {};
+            const coefficient = Number(calibration?.coefficient);
+            const mode = {
+                mode: 'rough',
+                coefficient: Number.isFinite(coefficient) && coefficient > 0 ? coefficient : 1,
+            };
+            const samples = Math.max(0, Math.trunc(Number(calibration?.samples)) || 0);
+            const label = samples > 0
+                ? `本地校准估算 ×${mode.coefficient.toFixed(3)} · ${samples} 次`
+                : '本地估算 · 待校准';
+            this.previewEstEl.textContent = `~${estimateTokens(joined, mode)} tokens（${label}）`;
         } catch {
             this.previewEstEl.textContent = '';
         }

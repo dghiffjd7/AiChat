@@ -21,6 +21,7 @@ import {
   buildMemoryBridgeYamlLines,
   buildMemoryTablePlan,
   estimateTokens,
+  formatMemoryRowText,
   getMemoryBridgeTablePromptLabel,
   parseMemoryPromptPositions,
 } from '../../src/scripts/memory/memory-prompt-utils.js';
@@ -221,7 +222,7 @@ test('moment memory context only matches dynamic global tables', () => {
     sessionId: 'moments',
   }));
   assert.deepEqual(dynamicTables.map(table => table.id), ['moment_summary', 'moment_outline']);
-  assert.deepEqual(dynamicTables.map(table => table.columns.map(col => col.id)), [['summary'], ['outline']]);
+  assert.deepEqual(dynamicTables.map(table => table.columns.map(col => col.id)), [['summary', 'keywords'], ['section', 'outline']]);
 });
 
 test('buildMemoryTablePlan: pinned first + max_rows', () => {
@@ -326,6 +327,26 @@ test('buildMemoryTablePlan: summary rows use round-first text and oldest-to-newe
   assert.match(plan.tableData, /- \[1\] 第5轮：第五轮摘要/);
   assert.match(plan.tableData, /- \[2\] 第6轮：第六轮摘要/);
   assert.deepEqual(plan.rowIndexMap.chat_summary, ['sum_1', 'sum_2', 'sum_3']);
+});
+
+test('formatMemoryRowText keeps interval labels for compacted summary rows', () => {
+  const columns = [{ id: 'time', name: '时间' }, { id: 'summary', name: '摘要' }, { id: 'keywords', name: '关键词' }];
+  assert.equal(
+    formatMemoryRowText({ time: '第1-40轮', summary: '大总结' }, columns, 'chat_summary'),
+    '第1-40轮：大总结',
+  );
+  assert.equal(
+    formatMemoryRowText({ time: '第40轮', summary: '单轮摘要' }, columns, 'chat_summary'),
+    '第40轮：单轮摘要',
+  );
+});
+
+test('formatMemoryRowText never injects keywords as summary body', () => {
+  const columns = [{ id: 'time', name: '时间' }, { id: 'summary', name: '摘要' }, { id: 'keywords', name: '关键词' }];
+  assert.equal(
+    formatMemoryRowText({ time: '第3轮', summary: '', keywords: '林昭, 死敌' }, columns, 'chat_summary'),
+    '第3轮',
+  );
 });
 
 test('getChatToRpBridgeSourceMeta: empty source defaults to all_social', () => {

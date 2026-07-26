@@ -153,6 +153,12 @@ export function renderEntryActivationOverviewImpl(explanation, deps = {}) {
                     ${explanation.recursionStep ? `<span class="world-cond-overview-pill">递归第 ${explanation.recursionStep} 轮</span>` : ''}
                     ${explanation.probabilityEnabled ? `<span class="world-cond-overview-pill subtle">概率 ${escapeHtml(String(explanation.probabilityValue))}%</span>` : ''}
                     ${explanation.filteredByGroup ? '<span class="world-cond-overview-pill warn">组竞争过滤</span>' : ''}
+                    ${explanation.variableConditionConfigured ? `
+                        <span class="world-cond-overview-pill ${explanation.variableConditionPassed ? '' : 'warn'}">
+                            ${explanation.variableConditionPassed ? '条目门控通过' : '被变量门控挡住'}
+                        </span>
+                    ` : ''}
+                    ${explanation.downgradeSuggestion ? '<span class="world-cond-overview-pill warn">可降级建议</span>' : ''}
                 </div>
             </div>
             <div class="world-entry-activation-grid">
@@ -161,11 +167,25 @@ export function renderEntryActivationOverviewImpl(explanation, deps = {}) {
                     <div class="world-entry-activation-value">${explanation.keys.length ? escapeHtml(explanation.keys.join(' / ')) : '未设置'}</div>
                     <div class="world-entry-activation-meta">${explanation.matchedPrimaryKeys.length ? `当前命中：${escapeHtml(explanation.matchedPrimaryKeys.join(' / '))}` : '当前未命中'}</div>
                 </div>
+                ${explanation.variableConditionConfigured ? `
+                    <div class="world-entry-activation-card">
+                        <div class="world-entry-activation-label">条目级变量门控</div>
+                        <div class="world-entry-activation-value">${explanation.variableConditionPassed ? '当前通过' : '当前未通过'}</div>
+                        <div class="world-entry-activation-meta">${explanation.variableConditionPassed ? '变量条件通过后才继续关键词、递归与分组判定。' : '该条目已在常驻、关键词、递归和分组竞争之前退出。'}</div>
+                    </div>
+                ` : ''}
                 ${explanation.selective ? `
                     <div class="world-entry-activation-card">
                         <div class="world-entry-activation-label">副关键词</div>
                         <div class="world-entry-activation-value">${explanation.secondaryKeys.length ? escapeHtml(explanation.secondaryKeys.join(' / ')) : '未设置'}</div>
                         <div class="world-entry-activation-meta">${escapeHtml(explanation.selectiveLogicLabel || '副关键词逻辑')} / ${explanation.matchedSecondaryKeys.length ? `命中：${escapeHtml(explanation.matchedSecondaryKeys.join(' / '))}` : '当前未命中'}</div>
+                    </div>
+                ` : ''}
+                ${explanation.downgradeSuggestion ? `
+                    <div class="world-entry-activation-card">
+                        <div class="world-entry-activation-label">常驻档位建议</div>
+                        <div class="world-entry-activation-value">${escapeHtml(explanation.downgradeSuggestion.reason || '该条目已被记忆表格覆盖。')}</div>
+                        <div class="world-entry-activation-meta">${escapeHtml(explanation.downgradeSuggestion.recommendation || '可手动改为关键词触发；不会自动修改。')}</div>
                     </div>
                 ` : ''}
                 <div class="world-entry-activation-card">

@@ -11,6 +11,7 @@ import {
 } from '../native-reasoning.js';
 import { prepareTransportRequest } from '../transport.js';
 import { reportProviderUsage } from '../provider-usage.js';
+import { isStreamOptionsRejectionError, streamUsageCompat } from '../stream-usage-compat.js';
 
 const DEFAULT_IMAGE_MIME = 'image/png';
 
@@ -523,7 +524,21 @@ export class CustomProvider {
     /**
      * 流式聊天
      */
+    // 同 openai.js：流式带 include_usage 拿校准样本；端点点名拒绝时记忆并去掉重试一次。
     async *streamChat(messages, options = {}) {
+        try {
+            yield* this.streamChatUnguarded(messages, options);
+        } catch (error) {
+            if (isStreamOptionsRejectionError(error) && !streamUsageCompat.isMarkedUnsupported(this.baseUrl)) {
+                streamUsageCompat.markUnsupported(this.baseUrl);
+                yield* this.streamChatUnguarded(messages, options);
+                return;
+            }
+            throw error;
+        }
+    }
+
+    async *streamChatUnguarded(messages, options = {}) {
         const request = this.prepareChatRequest(messages, options);
         const providerName = this.provider || 'custom';
         const notifyProviderToolCallDelta = data => {
@@ -531,10 +546,10 @@ export class CustomProvider {
                 request.onProviderToolCallDelta?.(data, { provider: providerName, model: this.model });
             } catch {}
         };
-        const payload = JSON.stringify({
+        const payload = JSON.stringify(streamUsageCompat.applyStreamUsageOptions({
             ...request.payload,
             stream: true,
-        });
+        }, this.baseUrl));
 
         const invoker = getTauriInvoker();
         if (typeof invoker === 'function') {

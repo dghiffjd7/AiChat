@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const extensionsSource = await readFile(path.join(root, 'src/scripts/ui/extensions-panel.js'), 'utf8');
 const regexSource = await readFile(path.join(root, 'src/scripts/ui/regex-panel.js'), 'utf8');
+const regexSessionSource = await readFile(path.join(root, 'src/scripts/ui/regex-session-panel.js'), 'utf8');
 const scriptSource = await readFile(path.join(root, 'src/scripts/ui/script-panel.js'), 'utf8');
 const pluginSource = await readFile(path.join(root, 'src/scripts/ui/plugin-panel.js'), 'utf8');
 const themeSource = await readFile(path.join(root, 'src/assets/css/theme.css'), 'utf8');
@@ -103,6 +104,23 @@ assert.match(pluginSource, /dataset\.motionInitialized/);
 
 assert.match(regexSource, /header\.addEventListener\('keydown',[\s\S]*?event\.target !== event\.currentTarget/);
 assert.match(regexSource, /hasUnsavedChanges\(\)[\s\S]*?editorDirty/);
+
+assert.match(regexSessionSource, /REGEX_SESSION_PANEL_STYLE_ID/);
+assert.match(regexSessionSource, /class="regex-session-modal"/);
+assert.match(regexSessionSource, /SESSION REGEX · 当前聊天室/);
+assert.match(regexSessionSource, /class="regex-session-title-icon"/);
+assert.match(regexSessionSource, /class="regex-session-runtime-status"/);
+assert.match(regexSessionSource, /class="regex-session-editor-head"/);
+assert.match(regexSessionSource, /class="regex-session-empty"/);
+assert.match(regexSessionSource, /class="re-toggle"[\s\S]*?<svg/);
+assert.match(regexSessionSource, /#regex-session-panel \.re-body\s*\{[\s\S]*?grid-template-rows:\s*0fr/);
+assert.match(regexSessionSource, /\.regex-rule\[data-collapsed='false'\] \.re-body[\s\S]*?grid-template-rows:\s*1fr/);
+assert.match(regexSessionSource, /#regex-session-panel input\[type='checkbox'\]\s*\{[\s\S]*?appearance:\s*none/);
+assert.match(regexSessionSource, /@media \(max-width:\s*720px\)/);
+assert.match(regexSessionSource, /body\[data-reduced-motion='on'\] #regex-session-panel/);
+assert.match(regexSessionSource, /@media \(prefers-reduced-motion:\s*reduce\)/);
+assert.doesNotMatch(regexSessionSource, /body\.style\.display\s*=\s*collapsed/);
+assert.match(themeSource, /#regex-session-panel #re-session-save\s*\{[\s\S]*?background:\s*var\(--app-accent-primary\)/);
 
 assert.match(themeSource, /body\[data-theme-mode='dark'\] #extensions-panel \.extensions-header/);
 assert.match(themeSource, /body\[data-theme-mode='dark'\] #extensions-panel :is\(\.extensions-section-chip, \.extensions-chevron\)/);

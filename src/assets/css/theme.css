@@ -5187,9 +5187,9 @@ body[data-theme-mode='dark'] #regex-session-panel :is(
 }
 
 body[data-theme-mode='dark'] #regex-session-panel #re-session-save {
-  background: rgba(var(--app-accent-rgb), 0.18) !important;
-  color: var(--app-text-primary) !important;
-  border-color: rgba(var(--app-accent-rgb), 0.28) !important;
+  background: var(--app-accent-primary) !important;
+  color: var(--app-text-on-accent) !important;
+  border-color: transparent !important;
 }
 
 body[data-theme-mode='dark'] #regex-session-panel .re-del {

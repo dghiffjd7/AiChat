@@ -5,6 +5,8 @@ import { normalizeAssistantStreamChunk } from '../api/native-reasoning.js';
 import { isDeepSeekApiRequest } from '../api/providers/deepseek-compat.js';
 import { extractTableEditBlocks, stripTableEditBlocks } from '../memory/memory-edit-parser.js';
 import { getMemoryContextType, resolveMemorySessionMode, tableMatchesMemoryContext } from '../memory/memory-context-utils.js';
+import { resolveMemoryCoverageStampInterval } from '../memory/memory-coverage-utils.js';
+import { isSummaryTableId } from '../memory/memory-prompt-utils.js';
 import {
   AGENT_FEATURE_IDS,
   createAgentFeatureSettingsStore,
@@ -19,6 +21,8 @@ import { createAgentPermissionEvaluator } from '../agent/agent-permissions.js';
 import { createAgentTaskRuntime } from '../agent/agent-task-runtime.js';
 import { createAgentToolRegistry } from '../agent/agent-tool-registry.js';
 import { createAgentToolSafetyAllowStore } from '../agent/agent-tool-safety-allow-store.js';
+import { tokenCalibrationStore } from '../memory/token-calibration-utils.js';
+import { streamUsageCompat } from '../api/stream-usage-compat.js';
 import { createProviderToolCallRuntime } from '../agent/provider-tool-call-runtime.js';
 import { createProviderToolExperimentRuntime } from '../agent/provider-tool-experiment-runtime.js';
 import {
@@ -378,6 +382,10 @@ import { createCreativeExecutionLaneRuntime } from './chat/creative-execution-la
 import { createExecutionFlowRuntime } from './chat/execution-flow-runtime-utils.js';
 import { createPromptPreviewRuntime } from './chat/prompt-preview-runtime-utils.js';
 import {
+  formatMemoryInjectionAuditForCopy,
+  renderMemoryInjectionAuditHtml,
+} from './chat/memory-injection-audit-view-utils.js';
+import {
   buildWorldDebugLocatorCandidates,
   formatPromptWorldDebug,
 } from './chat/prompt-world-debug-utils.js';
@@ -412,6 +420,7 @@ import {
   shouldRunSummaryCompaction,
 } from './chat/summary-compaction-utils.js';
 import { createSessionSummaryCompactionRuntime } from './chat/summary-compaction-runtime-utils.js';
+import { createMemoryTableSummaryCompactionAdapter } from './chat/summary-compaction-memory-adapter-utils.js';
 import {
   activateSessionEnterView,
   activateSessionShellState,
@@ -1290,6 +1299,7 @@ const initApp = async () => {
     personaStore,
     configPanel,
     getUiMode: () => (uiMode === 'rp' ? 'rp' : 'chat'),
+    getTokenCalibration: () => window.appBridge?.getActiveTokenCalibration?.() || null,
     // 请求预览（previewOnly 构建不发送）：按指定场景（聊天/创意写作）预览最终送模型的 prompt
     showScenePromptPreview: mode => showDraftPromptPreview({ previewUiMode: mode === 'rp' ? 'rp' : 'chat' }),
     // 分栏预览骨架：只构建请求不弹窗（草稿实时替换在预设面板内完成）
@@ -3346,6 +3356,22 @@ const initApp = async () => {
   } catch (err) {
     logger.debug('maid tool safety allow store hydrate skipped', err);
   }
+  // 这两个 store 原本只写 localStorage，配额满时会静默丢写（真机实测 5MiB 顶格、重启即丢
+  // 校准系数与端点降级记忆）。统一走 kv 权威通道。
+  const kvChannel = {
+    loadKv: name => safeInvoke('load_kv', { name }),
+    saveKv: (name, data) => safeInvoke('save_kv', { name, data }),
+  };
+  try {
+    await tokenCalibrationStore.hydrate(kvChannel);
+  } catch (err) {
+    logger.debug('token calibration store hydrate skipped', err);
+  }
+  try {
+    await streamUsageCompat.hydrate(kvChannel);
+  } catch (err) {
+    logger.debug('stream usage compat hydrate skipped', err);
+  }
   const requestMaidToolConfirmation = async request => {
     if (maidToolSafetyAllowStore.isAllowed(request)) {
       return { decision: 'allow', remembered: true };
@@ -3974,6 +4000,17 @@ const initApp = async () => {
         if (Number.isFinite(resolved) && resolved > 0) currentTurnNumber = resolved;
       } catch {}
     }
+    const stampInterval = resolveMemoryCoverageStampInterval({
+      currentTurnNumber,
+      summaryRows: (actionContext.allRows || []).filter(row => isSummaryTableId(String(row?.table_id || ''))),
+    });
+    const coverage = stampInterval
+      ? {
+          ...stampInterval,
+          messageId: String(timelineMessageId || '').trim(),
+          source: 'app',
+        }
+      : null;
     const result = await executeMemoryActionBatchMutation({
       actions,
       actionContext,
@@ -3984,13 +4021,25 @@ const initApp = async () => {
         inputs,
       }),
       currentTurnNumber,
+      coverage,
       isGroup,
     });
     const inserted = Number(result?.inserted || 0);
     const updated = Number(result?.updated || 0);
     const deleted = Number(result?.deleted || 0);
     const skipped = Number(result?.skipped || 0);
+    const rollbackSnapshot = result?.rollbackSnapshot || null;
     const changed = Number(result?.changed || (inserted + updated + deleted));
+    if (rollbackSnapshot) {
+      try {
+        const previous = getLastMemoryUpdate(window.appBridge, sid) || {};
+        setLastMemoryUpdate(window.appBridge, sid, {
+          ...previous,
+          rollback: rollbackSnapshot,
+          rollbackAt: Date.now(),
+        });
+      } catch {}
+    }
     if (changed > 0) {
       notifyMemoryEditsApplied({
         target: window,
@@ -4001,6 +4050,11 @@ const initApp = async () => {
         deleted,
         toastr: window.toastr,
       });
+      const compactionPlace = resolveMemoryTablePlace(memoryUiMode || 'chat');
+      if (getMemoryStorageMode(compactionPlace) === 'table') {
+        Promise.resolve(requestSummaryCompaction(sid, { place: compactionPlace }))
+          .catch(error => logger.debug('table memory summary compaction request failed', error));
+      }
     } else if (skipped > 0) {
       logger.debug('memory auto extract skipped actions', { skipped });
     }
@@ -14784,6 +14838,10 @@ Phase G（Frame 36）：循环衔接
       const rc = { system: '#ff79c6', user: '#50fa7b', assistant: '#8be9fd', tool: '#ffb86c' };
       const parts = [], plain = [];
       const at = req.at ? new Date(req.at).toLocaleString('zh-CN', { hour12: false }) : 'N/A';
+      if (req.injectionAudit) {
+        parts.push(renderMemoryInjectionAuditHtml(req.injectionAudit));
+        plain.push(formatMemoryInjectionAuditForCopy(req.injectionAudit));
+      }
 
       let h = `<div style="${sec} background:#0f0f23; border-bottom:1px solid #282a36;">`;
       h += `<span style="${mt}">// Request at ${escHtml(at)}</span><br>`;
@@ -16338,6 +16396,7 @@ Phase G（Frame 36）：循环衔接
       } = buildPromptPreviewSnapshot({
         request,
         contactName: `检查回复格式 · ${request.session?.name || request.session?.id || ''}`,
+        tokenCalibration: window.appBridge?.getActiveTokenCalibration?.() || null,
       });
       promptPreviewModal.show(
         [head, body].filter(Boolean).join('\n\n').trim(),
@@ -25211,6 +25270,33 @@ Phase G（Frame 36）：循环衔接
   const requestSummaryCompaction = createSessionSummaryCompactionRuntime({
     chatStore,
     getIsSummaryMemoryEnabled: isSummaryMemoryEnabled,
+    getIsCompactionEnabled: ({ place }) => {
+      const mode = getMemoryStorageMode(place);
+      return mode === 'summary' || mode === 'table';
+    },
+    getDefaultPlace: () => resolveMemoryTablePlace(uiMode),
+    createAdapter: async ({ sessionId, place }) => {
+      if (getMemoryStorageMode(place) !== 'table') return null;
+      const contact = contactsStore?.getContact?.(sessionId) || null;
+      const isGroup = Boolean(contact?.isGroup) || sessionId.startsWith('group:');
+      return createMemoryTableSummaryCompactionAdapter({
+        memoryTableStore,
+        memoryTemplateStore,
+        sessionId,
+        place,
+        isGroup,
+        onPersisted: async ({ tableId }) => {
+          emitSharedMemoryRowsUpdated({
+            target: window,
+            sessionId,
+            tableId,
+          });
+          await syncCurrentMemoryStateAfterTimelineRepair(sessionId, {
+            source: 'summary_compaction',
+          });
+        },
+      });
+    },
     getIsConfigured: () => isBridgeConfigured(window.appBridge),
     buildMessages: (...args) => window.appBridge.buildMessages(...args),
     backgroundChat: (...args) => window.appBridge.backgroundChat(...args),
@@ -26712,6 +26798,17 @@ Phase G（Frame 36）：循环衔接
         timelineMessageId,
         resolveTimelineTurnNumber,
       });
+      const stampInterval = resolveMemoryCoverageStampInterval({
+        currentTurnNumber,
+        summaryRows: (actionContext.allRows || []).filter(row => isSummaryTableId(String(row?.table_id || ''))),
+      });
+      const coverage = stampInterval
+        ? {
+            ...stampInterval,
+            messageId: String(timelineMessageId || '').trim(),
+            source: 'app',
+          }
+        : null;
       const result = await executeMemoryActionBatchMutation({
         actions,
         actionContext,
@@ -26722,6 +26819,7 @@ Phase G（Frame 36）：循环衔接
           inputs,
         }),
         currentTurnNumber,
+        coverage,
         isGroup,
       });
       const inserted = Number(result?.inserted || 0);
@@ -26750,6 +26848,11 @@ Phase G（Frame 36）：循环衔接
           deleted,
           toastr: window.toastr,
         });
+        const compactionPlace = resolveMemoryTablePlace(memoryUiMode || uiMode);
+        if (getMemoryStorageMode(compactionPlace) === 'table') {
+          Promise.resolve(requestSummaryCompaction(sessionId, { place: compactionPlace }))
+            .catch(error => logger.debug('table memory summary compaction request failed', error));
+        }
       } else if (skipped > 0) {
         logger.debug('memory auto extract skipped actions', { skipped });
       }
@@ -27451,6 +27554,7 @@ Phase G（Frame 36）：循环衔接
       attachmentParts,
       getOpenAIPreset: getRequestOpenAIPreset,
       getSettings: () => appSettings.get(),
+      getMemoryTotalTurns: sid => countUserTurnsForMemoryTimeline(chatStore.getMessages(sid) || []),
       getReplyPromptHint: () => buildReplyPromptHint(outgoingReplyContexts),
       getStagePromptBlocks: () => stageManager?.getPromptBlocks?.(sessionId) || [],
       getInjectedPromptBlocks: () => [

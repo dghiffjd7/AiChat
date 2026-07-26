@@ -1,4 +1,6 @@
-import { extractMemoryTimelineRound, resolveMemoryRowOrderKey } from './memory-row-order.js';
+import { resolveMemoryRowOrderKey } from './memory-row-order.js';
+import { getOutlineSectionLabel, isOutlineTableId } from './outline-section-utils.js';
+import { parseMemoryCoverageInterval } from './memory-coverage-utils.js';
 
 const MEMORY_PROMPT_POSITIONS = new Set([
   'after_persona',
@@ -48,6 +50,33 @@ export const isSummaryTableId = (tableId) => {
 export const isSummaryLimitTableId = (tableId) => {
   const id = String(tableId || '').trim();
   return SUMMARY_LIMIT_TABLE_IDS.has(id);
+};
+
+export const limitSummaryRowsForPrompt = (rows = [], limit = 10) => {
+  const list = Array.isArray(rows) ? rows : [];
+  const safeLimit = Math.max(0, Math.trunc(Number(limit)) || 0);
+  if (safeLimit <= 0) return [...list];
+  const grouped = new Map();
+  const kept = [];
+  list.forEach((row, index) => {
+    const tableId = String(row?.table_id || '').trim();
+    if (!isSummaryLimitTableId(tableId)) {
+      kept.push(row);
+      return;
+    }
+    if (!grouped.has(tableId)) grouped.set(tableId, []);
+    grouped.get(tableId).push({ row, index });
+  });
+  grouped.forEach((items, tableId) => {
+    items.sort((a, b) => {
+      const ak = resolveMemoryRowOrderKey(a.row, tableId, a.index);
+      const bk = resolveMemoryRowOrderKey(b.row, tableId, b.index);
+      if (ak !== bk) return ak - bk;
+      return a.index - b.index;
+    });
+    items.slice(-safeLimit).forEach(item => kept.push(item.row));
+  });
+  return kept;
 };
 
 export const getMemoryBridgeTablePromptLabel = (tableId, fallback = '') => {
@@ -114,23 +143,37 @@ export const parseMemoryPromptPositions = (raw) => {
 };
 
 export const normalizeTokenMode = (raw) => {
-  const mode = String(raw || '').trim().toLowerCase();
+  const source = raw && typeof raw === 'object' ? raw.mode : raw;
+  const mode = String(source || '').trim().toLowerCase();
   return mode === 'strict' ? 'strict' : 'rough';
 };
 
-export const estimateTokens = (text, mode = 'rough') => {
+export const resolveTokenEstimateCoefficient = (mode = 'rough', explicitCoefficient = null) => {
+  const source = explicitCoefficient ?? (
+    mode && typeof mode === 'object' ? mode.coefficient : null
+  );
+  const coefficient = Number(source);
+  return Number.isFinite(coefficient) && coefficient > 0
+    ? Math.max(0.25, Math.min(8, coefficient))
+    : 1;
+};
+
+export const estimateTokens = (text, mode = 'rough', coefficient = null) => {
   const raw = String(text || '');
   if (!raw.trim()) return 0;
-  if (mode === 'strict') {
-    return Math.max(1, raw.length);
-  }
-  let ascii = 0;
-  let nonAscii = 0;
-  for (const ch of raw) {
-    if (ch.charCodeAt(0) <= 0x7f) ascii += 1;
-    else nonAscii += 1;
-  }
-  return Math.max(1, Math.ceil(nonAscii + ascii / 4));
+  const normalizedMode = normalizeTokenMode(mode);
+  const base = normalizedMode === 'strict'
+    ? raw.length
+    : (() => {
+        let ascii = 0;
+        let nonAscii = 0;
+        for (const ch of raw) {
+          if (ch.charCodeAt(0) <= 0x7f) ascii += 1;
+          else nonAscii += 1;
+        }
+        return nonAscii + ascii / 4;
+      })();
+  return Math.max(1, Math.ceil(base * resolveTokenEstimateCoefficient(mode, coefficient)));
 };
 
 export const clampText = (value, max = 140) => {
@@ -152,11 +195,13 @@ export const normalizeMemoryCell = (value) => {
 
 const normalizePromptCellText = (value) => normalizeMemoryCell(value).replace(/\s*\r?\n\s*/g, ' / ').trim();
 
-const extractTimelineRound = (value) => extractMemoryTimelineRound(normalizePromptCellText(value));
-
 const extractTimelineRoundLabel = (value) => {
-  const round = extractTimelineRound(value);
-  if (Number.isFinite(round)) return `第${round}轮`;
+  // 区间行（滚动压缩大总结）必须整段展示，压成单点会让模型以为只讲末轮；
+  // 排序仍由 resolveMemoryRowOrderKey 按区间末端处理，这里只管展示。
+  const interval = parseMemoryCoverageInterval(normalizePromptCellText(value));
+  if (interval) {
+    return interval.from === interval.to ? `第${interval.from}轮` : `第${interval.from}-${interval.to}轮`;
+  }
   return normalizePromptCellText(value);
 };
 
@@ -167,7 +212,7 @@ const extractTimelineContentText = (rowData, columns) => {
   if (outline) return outline;
   for (const col of Array.isArray(columns) ? columns : []) {
     const colId = String(col?.id || '').trim();
-    if (!colId || colId === 'time') continue;
+    if (!colId || colId === 'time' || colId === 'keywords') continue;
     const text = normalizePromptCellText(rowData?.[colId]);
     if (text) return text;
   }
@@ -180,6 +225,11 @@ const resolveSummaryTablePromptOrderKey = (row, fallback = 0) => {
 
 export const formatMemoryRowText = (rowData, columns, tableId = '') => {
   const id = String(tableId || '').trim();
+  if (isOutlineTableId(id) && String(rowData?.section || '').trim()) {
+    const content = normalizePromptCellText(rowData?.outline ?? rowData?.content);
+    const sectionLabel = getOutlineSectionLabel(rowData.section);
+    return content ? `${sectionLabel}：${content}` : `${sectionLabel}：（未填写）`;
+  }
   if (SUMMARY_TABLE_IDS.has(id)) {
     const roundLabel = extractTimelineRoundLabel(rowData?.time);
     const content = extractTimelineContentText(rowData, columns);
@@ -191,7 +241,7 @@ export const formatMemoryRowText = (rowData, columns, tableId = '') => {
   const parts = [];
   for (const col of Array.isArray(columns) ? columns : []) {
     const colId = String(col?.id || '').trim();
-    if (!colId) continue;
+    if (!colId || colId === 'keywords') continue;
     const label = String(col?.name || colId).trim();
     const text = normalizePromptCellText(rowData?.[colId]);
     if (!text) continue;

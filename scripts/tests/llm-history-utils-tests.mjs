@@ -3,9 +3,13 @@ import assert from 'node:assert/strict';
 import {
   applyChatHistoryLimit,
   applyHistoryCharBudget,
+  applyHistoryTokenBudget,
   dropTrailingPendingUserEcho,
   finalizeLlmHistory,
   injectReasoningIntoHistory,
+  limitHistoryByTokenBudget,
+  mapHistoryMessagesToTurns,
+  resolveCoverageProtectedHistoryIndexes,
   limitCreativeAssistantHistory,
   stripTransientHistoryFields,
 } from '../../src/scripts/ui/chat/llm-history-utils.js';
@@ -38,7 +42,7 @@ test('applyChatHistoryLimit trims oldest messages when over limit', () => {
   );
 });
 
-test('applyHistoryCharBudget caps long messages and drops oldest entries when over budget', () => {
+test('applyHistoryTokenBudget caps long messages and drops oldest entries when over budget', () => {
   const result = applyHistoryCharBudget([
     { role: 'assistant', content: 'a'.repeat(50000) },
     { role: 'assistant', content: 'b'.repeat(50000) },
@@ -49,8 +53,99 @@ test('applyHistoryCharBudget caps long messages and drops oldest entries when ov
   });
 
   assert.equal(result.length, 1);
-  assert.ok(result[0].content.length <= 40001);
+  assert.ok(result[0].content.length <= 1953);
   assert.ok(result[0].content.startsWith('c'));
+});
+
+test('history token budget is conservative for Chinese and English across small contexts', () => {
+  const chinese = limitHistoryByTokenBudget([
+    { role: 'assistant', content: '中'.repeat(2000) },
+  ], {
+    maxContext: 2000,
+    maxOut: 1000,
+  });
+  assert.ok(chinese.stats.usedTokens <= 488);
+  assert.ok(chinese.messages[0].content.length <= 488);
+
+  const english = limitHistoryByTokenBudget([
+    { role: 'assistant', content: 'a'.repeat(8000) },
+  ], {
+    maxContext: 2000,
+    maxOut: 1000,
+  });
+  assert.ok(english.stats.usedTokens <= 488);
+  assert.ok(english.messages[0].content.length > chinese.messages[0].content.length);
+});
+
+test('unknown context does not invent an 8000-token hard limit', () => {
+  const content = '中'.repeat(20000);
+  const result = applyHistoryTokenBudget([
+    { role: 'assistant', content },
+  ], {
+    maxContext: 0,
+    maxOut: 4096,
+  });
+  assert.equal(result[0].content, content);
+});
+
+test('large context no longer uses a 140k-character cap that underfills English', () => {
+  const content = 'a'.repeat(200000);
+  const result = limitHistoryByTokenBudget([
+    { role: 'assistant', content },
+  ], {
+    maxContext: 131072,
+    maxOut: 4096,
+  });
+  assert.equal(result.messages[0].content, content);
+  assert.equal(result.stats.inputBudgetTokens, 126464);
+  assert.ok(result.stats.usedTokens < result.stats.inputBudgetTokens);
+});
+
+test('coverage holes protect exact history turns even when they exceed the recent quota', () => {
+  const history = [
+    { role: 'user', content: '第8轮用户'.repeat(20) },
+    { role: 'assistant', content: '第8轮助手'.repeat(20) },
+    { role: 'user', content: '第9轮用户'.repeat(20) },
+    { role: 'assistant', content: '第9轮助手'.repeat(20) },
+    { role: 'user', content: '第10轮用户'.repeat(20) },
+    { role: 'assistant', content: '第10轮助手'.repeat(20) },
+  ];
+  assert.deepEqual(mapHistoryMessagesToTurns(history, { lastTurn: 10 }).map(item => item.turn), [
+    8, 8, 9, 9, 10, 10,
+  ]);
+  const protectedIndexes = resolveCoverageProtectedHistoryIndexes({
+    history,
+    holes: [{ from: 8, to: 8 }],
+    lastTurn: 10,
+  });
+  assert.deepEqual(protectedIndexes, [0, 1]);
+  const limited = limitHistoryByTokenBudget(history, {
+    inputBudgetTokens: 10,
+    protectedMessageIndexes: protectedIndexes,
+  });
+  assert.deepEqual(limited.stats.keptOriginalIndexes, [0, 1]);
+  assert.equal(limited.stats.protectedMessageCount, 2);
+  assert.equal(limited.stats.overflowed, true);
+});
+
+test('token budget trimming stays fast on thousand-floor Chinese histories', () => {
+  const history = Array.from({ length: 3000 }, (_, index) => ({
+    role: index % 2 === 0 ? 'user' : 'assistant',
+    content: `第${index}楼：${'剧情正文'.repeat(125)}`,
+  }));
+  const startedAt = Date.now();
+  const result = limitHistoryByTokenBudget(history, {
+    inputBudgetTokens: 20000,
+    protectedMessageIndexes: [0, 1],
+  });
+  const elapsedMs = Date.now() - startedAt;
+  assert.ok(elapsedMs < 1500, `trimming took ${elapsedMs}ms`);
+  assert.ok(result.stats.droppedMessageCount > 2900);
+  assert.ok(result.stats.usedTokens <= 20000);
+  assert.equal(result.stats.protectedMessageCount, 2);
+  assert.deepEqual(result.stats.keptOriginalIndexes.slice(0, 2), [0, 1]);
+  const tail = result.stats.keptOriginalIndexes.slice(2);
+  assert.deepEqual(tail, tail.map((_, i) => 3000 - tail.length + i));
 });
 
 test('limitCreativeAssistantHistory keeps the user turn before the retained creative window', () => {

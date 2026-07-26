@@ -1,15 +1,11 @@
 const TIMELINE_TABLE_IDS = new Set([
   'chat_summary',
   'group_summary',
-  'chat_outline',
-  'group_outline',
   'rp_summary',
-  'rp_outline',
   'moment_summary',
-  'moment_outline',
 ]);
 
-const TIMELINE_ROUND_RE = /第\s*(\d+)\s*轮/;
+const TIMELINE_ROUND_RE = /第\s*(\d+)(?:\s*(?:-|—|~|～|至|到)\s*(\d+))?\s*轮/;
 
 const toFiniteNumber = (value) => {
   const num = Number(value);
@@ -25,12 +21,17 @@ export const extractMemoryTimelineRound = (value) => {
   if (!text) return null;
   const match = text.match(TIMELINE_ROUND_RE);
   if (!match) return null;
-  return toFiniteNumber(match[1]);
+  return toFiniteNumber(match[2] || match[1]);
 };
 
-export const buildMemoryTimelineLabel = (turnNumber) => {
-  const round = Math.trunc(Number(turnNumber));
-  return Number.isFinite(round) && round >= 0 ? `第${round}轮` : '';
+export const buildMemoryTimelineLabel = (turnNumber, endTurnNumber = null) => {
+  const start = Math.trunc(Number(turnNumber));
+  const end = Math.trunc(Number(endTurnNumber));
+  if (!Number.isFinite(start) || start < 0) return '';
+  if (Number.isFinite(end) && end > 0 && end !== start) {
+    return `第${Math.min(start, end)}-${Math.max(start, end)}轮`;
+  }
+  return `第${start}轮`;
 };
 
 export const getMemoryRowPriority = (row) => {

@@ -87,9 +87,17 @@ import {
       selectedSources: [{ contactId: 'contact:alice', name: 'Alice' }],
       injectedRows: [{ contactId: 'contact:alice', row: { id: 'r1' } }],
     },
+    downgradeSuggestions: [{
+      worldId: 'w1',
+      entryId: 'e1',
+      title: '内置1',
+      matchedTerms: ['顾青'],
+      coveredRowCount: 2,
+      reason: '常驻条目已被记忆表格覆盖。',
+    }],
   });
   assert.match(text, /\[世界书调试\]/);
-  assert.match(text, /变量自动建立: first_hit（命中后建立）/);
+  assert.match(text, /变量自动建立: first_hit（命中后建立；条目门控变量预先建立）/);
   assert.match(text, /激活条目/);
   assert.match(text, /模板注入/);
   assert.match(text, /render:regex:x/);
@@ -97,6 +105,8 @@ import {
   assert.match(text, /动态弱触发: 候选 1 \/ 命中 1 \/ 注入记忆行 1/);
   assert.match(text, /动态弱触发画像\/记忆/);
   assert.match(text, /动态强触发来源/);
+  assert.match(text, /常驻降级建议: 1 条（仅提示，不自动修改）/);
+  assert.match(text, /常驻条目降级建议/);
   assert.match(text, /裁剪=moment_session_budget/);
   console.log('ok - formatPromptWorldDebug formats sectioned prompt debug summary');
 }

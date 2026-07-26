@@ -98,6 +98,7 @@ export const buildWorldEntryMatchReport = (
     recursionStep = 0,
     globalCaseSensitive = false,
     globalMatchWholeWords = false,
+    evaluateEntryWhen = null,
   } = {},
 ) => {
   const report = {
@@ -108,6 +109,9 @@ export const buildWorldEntryMatchReport = (
     entryText: '',
     hasMatchInput: hasWorldMatchInput(matchText, matchContext),
     selectivePassed: true,
+    variableConditionConfigured: false,
+    variableConditionPassed: true,
+    variableConditionExplanation: null,
   };
   if (!entry || typeof entry !== 'object') {
     report.reasons.push('条目不存在');
@@ -116,6 +120,25 @@ export const buildWorldEntryMatchReport = (
   if (Boolean(entry.disable)) {
     report.reasons.push('条目已禁用');
     return report;
+  }
+  if (entry.when && typeof entry.when === 'object' && typeof evaluateEntryWhen === 'function') {
+    report.variableConditionConfigured = true;
+    try {
+      const evaluated = evaluateEntryWhen(entry.when, entry);
+      if (evaluated && typeof evaluated === 'object') {
+        report.variableConditionConfigured = evaluated.configured !== false;
+        report.variableConditionPassed = evaluated.passed === true;
+        report.variableConditionExplanation = evaluated.explanation || null;
+      } else {
+        report.variableConditionPassed = evaluated === true;
+      }
+    } catch {
+      report.variableConditionPassed = false;
+    }
+    if (report.variableConditionConfigured && !report.variableConditionPassed) {
+      report.reasons.push('被条目级变量条件挡住');
+      return report;
+    }
   }
   if (!isRecursivePass && Number.isFinite(Number(entry.delayUntilRecursion)) && Number(entry.delayUntilRecursion) > 0) {
     report.reasons.push(`需在递归第 ${Math.max(0, Math.trunc(Number(entry.delayUntilRecursion)))} 轮后才参与`);
@@ -376,6 +399,7 @@ export const analyzeWorldEntryActivation = ({
   targetEntryId = '',
   applyProbability = false,
   random = Math.random,
+  evaluateEntryWhen = null,
 } = {}) => {
   const {
     globalCaseSensitive = false,
@@ -390,6 +414,7 @@ export const analyzeWorldEntryActivation = ({
     buildWorldEntryMatchReport(entry, {
       globalCaseSensitive,
       globalMatchWholeWords,
+      evaluateEntryWhen,
       ...options,
     });
   const effectiveMatchContext = resolveEffectiveMatchContext({

@@ -124,6 +124,20 @@ test('buildPromptPreviewSnapshot formats meta header and prompt body', () => {
   assert.ok(snapshot.estimatedInputTokens > 0);
 });
 
+test('buildPromptPreviewSnapshot applies and labels a learned calibration coefficient', () => {
+  const snapshot = buildPromptPreviewSnapshot({
+    request: {
+      messages: [{ role: 'user', content: 'abcd' }],
+    },
+    tokenCalibration: {
+      coefficient: 1.5,
+      samples: 3,
+    },
+  });
+  assert.match(snapshot.head, /本地校准估算 ×1\.500/);
+  assert.equal(snapshot.tokenCalibration.samples, 3);
+});
+
 let failed = 0;
 for (const t of tests) {
   try {

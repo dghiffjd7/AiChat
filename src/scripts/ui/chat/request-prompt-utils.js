@@ -62,6 +62,7 @@ export const resolveMemoryUpdateRequestPrompt = ({
 export const buildPromptPreviewSnapshot = ({
   request = null,
   contactName = '',
+  tokenCalibration = null,
   buildRequestPrompt = buildRequestPromptText,
   formatAt = value => new Date(value).toLocaleString(),
 } = {}) => {
@@ -91,15 +92,27 @@ export const buildPromptPreviewSnapshot = ({
         .join('\n\n');
   // 发送前 token 估算：预览不发请求，无 provider 真实 usage，只能本地启发式（CJK 近似、不分模型）。
   // 明确标注「估算」——真实精确值在生成后由 provider 返回并记入本次回复。
-  const tokenMode = normalizeTokenMode('rough');
+  const coefficient = Number(tokenCalibration?.coefficient);
+  const tokenMode = {
+    mode: normalizeTokenMode('rough'),
+    coefficient: Number.isFinite(coefficient) && coefficient > 0 ? coefficient : 1,
+  };
   const estTokens = estimateTokens(body, tokenMode);
-  const tokenLine = `估算输入 token: ~${estTokens}（本地估算·非精确，真实值以生成后模型返回为准）`;
+  const samples = Math.max(0, Math.trunc(Number(tokenCalibration?.samples)) || 0);
+  const calibrationText = samples > 0
+    ? `本地校准估算 ×${tokenMode.coefficient.toFixed(3)}，${samples} 次样本`
+    : '本地估算·非精确·待校准';
+  const tokenLine = `估算输入 token: ~${estTokens}（${calibrationText}，真实值以生成后模型返回为准）`;
   return {
     meta,
     head: head ? `${head}\n${tokenLine}` : tokenLine,
     body,
     messages,
     estimatedInputTokens: estTokens,
+    tokenCalibration: samples > 0 ? {
+      coefficient: tokenMode.coefficient,
+      samples,
+    } : null,
   };
 };
 

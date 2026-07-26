@@ -1325,11 +1325,11 @@ export class WorldPanel {
                         <input id="world-global-scan-depth" type="number" min="0" step="1" placeholder="默认2" style="width:120px; padding:6px 8px; border:1px solid var(--app-border-default); border-radius:8px; font-size:12px;">
                     </div>
                     <div style="display:flex; gap:8px; align-items:center; margin-top:8px; flex-wrap:wrap;">
-                        <span class="has-help" data-help="%（用于世界书预算）。世界书注入内容最多占用上下文的百分比。" style="font-size:12px; color:var(--app-text-secondary);">上下文百分比</span>
+                        <span class="has-help" data-help="世界书从统一输入预算中取得的最高占比；设为 0 时不按百分比限制。若同时设置绝对上限，两者取更小值。" style="font-size:12px; color:var(--app-text-secondary);">统一预算占比</span>
                         <input id="world-global-context-percent" type="number" min="0" max="100" step="1" placeholder="默认" style="width:120px; padding:6px 8px; border:1px solid var(--app-border-default); border-radius:8px; font-size:12px;">
                     </div>
                     <div style="display:flex; gap:8px; align-items:center; margin-top:8px; flex-wrap:wrap;">
-                        <span class="has-help" data-help="tokens（优先级高于百分比）。世界书预算的绝对上限；设了此值时优先于上下文百分比。" style="font-size:12px; color:var(--app-text-secondary);">预算上限</span>
+                        <span class="has-help" data-help="世界书配额的绝对 Token 上限；大于 0 时与统一预算占比取更小值。占比为 0 时可单独使用此上限。" style="font-size:12px; color:var(--app-text-secondary);">Token 配额上限</span>
                         <input id="world-global-budget-cap" type="number" min="0" step="1" placeholder="0 = 不限制" style="width:120px; padding:6px 8px; border:1px solid var(--app-border-default); border-radius:8px; font-size:12px;">
                     </div>
                     <div style="display:flex; gap:8px; align-items:center; margin-top:8px; flex-wrap:wrap;">
@@ -1360,7 +1360,7 @@ export class WorldPanel {
                         <span style="font-size:12px; color:var(--app-text-secondary);">变量自动建立</span>
                         <select id="world-global-variable-define-strategy" style="display:none;">
                             <option value="legacy_eager">请求前自动建立（旧行为）</option>
-                            <option value="first_hit">命中条目后再建立</option>
+                            <option value="first_hit">命中后建立（条目门控变量除外）</option>
                             <option value="off">关闭运行时自动建立</option>
                         </select>
                         <button type="button" id="world-global-variable-define-strategy-btn" class="world-app-select-btn" style="min-width:220px;">

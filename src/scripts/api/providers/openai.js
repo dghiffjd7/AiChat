@@ -10,6 +10,7 @@ import {
 } from '../native-reasoning.js';
 import { prepareTransportRequest } from '../transport.js';
 import { reportProviderUsage } from '../provider-usage.js';
+import { isStreamOptionsRejectionError, streamUsageCompat } from '../stream-usage-compat.js';
 import { emitDebugLog } from '../../utils/debug-log.js';
 import {
   ensureTailAssistantPrefillUserTurn,
@@ -644,7 +645,22 @@ export class OpenAIProvider {
   /**
    * 流式聊天
    */
+  // 流式带 stream_options.include_usage 才能拿到 usage 校准样本；严格中转对该字段
+  // 报 4xx 点名拒绝时，记忆该端点并去掉重试一次（拒绝发生在首个增量之前，重启安全）。
   async *streamChat(messages, options = {}) {
+    try {
+      yield* this.streamChatUnguarded(messages, options);
+    } catch (error) {
+      if (isStreamOptionsRejectionError(error) && !streamUsageCompat.isMarkedUnsupported(this.baseUrl)) {
+        streamUsageCompat.markUnsupported(this.baseUrl);
+        yield* this.streamChatUnguarded(messages, options);
+        return;
+      }
+      throw error;
+    }
+  }
+
+  async *streamChatUnguarded(messages, options = {}) {
     const prepared = this.prepareChatRequest(messages, options);
     const { signal, requestId } = prepared;
     const notifyProviderToolCallDelta = data => {
@@ -673,10 +689,10 @@ export class OpenAIProvider {
         `请求过大（约 ${Math.round(estimatedChars / 1024)} KB），可能导致 Android WebView OOM；请减少历史/摘要/世界书注入或清理该聊天室。`,
       );
     }
-    const payload = JSON.stringify({
+    const payload = JSON.stringify(streamUsageCompat.applyStreamUsageOptions({
       ...prepared.payload,
       stream: true,
-    });
+    }, this.baseUrl));
     const transport = prepareTransportRequest({
       config: this.transportConfig,
       provider: this.provider,

@@ -56,6 +56,7 @@ import {
     attachmentParts: [{ type: 'image', url: 'x' }],
     getOpenAIPreset: () => ({ memory_data_position: 'history_after', memory_data_depth: 3 }),
     getSettings: () => ({ memoryInjectPosition: 'history_before', memoryInjectDepth: 1 }),
+    getMemoryTotalTurns: () => 12,
     getReplyPromptHint: () => 'reply hint',
     getStagePromptBlocks: () => ['stage'],
     getInjectedPromptBlocks: () => ['injected'],
@@ -75,5 +76,10 @@ import {
   assert.deepEqual(first.history, [{ role: 'user', content: '输入1' }]);
   assert.deepEqual(second.history, [{ role: 'user', content: '输入2' }]);
   assert.deepEqual(second.meta.extraPromptBlocks, ['stage', 'injected']);
+  assert.deepEqual(second.meta.inputBudgetContext, {
+    maxContextTokens: null,
+    maxOutputTokens: 0,
+  });
+  assert.equal(second.meta.memoryTotalTurns, 12);
   console.log('ok - createLlmContextBuilder preserves dynamic getters for summary and prompt blocks');
 }

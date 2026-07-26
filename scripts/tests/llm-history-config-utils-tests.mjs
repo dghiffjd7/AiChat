@@ -55,6 +55,7 @@ test('buildLlmHistoryFinalizeOptions normalizes limits and preserves openai pres
   assert.equal(result.creativeHistoryLimit, 2);
   assert.equal(result.rpUiMode, true);
   assert.equal(result.openaiPreset, openaiPreset);
+  assert.equal(result.deferHistoryTokenBudget, true);
   assert.equal(result.reasoning.enabled, false);
   assert.equal(result.reasoning.maxAdditions, 1);
   assert.equal(result.reasoning.prefix, '[');
