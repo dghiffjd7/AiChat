@@ -5,6 +5,7 @@ import {
   isTimelineMemoryTableId,
 } from './memory-row-order.js';
 import {
+  mergeMemoryCoverageIntervals,
   normalizeMemoryCoverageInterval,
   parseMemoryCoverageInterval,
 } from './memory-coverage-utils.js';
@@ -147,6 +148,40 @@ export const buildAssistantTimelineForMemoryRepair = ({
   return timeline;
 };
 
+// 锚点反查表：盖章锚点可能是用户消息（主发送链，盖章时本轮助手消息尚未 append）
+// 或助手消息（滑动重生成 / 继续 / 手动编辑原文指定的具体楼层），两类都要能查到轮号。
+export const buildMemoryTimelineMessageTurnMap = ({
+  messages = [],
+  isTrackedAssistantMessage = isDefaultTimelineAssistantMessage,
+  isTrackedUserMessage = isDefaultTimelineUserMessage,
+} = {}) => {
+  const turnById = new Map();
+  let userTurn = 0;
+  let assistantFloor = 0;
+  for (const message of Array.isArray(messages) ? messages : []) {
+    let trackedUser = false;
+    try {
+      trackedUser = Boolean(isTrackedUserMessage(message));
+    } catch {
+      trackedUser = false;
+    }
+    if (trackedUser) userTurn += 1;
+
+    let tracked = false;
+    try {
+      tracked = Boolean(isTrackedAssistantMessage(message));
+    } catch {
+      tracked = false;
+    }
+    if (tracked) assistantFloor += 1;
+    if (!trackedUser && !tracked) continue;
+    const id = String(message?.id || '').trim();
+    if (!id || turnById.has(id)) continue;
+    turnById.set(id, tracked ? (userTurn || assistantFloor) : userTurn);
+  }
+  return turnById;
+};
+
 export const matchMemoryTimelineRowToAssistant = ({
   row = null,
   assistantTimeline = [],
@@ -230,6 +265,11 @@ export const buildMemoryTimelineRepairPlan = ({
     isTrackedAssistantMessage,
     isTrackedUserMessage,
   });
+  const messageTurnById = buildMemoryTimelineMessageTurnMap({
+    messages,
+    isTrackedAssistantMessage,
+    isTrackedUserMessage,
+  });
   const maxTimelineRound = assistantTimeline.reduce((max, item) => {
     const round = Math.trunc(Number(item?.floor || 0));
     return Number.isFinite(round) ? Math.max(max, round) : max;
@@ -254,22 +294,31 @@ export const buildMemoryTimelineRepairPlan = ({
     if (coverageInterval && coverageAnchorId) {
       // app 盖章行：按锚定消息精确重排。删楼重编号后时间戳吸附会指错楼，
       // 且 _coverage 才是覆盖线护栏的权威输入，必须与 time 标签一起同步。
-      const anchor = assistantTimeline.find(item => item.id === coverageAnchorId) || null;
-      if (!anchor?.floor) continue; // 锚定消息已删除：保守不动，绝不退回时间戳吸附
-      const expectedTo = Math.trunc(Number(anchor.floor));
+      const anchoredTurn = Math.trunc(Number(messageTurnById.get(coverageAnchorId) || 0));
+      if (!anchoredTurn) continue; // 锚定消息已删除：保守不动，绝不退回时间戳吸附
+      const expectedTo = anchoredTurn;
       const delta = expectedTo - coverageInterval.to;
       const anchoredSortOrder = getMemoryRowSortOrder(row);
       if (delta === 0 && anchoredSortOrder === expectedTo) continue;
-      const expectedFrom = Math.max(1, coverageInterval.from + delta);
+      // 平移取 fail-closed：delta 由区间**末端**的锚点算出，被删楼层若落在区间内部，
+      // 起点的真实位移小于 delta——起点不得随 delta 前移，否则会多 claim 一轮把洞盖住。
+      // 多报洞只是多留几轮原文（费预算、可观测）；漏报洞会让覆盖护栏静默失效。
+      // 同时夹住 from ≤ to，避免连续删楼把区间挤成反向。
+      const shiftCoverageStart = value => Math.max(1, Math.max(value, value + delta));
+      const shiftCoverageEnd = value => Math.max(1, value + delta);
+      const expectedFrom = Math.min(shiftCoverageStart(coverageInterval.from), expectedTo);
       const nextCoverage = { ...coverageMeta, from: expectedFrom, to: expectedTo };
       if (Array.isArray(coverageMeta.intervals)) {
-        nextCoverage.intervals = coverageMeta.intervals
-          .map(interval => normalizeMemoryCoverageInterval(interval || {}))
-          .filter(Boolean)
-          .map(interval => ({
-            from: Math.max(1, interval.from + delta),
-            to: Math.max(1, interval.to + delta),
-          }));
+        // 夹到 expectedTo 后不同源区间可能压成同一段，落库前归一化，别存重复段
+        nextCoverage.intervals = mergeMemoryCoverageIntervals(
+          coverageMeta.intervals
+            .map(interval => normalizeMemoryCoverageInterval(interval || {}))
+            .filter(Boolean)
+            .map((interval) => {
+              const from = Math.min(shiftCoverageStart(interval.from), expectedTo);
+              return { from, to: Math.min(Math.max(shiftCoverageEnd(interval.to), from), expectedTo) };
+            }),
+        );
       }
       repairable.push({
         rowId: id,
@@ -277,7 +326,7 @@ export const buildMemoryTimelineRepairPlan = ({
         currentRound: extractMemoryTimelineRound(baseRowData.time),
         currentSortOrder: anchoredSortOrder,
         expectedRound: expectedTo,
-        assistantMessageId: anchor.id,
+        assistantMessageId: coverageAnchorId,
         distanceMs: 0,
         rowTimestamp: getMemoryTimelineRowTimestamp(row),
         rowData: {

@@ -8994,6 +8994,19 @@ body[data-reduced-motion='on'] .creative-execution-root *::after {
   line-height: 1.5;
   color: var(--app-text-secondary);
 }
+.maid-api-group-note {
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--app-text-secondary);
+  background: var(--app-accent-soft);
+  border: 1px solid var(--app-border-default);
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+.maid-api-group-note strong {
+  font-weight: 600;
+  color: var(--app-text-primary);
+}
 .maid-api-field {
   display: flex;
   flex-direction: column;

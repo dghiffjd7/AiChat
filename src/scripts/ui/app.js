@@ -464,6 +464,8 @@ import {
   countUserTurnsForMemoryTimeline,
   deleteNewestMatchingMemoryRow,
   executeMemoryActionBatchMutation,
+  findMemoryTimelineAnchorMessageId,
+  resolveMemoryCoverageAnchorMessageId,
   restoreMemoryRowsFromRollbackSnapshot,
 } from './chat/memory-table-action-utils.js';
 import { createMemoryUpdateRuntime } from './chat/memory-update-runtime.js';
@@ -2683,6 +2685,8 @@ const initApp = async () => {
     getUiMode: () => uiMode,
     resolveCurrentTurnNumber: async sid =>
       countUserTurnsForMemoryTimeline(chatStore.getMessages(sid) || []),
+    resolveTimelineMessageId: async (sid, turnNumber) =>
+      findMemoryTimelineAnchorMessageId(chatStore.getMessages(sid) || [], turnNumber),
     loadWorld: async (worldId) => {
       const id = String(worldId || '').trim();
       if (!id) return null;
@@ -3962,6 +3966,7 @@ const initApp = async () => {
     timelineTurnNumber = null,
     timelineMessageId = '',
     resolveTimelineTurnNumber = null,
+    resolveTimelineMessageId = null,
   } = {}) => {
     if (!Array.isArray(actions) || actions.length === 0) return null;
     if (!memoryTableStore || !memoryTemplateStore) return null;
@@ -4011,7 +4016,12 @@ const initApp = async () => {
     const coverage = stampInterval
       ? {
           ...stampInterval,
-          messageId: String(timelineMessageId || '').trim(),
+          messageId: await resolveMemoryCoverageAnchorMessageId({
+            sessionId: sid,
+            timelineMessageId,
+            currentTurnNumber,
+            resolveTimelineMessageId,
+          }),
           source: 'app',
         }
       : null;
@@ -4075,6 +4085,7 @@ const initApp = async () => {
     timelineTurnNumber = null,
     timelineMessageId = '',
     resolveTimelineTurnNumber = null,
+    resolveTimelineMessageId = null,
     force = false,
     requestPrompt = '',
   } = {}) => {
@@ -4127,6 +4138,7 @@ const initApp = async () => {
         timelineTurnNumber,
         timelineMessageId,
         resolveTimelineTurnNumber,
+        resolveTimelineMessageId,
       });
     } catch (err) {
       recordMemoryUpdateTraceEvent({
@@ -26765,6 +26777,7 @@ Phase G（Frame 36）：循环衔接
       timelineTurnNumber = null,
       timelineMessageId = '',
       resolveTimelineTurnNumber = null,
+      resolveTimelineMessageId = null,
     }) => {
       if (!Array.isArray(actions) || actions.length === 0) return null;
       if (!memoryTableStore || !memoryTemplateStore) return null;
@@ -26811,7 +26824,12 @@ Phase G（Frame 36）：循环衔接
       const coverage = stampInterval
         ? {
             ...stampInterval,
-            messageId: String(timelineMessageId || '').trim(),
+            messageId: await resolveMemoryCoverageAnchorMessageId({
+              sessionId,
+              timelineMessageId,
+              currentTurnNumber,
+              resolveTimelineMessageId,
+            }),
             source: 'app',
           }
         : null;
@@ -28039,6 +28057,12 @@ Phase G（Frame 36）：循环衔接
       if (turnIndex > 0) return turnIndex;
       return resolveTargetMemoryTimelineTurnNumber(sid);
     };
+    // 盖章锚点：写表在助手消息 append 之前执行，本轮助手消息此刻还不存在，
+    // 只有本轮用户消息是已入库且删楼后仍可反查轮号的稳定锚（轮次本就由用户消息定义）。
+    const resolveMemoryTimelineAnchorMessageId = (targetSessionId, turnNumber) => findMemoryTimelineAnchorMessageId(
+      chatStore.getMessages(String(targetSessionId || sessionId).trim()) || [],
+      turnNumber,
+    );
     const buildPreAppendMemoryOptions = () => {
       const targetMessageId = String(swipeTarget?.msgId || continueTarget?.messageId || '').trim();
       return {
@@ -28048,6 +28072,7 @@ Phase G（Frame 36）：循环衔接
         memoryPlace: uiMode === 'rp' ? 'writing' : 'chat',
         ...(targetMessageId ? { timelineMessageId: targetMessageId } : {}),
         resolveTimelineTurnNumber: targetSessionId => resolveTargetMemoryTimelineTurnNumber(targetSessionId || sessionId),
+        resolveTimelineMessageId: resolveMemoryTimelineAnchorMessageId,
       };
     };
     const buildProtocolMemoryOptions = () => ({
@@ -28056,6 +28081,7 @@ Phase G（Frame 36）：循环衔接
       uiMode,
       memoryPlace: uiMode === 'rp' ? 'writing' : 'chat',
       resolveTimelineTurnNumber: targetSessionId => resolveTailMemoryTimelineTurnNumber(targetSessionId || sessionId),
+      resolveTimelineMessageId: resolveMemoryTimelineAnchorMessageId,
     });
     const syncProtocolCheckpoints = async (protocolState, warnMessage) => {
       const result = await syncProtocolResponseTurnCheckpoints({

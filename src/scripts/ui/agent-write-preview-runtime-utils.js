@@ -1,6 +1,7 @@
 import {
   buildMemoryActionBatchPreview,
   executeMemoryActionBatchMutation,
+  resolveMemoryCoverageAnchorMessageId,
   restoreMemoryRowsFromRollbackSnapshot,
 } from './chat/memory-table-action-utils.js';
 import { buildUpdateVariableCommandsPreview } from './chat/update-variable-command-utils.js';
@@ -195,6 +196,7 @@ export const createMemoryPreviewCommitRuntime = ({
   getContact = null,
   getUiMode = null,
   resolveCurrentTurnNumber = null,
+  resolveTimelineMessageId = null,
   onMemoryCommitted = null,
   onMemoryUndone = null,
 } = {}) => ({
@@ -244,7 +246,17 @@ export const createMemoryPreviewCommitRuntime = ({
         inputs,
       }),
       currentTurnNumber,
-      coverage: stampInterval ? { ...stampInterval, messageId: '', source: 'app' } : null,
+      coverage: stampInterval
+        ? {
+            ...stampInterval,
+            messageId: await resolveMemoryCoverageAnchorMessageId({
+              sessionId: sid,
+              currentTurnNumber,
+              resolveTimelineMessageId,
+            }),
+            source: 'app',
+          }
+        : null,
       isGroup,
     });
     const changed = Number(result?.changed || 0) || 0;

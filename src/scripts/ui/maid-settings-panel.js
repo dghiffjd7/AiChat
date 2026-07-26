@@ -2061,6 +2061,9 @@ export const createMaidSettingsPanel = ({
           <div class="maid-api-group">
             <div class="maid-api-group-title">女仆主配置</div>
             <div class="maid-api-group-desc">女仆规划与执行使用的主模型。</div>
+            <div class="maid-api-group-note">
+              <strong>选渠道前请留意：</strong>该渠道需<strong>支持工具调用（function / tool calling）</strong>，否则女仆只能对话、无法真正执行操作；且女仆完成一次任务会连续发多次请求（规划 → 调用 → 读结果 → 再决策），比普通聊天更容易撞到渠道的 <strong>RPM（每分钟请求数）</strong>上限。
+            </div>
             <label class="maid-api-field">
               <span class="maid-api-field-label">连线配置</span>
               <select class="maid-subagent-select" data-main-profile>

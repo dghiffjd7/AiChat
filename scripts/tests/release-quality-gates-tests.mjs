@@ -39,6 +39,7 @@ const splitScriptSteps = script =>
 {
   const steps = splitScriptSteps(scripts['test:all']);
   assert.deepEqual(steps, [
+    'npm run test:maid-onboarding',
     'npm run test:agent',
     'npm run test:chat',
     'npm run test:memory',
@@ -52,7 +53,7 @@ const splitScriptSteps = script =>
     'npm run test:release',
     'npm run test:theme',
   ]);
-  console.log('ok - test:all keeps agent chat memory variables cancel moments sessions integration transfer migration release and theme gates');
+  console.log('ok - test:all keeps maid-onboarding agent chat memory variables cancel moments sessions integration transfer migration release and theme gates');
 }
 
 {

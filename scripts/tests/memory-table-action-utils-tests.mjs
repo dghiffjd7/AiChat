@@ -15,7 +15,9 @@ import {
   executeMemoryActionBatchMutation,
   executeMemoryActionMutationPlan,
   executeMemoryRollbackRestorePlan,
+  findMemoryTimelineAnchorMessageId,
   getMemoryRowScopeKey,
+  resolveMemoryCoverageAnchorMessageId,
   normalizeTimelineMemoryActionData,
   pickNewestMemoryRow,
   queueMemoryInsert,
@@ -1190,6 +1192,69 @@ test('pickNewestMemoryRow prefers latest updated/created timestamp and later ind
   ];
 
   assert.equal(pickNewestMemoryRow(rows)?.id, 'row-3');
+});
+
+test('findMemoryTimelineAnchorMessageId resolves the user message of the given turn', () => {
+  const messages = [
+    { id: 'u1', role: 'user' },
+    { id: 'a1', role: 'assistant' },
+    { id: 'u2', role: 'user' },
+    { id: 'a2', role: 'assistant' },
+  ];
+  // 锚点必须是「盖章轮号对应的那条用户消息」，不能独立取尾部：
+  // 各链路轮号解析口径不同，独立取尾会与盖上的区间差一轮
+  assert.equal(findMemoryTimelineAnchorMessageId(messages, 1), 'u1');
+  assert.equal(findMemoryTimelineAnchorMessageId(messages, 2), 'u2');
+  // AI 代发的用户消息不推进轮号，与 countUserTurnsForMemoryTimeline 同口径
+  assert.equal(
+    findMemoryTimelineAnchorMessageId([
+      { id: 'u1', role: 'user' },
+      { id: 'u-ai', role: 'user', meta: { generatedByAssistant: true } },
+      { id: 'u2', role: 'user' },
+    ], 2),
+    'u2',
+  );
+  // 轮号未知 / 越界 / 消息不在 store：一律返回空串 → 不盖 message_id，退回既有行为
+  assert.equal(findMemoryTimelineAnchorMessageId(messages, 0), '');
+  assert.equal(findMemoryTimelineAnchorMessageId(messages, 9), '');
+  assert.equal(findMemoryTimelineAnchorMessageId([], 1), '');
+  assert.equal(findMemoryTimelineAnchorMessageId([{ id: '  ', role: 'user' }], 1), '');
+});
+
+test('resolveMemoryCoverageAnchorMessageId prefers the explicit id over the resolver', async () => {
+  // 滑动重生成 / 继续 / 编辑原文指定的是具体楼层，可能不是尾轮：显式 id 必须优先
+  assert.equal(
+    await resolveMemoryCoverageAnchorMessageId({
+      sessionId: 'chat:1',
+      timelineMessageId: 'a-old',
+      resolveTimelineMessageId: async () => 'u-tail',
+    }),
+    'a-old',
+  );
+  // 主发送链没有显式 id → 回退到解析器，并把盖章轮号透传过去（锚点须与区间同轮）
+  const seen = [];
+  assert.equal(
+    await resolveMemoryCoverageAnchorMessageId({
+      sessionId: 'chat:1',
+      currentTurnNumber: 7,
+      resolveTimelineMessageId: async (sid, turn) => { seen.push([sid, turn]); return 'u7'; },
+    }),
+    'u7',
+  );
+  assert.deepEqual(seen, [['chat:1', 7]]);
+  // 无 session / 无 resolver / resolver 抛错：一律回空串，退回既有「不盖锚点」行为
+  assert.equal(await resolveMemoryCoverageAnchorMessageId({ sessionId: 'chat:1' }), '');
+  assert.equal(
+    await resolveMemoryCoverageAnchorMessageId({ resolveTimelineMessageId: async () => 'u-tail' }),
+    '',
+  );
+  assert.equal(
+    await resolveMemoryCoverageAnchorMessageId({
+      sessionId: 'chat:1',
+      resolveTimelineMessageId: async () => { throw new Error('boom'); },
+    }),
+    '',
+  );
 });
 
 let failed = 0;

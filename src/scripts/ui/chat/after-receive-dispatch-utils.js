@@ -72,7 +72,23 @@ const getChatFormatGuardianStatus = (status = '') => {
   return 'succeeded';
 };
 
-const getChatFormatGuardianTitle = (status = '') => {
+// 「检查器自身故障」与「检查完成且发现格式问题」共用 invalid 状态，标题必须区分：
+// 否则检查模型超时/请求失败/返回不可解析 JSON 时，卡片会显示「聊天格式错误」，
+// 把责任错误地指向用户的聊天内容。这三个 issue type 只由故障路径产生
+// （request_error/timeout 来自 failure builder，parse_error 来自 normalize 兜底）。
+const CHAT_FORMAT_GUARDIAN_CHECK_FAILURE_ISSUE_TYPES = new Set(['request_error', 'timeout', 'parse_error']);
+
+const isChatFormatGuardianCheckIncomplete = (review = null) => {
+  if (!isPlainObject(review)) return false;
+  if (trim(review.status) !== 'invalid') return false;
+  const issues = list(review.issues);
+  return issues.length > 0
+    && issues.every(issue => CHAT_FORMAT_GUARDIAN_CHECK_FAILURE_ISSUE_TYPES.has(trim(issue?.type)));
+};
+
+const getChatFormatGuardianTitle = (result = null) => {
+  if (isChatFormatGuardianCheckIncomplete(result?.modelReview)) return '格式检查未完成';
+  const status = trim(result?.status);
   if (status === 'invalid') return '聊天格式错误';
   if (status === 'needs_review') return '聊天格式待确认';
   return '聊天格式已验证';
@@ -442,7 +458,7 @@ export const buildChatFormatGuardianMessagePart = ({
     source: CHAT_FORMAT_GUARDIAN_SOURCE,
     kind: 'chat_format.validate',
     status,
-    title: getChatFormatGuardianTitle(result?.status),
+    title: getChatFormatGuardianTitle(result),
     summary: result?.summary || summary,
     createdAt: at,
     updatedAt: at,
@@ -675,7 +691,7 @@ export const buildChatFormatGuardianAgentRun = ({
   return {
     id: runId,
     kind: CHAT_FORMAT_GUARDIAN_KIND,
-    title: getChatFormatGuardianTitle(result?.status),
+    title: getChatFormatGuardianTitle(result),
     sessionId: trim(sessionId),
     surface,
     trigger: 'after_receive',
@@ -689,7 +705,7 @@ export const buildChatFormatGuardianAgentRun = ({
       id: `${runId}:validate`,
       runId,
       type: 'chat_format.validate',
-      title: getChatFormatGuardianTitle(result?.status),
+      title: getChatFormatGuardianTitle(result),
       status,
       summary,
       input: {
@@ -875,7 +891,9 @@ const buildChatFormatGuardianModelResult = ({
     status,
     summary: status === 'ready'
       ? '模型格式检查通过'
-      : (review?.canRepair ? '模型发现可修复格式问题' : '模型发现格式问题'),
+      : isChatFormatGuardianCheckIncomplete(review)
+        ? '格式检查未完成'
+        : (review?.canRepair ? '模型发现可修复格式问题' : '模型发现格式问题'),
     errors,
     warnings,
     sourceMessageId: trim(message?.id || options?.sourceMessageId),

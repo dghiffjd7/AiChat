@@ -325,3 +325,63 @@ import {
   assert.equal(createdInputs[0].row_data.time, '第3轮');
   console.log('ok - agent write commit stamps app coverage on summary rows via resolved turn number');
 }
+
+{
+  // 代写路径同样要盖锚点：否则删楼重编号后这些行没有修复通道，_coverage 停在旧轮号。
+  const summaryTable = {
+    id: 'chat_summary',
+    name: '摘要',
+    scope: 'contact',
+    columns: [{ id: 'summary', name: '摘要' }],
+  };
+  const summaryTableById = new Map([['chat_summary', summaryTable]]);
+  const summaryRowsById = new Map();
+  const summaryRowsByTableScope = new Map();
+  const summaryResolvers = createMemoryActionResolvers({
+    tableById: summaryTableById,
+    tableNameMap: new Map([['摘要', 'chat_summary']]),
+    tableOrder: ['chat_summary'],
+    rowIndexMap: {},
+    rowsByTableScope: summaryRowsByTableScope,
+    sessionId: 'chat:1',
+    isGroup: false,
+  });
+  const createdInputs = [];
+  const runtime = createMemoryPreviewCommitRuntime({
+    memoryTableStore: {
+      async updateMemory() {},
+      async batchCreateMemories(inputs) {
+        createdInputs.push(...inputs);
+        return inputs.length;
+      },
+    },
+    memoryTemplateStore: { ready: true },
+    getUiMode: () => 'chat',
+    getContact: sid => ({ id: sid, isGroup: false }),
+    resolveCurrentTurnNumber: async () => 3,
+    resolveTimelineMessageId: async (sid, turn) => `${sid}::u${turn}`,
+    loadActionContext: async () => ({
+      templateId: 'tpl-memory',
+      record: { id: 'tpl-memory' },
+      tableById: summaryTableById,
+      rowsById: summaryRowsById,
+      rowsByTableScope: summaryRowsByTableScope,
+      allRows: [],
+      ...summaryResolvers,
+    }),
+  });
+  const commit = await runtime.commit({
+    args: {
+      sessionId: 'chat:1',
+      actions: [{ action: 'insert', tableId: 'chat_summary', data: { summary: '本轮摘要' } }],
+    },
+  });
+  assert.equal(commit.status, 'committed');
+  assert.deepEqual(createdInputs[0].row_data._coverage, {
+    from: 3,
+    to: 3,
+    source: 'app',
+    message_id: 'chat:1::u3',
+  });
+  console.log('ok - agent write commit stamps the resolved anchor message id into _coverage');
+}

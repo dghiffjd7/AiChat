@@ -1417,6 +1417,46 @@ export const countUserTurnsForMemoryTimeline = (messages = []) => {
   return count;
 };
 
+// 覆盖盖章的锚点消息：轮次由用户消息定义（与 countUserTurnsForMemoryTimeline 同口径），
+// 且盖章发生在本轮助手消息 append 之前——此刻助手消息还不存在，取尾部助手消息会锚到上一轮。
+// 必须按已解析出的 currentTurnNumber 反查第 N 条用户消息，不能独立取尾部：
+// 各链路的轮号解析口径不同（协议链由尾部助手消息推导），独立取尾会与盖上的区间差一轮，
+// 首次修复就会把行错误平移。按轮号反查则 anchor 轮号 === 盖章轮号按构造成立。
+// 查不到（轮号未知 / 消息不在当前 store）返回空串 → 不盖锚点，退回既有行为。
+export const findMemoryTimelineAnchorMessageId = (messages = [], turnNumber = 0) => {
+  const target = Math.trunc(Number(turnNumber));
+  if (!Number.isFinite(target) || target <= 0) return '';
+  let turn = 0;
+  for (const message of Array.isArray(messages) ? messages : []) {
+    if (!message || message.role !== 'user') continue;
+    const meta = message?.meta && typeof message.meta === 'object' ? message.meta : {};
+    if (meta.generatedByAssistant === true) continue;
+    turn += 1;
+    if (turn === target) return String(message.id || '').trim();
+  }
+  return '';
+};
+
+// 盖章锚点解析（两条 applyMemoryEdits 链共用，防口径漂移）：
+// 显式 timelineMessageId 优先——滑动重生成 / 继续 / 编辑原文指定的是具体楼层，
+// 可能并非尾轮；主发送链没有显式 id，回退到 resolveTimelineMessageId 给出的本轮锚点。
+export const resolveMemoryCoverageAnchorMessageId = async ({
+  sessionId = '',
+  timelineMessageId = '',
+  currentTurnNumber = 0,
+  resolveTimelineMessageId = null,
+} = {}) => {
+  const explicit = String(timelineMessageId || '').trim();
+  if (explicit) return explicit;
+  const sid = String(sessionId || '').trim();
+  if (!sid || typeof resolveTimelineMessageId !== 'function') return '';
+  try {
+    return String((await resolveTimelineMessageId(sid, currentTurnNumber)) || '').trim();
+  } catch {
+    return '';
+  }
+};
+
 export const normalizeTimelineMemoryActionData = ({
   tableId = '',
   rowData = null,

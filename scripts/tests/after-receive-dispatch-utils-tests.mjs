@@ -516,6 +516,82 @@ test('buildChatFormatGuardianAgentRun records bounded model repair return detail
   assert.equal(run.metadata.repairCandidate.replacementText, undefined);
 });
 
+test('checker malfunction is labeled 格式检查未完成, never 聊天格式错误', () => {
+  // 检查器故障与「检查完成且发现问题」共用 invalid 状态：标题必须区分责任方，
+  // 否则检查模型自己坏了会被渲染成「聊天格式错误」，指向用户的聊天内容。
+  const buildResult = ({ issueType, message, summary = '' }) => ({
+    status: 'invalid',
+    ...(summary ? { summary } : {}),
+    sourceMessageId: 'm-guardian',
+    errors: [message],
+    warnings: [],
+    modelReview: {
+      ok: false,
+      status: 'invalid',
+      canRepair: false,
+      issues: [{ severity: 'error', type: issueType, message, evidence: '' }],
+    },
+  });
+
+  // 请求失败/超时路径（failure builder 形态）
+  const timedOut = buildChatFormatGuardianAgentRun({
+    now: 1000,
+    sessionId: 'contact:boss',
+    message: { id: 'm-guardian', role: 'assistant' },
+    result: buildResult({
+      issueType: 'timeout',
+      message: '格式修复请求超时（75 秒）',
+      summary: '格式修复请求失败',
+    }),
+  });
+  assert.equal(timedOut.status, 'failed');
+  assert.equal(timedOut.title, '格式检查未完成');
+  assert.equal(timedOut.steps[0].title, '格式检查未完成');
+  assert.equal(timedOut.errorMessage, '格式修复请求超时（75 秒）');
+
+  // 模型返回不可解析 JSON 路径（normalize 兜底形态；实际发生过的形态）
+  const parseFailed = buildResult({ issueType: 'parse_error', message: '模型未返回可解析的 JSON' });
+  assert.equal(
+    buildChatFormatGuardianAgentRun({
+      now: 1000,
+      sessionId: 'contact:boss',
+      message: { id: 'm-guardian', role: 'assistant' },
+      result: parseFailed,
+    }).title,
+    '格式检查未完成',
+  );
+  assert.equal(
+    buildChatFormatGuardianMessagePart({
+      now: 1000,
+      sessionId: 'contact:boss',
+      message: { id: 'm-guardian', role: 'assistant' },
+      result: parseFailed,
+    }).title,
+    '格式检查未完成',
+  );
+
+  // 检查完成、真实格式问题：标题保持「聊天格式错误」，status 仍是 failed
+  const realInvalid = buildChatFormatGuardianAgentRun({
+    now: 1000,
+    sessionId: 'contact:boss',
+    message: { id: 'm-guardian', role: 'assistant' },
+    result: buildResult({ issueType: 'missing_wrapper', message: '缺少 msg_start 包裹' }),
+  });
+  assert.equal(realInvalid.status, 'failed');
+  assert.equal(realInvalid.title, '聊天格式错误');
+
+  // 无 modelReview 的解析器级 invalid（未启用模型检查）：同样保持「聊天格式错误」
+  assert.equal(
+    buildChatFormatGuardianAgentRun({
+      now: 1000,
+      sessionId: 'contact:boss',
+      message: { id: 'm-guardian', role: 'assistant' },
+      result: { status: 'invalid', sourceMessageId: 'm-guardian', errors: ['content is required'], warnings: [] },
+    }).title,
+    '聊天格式错误',
+  );
+});
+
 test('runChatFormatGuardianPreview keeps ready results silent by default', () => {
   const runs = [];
   const result = runChatFormatGuardianPreview({
