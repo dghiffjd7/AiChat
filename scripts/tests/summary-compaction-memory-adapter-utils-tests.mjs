@@ -6,6 +6,7 @@ import {
   resolveMemorySummaryTableId,
 } from '../../src/scripts/ui/chat/summary-compaction-memory-adapter-utils.js';
 import { createSessionSummaryCompactionRuntime } from '../../src/scripts/ui/chat/summary-compaction-runtime-utils.js';
+import { buildMemoryCoverageLine } from '../../src/scripts/memory/memory-coverage-utils.js';
 
 assert.equal(resolveMemorySummaryTableId({ place: 'chat', isGroup: false }), 'chat_summary');
 assert.equal(resolveMemorySummaryTableId({ place: 'chat', isGroup: true }), 'group_summary');
@@ -193,3 +194,82 @@ assert.deepEqual(createCalls[0].row_data._summary_compaction.source_row_ids, [
 console.log('ok - table memory compaction reads summary rows and writes a rollback-friendly memory row through an adapter');
 console.log('ok - legacy time-text summary rows keep coverage through compaction via fallback interval parsing');
 
+
+{
+  // 源行之间有真实空洞（第 3 轮无摘要）：产物 _coverage 必须保留区间并集，
+  // 不得并成连续跨度把洞标成已覆盖（吞洞会让覆盖线护栏失效）。
+  const holeRows = [
+    {
+      id: 'hole-1',
+      table_id: 'chat_summary',
+      contact_id: 'c1',
+      row_data: { time: '第1-2轮', summary: '前段', _coverage: { from: 1, to: 2, source: 'app' } },
+      is_active: true,
+      sort_order: 2,
+      created_at: 1,
+    },
+    {
+      id: 'hole-2',
+      table_id: 'chat_summary',
+      contact_id: 'c1',
+      row_data: { time: '第4-5轮', summary: '后段', _coverage: { from: 4, to: 5, source: 'app' } },
+      is_active: true,
+      sort_order: 5,
+      created_at: 2,
+    },
+  ];
+  const holeCreates = [];
+  const holeStore = {
+    async getMemories() {
+      return holeRows;
+    },
+    async updateMemory(payload) {
+      const row = holeRows.find(item => item.id === payload.id);
+      if (row && Object.prototype.hasOwnProperty.call(payload, 'is_active')) {
+        row.is_active = payload.is_active;
+      }
+    },
+    async createMemory(payload) {
+      holeCreates.push(payload);
+      const created = { ...payload, id: 'hole-compacted', created_at: 30 };
+      holeRows.push(created);
+      return created;
+    },
+  };
+  const holeAdapter = createMemoryTableSummaryCompactionAdapter({
+    memoryTableStore: holeStore,
+    memoryTemplateStore: {
+      async getTemplates() {
+        return [{ id: 'default-v1' }];
+      },
+    },
+    sessionId: 'c1',
+    place: 'chat',
+    isGroup: false,
+  });
+  const holeItems = await holeAdapter.getItems();
+  assert.deepEqual(holeItems.map(item => item.intervals), [
+    [{ from: 1, to: 2 }],
+    [{ from: 4, to: 5 }],
+  ]);
+  await holeAdapter.persist({ text: '压缩后', raw: '', items: holeItems, keepItems: [] });
+  assert.deepEqual(holeCreates[0].row_data._coverage, {
+    from: 1,
+    to: 5,
+    source: 'compaction',
+    intervals: [{ from: 1, to: 2 }, { from: 4, to: 5 }],
+  });
+  const line = buildMemoryCoverageLine({
+    summaryRows: [holeCreates[0]],
+    fromTurn: 1,
+    toTurn: 5,
+  });
+  assert.deepEqual(line.holes, [{ from: 3, to: 3 }]);
+  // 再压缩时产物作为源行，区间并集必须继续传递
+  const recompactedItems = normalizeMemorySummaryRows(
+    [{ ...holeCreates[0], id: 'hole-compacted', created_at: 30, row_data: { ...holeCreates[0].row_data, _summary_compaction: undefined } }],
+    'chat_summary',
+  );
+  assert.deepEqual(recompactedItems[0].intervals, [{ from: 1, to: 2 }, { from: 4, to: 5 }]);
+  console.log('ok - compaction product keeps interval union so coverage holes stay detectable');
+}

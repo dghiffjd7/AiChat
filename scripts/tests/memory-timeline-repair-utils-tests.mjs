@@ -146,3 +146,106 @@ import {
   assert.equal(plan.unrepairable.length, 0);
   console.log('ok - buildMemoryTimelineRepairPlan trusts canonical round when timestamp is slightly early');
 }
+
+{
+  // 压缩产物 / 无锚定 _coverage 行 / 模型区间标签：绝不按时间戳吸附改写。
+  // 压缩行 created_at 是压缩时刻，时间戳吸附会把「第2-5轮」塌缩成错误单点并抬 sort_order。
+  const plan = buildMemoryTimelineRepairPlan({
+    tables: [{ id: 'chat_summary', scope: 'contact' }],
+    messages: [
+      { id: '1770000000900-u', role: 'user', timestamp: 1770000000900 },
+      { id: '1770000001000-a', role: 'assistant', timestamp: 1770000001000 },
+      { id: '1770000001900-u', role: 'user', timestamp: 1770000001900 },
+      { id: '1770000002000-b', role: 'assistant', timestamp: 1770000002000 },
+    ],
+    rows: [
+      {
+        id: 'mem_1770000002100_0',
+        table_id: 'chat_summary',
+        row_data: {
+          summary: '压缩产物',
+          time: '第2-5轮',
+          _coverage: { from: 2, to: 5, source: 'compaction' },
+          _summary_compaction: { level: 'rolling' },
+        },
+        sort_order: 5,
+      },
+      {
+        id: 'mem_1770000002200_0',
+        table_id: 'chat_summary',
+        row_data: { summary: '旧模型区间', time: '第1-3轮' },
+        sort_order: 3,
+      },
+    ],
+  });
+  assert.equal(plan.checked, 2);
+  assert.equal(plan.repairable.length, 0);
+  console.log('ok - repair plan never collapses coverage or compaction interval rows by timestamp proximity');
+}
+
+{
+  // app 盖章行按 _coverage.message_id 锚定重排：删楼重编号后 time、sort_order、
+  // _coverage（含 intervals）一起平移；锚定消息已删除则保守不动。
+  const plan = buildMemoryTimelineRepairPlan({
+    tables: [{ id: 'chat_summary', scope: 'contact' }],
+    messages: [
+      { id: 'u2', role: 'user', timestamp: 2000 },
+      { id: 'a2', role: 'assistant', timestamp: 2100 },
+      { id: 'u3', role: 'user', timestamp: 3000 },
+      { id: 'a3', role: 'assistant', timestamp: 3100 },
+    ],
+    rows: [
+      {
+        id: 'mem_shifted',
+        table_id: 'chat_summary',
+        row_data: {
+          summary: '双轮摘要',
+          time: '第2-3轮',
+          _coverage: {
+            from: 2,
+            to: 3,
+            source: 'app',
+            message_id: 'a3',
+            intervals: [{ from: 2, to: 2 }, { from: 3, to: 3 }],
+          },
+        },
+        sort_order: 3,
+      },
+      {
+        id: 'mem_healthy',
+        table_id: 'chat_summary',
+        row_data: {
+          summary: '健康行',
+          time: '第1轮',
+          _coverage: { from: 1, to: 1, source: 'app', message_id: 'a2' },
+        },
+        sort_order: 1,
+      },
+      {
+        id: 'mem_orphan',
+        table_id: 'chat_summary',
+        row_data: {
+          summary: '锚定已删',
+          time: '第9轮',
+          _coverage: { from: 9, to: 9, source: 'app', message_id: 'gone' },
+        },
+        sort_order: 9,
+      },
+    ],
+  });
+  assert.equal(plan.checked, 3);
+  assert.equal(plan.repairable.length, 1);
+  const repair = plan.repairable[0];
+  assert.equal(repair.rowId, 'mem_shifted');
+  assert.equal(repair.expectedRound, 2);
+  assert.equal(repair.sortOrder, 2);
+  assert.equal(repair.rowData.time, '第1-2轮');
+  assert.deepEqual(repair.rowData._coverage, {
+    from: 1,
+    to: 2,
+    source: 'app',
+    message_id: 'a3',
+    intervals: [{ from: 1, to: 1 }, { from: 2, to: 2 }],
+  });
+  console.log('ok - app-stamped rows renumber via coverage anchor and keep _coverage in sync');
+}

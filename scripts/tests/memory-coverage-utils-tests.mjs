@@ -6,6 +6,7 @@ import {
   mergeMemoryCoverageIntervals,
   parseMemoryCoverageInterval,
   readMemoryCoverageInterval,
+  readMemoryCoverageIntervals,
   resolveMemoryCoverageStampInterval,
   stampMemoryCoverage,
 } from '../../src/scripts/memory/memory-coverage-utils.js';
@@ -160,3 +161,37 @@ assert.equal(resolveMemoryCoverageStampInterval({ currentTurnNumber: 0, summaryR
 
 console.log('ok - coverage stamp interval derives from prior covered turns instead of context rounds');
 
+
+// 复数区间读取：_coverage.intervals（压缩产物的源区间并集）优先于单点跨度
+assert.deepEqual(
+  readMemoryCoverageIntervals({
+    row_data: {
+      _coverage: { from: 1, to: 5, source: 'compaction', intervals: [{ from: 1, to: 2 }, { from: 4, to: 5 }] },
+    },
+  }),
+  [{ from: 1, to: 2, source: 'compaction' }, { from: 4, to: 5, source: 'compaction' }],
+);
+// 无 intervals 时退回单区间读取（含 time 文本兜底）
+assert.deepEqual(
+  readMemoryCoverageIntervals({ row_data: { time: '第3-4轮' } }),
+  [{ from: 3, to: 4, source: 'model_text_fallback' }],
+);
+assert.deepEqual(readMemoryCoverageIntervals({ row_data: { summary: '无区间' } }), []);
+// 覆盖线按并集算：压缩产物跨度 1-5、实际只盖 1-2 与 4-5 → 第 3 轮必须报洞
+{
+  const line = buildMemoryCoverageLine({
+    summaryRows: [{
+      is_active: true,
+      row_data: {
+        summary: '压缩',
+        _coverage: { from: 1, to: 5, source: 'compaction', intervals: [{ from: 1, to: 2 }, { from: 4, to: 5 }] },
+      },
+    }],
+    fromTurn: 1,
+    toTurn: 5,
+  });
+  assert.deepEqual(line.holes, [{ from: 3, to: 3 }]);
+  assert.equal(line.complete, false);
+  assert.equal(line.coveredTurns, 4);
+}
+console.log('ok - coverage line honors interval union on compaction rows instead of span');

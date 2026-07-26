@@ -4,6 +4,10 @@ import {
   getMemoryRowSortOrder,
   isTimelineMemoryTableId,
 } from './memory-row-order.js';
+import {
+  normalizeMemoryCoverageInterval,
+  parseMemoryCoverageInterval,
+} from './memory-coverage-utils.js';
 
 const DEFAULT_MAX_MATCH_DISTANCE_MS = 15 * 60 * 1000;
 export const MEMORY_TIMELINE_AUTO_REPAIR_VERSION = 'user-turn-v2';
@@ -241,6 +245,56 @@ export const buildMemoryTimelineRepairPlan = ({
     const table = tableById.get(tableId);
     if (table && String(table.scope || '').trim().toLowerCase() === 'global') continue;
     checked += 1;
+    const baseRowData = row?.row_data && typeof row.row_data === 'object' ? row.row_data : {};
+    const coverageMeta = baseRowData?._coverage && typeof baseRowData._coverage === 'object'
+      ? baseRowData._coverage
+      : null;
+    const coverageInterval = coverageMeta ? normalizeMemoryCoverageInterval(coverageMeta) : null;
+    const coverageAnchorId = String(coverageMeta?.message_id || '').trim();
+    if (coverageInterval && coverageAnchorId) {
+      // app 盖章行：按锚定消息精确重排。删楼重编号后时间戳吸附会指错楼，
+      // 且 _coverage 才是覆盖线护栏的权威输入，必须与 time 标签一起同步。
+      const anchor = assistantTimeline.find(item => item.id === coverageAnchorId) || null;
+      if (!anchor?.floor) continue; // 锚定消息已删除：保守不动，绝不退回时间戳吸附
+      const expectedTo = Math.trunc(Number(anchor.floor));
+      const delta = expectedTo - coverageInterval.to;
+      const anchoredSortOrder = getMemoryRowSortOrder(row);
+      if (delta === 0 && anchoredSortOrder === expectedTo) continue;
+      const expectedFrom = Math.max(1, coverageInterval.from + delta);
+      const nextCoverage = { ...coverageMeta, from: expectedFrom, to: expectedTo };
+      if (Array.isArray(coverageMeta.intervals)) {
+        nextCoverage.intervals = coverageMeta.intervals
+          .map(interval => normalizeMemoryCoverageInterval(interval || {}))
+          .filter(Boolean)
+          .map(interval => ({
+            from: Math.max(1, interval.from + delta),
+            to: Math.max(1, interval.to + delta),
+          }));
+      }
+      repairable.push({
+        rowId: id,
+        tableId,
+        currentRound: extractMemoryTimelineRound(baseRowData.time),
+        currentSortOrder: anchoredSortOrder,
+        expectedRound: expectedTo,
+        assistantMessageId: anchor.id,
+        distanceMs: 0,
+        rowTimestamp: getMemoryTimelineRowTimestamp(row),
+        rowData: {
+          ...baseRowData,
+          time: buildMemoryTimelineLabel(expectedFrom, expectedTo),
+          _coverage: nextCoverage,
+        },
+        sortOrder: expectedTo,
+      });
+      continue;
+    }
+    // 无锚定的 _coverage 行（压缩产物等）与滚动压缩行：区间权威在 _coverage，
+    // 行时间戳是压缩/写入时刻，按时间戳吸附会把区间标签改写成错误的单点。
+    if (coverageInterval || baseRowData?._summary_compaction?.level === 'rolling') continue;
+    // 无 _coverage 的模型区间标签（第A-B轮）是展示兜底，禁止塌缩成单点。
+    const fallbackInterval = parseMemoryCoverageInterval(baseRowData.time);
+    if (fallbackInterval && fallbackInterval.from !== fallbackInterval.to) continue;
     const currentRound = extractMemoryTimelineRound(row?.row_data?.time);
     const currentSortOrder = getMemoryRowSortOrder(row);
     const rowTimestamp = getMemoryTimelineRowTimestamp(row);

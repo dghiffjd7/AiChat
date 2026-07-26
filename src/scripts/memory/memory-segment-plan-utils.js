@@ -1,7 +1,9 @@
 import {
   buildMemoryTablePlan,
   estimateTokens,
+  isSummaryLimitTableId,
   isSummaryTableId,
+  limitSummaryRowsForPrompt,
 } from './memory-prompt-utils.js';
 import { resolveMemoryRowOrderKey } from './memory-row-order.js';
 import { isOutlineTableId } from './outline-section-utils.js';
@@ -92,6 +94,36 @@ export const partitionMemoryRowsForPrompt = (
   return {
     workingRows: list.filter(row => !archiveRefs.has(row)),
     archiveRows: list.filter(row => archiveRefs.has(row)),
+  };
+};
+
+// 常驻/召回分层的唯一实现：bridge 注入链与离线评测器共用，防两侧口径漂移
+// （尤其召回准入 isMemoryRowRecallEligible 必须一致，否则评测结果不代表生产）。
+export const buildMemoryPromptRowLayers = (
+  rows = [],
+  {
+    summaryRowLimit = 10,
+    archiveRetentionByTable = { events: 3 },
+  } = {},
+) => {
+  const list = Array.isArray(rows) ? rows.filter(Boolean) : [];
+  const layers = partitionMemoryRowsForPrompt(list, { archiveRetentionByTable });
+  const workingRows = layers.workingRows.filter(row => row?.is_active !== false);
+  const limitedRows = limitSummaryRowsForPrompt(workingRows, summaryRowLimit);
+  const limitedRefs = new Set(limitedRows);
+  const archiveRefs = new Set(layers.archiveRows);
+  const recallCandidateRows = list.filter((row) => {
+    if (archiveRefs.has(row)) return isMemoryRowRecallEligible(row);
+    const tableId = String(row?.table_id || '').trim();
+    return row?.is_active !== false
+      && isSummaryLimitTableId(tableId)
+      && !limitedRefs.has(row);
+  });
+  return {
+    workingRows,
+    archiveRows: layers.archiveRows,
+    limitedRows,
+    recallCandidateRows,
   };
 };
 

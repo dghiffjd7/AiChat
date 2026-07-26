@@ -8,12 +8,8 @@ import { pathToFileURL } from 'node:url';
 import { buildMemoryCoverageLine } from '../src/scripts/memory/memory-coverage-utils.js';
 import { buildMemoryKeywordRecallPlan } from '../src/scripts/memory/memory-keyword-recall-utils.js';
 import {
-  partitionMemoryRowsForPrompt,
+  buildMemoryPromptRowLayers,
 } from '../src/scripts/memory/memory-segment-plan-utils.js';
-import {
-  isSummaryLimitTableId,
-  limitSummaryRowsForPrompt,
-} from '../src/scripts/memory/memory-prompt-utils.js';
 
 const SUMMARY_TABLE_IDS = new Set([
   'chat_summary',
@@ -173,19 +169,11 @@ const resolveAssistantText = (caseItem, messages) => {
   return next?._text || '';
 };
 
+// 与 bridge 注入链共用同一分层实现（含召回准入过滤）：
+// 评测器若自带口径，用户手动禁用的行会被当召回候选，评测结果就不代表生产。
 const buildReplayRowLayers = (rows = []) => {
-  const partitioned = partitionMemoryRowsForPrompt(rows);
-  const activeWorkingRows = partitioned.workingRows.filter(row => row?.is_active !== false);
-  const limitedWorkingRows = limitSummaryRowsForPrompt(activeWorkingRows, 10);
-  const limitedRefs = new Set(limitedWorkingRows);
-  const archiveRefs = new Set(partitioned.archiveRows);
-  const recallRows = rows.filter((row) => {
-    if (archiveRefs.has(row)) return true;
-    return row?.is_active !== false
-      && isSummaryLimitTableId(row?.table_id)
-      && !limitedRefs.has(row);
-  });
-  return { limitedWorkingRows, recallRows };
+  const layers = buildMemoryPromptRowLayers(rows);
+  return { limitedWorkingRows: layers.limitedRows, recallRows: layers.recallCandidateRows };
 };
 
 export const normalizeMemoryReplayDataset = (input = {}) => {

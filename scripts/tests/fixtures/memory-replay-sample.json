@@ -49,7 +49,17 @@
       "is_active": false,
       "row_data": {
         "description": "林家的账本在旧仓库被发现。",
-        "keywords": "林家,账本,旧仓库"
+        "keywords": "林家,账本,旧仓库",
+        "_archived_by": "compaction"
+      }
+    },
+    {
+      "id": "event-vetoed",
+      "table_id": "events",
+      "is_active": false,
+      "row_data": {
+        "description": "林家的账本其实是伪造的。",
+        "keywords": "林家,账本"
       }
     }
   ],

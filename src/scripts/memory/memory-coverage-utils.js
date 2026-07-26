@@ -90,6 +90,25 @@ export const mergeMemoryCoverageIntervals = (intervals = []) => {
   return merged;
 };
 
+// 行级覆盖读取（复数版）：压缩产物用 _coverage.intervals 保留源区间并集，
+// 单点 from/to 只是展示/排序用的跨度——覆盖线必须按并集算，否则源区间之间的
+// 真实空洞会被跨度掩盖（吞洞），护栏恰在最需要它的场景失效。
+export const readMemoryCoverageIntervals = (row = {}) => {
+  const data = row?.row_data && typeof row.row_data === 'object'
+    ? row.row_data
+    : (row && typeof row === 'object' ? row : {});
+  const meta = data?._coverage;
+  if (meta && Array.isArray(meta.intervals)) {
+    const merged = mergeMemoryCoverageIntervals(meta.intervals);
+    if (merged.length) {
+      const source = String(meta?.source || 'app');
+      return merged.map(interval => ({ ...interval, source }));
+    }
+  }
+  const single = readMemoryCoverageInterval(row);
+  return single ? [single] : [];
+};
+
 export const buildMemoryCoverageLine = ({
   summaryRows = [],
   fromTurn = 1,
@@ -100,8 +119,7 @@ export const buildMemoryCoverageLine = ({
   const intervals = mergeMemoryCoverageIntervals(
     (Array.isArray(summaryRows) ? summaryRows : [])
       .filter(row => row?.is_active !== false)
-      .map(readMemoryCoverageInterval)
-      .filter(Boolean),
+      .flatMap(readMemoryCoverageIntervals),
   );
   if (to === null || to < from) {
     return {

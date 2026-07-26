@@ -86,8 +86,6 @@ import {
   estimateTokens,
   getMemoryBridgeTablePromptLabel,
   isSummaryTableId,
-  isSummaryLimitTableId,
-  limitSummaryRowsForPrompt,
   formatMemoryRowText,
   normalizeMemoryCell,
   normalizeMemoryUpdateMode,
@@ -99,6 +97,7 @@ import {
   buildMemoryPlanAudit,
   buildRequestInjectionAudit,
   estimatePromptMessagesTokens,
+  promptMessagesContainNonTextContent,
 } from '../memory/memory-injection-audit-utils.js';
 import { isOutlineTableId } from '../memory/outline-section-utils.js';
 import {
@@ -106,10 +105,9 @@ import {
   resolveMemoryBudgetEnvelope,
 } from '../memory/memory-budget-allocator-utils.js';
 import {
+  buildMemoryPromptRowLayers,
   buildSegmentedMemoryTablePlan,
   estimateMemorySegmentDemands,
-  isMemoryRowRecallEligible,
-  partitionMemoryRowsForPrompt,
 } from '../memory/memory-segment-plan-utils.js';
 import { buildMemoryKeywordRecallPlan } from '../memory/memory-keyword-recall-utils.js';
 import {
@@ -1227,19 +1225,12 @@ class AppBridge {
         return table ? rowMatchesTableScope(row, table) : false;
       });
     const rows = matchingRows.filter(row => row?.is_active !== false);
-    const rowLayers = partitionMemoryRowsForPrompt(matchingRows);
-    const workingRows = rowLayers.workingRows.filter(row => row?.is_active !== false);
+    // 分层逻辑收敛到共享纯函数：离线评测器回放同一实现，别在这里另写口径
+    const rowLayers = buildMemoryPromptRowLayers(matchingRows);
+    const workingRows = rowLayers.workingRows;
     const resolveRowSortKey = (row, tableId = '', fallback = 0) => resolveMemoryRowOrderKey(row, tableId, fallback);
-    const limitedRows = limitSummaryRowsForPrompt(workingRows, 10);
-    const limitedRowRefs = new Set(limitedRows);
-    const archiveRowRefs = new Set(rowLayers.archiveRows);
-    const recallCandidateRows = matchingRows.filter((row) => {
-      if (archiveRowRefs.has(row)) return isMemoryRowRecallEligible(row);
-      const tableId = String(row?.table_id || '').trim();
-      return row?.is_active !== false
-        && isSummaryLimitTableId(tableId)
-        && !limitedRowRefs.has(row);
-    });
+    const limitedRows = rowLayers.limitedRows;
+    const recallCandidateRows = rowLayers.recallCandidateRows;
 
     const localDemands = estimateMemorySegmentDemands({
       rows: limitedRows,
@@ -3880,11 +3871,13 @@ class AppBridge {
       const generationStartedAt = Date.now();
       let rawEstimatedPromptTokens = 0;
       let calibrationRecorded = false;
+      let calibrationEligible = true;
       requestOptions.onProviderUsage = (usage) => {
         let calibration = this.getTokenCalibration(config?.provider, config?.model);
         const actualPromptTokens = Math.trunc(Number(usage?.promptTokens));
         if (
           !calibrationRecorded
+          && calibrationEligible
           && Number.isFinite(actualPromptTokens)
           && actualPromptTokens > 0
           && rawEstimatedPromptTokens > 0
@@ -3914,6 +3907,9 @@ class AppBridge {
       const responsePrefix = String(preparedRequest?.responsePrefix || '');
       const finalRequestMessages = preparedRequest?.messages || messages;
       rawEstimatedPromptTokens = estimatePromptMessagesTokens(finalRequestMessages, 'rough');
+      // 带图/语音请求不进校准样本：估算把附件折成占位符，而 usage 含真实附件 token，
+      // 比值会被顶到上限并经 EWMA 拉高系数，之后纯文本请求会被系统性高估。
+      calibrationEligible = !promptMessagesContainNonTextContent(finalRequestMessages);
       const injectionAudit = buildRequestInjectionAudit({
         memoryPlan: this.lastMemoryPlan,
         history: nextContext?.history,

@@ -1,5 +1,8 @@
 import { resolveMemoryRowOrderKey } from '../../memory/memory-row-order.js';
-import { readMemoryCoverageInterval } from '../../memory/memory-coverage-utils.js';
+import {
+  mergeMemoryCoverageIntervals,
+  readMemoryCoverageIntervals,
+} from '../../memory/memory-coverage-utils.js';
 
 export const resolveMemorySummaryTableId = ({ place = 'chat', isGroup = false } = {}) => {
   const mode = String(place || '').trim().toLowerCase();
@@ -13,9 +16,15 @@ const getSummaryText = (row = {}) =>
 
 // 覆盖区间走统一读取口（含 time 文本兜底）：存量会话的旧摘要行没有 _coverage，
 // 压缩时若丢掉兜底区间，压缩产物会把已覆盖轮次变成空洞、触发覆盖线护栏强留原文。
+// intervals 保留每行的区间并集：再压缩时不得把源行之间的真实空洞并成连续跨度。
 const getCoverage = (row = {}) => {
-  const interval = readMemoryCoverageInterval(row);
-  return { from: interval?.from ?? null, to: interval?.to ?? null };
+  const intervals = readMemoryCoverageIntervals(row);
+  if (!intervals.length) return { from: null, to: null, intervals: [] };
+  return {
+    from: intervals[0].from,
+    to: intervals[intervals.length - 1].to,
+    intervals: intervals.map(({ from, to }) => ({ from, to })),
+  };
 };
 
 export const normalizeMemorySummaryRows = (rows = [], tableId = '') => (
@@ -33,6 +42,7 @@ export const normalizeMemorySummaryRows = (rows = [], tableId = '') => (
         at: Number(row?.created_at || row?.updated_at || 0) || 0,
         from: coverage.from,
         to: coverage.to,
+        intervals: coverage.intervals,
         order: resolveMemoryRowOrderKey(row, tableId, index),
         row,
       };
@@ -135,24 +145,36 @@ export const createMemoryTableSummaryCompactionAdapter = ({
       if (previousCompacted?.id) {
         await deactivateAsCompactionArchive(String(previousCompacted.id), previousCompacted?.row_data);
       }
-      const coveredFrom = sourceItems
-        .map(item => Number(item?.from))
-        .filter(value => Number.isFinite(value) && value > 0);
-      const coveredTo = sourceItems
-        .map(item => Number(item?.to))
-        .filter(value => Number.isFinite(value) && value > 0);
+      // 并集而非 min/max 跨度：源行之间的真实空洞（中间行被停用/删除）必须保留在
+      // _coverage.intervals 里，否则覆盖线不再报洞、强留原文护栏失效。
+      const coveredIntervals = mergeMemoryCoverageIntervals(
+        sourceItems.flatMap(item => (
+          Array.isArray(item?.intervals) && item.intervals.length
+            ? item.intervals
+            : [{ from: item?.from, to: item?.to }]
+        )),
+      );
+      const coveredFrom = coveredIntervals.length ? coveredIntervals[0].from : null;
+      const coveredTo = coveredIntervals.length
+        ? coveredIntervals[coveredIntervals.length - 1].to
+        : null;
       const scopeFields = resolveScopeFields({ sessionId: sid, place, isGroup });
       const created = await memoryTableStore.createMemory({
         template_id: tid,
         table_id: tableId,
         ...scopeFields,
         row_data: {
-          time: coveredFrom.length && coveredTo.length
-            ? `第${Math.min(...coveredFrom)}-${Math.max(...coveredTo)}轮`
+          time: coveredIntervals.length
+            ? `第${coveredFrom}-${coveredTo}轮`
             : '滚动压缩',
           summary: String(text || '').trim(),
-          _coverage: coveredFrom.length && coveredTo.length
-            ? { from: Math.min(...coveredFrom), to: Math.max(...coveredTo), source: 'compaction' }
+          _coverage: coveredIntervals.length
+            ? {
+                from: coveredFrom,
+                to: coveredTo,
+                source: 'compaction',
+                ...(coveredIntervals.length > 1 ? { intervals: coveredIntervals } : {}),
+              }
             : null,
           _summary_compaction: {
             level: 'rolling',
@@ -161,7 +183,7 @@ export const createMemoryTableSummaryCompactionAdapter = ({
           },
         },
         is_active: true,
-        sort_order: coveredTo.length ? Math.max(...coveredTo) : Date.now(),
+        sort_order: coveredIntervals.length ? coveredTo : Date.now(),
       });
       await onPersisted?.({
         sessionId: sid,

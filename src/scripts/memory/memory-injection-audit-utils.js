@@ -1,8 +1,4 @@
-import {
-  estimateTokens,
-  normalizeTokenMode,
-  resolveTokenEstimateCoefficient,
-} from './memory-prompt-utils.js';
+import { estimateTokens } from './memory-prompt-utils.js';
 
 const toNonNegativeInt = (value, fallback = 0) => {
   const next = Math.trunc(Number(value));
@@ -38,6 +34,15 @@ export const estimatePromptMessagesTokens = (messages = [], tokenMode = 'rough')
   (Array.isArray(messages) ? messages : []).reduce((total, message) => (
     total + estimatePromptContentTokens(message?.content, tokenMode)
   ), 0)
+);
+
+// 图片/语音等非文本 part 在估算里只折成占位符，真实 usage 却含附件 token；
+// token 校准取样前用这个判断排除此类请求，避免比值被附件系统性推高。
+export const promptMessagesContainNonTextContent = (messages = []) => (
+  (Array.isArray(messages) ? messages : []).some(message => (
+    Array.isArray(message?.content)
+    && message.content.some(part => part && typeof part === 'object' && part.type !== 'text')
+  ))
 );
 
 export const buildInjectionAuditSegment = ({
@@ -155,8 +160,7 @@ export const buildMemoryPlanAudit = ({
     id: 'memory_guide',
     label: '记忆写表指引',
     text: guidePromptText,
-    tokenMode: normalizeTokenMode(tokenMode),
-    tokenEstimateCoefficient: resolveTokenEstimateCoefficient(tokenMode),
+    tokenMode,
   });
   if (guide.usedTokens > 0) segments.push(guide);
 

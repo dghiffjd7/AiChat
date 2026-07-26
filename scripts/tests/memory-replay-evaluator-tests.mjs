@@ -14,7 +14,7 @@ const fixture = JSON.parse(await readFile(fixturePath, 'utf8'));
 
 const normalized = normalizeMemoryReplayDataset(fixture);
 assert.equal(normalized.messages.length, 6);
-assert.equal(normalized.rows.length, 2);
+assert.equal(normalized.rows.length, 3);
 assert.equal(normalized.cases.length, 2);
 
 const report = evaluateMemoryReplay(fixture);
@@ -23,11 +23,19 @@ assert.equal(report.metrics.coverage.pass, true);
 assert.equal(report.metrics.recall.expectedRows, 1);
 assert.equal(report.metrics.recall.hitRows, 1);
 assert.equal(report.metrics.recall.hitRate, 1);
+assert.equal(report.metrics.recall.precision, 1);
 assert.equal(report.metrics.consistency.assistantReferences, 2);
 assert.equal(report.metrics.consistency.conflicts, 1);
 assert.equal(report.metrics.consistency.conflictRate, 0.5);
 assert.deepEqual(report.cases[0].recall.selectedRowIds, ['event-ledger']);
 assert.deepEqual(report.cases[1].consistency.conflictRowIds, ['event-ledger']);
+
+// 召回准入与生产同口径：event-vetoed 是用户手动禁用（inactive 且无系统归档标记），
+// 不得进入召回候选；event-ledger 带 _archived_by: compaction 才可召回。
+assert.equal(report.totals.recallCandidateRows, 1);
+for (const item of report.cases) {
+  assert.ok(!item.recall.selectedRowIds.includes('event-vetoed'));
+}
 
 const holeReport = evaluateMemoryReplay({
   ...fixture,

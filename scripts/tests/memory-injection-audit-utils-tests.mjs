@@ -3,7 +3,9 @@ import {
   buildMemoryPlanAudit,
   buildRequestInjectionAudit,
   formatInjectionAuditText,
+  promptMessagesContainNonTextContent,
 } from '../../src/scripts/memory/memory-injection-audit-utils.js';
+import { estimateTokens } from '../../src/scripts/memory/memory-prompt-utils.js';
 import {
   renderMemoryInjectionAuditHtml,
 } from '../../src/scripts/ui/chat/memory-injection-audit-view-utils.js';
@@ -102,3 +104,33 @@ assert.deepEqual(noOverQuotaAudit.overQuotaSegments, []);
 assert.doesNotMatch(formatInjectionAuditText(noOverQuotaAudit), /超出配额/);
 
 console.log('ok - state over-quota guardrail warning is surfaced in audit text and html');
+
+{
+  // 写表指引段与其他段共用同一 tokenMode（含校准系数），不再少乘系数导致
+  // guide 段偏小、fixed 段（总量-已知段）被同量高估。
+  const guideText = '<memory_edit_rules>只输出 tableEdit</memory_edit_rules>';
+  const findGuide = audit => audit.segments.find(item => item.id === 'memory_guide');
+  const baseGuide = findGuide(buildMemoryPlanAudit({ guidePromptText: guideText }));
+  const calibratedGuide = findGuide(buildMemoryPlanAudit({
+    guidePromptText: guideText,
+    tokenMode: { mode: 'rough', coefficient: 2 },
+  }));
+  assert.equal(calibratedGuide.usedTokens, estimateTokens(guideText, { mode: 'rough', coefficient: 2 }));
+  assert.ok(calibratedGuide.usedTokens > baseGuide.usedTokens);
+  console.log('ok - guide segment applies the calibrated token mode like every other segment');
+}
+
+{
+  // 非文本 part 检测：校准取样前排除带图/语音请求
+  assert.equal(promptMessagesContainNonTextContent([{ role: 'user', content: '纯文本' }]), false);
+  assert.equal(promptMessagesContainNonTextContent([
+    { role: 'user', content: [{ type: 'text', text: '你好' }] },
+  ]), false);
+  assert.equal(promptMessagesContainNonTextContent([
+    { role: 'user', content: [{ type: 'text', text: '看图' }, { type: 'image_url', image_url: { url: 'data:image/png;base64,x' } }] },
+  ]), true);
+  assert.equal(promptMessagesContainNonTextContent([
+    { role: 'user', content: [{ type: 'input_audio', input_audio: { data: 'x' } }] },
+  ]), true);
+  console.log('ok - non-text prompt content is detected for calibration exclusion');
+}
