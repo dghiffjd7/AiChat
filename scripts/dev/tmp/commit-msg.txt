@@ -1,6 +1,0 @@
-v0.6.3 preview-memory-injection-fix1
-
-核查报告 §5.1 中危项修复：timeline 修复器不再破坏 _coverage 区间行、app 盖章行按锚定消息重排（删楼同步 _coverage）、压缩产物保留源区间并集防吞洞、bridge/评测器共用分层纯函数（召回准入同口径）、带图请求不进校准取样；另修审计 guide 段系数。全部补专项测试。
-
-Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
-Claude-Session: https://claude.ai/code/session_016c6LZh2E2y4GdSAU3yLBdv
