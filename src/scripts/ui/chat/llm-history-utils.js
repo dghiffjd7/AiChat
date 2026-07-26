@@ -157,13 +157,22 @@ export const limitHistoryByTokenBudget = (
   };
 };
 
+// 轮次口径必须与写表盖章端 countUserTurnsForMemoryTimeline 一致：
+// AI 代发的用户消息（meta.generatedByAssistant）不推进轮号，只归属当前轮，
+// 否则含代发消息的会话里覆盖保护会整体错位。
+const isTrackedTurnUserMessage = (message) => {
+  if (!message || message.role !== 'user') return false;
+  const meta = message?.meta && typeof message.meta === 'object' ? message.meta : {};
+  return meta.generatedByAssistant !== true;
+};
+
 export const mapHistoryMessagesToTurns = (history = [], { lastTurn = 0 } = {}) => {
   const list = Array.isArray(history) ? history : [];
-  const userCount = list.filter(message => message?.role === 'user').length;
+  const userCount = list.filter(isTrackedTurnUserMessage).length;
   const normalizedLastTurn = Math.max(userCount, Math.trunc(Number(lastTurn)) || userCount);
   let currentTurn = Math.max(0, normalizedLastTurn - userCount);
   return list.map((message, index) => {
-    if (message?.role === 'user') currentTurn += 1;
+    if (isTrackedTurnUserMessage(message)) currentTurn += 1;
     return {
       index,
       turn: currentTurn > 0 ? currentTurn : null,

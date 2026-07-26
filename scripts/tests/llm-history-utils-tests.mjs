@@ -225,6 +225,26 @@ test('finalizeLlmHistory composes all post-processing steps', () => {
   ]);
 });
 
+test('turn mapping skips assistant-generated user messages like the stamping side', () => {
+  const history = [
+    { role: 'user', content: '第1轮' },
+    { role: 'assistant', content: '回1' },
+    { role: 'user', content: 'AI 代发', meta: { generatedByAssistant: true } },
+    { role: 'user', content: '第2轮' },
+    { role: 'assistant', content: '回2' },
+  ];
+  // 代发消息不推进轮号：与 countUserTurnsForMemoryTimeline 同口径
+  assert.deepEqual(
+    mapHistoryMessagesToTurns(history, { lastTurn: 2 }).map(item => item.turn),
+    [1, 1, 1, 2, 2],
+  );
+  // 空洞保护按同一轮号对齐：第 1 轮的三条（含代发）都被保护
+  assert.deepEqual(
+    resolveCoverageProtectedHistoryIndexes({ history, holes: [{ from: 1, to: 1 }], lastTurn: 2 }),
+    [0, 1, 2],
+  );
+});
+
 let failed = 0;
 for (const t of tests) {
   try {

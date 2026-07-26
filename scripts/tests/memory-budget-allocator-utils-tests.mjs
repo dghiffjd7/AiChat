@@ -132,3 +132,38 @@ assert.equal(segmented.segments.far.items.length, 0);
 assert.equal(segmented.truncated.filter(item => item.reason === 'max_tokens').length, 2);
 
 console.log('ok - unified memory allocator reflows quotas, honors unknown context, and preserves over-quota state');
+
+{
+  // 淘汰次序直测：state 缺口按 recall→far→mid→recent 依次借出，不许越序
+  const borrowed = allocateMemoryTokenQuotas({
+    poolTokens: 1000,
+    ratios: { state: 0.2, recent: 0.2, mid: 0.2, far: 0.2, recall: 0.2 },
+    demands: { state: 550, recent: 200, mid: 200, far: 200, recall: 200 },
+  });
+  // base 各 200；state 缺 350：recall 先掏空（200→0），far 补足剩余 150（200→50），mid/recent 不动
+  assert.equal(borrowed.allocations.state, 550);
+  assert.equal(borrowed.allocations.recall, 0);
+  assert.equal(borrowed.allocations.far, 50);
+  assert.equal(borrowed.allocations.mid, 200);
+  assert.equal(borrowed.allocations.recent, 200);
+  assert.equal(
+    Object.values(borrowed.allocations).reduce((sum, value) => sum + value, 0),
+    1000,
+  );
+  // 被借走的段记入 overQuotaSegments（需求未被满足）
+  assert.deepEqual([...borrowed.overQuotaSegments].sort(), ['far', 'recall']);
+
+  // state 需求超过整池：四个 donor 全部掏空，state 记超配
+  const drained = allocateMemoryTokenQuotas({
+    poolTokens: 500,
+    ratios: { state: 0.2, recent: 0.2, mid: 0.2, far: 0.2, recall: 0.2 },
+    demands: { state: 900, recent: 100, mid: 100, far: 100, recall: 100 },
+  });
+  assert.equal(drained.allocations.state, 500);
+  assert.equal(drained.allocations.recall, 0);
+  assert.equal(drained.allocations.far, 0);
+  assert.equal(drained.allocations.mid, 0);
+  assert.equal(drained.allocations.recent, 0);
+  assert.ok(drained.overQuotaSegments.includes('state'));
+  console.log('ok - state shortfall borrows in recall→far→mid→recent order and reports over-quota segments');
+}

@@ -648,10 +648,20 @@ export class OpenAIProvider {
   // 流式带 stream_options.include_usage 才能拿到 usage 校准样本；严格中转对该字段
   // 报 4xx 点名拒绝时，记忆该端点并去掉重试一次（拒绝发生在首个增量之前，重启安全）。
   async *streamChat(messages, options = {}) {
+    // 只在尚未产出任何增量时才允许去掉 stream_options 重试一次：
+    // 已产出的增量无法收回，整段重跑会把开头内容重复发给用户。
+    let yieldedAny = false;
     try {
-      yield* this.streamChatUnguarded(messages, options);
+      for await (const delta of this.streamChatUnguarded(messages, options)) {
+        yieldedAny = true;
+        yield delta;
+      }
     } catch (error) {
-      if (isStreamOptionsRejectionError(error) && !streamUsageCompat.isMarkedUnsupported(this.baseUrl)) {
+      if (
+        !yieldedAny
+        && isStreamOptionsRejectionError(error)
+        && !streamUsageCompat.isMarkedUnsupported(this.baseUrl)
+      ) {
         streamUsageCompat.markUnsupported(this.baseUrl);
         yield* this.streamChatUnguarded(messages, options);
         return;

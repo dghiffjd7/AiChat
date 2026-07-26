@@ -3,8 +3,20 @@ import { performance } from 'node:perf_hooks';
 
 import {
   buildMemoryTablePlan,
+  estimateTokens,
   limitSummaryRowsForPrompt,
 } from '../../src/scripts/memory/memory-prompt-utils.js';
+import {
+  reflowUnusedRecallToRecent,
+  resolveMemoryBudgetEnvelope,
+} from '../../src/scripts/memory/memory-budget-allocator-utils.js';
+import {
+  buildMemoryPromptRowLayers,
+  buildSegmentedMemoryTablePlan,
+  estimateMemorySegmentDemands,
+} from '../../src/scripts/memory/memory-segment-plan-utils.js';
+import { buildMemoryKeywordRecallPlan } from '../../src/scripts/memory/memory-keyword-recall-utils.js';
+import { limitHistoryByTokenBudget } from '../../src/scripts/ui/chat/llm-history-utils.js';
 
 const tableById = new Map([
   ['rp_summary', {
@@ -82,3 +94,100 @@ assert.ok(
 
 console.log('ok - 3000-row memory injection obeys bridge summary cap, row/token limits, ordering and row index mapping');
 
+
+{
+  // 端到端总量护栏：任意合成规模下，常驻/中景/远景记忆 + 按需召回 + 裁剪后 history
+  // + 世界书配额 + 固定预留 ≤ 用户预算 B（state 未超配的正常形态；state 超配属
+  // 显式告警不裁的护栏例外，不在本断言范围）。
+  const B = 20000;
+  const fullTableById = new Map([
+    ...tableById,
+    ['rp_tasks', {
+      id: 'rp_tasks',
+      name: '任务',
+      columns: [{ id: 'task', name: '任务' }, { id: 'status', name: '状态' }],
+    }],
+  ]);
+  const fullTableOrder = ['rp_tasks', 'rp_summary', 'rp_outline'];
+  for (const scale of [600, 3000]) {
+    const stateRows = Array.from({ length: 5 }, (_, index) => ({
+      id: `rp_tasks-${index + 1}`,
+      table_id: 'rp_tasks',
+      row_data: { task: `任务${index + 1}`, status: '进行中' },
+      is_active: true,
+      sort_order: index + 1,
+      contact_id: 'rp:test',
+    }));
+    const layers = buildMemoryPromptRowLayers([
+      ...stateRows,
+      ...createRows('rp_summary', scale, 'summary'),
+      ...createRows('rp_outline', scale, 'outline'),
+    ]);
+    const demands = estimateMemorySegmentDemands({
+      rows: layers.limitedRows,
+      tableById: fullTableById,
+      tableOrder: fullTableOrder,
+      autoExtract: true,
+      tokenMode: 'rough',
+    });
+    const historyMessages = Array.from({ length: 400 }, (_, index) => ({
+      role: index % 2 ? 'assistant' : 'user',
+      content: `历史消息${index}-${'中文'.repeat(30)}`,
+    }));
+    const historyDemand = historyMessages.reduce(
+      (sum, message) => sum + estimateTokens(message.content, 'rough'),
+      0,
+    );
+    const envelope = resolveMemoryBudgetEnvelope({
+      settings: { memoryBudgetMode: 'token', memoryInputBudgetTokens: B },
+      maxContextTokens: 200000,
+      maxOutputTokens: 1024,
+      place: 'writing',
+      worldContextPercent: 20,
+      worldBudgetCap: 0,
+      demands: {
+        state: demands.state,
+        recent: historyDemand,
+        mid: demands.mid,
+        far: demands.far,
+        recall: Number.POSITIVE_INFINITY,
+      },
+    });
+    assert.equal(envelope.inputBudgetTokens, B);
+    const allocations = { ...envelope.allocation.allocations };
+    const segmented = buildSegmentedMemoryTablePlan({
+      rows: layers.limitedRows,
+      tableById: fullTableById,
+      tableOrder: fullTableOrder,
+      autoExtract: true,
+      maxRows: 1000,
+      tokenQuotas: allocations,
+      tokenMode: 'rough',
+      preserveState: true,
+    });
+    const memoryTokens = estimateTokens(segmented.tableData, 'rough');
+    const recallPlan = buildMemoryKeywordRecallPlan({
+      rows: layers.recallCandidateRows,
+      tableById: fullTableById,
+      queryText: `第${scale - 20}段内容`,
+      tokenBudget: allocations.recall,
+      maxRows: 20,
+      tokenMode: 'rough',
+    });
+    const recallTokens = Math.max(0, Math.trunc(Number(recallPlan.tokens)) || 0);
+    const reflowed = reflowUnusedRecallToRecent(allocations, recallTokens).allocations;
+    const limitedHistory = limitHistoryByTokenBudget(historyMessages, {
+      inputBudgetTokens: reflowed.recent,
+      tokenMode: 'rough',
+    });
+    const total = memoryTokens
+      + recallTokens
+      + limitedHistory.stats.usedTokens
+      + (envelope.worldBudgetTokens ?? 0)
+      + envelope.fixedReserveTokens;
+    assert.ok(memoryTokens > 0, `scale=${scale} 记忆段为空`);
+    assert.ok(limitedHistory.stats.usedTokens > 0, `scale=${scale} history 为空`);
+    assert.ok(total <= B, `scale=${scale} 总注入 ${total} 超过预算 ${B}`);
+  }
+  console.log('ok - end-to-end synthetic pipeline keeps total injection within user budget B');
+}

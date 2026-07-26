@@ -6,20 +6,28 @@ const toNullableTokenCount = (value) => {
   return Number.isFinite(n) && n >= 0 ? Math.trunc(n) : null;
 };
 
+// §9.6-⑥ 按字段形态判别，两种形态处理方向相反：
+// - 有 prompt_tokens_details（OpenAI 形态）→ prompt_tokens 已含 cached，直接用；再求和=重复计数、系数被推高。
+// - 有 cache_read/cache_creation_input_tokens（Anthropic 形态，含经中转改名后基数叫 prompt_tokens 的混合形态）
+//   → 基数不含 cache，必须求和；否则系数被压低、预算越用越松。
 export const resolveProviderPromptTokens = (usage) => {
   if (!usage || typeof usage !== 'object') return null;
   const promptTokens = toNullableTokenCount(usage.prompt_tokens);
-  if (promptTokens !== null) return promptTokens;
   const inputTokens = toNullableTokenCount(usage.input_tokens);
-  if (inputTokens === null) return null;
+  const base = promptTokens !== null ? promptTokens : inputTokens;
+  if (base === null) return null;
+  const hasOpenAiDetailShape = Boolean(
+    usage.prompt_tokens_details && typeof usage.prompt_tokens_details === 'object',
+  );
+  if (promptTokens !== null && hasOpenAiDetailShape) return promptTokens;
   const hasAnthropicCacheShape = (
     Object.prototype.hasOwnProperty.call(usage, 'cache_read_input_tokens')
     || Object.prototype.hasOwnProperty.call(usage, 'cache_creation_input_tokens')
   );
-  if (!hasAnthropicCacheShape) return inputTokens;
+  if (!hasAnthropicCacheShape) return base;
   const cacheRead = toNullableTokenCount(usage.cache_read_input_tokens) || 0;
   const cacheCreation = toNullableTokenCount(usage.cache_creation_input_tokens) || 0;
-  return inputTokens + cacheRead + cacheCreation;
+  return base + cacheRead + cacheCreation;
 };
 
 export const reportProviderUsage = (options, meta) => {

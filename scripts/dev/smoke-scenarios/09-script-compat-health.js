@@ -19,6 +19,14 @@
     '自动开启角色卡局部正则', '世界书强制用推荐的全局设置', '世界书强制自定义排序',
     '酒馆思维链清洗', '预设对比助手', '格式肘击大师', '对话渲染系统',
     '三人成行悬浮窗', '双人成行悬浮窗', '悬浮窗V3', '悬浮球V2', '防奶人', 'TGbreak😺',
+    // 2026-07-26 增量审计（结论见 测试报告_2026-07-26 §11）：五家族均无远程请求/WS/XHR。
+    // 懸浮球V2(繁体系)/愛心科技HUD：仅 getVariables+insertOrAssignVariables，直接接纳。
+    // 正則巡檢 V7：仅 getTavernRegexes 只读，接纳（注：V7 无点号不被版本归一剥除，升 V8 需重审计）。
+    // 空正文提取：getChatMessages/setChatMessages + MESSAGE_RECEIVED，全部受支持，接纳。
+    // 消息整理：主路径受支持；7 个未映射事件（WORLDINFO_*/STREAM_TOKEN 等）挂空不触发，
+    //   SillyTavern.updateMessageBlock 与 substitudeMacros 已补防崩兜底（降级运行，见 script-runtime）。
+    '酒館助手腳本-懸浮球V2', 'R寶提醒｜消息整理', 'R寶提醒｜空正文提取',
+    'R寶提醒｜愛心科技 HUD', 'R寶提醒｜正則巡檢 V7',
   ]);
 
   const API_VOCAB = [

@@ -229,6 +229,44 @@ test('entry-level variable gate runs before constant and excludes blocked entrie
   );
 });
 
+test('entry-level variable gate stays fail-closed on evaluator crash but surfaces the error', () => {
+  const baseEntries = prepareWorldEntries({
+    worldId: 'world_entry_gate_crash',
+    data: {
+      entries: [
+        {
+          id: 'crash_constant',
+          constant: true,
+          content: 'spoiler content',
+          when: { left: 'enabled', op: '==', right: true, rightType: 'boolean' },
+        },
+      ],
+    },
+    loadWorld: () => null,
+  });
+
+  const activation = analyzeWorldEntryActivation({
+    baseEntries,
+    matchText: 'hero arrives',
+    settings: {},
+    targetEntryId: 'crash_constant',
+    evaluateEntryWhen: () => {
+      throw new Error('变量存储损坏');
+    },
+  });
+
+  assert.equal(activation.directExplain.variableConditionPassed, false);
+  assert.deepEqual(activation.directExplain.reasons, ['被条目级变量条件挡住']);
+  assert.match(
+    String(activation.directExplain.variableConditionExplanation || ''),
+    /求值出错.*变量存储损坏/,
+  );
+  assert.equal(
+    activation.activeEntries.some(entry => entry._entryId === 'crash_constant'),
+    false,
+  );
+});
+
 let failed = 0;
 for (const t of tests) {
   try {

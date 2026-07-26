@@ -132,8 +132,12 @@ export const buildWorldEntryMatchReport = (
       } else {
         report.variableConditionPassed = evaluated === true;
       }
-    } catch {
+    } catch (err) {
+      // fail-closed：求值崩溃按「被挡」处理（门控常用于隐藏剧透，出错时泄露比隐藏更糟），
+      // 但错误必须写进 explanation 供激活解释展示，不得静默变成普通「被挡」。
       report.variableConditionPassed = false;
+      report.variableConditionExplanation =
+        `条件求值出错（fail-closed 按未通过处理）：${err?.message || String(err)}`;
     }
     if (report.variableConditionConfigured && !report.variableConditionPassed) {
       report.reasons.push('被条目级变量条件挡住');

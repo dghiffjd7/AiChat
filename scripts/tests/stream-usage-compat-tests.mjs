@@ -93,3 +93,45 @@ const noKv = createStreamUsageCompat({ storage: localOnly });
 assert.deepEqual(await noKv.hydrate(), ['https://local-only.example/v1']);
 
 console.log('ok - stream usage rejection memory survives a full localStorage via the kv channel');
+
+// 重试守卫：仅在尚未产出增量时允许去掉 stream_options 重跑；已产出增量必须按原错误抛出
+{
+  const { OpenAIProvider } = await import('../../src/scripts/api/providers/openai.js');
+  const rejection = () => ({
+    status: 400,
+    response: '{"error":{"message":"Unknown parameter: stream_options"}}',
+  });
+
+  // 未产出任何增量：允许重试一次并标记端点
+  const clean = new OpenAIProvider({ apiKey: 'k', baseUrl: 'https://guard-a.example.com/v1' });
+  let cleanCalls = 0;
+  clean.streamChatUnguarded = async function* () {
+    cleanCalls += 1;
+    if (cleanCalls === 1) throw rejection();
+    yield 'ok';
+  };
+  const cleanChunks = [];
+  for await (const chunk of clean.streamChat([], {})) cleanChunks.push(chunk);
+  assert.deepEqual(cleanChunks, ['ok']);
+  assert.equal(cleanCalls, 2);
+
+  // 已产出增量后再出错：不得整段重跑（会重复输出），按原错误抛出
+  const dirty = new OpenAIProvider({ apiKey: 'k', baseUrl: 'https://guard-b.example.com/v1' });
+  let dirtyCalls = 0;
+  dirty.streamChatUnguarded = async function* () {
+    dirtyCalls += 1;
+    yield 'part1';
+    throw rejection();
+  };
+  const dirtyChunks = [];
+  let dirtyError = null;
+  try {
+    for await (const chunk of dirty.streamChat([], {})) dirtyChunks.push(chunk);
+  } catch (err) {
+    dirtyError = err;
+  }
+  assert.deepEqual(dirtyChunks, ['part1']);
+  assert.equal(dirtyCalls, 1);
+  assert.equal(dirtyError?.status, 400);
+  console.log('ok - stream_options retry only happens before the first yielded delta');
+}

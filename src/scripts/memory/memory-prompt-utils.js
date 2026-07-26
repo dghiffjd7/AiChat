@@ -296,7 +296,9 @@ export const buildMemoryTablePlan = ({
   const pinned = items.filter(it => it.isPinned).sort(sortByPriority);
   const normal = items.filter(it => !it.isPinned).sort(sortByPriority);
   const ordered = [...pinned, ...normal];
-  const rowPrefixTokens = autoExtract ? estimateTokens('- [0] ', tokenMode) : 0;
+  // 行成本按保守上界记账（前缀取 4 位行号、含行间换行）：逐行累加必须 ≥ 整段
+  // estimateTokens(tableData)，否则「总注入 ≤ B」在边界上会被换行/多位行号的零头击穿。
+  const rowPrefixTokens = estimateTokens(autoExtract ? '- [0000] \n' : '- \n', tokenMode);
 
   const selected = [];
   const truncated = [];
@@ -313,7 +315,7 @@ export const buildMemoryTablePlan = ({
     const table = nextTableById.get(tableId) || { id: tableId, name: tableId };
     const headerLabel = String(table?.name || tableId);
     const headerText = autoExtract ? `【${headerLabel}｜${tableId}】` : `【${headerLabel}】`;
-    const headerTokens = includedTables.has(tableId) ? 0 : estimateTokens(headerText, tokenMode);
+    const headerTokens = includedTables.has(tableId) ? 0 : estimateTokens(`${headerText}\n`, tokenMode);
     const rowTokens = estimateTokens(item.rowText, tokenMode) + rowPrefixTokens;
     const nextTokens = tokenUsed + headerTokens + rowTokens;
     if (nextTokens > tokenBudgetData) {

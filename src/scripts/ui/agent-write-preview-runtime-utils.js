@@ -5,6 +5,8 @@ import {
 } from './chat/memory-table-action-utils.js';
 import { buildUpdateVariableCommandsPreview } from './chat/update-variable-command-utils.js';
 import { batchCreateMemoriesWithFallback } from './session-memory-write-utils.js';
+import { resolveMemoryCoverageStampInterval } from '../memory/memory-coverage-utils.js';
+import { isSummaryLimitTableId } from '../memory/memory-prompt-utils.js';
 import { buildWorldbookActionBatchPreview } from './worldbook-action-preview-utils.js';
 import {
   deleteValueAtPath,
@@ -192,6 +194,7 @@ export const createMemoryPreviewCommitRuntime = ({
   resolvePlanForSession = null,
   getContact = null,
   getUiMode = null,
+  resolveCurrentTurnNumber = null,
   onMemoryCommitted = null,
   onMemoryUndone = null,
 } = {}) => ({
@@ -215,6 +218,22 @@ export const createMemoryPreviewCommitRuntime = ({
     if (!sid || !actions.length || !actionContext?.record) {
       return { status: 'blocked', reason: 'memory_context_missing', writesStore: false };
     }
+    let currentTurnNumber = Number(previewResult?.currentTurnNumber || 0) || 0;
+    if (!currentTurnNumber && typeof resolveCurrentTurnNumber === 'function') {
+      try {
+        currentTurnNumber = Math.max(0, Math.trunc(Number(await resolveCurrentTurnNumber(sid))) || 0);
+      } catch {
+        currentTurnNumber = 0;
+      }
+    }
+    // 与主链 applyMemoryEdits 同规则盖章：代写路径落的摘要行同样进覆盖线，
+    // 否则这些行只有模型 time 文本兜底、享受不到补洞区间与锚定修复。
+    const stampInterval = resolveMemoryCoverageStampInterval({
+      currentTurnNumber,
+      summaryRows: (actionContext.allRows || []).filter(
+        row => isSummaryLimitTableId(String(row?.table_id || '')),
+      ),
+    });
     const result = await executeMemoryActionBatchMutation({
       actions,
       actionContext,
@@ -224,7 +243,8 @@ export const createMemoryPreviewCommitRuntime = ({
         memoryTableStore,
         inputs,
       }),
-      currentTurnNumber: Number(previewResult?.currentTurnNumber || 0) || 0,
+      currentTurnNumber,
+      coverage: stampInterval ? { ...stampInterval, messageId: '', source: 'app' } : null,
       isGroup,
     });
     const changed = Number(result?.changed || 0) || 0;

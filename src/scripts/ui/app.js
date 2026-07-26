@@ -6,7 +6,7 @@ import { isDeepSeekApiRequest } from '../api/providers/deepseek-compat.js';
 import { extractTableEditBlocks, stripTableEditBlocks } from '../memory/memory-edit-parser.js';
 import { getMemoryContextType, resolveMemorySessionMode, tableMatchesMemoryContext } from '../memory/memory-context-utils.js';
 import { resolveMemoryCoverageStampInterval } from '../memory/memory-coverage-utils.js';
-import { isSummaryTableId } from '../memory/memory-prompt-utils.js';
+import { isSummaryLimitTableId } from '../memory/memory-prompt-utils.js';
 import {
   AGENT_FEATURE_IDS,
   createAgentFeatureSettingsStore,
@@ -2681,6 +2681,8 @@ const initApp = async () => {
     resolvePlanForSession: resolveMemoryUpdatePlanForSession,
     getContact: sid => contactsStore.getContact(sid),
     getUiMode: () => uiMode,
+    resolveCurrentTurnNumber: async sid =>
+      countUserTurnsForMemoryTimeline(chatStore.getMessages(sid) || []),
     loadWorld: async (worldId) => {
       const id = String(worldId || '').trim();
       if (!id) return null;
@@ -4002,7 +4004,9 @@ const initApp = async () => {
     }
     const stampInterval = resolveMemoryCoverageStampInterval({
       currentTurnNumber,
-      summaryRows: (actionContext.allRows || []).filter(row => isSummaryTableId(String(row?.table_id || ''))),
+      // 覆盖线唯一来源是 *_summary（§9.6-⑤）：种子若混入未迁移的旧 outline 行（第N轮），
+      // 会抬高已覆盖末端、造成永久空洞并让空洞保护白白吃预算。
+      summaryRows: (actionContext.allRows || []).filter(row => isSummaryLimitTableId(String(row?.table_id || ''))),
     });
     const coverage = stampInterval
       ? {
@@ -26800,7 +26804,9 @@ Phase G（Frame 36）：循环衔接
       });
       const stampInterval = resolveMemoryCoverageStampInterval({
         currentTurnNumber,
-        summaryRows: (actionContext.allRows || []).filter(row => isSummaryTableId(String(row?.table_id || ''))),
+        // 覆盖线唯一来源是 *_summary（§9.6-⑤）：种子若混入未迁移的旧 outline 行（第N轮），
+        // 会抬高已覆盖末端、造成永久空洞并让空洞保护白白吃预算。
+        summaryRows: (actionContext.allRows || []).filter(row => isSummaryLimitTableId(String(row?.table_id || ''))),
       });
       const coverage = stampInterval
         ? {

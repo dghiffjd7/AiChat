@@ -443,6 +443,22 @@ export const resolveMemoryActionMutationPlan = ({
         merged,
       };
     }
+    if (sectionRow) {
+      // 同批已排队的同节写入（尚无 id）：必须并入排队行而不是再排一条——
+      // 否则本批会落库两行同节，此后 upsert 永远只更新先找到的那条，另一条成死行。
+      const { changed, merged } = buildMemoryRowMergeResult({
+        row: sectionRow,
+        data,
+      });
+      if (!changed) return { kind: 'skip', reason: 'unchanged' };
+      return {
+        kind: 'mergeQueuedInsert',
+        tableId,
+        queuedRow: sectionRow,
+        queuedBefore: { ...(sectionRow.row_data || {}) },
+        merged,
+      };
+    }
     return {
       kind: 'queueInsert',
       tableId,
@@ -584,6 +600,22 @@ export const executeMemoryActionMutationPlan = async ({
       deleted: 0,
       skipped: result.skipped ? 1 : 0,
     };
+  }
+
+  if (plan.kind === 'mergeQueuedInsert') {
+    // 排队行的 row_data 与 createInputs 里的待建条目共享同一引用：原地合并即两处同步生效
+    const rowData = normalizeTimelineMemoryActionData({
+      tableId: plan.tableId,
+      rowData: plan.merged,
+      currentTurnNumber,
+      coverage,
+    });
+    const target = plan.queuedRow?.row_data;
+    if (target && typeof target === 'object') {
+      Object.keys(target).forEach((key) => { delete target[key]; });
+      Object.assign(target, rowData);
+    }
+    return { inserted: 0, updated: 1, deleted: 0, skipped: 0 };
   }
 
   if (plan.kind === 'updateRow') {
@@ -860,6 +892,17 @@ const buildMemoryMutationPreviewEntry = ({
         },
     };
   }
+  if (plan.kind === 'mergeQueuedInsert') {
+    return {
+      ...base,
+      kind: 'update',
+      skipped: false,
+      diff: {
+        before: plan.queuedBefore || {},
+        after: rowData || plan.merged || {},
+      },
+    };
+  }
   if (plan.kind === 'updateRow') {
     return {
       ...base,
@@ -1058,6 +1101,29 @@ export const buildMemoryActionBatchPreview = ({
         plan,
         previewResult,
         rowData: previewResult.rowData,
+      }));
+      return;
+    }
+    if (plan.kind === 'mergeQueuedInsert') {
+      const rowData = normalizeTimelineMemoryActionData({
+        tableId: plan.tableId,
+        rowData: plan.merged,
+        currentTurnNumber,
+        coverage,
+      });
+      const target = plan.queuedRow?.row_data;
+      if (target && typeof target === 'object') {
+        Object.keys(target).forEach((key) => { delete target[key]; });
+        Object.assign(target, rowData);
+      }
+      totals.updated += 1;
+      entries.push(buildMemoryMutationPreviewEntry({
+        index,
+        action,
+        context,
+        plan,
+        previewResult: null,
+        rowData,
       }));
       return;
     }

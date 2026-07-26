@@ -92,7 +92,10 @@ import {
   normalizeTokenMode,
   parseMemoryPromptPositions,
 } from '../memory/memory-prompt-utils.js';
-import { tokenCalibrationStore } from '../memory/token-calibration-utils.js';
+import {
+  DEFAULT_CONSERVATIVE_COEFFICIENT,
+  tokenCalibrationStore,
+} from '../memory/token-calibration-utils.js';
 import {
   buildMemoryPlanAudit,
   buildRequestInjectionAudit,
@@ -115,7 +118,10 @@ import {
   buildWorldbookDowngradeSuggestions,
 } from '../memory/worldbook-downgrade-suggestion-utils.js';
 import { buildMemoryCoverageLine } from '../memory/memory-coverage-utils.js';
-import { resolveRecentHistoryQuota } from '../memory/input-token-budget-utils.js';
+import {
+  resolveInputTokenBudget,
+  resolveRecentHistoryQuota,
+} from '../memory/input-token-budget-utils.js';
 import { resolveMemoryRowOrderKey } from '../memory/memory-row-order.js';
 import {
   getMemoryContextType,
@@ -1028,7 +1034,9 @@ class AppBridge {
       : maxTokens;
     const tokenMode = {
       mode: 'rough',
-      coefficient: Number(context?.meta?.tokenEstimateCalibration?.coefficient) || 1,
+      // meta 缺失（不经主发送链的直接调用）时与主链同用保守默认，不得回退成 1 少估中文
+      coefficient: Number(context?.meta?.tokenEstimateCalibration?.coefficient)
+        || DEFAULT_CONSERVATIVE_COEFFICIENT,
     };
     const injectDepthRaw = Math.trunc(Number(context?.meta?.memoryInjectDepth));
     const injectDepth = Number.isFinite(injectDepthRaw) ? Math.max(0, injectDepthRaw) : 0;
@@ -7713,13 +7721,14 @@ const stringifyMessageContent = (content) => {
     const percentRaw = Number(settings.contextPercent);
     if (!Number.isFinite(percentRaw) || percentRaw <= 0) return null;
     const preset = this.presets?.getActive?.('openai') || {};
-    const maxContext = Number(preset?.openai_max_context);
-    const maxOut = Number(preset?.openai_max_tokens);
-    const ctxTokens = Number.isFinite(maxContext) && maxContext > 0 ? maxContext : null;
-    const outTokens = Number.isFinite(maxOut) && maxOut > 0 ? maxOut : 0;
-    if (ctxTokens === null) return null;
-    const inputBudgetTokens = Math.max(0, ctxTokens - outTokens - 512);
-    return Math.max(0, Math.floor(inputBudgetTokens * (percentRaw / 100)));
+    // fallback 与调度器共用同一预算公式（ctx 未知 → null 不硬顶），不再保留内联副本
+    const fallbackBudget = resolveInputTokenBudget({
+      maxContextTokens: preset?.openai_max_context,
+      maxOutputTokens: preset?.openai_max_tokens,
+      safetyReserveTokens: 512,
+    });
+    if (fallbackBudget.inputBudgetTokens === null) return null;
+    return Math.max(0, Math.floor(fallbackBudget.inputBudgetTokens * (percentRaw / 100)));
   }
 
   warnWorldBudgetOverflow() {

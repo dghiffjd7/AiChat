@@ -66,6 +66,27 @@ test('no-op when callback absent and never throws on bad input', () => {
   assert.doesNotThrow(() => reportProviderUsage({ onProviderUsage: () => { throw new Error('boom'); } }, { body: { usage: {} } }));
 });
 
+test('mixed usage shape sums caches onto prompt_tokens when no OpenAI details object exists', () => {
+  // 中转把 Anthropic 基数改名成 prompt_tokens、cache 字段原样透传：基数不含 cache，必须求和
+  assert.equal(
+    resolveProviderPromptTokens({
+      prompt_tokens: 500,
+      cache_read_input_tokens: 400,
+      cache_creation_input_tokens: 100,
+    }),
+    1000,
+  );
+  // prompt_tokens_details 存在（OpenAI 形态）时优先：prompt_tokens 已含 cached，杂散 cache 字段不再求和
+  assert.equal(
+    resolveProviderPromptTokens({
+      prompt_tokens: 1200,
+      prompt_tokens_details: { cached_tokens: 800 },
+      cache_read_input_tokens: 800,
+    }),
+    1200,
+  );
+});
+
 let failed = 0;
 for (const t of tests) {
   try {

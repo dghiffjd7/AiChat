@@ -133,3 +133,47 @@ assert.equal(createdInputs.find(input => input.row_data.section === 'current')?.
 
 console.log('ok - outline patches upsert stable sections and migrate legacy per-turn rows with rollback data');
 
+
+{
+  // 同批对同一节连发两条 insert：第二条必须并入排队行，不得落库两行同节死行
+  const emptyIndex = buildMemoryRowsIndex([]);
+  const doubleResolvers = createMemoryActionResolvers({
+    tableById,
+    tableNameMap: new Map([['总体大纲', 'rp_outline']]),
+    tableOrder: ['rp_outline'],
+    rowIndexMap: {},
+    rowsByTableScope: emptyIndex.rowsByTableScope,
+    sessionId: 'rp:test',
+    isGroup: false,
+  });
+  let doubleInputs = [];
+  const doubleResult = await executeMemoryActionBatchMutation({
+    actions: [
+      { action: 'insert', tableId: 'rp_outline', data: { section: '当前', outline: '第一版局面' } },
+      { action: 'insert', tableId: 'rp_outline', data: { section: '当前', outline: '第二版局面' } },
+      { action: 'insert', tableId: 'rp_outline', data: { section: '当前', outline: '第二版局面' } },
+    ],
+    actionContext: {
+      templateId: 'default-v1',
+      tableById,
+      rowsById: emptyIndex.rowsById,
+      rowsByTableScope: emptyIndex.rowsByTableScope,
+      ...doubleResolvers,
+    },
+    updateMode: 'full',
+    memoryTableStore: { updateMemory: async () => {} },
+    createMemories: async (inputs) => {
+      doubleInputs = inputs;
+      return inputs.length;
+    },
+    currentTurnNumber: 1,
+    isGroup: false,
+  });
+  assert.equal(doubleInputs.length, 1);
+  assert.equal(doubleInputs[0].row_data.section, 'current');
+  assert.equal(doubleInputs[0].row_data.outline, '第二版局面');
+  assert.equal(doubleResult.inserted, 1);
+  assert.equal(doubleResult.updated, 1);
+  assert.equal(doubleResult.skipped, 1);
+  console.log('ok - same-batch outline inserts for one section merge into the queued row instead of duplicating');
+}

@@ -2964,6 +2964,9 @@ const buildSillyTavern = () => {
   st.getChatCompletionModel = () => '';
   st.getCurrentChatId = () => String(currentContext.sessionId || '');
   st.saveChat = () => Promise.resolve(true);
+  // 消息块渲染由 app 消息链自管（编辑走 setChatMessages RPC）；留 no-op 防
+  // R寶提醒｜消息整理等脚本的编辑路径在成员缺失时 TypeError 中断整个 handler。
+  st.updateMessageBlock = () => {};
   st.saveSettingsDebounced = () => saveCompatChatCompletionSettings(st.chatCompletionSettings);
   st.registerMacro = (name, fn) => {
     const key = String(name || '').trim();
@@ -3124,6 +3127,11 @@ const ensureCompatGlobals = () => {
   if (typeof self.setChatMessages !== 'function') self.setChatMessages = setChatMessages;
   if (typeof self.getTavernRegexes !== 'function') self.getTavernRegexes = getTavernRegexes;
   if (typeof self.replaceTavernRegexes !== 'function') self.replaceTavernRegexes = replaceTavernRegexes;
+  if (typeof self.substitudeMacros !== 'function') {
+    // ST 原拼写的宏替换，被 R寶提醒等脚本裸调用：宏引擎在 app 主链，这里退化为原文
+    // 返回，保证依赖它的正则/整理路径不因 ReferenceError 中断；真宏替换按需另接 RPC。
+    self.substitudeMacros = (text) => String(text ?? '');
+  }
   if (typeof self.alert !== 'function') {
     self.alert = (message) => callRpc('ui.alert', { message: String(message || ''), sessionId: currentContext.sessionId });
   }
@@ -4770,6 +4778,7 @@ ${allowNetwork ? `
     st.getChatCompletionModel = () => '';
     st.getCurrentChatId = () => String(currentContext.sessionId || '');
     st.saveChat = () => Promise.resolve(true);
+    st.updateMessageBlock = () => {};
     st.saveSettingsDebounced = () => {};
     st.registerMacro = () => {};
     st.unregisterMacro = () => {};

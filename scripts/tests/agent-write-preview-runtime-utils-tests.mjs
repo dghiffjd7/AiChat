@@ -268,3 +268,60 @@ import {
   ]);
   console.log('ok - worldbook write preview commit runtime saves next data and restores rollback snapshot');
 }
+
+{
+  // 代写路径盖章：commit 落的摘要行必须带 app _coverage（轮次经 DI 解析），
+  // 与主链 applyMemoryEdits 同规则，不再只有模型 time 文本兜底。
+  const summaryTable = {
+    id: 'chat_summary',
+    name: '摘要',
+    scope: 'contact',
+    columns: [{ id: 'time', name: '轮次' }, { id: 'summary', name: '摘要' }],
+  };
+  const summaryTableById = new Map([['chat_summary', summaryTable]]);
+  const summaryRowsById = new Map();
+  const summaryRowsByTableScope = new Map();
+  const summaryResolvers = createMemoryActionResolvers({
+    tableById: summaryTableById,
+    tableNameMap: new Map([['摘要', 'chat_summary']]),
+    tableOrder: ['chat_summary'],
+    rowIndexMap: {},
+    rowsByTableScope: summaryRowsByTableScope,
+    sessionId: 'chat:1',
+    isGroup: false,
+  });
+  const createdInputs = [];
+  const runtime = createMemoryPreviewCommitRuntime({
+    memoryTableStore: {
+      async updateMemory() {},
+      async batchCreateMemories(inputs) {
+        createdInputs.push(...inputs);
+        return inputs.length;
+      },
+    },
+    memoryTemplateStore: { ready: true },
+    getUiMode: () => 'chat',
+    getContact: sid => ({ id: sid, isGroup: false }),
+    resolveCurrentTurnNumber: async () => 3,
+    loadActionContext: async () => ({
+      templateId: 'tpl-memory',
+      record: { id: 'tpl-memory' },
+      tableById: summaryTableById,
+      rowsById: summaryRowsById,
+      rowsByTableScope: summaryRowsByTableScope,
+      allRows: [],
+      ...summaryResolvers,
+    }),
+  });
+  const commit = await runtime.commit({
+    args: {
+      sessionId: 'chat:1',
+      actions: [{ action: 'insert', tableId: 'chat_summary', data: { summary: '本轮摘要' } }],
+    },
+  });
+  assert.equal(commit.status, 'committed');
+  assert.equal(createdInputs.length, 1);
+  assert.deepEqual(createdInputs[0].row_data._coverage, { from: 3, to: 3, source: 'app' });
+  assert.equal(createdInputs[0].row_data.time, '第3轮');
+  console.log('ok - agent write commit stamps app coverage on summary rows via resolved turn number');
+}

@@ -526,10 +526,20 @@ export class CustomProvider {
      */
     // 同 openai.js：流式带 include_usage 拿校准样本；端点点名拒绝时记忆并去掉重试一次。
     async *streamChat(messages, options = {}) {
+        // 只在尚未产出任何增量时才允许去掉 stream_options 重试一次：
+        // 已产出的增量无法收回，整段重跑会把开头内容重复发给用户。
+        let yieldedAny = false;
         try {
-            yield* this.streamChatUnguarded(messages, options);
+            for await (const delta of this.streamChatUnguarded(messages, options)) {
+                yieldedAny = true;
+                yield delta;
+            }
         } catch (error) {
-            if (isStreamOptionsRejectionError(error) && !streamUsageCompat.isMarkedUnsupported(this.baseUrl)) {
+            if (
+                !yieldedAny
+                && isStreamOptionsRejectionError(error)
+                && !streamUsageCompat.isMarkedUnsupported(this.baseUrl)
+            ) {
                 streamUsageCompat.markUnsupported(this.baseUrl);
                 yield* this.streamChatUnguarded(messages, options);
                 return;
