@@ -68,6 +68,7 @@ const CHAT_PROVIDER_OPTIONS = [
     { value: 'deepseek', label: 'Deepseek' },
     { value: 'openrouter', label: 'OpenRouter' },
     { value: 'anthropic', label: 'Anthropic (Claude)' },
+    { value: 'ollama', label: 'Ollama' },
     { value: 'custom', label: '自定义 API' },
 ];
 
@@ -258,9 +259,11 @@ export class ConfigPanel {
         this.refreshCustomSelect('config-provider');
     }
 
-    providerRequiresApiKey(provider) {
+    providerRequiresApiKey(provider, baseUrl = '') {
         const raw = String(provider || '').trim().toLowerCase();
         if (raw === 'vertexai') return false;
+        // ollama：云端（ollama.com）必须有 Key，本地可留空
+        if (raw === 'ollama') return /(^|\/\/)(www\.)?ollama\.com(\/|$)/i.test(String(baseUrl || '').trim());
         return !NO_API_KEY_PROVIDERS.has(raw);
     }
 
@@ -406,12 +409,27 @@ export class ConfigPanel {
                         <option value="deepseek">Deepseek</option>
                         <option value="openrouter">OpenRouter</option>
                         <option value="anthropic">Anthropic (Claude)</option>
+                        <option value="ollama">Ollama</option>
                         <option value="custom">自定义 API</option>
                     </select>
                     <button type="button" id="config-provider-btn" class="world-app-select-btn" data-select-id="config-provider" data-maid-guide-target="config-provider-select">
                         <span class="config-custom-select-label">请选择服务商</span>
                         <span class="world-app-select-btn-chevron">${API_CONFIG_ICONS.chevronDown}</span>
                     </button>
+                </div>
+
+                <div id="ollama-fields" style="display: none;">
+                    <div class="api-config-field">
+                        <label class="api-config-field-label has-help" data-help="云端使用 ollama.com 托管模型（需 API Key）；本地连接本机 Ollama 服务（需先 ollama pull 模型）">连接模式</label>
+                        <select id="config-ollama-mode" style="display:none;">
+                            <option value="cloud">云端</option>
+                            <option value="local">本地</option>
+                        </select>
+                        <button type="button" id="config-ollama-mode-btn" class="world-app-select-btn" data-select-id="config-ollama-mode">
+                            <span class="config-custom-select-label">云端</span>
+                            <span class="world-app-select-btn-chevron">${API_CONFIG_ICONS.chevronDown}</span>
+                        </button>
+                    </div>
                 </div>
 
                 <div id="config-custom-fields" data-maid-guide-target="config-custom-fields">
@@ -675,6 +693,14 @@ export class ConfigPanel {
             }
             this.emitDraftChange();
         };
+        this.element.querySelector('#config-ollama-mode').onchange = async () => {
+            const provider = this.element.querySelector('#config-provider')?.value || 'openai';
+            if (provider === 'ollama') {
+                this.updateDefaultsForProvider(provider);
+                this.updateFieldVisibility(provider);
+            }
+            this.emitDraftChange();
+        };
         this.element.querySelector('#config-transport-mode').onchange = async () => {
             this.updateTransportVisibility({ autoExpand: true });
             this.emitDraftChange();
@@ -816,7 +842,7 @@ export class ConfigPanel {
     }
 
     refreshAllCustomSelects() {
-        ['config-profile', 'config-provider', 'config-region', 'config-transport-mode', 'config-prompt-post-processing'].forEach((id) => this.refreshCustomSelect(id));
+        ['config-profile', 'config-provider', 'config-region', 'config-ollama-mode', 'config-transport-mode', 'config-prompt-post-processing'].forEach((id) => this.refreshCustomSelect(id));
     }
 
     bindCustomSelect(selectId) {
@@ -852,7 +878,7 @@ export class ConfigPanel {
     }
 
     initCustomSelects() {
-        ['config-profile', 'config-provider', 'config-region', 'config-transport-mode', 'config-prompt-post-processing'].forEach((id) => this.bindCustomSelect(id));
+        ['config-profile', 'config-provider', 'config-region', 'config-ollama-mode', 'config-transport-mode', 'config-prompt-post-processing'].forEach((id) => this.bindCustomSelect(id));
         this.refreshAllCustomSelects();
     }
 
@@ -1109,6 +1135,17 @@ export class ConfigPanel {
                 model: 'deepseek-chat',
                 urlHelp: 'Deepseek API URL'
             },
+            ollama: String(options?.ollamaMode || 'cloud') === 'local'
+                ? {
+                    baseUrl: 'http://127.0.0.1:11434/v1',
+                    model: '',
+                    urlHelp: '本地 Ollama 地址（默认 http://127.0.0.1:11434/v1）；模型需先 ollama pull，再填 ollama list 中的名称'
+                }
+                : {
+                    baseUrl: 'https://ollama.com/v1',
+                    model: '',
+                    urlHelp: '云端 ollama.com 地址（必须 https）；需保存 ollama.com 账号的 API Key'
+                },
             openrouter: {
                 baseUrl: 'https://openrouter.ai/api/v1',
                 model: 'openrouter/auto',
@@ -1160,7 +1197,7 @@ export class ConfigPanel {
     }
 
     usesEditableBaseUrl(provider) {
-        return ['custom', 'automatic1111', 'a1111', 'comfyui', 'comfy'].includes(String(provider || '').trim().toLowerCase());
+        return ['custom', 'ollama', 'automatic1111', 'a1111', 'comfyui', 'comfy'].includes(String(provider || '').trim().toLowerCase());
     }
 
     resetFormForProvider(provider) {
@@ -1351,6 +1388,14 @@ export class ConfigPanel {
                 }
             }
 
+            // ollama：连接模式不落盘，由 baseUrl 推导（含 ollama.com 即云端）
+            if (provider === 'ollama') {
+                const modeInput = panel.querySelector('#config-ollama-mode');
+                if (modeInput) {
+                    modeInput.value = /ollama\.com/i.test(String(config.baseUrl || '')) ? 'cloud' : 'local';
+                }
+            }
+
             // 填充 Vertex AI 特定字段
             if (provider === 'vertexai') {
                 const regionInput = panel.querySelector('#config-region');
@@ -1478,6 +1523,14 @@ export class ConfigPanel {
             }
         };
 
+        // ollama：连接模式由 baseUrl 推导（含 ollama.com 即云端）
+        if (config.provider === 'ollama') {
+            const modeInput = panel.querySelector('#config-ollama-mode');
+            if (modeInput) {
+                modeInput.value = /ollama\.com/i.test(String(config.baseUrl || '')) ? 'cloud' : 'local';
+            }
+        }
+
         // 填充 Vertex AI 特定字段
         if (config.provider === 'vertexai') {
             const regionInput = panel.querySelector('#config-region');
@@ -1569,6 +1622,7 @@ export class ConfigPanel {
         const panel = this.element || document;
         const defaults = this.getProviderDefaults(provider, {
             region: panel.querySelector('#config-region')?.value || 'us-central1',
+            ollamaMode: panel.querySelector('#config-ollama-mode')?.value || 'cloud',
         });
         const baseUrlInput = panel.querySelector('#config-baseurl');
         const baseUrlSection = panel.querySelector('#config-baseurl-section');
@@ -1580,7 +1634,9 @@ export class ConfigPanel {
             const currentUrl = baseUrlInput.value.trim();
             const selectedRegion = panel.querySelector('#config-region')?.value || 'us-central1';
             const allDefaults = ALL_PROVIDER_KEYS
-                .map((name) => this.getProviderDefaults(name, { region: selectedRegion }).baseUrl);
+                .map((name) => this.getProviderDefaults(name, { region: selectedRegion }).baseUrl)
+                // ollama 云端/本地是同一 provider 的两个默认地址，切换时都视为“默认值”可替换
+                .concat([this.getProviderDefaults('ollama', { ollamaMode: 'local' }).baseUrl]);
             const isDefaultUrl = allDefaults.includes(currentUrl);
             if (!editableBaseUrl || !currentUrl || isDefaultUrl) {
                 baseUrlInput.value = defaults.baseUrl;
@@ -1615,9 +1671,24 @@ export class ConfigPanel {
         const panel = this.element || document;
         const baseUrlSection = panel.querySelector('#config-baseurl-section');
         const vertexaiFields = panel.querySelector('#vertexai-fields');
+        const ollamaFields = panel.querySelector('#ollama-fields');
         const apiKeyHelp = panel.querySelector('#apikey-help');
         if (baseUrlSection) {
             baseUrlSection.style.display = this.usesEditableBaseUrl(provider) ? 'block' : 'none';
+        }
+        if (ollamaFields) {
+            ollamaFields.style.display = provider === 'ollama' ? 'block' : 'none';
+        }
+        if (provider === 'ollama') {
+            if (vertexaiFields) vertexaiFields.style.display = 'none';
+            if (apiKeyHelp) {
+                const mode = panel.querySelector('#config-ollama-mode')?.value || 'cloud';
+                apiKeyHelp.textContent = mode === 'local'
+                    ? '本地 Ollama 可不填写 API Key；若服务端启用鉴权再保存 Key。'
+                    : '云端 ollama.com 需保存账号 API Key。';
+            }
+            this.refreshAllCustomSelects();
+            return;
         }
 
         if (provider === 'vertexai') {
@@ -1628,7 +1699,7 @@ export class ConfigPanel {
         } else if (!this.providerRequiresApiKey(provider)) {
             vertexaiFields.style.display = 'none';
             if (apiKeyHelp) {
-                apiKeyHelp.textContent = '此图片渠道可不填写 API Key；若服务端启用鉴权再保存 Key。';
+                apiKeyHelp.textContent = '此渠道可不填写 API Key；若服务端启用鉴权再保存 Key。';
             }
         } else {
             vertexaiFields.style.display = 'none';
@@ -1983,7 +2054,7 @@ export class ConfigPanel {
             const keys = this.configManager.listKeys?.(active?.id) || [];
             const hasTypedKey = typeof formData.apiKey === 'string' && formData.apiKey.trim().length > 0;
             const hasSavedKey = keys.length > 0;
-            if (!hasTypedKey && !hasSavedKey && this.providerRequiresApiKey(formData.provider)) {
+            if (!hasTypedKey && !hasSavedKey && this.providerRequiresApiKey(formData.provider, formData.baseUrl)) {
                 this.showStatus('请先在 Key 管理中保存至少一个 API Key，或在此栏贴上 Key 后保存', 'error');
                 return;
             }
@@ -2069,7 +2140,7 @@ export class ConfigPanel {
             const runtime = await this.configManager.load();
             const existingKey = (runtime?.apiKey || '').trim();
             const keyToUse = (typeof formData.apiKey === 'string') ? formData.apiKey.trim() : existingKey;
-            if (!keyToUse && this.providerRequiresApiKey(formData.provider)) {
+            if (!keyToUse && this.providerRequiresApiKey(formData.provider, formData.baseUrl)) {
                 this.showStatus('请先在 Key 管理中保存至少一个 API Key，或在此栏贴上 Key', 'error');
                 return;
             }

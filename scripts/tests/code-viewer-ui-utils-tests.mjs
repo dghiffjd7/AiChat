@@ -109,3 +109,75 @@ const createFakeDocument = () => {
   assert.equal(overlay.style.display, 'none');
   console.log('ok - code viewer hides save button for non-editable messages and closes on backdrop click');
 }
+
+{
+  const documentLike = createFakeDocument();
+  const contexts = [];
+  const runtime = createCodeViewerUiRuntime({
+    documentLike,
+    windowLike: { addEventListener() {} },
+    schedule: cb => cb(),
+    confirmDiscard: () => false,
+    onSaveEdit: async (_message, _text, context) => {
+      contexts.push(context);
+      return false;
+    },
+  });
+  const overlay = runtime.openCodeViewer(null, {
+    message: { role: 'assistant', id: 'm3' },
+    text: 'before',
+    canSave: true,
+    context: { sourceSnapshot: 'before', turnId: 'turn-1' },
+  });
+  overlay.__chatappRefs.codeEl.value = 'after';
+  overlay.__chatappRefs.codeEl.emit('input');
+  overlay.__chatappRefs.closeBtn.emit('click');
+  assert.equal(overlay.style.display, 'block');
+  await overlay.__chatappRefs.saveBtn.emit('click');
+  assert.deepEqual(contexts, [{ sourceSnapshot: 'before', turnId: 'turn-1' }]);
+  assert.equal(overlay.style.display, 'block');
+  assert.match(overlay.__chatappRefs.hint.textContent, /失败/);
+  console.log('ok - dirty source edits require discard confirmation and failed saves stay open');
+}
+
+{
+  const documentLike = createFakeDocument();
+  const validations = [];
+  const runtime = createCodeViewerUiRuntime({
+    documentLike,
+    windowLike: { addEventListener() {} },
+    schedule: cb => cb(),
+  });
+  const opened = runtime.openPatchReview(null, {
+    message: { role: 'assistant', id: 'm4' },
+    originalText: 'line 1\nbad close',
+    linePatches: [{
+      startLine: 2,
+      endLine: 2,
+      originalLines: ['bad close'],
+      replacementLines: ['</rule>'],
+      reason: '补齐闭合标签',
+    }],
+    formatSources: ['privateChat'],
+    warning: '正文疑似严重截断，可考虑重新生成',
+    validateCandidate: async ({ candidateText }) => {
+      validations.push(candidateText);
+      return { canApply: true, statusText: '本地复查通过' };
+    },
+  });
+  await Promise.resolve();
+  await Promise.resolve();
+  const overlay = opened.overlay;
+  assert.equal(overlay.__chatappMode, 'review');
+  assert.match(overlay.__chatappRefs.reviewSummary.textContent, /私聊格式/);
+  assert.match(overlay.__chatappRefs.reviewSummary.textContent, /疑似严重截断/);
+  assert.equal(overlay.__chatappRefs.reviewHunks.children.length, 1);
+  assert.equal(overlay.__chatappRefs.applyReviewBtn.disabled, false);
+  overlay.__chatappRefs.applyReviewBtn.emit('click');
+  const result = await opened.promise;
+  assert.equal(result.confirmed, true);
+  assert.equal(result.candidateText, 'line 1\n</rule>');
+  assert.equal(result.acceptedPatches.length, 1);
+  assert.deepEqual(validations, ['line 1\n</rule>']);
+  console.log('ok - patch review renders validated hunks and resolves the accepted candidate once');
+}

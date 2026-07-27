@@ -10,6 +10,7 @@ import {
   resolveAfterReceiveSkipScripts,
   runChatBodyQualityPreview,
   runChatFormatGuardianPreview,
+  validateChatFormatGuardianRepairCandidate,
 } from '../../src/scripts/ui/chat/after-receive-dispatch-utils.js';
 import {
   buildAfterReceiveHookFinishTraceEvent,
@@ -28,6 +29,13 @@ import {
 const tests = [];
 const test = (name, fn) => tests.push({ name, fn });
 const flushMicrotasks = () => new Promise(resolve => setTimeout(resolve, 0));
+const waitFor = async (predicate, message = 'condition was not met') => {
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    if (predicate()) return;
+    await flushMicrotasks();
+  }
+  assert.fail(message);
+};
 
 test('resolveAfterReceiveSkipScripts prefers explicit override', () => {
   assert.equal(resolveAfterReceiveSkipScripts(true, false), true);
@@ -376,6 +384,32 @@ test('dispatchAfterReceiveEffects dispatches runtimes, update apply, and variabl
   );
 });
 
+test('dispatchAfterReceiveEffects can suppress plugin hooks during transactional replay', () => {
+  const calls = [];
+  const handled = dispatchAfterReceiveEffects({
+    message: { id: 'm-replay', role: 'assistant' },
+    sessionId: 's-replay',
+    skipScripts: true,
+    skipPlugins: true,
+    scriptRuntime: {
+      dispatchEvent() {
+        calls.push('script');
+      },
+    },
+    pluginRuntime: {
+      dispatchEvent() {
+        calls.push('plugin');
+      },
+    },
+    applyUpdateVariable() {
+      calls.push('variable');
+    },
+    logger: { warn() {} },
+  });
+  assert.equal(handled, true);
+  assert.deepEqual(calls, ['variable']);
+});
+
 test('buildChatFormatGuardianMessagePart summarizes warnings without exposing full content', () => {
   const part = buildChatFormatGuardianMessagePart({
     now: 1000,
@@ -453,7 +487,7 @@ test('buildChatFormatGuardianAgentRun records review state without storing full 
 });
 
 test('buildChatFormatGuardianAgentRun records bounded model repair return details', () => {
-  const correctedText = 'MiPhone_start\nmsg_start\n<{{user}}和老板娘的私聊>\n{{user}}--姐姐--17:23\n</{{user}}和老板娘的私聊>\nmsg_end\nMiPhone_end';
+  const candidateText = 'MiPhone_start\nmsg_start\n<{{user}}和老板娘的私聊>\n{{user}}--姐姐--17:23\n</{{user}}和老板娘的私聊>\nmsg_end\nMiPhone_end';
   const run = buildChatFormatGuardianAgentRun({
     now: 1000,
     sessionId: 'contact:boss',
@@ -474,12 +508,14 @@ test('buildChatFormatGuardianAgentRun records bounded model repair return detail
       errors: ['missing close tag'],
       warnings: [],
       modelReview: {
-        status: 'needs_repair',
+        status: 'patch',
         canRepair: true,
         repairSummary: '补齐外层标签和结束标记。',
-        correctedText,
-        rawPreview: '{"status":"needs_repair"}',
-        rawText: '{"status":"needs_repair","correctedText":"完整模型修复返回"}',
+        candidateText,
+        protocolVersion: 'format_patch.v1',
+        baseRevision: 'format-run:test-detail',
+        rawPreview: '{"status":"patch"}',
+        rawText: '{"protocolVersion":"format_patch.v1","status":"patch","linePatches":[...]}',
         issues: [{
           severity: 'error',
           type: 'missing_close_tag',
@@ -498,10 +534,11 @@ test('buildChatFormatGuardianAgentRun records bounded model repair return detail
     },
   });
 
-  assert.equal(run.metadata.modelReviewDetail.status, 'needs_repair');
+  assert.equal(run.metadata.modelReviewDetail.status, 'patch');
   assert.equal(run.metadata.modelReviewDetail.canRepair, true);
-  assert.equal(run.metadata.modelReviewDetail.correctedText, correctedText);
-  assert.equal(run.metadata.modelReviewDetail.rawText.includes('完整模型修复返回'), true);
+  assert.equal(run.metadata.modelReviewDetail.candidateText, candidateText);
+  assert.equal(run.metadata.modelReviewDetail.correctedText, undefined);
+  assert.equal(run.metadata.modelReviewDetail.rawText.includes('linePatches'), true);
   assert.equal(run.metadata.modelReviewDetail.linePatches[0].replacementLines[1], '{{user}}--姐姐--17:23');
   assert.equal(run.metadata.modelReviewDetail.linePatches[0].replacementText, undefined);
   assert.deepEqual(run.metadata.autoRepair, {
@@ -659,10 +696,13 @@ test('runChatFormatGuardianPreview validates the full rawOriginal before cleaned
   assert.equal(result.result.status, 'needs_review');
   assert.equal(result.result.sourceTextKind, 'rawOriginal');
   assert.equal(result.part.metadata.sourceTextKind, 'rawOriginal');
-  assert.equal(result.part.metadata.repairCandidate.available, true);
-  assert.equal(result.part.metadata.repairCandidate.replacementText.includes('菲伦--今晚别一个人走。--00:00'), true);
+  assert.equal(result.part.metadata.repairCandidate, null);
+  assert.equal(
+    result.part.metadata.decisionActions.find(action => action.id === 'apply_repair')?.enabled,
+    false,
+  );
   assert.equal(result.agentRun.steps[0].input.sourceTextKind, 'rawOriginal');
-  assert.equal(result.agentRun.metadata.repairCandidate.replacementText, undefined);
+  assert.equal(result.agentRun.metadata.repairCandidate, null);
   assert.equal(result.result.warnings.includes('time is missing'), true);
 });
 
@@ -856,7 +896,7 @@ test('runChatFormatGuardianPreview keeps visible auto-mode bubbles out of format
   assert.equal(modelCalls, 0);
 });
 
-test('runChatFormatGuardianPreview auto-applies model repair for invisible parse failures', async () => {
+test('runChatFormatGuardianPreview always asks permission for model repair of invisible parse failures', async () => {
   const queued = [];
   const previews = [];
   const repairs = [];
@@ -876,6 +916,7 @@ test('runChatFormatGuardianPreview auto-applies model repair for invisible parse
     sessionId: 'contact:firen',
     chatFormatGuardian: {
       enabled: true,
+      baseRevision: 'format-run:test-invisible',
       userName: '我',
       resolvePrivateTargetId: name => (name === '菲伦' ? 'contact:firen' : ''),
       resolveSpeakerId: name => (name === '菲伦' ? 'contact:firen' : ''),
@@ -886,13 +927,15 @@ test('runChatFormatGuardianPreview auto-applies model repair for invisible parse
         backgroundChat: async (messages) => {
           modelCalls.push(messages);
           return JSON.stringify({
-            status: 'needs_repair',
+            protocolVersion: 'format_patch.v1',
+            status: 'patch',
+            baseRevision: 'format-run:test-invisible',
             issues: [{ severity: 'warning', type: 'missing_field', message: 'time is missing' }],
-            canRepair: true,
             repairSummary: '补齐时间',
             linePatches: [{
               startLine: 2,
               endLine: 2,
+              originalLines: ['菲伦--今晚别一个人走。'],
               replacementLines: ['菲伦--今晚别一个人走。--22:12'],
             }],
           });
@@ -919,14 +962,16 @@ test('runChatFormatGuardianPreview auto-applies model repair for invisible parse
   await flushMicrotasks();
 
   assert.equal(modelCalls.length, 1);
-  assert.equal(repairs.length, 1);
-  assert.match(repairs[0].correctedText, /22:12/);
-  assert.equal(previews.length, 0);
+  assert.equal(repairs.length, 0);
+  assert.equal(previews.length, 1);
+  assert.equal(previews[0].part.status, 'waiting_permission');
+  assert.match(previews[0].part.metadata.repairCandidate.replacementText, /22:12/);
 });
 
-test('runChatFormatGuardianPreview records failed auto repair diagnostics', async () => {
+test('runChatFormatGuardianPreview does not auto-apply even when legacy autoApplyRepair is enabled', async () => {
   const previews = [];
   const runs = [];
+  const repairs = [];
   const result = runChatFormatGuardianPreview({
     message: {
       id: 'm-auto-repair-no-events',
@@ -941,6 +986,7 @@ test('runChatFormatGuardianPreview records failed auto repair diagnostics', asyn
     sessionId: '老板娘',
     chatFormatGuardian: {
       enabled: true,
+      baseRevision: 'format-run:test-no-auto-apply',
       userName: '阿兰',
       modelReview: {
         enabled: true,
@@ -948,20 +994,25 @@ test('runChatFormatGuardianPreview records failed auto repair diagnostics', asyn
         reviewNoEvents: true,
         enabledFormats: { phoneShell: true, privateChat: true },
         backgroundChat: async () => JSON.stringify({
-          status: 'needs_repair',
+          protocolVersion: 'format_patch.v1',
+          status: 'patch',
+          baseRevision: 'format-run:test-no-auto-apply',
           issues: [{ severity: 'error', type: 'missing_tag', message: '缺少私聊标签' }],
-          canRepair: true,
           repairSummary: '补齐标签',
-          linePatches: [],
-          correctedText: [
-            'MiPhone_start',
-            'msg_start',
-            '<阿兰和老板娘的私聊>',
-            '老板娘--[yy-今晚过来吗？]--17:53',
-            '</阿兰和老板娘的私聊>',
-            'msg_end',
-            'MiPhone_end',
-          ].join('\n'),
+          linePatches: [{
+            startLine: 1,
+            endLine: 1,
+            originalLines: ['老板娘: [yy-今晚过来吗？]'],
+            replacementLines: [
+              'MiPhone_start',
+              'msg_start',
+              '<阿兰和老板娘的私聊>',
+              '老板娘--[yy-今晚过来吗？]--17:53',
+              '</阿兰和老板娘的私聊>',
+              'msg_end',
+              'MiPhone_end',
+            ],
+          }],
         }),
       },
     },
@@ -972,7 +1023,8 @@ test('runChatFormatGuardianPreview records failed auto repair diagnostics', asyn
       runs.push(payload);
     },
     onChatFormatGuardianAutoRepair() {
-      return { didAnything: false, reason: 'no_events', eventCount: 0 };
+      repairs.push(true);
+      return { didAnything: true, eventCount: 1 };
     },
     logger: { warn() {} },
   });
@@ -983,12 +1035,10 @@ test('runChatFormatGuardianPreview records failed auto repair diagnostics', asyn
 
   assert.equal(previews.length, 1);
   assert.equal(previews[0].part.status, 'waiting_permission');
-  assert.equal(previews[0].part.metadata.autoRepair.reason, 'no_events');
-  assert.equal(previews[0].part.metadata.autoRepair.didAnything, false);
+  assert.equal(previews[0].part.metadata.autoRepair, null);
   assert.equal(runs.length, 1);
-  assert.equal(runs[0].agentRun.metadata.autoRepair.autoApplyRepair, true);
-  assert.equal(runs[0].agentRun.metadata.autoRepair.attempted, true);
-  assert.equal(runs[0].agentRun.metadata.autoRepair.reason, 'no_events');
+  assert.equal(runs[0].agentRun.metadata.autoRepair, null);
+  assert.equal(repairs.length, 0);
 });
 
 test('runChatFormatGuardianPreview records model request failures for invisible parse failures', async () => {
@@ -1042,7 +1092,7 @@ test('runChatFormatGuardianPreview records model request failures for invisible 
   await flushMicrotasks();
 
   assert.equal(previews.length, 1);
-  assert.equal(previews[0].result.status, 'invalid');
+  assert.equal(previews[0].result.status, 'invalid_output');
   assert.equal(previews[0].part.metadata.modelReview.canRepair, false);
   assert.match(previews[0].part.metadata.modelReview.issues[0].message, /network down/);
   assert.equal(runs.length, 1);
@@ -1072,6 +1122,7 @@ test('runChatFormatGuardianPreview can attach async model format repair candidat
     chatFormatGuardian: {
       enabled: true,
       manualTrigger: true,
+      baseRevision: 'format-run:test-async-candidate',
       userName: '我',
       resolvePrivateTargetId: name => (name === '菲伦' ? 'contact:firen' : ''),
       resolveSpeakerId: name => (name === '菲伦' ? 'contact:firen' : ''),
@@ -1082,18 +1133,20 @@ test('runChatFormatGuardianPreview can attach async model format repair candidat
         backgroundChat: async (messages, options) => {
           modelCalls.push({ messages, options });
           return JSON.stringify({
-            status: 'needs_repair',
+            protocolVersion: 'format_patch.v1',
+            status: 'patch',
+            baseRevision: 'format-run:test-async-candidate',
             issues: [{
               severity: 'warning',
               type: 'missing_field',
               message: 'time is missing',
               evidence: '菲伦--今晚别一个人走。',
             }],
-            canRepair: true,
             repairSummary: '补齐私聊消息时间字段',
             linePatches: [{
               startLine: 2,
               endLine: 2,
+              originalLines: ['菲伦--今晚别一个人走。'],
               replacementLines: ['菲伦--今晚别一个人走。--22:12'],
             }],
           });
@@ -1126,14 +1179,173 @@ test('runChatFormatGuardianPreview can attach async model format repair candidat
   assert.match(modelCalls[0].messages[1].content, /待检测 AI 原始回复/);
   assert.equal(previews.length, 2);
   const modelPart = previews[1].part;
-  assert.equal(modelPart.metadata.modelReview.status, 'needs_repair');
+  assert.equal(modelPart.metadata.modelReview.status, 'patch');
   assert.equal(modelPart.metadata.modelReview.correctedText, undefined);
   assert.equal(modelPart.metadata.modelReview.patchCount, 1);
   const repairAction = modelPart.metadata.decisionActions.find(action => action.id === 'apply_repair');
   assert.equal(repairAction.repairCandidate.kind, 'model_format_repair');
   assert.match(repairAction.repairCandidate.replacementText, /22:12/);
+  assert.equal(repairAction.repairCandidate.formatTarget, 'private_chat');
+  assert.deepEqual(
+    repairAction.repairCandidate.formatSourceIds,
+    ['privateChat', 'sceneFormatReminder'],
+  );
   assert.equal(runs.at(-1).metadata.repairCandidate.replacementText, undefined);
   assert.equal(message.meta, undefined);
+});
+
+test('runChatFormatGuardianPreview retries one invalid patch response with the original snapshot', async () => {
+  const modelCalls = [];
+  const previews = [];
+  runChatFormatGuardianPreview({
+    message: {
+      id: 'm-retry-invalid-patch',
+      role: 'assistant',
+      rawOriginal: [
+        '<我和菲伦的私聊>',
+        '菲伦--今晚别一个人走。',
+        '</我和菲伦的私聊>',
+      ].join('\n'),
+      time: '22:12',
+    },
+    sessionId: 'contact:firen',
+    chatFormatGuardian: {
+      enabled: true,
+      manualTrigger: true,
+      baseRevision: 'format-run:test-retry-invalid',
+      userName: '我',
+      resolvePrivateTargetId: name => (name === '菲伦' ? 'contact:firen' : ''),
+      resolveSpeakerId: name => (name === '菲伦' ? 'contact:firen' : ''),
+      modelReview: {
+        enabled: true,
+        force: true,
+        enabledFormats: { privateChat: true },
+        backgroundChat: async (messages) => {
+          modelCalls.push(messages);
+          if (modelCalls.length === 1) {
+            return JSON.stringify({
+              protocolVersion: 'format_patch.v1',
+              status: 'patch',
+              baseRevision: 'format-run:test-retry-invalid',
+              issues: [],
+              repairSummary: '错误地返回完整全文',
+              correctedText: 'forbidden',
+              linePatches: [],
+            });
+          }
+          return JSON.stringify({
+            protocolVersion: 'format_patch.v1',
+            status: 'patch',
+            baseRevision: 'format-run:test-retry-invalid',
+            issues: [{ severity: 'warning', type: 'missing_field', message: '补齐时间' }],
+            repairSummary: '补齐缺失时间',
+            linePatches: [{
+              startLine: 2,
+              endLine: 2,
+              originalLines: ['菲伦--今晚别一个人走。'],
+              replacementLines: ['菲伦--今晚别一个人走。--22:12'],
+            }],
+          });
+        },
+      },
+    },
+    onChatFormatGuardianPreview(payload) {
+      previews.push(payload);
+    },
+    logger: { warn() {} },
+  });
+
+  await waitFor(() => modelCalls.length === 2 && previews.length >= 2, 'format repair retry did not finish');
+  assert.match(modelCalls[1].at(-1).content, /Retry Required/);
+  assert.match(modelCalls[1].at(-1).content, /corrected_text_forbidden/);
+  assert.equal(previews.at(-1).result.status, 'needs_review');
+  assert.equal(previews.at(-1).result.modelReview.attemptCount, 2);
+  assert.match(previews.at(-1).part.metadata.repairCandidate.replacementText, /22:12/);
+});
+
+test('runChatFormatGuardianPreview closes as cannot_repair when two social candidates still cannot parse', async () => {
+  const modelCalls = [];
+  const previews = [];
+  runChatFormatGuardianPreview({
+    message: {
+      id: 'm-domain-retry-fails',
+      role: 'assistant',
+      rawOriginal: '这是一行无法分发的普通文字',
+      time: '22:12',
+    },
+    sessionId: 'contact:firen',
+    chatFormatGuardian: {
+      enabled: true,
+      manualTrigger: true,
+      baseRevision: 'format-run:test-domain-fail',
+      repairTarget: {
+        sourceKind: 'social_turn_raw',
+        sourceSessionId: 'contact:firen',
+        turnId: 'turn:test-domain-fail',
+        sourceMessageIds: ['m-domain-retry-fails'],
+      },
+      modelReview: {
+        enabled: true,
+        force: true,
+        enabledFormats: { privateChat: true },
+        backgroundChat: async (messages) => {
+          modelCalls.push(messages);
+          const replacement = modelCalls.length === 1
+            ? '仍然不是聊天协议'
+            : '第二次仍然不是聊天协议';
+          return JSON.stringify({
+            protocolVersion: 'format_patch.v1',
+            status: 'patch',
+            baseRevision: 'format-run:test-domain-fail',
+            issues: [{ severity: 'error', type: 'missing_tag', message: '缺少协议结构' }],
+            repairSummary: '尝试修复结构',
+            linePatches: [{
+              startLine: 1,
+              endLine: 1,
+              originalLines: ['这是一行无法分发的普通文字'],
+              replacementLines: [replacement],
+            }],
+          });
+        },
+      },
+    },
+    onChatFormatGuardianPreview(payload) {
+      previews.push(payload);
+    },
+    logger: { warn() {} },
+  });
+
+  await waitFor(() => modelCalls.length === 2 && previews.length >= 1, 'social format recheck retry did not finish');
+  assert.match(modelCalls[1].at(-1).content, /format_recheck_failed|格式复查结果/);
+  assert.equal(previews.at(-1).result.status, 'cannot_repair');
+  assert.equal(previews.at(-1).result.modelReview.canRepair, false);
+  assert.equal(previews.at(-1).part.metadata.repairCandidate, null);
+});
+
+test('creative rawOriginal accepts a structurally valid patch without a social protocol gate', () => {
+  const validation = validateChatFormatGuardianRepairCandidate({
+    review: {
+      status: 'patch',
+      canRepair: true,
+      candidateText: '修复后的创意正文',
+    },
+    inputText: '原始创意正文',
+    options: {
+      repairTarget: { sourceKind: 'creative_raw_original' },
+    },
+    modelOptions: {
+      uiMode: 'rp',
+    },
+    formatProfile: {
+      target: 'creative_text',
+    },
+  });
+  assert.deepEqual(validation, {
+    applicable: false,
+    ok: true,
+    status: 'creative_writeback_allowed',
+    parserReport: null,
+  });
 });
 
 test('runChatFormatGuardianPreview filters model format reminders by resolved target', async () => {
@@ -1155,6 +1367,7 @@ test('runChatFormatGuardianPreview filters model format reminders by resolved ta
     chatFormatGuardian: {
       enabled: true,
       manualTrigger: true,
+      baseRevision: 'format-run:test-profile-filter',
       userName: '我',
       resolveGroupTargetId: name => (name === '调查组' ? 'group:case' : ''),
       resolveSpeakerId: name => (name === '雪' ? 'contact:snow' : ''),
@@ -1171,15 +1384,16 @@ test('runChatFormatGuardianPreview filters model format reminders by resolved ta
           { content: '群聊格式提醒', formatIds: ['groupChat'], targets: ['group_chat'] },
           { content: '生图格式提醒', formatIds: ['imagePrompt'], targets: ['image_prompt'] },
         ],
+        customFormatGuide: '调查组回复必须保留案件编号字段',
         backgroundChat: async (messages) => {
           modelCalls.push(messages);
           return JSON.stringify({
-            status: 'invalid',
+            protocolVersion: 'format_patch.v1',
+            status: 'cannot_repair',
+            baseRevision: 'format-run:test-profile-filter',
             issues: [{ severity: 'warning', type: 'missing_field', message: 'time is missing' }],
-            canRepair: false,
             repairSummary: '测试返回',
             linePatches: [],
-            correctedText: '',
           });
         },
       },
@@ -1196,6 +1410,7 @@ test('runChatFormatGuardianPreview filters model format reminders by resolved ta
   assert.match(userPrompt, /formatTarget: group_chat/);
   assert.match(userPrompt, /群聊格式提醒/);
   assert.match(userPrompt, /群聊格式/);
+  assert.match(userPrompt, /调查组回复必须保留案件编号字段/);
   assert.doesNotMatch(userPrompt, /私聊格式提醒/);
   assert.doesNotMatch(userPrompt, /生图格式提醒/);
   assert.doesNotMatch(userPrompt, /图片提示词格式/);
@@ -1216,6 +1431,7 @@ test('runChatFormatGuardianPreview asks model to suggest regeneration for empty 
     sessionId: 'contact:firen',
     chatFormatGuardian: {
       enabled: true,
+      baseRevision: 'format-run:test-empty',
       userName: '我',
       modelReview: {
         enabled: true,
@@ -1224,12 +1440,12 @@ test('runChatFormatGuardianPreview asks model to suggest regeneration for empty 
         backgroundChat: async (messages) => {
           modelCalls.push(messages);
           return JSON.stringify({
-            status: 'invalid',
+            protocolVersion: 'format_patch.v1',
+            status: 'cannot_repair',
+            baseRevision: 'format-run:test-empty',
             issues: [{ severity: 'error', type: 'parse_error', message: '没有可修复的有效内容' }],
-            canRepair: false,
             repairSummary: '没有可修复内容，建议重新生成。',
             linePatches: [],
-            correctedText: '',
           });
         },
       },
@@ -1252,7 +1468,7 @@ test('runChatFormatGuardianPreview asks model to suggest regeneration for empty 
   assert.equal(modelCalls.length, 1);
   assert.match(modelCalls[0][1].content, /建议用户重新生成/);
   assert.equal(previews.length, 1);
-  assert.equal(previews[0].result.status, 'invalid');
+  assert.equal(previews[0].result.status, 'cannot_repair');
   assert.equal(previews[0].part.metadata.modelReview.canRepair, false);
 });
 
@@ -1306,6 +1522,7 @@ test('runChatFormatGuardianPreview can force model review for manual checks', as
     sessionId: 'contact:firen',
     chatFormatGuardian: {
       enabled: true,
+      baseRevision: 'format-run:test-force',
       userName: '我',
       resolvePrivateTargetId: name => (name === '菲伦' ? 'contact:firen' : ''),
       resolveSpeakerId: name => (name === '菲伦' ? 'contact:firen' : ''),
@@ -1315,13 +1532,15 @@ test('runChatFormatGuardianPreview can force model review for manual checks', as
         backgroundChat: async () => {
           modelCalls += 1;
           return JSON.stringify({
-            status: 'needs_repair',
+            protocolVersion: 'format_patch.v1',
+            status: 'patch',
+            baseRevision: 'format-run:test-force',
             issues: [{ severity: 'warning', type: 'other', message: 'manual repair' }],
-            canRepair: true,
             repairSummary: '手动复核修复',
             linePatches: [{
               startLine: 2,
               endLine: 2,
+              originalLines: ['菲伦--今晚别一个人走。--22:12'],
               replacementLines: ['菲伦--今晚别一个人走。--22:13'],
             }],
           });

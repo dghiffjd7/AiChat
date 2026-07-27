@@ -235,7 +235,14 @@ const createFakeDocument = () => {
     wrapper,
     avatarImg: avatar,
     bubbleStack,
-    message: { id: 'chat-user', role: 'user', time: '11:30', status: 'sent', meta: {} },
+    message: {
+      id: 'chat-user',
+      role: 'user',
+      time: '11:30',
+      editedAt: 123,
+      status: 'sent',
+      meta: {},
+    },
     isUser: true,
     uiMode: 'chat',
   });
@@ -247,6 +254,7 @@ const createFakeDocument = () => {
   );
   assert.equal(timeRow.children[1].className, 'chat-delivery-status');
   assert.equal(timeRow.children[2].className, 'QQ_chat_time');
+  assert.equal(timeRow.children[2].textContent, '11:30 · 已编辑');
   console.log('ok - ordinary chat user messages share copy and edit quick actions');
 }
 

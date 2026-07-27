@@ -12,6 +12,39 @@ const ACTION_ICON_MAP = {
 };
 
 const DANGER_ACTIONS = new Set(['delete', 'cancel-media-generation']);
+const SVG_NAMESPACE = 'http://www.w3.org/2000/svg';
+const CHECK_FORMAT_ICON_PATHS = Object.freeze([
+  'M4 6h10',
+  'M4 12h7',
+  'M4 18h6',
+  'm14 17 2 2 4-5',
+]);
+
+const createCheckFormatIcon = (documentLike) => {
+  const createSvgNode = tagName => (
+    documentLike.createElementNS?.(SVG_NAMESPACE, tagName) ||
+    documentLike.createElement(tagName)
+  );
+  const svg = createSvgNode('svg');
+  Object.entries({
+    viewBox: '0 0 24 24',
+    width: '16',
+    height: '16',
+    fill: 'none',
+    stroke: 'currentColor',
+    'stroke-width': '1.8',
+    'stroke-linecap': 'round',
+    'stroke-linejoin': 'round',
+    focusable: 'false',
+    'aria-hidden': 'true',
+  }).forEach(([name, value]) => svg.setAttribute?.(name, value));
+  CHECK_FORMAT_ICON_PATHS.forEach((pathData) => {
+    const path = createSvgNode('path');
+    path.setAttribute?.('d', pathData);
+    svg.appendChild(path);
+  });
+  return svg;
+};
 
 export const createContextMenuReactionRow = ({
   documentLike,
@@ -63,7 +96,13 @@ export const createContextMenuActionButton = ({
   const icon = documentLike.createElement('span');
   icon.className = 'chat-context-menu-action-icon';
   icon.setAttribute?.('aria-hidden', 'true');
-  icon.textContent = String(action?.icon || ACTION_ICON_MAP[key] || '');
+  if (action?.icon) {
+    icon.textContent = String(action.icon);
+  } else if (key === 'check-format') {
+    icon.appendChild(createCheckFormatIcon(documentLike));
+  } else {
+    icon.textContent = String(ACTION_ICON_MAP[key] || '');
+  }
 
   const label = documentLike.createElement('span');
   label.className = 'chat-context-menu-action-label';

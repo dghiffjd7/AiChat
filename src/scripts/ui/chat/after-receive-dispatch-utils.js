@@ -6,11 +6,15 @@ import {
 import { mergeAgentMessageParts } from '../../agent/agent-message-parts.js';
 import {
   buildChatFormatGuardianModelPrompt,
-  buildChatFormatRepairCandidate,
   extractChatFormatEventDrafts,
   normalizeChatFormatGuardianModelReview,
   resolveChatFormatGuardianFormatProfile,
 } from './chat-format-guardian-utils.js';
+import {
+  createFormatPatchRevisionToken,
+  FORMAT_PATCH_MODEL_MAX_TOKENS,
+} from './format-patch-transaction-utils.js';
+import { validateFormatRepairFunctionPayloads } from './format-repair-side-effect-utils.js';
 import {
   analyzeChatBodyQuality,
   CHAT_BODY_QUALITY_STATUSES,
@@ -67,7 +71,7 @@ const countBy = (items = [], keyFn = item => item) => {
 };
 
 const getChatFormatGuardianStatus = (status = '') => {
-  if (status === 'invalid') return 'failed';
+  if (status === 'invalid' || status === 'invalid_output') return 'failed';
   if (status === 'needs_review') return 'waiting_permission';
   return 'succeeded';
 };
@@ -80,7 +84,7 @@ const CHAT_FORMAT_GUARDIAN_CHECK_FAILURE_ISSUE_TYPES = new Set(['request_error',
 
 const isChatFormatGuardianCheckIncomplete = (review = null) => {
   if (!isPlainObject(review)) return false;
-  if (trim(review.status) !== 'invalid') return false;
+  if (!['invalid', 'invalid_output'].includes(trim(review.status))) return false;
   const issues = list(review.issues);
   return issues.length > 0
     && issues.every(issue => CHAT_FORMAT_GUARDIAN_CHECK_FAILURE_ISSUE_TYPES.has(trim(issue?.type)));
@@ -89,6 +93,9 @@ const isChatFormatGuardianCheckIncomplete = (review = null) => {
 const getChatFormatGuardianTitle = (result = null) => {
   if (isChatFormatGuardianCheckIncomplete(result?.modelReview)) return '格式检查未完成';
   const status = trim(result?.status);
+  if (status === 'invalid_output') return '格式检查未完成';
+  if (status === 'needs_format_spec') return '缺少格式规范';
+  if (status === 'cannot_repair') return '无法安全修复';
   if (status === 'invalid') return '聊天格式错误';
   if (status === 'needs_review') return '聊天格式待确认';
   return '聊天格式已验证';
@@ -166,8 +173,32 @@ const summarizeChatFormatRepairCandidate = (repairCandidate = null, { includeTex
     fixedWarnings: list(repairCandidate.fixedWarnings).map(item => trim(item)).filter(Boolean),
     eventCount: Math.max(0, Math.trunc(Number(repairCandidate.eventCount) || 0)),
     issueCount: Math.max(0, Math.trunc(Number(repairCandidate.issueCount) || 0)),
+    protocolVersion: trim(repairCandidate.protocolVersion),
+    baseRevision: trim(repairCandidate.baseRevision),
+    sourceKind: trim(repairCandidate.sourceKind),
+    sourceSessionId: trim(repairCandidate.sourceSessionId),
+    targetSessionId: trim(repairCandidate.targetSessionId),
+    turnId: trim(repairCandidate.turnId),
+    sourceMessageIds: normalizeStringList(repairCandidate.sourceMessageIds),
+    formatTarget: trim(repairCandidate.formatTarget),
+    formatSourceIds: normalizeStringList(repairCandidate.formatSourceIds),
+    reviewWarning: trim(repairCandidate.reviewWarning),
+    linePatches: list(repairCandidate.linePatches).map(patch => ({
+      startLine: Number(patch?.startLine || 0) || 0,
+      endLine: Number(patch?.endLine || 0) || 0,
+      originalLines: Array.isArray(patch?.originalLines)
+        ? patch.originalLines.map(line => String(line ?? ''))
+        : [],
+      replacementLines: Array.isArray(patch?.replacementLines)
+        ? patch.replacementLines.map(line => String(line ?? ''))
+        : [],
+      reason: trim(patch?.reason),
+    })),
   };
-  if (includeText) summary.replacementText = String(repairCandidate.replacementText || '');
+  if (includeText) {
+    summary.replacementText = String(repairCandidate.replacementText || '');
+    summary.sourceSnapshot = String(repairCandidate.sourceSnapshot || '');
+  }
   return summary;
 };
 
@@ -176,6 +207,7 @@ const summarizeChatFormatModelReview = (modelReview = null, { includeText = fals
   const summary = {
     status: trim(modelReview.status),
     canRepair: modelReview.canRepair === true,
+    attemptCount: Math.max(0, Math.trunc(Number(modelReview.attemptCount) || 0)),
     repairSummary: trim(modelReview.repairSummary),
     rawPreview: truncate(modelReview.rawPreview, 180),
     issueCount: list(modelReview.issues).length,
@@ -197,8 +229,31 @@ const summarizeChatFormatModelReview = (modelReview = null, { includeText = fals
       }))
       .filter(issue => issue.message)
       .slice(0, 6),
+    domainValidation: isPlainObject(modelReview.domainValidation)
+      ? {
+        applicable: modelReview.domainValidation.applicable === true,
+        ok: modelReview.domainValidation.ok === true,
+        status: trim(modelReview.domainValidation.status),
+        parserStatus: trim(modelReview.domainValidation.parserReport?.status),
+      }
+      : null,
+    functionPayloadValidation: isPlainObject(modelReview.functionPayloadValidation)
+      ? {
+        ok: modelReview.functionPayloadValidation.ok === true,
+        beforeBlockCount: Math.max(
+          0,
+          Math.trunc(Number(modelReview.functionPayloadValidation.beforeBlockCount) || 0),
+        ),
+        afterBlockCount: Math.max(
+          0,
+          Math.trunc(Number(modelReview.functionPayloadValidation.afterBlockCount) || 0),
+        ),
+        violationCount: list(modelReview.functionPayloadValidation.violations).length,
+      }
+      : null,
+    sourceTruncationSuspected: modelReview.sourceTruncationSuspected === true,
   };
-  if (includeText) summary.correctedText = String(modelReview.correctedText || '');
+  if (includeText) summary.candidateText = String(modelReview.candidateText || '');
   return summary;
 };
 
@@ -225,7 +280,7 @@ const summarizeChatFormatModelReviewDetail = (modelReview = null, {
   maxPatchLines = 40,
 } = {}) => {
   if (!isPlainObject(modelReview)) return null;
-  const corrected = truncateRawText(modelReview.correctedText, maxTextLength);
+  const candidate = truncateRawText(modelReview.candidateText, maxTextLength);
   const rawText = truncateRawText(modelReview.rawText || modelReview.rawPreview, maxRawTextLength);
   const normalizedPatchLines = Math.max(4, Math.trunc(Number(maxPatchLines) || 40));
   const linePatches = list(modelReview.linePatches)
@@ -268,14 +323,67 @@ const summarizeChatFormatModelReviewDetail = (modelReview = null, {
   const detail = {
     status: trim(modelReview.status),
     canRepair: modelReview.canRepair === true,
+    attemptCount: Math.max(0, Math.trunc(Number(modelReview.attemptCount) || 0)),
     repairSummary: trim(modelReview.repairSummary),
     rawPreview: truncate(modelReview.rawPreview, 500),
     rawText: rawText.text,
     rawTextTruncated: modelReview.rawTextTruncated === true || rawText.truncated,
     issueCount: list(modelReview.issues).length,
     patchCount: list(modelReview.linePatches).length,
-    correctedText: corrected.text,
-    correctedTextTruncated: corrected.truncated,
+    candidateText: candidate.text,
+    candidateTextTruncated: candidate.truncated,
+    baseRevision: trim(modelReview.baseRevision),
+    protocolVersion: trim(modelReview.protocolVersion),
+    validationErrors: list(modelReview.validationErrors)
+      .map(item => ({
+        code: trim(item?.code),
+        message: trim(item?.message),
+        patchIndex: Number.isInteger(item?.patchIndex) ? item.patchIndex : null,
+      }))
+      .filter(item => item.code || item.message)
+      .slice(0, 8),
+    domainValidation: isPlainObject(modelReview.domainValidation)
+      ? {
+        applicable: modelReview.domainValidation.applicable === true,
+        ok: modelReview.domainValidation.ok === true,
+        status: trim(modelReview.domainValidation.status),
+        parserReport: isPlainObject(modelReview.domainValidation.parserReport)
+          ? {
+            status: trim(modelReview.domainValidation.parserReport.status),
+            summary: trim(modelReview.domainValidation.parserReport.summary),
+            eventCount: Math.max(
+              0,
+              Math.trunc(Number(modelReview.domainValidation.parserReport.eventCount) || 0),
+            ),
+            errors: normalizeStringList(modelReview.domainValidation.parserReport.errors).slice(0, 8),
+            warnings: normalizeStringList(modelReview.domainValidation.parserReport.warnings).slice(0, 8),
+          }
+          : null,
+      }
+      : null,
+    functionPayloadValidation: isPlainObject(modelReview.functionPayloadValidation)
+      ? {
+        ok: modelReview.functionPayloadValidation.ok === true,
+        beforeBlockCount: Math.max(
+          0,
+          Math.trunc(Number(modelReview.functionPayloadValidation.beforeBlockCount) || 0),
+        ),
+        afterBlockCount: Math.max(
+          0,
+          Math.trunc(Number(modelReview.functionPayloadValidation.afterBlockCount) || 0),
+        ),
+        violations: list(modelReview.functionPayloadValidation.violations)
+          .map(item => ({
+            code: trim(item?.code),
+            identity: trim(item?.identity),
+            kind: trim(item?.kind),
+            message: trim(item?.message),
+          }))
+          .filter(item => item.code || item.message)
+          .slice(0, 8),
+      }
+      : null,
+    sourceTruncationSuspected: modelReview.sourceTruncationSuspected === true,
     linePatches,
     issues,
   };
@@ -284,7 +392,7 @@ const summarizeChatFormatModelReviewDetail = (modelReview = null, {
     !detail.repairSummary &&
     !detail.rawPreview &&
     !detail.rawText.trim() &&
-    !detail.correctedText.trim() &&
+    !detail.candidateText.trim() &&
     !detail.linePatches.length &&
     !detail.issues.length
   ) {
@@ -355,26 +463,41 @@ const buildChatFormatGuardianDecisionActions = ({
 const resolveChatFormatGuardianRepairCandidate = ({ result = null, message = {} } = {}) => {
   if (!result || result.status === 'no_events' || result.status === 'ready') return null;
   const modelReview = isPlainObject(result?.modelReview) ? result.modelReview : null;
-  const modelCorrectedText = String(modelReview?.correctedText || '').trim();
-  if (modelReview?.canRepair === true && modelCorrectedText) {
+  const modelCandidateText = String(modelReview?.candidateText || '');
+  if (modelReview?.canRepair === true && modelCandidateText) {
     const issues = list(modelReview.issues);
     return {
       available: true,
       kind: 'model_format_repair',
       title: '模型格式修复',
       summary: trim(modelReview.repairSummary, '应用模型给出的最小格式修复。'),
-      preview: truncate(modelCorrectedText, 220),
-      replacementText: modelCorrectedText,
+      preview: truncate(modelCandidateText, 220),
+      replacementText: modelCandidateText,
+      candidateText: modelCandidateText,
+      baseRevision: trim(modelReview.baseRevision),
+      protocolVersion: trim(modelReview.protocolVersion),
+      linePatches: list(modelReview.linePatches),
+      sourceSnapshot: typeof result?.sourceSnapshot === 'string' ? result.sourceSnapshot : '',
+      sourceKind: trim(result?.repairTarget?.sourceKind),
+      sourceSessionId: trim(result?.repairTarget?.sourceSessionId),
+      targetSessionId: trim(result?.repairTarget?.targetSessionId),
+      turnId: trim(result?.repairTarget?.turnId),
+      sourceMessageIds: normalizeStringList(result?.repairTarget?.sourceMessageIds),
+      formatTarget: trim(result?.formatProfile?.target),
+      formatSourceIds: normalizeStringList(
+        result?.formatProfile?.formatSpecSourceIds ||
+        result?.formatProfile?.enabledFormatIds,
+      ),
+      reviewWarning: modelReview.sourceTruncationSuspected === true
+        ? '正文疑似严重截断，可考虑重新生成'
+        : '',
       fallbackTime: trim(result?.repairFallbackTime || message?.time),
       fixedWarnings: issues.map(issue => trim(issue?.message)).filter(Boolean).slice(0, 6),
       eventCount: list(result?.eventDrafts).length,
       issueCount: issues.length,
     };
   }
-  return buildChatFormatRepairCandidate(result, {
-    fallbackTime: trim(result?.repairFallbackTime || message?.time),
-    maxPreviewLength: 220,
-  });
+  return null;
 };
 
 const shouldEmitChatFormatGuardianPart = (result = {}, options = {}) => {
@@ -401,10 +524,9 @@ export const resolveChatFormatGuardianInputText = (message = {}) => {
   const rawOriginalText = String(message?.rawOriginal ?? '');
   for (const [source, value] of candidates) {
     if (typeof value !== 'string') continue;
-    const text = value.trim();
-    if (text) {
+    if (value.trim()) {
       return {
-        text,
+        text: value,
         source,
         hasRawOriginal: Boolean(rawOriginalText.trim()),
       };
@@ -873,6 +995,7 @@ const buildChatFormatGuardianModelResult = ({
   parserResult = null,
   message = {},
   options = {},
+  formatProfile = null,
 } = {}) => {
   const issues = list(review?.issues);
   const errors = issues
@@ -883,15 +1006,24 @@ const buildChatFormatGuardianModelResult = ({
     .filter(issue => trim(issue?.severity).toLowerCase() !== 'error')
     .map(issue => trim(issue?.message))
     .filter(Boolean);
-  const status = review?.status === 'ok'
+  const reviewStatus = trim(review?.status);
+  const status = reviewStatus === 'no_change'
     ? 'ready'
-    : (review?.canRepair === true ? 'needs_review' : 'invalid');
+    : (reviewStatus === 'patch' && review?.canRepair === true
+      ? 'needs_review'
+      : (['needs_format_spec', 'cannot_repair', 'invalid_output'].includes(reviewStatus)
+        ? reviewStatus
+        : 'invalid_output'));
   return {
     ...(isPlainObject(parserResult) ? parserResult : {}),
     status,
     summary: status === 'ready'
       ? '模型格式检查通过'
-      : isChatFormatGuardianCheckIncomplete(review)
+      : status === 'needs_format_spec'
+        ? '缺少足够的格式规范'
+        : status === 'cannot_repair'
+          ? '无法在不编造正文的前提下安全修复'
+          : isChatFormatGuardianCheckIncomplete(review)
         ? '格式检查未完成'
         : (review?.canRepair ? '模型发现可修复格式问题' : '模型发现格式问题'),
     errors,
@@ -900,6 +1032,20 @@ const buildChatFormatGuardianModelResult = ({
     sourceTextKind: trim(parserResult?.sourceTextKind),
     hasRawOriginal: parserResult?.hasRawOriginal === true,
     repairFallbackTime: trim(options?.repairFallbackTime || parserResult?.repairFallbackTime || message?.time),
+    baseRevision: trim(options?.baseRevision || review?.baseRevision),
+    sourceSnapshot: typeof options?.sourceSnapshot === 'string'
+      ? options.sourceSnapshot
+      : '',
+    repairTarget: isPlainObject(options?.repairTarget) ? { ...options.repairTarget } : null,
+    formatProfile: isPlainObject(formatProfile) ? {
+      target: trim(formatProfile.target),
+      requestedTarget: trim(formatProfile.requestedTarget),
+      enabledFormatIds: normalizeStringList(formatProfile.enabledFormatIds),
+      formatSpecSourceIds: normalizeStringList(
+        formatProfile.formatSpecSourceIds ||
+        formatProfile.enabledFormatIds,
+      ),
+    } : null,
     modelReview: review,
   };
 };
@@ -913,7 +1059,7 @@ const buildChatFormatGuardianModelFailureResult = ({
   const errorMessage = trim(error?.message || error, '格式修复请求失败');
   return {
     ...(isPlainObject(parserResult) ? parserResult : {}),
-    status: 'invalid',
+    status: 'invalid_output',
     summary: '格式修复请求失败',
     errors: [errorMessage],
     warnings: [],
@@ -921,9 +1067,16 @@ const buildChatFormatGuardianModelFailureResult = ({
     sourceTextKind: trim(parserResult?.sourceTextKind),
     hasRawOriginal: parserResult?.hasRawOriginal === true,
     repairFallbackTime: trim(options?.repairFallbackTime || parserResult?.repairFallbackTime || message?.time),
+    baseRevision: trim(options?.baseRevision),
+    sourceSnapshot: typeof options?.sourceSnapshot === 'string'
+      ? options.sourceSnapshot
+      : '',
+    repairTarget: isPlainObject(options?.repairTarget) ? { ...options.repairTarget } : null,
     modelReview: {
       ok: false,
-      status: 'invalid',
+      protocolVersion: 'format_patch.v1',
+      status: 'invalid_output',
+      baseRevision: trim(options?.baseRevision),
       issues: [{
         severity: 'error',
         type: error?.code === 'CHAT_FORMAT_GUARDIAN_TIMEOUT' ? 'timeout' : 'request_error',
@@ -932,8 +1085,9 @@ const buildChatFormatGuardianModelFailureResult = ({
       }],
       canRepair: false,
       repairSummary: errorMessage,
-      correctedText: '',
+      candidateText: '',
       linePatches: [],
+      validationErrors: [],
       rawPreview: '',
     },
   };
@@ -1009,6 +1163,178 @@ const selectChatFormatReminderTextForProfile = (modelOptions = {}, profile = {})
   return enabledIds.size ? trim(modelOptions?.formatReminderText).slice(0, 12000) : '';
 };
 
+const isSocialFormatRepairTarget = ({
+  options = {},
+  modelOptions = {},
+  formatProfile = {},
+} = {}) => {
+  const sourceKind = trim(options?.repairTarget?.sourceKind);
+  if (sourceKind === 'social_turn_raw') return true;
+  if (sourceKind === 'creative_raw_original') return false;
+  const uiMode = trim(modelOptions?.uiMode || options?.uiMode).toLowerCase();
+  const target = trim(formatProfile?.target || modelOptions?.formatTarget || options?.formatTarget).toLowerCase();
+  if (uiMode === 'rp' || ['creative_text', 'forum'].includes(target)) return false;
+  return true;
+};
+
+export const validateChatFormatGuardianRepairCandidate = ({
+  review = null,
+  inputText = '',
+  options = {},
+  modelOptions = {},
+  formatProfile = {},
+} = {}) => {
+  if (trim(review?.status) !== 'patch' || review?.canRepair !== true) {
+    return {
+      applicable: false,
+      ok: true,
+      status: 'not_applicable',
+      parserReport: null,
+    };
+  }
+  if (!isSocialFormatRepairTarget({ options, modelOptions, formatProfile })) {
+    return {
+      applicable: false,
+      ok: true,
+      status: 'creative_writeback_allowed',
+      parserReport: null,
+    };
+  }
+  const candidateText = String(review?.candidateText ?? inputText ?? '');
+  const parserReport = extractChatFormatEventDrafts(candidateText, {
+    ...options,
+    enabledFormats: formatProfile?.enabledFormats || modelOptions?.enabledFormats || options?.enabledFormats,
+    sourceMessageId: trim(options?.sourceMessageId),
+  });
+  const ok = parserReport.status === 'ready';
+  return {
+    applicable: true,
+    ok,
+    status: ok ? 'ready' : 'format_recheck_failed',
+    parserReport: {
+      status: trim(parserReport.status),
+      summary: trim(parserReport.summary),
+      eventCount: list(parserReport.eventDrafts).length,
+      errors: normalizeStringList(parserReport.errors).slice(0, 8),
+      warnings: normalizeStringList(parserReport.warnings).slice(0, 8),
+    },
+  };
+};
+
+const serializeChatFormatGuardianRetryRaw = (raw) => {
+  const text = typeof raw === 'string' ? raw : JSON.stringify(raw || {});
+  return text.length > 12000 ? `${text.slice(0, 12000)}\n（上一输出已截断）` : text;
+};
+
+export const buildChatFormatGuardianRetryInstruction = ({
+  raw = '',
+  review = null,
+  domainValidation = null,
+} = {}) => {
+  const validationErrors = list(review?.validationErrors)
+    .map(item => ({
+      code: trim(item?.code),
+      message: trim(item?.message),
+      patchIndex: Number.isInteger(item?.patchIndex) ? item.patchIndex : null,
+    }));
+  const parserReport = isPlainObject(domainValidation?.parserReport)
+    ? domainValidation.parserReport
+    : null;
+  return [
+    '# Retry Required',
+    '上一次返回未通过 APP 校验。原始回复与 baseRevision 均未改变。',
+    '请根据失败信息重新生成一套完整、互不重叠的 linePatches；不要只补充上一套补丁，也不要返回完整修复全文。',
+    `上一次模型输出：\n${serializeChatFormatGuardianRetryRaw(raw) || '（空）'}`,
+    validationErrors.length
+      ? `补丁协议校验失败：\n${JSON.stringify(validationErrors, null, 2)}`
+      : '',
+    parserReport
+      ? `应用上次完整补丁集后的格式复查结果：\n${JSON.stringify(parserReport, null, 2)}`
+      : '',
+    '仍然只输出一个符合 format_patch.v1 的 JSON 对象。',
+  ].filter(Boolean).join('\n\n');
+};
+
+const buildChatFormatGuardianDomainFailureReview = ({
+  review = null,
+  domainValidation = null,
+  attemptCount = 2,
+} = {}) => {
+  const parserReport = domainValidation?.parserReport || {};
+  const detail = [
+    ...normalizeStringList(parserReport.errors),
+    ...normalizeStringList(parserReport.warnings),
+  ][0] || '修复后仍无法通过完整格式复查';
+  return {
+    ...(isPlainObject(review) ? review : {}),
+    ok: true,
+    status: 'cannot_repair',
+    canRepair: false,
+    repairSummary: `已重试 ${attemptCount} 次，但修复后仍无法安全分发；建议重新生成。`,
+    candidateText: '',
+    linePatches: [],
+    issues: [{
+      severity: 'error',
+      type: 'parse_error',
+      message: detail,
+      evidence: '',
+    }],
+    domainValidation,
+    attemptCount,
+  };
+};
+
+export const validateChatFormatGuardianFunctionPayloads = ({
+  review = null,
+  inputText = '',
+} = {}) => {
+  if (trim(review?.status) !== 'patch' || review?.canRepair !== true) return review;
+  const validation = validateFormatRepairFunctionPayloads({
+    originalText: inputText,
+    candidateText: String(review?.candidateText || ''),
+  });
+  if (validation.ok) {
+    return {
+      ...review,
+      functionPayloadValidation: {
+        ok: true,
+        beforeBlockCount: validation.beforeBlocks.length,
+        afterBlockCount: validation.afterBlocks.length,
+        violations: [],
+      },
+    };
+  }
+  const validationErrors = validation.violations.map(item => ({
+    code: item.code,
+    message: item.message,
+  }));
+  return {
+    ...review,
+    ok: false,
+    status: 'invalid_output',
+    canRepair: false,
+    repairSummary: '',
+    candidateText: '',
+    linePatches: [],
+    validationErrors: [
+      ...list(review?.validationErrors),
+      ...validationErrors,
+    ],
+    issues: validation.violations.map(item => ({
+      severity: 'error',
+      type: 'other',
+      message: item.message,
+      evidence: item.identity,
+    })),
+    functionPayloadValidation: {
+      ok: false,
+      beforeBlockCount: validation.beforeBlocks.length,
+      afterBlockCount: validation.afterBlocks.length,
+      violations: validation.violations,
+    },
+  };
+};
+
 const emitChatFormatGuardianModelReviewResult = ({
   message = null,
   sessionId = '',
@@ -1026,7 +1352,7 @@ const emitChatFormatGuardianModelReviewResult = ({
     message,
     sessionId,
     autoRepairResult,
-    autoApplyRepair: modelOptions?.autoApplyRepair === true,
+    autoApplyRepair: false,
     showSucceededPreview: modelOptions?.showSucceededPreview === true,
     maxEvents: options.maxEvents,
     maxIssues: options.maxIssues,
@@ -1039,7 +1365,7 @@ const emitChatFormatGuardianModelReviewResult = ({
     message,
     sessionId,
     autoRepairResult,
-    autoApplyRepair: modelOptions?.autoApplyRepair === true,
+    autoApplyRepair: false,
     showSucceededRun: modelOptions?.recordSucceededRun === true,
     maxEvents: options.maxEvents,
     maxIssues: options.maxIssues,
@@ -1091,54 +1417,91 @@ const scheduleChatFormatGuardianModelReview = ({
       parserResult,
       enabledFormats: modelOptions.enabledFormats,
     });
+    const formatReminderText = selectChatFormatReminderTextForProfile(modelOptions, formatProfile);
+    const customFormatGuide = modelOptions.customFormatGuide || options.customFormatGuide || '';
+    const resolvedFormatProfile = {
+      ...formatProfile,
+      formatSpecSourceIds: [
+        ...formatProfile.enabledFormatIds,
+        ...(formatReminderText ? ['sceneFormatReminder'] : []),
+        ...(customFormatGuide ? ['customFormatGuide'] : []),
+      ],
+    };
     const prompt = buildChatFormatGuardianModelPrompt({
       assistantText: inputText,
-      formatReminderText: selectChatFormatReminderTextForProfile(modelOptions, formatProfile),
-      customFormatGuide: modelOptions.customFormatGuide || options.customFormatGuide || '',
+      formatReminderText,
+      customFormatGuide,
       enabledFormats: formatProfile.enabledFormats,
       parserReport: parserResult,
       userName: modelOptions.userName || options.userName,
       sessionLabel: modelOptions.sessionLabel,
       surface: modelOptions.surface || resolveChatFormatGuardianSurface(parserResult?.eventDrafts),
       formatTarget: formatProfile.target,
+      baseRevision: options.baseRevision,
+      repairTarget: options.repairTarget,
     });
-    const raw = await runChatFormatGuardianBackgroundChat(
-      modelOptions.backgroundChat,
-      prompt.messages,
-      modelOptions.requestOptions || { temperature: 0, maxTokens: 900 },
-      { timeoutMs: modelOptions.timeoutMs },
-    );
-    const review = normalizeChatFormatGuardianModelReview(raw, { originalText: inputText });
+    const requestReview = async (messages) => {
+      const raw = await runChatFormatGuardianBackgroundChat(
+        modelOptions.backgroundChat,
+        messages,
+        modelOptions.requestOptions || {
+          temperature: 0,
+          maxTokens: FORMAT_PATCH_MODEL_MAX_TOKENS,
+        },
+        { timeoutMs: modelOptions.timeoutMs },
+      );
+      const normalizedReview = normalizeChatFormatGuardianModelReview(raw, {
+        originalText: inputText,
+        baseRevision: options.baseRevision,
+      });
+      const review = validateChatFormatGuardianFunctionPayloads({
+        review: normalizedReview,
+        inputText,
+      });
+      const domainValidation = validateChatFormatGuardianRepairCandidate({
+        review,
+        inputText,
+        options,
+        modelOptions,
+        formatProfile: resolvedFormatProfile,
+      });
+      return { raw, review, domainValidation };
+    };
+    let attempt = await requestReview(prompt.messages);
+    const shouldRetry = attempt.review?.status === 'invalid_output' ||
+      (attempt.domainValidation?.applicable === true && attempt.domainValidation.ok !== true);
+    if (shouldRetry) {
+      const retryInstruction = buildChatFormatGuardianRetryInstruction(attempt);
+      attempt = await requestReview([
+        ...prompt.messages,
+        { role: 'user', content: retryInstruction },
+      ]);
+      attempt.review.attemptCount = 2;
+    } else {
+      attempt.review.attemptCount = 1;
+    }
+    attempt.review.domainValidation = attempt.domainValidation;
+    let review = attempt.review;
+    if (
+      attempt.domainValidation?.applicable === true &&
+      attempt.domainValidation.ok !== true &&
+      review?.status !== 'invalid_output'
+    ) {
+      review = buildChatFormatGuardianDomainFailureReview({
+        review,
+        domainValidation: attempt.domainValidation,
+        attemptCount: review.attemptCount,
+      });
+    }
     const result = buildChatFormatGuardianModelResult({
       review,
       parserResult,
       message,
       options,
+      formatProfile: resolvedFormatProfile,
     });
     let autoRepairResult = null;
-    const shouldAutoApplyRepair = modelOptions.autoApplyRepair === true &&
-      review?.canRepair === true &&
-      trim(review?.correctedText);
-    if (shouldAutoApplyRepair && typeof onChatFormatGuardianAutoRepair === 'function') {
-      try {
-        autoRepairResult = await onChatFormatGuardianAutoRepair({
-          message,
-          sessionId,
-          result,
-          correctedText: review.correctedText,
-          inputText,
-        });
-      } catch (err) {
-        autoRepairResult = {
-          didAnything: false,
-          errorMessage: err?.message ? String(err.message) : String(err || ''),
-        };
-        logger?.warn?.('chat format guardian auto repair failed', err);
-      }
-    }
-    if (modelOptions.autoApplyRepair === true && autoRepairResult?.didAnything) {
-      return;
-    }
+    // format_patch.v1 的所有 Agent 提案都必须由用户“同意一次”；不再后台自动写回。
     emitChatFormatGuardianModelReviewResult({
       message,
       sessionId,
@@ -1190,6 +1553,8 @@ export const runChatFormatGuardianPreview = ({
   if (options.enabled === false) return null;
   const input = resolveChatFormatGuardianInputText(message);
   const text = input.text;
+  if (!trim(options.baseRevision)) options.baseRevision = createFormatPatchRevisionToken();
+  if (typeof options.sourceSnapshot !== 'string') options.sourceSnapshot = text;
   const modelOptions = normalizeChatFormatGuardianModelOptions(options);
   const manualCheck = isManualChatFormatGuardianCheck(options);
   const visibleOutput = hasVisibleAssistantOutput(message);
@@ -1226,6 +1591,9 @@ export const runChatFormatGuardianPreview = ({
         hasRawOriginal: input.hasRawOriginal,
         repairFallbackTime: trim(options.repairFallbackTime || message?.time),
       };
+    result.baseRevision = trim(options.baseRevision);
+    result.sourceSnapshot = options.sourceSnapshot;
+    result.repairTarget = isPlainObject(options.repairTarget) ? { ...options.repairTarget } : null;
     const suppressAutomaticDiagnostics = !manualCheck && modelOptions?.force !== true && visibleOutput;
     const suppressLocalAutomaticPreview = !manualCheck;
     if (suppressAutomaticDiagnostics) {
@@ -1359,6 +1727,7 @@ export const dispatchAfterReceiveEffects = ({
   message,
   sessionId = '',
   skipScripts,
+  skipPlugins = false,
   defaultSkipScripts = false,
   scriptRuntime = null,
   pluginRuntime = null,
@@ -1409,7 +1778,7 @@ export const dispatchAfterReceiveEffects = ({
   if (scriptRuntime && !shouldSkipScripts) {
     dispatchRuntimeHook({ runtime: scriptRuntime, runtimeLabel: 'script' });
   }
-  if (pluginRuntime) {
+  if (pluginRuntime && skipPlugins !== true) {
     dispatchRuntimeHook({ runtime: pluginRuntime, runtimeLabel: 'plugin' });
   }
   const chatFormatResult = runChatFormatGuardianPreview({

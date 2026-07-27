@@ -36,7 +36,11 @@ export const appendStandardMessageLayoutCore = ({
   createSwipeIndicatorElement = null,
   resolveRpCharacterName = null,
 } = {}) => {
-  const timeEl = createMessageTimeElement(documentLike, message?.time || '');
+  const timeText = [
+    String(message?.time || ''),
+    Number(message?.editedAt || 0) > 0 ? '已编辑' : '',
+  ].filter(Boolean).join(' · ');
+  const timeEl = createMessageTimeElement(documentLike, timeText);
   if (isUser) {
     const useUserActions =
       (uiMode === 'rp' || uiMode === 'chat') &&

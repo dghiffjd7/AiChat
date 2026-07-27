@@ -44,6 +44,9 @@ const createFakeDocument = () => {
     createElement(tagName) {
       return new FakeElement(tagName);
     },
+    createElementNS(_namespace, tagName) {
+      return new FakeElement(tagName);
+    },
   };
 };
 
@@ -80,6 +83,22 @@ const createFakeDocument = () => {
   btn.onclick();
   assert.equal(clicked, true);
   console.log('ok - createContextMenuActionButton renders structured action rows and forwards clicks');
+}
+
+{
+  const documentLike = createFakeDocument();
+  const btn = createContextMenuActionButton({
+    documentLike,
+    action: { key: 'check-format', label: '检查格式' },
+  });
+  const icon = btn.children[0];
+  assert.equal(icon.textContent, '');
+  assert.equal(icon.children.length, 1);
+  assert.equal(icon.children[0].tagName, 'SVG');
+  assert.equal(icon.children[0].attributes.viewBox, '0 0 24 24');
+  assert.equal(icon.children[0].attributes.stroke, 'currentColor');
+  assert.equal(icon.children[0].children.length, 4);
+  console.log('ok - createContextMenuActionButton renders the check-format SVG icon');
 }
 
 {

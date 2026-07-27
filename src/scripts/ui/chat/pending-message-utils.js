@@ -35,6 +35,7 @@ export const createPendingUserMessage = ({
     type: stickerKey ? 'sticker' : 'text',
     content: stickerKey || rawText || nextFallbackContent,
     raw: stickerKey ? rawText : undefined,
+    rawInput: rawText,
     status: 'pending',
     avatar,
     name: String(userName || '').trim() || '我',

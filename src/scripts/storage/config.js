@@ -12,6 +12,7 @@ const SUPPORTED_PROVIDERS = [
     'vertexai',
     'anthropic',
     'deepseek',
+    'ollama',
     'openrouter',
     'gemini',
     'custom',
@@ -39,6 +40,7 @@ const IMAGE_ONLY_PROVIDERS = new Set([
 const TEXT_ONLY_PROVIDERS = new Set([
     'anthropic',
     'deepseek',
+    'ollama',
     'openrouter',
 ]);
 

@@ -125,6 +125,7 @@ const splitScriptSteps = script =>
     'node scripts/tests/app-settings-kv-tests.mjs',
     'node scripts/tests/storage-migration-contracts-tests.mjs',
     'node scripts/tests/chat-store-large-field-tests.mjs',
+    'node scripts/tests/chat-store-format-repair-envelope-tests.mjs',
     'node scripts/tests/chat-store-scope-guard-tests.mjs',
     'node scripts/tests/kv-too-large-guard-tests.mjs',
   ]);

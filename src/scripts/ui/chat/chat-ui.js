@@ -403,13 +403,18 @@ export class ChatUI {
       documentLike: document,
       windowLike: window,
       schedule: cb => setTimeout(cb, 0),
-      onSaveEdit: async (message, text) => {
-        if (typeof this.actionHandler !== 'function') return;
-        await this.actionHandler('edit-assistant-raw', message, { text, regexEditMode: false });
+      onSaveEdit: async (message, text, context = {}) => {
+        if (typeof this.actionHandler !== 'function') return false;
+        return this.actionHandler('edit-assistant-raw', message, {
+          text,
+          regexEditMode: false,
+          ...context,
+        });
       },
     });
     this.inlineEditRuntime = createInlineEditUiRuntime({
       documentLike: document,
+      windowLike: window,
       schedule: cb => setTimeout(cb, 0),
       onConfirmEdit: (message, text) => this.actionHandler?.(
         message?.role === 'assistant' ? 'edit-assistant-raw' : 'edit-confirm',
@@ -1885,8 +1890,14 @@ export class ChatUI {
       return true;
     }
     if (action === 'review_original') {
-      const text = this.resolveMessageRawText(message).trim();
-      if (!text) {
+      const repairCandidate =
+        request?.actionMeta?.repairCandidate ||
+        part?.metadata?.repairCandidate ||
+        null;
+      const text = typeof repairCandidate?.sourceSnapshot === 'string'
+        ? repairCandidate.sourceSnapshot
+        : this.resolveMessageRawText(message);
+      if (!text.trim()) {
         toastOnce('没有可查看的原始回复', 'warning');
         return false;
       }
@@ -1943,20 +1954,48 @@ export class ChatUI {
         return false;
       }
       try {
-        const original = resolveChatBodyQualityInputText(message);
-        const diffResult = await showTextDiffConfirmDialog({
+        if (!payload.sourceSnapshot || !payload.linePatches.length) {
+          toastOnce('格式修复候选缺少原始快照或行补丁，请重新检查', 'warning');
+          return false;
+        }
+        const reviewResult = await this.openFormatPatchReview({
+          message,
+          originalText: payload.sourceSnapshot,
+          linePatches: payload.linePatches,
           title: '应用格式修复',
-          summary: String(payload.repairKind || '').trim(),
-          oldText: original.text,
-          newText: payload.text,
-          confirmText: '应用修复',
+          summary: String(payload.repairSummary || payload.repairKind || '').trim(),
+          warning: String(payload.reviewWarning || '').trim(),
+          formatSources: Array.isArray(payload.formatSourceIds)
+            ? payload.formatSourceIds
+            : [payload.sourceKind].filter(Boolean),
+          validateCandidate: ({ candidateText }) => this.actionHandler(
+            'validate-format-repair-candidate',
+            message,
+            {
+              ...payload,
+              text: candidateText,
+            },
+          ),
         });
-        if (!diffResult.changed) {
+        if (!reviewResult.confirmed) {
+          await this.resolveAgentRunReviewFromPart({
+            part,
+            decision: 'reject',
+            summary: '已取消格式修复',
+            reason: 'chat sidecar format repair review cancelled',
+          });
+          return false;
+        }
+        if (!reviewResult.changed) {
           toastOnce('修复候选与当前正文一致，无需应用', 'info', 3000);
           return false;
         }
-        if (!diffResult.confirmed) return false;
-        await this.actionHandler('edit-assistant-raw', message, payload);
+        const applied = await this.actionHandler('edit-assistant-raw', message, {
+          ...payload,
+          text: reviewResult.candidateText,
+          linePatches: reviewResult.acceptedPatches,
+        });
+        if (applied === false) return false;
         await this.resolveAgentRunReviewFromPart({
           part,
           decision: 'execute',
@@ -2773,7 +2812,7 @@ export class ChatUI {
     return this.messageClipboardRuntime.getBubbleCopyText(wrapper);
   }
 
-  openCodeViewer({ message = null, text = '' } = {}) {
+  openCodeViewer({ message = null, text = '', context = null } = {}) {
     const msg = message && typeof message === 'object' ? message : null;
     const content = String(text ?? '');
     const canSave = msg?.role === 'assistant' && typeof this.actionHandler === 'function';
@@ -2781,7 +2820,26 @@ export class ChatUI {
       message: msg,
       text: content,
       canSave,
+      context,
     });
+  }
+
+  async openFormatPatchReview(options = {}) {
+    const opened = this.codeViewerRuntime.openPatchReview(this.__chatappCodeViewer, options);
+    this.__chatappCodeViewer = opened.overlay;
+    return opened.promise;
+  }
+
+  hasVisibleCodeViewer() {
+    return Boolean(
+      this.__chatappCodeViewer &&
+      this.__chatappCodeViewer.style?.display !== 'none',
+    );
+  }
+
+  closeCodeViewer() {
+    if (!this.__chatappCodeViewer) return false;
+    return this.codeViewerRuntime.hideViewer(this.__chatappCodeViewer);
   }
 
   showContextMenu(evt, message) {

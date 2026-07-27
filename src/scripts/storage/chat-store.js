@@ -1359,6 +1359,15 @@ export class ChatStore {
     if (!s.variableSchemas || typeof s.variableSchemas !== 'object') s.variableSchemas = {};
     if (!Array.isArray(s.variableRules)) s.variableRules = [];
     if (!('stageSchema' in s)) s.stageSchema = null;
+    if (typeof s.lastRawResponse !== 'string') s.lastRawResponse = '';
+    if (!Number.isFinite(Number(s.lastRawAt))) s.lastRawAt = 0;
+    if (typeof s.lastRawTruncated !== 'boolean') s.lastRawTruncated = false;
+    if (typeof s.lastRawTurnId !== 'string') s.lastRawTurnId = '';
+    if (typeof s.lastRawSourceSessionId !== 'string') s.lastRawSourceSessionId = '';
+    if (typeof s.lastRawTargetSessionId !== 'string') s.lastRawTargetSessionId = '';
+    if (!Array.isArray(s.lastRawTargetSessionIds)) s.lastRawTargetSessionIds = [];
+    if (typeof s.lastRawSourceKind !== 'string') s.lastRawSourceKind = 'social_turn_raw';
+    if (!Array.isArray(s.lastRawSourceMessageIds)) s.lastRawSourceMessageIds = [];
     if (!s.settings) s.settings = {};
     if (!s.settings.chatColorMode) {
       s.settings.chatColorMode = inferChatColorMode(s.settings, defaults.chatColorMode || 'theme');
@@ -2573,6 +2582,13 @@ export class ChatStore {
       this.state.sessions[sid].draft = '';
       this.state.sessions[sid].lastRawResponse = '';
       this.state.sessions[sid].lastRawAt = 0;
+      this.state.sessions[sid].lastRawTruncated = false;
+      this.state.sessions[sid].lastRawTurnId = '';
+      this.state.sessions[sid].lastRawSourceSessionId = '';
+      this.state.sessions[sid].lastRawTargetSessionId = '';
+      this.state.sessions[sid].lastRawTargetSessionIds = [];
+      this.state.sessions[sid].lastRawSourceKind = 'social_turn_raw';
+      this.state.sessions[sid].lastRawSourceMessageIds = [];
       this.state.sessions[sid].unreadCount = 0;
       if (this._useV2) {
         const aid = String(this.state.sessions[sid]?.currentArchiveId || '').trim();
@@ -2767,16 +2783,50 @@ export class ChatStore {
     return true;
   }
 
-  setLastRawResponse(text, id = this.currentId) {
+  setLastRawResponse(text, id = this.currentId, metadata = {}) {
     const sid = String(id || '').trim();
     if (!sid) return false;
     this._ensureSession(sid);
     const raw = String(text ?? '');
     // keep bounded to reduce quota risks
     const maxLen = 220_000;
-    const trimmed = raw.length > maxLen ? raw.slice(-maxLen) : raw;
-    this.state.sessions[sid].lastRawResponse = trimmed;
-    this.state.sessions[sid].lastRawAt = Date.now();
+    const truncated = raw.length > maxLen;
+    const session = this.state.sessions[sid];
+    session.lastRawResponse = truncated ? raw.slice(-maxLen) : raw;
+    session.lastRawAt = Date.now();
+    session.lastRawTruncated = truncated;
+    session.lastRawTurnId = String(metadata?.turnId || '').trim();
+    session.lastRawSourceSessionId = String(metadata?.sourceSessionId || sid).trim() || sid;
+    session.lastRawTargetSessionId = String(metadata?.targetSessionId || '').trim();
+    session.lastRawTargetSessionIds = session.lastRawTargetSessionId
+      ? [session.lastRawTargetSessionId]
+      : [];
+    session.lastRawSourceKind = String(metadata?.sourceKind || 'social_turn_raw').trim() || 'social_turn_raw';
+    session.lastRawSourceMessageIds = [];
+    this._persist();
+    return true;
+  }
+
+  registerLastRawResponseSourceMessage({
+    sourceSessionId = this.currentId,
+    targetSessionId = '',
+    turnId = '',
+    messageId = '',
+  } = {}) {
+    const sid = String(sourceSessionId || '').trim();
+    const tid = String(turnId || '').trim();
+    const mid = String(messageId || '').trim();
+    if (!sid || !tid || !mid) return false;
+    const session = this.state.sessions[sid];
+    if (!session || String(session.lastRawTurnId || '').trim() !== tid) return false;
+    if (!Array.isArray(session.lastRawSourceMessageIds)) session.lastRawSourceMessageIds = [];
+    if (!session.lastRawSourceMessageIds.includes(mid)) session.lastRawSourceMessageIds.push(mid);
+    const targetSid = String(targetSessionId || '').trim();
+    if (targetSid) {
+      if (!Array.isArray(session.lastRawTargetSessionIds)) session.lastRawTargetSessionIds = [];
+      if (!session.lastRawTargetSessionIds.includes(targetSid)) session.lastRawTargetSessionIds.push(targetSid);
+      if (!session.lastRawTargetSessionId) session.lastRawTargetSessionId = targetSid;
+    }
     this._persist();
     return true;
   }
@@ -2823,6 +2873,27 @@ export class ChatStore {
     const sid = String(id || '').trim();
     if (!sid) return 0;
     return Number(this.state.sessions[sid]?.lastRawAt || 0) || 0;
+  }
+
+  getLastRawResponseEnvelope(id = this.currentId) {
+    const sid = String(id || '').trim();
+    if (!sid) return null;
+    const session = this.state.sessions[sid] || {};
+    return {
+      text: String(session.lastRawResponse || ''),
+      at: Number(session.lastRawAt || 0) || 0,
+      truncated: session.lastRawTruncated === true,
+      turnId: String(session.lastRawTurnId || '').trim(),
+      sourceSessionId: String(session.lastRawSourceSessionId || sid).trim() || sid,
+      targetSessionId: String(session.lastRawTargetSessionId || '').trim(),
+      targetSessionIds: Array.isArray(session.lastRawTargetSessionIds)
+        ? session.lastRawTargetSessionIds.map(item => String(item || '').trim()).filter(Boolean)
+        : [],
+      sourceKind: String(session.lastRawSourceKind || 'social_turn_raw').trim() || 'social_turn_raw',
+      sourceMessageIds: Array.isArray(session.lastRawSourceMessageIds)
+        ? session.lastRawSourceMessageIds.map(item => String(item || '').trim()).filter(Boolean)
+        : [],
+    };
   }
 
   _tsSuffix() {
@@ -3002,6 +3073,14 @@ export class ChatStore {
     session.compactedSummary = null;
     session.draft = '';
     session.lastRawResponse = '';
+    session.lastRawAt = 0;
+    session.lastRawTruncated = false;
+    session.lastRawTurnId = '';
+    session.lastRawSourceSessionId = '';
+    session.lastRawTargetSessionId = '';
+    session.lastRawTargetSessionIds = [];
+    session.lastRawSourceKind = 'social_turn_raw';
+    session.lastRawSourceMessageIds = [];
     session.unreadCount = 0;
     if (this._useV2) {
       const threadKey = this._getThreadKey(sid, '');

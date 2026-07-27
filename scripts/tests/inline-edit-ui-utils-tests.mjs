@@ -101,19 +101,23 @@ const createFakeDocument = () => {
     scrollEl,
     message: { id: 'm1', content: 'hello' },
   });
-  const textarea = bubble.lastChild;
-  textarea.value = 'next text';
+  const shell = bubble.lastChild;
+  const textarea = shell.children[0];
+  const saveButton = shell.children[2].children[1];
+  textarea.value = '  next text  ';
   scheduled[0]();
   assert.equal(textarea.className, 'chat-inline-edit-textarea');
   assert.equal(textarea.focused, true);
-  assert.deepEqual(textarea.selection, [9, 9]);
+  assert.deepEqual(textarea.selection, [13, 13]);
   textarea.emit('keydown', {
     key: 'Enter',
     shiftKey: false,
     preventDefault() {},
   });
-  assert.deepEqual(confirms, [['m1', 'next text']]);
-  console.log('ok - startInlineEdit saves trimmed text on enter-triggered blur');
+  assert.deepEqual(confirms, []);
+  await saveButton.emit('click');
+  assert.deepEqual(confirms, [['m1', '  next text  ']]);
+  console.log('ok - startInlineEdit preserves whitespace and saves only through explicit action');
 }
 
 {
@@ -169,7 +173,7 @@ const createFakeDocument = () => {
     message: { id: 'm2', content: 'origin' },
     initialText: '<status>raw origin</status>',
   });
-  const textarea = bubble.lastChild;
+  const textarea = bubble.lastChild.children[0];
   assert.equal(textarea.value, '<status>raw origin</status>');
   textarea.value = 'changed';
   textarea.emit('keydown', {
@@ -180,4 +184,208 @@ const createFakeDocument = () => {
   assert.deepEqual(bubble.children, [renderedNode]);
   assert.equal(bubble.style.whiteSpace, '');
   console.log('ok - startInlineEdit uses raw initial text while restoring the original rendered nodes on escape');
+}
+
+{
+  const documentLike = createFakeDocument();
+  const bubble = {
+    children: [],
+    style: {},
+    classList: {
+      add(value) { this.value = value; },
+      remove(value) { if (this.value === value) this.value = ''; },
+      contains(value) { return this.value === value; },
+      value: '',
+    },
+    _innerHTML: '',
+    get childNodes() { return this.children; },
+    get innerHTML() { return this._innerHTML; },
+    set innerHTML(value) {
+      this._innerHTML = value;
+      if (value === '') this.children = [];
+    },
+    appendChild(child) {
+      this.children.push(child);
+      this.lastChild = child;
+      return child;
+    },
+  };
+  const wrapper = {
+    classList: {
+      add(value) { this.value = value; },
+      remove(value) { if (this.value === value) this.value = ''; },
+      contains(value) { return this.value === value; },
+      value: '',
+    },
+    querySelector() {
+      return bubble;
+    },
+  };
+  const saves = [];
+  const runtime = createInlineEditUiRuntime({
+    documentLike,
+    schedule: cb => cb(),
+    onConfirmEdit: async (_message, text) => {
+      saves.push(text);
+      return false;
+    },
+  });
+  runtime.startInlineEdit({
+    scrollEl: { querySelector: () => wrapper },
+    message: {
+      id: 'm3',
+      content: 'rendered',
+      raw: 'stored-regex',
+      rawInput: '正则前原文',
+    },
+  });
+  const shell = bubble.lastChild;
+  const textarea = shell.children[0];
+  const status = shell.children[1];
+  const saveButton = shell.children[2].children[1];
+  assert.equal(textarea.value, '正则前原文');
+  textarea.value = '输入法内容';
+  textarea.emit('compositionstart');
+  textarea.emit('keydown', {
+    key: 'Enter',
+    ctrlKey: true,
+    preventDefault() {},
+  });
+  assert.deepEqual(saves, []);
+  textarea.emit('compositionend');
+  await saveButton.emit('click');
+  assert.deepEqual(saves, ['输入法内容']);
+  assert.equal(wrapper.classList.contains('is-inline-editing'), true);
+  assert.match(status.textContent, /仍保留/);
+  console.log('ok - startInlineEdit uses pre-regex input, respects IME, and retains failed edits');
+}
+
+{
+  // 精确指针（桌面）：Enter 直接保存，Shift+Enter 不保存，IME 组合中 Enter 不保存。
+  const documentLike = createFakeDocument();
+  const bubble = {
+    children: [],
+    style: {},
+    classList: {
+      add(value) { this.value = value; },
+      remove(value) { if (this.value === value) this.value = ''; },
+      contains(value) { return this.value === value; },
+      value: '',
+    },
+    _innerHTML: '',
+    get childNodes() { return this.children; },
+    get innerHTML() { return this._innerHTML; },
+    set innerHTML(value) {
+      this._innerHTML = value;
+      if (value === '') this.children = [];
+    },
+    appendChild(child) {
+      this.children.push(child);
+      this.lastChild = child;
+      return child;
+    },
+  };
+  const wrapper = {
+    classList: {
+      add(value) { this.value = value; },
+      remove(value) { if (this.value === value) this.value = ''; },
+      contains(value) { return this.value === value; },
+      value: '',
+    },
+    querySelector() {
+      return bubble;
+    },
+  };
+  const saves = [];
+  const runtime = createInlineEditUiRuntime({
+    documentLike,
+    windowLike: {
+      matchMedia: query => ({ matches: query.includes('pointer: fine') }),
+    },
+    schedule: cb => cb(),
+    onConfirmEdit: async (_message, text) => {
+      saves.push(text);
+      return true;
+    },
+  });
+  runtime.startInlineEdit({
+    scrollEl: { querySelector: () => wrapper },
+    message: { id: 'm4', content: 'origin' },
+  });
+  const shell = bubble.lastChild;
+  const textarea = shell.children[0];
+  const status = shell.children[1];
+  assert.match(status.textContent, /Enter 保存/);
+  textarea.value = '第一次修改';
+  textarea.emit('keydown', { key: 'Enter', shiftKey: true, preventDefault() {} });
+  assert.deepEqual(saves, []);
+  textarea.emit('compositionstart');
+  textarea.emit('keydown', { key: 'Enter', preventDefault() {} });
+  assert.deepEqual(saves, []);
+  textarea.emit('compositionend');
+  await textarea.emit('keydown', { key: 'Enter', preventDefault() {} });
+  assert.deepEqual(saves, ['第一次修改']);
+  console.log('ok - fine-pointer Enter saves directly while Shift+Enter and IME composition do not');
+}
+
+{
+  // 点击气泡外直接取消编辑，不弹确认。
+  const documentListeners = new Map();
+  const documentLike = {
+    ...createFakeDocument(),
+    addEventListener(type, handler) { documentListeners.set(type, handler); },
+    removeEventListener(type) { documentListeners.delete(type); },
+  };
+  const renderedNode = { kind: 'origin-node' };
+  const bubble = {
+    children: [renderedNode],
+    style: { whiteSpace: '' },
+    classList: {
+      add(value) { this.value = value; },
+      remove(value) { if (this.value === value) this.value = ''; },
+      contains(value) { return this.value === value; },
+      value: '',
+    },
+    _innerHTML: '<span>origin</span>',
+    get childNodes() { return this.children; },
+    get innerHTML() { return this._innerHTML; },
+    set innerHTML(value) {
+      this._innerHTML = value;
+      if (value === '') this.children = [];
+    },
+    appendChild(child) {
+      this.children.push(child);
+      this.lastChild = child;
+      return child;
+    },
+  };
+  const wrapper = {
+    classList: {
+      add(value) { this.value = value; },
+      remove(value) { if (this.value === value) this.value = ''; },
+      contains(value) { return this.value === value; },
+      value: '',
+    },
+    querySelector() {
+      return bubble;
+    },
+  };
+  const runtime = createInlineEditUiRuntime({
+    documentLike,
+    schedule: cb => cb(),
+    onConfirmEdit: () => {
+      throw new Error('outside click must cancel, not save');
+    },
+  });
+  runtime.startInlineEdit({
+    scrollEl: { querySelector: () => wrapper },
+    message: { id: 'm5', content: 'origin' },
+  });
+  const textarea = bubble.lastChild.children[0];
+  textarea.value = 'changed but abandoned';
+  documentListeners.get('pointerdown')?.({ target: { kind: 'somewhere-else' } });
+  assert.deepEqual(bubble.children, [renderedNode]);
+  assert.equal(documentListeners.has('pointerdown'), false);
+  assert.equal(wrapper.classList.contains('is-inline-editing'), false);
+  console.log('ok - clicking outside the bubble cancels the edit and detaches the listener');
 }

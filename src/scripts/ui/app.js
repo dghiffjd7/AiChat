@@ -281,10 +281,13 @@ import { ChatUI } from './chat/chat-ui.js';
 import { enqueueMessagesCore } from './chat/typing-flow-ui-utils.js';
 import { createAssistantStreamRuntime, isStreamCtrlConnected } from './chat/assistant-stream-runtime.js';
 import {
+  buildChatFormatGuardianRetryInstruction,
   dispatchAfterReceiveEffects,
   resolveChatFormatGuardianInputText,
   runChatFormatGuardianBackgroundChat,
   runChatFormatGuardianPreview,
+  validateChatFormatGuardianFunctionPayloads,
+  validateChatFormatGuardianRepairCandidate,
 } from './chat/after-receive-dispatch-utils.js';
 import {
   CHAT_FORMAT_GUARDIAN_TARGETS,
@@ -294,6 +297,33 @@ import {
   normalizeChatFormatGuardianTarget,
   resolveChatFormatGuardianFormatProfile,
 } from './chat/chat-format-guardian-utils.js';
+import {
+  createFormatPatchRevisionToken,
+  FORMAT_PATCH_MODEL_MAX_TOKENS,
+  validateFormatPatchRevision,
+} from './chat/format-patch-transaction-utils.js';
+import {
+  FORMAT_REPAIR_SOURCE_KINDS,
+  buildFormatRepairTurnMeta,
+  canCheckLatestFormatRepairTarget,
+  getMessageFormatRepairTurnMeta,
+  resolveLatestFormatRepairTarget,
+  tagMessageWithFormatRepairTurn,
+} from './chat/format-repair-target-utils.js';
+import {
+  FORMAT_FUNCTION_BLOCK_KINDS,
+  buildFormatFunctionExecutionLedger,
+  buildFormatFunctionSideEffectPlan,
+  replaceReusedFormatFunctionBlocks,
+  validateFormatRepairFunctionPayloads,
+} from './chat/format-repair-side-effect-utils.js';
+import {
+  createFormatRepairMomentTransactionRuntime,
+} from './chat/format-repair-moment-transaction-utils.js';
+import {
+  buildUserMessageEditPatch,
+  hasDownstreamConversationContext,
+} from './chat/message-edit-transaction-utils.js';
 import { registerChatFormatRepairTools } from '../agent/tools/chat-format-tools.js';
 import {
   buildChatBodyOptimizeModelPrompt,
@@ -553,7 +583,6 @@ import {
   registerUpdateVariableApplyFn,
   resolveUpdateVariableApplyFn,
 } from './chat/update-variable-invoke-utils.js';
-import { applyUpdateVariableForMessageWithFallback } from './chat/update-variable-edit-utils.js';
 import {
   createUpdateVariableCommandApplier,
   createUpdateVariableMessageApplier,
@@ -608,7 +637,12 @@ import {
   toggleReactionActor,
 } from './chat/message-interaction-utils.js';
 import { parseSpecialMessage } from './chat/message-parser.js';
-import { canDeleteCurrentSwipe, resolveInlineGeneratedImageAsset, resolveViewCodeText } from './chat/context-menu-ui-utils.js';
+import {
+  canDeleteCurrentSwipe,
+  resolveActiveSwipeIndex,
+  resolveInlineGeneratedImageAsset,
+  resolveViewCodeText,
+} from './chat/context-menu-ui-utils.js';
 import {
   buildImagePromptModelHintFromConfig,
   buildAutoImagePromptPendingToken,
@@ -2310,8 +2344,14 @@ const initApp = async () => {
     logger.debug('agent center settings hydrate/migrate skipped', err);
   }
   ui.canCheckFormatForMessage = message => (
-    message?.role === 'assistant' &&
-    agentFeatureSettingsStore.isEnabled(AGENT_FEATURE_IDS.replyCheck)
+    agentFeatureSettingsStore.isEnabled(AGENT_FEATURE_IDS.replyCheck) &&
+    canCheckLatestFormatRepairTarget({
+      message,
+      sessionId: chatStore.getCurrent(),
+      uiMode: isRpSessionId(chatStore.getCurrent()) ? 'rp' : 'chat',
+      getMessages: sid => chatStore.getMessages(sid),
+      getLastRawResponseEnvelope: sid => chatStore.getLastRawResponseEnvelope(sid),
+    })
   );
   const agentPermissionEvaluator = createAgentPermissionEvaluator({
     defaultDecision: 'ask',
@@ -14555,10 +14595,10 @@ Phase G（Frame 36）：循环衔接
           </div>
         `;
       }).join('');
-      const correctedText = String(detail?.correctedText || repairCandidate?.replacementText || '').trim();
-      const correctedHtml = renderRepairCodeBlock(
-        detail?.correctedTextTruncated ? '修复后文本（已截断）' : '修复后文本',
-        correctedText,
+      const candidateText = String(detail?.candidateText || repairCandidate?.replacementText || '');
+      const candidateHtml = renderRepairCodeBlock(
+        detail?.candidateTextTruncated ? 'APP 本地补丁候选（已截断）' : 'APP 本地补丁候选',
+        candidateText,
       );
       const rawText = detail?.rawText || fallbackReview?.rawText || detail?.rawPreview || fallbackReview?.rawPreview || '';
       const rawPreviewHtml = rawText
@@ -14569,7 +14609,7 @@ Phase G（Frame 36）：循环衔接
           truncated: detail?.rawTextTruncated === true || fallbackReview?.rawTextTruncated === true,
         })
         : '';
-      if (!meta && !summary && !issueText && !patchHtml && !correctedHtml && !rawPreviewHtml) return '';
+      if (!meta && !summary && !issueText && !patchHtml && !candidateHtml && !rawPreviewHtml) return '';
       return `
         <details class="raw-reply-repair-card">
           <summary>
@@ -14580,7 +14620,7 @@ Phase G（Frame 36）：循环衔接
             ${summary ? `<div class="raw-reply-repair-note">${escapeHtml(summary)}</div>` : ''}
             ${issueText ? `<div class="raw-reply-repair-note">模型判断：${escapeHtml(issueText)}</div>` : ''}
             ${patchHtml}
-            ${correctedHtml}
+            ${candidateHtml}
             ${rawPreviewHtml}
           </div>
         </details>
@@ -16249,6 +16289,52 @@ Phase G（Frame 36）：循环衔接
     }
     return null;
   };
+  let maidFormatProfileStore = null;
+  const getSessionFormatGuide = (sessionId = '') => (
+    String(maidFormatProfileStore?.get?.(String(sessionId || '').trim())?.guide || '').trim()
+  );
+  const resolveUiModeForSession = (sessionId = '') => {
+    const sid = String(sessionId || '').trim();
+    if (isRpSessionId(sid)) return 'rp';
+    if (sid && sid === String(chatStore.getCurrent() || '').trim() && uiMode === 'moments') {
+      return 'moments';
+    }
+    return 'chat';
+  };
+  const resolveFormatTargetForSession = (sessionId = '') => {
+    const sid = String(sessionId || '').trim();
+    if (resolveUiModeForSession(sid) === 'rp') {
+      return CHAT_FORMAT_GUARDIAN_TARGETS.creativeText;
+    }
+    const contact = contactsStore.getContact(sid);
+    return Boolean(contact?.isGroup) || sid.startsWith('group:')
+      ? CHAT_FORMAT_GUARDIAN_TARGETS.groupChat
+      : CHAT_FORMAT_GUARDIAN_TARGETS.privateChat;
+  };
+  const resolveCreativeFormatRepairRawOriginal = async (message = null, sessionId = '') => {
+    const current = chatStore.findMessage(message?.id, sessionId) || message;
+    const swipes = Array.isArray(current?.meta?.swipes) ? current.meta.swipes : [];
+    const activeBranch = swipes.length ? swipes[resolveActiveSwipeIndex(current)] : null;
+    if (typeof activeBranch?.rawOriginal === 'string' && activeBranch.rawOriginal.length) {
+      return activeBranch.rawOriginal;
+    }
+    if (typeof current?.rawOriginal === 'string' && current.rawOriginal.length) {
+      return current.rawOriginal;
+    }
+    const loaded = await chatStore.loadRawOriginal?.(current, sessionId);
+    return typeof loaded === 'string' ? loaded : '';
+  };
+  const resolveChatFormatRepairTarget = async (message = null, sessionId = '') => (
+    resolveLatestFormatRepairTarget({
+      message,
+      sessionId,
+      uiMode: resolveUiModeForSession(sessionId),
+      getMessages: sid => chatStore.getMessages(sid),
+      getLastRawResponseEnvelope: sid => chatStore.getLastRawResponseEnvelope(sid),
+      loadRawOriginal: (targetMessage, sid) => chatStore.loadRawOriginal?.(targetMessage, sid),
+      resolveCreativeRawOriginal: resolveCreativeFormatRepairRawOriginal,
+    })
+  );
   const selectChatFormatReminderTextForProfile = (promptContext = {}, profile = {}) => {
     const sections = Array.isArray(promptContext?.formatReminderSections)
       ? promptContext.formatReminderSections
@@ -16282,9 +16368,22 @@ Phase G（Frame 36）：循环衔接
       window.toastr?.warning?.('当前会话暂无可预览的 AI 回复');
       return null;
     }
-    const input = resolveChatFormatGuardianInputText(message);
-    const text = String(input?.text || '').trim();
+    const repairTarget = await resolveChatFormatRepairTarget(message, sessionId);
+    if (!repairTarget?.ok) {
+      window.toastr?.warning?.(
+        repairTarget?.reason === 'source_truncated'
+          ? '最新一轮原始回复已截断，无法安全检查格式'
+          : '无法取得最新一轮完整 AI 原始回复',
+      );
+      return null;
+    }
+    const text = String(repairTarget.sourceText ?? '');
     const sourceMessageId = String(message?.id || '').trim();
+    const baseRevision = createFormatPatchRevisionToken();
+    const input = {
+      source: repairTarget.sourceKind,
+      hasRawOriginal: true,
+    };
     const promptContext = buildChatFormatGuardianModelContext(sessionId);
     const parserResult = text
       ? {
@@ -16311,12 +16410,18 @@ Phase G（Frame 36）：循环衔接
         repairFallbackTime: String(message?.time || '').trim(),
       };
     const contact = contactsStore.getContact(sessionId);
-    const surface = uiMode === 'rp' ? 'creative' : (uiMode === 'moments' ? 'moments' : 'chat');
+    const targetUiMode = resolveUiModeForSession(sessionId);
+    const surface = targetUiMode === 'rp'
+      ? 'creative'
+      : (targetUiMode === 'moments' ? 'moments' : 'chat');
     const isGroupChat = Boolean(contact?.isGroup) || sessionId.startsWith('group:');
     const requestedFormatTarget = normalizeChatFormatGuardianTarget(formatTarget, CHAT_FORMAT_GUARDIAN_TARGETS.auto);
+    const routedFormatTarget = requestedFormatTarget === CHAT_FORMAT_GUARDIAN_TARGETS.auto
+      ? resolveFormatTargetForSession(sessionId)
+      : requestedFormatTarget;
     const formatProfile = resolveChatFormatGuardianFormatProfile({
-      target: requestedFormatTarget,
-      uiMode,
+      target: routedFormatTarget,
+      uiMode: targetUiMode,
       surface,
       isGroupChat,
       assistantText: text,
@@ -16326,16 +16431,22 @@ Phase G（Frame 36）：循环衔接
     const prompt = buildChatFormatGuardianModelPrompt({
       assistantText: text,
       formatReminderText: selectChatFormatReminderTextForProfile(promptContext, formatProfile),
+      customFormatGuide: getSessionFormatGuide(sessionId),
       enabledFormats: formatProfile.enabledFormats,
       parserReport: parserResult,
       userName: getActiveUserProfile()?.name || '我',
       sessionLabel: getChatFormatGuardianSessionLabel(sessionId),
       surface,
       formatTarget: formatProfile.target,
+      baseRevision,
+      repairTarget: {
+        ...repairTarget,
+        sessionId: repairTarget.targetSessionId || sessionId,
+      },
     });
     const requestOptions = {
       temperature: 0,
-      maxTokens: 900,
+      maxTokens: FORMAT_PATCH_MODEL_MAX_TOKENS,
     };
     const featureState = agentFeatureSettingsStore.getSettings()?.features?.[AGENT_FEATURE_IDS.replyCheck] || {};
     const modelMode = String(featureState.modelMode || 'none').trim() || 'none';
@@ -16383,6 +16494,9 @@ Phase G（Frame 36）：循环衔接
         mode: 'prompt_preview',
         targetSessionId: sessionId,
         targetMessageId: sourceMessageId,
+        targetMessageIds: repairTarget.sourceMessageIds,
+        turnId: repairTarget.turnId,
+        sourceKind: repairTarget.sourceKind,
         formatTarget: formatProfile.target,
       },
       options: requestOptions,
@@ -16392,8 +16506,16 @@ Phase G（Frame 36）：循环衔接
         id: AGENT_FEATURE_IDS.replyCheck,
         responseFormat: prompt.responseFormat,
         enabledFormatIds: prompt.enabledFormatIds,
+        formatSpecSourceIds: [
+          ...prompt.enabledFormatIds,
+          ...(getSessionFormatGuide(sessionId) ? ['customFormatGuide'] : []),
+        ],
         requestedFormatTarget,
         formatTarget: formatProfile.target,
+        baseRevision,
+        sourceStats: {
+          lineCount: text.split(/\r\n|\r|\n/).length,
+        },
         sourceTextKind: input.source,
         hasRawOriginal: input.hasRawOriginal,
       },
@@ -25501,7 +25623,7 @@ Phase G（Frame 36）：循环衔接
   const getResolvedSyspromptPresetForSession = (targetSessionId = '') => {
     const context = {
       sessionId: String(targetSessionId || '').trim(),
-      uiMode,
+      uiMode: resolveUiModeForSession(targetSessionId),
     };
     return presetStore.getResolvedActive?.('sysprompt', context)?.preset ||
       presetStore.getActive?.('sysprompt') ||
@@ -25558,6 +25680,7 @@ Phase G（Frame 36）：循环衔接
         preset.phone_format_chat_rules,
       ].join('\n')),
       imagePrompt: Boolean(preset.auto_image_prompt_enabled),
+      variableUpdate: true,
     };
     const sections = [];
     appendFormatReminderSection(sections, {
@@ -25649,6 +25772,7 @@ Phase G（Frame 36）：循环衔接
     const modelMode = String(featureState.modelMode || 'none').trim() || 'none';
     if (modelMode === 'none') return { enabled: false };
     const sid = String(targetSessionId || '').trim();
+    const targetUiMode = resolveUiModeForSession(sid);
     const promptContext = buildChatFormatGuardianModelContext(sid);
     const useProfile = modelMode === 'profile' && String(featureState.modelProfileId || '').trim();
     const backgroundChat = useProfile
@@ -25677,19 +25801,22 @@ Phase G（Frame 36）：循环衔接
       enabledFormats: promptContext.enabledFormats,
       formatReminderText: promptContext.formatReminderText,
       formatReminderSections: promptContext.formatReminderSections,
-      reviewNoEvents: uiMode === 'chat' && Object.values(promptContext.enabledFormats).some(Boolean),
+      customFormatGuide: getSessionFormatGuide(sid),
+      reviewNoEvents: targetUiMode === 'chat' && Object.values(promptContext.enabledFormats).some(Boolean),
       force,
-      surface: uiMode === 'rp' ? 'creative' : (uiMode === 'moments' ? 'moments' : 'chat'),
-      uiMode,
+      surface: targetUiMode === 'rp'
+        ? 'creative'
+        : (targetUiMode === 'moments' ? 'moments' : 'chat'),
+      uiMode: targetUiMode,
       isGroupChat: Boolean(contactsStore.getContact(sid)?.isGroup) || sid.startsWith('group:'),
-      formatTarget: 'auto',
+      formatTarget: resolveFormatTargetForSession(sid),
       requestOptions: {
         temperature: 0,
-        maxTokens: 900,
-        presetContext: { sessionId: sid, uiMode },
+        maxTokens: FORMAT_PATCH_MODEL_MAX_TOKENS,
+        presetContext: { sessionId: sid, uiMode: targetUiMode },
       },
       timeoutMs: 60000,
-      autoApplyRepair: force !== true,
+      autoApplyRepair: false,
       recordSucceededRun: false,
     };
   };
@@ -25735,7 +25862,7 @@ Phase G（Frame 36）：循环衔接
     };
   };
 
-  const maidFormatProfileStore = createMaidFormatProfileStore({
+  maidFormatProfileStore = createMaidFormatProfileStore({
     loadKv: name => safeInvoke('load_kv', { name }),
     saveKv: (name, data) => safeInvoke('save_kv', { name, data }),
     logger,
@@ -25747,19 +25874,173 @@ Phase G（Frame 36）：循环衔接
   }
 
   // §4.6 协议修复文本重新解析进消息流：复用最近一轮发送链装配的协议事件分发器
-  // （协议事件自带目标名，跨会话安全；发送链尚未跑过时返回不可用并回落单条写回）。
+  // （协议事件自带目标名，跨会话安全；发送链尚未跑过时返回不可用）。
   let lastProtocolRetryDispatcher = null;
+  let activeFormatRepairFunctionPlan = null;
+  const resolveFormatFunctionEffectTarget = (entry, capturedMessages = [], fallbackSessionId = '') => {
+    const candidates = (Array.isArray(capturedMessages) ? capturedMessages : [])
+      .map((item) => {
+        const targetSessionId = String(item?.targetSessionId || fallbackSessionId || '').trim();
+        const targetMessage = chatStore.findMessage(item?.messageId, targetSessionId);
+        return targetMessage ? { targetMessage, targetSessionId } : null;
+      })
+      .filter(Boolean);
+    const block = entry?.after || {};
+    return candidates.find(({ targetMessage }) => [
+      targetMessage?.meta?.autoImagePromptRawContent,
+      targetMessage?.rawOriginal,
+      targetMessage?.rawSource,
+      targetMessage?.raw,
+      targetMessage?.content,
+    ].some(value => (
+      String(value || '').includes(String(block.raw || '')) ||
+      (String(block.payload || '') && String(value || '').includes(String(block.payload || '')))
+    ))) || candidates.find(({ targetMessage }) => targetMessage?.role === 'assistant') || candidates[0] || null;
+  };
+  const executeFormatFunctionSideEffectPlan = async ({
+    plan = null,
+    capturedMessages = [],
+    fallbackSessionId = '',
+    turnId = '',
+  } = {}) => {
+    if (!Array.isArray(plan?.entries) || !plan.entries.length) return {};
+    const resultByIdentity = {};
+    const handledImageEffectTargets = new Set();
+    for (const entry of (Array.isArray(plan?.executeEntries) ? plan.executeEntries : [])) {
+      if (resultByIdentity[entry.identity]) continue;
+      const target = resolveFormatFunctionEffectTarget(entry, capturedMessages, fallbackSessionId);
+      const blockText = String(entry?.after?.raw || '');
+      if (!target || !blockText) {
+        resultByIdentity[entry.identity] = { status: 'failed' };
+        continue;
+      }
+      const { targetMessage, targetSessionId } = target;
+      try {
+        if (entry.kind === FORMAT_FUNCTION_BLOCK_KINDS.updateVariable) {
+          const blocks = extractUpdateVariableBlocks(blockText).blocks || [];
+          const commands = blocks.flatMap(block => updateParser.parseCommands(block) || []);
+          if (!commands.length) {
+            resultByIdentity[entry.identity] = { status: 'skipped' };
+            continue;
+          }
+          applyUpdateVariableCommands(targetSessionId, commands, {
+            useGlobal: isSharedVariableSession(targetSessionId),
+          });
+          captureVariableSnapshotToMessage(targetSessionId, targetMessage);
+          resultByIdentity[entry.identity] = {
+            status: 'succeeded',
+            effectResultRef: `${targetSessionId}:${targetMessage.id}:variables`,
+          };
+          continue;
+        }
+        if (entry.kind === FORMAT_FUNCTION_BLOCK_KINDS.tableEdit) {
+          const contact = contactsStore.getContact(targetSessionId);
+          const parsed = await handleMemoryEditsFromRaw(blockText, {
+            sessionId: targetSessionId,
+            isGroup: Boolean(contact?.isGroup) || targetSessionId.startsWith('group:'),
+            uiMode,
+            memoryPlace: uiMode === 'rp' ? 'writing' : 'chat',
+            force: true,
+            timelineMessageId: String(targetMessage.id || ''),
+            resolveTimelineTurnNumber: sid => resolveMessageTimelineTurnNumber(
+              sid || targetSessionId,
+              targetMessage.id,
+            ),
+          });
+          resultByIdentity[entry.identity] = {
+            status: Array.isArray(parsed?.actions) && parsed.actions.length ? 'succeeded' : 'skipped',
+            effectResultRef: `${targetSessionId}:${targetMessage.id}:memory`,
+          };
+          continue;
+        }
+        if (entry.kind === FORMAT_FUNCTION_BLOCK_KINDS.imagePrompt) {
+          const targetKey = `${targetSessionId}\u0000${targetMessage.id}`;
+          if (handledImageEffectTargets.has(targetKey)) continue;
+          handledImageEffectTargets.add(targetKey);
+          const imageEntries = plan.executeEntries.filter((candidateEntry) => {
+            if (candidateEntry.kind !== FORMAT_FUNCTION_BLOCK_KINDS.imagePrompt) return false;
+            const candidateTarget = resolveFormatFunctionEffectTarget(
+              candidateEntry,
+              capturedMessages,
+              fallbackSessionId,
+            );
+            return candidateTarget?.targetSessionId === targetSessionId &&
+              candidateTarget?.targetMessage?.id === targetMessage.id;
+          });
+          const imageRawText = imageEntries
+            .map(candidateEntry => String(candidateEntry?.after?.raw || ''))
+            .filter(Boolean)
+            .join('\n\n');
+          autoImagePromptProcessedSourceIds.delete(
+            getAutoImagePromptSourceKey(targetSessionId, targetMessage.id),
+          );
+          const isolatedImageSource = {
+            ...targetMessage,
+            content: '',
+            meta: {
+              ...(targetMessage.meta || {}),
+              autoImagePromptRawContent: imageRawText,
+            },
+          };
+          delete isolatedImageSource.meta.autoImagePrompt;
+          delete isolatedImageSource.meta.autoImagePromptPlaceholders;
+          const started = scheduleAutoImagePromptGenerationForMessage(isolatedImageSource, targetSessionId, {
+            rawText: imageRawText,
+            source: 'format_repair',
+          });
+          imageEntries.forEach((candidateEntry) => {
+            resultByIdentity[candidateEntry.identity] = {
+              status: started ? 'running' : 'skipped',
+              effectResultRef: `${targetSessionId}:${targetMessage.id}:image`,
+            };
+          });
+        }
+      } catch (err) {
+        logger.warn('format repair functional side effect failed', {
+          identity: entry.identity,
+          kind: entry.kind,
+          error: err,
+        });
+        resultByIdentity[entry.identity] = { status: 'failed' };
+      }
+    }
+    const anchor = resolveFormatFunctionEffectTarget(
+      plan?.entries?.[0],
+      capturedMessages,
+      fallbackSessionId,
+    );
+    if (anchor?.targetMessage?.id) {
+      const current = chatStore.findMessage(anchor.targetMessage.id, anchor.targetSessionId) || anchor.targetMessage;
+      const ledger = buildFormatFunctionExecutionLedger({
+        plan,
+        turnId,
+        messageId: current.id,
+        resultByIdentity,
+      });
+      chatStore.updateMessage(current.id, {
+        meta: {
+          ...(current.meta || {}),
+          formatFunctionEffectLedger: ledger,
+        },
+      }, anchor.targetSessionId);
+    }
+    return resultByIdentity;
+  };
   const applyRepairedProtocolTextToChat = async ({
-    correctedText = '',
+    candidateText = '',
     sourceMessageId = '',
+    sourceMessageIds = [],
     sourceSessionId = '',
+    targetSessionIds = [],
+    turnId = '',
+    functionSideEffectPlan = null,
   } = {}) => {
     const dispatcher = lastProtocolRetryDispatcher;
-    const repairText = String(correctedText || '').trim();
+    const repairText = String(candidateText || '');
     if (!dispatcher || typeof dispatcher.processEvent !== 'function') {
       return { didAnything: false, reason: 'protocol_dispatcher_unavailable' };
     }
-    if (!repairText) return { didAnything: false, reason: 'empty_repair_text' };
+    if (!repairText.trim()) return { didAnything: false, reason: 'empty_repair_text' };
     let events = [];
     try {
       const parser = dispatcher.createParser();
@@ -25774,33 +26055,131 @@ Phase G（Frame 36）：循环衔接
       return { didAnything: false, reason: 'protocol_parse_failed' };
     }
     if (!events.length) return { didAnything: false, reason: 'no_events' };
+    if (typeof dispatcher.preflightEvent === 'function') {
+      const preflightResults = events.map(event => dispatcher.preflightEvent(event));
+      if (preflightResults.some(result => result?.ok !== true)) {
+        return {
+          didAnything: false,
+          reason: 'protocol_preflight_failed',
+          eventCount: events.length,
+          preflightResults,
+        };
+      }
+    }
     let didAnything = false;
     const eventResults = [];
-    for (const ev of events) {
-      const result = await dispatcher.processEvent(ev, {
-        renderMoments: true,
-        refreshAfterAppend: true,
-      });
-      eventResults.push({
-        type: String(ev?.type || ''),
-        consumed: result?.consumed === true,
-        didAnything: result?.didAnything === true,
-        targetSessionId: String(result?.targetSessionId || ''),
-      });
-      if (result?.didAnything) didAnything = true;
+    if (dispatcher.beginMessageCapture?.() === false) {
+      return { didAnything: false, reason: 'protocol_transaction_in_progress' };
     }
-    if (didAnything && sourceMessageId) {
-      const removed = chatStore.deleteMessage(sourceMessageId, sourceSessionId);
-      if (removed && isSessionActive(sourceSessionId)) ui.removeMessage(sourceMessageId);
-      refreshChatAndContacts();
+    let capturedMessages = [];
+    const previousFunctionPlan = activeFormatRepairFunctionPlan;
+    activeFormatRepairFunctionPlan = functionSideEffectPlan;
+    let dispatchError = null;
+    try {
+      for (const ev of events) {
+        const result = await dispatcher.processEvent(ev, {
+          renderMoments: true,
+          refreshAfterAppend: true,
+        });
+        eventResults.push({
+          type: String(ev?.type || ''),
+          consumed: result?.consumed === true,
+          didAnything: result?.didAnything === true,
+          targetSessionId: String(result?.targetSessionId || ''),
+        });
+        if (result?.didAnything) didAnything = true;
+      }
+    } catch (err) {
+      dispatchError = err;
+      logger.warn('format repair protocol dispatch failed', err);
+    } finally {
+      capturedMessages = dispatcher.endMessageCapture?.() || [];
+      activeFormatRepairFunctionPlan = previousFunctionPlan;
     }
-    return { didAnything, eventCount: events.length, eventResults };
+    const fullyCommitted = didAnything &&
+      eventResults.length === events.length &&
+      eventResults.every(item => item.consumed && item.didAnything);
+    const removeCapturedMessages = () => {
+      capturedMessages.forEach((item) => {
+        chatStore.deleteMessage(item.messageId, item.targetSessionId);
+        if (isSessionActive(item.targetSessionId)) ui.removeMessage(item.messageId);
+      });
+    };
+    if (!fullyCommitted) {
+      removeCapturedMessages();
+      dispatcher.rollbackTransaction?.();
+      return {
+        didAnything: false,
+        reason: dispatchError ? 'protocol_dispatch_failed' : 'protocol_dispatch_incomplete',
+        eventCount: events.length,
+        eventResults,
+      };
+    }
+    const transactionCommit = typeof dispatcher.commitTransaction === 'function'
+      ? await Promise.resolve(dispatcher.commitTransaction())
+      : { ok: true };
+    if (transactionCommit?.ok === false) {
+      removeCapturedMessages();
+      dispatcher.rollbackTransaction?.();
+      return {
+        didAnything: false,
+        reason: transactionCommit.reason || 'protocol_transaction_commit_failed',
+        eventCount: events.length,
+        eventResults,
+      };
+    }
+    const oldMessageIds = Array.from(new Set([
+      ...(Array.isArray(sourceMessageIds) ? sourceMessageIds : []),
+      sourceMessageId,
+    ].map(item => String(item || '').trim()).filter(Boolean)));
+    const candidateSessions = Array.from(new Set([
+      ...(Array.isArray(targetSessionIds) ? targetSessionIds : []),
+      sourceSessionId,
+      ...eventResults.map(item => item.targetSessionId),
+    ].map(item => String(item || '').trim()).filter(Boolean)));
+    oldMessageIds.forEach((messageId) => {
+      candidateSessions.some((sid) => {
+        const removed = chatStore.deleteMessage(messageId, sid);
+        if (removed && isSessionActive(sid)) ui.removeMessage(messageId);
+        return removed;
+      });
+    });
+    const sourceSid = String(sourceSessionId || '').trim();
+    const repairTurnId = String(turnId || '').trim();
+    if (sourceSid && repairTurnId) {
+      chatStore.setLastRawResponse(repairText, sourceSid, {
+        turnId: repairTurnId,
+        sourceSessionId: sourceSid,
+        sourceKind: FORMAT_REPAIR_SOURCE_KINDS.socialTurnRaw,
+      });
+      capturedMessages.forEach((item) => {
+        chatStore.registerLastRawResponseSourceMessage({
+          sourceSessionId: sourceSid,
+          targetSessionId: item.targetSessionId,
+          turnId: repairTurnId,
+          messageId: item.messageId,
+        });
+      });
+    }
+    const functionEffectResults = await executeFormatFunctionSideEffectPlan({
+      plan: functionSideEffectPlan,
+      capturedMessages,
+      fallbackSessionId: sourceSid,
+      turnId: repairTurnId,
+    });
+    refreshChatAndContacts();
+    return {
+      didAnything: true,
+      eventCount: events.length,
+      eventResults,
+      capturedMessages,
+      functionEffectResults,
+    };
   };
 
   // 女仆格式修复：guardian 手动检查 + 强制模型复核（formatHint 拼入修复 prompt），
-  // 候选经行级 diff 确认；社交聊天优先重新解析进消息流并移除原坏消息，
-  // 无法分发时回落 edit-assistant-raw 单条写回。用户取消返回 applied:false 且 ok:true，
-  // 避免 ReAct 修复循环把“用户取消”当失败重试弹窗。
+  // 候选逐块审阅；社交聊天只有本地复查可完整分发时才允许写回，创意写作则写回 rawOriginal。
+  // 用户取消返回 applied:false 且 ok:true，避免 ReAct 修复循环把“用户取消”当失败重试弹窗。
   // 修复/优化共享：按 messageId/会话名定位目标 AI 回复及其原始文本。
   const resolveMaidTargetAssistantMessage = ({
     messageId = '',
@@ -25832,6 +26211,27 @@ Phase G（Frame 36）：循环衔接
     }
     return { sid, message, inputText };
   };
+  const resolveMaidFormatRepairTarget = async (options = {}) => {
+    const located = resolveMaidTargetAssistantMessage(options);
+    if (located.error) return located;
+    const repairTarget = await resolveChatFormatRepairTarget(located.message, located.sid);
+    if (!repairTarget?.ok) {
+      return {
+        error: {
+          ok: false,
+          reason: repairTarget?.reason || 'source_unavailable',
+          message: repairTarget?.reason === 'not_latest_turn'
+            ? '格式修复只能作用于最新一轮已完成的 AI 回复。'
+            : '无法取得最新一轮完整 AI 原始回复。',
+        },
+      };
+    }
+    return {
+      ...located,
+      inputText: repairTarget.sourceText,
+      repairTarget,
+    };
+  };
 
   const repairAssistantMessageFormatForMaid = async ({
     messageId = '',
@@ -25839,9 +26239,14 @@ Phase G（Frame 36）：循环衔接
     sessionName = '',
     formatHint = '',
   } = {}) => {
-    const target = resolveMaidTargetAssistantMessage({ messageId, sessionId, sessionName });
+    const target = await resolveMaidFormatRepairTarget({ messageId, sessionId, sessionName });
     if (target.error) return target.error;
-    const { sid, message, inputText } = target;
+    const {
+      sid,
+      message,
+      inputText,
+      repairTarget,
+    } = target;
 
     // 未显式传规范时自动取会话格式画像（女仆此前调查保存的自定义格式）。
     let effectiveFormatHint = String(formatHint || '').trim();
@@ -25877,9 +26282,11 @@ Phase G（Frame 36）：循环衔接
       parserResult,
       enabledFormats: modelOptions.enabledFormats,
     });
+    const baseRevision = createFormatPatchRevisionToken();
+    const formatReminderText = selectChatFormatReminderTextForProfile(modelOptions, formatProfile);
     const prompt = buildChatFormatGuardianModelPrompt({
       assistantText: inputText,
-      formatReminderText: selectChatFormatReminderTextForProfile(modelOptions, formatProfile),
+      formatReminderText,
       customFormatGuide: effectiveFormatHint,
       enabledFormats: formatProfile.enabledFormats,
       parserReport: parserResult,
@@ -25887,6 +26294,11 @@ Phase G（Frame 36）：循环衔接
       sessionLabel: modelOptions.sessionLabel,
       surface: modelOptions.surface,
       formatTarget: formatProfile.target,
+      baseRevision,
+      repairTarget: {
+        ...repairTarget,
+        sessionId: repairTarget.targetSessionId || sid,
+      },
     });
     let review = null;
     try {
@@ -25897,27 +26309,64 @@ Phase G（Frame 36）：循环衔接
         const raw = await runChatFormatGuardianBackgroundChat(
           modelOptions.backgroundChat,
           messages,
-          modelOptions.requestOptions || { temperature: 0, maxTokens: 900 },
+          modelOptions.requestOptions || {
+            temperature: 0,
+            maxTokens: FORMAT_PATCH_MODEL_MAX_TOKENS,
+          },
           { timeoutMs: modelOptions.timeoutMs },
         );
-        return normalizeChatFormatGuardianModelReview(raw, { originalText: inputText });
+        const normalizedReview = normalizeChatFormatGuardianModelReview(raw, {
+          originalText: inputText,
+          baseRevision,
+        });
+        const payloadReview = validateChatFormatGuardianFunctionPayloads({
+          review: normalizedReview,
+          inputText,
+        });
+        const domainValidation = validateChatFormatGuardianRepairCandidate({
+          review: payloadReview,
+          inputText,
+          options: {
+            ...buildChatFormatGuardianOptions(sid),
+            sourceMessageId: String(message.id || ''),
+            sourceSnapshot: inputText,
+            baseRevision,
+            repairTarget,
+          },
+          modelOptions,
+          formatProfile,
+        });
+        return {
+          raw,
+          review: {
+            ...payloadReview,
+            domainValidation,
+          },
+          domainValidation,
+        };
       };
-      review = await requestRepairReview();
-      // 便宜/弱模型的 JSON 输出偶发不合法：带强化提示重试一次。
-      const jsonParseFailed = r => r?.canRepair !== true &&
-        (r?.issues || []).some(issue => String(issue?.type || '') === 'parse_error');
-      if (jsonParseFailed(review)) {
-        logger.debug?.('maid format repair retrying after model JSON parse failure');
-        review = await requestRepairReview(
-          '上一次输出的 JSON 无法解析。请重新输出：只输出一个完整 JSON 对象，禁止任何其他文字和 Markdown 代码块；JSON 字符串值内部不要使用未转义的英文双引号。',
-        );
+      let attempt = await requestRepairReview();
+      const shouldRetry = attempt.review?.status === 'invalid_output' ||
+        (attempt.domainValidation?.applicable === true && attempt.domainValidation.ok !== true);
+      if (shouldRetry) {
+        logger.debug?.('maid format repair retrying after patch validation failure');
+        attempt = await requestRepairReview(buildChatFormatGuardianRetryInstruction(attempt));
+      }
+      review = attempt.review;
+      if (attempt.domainValidation?.applicable === true && attempt.domainValidation.ok !== true) {
+        return {
+          ok: false,
+          reason: 'format_recheck_failed',
+          message: '补丁重试后仍无法安全重新分发，建议重新生成。',
+          parserReport: attempt.domainValidation.parserReport,
+        };
       }
     } catch (err) {
       logger.warn('maid format repair model review failed', err);
       return { ok: false, reason: 'format_repair_model_failed', message: err?.message || '格式修复模型请求失败。' };
     }
-    const correctedText = String(review?.correctedText || '').trim();
-    if (review?.canRepair !== true || !correctedText) {
+    let candidateText = String(review?.candidateText || '');
+    if (review?.canRepair !== true || !candidateText) {
       return {
         ok: false,
         reason: 'model_cannot_repair',
@@ -25925,34 +26374,125 @@ Phase G（Frame 36）：循环衔接
         issues: (review?.issues || []).slice(0, 5),
       };
     }
-
-    const diffResult = await showTextDiffConfirmDialog({
+    if (!Array.isArray(review?.linePatches) || !review.linePatches.length) {
+      return {
+        ok: false,
+        reason: 'format_patch_missing',
+        message: '格式修复模型没有返回可审阅的行补丁，请重新检查。',
+      };
+    }
+    if (typeof ui.openFormatPatchReview !== 'function') {
+      return { ok: false, reason: 'patch_reviewer_unavailable', message: '格式补丁审阅器尚未就绪。' };
+    }
+    const reviewResult = await ui.openFormatPatchReview({
+      message,
+      originalText: inputText,
+      linePatches: review.linePatches,
       title: '应用格式修复',
       summary: String(review.repairSummary || '').trim(),
-      oldText: inputText,
-      newText: correctedText,
-      confirmText: '应用修复',
+      warning: review.sourceTruncationSuspected === true
+        ? '正文疑似严重截断，可考虑重新生成'
+        : '',
+      formatSources: [
+        formatProfile.target,
+        ...formatProfile.enabledFormatIds,
+        ...(formatReminderText ? ['场景格式提示词'] : []),
+        ...(effectiveFormatHint ? ['自定义格式规范'] : []),
+      ],
+      validateCandidate: ({ candidateText: nextCandidateText, acceptedPatches }) => {
+        const payloadReview = validateChatFormatGuardianFunctionPayloads({
+          review: {
+            ...review,
+            status: 'patch',
+            canRepair: true,
+            candidateText: nextCandidateText,
+            linePatches: acceptedPatches,
+          },
+          inputText,
+        });
+        if (payloadReview.functionPayloadValidation?.ok !== true) {
+          return {
+            canApply: false,
+            statusText: payloadReview.functionPayloadValidation?.violations?.[0]?.message ||
+              '已接受的补丁越过了功能块载荷边界',
+          };
+        }
+        const validation = validateChatFormatGuardianRepairCandidate({
+          review: payloadReview,
+          inputText,
+          options: {
+            ...buildChatFormatGuardianOptions(sid),
+            sourceMessageId: String(message.id || ''),
+            sourceSnapshot: inputText,
+            baseRevision,
+            repairTarget,
+          },
+          modelOptions,
+          formatProfile,
+        });
+        if (repairTarget.sourceKind === FORMAT_REPAIR_SOURCE_KINDS.socialTurnRaw) {
+          return {
+            canApply: validation.applicable !== true || validation.ok === true,
+            statusText: validation.ok === true
+              ? `本地复查通过，可分发 ${validation.parserReport?.eventDrafts?.length || 0} 条事件`
+              : `当前补丁组合无法安全分发：${
+                validation.parserReport?.errors?.[0] ||
+                validation.parserReport?.warnings?.[0] ||
+                validation.parserReport?.summary ||
+                '格式仍不完整'
+              }`,
+          };
+        }
+        return {
+          canApply: true,
+          warning: validation.applicable === true && validation.ok !== true,
+          statusText: validation.ok === true
+            ? '本地格式复查通过'
+            : '应用后格式复查仍未通过；创意原文仍可安全写回',
+        };
+      },
     });
-    if (!diffResult.changed) {
-      return { ok: true, applied: false, reason: 'no_changes', message: '修复结果与原文一致，无需修改。' };
-    }
-    if (!diffResult.confirmed) {
+    if (!reviewResult.confirmed) {
       return {
         ok: true,
         applied: false,
         userDecision: 'cancelled',
-        message: '用户在 diff 预览中取消了修复；不要重试，等待用户新的指示。',
+        message: '用户在补丁审阅中取消了修复；不要重试，等待用户新的指示。',
       };
     }
+    if (!reviewResult.changed) {
+      return { ok: true, applied: false, reason: 'no_changes', message: '修复结果与原文一致，无需修改。' };
+    }
+    candidateText = reviewResult.candidateText;
+    const functionSideEffectPlan = buildFormatFunctionSideEffectPlan({
+      originalText: inputText,
+      candidateText,
+    });
     // 社交聊天：优先把修复文本解析成协议事件重新分发（进入正常消息流）并移除原坏消息。
     // 按目标会话判定（全局 uiMode 可能是 rp 而修复目标是社交会话）。
     let reparsed = false;
     let reparseFallbackReason = '';
     if (!isRpSessionId(sid)) {
+      const latestTarget = await resolveChatFormatRepairTarget(message, sid);
+      const revision = validateFormatPatchRevision({
+        snapshotText: inputText,
+        currentText: latestTarget?.ok ? latestTarget.sourceText : '',
+      });
+      if (!latestTarget?.ok || !revision.ok || latestTarget.turnId !== repairTarget.turnId) {
+        return {
+          ok: false,
+          applied: false,
+          reason: 'revision_expired',
+          message: '原文已变化，请重新发起格式修复。',
+        };
+      }
       const dispatchResult = await applyRepairedProtocolTextToChat({
-        correctedText,
-        sourceMessageId: String(message.id || ''),
-        sourceSessionId: sid,
+        candidateText,
+        sourceMessageIds: latestTarget.sourceMessageIds,
+        sourceSessionId: latestTarget.sourceSessionId,
+        targetSessionIds: latestTarget.targetSessionIds,
+        turnId: latestTarget.turnId,
+        functionSideEffectPlan,
       });
       reparsed = dispatchResult?.didAnything === true;
       if (!reparsed) {
@@ -25963,16 +26503,33 @@ Phase G（Frame 36）：循环衔接
         logger.debug?.(`maid format repair reparse fallback: ${reparseFallbackReason}`);
       }
     }
-    if (!reparsed) {
+    if (!reparsed && repairTarget.sourceKind === FORMAT_REPAIR_SOURCE_KINDS.creativeRawOriginal) {
       if (typeof ui.actionHandler !== 'function') {
         return { ok: false, reason: 'message_editor_unavailable', message: '消息编辑处理器未就绪。' };
       }
-      await ui.actionHandler('edit-assistant-raw', message, {
-        text: correctedText,
+      const applied = await ui.actionHandler('edit-assistant-raw', message, {
+        text: candidateText,
         regexEditMode: false,
         sessionId: sid,
         source: 'maid_format_repair',
+        sourceSnapshot: inputText,
+        sourceKind: repairTarget.sourceKind,
+        sourceSessionId: repairTarget.sourceSessionId,
+        targetSessionId: repairTarget.targetSessionId,
+        turnId: repairTarget.turnId,
+        sourceMessageIds: repairTarget.sourceMessageIds,
+        baseRevision,
+        functionSideEffectPlan,
       });
+      if (applied === false) {
+        return { ok: false, reason: 'writeback_failed', message: '格式修复写回失败。' };
+      }
+    } else if (!reparsed) {
+      return {
+        ok: false,
+        reason: reparseFallbackReason || 'protocol_dispatch_failed',
+        message: '修复结果无法安全重新分发，原消息未修改。',
+      };
     }
     return {
       ok: true,
@@ -25982,12 +26539,11 @@ Phase G（Frame 36）：循环衔接
       ...(reparseFallbackReason ? { reparseFallbackReason } : {}),
       sessionId: sid,
       messageId: String(message.id || ''),
-      added: diffResult.diff.added,
-      removed: diffResult.diff.removed,
+      patchCount: reviewResult.acceptedPatches.length,
       summary: String(review.repairSummary || '').trim(),
       message: reparsed
-        ? `格式修复已应用（+${diffResult.diff.added}/-${diffResult.diff.removed}），消息已重新解析进入聊天流。`
-        : `格式修复已应用（+${diffResult.diff.added}/-${diffResult.diff.removed}）。`,
+        ? `已应用 ${reviewResult.acceptedPatches.length} 处格式修复，消息已重新解析进入聊天流。`
+        : `已应用 ${reviewResult.acceptedPatches.length} 处格式修复。`,
     };
   };
   // 女仆正文优化（机制层）：按用户指示让优化模型产出替换文本 → 行级 diff 确认 →
@@ -26120,6 +26676,7 @@ Phase G（Frame 36）：循环衔接
       ...base,
       enabled: agentFeatureSettingsStore.isEnabled(AGENT_FEATURE_IDS.replyCheck),
       manualTrigger: true,
+      localOnly: modelMode === 'none',
       showSucceededPreview: false,
       recordSucceededRun: false,
       modelReview: modelMode === 'none'
@@ -26130,7 +26687,7 @@ Phase G（Frame 36）：循环衔接
 
   // 格式修复进行中的会话（占道期间发送失败时给出准确提示）。
   const chatFormatRepairActiveSessions = new Set();
-  const handleChatFormatGuardianAgentRun = ({ agentRun, message, autoRepairResult } = {}) => {
+  const handleChatFormatGuardianAgentRun = ({ agentRun, message } = {}) => {
     if (!agentRun?.id) return null;
     if (agentRun.sessionId && agentRun.status !== 'running' && agentRun.status !== 'queued') {
       chatFormatRepairActiveSessions.delete(String(agentRun.sessionId).trim());
@@ -26144,19 +26701,11 @@ Phase G（Frame 36）：循环衔接
     }
     const isProtocolRepair = message?.meta?.protocolParseFailure === true;
     const isActiveProtocolRepair = isProtocolRepair && isSessionActive(agentRun.sessionId);
-    if (isActiveProtocolRepair && agentRun.status === 'succeeded' && autoRepairResult?.didAnything === true) {
-      window.toastr?.success?.('格式修复完成，消息已更新');
-    }
     if (isActiveProtocolRepair && agentRun.status === 'failed') {
       const detail = String(agentRun.errorMessage || agentRun.summary || '').trim();
       window.toastr?.warning?.(detail
-        ? `格式修复未能自动完成：${detail}`
-        : '格式修复未能自动完成，建议重新生成');
-    } else if (isActiveProtocolRepair && autoRepairResult?.didAnything === false) {
-      const detail = String(autoRepairResult.errorMessage || agentRun.summary || '').trim();
-      window.toastr?.warning?.(detail
-        ? `格式修复未能自动完成：${detail}`
-        : '格式修复未能自动完成，建议重新生成');
+        ? `格式检查未完成：${detail}`
+        : '格式检查未完成，请重试或重新生成');
     }
     return stored;
   };
@@ -26185,16 +26734,51 @@ Phase G（Frame 36）：循环衔接
     window.toastr?.info?.('正在修复格式中');
   };
 
-  const runManualChatFormatGuardianCheck = (message = null, targetSessionId = '') => {
+  const runManualChatFormatGuardianCheck = async (message = null, targetSessionId = '') => {
     const sid = String(targetSessionId || chatStore.getCurrent() || '').trim();
     if (!agentFeatureSettingsStore.isEnabled(AGENT_FEATURE_IDS.replyCheck)) {
       window.toastr?.warning?.('请先在 Agent Center 开启「检查回复格式」');
       return false;
     }
     if (!message || message.role !== 'assistant') return false;
-    const options = buildManualChatFormatGuardianOptions(sid);
+    const repairTarget = await resolveChatFormatRepairTarget(message, sid);
+    if (!repairTarget?.ok) {
+      const reasonMessages = {
+        not_latest_turn: '只能检查最新一轮已完成的 AI 回复',
+        source_truncated: '最新一轮原始回复已截断，无法安全检查格式',
+        source_unavailable: '无法取得这轮完整 AI 原始回复',
+        turn_metadata_unavailable: '这条回复缺少完整轮次来源，无法安全检查格式',
+      };
+      window.toastr?.warning?.(reasonMessages[repairTarget?.reason] || '这条回复没有可检查的完整原始内容');
+      return false;
+    }
+    const baseRevision = createFormatPatchRevisionToken();
+    const options = {
+      ...buildManualChatFormatGuardianOptions(sid),
+      baseRevision,
+      sourceSnapshot: repairTarget.sourceText,
+      repairTarget: {
+        ...repairTarget,
+        sessionId: repairTarget.targetSessionId || sid,
+      },
+      sourceMessageId: String(message.id || '').trim(),
+    };
+    if (
+      options.localOnly !== true &&
+      (
+        options?.modelReview?.enabled !== true ||
+        typeof options?.modelReview?.backgroundChat !== 'function'
+      )
+    ) {
+      window.toastr?.warning?.('格式检查 Agent 没有可用模型，请先在 Agent Center 配置');
+      return false;
+    }
+    const repairMessage = {
+      ...message,
+      rawOriginal: repairTarget.sourceText,
+    };
     const result = runChatFormatGuardianPreview({
-      message,
+      message: repairMessage,
       sessionId: sid,
       chatFormatGuardian: options,
       onChatFormatGuardianPreview: handleChatFormatGuardianPreview,
@@ -26208,7 +26792,7 @@ Phase G（Frame 36）：循环衔接
     }
     const modelEnabled = options?.modelReview?.enabled === true;
     if (result?.result?.status === 'ready') {
-      window.toastr?.info?.(modelEnabled ? '正在请求模型复核格式' : '未发现明确格式问题');
+      window.toastr?.info?.(modelEnabled ? '正在请求模型复核格式' : '已完成本地格式检查');
     } else {
       window.toastr?.info?.(modelEnabled ? '已开始格式修复检查' : '已完成本地格式检查');
     }
@@ -26228,34 +26812,46 @@ Phase G（Frame 36）：循环衔接
       skipScripts: skipThisScripts,
       defaultSkipScripts = false,
       applyUpdateVariable = null,
-      applyChatFormatGuardianRepair = null,
     } = {},
   ) => {
+    const suppressReplayedFunctionalEffects = Boolean(activeFormatRepairFunctionPlan);
     dispatchAfterReceiveEffects({
       message,
       sessionId: targetSessionId,
-      skipScripts: skipThisScripts,
+      skipScripts: suppressReplayedFunctionalEffects ? true : skipThisScripts,
+      skipPlugins: suppressReplayedFunctionalEffects,
       defaultSkipScripts,
       scriptRuntime,
       pluginRuntime,
       logger,
-      applyUpdateVariable: resolveUpdateVariableApplyFn(applyUpdateVariable),
-      handleVariableRules: payload => variableRuleEngine?.handleAfterReceive?.(payload),
-      onVariablesSettled: (msg, sid) => captureVariableSnapshotToMessage(sid, msg),
+      applyUpdateVariable: suppressReplayedFunctionalEffects
+        ? () => false
+        : resolveUpdateVariableApplyFn(applyUpdateVariable),
+      handleVariableRules: suppressReplayedFunctionalEffects
+        ? null
+        : payload => variableRuleEngine?.handleAfterReceive?.(payload),
+      onVariablesSettled: suppressReplayedFunctionalEffects
+        ? null
+        : (msg, sid) => captureVariableSnapshotToMessage(sid, msg),
       useGlobalVariables: isSharedVariableSession(targetSessionId),
       recordTraceEvent: recordDebugTraceEvent,
-      chatFormatGuardian: buildChatFormatGuardianOptions(targetSessionId),
+      chatFormatGuardian: suppressReplayedFunctionalEffects
+        ? null
+        : buildChatFormatGuardianOptions(targetSessionId),
       onChatFormatGuardianPreview: handleChatFormatGuardianPreview,
       onChatFormatGuardianRun: handleChatFormatGuardianAgentRun,
       onChatFormatGuardianModelReviewQueued: handleChatFormatGuardianModelReviewQueued,
-      onChatFormatGuardianAutoRepair: applyChatFormatGuardianRepair,
-      chatBodyQualityGuardian: buildChatBodyQualityOptions(targetSessionId),
+      chatBodyQualityGuardian: suppressReplayedFunctionalEffects
+        ? null
+        : buildChatBodyQualityOptions(targetSessionId),
       onChatBodyQualityPreview: handleChatFormatGuardianPreview,
       onChatBodyQualityRun: handleChatBodyQualityAgentRun,
     });
-    scheduleAutoImagePromptGenerationForMessage(message, targetSessionId, {
-      source: 'after_receive',
-    });
+    if (!suppressReplayedFunctionalEffects) {
+      scheduleAutoImagePromptGenerationForMessage(message, targetSessionId, {
+        source: 'after_receive',
+      });
+    }
   };
 
   // Send handler (发送 pending 消息)
@@ -26319,6 +26915,71 @@ Phase G（Frame 36）：循环衔接
     const previewMacroVariableState = previewOnly ? new Map() : null;
     let outgoingReplyContexts = [];
     let generationId = 0;
+    let formatRepairTurnId = '';
+    const formatRepairTurnSourceMessages = [];
+    let formatRepairMessageCapture = null;
+    let formatRepairMomentTransaction = null;
+    const getFormatRepairTurnMeta = () => buildFormatRepairTurnMeta({
+      turnId: formatRepairTurnId,
+      sourceSessionId: sessionId,
+      sourceKind: rpUiMode
+        ? FORMAT_REPAIR_SOURCE_KINDS.creativeRawOriginal
+        : FORMAT_REPAIR_SOURCE_KINDS.socialTurnRaw,
+    });
+    const decorateFormatRepairTurnMessage = (message, targetSessionId = sessionId) => {
+      if (!message || typeof message !== 'object' || !formatRepairTurnId) return message;
+      const tagged = tagMessageWithFormatRepairTurn(message, getFormatRepairTurnMeta());
+      if (tagged !== message) {
+        try {
+          message.meta = tagged.meta;
+        } catch {}
+      }
+      return tagged;
+    };
+    const appendFormatRepairTurnMessage = (message, targetSessionId = sessionId) => {
+      const targetSid = String(targetSessionId || sessionId || '').trim();
+      const tagged = decorateFormatRepairTurnMessage(message, targetSid);
+      const saved = chatStore.appendMessage(tagged, targetSid);
+      const messageId = String(saved?.id || tagged?.id || '').trim();
+      if (formatRepairTurnId && messageId) {
+        const isRepairTransaction = Array.isArray(formatRepairMessageCapture);
+        if (isRepairTransaction) {
+          formatRepairMessageCapture.push({ messageId, targetSessionId: targetSid });
+        } else {
+          if (!formatRepairTurnSourceMessages.some(item => item.messageId === messageId)) {
+            formatRepairTurnSourceMessages.push({ messageId, targetSessionId: targetSid });
+          }
+          chatStore.registerLastRawResponseSourceMessage({
+            sourceSessionId: sessionId,
+            targetSessionId: targetSid,
+            turnId: formatRepairTurnId,
+            messageId,
+          });
+        }
+      }
+      return saved;
+    };
+    const setFormatRepairLastRawResponse = (raw, targetSessionId = sessionId) => {
+      const saved = chatStore.setLastRawResponse(raw, sessionId, {
+        turnId: formatRepairTurnId,
+        sourceSessionId: sessionId,
+        targetSessionId: String(targetSessionId || '').trim(),
+        sourceKind: rpUiMode
+          ? FORMAT_REPAIR_SOURCE_KINDS.creativeRawOriginal
+          : FORMAT_REPAIR_SOURCE_KINDS.socialTurnRaw,
+      });
+      if (saved) {
+        formatRepairTurnSourceMessages.forEach(item => {
+          chatStore.registerLastRawResponseSourceMessage({
+            sourceSessionId: sessionId,
+            targetSessionId: item.targetSessionId,
+            turnId: formatRepairTurnId,
+            messageId: item.messageId,
+          });
+        });
+      }
+      return saved;
+    };
     let sendTraceStarted = false;
     let sendErrorMessage = '';
     let creativeExecutionRunActive = false;
@@ -26693,6 +27354,16 @@ Phase G（Frame 36）：循环衔接
       resolveContactAvatar: authorId => resolveAvatarForContact(authorId, contactsStore.getContact(authorId)),
       normalizeStats: normalizeInitialMomentStats,
       normalizeMomentRecord: normalizeMomentRecordForStore,
+    });
+    formatRepairMomentTransaction = createFormatRepairMomentTransactionRuntime({
+      exportState: () => momentsStore.exportState(),
+      importState: snapshot => momentsStore.importState(snapshot),
+      addMany: items => momentsStore.addMany(items),
+      getMoment: id => momentsStore.get(id),
+      finalizePosts: posts => (posts.length ? addMomentsWithAutoImage(posts) : []),
+      render: () => {
+        if (activePage === 'moments') momentsPanel.render();
+      },
     });
     const loadMemoryTemplateContext = async ({
       sessionId = '',
@@ -27274,42 +27945,6 @@ Phase G（Frame 36）：循环衔接
         logger,
       });
     };
-    const applyChatFormatGuardianProtocolRepair = async ({ correctedText } = {}) => {
-      const repairText = String(correctedText || '').trim();
-      if (!repairText) {
-        window.toastr?.warning?.('格式修复没有可用内容，建议重新生成');
-        return { didAnything: false, reason: 'empty_repair_text' };
-      }
-      const parser = createDialogueParser();
-      const pushedEvents = parser?.push?.(repairText);
-      const flushedEvents = parser?.flush?.();
-      const events = [
-        ...(Array.isArray(pushedEvents) ? pushedEvents : []),
-        ...(Array.isArray(flushedEvents) ? flushedEvents : []),
-      ];
-      if (!events.length) {
-        window.toastr?.warning?.('格式修复未产生可显示内容，建议重新生成');
-        return { didAnything: false, reason: 'no_events' };
-      }
-      let didAnything = false;
-      let mutatedMoments = false;
-      for (const ev of events) {
-        const result = await processProtocolRetryEvent(ev, {
-          renderMoments: true,
-          refreshAfterAppend: true,
-        });
-        if (result?.didAnything) didAnything = true;
-        if (result?.mutatedMoments) mutatedMoments = true;
-      }
-      if (!didAnything) {
-        window.toastr?.warning?.('格式修复未产生可显示内容，建议重新生成');
-      }
-      return {
-        didAnything,
-        mutatedMoments,
-        eventCount: events.length,
-      };
-    };
     const applyUpdateVariableForCreativeExecution = (message, targetSessionId) => {
       const changed = applyUpdateVariableFromMessage(message, targetSessionId);
       if (
@@ -27328,7 +27963,7 @@ Phase G（Frame 36）：循环衔接
       return changed;
     };
     const emitPluginAfterReceive = (message, targetSessionId, { skipScripts: skipThisScripts } = {}) => {
-      if (message?.role === 'assistant') {
+      if (!activeFormatRepairFunctionPlan && message?.role === 'assistant') {
         maidGuideEmit(window, 'chat-message-received', {
           sessionId: String(targetSessionId || sessionId || '').trim(),
           messageId: String(message?.id || '').trim(),
@@ -27339,7 +27974,6 @@ Phase G（Frame 36）：循环衔接
         skipScripts: skipThisScripts,
         defaultSkipScripts: skipScripts,
         applyUpdateVariable: applyUpdateVariableForCreativeExecution,
-        applyChatFormatGuardianRepair: applyChatFormatGuardianProtocolRepair,
       });
     };
     const processProtocolRetryEvent = async (ev, {
@@ -27348,7 +27982,12 @@ Phase G（Frame 36）：循环衔接
     } = {}) => {
       const finalizeResult = (result) => {
         if (!result?.consumed) return result;
-        if (result.mutatedMoments && renderMoments && activePage === 'moments') {
+        if (
+          result.mutatedMoments &&
+          !formatRepairMomentTransaction?.isActive?.() &&
+          renderMoments &&
+          activePage === 'moments'
+        ) {
           momentsPanel.render();
         }
         if (result.didAnything && refreshAfterAppend) {
@@ -27359,7 +27998,13 @@ Phase G（Frame 36）：循环衔接
 
       try {
         const momentResult = applyProtocolMomentEvent(ev, {
-          addMoments: items => addMomentsWithAutoImage(ingestMoments(items)),
+          addMoments: (items) => {
+            const ingested = ingestMoments(items);
+            if (!formatRepairMomentTransaction?.isActive?.()) {
+              return addMomentsWithAutoImage(ingested);
+            }
+            return formatRepairMomentTransaction.addPosts(ingested);
+          },
           addMomentComments: (momentId, comments) => momentsStore.addComments(momentId, comments),
           normalizeComments: comments => normalizeMomentCommentsForStore(comments, { regexMode: 'output', depth: 0 }),
         });
@@ -27384,11 +28029,11 @@ Phase G（Frame 36）：循环衔接
         buildAssistantMessageFromText,
         buildUserMessageFromAI,
         isSessionActive,
-        onAddUiMessage: parsed => ui.addMessage(parsed),
-        appendMessage: (parsed, targetSessionId) => chatStore.appendMessage(parsed, targetSessionId),
+        onAddUiMessage: parsed => ui.addMessage(decorateFormatRepairTurnMessage(parsed)),
+        appendMessage: (parsed, targetSessionId) => appendFormatRepairTurnMessage(parsed, targetSessionId),
         autoMarkReadIfActive,
         emitPluginAfterReceive,
-        maybeApplyGroupSystemOps,
+        maybeApplyGroupSystemOps: activeFormatRepairFunctionPlan ? null : maybeApplyGroupSystemOps,
         formatNowTime,
       });
       if (groupResult.consumed) {
@@ -27403,8 +28048,8 @@ Phase G（Frame 36）：循环衔接
         buildUserMessageFromAI,
         buildAssistantMessageFromText,
         isSessionActive,
-        onAddUiMessage: parsed => ui.addMessage(parsed),
-        appendMessage: (parsed, targetSessionId) => chatStore.appendMessage(parsed, targetSessionId),
+        onAddUiMessage: parsed => ui.addMessage(decorateFormatRepairTurnMessage(parsed)),
+        appendMessage: (parsed, targetSessionId) => appendFormatRepairTurnMessage(parsed, targetSessionId),
         autoMarkReadIfActive,
         emitPluginAfterReceive,
         formatNowTime,
@@ -27415,12 +28060,71 @@ Phase G（Frame 36）：循环衔接
     lastProtocolRetryDispatcher = {
       processEvent: processProtocolRetryEvent,
       createParser: createDialogueParser,
+      preflightEvent(event) {
+        if (event?.type === 'moments') {
+          return { ok: Array.isArray(event?.moments) && event.moments.length > 0, type: event.type };
+        }
+        if (event?.type === 'moment_reply') {
+          const momentId = String(event?.momentId || '').trim();
+          return {
+            ok: Boolean(momentId && momentsStore.get(momentId)),
+            type: event.type,
+            momentId,
+          };
+        }
+        if (event?.type === 'group_chat') {
+          const targetSessionId = String(resolveGroupChatTargetSessionId(event?.groupName) || '').trim();
+          return {
+            ok: Boolean(targetSessionId && Array.isArray(event?.messages) && event.messages.length > 0),
+            type: event.type,
+            targetSessionId,
+          };
+        }
+        if (event?.type === 'private_chat') {
+          const targetSessionId = String(
+            resolvePrivateChatTargetSessionId(event?.otherName || characterName) || '',
+          ).trim();
+          return {
+            ok: Boolean(targetSessionId && Array.isArray(event?.messages) && event.messages.length > 0),
+            type: event.type,
+            targetSessionId,
+          };
+        }
+        return { ok: false, type: String(event?.type || '') };
+      },
+      beginMessageCapture() {
+        if (formatRepairMomentTransaction?.begin?.() === false) {
+          formatRepairMessageCapture = null;
+          return false;
+        }
+        formatRepairMessageCapture = [];
+        return true;
+      },
+      endMessageCapture() {
+        const captured = Array.isArray(formatRepairMessageCapture)
+          ? formatRepairMessageCapture.slice()
+          : [];
+        formatRepairMessageCapture = null;
+        return captured;
+      },
+      commitTransaction() {
+        return formatRepairMomentTransaction?.commit?.() || {
+          ok: true,
+          momentPostCount: 0,
+        };
+      },
+      rollbackTransaction() {
+        return formatRepairMomentTransaction?.rollback?.() || {
+          ok: true,
+          restored: false,
+        };
+      },
     };
     const runChatFormatGuardianProtocolParseFailureRepair = (rawText = '', {
       source = 'protocol_parse_failure',
     } = {}) => {
-      const raw = String(rawText || '').trim();
-      if (!raw) return false;
+      const raw = String(rawText || '');
+      if (!raw.trim()) return false;
       const repairMessage = {
         id: `protocol-format-repair-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`,
         role: 'assistant',
@@ -27440,37 +28144,50 @@ Phase G（Frame 36）：循环衔接
         onChatFormatGuardianPreview: handleChatFormatGuardianPreview,
         onChatFormatGuardianRun: handleChatFormatGuardianAgentRun,
         onChatFormatGuardianModelReviewQueued: handleChatFormatGuardianModelReviewQueued,
-        onChatFormatGuardianAutoRepair: applyChatFormatGuardianProtocolRepair,
         logger,
       });
     };
-    const buildProtocolGroupBatch = (ev) => buildProtocolGroupChatBatch(ev, {
-      resolveTargetSessionId: resolveGroupChatTargetSessionId,
-      normalizeChatMessage: item => normalizeProtocolChatMessage(item, { normalizeSpeaker: normalizeName }),
-      isSystemSpeaker,
-      isUserSpeakerName,
-      shouldDropUserEcho: (content, speaker) => userEchoGuard.shouldDrop(content, speaker),
-      resolveGroupSpeakerContact,
-      resolveGroupSpeakerAvatar,
-      buildSystemMessage: ({ content, time, fallbackTime }) => buildProtocolSystemMetaMessage({
-        content,
-        time,
-        fallbackTime,
-        sanitizeContent: value => sanitizeAssistantReplyText(value, userName),
-      }),
-      buildAssistantMessageFromText,
-      buildUserMessageFromAI,
-      formatNowTime,
-    });
-    const buildProtocolPrivateBatch = (ev) => buildProtocolPrivateChatBatch(ev, {
-      resolveTargetSessionId: otherName => resolvePrivateChatTargetSessionId(otherName || characterName),
-      normalizeDialogueMessage,
-      shouldDropUserEcho: (content, speaker) => userEchoGuard.shouldDrop(content, speaker),
-      isUserSpeakerName,
-      buildUserMessageFromAI,
-      buildAssistantMessageFromText,
-      formatNowTime,
-    });
+    const buildProtocolGroupBatch = async (ev) => {
+      const batch = await buildProtocolGroupChatBatch(ev, {
+        resolveTargetSessionId: resolveGroupChatTargetSessionId,
+        normalizeChatMessage: item => normalizeProtocolChatMessage(item, { normalizeSpeaker: normalizeName }),
+        isSystemSpeaker,
+        isUserSpeakerName,
+        shouldDropUserEcho: (content, speaker) => userEchoGuard.shouldDrop(content, speaker),
+        resolveGroupSpeakerContact,
+        resolveGroupSpeakerAvatar,
+        buildSystemMessage: ({ content, time, fallbackTime }) => buildProtocolSystemMetaMessage({
+          content,
+          time,
+          fallbackTime,
+          sanitizeContent: value => sanitizeAssistantReplyText(value, userName),
+        }),
+        buildAssistantMessageFromText,
+        buildUserMessageFromAI,
+        formatNowTime,
+      });
+      batch.items = (Array.isArray(batch.items) ? batch.items : []).map(item => ({
+        ...item,
+        parsed: decorateFormatRepairTurnMessage(item.parsed, batch.targetSessionId),
+      }));
+      return batch;
+    };
+    const buildProtocolPrivateBatch = async (ev) => {
+      const batch = await buildProtocolPrivateChatBatch(ev, {
+        resolveTargetSessionId: otherName => resolvePrivateChatTargetSessionId(otherName || characterName),
+        normalizeDialogueMessage,
+        shouldDropUserEcho: (content, speaker) => userEchoGuard.shouldDrop(content, speaker),
+        isUserSpeakerName,
+        buildUserMessageFromAI,
+        buildAssistantMessageFromText,
+        formatNowTime,
+      });
+      batch.items = (Array.isArray(batch.items) ? batch.items : []).map(item => ({
+        ...item,
+        parsed: decorateFormatRepairTurnMessage(item.parsed, batch.targetSessionId),
+      }));
+      return batch;
+    };
     const dispatchProtocolGroupBatchToSession = (batch, {
       animEnabled = false,
       backgroundQueue = false,
@@ -27478,7 +28195,7 @@ Phase G（Frame 36）：循环衔接
       onQueueCreated = null,
       queueTypingOptions = {},
     } = {}) => dispatchProtocolGroupChatBatch(batch, {
-      appendMessage: (parsed, targetSessionId) => chatStore.appendMessage(parsed, targetSessionId),
+      appendMessage: (parsed, targetSessionId) => appendFormatRepairTurnMessage(parsed, targetSessionId),
       autoMarkReadIfActive,
       backgroundQueue,
       bumpReadCount: bumpReadCount ? count => ui.bumpReadCount(count) : null,
@@ -27501,7 +28218,7 @@ Phase G（Frame 36）：循环衔接
       onQueueCreated = null,
       queueTypingOptions = {},
     } = {}) => dispatchProtocolPrivateChatBatch(batch, {
-      appendMessage: (parsed, targetSessionId) => chatStore.appendMessage(parsed, targetSessionId),
+      appendMessage: (parsed, targetSessionId) => appendFormatRepairTurnMessage(parsed, targetSessionId),
       autoMarkReadIfActive,
       backgroundQueue,
       emitPluginAfterReceive,
@@ -27932,6 +28649,7 @@ Phase G（Frame 36）：循环衔接
       if (attachmentMessages.length) refreshChatAndContacts();
       if (!suppressUserMessage && attachmentMessages.length) ui.clearInput();
     }
+    formatRepairTurnId = createFormatPatchRevisionToken().replace(/^format-run:/, 'turn:');
     if (consumedDraftReplyTarget) clearReplyTargetForSession(sessionId);
     ui.setSendingState(true);
     // 显示已送出状态（对 pending 消息在 flush 后也生效）
@@ -28014,7 +28732,7 @@ Phase G（Frame 36）：循环衔接
       isSessionActive,
       hideTyping: () => ui.hideTyping(),
       fastForwardDelivery,
-      setLastRawResponse: (raw, sid) => chatStore.setLastRawResponse(raw, sid),
+      setLastRawResponse: (raw, sid) => setFormatRepairLastRawResponse(raw, sid),
       addSummary: (summary, sid) => chatStore.addSummary(summary, sid),
       requestSummaryCompaction,
       handleMemoryEditsFromRaw,
@@ -28242,7 +28960,7 @@ Phase G（Frame 36）：循环衔接
             appendReasoningChunk: appendNativeReasoningChunk,
             isSessionActive: sid => isSessionActive(sid),
             hideTyping: () => ui.hideTyping(),
-            setLastRawResponse: raw => chatStore.setLastRawResponse(raw, sessionId),
+            setLastRawResponse: raw => setFormatRepairLastRawResponse(raw, sessionId),
             handleMemoryEditsFromRaw,
             summaryEnabled: isSummaryMemoryEnabled,
             extractSummaryBlock,
@@ -28262,9 +28980,9 @@ Phase G（Frame 36）：循环衔接
             attachAssistantMemoryStateToMeta,
             isStreamCtrlConnected,
             ensureAssistantStreamCtrl,
-            addMessage: message => ui.addMessage(message),
+            addMessage: message => ui.addMessage(decorateFormatRepairTurnMessage(message, sessionId)),
             commitContinuationMessage,
-            appendMessage: (message, targetSessionId) => chatStore.appendMessage(message, targetSessionId),
+            appendMessage: (message, targetSessionId) => appendFormatRepairTurnMessage(message, targetSessionId),
             autoMarkReadIfActive,
             emitPluginAfterReceive,
             isTurnCheckpointSessionEnabled,
@@ -28346,7 +29064,7 @@ Phase G（Frame 36）：循环衔接
             appendReasoningChunk: appendNativeReasoningChunk,
             buildStreamText: full => ((!isRpMode && isMemoryAutoExtractInline()) ? stripTableEditBlocks(full) : full),
             pushAssistantStreamText,
-            setLastRawResponse: raw => chatStore.setLastRawResponse(raw, sessionId),
+            setLastRawResponse: raw => setFormatRepairLastRawResponse(raw, sessionId),
             handleMemoryEditsFromRaw,
             summaryEnabled: isSummaryMemoryEnabled,
             extractSummaryBlock,
@@ -28361,8 +29079,8 @@ Phase G（Frame 36）：循环衔接
             isStreamCtrlConnected,
             isSessionActive: sid => isSessionActive(sid),
             ensureAssistantStreamCtrl,
-            addMessage: message => ui.addMessage(message),
-            appendMessage: (message, targetSessionId) => chatStore.appendMessage(message, targetSessionId),
+            addMessage: message => ui.addMessage(decorateFormatRepairTurnMessage(message, sessionId)),
+            appendMessage: (message, targetSessionId) => appendFormatRepairTurnMessage(message, targetSessionId),
             autoMarkReadIfActive,
             emitPluginAfterReceive,
             refreshChatAndContacts,
@@ -28400,7 +29118,7 @@ Phase G（Frame 36）：循环衔接
           onBeforeRawSave: () => {
             if (isSessionActive(sessionId)) { ui.hideTyping(); fastForwardDelivery(sessionId); }
           },
-          setLastRawResponse: raw => chatStore.setLastRawResponse(raw, sessionId),
+          setLastRawResponse: raw => setFormatRepairLastRawResponse(raw, sessionId),
           handleMemoryEditsFromRaw,
           extractSummaryBlock,
           runProtocolBufferedResponse: protocolInput => runProtocolBufferedResponseFlow(protocolInput, {
@@ -28419,9 +29137,9 @@ Phase G（Frame 36）：循环衔接
           captureAssistantMemoryState,
           attachAssistantMemoryStateToMeta,
           isSessionActive: sid => isSessionActive(sid),
-          addMessage: message => ui.addMessage(message),
+          addMessage: message => ui.addMessage(decorateFormatRepairTurnMessage(message, sessionId)),
           commitContinuationMessage,
-          appendMessage: (message, targetSessionId) => chatStore.appendMessage(message, targetSessionId),
+          appendMessage: (message, targetSessionId) => appendFormatRepairTurnMessage(message, targetSessionId),
           autoMarkReadIfActive,
           emitPluginAfterReceive,
           isTurnCheckpointSessionEnabled,
@@ -28725,23 +29443,6 @@ Phase G（Frame 36）：循环衔接
   });
   ui.onMessageAction(async (action, message, payload) => {
     const sessionId = chatStore.getCurrent();
-    const applyUpdateVariableForMessageSafe = (targetMessage, targetSessionId) => {
-      return applyUpdateVariableForMessageWithFallback({
-        message: targetMessage,
-        sessionId: targetSessionId,
-        applyUpdateVariable: resolveUpdateVariableApplyFn(),
-        getEffectivePersona,
-        listVariableSchemas: id => chatStore.listVariableSchemas?.(id),
-        transformDisplay: nextStored => applyOutputDisplayRegexSafe(nextStored, {
-          appBridge: window.appBridge,
-          depth: 0,
-        }),
-        updateMessage: (messageId, updatePayload, sessionId) => chatStore.updateMessage(messageId, updatePayload, sessionId),
-        isSessionActive,
-        updateUiMessage: (messageId, updated) => ui.updateMessage(messageId, updated),
-        logger,
-      });
-    };
     const isSyntheticUser = m => m?.role === 'user' && m?.meta?.generatedByAssistant === true;
     const collectRenderedMessageEntries = () => (
       Array.from(ui?.scrollEl?.querySelectorAll?.('.QQ_chat_mymsg, .QQ_chat_charmsg') || [])
@@ -28938,15 +29639,115 @@ Phase G（Frame 36）：循环衔接
     }
     if (action === 'view-code') {
       const current = ensureRenderedCancelledPartialPersisted(message) || chatStore.findMessage(message.id, sessionId) || message;
-      let raw = resolveViewCodeText(current);
-      if (!raw.trim()) {
-        raw = (await chatStore.loadRawOriginal?.(current, sessionId)) || '';
+      let raw = '';
+      let sourceContext = null;
+      if (isRpSessionId(sessionId)) {
+        raw = await resolveCreativeFormatRepairRawOriginal(current, sessionId);
+        const turnMeta = getMessageFormatRepairTurnMeta(current);
+        sourceContext = {
+          sourceKind: FORMAT_REPAIR_SOURCE_KINDS.creativeRawOriginal,
+          sourceSessionId: sessionId,
+          targetSessionId: sessionId,
+          turnId: turnMeta?.turnId || `creative:${sessionId}:${String(current.id || '')}`,
+          sourceMessageIds: [String(current.id || '')].filter(Boolean),
+        };
+      } else {
+        const latestTarget = await resolveChatFormatRepairTarget(current, sessionId);
+        if (latestTarget?.ok) {
+          raw = latestTarget.sourceText;
+          sourceContext = latestTarget;
+        }
       }
-      if (!raw.trim()) {
-        raw = current?.rawSource ?? current?.raw_source ?? current?.source ?? current?.raw ?? current?.content ?? '';
+      if (typeof raw !== 'string' || !raw.length) {
+        window.toastr?.warning?.('无法取得这轮完整原始回复，不能安全编辑');
+        return true;
       }
-      ui.openCodeViewer({ message: current, text: String(raw || '') });
+      ui.openCodeViewer({
+        message: current,
+        text: raw,
+        context: {
+          ...(sourceContext || {}),
+          sourceSnapshot: raw,
+          sessionId,
+        },
+      });
       return true;
+    }
+    if (action === 'validate-format-repair-candidate' && message?.role === 'assistant') {
+      const candidateText = String(payload?.text ?? '');
+      const sourceKind = String(payload?.sourceKind || '').trim();
+      const sourceSnapshot = String(payload?.sourceSnapshot ?? '');
+      const functionValidation = validateFormatRepairFunctionPayloads({
+        originalText: sourceSnapshot,
+        candidateText,
+      });
+      if (!functionValidation.ok) {
+        return {
+          canApply: false,
+          statusText: functionValidation.violations[0]?.message ||
+            '已接受的补丁越过了功能块载荷边界',
+          functionValidation,
+        };
+      }
+      if (sourceKind === FORMAT_REPAIR_SOURCE_KINDS.socialTurnRaw) {
+        const latestTarget = await resolveChatFormatRepairTarget(
+          message,
+          String(payload?.sourceSessionId || payload?.sessionId || sessionId || '').trim(),
+        );
+        const revision = validateFormatPatchRevision({
+          snapshotText: sourceSnapshot,
+          currentText: latestTarget?.ok ? latestTarget.sourceText : '',
+        });
+        if (
+          !latestTarget?.ok ||
+          !revision.ok ||
+          String(latestTarget.turnId || '') !== String(payload?.turnId || '')
+        ) {
+          return {
+            canApply: false,
+            statusText: '原始回复已变化，请关闭后重新发起格式检查',
+          };
+        }
+      } else if (sourceKind === FORMAT_REPAIR_SOURCE_KINDS.creativeRawOriginal) {
+        const currentRaw = await resolveCreativeFormatRepairRawOriginal(
+          message,
+          String(payload?.targetSessionId || payload?.sessionId || sessionId || '').trim(),
+        );
+        if (!validateFormatPatchRevision({
+          snapshotText: sourceSnapshot,
+          currentText: currentRaw,
+        }).ok) {
+          return {
+            canApply: false,
+            statusText: '原始回复已变化，请关闭后重新发起格式检查',
+          };
+        }
+      }
+      const parserReport = extractChatFormatEventDrafts(candidateText, {
+        ...buildChatFormatGuardianOptions(String(payload?.sessionId || sessionId || '').trim()),
+        sourceMessageId: String(message.id || ''),
+      });
+      if (sourceKind === FORMAT_REPAIR_SOURCE_KINDS.socialTurnRaw) {
+        return {
+          canApply: parserReport.status === 'ready',
+          statusText: parserReport.status === 'ready'
+            ? `本地复查通过，可分发 ${parserReport.eventDrafts.length} 条事件`
+            : `当前补丁组合无法安全分发：${
+              parserReport.errors[0] ||
+              parserReport.warnings[0] ||
+              parserReport.summary
+            }`,
+          parserReport,
+        };
+      }
+      return {
+        canApply: true,
+        warning: parserReport.status !== 'ready',
+        statusText: parserReport.status === 'ready'
+          ? '本地格式复查通过'
+          : '应用后格式复查仍未通过；创意原文仍可安全写回',
+        parserReport,
+      };
     }
     if (action === 'check-format' && message?.role === 'assistant') {
       const current = ensureRenderedCancelledPartialPersisted(message) || chatStore.findMessage(message.id, sessionId) || message;
@@ -29116,8 +29917,155 @@ Phase G（Frame 36）：循环衔接
       const sessionId = String(payload?.sessionId || '').trim() || chatStore.getCurrent();
       message = ensureRenderedCancelledPartialPersisted(message) || message;
       const next = String(payload?.text ?? '');
+      const isFormatRepairWrite = payload?.source === 'chat_format_guardian' ||
+        payload?.source === 'maid_format_repair';
+      const currentStoredMessage = chatStore.findMessage(message.id, sessionId) || message;
+      const currentStoredMeta = currentStoredMessage?.meta && typeof currentStoredMessage.meta === 'object'
+        ? currentStoredMessage.meta
+        : {};
+      const currentSwipes = Array.isArray(currentStoredMeta.swipes) ? currentStoredMeta.swipes : [];
+      const currentSwipeIndex = currentSwipes.length
+        ? resolveActiveSwipeIndex(currentStoredMessage)
+        : -1;
+      const currentSwipe = currentSwipeIndex >= 0 ? currentSwipes[currentSwipeIndex] : null;
+      let currentRawOriginal = typeof currentSwipe?.rawOriginal === 'string'
+        ? currentSwipe.rawOriginal
+        : (typeof currentStoredMessage?.rawOriginal === 'string' ? currentStoredMessage.rawOriginal : '');
+      if (
+        payload?.sourceKind === FORMAT_REPAIR_SOURCE_KINDS.creativeRawOriginal &&
+        !currentRawOriginal
+      ) {
+        currentRawOriginal = await resolveCreativeFormatRepairRawOriginal(currentStoredMessage, sessionId);
+      }
+      let sourceSnapshot = typeof payload?.sourceSnapshot === 'string'
+        ? payload.sourceSnapshot
+        : currentRawOriginal;
+      let activeFormatRepairTarget = null;
+      let activeManualSocialTarget = null;
+      if (isFormatRepairWrite) {
+        activeFormatRepairTarget = await resolveChatFormatRepairTarget(message, sessionId);
+        sourceSnapshot = activeFormatRepairTarget?.ok
+          ? activeFormatRepairTarget.sourceText
+          : sourceSnapshot;
+        const revision = validateFormatPatchRevision({
+          snapshotText: String(payload?.sourceSnapshot ?? ''),
+          currentText: activeFormatRepairTarget?.ok ? activeFormatRepairTarget.sourceText : '',
+        });
+        if (
+          !activeFormatRepairTarget?.ok ||
+          !revision.ok ||
+          (payload?.turnId && String(payload.turnId) !== String(activeFormatRepairTarget.turnId || ''))
+        ) {
+          window.toastr?.warning?.('原文已变化，请重新发起格式检查');
+          return false;
+        }
+      } else if (payload?.sourceKind === FORMAT_REPAIR_SOURCE_KINDS.socialTurnRaw) {
+        activeManualSocialTarget = await resolveChatFormatRepairTarget(message, sessionId);
+        const revision = validateFormatPatchRevision({
+          snapshotText: String(payload?.sourceSnapshot ?? ''),
+          currentText: activeManualSocialTarget?.ok ? activeManualSocialTarget.sourceText : '',
+        });
+        if (
+          !activeManualSocialTarget?.ok ||
+          !revision.ok ||
+          (payload?.turnId && String(payload.turnId) !== String(activeManualSocialTarget.turnId || ''))
+        ) {
+          window.toastr?.warning?.('原文已变化，请重新打开编辑器');
+          return false;
+        }
+        sourceSnapshot = activeManualSocialTarget.sourceText;
+      } else if (typeof payload?.sourceSnapshot === 'string') {
+        if (!validateFormatPatchRevision({
+          snapshotText: payload.sourceSnapshot,
+          currentText: currentRawOriginal,
+        }).ok) {
+          window.toastr?.warning?.('原文已变化，请重新打开编辑器');
+          return false;
+        }
+      }
+      const functionPayloadValidation = isFormatRepairWrite
+        ? validateFormatRepairFunctionPayloads({
+          originalText: sourceSnapshot,
+          candidateText: next,
+        })
+        : { ok: true };
+      if (!functionPayloadValidation.ok) {
+        logger.warn('format repair attempted to mutate functional payload', functionPayloadValidation.violations);
+        window.toastr?.warning?.('格式修复越过了功能块边界，请重新检查');
+        return false;
+      }
+      const functionSideEffectPlan = buildFormatFunctionSideEffectPlan({
+        originalText: sourceSnapshot,
+        candidateText: next,
+      });
+      const hasImageFunctionExecution = functionSideEffectPlan.executeKinds
+        .includes(FORMAT_FUNCTION_BLOCK_KINDS.imagePrompt);
+      if (isFormatRepairWrite) {
+        if (activeFormatRepairTarget.sourceKind === FORMAT_REPAIR_SOURCE_KINDS.socialTurnRaw) {
+          const dispatchResult = await applyRepairedProtocolTextToChat({
+            candidateText: next,
+            sourceMessageIds: activeFormatRepairTarget.sourceMessageIds,
+            sourceSessionId: activeFormatRepairTarget.sourceSessionId,
+            targetSessionIds: activeFormatRepairTarget.targetSessionIds,
+            turnId: activeFormatRepairTarget.turnId,
+            functionSideEffectPlan,
+          });
+          if (!dispatchResult?.didAnything) {
+            logger.warn('format repair protocol transaction failed', dispatchResult);
+            window.toastr?.warning?.('格式修复写回失败，原消息未替换');
+            return false;
+          }
+          return true;
+        }
+      }
+      if (activeManualSocialTarget) {
+        const dispatchResult = await applyRepairedProtocolTextToChat({
+          candidateText: next,
+          sourceMessageIds: activeManualSocialTarget.sourceMessageIds,
+          sourceSessionId: activeManualSocialTarget.sourceSessionId,
+          targetSessionIds: activeManualSocialTarget.targetSessionIds,
+          turnId: activeManualSocialTarget.turnId,
+          functionSideEffectPlan,
+        });
+        if (dispatchResult?.didAnything) return true;
+        logger.warn('manual social source edit could not be redistributed; preserving raw text in one bubble', {
+          reason: dispatchResult?.reason || 'dispatch_no_effect',
+          turnId: activeManualSocialTarget.turnId,
+        });
+      }
       const regexEditMode = payload?.regexEditMode === true;
-      const cleanedForRender = stripTableEditBlocks(stripUpdateVariableBlocks(next));
+      const currentImageTokens = String(
+        currentSwipe?.rawSource ||
+        currentStoredMessage?.rawSource ||
+        currentSwipe?.raw ||
+        currentStoredMessage?.raw ||
+        currentStoredMessage?.content ||
+        '',
+      ).match(/\[(?:img|img-error)-[^\]\n]+\]/g) || [];
+      const generatedInlineImages = Array.isArray(currentStoredMeta.generatedInlineImages)
+        ? currentStoredMeta.generatedInlineImages
+        : [];
+      const existingImagePlaceholders = Array.isArray(currentStoredMeta.autoImagePromptPlaceholders)
+        ? currentStoredMeta.autoImagePromptPlaceholders
+        : [];
+      const renderSource = replaceReusedFormatFunctionBlocks(
+        next,
+        functionSideEffectPlan,
+        FORMAT_FUNCTION_BLOCK_KINDS.imagePrompt,
+        (entry) => {
+          const prompt = String(entry?.after?.payload || '').trim();
+          const asset = generatedInlineImages.find(item => String(item?.prompt || '').trim() === prompt);
+          if (asset?.token) return asset.token;
+          const placeholder = existingImagePlaceholders.find(item =>
+            String(item?.prompt || '').trim() === prompt
+          );
+          if (placeholder?.pendingToken && currentImageTokens.includes(placeholder.pendingToken)) {
+            return placeholder.pendingToken;
+          }
+          return currentImageTokens[Math.max(0, Number(entry?.after?.ordinal || 1) - 1)] || '';
+        },
+      );
+      const cleanedForRender = stripTableEditBlocks(stripUpdateVariableBlocks(renderSource));
       const hadUpdateVariableTag = /<\s*(update(?:variable)?|variableupdate)\b/i.test(next);
       if (hadUpdateVariableTag) {
         logger.debug(
@@ -29138,9 +30086,10 @@ Phase G（Frame 36）：循环衔接
 	        tag: String(item?.tag || '').trim(),
 	        index: Number.isFinite(Number(item?.index)) ? Number(item.index) : undefined,
 	      })).filter(item => item.prompt && item.pendingToken);
-	      const clearAutoImagePromptEditMeta = (meta = {}) => {
-	        const nextMeta = meta && typeof meta === 'object' ? { ...meta } : {};
-	        delete nextMeta.autoImagePrompt;
+		      const clearAutoImagePromptEditMeta = (meta = {}) => {
+		        const nextMeta = meta && typeof meta === 'object' ? { ...meta } : {};
+		        if (!hasImageFunctionExecution) return nextMeta;
+		        delete nextMeta.autoImagePrompt;
 	        delete nextMeta.autoImagePromptRawContent;
 	        delete nextMeta.autoImagePromptPlaceholders;
 	        return nextMeta;
@@ -29284,12 +30233,14 @@ Phase G（Frame 36）：循环衔接
 	          raw: typeof updater?.raw === 'string' ? updater.raw : activeBranch.raw,
 	          content: typeof updater?.content === 'string' ? updater.content : activeBranch.content,
 	        };
-	        delete nextBranch.autoImagePromptRawContent;
-	        delete nextBranch.autoImagePromptPlaceholders;
-	        if (editAutoImagePromptRawText && editAutoImagePromptPlaceholders.length) {
-	          nextBranch.autoImagePromptRawContent = editAutoImagePromptRawText;
-	          nextBranch.autoImagePromptPlaceholders = editAutoImagePromptPlaceholders;
-	        }
+		        if (hasImageFunctionExecution) {
+		          delete nextBranch.autoImagePromptRawContent;
+		          delete nextBranch.autoImagePromptPlaceholders;
+		        }
+		        if (hasImageFunctionExecution && editAutoImagePromptRawText && editAutoImagePromptPlaceholders.length) {
+		          nextBranch.autoImagePromptRawContent = editAutoImagePromptRawText;
+		          nextBranch.autoImagePromptPlaceholders = editAutoImagePromptPlaceholders;
+		        }
 	        swipes[activeIndex] = nextBranch;
 	        const mergedMeta = {
 	          ...(sourceMeta || {}),
@@ -29297,119 +30248,79 @@ Phase G（Frame 36）：循环衔接
 	          swipes,
 	          activeSwipe: activeIndex,
 	        };
-	        delete mergedMeta.autoImagePrompt;
-	        delete mergedMeta.autoImagePromptRawContent;
-	        delete mergedMeta.autoImagePromptPlaceholders;
-	        if (editAutoImagePromptRawText && editAutoImagePromptPlaceholders.length) {
-	          mergedMeta.autoImagePromptRawContent = editAutoImagePromptRawText;
+		        if (hasImageFunctionExecution) {
+		          delete mergedMeta.autoImagePrompt;
+		          delete mergedMeta.autoImagePromptRawContent;
+		          delete mergedMeta.autoImagePromptPlaceholders;
+		        }
+		        if (hasImageFunctionExecution && editAutoImagePromptRawText && editAutoImagePromptPlaceholders.length) {
+		          mergedMeta.autoImagePromptRawContent = editAutoImagePromptRawText;
 	          mergedMeta.autoImagePromptPlaceholders = editAutoImagePromptPlaceholders;
 	        }
 	        updater = {
 	          ...updater,
 	          meta: mergedMeta,
         };
-      }
-      const updated = chatStore.updateMessage(message.id, updater, sessionId);
-      if (updated) {
-        let finalMessage = updated;
-        try {
-	          const changed = applyUpdateVariableForMessageSafe(updated, sessionId);
-          logger.debug(
-            `[edit-assistant-raw] update-variable messageId=${String(message?.id || '')} session=${String(sessionId || '')} changed=${changed ? 1 : 0}`,
-          );
-          finalMessage = chatStore.findMessage(message.id, sessionId) || finalMessage;
-          // C 计划 M1：编辑含有效变量标签后变量已更新——把该楼层最终变量态快照落到 meta（严格楼层绑定）。
-          if (changed) {
-            captureVariableSnapshotToMessage(sessionId, finalMessage);
-            finalMessage = chatStore.findMessage(message.id, sessionId) || finalMessage;
-          }
-        } catch (err) {
-          logger.warn('edit-assistant-raw: UpdateVariable parse failed', err);
-	        }
-        try {
-          const tableEditPreview = extractTableEditBlocks(next);
-          if (Array.isArray(tableEditPreview?.actions) && tableEditPreview.actions.length) {
-            const contact = contactsStore.getContact(sessionId);
-            const memoryParsed = await handleMemoryEditsFromRaw(next, {
-              sessionId,
-              isGroup: Boolean(contact?.isGroup) || String(sessionId || '').startsWith('group:'),
-              uiMode,
-              memoryPlace: uiMode === 'rp' ? 'writing' : 'chat',
-              force: true,
-              timelineMessageId: String(message?.id || ''),
-              resolveTimelineTurnNumber: targetSessionId => resolveMessageTimelineTurnNumber(
-                targetSessionId || sessionId,
-                message?.id,
-              ),
-            });
-            logger.debug(
-              `[edit-assistant-raw] table-edit messageId=${String(message?.id || '')} session=${String(sessionId || '')} actions=${Array.isArray(memoryParsed?.actions) ? memoryParsed.actions.length : 0}`,
-            );
-          }
-        } catch (err) {
-          logger.warn('edit-assistant-raw: tableEdit parse/apply failed', err);
-        }
-	        if (isSessionActive(sessionId)) ui.updateMessage(message.id, finalMessage);
-	        const scheduleCandidates = [
-	          ['meta.autoImagePromptRawContent', finalMessage?.meta?.autoImagePromptRawContent],
-	          ['editAutoImagePromptRawText', editAutoImagePromptRawText],
-	          ['rawSource', finalMessage?.rawSource],
-	          ['raw', finalMessage?.raw],
-	          ['content', finalMessage?.content],
-	        ];
-	        const schedulePicked = scheduleCandidates.find(([, value]) => String(value || '').trim());
-	        const scheduleRawText = String(schedulePicked?.[1] || '');
-	        const schedulePromptCount = extractAutoImagePrompts(scheduleRawText, {
-	          max: getAutoImagePromptMaxPerResponse(),
-	          dedupe: false,
-	          stripMomentBlocks: resolveMediaSurfaceForSession(sessionId) !== 'writing',
-	        }).length;
-	        const shouldScheduleAutoImageAfterEdit =
-	          schedulePromptCount > 0;
-	        logger.debug(`[edit-assistant-raw] auto-image-schedule-check ${JSON.stringify({
-	          messageId: String(message?.id || ''),
-	          session: String(sessionId || ''),
-	          surface: resolveMediaSurfaceForSession(sessionId),
-	          source: String(schedulePicked?.[0] || ''),
-	          scheduleLength: scheduleRawText.length,
-	          promptCount: schedulePromptCount,
-	          shouldSchedule: shouldScheduleAutoImageAfterEdit,
-	          preparedCount: editAutoImagePromptPlaceholders.length,
-	          metaPreparedCount: Array.isArray(finalMessage?.meta?.autoImagePromptPlaceholders) ? finalMessage.meta.autoImagePromptPlaceholders.length : 0,
-	          metaHasRawContent: Boolean(finalMessage?.meta?.autoImagePromptRawContent),
-	          autoImageStatus: String(finalMessage?.meta?.autoImagePrompt?.status || ''),
-	          prepare: editAutoImagePromptDebug,
-	        })}`);
-	        if (shouldScheduleAutoImageAfterEdit) {
-	          autoImagePromptProcessedSourceIds.delete(getAutoImagePromptSourceKey(sessionId, message.id));
-	          setTimeout(() => {
-	            const latest = chatStore.findMessage(message.id, sessionId) || finalMessage;
-	            const started = scheduleAutoImagePromptGenerationForMessage(latest, sessionId, {
-	              rawText: scheduleRawText,
-	              source: 'edit_assistant_raw',
+	      }
+	      const updated = chatStore.updateMessage(message.id, updater, sessionId);
+	      if (updated) {
+	        await executeFormatFunctionSideEffectPlan({
+	          plan: functionSideEffectPlan,
+	          capturedMessages: [{ messageId: message.id, targetSessionId: sessionId }],
+	          fallbackSessionId: sessionId,
+	          turnId: String(
+	            payload?.turnId ||
+	            currentStoredMeta?.formatRepairTurn?.turnId ||
+	            `edit:${message.id}`,
+	          ),
+	        });
+	        if (activeManualSocialTarget) {
+	          const anchorId = String(message.id || '').trim();
+	          const candidateSessions = Array.from(new Set([
+	            sessionId,
+	            activeManualSocialTarget.sourceSessionId,
+	            ...(activeManualSocialTarget.targetSessionIds || []),
+	          ].map(item => String(item || '').trim()).filter(Boolean)));
+	          (activeManualSocialTarget.sourceMessageIds || []).forEach((messageId) => {
+	            if (String(messageId || '').trim() === anchorId) return;
+	            candidateSessions.some((targetSid) => {
+	              const removed = chatStore.deleteMessage(messageId, targetSid);
+	              if (removed && isSessionActive(targetSid)) ui.removeMessage(messageId);
+	              return removed;
 	            });
-	            logger.debug(`[edit-assistant-raw] auto-image-schedule-run ${JSON.stringify({
-	              messageId: String(message?.id || ''),
-	              session: String(sessionId || ''),
-	              started: Boolean(started),
-	              latestHasMetaRaw: Boolean(latest?.meta?.autoImagePromptRawContent),
-	              latestPlaceholderCount: Array.isArray(latest?.meta?.autoImagePromptPlaceholders) ? latest.meta.autoImagePromptPlaceholders.length : 0,
-	              latestStatus: String(latest?.meta?.autoImagePrompt?.status || ''),
-	            })}`);
-	          }, 0);
+	          });
+	          chatStore.setLastRawResponse(next, activeManualSocialTarget.sourceSessionId, {
+	            turnId: activeManualSocialTarget.turnId,
+	            sourceSessionId: activeManualSocialTarget.sourceSessionId,
+	            targetSessionId: sessionId,
+	            sourceKind: FORMAT_REPAIR_SOURCE_KINDS.socialTurnRaw,
+	          });
+	          chatStore.registerLastRawResponseSourceMessage({
+	            sourceSessionId: activeManualSocialTarget.sourceSessionId,
+	            targetSessionId: sessionId,
+	            turnId: activeManualSocialTarget.turnId,
+	            messageId: anchorId,
+	          });
+	          window.toastr?.warning?.('原文已保存；当前内容无法按聊天格式分发，已作为单条原始回复显示');
 	        }
+	        const finalMessage = chatStore.findMessage(message.id, sessionId) || updated;
+	        if (isSessionActive(sessionId)) ui.updateMessage(message.id, finalMessage);
 	        refreshChatAndContacts();
 	      }
-      return;
+	      return Boolean(updated);
     }
     if (action === 'edit-confirm' && message.role === 'user') {
       const newText = String(payload?.text ?? '');
-      if (!newText) return;
-      const stored = window.appBridge.applyInputStoredRegex(newText, { isEdit: true });
-      const display = window.appBridge.applyInputDisplayRegex(stored, { isEdit: true, depth: 0 });
+      const messages = chatStore.getMessages(sessionId) || [];
+      const hasDownstreamContext = hasDownstreamConversationContext(messages, message.id);
+      const editPatch = buildUserMessageEditPatch({
+        text: newText,
+        applyStoredRegex: (value, options) => window.appBridge.applyInputStoredRegex(value, options),
+        applyDisplayRegex: (value, options) => window.appBridge.applyInputDisplayRegex(value, options),
+      });
       const updated = chatStore.updateMessage(
         message.id,
-        { content: display, raw: stored, time: formatNowTime() },
+        editPatch,
         sessionId,
       );
       if (updated) {
@@ -29421,8 +30332,11 @@ Phase G（Frame 36）：循环衔接
           name: getActiveUserName(),
         });
         refreshChatAndContacts();
+        if (hasDownstreamContext) {
+          window.toastr?.info?.('已修改历史消息；后续 AI 回复仍基于修改前的内容');
+        }
       }
-      return;
+      return Boolean(updated);
     }
     if (action === 'edit' && message.role === 'user') {
       // 已由 UI 层接管 startInlineEdit，此处保留旧逻辑备份或直接移除
@@ -30814,6 +31728,9 @@ Phase G（Frame 36）：循环衔接
     () => isBackLayerVisible(momentSummaryPanel.overlay) || isBackLayerVisible(momentSummaryPanel.panel),
   ];
   const closeTopAppLayer = ({ dryRun = false } = {}) => {
+    if (ui.hasVisibleCodeViewer?.()) {
+      return dryRun ? true : ui.closeCodeViewer?.() === true;
+    }
     if (closeVisibleBySelector(
       '#contact-detail.is-active',
       () => contactDetailRuntime?.clear?.(),
