@@ -1109,7 +1109,10 @@ export const createAppContentAgentTools = ({
         boundPersonaId,
       };
     },
-    summarizeResult: result => `saved worldbook ${trim(result?.worldbookId, '-')} (${Number(result?.entryCount || 0)} entries)`,
+    // 取消覆盖会创建安全副本——摘要必须点名副本，模型才不会漏报这个副作用
+    summarizeResult: result => (result?.fallbackCreated
+      ? `replace cancelled; created safety copy ${trim(result?.worldbookId, '-')} (${Number(result?.entryCount || 0)} entries), original ${trim(result?.previousWorldbookId, '-')} untouched`
+      : `saved worldbook ${trim(result?.worldbookId, '-')} (${Number(result?.entryCount || 0)} entries)`),
   },
   {
     name: 'worldbook.update_entries',

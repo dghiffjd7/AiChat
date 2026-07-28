@@ -34,6 +34,17 @@ const findContact = (contactsStore, query = '') => {
   }) || null;
 };
 
+const findStoredSessionId = (chatStore, query = '') => {
+  const q = trim(query);
+  if (!q) return '';
+  const qKey = normalizeKey(q);
+  const listed = chatStore?.listSessions?.();
+  const sessionIds = Array.isArray(listed) ? listed : [];
+  return sessionIds
+    .map(sessionId => trim(sessionId))
+    .find(sessionId => sessionId === q || normalizeKey(sessionId) === qKey) || '';
+};
+
 const summarizeContact = contact => ({
   id: trim(contact?.id),
   name: trim(contact?.name || contact?.id),
@@ -106,7 +117,7 @@ export const createAppSessionAgentTools = ({
     const existing = contactsStore?.getContact?.(sessionName) || findContact(contactsStore, sessionName);
     if (existing) {
       const sid = trim(existing.id || sessionName);
-      const opened = args.open === false ? null : await openSession(sid);
+      const opened = args.open === true ? await openSession(sid) : null;
       return {
         ok: true,
         created: false,
@@ -126,8 +137,6 @@ export const createAppSessionAgentTools = ({
       isUserCreated: true,
     };
     contactsStore?.upsertContact?.(contact);
-    chatStore?.switchSession?.(sessionName);
-    setActiveSession?.(sessionName);
     const time = formatNowTime();
     if (typeof chatStore?.appendMessage === 'function') {
       try {
@@ -142,7 +151,7 @@ export const createAppSessionAgentTools = ({
       } catch {}
     }
     refreshChatAndContacts?.({ immediate: true });
-    const opened = args.open === false ? null : await openSession(sessionName);
+    const opened = args.open === true ? await openSession(sessionName) : null;
     return {
       ok: true,
       created: true,
@@ -195,7 +204,7 @@ export const createAppSessionAgentTools = ({
     {
       name: 'session.create',
       title: 'Create chat session',
-      description: 'Create a private contact and chat session, then optionally open it.',
+      description: 'Create one or more private contacts and chat sessions in the background; open only the primary result when explicitly requested.',
       source: 'maid-app-session',
       permissions: [],
       riskLevel: 'medium',
@@ -235,7 +244,7 @@ export const createAppSessionAgentTools = ({
         if (names.length > 1) {
           const sessions = [];
           for (const name of names) {
-            const result = await createOneSession(name, args);
+            const result = await createOneSession(name, { ...args, open: false });
             sessions.push(result);
           }
           const failed = sessions.find(item => item?.ok === false);
@@ -248,13 +257,17 @@ export const createAppSessionAgentTools = ({
               sessions,
             };
           }
+          const sessionIds = sessions.map(item => item.sessionId).filter(Boolean);
+          const openedSessionId = args.open === true ? trim(sessionIds[0]) : '';
+          const opened = openedSessionId ? await openSession(openedSessionId) : null;
           return {
             ok: true,
             created: sessions.some(item => item?.created === true),
             createdCount: sessions.filter(item => item?.created === true).length,
             count: sessions.length,
             sessions,
-            sessionIds: sessions.map(item => item.sessionId).filter(Boolean),
+            sessionIds,
+            ...(openedSessionId ? { openedSessionId, opened } : {}),
           };
         }
         const name = names[0] || '';
@@ -336,7 +349,13 @@ export const createAppSessionAgentTools = ({
       execute: async (args = {}) => {
         const raw = trim(args.sessionId || args.sessionName || args.target || args.chatName || args.name);
         const contact = raw ? findContact(contactsStore, raw) : null;
-        const sid = trim(contact?.id || raw || chatStore?.getCurrent?.());
+        const storedSessionId = raw ? findStoredSessionId(chatStore, raw) : '';
+        // 面板以 chatStore 会话为权威来源；联系人显示名与无联系人会话 ID 都可定位，
+        // 两边均不存在时才拒绝，避免打开“幽灵”配置页。
+        if (raw && !contact && !storedSessionId) {
+          return { ok: false, opened: false, reason: 'session_not_found', target: raw };
+        }
+        const sid = trim(contact?.id || storedSessionId || raw || chatStore?.getCurrent?.());
         if (!sid) return { ok: false, opened: false, reason: 'missing_session_id' };
         if (typeof showSessionConfig !== 'function') {
           return { ok: false, opened: false, reason: 'session_config_unavailable', sessionId: sid };

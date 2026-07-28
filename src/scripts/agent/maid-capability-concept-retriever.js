@@ -1,0 +1,148 @@
+const trim = value => String(value ?? '').trim();
+
+const normalize = value => trim(value)
+  .normalize('NFKC')
+  .toLowerCase();
+
+const list = value => (Array.isArray(value) ? value : [value]).filter(Boolean);
+
+const stripNegatedActions = value => normalize(value)
+  .replace(/(?:不要|别|莫|禁止|无需|不用|不可|不能)\s*[^，,。；;！？!?\n]*/gu, ' ');
+
+export const searchMaidCapabilityConcepts = (
+  query = '',
+  { limit = 20, features = [] } = {},
+) => {
+  const text = normalize(query);
+  if (!text) return [];
+  const positiveText = stripNegatedActions(text);
+  const available = new Map(
+    (Array.isArray(features) ? features : [])
+      .map(feature => [trim(feature?.id), feature])
+      .filter(([id]) => id),
+  );
+  const scores = new Map();
+  const add = (ids, score, concept) => {
+    list(ids).forEach((id) => {
+      if (!available.has(id)) return;
+      const current = scores.get(id) || { score: 0, concepts: new Set() };
+      current.score = Math.max(current.score, score);
+      current.concepts.add(concept);
+      scores.set(id, current);
+    });
+  };
+  const has = pattern => pattern.test(text);
+  const hasPositive = pattern => pattern.test(positiveText);
+
+  if (has(/(?:连线|连接档|模型档|模型配置|聊天模型|聊天配置|provider|model\s*profiles?|chat\s*(?:model|profiles?)|image\s*scope|scope.{0,12}配置|active\s*档|服务商|secret|key\s*\/?\s*token)/iu)) {
+    add('config.model.switch', 98, 'model_profile');
+  }
+  if (hasPositive(/(?:设置|配置|打开|open|show).{0,16}(?:api|key|模型配置)/iu)) {
+    add('config.api.open', 96, 'api_config');
+  }
+
+  if (has(/(?:失败记录|最近错误|错误簿|翻车|failurecode|maid\s*failures?|tool\s*failures?|recent\s*errors?)/iu)) {
+    add('app.errors.read', 100, 'recent_errors');
+  }
+  if (has(/(?:where\s+(?:exactly\s+)?am\s+i|app\s*状态|状态接口|当前\s*(?:ui\s*)?(?:模式|页面|位置)|在哪个页面)/iu)) {
+    add('app.state.read', 100, 'app_state');
+  }
+  if (has(/(?:可见界面|当前界面|弹窗|侧栏|眼前.*窗口|visible\s*ui|scan.{0,20}(?:ui|panel)|哪些\s*panel|露出来.*panel)/iu)) {
+    add('app.visible_panel.read', 100, 'visible_ui');
+  }
+
+  const sessionNoun = /(?:会话|聊天室|房间|测试房|contacts?|groups?|chats?|conversations?|\brooms?\b)/iu;
+  const listIntent = /(?:列出|清单|名单|所有|全部|一共有|几间|多少|各几项|列候选|不唯一|inventory|\blist\b|\bevery\b|names?)/iu;
+  if (sessionNoun.test(text) && listIntent.test(text)) {
+    add('session.list', 98, 'session_inventory');
+  }
+  if (
+    sessionNoun.test(positiveText) &&
+    /(?:创建|新建|新增|\bcreate\b)/iu.test(positiveText)
+  ) {
+    add('session.create', 100, 'session_create');
+  }
+  if (hasPositive(/(?:打开|进入|切到|切换到|\bopen\b|\benter\b|\bswitch\b).{0,24}(?:会话|聊天室|房间|chat|conversation)/iu)) {
+    add('session.open', 96, 'session_open');
+  }
+
+  if (has(/(?:raworiginal|rendered\s*text|latest\s*assistant|最后一轮\s*ai|末条消息|最近一条消息|局部变量|全局变量|local\s*vars?|global\s*vars?|\bvars?\b|后处理规则|后处理脚本|正规表达式|\bregexp\b|\bregex\b|\bpreset\b|角色皮|角色卡|character\s*cards?|user\s*identit(?:y|ies)|用户名称|当前身份)/iu)) {
+    add('app.resource.read', 100, 'structured_resource');
+  }
+  if (hasPositive(/(?:发送|写入|发出|send|write).{0,16}(?:消息|message)/iu)) {
+    add('chat.send_message', 100, 'chat_send');
+  }
+  if (has(/(?:prompt\s*preset|哪份\s*preset|哪一套.*preset)/iu)) {
+    add('app.resource.read', 100, 'preset_resource');
+  }
+  if (hasPositive(/(?:打开|弹出|show|open).{0,16}(?:变量|variables?).{0,12}(?:面板|panel|editor)?/iu)) {
+    add('variables.open', 100, 'variables_panel');
+  }
+  if (hasPositive(/(?:打开|弹出|show|open).{0,16}(?:正则|regex|regexp).{0,12}(?:面板|页面|panel|editor)?/iu)) {
+    add('regex.open', 100, 'regex_panel');
+  }
+
+  const worldbookIntent = /(?:世界书|世借书|world\s*book|worldbook|world\s*lore|lore\s*library|条目|entry\s*titles?|目录页|(?:replace|覆盖).{0,24}全部内容)/iu;
+  if (worldbookIntent.test(text)) {
+    add(['worldbook.read', 'worldbook.list'], 84, 'worldbook_domain');
+    add(['worldbook.open', 'worldbook.create', 'worldbook.update_entries', 'worldbook.bind_session'], 58, 'worldbook_domain');
+    if (has(/(?:有哪些|名单|书名|几本|library|列出.*世界书|worldbook\s*名单)/iu)) {
+      add('worldbook.list', 100, 'worldbook_inventory');
+    }
+    if (has(/(?:读取|读回|只读|核对|确认|正文|索引|目录|entry\s*titles?|read|verify)/iu)) {
+      add('worldbook.read', 100, 'worldbook_read');
+    }
+    if (hasPositive(/(?:创建|新建|追加|写入|生成|覆盖|replace|append|create|generate|write)/iu)) {
+      add(['worldbook.create', 'worldbook.read'], 98, 'worldbook_write');
+    }
+    if (hasPositive(/(?:修改|更新|改写|update|modify)/iu)) {
+      add(['worldbook.update_entries', 'worldbook.read'], 100, 'worldbook_update');
+    }
+    if (hasPositive(/(?:删除|清理|去重|delete|remove|dedupe)/iu)) {
+      add(['worldbook.delete_entries', 'worldbook.read'], 100, 'worldbook_delete');
+    }
+    if (hasPositive(/(?:绑定|启用|bind)/iu)) {
+      add(['worldbook.bind_session', 'worldbook.list', 'worldbook.read'], 100, 'worldbook_bind');
+    }
+  }
+
+  if (has(/(?:联网|网上|上网|搜索网页|天气|新闻|最新资讯|官方文档|webview2|web\s*search|image\s*search|参考图|references?)/iu)) {
+    add('web.search', 100, 'web_search');
+  }
+  if (has(/(?:格式画像|format\s*profile|output\s*schema|custom\s*output\s*schema)/iu)) {
+    add('chat.format.profile', 100, 'format_profile');
+  }
+  if (has(/(?:格式修复|修复.*格式|格式坏|格式不对|repair.*format)/iu)) {
+    add('chat.format.repair', 100, 'format_repair');
+  }
+  if (has(/(?:优化|润色|精简|更简洁|optimi[sz]e|rewrite)/iu)) {
+    add('chat.message.optimize', 100, 'message_optimize');
+  }
+
+  if (has(/agent\s*center|agent\s*中心|智能体中心/iu)) {
+    add('agent.center.open', 100, 'agent_center');
+  }
+  if (has(/(?:界面\s*ref|按钮\s*ref|点击|点开|click|按\s*ref|活动.*标签)/iu)) {
+    add(['app.visible_panel.read', 'app.ui.click'], 98, 'ui_ref_click');
+  }
+  if (has(/(?:待办|任务清单|\btodo\b)/iu)) {
+    add('maid.todo', 100, 'todo');
+  }
+  const clauseCount = text.split(/(?:[；;。]|然后|最后|接着|随后)/u).map(trim).filter(Boolean).length;
+  if (
+    clauseCount >= 3 &&
+    /(?:创建|写入|发送|修改|更新|生成|create|write|send|update|generate)/iu.test(text)
+  ) {
+    add('maid.todo', 96, 'complex_workflow');
+  }
+
+  return Array.from(scores.entries())
+    .map(([id, entry]) => ({
+      ...available.get(id),
+      score: entry.score,
+      retrievalReason: 'semantic_concept',
+      conceptCodes: Array.from(entry.concepts),
+    }))
+    .sort((left, right) => right.score - left.score || trim(left.id).localeCompare(trim(right.id)))
+    .slice(0, Math.max(1, Math.min(40, Math.trunc(Number(limit) || 20))));
+};

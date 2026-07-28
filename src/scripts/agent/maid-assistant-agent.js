@@ -21,6 +21,116 @@ const compactText = value => normalizeText(value).replace(/\s+/g, '');
 
 const isPlainObject = value => Boolean(value && typeof value === 'object' && !Array.isArray(value));
 
+const MAID_READ_INTENT_PATTERN = /(查询|查看|检查|确认|核对|读取|只读|只查|列出|列表|清单|统计|比较|分析|告诉我|有哪些|是否|有没有|当前(?:状态|情况)?|状态|情况|是什么|怎么样|如何|\b(?:show|list|read|check|inspect|verify|status|what|which|whether|inventory|identit(?:y|ies))\b)/iu;
+const MAID_WRITE_VERB_PATTERN = /(创建|新建|添加|追加|新增|写入|保存|绑定|启用|禁用|修改|更改|更新|编辑|替换|覆盖|删除|删掉|移除|清空|发布|发送|设置|切换|应用|修复|优化|生成|上传|导入|回复)/gu;
+const MAID_WRITE_COMMAND_CUE_PATTERN = /(?:^|[，,。；;！？!?])(?:请|麻烦|帮我|替我|给我|为我|我要|我想|需要|把|将|然后|接着|随后|再|并且|并|同时|顺便|之后|后再|就|分别|直接|立即|现在|若没有|如果没有|没有才|没有就|没有则|没有的话|缺少就|缺少才|缺少的|缺的|不存在则|不存在就|不存在再|不存在的话|若无|如无|执行|先执行).{0,48}$/u;
+const MAID_POSTCHECK_WRITE_CUE_PATTERN = /(?:^|[，,。；;！？!?])(?:检查|确认|核对|验证|查完|查看)[^，,。；;！？!?\n]{0,24}(?:后|之后)(?:(?:再|就|然后|接着|随后|仅|只)\s*)?$/u;
+const MAID_POSTCHECK_OBJECT_WRITE_CUE_PATTERN = /(?:^|[，,。；;！？!?])(?:检查|确认|核对|验证|查完|查看)[^，,。；;！？!?\n]{0,24}(?:后|之后)(?:(?:再|就|然后|接着|随后)\s*)?(?:把|将)\s*[^，,。；;！？!?\n]{0,32}$/u;
+const MAID_NEGATED_WRITE_CLAUSE_PATTERN = /(?:^|[，,、。；;！？!?\s]|请)(?:不要|别|无需|不用|禁止|避免|不可|不能)\s*(?:再|去|进行)?[^。；;！？!?\n]*$/u;
+const MAID_WRITE_STATE_SUFFIX_PATTERN = /^(?:(?:书|世界书|条目|内容|角色|用户|会话|聊天室|绑定|配置|记录))?(?:已|是否|有没有|状态|情况|仍|还|曾|过|了吗|吗|呢)/u;
+const MAID_READ_STATE_BEFORE_WRITE_PATTERN = /(?:是否(?:已经|已)?|有没有|有无|是不是|为何|为什么|怎么会|何时|哪里|谁|当前|现有|已有|原有|已|已经|曾经?|被|正在)\s*$/u;
+const MAID_READ_ACTION_BEFORE_WRITE_PATTERN = /(?:查询|查看|检查|确认|核对|读取|列出|统计|比较|分析)(?:一下|下)?\s*$/u;
+const MAID_NON_TOOL_REPLY_SUFFIX_PATTERN = /^(?:我|检查结果|核对结果|验证结果|结果|答案|结论|情况|说明)(?:[，,。；;！？!?\s]|$)/u;
+const MAID_ENGLISH_WRITE_PATTERN = /\b(?:create|add|append|write|save|bind|enable|disable|modify|update|edit|replace|overwrite|delete|remove|clear|publish|send|set|switch|apply|repair|optimize|generate|upload|import|reply)\b/iu;
+const MAID_ENGLISH_NEGATED_WRITE_PATTERN = /\b(?:do\s+not|don't|dont|never|without)\s+(?:create|add|append|write|save|bind|enable|disable|modify|update|edit|replace|overwrite|delete|remove|clear|publish|send|set|switch|apply|repair|optimize|generate|upload|import|reply)\b/iu;
+
+const hasExplicitMaidWriteIntent = (input = '') => {
+  const text = String(input ?? '').normalize('NFKC').toLowerCase().trim();
+  if (!text) return false;
+  if (MAID_ENGLISH_WRITE_PATTERN.test(text) && !MAID_ENGLISH_NEGATED_WRITE_PATTERN.test(text)) {
+    return true;
+  }
+  MAID_WRITE_VERB_PATTERN.lastIndex = 0;
+  for (const match of text.matchAll(MAID_WRITE_VERB_PATTERN)) {
+    const index = Number(match.index || 0);
+    const verb = match[0];
+    const clauseStart = Math.max(
+      text.lastIndexOf('。', index - 1),
+      text.lastIndexOf('；', index - 1),
+      text.lastIndexOf(';', index - 1),
+      text.lastIndexOf('！', index - 1),
+      text.lastIndexOf('!', index - 1),
+      text.lastIndexOf('？', index - 1),
+      text.lastIndexOf('?', index - 1),
+      text.lastIndexOf('\n', index - 1),
+    ) + 1;
+    const before = text.slice(clauseStart, index);
+    const localClauseStart = Math.max(
+      before.lastIndexOf('，'),
+      before.lastIndexOf(','),
+      before.lastIndexOf('、'),
+    ) + 1;
+    const localBefore = before.slice(localClauseStart);
+    const after = text.slice(index + verb.length, index + verb.length + 16);
+    if (MAID_NEGATED_WRITE_CLAUSE_PATTERN.test(before)) continue;
+    if (MAID_WRITE_STATE_SUFFIX_PATTERN.test(after)) continue;
+    if (
+      MAID_READ_STATE_BEFORE_WRITE_PATTERN.test(localBefore) ||
+      MAID_READ_ACTION_BEFORE_WRITE_PATTERN.test(localBefore) ||
+      (verb === '回复' && MAID_NON_TOOL_REPLY_SUFFIX_PATTERN.test(after))
+    ) {
+      continue;
+    }
+    if (
+      !before.trim() ||
+      MAID_WRITE_COMMAND_CUE_PATTERN.test(before) ||
+      MAID_POSTCHECK_WRITE_CUE_PATTERN.test(before) ||
+      MAID_POSTCHECK_OBJECT_WRITE_CUE_PATTERN.test(before)
+    ) {
+      return true;
+    }
+  }
+  return false;
+};
+
+export const classifyMaidOperationIntent = (input = '') => {
+  const text = String(input ?? '').normalize('NFKC').trim();
+  const readIntent = MAID_READ_INTENT_PATTERN.test(text);
+  const writeIntent = hasExplicitMaidWriteIntent(text);
+  return {
+    mode: writeIntent ? 'write_allowed' : (readIntent ? 'read_only' : 'unspecified'),
+    source: 'maid_user_request',
+    reason: writeIntent
+      ? 'explicit_write'
+      : (readIntent ? 'explicit_read_without_write' : 'intent_unspecified'),
+  };
+};
+
+const MAID_BACKGROUND_PRESENTATION_PATTERN = /(后台(?:执行|处理|完成)?|保持当前位置|留在当前(?:页面|界面|聊天室|会话)?|不要打开|别打开|无需打开|不用打开|不要进入|别进入|无需进入|不用进入|不要跳转|别跳转|不要切换(?:页面|界面|聊天室|会话))/iu;
+const MAID_GUIDE_PRESENTATION_PATTERN = /(一步一步|一步步|逐步|教我|指导我|引导我|带着我|手把手|怎么(?:操作|设置|配置|创建|使用)|如何(?:操作|设置|配置|创建|使用))/iu;
+const MAID_NEGATED_GUIDE_PATTERN = /(?:不要|别|无需|不用|取消|停止)\s*(?:再)?(?:引导|指导|教学|教程|一步一步|一步步)/iu;
+const MAID_REVEAL_PRESENTATION_PATTERN = /(打开(?:给我看)?|进入(?:这个|该|对应)?(?:界面|页面|聊天室|会话)?|跳转(?:到)?|带我(?:去)?看(?:看)?|带我去|切到(?:对应)?(?:界面|页面|聊天室|会话)|(?:做完|完成|处理完|创建后|结束后).{0,16}(?:打开|进入|跳转|带我去|显示(?:界面|页面)))/iu;
+
+export const classifyMaidPresentationIntent = (input = '') => {
+  const text = String(input ?? '').normalize('NFKC').trim();
+  if (!text || MAID_BACKGROUND_PRESENTATION_PATTERN.test(text)) {
+    return {
+      mode: 'background',
+      source: 'maid_user_request',
+      reason: text ? 'explicit_background_or_no_navigation' : 'default_background',
+    };
+  }
+  if (MAID_GUIDE_PRESENTATION_PATTERN.test(text) && !MAID_NEGATED_GUIDE_PATTERN.test(text)) {
+    return {
+      mode: 'guide',
+      source: 'maid_user_request',
+      reason: 'explicit_teaching_or_step_by_step',
+    };
+  }
+  if (MAID_REVEAL_PRESENTATION_PATTERN.test(text)) {
+    return {
+      mode: 'reveal',
+      source: 'maid_user_request',
+      reason: 'explicit_navigation_or_result_reveal',
+    };
+  }
+  return {
+    mode: 'background',
+    source: 'maid_user_request',
+    reason: 'default_background',
+  };
+};
+
 const clone = (value) => {
   if (value === null || value === undefined) return value;
   if (typeof value !== 'object') return value;
@@ -29,6 +139,35 @@ const clone = (value) => {
   } catch {
     return Array.isArray(value) ? value.slice() : { ...value };
   }
+};
+
+const MAID_OPTIONAL_NAVIGATION_TOOLS = new Set([
+  'session.create',
+]);
+
+export const applyMaidPresentationPolicy = (plan = {}, presentationIntent = {}) => {
+  const next = clone(plan || {});
+  const mode = ['background', 'reveal', 'guide'].includes(trim(presentationIntent?.mode))
+    ? trim(presentationIntent.mode)
+    : 'background';
+  if (MAID_OPTIONAL_NAVIGATION_TOOLS.has(trim(next?.toolName))) {
+    next.args = {
+      ...(isPlainObject(next?.args) ? next.args : {}),
+      open: mode === 'reveal' || mode === 'guide',
+    };
+  }
+  if (trim(next?.toolName) === 'chat.send_message') {
+    const args = isPlainObject(next?.args) ? next.args : {};
+    const role = trim(args.role, 'user').toLowerCase();
+    const triggersReply = role === 'user' && args.triggerReply !== false;
+    next.args = {
+      ...args,
+      // 当前正常回复链依赖目标成为 current；在显式 target 隔离完成前不可伪装成后台发送。
+      open: triggersReply || mode === 'reveal' || mode === 'guide',
+    };
+  }
+  if (mode === 'guide') next.forceGuide = true;
+  return next;
 };
 
 const stableForKey = (value) => {
@@ -321,6 +460,174 @@ const getConsecutiveSameToolCount = (steps = []) => {
   }
   return { count, toolName };
 };
+
+const MAID_READ_RESOURCE_KEYS = new Set([
+  'persona',
+  'user',
+  'preset',
+  'regex',
+  'variables',
+  'config',
+]);
+
+const stripNegatedMaidActionClauses = value => String(value ?? '')
+  .replace(/(?:不要|别|禁止|无需|不用|不可|不能|避免)\s*[^，,。；;！？!?\n]*/gu, ' ');
+
+const hasMaidInteractiveActionRequest = (input = '') => {
+  const text = stripNegatedMaidActionClauses(String(input ?? '').normalize('NFKC'));
+  return /(打开|进入|点击|点开|按下|切换|跳转|返回|关闭|选择|勾选|滚动|展开|收起|导航|\b(?:open|enter|click|press|switch|navigate|select|scroll)\b)/iu.test(text);
+};
+
+const hasMaidDetailedReadRequest = (input = '') => (
+  /(完整|详情|描述|设定|简介|头像|正文|原文|具体(?:内容|数值|规则)?|提示词|变量[^。；;！？!?\n]{0,16}(?:值|内容)|\b(?:prompt|description|avatar|details?|content|value|base\s*url|endpoint|transport)\b)/iu
+    .test(String(input ?? '').normalize('NFKC'))
+);
+
+const getRequestedMaidReadKeys = (input = '') => {
+  const text = String(input ?? '').normalize('NFKC');
+  const patterns = [
+    ['state', /(APP\s*状态|当前状态|状态摘要|当前页面|哪个页面|当前位置|where\s+am\s+i)/iu],
+    ['todo', /(待办|任务清单|\btodo\b)/iu],
+    ['persona', /(角色卡|角色皮|character\s*cards?)/iu],
+    ['user', /(用户(?:名称|资料|清单|身份|资源)?|user\s+identit(?:y|ies)|current\s+user)/iu],
+    ['preset', /(?:\bpreset\b|预设)/iu],
+    ['regex', /(?:\bregex\b|正则)/iu],
+    ['variables', /(?:\bvariables?\b|变量)/iu],
+    ['config', /(模型档|模型配置|当前模型|服务商|\bprovider\b)/iu],
+  ];
+  return patterns
+    .filter(([, pattern]) => pattern.test(text))
+    .map(([key]) => key);
+};
+
+const getMaidReadStepKey = (step = {}) => {
+  if (step?.status !== 'succeeded') return '';
+  const toolName = trim(step?.toolName);
+  if (toolName === 'app.get_current_state') return 'state';
+  if (toolName === 'maid.todo.read') return 'todo';
+  if (toolName !== 'app.read_resource') return '';
+  const resource = trim(step?.output?.resource || step?.args?.resource).toLowerCase();
+  return MAID_READ_RESOURCE_KEYS.has(resource) ? resource : '';
+};
+
+const countObjectKeys = value => (isPlainObject(value) ? Object.keys(value).length : 0);
+
+const summarizeMaidProfileRead = (label, output = {}) => {
+  const items = Array.isArray(output?.items) ? output.items : [];
+  const count = Number.isFinite(Number(output?.count)) ? Number(output.count) : items.length;
+  const activeId = trim(output?.activeId);
+  const active = items.find(item => item?.active === true || (activeId && trim(item?.id) === activeId));
+  const activeName = trim(active?.name || activeId, '未设置');
+  const names = items.map(item => trim(item?.name)).filter(Boolean).slice(0, 8);
+  return [
+    `${label}：共 ${count} 项；当前为「${activeName}」`,
+    names.length ? `本次返回：${names.join('、')}${items.length > names.length ? '…' : ''}` : '',
+  ].filter(Boolean).join('；');
+};
+
+const summarizeMaidReadResult = (key, output = {}) => {
+  if (key === 'state') {
+    return [
+      `APP 状态：页面 ${trim(output?.activePage, '未知')}`,
+      trim(output?.uiMode) ? `模式 ${trim(output.uiMode)}` : '',
+      trim(output?.sessionId) ? `当前会话「${trim(output.sessionId)}」` : '',
+    ].filter(Boolean).join('；');
+  }
+  if (key === 'todo') {
+    const todos = Array.isArray(output?.todos) ? output.todos : [];
+    if (!todos.length) return '待办：当前没有项目';
+    const count = Number.isFinite(Number(output?.count)) ? Number(output.count) : todos.length;
+    const completed = todos.filter(item => item?.status === 'completed').length;
+    const inProgress = todos.filter(item => item?.status === 'in_progress').length;
+    const pending = todos.filter(item => item?.status === 'pending').length;
+    return `待办：共 ${count} 项；已完成 ${completed}，进行中 ${inProgress}，待处理 ${pending}`;
+  }
+  if (key === 'persona') return summarizeMaidProfileRead('角色卡', output);
+  if (key === 'user') return summarizeMaidProfileRead('用户', output);
+  if (key === 'preset') {
+    const active = Object.entries(isPlainObject(output?.presets) ? output.presets : {})
+      .map(([scope, value]) => `${scope}=${trim(value?.activeId, '未设置')}`);
+    return `预设：${active.length ? active.join('、') : '未返回活动预设'}`;
+  }
+  if (key === 'regex') {
+    const count = Number.isFinite(Number(output?.count))
+      ? Number(output.count)
+      : countArrayItems(output?.sets);
+    const enabled = output?.session?.enabled === false ? '未启用' : '已启用';
+    return `正则：${enabled}，共 ${count} 个规则集`;
+  }
+  if (key === 'variables') {
+    return `变量：会话 ${countObjectKeys(output?.variables)} 项，全局 ${countObjectKeys(output?.globalVariables)} 项`;
+  }
+  if (key === 'config') {
+    const config = isPlainObject(output?.config) ? output.config : {};
+    return [
+      `模型配置：服务商 ${trim(config.provider, '未设置')}`,
+      `模型 ${trim(config.model, '未设置')}`,
+      trim(config.activeProfileId) ? `当前档 ${trim(config.activeProfileId)}` : '',
+    ].filter(Boolean).join('；');
+  }
+  return '';
+};
+
+const buildDeterministicMaidReadDecision = ({
+  input = '',
+  operationIntentPolicy = {},
+  steps = [],
+} = {}) => {
+  if (
+    operationIntentPolicy?.mode !== 'read_only' ||
+    hasMaidInteractiveActionRequest(input) ||
+    hasMaidDetailedReadRequest(input)
+  ) return null;
+  const requestedKeys = getRequestedMaidReadKeys(input);
+  if (!requestedKeys.length) return null;
+  const latestByKey = new Map();
+  for (const step of Array.isArray(steps) ? steps : []) {
+    if (trim(step?.toolName) === 'maid.todo.write') continue;
+    const key = getMaidReadStepKey(step);
+    if (!key) return null;
+    latestByKey.set(key, step.output || {});
+  }
+  if (!requestedKeys.every(key => latestByKey.has(key))) return null;
+  const lines = requestedKeys
+    .map(key => summarizeMaidReadResult(key, latestByKey.get(key)))
+    .filter(Boolean);
+  if (lines.length !== requestedKeys.length) return null;
+  return {
+    ok: true,
+    action: 'final',
+    source: 'deterministic_read_completion',
+    message: lines.join('\n'),
+  };
+};
+
+const isRepeatedSuccessfulTodoWrite = (plan = {}, steps = []) => {
+  if (trim(plan?.toolName) !== 'maid.todo.write') return false;
+  const argsKey = stableJsonStringify(plan?.args || {});
+  return (Array.isArray(steps) ? steps : []).some(step => (
+    step?.status === 'succeeded' &&
+    trim(step?.toolName) === 'maid.todo.write' &&
+    stableJsonStringify(step?.args || {}) === argsKey
+  ));
+};
+
+const buildUnchangedTodoExecution = () => ({
+  output: {
+    toolName: 'maid.todo.write',
+    status: 'failed',
+    summary: 'todo list unchanged',
+    errorCode: 'maid_todo_unchanged',
+    result: {
+      ok: false,
+      reason: 'todo_unchanged',
+      message: '清单没有变化；不要重复写入，请执行当前 in_progress 或 pending 项的具体工具。',
+    },
+  },
+  guided: false,
+  guide: null,
+  message: '',
+});
 
 const MAID_MODEL_CALL_TIMEOUT_MS = 240_000;
 
@@ -629,6 +936,8 @@ const extractSessionNames = (text = '') => {
     .map(match => stripTrailingPunctuation(match?.[1] || ''))
     .filter(Boolean);
   if (quoted.length > 1) return Array.from(new Set(quoted)).slice(0, 20);
+  const explicitlyMultiple = /(?:两个|兩個|多个|多個|一些|几个|幾個|[2-9]\d*\s*[个個])\s*(?:聊天室|会话|好友|联系人)/u.test(raw);
+  if (quoted.length === 1 && !explicitlyMultiple) return quoted;
   const patterns = [
     /(?:创建|新建|新增|添加|开)(?:\s*(?:两个|兩個|多个|多個|一些|几个|幾個|\d+\s*个))?(?:聊天室|会话|好友|联系人)[，,：:\s]*(.{1,180})/u,
     /(?:聊天室|会话|好友|联系人)[，,：:\s]*(.{1,180})/u,
@@ -767,6 +1076,8 @@ export const planMaidAssistantCommand = (input = '', context = {}) => {
   if (!text) return unsupportedPlan('empty_input', '请输入想让女仆做的事。');
   const normalized = normalizeText(text);
   const compact = compactText(text);
+  const presentationIntent = classifyMaidPresentationIntent(text);
+  const shouldOpenOptionalResult = presentationIntent.mode === 'reveal' || presentationIntent.mode === 'guide';
 
   if (compact.includes('会话配置') || compact.includes('聊天室配置') || compact.includes('配置聊天室')) {
     return buildPlan({
@@ -900,7 +1211,7 @@ export const planMaidAssistantCommand = (input = '', context = {}) => {
     if (names.length > 1) {
       return buildPlan({
         toolName: 'session.create',
-        args: { names, open: true },
+        args: { names, open: shouldOpenOptionalResult },
         featureId: 'session.create',
         title: '创建聊天室',
         response: `我来创建 ${names.length} 个聊天室。`,
@@ -910,7 +1221,7 @@ export const planMaidAssistantCommand = (input = '', context = {}) => {
     if (!name) return unsupportedPlan('missing_session_name', '请告诉我要创建的聊天室名称。');
     return buildPlan({
       toolName: 'session.create',
-      args: { name, open: true },
+      args: { name, open: shouldOpenOptionalResult },
       featureId: 'session.create',
       title: '创建聊天室',
       response: `我来创建聊天室「${name}」。`,
@@ -1136,6 +1447,8 @@ export const createMaidAssistantAgent = ({
     // 每轮独立的视觉附件池：工具可把截图加入同一轮 ReAct，但不会回写输入框或跨 run 留存。
     context = {
       ...(isPlainObject(context) ? context : {}),
+      operationIntentPolicy: classifyMaidOperationIntent(input),
+      presentationIntent: classifyMaidPresentationIntent(input),
       maidAttachments: (Array.isArray(context?.maidAttachments) ? context.maidAttachments : [])
         .map(item => (isPlainObject(item) ? { ...item } : item)),
     };
@@ -1316,6 +1629,7 @@ export const createMaidAssistantAgent = ({
         };
       }
     }
+    plan = applyMaidPresentationPolicy(plan, context.presentationIntent);
     let currentPlan = plan;
     let lastExecution = null;
     let lastOutput = null;
@@ -1346,18 +1660,22 @@ export const createMaidAssistantAgent = ({
         }
 
         let execution = null;
-        try {
-          loopProbe(`step-${stepIndex}:tool-exec`);
-          execution = await executePlan(currentPlan, context, tracker);
-          loopProbe(`step-${stepIndex}:tool-done`);
-        } catch (error) {
-          logger?.warn?.('maid assistant tool execution failed', error);
-          execution = {
-            output: makeToolErrorOutput(currentPlan, error),
-            guided: false,
-            guide: null,
-            message: '',
-          };
+        if (isRepeatedSuccessfulTodoWrite(currentPlan, steps)) {
+          execution = buildUnchangedTodoExecution();
+        } else {
+          try {
+            loopProbe(`step-${stepIndex}:tool-exec`);
+            execution = await executePlan(currentPlan, context, tracker);
+            loopProbe(`step-${stepIndex}:tool-done`);
+          } catch (error) {
+            logger?.warn?.('maid assistant tool execution failed', error);
+            execution = {
+              output: makeToolErrorOutput(currentPlan, error),
+              guided: false,
+              guide: null,
+              message: '',
+            };
+          }
         }
         const output = execution?.output ?? execution;
         let ok = isToolOutputOk(output);
@@ -1438,6 +1756,30 @@ export const createMaidAssistantAgent = ({
         lastExecution = observedExecution;
         lastOutput = observedOutput;
         lastOk = ok;
+
+        const deterministicReadDecision = ok
+          ? buildDeterministicMaidReadDecision({
+              input,
+              operationIntentPolicy: context.operationIntentPolicy,
+              steps,
+            })
+          : null;
+        if (deterministicReadDecision) {
+          return {
+            ok: true,
+            status: 'succeeded',
+            responseType: 'react',
+            input: trim(input),
+            plan: clone(plan),
+            finalDecision: clone(deterministicReadDecision),
+            output: clone(observedOutput),
+            steps: clone(steps),
+            guided: Boolean(observedExecution?.guided),
+            guide: clone(observedExecution?.guide || null),
+            reason: '',
+            message: deterministicReadDecision.message,
+          };
+        }
 
         const sameTool = getConsecutiveSameToolCount(steps);
         if (sameTool.count >= 8) {
@@ -1641,7 +1983,7 @@ export const createMaidAssistantAgent = ({
               message: '已经写入并读回验证成功；为避免重复追加相同世界书条目，本轮未再次执行重复写入。',
             };
           }
-          currentPlan = decision;
+          currentPlan = applyMaidPresentationPolicy(decision, context.presentationIntent);
           continue;
         }
         if (!ok) {

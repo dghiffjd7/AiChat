@@ -627,3 +627,22 @@ const createProfileStore = (prefix = 'profile') => {
   assert.equal(already.alreadyActive, true);
   console.log('ok - app content tools list and switch model profiles with fuzzy matching');
 }
+
+{
+  // v4f obs-03-026：取消覆盖创建安全副本时，工具摘要必须点名副本与原书状态
+  const tools = createAppContentAgentTools({});
+  const create = getTool(tools, 'worldbook.create');
+  const copySummary = create.summarizeResult({
+    ok: true,
+    fallbackCreated: true,
+    worldbookId: '冻结观察写入-0728 (3)',
+    previousWorldbookId: '冻结观察写入-0728',
+    entryCount: 2,
+  });
+  assert.match(copySummary, /safety copy/);
+  assert.match(copySummary, /冻结观察写入-0728 \(3\)/);
+  assert.match(copySummary, /untouched/);
+  const normalSummary = create.summarizeResult({ ok: true, worldbookId: 'A', entryCount: 3 });
+  assert.equal(normalSummary.includes('safety copy'), false);
+  console.log('ok - worldbook.create summary surfaces cancel-replace safety copies explicitly');
+}

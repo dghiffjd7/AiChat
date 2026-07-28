@@ -46,7 +46,10 @@ const getTool = (tools, name) => tools.find(tool => tool.name === name);
   assert.equal(legacyVisible.ok, true);
   assert.equal(legacyVisible.panels[0].id, 'chat');
 
-  const resource = await getTool(tools, 'app.read_resource').execute({ resource: 'chat', sessionName: 'A' });
+  const resourceTool = getTool(tools, 'app.read_resource');
+  assert.match(resourceTool.schema.properties.include.description, /persona\/user/);
+  assert.match(resourceTool.schema.properties.include.description, /details/);
+  const resource = await resourceTool.execute({ resource: 'chat', sessionName: 'A' });
   assert.equal(resource.ok, true);
   assert.equal(resource.resource, 'chat');
   assert.equal(resource.items[0].content, '完整回复');
@@ -88,4 +91,28 @@ const getTool = (tools, name) => tools.find(tool => tool.name === name);
   assert.equal(result.ok, false);
   assert.equal(result.reason, 'recent_errors_unavailable');
   console.log('ok - app.read_recent_errors reports unavailable without provider');
+}
+
+{
+  const clicks = [];
+  const tools = createAppNavigationAgentTools({
+    clickUiElement: async args => {
+      clicks.push(args);
+      return { ok: true, clicked: true };
+    },
+  });
+  const clickTool = getTool(tools, 'ui.click_element');
+  assert.equal(clickTool.metadata.allowInReadOnlyIntent, true);
+  const safe = await clickTool.execute({ label: '活动' }, {
+    operationIntentPolicy: { mode: 'read_only' },
+  });
+  assert.equal(safe.clicked, true);
+  const dangerous = await clickTool.execute({ label: '删除记录' }, {
+    operationIntentPolicy: { mode: 'read_only' },
+    requestToolConfirmation: () => ({ decision: 'allow' }),
+  });
+  assert.equal(dangerous.ok, false);
+  assert.equal(dangerous.reason, 'agent_tool_write_intent_required');
+  assert.equal(clicks.length, 1);
+  console.log('ok - read-only intent allows navigation clicks but blocks dangerous UI actions');
 }

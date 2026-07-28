@@ -268,6 +268,10 @@ export const createAppNavigationAgentTools = ({
       modelContext: 'allowlist',
       confirmation: 'allow_once',
     },
+    metadata: {
+      // 普通标签页/折叠项点击属于只读导航；危险按钮仍由下方动态检查拦截。
+      allowInReadOnlyIntent: true,
+    },
     schema: {
       type: 'object',
       additionalProperties: false,
@@ -284,6 +288,14 @@ export const createAppNavigationAgentTools = ({
       const targetText = trim(args.label) || trim(args.ref);
       // 危险按钮（删除/覆盖/发送等）必须经用户确认；只读导航类放行
       if (UI_CLICK_DANGER_PATTERN.test(targetText)) {
+        if (context?.operationIntentPolicy?.mode === 'read_only') {
+          return {
+            ok: false,
+            clicked: false,
+            reason: 'agent_tool_write_intent_required',
+            message: '用户本轮只要求查询或查看，不能点击可能写入、发送或删除数据的按钮。',
+          };
+        }
         const confirm = context?.requestToolConfirmation;
         let allowed = false;
         if (typeof confirm === 'function') {
@@ -323,7 +335,7 @@ export const createAppNavigationAgentTools = ({
   {
     name: 'app.read_resource',
     title: 'Read APP resource',
-    description: 'Read structured APP resources such as chat messages, worldbook settings, regex, memory, variables, presets, config, sessions, personas, or users.',
+    description: 'Read structured APP resources such as chat messages, worldbook settings, regex, memory, variables, presets, config, sessions, personas, or users. Persona/user lists are compact by default; request profile fields through include only when needed.',
     source: 'maid-app-navigation',
     permissions: [],
     riskLevel: 'low',
@@ -355,6 +367,7 @@ export const createAppNavigationAgentTools = ({
         includeContent: { type: 'boolean' },
         include: {
           type: 'array',
+          description: 'Optional fields to expand. For persona/user, default items contain id/name/active; use description, avatar, or details (full profile).',
           items: { type: 'string', maxLength: 80 },
           maxItems: 30,
         },

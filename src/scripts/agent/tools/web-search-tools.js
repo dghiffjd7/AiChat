@@ -259,6 +259,59 @@ const parseDuckDuckGoHtmlResults = (html = '', limit = 5) => {
   return out;
 };
 
+const decodeXmlText = (value = '') => String(value || '')
+  .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/gi, '$1')
+  .replace(/&#x([0-9a-f]+);/gi, (_, hex) => {
+    try {
+      return String.fromCodePoint(Number.parseInt(hex, 16));
+    } catch {
+      return '';
+    }
+  })
+  .replace(/&#(\d+);/g, (_, digits) => {
+    try {
+      return String.fromCodePoint(Number.parseInt(digits, 10));
+    } catch {
+      return '';
+    }
+  })
+  .replace(/&apos;/gi, "'")
+  .replace(/&quot;/gi, '"')
+  .replace(/&gt;/gi, '>')
+  .replace(/&lt;/gi, '<')
+  .replace(/&amp;/gi, '&');
+
+const readXmlTag = (source = '', tag = '') => {
+  const match = String(source || '').match(new RegExp(`<${tag}(?:\\s[^>]*)?>([\\s\\S]*?)<\\/${tag}>`, 'i'));
+  return decodeXmlText(match?.[1] || '');
+};
+
+const parseBingRssResults = (xml = '', limit = 5) => {
+  const out = [];
+  const source = String(xml || '');
+  const pattern = /<item(?:\s[^>]*)?>([\s\S]*?)<\/item>/gi;
+  const max = Math.max(1, Math.min(10, Math.trunc(Number(limit || 0)) || 5));
+  let match = pattern.exec(source);
+  while (match && out.length < max) {
+    const item = match[1] || '';
+    const url = trim(readXmlTag(item, 'link'));
+    const title = trim(stripHtml(readXmlTag(item, 'title'), 220))
+      .replace(/\s+([.,!?;:，。！？；：])/g, '$1');
+    const snippet = trim(stripHtml(readXmlTag(item, 'description'), 900))
+      .replace(/\s+([.,!?;:，。！？；：])/g, '$1');
+    if (/^https?:\/\//i.test(url) && title && !out.some(result => result.url === url)) {
+      out.push({
+        title,
+        snippet: snippet || title,
+        url,
+        source: 'bing_rss',
+      });
+    }
+    match = pattern.exec(source);
+  }
+  return out;
+};
+
 const performDuckDuckGoHtmlSearch = async (request, { query = '', limit = 5 } = {}) => {
   const url = new URL('https://html.duckduckgo.com/html/');
   url.searchParams.set('q', query);
@@ -275,30 +328,94 @@ const performDuckDuckGoHtmlSearch = async (request, { query = '', limit = 5 } = 
   return parseDuckDuckGoHtmlResults(body, limit);
 };
 
+const performBingRssSearch = async (request, { query = '', limit = 5 } = {}) => {
+  const url = new URL('https://www.bing.com/search');
+  url.searchParams.set('q', query);
+  url.searchParams.set('format', 'rss');
+  const body = await readHttpText(request, {
+    url: url.toString(),
+    method: 'GET',
+    headers: {
+      accept: 'application/rss+xml,application/xml,text/xml',
+      'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+    },
+    body: null,
+    timeoutMs: 15000,
+  });
+  return parseBingRssResults(body, limit);
+};
+
 const performDuckDuckGoSearch = async (request, { query = '', limit = 5, locale = 'zh-tw' } = {}) => {
+  const attemptedProviders = [];
+  const providerOutcomes = [];
   const url = new URL('https://api.duckduckgo.com/');
   url.searchParams.set('q', query);
   url.searchParams.set('format', 'json');
   url.searchParams.set('no_html', '1');
   url.searchParams.set('skip_disambig', '1');
   url.searchParams.set('kl', locale);
-  const body = await readHttpText(request, {
-    url: url.toString(),
-    method: 'GET',
-    headers: {
-      accept: 'application/json',
-    },
-    body: null,
-    timeoutMs: 12000,
-  });
-  const results = normalizeSearchResults(parseJsonBody(body), limit);
-  if (results.length) return results;
-  // Instant Answer 是知识卡 API，实体/长尾查询常为空；回落 HTML 版全文搜索。
+  attemptedProviders.push('duckduckgo_instant');
   try {
-    return await performDuckDuckGoHtmlSearch(request, { query, limit });
-  } catch {
-    return results;
+    const body = await readHttpText(request, {
+      url: url.toString(),
+      method: 'GET',
+      headers: {
+        accept: 'application/json',
+      },
+      body: null,
+      timeoutMs: 12000,
+    });
+    const results = normalizeSearchResults(parseJsonBody(body), limit);
+    if (results.length) {
+      return {
+        provider: 'duckduckgo',
+        attemptedProviders,
+        providerOutcomes,
+        results,
+      };
+    }
+    providerOutcomes.push('duckduckgo_instant:no_results');
+  } catch (error) {
+    providerOutcomes.push(`duckduckgo_instant:${trim(error?.message, 'failed')}`);
   }
+  // Instant Answer 是知识卡 API，实体/长尾查询常为空；回落 HTML 版全文搜索。
+  attemptedProviders.push('duckduckgo_html');
+  try {
+    const results = await performDuckDuckGoHtmlSearch(request, { query, limit });
+    if (results.length) {
+      return {
+        provider: 'duckduckgo_html',
+        attemptedProviders,
+        providerOutcomes,
+        results,
+      };
+    }
+    providerOutcomes.push('duckduckgo_html:no_results');
+  } catch (error) {
+    providerOutcomes.push(`duckduckgo_html:${trim(error?.message, 'failed')}`);
+  }
+  // DDG HTML 可能返回 202 bot challenge；Bing RSS 是免 key 的结构化全文搜索回落。
+  attemptedProviders.push('bing_rss');
+  try {
+    const results = await performBingRssSearch(request, { query, limit });
+    if (results.length) {
+      return {
+        provider: 'bing_rss',
+        attemptedProviders,
+        providerOutcomes,
+        results,
+      };
+    }
+    providerOutcomes.push('bing_rss:no_results');
+  } catch (error) {
+    providerOutcomes.push(`bing_rss:${trim(error?.message, 'failed')}`);
+  }
+  return {
+    provider: 'duckduckgo',
+    attemptedProviders,
+    providerOutcomes,
+    results: [],
+  };
 };
 
 // Bing 图片搜索（免 key，服务端渲染）：解析 iusc 元素 m 属性里的 JSON（murl=原图）。
@@ -731,19 +848,30 @@ const normalizeSearchOutput = ({ query = '', provider = '', results = [] } = {})
       provider: trim(results.provider, provider),
     };
   }
-  const listResults = Array.isArray(results) ? results : [];
-  return {
+  const listResults = Array.isArray(results)
+    ? results
+    : (Array.isArray(results?.results) ? results.results : []);
+  const effectiveProvider = trim(results?.provider, provider);
+  const output = {
     ok: listResults.length > 0,
     query,
-    provider,
+    provider: effectiveProvider,
     results: clone(listResults),
     sources: listResults.map(item => ({
       title: trim(item.title || item.url),
       url: trim(item.url),
-      source: trim(item.source, provider),
+      source: trim(item.source, effectiveProvider),
     })),
     message: listResults.length ? '' : '没有找到可用的网页搜索结果。',
   };
+  if (effectiveProvider !== provider) output.requestedProvider = provider;
+  if (Array.isArray(results?.attemptedProviders)) {
+    output.attemptedProviders = clone(results.attemptedProviders);
+  }
+  if (Array.isArray(results?.providerOutcomes) && results.providerOutcomes.length) {
+    output.providerOutcomes = clone(results.providerOutcomes);
+  }
+  return output;
 };
 
 const fetchReadableUrl = async (request, {

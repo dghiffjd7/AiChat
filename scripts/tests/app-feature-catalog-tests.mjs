@@ -45,6 +45,15 @@ const escapeRegex = value => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'
 }
 
 {
+  const inspect = findAppFeature('app.visible_panel.read');
+  const click = findAppFeature('app.ui.click');
+  assert.deepEqual(inspect.tools, ['app.ui.inspect', 'app.read_visible_panel_summary']);
+  assert.deepEqual(click.tools, ['ui.click_element']);
+  assert.equal(click.directAction, 'ui.click_element');
+  console.log('ok - inspect and click tools have unambiguous feature ownership');
+}
+
+{
   const results = searchAppFeatures('帮我联网搜索最新资讯', { limit: 3 });
   assert.equal(results[0].id, 'web.search');
   assert.deepEqual(results[0].tools, ['web.search', 'web.fetch_url', 'web.research', 'web.search_images']);
@@ -53,6 +62,43 @@ const escapeRegex = value => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'
   assert.match(doc.doc, /web\.fetch_url/);
   assert.match(doc.doc, /web\.research/);
   console.log('ok - app feature catalog exposes web search feature');
+}
+
+{
+  // Shadow miss 归因回归（2026-07-28）：这些说法此前全部落到 4 候选兜底集。
+  const listHit = searchAppFeatures('帮我看看会话列表', { limit: 5 });
+  assert.equal(listHit[0]?.id, 'session.list');
+  assert.ok(listHit[0].tools.includes('session.list'));
+  const pageHit = searchAppFeatures('你现在在哪个页面', { limit: 5 });
+  assert.equal(pageHit[0]?.id, 'app.state.read');
+  const todoHit = searchAppFeatures('帮我记个待办', { limit: 5 });
+  assert.equal(todoHit[0]?.id, 'maid.todo');
+  const todoEn = searchAppFeatures('加一条todo', { limit: 5 });
+  assert.equal(todoEn[0]?.id, 'maid.todo');
+  const todoMark = searchAppFeatures('把待办里前两项标记为完成', { limit: 5 });
+  assert.equal(todoMark[0]?.id, 'maid.todo');
+  const imageHit = searchAppFeatures('网上搜图给我看看', { limit: 5 });
+  assert.equal(imageHit[0]?.id, 'web.search');
+  assert.ok(imageHit[0].tools.includes('web.search_images'));
+  const imageHit2 = searchAppFeatures('搜一张猫的图片', { limit: 5 });
+  assert.equal(imageHit2[0]?.id, 'web.search');
+  // 批次三归因回归：询问式资源读取与连线配置说法
+  const presetQ = searchAppFeatures('当前用的是哪个预设？', { limit: 5 });
+  assert.ok(presetQ.some(f => f.id === 'app.resource.read'), '预设询问应召回资源读取');
+  const memoryQ = searchAppFeatures('看看当前会话的表格记忆里记了什么', { limit: 5 });
+  assert.ok(memoryQ.some(f => f.id === 'app.resource.read'), '表格记忆询问应召回资源读取');
+  const sessionCfgQ = searchAppFeatures('帮我看看当前聊天室的会话配置摘要', { limit: 5 });
+  assert.ok(sessionCfgQ.some(f => f.id === 'app.resource.read'), '会话配置摘要询问应召回资源读取');
+  const personaQ = searchAppFeatures('我现在有哪些角色卡？', { limit: 5 });
+  assert.ok(personaQ.some(f => f.id === 'app.resource.read'), '角色卡询问应召回资源读取');
+  const providerQ = searchAppFeatures('现在的连线配置用的哪个服务商和模型？', { limit: 5 });
+  assert.ok(providerQ.some(f => f.id === 'config.model.switch'), '服务商/模型询问应召回渠道能力');
+  // 批次四归因回归：资源名词级问法
+  for (const q of ['当前会话有哪些变量？', '帮我看看上一条AI回复的完整原文', '当前会话绑定了哪些正则规则？', '我的用户名称列表有哪些？', '「测试花园」最近一条消息说了什么？']) {
+    const r = searchAppFeatures(q, { limit: 8 });
+    assert.ok(r.some(f => f.id === 'app.resource.read'), `资源问法应召回万能读取：${q}`);
+  }
+  console.log('ok - app feature catalog recalls session list / app state / todo write / image search / resource question phrasings');
 }
 
 {

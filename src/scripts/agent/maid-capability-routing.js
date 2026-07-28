@@ -2,9 +2,10 @@ import {
   listAppFeatures,
   searchAppFeatures,
 } from './app-feature-catalog.js';
+import { searchMaidCapabilityConcepts } from './maid-capability-concept-retriever.js';
 
 export const MAID_CAPABILITY_ROUTING_CONFIG_KEY = 'maid_capability_routing_v1';
-export const MAID_CAPABILITY_RETRIEVER_VERSION = 'maid-capability-retriever-v1';
+export const MAID_CAPABILITY_RETRIEVER_VERSION = 'maid-capability-retriever-v3';
 
 export const MAID_CAPABILITY_ROUTING_MODES = Object.freeze({
   shadow: 'shadow',
@@ -14,6 +15,7 @@ export const MAID_CAPABILITY_ROUTING_MODES = Object.freeze({
 
 const ROUTING_MODE_SET = new Set(Object.values(MAID_CAPABILITY_ROUTING_MODES));
 const CONTROL_CAPABILITY_ID = 'app.capabilities.search';
+const MULTI_STEP_TODO_CAPABILITY_ID = 'maid.todo';
 const DEFAULT_CANDIDATE_LIMIT = 8;
 const DEFAULT_STICKY_LIMIT = 4;
 const DEFAULT_MIN_SCORE = 45;
@@ -330,12 +332,38 @@ export const writeMaidCapabilityRoutingConfig = (raw = {}, {
 export const createMaidCapabilityRetriever = ({
   version = MAID_CAPABILITY_RETRIEVER_VERSION,
   search = searchAppFeatures,
+  conceptSearch = searchMaidCapabilityConcepts,
 } = {}) => ({
   version: trim(version, MAID_CAPABILITY_RETRIEVER_VERSION),
   retrieve: (query = '', { limit = 20, features = [] } = {}) => {
-    if (typeof search !== 'function') return [];
-    const result = search(query, { limit, features });
-    return Array.isArray(result) ? result : [];
+    const merged = new Map();
+    for (const backend of [search, conceptSearch]) {
+      if (typeof backend !== 'function') continue;
+      const result = backend(query, { limit, features });
+      for (const match of Array.isArray(result) ? result : []) {
+        const id = trim(match?.id);
+        if (!id) continue;
+        const existing = merged.get(id);
+        if (!existing || Number(match?.score || 0) > Number(existing?.score || 0)) {
+          merged.set(id, { ...(existing || {}), ...match });
+        } else if (trim(match?.retrievalReason)) {
+          merged.set(id, {
+            ...existing,
+            retrievalReason: trim(match.retrievalReason),
+            conceptCodes: Array.from(new Set([
+              ...list(existing?.conceptCodes),
+              ...list(match?.conceptCodes),
+            ])),
+          });
+        }
+      }
+    }
+    return Array.from(merged.values())
+      .sort((left, right) => (
+        Number(right?.score || 0) - Number(left?.score || 0) ||
+        trim(left?.id).localeCompare(trim(right?.id))
+      ))
+      .slice(0, Math.max(1, Math.min(40, Math.trunc(Number(limit) || 20))));
   },
 });
 
@@ -436,6 +464,26 @@ const buildToolProjection = ({ feature = {}, toolRegistry = null, permissionEval
   };
 };
 
+// 多步任务的步骤级意图藏在女仆自己的 todo 计划文本里（用户原话不含线索）：
+// 取最近一次 todo 读写步骤的未完成项文本，作为低权重检索查询。
+const extractTodoPlanText = (steps = []) => {
+  const listSteps = Array.isArray(steps) ? steps : [];
+  for (let i = listSteps.length - 1; i >= 0; i -= 1) {
+    const step = listSteps[i];
+    const tool = trim(step?.toolName);
+    if (tool !== 'maid.todo.write' && tool !== 'maid.todo.read') continue;
+    const todos = Array.isArray(step?.output?.todos) && step.output.todos.length
+      ? step.output.todos
+      : (Array.isArray(step?.args?.todos) ? step.args.todos : []);
+    const pending = todos
+      .filter(todo => trim(todo?.status, 'pending') !== 'completed')
+      .map(todo => trim(todo?.content))
+      .filter(Boolean);
+    if (pending.length) return pending.join(' ').slice(0, 400);
+  }
+  return '';
+};
+
 const buildRetrievalTexts = (input = '', context = {}, steps = []) => {
   const texts = [];
   const add = (text, weight, reason) => {
@@ -463,6 +511,11 @@ const buildRetrievalTexts = (input = '', context = {}, steps = []) => {
     ].filter(Boolean).join(' '), 0.7, 'observation');
   }
   add([context?.activePage, context?.uiMode].filter(Boolean).join(' '), 0.35, 'ui_context');
+  const historyText = trim(context?.maidConversationContext?.historyText);
+  if (historyText) {
+    add(`${historyText.slice(-800)}\n当前请求：${trim(input)}`, 0.6, 'history_context');
+  }
+  add(extractTodoPlanText(listSteps), 0.6, 'todo_plan');
   return texts;
 };
 
@@ -479,6 +532,7 @@ export const createMaidCapabilityRoutingRuntime = ({
   permissionEvaluator = null,
   retrievalStore = null,
   retriever = null,
+  getConversationContext = null,
   storage = globalThis?.localStorage || null,
   now = Date.now,
   retrieverVersion = MAID_CAPABILITY_RETRIEVER_VERSION,
@@ -602,7 +656,22 @@ export const createMaidCapabilityRoutingRuntime = ({
       records.set(id, existing);
     };
 
-    const retrievalTexts = buildRetrievalTexts(input || state.input, context, steps);
+    let retrievalContext = context;
+    if (!isPlainObject(context?.maidConversationContext) && typeof getConversationContext === 'function') {
+      try {
+        const maidConversationContext = getConversationContext({
+          input: input || state.input,
+          context,
+          phase,
+        });
+        if (isPlainObject(maidConversationContext)) {
+          retrievalContext = { ...context, maidConversationContext };
+        }
+      } catch (error) {
+        logger?.debug?.('maid capability conversation context skipped', error);
+      }
+    }
+    const retrievalTexts = buildRetrievalTexts(input || state.input, retrievalContext, steps);
     for (const query of retrievalTexts) {
       const matches = activeRetriever.retrieve(query.text, { limit: 20, features: allFeatures });
       for (const match of matches) {
@@ -610,6 +679,9 @@ export const createMaidCapabilityRoutingRuntime = ({
         if (!projected) continue;
         const weightedScore = Number(match.score || 0) * query.weight;
         addRecord(projected, weightedScore, query.reason);
+        if (trim(match.retrievalReason)) {
+          addRecord(projected, weightedScore, trim(match.retrievalReason));
+        }
       }
     }
 
@@ -645,6 +717,10 @@ export const createMaidCapabilityRoutingRuntime = ({
       .slice(-8)
       .forEach(featureId => addRecord(projectedById.get(featureId), 10, 'used_history'));
     addRecord(projectedById.get(CONTROL_CAPABILITY_ID), 110, 'control_plane', { pinned: true });
+    // react 中段：todo 清单是女仆自发维护的工具，用户原话不含其线索，常驻候选（Shadow 下仅影响指标）。
+    if (trim(phase) === 'react') {
+      addRecord(projectedById.get(MULTI_STEP_TODO_CAPABILITY_ID), 90, 'multi_step_todo', { pinned: true });
+    }
 
     const ranked = Array.from(records.values())
       .sort((a, b) => Number(b.pinned) - Number(a.pinned) || b.score - a.score || trim(a.feature.id).localeCompare(trim(b.feature.id)));

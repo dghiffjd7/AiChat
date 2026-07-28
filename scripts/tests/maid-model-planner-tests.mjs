@@ -27,6 +27,18 @@ const cloneJson = value => JSON.parse(JSON.stringify(value));
   assert.match(featureList, /worldbook\.open/);
   assert.match(featureList, /app\.open_panel/);
 
+  const writeFeatureList = buildMaidModelPlannerFeatureList([
+    {
+      id: 'worldbook.bind_session',
+      title: '绑定世界书',
+      tools: ['worldbook.bind_session'],
+      writes: true,
+      riskLevel: 'medium',
+    },
+  ]);
+  assert.match(writeFeatureList, /writes: true/);
+  assert.match(writeFeatureList, /risk: medium/);
+
   const messages = buildMaidModelPlannerMessages({
     input: '世界书在哪里',
     context: { sessionId: 'A', uiMode: 'chat' },
@@ -47,6 +59,8 @@ const cloneJson = value => JSON.parse(JSON.stringify(value));
   assert.match(messages[0].content, /优先选择非破坏性做法/);
   assert.match(messages[0].content, /删除、覆盖、替换/);
   assert.match(messages[0].content, /APP 确认弹窗/);
+  assert.match(messages[0].content, /只要求查询、查看、检查或确认/);
+  assert.match(messages[0].content, /多个结构化资源的只读比较不需要 todo/);
   assert.match(messages[0].content, /继续上一件未完成/);
   assert.match(messages[0].content, /可继续: 是/);
   assert.match(messages[0].content, /worldbook\.update_entries/);
@@ -144,6 +158,13 @@ const cloneJson = value => JSON.parse(JSON.stringify(value));
   assert.match(messages[0].content, /温柔、清楚、直接/);
   assert.match(messages[0].content, /优先选择非破坏性做法/);
   assert.match(messages[0].content, /未确认时跳过/);
+  assert.match(messages[0].content, /只要求查询、查看、检查或确认/);
+  assert.match(messages[0].content, /write_intent_required/);
+  assert.match(messages[0].content, /一次成功读取已经返回用户要求的字段时，立即 final/);
+  assert.match(messages[0].content, /todo_unchanged/);
+  assert.match(messages[0].content, /清单状态实际变化时/);
+  assert.match(messages[0].content, /多个结构化资源的只读比较不需要 todo/);
+  assert.match(messages[0].content, /拿到按钮 ref 后.*app\.ui\.click.*ui\.click_element/);
   assert.match(messages[0].content, /最终回答前必须/);
   assert.match(messages[0].content, /继续提示/);
   assert.match(messages[0].content, /worldbook\.update_entries/);
@@ -264,6 +285,17 @@ const cloneJson = value => JSON.parse(JSON.stringify(value));
   });
   assert.equal(invented.ok, true);
   assert.equal(invented.featureId, 'app.ui.click');
+
+  // inspect 只归属于可见界面读取；模型幻觉近似 featureId 时可按唯一工具归属纠偏
+  const hallucinatedInspect = normalizeMaidModelPlan({
+    ok: true,
+    toolName: 'app.ui.inspect',
+    args: {},
+    featureId: 'app.visible_panel_summary.read',
+  });
+  assert.equal(hallucinatedInspect.ok, true);
+  assert.equal(hallucinatedInspect.featureId, 'app.visible_panel.read');
+  assert.equal(hallucinatedInspect.toolName, 'app.ui.inspect');
 
   // 工具多归属且 featureId 不存在：无法纠偏，拒绝并带上模型选择
   const ambiguous = normalizeMaidModelPlan({
@@ -607,8 +639,13 @@ const cloneJson = value => JSON.parse(JSON.stringify(value));
   for (const system of [messages[0].content, reactMessages[0].content]) {
     assert.match(system, /APP 存在由本地界面直接处理的内建新手任务/);
     assert.doesNotMatch(system, /maid\.onboarding|女仆新手引导|guide\.start_flow|setup-api|add-friend|first-chat|meet-maid/);
+    assert.match(system, /默认在后台执行/);
+    assert.match(system, /只展示最终的主要结果/);
+    assert.match(system, /查询、查看、检查.*不等于要求打开界面/);
+    assert.match(system, /triggerReply:true/);
+    assert.match(system, /必须进入目标聊天室/);
   }
-  console.log('ok - model planner only receives awareness of local onboarding, not flow details or tools');
+  console.log('ok - model planner separates local onboarding from background-first presentation policy');
 }
 
 {

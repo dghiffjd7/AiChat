@@ -304,11 +304,13 @@ import {
 } from './chat/format-patch-transaction-utils.js';
 import {
   FORMAT_REPAIR_SOURCE_KINDS,
+  appendMessageWithFormatRepairEnvelopeRegistration,
   buildFormatRepairTurnMeta,
   canCheckLatestFormatRepairTarget,
   getMessageFormatRepairTurnMeta,
   resolveLatestFormatRepairTarget,
   tagMessageWithFormatRepairTurn,
+  tagProtocolDeliveryItemsWithFormatRepairTurn,
 } from './chat/format-repair-target-utils.js';
 import {
   FORMAT_FUNCTION_BLOCK_KINDS,
@@ -3354,6 +3356,7 @@ const initApp = async () => {
     toolRegistry: agentToolRegistry,
     permissionEvaluator: agentPermissionEvaluator,
     retrievalStore: capabilityRetrievalStore,
+    getConversationContext: getMaidConversationContext,
     logger,
   });
   const maidPlanner = createMaidModelBackedPlanner({
@@ -3419,7 +3422,10 @@ const initApp = async () => {
     logger.debug('stream usage compat hydrate skipped', err);
   }
   const requestMaidToolConfirmation = async request => {
-    if (maidToolSafetyAllowStore.isAllowed(request)) {
+    // 只读意图升级确认：不吃 allow-always 捷径、也不提供「始终允许」——
+    // 这是对单次意图误差的放行，不该沉淀成永久规则。
+    const escalated = request?.escalation === 'read_only_write';
+    if (!escalated && maidToolSafetyAllowStore.isAllowed(request)) {
       return { decision: 'allow', remembered: true };
     }
     const danger = request?.danger !== false;
@@ -3438,10 +3444,10 @@ const initApp = async () => {
           label: '允许一次',
           primary: true,
         },
-        {
+        ...(escalated ? [] : [{
           id: 'allow_always',
           label: '始终允许',
-        },
+        }]),
       ],
     });
     if (action === 'allow_always') {
@@ -17768,6 +17774,14 @@ Phase G（Frame 36）：循环衔接
     fallbackRead: readProtocolDeliveryDiskPayload,
     fallbackWrite: writeProtocolDeliveryDiskPayload,
   });
+  const appendPersistedProtocolDeliveryMessage = (message, targetSessionId) => (
+    appendMessageWithFormatRepairEnvelopeRegistration({
+      message,
+      targetSessionId,
+      appendMessage: (value, sid) => chatStore.appendMessage(value, sid),
+      registerSourceMessage: value => chatStore.registerLastRawResponseSourceMessage(value),
+    })
+  );
   const createProtocolDeliveryQueue = (items = [], options = {}, effects = {}) => {
     const targetSessionId = String(options?.targetSessionId || '').trim();
     const normalizedItems = (Array.isArray(items) ? items : [])
@@ -17808,7 +17822,9 @@ Phase G（Frame 36）：循环衔接
           if (cancelled) return;
           try {
             deliverProtocolDeliveryItem(item, {
-              appendMessage: (message, sid) => chatStore.appendMessage(message, sid),
+              appendMessage: typeof effects.appendMessage === 'function'
+                ? effects.appendMessage
+                : appendPersistedProtocolDeliveryMessage,
               findMessage: (messageId, sid) => chatStore.findMessage(messageId, sid),
               isSessionActive,
               addUiMessage: (message, addOptions) => ui.addMessage(message, addOptions),
@@ -17900,7 +17916,7 @@ Phase G（Frame 36）：循环衔接
     try {
       const result = await flushPersistedProtocolDeliveryPlans({
         ...getProtocolDeliveryPersistenceOptions(),
-        appendMessage: (message, sid) => chatStore.appendMessage(message, sid),
+        appendMessage: appendPersistedProtocolDeliveryMessage,
         findMessage: (messageId, sid) => chatStore.findMessage(messageId, sid),
         isSessionActive,
         autoMarkReadIfActive,
@@ -26980,6 +26996,18 @@ Phase G（Frame 36）：循环衔接
       }
       return saved;
     };
+    const enqueueFormatRepairProtocolMessages = (queueItems, queueOptions) => createProtocolDeliveryQueue(
+      tagProtocolDeliveryItemsWithFormatRepairTurn(queueItems, getFormatRepairTurnMeta()),
+      queueOptions,
+      {
+        appendMessage: (message, targetSessionId) => appendFormatRepairTurnMessage(
+          message,
+          targetSessionId,
+        ),
+        emitPluginAfterReceive,
+        maybeApplyGroupSystemOps,
+      },
+    );
     let sendTraceStarted = false;
     let sendErrorMessage = '';
     let creativeExecutionRunActive = false;
@@ -28200,10 +28228,7 @@ Phase G（Frame 36）：循环衔接
       backgroundQueue,
       bumpReadCount: bumpReadCount ? count => ui.bumpReadCount(count) : null,
       emitPluginAfterReceive,
-      enqueueMessages: (queueItems, queueOptions) => createProtocolDeliveryQueue(queueItems, queueOptions, {
-        emitPluginAfterReceive,
-        maybeApplyGroupSystemOps,
-      }),
+      enqueueMessages: enqueueFormatRepairProtocolMessages,
       isActive: isSessionActive(batch?.targetSessionId || ''),
       animEnabled,
       maybeApplyGroupSystemOps,
@@ -28222,9 +28247,7 @@ Phase G（Frame 36）：循环衔接
       autoMarkReadIfActive,
       backgroundQueue,
       emitPluginAfterReceive,
-      enqueueMessages: (queueItems, queueOptions) => createProtocolDeliveryQueue(queueItems, queueOptions, {
-        emitPluginAfterReceive,
-      }),
+      enqueueMessages: enqueueFormatRepairProtocolMessages,
       isActive: isSessionActive(batch?.targetSessionId || ''),
       animEnabled,
       onAddUiMessage: (parsed, options) => ui.addMessage(parsed, options),

@@ -191,6 +191,59 @@ const getTool = (tools, name) => tools.find(tool => tool.name === name);
 }
 
 {
+  const requests = [];
+  const tools = createWebSearchAgentTools({
+    httpRequest: async ({ url }) => {
+      requests.push(url);
+      if (url.includes('api.duckduckgo.com')) {
+        return {
+          status: 200,
+          ok: true,
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ AbstractText: '', RelatedTopics: [], Results: [] }),
+        };
+      }
+      if (url.includes('html.duckduckgo.com')) {
+        return {
+          status: 202,
+          ok: true,
+          headers: { 'content-type': 'text/html' },
+          body: '<html><title>DuckDuckGo</title><body>anomaly challenge</body></html>',
+        };
+      }
+      if (url.includes('www.bing.com/search')) {
+        return {
+          status: 200,
+          ok: true,
+          headers: { 'content-type': 'text/xml' },
+          body: '<?xml version="1.0"?><rss><channel><item><title>WebView2 debugging</title><link>https://learn.microsoft.com/webview2/debug</link><description>Remote debugging port &amp; DevTools.</description></item><item><title>CDP guide</title><link>https://example.com/cdp</link><description><![CDATA[Second <b>source</b>.]]></description></item></channel></rss>',
+        };
+      }
+      throw new Error(`unexpected url ${url}`);
+    },
+    getSearchConfig: () => ({}),
+  });
+  const result = await getTool(tools, 'web.search').execute({
+    query: 'WebView2 remote debugging port',
+    limit: 2,
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.provider, 'bing_rss');
+  assert.equal(result.requestedProvider, 'duckduckgo');
+  assert.deepEqual(result.attemptedProviders, [
+    'duckduckgo_instant',
+    'duckduckgo_html',
+    'bing_rss',
+  ]);
+  assert.equal(result.results.length, 2);
+  assert.equal(result.results[0].url, 'https://learn.microsoft.com/webview2/debug');
+  assert.equal(result.results[0].snippet, 'Remote debugging port & DevTools.');
+  assert.equal(result.results[1].snippet, 'Second source.');
+  assert.ok(requests.some(url => url.includes('www.bing.com/search') && url.includes('format=rss')));
+  console.log('ok - DDG challenge/空结果时回落免 key Bing RSS');
+}
+
+{
   const { createWebSearchAgentTools } = await import('../../src/scripts/agent/tools/web-search-tools.js');
   const tools = createWebSearchAgentTools({
     httpRequest: async ({ url }) => {

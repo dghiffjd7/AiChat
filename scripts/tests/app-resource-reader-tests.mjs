@@ -84,11 +84,39 @@ const makeDeps = () => {
     },
     personaStore: {
       getActive: () => ({ id: 'p1', name: '精灵女王' }),
-      getAll: () => [{ id: 'p1', name: '精灵女王' }, { id: 'p2', name: '暗夜女王' }],
+      getAll: () => [
+        {
+          id: 'p1',
+          name: '精灵女王',
+          avatar: `data:image/png;base64,${'A'.repeat(20_000)}`,
+          description: '温柔而坚定的精灵女王',
+          source: { worldbookEnabled: true },
+        },
+        {
+          id: 'p2',
+          name: '暗夜女王',
+          avatar: `data:image/png;base64,${'B'.repeat(20_000)}`,
+          description: '统治暗夜王国',
+          source: { worldbookEnabled: false },
+        },
+      ],
     },
     userStore: {
       getActive: () => ({ id: 'u1', name: '测试用户' }),
-      getAll: () => [{ id: 'u1', name: '测试用户' }, { id: 'u2', name: '备用用户' }],
+      getAll: () => [
+        {
+          id: 'u1',
+          name: '测试用户',
+          avatar: `data:image/png;base64,${'C'.repeat(20_000)}`,
+          description: '当前用户档案',
+        },
+        {
+          id: 'u2',
+          name: '备用用户',
+          avatar: '',
+          description: '备用档案',
+        },
+      ],
     },
     memoryTemplateStore: {
       getTemplates: async () => [{ id: 't1', name: '关系表', password: 'secret' }],
@@ -247,9 +275,55 @@ const makeDeps = () => {
   assert.equal(personas.ok, true);
   assert.equal(personas.items.length, 1);
   assert.equal(personas.items[0].id, 'p2');
+  assert.deepEqual(personas.items[0], {
+    id: 'p2',
+    name: '暗夜女王',
+    active: false,
+  });
+  assert.equal(personas.projection, 'compact');
+  assert.match(personas.contentHint, /include/);
   assert.equal(users.activeId, 'u1');
   assert.equal(users.items.length, 2);
-  console.log('ok - app resource reader returns personas and users');
+  assert.deepEqual(users.items[0], {
+    id: 'u1',
+    name: '测试用户',
+    active: true,
+  });
+  assert.equal(JSON.stringify(users).includes('base64'), false);
+  assert.equal(JSON.stringify(users).includes('当前用户档案'), false);
+  console.log('ok - app resource reader returns compact personas and users by default');
+}
+
+{
+  const readResource = createAppResourceReader(makeDeps());
+  const descriptions = await readResource({
+    resource: 'persona',
+    query: '精灵女王',
+    include: ['description'],
+  });
+  const avatar = await readResource({
+    resource: 'user',
+    id: 'u1',
+    include: ['avatar'],
+  });
+  const details = await readResource({
+    resource: 'persona',
+    name: '暗夜女王',
+    include: ['details'],
+  });
+
+  assert.equal(descriptions.projection, 'selected');
+  assert.equal(descriptions.items[0].description, '温柔而坚定的精灵女王');
+  assert.equal(Object.hasOwn(descriptions.items[0], 'avatar'), false);
+  assert.match(avatar.items[0].avatar, /^data:image\/png;base64,C+$/);
+  assert.equal(Object.hasOwn(avatar.items[0], 'description'), false);
+  assert.equal(details.projection, 'full');
+  assert.equal(details.items.length, 1);
+  assert.equal(details.items[0].description, '统治暗夜王国');
+  assert.match(details.items[0].avatar, /^data:image\/png;base64,B+$/);
+  assert.deepEqual(details.items[0].source, { worldbookEnabled: false });
+  assert.equal(details.items[0].active, false);
+  console.log('ok - app resource reader expands only explicitly included profile fields');
 }
 
 {

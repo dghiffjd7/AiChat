@@ -176,6 +176,30 @@ import { listAppFeatures } from '../../src/scripts/agent/app-feature-catalog.js'
 }
 
 {
+  const shown = [];
+  const runtime = createAppGuidedActionRuntime({
+    guideStore: {
+      isCompleted: () => true,
+      markCompleted() {},
+    },
+    getFeature: () => ({
+      id: 'worldbook.create',
+      title: '创建世界书',
+      firstRunGuide: 'worldbook.create.guide',
+      uiPath: ['世界书', '新增世界书'],
+    }),
+    showGuide: guide => shown.push(guide.guideId),
+  });
+  const result = await runtime.run({
+    plan: { featureId: 'worldbook.create', forceGuide: true },
+    execute: async () => ({ ok: true }),
+  });
+  assert.equal(result.guided, true);
+  assert.deepEqual(shown, ['worldbook.create.guide']);
+  console.log('ok - explicit guide semantics replay a completed feature guide');
+}
+
+{
   const completed = new Set();
   const runtime = createAppGuidedActionRuntime({
     guideStore: {

@@ -477,20 +477,55 @@ const createSessionReader = deps => async (args = {}) => {
   };
 };
 
+const FULL_PROFILE_INCLUDE_NAMES = new Set(['all', 'details', 'full', 'profile']);
+
+const projectAppProfile = (item = {}, activeId = '', requestedFields = [], includeFull = false) => {
+  const id = toText(item?.id);
+  const compact = {
+    id,
+    name: toText(item?.name),
+    active: Boolean(id && id === activeId),
+  };
+  if (includeFull) {
+    return {
+      ...sanitizeAppResourceValue(item),
+      ...compact,
+    };
+  }
+  const keysByName = new Map(
+    Object.keys(item || {}).map(key => [String(key).toLowerCase(), key]),
+  );
+  requestedFields.forEach((field) => {
+    const key = keysByName.get(field);
+    if (!key || ['id', 'name', 'active'].includes(field)) return;
+    compact[key] = sanitizeAppResourceValue(item[key]);
+  });
+  return compact;
+};
+
 const createProfileReader = (deps, kind = 'persona') => async (args = {}) => {
   const store = kind === 'user' ? deps.userStore || {} : deps.personaStore || {};
   const items = asArray(await callMethod(store, 'getAll'));
   const active = await callMethod(store, 'getActive') || null;
-  const target = toText(args.id || args.query);
+  const activeId = toText(active?.id);
+  const target = toText(args.id || args.name || args.query);
   const list = target
     ? items.filter(item => toText(item?.id) === target || toText(item?.name) === target)
     : items.slice(0, clampAppResourceLimit(args.limit, 80, 200));
+  const requestedFields = normalizeStringList(args.include)
+    .map(field => field.toLowerCase())
+    .filter(field => !FULL_PROFILE_INCLUDE_NAMES.has(field));
+  const includeFull = normalizeStringList(args.include)
+    .some(field => FULL_PROFILE_INCLUDE_NAMES.has(field.toLowerCase()));
   return {
     ok: true,
     resource: kind,
-    activeId: toText(active?.id),
+    activeId,
     count: items.length,
-    items: list.map(item => sanitizeAppResourceValue(item)),
+    projection: includeFull ? 'full' : (requestedFields.length ? 'selected' : 'compact'),
+    includedFields: includeFull ? ['details'] : requestedFields,
+    contentHint: '角色/用户默认仅返回 id、name、active；需要描述或头像时传 include:["description"] / include:["avatar"]，完整档案传 include:["details"]。',
+    items: list.map(item => projectAppProfile(item, activeId, requestedFields, includeFull)),
   };
 };
 

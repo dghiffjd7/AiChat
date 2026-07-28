@@ -200,6 +200,11 @@ export const createChatFormatRepairTools = ({
       destructive: false,
       description: '写回前必须经用户在行级 diff 弹窗确认；取消即不写入。',
     },
+    metadata: {
+      // 工具产出的是 diff 提案，落盘必经 hunk 审阅 +「同意一次」确认（无自动应用路径）；
+      // 只读意图下允许发起（预览后取消属合法只读流程），确认闸仍在 UI 层。
+      allowInReadOnlyIntent: true,
+    },
     schema: {
       type: 'object',
       additionalProperties: false,

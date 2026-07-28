@@ -10,6 +10,16 @@ const includesAny = (text, keys) => keys.some(key => text.includes(key));
 export const matchMaidIntent = (raw = '') => {
   const text = String(raw || '').trim().toLowerCase();
   if (!text) return null;
+  const compact = text.replace(/[\s，,。.!！?？、；;：:「」『』“”"'`]/g, '');
+  const hasTeachingCue = includesAny(text, [
+    '怎么',
+    '如何',
+    '教我',
+    '指导我',
+    '一步步',
+    '一步一步',
+    '第一次',
+  ]);
 
   if (includesAny(text, ['跳过', '退出引导', '停止引导', '取消引导', '不用引导'])) {
     return {
@@ -28,7 +38,11 @@ export const matchMaidIntent = (raw = '') => {
     };
   }
 
-  if (includesAny(text, ['api', 'apikey', 'api key', '接线', '连线', '配置模型', '模型配置'])) {
+  const hasApiTopic = includesAny(text, ['api', 'apikey', 'api key', '接线', '连线', '配置模型', '模型配置']);
+  if (
+    (hasTeachingCue && hasApiTopic) ||
+    ['接好api', '给女仆接api', '给女仆接上api'].includes(compact)
+  ) {
     return {
       kind: 'flow',
       flowId: 'setup-api',
@@ -36,7 +50,11 @@ export const matchMaidIntent = (raw = '') => {
     };
   }
 
-  const wantsFriend = includesAny(text, ['添加好友', '加好友', '推荐好友', '推荐角色', '认识角色', '联系人']);
+  const hasFriendTopic = includesAny(text, ['添加好友', '加好友', '推荐好友', '推荐角色', '认识角色', '联系人']);
+  const wantsFriend = (
+    (hasTeachingCue && hasFriendTopic) ||
+    ['添加好友', '我想添加好友', '推荐好友', '推荐角色', '认识角色'].includes(compact)
+  );
   if (wantsFriend) {
     return {
       kind: 'flow',
@@ -45,7 +63,11 @@ export const matchMaidIntent = (raw = '') => {
     };
   }
 
-  const wantsChat = includesAny(text, ['第一次对话', '第一次聊天', '怎么聊天', '怎么发消息', '发消息', '开始聊天']);
+  const hasChatTopic = includesAny(text, ['对话', '聊天', '发消息', '发送消息']);
+  const wantsChat = (
+    (hasTeachingCue && hasChatTopic) ||
+    ['第一次对话', '第一次聊天', '开始第一次对话', '开始第一次聊天'].includes(compact)
+  );
   if (wantsChat) {
     return {
       kind: 'flow',
@@ -54,7 +76,11 @@ export const matchMaidIntent = (raw = '') => {
     };
   }
 
-  if (includesAny(text, ['agent center', 'agent中心', 'agent 中心', '认识女仆', '女仆工作台', '小助手', '怎么用女仆'])) {
+  const hasMaidTopic = includesAny(text, ['agent center', 'agent中心', 'agent 中心', '认识女仆', '女仆工作台', '小助手', '怎么用女仆']);
+  if (
+    (hasTeachingCue && hasMaidTopic) ||
+    ['认识女仆', '怎么用女仆'].includes(compact)
+  ) {
     return {
       kind: 'flow',
       flowId: 'meet-maid',

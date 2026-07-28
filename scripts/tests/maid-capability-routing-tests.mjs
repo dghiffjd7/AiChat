@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 
 import { createAgentToolRegistry } from '../../src/scripts/agent/agent-tool-registry.js';
 import {
+  MAID_CAPABILITY_RETRIEVER_VERSION,
   MAID_CAPABILITY_ROUTING_MODES,
   createMaidCapabilityRetriever,
   createMaidCapabilityRoutingRuntime,
@@ -92,6 +93,15 @@ const retrievalLog = {
 }
 
 {
+  const retriever = createMaidCapabilityRetriever();
+  const result = retriever.retrieve('where am I in the app？', { features, limit: 8 });
+  assert.equal(MAID_CAPABILITY_RETRIEVER_VERSION, 'maid-capability-retriever-v3');
+  assert.equal(result[0].id, 'app.state.read');
+  assert.equal(result[0].retrievalReason, 'semantic_concept');
+  console.log('ok - v3 hybrid retriever adds explainable local concept matches');
+}
+
+{
   const runtime = createMaidCapabilityRoutingRuntime({
     features,
     toolRegistry: registry,
@@ -133,6 +143,121 @@ const retrievalLog = {
   assert.equal(retrievalLog.requests.length, 1);
   assert.equal(retrievalLog.requests.at(-1).cohort.riskLevel, 'low');
   console.log('ok - Shadow computes candidates and hit metrics without changing full prompt features');
+}
+
+{
+  let contextCalls = 0;
+  const runtime = createMaidCapabilityRoutingRuntime({
+    features,
+    toolRegistry: registry,
+    permissionEvaluator: { evaluateTool: () => ({ decision: 'allow', checks: [] }) },
+    getConversationContext: () => {
+      contextCalls += 1;
+      return { historyText: '上一轮用户说：看看当前状态。' };
+    },
+    logger: { debug() {} },
+  });
+  const request = runtime.beginRequest({ input: '再看一下。' });
+  const snapshot = runtime.prepareDecision({
+    requestId: request.id,
+    input: '再看一下。',
+    phase: 'planner',
+  });
+  assert.equal(contextCalls, 1);
+  const state = snapshot.candidateRefs.find(item => item.id === 'app.state.read');
+  assert.ok(state);
+  assert.ok(state.reasonCodes.includes('history_context'));
+  runtime.finishRequest(request.id, { ok: true });
+  console.log('ok - ambiguous planner retrieval can use recent maid conversation context');
+}
+
+{
+  // v2：react 中段的步骤级召回——maid.todo 常驻候选 + todo 计划文本参与检索
+  const todoFeatures = [
+    ...features,
+    {
+      id: 'maid.todo',
+      title: '女仆任务清单',
+      aliases: ['待办清单'],
+      tools: ['maid.todo.write', 'maid.todo.read'],
+      riskLevel: 'low',
+      writes: false,
+    },
+    {
+      id: 'web.search',
+      title: '联网搜索网页',
+      aliases: ['联网搜索白猫图片'],
+      tools: ['web.search'],
+      riskLevel: 'low',
+      writes: false,
+    },
+  ];
+  const todoRegistry = createAgentToolRegistry({
+    permissionEvaluator: { evaluateTool: () => ({ decision: 'allow', checks: [] }) },
+    logger: { warn() {} },
+  });
+  for (const name of ['app.read_state', 'app.read_resource', 'danger.delete', 'app.verify', 'app.search_feature', 'maid.todo.write', 'maid.todo.read', 'web.search']) {
+    todoRegistry.register({
+      name,
+      schema: { type: 'object', properties: {} },
+      riskLevel: 'low',
+      execute: async () => ({ ok: true }),
+    });
+  }
+  const runtime = createMaidCapabilityRoutingRuntime({
+    features: todoFeatures,
+    toolRegistry: todoRegistry,
+    permissionEvaluator: { evaluateTool: () => ({ decision: 'allow', checks: [] }) },
+    retrievalStore: retrievalLog,
+    logger: { debug() {} },
+  });
+  const request = runtime.beginRequest({ input: '帮我完成任务' });
+
+  const plannerSnapshot = runtime.prepareDecision({
+    requestId: request.id,
+    input: '帮我完成任务',
+    context: { uiMode: 'chat' },
+    phase: 'planner',
+  });
+  assert.equal(plannerSnapshot.candidateIds.has('maid.todo'), false, 'planner 阶段不应常驻 todo');
+
+  const reactSnapshot = runtime.prepareDecision({
+    requestId: request.id,
+    input: '帮我完成任务',
+    context: { uiMode: 'chat' },
+    steps: [
+      {
+        toolName: 'maid.todo.write',
+        status: 'succeeded',
+        // todos 放 args（observation 查询只含 output 文本），隔离验证 todo_plan 通道
+        args: {
+          todos: [
+            { content: '联网搜索白猫图片', status: 'pending' },
+            { content: '看看当前状态', status: 'completed' },
+          ],
+        },
+        output: { ok: true, count: 2 },
+      },
+    ],
+    phase: 'react',
+  });
+  assert.equal(reactSnapshot.candidateIds.has('maid.todo'), true, 'react 阶段 todo 应常驻候选');
+  const todoRef = reactSnapshot.candidateRefs.find(item => item.ref === 'maid.todo' || item.id === 'maid.todo');
+  assert.ok(todoRef.reasonCodes.includes('multi_step_todo'));
+  assert.equal(reactSnapshot.candidateIds.has('web.search'), true, '未完成 todo 项文本应召回对应能力');
+  const webRef = reactSnapshot.candidateRefs.find(item => item.ref === 'web.search' || item.id === 'web.search');
+  assert.ok(webRef.reasonCodes.includes('todo_plan'));
+  assert.equal(reactSnapshot.candidateIds.has('app.state.read'), false, '已完成 todo 项不应参与召回');
+
+  const observed = runtime.observeDecision(reactSnapshot, {
+    ok: true,
+    featureId: 'maid.todo',
+    toolName: 'maid.todo.write',
+    args: {},
+  });
+  assert.equal(observed.candidateHit, true, 'react 自发写 todo 应计为命中');
+  runtime.finishRequest(request.id, { ok: true });
+  console.log('ok - react phase pins maid.todo and recalls capabilities from pending todo plan text');
 }
 
 {

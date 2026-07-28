@@ -106,4 +106,28 @@ const catalogToolNames = new Set(
   console.log('ok - 每个功能的 directAction 都指向已注册工具');
 }
 
+{
+  // v3 概念检索表硬编码 feature id；catalog 改名时 available.has(id) 会静默跳过而非报错，
+  // 这里用源扫描把概念表引用锁定到真实目录，防止静默漂移。
+  const { readFileSync } = await import('node:fs');
+  const { resolve, dirname } = await import('node:path');
+  const { fileURLToPath } = await import('node:url');
+  const here = dirname(fileURLToPath(import.meta.url));
+  const source = readFileSync(
+    resolve(here, '../../src/scripts/agent/maid-capability-concept-retriever.js'),
+    'utf8',
+  );
+  const referenced = new Set();
+  for (const match of source.matchAll(/add\(\s*(\[[^\]]*\]|'[^']+')/g)) {
+    for (const id of match[1].match(/'([^']+)'/g) || []) {
+      referenced.add(id.slice(1, -1));
+    }
+  }
+  assert.ok(referenced.size >= 10, '概念表 id 提取异常（提取数过少，检查正则）');
+  const catalogIds = new Set(features.map(feature => feature.id));
+  const stale = Array.from(referenced).filter(id => !catalogIds.has(id));
+  assert.deepEqual(stale, [], `概念检索表引用了目录中不存在的 feature：${stale.join(', ')}`);
+  console.log(`ok - 概念检索表 ${referenced.size} 个 feature 引用全部存在于功能目录`);
+}
+
 console.log('maid-tool-catalog-drift-tests passed');

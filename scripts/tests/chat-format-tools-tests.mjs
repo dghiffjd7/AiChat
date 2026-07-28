@@ -166,4 +166,13 @@ const getTool = (tools, name) => tools.find(tool => tool.name === name);
   console.log('ok - 格式画像保存/读取工具与降级路径');
 }
 
+{
+  // 修复工具产出 diff 提案、落盘必经 UI 确认——只读意图下允许发起
+  const { createChatFormatRepairTools } = await import('../../src/scripts/agent/tools/chat-format-tools.js');
+  const repair = createChatFormatRepairTools({}).find(tool => tool.name === 'chat.repair_message_format');
+  assert.equal(repair.metadata?.allowInReadOnlyIntent, true);
+  assert.equal(repair.capabilities.write, true, '写标记保持真实，白名单只影响只读升级');
+  console.log('ok - format repair tool is allowed under read-only intent via metadata flag');
+}
+
 console.log('chat-format-tools-tests passed');

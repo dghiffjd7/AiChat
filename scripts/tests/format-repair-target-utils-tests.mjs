@@ -1,11 +1,14 @@
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 
 import {
   FORMAT_REPAIR_SOURCE_KINDS,
+  appendMessageWithFormatRepairEnvelopeRegistration,
   buildFormatRepairTurnMeta,
   canCheckLatestFormatRepairTarget,
   resolveLatestFormatRepairTarget,
   tagMessageWithFormatRepairTurn,
+  tagProtocolDeliveryItemsWithFormatRepairTurn,
 } from '../../src/scripts/ui/chat/format-repair-target-utils.js';
 
 {
@@ -168,4 +171,165 @@ import {
   assert.equal(result.ok, false);
   assert.equal(result.reason, 'source_unavailable');
   console.log('ok - format repair target never falls back to rendered creative content');
+}
+
+{
+  const callback = () => {};
+  const input = [{
+    message: { id: 'queued-bubble', role: 'assistant', content: '排队回复' },
+    delivery: { kind: 'private', targetSessionId: 'contact-session' },
+    callback,
+  }];
+  const turnMeta = buildFormatRepairTurnMeta({
+    turnId: 'turn-queued',
+    sourceSessionId: 'source-session',
+    sourceKind: FORMAT_REPAIR_SOURCE_KINDS.socialTurnRaw,
+  });
+  const tagged = tagProtocolDeliveryItemsWithFormatRepairTurn(input, turnMeta);
+
+  assert.notEqual(tagged, input);
+  assert.notEqual(tagged[0], input[0]);
+  assert.equal(tagged[0].callback, callback);
+  assert.equal(tagged[0].message.meta.formatRepairTurn.turnId, 'turn-queued');
+  assert.equal(tagged[0].message.meta.formatRepairTurn.sourceSessionId, 'source-session');
+  assert.equal(input[0].message.meta, undefined);
+  console.log('ok - queued protocol messages retain format-repair turn metadata before persistence');
+}
+
+{
+  const turnMeta = buildFormatRepairTurnMeta({
+    turnId: 'turn-recovered',
+    sourceSessionId: 'source-session',
+    sourceKind: FORMAT_REPAIR_SOURCE_KINDS.socialTurnRaw,
+  });
+  const message = tagMessageWithFormatRepairTurn({
+    id: 'recovered-bubble',
+    role: 'assistant',
+    content: '恢复投递',
+  }, turnMeta);
+  const appended = [];
+  const registered = [];
+  const saved = appendMessageWithFormatRepairEnvelopeRegistration({
+    message,
+    targetSessionId: 'contact-session',
+    appendMessage: (value, sessionId) => {
+      appended.push([value.id, sessionId]);
+      return value;
+    },
+    registerSourceMessage: value => {
+      registered.push(value);
+      return true;
+    },
+  });
+
+  assert.equal(saved, message);
+  assert.deepEqual(appended, [['recovered-bubble', 'contact-session']]);
+  assert.deepEqual(registered, [{
+    sourceSessionId: 'source-session',
+    targetSessionId: 'contact-session',
+    turnId: 'turn-recovered',
+    messageId: 'recovered-bubble',
+  }]);
+  console.log('ok - recovered queued messages rebuild format-repair envelope membership');
+}
+
+{
+  const message = {
+    id: 'legacy-single',
+    role: 'assistant',
+    timestamp: 1_000,
+    rawOriginal: '  完整旧回复\n保留空白  ',
+    content: '显示后的旧回复',
+  };
+  const result = await resolveLatestFormatRepairTarget({
+    message,
+    sessionId: 'legacy-session',
+    uiMode: 'chat',
+    getMessages: () => [{ id: 'user-1', role: 'user' }, message],
+    getLastRawResponseEnvelope: () => ({
+      text: '  完整旧回复\n保留空白  ',
+      at: 1_050,
+      turnId: '',
+      sourceSessionId: 'legacy-session',
+      targetSessionIds: [],
+      sourceMessageIds: [],
+      truncated: false,
+    }),
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.sourceText, message.rawOriginal);
+  assert.equal(result.turnId, 'legacy:legacy-session:1050:legacy-single');
+  assert.deepEqual(result.sourceMessageIds, ['legacy-single']);
+  assert.deepEqual(result.targetSessionIds, ['legacy-session']);
+  console.log('ok - exact single-message rawOriginal safely restores a legacy social turn');
+}
+
+{
+  const first = {
+    id: 'legacy-first',
+    role: 'assistant',
+    timestamp: 1_000,
+    rawOriginal: '第一颗气泡',
+  };
+  const second = {
+    id: 'legacy-second',
+    role: 'assistant',
+    timestamp: 1_001,
+    rawOriginal: '第二颗气泡',
+  };
+  const result = await resolveLatestFormatRepairTarget({
+    message: second,
+    sessionId: 'legacy-session',
+    uiMode: 'chat',
+    getMessages: () => [first, second],
+    getLastRawResponseEnvelope: () => ({
+      text: 'wrapper\n第一颗气泡\n第二颗气泡\nwrapper-end',
+      at: 1_050,
+      turnId: '',
+      sourceSessionId: 'legacy-session',
+      targetSessionIds: [],
+      sourceMessageIds: [],
+      truncated: false,
+    }),
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, 'legacy_turn_ambiguous');
+  console.log('ok - legacy multi-bubble raw is rejected when full turn membership is unknown');
+}
+
+{
+  const appSource = await readFile(new URL('../../src/scripts/ui/app.js', import.meta.url), 'utf8');
+  const queueWrapperStart = appSource.indexOf('const enqueueFormatRepairProtocolMessages');
+  const queueWrapperEnd = appSource.indexOf('let sendTraceStarted', queueWrapperStart);
+  const queueWrapperSource = queueWrapperStart >= 0 && queueWrapperEnd > queueWrapperStart
+    ? appSource.slice(queueWrapperStart, queueWrapperEnd)
+    : '';
+
+  assert.match(
+    queueWrapperSource,
+    /tagProtocolDeliveryItemsWithFormatRepairTurn\(\s*queueItems,\s*getFormatRepairTurnMeta\(\)\s*\)/,
+  );
+  assert.match(
+    queueWrapperSource,
+    /appendMessage:\s*\(message,\s*targetSessionId\)\s*=>\s*appendFormatRepairTurnMessage\(/,
+  );
+  assert.equal(
+    (appSource.match(/enqueueMessages:\s*enqueueFormatRepairProtocolMessages/g) || []).length,
+    2,
+  );
+  assert.match(
+    appSource,
+    /appendMessage:\s*typeof effects\.appendMessage === 'function'\s*\?\s*effects\.appendMessage\s*:\s*appendPersistedProtocolDeliveryMessage/,
+  );
+  assert.match(
+    appSource,
+    /const appendPersistedProtocolDeliveryMessage[\s\S]*appendMessageWithFormatRepairEnvelopeRegistration/,
+  );
+  assert.equal(
+    (appSource.match(/appendPersistedProtocolDeliveryMessage/g) || []).length,
+    3,
+  );
+  console.log('ok - app protocol queues persist and append through the format-repair turn wrapper');
 }

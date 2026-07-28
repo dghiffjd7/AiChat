@@ -293,6 +293,61 @@ const buildSafetySkippedOutput = (tool, preflight, durationMs = 0) => {
   };
 };
 
+// 只读意图下的写工具不再硬拒绝，而是升级为强制用户确认（无视 allow-always 规则）：
+// 误判（条件式写入/预览后取消等）的代价从任务失败降为多点一次确认；
+// 无确认通道（headless/测试）时保持 fail-closed 抛错，「无静默写入」性质不变。
+const enforceOperationIntentPolicy = async (tool, context = {}) => {
+  const policy = isPlainObject(context?.operationIntentPolicy)
+    ? context.operationIntentPolicy
+    : null;
+  if (
+    policy?.mode !== 'read_only' ||
+    tool?.capabilities?.write !== true ||
+    tool?.metadata?.allowInReadOnlyIntent === true
+  ) {
+    return;
+  }
+  const requestConfirmation = context.requestToolConfirmation ||
+    context.confirmToolSafety ||
+    context.requestSafetyConfirmation;
+  if (typeof requestConfirmation === 'function') {
+    const request = {
+      escalation: 'read_only_write',
+      toolName: tool.name,
+      source: tool.source,
+      riskLevel: tool.riskLevel,
+      kind: 'read_only_write_escalation',
+      operationType: trim(tool?.safety?.operationType, 'write'),
+      title: '本轮请求按只读理解',
+      message: `工具「${tool.title || tool.name}」需要写入数据。要允许这一次写入吗？`,
+      confirmText: '允许一次',
+      cancelText: '取消',
+      danger: true,
+    };
+    let allowed = false;
+    try { context.onToolConfirmationPending?.(request); } catch {}
+    try {
+      allowed = isSafetyConfirmationAllowed(await requestConfirmation(request));
+    } finally {
+      try { context.onToolConfirmationResolved?.(request); } catch {}
+    }
+    if (allowed) return;
+  }
+  throw new AgentToolSafetyError(
+    `用户本轮只授权查询或查看，未确认写入工具「${tool.name}」；如需执行，请让用户明确提出写入动作。`,
+    {
+      code: 'agent_tool_write_intent_required',
+      toolName: tool.name,
+      details: {
+        mode: 'read_only',
+        source: trim(policy.source),
+        reason: trim(policy.reason, 'explicit_read_without_write'),
+        operationType: trim(tool?.safety?.operationType, 'write'),
+      },
+    },
+  );
+};
+
 export const createAgentToolRegistry = ({
   permissionEvaluator = createAgentPermissionEvaluator({ defaultDecision: AGENT_PERMISSION_DECISIONS.ask }),
   requireSafetyForWrites = false,
@@ -479,6 +534,7 @@ export const createAgentToolRegistry = ({
         details: validation.errors,
       });
     }
+    await enforceOperationIntentPolicy(tool, context);
     await evaluatePermission(tool, validation.args, context);
     const startedAt = Date.now();
     const safety = await evaluateSafety(tool, validation.args, context);

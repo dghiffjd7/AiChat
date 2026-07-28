@@ -98,6 +98,139 @@ const logger = { warn: () => {} };
 }
 
 {
+  let executed = 0;
+  let permissionRequested = 0;
+  const registry = createAgentToolRegistry({
+    permissionEvaluator: createAgentPermissionEvaluator({
+      defaultDecision: AGENT_PERMISSION_DECISIONS.ask,
+    }),
+    logger,
+  });
+  registry.register({
+    name: 'worldbook.bind_session',
+    permissions: ['storage:write'],
+    riskLevel: 'medium',
+    safety: {
+      operationType: 'bind_worldbook_to_session',
+      destructive: 'never',
+    },
+    execute: async () => {
+      executed += 1;
+      return { ok: true };
+    },
+  });
+  await assert.rejects(
+    () => registry.executeTool('worldbook.bind_session', {}, {
+      operationIntentPolicy: {
+        mode: 'read_only',
+        source: 'maid_user_request',
+        reason: 'explicit_read_without_write',
+      },
+      requestPermission: () => {
+        permissionRequested += 1;
+        return 'allow';
+      },
+    }),
+    err => err instanceof AgentToolSafetyError && err.code === 'agent_tool_write_intent_required',
+  );
+  assert.equal(permissionRequested, 0, '只读越界应在权限确认前阻止');
+  assert.equal(executed, 0);
+
+  const allowed = await registry.executeTool('worldbook.bind_session', {}, {
+    operationIntentPolicy: {
+      mode: 'write_allowed',
+      source: 'maid_user_request',
+      reason: 'explicit_write',
+    },
+    requestPermission: () => {
+      permissionRequested += 1;
+      return 'allow';
+    },
+  });
+  assert.equal(allowed.status, 'succeeded');
+  assert.equal(permissionRequested, 1);
+  assert.equal(executed, 1);
+  console.log('ok - agent tool registry blocks read-only intent from escalating into writes');
+}
+
+{
+  // 只读意图 + 写工具：有确认通道时升级为强制确认，而不是硬拒绝。
+  const confirmRequests = [];
+  let executed = 0;
+  let decision = 'deny';
+  const registry = createAgentToolRegistry({
+    permissionEvaluator: createAgentPermissionEvaluator({
+      defaultDecision: AGENT_PERMISSION_DECISIONS.allow,
+    }),
+    logger,
+  });
+  registry.register({
+    name: 'worldbook.bind_session',
+    permissions: ['storage:write'],
+    riskLevel: 'medium',
+    safety: { operationType: 'bind_worldbook_to_session', destructive: 'never' },
+    execute: async () => {
+      executed += 1;
+      return { ok: true };
+    },
+  });
+  const context = {
+    operationIntentPolicy: {
+      mode: 'read_only',
+      source: 'maid_user_request',
+      reason: 'explicit_read_without_write',
+    },
+    requestToolConfirmation: (request) => {
+      confirmRequests.push(request);
+      return { decision };
+    },
+  };
+  await assert.rejects(
+    () => registry.executeTool('worldbook.bind_session', {}, context),
+    err => err instanceof AgentToolSafetyError && err.code === 'agent_tool_write_intent_required',
+  );
+  assert.equal(executed, 0, '确认被拒后不得执行');
+  assert.equal(confirmRequests.length, 1);
+  assert.equal(confirmRequests[0].escalation, 'read_only_write');
+  assert.equal(confirmRequests[0].kind, 'read_only_write_escalation');
+
+  decision = 'allow';
+  const allowed = await registry.executeTool('worldbook.bind_session', {}, context);
+  assert.equal(allowed.status, 'succeeded');
+  assert.equal(executed, 1, '确认放行后按条件写入执行');
+  assert.equal(confirmRequests.length, 2);
+  console.log('ok - read-only intent escalates write tools to forced confirmation instead of hard block');
+}
+
+{
+  // 白名单：带确认闸的 diff 提案工具（allowInReadOnlyIntent）在只读意图下直接放行
+  let executed = 0;
+  const registry = createAgentToolRegistry({
+    permissionEvaluator: createAgentPermissionEvaluator({
+      defaultDecision: AGENT_PERMISSION_DECISIONS.allow,
+    }),
+    logger,
+  });
+  registry.register({
+    name: 'chat.repair_message_format',
+    permissions: ['storage:write'],
+    riskLevel: 'medium',
+    metadata: { allowInReadOnlyIntent: true },
+    safety: { operationType: 'write', destructive: 'never' },
+    execute: async () => {
+      executed += 1;
+      return { ok: true, userDecision: 'cancelled' };
+    },
+  });
+  const result = await registry.executeTool('chat.repair_message_format', {}, {
+    operationIntentPolicy: { mode: 'read_only', source: 'maid_user_request', reason: 'explicit_read_without_write' },
+  });
+  assert.equal(result.status, 'succeeded');
+  assert.equal(executed, 1);
+  console.log('ok - diff-proposal tools with UI confirmation gates bypass the read-only escalation');
+}
+
+{
   const registry = createAgentToolRegistry({
     permissionEvaluator: createAgentPermissionEvaluator({
       defaultDecision: AGENT_PERMISSION_DECISIONS.ask,

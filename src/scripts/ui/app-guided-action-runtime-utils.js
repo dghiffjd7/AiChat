@@ -405,7 +405,11 @@ export const createAppGuidedActionRuntime = ({
     }
     const feature = resolveFeature(plan);
     const guide = feature ? buildGuidedActionGuide(feature) : null;
-    const shouldGuide = Boolean(guide?.guideId && plan?.skipGuide !== true && !isGuideCompleted(guide.guideId));
+    const shouldGuide = Boolean(
+      guide?.guideId &&
+      plan?.skipGuide !== true &&
+      (plan?.forceGuide === true || !isGuideCompleted(guide.guideId))
+    );
     if (shouldGuide && typeof showGuide === 'function') {
       await showGuide(clone(guide), { plan: clone(plan), context: clone(context) });
     }
