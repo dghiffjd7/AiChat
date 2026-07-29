@@ -2,7 +2,7 @@ export const AGENT_RUN_SCHEMA_VERSION = 2;
 
 // Phase B 真实计量：AgentRun 的 provider usage/延迟/降级/中止画像。
 // 硬约束——token 类指标 provider 不返回时 status='unknown' 且各字段为 null，绝不自行估算。
-// toolCallCount/latencyMs/aborted/degraded 是本地可得事实，与 provider usage 是否可用无关。
+// modelCallCount/toolCallCount/latencyMs/aborted/degraded 是本地可得事实，与 provider usage 是否可用无关。
 export const AGENT_USAGE_STATUSES = Object.freeze(['unknown', 'recorded']);
 const USAGE_STATUS_SET = new Set(AGENT_USAGE_STATUSES);
 
@@ -32,6 +32,7 @@ export const normalizeAgentUsage = (raw = {}) => {
     completionTokens,
     totalTokens,
     latencyMs: toNullableTokenCount(src.latencyMs ?? src.latency_ms),
+    modelCallCount: Math.max(0, Math.trunc(Number(src.modelCallCount ?? src.model_call_count)) || 0),
     toolCallCount: Math.max(0, Math.trunc(Number(src.toolCallCount ?? src.tool_call_count)) || 0),
     degraded: src.degraded === true,
     aborted: src.aborted === true,

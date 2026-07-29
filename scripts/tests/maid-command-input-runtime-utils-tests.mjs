@@ -233,6 +233,30 @@ class FakeDocument {
 
 {
   const documentRef = new FakeDocument();
+  const runtime = createMaidCommandInputRuntime({
+    documentRef,
+    getViewportSize: () => ({ w: 360, h: 640 }),
+    onSubmit: async () => ({
+      ok: true,
+      message: '**加粗**与`代码`\n第二行 <img src=x onerror=alert(1)>',
+    }),
+    setTimeoutFn: () => 1,
+    clearTimeoutFn: () => {},
+  });
+  runtime.open();
+  runtime.getElements().inputEl.value = '测试 Markdown';
+  await runtime.submit();
+  const message = runtime.getElements().resultEl.children[0].children[0];
+  assert.match(message.innerHTML, /<strong>加粗<\/strong>/);
+  assert.match(message.innerHTML, /<code>代码<\/code>/);
+  assert.match(message.innerHTML, /<br>/);
+  assert.match(message.innerHTML, /&lt;img src=x onerror=alert\(1\)&gt;/);
+  assert.doesNotMatch(message.innerHTML, /<img\b/);
+  console.log('ok - maid command input safely renders basic Markdown and real newlines');
+}
+
+{
+  const documentRef = new FakeDocument();
   const modeSwitchEl = new FakeElement('div');
   const outsideEl = new FakeElement('main');
   documentRef.body.appendChild(outsideEl);
@@ -319,6 +343,64 @@ class FakeDocument {
   assert.equal(runtime.getAttachments().length, 0);
   assert.equal(rootEl.classList.contains('has-attachments'), false);
   console.log('ok - maid command input attaches images and submits them with fallback text');
+}
+
+{
+  const documentRef = new FakeDocument();
+  const started = [];
+  const finishers = [];
+  let settingsCalls = 0;
+  const runtime = createMaidCommandInputRuntime({
+    documentRef,
+    getViewportSize: () => ({ w: 360, h: 640 }),
+    onSubmit: (text) => {
+      started.push(text);
+      return new Promise(resolve => finishers.push(resolve));
+    },
+    onSettings: () => {
+      settingsCalls += 1;
+    },
+    setTimeoutFn: () => 1,
+    clearTimeoutFn: () => {},
+  });
+
+  runtime.open();
+  const { inputEl, attachBtn, settingsBtn, submitBtn } = runtime.getElements();
+  inputEl.value = '第一项';
+  const first = runtime.submit();
+  assert.equal(runtime.isSubmitting(), true);
+  assert.equal(inputEl.disabled, false, '运行中输入框保持可编辑');
+  assert.equal(attachBtn.disabled, false, '运行中仍可添加附件');
+  assert.equal(settingsBtn.disabled, false, '运行中仍可打开女仆设置');
+  assert.equal(submitBtn.disabled, false, '运行中发送按钮用于加入串行队列');
+  settingsBtn.dispatchEvent('click', { preventDefault() {}, stopPropagation() {} });
+  assert.equal(settingsCalls, 1);
+
+  inputEl.value = '第二项';
+  const second = runtime.submit();
+  inputEl.value = '第三项';
+  const third = runtime.submit();
+  assert.deepEqual(started, ['第一项'], '后续发送在当前任务结束前不得并行执行');
+  assert.deepEqual(runtime.getQueue().map(item => item.text), ['第二项', '第三项']);
+
+  const secondId = runtime.getQueue()[0].id;
+  assert.equal(runtime.cancelQueued(secondId), true);
+  assert.deepEqual(runtime.getQueue().map(item => item.text), ['第三项']);
+  const cancelled = await second;
+  assert.equal(cancelled.cancelled, true);
+  assert.equal(cancelled.reason, 'queued_submission_cancelled');
+
+  finishers.shift()({ ok: true, message: '第一项完成' });
+  const firstResult = await first;
+  assert.equal(firstResult.ok, true);
+  assert.deepEqual(started, ['第一项', '第三项'], '首项完成后自动串行执行下一项');
+  assert.equal(runtime.cancelQueued(runtime.getActiveSubmission()?.id), false, '正在执行的任务不属于待执行队列');
+  finishers.shift()({ ok: true, message: '第三项完成' });
+  const thirdResult = await third;
+  assert.equal(thirdResult.ok, true);
+  assert.equal(runtime.isSubmitting(), false);
+  assert.deepEqual(runtime.getQueue(), []);
+  console.log('ok - maid command input stays interactive and serializes/cancels queued submissions');
 }
 
 {
@@ -410,7 +492,7 @@ class FakeDocument {
 }
 
 {
-  // 指令条盖住悬浮球：非交互区按下 → 转发球拖拽（运行中控件禁用时整条可拖）；交互控件不转发
+  // 指令条盖住悬浮球：非交互区按下 → 转发球拖拽；交互控件不转发
   const documentRef = new FakeDocument();
   const modeSwitchEl = new FakeElement('div');
   const dragCalls = [];

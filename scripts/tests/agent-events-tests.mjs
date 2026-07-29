@@ -75,6 +75,7 @@ import {
   assert.equal(run.usage.promptTokens, null);
   assert.equal(run.usage.completionTokens, null);
   assert.equal(run.usage.totalTokens, null);
+  assert.equal(run.usage.modelCallCount, 0);
   assert.equal(run.usage.toolCallCount, 0);
   assert.equal(run.usage.degraded, false);
   assert.equal(run.usage.aborted, false);
@@ -90,7 +91,7 @@ import {
     usage: {
       provider: 'deepseek', model: 'deepseek-v4-pro',
       promptTokens: 1200, completionTokens: 300,
-      latencyMs: 4200, toolCallCount: 3, finishReason: 'stop',
+      latencyMs: 4200, modelCallCount: 2, toolCallCount: 3, finishReason: 'stop',
     },
   }, { now: () => 5000 });
   assert.equal(run.usage.status, 'recorded');
@@ -100,6 +101,7 @@ import {
   assert.equal(run.usage.completionTokens, 300);
   assert.equal(run.usage.totalTokens, 1500);
   assert.equal(run.usage.latencyMs, 4200);
+  assert.equal(run.usage.modelCallCount, 2);
   assert.equal(run.usage.toolCallCount, 3);
   assert.equal(run.usage.finishReason, 'stop');
   console.log('ok - normalizeAgentRun records real provider usage and derives missing total');

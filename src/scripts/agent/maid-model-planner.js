@@ -21,6 +21,23 @@ const trim = (value, fallback = '') => {
 
 const isPlainObject = value => Boolean(value && typeof value === 'object' && !Array.isArray(value));
 
+export const resolveMaidConversationContextSnapshot = ({
+  getConversationContext = null,
+  input = '',
+  context = {},
+  taskType = 'maid_assistant',
+} = {}) => {
+  const sharedRef = isPlainObject(context?.maidConversationContextRef)
+    ? context.maidConversationContextRef
+    : null;
+  if (isPlainObject(sharedRef?.current)) return sharedRef.current;
+  const snapshot = typeof getConversationContext === 'function'
+    ? getConversationContext({ input, context, taskType })
+    : (isPlainObject(context?.maidConversationContext) ? context.maidConversationContext : null);
+  if (sharedRef && isPlainObject(snapshot)) sharedRef.current = snapshot;
+  return snapshot;
+};
+
 const clone = (value) => {
   if (value === null || value === undefined) return value;
   if (typeof value !== 'object') return value;
@@ -61,14 +78,25 @@ const chatWithFallback = async (
   // Phase B 计量：out-of-band 采集 provider usage，不改 client.chat 返回契约（仍返回文本）。
   const wantUsage = typeof onModelUsage === 'function';
   let capturedUsage = null;
+  let modelCallCount = 0;
+  let usageReported = false;
   const chatOptions = wantUsage
     ? { ...options, onProviderUsage: (u) => { capturedUsage = u; } }
     : options;
   const reportUsage = (degraded) => {
-    if (!wantUsage) return;
-    try { onModelUsage({ ...(capturedUsage || {}), latencyMs: Date.now() - startedAt, degraded }); } catch {}
+    if (!wantUsage || usageReported) return;
+    usageReported = true;
+    try {
+      onModelUsage({
+        ...(capturedUsage || {}),
+        latencyMs: Date.now() - startedAt,
+        modelCallCount,
+        degraded,
+      });
+    } catch {}
   };
   try {
+    modelCallCount += 1;
     const text = await client.chat(messages, chatOptions);
     probe.phase = 'done';
     probe.doneAt = Date.now();
@@ -81,12 +109,16 @@ const chatWithFallback = async (
     probe.error = String(error?.message || error).slice(0, 120);
     probe.elapsedMs = Date.now() - startedAt;
     logger?.warn?.(`[maid-model] chat failed after ${probe.elapsedMs}ms: ${probe.error}`);
-    if (!fallbackClient || typeof fallbackClient.chat !== 'function') throw error;
+    if (!fallbackClient || typeof fallbackClient.chat !== 'function') {
+      reportUsage(false);
+      throw error;
+    }
     probe.phase = 'fallback-calling';
     logger?.warn?.('maid main model failed, retrying with fallback profile');
     capturedUsage = null;
     try {
       try { onClientUsed?.('fallback'); } catch {}
+      modelCallCount += 1;
       const text = await fallbackClient.chat(messages, chatOptions);
       probe.phase = 'fallback-done';
       probe.elapsedMs = Date.now() - startedAt;
@@ -96,6 +128,7 @@ const chatWithFallback = async (
       probe.phase = 'fallback-failed';
       probe.error = String(err2?.message || err2).slice(0, 120);
       probe.elapsedMs = Date.now() - startedAt;
+      reportUsage(true);
       throw err2;
     }
   }
@@ -137,6 +170,90 @@ const stringifyForPrompt = (value, max = 10000) => {
   } catch {
     return truncate(String(value ?? ''), max);
   }
+};
+
+const MAID_READ_LEDGER_TOOLS = new Set([
+  'app.read_resource',
+  'worldbook.read',
+  'worldbook.list',
+  'session.list',
+  'app.get_current_state',
+  'chat.read_format_profile',
+  'maid.todo.read',
+]);
+
+const compactMaidReadLedgerFacts = (step = {}) => {
+  const output = isPlainObject(step?.output) ? step.output : {};
+  const toolName = trim(step?.toolName);
+  if (
+    toolName === 'app.read_resource' &&
+    trim(output.resource).toLowerCase() === 'persona' &&
+    Array.isArray(output.items)
+  ) {
+    return {
+      resource: 'persona',
+      items: output.items.slice(0, 8).map(item => ({
+        name: trim(item?.name || item?.id),
+        associations: isPlainObject(item?.associations) ? {
+          worldbookId: trim(item.associations.worldbookId),
+          worldbookEnabled: item.associations.worldbookEnabled,
+          systemPresetId: trim(item.associations.systemPresetId),
+          regexSetId: trim(item.associations.regexSetId),
+        } : undefined,
+      })),
+    };
+  }
+  if (toolName === 'worldbook.read') {
+    return {
+      name: trim(output.name || output.id || step?.args?.name || step?.args?.worldbookId),
+      entryCount: Number.isFinite(Number(output.entryCount)) ? Number(output.entryCount) : undefined,
+      titles: (Array.isArray(output.entries) ? output.entries : [])
+        .slice(0, 3)
+        .map(entry => trim(entry?.title || entry?.comment || entry?.name))
+        .filter(Boolean),
+    };
+  }
+  return {
+    summary: trim(step?.summary),
+  };
+};
+
+const buildMaidSuccessfulReadLedger = (steps = []) => {
+  const records = new Map();
+  (Array.isArray(steps) ? steps : []).forEach((step, index) => {
+    const toolName = trim(step?.toolName);
+    if (step?.status !== 'succeeded' || !MAID_READ_LEDGER_TOOLS.has(toolName)) return;
+    let argsText = '{}';
+    try {
+      argsText = JSON.stringify(isPlainObject(step?.args) ? step.args : {});
+    } catch {}
+    const key = `${toolName}:${argsText}`;
+    const existing = records.get(key);
+    if (existing) {
+      existing.count += 1;
+      existing.lastIndex = index;
+      return;
+    }
+    let factsText = '{}';
+    try {
+      factsText = JSON.stringify(compactMaidReadLedgerFacts(step));
+    } catch {}
+    records.set(key, {
+      toolName,
+      argsText: truncate(argsText, 360),
+      factsText: truncate(factsText, 720),
+      count: 1,
+      lastIndex: index,
+    });
+  });
+  const rows = Array.from(records.values())
+    .sort((left, right) => left.lastIndex - right.lastIndex)
+    .slice(-16)
+    .map((item, index) => (
+      `${index + 1}. ${item.toolName} args=${item.argsText} facts=${item.factsText}` +
+      (item.count > 1 ? ` repeated=${item.count}` : '')
+    ));
+  return rows.length ? rows.join('\n') : '';
 };
 
 // 可用 sub-agent 模型（能力标签制）：女仆看到的是能力描述而非模型名，按任务匹配选择。
@@ -213,7 +330,7 @@ export const buildMaidModelPlannerMessages = ({
     `UI 模式：${trim(context?.uiMode, '-')}`,
     `当前页面：${trim(context?.activePage, '-')}`,
     `界面呈现意图：${trim(context?.presentationIntent?.mode, 'background')}`,
-    `女仆记忆表格：\n${memoryText || '（空）'}`,
+    `女仆分层记忆：\n${memoryText || '（空）'}`,
     `女仆历史上下文：\n${historyText || '（空）'}`,
     `相关功能检索：\n${searchContext}`,
   ].filter(Boolean).join('\n');
@@ -454,6 +571,7 @@ export const buildMaidModelReActMessages = ({
   const olderText = olderSteps
     .map((step, i) => `${i + 1}. ${trim(step?.toolName)}:${trim(step?.status)} ${truncate(trim(step?.summary), 90)}`)
     .join('\n');
+  const successfulReadLedger = buildMaidSuccessfulReadLedger(stepList);
   const stepsText = [
     olderText ? `更早步骤（仅摘要）：\n${olderText}` : '',
     `最近步骤与完整观察：\n${stringifyForPrompt(recentSteps, 12000) || '[]'}`,
@@ -467,8 +585,9 @@ export const buildMaidModelReActMessages = ({
     `UI 模式：${trim(context?.uiMode, '-')}`,
     `当前页面：${trim(context?.activePage, '-')}`,
     `界面呈现意图：${trim(context?.presentationIntent?.mode, 'background')}`,
-    `女仆记忆表格：\n${memoryText || '（空）'}`,
+    `女仆分层记忆：\n${memoryText || '（空）'}`,
     `女仆历史上下文：\n${historyText || '（空）'}`,
+    successfulReadLedger ? `成功读取账本：\n${successfulReadLedger}` : '',
     `已执行步骤与观察结果：\n${stepsText}`,
   ].filter(Boolean).join('\n');
   return [
@@ -498,6 +617,7 @@ export const buildMaidModelReActMessages = ({
         '例外：chat.send_message 的 user 消息在 triggerReply:true 时会走正常回复链，当前实现必须进入目标聊天室并传 open:true；只有 triggerReply:false 的纯消息写入才能 open:false 后台追加。',
         '教我、一步步、引导等教学请求与普通展示不同；不要在普通后台任务中自行启动或模拟新手引导。',
         '一次成功读取已经返回用户要求的字段时，立即 final；不要为了“再确认”重复读取同一资源。多个只读资源尚未全部取得时，直接调用下一个具体读取工具。',
+        '成功读取账本中出现相同工具与参数，表示该读取已经完成；账本已保留用户所需事实且其后没有写入时，禁止重复调用，直接处理下一个未完成目标或 final。',
         'maid.todo.write 只在清单状态实际变化时调用，不要在每一步前后机械更新。遇到 todo_unchanged 后禁止重试相同清单，立即执行当前 in_progress 或 pending 项的具体工具。',
         '写过 todo 的复杂任务要逐项确认完成状态；如果最近一次 maid.todo.write 已返回全部 completed，无需再读。只有清单状态不确定或用户询问进度时才用 maid.todo.read；只要仍有未完成项，就继续执行对应具体工具。',
         '如果清单上的某一项在 APP 功能目录里找不到任何能完成它的工具，不要卡住：用 maid.todo.write 把该项标记为 cancelled（或在内容后注明“无对应工具”），跳过它继续做下一项，并在最终汇报中如实说明该项做不了及原因。',
@@ -675,9 +795,12 @@ export const createMaidModelBackedPlanner = ({
     const promptFeatures = resolveCapabilityDecisionFeatures(context, features);
     const decisionFeatures = getMaidModelFeatureContext(promptFeatures).features;
     const capabilitySnapshot = context?.capabilitySnapshot || null;
-    const conversationContext = typeof getConversationContext === 'function'
-      ? getConversationContext({ input, context, taskType: 'maid_assistant' })
-      : context?.maidConversationContext || null;
+    const conversationContext = resolveMaidConversationContextSnapshot({
+      getConversationContext,
+      input,
+      context,
+      taskType: 'maid_assistant',
+    });
     const messages = buildMaidModelPlannerMessages({
       input,
       context: { ...context, subAgents: runtime?.subAgents || [] },
@@ -725,9 +848,12 @@ export const createMaidModelBackedPlanner = ({
       messages: buildMaidModelPlannerMessages({
         input,
         context,
-        conversationContext: typeof getConversationContext === 'function'
-          ? getConversationContext({ input, context, taskType: 'maid_assistant' })
-          : context?.maidConversationContext || null,
+        conversationContext: resolveMaidConversationContextSnapshot({
+          getConversationContext,
+          input,
+          context,
+          taskType: 'maid_assistant',
+        }),
         features: resolveCapabilityDecisionFeatures(context, features),
         maidPrompt: runtime?.maidPrompt || runtime?.personaPrompt,
       }),
@@ -783,9 +909,12 @@ export const createMaidModelBackedReActPlanner = ({
     const promptFeatures = resolveCapabilityDecisionFeatures(context, features);
     const decisionFeatures = getMaidModelFeatureContext(promptFeatures).features;
     const capabilitySnapshot = context?.capabilitySnapshot || null;
-    const conversationContext = typeof getConversationContext === 'function'
-      ? getConversationContext({ input, context, taskType: 'maid_react' })
-      : context?.maidConversationContext || null;
+    const conversationContext = resolveMaidConversationContextSnapshot({
+      getConversationContext,
+      input,
+      context,
+      taskType: 'maid_react',
+    });
     const steps = Array.isArray(context?.maidReactSteps) ? context.maidReactSteps : [];
     const messages = buildMaidModelReActMessages({
       input,
@@ -832,9 +961,12 @@ export const createMaidModelBackedReActPlanner = ({
       messages: buildMaidModelReActMessages({
         input,
         context,
-        conversationContext: typeof getConversationContext === 'function'
-          ? getConversationContext({ input, context, taskType: 'maid_react' })
-          : context?.maidConversationContext || null,
+        conversationContext: resolveMaidConversationContextSnapshot({
+          getConversationContext,
+          input,
+          context,
+          taskType: 'maid_react',
+        }),
         features: resolveCapabilityDecisionFeatures(context, features),
         maidPrompt: runtime?.maidPrompt || runtime?.personaPrompt,
         steps: Array.isArray(context?.maidReactSteps) ? context.maidReactSteps : [],

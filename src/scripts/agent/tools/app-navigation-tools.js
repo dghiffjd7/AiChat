@@ -335,7 +335,7 @@ export const createAppNavigationAgentTools = ({
   {
     name: 'app.read_resource',
     title: 'Read APP resource',
-    description: 'Read structured APP resources such as chat messages, worldbook settings, regex, memory, variables, presets, config, sessions, personas, or users. Persona/user lists are compact by default; request profile fields through include only when needed.',
+    description: 'Read structured APP resources such as chat messages, worldbook settings, regex, memory, variables, presets, config, sessions, personas, or users. Persona/user lists are compact by default; request profile fields through include only when needed. Persona associations expose only saved binding references.',
     source: 'maid-app-navigation',
     permissions: [],
     riskLevel: 'low',
@@ -367,7 +367,7 @@ export const createAppNavigationAgentTools = ({
         includeContent: { type: 'boolean' },
         include: {
           type: 'array',
-          description: 'Optional fields to expand. For persona/user, default items contain id/name/active; use description, avatar, or details (full profile).',
+          description: 'Optional fields to expand. For persona/user, default items contain id/name/active; use associations (persona binding refs only), description, avatar, or details (full profile).',
           items: { type: 'string', maxLength: 80 },
           maxItems: 30,
         },

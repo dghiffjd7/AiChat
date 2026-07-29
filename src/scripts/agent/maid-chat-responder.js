@@ -4,7 +4,10 @@ import {
   getMaidModelFeatureContext,
   listAppFeatures,
 } from './app-feature-catalog.js';
-import { extractMaidModelPlannerJson } from './maid-model-planner.js';
+import {
+  extractMaidModelPlannerJson,
+  resolveMaidConversationContextSnapshot,
+} from './maid-model-planner.js';
 import {
   buildMaidImageAttachmentSummary,
   buildMaidUserContentWithImages,
@@ -86,7 +89,7 @@ export const buildMaidChatResponderMessages = ({
     `当前会话：${trim(context?.sessionId, '-')}`,
     `UI 模式：${trim(context?.uiMode, '-')}`,
     `当前页面：${trim(context?.activePage, '-')}`,
-    `女仆记忆表格：\n${memoryText || '（空）'}`,
+    `女仆分层记忆：\n${memoryText || '（空）'}`,
     `女仆历史上下文：\n${historyText || '（空）'}`,
     `APP 相关讯息：\n${appContext}`,
     observationText ? `已执行工具观察结果：\n${observationText}` : '',
@@ -98,7 +101,7 @@ export const buildMaidChatResponderMessages = ({
         trim(maidPrompt, DEFAULT_MAID_PROMPT),
         MAID_OPERATION_SAFETY_PROMPT,
         modelFeatureContext.awareness,
-        '你可以参考女仆记忆表格和历史上下文来延续对话、理解“刚才那个”等省略指代；不要编造不存在的历史。',
+        '你可以参考女仆分层记忆和历史上下文来延续对话、理解“刚才那个”等省略指代；不要编造不存在的历史。',
         observationText ? '如果提供了工具观察结果，请基于观察结果直接回答用户本次问题；不要只说已查看，也不要输出 JSON。' : '',
       ].filter(Boolean).join('\n'),
     },
@@ -180,9 +183,12 @@ export const createMaidChatResponder = ({
   }
 
   try {
-    const conversationContext = typeof getConversationContext === 'function'
-      ? getConversationContext({ input: text, context, taskType: 'maid_chat' })
-      : context?.maidConversationContext || null;
+    const conversationContext = resolveMaidConversationContextSnapshot({
+      getConversationContext,
+      input: text,
+      context,
+      taskType: 'maid_chat',
+    });
     const messages = buildMaidChatResponderMessages({
       input: text,
       context,
@@ -232,9 +238,12 @@ export const createMaidChatResponder = ({
       messages: buildMaidChatResponderMessages({
         input: text,
         context,
-        conversationContext: typeof getConversationContext === 'function'
-          ? getConversationContext({ input: text, context, taskType: 'maid_chat' })
-          : context?.maidConversationContext || null,
+        conversationContext: resolveMaidConversationContextSnapshot({
+          getConversationContext,
+          input: text,
+          context,
+          taskType: 'maid_chat',
+        }),
         maidPrompt: runtime?.maidPrompt || runtime?.personaPrompt,
       }),
       responseText: error?.message || '女仆暂时无法回复。',

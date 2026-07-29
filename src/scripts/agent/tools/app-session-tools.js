@@ -52,6 +52,10 @@ const summarizeContact = contact => ({
   memberCount: Array.isArray(contact?.members) ? contact.members.length : 0,
 });
 
+const normalizeStringList = value => (
+  Array.isArray(value) ? value : (value ? [value] : [])
+).map(item => trim(item)).filter(Boolean);
+
 const resolveCreateSessionNames = (args = {}) => {
   const names = Array.isArray(args.names)
     ? args.names
@@ -80,6 +84,7 @@ export const createAppSessionAgentTools = ({
   refreshChatAndContacts = null,
   setActiveSession = null,
   showSessionConfig = null,
+  deleteSession = null,
   renderSessionNameHtml = buildSessionNameHtmlFallback,
   defaultAvatar = '',
   now = Date.now,
@@ -161,6 +166,90 @@ export const createAppSessionAgentTools = ({
     };
   };
 
+  const deleteSnapshots = new WeakMap();
+  const buildDeleteSnapshot = async (args = {}) => {
+    const requested = normalizeStringList(args.sessions).slice(0, 100);
+    const currentSessionId = trim(chatStore?.getCurrent?.());
+    const items = [];
+    const seen = new Set();
+    for (const target of requested) {
+      const contact = findContact(contactsStore, target);
+      const sessionId = trim(contact?.id || target);
+      const label = trim(contact?.name || sessionId, target);
+      const isGroup = contact?.isGroup === true || isGroupLikeId(sessionId);
+      if (seen.has(sessionId)) {
+        items.push({
+          target,
+          sessionId,
+          name: label,
+          status: 'skipped',
+          reason: 'duplicate_target',
+          isGroup,
+        });
+        continue;
+      }
+      seen.add(sessionId);
+      if (isRpLikeId(sessionId)) {
+        items.push({
+          target,
+          sessionId,
+          name: label,
+          avatar: trim(contact?.avatar),
+          status: 'protected',
+          reason: 'rp_session_excluded',
+          isGroup,
+        });
+        continue;
+      }
+      if (sessionId === currentSessionId) {
+        items.push({
+          target,
+          sessionId,
+          name: label,
+          avatar: trim(contact?.avatar),
+          status: 'protected',
+          reason: 'current_session_protected',
+          isGroup,
+        });
+        continue;
+      }
+      if (!contact) {
+        items.push({
+          target,
+          sessionId,
+          name: label,
+          status: 'missing',
+          reason: 'session_not_found',
+          isGroup,
+        });
+        continue;
+      }
+      items.push({
+        target,
+        sessionId,
+        name: label,
+        avatar: trim(contact?.avatar),
+        status: 'planned',
+        reason: '',
+        isGroup,
+      });
+    }
+    return {
+      requested,
+      items,
+      plannedCount: items.filter(item => item.status === 'planned').length,
+    };
+  };
+
+  const compactDeleteItem = item => ({
+    target: trim(item?.target),
+    sessionId: trim(item?.sessionId),
+    sessionName: trim(item?.name || item?.sessionId),
+    status: trim(item?.status),
+    reason: trim(item?.reason),
+    isGroup: item?.isGroup === true,
+  });
+
   return [
     {
       name: 'session.list',
@@ -190,6 +279,7 @@ export const createAppSessionAgentTools = ({
         const limit = Math.max(1, Math.min(100, Math.trunc(Number(args.limit) || 30)));
         const includeGroups = args.includeGroups !== false;
         const contacts = resolveContactList(contactsStore)
+          .filter(contact => !isRpLikeId(contact?.id))
           .filter(contact => includeGroups || !(contact?.isGroup === true || isGroupLikeId(contact?.id)))
           .slice(0, limit)
           .map(summarizeContact);
@@ -318,6 +408,222 @@ export const createAppSessionAgentTools = ({
       summarizeResult: result => result?.ok === false
         ? `open session failed: ${trim(result.reason, 'unknown')}`
         : `opened session ${trim(result?.sessionId, '-')}`,
+    },
+    {
+      name: 'session.delete_many',
+      title: 'Delete multiple chat sessions',
+      description: 'Delete multiple explicit visible chat sessions with one structured confirmation. The current session and RP sessions are protected.',
+      source: 'maid-app-session',
+      permissions: [],
+      riskLevel: 'high',
+      capabilities: {
+        read: true,
+        write: true,
+        network: false,
+        cost: 'none',
+        undo: 'none',
+        modelContext: 'none',
+        confirmation: 'required',
+      },
+      safety: {
+        operationType: 'delete_chat_sessions',
+        destructive: 'conditional',
+        description: 'Permanently deletes selected visible chat sessions and their owned chat data.',
+        preflight: async (args = {}) => {
+          const snapshot = await buildDeleteSnapshot(args);
+          deleteSnapshots.set(args, snapshot);
+          if (args.preview === true || snapshot.plannedCount === 0) {
+            return { destructive: false, operationType: 'delete_chat_sessions' };
+          }
+          return {
+            destructive: true,
+            kind: 'session.delete_many',
+            operationType: 'delete_chat_sessions',
+            title: '批量删除聊天室',
+            message: `将永久删除 ${snapshot.plannedCount} 个聊天室及其聊天记录、联系人资料和内部归档。请确认列表范围。`,
+            confirmText: '确认删除',
+            cancelText: '取消',
+            danger: true,
+            allowAlways: false,
+            details: {
+              resource: 'session',
+              requestedCount: snapshot.requested.length,
+              plannedCount: snapshot.plannedCount,
+              items: snapshot.items.map(item => ({
+                id: item.sessionId,
+                label: item.name,
+                avatar: item.avatar,
+                showAvatar: true,
+                meta: item.isGroup ? '群聊' : '私聊',
+                status: item.status,
+                reason: item.reason,
+              })),
+            },
+            onDeny: {
+              action: 'skip',
+              reason: 'session_delete_cancelled',
+              result: {
+                ok: false,
+                skipped: true,
+                reason: 'session_delete_cancelled',
+                requestedCount: snapshot.requested.length,
+                plannedCount: snapshot.plannedCount,
+              },
+            },
+          };
+        },
+      },
+      schema: {
+        type: 'object',
+        required: ['sessions'],
+        additionalProperties: false,
+        properties: {
+          sessions: {
+            type: 'array',
+            minItems: 1,
+            maxItems: 100,
+            items: { type: 'string', minLength: 1, maxLength: 160 },
+          },
+          preview: { type: 'boolean' },
+        },
+      },
+      execute: async (args = {}, context = {}) => {
+        const snapshot = deleteSnapshots.get(args) || await buildDeleteSnapshot(args);
+        const preview = args.preview === true;
+        if (preview) {
+          return {
+            ok: true,
+            preview: true,
+            requestedCount: snapshot.requested.length,
+            plannedCount: snapshot.plannedCount,
+            results: snapshot.items.map(compactDeleteItem),
+          };
+        }
+        if (
+          snapshot.plannedCount > 0 &&
+          (
+            context?.toolSafety?.decision !== 'allow' ||
+            context?.toolSafety?.request?.kind !== 'session.delete_many'
+          )
+        ) {
+          return {
+            ok: false,
+            reason: 'confirmation_required',
+            requestedCount: snapshot.requested.length,
+            plannedCount: snapshot.plannedCount,
+            results: snapshot.items.map(compactDeleteItem),
+          };
+        }
+
+        const results = [];
+        const deletedItems = [];
+        for (const item of snapshot.items) {
+          if (item.status !== 'planned') {
+            results.push(compactDeleteItem(item));
+            continue;
+          }
+          const sessionId = trim(item.sessionId);
+          if (sessionId === trim(chatStore?.getCurrent?.())) {
+            results.push(compactDeleteItem({
+              ...item,
+              status: 'skipped',
+              reason: 'current_session_protected',
+            }));
+            continue;
+          }
+          const currentContact = findContact(contactsStore, sessionId);
+          if (!currentContact) {
+            results.push(compactDeleteItem({
+              ...item,
+              status: 'skipped',
+              reason: 'already_absent',
+            }));
+            continue;
+          }
+          if (typeof deleteSession !== 'function') {
+            results.push(compactDeleteItem({
+              ...item,
+              status: 'failed',
+              reason: 'session_delete_unavailable',
+            }));
+            continue;
+          }
+          try {
+            const deleted = await deleteSession(sessionId);
+            if (deleted?.deleted === false && deleted?.reason === 'already_absent') {
+              results.push(compactDeleteItem({
+                ...item,
+                status: 'skipped',
+                reason: 'already_absent',
+              }));
+              continue;
+            }
+            if (deleted?.ok === false) {
+              results.push(compactDeleteItem({
+                ...item,
+                status: 'failed',
+                reason: trim(deleted?.reason, 'delete_failed'),
+              }));
+              continue;
+            }
+            const stillPresent = Boolean(findContact(contactsStore, sessionId));
+            if (stillPresent) {
+              results.push(compactDeleteItem({
+                ...item,
+                status: 'failed',
+                reason: 'verification_failed',
+              }));
+              continue;
+            }
+            results.push(compactDeleteItem({
+              ...item,
+              status: 'succeeded',
+              reason: '',
+            }));
+            deletedItems.push({ id: sessionId, name: item.name });
+          } catch (error) {
+            results.push({
+              ...compactDeleteItem({
+                ...item,
+                status: 'failed',
+                reason: 'delete_failed',
+              }),
+              errorMessage: trim(error?.message || error),
+            });
+          }
+        }
+        if (deletedItems.length) await refreshChatAndContacts?.({ immediate: true });
+        const succeededCount = results.filter(item => item.status === 'succeeded').length;
+        const skippedCount = results.filter(item => ['skipped', 'protected', 'missing'].includes(item.status)).length;
+        const failed = results.filter(item => item.status === 'failed');
+        return {
+          ok: failed.length === 0,
+          partial: failed.length > 0 && succeededCount > 0,
+          preview: false,
+          requestedCount: snapshot.requested.length,
+          succeededCount,
+          skippedCount,
+          failedCount: failed.length,
+          results,
+          retry: failed.length
+            ? {
+                toolName: 'session.delete_many',
+                args: { sessions: failed.map(item => item.sessionId).filter(Boolean) },
+              }
+            : null,
+          audit: {
+            kind: 'session.delete_many',
+            deletedAt: Number(now?.() || Date.now()) || Date.now(),
+            items: deletedItems,
+          },
+        };
+      },
+      summarizeResult: result => [
+        `batch session deletion ${result?.ok ? 'completed' : 'incomplete'}`,
+        `${Number(result?.succeededCount || 0)} succeeded`,
+        `${Number(result?.skippedCount || 0)} skipped`,
+        `${Number(result?.failedCount || 0)} failed`,
+      ].join('; '),
     },
     {
       name: 'session.open_config',

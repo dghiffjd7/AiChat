@@ -21,9 +21,9 @@ const compactText = value => normalizeText(value).replace(/\s+/g, '');
 
 const isPlainObject = value => Boolean(value && typeof value === 'object' && !Array.isArray(value));
 
-const MAID_READ_INTENT_PATTERN = /(查询|查看|检查|确认|核对|读取|只读|只查|列出|列表|清单|统计|比较|分析|告诉我|有哪些|是否|有没有|当前(?:状态|情况)?|状态|情况|是什么|怎么样|如何|\b(?:show|list|read|check|inspect|verify|status|what|which|whether|inventory|identit(?:y|ies))\b)/iu;
-const MAID_WRITE_VERB_PATTERN = /(创建|新建|添加|追加|新增|写入|保存|绑定|启用|禁用|修改|更改|更新|编辑|替换|覆盖|删除|删掉|移除|清空|发布|发送|设置|切换|应用|修复|优化|生成|上传|导入|回复)/gu;
-const MAID_WRITE_COMMAND_CUE_PATTERN = /(?:^|[，,。；;！？!?])(?:请|麻烦|帮我|替我|给我|为我|我要|我想|需要|把|将|然后|接着|随后|再|并且|并|同时|顺便|之后|后再|就|分别|直接|立即|现在|若没有|如果没有|没有才|没有就|没有则|没有的话|缺少就|缺少才|缺少的|缺的|不存在则|不存在就|不存在再|不存在的话|若无|如无|执行|先执行).{0,48}$/u;
+const MAID_READ_INTENT_PATTERN = /(查询|查看|检查|确认|核对|读取|只读|只查|列出|列表|清单|统计|比较|分析|告诉我|有哪些|哪些|是否|有没有|当前(?:状态|情况)?|状态|情况|是什么|怎么样|如何|\b(?:show|list|read|check|inspect|verify|status|what|which|whether|inventory|identit(?:y|ies))\b)/iu;
+const MAID_WRITE_VERB_PATTERN = /(创建|新建|添加|追加|新增|写入|保存|绑(?:定|上|到)|启用|禁用|修改|更改|更新|编辑|替换|覆盖|删除|删掉|移除|清空|清理|发布|发送|设置|切换|应用|修复|优化|生成|上传|导入|回复)/gu;
+const MAID_WRITE_COMMAND_CUE_PATTERN = /(?:^|[，,。；;！？!?])(?:请|麻烦|帮我|替我|给我|给(?:这些|那些|所有|全部|多个|每个|各个|上述|前述)|为我|我要|我想|需要|把|将|然后|接着|随后|再|并且|并|同时|顺便|之后|后再|就|分别|直接|立即|现在|若没有|如果没有|没有才|没有就|没有则|没有的话|缺少就|缺少才|缺少的|缺的|不存在则|不存在就|不存在再|不存在的话|若无|如无|执行|先执行).{0,48}$/u;
 const MAID_POSTCHECK_WRITE_CUE_PATTERN = /(?:^|[，,。；;！？!?])(?:检查|确认|核对|验证|查完|查看)[^，,。；;！？!?\n]{0,24}(?:后|之后)(?:(?:再|就|然后|接着|随后|仅|只)\s*)?$/u;
 const MAID_POSTCHECK_OBJECT_WRITE_CUE_PATTERN = /(?:^|[，,。；;！？!?])(?:检查|确认|核对|验证|查完|查看)[^，,。；;！？!?\n]{0,24}(?:后|之后)(?:(?:再|就|然后|接着|随后)\s*)?(?:把|将)\s*[^，,。；;！？!?\n]{0,32}$/u;
 const MAID_NEGATED_WRITE_CLAUSE_PATTERN = /(?:^|[，,、。；;！？!?\s]|请)(?:不要|别|无需|不用|禁止|避免|不可|不能)\s*(?:再|去|进行)?[^。；;！？!?\n]*$/u;
@@ -31,8 +31,8 @@ const MAID_WRITE_STATE_SUFFIX_PATTERN = /^(?:(?:书|世界书|条目|内容|角�
 const MAID_READ_STATE_BEFORE_WRITE_PATTERN = /(?:是否(?:已经|已)?|有没有|有无|是不是|为何|为什么|怎么会|何时|哪里|谁|当前|现有|已有|原有|已|已经|曾经?|被|正在)\s*$/u;
 const MAID_READ_ACTION_BEFORE_WRITE_PATTERN = /(?:查询|查看|检查|确认|核对|读取|列出|统计|比较|分析)(?:一下|下)?\s*$/u;
 const MAID_NON_TOOL_REPLY_SUFFIX_PATTERN = /^(?:我|检查结果|核对结果|验证结果|结果|答案|结论|情况|说明)(?:[，,。；;！？!?\s]|$)/u;
-const MAID_ENGLISH_WRITE_PATTERN = /\b(?:create|add|append|write|save|bind|enable|disable|modify|update|edit|replace|overwrite|delete|remove|clear|publish|send|set|switch|apply|repair|optimize|generate|upload|import|reply)\b/iu;
-const MAID_ENGLISH_NEGATED_WRITE_PATTERN = /\b(?:do\s+not|don't|dont|never|without)\s+(?:create|add|append|write|save|bind|enable|disable|modify|update|edit|replace|overwrite|delete|remove|clear|publish|send|set|switch|apply|repair|optimize|generate|upload|import|reply)\b/iu;
+const MAID_ENGLISH_WRITE_PATTERN = /\b(?:create|add|append|write|save|bind|enable|disable|modify|update|edit|replace|overwrite|delete|remove|clear|clean|publish|send|set|switch|apply|repair|optimize|generate|upload|import|reply)\b/iu;
+const MAID_ENGLISH_NEGATED_WRITE_PATTERN = /\b(?:do\s+not|don't|dont|never|without)\s+(?:create|add|append|write|save|bind|enable|disable|modify|update|edit|replace|overwrite|delete|remove|clear|clean|publish|send|set|switch|apply|repair|optimize|generate|upload|import|reply)\b/iu;
 
 const hasExplicitMaidWriteIntent = (input = '') => {
   const text = String(input ?? '').normalize('NFKC').toLowerCase().trim();
@@ -97,13 +97,18 @@ export const classifyMaidOperationIntent = (input = '') => {
 };
 
 const MAID_BACKGROUND_PRESENTATION_PATTERN = /(后台(?:执行|处理|完成)?|保持当前位置|留在当前(?:页面|界面|聊天室|会话)?|不要打开|别打开|无需打开|不用打开|不要进入|别进入|无需进入|不用进入|不要跳转|别跳转|不要切换(?:页面|界面|聊天室|会话))/iu;
+const MAID_SCOPED_NEGATED_NAVIGATION_PATTERN = /(?:不要|不得|别|无需|不用|禁止|避免|不可|不能)(?!\s*(?:忘(?:记|了)?|漏(?:掉)?|阻止|妨碍|拒绝|不))(?:(?![，,。；;！？!?\n]|但|但是|不过|然而).){0,32}?(?:打开|进入|跳转|切(?:换)?到)/iu;
 const MAID_GUIDE_PRESENTATION_PATTERN = /(一步一步|一步步|逐步|教我|指导我|引导我|带着我|手把手|怎么(?:操作|设置|配置|创建|使用)|如何(?:操作|设置|配置|创建|使用))/iu;
 const MAID_NEGATED_GUIDE_PATTERN = /(?:不要|别|无需|不用|取消|停止)\s*(?:再)?(?:引导|指导|教学|教程|一步一步|一步步)/iu;
 const MAID_REVEAL_PRESENTATION_PATTERN = /(打开(?:给我看)?|进入(?:这个|该|对应)?(?:界面|页面|聊天室|会话)?|跳转(?:到)?|带我(?:去)?看(?:看)?|带我去|切到(?:对应)?(?:界面|页面|聊天室|会话)|(?:做完|完成|处理完|创建后|结束后).{0,16}(?:打开|进入|跳转|带我去|显示(?:界面|页面)))/iu;
 
 export const classifyMaidPresentationIntent = (input = '') => {
   const text = String(input ?? '').normalize('NFKC').trim();
-  if (!text || MAID_BACKGROUND_PRESENTATION_PATTERN.test(text)) {
+  if (
+    !text ||
+    MAID_BACKGROUND_PRESENTATION_PATTERN.test(text) ||
+    MAID_SCOPED_NEGATED_NAVIGATION_PATTERN.test(text)
+  ) {
     return {
       mode: 'background',
       source: 'maid_user_request',
@@ -226,6 +231,11 @@ const makeToolErrorOutput = (plan = {}, error = null) => ({
 });
 
 const countArrayItems = value => (Array.isArray(value) ? value.length : 0);
+const countExecutedMaidToolCalls = steps => (
+  (Array.isArray(steps) ? steps : [])
+    .filter(step => step?.output?.localToolExecutionSkipped !== true)
+    .length
+);
 
 const truncateForRun = (value = '', max = 200) => {
   const text = trim(value);
@@ -234,7 +244,7 @@ const truncateForRun = (value = '', max = 200) => {
 
 // Phase B 真实计量：把一次 run 里所有 ReAct 模型调用的 provider usage 聚合成 AgentRun.usage。
 // token 类只在至少一次调用真实返回 token 时才 recorded 并求和，否则 status=unknown、token 为 null（不估算）。
-// latencyMs 求和为本轮模型总耗时；toolCallCount/aborted 是本地可得事实。
+// latencyMs 求和为本轮模型总耗时；modelCallCount/toolCallCount/aborted 是本地可得事实。
 export const aggregateMaidModelUsage = (entries = [], { toolCallCount = 0, aborted = false } = {}) => {
   const list = (Array.isArray(entries) ? entries : []).filter(e => e && typeof e === 'object');
   const finite = (value) => {
@@ -261,6 +271,10 @@ export const aggregateMaidModelUsage = (entries = [], { toolCallCount = 0, abort
     // total = prompt 和 + completion 和，避免个别轮缺 total 字段导致与分项不自洽
     totalTokens: hasTokens ? sum('promptTokens') + sum('completionTokens') : null,
     latencyMs: list.length ? sum('latencyMs') : null,
+    modelCallCount: list.reduce((count, entry) => {
+      const reported = Math.trunc(Number(entry.modelCallCount));
+      return count + (Number.isFinite(reported) && reported > 0 ? reported : 1);
+    }, 0),
     toolCallCount: Math.max(0, Math.trunc(Number(toolCallCount)) || 0),
     degraded: list.some(e => e.degraded === true),
     aborted: aborted === true,
@@ -331,8 +345,11 @@ const createMaidRunTracker = ({ agentTaskRuntime = null, input = '', context = {
     if (!run) return;
     const ok = result?.ok === true;
     const failureCode = ok ? '' : classifyMaidRunFailure(result);
+    const maidContext = isPlainObject(context?.maidConversationContextRef?.current)
+      ? context.maidConversationContextRef.current
+      : (isPlainObject(context?.maidConversationContext) ? context.maidConversationContext : {});
     const runUsage = aggregateMaidModelUsage(Array.isArray(usage) ? usage : [], {
-      toolCallCount: countArrayItems(result?.steps),
+      toolCallCount: countExecutedMaidToolCalls(result?.steps),
       aborted: failureCode === 'user_aborted',
     });
     agentTaskRuntime.finishRun(run.id, {
@@ -358,6 +375,16 @@ const createMaidRunTracker = ({ agentTaskRuntime = null, input = '', context = {
         candidateAllCovered: result?.capabilityRouting?.validSelectionCount > 0
           ? result?.capabilityRouting?.allValidSelectionsCovered === true
           : null,
+        maidContextVersion: trim(maidContext?.maidContextVersion),
+        maidContextTokenCount: Number(maidContext?.tokenCount || 0) || 0,
+        maidContextHistoryTokenCount: Number(maidContext?.historyTokenCount || 0) || 0,
+        maidContextMemoryTokenCount: Number(maidContext?.memoryTokenCount || 0) || 0,
+        maidContextMemoryIds: (Array.isArray(maidContext?.selectedMemoryIds)
+          ? maidContext.selectedMemoryIds
+          : [])
+          .map(item => trim(item))
+          .filter(Boolean)
+          .slice(0, 12),
       },
     });
   };
@@ -378,7 +405,112 @@ const createMaidRunTracker = ({ agentTaskRuntime = null, input = '', context = {
   };
 };
 
+const extractExplicitMaidChatWrites = (input = '') => {
+  const text = String(input ?? '').normalize('NFKC');
+  if (
+    !/(?:后台|保持当前(?:房间|聊天室|会话)|不(?:要|得)打开)/iu.test(text) ||
+    !/triggerReply\s*:\s*false/iu.test(text) ||
+    !/open\s*:\s*false/iu.test(text)
+  ) return [];
+  const writes = [];
+  const seen = new Set();
+  const pattern = /给\s*[「『“"']([^」』”"']{1,160})[」』”"']\s*(?:写(?:入)?|发送)\s*[「『“"']([^」』”"']{1,1000})[」』”"']/gu;
+  for (const match of text.matchAll(pattern)) {
+    const sessionName = trim(match?.[1]);
+    const content = trim(match?.[2]);
+    const key = `${normalizeText(sessionName)}:${content}`;
+    if (!sessionName || !content || seen.has(key)) continue;
+    seen.add(key);
+    writes.push({ sessionName, content, key });
+  }
+  return writes.length >= 2 ? writes.slice(0, 20) : [];
+};
+
+const hasSucceededMaidChatWrite = (steps = [], obligation = {}) => (
+  (Array.isArray(steps) ? steps : []).some(step => (
+    step?.status === 'succeeded' &&
+    trim(step?.toolName) === 'chat.send_message' &&
+    normalizeText(step?.args?.sessionName || step?.args?.sessionId || step?.args?.target || step?.args?.chatName) ===
+      normalizeText(obligation.sessionName) &&
+    trim(step?.args?.content || step?.args?.message || step?.args?.text) === trim(obligation.content)
+  ))
+);
+
+const hasSucceededMaidChatReadback = (steps = [], sessionName = '') => (
+  (Array.isArray(steps) ? steps : []).some(step => (
+    step?.status === 'succeeded' &&
+    trim(step?.toolName) === 'app.read_resource' &&
+    trim(step?.args?.resource || step?.output?.resource).toLowerCase() === 'chat' &&
+    normalizeText(step?.args?.sessionName || step?.args?.sessionId || step?.args?.target) === normalizeText(sessionName)
+  ))
+);
+
+const buildPendingExplicitMaidChatPlan = ({
+  input = '',
+  steps = [],
+  decision = {},
+} = {}) => {
+  const writes = extractExplicitMaidChatWrites(input);
+  if (!writes.length) return null;
+  const pendingWrite = writes.find(item => !hasSucceededMaidChatWrite(steps, item));
+  const trace = {
+    candidateSnapshotId: trim(decision?.candidateSnapshotId),
+    retrieverVersion: trim(decision?.retrieverVersion),
+    capabilityRoutingMode: trim(decision?.capabilityRoutingMode),
+  };
+  if (pendingWrite) {
+    return {
+      ok: true,
+      action: 'tool',
+      toolName: 'chat.send_message',
+      args: {
+        sessionName: pendingWrite.sessionName,
+        content: pendingWrite.content,
+        role: 'user',
+        triggerReply: false,
+        open: false,
+      },
+      featureId: 'chat.send_message',
+      title: `继续写入「${pendingWrite.sessionName}」`,
+      response: `继续处理尚未完成的「${pendingWrite.sessionName}」。`,
+      metadata: {
+        workflowTransition: 'remaining_chat_write',
+        obligationKey: pendingWrite.key,
+      },
+      ...trace,
+    };
+  }
+  const needsReadback = /(?:结构化\s*chat|chat\s*资源).{0,40}(?:读取|读回)|(?:读取|读回).{0,40}(?:最后一条|末条)消息/iu.test(
+    String(input ?? '').normalize('NFKC'),
+  );
+  if (needsReadback) {
+    const pendingReadback = writes.find(item => !hasSucceededMaidChatReadback(steps, item.sessionName));
+    if (pendingReadback) {
+      return {
+        ok: true,
+        action: 'tool',
+        toolName: 'app.read_resource',
+        args: {
+          resource: 'chat',
+          sessionName: pendingReadback.sessionName,
+          limit: 1,
+        },
+        featureId: 'app.resource.read',
+        title: `读回「${pendingReadback.sessionName}」末条消息`,
+        response: `核对「${pendingReadback.sessionName}」的写入结果。`,
+        metadata: {
+          workflowTransition: 'remaining_chat_readback',
+          obligationKey: `chat-readback:${pendingReadback.sessionName}`,
+        },
+        ...trace,
+      };
+    }
+  }
+  return buildPendingMaidFinalStatePlan({ input, steps, decision });
+};
+
 const resolveReactStepBudget = ({
+  input = '',
   plan = {},
   context = {},
   configuredMaxReactSteps = 40,
@@ -395,7 +527,10 @@ const resolveReactStepBudget = ({
   } else if (toolName === 'app.open_panel' || toolName === 'session.open' || toolName === 'session.open_config') {
     recommended = 6;
   } else if (toolName === 'chat.send_message') {
-    recommended = 6;
+    const explicitTargetCount = extractExplicitMaidChatWrites(input).length;
+    recommended = explicitTargetCount > 1
+      ? Math.min(40, Math.max(6, explicitTargetCount * 2 + 3))
+      : 6;
   } else if (toolName === 'app.read_resource' || toolName === 'worldbook.read' || toolName === 'worldbook.list') {
     recommended = 10;
   } else if (toolName === 'web.search_images' || toolName === 'media.fetch_image') {
@@ -471,7 +606,36 @@ const MAID_READ_RESOURCE_KEYS = new Set([
 ]);
 
 const stripNegatedMaidActionClauses = value => String(value ?? '')
-  .replace(/(?:不要|别|禁止|无需|不用|不可|不能|避免)\s*[^，,。；;！？!?\n]*/gu, ' ');
+  .replace(/(?:不要|不得|别|禁止|无需|不用|不可|不能|避免)\s*[^，,。；;！？!?\n]*/gu, ' ');
+
+const buildPendingMaidFinalStatePlan = ({
+  input = '',
+  steps = [],
+  decision = {},
+} = {}) => {
+  const positiveText = stripNegatedMaidActionClauses(String(input ?? '').normalize('NFKC'));
+  if (!/(?:最后|再|然后).{0,20}读取\s*APP\s*状态/iu.test(positiveText)) return null;
+  const hasState = (Array.isArray(steps) ? steps : []).some(step => (
+    step?.status === 'succeeded' && trim(step?.toolName) === 'app.get_current_state'
+  ));
+  if (hasState) return null;
+  return {
+    ok: true,
+    action: 'tool',
+    toolName: 'app.get_current_state',
+    args: {},
+    featureId: 'app.state.read',
+    title: '确认当前 APP 状态',
+    response: '最后确认当前房间没有变化。',
+    metadata: {
+      workflowTransition: 'remaining_state_verification',
+      obligationKey: 'app-state',
+    },
+    candidateSnapshotId: trim(decision?.candidateSnapshotId),
+    retrieverVersion: trim(decision?.retrieverVersion),
+    capabilityRoutingMode: trim(decision?.capabilityRoutingMode),
+  };
+};
 
 const hasMaidInteractiveActionRequest = (input = '') => {
   const text = stripNegatedMaidActionClauses(String(input ?? '').normalize('NFKC'));
@@ -512,6 +676,20 @@ const getMaidReadStepKey = (step = {}) => {
 
 const countObjectKeys = value => (isPlainObject(value) ? Object.keys(value).length : 0);
 
+const summarizeMaidProfileAssociations = (item = {}) => {
+  const associations = isPlainObject(item?.associations) ? item.associations : {};
+  const refs = [];
+  const worldbookId = trim(associations.worldbookId);
+  const systemPresetId = trim(associations.systemPresetId);
+  const regexSetId = trim(associations.regexSetId);
+  if (worldbookId) {
+    refs.push(`世界书「${worldbookId}」（${associations.worldbookEnabled === false ? '未启用' : '已启用'}）`);
+  }
+  if (systemPresetId) refs.push(`系统预设「${systemPresetId}」`);
+  if (regexSetId) refs.push(`正则集「${regexSetId}」`);
+  return `${trim(item?.name || item?.id, '未命名角色卡')}：${refs.length ? refs.join('、') : '未记录关联资源'}`;
+};
+
 const summarizeMaidProfileRead = (label, output = {}) => {
   const items = Array.isArray(output?.items) ? output.items : [];
   const count = Number.isFinite(Number(output?.count)) ? Number(output.count) : items.length;
@@ -519,9 +697,17 @@ const summarizeMaidProfileRead = (label, output = {}) => {
   const active = items.find(item => item?.active === true || (activeId && trim(item?.id) === activeId));
   const activeName = trim(active?.name || activeId, '未设置');
   const names = items.map(item => trim(item?.name)).filter(Boolean).slice(0, 8);
+  const includesAssociations = Array.isArray(output?.includedFields) &&
+    output.includedFields.some(field => trim(field).toLowerCase() === 'associations');
+  const associationSummaries = includesAssociations
+    ? items.slice(0, 8).map(summarizeMaidProfileAssociations)
+    : [];
   return [
     `${label}：共 ${count} 项；当前为「${activeName}」`,
     names.length ? `本次返回：${names.join('、')}${items.length > names.length ? '…' : ''}` : '',
+    associationSummaries.length
+      ? `关联资源：${associationSummaries.join('；')}${items.length > associationSummaries.length ? '…' : ''}`
+      : '',
   ].filter(Boolean).join('；');
 };
 
@@ -568,6 +754,260 @@ const summarizeMaidReadResult = (key, output = {}) => {
     ].filter(Boolean).join('；');
   }
   return '';
+};
+
+const extractMaidQuotedValues = (value = '') => (
+  Array.from(String(value ?? '').matchAll(/[「『“"']([^」』”"']{1,160})[」』”"']/gu))
+    .map(match => trim(match?.[1]))
+    .filter(Boolean)
+);
+
+const buildMaidStructuredReadObligations = ({
+  input = '',
+  operationIntentPolicy = {},
+} = {}) => {
+  const text = String(input ?? '').normalize('NFKC');
+  if (
+    operationIntentPolicy?.mode !== 'read_only' ||
+    !/(?:审计|稽核|完整核对|最终核对)/iu.test(text) ||
+    hasMaidInteractiveActionRequest(text)
+  ) return [];
+  const obligations = [];
+  const auditPrefix = trim(
+    text.match(/(?:对|核对)\s*[「『“"']([^」』”"']{1,160})[」』”"']\s*(?:资源)?(?:做|进行)?(?:最终)?(?:只读)?(?:审计|核对)/iu)?.[1],
+  );
+  const add = (value) => {
+    if (!value?.key || obligations.some(item => item.key === value.key)) return;
+    obligations.push(value);
+  };
+  const worldbookMatch = text.match(
+    /读取(?:世界书)?\s*[「『“"']([^」』”"']{1,160})[」』”"']\s*(?:全文|完整)?(?:索引|目录)/iu,
+  );
+  if (worldbookMatch?.[1]) {
+    const name = trim(worldbookMatch[1]);
+    add({
+      key: `worldbook:${normalizeText(name)}`,
+      kind: 'worldbook',
+      target: name,
+      toolName: 'worldbook.read',
+      featureId: 'worldbook.read',
+      args: { name },
+      title: `读取世界书「${name}」索引`,
+    });
+  }
+  if (/(?:读取|查看|核对)(?:完整)?(?:会话|聊天室)(?:清单|列表)/iu.test(text)) {
+    add({
+      key: 'session-list',
+      kind: 'session-list',
+      auditPrefix,
+      toolName: 'session.list',
+      featureId: 'session.list',
+      args: {},
+      title: '读取完整会话清单',
+    });
+  }
+  if (/(?:读取|查看|核对)[^。；;！？!?\n]{0,40}用户[^。；;！？!?\n]{0,24}(?:清单|列表)/iu.test(text)) {
+    add({
+      key: 'resource:user',
+      kind: 'resource',
+      resource: 'user',
+      auditPrefix,
+      toolName: 'app.read_resource',
+      featureId: 'app.resource.read',
+      args: { resource: 'user' },
+      title: '读取用户清单',
+    });
+  }
+  if (/(?:读取|查看|核对)[^。；;！？!?\n]{0,64}角色卡[^。；;！？!?\n]{0,24}(?:清单|列表)/iu.test(text)) {
+    add({
+      key: 'resource:persona',
+      kind: 'resource',
+      resource: 'persona',
+      auditPrefix,
+      toolName: 'app.read_resource',
+      featureId: 'app.resource.read',
+      args: { resource: 'persona' },
+      title: '读取角色卡清单',
+    });
+  }
+  const profileSegment = text.match(/分别读取([^。；;！？!?\n]{1,480}?)的格式画像/iu)?.[1] || '';
+  extractMaidQuotedValues(profileSegment).forEach((target) => {
+    add({
+      key: `format-profile:${normalizeText(target)}`,
+      kind: 'format-profile',
+      target,
+      toolName: 'chat.read_format_profile',
+      featureId: 'chat.format.profile',
+      args: { sessionName: target },
+      title: `读取「${target}」格式画像`,
+    });
+  });
+  if (/(?:读取|查看|核对)\s*APP\s*状态/iu.test(text)) {
+    add({
+      key: 'app-state',
+      kind: 'state',
+      toolName: 'app.get_current_state',
+      featureId: 'app.state.read',
+      args: {},
+      title: '读取 APP 状态',
+    });
+  }
+  const hasTargetedIndex = obligations.some(item => item.kind === 'worldbook');
+  const hasTargetedProfiles = obligations.some(item => item.kind === 'format-profile');
+  return obligations.length >= 4 && (hasTargetedIndex || hasTargetedProfiles)
+    ? obligations
+    : [];
+};
+
+const resolveMaidStructuredWorldbookOutput = (obligation = {}, step = {}) => {
+  const output = isPlainObject(step?.output) ? step.output : {};
+  const toolName = trim(step?.toolName);
+  if (toolName === 'worldbook.read') {
+    const target = output?.name || output?.id || step?.args?.name || step?.args?.worldbookId || step?.args?.id;
+    return normalizeText(target) === normalizeText(obligation.target) ? output : null;
+  }
+  if (
+    toolName !== 'app.read_resource' ||
+    trim(step?.args?.resource || output?.resource).toLowerCase() !== 'worldbook' ||
+    normalizeText(step?.args?.name || step?.args?.worldbookId || step?.args?.id) !== normalizeText(obligation.target)
+  ) return null;
+  return (Array.isArray(output?.worldbooks) ? output.worldbooks : []).find(item => (
+    normalizeText(item?.name || item?.id) === normalizeText(obligation.target) &&
+    Array.isArray(item?.entries)
+  )) || null;
+};
+
+const maidStructuredReadObligationMatchesStep = (obligation = {}, step = {}) => {
+  if (step?.status !== 'succeeded') return false;
+  if (obligation.kind === 'worldbook') {
+    return Boolean(resolveMaidStructuredWorldbookOutput(obligation, step));
+  }
+  if (trim(step?.toolName) !== trim(obligation.toolName)) return false;
+  if (obligation.kind === 'resource') {
+    return trim(step?.output?.resource || step?.args?.resource).toLowerCase() === obligation.resource;
+  }
+  if (obligation.kind === 'format-profile') {
+    return normalizeText(
+      step?.output?.sessionId ||
+      step?.output?.profile?.sessionId ||
+      step?.args?.sessionName ||
+      step?.args?.sessionId ||
+      step?.args?.target,
+    ) === normalizeText(obligation.target);
+  }
+  return true;
+};
+
+const summarizeMaidStructuredRead = (obligation = {}, output = {}, step = {}) => {
+  if (obligation.kind === 'worldbook') {
+    const worldbook = resolveMaidStructuredWorldbookOutput(obligation, {
+      ...step,
+      output,
+    }) || output;
+    const entries = Array.isArray(worldbook?.entries) ? worldbook.entries : [];
+    const titles = entries
+      .map(item => trim(item?.title || item?.comment || item?.name || item?.id))
+      .filter(Boolean);
+    const counts = new Map();
+    titles.forEach(title => counts.set(normalizeText(title), (counts.get(normalizeText(title)) || 0) + 1));
+    const duplicateCount = Array.from(counts.values()).reduce((total, count) => total + Math.max(0, count - 1), 0);
+    const entryCount = Number.isFinite(Number(worldbook?.entryCount)) ? Number(worldbook.entryCount) : entries.length;
+    return `世界书「${obligation.target}」：共 ${entryCount} 条；标题：${titles.join('、') || '未返回'}；重复项 ${duplicateCount}`;
+  }
+  if (obligation.kind === 'session-list') {
+    const contacts = Array.isArray(output?.contacts) ? output.contacts : [];
+    const count = Number.isFinite(Number(output?.count)) ? Number(output.count) : contacts.length;
+    const names = contacts.map(item => trim(item?.name || item?.id)).filter(Boolean).slice(0, 12);
+    const auditItems = trim(obligation.auditPrefix)
+      ? contacts
+          .map(item => trim(item?.name || item?.id))
+          .filter(name => normalizeText(name).startsWith(normalizeText(obligation.auditPrefix)))
+      : [];
+    const auditCounts = new Map();
+    auditItems.forEach(name => auditCounts.set(normalizeText(name), (auditCounts.get(normalizeText(name)) || 0) + 1));
+    const duplicateCount = Array.from(auditCounts.values()).reduce(
+      (total, itemCount) => total + Math.max(0, itemCount - 1),
+      0,
+    );
+    return [
+      `会话清单：共 ${count} 项${names.length ? `；本次返回：${names.join('、')}${contacts.length > names.length ? '…' : ''}` : ''}`,
+      auditItems.length
+        ? `前缀「${obligation.auditPrefix}」：${auditItems.length} 项；重复名称 ${duplicateCount}；${auditItems.join('、')}`
+        : '',
+    ].filter(Boolean).join('\n');
+  }
+  if (obligation.kind === 'resource') {
+    const base = summarizeMaidReadResult(obligation.resource, output);
+    const auditItems = trim(obligation.auditPrefix) && Array.isArray(output?.items)
+      ? output.items.filter(item => (
+          normalizeText(item?.name || item?.id).startsWith(normalizeText(obligation.auditPrefix))
+        ))
+      : [];
+    const auditSummary = auditItems
+      .map(item => `${trim(item?.name || item?.id)}（${item?.active === true ? 'active' : 'inactive'}）`)
+      .join('、');
+    return [base, auditSummary ? `审计项：${auditSummary}` : ''].filter(Boolean).join('\n');
+  }
+  if (obligation.kind === 'format-profile') {
+    const profile = isPlainObject(output?.profile) ? output.profile : output;
+    const guide = trim(profile?.guide, '未设置');
+    const sources = (Array.isArray(profile?.sources) ? profile.sources : [])
+      .map(item => [trim(item?.type), trim(item?.ref)].filter(Boolean).join(':'))
+      .filter(Boolean);
+    return `格式画像「${obligation.target}」：${guide}${sources.length ? `；来源 ${sources.join('、')}` : ''}`;
+  }
+  if (obligation.kind === 'state') return summarizeMaidReadResult('state', output);
+  return '';
+};
+
+const buildMaidStructuredReadProgress = ({
+  input = '',
+  operationIntentPolicy = {},
+  steps = [],
+} = {}) => {
+  const obligations = buildMaidStructuredReadObligations({ input, operationIntentPolicy });
+  if (!obligations.length) return null;
+  const sourceSteps = Array.isArray(steps) ? steps : [];
+  if (sourceSteps.some(step => (
+    step?.status !== 'succeeded' ||
+    !obligations.some(obligation => maidStructuredReadObligationMatchesStep(obligation, step))
+  ))) return null;
+  const completed = obligations.map((obligation) => {
+    const step = sourceSteps.find(candidate => maidStructuredReadObligationMatchesStep(obligation, candidate)) || null;
+    return { obligation, step };
+  });
+  const pending = completed.find(item => !item.step)?.obligation || null;
+  if (pending) {
+    return {
+      complete: false,
+      nextPlan: {
+        ok: true,
+        action: 'tool',
+        toolName: pending.toolName,
+        args: clone(pending.args),
+        featureId: pending.featureId,
+        title: pending.title,
+        response: pending.title,
+        metadata: {
+          workflowTransition: 'structured_read_remaining_target',
+          obligationKey: pending.key,
+        },
+      },
+    };
+  }
+  const lines = completed
+    .map(({ obligation, step }) => summarizeMaidStructuredRead(obligation, step?.output || {}, step))
+    .filter(Boolean);
+  if (lines.length !== obligations.length) return null;
+  return {
+    complete: true,
+    finalDecision: {
+      ok: true,
+      action: 'final',
+      source: 'deterministic_structured_read_completion',
+      message: lines.join('\n'),
+    },
+  };
 };
 
 const buildDeterministicMaidReadDecision = ({
@@ -753,6 +1193,7 @@ const buildAutoVerificationPlan = (plan = {}, output = {}) => {
   const toolName = trim(plan?.toolName);
   const result = unwrapToolOutputResult(output);
   if (!isPlainObject(result) || result.ok === false) return null;
+  if (result.reusedVerifiedAction === true) return null;
   if (toolName === 'worldbook.create' || toolName === 'worldbook.update_entries' || toolName === 'worldbook.delete_entries') {
     const worldbookName = trim(result.worldbookId || plan?.args?.worldbookId || plan?.args?.name || plan?.args?.id);
     if (!worldbookName) return null;
@@ -841,6 +1282,184 @@ const shouldStopDuplicateWorldbookWriteAfterVerification = (decision = {}, steps
   return false;
 };
 
+const getSessionCreateTargets = (args = {}) => (
+  Array.from(new Set([
+    ...(Array.isArray(args?.names) ? args.names : [args?.names])
+      .map(value => trim(value))
+      .filter(Boolean),
+    trim(args?.name),
+  ].filter(Boolean))).sort((left, right) => left.localeCompare(right))
+);
+
+const hasSameSessionCreateTargets = (left = [], right = []) => (
+  left.length === right.length && left.every((value, index) => value === right[index])
+);
+
+const findVerifiedIdempotentSessionCreate = (plan = {}, steps = []) => {
+  if (trim(plan?.toolName) !== 'session.create') return null;
+  const targets = getSessionCreateTargets(plan?.args);
+  if (!targets.length) return null;
+  const source = Array.isArray(steps) ? steps : [];
+  for (let index = source.length - 1; index >= 0; index -= 1) {
+    const step = source[index];
+    if (step?.status !== 'succeeded' || trim(step?.toolName) !== 'session.create') continue;
+    if (!hasSameSessionCreateTargets(getSessionCreateTargets(step?.args), targets)) continue;
+    const returnedIds = new Set([
+      ...(Array.isArray(step?.output?.sessionIds) ? step.output.sessionIds : [step?.output?.sessionIds])
+        .map(value => trim(value))
+        .filter(Boolean),
+      ...(Array.isArray(step?.output?.sessions) ? step.output.sessions : [])
+        .map(item => trim(item?.sessionId || item?.id || item?.name))
+        .filter(Boolean),
+    ]);
+    if (!targets.every(target => returnedIds.has(target))) continue;
+    const verification = source.slice(index + 1).find(candidate => (
+      candidate?.status === 'succeeded' &&
+      trim(candidate?.toolName) === 'session.list' &&
+      trim(candidate?.metadata?.verificationFor) === 'session.create' &&
+      targets.every(target => (
+        (Array.isArray(candidate?.output?.contacts) ? candidate.output.contacts : [])
+          .some(contact => [contact?.id, contact?.name].map(value => trim(value)).includes(target))
+      ))
+    ));
+    if (verification) {
+      return {
+        targets,
+        createStep: step,
+        verificationStep: verification,
+      };
+    }
+  }
+  return null;
+};
+
+const buildReusedSessionCreateExecution = (match = {}) => ({
+  output: {
+    toolName: 'session.create',
+    status: 'succeeded',
+    result: {
+      ok: true,
+      created: false,
+      createdCount: Number(match?.createStep?.output?.createdCount || 0) || 0,
+      sessionIds: clone(match?.targets || []),
+      reusedVerifiedAction: true,
+      localToolExecutionSkipped: true,
+      reason: 'duplicate_idempotent_action_skipped',
+      message: '同一组聊天室已在本轮完成幂等创建并通过 session.list 验证；本次重复调用未执行，请继续下一个未完成目标。',
+    },
+    summary: 'session.create already completed and verified; duplicate execution skipped',
+  },
+  guided: false,
+  guide: null,
+  message: '',
+});
+
+const getWorldbookBatchBindingKey = (args = {}) => stableJsonStringify({
+  worldbookId: trim(args?.worldbookId || args?.name || args?.id),
+  sessions: (Array.isArray(args?.sessions) ? args.sessions : [])
+    .map(value => trim(value))
+    .filter(Boolean),
+  mode: trim(args?.mode, 'append') === 'replace' ? 'replace' : 'append',
+});
+
+const hasExplicitWorldbookPreviewApplyRequest = (input = '') => {
+  const text = stripNegatedMaidActionClauses(String(input ?? '').normalize('NFKC'));
+  return /(?:preview|预览)/iu.test(text) && (
+    /(?:实际|正式)(?:执行|应用)/iu.test(text) ||
+    /预览[^。；;！？!?\n]{0,80}(?:再|然后|随后)[^。；;！？!?\n]{0,40}(?:执行|应用|绑定)/iu.test(text)
+  );
+};
+
+const advanceRepeatedWorldbookPreviewToApply = ({
+  input = '',
+  plan = {},
+  steps = [],
+  operationIntentPolicy = {},
+} = {}) => {
+  if (
+    trim(plan?.toolName) !== 'worldbook.bind_sessions' ||
+    plan?.args?.preview !== true ||
+    operationIntentPolicy?.mode !== 'write_allowed' ||
+    !hasExplicitWorldbookPreviewApplyRequest(input)
+  ) return plan;
+  const key = getWorldbookBatchBindingKey(plan.args);
+  const previewStep = (Array.isArray(steps) ? steps : []).findLast(step => (
+    step?.status === 'succeeded' &&
+    trim(step?.toolName) === 'worldbook.bind_sessions' &&
+    step?.args?.preview === true &&
+    getWorldbookBatchBindingKey(step.args) === key &&
+    step?.output?.preview === true &&
+    Number(step?.output?.failedCount || 0) === 0 &&
+    Number(step?.output?.plannedCount || 0) > 0
+  ));
+  if (!previewStep) return plan;
+  return {
+    ...plan,
+    args: {
+      ...(isPlainObject(plan.args) ? plan.args : {}),
+      preview: false,
+    },
+    metadata: {
+      ...(isPlainObject(plan.metadata) ? plan.metadata : {}),
+      workflowTransition: 'preview_to_apply',
+      previewStepIndex: Number(previewStep.index || 0) || undefined,
+    },
+    title: trim(plan.title, '执行批量绑定'),
+    response: trim(plan.response, '预览已确认可处理，继续实际执行绑定。'),
+  };
+};
+
+const buildPendingWorldbookPreviewApplyPlan = ({
+  input = '',
+  steps = [],
+  decision = {},
+  operationIntentPolicy = {},
+} = {}) => {
+  if (
+    operationIntentPolicy?.mode !== 'write_allowed' ||
+    !hasExplicitWorldbookPreviewApplyRequest(input)
+  ) return null;
+  const source = Array.isArray(steps) ? steps : [];
+  const previewStep = source.findLast(step => (
+    step?.status === 'succeeded' &&
+    trim(step?.toolName) === 'worldbook.bind_sessions' &&
+    step?.args?.preview === true &&
+    step?.output?.preview === true &&
+    Number(step?.output?.failedCount || 0) === 0 &&
+    Number(step?.output?.plannedCount || 0) > 0
+  ));
+  if (!previewStep) return null;
+  const key = getWorldbookBatchBindingKey(previewStep.args);
+  const alreadyApplied = source.some(step => (
+    step?.status === 'succeeded' &&
+    trim(step?.toolName) === 'worldbook.bind_sessions' &&
+    step?.args?.preview !== true &&
+    getWorldbookBatchBindingKey(step.args) === key &&
+    step?.output?.preview !== true &&
+    Number(step?.output?.failedCount || 0) === 0
+  ));
+  if (alreadyApplied) return null;
+  return {
+    ok: true,
+    action: 'tool',
+    toolName: 'worldbook.bind_sessions',
+    args: {
+      ...(isPlainObject(previewStep.args) ? clone(previewStep.args) : {}),
+      preview: false,
+    },
+    featureId: 'worldbook.bind_sessions',
+    title: '执行已通过预览的批量绑定',
+    response: '预览全部可处理，继续实际执行绑定。',
+    metadata: {
+      workflowTransition: 'preview_to_apply',
+      previewStepIndex: Number(previewStep.index || 0) || undefined,
+    },
+    candidateSnapshotId: trim(decision?.candidateSnapshotId),
+    retrieverVersion: trim(decision?.retrieverVersion),
+    capabilityRoutingMode: trim(decision?.capabilityRoutingMode),
+  };
+};
+
 const buildReactStepSnapshot = ({
   index = 0,
   plan = {},
@@ -868,6 +1487,79 @@ const buildReactStepSnapshot = ({
     result: unwrapToolOutputResult(output),
   }),
 });
+
+const getObservationCharacterCount = (value) => {
+  if (typeof value === 'string') return value.length;
+  try {
+    return JSON.stringify(value)?.length || 0;
+  } catch {
+    return 0;
+  }
+};
+
+const getDataUrlMediaType = (value = '') => {
+  const match = String(value || '').match(/^data:([^;,]+)[;,]/iu);
+  return trim(match?.[1], 'application/octet-stream');
+};
+
+const projectFullPersonaObservationForModel = (output = {}) => {
+  const omittedFields = [];
+  const projectedItems = (Array.isArray(output?.items) ? output.items : []).map((item, index) => {
+    if (!isPlainObject(item)) return clone(item);
+    const projected = {};
+    // 结构化身份与绑定事实放在正文前，避免尾部截断时再次丢失 worldbookId 等关键引用。
+    ['id', 'name', 'active', 'source'].forEach((key) => {
+      if (Object.hasOwn(item, key)) projected[key] = clone(item[key]);
+    });
+    Object.entries(item).forEach(([key, value]) => {
+      if (Object.hasOwn(projected, key)) return;
+      if (key === 'avatar' && /^data:/iu.test(trim(value))) {
+        omittedFields.push({
+          path: `items[${index}].avatar`,
+          kind: 'inline_binary',
+          mediaType: getDataUrlMediaType(value),
+          characterCount: getObservationCharacterCount(value),
+        });
+        return;
+      }
+      if (key === 'originalCard' && value !== null && value !== undefined) {
+        omittedFields.push({
+          path: `items[${index}].originalCard`,
+          kind: 'embedded_resource',
+          characterCount: getObservationCharacterCount(value),
+        });
+        return;
+      }
+      projected[key] = clone(value);
+    });
+    return projected;
+  });
+  const projected = {
+    ...clone(output),
+    items: projectedItems,
+  };
+  if (omittedFields.length) {
+    projected.observationProjection = {
+      kind: 'maid_model',
+      omittedFields,
+    };
+  }
+  return projected;
+};
+
+const projectMaidReactStepsForModel = (steps = []) => (
+  (Array.isArray(steps) ? steps : []).map((step) => {
+    const projected = clone(step);
+    if (
+      trim(projected?.toolName) === 'app.read_resource' &&
+      trim(projected?.output?.resource).toLowerCase() === 'persona' &&
+      trim(projected?.output?.projection).toLowerCase() === 'full'
+    ) {
+      projected.output = projectFullPersonaObservationForModel(projected.output);
+    }
+    return projected;
+  })
+);
 
 const buildSuccessMessage = ({ plan = {}, output = {}, execution = {} } = {}) => {
   const guideMessage = trim(execution?.message);
@@ -1308,6 +2000,7 @@ export const createMaidAssistantAgent = ({
   reactPlanner = null,
   chatResponder = null,
   guidedActionRuntime = null,
+  prepareConversationContext = null,
   maxReactSteps = 40,
   repeatedFailureLimit = 3,
   logger = console,
@@ -1512,6 +2205,45 @@ export const createMaidAssistantAgent = ({
       }
       return decision;
     };
+    const authorizeDeterministicWorkflowPlan = (workflowPlan = {}, steps = []) => {
+      if (
+        !workflowPlan?.ok ||
+        !capabilityRoutingRuntime
+      ) return workflowPlan;
+      try {
+        if (typeof capabilityRoutingRuntime.authorizeWorkflowPlan === 'function') {
+          return capabilityRoutingRuntime.authorizeWorkflowPlan({
+            requestId: trim(context?.capabilityRequestId),
+            parentPlan: (Array.isArray(steps) ? steps.at(-1) : null) || {},
+            workflowPlan,
+            context,
+          }) || workflowPlan;
+        }
+        if (
+          typeof capabilityRoutingRuntime.prepareDecision !== 'function' ||
+          typeof capabilityRoutingRuntime.observeDecision !== 'function'
+        ) return workflowPlan;
+        const snapshot = capabilityRoutingRuntime.prepareDecision({
+          requestId: trim(context?.capabilityRequestId),
+          input,
+          context: {
+            ...context,
+            maidReactSteps: projectMaidReactStepsForModel(steps),
+          },
+          steps: projectMaidReactStepsForModel(steps),
+          phase: 'deterministic_workflow',
+        });
+        return snapshot
+          ? capabilityRoutingRuntime.observeDecision(snapshot, workflowPlan, {
+              countForRecall: false,
+              metricEligible: false,
+            })
+          : workflowPlan;
+      } catch (error) {
+        logger?.debug?.('maid deterministic workflow capability snapshot skipped', error);
+        return workflowPlan;
+      }
+    };
 
     let plan = await callRoutedPlanner({ plannerFn: planner, phase: 'planner', label: 'maid_planner' });
     if (!plan?.ok) {
@@ -1636,6 +2368,7 @@ export const createMaidAssistantAgent = ({
     let lastOk = false;
     const steps = [];
     const stepBudget = resolveReactStepBudget({
+      input,
       plan,
       context,
       configuredMaxReactSteps: maxReactSteps,
@@ -1650,6 +2383,12 @@ export const createMaidAssistantAgent = ({
       };
       for (let stepIndex = 0; stepIndex < maxSteps; stepIndex += 1) {
         loopProbe(`step-${stepIndex}:start`);
+        currentPlan = advanceRepeatedWorldbookPreviewToApply({
+          input,
+          plan: currentPlan,
+          steps,
+          operationIntentPolicy: context.operationIntentPolicy,
+        });
         if (trim(currentPlan.response) && typeof context?.onStatus === 'function') {
           context.onStatus({
             stage: stepIndex === 0 ? 'planned' : 'react_planned',
@@ -1660,7 +2399,10 @@ export const createMaidAssistantAgent = ({
         }
 
         let execution = null;
-        if (isRepeatedSuccessfulTodoWrite(currentPlan, steps)) {
+        const reusableSessionCreate = findVerifiedIdempotentSessionCreate(currentPlan, steps);
+        if (reusableSessionCreate) {
+          execution = buildReusedSessionCreateExecution(reusableSessionCreate);
+        } else if (isRepeatedSuccessfulTodoWrite(currentPlan, steps)) {
           execution = buildUnchangedTodoExecution();
         } else {
           try {
@@ -1756,6 +2498,37 @@ export const createMaidAssistantAgent = ({
         lastExecution = observedExecution;
         lastOutput = observedOutput;
         lastOk = ok;
+
+        const structuredReadProgress = ok
+          ? buildMaidStructuredReadProgress({
+              input,
+              operationIntentPolicy: context.operationIntentPolicy,
+              steps,
+            })
+          : null;
+        if (structuredReadProgress?.complete && structuredReadProgress.finalDecision) {
+          return {
+            ok: true,
+            status: 'succeeded',
+            responseType: 'react',
+            input: trim(input),
+            plan: clone(plan),
+            finalDecision: clone(structuredReadProgress.finalDecision),
+            output: clone(observedOutput),
+            steps: clone(steps),
+            guided: Boolean(observedExecution?.guided),
+            guide: clone(observedExecution?.guide || null),
+            reason: '',
+            message: structuredReadProgress.finalDecision.message,
+          };
+        }
+        if (structuredReadProgress?.nextPlan) {
+          currentPlan = applyMaidPresentationPolicy(
+            authorizeDeterministicWorkflowPlan(structuredReadProgress.nextPlan, steps),
+            context.presentationIntent,
+          );
+          continue;
+        }
 
         const deterministicReadDecision = ok
           ? buildDeterministicMaidReadDecision({
@@ -1888,14 +2661,15 @@ export const createMaidAssistantAgent = ({
         }
 
         loopProbe(`step-${stepIndex}:react-call`);
+        const modelReactSteps = projectMaidReactStepsForModel(steps);
         const decision = await callRoutedPlanner({
           plannerFn: reactPlanner,
           phase: 'react',
           label: 'maid_react',
           extraContext: {
-            maidReactSteps: clone(steps),
+            maidReactSteps: modelReactSteps,
             lastPlan: clone(observedPlan),
-            lastOutput: clone(observedOutput),
+            lastOutput: clone(modelReactSteps.at(-1)?.output ?? observedOutput),
             lastToolOk: ok,
           },
         });
@@ -1946,6 +2720,21 @@ export const createMaidAssistantAgent = ({
           };
         }
         if (decision.action === 'final') {
+          const pendingWorkflowPlan = buildPendingWorldbookPreviewApplyPlan({
+            input,
+            steps,
+            decision,
+            operationIntentPolicy: context.operationIntentPolicy,
+          }) ||
+            buildPendingExplicitMaidChatPlan({ input, steps, decision }) ||
+            buildPendingMaidFinalStatePlan({ input, steps, decision });
+          if (pendingWorkflowPlan) {
+            currentPlan = applyMaidPresentationPolicy(
+              authorizeDeterministicWorkflowPlan(pendingWorkflowPlan, steps),
+              context.presentationIntent,
+            );
+            continue;
+          }
           return {
             ok,
             status: ok ? 'succeeded' : 'failed',
@@ -2074,10 +2863,32 @@ export const createMaidAssistantAgent = ({
   };
 
   const runPrompt = async (input = '', context = {}) => {
+    const maidConversationContextRef = isPlainObject(context?.maidConversationContextRef)
+      ? context.maidConversationContextRef
+      : { current: null };
+    const requestContext = {
+      ...(isPlainObject(context) ? context : {}),
+      maidConversationContextRef,
+    };
+    if (
+      !isPlainObject(maidConversationContextRef.current) &&
+      typeof prepareConversationContext === 'function'
+    ) {
+      try {
+        const prepared = await prepareConversationContext({
+          input,
+          context: requestContext,
+          taskType: 'maid_assistant',
+        });
+        if (isPlainObject(prepared)) maidConversationContextRef.current = prepared;
+      } catch (error) {
+        logger?.debug?.('maid conversation context preparation skipped', error);
+      }
+    }
     let capabilityRequest = null;
     if (capabilityRoutingRuntime && typeof capabilityRoutingRuntime.beginRequest === 'function') {
       try {
-        capabilityRequest = capabilityRoutingRuntime.beginRequest({ input, context });
+        capabilityRequest = capabilityRoutingRuntime.beginRequest({ input, context: requestContext });
       } catch (error) {
         logger?.debug?.('maid capability request start skipped', error);
       }
@@ -2085,7 +2896,7 @@ export const createMaidAssistantAgent = ({
     // Phase B 计量：run 级 usage 收集器，经 context 穿透到 planner 的 chatWithFallback（按引用累加）。
     const modelUsageEntries = [];
     const routedContext = {
-      ...(isPlainObject(context) ? context : {}),
+      ...requestContext,
       ...(capabilityRequest?.id ? { capabilityRequestId: capabilityRequest.id } : {}),
       onModelUsage: (usage) => { if (usage && typeof usage === 'object') modelUsageEntries.push(usage); },
     };

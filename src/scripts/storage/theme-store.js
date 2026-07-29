@@ -148,6 +148,7 @@ const DEFAULT_TOKENS = Object.freeze({
     successText: '#15803d',
     info: '#2563eb',
     infoText: '#1d4ed8',
+    task: '#7c3aed',
   },
   border: {
     subtle: 'rgba(15, 23, 42, 0.08)',
@@ -246,6 +247,7 @@ const BUILTIN_THEMES = Object.freeze([
         successText: '#7ee787',
         info: '#3b82f6',
         infoText: '#8ecbff',
+        task: '#a78bfa',
       },
       border: {
         subtle: 'rgba(240, 246, 252, 0.08)',

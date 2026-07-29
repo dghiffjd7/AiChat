@@ -378,6 +378,305 @@ addBatch('fix-regression', [
   ['format-repair-cancel', '检查并修复「格式修复测试」最近一条 AI 回复格式；允许生成补丁预览，但在写回前取消。', ['chat.format.repair'], ['chat.repair_message_format'], { autoDeny: true, expectedDisposition: 'diff_cancelled_no_write', maxMs: 420000 }],
 ]);
 
+const addComplexWorkflowBatch = (batch, label) => {
+  const worldbook = `${label}·资料`;
+  const roomLan = `${label}·岚`;
+  const roomXian = `${label}·弦`;
+  const missingRoom = `${label}·不存在`;
+  addBatch(batch, [
+    [
+      'complex-association-audit',
+      '保持后台，不打开任何页面。分别读取角色卡「海贼王」「清月师尊」「女仆能力测试」的 associations；只对实际返回了 worldbookId 的项目继续读取对应世界书条目索引。最后按角色卡列出 worldbookId、enabled、条目总数和前三个标题。禁止读取头像、originalCard 或完整档案，也不要修改绑定。',
+      ['app.resource.read', 'worldbook.read'],
+      ['app.read_resource', 'worldbook.read'],
+      { expectedDisposition: 'bounded_association_followup_read', maxMs: 480000 },
+    ],
+    [
+      'complex-worldbook-seed',
+      `建立测试世界书「${worldbook}」。先读取确认现状；只补齐缺少的三个短条目且绝不 replace 或制造同名重复：①「调查员岚」正文“岚是负责追查失踪船队的调查员。”；②「机械师弦」正文“弦负责维修灯塔与港口机械。”；③「灰港」正文“灰港是终年被雾覆盖的港口城市。”。完成后读回索引，确认三个标题各恰好一条。`,
+      ['worldbook.read', 'worldbook.create'],
+      ['worldbook.read', 'worldbook.create'],
+      { expectedDisposition: 'idempotent_seed_and_verify', maxMs: 480000 },
+    ],
+    [
+      'complex-subagent-enrich',
+      `先读取「${worldbook}」，若还没有「共同事件」，让擅长世界观设定的 Sub-agent 根据大纲追加约 180 字正文：岚与弦在蓝色灯塔停摆之夜共同救出一艘迷航船；只描述事件经过，不新增人物。若已有同名条目则跳过生成。最后读回该条目确认写入且没有重复。`,
+      ['worldbook.read', 'worldbook.create'],
+      ['worldbook.read', 'worldbook.generate_entries'],
+      { allowSubAgent: true, expectedDisposition: 'delegate_if_missing_and_verify', maxMs: 540000 },
+    ],
+    [
+      'complex-infer-and-create',
+      `读取「${worldbook}」后自行区分人物、地点与事件，只为其中两个主要人物建立聊天室「${roomLan}」「${roomXian}」。先查会话列表，再用一次批量创建补齐缺少项，open:false，不得给灰港或共同事件建房；最后核对两个名称各只出现一次，并确认当前会话仍是「格式修复测试」。`,
+      ['worldbook.read', 'session.list', 'session.create', 'app.state.read'],
+      ['worldbook.read', 'session.list', 'session.create', 'app.get_current_state'],
+      { expectedDisposition: 'infer_people_batch_create_background_verify', maxMs: 540000 },
+    ],
+    [
+      'complex-batch-bind',
+      `把世界书「${worldbook}」追加绑定到「${roomLan}」「${roomXian}」。必须先调用 worldbook.bind_sessions 且 preview:true；仅当预览两项都可处理时，再以同一 sessions[]、mode:append 实际执行一次。整批只确认一次，不准退化成逐房 bind/list，也不要打开聊天室；逐项汇报 planned/succeeded/skipped/failed 与 verified。`,
+      ['worldbook.bind_sessions'],
+      ['worldbook.bind_sessions'],
+      { expectedDisposition: 'preview_then_single_batch_bind', maxMs: 540000 },
+    ],
+    [
+      'complex-cross-session-write',
+      `保持当前房间不变：向「${roomLan}」后台写入用户消息“${label}-LAN-CHECK”，向「${roomXian}」后台写入“${label}-XIAN-CHECK”；两次都必须 triggerReply:false、open:false。然后分别从结构化 chat 资源读回各房最后一条消息，核对角色与全文；最后读取 APP 状态证明没有跳房。`,
+      ['chat.send_message', 'app.resource.read', 'app.state.read'],
+      ['chat.send_message', 'app.read_resource', 'app.get_current_state'],
+      { expectedDisposition: 'two_background_writes_and_readback', maxMs: 540000 },
+    ],
+    [
+      'complex-format-profiles',
+      `为两个测试房保存不同格式画像并逐一读回：「${roomLan}」要求每次回复用 <lan>...</lan> 包裹；「${roomXian}」要求用 <xian>...</xian> 包裹。sources 都标记 type=test、ref=${label}。本任务只保存/读取画像，不要调用格式修复，也不要打开房间。`,
+      ['chat.format.profile'],
+      ['chat.save_format_profile', 'chat.read_format_profile'],
+      { expectedDisposition: 'two_distinct_profiles_save_and_verify', maxMs: 480000 },
+    ],
+    [
+      'complex-targeted-update',
+      `先完整核对「${worldbook}」的四个测试条目；然后只修改「灰港」正文为“灰港是终年被雾覆盖的港口城市；蓝色警报响起时居民沿北堤撤离。”，不得改标题或其他条目。允许一次修改后读回「灰港」全文，并确认另外三个标题仍存在。`,
+      ['worldbook.read', 'worldbook.update_entries'],
+      ['worldbook.read', 'worldbook.update_entries'],
+      { expectedDisposition: 'single_entry_update_preserve_others', maxMs: 540000 },
+    ],
+    [
+      'complex-reveal-primary',
+      `若「${worldbook}」还没有「联络暗号」，追加短条目，正文仅为“蓝灯三闪，白灯一长。”；已有则不重复。写入并验证后，按我的明确要求打开世界书管理界面给我看，但只展示这一个主要结果，不要打开「${roomLan}」或「${roomXian}」。`,
+      ['worldbook.create', 'worldbook.open'],
+      ['worldbook.create', 'app.open_panel'],
+      { followGuide: true, expectedDisposition: 'write_then_reveal_one_primary_surface', maxMs: 540000 },
+    ],
+    [
+      'complex-partial-batch',
+      `用一次 worldbook.bind_sessions、mode:append，把「${worldbook}」处理到 sessions=["${roomLan}","${missingRoom}","${roomLan}"]。不要创建缺失房间，也不要改用单房工具。允许一次后，准确区分 already_bound、session_not_found、duplicate_target，并把仅失败目标的 retry args 与可用补偿范围照实汇报；部分失败不能说成全成功。`,
+      ['worldbook.bind_sessions'],
+      ['worldbook.bind_sessions'],
+      { expectedDisposition: 'partial_failure_retry_and_compensation_report', maxMs: 540000 },
+    ],
+    [
+      'complex-idempotency',
+      `重复执行幂等核对：用一次 session.create(names[]) 请求「${roomLan}」「${roomXian}」，不得新增重名房；再用一次 worldbook.bind_sessions 把「${worldbook}」append 到两房。最后只根据工具结果说明 createdCount、already_bound/skipped 与 verified，不要逐房重复绑定或打开页面。`,
+      ['session.create', 'worldbook.bind_sessions'],
+      ['session.create', 'worldbook.bind_sessions'],
+      { expectedDisposition: 'batch_idempotency_no_duplicate', maxMs: 480000 },
+    ],
+    [
+      'complex-profile-isolation',
+      `建立测试用户「${label}·用户」和测试角色卡「${label}·角色」，两者若已有就复用；setActive 必须为 false。创建前后都读取用户与角色卡清单，确认各自只出现一次，而且当前用户、当前角色卡没有变化。不要设置头像或关联正式世界书。`,
+      ['app.resource.read', 'user.create', 'persona.create'],
+      ['app.read_resource', 'user.create', 'persona.create'],
+      { expectedDisposition: 'create_two_resource_types_without_switch', maxMs: 540000 },
+    ],
+    [
+      'complex-web-grounded-write',
+      `联网查找 Microsoft 官方对 WebView2 remote debugging port 的说明，取得至少两个真实 Microsoft 来源 URL。然后只在测试世界书「${worldbook}」中追加一个尚不存在的条目「远程调试参考」，正文用两句话概括并列出这两个 URL；不得写入其他世界书。写后读回该条目核对来源。如果搜索结果不足两条官方来源，就停止写入并如实说明。`,
+      ['web.search', 'worldbook.create', 'worldbook.read'],
+      ['worldbook.create', 'worldbook.read'],
+      { expectedAnyTools: ['web.search', 'web.research'], expectedDisposition: 'external_research_then_scoped_write', maxMs: 600000 },
+    ],
+    [
+      'complex-group-gap',
+      `我想把「${roomLan}」「${roomXian}」组成一个群聊「${label}·调查组」，并把两人设为成员。执行前先查能力目录；如果目前没有“创建群组并编辑成员”的正式工具，就停下并明确指出缺少哪些能力，绝对不能用创建第三个单人聊天室来冒充，也不要靠 UI 坐标操作。`,
+      ['app.capabilities.search'],
+      [],
+      { expectedAnyTools: ['app.search_feature', 'app.read_feature_doc'], expectedDisposition: 'capability_gap_no_approximate_write', maxMs: 420000 },
+    ],
+    [
+      'complex-preset-gap',
+      `读取当前会话使用的系统提示词预设名称，然后计划复制成「${label}·预设副本」并只追加一条测试说明。先查能力目录；如果没有预设复制/创建/编辑的正式写工具，就停止，不得改原预设、不得只打开面板后宣称完成，也不要用世界书代替。`,
+      ['app.resource.read', 'app.capabilities.search'],
+      ['app.read_resource'],
+      { expectedAnyTools: ['app.search_feature', 'app.read_feature_doc'], expectedDisposition: 'preset_crud_gap_no_false_completion', maxMs: 480000 },
+    ],
+    [
+      'complex-final-audit',
+      `对「${label}」测试资源做最终只读审计：读取世界书「${worldbook}」的标题清单；列出两个测试聊天室并核对无重名；读取两房格式画像；读取当前 APP 状态。汇报已存在、缺失、重复和当前会话是否仍为「格式修复测试」。禁止补建、补绑、补写或打开任何页面。`,
+      ['worldbook.read', 'session.list', 'chat.format.profile', 'app.state.read'],
+      ['worldbook.read', 'session.list', 'chat.read_format_profile', 'app.get_current_state'],
+      { expectedDisposition: 'read_only_end_to_end_integrity_audit', maxMs: 540000 },
+    ],
+  ]);
+};
+
+addComplexWorkflowBatch('complex-v4f-0729', '复杂压力V4F-0729');
+addComplexWorkflowBatch('complex-g35-0729', '复杂压力G35-0729');
+
+addBatch('regression-read-ledger-v4f-0729', [
+  [
+    'complex-association-audit',
+    '保持后台，不打开任何页面。分别读取角色卡「海贼王」「清月师尊」「女仆能力测试」的 associations；只对实际返回了 worldbookId 的项目继续读取对应世界书条目索引。最后按角色卡列出 worldbookId、enabled、条目总数和前三个标题。禁止读取头像、originalCard 或完整档案，也不要修改绑定。',
+    ['app.resource.read', 'worldbook.read'],
+    ['app.read_resource', 'worldbook.read'],
+    { expectedDisposition: 'bounded_association_followup_read', maxMs: 480000 },
+  ],
+]);
+
+addBatch('regression-read-ledger-g35-0729', [
+  [
+    'complex-association-audit',
+    '保持后台，不打开任何页面。分别读取角色卡「海贼王」「清月师尊」「女仆能力测试」的 associations；只对实际返回了 worldbookId 的项目继续读取对应世界书条目索引。最后按角色卡列出 worldbookId、enabled、条目总数和前三个标题。禁止读取头像、originalCard 或完整档案，也不要修改绑定。',
+    ['app.resource.read', 'worldbook.read'],
+    ['app.read_resource', 'worldbook.read'],
+    { expectedDisposition: 'bounded_association_followup_read', maxMs: 480000 },
+  ],
+]);
+
+addBatch('regression-routing-v4f-0729', [
+  [
+    'complex-idempotency',
+    '重复执行幂等核对：用一次 session.create(names[]) 请求「复杂压力V4F-0729·岚」「复杂压力V4F-0729·弦」，不得新增重名房；再用一次 worldbook.bind_sessions 把「复杂压力V4F-0729·资料」append 到两房。最后只根据工具结果说明 createdCount、already_bound/skipped 与 verified，不要逐房重复绑定或打开页面。',
+    ['session.create', 'worldbook.bind_sessions'],
+    ['session.create', 'worldbook.bind_sessions'],
+    { expectedDisposition: 'batch_idempotency_no_duplicate', maxMs: 480000 },
+  ],
+]);
+
+const addDiverseWorkflowBatch = (batch, label) => {
+  const worldbook = `${label}·档案库`;
+  const roomA = `${label}·观测站`;
+  const roomB = `${label}·档案室`;
+  const roomC = `${label}·检查站`;
+  const recoveryRoom = `${label}·中继站`;
+  const userName = `${label}·测试用户`;
+  const personaName = `${label}·测试角色`;
+  addBatch(batch, [
+    [
+      'diverse-cross-domain-baseline',
+      '保持后台完成一份跨资源基线，不要建立待办：依次读取当前 APP 状态、完整会话清单、用户身份清单、角色卡清单和世界书库清单。只汇报当前会话、当前用户、当前角色卡、各资源总数，以及名称以「扩面压力」开头的既有项目；不得打开页面、切换身份或写入任何内容。',
+      ['app.state.read', 'session.list', 'app.resource.read', 'worldbook.list'],
+      ['app.get_current_state', 'session.list', 'app.read_resource', 'worldbook.list'],
+      { expectedDisposition: 'five_source_background_baseline', maxMs: 540000 },
+    ],
+    [
+      'diverse-identity-bootstrap',
+      `不用建立待办。先分别读取用户和角色卡清单；若不存在「${userName}」才创建该用户，若不存在「${personaName}」才创建该角色卡，两者 setActive 都必须为 false。然后重新读取两份清单并读取 APP 状态，确认测试项各恰好一个，且当前用户、当前角色卡和当前聊天室都没有变化。`,
+      ['app.resource.read', 'user.create', 'persona.create', 'app.state.read'],
+      ['app.read_resource', 'user.create', 'persona.create', 'app.get_current_state'],
+      { expectedDisposition: 'two_identity_types_created_without_activation', maxMs: 600000 },
+    ],
+    [
+      'diverse-room-bootstrap',
+      `先读取会话清单，再只用一次 session.create(names[]) 补齐三个单聊「${roomA}」「${roomB}」「${roomC}」，open:false，不得逐房创建或进入。创建后再次读取会话清单并读取 APP 状态，确认三个名称各恰好一个且当前会话仍是「格式修复测试」。`,
+      ['session.list', 'session.create', 'app.state.read'],
+      ['session.list', 'session.create', 'app.get_current_state'],
+      { expectedDisposition: 'three_room_single_batch_background_create', maxMs: 540000 },
+    ],
+    [
+      'diverse-worldbook-seed-with-duplicates',
+      `先读取世界书「${worldbook}」确认不存在或为空；然后只用一次 worldbook.create、append 模式建立本批测试资料：①「站长」正文“站长负责记录蓝灯信号。”；②「档案员」正文“档案员负责保存巡检记录。”；③「观测站」正文“观测站位于北岸高地。”；④「检查站」正文“检查站负责核对通行证。”；以及两个同名的临时测试条目「临时草稿」，正文分别为“草稿-A”和“草稿-B”。这里的同名项是受控去重测试资料，不得写入其他世界书。最后读回索引，确认永久标题各一条、临时草稿恰好两条。`,
+      ['worldbook.read', 'worldbook.create'],
+      ['worldbook.read', 'worldbook.create'],
+      { expectedDisposition: 'controlled_duplicate_seed_for_delete_test', maxMs: 600000 },
+    ],
+    [
+      'diverse-dedupe-delete-and-batch-update',
+      `只操作测试世界书「${worldbook}」。先读取完整索引；然后用一次 worldbook.delete_entries 对标题「临时草稿」执行 dedupeByTitle:true、keep:first，只删除多余重复项并保留一条。接着用一次 worldbook.update_entries 同批更新「站长」和「档案员」：分别在原正文后追加“状态：在岗。”与“状态：已归档。”，不得创建新标题或改动地点条目。最后读回全文，确认临时草稿剩一条、两个人物正文已更新、总条目数为 5。`,
+      ['worldbook.read', 'worldbook.delete_entries', 'worldbook.update_entries'],
+      ['worldbook.read', 'worldbook.delete_entries', 'worldbook.update_entries'],
+      { expectedDisposition: 'confirmed_dedupe_then_two_entry_update', maxMs: 660000 },
+    ],
+    [
+      'diverse-three-room-bind',
+      `把世界书「${worldbook}」追加绑定到三个测试房「${roomA}」「${roomB}」「${roomC}」。先调用一次 worldbook.bind_sessions 且 preview:true；只有三项预览都可处理时，再以完全相同的 sessions[]、mode:append 实际执行一次。不得退化成单房 bind/list，不要打开任何房间；最后读取 APP 状态，并按房汇报 added/already_bound、verified 与失败原因。`,
+      ['worldbook.bind_sessions', 'app.state.read'],
+      ['worldbook.bind_sessions', 'app.get_current_state'],
+      { expectedDisposition: 'preview_apply_three_room_batch_and_state', maxMs: 600000 },
+    ],
+    [
+      'diverse-cross-room-message-matrix',
+      `保持当前房间不变，向三个测试房后台各写一条用户消息：给「${roomA}」写“${label}-OBS-A”，给「${roomB}」写“${label}-OBS-B”，给「${roomC}」写“${label}-OBS-C”；全部必须 triggerReply:false、open:false。然后分别用结构化 chat 资源读取三房最后一条消息，逐一核对角色与完整正文；最后读取 APP 状态证明仍在「格式修复测试」。`,
+      ['chat.send_message', 'app.resource.read', 'app.state.read'],
+      ['chat.send_message', 'app.read_resource', 'app.get_current_state'],
+      { expectedDisposition: 'three_background_messages_readback_and_state', maxMs: 660000 },
+    ],
+    [
+      'diverse-format-profile-matrix',
+      `为三个测试房分别保存并读回格式画像，不得打开房间或调用格式修复：「${roomA}」用 <station>...</station> 包裹；「${roomB}」用 <archive>...</archive>；「${roomC}」用 <checkpoint>...</checkpoint>。三份 sources 都写 type=test、ref=${label}。逐房确认 guide 与 sources 没有串线。`,
+      ['chat.format.profile'],
+      ['chat.save_format_profile', 'chat.read_format_profile'],
+      { expectedDisposition: 'three_distinct_profiles_save_and_readback', maxMs: 600000 },
+    ],
+    [
+      'diverse-partial-failure-recovery',
+      `执行一次可恢复的批量绑定演练：先用 worldbook.bind_sessions、mode:append 处理 sessions=["${roomA}","${recoveryRoom}","${roomA}"] 与世界书「${worldbook}」，不得预先创建缺失房，也不得改用单房工具。根据结果准确识别 already_bound、session_not_found 和 duplicate_target；随后只用一次 session.create(names[])、open:false 创建 retry args 中确实缺失的「${recoveryRoom}」，再只对该失败目标调用一次 worldbook.bind_sessions 重试。最后读取会话清单与 APP 状态，确认恢复项 verified、无重名且没有跳房。`,
+      ['worldbook.bind_sessions', 'session.create', 'session.list', 'app.state.read'],
+      ['worldbook.bind_sessions', 'session.create', 'session.list', 'app.get_current_state'],
+      { expectedDisposition: 'partial_failure_exact_retry_and_recovery', maxMs: 720000 },
+    ],
+    [
+      'diverse-remote-media-reuse',
+      `为测试资源执行一次真实图片资产链：先用 web.search_images 搜索“foggy lighthouse blue light photo”，只选结果中的第一张有效 imageUrl；再用 media.fetch_image 下载并取得真实 attachmentId。用同一个 attachmentId 给「${roomA}」设置联系人头像，并给「${roomB}」设置聊天室壁纸（opacity:0.35）。不得把图设到当前正式聊天室、用户或角色卡，也不得编造 URL/attachmentId；若搜索或下载失败就停止后续写入并如实报告。`,
+      ['web.search', 'contact.avatar.set', 'session.wallpaper.set'],
+      ['web.search_images', 'media.fetch_image', 'contact.set_avatar', 'session.set_wallpaper'],
+      { expectedDisposition: 'one_remote_image_reused_for_two_test_assets', maxMs: 720000 },
+    ],
+    [
+      'diverse-final-integrity-audit',
+      `对「${label}」资源做最终只读审计，不得补写或打开页面：读取「${worldbook}」全文索引；读取完整会话清单；读取测试用户与测试角色卡清单；分别读取「${roomA}」「${roomB}」「${roomC}」的格式画像；再读取 APP 状态。汇报世界书 5 条标题与重复数、四个测试房是否唯一、测试身份是否 inactive、三份格式规则是否对应，以及当前会话是否仍为「格式修复测试」。`,
+      ['worldbook.read', 'session.list', 'app.resource.read', 'chat.format.profile', 'app.state.read'],
+      ['worldbook.read', 'session.list', 'app.read_resource', 'chat.read_format_profile', 'app.get_current_state'],
+      { expectedDisposition: 'read_only_cross_resource_integrity_audit', maxMs: 720000 },
+    ],
+  ]);
+};
+
+addDiverseWorkflowBatch('diverse-v4f-0729', '扩面压力V4F-0729');
+addDiverseWorkflowBatch('diverse-g35-0729', '扩面压力G35-0729');
+
+const addFixClosureBatch = (batch, label, auditLabel) => {
+  const roomA = `${label}·观测站`;
+  const roomB = `${label}·档案室`;
+  const roomC = `${label}·检查站`;
+  const auditWorldbook = `${auditLabel}·档案库`;
+  const auditRoomA = `${auditLabel}·观测站`;
+  const auditRoomB = `${auditLabel}·档案室`;
+  const auditRoomC = `${auditLabel}·检查站`;
+  addBatch(batch, [
+    [
+      'fix-room-bootstrap',
+      `先读取会话清单，再只用一次 session.create(names[]) 补齐三个单聊「${roomA}」「${roomB}」「${roomC}」，open:false，不得逐房创建或进入。创建后再次读取会话清单并读取 APP 状态，确认三个名称各恰好一个且当前会话仍是「格式修复测试」。`,
+      ['session.list', 'session.create', 'app.state.read'],
+      ['session.list', 'session.create', 'app.get_current_state'],
+      { expectedDisposition: 'three_room_single_batch_background_create', maxMs: 540000 },
+    ],
+    [
+      'fix-preview-apply-state',
+      `把世界书「雷姆」追加绑定到三个测试房「${roomA}」「${roomB}」「${roomC}」。先调用一次 worldbook.bind_sessions 且 preview:true；只有三项预览都可处理时，再以完全相同的 sessions[]、mode:append 实际执行一次。不得退化成单房 bind/list，不要打开任何房间；最后读取 APP 状态，并按房汇报 added/already_bound、verified 与失败原因。`,
+      ['worldbook.bind_sessions', 'app.state.read'],
+      ['worldbook.bind_sessions', 'app.get_current_state'],
+      { autoConfirm: true, expectedDisposition: 'preview_apply_three_room_batch_and_state', maxMs: 600000 },
+    ],
+    [
+      'fix-message-ledger',
+      `保持当前房间不变，向三个测试房后台各写一条用户消息：给「${roomA}」写“${label}-OBS-A”，给「${roomB}」写“${label}-OBS-B”，给「${roomC}」写“${label}-OBS-C”；全部必须 triggerReply:false、open:false。然后分别用结构化 chat 资源读取三房最后一条消息，逐一核对角色与完整正文；最后读取 APP 状态证明仍在「格式修复测试」。`,
+      ['chat.send_message', 'app.resource.read', 'app.state.read'],
+      ['chat.send_message', 'app.read_resource', 'app.get_current_state'],
+      { expectedDisposition: 'three_background_messages_readback_and_state', maxMs: 660000 },
+    ],
+    [
+      'fix-structured-audit',
+      `对「${auditLabel}」资源做最终只读审计，不得补写或打开页面：读取「${auditWorldbook}」全文索引；读取完整会话清单；读取测试用户与测试角色卡清单；分别读取「${auditRoomA}」「${auditRoomB}」「${auditRoomC}」的格式画像；再读取 APP 状态。汇报世界书标题与重复数、四个测试房是否唯一、测试身份是否 inactive、三份格式规则是否对应，以及当前会话是否仍为「格式修复测试」。`,
+      ['worldbook.read', 'session.list', 'app.resource.read', 'chat.format.profile', 'app.state.read'],
+      ['worldbook.read', 'session.list', 'app.read_resource', 'chat.read_format_profile', 'app.get_current_state'],
+      { expectedDisposition: 'read_only_cross_resource_integrity_audit', maxMs: 720000 },
+    ],
+  ]);
+};
+
+addFixClosureBatch('fix-closure-v4f-0729', '修复闭环V4F-0729', '扩面压力V4F-0729');
+addFixClosureBatch('fix-closure-g35-0729', '修复闭环G35-0729', '扩面压力G35-0729');
+
+addBatch('fix-closure-audit-v4f-r2-0729', [
+  [
+    'fix-structured-audit-r2',
+    '对「扩面压力V4F-0729」资源做最终只读审计，不得补写或打开页面：读取「扩面压力V4F-0729·档案库」全文索引；读取完整会话清单；读取测试用户与测试角色卡清单；分别读取「扩面压力V4F-0729·观测站」「扩面压力V4F-0729·档案室」「扩面压力V4F-0729·检查站」的格式画像；再读取 APP 状态。汇报世界书标题与重复数、四个测试房是否唯一、测试身份是否 inactive、三份格式规则是否对应，以及当前会话是否仍为「格式修复测试」。',
+    ['worldbook.read', 'session.list', 'app.resource.read', 'chat.format.profile', 'app.state.read'],
+    ['worldbook.read', 'session.list', 'app.read_resource', 'chat.read_format_profile', 'app.get_current_state'],
+    { expectedDisposition: 'read_only_cross_resource_integrity_audit', maxMs: 720000 },
+  ],
+]);
+
 addBatch('cleanup-observation-sessions', [
   ['session-delete', '当前已经打开 APP 的聊天室列表。只删除精确名称「冻结观察会话-A-0728」：先调用 app.ui.inspect 检查 session 面板；已核对该行删除按钮为 ref=session:btn-7，请用 featureId=app.ui.click、toolName=ui.click_element 点击这个 ref。不要调用 app.open_panel、session.open_config 或点击其他 ref。删除完成后调用 session.list 验证该名称不存在。', ['app.visible_panel.read', 'app.ui.click', 'session.list'], ['app.ui.inspect', 'ui.click_element', 'session.list'], { appConfirmDeleteTarget: '冻结观察会话-A-0728', expectedDisposition: 'exact_ui_delete_and_verify' }],
   ['session-delete', '当前已经打开 APP 的聊天室列表。只删除精确名称「冻结观察会话-B-0728」：先调用 app.ui.inspect 检查 session 面板；已核对该行删除按钮为 ref=session:btn-6，请用 featureId=app.ui.click、toolName=ui.click_element 点击这个 ref。不要调用 app.open_panel、session.open_config 或点击其他 ref。删除完成后调用 session.list 验证该名称不存在。', ['app.visible_panel.read', 'app.ui.click', 'session.list'], ['app.ui.inspect', 'ui.click_element', 'session.list'], { appConfirmDeleteTarget: '冻结观察会话-B-0728', expectedDisposition: 'exact_ui_delete_and_verify' }],

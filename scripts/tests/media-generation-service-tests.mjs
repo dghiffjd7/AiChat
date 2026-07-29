@@ -117,11 +117,13 @@ import {
     config: { provider: 'openai', model: 'gpt-image-1' },
     sessionId: 'sid-1',
     options: { referenceImages: ['data:image/png;base64,ref'] },
+    retainDataUrl: true,
   });
   assert.equal(asset.kind, 'image');
   assert.equal(asset.status, 'succeeded');
   assert.equal(asset.output.path, '/tmp/generated.png');
   assert.equal(asset.output.bytes, 3);
+  assert.equal(asset.output.dataUrl, 'data:image/png;base64,abc123');
   assert.equal(asset.provider, 'openai');
   assert.equal(asset.model, 'gpt-image-1');
   assert.equal(asset.scope.targetId, 'sid-1');

@@ -4,6 +4,8 @@ import {
   eventHasImageFiles,
 } from './image-attachment-input-utils.js';
 
+import { renderMaidMarkdownHtml } from './maid-markdown-utils.js';
+
 const STYLE_ID = 'maid-command-input-runtime-style';
 const FIELD_MIN_HEIGHT = 32;
 const FIELD_MAX_HEIGHT = 76;
@@ -349,6 +351,48 @@ const injectStyle = (documentRef) => {
   border-color: rgba(239, 68, 68, 0.30);
   background: color-mix(in srgb, var(--app-surface-card, #fff) 90%, rgba(239, 68, 68, 0.12));
 }
+.mci-result-message > :first-child {
+  margin-top: 0;
+}
+.mci-result-message > :last-child {
+  margin-bottom: 0;
+}
+.mci-result-message p {
+  margin: 0 0 6px;
+}
+.mci-result-message ul,
+.mci-result-message ol {
+  margin: 3px 0 6px;
+  padding-left: 20px;
+}
+.mci-result-message blockquote {
+  margin: 4px 0 7px;
+  padding-left: 9px;
+  border-left: 3px solid color-mix(in srgb, var(--app-accent-primary, #2563eb) 38%, transparent);
+  color: var(--app-text-secondary, #475569);
+}
+.mci-result-message code {
+  padding: 1px 4px;
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--app-text-primary, #111827) 8%, transparent);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.92em;
+}
+.mci-result-message a {
+  color: var(--app-accent-primary, #2563eb);
+  text-decoration: underline;
+  overflow-wrap: anywhere;
+}
+.mci-result-message h1,
+.mci-result-message h2,
+.mci-result-message h3,
+.mci-result-message h4,
+.mci-result-message h5,
+.mci-result-message h6 {
+  margin: 4px 0 6px;
+  font-size: 1em;
+  line-height: 1.35;
+}
 .mci-result-actions {
   display: flex;
   flex-wrap: wrap;
@@ -581,6 +625,9 @@ export const createMaidCommandInputRuntime = ({
   let resultEnterPaceUntil = 0; // 跨渲染的逐卡推出节拍（相邻新卡 ≥150ms，积压封顶 1.2s）
   let liveStatus = null; // 过程叙述（thinking）单行状态：转圈+可替换文本，不各占气泡
   let restoreResultOnNextOpen = false;
+  let submissionSeq = 0;
+  let activeSubmission = null;
+  const queuedSubmissions = [];
 
   const notifyOpenStateChange = () => {
     try {
@@ -767,7 +814,7 @@ export const createMaidCommandInputRuntime = ({
         bubble.dataset.tone = item.tone;
         const message = documentRef.createElement?.('div');
         message.className = 'mci-result-message';
-        message.textContent = item.message;
+        message.innerHTML = renderMaidMarkdownHtml(item.message);
         bubble.appendChild(message);
         const actions = Array.isArray(item.actions) ? item.actions : [];
         if (actions.length) {
@@ -971,11 +1018,93 @@ export const createMaidCommandInputRuntime = ({
       renderResultMessages({ forceBottom: false });
     }
     rootEl?.classList.toggle('is-submitting', isSubmitting);
-    if (attachBtn) attachBtn.disabled = isSubmitting;
-    if (fileInputEl) fileInputEl.disabled = isSubmitting;
-    if (settingsBtn) settingsBtn.disabled = isSubmitting;
-    if (submitBtn) submitBtn.disabled = isSubmitting;
-    if (inputEl) inputEl.disabled = isSubmitting;
+    rootEl?.setAttribute?.('aria-busy', isSubmitting ? 'true' : 'false');
+    if (inputEl) inputEl.placeholder = isSubmitting ? '继续输入，发送后排队...' : '问女仆...';
+    if (submitBtn) {
+      submitBtn.setAttribute?.('aria-label', isSubmitting ? '加入女仆待执行队列' : '发送给女仆');
+      submitBtn.title = isSubmitting ? '加入待执行队列' : '';
+    }
+  };
+
+  const publicSubmission = entry => (entry ? {
+    id: entry.id,
+    text: entry.text,
+    attachmentCount: entry.attachments.length,
+  } : null);
+
+  const removeResultItem = (id = '') => {
+    const target = trim(id);
+    const next = resultMessages.filter(item => trim(item.id) !== target);
+    if (next.length === resultMessages.length) return false;
+    resultMessages = next;
+    renderResultMessages({ forceBottom: false });
+    return true;
+  };
+
+  const cancelQueued = (id = '') => {
+    const target = trim(id);
+    const index = queuedSubmissions.findIndex(item => item.id === target);
+    if (index < 0) return false;
+    const [entry] = queuedSubmissions.splice(index, 1);
+    removeResultItem(`queue:${entry.id}`);
+    const result = {
+      ok: false,
+      cancelled: true,
+      queued: true,
+      reason: 'queued_submission_cancelled',
+      message: '已取消排队任务。',
+    };
+    entry.resolve(result);
+    setResult(`已取消排队：${entry.text.slice(0, 48)}`, 'info');
+    return true;
+  };
+
+  const showQueuedSubmission = (entry) => {
+    upsertResultItem(`queue:${entry.id}`, {
+      kind: 'queue',
+      message: `等待执行：${entry.text.slice(0, 80)}${entry.text.length > 80 ? '…' : ''}`,
+      tone: 'thinking',
+      actions: [{
+        label: '取消排队',
+        onClick: () => cancelQueued(entry.id),
+      }],
+    });
+    renderResultMessages({ forceBottom: true });
+  };
+
+  const processSubmissionQueue = async () => {
+    if (isSubmitting || activeSubmission || !queuedSubmissions.length) return;
+    setSubmitting(true);
+    try {
+      while (queuedSubmissions.length) {
+        const entry = queuedSubmissions.shift();
+        activeSubmission = entry;
+        removeResultItem(`queue:${entry.id}`);
+        setResult(entry.wasQueued ? '女仆正在处理下一项排队任务...' : '女仆正在回复...', 'progress');
+        let result = null;
+        try {
+          result = await onSubmit(entry.text, {
+            setStatus: (message = '', tone = 'thinking') => setResult(message, tone),
+            attachments: entry.attachments,
+          });
+          const ok = result?.ok !== false;
+          setResult(
+            result?.message || result?.summary || (ok ? '已完成。' : '执行失败。'),
+            ok ? 'success' : 'error',
+            { actions: result?.actions },
+          );
+          entry.resolve(result || { ok });
+        } catch (error) {
+          setResult(error?.message || '女仆执行失败。', 'error');
+          entry.resolve({ ok: false, error });
+        } finally {
+          activeSubmission = null;
+        }
+      }
+    } finally {
+      setSubmitting(false);
+      if (!isOpen && (resultMessages.length > 0 || Boolean(liveStatus))) restoreResultOnNextOpen = true;
+    }
   };
 
   const unbindOutsidePointer = () => {
@@ -1101,8 +1230,8 @@ export const createMaidCommandInputRuntime = ({
     rootEl.appendChild(inputEl);
     rootEl.appendChild(settingsBtn);
     rootEl.appendChild(submitBtn);
-    // 指令条以球心定位、整体盖住悬浮球：非交互区/拖柄按下即转发球拖拽，
-    // 运行中（控件全禁用）整条可拖，不再出现"跑任务时挪不开"的遮挡。
+    // 指令条以球心定位、整体盖住悬浮球：非交互区/拖柄按下即转发球拖拽；
+    // 输入、附件、设置、发送等控件保持各自交互。
     rootEl.addEventListener?.('pointerdown', (event) => {
       const target = event?.target || null;
       const interactive = typeof target?.closest === 'function'
@@ -1169,7 +1298,6 @@ export const createMaidCommandInputRuntime = ({
     attachBtn.addEventListener?.('click', (event) => {
       event.preventDefault?.();
       event.stopPropagation?.();
-      if (isSubmitting) return;
       try {
         fileInputEl?.click?.();
       } catch {}
@@ -1188,7 +1316,6 @@ export const createMaidCommandInputRuntime = ({
     settingsBtn.addEventListener?.('click', (event) => {
       event.preventDefault?.();
       event.stopPropagation?.();
-      if (isSubmitting) return;
       void onSettings?.({ source: 'command_input' });
     });
     documentRef.body.appendChild(rootEl);
@@ -1243,39 +1370,35 @@ export const createMaidCommandInputRuntime = ({
     return true;
   };
 
-  const submit = async () => {
+  const submit = () => {
     const text = trim(inputEl?.value);
     const attachments = imageAttachments.slice();
-    if ((!text && !attachments.length) || isSubmitting) return false;
+    if (!text && !attachments.length) return false;
     clearCloseTimer();
     restoreResultOnNextOpen = false;
-    setSubmitting(true);
-    setResult('女仆正在回复...', 'progress', { replace: true });
-    try {
-      const effectiveText = text || '请看这张图片。';
-      const result = await onSubmit(effectiveText, {
-        setStatus: (message = '', tone = 'thinking') => setResult(message, tone),
-        attachments,
-      });
-      const ok = result?.ok !== false;
-      setResult(
-        result?.message || result?.summary || (ok ? '已完成。' : '执行失败。'),
-        ok ? 'success' : 'error',
-        { actions: result?.actions },
-      );
-      if (ok && inputEl) {
-        inputEl.value = '';
-        clearAttachments();
-        resizeInput();
-      }
-      return result || { ok };
-    } catch (error) {
-      setResult(error?.message || '女仆执行失败。', 'error');
-      return { ok: false, error };
-    } finally {
-      setSubmitting(false);
-      if (!isOpen && (resultMessages.length > 0 || Boolean(liveStatus))) restoreResultOnNextOpen = true;
+    const wasQueued = isSubmitting || Boolean(activeSubmission);
+    if (!wasQueued) clearResult();
+    submissionSeq += 1;
+    let resolveSubmission = null;
+    const completion = new Promise(resolve => {
+      resolveSubmission = resolve;
+    });
+    const entry = {
+      id: `maid_submission_${submissionSeq}`,
+      text: text || '请看这张图片。',
+      attachments,
+      wasQueued,
+      resolve: resolveSubmission,
+    };
+    queuedSubmissions.push(entry);
+    if (inputEl) {
+      inputEl.value = '';
+      clearAttachments();
+      resizeInput();
     }
+    if (wasQueued) showQueuedSubmission(entry);
+    else void processSubmissionQueue();
+    return completion;
   };
 
   const setSelectionState = ({ active = false, count = 0 } = {}) => {
@@ -1299,6 +1422,9 @@ export const createMaidCommandInputRuntime = ({
     getAttachments: () => imageAttachments.slice(),
     getResultMessages: () => resultMessages.map(item => ({ ...item })),
     getLiveStatus: () => (liveStatus ? { ...liveStatus } : null),
+    getQueue: () => queuedSubmissions.map(publicSubmission),
+    getActiveSubmission: () => publicSubmission(activeSubmission),
+    cancelQueued,
     isOpen: () => isOpen,
     isSubmitting: () => isSubmitting,
     getElements: () => ({ rootEl, inputEl, attachBtn, fileInputEl, attachmentsEl, settingsBtn, submitBtn, resultEl }),

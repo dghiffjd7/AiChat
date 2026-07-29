@@ -18,6 +18,8 @@ const batch = readArg('--batch', 'pilot');
 const limit = Math.max(0, Number(readArg('--limit', '0')) || 0);
 const outputPath = readArg('--output', join(here, `results-${batch}.jsonl`));
 const expectedMaidModel = readArg('--expected-maid-model', 'gemini-3.5-flash');
+const expectedMaidProfile = readArg('--expected-maid-profile', '');
+const expectedMaidProvider = readArg('--expected-maid-provider', '');
 const resume = hasArg('--resume');
 const selected = tasks
   .filter(task => task.batch === batch)
@@ -194,6 +196,8 @@ const setupExpression = `(async () => {
     readyState: document.readyState,
     maid: {
       boundProfileId,
+      boundProfileName: boundProfile?.name || '',
+      boundProvider: boundProfile?.provider || '',
       modelOverride,
       effectiveModel: modelOverride || boundProfile?.model || '',
       fallbackProfileId: maid?.getFallbackProfileId?.() || '',
@@ -394,6 +398,14 @@ if (setup.maid?.effectiveModel !== expectedMaidModel) {
   console.error(`unexpected maid model: ${setup.maid?.effectiveModel || '(empty)'}`);
   process.exit(2);
 }
+if (expectedMaidProfile && setup.maid?.boundProfileName !== expectedMaidProfile) {
+  console.error(`unexpected maid profile: ${setup.maid?.boundProfileName || '(empty)'}`);
+  process.exit(2);
+}
+if (expectedMaidProvider && setup.maid?.boundProvider !== expectedMaidProvider) {
+  console.error(`unexpected maid provider: ${setup.maid?.boundProvider || '(empty)'}`);
+  process.exit(2);
+}
 const enabledSubAgents = (setup.maid?.subAgents || []).filter(item => item.enabled);
 if (!enabledSubAgents.some(item => item.modelOverride === 'deepseek-v4-flash')) {
   console.error(`expected deepseek-v4-flash sub-agent is not enabled`);
@@ -413,7 +425,11 @@ append({
   resume,
   setup,
 });
-console.log(`BATCH ${batch}: ${selected.length} task(s), maid=${setup.maid.effectiveModel}, shadow=${setup.routing.mode}`);
+console.log(
+  `BATCH ${batch}: ${selected.length} task(s), ` +
+  `maid=${setup.maid.boundProfileName}/${setup.maid.boundProvider}/${setup.maid.effectiveModel}, ` +
+  `shadow=${setup.routing.mode}`,
+);
 
 let completed = 0;
 let failed = 0;

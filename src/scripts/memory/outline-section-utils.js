@@ -33,6 +33,13 @@ export const OUTLINE_SECTION_LABELS = Object.freeze({
   history: '迁移前历史',
 });
 
+export const EDITABLE_OUTLINE_SECTION_IDS = Object.freeze([
+  'current',
+  'plot',
+  'relationships',
+  'open_threads',
+]);
+
 export const isOutlineTableId = tableId =>
   OUTLINE_TABLE_IDS.has(String(tableId || '').trim());
 
@@ -125,4 +132,3 @@ export const buildLegacyOutlineMigrationPlan = ({
     },
   };
 };
-

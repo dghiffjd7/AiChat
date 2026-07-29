@@ -329,3 +329,57 @@ const attachment = {
   assert.equal(unavailable.reason, 'image_fetch_unavailable');
   console.log('ok - media.fetch_image 拦截非图片/非法协议/无通道');
 }
+
+{
+  const contacts = new Map([
+    ['room-generated', { id: 'room-generated', name: '生图壁纸房', avatar: '' }],
+  ]);
+  const settings = new Map();
+  const generatedCalls = [];
+  const tools = createMaidMediaAssetTools({
+    contactsStore: {
+      listContacts: () => Array.from(contacts.values()),
+      getContact: id => contacts.get(id) || null,
+    },
+    chatStore: {
+      getSessionSettings: id => settings.get(id) || {},
+      setSessionSettings: (id, next) => settings.set(id, next),
+    },
+    getCurrentSessionId: () => 'room-generated',
+    generateImageAttachment: async payload => {
+      generatedCalls.push(payload);
+      return {
+        dataUrl: 'data:image/png;base64,R0VORVJBVEVE',
+        mime: 'image/png',
+        bytes: 9,
+        name: 'generated-wallpaper.png',
+      };
+    },
+    prepareImage: async ({ dataUrl }) => ({
+      dataUrl,
+      width: 1280,
+      height: 720,
+      mime: 'image/jpeg',
+      bytes: 1200,
+      transformed: true,
+    }),
+    now: () => 88,
+  });
+
+  const generated = await getTool(tools, 'media.generate_image').execute({
+    prompt: '月光下的森林，横向壁纸',
+    negativePrompt: '文字，水印',
+  }, { runId: 'maid-run-1' });
+  assert.equal(generated.ok, true);
+  assert.equal(generated.attachmentId, 'generated-88-1');
+  assert.equal(generatedCalls[0].prompt, '月光下的森林，横向壁纸');
+  assert.equal(generatedCalls[0].negativePrompt, '文字，水印');
+
+  const wallpaper = await getTool(tools, 'session.set_wallpaper').execute({
+    target: '生图壁纸房',
+    attachmentId: generated.attachmentId,
+  });
+  assert.equal(wallpaper.ok, true);
+  assert.equal(settings.get('room-generated').wallpaper.url, 'data:image/png;base64,R0VORVJBVEVE');
+  console.log('ok - maid can generate an image attachment and set it as a chat wallpaper');
+}

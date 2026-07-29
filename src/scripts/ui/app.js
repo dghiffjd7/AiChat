@@ -63,6 +63,11 @@ import {
   createMaidModelBackedPlanner,
   createMaidModelBackedReActPlanner,
 } from '../agent/maid-model-planner.js';
+import {
+  createMaidSemanticMemoryExtractor,
+  projectMaidStructuredMemoriesFromResult,
+} from '../agent/maid-semantic-memory-extractor.js';
+import { createMaidSemanticResourceValidator } from '../agent/maid-semantic-resource-validator.js';
 import { createMaidRuntimeConfigResolver } from '../agent/maid-runtime-config.js';
 import { createAgentRegistry, createSubAgentRegistryProvider } from '../agent/agent-registry.js';
 import { registerAppNavigationAgentTools } from '../agent/tools/app-navigation-tools.js';
@@ -78,6 +83,7 @@ import { AgentRunStore } from '../storage/agent-run-store.js';
 import { CapabilityRetrievalStore } from '../storage/capability-retrieval-store.js';
 import { MaidGuideStore } from '../storage/maid-guide-store.js';
 import { MaidConversationStore } from '../storage/maid-conversation-store.js';
+import { MaidSemanticMemoryStore } from '../storage/maid-semantic-memory-store.js';
 import { MaidSettingsStore } from '../storage/maid-settings-store.js';
 import { appSettings } from '../storage/app-settings.js';
 import { renderTemplateTextAsync, templateSettings } from '../plugins/template-engine.js';
@@ -2975,6 +2981,7 @@ const initApp = async () => {
     refreshChatAndContacts: (...args) => refreshChatAndContacts(...args),
     setActiveSession: sessionId => window.appBridge.setActiveSession(sessionId),
     showSessionConfig: options => sessionConfigPanel.show(options || {}),
+    deleteSession: sessionId => sessionPanel.removeCore(sessionId),
     renderSessionNameHtml: (sessionId, contact) => renderSessionNameHtml(sessionId, contact),
     defaultAvatar: '',
   });
@@ -3072,13 +3079,17 @@ const initApp = async () => {
     chatStore,
     switchPersona,
     switchUserProfile,
+    deletePersona: (personaId, options) => personaPanel.deleteCore(personaId, options),
+    notifyPersonaChanged: () => personaPanel.notifyPersonaChanged(),
     saveWorldInfo: (id, data) => window.appBridge.saveWorldInfo?.(id, data),
     getWorldInfo: id => window.appBridge.getWorldInfo?.(id),
     listWorlds: () => window.appBridge.listWorlds?.(),
+    deleteWorldInfo: id => window.appBridge.deleteWorldInfo?.(id),
     waitForWorldStoreReady: () => window.appBridge.waitForWorldStoreReady?.(),
     getCurrentWorldId: sessionId => window.appBridge.getCurrentWorldId?.(sessionId),
     getCurrentWorldIds: sessionId => window.appBridge.getCurrentWorldIds?.(sessionId),
     getWorldIdsForSession: sessionId => window.appBridge.getWorldIdsForSession?.(sessionId),
+    getWorldSessionMap: () => window.appBridge.getWorldSessionMap?.(),
     getGlobalWorldId: () => window.appBridge.getGlobalWorldId?.(),
     assignWorldToPersona: (personaId, worldId, options) => window.appBridge.assignRoleWorldToPersona?.(personaId, worldId, options || {}),
     bindWorldToSession: (sessionId, worldIds, options) => window.appBridge.bindWorldToSession?.(sessionId, worldIds, options || {}),
@@ -3222,6 +3233,44 @@ const initApp = async () => {
       const bytes = Math.floor(base64.length * 3 / 4);
       return { dataUrl: `data:${mime};base64,${base64}`, mime, bytes };
     },
+    generateImageAttachment: async ({
+      prompt = '',
+      negativePrompt = '',
+      sessionId = '',
+      context = {},
+    } = {}) => {
+      const config = await loadImageRuntimeConfig({ includeDraft: true });
+      if (!canInitClient(config)) throw new Error('请先在 API 配置中启用图片生成模型。');
+      await imageGenerationParamsStore.ready;
+      const negativeCapability = resolveImageNegativePromptCapability(config);
+      const generationOptions = mergeImageGenerationRequestOptions({
+        config,
+        preset: imageGenerationParamsStore.getActive(),
+        extra: negativeCapability?.supported && String(negativePrompt || '').trim()
+          ? { negativePrompt: String(negativePrompt || '').trim() }
+          : {},
+      });
+      const targetSessionId = String(sessionId || chatStore.getCurrent() || '').trim();
+      const asset = await mediaGenerationService.generateImage({
+        prompt: String(prompt || '').trim(),
+        config,
+        sessionId: targetSessionId || 'maid_generated_images',
+        scope: {
+          surface: 'maid',
+          targetId: targetSessionId,
+        },
+        options: generationOptions,
+        signal: context?.signal,
+        agentTask: !context?.runId,
+        retainDataUrl: true,
+      });
+      const dataUrl = String(asset?.output?.dataUrl || '').trim();
+      return {
+        dataUrl,
+        mime: String(asset?.output?.mime || '').trim(),
+        bytes: Number(asset?.output?.bytes || 0) || 0,
+      };
+    },
     prepareImage: options => prepareImageDataUrlForAsset(options?.dataUrl || '', {
       purpose: options?.purpose,
       fit: options?.fit,
@@ -3296,7 +3345,14 @@ const initApp = async () => {
   const agentRegistry = createAgentRegistry({
     providers: [createSubAgentRegistryProvider(() => maidSettingsStore.listSubAgents())],
   });
-  const maidConversationStore = new MaidConversationStore();
+  const maidSemanticMemoryStore = new MaidSemanticMemoryStore({
+    loadKv: name => safeInvoke('load_kv', { name }),
+    saveKv: (name, data) => safeInvoke('save_kv', { name, data }),
+  });
+  await maidSemanticMemoryStore.load();
+  const maidConversationStore = new MaidConversationStore({
+    semanticMemoryStore: maidSemanticMemoryStore,
+  });
   await maidConversationStore.load();
   const recordMaidDebugSnapshot = ({
     source = '',
@@ -3314,7 +3370,25 @@ const initApp = async () => {
       source,
     });
   };
-  const getMaidConversationContext = () => maidConversationStore.getContextSnapshot();
+  const getMaidConversationContext = ({ input = '' } = {}) => maidConversationStore.getContextSnapshot({
+    query: input,
+  });
+  const validateMaidSemanticResource = createMaidSemanticResourceValidator({
+    appBridge: window.appBridge,
+    chatStore,
+    contactsStore,
+    personaStore,
+    userStore,
+    presetStore,
+    regexStore,
+    scriptStore,
+  });
+  const prepareMaidConversationContext = ({ input = '' } = {}) => (
+    maidConversationStore.getContextSnapshotAsync({
+      query: input,
+      validateResource: validateMaidSemanticResource,
+    })
+  );
   const recordMaidContextInjection = ({ conversationContext = null } = {}) => {
     const tokenCount = Number(conversationContext?.tokenCount || 0) || 0;
     if (!tokenCount) return;
@@ -3338,6 +3412,10 @@ const initApp = async () => {
         continuable: safeResult.continuable === true,
         continueHint: safeResult.continueHint || '',
         reactStoppedReason: safeResult.reactStoppedReason || '',
+        compactionProtection: safeResult.continuable === true
+          ? 'continuable'
+          : (safeResult.partial === true && !safeResult.finalDecision ? 'unverified_observation' : ''),
+        structuredMemories: projectMaidStructuredMemoriesFromResult(safeResult),
         context,
       });
     } catch (error) {
@@ -3351,6 +3429,15 @@ const initApp = async () => {
     isConfigReady: canInitClient,
     getSubAgents: () => agentRegistry.listPromptShapes(),
     logger,
+  });
+  maidConversationStore.setSemanticMemoryRuntime({
+    semanticMemoryStore: maidSemanticMemoryStore,
+    extractSemanticMemories: createMaidSemanticMemoryExtractor({
+      resolveRuntimeConfig: resolveMaidRuntimeConfig,
+      createClient: config => new LLMClient(config),
+      isConfigReady: canInitClient,
+      logger,
+    }),
   });
   const maidCapabilityRoutingRuntime = createMaidCapabilityRoutingRuntime({
     toolRegistry: agentToolRegistry,
@@ -3394,6 +3481,7 @@ const initApp = async () => {
     reactPlanner: maidReActPlanner,
     chatResponder: maidChatResponder,
     guidedActionRuntime: maidGuidedActionRuntime,
+    prepareConversationContext: prepareMaidConversationContext,
     logger,
   });
   const maidToolSafetyAllowStore = createAgentToolSafetyAllowStore({
@@ -3425,13 +3513,15 @@ const initApp = async () => {
     // 只读意图升级确认：不吃 allow-always 捷径、也不提供「始终允许」——
     // 这是对单次意图误差的放行，不该沉淀成永久规则。
     const escalated = request?.escalation === 'read_only_write';
-    if (!escalated && maidToolSafetyAllowStore.isAllowed(request)) {
+    const alwaysConfirm = request?.allowAlways === false;
+    if (!escalated && !alwaysConfirm && maidToolSafetyAllowStore.isAllowed(request)) {
       return { decision: 'allow', remembered: true };
     }
     const danger = request?.danger !== false;
     const action = await appChoice({
       title: String(request?.title || '确认危险操作'),
       message: String(request?.message || '这个动作可能会覆盖、删除或替换已有内容。'),
+      items: request?.details?.items,
       defaultActionId: 'allow_once',
       danger,
       actions: [
@@ -3441,10 +3531,12 @@ const initApp = async () => {
         },
         {
           id: 'allow_once',
-          label: '允许一次',
+          label: alwaysConfirm
+            ? String(request?.confirmText || '确认执行')
+            : '允许一次',
           primary: true,
         },
-        ...(escalated ? [] : [{
+        ...(escalated || alwaysConfirm ? [] : [{
           id: 'allow_always',
           label: '始终允许',
         }]),
@@ -3564,6 +3656,7 @@ const initApp = async () => {
         worldbookAuditAgent,
         agentCenterSettingsStore,
         maidConversationStore,
+        maidSemanticMemoryStore,
       },
       actions: {
         getAgentTool: name => agentToolRegistry.get(name),
@@ -23228,6 +23321,12 @@ Phase G（Frame 36）：循环衔接
     getAppKnowledgeText: () => buildAppFeatureKnowledgeText(),
     getHistoryContextText: () => maidConversationStore.getHistoryContextText(),
     getMemoryTableText: () => maidConversationStore.getMemoryTableDisplayText(),
+    semanticMemoryStore: maidSemanticMemoryStore,
+    confirmDeleteSemanticMemory: memory => appConfirm({
+      title: '删除长期记忆',
+      message: `确定删除这条长期记忆吗？\n\n${String(memory?.content || '').trim()}`,
+      danger: true,
+    }),
     listRuns: options => agentRunStore.listRuns({ ...(options || {}), kind: 'maid_assistant' }),
     allowRulesStore: maidToolSafetyAllowStore,
     onResumeRun: (run = {}) => {

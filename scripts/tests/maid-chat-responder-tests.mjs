@@ -65,7 +65,7 @@ import {
       memoryText: '| 1 | 摘要 |\n| 内容 | 用户创建了角色卡 A。 |',
     },
   });
-  assert.match(messages[1].content, /女仆记忆表格/);
+  assert.match(messages[1].content, /女仆分层记忆/);
   assert.match(messages[1].content, /用户创建了角色卡 A/);
   assert.match(messages[1].content, /女仆历史上下文/);
   assert.match(messages[1].content, /创建角色卡 A/);

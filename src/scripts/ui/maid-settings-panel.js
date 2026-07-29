@@ -1069,6 +1069,227 @@ const injectStyle = (documentRef) => {
   font-size: 13px;
   line-height: 1.65;
 }
+.maid-memory-overview {
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--app-border-default) 76%, transparent);
+  border-radius: 18px;
+  background: var(--app-surface-card, #fff);
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.035), 0 14px 30px -24px rgba(15, 23, 42, 0.24);
+}
+.maid-memory-overview-head {
+  min-height: 64px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 13px 16px;
+  border-bottom: 1px solid var(--app-border-subtle, rgba(148, 163, 184, 0.18));
+}
+.maid-memory-overview-mark {
+  width: 38px;
+  height: 38px;
+  flex: 0 0 38px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(var(--app-accent-rgb, 37, 99, 235), 0.2);
+  border-radius: 13px;
+  background: rgba(var(--app-accent-rgb, 37, 99, 235), 0.09);
+  color: var(--app-accent-primary, #2563eb);
+}
+.maid-memory-overview-mark .maid-settings-icon {
+  width: 18px;
+  height: 18px;
+}
+.maid-memory-overview-copy {
+  min-width: 0;
+  flex: 1;
+}
+.maid-memory-overview-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.maid-memory-overview-title {
+  color: var(--app-text-primary, #0f172a);
+  font-size: 14px;
+  font-weight: 800;
+  letter-spacing: -0.01em;
+}
+.maid-memory-count {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 7px;
+  border: 1px solid rgba(var(--app-accent-rgb, 37, 99, 235), 0.14);
+  border-radius: 7px;
+  background: rgba(var(--app-accent-rgb, 37, 99, 235), 0.07);
+  color: var(--app-accent-strong, #1d4ed8);
+  font: 650 11px/1.35 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+.maid-memory-overview-desc {
+  margin-top: 3px;
+  color: var(--app-text-muted, #94a3b8);
+  font-size: 11.5px;
+  line-height: 1.55;
+}
+.maid-memory-list {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  max-height: min(430px, 52vh);
+  overflow-y: auto;
+  padding: 12px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(100, 116, 139, 0.28) transparent;
+}
+.maid-memory-list::-webkit-scrollbar {
+  width: 8px;
+}
+.maid-memory-list::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background: rgba(100, 116, 139, 0.28);
+  background-clip: content-box;
+}
+.maid-memory-card {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px 14px;
+  overflow: hidden;
+  padding: 13px 13px 12px 16px;
+  border: 1px solid color-mix(in srgb, var(--app-border-default) 72%, transparent);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--app-surface-subtle) 36%, var(--app-surface-card));
+  transition: border-color 180ms ease, background 180ms ease, box-shadow 180ms ease, transform 180ms ease;
+  animation: maid-memory-card-in 260ms cubic-bezier(.22,1,.36,1) both;
+  animation-delay: calc(var(--maid-memory-index, 0) * 34ms);
+}
+.maid-memory-card::before {
+  content: '';
+  position: absolute;
+  inset: 11px auto 11px 0;
+  width: 3px;
+  border-radius: 0 999px 999px 0;
+  background: rgba(var(--app-accent-rgb, 37, 99, 235), 0.78);
+}
+.maid-memory-card[data-kind='decision']::before {
+  background: rgba(var(--app-warning-rgb, 245, 158, 11), 0.85);
+}
+.maid-memory-card[data-kind='resource_state']::before {
+  background: rgba(var(--app-success-rgb, 16, 185, 129), 0.82);
+}
+.maid-memory-card[data-kind='task_state']::before {
+  background: rgba(var(--app-task-rgb, 139, 92, 246), 0.82);
+}
+.maid-memory-card[data-status='stale'],
+.maid-memory-card[data-status='archived'] {
+  opacity: 0.72;
+}
+.maid-memory-card-main {
+  min-width: 0;
+}
+.maid-memory-card-heading,
+.maid-memory-card-meta,
+.maid-memory-source-list {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.maid-memory-kind,
+.maid-memory-confidence,
+.maid-memory-status,
+.maid-memory-tag,
+.maid-memory-source {
+  display: inline-flex;
+  align-items: center;
+  min-height: 19px;
+  box-sizing: border-box;
+  padding: 2px 7px;
+  border-radius: 7px;
+  font-size: 10.5px;
+  font-weight: 650;
+  line-height: 1.35;
+}
+.maid-memory-kind {
+  background: rgba(var(--app-accent-rgb, 37, 99, 235), 0.08);
+  color: var(--app-accent-strong, #1d4ed8);
+}
+.maid-memory-confidence {
+  background: color-mix(in srgb, var(--app-surface-subtle) 84%, transparent);
+  color: var(--app-text-secondary, #64748b);
+}
+.maid-memory-status {
+  background: rgba(var(--app-success-rgb, 16, 185, 129), 0.08);
+  color: var(--app-success-text, #047857);
+}
+.maid-memory-key {
+  min-width: 0;
+  overflow: hidden;
+  padding: 2px 6px;
+  border: 1px solid color-mix(in srgb, var(--app-border-subtle) 80%, transparent);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--app-surface-subtle) 72%, transparent);
+  color: var(--app-text-muted, #94a3b8);
+  font: 10.5px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.maid-memory-content {
+  margin-top: 8px;
+  color: var(--app-text-secondary, #334155);
+  font-size: 13px;
+  line-height: 1.65;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.maid-memory-card-meta {
+  margin-top: 8px;
+}
+.maid-memory-tag {
+  background: rgba(var(--app-accent-rgb, 37, 99, 235), 0.055);
+  color: var(--app-text-secondary, #64748b);
+}
+.maid-memory-time {
+  color: var(--app-text-muted, #94a3b8);
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+}
+.maid-memory-source-list {
+  grid-column: 1 / -1;
+  padding-top: 9px;
+  border-top: 1px solid color-mix(in srgb, var(--app-border-subtle) 76%, transparent);
+}
+.maid-memory-source-label {
+  color: var(--app-text-muted, #94a3b8);
+  font-size: 10.5px;
+  font-weight: 700;
+}
+.maid-memory-source {
+  max-width: 190px;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--app-surface-subtle) 78%, transparent);
+  color: var(--app-text-muted, #64748b);
+  font: 10px/1.35 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.maid-memory-delete {
+  align-self: start;
+  min-height: 30px;
+  padding: 0 10px;
+  border: 1px solid rgba(var(--app-danger-rgb, 239, 68, 68), 0.18);
+  border-radius: 9px;
+  background: var(--app-surface-card, #fff);
+  color: var(--app-danger-text, #dc2626);
+  font-size: 11.5px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 160ms ease, border-color 160ms ease, transform 120ms ease;
+}
+.maid-memory-delete:active {
+  transform: scale(.96);
+}
 
 /* API 首页卡片与二级编辑页。运行时样式晚于 qq-legacy，统一覆盖旧紧凑表单。 */
 .maid-api-nav {
@@ -1342,8 +1563,25 @@ const injectStyle = (documentRef) => {
   from { opacity: 0; transform: translate3d(0, 5px, 0); }
   to { opacity: 1; transform: translate3d(0, 0, 0); }
 }
+@keyframes maid-memory-card-in {
+  from { opacity: 0; transform: translate3d(0, 7px, 0); }
+  to { opacity: 1; transform: translate3d(0, 0, 0); }
+}
 
 .maid-settings-task-action:active { transform: scale(.96); }
+
+@media (hover: hover) {
+  .maid-memory-card:hover {
+    border-color: rgba(var(--app-accent-rgb, 37, 99, 235), 0.22);
+    background: color-mix(in srgb, var(--app-surface-subtle) 18%, var(--app-surface-card));
+    box-shadow: 0 10px 24px -20px rgba(15, 23, 42, 0.42);
+    transform: translateY(-1px);
+  }
+  .maid-memory-delete:hover {
+    border-color: rgba(var(--app-danger-rgb, 239, 68, 68), 0.3);
+    background: rgba(var(--app-danger-rgb, 239, 68, 68), 0.06);
+  }
+}
 
 @media (max-width: 640px) {
   .maid-settings-overlay {
@@ -1490,6 +1728,20 @@ const injectStyle = (documentRef) => {
     min-height: 300px;
     padding: 32px 18px;
   }
+  .maid-memory-overview-head {
+    padding: 12px 13px;
+  }
+  .maid-memory-list {
+    max-height: none;
+    padding: 9px;
+  }
+  .maid-memory-card {
+    grid-template-columns: minmax(0, 1fr);
+    padding: 12px 11px 11px 14px;
+  }
+  .maid-memory-delete {
+    width: 100%;
+  }
 }
 
 @media (max-width: 380px) {
@@ -1612,6 +1864,28 @@ const describeMaidRunStatus = (run = {}) => {
   return { key: 'failed', label: '失败' };
 };
 
+const MAID_MEMORY_KIND_LABELS = Object.freeze({
+  preference: '偏好',
+  decision: '决定',
+  resource_state: '资源状态',
+  relationship: '关系',
+  task_state: '任务状态',
+  important_event: '重要事件',
+});
+
+const MAID_MEMORY_CONFIDENCE_LABELS = Object.freeze({
+  explicit: '用户明确',
+  verified: '已验证',
+  inferred: '推断',
+});
+
+const MAID_MEMORY_STATUS_LABELS = Object.freeze({
+  active: '生效中',
+  resolved: '已完成',
+  stale: '已失效',
+  archived: '已归档',
+});
+
 const setIconButtonContent = (button, icon = '', label = '') => {
   if (!button) return;
   button.innerHTML = `${icon}${label ? `<span>${label}</span>` : ''}`;
@@ -1626,6 +1900,8 @@ export const createMaidSettingsPanel = ({
   getAppKnowledgeText = () => '',
   getHistoryContextText = () => '',
   getMemoryTableText = () => '',
+  semanticMemoryStore = null,
+  confirmDeleteSemanticMemory = null,
   listRuns = null,
   allowRulesStore = null,
   onResumeRun = null,
@@ -1648,6 +1924,8 @@ export const createMaidSettingsPanel = ({
   let appKnowledgeTextarea = null;
   let historyContextTextarea = null;
   let memoryTableTextarea = null;
+  let semanticMemoryListEl = null;
+  let semanticMemoryCountEl = null;
   let lastAppContextTextarea = null;
   let lastPromptTextarea = null;
   let lastResponseTextarea = null;
@@ -1871,6 +2149,122 @@ export const createMaidSettingsPanel = ({
     if (animateRows) taskListHasEntered = true;
   };
 
+  const renderSemanticMemories = () => {
+    if (!semanticMemoryListEl) return;
+    clearChildren(semanticMemoryListEl);
+    let memories = [];
+    try {
+      memories = semanticMemoryStore?.listMemories?.() || [];
+    } catch (error) {
+      logger?.warn?.('maid settings list semantic memories failed', error);
+    }
+    if (!Array.isArray(memories)) memories = [];
+    if (semanticMemoryCountEl) semanticMemoryCountEl.textContent = `${memories.length} 条`;
+    if (!memories.length) {
+      appendEmptyItem(semanticMemoryListEl, '还没有长期记忆。');
+      return;
+    }
+    memories.forEach((memory, memoryIndex) => {
+      const item = documentRef.createElement?.('article');
+      item.className = 'maid-memory-card';
+      item.dataset.kind = trim(memory?.kind, 'important_event');
+      item.dataset.status = trim(memory?.status, 'active');
+      item.style?.setProperty?.('--maid-memory-index', String(Math.min(memoryIndex, 8)));
+
+      const main = documentRef.createElement?.('div');
+      main.className = 'maid-memory-card-main';
+      const heading = documentRef.createElement?.('div');
+      heading.className = 'maid-memory-card-heading';
+      const kind = documentRef.createElement?.('span');
+      kind.className = 'maid-memory-kind';
+      kind.textContent = MAID_MEMORY_KIND_LABELS[memory?.kind] || trim(memory?.kind, '记忆');
+      const confidence = documentRef.createElement?.('span');
+      confidence.className = 'maid-memory-confidence';
+      confidence.textContent = MAID_MEMORY_CONFIDENCE_LABELS[memory?.confidence] || trim(memory?.confidence, '未标记');
+      const status = documentRef.createElement?.('span');
+      status.className = 'maid-memory-status';
+      status.textContent = MAID_MEMORY_STATUS_LABELS[memory?.status] || trim(memory?.status, '未知状态');
+      const key = documentRef.createElement?.('code');
+      key.className = 'maid-memory-key';
+      key.textContent = trim(memory?.key, 'unknown.key');
+      heading.append(kind, confidence, status, key);
+
+      const content = documentRef.createElement?.('div');
+      content.className = 'maid-memory-content';
+      content.textContent = trim(memory?.content, '（空）');
+      main.append(heading, content);
+
+      const tags = Array.isArray(memory?.tags) ? memory.tags.map(tag => trim(tag)).filter(Boolean).slice(0, 5) : [];
+      const updatedText = formatRunTime(memory?.updatedAt);
+      if (tags.length || updatedText) {
+        const meta = documentRef.createElement?.('div');
+        meta.className = 'maid-memory-card-meta';
+        tags.forEach((tagText) => {
+          const tag = documentRef.createElement?.('span');
+          tag.className = 'maid-memory-tag';
+          tag.textContent = tagText;
+          meta.appendChild(tag);
+        });
+        if (updatedText) {
+          const time = documentRef.createElement?.('span');
+          time.className = 'maid-memory-time';
+          time.textContent = updatedText;
+          meta.appendChild(time);
+        }
+        main.appendChild(meta);
+      }
+
+      const deleteBtn = createButton(documentRef, 'maid-memory-delete', '删除');
+      deleteBtn.addEventListener?.('click', async () => {
+        const confirmed = typeof confirmDeleteSemanticMemory === 'function'
+          ? await confirmDeleteSemanticMemory(memory)
+          : globalThis?.confirm?.('确定删除这条长期记忆吗？') === true;
+        if (!confirmed) return;
+        try {
+          const removed = await semanticMemoryStore?.deleteMemory?.(memory?.id);
+          setStatus(removed ? '长期记忆已删除' : '删除失败');
+          renderSemanticMemories();
+        } catch (error) {
+          logger?.warn?.('maid settings delete semantic memory failed', error);
+          setStatus('删除失败');
+        }
+      });
+      item.append(main, deleteBtn);
+
+      const sourceIds = Array.isArray(memory?.sourceTurnIds)
+        ? memory.sourceTurnIds.map(sourceId => trim(sourceId)).filter(Boolean)
+        : [];
+      const sources = documentRef.createElement?.('div');
+      sources.className = 'maid-memory-source-list';
+      const sourceLabel = documentRef.createElement?.('span');
+      sourceLabel.className = 'maid-memory-source-label';
+      sourceLabel.textContent = '来源';
+      sources.appendChild(sourceLabel);
+      if (!sourceIds.length) {
+        const source = documentRef.createElement?.('span');
+        source.className = 'maid-memory-source';
+        source.textContent = '暂无可追溯轮次';
+        sources.appendChild(source);
+      } else {
+        sourceIds.slice(0, 4).forEach((sourceId) => {
+          const source = documentRef.createElement?.('span');
+          source.className = 'maid-memory-source';
+          source.textContent = sourceId;
+          source.title = sourceId;
+          sources.appendChild(source);
+        });
+        if (sourceIds.length > 4) {
+          const source = documentRef.createElement?.('span');
+          source.className = 'maid-memory-source';
+          source.textContent = `另 ${sourceIds.length - 4} 个`;
+          sources.appendChild(source);
+        }
+      }
+      item.appendChild(sources);
+      semanticMemoryListEl.appendChild(item);
+    });
+  };
+
   const refresh = () => {
     if (promptTextarea) promptTextarea.value = settingsStore?.getMaidPrompt?.() || settingsStore?.getPersonaPrompt?.() || '';
     if (promptCountEl) promptCountEl.textContent = `${promptTextarea?.value?.length || 0} 字`;
@@ -1880,13 +2274,14 @@ export const createMaidSettingsPanel = ({
     if (lastAppContextTextarea) lastAppContextTextarea.value = getLastAppContextText();
     if (lastPromptTextarea) lastPromptTextarea.value = getLastPromptText();
     if (lastResponseTextarea) lastResponseTextarea.value = getLastResponseText();
+    renderSemanticMemories();
     renderRuns();
     renderRules();
     renderTasks();
   };
 
   const switchPromptTab = (tab = 'persona') => {
-    const next = ['persona', 'appKnowledge', 'historyContext', 'memoryTable', 'lastPrompt', 'lastResponse'].includes(tab) ? tab : 'persona';
+    const next = ['persona', 'appKnowledge', 'historyContext', 'semanticMemory', 'memoryTable', 'lastPrompt', 'lastResponse'].includes(tab) ? tab : 'persona';
     activePromptTab = next;
     promptTabButtons.forEach((button, key) => {
       button.classList.toggle('is-active', key === activePromptTab);
@@ -1902,7 +2297,7 @@ export const createMaidSettingsPanel = ({
 
   let refreshApiSubSection = null;
   const switchTab = (tab = 'api') => {
-    const promptSubtab = tab === 'appKnowledge' || tab === 'historyContext' || tab === 'memoryTable' || tab === 'lastPrompt' || tab === 'lastResponse' || tab === 'persona'
+    const promptSubtab = tab === 'appKnowledge' || tab === 'historyContext' || tab === 'semanticMemory' || tab === 'memoryTable' || tab === 'lastPrompt' || tab === 'lastResponse' || tab === 'persona'
       ? tab
       : '';
     const next = promptSubtab ? 'prompt' : (['api', 'prompt', 'tasks', 'activity', 'safety'].includes(tab) ? tab : 'api');
@@ -2347,7 +2742,8 @@ export const createMaidSettingsPanel = ({
       ['persona', '人格'],
       ['appKnowledge', 'APP知识'],
       ['historyContext', '历史上下文'],
-      ['memoryTable', '记忆表格'],
+      ['semanticMemory', '长期记忆'],
+      ['memoryTable', '轮次归档'],
       ['lastPrompt', '本次提示词'],
       ['lastResponse', '本次完整回复'],
     ].forEach(([key, label]) => {
@@ -2430,13 +2826,44 @@ export const createMaidSettingsPanel = ({
     historyContextField.append(historyContextLabel, historyContextTextarea);
     historyContextPane.append(historyContextField, historyContextFooter);
 
+    const semanticMemoryPane = documentRef.createElement?.('div');
+    semanticMemoryPane.className = 'maid-settings-prompt-pane';
+    const semanticMemoryOverview = documentRef.createElement?.('section');
+    semanticMemoryOverview.className = 'maid-memory-overview';
+    const semanticMemoryHead = documentRef.createElement?.('div');
+    semanticMemoryHead.className = 'maid-memory-overview-head';
+    const semanticMemoryMark = documentRef.createElement?.('span');
+    semanticMemoryMark.className = 'maid-memory-overview-mark';
+    semanticMemoryMark.innerHTML = ICONS.table;
+    semanticMemoryMark.setAttribute?.('aria-hidden', 'true');
+    const semanticMemoryCopy = documentRef.createElement?.('div');
+    semanticMemoryCopy.className = 'maid-memory-overview-copy';
+    const semanticMemoryTitleRow = documentRef.createElement?.('div');
+    semanticMemoryTitleRow.className = 'maid-memory-overview-title-row';
+    const semanticMemoryTitle = documentRef.createElement?.('span');
+    semanticMemoryTitle.className = 'maid-memory-overview-title';
+    semanticMemoryTitle.textContent = '长期记忆';
+    semanticMemoryCountEl = documentRef.createElement?.('span');
+    semanticMemoryCountEl.className = 'maid-memory-count';
+    semanticMemoryCountEl.textContent = '0 条';
+    semanticMemoryTitleRow.append(semanticMemoryTitle, semanticMemoryCountEl);
+    const semanticMemoryDesc = documentRef.createElement?.('div');
+    semanticMemoryDesc.className = 'maid-memory-overview-desc';
+    semanticMemoryDesc.textContent = '仅保存跨任务仍有价值的偏好、决定与已验证状态；可追溯到来源轮次。';
+    semanticMemoryCopy.append(semanticMemoryTitleRow, semanticMemoryDesc);
+    semanticMemoryHead.append(semanticMemoryMark, semanticMemoryCopy);
+    semanticMemoryListEl = documentRef.createElement?.('div');
+    semanticMemoryListEl.className = 'maid-memory-list';
+    semanticMemoryOverview.append(semanticMemoryHead, semanticMemoryListEl);
+    semanticMemoryPane.appendChild(semanticMemoryOverview);
+
     const memoryTablePane = documentRef.createElement?.('div');
     memoryTablePane.className = 'maid-settings-prompt-pane';
     const memoryTableField = documentRef.createElement?.('div');
     memoryTableField.className = 'maid-settings-field';
     const memoryTableLabel = documentRef.createElement?.('div');
     memoryTableLabel.className = 'maid-settings-label';
-    memoryTableLabel.textContent = '记忆表格';
+    memoryTableLabel.textContent = '轮次归档';
     memoryTableTextarea = createTextarea(documentRef, { readOnly: true });
     const memoryTableFooter = documentRef.createElement?.('div');
     memoryTableFooter.className = 'maid-settings-footer';
@@ -2483,6 +2910,7 @@ export const createMaidSettingsPanel = ({
     promptPanes.set('persona', personaPane);
     promptPanes.set('appKnowledge', appKnowledgePane);
     promptPanes.set('historyContext', historyContextPane);
+    promptPanes.set('semanticMemory', semanticMemoryPane);
     promptPanes.set('memoryTable', memoryTablePane);
     promptPanes.set('lastPrompt', lastPromptPane);
     promptPanes.set('lastResponse', lastResponsePane);
@@ -2497,6 +2925,7 @@ export const createMaidSettingsPanel = ({
       personaPane,
       appKnowledgePane,
       historyContextPane,
+      semanticMemoryPane,
       memoryTablePane,
       lastPromptPane,
       lastResponsePane,
@@ -2626,6 +3055,8 @@ export const createMaidSettingsPanel = ({
       promptTextarea,
       appKnowledgeTextarea,
       historyContextTextarea,
+      semanticMemoryListEl,
+      semanticMemoryCountEl,
       memoryTableTextarea,
       lastAppContextTextarea,
       lastPromptTextarea,

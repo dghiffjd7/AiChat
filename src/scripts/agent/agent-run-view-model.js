@@ -412,12 +412,12 @@ export const buildAgentRunCacheStats = ({
 export const buildAgentUsageProfile = (runs = []) => {
   const list = normalizeRuns(runs);
   const byKind = {};
-  const overall = { runCount: 0, recordedCount: 0, unknownCount: 0, degradedCount: 0, abortedCount: 0, promptTokens: 0, completionTokens: 0, totalTokens: 0, latencyMsSum: 0, toolCalls: 0 };
+  const overall = { runCount: 0, recordedCount: 0, unknownCount: 0, degradedCount: 0, abortedCount: 0, promptTokens: 0, completionTokens: 0, totalTokens: 0, latencyMsSum: 0, modelCalls: 0, toolCalls: 0 };
   list.forEach((run) => {
     const usage = isPlainObject(run.usage) ? run.usage : {};
     const kind = trim(run.kind, 'task');
     if (!byKind[kind]) {
-      byKind[kind] = { kind, runCount: 0, recordedCount: 0, unknownCount: 0, degradedCount: 0, abortedCount: 0, promptTokens: 0, completionTokens: 0, totalTokens: 0, latencyMsSum: 0, toolCalls: 0 };
+      byKind[kind] = { kind, runCount: 0, recordedCount: 0, unknownCount: 0, degradedCount: 0, abortedCount: 0, promptTokens: 0, completionTokens: 0, totalTokens: 0, latencyMsSum: 0, modelCalls: 0, toolCalls: 0 };
     }
     const bucket = byKind[kind];
     const recorded = trim(usage.status) === 'recorded';
@@ -432,6 +432,7 @@ export const buildAgentUsageProfile = (runs = []) => {
         target.unknownCount += 1;
       }
       if (Number.isFinite(Number(usage.latencyMs))) target.latencyMsSum += toFiniteNumber(usage.latencyMs, 0);
+      target.modelCalls += toFiniteNumber(usage.modelCallCount, 0);
       target.toolCalls += toFiniteNumber(usage.toolCallCount, 0);
       if (usage.degraded === true) target.degradedCount += 1;
       if (usage.aborted === true) target.abortedCount += 1;

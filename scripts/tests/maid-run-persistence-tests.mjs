@@ -3,7 +3,12 @@ import assert from 'node:assert/strict';
 import { createAgentTaskRuntime } from '../../src/scripts/agent/agent-task-runtime.js';
 import { createAgentToolRegistry } from '../../src/scripts/agent/agent-tool-registry.js';
 import { createMaidAssistantAgent } from '../../src/scripts/agent/maid-assistant-agent.js';
+import {
+  createMaidModelBackedPlanner,
+  createMaidModelBackedReActPlanner,
+} from '../../src/scripts/agent/maid-model-planner.js';
 import { AgentRunStore } from '../../src/scripts/storage/agent-run-store.js';
+import { compareMaidCandidateUsage } from '../dev/maid-candidate-usage-ab.mjs';
 
 const allowAll = { evaluateTool: () => ({ decision: 'allow', checks: [] }) };
 
@@ -37,7 +42,18 @@ const openPanelPlan = {
     agentTaskRuntime: runtime,
     logger: { warn() {} },
   });
-  const result = await agent.runPrompt('打开世界书', { sessionId: 's1' });
+  const result = await agent.runPrompt('打开世界书', {
+    sessionId: 's1',
+    maidConversationContextRef: {
+      current: {
+        maidContextVersion: 'maid-context-v2-p1a',
+        tokenCount: 9000,
+        historyTokenCount: 4200,
+        memoryTokenCount: 4800,
+        selectedMemoryIds: ['memory-a', 'memory-b'],
+      },
+    },
+  });
   assert.equal(result.ok, true);
   const runs = store.listRuns({ kind: 'maid_assistant' });
   assert.equal(runs.length, 1, `一次 runPrompt 应只产生一个 run，实际 ${runs.length}`);
@@ -45,6 +61,11 @@ const openPanelPlan = {
   assert.equal(run.status, 'succeeded');
   assert.equal(run.sessionId, 's1');
   assert.equal(run.metadata.goal, '打开世界书');
+  assert.equal(run.metadata.maidContextVersion, 'maid-context-v2-p1a');
+  assert.equal(run.metadata.maidContextTokenCount, 9000);
+  assert.equal(run.metadata.maidContextHistoryTokenCount, 4200);
+  assert.equal(run.metadata.maidContextMemoryTokenCount, 4800);
+  assert.deepEqual(run.metadata.maidContextMemoryIds, ['memory-a', 'memory-b']);
   assert.equal(run.steps.length, 1);
   assert.equal(run.steps[0].input.toolName, 'app.open_panel');
   assert.equal(run.steps[0].status, 'succeeded');
@@ -204,6 +225,244 @@ const openPanelPlan = {
   assert.equal(runs[0].metadata.stepCount, 2);
   assert.equal(runs[0].status, 'succeeded');
   console.log('ok - ReAct 多步共享同一个持久 run');
+}
+
+{
+  const { store, runtime } = createHarness({ executeTool: async () => ({ ok: true, opened: true }) });
+  const providerUsage = [
+    { provider: 'custom', model: 'usage-model', promptTokens: 100, completionTokens: 20, totalTokens: 120, finishReason: 'tool' },
+    { provider: 'custom', model: 'usage-model', promptTokens: 80, completionTokens: 10, totalTokens: 90, finishReason: 'stop' },
+  ];
+  const responses = [
+    JSON.stringify({
+      ok: true,
+      toolName: 'app.open_panel',
+      args: { panel: 'worldbook' },
+      featureId: 'worldbook.open',
+    }),
+    JSON.stringify({
+      ok: true,
+      action: 'final',
+      message: '世界书已经打开了。',
+    }),
+  ];
+  let chatCalls = 0;
+  const modelRuntime = {
+    config: { provider: 'custom', model: 'usage-model' },
+    client: {
+      chat: async (_messages, options) => {
+        const callIndex = chatCalls;
+        chatCalls += 1;
+        options?.onProviderUsage?.(providerUsage[callIndex]);
+        return responses[callIndex];
+      },
+    },
+  };
+  const resolveRuntimeConfig = async () => modelRuntime;
+  const agent = createMaidAssistantAgent({
+    planner: createMaidModelBackedPlanner({ resolveRuntimeConfig }),
+    reactPlanner: createMaidModelBackedReActPlanner({ resolveRuntimeConfig }),
+    agentTaskRuntime: runtime,
+    logger: { warn() {}, debug() {} },
+  });
+
+  const result = await agent.runPrompt('打开世界书', { sessionId: 'usage-session' });
+  assert.equal(result.ok, true);
+  assert.equal(chatCalls, 2, '一次工具任务应记录 Planner 与 ReAct 两次真实模型调用');
+
+  const exported = store.exportState({ includeNonExportable: true });
+  const run = Object.values(exported.runs)[0];
+  assert.ok(run, '完成的 maid run 应进入持久化导出');
+  assert.equal(run.usage.status, 'recorded');
+  assert.equal(run.usage.provider, 'custom');
+  assert.equal(run.usage.model, 'usage-model');
+  assert.equal(run.usage.promptTokens, 180);
+  assert.equal(run.usage.completionTokens, 30);
+  assert.equal(run.usage.totalTokens, 210);
+  assert.equal(run.usage.modelCallCount, 2);
+  assert.equal(run.usage.toolCallCount, 1);
+  assert.equal(run.usage.degraded, false);
+  assert.equal(run.usage.aborted, false);
+  assert.equal(run.usage.finishReason, 'stop');
+  assert.equal(typeof run.usage.latencyMs, 'number');
+  console.log('ok - Planner/ReAct 多次 provider usage 聚合并持久化到 AgentRun');
+}
+
+{
+  const buildObservation = ({
+    taskId,
+    effectiveMode,
+    promptTokens,
+    completionTokens,
+    modelCallCount = 2,
+    ok = true,
+    verified = true,
+    model = 'usage-model',
+    maidContextVersion = 'maid-context-v2-p1a',
+  }) => ({
+    recordType: 'task_result',
+    taskId,
+    prompt: `固定任务 ${taskId}`,
+    result: {
+      ok,
+      verified,
+      capabilityRouting: {
+        effectiveMode,
+        retrieverVersion: 'maid-capability-retriever-v3',
+      },
+    },
+    runs: [{
+      kind: 'maid_assistant',
+      status: ok ? 'succeeded' : 'failed',
+      metadata: { maidContextVersion },
+      usage: {
+        status: 'recorded',
+        provider: 'custom',
+        model,
+        promptTokens,
+        completionTokens,
+        totalTokens: promptTokens + completionTokens,
+        modelCallCount,
+      },
+    }],
+  });
+  const report = compareMaidCandidateUsage({
+    shadowRecords: [
+      buildObservation({ taskId: 'usage-ab-1', effectiveMode: 'shadow', promptTokens: 100, completionTokens: 20 }),
+      buildObservation({ taskId: 'usage-ab-2', effectiveMode: 'shadow', promptTokens: 200, completionTokens: 30 }),
+    ],
+    candidateRecords: [
+      buildObservation({ taskId: 'usage-ab-1', effectiveMode: 'candidate', promptTokens: 60, completionTokens: 20 }),
+      buildObservation({
+        taskId: 'usage-ab-2',
+        effectiveMode: 'full_fallback',
+        promptTokens: 180,
+        completionTokens: 30,
+        modelCallCount: 3,
+        ok: false,
+        verified: false,
+      }),
+    ],
+    minPairs: 2,
+  });
+  assert.equal(report.measurementReady, true);
+  assert.equal(report.canaryDecision, 'not_evaluated', '挂具只负责测量，不应自行发出 Canary 通过结论');
+  assert.equal(report.comparison.pairCount, 2);
+  assert.equal(report.usage.totalTokens.shadowTotal, 350);
+  assert.equal(report.usage.totalTokens.candidateTotal, 290);
+  assert.equal(Math.round(report.usage.totalTokens.reductionPercent * 100) / 100, 17.14);
+  assert.equal(report.usage.modelCallCount.shadowTotal, 4);
+  assert.equal(report.usage.modelCallCount.candidateTotal, 5);
+  assert.equal(report.quality.taskCompletion.shadowRate, 1);
+  assert.equal(report.quality.taskCompletion.candidateRate, 0.5);
+  assert.equal(report.quality.verification.candidateRate, 0.5);
+  assert.equal(report.candidateRouting.fullFallbackCount, 1);
+  assert.equal(report.candidateRouting.fallbackRate, 0.5);
+  console.log('ok - Shadow/Candidate 同题挂具比较实际 usage、完成、验证与回退');
+}
+
+{
+  const shadow = {
+    taskId: 'usage-ab-mismatch',
+    prompt: '同一个任务',
+    maidContextVersion: 'maid-context-v2-p1a',
+    result: {
+      ok: true,
+      capabilityRouting: { effectiveMode: 'shadow', retrieverVersion: 'maid-capability-retriever-v3' },
+    },
+    usage: {
+      status: 'recorded',
+      provider: 'custom',
+      model: 'model-a',
+      promptTokens: 10,
+      completionTokens: 5,
+      modelCallCount: 1,
+    },
+  };
+  const candidate = {
+    ...shadow,
+    result: {
+      ...shadow.result,
+      capabilityRouting: { ...shadow.result.capabilityRouting, effectiveMode: 'candidate' },
+    },
+    usage: { ...shadow.usage, model: 'model-b' },
+  };
+  const report = compareMaidCandidateUsage({
+    shadowRecords: [shadow],
+    candidateRecords: [candidate],
+  });
+  assert.equal(report.measurementReady, false);
+  assert.equal(report.comparison.pairCount, 0);
+  assert.deepEqual(report.comparison.exclusionReasons, { cohort_mismatch: 1 });
+  console.log('ok - A/B 挂具拒绝不同 provider/model/retriever 的伪比较');
+}
+
+{
+  const buildRecord = (effectiveMode, maidContextVersion) => ({
+    taskId: 'usage-ab-context-version-mismatch',
+    prompt: '同一个任务',
+    result: {
+      ok: true,
+      verified: true,
+      capabilityRouting: {
+        effectiveMode,
+        retrieverVersion: 'maid-capability-retriever-v3',
+      },
+    },
+    runs: [{
+      kind: 'maid_assistant',
+      status: 'succeeded',
+      metadata: { maidContextVersion },
+      usage: {
+        status: 'recorded',
+        provider: 'custom',
+        model: 'usage-model',
+        promptTokens: 10,
+        completionTokens: 5,
+        totalTokens: 15,
+        modelCallCount: 1,
+      },
+    }],
+  });
+  const report = compareMaidCandidateUsage({
+    shadowRecords: [buildRecord('shadow', 'maid-context-v1')],
+    candidateRecords: [buildRecord('candidate', 'maid-context-v2-p1a')],
+  });
+  assert.equal(report.measurementReady, false);
+  assert.equal(report.comparison.pairCount, 0);
+  assert.deepEqual(report.comparison.exclusionReasons, { cohort_mismatch: 1 });
+  console.log('ok - A/B 挂具拒绝不同 maidContextVersion 的伪比较');
+}
+
+{
+  const buildRecord = effectiveMode => ({
+    taskId: 'usage-ab-unverified',
+    prompt: '没有验证结论的任务',
+    maidContextVersion: 'maid-context-v2-p1a',
+    result: {
+      ok: true,
+      capabilityRouting: {
+        effectiveMode,
+        retrieverVersion: 'maid-capability-retriever-v3',
+      },
+    },
+    usage: {
+      status: 'recorded',
+      provider: 'custom',
+      model: 'usage-model',
+      promptTokens: 10,
+      completionTokens: 5,
+      modelCallCount: 1,
+    },
+  });
+  const report = compareMaidCandidateUsage({
+    shadowRecords: [buildRecord('shadow')],
+    candidateRecords: [buildRecord('candidate')],
+  });
+  assert.equal(report.comparison.pairCount, 1);
+  assert.equal(report.quality.complete, false);
+  assert.equal(report.measurementReady, false, '缺少显式 verification 时不能把 A/B 数据标为可验收');
+  console.log('ok - A/B 挂具不把缺少 verification 的样本误标为可验收');
 }
 
 {

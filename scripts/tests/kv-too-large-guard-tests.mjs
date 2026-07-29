@@ -144,3 +144,71 @@ const makePresetDefaultsResponse = () => ({
   assert.deepEqual(store.getState().local.order, []);
   console.log('ok - regex store does not overwrite disk when load_kv reports tooLarge');
 }
+
+{
+  const calls = [];
+  const existing = {
+    version: 1,
+    global: { enabled: true, rules: [] },
+    local: {
+      order: ['kept-set'],
+      sets: {
+        'kept-set': {
+          id: 'kept-set',
+          name: '保留正则',
+          enabled: true,
+          rules: [],
+        },
+      },
+    },
+    session: {},
+  };
+  let loadAttempts = 0;
+  installGlobals({
+    invoke: async (cmd, args) => {
+      calls.push([cmd, args]);
+      if (cmd === 'load_kv') {
+        loadAttempts += 1;
+        if (loadAttempts === 1) throw new TypeError('Failed to fetch');
+        return existing;
+      }
+      if (cmd === 'save_kv') return true;
+      return null;
+    },
+  });
+
+  const { RegexStore } = await import('../../src/scripts/storage/regex-store.js');
+  const store = new RegexStore();
+  await store.ready;
+
+  assert.equal(loadAttempts, 2);
+  assert.equal(store.listLocalSets().length, 1);
+  const saves = calls.filter(([cmd]) => cmd === 'save_kv');
+  assert.equal(saves.length, 1);
+  assert.equal(saves[0][1].data.local.order[0], 'kept-set');
+  console.log('ok - regex store retries a transient KV read before initializing or persisting defaults');
+}
+
+{
+  const calls = [];
+  installGlobals({
+    invoke: async (cmd, args) => {
+      calls.push([cmd, args]);
+      if (cmd === 'load_kv') throw new TypeError('Failed to fetch');
+      if (cmd === 'save_kv') throw new Error('save_kv must stay blocked after an unreadable startup');
+      return null;
+    },
+  });
+
+  const { RegexStore } = await import('../../src/scripts/storage/regex-store.js');
+  const store = new RegexStore();
+  await store.ready;
+
+  assert.equal(calls.some(([cmd]) => cmd === 'save_kv'), false);
+  await assert.rejects(
+    store.setGlobal({ enabled: true, rules: [] }),
+    /正则存储暂时无法读取/,
+  );
+  assert.equal(calls.some(([cmd]) => cmd === 'save_kv'), false);
+  console.log('ok - regex store stays read-only when every startup KV read fails');
+}

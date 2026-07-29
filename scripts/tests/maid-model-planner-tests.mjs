@@ -95,7 +95,7 @@ const cloneJson = value => JSON.parse(JSON.stringify(value));
     },
   });
   assert.match(messages[0].content, /历史上下文和记忆表格/);
-  assert.match(messages[1].content, /女仆记忆表格/);
+  assert.match(messages[1].content, /女仆分层记忆/);
   assert.match(messages[1].content, /用户创建了角色卡 A/);
   assert.match(messages[1].content, /女仆历史上下文/);
   assert.match(messages[1].content, /persona\.create/);
@@ -172,6 +172,66 @@ const cloneJson = value => JSON.parse(JSON.stringify(value));
   assert.match(messages[1].content, /已执行步骤与观察结果/);
   assert.match(messages[1].content, /晚上好/);
   console.log('ok - maid model react planner builds observation prompt messages');
+}
+
+{
+  const steps = [
+    {
+      toolName: 'app.read_resource',
+      status: 'succeeded',
+      args: { resource: 'persona', name: '海贼王', include: ['associations'] },
+      summary: 'read resource persona',
+      output: {
+        resource: 'persona',
+        includedFields: ['associations'],
+        items: [{
+          name: '海贼王',
+          associations: { worldbookId: '海贼王', worldbookEnabled: true },
+        }],
+      },
+    },
+    {
+      toolName: 'worldbook.read',
+      status: 'succeeded',
+      args: { name: '海贼王' },
+      summary: 'read worldbook 海贼王 (50 entries)',
+      output: {
+        name: '海贼王',
+        entryCount: 97,
+        entries: [
+          { title: '角色设定' },
+          { title: '地图' },
+          { title: '格式要求' },
+          { title: '世界观' },
+        ],
+      },
+    },
+    ...Array.from({ length: 4 }, (_, index) => ({
+      toolName: 'app.read_resource',
+      status: 'succeeded',
+      args: { resource: 'persona', name: `后续角色${index + 1}`, include: ['associations'] },
+      summary: 'read resource persona',
+      output: {
+        resource: 'persona',
+        includedFields: ['associations'],
+        items: [{ name: `后续角色${index + 1}`, associations: {} }],
+      },
+    })),
+  ];
+  const messages = buildMaidModelReActMessages({
+    input: '分别读取多张角色卡的 associations，再读取对应世界书并汇总。',
+    features: [],
+    steps,
+  });
+  const system = messages[0].content;
+  const user = messages[1].content;
+  assert.match(system, /成功读取账本.*相同工具与参数/);
+  assert.match(user, /成功读取账本/);
+  assert.match(user, /"name":\s*"海贼王"/);
+  assert.match(user, /"worldbookId":\s*"海贼王"/);
+  assert.match(user, /角色设定.*地图.*格式要求/s);
+  assert.doesNotMatch(user, /"titles":[^\n]*世界观/);
+  console.log('ok - ReAct compact read ledger preserves older targets and required facts without replaying full outputs');
 }
 
 {
@@ -410,6 +470,70 @@ const cloneJson = value => JSON.parse(JSON.stringify(value));
 }
 
 {
+  let contextBuilds = 0;
+  const injected = [];
+  const getConversationContext = () => {
+    contextBuilds += 1;
+    return {
+      maidContextVersion: 'maid-context-test-v1',
+      historyText: `冻结历史 ${contextBuilds}`,
+      memoryText: `冻结记忆 ${contextBuilds}`,
+      tokenCount: 42,
+    };
+  };
+  const runtime = {
+    client: {
+      chat: async messages => (
+        messages[0].content.includes('ReAct 控制器')
+          ? JSON.stringify({ ok: true, action: 'final', message: '完成' })
+          : JSON.stringify({
+              ok: true,
+              toolName: 'app.open_panel',
+              args: { panel: 'worldbook' },
+              featureId: 'worldbook.open',
+            })
+      ),
+    },
+  };
+  const planner = createMaidModelBackedPlanner({
+    features: [{
+      id: 'worldbook.open',
+      title: '打开世界书',
+      aliases: ['世界书'],
+      tools: ['app.open_panel'],
+      panel: 'worldbook',
+    }],
+    resolveRuntimeConfig: async () => runtime,
+    getConversationContext,
+    onContextInjected: payload => injected.push(payload.conversationContext),
+  });
+  const reactPlanner = createMaidModelBackedReActPlanner({
+    features: [{
+      id: 'worldbook.open',
+      title: '打开世界书',
+      aliases: ['世界书'],
+      tools: ['app.open_panel'],
+      panel: 'worldbook',
+    }],
+    resolveRuntimeConfig: async () => runtime,
+    getConversationContext,
+    onContextInjected: payload => injected.push(payload.conversationContext),
+  });
+  const context = { maidConversationContextRef: { current: null } };
+  const plan = await planner('打开世界书', context);
+  const decision = await reactPlanner('打开世界书', {
+    ...context,
+    maidReactSteps: [{ toolName: plan.toolName, status: 'succeeded', output: { ok: true } }],
+  });
+  assert.equal(plan.ok, true);
+  assert.equal(decision.action, 'final');
+  assert.equal(contextBuilds, 1, '同一 Maid Run 的 Planner/ReAct 只能构建一次上下文快照');
+  assert.equal(injected.length, 2);
+  assert.equal(injected[0], injected[1], 'Planner/ReAct 必须复用同一冻结对象');
+  console.log('ok - maid planner and ReAct share one frozen conversation context per run');
+}
+
+{
   // Phase B 计量：client 经 options.onProviderUsage 上报 usage → planner 经 context.onModelUsage 冒泡（含延迟）
   const usageEntries = [];
   const planner = createMaidModelBackedPlanner({
@@ -430,6 +554,7 @@ const cloneJson = value => JSON.parse(JSON.stringify(value));
   assert.equal(usageEntries[0].provider, 'deepseek');
   assert.equal(usageEntries[0].promptTokens, 800);
   assert.equal(usageEntries[0].completionTokens, 120);
+  assert.equal(usageEntries[0].modelCallCount, 1);
   assert.equal(usageEntries[0].degraded, false);
   assert.equal(typeof usageEntries[0].latencyMs, 'number');
   console.log('ok - planner bubbles provider usage through context.onModelUsage');
@@ -475,8 +600,28 @@ const cloneJson = value => JSON.parse(JSON.stringify(value));
   assert.equal(usageEntries.length, 1);
   assert.equal(usageEntries[0].provider, 'deepseek');
   assert.equal(usageEntries[0].promptTokens, 500);
+  assert.equal(usageEntries[0].modelCallCount, 2);
   assert.equal(usageEntries[0].degraded, true);
   console.log('ok - fallback model decisions are attributed to the actual cohort');
+}
+
+{
+  const usageEntries = [];
+  const planner = createMaidModelBackedPlanner({
+    resolveRuntimeConfig: async () => ({
+      client: { chat: async () => { throw new Error('primary offline'); } },
+    }),
+    logger: { warn() {}, debug() {} },
+  });
+  const plan = await planner('打开世界书', {
+    onModelUsage: usage => usageEntries.push(usage),
+  });
+  assert.equal(plan.ok, false);
+  assert.equal(usageEntries.length, 1);
+  assert.equal(usageEntries[0].modelCallCount, 1);
+  assert.equal(usageEntries[0].degraded, false);
+  assert.equal(typeof usageEntries[0].latencyMs, 'number');
+  console.log('ok - failed model calls still report local call count and latency');
 }
 
 {

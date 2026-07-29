@@ -14,9 +14,8 @@ import { buildNameWithBadgesHtml, escapeHtml, getAutoBadgeFromName, getContactBa
 import { safeInvoke } from '../utils/tauri.js';
 import { appConfirm } from './app-confirm.js';
 import { createSessionAddFriendFeedbackUi } from './session-add-friend-feedback-ui.js';
+import { removeSessionCore } from './session-delete-runtime-utils.js';
 import {
-  deleteWorldSessionMapEntry,
-  getWorldSessionMap,
   renameWorldSessionMapEntry,
 } from './world-session-runtime-utils.js';
 
@@ -496,58 +495,21 @@ export class SessionPanel {
     });
     if (!ok) return;
 
-    try {
-      const settings = this.store?.getSessionSettings?.(id) || null;
-      const path = String(settings?.wallpaper?.path || '').trim();
-      if (path) {
-        safeInvoke('delete_wallpaper', { sessionId: id, path }).catch(err => {
-          logger.warn('删除联系人时清理壁纸失败', err);
-        });
-      }
-    } catch (err) {
-      logger.warn('删除联系人时读取壁纸失败', err);
-    }
-
-    // 删除由拆分条目创建的引用世界书（仅在未被其他会话使用时）
-    try {
-      const bound = window.appBridge?.getWorldIdsForSession?.(id) || [];
-      const boundIds = Array.isArray(bound) ? bound.filter(Boolean) : (bound ? [String(bound)] : []);
-      const map = getWorldSessionMap(window.appBridge);
-      const isUsedElsewhere = (worldId) => {
-        const target = String(worldId || '').trim();
-        if (!target) return false;
-        return Object.entries(map).some(([sid, list]) => {
-          if (String(sid || '').trim() === String(id || '').trim()) return false;
-          const ids = Array.isArray(list) ? list : (list ? [list] : []);
-          return ids.some(val => String(val || '').trim() === target);
-        });
-      };
-      for (const worldId of boundIds) {
-        if (!worldId || isUsedElsewhere(worldId)) continue;
-        let data = null;
-        try {
-          data = await window.appBridge?.getWorldInfo?.(worldId);
-        } catch {}
-        if (data?.source === 'world_entry') {
-          await window.appBridge?.deleteWorldInfo?.(worldId);
-        }
-      }
-    } catch (err) {
-      logger.warn('删除联系人时清理引用世界书失败', err);
-    }
-
-    // 清理世界书映射
-    deleteWorldSessionMapEntry(window.appBridge, id);
-
-    this.store.delete(id);
-    window.appBridge?.clearSessionTurnCheckpointState?.(id).catch?.(err => {
-      logger.warn('clear session checkpoint state failed', err);
-    });
-    this.contactsStore?.removeContact?.(id);
+    await this.removeCore(id);
     this.refresh();
     const current = this.store.getCurrent();
     this.switchTo(current);
     this.onUpdated?.();
+  }
+
+  removeCore(id) {
+    return removeSessionCore({
+      sessionId: id,
+      chatStore: this.store,
+      contactsStore: this.contactsStore,
+      appBridge: window.appBridge,
+      logger,
+    });
   }
 
   async loadScopedData(key, { fallbackKey = '' } = {}) {

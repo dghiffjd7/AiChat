@@ -49,6 +49,7 @@ const getTool = (tools, name) => tools.find(tool => tool.name === name);
   const resourceTool = getTool(tools, 'app.read_resource');
   assert.match(resourceTool.schema.properties.include.description, /persona\/user/);
   assert.match(resourceTool.schema.properties.include.description, /details/);
+  assert.match(resourceTool.schema.properties.include.description, /associations/);
   const resource = await resourceTool.execute({ resource: 'chat', sessionName: 'A' });
   assert.equal(resource.ok, true);
   assert.equal(resource.resource, 'chat');

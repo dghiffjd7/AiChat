@@ -8,12 +8,35 @@ import {
   createMaidAssistantAgent,
   planMaidAssistantCommand,
 } from '../../src/scripts/agent/maid-assistant-agent.js';
+import { buildMaidModelReActMessages } from '../../src/scripts/agent/maid-model-planner.js';
 import { createAgentToolRegistry } from '../../src/scripts/agent/agent-tool-registry.js';
 
 {
   assert.equal(classifyMaidPresentationIntent('创建聊天室「小美」').mode, 'background');
   assert.equal(classifyMaidPresentationIntent('查看世界书里有哪些人物').mode, 'background');
   assert.equal(classifyMaidPresentationIntent('创建聊天室「小美」，不要打开，留在当前页面').mode, 'background');
+  assert.equal(
+    classifyMaidPresentationIntent('重复执行幂等核对，不要逐房重复绑定或打开页面。').mode,
+    'background',
+    '同一分句内的并列否定必须覆盖后面的打开动作',
+  );
+  assert.equal(
+    classifyMaidPresentationIntent('不要重复绑定；完成后打开页面给我看。').mode,
+    'reveal',
+    '跨分句的明确打开要求不能被前一分句的否定吞掉',
+  );
+  assert.equal(
+    classifyMaidPresentationIntent('不要忘了在完成后打开页面给我看。').mode,
+    'reveal',
+    '否定“忘记”不等于否定后面的打开动作',
+  );
+  assert.equal(
+    classifyMaidPresentationIntent(
+      '先读取会话清单，再只用一次 session.create(names[]) 补齐三个单聊，open:false，不得逐房创建或进入。',
+    ).mode,
+    'background',
+    '“不得”必须否定同一分句内的进入动作，不能被 reveal 反向命中',
+  );
   assert.equal(classifyMaidPresentationIntent('创建聊天室「小美」，做好以后打开给我看').mode, 'reveal');
   assert.equal(classifyMaidPresentationIntent('批量处理完后带我去看主要结果').mode, 'reveal');
   assert.equal(classifyMaidPresentationIntent('带我看看 Agent Center').mode, 'reveal');
@@ -27,6 +50,24 @@ import { createAgentToolRegistry } from '../../src/scripts/agent/agent-tool-regi
     featureId: 'session.create',
   }, { mode: 'background' });
   assert.equal(background.args.open, false, 'optional navigation must be disabled for background work');
+
+  const coordinatedBackground = applyMaidPresentationPolicy({
+    ok: true,
+    toolName: 'session.create',
+    args: { names: ['小美', '小夏'], open: true },
+    featureId: 'session.create',
+  }, classifyMaidPresentationIntent('不要逐房重复绑定或打开页面。'));
+  assert.equal(coordinatedBackground.args.open, false, 'coordinated negation must keep session creation in the background');
+
+  const prohibitedBackground = applyMaidPresentationPolicy({
+    ok: true,
+    toolName: 'session.create',
+    args: { names: ['观测站', '档案室', '检查站'], open: true },
+    featureId: 'session.create',
+  }, classifyMaidPresentationIntent(
+    '先读取会话清单，再只用一次 session.create(names[]) 补齐三个单聊，open:false，不得逐房创建或进入。',
+  ));
+  assert.equal(prohibitedBackground.args.open, false, '“不得进入”必须把批量建房强制留在后台');
 
   const reveal = applyMaidPresentationPolicy({
     ok: true,
@@ -97,6 +138,14 @@ import { createAgentToolRegistry } from '../../src/scripts/agent/agent-tool-regi
     classifyMaidOperationIntent('user identities 列表与当前身份，只查别换。').mode,
     'read_only',
   );
+  assert.equal(
+    classifyMaidOperationIntent('清理测试用的房间').mode,
+    'write_allowed',
+  );
+  assert.equal(
+    classifyMaidOperationIntent('哪些房是测试用的').mode,
+    'read_only',
+  );
   console.log('ok - maid operation intent distinguishes read-only observations from explicit writes');
 }
 
@@ -153,6 +202,16 @@ import { createAgentToolRegistry } from '../../src/scripts/agent/agent-tool-regi
     'write_allowed',
     '带前置核对的明确写入不应多触发一次只读升级确认',
   );
+  assert.equal(
+    classifyMaidOperationIntent('给这些房都绑上世界书「精灵抱抱」。').mode,
+    'write_allowed',
+    '明确批量绑定措辞应直接授权写入',
+  );
+  assert.equal(
+    classifyMaidOperationIntent('检查这些房有没有绑上世界书「精灵抱抱」，不要修改。').mode,
+    'read_only',
+    '批量绑定状态查询不得误授权写入',
+  );
   console.log('ok - conditional explicit writes classify as write_allowed while pure reads stay read_only');
 }
 
@@ -168,6 +227,7 @@ import { createAgentToolRegistry } from '../../src/scripts/agent/agent-tool-regi
   assert.equal(usage.completionTokens, 600);
   assert.equal(usage.totalTokens, 3100); // = promptSum + completionSum，自洽于分项
   assert.equal(usage.latencyMs, 5500);
+  assert.equal(usage.modelCallCount, 2);
   assert.equal(usage.toolCallCount, 2);
   assert.equal(usage.degraded, true);
   assert.equal(usage.aborted, false);
@@ -184,6 +244,7 @@ import { createAgentToolRegistry } from '../../src/scripts/agent/agent-tool-regi
   assert.equal(usage.completionTokens, null);
   assert.equal(usage.totalTokens, null);
   assert.equal(usage.latencyMs, 900);
+  assert.equal(usage.modelCallCount, 1);
   assert.equal(usage.toolCallCount, 1);
   assert.equal(usage.aborted, true);
   console.log('ok - aggregateMaidModelUsage marks unknown without inventing tokens');
@@ -194,6 +255,7 @@ import { createAgentToolRegistry } from '../../src/scripts/agent/agent-tool-regi
   const usage = aggregateMaidModelUsage([], { toolCallCount: 0 });
   assert.equal(usage.status, 'unknown');
   assert.equal(usage.latencyMs, null);
+  assert.equal(usage.modelCallCount, 0);
   assert.equal(usage.toolCallCount, 0);
   console.log('ok - aggregateMaidModelUsage keeps null latency when no model call happened');
 }
@@ -327,6 +389,57 @@ import { createAgentToolRegistry } from '../../src/scripts/agent/agent-tool-regi
   assert.equal(statuses[0].stage, 'planned');
   assert.equal(statuses[0].message, '我来打开世界书。');
   console.log('ok - maid assistant agent executes planned tools through registry');
+}
+
+{
+  const order = [];
+  const preparedSnapshot = {
+    maidContextVersion: 'maid-context-test',
+    historyText: '冻结的近期历史',
+    memoryText: '冻结的长期记忆',
+    tokenCount: 12,
+  };
+  let routingSnapshot = null;
+  let plannerSnapshot = null;
+  const agent = createMaidAssistantAgent({
+    prepareConversationContext: async ({ input }) => {
+      order.push(`prepare:${input}`);
+      return preparedSnapshot;
+    },
+    capabilityRoutingRuntime: {
+      beginRequest: ({ context }) => {
+        order.push('route');
+        routingSnapshot = context.maidConversationContextRef.current;
+        return null;
+      },
+    },
+    planner: async (_input, context) => {
+      order.push('plan');
+      plannerSnapshot = context.maidConversationContextRef.current;
+      return {
+        ok: true,
+        toolName: 'app.open_panel',
+        args: { panel: 'worldbook' },
+        featureId: 'worldbook.open',
+        title: '打开世界书',
+      };
+    },
+    toolRegistry: {
+      executeTool: async toolName => ({
+        toolName,
+        status: 'succeeded',
+        result: { ok: true },
+        summary: 'opened',
+      }),
+    },
+    logger: { warn() {}, debug() {} },
+  });
+  const result = await agent.runPrompt('打开世界书');
+  assert.equal(result.ok, true);
+  assert.deepEqual(order.slice(0, 3), ['prepare:打开世界书', 'route', 'plan']);
+  assert.equal(routingSnapshot, preparedSnapshot);
+  assert.equal(plannerSnapshot, preparedSnapshot);
+  console.log('ok - maid run prepares and freezes async conversation context before routing');
 }
 
 {
@@ -645,6 +758,98 @@ import { createAgentToolRegistry } from '../../src/scripts/agent/agent-tool-regi
   assert.equal(reactCalls[0].context.maidReactSteps[0].toolName, 'app.read_resource');
   assert.equal(statuses.some(status => status.stage === 'observed'), true);
   console.log('ok - maid assistant agent continues after read tool and returns final answer');
+}
+
+{
+  const avatar = `data:image/png;base64,${'A'.repeat(20_000)}`;
+  const originalCard = {
+    data: {
+      character_book: {
+        entries: [{ comment: '世界观', content: '原卡内的大段世界书正文' }],
+      },
+    },
+  };
+  const routedReactSteps = [];
+  let reactContext = null;
+  let reactPrompt = '';
+  const agent = createMaidAssistantAgent({
+    capabilityRoutingRuntime: {
+      prepareDecision: ({ phase, steps }) => {
+        if (phase === 'react') routedReactSteps.push(steps);
+        return null;
+      },
+    },
+    planner: async () => ({
+      ok: true,
+      toolName: 'app.read_resource',
+      args: { resource: 'persona', id: 'p1', include: ['details'] },
+      featureId: 'app.resource.read',
+      title: '读取完整角色卡',
+      response: '我先读取完整角色卡。',
+    }),
+    reactPlanner: async (_input, context) => {
+      reactContext = context;
+      reactPrompt = buildMaidModelReActMessages({
+        input: '读取完整角色卡，然后根据绑定的世界书继续处理人物条目',
+        context,
+        features: [],
+        steps: context.maidReactSteps,
+      })[1].content;
+      return {
+        ok: true,
+        action: 'final',
+        message: '角色卡绑定了世界书「精灵抱抱」。',
+      };
+    },
+    toolRegistry: {
+      executeTool: async () => ({
+        toolName: 'app.read_resource',
+        status: 'succeeded',
+        result: {
+          ok: true,
+          resource: 'persona',
+          activeId: 'p1',
+          count: 1,
+          projection: 'full',
+          includedFields: ['details'],
+          items: [{
+            id: 'p1',
+            name: '精灵女王',
+            avatar,
+            description: '温柔而坚定的精灵女王',
+            source: {
+              worldbookId: '精灵抱抱',
+              worldbookEnabled: true,
+              originalCardStored: true,
+            },
+            originalCard,
+            active: true,
+          }],
+        },
+        summary: 'read resource persona',
+      }),
+    },
+    logger: { warn() {}, debug() {} },
+  });
+  const result = await agent.runPrompt('读取完整角色卡，然后根据绑定的世界书继续处理人物条目');
+  const modelOutput = reactContext?.maidReactSteps?.[0]?.output;
+  const routedOutput = routedReactSteps[0]?.[0]?.output;
+
+  assert.equal(result.ok, true);
+  assert.equal(modelOutput.items[0].source.worldbookId, '精灵抱抱');
+  assert.equal(modelOutput.items[0].description, '温柔而坚定的精灵女王');
+  assert.equal(Object.hasOwn(modelOutput.items[0], 'avatar'), false);
+  assert.equal(Object.hasOwn(modelOutput.items[0], 'originalCard'), false);
+  assert.equal(modelOutput.observationProjection.omittedFields[0].path, 'items[0].avatar');
+  assert.equal(modelOutput.observationProjection.omittedFields[1].path, 'items[0].originalCard');
+  assert.equal(JSON.stringify(modelOutput).includes('data:image'), false);
+  assert.equal(JSON.stringify(modelOutput).length < 4_000, true);
+  assert.match(reactPrompt, /"worldbookId": "精灵抱抱"/);
+  assert.doesNotMatch(reactPrompt, /data:image|原卡内的大段世界书正文/);
+  assert.deepEqual(routedOutput, modelOutput, 'capability retrieval and ReAct should share the bounded model snapshot');
+  assert.equal(result.steps[0].output.items[0].avatar, avatar, 'internal step result must stay truthful and complete');
+  assert.deepEqual(result.steps[0].output.items[0].originalCard, originalCard);
+  console.log('ok - maid assistant projects full persona observations before routing and ReAct');
 }
 
 {
@@ -1277,6 +1482,445 @@ import { createAgentToolRegistry } from '../../src/scripts/agent/agent-tool-regi
 }
 
 {
+  const calls = [];
+  const agent = createMaidAssistantAgent({
+    planner: async () => ({
+      ok: true,
+      toolName: 'worldbook.bind_sessions',
+      args: { worldbookId: '精灵抱抱', sessions: ['艾露维娅', '薇拉妮丝'] },
+      featureId: 'worldbook.bind_sessions',
+      title: '批量绑定世界书',
+      response: '我来批量绑定并逐项验证。',
+    }),
+    reactPlanner: async () => ({
+      ok: true,
+      action: 'final',
+      message: '两个聊天室都已绑定并验证。',
+    }),
+    toolRegistry: {
+      executeTool: async (toolName, args) => {
+        calls.push({ toolName, args });
+        return {
+          toolName,
+          status: 'succeeded',
+          result: {
+            ok: true,
+            worldbookId: args.worldbookId,
+            requestedCount: 2,
+            succeededCount: 2,
+            verifiedCount: 2,
+            results: args.sessions.map(sessionId => ({ sessionId, status: 'succeeded', verified: true })),
+          },
+          summary: 'batch worldbook binding completed',
+        };
+      },
+    },
+    logger: { warn() {} },
+  });
+  const result = await agent.runPrompt('给这两个房都绑上世界书「精灵抱抱」');
+  assert.equal(result.ok, true);
+  assert.deepEqual(calls.map(call => call.toolName), ['worldbook.bind_sessions']);
+  assert.equal(result.steps.length, 1, 'batch tool verifies each item internally and should not add N verification calls');
+  assert.match(result.message, /两个聊天室/);
+  console.log('ok - maid assistant treats verified batch binding as a single result-authoritative step');
+}
+
+{
+  const calls = [];
+  let reactCalls = 0;
+  const sessions = ['观测站', '档案室', '检查站'];
+  const agent = createMaidAssistantAgent({
+    planner: async () => ({
+      ok: true,
+      toolName: 'worldbook.bind_sessions',
+      args: { worldbookId: '档案库', sessions, mode: 'append', preview: true },
+      featureId: 'worldbook.bind_sessions',
+      title: '预览三房绑定',
+    }),
+    reactPlanner: async () => {
+      reactCalls += 1;
+      if (reactCalls === 1) {
+        return {
+          ok: true,
+          action: 'tool',
+          toolName: 'worldbook.bind_sessions',
+          args: { worldbookId: '档案库', sessions, mode: 'append', preview: true },
+          featureId: 'worldbook.bind_sessions',
+          title: '重复预览三房绑定',
+        };
+      }
+      return {
+        ok: true,
+        action: 'final',
+        message: '三房绑定已经实际执行并验证。',
+      };
+    },
+    toolRegistry: {
+      executeTool: async (toolName, args) => {
+        calls.push({ toolName, args });
+        if (args.preview === true) {
+          return {
+            toolName,
+            status: 'succeeded',
+            result: {
+              ok: true,
+              preview: true,
+              worldbookId: args.worldbookId,
+              mode: args.mode,
+              requestedCount: sessions.length,
+              plannedCount: sessions.length,
+              failedCount: 0,
+              results: sessions.map(sessionId => ({ sessionId, status: 'planned' })),
+            },
+            summary: 'batch worldbook binding preview completed',
+          };
+        }
+        return {
+          toolName,
+          status: 'succeeded',
+          result: {
+            ok: true,
+            preview: false,
+            worldbookId: args.worldbookId,
+            mode: args.mode,
+            requestedCount: sessions.length,
+            succeededCount: sessions.length,
+            failedCount: 0,
+            verifiedCount: sessions.length,
+            results: sessions.map(sessionId => ({ sessionId, status: 'succeeded', verified: true })),
+          },
+          summary: 'batch worldbook binding completed',
+        };
+      },
+    },
+    logger: { warn() {} },
+  });
+  const result = await agent.runPrompt(
+    '把世界书「档案库」追加绑定到三个测试房。先调用一次 worldbook.bind_sessions 且 preview:true；只有三项预览都可处理时，再以完全相同的 sessions[]、mode:append 实际执行一次。',
+  );
+  assert.equal(result.ok, true);
+  assert.deepEqual(
+    calls.map(call => call.args.preview),
+    [true, false],
+    '写入已获授权且预览全部可处理时，模型重复 preview 必须推进为一次 apply',
+  );
+  assert.equal(result.steps[1].metadata?.workflowTransition, 'preview_to_apply');
+  console.log('ok - repeated successful batch preview advances once to the authorized apply phase');
+}
+
+{
+  const previewFlags = [];
+  const toolNames = [];
+  const sessions = ['观测站', '档案室', '检查站'];
+  const agent = createMaidAssistantAgent({
+    planner: async () => ({
+      ok: true,
+      toolName: 'worldbook.bind_sessions',
+      args: { worldbookId: '档案库', sessions, mode: 'append', preview: true },
+      featureId: 'worldbook.bind_sessions',
+      title: '预览三房绑定',
+    }),
+    reactPlanner: async () => ({
+      ok: true,
+      action: 'final',
+      message: '预览完成。',
+    }),
+    toolRegistry: {
+      executeTool: async (toolName, args) => {
+        toolNames.push(toolName);
+        if (toolName === 'app.get_current_state') {
+          return {
+            toolName,
+            status: 'succeeded',
+            result: { activePage: 'chat', uiMode: 'chat', sessionId: '格式修复测试' },
+            summary: 'state page=chat session=格式修复测试',
+          };
+        }
+        previewFlags.push(args.preview);
+        return {
+          toolName,
+          status: 'succeeded',
+          result: args.preview === true
+            ? {
+                ok: true,
+                preview: true,
+                plannedCount: sessions.length,
+                failedCount: 0,
+                results: sessions.map(sessionId => ({ sessionId, status: 'planned' })),
+              }
+            : {
+                ok: true,
+                preview: false,
+                succeededCount: sessions.length,
+                verifiedCount: sessions.length,
+                failedCount: 0,
+                results: sessions.map(sessionId => ({ sessionId, status: 'succeeded', verified: true })),
+              },
+          summary: args.preview === true ? 'batch preview completed' : 'batch binding completed',
+        };
+      },
+    },
+    logger: { warn() {} },
+  });
+  const result = await agent.runPrompt(
+    '把世界书「档案库」追加绑定到三个测试房。先 preview，三项都可处理时再实际执行绑定；最后读取 APP 状态。',
+  );
+  assert.equal(result.ok, true);
+  assert.deepEqual(previewFlags, [true, false], '模型在 preview 后提前 final 也不能跳过用户明确要求的 apply');
+  assert.deepEqual(
+    toolNames,
+    ['worldbook.bind_sessions', 'worldbook.bind_sessions', 'app.get_current_state'],
+    '完成 apply 后仍须履行用户明确要求的最终 APP 状态核对',
+  );
+  console.log('ok - successful preview cannot prematurely final before the explicit apply phase');
+}
+
+{
+  const previewFlags = [];
+  let reactCalls = 0;
+  const sessions = ['观测站', '档案室', '检查站'];
+  const agent = createMaidAssistantAgent({
+    planner: async () => ({
+      ok: true,
+      toolName: 'worldbook.bind_sessions',
+      args: { worldbookId: '档案库', sessions, mode: 'append', preview: true },
+      featureId: 'worldbook.bind_sessions',
+      title: '只预览三房绑定',
+    }),
+    reactPlanner: async () => {
+      reactCalls += 1;
+      return reactCalls === 1
+        ? {
+            ok: true,
+            action: 'tool',
+            toolName: 'worldbook.bind_sessions',
+            args: { worldbookId: '档案库', sessions, mode: 'append', preview: true },
+            featureId: 'worldbook.bind_sessions',
+            title: '再次核对预览',
+          }
+        : {
+            ok: true,
+            action: 'final',
+            message: '仅完成预览，没有实际应用。',
+          };
+    },
+    toolRegistry: {
+      executeTool: async (toolName, args) => {
+        previewFlags.push(args.preview);
+        return {
+          toolName,
+          status: 'succeeded',
+          result: {
+            ok: true,
+            preview: args.preview === true,
+            plannedCount: args.preview === true ? sessions.length : 0,
+            succeededCount: args.preview === true ? 0 : sessions.length,
+            verifiedCount: args.preview === true ? 0 : sessions.length,
+            failedCount: 0,
+            results: sessions.map(sessionId => ({
+              sessionId,
+              status: args.preview === true ? 'planned' : 'succeeded',
+              verified: args.preview !== true,
+            })),
+          },
+          summary: args.preview === true ? 'batch preview completed' : 'batch binding completed',
+        };
+      },
+    },
+    logger: { warn() {} },
+  });
+  const result = await agent.runPrompt(
+    '把世界书「档案库」追加绑定到三个测试房；这次只预览，不要实际执行或应用任何绑定。',
+  );
+  assert.equal(result.ok, true);
+  assert.deepEqual(previewFlags, [true, true], '否定 apply 的请求即使模型重复 preview，也绝不能升级为实际写入');
+  console.log('ok - preview-only requests never advance to an apply write');
+}
+
+{
+  const calls = [];
+  let reactCalls = 0;
+  const agent = createMaidAssistantAgent({
+    planner: async () => ({
+      ok: true,
+      toolName: 'chat.send_message',
+      args: {
+        sessionName: '观测站',
+        content: 'OBS-A',
+        role: 'user',
+        triggerReply: false,
+        open: false,
+      },
+      featureId: 'chat.send_message',
+      title: '写入观测站消息',
+    }),
+    reactPlanner: async (_input, context) => {
+      reactCalls += 1;
+      const sentTargets = (context.maidReactSteps || [])
+        .filter(step => step.toolName === 'chat.send_message' && step.status === 'succeeded')
+        .map(step => step.args.sessionName);
+      return {
+        ok: true,
+        action: 'final',
+        message: sentTargets.length < 3
+          ? `继续处理第 ${sentTargets.length + 1} 个房间。`
+          : '三房消息均已写入，当前房间没有变化。',
+      };
+    },
+    toolRegistry: {
+      executeTool: async (toolName, args) => {
+        calls.push({ toolName, args });
+        if (toolName === 'chat.send_message') {
+          return {
+            toolName,
+            status: 'succeeded',
+            result: { ok: true, sessionId: args.sessionName, sessionName: args.sessionName },
+            summary: `sent message to ${args.sessionName}`,
+          };
+        }
+        if (toolName === 'app.read_resource') {
+          return {
+            toolName,
+            status: 'succeeded',
+            result: {
+              ok: true,
+              resource: 'chat',
+              messages: [{ role: 'user', content: `OBS-${args.sessionName === '观测站' ? 'A' : (args.sessionName === '档案室' ? 'B' : 'C')}` }],
+            },
+            summary: `read resource chat for ${args.sessionName}`,
+          };
+        }
+        return {
+          toolName,
+          status: 'succeeded',
+          result: { activePage: 'chat', uiMode: 'chat', sessionId: '格式修复测试' },
+          summary: 'state page=chat session=格式修复测试',
+        };
+      },
+    },
+    logger: { warn() {} },
+  });
+  const result = await agent.runPrompt(
+    '保持当前房间不变，向三个测试房后台各写一条用户消息：给「观测站」写“OBS-A”，给「档案室」写“OBS-B”，给「检查站」写“OBS-C”；全部必须 triggerReply:false、open:false。然后分别用结构化 chat 资源读取三房最后一条消息，逐一核对角色与完整正文；最后读取 APP 状态证明仍在「格式修复测试」。',
+  );
+  assert.equal(result.ok, true);
+  assert.deepEqual(
+    calls.filter(call => call.toolName === 'chat.send_message').map(call => [call.args.sessionName, call.args.content]),
+    [['观测站', 'OBS-A'], ['档案室', 'OBS-B'], ['检查站', 'OBS-C']],
+    '模型提前 final 时必须从显式目标账本继续尚未发送的 sibling 目标',
+  );
+  assert.deepEqual(
+    calls.filter(call => call.toolName === 'app.read_resource').map(call => call.args.sessionName),
+    ['观测站', '档案室', '检查站'],
+  );
+  assert.equal(calls.at(-1).toolName, 'app.get_current_state');
+  assert.ok(reactCalls >= 3);
+  console.log('ok - explicit multi-room message ledger prevents premature final and completes remaining targets');
+}
+
+{
+  const calls = [];
+  let reactCalls = 0;
+  const roomNames = ['复杂压力·岚', '复杂压力·弦'];
+  const agent = createMaidAssistantAgent({
+    planner: async () => ({
+      ok: true,
+      toolName: 'session.list',
+      args: {},
+      featureId: 'session.list',
+      title: '先查聊天室',
+    }),
+    reactPlanner: async () => {
+      reactCalls += 1;
+      if (reactCalls <= 2) {
+        return {
+          ok: true,
+          action: 'tool',
+          toolName: 'session.create',
+          args: { names: roomNames, open: false },
+          featureId: 'session.create',
+          title: reactCalls === 1 ? '幂等建立聊天室' : '重复建立聊天室',
+        };
+      }
+      if (reactCalls === 3) {
+        return {
+          ok: true,
+          action: 'tool',
+          toolName: 'worldbook.bind_sessions',
+          args: { worldbookId: '复杂压力·资料', sessions: roomNames, mode: 'append' },
+          featureId: 'worldbook.bind_sessions',
+          title: '继续批量绑定',
+        };
+      }
+      return {
+        ok: true,
+        action: 'final',
+        message: '两个聊天室已复用，世界书绑定也已核对。',
+      };
+    },
+    toolRegistry: {
+      executeTool: async (toolName, args) => {
+        calls.push({ toolName, args });
+        if (toolName === 'session.list') {
+          return {
+            toolName,
+            status: 'succeeded',
+            result: {
+              count: 2,
+              contacts: roomNames.map(name => ({ id: name, name })),
+            },
+            summary: 'listed 2 session(s)',
+          };
+        }
+        if (toolName === 'session.create') {
+          return {
+            toolName,
+            status: 'succeeded',
+            result: {
+              ok: true,
+              created: false,
+              createdCount: 0,
+              sessionIds: roomNames,
+              sessions: roomNames.map(name => ({
+                ok: true,
+                created: false,
+                existing: true,
+                sessionId: name,
+              })),
+            },
+            summary: 'created 0 of 2 session(s)',
+          };
+        }
+        return {
+          toolName,
+          status: 'succeeded',
+          result: {
+            ok: true,
+            worldbookId: args.worldbookId,
+            skippedCount: 2,
+            failedCount: 0,
+            verifiedCount: 2,
+          },
+          summary: 'batch worldbook binding completed',
+        };
+      },
+    },
+    logger: { warn() {} },
+  });
+  const result = await agent.runPrompt(
+    '重复执行幂等核对：用一次 session.create(names[]) 请求两个房，再用一次 worldbook.bind_sessions 绑定；不要打开页面。',
+  );
+  assert.equal(result.ok, true);
+  assert.equal(calls.filter(call => call.toolName === 'session.create').length, 1, '已验证的同参幂等创建不得真实执行第二次');
+  assert.equal(calls.filter(call => call.toolName === 'session.list').length, 2, '只允许初始清单和第一次创建后的自动验证');
+  assert.equal(calls.filter(call => call.toolName === 'worldbook.bind_sessions').length, 1, '拦截重复创建后必须继续下一个用户子目标');
+  const guardedStep = result.steps.find(step => step?.output?.reason === 'duplicate_idempotent_action_skipped');
+  assert.equal(guardedStep?.output?.reusedVerifiedAction, true);
+  assert.match(result.message, /世界书绑定/);
+  console.log('ok - verified idempotent session creation is reused instead of re-executed');
+}
+
+{
   const agent = createMaidAssistantAgent({
     planner: async () => ({
       ok: true,
@@ -1391,6 +2035,57 @@ import { createAgentToolRegistry } from '../../src/scripts/agent/agent-tool-regi
   assert.match(result.message, /女仆能力测试/);
   assert.equal(reactCalls, 0, '一次读取已经满足请求时不应再调用 ReAct');
   console.log('ok - 单一角色卡读取在结果足够时确定性收口');
+}
+
+{
+  let reactCalls = 0;
+  const agent = createMaidAssistantAgent({
+    planner: async () => ({
+      ok: true,
+      toolName: 'app.read_resource',
+      args: { resource: 'persona', id: 'p1', include: ['associations'] },
+      featureId: 'app.resource.read',
+      title: '读取角色卡关联资源',
+    }),
+    reactPlanner: async () => {
+      reactCalls += 1;
+      return { ok: true, action: 'final', message: '不应依赖模型补写关联资源。' };
+    },
+    toolRegistry: {
+      executeTool: async toolName => ({
+        toolName,
+        status: 'succeeded',
+        result: {
+          ok: true,
+          resource: 'persona',
+          activeId: 'p1',
+          count: 1,
+          includedFields: ['associations'],
+          items: [{
+            id: 'p1',
+            name: '精灵女王',
+            active: true,
+            associations: {
+              worldbookId: '精灵抱抱',
+              worldbookEnabled: true,
+              systemPresetId: '精灵预设',
+              regexSetId: '精灵正则',
+            },
+          }],
+        },
+        summary: 'read resource persona associations',
+      }),
+    },
+    logger: { warn() {} },
+  });
+  const result = await agent.runPrompt('读取精灵女王角色卡关联了哪些资源。');
+  assert.equal(result.ok, true);
+  assert.equal(result.finalDecision?.source, 'deterministic_read_completion');
+  assert.match(result.message, /世界书「精灵抱抱」.*已启用/);
+  assert.match(result.message, /系统预设「精灵预设」/);
+  assert.match(result.message, /正则集「精灵正则」/);
+  assert.equal(reactCalls, 0, '关联引用已是结构化事实，不应再调用 ReAct 重述');
+  console.log('ok - 角色卡关联资源读取由确定性摘要完整收口');
 }
 
 {
@@ -1552,6 +2247,220 @@ import { createAgentToolRegistry } from '../../src/scripts/agent/agent-tool-regi
   assert.match(result.message, /变量：会话 1 项，全局 2 项/);
   assert.equal(reactCalls, 2);
   console.log('ok - preset/regex/variables 只读组合在第三项后确定性收口');
+}
+
+{
+  const calls = [];
+  let reactCalls = 0;
+  const profileTargets = ['观测站', '档案室', '检查站'];
+  const agent = createMaidAssistantAgent({
+    planner: async () => ({
+      ok: true,
+      toolName: 'worldbook.read',
+      args: { name: '档案库' },
+      featureId: 'worldbook.read',
+      title: '读取世界书索引',
+    }),
+    reactPlanner: async () => {
+      reactCalls += 1;
+      return {
+        ok: true,
+        action: 'tool',
+        toolName: 'worldbook.read',
+        args: { name: '档案库', includeContent: reactCalls % 2 === 0 },
+        featureId: 'worldbook.read',
+        title: '重复读取世界书',
+      };
+    },
+    toolRegistry: {
+      executeTool: async (toolName, args) => {
+        calls.push({ toolName, args });
+        if (toolName === 'worldbook.read') {
+          return {
+            toolName,
+            status: 'succeeded',
+            result: {
+              ok: true,
+              name: '档案库',
+              entryCount: 5,
+              entries: ['站长', '档案员', '观测站', '检查站', '临时草稿']
+                .map(title => ({ title })),
+            },
+            summary: 'read worldbook 档案库 (5 entries)',
+          };
+        }
+        if (toolName === 'session.list') {
+          return {
+            toolName,
+            status: 'succeeded',
+            result: {
+              count: 4,
+              contacts: ['观测站', '档案室', '检查站', '中继站'].map(name => ({ id: name, name })),
+            },
+            summary: 'listed 4 session(s)',
+          };
+        }
+        if (toolName === 'app.read_resource') {
+          return {
+            toolName,
+            status: 'succeeded',
+            result: {
+              ok: true,
+              resource: args.resource,
+              count: 1,
+              items: [{ id: `${args.resource}-1`, name: `测试${args.resource}`, active: false }],
+            },
+            summary: `read resource ${args.resource}`,
+          };
+        }
+        if (toolName === 'chat.read_format_profile') {
+          return {
+            toolName,
+            status: 'succeeded',
+            result: {
+              ok: true,
+              sessionId: args.sessionName,
+              profile: { sessionId: args.sessionName, guide: `<${args.sessionName}>...</${args.sessionName}>` },
+            },
+            summary: `format profile found for ${args.sessionName}`,
+          };
+        }
+        return {
+          toolName,
+          status: 'succeeded',
+          result: { activePage: 'chat', uiMode: 'chat', sessionId: '格式修复测试' },
+          summary: 'state page=chat session=格式修复测试',
+        };
+      },
+    },
+    logger: { warn() {} },
+  });
+  const result = await agent.runPrompt(
+    '进行最终只读审计，不得补写或打开页面：读取「档案库」全文索引；读取完整会话清单；读取测试用户与测试角色卡清单；分别读取「观测站」「档案室」「检查站」的格式画像；再读取 APP 状态。',
+  );
+  assert.equal(result.ok, true);
+  assert.deepEqual(
+    calls.map(call => [
+      call.toolName,
+      call.args.resource || call.args.name || call.args.sessionName || '',
+    ]),
+    [
+      ['worldbook.read', '档案库'],
+      ['session.list', ''],
+      ['app.read_resource', 'user'],
+      ['app.read_resource', 'persona'],
+      ['chat.read_format_profile', '观测站'],
+      ['chat.read_format_profile', '档案室'],
+      ['chat.read_format_profile', '检查站'],
+      ['app.get_current_state', ''],
+    ],
+    '结构化只读审计应按剩余目标各读一次，不受模型重复 worldbook 参数影响',
+  );
+  assert.equal(reactCalls, 0, '可完整解析的只读审计应由剩余目标账本确定性推进并收口');
+  assert.equal(result.finalDecision?.source, 'deterministic_structured_read_completion');
+  assert.match(result.message, /档案库.*5 条/);
+  assert.match(result.message, /格式画像.*观测站/);
+  assert.match(result.message, /当前会话「格式修复测试」/);
+  console.log('ok - structured read audit executes each remaining target once and closes deterministically');
+}
+
+{
+  const calls = [];
+  let reactCalls = 0;
+  const agent = createMaidAssistantAgent({
+    planner: async () => ({
+      ok: true,
+      toolName: 'app.read_resource',
+      args: { resource: 'worldbook', name: '档案库', includeContent: false },
+      featureId: 'app.resource.read',
+      title: '通过通用资源读取档案库',
+    }),
+    reactPlanner: async () => {
+      reactCalls += 1;
+      return {
+        ok: true,
+        action: 'final',
+        message: '提前结束。',
+      };
+    },
+    toolRegistry: {
+      executeTool: async (toolName, args) => {
+        calls.push({ toolName, args });
+        if (toolName === 'app.read_resource') {
+          return {
+            toolName,
+            status: 'succeeded',
+            result: {
+              ok: true,
+              resource: 'worldbook',
+              count: 2,
+              worldbooks: [{
+                id: '档案库',
+                name: '档案库',
+                entryCount: 5,
+                entries: ['站长', '档案员', '观测站', '检查站', '临时草稿']
+                  .map(title => ({ title })),
+              }, {
+                id: '其他资料',
+                name: '其他资料',
+                entryCount: 1,
+                entries: [{ title: '无关项' }],
+              }],
+            },
+            summary: 'read resource worldbook',
+          };
+        }
+        if (toolName === 'session.list') {
+          return {
+            toolName,
+            status: 'succeeded',
+            result: { count: 1, contacts: [{ id: '观测站', name: '观测站' }] },
+            summary: 'listed 1 session(s)',
+          };
+        }
+        if (toolName === 'chat.read_format_profile') {
+          return {
+            toolName,
+            status: 'succeeded',
+            result: {
+              ok: true,
+              sessionId: '观测站',
+              profile: { sessionId: '观测站', guide: '<station>...</station>' },
+            },
+            summary: 'format profile found for 观测站',
+          };
+        }
+        return {
+          toolName,
+          status: 'succeeded',
+          result: { activePage: 'chat', uiMode: 'chat', sessionId: '格式修复测试' },
+          summary: 'state page=chat session=格式修复测试',
+        };
+      },
+    },
+    logger: { warn() {} },
+  });
+  const result = await agent.runPrompt(
+    '进行最终只读审计，不得补写或打开页面：读取「档案库」全文索引；读取完整会话清单；分别读取「观测站」的格式画像；再读取 APP 状态。',
+  );
+  assert.equal(result.ok, true);
+  assert.deepEqual(
+    calls.map(call => [
+      call.toolName,
+      call.args.resource || call.args.name || call.args.sessionName || '',
+    ]),
+    [
+      ['app.read_resource', 'worldbook'],
+      ['session.list', ''],
+      ['chat.read_format_profile', '观测站'],
+      ['app.get_current_state', ''],
+    ],
+    '精确目标的通用 worldbook 结构化读取应等价满足索引义务，并推进其余目标',
+  );
+  assert.equal(reactCalls, 0);
+  assert.match(result.message, /档案库.*5 条/);
+  assert.doesNotMatch(result.message, /无关项/);
+  console.log('ok - exact generic worldbook resource reads can seed the structured audit ledger');
 }
 
 {

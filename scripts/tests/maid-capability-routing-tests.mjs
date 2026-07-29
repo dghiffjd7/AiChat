@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 
 import { createAgentToolRegistry } from '../../src/scripts/agent/agent-tool-registry.js';
+import { listAppFeatures } from '../../src/scripts/agent/app-feature-catalog.js';
 import {
   MAID_CAPABILITY_RETRIEVER_VERSION,
   MAID_CAPABILITY_ROUTING_MODES,
@@ -76,6 +77,28 @@ const retrievalLog = {
   recordRequestSummary(value) { this.requests.push(value); },
 };
 
+const createCatalogRoutingHarness = () => {
+  const catalogFeatures = listAppFeatures();
+  const catalogRegistry = createAgentToolRegistry({
+    permissionEvaluator: { evaluateTool: () => ({ decision: 'allow', checks: [] }) },
+    logger: { warn() {} },
+  });
+  const registered = new Set();
+  catalogFeatures.forEach((feature) => {
+    (Array.isArray(feature?.tools) ? feature.tools : []).forEach((name) => {
+      if (registered.has(name)) return;
+      registered.add(name);
+      catalogRegistry.register({
+        name,
+        schema: { type: 'object', properties: {} },
+        riskLevel: 'low',
+        execute: async () => ({ ok: true }),
+      });
+    });
+  });
+  return { catalogFeatures, catalogRegistry };
+};
+
 {
   let calls = 0;
   const retriever = createMaidCapabilityRetriever({
@@ -99,6 +122,212 @@ const retrievalLog = {
   assert.equal(result[0].id, 'app.state.read');
   assert.equal(result[0].retrievalReason, 'semantic_concept');
   console.log('ok - v3 hybrid retriever adds explainable local concept matches');
+}
+
+{
+  const retriever = createMaidCapabilityRetriever();
+  const batchFeature = {
+    id: 'worldbook.bind_sessions',
+    title: '批量绑定世界书到聊天室',
+    aliases: ['给这些房都绑上世界书'],
+    tools: ['worldbook.bind_sessions'],
+    riskLevel: 'medium',
+    writes: true,
+  };
+  const singleFeature = {
+    id: 'worldbook.bind_session',
+    title: '绑定世界书到聊天室',
+    aliases: ['给聊天室绑定世界书'],
+    tools: ['worldbook.bind_session'],
+    riskLevel: 'medium',
+    writes: true,
+  };
+  const result = retriever.retrieve('给这些房都绑上世界书「精灵抱抱」', {
+    features: [...features, singleFeature, batchFeature],
+    limit: 8,
+  });
+  assert.equal(result[0].id, 'worldbook.bind_sessions');
+  assert.ok(result[0].conceptCodes.includes('worldbook_batch_bind'));
+  console.log('ok - v3 retriever ranks batch worldbook binding above the single-session primitive');
+}
+
+{
+  const retriever = createMaidCapabilityRetriever();
+  const { catalogFeatures } = createCatalogRoutingHarness();
+  const fixtures = [
+    ['清理测试用的房间', 'session.delete_many', 'session_batch_delete'],
+    ['批量删除测试角色卡', 'persona.delete_many', 'persona_batch_delete'],
+    ['删除这些测试世界书', 'worldbook.delete_many', 'worldbook_batch_delete'],
+    ['删除世界书重复条目', 'worldbook.delete_entries', 'worldbook_entry_delete'],
+  ];
+  for (const [input, featureId, conceptCode] of fixtures) {
+    const result = retriever.retrieve(input, { features: catalogFeatures, limit: 8 });
+    const match = result.find(item => item.id === featureId);
+    assert.ok(match, `${input} should retrieve ${featureId}`);
+    assert.ok(match.conceptCodes.includes(conceptCode), `${featureId} should expose ${conceptCode}`);
+  }
+  console.log('ok - v3 retriever distinguishes resource batch deletion from worldbook entry deletion');
+}
+
+{
+  const { catalogFeatures, catalogRegistry } = createCatalogRoutingHarness();
+  const runtime = createMaidCapabilityRoutingRuntime({
+    features: catalogFeatures,
+    toolRegistry: catalogRegistry,
+    permissionEvaluator: { evaluateTool: () => ({ decision: 'allow', checks: [] }) },
+    logger: { debug() {} },
+  });
+  const input = '重复执行幂等核对：用一次 session.create(names[]) 请求「复杂压力·岚」「复杂压力·弦」，不得新增重名房；再用一次 worldbook.bind_sessions 把「复杂压力·资料」append 到两房。最后只根据工具结果说明 createdCount、already_bound/skipped 与 verified，不要逐房重复绑定或打开页面。';
+  const request = runtime.beginRequest({ input });
+  const snapshot = runtime.prepareDecision({ requestId: request.id, input, phase: 'planner' });
+  assert.ok(snapshot.candidateIds.has('session.create'), '原句明确写出的 session.create 必须进入首轮候选');
+  runtime.finishRequest(request.id, { ok: true });
+  console.log('ok - complex idempotency request retains the explicit session.create subgoal');
+}
+
+{
+  const { catalogFeatures, catalogRegistry } = createCatalogRoutingHarness();
+  const runtime = createMaidCapabilityRoutingRuntime({
+    features: catalogFeatures,
+    toolRegistry: catalogRegistry,
+    permissionEvaluator: { evaluateTool: () => ({ decision: 'allow', checks: [] }) },
+    logger: { debug() {} },
+  });
+  const input = '建立测试用户「复杂压力·用户」和测试角色卡「复杂压力·角色」，两者若已有就复用；setActive 必须为 false。创建前后都读取用户与角色卡清单，确认各自只出现一次，而且当前用户、当前角色卡没有变化。不要设置头像或关联正式世界书。';
+  const steps = [
+    {
+      toolName: 'app.read_resource',
+      featureId: 'app.resource.read',
+      status: 'succeeded',
+      args: { resource: 'user' },
+      output: { ok: true, resource: 'user', items: [] },
+    },
+    {
+      toolName: 'app.read_resource',
+      featureId: 'app.resource.read',
+      status: 'succeeded',
+      args: { resource: 'persona' },
+      output: { ok: true, resource: 'persona', items: [] },
+    },
+  ];
+  const request = runtime.beginRequest({ input });
+  const afterReads = runtime.prepareDecision({
+    requestId: request.id,
+    input,
+    steps,
+    phase: 'react',
+  });
+  assert.ok(afterReads.candidateIds.has('user.create'), '读取清单后仍须保留用户创建子目标');
+  assert.ok(afterReads.candidateIds.has('persona.create'), '读取清单后仍须保留角色卡创建子目标');
+  runtime.observeDecision(afterReads, {
+    ok: true,
+    featureId: 'user.create',
+    toolName: 'user.create',
+    args: { name: '复杂压力·用户', setActive: false },
+  });
+  const afterUserCreate = runtime.prepareDecision({
+    requestId: request.id,
+    input,
+    steps: [
+      ...steps,
+      {
+        toolName: 'user.create',
+        featureId: 'user.create',
+        status: 'succeeded',
+        args: { name: '复杂压力·用户', setActive: false },
+        output: { ok: true, created: true },
+      },
+    ],
+    phase: 'react',
+  });
+  assert.ok(afterUserCreate.candidateIds.has('persona.create'), '完成用户创建后 sibling 角色卡创建能力不能被挤出');
+  runtime.finishRequest(request.id, { ok: true });
+  console.log('ok - user and persona sibling creation subgoals survive sequential ReAct steps');
+}
+
+{
+  const { catalogFeatures, catalogRegistry } = createCatalogRoutingHarness();
+  const runtime = createMaidCapabilityRoutingRuntime({
+    features: catalogFeatures,
+    toolRegistry: catalogRegistry,
+    permissionEvaluator: { evaluateTool: () => ({ decision: 'allow', checks: [] }) },
+    logger: { debug() {} },
+  });
+  const input = '保持当前房间不变，向三个测试房后台各写一条用户消息：给「扩面压力·观测站」写“OBS-A”，给「扩面压力·档案室」写“OBS-B”，给「扩面压力·检查站」写“OBS-C”；全部必须 triggerReply:false、open:false。然后分别用结构化 chat 资源读取三房最后一条消息，逐一核对角色与完整正文；最后读取 APP 状态证明仍在「格式修复测试」。';
+  const request = runtime.beginRequest({ input });
+  const first = runtime.prepareDecision({
+    requestId: request.id,
+    input,
+    phase: 'planner',
+  });
+  assert.ok(first.candidateIds.has('chat.send_message'), '“各写一条用户消息”必须在首轮召回 chat.send_message');
+
+  const afterFirstReadback = runtime.prepareDecision({
+    requestId: request.id,
+    input,
+    steps: [
+      {
+        toolName: 'chat.send_message',
+        featureId: 'chat.send_message',
+        status: 'succeeded',
+        args: {
+          sessionName: '扩面压力·观测站',
+          content: 'OBS-A',
+          triggerReply: false,
+          open: false,
+        },
+        output: { ok: true, sessionId: '扩面压力·观测站' },
+      },
+      {
+        toolName: 'app.read_resource',
+        featureId: 'app.resource.read',
+        status: 'succeeded',
+        args: { resource: 'chat', sessionName: '扩面压力·观测站', limit: 1 },
+        output: { ok: true, resource: 'chat', messages: [{ role: 'user', content: 'OBS-A' }] },
+      },
+    ],
+    phase: 'react',
+  });
+  assert.ok(
+    afterFirstReadback.candidateIds.has('chat.send_message'),
+    '读回第一房后仍有两个 sibling 发送目标，chat.send_message 不能从候选消失',
+  );
+  runtime.finishRequest(request.id, { ok: true });
+  console.log('ok - repeated sibling chat sends survive readback and ReAct replanning');
+}
+
+{
+  const { catalogFeatures, catalogRegistry } = createCatalogRoutingHarness();
+  const runtime = createMaidCapabilityRoutingRuntime({
+    features: catalogFeatures,
+    toolRegistry: catalogRegistry,
+    permissionEvaluator: { evaluateTool: () => ({ decision: 'allow', checks: [] }) },
+    logger: { debug() {} },
+  });
+  const input = '读取「复杂压力·资料」后自行区分人物、地点与事件，只为其中两个主要人物建立聊天室「复杂压力·岚」「复杂压力·弦」。先查会话列表，再用一次批量创建补齐缺少项，open:false，不得给灰港或共同事件建房；最后核对两个名称各只出现一次。';
+  const request = runtime.beginRequest({ input });
+  const first = runtime.prepareDecision({ requestId: request.id, input, phase: 'planner' });
+  runtime.observeDecision(first, {
+    ok: true,
+    featureId: 'session.list',
+    toolName: 'session.list',
+    args: {},
+  });
+  const afterSessionList = runtime.prepareDecision({
+    requestId: request.id,
+    input,
+    steps: [{
+      toolName: 'session.list',
+      featureId: 'session.list',
+      status: 'succeeded',
+      args: {},
+      output: { count: 2, contacts: [] },
+    }],
+    phase: 'react',
+  });
+  assert.ok(afterSessionList.candidateIds.has('worldbook.read'), '先查会话后必须保留读取人物资料的原始子目标');
+  runtime.finishRequest(request.id, { ok: true });
+  console.log('ok - execution order does not drop the original worldbook read subgoal');
 }
 
 {
@@ -169,6 +398,35 @@ const retrievalLog = {
   assert.ok(state.reasonCodes.includes('history_context'));
   runtime.finishRequest(request.id, { ok: true });
   console.log('ok - ambiguous planner retrieval can use recent maid conversation context');
+}
+
+{
+  let contextCalls = 0;
+  const frozenContext = { historyText: '上一轮用户说：看看当前状态。' };
+  const sharedRef = { current: frozenContext };
+  const runtime = createMaidCapabilityRoutingRuntime({
+    features,
+    toolRegistry: registry,
+    permissionEvaluator: { evaluateTool: () => ({ decision: 'allow', checks: [] }) },
+    getConversationContext: () => {
+      contextCalls += 1;
+      return { historyText: '不应重新构建的历史。' };
+    },
+    logger: { debug() {} },
+  });
+  const context = { maidConversationContextRef: sharedRef };
+  const request = runtime.beginRequest({ input: '再看一下。', context });
+  const snapshot = runtime.prepareDecision({
+    requestId: request.id,
+    input: '再看一下。',
+    context,
+    phase: 'planner',
+  });
+  assert.equal(contextCalls, 0, 'Capability routing 必须使用 Run 开始前已冻结的异步快照');
+  assert.equal(sharedRef.current, frozenContext);
+  assert.ok(snapshot.candidateRefs.find(item => item.id === 'app.state.read'));
+  runtime.finishRequest(request.id, { ok: true });
+  console.log('ok - capability routing reuses the prepared conversation snapshot');
 }
 
 {
@@ -334,6 +592,54 @@ const retrievalLog = {
   assert.equal(runtime.validatePlan(verification, { context: {} }).ok, true);
   assert.equal(runtime.finishRequest(request.id, { ok: true }).effectiveMode, 'candidate');
   console.log('ok - Canary uses schema-aware candidates, per-decision snapshots, sticky reuse, and verification child snapshots');
+}
+
+{
+  const { catalogFeatures, catalogRegistry } = createCatalogRoutingHarness();
+  const workflowLog = {
+    decisions: [],
+    recordDecision(value) { this.decisions.push(value); },
+  };
+  const runtime = createMaidCapabilityRoutingRuntime({
+    features: catalogFeatures,
+    toolRegistry: catalogRegistry,
+    permissionEvaluator: { evaluateTool: () => ({ decision: 'allow', checks: [] }) },
+    retrievalStore: workflowLog,
+    logger: { debug() {} },
+  });
+  runtime.setConfig({ mode: 'bounded' });
+  const input = '进行最终只读审计，不得补写或打开页面：读取「档案库」全文索引；读取完整会话清单；读取测试用户与测试角色卡清单；分别读取「观测站」「档案室」「检查站」的格式画像；再读取 APP 状态。';
+  const request = runtime.beginRequest({ input });
+  const snapshot = runtime.prepareDecision({
+    requestId: request.id,
+    input,
+    phase: 'planner',
+  });
+  assert.equal(snapshot.useCandidates, true);
+  assert.equal(snapshot.candidateIds.has('worldbook.read'), false, '此用例必须覆盖目标不在普通 Top-N 的边界');
+  const parentPlan = runtime.observeDecision(snapshot, {
+    ok: true,
+    featureId: 'session.list',
+    toolName: 'session.list',
+    args: {},
+  });
+  const workflowPlan = runtime.authorizeWorkflowPlan({
+    requestId: request.id,
+    parentPlan,
+    workflowPlan: {
+      ok: true,
+      action: 'tool',
+      featureId: 'worldbook.read',
+      toolName: 'worldbook.read',
+      args: { name: '档案库' },
+    },
+  });
+  assert.match(workflowPlan.candidateSnapshotId, /^cap-workflow:/);
+  assert.equal(runtime.validatePlan(workflowPlan).ok, true);
+  assert.equal(workflowLog.decisions.at(-1).phase, 'deterministic_workflow');
+  assert.equal(workflowLog.decisions.at(-1).metricEligible, false);
+  assert.equal(workflowLog.decisions.at(-1).validSelection, false);
+  console.log('ok - deterministic workflow child plans get exact non-metric capability snapshots');
 }
 
 {

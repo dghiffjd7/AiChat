@@ -592,3 +592,55 @@ const logger = { warn: () => {} };
   assert.deepEqual(events, ['pending', 'confirm', 'resolved'], '确认前后回调顺序');
   console.log('ok - 确认 gate 通知 pending/resolved 回调');
 }
+
+{
+  const registry = createAgentToolRegistry({
+    permissionEvaluator: createAgentPermissionEvaluator({
+      defaultDecision: AGENT_PERMISSION_DECISIONS.allow,
+    }),
+    logger: { warn() {} },
+  });
+  let visibleRequest = null;
+  let executionRequest = null;
+  registry.register({
+    name: 'test.structured_delete',
+    title: 'Structured delete',
+    riskLevel: 'high',
+    capabilities: { read: true, write: true },
+    safety: {
+      operationType: 'delete_records',
+      destructive: 'conditional',
+      preflight: async () => ({
+        destructive: true,
+        kind: 'test.structured_delete',
+        allowAlways: false,
+        details: {
+          resource: 'session',
+          items: [
+            { id: 'a', label: 'A', avatar: 'data:image/png;base64,AAAA' },
+            { id: 'b', label: 'B', avatar: 'data:image/png;base64,BBBB' },
+          ],
+        },
+      }),
+    },
+    execute: async (_args, context) => {
+      executionRequest = context.toolSafety.request;
+      return { ok: true };
+    },
+  });
+  const output = await registry.executeTool('test.structured_delete', {}, {
+    operationIntentPolicy: { mode: 'write_allowed' },
+    requestToolConfirmation: request => {
+      visibleRequest = request;
+      return true;
+    },
+  });
+  assert.equal(output.status, 'succeeded');
+  assert.equal(visibleRequest.allowAlways, false);
+  assert.match(visibleRequest.details.items[0].avatar, /^data:image/);
+  assert.equal(Object.hasOwn(executionRequest.details, 'items'), false);
+  assert.equal(executionRequest.details.itemCount, 2);
+  assert.deepEqual(executionRequest.details.itemIds, ['a', 'b']);
+  assert.equal(JSON.stringify(executionRequest).includes('data:image'), false);
+  console.log('ok - structured confirmation items are visible to UI but stripped from persisted tool safety context');
+}

@@ -91,6 +91,7 @@ const escapeRegex = value => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'
   assert.ok(sessionCfgQ.some(f => f.id === 'app.resource.read'), '会话配置摘要询问应召回资源读取');
   const personaQ = searchAppFeatures('我现在有哪些角色卡？', { limit: 5 });
   assert.ok(personaQ.some(f => f.id === 'app.resource.read'), '角色卡询问应召回资源读取');
+  assert.match(findAppFeature('app.resource.read').argsHint, /include:\["associations"\]/);
   const providerQ = searchAppFeatures('现在的连线配置用的哪个服务商和模型？', { limit: 5 });
   assert.ok(providerQ.some(f => f.id === 'config.model.switch'), '服务商/模型询问应召回渠道能力');
   // 批次四归因回归：资源名词级问法
@@ -107,7 +108,35 @@ const escapeRegex = value => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'
   const wallpaper = findAppFeature('设置聊天室壁纸');
   assert.equal(wallpaper.id, 'session.wallpaper.set');
   assert.ok(wallpaper.tools.includes('session.set_wallpaper'));
+  assert.ok(wallpaper.tools.includes('media.generate_image'));
+  assert.match(wallpaper.argsHint, /media\.generate_image/);
   console.log('ok - app feature catalog exposes maid image asset features');
+}
+
+{
+  const feature = findAppFeature('worldbook.bind_sessions');
+  assert.deepEqual(feature.tools, ['worldbook.bind_sessions']);
+  assert.match(feature.argsHint, /sessions\[\]/);
+  assert.match(feature.argsHint, /preview/);
+  assert.equal(searchAppFeatures('给这些房都绑上世界书', { limit: 3 })[0].id, 'worldbook.bind_sessions');
+  console.log('ok - worldbook binding feature exposes the batch primitive');
+}
+
+{
+  const sessionDelete = findAppFeature('session.delete_many');
+  const personaDelete = findAppFeature('persona.delete_many');
+  const worldbookDelete = findAppFeature('worldbook.delete_many');
+  assert.deepEqual(sessionDelete.tools, ['session.delete_many']);
+  assert.match(sessionDelete.argsHint, /当前会话是批量专属保护项/);
+  assert.deepEqual(personaDelete.tools, ['persona.delete_many']);
+  assert.match(personaDelete.argsHint, /不跨资源删除/);
+  assert.deepEqual(worldbookDelete.tools, ['worldbook.delete_many']);
+  assert.match(worldbookDelete.argsHint, /手机-格式/);
+  assert.equal(searchAppFeatures('清理测试用的房间', { limit: 1 })[0].id, 'session.delete_many');
+  assert.equal(searchAppFeatures('批量删除测试角色卡', { limit: 1 })[0].id, 'persona.delete_many');
+  assert.equal(searchAppFeatures('删除这些测试世界书', { limit: 1 })[0].id, 'worldbook.delete_many');
+  assert.equal(searchAppFeatures('删除世界书重复条目', { limit: 1 })[0].id, 'worldbook.delete_entries');
+  console.log('ok - resource-specific batch deletion features expose protected domains and precise retrieval aliases');
 }
 
 {
@@ -444,6 +473,12 @@ const escapeRegex = value => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'
       assert.equal(result.created, true);
       return;
     }
+    if (feature.id === 'session.delete_many') {
+      const result = await getTool(tools, 'session.delete_many').execute({ sessions: ['Beta'], preview: true });
+      assert.equal(result.ok, true);
+      assert.equal(result.preview, true);
+      return;
+    }
     if (feature.id === 'session.open') {
       const result = await getTool(tools, 'session.open').execute({ sessionId: 'Beta' });
       assert.equal(result.ok, true);
@@ -460,6 +495,12 @@ const escapeRegex = value => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'
       const result = await getTool(tools, 'persona.create').execute({ name: 'CatalogRole', setActive: true });
       assert.equal(result.ok, true);
       assert.equal(result.created, true);
+      return;
+    }
+    if (feature.id === 'persona.delete_many') {
+      const result = await getTool(tools, 'persona.delete_many').execute({ personas: ['CatalogRole'], preview: true });
+      assert.equal(result.ok, true);
+      assert.equal(result.preview, true);
       return;
     }
     if (feature.id === 'persona.switch') {
@@ -553,6 +594,12 @@ const escapeRegex = value => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'
       assert.deepEqual(savedWorlds.get('CatalogDeleteWorld').entries.map(entry => entry.id), ['latest']);
       return;
     }
+    if (feature.id === 'worldbook.delete_many') {
+      const result = await getTool(tools, 'worldbook.delete_many').execute({ worldbooks: ['CatalogWorld'], preview: true });
+      assert.equal(result.ok, true);
+      assert.equal(result.preview, true);
+      return;
+    }
     if (feature.id === 'worldbook.list') {
       const result = await getTool(tools, 'worldbook.list').execute({ sessionId: current });
       assert.equal(result.ok, true);
@@ -564,6 +611,17 @@ const escapeRegex = value => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'
       assert.equal(result.ok, true);
       assert.equal(result.bound, true);
       assert.deepEqual(boundWorlds.at(-1), { sessionId: current, worldIds: ['CatalogWorld'], options: { silent: false } });
+      return;
+    }
+    if (feature.id === 'worldbook.bind_sessions') {
+      const result = await getTool(tools, 'worldbook.bind_sessions').execute({
+        sessions: [current, 'B'],
+        worldbookId: 'CatalogWorld',
+        preview: true,
+      });
+      assert.equal(result.ok, true);
+      assert.equal(result.preview, true);
+      assert.equal(result.requestedCount, 2);
       return;
     }
     if (feature.id === 'worldbook.read') {

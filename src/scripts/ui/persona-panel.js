@@ -1379,6 +1379,57 @@ export class PersonaPanel {
         await this.notifyPersonaChanged();
     }
 
+    async deleteCore(deleteId, options = {}) {
+        const personaId = String(deleteId || '').trim();
+        const persona = personaId ? this.store.get(personaId) : null;
+        if (!persona) {
+            return { ok: true, deleted: false, reason: 'already_absent', personaId };
+        }
+
+        const success = await this.store.delete(personaId);
+        if (!success) {
+            const remaining = this.store.getAll?.() || [];
+            return {
+                ok: false,
+                deleted: false,
+                reason: remaining.length <= 1 ? 'last_persona_protected' : 'delete_failed',
+                personaId,
+            };
+        }
+
+        const warnings = [];
+        if (options.notify !== false) {
+            try {
+                await this.notifyPersonaChanged();
+            } catch (error) {
+                warnings.push({ step: 'notify_persona_changed', message: String(error?.message || error || '') });
+            }
+        }
+        try {
+            await deletePersonaCard(window.appBridge, personaId);
+        } catch (error) {
+            warnings.push({ step: 'delete_persona_card', message: String(error?.message || error || '') });
+        }
+        if (options.cleanupBindings !== false) {
+            try {
+                await this.cleanupPersonaBindings(persona, options);
+            } catch (error) {
+                warnings.push({ step: 'cleanup_persona_bindings', message: String(error?.message || error || '') });
+            }
+        }
+        try {
+            await this.cleanupPersonaData(persona, { remainingPersonas: this.store.getAll?.() || [] });
+        } catch (error) {
+            warnings.push({ step: 'cleanup_persona_data', message: String(error?.message || error || '') });
+        }
+        return {
+            ok: true,
+            deleted: true,
+            personaId,
+            warnings,
+        };
+    }
+
     async deleteCurrent() {
         if (!this.editingId) return;
         const deleteId = String(this.editingId || '').trim();
@@ -1386,20 +1437,8 @@ export class PersonaPanel {
         const options = await this.promptDeleteOptions(persona);
         if (!options?.confirm) return;
 
-        const success = await this.store.delete(deleteId);
-        if (success) {
-            try {
-                await this.notifyPersonaChanged();
-            } catch {}
-            try {
-                await deletePersonaCard(window.appBridge, deleteId);
-            } catch {}
-            try {
-                await this.cleanupPersonaBindings(persona, options);
-            } catch {}
-            try {
-                await this.cleanupPersonaData(persona, { remainingPersonas: this.store.getAll?.() || [] });
-            } catch {}
+        const result = await this.deleteCore(deleteId, options);
+        if (result.deleted) {
             this.closeEdit();
             this.renderList();
         } else {

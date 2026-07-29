@@ -22,13 +22,33 @@ export const substitute_find_regex = {
     ESCAPED: 2,
 };
 
-const safeInvoke = async (cmd, args) => {
+const getTauriInvoker = () => {
     const g = typeof globalThis !== 'undefined' ? globalThis : window;
-    const invoker = g?.__TAURI__?.core?.invoke || g?.__TAURI__?.invoke || g?.__TAURI_INVOKE__ || g?.__TAURI_INTERNALS__?.invoke;
+    return g?.__TAURI__?.core?.invoke || g?.__TAURI__?.invoke || g?.__TAURI_INVOKE__ || g?.__TAURI_INTERNALS__?.invoke;
+};
+
+const safeInvoke = async (cmd, args) => {
+    const invoker = getTauriInvoker();
     if (typeof invoker !== 'function') {
         throw new Error('Tauri invoke not available');
     }
     return invoker(cmd, args);
+};
+
+const wait = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+const loadKvWithRetry = async (name) => {
+    const retryDelays = [40, 120];
+    let lastError = null;
+    for (let attempt = 0; attempt <= retryDelays.length; attempt += 1) {
+        try {
+            return await safeInvoke('load_kv', { name });
+        } catch (err) {
+            lastError = err;
+            if (attempt < retryDelays.length) await wait(retryDelays[attempt]);
+        }
+    }
+    throw lastError || new Error('load_kv failed');
 };
 
 const STORE_KEY = 'regex_store_v1';
@@ -221,6 +241,7 @@ export class RegexStore {
     constructor() {
         this.state = null;
         this.isLoaded = false;
+        this.persistenceBlocked = false;
         this.ready = this.load();
     }
 
@@ -229,8 +250,10 @@ export class RegexStore {
 
         let state = null;
         let skipPersistOnLoad = false;
+        let kvReadFailed = false;
+        const expectsKv = typeof getTauriInvoker() === 'function';
         try {
-            const kv = await safeInvoke('load_kv', { name: STORE_KEY });
+            const kv = await loadKvWithRetry(STORE_KEY);
             if (isRegexStoreState(kv)) {
                 state = kv;
             } else if (isNonEmptyObject(kv)) {
@@ -242,6 +265,7 @@ export class RegexStore {
                 }
             }
         } catch (err) {
+            kvReadFailed = expectsKv;
             logger.debug('load_kv regex store failed (可能非 Tauri)', err);
         }
 
@@ -255,8 +279,9 @@ export class RegexStore {
             } catch {}
         }
 
+        this.persistenceBlocked = kvReadFailed || skipPersistOnLoad;
         const persistLoadedState = async (next) => {
-            if (skipPersistOnLoad) {
+            if (this.persistenceBlocked) {
                 this.state = next;
                 return;
             }
@@ -305,7 +330,15 @@ export class RegexStore {
         return this.state;
     }
 
+    assertWritable() {
+        if (!this.persistenceBlocked) return;
+        const error = new Error('正则存储暂时无法读取，已阻止写入以保护现有数据。请重新载入 APP 后重试。');
+        error.code = 'regex_store_read_unavailable';
+        throw error;
+    }
+
     async persist(next = this.state) {
+        this.assertWritable();
         this.state = next;
         try {
             await safeInvoke('save_kv', { name: STORE_KEY, data: this.state });
@@ -328,6 +361,7 @@ export class RegexStore {
 
     async setGlobal(next) {
         await this.ready;
+        this.assertWritable();
         this.state.global = {
             enabled: next?.enabled !== false,
             rules: ensureArr(next?.rules).map(normalizeRule),
@@ -350,6 +384,7 @@ export class RegexStore {
 
     async upsertLocalSet({ id, name, enabled, bind, rules }) {
         await this.ready;
+        this.assertWritable();
         const prev = id ? this.state?.local?.sets?.[id] : null;
         const next = normalizeLocalSet({
             ...(prev || {}),
@@ -371,6 +406,7 @@ export class RegexStore {
 
     async removeLocalSet(id) {
         await this.ready;
+        this.assertWritable();
         if (!id) return;
         delete this.state?.local?.sets?.[id];
         if (Array.isArray(this.state?.local?.order)) {
@@ -387,6 +423,7 @@ export class RegexStore {
      */
     async syncPresetBindings(activePresets = {}) {
         await this.ready;
+        this.assertWritable();
         const sets = ensureObj(this.state?.local?.sets, {});
         let changed = false;
         for (const s of Object.values(sets)) {
@@ -409,6 +446,7 @@ export class RegexStore {
 
     async syncWorldBindings(activeWorldIds = []) {
         await this.ready;
+        this.assertWritable();
         const ids = new Set(
             (Array.isArray(activeWorldIds) ? activeWorldIds : [activeWorldIds])
                 .map(v => String(v || '').trim())
@@ -444,6 +482,7 @@ export class RegexStore {
 
     async setSession(sessionId, next) {
         await this.ready;
+        this.assertWritable();
         const sid = String(sessionId || '');
         if (!sid) return;
         this.state.session ||= {};

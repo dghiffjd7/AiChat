@@ -121,7 +121,7 @@ const publicImageMeta = image => ({
   transformed: image?.transformed === true,
 });
 
-// 附件解析顺序：本次女仆输入附件 -> 联网下载的运行时图片池（media.fetch_image 产物）。
+// 附件解析顺序：本次女仆输入附件 -> 工具在当前运行期取得的图片池。
 const resolveAttachment = (context = {}, args = {}, fetchedImages = []) => {
   const images = normalizeMaidImageAttachments(context?.maidAttachments);
   const fetched = Array.isArray(fetchedImages) ? fetchedImages : [];
@@ -174,10 +174,11 @@ export const createMaidMediaAssetTools = ({
   getCurrentSessionId = () => '',
   confirmDestructiveWrite = null,
   fetchRemoteImage = null,
+  generateImageAttachment = null,
   now = Date.now,
   preparedImageCache = createPreparedImageCache(),
 } = {}) => {
-  // 联网下载图片的运行时池：media.fetch_image 写入，头像/壁纸工具经 attachmentId 取用。
+  // 工具运行期图片池：联网下载与生图写入，头像/壁纸工具经 attachmentId 取用。
   const fetchedImages = [];
   const FETCHED_IMAGE_LIMIT = 6;
   const prepareAndCacheImage = async ({
@@ -326,6 +327,89 @@ export const createMaidMediaAssetTools = ({
   };
 
   return [
+    {
+      name: 'media.generate_image',
+      title: 'Generate image as attachment',
+      description: 'Generate an image with the active image model and place it in the maid attachment pool; then pass the returned attachmentId to an avatar or wallpaper tool.',
+      source: 'maid-media-assets',
+      permissions: [],
+      riskLevel: 'medium',
+      capabilities: {
+        read: false,
+        write: true,
+        network: true,
+        cost: 'variable',
+        undo: 'delete_asset',
+        modelContext: 'allowlist',
+        confirmation: 'allow_once',
+      },
+      timeoutMs: 180000,
+      outputLimit: 800,
+      schema: {
+        type: 'object',
+        required: ['prompt'],
+        additionalProperties: false,
+        properties: {
+          prompt: { type: 'string', minLength: 1, maxLength: 4000 },
+          negativePrompt: { type: 'string', maxLength: 2000 },
+        },
+      },
+      execute: async (args = {}, context = {}) => {
+        if (typeof generateImageAttachment !== 'function') {
+          return { ok: false, reason: 'image_generation_unavailable', message: '当前没有可用的图片生成配置。' };
+        }
+        const prompt = trim(args.prompt);
+        if (!prompt) {
+          return { ok: false, reason: 'missing_prompt', message: '图片提示词不能为空。' };
+        }
+        let generated = null;
+        try {
+          generated = await generateImageAttachment({
+            prompt,
+            negativePrompt: trim(args.negativePrompt),
+            sessionId: trim(getCurrentSessionId?.()),
+            context,
+          });
+        } catch (error) {
+          return {
+            ok: false,
+            reason: 'image_generation_failed',
+            message: error?.message || '图片生成失败。',
+          };
+        }
+        const dataUrl = trim(generated?.dataUrl);
+        const mime = trim(generated?.mime, inferDataUrlMime(dataUrl)).toLowerCase();
+        const bytes = Number(generated?.bytes || 0) || estimateDataUrlBytes(dataUrl);
+        if (!dataUrl.startsWith('data:image/') || !mime.startsWith('image/')) {
+          return { ok: false, reason: 'image_generation_invalid', message: '图片模型没有返回可用图片。' };
+        }
+        if (bytes > 6_000_000) {
+          return { ok: false, reason: 'image_too_large', message: '生成图片超过 6MB 限制。' };
+        }
+        const id = `generated-${Number(typeof now === 'function' ? now() : Date.now()) || Date.now()}-${fetchedImages.length + 1}`;
+        const attachment = {
+          id,
+          name: trim(generated?.name, `${id}.${mime.split('/')[1] || 'png'}`),
+          url: dataUrl,
+          mime,
+          bytes,
+          source: 'generated',
+        };
+        fetchedImages.push(attachment);
+        while (fetchedImages.length > FETCHED_IMAGE_LIMIT) fetchedImages.shift();
+        return {
+          ok: true,
+          attachmentId: id,
+          name: attachment.name,
+          mime,
+          bytes,
+          message: `图片已生成为附件 ${id}，可继续用于头像或壁纸设置。`,
+        };
+      },
+      summarizeResult: result => (result?.ok === false
+        ? `image generation failed: ${trim(result?.reason, 'unknown')}`
+        : `image generated as ${trim(result?.attachmentId)} (${Number(result?.bytes || 0)} bytes)`),
+    },
     {
       name: 'media.fetch_image',
       title: 'Fetch web image as attachment',

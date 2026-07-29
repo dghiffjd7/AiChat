@@ -12,10 +12,10 @@ import {
 {
   // Phase B 只读用量画像：recorded 求和求均，unknown 只计数不参与 token 统计
   const profile = buildAgentUsageProfile([
-    { id: 'r1', kind: 'maid_assistant', usage: { status: 'recorded', promptTokens: 1000, completionTokens: 200, totalTokens: 1200, latencyMs: 3000, toolCallCount: 2, degraded: false, aborted: false } },
-    { id: 'r2', kind: 'maid_assistant', usage: { status: 'recorded', promptTokens: 500, completionTokens: 100, totalTokens: 600, latencyMs: 1000, toolCallCount: 1, degraded: true, aborted: false } },
-    { id: 'r3', kind: 'maid_assistant', usage: { status: 'unknown', latencyMs: 800, toolCallCount: 1, aborted: true } },
-    { id: 'r4', kind: 'memory_update', usage: { status: 'recorded', promptTokens: 300, completionTokens: 50, totalTokens: 350, latencyMs: 600, toolCallCount: 0 } },
+    { id: 'r1', kind: 'maid_assistant', usage: { status: 'recorded', promptTokens: 1000, completionTokens: 200, totalTokens: 1200, latencyMs: 3000, modelCallCount: 2, toolCallCount: 2, degraded: false, aborted: false } },
+    { id: 'r2', kind: 'maid_assistant', usage: { status: 'recorded', promptTokens: 500, completionTokens: 100, totalTokens: 600, latencyMs: 1000, modelCallCount: 1, toolCallCount: 1, degraded: true, aborted: false } },
+    { id: 'r3', kind: 'maid_assistant', usage: { status: 'unknown', latencyMs: 800, modelCallCount: 1, toolCallCount: 1, aborted: true } },
+    { id: 'r4', kind: 'memory_update', usage: { status: 'recorded', promptTokens: 300, completionTokens: 50, totalTokens: 350, latencyMs: 600, modelCallCount: 1, toolCallCount: 0 } },
   ]);
   assert.equal(profile.overall.runCount, 4);
   assert.equal(profile.overall.recordedCount, 3);
@@ -29,6 +29,7 @@ import {
   assert.equal(maid.recordedCount, 2);
   assert.equal(maid.unknownCount, 1);
   assert.equal(maid.totalTokens, 1800);
+  assert.equal(maid.modelCalls, 4);
   assert.equal(maid.toolCalls, 4);
   assert.equal(maid.avgLatencyMs, Math.round((3000 + 1000 + 800) / 3));
   console.log('ok - buildAgentUsageProfile aggregates recorded usage per kind and excludes unknown tokens');

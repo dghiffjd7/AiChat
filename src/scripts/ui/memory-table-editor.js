@@ -4,6 +4,12 @@ import {
   tableMatchesMemoryContext,
 } from '../memory/memory-context-utils.js';
 import {
+  EDITABLE_OUTLINE_SECTION_IDS,
+  getOutlineSectionLabel,
+  isOutlineTableId,
+  normalizeOutlineSection,
+} from '../memory/outline-section-utils.js';
+import {
   buildMemoryTimelineLabel,
   computeNextMemoryRowSortOrder,
   extractMemoryTimelineRound,
@@ -20,8 +26,6 @@ import { buildMemoryImpactText, formatMemoryImpactScopeLabel } from './memory-im
 import { emitMemoryRowsUpdated as emitSharedMemoryRowsUpdated } from './session-memory-event-utils.js';
 import { getCurrentWorldId, getGlobalWorldId, setCurrentWorld } from './world-session-runtime-utils.js';
 
-const MEMORY_SCOPE_BADGE_STYLE = 'display:inline-flex; align-items:center; width:max-content; max-width:100%; padding:4px 8px; border:1px solid var(--app-border-default); border-radius:999px; background:var(--app-surface-subtle); color:var(--app-text-secondary); font-size:11px; line-height:1.3; cursor:help;';
-
 const scopeLabelMap = {
   global: '全局',
   contact: '私聊',
@@ -35,12 +39,6 @@ const getRuntimeScopeLabel = (table, ctx = null) => {
   return scopeLabelMap[scope] || scope || '未知';
 };
 
-const clampText = (value, max = 120) => {
-  const text = String(value || '').trim();
-  if (text.length <= max) return text;
-  return `${text.slice(0, max)}…`;
-};
-
 const escapeHtml = (value) => (
   String(value ?? '')
     .replace(/&/g, '&amp;')
@@ -50,17 +48,80 @@ const escapeHtml = (value) => (
     .replace(/'/g, '&#39;')
 );
 
-const formatRowSummary = (rowData, columns) => {
-  const parts = [];
-  for (const col of columns || []) {
-    const value = rowData?.[col.id];
-    const text = String(value ?? '').trim();
-    if (!text) continue;
-    parts.push(`${col.name}: ${text}`);
-  }
-  if (!parts.length) return '（未填写）';
-  return clampText(parts.join(' · '), 160);
+const splitMemoryCellTags = value => String(value || '')
+  .split(/[、,，；;\n\r·]+/)
+  .map(item => item.trim())
+  .filter(Boolean);
+
+const isOutlineSectionColumn = (tableId, column) => (
+  isOutlineTableId(tableId)
+  && String(column?.id || '').trim() === 'section'
+);
+
+const normalizeMemorySelectOption = (option) => {
+  const value = String(option ?? '').trim();
+  return { value, label: value };
 };
+
+export const buildMemoryTableSelectFieldView = ({
+  column = {},
+  tableId = '',
+  value = '',
+} = {}) => {
+  const rawValue = String(value ?? '').trim();
+  if (isOutlineSectionColumn(tableId, column)) {
+    const section = rawValue ? normalizeOutlineSection(rawValue) : '';
+    const isArchive = section === 'history';
+    return {
+      value: section,
+      readOnly: isArchive,
+      options: (isArchive ? ['history'] : EDITABLE_OUTLINE_SECTION_IDS).map(sectionId => ({
+        value: sectionId,
+        label: getOutlineSectionLabel(sectionId),
+      })),
+    };
+  }
+  return {
+    value: rawValue,
+    readOnly: false,
+    options: (Array.isArray(column?.options) ? column.options : [])
+      .map(normalizeMemorySelectOption)
+      .filter(option => option.value),
+  };
+};
+
+export const buildMemoryTableCellViews = (rowData = {}, columns = [], { tableId = '' } = {}) => (
+  (Array.isArray(columns) ? columns : []).map((column, index) => {
+    const id = String(column?.id || `column-${index + 1}`).trim();
+    const outlineSection = isOutlineSectionColumn(tableId, column);
+    const label = outlineSection
+      ? '大纲类别'
+      : String(column?.name || id || '字段').trim() || '字段';
+    const type = String(column?.type || 'text').trim().toLowerCase() || 'text';
+    const rawValue = String(rowData?.[id] ?? '').trim();
+    const value = outlineSection && rawValue
+      ? getOutlineSectionLabel(rawValue)
+      : rawValue;
+    const isTagField = /(?:^|_)(?:keyword|keywords|tag|tags)(?:_|$)/i.test(id);
+    const kind = type === 'select'
+      ? 'chip'
+      : isTagField
+        ? 'tag'
+        : type === 'multiline'
+          ? 'long'
+          : type === 'number'
+            ? 'number'
+            : 'text';
+    return {
+      id,
+      label,
+      type,
+      kind,
+      value,
+      tags: kind === 'tag' ? splitMemoryCellTags(value) : [],
+    };
+  })
+);
 
 const formatRowDetail = (rowData, columns) => {
   const parts = [];
@@ -259,6 +320,7 @@ export class MemoryTableEditor {
     this.modalMeta = null;
     this.modalImpact = null;
     this.modalHeader = null;
+    this.modalSubtitle = null;
     this.modalForm = null;
     this.promptWrap = null;
     this.promptTemplateInput = null;
@@ -494,37 +556,32 @@ export class MemoryTableEditor {
     this.container.innerHTML = '';
     const promptWrap = document.createElement('details');
     promptWrap.className = 'memory-table-prompt-wrap';
-    promptWrap.style.cssText = 'border:1px solid var(--app-border-default); border-radius:12px; padding:10px; margin-bottom:10px; background:var(--app-surface-subtle);';
     const promptSummary = document.createElement('summary');
     promptSummary.className = 'memory-table-prompt-summary';
-    promptSummary.style.cssText = 'cursor:pointer; font-weight:800; color:var(--app-text-primary);';
     promptSummary.textContent = '记忆表格提示词（可编辑）';
     const promptBody = document.createElement('div');
-    promptBody.style.cssText = 'margin-top:10px; display:flex; flex-direction:column; gap:10px;';
+    promptBody.className = 'memory-table-prompt-body';
     const templateLabel = document.createElement('div');
     templateLabel.className = 'memory-table-prompt-label';
-    templateLabel.style.cssText = 'font-size:12px; font-weight:700; color:var(--app-text-primary);';
     templateLabel.textContent = '模板（使用 {{tableData}} 插入表格内容）';
     const templateInput = document.createElement('textarea');
+    templateInput.className = 'memory-table-prompt-input';
     templateInput.rows = 6;
     templateInput.placeholder = '{{tableData}}';
-    templateInput.style.cssText = 'width:100%; padding:8px; border:1px solid var(--app-border-default); border-radius:10px; font-size:12px; font-family: monospace; resize: vertical;';
     const wrapperLabel = document.createElement('div');
     wrapperLabel.className = 'memory-table-prompt-label';
-    wrapperLabel.style.cssText = 'font-size:12px; font-weight:700; color:var(--app-text-primary);';
     wrapperLabel.textContent = '包裹模板（可选）';
     const wrapperInput = document.createElement('textarea');
+    wrapperInput.className = 'memory-table-prompt-input';
     wrapperInput.rows = 3;
     wrapperInput.placeholder = '<memories>\n{{tableData}}\n</memories>';
-    wrapperInput.style.cssText = 'width:100%; padding:8px; border:1px solid var(--app-border-default); border-radius:10px; font-size:12px; font-family: monospace; resize: vertical;';
     const positionRow = document.createElement('div');
-    positionRow.style.cssText = 'display:flex; align-items:center; gap:8px; flex-wrap:wrap;';
+    positionRow.className = 'memory-table-prompt-position';
     const positionLabel = document.createElement('div');
     positionLabel.className = 'memory-table-prompt-label';
-    positionLabel.style.cssText = 'font-size:12px; font-weight:700; color:var(--app-text-primary);';
     positionLabel.textContent = '注入位置';
     const positionSelect = document.createElement('select');
-    positionSelect.style.cssText = 'padding:6px 8px; border:1px solid var(--app-border-default); border-radius:8px; font-size:12px;';
+    positionSelect.className = 'memory-table-prompt-select';
     [
 	      { value: 'after_persona', label: '角色设定后' },
 	      { value: 'system_end', label: '系统末尾' },
@@ -558,35 +615,29 @@ export class MemoryTableEditor {
     }
     const promptActions = document.createElement('div');
     promptActions.className = 'memory-table-prompt-actions';
-    promptActions.style.cssText = 'display:flex; gap:8px; justify-content:flex-end;';
     const promptRefresh = document.createElement('button');
     promptRefresh.className = 'memory-table-action-btn';
     promptRefresh.textContent = '刷新预览';
-    promptRefresh.style.cssText = 'padding:6px 10px; border:1px solid var(--app-border-default); border-radius:8px; background:var(--app-surface-card); cursor:pointer; font-size:12px;';
     const promptLastRaw = document.createElement('button');
     promptLastRaw.className = 'memory-table-action-btn';
     promptLastRaw.textContent = '查看最近写表原始输出';
-    promptLastRaw.style.cssText = 'padding:6px 10px; border:1px solid var(--app-border-default); border-radius:8px; background:var(--app-surface-card); cursor:pointer; font-size:12px;';
     const promptLastPrompt = document.createElement('button');
     promptLastPrompt.className = 'memory-table-action-btn';
     promptLastPrompt.textContent = '查看最近写表请求提示词';
-    promptLastPrompt.style.cssText = 'padding:6px 10px; border:1px solid var(--app-border-default); border-radius:8px; background:var(--app-surface-card); cursor:pointer; font-size:12px;';
     const promptSave = document.createElement('button');
     promptSave.className = 'memory-table-action-btn memory-table-action-btn-primary';
     promptSave.textContent = '保存模板';
-    promptSave.style.cssText = 'padding:6px 10px; border:none; border-radius:8px; background:#019aff; color:var(--app-text-inverse); cursor:pointer; font-size:12px; font-weight:700;';
     promptActions.appendChild(promptRefresh);
     promptActions.appendChild(promptLastRaw);
     promptActions.appendChild(promptLastPrompt);
     promptActions.appendChild(promptSave);
     const previewLabel = document.createElement('div');
     previewLabel.className = 'memory-table-prompt-label';
-    previewLabel.style.cssText = 'font-size:12px; font-weight:700; color:var(--app-text-primary);';
     previewLabel.textContent = '当前会发送的提示词（预览）';
     const previewInput = document.createElement('textarea');
+    previewInput.className = 'memory-table-prompt-input is-preview';
     previewInput.rows = 6;
     previewInput.readOnly = true;
-    previewInput.style.cssText = 'width:100%; padding:8px; border:1px solid var(--app-border-default); border-radius:10px; font-size:12px; font-family: monospace; background:var(--app-surface-card); resize: vertical;';
 
     promptBody.appendChild(templateLabel);
     promptBody.appendChild(templateInput);
@@ -612,19 +663,19 @@ export class MemoryTableEditor {
     this.promptLastPromptBtn = promptLastPrompt;
 
     const toolbarWrap = document.createElement('div');
-    toolbarWrap.style.cssText = 'display:flex; flex-direction:column; gap:8px; margin-bottom:10px;';
+    toolbarWrap.className = 'memory-table-toolbar';
     const row = document.createElement('div');
-    row.style.cssText = 'display:flex; align-items:center; gap:8px;';
+    row.className = 'memory-table-toolbar-row';
     const search = document.createElement('input');
+    search.className = 'memory-table-search';
     search.type = 'text';
     search.placeholder = '搜索记忆…';
-    search.style.cssText = 'flex:1; padding:8px; border:1px solid var(--app-border-default); border-radius:10px; font-size:12px;';
     search.oninput = () => {
       this.searchTerm = String(search.value || '');
       this.renderTableList(this.currentContext);
     };
     const batchBtn = document.createElement('button');
-    batchBtn.style.cssText = 'padding:8px 10px; border:1px solid var(--app-border-default); border-radius:10px; background:var(--app-surface-card); cursor:pointer; font-size:12px;';
+    batchBtn.className = 'memory-table-action-btn';
     batchBtn.onclick = () => {
       this.setBatchMode(!this.batchMode);
       this.renderTableList(this.currentContext);
@@ -635,38 +686,38 @@ export class MemoryTableEditor {
 
     const impact = document.createElement('div');
     impact.className = 'memory-scope-badge';
-    impact.style.cssText = MEMORY_SCOPE_BADGE_STYLE;
     toolbarWrap.appendChild(impact);
 
     const bar = document.createElement('div');
-    bar.style.cssText = 'display:none; align-items:center; gap:8px; flex-wrap:wrap; font-size:12px;';
+    bar.className = 'memory-table-batch-bar';
+    bar.style.display = 'none';
     const count = document.createElement('div');
-    count.style.cssText = 'color:var(--app-text-muted);';
+    count.className = 'memory-table-batch-count';
     const selectAll = document.createElement('button');
+    selectAll.className = 'memory-table-action-btn';
     selectAll.textContent = '全选';
-    selectAll.style.cssText = 'padding:6px 8px; border:1px solid var(--app-border-default); border-radius:8px; background:var(--app-surface-card); cursor:pointer; font-size:12px;';
     selectAll.onclick = () => {
       this.visibleIds.forEach(id => this.selectedIds.add(id));
       this.renderTableList(this.currentContext);
     };
     const clearBtn = document.createElement('button');
+    clearBtn.className = 'memory-table-action-btn';
     clearBtn.textContent = '清空';
-    clearBtn.style.cssText = 'padding:6px 8px; border:1px solid var(--app-border-default); border-radius:8px; background:var(--app-surface-card); cursor:pointer; font-size:12px;';
     clearBtn.onclick = () => {
       this.selectedIds.clear();
       this.renderTableList(this.currentContext);
     };
     const enableBtn = document.createElement('button');
+    enableBtn.className = 'memory-table-action-btn';
     enableBtn.textContent = '启用';
-    enableBtn.style.cssText = 'padding:6px 8px; border:1px solid var(--app-border-default); border-radius:8px; background:var(--app-surface-card); cursor:pointer; font-size:12px;';
     enableBtn.onclick = () => this.applyBatchUpdate({ is_active: true });
     const disableBtn = document.createElement('button');
+    disableBtn.className = 'memory-table-action-btn';
     disableBtn.textContent = '禁用';
-    disableBtn.style.cssText = 'padding:6px 8px; border:1px solid var(--app-border-default); border-radius:8px; background:var(--app-surface-card); cursor:pointer; font-size:12px;';
     disableBtn.onclick = () => this.applyBatchUpdate({ is_active: false });
     const deleteBtn = document.createElement('button');
+    deleteBtn.className = 'memory-table-action-btn memory-table-row-btn-danger';
     deleteBtn.textContent = '删除';
-    deleteBtn.style.cssText = 'padding:6px 8px; border:1px solid #fecaca; border-radius:8px; background:var(--app-surface-card); cursor:pointer; font-size:12px; color:#b91c1c;';
     deleteBtn.onclick = () => this.applyBatchDelete();
     bar.appendChild(count);
     bar.appendChild(selectAll);
@@ -677,9 +728,10 @@ export class MemoryTableEditor {
     toolbarWrap.appendChild(bar);
 
     const listWrap = document.createElement('div');
-    listWrap.style.cssText = 'display:flex; flex-direction:column;';
+    listWrap.className = 'memory-table-list';
     const timelineRepairWrap = document.createElement('div');
-    timelineRepairWrap.style.cssText = 'display:none; margin-bottom:10px;';
+    timelineRepairWrap.className = 'memory-table-timeline-repair';
+    timelineRepairWrap.style.display = 'none';
     this.container.appendChild(toolbarWrap);
     this.container.appendChild(timelineRepairWrap);
     this.container.appendChild(listWrap);
@@ -1353,45 +1405,55 @@ export class MemoryTableEditor {
   renderTableBlock(table, ctx) {
     const block = document.createElement('div');
     block.className = 'memory-table-block';
-    block.style.cssText = 'border:1px solid var(--app-border-default); border-radius:12px; padding:10px; margin-bottom:12px; background:var(--app-surface-card);';
+    block.style.setProperty('--memory-table-index', String(Math.min(this.listWrap?.children?.length || 0, 8)));
     const header = document.createElement('div');
-    header.style.cssText = 'display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:8px;';
+    header.className = 'memory-table-block-header';
     const title = document.createElement('div');
     title.className = 'memory-table-block-title';
-    title.style.cssText = 'font-weight:800; color:var(--app-text-primary);';
     title.textContent = table.name || table.id || '记忆表格';
+    const titleLine = document.createElement('div');
+    titleLine.className = 'memory-table-block-title-line';
+    titleLine.appendChild(title);
+    if (table.id && String(table.id) !== String(table.name || '')) {
+      const key = document.createElement('code');
+      key.className = 'memory-table-block-key';
+      key.textContent = String(table.id);
+      titleLine.appendChild(key);
+    }
     const meta = document.createElement('div');
     meta.className = 'memory-table-block-meta';
-    meta.style.cssText = 'font-size:11px; color:var(--app-text-muted);';
     const allRows = this.memories.filter(row => String(row.table_id || '') === String(table.id || ''));
     const scopedRows = filterRowsByScope(allRows, table, ctx);
-    const maxLabel = table.maxRows ? ` / ${table.maxRows}` : '';
-    meta.textContent = `${getRuntimeScopeLabel(table, ctx)} · ${scopedRows.length}${maxLabel} · ${table.columns?.length || 0} 列`;
+    const appendMetaPill = (text, tone = '') => {
+      const pill = document.createElement('span');
+      pill.className = `memory-table-meta-pill${tone ? ` is-${tone}` : ''}`;
+      pill.textContent = text;
+      meta.appendChild(pill);
+    };
+    appendMetaPill(getRuntimeScopeLabel(table, ctx), 'scope');
+    appendMetaPill(`${scopedRows.length}${table.maxRows ? ` / ${table.maxRows}` : ''} 行`);
+    appendMetaPill(`${table.columns?.length || 0} 列`);
     const titleWrap = document.createElement('div');
-    titleWrap.appendChild(title);
+    titleWrap.className = 'memory-table-block-title-wrap';
+    titleWrap.appendChild(titleLine);
     titleWrap.appendChild(meta);
     const addBtn = document.createElement('button');
     addBtn.className = 'memory-table-action-btn memory-table-action-btn-soft';
     addBtn.textContent = '新增';
-    addBtn.style.cssText = 'padding:6px 12px; border:1px solid var(--app-border-default); border-radius:10px; background:var(--app-surface-subtle); cursor:pointer; font-size:12px;';
     if (table.maxRows && scopedRows.length >= table.maxRows) {
       addBtn.disabled = true;
-      addBtn.style.cursor = 'not-allowed';
-      addBtn.style.opacity = '0.6';
     }
     addBtn.onclick = () => this.openEditor({ table, ctx, row: null });
     const pushBtn = document.createElement('button');
     pushBtn.className = 'memory-table-action-btn';
     pushBtn.textContent = '推送';
-    pushBtn.style.cssText = 'padding:6px 10px; border:1px solid var(--app-border-default); border-radius:10px; background:var(--app-surface-card); cursor:pointer; font-size:12px;';
     pushBtn.onclick = () => this.pushTableToChat(table, scopedRows, ctx);
     const exportBtn = document.createElement('button');
     exportBtn.className = 'memory-table-action-btn memory-table-action-btn-accent';
     exportBtn.textContent = '导出世界书';
-    exportBtn.style.cssText = 'padding:6px 10px; border:1px solid #bae6fd; border-radius:10px; background:#e0f2fe; cursor:pointer; font-size:12px;';
     exportBtn.onclick = () => this.exportTableToWorldbook(table, scopedRows, ctx);
     const actionWrap = document.createElement('div');
-    actionWrap.style.cssText = 'display:flex; align-items:center; gap:6px; flex-wrap:wrap;';
+    actionWrap.className = 'memory-table-block-actions';
     actionWrap.appendChild(addBtn);
     actionWrap.appendChild(pushBtn);
     actionWrap.appendChild(exportBtn);
@@ -1402,21 +1464,57 @@ export class MemoryTableEditor {
     const list = document.createElement('div');
     list.className = 'memory-table-row-list';
     list.dataset.memoryTableId = String(table.id || '');
-    list.style.cssText = 'display:flex; flex-direction:column; gap:8px; max-height:220px; overflow-y:auto; padding-right:4px;';
     const rows = this.filterRows(scopedRows);
     const orderedRows = sortMemoryRows(rows, { tableId: table.id });
+    const columns = buildMemoryTableCellViews({}, table.columns || [], { tableId: table.id });
+    const dataTable = document.createElement('table');
+    dataTable.className = 'memory-table-data-grid';
+    dataTable.setAttribute('aria-label', table.name || table.id || '记忆表格');
+    const tableHead = document.createElement('thead');
+    const headerRow = document.createElement('tr');
+    if (this.batchMode) {
+      const selectHeader = document.createElement('th');
+      selectHeader.className = 'memory-table-select-header';
+      selectHeader.scope = 'col';
+      selectHeader.textContent = '选择';
+      headerRow.appendChild(selectHeader);
+    }
+    columns.forEach((column) => {
+      const columnHeader = document.createElement('th');
+      columnHeader.className = `memory-table-column-header is-${column.kind}`;
+      columnHeader.dataset.columnId = column.id;
+      columnHeader.dataset.cellKind = column.kind;
+      columnHeader.scope = 'col';
+      columnHeader.textContent = column.label;
+      headerRow.appendChild(columnHeader);
+    });
+    const actionHeader = document.createElement('th');
+    actionHeader.className = 'memory-table-action-header';
+    actionHeader.scope = 'col';
+    actionHeader.textContent = '操作';
+    headerRow.appendChild(actionHeader);
+    tableHead.appendChild(headerRow);
+    dataTable.appendChild(tableHead);
+    const tableBody = document.createElement('tbody');
     if (!orderedRows.length) {
+      const emptyRow = document.createElement('tr');
+      emptyRow.className = 'memory-table-empty-row';
+      const emptyCell = document.createElement('td');
+      emptyCell.colSpan = columns.length + 1 + (this.batchMode ? 1 : 0);
       const empty = document.createElement('div');
       empty.className = 'memory-table-empty';
-      empty.style.cssText = 'font-size:12px; color:var(--app-text-muted); padding:6px 4px;';
       empty.textContent = this.searchTerm ? '无匹配内容' : '暂无记忆条目';
-      list.appendChild(empty);
+      emptyCell.appendChild(empty);
+      emptyRow.appendChild(emptyCell);
+      tableBody.appendChild(emptyRow);
     } else {
-      for (const row of orderedRows) {
+      orderedRows.forEach((row, rowIndex) => {
         if (row?.id) this.visibleIds.add(row.id);
-        list.appendChild(this.renderRowItem(row, table, ctx));
-      }
+        tableBody.appendChild(this.renderRowItem(row, table, ctx, rowIndex));
+      });
     }
+    dataTable.appendChild(tableBody);
+    list.appendChild(dataTable);
     block.appendChild(list);
     return block;
   }
@@ -1433,19 +1531,62 @@ export class MemoryTableEditor {
     });
   }
 
-  renderRowItem(row, table, ctx) {
-    const item = document.createElement('div');
+  renderRowItem(row, table, ctx, rowIndex = 0) {
+    const item = document.createElement('tr');
     item.className = 'memory-table-row-item';
-    item.style.cssText =
-      'border:1px solid var(--app-border-default); border-radius:10px; padding:8px; background:var(--app-surface-subtle); display:flex; gap:8px; align-items:flex-start; justify-content:space-between;';
-    const summary = document.createElement('div');
-    summary.className = 'memory-table-row-summary';
-    summary.style.cssText = 'font-size:12px; color:var(--app-text-primary); line-height:1.4; flex:1; min-width:0;';
-    const summaryText = formatRowSummary(row.row_data || {}, table.columns || []);
-    const summaryMain = document.createElement('div');
-    summaryMain.className = 'memory-table-row-main';
-    summaryMain.textContent = summaryText;
-    summary.appendChild(summaryMain);
+    item.classList.toggle('is-inactive', !row.is_active);
+    item.classList.toggle('is-selected', this.selectedIds.has(row.id));
+    item.style.setProperty('--memory-row-index', String(Math.min(rowIndex, 10)));
+    item.dataset.memoryRowId = String(row.id || '');
+
+    if (this.batchMode) {
+      const selectCell = document.createElement('td');
+      selectCell.className = 'memory-table-select-cell';
+      const select = document.createElement('input');
+      select.className = 'memory-table-row-check';
+      select.type = 'checkbox';
+      select.checked = this.selectedIds.has(row.id);
+      select.setAttribute('aria-label', '选择记忆');
+      select.onchange = () => {
+        if (select.checked) this.selectedIds.add(row.id);
+        else this.selectedIds.delete(row.id);
+        this.renderTableList(this.currentContext);
+      };
+      selectCell.appendChild(select);
+      item.appendChild(selectCell);
+    }
+
+    buildMemoryTableCellViews(row.row_data || {}, table.columns || [], { tableId: table.id }).forEach((cellView) => {
+      const cell = document.createElement('td');
+      cell.className = `memory-table-cell is-${cellView.kind}`;
+      cell.dataset.columnId = cellView.id;
+      cell.dataset.cellKind = cellView.kind;
+      if (!cellView.value) {
+        const emptyValue = document.createElement('span');
+        emptyValue.className = 'memory-table-cell-empty';
+        emptyValue.textContent = '—';
+        cell.appendChild(emptyValue);
+      } else if (cellView.kind === 'tag') {
+        const tagList = document.createElement('span');
+        tagList.className = 'memory-table-cell-tags';
+        cellView.tags.forEach((tagText) => {
+          const tag = document.createElement('span');
+          tag.className = 'memory-table-cell-tag';
+          tag.textContent = tagText;
+          tagList.appendChild(tag);
+        });
+        cell.appendChild(tagList);
+      } else {
+        const value = document.createElement('span');
+        value.className = `memory-table-cell-value memory-table-row-main${cellView.kind === 'chip' ? ' is-chip' : ''}`;
+        value.textContent = cellView.value;
+        cell.appendChild(value);
+      }
+      item.appendChild(cell);
+    });
+
+    const actionCell = document.createElement('td');
+    actionCell.className = 'memory-table-action-cell';
     const metaParts = [];
     if (!row.is_active) metaParts.push('已停用');
     if (row.is_pinned) metaParts.push('置顶');
@@ -1453,30 +1594,19 @@ export class MemoryTableEditor {
     if (metaParts.length) {
       const metaLine = document.createElement('div');
       metaLine.className = 'memory-table-row-meta';
-      metaLine.style.cssText = 'color:var(--app-text-muted); font-size:11px; margin-top:4px;';
       metaLine.textContent = metaParts.join(' · ');
-      summary.appendChild(metaLine);
+      actionCell.appendChild(metaLine);
     }
 
     const controls = document.createElement('div');
-    controls.style.cssText = 'display:flex; align-items:center; gap:6px;';
-
-    if (this.batchMode) {
-      const select = document.createElement('input');
-      select.type = 'checkbox';
-      select.checked = this.selectedIds.has(row.id);
-      select.onchange = () => {
-        if (select.checked) this.selectedIds.add(row.id);
-        else this.selectedIds.delete(row.id);
-        this.renderTableList(this.currentContext);
-      };
-      controls.appendChild(select);
-    }
+    controls.className = 'memory-table-row-controls';
 
     const activeToggle = document.createElement('input');
+    activeToggle.className = 'memory-table-row-toggle is-active';
     activeToggle.type = 'checkbox';
     activeToggle.checked = Boolean(row.is_active);
     activeToggle.title = '启用';
+    activeToggle.setAttribute('aria-label', '启用记忆');
     activeToggle.onchange = async () => {
       try {
         await this.memoryStore.updateMemory({ id: row.id, is_active: Boolean(activeToggle.checked) });
@@ -1486,10 +1616,17 @@ export class MemoryTableEditor {
       }
       this.renderPreservingScroll().catch(() => {});
     };
+    const activeControl = document.createElement('label');
+    activeControl.className = 'memory-table-toggle-control';
+    const activeText = document.createElement('span');
+    activeText.textContent = '启用';
+    activeControl.append(activeToggle, activeText);
     const pinToggle = document.createElement('input');
+    pinToggle.className = 'memory-table-row-toggle is-pin';
     pinToggle.type = 'checkbox';
     pinToggle.checked = Boolean(row.is_pinned);
     pinToggle.title = '置顶';
+    pinToggle.setAttribute('aria-label', '置顶记忆');
     pinToggle.onchange = async () => {
       try {
         await this.memoryStore.updateMemory({ id: row.id, is_pinned: Boolean(pinToggle.checked) });
@@ -1499,15 +1636,18 @@ export class MemoryTableEditor {
       }
       this.renderPreservingScroll().catch(() => {});
     };
+    const pinControl = document.createElement('label');
+    pinControl.className = 'memory-table-toggle-control';
+    const pinText = document.createElement('span');
+    pinText.textContent = '置顶';
+    pinControl.append(pinToggle, pinText);
     const editBtn = document.createElement('button');
     editBtn.className = 'memory-table-row-btn';
     editBtn.textContent = '编辑';
-    editBtn.style.cssText = 'padding:4px 8px; border:1px solid var(--app-border-default); border-radius:8px; background:var(--app-surface-card); cursor:pointer; font-size:12px;';
     editBtn.onclick = () => this.openEditor({ table, ctx, row });
     const deleteBtn = document.createElement('button');
     deleteBtn.className = 'memory-table-row-btn memory-table-row-btn-danger';
     deleteBtn.textContent = '删除';
-    deleteBtn.style.cssText = 'padding:4px 8px; border:1px solid #fecaca; border-radius:8px; background:var(--app-surface-card); cursor:pointer; font-size:12px; color:#b91c1c;';
     deleteBtn.onclick = async () => {
       const ok = await appConfirm({
         title: '删除记忆',
@@ -1529,16 +1669,14 @@ export class MemoryTableEditor {
       pinToggle.disabled = true;
       editBtn.disabled = true;
       deleteBtn.disabled = true;
-      editBtn.style.opacity = '0.6';
-      deleteBtn.style.opacity = '0.6';
     }
 
-    controls.appendChild(activeToggle);
-    controls.appendChild(pinToggle);
+    controls.appendChild(activeControl);
+    controls.appendChild(pinControl);
     controls.appendChild(editBtn);
     controls.appendChild(deleteBtn);
-    item.appendChild(summary);
-    item.appendChild(controls);
+    actionCell.appendChild(controls);
+    item.appendChild(actionCell);
     return item;
   }
 
@@ -1603,37 +1741,40 @@ export class MemoryTableEditor {
     if (this.modalPanel) return;
     this.modalOverlay = document.createElement('div');
     this.modalOverlay.className = 'app-themed-overlay memory-editor-overlay';
-    this.modalOverlay.style.cssText = 'display:none; position:fixed; inset:0; background:rgba(0,0,0,0.45); z-index:22000;';
+    this.modalOverlay.style.display = 'none';
     this.modalOverlay.addEventListener('click', () => this.closeEditor());
     this.modalPanel = document.createElement('div');
     this.modalPanel.className = 'app-themed-panel memory-editor-panel';
-    this.modalPanel.style.cssText = `
-      display:none; position:fixed;
-      left: calc(12px + env(safe-area-inset-left, 0px));
-      right: calc(12px + env(safe-area-inset-right, 0px));
-      bottom: calc(12px + env(safe-area-inset-bottom, 0px));
-      max-height: calc(100dvh - 24px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
-      background:var(--app-surface-card); border-radius:14px; box-shadow:0 10px 40px rgba(0,0,0,0.28);
-      z-index:23000;
-      overflow:hidden;
-      display:flex; flex-direction:column;
-    `;
+    this.modalPanel.style.display = 'none';
+    this.modalPanel.setAttribute('role', 'dialog');
+    this.modalPanel.setAttribute('aria-modal', 'true');
+    this.modalPanel.setAttribute('aria-labelledby', 'memory-editor-dialog-title');
     this.modalPanel.addEventListener('click', (e) => e.stopPropagation());
     this.modalPanel.innerHTML = `
-      <div style="padding:12px 14px; border-bottom:1px solid rgba(0,0,0,0.06); display:flex; align-items:center; justify-content:space-between; gap:10px;">
-        <div data-role="header" style="font-weight:900; color:var(--app-text-primary);">编辑记忆</div>
-        <button data-role="close" style="border:none; background:transparent; font-size:22px; cursor:pointer; color:var(--app-text-primary);">×</button>
+      <div class="memory-editor-header">
+        <span class="memory-editor-mark" aria-hidden="true"></span>
+        <div class="memory-editor-heading">
+          <div id="memory-editor-dialog-title" data-role="header" class="memory-editor-title">编辑条目</div>
+          <div data-role="subtitle" class="memory-editor-subtitle"></div>
+        </div>
+        <button type="button" data-role="close" class="memory-editor-close" aria-label="关闭">×</button>
       </div>
-      <div data-role="impact" class="memory-scope-badge" style="margin:12px 14px 0; ${MEMORY_SCOPE_BADGE_STYLE}"></div>
-      <div data-role="form" style="padding:12px 14px; flex:1; min-height:0; overflow:auto;"></div>
-      <div style="padding:12px 14px; border-top:1px solid rgba(0,0,0,0.06); background:rgba(248,250,252,0.92); display:flex; gap:10px;">
-        <button data-role="cancel" style="flex:1; padding:10px 12px; border:1px solid var(--app-border-default); border-radius:12px; background:var(--app-surface-card); cursor:pointer;">取消</button>
-        <button data-role="save" style="flex:1; padding:10px 12px; border:none; border-radius:12px; background:#019aff; color:var(--app-text-inverse); cursor:pointer; font-weight:900;">保存</button>
+      <div class="memory-editor-impact">
+        <div data-role="impact" class="memory-scope-badge"></div>
+      </div>
+      <div data-role="form" class="memory-editor-form"></div>
+      <div class="memory-editor-footer">
+        <span class="memory-editor-footer-note">保存后，发送预览将实时更新</span>
+        <div class="memory-editor-footer-actions">
+          <button type="button" data-role="cancel" class="memory-editor-button">取消</button>
+          <button type="button" data-role="save" class="memory-editor-button is-primary">保存</button>
+        </div>
       </div>
     `;
     document.body.appendChild(this.modalOverlay);
     document.body.appendChild(this.modalPanel);
     this.modalHeader = this.modalPanel.querySelector('[data-role="header"]');
+    this.modalSubtitle = this.modalPanel.querySelector('[data-role="subtitle"]');
     this.modalImpact = this.modalPanel.querySelector('[data-role="impact"]');
     this.modalForm = this.modalPanel.querySelector('[data-role="form"]');
     this.modalSave = this.modalPanel.querySelector('[data-role="save"]');
@@ -1646,50 +1787,70 @@ export class MemoryTableEditor {
     this.ensureEditorModal();
     if (!this.modalForm || !this.modalHeader) return;
     const isNew = !row;
-    this.modalHeader.textContent = `${isNew ? '新增' : '编辑'} · ${table.name || table.id || ''}`;
+    const tableRows = this.memories.filter(item => String(item?.table_id || '') === String(table?.id || ''));
+    const scopedRowsForHeader = filterRowsByScope(tableRows, table, ctx);
+    this.modalPanel.dataset.mode = isNew ? 'add' : 'edit';
+    this.modalHeader.textContent = isNew ? '新增条目' : '编辑条目';
+    if (this.modalSubtitle) {
+      const rowCount = `${scopedRowsForHeader.length}${table.maxRows ? `/${table.maxRows}` : ''} 行`;
+      this.modalSubtitle.textContent = [
+        table.name || table.id || '记忆表格',
+        getRuntimeScopeLabel(table, ctx),
+        rowCount,
+      ].join(' · ');
+    }
     this.setImpactText('edit', ctx, table, this.modalImpact);
     this.modalForm.innerHTML = '';
     this.modalFields = [];
 
     for (const col of table.columns || []) {
-      const field = this.createField(col, row?.row_data?.[col.id]);
+      const field = this.createField(col, row?.row_data?.[col.id], { tableId: table.id });
       this.modalForm.appendChild(field.wrapper);
       this.modalFields.push(field);
     }
 
     const metaWrap = document.createElement('div');
-    metaWrap.style.cssText = 'display:flex; flex-wrap:wrap; gap:12px; margin-top:10px; align-items:center;';
+    metaWrap.className = 'memory-editor-meta';
+    const metaTitle = document.createElement('div');
+    metaTitle.className = 'memory-editor-meta-title';
+    metaTitle.textContent = '条目状态';
+    const metaControls = document.createElement('div');
+    metaControls.className = 'memory-editor-meta-controls';
     const activeBox = document.createElement('label');
-    activeBox.style.cssText = 'display:flex; align-items:center; gap:6px; font-size:12px; color:var(--app-text-primary);';
+    activeBox.className = 'memory-editor-meta-option';
     const activeInput = document.createElement('input');
     activeInput.type = 'checkbox';
+    activeInput.className = 'memory-editor-check';
     activeInput.checked = row ? Boolean(row.is_active) : true;
     activeBox.appendChild(activeInput);
     activeBox.appendChild(document.createTextNode('启用'));
 
     const pinBox = document.createElement('label');
-    pinBox.style.cssText = 'display:flex; align-items:center; gap:6px; font-size:12px; color:var(--app-text-primary);';
+    pinBox.className = 'memory-editor-meta-option';
     const pinInput = document.createElement('input');
     pinInput.type = 'checkbox';
+    pinInput.className = 'memory-editor-check';
     pinInput.checked = row ? Boolean(row.is_pinned) : false;
     pinBox.appendChild(pinInput);
     pinBox.appendChild(document.createTextNode('置顶'));
 
     const priorityWrap = document.createElement('label');
-    priorityWrap.style.cssText = 'display:flex; align-items:center; gap:6px; font-size:12px; color:var(--app-text-primary);';
+    priorityWrap.className = 'memory-editor-meta-option is-priority';
     const priorityInput = document.createElement('input');
     priorityInput.type = 'number';
+    priorityInput.className = 'memory-editor-priority-input';
     priorityInput.min = '-9';
     priorityInput.max = '9';
     priorityInput.step = '1';
     priorityInput.value = row ? String(row.priority ?? 0) : '0';
-    priorityInput.style.cssText = 'width:64px; padding:4px 6px; border:1px solid var(--app-border-default); border-radius:8px; font-size:12px;';
     priorityWrap.appendChild(document.createTextNode('优先级'));
     priorityWrap.appendChild(priorityInput);
 
-    metaWrap.appendChild(activeBox);
-    metaWrap.appendChild(pinBox);
-    metaWrap.appendChild(priorityWrap);
+    metaControls.appendChild(activeBox);
+    metaControls.appendChild(pinBox);
+    metaControls.appendChild(priorityWrap);
+    metaWrap.appendChild(metaTitle);
+    metaWrap.appendChild(metaControls);
     this.modalForm.appendChild(metaWrap);
 
     this.modalMeta = { activeInput, pinInput, priorityInput };
@@ -1753,26 +1914,41 @@ export class MemoryTableEditor {
       };
     }
     if (this.modalOverlay) this.modalOverlay.style.display = 'block';
-    if (this.modalPanel) this.modalPanel.style.display = 'flex';
+    if (this.modalPanel) {
+      this.modalPanel.classList.add('is-open');
+      this.modalPanel.style.display = 'flex';
+    }
   }
 
-  createField(column, value) {
+  createField(column, value, { tableId = '' } = {}) {
     const wrapper = document.createElement('div');
-    wrapper.style.cssText = 'margin-bottom:10px;';
-    const label = document.createElement('div');
-    label.style.cssText = 'font-weight:700; color:var(--app-text-primary); margin-bottom:6px; font-size:12px;';
-    label.textContent = column.name || column.id || '字段';
+    wrapper.className = 'memory-editor-field';
+    const label = document.createElement('label');
+    label.className = 'memory-editor-label';
+    const labelText = isOutlineSectionColumn(tableId, column)
+      ? '大纲类别'
+      : String(column.name || column.id || '字段');
+    const labelName = document.createElement('span');
+    labelName.textContent = labelText;
+    label.appendChild(labelName);
+    if (column.type === 'multiline') {
+      const hint = document.createElement('span');
+      hint.className = 'memory-editor-field-hint';
+      hint.textContent = '长文本';
+      label.appendChild(hint);
+    }
     wrapper.appendChild(label);
 
     let input;
     let selectWrap = null;
     if (column.type === 'multiline') {
       input = document.createElement('textarea');
-      input.style.cssText = 'width:100%; min-height:80px; resize:vertical; padding:8px; border:1px solid var(--app-border-default); border-radius:10px; font-size:12px;';
+      input.className = 'memory-editor-input is-textarea';
     } else if (column.type === 'select') {
       input = document.createElement('select');
-      input.style.cssText = 'width:100%; padding:8px; border:1px solid var(--app-border-default); border-radius:10px; font-size:12px; background:var(--app-surface-card);';
-      const opts = Array.isArray(column.options) ? column.options : [];
+      input.className = 'memory-editor-input memory-editor-native-select';
+      const fieldView = buildMemoryTableSelectFieldView({ column, tableId, value });
+      const opts = fieldView.options;
       if (!opts.length) {
         const opt = document.createElement('option');
         opt.value = '';
@@ -1783,19 +1959,22 @@ export class MemoryTableEditor {
         empty.value = '';
         empty.textContent = '请选择';
         input.appendChild(empty);
-        for (const optText of opts) {
+        for (const optionView of opts) {
           const opt = document.createElement('option');
-          opt.value = String(optText);
-          opt.textContent = String(optText);
+          opt.value = optionView.value;
+          opt.textContent = optionView.label;
           input.appendChild(opt);
         }
       }
+      input.value = fieldView.value;
+      input.disabled = fieldView.readOnly;
       selectWrap = createCustomSelectWrapper(input, {
         placeholder: '请选择',
-        wrapperStyle: 'width:100%;',
-        buttonStyle: 'width:100%;',
+        buttonClass: 'world-app-select-btn memory-editor-input memory-editor-select-button',
+        wrapperStyle: '',
       });
       if (selectWrap) {
+        selectWrap.className = 'memory-editor-select-wrap';
         bindCustomSelectButton({
           buttonEl: selectWrap.querySelector('button'),
           selectEl: input,
@@ -1805,9 +1984,13 @@ export class MemoryTableEditor {
     } else {
       input = document.createElement('input');
       input.type = column.type === 'number' ? 'number' : 'text';
-      input.style.cssText = 'width:100%; padding:8px; border:1px solid var(--app-border-default); border-radius:10px; font-size:12px;';
+      input.className = 'memory-editor-input';
     }
-    input.value = value !== undefined && value !== null ? String(value) : '';
+    input.setAttribute('aria-label', labelText);
+    if (column.type !== 'select') input.placeholder = `填写${labelText}…`;
+    if (column.type !== 'select') {
+      input.value = value !== undefined && value !== null ? String(value) : '';
+    }
     if (selectWrap) {
       refreshCustomSelectButton(selectWrap.querySelector('button'), input, '请选择');
       wrapper.appendChild(selectWrap);
@@ -1824,7 +2007,10 @@ export class MemoryTableEditor {
 
   closeEditor() {
     if (this.modalOverlay) this.modalOverlay.style.display = 'none';
-    if (this.modalPanel) this.modalPanel.style.display = 'none';
+    if (this.modalPanel) {
+      this.modalPanel.classList.remove('is-open');
+      this.modalPanel.style.display = 'none';
+    }
     this.__onSave = null;
   }
 }

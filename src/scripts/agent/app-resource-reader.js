@@ -479,6 +479,23 @@ const createSessionReader = deps => async (args = {}) => {
 
 const FULL_PROFILE_INCLUDE_NAMES = new Set(['all', 'details', 'full', 'profile']);
 
+const projectPersonaAssociations = (item = {}) => {
+  const source = item?.source && typeof item.source === 'object' && !Array.isArray(item.source)
+    ? item.source
+    : {};
+  const associations = {};
+  const worldbookId = toText(source.worldbookId);
+  const systemPresetId = toText(source.systemPresetId);
+  const regexSetId = toText(source.regexSetId);
+  if (worldbookId) {
+    associations.worldbookId = worldbookId;
+    associations.worldbookEnabled = source.worldbookEnabled !== false;
+  }
+  if (systemPresetId) associations.systemPresetId = systemPresetId;
+  if (regexSetId) associations.regexSetId = regexSetId;
+  return associations;
+};
+
 const projectAppProfile = (item = {}, activeId = '', requestedFields = [], includeFull = false) => {
   const id = toText(item?.id);
   const compact = {
@@ -517,15 +534,26 @@ const createProfileReader = (deps, kind = 'persona') => async (args = {}) => {
     .filter(field => !FULL_PROFILE_INCLUDE_NAMES.has(field));
   const includeFull = normalizeStringList(args.include)
     .some(field => FULL_PROFILE_INCLUDE_NAMES.has(field.toLowerCase()));
+  const includedFields = includeFull
+    ? ['details', ...requestedFields]
+    : requestedFields;
   return {
     ok: true,
     resource: kind,
     activeId,
     count: items.length,
     projection: includeFull ? 'full' : (requestedFields.length ? 'selected' : 'compact'),
-    includedFields: includeFull ? ['details'] : requestedFields,
-    contentHint: '角色/用户默认仅返回 id、name、active；需要描述或头像时传 include:["description"] / include:["avatar"]，完整档案传 include:["details"]。',
-    items: list.map(item => projectAppProfile(item, activeId, requestedFields, includeFull)),
+    includedFields,
+    contentHint: kind === 'persona'
+      ? '角色默认仅返回 id、name、active；需要关联资源引用时传 include:["associations"]，需要描述或头像时传 include:["description"] / include:["avatar"]，完整档案传 include:["details"]。'
+      : '用户默认仅返回 id、name、active；需要描述或头像时传 include:["description"] / include:["avatar"]，完整档案传 include:["details"]。',
+    items: list.map((item) => {
+      const projected = projectAppProfile(item, activeId, requestedFields, includeFull);
+      if (kind === 'persona' && requestedFields.includes('associations')) {
+        projected.associations = projectPersonaAssociations(item);
+      }
+      return projected;
+    }),
   };
 };
 

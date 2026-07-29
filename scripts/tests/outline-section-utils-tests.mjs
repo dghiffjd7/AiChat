@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 
 import {
   buildLegacyOutlineMigrationPlan,
+  EDITABLE_OUTLINE_SECTION_IDS,
   findOutlineSectionRow,
   getOutlineSectionLabel,
   normalizeOutlinePatchData,
@@ -17,6 +18,11 @@ import {
 assert.equal(normalizeOutlineSection('关系'), 'relationships');
 assert.equal(normalizeOutlineSection('非法节名'), 'current');
 assert.equal(getOutlineSectionLabel('open_threads'), '未决线索');
+assert.deepEqual(
+  EDITABLE_OUTLINE_SECTION_IDS,
+  ['current', 'plot', 'relationships', 'open_threads'],
+);
+assert.equal(EDITABLE_OUTLINE_SECTION_IDS.includes('history'), false);
 assert.deepEqual(
   normalizeOutlinePatchData({ section: '剧情', outline: '主角抵达港口' }),
   { section: 'plot', outline: '主角抵达港口' },

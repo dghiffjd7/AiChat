@@ -90,7 +90,14 @@ const makeDeps = () => {
           name: '精灵女王',
           avatar: `data:image/png;base64,${'A'.repeat(20_000)}`,
           description: '温柔而坚定的精灵女王',
-          source: { worldbookEnabled: true },
+          source: {
+            worldbookId: 'w1',
+            worldbookEnabled: true,
+            systemPresetId: 'sysprompt-elf',
+            regexSetId: 'r1',
+            originalCardStored: true,
+          },
+          originalCard: { data: { character_book: { entries: [{ content: '不应进入轻量投影' }] } } },
         },
         {
           id: 'p2',
@@ -324,6 +331,43 @@ const makeDeps = () => {
   assert.deepEqual(details.items[0].source, { worldbookEnabled: false });
   assert.equal(details.items[0].active, false);
   console.log('ok - app resource reader expands only explicitly included profile fields');
+}
+
+{
+  const readResource = createAppResourceReader(makeDeps());
+  const personas = await readResource({
+    resource: 'persona',
+    id: 'p1',
+    include: ['associations'],
+  });
+
+  assert.equal(personas.projection, 'selected');
+  assert.deepEqual(personas.includedFields, ['associations']);
+  assert.deepEqual(personas.items[0], {
+    id: 'p1',
+    name: '精灵女王',
+    active: true,
+    associations: {
+      worldbookId: 'w1',
+      worldbookEnabled: true,
+      systemPresetId: 'sysprompt-elf',
+      regexSetId: 'r1',
+    },
+  });
+  assert.equal(Object.hasOwn(personas.items[0], 'source'), false);
+  assert.equal(JSON.stringify(personas).includes('base64'), false);
+  assert.equal(JSON.stringify(personas).includes('originalCardStored'), false);
+  assert.equal(JSON.stringify(personas).includes('不应进入轻量投影'), false);
+
+  const worldbook = await readResource({
+    resource: 'worldbook',
+    worldbookId: personas.items[0].associations.worldbookId,
+  });
+  assert.equal(worldbook.ok, true);
+  assert.equal(worldbook.worldbooks[0].id, 'w1');
+  assert.equal(worldbook.worldbooks[0].contentMode, 'summary');
+  assert.equal(Object.hasOwn(worldbook.worldbooks[0].entries[0], 'content'), false);
+  console.log('ok - persona associations expose only binding refs and can resolve a worldbook summary');
 }
 
 {

@@ -33,6 +33,12 @@ const createProfileStore = (prefix = 'profile') => {
       activeId = id;
       return true;
     },
+    async delete(id) {
+      if (items.size <= 1 || !items.has(id)) return false;
+      items.delete(id);
+      if (activeId === id) activeId = items.keys().next().value || '';
+      return true;
+    },
     getActiveId: () => activeId,
     getActive: () => items.get(activeId) || null,
     items,
@@ -94,6 +100,141 @@ const createProfileStore = (prefix = 'profile') => {
   assert.equal(userResult.userId, user.id);
   assert.deepEqual(switched, [['persona', persona.id], ['user', user.id]]);
   console.log('ok - app content tools switch persona and user profiles');
+}
+
+{
+  const personaStore = createProfileStore('persona');
+  const keep = await personaStore.create({ name: '保留角色', avatar: 'data:image/png;base64,KEEP' });
+  const deleteA = await personaStore.create({ name: '测试角色 A', avatar: 'data:image/png;base64,A' });
+  const deleteB = await personaStore.create({ name: '测试角色 B', avatar: 'data:image/png;base64,B' });
+  await personaStore.setActive(keep.id);
+  const deleteCalls = [];
+  let notifyCount = 0;
+  let confirmation = null;
+  const tools = createAppContentAgentTools({
+    personaStore,
+    deletePersona: async (personaId, options) => {
+      deleteCalls.push({ personaId, options });
+      const deleted = await personaStore.delete(personaId);
+      return deleted
+        ? { ok: true, deleted: true, personaId }
+        : { ok: false, deleted: false, reason: 'delete_failed', personaId };
+    },
+    notifyPersonaChanged: async () => {
+      notifyCount += 1;
+    },
+    now: () => 4000,
+  });
+  const registry = createAgentToolRegistry({
+    permissionEvaluator: createAgentPermissionEvaluator({
+      defaultDecision: AGENT_PERMISSION_DECISIONS.allow,
+    }),
+    logger: { warn: () => {} },
+  });
+  registry.registerMany(tools);
+
+  const result = await registry.executeTool('persona.delete_many', {
+    personas: [keep.id, deleteA.id, deleteB.id, deleteB.id, '不存在角色'],
+  }, {
+    operationIntentPolicy: { mode: 'write_allowed' },
+    requestToolConfirmation: request => {
+      confirmation = request;
+      personaStore.items.delete(deleteB.id);
+      return true;
+    },
+  });
+  assert.equal(result.status, 'succeeded');
+  assert.equal(result.result.succeededCount, 1);
+  assert.equal(result.result.skippedCount, 4);
+  assert.equal(result.result.failedCount, 0);
+  assert.equal(result.result.results.find(item => item.personaId === keep.id).reason, 'last_persona_protected');
+  assert.equal(result.result.results.find(item => item.personaId === deleteB.id && item.status === 'skipped').reason, 'already_absent');
+  assert.equal(personaStore.get(deleteA.id), null);
+  assert.ok(personaStore.get(keep.id));
+  assert.equal(notifyCount, 1);
+  assert.deepEqual(deleteCalls, [{
+    personaId: deleteA.id,
+    options: {
+      deleteWorld: false,
+      deleteRegex: false,
+      deleteScripts: false,
+      cleanupBindings: false,
+      notify: false,
+    },
+  }]);
+  assert.equal(confirmation.kind, 'persona.delete_many');
+  assert.equal(confirmation.allowAlways, false);
+  assert.equal(confirmation.details.items.find(item => item.id === keep.id).status, 'protected');
+  assert.match(confirmation.details.items.find(item => item.id === deleteA.id).avatar, /^data:image/);
+  assert.equal(JSON.stringify(result.result).includes('data:image'), false);
+  assert.deepEqual(result.result.audit.items, [{ id: deleteA.id, name: '测试角色 A' }]);
+  console.log('ok - persona.delete_many protects one persona, rechecks TOCTOU, and preserves bound resources');
+}
+
+{
+  const builtinId = '手机-格式';
+  const saved = new Map([
+    [builtinId, { name: builtinId, entries: [] }],
+    ['绑定世界书', { name: '绑定世界书', entries: [] }],
+    ['确认期消失', { name: '确认期消失', entries: [] }],
+  ]);
+  const personaStore = createProfileStore('persona');
+  await personaStore.create({
+    name: '绑定角色',
+    source: { worldbookId: '绑定世界书' },
+  });
+  const deleted = [];
+  let confirmation = null;
+  const tools = createAppContentAgentTools({
+    personaStore,
+    listWorlds: async () => Array.from(saved.keys()),
+    getWorldInfo: async id => saved.get(id) || null,
+    getWorldSessionMap: () => ({
+      'chat-a': ['绑定世界书'],
+      'chat-b': ['其他世界书', '绑定世界书'],
+    }),
+    getGlobalWorldId: async () => '绑定世界书',
+    deleteWorldInfo: async id => {
+      deleted.push(id);
+      saved.delete(id);
+    },
+    now: () => 5000,
+  });
+  const registry = createAgentToolRegistry({
+    permissionEvaluator: createAgentPermissionEvaluator({
+      defaultDecision: AGENT_PERMISSION_DECISIONS.allow,
+    }),
+    logger: { warn: () => {} },
+  });
+  registry.registerMany(tools);
+
+  const result = await registry.executeTool('worldbook.delete_many', {
+    worldbooks: [builtinId, '绑定世界书', '确认期消失', '绑定世界书', '不存在世界书'],
+  }, {
+    operationIntentPolicy: { mode: 'write_allowed' },
+    requestToolConfirmation: request => {
+      confirmation = request;
+      saved.delete('确认期消失');
+      return true;
+    },
+  });
+  assert.equal(result.status, 'succeeded');
+  assert.equal(result.result.succeededCount, 1);
+  assert.equal(result.result.skippedCount, 4);
+  assert.equal(result.result.failedCount, 0);
+  assert.deepEqual(deleted, ['绑定世界书']);
+  assert.ok(saved.has(builtinId));
+  assert.equal(confirmation.kind, 'worldbook.delete_many');
+  assert.equal(confirmation.allowAlways, false);
+  const builtinItem = confirmation.details.items.find(item => item.id === builtinId);
+  assert.equal(builtinItem.status, 'protected');
+  assert.equal(builtinItem.reason, 'builtin_worldbook_protected');
+  const boundItem = confirmation.details.items.find(item => item.id === '绑定世界书' && item.status === 'planned');
+  assert.equal(boundItem.meta, '绑定中 ×4');
+  assert.equal(boundItem.showAvatar, false);
+  assert.equal(result.result.results.find(item => item.worldbookId === '确认期消失').reason, 'already_absent');
+  assert.deepEqual(result.result.audit.items, [{ id: '绑定世界书', name: '绑定世界书' }]);
+  console.log('ok - worldbook.delete_many protects builtin data, reports binding impact, and rechecks TOCTOU');
 }
 
 {
@@ -234,12 +375,158 @@ const createProfileStore = (prefix = 'profile') => {
   assert.equal(deduped.entryCount, 2);
   assert.deepEqual(saved.get('Duplicate World').entries.map(entry => entry.id), ['a-2', 'b-2']);
 
+  saved.set('Ambiguous Delete World', {
+    name: 'Ambiguous Delete World',
+    entries: [
+      { id: 'draft-a', comment: '临时草稿', content: '草稿-A' },
+      { id: 'draft-b', comment: '临时草稿', content: '草稿-B' },
+      { id: 'keeper', comment: '永久条目', content: '必须保留' },
+    ],
+  });
+  const ambiguousDelete = await getTool(tools, 'worldbook.delete_entries').execute({
+    name: 'Ambiguous Delete World',
+    entries: ['临时草稿'],
+    dedupeByTitle: true,
+    keep: 'first',
+  }, {
+    toolSafety: {
+      decision: 'allow',
+      request: { kind: 'worldbook.delete_entries' },
+    },
+  });
+  assert.equal(ambiguousDelete.ok, false);
+  assert.equal(ambiguousDelete.reason, 'ambiguous_delete_mode');
+  assert.deepEqual(
+    saved.get('Ambiguous Delete World').entries.map(entry => entry.id),
+    ['draft-a', 'draft-b', 'keeper'],
+    '显式删除 selector 与 dedupe 混用时必须 fail closed，不能把保留项并入删除计划',
+  );
+
   const currentRead = await getTool(tools, 'worldbook.read').execute({ sessionId: 'chat-a', maxEntries: 1 });
   assert.equal(currentRead.ok, true);
   assert.equal(currentRead.id, 'Role A World');
   assert.equal(currentRead.entries.length, 1);
   assert.equal(currentRead.truncated, true);
   console.log('ok - app content tools create bind list and read worldbooks');
+}
+
+{
+  const sessionWorldIds = new Map([
+    ['chat-a', ['Batch World']],
+    ['chat-b', ['Existing World']],
+  ]);
+  const bindCalls = [];
+  const tools = createAppContentAgentTools({
+    contactsStore: {
+      getContact: () => null,
+      listContacts: () => [],
+    },
+    chatStore: {
+      listSessions: () => ['chat-a', 'chat-b', 'chat-c', 'chat-broken', 'chat-unverified', 'chat-preview'],
+    },
+    getWorldInfo: async id => id === 'Batch World' ? { name: id, entries: [] } : null,
+    getWorldIdsForSession: async sessionId => sessionWorldIds.get(sessionId) || [],
+    getCurrentWorldIds: async () => ['Active Session World'],
+    bindWorldToSession: async (sessionId, worldIds) => {
+      bindCalls.push(sessionId);
+      if (sessionId === 'chat-broken') throw new Error('storage unavailable');
+      if (sessionId !== 'chat-unverified') sessionWorldIds.set(sessionId, [...worldIds]);
+    },
+  });
+  const batchTool = getTool(tools, 'worldbook.bind_sessions');
+  assert.ok(batchTool, 'batch worldbook binding tool should be registered');
+
+  const preview = await batchTool.execute({
+    worldbookId: 'Batch World',
+    sessions: ['chat-preview'],
+    preview: true,
+  });
+  assert.equal(preview.ok, true);
+  assert.equal(preview.preview, true);
+  assert.equal(preview.plannedCount, 1);
+  assert.equal(preview.results[0].status, 'planned');
+  assert.equal(bindCalls.length, 0, 'preview must not mutate session bindings');
+
+  const result = await batchTool.execute({
+    worldbookId: 'Batch World',
+    sessions: ['chat-a', 'chat-b', 'chat-c', 'chat-c', 'chat-broken', 'chat-unverified', 'chat-missing'],
+  });
+  assert.equal(result.ok, false, 'partial failures must not be reported as full success');
+  assert.equal(result.partial, true);
+  assert.equal(result.requestedCount, 7);
+  assert.equal(result.succeededCount, 2);
+  assert.equal(result.skippedCount, 2);
+  assert.equal(result.failedCount, 3);
+  assert.deepEqual(sessionWorldIds.get('chat-a'), ['Batch World'], 'already-bound sessions stay unchanged');
+  assert.deepEqual(sessionWorldIds.get('chat-b'), ['Existing World', 'Batch World']);
+  assert.deepEqual(sessionWorldIds.get('chat-c'), ['Batch World']);
+  assert.equal(result.results.find(item => item.target === 'chat-a').reason, 'already_bound');
+  assert.equal(result.results.filter(item => item.target === 'chat-c').at(-1).reason, 'duplicate_target');
+  assert.equal(result.results.find(item => item.target === 'chat-broken').reason, 'bind_failed');
+  assert.equal(result.results.find(item => item.target === 'chat-unverified').reason, 'verification_failed');
+  assert.equal(result.results.find(item => item.target === 'chat-missing').reason, 'session_not_found');
+  assert.deepEqual(result.retry.args.sessions, ['chat-broken', 'chat-unverified', 'chat-missing']);
+  assert.equal(result.compensation.kind, 'restore_previous_worldbook_bindings');
+  assert.deepEqual(
+    result.compensation.sessions.map(item => item.sessionId),
+    ['chat-b', 'chat-c', 'chat-unverified'],
+    'every attempted mutation should retain its previous bindings for manual compensation',
+  );
+  console.log('ok - worldbook.bind_sessions previews and reports idempotent partial batch results');
+}
+
+{
+  const sessionWorldIds = new Map();
+  const bindCalls = [];
+  const confirmations = [];
+  const tools = createAppContentAgentTools({
+    getWorldInfo: async id => id === 'Batch World' ? { name: id, entries: [] } : null,
+    getWorldIdsForSession: async sessionId => sessionWorldIds.get(sessionId) || [],
+    bindWorldToSession: async (sessionId, worldIds) => {
+      bindCalls.push(sessionId);
+      sessionWorldIds.set(sessionId, [...worldIds]);
+    },
+  });
+  const registry = createAgentToolRegistry({
+    permissionEvaluator: createAgentPermissionEvaluator({
+      defaultDecision: AGENT_PERMISSION_DECISIONS.allow,
+    }),
+    logger: { warn: () => {} },
+  });
+  registry.registerMany(tools);
+
+  const denied = await registry.executeTool('worldbook.bind_sessions', {
+    worldbookId: 'Batch World',
+    sessions: ['chat-a', 'chat-b'],
+  }, {
+    operationIntentPolicy: { mode: 'write_allowed' },
+    requestToolConfirmation: request => {
+      confirmations.push(request);
+      return false;
+    },
+  });
+  assert.equal(denied.status, 'skipped');
+  assert.equal(denied.result.reason, 'batch_binding_cancelled');
+  assert.equal(bindCalls.length, 0);
+
+  const allowed = await registry.executeTool('worldbook.bind_sessions', {
+    worldbookId: 'Batch World',
+    sessions: ['chat-a', 'chat-b'],
+  }, {
+    operationIntentPolicy: { mode: 'write_allowed' },
+    requestToolConfirmation: request => {
+      confirmations.push(request);
+      return true;
+    },
+  });
+  assert.equal(allowed.status, 'succeeded');
+  assert.equal(allowed.result.ok, true);
+  assert.equal(allowed.result.verifiedCount, 2);
+  assert.equal(confirmations.length, 2, 'one confirmation should cover each batch invocation');
+  assert.equal(confirmations[1].kind, 'worldbook.bind_sessions');
+  assert.match(confirmations[1].message, /2 个聊天室/);
+  assert.deepEqual(bindCalls, ['chat-a', 'chat-b']);
+  console.log('ok - worldbook.bind_sessions requires one registry confirmation for the whole batch');
 }
 
 {
@@ -361,6 +648,23 @@ const createProfileStore = (prefix = 'profile') => {
   });
   registry.registerMany(tools);
   const confirmations = [];
+  const ambiguous = await registry.executeTool('worldbook.delete_entries', {
+    name: 'Registry Delete World',
+    entries: ['重复条目'],
+    dedupeByTitle: true,
+    keep: 'first',
+  }, {
+    requestToolConfirmation: request => {
+      confirmations.push(request);
+      return true;
+    },
+  });
+  assert.equal(ambiguous.status, 'succeeded');
+  assert.equal(ambiguous.result.ok, false);
+  assert.equal(ambiguous.result.reason, 'ambiguous_delete_mode');
+  assert.equal(confirmations.length, 0, '歧义参数必须在确认窗前拒绝，不能让一次确认掩盖错误删除计划');
+  assert.deepEqual(saved.get('Registry Delete World').entries.map(entry => entry.id), ['keep', 'delete']);
+
   const result = await registry.executeTool('worldbook.delete_entries', {
     name: 'Registry Delete World',
     dedupeByTitle: true,

@@ -657,7 +657,14 @@ export const createMaidCapabilityRoutingRuntime = ({
     };
 
     let retrievalContext = context;
-    if (!isPlainObject(context?.maidConversationContext) && typeof getConversationContext === 'function') {
+    const frozenConversationContext = isPlainObject(context?.maidConversationContextRef?.current)
+      ? context.maidConversationContextRef.current
+      : null;
+    if (isPlainObject(context?.maidConversationContext)) {
+      retrievalContext = context;
+    } else if (frozenConversationContext) {
+      retrievalContext = { ...context, maidConversationContext: frozenConversationContext };
+    } else if (typeof getConversationContext === 'function') {
       try {
         const maidConversationContext = getConversationContext({
           input: input || state.input,
@@ -665,6 +672,12 @@ export const createMaidCapabilityRoutingRuntime = ({
           phase,
         });
         if (isPlainObject(maidConversationContext)) {
+          if (
+            isPlainObject(context?.maidConversationContextRef) &&
+            !isPlainObject(context.maidConversationContextRef.current)
+          ) {
+            context.maidConversationContextRef.current = maidConversationContext;
+          }
           retrievalContext = { ...context, maidConversationContext };
         }
       } catch (error) {
@@ -776,6 +789,7 @@ export const createMaidCapabilityRoutingRuntime = ({
         activePage: trim(context?.activePage),
         language: detectLanguage(input || state.input),
         taskDomain: trim(candidateFeatures[0]?.id).split('.')[0] || '',
+        maidContextVersion: trim(retrievalContext?.maidConversationContext?.maidContextVersion),
       },
     });
     state.snapshotIds.push(snapshot.id);
@@ -935,15 +949,18 @@ export const createMaidCapabilityRoutingRuntime = ({
     };
   };
 
-  const authorizeVerification = ({
+  const authorizeChildPlan = ({
     requestId = '',
     parentPlan = {},
-    verificationPlan = {},
+    childPlan = {},
     context = {},
+    phase = 'verification',
+    snapshotPrefix = 'cap-verify',
+    reasonCode = 'verification_dependency',
   } = {}) => {
     const parentSnapshot = snapshotCache.get(trim(parentPlan?.candidateSnapshotId)) || null;
-    const owners = findToolOwners(verificationPlan?.toolName, allFeatures);
-    const rawFeature = findExactFeature(verificationPlan?.featureId, owners) || (owners.length === 1 ? owners[0] : null);
+    const owners = findToolOwners(childPlan?.toolName, allFeatures);
+    const rawFeature = findExactFeature(childPlan?.featureId, owners) || (owners.length === 1 ? owners[0] : null);
     const projection = rawFeature ? buildToolProjection({
       feature: rawFeature,
       toolRegistry,
@@ -951,18 +968,18 @@ export const createMaidCapabilityRoutingRuntime = ({
       context,
     }).feature : null;
     if (!projection) {
-      if (!parentSnapshot?.useCandidates) return verificationPlan;
+      if (!parentSnapshot?.useCandidates) return childPlan;
       return {
-        ...verificationPlan,
+        ...childPlan,
         candidateSnapshotId: parentSnapshot.id,
         retrieverVersion: activeRetrieverVersion,
         capabilityRoutingMode: parentSnapshot.effectiveMode,
       };
     }
     const snapshot = rememberSnapshot({
-      id: createId('cap-verify'),
+      id: createId(snapshotPrefix),
       requestId: trim(requestId || parentSnapshot?.requestId),
-      phase: 'verification',
+      phase,
       mode: parentSnapshot?.mode || getConfig().mode,
       effectiveMode: parentSnapshot?.effectiveMode || 'shadow',
       useCandidates: parentSnapshot?.useCandidates === true,
@@ -971,14 +988,14 @@ export const createMaidCapabilityRoutingRuntime = ({
       latencyMs: 0,
       confidence: 100,
       candidateFeatures: [projection],
-      candidateRefs: [{ ...projection.capabilityRef, rank: 1, score: 100, reasonCodes: ['verification_dependency'] }],
+      candidateRefs: [{ ...projection.capabilityRef, rank: 1, score: 100, reasonCodes: [reasonCode] }],
       candidateIds: new Set([trim(projection.id)]),
       excluded: [],
       promptFeatures: [projection],
       cohort: clone(parentSnapshot?.cohort, {}),
     });
     const plan = {
-      ...verificationPlan,
+      ...childPlan,
       featureId: trim(projection.id),
       candidateSnapshotId: snapshot.id,
       retrieverVersion: activeRetrieverVersion,
@@ -986,6 +1003,33 @@ export const createMaidCapabilityRoutingRuntime = ({
     };
     return observeDecision(snapshot, plan, { countForRecall: false, metricEligible: false });
   };
+
+  const authorizeVerification = ({
+    requestId = '',
+    parentPlan = {},
+    verificationPlan = {},
+    context = {},
+  } = {}) => authorizeChildPlan({
+    requestId,
+    parentPlan,
+    childPlan: verificationPlan,
+    context,
+  });
+
+  const authorizeWorkflowPlan = ({
+    requestId = '',
+    parentPlan = {},
+    workflowPlan = {},
+    context = {},
+  } = {}) => authorizeChildPlan({
+    requestId,
+    parentPlan,
+    childPlan: workflowPlan,
+    context,
+    phase: 'deterministic_workflow',
+    snapshotPrefix: 'cap-workflow',
+    reasonCode: 'deterministic_workflow_dependency',
+  });
 
   const finishRequest = (requestId = '', result = {}) => {
     const state = requestStates.get(trim(requestId));
@@ -1026,6 +1070,7 @@ export const createMaidCapabilityRoutingRuntime = ({
 
   return {
     authorizeVerification,
+    authorizeWorkflowPlan,
     beginRequest,
     finishRequest,
     getConfig,

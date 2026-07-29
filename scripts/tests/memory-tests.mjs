@@ -163,6 +163,27 @@ test('default memory template injects dynamic data before latest user', () => {
   assert.equal(DEFAULT_MEMORY_TEMPLATE.injection.position, 'before_latest_user');
 });
 
+test('default outline tables expose only user-editable categories', () => {
+  const outlineTables = DEFAULT_MEMORY_TEMPLATE.tables.filter(table => table.id.endsWith('_outline'));
+  assert.deepEqual(outlineTables.map(table => table.id), [
+    'chat_outline',
+    'group_outline',
+    'moment_outline',
+    'rp_outline',
+  ]);
+  for (const table of outlineTables) {
+    const sectionColumn = table.columns.find(column => column.id === 'section');
+    assert.equal(sectionColumn?.name, '大纲类别');
+    assert.deepEqual(sectionColumn?.options, [
+      'current',
+      'plot',
+      'relationships',
+      'open_threads',
+    ]);
+    assert.equal(sectionColumn?.options?.includes('history'), false);
+  }
+});
+
 test('validateTemplate: invalid field types', () => {
   const template = {
     meta: { id: 'tpl2', name: '模板' },

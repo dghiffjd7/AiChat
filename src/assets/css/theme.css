@@ -18,6 +18,7 @@
   --app-accent-primary: #199aff;
   --app-accent-strong: #0b66c2;
   --app-accent-soft: rgba(25, 154, 255, 0.14);
+  --app-task-rgb: 139, 92, 246;
   --app-danger-text: #dc2626;
   --app-danger-soft: rgba(220, 38, 38, 0.08);
   --app-danger-border: rgba(220, 38, 38, 0.28);
@@ -46,6 +47,7 @@ body[data-theme-mode='dark'] {
   --app-danger-text: #f87171;
   --app-danger-soft: rgba(248, 113, 113, 0.13);
   --app-danger-border: rgba(248, 113, 113, 0.34);
+  --app-task-rgb: 167, 139, 250;
   color-scheme: dark;
 }
 

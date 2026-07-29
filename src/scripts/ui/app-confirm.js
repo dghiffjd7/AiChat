@@ -16,6 +16,109 @@ let choiceActionsEl = null;
 let choiceResolve = null;
 let choiceKeyHandler = null;
 
+const trimConfirmText = (value, fallback = '') => {
+  const text = String(value ?? '').trim();
+  return text || fallback;
+};
+
+export const normalizeAppConfirmItems = (items = []) => (
+  Array.isArray(items) ? items : []
+).slice(0, 100).map((item = {}) => ({
+  id: trimConfirmText(item?.id),
+  label: trimConfirmText(item?.label, trimConfirmText(item?.id, '未命名项目')),
+  avatar: trimConfirmText(item?.avatar),
+  showAvatar: item?.showAvatar === true,
+  meta: trimConfirmText(item?.meta),
+  status: trimConfirmText(item?.status, 'planned'),
+  reason: trimConfirmText(item?.reason),
+}));
+
+const CONFIRM_ITEM_STATUS_LABELS = Object.freeze({
+  planned: '将删除',
+  protected: '受保护',
+  missing: '未找到',
+  skipped: '将跳过',
+});
+
+const CONFIRM_ITEM_REASON_LABELS = Object.freeze({
+  current_session_protected: '当前会话',
+  rp_session_excluded: 'RP 会话不在批量范围',
+  builtin_worldbook_protected: '内建世界书',
+  last_persona_protected: '至少保留一张角色卡',
+  already_absent: '已不存在',
+  duplicate_target: '重复目标',
+  not_visible_session: '不在可见会话范围',
+});
+
+const renderChoiceBody = (message = '', items = []) => {
+  if (!choiceBodyEl) return;
+  choiceBodyEl.replaceChildren();
+  const normalizedItems = normalizeAppConfirmItems(items);
+  choiceBodyEl.classList.toggle('has-confirm-items', normalizedItems.length > 0);
+
+  const text = String(message || '');
+  if (text) {
+    const messageEl = document.createElement('div');
+    messageEl.className = 'app-confirm-message';
+    messageEl.textContent = text;
+    choiceBodyEl.appendChild(messageEl);
+  }
+  if (!normalizedItems.length) {
+    choiceBodyEl.scrollTop = 0;
+    return;
+  }
+
+  const listEl = document.createElement('div');
+  listEl.className = 'app-confirm-item-list';
+  listEl.setAttribute('role', 'list');
+  normalizedItems.forEach(item => {
+    const rowEl = document.createElement('div');
+    rowEl.className = 'app-confirm-item';
+    rowEl.dataset.status = item.status;
+    rowEl.setAttribute('role', 'listitem');
+    rowEl.title = item.label;
+
+    if (item.showAvatar) {
+      const avatarEl = document.createElement('div');
+      avatarEl.className = 'app-confirm-item-avatar';
+      avatarEl.textContent = item.label.slice(0, 1);
+      if (item.avatar) {
+        const imageEl = document.createElement('img');
+        imageEl.alt = '';
+        imageEl.src = item.avatar;
+        imageEl.addEventListener('error', () => imageEl.remove(), { once: true });
+        avatarEl.appendChild(imageEl);
+      }
+      rowEl.appendChild(avatarEl);
+    }
+
+    const copyEl = document.createElement('div');
+    copyEl.className = 'app-confirm-item-copy';
+    const labelEl = document.createElement('div');
+    labelEl.className = 'app-confirm-item-label';
+    labelEl.textContent = item.label;
+    copyEl.appendChild(labelEl);
+
+    const reasonLabel = CONFIRM_ITEM_REASON_LABELS[item.reason] || item.reason;
+    const metaText = [item.meta, reasonLabel].filter(Boolean).join(' · ');
+    if (metaText) {
+      const metaEl = document.createElement('div');
+      metaEl.className = 'app-confirm-item-meta';
+      metaEl.textContent = metaText;
+      copyEl.appendChild(metaEl);
+    }
+    rowEl.appendChild(copyEl);
+
+    const statusEl = document.createElement('div');
+    statusEl.className = 'app-confirm-item-status';
+    statusEl.textContent = CONFIRM_ITEM_STATUS_LABELS[item.status] || item.status;
+    rowEl.appendChild(statusEl);
+    listEl.appendChild(rowEl);
+  });
+  choiceBodyEl.appendChild(listEl);
+  choiceBodyEl.scrollTop = 0;
+};
+
 const closeConfirm = (result) => {
   if (!confirmResolve) return;
   const resolve = confirmResolve;
@@ -72,6 +175,8 @@ const closeChoice = (result) => {
   choiceResolve = null;
   if (choiceOverlay) choiceOverlay.style.display = 'none';
   if (choiceModal) choiceModal.style.display = 'none';
+  choiceBodyEl?.replaceChildren();
+  choiceBodyEl?.classList.remove('has-confirm-items');
   if (choiceKeyHandler) {
     document.removeEventListener('keydown', choiceKeyHandler);
     choiceKeyHandler = null;
@@ -164,6 +269,7 @@ export const appChoice = (options = {}) => {
   const {
     title = '请选择',
     message = '',
+    items = [],
     actions = [],
     defaultActionId = '',
     danger = false,
@@ -178,10 +284,7 @@ export const appChoice = (options = {}) => {
     choiceResolve = resolve;
 
     if (choiceTitleEl) choiceTitleEl.textContent = String(title || '请选择');
-    if (choiceBodyEl) {
-      choiceBodyEl.textContent = String(message || '');
-      choiceBodyEl.scrollTop = 0;
-    }
+    renderChoiceBody(message, items);
     if (choiceActionsEl) {
       choiceActionsEl.innerHTML = '';
       choiceActionsEl.scrollTop = 0;

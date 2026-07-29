@@ -262,6 +262,7 @@ const normalizeSafetyPreflightResult = (result = {}, tool = {}, args = {}) => {
     confirmText: trim(src.confirmText || '确认执行'),
     cancelText: trim(src.cancelText || '取消'),
     danger: src.danger !== false,
+    allowAlways: src.allowAlways !== false,
     argsPreview: clone(src.argsPreview || args),
     details: isPlainObject(src.details) ? clone(src.details) : null,
     onDeny: {
@@ -271,6 +272,19 @@ const normalizeSafetyPreflightResult = (result = {}, tool = {}, args = {}) => {
       reason: trim(src.onDeny?.reason || src.onCancel?.reason || tool.safety?.onDeny?.reason, 'destructive_operation_cancelled'),
     },
   };
+};
+
+const compactSafetyConfirmationRequest = (request = {}) => {
+  const compact = clone(request);
+  const details = isPlainObject(compact?.details) ? compact.details : null;
+  const items = Array.isArray(details?.items) ? details.items : [];
+  if (!details || !items.length) return compact;
+  delete details.items;
+  details.itemCount = items.length;
+  details.itemIds = items
+    .map(item => trim(item?.id))
+    .filter(Boolean);
+  return compact;
 };
 
 const buildSafetySkippedOutput = (tool, preflight, durationMs = 0) => {
@@ -439,7 +453,7 @@ export const createAgentToolRegistry = ({
     const requestConfirmation = context.requestToolConfirmation ||
       context.confirmToolSafety ||
       context.requestSafetyConfirmation;
-    const request = {
+    const displayRequest = {
       toolName: tool.name,
       source: tool.source,
       riskLevel: tool.riskLevel,
@@ -450,15 +464,17 @@ export const createAgentToolRegistry = ({
       confirmText: preflight.confirmText,
       cancelText: preflight.cancelText,
       danger: preflight.danger,
+      allowAlways: preflight.allowAlways,
       argsPreview: preflight.argsPreview,
       details: preflight.details,
     };
+    const request = compactSafetyConfirmationRequest(displayRequest);
     let allowed = false;
     if (typeof requestConfirmation === 'function') {
       // 等待用户确认期间通知调用方（run 可标记 waiting_permission，避免看起来像卡死）
       try { context.onToolConfirmationPending?.(request); } catch {}
       try {
-        allowed = isSafetyConfirmationAllowed(await requestConfirmation(request));
+        allowed = isSafetyConfirmationAllowed(await requestConfirmation(displayRequest));
       } finally {
         try { context.onToolConfirmationResolved?.(request); } catch {}
       }

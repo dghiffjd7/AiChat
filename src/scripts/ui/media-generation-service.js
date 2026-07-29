@@ -204,7 +204,14 @@ export const createMediaGenerationService = ({
     return blobToDataUrl(blob);
   };
 
-  const persistImage = async ({ normalized, prompt, config, sessionId, signal }) => {
+  const persistImage = async ({
+    normalized,
+    prompt,
+    config,
+    sessionId,
+    signal,
+    retainDataUrl = false,
+  }) => {
     throwIfAborted(signal);
     let dataUrl = normalized.dataUrl || '';
     let remoteUrl = normalized.url || '';
@@ -238,7 +245,7 @@ export const createMediaGenerationService = ({
       url: path ? '' : remoteUrl,
       mime: mime || getImageMimeFromDataUrl(dataUrl),
       bytes,
-      dataUrl: '',
+      dataUrl: retainDataUrl ? dataUrl : '',
     };
   };
 
@@ -339,6 +346,7 @@ export const createMediaGenerationService = ({
     options = {},
     signal,
     agentTask = true,
+    retainDataUrl = false,
   } = {}) => {
     const text = String(prompt || '').trim();
     if (!text) throw new Error('图片提示词为空');
@@ -359,7 +367,14 @@ export const createMediaGenerationService = ({
         .find(Boolean);
       if (!normalized) throw new Error('图片模型未返回可用图片');
 
-      const output = await persistImage({ normalized, prompt: text, config, sessionId, signal });
+      const output = await persistImage({
+        normalized,
+        prompt: text,
+        config,
+        sessionId,
+        signal,
+        retainDataUrl,
+      });
       throwIfAborted(signal);
       if (!output.path && !output.url && !output.dataUrl) {
         throw new Error('图片生成成功，但保存结果失败');

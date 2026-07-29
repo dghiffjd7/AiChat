@@ -1,8 +1,10 @@
+import { EDITABLE_OUTLINE_SECTION_IDS } from './outline-section-utils.js';
+
 export const DEFAULT_MEMORY_TEMPLATE = {
   meta: {
     id: 'default-v1',
     name: '通用记忆模板',
-    version: '1.3.0',
+    version: '1.3.1',
     author: '官方',
     description: '适用于聊天界面、动态界面与 RP 界面的基础记忆表格模板。',
     tags: ['通用', '聊天', '动态', 'RP'],
@@ -298,7 +300,7 @@ export const DEFAULT_MEMORY_TEMPLATE = {
         injectionTemplate: '',
       },
       columns: [
-        { id: 'section', name: '大纲分节', type: 'select', options: ['current', 'plot', 'relationships', 'open_threads', 'history'] },
+        { id: 'section', name: '大纲类别', type: 'select', options: [...EDITABLE_OUTLINE_SECTION_IDS] },
         { id: 'outline', name: '总体大纲', type: 'multiline' },
       ],
     },
@@ -359,7 +361,7 @@ export const DEFAULT_MEMORY_TEMPLATE = {
         injectionTemplate: '',
       },
       columns: [
-        { id: 'section', name: '大纲分节', type: 'select', options: ['current', 'plot', 'relationships', 'open_threads', 'history'] },
+        { id: 'section', name: '大纲类别', type: 'select', options: [...EDITABLE_OUTLINE_SECTION_IDS] },
         { id: 'outline', name: '总体大纲', type: 'multiline' },
       ],
     },
@@ -419,7 +421,7 @@ export const DEFAULT_MEMORY_TEMPLATE = {
         injectionTemplate: '',
       },
       columns: [
-        { id: 'section', name: '大纲分节', type: 'select', options: ['current', 'plot', 'relationships', 'open_threads', 'history'] },
+        { id: 'section', name: '大纲类别', type: 'select', options: [...EDITABLE_OUTLINE_SECTION_IDS] },
         { id: 'outline', name: '动态总体大纲', type: 'multiline' },
       ],
     },
@@ -552,7 +554,7 @@ export const DEFAULT_MEMORY_TEMPLATE = {
         injectionTemplate: '',
       },
       columns: [
-        { id: 'section', name: '大纲分节', type: 'select', options: ['current', 'plot', 'relationships', 'open_threads', 'history'] },
+        { id: 'section', name: '大纲类别', type: 'select', options: [...EDITABLE_OUTLINE_SECTION_IDS] },
         { id: 'outline', name: '总体大纲', type: 'multiline' },
       ],
     },

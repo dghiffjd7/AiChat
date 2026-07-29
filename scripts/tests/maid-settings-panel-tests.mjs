@@ -23,6 +23,8 @@ const maidSettingsSource = fs.readFileSync(
   assert.match(maidSettingsSource, /maid-settings-task-item\.is-entering/);
   assert.match(maidSettingsSource, /taskListHasEntered/);
   assert.match(maidSettingsSource, /linear-gradient\([^;]*var\(--app-accent-primary/);
+  assert.match(maidSettingsSource, /rgba\(var\(--app-task-rgb/);
+  assert.doesNotMatch(maidSettingsSource, /background:\s*rgba\(139,\s*92,\s*246/);
   assert.doesNotMatch(maidSettingsSource, /animation[^;]*infinite/);
   console.log('ok - maid settings redesign keeps reference proportions, onboarding visuals, responsive motion, and semantic structure');
 }
@@ -118,6 +120,20 @@ const flushMicrotasks = () => new Promise(resolve => setTimeout(resolve, 0));
   const documentRef = new FakeDocument();
   const apiCalls = [];
   const copied = [];
+  const deletedSemanticMemories = [];
+  const semanticMemories = [
+    {
+      id: 'memory-pref-background',
+      kind: 'preference',
+      key: 'presentation.default',
+      content: '普通操作默认后台执行；明确要求查看时才打开主要结果。',
+      confidence: 'explicit',
+      status: 'active',
+      tags: ['呈现', '女仆'],
+      sourceTurnIds: ['turn-source-a', 'turn-source-b'],
+      updatedAt: 1700000002000,
+    },
+  ];
   const store = {
     maidPrompt: '旧提示词',
     lastAppContext: '检索：已执行\n命中：打开世界书',
@@ -146,6 +162,14 @@ const flushMicrotasks = () => new Promise(resolve => setTimeout(resolve, 0));
     getAppKnowledgeText: () => '打开世界书 (worldbook.open)\n工具：app.open_panel',
     getHistoryContextText: () => '- 用户: 创建角色卡 A\n  结果: 已完成',
     getMemoryTableText: () => '| 1 | 摘要 |\n| 内容 | 用户创建了角色卡 A。 |',
+    semanticMemoryStore: {
+      listMemories: () => semanticMemories.filter(memory => !deletedSemanticMemories.includes(memory.id)),
+      deleteMemory: async (id) => {
+        deletedSemanticMemories.push(id);
+        return true;
+      },
+    },
+    confirmDeleteSemanticMemory: async () => true,
     onOpenApiConfig: payload => apiCalls.push(payload),
     copyText: async text => copied.push(text),
     logger: { warn() {}, debug() {} },
@@ -157,6 +181,7 @@ const flushMicrotasks = () => new Promise(resolve => setTimeout(resolve, 0));
   assert.equal(elements.tabButtons.get('prompt').classList.contains('is-active'), true);
   assert.equal(elements.promptTabButtons.get('persona').classList.contains('is-active'), true);
   assert.equal(elements.promptTabButtons.has('historyContext'), true);
+  assert.equal(elements.promptTabButtons.has('semanticMemory'), true);
   assert.equal(elements.promptTabButtons.has('memoryTable'), true);
   assert.equal(elements.promptTabButtons.has('lastResponse'), true);
   assert.equal(elements.promptTextarea.value, '旧提示词');
@@ -184,6 +209,16 @@ const flushMicrotasks = () => new Promise(resolve => setTimeout(resolve, 0));
   findByText(elements.promptPanes.get('historyContext'), '复制').dispatchEvent('click', {});
   await flushMicrotasks();
   assert.deepEqual(copied, ['- 用户: 创建角色卡 A\n  结果: 已完成']);
+
+  panel.switchTab('semanticMemory');
+  assert.equal(elements.promptTabButtons.get('semanticMemory').classList.contains('is-active'), true);
+  assert.ok(findByText(elements.semanticMemoryListEl, '普通操作默认后台执行；明确要求查看时才打开主要结果。'));
+  assert.ok(findByText(elements.semanticMemoryListEl, 'presentation.default'));
+  assert.ok(findByText(elements.semanticMemoryListEl, 'turn-source-a'));
+  findByText(elements.semanticMemoryListEl, '删除').dispatchEvent('click', {});
+  await flushMicrotasks();
+  assert.deepEqual(deletedSemanticMemories, ['memory-pref-background']);
+  assert.ok(findByText(elements.semanticMemoryListEl, '还没有长期记忆。'));
 
   panel.switchTab('memoryTable');
   assert.equal(elements.promptTabButtons.get('memoryTable').classList.contains('is-active'), true);
@@ -384,4 +419,22 @@ const flushMicrotasks = () => new Promise(resolve => setTimeout(resolve, 0));
   configuredPanel.show({ tab: 'tasks' });
   assert.equal(findByText(configuredPanel.getElements().taskListEl, '先接 API'), null);
   console.log('ok - maid settings task tab renders progress, dependency locks, and flow actions');
+}
+
+{
+  const themeManagerSource = fs.readFileSync(
+    new URL('../../src/scripts/ui/theme-manager.js', import.meta.url),
+    'utf8',
+  );
+  const referencedRgbTokens = [...new Set(
+    [...maidSettingsSource.matchAll(/var\((--app-[a-z-]+-rgb)[,)]/g)].map(match => match[1]),
+  )];
+  assert.ok(referencedRgbTokens.includes('--app-task-rgb'), 'task_state 色条应引用 --app-task-rgb');
+  for (const token of referencedRgbTokens) {
+    assert.ok(
+      themeManagerSource.includes(`setCssVar('${token}'`),
+      `${token} 在面板 CSS 中被引用，但 theme-manager 未定义（会永远落在 fallback 上）`,
+    );
+  }
+  console.log('ok - maid settings rgb tokens are all defined by theme-manager');
 }

@@ -222,6 +222,7 @@ export class ThemeManager {
     setCssVar('--app-success-text', status.successText || '#7ee787');
     setCssVar('--app-info-rgb', colorToRgbTriplet(status.info, '59, 130, 246'));
     setCssVar('--app-info-text', status.infoText || '#8ecbff');
+    setCssVar('--app-task-rgb', colorToRgbTriplet(status.task, '139, 92, 246'));
 
     setCssVar('--app-border-subtle', border.subtle);
     setCssVar('--app-border-default', border.default || border.subtle);
