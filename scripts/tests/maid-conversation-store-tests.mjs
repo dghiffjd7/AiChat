@@ -3,8 +3,11 @@ import assert from 'node:assert/strict';
 import {
   MAID_CONTEXT_MEMORY_TOKEN_LIMIT,
   MAID_CONTEXT_COMPACTION_TURN_THRESHOLD,
+  MAID_COMPACTION_PROTECTION_TTL_MS,
   MAID_CONTEXT_TOTAL_TOKEN_LIMIT,
   MAID_CONTEXT_VERSION,
+  MAID_EXTRACTION_MAX_AUTO_ATTEMPTS,
+  MAID_EXTRACTION_RETRY_DELAYS_MS,
   MaidConversationStore,
   MAID_CONVERSATION_LEGACY_ARCHIVE_KEY,
   MAID_CONVERSATION_STORE_KEY,
@@ -141,23 +144,55 @@ const createStorage = () => {
 }
 
 {
+  let clock = 1750;
   const store = new MaidConversationStore({
     storage: createStorage(),
     loadKv: async () => null,
     saveKv: async () => true,
-    now: () => 1750,
+    now: () => clock,
     compactionTurnThreshold: 12,
     compactionHistoryTokenThreshold: 100000,
   });
   await store.load();
   await store.appendTurn({
-    id: 'protected-continuation',
+    id: 'protected-first',
     input: '尚未完成的批量任务',
     status: 'interrupted',
     continuable: true,
     message: '稍后继续',
   });
+  clock += 1;
+  await store.appendTurn({
+    id: 'protected-latest',
+    input: '继续刚才的批量任务',
+    status: 'interrupted',
+    continuable: true,
+    message: '仍可继续',
+  });
+  let state = store.exportState();
+  assert.equal(state.turns.find(turn => turn.id === 'protected-first')?.compactionProtection, '');
+  assert.equal(
+    state.turns.find(turn => turn.id === 'protected-first')?.compactionProtectionReleaseReason,
+    'superseded_by_next_turn',
+  );
+  assert.equal(state.turns.find(turn => turn.id === 'protected-latest')?.compactionProtection, 'continuable');
+
+  clock += 1;
+  await store.appendTurn({
+    id: 'protected-completed',
+    input: '继续完成刚才的批量任务',
+    status: 'succeeded',
+    message: '已完成',
+  });
+  state = store.exportState();
+  assert.equal(state.turns.find(turn => turn.id === 'protected-latest')?.compactionProtection, '');
+  assert.equal(
+    state.turns.find(turn => turn.id === 'protected-latest')?.compactionProtectionReleaseReason,
+    'completed_by_next_turn',
+  );
+
   for (let index = 1; index < 13; index += 1) {
+    clock += 1;
     await store.appendTurn({
       id: `protected-clock-${index}`,
       input: `普通轮次 ${index}`,
@@ -165,18 +200,40 @@ const createStorage = () => {
       message: '已完成',
     });
   }
-  const protectedTurn = store.exportState().turns.find(turn => turn.id === 'protected-continuation');
-  assert.equal(protectedTurn?.compacted, false);
+  state = store.exportState();
   assert.equal(
-    store.exportState().memoryRows[0].sourceTurnIds.includes('protected-continuation'),
+    state.turns.some(turn => turn.compactionProtection),
     false,
   );
-  console.log('ok - unfinished and continuable turns stay outside compaction batches');
+  assert.equal(
+    state.memoryRows.some(row => row.sourceTurnIds.includes('protected-first')),
+    true,
+  );
+  console.log('ok - only the latest recoverable turn stays protected and completion releases it');
+}
+
+{
+  const at = 20_000;
+  const state = normalizeMaidConversationState({
+    turns: [{
+      id: 'expired-protection',
+      at,
+      input: '一周前未完成的任务',
+      continuable: true,
+      compactionProtection: 'continuable',
+    }],
+  }, {
+    now: () => at + MAID_COMPACTION_PROTECTION_TTL_MS + 1,
+  });
+  assert.equal(state.turns[0].compactionProtection, '');
+  assert.equal(state.turns[0].compactionProtectionReleaseReason, 'expired');
+  console.log('ok - stale compaction protection expires without erasing audit fields');
 }
 
 {
   const semanticUpserts = [];
   let extractionShouldFail = true;
+  let clock = 1900;
   const semanticMemoryStore = {
     scopeId: 'maid_default',
     listMemories: () => [],
@@ -189,13 +246,46 @@ const createStorage = () => {
     storage: createStorage(),
     loadKv: async () => null,
     saveKv: async () => true,
-    now: () => 1900,
+    now: () => clock,
     compactionTurnThreshold: 8,
     compactionHistoryTokenThreshold: 100000,
     semanticMemoryStore,
     extractSemanticMemories: async () => {
-      if (extractionShouldFail) throw new Error('temporary provider failure');
-      return { memories: [], candidateKeys: [] };
+      if (extractionShouldFail) {
+        const error = new Error('temporary provider failure');
+        error.memoryExtractionUsage = [{
+          status: 'recorded',
+          provider: 'pioneer',
+          model: 'memory-custom',
+          promptTokens: 90,
+          completionTokens: 10,
+          totalTokens: 100,
+          latencyMs: 20,
+          modelCallCount: 1,
+          degraded: false,
+          source: 'custom',
+        }];
+        throw error;
+      }
+      return {
+        memories: [],
+        candidateKeys: [],
+        fallbackUsed: true,
+        modelSource: 'maid_main_fallback',
+        model: 'maid-main',
+        usageEntries: [{
+          status: 'recorded',
+          provider: 'deepseek',
+          model: 'maid-main',
+          promptTokens: 80,
+          completionTokens: 20,
+          totalTokens: 100,
+          latencyMs: 25,
+          modelCallCount: 1,
+          degraded: true,
+          source: 'maid_main_fallback',
+        }],
+      };
     },
   });
   await store.load();
@@ -219,25 +309,82 @@ const createStorage = () => {
   assert.equal(state.extractionBatches[0].status, 'pending');
   assert.equal(state.extractionBatches[0].attempts, 1);
   assert.equal(
+    state.extractionBatches[0].nextRetryAt,
+    clock + MAID_EXTRACTION_RETRY_DELAYS_MS[0],
+  );
+  assert.equal(
     semanticUpserts.some(call => call.memory.key === 'presentation.default'),
     true,
     '确定性投影不依赖模型提取成功',
   );
 
   extractionShouldFail = false;
-  for (let index = 9; index < 14; index += 1) {
-    await store.appendTurn({
-      id: `extract-turn-${index + 1}`,
-      input: `提取轮次 ${index + 1}`,
-      status: 'succeeded',
-      message: '已完成',
-    });
-  }
+  clock = state.extractionBatches[0].nextRetryAt;
+  await store.processPendingExtractions();
   await store.flushPendingExtractions();
   state = store.exportState();
   assert.equal(state.extractionBatches.every(batch => batch.status === 'completed'), true);
   assert.equal(state.extractionBatches[0].extractedCount, 0, '0 条自然语言事实是合法成功结果');
+  assert.equal(state.extractionBatches[0].modelSource, 'maid_main_fallback');
+  assert.equal(state.extractionBatches[0].model, 'maid-main');
+  assert.equal(state.extractionBatches[0].fallbackUsed, true);
+  assert.deepEqual(
+    state.extractionBatches[0].modelUsage.map(entry => [entry.provider, entry.model, entry.totalTokens]),
+    [
+      ['pioneer', 'memory-custom', 100],
+      ['deepseek', 'maid-main', 100],
+    ],
+  );
   console.log('ok - semantic extraction is best-effort, retryable, and allows zero extracted facts');
+}
+
+{
+  let clock = 30_000;
+  let calls = 0;
+  const semanticMemoryStore = {
+    scopeId: 'maid_default',
+    listMemories: () => [],
+    upsertMemory: async memory => ({ ok: true, memory }),
+  };
+  const store = new MaidConversationStore({
+    storage: createStorage(),
+    loadKv: async () => null,
+    saveKv: async () => true,
+    now: () => clock,
+    compactionTurnThreshold: 1,
+    compactionHistoryTokenThreshold: 100000,
+    semanticMemoryStore,
+    extractSemanticMemories: async () => {
+      calls += 1;
+      throw new Error('invalid JSON');
+    },
+  });
+  await store.load();
+  for (let index = 1; index <= 9; index += 1) {
+    await store.appendTurn({
+      id: `bounded-${index}`,
+      input: `第 ${index} 轮`,
+      status: 'succeeded',
+      message: '完成',
+    });
+  }
+  await store.flushPendingExtractions();
+
+  let batch = store.exportState().extractionBatches[0];
+  while (batch.status === 'pending') {
+    clock = batch.nextRetryAt;
+    await store.processPendingExtractions();
+    batch = store.exportState().extractionBatches[0];
+  }
+  assert.equal(calls, MAID_EXTRACTION_MAX_AUTO_ATTEMPTS);
+  assert.equal(batch.status, 'paused');
+  assert.equal(batch.attempts, MAID_EXTRACTION_MAX_AUTO_ATTEMPTS);
+  assert.equal(batch.pauseReason, 'auto_retry_exhausted');
+
+  clock += 24 * 60 * 60 * 1000;
+  await store.processPendingExtractions();
+  assert.equal(calls, MAID_EXTRACTION_MAX_AUTO_ATTEMPTS, 'paused batch must not spend again automatically');
+  console.log('ok - failed semantic extraction uses bounded backoff and pauses after the auto retry budget');
 }
 
 {
@@ -640,4 +787,51 @@ const createStorage = () => {
     '全 pending 超限时丢最旧、保最新',
   );
   console.log('ok - extraction batch trim evicts completed batches before pending ones');
+}
+
+{
+  let clock = 9000;
+  const storage = createStorage();
+  const semanticStore = new MaidSemanticMemoryStore({
+    storage,
+    loadKv: async () => null,
+    saveKv: async () => true,
+    now: () => ++clock,
+  });
+  await semanticStore.load();
+  const fact = await semanticStore.upsertMemory({
+    kind: 'decision',
+    key: 'content.section_budget_probe',
+    content: '预算探针决定：这一条内容足够长，用来验证被裁掉的区块不得再报告任何选中记忆编号。',
+    confidence: 'explicit',
+    sourceTurnIds: ['budget-probe-source'],
+  });
+  const store = new MaidConversationStore({
+    storage,
+    loadKv: async () => null,
+    saveKv: async () => true,
+    now: () => ++clock,
+    semanticMemoryStore: semanticStore,
+  });
+  await store.load();
+  await store.appendTurn({
+    id: 'budget-probe-source',
+    input: '记住预算探针决定。',
+    status: 'succeeded',
+    message: '已记住。',
+  });
+  for (const budget of [1, 4, 8, 12, 16, 24, 40, 400]) {
+    const snapshot = await store.getContextSnapshotAsync({
+      query: '预算探针决定',
+      maxMemoryTokens: budget,
+    });
+    if (!/\[长期记忆\]/.test(snapshot.memoryText)) {
+      assert.equal(
+        snapshot.selectedSemanticMemoryIds.includes(fact.memory.id),
+        false,
+        `预算 ${budget} 下长期记忆区块未注入，却报告了其选中记忆 ID`,
+      );
+    }
+  }
+  console.log('ok - dropped memory sections never report selected memory IDs');
 }

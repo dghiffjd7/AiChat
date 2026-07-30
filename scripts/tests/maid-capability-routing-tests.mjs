@@ -177,6 +177,122 @@ const createCatalogRoutingHarness = () => {
     permissionEvaluator: { evaluateTool: () => ({ decision: 'allow', checks: [] }) },
     logger: { debug() {} },
   });
+  const input = '保持当前房间不变，分别向「记忆系统G35-0730·白塔」「记忆系统G35-0730·灰港」「记忆系统G35-0730·档案室」后台写入用户消息“G35-MEM-A”“G35-MEM-B”“G35-MEM-C”，全部 triggerReply:false、open:false；逐房读回末条消息核对，再读取 APP 状态。';
+  const request = runtime.beginRequest({ input });
+  const snapshot = runtime.prepareDecision({ requestId: request.id, input, phase: 'planner' });
+  assert.equal(snapshot.candidateIds.has('chat.send_message'), true, '“分别”不得吞掉后续发送意图');
+  assert.equal(snapshot.candidateIds.has('maid.todo'), true, '三目标发送、读回与状态核对必须识别为复杂工作流');
+  runtime.finishRequest(request.id, { ok: true });
+  console.log('ok - exact multi-room wording retains chat send and complex-workflow candidates');
+}
+
+{
+  const { catalogFeatures, catalogRegistry } = createCatalogRoutingHarness();
+  const runtime = createMaidCapabilityRoutingRuntime({
+    features: catalogFeatures,
+    toolRegistry: catalogRegistry,
+    permissionEvaluator: { evaluateTool: () => ({ decision: 'allow', checks: [] }) },
+    logger: { debug() {} },
+  });
+  const input = '只做删除预览，不得实际删除：分别预览批量删除测试聊天室「白塔」「灰港」「档案室」、测试角色卡「记录员」「观察员」和测试世界书「资料库」。三个资源域必须分开调用各自 delete_many 且 preview:true。';
+  const request = runtime.beginRequest({ input });
+  const snapshot = runtime.prepareDecision({ requestId: request.id, input, phase: 'planner' });
+  for (const featureId of ['session.delete_many', 'persona.delete_many', 'worldbook.delete_many']) {
+    assert.equal(snapshot.candidateIds.has(featureId), true, `三域预览应召回 ${featureId}`);
+  }
+  runtime.finishRequest(request.id, { ok: true });
+  console.log('ok - exact three-domain preview keeps every explicitly requested delete capability');
+}
+
+{
+  const { catalogFeatures, catalogRegistry } = createCatalogRoutingHarness();
+  const runtime = createMaidCapabilityRoutingRuntime({
+    features: catalogFeatures,
+    toolRegistry: catalogRegistry,
+    permissionEvaluator: { evaluateTool: () => ({ decision: 'allow', checks: [] }) },
+    logger: { debug() {} },
+  });
+  const input = '保持后台做清理后只读审计：读取会话、角色卡、世界书、用户清单和 APP 状态，确认测试房、测试角色卡与测试世界书已不存在。不得补删或切换。';
+  const request = runtime.beginRequest({ input });
+  const snapshot = runtime.prepareDecision({ requestId: request.id, input, phase: 'planner' });
+  for (const featureId of ['session.list', 'app.resource.read', 'worldbook.list', 'app.state.read']) {
+    assert.equal(snapshot.candidateIds.has(featureId), true, `只读审计应召回 ${featureId}`);
+  }
+  for (const featureId of ['session.delete_many', 'persona.delete_many', 'worldbook.delete_many']) {
+    assert.equal(snapshot.candidateIds.has(featureId), false, `“清理后/已不存在/不得补删”不得召回 ${featureId}`);
+  }
+  runtime.finishRequest(request.id, { ok: true });
+  console.log('ok - post-cleanup read-only audit excludes destructive capabilities');
+}
+
+{
+  const { catalogFeatures, catalogRegistry } = createCatalogRoutingHarness();
+  const runtime = createMaidCapabilityRoutingRuntime({
+    features: catalogFeatures,
+    toolRegistry: catalogRegistry,
+    permissionEvaluator: { evaluateTool: () => ({ decision: 'allow', checks: [] }) },
+    logger: { debug() {} },
+  });
+  const input = '生成一张极简蓝色灯塔图片，再复用同一 attachmentId 给「白塔」设置联系人头像、给「灰港」设置聊天室壁纸 opacity:0.3。';
+  const request = runtime.beginRequest({ input });
+  const afterAvatar = runtime.prepareDecision({
+    requestId: request.id,
+    input,
+    phase: 'react',
+    steps: [{
+      toolName: 'contact.set_avatar',
+      featureId: 'contact.avatar.set',
+      status: 'succeeded',
+      args: { sessionName: '白塔', attachmentId: 'generated-1' },
+      output: { ok: true, attachmentId: 'generated-1' },
+    }],
+  });
+  assert.equal(
+    afterAvatar.candidateIds.has('session.wallpaper.set'),
+    true,
+    '完成头像后仍须保留同图壁纸 sibling',
+  );
+  runtime.finishRequest(request.id, { ok: true });
+  console.log('ok - generated-image reuse keeps the unfinished wallpaper sibling');
+}
+
+{
+  const { catalogFeatures, catalogRegistry } = createCatalogRoutingHarness();
+  const runtime = createMaidCapabilityRoutingRuntime({
+    features: catalogFeatures,
+    toolRegistry: catalogRegistry,
+    permissionEvaluator: { evaluateTool: () => ({ decision: 'allow', checks: [] }) },
+    logger: { debug() {} },
+  });
+  const input = '分别向「白塔」「灰港」「档案室」后台写入用户消息“A”“B”“C”，全部 triggerReply:false、open:false。';
+  const request = runtime.beginRequest({ input });
+  const afterMissingInventory = runtime.prepareDecision({
+    requestId: request.id,
+    input,
+    phase: 'react',
+    steps: [{
+      toolName: 'session.list',
+      featureId: 'session.list',
+      status: 'succeeded',
+      args: {},
+      output: { count: 1, contacts: [{ id: '正式房', name: '正式房' }] },
+    }],
+  });
+  const createRef = afterMissingInventory.candidateRefs.find(item => item.id === 'session.create');
+  assert.ok(createRef, '真实清单缺少精确消息目标时应提供 session.create 前置能力');
+  assert.ok(createRef.reasonCodes.includes('missing_session_prerequisite'));
+  runtime.finishRequest(request.id, { ok: true });
+  console.log('ok - missing exact chat targets add a bounded session-create prerequisite');
+}
+
+{
+  const { catalogFeatures, catalogRegistry } = createCatalogRoutingHarness();
+  const runtime = createMaidCapabilityRoutingRuntime({
+    features: catalogFeatures,
+    toolRegistry: catalogRegistry,
+    permissionEvaluator: { evaluateTool: () => ({ decision: 'allow', checks: [] }) },
+    logger: { debug() {} },
+  });
   const input = '重复执行幂等核对：用一次 session.create(names[]) 请求「复杂压力·岚」「复杂压力·弦」，不得新增重名房；再用一次 worldbook.bind_sessions 把「复杂压力·资料」append 到两房。最后只根据工具结果说明 createdCount、already_bound/skipped 与 verified，不要逐房重复绑定或打开页面。';
   const request = runtime.beginRequest({ input });
   const snapshot = runtime.prepareDecision({ requestId: request.id, input, phase: 'planner' });

@@ -25,11 +25,21 @@ const createStorage = () => {
   const state = normalizeMaidSettingsState({
     boundProfileId: ' profile-a ',
     maidPrompt: ' maid ',
+    memoryExtractionMode: ' custom ',
+    memoryExtractionProfileId: ' memory-profile ',
+    memoryExtractionModelOverride: ' memory-model ',
+    memoryExtractionFallbackToMain: false,
     updatedAt: 10,
   });
   assert.equal(state.boundProfileId, 'profile-a');
   assert.equal(state.maidPrompt, 'maid');
   assert.equal(state.personaPrompt, 'maid');
+  assert.deepEqual(state.memoryExtraction, {
+    mode: 'custom',
+    profileId: 'memory-profile',
+    modelOverride: 'memory-model',
+    fallbackToMain: false,
+  });
   assert.equal(state.updatedAt, 10);
   console.log('ok - maid settings state normalizes binding and persona');
 }
@@ -38,6 +48,12 @@ const createStorage = () => {
   const state = normalizeMaidSettingsState({});
   assert.equal(state.maidPrompt, DEFAULT_MAID_PROMPT);
   assert.equal(state.personaPrompt, DEFAULT_MAID_PROMPT);
+  assert.deepEqual(state.memoryExtraction, {
+    mode: 'follow_main',
+    profileId: '',
+    modelOverride: '',
+    fallbackToMain: false,
+  });
   console.log('ok - maid settings state exposes current default maid prompt');
 }
 
@@ -66,6 +82,12 @@ const createStorage = () => {
     source: 'test',
   });
   await store.setPersonaPrompt('稳重女仆 2');
+  await store.setMemoryExtractionSettings({
+    mode: 'custom',
+    profileId: 'profile-memory',
+    modelOverride: 'deepseek-v4-flash',
+    fallbackToMain: false,
+  });
   assert.match(storage.backing.get(MAID_SETTINGS_STORE_KEY), /profile-a/);
   assert.match(storage.backing.get(MAID_SETTINGS_STORE_KEY), /secret prompt/);
   assert.match(storage.backing.get(MAID_SETTINGS_STORE_KEY), /检索：已执行/);
@@ -73,6 +95,10 @@ const createStorage = () => {
   assert.equal(kv.get(MAID_SETTINGS_STORE_KEY).boundProfileId, 'profile-a');
   assert.equal(kv.get(MAID_SETTINGS_STORE_KEY).maidPrompt, '稳重女仆 2');
   assert.equal(kv.get(MAID_SETTINGS_STORE_KEY).personaPrompt, undefined);
+  assert.equal(kv.get(MAID_SETTINGS_STORE_KEY).memoryExtractionMode, 'custom');
+  assert.equal(kv.get(MAID_SETTINGS_STORE_KEY).memoryExtractionProfileId, 'profile-memory');
+  assert.equal(kv.get(MAID_SETTINGS_STORE_KEY).memoryExtractionModelOverride, 'deepseek-v4-flash');
+  assert.equal(kv.get(MAID_SETTINGS_STORE_KEY).memoryExtractionFallbackToMain, false);
   assert.equal(kv.get(MAID_SETTINGS_STORE_KEY).lastRequestPrompt, 'system:\nsecret prompt');
   assert.equal(store.getLastRequestPrompt(), 'system:\nsecret prompt');
   assert.equal(store.getLastAppContext(), '检索：已执行');
@@ -94,6 +120,12 @@ const createStorage = () => {
   assert.equal(restored.getLastRequestPrompt(), 'system:\nsecret prompt');
   assert.equal(restored.getLastAppContext(), '检索：已执行');
   assert.equal(restored.getLastFullResponse(), 'raw response');
+  assert.deepEqual(restored.getMemoryExtractionSettings(), {
+    mode: 'custom',
+    profileId: 'profile-memory',
+    modelOverride: 'deepseek-v4-flash',
+    fallbackToMain: false,
+  });
   console.log('ok - MaidSettingsStore persists explicit maid binding and debug exchange to KV and local backup');
 }
 

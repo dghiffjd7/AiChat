@@ -1,4 +1,5 @@
 import { validateMaidSemanticMemoryKey } from '../storage/maid-semantic-memory-store.js';
+import { normalizeAgentUsage } from './agent-events.js';
 
 const trim = (value, fallback = '') => {
   const text = String(value ?? '').trim();
@@ -40,7 +41,7 @@ const CANDIDATE_KEY_RULES = Object.freeze([
   },
   {
     key: 'workflow.confirmation',
-    pattern: /(确认|允许一次|始终允许|危险操作|删除前|执行前|预览后)/iu,
+    pattern: /(?:允许一次|始终允许|危险操作.{0,20}(?:确认|允许|询问)|(?:删除|执行|写入|变更|发布|导入).{0,16}(?:前|之前).{0,12}(?:确认|询问)|(?:确认|询问).{0,12}(?:后|以后|再).{0,12}(?:删除|执行|写入|变更|发布|导入)|(?:无需|不用|不要|必须|需要|应当).{0,8}(?:用户)?确认)/iu,
   },
   {
     key: 'workflow.navigation',
@@ -84,6 +85,7 @@ const RESOURCE_TOOL_RULES = Object.freeze([
 
 const READ_ONLY_TOOL_PATTERN = /\.(?:read|list|get|inspect|search|query|status|preview)$/iu;
 const WRITE_TOOL_PATTERN = /\.(?:create|update|delete|remove|bind|set|enable|disable|add|append|import|save|clear|rename|publish|apply)(?:_|$|\.)/iu;
+const WHOLE_RESOURCE_DELETE_TOOL_PATTERN = /\.(?:delete_many|delete|remove)$/iu;
 
 const getNestedObject = (value, key) => (
   isPlainObject(value?.[key]) ? value[key] : null
@@ -121,7 +123,7 @@ const resolveStructuredResource = (step = {}) => {
   return {
     type: rule.type,
     id,
-    deleted: /\.(?:delete|remove|clear)(?:_|$|\.)/iu.test(toolName),
+    deleted: WHOLE_RESOURCE_DELETE_TOOL_PATTERN.test(toolName),
   };
 };
 
@@ -302,26 +304,90 @@ export const createMaidSemanticMemoryExtractor = ({
   if (!client && typeof createClient === 'function' && isConfigReady(config)) {
     client = createClient(config);
   }
-  if (!client || typeof client.chat !== 'function') {
+  const fallbackClient = runtime?.extractionFallbackClient || null;
+  if (
+    (!client || typeof client.chat !== 'function') &&
+    (!fallbackClient || typeof fallbackClient.chat !== 'function')
+  ) {
     throw new Error(runtime?.reason || 'maid semantic memory API not configured');
   }
   const messages = buildMaidSemanticMemoryExtractionMessages({
     turns: sourceTurns,
     candidateKeys,
   });
-  let responseText = '';
-  try {
-    responseText = await client.chat(messages, {
-      temperature: 0,
-      maxTokens: 1200,
-      max_tokens: 1200,
-    });
-  } catch (error) {
-    logger?.warn?.('maid semantic memory extraction failed', error);
-    throw error;
+  const usageEntries = [];
+  const runExtraction = async (targetClient, {
+    runtimeConfig = {},
+    source = 'maid_main',
+    degraded = false,
+  } = {}) => {
+    const startedAt = Date.now();
+    let capturedUsage = null;
+    try {
+      const responseText = await targetClient.chat(messages, {
+        temperature: 0,
+        maxTokens: 1200,
+        max_tokens: 1200,
+        onProviderUsage: usage => {
+          capturedUsage = usage;
+        },
+      });
+      const parsedResult = parseJsonObject(responseText);
+      if (!parsedResult) throw new Error('maid semantic memory extraction returned invalid JSON');
+      return parsedResult;
+    } finally {
+      usageEntries.push({
+        ...normalizeAgentUsage({
+          ...(isPlainObject(capturedUsage) ? capturedUsage : {}),
+          provider: trim(capturedUsage?.provider || runtimeConfig?.provider),
+          model: trim(capturedUsage?.model || runtimeConfig?.model),
+          latencyMs: Date.now() - startedAt,
+          modelCallCount: 1,
+          degraded,
+        }),
+        source,
+      });
+    }
+  };
+  const attachUsage = (error) => {
+    const target = error instanceof Error
+      ? error
+      : new Error(trim(error, 'maid semantic memory extraction failed'));
+    target.memoryExtractionUsage = clone(usageEntries);
+    return target;
+  };
+  let parsed = null;
+  let fallbackUsed = false;
+  if (client && typeof client.chat === 'function') {
+    try {
+      parsed = await runExtraction(client, {
+        runtimeConfig: config,
+        source: trim(runtime?.memoryExtractionModelSource, 'maid_main'),
+      });
+    } catch (error) {
+      if (!fallbackClient || typeof fallbackClient.chat !== 'function') {
+        logger?.warn?.('maid semantic memory extraction failed', error);
+        throw attachUsage(error);
+      }
+      logger?.warn?.('maid semantic memory custom extraction failed; trying maid main model', error);
+    }
   }
-  const parsed = parseJsonObject(responseText);
-  if (!parsed) throw new Error('maid semantic memory extraction returned invalid JSON');
+  if (!parsed && fallbackClient && typeof fallbackClient.chat === 'function') {
+    fallbackUsed = true;
+    try {
+      parsed = await runExtraction(fallbackClient, {
+        runtimeConfig: runtime?.extractionFallbackConfig,
+        source: 'maid_main_fallback',
+        degraded: true,
+      });
+    } catch (error) {
+      logger?.warn?.('maid semantic memory main fallback failed', error);
+      throw attachUsage(error);
+    }
+  }
+  const usedConfig = fallbackUsed && isPlainObject(runtime?.extractionFallbackConfig)
+    ? runtime.extractionFallbackConfig
+    : config;
   return {
     memories: normalizeExtractedMemories(parsed, {
       scopeId,
@@ -329,5 +395,11 @@ export const createMaidSemanticMemoryExtractor = ({
       sourceTurnIds: sourceTurns.map(turn => turn.id),
     }),
     candidateKeys: clone(candidateKeys),
+    fallbackUsed,
+    modelSource: fallbackUsed
+      ? 'maid_main_fallback'
+      : trim(runtime?.memoryExtractionModelSource, 'maid_main'),
+    model: trim(usedConfig?.model),
+    usageEntries: clone(usageEntries),
   };
 };

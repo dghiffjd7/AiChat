@@ -677,6 +677,223 @@ addBatch('fix-closure-audit-v4f-r2-0729', [
   ],
 ]);
 
+const addMemorySystemBatches = (batchA, batchB, label) => {
+  const worldbook = `${label}·资料库`;
+  const roomA = `${label}·白塔`;
+  const roomB = `${label}·灰港`;
+  const roomC = `${label}·档案室`;
+  const recoveryRoom = `${label}·中继站`;
+  const userName = `${label}·测试用户`;
+  const personaA = `${label}·记录员`;
+  const personaB = `${label}·观察员`;
+
+  addBatch(batchA, [
+    [
+      'memory-explicit-preference-seed',
+      '请长期记住两项测试偏好：第一，女仆回复保持简洁；第二，普通资源操作默认在后台完成，只有我明确要求查看时才打开主要结果。这一轮不要调用任何工具，只确认你理解了。',
+      [],
+      [],
+      { autoConfirm: false, autoDeny: true, expectedDisposition: 'explicit_preference_seed_no_tool' },
+    ],
+    [
+      'memory-baseline-state',
+      '保持后台，不建立待办。读取当前 APP 状态，准确汇报页面、模式、当前聊天室；不要切换任何内容。',
+      ['app.state.read'],
+      ['app.get_current_state'],
+      { expectedDisposition: 'background_state_baseline' },
+    ],
+    [
+      'memory-baseline-inventory',
+      `保持后台读取完整会话清单、用户清单、角色卡清单和世界书清单；只汇报各自数量，以及名称以「${label}」开头的既有项目，不得写入或打开页面。`,
+      ['session.list', 'app.resource.read', 'worldbook.list'],
+      ['session.list', 'app.read_resource', 'worldbook.list'],
+      { expectedDisposition: 'four_source_read_only_inventory', maxMs: 540000 },
+    ],
+    [
+      'memory-room-bootstrap',
+      `先读会话清单，再只用一次 session.create(names[]) 补齐三个单聊「${roomA}」「${roomB}」「${roomC}」，open:false，不得逐房创建或进入。最后再读会话清单和 APP 状态，确认三项各一个且当前聊天室没有变化。`,
+      ['session.list', 'session.create', 'app.state.read'],
+      ['session.list', 'session.create', 'app.get_current_state'],
+      { expectedDisposition: 'three_room_background_batch_create', maxMs: 600000 },
+    ],
+    [
+      'memory-identity-bootstrap',
+      `分别读取用户与角色卡清单；若缺少「${userName}」则创建但 setActive:false；若缺少「${personaA}」「${personaB}」则用两次合法创建补齐且都不设为当前角色。完成后重新读取两份清单和 APP 状态，确认测试身份存在且当前身份与聊天室均未改变。`,
+      ['app.resource.read', 'user.create', 'persona.create', 'app.state.read'],
+      ['app.read_resource', 'user.create', 'persona.create', 'app.get_current_state'],
+      { expectedDisposition: 'inactive_user_and_two_personas_create_verify', maxMs: 660000 },
+    ],
+    [
+      'memory-worldbook-seed',
+      `建立测试世界书「${worldbook}」。先读取确认现状，只补齐四个短条目且不得 replace：①「记录员」正文“记录员负责整理蓝灯日志。”；②「观察员」正文“观察员负责核对潮汐信号。”；③「白塔」正文“白塔位于灰港北岸。”；④「临时记录」正文“临时-A”。完成后读回全文，确认四个标题各一条。`,
+      ['worldbook.read', 'worldbook.create'],
+      ['worldbook.read', 'worldbook.create'],
+      { expectedDisposition: 'worldbook_seed_idempotent_verify', maxMs: 600000 },
+    ],
+    [
+      'memory-subagent-enrich',
+      `先读取「${worldbook}」。若还没有「停灯之夜」，让擅长世界观设定的 Sub-agent 根据大纲追加约 160 字：白塔熄灭、记录员和观察员共同恢复信号、没有新增人物；已有同名条目则跳过。最后读回确认恰好一条。`,
+      ['worldbook.read', 'worldbook.create'],
+      ['worldbook.read', 'worldbook.generate_entries'],
+      { allowSubAgent: true, expectedDisposition: 'subagent_generate_if_missing_verify', maxMs: 600000 },
+    ],
+    [
+      'memory-batch-bind',
+      `把「${worldbook}」追加绑定到「${roomA}」「${roomB}」「${roomC}」。必须先以同一 sessions[] 调用 worldbook.bind_sessions preview:true，三项都可处理才实际执行一次；整批只确认一次，不逐房退化，不打开房间。最后读取 APP 状态。`,
+      ['worldbook.bind_sessions', 'app.state.read'],
+      ['worldbook.bind_sessions', 'app.get_current_state'],
+      { expectedDisposition: 'preview_apply_three_room_bind', maxMs: 660000 },
+    ],
+    [
+      'memory-message-matrix',
+      `保持当前房间不变，分别向「${roomA}」「${roomB}」「${roomC}」后台写入用户消息“${label}-MEM-A”“${label}-MEM-B”“${label}-MEM-C”，全部 triggerReply:false、open:false；逐房读回末条消息核对，再读取 APP 状态。`,
+      ['chat.send_message', 'app.resource.read', 'app.state.read'],
+      ['chat.send_message', 'app.read_resource', 'app.get_current_state'],
+      { expectedDisposition: 'three_background_messages_readback', maxMs: 720000 },
+    ],
+    [
+      'memory-format-profile-matrix',
+      `后台为「${roomA}」「${roomB}」分别保存并读回格式画像：白塔用 <tower>...</tower>，灰港用 <harbor>...</harbor>；sources 均标 type=test、ref=${label}。不得进入房间或调用格式修复，确认两份规则没有串线。`,
+      ['chat.format.profile'],
+      ['chat.save_format_profile', 'chat.read_format_profile'],
+      { expectedDisposition: 'two_format_profiles_save_readback', maxMs: 600000 },
+    ],
+    [
+      'memory-regex-read-regression',
+      '只读核对正则资料是否仍存在：读取当前角色卡关联资料与正则资源摘要，汇报正则集数量、规则数量和启用数量；不要打开面板、切换角色或保存任何正则。',
+      ['app.resource.read'],
+      ['app.read_resource'],
+      { expectedDisposition: 'regex_persistence_read_only_check', maxMs: 420000 },
+    ],
+    [
+      'memory-capability-boundary',
+      '只查询能力目录并简洁说明：女仆如何生成图片后设为联系人头像或聊天室壁纸，以及批量删除聊天室、角色卡、世界书分别使用什么工具。不要生成、删除或打开页面。',
+      ['app.capabilities.search'],
+      [],
+      { expectedAnyTools: ['app.search_feature', 'app.read_feature_doc'], expectedDisposition: 'capability_only_no_write', maxMs: 480000 },
+    ],
+    [
+      'memory-stage-a-integrity',
+      `最终只读审计「${label}」阶段 A，不得补写：读取「${worldbook}」全文、完整会话清单、测试用户与角色卡清单、两个格式画像和 APP 状态。汇报世界书标题数、三房唯一性、测试身份 inactive、格式规则对应关系及当前聊天室。`,
+      ['worldbook.read', 'session.list', 'app.resource.read', 'chat.format.profile', 'app.state.read'],
+      ['worldbook.read', 'session.list', 'app.read_resource', 'chat.read_format_profile', 'app.get_current_state'],
+      { expectedDisposition: 'stage_a_read_only_integrity', maxMs: 780000 },
+    ],
+  ]);
+
+  addBatch(batchB, [
+    [
+      'memory-semantic-recall',
+      '不要调用工具。请根据你自己的长期记忆回答：我刚才要求女仆采用怎样的回复长度与界面呈现方式？若没有记住就明确说没有。',
+      [],
+      [],
+      { autoConfirm: false, autoDeny: true, expectedDisposition: 'semantic_preference_recall_no_tool' },
+    ],
+    [
+      'memory-preference-repeat',
+      '再次确认：普通资源操作默认后台，回复保持简洁。不要调用工具，也不要把相同偏好当成两条不同记忆。',
+      [],
+      [],
+      { autoConfirm: false, autoDeny: true, expectedDisposition: 'same_key_memory_upsert_not_duplicate' },
+    ],
+    [
+      'memory-worldbook-batch-update',
+      `只操作「${worldbook}」。先读全文，然后用一次 worldbook.update_entries 同批更新「记录员」「观察员」，分别在原文后追加“状态：值守中。”和“状态：巡查中。”；不要改其他条目，最后读回验证。`,
+      ['worldbook.read', 'worldbook.update_entries'],
+      ['worldbook.read', 'worldbook.update_entries'],
+      { expectedDisposition: 'two_entry_batch_update_verify', maxMs: 660000 },
+    ],
+    [
+      'memory-worldbook-duplicate-seed',
+      `只向「${worldbook}」append 一条同名「临时记录」，正文“临时-B”，不得 replace 或改其他条目。写入后读回，确认「临时记录」正好两条。`,
+      ['worldbook.create', 'worldbook.read'],
+      ['worldbook.create', 'worldbook.read'],
+      { expectedDisposition: 'controlled_duplicate_append_verify', maxMs: 540000 },
+    ],
+    [
+      'memory-worldbook-dedupe',
+      `只操作「${worldbook}」。先读索引，再用 worldbook.delete_entries 的 dedupeByTitle:true、titles:["临时记录"]、keep:first 删除多余重复项，禁止混用 entries/deletes；最后读回确认只剩“临时-A”一条。`,
+      ['worldbook.read', 'worldbook.delete_entries'],
+      ['worldbook.read', 'worldbook.delete_entries'],
+      { expectedDisposition: 'safe_dedupe_keep_first_verify', maxMs: 600000 },
+    ],
+    [
+      'memory-partial-recovery',
+      `用 worldbook.bind_sessions、mode:append 处理 sessions=["${roomA}","${recoveryRoom}","${roomA}"] 与「${worldbook}」，不要预先建缺失房。根据结果识别 already_bound、session_not_found、duplicate_target；随后只用一次 session.create(names[])、open:false 创建 retry 中确实缺少的「${recoveryRoom}」，再只对该目标重试绑定。最后读会话清单和 APP 状态确认恢复且没有跳房。`,
+      ['worldbook.bind_sessions', 'session.create', 'session.list', 'app.state.read'],
+      ['worldbook.bind_sessions', 'session.create', 'session.list', 'app.get_current_state'],
+      { expectedDisposition: 'partial_failure_exact_retry', maxMs: 780000 },
+    ],
+    [
+      'memory-generated-asset-reuse',
+      `为测试资源生成一张“极简蓝色灯塔、灰雾、无文字”的图片，先用 media.generate_image 得到真实 attachmentId，再复用同一 attachmentId 给「${roomA}」设置联系人头像、给「${roomB}」设置聊天室壁纸 opacity:0.3。不得改当前正式房、用户或角色卡；若生图失败就停止后续写入并如实报告。`,
+      ['contact.avatar.set', 'session.wallpaper.set'],
+      ['media.generate_image', 'contact.set_avatar', 'session.set_wallpaper'],
+      { expectedDisposition: 'generated_image_reused_for_two_test_assets', maxMs: 900000 },
+    ],
+    [
+      'memory-delete-preview',
+      `只做删除预览，不得实际删除：分别预览批量删除测试聊天室「${roomA}」「${roomB}」「${roomC}」「${recoveryRoom}」、测试角色卡「${personaA}」「${personaB}」和测试世界书「${worldbook}」。三个资源域必须分开调用各自 delete_many 且 preview:true；汇报 planned/protected/skipped 和世界书绑定影响。`,
+      ['session.delete_many', 'persona.delete_many', 'worldbook.delete_many'],
+      ['session.delete_many', 'persona.delete_many', 'worldbook.delete_many'],
+      { expectedDisposition: 'three_domain_delete_preview_only', maxMs: 660000 },
+    ],
+    [
+      'memory-delete-personas',
+      `实际批量删除且只删除测试角色卡「${personaA}」「${personaB}」。使用一次 persona.delete_many 单次确认，保留当前正式角色卡，不跨资源删除世界书、正则或脚本；逐项汇报 succeeded/protected/skipped/failed。`,
+      ['persona.delete_many'],
+      ['persona.delete_many'],
+      { expectedDisposition: 'batch_delete_two_test_personas', maxMs: 600000 },
+    ],
+    [
+      'memory-delete-worldbook',
+      `实际批量删除且只删除测试世界书「${worldbook}」。使用一次 worldbook.delete_many 单次确认；允许工具按正式 lifecycle 解除测试房绑定，但不得删除其他世界书，汇报绑定影响与结果。`,
+      ['worldbook.delete_many'],
+      ['worldbook.delete_many'],
+      { expectedDisposition: 'batch_delete_one_test_worldbook', maxMs: 600000 },
+    ],
+    [
+      'memory-delete-sessions',
+      `实际批量删除且只删除测试聊天室「${roomA}」「${roomB}」「${roomC}」「${recoveryRoom}」。使用一次 session.delete_many 单次确认，不得触碰当前聊天室或 RP；逐项汇报 succeeded/protected/skipped/failed。`,
+      ['session.delete_many'],
+      ['session.delete_many'],
+      { expectedDisposition: 'batch_delete_four_test_sessions', maxMs: 660000 },
+    ],
+    [
+      'memory-cleanup-audit',
+      `保持后台做清理后只读审计：读取会话、角色卡、世界书、用户清单和 APP 状态，确认「${label}」测试房、测试角色卡与测试世界书已不存在，测试用户「${userName}」仍 inactive，当前正式聊天室和身份未改变。不得补删或切换。`,
+      ['session.list', 'app.resource.read', 'worldbook.list', 'app.state.read'],
+      ['session.list', 'app.read_resource', 'worldbook.list', 'app.get_current_state'],
+      { expectedDisposition: 'post_cleanup_read_only_audit', maxMs: 660000 },
+    ],
+    [
+      'memory-user-delete-gap',
+      `我想批量删除测试用户名称「${userName}」。先只查询能力目录；如果没有用户批量删除正式工具，就明确说明需要用户在管理 UI 手动处理，不得改用角色卡删除或 UI 坐标盲点。`,
+      ['app.capabilities.search'],
+      [],
+      { expectedAnyTools: ['app.search_feature', 'app.read_feature_doc'], expectedDisposition: 'user_batch_delete_capability_gap_no_write', maxMs: 420000 },
+    ],
+    [
+      'memory-final-semantic-recall',
+      '不要调用工具。最后再根据长期记忆用一句话说出我的回复长度偏好与普通资源操作的默认呈现方式。',
+      [],
+      [],
+      { autoConfirm: false, autoDeny: true, expectedDisposition: 'final_semantic_recall_no_tool' },
+    ],
+  ]);
+};
+
+addMemorySystemBatches(
+  'memory-system-v4f-a-0730',
+  'memory-system-v4f-b-0730',
+  '记忆系统V4F-0730',
+);
+addMemorySystemBatches(
+  'memory-system-g35-a-0730',
+  'memory-system-g35-b-0730',
+  '记忆系统G35-0730',
+);
+
 addBatch('cleanup-observation-sessions', [
   ['session-delete', '当前已经打开 APP 的聊天室列表。只删除精确名称「冻结观察会话-A-0728」：先调用 app.ui.inspect 检查 session 面板；已核对该行删除按钮为 ref=session:btn-7，请用 featureId=app.ui.click、toolName=ui.click_element 点击这个 ref。不要调用 app.open_panel、session.open_config 或点击其他 ref。删除完成后调用 session.list 验证该名称不存在。', ['app.visible_panel.read', 'app.ui.click', 'session.list'], ['app.ui.inspect', 'ui.click_element', 'session.list'], { appConfirmDeleteTarget: '冻结观察会话-A-0728', expectedDisposition: 'exact_ui_delete_and_verify' }],
   ['session-delete', '当前已经打开 APP 的聊天室列表。只删除精确名称「冻结观察会话-B-0728」：先调用 app.ui.inspect 检查 session 面板；已核对该行删除按钮为 ref=session:btn-6，请用 featureId=app.ui.click、toolName=ui.click_element 点击这个 ref。不要调用 app.open_panel、session.open_config 或点击其他 ref。删除完成后调用 session.list 验证该名称不存在。', ['app.visible_panel.read', 'app.ui.click', 'session.list'], ['app.ui.inspect', 'ui.click_element', 'session.list'], { appConfirmDeleteTarget: '冻结观察会话-B-0728', expectedDisposition: 'exact_ui_delete_and_verify' }],

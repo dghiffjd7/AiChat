@@ -529,6 +529,7 @@ export const createAppContentAgentTools = ({
   notifyPersonaChanged = null,
   saveWorldInfo = null,
   getWorldInfo = null,
+  worldInfoExists = null,
   listWorlds = null,
   deleteWorldInfo = null,
   waitForWorldStoreReady = null,
@@ -1979,10 +1980,12 @@ export const createAppContentAgentTools = ({
           continue;
         }
         const worldbookId = trim(item.worldbookId);
-        const existing = typeof getWorldInfo === 'function'
-          ? await getWorldInfo(worldbookId)
-          : null;
-        if (!existing) {
+        const existsBeforeDelete = typeof worldInfoExists === 'function'
+          ? await worldInfoExists(worldbookId)
+          : Boolean(typeof getWorldInfo === 'function'
+            ? await getWorldInfo(worldbookId)
+            : null);
+        if (!existsBeforeDelete) {
           results.push(compactWorldbookDeleteItem({
             ...item,
             status: 'skipped',
@@ -2008,10 +2011,12 @@ export const createAppContentAgentTools = ({
         }
         try {
           await deleteWorldInfo(worldbookId);
-          const remaining = typeof getWorldInfo === 'function'
-            ? await getWorldInfo(worldbookId)
-            : null;
-          if (remaining) {
+          const stillExists = typeof worldInfoExists === 'function'
+            ? await worldInfoExists(worldbookId)
+            : Boolean(typeof getWorldInfo === 'function'
+              ? await getWorldInfo(worldbookId)
+              : null);
+          if (stillExists) {
             results.push(compactWorldbookDeleteItem({
               ...item,
               status: 'failed',

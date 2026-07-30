@@ -22,6 +22,7 @@ const compactText = value => normalizeText(value).replace(/\s+/g, '');
 const isPlainObject = value => Boolean(value && typeof value === 'object' && !Array.isArray(value));
 
 const MAID_READ_INTENT_PATTERN = /(查询|查看|检查|确认|核对|读取|只读|只查|列出|列表|清单|统计|比较|分析|告诉我|有哪些|哪些|是否|有没有|当前(?:状态|情况)?|状态|情况|是什么|怎么样|如何|\b(?:show|list|read|check|inspect|verify|status|what|which|whether|inventory|identit(?:y|ies))\b)/iu;
+const MAID_NO_TOOL_INTENT_PATTERN = /(?:(?:不要|不得|禁止|无需|不用|不必)\s*(?:再)?(?:调用|使用|动用|执行)\s*(?:任何|任意|任一)?\s*工具|(?:不调用|不使用)\s*(?:任何|任意|任一)?\s*工具|\b(?:do\s+not|don't|dont|never)\s+(?:use|call)\s+(?:any\s+)?tools?\b|\bwithout\s+(?:using\s+)?tools?\b)/iu;
 const MAID_WRITE_VERB_PATTERN = /(创建|新建|添加|追加|新增|写入|保存|绑(?:定|上|到)|启用|禁用|修改|更改|更新|编辑|替换|覆盖|删除|删掉|移除|清空|清理|发布|发送|设置|切换|应用|修复|优化|生成|上传|导入|回复)/gu;
 const MAID_WRITE_COMMAND_CUE_PATTERN = /(?:^|[，,。；;！？!?])(?:请|麻烦|帮我|替我|给我|给(?:这些|那些|所有|全部|多个|每个|各个|上述|前述)|为我|我要|我想|需要|把|将|然后|接着|随后|再|并且|并|同时|顺便|之后|后再|就|分别|直接|立即|现在|若没有|如果没有|没有才|没有就|没有则|没有的话|缺少就|缺少才|缺少的|缺的|不存在则|不存在就|不存在再|不存在的话|若无|如无|执行|先执行).{0,48}$/u;
 const MAID_POSTCHECK_WRITE_CUE_PATTERN = /(?:^|[，,。；;！？!?])(?:检查|确认|核对|验证|查完|查看)[^，,。；;！？!?\n]{0,24}(?:后|之后)(?:(?:再|就|然后|接着|随后|仅|只)\s*)?$/u;
@@ -85,14 +86,19 @@ const hasExplicitMaidWriteIntent = (input = '') => {
 
 export const classifyMaidOperationIntent = (input = '') => {
   const text = String(input ?? '').normalize('NFKC').trim();
+  const noToolIntent = MAID_NO_TOOL_INTENT_PATTERN.test(text);
   const readIntent = MAID_READ_INTENT_PATTERN.test(text);
   const writeIntent = hasExplicitMaidWriteIntent(text);
   return {
-    mode: writeIntent ? 'write_allowed' : (readIntent ? 'read_only' : 'unspecified'),
+    mode: noToolIntent
+      ? 'no_tool'
+      : (writeIntent ? 'write_allowed' : (readIntent ? 'read_only' : 'unspecified')),
     source: 'maid_user_request',
-    reason: writeIntent
-      ? 'explicit_write'
-      : (readIntent ? 'explicit_read_without_write' : 'intent_unspecified'),
+    reason: noToolIntent
+      ? 'explicit_no_tool'
+      : (writeIntent
+        ? 'explicit_write'
+        : (readIntent ? 'explicit_read_without_write' : 'intent_unspecified')),
   };
 };
 
@@ -2156,6 +2162,56 @@ export const createMaidAssistantAgent = ({
         input: '',
         message: '这次没有收到指令内容，女仆先不行动～请告诉我需要做什么。',
       };
+    }
+    if (context.operationIntentPolicy.mode === 'no_tool') {
+      if (typeof chatResponder !== 'function') {
+        return {
+          ok: false,
+          status: 'unsupported',
+          responseType: 'chat',
+          input: trim(input),
+          reason: 'tools_forbidden_by_user',
+          message: '你要求本轮不调用工具，但当前没有可用的纯聊天回复能力。',
+        };
+      }
+      try {
+        const chatResult = await chatResponder(input, context, {
+          plan: {
+            ok: false,
+            status: 'unsupported',
+            reason: 'tools_forbidden_by_user',
+            message: '用户明确要求本轮不调用工具。',
+          },
+        });
+        if (chatResult?.ok && trim(chatResult.message)) {
+          return {
+            ok: true,
+            status: chatResult.status || 'responded',
+            responseType: 'chat',
+            source: chatResult.source || 'maid_chat_responder',
+            input: trim(input),
+            message: trim(chatResult.message),
+          };
+        }
+        return {
+          ok: false,
+          status: chatResult?.status || 'failed',
+          responseType: 'chat',
+          input: trim(input),
+          reason: chatResult?.reason || 'maid_chat_failed',
+          message: chatResult?.message || '女仆暂时无法在不调用工具的前提下回答。',
+        };
+      } catch (error) {
+        logger?.warn?.('maid assistant no-tool chat response failed', error);
+        return {
+          ok: false,
+          status: 'failed',
+          responseType: 'chat',
+          input: trim(input),
+          reason: error?.message || 'maid_chat_failed',
+          message: error?.message || '女仆暂时无法在不调用工具的前提下回答。',
+        };
+      }
     }
     const callRoutedPlanner = async ({
       plannerFn,

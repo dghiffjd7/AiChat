@@ -90,6 +90,8 @@ const readSourceInfo = async (fullPath) => ({
     registerWorldStoreBridgeContract(window.appBridge, {
       getWorldInfo: async id => ({ id }),
       saveWorldInfo: async (id, data) => ({ id, data }),
+      worldInfoExists: async id => Boolean(id),
+      auditWorldInfoStorage: async () => ({ nativeOnlyIds: [] }),
       listWorlds: async () => [],
       waitForWorldStoreReady: async () => true,
       loadStoredWorldInfo: id => ({ id }),
@@ -199,6 +201,8 @@ const readSourceInfo = async (fullPath) => ({
       ['explainWorldEntryActivation', 'role-world'],
       ['getWorldInfo', 'world-store'],
       ['saveWorldInfo', 'world-store'],
+      ['worldInfoExists', 'world-store'],
+      ['auditWorldInfoStorage', 'world-store'],
       ['listWorlds', 'world-store'],
       ['waitForWorldStoreReady', 'world-store'],
       ['loadStoredWorldInfo', 'world-store'],
@@ -309,6 +313,8 @@ const readSourceInfo = async (fullPath) => ({
   assert.equal(registered.has('buildMemoryPromptPlan'), true);
   assert.equal(registered.has('sendMessageFromPlugin'), true);
   assert.equal(registered.has('saveWorldInfo'), true);
+  assert.equal(registered.has('worldInfoExists'), true);
+  assert.equal(registered.has('auditWorldInfoStorage'), true);
   assert.equal(registered.has('waitForWorldStoreReady'), true);
   assert.equal(registered.has('loadStoredWorldInfo'), true);
   assert.equal(registered.has('hasStoredWorldInfo'), true);
@@ -387,6 +393,8 @@ const readSourceInfo = async (fullPath) => ({
   assert.equal(gaps.has('setLastMemoryPlan'), false);
   assert.equal(gaps.has('buildMemoryPromptPlan'), false);
   assert.equal(gaps.has('saveWorldInfo'), false);
+  assert.equal(gaps.has('worldInfoExists'), false);
+  assert.equal(gaps.has('auditWorldInfoStorage'), false);
   assert.equal(gaps.has('waitForWorldStoreReady'), false);
   assert.equal(gaps.has('loadStoredWorldInfo'), false);
   assert.equal(gaps.has('hasStoredWorldInfo'), false);

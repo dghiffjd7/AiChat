@@ -8,6 +8,7 @@ import { registerAppContentAgentTools } from '../../src/scripts/agent/tools/app-
 import { registerMaidMediaAssetTools } from '../../src/scripts/agent/tools/media-asset-tools.js';
 import { registerAppUiCaptureTools } from '../../src/scripts/agent/tools/app-ui-capture-tools.js';
 import { registerMaidTodoTools } from '../../src/scripts/agent/tools/maid-todo-tools.js';
+import { registerMaidMemoryTools } from '../../src/scripts/agent/tools/maid-memory-tools.js';
 import { registerGuideStartFlowTools } from '../../src/scripts/agent/tools/guide-start-flow-tools.js';
 import { registerChatFormatRepairTools } from '../../src/scripts/agent/tools/chat-format-tools.js';
 import { registerWebSearchAgentTools } from '../../src/scripts/agent/tools/web-search-tools.js';
@@ -27,6 +28,7 @@ registerAppContentAgentTools(registry, {});
 registerMaidMediaAssetTools(registry, {});
 registerAppUiCaptureTools(registry, {});
 registerMaidTodoTools(registry, {});
+registerMaidMemoryTools(registry, {});
 registerGuideStartFlowTools(registry, {});
 registerChatFormatRepairTools(registry, {});
 registerWebSearchAgentTools(registry, {});

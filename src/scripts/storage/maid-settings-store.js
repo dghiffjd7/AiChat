@@ -54,9 +54,25 @@ const loadKvDefault = async (key = '') => safeInvoke('load_kv', { name: key });
 
 const saveKvDefault = async (key = '', value = {}) => safeInvoke('save_kv', { name: key, data: value });
 
+const hasExplicitMemoryExtractionSettings = (raw = {}) => {
+  const src = isPlainObject(raw) ? raw : {};
+  return Boolean(
+    isPlainObject(src.memoryExtraction) ||
+    Object.prototype.hasOwnProperty.call(src, 'memoryExtractionMode') ||
+    Object.prototype.hasOwnProperty.call(src, 'memoryExtractionProfileId') ||
+    Object.prototype.hasOwnProperty.call(src, 'memoryExtractionModelOverride') ||
+    Object.prototype.hasOwnProperty.call(src, 'memoryExtractionFallbackToMain')
+  );
+};
+
 const hasExplicitSettings = (raw = {}) => {
   const src = isPlainObject(raw) ? raw : {};
-  return Boolean(trim(src.boundProfileId) || trim(src.maidPrompt) || trim(src.personaPrompt));
+  return Boolean(
+    trim(src.boundProfileId) ||
+    trim(src.maidPrompt) ||
+    trim(src.personaPrompt) ||
+    hasExplicitMemoryExtractionSettings(src)
+  );
 };
 
 const hasExplicitPrompt = (raw = {}) => {
@@ -102,6 +118,10 @@ const toPersistedMaidSettingsState = (state = {}, { now = Date.now } = {}) => {
     fallbackProfileId: normalized.fallbackProfileId,
     subAgents: normalized.subAgents,
     subAgentRemindAt: normalized.subAgentRemindAt,
+    memoryExtractionMode: normalized.memoryExtraction.mode,
+    memoryExtractionProfileId: normalized.memoryExtraction.profileId,
+    memoryExtractionModelOverride: normalized.memoryExtraction.modelOverride,
+    memoryExtractionFallbackToMain: normalized.memoryExtraction.fallbackToMain,
     maidPrompt: normalized.maidPrompt,
     lastRequestPrompt: trimPersistedText(normalized.lastRequestPrompt),
     lastAppContext: trimPersistedText(normalized.lastAppContext, 60000),
@@ -141,9 +161,20 @@ export const normalizeMaidSubAgent = (raw = {}, { now = Date.now } = {}) => {
   };
 };
 
+export const normalizeMaidMemoryExtractionSettings = (raw = {}) => {
+  const src = isPlainObject(raw) ? raw : {};
+  return {
+    mode: trim(src.mode).toLowerCase() === 'custom' ? 'custom' : 'follow_main',
+    profileId: trim(src.profileId).slice(0, 120),
+    modelOverride: trim(src.modelOverride).slice(0, 120),
+    fallbackToMain: src.fallbackToMain === true,
+  };
+};
+
 export const normalizeMaidSettingsState = (raw = {}, { now = Date.now } = {}) => {
   const src = isPlainObject(raw) ? raw : {};
   const maidPrompt = trim(src.maidPrompt || src.personaPrompt, DEFAULT_MAID_PROMPT);
+  const nestedMemoryExtraction = isPlainObject(src.memoryExtraction) ? src.memoryExtraction : {};
   return {
     version: MAID_SETTINGS_STORE_VERSION,
     updatedAt: Number(src.updatedAt || safeNow(now)) || safeNow(now),
@@ -155,6 +186,13 @@ export const normalizeMaidSettingsState = (raw = {}, { now = Date.now } = {}) =>
       .filter(Boolean)
       .slice(0, 12),
     subAgentRemindAt: Number(src.subAgentRemindAt || 0) || 0,
+    memoryExtraction: normalizeMaidMemoryExtractionSettings({
+      mode: nestedMemoryExtraction.mode ?? src.memoryExtractionMode,
+      profileId: nestedMemoryExtraction.profileId ?? src.memoryExtractionProfileId,
+      modelOverride: nestedMemoryExtraction.modelOverride ?? src.memoryExtractionModelOverride,
+      fallbackToMain: nestedMemoryExtraction.fallbackToMain
+        ?? src.memoryExtractionFallbackToMain,
+    }),
     maidPrompt,
     personaPrompt: maidPrompt,
     lastRequestPrompt: trim(src.lastRequestPrompt),
@@ -200,9 +238,21 @@ export class MaidSettingsStore {
     const kvHasBound = Boolean(trim(kvRaw?.boundProfileId));
     const localHasPrompt = hasExplicitPrompt(localRaw);
     const kvHasPrompt = hasExplicitPrompt(kvRaw);
+    const localHasMemoryExtraction = hasExplicitMemoryExtractionSettings(localRaw);
+    const kvHasMemoryExtraction = hasExplicitMemoryExtractionSettings(kvRaw);
     const shouldWriteBackup = localHasSettings || kvHasSettings;
 
     const debugRaw = readTimestamp(kvRaw) >= readTimestamp(localRaw) ? kvRaw : localRaw;
+    const memoryExtraction = (() => {
+      if (localHasMemoryExtraction && kvHasMemoryExtraction) {
+        return readTimestamp(kvRaw) >= readTimestamp(localRaw)
+          ? kvState?.memoryExtraction
+          : localState.memoryExtraction;
+      }
+      if (kvHasMemoryExtraction) return kvState?.memoryExtraction;
+      if (localHasMemoryExtraction) return localState.memoryExtraction;
+      return normalizeMaidMemoryExtractionSettings();
+    })();
 
     this.state = normalizeMaidSettingsState({
       updatedAt: Math.max(readTimestamp(localRaw), readTimestamp(kvRaw), safeNow(this.now)),
@@ -239,6 +289,7 @@ export class MaidSettingsStore {
         return localState.subAgents || [];
       })(),
       subAgentRemindAt: Math.max(Number(kvState?.subAgentRemindAt || 0), Number(localState.subAgentRemindAt || 0)),
+      memoryExtraction,
     }, { now: this.now });
 
     if (shouldWriteBackup && this.saveKv) {
@@ -344,6 +395,21 @@ export class MaidSettingsStore {
     await this.write();
   }
 
+  getMemoryExtractionSettings() {
+    this.ensureLoaded();
+    return clone(this.state.memoryExtraction);
+  }
+
+  async setMemoryExtractionSettings(patch = {}) {
+    this.ensureLoaded();
+    this.state.memoryExtraction = normalizeMaidMemoryExtractionSettings({
+      ...this.state.memoryExtraction,
+      ...(isPlainObject(patch) ? patch : {}),
+    });
+    await this.write();
+    return this.getMemoryExtractionSettings();
+  }
+
   getPersonaPrompt() {
     return this.getMaidPrompt();
   }
@@ -410,6 +476,12 @@ export class MaidSettingsStore {
     if (Object.prototype.hasOwnProperty.call(patch || {}, 'maidPrompt')) {
       this.state.maidPrompt = trim(patch.maidPrompt, DEFAULT_MAID_PROMPT);
       this.state.personaPrompt = this.state.maidPrompt;
+    }
+    if (Object.prototype.hasOwnProperty.call(patch || {}, 'memoryExtraction')) {
+      this.state.memoryExtraction = normalizeMaidMemoryExtractionSettings({
+        ...this.state.memoryExtraction,
+        ...(isPlainObject(patch.memoryExtraction) ? patch.memoryExtraction : {}),
+      });
     }
     await this.write();
     return this.exportState();

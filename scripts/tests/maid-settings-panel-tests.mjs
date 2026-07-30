@@ -22,6 +22,11 @@ const maidSettingsSource = fs.readFileSync(
   assert.match(maidSettingsSource, /maid-settings-task-completion/);
   assert.match(maidSettingsSource, /maid-settings-task-item\.is-entering/);
   assert.match(maidSettingsSource, /taskListHasEntered/);
+  assert.match(maidSettingsSource, /data-api-nav="memory"/);
+  assert.match(maidSettingsSource, /data-memory-extraction-mode/);
+  assert.match(maidSettingsSource, /data-memory-extraction-profile/);
+  assert.match(maidSettingsSource, /data-memory-extraction-fallback/);
+  assert.match(maidSettingsSource, /跟随女仆主模型/);
   assert.match(maidSettingsSource, /linear-gradient\([^;]*var\(--app-accent-primary/);
   assert.match(maidSettingsSource, /rgba\(var\(--app-task-rgb/);
   assert.doesNotMatch(maidSettingsSource, /background:\s*rgba\(139,\s*92,\s*246/);
@@ -121,6 +126,7 @@ const flushMicrotasks = () => new Promise(resolve => setTimeout(resolve, 0));
   const apiCalls = [];
   const copied = [];
   const deletedSemanticMemories = [];
+  const semanticMemoryStatusChanges = [];
   const semanticMemories = [
     {
       id: 'memory-pref-background',
@@ -164,6 +170,13 @@ const flushMicrotasks = () => new Promise(resolve => setTimeout(resolve, 0));
     getMemoryTableText: () => '| 1 | 摘要 |\n| 内容 | 用户创建了角色卡 A。 |',
     semanticMemoryStore: {
       listMemories: () => semanticMemories.filter(memory => !deletedSemanticMemories.includes(memory.id)),
+      setMemoryStatus: async (id, status) => {
+        const memory = semanticMemories.find(item => item.id === id);
+        if (!memory) return null;
+        memory.status = status;
+        semanticMemoryStatusChanges.push([id, status]);
+        return memory;
+      },
       deleteMemory: async (id) => {
         deletedSemanticMemories.push(id);
         return true;
@@ -215,7 +228,19 @@ const flushMicrotasks = () => new Promise(resolve => setTimeout(resolve, 0));
   assert.ok(findByText(elements.semanticMemoryListEl, '普通操作默认后台执行；明确要求查看时才打开主要结果。'));
   assert.ok(findByText(elements.semanticMemoryListEl, 'presentation.default'));
   assert.ok(findByText(elements.semanticMemoryListEl, 'turn-source-a'));
-  findByText(elements.semanticMemoryListEl, '删除').dispatchEvent('click', {});
+  findByText(elements.semanticMemoryListEl, '归档').dispatchEvent('click', {});
+  await flushMicrotasks();
+  assert.deepEqual(semanticMemoryStatusChanges, [['memory-pref-background', 'archived']]);
+  assert.ok(findByText(elements.semanticMemoryListEl, '已归档'));
+  assert.ok(findByText(elements.semanticMemoryListEl, '恢复'));
+  findByText(elements.semanticMemoryListEl, '恢复').dispatchEvent('click', {});
+  await flushMicrotasks();
+  assert.deepEqual(semanticMemoryStatusChanges, [
+    ['memory-pref-background', 'archived'],
+    ['memory-pref-background', 'active'],
+  ]);
+  assert.ok(findByText(elements.semanticMemoryListEl, '生效中'));
+  findByText(elements.semanticMemoryListEl, '永久删除').dispatchEvent('click', {});
   await flushMicrotasks();
   assert.deepEqual(deletedSemanticMemories, ['memory-pref-background']);
   assert.ok(findByText(elements.semanticMemoryListEl, '还没有长期记忆。'));

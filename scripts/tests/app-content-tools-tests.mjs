@@ -238,6 +238,79 @@ const createProfileStore = (prefix = 'profile') => {
 }
 
 {
+  const saved = new Map([
+    ['旧缺失语义世界书', { name: '旧缺失语义世界书', entries: [] }],
+  ]);
+  const deleted = [];
+  const tools = createAppContentAgentTools({
+    listWorlds: async () => Array.from(saved.keys()),
+    getWorldInfo: async id => saved.get(id) || {},
+    worldInfoExists: async id => saved.has(id),
+    deleteWorldInfo: async id => {
+      deleted.push(id);
+      saved.delete(id);
+    },
+  });
+  const registry = createAgentToolRegistry({
+    permissionEvaluator: createAgentPermissionEvaluator({
+      defaultDecision: AGENT_PERMISSION_DECISIONS.allow,
+    }),
+    logger: { warn: () => {} },
+  });
+  registry.registerMany(tools);
+
+  const result = await registry.executeTool('worldbook.delete_many', {
+    worldbooks: ['旧缺失语义世界书'],
+  }, {
+    operationIntentPolicy: { mode: 'write_allowed' },
+    requestToolConfirmation: () => true,
+  });
+
+  assert.equal(result.status, 'succeeded');
+  assert.equal(result.result.ok, true);
+  assert.equal(result.result.succeededCount, 1);
+  assert.deepEqual(deleted, ['旧缺失语义世界书']);
+  console.log('ok - worldbook.delete_many verifies absence through explicit exists without changing legacy get semantics');
+}
+
+{
+  let exists = true;
+  let deleteCalls = 0;
+  const tools = createAppContentAgentTools({
+    listWorlds: async () => ['确认期原生消失'],
+    getWorldInfo: async () => ({}),
+    worldInfoExists: async () => exists,
+    deleteWorldInfo: async () => {
+      deleteCalls += 1;
+    },
+  });
+  const registry = createAgentToolRegistry({
+    permissionEvaluator: createAgentPermissionEvaluator({
+      defaultDecision: AGENT_PERMISSION_DECISIONS.allow,
+    }),
+    logger: { warn: () => {} },
+  });
+  registry.registerMany(tools);
+
+  const result = await registry.executeTool('worldbook.delete_many', {
+    worldbooks: ['确认期原生消失'],
+  }, {
+    operationIntentPolicy: { mode: 'write_allowed' },
+    requestToolConfirmation: () => {
+      exists = false;
+      return true;
+    },
+  });
+
+  assert.equal(result.status, 'succeeded');
+  assert.equal(result.result.succeededCount, 0);
+  assert.equal(result.result.skippedCount, 1);
+  assert.equal(result.result.results[0].reason, 'already_absent');
+  assert.equal(deleteCalls, 0, '确认期间已消失的目标不得重复执行删除');
+  console.log('ok - worldbook.delete_many uses explicit exists for the pre-execution TOCTOU check');
+}
+
+{
   const personaStore = createProfileStore('persona');
   const persona = await personaStore.create({ name: 'Role A' });
   await personaStore.setActive(persona.id);

@@ -11,6 +11,7 @@ import { normalizeAppConfirmItems } from '../../src/scripts/ui/app-confirm.js';
       showAvatar: true,
       meta: '私聊',
       status: 'planned',
+      warning: true,
     },
     {
       id: 'world-a',
@@ -28,6 +29,7 @@ import { normalizeAppConfirmItems } from '../../src/scripts/ui/app-confirm.js';
       meta: '私聊',
       status: 'planned',
       reason: '',
+      warning: true,
     },
     {
       id: 'world-a',
@@ -37,6 +39,7 @@ import { normalizeAppConfirmItems } from '../../src/scripts/ui/app-confirm.js';
       meta: '',
       status: 'protected',
       reason: 'builtin_worldbook_protected',
+      warning: false,
     },
   ]);
   console.log('ok - app confirmation items retain exact labels and resource-specific avatar presentation');

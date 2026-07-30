@@ -6,8 +6,9 @@ const normalize = value => trim(value)
 
 const list = value => (Array.isArray(value) ? value : [value]).filter(Boolean);
 
-const stripNegatedActions = value => normalize(value)
-  .replace(/(?:不要|别|莫|禁止|无需|不用|不可|不能)\s*[^，,。；;！？!?\n]*/gu, ' ');
+export const stripNegatedMaidCapabilityActions = value => normalize(value)
+  .replace(/(?:不要|不得|禁止|无需|不用|不可|不能|避免)\s*[^，,。；;：:！？!?\n]*/gu, ' ')
+  .replace(/(^|[，,。；;：:！？!?\n\s]|请)(?:别|莫)\s*[^，,。；;：:！？!?\n]*/gu, '$1 ');
 
 export const searchMaidCapabilityConcepts = (
   query = '',
@@ -15,7 +16,7 @@ export const searchMaidCapabilityConcepts = (
 ) => {
   const text = normalize(query);
   if (!text) return [];
-  const positiveText = stripNegatedActions(text);
+  const positiveText = stripNegatedMaidCapabilityActions(text);
   const available = new Map(
     (Array.isArray(features) ? features : [])
       .map(feature => [trim(feature?.id), feature])
@@ -64,7 +65,7 @@ export const searchMaidCapabilityConcepts = (
   }
   if (
     sessionNoun.test(positiveText) &&
-    /(?:批量删除|删除|删掉|移除|清理|delete|remove|clean)/iu.test(positiveText)
+    /(?:批量删除|删除|删掉|移除|清理(?!后)|delete|remove|clean)/iu.test(positiveText)
   ) {
     add('session.delete_many', 105, 'session_batch_delete');
   }
@@ -103,7 +104,7 @@ export const searchMaidCapabilityConcepts = (
   }
   if (
     /(?:角色卡|角色档案|人物卡|character\s*cards?|personas?)/iu.test(positiveText) &&
-    /(?:批量删除|删除|删掉|移除|清理|delete|remove|clean)/iu.test(positiveText)
+    /(?:批量删除|删除|删掉|移除|清理(?!后)|delete|remove|clean)/iu.test(positiveText)
   ) {
     add('persona.delete_many', 105, 'persona_batch_delete');
   }
@@ -125,7 +126,7 @@ export const searchMaidCapabilityConcepts = (
     if (hasPositive(/(?:修改|更新|改写|update|modify)/iu)) {
       add(['worldbook.update_entries', 'worldbook.read'], 100, 'worldbook_update');
     }
-    if (hasPositive(/(?:删除|清理|去重|delete|remove|dedupe)/iu)) {
+    if (hasPositive(/(?:删除|清理(?!后)|去重|delete|remove|dedupe)/iu)) {
       const entryDelete = /(?:条目|重复|去重|dedupe|entries?|(?:里|中|内)的)/iu.test(text);
       if (entryDelete) {
         add(['worldbook.delete_entries', 'worldbook.read'], 105, 'worldbook_entry_delete');
@@ -149,8 +150,15 @@ export const searchMaidCapabilityConcepts = (
   if (
     hasPositive(/(?:生成|生图|画).{0,36}(?:聊天室|会话|聊天)?.{0,12}(?:壁纸|背景)/iu)
     || hasPositive(/(?:壁纸|聊天背景).{0,24}(?:生成|生图|画)/iu)
+    || hasPositive(/(?:设置|设为|作为|当作|用作|更换).{0,28}(?:壁纸|聊天背景)/iu)
   ) {
     add('session.wallpaper.set', 105, 'generated_wallpaper');
+  }
+  if (
+    hasPositive(/(?:设置|设为|作为|当作|用作|更换).{0,28}(?:联系人|聊天室|会话).{0,12}头像/iu)
+    || hasPositive(/(?:联系人|聊天室|会话).{0,12}头像.{0,20}(?:设置|设为|作为|当作|用作|更换)/iu)
+  ) {
+    add('contact.avatar.set', 105, 'contact_avatar');
   }
   if (has(/(?:格式画像|format\s*profile|output\s*schema|custom\s*output\s*schema)/iu)) {
     add('chat.format.profile', 100, 'format_profile');
@@ -171,9 +179,32 @@ export const searchMaidCapabilityConcepts = (
   if (has(/(?:待办|任务清单|\btodo\b)/iu)) {
     add('maid.todo', 100, 'todo');
   }
-  const clauseCount = text.split(/(?:[；;。]|然后|最后|接着|随后)/u).map(trim).filter(Boolean).length;
+  const maidMemoryIntent = /(?:女仆(?:自己)?(?:的)?(?:长期)?记忆|你(?:自己)?记得|你记住|你的长期记忆|maid\s*memory)/iu;
   if (
-    clauseCount >= 3 &&
+    maidMemoryIntent.test(text) &&
+    /(?:记得什么|记住了什么|列出|查看|看看|哪些|有什么|清单|\blist\b)/iu.test(text)
+  ) {
+    add('maid.memory.list', 105, 'maid_memory_list');
+  }
+  if (
+    (
+      maidMemoryIntent.test(positiveText) ||
+      /(?:清理|归档).{0,12}(?:测试|探针).{0,8}记忆/iu.test(positiveText)
+    ) &&
+    /(?:归档|忘掉|忘记|清理|archive|forget)/iu.test(positiveText)
+  ) {
+    add(['maid.memory.archive', 'maid.memory.list'], 108, 'maid_memory_archive');
+  }
+  const clauseCount = text.split(/(?:[；;。]|然后|最后|接着|随后)/u).map(trim).filter(Boolean).length;
+  const quotedTargetCount = (text.match(/「[^」]{1,100}」/gu) || []).length;
+  const hasMultiTargetWorkflow = (
+    quotedTargetCount >= 3 &&
+    /(?:分别|逐(?:一|个|项|房)|每个|多个|三个|这些|全部)/iu.test(text) &&
+    /(?:创建|写入|发送|修改|更新|生成|删除|设置|create|write|send|update|generate|delete|set)/iu.test(positiveText) &&
+    /(?:读回|核对|验证|清单|状态|最后|完成后|汇报|read|verify|status|list)/iu.test(text)
+  );
+  if (
+    (clauseCount >= 3 || hasMultiTargetWorkflow) &&
     /(?:创建|写入|发送|修改|更新|生成|create|write|send|update|generate)/iu.test(text)
   ) {
     add('maid.todo', 96, 'complex_workflow');

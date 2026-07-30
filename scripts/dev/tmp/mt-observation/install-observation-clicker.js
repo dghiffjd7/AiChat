@@ -19,6 +19,17 @@
       if (state.autoConfirm === true) {
         button = buttons.find(item => String(item.textContent || '').trim() === '允许一次') || null;
       }
+      const structuredDeleteTaskIds = new Set([
+        'memory-system-v4f-b-0730-009',
+        'memory-system-v4f-b-0730-010',
+        'memory-system-v4f-b-0730-011',
+        'memory-system-g35-b-0730-009',
+        'memory-system-g35-b-0730-010',
+        'memory-system-g35-b-0730-011',
+      ]);
+      if (!button && structuredDeleteTaskIds.has(String(state.taskId || ''))) {
+        button = buttons.find(item => String(item.textContent || '').trim() === '确认删除') || null;
+      }
       if (!button && state.allowSubAgent === true) {
         button = buttons.find(item => String(item.textContent || '').trim() === '允许') || null;
       }

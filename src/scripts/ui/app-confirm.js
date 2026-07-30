@@ -31,10 +31,12 @@ export const normalizeAppConfirmItems = (items = []) => (
   meta: trimConfirmText(item?.meta),
   status: trimConfirmText(item?.status, 'planned'),
   reason: trimConfirmText(item?.reason),
+  warning: item?.warning === true,
 }));
 
 const CONFIRM_ITEM_STATUS_LABELS = Object.freeze({
   planned: '将删除',
+  archive_planned: '将归档',
   protected: '受保护',
   missing: '未找到',
   skipped: '将跳过',
@@ -48,6 +50,10 @@ const CONFIRM_ITEM_REASON_LABELS = Object.freeze({
   already_absent: '已不存在',
   duplicate_target: '重复目标',
   not_visible_session: '不在可见会话范围',
+  active_task_state_protected: '活动任务记忆不可归档',
+  memory_not_found: '记忆已不存在',
+  already_archived: '已经归档',
+  memory_not_active: '当前并非生效记忆',
 });
 
 const renderChoiceBody = (message = '', items = []) => {
@@ -75,6 +81,7 @@ const renderChoiceBody = (message = '', items = []) => {
     const rowEl = document.createElement('div');
     rowEl.className = 'app-confirm-item';
     rowEl.dataset.status = item.status;
+    if (item.warning) rowEl.dataset.warning = 'true';
     rowEl.setAttribute('role', 'listitem');
     rowEl.title = item.label;
 

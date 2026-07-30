@@ -29,6 +29,12 @@ export const MAID_CONTEXT_KEEP_RECENT_AFTER_COMPACT = 8;
 export const MAID_CONTEXT_MAX_TURNS = 120;
 export const MAID_CONTEXT_MAX_MEMORY_ROWS = 240;
 export const MAID_CONTEXT_MAX_EXTRACTION_BATCHES = 60;
+export const MAID_COMPACTION_PROTECTION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+export const MAID_EXTRACTION_MAX_AUTO_ATTEMPTS = 3;
+export const MAID_EXTRACTION_RETRY_DELAYS_MS = Object.freeze([
+  5 * 60 * 1000,
+  30 * 60 * 1000,
+]);
 
 const trim = (value, fallback = '') => {
   const text = String(value ?? '').trim();
@@ -354,7 +360,7 @@ const buildMaidWorkingContextPlan = ({
   }
   const candidates = [];
   (Array.isArray(turns) ? turns : [])
-    .filter(turn => !turn?.compacted && (turn?.continuable === true || trim(turn?.compactionProtection)))
+    .filter(turn => !turn?.compacted && trim(turn?.compactionProtection))
     .slice(-MAID_CONTEXT_WORKING_ITEM_LIMIT)
     .forEach((turn) => {
       candidates.push({
@@ -523,10 +529,19 @@ const normalizeStructuredMemorySignal = (raw = {}) => {
 
 const normalizeTurn = (raw = {}, { now = Date.now } = {}) => {
   const src = isPlainObject(raw) ? raw : {};
-  const at = Number(src.at || safeNow(now)) || safeNow(now);
+  const currentAt = safeNow(now);
+  const at = Number(src.at || currentAt) || currentAt;
   const id = normalizeId(src.id, `turn_${at}_${Math.random().toString(36).slice(2, 8)}`);
   const plan = isPlainObject(src.plan) ? src.plan : {};
   const output = isPlainObject(src.output) ? src.output : {};
+  const rawProtection = trim(
+    src.compactionProtection,
+    src.continuable === true ? 'continuable' : '',
+  );
+  const protectionExpired = Boolean(
+    rawProtection &&
+    currentAt - at > MAID_COMPACTION_PROTECTION_TTL_MS
+  );
   return {
     id,
     at,
@@ -541,9 +556,13 @@ const normalizeTurn = (raw = {}, { now = Date.now } = {}) => {
     continueHint: truncate(src.continueHint, 1200),
     reactStoppedReason: trim(src.reactStoppedReason),
     compacted: src.compacted === true,
-    compactionProtection: trim(
-      src.compactionProtection,
-      src.continuable === true ? 'continuable' : '',
+    compactionProtection: protectionExpired ? '' : rawProtection,
+    compactionProtectionReleasedAt: Number(
+      src.compactionProtectionReleasedAt || (protectionExpired ? currentAt : 0),
+    ) || 0,
+    compactionProtectionReleaseReason: trim(
+      src.compactionProtectionReleaseReason,
+      protectionExpired ? 'expired' : '',
     ),
     structuredMemories: (Array.isArray(src.structuredMemories) ? src.structuredMemories : [])
       .map(normalizeStructuredMemorySignal)
@@ -576,21 +595,86 @@ const normalizeMemoryRow = (raw = {}, { now = Date.now } = {}) => {
   };
 };
 
+const normalizeExtractionUsageEntry = (raw = {}) => {
+  const src = isPlainObject(raw) ? raw : {};
+  const toNullableTokenCount = (value) => {
+    if (value === null || value === undefined || value === '') return null;
+    const numeric = Number(value);
+    return Number.isFinite(numeric) && numeric >= 0 ? Math.trunc(numeric) : null;
+  };
+  const promptTokens = toNullableTokenCount(src.promptTokens);
+  const completionTokens = toNullableTokenCount(src.completionTokens);
+  const totalTokensRaw = toNullableTokenCount(src.totalTokens);
+  const totalTokens = totalTokensRaw !== null
+    ? totalTokensRaw
+    : (promptTokens !== null || completionTokens !== null
+      ? (promptTokens || 0) + (completionTokens || 0)
+      : null);
+  return {
+    status: trim(src.status).toLowerCase() === 'recorded' || totalTokens !== null
+      ? 'recorded'
+      : 'unknown',
+    provider: truncate(src.provider, 80),
+    model: truncate(src.model, 120),
+    promptTokens,
+    completionTokens,
+    totalTokens,
+    latencyMs: toNullableTokenCount(src.latencyMs),
+    modelCallCount: Math.max(1, Math.trunc(Number(src.modelCallCount)) || 0),
+    degraded: src.degraded === true,
+    source: truncate(src.source, 40),
+  };
+};
+
+const appendExtractionUsage = (batch = {}, entries = []) => {
+  const normalized = (Array.isArray(entries) ? entries : [])
+    .filter(isPlainObject)
+    .map(normalizeExtractionUsageEntry);
+  if (!normalized.length) return;
+  const limit = MAID_EXTRACTION_MAX_AUTO_ATTEMPTS * 2;
+  batch.modelUsage = [
+    ...(Array.isArray(batch.modelUsage) ? batch.modelUsage : []),
+    ...normalized,
+  ].slice(-limit);
+  if (normalized.some(entry => entry.source === 'maid_main_fallback' || entry.degraded)) {
+    batch.fallbackUsed = true;
+  }
+};
+
 const normalizeExtractionBatch = (raw = {}, { now = Date.now, fallbackId = '' } = {}) => {
   const src = isPlainObject(raw) ? raw : {};
   const at = safeNow(now);
   const createdAt = Number(src.createdAt || at) || at;
   const rawStatus = trim(src.status, 'pending').toLowerCase();
+  const attempts = Math.max(0, Math.trunc(Number(src.attempts)) || 0);
+  const status = rawStatus === 'completed'
+    ? 'completed'
+    : (rawStatus === 'paused' || attempts >= MAID_EXTRACTION_MAX_AUTO_ATTEMPTS
+      ? 'paused'
+      : 'pending');
+  const modelUsage = (Array.isArray(src.modelUsage) ? src.modelUsage : [])
+    .filter(isPlainObject)
+    .map(normalizeExtractionUsageEntry)
+    .slice(-(MAID_EXTRACTION_MAX_AUTO_ATTEMPTS * 2));
   return {
     id: normalizeId(src.id, fallbackId || `maid_extract_${createdAt}`),
     sourceTurnIds: Array.isArray(src.sourceTurnIds)
       ? src.sourceTurnIds.map(id => trim(id)).filter(Boolean).slice(0, 80)
       : [],
-    status: rawStatus === 'completed' ? 'completed' : 'pending',
-    attempts: Math.max(0, Math.trunc(Number(src.attempts)) || 0),
+    status,
+    attempts,
     deterministicComplete: src.deterministicComplete === true,
     extractedCount: Math.max(0, Math.trunc(Number(src.extractedCount)) || 0),
+    modelSource: truncate(src.modelSource, 40),
+    model: truncate(src.model, 120),
+    fallbackUsed: src.fallbackUsed === true ||
+      modelUsage.some(entry => entry.source === 'maid_main_fallback' || entry.degraded),
+    modelUsage,
     lastError: truncate(src.lastError, 500),
+    nextRetryAt: status === 'pending' ? Math.max(0, Number(src.nextRetryAt) || 0) : 0,
+    pauseReason: status === 'paused'
+      ? trim(src.pauseReason, 'auto_retry_exhausted')
+      : '',
     createdAt,
     updatedAt: Number(src.updatedAt || createdAt) || createdAt,
     completedAt: Number(src.completedAt || 0) || 0,
@@ -1256,6 +1340,7 @@ export class MaidConversationStore {
         this.state.turns.filter(turn => !turn.compacted),
       ),
       pendingExtractionCount: this.state.extractionBatches.filter(batch => batch.status === 'pending').length,
+      pausedExtractionCount: this.state.extractionBatches.filter(batch => batch.status === 'paused').length,
     };
   }
 
@@ -1336,7 +1421,20 @@ export class MaidConversationStore {
       if (!plan?.text || bodyBudget <= 0) return plan;
       const text = `${header}\n${plan.text}`;
       const cost = estimateTokens(text, 'rough');
-      if (cost > available) return { ...plan, text: '', tokenCount: 0 };
+      if (cost > available) {
+        // 整段被预算裁掉时不得再报告其选中项：否则未注入的记忆会污染 markMemoriesUsed 与 Run 统计。
+        return {
+          ...plan,
+          text: '',
+          tokenCount: 0,
+          selectedMemoryIds: [],
+          selectedTurnIds: [],
+          diagnostics: [
+            ...(Array.isArray(plan?.diagnostics) ? plan.diagnostics : []),
+            { id: '', reason: 'section_token_budget', label },
+          ],
+        };
+      }
       sections.push({ label, text, tokenCount: cost, plan });
       remainingMemoryTokens = Math.max(0, remainingMemoryTokens - separatorCost - cost);
       return plan;
@@ -1485,6 +1583,7 @@ export class MaidConversationStore {
         this.state.turns.filter(turn => !turn.compacted),
       ),
       pendingExtractionCount: this.state.extractionBatches.filter(batch => batch.status === 'pending').length,
+      pausedExtractionCount: this.state.extractionBatches.filter(batch => batch.status === 'paused').length,
     };
   }
 
@@ -1519,6 +1618,7 @@ export class MaidConversationStore {
       id: turn.id || `turn_${safeNow(this.now)}_${this.state.turns.length + 1}`,
       at: turn.at || safeNow(this.now),
     }, { now: this.now });
+    this.releaseSupersededCompactionProtections(normalizedTurn);
     this.state.turns.push(normalizedTurn);
     const evictedTurns = this.state.turns.length > MAID_CONTEXT_MAX_TURNS
       ? this.state.turns.slice(0, this.state.turns.length - MAID_CONTEXT_MAX_TURNS)
@@ -1531,6 +1631,26 @@ export class MaidConversationStore {
     await this.write();
     if (compactedRow) this.schedulePendingExtractions();
     return this.exportState();
+  }
+
+  releaseSupersededCompactionProtections(nextTurn = {}) {
+    const protectedTurns = this.state.turns.filter(turn => trim(turn?.compactionProtection));
+    if (!protectedTurns.length) return 0;
+    const input = trim(nextTurn?.input);
+    const status = trim(nextTurn?.status).toLowerCase();
+    const cancelled = /(?:^|[，,。；;！？!?\s])(?:取消|停止|不用继续|不要继续|别继续|放弃)(?:$|[，,。；;！？!?\s])/u.test(input);
+    const continuing = /(?:^|[，,。；;！？!?\s])(?:继续|接着|承接|恢复|上一步|刚才|前一步)/u.test(input);
+    const completed = continuing && ['succeeded', 'success', 'completed', 'responded'].includes(status);
+    const reason = cancelled
+      ? 'cancelled_by_next_turn'
+      : (completed ? 'completed_by_next_turn' : 'superseded_by_next_turn');
+    const releasedAt = Number(nextTurn?.at || safeNow(this.now)) || safeNow(this.now);
+    protectedTurns.forEach((turn) => {
+      turn.compactionProtection = '';
+      turn.compactionProtectionReleasedAt = releasedAt;
+      turn.compactionProtectionReleaseReason = reason;
+    });
+    return protectedTurns.length;
   }
 
   getUncompressedTurns() {
@@ -1676,12 +1796,19 @@ export class MaidConversationStore {
     this.ensureLoaded();
     if (!this.semanticMemoryStore) return [];
     const processed = [];
-    const pending = this.state.extractionBatches.filter(batch => batch.status === 'pending');
+    const startedAt = safeNow(this.now);
+    const pending = this.state.extractionBatches.filter(batch => (
+      batch.status === 'pending' &&
+      batch.attempts < MAID_EXTRACTION_MAX_AUTO_ATTEMPTS &&
+      Number(batch.nextRetryAt || 0) <= startedAt
+    ));
     for (const batch of pending) {
       const turns = this.resolveExtractionBatchTurns(batch);
       if (!turns.length) {
-        batch.attempts += 1;
+        batch.status = 'paused';
         batch.lastError = 'source_turns_unavailable';
+        batch.pauseReason = 'source_turns_unavailable';
+        batch.nextRetryAt = 0;
         batch.updatedAt = safeNow(this.now);
         await this.write();
         processed.push(clone(batch));
@@ -1696,29 +1823,55 @@ export class MaidConversationStore {
         }
         if (typeof this.extractSemanticMemories !== 'function') {
           batch.lastError = 'extractor_unavailable';
+          batch.nextRetryAt = safeNow(this.now) + MAID_EXTRACTION_RETRY_DELAYS_MS[0];
           batch.updatedAt = safeNow(this.now);
           await this.write();
           processed.push(clone(batch));
           continue;
         }
         batch.attempts += 1;
+        batch.nextRetryAt = 0;
         batch.updatedAt = safeNow(this.now);
         const extractionResult = await this.extractSemanticMemories({
           turns: clone(turns),
           scopeId: trim(this.semanticMemoryStore.scopeId, 'maid_default'),
           batch: clone(batch),
         });
+        appendExtractionUsage(batch, extractionResult?.usageEntries);
         const extractedCount = await this.upsertExtractedMemoriesForBatch(batch, extractionResult);
         batch.status = 'completed';
         batch.extractedCount = extractedCount;
+        batch.modelSource = truncate(extractionResult?.modelSource, 40);
+        batch.model = truncate(extractionResult?.model, 120);
+        batch.fallbackUsed = batch.fallbackUsed || extractionResult?.fallbackUsed === true;
         batch.lastError = '';
+        batch.nextRetryAt = 0;
+        batch.pauseReason = '';
         batch.completedAt = safeNow(this.now);
         batch.updatedAt = batch.completedAt;
       } catch (error) {
-        batch.status = 'pending';
+        appendExtractionUsage(batch, error?.memoryExtractionUsage);
         batch.lastError = truncate(error?.message || String(error || 'memory extraction failed'), 500);
+        if (batch.attempts >= MAID_EXTRACTION_MAX_AUTO_ATTEMPTS) {
+          batch.status = 'paused';
+          batch.pauseReason = 'auto_retry_exhausted';
+          batch.nextRetryAt = 0;
+        } else {
+          const retryIndex = Math.min(
+            Math.max(0, batch.attempts - 1),
+            MAID_EXTRACTION_RETRY_DELAYS_MS.length - 1,
+          );
+          batch.status = 'pending';
+          batch.pauseReason = '';
+          batch.nextRetryAt = safeNow(this.now) + MAID_EXTRACTION_RETRY_DELAYS_MS[retryIndex];
+        }
         batch.updatedAt = safeNow(this.now);
-        this.logger?.warn?.('maid semantic memory batch remains pending', error);
+        this.logger?.warn?.(
+          batch.status === 'paused'
+            ? 'maid semantic memory batch paused after retry budget'
+            : 'maid semantic memory batch remains pending',
+          error,
+        );
       }
       await this.write();
       processed.push(clone(batch));

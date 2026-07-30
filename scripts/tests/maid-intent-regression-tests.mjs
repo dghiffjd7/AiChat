@@ -21,6 +21,8 @@ const RETRIEVAL_FIXTURES = [
   { input: '我想设置API', expect: 'config.api.open' },
   { input: '打开世界书', expect: 'worldbook.open' },
   { input: '打开记忆表格', expect: 'memory.open' },
+  { input: '你记得什么', expect: 'maid.memory.list' },
+  { input: '归档女仆记忆', expect: 'maid.memory.archive' },
   { input: '打开变量面板', expect: 'variables.open' },
   { input: '打开正则', expect: 'regex.open' },
   // 会话与消息
@@ -88,6 +90,8 @@ const SHADOW_LONG_TAIL_FIXTURES = [
   { input: '不跳房间，偷看一下「测试花园」末条消息是谁发的、几点发的。', expect: ['app.resource.read'] },
   { input: '世借书都有哪些？我可能打错字了，想看的是 worldbook 名单。', expect: ['worldbook.list'] },
   { input: '删除这些测试世界书，绑定中的也列出来让我一次确认。', expect: ['worldbook.delete_many'] },
+  { input: '看看你自己的长期记忆里记了什么，只列生效中的。', expect: ['maid.memory.list'] },
+  { input: '把你记住的测试探针找出来并归档，先列清单让我确认。', expect: ['maid.memory.archive', 'maid.memory.list'] },
   { input: '翻一下「花园设定」的目录页，条目标题就够，正文先别端上来。', expect: ['worldbook.read'] },
   { input: '刚才若有翻车，错误簿里最新三笔是什么？', expect: ['app.errors.read'] },
   { input: 'scan 一下当前 UI，告诉我现在露出来哪些 panel。', expect: ['app.visible_panel.read'] },

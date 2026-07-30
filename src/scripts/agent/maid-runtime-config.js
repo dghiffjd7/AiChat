@@ -102,6 +102,99 @@ export const createMaidRuntimeConfigResolver = ({
   }
 };
 
+export const createMaidMemoryExtractionRuntimeResolver = ({
+  settingsStore = null,
+  configManager = null,
+  resolveMainRuntime = null,
+  createClient = null,
+  isConfigReady = () => false,
+  logger = console,
+} = {}) => async (context = {}) => {
+  const selection = settingsStore?.getMemoryExtractionSettings?.() || {};
+  const mode = trim(selection?.mode).toLowerCase() === 'custom' ? 'custom' : 'follow_main';
+  const fallbackToMain = selection?.fallbackToMain === true;
+  const resolveMain = async () => {
+    if (typeof resolveMainRuntime !== 'function') return null;
+    return resolveMainRuntime({
+      ...context,
+      taskType: 'maid_memory_extract',
+      uiMode: 'maid',
+    });
+  };
+
+  if (mode !== 'custom') {
+    const mainRuntime = await resolveMain();
+    return {
+      ...(isPlainObject(mainRuntime) ? mainRuntime : {}),
+      memoryExtractionMode: 'follow_main',
+      memoryExtractionModelSource: 'maid_main',
+      memoryExtractionFallbackToMain: false,
+      extractionFallbackClient: null,
+      extractionFallbackConfig: null,
+    };
+  }
+
+  const profileId = trim(selection?.profileId);
+  const modelOverride = trim(selection?.modelOverride);
+  let mainRuntime = null;
+  if (fallbackToMain) {
+    try {
+      mainRuntime = await resolveMain();
+    } catch (error) {
+      logger?.warn?.('maid memory extraction main fallback resolve failed', error);
+    }
+  }
+  const extractionFallbackClient = mainRuntime?.configured && mainRuntime?.client
+    ? mainRuntime.client
+    : null;
+  const extractionFallbackConfig = extractionFallbackClient && isPlainObject(mainRuntime?.config)
+    ? mainRuntime.config
+    : null;
+
+  let config = null;
+  let client = null;
+  let reason = profileId ? 'memory_extraction_profile_missing' : 'memory_extraction_profile_not_bound';
+  try {
+    await configManager?.ensureStores?.();
+    const rawConfig = profileId
+      ? await configManager?.getRuntimeConfigByProfileId?.(profileId)
+      : null;
+    if (isPlainObject(rawConfig)) {
+      config = {
+        ...rawConfig,
+        ...(modelOverride ? { model: modelOverride } : {}),
+        timeout: Math.min(Number(rawConfig.timeout) > 0 ? Number(rawConfig.timeout) : 240000, 240000),
+      };
+      if (isConfigReady(config) && typeof createClient === 'function') {
+        client = createClient(config);
+        reason = '';
+      } else {
+        reason = 'memory_extraction_profile_incomplete';
+      }
+    }
+  } catch (error) {
+    reason = error?.message || 'memory_extraction_profile_error';
+    logger?.warn?.('maid memory extraction runtime resolve failed', error);
+  }
+
+  return {
+    configured: Boolean(client || extractionFallbackClient),
+    bound: Boolean(profileId),
+    profileId,
+    config,
+    client,
+    reason: client || extractionFallbackClient ? '' : reason,
+    memoryExtractionMode: 'custom',
+    memoryExtractionModelSource: 'custom',
+    memoryExtractionFallbackToMain: fallbackToMain,
+    extractionFallbackClient,
+    extractionFallbackConfig,
+    extractionFallbackProfileId: extractionFallbackClient
+      ? trim(mainRuntime?.profileId)
+      : '',
+  };
+};
+
 export const isMaidRuntimeConfigured = async (resolveRuntimeConfig = null) => {
   if (typeof resolveRuntimeConfig !== 'function') return false;
   const runtime = await resolveRuntimeConfig();

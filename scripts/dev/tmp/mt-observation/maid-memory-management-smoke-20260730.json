@@ -1,0 +1,179 @@
+{
+  "schemaVersion": 1,
+  "startedAt": 1785386237906,
+  "prompts": {
+    "remember": {
+      "ok": true,
+      "status": "responded",
+      "responseType": "chat",
+      "message": "记住了。今后后台操作回复，先给一句话结论，再列最多三项摘要。不会操作任何APP资源。",
+      "failureCode": "",
+      "steps": [],
+      "clicked": []
+    },
+    "list": {
+      "ok": true,
+      "status": "succeeded",
+      "responseType": "react",
+      "message": "目前生效中的长期记忆有一条：\n\n• **偏好**：后台操作回复时，先用一句话给结论，再列出最多三项摘要。\n\n其余记忆均为已归档或无生效状态，当前活跃的就这一条哦。",
+      "failureCode": "",
+      "steps": [
+        {
+          "toolName": "maid.memory.list",
+          "featureId": "maid.memory.list",
+          "status": "succeeded",
+          "summary": "maid memory list returned 1 item(s)",
+          "output": {
+            "ok": true,
+            "query": "",
+            "kind": "",
+            "status": "active",
+            "count": 1,
+            "items": [
+              {
+                "id": "maid_semantic_1785386242931_1",
+                "kind": "preference",
+                "key": "presentation.default",
+                "contentSummary": "后台操作回复时，先用一句话给结论，再列出最多三项摘要。",
+                "confidence": "explicit",
+                "status": "active",
+                "updatedAt": 1785386242931
+              }
+            ]
+          }
+        }
+      ],
+      "clicked": []
+    },
+    "archive": {
+      "ok": true,
+      "status": "succeeded",
+      "responseType": "react",
+      "message": "好的，已将那笔测试偏好归档，不再生效。",
+      "failureCode": "",
+      "steps": [
+        {
+          "toolName": "maid.memory.list",
+          "featureId": "maid.memory.list",
+          "status": "succeeded",
+          "summary": "maid memory list returned 1 item(s)",
+          "output": {
+            "ok": true,
+            "query": "",
+            "kind": "",
+            "status": "active",
+            "count": 1,
+            "items": [
+              {
+                "id": "maid_semantic_1785386242931_1",
+                "kind": "preference",
+                "key": "presentation.default",
+                "contentSummary": "后台操作回复时，先用一句话给结论，再列出最多三项摘要。",
+                "confidence": "explicit",
+                "status": "active",
+                "updatedAt": 1785386242931
+              }
+            ]
+          }
+        },
+        {
+          "toolName": "maid.memory.archive",
+          "featureId": "maid.memory.archive",
+          "status": "succeeded",
+          "summary": "maid memory archive completed (1 archived)",
+          "output": {
+            "ok": true,
+            "preview": false,
+            "requestedCount": 1,
+            "plannedCount": 1,
+            "archivedCount": 1,
+            "protectedCount": 0,
+            "skippedCount": 0,
+            "failedCount": 0,
+            "results": [
+              {
+                "id": "maid_semantic_1785386242931_1",
+                "status": "archived",
+                "reason": ""
+              }
+            ]
+          }
+        }
+      ],
+      "clicked": [
+        {
+          "at": 1785386369230,
+          "text": "确认归档",
+          "title": "归档女仆长期记忆"
+        }
+      ]
+    }
+  },
+  "lifecycle": {
+    "ok": true,
+    "turns": 13,
+    "activeTurns": 8,
+    "compactedTurns": 5,
+    "memoryRows": 1,
+    "extractionBatches": [
+      {
+        "id": "maid_extract_1785386240507_1",
+        "status": "completed",
+        "attempts": 1,
+        "extractedCount": 1,
+        "lastError": ""
+      }
+    ],
+    "semanticMemories": [
+      {
+        "id": "maid_semantic_1785386242931_1",
+        "kind": "preference",
+        "key": "presentation.default",
+        "content": "后台操作回复时，先用一句话给结论，再列出最多三项摘要。",
+        "confidence": "explicit",
+        "status": "active",
+        "sourceTurnIds": [
+          "turn_1785386240355_1"
+        ]
+      }
+    ]
+  },
+  "beforeArchive": {
+    "target": {
+      "id": "maid_semantic_1785386242931_1",
+      "kind": "preference",
+      "key": "presentation.default",
+      "content": "后台操作回复时，先用一句话给结论，再列出最多三项摘要。",
+      "confidence": "explicit",
+      "status": "active"
+    },
+    "selectedMemoryIds": [
+      "maid_semantic_1785386242931_1",
+      "maid_memory_1785386240507_1"
+    ],
+    "semanticMemoryTokenCount": 47
+  },
+  "afterArchive": {
+    "target": null,
+    "selectedMemoryIds": [
+      "maid_memory_1785386240507_1"
+    ],
+    "semanticMemoryTokenCount": 0
+  },
+  "uiRestore": {
+    "before": {
+      "panelOpen": true,
+      "cardCount": 1,
+      "targetFound": true,
+      "statusText": "已归档",
+      "actionText": "恢复"
+    },
+    "after": {
+      "status": "",
+      "statusText": "生效中",
+      "actionText": "归档"
+    }
+  },
+  "finishedAt": 1785386373002,
+  "ok": false
+}

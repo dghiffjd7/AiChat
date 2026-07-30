@@ -217,11 +217,31 @@ const lcsSimilarity = (left = '', right = '') => {
 
 const getKeyFamily = key => trim(key).toLowerCase().split('.')[0];
 
+const getCrossKeyMergeFamily = (memory = {}) => {
+  if (trim(memory?.kind).toLowerCase() !== 'preference') return '';
+  const key = trim(memory?.key).toLowerCase();
+  if (key === 'presentation.default' || key === 'workflow.confirmation') {
+    return 'preference:presentation_visibility';
+  }
+  return '';
+};
+
+const getMemoryMergeFamily = (memory = {}) => (
+  getCrossKeyMergeFamily(memory) ||
+  `${trim(memory?.kind).toLowerCase()}:${getKeyFamily(memory?.key)}`
+);
+
+const isKnownCrossKeyPair = (left = {}, right = {}) => (
+  trim(left?.key).toLowerCase() !== trim(right?.key).toLowerCase() &&
+  Boolean(getCrossKeyMergeFamily(left)) &&
+  getCrossKeyMergeFamily(left) === getCrossKeyMergeFamily(right)
+);
+
 export const areMaidSemanticMemoriesNearDuplicate = (left = {}, right = {}) => {
   if (
     trim(left?.scopeId) !== trim(right?.scopeId) ||
     trim(left?.kind) !== trim(right?.kind) ||
-    getKeyFamily(left?.key) !== getKeyFamily(right?.key)
+    getMemoryMergeFamily(left) !== getMemoryMergeFamily(right)
   ) return false;
   if (trim(left?.kind) === 'resource_state') {
     const leftRef = normalizeResourceRef(left?.resourceRef);
@@ -231,11 +251,18 @@ export const areMaidSemanticMemoriesNearDuplicate = (left = {}, right = {}) => {
   const leftText = normalizeComparableText(left?.content);
   const rightText = normalizeComparableText(right?.content);
   if (!leftText || !rightText) return false;
+  const knownCrossKeyPair = isKnownCrossKeyPair(left, right);
+  const hasContainment = (
+    Math.min(leftText.length, rightText.length) >= 8 &&
+    (leftText.includes(rightText) || rightText.includes(leftText))
+  );
   if (
     trim(left?.confidence) === 'explicit' &&
     trim(right?.confidence) === 'explicit' &&
-    leftText !== rightText
+    leftText !== rightText &&
+    !(knownCrossKeyPair && hasContainment)
   ) return false;
+  if (knownCrossKeyPair && hasContainment) return true;
   return lcsSimilarity(leftText, rightText) >= 0.84;
 };
 
@@ -671,9 +698,17 @@ export class MaidSemanticMemoryStore {
         const duplicate = this.state.memories[duplicateIndex];
         const incomingRank = CONFIDENCE_RANK[incoming.confidence] || 0;
         const duplicateRank = CONFIDENCE_RANK[duplicate.confidence] || 0;
+        const incomingIsRicherCrossKey = (
+          incomingRank === duplicateRank &&
+          isKnownCrossKeyPair(duplicate, incoming) &&
+          normalizeComparableText(incoming.content).length >
+            normalizeComparableText(duplicate.content).length
+        );
+        const useIncomingContent = incomingRank > duplicateRank || incomingIsRicherCrossKey;
         const merged = {
           ...duplicate,
-          content: incomingRank > duplicateRank ? incoming.content : duplicate.content,
+          key: incomingIsRicherCrossKey ? incoming.key : duplicate.key,
+          content: useIncomingContent ? incoming.content : duplicate.content,
           confidence: incomingRank > duplicateRank ? incoming.confidence : duplicate.confidence,
           tags: uniqueStrings([...duplicate.tags, ...incoming.tags], 20),
           sourceTurnIds: uniqueStrings([...duplicate.sourceTurnIds, ...incoming.sourceTurnIds], 200),
@@ -681,7 +716,12 @@ export class MaidSemanticMemoryStore {
         };
         this.state.memories[duplicateIndex] = merged;
         await this.write();
-        this.emitChanged({ action: 'merged_duplicate', id: merged.id, proposedKey: incoming.key });
+        this.emitChanged({
+          action: 'merged_duplicate',
+          id: merged.id,
+          proposedKey: incoming.key,
+          retainedKey: merged.key,
+        });
         return { ok: true, action: 'merged_duplicate', memory: clone(merged) };
       }
 

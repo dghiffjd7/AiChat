@@ -2480,6 +2480,54 @@ pub async fn clear_chat_history(app: AppHandle, character_id: String) -> Result<
 }
 
 /// 保存世界书数据
+fn world_info_file_path(data_dir: &Path, character_id: &str) -> Result<PathBuf, String> {
+    let id = character_id.trim();
+    if id.is_empty() {
+        return Err("world info id empty".to_string());
+    }
+    if id == "." || id == ".." || id.contains('/') || id.contains('\\') || id.contains('\0') {
+        return Err("world info id contains invalid path characters".to_string());
+    }
+    Ok(data_dir.join("worldinfo").join(format!("{id}.json")))
+}
+
+fn delete_world_info_file(data_dir: &Path, character_id: &str) -> Result<bool, String> {
+    let world_file = world_info_file_path(data_dir, character_id)?;
+    if !world_file.exists() {
+        return Ok(false);
+    }
+    fs::remove_file(world_file).map_err(|e| e.to_string())?;
+    Ok(true)
+}
+
+fn list_world_info_file_ids(data_dir: &Path) -> Result<Vec<String>, String> {
+    let world_dir = data_dir.join("worldinfo");
+    if !world_dir.exists() {
+        return Ok(Vec::new());
+    }
+    let mut ids = Vec::new();
+    for entry in fs::read_dir(world_dir).map_err(|e| e.to_string())? {
+        let entry = entry.map_err(|e| e.to_string())?;
+        let file_type = entry.file_type().map_err(|e| e.to_string())?;
+        if !file_type.is_file() {
+            continue;
+        }
+        let path = entry.path();
+        if path.extension().and_then(|value| value.to_str()) != Some("json") {
+            continue;
+        }
+        if let Some(id) = path.file_stem().and_then(|value| value.to_str()) {
+            let id = id.trim();
+            if !id.is_empty() {
+                ids.push(id.to_string());
+            }
+        }
+    }
+    ids.sort();
+    ids.dedup();
+    Ok(ids)
+}
+
 #[tauri::command]
 pub async fn save_world_info(
     app: AppHandle,
@@ -2513,6 +2561,27 @@ pub async fn get_world_info(app: AppHandle, character_id: String) -> Result<Valu
     let data: Value = serde_json::from_str(&json).unwrap_or(serde_json::json!({}));
 
     Ok(data)
+}
+
+/// 删除世界书原生文件；不存在视为幂等成功并返回 false。
+#[tauri::command]
+pub async fn delete_world_info(app: AppHandle, character_id: String) -> Result<bool, String> {
+    let data_dir = get_data_dir(&app)?;
+    delete_world_info_file(&data_dir, &character_id)
+}
+
+/// 独立存在性探测；保留 get_world_info 缺失时返回空对象的既有语义。
+#[tauri::command]
+pub async fn world_info_exists(app: AppHandle, character_id: String) -> Result<bool, String> {
+    let data_dir = get_data_dir(&app)?;
+    Ok(world_info_file_path(&data_dir, &character_id)?.exists())
+}
+
+/// 只读列出原生 worldinfo 目录中的 JSON 文件 ID，供索引外文件审计。
+#[tauri::command]
+pub async fn list_world_info_files(app: AppHandle) -> Result<Vec<String>, String> {
+    let data_dir = get_data_dir(&app)?;
+    list_world_info_file_ids(&data_dir)
 }
 
 /// 保存角色信息
@@ -4212,6 +4281,36 @@ mod tests {
         );
         assert_eq!(sanitize_zip_entry_name("../.."), "entry");
         assert_eq!(sanitize_zip_entry_name(".../   /ok.txt"), "entry/ok.txt");
+    }
+
+    #[test]
+    fn world_info_file_lifecycle_is_idempotent_and_lists_only_direct_json_files() {
+        let data_dir = unique_temp_data_dir("world-info-lifecycle");
+        let world_dir = data_dir.join("worldinfo");
+        write_json(
+            &world_dir.join("世界书-A.json"),
+            serde_json::json!({ "name": "世界书-A", "entries": [] }),
+        );
+        fs::write(world_dir.join("notes.txt"), b"not a worldbook").unwrap();
+        write_json(
+            &world_dir.join("nested").join("hidden.json"),
+            serde_json::json!({ "name": "hidden" }),
+        );
+
+        assert!(world_info_file_path(&data_dir, "世界书-A")
+            .unwrap()
+            .exists());
+        assert_eq!(
+            list_world_info_file_ids(&data_dir).unwrap(),
+            vec!["世界书-A".to_string()]
+        );
+        assert!(delete_world_info_file(&data_dir, "世界书-A").unwrap());
+        assert!(!delete_world_info_file(&data_dir, "世界书-A").unwrap());
+        assert!(list_world_info_file_ids(&data_dir).unwrap().is_empty());
+        assert!(world_info_file_path(&data_dir, "../outside").is_err());
+        assert!(world_info_file_path(&data_dir, r"nested\hidden").is_err());
+
+        let _ = fs::remove_dir_all(&data_dir);
     }
 
     #[test]

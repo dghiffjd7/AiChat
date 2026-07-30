@@ -68,7 +68,10 @@ import {
   projectMaidStructuredMemoriesFromResult,
 } from '../agent/maid-semantic-memory-extractor.js';
 import { createMaidSemanticResourceValidator } from '../agent/maid-semantic-resource-validator.js';
-import { createMaidRuntimeConfigResolver } from '../agent/maid-runtime-config.js';
+import {
+  createMaidMemoryExtractionRuntimeResolver,
+  createMaidRuntimeConfigResolver,
+} from '../agent/maid-runtime-config.js';
 import { createAgentRegistry, createSubAgentRegistryProvider } from '../agent/agent-registry.js';
 import { registerAppNavigationAgentTools } from '../agent/tools/app-navigation-tools.js';
 import { registerAppSessionAgentTools } from '../agent/tools/app-session-tools.js';
@@ -78,6 +81,7 @@ import { registerAppUiCaptureTools } from '../agent/tools/app-ui-capture-tools.j
 import { registerWebSearchAgentTools } from '../agent/tools/web-search-tools.js';
 import { registerMomentsAgentTools } from '../agent/tools/moments-tools.js';
 import { registerMaidTodoTools } from '../agent/tools/maid-todo-tools.js';
+import { registerMaidMemoryTools } from '../agent/tools/maid-memory-tools.js';
 import { registerGuideStartFlowTools } from '../agent/tools/guide-start-flow-tools.js';
 import { AgentRunStore } from '../storage/agent-run-store.js';
 import { CapabilityRetrievalStore } from '../storage/capability-retrieval-store.js';
@@ -1811,6 +1815,8 @@ const initApp = async () => {
       registerWorldStoreBridgeContract(window.appBridge, {
         getWorldInfo: window.appBridge.getWorldInfo?.bind(window.appBridge),
         saveWorldInfo: window.appBridge.saveWorldInfo?.bind(window.appBridge),
+        worldInfoExists: window.appBridge.worldInfoExists?.bind(window.appBridge),
+        auditWorldInfoStorage: window.appBridge.auditWorldInfoStorage?.bind(window.appBridge),
         listWorlds: window.appBridge.listWorlds?.bind(window.appBridge),
         waitForWorldStoreReady: window.appBridge.waitForWorldStoreReady?.bind(window.appBridge),
         loadStoredWorldInfo: window.appBridge.loadStoredWorldInfo?.bind(window.appBridge),
@@ -3083,6 +3089,7 @@ const initApp = async () => {
     notifyPersonaChanged: () => personaPanel.notifyPersonaChanged(),
     saveWorldInfo: (id, data) => window.appBridge.saveWorldInfo?.(id, data),
     getWorldInfo: id => window.appBridge.getWorldInfo?.(id),
+    worldInfoExists: id => window.appBridge.worldInfoExists?.(id),
     listWorlds: () => window.appBridge.listWorlds?.(),
     deleteWorldInfo: id => window.appBridge.deleteWorldInfo?.(id),
     waitForWorldStoreReady: () => window.appBridge.waitForWorldStoreReady?.(),
@@ -3350,6 +3357,9 @@ const initApp = async () => {
     saveKv: (name, data) => safeInvoke('save_kv', { name, data }),
   });
   await maidSemanticMemoryStore.load();
+  registerMaidMemoryTools(agentToolRegistry, {
+    semanticMemoryStore: maidSemanticMemoryStore,
+  });
   const maidConversationStore = new MaidConversationStore({
     semanticMemoryStore: maidSemanticMemoryStore,
   });
@@ -3430,10 +3440,18 @@ const initApp = async () => {
     getSubAgents: () => agentRegistry.listPromptShapes(),
     logger,
   });
+  const resolveMaidMemoryExtractionRuntime = createMaidMemoryExtractionRuntimeResolver({
+    settingsStore: maidSettingsStore,
+    configManager: chatConfigManager,
+    resolveMainRuntime: resolveMaidRuntimeConfig,
+    createClient: config => new LLMClient(config),
+    isConfigReady: canInitClient,
+    logger,
+  });
   maidConversationStore.setSemanticMemoryRuntime({
     semanticMemoryStore: maidSemanticMemoryStore,
     extractSemanticMemories: createMaidSemanticMemoryExtractor({
-      resolveRuntimeConfig: resolveMaidRuntimeConfig,
+      resolveRuntimeConfig: resolveMaidMemoryExtractionRuntime,
       createClient: config => new LLMClient(config),
       isConfigReady: canInitClient,
       logger,
@@ -23323,8 +23341,8 @@ Phase G（Frame 36）：循环衔接
     getMemoryTableText: () => maidConversationStore.getMemoryTableDisplayText(),
     semanticMemoryStore: maidSemanticMemoryStore,
     confirmDeleteSemanticMemory: memory => appConfirm({
-      title: '删除长期记忆',
-      message: `确定删除这条长期记忆吗？\n\n${String(memory?.content || '').trim()}`,
+      title: '永久删除长期记忆',
+      message: `这项操作无法恢复。确定永久删除这条长期记忆吗？\n\n${String(memory?.content || '').trim()}`,
       danger: true,
     }),
     listRuns: options => agentRunStore.listRuns({ ...(options || {}), kind: 'maid_assistant' }),

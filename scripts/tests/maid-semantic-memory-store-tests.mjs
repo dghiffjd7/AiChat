@@ -162,6 +162,44 @@ const createStore = async ({
 
 {
   const { store } = await createStore();
+  const presentation = await store.upsertMemory({
+    kind: 'preference',
+    key: 'presentation.default',
+    content: '普通资源操作默认在后台完成，只有明确要求查看时才打开主要结果。',
+    confidence: 'explicit',
+    sourceTurnIds: ['turn-presentation'],
+  });
+  const pollutedConfirmation = await store.upsertMemory({
+    kind: 'preference',
+    key: 'workflow.confirmation',
+    content: '普通资源操作默认在后台完成。',
+    confidence: 'explicit',
+    sourceTurnIds: ['turn-repeat'],
+  });
+  assert.equal(presentation.action, 'created');
+  assert.equal(pollutedConfirmation.action, 'merged_duplicate');
+  assert.equal(store.listMemories().length, 1);
+  assert.equal(store.listMemories()[0].key, 'presentation.default');
+  assert.match(store.listMemories()[0].content, /明确要求查看/);
+  assert.deepEqual(
+    store.listMemories()[0].sourceTurnIds,
+    ['turn-presentation', 'turn-repeat'],
+  );
+
+  const actualConfirmation = await store.upsertMemory({
+    kind: 'preference',
+    key: 'workflow.confirmation',
+    content: '删除资源前必须先显示确认列表。',
+    confidence: 'explicit',
+    sourceTurnIds: ['turn-confirmation'],
+  });
+  assert.equal(actualConfirmation.action, 'created', '真正的执行确认偏好不得被呈现偏好吞并');
+  assert.equal(store.listMemories().length, 2);
+  console.log('ok - known cross-key containment merges extraction drift without hiding real confirmation rules');
+}
+
+{
+  const { store } = await createStore();
   const resourceKey = buildMaidResourceStateKey('worldbook', '精灵抱抱');
   const created = await store.upsertMemory({
     kind: 'resource_state',

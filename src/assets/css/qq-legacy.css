@@ -7257,6 +7257,11 @@ body[data-reduced-motion='on'] .session-add-success-viewport * {
   opacity: 0.68;
 }
 
+.app-confirm-item[data-warning='true'] {
+  border-color: rgba(var(--app-warning-rgb, 245, 158, 11), 0.42);
+  background: color-mix(in srgb, rgba(var(--app-warning-rgb, 245, 158, 11), 0.08) 70%, var(--app-surface-subtle));
+}
+
 .app-confirm-item-avatar {
   position: relative;
   flex: 0 0 34px;
@@ -7313,6 +7318,11 @@ body[data-reduced-motion='on'] .session-add-success-viewport * {
 
 .app-confirm-item[data-status='planned'] .app-confirm-item-status {
   color: var(--app-danger-text);
+  font-weight: 700;
+}
+
+.app-confirm-item[data-status='archive_planned'] .app-confirm-item-status {
+  color: var(--app-warning-text, #b45309);
   font-weight: 700;
 }
 

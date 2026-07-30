@@ -177,6 +177,10 @@ import {
   shouldUseWorldPromptBlocks,
 } from '../variables/world-condition-core.js';
 
+const isTauriInvokeUnavailableError = error => (
+  /tauri invoke not available/i.test(String(error?.message || error || ''))
+);
+
 const makeCancelledError = (reason = 'user') => {
   const e = new Error('cancelled');
   e.name = 'AbortError';
@@ -7315,6 +7319,74 @@ const stringifyMessageContent = (content) => {
   }
 
   /**
+   * 独立检查世界书是否仍存在，不改变 getWorldInfo 缺失时的兼容返回语义。
+   */
+  async worldInfoExists(characterId) {
+    const id = String(characterId || this.currentCharacterId || '').trim();
+    if (!id) return false;
+    if (this.worldStore.ready) {
+      await this.worldStore.ready;
+    }
+    if (this.worldStore.load(id)) return true;
+    try {
+      return Boolean(await safeInvoke('world_info_exists', { characterId: id }));
+    } catch (error) {
+      if (isTauriInvokeUnavailableError(error)) return false;
+      throw error;
+    }
+  }
+
+  /**
+   * 对照前端索引与原生 worldinfo 文件；只审计，不自动删除。
+   */
+  async auditWorldInfoStorage() {
+    if (this.worldStore.ready) {
+      await this.worldStore.ready;
+    }
+    const indexedIds = Array.from(new Set(this.worldStore.list()
+      .map(id => String(id || '').trim())
+      .filter(Boolean)))
+      .sort();
+    let nativeIds = [];
+    try {
+      nativeIds = Array.from(new Set((await safeInvoke('list_world_info_files') || [])
+        .map(id => String(id || '').trim())
+        .filter(Boolean)))
+        .sort();
+    } catch (error) {
+      if (isTauriInvokeUnavailableError(error)) {
+        return {
+          ok: true,
+          nativeAvailable: false,
+          indexedIds,
+          nativeIds: [],
+          nativeOnlyIds: [],
+          indexedOnlyIds: indexedIds,
+          referencedNativeOnlyIds: [],
+        };
+      }
+      throw error;
+    }
+    const indexedSet = new Set(indexedIds);
+    const nativeSet = new Set(nativeIds);
+    const nativeOnlyIds = nativeIds.filter(id => !indexedSet.has(id));
+    const referencedIds = new Set([
+      ...this.normalizeWorldIds(this.currentWorldIds),
+      String(this.globalWorldId || '').trim(),
+      ...Object.values(this.worldSessionMap || {}).flatMap(value => this.normalizeWorldIds(value)),
+    ].filter(Boolean));
+    return {
+      ok: true,
+      nativeAvailable: true,
+      indexedIds,
+      nativeIds,
+      nativeOnlyIds,
+      indexedOnlyIds: indexedIds.filter(id => !nativeSet.has(id)),
+      referencedNativeOnlyIds: nativeOnlyIds.filter(id => referencedIds.has(id)),
+    };
+  }
+
+  /**
    * 保存世界书数据
    */
   async saveWorldInfo(characterId, data) {
@@ -7334,8 +7406,14 @@ const stringifyMessageContent = (content) => {
       };
       await this.worldStore.save(id, payload);
 
-      // 如果后端支持可同步保存（忽略失败）
-      safeInvoke('save_world_info', { characterId: id, data: payload }).catch(() => {});
+      // 等待原生侧完成，避免保存尚未落盘时紧接删除又被迟到写入复活。
+      try {
+        await safeInvoke('save_world_info', { characterId: id, data: payload });
+      } catch (error) {
+        if (!isTauriInvokeUnavailableError(error)) {
+          logger.warn('原生世界书同步保存失败（KV 已保存）', error);
+        }
+      }
 
       logger.debug('世界书已保存', id);
     } catch (error) {
@@ -7392,6 +7470,26 @@ const stringifyMessageContent = (content) => {
       logger.warn('cleanup persona scoped data failed', err);
       return { deletedScopes: [], deletedPaths: [], failedScopes: [] };
     }
+  }
+
+  async _removeWorldInfoStorage(worldId) {
+    const target = String(worldId || '').trim();
+    if (!target) {
+      return { nativeAvailable: false, nativeDeleted: false };
+    }
+    let nativeAvailable = true;
+    let nativeDeleted = false;
+    try {
+      nativeDeleted = Boolean(await safeInvoke('delete_world_info', { characterId: target }));
+    } catch (error) {
+      if (isTauriInvokeUnavailableError(error)) {
+        nativeAvailable = false;
+      } else {
+        throw error;
+      }
+    }
+    await this.worldStore.remove(target);
+    return { nativeAvailable, nativeDeleted };
   }
 
   async renameWorldInfo(fromId, toId, data) {
@@ -7485,7 +7583,7 @@ const stringifyMessageContent = (content) => {
       logger.warn('rename role world refs failed', err);
     }
 
-    await this.worldStore.remove(from);
+    await this._removeWorldInfoStorage(from);
 
     if (mapChanged || currentChanged || globalChanged || refsChanged || roleChanged) {
       this.syncWorldRegexBindings?.();
@@ -7501,7 +7599,7 @@ const stringifyMessageContent = (content) => {
     try {
       const target = String(worldId || '').trim();
       if (!target) return;
-      await this.worldStore.remove(target);
+      const storageResult = await this._removeWorldInfoStorage(target);
 
       let mapChanged = false;
       for (const [sid, val] of Object.entries(this.worldSessionMap || {})) {
@@ -7538,6 +7636,7 @@ const stringifyMessageContent = (content) => {
         this.emitWorldInfoChanged({ deletedWorldId: target });
       }
       logger.debug('世界书已删除', worldId);
+      return { ok: true, worldId: target, ...storageResult };
     } catch (error) {
       logger.error('删除世界书失败:', error);
       throw error;

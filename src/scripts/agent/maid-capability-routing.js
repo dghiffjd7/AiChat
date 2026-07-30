@@ -2,7 +2,10 @@ import {
   listAppFeatures,
   searchAppFeatures,
 } from './app-feature-catalog.js';
-import { searchMaidCapabilityConcepts } from './maid-capability-concept-retriever.js';
+import {
+  searchMaidCapabilityConcepts,
+  stripNegatedMaidCapabilityActions,
+} from './maid-capability-concept-retriever.js';
 
 export const MAID_CAPABILITY_ROUTING_CONFIG_KEY = 'maid_capability_routing_v1';
 export const MAID_CAPABILITY_RETRIEVER_VERSION = 'maid-capability-retriever-v3';
@@ -369,7 +372,13 @@ export const createMaidCapabilityRetriever = ({
 
 const hasExplicitHighRiskIntent = (input = '', feature = {}) => {
   if (trim(feature?.riskLevel, 'low') !== 'high') return true;
-  return /(删除|删掉|移除|清空|清除|清理|去重|覆盖|替换|delete|remove|clear|dedupe|overwrite|replace)/iu.test(String(input || ''));
+  const text = String(input || '').normalize('NFKC');
+  if (
+    /(?:只读|只查询|只查|仅查询|仅核对)/iu.test(text) &&
+    !/(?:删除预览|预览.{0,12}删除|preview)/iu.test(text)
+  ) return false;
+  const positiveText = stripNegatedMaidCapabilityActions(text);
+  return /(?:删除|删掉|移除|清空|清除|清理(?!后)|去重|覆盖|替换|delete|remove|clear|dedupe|overwrite|replace)/iu.test(positiveText);
 };
 
 const detectLanguage = (input = '') => (/\p{Script=Han}/u.test(String(input || '')) ? 'zh' : 'other');
@@ -517,6 +526,30 @@ const buildRetrievalTexts = (input = '', context = {}, steps = []) => {
   }
   add(extractTodoPlanText(listSteps), 0.6, 'todo_plan');
   return texts;
+};
+
+const getMissingExplicitMessageSessions = (input = '', steps = []) => {
+  const text = String(input || '').normalize('NFKC');
+  if (!/(?:发送|写入|发出).{0,20}(?:用户)?消息/iu.test(text)) return [];
+  const targets = Array.from(text.matchAll(/「([^」]{1,100})」/gu))
+    .map(match => trim(match[1]))
+    .filter(Boolean);
+  if (!targets.length) return [];
+  const listStep = (Array.isArray(steps) ? steps : []).findLast(step => (
+    step?.status === 'succeeded' &&
+    trim(step?.toolName) === 'session.list' &&
+    Array.isArray(step?.output?.contacts)
+  ));
+  if (!listStep) return [];
+  const existing = new Set(
+    listStep.output.contacts
+      .flatMap(item => [trim(item?.id), trim(item?.name)])
+      .filter(Boolean)
+      .map(item => item.normalize('NFKC').toLowerCase()),
+  );
+  return Array.from(new Set(targets)).filter(target => (
+    !existing.has(target.normalize('NFKC').toLowerCase())
+  ));
 };
 
 const getFeatureById = (features = [], featureId = '') => {
@@ -719,6 +752,16 @@ export const createMaidCapabilityRoutingRuntime = ({
       )) {
         addRecord(projected, 20, 'page_context');
       }
+    }
+
+    const missingMessageSessions = getMissingExplicitMessageSessions(primaryIntent, steps);
+    if (missingMessageSessions.length) {
+      addRecord(
+        projectedById.get('session.create'),
+        121,
+        'missing_session_prerequisite',
+        { pinned: true },
+      );
     }
 
     const stickyIds = state.usedFeatureIds.slice(-currentConfig.stickyLimit).reverse();

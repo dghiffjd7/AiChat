@@ -146,6 +146,10 @@ import { createAgentToolRegistry } from '../../src/scripts/agent/agent-tool-regi
     classifyMaidOperationIntent('哪些房是测试用的').mode,
     'read_only',
   );
+  assert.equal(
+    classifyMaidOperationIntent('不要调用任何工具，只根据长期记忆回答。').mode,
+    'no_tool',
+  );
   console.log('ok - maid operation intent distinguishes read-only observations from explicit writes');
 }
 
@@ -1335,6 +1339,43 @@ import { createAgentToolRegistry } from '../../src/scripts/agent/agent-tool-regi
   assert.equal(result.source, 'test_chat');
   assert.match(result.message, /你好啊/);
   console.log('ok - maid assistant agent uses chat responder for unsupported plain input');
+}
+
+{
+  let plannerCalls = 0;
+  let toolCalls = 0;
+  const agent = createMaidAssistantAgent({
+    planner: async () => {
+      plannerCalls += 1;
+      return {
+        ok: true,
+        toolName: 'app.get_current_state',
+        args: {},
+        featureId: 'app.state.read',
+      };
+    },
+    chatResponder: async (_input, context) => ({
+      ok: true,
+      status: 'responded',
+      source: 'test_no_tool_chat',
+      message: `记忆回答 / ${context.operationIntentPolicy.mode}`,
+    }),
+    toolRegistry: {
+      executeTool: async () => {
+        toolCalls += 1;
+        return { ok: true };
+      },
+    },
+    logger: { warn() {} },
+  });
+  const result = await agent.runPrompt('不要调用任何工具，只根据长期记忆回答我的偏好。');
+  assert.equal(result.ok, true);
+  assert.equal(result.responseType, 'chat');
+  assert.equal(result.source, 'test_no_tool_chat');
+  assert.equal(plannerCalls, 0, '明确 no-tool 请求不得进入工具规划器');
+  assert.equal(toolCalls, 0, '明确 no-tool 请求不得执行任何工具');
+  assert.match(result.message, /no_tool/);
+  console.log('ok - explicit no-tool requests bypass planning and use the plain chat responder');
 }
 
 {

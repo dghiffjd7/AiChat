@@ -18,6 +18,7 @@ import { createMaidMediaAssetTools } from '../../src/scripts/agent/tools/media-a
 import { createAppUiCaptureTools } from '../../src/scripts/agent/tools/app-ui-capture-tools.js';
 import { createWebSearchAgentTools } from '../../src/scripts/agent/tools/web-search-tools.js';
 import { createMaidTodoTools } from '../../src/scripts/agent/tools/maid-todo-tools.js';
+import { createMaidMemoryTools } from '../../src/scripts/agent/tools/maid-memory-tools.js';
 import { createGuideStartFlowTools } from '../../src/scripts/agent/tools/guide-start-flow-tools.js';
 import { createChatFormatRepairTools } from '../../src/scripts/agent/tools/chat-format-tools.js';
 import { createMomentsAgentTools } from '../../src/scripts/agent/tools/moments-tools.js';
@@ -110,7 +111,15 @@ const escapeRegex = value => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'
   assert.ok(wallpaper.tools.includes('session.set_wallpaper'));
   assert.ok(wallpaper.tools.includes('media.generate_image'));
   assert.match(wallpaper.argsHint, /media\.generate_image/);
-  console.log('ok - app feature catalog exposes maid image asset features');
+  const contactAvatar = findAppFeature('contact.avatar.set');
+  assert.ok(contactAvatar.tools.includes('media.generate_image'));
+  assert.match(contactAvatar.argsHint, /media\.generate_image/);
+  const personaAvatar = findAppFeature('persona.avatar.set');
+  assert.ok(personaAvatar.tools.includes('media.generate_image'));
+  assert.match(personaAvatar.argsHint, /media\.generate_image/);
+  assert.equal(searchAppFeatures('生成一张头像', { limit: 3 })[0].id, 'contact.avatar.set');
+  assert.equal(searchAppFeatures('生成一张角色头像', { limit: 3 })[0].id, 'persona.avatar.set');
+  console.log('ok - app feature catalog exposes maid image asset features (incl. generated avatars)');
 }
 
 {
@@ -137,6 +146,19 @@ const escapeRegex = value => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'
   assert.equal(searchAppFeatures('删除这些测试世界书', { limit: 1 })[0].id, 'worldbook.delete_many');
   assert.equal(searchAppFeatures('删除世界书重复条目', { limit: 1 })[0].id, 'worldbook.delete_entries');
   console.log('ok - resource-specific batch deletion features expose protected domains and precise retrieval aliases');
+}
+
+{
+  const memoryList = findAppFeature('maid.memory.list');
+  const memoryArchive = findAppFeature('maid.memory.archive');
+  assert.deepEqual(memoryList.tools, ['maid.memory.list']);
+  assert.deepEqual(memoryArchive.tools, ['maid.memory.archive']);
+  assert.equal(memoryArchive.confirmation, 'required');
+  assert.match(memoryArchive.argsHint, /明确 memoryIds/);
+  assert.equal(searchAppFeatures('你记得什么', { limit: 1 })[0].id, 'maid.memory.list');
+  assert.equal(searchAppFeatures('归档女仆记忆', { limit: 1 })[0].id, 'maid.memory.archive');
+  assert.equal(searchAppFeatures('打开记忆表格', { limit: 1 })[0].id, 'memory.open');
+  console.log('ok - maid memory features distinguish semantic memory management from the chat memory table');
 }
 
 {
@@ -417,6 +439,35 @@ const escapeRegex = value => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'
       return run;
     },
   });
+  const maidSemanticMemories = new Map([[
+    'catalog-memory',
+    {
+      id: 'catalog-memory',
+      kind: 'important_event',
+      key: 'event.catalog_probe',
+      content: '目录测试长期记忆。',
+      confidence: 'verified',
+      status: 'active',
+      updatedAt: 1000,
+    },
+  ]]);
+  const maidMemoryStore = {
+    listMemories: ({ kind = '', status = '', query = '', limit = 0 } = {}) => Array.from(maidSemanticMemories.values())
+      .filter(memory => !kind || memory.kind === kind)
+      .filter(memory => !status || memory.status === status)
+      .filter(memory => !query || `${memory.key} ${memory.content}`.includes(query))
+      .slice(0, limit || undefined),
+    getMemory: id => maidSemanticMemories.get(id) || null,
+    setMemoryStatus: async (id, status) => {
+      const memory = maidSemanticMemories.get(id);
+      if (!memory) return null;
+      memory.status = status;
+      return memory;
+    },
+  };
+  const maidMemoryTools = createMaidMemoryTools({
+    semanticMemoryStore: maidMemoryStore,
+  });
   const startedGuideFlows = [];
   const guideTools = createGuideStartFlowTools({
     startFlow: flowId => startedGuideFlows.push(flowId),
@@ -442,7 +493,7 @@ const escapeRegex = value => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'
       return { ok: true, momentId: 'catalog-moment', commentsRequested: payload.generateComments === true };
     },
   });
-  const tools = [...navTools, ...sessionTools, ...contentTools, ...mediaTools, ...captureTools, ...webTools, ...todoTools, ...guideTools, ...formatTools, ...momentsTools];
+  const tools = [...navTools, ...sessionTools, ...contentTools, ...mediaTools, ...captureTools, ...webTools, ...todoTools, ...maidMemoryTools, ...guideTools, ...formatTools, ...momentsTools];
   const maidAttachments = [{ id: 'catalog-image', kind: 'image', url: 'data:image/png;base64,AAAA', name: 'catalog.png' }];
 
   for (const feature of listAppFeatures()) {
@@ -737,6 +788,22 @@ const escapeRegex = value => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'
       const read = await getTool(tools, 'maid.todo.read').execute({}, { runId: 'run-1' });
       assert.equal(read.ok, true);
       assert.equal(read.todos[0].content, '创建聊天室');
+      return;
+    }
+    if (feature.id === 'maid.memory.list') {
+      const result = await getTool(tools, 'maid.memory.list').execute({});
+      assert.equal(result.ok, true);
+      assert.deepEqual(result.items.map(item => item.id), ['catalog-memory']);
+      return;
+    }
+    if (feature.id === 'maid.memory.archive') {
+      const result = await getTool(tools, 'maid.memory.archive').execute({
+        memoryIds: ['catalog-memory'],
+        preview: true,
+      });
+      assert.equal(result.ok, true);
+      assert.equal(result.preview, true);
+      assert.equal(result.plannedCount, 1);
       return;
     }
     if (feature.id === 'maid.onboarding') {

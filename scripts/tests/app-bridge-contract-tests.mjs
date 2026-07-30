@@ -205,6 +205,8 @@ import {
   registerWorldStoreBridgeContract(appBridge, {
     getWorldInfo: async id => ({ id }),
     saveWorldInfo: async (id, data) => calls.push(['save', id, data]),
+    worldInfoExists: async id => id === 'w1',
+    auditWorldInfoStorage: async () => ({ nativeOnlyIds: ['legacy'] }),
     listWorlds: async () => ['w1'],
     waitForWorldStoreReady: async () => true,
     loadStoredWorldInfo: id => ({ id, stored: true }),
@@ -215,6 +217,8 @@ import {
   });
   assert.deepEqual(await appBridge.getWorldInfo('w1'), { id: 'w1' });
   await appBridge.saveWorldInfo('w1', { name: 'World' });
+  assert.equal(await appBridge.worldInfoExists('w1'), true);
+  assert.deepEqual(await appBridge.auditWorldInfoStorage(), { nativeOnlyIds: ['legacy'] });
   assert.deepEqual(await appBridge.listWorlds(), ['w1']);
   assert.equal(await appBridge.waitForWorldStoreReady(), true);
   assert.deepEqual(appBridge.loadStoredWorldInfo('w1'), { id: 'w1', stored: true });
@@ -230,6 +234,8 @@ import {
   ]);
   const registry = getBridgeContractRegistry(appBridge);
   assert.equal(registry.contracts.saveWorldInfo.domain, BRIDGE_CONTRACT_DOMAINS.worldStore);
+  assert.equal(registry.contracts.worldInfoExists.domain, BRIDGE_CONTRACT_DOMAINS.worldStore);
+  assert.equal(registry.contracts.auditWorldInfoStorage.domain, BRIDGE_CONTRACT_DOMAINS.worldStore);
   assert.equal(registry.domains[BRIDGE_CONTRACT_DOMAINS.worldStore].waitForWorldStoreReady, true);
   assert.equal(registry.domains[BRIDGE_CONTRACT_DOMAINS.worldStore].loadStoredWorldInfo, true);
   assert.equal(registry.domains[BRIDGE_CONTRACT_DOMAINS.worldStore].hasStoredWorldInfo, true);

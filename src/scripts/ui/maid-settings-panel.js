@@ -1274,19 +1274,32 @@ const injectStyle = (documentRef) => {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.maid-memory-actions {
+  align-self: start;
+  display: flex;
+  gap: 7px;
+}
+.maid-memory-status-action,
 .maid-memory-delete {
   align-self: start;
   min-height: 30px;
   padding: 0 10px;
-  border: 1px solid rgba(var(--app-danger-rgb, 239, 68, 68), 0.18);
   border-radius: 9px;
   background: var(--app-surface-card, #fff);
-  color: var(--app-danger-text, #dc2626);
   font-size: 11.5px;
   font-weight: 700;
   cursor: pointer;
   transition: background 160ms ease, border-color 160ms ease, transform 120ms ease;
 }
+.maid-memory-status-action {
+  border: 1px solid rgba(var(--app-accent-rgb, 37, 99, 235), 0.2);
+  color: var(--app-accent-strong, #1d4ed8);
+}
+.maid-memory-delete {
+  border: 1px solid rgba(var(--app-danger-rgb, 239, 68, 68), 0.18);
+  color: var(--app-danger-text, #dc2626);
+}
+.maid-memory-status-action:active,
 .maid-memory-delete:active {
   transform: scale(.96);
 }
@@ -1581,6 +1594,10 @@ const injectStyle = (documentRef) => {
     border-color: rgba(var(--app-danger-rgb, 239, 68, 68), 0.3);
     background: rgba(var(--app-danger-rgb, 239, 68, 68), 0.06);
   }
+  .maid-memory-status-action:hover {
+    border-color: rgba(var(--app-accent-rgb, 37, 99, 235), 0.32);
+    background: rgba(var(--app-accent-rgb, 37, 99, 235), 0.06);
+  }
 }
 
 @media (max-width: 640px) {
@@ -1739,8 +1756,14 @@ const injectStyle = (documentRef) => {
     grid-template-columns: minmax(0, 1fr);
     padding: 12px 11px 11px 14px;
   }
+  .maid-memory-actions,
+  .maid-memory-status-action,
   .maid-memory-delete {
     width: 100%;
+  }
+  .maid-memory-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
@@ -2214,7 +2237,26 @@ export const createMaidSettingsPanel = ({
         main.appendChild(meta);
       }
 
-      const deleteBtn = createButton(documentRef, 'maid-memory-delete', '删除');
+      const actions = documentRef.createElement?.('div');
+      actions.className = 'maid-memory-actions';
+      const memoryStatus = trim(memory?.status, 'active');
+      if (memoryStatus === 'active' || memoryStatus === 'archived') {
+        const nextStatus = memoryStatus === 'archived' ? 'active' : 'archived';
+        const actionLabel = memoryStatus === 'archived' ? '恢复' : '归档';
+        const statusBtn = createButton(documentRef, 'maid-memory-status-action', actionLabel);
+        statusBtn.addEventListener?.('click', async () => {
+          try {
+            const updated = await semanticMemoryStore?.setMemoryStatus?.(memory?.id, nextStatus);
+            setStatus(updated ? `长期记忆已${actionLabel}` : `${actionLabel}失败`);
+            renderSemanticMemories();
+          } catch (error) {
+            logger?.warn?.('maid settings update semantic memory status failed', error);
+            setStatus(`${actionLabel}失败`);
+          }
+        });
+        actions.appendChild(statusBtn);
+      }
+      const deleteBtn = createButton(documentRef, 'maid-memory-delete', '永久删除');
       deleteBtn.addEventListener?.('click', async () => {
         const confirmed = typeof confirmDeleteSemanticMemory === 'function'
           ? await confirmDeleteSemanticMemory(memory)
@@ -2229,7 +2271,8 @@ export const createMaidSettingsPanel = ({
           setStatus('删除失败');
         }
       });
-      item.append(main, deleteBtn);
+      actions.appendChild(deleteBtn);
+      item.append(main, actions);
 
       const sourceIds = Array.isArray(memory?.sourceTurnIds)
         ? memory.sourceTurnIds.map(sourceId => trim(sourceId)).filter(Boolean)
@@ -2448,6 +2491,14 @@ export const createMaidSettingsPanel = ({
       const boundProfile = profileById(boundId);
       const fallbackId = settingsStore?.getFallbackProfileId?.() || '';
       const subAgents = settingsStore?.listSubAgents?.() || [];
+      const memoryExtraction = settingsStore?.getMemoryExtractionSettings?.() || {
+        mode: 'follow_main',
+        profileId: '',
+        modelOverride: '',
+        fallbackToMain: false,
+      };
+      const memoryExtractionMode = memoryExtraction.mode === 'custom' ? 'custom' : 'follow_main';
+      const memoryExtractionProfile = profileById(memoryExtraction.profileId);
 
       if (apiPage === 'main') {
         const shownModel = boundOverride || boundProfile?.model || '';
@@ -2481,6 +2532,47 @@ export const createMaidSettingsPanel = ({
                 ${profileOptions(fallbackId)}
               </select>
             </label>
+            <button type="button" class="maid-api-manage-link" data-api-open-config>管理连线配置（新增/编辑渠道）…</button>
+          </div>
+        `;
+      } else if (apiPage === 'memory') {
+        const shownMemoryModel = memoryExtraction.modelOverride || memoryExtractionProfile?.model || '';
+        apiSection.innerHTML = `
+          <button type="button" class="maid-api-back" data-api-back>${ICONS.chevron}<span>返回</span></button>
+          <div class="maid-api-group">
+            <div class="maid-api-group-title">记忆提取模型</div>
+            <div class="maid-api-group-desc">旧轮次达到压缩阈值后，后台从中提炼长期偏好与决定；不会改变女仆平时聊天或执行任务的模型。</div>
+            <label class="maid-api-field">
+              <span class="maid-api-field-label">提取模型</span>
+              <select class="maid-subagent-select" data-memory-extraction-mode>
+                <option value="follow_main"${memoryExtractionMode === 'follow_main' ? ' selected' : ''}>跟随女仆主模型</option>
+                <option value="custom"${memoryExtractionMode === 'custom' ? ' selected' : ''}>使用自定义模型</option>
+              </select>
+            </label>
+            ${memoryExtractionMode === 'custom' ? `
+              <label class="maid-api-field">
+                <span class="maid-api-field-label">连线配置</span>
+                <select class="maid-subagent-select" data-memory-extraction-profile>
+                  <option value="">选择连线配置…</option>
+                  ${profileOptions(memoryExtraction.profileId)}
+                </select>
+              </label>
+              <label class="maid-api-field">
+                <span class="maid-api-field-label">模型</span>
+                <span class="maid-subagent-model-row">
+                  <input type="text" class="maid-subagent-input" data-memory-extraction-model placeholder="${memoryExtraction.profileId ? '默认该配置保存的模型，可改' : '先选连线配置'}" maxlength="120" value="${escapeHtml(shownMemoryModel)}" ${memoryExtraction.profileId ? '' : 'disabled'} />
+                  <button type="button" class="maid-settings-action" data-memory-extraction-model-pick ${memoryExtraction.profileId ? '' : 'disabled'}>▾</button>
+                </span>
+              </label>
+              <div class="maid-subagent-model-menu" data-memory-extraction-model-menu hidden></div>
+              <label class="maid-subagent-skill">
+                <input type="checkbox" data-memory-extraction-fallback${memoryExtraction.fallbackToMain === true ? ' checked' : ''} />
+                自定义模型失败时，使用女仆主模型重试一次
+              </label>
+              <div class="maid-api-group-desc">网络错误、空响应或无法解析的 JSON 都视为失败。主模型兜底与后续自动重试共用现有的有界重试预算。</div>
+            ` : `
+              <div class="maid-api-group-desc">当前与女仆主配置使用相同模型；现有行为与模型消耗保持不变。</div>
+            `}
             <button type="button" class="maid-api-manage-link" data-api-open-config>管理连线配置（新增/编辑渠道）…</button>
           </div>
         `;
@@ -2551,6 +2643,12 @@ export const createMaidSettingsPanel = ({
         const subSummary = subAgents.length
           ? subAgents.map(item => item.name).slice(0, 3).join('、') + (subAgents.length > 3 ? ` 等 ${subAgents.length} 个` : '')
           : '按能力标签委派模型任务';
+        const memorySummary = memoryExtractionMode === 'custom'
+          ? (memoryExtractionProfile?.name || memoryExtractionProfile?.label || '尚未选择连线配置')
+          : '跟随女仆主模型';
+        const memoryModel = memoryExtractionMode === 'custom'
+          ? (memoryExtraction.modelOverride || memoryExtractionProfile?.model || '')
+          : mainModel;
         apiSection.innerHTML = `
           <div class="maid-settings-section-caption"><span>模型配置</span><small>MODEL ROUTING</small></div>
           <div class="maid-api-nav">
@@ -2576,6 +2674,20 @@ export const createMaidSettingsPanel = ({
                   <span class="maid-api-nav-badge${subAgents.length ? '' : ' is-muted'}">${subAgents.length ? `${subAgents.length} 个模型` : '未配置'}</span>
                 </span>
                 <span class="maid-api-nav-summary">${escapeHtml(subSummary)}</span>
+              </span>
+              <span class="maid-api-nav-chevron">${ICONS.chevron}</span>
+            </button>
+            <button type="button" class="maid-api-nav-item" data-api-nav="memory">
+              <span class="maid-api-nav-icon">${ICONS.table}</span>
+              <span class="maid-api-nav-copy">
+                <span class="maid-api-nav-heading">
+                  <span class="maid-api-nav-title">记忆提取模型</span>
+                  <span class="maid-api-nav-badge${memoryExtractionMode === 'custom' && !memoryExtractionProfile ? ' is-muted' : ''}">${memoryExtractionMode === 'custom' ? '自定义' : '跟随主模型'}</span>
+                </span>
+                <span class="maid-api-nav-summary">
+                  <span>${escapeHtml(memorySummary)}${memoryExtractionMode === 'custom' && memoryExtraction.fallbackToMain === true ? ' · 失败时回退主模型' : ''}</span>
+                  ${memoryModel ? `<code>${escapeHtml(memoryModel)}</code>` : ''}
+                </span>
               </span>
               <span class="maid-api-nav-chevron">${ICONS.chevron}</span>
             </button>
@@ -2662,6 +2774,44 @@ export const createMaidSettingsPanel = ({
         });
         apiSection.querySelector('[data-main-fallback]')?.addEventListener('change', (event) => {
           void settingsStore?.setFallbackProfileId?.(event.target.value);
+        });
+      }
+      // 长期记忆提取模型页
+      const memoryModeSelect = apiSection.querySelector('[data-memory-extraction-mode]');
+      if (memoryModeSelect) {
+        memoryModeSelect.addEventListener('change', async () => {
+          await settingsStore?.setMemoryExtractionSettings?.({
+            mode: memoryModeSelect.value === 'custom' ? 'custom' : 'follow_main',
+          });
+          renderApiSection();
+        });
+      }
+      const memoryProfileSelect = apiSection.querySelector('[data-memory-extraction-profile]');
+      if (memoryProfileSelect) {
+        const { input: memoryModelInput } = bindModelPicker({
+          inputSel: '[data-memory-extraction-model]',
+          pickSel: '[data-memory-extraction-model-pick]',
+          menuSel: '[data-memory-extraction-model-menu]',
+          getProfileId: () => memoryProfileSelect.value,
+        });
+        memoryProfileSelect.addEventListener('change', async () => {
+          await settingsStore?.setMemoryExtractionSettings?.({
+            profileId: memoryProfileSelect.value,
+            modelOverride: '',
+          });
+          renderApiSection();
+        });
+        memoryModelInput?.addEventListener('change', async () => {
+          const chosen = memoryModelInput.value.trim();
+          const profileModel = (profiles.find(item => item.id === memoryProfileSelect.value)?.model || '').trim();
+          await settingsStore?.setMemoryExtractionSettings?.({
+            modelOverride: chosen && chosen !== profileModel ? chosen : '',
+          });
+        });
+        apiSection.querySelector('[data-memory-extraction-fallback]')?.addEventListener('change', (event) => {
+          void settingsStore?.setMemoryExtractionSettings?.({
+            fallbackToMain: event.target.checked === true,
+          });
         });
       }
       // sub-agent 页
