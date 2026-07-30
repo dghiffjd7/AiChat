@@ -229,6 +229,10 @@ const matchBind = (bind, ctx) => {
     return false;
 };
 
+// Match SillyTavern's regex priority: preset transforms run before character-scoped transforms.
+// Keep insertion order within each scope so recovery/import order cannot invert the scope priority.
+const LOCAL_BIND_EXECUTION_ORDER = ['preset', 'world'];
+
 export const isLocalRegexSetAutoActive = (set, ctx = {}) => {
     if (!set || typeof set !== 'object') return false;
     if (set.manualEnabled === false) return false;
@@ -508,16 +512,18 @@ export class RegexStore {
 
         const sets = ensureObj(this.state?.local?.sets, {});
         const order = ensureArr(this.state?.local?.order);
-        for (const id of order) {
-            const s = sets[id];
-            if (!s || s.manualEnabled === false) continue;
-            const bind = s.bind;
-            // local set without bind: treat as disabled by default (to keep "局部"语义清晰)
-            if (!bind) continue;
-            if (!matchBind(bind, ctx)) continue;
-            for (const r of ensureArr(s.rules)) {
-                if (!r) continue;
-                out.push(r);
+        for (const bindType of LOCAL_BIND_EXECUTION_ORDER) {
+            for (const id of order) {
+                const s = sets[id];
+                if (!s || s.manualEnabled === false) continue;
+                const bind = s.bind;
+                // local set without bind: treat as disabled by default (to keep "局部"语义清晰)
+                if (!bind || bind.type !== bindType) continue;
+                if (!matchBind(bind, ctx)) continue;
+                for (const r of ensureArr(s.rules)) {
+                    if (!r) continue;
+                    out.push(r);
+                }
             }
         }
 

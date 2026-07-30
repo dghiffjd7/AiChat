@@ -1,0 +1,1002 @@
+{
+  "ok": true,
+  "readyState": "complete",
+  "storeKeys": [
+    "agentCenterSettingsStore",
+    "agentRegistry",
+    "agentRunStore",
+    "agentTaskRuntime",
+    "agentToolRegistry",
+    "capabilityRetrievalStore",
+    "chatStore",
+    "contactProfileStore",
+    "contactProfilerAgent",
+    "contactsStore",
+    "creativeExecutionLaneRuntime",
+    "executionFlowRuntime",
+    "groupStore",
+    "imageDirectorAgent",
+    "maidCapabilityRoutingRuntime",
+    "maidCommandInputRuntime",
+    "maidConversationStore",
+    "maidOnboardingRuntime",
+    "maidSelectionMode",
+    "maidSemanticMemoryStore",
+    "maidSettingsStore",
+    "memoryTableStore",
+    "memoryTemplateStore",
+    "momentSummaryStore",
+    "momentsStore",
+    "personaStore",
+    "pluginStore",
+    "providerToolCallRuntime",
+    "providerToolExperimentRuntime",
+    "providerToolPendingContinuationPlanner",
+    "providerToolPendingPermissionStore",
+    "providerToolPendingResumeExecutor",
+    "rpSessionStore",
+    "scriptStore",
+    "traceTimeline",
+    "userStore",
+    "worldbookAuditAgent"
+  ],
+  "actionKeys": [
+    "approveContactProfilePendingUpdate",
+    "auditWorldbook",
+    "captureProviderToolCallDeltas",
+    "clearProviderToolCallLoopGuard",
+    "clearProviderToolExperimentDiagnostics",
+    "clearProviderToolPendingPermissions",
+    "closeChatSettings",
+    "closeTopAppLayer",
+    "commitAgentWritePreviewPendingPermission",
+    "commitChatEmitPendingPermission",
+    "compactAgentRuns",
+    "denyContactProfilePendingUpdate",
+    "enterChatRoom",
+    "exitChatRoom",
+    "exportAgentRuns",
+    "finishTraceEvent",
+    "getAgentCenterProfileView",
+    "getAgentCenterSettings",
+    "getAgentFeatureSettings",
+    "getAgentRun",
+    "getAgentRunCacheStats",
+    "getAgentRunParts",
+    "getAgentTool",
+    "getAndroidBackDiagnostics",
+    "getContactProfile",
+    "getMemoryAgentPromptConfig",
+    "getMemoryStorageMode",
+    "getProviderContinuationCommitPolicy",
+    "getProviderModelContextTools",
+    "getProviderToolCallLoopGuardSnapshot",
+    "getProviderToolExperimentDiagnostics",
+    "getProviderToolExperimentStatus",
+    "getProviderToolPendingPermission",
+    "getProviderToolPendingPermissionStats",
+    "getProviderToolSessionGate",
+    "getViewportDebugInfo",
+    "handleAndroidBack",
+    "hideMenus",
+    "hidePromptPreviewModal",
+    "hideRawReplyModal",
+    "hideWorldDebugLocatorModal",
+    "importAgentCenterSettings",
+    "listAgentFeatures",
+    "listAgentModelProfiles",
+    "listAgentPermissionRules",
+    "listAgentRunEvents",
+    "listAgentRunParts",
+    "listAgentRunView",
+    "listAgentRuns",
+    "listAgentTools",
+    "listContactProfilePendingUpdates",
+    "listProfileModels",
+    "listProviderToolExperimentParts",
+    "listProviderToolPendingContinuationParts",
+    "listProviderToolPendingPermissions",
+    "listProviderToolPendingResumeParts",
+    "openAgentCenter",
+    "openChatSettings",
+    "openMaidCommandInput",
+    "planProviderToolPendingContinuation",
+    "planProviderToolPendingContinuationWithCurrentProvider",
+    "previewProviderToolRequestSchema",
+    "recordTraceEvent",
+    "refreshViewportKeyboardRuntime",
+    "rejectAgentWritePreviewPendingCommit",
+    "rejectChatEmitPendingCommit",
+    "requestProviderToolPermission",
+    "resolveAgentOpenAIPreset",
+    "resolveAgentOpenAIPresetSync",
+    "resolveAgentRunReview",
+    "resolveAgentSyspromptPreset",
+    "resolveAgentSyspromptPresetSync",
+    "resolveCurrentProviderToolRunnerClient",
+    "resolveProviderToolPendingPermission",
+    "resumeProviderToolPendingPermission",
+    "runContactProfileUpdate",
+    "runImageDirectorGeneration",
+    "runMaidAssistantPrompt",
+    "runProviderToolCallDeltaExperiment",
+    "runProviderToolCallExperiment",
+    "runProviderToolExecutionLoopFixture",
+    "setAgentCardEnabled",
+    "setAgentFeatureEnabled",
+    "setAgentFeatureModel",
+    "setAgentFeatureTriggerMode",
+    "setAgentPromptConfig",
+    "setMemoryAgentPromptConfig",
+    "setMemoryAgentSettings",
+    "setProviderContinuationCommitPolicy",
+    "setProviderToolExperimentEnabled",
+    "setProviderToolSessionGate",
+    "showPromptPreview",
+    "showPromptPreviewModal",
+    "showRawReplyModal",
+    "showWorldDebugLocatorModal",
+    "startMaidOnboardingFlow",
+    "startTraceEvent",
+    "switchPage",
+    "undoAgentWritePreviewPendingCommit",
+    "undoChatEmitPendingCommit"
+  ],
+  "maid": {
+    "boundProfileId": "profile-1782112231605-1c4f1f",
+    "boundProfileName": "pioneer",
+    "boundProvider": "custom",
+    "modelOverride": "",
+    "effectiveModel": "gpt-5.6-luna"
+  },
+  "memoryExtraction": {
+    "mode": "custom",
+    "profileId": "profile-1769099653885-3faa87",
+    "profileName": "Deepseek",
+    "profileProvider": "deepseek",
+    "modelOverride": "",
+    "effectiveModel": "deepseek-v4-flash",
+    "fallbackToMain": true
+  },
+  "routing": {
+    "mode": "shadow",
+    "canaryPercent": 0,
+    "candidateLimit": 8,
+    "stickyLimit": 4,
+    "minScore": 45
+  },
+  "activeRunIds": [],
+  "relevantToolNames": [
+    "contact.set_avatar",
+    "media.fetch_image",
+    "media.generate_image",
+    "media.prepare_image",
+    "persona.create",
+    "persona.delete_many",
+    "persona.set_avatar",
+    "persona.switch",
+    "session.create",
+    "session.delete_many",
+    "session.list",
+    "session.open",
+    "session.open_config",
+    "session.set_wallpaper",
+    "user.create",
+    "user.set_avatar",
+    "user.switch",
+    "web.fetch_url",
+    "web.research",
+    "web.search",
+    "web.search_images",
+    "worldbook.bind_session",
+    "worldbook.bind_sessions",
+    "worldbook.create",
+    "worldbook.delete_entries",
+    "worldbook.delete_many",
+    "worldbook.generate_entries",
+    "worldbook.list",
+    "worldbook.preview_actions",
+    "worldbook.read",
+    "worldbook.update_entries"
+  ],
+  "resources": {
+    "personas": [
+      {
+        "id": "default",
+        "name": "薪炎",
+        "active": false,
+        "hasAvatar": true,
+        "descriptionLength": 5
+      },
+      {
+        "id": "persona_1770257776830_c5b73",
+        "name": "User",
+        "active": false,
+        "hasAvatar": false,
+        "descriptionLength": 0
+      },
+      {
+        "id": "persona_1778774454987_e36ii",
+        "name": "清月师尊",
+        "active": false,
+        "hasAvatar": true,
+        "descriptionLength": 0
+      },
+      {
+        "id": "persona_1778774487050_vtkyk",
+        "name": "苏晓彤",
+        "active": false,
+        "hasAvatar": true,
+        "descriptionLength": 0
+      },
+      {
+        "id": "persona_1778841742225_g9f0p",
+        "name": "- juus -",
+        "active": false,
+        "hasAvatar": true,
+        "descriptionLength": 0
+      },
+      {
+        "id": "persona_1778861414248_0b5fd",
+        "name": "精灵抱抱",
+        "active": false,
+        "hasAvatar": true,
+        "descriptionLength": 0
+      },
+      {
+        "id": "persona_1778862159452_o5q4a",
+        "name": "皇后",
+        "active": false,
+        "hasAvatar": true,
+        "descriptionLength": 0
+      },
+      {
+        "id": "persona_1779102090269_tbimh",
+        "name": "user",
+        "active": false,
+        "hasAvatar": false,
+        "descriptionLength": 0
+      },
+      {
+        "id": "persona_1779357832334_yhlnx",
+        "name": "姐姐",
+        "active": false,
+        "hasAvatar": true,
+        "descriptionLength": 0
+      },
+      {
+        "id": "persona_1779847998172_81jty",
+        "name": "青梅竹马",
+        "active": false,
+        "hasAvatar": true,
+        "descriptionLength": 0
+      },
+      {
+        "id": "persona_1782701425512_cgtbd",
+        "name": "异世界",
+        "active": false,
+        "hasAvatar": false,
+        "descriptionLength": 0
+      },
+      {
+        "id": "persona_1783052220449_63wbh",
+        "name": "女仆能力测试",
+        "active": true,
+        "hasAvatar": false,
+        "descriptionLength": 0
+      },
+      {
+        "id": "persona_1783693120316_l99qc",
+        "name": "《凡人修仙传V10.91》",
+        "active": false,
+        "hasAvatar": true,
+        "descriptionLength": 0
+      },
+      {
+        "id": "persona_1783693139509_x1cw7",
+        "name": "【Sgw】又看一集",
+        "active": false,
+        "hasAvatar": true,
+        "descriptionLength": 0
+      },
+      {
+        "id": "persona_1783693152632_sunpt",
+        "name": "海贼王",
+        "active": false,
+        "hasAvatar": true,
+        "descriptionLength": 0
+      },
+      {
+        "id": "persona_1783693169888_r50wa",
+        "name": "仙侠雌竞：什么叫我是炉鼎体质？",
+        "active": false,
+        "hasAvatar": true,
+        "descriptionLength": 0
+      },
+      {
+        "id": "persona_1785392124516_1jyrr",
+        "name": "总武高·桐谷澪企划",
+        "active": false,
+        "hasAvatar": true,
+        "descriptionLength": 434
+      },
+      {
+        "id": "persona_1785392438308_ddt7u",
+        "name": "总武高·桐谷澪",
+        "active": false,
+        "hasAvatar": false,
+        "descriptionLength": 0
+      }
+    ],
+    "users": [
+      {
+        "id": "default",
+        "name": "薪炎",
+        "active": false,
+        "hasAvatar": true,
+        "descriptionLength": 8
+      },
+      {
+        "id": "user_1777634349827_pvjjw",
+        "name": "阿兰",
+        "active": false,
+        "hasAvatar": false,
+        "descriptionLength": 37
+      },
+      {
+        "id": "user_1777774587447_59uo8",
+        "name": "炎王",
+        "active": false,
+        "hasAvatar": false,
+        "descriptionLength": 33
+      },
+      {
+        "id": "user_1779092041400_g9pi8",
+        "name": "阿伟",
+        "active": false,
+        "hasAvatar": false,
+        "descriptionLength": 0
+      },
+      {
+        "id": "user_1780931233613_88lsr",
+        "name": "我",
+        "active": true,
+        "hasAvatar": false,
+        "descriptionLength": 0
+      },
+      {
+        "id": "user_1781511135887_omxh6",
+        "name": "阿兰",
+        "active": false,
+        "hasAvatar": false,
+        "descriptionLength": 0
+      },
+      {
+        "id": "user_1782701534041_trt9t",
+        "name": "阳翔",
+        "active": false,
+        "hasAvatar": false,
+        "descriptionLength": 49
+      },
+      {
+        "id": "user_1783052232450_88jbo",
+        "name": "小悠",
+        "active": false,
+        "hasAvatar": false,
+        "descriptionLength": 0
+      },
+      {
+        "id": "user_1785227497804_a6sze",
+        "name": "冻结观察用户-0728",
+        "active": false,
+        "hasAvatar": false,
+        "descriptionLength": 0
+      },
+      {
+        "id": "user_1785295601744_l2jyx",
+        "name": "复杂压力V4F-0729·用户",
+        "active": false,
+        "hasAvatar": false,
+        "descriptionLength": 0
+      },
+      {
+        "id": "user_1785296179934_lmpom",
+        "name": "复杂压力G35-0729·用户",
+        "active": false,
+        "hasAvatar": false,
+        "descriptionLength": 0
+      },
+      {
+        "id": "user_1785300639183_pkjxp",
+        "name": "扩面压力G35-0729·测试用户",
+        "active": false,
+        "hasAvatar": false,
+        "descriptionLength": 0
+      },
+      {
+        "id": "user_1785378685422_pd2tr",
+        "name": "记忆系统V4F-0730·测试用户",
+        "active": false,
+        "hasAvatar": false,
+        "descriptionLength": 0
+      },
+      {
+        "id": "user_1785379944989_1n778",
+        "name": "记忆系统G35-0730·测试用户",
+        "active": false,
+        "hasAvatar": false,
+        "descriptionLength": 0
+      },
+      {
+        "id": "user_1785392112793_wf81b",
+        "name": "桐谷澪",
+        "active": false,
+        "hasAvatar": false,
+        "descriptionLength": 297
+      }
+    ],
+    "contacts": [
+      {
+        "id": "侍奉部",
+        "name": "侍奉部",
+        "isGroup": false,
+        "members": [],
+        "hasAvatar": false,
+        "hasWallpaper": false
+      },
+      {
+        "id": "平塚静",
+        "name": "平塚静",
+        "isGroup": false,
+        "members": [],
+        "hasAvatar": true,
+        "hasWallpaper": true
+      },
+      {
+        "id": "由比滨结衣",
+        "name": "由比滨结衣",
+        "isGroup": false,
+        "members": [],
+        "hasAvatar": true,
+        "hasWallpaper": true
+      },
+      {
+        "id": "雪之下雪乃",
+        "name": "雪之下雪乃",
+        "isGroup": false,
+        "members": [],
+        "hasAvatar": true,
+        "hasWallpaper": true
+      },
+      {
+        "id": "比企谷八幡",
+        "name": "比企谷八幡",
+        "isGroup": false,
+        "members": [],
+        "hasAvatar": true,
+        "hasWallpaper": true
+      },
+      {
+        "id": "猫老师",
+        "name": "猫老师",
+        "isGroup": false,
+        "members": [],
+        "hasAvatar": true,
+        "hasWallpaper": false
+      },
+      {
+        "id": "火箭队(武藏&小次郎)",
+        "name": "火箭队(武藏&小次郎)",
+        "isGroup": false,
+        "members": [],
+        "hasAvatar": true,
+        "hasWallpaper": false
+      },
+      {
+        "id": "Lara Croft",
+        "name": "Lara Croft",
+        "isGroup": false,
+        "members": [],
+        "hasAvatar": true,
+        "hasWallpaper": true
+      },
+      {
+        "id": "rp:persona_1783052220449_63wbh",
+        "name": "rp:persona_1783052220449_63wbh",
+        "isGroup": false,
+        "members": [],
+        "hasAvatar": false,
+        "hasWallpaper": false
+      },
+      {
+        "id": "大小姐",
+        "name": "大小姐",
+        "isGroup": false,
+        "members": [],
+        "hasAvatar": true,
+        "hasWallpaper": true
+      },
+      {
+        "id": "脚本测试室",
+        "name": "脚本测试室",
+        "isGroup": false,
+        "members": [],
+        "hasAvatar": false,
+        "hasWallpaper": false
+      },
+      {
+        "id": "拉姆",
+        "name": "拉姆",
+        "isGroup": false,
+        "members": [],
+        "hasAvatar": true,
+        "hasWallpaper": true
+      },
+      {
+        "id": "雷姆",
+        "name": "雷姆",
+        "isGroup": false,
+        "members": [],
+        "hasAvatar": true,
+        "hasWallpaper": true
+      },
+      {
+        "id": "爱丽丝",
+        "name": "爱丽丝",
+        "isGroup": false,
+        "members": [],
+        "hasAvatar": false,
+        "hasWallpaper": false
+      },
+      {
+        "id": "蒂法",
+        "name": "蒂法",
+        "isGroup": false,
+        "members": [],
+        "hasAvatar": true,
+        "hasWallpaper": true
+      },
+      {
+        "id": "测试花园",
+        "name": "测试花园",
+        "isGroup": false,
+        "members": [],
+        "hasAvatar": false,
+        "hasWallpaper": false
+      },
+      {
+        "id": "格式修复测试",
+        "name": "格式修复测试",
+        "isGroup": false,
+        "members": [],
+        "hasAvatar": false,
+        "hasWallpaper": false
+      }
+    ],
+    "sessionIds": [
+      "侍奉部",
+      "平塚静",
+      "由比滨结衣",
+      "雪之下雪乃",
+      "比企谷八幡",
+      "rp:persona_1783052220449_63wbh",
+      "测试花园",
+      "格式修复测试",
+      "Lara Croft",
+      "大小姐",
+      "雷姆",
+      "脚本测试室",
+      "拉姆",
+      "蒂法",
+      "__arc_probe__",
+      "__kv_probe__",
+      "group:1768668321145-6210c5",
+      "护栏验证房-2128",
+      "海伦娜",
+      "火箭队(武藏&小次郎)",
+      "爱丽丝",
+      "猫老师"
+    ],
+    "worldbooks": [
+      {
+        "id": "- juus -",
+        "name": "- juus -",
+        "entryCount": 138,
+        "boundToCurrentSession": false,
+        "global": false
+      },
+      {
+        "id": "Lara croft",
+        "name": "Lara croft",
+        "entryCount": 1,
+        "boundToCurrentSession": false,
+        "global": false
+      },
+      {
+        "id": "《凡人修仙传V10.91》",
+        "name": "《凡人修仙传V10.91》",
+        "entryCount": 11,
+        "boundToCurrentSession": false,
+        "global": false
+      },
+      {
+        "id": "【Sgw】又看一集",
+        "name": "【Sgw】又看一集",
+        "entryCount": 39,
+        "boundToCurrentSession": false,
+        "global": false
+      },
+      {
+        "id": "仙侠雌竞：什么叫我是炉鼎体质？",
+        "name": "仙侠雌竞：什么叫我是炉鼎体质？",
+        "entryCount": 93,
+        "boundToCurrentSession": false,
+        "global": false
+      },
+      {
+        "id": "信浓",
+        "name": "信浓",
+        "entryCount": 1,
+        "boundToCurrentSession": false,
+        "global": false
+      },
+      {
+        "id": "冻结观察SubAgent-A-0728",
+        "name": "冻结观察SubAgent-A-0728",
+        "entryCount": 2,
+        "boundToCurrentSession": false,
+        "global": false
+      },
+      {
+        "id": "冻结观察SubAgent-B-0728",
+        "name": "冻结观察SubAgent-B-0728",
+        "entryCount": 3,
+        "boundToCurrentSession": false,
+        "global": false
+      },
+      {
+        "id": "冻结观察SubAgent测试-0728",
+        "name": "冻结观察SubAgent测试-0728",
+        "entryCount": 2,
+        "boundToCurrentSession": false,
+        "global": false
+      },
+      {
+        "id": "冻结观察写入-0728",
+        "name": "冻结观察写入-0728",
+        "entryCount": 3,
+        "boundToCurrentSession": false,
+        "global": false
+      },
+      {
+        "id": "冻结观察写入-0728 (2)",
+        "name": "冻结观察写入-0728 (2)",
+        "entryCount": 1,
+        "boundToCurrentSession": false,
+        "global": false
+      },
+      {
+        "id": "冻结观察写入-0728 (3)",
+        "name": "冻结观察写入-0728 (3)",
+        "entryCount": 1,
+        "boundToCurrentSession": false,
+        "global": false
+      },
+      {
+        "id": "千花",
+        "name": "千花",
+        "entryCount": 1,
+        "boundToCurrentSession": false,
+        "global": false
+      },
+      {
+        "id": "可畏",
+        "name": "可畏",
+        "entryCount": 1,
+        "boundToCurrentSession": false,
+        "global": false
+      },
+      {
+        "id": "哆啦A梦",
+        "name": "哆啦A梦",
+        "entryCount": 1,
+        "boundToCurrentSession": false,
+        "global": false
+      },
+      {
+        "id": "四万十",
+        "name": "四万十",
+        "entryCount": 1,
+        "boundToCurrentSession": false,
+        "global": false
+      },
+      {
+        "id": "圣路易斯",
+        "name": "圣路易斯",
+        "entryCount": 1,
+        "boundToCurrentSession": false,
+        "global": false
+      },
+      {
+        "id": "复杂压力G35-0729·资料",
+        "name": "复杂压力G35-0729·资料",
+        "entryCount": 5,
+        "boundToCurrentSession": false,
+        "global": false
+      },
+      {
+        "id": "复杂压力V4F-0729·资料",
+        "name": "复杂压力V4F-0729·资料",
+        "entryCount": 5,
+        "boundToCurrentSession": false,
+        "global": false
+      },
+      {
+        "id": "大凤",
+        "name": "大凤",
+        "entryCount": 1,
+        "boundToCurrentSession": false,
+        "global": false
+      },
+      {
+        "id": "天狼星",
+        "name": "天狼星",
+        "entryCount": 1,
+        "boundToCurrentSession": false,
+        "global": false
+      },
+      {
+        "id": "姐姐",
+        "name": "姐姐",
+        "entryCount": 3,
+        "boundToCurrentSession": false,
+        "global": false
+      },
+      {
+        "id": "娜美",
+        "name": "娜美",
+        "entryCount": 1,
+        "boundToCurrentSession": false,
+        "global": false
+      },
+      {
+        "id": "异世界",
+        "name": "异世界",
+        "entryCount": 3,
+        "boundToCurrentSession": false,
+        "global": false
+      },
+      {
+        "id": "异世界 世界书",
+        "name": "异世界 世界书",
+        "entryCount": 3,
+        "boundToCurrentSession": false,
+        "global": false
+      },
+      {
+        "id": "手机-格式",
+        "name": "手机-格式",
+        "entryCount": 5,
+        "boundToCurrentSession": false,
+        "global": false
+      },
+      {
+        "id": "扩面压力G35-0729·档案库",
+        "name": "扩面压力G35-0729·档案库",
+        "entryCount": 5,
+        "boundToCurrentSession": false,
+        "global": false
+      },
+      {
+        "id": "扩面压力V4F-0729·档案库",
+        "name": "扩面压力V4F-0729·档案库",
+        "entryCount": 4,
+        "boundToCurrentSession": false,
+        "global": false
+      },
+      {
+        "id": "拉菲",
+        "name": "拉菲",
+        "entryCount": 1,
+        "boundToCurrentSession": false,
+        "global": false
+      },
+      {
+        "id": "欧根亲王",
+        "name": "欧根亲王",
+        "entryCount": 1,
+        "boundToCurrentSession": false,
+        "global": false
+      },
+      {
+        "id": "武藏",
+        "name": "武藏",
+        "entryCount": 1,
+        "boundToCurrentSession": false,
+        "global": false
+      },
+      {
+        "id": "测试世界书",
+        "name": "测试世界书",
+        "entryCount": 2,
+        "boundToCurrentSession": false,
+        "global": false
+      },
+      {
+        "id": "海伦娜",
+        "name": "海伦娜",
+        "entryCount": 1,
+        "boundToCurrentSession": false,
+        "global": false
+      },
+      {
+        "id": "海贼王",
+        "name": "海贼王",
+        "entryCount": 97,
+        "boundToCurrentSession": false,
+        "global": false
+      },
+      {
+        "id": "清月师尊",
+        "name": "清月师尊",
+        "entryCount": 41,
+        "boundToCurrentSession": false,
+        "global": false
+      },
+      {
+        "id": "渡我被身子(爱)",
+        "name": "渡我被身子(爱)",
+        "entryCount": 1,
+        "boundToCurrentSession": false,
+        "global": false
+      },
+      {
+        "id": "火箭队(武藏&小次郎)",
+        "name": "火箭队(武藏&小次郎)",
+        "entryCount": 1,
+        "boundToCurrentSession": false,
+        "global": false
+      },
+      {
+        "id": "爱丽丝",
+        "name": "爱丽丝",
+        "entryCount": 5,
+        "boundToCurrentSession": false,
+        "global": false
+      },
+      {
+        "id": "猫老师",
+        "name": "猫老师",
+        "entryCount": 1,
+        "boundToCurrentSession": false,
+        "global": false
+      },
+      {
+        "id": "皇后",
+        "name": "皇后",
+        "entryCount": 4,
+        "boundToCurrentSession": false,
+        "global": false
+      },
+      {
+        "id": "精灵抱抱",
+        "name": "精灵抱抱",
+        "entryCount": 13,
+        "boundToCurrentSession": false,
+        "global": false
+      },
+      {
+        "id": "绫波",
+        "name": "绫波",
+        "entryCount": 1,
+        "boundToCurrentSession": false,
+        "global": false
+      },
+      {
+        "id": "胡德",
+        "name": "胡德",
+        "entryCount": 1,
+        "boundToCurrentSession": false,
+        "global": false
+      },
+      {
+        "id": "能代",
+        "name": "能代",
+        "entryCount": 1,
+        "boundToCurrentSession": false,
+        "global": false
+      },
+      {
+        "id": "舰娘 (3).json",
+        "name": "舰娘 (3).json",
+        "entryCount": 265,
+        "boundToCurrentSession": false,
+        "global": false
+      },
+      {
+        "id": "芙莉莲(葬送)",
+        "name": "芙莉莲(葬送)",
+        "entryCount": 1,
+        "boundToCurrentSession": false,
+        "global": false
+      },
+      {
+        "id": "花园设定",
+        "name": "花园设定",
+        "entryCount": 1,
+        "boundToCurrentSession": false,
+        "global": false
+      },
+      {
+        "id": "苏晓彤",
+        "name": "苏晓彤",
+        "entryCount": 33,
+        "boundToCurrentSession": false,
+        "global": false
+      },
+      {
+        "id": "菲伦",
+        "name": "菲伦",
+        "entryCount": 1,
+        "boundToCurrentSession": false,
+        "global": false
+      },
+      {
+        "id": "蒂法",
+        "name": "蒂法",
+        "entryCount": 4,
+        "boundToCurrentSession": false,
+        "global": false
+      },
+      {
+        "id": "记忆系统V4F-0730·资料库",
+        "name": "记忆系统V4F-0730·资料库",
+        "entryCount": 5,
+        "boundToCurrentSession": false,
+        "global": false
+      },
+      {
+        "id": "贝尔法斯特",
+        "name": "贝尔法斯特",
+        "entryCount": 1,
+        "boundToCurrentSession": false,
+        "global": false
+      },
+      {
+        "id": "长门",
+        "name": "长门",
+        "entryCount": 1,
+        "boundToCurrentSession": false,
+        "global": false
+      },
+      {
+        "id": "雷姆",
+        "name": "雷姆",
+        "entryCount": 4,
+        "boundToCurrentSession": false,
+        "global": false
+      },
+      {
+        "id": "青梅竹马",
+        "name": "青梅竹马",
+        "entryCount": 4,
+        "boundToCurrentSession": false,
+        "global": false
+      },
+      {
+        "id": "总武高与侍奉部世界观",
+        "name": "总武高与侍奉部世界观",
+        "entryCount": 4,
+        "boundToCurrentSession": true,
+        "global": false
+      },
+      {
+        "id": "总武高重要人物资料",
+        "name": "总武高重要人物资料",
+        "entryCount": 4,
+        "boundToCurrentSession": true,
+        "global": false
+      }
+    ]
+  }
+}

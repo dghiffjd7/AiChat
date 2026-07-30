@@ -266,7 +266,7 @@ export const dispatchRuntimeHookLifecycleEvent = ({
 
   let result;
   try {
-    result = runtime.dispatchEvent(normalizedHookName, payload);
+    result = runtime.dispatchEvent(normalizedHookName, payload, { sessionId });
   } catch (err) {
     emitHookLifecycleTrace(recordTraceEvent, buildRuntimeHookFinishTraceEvent({
       hookName: normalizedHookName,
@@ -333,7 +333,7 @@ export const runRuntimeHookLifecycleEvent = async ({
   }));
 
   try {
-    const result = await runtime.dispatchEvent(normalizedHookName, payload);
+    const result = await runtime.dispatchEvent(normalizedHookName, payload, { sessionId });
     const nextDetails = typeof finishDetails === 'function'
       ? finishDetails(result)
       : finishDetails;

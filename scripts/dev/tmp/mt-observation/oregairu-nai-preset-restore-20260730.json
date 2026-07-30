@@ -1,0 +1,104 @@
+{
+  "ok": true,
+  "mode": "restore",
+  "restoredId": "default",
+  "activeId": "default",
+  "deletedAvatar": false,
+  "deletedWallpaper": true,
+  "active": {
+    "id": "default",
+    "name": "默认图片参数",
+    "paramsByProvider": {
+      "openai": {
+        "moderation": "low",
+        "n": 1,
+        "output_format": "png"
+      },
+      "makersuite": {
+        "aspectRatio": "1:1",
+        "n": 1,
+        "negativePrompt": "",
+        "outputCompression": 100,
+        "responseMimeType": "image/png"
+      },
+      "vertexai": {
+        "aspectRatio": "1:1",
+        "n": 1,
+        "negativePrompt": "",
+        "outputCompression": 100,
+        "responseMimeType": "image/png"
+      },
+      "custom": {
+        "n": 1,
+        "quality": "",
+        "response_format": "",
+        "size": "",
+        "style": ""
+      },
+      "novelai": {
+        "cfgRescale": 0,
+        "height": 1024,
+        "promptPrefix": "1.8::misaka12003-gou ::, 0.8::dino(dinoartforame), year 2025, realistic, 4k, 1.3::photorealistic::, 1.3::photo(medium)::, 15::best quality, absurdres, very aesthetic, detailed, masterpiece::,",
+        "promptSuffix": "",
+        "qualityToggle": "true",
+        "sampler": "k_euler_ancestral",
+        "scale": 5,
+        "scheduler": "karras",
+        "steps": 23,
+        "width": 1024
+      },
+      "stability": {
+        "aspectRatio": "1:1",
+        "negativePrompt": "",
+        "output_format": "png",
+        "seed": "",
+        "style_preset": ""
+      },
+      "togetherai": {
+        "disable_safety_checker": "",
+        "guidance_scale": 3.5,
+        "height": 1024,
+        "n": 1,
+        "negativePrompt": "",
+        "output_format": "png",
+        "response_format": "",
+        "seed": "",
+        "steps": 4,
+        "width": 1024
+      },
+      "pollinations": {
+        "enhance": "",
+        "height": 1024,
+        "negativePrompt": "",
+        "seed": "",
+        "width": 1024
+      },
+      "automatic1111": {
+        "cfg_scale": 7,
+        "enable_hr": "",
+        "height": 1024,
+        "n": 1,
+        "negativePrompt": "",
+        "restore_faces": "",
+        "sampler_name": "",
+        "scheduler": "",
+        "seed": "",
+        "steps": 20,
+        "width": 1024
+      },
+      "comfyui": {
+        "height": 1024,
+        "negativePrompt": "",
+        "sampler": "",
+        "scale": 7,
+        "scheduler": "",
+        "seed": "",
+        "steps": 20,
+        "width": 1024,
+        "workflowJson": ""
+      }
+    },
+    "createdAt": 1778576176779,
+    "updatedAt": 1779845433252
+  }
+}

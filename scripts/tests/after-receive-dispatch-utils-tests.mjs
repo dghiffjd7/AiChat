@@ -205,8 +205,8 @@ test('dispatchRuntimeHookLifecycleEvent records queued and async error without e
   const warnings = [];
   const ok = dispatchRuntimeHookLifecycleEvent({
     runtime: {
-      dispatchEvent(event, payload) {
-        calls.push([event, payload.secret]);
+      dispatchEvent(event, payload, options) {
+        calls.push([event, payload.secret, options?.sessionId]);
         return Promise.reject(new Error('async failed'));
       },
     },
@@ -222,7 +222,7 @@ test('dispatchRuntimeHookLifecycleEvent records queued and async error without e
   await flushMicrotasks();
 
   assert.equal(ok, true);
-  assert.deepEqual(calls, [['variable.changed', 'raw-value']]);
+  assert.deepEqual(calls, [['variable.changed', 'raw-value', 's1']]);
   assert.deepEqual(
     trace.map(event => [event.runtimeLabel, event.phase, event.status, event.summary]),
     [
@@ -266,9 +266,10 @@ test('runRuntimeHookLifecycleEvent awaits mutable hooks and records non-sensitiv
   const warnings = [];
   const success = await runRuntimeHookLifecycleEvent({
     runtime: {
-      dispatchEvent(event, payload) {
+      dispatchEvent(event, payload, options) {
         assert.equal(event, 'prompt.before_build');
         assert.equal(payload.input, 'raw prompt');
+        assert.equal(options?.sessionId, 's1');
         return Promise.resolve({ input: 'next prompt', context: payload.context });
       },
     },

@@ -6190,7 +6190,13 @@ export class ScriptRuntime {
   }
 
   async dispatchEvent(event, payload = {}, options = {}) {
-    const sessionId = String(payload?.sessionId || this.context.sessionId || this.chatStore?.getCurrent?.() || '').trim();
+    const sessionId = String(
+      options?.sessionId
+      || payload?.sessionId
+      || this.context.sessionId
+      || this.chatStore?.getCurrent?.()
+      || '',
+    ).trim();
     if (!this.isEnabled(sessionId)) return payload;
     if (options?.skip === true || payload?.skipScripts === true || payload?.meta?.skipScripts === true) {
       return payload;

@@ -1,0 +1,45 @@
+{
+  "ok": true,
+  "removedOrphan": {
+    "ok": true,
+    "deleted": true,
+    "sessionId": "Lara Croft",
+    "deletedDerivedWorldbookIds": [],
+    "warnings": []
+  },
+  "orphanStillPresent": false,
+  "group": {
+    "id": "group:1785395748527-c7407b",
+    "name": "侍奉部",
+    "members": [
+      "比企谷八幡",
+      "雪之下雪乃",
+      "由比滨结衣"
+    ],
+    "hasAvatar": false,
+    "messageCount": 2
+  },
+  "resolved": {
+    "sessionId": "group:1785395748527-c7407b",
+    "uiMode": "chat",
+    "isGroupChat": true,
+    "groupMemberIds": [
+      "比企谷八幡",
+      "雪之下雪乃",
+      "由比滨结衣"
+    ],
+    "globalWorldId": "",
+    "roleWorldIds": [],
+    "sessionWorldIds": [
+      "比企谷八幡·私聊资料",
+      "雪之下雪乃·私聊资料",
+      "由比滨结衣·私聊资料"
+    ],
+    "worldIds": [
+      "比企谷八幡·私聊资料",
+      "雪之下雪乃·私聊资料",
+      "由比滨结衣·私聊资料"
+    ]
+  },
+  "currentSessionId": "group:1785395748527-c7407b"
+}

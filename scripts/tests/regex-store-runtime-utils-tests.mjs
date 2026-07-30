@@ -96,7 +96,7 @@ test('regex sync helpers tolerate missing contract', async () => {
   assert.equal(await syncWorldRegexBindings({}), null);
 });
 
-test('regex store activates preset-bound set when any selected preset id matches', async () => {
+test('regex store activates selected preset and preserves preset-before-world priority after recovery', async () => {
   const previousLocalStorage = globalThis.localStorage;
   const previousInvoke = globalThis.__TAURI_INVOKE__;
   const kv = new Map();
@@ -125,6 +125,20 @@ test('regex store activates preset-bound set when any selected preset id matches
     const { RegexStore, regex_placement } = await import('../../src/scripts/storage/regex-store.js');
     const store = new RegexStore();
     await store.ready;
+    await store.upsertLocalSet({
+      name: 'Recovered character regex',
+      enabled: true,
+      bind: {
+        type: 'world',
+        worldId: 'world-a',
+      },
+      rules: [{
+        scriptName: 'Expand character panel',
+        findRegex: '/lucklyjkop/g',
+        replaceString: '<character-panel>',
+        placement: [regex_placement.AI_OUTPUT],
+      }],
+    });
     const id = await store.upsertLocalSet({
       name: 'Shared preset regex',
       enabled: true,
@@ -135,8 +149,8 @@ test('regex store activates preset-bound set when any selected preset id matches
       },
       rules: [{
         scriptName: 'Replace',
-        findRegex: '/foo/g',
-        replaceString: 'bar',
+        findRegex: '/lucklyjkop/g',
+        replaceString: 'cleaned',
         placement: [regex_placement.AI_OUTPUT],
       }],
     });
@@ -146,6 +160,18 @@ test('regex store activates preset-bound set when any selected preset id matches
     assert.deepEqual(stored.bind.presetIds, ['preset-a', 'preset-b']);
     assert.equal(store.computeActiveRules({ activePresets: { openai: 'preset-b' } }).length, 1);
     assert.equal(store.computeActiveRules({ activePresets: { openai: 'preset-c' } }).length, 0);
+    const recoveredContext = {
+      activePresets: { openai: 'preset-b' },
+      worldId: 'world-a',
+    };
+    assert.deepEqual(
+      store.computeActiveRules(recoveredContext).map(rule => rule.scriptName),
+      ['Replace', 'Expand character panel'],
+    );
+    assert.equal(
+      store.apply('lucklyjkop', recoveredContext, regex_placement.AI_OUTPUT),
+      'cleaned',
+    );
 
     await store.syncPresetBindings({ openai: 'preset-b' });
     assert.equal(store.getLocalSet(id).enabled, true);

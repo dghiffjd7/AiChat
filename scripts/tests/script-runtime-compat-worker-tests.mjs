@@ -138,6 +138,35 @@ assert.equal(isEsmLikeScriptForTests('const data = { import: fn, export: gn };')
 console.log('ok - script runtime recognizes actual ESM import and export syntax');
 
 {
+  const runtime = new ScriptRuntime({ ready: Promise.resolve(), getScripts: () => [] });
+  await runtime.ready;
+  runtime.context = { sessionId: 'deleted-old-session' };
+  runtime.chatStore = { getCurrent: () => 'new-session' };
+  runtime.worker = null;
+  runtime.iframeRuntime = null;
+  const enabledSessionIds = [];
+  const syncedSessionIds = [];
+  runtime.isEnabled = (sessionId) => {
+    enabledSessionIds.push(sessionId);
+    return true;
+  };
+  runtime.syncContext = async ({ sessionId } = {}) => {
+    syncedSessionIds.push(sessionId);
+  };
+
+  await runtime.dispatchEvent('session.changed', {
+    oldSession: { id: 'deleted-old-session' },
+    newSession: { id: 'new-session' },
+  }, {
+    sessionId: 'new-session',
+  });
+
+  assert.deepEqual(enabledSessionIds, ['new-session']);
+  assert.deepEqual(syncedSessionIds, ['new-session']);
+  console.log('ok - script runtime lifecycle dispatch uses the explicit target session context');
+}
+
+{
   let fetchCalls = 0;
   const { sandbox, messages } = createWorkerHarness({
     fetchImpl: async () => {
