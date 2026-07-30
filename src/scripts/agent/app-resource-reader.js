@@ -442,8 +442,18 @@ const createSessionReader = deps => async (args = {}) => {
   const chatStore = deps.chatStore || {};
   const contactsStore = deps.contactsStore || {};
   const ids = asArray(await callMethod(chatStore, 'listSessions'));
-  const target = normalizeLookupText(args.sessionName || args.chatName || args.target || args.query || args.id);
+  const target = normalizeLookupText(
+    args.sessionName || args.chatName || args.name || args.target || args.query || args.id,
+  );
   const limit = clampAppResourceLimit(args.limit, 50, 200);
+  const requestedFields = normalizeStringList(args.include)
+    .map(field => field.toLowerCase());
+  const includeMembers = requestedFields.includes('members');
+  const includeWorldbooks = requestedFields.includes('worldbooks');
+  const includedFields = [
+    ...(includeMembers ? ['members'] : []),
+    ...(includeWorldbooks ? ['worldbooks'] : []),
+  ];
   const sessions = [];
   for (const id of ids) {
     const contact = await callMethod(contactsStore, 'getContact', id) || null;
@@ -458,14 +468,40 @@ const createSessionReader = deps => async (args = {}) => {
     ].map(normalizeLookupText).filter(Boolean);
     if (target && !names.includes(target)) continue;
     const messages = asArray(await callMethod(chatStore, 'getMessages', id));
-    sessions.push(sanitizeAppResourceValue({
+    const projected = {
       id,
       name: contact?.name || id,
       isGroup: contact?.isGroup === true,
       hasAvatar: Boolean(contact?.avatar),
       messageCount: messages.length,
       settings: await callMethod(chatStore, 'getSessionSettings', id) || null,
-    }));
+    };
+    if (includeMembers) {
+      const memberIds = contact?.isGroup === true
+        ? normalizeStringList(contact?.members)
+        : [];
+      projected.memberCount = memberIds.length;
+      projected.members = [];
+      for (const memberId of memberIds) {
+        const member = await callMethod(contactsStore, 'getContact', memberId) || null;
+        projected.members.push({
+          id: memberId,
+          name: toText(member?.name || memberId),
+        });
+      }
+    }
+    if (includeWorldbooks) {
+      const bridge = getBridgeFromDeps(deps);
+      const directWorldIds = normalizeStringList(await callMethod(bridge, 'getWorldIdsForSession', id));
+      const resolved = await callMethod(bridge, 'getResolvedWorldState', id) || {};
+      projected.worldbooks = {
+        directWorldIds,
+        roleWorldIds: normalizeStringList(resolved?.roleWorldIds),
+        resolvedWorldIds: normalizeStringList(resolved?.worldIds),
+        globalWorldId: toText(resolved?.globalWorldId),
+      };
+    }
+    sessions.push(sanitizeAppResourceValue(projected));
     if (sessions.length >= limit) break;
   }
   return {
@@ -473,6 +509,8 @@ const createSessionReader = deps => async (args = {}) => {
     resource: 'session',
     currentSessionId: toText(chatStore.getCurrent?.()),
     count: ids.length,
+    includedFields,
+    contentHint: '会话默认仅返回摘要；精确群成员用 include:["members"]，角色卡继承世界书与 session 直接绑定证据用 include:["worldbooks"]。',
     sessions,
   };
 };

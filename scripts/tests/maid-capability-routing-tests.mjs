@@ -153,6 +153,25 @@ const createCatalogRoutingHarness = () => {
 
 {
   const retriever = createMaidCapabilityRetriever();
+  const rpFeature = {
+    id: 'worldbook.bind_rp_session',
+    title: '绑定创意写作专属世界书',
+    aliases: ['把汇总世界书只用于创意写作'],
+    tools: ['worldbook.bind_rp_session'],
+    riskLevel: 'medium',
+    writes: true,
+  };
+  const result = retriever.retrieve('把人物汇总世界书只绑定到这个角色卡的创意写作，不要影响私聊', {
+    features: [...features, rpFeature],
+    limit: 8,
+  });
+  assert.equal(result[0].id, 'worldbook.bind_rp_session');
+  assert.ok(result[0].conceptCodes.includes('worldbook_rp_bind'));
+  console.log('ok - v3 retriever routes RP-only worldbook binding above ordinary chat binding');
+}
+
+{
+  const retriever = createMaidCapabilityRetriever();
   const { catalogFeatures } = createCatalogRoutingHarness();
   const fixtures = [
     ['清理测试用的房间', 'session.delete_many', 'session_batch_delete'],
@@ -167,6 +186,25 @@ const createCatalogRoutingHarness = () => {
     assert.ok(match.conceptCodes.includes(conceptCode), `${featureId} should expose ${conceptCode}`);
   }
   console.log('ok - v3 retriever distinguishes resource batch deletion from worldbook entry deletion');
+}
+
+{
+  const retriever = createMaidCapabilityRetriever();
+  const { catalogFeatures } = createCatalogRoutingHarness();
+  const fixtures = [
+    ['从现有联系人里创建一个侍奉部群聊', 'group.create', 'group_chat_create'],
+    ['给侍奉部群聊加上雪乃和结衣', 'group.members.update', 'group_member_update'],
+    ['打开建群界面让我自己选', 'group.create.open', 'group_create_panel'],
+    ['只读确认「草帽一伙」群聊有哪些成员', 'app.resource.read', 'group_member_read'],
+    ['只打开这个群聊给我看', 'session.open', 'session_open'],
+  ];
+  for (const [input, featureId, conceptCode] of fixtures) {
+    const result = retriever.retrieve(input, { features: catalogFeatures, limit: 8 });
+    const match = result.find(item => item.id === featureId);
+    assert.ok(match, `${input} should retrieve ${featureId}`);
+    assert.ok(match.conceptCodes.includes(conceptCode), `${featureId} should expose ${conceptCode}`);
+  }
+  console.log('ok - v3 retriever separates group creation, member reads/updates, opening, and create-panel navigation');
 }
 
 {

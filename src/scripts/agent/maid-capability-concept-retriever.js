@@ -52,7 +52,7 @@ export const searchMaidCapabilityConcepts = (
     add('app.visible_panel.read', 100, 'visible_ui');
   }
 
-  const sessionNoun = /(?:会话|聊天室|房间|测试房|contacts?|groups?|chats?|conversations?|\bsessions?\b|\brooms?\b)/iu;
+  const sessionNoun = /(?:会话|聊天室|房间|测试房|群聊|群组(?:聊天)?|contacts?|groups?|chats?|conversations?|\bsessions?\b|\brooms?\b)/iu;
   const listIntent = /(?:列出|清单|名单|所有|全部|哪些|一共有|几间|多少|各几项|列候选|不唯一|inventory|\blist\b|\bevery\b|names?)/iu;
   if (sessionNoun.test(text) && listIntent.test(text)) {
     add('session.list', 98, 'session_inventory');
@@ -69,8 +69,35 @@ export const searchMaidCapabilityConcepts = (
   ) {
     add('session.delete_many', 105, 'session_batch_delete');
   }
-  if (hasPositive(/(?:打开|进入|切到|切换到|\bopen\b|\benter\b|\bswitch\b).{0,24}(?:会话|聊天室|房间|chat|conversation)/iu)) {
+  if (hasPositive(/(?:打开|进入|切到|切换到|\bopen\b|\benter\b|\bswitch\b).{0,24}(?:会话|聊天室|房间|群聊|群组(?:聊天)?|chat|conversation|group)/iu)) {
     add('session.open', 96, 'session_open');
+  }
+  const groupChatNoun = /(?:群聊|群组(?:聊天)?|group\s*chats?|\bgroups?\b)/iu;
+  if (
+    groupChatNoun.test(text) &&
+    /(?:成员|members?)/iu.test(text) &&
+    /(?:只读|查看|读取|确认|核对|哪些|名单|清单|\blist\b|\bread\b|\bcheck\b)/iu.test(text) &&
+    !/(?:添加|加入|邀请|拉进|移出|踢出|删除|修改|替换|\badd\b|\bremove\b|\bupdate\b|\breplace\b)/iu.test(positiveText)
+  ) {
+    add('app.resource.read', 108, 'group_member_read');
+  }
+  if (
+    groupChatNoun.test(positiveText) &&
+    /(?:创建|新建|建立|发起|拉一个|\bcreate\b|\bstart\b)/iu.test(positiveText)
+  ) {
+    add('group.create', 110, 'group_chat_create');
+  }
+  if (
+    /(?:打开|进入|带我去|\bopen\b|\bshow\b)/iu.test(positiveText) &&
+    /(?:建群|创建群聊|创建群组|发起群聊).{0,12}(?:界面|页面|入口|panel)?/iu.test(positiveText)
+  ) {
+    add('group.create.open', 112, 'group_create_panel');
+  }
+  if (
+    groupChatNoun.test(positiveText) &&
+    /(?:成员|加(?:上|入|进|人)|邀请|拉进|移出|踢出|删除.{0,6}成员|members?)/iu.test(positiveText)
+  ) {
+    add('group.members.update', 112, 'group_member_update');
   }
 
   if (has(/(?:raworiginal|rendered\s*text|latest\s*assistant|最后一轮\s*ai|末条消息|最近一条消息|局部变量|全局变量|local\s*vars?|global\s*vars?|\bvars?\b|后处理规则|后处理脚本|正规表达式|\bregexp\b|\bregex\b|\bpreset\b|角色皮|角色卡|character\s*cards?|user\s*identit(?:y|ies)|用户名称|当前身份)/iu)) {
@@ -113,7 +140,7 @@ export const searchMaidCapabilityConcepts = (
   const worldbookIntent = /(?:世界书|世借书|world\s*book|worldbook|world\s*lore|lore\s*library|条目|entry\s*titles?|目录页|(?:replace|覆盖).{0,24}全部内容)/iu;
   if (worldbookIntent.test(text) || inferredWorldbookContentIntent.test(text)) {
     add(['worldbook.read', 'worldbook.list'], 84, 'worldbook_domain');
-    add(['worldbook.open', 'worldbook.create', 'worldbook.update_entries', 'worldbook.bind_session', 'worldbook.bind_sessions'], 58, 'worldbook_domain');
+    add(['worldbook.open', 'worldbook.create', 'worldbook.update_entries', 'worldbook.bind_session', 'worldbook.bind_sessions', 'worldbook.bind_rp_session'], 58, 'worldbook_domain');
     if (has(/(?:有哪些|名单|书名|几本|library|列出.*世界书|worldbook\s*名单)/iu)) {
       add('worldbook.list', 100, 'worldbook_inventory');
     }
@@ -135,7 +162,11 @@ export const searchMaidCapabilityConcepts = (
       }
     }
     if (hasPositive(/(?:绑(?:定|上|到)|启用|bind)/iu)) {
-      if (has(/(?:批量|多个|这些|所有|全部|都|分别|每个|多间|多個|sessions?)/iu)) {
+      const rpOnlyBinding = has(/(?:创意写作|创作会话|写作会话|RP\s*会话|roleplay).{0,28}(?:专属|只|隔离|不.{0,8}私聊)|(?:专属|只).{0,28}(?:创意写作|创作会话|写作会话|RP\s*会话)|不.{0,12}(?:影响|进入|用于).{0,12}私聊/iu);
+      if (rpOnlyBinding) {
+        add('worldbook.bind_rp_session', 112, 'worldbook_rp_bind');
+        add(['worldbook.list', 'worldbook.read'], 92, 'worldbook_bind_verify');
+      } else if (has(/(?:批量|多个|这些|所有|全部|都|分别|每个|多间|多個|sessions?)/iu)) {
         add('worldbook.bind_sessions', 105, 'worldbook_batch_bind');
         add(['worldbook.bind_session', 'worldbook.list', 'worldbook.read'], 92, 'worldbook_bind');
       } else {
@@ -146,6 +177,15 @@ export const searchMaidCapabilityConcepts = (
 
   if (has(/(?:联网|网上|上网|搜索网页|天气|新闻|最新资讯|官方文档|webview2|web\s*search|image\s*search|参考图|references?)/iu)) {
     add('web.search', 100, 'web_search');
+  }
+  if (
+    hasPositive(/(?:调用|使用).{0,10}(?:生图工具|图片生成工具|media\.generate_image)/iu) ||
+    (
+      hasPositive(/(?:生成|生图|画)/iu) &&
+      has(/(?:图片|图像|头像|壁纸|背景|image)/iu)
+    )
+  ) {
+    add('media.generate_image', 96, 'image_generate');
   }
   if (
     hasPositive(/(?:生成|生图|画).{0,36}(?:聊天室|会话|聊天)?.{0,12}(?:壁纸|背景)/iu)

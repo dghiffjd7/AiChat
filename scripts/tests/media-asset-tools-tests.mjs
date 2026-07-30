@@ -346,6 +346,14 @@ const attachment = {
       setSessionSettings: (id, next) => settings.set(id, next),
     },
     getCurrentSessionId: () => 'room-generated',
+    getImageGenerationContext: async () => ({
+      provider: 'novelai',
+      model: 'nai-diffusion-4-full',
+      promptDialect: 'nai_tags',
+      promptLanguage: 'en',
+      width: 1344,
+      height: 768,
+    }),
     generateImageAttachment: async payload => {
       generatedCalls.push(payload);
       return {
@@ -353,6 +361,20 @@ const attachment = {
         mime: 'image/png',
         bytes: 9,
         name: 'generated-wallpaper.png',
+        generationContext: {
+          profileId: 'image-profile-1',
+          profileName: 'NAI 动漫',
+          provider: 'novelai',
+          model: 'nai-diffusion-4-full',
+          presetId: 'wide',
+          presetName: '横向壁纸',
+          promptDialect: 'nai_tags',
+          promptLanguage: 'en',
+          width: 1344,
+          height: 768,
+          negativePromptSupported: true,
+          apiKey: 'must-not-leak',
+        },
       };
     },
     prepareImage: async ({ dataUrl }) => ({
@@ -367,13 +389,31 @@ const attachment = {
   });
 
   const generated = await getTool(tools, 'media.generate_image').execute({
-    prompt: '月光下的森林，横向壁纸',
-    negativePrompt: '文字，水印',
-  }, { runId: 'maid-run-1' });
+    prompt: 'moonlit_forest, night, anime_background',
+    negativePrompt: 'text, watermark',
+    subject: '月光森林',
+    subjectAliases: ['moonlit_forest'],
+    target: '生图壁纸房',
+    purpose: 'wallpaper',
+    appearance: 'moonlit forest, deep blue night',
+    outfit: 'not_applicable',
+    style: 'anime background, detailed',
+    targetAspectRatio: '16:9',
+  }, {
+    runId: 'maid-run-1',
+    maidVisualSpecLedger: { version: 'maid-visual-spec-v1', specs: {} },
+  });
   assert.equal(generated.ok, true);
   assert.equal(generated.attachmentId, 'generated-88-1');
-  assert.equal(generatedCalls[0].prompt, '月光下的森林，横向壁纸');
-  assert.equal(generatedCalls[0].negativePrompt, '文字，水印');
+  assert.match(generatedCalls[0].prompt, /moonlit_forest/);
+  assert.match(generatedCalls[0].prompt, /anime background/);
+  assert.equal(generatedCalls[0].negativePrompt, 'text, watermark');
+  assert.equal(generated.generationContext.provider, 'novelai');
+  assert.equal(generated.generationContext.promptDialect, 'nai_tags');
+  assert.equal(generated.generationContext.width, 1344);
+  assert.equal(generated.visualSpec.target, '生图壁纸房');
+  assert.equal(generated.visualSpec.purpose, 'wallpaper');
+  assert.equal('apiKey' in generated.generationContext, false);
 
   const wallpaper = await getTool(tools, 'session.set_wallpaper').execute({
     target: '生图壁纸房',
@@ -382,4 +422,67 @@ const attachment = {
   assert.equal(wallpaper.ok, true);
   assert.equal(settings.get('room-generated').wallpaper.url, 'data:image/png;base64,R0VORVJBVEVE');
   console.log('ok - maid can generate an image attachment and set it as a chat wallpaper');
+}
+
+{
+  const generatedCalls = [];
+  const sharedContext = {
+    maidVisualSpecLedger: { version: 'maid-visual-spec-v1', specs: {} },
+  };
+  const tools = createMaidMediaAssetTools({
+    getImageGenerationContext: async () => ({
+      provider: 'novelai',
+      promptDialect: 'nai_tags',
+      width: 1024,
+      height: 1024,
+    }),
+    generateImageAttachment: async payload => {
+      generatedCalls.push(payload);
+      return {
+        dataUrl: 'data:image/png;base64,AAAA',
+        mime: 'image/png',
+        bytes: 4,
+        generationContext: {
+          provider: 'novelai',
+          promptDialect: 'nai_tags',
+          width: 1024,
+          height: 1024,
+        },
+      };
+    },
+    now: () => 99,
+  });
+  const args = {
+    prompt: 'yukinoshita_yukino, long black hair, school uniform, anime style',
+    subject: '雪之下雪乃',
+    subjectAliases: ['yukinoshita_yukino'],
+    target: '雪之下雪乃',
+    purpose: 'avatar',
+    appearance: 'long black hair, blue eyes',
+    outfit: 'sobu high school uniform',
+    style: 'anime style, clean lineart',
+    targetAspectRatio: '1:1',
+  };
+  const first = await getTool(tools, 'media.generate_image').execute(args, sharedContext);
+  assert.equal(first.ok, true);
+  const conflict = await getTool(tools, 'media.generate_image').execute({
+    ...args,
+    style: 'photorealistic',
+  }, sharedContext);
+  assert.equal(conflict.ok, false);
+  assert.equal(conflict.reason, 'visual_spec_conflict');
+  assert.equal(generatedCalls.length, 1, '冲突规格必须在付费生图前拦截');
+
+  const wrongAspect = await getTool(tools, 'media.generate_image').execute({
+    ...args,
+    subject: '由比滨结衣',
+    subjectAliases: ['yuigahama_yui'],
+    prompt: 'yuigahama_yui, anime style',
+    target: '由比滨结衣',
+    targetAspectRatio: '16:9',
+  }, sharedContext);
+  assert.equal(wrongAspect.ok, false);
+  assert.equal(wrongAspect.reason, 'visual_aspect_mismatch');
+  assert.equal(generatedCalls.length, 1, '宽高比不符必须在付费生图前拦截');
+  console.log('ok - media generation enforces frozen design and aspect before paid calls');
 }

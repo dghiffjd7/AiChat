@@ -1,0 +1,159 @@
+{
+  "version": 1,
+  "updatedAt": 1785411299605,
+  "threadId": "maid_v4f_observation_20260728",
+  "threadTitle": "v4f 冻结观察测试",
+  "totalInjectedTokens": 25536,
+  "pendingInjectedTokens": 0,
+  "compactionCount": 0,
+  "lastCompactionAt": 0,
+  "turns": [
+    {
+      "id": "turn_1785411299605_1",
+      "at": 1785411299605,
+      "input": "我想顺手开一套原创的现代奇幻聊天企划，名字统一带上「月影验收-0730」，这样以后我比较好整理。你直接帮我从零配好，过程中都放在后台做，不要每建一个东西就跳页面。\n\n先建一张「月影港·夜航社·月影验收-0730」角色卡，再建我的用户身份「林澄·月影验收-0730」。我是刚转进月影港高中的学生，性格冷静但不是万能主角。这里完全是我授权你补写的原创设定，不用上网，也不要把它冒充成任何作品的原作事实。\n\n主要人物只有两位：寡言、黑色短发、灰蓝眼、总穿深蓝校服外套的女生「沈岚·月影验收-0730」，以及开朗、栗色长发、琥珀眼、穿米白针织衫的女生「苏绮·月影验收-0730」。分别给她们建个人世界书和私聊；每个私聊只绑定自己的个人资料，不要让另一人的私密资料串进来。\n\n再建一本「月影港创作汇总·月影验收-0730」，汇总城市、夜航社、我和两位人物的公开设定，但只绑定到这张角色卡的创意写作会话，不能通过角色卡全局绑定泄漏到两个私聊。然后建立真群聊「夜航社·月影验收-0730」，成员是沈岚和苏绮（我作为当前用户参与即可），群聊绑定两本人物资料。\n\n请用当前图片配置给沈岚生成一个头像，再生成一张有沈岚本人出镜的私聊壁纸；两张都接受 1:1，但必须保持同一套外貌、服装和画风。提示词要自己按当前生图渠道要求写，不要让我再告诉你模型格式。生成后确实写到沈岚的头像和她的聊天室壁纸。\n\n全部完成后再一次性切换到新角色卡和新用户，并只打开「夜航社·月影验收-0730」给我看。最后如实列出已完成、没完成和你补写的原创内容；如果一轮步骤不够，就保留可继续状态，继续时不要重做已经成功的资源。",
+      "status": "interrupted",
+      "responseType": "react",
+      "message": "已执行：好的，先看看当前界面和会话信息～\n但这轮女仆没有完成最终回答：模型选择的工具不在功能白名单内（featureId=session.open，toolName=app.read_resource，该功能可用：session.open）。",
+      "toolName": "app.get_current_state",
+      "featureId": "app.state.read",
+      "title": "检查当前状态",
+      "continuable": false,
+      "continueHint": "",
+      "reactStoppedReason": "tool_not_allowed",
+      "compacted": false,
+      "compactionProtection": "unverified_observation",
+      "compactionProtectionReleasedAt": 0,
+      "compactionProtectionReleaseReason": "",
+      "structuredMemories": [
+        {
+          "kind": "resource_state",
+          "key": "",
+          "content": "created character card 月影港·夜航社·月影验收-0730",
+          "tags": [
+            "persona",
+            "persona.create"
+          ],
+          "status": "active",
+          "confidence": "verified",
+          "sourceTurnIds": [],
+          "resourceRef": {
+            "id": "persona_1785410590528_gc2vv",
+            "type": "persona"
+          },
+          "keyOrigin": "deterministic"
+        },
+        {
+          "kind": "resource_state",
+          "key": "",
+          "content": "created user 林澄·月影验收-0730",
+          "tags": [
+            "user",
+            "user.create"
+          ],
+          "status": "active",
+          "confidence": "verified",
+          "sourceTurnIds": [],
+          "resourceRef": {
+            "id": "user_1785410600011_0y3d6",
+            "type": "user"
+          },
+          "keyOrigin": "deterministic"
+        },
+        {
+          "kind": "resource_state",
+          "key": "",
+          "content": "created session 沈岚·月影验收-0730",
+          "tags": [
+            "session",
+            "session.create"
+          ],
+          "status": "active",
+          "confidence": "verified",
+          "sourceTurnIds": [],
+          "resourceRef": {
+            "id": "沈岚·月影验收-0730",
+            "type": "session"
+          },
+          "keyOrigin": "deterministic"
+        },
+        {
+          "kind": "resource_state",
+          "key": "",
+          "content": "created session 苏绮·月影验收-0730",
+          "tags": [
+            "session",
+            "session.create"
+          ],
+          "status": "active",
+          "confidence": "verified",
+          "sourceTurnIds": [],
+          "resourceRef": {
+            "id": "苏绮·月影验收-0730",
+            "type": "session"
+          },
+          "keyOrigin": "deterministic"
+        },
+        {
+          "kind": "resource_state",
+          "key": "",
+          "content": "saved worldbook 沈岚·私聊资料·月影验收-0730 (1 entries)",
+          "tags": [
+            "worldbook",
+            "worldbook.create"
+          ],
+          "status": "active",
+          "confidence": "verified",
+          "sourceTurnIds": [],
+          "resourceRef": {
+            "id": "沈岚·私聊资料·月影验收-0730",
+            "type": "worldbook"
+          },
+          "keyOrigin": "deterministic"
+        },
+        {
+          "kind": "resource_state",
+          "key": "",
+          "content": "saved worldbook 苏绮·私聊资料·月影验收-0730 (1 entries)",
+          "tags": [
+            "worldbook",
+            "worldbook.create"
+          ],
+          "status": "active",
+          "confidence": "verified",
+          "sourceTurnIds": [],
+          "resourceRef": {
+            "id": "苏绮·私聊资料·月影验收-0730",
+            "type": "worldbook"
+          },
+          "keyOrigin": "deterministic"
+        },
+        {
+          "kind": "resource_state",
+          "key": "",
+          "content": "saved worldbook 月影港创作汇总·月影验收-0730 (1 entries)",
+          "tags": [
+            "worldbook",
+            "worldbook.create"
+          ],
+          "status": "active",
+          "confidence": "verified",
+          "sourceTurnIds": [],
+          "resourceRef": {
+            "id": "月影港创作汇总·月影验收-0730",
+            "type": "worldbook"
+          },
+          "keyOrigin": "deterministic"
+        }
+      ],
+      "context": {
+        "activePage": "chat",
+        "sessionId": "平塚静",
+        "uiMode": "chat",
+        "userSelection": []
+      }
+    }
+  ],
+  "memoryRows": [],
+  "extractionBatches": []
+}

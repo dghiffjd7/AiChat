@@ -1,3 +1,5 @@
+import { annotateMaidResearchResult } from '../maid-source-grounding.js';
+
 const trim = (value, fallback = '') => {
   const text = String(value ?? '').trim();
   return text || fallback;
@@ -1155,6 +1157,17 @@ export const createWebSearchAgentTools = ({
           locale: { type: 'string', maxLength: 20 },
           provider: { type: 'string', maxLength: 40 },
           maxTextLength: { type: 'integer', minimum: 500, maximum: 12000 },
+          target: {
+            type: 'string',
+            maxLength: 160,
+            description: 'Named work/person/topic whose identity must be checked before the sources can support canon facts.',
+          },
+          targetAliases: {
+            type: 'array',
+            maxItems: 8,
+            items: { type: 'string', minLength: 1, maxLength: 120 },
+            description: 'Known alternate titles/names used to match sources to target.',
+          },
         },
       },
       execute: async (args = {}) => {
@@ -1219,7 +1232,7 @@ export const createWebSearchAgentTools = ({
             }
           }
         }
-        return {
+        return annotateMaidResearchResult({
           ...search,
           documents,
           sources: search.sources || search.results?.map(item => ({
@@ -1227,7 +1240,7 @@ export const createWebSearchAgentTools = ({
             url: trim(item.url),
             source: trim(item.source, config.provider),
           })) || [],
-        };
+        }, args);
       },
       summarizeResult: result => result?.ok === false
         ? `web research failed: ${trim(result?.reason || result?.message, 'no_results')}`

@@ -37,6 +37,7 @@ if (mode === 'isolate') {
     };
     store.loaded = true;
     await store.write();
+    await store.load();
     return { ok: true, state: store.exportState(), context: store.getContextSnapshot?.() || null };
   })()`);
   if (!isolated?.ok) throw new Error(isolated?.reason || 'failed to isolate maid conversation');
@@ -66,6 +67,7 @@ if (mode === 'isolate') {
     store.state = ${JSON.stringify(state)};
     store.loaded = true;
     await store.write();
+    await store.load();
     return { ok: true, state: store.exportState(), context: store.getContextSnapshot?.() || null };
   })()`);
   if (!restored?.ok) throw new Error(restored?.reason || 'failed to restore maid conversation');

@@ -627,3 +627,48 @@ import {
   assert.deepEqual(Object.keys(nextRegistry).sort(), ['actions', 'panels', 'stores']);
   console.log('ok - ensureDebugUiRegistry creates and normalizes registry buckets');
 }
+
+// rename 生命周期源码契约：真实 AppBridge 无法在 Node 中安全实例化（模块顶层实例化多个 store），
+// 行为验证依赖真机 CDP；此处锁定生命周期步骤存在且顺序不被意外重排/删除。
+{
+  const fs = await import('node:fs');
+  const bridgeSource = fs.readFileSync(
+    new URL('../../src/scripts/ui/bridge.js', import.meta.url),
+    'utf8',
+  );
+  const renameStart = bridgeSource.indexOf('async renameWorldInfo(');
+  assert.ok(renameStart > 0, 'renameWorldInfo 必须存在');
+  const renameEnd = bridgeSource.indexOf('async deleteWorldInfo(', renameStart);
+  const renameBody = bridgeSource.slice(renameStart, renameEnd);
+  const orderedMarkers = [
+    'await this.saveWorldInfo(to, { ...(data || {}), name: to })',
+    'this.persistWorldSessionMap()',
+    'this.persistGlobalWorldId()',
+    'await this.regex.persist()',
+    "await this.worldLifecycleHandler?.({ type: 'rename', from, to })",
+    'await this._removeWorldInfoStorage(from)',
+  ];
+  let cursor = -1;
+  for (const marker of orderedMarkers) {
+    const index = renameBody.indexOf(marker);
+    assert.ok(index >= 0, `rename 生命周期缺少步骤：${marker}`);
+    assert.ok(index > cursor, `rename 生命周期顺序被重排：${marker} 必须晚于前一步骤`);
+    cursor = index;
+  }
+  const removeStart = bridgeSource.indexOf('async _removeWorldInfoStorage(');
+  assert.ok(removeStart > 0, '_removeWorldInfoStorage 必须存在');
+  const removeBody = bridgeSource.slice(removeStart, renameStart);
+  assert.ok(
+    removeBody.includes("safeInvoke('delete_world_info'"),
+    '_removeWorldInfoStorage 必须调用原生 delete_world_info（否则旧原生文件成孤儿）',
+  );
+  assert.ok(
+    removeBody.includes('await this.worldStore.remove(target)'),
+    '_removeWorldInfoStorage 必须清理前端 worldStore 条目',
+  );
+  assert.ok(
+    removeBody.indexOf("safeInvoke('delete_world_info'") < removeBody.indexOf('await this.worldStore.remove(target)'),
+    '原生删除必须先于前端删除（真错误重抛时保持双存储一致可重试）',
+  );
+  console.log('ok - renameWorldInfo lifecycle markers stay present and ordered (incl. old native file cleanup)');
+}

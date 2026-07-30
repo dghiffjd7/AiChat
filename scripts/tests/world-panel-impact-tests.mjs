@@ -29,6 +29,10 @@ try {
       '当前会话「chat:alice」的附加世界书',
     );
     assert.equal(
+      formatWorldScopeLabel({ scope: 'session', sessionId: 'rp:persona-a', targetType: 'session_extra' }),
+      '创意写作会话「rp:persona-a」的专属世界书',
+    );
+    assert.equal(
       formatWorldScopeLabel({ scope: 'session', sessionId: 'chat:alice', targetType: 'role' }),
       '角色绑定（当前会话「chat:alice」）',
     );

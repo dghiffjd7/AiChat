@@ -1,0 +1,39 @@
+{
+  "version": 1,
+  "updatedAt": 1785422496319,
+  "threadId": "maid_v4f_observation_20260728",
+  "threadTitle": "v4f 冻结观察测试",
+  "totalInjectedTokens": 1406,
+  "pendingInjectedTokens": 0,
+  "compactionCount": 0,
+  "lastCompactionAt": 0,
+  "turns": [
+    {
+      "id": "turn_1785422496319_1",
+      "at": 1785422496319,
+      "input": "我刚切到「海贼王」这张角色卡，里面自带的世界书资料很多。\n\n你先帮我看看这张卡关联的世界书，从里面挑出适合建立长期聊天室的草帽一伙主要成员，给我一份候选清单，并简单说说你为什么选这些人。\n\n这一步先只看和整理，别创建聊天室或群聊，也别修改世界书、绑定和角色卡，页面也不用打开。\n\n另外，这种导入角色卡的聊天室直接共用角色卡自带的世界书就好，不需要为每个人新建或绑定独立世界书。",
+      "status": "succeeded",
+      "responseType": "react",
+      "message": "角色卡：共 13 项；当前为「海贼王」；本次返回：薪炎、User、苏晓彤、- juus -、user、异世界、女仆能力测试、《凡人修仙传V10.91》…；关联资源：薪炎：未记录关联资源；User：未记录关联资源；苏晓彤：世界书「苏晓彤」（已启用）、正则集「re-set-1778774487358-a9ff50」；- juus -：世界书「- juus -」（已启用）、正则集「re-set-1778841742818-d0689f」；user：未记录关联资源；异世界：世界书「异世界 世界书」（已启用）；女仆能力测试：世界书「测试世界书」（已启用）；《凡人修仙传V10.91》：世界书「《凡人修仙传V10.91》」（已启用）、正则集「re-set-1783693120661-18abfc」…",
+      "toolName": "app.get_current_state",
+      "featureId": "app.state.read",
+      "title": "查看当前APP状态",
+      "continuable": false,
+      "continueHint": "",
+      "reactStoppedReason": "",
+      "compacted": false,
+      "compactionProtection": "",
+      "compactionProtectionReleasedAt": 0,
+      "compactionProtectionReleaseReason": "",
+      "structuredMemories": [],
+      "context": {
+        "activePage": "chat",
+        "sessionId": "rp:persona_1783693152632_sunpt",
+        "uiMode": "chat",
+        "userSelection": []
+      }
+    }
+  ],
+  "memoryRows": [],
+  "extractionBatches": []
+}

@@ -13,6 +13,7 @@ import {
 } from '../../src/scripts/agent/app-feature-catalog.js';
 import { createAppNavigationAgentTools } from '../../src/scripts/agent/tools/app-navigation-tools.js';
 import { createAppSessionAgentTools } from '../../src/scripts/agent/tools/app-session-tools.js';
+import { createGroupChatAgentTools } from '../../src/scripts/agent/tools/group-chat-agent-tools.js';
 import { createAppContentAgentTools } from '../../src/scripts/agent/tools/app-content-tools.js';
 import { createMaidMediaAssetTools } from '../../src/scripts/agent/tools/media-asset-tools.js';
 import { createAppUiCaptureTools } from '../../src/scripts/agent/tools/app-ui-capture-tools.js';
@@ -104,6 +105,11 @@ const escapeRegex = value => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'
 }
 
 {
+  const generateImage = findAppFeature('media.generate_image');
+  assert.deepEqual(generateImage.tools, ['media.generate_image']);
+  assert.equal(generateImage.directAction, 'media.generate_image');
+  assert.match(generateImage.argsHint, /subjectAliases/);
+  assert.match(generateImage.argsHint, /不要传 width\/height/);
   const results = searchAppFeatures('把这张图设为角色头像', { limit: 3 });
   assert.equal(results[0].id, 'persona.avatar.set');
   const wallpaper = findAppFeature('设置聊天室壁纸');
@@ -119,7 +125,11 @@ const escapeRegex = value => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'
   assert.match(personaAvatar.argsHint, /media\.generate_image/);
   assert.equal(searchAppFeatures('生成一张头像', { limit: 3 })[0].id, 'contact.avatar.set');
   assert.equal(searchAppFeatures('生成一张角色头像', { limit: 3 })[0].id, 'persona.avatar.set');
-  console.log('ok - app feature catalog exposes maid image asset features (incl. generated avatars)');
+  assert.ok(
+    searchAppFeatures('调用生图工具生成一张图片附件', { limit: 3 })
+      .some(feature => feature.id === 'media.generate_image'),
+  );
+  console.log('ok - app feature catalog exposes direct image generation and target-specific image assets');
 }
 
 {
@@ -129,6 +139,19 @@ const escapeRegex = value => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'
   assert.match(feature.argsHint, /preview/);
   assert.equal(searchAppFeatures('给这些房都绑上世界书', { limit: 3 })[0].id, 'worldbook.bind_sessions');
   console.log('ok - worldbook binding feature exposes the batch primitive');
+}
+
+{
+  const createGroup = findAppFeature('group.create');
+  const updateMembers = findAppFeature('group.members.update');
+  const openGroupCreate = findAppFeature('group.create.open');
+  assert.deepEqual(createGroup.tools, ['group.create']);
+  assert.deepEqual(updateMembers.tools, ['group.update_members']);
+  assert.deepEqual(openGroupCreate.tools, ['app.open_panel']);
+  assert.equal(searchAppFeatures('创建一个叫侍奉部的群聊', { limit: 1 })[0].id, 'group.create');
+  assert.equal(searchAppFeatures('给侍奉部群聊加上雪乃和结衣', { limit: 1 })[0].id, 'group.members.update');
+  assert.equal(searchAppFeatures('打开建群界面', { limit: 1 })[0].id, 'group.create.open');
+  console.log('ok - group chat catalog separates real group creation, member editing, and create-panel navigation');
 }
 
 {
@@ -239,6 +262,7 @@ const escapeRegex = value => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'
       config: options => openedPanels.push(['config', options]),
       session: options => openedPanels.push(['session', options]),
       'session-config': options => openedPanels.push(['session-config', options]),
+      'group-create': options => openedPanels.push(['group-create', options]),
       worldbook: options => openedPanels.push(['worldbook', options]),
       memory: options => openedPanels.push(['memory', options]),
       variables: options => openedPanels.push(['variables', options]),
@@ -334,6 +358,7 @@ const escapeRegex = value => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'
     getWorldIdsForSession: async () => ['CatalogWorld'],
     getGlobalWorldId: async () => '',
     assignWorldToPersona: async (personaId, worldId, options) => boundWorlds.push({ personaId, worldId, options }),
+    getRpSessionId: personaId => `rp:${personaId}`,
     bindWorldToSession: async (sessionId, worldIds, options) => boundWorlds.push({ sessionId, worldIds, options }),
     enterChatRoom: async id => {
       openedSessions.push(id);
@@ -414,6 +439,29 @@ const escapeRegex = value => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'
       bytes: 120,
       transformed: true,
     }),
+    generateImageAttachment: async () => ({
+      dataUrl: 'data:image/png;base64,R0VORVJBVEVE',
+      width: 1024,
+      height: 1024,
+      mime: 'image/png',
+      bytes: 9,
+      generationContext: {
+        provider: 'novelai',
+        model: 'nai-diffusion-4-5-full',
+        promptDialect: 'nai_tags',
+        promptLanguage: 'en',
+        width: 1024,
+        height: 1024,
+      },
+    }),
+    getImageGenerationContext: async () => ({
+      provider: 'novelai',
+      model: 'nai-diffusion-4-5-full',
+      promptDialect: 'nai_tags',
+      promptLanguage: 'en',
+      width: 1024,
+      height: 1024,
+    }),
     saveWallpaper: async payload => ({ path: `wallpapers/${payload.sessionId}/wallpaper.jpg`, bytes: 120 }),
     refreshChatAndContacts: options => refreshed.push(options),
     applyChatSettings: () => {},
@@ -493,7 +541,31 @@ const escapeRegex = value => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'
       return { ok: true, momentId: 'catalog-moment', commentsRequested: payload.generateComments === true };
     },
   });
-  const tools = [...navTools, ...sessionTools, ...contentTools, ...mediaTools, ...captureTools, ...webTools, ...todoTools, ...maidMemoryTools, ...guideTools, ...formatTools, ...momentsTools];
+  const groupTools = createGroupChatAgentTools({
+    contactsStore: {
+      listContacts: () => Array.from(contacts.values()),
+      getContact: id => contacts.get(id) || null,
+      upsertContact: contact => {
+        contacts.set(contact.id, { ...(contacts.get(contact.id) || {}), ...contact });
+        return contacts.get(contact.id);
+      },
+    },
+    chatStore: {
+      getCurrent: () => current,
+      switchSession: id => {
+        current = id;
+      },
+      appendMessage: (message, id = current) => {
+        const list = messages.get(id) || [];
+        list.push({ ...message });
+        messages.set(id, list);
+      },
+    },
+    refreshChatAndContacts: options => refreshed.push(options),
+    createGroupId: () => 'group:catalog',
+    now: () => 1000,
+  });
+  const tools = [...navTools, ...sessionTools, ...groupTools, ...contentTools, ...mediaTools, ...captureTools, ...webTools, ...todoTools, ...maidMemoryTools, ...guideTools, ...formatTools, ...momentsTools];
   const maidAttachments = [{ id: 'catalog-image', kind: 'image', url: 'data:image/png;base64,AAAA', name: 'catalog.png' }];
 
   for (const feature of listAppFeatures()) {
@@ -542,6 +614,36 @@ const escapeRegex = value => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'
       assert.equal(result.opened, true);
       return;
     }
+    if (feature.id === 'group.create') {
+      const result = await getTool(tools, 'group.create').execute({
+        name: 'CatalogGroup',
+        members: ['B', 'CatalogRoom'],
+      }, {
+        toolSafety: {
+          decision: 'allow',
+          request: { kind: 'group.create' },
+        },
+      });
+      assert.equal(result.ok, true);
+      assert.equal(result.created, true);
+      assert.equal(result.verified, true);
+      return;
+    }
+    if (feature.id === 'group.members.update') {
+      const result = await getTool(tools, 'group.update_members').execute({
+        group: 'CatalogGroup',
+        removeMembers: ['CatalogRoom'],
+      }, {
+        toolSafety: {
+          decision: 'allow',
+          request: { kind: 'group.update_members' },
+        },
+      });
+      assert.equal(result.ok, true);
+      assert.equal(result.changed, true);
+      assert.equal(result.verified, true);
+      return;
+    }
     if (feature.id === 'persona.create') {
       const result = await getTool(tools, 'persona.create').execute({ name: 'CatalogRole', setActive: true });
       assert.equal(result.ok, true);
@@ -558,6 +660,23 @@ const escapeRegex = value => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'
       const result = await getTool(tools, 'persona.switch').execute({ target: 'CatalogRole' });
       assert.equal(result.ok, true);
       assert.equal(result.switched, true);
+      return;
+    }
+    if (feature.id === 'media.generate_image') {
+      const result = await getTool(tools, 'media.generate_image').execute({
+        prompt: '1girl, catalog_subject, solo, school_uniform',
+        negativePrompt: 'lowres, blurry',
+        subject: '目录测试人物',
+        subjectAliases: ['catalog_subject'],
+        target: 'Beta',
+        purpose: 'avatar',
+        appearance: 'black hair, blue eyes',
+        outfit: 'school uniform',
+        style: 'anime',
+        targetAspectRatio: '1:1',
+      }, {});
+      assert.equal(result.ok, true);
+      assert.match(result.attachmentId, /^generated-/);
       return;
     }
     if (feature.id === 'persona.avatar.set') {
@@ -673,6 +792,21 @@ const escapeRegex = value => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'
       assert.equal(result.ok, true);
       assert.equal(result.preview, true);
       assert.equal(result.requestedCount, 2);
+      return;
+    }
+    if (feature.id === 'worldbook.bind_rp_session') {
+      const result = await getTool(tools, 'worldbook.bind_rp_session').execute({
+        personaName: 'CatalogRole',
+        worldbookId: 'CatalogWorld',
+      });
+      assert.equal(result.ok, true);
+      assert.equal(result.scope, 'rp_only');
+      assert.equal(result.rpSessionId, 'rp:persona-1');
+      assert.deepEqual(boundWorlds.at(-1), {
+        sessionId: 'rp:persona-1',
+        worldIds: ['CatalogWorld'],
+        options: { silent: false },
+      });
       return;
     }
     if (feature.id === 'worldbook.read') {

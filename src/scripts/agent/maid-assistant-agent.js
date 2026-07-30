@@ -6,6 +6,28 @@ import {
   classifyMaidRunFailure,
   classifyMaidToolFailure,
 } from './maid-failure-codes.js';
+import {
+  buildMaidRunContinuationSnapshot,
+  extractMaidResumeRunId,
+  findMaidRunContinuationSuccess,
+  maidContinuationRefsExistInOutput,
+  resolveMaidRunContinuationFromRun,
+} from './maid-run-continuation.js';
+import {
+  buildMaidImportedCardExecutionMessage,
+  buildMaidImportedCardPreviewMessage,
+  buildMaidImportedCardWorkflowSnapshot,
+  classifyMaidImportedCardConfirmation,
+  classifyMaidImportedCardWorkflowIntent,
+  normalizeMaidImportedCardClassification,
+  resolvePendingMaidImportedCardWorkflow,
+  validateMaidImportedCardWorkflowSnapshot,
+} from './maid-imported-card-workflow.js';
+import { buildMaidSourceGroundingContext } from './maid-source-grounding.js';
+import {
+  createMaidVisualSpecLedger,
+  normalizeMaidVisualSpecLedger,
+} from './maid-visual-spec.js';
 
 const trim = (value, fallback = '') => {
   const text = String(value ?? '').trim();
@@ -107,9 +129,30 @@ const MAID_SCOPED_NEGATED_NAVIGATION_PATTERN = /(?:不要|不得|别|无需|不�
 const MAID_GUIDE_PRESENTATION_PATTERN = /(一步一步|一步步|逐步|教我|指导我|引导我|带着我|手把手|怎么(?:操作|设置|配置|创建|使用)|如何(?:操作|设置|配置|创建|使用))/iu;
 const MAID_NEGATED_GUIDE_PATTERN = /(?:不要|别|无需|不用|取消|停止)\s*(?:再)?(?:引导|指导|教学|教程|一步一步|一步步)/iu;
 const MAID_REVEAL_PRESENTATION_PATTERN = /(打开(?:给我看)?|进入(?:这个|该|对应)?(?:界面|页面|聊天室|会话)?|跳转(?:到)?|带我(?:去)?看(?:看)?|带我去|切到(?:对应)?(?:界面|页面|聊天室|会话)|(?:做完|完成|处理完|创建后|结束后).{0,16}(?:打开|进入|跳转|带我去|显示(?:界面|页面)))/iu;
+const MAID_DEFERRED_REVEAL_PRESENTATION_PATTERN = /(?:(?:全部|都|整体|一切).{0,4})?(?:做完|完成|处理完|创建后|结束后|配置完|准备好)(?:以后|之后|后)?.{0,72}(?:打开|进入|跳转|带我(?:去)?看|显示(?:界面|页面)|切(?:换)?到)/iu;
+
+const hasMaidDeferredResultReveal = (input = '') => (
+  String(input ?? '')
+    .split(/[，,。；;！？!?\n]/u)
+    .map(item => item.trim())
+    .filter(Boolean)
+    .some(clause => (
+      MAID_DEFERRED_REVEAL_PRESENTATION_PATTERN.test(clause) &&
+      !MAID_SCOPED_NEGATED_NAVIGATION_PATTERN.test(clause)
+    ))
+);
 
 export const classifyMaidPresentationIntent = (input = '') => {
   const text = String(input ?? '').normalize('NFKC').trim();
+  const explicitGuide = MAID_GUIDE_PRESENTATION_PATTERN.test(text) &&
+    !MAID_NEGATED_GUIDE_PATTERN.test(text);
+  if (text && !explicitGuide && hasMaidDeferredResultReveal(text)) {
+    return {
+      mode: 'reveal',
+      source: 'maid_user_request',
+      reason: 'explicit_deferred_result_reveal',
+    };
+  }
   if (
     !text ||
     MAID_BACKGROUND_PRESENTATION_PATTERN.test(text) ||
@@ -121,7 +164,7 @@ export const classifyMaidPresentationIntent = (input = '') => {
       reason: text ? 'explicit_background_or_no_navigation' : 'default_background',
     };
   }
-  if (MAID_GUIDE_PRESENTATION_PATTERN.test(text) && !MAID_NEGATED_GUIDE_PATTERN.test(text)) {
+  if (explicitGuide) {
     return {
       mode: 'guide',
       source: 'maid_user_request',
@@ -154,6 +197,7 @@ const clone = (value) => {
 
 const MAID_OPTIONAL_NAVIGATION_TOOLS = new Set([
   'session.create',
+  'group.create',
 ]);
 
 export const applyMaidPresentationPolicy = (plan = {}, presentationIntent = {}) => {
@@ -164,7 +208,13 @@ export const applyMaidPresentationPolicy = (plan = {}, presentationIntent = {}) 
   if (MAID_OPTIONAL_NAVIGATION_TOOLS.has(trim(next?.toolName))) {
     next.args = {
       ...(isPlainObject(next?.args) ? next.args : {}),
-      open: mode === 'reveal' || mode === 'guide',
+      open: mode === 'guide',
+    };
+  }
+  if (['persona.create', 'user.create'].includes(trim(next?.toolName))) {
+    next.args = {
+      ...(isPlainObject(next?.args) ? next.args : {}),
+      setActive: mode === 'guide',
     };
   }
   if (trim(next?.toolName) === 'chat.send_message') {
@@ -317,6 +367,8 @@ const createMaidRunTracker = ({ agentTaskRuntime = null, input = '', context = {
     typeof agentTaskRuntime.finishStep === 'function',
   );
   let run = null;
+  const continuation = isPlainObject(context?.runContinuation) ? context.runContinuation : null;
+  const trackedGoal = trim(continuation?.goal || input);
   const ensureRun = () => {
     if (!canTrack || run) return run;
     run = agentTaskRuntime.startRun({
@@ -324,9 +376,16 @@ const createMaidRunTracker = ({ agentTaskRuntime = null, input = '', context = {
       source: 'maid-assistant',
       trigger: 'manual',
       sessionId: trim(context.sessionId),
-      title: truncateForRun(input, 80),
-      summary: truncateForRun(input, 200),
-      metadata: { goal: trim(input) },
+      title: truncateForRun(trackedGoal, 80),
+      summary: truncateForRun(trackedGoal, 200),
+      metadata: {
+        goal: trackedGoal,
+        ...(trim(continuation?.sourceRunId) ? {
+          resumedFromRunId: trim(continuation.sourceRunId),
+          continuationVersion: trim(continuation.version),
+          todos: clone(continuation.remainingTodos || []),
+        } : {}),
+      },
     });
     return run;
   };
@@ -358,40 +417,78 @@ const createMaidRunTracker = ({ agentTaskRuntime = null, input = '', context = {
       toolCallCount: countExecutedMaidToolCalls(result?.steps),
       aborted: failureCode === 'user_aborted',
     });
+    const continuationSnapshot = result?.continuable === true
+      ? buildMaidRunContinuationSnapshot({
+          run: agentTaskRuntime?.getRun?.(run.id) || run,
+          result,
+          previousSnapshot: continuation,
+          visualSpecLedger: context?.maidVisualSpecLedger,
+        })
+      : null;
+    const visualSpecLedger = normalizeMaidVisualSpecLedger(context?.maidVisualSpecLedger);
+    const hasVisualSpecs = Object.keys(visualSpecLedger.specs).length > 0;
+    const summary = truncateForRun(
+      result?.message || result?.reason || (ok ? '女仆已完成。' : '女仆执行失败。'),
+    );
+    const metadata = {
+      goal: trackedGoal,
+      ...(trim(continuation?.sourceRunId) ? {
+        resumedFromRunId: trim(continuation.sourceRunId),
+        continuationVersion: trim(continuation.version),
+      } : {}),
+      ...(continuationSnapshot ? { continuationSnapshot } : {}),
+      ...(hasVisualSpecs ? { visualSpecLedger } : {}),
+      maidStatus: trim(result?.status),
+      responseType: trim(result?.responseType),
+      reason: trim(result?.reason),
+      failureCode,
+      continuable: result?.continuable === true,
+      continueHint: trim(result?.continueHint),
+      stepCount: countArrayItems(result?.steps),
+      reactStoppedReason: trim(result?.reactStoppedReason),
+      lastCandidateSnapshotId: trim(result?.capabilityRouting?.lastCandidateSnapshotId),
+      candidateEffectiveMode: trim(result?.capabilityRouting?.effectiveMode),
+      candidateDecisionCount: Number(result?.capabilityRouting?.decisionCount || 0) || 0,
+      candidateValidSelectionCount: Number(result?.capabilityRouting?.validSelectionCount || 0) || 0,
+      candidateHitCount: Number(result?.capabilityRouting?.hitCount || 0) || 0,
+      candidateAllCovered: result?.capabilityRouting?.validSelectionCount > 0
+        ? result?.capabilityRouting?.allValidSelectionsCovered === true
+        : null,
+      maidContextVersion: trim(maidContext?.maidContextVersion),
+      maidContextTokenCount: Number(maidContext?.tokenCount || 0) || 0,
+      maidContextHistoryTokenCount: Number(maidContext?.historyTokenCount || 0) || 0,
+      maidContextMemoryTokenCount: Number(maidContext?.memoryTokenCount || 0) || 0,
+      maidContextMemoryIds: (Array.isArray(maidContext?.selectedMemoryIds)
+        ? maidContext.selectedMemoryIds
+        : [])
+        .map(item => trim(item))
+        .filter(Boolean)
+        .slice(0, 12),
+      ...(isPlainObject(result?.pendingWorkflow) ? {
+        pendingWorkflow: clone(result.pendingWorkflow),
+      } : {}),
+    };
+    if (
+      trim(result?.status) === 'awaiting_confirmation' &&
+      isPlainObject(result?.pendingWorkflow) &&
+      typeof agentTaskRuntime?.updateRun === 'function'
+    ) {
+      agentTaskRuntime.updateRun(run.id, {
+        status: 'waiting_permission',
+        summary,
+        errorMessage: '',
+        usage: runUsage,
+        metadata,
+      });
+      try { void agentTaskRuntime.flush?.(); } catch {}
+      return;
+    }
     agentTaskRuntime.finishRun(run.id, {
       status: ok ? 'succeeded' : 'failed',
-      summary: truncateForRun(result?.message || result?.reason || (ok ? '女仆已完成。' : '女仆执行失败。')),
+      summary,
       errorMessage: ok ? '' : truncateForRun(result?.reason || result?.message || ''),
       usage: runUsage,
-      metadata: {
-        goal: trim(input),
-        maidStatus: trim(result?.status),
-        responseType: trim(result?.responseType),
-        reason: trim(result?.reason),
-        failureCode,
-        continuable: result?.continuable === true,
-        continueHint: trim(result?.continueHint),
-        stepCount: countArrayItems(result?.steps),
-        reactStoppedReason: trim(result?.reactStoppedReason),
-        lastCandidateSnapshotId: trim(result?.capabilityRouting?.lastCandidateSnapshotId),
-        candidateEffectiveMode: trim(result?.capabilityRouting?.effectiveMode),
-        candidateDecisionCount: Number(result?.capabilityRouting?.decisionCount || 0) || 0,
-        candidateValidSelectionCount: Number(result?.capabilityRouting?.validSelectionCount || 0) || 0,
-        candidateHitCount: Number(result?.capabilityRouting?.hitCount || 0) || 0,
-        candidateAllCovered: result?.capabilityRouting?.validSelectionCount > 0
-          ? result?.capabilityRouting?.allValidSelectionsCovered === true
-          : null,
-        maidContextVersion: trim(maidContext?.maidContextVersion),
-        maidContextTokenCount: Number(maidContext?.tokenCount || 0) || 0,
-        maidContextHistoryTokenCount: Number(maidContext?.historyTokenCount || 0) || 0,
-        maidContextMemoryTokenCount: Number(maidContext?.memoryTokenCount || 0) || 0,
-        maidContextMemoryIds: (Array.isArray(maidContext?.selectedMemoryIds)
-          ? maidContext.selectedMemoryIds
-          : [])
-          .map(item => trim(item))
-          .filter(Boolean)
-          .slice(0, 12),
-      },
+      metadata,
     });
   };
   const markWaitingPermission = (pending = true) => {
@@ -545,14 +642,22 @@ const resolveReactStepBudget = ({
   } else if (toolName === 'worldbook.create' || toolName === 'worldbook.update_entries' || toolName === 'worldbook.delete_entries') {
     const batchSize = Math.max(countArrayItems(args.entries), countArrayItems(args.updates), countArrayItems(args.deletes), 1);
     recommended = Math.min(40, 14 + (batchSize * 3));
-  } else if (/^(persona|user|session|contact)\./.test(toolName)) {
+  } else if (/^(persona|user|session|contact|group)\./.test(toolName)) {
     recommended = 10;
   }
-  const maxSteps = Math.max(1, Math.min(hardMax, recommended));
+  const feature = findAppFeature(trim(plan?.featureId) || toolName);
+  const writeLike = toolName === 'maid.todo.write' || feature?.writes === true;
+  // recommended 是主任务动作额度；写任务另留一个有界尾舱给读回复验、
+  // 清单收口或模型修正。用户/构造器设置的 hardMax 仍是绝对上限。
+  const verificationReserve = writeLike ? (toolName === 'maid.todo.write' ? 4 : 2) : 0;
+  const actionSteps = Math.max(1, Math.min(hardMax, recommended));
+  const maxSteps = Math.max(1, Math.min(hardMax, actionSteps + verificationReserve));
   return {
     maxSteps,
     hardMax,
     recommended,
+    actionSteps,
+    verificationReserve: Math.max(0, maxSteps - actionSteps),
     toolName,
   };
 };
@@ -643,13 +748,200 @@ const buildPendingMaidFinalStatePlan = ({
   };
 };
 
+const getMaidRevealFinalMessage = (steps = [], decision = {}) => (
+  trim(decision?.message) ||
+  trim((Array.isArray(steps) ? steps : []).find(step => (
+    trim(step?.metadata?.workflowTransition) === 'result_reveal' &&
+    trim(step?.metadata?.revealFinalMessage)
+  ))?.metadata?.revealFinalMessage)
+);
+
+const getMaidRevealTargets = (steps = []) => {
+  const source = (Array.isArray(steps) ? steps : []).filter(step => (
+    step?.status === 'succeeded' &&
+    trim(step?.metadata?.workflowTransition) !== 'result_reveal'
+  ));
+  const personaStep = source.find(step => trim(step?.toolName) === 'persona.create');
+  const userStep = source.find(step => trim(step?.toolName) === 'user.create');
+  const groupStep = source.findLast(step => trim(step?.toolName) === 'group.create');
+  const sessionStep = source.find(step => trim(step?.toolName) === 'session.create');
+  const personaId = trim(personaStep?.output?.personaId || personaStep?.output?.profile?.id);
+  const userId = trim(userStep?.output?.userId || userStep?.output?.profile?.id);
+  const groupSessionId = trim(
+    groupStep?.output?.groupId ||
+    groupStep?.output?.group?.id ||
+    groupStep?.output?.sessionId,
+  );
+  const privateSessionId = trim(
+    (Array.isArray(sessionStep?.output?.sessionIds) ? sessionStep.output.sessionIds[0] : '') ||
+    (Array.isArray(sessionStep?.output?.sessions)
+      ? sessionStep.output.sessions[0]?.sessionId || sessionStep.output.sessions[0]?.id
+      : '') ||
+    sessionStep?.output?.sessionId ||
+    (Array.isArray(sessionStep?.args?.names) ? sessionStep.args.names[0] : '') ||
+    sessionStep?.args?.name,
+  );
+  return {
+    personaId,
+    userId,
+    sessionId: groupSessionId || privateSessionId,
+  };
+};
+
+const MAID_PERSONA_BUILD_REQUEST_PATTERN = /(?:(?:创建|建立|新建|导入|建|配好)(?:(?!(?:删除|清理|移除|归档)).){0,40}(?:角色卡|角色档案|人物卡)|(?:角色卡|角色档案|人物卡)(?:(?!(?:删除|清理|移除|归档)).){0,24}(?:创建|建立|新建|导入|建|配好)|\b(?:create|build|import)\b.{0,40}\b(?:persona|character\s*card)\b)/isu;
+const MAID_PERSONA_SCOPED_BUILD_REQUEST_PATTERN = /(?:(?:创建|建立|新建|新增|生成|配好|建|开)(?:(?!(?:角色卡|角色档案|人物卡|删除|清理|移除|归档|查看|读取|检查|保留|取消)).){0,48}(?:私聊|单聊|聊天室|会话|房间|群聊|群组|联系人)|\b(?:create|build|add)\b(?:(?!\b(?:persona|character\s*card|delete|remove|inspect|read|keep)\b).){0,48}\b(?:private\s*chat|chat|session|room|group|contact)\b)/isu;
+
+const hasMaidPersonaScopedBuildRequest = (input = '') => {
+  const text = String(input ?? '').normalize('NFKC');
+  return MAID_PERSONA_BUILD_REQUEST_PATTERN.test(text) &&
+    MAID_PERSONA_SCOPED_BUILD_REQUEST_PATTERN.test(text);
+};
+
+const getMaidPersonaStepTarget = (step = {}) => trim(
+  step?.output?.personaId ||
+  step?.output?.profile?.id ||
+  step?.args?.target ||
+  step?.args?.personaId ||
+  step?.args?.id ||
+  step?.args?.name,
+);
+
+const getLatestSucceededMaidPersonaSwitch = (steps = []) => (
+  (Array.isArray(steps) ? steps : []).findLast(step => (
+    step?.status === 'succeeded' &&
+    trim(step?.toolName) === 'persona.switch'
+  )) || null
+);
+
+const buildPendingMaidWorkScopePlan = ({
+  input = '',
+  steps = [],
+} = {}) => {
+  if (!hasMaidPersonaScopedBuildRequest(input)) return null;
+  const source = Array.isArray(steps) ? steps : [];
+  const personaStep = source.find(step => (
+    step?.status === 'succeeded' &&
+    trim(step?.toolName) === 'persona.create'
+  ));
+  const personaId = getMaidPersonaStepTarget(personaStep);
+  if (!personaId) return null;
+  const latestSwitch = getLatestSucceededMaidPersonaSwitch(source);
+  if (
+    latestSwitch &&
+    normalizeText(getMaidPersonaStepTarget(latestSwitch)) === normalizeText(personaId)
+  ) return null;
+  const attempted = source.some(step => (
+    trim(step?.metadata?.workflowTransition) === 'work_scope' &&
+    trim(step?.metadata?.workScopeKind) === 'persona'
+  ));
+  if (attempted) return null;
+  return {
+    ok: true,
+    action: 'tool',
+    toolName: 'persona.switch',
+    args: { target: personaId },
+    featureId: 'persona.switch',
+    title: '切换角色卡工作域',
+    response: '先切换到新角色卡的工作域，再继续建立其中的聊天室与群聊。',
+    metadata: {
+      workflowTransition: 'work_scope',
+      workScopeKind: 'persona',
+      workScopeTargetId: personaId,
+    },
+    source: 'deterministic_work_scope',
+  };
+};
+
+export const buildPendingMaidResultRevealPlan = ({
+  presentationIntent = {},
+  steps = [],
+  decision = {},
+} = {}) => {
+  if (trim(presentationIntent?.mode) !== 'reveal') return null;
+  const targets = getMaidRevealTargets(steps);
+  const completedKinds = new Set(
+    (Array.isArray(steps) ? steps : [])
+      .filter(step => (
+        step?.status === 'succeeded' &&
+        trim(step?.metadata?.workflowTransition) === 'result_reveal'
+      ))
+      .map(step => trim(step?.metadata?.revealKind))
+      .filter(Boolean),
+  );
+  const finalMessage = getMaidRevealFinalMessage(steps, decision);
+  const trace = {
+    candidateSnapshotId: trim(decision?.candidateSnapshotId),
+    retrieverVersion: trim(decision?.retrieverVersion),
+    capabilityRoutingMode: trim(decision?.capabilityRoutingMode),
+  };
+  const latestPersonaSwitch = getLatestSucceededMaidPersonaSwitch(steps);
+  const personaAlreadyActive = Boolean(
+    latestPersonaSwitch &&
+    normalizeText(getMaidPersonaStepTarget(latestPersonaSwitch)) === normalizeText(targets.personaId),
+  );
+  const buildRevealPlan = ({
+    kind,
+    toolName,
+    args,
+    featureId,
+    title,
+    response,
+  }) => ({
+    ok: true,
+    action: 'tool',
+    toolName,
+    args,
+    featureId,
+    title,
+    response,
+    metadata: {
+      workflowTransition: 'result_reveal',
+      revealKind: kind,
+      revealFinalMessage: finalMessage,
+      skipAutoVerification: true,
+    },
+    ...trace,
+  });
+  if (targets.personaId && !personaAlreadyActive && !completedKinds.has('persona')) {
+    return buildRevealPlan({
+      kind: 'persona',
+      toolName: 'persona.switch',
+      args: { target: targets.personaId },
+      featureId: 'persona.switch',
+      title: '激活主要角色卡',
+      response: '任务已经完成，我来激活主要角色卡。',
+    });
+  }
+  if (targets.userId && !completedKinds.has('user')) {
+    return buildRevealPlan({
+      kind: 'user',
+      toolName: 'user.switch',
+      args: { target: targets.userId },
+      featureId: 'user.switch',
+      title: '激活主要用户',
+      response: '继续激活这次任务的主要用户。',
+    });
+  }
+  if (targets.sessionId && !completedKinds.has('session')) {
+    return buildRevealPlan({
+      kind: 'session',
+      toolName: 'session.open',
+      args: { sessionId: targets.sessionId },
+      featureId: 'session.open',
+      title: '打开主要会话',
+      response: '最后打开一个主要会话给你查看。',
+    });
+  }
+  return null;
+};
+
 const hasMaidInteractiveActionRequest = (input = '') => {
   const text = stripNegatedMaidActionClauses(String(input ?? '').normalize('NFKC'));
   return /(打开|进入|点击|点开|按下|切换|跳转|返回|关闭|选择|勾选|滚动|展开|收起|导航|\b(?:open|enter|click|press|switch|navigate|select|scroll)\b)/iu.test(text);
 };
 
 const hasMaidDetailedReadRequest = (input = '') => (
-  /(完整|详情|描述|设定|简介|头像|正文|原文|具体(?:内容|数值|规则)?|提示词|变量[^。；;！？!?\n]{0,16}(?:值|内容)|\b(?:prompt|description|avatar|details?|content|value|base\s*url|endpoint|transport)\b)/iu
+  /(完整|详情|描述|设定|简介|头像|正文|原文|具体(?:内容|数值|规则)?|提示词|挑出|选出|筛选|候选(?:清单|名单)?|归类|归纳|分析|判断|推荐|主要(?:人物|角色|成员)|变量[^。；;！？!?\n]{0,16}(?:值|内容)|\b(?:prompt|description|avatar|details?|content|value|base\s*url|endpoint|transport)\b)/iu
     .test(String(input ?? '').normalize('NFKC'))
 );
 
@@ -1124,6 +1416,9 @@ const isContinuableReactStop = (reason = '') => {
   const normalized = trim(reason);
   return [
     'max_steps_reached',
+    'invalid_model_plan',
+    'feature_not_found',
+    'tool_not_allowed',
     'invalid_model_react_decision',
     'missing_final_message',
     'invalid_react_action',
@@ -1197,6 +1492,7 @@ const buildCatalogVerificationPlan = (plan = {}, result = {}) => {
 
 const buildAutoVerificationPlan = (plan = {}, output = {}) => {
   const toolName = trim(plan?.toolName);
+  if (trim(plan?.metadata?.verificationFor) || plan?.metadata?.skipAutoVerification === true) return null;
   const result = unwrapToolOutputResult(output);
   if (!isPlainObject(result) || result.ok === false) return null;
   if (result.reusedVerifiedAction === true) return null;
@@ -1227,6 +1523,68 @@ const buildAutoVerificationPlan = (plan = {}, output = {}) => {
   }
   return buildCatalogVerificationPlan(plan, result);
 };
+
+const resolveCrossRunResumePlan = ({
+  plan = {},
+  continuation = null,
+  steps = [],
+} = {}) => {
+  if (!isPlainObject(continuation) || !trim(plan?.toolName)) return null;
+  const previous = findMaidRunContinuationSuccess(
+    continuation,
+    plan.toolName,
+    isPlainObject(plan?.args) ? plan.args : {},
+  );
+  if (!previous || !Array.isArray(previous.resourceRefs) || !previous.resourceRefs.length) return null;
+  const priorVerification = (Array.isArray(steps) ? steps : []).findLast(step => (
+    trim(step?.metadata?.crossRunArgsDigest) === previous.argsDigest &&
+    trim(step?.metadata?.crossRunSourceRunId) === trim(continuation.sourceRunId)
+  ));
+  if (priorVerification) {
+    return maidContinuationRefsExistInOutput(previous.resourceRefs, priorVerification.output)
+      ? { status: 'verified', previous, verificationStep: priorVerification }
+      : { status: 'missing', previous, verificationStep: priorVerification };
+  }
+  const verificationPlan = buildAutoVerificationPlan(plan, {
+    status: 'succeeded',
+    result: previous.result || {},
+  });
+  if (!verificationPlan) return null;
+  return {
+    status: 'verify',
+    previous,
+    verificationPlan: {
+      ...verificationPlan,
+      source: 'cross_run_resume_verification',
+      response: '我先按上一轮保存的稳定 ID 复验资源，确认仍存在后再继续。',
+      metadata: {
+        ...(isPlainObject(verificationPlan.metadata) ? verificationPlan.metadata : {}),
+        crossRunArgsDigest: previous.argsDigest,
+        crossRunSourceRunId: trim(continuation.sourceRunId),
+        expectedResourceRefs: clone(previous.resourceRefs),
+      },
+    },
+  };
+};
+
+const buildReusedCrossRunExecution = (match = {}) => ({
+  output: {
+    toolName: trim(match?.previous?.toolName),
+    status: 'succeeded',
+    result: {
+      ...(isPlainObject(match?.previous?.result) ? clone(match.previous.result) : {}),
+      ok: true,
+      reusedVerifiedAction: true,
+      localToolExecutionSkipped: true,
+      reason: 'cross_run_action_already_verified',
+      message: '上一轮的同一写动作已按稳定 ID 复验仍然有效；本次没有重复执行。',
+    },
+    summary: 'cross-run action already exists and was verified; duplicate execution skipped',
+  },
+  guided: false,
+  guide: null,
+  message: '',
+});
 
 const normalizeEntryTitle = (entry = {}) => compactText(
   entry?.entryTitle ||
@@ -1354,6 +1712,78 @@ const buildReusedSessionCreateExecution = (match = {}) => ({
       message: '同一组聊天室已在本轮完成幂等创建并通过 session.list 验证；本次重复调用未执行，请继续下一个未完成目标。',
     },
     summary: 'session.create already completed and verified; duplicate execution skipped',
+  },
+  guided: false,
+  guide: null,
+  message: '',
+});
+
+const hasExplicitGeneratedMediaVariantRequest = (input = '') => (
+  /(?:(?:多|几|两|三|四|五|六|七|八|九|[2-9])(?:张|幅|个)(?:候选|版本|方案|图|图片|头像|壁纸)|(?:多个版本|多种方案|候选图|候选图片|再生成|重新生成|重画|换一张|另一张))/u
+    .test(String(input ?? '').normalize('NFKC'))
+);
+
+const getGeneratedMediaKey = (args = {}) => {
+  const target = normalizeText(args?.target || args?.subject);
+  const purpose = trim(args?.purpose).toLowerCase();
+  return target && purpose ? `${target}:${purpose}` : '';
+};
+
+const getGeneratedMediaWriteTools = (purpose = '') => {
+  if (purpose === 'avatar') return new Set(['contact.set_avatar', 'persona.set_avatar']);
+  if (purpose === 'wallpaper') return new Set(['session.set_wallpaper']);
+  return new Set();
+};
+
+const findAppliedGeneratedMedia = ({
+  input = '',
+  plan = {},
+  steps = [],
+} = {}) => {
+  if (
+    trim(plan?.toolName) !== 'media.generate_image' ||
+    hasExplicitGeneratedMediaVariantRequest(input)
+  ) return null;
+  const key = getGeneratedMediaKey(plan?.args);
+  const purpose = trim(plan?.args?.purpose).toLowerCase();
+  const writeTools = getGeneratedMediaWriteTools(purpose);
+  if (!key || !writeTools.size) return null;
+  const source = Array.isArray(steps) ? steps : [];
+  for (let index = source.length - 1; index >= 0; index -= 1) {
+    const generatedStep = source[index];
+    if (
+      generatedStep?.status !== 'succeeded' ||
+      trim(generatedStep?.toolName) !== 'media.generate_image' ||
+      getGeneratedMediaKey(generatedStep?.args) !== key
+    ) continue;
+    const attachmentId = trim(generatedStep?.output?.attachmentId);
+    if (!attachmentId) continue;
+    const appliedStep = source.slice(index + 1).find(step => (
+      step?.status === 'succeeded' &&
+      writeTools.has(trim(step?.toolName)) &&
+      trim(step?.args?.attachmentId) === attachmentId
+    ));
+    if (appliedStep) return { generatedStep, appliedStep, attachmentId };
+  }
+  return null;
+};
+
+const buildReusedGeneratedMediaExecution = (match = {}) => ({
+  output: {
+    toolName: 'media.generate_image',
+    status: 'succeeded',
+    result: {
+      ...(isPlainObject(match?.generatedStep?.output) ? clone(match.generatedStep.output) : {}),
+      ok: true,
+      attachmentId: trim(match?.attachmentId),
+      reusedVerifiedAction: true,
+      localToolExecutionSkipped: true,
+      alreadyApplied: true,
+      appliedByTool: trim(match?.appliedStep?.toolName),
+      reason: 'generated_media_already_applied',
+      message: '同一对象与用途的图片已经生成并成功写回；本次未重复产生计费生图调用，请继续下一个未完成目标。',
+    },
+    summary: 'generated media already applied; duplicate billed generation skipped',
   },
   guided: false,
   guide: null,
@@ -1775,7 +2205,7 @@ export const planMaidAssistantCommand = (input = '', context = {}) => {
   const normalized = normalizeText(text);
   const compact = compactText(text);
   const presentationIntent = classifyMaidPresentationIntent(text);
-  const shouldOpenOptionalResult = presentationIntent.mode === 'reveal' || presentationIntent.mode === 'guide';
+  const shouldOpenOptionalResult = presentationIntent.mode === 'guide';
 
   if (compact.includes('会话配置') || compact.includes('聊天室配置') || compact.includes('配置聊天室')) {
     return buildPlan({
@@ -2004,10 +2434,11 @@ export const createMaidAssistantAgent = ({
   capabilityRoutingRuntime = null,
   planner = requireAiPlanner,
   reactPlanner = null,
+  importedCardClassifier = null,
   chatResponder = null,
   guidedActionRuntime = null,
   prepareConversationContext = null,
-  maxReactSteps = 40,
+  maxReactSteps = 48,
   repeatedFailureLimit = 3,
   logger = console,
 } = {}) => {
@@ -2142,12 +2573,963 @@ export const createMaidAssistantAgent = ({
     };
   };
 
+  const makeImportedCardWorkflowPlan = ({
+    toolName = '',
+    args = {},
+    featureId = '',
+    title = '',
+    response = '',
+    phase = '',
+  } = {}) => ({
+    ok: true,
+    action: 'tool',
+    toolName,
+    args,
+    featureId,
+    title,
+    response,
+    source: 'bounded_imported_card_workflow',
+    metadata: {
+      workflowTransition: 'imported_card_session_setup',
+      workflowPhase: phase,
+    },
+  });
+
+  const runImportedCardWorkflowTool = async ({
+    plan = {},
+    context = {},
+    tracker = null,
+    steps = [],
+    authorizePlan = null,
+  } = {}) => {
+    const executablePlan = typeof authorizePlan === 'function'
+      ? authorizePlan(plan, steps)
+      : plan;
+    let execution = null;
+    try {
+      execution = await executePlan(executablePlan, context, tracker);
+    } catch (error) {
+      logger?.warn?.('maid imported-card workflow tool failed', error);
+      execution = {
+        output: makeToolErrorOutput(executablePlan, error),
+        guided: false,
+        guide: null,
+        message: '',
+      };
+    }
+    const output = execution?.output ?? execution;
+    const ok = isToolOutputOk(output);
+    steps.push(buildReactStepSnapshot({
+      index: steps.length + 1,
+      plan: executablePlan,
+      execution,
+      output,
+      ok,
+    }));
+    return {
+      ok,
+      plan: executablePlan,
+      execution,
+      output,
+      result: unwrapToolOutputResult(output),
+    };
+  };
+
+  const importedCardWorkflowFailure = ({
+    input = '',
+    reason = 'imported_card_workflow_failed',
+    message = '导入角色卡建房流程未能继续。',
+    steps = [],
+    output = null,
+    status = 'failed',
+  } = {}) => ({
+    ok: false,
+    status,
+    responseType: 'workflow',
+    input: trim(input),
+    reason,
+    message,
+    steps: clone(steps),
+    output: clone(output),
+  });
+
+  const resolveImportedCardPersona = (result = {}, intent = {}) => {
+    const items = Array.isArray(result?.items) ? result.items : [];
+    const targetName = trim(intent?.targetPersonaName);
+    if (targetName) {
+      const targetKey = compactText(targetName);
+      const matches = items.filter(item => (
+        compactText(item?.id) === targetKey || compactText(item?.name) === targetKey
+      ));
+      if (matches.length === 1) return { persona: matches[0], reason: '' };
+      return {
+        persona: null,
+        reason: matches.length > 1 ? 'persona_target_ambiguous' : 'persona_target_not_found',
+      };
+    }
+    const activeId = trim(result?.activeId);
+    const active = items.find(item => (
+      item?.active === true || (activeId && trim(item?.id) === activeId)
+    )) || null;
+    if (active) return { persona: active, reason: '' };
+    return {
+      persona: null,
+      reason: items.length > 1 ? 'persona_target_required' : 'active_persona_not_found',
+    };
+  };
+
+  const isAmbiguousImportedCardEntry = (entry = {}) => {
+    const title = compactText(entry?.title || entry?.name || entry?.id);
+    const keys = [
+      ...(Array.isArray(entry?.keys) ? entry.keys : []),
+      ...(Array.isArray(entry?.secondaryKeys) ? entry.secondaryKeys : []),
+    ].map(item => trim(item)).filter(Boolean);
+    return (
+      /^(?:角色|人物|角色设定|人物设定|角色资料|人物资料|character|profile|设定)$/iu.test(title) ||
+      (!keys.length && /^(?:entry|条目|资料)\d*$/iu.test(title))
+    );
+  };
+
+  const runImportedCardPreviewWorkflow = async ({
+    input = '',
+    intent = {},
+    context = {},
+    tracker = null,
+    authorizePlan = null,
+  } = {}) => {
+    const steps = [];
+    if (intent?.requestedStrategy === 'isolated_session_worldbooks') {
+      return importedCardWorkflowFailure({
+        input,
+        status: 'needs_input',
+        reason: 'isolated_worldbook_strategy_not_supported_in_imported_card_workflow',
+        message: '这张导入卡已有共用世界书；当前有界流程只支持安全继承。若确实要为每个聊天室建立隔离世界书，请另行明确每位人物的隔离范围。',
+      });
+    }
+    if (typeof importedCardClassifier !== 'function') {
+      return importedCardWorkflowFailure({
+        input,
+        status: 'unsupported',
+        reason: 'imported_card_classifier_unavailable',
+        message: '导入角色卡的人物分类器尚未配置，未执行任何写入。',
+      });
+    }
+
+    const personaRead = await runImportedCardWorkflowTool({
+      plan: makeImportedCardWorkflowPlan({
+        toolName: 'app.read_resource',
+        args: {
+          resource: 'persona',
+          ...(trim(intent?.targetPersonaName) ? { name: trim(intent.targetPersonaName) } : {}),
+          include: ['associations'],
+        },
+        featureId: 'app.resource.read',
+        title: '读取目标角色卡关联资源',
+        response: '先确认目标角色卡及其关联世界书。',
+        phase: 'read_persona',
+      }),
+      context,
+      tracker,
+      steps,
+      authorizePlan,
+    });
+    if (!personaRead.ok) {
+      return importedCardWorkflowFailure({
+        input,
+        reason: 'persona_read_failed',
+        message: summarizeToolFailure(personaRead.output),
+        steps,
+        output: personaRead.result,
+      });
+    }
+    const resolvedPersona = resolveImportedCardPersona(personaRead.result, intent);
+    if (!resolvedPersona.persona) {
+      return importedCardWorkflowFailure({
+        input,
+        status: 'needs_input',
+        reason: resolvedPersona.reason,
+        message: resolvedPersona.reason === 'persona_target_ambiguous'
+          ? '找到多张同名角色卡，请先明确要处理的角色卡 ID。'
+          : '没有找到唯一的目标角色卡；请先切到目标角色卡，或在指令中写出角色卡名称。',
+        steps,
+        output: personaRead.result,
+      });
+    }
+    const persona = resolvedPersona.persona;
+    const activePersonaId = trim(personaRead.result?.activeId);
+    if (
+      persona?.active !== true &&
+      (!activePersonaId || trim(persona?.id) !== activePersonaId)
+    ) {
+      return importedCardWorkflowFailure({
+        input,
+        status: 'needs_input',
+        reason: 'target_persona_not_active',
+        message: `「${trim(persona?.name || persona?.id)}」目前不是活动角色卡。请先切换到它再预览，避免读取或冻结到其他角色卡的聊天室作用域。`,
+        steps,
+        output: personaRead.result,
+      });
+    }
+    const worldbookId = trim(persona?.associations?.worldbookId);
+    if (!worldbookId || persona?.associations?.worldbookEnabled === false) {
+      return importedCardWorkflowFailure({
+        input,
+        status: 'needs_input',
+        reason: worldbookId ? 'persona_worldbook_disabled' : 'persona_worldbook_missing',
+        message: worldbookId
+          ? `角色卡「${trim(persona?.name || persona?.id)}」关联的世界书目前未启用。`
+          : `角色卡「${trim(persona?.name || persona?.id)}」没有可继承的关联世界书。`,
+        steps,
+        output: personaRead.result,
+      });
+    }
+
+    const worldbookRead = await runImportedCardWorkflowTool({
+      plan: makeImportedCardWorkflowPlan({
+        toolName: 'worldbook.read',
+        args: { name: worldbookId, maxEntries: 200 },
+        featureId: 'worldbook.read',
+        title: '读取完整世界书紧凑索引',
+        response: '读取完整条目索引后再做一次人物分类。',
+        phase: 'read_worldbook_index',
+      }),
+      context,
+      tracker,
+      steps,
+      authorizePlan,
+    });
+    if (!worldbookRead.ok) {
+      return importedCardWorkflowFailure({
+        input,
+        reason: 'worldbook_read_failed',
+        message: summarizeToolFailure(worldbookRead.output),
+        steps,
+        output: worldbookRead.result,
+      });
+    }
+    const entryCount = Math.max(0, Math.trunc(Number(worldbookRead.result?.entryCount) || 0));
+    const returnedEntryCount = Math.max(
+      0,
+      Math.trunc(Number(worldbookRead.result?.returnedEntryCount) || 0),
+    );
+    if (
+      entryCount > 200 ||
+      returnedEntryCount !== entryCount ||
+      worldbookRead.result?.truncated === true
+    ) {
+      return importedCardWorkflowFailure({
+        input,
+        status: 'needs_input',
+        reason: 'worldbook_index_incomplete',
+        message: `关联世界书共有 ${entryCount} 条，但本轮只能安全取得 ${returnedEntryCount} 条完整索引；未分类、未创建任何资源。`,
+        steps,
+        output: worldbookRead.result,
+      });
+    }
+    let entries = (Array.isArray(worldbookRead.result?.entries) ? worldbookRead.result.entries : [])
+      .map(item => clone(item));
+    const ambiguousEntries = entries.filter(isAmbiguousImportedCardEntry).slice(0, 6);
+    for (const entry of ambiguousEntries) {
+      const detailRead = await runImportedCardWorkflowTool({
+        plan: makeImportedCardWorkflowPlan({
+          toolName: 'worldbook.read',
+          args: {
+            name: worldbookId,
+            entryId: trim(entry?.id),
+            includeContent: true,
+            maxEntries: 1,
+            maxContentLength: 1200,
+          },
+          featureId: 'worldbook.read',
+          title: `补读含糊条目「${trim(entry?.title || entry?.id)}」`,
+          response: '只补读标题不足以判断的少数条目。',
+          phase: 'read_ambiguous_entry',
+        }),
+        context,
+        tracker,
+        steps,
+        authorizePlan,
+      });
+      if (!detailRead.ok) continue;
+      const detailed = Array.isArray(detailRead.result?.entries)
+        ? detailRead.result.entries[0]
+        : null;
+      if (!detailed) continue;
+      entries = entries.map(item => (
+        trim(item?.id) === trim(entry?.id)
+          ? { ...item, content: trim(detailed?.content).slice(0, 1200) }
+          : item
+      ));
+    }
+
+    let rawClassification = null;
+    try {
+      rawClassification = await importedCardClassifier({
+        input: trim(input),
+        persona: { id: trim(persona?.id), name: trim(persona?.name || persona?.id) },
+        worldbook: {
+          id: trim(worldbookRead.result?.id || worldbookId),
+          name: trim(worldbookRead.result?.name || worldbookId),
+          entryCount,
+        },
+        entries,
+      }, context);
+    } catch (error) {
+      return importedCardWorkflowFailure({
+        input,
+        reason: 'imported_card_classification_failed',
+        message: error?.message || '人物分类模型调用失败；未执行任何写入。',
+        steps,
+        output: worldbookRead.result,
+      });
+    }
+    const classification = normalizeMaidImportedCardClassification(rawClassification, {
+      entries,
+      requestedGroupName: intent?.requestedGroupName,
+      groupRequested: intent?.groupRequested === true,
+    });
+    if (!classification.ok) {
+      return importedCardWorkflowFailure({
+        input,
+        reason: classification.reason,
+        message: `人物分类结果未通过完整性校验（${classification.reason}）；未执行任何写入。`,
+        steps,
+        output: classification,
+      });
+    }
+
+    const worldbook = {
+      id: trim(worldbookRead.result?.id || worldbookId),
+      name: trim(worldbookRead.result?.name || worldbookId),
+      enabled: true,
+      entryCount,
+      returnedEntryCount,
+    };
+    if (intent?.createRequested !== true) {
+      const previewSnapshot = buildMaidImportedCardWorkflowSnapshot({
+        persona,
+        worldbook,
+        classification,
+      });
+      return {
+        ok: true,
+        status: 'succeeded',
+        responseType: 'workflow',
+        input: trim(input),
+        steps: clone(steps),
+        output: clone(worldbookRead.result),
+        classification: clone(classification),
+        message: buildMaidImportedCardPreviewMessage(previewSnapshot, { previewOnly: true }),
+      };
+    }
+
+    const sessionList = await runImportedCardWorkflowTool({
+      plan: makeImportedCardWorkflowPlan({
+        toolName: 'session.list',
+        args: { limit: 100, includeGroups: true },
+        featureId: 'session.list',
+        title: '读取当前角色卡会话清单',
+        response: '核对候选聊天室与群聊是否已经存在。',
+        phase: 'read_existing_sessions',
+      }),
+      context,
+      tracker,
+      steps,
+      authorizePlan,
+    });
+    if (!sessionList.ok) {
+      return importedCardWorkflowFailure({
+        input,
+        reason: 'session_list_failed',
+        message: summarizeToolFailure(sessionList.output),
+        steps,
+        output: sessionList.result,
+      });
+    }
+    const contacts = Array.isArray(sessionList.result?.contacts) ? sessionList.result.contacts : [];
+    const groupKey = compactText(classification?.group?.name);
+    const existingGroup = classification?.group?.enabled === true
+      ? contacts.find(item => (
+          compactText(item?.id) === groupKey || compactText(item?.name) === groupKey
+        ))
+      : null;
+    let existingGroupMembers = [];
+    if (existingGroup?.isGroup === true) {
+      const groupRead = await runImportedCardWorkflowTool({
+        plan: makeImportedCardWorkflowPlan({
+          toolName: 'app.read_resource',
+          args: {
+            resource: 'session',
+            id: trim(existingGroup?.id),
+            include: ['members'],
+          },
+          featureId: 'app.resource.read',
+          title: '冻结现有群聊成员',
+          response: '记录现有群聊的精确成员 ID。',
+          phase: 'read_existing_group',
+        }),
+        context,
+        tracker,
+        steps,
+        authorizePlan,
+      });
+      if (!groupRead.ok) {
+        return importedCardWorkflowFailure({
+          input,
+          reason: 'existing_group_read_failed',
+          message: summarizeToolFailure(groupRead.output),
+          steps,
+          output: groupRead.result,
+        });
+      }
+      existingGroupMembers = (groupRead.result?.sessions?.[0]?.members || [])
+        .map(item => trim(item?.id || item))
+        .filter(Boolean);
+    }
+    const snapshot = buildMaidImportedCardWorkflowSnapshot({
+      persona,
+      worldbook,
+      classification,
+      contacts,
+      existingGroupMembers,
+      revealRequested: intent?.revealRequested === true,
+    });
+    const privateConflict = snapshot.privateSessions.find(item => item.existingType === 'group');
+    if (privateConflict) {
+      return importedCardWorkflowFailure({
+        input,
+        status: 'needs_input',
+        reason: 'private_session_name_conflict',
+        message: `候选人物「${privateConflict.name}」与现有群聊同名，无法安全冻结建房清单。`,
+        steps,
+        output: snapshot,
+      });
+    }
+    if (snapshot.group.enabled && snapshot.group.existingType === 'private') {
+      return importedCardWorkflowFailure({
+        input,
+        status: 'needs_input',
+        reason: 'group_name_conflict',
+        message: `拟建群聊「${snapshot.group.name}」与现有私聊同名，请先换一个群名。`,
+        steps,
+        output: snapshot,
+      });
+    }
+    const validation = validateMaidImportedCardWorkflowSnapshot(snapshot);
+    if (!validation.ok) {
+      return importedCardWorkflowFailure({
+        input,
+        reason: validation.reason,
+        message: `冻结清单未通过校验（${validation.reason}）；未执行任何写入。`,
+        steps,
+        output: snapshot,
+      });
+    }
+    return {
+      ok: true,
+      status: 'awaiting_confirmation',
+      responseType: 'workflow',
+      input: trim(input),
+      steps: clone(steps),
+      output: clone(sessionList.result),
+      pendingWorkflow: validation.snapshot,
+      message: buildMaidImportedCardPreviewMessage(validation.snapshot),
+    };
+  };
+
+  const sameImportedCardMemberSet = (left = [], right = []) => {
+    const leftSet = Array.from(new Set(left.map(item => trim(item)).filter(Boolean))).sort();
+    const rightSet = Array.from(new Set(right.map(item => trim(item)).filter(Boolean))).sort();
+    return leftSet.length === rightSet.length &&
+      leftSet.every((item, index) => item === rightSet[index]);
+  };
+
+  const runImportedCardApplyWorkflow = async ({
+    input = '',
+    pending = null,
+    context = {},
+    tracker = null,
+    authorizePlan = null,
+  } = {}) => {
+    const steps = [];
+    const validation = validateMaidImportedCardWorkflowSnapshot(pending?.snapshot);
+    if (!validation.ok) {
+      return importedCardWorkflowFailure({
+        input,
+        status: 'needs_input',
+        reason: validation.reason,
+        message: '上一份建房清单已经失效，请重新发起预览。',
+      });
+    }
+    const snapshot = validation.snapshot;
+    const personaRead = await runImportedCardWorkflowTool({
+      plan: makeImportedCardWorkflowPlan({
+        toolName: 'app.read_resource',
+        args: {
+          resource: 'persona',
+          id: snapshot.persona.id,
+          include: ['associations'],
+        },
+        featureId: 'app.resource.read',
+        title: '复验冻结角色卡',
+        response: '执行前先复验角色卡与世界书关联没有变化。',
+        phase: 'apply_verify_persona',
+      }),
+      context,
+      tracker,
+      steps,
+      authorizePlan,
+    });
+    const currentPersona = personaRead.result?.items?.find(item => (
+      trim(item?.id) === snapshot.persona.id
+    ));
+    if (
+      !personaRead.ok ||
+      !currentPersona ||
+      trim(currentPersona?.associations?.worldbookId) !== snapshot.worldbook.id ||
+      currentPersona?.associations?.worldbookEnabled === false
+    ) {
+      return importedCardWorkflowFailure({
+        input,
+        reason: 'frozen_persona_scope_changed',
+        message: '角色卡或其世界书关联在确认期间发生变化，已停止写入；请重新预览。',
+        steps,
+        output: personaRead.result,
+      });
+    }
+    const worldbookRead = await runImportedCardWorkflowTool({
+      plan: makeImportedCardWorkflowPlan({
+        toolName: 'worldbook.read',
+        args: { name: snapshot.worldbook.id, maxEntries: 200 },
+        featureId: 'worldbook.read',
+        title: '复验冻结世界书条目',
+        response: '确认候选来源条目仍存在。',
+        phase: 'apply_verify_worldbook',
+      }),
+      context,
+      tracker,
+      steps,
+      authorizePlan,
+    });
+    const currentEntryIds = new Set(
+      (Array.isArray(worldbookRead.result?.entries) ? worldbookRead.result.entries : [])
+        .map(item => trim(item?.id))
+        .filter(Boolean),
+    );
+    if (
+      !worldbookRead.ok ||
+      Number(worldbookRead.result?.entryCount || 0) !== Number(snapshot.worldbook.entryCount || 0) ||
+      snapshot.candidates.some(item => !currentEntryIds.has(trim(item?.entryId)))
+    ) {
+      return importedCardWorkflowFailure({
+        input,
+        reason: 'frozen_worldbook_index_changed',
+        message: '世界书条目在确认期间发生变化，已停止写入；请重新预览候选。',
+        steps,
+        output: worldbookRead.result,
+      });
+    }
+
+    if (currentPersona?.active !== true && trim(personaRead.result?.activeId) !== snapshot.persona.id) {
+      const switched = await runImportedCardWorkflowTool({
+        plan: makeImportedCardWorkflowPlan({
+          toolName: 'persona.switch',
+          args: { target: snapshot.persona.id },
+          featureId: 'persona.switch',
+          title: '切换到冻结角色卡作用域',
+          response: '进入已确认的角色卡作用域后再创建会话。',
+          phase: 'apply_switch_persona',
+        }),
+        context,
+        tracker,
+        steps,
+        authorizePlan,
+      });
+      if (!switched.ok) {
+        return importedCardWorkflowFailure({
+          input,
+          reason: 'persona_switch_failed',
+          message: summarizeToolFailure(switched.output),
+          steps,
+          output: switched.result,
+        });
+      }
+    }
+
+    const sessionList = await runImportedCardWorkflowTool({
+      plan: makeImportedCardWorkflowPlan({
+        toolName: 'session.list',
+        args: { limit: 100, includeGroups: true },
+        featureId: 'session.list',
+        title: '执行前复验会话清单',
+        response: '复验冻结 ID，避免确认期间的同名资源变化。',
+        phase: 'apply_verify_sessions',
+      }),
+      context,
+      tracker,
+      steps,
+      authorizePlan,
+    });
+    if (!sessionList.ok) {
+      return importedCardWorkflowFailure({
+        input,
+        reason: 'session_list_failed',
+        message: summarizeToolFailure(sessionList.output),
+        steps,
+        output: sessionList.result,
+      });
+    }
+    const currentContacts = Array.isArray(sessionList.result?.contacts)
+      ? sessionList.result.contacts
+      : [];
+    const findCurrentContact = (target = '') => {
+      const key = compactText(target);
+      return currentContacts.find(item => (
+        compactText(item?.id) === key || compactText(item?.name) === key
+      )) || null;
+    };
+    for (const item of snapshot.privateSessions) {
+      const byFrozenId = trim(item?.existingSessionId)
+        ? currentContacts.find(contact => trim(contact?.id) === trim(item.existingSessionId))
+        : null;
+      if (trim(item?.existingSessionId) && (!byFrozenId || byFrozenId?.isGroup === true)) {
+        return importedCardWorkflowFailure({
+          input,
+          reason: 'frozen_private_session_changed',
+          message: `私聊「${item.name}」在确认期间发生变化，已停止写入；请重新预览。`,
+          steps,
+          output: sessionList.result,
+        });
+      }
+      const byName = findCurrentContact(item.name);
+      if (byName?.isGroup === true) {
+        return importedCardWorkflowFailure({
+          input,
+          reason: 'private_session_name_conflict',
+          message: `候选人物「${item.name}」现在与群聊同名，已停止写入。`,
+          steps,
+          output: sessionList.result,
+        });
+      }
+    }
+    const frozenGroupId = trim(snapshot?.group?.existingSessionId);
+    const currentGroup = snapshot?.group?.enabled === true
+      ? (frozenGroupId
+          ? currentContacts.find(item => trim(item?.id) === frozenGroupId)
+          : findCurrentContact(snapshot.group.name))
+      : null;
+    if (
+      frozenGroupId &&
+      (!currentGroup || currentGroup?.isGroup !== true)
+    ) {
+      return importedCardWorkflowFailure({
+        input,
+        reason: 'frozen_group_changed',
+        message: `群聊「${snapshot.group.name}」在确认期间发生变化，已停止写入；请重新预览。`,
+        steps,
+        output: sessionList.result,
+      });
+    }
+    if (currentGroup && currentGroup?.isGroup !== true) {
+      return importedCardWorkflowFailure({
+        input,
+        reason: 'group_name_conflict',
+        message: `群聊名「${snapshot.group.name}」现在与私聊冲突，已停止写入。`,
+        steps,
+        output: sessionList.result,
+      });
+    }
+
+    const sessionCreate = await runImportedCardWorkflowTool({
+      plan: makeImportedCardWorkflowPlan({
+        toolName: 'session.create',
+        args: {
+          names: snapshot.privateSessions.map(item => item.name),
+          open: false,
+        },
+        featureId: 'session.create',
+        title: '建立冻结私聊清单',
+        response: '一次性建立缺少的私聊，已存在项按精确名称复用。',
+        phase: 'apply_create_private_sessions',
+      }),
+      context,
+      tracker,
+      steps,
+      authorizePlan,
+    });
+    if (!sessionCreate.ok) {
+      return importedCardWorkflowFailure({
+        input,
+        reason: 'private_session_create_failed',
+        message: summarizeToolFailure(sessionCreate.output),
+        steps,
+        output: sessionCreate.result,
+      });
+    }
+    const sessionResults = Array.isArray(sessionCreate.result?.sessions)
+      ? sessionCreate.result.sessions
+      : [];
+    const privateSessionIds = snapshot.privateSessions.map((item, index) => trim(
+      sessionResults[index]?.sessionId ||
+      sessionCreate.result?.sessionIds?.[index] ||
+      item?.existingSessionId ||
+      item?.name,
+    ));
+    const privateCreatedCount = sessionResults.length
+      ? sessionResults.filter(item => item?.created === true).length
+      : Number(sessionCreate.result?.createdCount || 0);
+    const privateReusedCount = snapshot.privateSessions.length - privateCreatedCount;
+    const privateSessionIdByName = new Map(
+      snapshot.privateSessions.map((item, index) => [
+        compactText(item?.name),
+        privateSessionIds[index],
+      ]),
+    );
+    const groupMemberSessionIds = snapshot?.group?.enabled === true
+      ? snapshot.group.memberNames
+          .map(name => trim(privateSessionIdByName.get(compactText(name))))
+          .filter(Boolean)
+      : [];
+    if (
+      snapshot?.group?.enabled === true &&
+      groupMemberSessionIds.length !== snapshot.group.memberNames.length
+    ) {
+      return importedCardWorkflowFailure({
+        input,
+        reason: 'frozen_group_member_resolution_failed',
+        message: '已建立私聊，但无法把冻结群成员完整解析到稳定会话 ID；已停止群聊写入并保留清单供重试。',
+        steps,
+        output: { privateSessionIds, groupMemberNames: snapshot.group.memberNames },
+      });
+    }
+
+    let groupSessionId = trim(currentGroup?.id);
+    let groupCreated = false;
+    let groupReused = false;
+    if (snapshot?.group?.enabled === true) {
+      let existingMemberIds = [];
+      if (currentGroup?.isGroup === true) {
+        const currentGroupRead = await runImportedCardWorkflowTool({
+          plan: makeImportedCardWorkflowPlan({
+            toolName: 'app.read_resource',
+            args: {
+              resource: 'session',
+              id: trim(currentGroup.id),
+              include: ['members'],
+            },
+            featureId: 'app.resource.read',
+            title: '复验现有群聊成员',
+            response: '取得群聊当前成员 ID，避免重复或错误覆盖。',
+            phase: 'apply_read_group_members',
+          }),
+          context,
+          tracker,
+          steps,
+          authorizePlan,
+        });
+        if (!currentGroupRead.ok) {
+          return importedCardWorkflowFailure({
+            input,
+            reason: 'existing_group_read_failed',
+            message: summarizeToolFailure(currentGroupRead.output),
+            steps,
+            output: currentGroupRead.result,
+          });
+        }
+        existingMemberIds = (currentGroupRead.result?.sessions?.[0]?.members || [])
+          .map(item => trim(item?.id || item))
+          .filter(Boolean);
+      }
+      if (currentGroup?.isGroup === true && sameImportedCardMemberSet(existingMemberIds, groupMemberSessionIds)) {
+        groupReused = true;
+      } else {
+        const groupPlan = currentGroup?.isGroup === true
+          ? makeImportedCardWorkflowPlan({
+              toolName: 'group.update_members',
+              args: {
+                groupId: trim(currentGroup.id),
+                members: groupMemberSessionIds,
+                open: false,
+              },
+              featureId: 'group.members.update',
+              title: '更新冻结群聊成员',
+              response: '把现有群聊成员调整为已确认的精确集合。',
+              phase: 'apply_update_group',
+            })
+          : makeImportedCardWorkflowPlan({
+              toolName: 'group.create',
+              args: {
+                name: snapshot.group.name,
+                members: groupMemberSessionIds,
+                open: false,
+              },
+              featureId: 'group.create',
+              title: '建立冻结群聊',
+              response: '建立群聊并加入冻结的私聊联系人。',
+              phase: 'apply_create_group',
+            });
+        const groupWrite = await runImportedCardWorkflowTool({
+          plan: groupPlan,
+          context,
+          tracker,
+          steps,
+          authorizePlan,
+        });
+        if (!groupWrite.ok) {
+          return importedCardWorkflowFailure({
+            input,
+            reason: 'group_write_failed',
+            message: summarizeToolFailure(groupWrite.output),
+            steps,
+            output: groupWrite.result,
+          });
+        }
+        groupSessionId = trim(
+          groupWrite.result?.group?.id ||
+          groupWrite.result?.groupId ||
+          currentGroup?.id,
+        );
+        groupCreated = groupWrite.result?.created === true;
+        groupReused = !groupCreated;
+      }
+    }
+
+    const verification = await runImportedCardWorkflowTool({
+      plan: makeImportedCardWorkflowPlan({
+        toolName: 'app.read_resource',
+        args: {
+          resource: 'session',
+          include: ['members', 'worldbooks'],
+          limit: 200,
+        },
+        featureId: 'app.resource.read',
+        title: '验收会话、群成员与世界书继承',
+        response: '读回所有冻结目标的成员和世界书来源。',
+        phase: 'apply_verify_result',
+      }),
+      context,
+      tracker,
+      steps,
+      authorizePlan,
+    });
+    if (!verification.ok) {
+      return importedCardWorkflowFailure({
+        input,
+        reason: 'result_verification_read_failed',
+        message: summarizeToolFailure(verification.output),
+        steps,
+        output: verification.result,
+      });
+    }
+    const verifiedSessions = Array.isArray(verification.result?.sessions)
+      ? verification.result.sessions
+      : [];
+    const verifiedById = new Map(verifiedSessions.map(item => [trim(item?.id), item]));
+    const verifyWorldInheritance = (item = {}) => (
+      Array.isArray(item?.worldbooks?.directWorldIds) &&
+      item.worldbooks.directWorldIds.length === 0 &&
+      Array.isArray(item?.worldbooks?.roleWorldIds) &&
+      item.worldbooks.roleWorldIds.includes(snapshot.worldbook.id)
+    );
+    const privateVerified = privateSessionIds.every((sessionId) => {
+      const item = verifiedById.get(sessionId);
+      return Boolean(item && item?.isGroup !== true && verifyWorldInheritance(item));
+    });
+    const verifiedGroup = snapshot?.group?.enabled === true
+      ? verifiedById.get(groupSessionId)
+      : null;
+    const verifiedGroupMemberIds = (verifiedGroup?.members || [])
+      .map(item => trim(item?.id || item))
+      .filter(Boolean);
+    const groupVerified = snapshot?.group?.enabled !== true || Boolean(
+      verifiedGroup &&
+      verifiedGroup?.isGroup === true &&
+      sameImportedCardMemberSet(verifiedGroupMemberIds, groupMemberSessionIds) &&
+      verifyWorldInheritance(verifiedGroup)
+    );
+    if (!privateVerified || !groupVerified) {
+      return importedCardWorkflowFailure({
+        input,
+        reason: 'imported_card_result_verification_failed',
+        message: '建房结果没有同时通过私聊集合、群成员、角色卡世界书继承与空直接绑定验收；已保留冻结清单供幂等重试。',
+        steps,
+        output: {
+          privateVerified,
+          groupVerified,
+          privateSessionIds,
+          groupSessionId,
+        },
+      });
+    }
+
+    let opened = false;
+    if (snapshot.revealRequested === true) {
+      const revealSessionId = groupSessionId || privateSessionIds[0];
+      if (revealSessionId) {
+        const reveal = await runImportedCardWorkflowTool({
+          plan: makeImportedCardWorkflowPlan({
+            toolName: 'session.open',
+            args: { sessionId: revealSessionId },
+            featureId: 'session.open',
+            title: '打开主要结果',
+            response: '只打开一个主要会话供你查看。',
+            phase: 'apply_reveal',
+          }),
+          context,
+          tracker,
+          steps,
+          authorizePlan,
+        });
+        opened = reveal.ok;
+      }
+    }
+
+    if (pending?.runId && typeof agentTaskRuntime?.finishRun === 'function') {
+      try {
+        agentTaskRuntime.finishRun(pending.runId, {
+          status: 'succeeded',
+          summary: '导入角色卡建房清单已确认并执行。',
+          metadata: {
+            maidStatus: 'succeeded',
+            pendingWorkflow: {
+              ...snapshot,
+              state: 'consumed',
+              consumedAt: Date.now(),
+              consumedByRunId: tracker?.getRunId?.() || '',
+            },
+          },
+        });
+      } catch {}
+    }
+    return {
+      ok: true,
+      status: 'succeeded',
+      responseType: 'workflow',
+      input: trim(input),
+      steps: clone(steps),
+      output: clone(verification.result),
+      verified: true,
+      message: buildMaidImportedCardExecutionMessage({
+        snapshot,
+        privateCreatedCount,
+        privateReusedCount,
+        groupCreated,
+        groupReused,
+        opened,
+      }),
+    };
+  };
+
   const runPromptWithTracker = async (input = '', context = {}, tracker = null) => {
     // 每轮独立的视觉附件池：工具可把截图加入同一轮 ReAct，但不会回写输入框或跨 run 留存。
     context = {
       ...(isPlainObject(context) ? context : {}),
       operationIntentPolicy: classifyMaidOperationIntent(input),
       presentationIntent: classifyMaidPresentationIntent(input),
+      maidSourceGrounding: buildMaidSourceGroundingContext({ input, steps: [] }),
+      maidVisualSpecLedger: isPlainObject(context?.maidVisualSpecLedger)
+        ? context.maidVisualSpecLedger
+        : createMaidVisualSpecLedger(context?.runContinuation?.visualSpecLedger),
       maidAttachments: (Array.isArray(context?.maidAttachments) ? context.maidAttachments : [])
         .map(item => (isPlainObject(item) ? { ...item } : item)),
     };
@@ -2301,6 +3683,72 @@ export const createMaidAssistantAgent = ({
       }
     };
 
+    let pendingImportedCardWorkflow = null;
+    if (typeof agentTaskRuntime?.listRuns === 'function') {
+      try {
+        pendingImportedCardWorkflow = resolvePendingMaidImportedCardWorkflow(
+          agentTaskRuntime.listRuns({ kind: 'maid_assistant', limit: 20 }),
+        );
+      } catch (error) {
+        logger?.debug?.('maid imported-card pending workflow lookup skipped', error);
+      }
+    }
+    const importedCardConfirmation = pendingImportedCardWorkflow
+      ? classifyMaidImportedCardConfirmation(input)
+      : 'none';
+    if (pendingImportedCardWorkflow && importedCardConfirmation === 'cancel') {
+      if (typeof agentTaskRuntime?.finishRun === 'function') {
+        try {
+          agentTaskRuntime.finishRun(pendingImportedCardWorkflow.runId, {
+            status: 'cancelled',
+            summary: '用户取消了导入角色卡建房清单。',
+            cancelReason: 'user_cancelled_pending_workflow',
+            metadata: {
+              maidStatus: 'cancelled',
+              pendingWorkflow: {
+                ...pendingImportedCardWorkflow.snapshot,
+                state: 'cancelled',
+                cancelledAt: Date.now(),
+              },
+            },
+          });
+        } catch {}
+      }
+      return {
+        ok: true,
+        status: 'cancelled',
+        responseType: 'workflow',
+        input: trim(input),
+        message: '已取消上一份导入角色卡建房清单，没有执行任何写入。',
+      };
+    }
+    if (pendingImportedCardWorkflow && importedCardConfirmation === 'confirm') {
+      return runImportedCardApplyWorkflow({
+        input,
+        pending: pendingImportedCardWorkflow,
+        context: {
+          ...context,
+          operationIntentPolicy: {
+            mode: 'write_allowed',
+            source: 'frozen_workflow_confirmation',
+            reason: 'confirmed_imported_card_session_setup',
+          },
+        },
+        tracker,
+        authorizePlan: authorizeDeterministicWorkflowPlan,
+      });
+    }
+    const importedCardIntent = classifyMaidImportedCardWorkflowIntent(input);
+    if (importedCardIntent.matched && typeof importedCardClassifier === 'function') {
+      return runImportedCardPreviewWorkflow({
+        input,
+        intent: importedCardIntent,
+        context,
+        tracker,
+        authorizePlan: authorizeDeterministicWorkflowPlan,
+      });
+    }
+
     let plan = await callRoutedPlanner({ plannerFn: planner, phase: 'planner', label: 'maid_planner' });
     if (!plan?.ok) {
       let reactRecoveryFailure = null;
@@ -2422,14 +3870,34 @@ export const createMaidAssistantAgent = ({
     let lastExecution = null;
     let lastOutput = null;
     let lastOk = false;
+    let cyclesUsed = 0;
     const steps = [];
-    const stepBudget = resolveReactStepBudget({
+    const crossRunFallbackPlans = new Map();
+    let stepBudget = resolveReactStepBudget({
       input,
       plan,
       context,
       configuredMaxReactSteps: maxReactSteps,
     });
-    const maxSteps = stepBudget.maxSteps;
+    let maxSteps = stepBudget.maxSteps;
+    const expandStepBudget = (nextPlan = {}) => {
+      const next = resolveReactStepBudget({
+        input,
+        plan: nextPlan,
+        context,
+        configuredMaxReactSteps: maxReactSteps,
+      });
+      if (next.maxSteps <= maxSteps) return;
+      maxSteps = next.maxSteps;
+      stepBudget = {
+        ...stepBudget,
+        maxSteps,
+        recommended: Math.max(stepBudget.recommended, next.recommended),
+        actionSteps: Math.max(stepBudget.actionSteps, next.actionSteps),
+        verificationReserve: Math.max(stepBudget.verificationReserve, next.verificationReserve),
+        expandedByToolName: next.toolName,
+      };
+    };
     const failureLimit = Math.max(2, Math.min(8, Math.trunc(Number(
       context.repeatedFailureLimit || repeatedFailureLimit,
     )) || 3));
@@ -2438,6 +3906,7 @@ export const createMaidAssistantAgent = ({
         try { globalThis.__maidLoopProbe = { stage, at: Date.now() }; } catch {}
       };
       for (let stepIndex = 0; stepIndex < maxSteps; stepIndex += 1) {
+        cyclesUsed += 1;
         loopProbe(`step-${stepIndex}:start`);
         currentPlan = advanceRepeatedWorldbookPreviewToApply({
           input,
@@ -2445,6 +3914,35 @@ export const createMaidAssistantAgent = ({
           steps,
           operationIntentPolicy: context.operationIntentPolicy,
         });
+        context.maidSourceGrounding = buildMaidSourceGroundingContext({ input, steps });
+        expandStepBudget(currentPlan);
+        let crossRunResumeMatch = resolveCrossRunResumePlan({
+          plan: currentPlan,
+          continuation: context.runContinuation,
+          steps,
+        });
+        if (crossRunResumeMatch?.status === 'verify') {
+          const originalPlan = currentPlan;
+          let verificationPlan = crossRunResumeMatch.verificationPlan;
+          if (
+            capabilityRoutingRuntime &&
+            typeof capabilityRoutingRuntime.authorizeVerification === 'function'
+          ) {
+            try {
+              verificationPlan = capabilityRoutingRuntime.authorizeVerification({
+                requestId: trim(context?.capabilityRequestId),
+                parentPlan: originalPlan,
+                verificationPlan,
+                context,
+              });
+            } catch (error) {
+              logger?.debug?.('maid cross-run verification capability snapshot skipped', error);
+            }
+          }
+          crossRunFallbackPlans.set(crossRunResumeMatch.previous.argsDigest, clone(originalPlan));
+          currentPlan = applyMaidPresentationPolicy(verificationPlan, context.presentationIntent);
+          crossRunResumeMatch = null;
+        }
         if (trim(currentPlan.response) && typeof context?.onStatus === 'function') {
           context.onStatus({
             stage: stepIndex === 0 ? 'planned' : 'react_planned',
@@ -2456,8 +3954,17 @@ export const createMaidAssistantAgent = ({
 
         let execution = null;
         const reusableSessionCreate = findVerifiedIdempotentSessionCreate(currentPlan, steps);
-        if (reusableSessionCreate) {
+        const reusableGeneratedMedia = findAppliedGeneratedMedia({
+          input,
+          plan: currentPlan,
+          steps,
+        });
+        if (crossRunResumeMatch?.status === 'verified') {
+          execution = buildReusedCrossRunExecution(crossRunResumeMatch);
+        } else if (reusableSessionCreate) {
           execution = buildReusedSessionCreateExecution(reusableSessionCreate);
+        } else if (reusableGeneratedMedia) {
+          execution = buildReusedGeneratedMediaExecution(reusableGeneratedMedia);
         } else if (isRepeatedSuccessfulTodoWrite(currentPlan, steps)) {
           execution = buildUnchangedTodoExecution();
         } else {
@@ -2555,6 +4062,35 @@ export const createMaidAssistantAgent = ({
         lastOutput = observedOutput;
         lastOk = ok;
 
+        const crossRunArgsDigest = trim(observedPlan?.metadata?.crossRunArgsDigest);
+        if (
+          ok &&
+          crossRunArgsDigest &&
+          !maidContinuationRefsExistInOutput(
+            observedPlan?.metadata?.expectedResourceRefs,
+            observedOutput,
+          )
+        ) {
+          const fallbackPlan = crossRunFallbackPlans.get(crossRunArgsDigest);
+          if (fallbackPlan) {
+            currentPlan = fallbackPlan;
+            expandStepBudget(currentPlan);
+            continue;
+          }
+        }
+
+        const pendingWorkScopePlan = ok
+          ? buildPendingMaidWorkScopePlan({ input, steps })
+          : null;
+        if (pendingWorkScopePlan) {
+          currentPlan = applyMaidPresentationPolicy(
+            authorizeDeterministicWorkflowPlan(pendingWorkScopePlan, steps),
+            context.presentationIntent,
+          );
+          expandStepBudget(currentPlan);
+          continue;
+        }
+
         const structuredReadProgress = ok
           ? buildMaidStructuredReadProgress({
               input,
@@ -2583,6 +4119,7 @@ export const createMaidAssistantAgent = ({
             authorizeDeterministicWorkflowPlan(structuredReadProgress.nextPlan, steps),
             context.presentationIntent,
           );
+          expandStepBudget(currentPlan);
           continue;
         }
 
@@ -2607,6 +4144,44 @@ export const createMaidAssistantAgent = ({
             guide: clone(observedExecution?.guide || null),
             reason: '',
             message: deterministicReadDecision.message,
+          };
+        }
+
+        const revealWorkflowActive = (Array.isArray(steps) ? steps : []).some(step => (
+          trim(step?.metadata?.workflowTransition) === 'result_reveal'
+        ));
+        if (ok && revealWorkflowActive) {
+          const nextRevealPlan = buildPendingMaidResultRevealPlan({
+            presentationIntent: context.presentationIntent,
+            steps,
+          });
+          if (nextRevealPlan) {
+            currentPlan = applyMaidPresentationPolicy(
+              authorizeDeterministicWorkflowPlan(nextRevealPlan, steps),
+              context.presentationIntent,
+            );
+            expandStepBudget(currentPlan);
+            continue;
+          }
+          const finalMessage = getMaidRevealFinalMessage(steps) || '任务已经完成，并已打开主要结果。';
+          return {
+            ok: true,
+            status: 'succeeded',
+            responseType: 'react',
+            input: trim(input),
+            plan: clone(plan),
+            finalDecision: {
+              ok: true,
+              action: 'final',
+              message: finalMessage,
+              source: 'deterministic_result_reveal',
+            },
+            output: clone(observedOutput),
+            steps: clone(steps),
+            guided: Boolean(observedExecution?.guided),
+            guide: clone(observedExecution?.guide || null),
+            reason: '',
+            message: finalMessage,
           };
         }
 
@@ -2670,9 +4245,12 @@ export const createMaidAssistantAgent = ({
             message,
             reactStoppedReason: reason,
             reactStepBudget: {
-              used: steps.length,
+              used: cyclesUsed,
+              toolSteps: steps.length,
               maxSteps,
               hardMax: stepBudget.hardMax,
+              actionSteps: stepBudget.actionSteps,
+              verificationReserve: stepBudget.verificationReserve,
               repeatedFailureLimit: failureLimit,
             },
           };
@@ -2692,6 +4270,25 @@ export const createMaidAssistantAgent = ({
               reason: summarizeToolFailure(observedOutput),
               message: summarizeToolFailure(observedOutput),
             };
+          }
+          const pendingRevealPlan = buildPendingMaidResultRevealPlan({
+            presentationIntent: context.presentationIntent,
+            steps,
+            decision: {
+              message: buildSuccessMessage({
+                plan: observedPlan,
+                output: observedOutput,
+                execution: observedExecution,
+              }),
+            },
+          });
+          if (pendingRevealPlan) {
+            currentPlan = applyMaidPresentationPolicy(
+              authorizeDeterministicWorkflowPlan(pendingRevealPlan, steps),
+              context.presentationIntent,
+            );
+            expandStepBudget(currentPlan);
+            continue;
           }
           return {
             ok: true,
@@ -2756,10 +4353,13 @@ export const createMaidAssistantAgent = ({
               message: buildInterruptedMessage({ decision, plan: observedPlan, output: observedOutput, execution: observedExecution }),
               reactStoppedReason: stoppedReason,
               reactStepBudget: {
-                used: steps.length,
+                used: cyclesUsed,
+                toolSteps: steps.length,
                 maxSteps,
                 hardMax: stepBudget.hardMax,
                 recommended: stepBudget.recommended,
+                actionSteps: stepBudget.actionSteps,
+                verificationReserve: stepBudget.verificationReserve,
                 initialToolName: stepBudget.toolName,
               },
             };
@@ -2783,12 +4383,18 @@ export const createMaidAssistantAgent = ({
             operationIntentPolicy: context.operationIntentPolicy,
           }) ||
             buildPendingExplicitMaidChatPlan({ input, steps, decision }) ||
-            buildPendingMaidFinalStatePlan({ input, steps, decision });
+            buildPendingMaidFinalStatePlan({ input, steps, decision }) ||
+            buildPendingMaidResultRevealPlan({
+              presentationIntent: context.presentationIntent,
+              steps,
+              decision,
+            });
           if (pendingWorkflowPlan) {
             currentPlan = applyMaidPresentationPolicy(
               authorizeDeterministicWorkflowPlan(pendingWorkflowPlan, steps),
               context.presentationIntent,
             );
+            expandStepBudget(currentPlan);
             continue;
           }
           return {
@@ -2829,6 +4435,7 @@ export const createMaidAssistantAgent = ({
             };
           }
           currentPlan = applyMaidPresentationPolicy(decision, context.presentationIntent);
+          expandStepBudget(currentPlan);
           continue;
         }
         if (!ok) {
@@ -2893,14 +4500,17 @@ export const createMaidAssistantAgent = ({
           plan: currentPlan,
           output: lastOutput,
           execution: lastExecution,
-          fallback: `已达到本轮执行预算（${steps.length}/${maxSteps} 个工具步骤）。你可以直接说“继续”，女仆会接着当前任务执行。`,
+          fallback: `已达到本轮执行预算（${cyclesUsed}/${maxSteps} 个执行轮，实际 ${steps.length} 个工具步骤）。你可以直接说“继续”，女仆会接着当前任务执行。`,
         }),
         reactStoppedReason: 'max_steps_reached',
         reactStepBudget: {
-          used: steps.length,
+          used: cyclesUsed,
+          toolSteps: steps.length,
           maxSteps,
           hardMax: stepBudget.hardMax,
           recommended: stepBudget.recommended,
+          actionSteps: stepBudget.actionSteps,
+          verificationReserve: stepBudget.verificationReserve,
           initialToolName: stepBudget.toolName,
         },
       };
@@ -2919,11 +4529,32 @@ export const createMaidAssistantAgent = ({
   };
 
   const runPrompt = async (input = '', context = {}) => {
+    let runContinuation = isPlainObject(context?.runContinuation)
+      ? context.runContinuation
+      : null;
+    const resumeRunId = runContinuation ? '' : extractMaidResumeRunId(input);
+    if (resumeRunId && typeof agentTaskRuntime?.getRun === 'function') {
+      try {
+        const sourceRun = agentTaskRuntime.getRun(resumeRunId);
+        if (
+          sourceRun?.kind === 'maid_assistant' &&
+          (
+            sourceRun?.metadata?.continuable === true ||
+            ['failed', 'cancelled'].includes(trim(sourceRun?.status))
+          )
+        ) {
+          runContinuation = resolveMaidRunContinuationFromRun(sourceRun);
+        }
+      } catch (error) {
+        logger?.debug?.('maid run continuation lookup skipped', error);
+      }
+    }
     const maidConversationContextRef = isPlainObject(context?.maidConversationContextRef)
       ? context.maidConversationContextRef
       : { current: null };
     const requestContext = {
       ...(isPlainObject(context) ? context : {}),
+      ...(runContinuation ? { runContinuation } : {}),
       maidConversationContextRef,
     };
     if (

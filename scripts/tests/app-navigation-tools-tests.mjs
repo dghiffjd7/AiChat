@@ -12,12 +12,19 @@ const getTool = (tools, name) => tools.find(tool => tool.name === name);
         opened.push(['config', options.tab]);
         return { opened: true };
       },
+      'group-create': () => {
+        opened.push(['group-create']);
+        return { opened: true };
+      },
     },
   });
   const result = await getTool(tools, 'app.open_panel').execute({ panel: 'api', tab: 'chat' });
   assert.equal(result.opened, true);
   assert.equal(result.panel, 'config');
-  assert.deepEqual(opened, [['config', 'chat']]);
+  const groupCreate = await getTool(tools, 'app.open_panel').execute({ panel: 'create-group' });
+  assert.equal(groupCreate.opened, true);
+  assert.equal(groupCreate.panel, 'group-create');
+  assert.deepEqual(opened, [['config', 'chat'], ['group-create']]);
   console.log('ok - app navigation tool normalizes panel aliases and opens whitelisted panels');
 }
 

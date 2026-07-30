@@ -1,17 +1,88 @@
 import assert from 'node:assert/strict';
 
 import {
+  buildMaidImportedCardClassificationMessages,
   buildMaidModelPlannerFeatureList,
   buildMaidModelPlannerMessages,
   buildMaidModelReActMessages,
+  createMaidImportedCardClassifier,
   createMaidModelBackedPlanner,
   createMaidModelBackedReActPlanner,
   extractMaidModelPlannerJson,
   normalizeMaidModelPlan,
   normalizeMaidModelReActDecision,
 } from '../../src/scripts/agent/maid-model-planner.js';
+import {
+  buildMaidImageGenerationContext,
+} from '../../src/scripts/agent/maid-image-generation-context.js';
 
 const cloneJson = value => JSON.parse(JSON.stringify(value));
+
+{
+  const entries = Array.from({ length: 97 }, (_, index) => ({
+    id: `entry-${index + 1}`,
+    title: `条目-${index + 1}`,
+    keys: [`key-${index + 1}`],
+    disabled: index % 2 === 0,
+  }));
+  const messages = buildMaidImportedCardClassificationMessages({
+    input: '从海贼王世界书挑出草帽一伙主要人物并建立聊天室。',
+    persona: { id: 'persona-one-piece', name: '海贼王' },
+    worldbook: { id: 'world-one-piece', name: '海贼王', entryCount: 97 },
+    entries,
+  });
+  assert.match(String(messages[0].content), /character\s*\/\s*setting\s*\/\s*format\s*\/\s*rule\s*\/\s*other/);
+  assert.match(String(messages[1].content), /entry-1/);
+  assert.match(String(messages[1].content), /entry-97/);
+
+  let runtimeRequest = null;
+  let chatCalls = 0;
+  let seenOptions = null;
+  const classifier = createMaidImportedCardClassifier({
+    resolveRuntimeConfig: async (request) => {
+      runtimeRequest = request;
+      return {
+        configured: true,
+        config: { provider: 'custom', model: 'gpt-test' },
+        client: {
+          chat: async (_messages, options) => {
+            chatCalls += 1;
+            seenOptions = options;
+            return JSON.stringify({
+              entries: entries.map(entry => ({
+                entryId: entry.id,
+                kind: entry.id === 'entry-1' ? 'character' : 'other',
+              })),
+              candidates: [{
+                entryId: 'entry-1',
+                name: '路飞',
+                confidence: 0.99,
+                reason: '草帽一伙船长',
+              }],
+              group: {
+                enabled: true,
+                name: '草帽一伙',
+                memberEntryIds: ['entry-1'],
+              },
+            });
+          },
+        },
+      };
+    },
+    logger: { warn() {}, debug() {} },
+  });
+  const classified = await classifier({
+    input: '从海贼王世界书挑出草帽一伙主要人物并建立聊天室。',
+    persona: { id: 'persona-one-piece', name: '海贼王' },
+    worldbook: { id: 'world-one-piece', name: '海贼王', entryCount: 97 },
+    entries,
+  });
+  assert.equal(runtimeRequest.taskType, 'maid_imported_card_classifier');
+  assert.equal(chatCalls, 1, '人物分类必须只有一次模型调用');
+  assert.equal(seenOptions.temperature, 0);
+  assert.equal(classified.candidates[0].entryId, 'entry-1');
+  console.log('ok - imported-card classifier receives the complete compact index in one constrained call');
+}
 
 {
   const featureList = buildMaidModelPlannerFeatureList([
@@ -278,6 +349,26 @@ const cloneJson = value => JSON.parse(JSON.stringify(value));
   });
   assert.equal(denied.ok, false);
   assert.equal(denied.reason, 'tool_not_allowed');
+
+  const directImage = normalizeMaidModelReActDecision({
+    ok: true,
+    action: 'tool',
+    toolName: 'media.generate_image',
+    args: {
+      prompt: '1girl, cen_xia',
+      subject: '岑夏',
+      subjectAliases: ['cen_xia'],
+      target: '岑夏',
+      purpose: 'avatar',
+      appearance: 'silver hair',
+      outfit: 'navy uniform',
+      style: 'anime',
+      targetAspectRatio: '1:1',
+    },
+    featureId: 'media.generate_image',
+  });
+  assert.equal(directImage.ok, true);
+  assert.equal(directImage.featureId, 'media.generate_image');
   console.log('ok - maid model react planner validates final and tool decisions');
 }
 
@@ -896,4 +987,256 @@ const cloneJson = value => JSON.parse(JSON.stringify(value));
   assert.match(systemPrompt, /schemas:/);
   assert.doesNotMatch(systemPrompt, /outside\.feature/);
   console.log('ok - candidate mode injects only hydrated schemas and corrects IDs inside the snapshot');
+}
+
+{
+  const context = buildMaidImageGenerationContext({
+    config: {
+      provider: 'novelai',
+      model: 'nai-diffusion-4-full',
+      apiKey: 'must-not-leak',
+      endpoint: 'https://secret.example.test',
+    },
+    profile: { id: 'image-profile-1', name: 'NAI 动漫' },
+    preset: { id: 'wide', name: '横向壁纸', secretNote: 'must-not-leak' },
+    options: {
+      width: 1344,
+      height: 768,
+      promptPrefix: 'best quality, secret-prefix',
+      promptSuffix: 'secret-suffix',
+      negativePrompt: 'secret-negative',
+    },
+    negativeCapability: { supported: true },
+    referenceCapability: { supported: false, max: 0 },
+  });
+  assert.equal(context.promptDialect, 'nai_tags');
+  assert.equal(context.promptLanguage, 'en');
+  assert.equal(context.width, 1344);
+  assert.equal(context.height, 768);
+  assert.equal(context.promptPrefixApplied, true);
+  assert.equal(context.promptSuffixApplied, true);
+  assert.equal(context.negativePromptSupported, true);
+  const serialized = JSON.stringify(context);
+  assert.doesNotMatch(serialized, /must-not-leak|secret-prefix|secret-suffix|secret-negative|secret\.example/);
+  console.log('ok - maid image generation context exposes only safe NovelAI prompt metadata');
+}
+
+{
+  const mediaFeature = [{
+    id: 'session.wallpaper',
+    title: '设置聊天室壁纸',
+    tools: ['media.generate_image', 'session.set_wallpaper'],
+  }];
+  const unrelatedFeature = [{
+    id: 'app.state.read',
+    title: '读取状态',
+    tools: ['app.read_state'],
+  }];
+  let contextReads = 0;
+  const captured = [];
+  const planner = createMaidModelBackedPlanner({
+    features: unrelatedFeature,
+    getImageGenerationContext: async () => {
+      contextReads += 1;
+      return {
+        provider: 'novelai',
+        model: 'nai-diffusion-4-full',
+        promptDialect: 'nai_tags',
+        promptLanguage: 'en',
+        width: 1344,
+        height: 768,
+        negativePromptSupported: true,
+      };
+    },
+    resolveRuntimeConfig: async () => ({
+      client: {
+        chat: async messages => {
+          captured.push(messages);
+          return JSON.stringify({
+            ok: true,
+            featureId: 'session.wallpaper',
+            toolName: 'media.generate_image',
+            args: { prompt: '1girl, school uniform' },
+          });
+        },
+      },
+    }),
+  });
+  const result = await planner('帮这个聊天室生成壁纸', {
+    capabilitySnapshot: {
+      id: 'media-candidates',
+      useCandidates: true,
+      candidateFeatures: mediaFeature,
+      promptFeatures: mediaFeature,
+      cohort: {},
+    },
+  });
+  assert.equal(result.ok, true);
+  assert.equal(contextReads, 1);
+  assert.match(captured[0][1].content, /<image_generation_context>/);
+  assert.match(captured[0][1].content, /nai_tags/);
+  assert.match(captured[0][1].content, /English comma-separated NovelAI\/Danbooru tags/);
+  assert.match(
+    captured[0][1].content,
+    /exact ASCII subjectAliases item/,
+    'NAI prompt contract must tell the model how to pass subject identity without Chinese prose',
+  );
+  assert.match(
+    captured[0][1].content,
+    /Do not pass width, height, size, model, provider, profileId, or presetId/,
+    'runtime generation metadata must be clearly marked read-only for tool args',
+  );
+
+  const unrelatedCaptured = [];
+  const unrelatedPlanner = createMaidModelBackedPlanner({
+    features: unrelatedFeature,
+    getImageGenerationContext: async () => {
+      contextReads += 1;
+      return { provider: 'novelai', promptDialect: 'nai_tags' };
+    },
+    resolveRuntimeConfig: async () => ({
+      client: {
+        chat: async messages => {
+          unrelatedCaptured.push(messages);
+          return JSON.stringify({
+            ok: true,
+            featureId: 'app.state.read',
+            toolName: 'app.read_state',
+            args: {},
+          });
+        },
+      },
+    }),
+  });
+  const unrelated = await unrelatedPlanner('看看状态', {
+    capabilitySnapshot: {
+      id: 'read-candidates',
+      useCandidates: true,
+      candidateFeatures: unrelatedFeature,
+      promptFeatures: unrelatedFeature,
+      cohort: {},
+    },
+  });
+  assert.equal(unrelated.ok, true);
+  assert.equal(contextReads, 1, '无生图候选时不应读取图片配置');
+  assert.doesNotMatch(unrelatedCaptured[0][1].content, /image_generation_context/);
+  console.log('ok - planner injects current image prompt dialect only for image-generation candidates');
+}
+
+{
+  const mediaFeature = [{
+    id: 'session.wallpaper',
+    title: '设置聊天室壁纸',
+    tools: ['media.generate_image', 'session.set_wallpaper'],
+  }];
+  let provider = 'novelai';
+  const prompts = [];
+  const reactPlanner = createMaidModelBackedReActPlanner({
+    features: mediaFeature,
+    getImageGenerationContext: async () => ({
+      provider,
+      model: provider === 'novelai' ? 'nai-diffusion-4-full' : 'gpt-image-1',
+      promptDialect: provider === 'novelai' ? 'nai_tags' : 'natural_language',
+      promptLanguage: provider === 'novelai' ? 'en' : 'auto',
+    }),
+    resolveRuntimeConfig: async () => ({
+      client: {
+        chat: async messages => {
+          prompts.push(messages[1].content);
+          return JSON.stringify({ ok: true, action: 'final', message: '完成' });
+        },
+      },
+    }),
+  });
+  const baseContext = {
+    capabilitySnapshot: {
+      id: 'media-react-candidates',
+      useCandidates: true,
+      candidateFeatures: mediaFeature,
+      promptFeatures: mediaFeature,
+      cohort: {},
+    },
+    maidReactSteps: [],
+  };
+  await reactPlanner('继续生成壁纸', baseContext);
+  provider = 'openai';
+  await reactPlanner('继续生成壁纸', baseContext);
+  assert.match(prompts[0], /"provider":"novelai"/);
+  assert.match(prompts[1], /"provider":"openai"/);
+  assert.doesNotMatch(prompts[1], /nai-diffusion-4-full/);
+  console.log('ok - ReAct refreshes image generation context after profile changes');
+}
+
+{
+  const runContinuation = {
+    version: 'maid-run-continuation-v1',
+    sourceRunId: 'run-previous',
+    goal: '建立春物角色卡',
+    successfulSteps: [{
+      toolName: 'persona.create',
+      argsDigest: 'fnv1a32:test',
+      resourceRefs: [{ kind: 'persona', id: 'persona-oregairu', name: '总武高' }],
+      verification: 'readback',
+    }],
+    remainingTodos: [{ id: 'todo-group', content: '建立侍奉部群聊', status: 'pending' }],
+  };
+  const plannerText = String(buildMaidModelPlannerMessages({
+    input: '继续这条已中断的女仆任务。',
+    context: { runContinuation },
+    conversationContext: {},
+    features: [],
+  })[1].content);
+  const reactText = String(buildMaidModelReActMessages({
+    input: '继续这条已中断的女仆任务。',
+    context: { runContinuation },
+    conversationContext: {},
+    features: [],
+    steps: [],
+  })[1].content);
+  assert.match(plannerText, /<maid_run_continuation/);
+  assert.match(plannerText, /persona-oregairu/);
+  assert.match(reactText, /todo-group/);
+  assert.match(buildMaidModelPlannerMessages({
+    input: '继续',
+    context: { runContinuation },
+    conversationContext: {},
+    features: [],
+  })[0].content, /稳定 ID.*复验/u);
+  console.log('ok - Planner and ReAct receive the structured cross-run ledger');
+}
+
+{
+  const input = '请按《目标作品》原作建立世界书，不要硬编。';
+  const plannerText = String(buildMaidModelPlannerMessages({
+    input,
+    context: {},
+    conversationContext: {},
+    features: [],
+  })[1].content);
+  const reactText = String(buildMaidModelReActMessages({
+    input,
+    context: {},
+    conversationContext: {},
+    features: [],
+    steps: [{
+      toolName: 'web.research',
+      status: 'succeeded',
+      args: { target: '目标作品' },
+      output: {
+        targetCheck: { checked: true },
+        sources: [{ title: '目标作品官方资料', url: 'https://example.com/canon', targetRelevant: true }],
+      },
+    }],
+  })[1].content);
+  assert.match(plannerText, /<maid_source_grounding/);
+  assert.match(plannerText, /strict_no_invent/);
+  assert.match(reactText, /https:\/\/example\.com\/canon/);
+  assert.match(buildMaidModelReActMessages({
+    input,
+    context: {},
+    conversationContext: {},
+    features: [],
+    steps: [],
+  })[0].content, /sourceLayer/);
+  console.log('ok - Planner and ReAct receive source-layering rules and verified canon references');
 }

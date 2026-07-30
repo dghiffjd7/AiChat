@@ -25,6 +25,7 @@ export const APP_NAVIGATION_PANEL_IDS = Object.freeze([
   'config',
   'session',
   'session-config',
+  'group-create',
   'worldbook',
   'memory',
   'variables',
@@ -39,6 +40,7 @@ const normalizePanelId = (panel = '') => {
   if (text === 'agent' || text === 'agentcenter' || text === 'agent-center') return 'agent-center';
   if (text === 'api' || text === 'model' || text === 'models' || text === 'config') return 'config';
   if (text === 'sessionconfig' || text === 'chat-config' || text === 'session-config') return 'session-config';
+  if (text === 'group' || text === 'create-group' || text === 'new-group' || text === 'group-create') return 'group-create';
   if (text === 'world' || text === 'world-info' || text === 'worldbook') return 'worldbook';
   if (text === 'memory-template' || text === 'memory-center' || text === 'memory') return 'memory';
   if (text === 'variable' || text === 'variables') return 'variables';
@@ -335,7 +337,7 @@ export const createAppNavigationAgentTools = ({
   {
     name: 'app.read_resource',
     title: 'Read APP resource',
-    description: 'Read structured APP resources such as chat messages, worldbook settings, regex, memory, variables, presets, config, sessions, personas, or users. Persona/user lists are compact by default; request profile fields through include only when needed. Persona associations expose only saved binding references.',
+    description: 'Read structured APP resources such as chat messages, worldbook settings, regex, memory, variables, presets, config, sessions, personas, or users. Persona/user lists are compact by default; request profile fields through include only when needed. Persona associations expose only saved binding references. Session include:["members","worldbooks"] returns compact group-member IDs plus inherited role-world and direct-binding evidence.',
     source: 'maid-app-navigation',
     permissions: [],
     riskLevel: 'low',
@@ -367,7 +369,7 @@ export const createAppNavigationAgentTools = ({
         includeContent: { type: 'boolean' },
         include: {
           type: 'array',
-          description: 'Optional fields to expand. For persona/user, default items contain id/name/active; use associations (persona binding refs only), description, avatar, or details (full profile).',
+          description: 'Optional fields to expand. For persona/user use associations, description, avatar, or details. For session use members and/or worldbooks.',
           items: { type: 'string', maxLength: 80 },
           maxItems: 30,
         },

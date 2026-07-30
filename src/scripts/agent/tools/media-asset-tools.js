@@ -1,4 +1,12 @@
 import { normalizeMaidImageAttachments } from '../maid-attachment-parts.js';
+import { normalizeMaidImageGenerationContext } from '../maid-image-generation-context.js';
+import {
+  buildMaidVisualSpecPrompt,
+  createMaidVisualSpecLedger,
+  freezeMaidVisualSpec,
+  validateMaidVisualAspect,
+  validateMaidVisualAttachmentTarget,
+} from '../maid-visual-spec.js';
 
 const trim = (value, fallback = '') => {
   const text = String(value ?? '').trim();
@@ -119,6 +127,17 @@ const publicImageMeta = image => ({
   height: Number(image?.height || 0) || 0,
   bytes: Number(image?.bytes || 0) || 0,
   transformed: image?.transformed === true,
+  ...(image?.visualSpec ? {
+    visualSpec: {
+      id: trim(image.visualSpec.id),
+      subject: trim(image.visualSpec.subject),
+      target: trim(image.visualSpec.target),
+      purpose: trim(image.visualSpec.purpose),
+      targetAspectRatio: trim(image.visualSpec.targetAspectRatio),
+      actualWidth: Number(image.visualSpec.actualWidth || 0) || 0,
+      actualHeight: Number(image.visualSpec.actualHeight || 0) || 0,
+    },
+  } : {}),
 });
 
 // 附件解析顺序：本次女仆输入附件 -> 工具在当前运行期取得的图片池。
@@ -175,6 +194,7 @@ export const createMaidMediaAssetTools = ({
   confirmDestructiveWrite = null,
   fetchRemoteImage = null,
   generateImageAttachment = null,
+  getImageGenerationContext = null,
   now = Date.now,
   preparedImageCache = createPreparedImageCache(),
 } = {}) => {
@@ -185,6 +205,7 @@ export const createMaidMediaAssetTools = ({
     args = {},
     context = {},
     purpose = 'image',
+    target = null,
   } = {}) => {
     const cached = preparedImageCache.get(args.preparedImageId);
     if (cached) return cached;
@@ -196,6 +217,12 @@ export const createMaidMediaAssetTools = ({
         message: '没有找到本次请求中的图片附件。',
       };
     }
+    const visualValidation = validateMaidVisualAttachmentTarget({
+      attachment,
+      purpose: normalizePurpose(purpose || args.purpose, 'image'),
+      target,
+    });
+    if (!visualValidation.ok) return visualValidation;
     const options = buildPrepareOptions(purpose || args.purpose, args);
     const prepared = await prepareImage({
       dataUrl: attachment.url,
@@ -222,6 +249,7 @@ export const createMaidMediaAssetTools = ({
       bytes: Number(prepared?.bytes || 0) || estimateDataUrlBytes(dataUrl),
       width: Number(prepared?.width || 0) || 0,
       height: Number(prepared?.height || 0) || 0,
+      ...(attachment?.visualSpec ? { visualSpec: clone(attachment.visualSpec) } : {}),
     });
   };
 
@@ -307,7 +335,7 @@ export const createMaidMediaAssetTools = ({
         };
       }
     }
-    const image = await prepareAndCacheImage({ args, context, purpose: 'avatar' });
+    const image = await prepareAndCacheImage({ args, context, purpose: 'avatar', target });
     if (image?.ok === false) return image;
     const updated = await update(target, image.dataUrl);
     if (!updated) {
@@ -347,11 +375,32 @@ export const createMaidMediaAssetTools = ({
       outputLimit: 800,
       schema: {
         type: 'object',
-        required: ['prompt'],
+        required: [
+          'prompt',
+          'subject',
+          'target',
+          'purpose',
+          'appearance',
+          'outfit',
+          'style',
+          'targetAspectRatio',
+        ],
         additionalProperties: false,
         properties: {
           prompt: { type: 'string', minLength: 1, maxLength: 4000 },
           negativePrompt: { type: 'string', maxLength: 2000 },
+          subject: { type: 'string', minLength: 1, maxLength: 240 },
+          subjectAliases: {
+            type: 'array',
+            maxItems: 12,
+            items: { type: 'string', minLength: 1, maxLength: 240 },
+          },
+          target: { type: 'string', minLength: 1, maxLength: 240 },
+          purpose: { type: 'string', enum: ['avatar', 'wallpaper'] },
+          appearance: { type: 'string', minLength: 1, maxLength: 1000 },
+          outfit: { type: 'string', minLength: 1, maxLength: 1000 },
+          style: { type: 'string', minLength: 1, maxLength: 1000 },
+          targetAspectRatio: { type: 'string', minLength: 3, maxLength: 40 },
         },
       },
       execute: async (args = {}, context = {}) => {
@@ -362,10 +411,41 @@ export const createMaidMediaAssetTools = ({
         if (!prompt) {
           return { ok: false, reason: 'missing_prompt', message: '图片提示词不能为空。' };
         }
+        const ledger = context?.maidVisualSpecLedger && typeof context.maidVisualSpecLedger === 'object'
+          ? context.maidVisualSpecLedger
+          : createMaidVisualSpecLedger();
+        const frozen = freezeMaidVisualSpec({ ledger, args });
+        if (!frozen.ok) return frozen;
+        let currentGenerationContext = null;
+        if (typeof getImageGenerationContext === 'function') {
+          try {
+            currentGenerationContext = normalizeMaidImageGenerationContext(await getImageGenerationContext());
+          } catch {}
+        }
+        if (currentGenerationContext?.width && currentGenerationContext?.height) {
+          const preflightAspect = validateMaidVisualAspect({
+            targetAspectRatio: frozen.spec.targetAspectRatio,
+            width: currentGenerationContext.width,
+            height: currentGenerationContext.height,
+          });
+          if (!preflightAspect.ok) {
+            return {
+              ...preflightAspect,
+              stage: 'preflight',
+              visualSpec: frozen.spec,
+              message: `${preflightAspect.message || '当前生图比例与目标不符'} 请先切换合适的图片尺寸/预设后再生成。`,
+            };
+          }
+        }
+        const effectivePrompt = buildMaidVisualSpecPrompt({
+          prompt,
+          spec: frozen.spec,
+          promptDialect: currentGenerationContext?.promptDialect,
+        });
         let generated = null;
         try {
           generated = await generateImageAttachment({
-            prompt,
+            prompt: effectivePrompt,
             negativePrompt: trim(args.negativePrompt),
             sessionId: trim(getCurrentSessionId?.()),
             context,
@@ -386,7 +466,32 @@ export const createMaidMediaAssetTools = ({
         if (bytes > 6_000_000) {
           return { ok: false, reason: 'image_too_large', message: '生成图片超过 6MB 限制。' };
         }
+        const generationContext = normalizeMaidImageGenerationContext(
+          generated?.generationContext || currentGenerationContext,
+        );
+        const actualWidth = Number(generated?.width || generationContext?.width || 0) || 0;
+        const actualHeight = Number(generated?.height || generationContext?.height || 0) || 0;
+        const aspectValidation = validateMaidVisualAspect({
+          targetAspectRatio: frozen.spec.targetAspectRatio,
+          width: actualWidth,
+          height: actualHeight,
+        });
+        if (!aspectValidation.ok) {
+          return {
+            ...aspectValidation,
+            stage: 'generated',
+            visualSpec: frozen.spec,
+            message: `${aspectValidation.message || '生成结果无法验证目标比例'} 图片未加入可写回附件池。`,
+          };
+        }
         const id = `generated-${Number(typeof now === 'function' ? now() : Date.now()) || Date.now()}-${fetchedImages.length + 1}`;
+        const visualSpec = {
+          ...clone(frozen.spec),
+          actualWidth,
+          actualHeight,
+          actualAspectRatio: aspectValidation.actualAspectRatio,
+          subjectVerification: 'prompt_contract',
+        };
         const attachment = {
           id,
           name: trim(generated?.name, `${id}.${mime.split('/')[1] || 'png'}`),
@@ -394,6 +499,7 @@ export const createMaidMediaAssetTools = ({
           mime,
           bytes,
           source: 'generated',
+          visualSpec,
         };
         fetchedImages.push(attachment);
         while (fetchedImages.length > FETCHED_IMAGE_LIMIT) fetchedImages.shift();
@@ -403,6 +509,13 @@ export const createMaidMediaAssetTools = ({
           name: attachment.name,
           mime,
           bytes,
+          ...(generationContext ? { generationContext } : {}),
+          visualSpec,
+          verification: {
+            subject: 'prompt_contract',
+            purpose: true,
+            aspectRatio: true,
+          },
           message: `图片已生成为附件 ${id}，可继续用于头像或壁纸设置。`,
         };
       },
@@ -693,7 +806,7 @@ export const createMaidMediaAssetTools = ({
             };
           }
         }
-        const image = await prepareAndCacheImage({ args, context, purpose: 'avatar' });
+        const image = await prepareAndCacheImage({ args, context, purpose: 'avatar', target });
         if (image?.ok === false) return image;
         contactsStore.upsertContact({ ...target, avatar: image.dataUrl });
         await refreshChatAndContacts?.({ reason: 'maid_contact_avatar', sessionId: target.id });
@@ -806,7 +919,7 @@ export const createMaidMediaAssetTools = ({
             };
           }
         }
-        const image = await prepareAndCacheImage({ args, context, purpose: 'wallpaper' });
+        const image = await prepareAndCacheImage({ args, context, purpose: 'wallpaper', target });
         if (image?.ok === false) return image;
         let saved = null;
         if (typeof saveWallpaper === 'function') {

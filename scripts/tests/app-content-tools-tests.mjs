@@ -311,6 +311,70 @@ const createProfileStore = (prefix = 'profile') => {
 }
 
 {
+  const saved = new Map();
+  const binds = [];
+  const tools = createAppContentAgentTools({
+    saveWorldInfo: async (id, data) => saved.set(id, data),
+    getWorldInfo: async id => saved.get(id) || {},
+    worldInfoExists: async id => saved.has(id),
+    listWorlds: async () => Array.from(saved.keys()),
+    generateWithSubAgent: async () => ({
+      ok: true,
+      text: '由测试生成的世界书正文。',
+      delegated: true,
+      modelUsed: 'test-model',
+      subAgentName: 'test-sub-agent',
+    }),
+    bindWorldToSession: async (...args) => binds.push(args),
+  });
+
+  const created = await getTool(tools, 'worldbook.create').execute({
+    name: '不存在但旧接口返回空对象',
+    mode: 'create_new',
+    entries: [{ title: '新条目', content: '必须使用原始名称。' }],
+  });
+  assert.equal(created.ok, true);
+  assert.equal(created.worldbookId, '不存在但旧接口返回空对象');
+  assert.equal(created.previousWorldbookId, '');
+  assert.equal(saved.has('不存在但旧接口返回空对象 (2)'), false);
+
+  const generated = await getTool(tools, 'worldbook.generate_entries').execute({
+    name: '首次生成世界书',
+    entries: [{ title: '生成条目', outline: '首次创建，不是追加', length: 80 }],
+  });
+  assert.equal(generated.ok, true);
+  assert.equal(generated.created, true);
+  assert.equal(generated.appended, false);
+
+  const read = await getTool(tools, 'worldbook.read').execute({ name: '确实不存在' });
+  assert.equal(read.ok, false);
+  assert.equal(read.reason, 'worldbook_not_found');
+
+  const updated = await getTool(tools, 'worldbook.update_entries').execute({
+    name: '确实不存在',
+    updates: [{ entryTitle: 'A', content: 'B' }],
+  });
+  assert.equal(updated.ok, false);
+  assert.equal(updated.reason, 'worldbook_not_found');
+
+  const deleted = await getTool(tools, 'worldbook.delete_entries').execute({
+    name: '确实不存在',
+    dedupeByTitle: true,
+  });
+  assert.equal(deleted.ok, false);
+  assert.equal(deleted.reason, 'worldbook_not_found');
+
+  const bound = await getTool(tools, 'worldbook.bind_session').execute({
+    sessionId: 'chat-a',
+    worldbookId: '确实不存在',
+  });
+  assert.equal(bound.ok, false);
+  assert.equal(bound.reason, 'worldbook_not_found');
+  assert.equal(binds.length, 0);
+  console.log('ok - all worldbook tools use explicit exists when legacy reads return empty objects');
+}
+
+{
   const personaStore = createProfileStore('persona');
   const persona = await personaStore.create({ name: 'Role A' });
   await personaStore.setActive(persona.id);
@@ -327,6 +391,7 @@ const createProfileStore = (prefix = 'profile') => {
     getWorldIdsForSession: async sessionId => sessionWorldIds.get(sessionId) || [],
     getGlobalWorldId: async () => 'Global World',
     assignWorldToPersona: async (personaId, worldId, options) => bound.push({ personaId, worldId, options }),
+    getRpSessionId: personaId => `rp:${personaId}`,
     bindWorldToSession: async (sessionId, worldIds, options) => {
       const list = Array.isArray(worldIds) ? worldIds : [worldIds].filter(Boolean);
       sessionWorldIds.set(sessionId, list);
@@ -384,6 +449,23 @@ const createProfileStore = (prefix = 'profile') => {
   assert.equal(bindResult.bound, true);
   assert.deepEqual(sessionWorldIds.get('chat-b'), ['Role A World']);
   assert.deepEqual(boundSessions.at(-1), { sessionId: 'chat-b', worldIds: ['Role A World'], options: { silent: false } });
+
+  saved.set('Writing Aggregate', { name: 'Writing Aggregate', entries: [] });
+  const bindRpResult = await getTool(tools, 'worldbook.bind_rp_session').execute({
+    personaName: 'Role A',
+    worldbookId: 'Writing Aggregate',
+  });
+  assert.equal(bindRpResult.ok, true);
+  assert.equal(bindRpResult.bound, true);
+  assert.equal(bindRpResult.scope, 'rp_only');
+  assert.equal(bindRpResult.rpSessionId, `rp:${persona.id}`);
+  assert.deepEqual(sessionWorldIds.get(`rp:${persona.id}`), ['Writing Aggregate']);
+  assert.deepEqual(sessionWorldIds.get('chat-b'), ['Role A World'], '创作汇总世界书不得写入角色卡私聊绑定');
+  assert.deepEqual(boundSessions.at(-1), {
+    sessionId: `rp:${persona.id}`,
+    worldIds: ['Writing Aggregate'],
+    options: { silent: false },
+  });
 
   const readResult = await getTool(tools, 'worldbook.read').execute({ name: 'Role A World' });
   assert.equal(readResult.ok, true);
@@ -721,6 +803,30 @@ const createProfileStore = (prefix = 'profile') => {
   });
   registry.registerMany(tools);
   const confirmations = [];
+  const emptyTarget = await registry.executeTool('worldbook.delete_entries', {}, {
+    requestToolConfirmation: request => {
+      confirmations.push(request);
+      return true;
+    },
+  });
+  assert.equal(emptyTarget.status, 'succeeded');
+  assert.equal(emptyTarget.result.ok, false);
+  assert.equal(emptyTarget.result.reason, 'missing_worldbook_id');
+  assert.equal(confirmations.length, 0, '空参数删除不得回退到当前或全局世界书');
+
+  const missingMode = await registry.executeTool('worldbook.delete_entries', {
+    name: 'Registry Delete World',
+  }, {
+    requestToolConfirmation: request => {
+      confirmations.push(request);
+      return true;
+    },
+  });
+  assert.equal(missingMode.status, 'succeeded');
+  assert.equal(missingMode.result.ok, false);
+  assert.equal(missingMode.result.reason, 'missing_delete_mode');
+  assert.equal(confirmations.length, 0, '未指定条目或去重模式时必须在确认窗前拒绝');
+
   const ambiguous = await registry.executeTool('worldbook.delete_entries', {
     name: 'Registry Delete World',
     entries: ['重复条目'],
@@ -1022,4 +1128,62 @@ const createProfileStore = (prefix = 'profile') => {
   const normalSummary = create.summarizeResult({ ok: true, worldbookId: 'A', entryCount: 3 });
   assert.equal(normalSummary.includes('safety copy'), false);
   console.log('ok - worldbook.create summary surfaces cancel-replace safety copies explicitly');
+}
+
+{
+  const saved = new Map();
+  const tools = createAppContentAgentTools({
+    saveWorldInfo: async (id, data) => saved.set(id, data),
+    getWorldInfo: async id => saved.get(id) || null,
+  });
+  const grounding = {
+    policy: {
+      strictNoInvent: true,
+      allowCreativeExtension: false,
+      requiresLayering: true,
+    },
+    targetCheckPerformed: true,
+    allowedCanonRefs: ['https://example.com/canon'],
+    sources: [{ url: 'https://example.com/canon', targetRelevant: true }],
+  };
+  const rejected = await getTool(tools, 'worldbook.create').execute({
+    name: 'Grounded World',
+    entries: [{ title: '未标层', content: '不可写入' }],
+  }, {
+    maidSourceGrounding: grounding,
+  });
+  assert.equal(rejected.ok, false);
+  assert.equal(rejected.reason, 'source_layer_required');
+  assert.equal(saved.has('Grounded World'), false);
+
+  const accepted = await getTool(tools, 'worldbook.create').execute({
+    name: 'Grounded World',
+    entries: [{
+      title: '正典人物',
+      content: '有来源的原作事实。',
+      sourceLayer: 'canon',
+      sourceRefs: ['https://example.com/canon'],
+      sourceNotes: '目标作品资料页',
+    }, {
+      title: '用户背景',
+      content: '用户明确指定的原创背景。',
+      sourceLayer: 'user_original',
+      sourceRefs: ['user_request'],
+    }],
+  }, {
+    maidSourceGrounding: grounding,
+  });
+  assert.equal(accepted.ok, true);
+  assert.equal(saved.get('Grounded World').entries[0].sourceLayer, 'canon');
+  assert.deepEqual(saved.get('Grounded World').entries[0].sourceRefs, ['https://example.com/canon']);
+  assert.equal(saved.get('Grounded World').entries[0].provenance.layer, 'canon');
+  assert.equal(saved.get('Grounded World').entries[1].sourceLayer, 'user_original');
+
+  const read = await getTool(tools, 'worldbook.read').execute({
+    name: 'Grounded World',
+    includeContent: true,
+  });
+  assert.equal(read.entries[0].sourceLayer, 'canon');
+  assert.deepEqual(read.entries[0].sourceRefs, ['https://example.com/canon']);
+  console.log('ok - worldbook writes enforce strict source layers and preserve provenance for readback');
 }

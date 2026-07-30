@@ -66,6 +66,58 @@ fn sanitize_segment(input: &str) -> String {
     cleaned
 }
 
+fn stable_session_asset_hash(input: &str) -> u64 {
+    let mut hash = 0xcbf29ce484222325u64;
+    for byte in input.as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    hash
+}
+
+fn sanitize_session_asset_segment(input: &str) -> String {
+    let raw = input.trim();
+    let legacy = sanitize_segment(raw);
+    if raw.is_empty() || raw == legacy {
+        return legacy;
+    }
+
+    const HASH_SEPARATOR: &str = "--";
+    const HASH_LEN: usize = 16;
+    const MAX_LEN: usize = 80;
+    let digest = format!("{:016x}", stable_session_asset_hash(raw));
+    let mut prefix = legacy.trim_matches('_').to_string();
+    if prefix.is_empty() || prefix == "default" {
+        prefix = "session".to_string();
+    }
+    let max_prefix_len = MAX_LEN - HASH_SEPARATOR.len() - HASH_LEN;
+    if prefix.len() > max_prefix_len {
+        prefix.truncate(max_prefix_len);
+    }
+    format!("{prefix}{HASH_SEPARATOR}{digest}")
+}
+
+fn session_asset_segments(session_id: &str) -> Vec<String> {
+    let current = sanitize_session_asset_segment(session_id);
+    let legacy = sanitize_segment(session_id);
+    if current == legacy {
+        vec![current]
+    } else {
+        vec![current, legacy]
+    }
+}
+
+fn session_asset_roots(data_dir: &Path, base: &str, session_id: &str) -> Vec<PathBuf> {
+    session_asset_segments(session_id)
+        .into_iter()
+        .map(|segment| data_dir.join(base).join(segment))
+        .collect()
+}
+
+fn path_is_within_roots(path: &Path, roots: &[PathBuf]) -> bool {
+    roots.iter().any(|root| path.starts_with(root))
+}
+
 fn sanitize_zip_entry_name(input: &str) -> String {
     let normalized = input.replace('\\', "/");
     let mut parts: Vec<String> = Vec::new();
@@ -339,12 +391,25 @@ fn ensure_extension(name: &str, ext: Option<&str>) -> String {
 
 fn raw_reply_path(app: &AppHandle, session_id: &str, message_id: &str) -> Result<PathBuf, String> {
     let data_dir = get_data_dir(app)?;
-    let sid = sanitize_segment(session_id);
+    let sid = sanitize_session_asset_segment(session_id);
     let mid = sanitize_segment(message_id);
     Ok(data_dir
         .join("raw_replies")
         .join(sid)
         .join(format!("{mid}.txt")))
+}
+
+fn raw_reply_paths(
+    app: &AppHandle,
+    session_id: &str,
+    message_id: &str,
+) -> Result<Vec<PathBuf>, String> {
+    let data_dir = get_data_dir(app)?;
+    let mid = sanitize_segment(message_id);
+    Ok(session_asset_roots(&data_dir, "raw_replies", session_id)
+        .into_iter()
+        .map(|root| root.join(format!("{mid}.txt")))
+        .collect())
 }
 
 fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<(), String> {
@@ -1377,7 +1442,7 @@ pub async fn save_wallpaper(
 ) -> Result<WallpaperSaveResult, String> {
     let data_dir = get_data_dir(&app)?;
     fs::create_dir_all(&data_dir).map_err(|e| e.to_string())?;
-    let safe_sid = sanitize_segment(&session_id);
+    let safe_sid = sanitize_session_asset_segment(&session_id);
     let wallpaper_root = data_dir.join("wallpapers").join(&safe_sid);
     fs::create_dir_all(&wallpaper_root).map_err(|e| e.to_string())?;
 
@@ -1393,7 +1458,8 @@ pub async fn save_wallpaper(
 
     if let Some(prev) = previous_path {
         let prev_path = PathBuf::from(prev);
-        if prev_path.starts_with(&wallpaper_root) && prev_path.exists() {
+        let allowed_roots = session_asset_roots(&data_dir, "wallpapers", &session_id);
+        if path_is_within_roots(&prev_path, &allowed_roots) && prev_path.exists() {
             let _ = fs::remove_file(prev_path);
         }
     }
@@ -1416,7 +1482,7 @@ pub async fn save_wallpaper_chunked(
 ) -> Result<WallpaperSaveResult, String> {
     let data_dir = get_data_dir(&app)?;
     fs::create_dir_all(&data_dir).map_err(|e| e.to_string())?;
-    let safe_sid = sanitize_segment(&session_id);
+    let safe_sid = sanitize_session_asset_segment(&session_id);
     let wallpaper_root = data_dir.join("wallpapers").join(&safe_sid);
     fs::create_dir_all(&wallpaper_root).map_err(|e| e.to_string())?;
 
@@ -1448,7 +1514,8 @@ pub async fn save_wallpaper_chunked(
     // 删除旧壁纸
     if let Some(prev) = previous_path {
         let prev_path = PathBuf::from(prev);
-        if prev_path.starts_with(&wallpaper_root) && prev_path.exists() {
+        let allowed_roots = session_asset_roots(&data_dir, "wallpapers", &session_id);
+        if path_is_within_roots(&prev_path, &allowed_roots) && prev_path.exists() {
             let _ = fs::remove_file(prev_path);
         }
     }
@@ -1471,7 +1538,7 @@ pub async fn save_wallpaper_stream_start(
 ) -> Result<WallpaperStreamStartResult, String> {
     let data_dir = get_data_dir(&app)?;
     fs::create_dir_all(&data_dir).map_err(|e| e.to_string())?;
-    let safe_sid = sanitize_segment(&session_id);
+    let safe_sid = sanitize_session_asset_segment(&session_id);
     let wallpaper_root = data_dir.join("wallpapers").join(&safe_sid);
     fs::create_dir_all(&wallpaper_root).map_err(|e| e.to_string())?;
 
@@ -1493,6 +1560,11 @@ pub async fn save_wallpaper_stream_start(
     fs::write(&file, &[]).map_err(|e| e.to_string())?;
 
     let upload_id = format!("{safe_sid}_{ts}");
+    let allowed_roots = session_asset_roots(&data_dir, "wallpapers", &session_id);
+    let previous_path = previous_path.filter(|raw| {
+        let path = PathBuf::from(raw);
+        path_is_within_roots(&path, &allowed_roots)
+    });
     let entry = WallpaperStreamEntry {
         path: file.clone(),
         previous_path,
@@ -1553,8 +1625,7 @@ pub async fn save_wallpaper_stream_finish(
 
     if let Some(prev) = entry.previous_path.clone() {
         let prev_path = PathBuf::from(prev);
-        if prev_path.starts_with(entry.path.parent().unwrap_or(Path::new(""))) && prev_path.exists()
-        {
+        if prev_path.exists() {
             let _ = fs::remove_file(prev_path);
         }
     }
@@ -1579,10 +1650,9 @@ pub async fn delete_wallpaper(
         return Ok(false);
     }
     let data_dir = get_data_dir(&app)?;
-    let safe_sid = sanitize_segment(&session_id);
-    let wallpaper_root = data_dir.join("wallpapers").join(&safe_sid);
+    let wallpaper_roots = session_asset_roots(&data_dir, "wallpapers", &session_id);
     let target = PathBuf::from(raw);
-    if !target.starts_with(&wallpaper_root) {
+    if !path_is_within_roots(&target, &wallpaper_roots) {
         return Err("invalid wallpaper path".to_string());
     }
     if target.exists() {
@@ -1619,7 +1689,7 @@ pub async fn save_attachment(
 ) -> Result<AttachmentSaveResult, String> {
     let data_dir = get_data_dir(&app)?;
     fs::create_dir_all(&data_dir).map_err(|e| e.to_string())?;
-    let safe_sid = sanitize_segment(&session_id);
+    let safe_sid = sanitize_session_asset_segment(&session_id);
     let attach_root = data_dir.join("attachments").join(&safe_sid);
     fs::create_dir_all(&attach_root).map_err(|e| e.to_string())?;
 
@@ -1649,7 +1719,7 @@ pub async fn save_attachment_bytes(
 ) -> Result<AttachmentSaveResult, String> {
     let data_dir = get_data_dir(&app)?;
     fs::create_dir_all(&data_dir).map_err(|e| e.to_string())?;
-    let safe_sid = sanitize_segment(&session_id);
+    let safe_sid = sanitize_session_asset_segment(&session_id);
     let attach_root = data_dir.join("attachments").join(&safe_sid);
     fs::create_dir_all(&attach_root).map_err(|e| e.to_string())?;
 
@@ -1679,10 +1749,9 @@ pub async fn read_attachment_data_url(
         return Err("attachment path empty".to_string());
     }
     let data_dir = get_data_dir(&app)?;
-    let safe_sid = sanitize_segment(&session_id);
-    let attach_root = data_dir.join("attachments").join(&safe_sid);
+    let attach_roots = session_asset_roots(&data_dir, "attachments", &session_id);
     let target = PathBuf::from(raw);
-    if !target.starts_with(&attach_root) {
+    if !path_is_within_roots(&target, &attach_roots) {
         return Err("invalid attachment path".to_string());
     }
     let bytes = fs::read(&target).map_err(|e| e.to_string())?;
@@ -1714,7 +1783,7 @@ pub async fn save_attachment_stream_start(
 ) -> Result<AttachmentStreamStartResult, String> {
     let data_dir = get_data_dir(&app)?;
     fs::create_dir_all(&data_dir).map_err(|e| e.to_string())?;
-    let safe_sid = sanitize_segment(&session_id);
+    let safe_sid = sanitize_session_asset_segment(&session_id);
     let attach_root = data_dir.join("attachments").join(&safe_sid);
     fs::create_dir_all(&attach_root).map_err(|e| e.to_string())?;
 
@@ -1811,10 +1880,9 @@ pub async fn delete_attachment(
         return Ok(false);
     }
     let data_dir = get_data_dir(&app)?;
-    let safe_sid = sanitize_segment(&session_id);
-    let attach_root = data_dir.join("attachments").join(&safe_sid);
+    let attach_roots = session_asset_roots(&data_dir, "attachments", &session_id);
     let target = PathBuf::from(raw);
-    if !target.starts_with(&attach_root) {
+    if !path_is_within_roots(&target, &attach_roots) {
         return Err("invalid attachment path".to_string());
     }
     if target.exists() {
@@ -2535,10 +2603,10 @@ pub async fn save_world_info(
     data: Value,
 ) -> Result<(), String> {
     let data_dir = get_data_dir(&app)?;
-    let world_dir = data_dir.join("worldinfo");
-    fs::create_dir_all(&world_dir).map_err(|e| e.to_string())?;
+    let world_file = world_info_file_path(&data_dir, &character_id)?;
+    fs::create_dir_all(world_file.parent().ok_or("world info dir unavailable")?)
+        .map_err(|e| e.to_string())?;
 
-    let world_file = world_dir.join(format!("{}.json", character_id));
     let json = serde_json::to_string_pretty(&data).map_err(|e| e.to_string())?;
     fs::write(world_file, json).map_err(|e| e.to_string())?;
 
@@ -2549,9 +2617,11 @@ pub async fn save_world_info(
 #[tauri::command]
 pub async fn get_world_info(app: AppHandle, character_id: String) -> Result<Value, String> {
     let data_dir = get_data_dir(&app)?;
-    let world_file = data_dir
-        .join("worldinfo")
-        .join(format!("{}.json", character_id));
+    // 非法 id（路径穿越等）按“缺失”返回 `{}`，保持 legacy 语义不向调用方抛新错误。
+    let world_file = match world_info_file_path(&data_dir, &character_id) {
+        Ok(path) => path,
+        Err(_) => return Ok(serde_json::json!({})),
+    };
 
     if !world_file.exists() {
         return Ok(serde_json::json!({}));
@@ -3113,17 +3183,27 @@ fn delete_unprotected_session_sidecars(
     protected_session_ids: &HashSet<String>,
     deleted_paths: &mut Vec<String>,
 ) -> Result<(), String> {
+    let protected_segments: HashSet<String> = protected_session_ids
+        .iter()
+        .flat_map(|session_id| session_asset_segments(session_id))
+        .collect();
+    let mut handled_segments: HashSet<String> = HashSet::new();
     for session_id in session_ids {
         if protected_session_ids.contains(&session_id) {
             continue;
         }
-        let safe_sid = sanitize_segment(&session_id);
-        let raw_reply_dir = data_dir.join("raw_replies").join(&safe_sid);
-        delete_path_if_exists(&raw_reply_dir, deleted_paths)?;
-        let wallpaper_dir = data_dir.join("wallpapers").join(&safe_sid);
-        delete_path_if_exists(&wallpaper_dir, deleted_paths)?;
-        let attachment_dir = data_dir.join("attachments").join(&safe_sid);
-        delete_path_if_exists(&attachment_dir, deleted_paths)?;
+        for safe_sid in session_asset_segments(&session_id) {
+            if protected_segments.contains(&safe_sid) || !handled_segments.insert(safe_sid.clone())
+            {
+                continue;
+            }
+            let raw_reply_dir = data_dir.join("raw_replies").join(&safe_sid);
+            delete_path_if_exists(&raw_reply_dir, deleted_paths)?;
+            let wallpaper_dir = data_dir.join("wallpapers").join(&safe_sid);
+            delete_path_if_exists(&wallpaper_dir, deleted_paths)?;
+            let attachment_dir = data_dir.join("attachments").join(&safe_sid);
+            delete_path_if_exists(&attachment_dir, deleted_paths)?;
+        }
     }
     Ok(())
 }
@@ -3454,12 +3534,14 @@ pub async fn load_raw_reply(
     session_id: String,
     message_id: String,
 ) -> Result<Option<String>, String> {
-    let file = raw_reply_path(&app, &session_id, &message_id)?;
-    if !file.exists() {
-        return Ok(None);
+    for file in raw_reply_paths(&app, &session_id, &message_id)? {
+        if !file.exists() {
+            continue;
+        }
+        let text = fs::read_to_string(file).map_err(|e| e.to_string())?;
+        return Ok(Some(text));
     }
-    let text = fs::read_to_string(file).map_err(|e| e.to_string())?;
-    Ok(Some(text))
+    Ok(None)
 }
 
 /// 删除原始回复
@@ -3469,9 +3551,10 @@ pub async fn delete_raw_reply(
     session_id: String,
     message_id: String,
 ) -> Result<(), String> {
-    let file = raw_reply_path(&app, &session_id, &message_id)?;
-    if file.exists() {
-        fs::remove_file(file).map_err(|e| e.to_string())?;
+    for file in raw_reply_paths(&app, &session_id, &message_id)? {
+        if file.exists() {
+            fs::remove_file(file).map_err(|e| e.to_string())?;
+        }
     }
     Ok(())
 }
@@ -4240,6 +4323,69 @@ mod tests {
 
         assert!(protected.contains("rp:persona_keep"));
         assert!(!protected.contains("rp:persona_deleted"));
+        let _ = fs::remove_dir_all(&data_dir);
+    }
+
+    #[test]
+    fn session_asset_segment_is_collision_resistant_and_ascii_stable() {
+        assert_eq!(
+            sanitize_session_asset_segment("session-safe_123"),
+            "session-safe_123"
+        );
+        assert_ne!(
+            sanitize_session_asset_segment("比企谷八幡"),
+            sanitize_session_asset_segment("雪之下雪乃")
+        );
+        assert_ne!(
+            sanitize_session_asset_segment("group:shared"),
+            sanitize_session_asset_segment("group?shared")
+        );
+        assert!(sanitize_session_asset_segment(&"会".repeat(120)).len() <= 80);
+    }
+
+    #[test]
+    fn deleting_unicode_scope_does_not_remove_retained_legacy_sidecars() {
+        let data_dir = unique_temp_data_dir("unicode-sidecar-protection");
+        let legacy_shared = sanitize_segment("旧测试聊天室");
+        let deleted_current = sanitize_session_asset_segment("旧测试聊天室");
+        let retained_current = sanitize_session_asset_segment("比企谷八幡");
+        assert_eq!(legacy_shared, sanitize_segment("比企谷八幡"));
+        assert_ne!(deleted_current, retained_current);
+        for base in ["attachments", "raw_replies", "wallpapers"] {
+            let legacy_dir = data_dir.join(base).join(&legacy_shared);
+            fs::create_dir_all(&legacy_dir).unwrap();
+            fs::write(legacy_dir.join("retained-legacy.dat"), b"keep").unwrap();
+            let retained_dir = data_dir.join(base).join(&retained_current);
+            fs::create_dir_all(&retained_dir).unwrap();
+            fs::write(retained_dir.join("retained-current.dat"), b"keep").unwrap();
+            let deleted_dir = data_dir.join(base).join(&deleted_current);
+            fs::create_dir_all(&deleted_dir).unwrap();
+            fs::write(deleted_dir.join("deleted-current.dat"), b"delete").unwrap();
+        }
+
+        let mut session_ids = HashSet::new();
+        session_ids.insert("旧测试聊天室".to_string());
+        let mut protected = HashSet::new();
+        protected.insert("比企谷八幡".to_string());
+        let mut deleted_paths = Vec::new();
+
+        delete_unprotected_session_sidecars(&data_dir, session_ids, &protected, &mut deleted_paths)
+            .unwrap();
+
+        for base in ["attachments", "raw_replies", "wallpapers"] {
+            assert!(data_dir
+                .join(base)
+                .join(&legacy_shared)
+                .join("retained-legacy.dat")
+                .exists());
+            assert!(data_dir
+                .join(base)
+                .join(&retained_current)
+                .join("retained-current.dat")
+                .exists());
+            assert!(!data_dir.join(base).join(&deleted_current).exists());
+        }
+        assert_eq!(deleted_paths.len(), 3);
         let _ = fs::remove_dir_all(&data_dir);
     }
 

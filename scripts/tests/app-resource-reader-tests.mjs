@@ -276,6 +276,77 @@ const makeDeps = () => {
 }
 
 {
+  const deps = makeDeps();
+  deps.chatStore.listSessions = () => ['group:crew', 's1'];
+  deps.chatStore.getMessages = () => [];
+  deps.chatStore.getSessionSettings = () => ({});
+  deps.contactsStore.getContact = id => {
+    if (id === 'group:crew') {
+      return {
+        id,
+        name: '草帽一伙',
+        isGroup: true,
+        members: ['路飞', '索隆', '娜美'],
+      };
+    }
+    return { id, name: id, isGroup: false };
+  };
+  const readResource = createAppResourceReader(deps);
+  const result = await readResource({
+    resource: 'session',
+    name: '草帽一伙',
+    include: ['members'],
+  });
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.includedFields, ['members']);
+  assert.equal(result.sessions.length, 1);
+  assert.equal(result.sessions[0].memberCount, 3);
+  assert.deepEqual(result.sessions[0].members, [
+    { id: '路飞', name: '路飞' },
+    { id: '索隆', name: '索隆' },
+    { id: '娜美', name: '娜美' },
+  ]);
+  console.log('ok - app resource reader returns exact compact group members only when requested');
+}
+
+{
+  const deps = makeDeps();
+  deps.chatStore.listSessions = () => ['路飞', 'group:crew'];
+  deps.chatStore.getMessages = () => [];
+  deps.chatStore.getSessionSettings = () => ({});
+  deps.contactsStore.getContact = id => (
+    id === 'group:crew'
+      ? { id, name: '草帽一伙', isGroup: true, members: ['路飞'] }
+      : { id, name: id, isGroup: false }
+  );
+  deps.appBridge.getWorldIdsForSession = id => (
+    id === '路飞' ? [] : ['unexpected-direct-world']
+  );
+  deps.appBridge.getResolvedWorldState = id => ({
+    sessionId: id,
+    globalWorldId: '',
+    roleWorldIds: ['海贼王'],
+    sessionWorldIds: deps.appBridge.getWorldIdsForSession(id),
+    worldIds: ['海贼王', ...deps.appBridge.getWorldIdsForSession(id)],
+  });
+  const readResource = createAppResourceReader(deps);
+  const result = await readResource({
+    resource: 'session',
+    include: ['members', 'worldbooks'],
+  });
+  assert.deepEqual(result.includedFields, ['members', 'worldbooks']);
+  assert.deepEqual(result.sessions[0].worldbooks, {
+    directWorldIds: [],
+    roleWorldIds: ['海贼王'],
+    resolvedWorldIds: ['海贼王'],
+    globalWorldId: '',
+  });
+  assert.deepEqual(result.sessions[1].worldbooks.directWorldIds, ['unexpected-direct-world']);
+  assert.deepEqual(result.sessions[1].members, [{ id: '路飞', name: '路飞' }]);
+  console.log('ok - session resource readback distinguishes inherited role worlds from direct bindings');
+}
+
+{
   const readResource = createAppResourceReader(makeDeps());
   const personas = await readResource({ resource: 'persona', query: '暗夜女王' });
   const users = await readResource({ resource: 'user' });

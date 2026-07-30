@@ -77,6 +77,11 @@
   runtime.workerWarmingUp = false;
   runtime.pending = new Map();
   runtime.seq = 0;
+  runtime.listenerEvents = new Set();
+  runtime.uiLayoutInterestIds = new Set();
+  runtime.uiLayoutPendingIds = new Set();
+  runtime.uiNativeStatePending = new Map();
+  runtime.uiPerformanceSamples = [];
   let restarted = false;
   runtime.restartWorker = () => {
     restarted = true;

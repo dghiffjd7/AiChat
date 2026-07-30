@@ -1,4 +1,5 @@
 import { normalizeMaidImageAttachments } from '../maid-attachment-parts.js';
+import { validateMaidWorldbookSourcePlan } from '../maid-source-grounding.js';
 import { BUILTIN_PHONE_FORMAT_WORLDBOOK_ID } from '../../storage/builtin-worldbooks.js';
 
 const trim = (value, fallback = '') => {
@@ -149,6 +150,9 @@ const normalizeWorldEntry = (entry = {}, index = 0) => {
   const keysecondary = Array.isArray(source.keysecondary)
     ? source.keysecondary
     : (Array.isArray(source.secondary) ? source.secondary : []);
+  const sourceLayer = trim(source.sourceLayer || source.provenance?.layer).toLocaleLowerCase();
+  const sourceRefs = Array.from(new Set(normalizeStringList(source.sourceRefs || source.provenance?.refs)));
+  const sourceNotes = trim(source.sourceNotes || source.provenance?.notes);
   return {
     ...clone(source),
     id,
@@ -169,6 +173,19 @@ const normalizeWorldEntry = (entry = {}, index = 0) => {
     constant: source.constant !== false,
     probability: Number.isFinite(Number(source.probability)) ? Number(source.probability) : 100,
     useProbability: source.useProbability !== false,
+    ...(sourceLayer
+      ? {
+          sourceLayer,
+          sourceRefs,
+          ...(sourceNotes ? { sourceNotes } : {}),
+          provenance: {
+            ...(isPlainObject(source.provenance) ? clone(source.provenance) : {}),
+            layer: sourceLayer,
+            refs: sourceRefs,
+            ...(sourceNotes ? { notes: sourceNotes } : {}),
+          },
+        }
+      : {}),
   };
 };
 
@@ -209,6 +226,7 @@ const makeUniqueWorldEntryId = (baseEntry = {}, entries = [], index = 0) => {
 const makeUniqueWorldbookName = async (baseName = '', {
   listWorlds = null,
   getWorldInfo = null,
+  worldInfoExists = null,
 } = {}) => {
   const base = trim(baseName, '女仆创建的世界书');
   const names = new Set();
@@ -217,15 +235,24 @@ const makeUniqueWorldbookName = async (baseName = '', {
       normalizeStringList(await listWorlds()).forEach(name => names.add(name));
     } catch {}
   }
-  if (!names.has(base) && typeof getWorldInfo === 'function') {
-    try {
-      if (await getWorldInfo(base)) names.add(base);
-    } catch {}
-  }
-  if (!names.has(base)) return base;
+  const exists = async (name) => {
+    if (names.has(name)) return true;
+    if (typeof worldInfoExists === 'function') {
+      try {
+        return Boolean(await worldInfoExists(name));
+      } catch {}
+    }
+    if (typeof getWorldInfo === 'function') {
+      try {
+        return Boolean(await getWorldInfo(name));
+      } catch {}
+    }
+    return false;
+  };
+  if (!await exists(base)) return base;
   let index = 2;
   let next = `${base} (${index})`;
-  while (names.has(next)) {
+  while (await exists(next)) {
     index += 1;
     next = `${base} (${index})`;
   }
@@ -254,7 +281,11 @@ const normalizeWorldbookEntrySummary = (entry = {}, index = 0, { includeContent 
     order: Number.isFinite(Number(source.order ?? source.priority)) ? Number(source.order ?? source.priority) : undefined,
     position: Number.isFinite(Number(source.position)) ? Number(source.position) : undefined,
     contentLength: trim(source.content || source.description || '').length,
+    sourceLayer: trim(source.sourceLayer || source.provenance?.layer),
+    sourceRefs: Array.from(new Set(normalizeStringList(source.sourceRefs || source.provenance?.refs))),
   };
+  const sourceNotes = trim(source.sourceNotes || source.provenance?.notes);
+  if (sourceNotes) summary.sourceNotes = truncateText(sourceNotes, 500);
   if (includeContent === true) {
     summary.content = truncateText(source.content || source.description || '', maxContentLength);
     summary.contentTruncated = trim(source.content || source.description || '').length > maxContentLength;
@@ -385,6 +416,16 @@ const buildWorldbookDeletePlan = (entries = [], args = {}) => {
       conflictingFields: [...explicitSelectorFields, 'dedupeByTitle'],
     };
   }
+  if (!selectors.length && args.dedupeByTitle !== true) {
+    return {
+      deleteIndexes: new Set(),
+      deletedEntries: [],
+      skippedDeletes: [],
+      deleteCount: 0,
+      invalidReason: 'missing_delete_mode',
+      conflictingFields: [],
+    };
+  }
   selectors.forEach((selector, index) => {
     const criteria = normalizeWorldbookEntrySelector(selector);
     if (!Object.keys(criteria).length) {
@@ -487,6 +528,12 @@ const applyWorldbookEntryUpdate = (entry = {}, update = {}, index = 0) => {
   ['disable', 'selective', 'constant', 'useProbability'].forEach((key) => {
     if (hasOwn(source, key)) next[key] = source[key] === true;
   });
+  if (hasOwn(source, 'sourceLayer')) next.sourceLayer = trim(source.sourceLayer).toLocaleLowerCase();
+  if (hasOwn(source, 'sourceRefs')) next.sourceRefs = normalizeStringList(source.sourceRefs);
+  if (hasOwn(source, 'sourceNotes')) next.sourceNotes = trim(source.sourceNotes);
+  if (hasOwn(source, 'provenance') && isPlainObject(source.provenance)) {
+    next.provenance = clone(source.provenance);
+  }
   return normalizeWorldEntry(next, index);
 };
 
@@ -539,6 +586,7 @@ export const createAppContentAgentTools = ({
   getWorldSessionMap = null,
   getGlobalWorldId = null,
   assignWorldToPersona = null,
+  getRpSessionId = null,
   bindWorldToSession = null,
   enterChatRoom = null,
   refreshChatAndContacts = null,
@@ -571,6 +619,27 @@ export const createAppContentAgentTools = ({
     typeof getGlobalWorldId === 'function' ? trim(await getGlobalWorldId()) : ''
   );
 
+  const readWorldbookRecord = async (worldbookId = '') => {
+    const id = trim(worldbookId);
+    if (!id || typeof getWorldInfo !== 'function') {
+      return { exists: false, data: null };
+    }
+    if (typeof worldInfoExists === 'function') {
+      const exists = Boolean(await worldInfoExists(id));
+      if (!exists) return { exists: false, data: null };
+      const data = await getWorldInfo(id);
+      return {
+        exists: true,
+        data: isPlainObject(data) ? data : { name: id, entries: [] },
+      };
+    }
+    const data = await getWorldInfo(id);
+    return {
+      exists: Boolean(data),
+      data: data || null,
+    };
+  };
+
   const resolveWorldbookId = async (args = {}) => {
     const explicit = trim(args.worldbookId || args.id || args.name);
     if (explicit) return explicit;
@@ -589,7 +658,7 @@ export const createAppContentAgentTools = ({
       : '女仆创建的世界书';
     const explicitName = trim(args.name);
     const name = trim(explicitName, fallbackWorldName);
-    const existing = typeof getWorldInfo === 'function' ? await getWorldInfo(name) : null;
+    const existing = (await readWorldbookRecord(name)).data;
     const existingEntries = getWorldEntries(existing);
     const requestedMode = trim(args.mode, 'append');
     const mode = requestedMode === 'replace'
@@ -608,9 +677,7 @@ export const createAppContentAgentTools = ({
 
   const resolveWorldbookUpdateTarget = async (args = {}) => {
     const worldbookId = await resolveWorldbookId(args);
-    const existing = worldbookId && typeof getWorldInfo === 'function'
-      ? await getWorldInfo(worldbookId)
-      : null;
+    const existing = (await readWorldbookRecord(worldbookId)).data;
     const existingEntries = getWorldEntries(existing);
     return {
       worldbookId,
@@ -622,10 +689,14 @@ export const createAppContentAgentTools = ({
   };
 
   const resolveWorldbookDeleteTarget = async (args = {}) => {
-    const worldbookId = await resolveWorldbookId(args);
-    const existing = worldbookId && typeof getWorldInfo === 'function'
-      ? await getWorldInfo(worldbookId)
-      : null;
+    const directWorldbookId = trim(args.worldbookId || args.id || args.name);
+    const sessionId = trim(args.sessionId);
+    const sessionWorldIds = !directWorldbookId && sessionId
+      ? await getSessionWorldIds(sessionId)
+      : [];
+    // 删除不得回退到当前/全局世界书；必须显式给出书或明确会话绑定。
+    const worldbookId = directWorldbookId || trim(sessionWorldIds[0]);
+    const existing = (await readWorldbookRecord(worldbookId)).data;
     const existingEntries = getWorldEntries(existing);
     return {
       worldbookId,
@@ -759,10 +830,9 @@ export const createAppContentAgentTools = ({
     for (const target of requested) {
       const worldbookId = resolveStoredId(target);
       const isBuiltin = worldbookId === BUILTIN_PHONE_FORMAT_WORLDBOOK_ID;
-      const existing = typeof getWorldInfo === 'function'
-        ? await getWorldInfo(worldbookId)
-        : null;
-      const exists = Boolean(existing) || storedIds.includes(worldbookId);
+      const record = await readWorldbookRecord(worldbookId);
+      const existing = record.data;
+      const exists = record.exists || storedIds.includes(worldbookId);
       const name = trim(existing?.name || worldbookId || target);
       if (isBuiltin) {
         items.push({
@@ -1316,6 +1386,13 @@ export const createAppContentAgentTools = ({
               outline: { type: 'string', minLength: 4, maxLength: 1200 },
               length: { type: 'integer', minimum: 50, maximum: 1200 },
               keys: { type: 'array', items: { type: 'string', maxLength: 60 }, maxItems: 12 },
+              sourceLayer: { type: 'string', enum: ['canon', 'user_original', 'creative_extension'] },
+              sourceRefs: {
+                type: 'array',
+                maxItems: 12,
+                items: { type: 'string', minLength: 1, maxLength: 1000 },
+              },
+              sourceNotes: { type: 'string', maxLength: 1000 },
             },
           },
         },
@@ -1323,6 +1400,12 @@ export const createAppContentAgentTools = ({
       },
     },
     execute: async (args = {}, context = {}) => {
+      const sourceValidation = validateMaidWorldbookSourcePlan({
+        toolName: 'worldbook.generate_entries',
+        args,
+        grounding: context?.maidSourceGrounding,
+      });
+      if (!sourceValidation.ok) return sourceValidation;
       if (typeof generateWithSubAgent !== 'function') {
         return { ok: false, reason: 'generation_unavailable', message: '正文生成通道未接入。' };
       }
@@ -1342,8 +1425,12 @@ export const createAppContentAgentTools = ({
           `为世界书「${worldbookName}」生成条目正文。`,
           `条目标题：${title}`,
           `要点大纲：${trim(item?.outline)}`,
+          `资料层：${trim(item?.sourceLayer, '未标记')}`,
+          `来源引用：${normalizeStringList(item?.sourceRefs).join('、') || '无'}`,
+          trim(item?.sourceNotes) ? `来源说明：${trim(item.sourceNotes)}` : '',
+          '资料边界：只根据大纲与上述来源层写作；不得把用户原创或创意扩写伪装成原作事实。',
           `要求：约 ${length} 字；只输出条目正文本身（纯文本，不要标题、不要解释、不要 markdown 代码块）。`,
-        ].join('\n');
+        ].filter(Boolean).join('\n');
         const out = await generateWithSubAgent({
           subAgentId: trim(args.subAgentId),
           prompt,
@@ -1365,11 +1452,14 @@ export const createAppContentAgentTools = ({
           title,
           content: trim(out.text),
           keys: Array.isArray(item?.keys) ? item.keys : [],
+          sourceLayer: trim(item?.sourceLayer),
+          sourceRefs: normalizeStringList(item?.sourceRefs),
+          sourceNotes: trim(item?.sourceNotes),
         });
       }
       // 写入：已有同名世界书则追加，否则新建（不做 replace，安全语义最窄）
       await waitForWorldStoreReady?.();
-      const existing = typeof getWorldInfo === 'function' ? await getWorldInfo(worldbookName) : null;
+      const existing = (await readWorldbookRecord(worldbookName)).data;
       const existingEntries = getWorldEntries(existing);
       const reserved = existingEntries.map(entry => clone(entry));
       const incoming = generated.map((entry, index) => {
@@ -1466,6 +1556,12 @@ export const createAppContentAgentTools = ({
       },
     },
     execute: async (args = {}, context = {}) => {
+      const sourceValidation = validateMaidWorldbookSourcePlan({
+        toolName: 'worldbook.create',
+        args,
+        grounding: context?.maidSourceGrounding,
+      });
+      if (!sourceValidation.ok) return sourceValidation;
       const {
         personaQuery,
         persona,
@@ -1481,7 +1577,9 @@ export const createAppContentAgentTools = ({
       if (typeof saveWorldInfo !== 'function') {
         return { ok: false, created: false, reason: 'worldbook_store_unavailable' };
       }
-      let targetName = mode === 'create_new' ? await makeUniqueWorldbookName(name, { listWorlds, getWorldInfo }) : name;
+      let targetName = mode === 'create_new'
+        ? await makeUniqueWorldbookName(name, { listWorlds, getWorldInfo, worldInfoExists })
+        : name;
       let targetExisting = targetName === name ? existing : null;
       let overwritten = false;
       let fallbackCreated = hasFallbackToolSafety(context, 'worldbook.replace');
@@ -1504,7 +1602,7 @@ export const createAppContentAgentTools = ({
         if (confirmed === true) {
           overwritten = true;
         } else {
-          targetName = await makeUniqueWorldbookName(name, { listWorlds, getWorldInfo });
+          targetName = await makeUniqueWorldbookName(name, { listWorlds, getWorldInfo, worldInfoExists });
           targetExisting = null;
           fallbackCreated = true;
         }
@@ -1614,6 +1712,12 @@ export const createAppContentAgentTools = ({
       },
     },
     execute: async (args = {}, context = {}) => {
+      const sourceValidation = validateMaidWorldbookSourcePlan({
+        toolName: 'worldbook.update_entries',
+        args,
+        grounding: context?.maidSourceGrounding,
+      });
+      if (!sourceValidation.ok) return sourceValidation;
       await waitForWorldStoreReady?.();
       const target = await resolveWorldbookUpdateTarget(args);
       if (!Array.isArray(args.updates) || !args.updates.length) {
@@ -1718,7 +1822,7 @@ export const createAppContentAgentTools = ({
   {
     name: 'worldbook.delete_entries',
     title: 'Delete worldbook entries',
-    description: 'Delete selected entries from an existing worldbook, including duplicate entries by title. Requires user confirmation.',
+    description: 'Delete selected entries from an explicitly identified existing worldbook, including duplicate entries by title. Requires user confirmation.',
     source: 'maid-app-content',
     permissions: [],
     riskLevel: 'high',
@@ -2169,9 +2273,8 @@ export const createAppContentAgentTools = ({
       if (typeof bindWorldToSession !== 'function') {
         return { ok: false, bound: false, reason: 'worldbook_session_binding_unavailable', sessionId, worldbookId };
       }
-      if (typeof getWorldInfo === 'function') {
-        const world = await getWorldInfo(worldbookId);
-        if (!world) return { ok: false, bound: false, reason: 'worldbook_not_found', sessionId, worldbookId };
+      if (!(await readWorldbookRecord(worldbookId)).exists) {
+        return { ok: false, bound: false, reason: 'worldbook_not_found', sessionId, worldbookId };
       }
       const currentIds = await getSessionWorldIds(sessionId);
       const mode = trim(args.mode, 'append') === 'replace' ? 'replace' : 'append';
@@ -2195,6 +2298,96 @@ export const createAppContentAgentTools = ({
     summarizeResult: result => result?.ok === false
       ? `bind worldbook to session failed: ${trim(result?.reason, 'unknown')}`
       : `bound worldbook ${trim(result?.worldbookId, '-')} to ${trim(result?.sessionName || result?.sessionId, '-')}`,
+  },
+  {
+    name: 'worldbook.bind_rp_session',
+    title: 'Bind worldbook to creative-writing session only',
+    description: 'Enable a saved aggregate worldbook only for one persona creative-writing session, without binding it to the persona card or private chats.',
+    source: 'maid-app-content',
+    permissions: [],
+    riskLevel: 'medium',
+    capabilities: {
+      read: true,
+      write: true,
+      network: false,
+      cost: 'none',
+      undo: 'manual_unbind',
+      modelContext: 'none',
+      confirmation: 'allow_once',
+    },
+    safety: {
+      operationType: 'bind_worldbook_to_rp_session',
+      destructive: 'never',
+      description: 'Adds a worldbook binding to exactly one rp:<personaId> session. It never changes the persona worldbook binding used by private chats.',
+    },
+    schema: {
+      type: 'object',
+      required: ['worldbookId'],
+      additionalProperties: false,
+      properties: {
+        worldbookId: { type: 'string', minLength: 1, maxLength: 160 },
+        id: { type: 'string', maxLength: 160 },
+        name: { type: 'string', maxLength: 160 },
+        personaId: { type: 'string', maxLength: 160 },
+        personaName: { type: 'string', maxLength: 160 },
+        target: { type: 'string', maxLength: 160 },
+        mode: { type: 'string', enum: ['append', 'replace'] },
+      },
+    },
+    execute: async (args = {}) => {
+      await waitForWorldStoreReady?.();
+      const personaQuery = trim(args.personaId || args.personaName || args.target);
+      const persona = personaQuery
+        ? findStoreItem(personaStore, personaQuery)
+        : getActiveStoreItem(personaStore);
+      const personaId = trim(persona?.id);
+      if (!personaId) {
+        return {
+          ok: false,
+          bound: false,
+          reason: personaQuery ? 'persona_not_found' : 'active_persona_not_found',
+          personaQuery,
+        };
+      }
+      if (typeof getRpSessionId !== 'function') {
+        return { ok: false, bound: false, reason: 'rp_session_resolution_unavailable', personaId };
+      }
+      const rpSessionId = trim(await getRpSessionId(personaId));
+      if (!rpSessionId || !rpSessionId.startsWith('rp:')) {
+        return { ok: false, bound: false, reason: 'invalid_rp_session_id', personaId, rpSessionId };
+      }
+      const worldbookId = trim(args.worldbookId || args.id || args.name);
+      if (!worldbookId) return { ok: false, bound: false, reason: 'missing_worldbook_id', personaId, rpSessionId };
+      if (typeof bindWorldToSession !== 'function') {
+        return { ok: false, bound: false, reason: 'worldbook_session_binding_unavailable', personaId, rpSessionId, worldbookId };
+      }
+      if (!(await readWorldbookRecord(worldbookId)).exists) {
+        return { ok: false, bound: false, reason: 'worldbook_not_found', personaId, rpSessionId, worldbookId };
+      }
+      const currentIds = await getSessionWorldIds(rpSessionId);
+      const mode = trim(args.mode, 'append') === 'replace' ? 'replace' : 'append';
+      const nextIds = mode === 'replace'
+        ? [worldbookId]
+        : Array.from(new Set([...currentIds, worldbookId].filter(Boolean)));
+      await bindWorldToSession(rpSessionId, nextIds, { silent: false });
+      refreshChatAndContacts?.({ immediate: true });
+      return {
+        ok: true,
+        bound: true,
+        added: !currentIds.includes(worldbookId),
+        scope: 'rp_only',
+        mode,
+        personaId,
+        personaName: trim(persona?.name || personaId),
+        rpSessionId,
+        worldbookId,
+        previousWorldbookIds: currentIds,
+        worldbookIds: nextIds,
+      };
+    },
+    summarizeResult: result => result?.ok === false
+      ? `bind worldbook to creative-writing session failed: ${trim(result?.reason, 'unknown')}`
+      : `bound worldbook ${trim(result?.worldbookId, '-')} only to ${trim(result?.rpSessionId, '-')}`,
   },
   {
     name: 'worldbook.bind_sessions',
@@ -2275,27 +2468,25 @@ export const createAppContentAgentTools = ({
       if (!worldbookId) return { ok: false, reason: 'missing_worldbook_id', results: [] };
       if (!targets.length) return { ok: false, reason: 'missing_sessions', results: [] };
 
-      let worldbook = null;
-      if (typeof getWorldInfo === 'function') {
-        try {
-          worldbook = await getWorldInfo(worldbookId);
-        } catch (error) {
-          return {
-            ok: false,
-            reason: 'worldbook_read_failed',
-            worldbookId,
-            errorMessage: trim(error?.message || error),
-            results: targets.map(target => ({ target, status: 'failed', reason: 'worldbook_read_failed' })),
-          };
-        }
-        if (!worldbook) {
-          return {
-            ok: false,
-            reason: 'worldbook_not_found',
-            worldbookId,
-            results: targets.map(target => ({ target, status: 'failed', reason: 'worldbook_not_found' })),
-          };
-        }
+      let worldbookRecord = null;
+      try {
+        worldbookRecord = await readWorldbookRecord(worldbookId);
+      } catch (error) {
+        return {
+          ok: false,
+          reason: 'worldbook_read_failed',
+          worldbookId,
+          errorMessage: trim(error?.message || error),
+          results: targets.map(target => ({ target, status: 'failed', reason: 'worldbook_read_failed' })),
+        };
+      }
+      if (!worldbookRecord.exists) {
+        return {
+          ok: false,
+          reason: 'worldbook_not_found',
+          worldbookId,
+          results: targets.map(target => ({ target, status: 'failed', reason: 'worldbook_not_found' })),
+        };
       }
       if (!preview && typeof bindWorldToSession !== 'function') {
         return {
@@ -2519,8 +2710,9 @@ export const createAppContentAgentTools = ({
       if (typeof getWorldInfo !== 'function') {
         return { ok: false, reason: 'worldbook_store_unavailable', worldbookId };
       }
-      const data = await getWorldInfo(worldbookId);
-      if (!data) return { ok: false, reason: 'worldbook_not_found', worldbookId };
+      const record = await readWorldbookRecord(worldbookId);
+      if (!record.exists) return { ok: false, reason: 'worldbook_not_found', worldbookId };
+      const data = record.data;
       const entries = getWorldEntries(data);
       const maxEntries = Math.max(1, Math.min(200, Number(args.maxEntries || 50) || 50));
       const maxContentLength = Math.max(120, Math.min(12000, Number(args.maxContentLength || 2000) || 2000));

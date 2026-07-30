@@ -130,6 +130,7 @@ import {
   resolveMemorySessionMode,
   tableMatchesMemoryContext,
 } from '../memory/memory-context-utils.js';
+import { resolveVisibleSessionWorldIds } from './world-session-visibility-utils.js';
 import {
   limitHistoryByTokenBudget,
   mapHistoryMessagesToTurns,
@@ -767,18 +768,14 @@ class AppBridge {
     const normalizeVisibleIds = (value) => this.normalizeWorldIds(value).filter((id) => id !== BUILTIN_PHONE_FORMAT_WORLDBOOK_ID);
     const globalWorldId = String(this.globalWorldId || '').trim();
     const roleWorldIds = normalizeVisibleIds(this.getRoleWorldIds(sid, { ...(options || {}), uiMode, isGroupChat, groupMemberIds }));
-    const sessionWorldIds = [];
-    if (uiMode !== 'rp') {
-      if (!isGroupChat) {
-        sessionWorldIds.push(...normalizeVisibleIds(this.worldSessionMap[sid]));
-      } else {
-        groupMemberIds.forEach((memberSessionId) => {
-          normalizeVisibleIds(this.worldSessionMap[memberSessionId]).forEach((worldId) => {
-            if (!sessionWorldIds.includes(worldId)) sessionWorldIds.push(worldId);
-          });
-        });
-      }
-    }
+    const sessionWorldIds = resolveVisibleSessionWorldIds({
+      uiMode,
+      sessionId: sid,
+      isGroupChat,
+      groupMemberIds,
+      worldSessionMap: this.worldSessionMap,
+      normalizeWorldIds: normalizeVisibleIds,
+    });
     const worldIds = [];
     const pushUnique = (value) => {
       const worldId = String(value || '').trim();

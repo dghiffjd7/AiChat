@@ -98,6 +98,11 @@ const setupExpression = `(async () => {
       if (state.autoConfirm === true) {
         button = buttons.find(item => String(item.textContent || '').trim() === '允许一次') || null;
       }
+      if (!button && state.autoConfirm === true) {
+        button = buttons.find(item => ['确认创建', '确认修改'].includes(
+          String(item.textContent || '').trim(),
+        )) || null;
+      }
       const structuredDeleteTaskIds = new Set([
         'memory-system-v4f-b-0730-009',
         'memory-system-v4f-b-0730-010',
@@ -105,6 +110,8 @@ const setupExpression = `(async () => {
         'memory-system-g35-b-0730-009',
         'memory-system-g35-b-0730-010',
         'memory-system-g35-b-0730-011',
+        'one-piece-cleanup-v4f-0730-001',
+        'one-piece-cleanup-apply-v4f-0730-001',
       ]);
       if (!button && structuredDeleteTaskIds.has(String(state.taskId || ''))) {
         button = buttons.find(item => String(item.textContent || '').trim() === '确认删除') || null;

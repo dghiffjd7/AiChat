@@ -45,7 +45,10 @@ export const formatWorldScopeLabel = ({
     const target = normalizeWorldTarget(targetType, scope);
     if (target === 'global') return '全局世界书（所有会话共享）';
     if (target === 'role') return sid ? `角色绑定（当前会话「${sid}」）` : '角色绑定';
-    if (target === 'session_extra') return sid ? `当前会话「${sid}」的附加世界书` : '当前会话的附加世界书';
+    if (target === 'session_extra') {
+        if (sid.startsWith('rp:')) return `创意写作会话「${sid}」的专属世界书`;
+        return sid ? `当前会话「${sid}」的附加世界书` : '当前会话的附加世界书';
+    }
     return sid ? `当前会话「${sid}」的角色/附加世界书` : '当前会话的角色/附加世界书';
 };
 
@@ -414,9 +417,9 @@ export class WorldPanel {
                 if (this.scope === 'global') {
                     newBtn.style.display = '';
                     newBtn.textContent = '新增全局';
-                } else if (!isGroupSession && !isRpSession) {
+                } else if (!isGroupSession) {
                     newBtn.style.display = '';
-                    newBtn.textContent = '新增附加';
+                    newBtn.textContent = isRpSession ? '新增创作专属' : '新增附加';
                 } else {
                     newBtn.style.display = 'none';
                 }
@@ -425,9 +428,9 @@ export class WorldPanel {
                 if (this.scope === 'global') {
                     this.libraryToggleBtn.style.display = '';
                     this.libraryToggleBtn.textContent = '全局世界书库';
-                } else if (!isGroupSession && !isRpSession) {
+                } else if (!isGroupSession) {
                     this.libraryToggleBtn.style.display = '';
-                    this.libraryToggleBtn.textContent = '附加世界书库';
+                    this.libraryToggleBtn.textContent = isRpSession ? '创作世界书库' : '附加世界书库';
                 } else {
                     this.libraryToggleBtn.style.display = 'none';
                 }
@@ -478,7 +481,8 @@ export class WorldPanel {
                 } else if (isGroupSession) {
                     indicator.textContent = `群聊 ${contact?.name || sessionKey}：角色 ${roleSummary} / 成员附加自动合并`;
                 } else if (isRpSession) {
-                    indicator.textContent = `创意写作会话：角色 ${roleSummary} / 附加世界书不参与`;
+                    const extrasLabel = visibleSessionIds.length ? visibleSessionIds.join(' + ') : '未启用';
+                    indicator.textContent = `创意写作会话：角色 ${roleSummary} / 创作专属 ${extrasLabel}`;
                 } else {
                     const extrasLabel = visibleSessionIds.length ? visibleSessionIds.join(' + ') : '未启用';
                     indicator.textContent = `私聊 ${contact?.name || sessionKey}：角色 ${roleSummary} / 附加 ${extrasLabel}`;
@@ -950,15 +954,15 @@ export class WorldPanel {
                     }
                 }
                 const sessionSection = createSection({
-                    title: '聊天室附加世界书',
+                    title: isRpSession ? '创作专属世界书' : '聊天室附加世界书',
                     description: isRpSession
-                        ? '创意写作会话不读取聊天室附加世界书。'
+                        ? '只对当前角色卡的创意写作会话生效；不会进入该角色卡的私聊。'
                         : '只对当前聊天室生效；不会影响创意写作会话或其他聊天。',
                 });
-                if (isRpSession) {
-                    appendEmpty(sessionSection.body, '当前为创意写作会话，附加世界书暂停生效。');
-                } else if (!visibleSessionIds.length) {
-                    appendEmpty(sessionSection.body, '当前聊天室还没有附加世界书。');
+                if (!visibleSessionIds.length) {
+                    appendEmpty(sessionSection.body, isRpSession
+                        ? '当前创意写作会话还没有专属世界书。'
+                        : '当前聊天室还没有附加世界书。');
                 } else {
                     for (const worldId of visibleSessionIds) {
                         const card = await buildWorldCard(worldId, {

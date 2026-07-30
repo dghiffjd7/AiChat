@@ -256,3 +256,4 @@ const createHarness = () => {
 }
 
 console.log('app-session-tools-tests passed');
+await import('./group-chat-agent-tools-tests.mjs');

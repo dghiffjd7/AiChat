@@ -4,6 +4,7 @@ import { createAgentToolRegistry } from '../../src/scripts/agent/agent-tool-regi
 import { listAppFeatures } from '../../src/scripts/agent/app-feature-catalog.js';
 import { registerAppNavigationAgentTools } from '../../src/scripts/agent/tools/app-navigation-tools.js';
 import { registerAppSessionAgentTools } from '../../src/scripts/agent/tools/app-session-tools.js';
+import { registerGroupChatAgentTools } from '../../src/scripts/agent/tools/group-chat-agent-tools.js';
 import { registerAppContentAgentTools } from '../../src/scripts/agent/tools/app-content-tools.js';
 import { registerMaidMediaAssetTools } from '../../src/scripts/agent/tools/media-asset-tools.js';
 import { registerAppUiCaptureTools } from '../../src/scripts/agent/tools/app-ui-capture-tools.js';
@@ -24,6 +25,7 @@ const CATALOG_EXEMPT_TOOLS = new Set([
 const registry = createAgentToolRegistry();
 registerAppNavigationAgentTools(registry, {});
 registerAppSessionAgentTools(registry, {});
+registerGroupChatAgentTools(registry, {});
 registerAppContentAgentTools(registry, {});
 registerMaidMediaAssetTools(registry, {});
 registerAppUiCaptureTools(registry, {});

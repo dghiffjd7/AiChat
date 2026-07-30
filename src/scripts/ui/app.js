@@ -60,9 +60,11 @@ import {
 } from '../agent/app-feature-catalog.js';
 import { createAppResourceReader } from '../agent/app-resource-reader.js';
 import {
+  createMaidImportedCardClassifier,
   createMaidModelBackedPlanner,
   createMaidModelBackedReActPlanner,
 } from '../agent/maid-model-planner.js';
+import { buildMaidImageGenerationContext } from '../agent/maid-image-generation-context.js';
 import {
   createMaidSemanticMemoryExtractor,
   projectMaidStructuredMemoriesFromResult,
@@ -75,6 +77,7 @@ import {
 import { createAgentRegistry, createSubAgentRegistryProvider } from '../agent/agent-registry.js';
 import { registerAppNavigationAgentTools } from '../agent/tools/app-navigation-tools.js';
 import { registerAppSessionAgentTools } from '../agent/tools/app-session-tools.js';
+import { registerGroupChatAgentTools } from '../agent/tools/group-chat-agent-tools.js';
 import { registerAppContentAgentTools } from '../agent/tools/app-content-tools.js';
 import { registerMaidMediaAssetTools } from '../agent/tools/media-asset-tools.js';
 import { registerAppUiCaptureTools } from '../agent/tools/app-ui-capture-tools.js';
@@ -2833,6 +2836,7 @@ const initApp = async () => {
       { id: 'config', title: 'API 配置', element: configPanel?.element },
       { id: 'session', title: '聊天室列表', element: sessionPanel?.panel },
       { id: 'session-config', title: '会话配置', element: sessionConfigPanel?.panel },
+      { id: 'group-create', title: '创建群聊', element: groupCreatePanel?.panel, aliases: ['create-group'] },
       { id: 'worldbook-editor', title: '世界书编辑器', element: worldPanel?.editor?.modal, aliases: ['world-editor', 'worldbook'] },
       { id: 'worldbook-library', title: '世界书库', element: worldPanel?.libraryModal, aliases: ['world-library', 'worldbook'] },
       { id: 'worldbook', title: '世界书管理', element: worldPanel?.panel },
@@ -2940,6 +2944,7 @@ const initApp = async () => {
       config: options => configPanel.show({ tab: options?.tab || 'chat' }),
       session: () => sessionPanel.show(),
       'session-config': options => sessionConfigPanel.show({ sessionId: options?.sessionId || chatStore.getCurrent() }),
+      'group-create': () => groupCreatePanel.show(),
       worldbook: options => worldPanel.show(options || {}),
       memory: () => memoryTemplatePanel.show(),
       variables: () => {
@@ -2990,6 +2995,14 @@ const initApp = async () => {
     deleteSession: sessionId => sessionPanel.removeCore(sessionId),
     renderSessionNameHtml: (sessionId, contact) => renderSessionNameHtml(sessionId, contact),
     defaultAvatar: '',
+  });
+  registerGroupChatAgentTools(agentToolRegistry, {
+    contactsStore,
+    chatStore,
+    enterChatRoom: (...args) => enterChatRoom(...args),
+    refreshChatAndContacts: (...args) => refreshChatAndContacts(...args),
+    setActiveSession: sessionId => window.appBridge.setActiveSession(sessionId),
+    renderSessionNameHtml: (sessionId, contact) => renderSessionNameHtml(sessionId, contact),
   });
   const subAgentSkillLabel = (skills = []) => skills
     .map(id => MAID_SUB_AGENT_SKILLS.find(item => item.id === id)?.label || id)
@@ -3099,6 +3112,7 @@ const initApp = async () => {
     getWorldSessionMap: () => window.appBridge.getWorldSessionMap?.(),
     getGlobalWorldId: () => window.appBridge.getGlobalWorldId?.(),
     assignWorldToPersona: (personaId, worldId, options) => window.appBridge.assignRoleWorldToPersona?.(personaId, worldId, options || {}),
+    getRpSessionId: personaId => getRpSessionId(personaId),
     bindWorldToSession: (sessionId, worldIds, options) => window.appBridge.bindWorldToSession?.(sessionId, worldIds, options || {}),
     enterChatRoom: (...args) => enterChatRoom(...args),
     refreshChatAndContacts: (...args) => refreshChatAndContacts(...args),
@@ -3213,11 +3227,40 @@ const initApp = async () => {
     getActiveUserName,
     getActiveUserAvatar,
   });
+  const buildCurrentMaidImageGenerationContext = ({
+    config = {},
+    preset = {},
+    options = {},
+  } = {}) => {
+    const activeProfileId = String(imageConfigManager.getActiveProfileId?.() || '').trim();
+    const activeProfile = activeProfileId
+      ? imageConfigManager.getProfileById?.(activeProfileId)
+      : imageConfigManager.getActiveProfile?.();
+    return buildMaidImageGenerationContext({
+      config,
+      profile: activeProfile || {},
+      preset,
+      options,
+      negativeCapability: resolveImageNegativePromptCapability(config),
+      referenceCapability: resolveImageReferenceCapability(config),
+    });
+  };
+  const getCurrentMaidImageGenerationContext = async () => {
+    const config = await loadImageRuntimeConfig({ includeDraft: true });
+    await imageGenerationParamsStore.ready;
+    const preset = imageGenerationParamsStore.getActive();
+    return buildCurrentMaidImageGenerationContext({
+      config,
+      preset,
+      options: mergeImageGenerationRequestOptions({ config, preset }),
+    });
+  };
   registerMaidMediaAssetTools(agentToolRegistry, {
     personaStore,
     userStore,
     contactsStore,
     chatStore,
+    getImageGenerationContext: getCurrentMaidImageGenerationContext,
     fetchRemoteImage: async (url = '') => {
       const response = await safeInvoke('http_request', {
         url: String(url || ''),
@@ -3250,9 +3293,10 @@ const initApp = async () => {
       if (!canInitClient(config)) throw new Error('请先在 API 配置中启用图片生成模型。');
       await imageGenerationParamsStore.ready;
       const negativeCapability = resolveImageNegativePromptCapability(config);
+      const preset = imageGenerationParamsStore.getActive();
       const generationOptions = mergeImageGenerationRequestOptions({
         config,
-        preset: imageGenerationParamsStore.getActive(),
+        preset,
         extra: negativeCapability?.supported && String(negativePrompt || '').trim()
           ? { negativePrompt: String(negativePrompt || '').trim() }
           : {},
@@ -3276,6 +3320,11 @@ const initApp = async () => {
         dataUrl,
         mime: String(asset?.output?.mime || '').trim(),
         bytes: Number(asset?.output?.bytes || 0) || 0,
+        generationContext: buildCurrentMaidImageGenerationContext({
+          config,
+          preset,
+          options: generationOptions,
+        }),
       };
     },
     prepareImage: options => prepareImageDataUrlForAsset(options?.dataUrl || '', {
@@ -3469,6 +3518,7 @@ const initApp = async () => {
     createClient: config => new LLMClient(config),
     isConfigReady: canInitClient,
     getConversationContext: getMaidConversationContext,
+    getImageGenerationContext: getCurrentMaidImageGenerationContext,
     onContextInjected: recordMaidContextInjection,
     onDebugSnapshot: recordMaidDebugSnapshot,
     logger,
@@ -3478,7 +3528,15 @@ const initApp = async () => {
     createClient: config => new LLMClient(config),
     isConfigReady: canInitClient,
     getConversationContext: getMaidConversationContext,
+    getImageGenerationContext: getCurrentMaidImageGenerationContext,
     onContextInjected: recordMaidContextInjection,
+    onDebugSnapshot: recordMaidDebugSnapshot,
+    logger,
+  });
+  const maidImportedCardClassifier = createMaidImportedCardClassifier({
+    resolveRuntimeConfig: resolveMaidRuntimeConfig,
+    createClient: config => new LLMClient(config),
+    isConfigReady: canInitClient,
     onDebugSnapshot: recordMaidDebugSnapshot,
     logger,
   });
@@ -3497,6 +3555,7 @@ const initApp = async () => {
     capabilityRoutingRuntime: maidCapabilityRoutingRuntime,
     planner: maidPlanner,
     reactPlanner: maidReActPlanner,
+    importedCardClassifier: maidImportedCardClassifier,
     chatResponder: maidChatResponder,
     guidedActionRuntime: maidGuidedActionRuntime,
     prepareConversationContext: prepareMaidConversationContext,
@@ -23535,7 +23594,11 @@ Phase G（Frame 36）：循环衔接
       }
       if (result?.ok === false) {
         window.toastr?.warning?.(result.message || result.reason || '女仆暂时无法执行这个请求');
-      } else if (result?.message && result?.responseType !== 'chat') {
+      } else if (
+        result?.message &&
+        result?.responseType !== 'chat' &&
+        !['awaiting_confirmation', 'cancelled'].includes(String(result?.status || '').trim())
+      ) {
         // 完整回复已在女仆气泡中展示；通知只提示任务结束，不重复全文
         window.toastr?.success?.('女仆已完成任务 ✓');
       }

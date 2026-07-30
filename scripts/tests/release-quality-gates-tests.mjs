@@ -82,6 +82,16 @@ const splitScriptSteps = script =>
 }
 
 {
+  const agentSteps = splitScriptSteps(scripts['test:agent']);
+  assert.equal(agentSteps.includes('node scripts/tests/maid-source-grounding-tests.mjs'), true);
+  assert.equal(agentSteps.includes('node scripts/tests/maid-visual-spec-tests.mjs'), true);
+
+  const variableSteps = splitScriptSteps(scripts['test:variables']);
+  assert.equal(variableSteps.includes('node scripts/tests/world-session-visibility-utils-tests.mjs'), true);
+  console.log('ok - source grounding visual continuity and RP world visibility tests stay wired into release gates');
+}
+
+{
   const chatGenerationSteps = splitScriptSteps(scripts['test:chat-generation']);
   assert.equal(chatGenerationSteps.includes('node scripts/tests/lifecycle-trace-utils-tests.mjs'), true);
   assert.equal(chatGenerationSteps.includes('node scripts/tests/send-flow-utils-tests.mjs'), true);

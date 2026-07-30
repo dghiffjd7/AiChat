@@ -127,12 +127,21 @@ const getTool = (tools, name) => tools.find(tool => tool.name === name);
     },
   });
   const research = getTool(tools, 'web.research');
-  const result = await research.execute({ query: 'research topic', limit: 2, fetchTop: 1 });
+  const result = await research.execute({
+    query: 'research topic',
+    target: 'Readable source',
+    targetAliases: ['Fetched'],
+    limit: 2,
+    fetchTop: 1,
+  });
   assert.equal(result.ok, true);
   assert.equal(result.results.length, 2);
   assert.equal(result.documents.length, 1);
   assert.equal(result.documents[0].title, 'Fetched');
   assert.match(result.documents[0].text, /Readable source text/);
+  assert.equal(result.targetCheck.checked, true);
+  assert.equal(result.targetCheck.relevantSourceCount, 1);
+  assert.equal(result.sources[0].targetRelevant, true);
   assert.equal(requests.length, 2);
   console.log('ok - web research tool searches and fetches readable source text');
 }

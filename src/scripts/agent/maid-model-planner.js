@@ -10,6 +10,13 @@ import {
   buildMaidUserContentWithImages,
   getMaidImageAttachmentsFromContext,
 } from './maid-attachment-parts.js';
+import {
+  buildMaidImageGenerationContextPromptBlock,
+  normalizeMaidImageGenerationContext,
+} from './maid-image-generation-context.js';
+import { buildMaidRunContinuationPromptBlock } from './maid-run-continuation.js';
+import { buildMaidSourceGroundingPromptBlock } from './maid-source-grounding.js';
+import { buildMaidVisualSpecPromptBlock } from './maid-visual-spec.js';
 import { DEFAULT_MAID_PROMPT, MAID_OPERATION_SAFETY_PROMPT } from './maid-prompt-defaults.js';
 import { buildMaidSelectionPromptBlock } from '../ui/maid-selection-utils.js';
 import { getVisionInputCapability } from '../api/vision-capabilities.js';
@@ -321,11 +328,22 @@ export const buildMaidModelPlannerMessages = ({
   const imageSummary = buildMaidImageAttachmentSummary(imageAttachments);
   const selectionBlock = buildMaidSelectionPromptBlock(context?.userSelection);
   const subAgentsBlock = buildMaidSubAgentsPromptBlock(context?.subAgents);
+  const imageGenerationBlock = buildMaidImageGenerationContextPromptBlock(context?.imageGenerationContext);
+  const runContinuationBlock = buildMaidRunContinuationPromptBlock(context?.runContinuation);
+  const sourceGroundingBlock = buildMaidSourceGroundingPromptBlock({
+    input,
+    steps: context?.maidReactSteps,
+  });
+  const visualSpecBlock = buildMaidVisualSpecPromptBlock(context?.maidVisualSpecLedger);
   const userText = [
     `用户请求：${trim(input)}`,
+    runContinuationBlock,
+    sourceGroundingBlock,
+    visualSpecBlock,
     selectionBlock,
     subAgentsBlock,
     imageSummary ? `用户附图：\n${imageSummary}` : '',
+    imageGenerationBlock,
     `当前会话：${trim(context?.sessionId, '-')}`,
     `UI 模式：${trim(context?.uiMode, '-')}`,
     `当前页面：${trim(context?.activePage, '-')}`,
@@ -357,6 +375,8 @@ export const buildMaidModelPlannerMessages = ({
         '例外：chat.send_message 的 user 消息在 triggerReply:true 时会走正常回复链，当前实现必须进入目标聊天室并传 open:true；只有 triggerReply:false 的纯消息写入才能 open:false 后台追加。',
         '教我、一步步、引导等教学请求与普通展示不同：APP 的内建新手任务由本地流程处理；功能首次引导由执行层处理，不要把普通后台任务改写成界面教学。',
         '如果用户要求把附图设置为头像或壁纸，选择对应头像/壁纸工具；工具参数只传 target/name/sessionId/attachmentId 等小字段，不要把 base64 或图片 data URL 写进 args。省略 attachmentId 时工具会使用第一张附图。',
+        '调用 media.generate_image 时必须完整传 subject、subjectAliases（提示词使用别名时）、target、purpose、appearance、outfit、style、targetAspectRatio；subject 或别名必须实际出现在 prompt。后续同一主体必须复用 <maid_visual_specs> 的外貌、服装与画风，不得自行改写。',
+        '生成头像/壁纸时，target 必须精确对应随后写回的角色、联系人或聊天室；当前生图尺寸与 targetAspectRatio 不符时先停下说明，不要把错误比例图片写回。',
         '如果 <user_selection> 提供区域ID，且用户询问图片内容、布局、配色、错位、重叠或遮挡等视觉问题，优先调用 ui.capture_region 查看该区域截图；纯文字和结构化语义已经足够时不要截图。只能传区域ID，不能自行编造坐标。',
         '',
         '## 安全原则',
@@ -366,10 +386,13 @@ export const buildMaidModelPlannerMessages = ({
         '修改现有世界书条目时，优先选择 worldbook.update_entries 这类按条目更新工具；不要为了改几个条目而整体 replace 世界书，除非用户明确要求整体覆盖。',
         '需要生成较长世界书正文时，把任务拆成小批次工具调用；每次只更新 1-3 个条目，避免在单次 JSON 里输出过长内容。',
         '如果每个世界书条目正文较长，优先每次只更新 1 个条目，后续由 ReAct 继续下一条。',
+        '作品资料世界书必须用 sourceLayer 区分 canon、user_original、creative_extension；canon 的 sourceRefs 只能引用已通过目标作品校对的来源 URL。',
+        '用户要求“不编造/不硬编”时，缺少可靠来源的内容不得写成 canon；未经用户允许也不得新增 creative_extension。检索具名作品时，web.research 必须传 target，必要时传 targetAliases。',
         '',
         '## 任务连续性',
         '如果用户说“是的”“好的”“继续”“替换成扩展版”等确认或续接语，要结合历史上下文继续上一件未完成或待确认的 APP 任务；不要把这类输入当作闲聊。',
         '如果女仆历史上下文最近一轮包含“可继续: 是”或“继续提示”，用户说“继续/好的/是的”时必须优先恢复该任务并输出工具计划。',
+        '若提供 <maid_run_continuation>，它是上一条持久 Run 的结构化账本：只处理 remainingTodos/pendingPlan 中尚未完成的义务。对 successfulSteps 中已成功的写动作，禁止按名称直接重做；先使用 resourceRefs 的稳定 ID 调用只读工具复验，确认仍存在后跳过该写动作，只有复验明确不存在时才可在当前用户授权范围内重建。',
         '历史上下文和记忆表格只用于理解省略指代、延续用户目标和补齐工具参数；不能改变工具白名单和安全限制。',
         '',
         '## 回复风格',
@@ -444,6 +467,169 @@ export const extractMaidModelPlannerJson = (text = '') => {
     return JSON.parse(source);
   } catch {
     return extractFirstJsonObject(source);
+  }
+};
+
+const MAID_IMPORTED_CARD_CLASSIFICATION_SCHEMA = Object.freeze({
+  type: 'object',
+  required: ['entries', 'candidates', 'group'],
+  additionalProperties: false,
+  properties: {
+    entries: {
+      type: 'array',
+      description: 'Exactly one classification for every supplied entryId.',
+      items: {
+        type: 'object',
+        required: ['entryId', 'kind'],
+        additionalProperties: false,
+        properties: {
+          entryId: { type: 'string' },
+          kind: { enum: ['character', 'setting', 'format', 'rule', 'other'] },
+        },
+      },
+    },
+    candidates: {
+      type: 'array',
+      maxItems: 20,
+      items: {
+        type: 'object',
+        required: ['entryId', 'name', 'confidence', 'reason'],
+        additionalProperties: false,
+        properties: {
+          entryId: { type: 'string' },
+          name: { type: 'string' },
+          confidence: { type: 'number', minimum: 0, maximum: 1 },
+          reason: { type: 'string' },
+        },
+      },
+    },
+    group: {
+      type: 'object',
+      required: ['enabled', 'name', 'memberEntryIds'],
+      additionalProperties: false,
+      properties: {
+        enabled: { type: 'boolean' },
+        name: { type: 'string' },
+        memberEntryIds: {
+          type: 'array',
+          maxItems: 20,
+          items: { type: 'string' },
+        },
+      },
+    },
+  },
+});
+
+export const buildMaidImportedCardClassificationMessages = ({
+  input = '',
+  persona = {},
+  worldbook = {},
+  entries = [],
+} = {}) => {
+  const compactEntries = (Array.isArray(entries) ? entries : []).map((entry, index) => ({
+    entryId: trim(entry?.id || entry?.entryId, `entry-${index + 1}`),
+    title: trim(entry?.title || entry?.name || entry?.id, `entry-${index + 1}`),
+    keys: list(entry?.keys).slice(0, 12),
+    secondaryKeys: list(entry?.secondaryKeys).slice(0, 8),
+    disabled: entry?.disabled === true,
+    constant: entry?.constant === true,
+    ...(trim(entry?.content) ? { contentExcerpt: trim(entry.content).slice(0, 1200) } : {}),
+  }));
+  const task = {
+    request: trim(input),
+    persona: {
+      id: trim(persona?.id),
+      name: trim(persona?.name || persona?.id),
+    },
+    worldbook: {
+      id: trim(worldbook?.id),
+      name: trim(worldbook?.name || worldbook?.id),
+      entryCount: Math.max(0, Math.trunc(Number(worldbook?.entryCount) || compactEntries.length)),
+    },
+    entries: compactEntries,
+    outputSchema: MAID_IMPORTED_CARD_CLASSIFICATION_SCHEMA,
+  };
+  return [
+    {
+      role: 'system',
+      content: [
+        '你是导入角色卡世界书的人物分类器，只做一次有界分类，不调用工具、不写入 APP。',
+        '必须只输出一个 JSON 对象，禁止 Markdown 代码块、解释文字或额外字段。',
+        '对输入中的每个 entryId 恰好输出一次 kind：character / setting / format / rule / other。',
+        'candidates 只能引用被标为 character 的真实 entryId，需给显示名、0~1 置信度和简短理由；不得伪造 entryId。',
+        '“主要人物”是精简建议，不是把所有人物条目全选。优先满足用户指定阵营/团队/范围；低置信度仍可列出，但必须如实降低 confidence。',
+        'disabled 只表示世界书触发状态，不代表该条目不是人物，不能仅因此排除。',
+        'group.memberEntryIds 只能引用 candidates；若用户不要求群聊则 enabled=false。',
+        '输出必须满足任务中给出的 outputSchema；entries 数量必须与输入 entries 数量完全相同。',
+      ].join('\n'),
+    },
+    {
+      role: 'user',
+      content: JSON.stringify(task),
+    },
+  ];
+};
+
+export const createMaidImportedCardClassifier = ({
+  resolveRuntimeConfig = null,
+  createClient = null,
+  isConfigReady = () => false,
+  onDebugSnapshot = null,
+  logger = console,
+} = {}) => async (payload = {}, context = {}) => {
+  if (typeof resolveRuntimeConfig !== 'function') {
+    throw new Error('maid imported-card classifier unavailable');
+  }
+  const runtime = await resolveRuntimeConfig({
+    sessionId: trim(context?.sessionId),
+    uiMode: trim(context?.uiMode),
+    taskType: 'maid_imported_card_classifier',
+  });
+  const config = isPlainObject(runtime?.config) ? runtime.config : {};
+  let client = runtime?.client || null;
+  if (!client && typeof createClient === 'function' && isConfigReady(config)) {
+    client = createClient(config);
+  }
+  if (!client || typeof client.chat !== 'function') {
+    throw new Error(runtime?.reason || 'maid imported-card classifier API not configured');
+  }
+
+  const messages = buildMaidImportedCardClassificationMessages(payload);
+  try {
+    const responseText = await chatWithFallback(
+      client,
+      resolveFallbackClientForMessages(runtime, messages),
+      messages,
+      {
+        temperature: 0,
+        maxTokens: 10000,
+        max_tokens: 10000,
+      },
+      logger,
+      null,
+      typeof context?.onModelUsage === 'function' ? context.onModelUsage : null,
+    );
+    emitDebugSnapshot(onDebugSnapshot, {
+      source: 'maid_imported_card_classifier',
+      input: trim(payload?.input),
+      messages,
+      responseText,
+    }, logger);
+    const parsed = extractMaidModelPlannerJson(responseText);
+    if (!isPlainObject(parsed)) {
+      throw new Error('maid imported-card classifier returned invalid JSON');
+    }
+    return parsed;
+  } catch (error) {
+    logger?.warn?.('maid imported-card classifier failed', error);
+    emitDebugSnapshot(onDebugSnapshot, {
+      source: 'maid_imported_card_classifier',
+      input: trim(payload?.input),
+      messages,
+      responseText: error?.message || 'maid imported-card classifier failed',
+      error,
+    }, logger);
+    throw error;
   }
 };
 
@@ -562,12 +748,19 @@ export const buildMaidModelReActMessages = ({
   const imageSummary = buildMaidImageAttachmentSummary(imageAttachments);
   const selectionBlock = buildMaidSelectionPromptBlock(context?.userSelection);
   const subAgentsBlock = buildMaidSubAgentsPromptBlock(context?.subAgents);
+  const imageGenerationBlock = buildMaidImageGenerationContextPromptBlock(context?.imageGenerationContext);
+  const runContinuationBlock = buildMaidRunContinuationPromptBlock(context?.runContinuation);
   // 步骤观察滚动窗口：早期步骤只留一行摘要，最近步骤保留完整观察——
   // 防止长任务里 steps 序列化超限截断导致模型看不到最新工具结果（观察失明）。
   const RECENT_STEP_WINDOW = 4;
   const stepList = Array.isArray(steps) ? steps : [];
   const olderSteps = stepList.slice(0, Math.max(0, stepList.length - RECENT_STEP_WINDOW));
   const recentSteps = stepList.slice(-RECENT_STEP_WINDOW);
+  const sourceGroundingBlock = buildMaidSourceGroundingPromptBlock({
+    input,
+    steps: stepList,
+  });
+  const visualSpecBlock = buildMaidVisualSpecPromptBlock(context?.maidVisualSpecLedger);
   const olderText = olderSteps
     .map((step, i) => `${i + 1}. ${trim(step?.toolName)}:${trim(step?.status)} ${truncate(trim(step?.summary), 90)}`)
     .join('\n');
@@ -578,9 +771,13 @@ export const buildMaidModelReActMessages = ({
   ].filter(Boolean).join('\n');
   const userText = [
     `用户请求：${trim(input)}`,
+    runContinuationBlock,
+    sourceGroundingBlock,
+    visualSpecBlock,
     selectionBlock,
     subAgentsBlock,
     imageSummary ? `用户附图：\n${imageSummary}` : '',
+    imageGenerationBlock,
     `当前会话：${trim(context?.sessionId, '-')}`,
     `UI 模式：${trim(context?.uiMode, '-')}`,
     `当前页面：${trim(context?.activePage, '-')}`,
@@ -609,6 +806,8 @@ export const buildMaidModelReActMessages = ({
         '每次最多选择一个工具；不要发明工具；只能使用 APP 功能目录中 feature 允许的 tools。',
         '工具失败时，先读取观察结果中的失败原因（reason/message/failureCode）再决定下一步，不要把失败一律当偶发问题直接重试：failureCode 为 user_aborted/safety_denied/write_intent_required（用户中止、取消、拒绝确认或原请求没有授权写入）时绝不自动重试，停下向用户说明并询问是否继续；invalid_args 时修正参数重试；服务或网络类失败才值得换方式再试一次。',
         '连续操作界面或对当前界面状态不确定时（如上一步涉及打开/切换/发送），先用 app.ui.inspect 查看当前实际状态再决定下一步，不要凭猜测行动。',
+        '作品资料世界书必须用 sourceLayer 区分 canon、user_original、creative_extension；canon 的 sourceRefs 只能引用 <maid_source_grounding> 中 relevant 的完整 URL。严格“不编造”任务不得省略资料层，也不得把创意扩写当 canon。',
+        'media.generate_image 必须完整传 subject/subjectAliases/target/purpose/appearance/outfit/style/targetAspectRatio，并复用 <maid_visual_specs> 的冻结设计；生成附件只能写回相同 target 与 purpose。',
         'app.ui.inspect 拿到按钮 ref 后，如果用户要求点击，下一步使用 featureId=app.ui.click、toolName=ui.click_element 并传该 ref；不要改写 featureId，也不要用 todo 代替点击。',
         '最终回答只能陈述已执行工具步骤中真实完成的操作；用户要求的操作（如点击、切换、发送）如果没有对应的成功步骤，就不能说已完成——要么先用工具真正执行，要么如实说明你改用了什么方式（如“从页面统计直接读到了数字，没有切换过滤器”）。',
         '任务规划判据：todo 只用于跨 3 个及以上不同功能域、且包含写入、生成或较长处理链的复杂任务；多个结构化资源的只读比较不需要 todo，打开→检查→点击这类短界面序列也不要写清单。',
@@ -639,6 +838,7 @@ export const buildMaidModelReActMessages = ({
         '## 任务连续性',
         '如果历史中上一轮包含“可继续: 是”或“继续提示”，本轮用户要求继续时要接着该任务执行，不要重新开始，也不要输出普通闲聊。',
         '恢复任务时以继续提示中的“已完成步骤”清单为准：不要重复执行已完成项，最终汇报时也不要把已完成项报告为未完成或失败。',
+        '若提供 <maid_run_continuation>，以其中稳定 ID、成功步骤和剩余义务为准；已成功写动作必须先按 resourceRefs 的稳定 ID 只读复验，存在则跳过，明确不存在才可在当前授权范围内重建。不得仅凭同名资源重复创建。',
         '',
         '## 回复风格',
         '最终回答要像女仆助手自然回应：温柔、清楚、直接完成用户的问题。不要只说“我看到了/我查到了”，要给出结果。',
@@ -730,6 +930,37 @@ const resolveCapabilityDecisionFeatures = (context = {}, fallbackFeatures = []) 
   return Array.isArray(snapshot?.promptFeatures) ? snapshot.promptFeatures : fallbackFeatures;
 };
 
+const featureListUsesImageGeneration = (features = []) => (
+  (Array.isArray(features) ? features : [])
+    .some(feature => list(feature?.tools).includes('media.generate_image'))
+);
+
+const shouldInjectImageGenerationContext = (context = {}, promptFeatures = []) => {
+  const snapshotCandidates = context?.capabilitySnapshot?.candidateFeatures;
+  const relevantFeatures = Array.isArray(snapshotCandidates) ? snapshotCandidates : promptFeatures;
+  if (featureListUsesImageGeneration(relevantFeatures)) return true;
+  return (Array.isArray(context?.maidReactSteps) ? context.maidReactSteps : [])
+    .some(step => trim(step?.toolName) === 'media.generate_image');
+};
+
+const resolveImageGenerationContext = async ({
+  context = {},
+  promptFeatures = [],
+  getImageGenerationContext = null,
+  logger = console,
+} = {}) => {
+  if (!shouldInjectImageGenerationContext(context, promptFeatures)) return null;
+  if (typeof getImageGenerationContext !== 'function') {
+    return normalizeMaidImageGenerationContext(context?.imageGenerationContext);
+  }
+  try {
+    return normalizeMaidImageGenerationContext(await getImageGenerationContext());
+  } catch (error) {
+    logger?.debug?.('maid image generation context unavailable', error);
+    return null;
+  }
+};
+
 const annotateCapabilitySnapshotModel = (context = {}, runtime = {}, config = {}) => {
   const snapshot = context?.capabilitySnapshot;
   if (!snapshot || typeof snapshot !== 'object') return;
@@ -756,6 +987,7 @@ export const createMaidModelBackedPlanner = ({
   isConfigReady = () => false,
   features = listAppFeatures(),
   getConversationContext = null,
+  getImageGenerationContext = null,
   onContextInjected = null,
   onDebugSnapshot = null,
   logger = console,
@@ -795,6 +1027,12 @@ export const createMaidModelBackedPlanner = ({
     const promptFeatures = resolveCapabilityDecisionFeatures(context, features);
     const decisionFeatures = getMaidModelFeatureContext(promptFeatures).features;
     const capabilitySnapshot = context?.capabilitySnapshot || null;
+    const imageGenerationContext = await resolveImageGenerationContext({
+      context,
+      promptFeatures,
+      getImageGenerationContext,
+      logger,
+    });
     const conversationContext = resolveMaidConversationContextSnapshot({
       getConversationContext,
       input,
@@ -803,7 +1041,11 @@ export const createMaidModelBackedPlanner = ({
     });
     const messages = buildMaidModelPlannerMessages({
       input,
-      context: { ...context, subAgents: runtime?.subAgents || [] },
+      context: {
+        ...context,
+        subAgents: runtime?.subAgents || [],
+        ...(imageGenerationContext ? { imageGenerationContext } : {}),
+      },
       conversationContext,
       features: promptFeatures,
       maidPrompt: runtime?.maidPrompt || runtime?.personaPrompt,
@@ -870,6 +1112,7 @@ export const createMaidModelBackedReActPlanner = ({
   isConfigReady = () => false,
   features = listAppFeatures(),
   getConversationContext = null,
+  getImageGenerationContext = null,
   onContextInjected = null,
   onDebugSnapshot = null,
   logger = console,
@@ -909,6 +1152,12 @@ export const createMaidModelBackedReActPlanner = ({
     const promptFeatures = resolveCapabilityDecisionFeatures(context, features);
     const decisionFeatures = getMaidModelFeatureContext(promptFeatures).features;
     const capabilitySnapshot = context?.capabilitySnapshot || null;
+    const imageGenerationContext = await resolveImageGenerationContext({
+      context,
+      promptFeatures,
+      getImageGenerationContext,
+      logger,
+    });
     const conversationContext = resolveMaidConversationContextSnapshot({
       getConversationContext,
       input,
@@ -918,7 +1167,11 @@ export const createMaidModelBackedReActPlanner = ({
     const steps = Array.isArray(context?.maidReactSteps) ? context.maidReactSteps : [];
     const messages = buildMaidModelReActMessages({
       input,
-      context: { ...context, subAgents: runtime?.subAgents || [] },
+      context: {
+        ...context,
+        subAgents: runtime?.subAgents || [],
+        ...(imageGenerationContext ? { imageGenerationContext } : {}),
+      },
       conversationContext,
       features: promptFeatures,
       maidPrompt: runtime?.maidPrompt || runtime?.personaPrompt,

@@ -378,6 +378,7 @@ export const createAgentTaskRuntime = ({
     executeTool,
     finishRun,
     finishStep,
+    flush: () => store?.flush?.(),
     getRun: runId => store?.getRun?.(runId) || null,
     listEvents: options => store?.listEvents?.(options) || [],
     listRuns: options => store?.listRuns?.(options) || [],

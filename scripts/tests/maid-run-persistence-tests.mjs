@@ -9,6 +9,7 @@ import {
 } from '../../src/scripts/agent/maid-model-planner.js';
 import { AgentRunStore } from '../../src/scripts/storage/agent-run-store.js';
 import { compareMaidCandidateUsage } from '../dev/maid-candidate-usage-ab.mjs';
+import { buildMaidRunResumePrompt } from '../../src/scripts/ui/maid-run-resume-utils.js';
 
 const allowAll = { evaluateTool: () => ({ decision: 'allow', checks: [] }) };
 
@@ -482,6 +483,52 @@ const openPanelPlan = {
   assert.equal(run.metadata.continuable, true);
   assert.ok(run.metadata.continueHint.includes('打开世界书'), 'continueHint 应包含用户目标');
   console.log('ok - 中断 run 记录 continuable 与 continueHint');
+}
+
+{
+  const { store, runtime } = createHarness({
+    executeTool: async () => ({
+      ok: true,
+      sessionId: 'session-stable-1',
+      name: '雪之下雪乃',
+      wallpaper: 'data:image/png;base64,DO_NOT_PERSIST',
+    }),
+  });
+  const interruptedAgent = createMaidAssistantAgent({
+    planner: async () => ({ ...openPanelPlan }),
+    reactPlanner: async () => ({
+      ok: false,
+      reason: 'invalid_model_react_decision',
+      message: '模型没有返回有效决策。',
+    }),
+    agentTaskRuntime: runtime,
+    logger: { warn() {} },
+  });
+  await interruptedAgent.runPrompt('建立完整角色资料', { sessionId: 's1' });
+  const sourceRun = store.listRuns({ kind: 'maid_assistant' })[0];
+  const snapshot = sourceRun.metadata.continuationSnapshot;
+  assert.equal(snapshot.sourceRunId, sourceRun.id);
+  assert.equal(snapshot.goal, '建立完整角色资料');
+  assert.ok(snapshot.successfulSteps[0].resourceRefs.some(ref => ref.id === 'session-stable-1'));
+  assert.doesNotMatch(JSON.stringify(snapshot), /data:image|DO_NOT_PERSIST/);
+
+  let receivedContinuation = null;
+  const resumedAgent = createMaidAssistantAgent({
+    planner: async (_input, context) => {
+      receivedContinuation = context.runContinuation;
+      return { ...openPanelPlan, args: { panel: 'memory' } };
+    },
+    agentTaskRuntime: runtime,
+    logger: { warn() {} },
+  });
+  const resumedResult = await resumedAgent.runPrompt(buildMaidRunResumePrompt(sourceRun), { sessionId: 's1' });
+  assert.equal(resumedResult.ok, true);
+  assert.equal(receivedContinuation.sourceRunId, sourceRun.id);
+  assert.equal(receivedContinuation.successfulSteps[0].resourceRefs[0].id, 'session-stable-1');
+  const resumedRun = store.listRuns({ kind: 'maid_assistant' })[0];
+  assert.equal(resumedRun.metadata.resumedFromRunId, sourceRun.id);
+  assert.equal(resumedRun.metadata.goal, '建立完整角色资料');
+  console.log('ok - continuable run persists and injects a structured ledger into the resumed run');
 }
 
 {
