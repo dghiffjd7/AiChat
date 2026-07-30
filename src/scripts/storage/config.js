@@ -414,23 +414,13 @@ export class ConfigManager {
                 } catch (err) {
                     logger.debug('load_kv master key failed (可能非 Tauri)', err);
                 }
-                // browser fallback (dev mode): keyring master 可能直接存 string
-                if (!masterB64) {
-                    try {
-                        const raw = localStorage.getItem(this.keyringMasterKey);
-                        if (raw) masterB64 = raw;
-                    } catch {}
-                }
                 if (!masterB64) {
                     const bytes = crypto.getRandomValues(new Uint8Array(32));
                     masterB64 = encodeB64(bytes);
                     try {
                         await safeInvoke('save_kv', { name: this.keyringMasterKey, data: { master: masterB64 } });
                     } catch (err) {
-                        logger.warn('save_kv master key failed (可能非 Tauri)', err);
-                        try {
-                            localStorage.setItem(this.keyringMasterKey, masterB64);
-                        } catch {}
+                        logger.warn('save_kv master key failed (可能非 Tauri), master key will not be persisted', err);
                     }
                 }
                 const rawKey = decodeB64(masterB64);
