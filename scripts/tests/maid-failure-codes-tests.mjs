@@ -23,6 +23,18 @@ import {
     classifyMaidToolFailure({ errorCode: 'agent_tool_safety_confirmation_required' }),
     MAID_FAILURE_CODES.safetyDenied,
   );
+  assert.equal(
+    classifyMaidToolFailure({ result: { failureCode: 'protocol_rejected' } }),
+    MAID_FAILURE_CODES.protocolRejected,
+  );
+  assert.equal(
+    classifyMaidToolFailure({ result: { failureCode: 'repair_failed' } }),
+    MAID_FAILURE_CODES.repairFailed,
+  );
+  assert.equal(
+    classifyMaidToolFailure({ result: { failureCode: 'blocked_by_config' } }),
+    MAID_FAILURE_CODES.blockedByConfig,
+  );
   console.log('ok - 工具错误码映射到失败分类');
 }
 
@@ -101,6 +113,8 @@ console.log('maid-failure-codes-tests passed');
   assert.equal(classifyMaidToolFailure({ message: '用户点击了中止，生成已停止' }), 'user_aborted');
   assert.equal(classifyMaidToolFailure({ message: 'generation stopped by user' }), 'user_aborted');
   assert.equal(classifyMaidToolFailure({ result: { cancelled: true, reason: 'user_declined' } }), 'user_aborted');
+  assert.equal(classifyMaidToolFailure({ result: { cancelled: true } }), 'user_aborted');
+  assert.equal(classifyMaidToolFailure({ result: { reason: 'user_aborted' } }), 'user_aborted');
   assert.equal(classifyMaidToolFailure({ message: 'user_aborted' }), 'user_aborted');
   assert.equal(classifyMaidToolFailure({ message: '危险操作未确认' }), 'safety_denied');
   console.log('ok - user_aborted 失败分类');

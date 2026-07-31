@@ -963,7 +963,12 @@ const createProfileStore = (prefix = 'profile') => {
     },
   });
 
-  const result = await getTool(tools, 'chat.send_message').execute({
+  const sendTool = getTool(tools, 'chat.send_message');
+  assert.equal(sendTool.timeoutMs, 180000);
+  assert.equal(sendTool.timeoutErrorCode, 'generation_failed');
+  assert.equal(sendTool.capabilities.network, true);
+  assert.equal(sendTool.capabilities.cost, 'variable');
+  const result = await sendTool.execute({
     sessionName: '精灵女王',
     message: '妈妈',
   });
@@ -971,7 +976,7 @@ const createProfileStore = (prefix = 'profile') => {
   assert.equal(result.sent, true);
   assert.equal(result.requestTriggered, true);
   assert.equal(result.sessionId, 'elf');
-  assert.deepEqual(sendCalls, [{ content: '妈妈', options: { sessionId: 'elf', source: 'maid', open: true, waitForReply: false } }]);
+  assert.deepEqual(sendCalls, [{ content: '妈妈', options: { sessionId: 'elf', source: 'maid', open: true, waitForReply: true } }]);
   assert.deepEqual(messages.get('elf'), [{ role: 'user', content: '妈妈', source: 'pipeline' }]);
   assert.deepEqual(opened, [['elf', '精灵女王']]);
   assert.deepEqual(active, ['elf']);
@@ -979,7 +984,120 @@ const createProfileStore = (prefix = 'profile') => {
 }
 
 {
+  const contacts = new Map([['elf', { id: 'elf', name: '精灵女王' }]]);
+  const makeTools = sendChatMessage => createAppContentAgentTools({
+    contactsStore: {
+      listContacts: () => Array.from(contacts.values()),
+      getContact: id => contacts.get(id) || null,
+    },
+    chatStore: { getCurrent: () => 'elf', switchSession: () => {}, appendMessage: () => {} },
+    enterChatRoom: async () => {},
+    setActiveSession: () => {},
+    sendChatMessage,
+  });
+
+  const delivered = await getTool(makeTools(async () => ({
+    ok: true,
+    sent: true,
+    requested: true,
+    requestTriggered: true,
+    completionOutcome: 'assistant_delivered',
+    assistantMessageIds: ['assistant-1', 'assistant-2'],
+    assistantMessageRefs: [
+      { sessionId: 'elf', messageId: 'assistant-1' },
+      { sessionId: 'other-room', messageId: 'assistant-2' },
+    ],
+  })), 'chat.send_message').execute({
+    sessionId: 'elf',
+    content: '你好',
+  });
+  assert.equal(delivered.ok, true);
+  assert.equal(delivered.completionOutcome, 'assistant_delivered');
+  assert.deepEqual(delivered.assistantMessageIds, ['assistant-1', 'assistant-2']);
+  assert.deepEqual(delivered.assistantMessageRefs, [
+    { sessionId: 'elf', messageId: 'assistant-1' },
+    { sessionId: 'other-room', messageId: 'assistant-2' },
+  ]);
+
+  const rejected = await getTool(makeTools(async () => ({
+    ok: false,
+    sent: true,
+    requested: true,
+    requestTriggered: true,
+    completionOutcome: 'protocol_rejected',
+    failureCode: 'protocol_rejected',
+    reason: 'protocol_rejected',
+    message: '模型回复没有通过聊天协议验收，未提交回复副作用。',
+  })), 'chat.send_message').execute({
+    sessionId: 'elf',
+    content: '你好',
+  });
+  assert.equal(rejected.ok, false);
+  assert.equal(rejected.sent, true, '用户消息已入库与 assistant 终态失败必须分开表达');
+  assert.equal(rejected.completionOutcome, 'protocol_rejected');
+  assert.equal(rejected.failureCode, 'protocol_rejected');
+
+  const blocked = await getTool(makeTools(async () => ({
+    ok: false,
+    sent: false,
+    requested: false,
+    requestTriggered: false,
+    completionOutcome: 'blocked_by_config',
+    failureCode: 'blocked_by_config',
+    reason: 'api-not-configured',
+  })), 'chat.send_message').execute({
+    sessionId: 'elf',
+    content: '你好',
+  });
+  assert.equal(blocked.ok, false);
+  assert.equal(blocked.completionOutcome, 'blocked_by_config');
+  assert.equal(blocked.failureCode, 'blocked_by_config');
+  console.log('ok - chat send tool preserves assistant delivery, protocol rejection, and config-blocked outcomes');
+}
+
+{
   // 用户点停止生成时，send 管线返回的中止标记要透传给女仆观察结果
+  const contacts = new Map([['elf', { id: 'elf', name: '精灵女王' }]]);
+  const controller = new AbortController();
+  let receivedSignal = null;
+  const tools = createAppContentAgentTools({
+    contactsStore: {
+      listContacts: () => Array.from(contacts.values()),
+      getContact: id => contacts.get(id) || null,
+    },
+    chatStore: { getCurrent: () => 'elf', switchSession: () => {}, appendMessage: () => {} },
+    enterChatRoom: async () => {},
+    setActiveSession: () => {},
+    sendChatMessage: async (_content, options) => {
+      receivedSignal = options.signal;
+      return {
+        ok: false,
+        sent: false,
+        cancelled: true,
+        reason: 'user_aborted',
+        message: '用户在生成过程中点击了停止，本次发送/回复被用户中止。',
+      };
+    },
+  });
+  const tool = getTool(tools, 'chat.send_message');
+  const result = await tool.execute({
+    sessionName: '精灵女王',
+    message: '你好',
+  }, {
+    signal: controller.signal,
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, 'user_aborted');
+  assert.equal(result.failureCode, 'user_aborted');
+  assert.equal(result.cancelled, true);
+  assert.equal(receivedSignal, controller.signal);
+  assert.equal(tool.summarizeResult(result), 'send message cancelled: user_aborted');
+  assert.ok(String(result.message).includes('中止'));
+  console.log('ok - app content tools propagate abort signals and stable user-aborted results');
+}
+
+{
+  // 请求已触发后才中止（sent=true）也必须报告为取消，不得误报成功发送
   const contacts = new Map([['elf', { id: 'elf', name: '精灵女王' }]]);
   const tools = createAppContentAgentTools({
     contactsStore: {
@@ -991,21 +1109,29 @@ const createProfileStore = (prefix = 'profile') => {
     setActiveSession: () => {},
     sendChatMessage: async () => ({
       ok: false,
-      sent: false,
+      sent: true,
+      requested: true,
+      requestTriggered: true,
       cancelled: true,
+      completionOutcome: 'request_triggered',
+      failureCode: 'user_aborted',
       reason: 'user_aborted',
-      message: '用户在生成过程中点击了停止，本次发送/回复被用户中止。',
+      message: '用户已中止本次发送或回复生成。',
+      assistantMessageIds: [],
+      sessionId: 'elf',
     }),
   });
-  const result = await getTool(tools, 'chat.send_message').execute({
-    sessionName: '精灵女王',
-    message: '你好',
-  });
+  const tool = getTool(tools, 'chat.send_message');
+  const result = await tool.execute({ sessionName: '精灵女王', message: '你好' }, {});
   assert.equal(result.ok, false);
-  assert.equal(result.reason, 'user_aborted');
-  assert.equal(result.cancelled, true);
-  assert.ok(String(result.message).includes('中止'));
-  console.log('ok - app content tools propagate user abort marker from send pipeline');
+  assert.equal(result.cancelled, true, '触发后中止的 cancelled 标志必须透传');
+  assert.equal(result.failureCode, 'user_aborted');
+  assert.equal(
+    tool.summarizeResult(result),
+    'send message cancelled: user_aborted',
+    '触发后中止不得被 summarize 误报为 "sent message"',
+  );
+  console.log('ok - post-trigger aborts surface as cancellation instead of a sent message');
 }
 
 {

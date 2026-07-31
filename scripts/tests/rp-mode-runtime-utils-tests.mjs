@@ -10,10 +10,37 @@ import {
   removeLegacySendModeState,
   resetRpGreetingVariableState,
   resolveRpInitVarWorldIds,
+  runRpGreetingStoreWrite,
   runEnterRpModeFlow,
   runExitRpModeFlow,
   writeUiMode,
 } from '../../src/scripts/ui/chat/rp-mode-runtime-utils.js';
+
+{
+  const warnings = [];
+  const failures = [];
+  const error = Object.assign(new Error('store blocked'), {
+    code: 'rp_session_store_read_unavailable',
+  });
+  const blocked = runRpGreetingStoreWrite({
+    mutate: () => {
+      throw error;
+    },
+    logger: { warn: (...args) => warnings.push(args) },
+    onFailure: value => failures.push(value),
+  });
+  assert.equal(blocked.ok, false);
+  assert.equal(blocked.error, error);
+  assert.equal(blocked.errorCode, 'rp_session_store_read_unavailable');
+  assert.equal(warnings.length, 1);
+  assert.deepEqual(failures, [error]);
+
+  const success = runRpGreetingStoreWrite({
+    mutate: () => 'greeting-2',
+  });
+  assert.deepEqual(success, { ok: true, value: 'greeting-2' });
+  console.log('ok - RP greeting writes catch fail-closed store errors at UI boundaries');
+}
 
 {
   const calls = [];
@@ -430,5 +457,21 @@ const createStorage = () => {
   const bootFlowSource = appSource.slice(bootFlowStart, bootFlowEnd);
   assert.ok(bootFlowSource.indexOf('getUiMode: () => uiMode') >= 0);
   assert.ok(bootFlowSource.indexOf('detachChatModeRpSession,') >= 0);
-  console.log('ok - app invalidates cross-scope restore state before hydration and wires safe RP exit cleanup');
+
+  const greetingFlowStart = appSource.indexOf('const addRpGreeting = async');
+  const greetingFlowEnd = appSource.indexOf('const getRpGreetingState =', greetingFlowStart);
+  const greetingSetEnd = appSource.indexOf('const resetRpHistory = async', greetingFlowEnd);
+  assert.ok(greetingFlowStart >= 0 && greetingFlowEnd > greetingFlowStart);
+  assert.ok(greetingSetEnd > greetingFlowEnd);
+  const greetingWriteSource = appSource.slice(greetingFlowStart, greetingSetEnd);
+  assert.equal(
+    (greetingWriteSource.match(/const write = commitRpGreetingStoreWrite\(/g) || []).length,
+    3,
+    '新增、编辑与切换开场白都必须经过 fail-closed UI 边界',
+  );
+  assert.equal(
+    (greetingWriteSource.match(/if \(!write\.ok\) return false;/g) || []).length,
+    3,
+  );
+  console.log('ok - app wires safe RP exit cleanup and all three greeting write entry points');
 }

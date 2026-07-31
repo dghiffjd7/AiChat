@@ -1,0 +1,209 @@
+{
+  "sessionId": "艾琳·洛",
+  "currentSessionId": "艾琳·洛",
+  "markerIndex": 4,
+  "totalMessageCount": 15,
+  "tail": [
+    {
+      "id": "1785474046226-c111e9",
+      "role": "user",
+      "type": "text",
+      "name": "冻结观察用户V4F-V2-0731",
+      "content": "艾琳，蓝焰灯塔今天有什么异常？我出发前需要准备什么？",
+      "rawOriginal": "",
+      "rawOriginalLength": 0,
+      "rawOriginalRef": null,
+      "formatRepairTurn": null
+    },
+    {
+      "id": "protocol-delivery-1785474181670-05759032",
+      "role": "assistant",
+      "type": "text",
+      "name": "助手",
+      "content": "“异常”……何止异常。蓝焰灯塔连着几个晚上退潮就亮，今早天光大亮了也没熄。现在人站在石阶半腰上，一抬头就能望见塔尖那团蓝汪汪的光，雾气里一明一灭，跟烧不尽的鬼火似的。那蓝光亮得跟有人在塔顶点了盏永不熄灭的灯似的，怪好看，也怪瘆人。观测站那帮人倒好，报告写了好几页，愣是从“疑似雾潮前兆”一路改到“有待观察”，就是不肯抬一抬蓝标，你说，这算不算异常得有点过分了？",
+      "rawOriginal": "“异常”……何止异常。蓝焰灯塔连着几个晚上退潮就亮，今早天光大亮了也没熄。现在人站在石阶半腰上，一抬头就能望见塔尖那团蓝汪汪的光，雾气里一明一灭，跟烧不尽的鬼火似的。那蓝光亮得跟有人在塔顶点了盏永不熄灭的灯似的，怪好看，也怪瘆人。观测站那帮人倒好，报告写了好几页，愣是从“疑似雾潮前兆”一路改到“有待观察”，就是不肯抬一抬蓝标——你说，这算不算异常得有点过分了？",
+      "rawOriginalLength": 181,
+      "rawOriginalRef": {
+        "sessionId": "艾琳·洛",
+        "messageId": "protocol-delivery-1785474181670-05759032"
+      },
+      "formatRepairTurn": {
+        "turnId": "turn:ms8h5b9l:7jo0y3x8i0n0",
+        "sourceSessionId": "艾琳·洛",
+        "sourceKind": "social_turn_raw",
+        "sourceMessageIds": []
+      }
+    },
+    {
+      "id": "protocol-delivery-1785474181671-54498018",
+      "role": "assistant",
+      "type": "text",
+      "name": "助手",
+      "content": "仪器？昨晚我亲自去观测站盯过，那指针跟焊死了似的纹丝不动。蓝光都快要糊到人脸上了，机器连个屁都不放，预警灯一颗都没亮。你说这叫什么？叫集体装死。顾风今早还在蓝塔底下骂骂咧咧地捣鼓他那台测雾仪，说再这样下去他得改行当修钟表的。",
+      "rawOriginal": "仪器？昨晚我亲自去观测站盯过，那指针跟焊死了似的纹丝不动。蓝光都快要糊到人脸上了，机器连个屁都不放，预警灯一颗都没亮。你说这叫什么？叫集体装死。顾风今早还在蓝塔底下骂骂咧咧地捣鼓他那台测雾仪，说再这样下去他得改行当修钟表的。",
+      "rawOriginalLength": 112,
+      "rawOriginalRef": {
+        "sessionId": "艾琳·洛",
+        "messageId": "protocol-delivery-1785474181671-54498018"
+      },
+      "formatRepairTurn": {
+        "turnId": "turn:ms8h5b9l:7jo0y3x8i0n0",
+        "sourceSessionId": "艾琳·洛",
+        "sourceKind": "social_turn_raw",
+        "sourceMessageIds": []
+      }
+    },
+    {
+      "id": "protocol-delivery-1785474181671-74686895",
+      "role": "assistant",
+      "type": "text",
+      "name": "助手",
+      "content": "啊对了，顾风让我提醒你，塔底下那台测雾仪归他管，你要是看见上头有根铜管子歪着，别手痒去扶，他昨儿才跟那根管子较过劲，据说差点没把整个机箱拆了。这人有洁癖，碰坏了他能念叨你一整天，比潮雾还磨人。",
+      "rawOriginal": "啊对了，顾风让我提醒你，塔底下那台测雾仪归他管，你要是看见上头有根铜管子歪着，别手痒去扶——他昨儿才跟那根管子较过劲，据说差点没把整个机箱拆了。这人有洁癖，碰坏了他能念叨你一整天，比潮雾还磨人。",
+      "rawOriginalLength": 97,
+      "rawOriginalRef": {
+        "sessionId": "艾琳·洛",
+        "messageId": "protocol-delivery-1785474181671-74686895"
+      },
+      "formatRepairTurn": {
+        "turnId": "turn:ms8h5b9l:7jo0y3x8i0n0",
+        "sourceSessionId": "艾琳·洛",
+        "sourceKind": "social_turn_raw",
+        "sourceMessageIds": []
+      }
+    },
+    {
+      "id": "protocol-delivery-1785474181671-52215705",
+      "role": "assistant",
+      "type": "text",
+      "name": "助手",
+      "content": "所以你也别问要准备什么啦。早上在码头我塞你手里那支手电，拧亮了就够你用。哨子挂脖子上，万一雾潮拢过来，吹响它，我保准能找到你。至于别的，装备我这都齐了，你把自己带好、别乱跑，就行。",
+      "rawOriginal": "所以你也别问要准备什么啦。早上在码头我塞你手里那支手电，拧亮了就够你用。哨子挂脖子上，万一雾潮拢过来，吹响它，我保准能找到你。至于别的——装备我这都齐了，你把自己带好、别乱跑，就行。",
+      "rawOriginalLength": 91,
+      "rawOriginalRef": {
+        "sessionId": "艾琳·洛",
+        "messageId": "protocol-delivery-1785474181671-52215705"
+      },
+      "formatRepairTurn": {
+        "turnId": "turn:ms8h5b9l:7jo0y3x8i0n0",
+        "sourceSessionId": "艾琳·洛",
+        "sourceKind": "social_turn_raw",
+        "sourceMessageIds": []
+      }
+    },
+    {
+      "id": "protocol-delivery-1785474181671-68238729",
+      "role": "assistant",
+      "type": "text",
+      "name": "助手",
+      "content": "不过话说回来，新人，你现在才问这个是不是有点晚？我看你脚程不慢，路都走完一半了。早上在码头我递你手电那会儿，你接得倒是利索，我还以为你心里门儿清呢。结果倒好，走半道上想起来问准备，行吧，不逗你了，说正经的。",
+      "rawOriginal": "不过话说回来，新人，你现在才问这个是不是有点晚？我看你脚程不慢，路都走完一半了。早上在码头我递你手电那会儿，你接得倒是利索，我还以为你心里门儿清呢。结果倒好，走半道上想起来问准备——行吧，不逗你了，说正经的。",
+      "rawOriginalLength": 104,
+      "rawOriginalRef": {
+        "sessionId": "艾琳·洛",
+        "messageId": "protocol-delivery-1785474181671-68238729"
+      },
+      "formatRepairTurn": {
+        "turnId": "turn:ms8h5b9l:7jo0y3x8i0n0",
+        "sourceSessionId": "艾琳·洛",
+        "sourceKind": "social_turn_raw",
+        "sourceMessageIds": []
+      }
+    },
+    {
+      "id": "protocol-delivery-1785474181671-23196608",
+      "role": "assistant",
+      "type": "text",
+      "name": "助手",
+      "content": "到了塔底下，规矩拢共两条，你记牢。第一，跟紧我，霜港的潮雾说不准什么时候就漫上来了，几步开外连人影都看不清，到时候我可没工夫回头捞你。第二，灯塔里头但凡刻了纹路的石头，只准看，不准碰，别问为什么，顾风那台仪器昨儿差点让一块破石板给带沟里去，那玩意邪门着呢。",
+      "rawOriginal": "到了塔底下，规矩拢共两条，你记牢。第一，跟紧我，霜港的潮雾说不准什么时候就漫上来了，几步开外连人影都看不清，到时候我可没工夫回头捞你。第二，灯塔里头但凡刻了纹路的石头，只准看，不准碰——别问为什么，顾风那台仪器昨儿差点让一块破石板给带沟里去，那玩意邪门着呢。",
+      "rawOriginalLength": 129,
+      "rawOriginalRef": {
+        "sessionId": "艾琳·洛",
+        "messageId": "protocol-delivery-1785474181671-23196608"
+      },
+      "formatRepairTurn": {
+        "turnId": "turn:ms8h5b9l:7jo0y3x8i0n0",
+        "sourceSessionId": "艾琳·洛",
+        "sourceKind": "social_turn_raw",
+        "sourceMessageIds": []
+      }
+    },
+    {
+      "id": "protocol-delivery-1785474181671-02878968",
+      "role": "assistant",
+      "type": "text",
+      "name": "助手",
+      "content": "还有一桩事，你早上听见港外那声笛没有？入港该鸣的号都没按规矩来，就贴着雾缘往深水方向钻。这种船我们管它叫借潮船。霜港的老话讲，雾里行船，礼数在先，它连号都不好好吹，十有八九藏着事。等看完灯塔，我带你去码头找守夜人认认那条船的船影。",
+      "rawOriginal": "还有一桩事，你早上听见港外那声笛没有？入港该鸣的号都没按规矩来，就贴着雾缘往深水方向钻。这种船我们管它叫借潮船。霜港的老话讲，雾里行船，礼数在先——它连号都不好好吹，十有八九藏着事。等看完灯塔，我带你去码头找守夜人认认那条船的船影。",
+      "rawOriginalLength": 116,
+      "rawOriginalRef": {
+        "sessionId": "艾琳·洛",
+        "messageId": "protocol-delivery-1785474181671-02878968"
+      },
+      "formatRepairTurn": {
+        "turnId": "turn:ms8h5b9l:7jo0y3x8i0n0",
+        "sourceSessionId": "艾琳·洛",
+        "sourceKind": "social_turn_raw",
+        "sourceMessageIds": []
+      }
+    },
+    {
+      "id": "protocol-delivery-1785474181671-14884405",
+      "role": "assistant",
+      "type": "text",
+      "name": "助手",
+      "content": "说真的，我有个不成熟的想法。那蓝光不像是闹脾气，倒像是在等什么。退潮时最亮，潮水一退，就好像底下有什么东西要回话似的。……这话你听听就行，回头让顾风知道，又该说我瞎琢磨了。",
+      "rawOriginal": "说真的，我有个不成熟的想法。那蓝光不像是闹脾气，倒像是在等什么。退潮时最亮，潮水一退，就好像底下有什么东西要回话似的。……这话你听听就行，回头让顾风知道，又该说我瞎琢磨了。",
+      "rawOriginalLength": 86,
+      "rawOriginalRef": {
+        "sessionId": "艾琳·洛",
+        "messageId": "protocol-delivery-1785474181671-14884405"
+      },
+      "formatRepairTurn": {
+        "turnId": "turn:ms8h5b9l:7jo0y3x8i0n0",
+        "sourceSessionId": "艾琳·洛",
+        "sourceKind": "social_turn_raw",
+        "sourceMessageIds": []
+      }
+    },
+    {
+      "id": "protocol-delivery-1785474181671-49270831",
+      "role": "assistant",
+      "type": "text",
+      "name": "助手",
+      "content": "啊，到岔路了，先不跟你多聊。前面这段石阶滑得跟上了蜡似的，你留心脚下。喏，给你看看此刻的灯塔，省得你光听我在这儿形容，跟说书似的。",
+      "rawOriginal": "啊，到岔路了，先不跟你多聊。前面这段石阶滑得跟上了蜡似的，你留心脚下。喏，给你看看此刻的灯塔，省得你光听我在这儿形容，跟说书似的。",
+      "rawOriginalLength": 65,
+      "rawOriginalRef": {
+        "sessionId": "艾琳·洛",
+        "messageId": "protocol-delivery-1785474181671-49270831"
+      },
+      "formatRepairTurn": {
+        "turnId": "turn:ms8h5b9l:7jo0y3x8i0n0",
+        "sourceSessionId": "艾琳·洛",
+        "sourceKind": "social_turn_raw",
+        "sourceMessageIds": []
+      }
+    },
+    {
+      "id": "protocol-delivery-1785474181671-00618255",
+      "role": "assistant",
+      "type": "meta",
+      "name": "助手",
+      "content": "图片：雾霭里蓝焰灯塔的尖顶，泛着幽蓝微光，拍得有点糊",
+      "rawOriginal": "[img-雾霭里蓝焰灯塔的尖顶，泛着幽蓝微光，拍得有点糊]",
+      "rawOriginalLength": 29,
+      "rawOriginalRef": {
+        "sessionId": "艾琳·洛",
+        "messageId": "protocol-delivery-1785474181671-00618255"
+      },
+      "formatRepairTurn": {
+        "turnId": "turn:ms8h5b9l:7jo0y3x8i0n0",
+        "sourceSessionId": "艾琳·洛",
+        "sourceKind": "social_turn_raw",
+        "sourceMessageIds": []
+      }
+    }
+  ]
+}

@@ -947,14 +947,8 @@ export class CustomBundleExporter {
       }
     } catch {}
     try {
-      const rpPayload = runtime.rpSessionStore?.state && typeof runtime.rpSessionStore.state === 'object'
-        ? cloneJson(runtime.rpSessionStore.state, {})
-        : { greetings: [], activeGreetingId: '', syncEvents: [] };
-      if (runtime.rpSessionStore?.storeKey) {
-        try {
-          localStorage.setItem(runtime.rpSessionStore.storeKey, JSON.stringify(rpPayload));
-        } catch {}
-        await safeInvoke('save_kv', { name: runtime.rpSessionStore.storeKey, data: rpPayload });
+      if (runtime.rpSessionStore?.persistenceBlocked !== true) {
+        await runtime.rpSessionStore?.flush?.();
       }
     } catch {}
     try {

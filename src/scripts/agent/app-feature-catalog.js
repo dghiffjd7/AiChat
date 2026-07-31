@@ -514,7 +514,7 @@ export const APP_FEATURE_DEFINITIONS = Object.freeze([
     summary: '向指定聊天室写入一条聊天消息，并可打开该聊天室。',
     uiPath: ['聊天室', '输入框', '发送'],
     tools: ['chat.send_message'],
-    argsHint: 'sessionId/sessionName/target/chatName 指定聊天室；content/message/text 指定要发送的内容；role 默认 user；triggerReply 默认 true 会触发正常回复请求，当前发送链必须 open:true 并进入目标聊天室；只有 triggerReply:false 的纯消息写入可用 open:false 后台追加',
+    argsHint: 'sessionId/sessionName/target/chatName 指定聊天室；content/message/text 指定要发送的内容；role 默认 user；triggerReply 默认 true 会触发正常回复请求，waitForReply 默认 true 并返回 assistant_delivered/protocol_rejected/repair_failed/blocked_by_config 终态；仅明确不等待时传 waitForReply:false；当前回复链必须 open:true 并进入目标聊天室，只有 triggerReply:false 的纯消息写入可用 open:false 后台追加',
     panel: 'chat',
     riskLevel: 'medium',
     writes: true,

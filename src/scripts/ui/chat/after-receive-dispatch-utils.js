@@ -1390,6 +1390,7 @@ const scheduleChatFormatGuardianModelReview = ({
   onChatFormatGuardianPreview = null,
   onChatFormatGuardianRun = null,
   onChatFormatGuardianModelReviewQueued = null,
+  onChatFormatGuardianModelReviewCompleted = null,
   onChatFormatGuardianAutoRepair = null,
   logger = console,
   now = Date.now,
@@ -1513,6 +1514,16 @@ const scheduleChatFormatGuardianModelReview = ({
       onChatFormatGuardianRun,
       now,
     });
+    try {
+      onChatFormatGuardianModelReviewCompleted?.({
+        message,
+        sessionId,
+        result,
+        failed: result?.status === 'invalid_output' || result?.status === 'cannot_repair',
+      });
+    } catch (err) {
+      logger?.warn?.('chat format guardian completion notification failed', err);
+    }
   }).catch((err) => {
     logger?.warn?.('chat format guardian model review failed', err);
     const result = buildChatFormatGuardianModelFailureResult({
@@ -1531,6 +1542,17 @@ const scheduleChatFormatGuardianModelReview = ({
       onChatFormatGuardianRun,
       now,
     });
+    try {
+      onChatFormatGuardianModelReviewCompleted?.({
+        message,
+        sessionId,
+        result,
+        failed: true,
+        error: err,
+      });
+    } catch (notifyError) {
+      logger?.warn?.('chat format guardian completion notification failed', notifyError);
+    }
   });
   return true;
 };
@@ -1542,6 +1564,7 @@ export const runChatFormatGuardianPreview = ({
   onChatFormatGuardianPreview = null,
   onChatFormatGuardianRun = null,
   onChatFormatGuardianModelReviewQueued = null,
+  onChatFormatGuardianModelReviewCompleted = null,
   onChatFormatGuardianAutoRepair = null,
   logger = console,
   now = Date.now,
@@ -1631,7 +1654,7 @@ export const runChatFormatGuardianPreview = ({
     if (agentRun && typeof onChatFormatGuardianRun === 'function') {
       onChatFormatGuardianRun({ message, patchedMessage, result, part, agentRun, sessionId });
     }
-    scheduleChatFormatGuardianModelReview({
+    const modelReviewQueued = scheduleChatFormatGuardianModelReview({
       message,
       sessionId,
       parserResult: result,
@@ -1641,11 +1664,12 @@ export const runChatFormatGuardianPreview = ({
       onChatFormatGuardianPreview,
       onChatFormatGuardianRun,
       onChatFormatGuardianModelReviewQueued,
+      onChatFormatGuardianModelReviewCompleted,
       onChatFormatGuardianAutoRepair,
       logger,
       now,
     });
-    return { result, part, patchedMessage, agentRun };
+    return { result, part, patchedMessage, agentRun, modelReviewQueued };
   } catch (err) {
     logger?.warn?.('chat format guardian preview failed', err);
     return null;

@@ -103,6 +103,11 @@ const setupExpression = `(async () => {
           String(item.textContent || '').trim(),
         )) || null;
       }
+      if (!button && state.autoConfirm === true && Array.isArray(state.confirmButtonLabels)) {
+        button = buttons.find(item => state.confirmButtonLabels.includes(
+          String(item.textContent || '').trim(),
+        )) || null;
+      }
       const structuredDeleteTaskIds = new Set([
         'memory-system-v4f-b-0730-009',
         'memory-system-v4f-b-0730-010',
@@ -242,6 +247,9 @@ const startExpression = task => `(() => {
     allowSubAgent: task.allowSubAgent === true,
     followGuide: task.followGuide === true,
     appConfirmDeleteTarget: String(task.appConfirmDeleteTarget || ''),
+    confirmButtonLabels: Array.isArray(task.confirmButtonLabels)
+      ? task.confirmButtonLabels.map(item => String(item || '').trim()).filter(Boolean)
+      : [],
   })};
   const actions = window.appBridge?.debugUiRegistry?.actions || {};
   if (!actions.runMaidAssistantPrompt) return { started: false, reason: 'maid_action_missing' };
@@ -265,6 +273,7 @@ const startExpression = task => `(() => {
     allowSubAgent: task.allowSubAgent,
     followGuide: task.followGuide,
     appConfirmDeleteTarget: task.appConfirmDeleteTarget,
+    confirmButtonLabels: task.confirmButtonLabels,
     permissionLogStart: (window.__obsPermissionLog || []).length,
     snapshotIdsBefore: (retrievalStore?.listSnapshots?.({ limit: 500 }) || []).map(item => item.id),
     runIdsBefore: (runStore?.listRuns?.({ limit: 500 }) || []).map(item => item.id),
@@ -477,6 +486,9 @@ for (const task of selected) {
         autoDeny: task.autoDeny === true,
         allowSubAgent: task.allowSubAgent === true,
         followGuide: task.followGuide === true,
+        confirmButtonLabels: Array.isArray(task.confirmButtonLabels)
+          ? task.confirmButtonLabels
+          : [],
       },
       harnessError: started?.reason || 'start_failed',
       at: Date.now(),
@@ -519,6 +531,9 @@ for (const task of selected) {
         autoDeny: task.autoDeny === true,
         allowSubAgent: task.allowSubAgent === true,
         followGuide: task.followGuide === true,
+        confirmButtonLabels: Array.isArray(task.confirmButtonLabels)
+          ? task.confirmButtonLabels
+          : [],
       },
       timeout: true,
       maxMs,
@@ -555,6 +570,9 @@ for (const task of selected) {
       autoDeny: task.autoDeny === true,
       allowSubAgent: task.allowSubAgent === true,
       followGuide: task.followGuide === true,
+      confirmButtonLabels: Array.isArray(task.confirmButtonLabels)
+        ? task.confirmButtonLabels
+        : [],
     },
     observed: {
       selectedFeatures,

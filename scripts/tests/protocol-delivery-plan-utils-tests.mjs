@@ -46,6 +46,7 @@ class QuotaStorage extends MemoryStorage {
     plan: {
       id: 'plan-1',
       sessionId: 'c1',
+      alreadyPersisted: true,
       items: [
         {
           message: { role: 'assistant', content: 'hello' },
@@ -63,6 +64,7 @@ class QuotaStorage extends MemoryStorage {
   assert.ok(storage.getItem(key));
   const [storedPlan] = readProtocolDeliveryPlans({ storage, scopeId: 'scope-a' });
   assert.equal(storedPlan.id, 'plan-1');
+  assert.equal(storedPlan.alreadyPersisted, true);
   assert.equal(updateProtocolDeliveryPlanCursor({ storage, scopeId: 'scope-a', planId: 'plan-1', cursor: 1 }), true);
   assert.equal(readProtocolDeliveryPlans({ storage, scopeId: 'scope-a' })[0].cursor, 1);
   assert.equal(removeProtocolDeliveryPlan({ storage, scopeId: 'scope-a', planId: 'plan-1' }), true);
@@ -199,6 +201,74 @@ class QuotaStorage extends MemoryStorage {
 }
 
 {
+  const existing = { id: 'm-committed', role: 'assistant', content: 'already committed' };
+  const ui = [];
+  const receives = [];
+  const result = deliverProtocolDeliveryItem({
+    message: existing,
+    delivery: { kind: 'private', targetSessionId: 'c-committed', isMe: false },
+  }, {
+    alreadyPersisted: true,
+    findMessage: () => existing,
+    appendMessage: () => {
+      throw new Error('a committed message must not be appended twice');
+    },
+    isSessionActive: () => true,
+    addUiMessage: message => ui.push(message.id),
+    emitPluginAfterReceive: message => receives.push(message.id),
+  });
+
+  assert.equal(result.appended, false);
+  assert.equal(result.delivered, true);
+  assert.deepEqual(ui, ['m-committed']);
+  assert.deepEqual(receives, ['m-committed']);
+  console.log('ok - committed protocol messages can replay UI delivery without duplicate persistence');
+}
+
+{
+  const existing = { id: 'm-rendered', role: 'assistant', content: 'already rendered after re-entry' };
+  const ui = [];
+  const receives = [];
+  const result = deliverProtocolDeliveryItem({
+    message: existing,
+    delivery: { kind: 'private', targetSessionId: 'c-rendered', isMe: false },
+  }, {
+    alreadyPersisted: true,
+    findMessage: () => existing,
+    isUiMessagePresent: () => true,
+    isSessionActive: () => true,
+    addUiMessage: message => ui.push(message.id),
+    emitPluginAfterReceive: message => receives.push(message.id),
+  });
+
+  assert.equal(result.delivered, true);
+  assert.deepEqual(ui, []);
+  assert.deepEqual(receives, ['m-rendered']);
+  console.log('ok - committed delivery skips a bubble already rendered by session re-entry');
+}
+
+{
+  const result = deliverProtocolDeliveryItem({
+    message: { id: 'm-deleted', role: 'assistant', content: 'must stay deleted' },
+    delivery: { kind: 'private', targetSessionId: 'c-deleted', isMe: false },
+  }, {
+    alreadyPersisted: true,
+    findMessage: () => null,
+    appendMessage: () => {
+      throw new Error('deleted committed message must not be revived');
+    },
+    isSessionActive: () => true,
+    addUiMessage: () => {
+      throw new Error('deleted committed message must not be rendered');
+    },
+  });
+
+  assert.equal(result.delivered, false);
+  assert.equal(result.reason, 'missing-committed-message');
+  console.log('ok - missing committed delivery slots never revive a deleted message');
+}
+
+{
   const storage = new MemoryStorage();
   const existing = new Map([['m1', { id: 'm1', role: 'assistant', content: 'old' }]]);
   upsertProtocolDeliveryPlan({
@@ -236,4 +306,43 @@ class QuotaStorage extends MemoryStorage {
   assert.deepEqual(appended, [['c2', 'm2']]);
   assert.deepEqual(readProtocolDeliveryPlans({ storage, scopeId: 'scope-b' }), []);
   console.log('ok - flushPersistedProtocolDeliveryPlans recovers remaining items and removes completed plan');
+}
+
+{
+  const storage = new MemoryStorage();
+  upsertProtocolDeliveryPlan({
+    storage,
+    scopeId: 'scope-committed-recovery',
+    plan: {
+      id: 'plan-committed-recovery',
+      sessionId: 'c-committed-recovery',
+      alreadyPersisted: true,
+      cursor: 0,
+      items: [
+        {
+          message: { id: 'm-deleted-before-recovery', role: 'assistant', content: 'stay deleted' },
+          delivery: {
+            kind: 'private',
+            targetSessionId: 'c-committed-recovery',
+            isMe: false,
+          },
+        },
+      ],
+    },
+  });
+  const result = await flushPersistedProtocolDeliveryPlans({
+    storage,
+    scopeId: 'scope-committed-recovery',
+    findMessage: () => null,
+    appendMessage: () => {
+      throw new Error('recovery must not revive a deleted committed message');
+    },
+    isSessionActive: () => false,
+  });
+  assert.deepEqual(result, { plans: 1, appended: 0, skipped: 1, failed: 0 });
+  assert.deepEqual(
+    readProtocolDeliveryPlans({ storage, scopeId: 'scope-committed-recovery' }),
+    [],
+  );
+  console.log('ok - persisted committed delivery mode prevents message revival during recovery');
 }

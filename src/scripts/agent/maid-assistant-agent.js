@@ -46,7 +46,7 @@ const isPlainObject = value => Boolean(value && typeof value === 'object' && !Ar
 const MAID_READ_INTENT_PATTERN = /(查询|查看|检查|确认|核对|读取|只读|只查|列出|列表|清单|统计|比较|分析|告诉我|有哪些|哪些|是否|有没有|当前(?:状态|情况)?|状态|情况|是什么|怎么样|如何|\b(?:show|list|read|check|inspect|verify|status|what|which|whether|inventory|identit(?:y|ies))\b)/iu;
 const MAID_NO_TOOL_INTENT_PATTERN = /(?:(?:不要|不得|禁止|无需|不用|不必)\s*(?:再)?(?:调用|使用|动用|执行)\s*(?:任何|任意|任一)?\s*工具|(?:不调用|不使用)\s*(?:任何|任意|任一)?\s*工具|\b(?:do\s+not|don't|dont|never)\s+(?:use|call)\s+(?:any\s+)?tools?\b|\bwithout\s+(?:using\s+)?tools?\b)/iu;
 const MAID_WRITE_VERB_PATTERN = /(创建|新建|添加|追加|新增|写入|保存|绑(?:定|上|到)|启用|禁用|修改|更改|更新|编辑|替换|覆盖|删除|删掉|移除|清空|清理|发布|发送|设置|切换|应用|修复|优化|生成|上传|导入|回复)/gu;
-const MAID_WRITE_COMMAND_CUE_PATTERN = /(?:^|[，,。；;！？!?])(?:请|麻烦|帮我|替我|给我|给(?:这些|那些|所有|全部|多个|每个|各个|上述|前述)|为我|我要|我想|需要|把|将|然后|接着|随后|再|并且|并|同时|顺便|之后|后再|就|分别|直接|立即|现在|若没有|如果没有|没有才|没有就|没有则|没有的话|缺少就|缺少才|缺少的|缺的|不存在则|不存在就|不存在再|不存在的话|若无|如无|执行|先执行).{0,48}$/u;
+const MAID_WRITE_COMMAND_CUE_PATTERN = /(?:^|[，,。；;！？!?])(?:请|麻烦|帮我|替我|给我|给(?:这些|那些|所有|全部|多个|每个|各个|上述|前述)|为我|我要|我想|需要|把|将|然后|接着|随后|再|并且|并|同时|顺便|之后|后再|就|分别|直接|立即|现在|若没有|如果没有|没有才|没有就|没有则|没有的话|缺少就|缺少才|缺少的|缺的|不存在时才|不存在则|不存在就|不存在再|不存在的话|若无|如无|执行|先执行).{0,48}$/u;
 const MAID_POSTCHECK_WRITE_CUE_PATTERN = /(?:^|[，,。；;！？!?])(?:检查|确认|核对|验证|查完|查看)[^，,。；;！？!?\n]{0,24}(?:后|之后)(?:(?:再|就|然后|接着|随后|仅|只)\s*)?$/u;
 const MAID_POSTCHECK_OBJECT_WRITE_CUE_PATTERN = /(?:^|[，,。；;！？!?])(?:检查|确认|核对|验证|查完|查看)[^，,。；;！？!?\n]{0,24}(?:后|之后)(?:(?:再|就|然后|接着|随后)\s*)?(?:把|将)\s*[^，,。；;！？!?\n]{0,32}$/u;
 const MAID_NEGATED_WRITE_CLAUSE_PATTERN = /(?:^|[，,、。；;！？!?\s]|请)(?:不要|别|无需|不用|禁止|避免|不可|不能)\s*(?:再|去|进行)?[^。；;！？!?\n]*$/u;
@@ -718,6 +718,130 @@ const MAID_READ_RESOURCE_KEYS = new Set([
 
 const stripNegatedMaidActionClauses = value => String(value ?? '')
   .replace(/(?:不要|不得|别|禁止|无需|不用|不可|不能|避免)\s*[^，,。；;！？!?\n]*/gu, ' ');
+
+const extractConditionalMaidProfileCreateObligation = ({
+  input = '',
+  operationIntentPolicy = {},
+} = {}) => {
+  if (operationIntentPolicy?.mode !== 'write_allowed') return null;
+  const text = String(input ?? '').normalize('NFKC');
+  const condition = text.match(
+    /(?:不存在|没有|缺少|若无|如无)(?:时|的话)?(?:才|就|则|再)?\s*(?:创建|新建|新增|添加)/iu,
+  );
+  if (!condition) return null;
+  const tail = text.slice(Number(condition.index || 0) + condition[0].length);
+  const target = trim(tail.match(/[「『“"']([^」』”"']{1,160})[」』”"']/u)?.[1]);
+  if (!target) return null;
+  const hasPersona = /角色卡|角色档案|人物卡/iu.test(text);
+  const hasUser = /用户清单|用户列表|用户名称|用户名|用户档案/iu.test(text);
+  if (hasPersona === hasUser) return null;
+  const resource = hasPersona ? 'persona' : 'user';
+  return {
+    resource,
+    target,
+    createTool: `${resource}.create`,
+    featureId: `${resource}.create`,
+    label: resource === 'persona' ? '角色卡' : '用户',
+  };
+};
+
+const maidProfileReadContainsTarget = (step = {}, obligation = {}) => (
+  step?.status === 'succeeded' &&
+  trim(step?.toolName) === 'app.read_resource' &&
+  trim(step?.args?.resource || step?.output?.resource).toLowerCase() === obligation.resource &&
+  (Array.isArray(step?.output?.items) ? step.output.items : []).some(item => (
+    normalizeText(item?.name || item?.id) === normalizeText(obligation.target)
+  ))
+);
+
+const isConclusiveMissingMaidProfileRead = (step = {}, obligation = {}) => {
+  if (
+    step?.status !== 'succeeded' ||
+    trim(step?.toolName) !== 'app.read_resource' ||
+    trim(step?.args?.resource || step?.output?.resource).toLowerCase() !== obligation.resource
+  ) return false;
+  const requestedTarget = trim(step?.args?.name || step?.args?.id || step?.args?.query);
+  if (requestedTarget && normalizeText(requestedTarget) === normalizeText(obligation.target)) return true;
+  const items = Array.isArray(step?.output?.items) ? step.output.items : [];
+  const count = Number(step?.output?.count);
+  return Number.isFinite(count) && count >= 0 && items.length >= count;
+};
+
+const buildMaidConditionalProfileCreateProgress = ({
+  input = '',
+  operationIntentPolicy = {},
+  steps = [],
+} = {}) => {
+  const obligation = extractConditionalMaidProfileCreateObligation({
+    input,
+    operationIntentPolicy,
+  });
+  if (!obligation) return null;
+  const source = Array.isArray(steps) ? steps : [];
+  const matchingReads = source.filter(step => (
+    trim(step?.toolName) === 'app.read_resource' &&
+    trim(step?.args?.resource || step?.output?.resource).toLowerCase() === obligation.resource
+  ));
+  const targetExists = matchingReads.some(step => maidProfileReadContainsTarget(step, obligation));
+  const created = source.some(step => (
+    step?.status === 'succeeded' &&
+    trim(step?.toolName) === obligation.createTool &&
+    normalizeText(step?.args?.name || step?.args?.target) === normalizeText(obligation.target)
+  ));
+  if (targetExists) {
+    const message = created
+      ? `已创建${obligation.label}「${obligation.target}」并读回确认；当前${obligation.label}未切换。`
+      : `${obligation.label}「${obligation.target}」已存在，因此没有重复创建，也没有切换当前${obligation.label}。`;
+    return {
+      complete: true,
+      finalDecision: {
+        ok: true,
+        action: 'final',
+        source: 'deterministic_conditional_create_completion',
+        message,
+      },
+    };
+  }
+  if (created) return null;
+  const conclusiveMissing = matchingReads.findLast(step => (
+    isConclusiveMissingMaidProfileRead(step, obligation)
+  ));
+  if (!conclusiveMissing) {
+    if (!matchingReads.length) return null;
+    return {
+      complete: false,
+      nextPlan: {
+        ok: true,
+        action: 'tool',
+        toolName: 'app.read_resource',
+        args: { resource: obligation.resource, name: obligation.target },
+        featureId: 'app.resource.read',
+        title: `精确确认${obligation.label}是否存在`,
+        response: `清单结果有截断，先精确确认「${obligation.target}」是否存在。`,
+        metadata: {
+          workflowTransition: 'conditional_create_target_probe',
+          obligationKey: `${obligation.resource}:${normalizeText(obligation.target)}`,
+        },
+      },
+    };
+  }
+  return {
+    complete: false,
+    nextPlan: {
+      ok: true,
+      action: 'tool',
+      toolName: obligation.createTool,
+      args: { name: obligation.target, setActive: false },
+      featureId: obligation.featureId,
+      title: `创建缺少的${obligation.label}`,
+      response: `清单中没有「${obligation.target}」，继续创建并读回确认。`,
+      metadata: {
+        workflowTransition: 'conditional_create_missing_target',
+        obligationKey: `${obligation.resource}:${normalizeText(obligation.target)}`,
+      },
+    },
+  };
+};
 
 const buildPendingMaidFinalStatePlan = ({
   input = '',
@@ -1718,10 +1842,119 @@ const buildReusedSessionCreateExecution = (match = {}) => ({
   message: '',
 });
 
-const hasExplicitGeneratedMediaVariantRequest = (input = '') => (
-  /(?:(?:多|几|两|三|四|五|六|七|八|九|[2-9])(?:张|幅|个)(?:候选|版本|方案|图|图片|头像|壁纸)|(?:多个版本|多种方案|候选图|候选图片|再生成|重新生成|重画|换一张|另一张))/u
-    .test(String(input ?? '').normalize('NFKC'))
-);
+const GENERATED_MEDIA_QUANTITY_MAP = Object.freeze({
+  一: 1,
+  两: 2,
+  二: 2,
+  三: 3,
+  四: 4,
+  五: 5,
+  六: 6,
+  七: 7,
+  八: 8,
+  九: 9,
+});
+
+const GENERATED_MEDIA_PURPOSE_ALIASES = Object.freeze({
+  avatar: ['头像', '頭像', 'avatar', 'profile picture'],
+  wallpaper: ['壁纸', '壁紙', '聊天室背景', '聊天背景', 'wallpaper', 'background image'],
+});
+
+const listGeneratedMediaPurposeMatches = (clause = '', purpose = '') => {
+  const text = String(clause || '').toLowerCase();
+  const aliases = GENERATED_MEDIA_PURPOSE_ALIASES[purpose] || [];
+  const matches = [];
+  aliases.forEach(alias => {
+    const needle = String(alias || '').toLowerCase();
+    let index = text.indexOf(needle);
+    while (needle && index >= 0) {
+      matches.push(index);
+      index = text.indexOf(needle, index + needle.length);
+    }
+  });
+  return matches;
+};
+
+const resolveGeneratedMediaTargetQuota = (input = '', args = {}) => {
+  const normalized = stripNegatedMaidActionClauses(
+    String(input ?? '').normalize('NFKC'),
+  );
+  const purpose = trim(args?.purpose).toLowerCase();
+  const targetKey = normalizeText(args?.target || args?.subject);
+  const clauses = normalized
+    .split(/(?:[，,。；;！？!?\n]+|然后|随后|接着|看完(?:之后|以后|后)?|再(?=(?:来|生成|画|绘|制作|做|换)))/gu)
+    .map(value => trim(value))
+    .filter(Boolean);
+  const sourceClauses = clauses.length ? clauses : [normalized];
+  const hasTargetMention = Boolean(
+    targetKey && sourceClauses.some(clause => normalizeText(clause).includes(targetKey)),
+  );
+  const hasPurposeMention = sourceClauses.some(clause => (
+    listGeneratedMediaPurposeMatches(clause, purpose).length > 0
+  ));
+  let quota = 1;
+  let relevantActionCount = 0;
+  let targetActive = !hasTargetMention;
+  let purposeActive = !hasPurposeMention;
+
+  for (const clause of sourceClauses) {
+    const clauseKey = normalizeText(clause);
+    const mentionsTarget = Boolean(targetKey && clauseKey.includes(targetKey));
+    const directedTarget = clause.match(
+      /(?:给|为|替)\s*([^，,。；;！？!?\n]{1,40}?)(?=(?:生成|画(?!风)|绘制|制作|做|重画|重绘|换))/u,
+    );
+    if (mentionsTarget) {
+      targetActive = true;
+    } else if (hasTargetMention && directedTarget) {
+      targetActive = false;
+    }
+
+    const currentPurposeMatches = listGeneratedMediaPurposeMatches(clause, purpose);
+    const otherPurposeMatches = Object.keys(GENERATED_MEDIA_PURPOSE_ALIASES)
+      .filter(candidate => candidate !== purpose)
+      .flatMap(candidate => listGeneratedMediaPurposeMatches(clause, candidate));
+    if (currentPurposeMatches.length) {
+      purposeActive = true;
+    } else if (hasPurposeMention && otherPurposeMatches.length) {
+      purposeActive = false;
+    }
+    if (!targetActive || !purposeActive) continue;
+    const hasGenerationAction = /(?:生成|画(?!风)|绘制|制作|做图|重(?:新)?生成|重画|重绘|再画|来一张|换(?:掉|成|一张)?)/u.test(clause);
+    const hasBareVariant = /另(?:一|1)(?:张|幅)(?![^，,。；;！？!?\n]{0,12}(?:画风|风格)?参考)/u.test(clause)
+      || /另一个版本/u.test(clause);
+    if (!hasGenerationAction && !hasBareVariant) {
+      continue;
+    }
+
+    relevantActionCount += 1;
+    const purposePositions = currentPurposeMatches.map(index => ({ index, current: true }))
+      .concat(otherPurposeMatches.map(index => ({ index, current: false })));
+    for (const match of clause.matchAll(/([1-9一两二三四五六七八九])\s*(?:张|幅|个)/gu)) {
+      const quantityIndex = Number(match.index || 0);
+      const beforeQuantity = clause.slice(Math.max(0, quantityIndex - 16), quantityIndex);
+      const afterQuantity = clause.slice(quantityIndex + match[0].length, quantityIndex + match[0].length + 16);
+      if (
+        /(?:画风|风格)?参考(?:图|图片|素材)?\s*$/u.test(beforeQuantity)
+        || /^\s*(?:画风|风格)?参考(?:图|图片|素材)?/u.test(afterQuantity)
+      ) {
+        continue;
+      }
+      const quantity = Number(match[1]) || GENERATED_MEDIA_QUANTITY_MAP[match[1]] || 1;
+      if (!purposePositions.length || !otherPurposeMatches.length) {
+        quota = Math.max(quota, quantity);
+        continue;
+      }
+      const nearest = purposePositions
+        .slice()
+        .sort((left, right) => Math.abs(left.index - quantityIndex) - Math.abs(right.index - quantityIndex))[0];
+      if (nearest?.current) quota = Math.max(quota, quantity);
+    }
+    if (/(?:多张|几张|多个版本|多种方案|候选图|候选图片)/u.test(clause)) {
+      quota = Math.max(quota, 2);
+    }
+  }
+  return Math.max(quota, relevantActionCount);
+};
 
 const getGeneratedMediaKey = (args = {}) => {
   const target = normalizeText(args?.target || args?.subject);
@@ -1740,15 +1973,15 @@ const findAppliedGeneratedMedia = ({
   plan = {},
   steps = [],
 } = {}) => {
-  if (
-    trim(plan?.toolName) !== 'media.generate_image' ||
-    hasExplicitGeneratedMediaVariantRequest(input)
-  ) return null;
+  if (trim(plan?.toolName) !== 'media.generate_image') return null;
   const key = getGeneratedMediaKey(plan?.args);
   const purpose = trim(plan?.args?.purpose).toLowerCase();
   const writeTools = getGeneratedMediaWriteTools(purpose);
   if (!key || !writeTools.size) return null;
   const source = Array.isArray(steps) ? steps : [];
+  const targetQuota = resolveGeneratedMediaTargetQuota(input, plan.args);
+  const appliedMatches = [];
+  const appliedAttachmentIds = new Set();
   for (let index = source.length - 1; index >= 0; index -= 1) {
     const generatedStep = source[index];
     if (
@@ -1763,9 +1996,17 @@ const findAppliedGeneratedMedia = ({
       writeTools.has(trim(step?.toolName)) &&
       trim(step?.args?.attachmentId) === attachmentId
     ));
-    if (appliedStep) return { generatedStep, appliedStep, attachmentId };
+    if (appliedStep && !appliedAttachmentIds.has(attachmentId)) {
+      appliedAttachmentIds.add(attachmentId);
+      appliedMatches.push({ generatedStep, appliedStep, attachmentId });
+    }
   }
-  return null;
+  if (appliedMatches.length < targetQuota) return null;
+  return {
+    ...appliedMatches[0],
+    appliedCount: appliedMatches.length,
+    targetQuota,
+  };
 };
 
 const buildReusedGeneratedMediaExecution = (match = {}) => ({
@@ -1780,8 +2021,10 @@ const buildReusedGeneratedMediaExecution = (match = {}) => ({
       localToolExecutionSkipped: true,
       alreadyApplied: true,
       appliedByTool: trim(match?.appliedStep?.toolName),
+      appliedVariantCount: Number(match?.appliedCount || 0),
+      requestedVariantQuota: Number(match?.targetQuota || 1),
       reason: 'generated_media_already_applied',
-      message: '同一对象与用途的图片已经生成并成功写回；本次未重复产生计费生图调用，请继续下一个未完成目标。',
+      message: '同一对象与用途已完成用户要求的图片数量并成功写回；本次未重复产生计费生图调用，请继续下一个未完成目标。',
     },
     summary: 'generated media already applied; duplicate billed generation skipped',
   },
@@ -1894,6 +2137,67 @@ const buildPendingWorldbookPreviewApplyPlan = ({
     retrieverVersion: trim(decision?.retrieverVersion),
     capabilityRoutingMode: trim(decision?.capabilityRoutingMode),
   };
+};
+
+const hasExplicitWorldbookTailReadReveal = (input = '') => {
+  const text = stripNegatedMaidActionClauses(String(input ?? '').normalize('NFKC'));
+  return /(?:读出来给我看|读给我看|把[^。；;！？!?\n]{0,60}读出来|展示给我看|显示给我看|列出来给我看|让我看看|给我看(?:一下)?)/iu.test(text);
+};
+
+const findVerifiedWorldbookBindingForTailRead = (decision = {}, steps = [], input = '') => {
+  const toolName = trim(decision?.toolName);
+  const args = isPlainObject(decision?.args) ? decision.args : {};
+  if (hasExplicitWorldbookTailReadReveal(input)) return null;
+  const include = (Array.isArray(args.include) ? args.include : [])
+    .map(value => trim(value).toLowerCase())
+    .filter(Boolean);
+  const isSessionWorldbookRead = toolName === 'app.read_resource' &&
+    trim(args.resource).toLowerCase() === 'session' &&
+    include.length === 1 &&
+    include[0] === 'worldbooks';
+  const isWorldbookListRead = toolName === 'worldbook.list';
+  if (!isSessionWorldbookRead && !isWorldbookListRead) return null;
+  const readTarget = trim(args.sessionId || args.sessionName || args.target || args.chatName);
+  if (!readTarget) return null;
+  const source = Array.isArray(steps) ? steps : [];
+
+  for (let index = source.length - 1; index >= 0; index -= 1) {
+    const step = source[index];
+    if (step?.status !== 'succeeded') continue;
+    if (trim(step?.toolName) === 'worldbook.bind_session') {
+      const target = trim(step?.output?.sessionId || step?.args?.sessionId || step?.args?.sessionName);
+      if (target !== readTarget) continue;
+      const verified = source.slice(index + 1).some(candidate => (
+        candidate?.status === 'succeeded' &&
+        trim(candidate?.toolName) === 'worldbook.list' &&
+        trim(candidate?.metadata?.verificationFor) === 'worldbook.bind_session' &&
+        trim(candidate?.args?.sessionId || candidate?.args?.sessionName) === target
+      ));
+      if (verified) return { step, target };
+      continue;
+    }
+    if (
+      trim(step?.toolName) === 'worldbook.bind_sessions' &&
+      step?.args?.preview !== true &&
+      step?.output?.preview !== true
+    ) {
+      const targets = (Array.isArray(step?.args?.sessions) ? step.args.sessions : [])
+        .map(value => trim(value))
+        .filter(Boolean);
+      const succeededCount = Number(step?.output?.succeededCount || 0);
+      const verifiedCount = Number(step?.output?.verifiedCount || 0);
+      const failedCount = Number(step?.output?.failedCount || 0);
+      if (
+        targets.includes(readTarget) &&
+        succeededCount > 0 &&
+        verifiedCount >= succeededCount &&
+        failedCount === 0
+      ) {
+        return { step, target: readTarget };
+      }
+    }
+  }
+  return null;
 };
 
 const buildReactStepSnapshot = ({
@@ -4091,6 +4395,41 @@ export const createMaidAssistantAgent = ({
           continue;
         }
 
+        const conditionalProfileCreateProgress = ok
+          ? buildMaidConditionalProfileCreateProgress({
+              input,
+              operationIntentPolicy: context.operationIntentPolicy,
+              steps,
+            })
+          : null;
+        if (
+          conditionalProfileCreateProgress?.complete &&
+          conditionalProfileCreateProgress.finalDecision
+        ) {
+          return {
+            ok: true,
+            status: 'succeeded',
+            responseType: 'react',
+            input: trim(input),
+            plan: clone(plan),
+            finalDecision: clone(conditionalProfileCreateProgress.finalDecision),
+            output: clone(observedOutput),
+            steps: clone(steps),
+            guided: Boolean(observedExecution?.guided),
+            guide: clone(observedExecution?.guide || null),
+            reason: '',
+            message: conditionalProfileCreateProgress.finalDecision.message,
+          };
+        }
+        if (conditionalProfileCreateProgress?.nextPlan) {
+          currentPlan = applyMaidPresentationPolicy(
+            authorizeDeterministicWorkflowPlan(conditionalProfileCreateProgress.nextPlan, steps),
+            context.presentationIntent,
+          );
+          expandStepBudget(currentPlan);
+          continue;
+        }
+
         const structuredReadProgress = ok
           ? buildMaidStructuredReadProgress({
               input,
@@ -4413,6 +4752,29 @@ export const createMaidAssistantAgent = ({
           };
         }
         if (decision.action === 'tool') {
+          const verifiedBinding = findVerifiedWorldbookBindingForTailRead(decision, steps, input);
+          if (verifiedBinding) {
+            const message = `世界书绑定已由工具完成并读回验证；没有再对「${verifiedBinding.target}」执行重复核对。`;
+            return {
+              ok: true,
+              status: 'succeeded',
+              responseType: 'react',
+              input: trim(input),
+              plan: clone(plan),
+              finalDecision: {
+                ok: true,
+                action: 'final',
+                message,
+                source: 'verified_write_tail_read_guard',
+              },
+              output: clone(observedOutput),
+              steps: clone(steps),
+              guided: Boolean(observedExecution?.guided),
+              guide: clone(observedExecution?.guide || null),
+              reason: '',
+              message,
+            };
+          }
           if (shouldStopDuplicateWorldbookWriteAfterVerification(decision, steps)) {
             return {
               ok: true,

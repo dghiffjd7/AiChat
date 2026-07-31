@@ -8,6 +8,33 @@ const BASE_REF_KEY = 'memory_snapshot_refs_v1';
 const BASE_PAYLOAD_KEY = 'memory_snapshot_payload_v1';
 const LOCAL_BOOTSTRAP_JSON_SOFT_LIMIT = 240_000;
 const DEFAULT_UNREACHABLE_GRACE_MS = 30 * 24 * 60 * 60 * 1000;
+const LOCAL_PAYLOAD_MIGRATION_YIELD_EVERY = 16;
+
+const getTauriInvoker = () => {
+  const g = typeof globalThis !== 'undefined' ? globalThis : window;
+  return g?.__TAURI__?.core?.invoke
+    || g?.__TAURI__?.invoke
+    || g?.__TAURI_INVOKE__
+    || g?.__TAURI_INTERNALS__?.invoke;
+};
+
+const isPlainRecord = value => Boolean(
+  value
+  && typeof value === 'object'
+  && !Array.isArray(value)
+);
+
+const scheduleIdle = runner => {
+  if (typeof runner !== 'function') return;
+  try {
+    const g = typeof globalThis !== 'undefined' ? globalThis : window;
+    if (typeof g?.requestIdleCallback === 'function') {
+      g.requestIdleCallback(() => runner(), { timeout: 1_500 });
+      return;
+    }
+  } catch {}
+  setTimeout(() => runner(), 600);
+};
 
 const clone = value => {
   if (value === null || value === undefined) return value;
@@ -116,6 +143,111 @@ export const buildMemorySnapshotId = (sessionId = '', snapshot = {}) => {
   return `mem_${checkpointHashString(`${sid}|${signature}`)}`;
 };
 
+const isMemorySnapshotPayload = value => Boolean(
+  isPlainRecord(value)
+  && !value._tooLarge
+  && String(value.id || '').trim()
+  && String(value.sessionId || '').trim()
+  && String(value.templateId || '').trim()
+  && Array.isArray(value.rows)
+);
+
+const listLocalPayloadKeys = () => {
+  const storage = globalThis?.localStorage;
+  const length = Number(storage?.length || 0);
+  if (!storage || !Number.isFinite(length) || length <= 0 || typeof storage.key !== 'function') return [];
+  const prefix = `${BASE_PAYLOAD_KEY}__`;
+  const keys = [];
+  for (let index = 0; index < length; index += 1) {
+    const key = String(storage.key(index) || '');
+    if (key.startsWith(prefix)) keys.push(key);
+  }
+  return keys;
+};
+
+export const migrateMemorySnapshotLocalPayloads = async () => {
+  const result = {
+    scanned: 0,
+    removed: 0,
+    backfilled: 0,
+    retained: 0,
+  };
+  if (typeof getTauriInvoker() !== 'function') return result;
+
+  const storage = globalThis?.localStorage;
+  const keys = listLocalPayloadKeys();
+  for (let index = 0; index < keys.length; index += 1) {
+    const key = keys[index];
+    result.scanned += 1;
+    let localPayload = null;
+    try {
+      const raw = storage?.getItem?.(key);
+      localPayload = raw ? JSON.parse(raw) : null;
+    } catch {}
+    if (!isMemorySnapshotPayload(localPayload)) {
+      result.retained += 1;
+      continue;
+    }
+
+    let kv = null;
+    try {
+      kv = await safeInvoke('load_kv', { name: key });
+    } catch (err) {
+      logger.debug('memory snapshot local payload migration read skipped', { key, error: err });
+      result.retained += 1;
+      continue;
+    }
+
+    if (isMemorySnapshotPayload(kv)) {
+      if (buildMemorySnapshotSignature(kv) !== buildMemorySnapshotSignature(localPayload)) {
+        logger.warn('memory snapshot local/KV payload conflict retained for recovery', { key });
+        result.retained += 1;
+        continue;
+      }
+    } else if (isPlainRecord(kv) && !Object.keys(kv).length) {
+      try {
+        await safeInvoke('save_kv', { name: key, data: localPayload });
+        result.backfilled += 1;
+      } catch (err) {
+        logger.debug('memory snapshot local payload migration backfill skipped', { key, error: err });
+        result.retained += 1;
+        continue;
+      }
+    } else {
+      result.retained += 1;
+      continue;
+    }
+
+    try {
+      storage?.removeItem?.(key);
+      result.removed += 1;
+    } catch {
+      result.retained += 1;
+    }
+
+    if ((index + 1) % LOCAL_PAYLOAD_MIGRATION_YIELD_EVERY === 0) {
+      await new Promise(resolve => setTimeout(resolve, 0));
+    }
+  }
+  return result;
+};
+
+let localPayloadMigrationScheduled = false;
+const scheduleMemorySnapshotLocalPayloadMigration = () => {
+  if (localPayloadMigrationScheduled || typeof getTauriInvoker() !== 'function') return;
+  localPayloadMigrationScheduled = true;
+  scheduleIdle(async () => {
+    try {
+      const result = await migrateMemorySnapshotLocalPayloads();
+      if (result.scanned) {
+        logger.info('memory snapshot local payload migration complete', result);
+      }
+    } catch (err) {
+      logger.warn('memory snapshot local payload migration failed', err);
+    }
+  });
+};
+
 const normalizeSnapshotRefs = (sessionId = '', input = {}) => {
   const raw = input && typeof input === 'object' ? input : {};
   const refsRaw = raw.refs && typeof raw.refs === 'object' ? raw.refs : {};
@@ -146,6 +278,7 @@ export class MemorySnapshotStore {
     this.refsCache = new Map();
     this.refsLoaded = new Set();
     this.refsWriteChains = new Map();
+    scheduleMemorySnapshotLocalPayloadMigration();
   }
 
   async setScope(scopeId = '') {
@@ -212,29 +345,55 @@ export class MemorySnapshotStore {
     const id = String(snapshotId || '').trim();
     if (!id) return false;
     const key = this._getPayloadKey(id);
-    writeLocalJson(key, payload);
-    try {
-      await safeInvoke('save_kv', { name: key, data: payload });
-      return true;
-    } catch (err) {
-      logger.debug('memory snapshot payload save_kv skipped (可能非 Tauri)', err);
-      return false;
+    if (typeof getTauriInvoker() === 'function') {
+      try {
+        await safeInvoke('save_kv', { name: key, data: payload });
+        try {
+          globalThis?.localStorage?.removeItem?.(key);
+        } catch {}
+        return true;
+      } catch (err) {
+        logger.debug('memory snapshot payload save_kv failed; retaining local fallback', err);
+        return writeLocalJson(key, payload);
+      }
     }
+    return writeLocalJson(key, payload);
   }
 
   async getSnapshot(snapshotId = '') {
     const id = String(snapshotId || '').trim();
     if (!id) return null;
     const key = this._getPayloadKey(id);
+    const expectsKv = typeof getTauriInvoker() === 'function';
     let payload = null;
-    try {
-      const kv = await safeInvoke('load_kv', { name: key });
-      if (kv && typeof kv === 'object' && !kv._tooLarge) payload = kv;
-    } catch (err) {
-      logger.debug('memory snapshot payload hydrate skipped (可能非 Tauri)', err);
+    let kvMissing = false;
+    if (expectsKv) {
+      try {
+        const kv = await safeInvoke('load_kv', { name: key });
+        if (isMemorySnapshotPayload(kv)) {
+          payload = kv;
+          try {
+            globalThis?.localStorage?.removeItem?.(key);
+          } catch {}
+        } else if (isPlainRecord(kv) && !Object.keys(kv).length) {
+          kvMissing = true;
+        }
+      } catch (err) {
+        logger.debug('memory snapshot payload hydrate skipped (可能非 Tauri)', err);
+      }
     }
     if (!payload) payload = readLocalJson(key);
     if (!payload) return null;
+    if (expectsKv && kvMissing && isMemorySnapshotPayload(payload)) {
+      try {
+        await safeInvoke('save_kv', { name: key, data: payload });
+        try {
+          globalThis?.localStorage?.removeItem?.(key);
+        } catch {}
+      } catch (err) {
+        logger.debug('memory snapshot payload on-read migration skipped', err);
+      }
+    }
     return normalizeMemorySnapshotRecord(payload, { id });
   }
 
@@ -245,7 +404,13 @@ export class MemorySnapshotStore {
     if (!normalized.templateId) return null;
     const snapshotId = normalized.id || buildMemorySnapshotId(sid, normalized);
     const finalSnapshot = normalizeMemorySnapshotRecord({ ...normalized, id: snapshotId, sessionId: sid });
-    await this._savePayload(snapshotId, finalSnapshot);
+    const payloadPersisted = await this._savePayload(snapshotId, finalSnapshot);
+    if (!payloadPersisted) {
+      logger.warn('memory snapshot payload persist failed; ref marked unreachable', {
+        snapshotId,
+        sessionId: sid,
+      });
+    }
     await this._loadRefs(sid);
     await this._enqueueRefsWrite(sid, async () => {
       const refs = await this._loadRefs(sid);
@@ -253,8 +418,8 @@ export class MemorySnapshotStore {
         snapshotId,
         createdAt: refs.refs[snapshotId]?.createdAt || Date.now(),
         lastReferencedAt: Date.now(),
-        lastUnreachableAt: 0,
-        state: 'reachable',
+        lastUnreachableAt: payloadPersisted ? 0 : Date.now(),
+        state: payloadPersisted ? 'reachable' : 'unreachable',
       };
       await this._persistRefs(sid);
     });

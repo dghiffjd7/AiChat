@@ -301,23 +301,56 @@ import {
 
 {
   const appSource = await readFile(new URL('../../src/scripts/ui/app.js', import.meta.url), 'utf8');
-  const queueWrapperStart = appSource.indexOf('const enqueueFormatRepairProtocolMessages');
-  const queueWrapperEnd = appSource.indexOf('let sendTraceStarted', queueWrapperStart);
-  const queueWrapperSource = queueWrapperStart >= 0 && queueWrapperEnd > queueWrapperStart
-    ? appSource.slice(queueWrapperStart, queueWrapperEnd)
+  const transactionStart = appSource.indexOf('const runTransactionalProtocolResponse');
+  const transactionEnd = appSource.indexOf('const syncProtocolCheckpoints', transactionStart);
+  const transactionSource = transactionStart >= 0 && transactionEnd > transactionStart
+    ? appSource.slice(transactionStart, transactionEnd)
+    : '';
+  const backlogStart = appSource.indexOf('const flushProtocolDeliveryBacklog');
+  const backlogEnd = appSource.indexOf('const pendingFloatRuntime', backlogStart);
+  const backlogSource = backlogStart >= 0 && backlogEnd > backlogStart
+    ? appSource.slice(backlogStart, backlogEnd)
     : '';
 
   assert.match(
-    queueWrapperSource,
-    /tagProtocolDeliveryItemsWithFormatRepairTurn\(\s*queueItems,\s*getFormatRepairTurnMeta\(\)\s*\)/,
+    transactionSource,
+    /runProtocolResponseTransaction\(\{/,
   );
   assert.match(
-    queueWrapperSource,
-    /appendMessage:\s*\(message,\s*targetSessionId\)\s*=>\s*appendFormatRepairTurnMessage\(/,
+    transactionSource,
+    /beginTransaction:\s*\(\)\s*=>\s*lastProtocolRetryDispatcher\?\.beginMessageCapture/,
+  );
+  assert.match(
+    transactionSource,
+    /formatRepairTurnSourceMessages\.push\(\{\s*messageId,\s*targetSessionId\s*\}\)/,
+  );
+  assert.match(
+    transactionSource,
+    /setFormatRepairLastRawResponse\(raw,\s*sessionId\)/,
+  );
+  assert.match(
+    transactionSource,
+    /createProtocolDeliveryQueue\(batch\.items,[\s\S]*alreadyPersisted:\s*true/,
+  );
+  assert.match(
+    transactionSource,
+    /if\s*\(animateDelivery\)\s*\{[\s\S]*createProtocolDeliveryQueue\(batch\.items/,
+  );
+  assert.match(
+    transactionSource,
+    /const generationOwnsProtocolDelivery\s*=\s*\(\)\s*=>/,
   );
   assert.equal(
-    (appSource.match(/enqueueMessages:\s*enqueueFormatRepairProtocolMessages/g) || []).length,
+    (transactionSource.match(/if\s*\(!generationOwnsProtocolDelivery\(\)\)\s*break;/g) || []).length,
     2,
+  );
+  assert.doesNotMatch(
+    transactionSource,
+    /animateDelivery\s*&&\s*batch\.items\.length/,
+  );
+  assert.match(
+    transactionSource,
+    /await queue\.promise/,
   );
   assert.match(
     appSource,
@@ -327,9 +360,17 @@ import {
     appSource,
     /const appendPersistedProtocolDeliveryMessage[\s\S]*appendMessageWithFormatRepairEnvelopeRegistration/,
   );
+  assert.match(
+    appSource,
+    /collectMaidAssistantMessageRefs\(\{[\s\S]*trackedMessageRefs:\s*formatRepairTurnSourceMessages/,
+  );
   assert.equal(
     (appSource.match(/appendPersistedProtocolDeliveryMessage/g) || []).length,
     3,
   );
-  console.log('ok - app protocol queues persist and append through the format-repair turn wrapper');
+  assert.doesNotMatch(
+    backlogSource,
+    /deferProtocolAfterReceiveEffects|deferProtocolUiMessages/,
+  );
+  console.log('ok - app protocol transactions register committed bubbles and persisted queues retain repair envelopes');
 }

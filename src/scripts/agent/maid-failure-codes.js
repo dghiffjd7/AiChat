@@ -13,6 +13,10 @@ export const MAID_FAILURE_CODES = Object.freeze({
   modelInvalidDecision: 'model_invalid_decision',
   repeatedToolFailure: 'repeated_tool_failure',
   maxStepsReached: 'max_steps_reached',
+  protocolRejected: 'protocol_rejected',
+  repairFailed: 'repair_failed',
+  blockedByConfig: 'blocked_by_config',
+  generationFailed: 'generation_failed',
   unknown: 'unknown',
 });
 
@@ -22,6 +26,7 @@ const trim = (value, fallback = '') => {
 };
 
 const TOOL_ERROR_CODE_MAP = Object.freeze({
+  user_aborted: MAID_FAILURE_CODES.userAborted,
   agent_tool_args_invalid: MAID_FAILURE_CODES.invalidArgs,
   agent_tool_not_found: MAID_FAILURE_CODES.toolUnavailable,
   agent_tool_denied: MAID_FAILURE_CODES.permissionDenied,
@@ -32,6 +37,10 @@ const TOOL_ERROR_CODE_MAP = Object.freeze({
   agent_tool_safety_required: MAID_FAILURE_CODES.safetyDenied,
   agent_tool_safety_confirmation_required: MAID_FAILURE_CODES.safetyDenied,
   agent_tool_safety_fallback_args_invalid: MAID_FAILURE_CODES.safetyDenied,
+  protocol_rejected: MAID_FAILURE_CODES.protocolRejected,
+  repair_failed: MAID_FAILURE_CODES.repairFailed,
+  blocked_by_config: MAID_FAILURE_CODES.blockedByConfig,
+  generation_failed: MAID_FAILURE_CODES.generationFailed,
 });
 
 const MODEL_DECISION_REASONS = new Set([
@@ -51,7 +60,10 @@ export const classifyMaidToolFailure = ({
 } = {}) => {
   const code = trim(errorCode);
   if (code && TOOL_ERROR_CODE_MAP[code]) return TOOL_ERROR_CODE_MAP[code];
+  const resultCode = trim(result?.failureCode || result?.reason);
+  if (resultCode && TOOL_ERROR_CODE_MAP[resultCode]) return TOOL_ERROR_CODE_MAP[resultCode];
   if (result && result.skipped === true) return MAID_FAILURE_CODES.safetyDenied;
+  if (result?.cancelled === true) return MAID_FAILURE_CODES.userAborted;
   const text = trim(message || result?.reason || result?.message).toLowerCase();
   if (!text) return MAID_FAILURE_CODES.unknown;
   if (/is required|is not allowed|must be|expected |args invalid|参数(错误|无效|缺失)/.test(text)) {
@@ -63,7 +75,7 @@ export const classifyMaidToolFailure = ({
   if (/permission|denied|权限|拒绝/.test(text)) {
     return MAID_FAILURE_CODES.permissionDenied;
   }
-  if (result?.cancelled === true || /用户(点击了?)?(中止|停止|取消)|user[_ ](aborted|stopped|declined|cancelled)|aborted by user|stopped by user|generation (stopped|aborted)/.test(text)) {
+  if (/用户(点击了?)?(中止|停止|取消)|user[_ ](aborted|stopped|declined|cancelled)|aborted by user|stopped by user|generation (stopped|aborted)/.test(text)) {
     return MAID_FAILURE_CODES.userAborted;
   }
   if (/destructive|未确认|危险操作|cancelled by user/.test(text)) {

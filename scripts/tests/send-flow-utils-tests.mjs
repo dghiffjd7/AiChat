@@ -9,12 +9,15 @@ import {
   buildSendPreflightBlockedTraceEvent,
   buildSendStartTraceEvent,
   buildSendUserMessage,
+  collectMaidAssistantMessageRefs,
   adoptRenderedRegenerateRoundMessages,
   normalizeHandleSendInvocation,
   normalizeHandleSendOptions,
+  resolveMaidChatSendCompletionResult,
   resolveRegenerateFromUserIndexPlan,
   resolveSendPreflightBlock,
   resolveSyspromptProtocolFlags,
+  runAbortableSendFlow,
   runPendingSendPreparationFlow,
   runRegenerateFromUserIndexFlow,
   runSendCatchFlow,
@@ -23,6 +26,126 @@ import {
 
 const tests = [];
 const test = (name, fn) => tests.push({ name, fn });
+
+test('runAbortableSendFlow relays a tool timeout signal to the active generation and cleans up', async () => {
+  const controller = new AbortController();
+  const aborts = [];
+  let finishSend = null;
+  const pending = runAbortableSendFlow({
+    signal: controller.signal,
+    runSend: () => new Promise(resolve => {
+      finishSend = resolve;
+    }),
+    abortGeneration: reason => aborts.push(reason),
+  });
+
+  const timeoutReason = Object.assign(new Error('Agent tool timed out'), {
+    code: 'generation_failed',
+  });
+  controller.abort(timeoutReason);
+  finishSend({ ok: false });
+  assert.deepEqual(await pending, { ok: false });
+  assert.deepEqual(aborts, [timeoutReason]);
+
+  controller.abort(new Error('late abort'));
+  assert.equal(aborts.length, 1);
+});
+
+test('collectMaidAssistantMessageRefs keeps committed cross-session replies with their session ids', () => {
+  const messages = new Map([
+    ['source:new', { id: 'source:new', role: 'assistant' }],
+    ['other:assistant', { id: 'other:assistant', role: 'assistant' }],
+    ['other:user', { id: 'other:user', role: 'user' }],
+  ]);
+  const refs = collectMaidAssistantMessageRefs({
+    sourceSessionId: 'source',
+    assistantMessageIdsBefore: ['source:old'],
+    currentSessionMessages: [
+      { id: 'source:old', role: 'assistant' },
+      messages.get('source:new'),
+    ],
+    trackedMessageRefs: [
+      { targetSessionId: 'other', messageId: 'other:assistant' },
+      { targetSessionId: 'other', messageId: 'other:user' },
+      { targetSessionId: 'other', messageId: 'other:deleted' },
+      { targetSessionId: 'source', messageId: 'source:new' },
+    ],
+    findMessage: (messageId) => messages.get(messageId) || null,
+  });
+  assert.deepEqual(refs, [
+    { sessionId: 'other', messageId: 'other:assistant' },
+    { sessionId: 'source', messageId: 'source:new' },
+  ]);
+});
+
+test('resolveMaidChatSendCompletionResult distinguishes delivered, rejected, and config-blocked outcomes', () => {
+  assert.deepEqual(resolveMaidChatSendCompletionResult({
+    pipelineSucceeded: true,
+    requestTriggered: true,
+    protocolEnabled: true,
+    protocolAccepted: true,
+    assistantMessageIds: ['assistant-1'],
+    assistantMessageRefs: [
+      { sessionId: 'elf', messageId: 'assistant-1' },
+      { sessionId: 'other-room', messageId: 'assistant-2' },
+    ],
+    sessionId: 'elf',
+  }), {
+    ok: true,
+    sent: true,
+    requested: true,
+    requestTriggered: true,
+    completionOutcome: 'assistant_delivered',
+    failureCode: '',
+    reason: '',
+    message: '角色回复已通过协议验收并落库。',
+    assistantMessageIds: ['assistant-1', 'assistant-2'],
+    assistantMessageRefs: [
+      { sessionId: 'elf', messageId: 'assistant-1' },
+      { sessionId: 'other-room', messageId: 'assistant-2' },
+    ],
+    sessionId: 'elf',
+  });
+  const rejected = resolveMaidChatSendCompletionResult({
+    pipelineSucceeded: false,
+    requestTriggered: true,
+    protocolEnabled: true,
+    protocolAccepted: false,
+    sessionId: 'elf',
+  });
+  assert.equal(rejected.ok, false);
+  assert.equal(rejected.sent, true);
+  assert.equal(rejected.completionOutcome, 'protocol_rejected');
+  assert.equal(rejected.failureCode, 'protocol_rejected');
+  const blocked = resolveMaidChatSendCompletionResult({
+    blockedReason: 'api-not-configured',
+    sessionId: 'elf',
+  });
+  assert.equal(blocked.ok, false);
+  assert.equal(blocked.sent, false);
+  assert.equal(blocked.completionOutcome, 'blocked_by_config');
+  assert.equal(blocked.failureCode, 'blocked_by_config');
+});
+
+test('resolveMaidChatSendCompletionResult keeps the cancelled flag on a post-trigger abort', () => {
+  const aborted = resolveMaidChatSendCompletionResult({
+    pipelineSucceeded: false,
+    requestTriggered: true,
+    cancelled: true,
+    sessionId: 'elf',
+  });
+  assert.equal(aborted.ok, false);
+  assert.equal(aborted.sent, true, '触发后中止时 sent 仍为 true');
+  assert.equal(aborted.cancelled, true, '触发后中止必须携带 cancelled 标志供工具层识别');
+  assert.equal(aborted.completionOutcome, 'request_triggered');
+  assert.equal(aborted.failureCode, 'user_aborted');
+  const delivered = resolveMaidChatSendCompletionResult({
+    pipelineSucceeded: true,
+    requestTriggered: true,
+    sessionId: 'elf',
+  });
+  assert.equal('cancelled' in delivered, false, '非中止结果不应出现 cancelled 字段');
+});
 
 test('normalizeHandleSendInvocation treats DOM-style events as empty send arguments', () => {
   const eventLike = {

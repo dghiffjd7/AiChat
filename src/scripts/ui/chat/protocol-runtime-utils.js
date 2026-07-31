@@ -249,22 +249,6 @@ export const finalizeProtocolStreamFlow = async (
   let nextDidAnything = Boolean(didAnything);
   let nextMutatedMoments = Boolean(mutatedMoments);
 
-  if (summaryEnabled && typeof extractSummaryBlock === 'function') {
-    const { summary: protocolSummary } = extractSummaryBlock(raw) || {};
-    commitProtocolSummary(protocolSummary, summarySessionIds, {
-      addSummary,
-      requestSummaryCompaction,
-    });
-  }
-  if (typeof handleMemoryEditsFromRaw === 'function') {
-    await handleMemoryEditsFromRaw(raw, memoryOptions || {});
-  }
-  await flushProtocolMomentsIfNeeded(nextMutatedMoments, {
-    flushMoments,
-  });
-  if (typeof refreshChatAndContacts === 'function') {
-    refreshChatAndContacts();
-  }
   if (!nextDidAnything) {
     const retryState = await runProtocolRetryFallbacks({
       rawText: raw,
@@ -275,8 +259,8 @@ export const finalizeProtocolStreamFlow = async (
       buildProtocolRetryCandidates,
       createDialogueParser,
       handleEvent: handleRetryEvent,
-      flushAfterRetry: true,
-      refreshAfterRetry: true,
+      flushAfterRetry: false,
+      refreshAfterRetry: false,
       stopOnMiPhoneAbort: true,
       flushMoments,
       refreshChatAndContacts,
@@ -294,6 +278,24 @@ export const finalizeProtocolStreamFlow = async (
     nextMutatedMoments = retryState.mutatedMoments;
     if (!nextDidAnything && typeof warnNoValidTag === 'function') {
       warnNoValidTag({ rawText: raw });
+    }
+  }
+  if (nextDidAnything) {
+    if (summaryEnabled && typeof extractSummaryBlock === 'function') {
+      const { summary: protocolSummary } = extractSummaryBlock(raw) || {};
+      commitProtocolSummary(protocolSummary, summarySessionIds, {
+        addSummary,
+        requestSummaryCompaction,
+      });
+    }
+    if (typeof handleMemoryEditsFromRaw === 'function') {
+      await handleMemoryEditsFromRaw(raw, memoryOptions || {});
+    }
+    await flushProtocolMomentsIfNeeded(nextMutatedMoments, {
+      flushMoments,
+    });
+    if (typeof refreshChatAndContacts === 'function') {
+      refreshChatAndContacts();
     }
   }
 
@@ -769,11 +771,7 @@ export const runProtocolBufferedResponseFlow = async (
     eventHandlers,
   }));
 
-  if (typeof handleMemoryEditsFromRaw === 'function') {
-    await handleMemoryEditsFromRaw(raw, memoryOptions || {});
-  }
-
-  return finalizeProtocolBufferedFlow({
+  const finalState = await finalizeProtocolBufferedFlow({
     rawText: raw,
     didAnything,
     mutatedMoments,
@@ -790,6 +788,10 @@ export const runProtocolBufferedResponseFlow = async (
     handleRetryEvent,
     warnNoValidTag,
   });
+  if (finalState?.handled === true && typeof handleMemoryEditsFromRaw === 'function') {
+    await handleMemoryEditsFromRaw(raw, memoryOptions || {});
+  }
+  return finalState;
 };
 
 export const createProtocolBatchEventHandlers = ({

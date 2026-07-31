@@ -1,0 +1,441 @@
+{
+  "generatedAt": "2026-07-31T05:27:32.433Z",
+  "model": "deepseek-v4-flash",
+  "resultFiles": [
+    "results-v4f-v2-pilot-0731.jsonl",
+    "results-v4f-v2-core-0731.jsonl",
+    "results-v4f-v2-capabilities-0731.jsonl",
+    "results-v4f-v2-complex-0731.jsonl",
+    "results-v4f-v2-media-0731.jsonl",
+    "results-v4f-v2-media-recovery-0731.jsonl",
+    "results-v4f-v2-chat-memory-a-0731.jsonl",
+    "results-v4f-v2-chat-retry-0731.jsonl",
+    "results-v4f-v2-chat-natural-0731.jsonl",
+    "results-v4f-v2-format-repair-0731.jsonl",
+    "results-v4f-v2-memory-management-0731.jsonl"
+  ],
+  "batches": [
+    {
+      "file": "results-v4f-v2-pilot-0731.jsonl",
+      "batch": "v4f-v2-pilot-0731",
+      "taskCount": 12,
+      "statusCounts": {
+        "succeeded": 11,
+        "responded": 1
+      }
+    },
+    {
+      "file": "results-v4f-v2-core-0731.jsonl",
+      "batch": "v4f-v2-core-0731",
+      "taskCount": 40,
+      "statusCounts": {
+        "succeeded": 32,
+        "interrupted": 2,
+        "failed": 2,
+        "responded": 4
+      }
+    },
+    {
+      "file": "results-v4f-v2-capabilities-0731.jsonl",
+      "batch": "v4f-v2-capabilities-0731",
+      "taskCount": 24,
+      "statusCounts": {
+        "succeeded": 23,
+        "failed": 1
+      }
+    },
+    {
+      "file": "results-v4f-v2-complex-0731.jsonl",
+      "batch": "v4f-v2-complex-0731",
+      "taskCount": 16,
+      "statusCounts": {
+        "awaiting_confirmation": 2,
+        "cancelled": 1,
+        "succeeded": 12,
+        "failed": 1
+      }
+    },
+    {
+      "file": "results-v4f-v2-media-0731.jsonl",
+      "batch": "v4f-v2-media-0731",
+      "taskCount": 3,
+      "statusCounts": {
+        "succeeded": 2,
+        "interrupted": 1
+      }
+    },
+    {
+      "file": "results-v4f-v2-media-recovery-0731.jsonl",
+      "batch": "v4f-v2-media-recovery-0731",
+      "taskCount": 1,
+      "statusCounts": {
+        "succeeded": 1
+      }
+    },
+    {
+      "file": "results-v4f-v2-chat-memory-a-0731.jsonl",
+      "batch": "v4f-v2-chat-memory-a-0731",
+      "taskCount": 2,
+      "statusCounts": {
+        "responded": 1,
+        "succeeded": 1
+      }
+    },
+    {
+      "file": "results-v4f-v2-chat-retry-0731.jsonl",
+      "batch": "v4f-v2-chat-retry-0731",
+      "taskCount": 1,
+      "statusCounts": {
+        "succeeded": 1
+      }
+    },
+    {
+      "file": "results-v4f-v2-chat-natural-0731.jsonl",
+      "batch": "v4f-v2-chat-natural-0731",
+      "taskCount": 1,
+      "statusCounts": {
+        "succeeded": 1
+      }
+    },
+    {
+      "file": "results-v4f-v2-format-repair-0731.jsonl",
+      "batch": "v4f-v2-format-repair-0731",
+      "taskCount": 1,
+      "statusCounts": {
+        "succeeded": 1
+      }
+    },
+    {
+      "file": "results-v4f-v2-memory-management-0731.jsonl",
+      "batch": "v4f-v2-memory-management-0731",
+      "taskCount": 2,
+      "statusCounts": {
+        "succeeded": 2
+      }
+    }
+  ],
+  "totals": {
+    "tasks": 103,
+    "statusCounts": {
+      "succeeded": 87,
+      "responded": 6,
+      "interrupted": 3,
+      "failed": 4,
+      "awaiting_confirmation": 2,
+      "cancelled": 1
+    },
+    "durationMs": 3402463,
+    "durationMedianMs": 16091,
+    "durationP95Ms": 139191,
+    "durationMaxMs": 375978,
+    "usage": {
+      "promptTokens": 3162790,
+      "completionTokens": 269547,
+      "totalTokens": 3432337,
+      "modelCallCount": 241,
+      "toolCallCount": 179
+    },
+    "shadow": {
+      "validSelections": 150,
+      "hitCount": 134,
+      "missCount": 16,
+      "hitRate": 0.8933333333333333,
+      "missCategoryCounts": {
+        "secondary_cross_domain": 9,
+        "primary_history_query": 4,
+        "memory_new_sequential": 3
+      },
+      "unattributedCount": 0
+    }
+  },
+  "misses": [
+    {
+      "taskId": "v4f-v2-pilot-0731-001",
+      "snapshotId": "cap-snapshot:6e2bd65d-d803-41b0-8b0b-a964f15db231",
+      "phase": "react",
+      "selected": "app.state.read",
+      "candidates": [
+        "session.list",
+        "app.resource.read",
+        "maid.todo",
+        "persona.create",
+        "persona.switch",
+        "session.create",
+        "session.open",
+        "app.capabilities.search"
+      ],
+      "category": "secondary_cross_domain",
+      "reason": "主读取完成后的 APP 状态核对不在候选集；候选只覆盖会话与资源读取。"
+    },
+    {
+      "taskId": "v4f-v2-core-0731-003",
+      "snapshotId": "cap-snapshot:1760d2b3-e89e-4b9f-a8c3-2ac3d6f29e5d",
+      "phase": "react_recovery",
+      "selected": "chat.send_message",
+      "candidates": [
+        "regex.open",
+        "session.create",
+        "user.create",
+        "worldbook.read",
+        "session.list",
+        "worldbook.create",
+        "maid.todo",
+        "app.capabilities.search"
+      ],
+      "category": "primary_history_query",
+      "reason": "恢复阶段仍需发送消息，但候选被先前创建／读取历史污染，发送能力未进入 Top-K。"
+    },
+    {
+      "taskId": "v4f-v2-core-0731-017",
+      "snapshotId": "cap-snapshot:fb096f56-caa0-4663-97d1-d00afc400323",
+      "phase": "planner",
+      "selected": "app.resource.read",
+      "candidates": [
+        "worldbook.bind_session",
+        "worldbook.list",
+        "worldbook.read",
+        "worldbook.create",
+        "worldbook.open",
+        "worldbook.bind_sessions",
+        "session.create",
+        "app.capabilities.search"
+      ],
+      "category": "secondary_cross_domain",
+      "reason": "会话世界书绑定前的会话事实核对跨到通用资源读取，世界书候选集未覆盖。"
+    },
+    {
+      "taskId": "v4f-v2-core-0731-035",
+      "snapshotId": "cap-snapshot:e71d5df4-b1e6-400b-896b-e0b6ed11a687",
+      "phase": "planner",
+      "selected": "worldbook.list",
+      "candidates": [
+        "worldbook.bind_sessions",
+        "session.create",
+        "user.create",
+        "worldbook.read",
+        "session.list",
+        "worldbook.create",
+        "maid.todo",
+        "app.capabilities.search"
+      ],
+      "category": "secondary_cross_domain",
+      "reason": "批量绑定前的世界书解析／核对步骤未进入以 bind_sessions 为主的候选集。"
+    },
+    {
+      "taskId": "v4f-v2-core-0731-036",
+      "snapshotId": "cap-snapshot:d8f9bea0-ca76-4ed2-82a6-c6b108ed3a2a",
+      "phase": "planner",
+      "selected": "app.resource.read",
+      "candidates": [
+        "worldbook.bind_sessions",
+        "worldbook.read",
+        "worldbook.bind_session",
+        "worldbook.list",
+        "worldbook.create",
+        "worldbook.open",
+        "session.create",
+        "app.capabilities.search"
+      ],
+      "category": "secondary_cross_domain",
+      "reason": "绑定结果的会话侧读回跨到通用资源读取，世界书候选集未覆盖。"
+    },
+    {
+      "taskId": "v4f-v2-capabilities-0731-005",
+      "snapshotId": "cap-snapshot:33d51ca8-0682-4903-b777-7c12c909530d",
+      "phase": "react",
+      "selected": "session.create",
+      "candidates": [
+        "session.list",
+        "maid.todo",
+        "group.members.update",
+        "app.resource.read",
+        "session.open",
+        "group.create",
+        "session.config.open",
+        "app.capabilities.search"
+      ],
+      "category": "primary_history_query",
+      "reason": "先 list 再按缺项创建的条件动作没有保留到 ReAct 候选，只有查询能力命中。"
+    },
+    {
+      "taskId": "v4f-v2-capabilities-0731-007",
+      "snapshotId": "cap-snapshot:88977aca-a706-461f-acb4-7caf196983d5",
+      "phase": "planner",
+      "selected": "session.list",
+      "candidates": [
+        "agent.center.open",
+        "app.errors.read",
+        "app.resource.read",
+        "app.state.read",
+        "app.ui.capture_region",
+        "app.visible_panel.read",
+        "chat.format.profile",
+        "app.capabilities.search"
+      ],
+      "category": "primary_history_query",
+      "reason": "批删预览／取消的自然话术没有召回会话列表前置步骤，落入通用候选集。"
+    },
+    {
+      "taskId": "v4f-v2-capabilities-0731-008",
+      "snapshotId": "cap-snapshot:f63a7370-16b2-4c5e-8070-32f617246a11",
+      "phase": "react",
+      "selected": "session.list",
+      "candidates": [
+        "session.delete_many",
+        "maid.todo",
+        "chat.format.profile",
+        "chat.format.repair",
+        "config.api.open",
+        "config.model.switch",
+        "session.config.open",
+        "app.capabilities.search"
+      ],
+      "category": "secondary_cross_domain",
+      "reason": "取消批删后的只读复验未进入以 delete_many 为主的候选集。"
+    },
+    {
+      "taskId": "v4f-v2-capabilities-0731-020",
+      "snapshotId": "cap-snapshot:10c3c825-0cdf-4987-8703-54473ddd1b41",
+      "phase": "planner",
+      "selected": "maid.memory.list",
+      "candidates": [
+        "memory.open",
+        "config.api.open",
+        "config.model.switch",
+        "session.list",
+        "maid.todo",
+        "media.generate_image",
+        "agent.center.open",
+        "app.capabilities.search"
+      ],
+      "category": "memory_new_sequential",
+      "reason": "新的女仆语义记忆列出能力尚缺自然话术覆盖，候选只出现通用 memory.open。"
+    },
+    {
+      "taskId": "v4f-v2-capabilities-0731-021",
+      "snapshotId": "cap-snapshot:a273ae4a-4415-4950-9ad4-471bb66e6d12",
+      "phase": "planner",
+      "selected": "maid.memory.archive",
+      "candidates": [
+        "memory.open",
+        "worldbook.bind_sessions",
+        "app.resource.read",
+        "persona.create",
+        "user.create",
+        "web.search",
+        "worldbook.read",
+        "app.capabilities.search"
+      ],
+      "category": "memory_new_sequential",
+      "reason": "新的女仆语义记忆归档能力尚缺“清理／忘掉测试记忆”话术覆盖。"
+    },
+    {
+      "taskId": "v4f-v2-complex-0731-016",
+      "snapshotId": "cap-snapshot:b3d8d6ee-ab27-49ed-9911-d8dd2db8c95a",
+      "phase": "react",
+      "selected": "session.open",
+      "candidates": [
+        "session.list",
+        "maid.todo",
+        "group.members.update",
+        "app.resource.read",
+        "chat.send_message",
+        "worldbook.bind_sessions",
+        "chat.format.profile",
+        "app.capabilities.search"
+      ],
+      "category": "primary_history_query",
+      "reason": "长链最后“只打开主要结果”的动作被先前审计历史与 sticky 候选挤出 Top-K。"
+    },
+    {
+      "taskId": "v4f-v2-media-0731-002",
+      "snapshotId": "cap-snapshot:63b9f439-656a-40e8-87f2-4b43d88faec3",
+      "phase": "react",
+      "selected": "config.model.switch",
+      "candidates": [
+        "session.wallpaper.set",
+        "maid.todo",
+        "media.generate_image",
+        "contact.avatar.set",
+        "persona.avatar.set",
+        "chat.image.generate",
+        "session.config.open",
+        "app.capabilities.search"
+      ],
+      "category": "secondary_cross_domain",
+      "reason": "生图尺寸预检失败后读取配置能力跨域；候选仍集中于生图与壁纸写入。"
+    },
+    {
+      "taskId": "v4f-v2-media-0731-003",
+      "snapshotId": "cap-snapshot:c8c6c518-5cc7-4193-baba-0c7119d1c21a",
+      "phase": "react",
+      "selected": "session.list",
+      "candidates": [
+        "app.resource.read",
+        "maid.todo",
+        "group.members.update",
+        "contact.avatar.set",
+        "session.wallpaper.set",
+        "worldbook.bind_sessions",
+        "session.open",
+        "app.capabilities.search"
+      ],
+      "category": "secondary_cross_domain",
+      "reason": "媒体结果读回前的会话解析步骤未进入以资源读取／媒体写入为主的候选集。"
+    },
+    {
+      "taskId": "v4f-v2-media-0731-003",
+      "snapshotId": "cap-snapshot:2e01d440-ada4-4dd6-9e36-6721edd151a7",
+      "phase": "react_recovery",
+      "selected": "app.resource.read",
+      "candidates": [
+        "contact.avatar.set",
+        "session.wallpaper.set",
+        "session.open",
+        "session.config.open",
+        "session.list",
+        "maid.todo",
+        "media.generate_image",
+        "app.capabilities.search"
+      ],
+      "category": "secondary_cross_domain",
+      "reason": "恢复阶段需要通用资源读回，但候选漂移到头像／壁纸写入能力。"
+    },
+    {
+      "taskId": "v4f-v2-media-recovery-0731-001",
+      "snapshotId": "cap-snapshot:a9f6bb71-c409-40ca-90a9-e00435b9bfc3",
+      "phase": "react",
+      "selected": "app.resource.read",
+      "candidates": [
+        "session.wallpaper.set",
+        "media.generate_image",
+        "maid.todo",
+        "contact.avatar.set",
+        "persona.avatar.set",
+        "chat.image.generate",
+        "config.model.switch",
+        "app.capabilities.search"
+      ],
+      "category": "secondary_cross_domain",
+      "reason": "壁纸写入后的最终状态读回未进入媒体写入候选集。"
+    },
+    {
+      "taskId": "v4f-v2-memory-management-0731-002",
+      "snapshotId": "cap-snapshot:944386da-59fb-4d22-9f8a-c88851a4220b",
+      "phase": "react",
+      "selected": "maid.memory.archive",
+      "candidates": [
+        "maid.memory.list",
+        "maid.todo",
+        "memory.open",
+        "web.search",
+        "user.create",
+        "session.list",
+        "config.api.open",
+        "app.capabilities.search"
+      ],
+      "category": "memory_new_sequential",
+      "reason": "同一轮先 list 后 archive，第二个语义记忆能力没有随顺序目标保留。"
+    }
+  ]
+}

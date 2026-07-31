@@ -106,7 +106,7 @@ export const STORAGE_MIGRATION_CONTRACTS = Object.freeze([
     payloadVersion: 1,
     risk: 'high',
     importExportSurfaces: ['new-chat-archive', 'swipe-memory-state'],
-    tests: ['turn-checkpoint-store-tests'],
+    tests: ['turn-checkpoint-store-tests', 'turn-checkpoint-storage-tier-tests'],
   }),
   freezeContract({
     id: 'memory-snapshots',
@@ -117,7 +117,7 @@ export const STORAGE_MIGRATION_CONTRACTS = Object.freeze([
     payloadVersion: 1,
     risk: 'high',
     importExportSurfaces: ['turn-checkpoint', 'memory-rollback'],
-    tests: ['turn-checkpoint-store-tests', 'memory-lifecycle-integration'],
+    tests: ['turn-checkpoint-store-tests', 'memory-snapshot-storage-tier-tests', 'memory-lifecycle-integration'],
   }),
   freezeContract({
     id: 'regex',

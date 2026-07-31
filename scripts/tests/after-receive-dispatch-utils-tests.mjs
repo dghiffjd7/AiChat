@@ -1044,6 +1044,7 @@ test('runChatFormatGuardianPreview does not auto-apply even when legacy autoAppl
 
 test('runChatFormatGuardianPreview records model request failures for invisible parse failures', async () => {
   const queued = [];
+  const completed = [];
   const previews = [];
   const runs = [];
   const result = runChatFormatGuardianPreview({
@@ -1083,6 +1084,9 @@ test('runChatFormatGuardianPreview records model request failures for invisible 
     onChatFormatGuardianModelReviewQueued(payload) {
       queued.push(payload);
     },
+    onChatFormatGuardianModelReviewCompleted(payload) {
+      completed.push(payload);
+    },
     logger: { warn() {} },
   });
 
@@ -1099,6 +1103,8 @@ test('runChatFormatGuardianPreview records model request failures for invisible 
   assert.equal(runs.length, 1);
   assert.equal(runs[0].agentRun.status, 'failed');
   assert.match(runs[0].agentRun.errorMessage, /network down/);
+  assert.equal(completed.length, 1);
+  assert.equal(completed[0].result.status, 'invalid_output');
 });
 
 test('runChatFormatGuardianPreview can attach async model format repair candidate', async () => {

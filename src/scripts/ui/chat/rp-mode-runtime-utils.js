@@ -112,6 +112,30 @@ export const resetRpGreetingVariableState = ({
   return true;
 };
 
+export const runRpGreetingStoreWrite = ({
+  mutate = null,
+  logger = console,
+  onFailure = null,
+} = {}) => {
+  if (typeof mutate !== 'function') {
+    return { ok: false, value: null, error: null, errorCode: 'missing_mutation' };
+  }
+  try {
+    return { ok: true, value: mutate() };
+  } catch (error) {
+    logger?.warn?.('[rp-greeting] store write failed', error);
+    try {
+      onFailure?.(error);
+    } catch {}
+    return {
+      ok: false,
+      value: null,
+      error,
+      errorCode: String(error?.code || 'rp_greeting_write_failed'),
+    };
+  }
+};
+
 export const runEnterRpModeFlow = async ({
   uiMode = 'chat',
   captureSocial = true,

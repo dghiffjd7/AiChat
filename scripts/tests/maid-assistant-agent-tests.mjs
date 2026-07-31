@@ -210,6 +210,16 @@ import { AgentRunStore } from '../../src/scripts/storage/agent-run-store.js';
     classifyMaidOperationIntent('先确认「护栏验证房-2128」这个聊天室是否已存在；没有的话才创建它。').mode,
     'write_allowed',
   );
+  assert.equal(
+    classifyMaidOperationIntent('读取用户清单；不存在时才创建「V4F-V2备用用户-0731」，但不要切换成它。').mode,
+    'write_allowed',
+    '“不存在时才创建”是明确的条件写入授权',
+  );
+  assert.equal(
+    classifyMaidOperationIntent('读取角色卡清单；不存在时才创建「V4F-V2备用角色卡-0731」，但不得设为当前角色卡。').mode,
+    'write_allowed',
+    '条件创建角色卡不得被清单读取语义降为 read_only',
+  );
   // 反向锚定：纯查询与否定式写入仍是 read_only
   assert.equal(
     classifyMaidOperationIntent('检查会话列表，告诉我有几间。').mode,
@@ -2095,7 +2105,7 @@ for (const stopReason of ['feature_not_found', 'invalid_model_plan']) {
     },
     logger: { warn() {}, debug() {} },
   });
-  const result = await agent.runPrompt('请生成一张岑夏的聊天室壁纸并设置好，然后继续核对角色卡。');
+  const result = await agent.runPrompt('请重新生成一张岑夏的聊天室壁纸并设置好，然后继续核对角色卡。');
   assert.equal(result.ok, true);
   assert.equal(
     calls.filter(call => call.toolName === 'media.generate_image').length,
@@ -2110,7 +2120,7 @@ for (const stopReason of ['feature_not_found', 'invalid_model_plan']) {
   const guardedStep = result.steps.find(step => step?.output?.reason === 'generated_media_already_applied');
   assert.equal(guardedStep?.output?.reusedVerifiedAction, true);
   assert.equal(guardedStep?.output?.attachmentId, 'generated-wallpaper-1');
-  console.log('ok - already-applied generated media is reused instead of billed twice');
+  console.log('ok - a one-image regenerate request consumes one target quota instead of bypassing the guard');
 }
 
 {
@@ -2194,7 +2204,7 @@ for (const stopReason of ['feature_not_found', 'invalid_model_plan']) {
     },
     logger: { warn() {}, debug() {} },
   });
-  const result = await agent.runPrompt('先给岑夏生成一张聊天室壁纸设置上，看完之后再生成一张换掉它。');
+  const result = await agent.runPrompt('先给岑夏生成聊天室壁纸设置上，看完之后重新生成换掉它。');
   assert.equal(result.ok, true);
   assert.equal(
     calls.filter(call => call.toolName === 'media.generate_image').length,
@@ -2211,6 +2221,218 @@ for (const stopReason of ['feature_not_found', 'invalid_model_plan']) {
     ['media.generate_image', 'session.set_wallpaper', 'media.generate_image', 'session.set_wallpaper'],
   );
   console.log('ok - explicit regenerate request bypasses the generated-media idempotency guard');
+}
+
+const runGeneratedMediaQuotaProbe = async input => {
+  const calls = [];
+  let reactIndex = 0;
+  let generated = 0;
+  const mediaArgs = suffix => ({
+    prompt: `cenxia, ${suffix}, anime wallpaper`,
+    subject: '岑夏',
+    target: '岑夏',
+    purpose: 'wallpaper',
+  });
+  const reactDecisions = [
+    {
+      ok: true,
+      action: 'tool',
+      toolName: 'session.set_wallpaper',
+      args: { target: '岑夏', attachmentId: 'quota-wallpaper-1' },
+      featureId: 'session.wallpaper.set',
+      title: '设置第一张壁纸',
+    },
+    {
+      ok: true,
+      action: 'tool',
+      toolName: 'media.generate_image',
+      args: mediaArgs('night'),
+      featureId: 'media.generate_image',
+      title: '尝试生成第二张壁纸',
+    },
+    {
+      ok: true,
+      action: 'final',
+      message: '配额探针结束。',
+    },
+  ];
+  const agent = createMaidAssistantAgent({
+    planner: async () => ({
+      ok: true,
+      toolName: 'media.generate_image',
+      args: mediaArgs('day'),
+      featureId: 'media.generate_image',
+      title: '生成第一张壁纸',
+    }),
+    reactPlanner: async () => reactDecisions[reactIndex++],
+    toolRegistry: {
+      executeTool: async (toolName, args) => {
+        calls.push({ toolName, args });
+        if (toolName === 'media.generate_image') {
+          generated += 1;
+          return {
+            toolName,
+            status: 'succeeded',
+            result: { ok: true, attachmentId: `quota-wallpaper-${generated}` },
+          };
+        }
+        return {
+          toolName,
+          status: 'succeeded',
+          result: { ok: true, sessionId: args.target },
+        };
+      },
+    },
+    logger: { warn() {}, debug() {} },
+  });
+  const result = await agent.runPrompt(input);
+  return {
+    result,
+    generated: calls.filter(call => call.toolName === 'media.generate_image').length,
+  };
+};
+
+{
+  const probe = await runGeneratedMediaQuotaProbe(
+    '给岑夏生成一张聊天室壁纸并设置，不要再生成第二张。',
+  );
+  assert.equal(probe.generated, 1, '否定分句中的“第二张”不得扩大生图额度');
+  assert.equal(
+    probe.result.steps.some(step => step?.output?.reason === 'generated_media_already_applied'),
+    true,
+  );
+  console.log('ok - negated regenerate wording does not increase generated-media quota');
+}
+
+{
+  const probe = await runGeneratedMediaQuotaProbe(
+    '给岑夏生成一张聊天室壁纸并设置，画风参考两张附件。',
+  );
+  assert.equal(probe.generated, 1, '画风参考的输入图片数量不得当成输出生图额度');
+  console.log('ok - style-reference units are excluded from generated-media quota');
+}
+
+{
+  const probe = await runGeneratedMediaQuotaProbe(
+    '给岑夏生成聊天室壁纸并设置，一张白天，另一张夜景。',
+  );
+  assert.equal(probe.generated, 2, '继承同一目标与用途的裸“另一张”应授权第二个变体');
+  assert.equal(
+    probe.result.steps.some(step => step?.output?.reason === 'generated_media_already_applied'),
+    false,
+  );
+  console.log('ok - bare another-image wording grants one additional target-purpose variant');
+}
+
+{
+  const calls = [];
+  let reactIndex = 0;
+  const reactDecisions = [
+    {
+      ok: true,
+      action: 'tool',
+      toolName: 'contact.set_avatar',
+      args: { target: '岑夏', attachmentId: 'avatar-1' },
+      featureId: 'contact.avatar.set',
+      title: '设置头像',
+    },
+    {
+      ok: true,
+      action: 'tool',
+      toolName: 'media.generate_image',
+      args: {
+        prompt: 'cenxia, school courtyard, anime wallpaper',
+        subject: '岑夏',
+        target: '岑夏',
+        purpose: 'wallpaper',
+      },
+      featureId: 'media.generate_image',
+      title: '生成壁纸',
+    },
+    {
+      ok: true,
+      action: 'tool',
+      toolName: 'session.set_wallpaper',
+      args: { target: '岑夏', attachmentId: 'wallpaper-1' },
+      featureId: 'session.wallpaper.set',
+      title: '设置壁纸',
+    },
+    {
+      ok: true,
+      action: 'tool',
+      toolName: 'media.generate_image',
+      args: {
+        prompt: 'cenxia, portrait, another avatar',
+        subject: '岑夏',
+        target: '岑夏',
+        purpose: 'avatar',
+      },
+      featureId: 'media.generate_image',
+      title: '误重复生成头像',
+    },
+    {
+      ok: true,
+      action: 'final',
+      message: '头像和壁纸都已设置。',
+    },
+  ];
+  const generatedByPurpose = new Map();
+  const agent = createMaidAssistantAgent({
+    planner: async () => ({
+      ok: true,
+      toolName: 'media.generate_image',
+      args: {
+        prompt: 'cenxia, portrait, anime avatar',
+        subject: '岑夏',
+        target: '岑夏',
+        purpose: 'avatar',
+      },
+      featureId: 'media.generate_image',
+      title: '生成头像',
+    }),
+    reactPlanner: async () => reactDecisions[reactIndex++],
+    toolRegistry: {
+      executeTool: async (toolName, args) => {
+        calls.push({ toolName, args });
+        if (toolName === 'media.generate_image') {
+          const purpose = args.purpose;
+          const sequence = (generatedByPurpose.get(purpose) || 0) + 1;
+          generatedByPurpose.set(purpose, sequence);
+          return {
+            toolName,
+            status: 'succeeded',
+            result: { ok: true, attachmentId: `${purpose}-${sequence}` },
+          };
+        }
+        return {
+          toolName,
+          status: 'succeeded',
+          result: { ok: true },
+        };
+      },
+    },
+    logger: { warn() {}, debug() {} },
+  });
+  const result = await agent.runPrompt('请给岑夏生成一张头像并设置，再生成一张聊天室壁纸并设置。');
+
+  assert.equal(result.ok, true);
+  assert.equal(
+    calls.filter(call => call.toolName === 'media.generate_image' && call.args.purpose === 'avatar').length,
+    1,
+    '头像与壁纸各一张不能被误算成头像配额两张',
+  );
+  assert.equal(
+    calls.filter(call => call.toolName === 'media.generate_image' && call.args.purpose === 'wallpaper').length,
+    1,
+  );
+  assert.equal(
+    result.steps.some(step => (
+      step?.toolName === 'media.generate_image'
+      && step?.output?.reason === 'generated_media_already_applied'
+    )),
+    true,
+  );
+  console.log('ok - mixed avatar and wallpaper requests keep independent target-purpose quotas');
 }
 
 {
@@ -2255,6 +2477,191 @@ for (const stopReason of ['feature_not_found', 'invalid_model_plan']) {
   assert.equal(result.steps.length, 1, 'batch tool verifies each item internally and should not add N verification calls');
   assert.match(result.message, /两个聊天室/);
   console.log('ok - maid assistant treats verified batch binding as a single result-authoritative step');
+}
+
+{
+  const calls = [];
+  let reactIndex = 0;
+  const agent = createMaidAssistantAgent({
+    planner: async () => ({
+      ok: true,
+      toolName: 'worldbook.bind_session',
+      args: {
+        worldbookId: 'V4F-V2档案库-0731',
+        sessionName: 'V4F-V2观测站-A-0731',
+        mode: 'append',
+      },
+      featureId: 'worldbook.bind_session',
+      title: '追加绑定世界书',
+    }),
+    reactPlanner: async () => ([
+      {
+        ok: true,
+        action: 'tool',
+        toolName: 'app.read_resource',
+        args: {
+          resource: 'session',
+          sessionName: 'V4F-V2观测站-A-0731',
+          include: ['worldbooks'],
+        },
+        featureId: 'app.resource.read',
+        title: '重复读回绑定',
+      },
+      {
+        ok: true,
+        action: 'final',
+        message: '已完成绑定并验证。',
+      },
+    ][reactIndex++]),
+    toolRegistry: {
+      executeTool: async (toolName, args) => {
+        calls.push({ toolName, args });
+        if (toolName === 'worldbook.bind_session') {
+          return {
+            toolName,
+            status: 'succeeded',
+            result: {
+              ok: true,
+              bound: true,
+              sessionId: args.sessionName,
+              worldbookId: args.worldbookId,
+              worldbookIds: [args.worldbookId],
+            },
+          };
+        }
+        if (toolName === 'worldbook.list') {
+          return {
+            toolName,
+            status: 'succeeded',
+            result: {
+              ok: true,
+              count: 1,
+              worldbooks: [{
+                id: 'V4F-V2档案库-0731',
+                name: 'V4F-V2档案库-0731',
+                boundToCurrentSession: true,
+              }],
+            },
+          };
+        }
+        return {
+          toolName,
+          status: 'succeeded',
+          result: { ok: true, resource: args.resource, sessions: [] },
+        };
+      },
+    },
+    logger: { warn() {}, debug() {} },
+  });
+  const result = await agent.runPrompt(
+    '把「V4F-V2档案库-0731」追加绑定到「V4F-V2观测站-A-0731」，保留原绑定，完成后读回确认。',
+  );
+  assert.equal(result.ok, true);
+  assert.deepEqual(
+    calls.map(call => call.toolName),
+    ['worldbook.bind_session', 'worldbook.list'],
+    '目录声明的自动验证已成功后，不应再次执行同目标 app.read_resource 尾读',
+  );
+  assert.equal(result.finalDecision?.source, 'verified_write_tail_read_guard');
+  console.log('ok - verified worldbook binding closes before a redundant cross-capability tail read');
+}
+
+{
+  const runBindingTailRead = async ({ input, include }) => {
+    const calls = [];
+    let reactIndex = 0;
+    const agent = createMaidAssistantAgent({
+      planner: async () => ({
+        ok: true,
+        toolName: 'worldbook.bind_session',
+        args: { worldbookId: '展示书', sessionName: '展示房', mode: 'append' },
+        featureId: 'worldbook.bind_session',
+        title: '绑定世界书',
+      }),
+      reactPlanner: async () => ([
+        {
+          ok: true,
+          action: 'tool',
+          toolName: 'app.read_resource',
+          args: {
+            resource: 'session',
+            sessionName: '展示房',
+            include,
+          },
+          featureId: 'app.resource.read',
+          title: '读取会话资料',
+        },
+        {
+          ok: true,
+          action: 'final',
+          message: '已展示读取结果。',
+        },
+      ][reactIndex++]),
+      toolRegistry: {
+        executeTool: async (toolName, args) => {
+          calls.push({ toolName, args });
+          if (toolName === 'worldbook.bind_session') {
+            return {
+              toolName,
+              status: 'succeeded',
+              result: {
+                ok: true,
+                bound: true,
+                sessionId: args.sessionName,
+                worldbookId: args.worldbookId,
+              },
+            };
+          }
+          if (toolName === 'worldbook.list') {
+            return {
+              toolName,
+              status: 'succeeded',
+              result: {
+                ok: true,
+                worldbooks: [{ id: '展示书', boundToCurrentSession: true }],
+              },
+            };
+          }
+          return {
+            toolName,
+            status: 'succeeded',
+            result: {
+              ok: true,
+              resource: 'session',
+              members: ['甲', '乙'],
+              worldbooks: ['展示书'],
+            },
+          };
+        },
+      },
+      logger: { warn() {}, debug() {} },
+    });
+    return {
+      result: await agent.runPrompt(input),
+      calls,
+    };
+  };
+
+  const explicit = await runBindingTailRead({
+    input: '把「展示书」绑定到「展示房」，然后把绑定内容读出来给我看。',
+    include: ['worldbooks'],
+  });
+  assert.deepEqual(
+    explicit.calls.map(call => call.toolName),
+    ['worldbook.bind_session', 'worldbook.list', 'app.read_resource'],
+    '用户明确要求展示时不能用自动验证结果替代真实尾读',
+  );
+
+  const composite = await runBindingTailRead({
+    input: '把「展示书」绑定到「展示房」，最后核对会话资料。',
+    include: ['members', 'worldbooks'],
+  });
+  assert.deepEqual(
+    composite.calls.map(call => call.toolName),
+    ['worldbook.bind_session', 'worldbook.list', 'app.read_resource'],
+    '复合读取不能因为包含 worldbooks 而吞掉 members',
+  );
+  console.log('ok - binding tail-read guard preserves explicit reveals and composite session reads');
 }
 
 {
@@ -2767,6 +3174,139 @@ for (const stopReason of ['feature_not_found', 'invalid_model_plan']) {
   assert.match(result.message, /女仆能力测试/);
   assert.equal(reactCalls, 0, '一次读取已经满足请求时不应再调用 ReAct');
   console.log('ok - 单一角色卡读取在结果足够时确定性收口');
+}
+
+{
+  const cases = [
+    {
+      resource: 'user',
+      createTool: 'user.create',
+      target: 'V4F-V2备用用户-0731',
+      prompt: '读取用户清单；不存在时才创建「V4F-V2备用用户-0731」，但不要切换成它。',
+      activeId: 'user-current',
+    },
+    {
+      resource: 'persona',
+      createTool: 'persona.create',
+      target: 'V4F-V2备用角色卡-0731',
+      prompt: '读取角色卡清单；不存在时才创建「V4F-V2备用角色卡-0731」，但不得设为当前角色卡。',
+      activeId: 'persona-current',
+    },
+  ];
+  for (const testCase of cases) {
+    const calls = [];
+    let created = false;
+    const agent = createMaidAssistantAgent({
+      planner: async () => ({
+        ok: true,
+        toolName: 'app.read_resource',
+        args: { resource: testCase.resource },
+        featureId: 'app.resource.read',
+        title: '读取清单',
+      }),
+      reactPlanner: async () => {
+        throw new Error('条件创建的剩余目标不应依赖模型自行补做');
+      },
+      toolRegistry: {
+        executeTool: async (toolName, args) => {
+          calls.push({ toolName, args });
+          if (toolName === testCase.createTool) {
+            created = true;
+            return {
+              toolName,
+              status: 'succeeded',
+              result: {
+                ok: true,
+                created: true,
+                [`${testCase.resource}Id`]: `${testCase.resource}-created`,
+                name: testCase.target,
+              },
+            };
+          }
+          if (toolName === 'app.read_resource') {
+            const items = [
+              { id: testCase.activeId, name: '当前项目', active: true },
+              ...(created
+                ? [{ id: `${testCase.resource}-created`, name: testCase.target, active: false }]
+                : []),
+            ];
+            return {
+              toolName,
+              status: 'succeeded',
+              result: {
+                ok: true,
+                resource: testCase.resource,
+                activeId: testCase.activeId,
+                count: items.length,
+                items,
+              },
+            };
+          }
+          throw new Error(`unexpected tool ${toolName}`);
+        },
+      },
+      logger: { warn() {} },
+    });
+    const result = await agent.runPrompt(testCase.prompt);
+    assert.equal(result.ok, true);
+    assert.equal(result.finalDecision?.source, 'deterministic_conditional_create_completion');
+    assert.deepEqual(
+      calls.map(call => call.toolName),
+      ['app.read_resource', testCase.createTool, 'app.read_resource'],
+      '缺项时应创建一次并复验一次',
+    );
+    assert.deepEqual(calls[1].args, { name: testCase.target, setActive: false });
+    assert.match(result.message, /已创建/);
+  }
+  console.log('ok - conditional user/persona creation completes missing targets without switching');
+}
+
+{
+  const calls = [];
+  let reactCalls = 0;
+  const target = 'V4F-V2备用角色卡-0731';
+  const agent = createMaidAssistantAgent({
+    planner: async () => ({
+      ok: true,
+      toolName: 'app.read_resource',
+      args: { resource: 'persona' },
+      featureId: 'app.resource.read',
+      title: '读取角色卡清单',
+    }),
+    reactPlanner: async () => {
+      reactCalls += 1;
+      return { ok: true, action: 'final', message: '不应调用模型收口。' };
+    },
+    toolRegistry: {
+      executeTool: async (toolName, args) => {
+        calls.push({ toolName, args });
+        return {
+          toolName,
+          status: 'succeeded',
+          result: {
+            ok: true,
+            resource: 'persona',
+            activeId: 'persona-current',
+            count: 2,
+            items: [
+              { id: 'persona-current', name: '当前角色卡', active: true },
+              { id: 'persona-existing', name: target, active: false },
+            ],
+          },
+        };
+      },
+    },
+    logger: { warn() {} },
+  });
+  const result = await agent.runPrompt(
+    '读取角色卡清单；不存在时才创建「V4F-V2备用角色卡-0731」，但不得设为当前角色卡。',
+  );
+  assert.equal(result.ok, true);
+  assert.equal(result.finalDecision?.source, 'deterministic_conditional_create_completion');
+  assert.deepEqual(calls.map(call => call.toolName), ['app.read_resource']);
+  assert.equal(reactCalls, 0);
+  assert.match(result.message, /已存在/);
+  console.log('ok - conditional creation reuses an existing target without duplicate writes');
 }
 
 {

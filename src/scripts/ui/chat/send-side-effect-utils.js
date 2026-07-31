@@ -223,6 +223,7 @@ export const prepareBufferedAssistantResponse = async (
 
 const collectProtocolCheckpointSessionIds = (protocolState = null, sessionId = '') => {
   const ids = new Set();
+  if (protocolState?.handled === false) return [];
   const hasHandledProtocolOutput = Boolean(
     protocolState?.didAnything ||
       protocolState?.mutatedMoments ||

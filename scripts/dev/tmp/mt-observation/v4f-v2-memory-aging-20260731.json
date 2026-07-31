@@ -1,0 +1,98 @@
+{
+  "ok": true,
+  "appendedTurnIds": [
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    ""
+  ],
+  "before": {
+    "turns": 101,
+    "activeTurns": 11,
+    "compactedTurns": 90,
+    "memoryRows": 18,
+    "extractionBatchCount": 18
+  },
+  "after": {
+    "turns": 111,
+    "activeTurns": 11,
+    "compactedTurns": 100,
+    "memoryRows": 20,
+    "extractionBatches": [
+      {
+        "id": "maid_extract_1785473658127_18",
+        "sourceTurnIds": [
+          "turn_1785472049250_86",
+          "turn_1785472118519_87",
+          "turn_1785472157458_88",
+          "turn_1785472179445_89",
+          "turn_1785472243737_90"
+        ],
+        "status": "completed",
+        "attempts": 1,
+        "deterministicComplete": true,
+        "extractedCount": 0,
+        "modelSource": "custom",
+        "model": "deepseek-v4-flash",
+        "fallbackUsed": false,
+        "lastError": ""
+      },
+      {
+        "id": "maid_extract_1785474677923_19",
+        "sourceTurnIds": [
+          "turn_1785472620373_91",
+          "turn_1785472641052_92",
+          "turn_1785472941804_93",
+          "turn_1785473056804_94",
+          "turn_1785473231153_95"
+        ],
+        "status": "completed",
+        "attempts": 1,
+        "deterministicComplete": true,
+        "extractedCount": 0,
+        "modelSource": "custom",
+        "model": "deepseek-v4-flash",
+        "fallbackUsed": false,
+        "lastError": ""
+      },
+      {
+        "id": "maid_extract_1785474678085_20",
+        "sourceTurnIds": [
+          "turn_1785473430797_96",
+          "turn_1785473562131_97",
+          "turn_1785473658126_98",
+          "turn_1785473962033_99",
+          "turn_1785474236547_100"
+        ],
+        "status": "completed",
+        "attempts": 1,
+        "deterministicComplete": true,
+        "extractedCount": 1,
+        "modelSource": "custom",
+        "model": "deepseek-v4-flash",
+        "fallbackUsed": false,
+        "lastError": ""
+      }
+    ]
+  },
+  "targets": [
+    {
+      "id": "maid_semantic_1785472950438_14",
+      "kind": "preference",
+      "key": "format.default",
+      "content": "完成名字含「V4F-V2」的测试任务时，先以“霜港核对完成”一句给出结论，再列摘要。",
+      "confidence": "explicit",
+      "status": "active",
+      "sourceTurnIds": [
+        "turn_1785472029328_85",
+        "turn_1785473562131_97"
+      ]
+    }
+  ]
+}

@@ -53,13 +53,13 @@ export const searchMaidCapabilityConcepts = (
   }
 
   const sessionNoun = /(?:会话|聊天室|房间|测试房|群聊|群组(?:聊天)?|contacts?|groups?|chats?|conversations?|\bsessions?\b|\brooms?\b)/iu;
-  const listIntent = /(?:列出|清单|名单|所有|全部|哪些|一共有|几间|多少|各几项|列候选|不唯一|inventory|\blist\b|\bevery\b|names?)/iu;
+  const listIntent = /(?:列出|读取|查看|清单|名单|所有|全部|哪些|一共有|几间|多少|各几项|列候选|不唯一|inventory|\blist\b|\bevery\b|names?)/iu;
   if (sessionNoun.test(text) && listIntent.test(text)) {
     add('session.list', 98, 'session_inventory');
   }
   if (
     sessionNoun.test(positiveText) &&
-    /(?:创建|新建|新增|\bcreate\b)/iu.test(positiveText)
+    /(?:创建|新建|新增|建立|\bcreate\b)/iu.test(positiveText)
   ) {
     add('session.create', 100, 'session_create');
   }
@@ -71,6 +71,9 @@ export const searchMaidCapabilityConcepts = (
   }
   if (hasPositive(/(?:打开|进入|切到|切换到|\bopen\b|\benter\b|\bswitch\b).{0,24}(?:会话|聊天室|房间|群聊|群组(?:聊天)?|chat|conversation|group)/iu)) {
     add('session.open', 96, 'session_open');
+  }
+  if (hasPositive(/(?:打开|进入|切到|切换到).{0,12}(?:主要|最终)(?:结果|成果)/iu)) {
+    add('session.open', 108, 'session_open_result');
   }
   const groupChatNoun = /(?:群聊|群组(?:聊天)?|group\s*chats?|\bgroups?\b)/iu;
   if (
@@ -103,8 +106,18 @@ export const searchMaidCapabilityConcepts = (
   if (has(/(?:raworiginal|rendered\s*text|latest\s*assistant|最后一轮\s*ai|末条消息|最近一条消息|局部变量|全局变量|local\s*vars?|global\s*vars?|\bvars?\b|后处理规则|后处理脚本|正规表达式|\bregexp\b|\bregex\b|\bpreset\b|角色皮|角色卡|character\s*cards?|user\s*identit(?:y|ies)|用户名称|当前身份)/iu)) {
     add('app.resource.read', 100, 'structured_resource');
   }
-  if (hasPositive(/(?:发送|写(?:入)?|发出|send|write).{0,16}(?:消息|message)/iu)) {
+  if (
+    hasPositive(/(?:发送|写(?:入)?|发出|send|write).{0,16}(?:消息|message)/iu) ||
+    hasPositive(/(?:给|向).{0,80}(?:后台)?写入.{0,80}(?:triggerreply\s*:\s*false|只写不回|open\s*:\s*false)/iu)
+  ) {
     add('chat.send_message', 100, 'chat_send');
+  }
+  if (
+    has(/(?:查询|读取|查看|只读核对|读回确认).{0,40}(?:会话|聊天室|观测站|私聊).{0,32}世界书绑定/iu) ||
+    has(/(?:会话|聊天室|观测站|私聊).{0,32}世界书绑定.{0,24}(?:查询|读取|查看|只读|核对|确认)/iu) ||
+    has(/(?:读取|读回|核对|确认).{0,24}(?:真实)?(?:资源)?状态/iu)
+  ) {
+    add('app.resource.read', 108, 'resource_verification');
   }
   if (has(/(?:prompt\s*preset|哪份\s*preset|哪一套.*preset)/iu)) {
     add('app.resource.read', 100, 'preset_resource');
@@ -168,7 +181,8 @@ export const searchMaidCapabilityConcepts = (
         add(['worldbook.list', 'worldbook.read'], 92, 'worldbook_bind_verify');
       } else if (has(/(?:批量|多个|这些|所有|全部|都|分别|每个|多间|多個|sessions?)/iu)) {
         add('worldbook.bind_sessions', 105, 'worldbook_batch_bind');
-        add(['worldbook.bind_session', 'worldbook.list', 'worldbook.read'], 92, 'worldbook_bind');
+        add(['worldbook.bind_session', 'worldbook.read'], 92, 'worldbook_bind');
+        add('worldbook.list', 106, 'worldbook_bind_prerequisite');
       } else {
         add(['worldbook.bind_session', 'worldbook.list', 'worldbook.read'], 100, 'worldbook_bind');
       }
@@ -219,19 +233,20 @@ export const searchMaidCapabilityConcepts = (
   if (has(/(?:待办|任务清单|\btodo\b)/iu)) {
     add('maid.todo', 100, 'todo');
   }
-  const maidMemoryIntent = /(?:女仆(?:自己)?(?:的)?(?:长期)?记忆|你(?:自己)?记得|你记住|你的长期记忆|maid\s*memory)/iu;
+  const maidMemoryIntent = /(?:女仆(?:自己)?(?:的)?(?:长期)?记忆|你(?:自己)?记得|你记住|你.{0,12}保存的长期(?:语义)?记忆|你的长期(?:语义)?记忆|长期语义记忆|maid(?:\.|\s*)memory)/iu;
   if (
     maidMemoryIntent.test(text) &&
-    /(?:记得什么|记住了什么|列出|查看|看看|哪些|有什么|清单|\blist\b)/iu.test(text)
+    /(?:记得什么|记住了什么|列出|查看|看看|哪些|有什么|清单|maid\.memory\.list|\blist\b)/iu.test(text)
   ) {
     add('maid.memory.list', 105, 'maid_memory_list');
   }
   if (
     (
       maidMemoryIntent.test(positiveText) ||
-      /(?:清理|归档).{0,12}(?:测试|探针).{0,8}记忆/iu.test(positiveText)
+      /(?:清理|归档).{0,12}(?:测试|探针).{0,8}记忆/iu.test(positiveText) ||
+      /(?:记忆\s*(?:id)?|maid\.memory).{0,32}(?:归档|archive)|(?:归档|archive).{0,32}(?:记忆\s*(?:id)?|maid\.memory)/iu.test(positiveText)
     ) &&
-    /(?:归档|忘掉|忘记|清理|archive|forget)/iu.test(positiveText)
+    /(?:归档|忘掉|忘记|清理|maid\.memory\.archive|archive|forget)/iu.test(positiveText)
   ) {
     add(['maid.memory.archive', 'maid.memory.list'], 108, 'maid_memory_archive');
   }

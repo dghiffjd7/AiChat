@@ -10,6 +10,34 @@ import { safeInvoke } from '../utils/tauri.js';
 const STORAGE_KEY = 'worldinfo_store';
 const INDEX_STORAGE_KEY = 'worldinfo_store_index_v1';
 const LOCALSTORAGE_SOFT_LIMIT = 3 * 1024 * 1024; // 3MB: avoid quota errors on mobile WebView
+const KV_LOAD_RETRY_DELAYS = [40, 120];
+const getTauriInvoker = () => {
+    const g = typeof globalThis !== 'undefined' ? globalThis : window;
+    return g?.__TAURI__?.core?.invoke
+        || g?.__TAURI__?.invoke
+        || g?.__TAURI_INVOKE__
+        || g?.__TAURI_INTERNALS__?.invoke;
+};
+const wait = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+const loadKvWithRetry = async () => {
+    let lastError = null;
+    for (let attempt = 0; attempt <= KV_LOAD_RETRY_DELAYS.length; attempt += 1) {
+        try {
+            return await safeInvoke('load_kv', { name: STORAGE_KEY });
+        } catch (err) {
+            lastError = err;
+            if (attempt < KV_LOAD_RETRY_DELAYS.length) {
+                await wait(KV_LOAD_RETRY_DELAYS[attempt]);
+            }
+        }
+    }
+    throw lastError || new Error('worldinfo load_kv failed');
+};
+const isPlainRecord = (value) => Boolean(
+    value
+    && typeof value === 'object'
+    && !Array.isArray(value)
+);
 const scheduleIdle = (runner, { timeout = 240 } = {}) => {
     if (typeof runner !== 'function') return;
     try {
@@ -27,6 +55,7 @@ export class WorldInfoStore {
         this.cache = {};
         this.index = this._loadIndexSnapshot();
         this.hydrated = false;
+        this.persistenceBlocked = false;
         this._readyPromise = null;
         this._prewarmScheduled = false;
     }
@@ -58,12 +87,12 @@ export class WorldInfoStore {
         }
     }
 
-    _replaceCache(next = {}) {
+    _replaceCache(next = {}, { persistIndex = true } = {}) {
         const data = next && typeof next === 'object' ? next : {};
         this.cache = data;
         this.index = Object.keys(data).map((item) => String(item || '').trim()).filter(Boolean);
         this.hydrated = true;
-        this._persistIndex();
+        if (persistIndex) this._persistIndex();
     }
 
     ensureReady() {
@@ -85,27 +114,50 @@ export class WorldInfoStore {
     }
 
     async _loadCache() {
-        try {
-            // 优先从 Tauri 持久化读取
-            const kv = await safeInvoke('load_kv', { name: STORAGE_KEY });
-            if (kv && typeof kv === 'object' && kv._tooLarge) {
-                logger.warn('世界书持久化文件过大，跳过磁盘快照并尝试 localStorage', kv);
-            } else if (kv && typeof kv === 'object' && Object.keys(kv).length) {
-                this._replaceCache(kv);
-                return this.cache;
+        const expectsKv = typeof getTauriInvoker() === 'function';
+        let kvReadUncertain = false;
+
+        if (expectsKv) {
+            try {
+                // 优先从 Tauri 持久化读取；瞬时 IPC 故障先重试，避免误用空镜像初始化。
+                const kv = await loadKvWithRetry();
+                if (isPlainRecord(kv) && kv._tooLarge) {
+                    kvReadUncertain = true;
+                    logger.warn('世界书持久化文件过大，已进入只读保护并尝试 localStorage', kv);
+                } else if (isPlainRecord(kv) && Object.keys(kv).length) {
+                    this._replaceCache(kv);
+                    return this.cache;
+                } else if (!isPlainRecord(kv)) {
+                    kvReadUncertain = true;
+                    logger.warn('世界书持久化返回无效数据，已进入只读保护');
+                }
+            } catch (err) {
+                kvReadUncertain = true;
+                logger.warn('世界书持久化读取失败，已进入只读保护并尝试 localStorage', err);
             }
-        } catch (err) {
-            logger.warn('世界书持久化读取失败，尝试 localStorage', err);
         }
+
         try {
             const raw = localStorage.getItem(STORAGE_KEY);
             if (raw) {
-                this._replaceCache(JSON.parse(raw));
-                return this.cache;
+                const parsed = JSON.parse(raw);
+                if (isPlainRecord(parsed) && !parsed._tooLarge) {
+                    this.persistenceBlocked = kvReadUncertain;
+                    this._replaceCache(parsed, { persistIndex: !kvReadUncertain });
+                    return this.cache;
+                }
+                logger.warn('世界书 localStorage 镜像格式无效，已忽略');
             }
         } catch (err) {
-            logger.warn('世界书缓存读取失败，重置为空', err);
+            logger.warn('世界书缓存读取失败', err);
         }
+
+        if (kvReadUncertain) {
+            // 保留构造时读到的 index，不把“读取失败”误当成“权威数据为空”。
+            this.persistenceBlocked = true;
+            return this.cache;
+        }
+
         this._replaceCache({});
         return this.cache;
     }
@@ -138,8 +190,16 @@ export class WorldInfoStore {
         }
     }
 
+    assertWritable() {
+        if (!this.persistenceBlocked) return;
+        const error = new Error('世界书存储暂时无法读取，已阻止写入以保护现有数据。请重新载入 APP 后重试。');
+        error.code = 'worldinfo_store_read_unavailable';
+        throw error;
+    }
+
     async save(name, data) {
         if (!this.hydrated) await this.ensureReady();
+        this.assertWritable();
         this.cache[name] = data;
         if (!this.index.includes(name)) {
             this.index = Array.from(new Set(this.list().concat(name).filter(Boolean)));
@@ -156,6 +216,7 @@ export class WorldInfoStore {
 
     async remove(name) {
         if (!this.hydrated) await this.ensureReady();
+        this.assertWritable();
         delete this.cache[name];
         this.index = this.list().filter(item => item !== name);
         this.hydrated = true;
@@ -170,6 +231,7 @@ export class WorldInfoStore {
 
     async saveMany(map) {
         if (!this.hydrated) await this.ensureReady();
+        this.assertWritable();
         this.cache = { ...this.cache, ...map };
         this.index = Object.keys(this.cache).map((item) => String(item || '').trim()).filter(Boolean);
         this.hydrated = true;

@@ -117,3 +117,34 @@ const { renderTemplateMessages } = await import('../../src/scripts/plugins/templ
   assert.equal(context.character.name, 'Original', '只读 EJS 不得经由 context 引用改写真实上下文对象');
   console.log('ok - EJS 预览隔离上下文对象引用');
 }
+
+{
+  let unhandled = null;
+  const onUnhandled = reason => {
+    unhandled = reason;
+  };
+  process.once('unhandledRejection', onUnhandled);
+  window.appBridge.worldStore.save = () => Promise.reject(new Error('world store is read-only'));
+  world.entries[0].disable = true;
+  world.entries[0].constant = false;
+
+  const result = await renderTemplateMessages([{
+    role: 'system',
+    content: "<% activewi('world-a','Entry',true) %>done",
+  }], {
+    stage: 'generate',
+    chatStore: {
+      listGlobalVariables: () => ({}),
+      listVariables: () => ({}),
+      listInitialVariables: () => ({}),
+    },
+    sessionId: 'blocked-world-session',
+    context: {},
+  });
+  await new Promise(resolve => setTimeout(resolve, 0));
+  process.removeListener('unhandledRejection', onUnhandled);
+
+  assert.equal(result.messages[0].content, 'done');
+  assert.equal(unhandled, null, 'blocked worldStore.save must be observed instead of becoming an unhandled rejection');
+  console.log('ok - template worldbook activation observes asynchronous persistence rejection');
+}

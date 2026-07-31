@@ -369,11 +369,10 @@ import {
   assert.equal(result.warned, false);
   assert.deepEqual([...summarySessionIds], ['s1', 's2']);
   assert.deepEqual(calls, [
-    ['memory', 'raw'],
-    ['refresh'],
     ['candidates', 'raw'],
     ['parse', 'retry'],
     ['retry-event', 'retry-event'],
+    ['memory', 'raw'],
     ['flush'],
     ['refresh'],
   ]);
@@ -413,9 +412,6 @@ import {
   assert.equal(result.mutatedMoments, true);
   assert.equal(result.warned, false);
   assert.deepEqual(calls, [
-    ['memory'],
-    ['flush'],
-    ['refresh'],
     ['candidates', 'raw'],
     ['candidates', 'raw'],
     ['parse', 'mi-phone'],
@@ -1089,8 +1085,6 @@ import {
   assert.deepEqual(calls, [
     ['parse', 'raw'],
     ['events', 'event-1', false, false, 'handlers'],
-    ['memory-start', 'raw', { sessionId: 's1', isGroup: false }],
-    ['memory-end'],
     ['summary', 's1', '总结'],
     ['summary', 's2', '总结'],
     ['compact', 's1'],
@@ -1098,6 +1092,8 @@ import {
     ['refresh'],
     ['render'],
     ['flush'],
+    ['memory-start', 'raw', { sessionId: 's1', isGroup: false }],
+    ['memory-end'],
   ]);
   console.log('ok - runProtocolBufferedResponseFlow parses consumes events awaits memory and finalizes');
 }
@@ -1137,12 +1133,11 @@ import {
   assert.deepEqual(calls, [
     ['parse', 'raw'],
     ['events'],
-    ['memory'],
     ['candidates', 'raw'],
     ['candidates', 'raw'],
     ['warn', 'raw'],
   ]);
-  console.log('ok - runProtocolBufferedResponseFlow waits for memory and warns on misses');
+  console.log('ok - runProtocolBufferedResponseFlow rejects invalid protocol before memory side effects');
 }
 
 {

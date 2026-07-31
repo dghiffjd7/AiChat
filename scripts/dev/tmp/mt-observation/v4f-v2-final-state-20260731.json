@@ -1,0 +1,1759 @@
+{
+  "schemaVersion": 1,
+  "capturedAt": 1785474993910,
+  "scope": {
+    "persona": {
+      "id": "persona_1785469636269_4ciqh",
+      "name": "冻结观察V4F-V2-0731",
+      "avatar": "",
+      "description": "Deepseek V4 Flash 冻结观察 v2 的一次性测试作用域；不属于正式资料。",
+      "userBubbleColor": "#E8F0FE",
+      "userTextColor": "#1F2937",
+      "position": 0,
+      "depth": 2,
+      "role": 0,
+      "created": 1785469636269,
+      "updated": 1785471710909,
+      "source": {
+        "cardName": "冻结观察V4F-V2-0731",
+        "characterName": "冻结观察V4F-V2-0731",
+        "importedBy": "maid",
+        "type": "character_card",
+        "worldbookId": "V4F-V2导入卡资料-0731",
+        "worldbookEnabled": true
+      },
+      "originalCard": null
+    },
+    "user": {
+      "id": "user_1785469636799_ppdq2",
+      "name": "冻结观察用户V4F-V2-0731",
+      "avatar": "",
+      "description": "Deepseek V4 Flash 冻结观察 v2 的一次性测试用户；不属于正式资料。",
+      "userBubbleColor": "#E8F0FE",
+      "userTextColor": "#1F2937",
+      "position": 0,
+      "depth": 2,
+      "role": 0,
+      "created": 1785469636799,
+      "updated": 1785469636799,
+      "source": null,
+      "originalCard": null
+    },
+    "chatScopeId": "persona_1785469636269_4ciqh",
+    "currentSessionId": "艾琳·洛"
+  },
+  "models": {
+    "chat": {
+      "id": "profile-1769099653885-3faa87",
+      "name": "Deepseek",
+      "provider": "deepseek",
+      "model": "deepseek-v4-flash",
+      "active": true
+    },
+    "image": {
+      "id": "profile-1778658246478-7e0bdc",
+      "name": "NAI",
+      "provider": "novelai",
+      "model": "nai-diffusion-4-5-full",
+      "active": true
+    },
+    "maid": {
+      "profileId": "profile-1769099653885-3faa87",
+      "modelOverride": ""
+    }
+  },
+  "allSessionCount": 11,
+  "sessions": {
+    "V4F-V2观测站-A-0731": {
+      "contact": {
+        "id": "V4F-V2观测站-A-0731",
+        "name": "V4F-V2观测站-A-0731",
+        "isGroup": false,
+        "memberCount": 0
+      },
+      "detail": {
+        "ok": true,
+        "resource": "session",
+        "currentSessionId": "艾琳·洛",
+        "count": 11,
+        "includedFields": [
+          "members",
+          "worldbooks"
+        ],
+        "contentHint": "会话默认仅返回摘要；精确群成员用 include:[\"members\"]，角色卡继承世界书与 session 直接绑定证据用 include:[\"worldbooks\"]。",
+        "sessions": [
+          {
+            "id": "V4F-V2观测站-A-0731",
+            "name": "V4F-V2观测站-A-0731",
+            "isGroup": false,
+            "hasAvatar": false,
+            "messageCount": 2,
+            "settings": {
+              "chatColorMode": "theme",
+              "bubbleColor": "#c9c9c9",
+              "textColor": "#1F2937"
+            },
+            "memberCount": 0,
+            "members": [],
+            "worldbooks": {
+              "directWorldIds": [
+                "V4F-V2档案库-0731"
+              ],
+              "roleWorldIds": [
+                "V4F-V2导入卡资料-0731"
+              ],
+              "resolvedWorldIds": [
+                "V4F-V2导入卡资料-0731",
+                "V4F-V2档案库-0731"
+              ],
+              "globalWorldId": ""
+            }
+          }
+        ]
+      },
+      "memberIds": [],
+      "avatar": {
+        "present": false,
+        "length": 0,
+        "prefix": ""
+      },
+      "wallpaper": null,
+      "messages": [
+        {
+          "id": "1785469943567-d9f13b",
+          "role": "system",
+          "type": "meta",
+          "name": "系统",
+          "content": "你创建了聊天室「V4F-V2观测站-A-0731」",
+          "rawOriginalRef": null,
+          "formatRepairTurn": null
+        },
+        {
+          "id": "1785469960026-44ea84",
+          "role": "user",
+          "type": "",
+          "name": "冻结观察用户V4F-V2-0731",
+          "content": "【V4F-V2】仅写入，不触发回复。",
+          "rawOriginalRef": null,
+          "formatRepairTurn": null
+        }
+      ],
+      "formatProfile": {
+        "ok": true,
+        "sessionId": "V4F-V2观测站-A-0731",
+        "hasProfile": true,
+        "profile": {
+          "sessionId": "V4F-V2观测站-A-0731",
+          "guide": "每次 AI 回复必须使用 <v4f_v2>...</v4f_v2> 标签包裹。来源标记：冻结观察（V4F-V2 测试格式，仅用于冻结观察，禁止用于正式资料）。",
+          "sources": [],
+          "updatedAt": 1785470828194
+        },
+        "message": "已读取该会话的格式画像。"
+      }
+    },
+    "V4F-V2观测站-B-0731": {
+      "contact": {
+        "id": "V4F-V2观测站-B-0731",
+        "name": "V4F-V2观测站-B-0731",
+        "isGroup": false,
+        "memberCount": 0
+      },
+      "detail": {
+        "ok": true,
+        "resource": "session",
+        "currentSessionId": "艾琳·洛",
+        "count": 11,
+        "includedFields": [
+          "members",
+          "worldbooks"
+        ],
+        "contentHint": "会话默认仅返回摘要；精确群成员用 include:[\"members\"]，角色卡继承世界书与 session 直接绑定证据用 include:[\"worldbooks\"]。",
+        "sessions": [
+          {
+            "id": "V4F-V2观测站-B-0731",
+            "name": "V4F-V2观测站-B-0731",
+            "isGroup": false,
+            "hasAvatar": false,
+            "messageCount": 2,
+            "settings": {
+              "chatColorMode": "theme",
+              "bubbleColor": "#c9c9c9",
+              "textColor": "#1F2937"
+            },
+            "memberCount": 0,
+            "members": [],
+            "worldbooks": {
+              "directWorldIds": [
+                "V4F-V2档案库-0731"
+              ],
+              "roleWorldIds": [
+                "V4F-V2导入卡资料-0731"
+              ],
+              "resolvedWorldIds": [
+                "V4F-V2导入卡资料-0731",
+                "V4F-V2档案库-0731"
+              ],
+              "globalWorldId": ""
+            }
+          }
+        ]
+      },
+      "memberIds": [],
+      "avatar": {
+        "present": false,
+        "length": 0,
+        "prefix": ""
+      },
+      "wallpaper": null,
+      "messages": [
+        {
+          "id": "1785469943578-6ea51f",
+          "role": "system",
+          "type": "meta",
+          "name": "系统",
+          "content": "你创建了聊天室「V4F-V2观测站-B-0731」",
+          "rawOriginalRef": null,
+          "formatRepairTurn": null
+        },
+        {
+          "id": "1785470185141-282429",
+          "role": "user",
+          "type": "",
+          "name": "冻结观察用户V4F-V2-0731",
+          "content": "【V4F-V2-B】只写不回",
+          "rawOriginalRef": null,
+          "formatRepairTurn": null
+        }
+      ],
+      "formatProfile": {
+        "ok": true,
+        "sessionId": "V4F-V2观测站-B-0731",
+        "hasProfile": false,
+        "profile": null,
+        "message": "该会话还没有保存过格式画像。"
+      }
+    },
+    "V4F-V2观测站-C-0731": {
+      "contact": {
+        "id": "V4F-V2观测站-C-0731",
+        "name": "V4F-V2观测站-C-0731",
+        "isGroup": false,
+        "memberCount": 0
+      },
+      "detail": {
+        "ok": true,
+        "resource": "session",
+        "currentSessionId": "艾琳·洛",
+        "count": 11,
+        "includedFields": [
+          "members",
+          "worldbooks"
+        ],
+        "contentHint": "会话默认仅返回摘要；精确群成员用 include:[\"members\"]，角色卡继承世界书与 session 直接绑定证据用 include:[\"worldbooks\"]。",
+        "sessions": [
+          {
+            "id": "V4F-V2观测站-C-0731",
+            "name": "V4F-V2观测站-C-0731",
+            "isGroup": false,
+            "hasAvatar": false,
+            "messageCount": 1,
+            "settings": {
+              "chatColorMode": "theme",
+              "bubbleColor": "#c9c9c9",
+              "textColor": "#1F2937"
+            },
+            "memberCount": 0,
+            "members": [],
+            "worldbooks": {
+              "directWorldIds": [],
+              "roleWorldIds": [
+                "V4F-V2导入卡资料-0731"
+              ],
+              "resolvedWorldIds": [
+                "V4F-V2导入卡资料-0731"
+              ],
+              "globalWorldId": ""
+            }
+          }
+        ]
+      },
+      "memberIds": [],
+      "avatar": {
+        "present": false,
+        "length": 0,
+        "prefix": ""
+      },
+      "wallpaper": null,
+      "messages": [
+        {
+          "id": "1785470591768-5a1bbe",
+          "role": "system",
+          "type": "meta",
+          "name": "系统",
+          "content": "你创建了聊天室「V4F-V2观测站-C-0731」",
+          "rawOriginalRef": null,
+          "formatRepairTurn": null
+        }
+      ],
+      "formatProfile": {
+        "ok": true,
+        "sessionId": "V4F-V2观测站-C-0731",
+        "hasProfile": false,
+        "profile": null,
+        "message": "该会话还没有保存过格式画像。"
+      }
+    },
+    "V4F-V2观测站-D-0731": {
+      "contact": {
+        "id": "V4F-V2观测站-D-0731",
+        "name": "V4F-V2观测站-D-0731",
+        "isGroup": false,
+        "memberCount": 0
+      },
+      "detail": {
+        "ok": true,
+        "resource": "session",
+        "currentSessionId": "艾琳·洛",
+        "count": 11,
+        "includedFields": [
+          "members",
+          "worldbooks"
+        ],
+        "contentHint": "会话默认仅返回摘要；精确群成员用 include:[\"members\"]，角色卡继承世界书与 session 直接绑定证据用 include:[\"worldbooks\"]。",
+        "sessions": [
+          {
+            "id": "V4F-V2观测站-D-0731",
+            "name": "V4F-V2观测站-D-0731",
+            "isGroup": false,
+            "hasAvatar": false,
+            "messageCount": 1,
+            "settings": {
+              "chatColorMode": "theme",
+              "bubbleColor": "#c9c9c9",
+              "textColor": "#1F2937"
+            },
+            "memberCount": 0,
+            "members": [],
+            "worldbooks": {
+              "directWorldIds": [],
+              "roleWorldIds": [
+                "V4F-V2导入卡资料-0731"
+              ],
+              "resolvedWorldIds": [
+                "V4F-V2导入卡资料-0731"
+              ],
+              "globalWorldId": ""
+            }
+          }
+        ]
+      },
+      "memberIds": [],
+      "avatar": {
+        "present": false,
+        "length": 0,
+        "prefix": ""
+      },
+      "wallpaper": null,
+      "messages": [
+        {
+          "id": "1785470591780-f24005",
+          "role": "system",
+          "type": "meta",
+          "name": "系统",
+          "content": "你创建了聊天室「V4F-V2观测站-D-0731」",
+          "rawOriginalRef": null,
+          "formatRepairTurn": null
+        }
+      ],
+      "formatProfile": {
+        "ok": true,
+        "sessionId": "V4F-V2观测站-D-0731",
+        "hasProfile": false,
+        "profile": null,
+        "message": "该会话还没有保存过格式画像。"
+      }
+    },
+    "V4F-V2保留-G-0731": {
+      "contact": {
+        "id": "V4F-V2保留-G-0731",
+        "name": "V4F-V2保留-G-0731",
+        "isGroup": false,
+        "memberCount": 0
+      },
+      "detail": {
+        "ok": true,
+        "resource": "session",
+        "currentSessionId": "艾琳·洛",
+        "count": 11,
+        "includedFields": [
+          "members",
+          "worldbooks"
+        ],
+        "contentHint": "会话默认仅返回摘要；精确群成员用 include:[\"members\"]，角色卡继承世界书与 session 直接绑定证据用 include:[\"worldbooks\"]。",
+        "sessions": [
+          {
+            "id": "V4F-V2保留-G-0731",
+            "name": "V4F-V2保留-G-0731",
+            "isGroup": false,
+            "hasAvatar": false,
+            "messageCount": 1,
+            "settings": {
+              "chatColorMode": "theme",
+              "bubbleColor": "#c9c9c9",
+              "textColor": "#1F2937"
+            },
+            "memberCount": 0,
+            "members": [],
+            "worldbooks": {
+              "directWorldIds": [],
+              "roleWorldIds": [
+                "V4F-V2导入卡资料-0731"
+              ],
+              "resolvedWorldIds": [
+                "V4F-V2导入卡资料-0731"
+              ],
+              "globalWorldId": ""
+            }
+          }
+        ]
+      },
+      "memberIds": [],
+      "avatar": {
+        "present": false,
+        "length": 0,
+        "prefix": ""
+      },
+      "wallpaper": null,
+      "messages": [
+        {
+          "id": "1785471132654-51c3a3",
+          "role": "system",
+          "type": "meta",
+          "name": "系统",
+          "content": "你创建了聊天室「V4F-V2保留-G-0731」",
+          "rawOriginalRef": null,
+          "formatRepairTurn": null
+        }
+      ],
+      "formatProfile": {
+        "ok": true,
+        "sessionId": "V4F-V2保留-G-0731",
+        "hasProfile": false,
+        "profile": null,
+        "message": "该会话还没有保存过格式画像。"
+      }
+    },
+    "V4F-V2联合观测组-0731": {
+      "contact": {
+        "id": "group:1785471066463-0375f2",
+        "name": "V4F-V2联合观测组-0731",
+        "isGroup": true,
+        "memberCount": 2
+      },
+      "detail": {
+        "ok": true,
+        "resource": "session",
+        "currentSessionId": "艾琳·洛",
+        "count": 11,
+        "includedFields": [
+          "members",
+          "worldbooks"
+        ],
+        "contentHint": "会话默认仅返回摘要；精确群成员用 include:[\"members\"]，角色卡继承世界书与 session 直接绑定证据用 include:[\"worldbooks\"]。",
+        "sessions": [
+          {
+            "id": "group:1785471066463-0375f2",
+            "name": "V4F-V2联合观测组-0731",
+            "isGroup": true,
+            "hasAvatar": false,
+            "messageCount": 4,
+            "settings": {
+              "chatColorMode": "theme",
+              "bubbleColor": "#c9c9c9",
+              "textColor": "#1F2937"
+            },
+            "memberCount": 2,
+            "members": [
+              {
+                "id": "V4F-V2观测站-A-0731",
+                "name": "V4F-V2观测站-A-0731"
+              },
+              {
+                "id": "V4F-V2观测站-C-0731",
+                "name": "V4F-V2观测站-C-0731"
+              }
+            ],
+            "worldbooks": {
+              "directWorldIds": [],
+              "roleWorldIds": [
+                "V4F-V2导入卡资料-0731"
+              ],
+              "resolvedWorldIds": [
+                "V4F-V2导入卡资料-0731",
+                "V4F-V2档案库-0731"
+              ],
+              "globalWorldId": ""
+            }
+          }
+        ]
+      },
+      "memberIds": [
+        "V4F-V2观测站-A-0731",
+        "V4F-V2观测站-C-0731"
+      ],
+      "avatar": {
+        "present": false,
+        "length": 0,
+        "prefix": ""
+      },
+      "wallpaper": null,
+      "messages": [
+        {
+          "id": "1785471066740-8219c8",
+          "role": "system",
+          "type": "meta",
+          "name": "系统",
+          "content": "你创建了群聊「V4F-V2联合观测组-0731」",
+          "rawOriginalRef": null,
+          "formatRepairTurn": null
+        },
+        {
+          "id": "1785471066740-218601",
+          "role": "system",
+          "type": "meta",
+          "name": "系统",
+          "content": "你邀请了：V4F-V2观测站-A-0731、V4F-V2观测站-B-0731 加入群聊",
+          "rawOriginalRef": null,
+          "formatRepairTurn": null
+        },
+        {
+          "id": "1785471105201-98340b",
+          "role": "system",
+          "type": "meta",
+          "name": "系统",
+          "content": "成员加入：V4F-V2观测站-C-0731",
+          "rawOriginalRef": null,
+          "formatRepairTurn": null
+        },
+        {
+          "id": "1785471105202-fda34a",
+          "role": "system",
+          "type": "meta",
+          "name": "系统",
+          "content": "成员已移除：V4F-V2观测站-B-0731",
+          "rawOriginalRef": null,
+          "formatRepairTurn": null
+        }
+      ],
+      "formatProfile": null
+    },
+    "艾琳·洛": {
+      "contact": {
+        "id": "艾琳·洛",
+        "name": "艾琳·洛",
+        "isGroup": false,
+        "memberCount": 0
+      },
+      "detail": {
+        "ok": true,
+        "resource": "session",
+        "currentSessionId": "艾琳·洛",
+        "count": 11,
+        "includedFields": [
+          "members",
+          "worldbooks"
+        ],
+        "contentHint": "会话默认仅返回摘要；精确群成员用 include:[\"members\"]，角色卡继承世界书与 session 直接绑定证据用 include:[\"worldbooks\"]。",
+        "sessions": [
+          {
+            "id": "艾琳·洛",
+            "name": "艾琳·洛",
+            "isGroup": false,
+            "hasAvatar": true,
+            "messageCount": 15,
+            "settings": {
+              "chatColorMode": "theme",
+              "bubbleColor": "#c9c9c9",
+              "textColor": "#1F2937",
+              "wallpaper": {
+                "path": "C:\\Users\\alan9\\AppData\\Roaming\\com.chatapp.dev\\wallpapers\\session--9f2c98de2b8d781e\\wallpaper_session--9f2c98de2b8d781e_generated-1785473351940-3.png_1785473364.jpg",
+                "name": "generated-1785473351940-3.png",
+                "zoom": 1,
+                "rotate": 0,
+                "offsetX": 0,
+                "offsetY": 0,
+                "width": 1024,
+                "height": 1024,
+                "opacity": 1,
+                "updatedAt": 1785473364923,
+                "source": "maid"
+              }
+            },
+            "memberCount": 0,
+            "members": [],
+            "worldbooks": {
+              "directWorldIds": [
+                "V4F-V2长文库-0731"
+              ],
+              "roleWorldIds": [
+                "V4F-V2导入卡资料-0731"
+              ],
+              "resolvedWorldIds": [
+                "V4F-V2导入卡资料-0731",
+                "V4F-V2长文库-0731"
+              ],
+              "globalWorldId": ""
+            }
+          }
+        ]
+      },
+      "memberIds": [],
+      "avatar": {
+        "present": true,
+        "length": 17943,
+        "prefix": "data:image/webp;base64,UklGRng0AABXRUJQV"
+      },
+      "wallpaper": {
+        "path": "C:\\Users\\alan9\\AppData\\Roaming\\com.chatapp.dev\\wallpapers\\session--9f2c98de2b8d781e\\wallpaper_session--9f2c98de2b8d781e_generated-1785473351940-3.png_1785473364.jpg",
+        "name": "generated-1785473351940-3.png",
+        "zoom": 1,
+        "rotate": 0,
+        "offsetX": 0,
+        "offsetY": 0,
+        "width": 1024,
+        "height": 1024,
+        "opacity": 1,
+        "updatedAt": 1785473364923,
+        "source": "maid"
+      },
+      "messages": [
+        {
+          "id": "1785471866830-7ddf4a",
+          "role": "system",
+          "type": "meta",
+          "name": "系统",
+          "content": "你创建了聊天室「艾琳·洛」",
+          "rawOriginalRef": null,
+          "formatRepairTurn": null
+        },
+        {
+          "id": "1785471949297-d7207f",
+          "role": "user",
+          "type": "",
+          "name": "冻结观察用户V4F-V2-0731",
+          "content": "【霜港测试】请先待命。",
+          "rawOriginalRef": null,
+          "formatRepairTurn": null
+        },
+        {
+          "id": "1785473566778-6ce8c6",
+          "role": "user",
+          "type": "text",
+          "name": "冻结观察用户V4F-V2-0731",
+          "content": "这是格式工具的测试，请只回复四行：第一行 <frostport>，第二行 已收到霜港信号。，第三行 我会在灯塔下等你。，第四行故意写成 </frostport（不要补右尖括号）。",
+          "rawOriginalRef": null,
+          "formatRepairTurn": null
+        },
+        {
+          "id": "1785473867735-c18e1f",
+          "role": "user",
+          "type": "text",
+          "name": "冻结观察用户V4F-V2-0731",
+          "content": "请保留并完整遵守系统要求的私聊协议外层；只让可见消息正文为三行：第一行 <frostport>，第二行 已收到霜港信号。，第三行 </frostport（故意缺右尖括号）。外层协议标签必须完整。",
+          "rawOriginalRef": null,
+          "formatRepairTurn": null
+        },
+        {
+          "id": "1785474046226-c111e9",
+          "role": "user",
+          "type": "text",
+          "name": "冻结观察用户V4F-V2-0731",
+          "content": "艾琳，蓝焰灯塔今天有什么异常？我出发前需要准备什么？",
+          "rawOriginalRef": null,
+          "formatRepairTurn": null
+        },
+        {
+          "id": "protocol-delivery-1785474181670-05759032",
+          "role": "assistant",
+          "type": "text",
+          "name": "助手",
+          "content": "“异常”……何止异常。蓝焰灯塔连着几个晚上退潮就亮，今早天光大亮了也没熄。现在人站在石阶半腰上，一抬头就能望见塔尖那团蓝汪汪的光，雾气里一明一灭，跟烧不尽的鬼火似的。那蓝光亮得跟有人在塔顶点了盏永不熄灭的灯似的，怪好看，也怪瘆人。观测站那帮人倒好，报告写了好几页，愣是从“疑似雾潮前兆”一路改到“有待观察”，就是不肯抬一抬蓝标，你说，这算不算异常得有点过分了？",
+          "rawOriginalRef": {
+            "sessionId": "艾琳·洛",
+            "messageId": "protocol-delivery-1785474181670-05759032"
+          },
+          "formatRepairTurn": {
+            "turnId": "turn:ms8h5b9l:7jo0y3x8i0n0",
+            "sourceSessionId": "艾琳·洛",
+            "sourceKind": "social_turn_raw",
+            "sourceMessageIds": []
+          }
+        },
+        {
+          "id": "protocol-delivery-1785474181671-54498018",
+          "role": "assistant",
+          "type": "text",
+          "name": "助手",
+          "content": "仪器？昨晚我亲自去观测站盯过，那指针跟焊死了似的纹丝不动。蓝光都快要糊到人脸上了，机器连个屁都不放，预警灯一颗都没亮。你说这叫什么？叫集体装死。顾风今早还在蓝塔底下骂骂咧咧地捣鼓他那台测雾仪，说再这样下去他得改行当修钟表的。",
+          "rawOriginalRef": {
+            "sessionId": "艾琳·洛",
+            "messageId": "protocol-delivery-1785474181671-54498018"
+          },
+          "formatRepairTurn": {
+            "turnId": "turn:ms8h5b9l:7jo0y3x8i0n0",
+            "sourceSessionId": "艾琳·洛",
+            "sourceKind": "social_turn_raw",
+            "sourceMessageIds": []
+          }
+        },
+        {
+          "id": "protocol-delivery-1785474181671-74686895",
+          "role": "assistant",
+          "type": "text",
+          "name": "助手",
+          "content": "啊对了，顾风让我提醒你，塔底下那台测雾仪归他管，你要是看见上头有根铜管子歪着，别手痒去扶，他昨儿才跟那根管子较过劲，据说差点没把整个机箱拆了。这人有洁癖，碰坏了他能念叨你一整天，比潮雾还磨人。",
+          "rawOriginalRef": {
+            "sessionId": "艾琳·洛",
+            "messageId": "protocol-delivery-1785474181671-74686895"
+          },
+          "formatRepairTurn": {
+            "turnId": "turn:ms8h5b9l:7jo0y3x8i0n0",
+            "sourceSessionId": "艾琳·洛",
+            "sourceKind": "social_turn_raw",
+            "sourceMessageIds": []
+          }
+        },
+        {
+          "id": "protocol-delivery-1785474181671-52215705",
+          "role": "assistant",
+          "type": "text",
+          "name": "助手",
+          "content": "所以你也别问要准备什么啦。早上在码头我塞你手里那支手电，拧亮了就够你用。哨子挂脖子上，万一雾潮拢过来，吹响它，我保准能找到你。至于别的，装备我这都齐了，你把自己带好、别乱跑，就行。",
+          "rawOriginalRef": {
+            "sessionId": "艾琳·洛",
+            "messageId": "protocol-delivery-1785474181671-52215705"
+          },
+          "formatRepairTurn": {
+            "turnId": "turn:ms8h5b9l:7jo0y3x8i0n0",
+            "sourceSessionId": "艾琳·洛",
+            "sourceKind": "social_turn_raw",
+            "sourceMessageIds": []
+          }
+        },
+        {
+          "id": "protocol-delivery-1785474181671-68238729",
+          "role": "assistant",
+          "type": "text",
+          "name": "助手",
+          "content": "不过话说回来，新人，你现在才问这个是不是有点晚？我看你脚程不慢，路都走完一半了。早上在码头我递你手电那会儿，你接得倒是利索，我还以为你心里门儿清呢。结果倒好，走半道上想起来问准备，行吧，不逗你了，说正经的。",
+          "rawOriginalRef": {
+            "sessionId": "艾琳·洛",
+            "messageId": "protocol-delivery-1785474181671-68238729"
+          },
+          "formatRepairTurn": {
+            "turnId": "turn:ms8h5b9l:7jo0y3x8i0n0",
+            "sourceSessionId": "艾琳·洛",
+            "sourceKind": "social_turn_raw",
+            "sourceMessageIds": []
+          }
+        },
+        {
+          "id": "protocol-delivery-1785474181671-23196608",
+          "role": "assistant",
+          "type": "text",
+          "name": "助手",
+          "content": "到了塔底下，规矩拢共两条，你记牢。第一，跟紧我，霜港的潮雾说不准什么时候就漫上来了，几步开外连人影都看不清，到时候我可没工夫回头捞你。第二，灯塔里头但凡刻了纹路的石头，只准看，不准碰，别问为什么，顾风那台仪器昨儿差点让一块破石板给带沟里去，那玩意邪门着呢。",
+          "rawOriginalRef": {
+            "sessionId": "艾琳·洛",
+            "messageId": "protocol-delivery-1785474181671-23196608"
+          },
+          "formatRepairTurn": {
+            "turnId": "turn:ms8h5b9l:7jo0y3x8i0n0",
+            "sourceSessionId": "艾琳·洛",
+            "sourceKind": "social_turn_raw",
+            "sourceMessageIds": []
+          }
+        },
+        {
+          "id": "protocol-delivery-1785474181671-02878968",
+          "role": "assistant",
+          "type": "text",
+          "name": "助手",
+          "content": "还有一桩事，你早上听见港外那声笛没有？入港该鸣的号都没按规矩来，就贴着雾缘往深水方向钻。这种船我们管它叫借潮船。霜港的老话讲，雾里行船，礼数在先，它连号都不好好吹，十有八九藏着事。等看完灯塔，我带你去码头找守夜人认认那条船的船影。",
+          "rawOriginalRef": {
+            "sessionId": "艾琳·洛",
+            "messageId": "protocol-delivery-1785474181671-02878968"
+          },
+          "formatRepairTurn": {
+            "turnId": "turn:ms8h5b9l:7jo0y3x8i0n0",
+            "sourceSessionId": "艾琳·洛",
+            "sourceKind": "social_turn_raw",
+            "sourceMessageIds": []
+          }
+        },
+        {
+          "id": "protocol-delivery-1785474181671-14884405",
+          "role": "assistant",
+          "type": "text",
+          "name": "助手",
+          "content": "说真的，我有个不成熟的想法。那蓝光不像是闹脾气，倒像是在等什么。退潮时最亮，潮水一退，就好像底下有什么东西要回话似的。……这话你听听就行，回头让顾风知道，又该说我瞎琢磨了。",
+          "rawOriginalRef": {
+            "sessionId": "艾琳·洛",
+            "messageId": "protocol-delivery-1785474181671-14884405"
+          },
+          "formatRepairTurn": {
+            "turnId": "turn:ms8h5b9l:7jo0y3x8i0n0",
+            "sourceSessionId": "艾琳·洛",
+            "sourceKind": "social_turn_raw",
+            "sourceMessageIds": []
+          }
+        },
+        {
+          "id": "protocol-delivery-1785474181671-49270831",
+          "role": "assistant",
+          "type": "text",
+          "name": "助手",
+          "content": "啊，到岔路了，先不跟你多聊。前面这段石阶滑得跟上了蜡似的，你留心脚下。喏，给你看看此刻的灯塔，省得你光听我在这儿形容，跟说书似的。",
+          "rawOriginalRef": {
+            "sessionId": "艾琳·洛",
+            "messageId": "protocol-delivery-1785474181671-49270831"
+          },
+          "formatRepairTurn": {
+            "turnId": "turn:ms8h5b9l:7jo0y3x8i0n0",
+            "sourceSessionId": "艾琳·洛",
+            "sourceKind": "social_turn_raw",
+            "sourceMessageIds": []
+          }
+        },
+        {
+          "id": "protocol-delivery-1785474181671-00618255",
+          "role": "assistant",
+          "type": "meta",
+          "name": "助手",
+          "content": "图片：雾霭里蓝焰灯塔的尖顶，泛着幽蓝微光，拍得有点糊",
+          "rawOriginalRef": {
+            "sessionId": "艾琳·洛",
+            "messageId": "protocol-delivery-1785474181671-00618255"
+          },
+          "formatRepairTurn": {
+            "turnId": "turn:ms8h5b9l:7jo0y3x8i0n0",
+            "sourceSessionId": "艾琳·洛",
+            "sourceKind": "social_turn_raw",
+            "sourceMessageIds": []
+          }
+        }
+      ],
+      "formatProfile": {
+        "ok": true,
+        "sessionId": "艾琳·洛",
+        "hasProfile": true,
+        "profile": {
+          "sessionId": "艾琳·洛",
+          "guide": "回复必须用 <frostport>...</frostport> 包裹（霜港测试格式规范）。",
+          "sources": [
+            {
+              "type": "preset",
+              "ref": "V4F-V2 霜港测试"
+            }
+          ],
+          "updatedAt": 1785472001123
+        },
+        "message": "已读取该会话的格式画像。"
+      }
+    },
+    "顾风": {
+      "contact": {
+        "id": "顾风",
+        "name": "顾风",
+        "isGroup": false,
+        "memberCount": 0
+      },
+      "detail": {
+        "ok": true,
+        "resource": "session",
+        "currentSessionId": "艾琳·洛",
+        "count": 11,
+        "includedFields": [
+          "members",
+          "worldbooks"
+        ],
+        "contentHint": "会话默认仅返回摘要；精确群成员用 include:[\"members\"]，角色卡继承世界书与 session 直接绑定证据用 include:[\"worldbooks\"]。",
+        "sessions": [
+          {
+            "id": "顾风",
+            "name": "顾风",
+            "isGroup": false,
+            "hasAvatar": false,
+            "messageCount": 2,
+            "settings": {
+              "chatColorMode": "theme",
+              "bubbleColor": "#c9c9c9",
+              "textColor": "#1F2937"
+            },
+            "memberCount": 0,
+            "members": [],
+            "worldbooks": {
+              "directWorldIds": [],
+              "roleWorldIds": [
+                "V4F-V2导入卡资料-0731"
+              ],
+              "resolvedWorldIds": [
+                "V4F-V2导入卡资料-0731"
+              ],
+              "globalWorldId": ""
+            }
+          }
+        ]
+      },
+      "memberIds": [],
+      "avatar": {
+        "present": false,
+        "length": 0,
+        "prefix": ""
+      },
+      "wallpaper": null,
+      "messages": [
+        {
+          "id": "1785471866841-084a19",
+          "role": "system",
+          "type": "meta",
+          "name": "系统",
+          "content": "你创建了聊天室「顾风」",
+          "rawOriginalRef": null,
+          "formatRepairTurn": null
+        },
+        {
+          "id": "1785471952436-c8d35f",
+          "role": "user",
+          "type": "",
+          "name": "冻结观察用户V4F-V2-0731",
+          "content": "【霜港测试】请先待命。",
+          "rawOriginalRef": null,
+          "formatRepairTurn": null
+        }
+      ],
+      "formatProfile": {
+        "ok": true,
+        "sessionId": "顾风",
+        "hasProfile": true,
+        "profile": {
+          "sessionId": "顾风",
+          "guide": "回复必须用 <frostport>...</frostport> 包裹（霜港测试格式规范）。",
+          "sources": [
+            {
+              "type": "preset",
+              "ref": "V4F-V2 霜港测试"
+            }
+          ],
+          "updatedAt": 1785472016355
+        },
+        "message": "已读取该会话的格式画像。"
+      }
+    },
+    "米娅": {
+      "contact": {
+        "id": "米娅",
+        "name": "米娅",
+        "isGroup": false,
+        "memberCount": 0
+      },
+      "detail": {
+        "ok": true,
+        "resource": "session",
+        "currentSessionId": "艾琳·洛",
+        "count": 11,
+        "includedFields": [
+          "members",
+          "worldbooks"
+        ],
+        "contentHint": "会话默认仅返回摘要；精确群成员用 include:[\"members\"]，角色卡继承世界书与 session 直接绑定证据用 include:[\"worldbooks\"]。",
+        "sessions": [
+          {
+            "id": "米娅",
+            "name": "米娅",
+            "isGroup": false,
+            "hasAvatar": false,
+            "messageCount": 2,
+            "settings": {
+              "chatColorMode": "theme",
+              "bubbleColor": "#c9c9c9",
+              "textColor": "#1F2937"
+            },
+            "memberCount": 0,
+            "members": [],
+            "worldbooks": {
+              "directWorldIds": [],
+              "roleWorldIds": [
+                "V4F-V2导入卡资料-0731"
+              ],
+              "resolvedWorldIds": [
+                "V4F-V2导入卡资料-0731"
+              ],
+              "globalWorldId": ""
+            }
+          }
+        ]
+      },
+      "memberIds": [],
+      "avatar": {
+        "present": false,
+        "length": 0,
+        "prefix": ""
+      },
+      "wallpaper": null,
+      "messages": [
+        {
+          "id": "1785471866851-abc03f",
+          "role": "system",
+          "type": "meta",
+          "name": "系统",
+          "content": "你创建了聊天室「米娅」",
+          "rawOriginalRef": null,
+          "formatRepairTurn": null
+        },
+        {
+          "id": "1785471956040-d0261e",
+          "role": "user",
+          "type": "",
+          "name": "冻结观察用户V4F-V2-0731",
+          "content": "【霜港测试】请先待命。",
+          "rawOriginalRef": null,
+          "formatRepairTurn": null
+        }
+      ],
+      "formatProfile": {
+        "ok": true,
+        "sessionId": "米娅",
+        "hasProfile": true,
+        "profile": {
+          "sessionId": "米娅",
+          "guide": "回复必须用 <frostport>...</frostport> 包裹（霜港测试格式规范）。",
+          "sources": [
+            {
+              "type": "preset",
+              "ref": "V4F-V2 霜港测试"
+            }
+          ],
+          "updatedAt": 1785472021841
+        },
+        "message": "已读取该会话的格式画像。"
+      }
+    },
+    "V4F-V2霜港调查组-0731": {
+      "contact": {
+        "id": "group:1785471866931-66f325",
+        "name": "V4F-V2霜港调查组-0731",
+        "isGroup": true,
+        "memberCount": 3
+      },
+      "detail": {
+        "ok": true,
+        "resource": "session",
+        "currentSessionId": "艾琳·洛",
+        "count": 11,
+        "includedFields": [
+          "members",
+          "worldbooks"
+        ],
+        "contentHint": "会话默认仅返回摘要；精确群成员用 include:[\"members\"]，角色卡继承世界书与 session 直接绑定证据用 include:[\"worldbooks\"]。",
+        "sessions": [
+          {
+            "id": "group:1785471866931-66f325",
+            "name": "V4F-V2霜港调查组-0731",
+            "isGroup": true,
+            "hasAvatar": false,
+            "messageCount": 2,
+            "settings": {
+              "chatColorMode": "theme",
+              "bubbleColor": "#c9c9c9",
+              "textColor": "#1F2937"
+            },
+            "memberCount": 3,
+            "members": [
+              {
+                "id": "艾琳·洛",
+                "name": "艾琳·洛"
+              },
+              {
+                "id": "顾风",
+                "name": "顾风"
+              },
+              {
+                "id": "米娅",
+                "name": "米娅"
+              }
+            ],
+            "worldbooks": {
+              "directWorldIds": [],
+              "roleWorldIds": [
+                "V4F-V2导入卡资料-0731"
+              ],
+              "resolvedWorldIds": [
+                "V4F-V2导入卡资料-0731",
+                "V4F-V2长文库-0731"
+              ],
+              "globalWorldId": ""
+            }
+          }
+        ]
+      },
+      "memberIds": [
+        "艾琳·洛",
+        "顾风",
+        "米娅"
+      ],
+      "avatar": {
+        "present": false,
+        "length": 0,
+        "prefix": ""
+      },
+      "wallpaper": null,
+      "messages": [
+        {
+          "id": "1785471867017-619a88",
+          "role": "system",
+          "type": "meta",
+          "name": "系统",
+          "content": "你创建了群聊「V4F-V2霜港调查组-0731」",
+          "rawOriginalRef": null,
+          "formatRepairTurn": null
+        },
+        {
+          "id": "1785471867017-8db6f8",
+          "role": "system",
+          "type": "meta",
+          "name": "系统",
+          "content": "你邀请了：艾琳·洛、顾风、米娅 加入群聊",
+          "rawOriginalRef": null,
+          "formatRepairTurn": null
+        }
+      ],
+      "formatProfile": null
+    },
+    "V4F-V2恢复目标-H-0731": {
+      "contact": {
+        "id": "V4F-V2恢复目标-H-0731",
+        "name": "V4F-V2恢复目标-H-0731",
+        "isGroup": false,
+        "memberCount": 0
+      },
+      "detail": {
+        "ok": true,
+        "resource": "session",
+        "currentSessionId": "艾琳·洛",
+        "count": 11,
+        "includedFields": [
+          "members",
+          "worldbooks"
+        ],
+        "contentHint": "会话默认仅返回摘要；精确群成员用 include:[\"members\"]，角色卡继承世界书与 session 直接绑定证据用 include:[\"worldbooks\"]。",
+        "sessions": [
+          {
+            "id": "V4F-V2恢复目标-H-0731",
+            "name": "V4F-V2恢复目标-H-0731",
+            "isGroup": false,
+            "hasAvatar": false,
+            "messageCount": 1,
+            "settings": {
+              "chatColorMode": "theme",
+              "bubbleColor": "#c9c9c9",
+              "textColor": "#1F2937"
+            },
+            "memberCount": 0,
+            "members": [],
+            "worldbooks": {
+              "directWorldIds": [
+                "V4F-V2长文库-0731"
+              ],
+              "roleWorldIds": [
+                "V4F-V2导入卡资料-0731"
+              ],
+              "resolvedWorldIds": [
+                "V4F-V2导入卡资料-0731",
+                "V4F-V2长文库-0731"
+              ],
+              "globalWorldId": ""
+            }
+          }
+        ]
+      },
+      "memberIds": [],
+      "avatar": {
+        "present": false,
+        "length": 0,
+        "prefix": ""
+      },
+      "wallpaper": null,
+      "messages": [
+        {
+          "id": "1785472195896-16a59a",
+          "role": "system",
+          "type": "meta",
+          "name": "系统",
+          "content": "你创建了聊天室「V4F-V2恢复目标-H-0731」",
+          "rawOriginalRef": null,
+          "formatRepairTurn": null
+        }
+      ],
+      "formatProfile": {
+        "ok": true,
+        "sessionId": "V4F-V2恢复目标-H-0731",
+        "hasProfile": false,
+        "profile": null,
+        "message": "该会话还没有保存过格式画像。"
+      }
+    }
+  },
+  "worldbooks": {
+    "V4F-V2档案库-0731": {
+      "ok": true,
+      "id": "V4F-V2档案库-0731",
+      "name": "V4F-V2档案库-0731",
+      "entryCount": 2,
+      "boundToCurrentSession": false,
+      "global": false,
+      "contentMode": "content",
+      "contentHint": "",
+      "returnedEntryCount": 2,
+      "entries": [
+        {
+          "id": "观察门牌",
+          "title": "观察门牌",
+          "keys": [
+            "观察门牌"
+          ],
+          "secondaryKeys": [],
+          "disabled": false,
+          "constant": true,
+          "order": 100,
+          "position": 0,
+          "contentLength": 39,
+          "sourceLayer": "user_original",
+          "sourceRefs": [
+            "user_request"
+          ],
+          "content": "仅用于 Deepseek V4 Flash 冻结观察 v2；禁止用于正式资料。",
+          "contentTruncated": false
+        },
+        {
+          "id": "核心批次标记",
+          "title": "核心批次标记",
+          "keys": [
+            "核心批次标记",
+            "CORE-0731"
+          ],
+          "secondaryKeys": [],
+          "disabled": false,
+          "constant": true,
+          "order": 100,
+          "position": 0,
+          "contentLength": 9,
+          "sourceLayer": "user_original",
+          "sourceRefs": [
+            "user_request"
+          ],
+          "content": "CORE-0731",
+          "contentTruncated": false
+        }
+      ],
+      "truncated": false
+    },
+    "V4F-V2长文库-0731": {
+      "ok": true,
+      "id": "V4F-V2长文库-0731",
+      "name": "V4F-V2长文库-0731",
+      "entryCount": 1,
+      "boundToCurrentSession": false,
+      "global": false,
+      "contentMode": "content",
+      "contentHint": "",
+      "returnedEntryCount": 1,
+      "entries": [
+        {
+          "id": "雾港通行规则",
+          "title": "雾港通行规则",
+          "keys": [],
+          "secondaryKeys": [],
+          "disabled": false,
+          "constant": true,
+          "order": 100,
+          "position": 0,
+          "contentLength": 115,
+          "sourceLayer": "user_original",
+          "sourceRefs": [
+            "user_request"
+          ],
+          "content": "潮雾弥漫之际，雾港通行以蓝塔为引。凡进港船只，须循蓝色灯塔光束指引航路，并以三短一长鸣笛为通航信号，未鸣者不予回应。船抵码头后，守夜人登船核验通行凭证，确认无误方可放行；无证或不符者，须原地候查，不得擅自登岸。雾中行船，礼序为先。",
+          "contentTruncated": false
+        }
+      ],
+      "truncated": false
+    },
+    "V4F-V2导入卡资料-0731": {
+      "ok": true,
+      "id": "V4F-V2导入卡资料-0731",
+      "name": "V4F-V2导入卡资料-0731",
+      "entryCount": 14,
+      "boundToCurrentSession": false,
+      "global": false,
+      "contentMode": "content",
+      "contentHint": "",
+      "returnedEntryCount": 14,
+      "entries": [
+        {
+          "id": "艾琳·洛",
+          "title": "艾琳·洛",
+          "keys": [
+            "艾琳",
+            "调查队长"
+          ],
+          "secondaryKeys": [],
+          "disabled": false,
+          "constant": true,
+          "order": 100,
+          "position": 0,
+          "contentLength": 39,
+          "sourceLayer": "",
+          "sourceRefs": [],
+          "content": "艾琳·洛是霜港调查队长，冷静果断，擅长航海与现场判断，是长期故事中的主要人物。",
+          "contentTruncated": false
+        },
+        {
+          "id": "顾风",
+          "title": "顾风",
+          "keys": [
+            "顾风",
+            "机关师"
+          ],
+          "secondaryKeys": [],
+          "disabled": false,
+          "constant": true,
+          "order": 101,
+          "position": 0,
+          "contentLength": 41,
+          "sourceLayer": "",
+          "sourceRefs": [],
+          "content": "顾风是调查队机关师，谨慎寡言，负责修理设备与破解遗迹机关，是长期故事中的主要人物。",
+          "contentTruncated": false
+        },
+        {
+          "id": "米娅",
+          "title": "米娅",
+          "keys": [
+            "米娅",
+            "向导"
+          ],
+          "secondaryKeys": [],
+          "disabled": false,
+          "constant": true,
+          "order": 102,
+          "position": 0,
+          "contentLength": 35,
+          "sourceLayer": "",
+          "sourceRefs": [],
+          "content": "米娅是熟悉霜港街巷与潮汐的年轻向导，外向敏锐，是长期故事中的主要人物。",
+          "contentTruncated": false
+        },
+        {
+          "id": "霜港概览",
+          "title": "霜港概览",
+          "keys": [
+            "霜港",
+            "城市"
+          ],
+          "secondaryKeys": [],
+          "disabled": false,
+          "constant": true,
+          "order": 103,
+          "position": 0,
+          "contentLength": 26,
+          "sourceLayer": "",
+          "sourceRefs": [],
+          "content": "霜港终年受潮雾笼罩，港区、旧城与灯塔区构成主要舞台。",
+          "contentTruncated": false
+        },
+        {
+          "id": "蓝焰灯塔",
+          "title": "蓝焰灯塔",
+          "keys": [
+            "灯塔",
+            "蓝焰"
+          ],
+          "secondaryKeys": [],
+          "disabled": false,
+          "constant": true,
+          "order": 104,
+          "position": 0,
+          "contentLength": 27,
+          "sourceLayer": "",
+          "sourceRefs": [],
+          "content": "蓝焰灯塔每逢退潮会发出异常光芒，是调查主线的重要地点。",
+          "contentTruncated": false
+        },
+        {
+          "id": "潮汐规则",
+          "title": "潮汐规则",
+          "keys": [
+            "潮汐",
+            "通行"
+          ],
+          "secondaryKeys": [],
+          "disabled": false,
+          "constant": true,
+          "order": 105,
+          "position": 0,
+          "contentLength": 27,
+          "sourceLayer": "",
+          "sourceRefs": [],
+          "content": "船只靠岸前必须鸣笛三短一长，夜间仅持证者可以进入旧港。",
+          "contentTruncated": false
+        },
+        {
+          "id": "调查队守则",
+          "title": "调查队守则",
+          "keys": [
+            "守则",
+            "规则"
+          ],
+          "secondaryKeys": [],
+          "disabled": false,
+          "constant": true,
+          "order": 106,
+          "position": 0,
+          "contentLength": 32,
+          "sourceLayer": "",
+          "sourceRefs": [],
+          "content": "调查必须两人同行，发现未知遗物时先记录、隔离，再交由机关师检查。",
+          "contentTruncated": false
+        },
+        {
+          "id": "旧港遗迹",
+          "title": "旧港遗迹",
+          "keys": [
+            "遗迹",
+            "旧港"
+          ],
+          "secondaryKeys": [],
+          "disabled": false,
+          "constant": true,
+          "order": 107,
+          "position": 0,
+          "contentLength": 25,
+          "sourceLayer": "",
+          "sourceRefs": [],
+          "content": "旧港地下保存着失落航线的石刻与多处尚未开启的密室。",
+          "contentTruncated": false
+        },
+        {
+          "id": "输出格式",
+          "title": "输出格式",
+          "keys": [
+            "格式",
+            "对话"
+          ],
+          "secondaryKeys": [],
+          "disabled": false,
+          "constant": true,
+          "order": 108,
+          "position": 0,
+          "contentLength": 29,
+          "sourceLayer": "",
+          "sourceRefs": [],
+          "content": "角色聊天使用 APP 既有私聊协议，不要求额外自定义标签。",
+          "contentTruncated": false
+        },
+        {
+          "id": "用户边界",
+          "title": "用户边界",
+          "keys": [
+            "用户",
+            "边界"
+          ],
+          "secondaryKeys": [],
+          "disabled": false,
+          "constant": true,
+          "order": 109,
+          "position": 0,
+          "contentLength": 30,
+          "sourceLayer": "",
+          "sourceRefs": [],
+          "content": "用户是刚加入调查队的新成员；不得替用户决定行动、关系或背景。",
+          "contentTruncated": false
+        },
+        {
+          "id": "时间线",
+          "title": "时间线",
+          "keys": [
+            "时间",
+            "序章"
+          ],
+          "secondaryKeys": [],
+          "disabled": false,
+          "constant": true,
+          "order": 110,
+          "position": 0,
+          "contentLength": 22,
+          "sourceLayer": "",
+          "sourceRefs": [],
+          "content": "故事从蓝焰灯塔连续三夜异常点亮后的清晨开始。",
+          "contentTruncated": false
+        },
+        {
+          "id": "资料来源说明",
+          "title": "资料来源说明",
+          "keys": [
+            "来源",
+            "测试"
+          ],
+          "secondaryKeys": [],
+          "disabled": false,
+          "constant": true,
+          "order": 111,
+          "position": 0,
+          "contentLength": 35,
+          "sourceLayer": "",
+          "sourceRefs": [],
+          "content": "以上均为 V4F-V2 冻结观察用原创测试资料，不属于任何正式角色卡。",
+          "contentTruncated": false
+        },
+        {
+          "id": "雾潮预警",
+          "title": "雾潮预警",
+          "keys": [
+            "雾潮",
+            "预警",
+            "霜港"
+          ],
+          "secondaryKeys": [],
+          "disabled": false,
+          "constant": true,
+          "order": 100,
+          "position": 0,
+          "contentLength": 125,
+          "sourceLayer": "user_original",
+          "sourceRefs": [
+            "user_request"
+          ],
+          "content": "霜港近海周期性弥漫灰白色雾潮，浓时遮蔽视线，干扰罗盘与通讯，潮中常伴随低语。观测站依强度分蓝、黄、红三色预警：蓝色戒备，黄色管制，红色封锁。雾潮逼近时，村民须沿固定路线撤离至高地；调查队则就地转入防护状态，停止一切外出勘测，待雾潮消退后方可恢复作业。",
+          "contentTruncated": false
+        },
+        {
+          "id": "遗迹勘察流程",
+          "title": "遗迹勘察流程",
+          "keys": [
+            "遗迹",
+            "勘察",
+            "流程"
+          ],
+          "secondaryKeys": [],
+          "disabled": false,
+          "constant": true,
+          "order": 101,
+          "position": 0,
+          "contentLength": 138,
+          "sourceLayer": "user_original",
+          "sourceRefs": [
+            "user_request"
+          ],
+          "content": "霜港周边遗迹勘察按标准化流程执行。第一步，外围测绘并拓印符文，同步开展机关、毒气与塌方安全检查。确认安全后，分组进入，每组须标记行进路径并严格遵循返回时限。发现异常古物时，不得擅自带回，须当场封装、登记造册。勘察结束后，全部物品统一移交观测站归档，个人禁止留存任何取样或拓片。",
+          "contentTruncated": false
+        }
+      ],
+      "truncated": false
+    },
+    "V4F-V2待删书-X-0731": {
+      "ok": false,
+      "reason": "worldbook_not_found",
+      "worldbookId": "V4F-V2待删书-X-0731"
+    },
+    "V4F-V2待删书-Y-0731": {
+      "ok": false,
+      "reason": "worldbook_not_found",
+      "worldbookId": "V4F-V2待删书-Y-0731"
+    }
+  },
+  "users": [
+    {
+      "id": "user_1785469636799_ppdq2",
+      "name": "冻结观察用户V4F-V2-0731",
+      "avatar": "",
+      "description": "Deepseek V4 Flash 冻结观察 v2 的一次性测试用户；不属于正式资料。",
+      "userBubbleColor": "#E8F0FE",
+      "userTextColor": "#1F2937",
+      "position": 0,
+      "depth": 2,
+      "role": 0,
+      "created": 1785469636799,
+      "updated": 1785469636799,
+      "source": null,
+      "originalCard": null,
+      "active": true
+    }
+  ],
+  "personas": [
+    {
+      "id": "persona_1785469636269_4ciqh",
+      "name": "冻结观察V4F-V2-0731",
+      "avatar": "",
+      "description": "Deepseek V4 Flash 冻结观察 v2 的一次性测试作用域；不属于正式资料。",
+      "userBubbleColor": "#E8F0FE",
+      "userTextColor": "#1F2937",
+      "position": 0,
+      "depth": 2,
+      "role": 0,
+      "created": 1785469636269,
+      "updated": 1785471710909,
+      "source": {
+        "cardName": "冻结观察V4F-V2-0731",
+        "characterName": "冻结观察V4F-V2-0731",
+        "importedBy": "maid",
+        "type": "character_card",
+        "worldbookId": "V4F-V2导入卡资料-0731",
+        "worldbookEnabled": true
+      },
+      "originalCard": null,
+      "active": true
+    }
+  ],
+  "maidMemory": {
+    "turns": 113,
+    "activeTurns": 8,
+    "compactedTurns": 105,
+    "memoryRows": 21,
+    "extractionBatchCount": 21,
+    "targetMemories": [
+      {
+        "id": "maid_semantic_1785472950438_14",
+        "kind": "preference",
+        "key": "format.default",
+        "content": "完成名字含「V4F-V2」的测试任务时，先以“霜港核对完成”一句给出结论，再列摘要。",
+        "confidence": "explicit",
+        "status": "archived",
+        "sourceTurnIds": [
+          "turn_1785472029328_85",
+          "turn_1785473562131_97"
+        ]
+      }
+    ]
+  },
+  "shadow": {
+    "snapshotCount": 500,
+    "aggregateCount": 160,
+    "validSelectionCount": 1346,
+    "hitCount": 1151,
+    "missCount": 195
+  },
+  "localStorage": {
+    "itemCount": 1056,
+    "totalBytesApprox": 10356538,
+    "largestItems": [
+      {
+        "key": "rp_session_v1__persona_1783693139509_x1cw7",
+        "chars": 489667,
+        "bytesApprox": 979334
+      },
+      {
+        "key": "persona_archive_store_v1__persona_1778774487050_vtkyk",
+        "chars": 166586,
+        "bytesApprox": 333172
+      },
+      {
+        "key": "capability_retrieval_store_v2",
+        "chars": 165867,
+        "bytesApprox": 331734
+      },
+      {
+        "key": "persona_archive_store_v1__default",
+        "chars": 141214,
+        "bytesApprox": 282428
+      },
+      {
+        "key": "maid_conversation_legacy_archive_v1",
+        "chars": 124961,
+        "bytesApprox": 249922
+      },
+      {
+        "key": "maid_conversation_store_v1",
+        "chars": 116070,
+        "bytesApprox": 232140
+      },
+      {
+        "key": "agent_center_settings_v1",
+        "chars": 101895,
+        "bytesApprox": 203790
+      },
+      {
+        "key": "memory_snapshot_refs_v1__rp_persona_1779102090269_tbimh_t6s73k__persona_1779102090269_tbimh",
+        "chars": 50171,
+        "bytesApprox": 100342
+      },
+      {
+        "key": "rp_session_v1__persona_1778841742225_g9f0p",
+        "chars": 44541,
+        "bytesApprox": 89082
+      },
+      {
+        "key": "turn_checkpoint_v1_____1z0yo31__default",
+        "chars": 39304,
+        "bytesApprox": 78608
+      },
+      {
+        "key": "turn_checkpoint_v1__rp_persona_1779357832334_yhlnx_1qu9jk4__persona_1779357832334_yhlnx",
+        "chars": 38667,
+        "bytesApprox": 77334
+      },
+      {
+        "key": "user_character_state_v1__persona_1778774487050_vtkyk",
+        "chars": 36361,
+        "bytesApprox": 72722
+      },
+      {
+        "key": "turn_checkpoint_v1__rp_persona_1783052220449_63wbh_tcvey8__persona_1783052220449_63wbh",
+        "chars": 35882,
+        "bytesApprox": 71764
+      },
+      {
+        "key": "memory_snapshot_payload_v1__mem_1vbk4sq__default",
+        "chars": 34795,
+        "bytesApprox": 69590
+      },
+      {
+        "key": "memory_snapshot_payload_v1__mem_1vg4jnv__default",
+        "chars": 34069,
+        "bytesApprox": 68138
+      },
+      {
+        "key": "memory_snapshot_payload_v1__mem_1m53106__default",
+        "chars": 33367,
+        "bytesApprox": 66734
+      },
+      {
+        "key": "turn_checkpoint_v1______1gq0fvl__persona_1783052220449_63wbh",
+        "chars": 33069,
+        "bytesApprox": 66138
+      },
+      {
+        "key": "turn_checkpoint_v1__Lara_Croft_tyhzqv__persona_1783052220449_63wbh",
+        "chars": 32921,
+        "bytesApprox": 65842
+      },
+      {
+        "key": "memory_snapshot_payload_v1__mem_8fnba6__default",
+        "chars": 32699,
+        "bytesApprox": 65398
+      },
+      {
+        "key": "memory_snapshot_payload_v1__mem_vmpqzo__default",
+        "chars": 32026,
+        "bytesApprox": 64052
+      }
+    ],
+    "estimate": {
+      "quota": 10738665185,
+      "usage": 1246945,
+      "usageDetails": {
+        "indexedDB": 1246945
+      }
+    }
+  }
+}

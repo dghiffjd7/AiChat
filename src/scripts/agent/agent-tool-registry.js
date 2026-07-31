@@ -137,6 +137,7 @@ export const normalizeAgentToolDefinition = (definition = {}) => {
     safety: normalizeAgentToolSafety(src.safety, { capabilities }),
     schema: isPlainObject(src.schema) ? clone(src.schema) : { type: 'object' },
     timeoutMs: Math.max(0, Number(src.timeoutMs || 0) || 0),
+    timeoutErrorCode: trim(src.timeoutErrorCode),
     outputLimit: Math.max(0, Number(src.outputLimit || 0) || 0),
     prepareArguments: typeof src.prepareArguments === 'function' ? src.prepareArguments : null,
     summarizeResult: typeof src.summarizeResult === 'function' ? src.summarizeResult : null,
@@ -226,19 +227,45 @@ const summarizeResultValue = (result, outputLimit = 0) => {
   return `${raw.slice(0, outputLimit)}...`;
 };
 
-const runWithTimeout = async (task, timeoutMs = 0, signal = null) => {
+const runWithTimeout = async (task, timeoutMs = 0, signal = null, {
+  timeoutErrorCode = '',
+  toolName = '',
+} = {}) => {
   if (signal?.aborted) throw createAbortError();
-  if (!timeoutMs) return task();
+  if (!timeoutMs) return task(signal);
+  const timeoutController = typeof AbortController === 'function'
+    ? new AbortController()
+    : null;
+  const executionSignal = timeoutController?.signal || signal;
+  const relayAbort = () => {
+    try {
+      timeoutController?.abort?.(signal?.reason);
+    } catch {}
+  };
+  signal?.addEventListener?.('abort', relayAbort, { once: true });
   let timeoutId = null;
   try {
     return await Promise.race([
-      task(),
+      task(executionSignal),
       new Promise((_, reject) => {
-        timeoutId = setTimeout(() => reject(createAbortError('Agent tool timed out')), timeoutMs);
+        timeoutId = setTimeout(() => {
+          const timeoutError = timeoutErrorCode
+            ? new AgentToolError('Agent tool timed out', {
+              code: timeoutErrorCode,
+              toolName,
+              details: { timeoutMs },
+            })
+            : createAbortError('Agent tool timed out');
+          reject(timeoutError);
+          try {
+            timeoutController?.abort?.(timeoutError);
+          } catch {}
+        }, timeoutMs);
       }),
     ]);
   } finally {
     if (timeoutId) clearTimeout(timeoutId);
+    signal?.removeEventListener?.('abort', relayAbort);
   }
 };
 
@@ -588,14 +615,18 @@ export const createAgentToolRegistry = ({
     });
     try {
       const result = await runWithTimeout(
-        () => tool.execute(preparedArgs, {
+        executionSignal => tool.execute(preparedArgs, {
           ...context,
-          signal: context.signal,
+          signal: executionSignal,
           tool,
           toolSafety: clone(safety.confirmation),
         }),
         tool.timeoutMs,
         context.signal,
+        {
+          timeoutErrorCode: tool.timeoutErrorCode,
+          toolName: tool.name,
+        },
       );
       const durationMs = Math.max(0, Date.now() - startedAt);
       const summary = tool.summarizeResult

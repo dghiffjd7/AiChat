@@ -21,6 +21,71 @@ const normalizeStringIdList = (items = []) => Array.from(
   ),
 );
 
+export const collectMaidAssistantMessageRefs = ({
+  sourceSessionId = '',
+  assistantMessageIdsBefore = [],
+  currentSessionMessages = [],
+  trackedMessageRefs = [],
+  findMessage = null,
+} = {}) => {
+  const sid = String(sourceSessionId || '').trim();
+  const before = new Set(normalizeStringIdList(Array.from(assistantMessageIdsBefore || [])));
+  const refs = [];
+  const seen = new Set();
+  const add = (sessionId, messageId) => {
+    const targetSessionId = String(sessionId || '').trim();
+    const id = String(messageId || '').trim();
+    const key = JSON.stringify([targetSessionId, id]);
+    if (!targetSessionId || !id || seen.has(key)) return;
+    seen.add(key);
+    refs.push({ sessionId: targetSessionId, messageId: id });
+  };
+
+  for (const item of (Array.isArray(trackedMessageRefs) ? trackedMessageRefs : [])) {
+    const targetSessionId = String(item?.sessionId || item?.targetSessionId || '').trim();
+    const messageId = String(item?.messageId || item?.id || '').trim();
+    if (!targetSessionId || !messageId || typeof findMessage !== 'function') continue;
+    let message = null;
+    try {
+      message = findMessage(messageId, targetSessionId) || null;
+    } catch {}
+    if (message?.role === 'assistant') add(targetSessionId, messageId);
+  }
+
+  for (const message of (Array.isArray(currentSessionMessages) ? currentSessionMessages : [])) {
+    const messageId = String(message?.id || '').trim();
+    if (message?.role !== 'assistant' || !messageId || before.has(messageId)) continue;
+    add(sid, messageId);
+  }
+  return refs;
+};
+
+export const runAbortableSendFlow = async ({
+  signal = null,
+  runSend = null,
+  abortGeneration = null,
+} = {}) => {
+  if (typeof runSend !== 'function') return false;
+  const handleAbort = () => {
+    try {
+      abortGeneration?.(signal?.reason);
+    } catch {}
+  };
+  if (signal?.aborted) {
+    handleAbort();
+    if (signal.reason instanceof Error) throw signal.reason;
+    const error = new Error('Chat send aborted');
+    error.name = 'AbortError';
+    throw error;
+  }
+  signal?.addEventListener?.('abort', handleAbort, { once: true });
+  try {
+    return await runSend();
+  } finally {
+    signal?.removeEventListener?.('abort', handleAbort);
+  }
+};
+
 export const buildSendFlowTraceEvent = ({
   phase = '',
   sessionId = '',
@@ -193,6 +258,105 @@ export const resolveSendPreflightBlock = ({
     toastMessage: '',
     toastTitle: '',
     showConfigPanel: false,
+  };
+};
+
+export const resolveMaidChatSendCompletionResult = ({
+  pipelineSucceeded = false,
+  requestTriggered = false,
+  protocolEnabled = false,
+  protocolAccepted = null,
+  repairFailed = false,
+  blockedReason = '',
+  cancelled = false,
+  waitForReply = true,
+  errorMessage = '',
+  assistantMessageIds = [],
+  assistantMessageRefs = [],
+  sessionId = '',
+} = {}) => {
+  const blocked = String(blockedReason || '').trim();
+  const refs = [];
+  const seenRefs = new Set();
+  for (const item of (Array.isArray(assistantMessageRefs) ? assistantMessageRefs : [])) {
+    const refSessionId = String(item?.sessionId || item?.targetSessionId || '').trim();
+    const messageId = String(item?.messageId || item?.id || '').trim();
+    const key = JSON.stringify([refSessionId, messageId]);
+    if (!refSessionId || !messageId || seenRefs.has(key)) continue;
+    seenRefs.add(key);
+    refs.push({ sessionId: refSessionId, messageId });
+  }
+  const ids = Array.from(new Set(
+    [
+      ...(Array.isArray(assistantMessageIds) ? assistantMessageIds : []),
+      ...refs.map(item => item.messageId),
+    ]
+      .map(item => String(item || '').trim())
+      .filter(Boolean),
+  ));
+  let completionOutcome = '';
+  let failureCode = '';
+  let reason = '';
+  let message = '';
+  let ok = false;
+
+  if (blocked === 'api-not-configured') {
+    completionOutcome = 'blocked_by_config';
+    failureCode = 'blocked_by_config';
+    reason = blocked;
+    message = '聊天模型尚未配置，回复请求未开始。';
+  } else if (blocked) {
+    completionOutcome = 'request_rejected';
+    failureCode = blocked;
+    reason = blocked;
+    message = blocked === 'offline' ? '当前离线，回复请求未开始。' : '回复请求未开始。';
+  } else if (cancelled) {
+    completionOutcome = requestTriggered ? 'request_triggered' : 'request_rejected';
+    failureCode = 'user_aborted';
+    reason = 'user_aborted';
+    message = '用户已中止本次发送或回复生成。';
+  } else if (waitForReply === false && requestTriggered) {
+    ok = true;
+    completionOutcome = 'request_triggered';
+    message = '回复请求已触发；未等待角色回复终态。';
+  } else if (repairFailed) {
+    completionOutcome = 'repair_failed';
+    failureCode = 'repair_failed';
+    reason = 'repair_failed';
+    message = '模型回复格式修复失败，未提交回复副作用。';
+  } else if (protocolEnabled && protocolAccepted !== true) {
+    completionOutcome = 'protocol_rejected';
+    failureCode = 'protocol_rejected';
+    reason = 'protocol_rejected';
+    message = '模型回复没有通过聊天协议验收，未提交回复副作用。';
+  } else if (pipelineSucceeded) {
+    ok = true;
+    completionOutcome = 'assistant_delivered';
+    message = protocolEnabled
+      ? '角色回复已通过协议验收并落库。'
+      : '角色回复已生成并落库。';
+  } else {
+    completionOutcome = requestTriggered ? 'request_triggered' : 'request_rejected';
+    failureCode = requestTriggered ? 'generation_failed' : 'request_rejected';
+    reason = failureCode;
+    message = String(errorMessage || '').trim() || (
+      requestTriggered ? '回复请求已发出，但角色回复未完成。' : '回复请求未开始。'
+    );
+  }
+
+  return {
+    ok,
+    sent: Boolean(requestTriggered || pipelineSucceeded),
+    requested: Boolean(requestTriggered),
+    requestTriggered: Boolean(requestTriggered),
+    ...(cancelled ? { cancelled: true } : {}),
+    completionOutcome,
+    failureCode,
+    reason,
+    message,
+    assistantMessageIds: ids,
+    ...(refs.length ? { assistantMessageRefs: refs } : {}),
+    sessionId: String(sessionId || '').trim(),
   };
 };
 

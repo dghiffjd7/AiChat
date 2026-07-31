@@ -115,6 +115,7 @@ export const normalizeProtocolDeliveryPlan = (
     sessionId,
     createdAt,
     cursor,
+    alreadyPersisted: plan.alreadyPersisted === true,
     items,
   };
 };
@@ -325,6 +326,7 @@ export const deliverProtocolDeliveryItem = (
   {
     appendMessage = null,
     findMessage = null,
+    isUiMessagePresent = null,
     isSessionActive = null,
     addUiMessage = null,
     autoMarkReadIfActive = null,
@@ -333,6 +335,7 @@ export const deliverProtocolDeliveryItem = (
     refreshChatAndContacts = null,
     renderActive = true,
     autoScroll = true,
+    alreadyPersisted = false,
     logger = null,
   } = {},
 ) => {
@@ -349,18 +352,38 @@ export const deliverProtocolDeliveryItem = (
       logger?.debug?.('protocol delivery duplicate check failed', err);
     }
   }
-  if (existing) {
+  if (existing && alreadyPersisted !== true) {
     return { appended: false, skipped: true, reason: 'duplicate', sessionId, saved: existing };
+  }
+  if (!existing && alreadyPersisted === true) {
+    return {
+      appended: false,
+      delivered: false,
+      skipped: true,
+      reason: 'missing-committed-message',
+      sessionId,
+    };
   }
 
   const active = Boolean(typeof isSessionActive === 'function' && isSessionActive(sessionId));
-  if (renderActive !== false && active && typeof addUiMessage === 'function') {
-    addUiMessage(message, { autoScroll: Boolean(autoScroll) });
+  const deliveryMessage = existing || message;
+  let uiMessagePresent = false;
+  if (active && messageId && typeof isUiMessagePresent === 'function') {
+    try {
+      uiMessagePresent = isUiMessagePresent(messageId, sessionId) === true;
+    } catch (err) {
+      logger?.debug?.('protocol delivery UI duplicate check failed', err);
+    }
+  }
+  if (renderActive !== false && active && !uiMessagePresent && typeof addUiMessage === 'function') {
+    addUiMessage(deliveryMessage, { autoScroll: Boolean(autoScroll) });
   }
 
-  const saved = typeof appendMessage === 'function'
-    ? (appendMessage(message, sessionId) || message)
-    : message;
+  const saved = existing || (
+    typeof appendMessage === 'function'
+      ? (appendMessage(message, sessionId) || message)
+      : message
+  );
   const savedId = normalizeString(saved?.id || message.id);
   const isGroup = delivery.kind === 'group';
   const isSystem = Boolean(delivery.isSystem);
@@ -379,7 +402,13 @@ export const deliverProtocolDeliveryItem = (
   if (typeof refreshChatAndContacts === 'function') {
     refreshChatAndContacts();
   }
-  return { appended: true, skipped: false, sessionId, saved };
+  return {
+    appended: !existing,
+    delivered: true,
+    skipped: false,
+    sessionId,
+    saved,
+  };
 };
 
 export const flushPersistedProtocolDeliveryPlans = async ({
@@ -408,6 +437,7 @@ export const flushPersistedProtocolDeliveryPlans = async ({
         const result = deliverProtocolDeliveryItem(plan.items[i], {
           ...deliveryOptions,
           renderActive: false,
+          alreadyPersisted: plan.alreadyPersisted === true,
           logger,
         });
         if (result.appended) appended += 1;

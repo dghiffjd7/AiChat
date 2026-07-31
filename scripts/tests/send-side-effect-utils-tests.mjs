@@ -2044,6 +2044,32 @@ test('syncProtocolResponseTurnCheckpoints skips invalid protocol output without 
   assert.deepEqual(calls, []);
 });
 
+test('syncProtocolResponseTurnCheckpoints ignores rolled-back moment mutations from a rejected response', async () => {
+  const calls = [];
+
+  const result = await syncProtocolResponseTurnCheckpoints({
+    protocolState: {
+      handled: false,
+      didAnything: false,
+      mutatedMoments: true,
+      summarySessionIds: new Set(['chat:rejected']),
+    },
+    sessionId: 'chat:rejected',
+    isTurnCheckpointSessionEnabled: () => true,
+    findTailTrackedAssistantMessage: sessionId => ({ id: `${sessionId}:old-tail`, role: 'assistant' }),
+    syncTurnCheckpointForMessage: async (...args) => {
+      calls.push(args);
+    },
+  });
+
+  assert.deepEqual(result, {
+    checkpointTargetMessageId: '',
+    syncedSessionIds: [],
+    failedSessionIds: [],
+  });
+  assert.deepEqual(calls, []);
+});
+
 let failed = 0;
 for (const t of tests) {
   try {

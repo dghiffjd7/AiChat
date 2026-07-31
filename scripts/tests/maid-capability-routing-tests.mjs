@@ -118,10 +118,10 @@ const createCatalogRoutingHarness = () => {
 {
   const retriever = createMaidCapabilityRetriever();
   const result = retriever.retrieve('where am I in the app？', { features, limit: 8 });
-  assert.equal(MAID_CAPABILITY_RETRIEVER_VERSION, 'maid-capability-retriever-v3');
+  assert.equal(MAID_CAPABILITY_RETRIEVER_VERSION, 'maid-capability-retriever-v4');
   assert.equal(result[0].id, 'app.state.read');
   assert.equal(result[0].retrievalReason, 'semantic_concept');
-  console.log('ok - v3 hybrid retriever adds explainable local concept matches');
+  console.log('ok - v4 hybrid retriever adds explainable local concept matches');
 }
 
 {
@@ -148,7 +148,7 @@ const createCatalogRoutingHarness = () => {
   });
   assert.equal(result[0].id, 'worldbook.bind_sessions');
   assert.ok(result[0].conceptCodes.includes('worldbook_batch_bind'));
-  console.log('ok - v3 retriever ranks batch worldbook binding above the single-session primitive');
+  console.log('ok - v4 retriever ranks batch worldbook binding above the single-session primitive');
 }
 
 {
@@ -167,7 +167,7 @@ const createCatalogRoutingHarness = () => {
   });
   assert.equal(result[0].id, 'worldbook.bind_rp_session');
   assert.ok(result[0].conceptCodes.includes('worldbook_rp_bind'));
-  console.log('ok - v3 retriever routes RP-only worldbook binding above ordinary chat binding');
+  console.log('ok - v4 retriever routes RP-only worldbook binding above ordinary chat binding');
 }
 
 {
@@ -185,7 +185,7 @@ const createCatalogRoutingHarness = () => {
     assert.ok(match, `${input} should retrieve ${featureId}`);
     assert.ok(match.conceptCodes.includes(conceptCode), `${featureId} should expose ${conceptCode}`);
   }
-  console.log('ok - v3 retriever distinguishes resource batch deletion from worldbook entry deletion');
+  console.log('ok - v4 retriever distinguishes resource batch deletion from worldbook entry deletion');
 }
 
 {
@@ -204,7 +204,54 @@ const createCatalogRoutingHarness = () => {
     assert.ok(match, `${input} should retrieve ${featureId}`);
     assert.ok(match.conceptCodes.includes(conceptCode), `${featureId} should expose ${conceptCode}`);
   }
-  console.log('ok - v3 retriever separates group creation, member reads/updates, opening, and create-panel navigation');
+  console.log('ok - v4 retriever separates group creation, member reads/updates, opening, and create-panel navigation');
+}
+
+{
+  const retriever = createMaidCapabilityRetriever();
+  const { catalogFeatures } = createCatalogRoutingHarness();
+  const fixtures = [
+    [
+      '给「V4F-V2观测站-B-0731」后台写入“【V4F-V2-B】只写不回”，必须 triggerReply:false 且 open:false。',
+      'chat.send_message',
+    ],
+    [
+      '在后台建立三个一次性聊天室「V4F-V2待删-E-0731」「V4F-V2待删-F-0731」「V4F-V2保留-G-0731」，已存在就复用，全部不要进入。',
+      'session.create',
+    ],
+    [
+      '读取会话列表，确认刚才只是预览，E、F 与保留的 G 都还存在。',
+      'session.list',
+    ],
+    [
+      '列出你目前保存的长期语义记忆，只返回 kind、key、简短内容和置信度；不要归档或删除。',
+      'maid.memory.list',
+    ],
+    [
+      '尝试归档一个明确不存在的记忆 ID「memory-v4f-v2-missing-404」；找不到就安全停止，不能改其他记忆。',
+      'maid.memory.archive',
+    ],
+    [
+      '前面所有工作完成后，现在只打开主要结果「V4F-V2霜港调查组-0731」给我看；不要逐个打开私聊，也不要发送消息。',
+      'session.open',
+    ],
+    [
+      '查询「V4F-V2观测站-A-0731」的世界书绑定，只读核对「V4F-V2档案库-0731」已启用。',
+      'app.resource.read',
+    ],
+    [
+      '不要复用头像附件；写回后读取真实状态确认。',
+      'app.resource.read',
+    ],
+  ];
+  for (const [input, featureId] of fixtures) {
+    const result = retriever.retrieve(input, { features: catalogFeatures, limit: 8 });
+    assert.ok(
+      result.some(item => item.id === featureId),
+      `${featureId} should be in the top-8 candidates for: ${input}`,
+    );
+  }
+  console.log('ok - frozen V4F primary and natural-memory phrases remain in the retriever top-k');
 }
 
 {
@@ -222,6 +269,77 @@ const createCatalogRoutingHarness = () => {
   assert.equal(snapshot.candidateIds.has('maid.todo'), true, '三目标发送、读回与状态核对必须识别为复杂工作流');
   runtime.finishRequest(request.id, { ok: true });
   console.log('ok - exact multi-room wording retains chat send and complex-workflow candidates');
+}
+
+{
+  const { catalogFeatures, catalogRegistry } = createCatalogRoutingHarness();
+  const runtime = createMaidCapabilityRoutingRuntime({
+    features: catalogFeatures,
+    toolRegistry: catalogRegistry,
+    permissionEvaluator: { evaluateTool: () => ({ decision: 'allow', checks: [] }) },
+    logger: { debug() {} },
+  });
+  const cases = [
+    {
+      input: '请求批量删除 E、F；出现最终删除确认列表时取消，验证取消路径不应删除任何聊天室。',
+      step: {
+        toolName: 'session.delete_many',
+        featureId: 'session.delete_many',
+        status: 'succeeded',
+        args: { sessions: ['E', 'F'] },
+        output: { ok: true, cancelled: true },
+      },
+      expected: 'session.list',
+    },
+    {
+      input: '只生成一张横向壁纸；失败就停止，不能使用旧附件。',
+      step: {
+        toolName: 'media.generate_image',
+        featureId: 'media.generate_image',
+        status: 'failed',
+        args: { target: '艾琳·洛', purpose: 'wallpaper', targetAspectRatio: '16:9' },
+        output: { ok: false, reason: '当前生图配置锁定为 1024×1024 方形输出' },
+      },
+      expected: 'config.model.switch',
+    },
+    {
+      input: '只读核对联系人头像和私聊壁纸，读取真实资源状态，不要重新生成或设置。',
+      step: {
+        toolName: 'app.read_resource',
+        featureId: 'app.resource.read',
+        status: 'failed',
+        args: { resource: 'session', sessionName: '艾琳·洛', include: ['wallpaper'] },
+        output: { ok: false, reason: 'session_not_found' },
+      },
+      expected: 'session.list',
+    },
+    {
+      input: '先用 maid.memory.list 精确找到这条探针偏好，再用 maid.memory.archive 软归档。',
+      step: {
+        toolName: 'maid.memory.list',
+        featureId: 'maid.memory.list',
+        status: 'succeeded',
+        args: { query: '探针偏好' },
+        output: { ok: true, items: [{ id: 'memory-probe' }] },
+      },
+      expected: 'maid.memory.archive',
+    },
+  ];
+  for (const testCase of cases) {
+    const request = runtime.beginRequest({ input: testCase.input });
+    const snapshot = runtime.prepareDecision({
+      requestId: request.id,
+      input: testCase.input,
+      steps: [testCase.step],
+      phase: 'react',
+    });
+    assert.ok(
+      snapshot.candidateIds.has(testCase.expected),
+      `${testCase.expected} should remain available after ${testCase.step.toolName}`,
+    );
+    runtime.finishRequest(request.id, { ok: true });
+  }
+  console.log('ok - bounded cross-domain verification dependencies survive V4F ReAct transitions');
 }
 
 {
@@ -497,7 +615,13 @@ const createCatalogRoutingHarness = () => {
   const snapshot = runtime.prepareDecision({
     requestId: request.id,
     input: '看看当前状态',
-    context: { uiMode: 'chat', activePage: 'chat' },
+    context: {
+      uiMode: 'chat',
+      activePage: 'chat',
+      maidConversationContextRef: {
+        current: { maidContextVersion: 'maid-context-test' },
+      },
+    },
     phase: 'planner',
   });
   assert.equal(snapshot.mode, MAID_CAPABILITY_ROUTING_MODES.shadow);
@@ -525,6 +649,8 @@ const createCatalogRoutingHarness = () => {
   );
   assert.equal(retrievalLog.requests.length, 1);
   assert.equal(retrievalLog.requests.at(-1).cohort.riskLevel, 'low');
+  assert.equal(retrievalLog.decisions.at(-1).cohort.maidContextVersion, 'maid-context-test');
+  assert.equal(retrievalLog.requests.at(-1).cohort.maidContextVersion, 'maid-context-test');
   console.log('ok - Shadow computes candidates and hit metrics without changing full prompt features');
 }
 

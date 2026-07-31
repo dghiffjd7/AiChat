@@ -2,6 +2,7 @@ import { safeInvoke } from '../utils/tauri.js';
 
 export const CAPABILITY_RETRIEVAL_STORE_KEY = 'capability_retrieval_store_v2';
 export const CAPABILITY_RETRIEVAL_STORE_VERSION = 2;
+export const CAPABILITY_RETRIEVAL_COUNTER_VERSION = 1;
 // 开发期旧口径 key，load 时顺手清除（旧聚合不迁入 v2，见 PROGRESS 2026-07-10）。
 const LEGACY_STORE_KEYS = ['capability_retrieval_store_v1'];
 
@@ -9,8 +10,26 @@ const DEFAULT_MAX_SNAPSHOTS = 500;
 const DEFAULT_TTL_MS = 14 * 24 * 60 * 60 * 1000;
 const DEFAULT_FLUSH_DELAY_MS = 1500;
 const MAX_AGGREGATES = 160;
+const MAX_COUNTER_DAILY_BUCKETS = 45;
 
 const isPlainObject = value => Boolean(value && typeof value === 'object' && !Array.isArray(value));
+const getTauriInvoker = () => {
+  const g = typeof globalThis !== 'undefined' ? globalThis : window;
+  return g?.__TAURI__?.core?.invoke
+    || g?.__TAURI__?.invoke
+    || g?.__TAURI_INVOKE__
+    || g?.__TAURI_INTERNALS__?.invoke;
+};
+const hasStoreStateShape = value => Boolean(
+  isPlainObject(value)
+  && !value._tooLarge
+  && (
+    Object.prototype.hasOwnProperty.call(value, 'version')
+    || Object.prototype.hasOwnProperty.call(value, 'snapshots')
+    || Object.prototype.hasOwnProperty.call(value, 'aggregates')
+    || Object.prototype.hasOwnProperty.call(value, 'monotonicCounters')
+  )
+);
 
 const trim = (value, fallback = '') => {
   const text = String(value ?? '').trim();
@@ -62,6 +81,7 @@ const normalizeCohort = (raw = {}) => {
     language: trim(src.language).slice(0, 20),
     taskDomain: trim(src.taskDomain).slice(0, 60),
     riskLevel: trim(src.riskLevel).slice(0, 20),
+    maidContextVersion: trim(src.maidContextVersion, 'unknown').slice(0, 80),
   };
 };
 
@@ -102,6 +122,11 @@ export const normalizeCapabilityRetrievalSnapshot = (raw = {}, {
       rule: trim(src.correction.rule).slice(0, 60),
       confidence: Math.max(0, Math.min(1, finite(src.correction.confidence, 0))),
     } : null,
+    missAttribution: isPlainObject(src.missAttribution) && src.missAttribution.attributed !== false ? {
+      attributed: true,
+      code: trim(src.missAttribution.code, 'manually_attributed').slice(0, 80),
+      attributedAt: Math.max(0, finite(src.missAttribution.attributedAt, 0)),
+    } : null,
     cohort: normalizeCohort(src.cohort),
   };
 };
@@ -116,6 +141,7 @@ const buildAggregateKey = (snapshot = {}) => [
   trim(snapshot.cohort?.language, '-'),
   trim(snapshot.cohort?.taskDomain, '-'),
   trim(snapshot.cohort?.riskLevel, '-'),
+  trim(snapshot.cohort?.maidContextVersion, 'unknown'),
 ].join('|').slice(0, 420);
 
 const normalizeAggregate = (raw = {}, key = '') => {
@@ -159,6 +185,146 @@ const capSnapshots = (snapshots = [], maxSnapshots = DEFAULT_MAX_SNAPSHOTS) => {
   return [...misses, ...recentOthers].sort((a, b) => a.createdAt - b.createdAt);
 };
 
+const toUtcDay = value => {
+  const timestamp = Math.max(0, finite(value, 0));
+  try {
+    return new Date(timestamp).toISOString().slice(0, 10);
+  } catch {
+    return '1970-01-01';
+  }
+};
+
+const normalizeCounterFields = (raw = {}) => {
+  const src = isPlainObject(raw) ? raw : {};
+  const missCount = Math.max(0, Math.trunc(finite(src.missCount, 0)));
+  const attributedMissCount = Math.min(
+    missCount,
+    Math.max(0, Math.trunc(finite(src.attributedMissCount, 0))),
+  );
+  const unexplainedFallback = Math.max(0, missCount - attributedMissCount);
+  const unexplainedMissCount = Math.min(
+    unexplainedFallback,
+    Math.max(0, Math.trunc(finite(src.unexplainedMissCount, unexplainedFallback))),
+  );
+  return {
+    decisionCount: Math.max(0, Math.trunc(finite(src.decisionCount, 0))),
+    validSelectionCount: Math.max(0, Math.trunc(finite(src.validSelectionCount, 0))),
+    hitCount: Math.max(0, Math.trunc(finite(src.hitCount, 0))),
+    missCount,
+    policyExcludedCount: Math.max(0, Math.trunc(finite(src.policyExcludedCount, 0))),
+    runCount: Math.max(0, Math.trunc(finite(src.runCount, 0))),
+    runCoveredCount: Math.max(0, Math.trunc(finite(src.runCoveredCount, 0))),
+    attributedMissCount,
+    unexplainedMissCount,
+  };
+};
+
+const normalizeDailyBuckets = raw => Object.fromEntries(
+  Object.entries(isPlainObject(raw) ? raw : {})
+    .filter(([day]) => /^\d{4}-\d{2}-\d{2}$/.test(day))
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .slice(-MAX_COUNTER_DAILY_BUCKETS)
+    .map(([day, value]) => [day, {
+      day,
+      ...normalizeCounterFields(value),
+    }]),
+);
+
+const buildMonotonicPoolKey = (raw = {}) => [
+  trim(raw.retrieverVersion, 'unknown'),
+  trim(raw.cohort?.maidContextVersion || raw.maidContextVersion, 'unknown'),
+  trim(raw.mode, 'shadow'),
+].join('|').slice(0, 240);
+
+const normalizeMonotonicPool = (raw = {}, key = '') => {
+  const src = isPlainObject(raw) ? raw : {};
+  return {
+    key: trim(src.key || key).slice(0, 240),
+    retrieverVersion: trim(src.retrieverVersion, 'unknown').slice(0, 80),
+    maidContextVersion: trim(src.maidContextVersion, 'unknown').slice(0, 80),
+    mode: trim(src.mode, 'shadow').slice(0, 40),
+    firstSeenAt: Math.max(0, finite(src.firstSeenAt, 0)),
+    lastSeenAt: Math.max(0, finite(src.lastSeenAt, 0)),
+    ...normalizeCounterFields(src),
+    dailyBuckets: normalizeDailyBuckets(src.dailyBuckets),
+  };
+};
+
+const normalizeMonotonicCounters = (raw = {}, { now = Date.now } = {}) => {
+  const currentTime = Math.max(0, finite(now?.(), Date.now()));
+  const src = isPlainObject(raw) && Number(raw.version || 0) === CAPABILITY_RETRIEVAL_COUNTER_VERSION
+    ? raw
+    : {};
+  return {
+    version: CAPABILITY_RETRIEVAL_COUNTER_VERSION,
+    startedAt: Math.max(0, finite(src.startedAt, currentTime)),
+    pools: Object.fromEntries(
+      Object.entries(isPlainObject(src.pools) ? src.pools : {})
+        .map(([key, value]) => [key, normalizeMonotonicPool(value, key)]),
+    ),
+  };
+};
+
+const ensureMonotonicPool = (measurement, raw = {}, timestamp = 0) => {
+  const key = buildMonotonicPoolKey(raw);
+  const pool = normalizeMonotonicPool(measurement.pools[key], key);
+  pool.retrieverVersion = trim(raw.retrieverVersion, pool.retrieverVersion);
+  pool.maidContextVersion = trim(
+    raw.cohort?.maidContextVersion || raw.maidContextVersion,
+    pool.maidContextVersion,
+  );
+  pool.mode = trim(raw.mode, pool.mode);
+  const seenAt = Math.max(0, finite(timestamp, 0));
+  pool.firstSeenAt = pool.firstSeenAt > 0
+    ? Math.min(pool.firstSeenAt, seenAt || pool.firstSeenAt)
+    : seenAt;
+  pool.lastSeenAt = Math.max(pool.lastSeenAt, seenAt);
+  measurement.pools[key] = pool;
+  return pool;
+};
+
+const ensureDailyBucket = (pool, timestamp = 0) => {
+  const day = toUtcDay(timestamp);
+  const bucket = {
+    day,
+    ...normalizeCounterFields(pool.dailyBuckets?.[day]),
+  };
+  pool.dailyBuckets = {
+    ...(pool.dailyBuckets || {}),
+    [day]: bucket,
+  };
+  pool.dailyBuckets = normalizeDailyBuckets(pool.dailyBuckets);
+  return pool.dailyBuckets[day] || bucket;
+};
+
+const incrementDecisionCounters = (pool, snapshot) => {
+  const bucket = ensureDailyBucket(pool, snapshot.createdAt);
+  pool.decisionCount += 1;
+  bucket.decisionCount += 1;
+  if (snapshot.policyExcluded) {
+    pool.policyExcludedCount += 1;
+    bucket.policyExcludedCount += 1;
+    return;
+  }
+  if (!snapshot.validSelection) return;
+  pool.validSelectionCount += 1;
+  bucket.validSelectionCount += 1;
+  if (snapshot.candidateHit) {
+    pool.hitCount += 1;
+    bucket.hitCount += 1;
+    return;
+  }
+  pool.missCount += 1;
+  bucket.missCount += 1;
+  if (snapshot.missAttribution) {
+    pool.attributedMissCount += 1;
+    bucket.attributedMissCount += 1;
+  } else {
+    pool.unexplainedMissCount += 1;
+    bucket.unexplainedMissCount += 1;
+  }
+};
+
 export const normalizeCapabilityRetrievalStoreState = (raw = {}, {
   now = Date.now,
   maxSnapshots = DEFAULT_MAX_SNAPSHOTS,
@@ -185,6 +351,7 @@ export const normalizeCapabilityRetrievalStoreState = (raw = {}, {
     updatedAt: Math.max(0, finite(src.updatedAt, currentTime)),
     snapshots: cappedSnapshots,
     aggregates,
+    monotonicCounters: normalizeMonotonicCounters(src.monotonicCounters, { now }),
   };
 };
 
@@ -236,6 +403,7 @@ export class CapabilityRetrievalStore {
       ttlMs: this.ttlMs,
     });
     this.loaded = false;
+    this.persistenceBlocked = false;
     this.writeChain = Promise.resolve();
     this.flushTimer = null;
   }
@@ -246,18 +414,52 @@ export class CapabilityRetrievalStore {
         this.storage?.removeItem?.(legacyKey);
       } catch {}
     }
+    const expectsKv = typeof getTauriInvoker() === 'function';
+    const localRaw = readLocalJson(this.storage, CAPABILITY_RETRIEVAL_STORE_KEY);
     let raw = null;
+    let kvMissing = false;
+    let kvReadUncertain = false;
+    let localSelectedOverKv = false;
     try {
-      raw = await this.loadKv?.(CAPABILITY_RETRIEVAL_STORE_KEY);
-      if (raw?._tooLarge) raw = null;
-    } catch {}
-    if (!raw) raw = readLocalJson(this.storage, CAPABILITY_RETRIEVAL_STORE_KEY);
+      const kv = await this.loadKv?.(CAPABILITY_RETRIEVAL_STORE_KEY);
+      if (hasStoreStateShape(kv)) {
+        const localIsNewer = hasStoreStateShape(localRaw)
+          && Number(localRaw.updatedAt || 0) > Number(kv.updatedAt || 0);
+        localSelectedOverKv = localIsNewer;
+        raw = localIsNewer ? localRaw : kv;
+      } else if (isPlainObject(kv) && !Object.keys(kv).length) {
+        kvMissing = true;
+      } else if (expectsKv) {
+        kvReadUncertain = true;
+      }
+    } catch {
+      kvReadUncertain = expectsKv;
+    }
+    if (!raw) raw = localRaw;
+    this.persistenceBlocked = kvReadUncertain;
+    const needsCounterInitialization = Number(raw?.monotonicCounters?.version || 0)
+      !== CAPABILITY_RETRIEVAL_COUNTER_VERSION;
     this.state = normalizeCapabilityRetrievalStoreState(raw || {}, {
       now: this.now,
       maxSnapshots: this.maxSnapshots,
       ttlMs: this.ttlMs,
     });
     this.loaded = true;
+    if (expectsKv && !kvReadUncertain) {
+      const shouldBackfillLocal = hasStoreStateShape(localRaw) && (
+        kvMissing
+        || localSelectedOverKv
+      );
+      if (shouldBackfillLocal) {
+        try {
+          await this.saveKv?.(CAPABILITY_RETRIEVAL_STORE_KEY, this.exportState());
+          this.storage?.removeItem?.(CAPABILITY_RETRIEVAL_STORE_KEY);
+        } catch {}
+      } else if (hasStoreStateShape(raw)) {
+        try { this.storage?.removeItem?.(CAPABILITY_RETRIEVAL_STORE_KEY); } catch {}
+      }
+    }
+    if (needsCounterInitialization) this.scheduleFlush();
     return this.exportState();
   }
 
@@ -284,6 +486,7 @@ export class CapabilityRetrievalStore {
     const snapshot = normalizeCapabilityRetrievalSnapshot(raw, { now: this.now });
     if (!snapshot.id) return null;
     const existingIndex = this.state.snapshots.findIndex(item => item.id === snapshot.id);
+    const isNewSnapshot = existingIndex < 0;
     if (existingIndex >= 0) this.state.snapshots[existingIndex] = snapshot;
     else this.state.snapshots.push(snapshot);
     const currentTime = this.now();
@@ -324,6 +527,14 @@ export class CapabilityRetrievalStore {
     }
     aggregate.updatedAt = this.now();
     this.state.aggregates[key] = aggregate;
+    if (isNewSnapshot) {
+      const pool = ensureMonotonicPool(
+        this.state.monotonicCounters,
+        snapshot,
+        snapshot.createdAt || currentTime,
+      );
+      incrementDecisionCounters(pool, snapshot);
+    }
     this.scheduleFlush();
     return clone(snapshot);
   }
@@ -346,9 +557,67 @@ export class CapabilityRetrievalStore {
     if (src.allValidSelectionsCovered === true) aggregate.runCoveredCount += 1;
     aggregate.updatedAt = this.now();
     this.state.aggregates[key] = aggregate;
+    const currentTime = this.now();
+    const pool = ensureMonotonicPool(
+      this.state.monotonicCounters,
+      {
+        retrieverVersion: aggregate.retrieverVersion,
+        mode: aggregate.mode,
+        cohort: aggregate.cohort,
+      },
+      currentTime,
+    );
+    const bucket = ensureDailyBucket(pool, currentTime);
+    pool.runCount += 1;
+    bucket.runCount += 1;
+    if (src.allValidSelectionsCovered === true) {
+      pool.runCoveredCount += 1;
+      bucket.runCoveredCount += 1;
+    }
     this.state.updatedAt = this.now();
     this.scheduleFlush();
     return clone(aggregate);
+  }
+
+  recordMissAttribution(snapshotId = '', raw = {}) {
+    this.ensureLoaded();
+    const id = trim(snapshotId);
+    if (!id) return null;
+    const snapshot = this.state.snapshots.find(item => item.id === id);
+    if (
+      !snapshot
+      || !snapshot.metricEligible
+      || snapshot.policyExcluded
+      || !snapshot.validSelection
+      || snapshot.candidateHit
+    ) {
+      return null;
+    }
+    if (snapshot.missAttribution) return clone(snapshot);
+
+    snapshot.missAttribution = {
+      attributed: true,
+      code: trim(raw?.code, 'manually_attributed').slice(0, 80),
+      attributedAt: Math.max(0, finite(raw?.attributedAt, this.now())),
+    };
+    const pool = ensureMonotonicPool(
+      this.state.monotonicCounters,
+      snapshot,
+      snapshot.createdAt || this.now(),
+    );
+    const bucket = ensureDailyBucket(pool, snapshot.createdAt || this.now());
+    if (pool.unexplainedMissCount > 0) {
+      pool.unexplainedMissCount -= 1;
+      pool.attributedMissCount += 1;
+    }
+    if (bucket.unexplainedMissCount > 0) {
+      bucket.unexplainedMissCount -= 1;
+      bucket.attributedMissCount += 1;
+    }
+    pool.lastSeenAt = Math.max(pool.lastSeenAt, snapshot.missAttribution.attributedAt);
+    this.state.updatedAt = this.now();
+    this.scheduleFlush();
+    return clone(snapshot);
   }
 
   listSnapshots({ requestId = '', limit = 0 } = {}) {
@@ -364,10 +633,44 @@ export class CapabilityRetrievalStore {
   getStats() {
     this.ensureLoaded();
     const aggregates = Object.values(this.state.aggregates).map(item => clone(item));
+    const monotonicPools = Object.values(this.state.monotonicCounters?.pools || {})
+      .map(item => clone(item))
+      .sort((a, b) => Number(b?.lastSeenAt || 0) - Number(a?.lastSeenAt || 0));
     return {
       snapshotCount: this.state.snapshots.length,
       aggregateCount: aggregates.length,
       aggregates,
+      counterVersion: this.state.monotonicCounters?.version || CAPABILITY_RETRIEVAL_COUNTER_VERSION,
+      counterStartedAt: Number(this.state.monotonicCounters?.startedAt || 0),
+      monotonicPools,
+    };
+  }
+
+  getMonotonicStats({ rollingDays = 14 } = {}) {
+    this.ensureLoaded();
+    const days = Math.max(1, Math.min(MAX_COUNTER_DAILY_BUCKETS, Math.trunc(finite(rollingDays, 14))));
+    const cutoff = toUtcDay(this.now() - ((days - 1) * 24 * 60 * 60 * 1000));
+    const pools = Object.values(this.state.monotonicCounters?.pools || {}).map((item) => {
+      const pool = clone(item, {});
+      const rolling = normalizeCounterFields({});
+      Object.entries(pool.dailyBuckets || {}).forEach(([day, bucket]) => {
+        if (day < cutoff) return;
+        const normalized = normalizeCounterFields(bucket);
+        Object.keys(rolling).forEach((key) => {
+          rolling[key] += normalized[key];
+        });
+      });
+      return {
+        ...pool,
+        rollingDays: days,
+        rolling,
+      };
+    });
+    return {
+      version: this.state.monotonicCounters?.version || CAPABILITY_RETRIEVAL_COUNTER_VERSION,
+      startedAt: Number(this.state.monotonicCounters?.startedAt || 0),
+      rollingDays: days,
+      pools,
     };
   }
 
@@ -378,6 +681,7 @@ export class CapabilityRetrievalStore {
       updatedAt: this.now(),
       snapshots: [],
       aggregates: {},
+      monotonicCounters: normalizeMonotonicCounters({}, { now: this.now }),
     });
   }
 
@@ -392,6 +696,21 @@ export class CapabilityRetrievalStore {
       ttlMs: this.ttlMs,
     });
     const payload = this.exportState();
+    const expectsKv = typeof getTauriInvoker() === 'function';
+    if (this.persistenceBlocked) {
+      writeLocalJson(this.storage, CAPABILITY_RETRIEVAL_STORE_KEY, payload);
+      return false;
+    }
+    if (expectsKv) {
+      try {
+        await this.saveKv?.(CAPABILITY_RETRIEVAL_STORE_KEY, payload);
+        try { this.storage?.removeItem?.(CAPABILITY_RETRIEVAL_STORE_KEY); } catch {}
+        return true;
+      } catch {
+        writeLocalJson(this.storage, CAPABILITY_RETRIEVAL_STORE_KEY, payload);
+        return false;
+      }
+    }
     writeLocalJson(this.storage, CAPABILITY_RETRIEVAL_STORE_KEY, payload);
     try {
       await this.saveKv?.(CAPABILITY_RETRIEVAL_STORE_KEY, payload);

@@ -2746,8 +2746,8 @@ export const createAppContentAgentTools = ({
     capabilities: {
       read: true,
       write: true,
-      network: false,
-      cost: 'none',
+      network: true,
+      cost: 'variable',
       undo: 'manual_delete',
       modelContext: 'none',
       confirmation: 'allow_once',
@@ -2773,9 +2773,12 @@ export const createAppContentAgentTools = ({
         avatar: { type: 'string', maxLength: 500000 },
         open: { type: 'boolean' },
         triggerReply: { type: 'boolean' },
+        waitForReply: { type: 'boolean' },
       },
     },
-    execute: async (args = {}) => {
+    timeoutMs: 180000,
+    timeoutErrorCode: 'generation_failed',
+    execute: async (args = {}, context = {}) => {
       const content = trim(args.content || args.message || args.text);
       if (!content) return { ok: false, sent: false, reason: 'missing_content' };
       const rawSessionId = trim(args.sessionId || args.sessionName || args.target || args.chatName || chatStore?.getCurrent?.());
@@ -2788,6 +2791,7 @@ export const createAppContentAgentTools = ({
       const role = ['assistant', 'system'].includes(trim(args.role)) ? trim(args.role) : 'user';
       const shouldTriggerReply = role === 'user' && args.triggerReply !== false && typeof sendChatMessage === 'function';
       if (shouldTriggerReply) {
+        const waitForReply = args.waitForReply !== false;
         chatStore?.switchSession?.(sessionId);
         setActiveSession?.(sessionId);
         if (args.open !== false && typeof enterChatRoom === 'function') {
@@ -2798,17 +2802,31 @@ export const createAppContentAgentTools = ({
           sessionId,
           source: 'maid',
           open: args.open !== false,
-          waitForReply: false,
+          waitForReply,
+          ...(context?.signal ? { signal: context.signal } : {}),
         });
         const sent = sendResult === true || sendResult?.ok === true || sendResult?.sent === true;
-        if (!sent) {
+        const completionOutcome = trim(sendResult?.completionOutcome, sent ? 'request_triggered' : '');
+        const cancelled = sendResult?.cancelled === true;
+        const failureCode = trim(
+          sendResult?.failureCode,
+          cancelled ? 'user_aborted' : '',
+        );
+        const completionFailed = sendResult?.ok === false || cancelled || [
+          'protocol_rejected',
+          'repair_failed',
+          'blocked_by_config',
+        ].includes(completionOutcome);
+        if (!sent || completionFailed) {
           return {
             ok: false,
-            sent: false,
-            requested: false,
-            requestTriggered: false,
+            sent,
+            requested: sendResult?.requested === true || sendResult?.requestTriggered === true,
+            requestTriggered: sendResult?.requestTriggered === true,
             reason: trim(sendResult?.reason || sendResult?.message, 'send_pipeline_failed'),
-            ...(sendResult?.cancelled === true ? { cancelled: true } : {}),
+            ...(completionOutcome ? { completionOutcome } : {}),
+            ...(failureCode ? { failureCode } : {}),
+            ...(cancelled ? { cancelled: true } : {}),
             ...(trim(sendResult?.message) ? { message: trim(sendResult.message) } : {}),
             sessionId,
             role,
@@ -2821,6 +2839,20 @@ export const createAppContentAgentTools = ({
           sent: true,
           requested: true,
           requestTriggered: true,
+          completionOutcome,
+          ...(Array.isArray(sendResult?.assistantMessageIds)
+            ? { assistantMessageIds: sendResult.assistantMessageIds.map(item => trim(item)).filter(Boolean) }
+            : {}),
+          ...(Array.isArray(sendResult?.assistantMessageRefs)
+            ? {
+              assistantMessageRefs: sendResult.assistantMessageRefs
+                .map(item => ({
+                  sessionId: trim(item?.sessionId || item?.targetSessionId),
+                  messageId: trim(item?.messageId || item?.id),
+                }))
+                .filter(item => item.sessionId && item.messageId),
+            }
+            : {}),
           sessionId,
           role,
           content,
@@ -2858,9 +2890,11 @@ export const createAppContentAgentTools = ({
         content,
       };
     },
-    summarizeResult: result => result?.sent
-      ? `sent message to ${trim(result?.sessionId, '-')}`
-      : `send message failed: ${trim(result?.reason, 'unknown')}`,
+    summarizeResult: result => result?.cancelled === true
+      ? `send message cancelled: ${trim(result?.failureCode || result?.reason, 'user_aborted')}`
+      : (result?.sent
+        ? `sent message to ${trim(result?.sessionId, '-')}`
+        : `send message failed: ${trim(result?.reason, 'unknown')}`),
   },
   {
     name: 'chat.generate_image',

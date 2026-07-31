@@ -1262,9 +1262,15 @@ const createRuntime = ({ chatStore, sessionId, messageVars, initialVars, state, 
     try {
       const worldId = String(worldData.name || targetWorld || appBridge?.currentWorldId || '').trim();
       if (!readOnly && worldId && appBridge?.worldStore?.save) {
-        appBridge.worldStore.save(worldId, { ...worldData, entries: worldData.entries });
+        Promise.resolve(
+          appBridge.worldStore.save(worldId, { ...worldData, entries: worldData.entries }),
+        ).catch((error) => {
+          logger.warn('template activewi worldbook save failed', error);
+        });
       }
-    } catch {}
+    } catch (error) {
+      logger.warn('template activewi worldbook save failed', error);
+    }
     return entry;
   };
 
@@ -1490,7 +1496,15 @@ const applyWorldUpdates = (updates = []) => {
       mutated = true;
     });
     if (mutated) {
-      worldStore.save(worldId, { ...world, entries: world.entries });
+      try {
+        Promise.resolve(
+          worldStore.save(worldId, { ...world, entries: world.entries }),
+        ).catch((error) => {
+          logger.warn('template worldbook update save failed', error);
+        });
+      } catch (error) {
+        logger.warn('template worldbook update save failed', error);
+      }
     }
   });
 };

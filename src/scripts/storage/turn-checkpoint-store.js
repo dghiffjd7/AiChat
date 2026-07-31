@@ -10,6 +10,59 @@ const MAX_BRANCH_TEXT_CHARS = 220_000;
 const COMPACT_RECENT_TURNS = 30;
 const ALLOWED_CHECKPOINT_STATES = new Set(['provisional', 'final']);
 const ALLOWED_REPLY_STATES = new Set(['complete', 'partial_cancelled', 'failed', 'restored']);
+const KV_LOAD_RETRY_DELAYS = [40, 120];
+const LOCAL_MIGRATION_YIELD_EVERY = 12;
+
+const getTauriInvoker = () => {
+  const g = typeof globalThis !== 'undefined' ? globalThis : window;
+  return g?.__TAURI__?.core?.invoke
+    || g?.__TAURI__?.invoke
+    || g?.__TAURI_INVOKE__
+    || g?.__TAURI_INTERNALS__?.invoke;
+};
+
+const isPlainRecord = value => Boolean(
+  value
+  && typeof value === 'object'
+  && !Array.isArray(value)
+);
+
+const hasCheckpointStateShape = value => Boolean(
+  isPlainRecord(value)
+  && !value._tooLarge
+  && (
+    Object.prototype.hasOwnProperty.call(value, 'checkpoints')
+    || Object.prototype.hasOwnProperty.call(value, 'pointer')
+    || Object.prototype.hasOwnProperty.call(value, 'baselineSnapshotId')
+    || Object.prototype.hasOwnProperty.call(value, 'version')
+  )
+);
+
+const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
+const loadKvWithRetry = async key => {
+  let lastError = null;
+  for (let attempt = 0; attempt <= KV_LOAD_RETRY_DELAYS.length; attempt += 1) {
+    try {
+      return await safeInvoke('load_kv', { name: key });
+    } catch (err) {
+      lastError = err;
+      if (attempt < KV_LOAD_RETRY_DELAYS.length) await wait(KV_LOAD_RETRY_DELAYS[attempt]);
+    }
+  }
+  throw lastError || new Error('turn checkpoint load_kv failed');
+};
+
+const scheduleIdle = runner => {
+  if (typeof runner !== 'function') return;
+  try {
+    const g = typeof globalThis !== 'undefined' ? globalThis : window;
+    if (typeof g?.requestIdleCallback === 'function') {
+      g.requestIdleCallback(() => runner(), { timeout: 1_500 });
+      return;
+    }
+  } catch {}
+  setTimeout(() => runner(), 600);
+};
 
 const readLocalJson = key => {
   try {
@@ -30,6 +83,17 @@ const readLocalJson = key => {
   }
 };
 
+const readLocalJsonUnbounded = key => {
+  try {
+    const raw = globalThis?.localStorage?.getItem?.(key);
+    if (!raw || typeof raw !== 'string') return null;
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' ? parsed : null;
+  } catch {
+    return null;
+  }
+};
+
 const writeLocalJson = (key, value) => {
   try {
     const json = JSON.stringify(value);
@@ -43,6 +107,26 @@ const writeLocalJson = (key, value) => {
     return false;
   }
 };
+
+const writeLocalRecoveryJson = (key, value) => {
+  try {
+    globalThis?.localStorage?.setItem?.(key, JSON.stringify(value));
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+const stableSortObject = value => {
+  if (Array.isArray(value)) return value.map(stableSortObject);
+  if (!value || typeof value !== 'object') return value;
+  return Object.keys(value).sort().reduce((acc, key) => {
+    acc[key] = stableSortObject(value[key]);
+    return acc;
+  }, {});
+};
+
+const canonicalJson = value => JSON.stringify(stableSortObject(value));
 
 export const checkpointHashString = (value = '') => {
   const input = String(value || '');
@@ -182,6 +266,100 @@ const normalizeSessionState = (sessionId = '', input = {}) => {
   };
 };
 
+const listLocalCheckpointKeys = () => {
+  const storage = globalThis?.localStorage;
+  const length = Number(storage?.length || 0);
+  if (!storage || !Number.isFinite(length) || length <= 0 || typeof storage.key !== 'function') return [];
+  const prefix = `${BASE_STORE_KEY}__`;
+  const keys = [];
+  for (let index = 0; index < length; index += 1) {
+    const key = String(storage.key(index) || '');
+    if (key.startsWith(prefix)) keys.push(key);
+  }
+  return keys;
+};
+
+export const migrateTurnCheckpointLocalMirrors = async () => {
+  const result = {
+    scanned: 0,
+    removed: 0,
+    backfilled: 0,
+    retained: 0,
+  };
+  if (typeof getTauriInvoker() !== 'function') return result;
+
+  const storage = globalThis?.localStorage;
+  const keys = listLocalCheckpointKeys();
+  for (let index = 0; index < keys.length; index += 1) {
+    const key = keys[index];
+    result.scanned += 1;
+    const localState = readLocalJsonUnbounded(key);
+    if (!hasCheckpointStateShape(localState)) {
+      result.retained += 1;
+      continue;
+    }
+
+    let kv = null;
+    try {
+      kv = await loadKvWithRetry(key);
+    } catch (err) {
+      logger.debug('turn checkpoint local migration read skipped', { key, error: err });
+      result.retained += 1;
+      continue;
+    }
+
+    if (hasCheckpointStateShape(kv)) {
+      if (canonicalJson(kv) !== canonicalJson(localState)) {
+        logger.warn('turn checkpoint local/KV conflict retained for recovery', { key });
+        result.retained += 1;
+        continue;
+      }
+    } else if (isPlainRecord(kv) && !Object.keys(kv).length) {
+      const sessionId = String(localState.sessionId || '').trim();
+      try {
+        await safeInvoke('save_kv', {
+          name: key,
+          data: normalizeSessionState(sessionId, localState),
+        });
+        result.backfilled += 1;
+      } catch (err) {
+        logger.debug('turn checkpoint local migration backfill skipped', { key, error: err });
+        result.retained += 1;
+        continue;
+      }
+    } else {
+      result.retained += 1;
+      continue;
+    }
+
+    try {
+      storage?.removeItem?.(key);
+      result.removed += 1;
+    } catch {
+      result.retained += 1;
+    }
+
+    if ((index + 1) % LOCAL_MIGRATION_YIELD_EVERY === 0) {
+      await wait(0);
+    }
+  }
+  return result;
+};
+
+let localCheckpointMigrationScheduled = false;
+const scheduleTurnCheckpointLocalMigration = () => {
+  if (localCheckpointMigrationScheduled || typeof getTauriInvoker() !== 'function') return;
+  localCheckpointMigrationScheduled = true;
+  scheduleIdle(async () => {
+    try {
+      const result = await migrateTurnCheckpointLocalMirrors();
+      if (result.scanned) logger.info('turn checkpoint local migration complete', result);
+    } catch (err) {
+      logger.warn('turn checkpoint local migration failed', err);
+    }
+  });
+};
+
 const collectCheckpointSnapshotIdsByField = (state = {}, field = 'memorySnapshotId') => {
   const ids = new Set();
   const checkpoints = state?.checkpoints && typeof state.checkpoints === 'object' ? state.checkpoints : {};
@@ -213,6 +391,8 @@ export class TurnCheckpointStore {
     this.cache = new Map();
     this.loaded = new Set();
     this.writeChains = new Map();
+    this.persistenceBlocked = new Set();
+    scheduleTurnCheckpointLocalMigration();
   }
 
   async setScope(scopeId = '') {
@@ -222,6 +402,7 @@ export class TurnCheckpointStore {
     this.cache.clear();
     this.loaded.clear();
     this.writeChains.clear();
+    this.persistenceBlocked.clear();
   }
 
   _getStoreKey(sessionId = '') {
@@ -233,14 +414,57 @@ export class TurnCheckpointStore {
     if (!sid) return normalizeSessionState('', {});
     if (this.loaded.has(sid) && this.cache.has(sid)) return this.cache.get(sid);
     const key = this._getStoreKey(sid);
+    const expectsKv = typeof getTauriInvoker() === 'function';
     let payload = null;
-    try {
-      const kv = await safeInvoke('load_kv', { name: key });
-      if (kv && typeof kv === 'object' && !kv._tooLarge) payload = kv;
-    } catch (err) {
-      logger.debug('turn checkpoint store hydrate skipped (可能非 Tauri)', err);
+    let localPayload = expectsKv ? readLocalJsonUnbounded(key) : readLocalJson(key);
+
+    if (expectsKv) {
+      try {
+        const kv = await loadKvWithRetry(key);
+        if (hasCheckpointStateShape(kv)) {
+          const localIsNewer = hasCheckpointStateShape(localPayload)
+            && Number(localPayload.updatedAt || 0) > Number(kv.updatedAt || 0);
+          if (localIsNewer) {
+            try {
+              payload = normalizeSessionState(sid, localPayload);
+              await safeInvoke('save_kv', { name: key, data: payload });
+              try { globalThis?.localStorage?.removeItem?.(key); } catch {}
+            } catch (err) {
+              payload = localPayload;
+              this.persistenceBlocked.add(sid);
+              logger.warn('turn checkpoint newer local recovery could not reach KV; writes blocked', { key, error: err });
+            }
+          } else {
+            payload = kv;
+            const exactMirror = hasCheckpointStateShape(localPayload)
+              && canonicalJson(localPayload) === canonicalJson(kv);
+            const localNotNewer = hasCheckpointStateShape(localPayload)
+              && Number(localPayload.updatedAt || 0) < Number(kv.updatedAt || 0);
+            if (!localPayload || exactMirror || localNotNewer) {
+              try { globalThis?.localStorage?.removeItem?.(key); } catch {}
+            }
+          }
+        } else if (isPlainRecord(kv) && !Object.keys(kv).length) {
+          if (hasCheckpointStateShape(localPayload)) {
+            payload = normalizeSessionState(sid, localPayload);
+            try {
+              await safeInvoke('save_kv', { name: key, data: payload });
+              try { globalThis?.localStorage?.removeItem?.(key); } catch {}
+            } catch (err) {
+              this.persistenceBlocked.add(sid);
+              logger.warn('turn checkpoint local recovery could not reach KV; writes blocked', { key, error: err });
+            }
+          }
+        } else {
+          this.persistenceBlocked.add(sid);
+          logger.warn('turn checkpoint KV payload is uncertain; writes blocked', { key });
+        }
+      } catch (err) {
+        this.persistenceBlocked.add(sid);
+        logger.warn('turn checkpoint KV read failed; writes blocked', { key, error: err });
+      }
     }
-    if (!payload) payload = readLocalJson(key);
+    if (!payload) payload = localPayload;
     const state = normalizeSessionState(sid, payload || {});
     this.cache.set(sid, state);
     this.loaded.add(sid);
@@ -253,6 +477,14 @@ export class TurnCheckpointStore {
     const next = prev.then(task);
     this.writeChains.set(sid, next.catch(() => {}));
     return next;
+  }
+
+  _assertSessionWritable(sessionId = '') {
+    const sid = String(sessionId || '').trim();
+    if (!this.persistenceBlocked.has(sid)) return;
+    const error = new Error('回合检查点暂时无法读取，已阻止写入以保护现有数据。请重新载入 APP 后重试。');
+    error.code = 'turn_checkpoint_store_read_unavailable';
+    throw error;
   }
 
   _compactOldBranches(state) {
@@ -281,17 +513,22 @@ export class TurnCheckpointStore {
     const sid = String(sessionId || '').trim();
     if (!sid) return false;
     const state = await this._loadSession(sid);
+    this._assertSessionWritable(sid);
     state.updatedAt = Date.now();
     this._compactOldBranches(state);
     const key = this._getStoreKey(sid);
-    writeLocalJson(key, state);
-    try {
-      await safeInvoke('save_kv', { name: key, data: state });
-      return true;
-    } catch (err) {
-      logger.debug('turn checkpoint store save_kv skipped (可能非 Tauri)', err);
-      return false;
+    if (typeof getTauriInvoker() === 'function') {
+      try {
+        await safeInvoke('save_kv', { name: key, data: state });
+        try { globalThis?.localStorage?.removeItem?.(key); } catch {}
+        return true;
+      } catch (err) {
+        writeLocalRecoveryJson(key, state);
+        logger.debug('turn checkpoint store save_kv failed; retained local fallback', err);
+        return false;
+      }
     }
+    return writeLocalJson(key, state);
   }
 
   async getSessionState(sessionId = '') {
@@ -463,20 +700,28 @@ export class TurnCheckpointStore {
   async clearSession(sessionId = '') {
     const sid = String(sessionId || '').trim();
     if (!sid) return false;
+    await this._loadSession(sid);
+    this._assertSessionWritable(sid);
     const key = this._getStoreKey(sid);
-    this.cache.delete(sid);
-    this.loaded.delete(sid);
-    this.writeChains.delete(sid);
+    if (typeof getTauriInvoker() === 'function') {
+      try {
+        await safeInvoke('save_kv', { name: key, data: normalizeSessionState(sid, {}) });
+      } catch (err) {
+        logger.debug('turn checkpoint store clear save_kv failed; existing state retained', err);
+        return false;
+      }
+    }
     try {
       globalThis?.localStorage?.removeItem?.(key);
     } catch {}
-    try {
-      await safeInvoke('save_kv', { name: key, data: normalizeSessionState(sid, {}) });
+    this.cache.delete(sid);
+    this.loaded.delete(sid);
+    this.writeChains.delete(sid);
+    this.persistenceBlocked.delete(sid);
+    if (typeof getTauriInvoker() !== 'function') {
       return true;
-    } catch (err) {
-      logger.debug('turn checkpoint store clear save_kv skipped (可能非 Tauri)', err);
-      return false;
     }
+    return true;
   }
 
   async renameSession(oldSessionId = '', newSessionId = '') {
@@ -484,6 +729,9 @@ export class TurnCheckpointStore {
     const to = String(newSessionId || '').trim();
     if (!from || !to || from === to) return false;
     const state = await this._loadSession(from);
+    await this._loadSession(to);
+    this._assertSessionWritable(from);
+    this._assertSessionWritable(to);
     const checkpointsRaw = state?.checkpoints && typeof state.checkpoints === 'object' ? state.checkpoints : {};
     const checkpoints = {};
     Object.entries(checkpointsRaw).forEach(([assistantMessageId, checkpoint]) => {
@@ -511,15 +759,38 @@ export class TurnCheckpointStore {
       checkpoints,
     });
     const nextKey = this._getStoreKey(to);
-    writeLocalJson(nextKey, nextState);
-    try {
-      await safeInvoke('save_kv', { name: nextKey, data: nextState });
-    } catch (err) {
-      logger.debug('turn checkpoint store rename save_kv skipped (可能非 Tauri)', err);
+    const fromKey = this._getStoreKey(from);
+    if (typeof getTauriInvoker() === 'function') {
+      try {
+        await safeInvoke('save_kv', { name: nextKey, data: nextState });
+      } catch (err) {
+        writeLocalRecoveryJson(nextKey, nextState);
+        logger.debug('turn checkpoint store rename destination save failed; source retained', err);
+        return false;
+      }
+      try {
+        await safeInvoke('save_kv', { name: fromKey, data: normalizeSessionState(from, {}) });
+      } catch (err) {
+        try { globalThis?.localStorage?.removeItem?.(nextKey); } catch {}
+        this.cache.set(to, nextState);
+        this.loaded.add(to);
+        logger.debug('turn checkpoint store rename source clear failed; both states retained', err);
+        return false;
+      }
+      try {
+        globalThis?.localStorage?.removeItem?.(nextKey);
+        globalThis?.localStorage?.removeItem?.(fromKey);
+      } catch {}
+    } else {
+      if (!writeLocalJson(nextKey, nextState)) return false;
+      try { globalThis?.localStorage?.removeItem?.(fromKey); } catch {}
     }
     this.cache.set(to, nextState);
     this.loaded.add(to);
-    await this.clearSession(from);
+    this.cache.delete(from);
+    this.loaded.delete(from);
+    this.writeChains.delete(from);
+    this.persistenceBlocked.delete(from);
     return true;
   }
 }

@@ -71,6 +71,45 @@ const logger = { warn: () => {} };
 }
 
 {
+  const events = [];
+  let executionSignalAborted = false;
+  const registry = createAgentToolRegistry({
+    permissionEvaluator: createAgentPermissionEvaluator({
+      defaultDecision: AGENT_PERMISSION_DECISIONS.allow,
+    }),
+    logger,
+  });
+  registry.register({
+    name: 'chat.wait_forever',
+    timeoutMs: 5,
+    timeoutErrorCode: 'generation_failed',
+    execute: async (_args, context) => new Promise(resolve => {
+      context.signal.addEventListener('abort', () => {
+        executionSignalAborted = true;
+        resolve(false);
+      }, { once: true });
+    }),
+  });
+
+  assert.equal(registry.get('chat.wait_forever').timeoutErrorCode, 'generation_failed');
+  await assert.rejects(
+    registry.executeTool('chat.wait_forever', {}, {
+      emit: event => events.push(event),
+      runId: 'timeout-run',
+      stepId: 'timeout-step',
+    }),
+    error => (
+      error instanceof AgentToolError
+      && error.code === 'generation_failed'
+      && error.toolName === 'chat.wait_forever'
+    ),
+  );
+  assert.equal(executionSignalAborted, true, 'timeout must abort the signal passed to the underlying tool');
+  assert.equal(events.at(-1)?.status, 'failed', 'a provider timeout is a generation failure, not a user cancellation');
+  console.log('ok - agent tool registry maps declared timeout failures to a stable failure code');
+}
+
+{
   const registry = createAgentToolRegistry({
     permissionEvaluator: createAgentPermissionEvaluator({
       defaultDecision: AGENT_PERMISSION_DECISIONS.allow,

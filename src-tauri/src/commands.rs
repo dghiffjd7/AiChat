@@ -15,6 +15,7 @@ use std::fs::OpenOptions;
 use std::io::Cursor;
 use std::io::{Read, Seek, Write};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Manager, State, Window};
 use zip::write::FileOptions;
@@ -2777,6 +2778,54 @@ pub async fn delete_persona_card(app: AppHandle, id: String) -> Result<bool, Str
     Ok(false)
 }
 
+static KV_WRITE_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+fn write_file_atomically(file: &Path, contents: &[u8]) -> Result<(), String> {
+    let parent = file
+        .parent()
+        .ok_or_else(|| format!("KV 路径缺少父目录: {file:?}"))?;
+    fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    let file_name = file
+        .file_name()
+        .and_then(|value| value.to_str())
+        .ok_or_else(|| format!("KV 文件名无效: {file:?}"))?;
+
+    for _ in 0..8 {
+        let counter = KV_WRITE_COUNTER.fetch_add(1, Ordering::Relaxed);
+        let temp = parent.join(format!(
+            ".{file_name}.kv-write-{}-{counter}.tmp",
+            std::process::id()
+        ));
+        let mut handle = match OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temp)
+        {
+            Ok(handle) => handle,
+            Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(err) => return Err(err.to_string()),
+        };
+
+        let result = (|| -> std::io::Result<()> {
+            handle.write_all(contents)?;
+            handle.sync_all()?;
+            drop(handle);
+            fs::rename(&temp, file)?;
+            if let Ok(directory) = fs::File::open(parent) {
+                let _ = directory.sync_all();
+            }
+            Ok(())
+        })();
+        if let Err(err) = result {
+            let _ = fs::remove_file(&temp);
+            return Err(err.to_string());
+        }
+        return Ok(());
+    }
+
+    Err(format!("无法为 KV 写入创建临时文件: {file:?}"))
+}
+
 /// 通用 KV 持久化（前端清缓存后仍可讀）
 #[tauri::command]
 pub async fn save_kv(app: AppHandle, name: String, data: Value) -> Result<(), String> {
@@ -2785,18 +2834,8 @@ pub async fn save_kv(app: AppHandle, name: String, data: Value) -> Result<(), St
     let file = data_dir.join(format!("{name}.json"));
     let json = serde_json::to_string_pretty(&data).map_err(|e| e.to_string())?;
 
-    // 写入文件并强制刷新到磁盘
-    fs::write(&file, &json).map_err(|e| e.to_string())?;
-
-    // Android 上强制同步到磁盘
-    #[cfg(target_os = "android")]
-    {
-        if let Ok(f) = fs::File::open(&file) {
-            unsafe {
-                libc::fsync(f.as_raw_fd());
-            }
-        }
-    }
+    // 先在同目录完整写入并同步临时文件，再原子替换权威副本。
+    write_file_atomically(&file, json.as_bytes())?;
 
     if is_kv_debug_enabled() {
         eprintln!("[save_kv] 文件: {:?}, 大小: {} bytes", file, json.len());
@@ -4251,6 +4290,32 @@ mod tests {
             fs::create_dir_all(parent).unwrap();
         }
         fs::write(path, serde_json::to_vec(&value).unwrap()).unwrap();
+    }
+
+    #[test]
+    fn atomic_kv_write_replaces_existing_file_and_removes_temp_file() {
+        let data_dir = unique_temp_data_dir("atomic-kv-write");
+        let file = data_dir.join("state.json");
+        fs::write(&file, br#"{"version":"old"}"#).unwrap();
+
+        write_file_atomically(&file, br#"{"version":"new","complete":true}"#).unwrap();
+
+        assert_eq!(
+            fs::read_to_string(&file).unwrap(),
+            r#"{"version":"new","complete":true}"#,
+        );
+        let leftovers = fs::read_dir(&data_dir)
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|entry| {
+                entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with(".state.json.kv-write-")
+            })
+            .count();
+        assert_eq!(leftovers, 0);
+        let _ = fs::remove_dir_all(data_dir);
     }
 
     fn build_test_zip(entries: &[(&str, Option<&[u8]>)]) -> Vec<u8> {

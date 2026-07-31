@@ -8,7 +8,7 @@ import {
 } from './maid-capability-concept-retriever.js';
 
 export const MAID_CAPABILITY_ROUTING_CONFIG_KEY = 'maid_capability_routing_v1';
-export const MAID_CAPABILITY_RETRIEVER_VERSION = 'maid-capability-retriever-v3';
+export const MAID_CAPABILITY_RETRIEVER_VERSION = 'maid-capability-retriever-v4';
 
 export const MAID_CAPABILITY_ROUTING_MODES = Object.freeze({
   shadow: 'shadow',
@@ -552,6 +552,56 @@ const getMissingExplicitMessageSessions = (input = '', steps = []) => {
   ));
 };
 
+const getReactDependencyCapabilityIds = (input = '', steps = []) => {
+  const text = String(input || '').normalize('NFKC');
+  const source = Array.isArray(steps) ? steps : [];
+  const last = source.at(-1) || null;
+  if (!last) return [];
+  const ids = new Set();
+  const lastTool = trim(last?.toolName);
+  const lastOutputText = stableJson(last?.output || {});
+
+  if (
+    lastTool === 'session.list' &&
+    /(?:创建|新建|新增|建立).{0,32}(?:会话|聊天室|房间)/iu.test(text)
+  ) {
+    ids.add('session.create');
+  }
+  if (
+    lastTool === 'session.delete_many' &&
+    /(?:取消|验证|核对|仍(?:然)?存在|不应删除)/iu.test(text)
+  ) {
+    ids.add('session.list');
+  }
+  if (
+    lastTool === 'media.generate_image' &&
+    last?.status !== 'succeeded' &&
+    /(?:配置|渠道|模型|尺寸|比例|方形|横向|preset|profile|aspect)/iu.test(lastOutputText)
+  ) {
+    ids.add('config.model.switch');
+  }
+  if (
+    lastTool === 'app.read_resource' &&
+    last?.status !== 'succeeded' &&
+    /(?:session_not_found|会话不存在|聊天室不存在|无法解析.{0,12}(?:会话|聊天室))/iu.test(lastOutputText)
+  ) {
+    ids.add('session.list');
+  }
+  if (
+    lastTool === 'maid.memory.list' &&
+    /(?:maid\.memory\.archive|归档|忘掉|忘记|软归档)/iu.test(text)
+  ) {
+    ids.add('maid.memory.archive');
+  }
+  if (
+    ['app.read_resource', 'session.list'].includes(lastTool) &&
+    /(?:当前角色卡下|当前角色卡|当前身份).{0,32}(?:会话|聊天室|清单|列表)/iu.test(text)
+  ) {
+    ids.add('app.state.read');
+  }
+  return Array.from(ids);
+};
+
 const getFeatureById = (features = [], featureId = '') => {
   const target = canonicalToken(featureId);
   return (Array.isArray(features) ? features : []).find(feature => canonicalToken(feature?.id) === target) || null;
@@ -763,6 +813,14 @@ export const createMaidCapabilityRoutingRuntime = ({
         { pinned: true },
       );
     }
+    getReactDependencyCapabilityIds(primaryIntent, steps).forEach((featureId) => {
+      addRecord(
+        projectedById.get(featureId),
+        119,
+        'bounded_react_dependency',
+        { pinned: true },
+      );
+    });
 
     const stickyIds = state.usedFeatureIds.slice(-currentConfig.stickyLimit).reverse();
     stickyIds.forEach((featureId, index) => {
