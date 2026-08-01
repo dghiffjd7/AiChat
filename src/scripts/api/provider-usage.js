@@ -36,13 +36,21 @@ export const reportProviderUsage = (options, meta) => {
   const { body, model, provider, finishReason } = (meta && typeof meta === 'object') ? meta : {};
   const usage = body?.usage && typeof body.usage === 'object' ? body.usage : null;
   try {
-    cb({
+    const normalized = {
       provider: String(provider || ''),
       model: String(model || ''),
       finishReason: String(finishReason || ''),
       promptTokens: resolveProviderPromptTokens(usage),
       completionTokens: usage ? toNullableTokenCount(usage.completion_tokens ?? usage.output_tokens) : null,
       totalTokens: usage ? toNullableTokenCount(usage.total_tokens) : null,
-    });
+    };
+    const systemFingerprint = String(
+      body?.system_fingerprint
+      ?? body?.systemFingerprint
+      ?? body?.response_metadata?.system_fingerprint
+      ?? '',
+    ).trim();
+    if (systemFingerprint) normalized.systemFingerprint = systemFingerprint;
+    cb(normalized);
   } catch {}
 };

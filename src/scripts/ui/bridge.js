@@ -61,6 +61,10 @@ import {
   buildPromptTraceFromRequest,
 } from './chat/context-lineage-graph-utils.js';
 import {
+  buildCompletedResponseDiagnostics,
+  buildFirstTokenResponseDiagnostics,
+} from './chat/request-response-diagnostics-utils.js';
+import {
   normalizeRequestConfigUiMode,
   resolveRequestConfigProfileId,
 } from './chat/request-config-profile-utils.js';
@@ -3882,6 +3886,7 @@ class AppBridge {
       let calibrationRecorded = false;
       let calibrationEligible = true;
       requestOptions.onProviderUsage = (usage) => {
+        const completedAt = Date.now();
         let calibration = this.getTokenCalibration(config?.provider, config?.model);
         const actualPromptTokens = Math.trunc(Number(usage?.promptTokens));
         if (
@@ -3901,7 +3906,7 @@ class AppBridge {
         }
         this.lastGenerationUsage = {
           ...(usage && typeof usage === 'object' ? usage : {}),
-          latencyMs: Date.now() - generationStartedAt,
+          latencyMs: completedAt - generationStartedAt,
           estimatedPromptTokens: rawEstimatedPromptTokens,
           tokenCalibrationCoefficient: calibration.coefficient,
           tokenCalibrationSamples: calibration.samples,
@@ -3910,6 +3915,17 @@ class AppBridge {
         // （agent/压缩/图片）换成别的请求，盖过去会把别档模型的系数展示到错误面板上。
         if (this.lastRequest?.injectionAudit && this.lastRequest.requestId === nativeRequestId) {
           this.lastRequest.injectionAudit.calibration = { ...calibration };
+        }
+        if (this.lastRequest?.requestId === nativeRequestId) {
+          this.lastRequest.responseDiagnostics = buildCompletedResponseDiagnostics(
+            this.lastRequest.responseDiagnostics,
+            {
+              requestStartedAt: generationStartedAt,
+              completedAt,
+              usage: this.lastGenerationUsage,
+              stream: Boolean(config?.stream),
+            },
+          );
         }
       };
       const preparedRequest = requestClient?.prepareChatRequest?.(messages, requestOptions) || null;
@@ -4013,6 +4029,8 @@ class AppBridge {
           responsePrefix,
           client: requestClient,
           config,
+          requestId: nativeRequestId,
+          requestStartedAt: generationStartedAt,
         });
         return (async function* () {
           try {
@@ -4030,6 +4048,18 @@ class AppBridge {
           throw makeCancelledError('user');
         }
         const finalResponse = this.mergeAssistantPrefillResponse(responsePrefix, response);
+
+        if (this.lastRequest?.requestId === nativeRequestId && !this.lastRequest.responseDiagnostics?.completedAt) {
+          this.lastRequest.responseDiagnostics = buildCompletedResponseDiagnostics(
+            this.lastRequest.responseDiagnostics,
+            {
+              requestStartedAt: generationStartedAt,
+              completedAt: Date.now(),
+              usage: this.lastGenerationUsage,
+              stream: false,
+            },
+          );
+        }
 
         // 保存到历史记录
         await this.saveToHistory(originalInput, finalResponse);
@@ -4118,17 +4148,47 @@ class AppBridge {
     const streamConfig = streamMeta?.config && typeof streamMeta.config === 'object'
       ? streamMeta.config
       : (this.config?.get?.() || {});
+    const requestId = String(streamMeta?.requestId || genOptions?.nativeRequestId || '').trim();
+    const requestStartedAt = Number(streamMeta?.requestStartedAt) || Date.now();
 
     try {
       if (!requestClient?.streamChat) {
         throw new Error('请先配置 API 信息');
       }
       const stream = requestClient.streamChat(messages, genOptions);
-      for await (const chunk of this.applyAssistantPrefillToStream(stream, responsePrefix)) {
+      const bridge = this;
+      const measuredStream = (async function* () {
+        for await (const chunk of stream) {
+          if (bridge.lastRequest?.requestId === requestId && !bridge.lastRequest.responseDiagnostics?.firstTokenAt) {
+            bridge.lastRequest.responseDiagnostics = buildFirstTokenResponseDiagnostics(
+              bridge.lastRequest.responseDiagnostics,
+              {
+                requestStartedAt,
+                firstTokenAt: Date.now(),
+                stream: true,
+              },
+            );
+          }
+          yield chunk;
+        }
+      })();
+      for await (const chunk of this.applyAssistantPrefillToStream(measuredStream, responsePrefix)) {
         if (!isReasoningStreamEvent(chunk)) {
           fullResponse += String(chunk ?? '');
         }
         yield chunk;
+      }
+
+      if (this.lastRequest?.requestId === requestId && !this.lastRequest.responseDiagnostics?.completedAt) {
+        this.lastRequest.responseDiagnostics = buildCompletedResponseDiagnostics(
+          this.lastRequest.responseDiagnostics,
+          {
+            requestStartedAt,
+            completedAt: Date.now(),
+            usage: this.lastGenerationUsage,
+            stream: true,
+          },
+        );
       }
 
       // 流式完成后保存到历史记录

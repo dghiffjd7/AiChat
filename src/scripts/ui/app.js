@@ -439,6 +439,10 @@ import { createCreativeExecutionLaneRuntime } from './chat/creative-execution-la
 import { createExecutionFlowRuntime } from './chat/execution-flow-runtime-utils.js';
 import { createPromptPreviewRuntime } from './chat/prompt-preview-runtime-utils.js';
 import {
+  buildFullPromptDocument,
+  buildPromptOverviewView,
+} from './chat/prompt-preview-view-utils.js';
+import {
   formatMemoryInjectionAuditForCopy,
   renderMemoryInjectionAuditHtml,
 } from './chat/memory-injection-audit-view-utils.js';
@@ -15078,6 +15082,7 @@ Phase G（Frame 36）：循环衔接
     let overlay = null;
     let panel = null;
     let textarea = null;
+    let promptContentEl = null;
     let apiContentEl = null;
     let metaEl = null;
     let locateBtn = null;
@@ -15111,6 +15116,7 @@ Phase G（Frame 36）：循环衔接
     let lineageTextarea = null;
     let activeTab = 'prompt';
     let apiPlainText = '';
+    let promptPlainText = '';
     let lineagePlainText = '';
     let previewRequest = null;
     let previewLineageTrace = null;
@@ -15134,121 +15140,6 @@ Phase G（Frame 36）：循环衔接
     const LINEAGE_CATEGORY_PAGE_SIZE = 12;
 
     const escHtml = (s) => escapeHtml(s);
-
-    const truncateBase64 = (str) => {
-      if (typeof str !== 'string') return str;
-      return str.replace(/data:[^;]+;base64,[A-Za-z0-9+/=]{100,}/g, (match) => {
-        const ci = match.indexOf(',');
-        if (ci < 0) return match;
-        return `${match.slice(0, ci + 1)}...(${match.length - ci - 1} chars)`;
-      });
-    };
-
-    const stringifyContent = (content) => {
-      if (content === null || content === undefined) return '';
-      if (typeof content === 'string') return content;
-      if (Array.isArray(content)) {
-        return content.map(p => {
-          if (!p || typeof p !== 'object') return '';
-          if (p.type === 'text') return String(p.text || '');
-          if (p.type === 'image_url') {
-            const u = String(p.image_url?.url || '');
-            return u.startsWith('data:') ? '[image: base64]' : `[image: ${u}]`;
-          }
-          if (p.type === 'input_audio') return '[audio]';
-          try { return JSON.stringify(p); } catch { return '[content_part]'; }
-        }).filter(Boolean).join('\n');
-      }
-      try { return JSON.stringify(content, null, 2); } catch { return String(content); }
-    };
-
-    const fmtVal = (val) => {
-      const S = { str: '#f1fa8c', num: '#bd93f9', bool: '#ff5555', muted: '#6272a4', label: '#ff79c6', val: '#f8f8f2' };
-      if (val === null || val === undefined) return { h: `<span style="color:${S.muted}">null</span>`, p: 'null' };
-      if (typeof val === 'boolean') return { h: `<span style="color:${S.bool}">${val}</span>`, p: String(val) };
-      if (typeof val === 'number') return { h: `<span style="color:${S.num}">${val}</span>`, p: String(val) };
-      if (typeof val === 'string') return { h: `<span style="color:${S.str}">"${escHtml(val)}"</span>`, p: `"${val}"` };
-      if (typeof val === 'object') {
-        try {
-          const j = JSON.stringify(val, null, 2);
-          return { h: `<span style="color:${S.muted}">${escHtml(j)}</span>`, p: j };
-        } catch { return { h: `<span style="color:${S.muted}">[object]</span>`, p: '[object]' }; }
-      }
-      return { h: `<span style="color:${S.val}">${escHtml(String(val))}</span>`, p: String(val) };
-    };
-
-    const buildApiPayloadHtml = (req) => {
-      if (!req) return { html: '', plain: '' };
-      const sec = 'margin:0 0 2px 0; padding:8px 12px; font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace; font-size:12px; line-height:1.5;';
-      const lbl = 'color:#ff79c6; font-weight:bold;';
-      const mt = 'color:#6272a4;';
-      const sv = 'color:#f8f8f2;';
-      const ss = 'color:#f1fa8c;';
-      const sb = 'color:#ff5555;';
-      const rc = { system: '#ff79c6', user: '#50fa7b', assistant: '#8be9fd', tool: '#ffb86c' };
-      const parts = [], plain = [];
-      const at = req.at ? new Date(req.at).toLocaleString('zh-CN', { hour12: false }) : 'N/A';
-      if (req.injectionAudit) {
-        parts.push(renderMemoryInjectionAuditHtml(req.injectionAudit));
-        plain.push(formatMemoryInjectionAuditForCopy(req.injectionAudit));
-      }
-
-      let h = `<div style="${sec} background:#0f0f23; border-bottom:1px solid #282a36;">`;
-      h += `<span style="${mt}">// Request at ${escHtml(at)}</span><br>`;
-      h += `<span style="${lbl}">provider</span><span style="${mt}">: </span><span style="${ss}">"${escHtml(req.provider || '')}"</span><br>`;
-      h += `<span style="${lbl}">model</span><span style="${mt}">: </span><span style="${ss}">"${escHtml(req.model || '')}"</span><br>`;
-      if (req.baseUrl) h += `<span style="${lbl}">base_url</span><span style="${mt}">: </span><span style="${ss}">"${escHtml(req.baseUrl)}"</span><br>`;
-      h += `<span style="${lbl}">stream</span><span style="${mt}">: </span><span style="${sb}">${req.stream ? 'true' : 'false'}</span></div>`;
-      parts.push(h);
-      let hp = `// Request at ${at}\nprovider: "${req.provider || ''}"\nmodel: "${req.model || ''}"`;
-      if (req.baseUrl) hp += `\nbase_url: "${req.baseUrl}"`;
-      hp += `\nstream: ${req.stream}`;
-      plain.push(hp);
-
-      const allParams = { ...(req.options || {}), ...(req.requestOptions || {}) };
-      const skip = new Set(['signal', 'nativeRequestId']);
-      const entries = Object.entries(allParams).filter(([k, v]) => v !== undefined && !skip.has(k));
-      if (entries.length) {
-        let ph = `<div style="${sec} background:#1a1a2e; border-bottom:1px solid #282a36;"><span style="${mt}">// Generation Parameters</span><br>`;
-        let pp = '// Generation Parameters';
-        for (const [k, v] of entries) {
-          const f = fmtVal(v);
-          ph += `<span style="${lbl}">${escHtml(k)}</span><span style="${mt}">: </span>${f.h}<br>`;
-          pp += `\n${k}: ${f.p}`;
-        }
-        ph += '</div>';
-        parts.push(ph);
-        plain.push(pp);
-      }
-
-      const msgs = Array.isArray(req.messages) ? req.messages : [];
-      if (msgs.length) {
-        let mh = `<div style="${sec} background:#1a1a2e;"><span style="${mt}">// Messages (${msgs.length})</span><br><br>`;
-        let mp = `// Messages (${msgs.length})`;
-        for (let i = 0; i < msgs.length; i++) {
-          const m = msgs[i];
-          const role = String(m?.role || 'unknown');
-          const color = rc[role] || '#f8f8f2';
-          const txt = truncateBase64(stringifyContent(m?.content));
-          mh += `<div style="margin-bottom:12px; padding:8px; background:rgba(255,255,255,0.03); border-radius:6px; border-left:3px solid ${color};">`;
-          mh += `<div style="margin-bottom:4px;"><span style="color:${color}; font-weight:bold;">[${escHtml(role)}]</span> <span style="${mt}">#${i}</span></div>`;
-          mh += `<div style="${sv} white-space:pre-wrap; word-break:break-all;">${escHtml(txt)}</div></div>`;
-          mp += `\n\n[${role}] #${i}\n${txt}`;
-        }
-        mh += '</div>';
-        parts.push(mh);
-        plain.push(mp);
-      }
-
-      if (req.responsePrefix) {
-        let rh = `<div style="${sec} background:#1a1a2e; border-top:1px solid #282a36;">`;
-        rh += `<span style="${mt}">// Response Prefix</span><br><span style="${ss}">"${escHtml(truncateBase64(req.responsePrefix))}"</span></div>`;
-        parts.push(rh);
-        plain.push(`// Response Prefix\n"${req.responsePrefix}"`);
-      }
-
-      return { html: parts.join(''), plain: plain.join('\n\n') };
-    };
 
     const getPreviewLineageGraph = () => {
       const trace = previewLineageTrace || previewRequest?.lineageTrace || null;
@@ -15675,39 +15566,37 @@ Phase G（Frame 36）：循环衔接
       }
       activeTab = tab;
       if (!promptView || !apiView || !lineageView || !tabPromptBtn || !tabApiBtn || !tabLineageBtn) return;
-      const active = 'font-weight:700; opacity:1; border-bottom:2px solid var(--app-text-primary, #333);';
-      const inactive = 'font-weight:400; opacity:0.6; border-bottom:2px solid transparent;';
-      const applyBtn = (btn, style) => {
+      const applyBtn = (btn, isActive) => {
         if (!btn) return;
-        btn.style.cssText = btn.style.cssText
-          .replace(/font-weight:[^;]+;/, '')
-          .replace(/opacity:[^;]+;/, '')
-          .replace(/border-bottom:[^;]+;/, '') + style;
+        btn.classList.toggle('is-active', isActive);
+        btn.setAttribute('aria-selected', isActive ? 'true' : 'false');
+        btn.tabIndex = isActive ? 0 : -1;
       };
       if (tab === 'prompt') {
         promptView.style.display = '';
         apiView.style.display = 'none';
         lineageView.style.display = 'none';
-        applyBtn(tabPromptBtn, active);
-        applyBtn(tabApiBtn, inactive);
-        applyBtn(tabLineageBtn, inactive);
+        applyBtn(tabPromptBtn, true);
+        applyBtn(tabApiBtn, false);
+        applyBtn(tabLineageBtn, false);
         if (locateBtn) locateBtn.style.display = '';
+        refreshPromptView();
       } else if (tab === 'lineage') {
         promptView.style.display = 'none';
         apiView.style.display = 'none';
         lineageView.style.display = '';
-        applyBtn(tabPromptBtn, inactive);
-        applyBtn(tabApiBtn, inactive);
-        applyBtn(tabLineageBtn, active);
+        applyBtn(tabPromptBtn, false);
+        applyBtn(tabApiBtn, false);
+        applyBtn(tabLineageBtn, true);
         if (locateBtn) locateBtn.style.display = 'none';
         scheduleLineageFrame(() => syncLineageCameraWhenVisible({ smooth: false }));
       } else {
         promptView.style.display = 'none';
         apiView.style.display = '';
         lineageView.style.display = 'none';
-        applyBtn(tabApiBtn, active);
-        applyBtn(tabPromptBtn, inactive);
-        applyBtn(tabLineageBtn, inactive);
+        applyBtn(tabApiBtn, true);
+        applyBtn(tabPromptBtn, false);
+        applyBtn(tabLineageBtn, false);
         if (locateBtn) locateBtn.style.display = 'none';
         refreshApiView();
       }
@@ -15716,13 +15605,26 @@ Phase G（Frame 36）：循环衔接
     const refreshApiView = () => {
       const req = previewRequest || window.appBridge?.lastRequest;
       if (!req) {
-        if (apiContentEl) apiContentEl.innerHTML = '<div style="padding:20px; color:#6272a4; font-family:monospace; font-size:13px; text-align:center;">暂无 API 请求记录<br><span style="font-size:11px;">请先发送一次消息</span></div>';
+        if (apiContentEl) apiContentEl.innerHTML = '<div class="prompt-overview-empty">暂无 API 请求记录<br><small>请先发送一次消息</small></div>';
         apiPlainText = '';
         return;
       }
-      const { html, plain } = buildApiPayloadHtml(req);
+      const { html, plain } = buildPromptOverviewView(req, {
+        injectionAuditHtml: renderMemoryInjectionAuditHtml(req.injectionAudit),
+        injectionAuditText: formatMemoryInjectionAuditForCopy(req.injectionAudit),
+      });
       if (apiContentEl) apiContentEl.innerHTML = html;
       apiPlainText = plain;
+    };
+
+    const refreshPromptView = () => {
+      if (promptPlainText && promptContentEl?.firstElementChild) return;
+      const req = previewRequest || window.appBridge?.lastRequest;
+      const fallbackText = String(textarea?.value || '');
+      const documentView = buildFullPromptDocument(req, { fallbackText });
+      promptPlainText = documentView.plain;
+      if (textarea) textarea.value = promptPlainText;
+      if (promptContentEl) promptContentEl.innerHTML = documentView.html;
     };
 
     const clearLineageSelectionAndRender = () => {
@@ -15796,6 +15698,7 @@ Phase G（Frame 36）：循环衔接
 
       panel = document.createElement('div');
       panel.id = 'prompt-preview-panel';
+      panel.className = 'prompt-preview-panel';
       panel.style.cssText = `
                 width: 100%;
                 height: 100%;
@@ -15808,35 +15711,26 @@ Phase G（Frame 36）：循环衔接
       panel.addEventListener('click', e => e.stopPropagation());
 
       panel.innerHTML = `
-                <div style="display:flex; align-items:center; gap:10px; padding:12px; background:#f3f4f6; border-bottom:1px solid var(--app-border-default);">
-                    <div id="prompt-preview-title" style="font-weight:900;">本次请求</div>
-                    <div id="prompt-preview-meta" style="margin-left:auto; font-size:12px; color:var(--app-text-muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;"></div>
-                    <button id="prompt-preview-copy" style="border:1px solid var(--app-border-default); background:var(--app-surface-card); border-radius:10px; padding:6px 10px;">复制</button>
-                    <button id="prompt-preview-close" style="border:1px solid var(--app-border-default); background:var(--app-surface-card); border-radius:10px; padding:6px 10px;">关闭</button>
-                </div>
-                <div id="prompt-preview-tabs" style="display:flex; align-items:center; gap:0; background:#f3f4f6; border-bottom:1px solid var(--app-border-default); padding:0 12px;">
-                    <button id="prompt-tab-api" type="button" style="padding:8px 16px; background:none; border:none; border-bottom:2px solid var(--app-text-primary, #333); font-size:13px; font-weight:700; cursor:pointer; color:var(--app-text-primary, #333); opacity:1;">请求参数</button>
-                    <button id="prompt-tab-prompt" type="button" style="padding:8px 16px; background:none; border:none; border-bottom:2px solid transparent; font-size:13px; font-weight:400; cursor:pointer; color:var(--app-text-primary, #333); opacity:0.6;">完整 Prompt</button>
-                    <button id="prompt-tab-lineage" type="button" style="padding:8px 16px; background:none; border:none; border-bottom:2px solid transparent; font-size:13px; font-weight:400; cursor:pointer; color:var(--app-text-primary, #333); opacity:0.6;">血缘图</button>
-                    <button id="prompt-preview-locate" style="margin-left:auto; border:1px solid var(--app-border-default); background:var(--app-surface-card); border-radius:10px; padding:5px 10px; font-size:12px; cursor:pointer; display:none;">定位世界书</button>
-                </div>
-                <div id="prompt-view-api" style="flex:1; min-height:0; overflow:auto; -webkit-overflow-scrolling:touch; background:#1a1a2e;"></div>
-                <div id="prompt-view-prompt" style="flex:1; min-height:0; overflow:auto; -webkit-overflow-scrolling:touch; padding:10px; display:none;">
-                    <textarea id="prompt-preview-text" readonly style="
-                        width:100%;
-                        height:100%;
-                        min-height: 100%;
-                        resize:none;
-                        border:1px solid rgba(0,0,0,0.10);
-                        border-radius:12px;
-                        padding:12px;
-                        font-size:13px;
-                        line-height:1.4;
-                        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
-                        white-space: pre;
-                        box-sizing:border-box;
-                        outline:none;
-                    "></textarea>
+                <header class="prompt-preview-titlebar">
+                    <div class="prompt-preview-brand" aria-hidden="true"><span></span></div>
+                    <div class="prompt-preview-title-copy">
+                        <div id="prompt-preview-title">本次请求</div>
+                        <small>PROMPT INSPECTOR · READ ONLY</small>
+                    </div>
+                    <div id="prompt-preview-meta"></div>
+                    <button id="prompt-preview-copy" class="prompt-preview-action" type="button">复制</button>
+                    <button id="prompt-preview-close" class="prompt-preview-action is-close" type="button">关闭</button>
+                </header>
+                <nav id="prompt-preview-tabs" class="prompt-preview-tabs" role="tablist" aria-label="本次请求视图">
+                    <button id="prompt-tab-api" class="prompt-preview-tab is-active" type="button" role="tab" aria-selected="true"><span>01</span>请求概览</button>
+                    <button id="prompt-tab-prompt" class="prompt-preview-tab" type="button" role="tab" aria-selected="false" tabindex="-1"><span>02</span>完整 Prompt</button>
+                    <button id="prompt-tab-lineage" class="prompt-preview-tab" type="button" role="tab" aria-selected="false" tabindex="-1"><span>03</span>血缘图</button>
+                    <button id="prompt-preview-locate" class="prompt-preview-locate" type="button" style="display:none;">定位世界书</button>
+                </nav>
+                <div id="prompt-view-api" class="prompt-preview-tab-view prompt-overview-host"></div>
+                <div id="prompt-view-prompt" class="prompt-preview-tab-view prompt-full-host" style="display:none;">
+                    <div id="prompt-preview-document"></div>
+                    <textarea id="prompt-preview-text" class="prompt-preview-copy-source" readonly aria-hidden="true" tabindex="-1"></textarea>
                 </div>
                 <div id="prompt-view-lineage" class="lineage-preview-view" style="flex:1; min-height:0; overflow:auto; -webkit-overflow-scrolling:touch; padding:10px; display:none;">
                     <div id="prompt-lineage-graph" class="lineage-graph-panel">
@@ -15929,6 +15823,7 @@ Phase G（Frame 36）：循环衔接
       document.body.appendChild(overlay);
 
       textarea = panel.querySelector('#prompt-preview-text');
+      promptContentEl = panel.querySelector('#prompt-preview-document');
       lineageGraphEl = panel.querySelector('#prompt-lineage-graph');
       lineageScopeEl = panel.querySelector('#prompt-lineage-scope');
       lineageCanvasWrap = panel.querySelector('#prompt-lineage-canvas-wrap');
@@ -15985,6 +15880,17 @@ Phase G（Frame 36）：循环衔接
       tabPromptBtn?.addEventListener('click', () => switchTab('prompt'));
       tabApiBtn?.addEventListener('click', () => switchTab('api'));
       tabLineageBtn?.addEventListener('click', () => switchTab('lineage'));
+      promptView?.addEventListener('click', (event) => {
+        const wrapButton = event.target?.closest?.('[data-prompt-wrap-toggle]');
+        if (wrapButton) {
+          const documentEl = promptView.querySelector('[data-prompt-document]');
+          const nextWrapped = documentEl?.classList.toggle('is-nowrap') !== true;
+          wrapButton.classList.toggle('is-active', nextWrapped);
+          wrapButton.setAttribute('aria-pressed', nextWrapped ? 'true' : 'false');
+          return;
+        }
+        if (event.target?.closest?.('[data-prompt-copy-all]')) copyBtn?.click?.();
+      });
       lineageSearchEl?.addEventListener('input', updateLineageSearch);
       lineageSearchEl?.addEventListener('focus', updateLineageSearch);
       lineageSearchEl?.addEventListener('keydown', (event) => {
@@ -16218,7 +16124,7 @@ Phase G（Frame 36）：循环衔接
           ? apiPlainText
           : activeTab === 'lineage'
             ? lineagePlainText
-            : String(textarea?.value || '');
+            : promptPlainText;
         if (!text) {
           window.toastr?.warning?.('暂无内容可复制');
           return;
@@ -16260,6 +16166,8 @@ Phase G（Frame 36）：循环衔接
       if (lineageDrag?.pointerId != null) lineageCanvasWrap?.releasePointerCapture?.(lineageDrag.pointerId);
       if (lineageMiniDrag?.pointerId != null) lineageMiniMapEl?.releasePointerCapture?.(lineageMiniDrag.pointerId);
       lineageOnlyMode = Boolean(lineageOnly);
+      promptPlainText = '';
+      apiPlainText = '';
       previewRequest = request && typeof request === 'object' ? request : null;
       previewLineageTrace = lineageTrace && typeof lineageTrace === 'object'
         ? lineageTrace
@@ -16338,6 +16246,8 @@ Phase G（Frame 36）：循环衔接
       previewLineageTrace = null;
       lineageOnlyMode = false;
       lineagePlainText = '';
+      promptPlainText = '';
+      apiPlainText = '';
       lineagePendingCenterSelector = '';
       lineageDrag = null;
       lineageMiniDrag = null;

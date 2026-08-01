@@ -33,6 +33,18 @@ test('falls back to input/output token field names', () => {
   assert.equal(seen.totalTokens, null); // 无 total 字段时不推导，留给上层 aggregator/normalizer
 });
 
+test('preserves an OpenAI-compatible system fingerprint when the provider returns one', () => {
+  let seen = null;
+  reportProviderUsage({ onProviderUsage: (u) => { seen = u; } }, {
+    body: {
+      system_fingerprint: 'fp_2026_08_01_alpha',
+      usage: { prompt_tokens: 500, completion_tokens: 90, total_tokens: 590 },
+    },
+    model: 'm', provider: 'openai', finishReason: 'stop',
+  });
+  assert.equal(seen.systemFingerprint, 'fp_2026_08_01_alpha');
+});
+
 test('does not double count OpenAI cached prompt tokens', () => {
   assert.equal(resolveProviderPromptTokens({
     prompt_tokens: 1200,
