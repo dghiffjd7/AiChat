@@ -1,6 +1,0 @@
-[
-  {
-    "at": 338582,
-    "ctx": "tToUI(); showDanmaku(`预设 \"${newPreset.name}\" 已创建并激活！`, 'success'); }); document .getElementById('import-text-image-presets-btn') .addEventListener('click', () => i"
-  }
-]

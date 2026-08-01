@@ -348,6 +348,8 @@ export const deactivateSessionEnterView = ({
   setReplyTarget = null,
   scheduleModeSwitchSync = null,
   scheduleWallpaperIdle = null,
+  clearMessages = null,
+  clearChatTitle = null,
   messageTopbarEl = null,
   bottomNavEl = null,
   updateChatContentSearchVisibility = null,
@@ -387,6 +389,12 @@ export const deactivateSessionEnterView = ({
   } catch {}
   try {
     scheduleWallpaperIdle?.();
+  } catch {}
+  try {
+    clearMessages?.();
+  } catch {}
+  try {
+    clearChatTitle?.();
   } catch {}
   try {
     if (messageTopbarEl?.style) messageTopbarEl.style.display = '';

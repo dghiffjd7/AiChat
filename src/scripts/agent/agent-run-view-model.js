@@ -184,6 +184,7 @@ const buildChatFormatReview = (run = {}) => {
     }
     : null;
   return {
+    protocolParseFailure: metadata.protocolParseFailure === true,
     sourceTextKind: trim(metadata.sourceTextKind),
     hasRawOriginal: metadata.hasRawOriginal === true,
     issueCount: toFiniteNumber(metadata.issueCount, 0),

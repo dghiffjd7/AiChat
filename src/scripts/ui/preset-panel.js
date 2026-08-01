@@ -169,13 +169,6 @@ const diffRejectSvg = `<svg class="pp-diff-icon" viewBox="0 0 20 20" aria-hidden
     <path class="pp-diff-icon-depth" d="m5 5 10 10m0-10L5 15"/>
     <path class="pp-diff-icon-mark" d="m5 5 10 10m0-10L5 15"/>
 </svg>`;
-const previewPullHandleSvg = `<svg class="pp-pull-handle-svg" viewBox="0 0 28 16" aria-hidden="true" focusable="false">
-    <path class="pp-pull-handle-depth" d="M4.5 14.75C4.5 6.9 8.25 2.25 14 2.25s9.5 4.65 9.5 12.5"/>
-    <path class="pp-pull-handle-rail" d="M4.5 14.75C4.5 6.9 8.25 2.25 14 2.25s9.5 4.65 9.5 12.5"/>
-    <path class="pp-pull-handle-glint" d="M8.4 5.45C9.95 4.2 11.8 3.58 14 3.58"/>
-    <circle class="pp-pull-handle-anchor" cx="4.5" cy="14.75" r="1.25"/>
-    <circle class="pp-pull-handle-anchor" cx="23.5" cy="14.75" r="1.25"/>
-</svg>`;
 const panelIconSvg = (body) => `<svg class="pp-nav-item-icon-svg" viewBox="0 0 24 24" aria-hidden="true">${body}</svg>`;
 const SECTION_ICONS = Object.freeze({
     openai: panelIconSvg('<path d="M4 7h16"/><path d="M7 12h10"/><path d="M10 17h4"/><circle cx="7" cy="7" r="2"/><circle cx="17" cy="12" r="2"/><circle cx="12" cy="17" r="2"/>'),
@@ -986,24 +979,25 @@ body[data-reduced-motion='on'] .pp-prev-block.pp-prev-flash {
     font-size: 12px;
 }
 .pp-preview-loading { padding: 30px 12px; text-align: center; color: var(--app-text-muted); font-size: 12px; }
-/* 请求预览提环：仅保留发光 SVG；按钮本体透明，触控区在视觉之外扩展。 */
+/* 请求预览边缘锚条：按钮本体透明，触控区在视觉之外扩展。 */
 .pp-preview-edge,
 .pp-pane-handle,
 .pp-editor-handle {
     --pp-handle-x: 0%;
+    --pp-handle-nudge: 0px;
+    --pp-edge-marker-height: var(--pull-handle-anchor-height);
     appearance: none; -webkit-appearance: none;
     position: absolute; top: 50%;
-    transform: translate(var(--pp-handle-x), -50%);
+    transform: translate(calc(var(--pp-handle-x) + var(--pp-handle-nudge)), -50%);
     display: none; align-items: center; justify-content: center;
-    width: 28px; height: 56px; padding: 0;
+    width: 24px; padding: 0;
     border: 0;
     border-radius: 0;
     background: transparent;
     box-shadow: none;
-    color: color-mix(in srgb, var(--app-text-muted) 72%, var(--app-accent-primary));
-    opacity: 0.5;
+    opacity: var(--pull-handle-rest-opacity);
     cursor: grab;
-    transition: color 150ms ease, opacity 150ms ease;
+    transition: opacity 150ms ease, transform 150ms ease;
     touch-action: none; overflow: visible; isolation: isolate;
 }
 .pp-preview-edge::before,
@@ -1011,52 +1005,54 @@ body[data-reduced-motion='on'] .pp-prev-block.pp-prev-flash {
 .pp-editor-handle::before {
     content: ''; position: absolute; inset: -6px -10px; z-index: 0;
 }
-.pp-pull-handle-svg {
-    position: relative; z-index: 1;
-    display: block; width: 56px; height: 28px; overflow: visible;
-    transform: rotate(var(--pp-pull-rotation));
-    transform-origin: center;
-    transition: filter 150ms ease;
-    filter: drop-shadow(0 0 2px rgba(var(--app-accent-rgb), 0.34)) drop-shadow(0 1px 1px rgba(15,23,42,0.16));
-}
-.pp-pull-handle-depth,
-.pp-pull-handle-rail,
-.pp-pull-handle-glint {
-    fill: none;
-    stroke-linecap: round;
-    stroke-linejoin: round;
-}
-.pp-pull-handle-depth { stroke: currentColor; stroke-width: 4.2; opacity: 0.14; }
-.pp-pull-handle-rail { stroke: currentColor; stroke-width: 1.7; }
-.pp-pull-handle-glint { stroke: rgba(255,255,255,0.82); stroke-width: 1.05; }
-.pp-pull-handle-anchor {
-    fill: currentColor; stroke: color-mix(in srgb, var(--app-surface-card) 82%, transparent); stroke-width: 0.75;
+.pp-preview-edge::after,
+.pp-pane-handle::after,
+.pp-editor-handle::after {
+    content: '';
+    position: absolute;
+    left: 50%; top: 50%;
+    width: 3px; height: var(--pp-edge-marker-height);
+    border-radius: 999px;
+    background: linear-gradient(
+        to bottom,
+        transparent,
+        var(--pull-handle-anchor-color) 48%,
+        var(--pull-handle-anchor-color) 52%,
+        transparent
+    );
+    opacity: var(--pull-handle-anchor-rest-opacity);
+    filter: var(--pull-handle-rest-filter);
+    transform: translate(-50%, -50%);
+    transition: width 150ms ease, opacity 150ms ease, filter 150ms ease;
+    pointer-events: none;
 }
 .pp-preview-edge:hover,
 .pp-pane-handle:hover,
 .pp-editor-handle:hover {
-    color: var(--app-accent-strong, var(--app-accent-primary));
+    --pp-handle-nudge: var(--pp-handle-nudge-hover, 0px);
+    opacity: 1;
 }
 .pp-preview-edge.is-opaque,
 .pp-pane-handle.is-opaque,
 .pp-editor-handle.is-opaque {
     opacity: 1;
 }
-.pp-preview-edge:hover .pp-pull-handle-svg,
-.pp-pane-handle:hover .pp-pull-handle-svg,
-.pp-editor-handle:hover .pp-pull-handle-svg {
-    filter: drop-shadow(0 0 3.5px rgba(var(--app-accent-rgb), 0.58)) drop-shadow(0 1px 1px rgba(15,23,42,0.18));
+.pp-preview-edge:hover::after,
+.pp-pane-handle:hover::after,
+.pp-editor-handle:hover::after,
+.pp-preview-edge:focus-visible::after,
+.pp-pane-handle:focus-visible::after,
+.pp-editor-handle:focus-visible::after {
+    width: 4px;
+    opacity: 1;
+    filter: var(--pull-handle-hover-filter);
 }
 .pp-preview-edge:focus-visible,
 .pp-pane-handle:focus-visible,
 .pp-editor-handle:focus-visible {
     outline: none;
-    color: var(--app-accent-strong, var(--app-accent-primary));
-}
-.pp-preview-edge:focus-visible .pp-pull-handle-svg,
-.pp-pane-handle:focus-visible .pp-pull-handle-svg,
-.pp-editor-handle:focus-visible .pp-pull-handle-svg {
-    filter: drop-shadow(0 0 3.5px rgba(var(--app-accent-rgb), 0.58));
+    --pp-handle-nudge: var(--pp-handle-nudge-hover, 0px);
+    opacity: 1;
 }
 .pp-preview-edge:active,
 .pp-pane-handle:active,
@@ -1064,18 +1060,20 @@ body[data-reduced-motion='on'] .pp-prev-block.pp-prev-flash {
     cursor: grabbing;
 }
 
-/* 环顶指向拉动方向；环底分别贴住自身所在区域的边缘，不使用连接线。 */
+/* 锚条按拉动方向轻微位移；所在侧与文案继续表达操作方向。 */
 .pp-preview-edge,
-.pp-pane-handle-expand { --pp-pull-rotation: -90deg; }
+.pp-pane-handle-expand { --pp-handle-nudge-hover: -2px; }
 .pp-pane-handle-collapse,
-.pp-editor-handle { --pp-pull-rotation: 90deg; }
+.pp-editor-handle { --pp-handle-nudge-hover: 2px; }
+.pp-preview-edge,
+.pp-editor-handle { height: 112px; }
 .pp-preview-edge {
     right: 0; z-index: 4; display: flex;
 }
 #preset-panel[data-preview="split"] .pp-preview-edge,
 #preset-panel[data-preview="full"] .pp-preview-edge { display: none; }
 /* 分栏提环分居分隔线两侧：左向环在编辑侧，右向环在预览侧。 */
-.pp-pane-handle { left: 54%; z-index: 7; }
+.pp-pane-handle { left: 54%; z-index: 7; height: 56px; --pp-edge-marker-height: 52px; }
 #preset-panel[data-preview="split"] .pp-pane-handle { display: flex; }
 #preset-panel[data-preview-motion="opening-split"] .pp-pane-handle-collapse {
     opacity: 0;
@@ -1111,12 +1109,17 @@ body[data-reduced-motion='on'] .pp-prev-block.pp-prev-flash {
 body[data-reduced-motion='on'] .pp-preview-edge,
 body[data-reduced-motion='on'] .pp-pane-handle,
 body[data-reduced-motion='on'] .pp-editor-handle,
-body[data-reduced-motion='on'] .pp-pull-handle-svg,
 body[data-reduced-motion='on'] .pp-diff-accept,
 body[data-reduced-motion='on'] .pp-diff-reject,
 body[data-reduced-motion='on'] .pp-diff-icon,
 body[data-reduced-motion='on'] .pp-maximize-expand,
 body[data-reduced-motion='on'] .pp-maximize-restore { animation: none; transition: none; }
+body[data-reduced-motion='on'] .pp-preview-edge,
+body[data-reduced-motion='on'] .pp-pane-handle,
+body[data-reduced-motion='on'] .pp-editor-handle { --pp-handle-nudge: 0px !important; }
+body[data-reduced-motion='on'] .pp-preview-edge::after,
+body[data-reduced-motion='on'] .pp-pane-handle::after,
+body[data-reduced-motion='on'] .pp-editor-handle::after { transition: none !important; }
 .pp-block-linked {
     outline: 2px solid rgba(var(--app-accent-rgb, 25, 154, 255), 0.55);
     outline-offset: -2px;
@@ -1735,11 +1738,21 @@ body[data-theme-mode='dark'] #preset-panel .pp-binding-card {
     box-shadow: 0 8px 24px rgba(0,0,0,0.24);
 }
 
+:where(body[data-theme-mode='dark'] #preset-panel) :is(.pp-preview-edge, .pp-pane-handle, .pp-editor-handle) {
+    opacity: var(--pull-handle-rest-opacity);
+}
+
+:where(body[data-theme-mode='dark'] #preset-panel) :is(.pp-preview-edge, .pp-pane-handle, .pp-editor-handle).is-opaque {
+    opacity: 1;
+}
+
 @media (prefers-reduced-motion: reduce) {
     #preset-panel .pp-preview-edge,
     #preset-panel .pp-pane-handle,
     #preset-panel .pp-editor-handle,
-    #preset-panel .pp-pull-handle-svg,
+    #preset-panel .pp-preview-edge::after,
+    #preset-panel .pp-pane-handle::after,
+    #preset-panel .pp-editor-handle::after,
     #preset-panel .pp-diff-accept,
     #preset-panel .pp-diff-reject,
     #preset-panel .pp-diff-icon,
@@ -1747,6 +1760,9 @@ body[data-theme-mode='dark'] #preset-panel .pp-binding-card {
     #preset-panel .pp-maximize-restore {
         animation: none !important;
         transition: none !important;
+    }
+    #preset-panel :is(.pp-preview-edge, .pp-pane-handle, .pp-editor-handle) {
+        --pp-handle-nudge: 0px !important;
     }
     #preset-panel .pp-page,
     #preset-panel .pp-header-actions button,
@@ -2285,7 +2301,7 @@ export class PresetPanel {
                                 <div class="pp-detail-heading" id="preset-detail-title"></div>
                                 <div class="pp-detail-subheading" id="preset-detail-subtitle"></div>
                             </div>
-                            <button type="button" class="pp-preview-edge" data-pp-preview-open aria-label="展开请求预览" title="点击或向左拉，展开请求预览">${previewPullHandleSvg}</button>
+                            <button type="button" class="pp-preview-edge" data-pp-preview-open aria-label="展开请求预览" title="点击或向左拉，展开请求预览"></button>
                             <div class="pp-page-scroll" id="preset-detail-scroll">
                                 <div class="pp-section-editor" id="preset-detail-editor"></div>
                             </div>
@@ -2313,7 +2329,7 @@ export class PresetPanel {
                                 <div class="pp-detail-subheading" id="preset-block-subtitle"></div>
                             </div>
                             <div class="pp-swipe-hint pp-swipe-hint-prev" aria-hidden="true"><span>↑</span><span class="pp-swipe-hint-label"></span></div>
-                            <button type="button" class="pp-preview-edge" data-pp-preview-open aria-label="展开请求预览" title="点击或向左拉，展开请求预览">${previewPullHandleSvg}</button>
+                            <button type="button" class="pp-preview-edge" data-pp-preview-open aria-label="展开请求预览" title="点击或向左拉，展开请求预览"></button>
                             <div class="pp-page-scroll" id="preset-block-scroll">
                                 <div class="pp-section-editor" id="preset-block-editor"></div>
                             </div>
@@ -2335,9 +2351,9 @@ export class PresetPanel {
                     <div class="pp-preview-body" id="preset-preview-body"></div>
                 </div>
             </aside>
-            <button type="button" class="pp-pane-handle pp-pane-handle-expand" id="preset-preview-expand" aria-label="拉出全屏预览" title="点击或向左拉，拉满预览">${previewPullHandleSvg}</button>
-            <button type="button" class="pp-pane-handle pp-pane-handle-collapse" id="preset-preview-collapse" aria-label="收起预览" title="点击或向右拉，收起预览">${previewPullHandleSvg}</button>
-            <button type="button" class="pp-editor-handle" id="preset-editor-return" aria-label="返回编辑" title="点击或向右拉，返回编辑">${previewPullHandleSvg}</button>
+            <button type="button" class="pp-pane-handle pp-pane-handle-expand" id="preset-preview-expand" aria-label="拉出全屏预览" title="点击或向左拉，拉满预览"></button>
+            <button type="button" class="pp-pane-handle pp-pane-handle-collapse" id="preset-preview-collapse" aria-label="收起预览" title="点击或向右拉，收起预览"></button>
+            <button type="button" class="pp-editor-handle" id="preset-editor-return" aria-label="返回编辑" title="点击或向右拉，返回编辑"></button>
             </div>
             <div class="pp-status" id="preset-status"></div>
             <div class="pp-footer">
@@ -5529,6 +5545,12 @@ export class PresetPanel {
                 isActive: () => active && el.dataset.previewMotion === name,
             };
         };
+        const pullHandleRestOpacity = (() => {
+            const value = Number.parseFloat(
+                window.getComputedStyle?.(el)?.getPropertyValue('--pull-handle-rest-opacity') || '',
+            );
+            return Number.isFinite(value) ? value : 0.62;
+        })();
         const fadeHandleHandoff = ({ incoming, outgoing = null, incomingOpacity = 1, motion, heldAnimations = [] }) => {
             const held = heldAnimations.filter(Boolean);
             const release = (animations = []) => {
@@ -5549,7 +5571,7 @@ export class PresetPanel {
                 { opacity: 0 },
                 { opacity: incomingOpacity },
             ], { duration: 180, easing: easeOut, fill: 'both' });
-            const outgoingOpacity = outgoing?.classList.contains('is-opaque') ? 1 : 0.5;
+            const outgoingOpacity = outgoing?.classList.contains('is-opaque') ? 1 : pullHandleRestOpacity;
             const fadeOut = outgoing
                 ? run(outgoing, [
                     { opacity: outgoingOpacity },
@@ -5598,7 +5620,7 @@ export class PresetPanel {
                 if (el.dataset.previewMotion !== previewMotion || !motion.isActive()) return;
                 fadeHandleHandoff({
                     incoming: collapseHandle,
-                    incomingOpacity: 0.5,
+                    incomingOpacity: pullHandleRestOpacity,
                     motion,
                     heldAnimations: [leadHandleAnimation],
                 });
@@ -5765,7 +5787,7 @@ export class PresetPanel {
                     this.revealPreviewHandleTemporarily?.(collapseHandle);
                     fadeHandleHandoff({
                         incoming: expandHandle,
-                        incomingOpacity: 0.5,
+                        incomingOpacity: pullHandleRestOpacity,
                         motion,
                         heldAnimations: [leadHandleAnimation],
                     });

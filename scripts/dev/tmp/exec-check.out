@@ -1,9 +1,0 @@
-page exception: ReferenceError: buildMvuCompatWindowContext is not defined
-    at compat.getContext (about:srcdoc:197:19)
-    at window.getContext (about:srcdoc:508:88)
-    at get (about:srcdoc:1640:41)
-    at <anonymous>:5:71
-    at Array.filter (<anonymous>)
-    at <anonymous>:5:22
-    at <anonymous>:15:3
-    at <anonymous>:16:3

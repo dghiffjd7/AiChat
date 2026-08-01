@@ -1,4 +1,0 @@
-{
-  "storedHasBrLiteral": false,
-  "expandedCtx": "\"ewText) {\\n              changes += `<li><span class=\\\"label\\\">新增生平:</span> ${newText.replace(/\\\\n/g, '<br>')}</li>`;\\n            }\\n          }\\n\\n          return changes;\\n        }\\n\\n  \""
-}

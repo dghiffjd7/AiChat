@@ -139,6 +139,7 @@ const runs = [
     source: 'chat-format-guardian',
     status: 'waiting_permission',
     metadata: {
+      protocolParseFailure: true,
       sourceTextKind: 'rawOriginal',
       hasRawOriginal: true,
       eventCount: 1,
@@ -184,6 +185,7 @@ const runs = [
     },
   });
   assert.equal(summary.review.sourceTextKind, 'rawOriginal');
+  assert.equal(summary.review.protocolParseFailure, true);
   assert.equal(summary.review.hasRawOriginal, true);
   assert.deepEqual(summary.review.warnings, ['time is missing']);
   assert.equal(summary.review.repairCandidate.summary, '补齐 1 条缺失时间');

@@ -1,5 +1,0 @@
-{
-  "hasMainRegions": 1007,
-  "fieldsNear": [],
-  "setMapData": "setMapData(WORLD_MAP_DATA); } if (creationState.birthLocation) { const coordMatch = creationState.birthLocation.match(/(-?\\d+),(-?\\d+)/); if (coordMatch) { const x = parseInt(coordMatch[1], 10); "
-}

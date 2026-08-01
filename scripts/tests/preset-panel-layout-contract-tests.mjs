@@ -42,27 +42,30 @@ const previewHandleButtons = Array.from(source.matchAll(
 ));
 assert.equal(previewHandleButtons.length, 5, '展开、拉满、收合与返回编辑应共用五个预览把手入口');
 previewHandleButtons.forEach((match) => {
-    assert.match(match[1], /\$\{previewPullHandleSvg\}/, '预览把手入口应使用统一的椭圆提环 SVG');
+    assert.equal(match[1].trim(), '', '预览把手入口应只保留透明热区，不再渲染 U 形提环');
 });
-assert.match(source, /const previewPullHandleSvg = `<svg class="pp-pull-handle-svg"/);
-assert.match(source, /\.pp-preview-edge,\s*\n\.pp-pane-handle,\s*\n\.pp-editor-handle\s*\{[\s\S]*width:\s*28px;[\s\S]*height:\s*56px;[\s\S]*border:\s*0;[\s\S]*background:\s*transparent;[\s\S]*box-shadow:\s*none;/, '提环按钮应无外框，并承载稍微收窄的 SVG');
-assert.match(source, /\.pp-pull-handle-svg\s*\{[\s\S]*width:\s*56px;\s*height:\s*28px;/, '提环应保留沿边长度并稍微缩短环顶到底部的距离');
-assert.match(source, /\.pp-preview-edge,\s*\n\.pp-pane-handle,\s*\n\.pp-editor-handle\s*\{[\s\S]*opacity:\s*0\.5;/, '提环平时应保持半透明');
+assert.doesNotMatch(source, /previewPullHandleSvg|pp-pull-handle-(?:svg|depth|rail|glint|anchor)/, '移除 U 形提环后不得遗留 SVG 模板或专用样式');
+assert.match(source, /\.pp-preview-edge,\s*\n\.pp-pane-handle,\s*\n\.pp-editor-handle\s*\{[\s\S]*width:\s*24px;[\s\S]*border:\s*0;[\s\S]*background:\s*transparent;[\s\S]*box-shadow:\s*none;/, '预设锚条按钮应保留无外框透明热区');
+assert.match(source, /\.pp-preview-edge,\s*\n\.pp-editor-handle\s*\{\s*height:\s*112px;/, 'closed/full 单锚条的热区应完整覆盖 92px 视觉标记');
+assert.match(source, /\.pp-preview-edge,\s*\n\.pp-pane-handle,\s*\n\.pp-editor-handle\s*\{[\s\S]*opacity:\s*var\(--pull-handle-rest-opacity\);/, '预设提环应消费共享静息透明度');
 assert.match(source, /\.pp-preview-edge\.is-opaque,[\s\S]*\.pp-editor-handle\.is-opaque\s*\{\s*opacity:\s*1;/, '互动中的提环应完全不透明');
 assert.match(source, /handle\.classList\.add\('is-opaque'\)[\s\S]*setTimeout\([\s\S]*handle\.classList\.remove\('is-opaque'\)[\s\S]*},\s*3000\);/, '提环应在最后一次互动三秒后恢复半透明');
 assert.match(source, /addEventListener\('pointerenter',[\s\S]*addEventListener\('click',[\s\S]*addEventListener\('focus'/, '鼠标进入、点击与键盘聚焦都应触发提环显现');
-assert.match(source, /\.pp-preview-edge,\s*\n\.pp-pane-handle-expand\s*\{\s*--pp-pull-rotation:\s*-90deg;/, '向左拉的提环应朝左');
-assert.match(source, /\.pp-pane-handle-collapse,\s*\n\.pp-editor-handle\s*\{\s*--pp-pull-rotation:\s*90deg;/, '向右拉的提环应朝右');
-assert.match(source, /transform:\s*rotate\(var\(--pp-pull-rotation\)\);/);
-assert.doesNotMatch(source, /\.pp-preview-edge::after|\.pp-pane-handle::after|\.pp-editor-handle::after/, '提环与边缘之间不应再绘制连接线');
+assert.match(source, /\.pp-preview-edge::after,[\s\S]*\.pp-editor-handle::after\s*\{[\s\S]*linear-gradient/, '提环应以轻量渐变锚定所在边缘');
+assert.match(source, /\.pp-preview-edge::after,[\s\S]*\.pp-editor-handle::after\s*\{[\s\S]*width:\s*3px;[\s\S]*height:\s*var\(--pp-edge-marker-height\);[\s\S]*opacity:\s*var\(--pull-handle-anchor-rest-opacity\);[\s\S]*filter:\s*var\(--pull-handle-rest-filter\);/, '预设入口应消费共享锚条与静息光晕规格');
+assert.match(source, /\.pp-preview-edge:(?:hover|focus-visible)::after[\s\S]*?\.pp-editor-handle:(?:hover|focus-visible)::after[\s\S]*?width:\s*4px;[\s\S]*?opacity:\s*1;[\s\S]*?filter:\s*var\(--pull-handle-hover-filter\);/s, '预设锚条应随 hover/focus 加粗并醒来');
+assert.match(source, /--pp-handle-nudge-hover:\s*-2px[\s\S]*--pp-handle-nudge-hover:\s*2px/, '提环应按拉动方向提供轻微位移反馈');
+assert.match(source, /:where\(body\[data-theme-mode='dark'\] #preset-panel\) :is\(\.pp-preview-edge, \.pp-pane-handle, \.pp-editor-handle\)/, '深色静息覆盖应降低特异性，不能压过 hover/focus');
 assert.match(source, /\.pp-pane-handle\s*\{\s*left:\s*54%;/, '分栏提环应定位在共同分隔线上');
+assert.match(source, /\.pp-pane-handle\s*\{[^}]*height:\s*56px;[^}]*--pp-edge-marker-height:\s*52px;/, '分栏双向锚条应保持独立热区、缩短并留出明确间隔');
 assert.match(source, /\.pp-pane-handle-expand\s*\{[\s\S]*--pp-handle-x:\s*-100%;/, '左向提环应从编辑侧以环底贴住分隔线');
 assert.match(source, /\.pp-pane-handle-collapse\s*\{[\s\S]*--pp-handle-x:\s*0%;/, '右向提环应从预览侧以环底贴住分隔线');
 assert.match(source, /\.pp-pane-handle-expand\s*\{[^}]*top:\s*calc\(50% - 34px\);[^}]*\}[\s\S]*\.pp-pane-handle-collapse\s*\{[^}]*top:\s*calc\(50% \+ 34px\);/, '放大后的分栏提环应保持间距且不得重叠');
+assert.match(source, /body\[data-reduced-motion='on'\] \.pp-preview-edge::after,[\s\S]*\.pp-editor-handle::after[\s\S]*transition:\s*none\s*!important;/, '预设锚条应服从应用减弱动效设置');
 assert.match(source, /#preset-panel\[data-preview-motion="opening-split"\] \.pp-pane-handle-collapse\s*\{[\s\S]*opacity:\s*0;[\s\S]*pointer-events:\s*none;/, '展开动画落位前不得提前显示第二个提环');
 assert.match(source, /previewMotion\s*=\s*'opening-split'[\s\S]*left:\s*'100%'[\s\S]*top:\s*'50%'[\s\S]*left:\s*'54%'[\s\S]*top:\s*'calc\(50% - 34px\)'/, '第一个提环应从原边缘跟随预览分隔线移动到落点');
 assert.match(source, /const fadeHandleHandoff[\s\S]*\{ opacity:\s*0 \}[\s\S]*\{ opacity:\s*incomingOpacity \}/, '提环交接应从透明淡入目标透明度');
-assert.match(source, /const revealSecondHandle[\s\S]*incoming:\s*collapseHandle[\s\S]*incomingOpacity:\s*0\.5[\s\S]*leadHandleAnimation\.onfinish\s*=\s*revealSecondHandle/, '第一个提环落位后才应淡入第二个提环');
+assert.match(source, /const pullHandleRestOpacity[\s\S]*getPropertyValue\('--pull-handle-rest-opacity'\)[\s\S]*const revealSecondHandle[\s\S]*incoming:\s*collapseHandle[\s\S]*incomingOpacity:\s*pullHandleRestOpacity[\s\S]*leadHandleAnimation\.onfinish\s*=\s*revealSecondHandle/, '第一个提环落位后应淡入共享静息透明度');
 for (const motion of ['opening-split', 'expanding-full', 'returning-split', 'closing-split', 'opening-full', 'closing-full']) {
     assert.match(source, new RegExp(`startPreviewMotion\\('${motion}'(?:,|\\))`), `预览状态路径 ${motion} 应启用提环跟随动画`);
 }

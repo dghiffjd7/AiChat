@@ -331,6 +331,8 @@ import {
     setReplyTarget: value => calls.push(['replyTarget', value]),
     scheduleModeSwitchSync: () => calls.push(['mode-sync']),
     scheduleWallpaperIdle: () => calls.push(['wallpaper']),
+    clearMessages: () => calls.push(['clearMessages']),
+    clearChatTitle: () => calls.push(['clearTitle']),
     messageTopbarEl: { style: {} },
     bottomNavEl: { style: {} },
     updateChatContentSearchVisibility: () => calls.push(['search']),
@@ -349,6 +351,8 @@ import {
     ['replyTarget', null],
     ['mode-sync'],
     ['wallpaper'],
+    ['clearMessages'],
+    ['clearTitle'],
     ['search'],
   ]);
   console.log('ok - deactivateSessionEnterView restores list shell and clears room state');

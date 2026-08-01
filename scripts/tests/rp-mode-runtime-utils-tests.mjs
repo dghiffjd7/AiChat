@@ -432,7 +432,7 @@ const createStorage = () => {
   const invalidateIndex = scopeFlowSource.indexOf(
     "if (uiMode === 'rp' && nextKey !== activePersonaScopeKey)",
   );
-  const hydrateIndex = scopeFlowSource.indexOf('await Promise.all([');
+  const hydrateIndex = scopeFlowSource.indexOf('await settlePersonaScopeStores({');
   assert.ok(invalidateIndex >= 0);
   assert.ok(hydrateIndex > invalidateIndex);
   assert.match(
@@ -472,6 +472,50 @@ const createStorage = () => {
   assert.equal(
     (greetingWriteSource.match(/if \(!write\.ok\) return false;/g) || []).length,
     3,
+  );
+  const resetFlowStart = appSource.indexOf('const resetRpHistory = async');
+  const resetFlowEnd = appSource.indexOf('if (!chatStore.__rpGreetingWrapped)', resetFlowStart);
+  const resetFlowSource = appSource.slice(resetFlowStart, resetFlowEnd);
+  assert.match(resetFlowSource, /if \(withArchive\) \{/);
+  assert.match(resetFlowSource, /runRpPlotResetFlow\(\{/);
+  assert.match(resetFlowSource, /captureArchivePointer:[\s\S]*buildArchivePointerFromCurrentThread/);
+  assert.match(resetFlowSource, /resetVariableState:[\s\S]*resetRpGreetingVariableState/);
+  assert.match(
+    resetFlowSource,
+    /startNewChat:[\s\S]*skipRpGreetingSeed:\s*true/,
+    '存档重置必须抑制 startNewChat 包装器的后台播种，改由流程末尾等待并播种一次',
+  );
+  const greetingWrapperStart = appSource.indexOf('if (!chatStore.__rpGreetingWrapped)', resetFlowEnd);
+  const greetingWrapperEnd = appSource.indexOf('const enterRpMode = async', greetingWrapperStart);
+  assert.ok(greetingWrapperStart >= 0 && greetingWrapperEnd > greetingWrapperStart);
+  assert.match(
+    appSource.slice(greetingWrapperStart, greetingWrapperEnd),
+    /options\?\.skipRpGreetingSeed !== true/,
+  );
+  assert.match(appSource, /resetRpHistory\(getRpSessionId\(activePersonaId\), \{ withArchive: true \}\)/);
+  assert.match(appSource, /当前剧情会先存档/);
+  const snapshotFlowStart = appSource.indexOf('const buildSwipeMemoryTableSnapshot = async');
+  const snapshotFlowEnd = appSource.indexOf('const attachAssistantMemoryStateToMeta', snapshotFlowStart);
+  assert.ok(snapshotFlowStart >= 0 && snapshotFlowEnd > snapshotFlowStart);
+  const snapshotFlowSource = appSource.slice(snapshotFlowStart, snapshotFlowEnd);
+  assert.match(
+    snapshotFlowSource,
+    /getMemoryStorageModeForSession\(sessionId\)\s*!==\s*'table'/,
+    'RP 快照与应用必须按 rp: session 走 writing 门，不能回退默认 chat 门',
+  );
+  const checkpointGateStart = appSource.indexOf('const isTurnCheckpointSessionEnabled =');
+  const checkpointGateEnd = appSource.indexOf('const getTurnCheckpointSessionScope =', checkpointGateStart);
+  assert.ok(checkpointGateStart >= 0 && checkpointGateEnd > checkpointGateStart);
+  assert.match(
+    appSource.slice(checkpointGateStart, checkpointGateEnd),
+    /getMemoryStorageModeForSession\(sid\)\s*!==\s*'table'/,
+  );
+  const restoreCheckpointStart = appSource.indexOf('const restoreCheckpointBranchMemoryState =');
+  const restoreCheckpointEnd = appSource.indexOf('const syncTurnCheckpointForMessage =', restoreCheckpointStart);
+  assert.ok(restoreCheckpointStart >= 0 && restoreCheckpointEnd > restoreCheckpointStart);
+  assert.match(
+    appSource.slice(restoreCheckpointStart, restoreCheckpointEnd),
+    /getMemoryStorageModeForSession\(sid\)\s*!==\s*'table'/,
   );
   console.log('ok - app wires safe RP exit cleanup and all three greeting write entry points');
 }

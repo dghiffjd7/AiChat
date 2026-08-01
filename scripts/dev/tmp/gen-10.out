@@ -1,9 +1,0 @@
-{
-  "sent": false,
-  "reason": "send_pipeline_failed",
-  "assistantCount": 0,
-  "lastReplyHead": "",
-  "payloadCount": 48,
-  "hasInjectedRule": false,
-  "errs": []
-}

@@ -10,6 +10,209 @@ import {
   tagMessageWithFormatRepairTurn,
   tagProtocolDeliveryItemsWithFormatRepairTurn,
 } from '../../src/scripts/ui/chat/format-repair-target-utils.js';
+import {
+  createRejectedFormatRepairBannerRuntime,
+  isRejectedProtocolRawEnvelope,
+  resolveRejectedFormatRepairDispatcherAvailability,
+} from '../../src/scripts/ui/chat/rejected-format-repair-banner-utils.js';
+
+{
+  const envelope = {
+    sourceSessionId: 'source-room',
+    turnId: 'turn-1',
+  };
+  assert.deepEqual(resolveRejectedFormatRepairDispatcherAvailability({
+    dispatcher: null,
+    envelope,
+  }), {
+    available: false,
+    reason: 'protocol_dispatcher_unavailable',
+    message: '应用通道已在重启后失效，请先在本聊天室完成一轮对话，或直接重新生成。',
+  });
+  assert.equal(resolveRejectedFormatRepairDispatcherAvailability({
+    dispatcher: {
+      sourceSessionId: 'source-room',
+      getTurnId: () => 'turn-1',
+      processEvent() {},
+    },
+    envelope,
+  }).available, true);
+  assert.equal(resolveRejectedFormatRepairDispatcherAvailability({
+    dispatcher: {
+      sourceSessionId: 'other-room',
+      getTurnId: () => 'turn-1',
+      processEvent() {},
+    },
+    envelope,
+  }).reason, 'protocol_dispatcher_revision_mismatch');
+  console.log('ok - rejected format repair detects missing and stale dispatchers before model work');
+}
+
+{
+  assert.equal(isRejectedProtocolRawEnvelope({
+    text: '<private_chat>',
+    turnId: 'turn-rejected',
+    sourceKind: FORMAT_REPAIR_SOURCE_KINDS.socialTurnRaw,
+    sourceMessageIds: [],
+  }), true);
+  assert.equal(isRejectedProtocolRawEnvelope({
+    text: '<private_chat>',
+    turnId: 'turn-committed',
+    sourceKind: FORMAT_REPAIR_SOURCE_KINDS.socialTurnRaw,
+    sourceMessageIds: ['message-1'],
+  }), false);
+  assert.equal(isRejectedProtocolRawEnvelope({
+    text: 'creative raw',
+    turnId: 'turn-creative',
+    sourceKind: FORMAT_REPAIR_SOURCE_KINDS.creativeRawOriginal,
+    sourceMessageIds: [],
+  }), false);
+  console.log('ok - rejected format banner only accepts uncommitted social raw envelopes');
+}
+
+{
+  const envelope = {
+    text: '<private_chat>broken</private_ch',
+    at: 100,
+    turnId: 'turn-banner',
+    sourceSessionId: 'source-room',
+    targetSessionIds: ['target-room'],
+    sourceKind: FORMAT_REPAIR_SOURCE_KINDS.socialTurnRaw,
+    sourceMessageIds: [],
+  };
+  const nodes = Object.fromEntries([
+    'title',
+    'status',
+    'apply',
+    'recheck',
+  ].map(name => [name, {
+    textContent: '',
+    hidden: false,
+    disabled: false,
+  }]));
+  const root = {
+    hidden: true,
+    dataset: {},
+    querySelector: selector => ({
+      '[data-format-repair-banner-title]': nodes.title,
+      '[data-format-repair-banner-status]': nodes.status,
+      '[data-format-repair-banner-action="apply"]': nodes.apply,
+      '[data-format-repair-banner-action="recheck"]': nodes.recheck,
+    })[selector] || null,
+    addEventListener() {},
+  };
+  const applied = [];
+  const runtime = createRejectedFormatRepairBannerRuntime({
+    root,
+    getEnvelope: sessionId => (sessionId === 'source-room' ? envelope : null),
+    onApply: async state => {
+      applied.push({ sessionId: state.sessionId, runId: state.runId });
+      return { ok: true, applied: true };
+    },
+  });
+
+  assert.equal(runtime.sync('source-room'), true);
+  assert.equal(root.hidden, false);
+  assert.equal(root.dataset.status, 'needs_check');
+  assert.equal(nodes.apply.disabled, true);
+  runtime.markChecking({ sessionId: 'source-room' });
+  assert.equal(root.dataset.status, 'checking');
+  runtime.updateReview({
+    sessionId: 'source-room',
+    result: {
+      status: 'invalid_format',
+      errors: ['本地检查仍缺少闭合标签'],
+      summary: '本地检查未通过',
+    },
+  });
+  assert.equal(root.dataset.status, 'check_failed');
+  assert.equal(nodes.recheck.disabled, false);
+  assert.match(nodes.status.textContent, /本地检查仍缺少闭合标签/);
+  runtime.markChecking({ sessionId: 'source-room' });
+  runtime.updateReview({
+    sessionId: 'source-room',
+    runId: 'run-banner',
+    result: {
+      modelReview: {
+        status: 'patch',
+        canRepair: true,
+        repairSummary: '补齐闭合标签',
+        candidateText: '<private_chat>fixed</private_chat>',
+        linePatches: [{
+          startLine: 1,
+          endLine: 1,
+          originalLines: ['<private_chat>broken</private_ch'],
+          replacementLines: ['<private_chat>fixed</private_chat>'],
+        }],
+      },
+    },
+  });
+  assert.equal(root.dataset.status, 'candidate_ready');
+  assert.equal(nodes.apply.disabled, false);
+  assert.match(nodes.status.textContent, /补齐闭合标签/);
+  assert.deepEqual(await runtime.applyByRunId('run-banner'), { ok: true, applied: true });
+  assert.deepEqual(applied, [{ sessionId: 'source-room', runId: 'run-banner' }]);
+
+  envelope.turnId = 'turn-newer';
+  assert.equal(runtime.sync('source-room'), true);
+  assert.equal(nodes.apply.disabled, true);
+  assert.equal(await runtime.applyByRunId('run-banner'), null);
+  runtime.clear('source-room');
+  assert.equal(root.hidden, true);
+  console.log('ok - rejected format banner tracks checking/candidate state and rejects drifted run actions');
+}
+
+{
+  const envelope = {
+    text: '<private_chat>broken</private_ch',
+    at: 101,
+    turnId: 'turn-restarted',
+    sourceSessionId: 'source-room',
+    sourceKind: FORMAT_REPAIR_SOURCE_KINDS.socialTurnRaw,
+    sourceMessageIds: [],
+  };
+  const nodes = Object.fromEntries(['title', 'status', 'apply', 'recheck'].map(name => [name, {
+    textContent: '',
+    disabled: false,
+  }]));
+  let clickHandler = null;
+  let recheckCalls = 0;
+  const root = {
+    hidden: true,
+    dataset: {},
+    querySelector: selector => ({
+      '[data-format-repair-banner-title]': nodes.title,
+      '[data-format-repair-banner-status]': nodes.status,
+      '[data-format-repair-banner-action="apply"]': nodes.apply,
+      '[data-format-repair-banner-action="recheck"]': nodes.recheck,
+    })[selector] || null,
+    addEventListener(name, handler) {
+      if (name === 'click') clickHandler = handler;
+    },
+  };
+  const runtime = createRejectedFormatRepairBannerRuntime({
+    root,
+    getEnvelope: () => envelope,
+    getRepairAvailability: state => resolveRejectedFormatRepairDispatcherAvailability({
+      dispatcher: null,
+      envelope: state.envelope,
+    }),
+    onRecheck: () => { recheckCalls += 1; },
+  });
+  runtime.sync('source-room');
+  assert.equal(root.dataset.status, 'dispatcher_unavailable');
+  assert.equal(nodes.apply.disabled, true);
+  assert.equal(nodes.recheck.disabled, true);
+  assert.match(nodes.status.textContent, /先在本聊天室完成一轮对话/);
+  clickHandler({
+    target: {
+      closest: () => ({ dataset: { formatRepairBannerAction: 'recheck' } }),
+    },
+    preventDefault() {},
+  });
+  assert.equal(recheckCalls, 0, 'dispatcher 不可用时不得调用模型检查回调');
+  console.log('ok - restarted rejected banner blocks repair work before spending a model call');
+}
 
 {
   const turnMeta = buildFormatRepairTurnMeta({
@@ -373,4 +576,30 @@ import {
     /deferProtocolAfterReceiveEffects|deferProtocolUiMessages/,
   );
   console.log('ok - app protocol transactions register committed bubbles and persisted queues retain repair envelopes');
+}
+
+{
+  const [indexSource, cssSource, appSource] = await Promise.all([
+    readFile(new URL('../../src/index.html', import.meta.url), 'utf8'),
+    readFile(new URL('../../src/assets/css/format-repair-banner.css', import.meta.url), 'utf8'),
+    readFile(new URL('../../src/scripts/ui/app.js', import.meta.url), 'utf8'),
+  ]);
+  assert.match(indexSource, /id="rejected-format-repair-banner"/);
+  assert.match(indexSource, /data-format-repair-banner-action="view"/);
+  assert.match(indexSource, /data-format-repair-banner-action="apply"/);
+  assert.match(indexSource, /data-format-repair-banner-action="recheck"/);
+  assert.match(indexSource, /data-format-repair-banner-action="regenerate"/);
+  assert.match(cssSource, /body\[data-theme-mode='dark'\] \.format-repair-banner/);
+  assert.match(cssSource, /prefers-reduced-motion:\s*reduce/);
+  assert.doesNotMatch(cssSource, /backdrop-filter/);
+  assert.match(appSource, /createRejectedFormatRepairBannerRuntime\(\{/);
+  assert.match(appSource, /getRepairAvailability:[\s\S]*resolveRejectedFormatRepairDispatcherAvailability/);
+  const localReviewBranch = appSource.slice(
+    appSource.indexOf('if (!modelReviewQueued)'),
+    appSource.indexOf('return {', appSource.indexOf('if (!modelReviewQueued)')),
+  );
+  assert.match(localReviewBranch, /rejectedFormatRepairBannerRuntime\?\.updateReview/, '仅本地检查完成也必须退出 checking 状态');
+  assert.match(appSource, /protocol_dispatcher_revision_mismatch/);
+  assert.match(appSource, /applyAgentFormatRepairRun/);
+  console.log('ok - rejected format repair banner is wired with themed, revision-safe actions');
 }

@@ -39,6 +39,14 @@
   --app-radius-pill: 999px;
   --app-avatar-radius: 18px;
   --app-font-scale: 1;
+  --pull-handle-rest-opacity: 0.62;
+  --chat-list-edge-marker-rest-opacity: 0.42;
+  --chat-list-edge-marker-room-opacity: 0.3;
+  --pull-handle-anchor-height: 92px;
+  --pull-handle-anchor-rest-opacity: 0.65;
+  --pull-handle-anchor-color: color-mix(in srgb, var(--app-accent-primary) 34%, transparent);
+  --pull-handle-rest-filter: drop-shadow(0 0 2px color-mix(in srgb, var(--app-accent-primary) 34%, transparent)) drop-shadow(0 1px 1px var(--app-shadow-color));
+  --pull-handle-hover-filter: drop-shadow(0 0 3.5px color-mix(in srgb, var(--app-accent-primary) 58%, transparent)) drop-shadow(0 1px 1px var(--app-shadow-color));
 }
 
 body[data-theme-mode='dark'] {
@@ -48,6 +56,7 @@ body[data-theme-mode='dark'] {
   --app-danger-soft: rgba(248, 113, 113, 0.13);
   --app-danger-border: rgba(248, 113, 113, 0.34);
   --app-task-rgb: 167, 139, 250;
+  --pull-handle-rest-filter: drop-shadow(0 0 3px color-mix(in srgb, var(--app-accent-primary) 38%, transparent)) drop-shadow(0 1px 1px var(--app-shadow-color));
   color-scheme: dark;
 }
 

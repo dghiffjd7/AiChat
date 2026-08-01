@@ -1,14 +1,54 @@
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 
 import {
   arePersonaScopedStoresReady,
   buildPersonaScopedStorageKey,
+  canReusePersonaScope,
   canEnterPersonaScopedSession,
   getOwnRpSessionIdForScope,
   hasPersonaScopedSession,
   isForeignRpSessionForScope,
   resolvePersonaScopedCurrentSession,
+  settlePersonaScopeStores,
 } from '../../src/scripts/ui/persona-scope-runtime-utils.js';
+
+{
+  const chatStore = { scopeId: 'persona_a' };
+  const contactsStore = { scopeId: 'persona_a' };
+  assert.equal(canReusePersonaScope({
+    nextScopeId: 'persona_a',
+    activeScopeId: 'persona_a',
+    chatStore,
+    contactsStore,
+  }), true);
+  chatStore.scopeId = 'persona_b';
+  contactsStore.scopeId = 'persona_b';
+  assert.equal(canReusePersonaScope({
+    nextScopeId: 'persona_a',
+    activeScopeId: 'persona_a',
+    chatStore,
+    contactsStore,
+  }), false, 'A→B stale 后 key=A/store=B 时不得早退');
+  assert.equal(canReusePersonaScope({
+    nextScopeId: 'persona_a',
+    activeScopeId: 'persona_a',
+    chatStore: { scopeId: 'persona_a' },
+    contactsStore: { scopeId: 'persona_a' },
+    force: true,
+  }), false);
+  console.log('ok - persona scope reuse requires both key and critical stores to match');
+}
+
+{
+  const appSource = await readFile(new URL('../../src/scripts/ui/app.js', import.meta.url), 'utf8');
+  const applyScopeSource = appSource.slice(
+    appSource.indexOf('const applyPersonaScopeNow = async'),
+    appSource.indexOf('const wasChatRoomVisible', appSource.indexOf('const applyPersonaScopeNow = async')),
+  );
+  assert.match(applyScopeSource, /canReusePersonaScope\(\{[\s\S]*nextScopeId:\s*nextKey[\s\S]*activeScopeId:\s*activePersonaScopeKey[\s\S]*chatStore[\s\S]*contactsStore/);
+  console.log('ok - app early return delegates to the store-ready persona scope guard');
+}
 
 {
   assert.equal(buildPersonaScopedStorageKey('phone_ui_state_v1', ''), 'phone_ui_state_v1__default');
@@ -112,4 +152,29 @@ import {
     reason: 'known-session',
   });
   console.log('ok - persona scoped enter guard blocks stale DOM sessions during scope switches');
+}
+
+{
+  const calls = [];
+  const result = await settlePersonaScopeStores({
+    scopeId: 'persona_2',
+    stores: [
+      { name: 'chat', store: { setScope: async scope => calls.push(['chat', scope]) } },
+      { name: 'memory', store: { setScope: async scope => {
+        calls.push(['memory', scope]);
+        throw new Error('memory unavailable');
+      } } },
+      { name: 'missing', store: null },
+      { name: 'contacts', store: { setScope: async scope => calls.push(['contacts', scope]) } },
+    ],
+  });
+  assert.deepEqual(calls, [
+    ['chat', 'persona_2'],
+    ['memory', 'persona_2'],
+    ['contacts', 'persona_2'],
+  ]);
+  assert.equal(result.ok, false);
+  assert.deepEqual(result.failures.map(item => item.name), ['memory']);
+  assert.match(result.failures[0].error.message, /memory unavailable/);
+  console.log('ok - persona scope store settlement completes every store and reports partial failures');
 }

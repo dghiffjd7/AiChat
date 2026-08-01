@@ -10,6 +10,34 @@ export const buildPersonaScopedStorageKey = (baseKey = '', scopeId = '') => {
 
 export const getOwnRpSessionIdForScope = (scopeId = '') => `rp:${getPersonaScopeStorageSuffix(scopeId)}`;
 
+export const settlePersonaScopeStores = async ({
+  scopeId = '',
+  stores = [],
+} = {}) => {
+  const targets = (Array.isArray(stores) ? stores : [])
+    .filter(item => typeof item?.store?.setScope === 'function')
+    .map(item => ({
+      name: String(item?.name || 'store').trim() || 'store',
+      store: item.store,
+    }));
+  const results = await Promise.allSettled(
+    targets.map(item => Promise.resolve().then(() => item.store.setScope(scopeId))),
+  );
+  const failures = [];
+  results.forEach((result, index) => {
+    if (result.status !== 'rejected') return;
+    failures.push({
+      name: targets[index].name,
+      error: result.reason instanceof Error ? result.reason : new Error(String(result.reason || 'scope failed')),
+    });
+  });
+  return {
+    ok: failures.length === 0,
+    failures,
+    results,
+  };
+};
+
 export const isForeignRpSessionForScope = (sessionId = '', scopeId = '') => {
   const sid = String(sessionId || '').trim();
   if (!sid.startsWith('rp:')) return false;
@@ -44,6 +72,18 @@ export const arePersonaScopedStoresReady = ({
   const contactsScope = normalizeScopeId(contactsStore?.scopeId || '');
   return chatScope === scope && contactsScope === scope;
 };
+
+export const canReusePersonaScope = ({
+  nextScopeId = '',
+  activeScopeId = '',
+  force = false,
+  chatStore = null,
+  contactsStore = null,
+} = {}) => (
+  force !== true &&
+  normalizeScopeId(nextScopeId) === normalizeScopeId(activeScopeId) &&
+  arePersonaScopedStoresReady({ scopeId: nextScopeId, chatStore, contactsStore })
+);
 
 export const canEnterPersonaScopedSession = ({
   sessionId = '',

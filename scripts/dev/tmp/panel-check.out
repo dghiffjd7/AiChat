@@ -1,9 +1,0 @@
-{
-  "def": "document.getElementById('interaction-choice-panel')",
-  "id": "interaction-choice-panel",
-  "inDom": true,
-  "isPhantom": false,
-  "hasCloseBtn": false,
-  "childCount": 2,
-  "staticCtx": "id=\"interaction-choice-panel\"> <h4 id=\"interaction-choice-title\">选择行动</h4> <div id=\"interaction-choice-buttons\"></div> </div> </div> <div class=\"overlay\" id=\"error-report-overlay\"> <div class=\"modal\" id=\"error-report-modal\"> <button class=\"modal-close-btn\">×</button> <h4> <i clas"
-}

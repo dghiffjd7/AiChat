@@ -492,7 +492,11 @@ test('buildChatFormatGuardianAgentRun records bounded model repair return detail
   const run = buildChatFormatGuardianAgentRun({
     now: 1000,
     sessionId: 'contact:boss',
-    message: { id: 'm-model-format', role: 'assistant' },
+    message: {
+      id: 'm-model-format',
+      role: 'assistant',
+      meta: { protocolParseFailure: true },
+    },
     autoApplyRepair: true,
     autoRepairResult: {
       didAnything: false,
@@ -536,6 +540,7 @@ test('buildChatFormatGuardianAgentRun records bounded model repair return detail
   });
 
   assert.equal(run.metadata.modelReviewDetail.status, 'patch');
+  assert.equal(run.metadata.protocolParseFailure, true);
   assert.equal(run.metadata.modelReviewDetail.canRepair, true);
   assert.equal(run.metadata.modelReviewDetail.candidateText, candidateText);
   assert.equal(run.metadata.modelReviewDetail.correctedText, undefined);

@@ -793,6 +793,7 @@ export const buildChatFormatGuardianAgentRun = ({
     sessionId: trim(sessionId),
     sourceMessageId,
     sourceMessageRole: trim(message?.role),
+    protocolParseFailure: message?.meta?.protocolParseFailure === true,
     rawStatus: trim(result?.status),
     sourceTextKind: trim(result?.sourceTextKind),
     hasRawOriginal: result?.hasRawOriginal === true,

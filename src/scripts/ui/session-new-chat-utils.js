@@ -134,3 +134,38 @@ export const runStartNewChatFlow = async ({
     memoryTableSnapshot,
   };
 };
+
+export const runRpPlotResetFlow = async ({
+  sessionId = '',
+  keepInput = false,
+  runStartNewChat = runStartNewChatFlow,
+  startNewChat = () => '',
+  resetVariableState = () => {},
+  clearRenderedMessages = () => {},
+  resetRenderState = () => {},
+  seedGreeting = async () => false,
+  clearInput = () => {},
+  refreshUi = () => {},
+  ...flowOptions
+} = {}) => {
+  const sid = String(sessionId || '').trim();
+  if (!sid) return { started: false, cancelled: true, archiveId: '' };
+  const result = await runStartNewChat({
+    ...flowOptions,
+    sessionId: sid,
+    isGroup: false,
+    sessionMode: 'rp',
+    sourcePrefix: 'rp_plot_reset',
+    startNewChat: (targetSessionId, archiveName, options) => {
+      clearRenderedMessages?.();
+      resetVariableState?.(targetSessionId);
+      resetRenderState?.(targetSessionId);
+      return startNewChat?.(targetSessionId, archiveName, options) || '';
+    },
+  });
+  if (!result?.started) return result;
+  await seedGreeting?.(sid);
+  if (!keepInput) clearInput?.();
+  refreshUi?.(sid);
+  return result;
+};

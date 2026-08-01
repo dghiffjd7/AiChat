@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 
 import {
   clearSessionMemoriesForNewChat,
+  runRpPlotResetFlow,
   runStartNewChatFlow,
 } from '../../src/scripts/ui/session-new-chat-utils.js';
 
@@ -137,4 +138,62 @@ import {
   assert.deepEqual(result, { started: false, cancelled: true, archiveId: '' });
   assert.deepEqual(calls, []);
   console.log('ok - runStartNewChatFlow exits before prompting when table-mode new-chat dialog is cancelled');
+}
+
+{
+  const calls = [];
+  const result = await runRpPlotResetFlow({
+    sessionId: 'rp:hero',
+    keepInput: false,
+    getMemoryStorageMode: () => 'table',
+    askMemoryTableNewChatMode: async () => 'keep',
+    promptForArchiveName: async () => '剧情存档',
+    buildMemoryTableSnapshot: async () => ({ rows: ['memory'] }),
+    captureArchivePointer: async () => ({ pointer: true }),
+    clearSessionMemories: async () => calls.push('clear-memory'),
+    persistArchivePointer: async () => calls.push('persist-pointer'),
+    restoreMemoryForActiveThread: async () => calls.push('restore-baseline'),
+    clearRenderedMessages: () => calls.push('clear-rendered'),
+    resetVariableState: sessionId => calls.push(`reset-variables:${sessionId}`),
+    resetRenderState: sessionId => calls.push(`reset-render:${sessionId}`),
+    startNewChat: (sessionId, archiveName, options) => {
+      calls.push(['start', sessionId, archiveName, options]);
+      return 'archive-rp';
+    },
+    seedGreeting: async sessionId => calls.push(`seed:${sessionId}`),
+    clearInput: () => calls.push('clear-input'),
+    refreshUi: sessionId => calls.push(`refresh:${sessionId}`),
+  });
+  assert.equal(result.started, true);
+  assert.equal(result.archiveId, 'archive-rp');
+  assert.deepEqual(calls, [
+    'clear-memory',
+    'clear-rendered',
+    'reset-variables:rp:hero',
+    'reset-render:rp:hero',
+    ['start', 'rp:hero', '剧情存档', { memoryTableSnapshot: { rows: ['memory'] } }],
+    'persist-pointer',
+    'restore-baseline',
+    'seed:rp:hero',
+    'clear-input',
+    'refresh:rp:hero',
+  ]);
+  console.log('ok - runRpPlotResetFlow archives before resetting variables and reseeding the greeting');
+}
+
+{
+  const calls = [];
+  const result = await runRpPlotResetFlow({
+    sessionId: 'rp:cancel',
+    runStartNewChat: async () => ({ started: false, cancelled: true, archiveId: '' }),
+    clearRenderedMessages: () => calls.push('clear-rendered'),
+    resetVariableState: () => calls.push('reset-variables'),
+    startNewChat: () => calls.push('start'),
+    seedGreeting: async () => calls.push('seed'),
+    clearInput: () => calls.push('clear-input'),
+    refreshUi: () => calls.push('refresh'),
+  });
+  assert.deepEqual(result, { started: false, cancelled: true, archiveId: '' });
+  assert.deepEqual(calls, []);
+  console.log('ok - runRpPlotResetFlow leaves UI and data untouched when the archive flow is cancelled');
 }

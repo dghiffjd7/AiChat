@@ -1,7 +1,0 @@
-[
-  {
-    "at": 2035079,
-    "head": "drawMap() { this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height); this.ctx.save(); ",
-    "feCtx": "; this.ctx.translate(this.offsetX, this.offsetY); this.ctx.scale(this.scale, this.scale); // 使用 _mapData this._mapData.main_regions.forEach(mainRegion => { this.ctx.fi"
-  }
-]

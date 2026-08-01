@@ -4,7 +4,12 @@ import { getVisionInputCapability } from '../api/vision-capabilities.js';
 import { normalizeAssistantStreamChunk } from '../api/native-reasoning.js';
 import { isDeepSeekApiRequest } from '../api/providers/deepseek-compat.js';
 import { extractTableEditBlocks, stripTableEditBlocks } from '../memory/memory-edit-parser.js';
-import { getMemoryContextType, resolveMemorySessionMode, tableMatchesMemoryContext } from '../memory/memory-context-utils.js';
+import {
+  getMemoryContextType,
+  getSummaryTableIdsForContext,
+  resolveMemorySessionMode,
+  tableMatchesMemoryContext,
+} from '../memory/memory-context-utils.js';
 import { resolveMemoryCoverageStampInterval } from '../memory/memory-coverage-utils.js';
 import { isSummaryLimitTableId } from '../memory/memory-prompt-utils.js';
 import {
@@ -214,6 +219,7 @@ import {
   createChatAndContactsRefreshRuntime,
   refreshChatAndContactsListNow,
 } from './app-list-refresh-runtime-utils.js';
+import { createChatListCollapseRuntime } from './chat-list-collapse-runtime-utils.js';
 import {
   createAppChatroomRuntime,
 } from './app-chatroom-runtime-utils.js';
@@ -251,8 +257,10 @@ import { createAppUiStateRuntime } from './app-ui-state-runtime-utils.js';
 import {
   buildPersonaScopedStorageKey,
   canEnterPersonaScopedSession,
+  canReusePersonaScope,
   hasPersonaScopedSession,
   resolvePersonaScopedCurrentSession,
+  settlePersonaScopeStores,
 } from './persona-scope-runtime-utils.js';
 import { createViewportKeyboardRuntime } from './viewport-keyboard-runtime-utils.js';
 import {
@@ -324,6 +332,11 @@ import {
   resolveLatestFormatRepairTarget,
   tagMessageWithFormatRepairTurn,
 } from './chat/format-repair-target-utils.js';
+import {
+  createRejectedFormatRepairBannerRuntime,
+  isRejectedProtocolRawEnvelope,
+  resolveRejectedFormatRepairDispatcherAvailability,
+} from './chat/rejected-format-repair-banner-utils.js';
 import {
   FORMAT_FUNCTION_BLOCK_KINDS,
   buildFormatFunctionExecutionLedger,
@@ -683,11 +696,16 @@ import { AgentCenterStatusChip } from './agent-center-status-chip.js';
 import { createAgentWritePreviewPendingCommitActions } from './agent-write-preview-pending-commit-actions.js';
 import { createAgentWritePreviewRuntimes } from './agent-write-preview-runtime-utils.js';
 import {
+  askMemoryTableNewChatMode,
   loadSessionMemoryActionContext,
   loadSessionMemoryRollbackSnapshotContext,
   resolveDefaultMemoryTemplateId,
   resolveSessionMemoryTemplateContextSafe,
 } from './session-memory-table-utils.js';
+import {
+  clearSessionMemoriesForNewChat,
+  runRpPlotResetFlow,
+} from './session-new-chat-utils.js';
 import {
   emitMemoryRowsUpdated as emitSharedMemoryRowsUpdated,
   notifyMemoryEditsApplied,
@@ -755,7 +773,7 @@ import {
   readModeSwitchPosition,
   writeModeSwitchPosition,
 } from './mode-switch-position-runtime-utils.js';
-import { appConfirm, appChoice } from './app-confirm.js';
+import { appConfirm, appChoice, appPromptText } from './app-confirm.js';
 import {
   clearRuntimeNoiseStorage,
   finishAppBootTrace,
@@ -2055,12 +2073,39 @@ const initApp = async () => {
   const applyPersonaScopeNow = async ({ personaId = null, force = false } = {}, token = 0) => {
     const pid = personaId || personaStore.getActive?.()?.id || 'default';
     const nextKey = getPersonaScopeKey(pid);
-    if (!force && nextKey === activePersonaScopeKey) {
+    if (canReusePersonaScope({
+      nextScopeId: nextKey,
+      activeScopeId: activePersonaScopeKey,
+      force,
+      chatStore,
+      contactsStore,
+    })) {
       activePersonaId = pid;
+      if (uiMode !== 'rp' && typeof isChatRoomVisible === 'function' && isChatRoomVisible()) {
+        const current = resolvePersonaScopedCurrentSession({
+          scopeId: nextKey,
+          chatStore,
+          contactsStore,
+          allowRpSession: false,
+        });
+        if (!current.sessionId) {
+          try {
+            exitChatRoom({ animate: false });
+          } catch {}
+          refreshChatAndContacts({ immediate: true });
+        }
+      }
       return false;
     }
+    const wasChatRoomVisible = uiMode !== 'rp' &&
+      typeof isChatRoomVisible === 'function' && isChatRoomVisible();
     if (uiMode === 'rp' && nextKey !== activePersonaScopeKey) {
       lastChatState = { activePage: 'chat', sessionId: '', inChatRoom: false };
+    }
+    if (wasChatRoomVisible) {
+      try {
+        exitChatRoom({ animate: false });
+      } catch {}
     }
     try {
       const prevId = activePersonaId || 'default';
@@ -2071,25 +2116,36 @@ const initApp = async () => {
       };
     } catch {}
     logger.debug(`[Persona_test] applyPersonaScope start persona=${pid} scope=${nextKey || 'default'}`);
-    activePersonaScopeKey = nextKey;
-    await Promise.all([
-      chatStore.setScope?.(nextKey),
-      contactsStore.setScope?.(nextKey),
-      groupStore.setScope?.(nextKey),
-      momentsStore.setScope?.(nextKey),
-      momentSummaryStore.setScope?.(nextKey),
-      personaArchiveStore.setScope?.(nextKey),
-      rpSessionStore.setScope?.(nextKey),
-      memoryTableStore.setScope?.(nextKey),
-      contactProfileStore.setScope?.(nextKey),
-      memoryTemplateStore.setScope?.(nextKey),
-      memorySnapshotStore.setScope?.(nextKey),
-      variableSnapshotStore.setScope?.(nextKey),
-      turnCheckpointStore.setScope?.(nextKey),
-    ]);
+    const scopeSettlement = await settlePersonaScopeStores({
+      scopeId: nextKey,
+      stores: [
+        { name: 'chatStore', store: chatStore },
+        { name: 'contactsStore', store: contactsStore },
+        { name: 'groupStore', store: groupStore },
+        { name: 'momentsStore', store: momentsStore },
+        { name: 'momentSummaryStore', store: momentSummaryStore },
+        { name: 'personaArchiveStore', store: personaArchiveStore },
+        { name: 'rpSessionStore', store: rpSessionStore },
+        { name: 'memoryTableStore', store: memoryTableStore },
+        { name: 'contactProfileStore', store: contactProfileStore },
+        { name: 'memoryTemplateStore', store: memoryTemplateStore },
+        { name: 'memorySnapshotStore', store: memorySnapshotStore },
+        { name: 'variableSnapshotStore', store: variableSnapshotStore },
+        { name: 'turnCheckpointStore', store: turnCheckpointStore },
+      ],
+    });
+    for (const failure of scopeSettlement.failures) {
+      logger.warn(`[Persona_test] ${failure.name} scope apply failed`, failure.error);
+    }
+    const criticalFailure = scopeSettlement.failures.find(failure => (
+      failure.name === 'chatStore' || failure.name === 'contactsStore'
+    ));
+    if (criticalFailure) throw criticalFailure.error;
     try {
       await memoryTemplateStore.ensureDefaultTemplate?.();
-    } catch {}
+    } catch (err) {
+      logger.warn('[Persona_test] ensure default memory template after scope apply failed', err);
+    }
     const activePid = personaStore.getActive?.()?.id || 'default';
     const activeKey = getPersonaScopeKey(activePid);
     if (token !== personaScopeApplyToken || activeKey !== nextKey) {
@@ -2098,6 +2154,7 @@ const initApp = async () => {
       );
       return false;
     }
+    activePersonaScopeKey = nextKey;
     try {
       window.appBridge?.setPersonaScope?.(nextKey);
     } catch {}
@@ -2115,14 +2172,24 @@ const initApp = async () => {
       try {
         window.appBridge?.setActiveSession?.(sid);
       } catch {}
-      if (sid) applyMvuSchemaDefaults(sid, { reason: 'persona' });
+      if (sid) {
+        try {
+          applyMvuSchemaDefaults(sid, { reason: 'persona' });
+        } catch (err) {
+          logger.warn('[Persona_test] apply social MVU defaults after scope switch failed', err);
+        }
+      }
     }
     const rpSessionId = getRpSessionId(pid);
     if (chatStore.hasSession?.(rpSessionId)) {
-      applyMvuSchemaDefaults(rpSessionId, { reason: 'persona_rp' });
+      try {
+        applyMvuSchemaDefaults(rpSessionId, { reason: 'persona_rp' });
+      } catch (err) {
+        logger.warn('[Persona_test] apply RP MVU defaults after scope switch failed', err);
+      }
     }
     if (!isRpScopeSwitch) {
-      if (typeof isChatRoomVisible === 'function' && isChatRoomVisible()) {
+      if (wasChatRoomVisible) {
         if (sid) {
           const contact = contactsStore.getContact(sid);
           enterChatRoom(sid, contact?.name || sid, chatOriginPage);
@@ -2229,6 +2296,7 @@ const initApp = async () => {
     }
     if (!target) return false;
     if (String(personaStore.getActive?.()?.id || '') === String(target.id || '')) {
+      await applyPersonaScope({ personaId: target.id });
       await syncBoundUserForCharacterCard(target);
       syncUserPersonaUI(chatStore.getCurrent());
       return true;
@@ -3658,6 +3726,11 @@ const initApp = async () => {
     }
     return { decision: 'deny' };
   };
+  let applyRejectedFormatRepairAgentRun = async () => ({
+    ok: false,
+    reason: 'format_repair_runtime_unavailable',
+    message: '格式修复入口尚未就绪。',
+  });
   const agentCenterPanel = new AgentCenterPanel({
     getFailureSeenAt: ({ surface = '' } = {}) => getAgentFailureSeenAt({ surface }),
     markFailureSeen: ({ surface = '', at = Date.now() } = {}) => markAgentFailuresSeen({ surface, at }),
@@ -3841,6 +3914,7 @@ const initApp = async () => {
             run: finished,
           };
         },
+        applyAgentFormatRepairRun: options => applyRejectedFormatRepairAgentRun(options || {}),
         getAgentFeatureSettings: () => agentFeatureSettingsStore.getSettings(),
         listAgentFeatures: () => agentFeatureSettingsStore.listFeatures(),
         setAgentFeatureEnabled: async (options = {}) => {
@@ -8355,6 +8429,7 @@ Phase G（Frame 36）：循环衔接
   };
 
   let contactDetailRuntime = null;
+  let chatListCollapseRuntime = null;
 
   // 孤儿群会话（本 scope 无联系人，多为跨 scope 泄漏残留）：无名无头像也进不了房，直接不进列表
   const isOrphanGroupSessionId = (sessionId) => {
@@ -8370,6 +8445,11 @@ Phase G（Frame 36）：循环衔接
       .filter(id => !isOrphanGroupSessionId(id))
       .filter(id => chatStore.hasMessages?.(id) || (chatStore.getMessages(id) || []).some(isConversationMessage))
       .slice(0, 50);
+    const unreadTotal = ids.reduce(
+      (total, id) => total + Math.max(0, Number(chatStore.getUnreadCount(id) || 0)),
+      0,
+    );
+    chatListCollapseRuntime?.setUnreadCount?.(unreadTotal);
     el.innerHTML = '';
     if (!ids.length) {
       const empty = document.createElement('div');
@@ -9178,6 +9258,14 @@ Phase G（Frame 36）：循环衔接
   const chatScroll = document.getElementById('chat-scroll');
   const composerInput = document.getElementById('composer-input');
   const chatInputContainer = document.querySelector('.chat-input-container');
+  chatListCollapseRuntime = createChatListCollapseRuntime({
+    root: document.getElementById('chat-page'),
+    handle: document.getElementById('chat-list-collapse-handle'),
+    storage: localStorage,
+  });
+  patchDebugUiRegistry((registry) => {
+    registry.stores.chatListCollapseRuntime = chatListCollapseRuntime;
+  });
   const blurComposerInput = () => {
     try {
       const active = document.activeElement;
@@ -22021,6 +22109,7 @@ Phase G（Frame 36）：循环衔接
 	    });
 	    return true;
 	  };
+  let syncRejectedFormatRepairBanner = () => false;
 	  const enterChatRoom = async (sessionId, sessionName, originPage = activePage, options = {}) => {
     const sid = String(sessionId || '').trim();
     const enterGuard = canEnterPersonaScopedSession({
@@ -22193,6 +22282,7 @@ Phase G（Frame 36）：循环衔接
 	    });
 	    chatGeneratedImagePreview.revealPendingForSession(sessionId);
     if (!result?.stale && String(chatStore.getCurrent?.() || '').trim() === sid) {
+      syncRejectedFormatRepairBanner(sid);
       maidGuideEmit(window, 'chat-room-entered', { sessionId: sid });
     }
 	    return result;
@@ -22200,6 +22290,7 @@ Phase G（Frame 36）：循环衔接
 
 	  const exitChatRoom = (options) => {
 	    chatGeneratedImagePreview.suspendCurrent();
+    syncRejectedFormatRepairBanner('');
     runSessionExitFlow({
       options,
       deactivateView: () => deactivateSessionEnterView({
@@ -22215,6 +22306,10 @@ Phase G（Frame 36）：循环衔接
         setReplyTarget: value => ui.setReplyTarget(value),
         scheduleModeSwitchSync,
         scheduleWallpaperIdle,
+        clearMessages: () => ui.clearMessages(),
+        clearChatTitle: () => {
+          if (currentChatTitle) currentChatTitle.textContent = '';
+        },
         messageTopbarEl: document.getElementById('message-topbar'),
         bottomNavEl: document.querySelector('.bottom-nav'),
         updateChatContentSearchVisibility,
@@ -23286,9 +23381,77 @@ Phase G（Frame 36）：循环衔接
     return true;
   };
 
-  const resetRpHistory = async (sessionId, { keepInput = false } = {}) => {
+  const resetRpHistory = async (sessionId, { keepInput = false, withArchive = false } = {}) => {
     const sid = String(sessionId || '').trim();
-    if (!sid) return;
+    if (!sid) return { started: false, cancelled: true, archiveId: '' };
+    if (withArchive) {
+      return runRpPlotResetFlow({
+        sessionId: sid,
+        keepInput,
+        getMemoryStorageMode: () => getMemoryStorageMode('writing'),
+        askMemoryTableNewChatMode,
+        promptForArchiveName: () => appPromptText({
+          title: '为当前剧情存档',
+          message: '留空会自动命名；取消则不会重置。',
+          placeholder: '存档名称（可选）',
+          confirmText: '继续',
+        }),
+        buildMemoryTableSnapshot: ({ sessionId: targetSessionId, isGroup }) =>
+          buildSwipeMemoryTableSnapshot(targetSessionId, { isGroup }),
+        captureArchivePointer: (targetSessionId, options) =>
+          buildArchivePointerFromCurrentThread(targetSessionId, options),
+        clearSessionMemories: ({
+          sessionId: targetSessionId,
+          isGroup,
+          keepNonSummary,
+          sessionMode,
+        }) => clearSessionMemoriesForNewChat({
+          sessionId: targetSessionId,
+          isGroup,
+          keepNonSummary,
+          memoryTableStore,
+          resolveDefaultMemoryTemplateId: () => resolveDefaultMemoryTemplateId({ memoryTemplateStore }),
+          resolveSummaryTableIds: () => {
+            const { summaryTableId, outlineTableId } = getSummaryTableIdsForContext({
+              sessionId: targetSessionId,
+              isGroup,
+              contextType: 'rp',
+              uiMode: sessionMode === 'rp' ? 'rp' : uiMode,
+            });
+            return [summaryTableId, outlineTableId];
+          },
+          notifyRowsUpdated: ({ sessionId: updatedSessionId, templateId }) =>
+            emitSharedMemoryRowsUpdated({
+              target: window,
+              sessionId: updatedSessionId,
+              templateId,
+            }),
+        }),
+        startNewChat: (targetSessionId, archiveName, options) =>
+          chatStore.startNewChat(targetSessionId, archiveName, {
+            ...(options || {}),
+            skipRpGreetingSeed: true,
+          }),
+        persistArchivePointer: (targetSessionId, archiveId, archivePointer, options) =>
+          setArchivePointerForArchive(targetSessionId, archiveId, archivePointer, options),
+        restoreMemoryForActiveThread,
+        resetVariableState: targetSessionId => resetRpGreetingVariableState({
+          chatStore,
+          sessionId: targetSessionId,
+          applyMvuSchemaDefaults,
+        }),
+        clearRenderedMessages: () => ui.clearMessages(),
+        resetRenderState: targetSessionId => chatRenderState.set(targetSessionId, { start: 0 }),
+        seedGreeting: targetSessionId => seedRpGreetingIfNeeded(targetSessionId),
+        clearInput: () => ui.clearInput({ focus: false }),
+        refreshUi: targetSessionId => {
+          refreshChatAndContacts();
+          updatePendingFloat(targetSessionId);
+          refreshRpToolbar(targetSessionId);
+        },
+        logger,
+      });
+    }
     chatStore.clear(sid);
     resetRpGreetingVariableState({ chatStore, sessionId: sid, applyMvuSchemaDefaults });
     ui.clearMessages();
@@ -23298,7 +23461,11 @@ Phase G（Frame 36）：循环衔接
     refreshChatAndContacts();
     updatePendingFloat(sid);
     refreshRpToolbar(sid);
+    return { started: true, cancelled: false, archiveId: '' };
   };
+  patchDebugUiRegistry((registry) => {
+    registry.actions.resetRpHistory = (sessionId, options = {}) => resetRpHistory(sessionId, options);
+  });
 
   if (!chatStore.__rpGreetingWrapped) {
     chatStore.__rpGreetingWrapped = true;
@@ -23318,7 +23485,7 @@ Phase G（Frame 36）：循环衔接
       chatStore.startNewChat = (id = chatStore.getCurrent(), archiveName = '', options = {}) => {
         const sid = String(id || chatStore.getCurrent() || '').trim();
         const result = originalStartNewChat(id, archiveName, options);
-        if (sid && isRpSessionId(sid)) {
+        if (sid && isRpSessionId(sid) && options?.skipRpGreetingSeed !== true) {
           seedRpGreetingIfNeeded(sid).catch(() => {});
           refreshRpToolbar(sid);
         }
@@ -23882,13 +24049,14 @@ Phase G（Frame 36）：循环衔接
     closeRpGreetingSheet();
     const ok = await appConfirm({
       title: '重置创意写作剧情',
-      message: '将清空当前创意写作历史并重新插入开场白，是否继续？',
-      confirmText: '重置',
+      message: '当前剧情会先存档，再开启一段从开场白开始的新剧情；之后可在历史存档中切回。',
+      confirmText: '存档并重置',
       cancelText: '取消',
       danger: true,
     });
     if (!ok) return;
-    await resetRpHistory(getRpSessionId(activePersonaId));
+    const result = await resetRpHistory(getRpSessionId(activePersonaId), { withArchive: true });
+    if (result?.started) window.toastr?.success?.('当前剧情已存档，并已开启新聊天');
   });
 
   const contactsUngroupedEl = document.getElementById('contacts-ungrouped-list');
@@ -24002,9 +24170,12 @@ Phase G（Frame 36）：循环衔接
   const canPersistOutgoingSwipeMemoryState = (sessionId, msgId, index, branch) => {
     return swipeMemoryStateTracker.canPersistOutgoing(sessionId, msgId, index, branch);
   };
+  const getMemoryStorageModeForSession = sessionId => (
+    getMemoryStorageMode(isRpSessionId(sessionId) ? 'writing' : 'chat')
+  );
   const resolveSwipeMemoryTemplateId = async () => resolveDefaultMemoryTemplateId({ memoryTemplateStore });
   const buildSwipeMemoryTableSnapshot = async (sessionId, { isGroup } = {}) => {
-    if (getMemoryStorageMode() !== 'table') return null;
+    if (getMemoryStorageModeForSession(sessionId) !== 'table') return null;
     if (!memoryTableStore?.getMemories || !memoryTemplateStore) return null;
     const sid = String(sessionId || '').trim();
     if (!sid) return null;
@@ -24028,7 +24199,7 @@ Phase G（Frame 36）：循环衔接
     });
   };
   const applySwipeMemoryTableSnapshot = async (sessionId, snapshot, { isGroup } = {}) => {
-    if (getMemoryStorageMode() !== 'table') return false;
+    if (getMemoryStorageModeForSession(sessionId) !== 'table') return false;
     if (!snapshot || !memoryTableStore?.getMemories) return false;
     const sid = String(sessionId || '').trim();
     if (!sid) return false;
@@ -24055,7 +24226,7 @@ Phase G（Frame 36）：循环衔接
     return true;
   };
   const persistSwipeBranchMemoryState = async (branches, index, sessionId, { isGroup } = {}) => {
-    if (getMemoryStorageMode() !== 'table') return false;
+    if (getMemoryStorageModeForSession(sessionId) !== 'table') return false;
     return persistSwipeBranchMemoryStateCore({
       branches,
       index,
@@ -24066,7 +24237,7 @@ Phase G（Frame 36）：循环衔接
     });
   };
   const applySwipeBranchMemoryState = async (sessionId, branch, { isGroup } = {}) => {
-    if (getMemoryStorageMode() !== 'table') return false;
+    if (getMemoryStorageModeForSession(sessionId) !== 'table') return false;
     return applySwipeBranchMemoryStateCore({
       sessionId,
       branch,
@@ -24076,7 +24247,7 @@ Phase G（Frame 36）：循环衔接
     });
   };
   const captureAssistantMemoryState = async (sessionId, { isGroup } = {}) => {
-    if (getMemoryStorageMode() !== 'table') return null;
+    if (getMemoryStorageModeForSession(sessionId) !== 'table') return null;
     return captureAssistantMemoryStateCore({
       sessionId,
       buildSnapshot: sid => buildSwipeMemoryTableSnapshot(sid, { isGroup }),
@@ -24208,7 +24379,7 @@ Phase G（Frame 36）：循环衔接
   const isTurnCheckpointSessionEnabled = sessionId => {
     const sid = String(sessionId || '').trim();
     if (!sid) return false;
-    if (getMemoryStorageMode() !== 'table') return false;
+    if (getMemoryStorageModeForSession(sid) !== 'table') return false;
     if (!memoryTableStore?.getMemories || !memoryTemplateStore) return false;
     return true;
   };
@@ -24440,7 +24611,7 @@ Phase G（Frame 36）：循环衔接
   };
   const restoreCheckpointBranchMemoryState = async (sessionId, branch, { isGroup, fallbackSnapshot = null } = {}) => {
     const sid = String(sessionId || '').trim();
-    if (!sid || getMemoryStorageMode() !== 'table') return false;
+    if (!sid || getMemoryStorageModeForSession(sid) !== 'table') return false;
     const source = branch && typeof branch === 'object' ? branch : {};
     const snapshotId = String(source.memorySnapshotId || '').trim();
     let snapshot = source.memoryTableSnapshot || null;
@@ -26136,6 +26307,7 @@ Phase G（Frame 36）：循环衔接
   // §4.6 协议修复文本重新解析进消息流：复用最近一轮发送链装配的协议事件分发器
   // （协议事件自带目标名，跨会话安全；发送链尚未跑过时返回不可用）。
   let lastProtocolRetryDispatcher = null;
+  let rejectedFormatRepairBannerRuntime = null;
   let activeFormatRepairFunctionPlan = null;
   const resolveFormatFunctionEffectTarget = (entry, capturedMessages = [], fallbackSessionId = '') => {
     const candidates = (Array.isArray(capturedMessages) ? capturedMessages : [])
@@ -26297,8 +26469,20 @@ Phase G（Frame 36）：循环衔接
   } = {}) => {
     const dispatcher = lastProtocolRetryDispatcher;
     const repairText = String(candidateText || '');
-    if (!dispatcher || typeof dispatcher.processEvent !== 'function') {
-      return { didAnything: false, reason: 'protocol_dispatcher_unavailable' };
+    const sourceSid = String(sourceSessionId || '').trim();
+    const repairTurnId = String(turnId || '').trim();
+    const dispatcherAvailability = resolveRejectedFormatRepairDispatcherAvailability({
+      dispatcher,
+      envelope: {
+        sourceSessionId: sourceSid,
+        turnId: repairTurnId,
+      },
+    });
+    if (!dispatcherAvailability.available) {
+      const reason = dispatcherAvailability.reason === 'protocol_dispatcher_revision_mismatch'
+        ? 'protocol_dispatcher_revision_mismatch'
+        : 'protocol_dispatcher_unavailable';
+      return { didAnything: false, reason };
     }
     if (!repairText.trim()) return { didAnything: false, reason: 'empty_repair_text' };
     let events = [];
@@ -26423,8 +26607,6 @@ Phase G（Frame 36）：循环衔接
         return removed;
       });
     });
-    const sourceSid = String(sourceSessionId || '').trim();
-    const repairTurnId = String(turnId || '').trim();
     if (sourceSid && repairTurnId) {
       chatStore.setLastRawResponse(repairText, sourceSid, {
         turnId: repairTurnId,
@@ -26447,6 +26629,7 @@ Phase G（Frame 36）：循环衔接
       turnId: repairTurnId,
     });
     refreshChatAndContacts();
+    if (sourceSid) rejectedFormatRepairBannerRuntime?.clear?.(sourceSid);
     return {
       didAnything: true,
       eventCount: events.length,
@@ -26999,19 +27182,362 @@ Phase G（Frame 36）：循环衔接
     }
   };
 
-  const handleChatFormatGuardianPreview = ({ patchedMessage, sessionId: previewSessionId } = {}) => {
+  const handleChatFormatGuardianPreview = ({
+    message,
+    patchedMessage,
+    result,
+    agentRun,
+    sessionId: previewSessionId,
+  } = {}) => {
     const sid = String(previewSessionId || '').trim();
+    if (message?.meta?.protocolParseFailure === true) {
+      if (result?.modelReview || agentRun?.status === 'failed') {
+        rejectedFormatRepairBannerRuntime?.updateReview?.({
+          sessionId: sid,
+          runId: agentRun?.id,
+          result,
+        });
+      }
+      return;
+    }
     if (!patchedMessage?.id || !isSessionActive(sid)) return;
     const decorated = decorateMessagesForDisplay([patchedMessage], { sessionId: sid })?.[0] || patchedMessage;
     ui.updateMessage(patchedMessage.id, decorated);
   };
 
-  const handleChatFormatGuardianModelReviewQueued = ({ sessionId: previewSessionId } = {}) => {
+  const handleChatFormatGuardianModelReviewQueued = ({ message, sessionId: previewSessionId } = {}) => {
     const sid = String(previewSessionId || '').trim();
     if (sid) chatFormatRepairActiveSessions.add(sid);
+    if (message?.meta?.protocolParseFailure === true) {
+      rejectedFormatRepairBannerRuntime?.markChecking?.({ sessionId: sid });
+    }
     if (!isSessionActive(sid)) return;
     window.toastr?.info?.('正在修复格式中');
   };
+
+  const buildRejectedProtocolRepairTarget = (sessionId = '', envelope = null) => {
+    const sid = String(sessionId || '').trim();
+    const sourceSessionId = String(envelope?.sourceSessionId || sid).trim() || sid;
+    return {
+      ok: true,
+      sessionId: sid,
+      sourceText: String(envelope?.text || ''),
+      sourceKind: FORMAT_REPAIR_SOURCE_KINDS.socialTurnRaw,
+      sourceSessionId,
+      targetSessionId: String(envelope?.targetSessionId || '').trim(),
+      targetSessionIds: Array.isArray(envelope?.targetSessionIds)
+        ? envelope.targetSessionIds.map(item => String(item || '').trim()).filter(Boolean)
+        : [],
+      turnId: String(envelope?.turnId || '').trim(),
+      sourceMessageIds: [],
+    };
+  };
+
+  const runChatFormatGuardianProtocolParseFailureRepair = (rawText = '', {
+    sessionId: targetSessionId = '',
+    source = 'protocol_parse_failure',
+    manualTrigger = false,
+  } = {}) => {
+    const sid = String(targetSessionId || chatStore.getCurrent() || '').trim();
+    const envelope = chatStore.getLastRawResponseEnvelope(sid);
+    const raw = String(rawText || envelope?.text || '');
+    if (!sid || !raw.trim() || !isRejectedProtocolRawEnvelope(envelope) || envelope.text !== raw) {
+      return { started: false, modelReviewQueued: false, completion: null };
+    }
+    const baseRevision = createFormatPatchRevisionToken();
+    const repairTarget = buildRejectedProtocolRepairTarget(sid, envelope);
+    let settleCompletion = null;
+    const completion = new Promise((resolve) => {
+      settleCompletion = resolve;
+    });
+    const repairMessage = {
+      id: `protocol-format-repair-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`,
+      role: 'assistant',
+      name: '助手',
+      content: '',
+      rawOriginal: raw,
+      time: formatNowTime(),
+      meta: {
+        protocolParseFailure: true,
+        source,
+        formatRepairTurnId: repairTarget.turnId,
+      },
+    };
+    const baseOptions = manualTrigger
+      ? buildManualChatFormatGuardianOptions(sid)
+      : buildChatFormatGuardianOptions(sid);
+    const preview = runChatFormatGuardianPreview({
+      message: repairMessage,
+      sessionId: sid,
+      chatFormatGuardian: {
+        ...baseOptions,
+        ...(manualTrigger ? { manualTrigger: true } : {}),
+        baseRevision,
+        sourceSnapshot: raw,
+        repairTarget,
+      },
+      onChatFormatGuardianPreview: handleChatFormatGuardianPreview,
+      onChatFormatGuardianRun: handleChatFormatGuardianAgentRun,
+      onChatFormatGuardianModelReviewQueued: handleChatFormatGuardianModelReviewQueued,
+      onChatFormatGuardianModelReviewCompleted: payload => settleCompletion?.({
+        ...(payload || {}),
+        queued: true,
+      }),
+      logger,
+    });
+    const modelReviewQueued = preview?.modelReviewQueued === true;
+    if (!modelReviewQueued) {
+      settleCompletion?.({
+        result: preview?.result || null,
+        queued: false,
+        failed: false,
+      });
+      if (preview?.result) {
+        rejectedFormatRepairBannerRuntime?.updateReview?.({
+          sessionId: sid,
+          runId: preview?.agentRun?.id,
+          result: preview.result,
+        });
+      } else {
+        rejectedFormatRepairBannerRuntime?.updateReview?.({
+          sessionId: sid,
+          result: {
+            status: 'cannot_repair',
+            summary: '格式检查 Agent 未启用或没有可用模型。',
+          },
+        });
+      }
+    }
+    return {
+      started: Boolean(preview),
+      modelReviewQueued,
+      completion,
+    };
+  };
+
+  const applyRejectedProtocolFormatRepair = async (state = null) => {
+    const sid = String(state?.sessionId || '').trim();
+    const sourceEnvelope = state?.envelope;
+    const review = state?.result?.modelReview;
+    const latestEnvelope = chatStore.getLastRawResponseEnvelope(sid);
+    const revision = validateFormatPatchRevision({
+      snapshotText: sourceEnvelope?.text,
+      currentText: latestEnvelope?.text,
+    });
+    if (
+      !sid ||
+      !state?.candidate ||
+      !isRejectedProtocolRawEnvelope(latestEnvelope) ||
+      !revision.ok ||
+      String(latestEnvelope?.turnId || '') !== String(sourceEnvelope?.turnId || '') ||
+      String(latestEnvelope?.sourceSessionId || '') !== String(sourceEnvelope?.sourceSessionId || '')
+    ) {
+      return {
+        ok: false,
+        applied: false,
+        reason: 'revision_expired',
+        message: '原文已变化，请重新发起格式检查。',
+      };
+    }
+    if (typeof ui.openFormatPatchReview !== 'function') {
+      return { ok: false, applied: false, reason: 'patch_reviewer_unavailable', message: '格式补丁审阅器尚未就绪。' };
+    }
+    const inputText = String(sourceEnvelope.text || '');
+    const repairTarget = buildRejectedProtocolRepairTarget(sid, sourceEnvelope);
+    const activeUser = getActiveUserProfile();
+    const modelOptions = buildChatFormatGuardianModelReviewOptions(sid, activeUser, { force: true });
+    const parserResult = extractChatFormatEventDrafts(inputText, {
+      ...buildChatFormatGuardianOptions(sid),
+      sourceMessageId: '',
+    });
+    const formatProfile = resolveChatFormatGuardianFormatProfile({
+      target: modelOptions.formatTarget,
+      uiMode: modelOptions.uiMode,
+      surface: modelOptions.surface,
+      isGroupChat: modelOptions.isGroupChat === true,
+      assistantText: inputText,
+      parserResult,
+      enabledFormats: modelOptions.enabledFormats,
+    });
+    const reviewResult = await ui.openFormatPatchReview({
+      message: {
+        id: `protocol-format-repair-review-${repairTarget.turnId || Date.now()}`,
+        role: 'assistant',
+        rawOriginal: inputText,
+        meta: { protocolParseFailure: true },
+      },
+      originalText: inputText,
+      linePatches: state.candidate.linePatches,
+      title: '应用格式修复',
+      summary: state.candidate.summary,
+      warning: state.candidate.sourceTruncationSuspected
+        ? '正文疑似严重截断，可考虑重新生成'
+        : '',
+      formatSources: [formatProfile.target, ...formatProfile.enabledFormatIds, '场景格式提示词'],
+      validateCandidate: ({ candidateText, acceptedPatches }) => {
+        const payloadReview = validateChatFormatGuardianFunctionPayloads({
+          review: {
+            ...(review || {}),
+            status: 'patch',
+            canRepair: true,
+            candidateText,
+            linePatches: acceptedPatches,
+          },
+          inputText,
+        });
+        if (payloadReview.functionPayloadValidation?.ok !== true) {
+          return {
+            canApply: false,
+            statusText: payloadReview.functionPayloadValidation?.violations?.[0]?.message ||
+              '已接受的补丁越过了功能块载荷边界',
+          };
+        }
+        const validation = validateChatFormatGuardianRepairCandidate({
+          review: payloadReview,
+          inputText,
+          options: {
+            ...buildChatFormatGuardianOptions(sid),
+            sourceMessageId: '',
+            sourceSnapshot: inputText,
+            baseRevision: state.candidate.baseRevision,
+            repairTarget,
+          },
+          modelOptions,
+          formatProfile,
+        });
+        return {
+          canApply: validation.applicable !== true || validation.ok === true,
+          statusText: validation.ok === true
+            ? `本地复查通过，可分发 ${validation.parserReport?.eventDrafts?.length || 0} 条事件`
+            : `当前补丁组合无法安全分发：${
+              validation.parserReport?.errors?.[0] ||
+              validation.parserReport?.warnings?.[0] ||
+              validation.parserReport?.summary ||
+              '格式仍不完整'
+            }`,
+        };
+      },
+    });
+    if (!reviewResult.confirmed) {
+      return {
+        ok: true,
+        applied: false,
+        userDecision: 'cancelled',
+        message: '已取消应用，候选仍保留在当前会话。',
+      };
+    }
+    if (!reviewResult.changed) {
+      return { ok: true, applied: false, reason: 'no_changes', message: '修复结果与原文一致，无需修改。' };
+    }
+    const currentEnvelope = chatStore.getLastRawResponseEnvelope(sid);
+    if (
+      !isRejectedProtocolRawEnvelope(currentEnvelope) ||
+      !validateFormatPatchRevision({ snapshotText: inputText, currentText: currentEnvelope?.text }).ok ||
+      String(currentEnvelope?.turnId || '') !== repairTarget.turnId
+    ) {
+      return {
+        ok: false,
+        applied: false,
+        reason: 'revision_expired',
+        message: '原文已变化，请重新发起格式检查。',
+      };
+    }
+    const candidateText = String(reviewResult.candidateText || '');
+    const dispatchResult = await applyRepairedProtocolTextToChat({
+      candidateText,
+      sourceMessageIds: [],
+      sourceSessionId: repairTarget.sourceSessionId,
+      targetSessionIds: repairTarget.targetSessionIds,
+      turnId: repairTarget.turnId,
+      functionSideEffectPlan: buildFormatFunctionSideEffectPlan({
+        originalText: inputText,
+        candidateText,
+      }),
+    });
+    if (dispatchResult?.didAnything !== true) {
+      return {
+        ok: false,
+        applied: false,
+        reason: dispatchResult?.reason || 'protocol_dispatch_failed',
+        message: '修复结果无法安全重新分发，原回复仍保留待处理。',
+      };
+    }
+    if (state.runId) {
+      try {
+        await Promise.resolve(window.appBridge?.debugUiRegistry?.actions?.resolveAgentRunReview?.({
+          runId: state.runId,
+          decision: 'apply',
+          reason: 'rejected reply format repair applied',
+          summary: '格式修复已应用',
+        }));
+      } catch (err) {
+        logger.warn('format repair agent run completion failed', err);
+      }
+    }
+    rejectedFormatRepairBannerRuntime?.clear?.(sid);
+    window.toastr?.success?.(`已应用 ${reviewResult.acceptedPatches.length} 处格式修复`);
+    return {
+      ok: true,
+      applied: true,
+      reparsed: true,
+      sessionId: sid,
+      patchCount: reviewResult.acceptedPatches.length,
+      dispatchResult,
+    };
+  };
+
+  rejectedFormatRepairBannerRuntime = createRejectedFormatRepairBannerRuntime({
+    root: document.getElementById('rejected-format-repair-banner'),
+    getEnvelope: sid => chatStore.getLastRawResponseEnvelope(sid),
+    getRepairAvailability: state => resolveRejectedFormatRepairDispatcherAvailability({
+      dispatcher: lastProtocolRetryDispatcher,
+      envelope: state?.envelope,
+    }),
+    onViewOriginal: state => rawReplyModal.show(
+      state.envelope?.text || '',
+      '被拒回复 · 完整原文',
+    ),
+    onApply: applyRejectedProtocolFormatRepair,
+    onRecheck: state => runChatFormatGuardianProtocolParseFailureRepair(
+      state.envelope?.text || '',
+      {
+        sessionId: state.sessionId,
+        source: 'protocol_parse_failure_manual_recheck',
+        manualTrigger: true,
+      },
+    ),
+    onRegenerate: async (state) => {
+      if (!isSessionActive(state.sessionId)) {
+        window.toastr?.warning?.('请先打开对应聊天室再重新生成');
+        return { ok: false, reason: 'session_not_active' };
+      }
+      const userMessage = [...(chatStore.getMessages(state.sessionId) || [])]
+        .reverse()
+        .find(message => message?.role === 'user' && message?.meta?.generatedByAssistant !== true);
+      if (!userMessage || typeof ui.actionHandler !== 'function') {
+        window.toastr?.warning?.('未找到对应的用户消息，无法重新生成');
+        return { ok: false, reason: 'user_message_not_found' };
+      }
+      await ui.actionHandler('regenerate', userMessage);
+      syncRejectedFormatRepairBanner(state.sessionId);
+      return { ok: true };
+    },
+  });
+  patchDebugUiRegistry((registry) => {
+    registry.stores.rejectedFormatRepairBannerRuntime = rejectedFormatRepairBannerRuntime;
+  });
+  syncRejectedFormatRepairBanner = sid => rejectedFormatRepairBannerRuntime?.sync?.(sid) || false;
+  applyRejectedFormatRepairAgentRun = async ({ runId = '' } = {}) => {
+    const result = await rejectedFormatRepairBannerRuntime?.applyByRunId?.(runId);
+    if (result) return result;
+    return {
+      ok: false,
+      applied: false,
+      reason: 'format_repair_candidate_unavailable',
+      message: '这条候选已过期或原文已变化，请回到聊天室重新检查。',
+    };
+  };
+  syncRejectedFormatRepairBanner(chatStore.getCurrent());
 
   const runManualChatFormatGuardianCheck = async (message = null, targetSessionId = '') => {
     const sid = String(targetSessionId || chatStore.getCurrent() || '').trim();
@@ -28371,6 +28897,8 @@ Phase G（Frame 36）：循环衔接
     };
     // 供发送轮之外的修复分发复用（§4.6）：协议事件自带目标名，跨会话安全。
     lastProtocolRetryDispatcher = {
+      sourceSessionId: sessionId,
+      getTurnId: () => formatRepairTurnId,
       processEvent: processProtocolRetryEvent,
       createParser: createDialogueParser,
       preflightEvent(event, { priorEvents = [] } = {}) {
@@ -28438,54 +28966,6 @@ Phase G（Frame 36）：循环衔接
           restored: false,
         };
       },
-    };
-    const runChatFormatGuardianProtocolParseFailureRepair = (rawText = '', {
-      source = 'protocol_parse_failure',
-    } = {}) => {
-      const raw = String(rawText || '');
-      if (!raw.trim()) return { started: false, modelReviewQueued: false, completion: null };
-      let settleCompletion = null;
-      const completion = new Promise((resolve) => {
-        settleCompletion = resolve;
-      });
-      const repairMessage = {
-        id: `protocol-format-repair-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`,
-        role: 'assistant',
-        name: '助手',
-        content: '',
-        rawOriginal: raw,
-        time: formatNowTime(),
-        meta: {
-          protocolParseFailure: true,
-          source,
-        },
-      };
-      const preview = runChatFormatGuardianPreview({
-        message: repairMessage,
-        sessionId,
-        chatFormatGuardian: buildChatFormatGuardianOptions(sessionId),
-        onChatFormatGuardianPreview: handleChatFormatGuardianPreview,
-        onChatFormatGuardianRun: handleChatFormatGuardianAgentRun,
-        onChatFormatGuardianModelReviewQueued: handleChatFormatGuardianModelReviewQueued,
-        onChatFormatGuardianModelReviewCompleted: payload => settleCompletion?.({
-          ...(payload || {}),
-          queued: true,
-        }),
-        logger,
-      });
-      const modelReviewQueued = preview?.modelReviewQueued === true;
-      if (!modelReviewQueued) {
-        settleCompletion?.({
-          result: preview?.result || null,
-          queued: false,
-          failed: false,
-        });
-      }
-      return {
-        started: Boolean(preview),
-        modelReviewQueued,
-        completion,
-      };
     };
     const buildHistoryForLLM = createLlmHistoryBuilder({
       sessionId,
@@ -29160,7 +29640,9 @@ Phase G（Frame 36）：循环衔接
       );
       if (protocolState?.handled !== true) {
         window.toastr?.warning?.('未解析到有效对话标签，已丢弃；可在「本次 AI 回复」查看原始内容');
+        rejectedFormatRepairBannerRuntime?.markRejected?.({ sessionId });
         const repairRun = runChatFormatGuardianProtocolParseFailureRepair(raw, {
+          sessionId,
           source: mode ? `protocol_${mode}_parse_failure` : 'protocol_parse_failure',
         });
         if (returnMaidCompletionOutcome && repairRun?.modelReviewQueued) {
@@ -29173,6 +29655,7 @@ Phase G（Frame 36）：循环衔接
           warned: true,
         };
       }
+      syncRejectedFormatRepairBanner(sessionId);
 
       let resolvedSummary = String(protocolSummary || '').trim();
       if (!resolvedSummary && isSummaryMemoryEnabled()) {

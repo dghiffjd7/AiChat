@@ -1432,6 +1432,31 @@ const agentCenterPanelSource = await readFile(
 }
 
 {
+  let applyPayload = null;
+  let refreshed = false;
+  let successMessage = '';
+  const panel = new AgentCenterPanel({
+    getActions: () => ({
+      applyAgentFormatRepairRun: payload => {
+        applyPayload = payload;
+        return { ok: true, applied: true };
+      },
+    }),
+    notifySuccess: message => {
+      successMessage = message;
+    },
+  });
+  panel.refresh = async () => {
+    refreshed = true;
+  };
+  await panel.handleAgentRunReviewAction('apply', 'run-rejected-format');
+  assert.deepEqual(applyPayload, { runId: 'run-rejected-format' });
+  assert.equal(successMessage, '格式修复已应用');
+  assert.equal(refreshed, true);
+  console.log('ok - agent center can apply an in-memory rejected-reply format candidate');
+}
+
+{
   const panel = new AgentCenterPanel();
   panel.activeTab = 'activity';
   panel.view = {
@@ -1501,6 +1526,31 @@ const agentCenterPanelSource = await readFile(
   assert.match(html, /data-agent-run-review-action="reject"/);
   assert.match(html, /打回/);
   console.log('ok - agent center panel renders chat format review details without write actions');
+}
+
+{
+  const panel = new AgentCenterPanel();
+  panel.activeTab = 'activity';
+  panel.view = {
+    activity: {
+      meta: { total: 1, active: 1, failures: 0, statusCounts: { waiting_permission: 1 } },
+      runs: [{
+        id: 'run-rejected-format',
+        kind: 'chat_format_guardian',
+        title: '聊天格式待确认',
+        status: 'waiting_permission',
+        review: {
+          protocolParseFailure: true,
+          modelReviewDetail: { canRepair: true },
+        },
+      }],
+    },
+  };
+  const html = panel.renderActivity();
+  assert.match(html, /data-agent-run-review-action="apply"/);
+  assert.match(html, />应用修复<\/button>/);
+  assert.match(html, /data-agent-run-review-action="reject"/);
+  console.log('ok - agent center exposes apply only for rejected-reply format candidates');
 }
 
 {

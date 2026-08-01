@@ -3912,7 +3912,17 @@ export class AgentCenterPanel {
     async handleAgentRunReviewAction(action = '', runId = '') {
         const normalizedAction = trim(action);
         const id = trim(runId);
-        if (!id || normalizedAction !== 'reject') return;
+        if (!id || !['apply', 'reject'].includes(normalizedAction)) return;
+        if (normalizedAction === 'apply') {
+            const result = await this.callAction('applyAgentFormatRepairRun', { runId: id }, null);
+            if (!result || result.ok === false) {
+                this.lastError = result?.message || result?.reason || '当前格式修复候选已经不可用';
+            } else if (result.applied === true) {
+                this.notifySuccess?.('格式修复已应用');
+            }
+            await this.refresh();
+            return;
+        }
         const run = (this.view.activity?.runs || []).find(item => item.id === id);
         const ok = await this.confirm({
             title: '打回 Agent 待确认',
@@ -3998,6 +4008,9 @@ export class AgentCenterPanel {
                 ${renderChatFormatReview(run.review)}
                 ${run.status === 'waiting_permission' ? `
                     <div class="agent-center-card-actions">
+                        ${run.review?.protocolParseFailure === true && run.review?.modelReviewDetail?.canRepair === true
+                          ? `<button type="button" class="agent-center-card-action" data-agent-run-review-action="apply" data-run-id="${escapeHtml(run.id)}">应用修复</button>`
+                          : ''}
                         <button type="button" class="agent-center-card-action is-danger" data-agent-run-review-action="reject" data-run-id="${escapeHtml(run.id)}">打回</button>
                     </div>
                 ` : ''}

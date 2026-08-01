@@ -1,4 +1,0 @@
-{
-  "nullSelectors": [],
-  "lastStack": "TypeError: Cannot read properties of null (reading 'replaceChild') at setupEventListeners (chatapp-script-8-pos-body-kind-inline-preview-const-SYSTEM_PROMPT_PREFIX-const-API_PRESE.js:34874:32) at HTMLDocument.<anonymous> (chatapp-script-8-pos-body-kind-inline-preview-const-SYSTEM_PROMPT_PREFIX-const"
-}
