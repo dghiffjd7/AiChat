@@ -27279,10 +27279,17 @@ Phase G（Frame 36）：循环衔接
       onChatFormatGuardianPreview: handleChatFormatGuardianPreview,
       onChatFormatGuardianRun: handleChatFormatGuardianAgentRun,
       onChatFormatGuardianModelReviewQueued: handleChatFormatGuardianModelReviewQueued,
-      onChatFormatGuardianModelReviewCompleted: payload => settleCompletion?.({
-        ...(payload || {}),
-        queued: true,
-      }),
+      onChatFormatGuardianModelReviewCompleted: (payload) => {
+        settleCompletion?.({
+          ...(payload || {}),
+          queued: true,
+        });
+        // 模型复查返回 no_change 时不会发出可展示部件，横幅需要在这里退出“检查中”。
+        rejectedFormatRepairBannerRuntime?.settleChecking?.({
+          sessionId: sid,
+          result: payload?.result || null,
+        });
+      },
       logger,
     });
     const modelReviewQueued = preview?.modelReviewQueued === true;
@@ -29640,6 +29647,10 @@ Phase G（Frame 36）：循环衔接
       );
       if (protocolState?.handled !== true) {
         window.toastr?.warning?.('未解析到有效对话标签，已丢弃；可在「本次 AI 回复」查看原始内容');
+        chatStore.markLastRawResponsePendingRepair({
+          sourceSessionId: sessionId,
+          turnId: formatRepairTurnId,
+        });
         rejectedFormatRepairBannerRuntime?.markRejected?.({ sessionId });
         const repairRun = runChatFormatGuardianProtocolParseFailureRepair(raw, {
           sessionId,

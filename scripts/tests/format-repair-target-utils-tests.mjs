@@ -54,18 +54,21 @@ import {
     turnId: 'turn-rejected',
     sourceKind: FORMAT_REPAIR_SOURCE_KINDS.socialTurnRaw,
     sourceMessageIds: [],
+    pendingRepair: true,
   }), true);
   assert.equal(isRejectedProtocolRawEnvelope({
     text: '<private_chat>',
     turnId: 'turn-committed',
     sourceKind: FORMAT_REPAIR_SOURCE_KINDS.socialTurnRaw,
     sourceMessageIds: ['message-1'],
+    pendingRepair: true,
   }), false);
   assert.equal(isRejectedProtocolRawEnvelope({
     text: 'creative raw',
     turnId: 'turn-creative',
     sourceKind: FORMAT_REPAIR_SOURCE_KINDS.creativeRawOriginal,
     sourceMessageIds: [],
+    pendingRepair: true,
   }), false);
   console.log('ok - rejected format banner only accepts uncommitted social raw envelopes');
 }
@@ -79,6 +82,7 @@ import {
     targetSessionIds: ['target-room'],
     sourceKind: FORMAT_REPAIR_SOURCE_KINDS.socialTurnRaw,
     sourceMessageIds: [],
+    pendingRepair: true,
   };
   const nodes = Object.fromEntries([
     'title',
@@ -170,6 +174,7 @@ import {
     sourceSessionId: 'source-room',
     sourceKind: FORMAT_REPAIR_SOURCE_KINDS.socialTurnRaw,
     sourceMessageIds: [],
+    pendingRepair: true,
   };
   const nodes = Object.fromEntries(['title', 'status', 'apply', 'recheck'].map(name => [name, {
     textContent: '',
@@ -212,6 +217,166 @@ import {
   });
   assert.equal(recheckCalls, 0, 'dispatcher 不可用时不得调用模型检查回调');
   console.log('ok - restarted rejected banner blocks repair work before spending a model call');
+}
+
+{
+  // 历史遗留信封、普通成功回复与重派成功后的原文都缺少 pendingRepair 标记，不能靠“没有消息 id”反推。
+  assert.equal(isRejectedProtocolRawEnvelope({
+    text: '<private_chat>历史成功回复</private_chat>',
+    turnId: 'legacy-turn',
+    sourceKind: FORMAT_REPAIR_SOURCE_KINDS.socialTurnRaw,
+    sourceMessageIds: [],
+  }), false, '未标记待修复的信封不得让成功的聊天室显示未通过横幅');
+  assert.equal(isRejectedProtocolRawEnvelope({
+    text: '<private_chat>broken</private_ch',
+    turnId: 'turn-rejected',
+    sourceKind: FORMAT_REPAIR_SOURCE_KINDS.socialTurnRaw,
+    sourceMessageIds: [],
+    pendingRepair: true,
+  }), true);
+  console.log('ok - repair banner only accepts envelopes flagged pending at the rejecting turn');
+}
+
+const createBannerHarness = ({ envelope, ...handlers } = {}) => {
+  const nodes = Object.fromEntries(['title', 'status', 'apply', 'recheck'].map(name => [name, {
+    textContent: '',
+    disabled: false,
+  }]));
+  let clickHandler = null;
+  const root = {
+    hidden: true,
+    dataset: {},
+    querySelector: selector => ({
+      '[data-format-repair-banner-title]': nodes.title,
+      '[data-format-repair-banner-status]': nodes.status,
+      '[data-format-repair-banner-action="apply"]': nodes.apply,
+      '[data-format-repair-banner-action="recheck"]': nodes.recheck,
+    })[selector] || null,
+    addEventListener(name, handler) {
+      if (name === 'click') clickHandler = handler;
+    },
+  };
+  const runtime = createRejectedFormatRepairBannerRuntime({
+    root,
+    getEnvelope: sessionId => (sessionId === 'source-room' ? envelope : null),
+    ...handlers,
+  });
+  const click = action => clickHandler?.({
+    target: { closest: () => ({ dataset: { formatRepairBannerAction: action } }) },
+    preventDefault() {},
+  });
+  return { nodes, root, runtime, click };
+};
+
+const readyCandidateResult = {
+  modelReview: {
+    status: 'patch',
+    canRepair: true,
+    repairSummary: '补齐闭合标签',
+    candidateText: '<private_chat>fixed</private_chat>',
+    linePatches: [{
+      startLine: 1,
+      endLine: 1,
+      originalLines: ['<private_chat>broken</private_ch'],
+      replacementLines: ['<private_chat>fixed</private_chat>'],
+    }],
+  },
+};
+
+const buildRejectedEnvelope = (at = 200) => ({
+  text: '<private_chat>broken</private_ch',
+  at,
+  turnId: `turn-${at}`,
+  sourceSessionId: 'source-room',
+  sourceKind: FORMAT_REPAIR_SOURCE_KINDS.socialTurnRaw,
+  sourceMessageIds: [],
+  pendingRepair: true,
+});
+
+{
+  const envelope = buildRejectedEnvelope(201);
+  const applied = [];
+  const { root, runtime } = createBannerHarness({
+    envelope,
+    onApply: async () => {
+      applied.push('apply');
+      return { applied: true };
+    },
+  });
+  runtime.sync('source-room');
+  assert.equal(runtime.dismiss('source-room'), true);
+  assert.equal(root.hidden, true, '关闭后横幅必须隐藏');
+  // 关闭只影响 UI：异步复查结果仍要落到状态里，否则 Agent Center 兜底找不到候选。
+  runtime.updateReview({ sessionId: 'source-room', runId: 'run-dismissed', result: readyCandidateResult });
+  assert.equal(root.hidden, true, '复查结果不得让已关闭的横幅自行弹回');
+  assert.deepEqual(await runtime.applyByRunId('run-dismissed'), { applied: true });
+  assert.deepEqual(applied, ['apply'], 'Agent Center 应用必须在关闭横幅后仍然可用');
+  assert.equal(root.hidden, false, '显式应用等于撤销关闭，用户要能看到进度');
+  console.log('ok - dismissed rejected banner still records review results and honors Agent Center apply');
+}
+
+{
+  const envelope = buildRejectedEnvelope(202);
+  let inFlight = 0;
+  let peak = 0;
+  let release = null;
+  const { runtime } = createBannerHarness({
+    envelope,
+    onApply: async () => {
+      inFlight += 1;
+      peak = Math.max(peak, inFlight);
+      await new Promise((resolve) => { release = resolve; });
+      inFlight -= 1;
+      return { applied: true };
+    },
+  });
+  runtime.sync('source-room');
+  runtime.updateReview({ sessionId: 'source-room', runId: 'run-concurrent', result: readyCandidateResult });
+  const first = runtime.applyByRunId('run-concurrent');
+  const second = runtime.applyByRunId('run-concurrent');
+  assert.equal(await second, null, '应用进行中不得再开一次补丁审阅');
+  release?.();
+  assert.deepEqual(await first, { applied: true });
+  assert.equal(peak, 1, '同一候选任何时刻只能有一个应用流程');
+  console.log('ok - rejected banner apply is single-flight across banner and Agent Center');
+}
+
+{
+  const envelope = buildRejectedEnvelope(203);
+  const { nodes, root, runtime, click } = createBannerHarness({
+    envelope,
+    onApply: async () => { throw new Error('补丁审阅打开失败'); },
+    onRecheck: async () => { throw new Error('检查 Agent 崩溃'); },
+  });
+  runtime.sync('source-room');
+  runtime.updateReview({ sessionId: 'source-room', runId: 'run-throw', result: readyCandidateResult });
+  const applyResult = await runtime.applyByRunId('run-throw');
+  assert.equal(applyResult?.applied, false);
+  assert.equal(root.dataset.status, 'candidate_ready', 'onApply 抛错后状态不得永久停在 applying');
+  assert.equal(nodes.apply.disabled, false, '异常后必须能重试应用');
+  assert.match(nodes.status.textContent, /补丁审阅打开失败/);
+
+  click('recheck');
+  await new Promise((resolve) => { setTimeout(resolve, 0); });
+  assert.equal(root.dataset.status, 'check_failed', 'onRecheck 抛错后状态不得永久停在 checking');
+  assert.equal(nodes.recheck.disabled, false, '异常后必须能重新检查');
+  assert.match(nodes.status.textContent, /检查 Agent 崩溃/);
+  console.log('ok - rejected banner callback failures restore a retryable state instead of stranding');
+}
+
+{
+  const envelope = buildRejectedEnvelope(204);
+  const { root, runtime } = createBannerHarness({ envelope });
+  runtime.sync('source-room');
+  runtime.markChecking({ sessionId: 'source-room' });
+  assert.equal(root.dataset.status, 'checking');
+  // 模型返回 no_change 时不会发出可展示部件，settleChecking 是唯一的收口点。
+  runtime.settleChecking({ sessionId: 'source-room', result: { status: 'ready', summary: '模型认为无需修改' } });
+  assert.equal(root.dataset.status, 'check_failed', 'no_change 复查必须退出检查中状态');
+  runtime.updateReview({ sessionId: 'source-room', runId: 'run-settled', result: readyCandidateResult });
+  runtime.settleChecking({ sessionId: 'source-room', result: { status: 'ready' } });
+  assert.equal(root.dataset.status, 'candidate_ready', 'settleChecking 不得覆盖已就绪的候选');
+  console.log('ok - rejected banner settles a queued model review without clobbering a ready candidate');
 }
 
 {
@@ -601,5 +766,17 @@ import {
   assert.match(localReviewBranch, /rejectedFormatRepairBannerRuntime\?\.updateReview/, '仅本地检查完成也必须退出 checking 状态');
   assert.match(appSource, /protocol_dispatcher_revision_mismatch/);
   assert.match(appSource, /applyAgentFormatRepairRun/);
+  // 待修复标记只能打在协议驳回现场，否则历史会话与成功回复都会误显示横幅。
+  const rejectionBranch = appSource.slice(
+    appSource.indexOf("if (protocolState?.handled !== true) {"),
+    appSource.indexOf('runChatFormatGuardianProtocolParseFailureRepair(raw, {'),
+  );
+  assert.match(rejectionBranch, /chatStore\.markLastRawResponsePendingRepair\(\{/);
+  assert.match(rejectionBranch, /turnId: formatRepairTurnId,/);
+  assert.equal(
+    (appSource.match(/markLastRawResponsePendingRepair\(\{/g) || []).length,
+    1,
+    '待修复标记只允许有协议驳回这一个写入点',
+  );
   console.log('ok - rejected format repair banner is wired with themed, revision-safe actions');
 }

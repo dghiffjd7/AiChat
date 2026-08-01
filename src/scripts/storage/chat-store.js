@@ -1368,6 +1368,7 @@ export class ChatStore {
     if (!Array.isArray(s.lastRawTargetSessionIds)) s.lastRawTargetSessionIds = [];
     if (typeof s.lastRawSourceKind !== 'string') s.lastRawSourceKind = 'social_turn_raw';
     if (!Array.isArray(s.lastRawSourceMessageIds)) s.lastRawSourceMessageIds = [];
+    if (typeof s.lastRawPendingRepair !== 'boolean') s.lastRawPendingRepair = false;
     if (!s.settings) s.settings = {};
     if (!s.settings.chatColorMode) {
       s.settings.chatColorMode = inferChatColorMode(s.settings, defaults.chatColorMode || 'theme');
@@ -2589,6 +2590,7 @@ export class ChatStore {
       this.state.sessions[sid].lastRawTargetSessionIds = [];
       this.state.sessions[sid].lastRawSourceKind = 'social_turn_raw';
       this.state.sessions[sid].lastRawSourceMessageIds = [];
+      this.state.sessions[sid].lastRawPendingRepair = false;
       this.state.sessions[sid].unreadCount = 0;
       if (this._useV2) {
         const aid = String(this.state.sessions[sid]?.currentArchiveId || '').trim();
@@ -2803,6 +2805,19 @@ export class ChatStore {
       : [];
     session.lastRawSourceKind = String(metadata?.sourceKind || 'social_turn_raw').trim() || 'social_turn_raw';
     session.lastRawSourceMessageIds = [];
+    // 待修复必须由协议驳回现场显式标记：历史信封与普通成功回复都默认 false，不能靠“没有消息 id”反推。
+    session.lastRawPendingRepair = false;
+    this._persist();
+    return true;
+  }
+
+  markLastRawResponsePendingRepair({ sourceSessionId = this.currentId, turnId = '' } = {}) {
+    const sid = String(sourceSessionId || '').trim();
+    const tid = String(turnId || '').trim();
+    if (!sid || !tid) return false;
+    const session = this.state.sessions[sid];
+    if (!session || String(session.lastRawTurnId || '').trim() !== tid) return false;
+    session.lastRawPendingRepair = true;
     this._persist();
     return true;
   }
@@ -2893,6 +2908,7 @@ export class ChatStore {
       sourceMessageIds: Array.isArray(session.lastRawSourceMessageIds)
         ? session.lastRawSourceMessageIds.map(item => String(item || '').trim()).filter(Boolean)
         : [],
+      pendingRepair: session.lastRawPendingRepair === true,
     };
   }
 
@@ -3081,6 +3097,7 @@ export class ChatStore {
     session.lastRawTargetSessionIds = [];
     session.lastRawSourceKind = 'social_turn_raw';
     session.lastRawSourceMessageIds = [];
+    session.lastRawPendingRepair = false;
     session.unreadCount = 0;
     if (this._useV2) {
       const threadKey = this._getThreadKey(sid, '');

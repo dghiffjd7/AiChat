@@ -18,6 +18,7 @@ const normalizeEnvelope = (value = null) => {
     targetSessionIds: normalizeStringList(value.targetSessionIds),
     sourceKind: trim(value.sourceKind) || 'social_turn_raw',
     sourceMessageIds: normalizeStringList(value.sourceMessageIds),
+    pendingRepair: value.pendingRepair === true,
   };
 };
 
@@ -35,10 +36,12 @@ const buildEnvelopeKey = (sessionId = '', envelope = null) => {
   ]);
 };
 
+// 只认协议驳回现场打过标记的信封：历史遗留信封、普通成功回复与已重派成功的原文都不得入选。
 export const isRejectedProtocolRawEnvelope = (value = null) => {
   const envelope = normalizeEnvelope(value);
   return Boolean(
     envelope &&
+    envelope.pendingRepair === true &&
     envelope.text.trim() &&
     envelope.truncated !== true &&
     envelope.sourceKind === 'social_turn_raw' &&
@@ -141,7 +144,8 @@ export const createRejectedFormatRepairBannerRuntime = ({
       };
     }
   };
-  const getCurrentState = (sessionId = activeSessionId) => {
+  // includeDismissed：关闭横幅只隐藏 UI，检查结果仍需记录，否则 Agent Center 兜底找不到候选。
+  const getCurrentState = (sessionId = activeSessionId, { includeDismissed = false } = {}) => {
     const sid = trim(sessionId);
     const envelope = readEnvelope(sid);
     if (!sid || !isRejectedProtocolRawEnvelope(envelope)) {
@@ -156,6 +160,7 @@ export const createRejectedFormatRepairBannerRuntime = ({
     } else {
       state.envelope = envelope;
     }
+    if (includeDismissed) return state;
     return dismissedKeys.has(envelopeKey) ? null : state;
   };
 
@@ -192,7 +197,7 @@ export const createRejectedFormatRepairBannerRuntime = ({
   const mutate = (sessionId, updater) => {
     const sid = trim(sessionId);
     if (!sid) return null;
-    const state = getCurrentState(sid);
+    const state = getCurrentState(sid, { includeDismissed: true });
     if (!state) {
       render();
       return null;
@@ -203,7 +208,6 @@ export const createRejectedFormatRepairBannerRuntime = ({
   };
 
   const markRejected = ({ sessionId = '' } = {}) => mutate(sessionId, (state) => {
-    dismissedKeys.delete(state.envelopeKey);
     state.status = 'needs_check';
     state.statusText = '这次回复没有通过格式验收，可查看原文、重新检查或重新生成。';
     state.runId = '';
@@ -212,13 +216,11 @@ export const createRejectedFormatRepairBannerRuntime = ({
   });
 
   const markChecking = ({ sessionId = '' } = {}) => mutate(sessionId, (state) => {
-    dismissedKeys.delete(state.envelopeKey);
     state.status = 'checking';
     state.statusText = '正在检查并生成最小格式补丁…';
   });
 
   const updateReview = ({ sessionId = '', runId = '', result = null } = {}) => mutate(sessionId, (state) => {
-    dismissedKeys.delete(state.envelopeKey);
     const candidate = resolveReviewCandidate(result);
     state.runId = trim(runId);
     state.result = result;
@@ -236,6 +238,13 @@ export const createRejectedFormatRepairBannerRuntime = ({
     ) || '当前没有可安全应用的补丁，可重新检查或重新生成。';
   });
 
+  // 模型复查结束但没有产出可展示部件时（例如 no_change），由此收口，避免横幅永远停在“检查中…”。
+  const settleChecking = ({ sessionId = '', runId = '', result = null } = {}) => {
+    const state = getCurrentState(sessionId, { includeDismissed: true });
+    if (!state || state.status !== 'checking') return null;
+    return updateReview({ sessionId, runId: trim(runId) || state.runId, result });
+  };
+
   const invoke = async (kind, sessionId = activeSessionId) => {
     const state = getCurrentState(sessionId);
     if (!state) return null;
@@ -245,32 +254,55 @@ export const createRejectedFormatRepairBannerRuntime = ({
       return null;
     }
     if (kind === 'recheck') {
+      if (state.status === 'checking' || state.status === 'applying') return null;
       markChecking({ sessionId: state.sessionId });
-      return onRecheck?.(state);
+      try {
+        return await onRecheck?.(state);
+      } catch (err) {
+        updateReview({
+          sessionId: state.sessionId,
+          result: { errors: [trim(err?.message) || '格式检查未能完成，请重试或重新生成。'] },
+        });
+        return null;
+      }
     }
     if (kind === 'regenerate') return onRegenerate?.(state);
     if (kind !== 'apply' || !state.candidate) return null;
+    if (state.status === 'applying') return null;
     state.status = 'applying';
     state.statusText = '正在打开补丁审阅…';
     render();
-    const result = await onApply?.(state);
+    let result = null;
+    let failureMessage = '';
+    try {
+      result = await onApply?.(state);
+    } catch (err) {
+      failureMessage = trim(err?.message) || '应用格式修复时发生异常，请重试或重新生成。';
+    }
     if (result?.applied === true) return result;
     state.status = 'candidate_ready';
-    state.statusText = trim(result?.message || result?.reason) || state.candidate.summary;
+    state.statusText = failureMessage || trim(result?.message || result?.reason) || state.candidate.summary;
     render();
-    return result || null;
+    if (result) return result;
+    return failureMessage ? { applied: false, message: failureMessage } : null;
   };
 
+  // Agent Center 的显式应用等于撤销关闭：用户主动要求处理这条候选。
   const applyByRunId = async (runId = '') => {
     const id = trim(runId);
     if (!id) return null;
-    const state = Array.from(states.values()).find(item => item.runId === id) || null;
-    if (!state || getCurrentState(state.sessionId)?.runId !== id) return null;
+    const tracked = Array.from(states.values()).find(item => item.runId === id) || null;
+    if (!tracked) return null;
+    const state = getCurrentState(tracked.sessionId, { includeDismissed: true });
+    if (state?.runId !== id) return null;
+    dismissedKeys.delete(state.envelopeKey);
     return invoke('apply', state.sessionId);
   };
 
   const clear = (sessionId = '') => {
     const sid = trim(sessionId || activeSessionId);
+    const tracked = states.get(sid) || null;
+    if (tracked?.envelopeKey) dismissedKeys.delete(tracked.envelopeKey);
     states.delete(sid);
     if (sid === activeSessionId && root) {
       root.hidden = true;
@@ -304,6 +336,7 @@ export const createRejectedFormatRepairBannerRuntime = ({
     markRejected,
     markChecking,
     updateReview,
+    settleChecking,
     applyByRunId,
     clear,
     dismiss,
