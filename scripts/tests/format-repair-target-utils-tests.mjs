@@ -332,6 +332,7 @@ const buildRejectedEnvelope = (at = 200) => ({
   });
   runtime.sync('source-room');
   runtime.updateReview({ sessionId: 'source-room', runId: 'run-concurrent', result: readyCandidateResult });
+  assert.equal(runtime.hasRunCandidate('run-concurrent'), true);
   const first = runtime.applyByRunId('run-concurrent');
   const second = runtime.applyByRunId('run-concurrent');
   assert.equal(await second, null, '应用进行中不得再开一次补丁审阅');
@@ -339,6 +340,73 @@ const buildRejectedEnvelope = (at = 200) => ({
   assert.deepEqual(await first, { applied: true });
   assert.equal(peak, 1, '同一候选任何时刻只能有一个应用流程');
   console.log('ok - rejected banner apply is single-flight across banner and Agent Center');
+}
+
+{
+  const envelopes = new Map();
+  const runtime = createRejectedFormatRepairBannerRuntime({
+    getEnvelope: sessionId => envelopes.get(sessionId) || null,
+  });
+  for (let index = 0; index < 51; index += 1) {
+    const sessionId = `room-${index}`;
+    envelopes.set(sessionId, {
+      ...buildRejectedEnvelope(300 + index),
+      sourceSessionId: sessionId,
+    });
+    runtime.sync(sessionId);
+    runtime.updateReview({ sessionId, runId: `run-${index}`, result: readyCandidateResult });
+  }
+  assert.equal(runtime.hasRunCandidate('run-0'), false, '超过上限后应淘汰最旧候选');
+  assert.equal(runtime.hasRunCandidate('run-50'), true, '最新候选必须保留');
+  console.log('ok - rejected banner caps tracked cross-session candidates');
+}
+
+{
+  let envelope = buildRejectedEnvelope(400);
+  const { root, runtime } = createBannerHarness({
+    envelope,
+    getEnvelope: sessionId => (sessionId === 'source-room' ? envelope : null),
+  });
+  runtime.sync('source-room');
+  runtime.dismiss('source-room');
+  for (let index = 1; index <= 55; index += 1) {
+    envelope = buildRejectedEnvelope(400 + index);
+    runtime.sync('source-room');
+    runtime.dismiss('source-room');
+  }
+  envelope = buildRejectedEnvelope(400);
+  runtime.sync('source-room');
+  assert.equal(root.hidden, false, '同房间被替换的历史 dismissed key 必须释放');
+  console.log('ok - rejected banner releases dismissed keys from replaced envelopes');
+}
+
+{
+  const envelopes = new Map();
+  let releaseApply = null;
+  const runtime = createRejectedFormatRepairBannerRuntime({
+    getEnvelope: sessionId => envelopes.get(sessionId) || null,
+    onApply: async () => new Promise(resolve => { releaseApply = resolve; }),
+  });
+  envelopes.set('applying-room', {
+    ...buildRejectedEnvelope(500),
+    sourceSessionId: 'applying-room',
+  });
+  runtime.sync('applying-room');
+  runtime.updateReview({ sessionId: 'applying-room', runId: 'run-applying', result: readyCandidateResult });
+  const applying = runtime.applyByRunId('run-applying');
+  for (let index = 0; index < 55; index += 1) {
+    const sessionId = `overflow-room-${index}`;
+    envelopes.set(sessionId, {
+      ...buildRejectedEnvelope(501 + index),
+      sourceSessionId: sessionId,
+    });
+    runtime.sync(sessionId);
+    runtime.updateReview({ sessionId, runId: `run-overflow-${index}`, result: readyCandidateResult });
+  }
+  assert.equal(runtime.hasRunCandidate('run-applying'), true, '应用中的候选不得被容量淘汰');
+  releaseApply?.({ applied: true });
+  assert.deepEqual(await applying, { applied: true });
+  console.log('ok - rejected banner eviction preserves an in-flight apply');
 }
 
 {
@@ -698,27 +766,32 @@ const buildRejectedEnvelope = (at = 200) => ({
   );
   assert.match(
     transactionSource,
-    /createProtocolDeliveryQueue\(batch\.items,[\s\S]*alreadyPersisted:\s*true/,
+    /scheduleProtocolDeliveryQueue\(batch\.items,[\s\S]*alreadyPersisted:\s*true/,
   );
   assert.match(
     transactionSource,
-    /if\s*\(animateDelivery\)\s*\{[\s\S]*createProtocolDeliveryQueue\(batch\.items/,
+    /if\s*\(animateDelivery\)\s*\{[\s\S]*scheduleProtocolDeliveryQueue\(batch\.items/,
   );
-  assert.match(
-    transactionSource,
-    /const generationOwnsProtocolDelivery\s*=\s*\(\)\s*=>/,
-  );
-  assert.equal(
-    (transactionSource.match(/if\s*\(!generationOwnsProtocolDelivery\(\)\)\s*break;/g) || []).length,
-    2,
-  );
+  assert.doesNotMatch(transactionSource, /generationOwnsProtocolDelivery/);
   assert.doesNotMatch(
     transactionSource,
     /animateDelivery\s*&&\s*batch\.items\.length/,
   );
+  assert.doesNotMatch(transactionSource, /await queue\.promise/);
+  assert.doesNotMatch(transactionSource, /await scheduleProtocolDeliveryQueue/);
+  assert.match(appSource, /await fastForwardProtocolDeliveryQueues\(sessionId\)/);
+  assert.match(appSource, /onGenerationStarted:\s*generationId\s*=>\s*generationAbortGuard\.bindGeneration\(generationId\)/);
   assert.match(
-    transactionSource,
-    /await queue\.promise/,
+    appSource,
+    /onAssistantDelivered:\s*\(\)\s*=>\s*\{[\s\S]*generationAbortGuard\.disarm\(\);[\s\S]*disarmAbort\?\.\(\)/,
+  );
+  assert.match(appSource, /completionOutcome\s*===\s*'assistant_delivered'[\s\S]*generationAbortGuard\.disarm\(\)/);
+  const generationCreateIndex = appSource.indexOf('activeGeneration = createActiveGenerationRecord');
+  const preGenerationAbortIndex = appSource.lastIndexOf('throwIfSendAborted();', generationCreateIndex);
+  assert.ok(generationCreateIndex > 0, '发送链应创建 generation record');
+  assert.ok(
+    preGenerationAbortIndex > 0 && preGenerationAbortIndex < generationCreateIndex,
+    'generation 创建前必须复验工具 abort signal，避免超时后迟发',
   );
   assert.match(
     appSource,

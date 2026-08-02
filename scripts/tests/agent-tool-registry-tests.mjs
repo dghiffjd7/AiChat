@@ -83,6 +83,7 @@ const logger = { warn: () => {} };
     name: 'chat.wait_forever',
     timeoutMs: 5,
     timeoutErrorCode: 'generation_failed',
+    timeoutSettleGraceMs: 0,
     execute: async (_args, context) => new Promise(resolve => {
       context.signal.addEventListener('abort', () => {
         executionSignalAborted = true;
@@ -107,6 +108,57 @@ const logger = { warn: () => {} };
   assert.equal(executionSignalAborted, true, 'timeout must abort the signal passed to the underlying tool');
   assert.equal(events.at(-1)?.status, 'failed', 'a provider timeout is a generation failure, not a user cancellation');
   console.log('ok - agent tool registry maps declared timeout failures to a stable failure code');
+}
+
+{
+  // 域超时宽限：中止后任务若能用真实终态收尾，registry 应采纳该结果而非笼统超时码。
+  const registry = createAgentToolRegistry({
+    permissionEvaluator: createAgentPermissionEvaluator({
+      defaultDecision: AGENT_PERMISSION_DECISIONS.allow,
+    }),
+    logger,
+  });
+  registry.register({
+    name: 'chat.settle_after_abort',
+    timeoutMs: 10,
+    timeoutErrorCode: 'generation_failed',
+    timeoutSettleGraceMs: 500,
+    execute: async (_args, context) => new Promise((resolve) => {
+      context.signal.addEventListener('abort', () => {
+        setTimeout(() => resolve({
+          ok: false,
+          sent: true,
+          completionOutcome: 'request_triggered',
+          failureCode: 'generation_failed',
+          message: '角色回复生成超时，本轮已中止。',
+        }), 30);
+      }, { once: true });
+    }),
+  });
+  const settled = await registry.executeTool('chat.settle_after_abort', {}, {
+    emit: () => {},
+    runId: 'grace-run',
+    stepId: 'grace-step',
+  });
+  assert.equal(settled.result?.failureCode, 'generation_failed');
+  assert.equal(settled.result?.sent, true, '宽限内收尾的结构化结果必须保留（而非丢给笼统超时错误）');
+
+  registry.register({
+    name: 'chat.never_settles',
+    timeoutMs: 10,
+    timeoutErrorCode: 'generation_failed',
+    timeoutSettleGraceMs: 40,
+    execute: async () => new Promise(() => {}),
+  });
+  await assert.rejects(
+    registry.executeTool('chat.never_settles', {}, {
+      emit: () => {},
+      runId: 'grace-expire-run',
+      stepId: 'grace-expire-step',
+    }),
+    error => error instanceof AgentToolError && error.code === 'generation_failed',
+  );
+  console.log('ok - domain timeout grace prefers a real terminal result and still fails hung tasks');
 }
 
 {

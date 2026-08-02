@@ -200,6 +200,44 @@ import {
 }
 
 {
+  const added = [];
+  const timers = [];
+  const queued = enqueueMessagesCore({
+    items: [
+      { message: { id: 'm1', content: 'first' } },
+      { message: { id: 'm2', content: 'second' } },
+      { message: { id: 'm3', content: 'third' } },
+    ],
+    options: { typingOptions: {} },
+    clearMessageQueueTimer() {},
+    hideTyping() {},
+    showTyping() {},
+    getTypingThinkTimer: () => null,
+    setTypingThinkTimer() {},
+    getTypingThinkResumeTimer: () => null,
+    setTypingThinkResumeTimer() {},
+    isNearBottom: () => false,
+    applyThinkPause() {},
+    removeThinkPause() {},
+    removeTypingElement() {},
+    scrollToBottom() {},
+    setMessageQueueTimer: timer => timers.push(timer),
+    scheduleTimeout: handler => ({ handler }),
+    scheduleFrame: handler => handler(),
+    addMessage: message => added.push(message.id),
+    random: () => 0.99,
+  });
+
+  await Promise.resolve();
+  assert.deepEqual(added, ['m1']);
+  assert.equal(queued.fastForward(), true);
+  await queued.promise;
+  assert.deepEqual(added, ['m1', 'm2', 'm3'], '快进必须立即投放所有已提交的剩余气泡');
+  assert.equal(timers.length, 1, '快进后不得再建立后续揭示等待');
+  console.log('ok - enqueueMessagesCore fast-forward drains committed messages without cancelling them');
+}
+
+{
   const shown = [];
   const added = [];
   let hidden = 0;

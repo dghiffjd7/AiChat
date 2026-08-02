@@ -89,6 +89,7 @@ const createFakeDocument = () => ({
   let deleted = 0;
   let renamed = 0;
   let confirmed = 0;
+  const confirmPayloads = [];
   let switchPayload = null;
   let deletePayload = null;
   let renamePayload = null;
@@ -103,8 +104,9 @@ const createFakeDocument = () => ({
         return [{ id: 'a1', name: '旧档', timestamp: 1700000000000, messageCount: 3 }];
       },
     },
-    appConfirmFn: async () => {
+    appConfirmFn: async (payload) => {
       confirmed += 1;
+      confirmPayloads.push(payload);
       return true;
     },
     runArchiveSwitchFlow: async (payload) => {
@@ -139,6 +141,8 @@ const createFakeDocument = () => ({
   await rowDefs[0].onRename({ stopPropagation() {}, preventDefault() {} });
   await rowDefs[0].onDelete({ stopPropagation() {} });
   assert.equal(confirmed, 2);
+  assert.match(confirmPayloads[0].message, /正文与记忆表（如启用）会随存档切换/);
+  assert.match(confirmPayloads[0].message, /变量状态目前不会随存档恢复/);
   assert.equal(loaded, 1);
   assert.equal(hidden, 1);
   assert.equal(renamed, 1);

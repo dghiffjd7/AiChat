@@ -1920,7 +1920,13 @@ const resolveGeneratedMediaTargetQuota = (input = '', args = {}) => {
     }
     if (!targetActive || !purposeActive) continue;
     const hasGenerationAction = /(?:生成|画(?!风)|绘制|制作|做图|重(?:新)?生成|重画|重绘|再画|来一张|换(?:掉|成|一张)?)/u.test(clause);
-    const hasBareVariant = /另(?:一|1)(?:张|幅)(?![^，,。；;！？!?\n]{0,12}(?:画风|风格)?参考)/u.test(clause)
+    const hasBareVariant = Array.from(clause.matchAll(/另(?:一|1)(?:张|幅)/gu)).some((match) => {
+      const index = Number(match.index || 0);
+      const beforeVariant = clause.slice(Math.max(0, index - 18), index);
+      const afterVariant = clause.slice(index + match[0].length, index + match[0].length + 12);
+      if (/(?:画风|风格)?参考(?:图|图片|素材|附件)?(?:的)?\s*$/u.test(beforeVariant)) return false;
+      return !/^[^，,。；;！？!?\n]{0,12}(?:画风|风格)?参考/u.test(afterVariant);
+    })
       || /另一个版本/u.test(clause);
     if (!hasGenerationAction && !hasBareVariant) {
       continue;

@@ -1,4 +1,5 @@
 const trim = value => String(value || '').trim();
+const MAX_TRACKED_STATES = 50;
 
 const normalizeStringList = value => Array.from(new Set(
   (Array.isArray(value) ? value : [])
@@ -144,19 +145,35 @@ export const createRejectedFormatRepairBannerRuntime = ({
       };
     }
   };
+  const deleteTrackedState = (sessionId = '') => {
+    const sid = trim(sessionId);
+    const tracked = states.get(sid) || null;
+    if (tracked?.envelopeKey) dismissedKeys.delete(tracked.envelopeKey);
+    states.delete(sid);
+  };
+  const pruneTrackedStates = () => {
+    while (states.size > MAX_TRACKED_STATES) {
+      const oldestEvictable = Array.from(states.entries())
+        .find(([, state]) => state?.status !== 'applying');
+      if (!oldestEvictable) break;
+      deleteTrackedState(oldestEvictable[0]);
+    }
+  };
   // includeDismissed：关闭横幅只隐藏 UI，检查结果仍需记录，否则 Agent Center 兜底找不到候选。
   const getCurrentState = (sessionId = activeSessionId, { includeDismissed = false } = {}) => {
     const sid = trim(sessionId);
     const envelope = readEnvelope(sid);
     if (!sid || !isRejectedProtocolRawEnvelope(envelope)) {
-      states.delete(sid);
+      deleteTrackedState(sid);
       return null;
     }
     const envelopeKey = buildEnvelopeKey(sid, envelope);
     let state = states.get(sid) || null;
     if (!state || state.envelopeKey !== envelopeKey) {
+      deleteTrackedState(sid);
       state = buildInitialState(sid, envelope);
       states.set(sid, state);
+      pruneTrackedStates();
     } else {
       state.envelope = envelope;
     }
@@ -288,6 +305,15 @@ export const createRejectedFormatRepairBannerRuntime = ({
   };
 
   // Agent Center 的显式应用等于撤销关闭：用户主动要求处理这条候选。
+  const hasRunCandidate = (runId = '') => {
+    const id = trim(runId);
+    if (!id) return false;
+    const tracked = Array.from(states.values()).find(item => item.runId === id) || null;
+    if (!tracked?.candidate) return false;
+    const state = getCurrentState(tracked.sessionId, { includeDismissed: true });
+    return Boolean(state?.runId === id && state.candidate);
+  };
+
   const applyByRunId = async (runId = '') => {
     const id = trim(runId);
     if (!id) return null;
@@ -301,9 +327,7 @@ export const createRejectedFormatRepairBannerRuntime = ({
 
   const clear = (sessionId = '') => {
     const sid = trim(sessionId || activeSessionId);
-    const tracked = states.get(sid) || null;
-    if (tracked?.envelopeKey) dismissedKeys.delete(tracked.envelopeKey);
-    states.delete(sid);
+    deleteTrackedState(sid);
     if (sid === activeSessionId && root) {
       root.hidden = true;
       delete root.dataset.status;
@@ -337,6 +361,7 @@ export const createRejectedFormatRepairBannerRuntime = ({
     markChecking,
     updateReview,
     settleChecking,
+    hasRunCandidate,
     applyByRunId,
     clear,
     dismiss,

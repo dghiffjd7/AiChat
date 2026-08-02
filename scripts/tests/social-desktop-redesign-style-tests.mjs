@@ -7,6 +7,40 @@ const theme = fs.readFileSync(new URL('../../src/assets/css/theme.css', import.m
 const app = fs.readFileSync(new URL('../../src/scripts/ui/app.js', import.meta.url), 'utf8');
 const chatListHandleMarkup = html.match(/<button[^>]*id="chat-list-collapse-handle"[^>]*>([\s\S]*?)<\/button>/)?.[1] || '';
 
+const collectBalancedCssBlocks = (source, marker) => {
+  const flags = marker.flags.includes('g') ? marker.flags : `${marker.flags}g`;
+  const pattern = new RegExp(marker.source, flags);
+  const blocks = [];
+  let match = null;
+  while ((match = pattern.exec(source))) {
+    const open = source.indexOf('{', match.index);
+    if (open < 0) break;
+    let depth = 0;
+    let close = -1;
+    for (let index = open; index < source.length; index += 1) {
+      if (source[index] === '{') depth += 1;
+      if (source[index] !== '}') continue;
+      depth -= 1;
+      if (depth === 0) {
+        close = index;
+        break;
+      }
+    }
+    assert.ok(close > open, `CSS block must close: ${match[0]}`);
+    blocks.push({ start: match.index, end: close + 1, body: source.slice(open + 1, close) });
+    pattern.lastIndex = close + 1;
+  }
+  return blocks;
+};
+
+const desktopMediaBlocks = collectBalancedCssBlocks(css, /@media\s*\(min-width:\s*900px\)\s*/);
+const desktopCss = desktopMediaBlocks.map(block => block.body).join('\n');
+let cssOutsideDesktop = css;
+for (const block of desktopMediaBlocks.slice().reverse()) {
+  cssOutsideDesktop = `${cssOutsideDesktop.slice(0, block.start)}${cssOutsideDesktop.slice(block.end)}`;
+}
+const darkThemeBlock = collectBalancedCssBlocks(theme, /body\[data-theme-mode='dark'\]\s*/)[0]?.body || '';
+
 assert.match(html, /id="desktop-chat-placeholder"/);
 assert.match(html, /id="chat-list-collapse-handle"/);
 assert.doesNotMatch(chatListHandleMarkup, /<svg|desktop-chat-list-handle-svg/, '聊天收合入口应只保留透明热区，不再渲染 U 形提环');
@@ -16,6 +50,18 @@ assert.match(html, /<button[^>]+class="desktop-rail-brand"[^>]+aria-label="切�
 assert.match(html, /class="chat-room-presence-dot"/);
 assert.match(html, /id="current-chat-avatar-button"/);
 assert.match(css, /@media\s*\(min-width:\s*900px\)/);
+assert.ok(desktopMediaBlocks.length >= 1, '桌面规则必须存在于 min-width: 900px 媒体块');
+assert.match(cssOutsideDesktop, /\.desktop-chat-list-handle\s*\{[^}]*display:\s*none;/s, '移动端默认必须隐藏锚条热区');
+assert.doesNotMatch(
+  cssOutsideDesktop,
+  /#chat-page[^{}]*>\s*\.desktop-chat-list-handle\s*\{[^}]*(?:display:\s*block|position:\s*absolute|left:\s*calc)/s,
+  '令锚条显形与定位的规则不得逃出桌面媒体块',
+);
+assert.match(
+  desktopCss,
+  /#chat-page\s*>\s*\.desktop-chat-list-handle\s*\{[^}]*position:\s*absolute;[^}]*display:\s*block;/s,
+  '桌面媒体块内才允许锚条热区显形与定位',
+);
 assert.match(css, /body\[data-ui-mode=['"]chat['"]\]\s+#app\s*\{[^}]*grid-template-columns:\s*84px\s+minmax\(0,\s*1fr\)/s);
 assert.match(css, /#chat-page\.active[\s\S]*?--chat-list-column-width:\s*320px;[\s\S]*?grid-template-columns:\s*minmax\(0,\s*var\(--chat-list-column-width\)\)\s+minmax\(0,\s*1fr\)/);
 assert.match(css, /#chat-page\[data-chat-list-collapsed='true'\]\s*\{[^}]*--chat-list-column-width:\s*0px/s);
@@ -29,6 +75,8 @@ assert.match(theme, /--chat-list-edge-marker-room-opacity:\s*0\.3;/, '进房后�
 assert.match(theme, /--pull-handle-anchor-height:\s*92px;/, '边缘锚条应保留既有高度');
 assert.match(theme, /--pull-handle-rest-filter:[^;]*color-mix\(/, '静息光晕应统一使用 color-mix');
 assert.match(theme, /--pull-handle-hover-filter:[^;]*color-mix\(/, '互动光晕应统一使用 color-mix');
+assert.match(darkThemeBlock, /--pull-handle-rest-filter:[^;]*color-mix\(/, '深色主题必须保留独立的静息光晕覆盖');
+assert.match(darkThemeBlock, /--pull-handle-anchor-color:[^;]*color-mix\(/, '深色主题必须直接覆盖锚条颜色');
 assert.match(css, /\.desktop-chat-list-handle::after\s*\{[\s\S]*?height:\s*var\(--pull-handle-anchor-height\)[\s\S]*?opacity:\s*var\(--chat-list-edge-marker-rest-opacity\)[\s\S]*?filter:\s*var\(--pull-handle-rest-filter\)/, '聊天锚条应消费独立静息透明度与共享光晕');
 assert.match(css, /\.desktop-chat-list-handle:(?:hover|focus-visible)::after[\s\S]*?width:\s*4px;[\s\S]*?opacity:\s*1;[\s\S]*?filter:\s*var\(--pull-handle-hover-filter\)/s, '锚条应随 hover/focus 醒来');
 assert.match(css, /\.desktop-chat-list-handle::before\s*\{[\s\S]*?background:\s*var\(--app-danger-text\)[\s\S]*?opacity:\s*0;/, '透明热区应以伪元素预留未读点');

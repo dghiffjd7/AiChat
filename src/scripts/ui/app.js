@@ -255,9 +255,11 @@ import {
 } from './app-native-back-button-utils.js';
 import { createAppUiStateRuntime } from './app-ui-state-runtime-utils.js';
 import {
+  buildPersonaScopeStoreTargets,
   buildPersonaScopedStorageKey,
   canEnterPersonaScopedSession,
   canReusePersonaScope,
+  createPersonaScopeApplyCoordinator,
   hasPersonaScopedSession,
   resolvePersonaScopedCurrentSession,
   settlePersonaScopeStores,
@@ -620,6 +622,7 @@ import {
   buildSendUserMessage,
   adoptRenderedRegenerateRoundMessages,
   collectMaidAssistantMessageRefs,
+  createSendGenerationAbortGuard,
   normalizeHandleSendInvocation,
   normalizeHandleSendOptions,
   resolveMaidChatSendCompletionResult,
@@ -2072,9 +2075,10 @@ const initApp = async () => {
     applyUserMessageColors(sessionId);
   };
 
-  let personaScopeApplyToken = 0;
-  let personaScopeApplySerial = Promise.resolve();
-  const applyPersonaScopeNow = async ({ personaId = null, force = false } = {}, token = 0) => {
+  const personaScopeApplyCoordinator = createPersonaScopeApplyCoordinator({
+    getRequestedScopeId: () => getPersonaScopeKey(personaStore.getActive?.()?.id || 'default'),
+  });
+  const applyPersonaScopeNow = async ({ personaId = null, force = false } = {}, scopeRun = null) => {
     const pid = personaId || personaStore.getActive?.()?.id || 'default';
     const nextKey = getPersonaScopeKey(pid);
     if (canReusePersonaScope({
@@ -2122,43 +2126,56 @@ const initApp = async () => {
     logger.debug(`[Persona_test] applyPersonaScope start persona=${pid} scope=${nextKey || 'default'}`);
     const scopeSettlement = await settlePersonaScopeStores({
       scopeId: nextKey,
-      stores: [
-        { name: 'chatStore', store: chatStore },
-        { name: 'contactsStore', store: contactsStore },
-        { name: 'groupStore', store: groupStore },
-        { name: 'momentsStore', store: momentsStore },
-        { name: 'momentSummaryStore', store: momentSummaryStore },
-        { name: 'personaArchiveStore', store: personaArchiveStore },
-        { name: 'rpSessionStore', store: rpSessionStore },
-        { name: 'memoryTableStore', store: memoryTableStore },
-        { name: 'contactProfileStore', store: contactProfileStore },
-        { name: 'memoryTemplateStore', store: memoryTemplateStore },
-        { name: 'memorySnapshotStore', store: memorySnapshotStore },
-        { name: 'variableSnapshotStore', store: variableSnapshotStore },
-        { name: 'turnCheckpointStore', store: turnCheckpointStore },
-      ],
+      stores: buildPersonaScopeStoreTargets({
+        chatStore,
+        contactsStore,
+        groupStore,
+        momentsStore,
+        momentSummaryStore,
+        personaArchiveStore,
+        rpSessionStore,
+        memoryTableStore,
+        contactProfileStore,
+        memoryTemplateStore,
+        memorySnapshotStore,
+        variableSnapshotStore,
+        turnCheckpointStore,
+      }),
     });
     for (const failure of scopeSettlement.failures) {
       logger.warn(`[Persona_test] ${failure.name} scope apply failed`, failure.error);
     }
-    const criticalFailure = scopeSettlement.failures.find(failure => (
-      failure.name === 'chatStore' || failure.name === 'contactsStore'
-    ));
+    const activePid = personaStore.getActive?.()?.id || 'default';
+    const activeKey = getPersonaScopeKey(activePid);
+    if (!scopeRun?.isCurrent?.(nextKey) || activeKey !== nextKey) {
+      logger.debug(
+        `[Persona_test] applyPersonaScope stale scope=${nextKey || 'default'} active=${activeKey || 'default'}`,
+      );
+      return false;
+    }
+    const criticalFailure = scopeSettlement.criticalFailures[0] || null;
     if (criticalFailure) throw criticalFailure.error;
     try {
       await memoryTemplateStore.ensureDefaultTemplate?.();
     } catch (err) {
       logger.warn('[Persona_test] ensure default memory template after scope apply failed', err);
     }
-    const activePid = personaStore.getActive?.()?.id || 'default';
-    const activeKey = getPersonaScopeKey(activePid);
-    if (token !== personaScopeApplyToken || activeKey !== nextKey) {
+    if (!scopeRun?.isCurrent?.(nextKey)) {
       logger.debug(
         `[Persona_test] applyPersonaScope stale scope=${nextKey || 'default'} active=${activeKey || 'default'}`,
       );
       return false;
     }
-    activePersonaScopeKey = nextKey;
+    if (!scopeRun.commit(nextKey, () => { activePersonaScopeKey = nextKey; })) return false;
+    const degradedFeatures = Array.from(new Set(
+      scopeSettlement.degradedFailures.map(failure => failure.feature).filter(Boolean),
+    ));
+    if (degradedFeatures.length) {
+      window.toastr?.warning?.(
+        `部分资料未载入：${degradedFeatures.join('、')}。可重切角色卡或重启 APP 后再试。`,
+        '角色卡切换',
+      );
+    }
     try {
       window.appBridge?.setPersonaScope?.(nextKey);
     } catch {}
@@ -2229,11 +2246,7 @@ const initApp = async () => {
     return true;
   };
   const applyPersonaScope = (options = {}) => {
-    const token = ++personaScopeApplyToken;
-    personaScopeApplySerial = personaScopeApplySerial
-      .catch(() => {})
-      .then(() => applyPersonaScopeNow(options, token));
-    return personaScopeApplySerial;
+    return personaScopeApplyCoordinator.enqueue(scopeRun => applyPersonaScopeNow(options, scopeRun));
   };
 
   const personaPanel = new PersonaPanel({
@@ -3201,12 +3214,45 @@ const initApp = async () => {
       }
       const waitForReply = options?.waitForReply !== false;
       const sendStartedAt = Date.now();
-      const runSend = () => handleSend(null, {
-        overrideText: String(content ?? ''),
-        ignorePending: true,
-        includeAttachments: false,
-        returnCompletionOutcome: true,
+      let toolTimeoutAborted = false;
+      const generationAbortGuard = createSendGenerationAbortGuard({
+        getActiveGeneration: () => activeGeneration,
+        cancelGeneration: (abortReason) => {
+          const isToolTimeout = abortReason?.code === 'generation_failed';
+          if (isToolTimeout) toolTimeoutAborted = true;
+          cancelActiveGeneration(isToolTimeout ? 'tool_timeout' : 'agent_abort');
+        },
       });
+      const runSend = async ({ disarmAbort = null } = {}) => {
+        const result = await handleSend(null, {
+          overrideText: String(content ?? ''),
+          ignorePending: true,
+          includeAttachments: false,
+          returnCompletionOutcome: true,
+          abortSignal: options?.signal,
+          onGenerationStarted: generationId => generationAbortGuard.bindGeneration(generationId),
+          onAssistantDelivered: () => {
+            generationAbortGuard.disarm();
+            disarmAbort?.();
+          },
+        });
+        if (result?.completionOutcome === 'assistant_delivered') {
+          generationAbortGuard.disarm();
+          disarmAbort?.();
+        }
+        // 工具超时导致的中止不是用户取消：改写为 generation_failed，避免误报 user_aborted。
+        if (toolTimeoutAborted && result?.cancelled === true) {
+          const { cancelled: _cancelled, ...rest } = result;
+          return {
+            ...rest,
+            completionOutcome: 'request_triggered',
+            failureCode: 'generation_failed',
+            reason: 'generation_failed',
+            message: '角色回复生成超时，本轮已中止；可重试或换用更快的模型。',
+          };
+        }
+        return result;
+      };
       if (!waitForReply) {
         const preflight = resolveSendPreflightBlock({
           bridgeConfigured: isBridgeConfigured(window.appBridge),
@@ -3226,13 +3272,7 @@ const initApp = async () => {
       const result = await runAbortableSendFlow({
         signal: options?.signal,
         runSend,
-        abortGeneration: abortReason => {
-          if (!activeGeneration || (sid && activeGeneration.sessionId !== sid)) return;
-          const reason = abortReason?.code === 'generation_failed'
-            ? 'tool_timeout'
-            : 'agent_abort';
-          cancelActiveGeneration(reason);
-        },
+        abortGeneration: abortReason => generationAbortGuard.abort(abortReason),
       });
       const sent = result === true || result?.ok === true || result?.sent === true;
       if (!sent && lastUserGenerationCancelAt >= sendStartedAt) {
@@ -3735,6 +3775,7 @@ const initApp = async () => {
     reason: 'format_repair_runtime_unavailable',
     message: '格式修复入口尚未就绪。',
   });
+  let hasRejectedFormatRepairAgentRunCandidate = () => false;
   const agentCenterPanel = new AgentCenterPanel({
     getFailureSeenAt: ({ surface = '' } = {}) => getAgentFailureSeenAt({ surface }),
     markFailureSeen: ({ surface = '', at = Date.now() } = {}) => markAgentFailuresSeen({ surface, at }),
@@ -3919,6 +3960,7 @@ const initApp = async () => {
           };
         },
         applyAgentFormatRepairRun: options => applyRejectedFormatRepairAgentRun(options || {}),
+        hasAgentFormatRepairCandidate: options => hasRejectedFormatRepairAgentRunCandidate(options || {}),
         getAgentFeatureSettings: () => agentFeatureSettingsStore.getSettings(),
         listAgentFeatures: () => agentFeatureSettingsStore.listFeatures(),
         setAgentFeatureEnabled: async (options = {}) => {
@@ -17986,13 +18028,18 @@ Phase G（Frame 36）：循环衔接
     return Array.from(chatScroll.querySelectorAll('[data-msg-id]'))
       .some(element => String(element?.dataset?.msgId || '') === id);
   };
+  const protocolDeliveryQueuesBySession = new Map();
+  const protocolDeliveryTailsBySession = new Map();
   const createProtocolDeliveryQueue = (items = [], options = {}, effects = {}) => {
     const targetSessionId = String(options?.targetSessionId || '').trim();
+    const startAfter = options?.startAfter?.then ? options.startAfter : null;
+    const queueOptions = { ...(options || {}) };
+    delete queueOptions.startAfter;
     const normalizedItems = (Array.isArray(items) ? items : [])
       .map(item => normalizeProtocolDeliveryItem(item, { fallbackSessionId: targetSessionId }))
       .filter(Boolean);
     if (!normalizedItems.length) {
-      return { cancel: () => {}, promise: Promise.resolve() };
+      return { cancel: () => {}, fastForward: () => false, promise: Promise.resolve() };
     }
 
     const sessionId = String(normalizedItems[0]?.delivery?.targetSessionId || targetSessionId).trim();
@@ -18012,6 +18059,8 @@ Phase G（Frame 36）：循环衔接
     });
     let messageQueueTimer = null;
     let cancelled = false;
+    let fastForwardRequested = false;
+    let queue = null;
     const clearMessageQueueTimer = () => {
       if (messageQueueTimer) clearTimeout(messageQueueTimer);
       messageQueueTimer = null;
@@ -18020,79 +18069,91 @@ Phase G（Frame 36）：循环衔接
     const hideQueueTyping = () => {
       if (isQueueSessionActive()) ui.hideTyping({ clearMessageQueue: false });
     };
-    const queue = enqueueMessagesCore({
-      items: normalizedItems.map((item, index) => ({
-        message: item.message,
-        callback: () => {
-          if (cancelled) return;
-          try {
-            deliverProtocolDeliveryItem(item, {
-              appendMessage: typeof effects.appendMessage === 'function'
-                ? effects.appendMessage
-                : appendPersistedProtocolDeliveryMessage,
-              findMessage: (messageId, sid) => chatStore.findMessage(messageId, sid),
-              isUiMessagePresent: isProtocolUiMessagePresent,
-              isSessionActive,
-              addUiMessage: (message, addOptions) => ui.addMessage(message, addOptions),
-              autoMarkReadIfActive,
-              emitPluginAfterReceive: effects.emitPluginAfterReceive,
-              maybeApplyGroupSystemOps: effects.maybeApplyGroupSystemOps,
-              refreshChatAndContacts,
-              alreadyPersisted: effects.alreadyPersisted === true,
-              logger,
-            });
-            if (plan?.id) {
-              updateProtocolDeliveryPlanCursor({
-                ...persistenceOptions,
-                planId: plan.id,
-                cursor: index + 1,
+    const startQueue = async () => {
+      if (startAfter) {
+        try {
+          await startAfter;
+        } catch (err) {
+          logger.warn('prior protocol delivery queue failed; continuing next batch', err);
+        }
+      }
+      if (cancelled) return;
+      queue = enqueueMessagesCore({
+        items: normalizedItems.map((item, index) => ({
+          message: item.message,
+          callback: () => {
+            if (cancelled) return;
+            try {
+              deliverProtocolDeliveryItem(item, {
+                appendMessage: typeof effects.appendMessage === 'function'
+                  ? effects.appendMessage
+                  : appendPersistedProtocolDeliveryMessage,
+                findMessage: (messageId, sid) => chatStore.findMessage(messageId, sid),
+                isUiMessagePresent: isProtocolUiMessagePresent,
+                isSessionActive,
+                addUiMessage: (message, addOptions) => ui.addMessage(message, addOptions),
+                autoMarkReadIfActive,
+                emitPluginAfterReceive: effects.emitPluginAfterReceive,
+                maybeApplyGroupSystemOps: effects.maybeApplyGroupSystemOps,
+                refreshChatAndContacts,
+                alreadyPersisted: effects.alreadyPersisted === true,
                 logger,
               });
+              if (plan?.id) {
+                updateProtocolDeliveryPlanCursor({
+                  ...persistenceOptions,
+                  planId: plan.id,
+                  cursor: index + 1,
+                  logger,
+                });
+              }
+            } catch (err) {
+              logger.warn('protocol delivery queue append failed', err);
             }
-          } catch (err) {
-            logger.warn('protocol delivery queue append failed', err);
-          }
+          },
+        })),
+        options: queueOptions,
+        clearMessageQueueTimer,
+        hideTyping: hideQueueTyping,
+        showTyping: (avatarUrl, typingOptions) => {
+          if (isQueueSessionActive()) ui.showTyping(avatarUrl, typingOptions);
         },
-      })),
-      options,
-      clearMessageQueueTimer,
-      hideTyping: hideQueueTyping,
-      showTyping: (avatarUrl, typingOptions) => {
-        if (isQueueSessionActive()) ui.showTyping(avatarUrl, typingOptions);
-      },
-      getTypingThinkTimer: () => ui._typingThinkTimer,
-      setTypingThinkTimer: value => {
-        ui._typingThinkTimer = value;
-      },
-      getTypingThinkResumeTimer: () => ui._typingThinkResumeTimer,
-      setTypingThinkResumeTimer: value => {
-        ui._typingThinkResumeTimer = value;
-      },
-      isNearBottom: () => (isQueueSessionActive() ? ui.isNearBottom() : false),
-      applyThinkPause: () => {
-        if (isQueueSessionActive()) ui._applyThinkPause?.();
-      },
-      removeThinkPause: () => {
-        if (isQueueSessionActive()) ui._removeThinkPause?.();
-      },
-      removeTypingElement: () => {
-        if (isQueueSessionActive()) ui._removeTypingElement?.();
-      },
-      scrollToBottom: () => {
-        if (isQueueSessionActive()) ui.scrollToBottom();
-      },
-      setMessageQueueTimer: value => {
-        messageQueueTimer = value;
-      },
-      scheduleTimeout: (handler, delay) => setTimeout(handler, delay),
-      scheduleFrame: handler => (
-        typeof requestAnimationFrame === 'function'
-          ? requestAnimationFrame(handler)
-          : setTimeout(handler, 0)
-      ),
-      addMessage: () => {},
-    });
-    const wrappedPromise = Promise.resolve(queue?.promise).finally(() => {
+        getTypingThinkTimer: () => ui._typingThinkTimer,
+        setTypingThinkTimer: value => {
+          ui._typingThinkTimer = value;
+        },
+        getTypingThinkResumeTimer: () => ui._typingThinkResumeTimer,
+        setTypingThinkResumeTimer: value => {
+          ui._typingThinkResumeTimer = value;
+        },
+        isNearBottom: () => (isQueueSessionActive() ? ui.isNearBottom() : false),
+        applyThinkPause: () => {
+          if (isQueueSessionActive()) ui._applyThinkPause?.();
+        },
+        removeThinkPause: () => {
+          if (isQueueSessionActive()) ui._removeThinkPause?.();
+        },
+        removeTypingElement: () => {
+          if (isQueueSessionActive()) ui._removeTypingElement?.();
+        },
+        scrollToBottom: () => {
+          if (isQueueSessionActive()) ui.scrollToBottom();
+        },
+        setMessageQueueTimer: value => {
+          messageQueueTimer = value;
+        },
+        scheduleTimeout: (handler, delay) => setTimeout(handler, delay),
+        scheduleFrame: handler => (
+          typeof requestAnimationFrame === 'function'
+            ? requestAnimationFrame(handler)
+            : setTimeout(handler, 0)
+        ),
+        addMessage: () => {},
+      });
+      if (fastForwardRequested) queue.fastForward?.();
+      await queue.promise;
+    };
+    const wrappedPromise = Promise.resolve().then(startQueue).finally(() => {
       if (!cancelled && plan?.id) {
         removeProtocolDeliveryPlan({
           ...persistenceOptions,
@@ -18116,8 +18177,50 @@ Phase G（Frame 36）：循环衔接
           });
         }
       },
+      fastForward: () => {
+        if (cancelled || fastForwardRequested) return false;
+        fastForwardRequested = true;
+        queue?.fastForward?.();
+        return true;
+      },
       promise: wrappedPromise,
     };
+  };
+  // 揭示动画进行中时，发送键切换为「跳过动画」态；仅针对当前会话。
+  const syncProtocolRevealButtonState = () => {
+    const sid = String(chatStore.getCurrent?.() || '').trim();
+    ui.setRevealingState?.(Boolean(sid && protocolDeliveryQueuesBySession.has(sid)));
+  };
+  const scheduleProtocolDeliveryQueue = (items = [], options = {}, effects = {}) => {
+    const sessionId = String(options?.targetSessionId || '').trim();
+    const startAfter = protocolDeliveryTailsBySession.get(sessionId) || null;
+    const queue = createProtocolDeliveryQueue(items, { ...options, startAfter }, effects);
+    if (!sessionId) return queue;
+    const trackedQueues = protocolDeliveryQueuesBySession.get(sessionId) || new Set();
+    trackedQueues.add(queue);
+    protocolDeliveryQueuesBySession.set(sessionId, trackedQueues);
+    syncProtocolRevealButtonState();
+    const completion = Promise.resolve(queue.promise).catch((err) => {
+      logger.warn('background protocol delivery queue failed', err);
+    });
+    protocolDeliveryTailsBySession.set(sessionId, completion);
+    void completion.finally(() => {
+      trackedQueues.delete(queue);
+      if (!trackedQueues.size) protocolDeliveryQueuesBySession.delete(sessionId);
+      if (protocolDeliveryTailsBySession.get(sessionId) === completion) {
+        protocolDeliveryTailsBySession.delete(sessionId);
+      }
+      syncProtocolRevealButtonState();
+    });
+    return queue;
+  };
+  const fastForwardProtocolDeliveryQueues = async (sessionId = '') => {
+    const sid = String(sessionId || '').trim();
+    const queues = Array.from(protocolDeliveryQueuesBySession.get(sid) || []);
+    if (!queues.length) return 0;
+    queues.forEach(queue => queue.fastForward?.());
+    await Promise.allSettled(queues.map(queue => queue.promise));
+    return queues.length;
   };
   const flushProtocolDeliveryBacklog = async ({ source = 'boot' } = {}) => {
     try {
@@ -22193,6 +22296,7 @@ Phase G（Frame 36）：循环衔接
 	    chatGeneratedImagePreview.revealPendingForSession(sessionId);
     if (!result?.stale && String(chatStore.getCurrent?.() || '').trim() === sid) {
       syncRejectedFormatRepairBanner(sid);
+      syncProtocolRevealButtonState();
       maidGuideEmit(window, 'chat-room-entered', { sessionId: sid });
     }
 	    return result;
@@ -23959,7 +24063,7 @@ Phase G（Frame 36）：循环衔接
     closeRpGreetingSheet();
     const ok = await appConfirm({
       title: '重置创意写作剧情',
-      message: '当前剧情会先存档，再开启一段从开场白开始的新剧情；之后可在历史存档中切回。',
+      message: '当前剧情会先存档，再开启一段从开场白开始的新剧情。正文与记忆表可在历史存档中切回；变量状态目前不会随存档恢复。',
       confirmText: '存档并重置',
       cancelText: '取消',
       danger: true,
@@ -27444,6 +27548,9 @@ Phase G（Frame 36）：循环衔接
     registry.stores.rejectedFormatRepairBannerRuntime = rejectedFormatRepairBannerRuntime;
   });
   syncRejectedFormatRepairBanner = sid => rejectedFormatRepairBannerRuntime?.sync?.(sid) || false;
+  hasRejectedFormatRepairAgentRunCandidate = ({ runId = '' } = {}) => (
+    rejectedFormatRepairBannerRuntime?.hasRunCandidate?.(runId) === true
+  );
   applyRejectedFormatRepairAgentRun = async ({ runId = '' } = {}) => {
     const result = await rejectedFormatRepairBannerRuntime?.applyByRunId?.(runId);
     if (result) return result;
@@ -27607,10 +27714,22 @@ Phase G（Frame 36）：循环衔接
       assistantStreamFactory,
       continueTarget,
       partialCommitHandler,
+      onGenerationStarted,
+      onAssistantDelivered,
+      abortSignal,
       swipeTarget,
       excludeMessageIds: excludedMessageIds,
       includeAttachments,
     } = normalizeHandleSendOptions(options);
+    const throwIfSendAborted = () => {
+      if (!abortSignal?.aborted) return;
+      if (abortSignal.reason instanceof Error) throw abortSignal.reason;
+      const error = new Error('Chat send aborted');
+      error.name = 'AbortError';
+      error.cancelled = true;
+      throw error;
+    };
+    throwIfSendAborted();
     const excludeMessageIds = new Set(excludedMessageIds);
     // 请求预览可指定场景（仅 previewOnly 生效）：聊天/创意写作的格式注入差异由 rpUiMode 派生
     const sceneUiMode = (previewOnly && previewUiMode) ? previewUiMode : uiMode;
@@ -27649,6 +27768,14 @@ Phase G（Frame 36）：循环衔接
     const previewMacroVariableState = previewOnly ? new Map() : null;
     let outgoingReplyContexts = [];
     let generationId = 0;
+    let assistantDeliveredNotified = false;
+    const notifyAssistantDelivered = () => {
+      if (assistantDeliveredNotified) return;
+      assistantDeliveredNotified = true;
+      try {
+        onAssistantDelivered?.({ sessionId, generationId });
+      } catch {}
+    };
     let formatRepairTurnId = '';
     const formatRepairTurnSourceMessages = [];
     let formatRepairMessageCapture = null;
@@ -27772,6 +27899,10 @@ Phase G（Frame 36）：循环衔接
             })
           : false;
       }
+    }
+    if (!previewOnly) {
+      await fastForwardProtocolDeliveryQueues(sessionId);
+      throwIfSendAborted();
     }
     let pendingMessagesToConfirm = [];
     let text = '';
@@ -29240,6 +29371,7 @@ Phase G（Frame 36）：循环衔接
             return true;
           })
         : null);
+    throwIfSendAborted();
 
     // 只有在没有 pending 消息时，才创建新的用户消息气泡
     let userMsg = null;
@@ -29287,6 +29419,9 @@ Phase G（Frame 36）：循环衔接
         swipeTarget,
       });
       generationId = activeGeneration.id;
+      try {
+        onGenerationStarted?.(generationId);
+      } catch {}
       bindActiveGenerationReattach();
       if (appendedUserOutput) refreshChatAndContacts();
       if (appendedUserOutput) ui.showDeliveryStatus();
@@ -29302,6 +29437,9 @@ Phase G（Frame 36）：循环衔接
         swipeTarget,
       });
       generationId = activeGeneration.id;
+      try {
+        onGenerationStarted?.(generationId);
+      } catch {}
       bindActiveGenerationReattach();
       if (attachmentMessages.length) refreshChatAndContacts();
       if (!suppressUserMessage && attachmentMessages.length) ui.clearInput();
@@ -29499,14 +29637,9 @@ Phase G（Frame 36）：循环衔接
           setFormatRepairLastRawResponse(raw, sessionId);
           committedRawSaved = true;
           const animateDelivery = document.body.dataset.typingDots !== 'off';
-          const generationOwnsProtocolDelivery = () => (
-            activeGeneration?.id === generationId
-            && activeGeneration.cancelled !== true
-          );
           for (const batch of deliveryBatches) {
             if (animateDelivery) {
-              if (!generationOwnsProtocolDelivery()) break;
-              const queue = createProtocolDeliveryQueue(batch.items, {
+              scheduleProtocolDeliveryQueue(batch.items, {
                 avatarUrl: assistantAvatar,
                 typingOptions: getGroupTypingMembers(batch.targetSessionId) || {},
                 targetSessionId: batch.targetSessionId,
@@ -29517,9 +29650,6 @@ Phase G（Frame 36）：循环衔接
                 emitPluginAfterReceive,
                 maybeApplyGroupSystemOps,
               });
-              activeGeneration._messageQueue = queue;
-              await queue.promise;
-              if (!generationOwnsProtocolDelivery()) break;
               continue;
             }
             for (const item of batch.items) {
@@ -29983,13 +30113,13 @@ Phase G（Frame 36）：循环衔接
       }
       // 生成成功完成后兜底挂 usage（覆盖 usage 尾部到达的流式协议路径）
       patchTrailingAssistantUsage(sessionId);
+      if (sendSucceeded) notifyAssistantDelivered();
     } catch (error) {
       const catchResult = runSendCatchFlow({
         error,
         generationId,
         suppressErrorUI,
         streamCtrl,
-        getActiveGeneration: () => activeGeneration,
         isGenerationInterrupted,
         sessionId,
         isSessionActive,
@@ -30108,11 +30238,28 @@ Phase G（Frame 36）：循环衔接
       }
       if (!returnMaidCompletionOutcome) return finallyResult;
       if (maidProtocolRepairCompletion) {
+        // 工具超时中止后不再等待后台修复收尾：立即以 protocol_rejected 收口，
+        // 修复结果仍由横幅/Agent Center 承接（后台守卫继续跑）。
+        let abortNotify = null;
+        const abortWait = abortSignal
+          ? new Promise((resolve) => {
+            if (abortSignal.aborted) {
+              resolve(null);
+              return;
+            }
+            abortNotify = () => resolve(null);
+            abortSignal.addEventListener('abort', abortNotify, { once: true });
+          })
+          : null;
         try {
-          const repairCompletion = await maidProtocolRepairCompletion;
+          const repairCompletion = abortWait
+            ? await Promise.race([maidProtocolRepairCompletion, abortWait])
+            : await maidProtocolRepairCompletion;
           maidProtocolRepairFailed = repairCompletion?.failed === true;
         } catch {
           maidProtocolRepairFailed = true;
+        } finally {
+          if (abortNotify) abortSignal.removeEventListener('abort', abortNotify);
         }
       }
       const assistantMessageRefs = collectMaidAssistantMessageRefs({
@@ -30190,6 +30337,12 @@ Phase G（Frame 36）：循环衔接
 	        ui.setStreamingState?.(false);
 	        ui.setSendingState?.(false);
 	      }
+	      return;
+	    }
+	    // 揭示动画播放中：本次点击只跳过动画（无论输入框是否有内容），想发送需再点一次。
+	    const revealSid = String(chatStore.getCurrent?.() || '').trim();
+	    if (revealSid && protocolDeliveryQueuesBySession.has(revealSid)) {
+	      void fastForwardProtocolDeliveryQueues(revealSid);
 	      return;
 	    }
 	    const raw = String(ui.getInputText?.() || '').trim();

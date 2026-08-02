@@ -155,20 +155,25 @@ export const updateSendButtonStateCore = ({
   sendBtn,
   isSending = false,
   isStreaming = false,
+  isRevealing = false,
   isOnline = true,
   continueButton = null,
 } = {}) => {
   if (!sendBtn) return false;
   const isBusy = Boolean(isSending) || Boolean(isStreaming);
+  // 揭示动画播放中发送键即跳过键（生成中的停止语义优先）。
+  const revealing = !isBusy && Boolean(isRevealing);
   const disabled = !Boolean(isOnline);
   sendBtn.disabled = disabled;
   sendBtn.classList?.toggle?.('is-generating', isBusy);
-  const label = !isOnline ? '离线' : (isBusy ? '停止生成' : '发送');
+  sendBtn.classList?.toggle?.('is-revealing', revealing);
+  const label = !isOnline ? '离线' : (isBusy ? '停止生成' : (revealing ? '跳过动画' : '发送'));
   sendBtn.setAttribute?.('aria-label', label);
+  sendBtn.setAttribute?.('title', label);
   if (isOnline) sendBtn.classList?.remove?.('is-offline');
   else sendBtn.classList?.add?.('is-offline');
   if (continueButton) continueButton.disabled = isBusy || disabled;
-  return { isBusy, disabled, label };
+  return { isBusy, revealing, disabled, label };
 };
 
 export const scrollToBottomCore = ({

@@ -2610,6 +2610,40 @@ body[data-ui-mode='rp'] .rp-continue-btn {
   }
 }
 
+/* 揭示动画播放中：发送键化为「跳过动画」键（圆角实心双三角，圆形浮起底座，随主题翻转）。 */
+.chat-skip-icon {
+  display: none;
+  width: 22px;
+  height: 22px;
+}
+
+.chat-skip-icon-play {
+  fill: currentColor;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linejoin: round;
+}
+
+.chat-send-btn.is-revealing {
+  color: var(--app-text-primary);
+  background: var(--app-surface-card);
+  border-radius: 999px;
+  box-shadow: var(--app-shadow-sm);
+}
+
+.chat-send-btn.is-revealing .chat-send-icon {
+  display: none;
+}
+
+.chat-send-btn.is-revealing .chat-skip-icon {
+  display: block;
+}
+
+.chat-send-btn.is-revealing:hover,
+.chat-send-btn.is-revealing:focus-visible {
+  box-shadow: var(--app-shadow-md, var(--app-shadow-sm));
+}
+
 .chat-send-icon {
   width: 26px;
   height: 26px;

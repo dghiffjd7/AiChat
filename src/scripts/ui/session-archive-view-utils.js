@@ -237,7 +237,7 @@ export const renderSessionArchivesSection = ({
         if (isCurrent) return;
         const ok = await appConfirmFn({
           title: '加载存档',
-          message: `确定要加载存档「${archive.name}」吗？\n当前聊天将被自动保存。`,
+          message: `确定要加载存档「${archive.name}」吗？\n当前聊天将被自动保存；正文与记忆表（如启用）会随存档切换。变量状态目前不会随存档恢复。`,
         });
         if (!ok) return;
         await runArchiveSwitchFlow({

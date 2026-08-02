@@ -484,17 +484,12 @@ test('runActiveGenerationCancelFlow skips partial commit for non-user reasons an
   ]);
 });
 
-test('runActiveGenerationCancelFlow cancels queued protocol bubbles', () => {
+test('runActiveGenerationCancelFlow cancels stream and delivery without touching committed reveal queues', () => {
   const calls = [];
   const generation = createActiveGenerationRecord({
     id: 11,
     sessionId: 'session-cancel',
   });
-  generation._messageQueue = {
-    cancel() {
-      calls.push(['queue-cancel']);
-    },
-  };
 
   const result = runActiveGenerationCancelFlow({
     generation,
@@ -508,10 +503,10 @@ test('runActiveGenerationCancelFlow cancels queued protocol bubbles', () => {
   });
 
   assert.equal(result.cancelled, true);
+  // 已提交气泡的揭示队列由独立 session delivery runtime 管理，取消生成不得再触碰它。
   assert.deepEqual(calls, [
     ['abort-memory', 'session-cancel'],
     ['bridge-cancel', 'user'],
-    ['queue-cancel'],
     ['cancel-delivery'],
     ['hide-typing'],
     ['streaming', false],

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 
 import {
   buildRegenerateFinishTraceEvent,
@@ -10,6 +11,7 @@ import {
   buildSendStartTraceEvent,
   buildSendUserMessage,
   collectMaidAssistantMessageRefs,
+  createSendGenerationAbortGuard,
   adoptRenderedRegenerateRoundMessages,
   normalizeHandleSendInvocation,
   normalizeHandleSendOptions,
@@ -49,6 +51,52 @@ test('runAbortableSendFlow relays a tool timeout signal to the active generation
 
   controller.abort(new Error('late abort'));
   assert.equal(aborts.length, 1);
+});
+
+test('runAbortableSendFlow removes its abort listener once assistant delivery is terminal', async () => {
+  const controller = new AbortController();
+  const aborts = [];
+  let finishSend = null;
+  let disarmAfterDelivery = null;
+  const pending = runAbortableSendFlow({
+    signal: controller.signal,
+    runSend: ({ disarmAbort }) => {
+      disarmAfterDelivery = disarmAbort;
+      return new Promise(resolve => {
+        finishSend = resolve;
+      });
+    },
+    abortGeneration: reason => aborts.push(reason),
+  });
+
+  assert.equal(disarmAfterDelivery(), true);
+  controller.abort(Object.assign(new Error('late timeout'), { code: 'generation_failed' }));
+  assert.deepEqual(aborts, [], 'assistant_delivered 后工具 abort 监听必须解除');
+  finishSend({ ok: true, completionOutcome: 'assistant_delivered' });
+  assert.equal((await pending).ok, true);
+  assert.equal(disarmAfterDelivery(), false, '解除武装必须幂等');
+});
+
+test('createSendGenerationAbortGuard only cancels its owned generation and disarms after delivery', () => {
+  let activeGeneration = { id: 7, sessionId: 'room-1' };
+  const cancelled = [];
+  const guard = createSendGenerationAbortGuard({
+    getActiveGeneration: () => activeGeneration,
+    cancelGeneration: (reason, generationId) => cancelled.push([reason, generationId]),
+  });
+  const timeout = Object.assign(new Error('timeout'), { code: 'generation_failed' });
+
+  assert.equal(guard.abort(timeout), false, 'generation 建立前不得误取消别轮');
+  assert.equal(guard.bindGeneration(7), true);
+  assert.equal(guard.abort(timeout), true);
+  assert.deepEqual(cancelled, [[timeout, 7]]);
+
+  activeGeneration = { id: 8, sessionId: 'room-1' };
+  assert.equal(guard.abort(timeout), false, '旧轮 abort 不得取消同会话新 generation');
+  guard.disarm();
+  activeGeneration = { id: 7, sessionId: 'room-1' };
+  assert.equal(guard.abort(timeout), false, 'assistant_delivered 后迟到 abort 必须完全无动作');
+  assert.deepEqual(cancelled, [[timeout, 7]]);
 });
 
 test('collectMaidAssistantMessageRefs keeps committed cross-session replies with their session ids', () => {
@@ -435,6 +483,9 @@ test('normalizeHandleSendInvocation upgrades object target into options payload'
 test('normalizeHandleSendOptions preserves valid fields and deduplicates excluded ids', () => {
   const streamFactory = () => ({});
   const partialCommitHandler = () => true;
+  const onGenerationStarted = () => {};
+  const onAssistantDelivered = () => {};
+  const abortController = new AbortController();
   const swipeTarget = { msgId: 'assistant-2' };
   const continueTarget = { messageId: 'assistant-2', prefix: '继续' };
 
@@ -451,6 +502,9 @@ test('normalizeHandleSendOptions preserves valid fields and deduplicates exclude
     createAssistantStream: streamFactory,
     continueTarget,
     partialCommitHandler,
+    onGenerationStarted,
+    onAssistantDelivered,
+    abortSignal: abortController.signal,
     swipeTarget,
     excludeMessageIds: ['assistant-2', 'assistant-3', '', null],
     includeAttachments: false,
@@ -469,6 +523,9 @@ test('normalizeHandleSendOptions preserves valid fields and deduplicates exclude
   assert.equal(result.assistantStreamFactory, streamFactory);
   assert.equal(result.continueTarget, continueTarget);
   assert.equal(result.partialCommitHandler, partialCommitHandler);
+  assert.equal(result.onGenerationStarted, onGenerationStarted);
+  assert.equal(result.onAssistantDelivered, onAssistantDelivered);
+  assert.equal(result.abortSignal, abortController.signal);
   assert.equal(result.swipeTarget, swipeTarget);
   assert.deepEqual(result.excludeMessageIds, ['assistant-2', 'assistant-3']);
   assert.equal(result.includeAttachments, false);
@@ -481,6 +538,9 @@ test('normalizeHandleSendOptions falls back safely for invalid payloads', () => 
     createAssistantStream: 'not-fn',
     continueTarget: 'bad',
     partialCommitHandler: 'bad',
+    onGenerationStarted: 'bad',
+    onAssistantDelivered: 'bad',
+    abortSignal: null,
     swipeTarget: 'bad',
   });
 
@@ -490,6 +550,9 @@ test('normalizeHandleSendOptions falls back safely for invalid payloads', () => 
   assert.equal(result.assistantStreamFactory, null);
   assert.equal(result.continueTarget, null);
   assert.equal(result.partialCommitHandler, null);
+  assert.equal(result.onGenerationStarted, null);
+  assert.equal(result.onAssistantDelivered, null);
+  assert.equal(result.abortSignal, null);
   assert.equal(result.swipeTarget, null);
   assert.deepEqual(result.excludeMessageIds, []);
   assert.equal(result.previewOnly, false);
@@ -896,14 +959,6 @@ test('runSendCatchFlow clears active stream queue typing and shows toast error u
     streamCtrl: {
       cancel: () => calls.push(['stream-cancel']),
     },
-    getActiveGeneration: () => {
-      calls.push(['get-active']);
-      return {
-        _messageQueue: {
-          cancel: () => calls.push(['queue-cancel']),
-        },
-      };
-    },
     isGenerationInterrupted: generationId => {
       calls.push(['interrupted', generationId]);
       return false;
@@ -930,8 +985,6 @@ test('runSendCatchFlow clears active stream queue typing and shows toast error u
   assert.deepEqual(calls, [
     ['interrupted', 17],
     ['stream-cancel'],
-    ['get-active'],
-    ['queue-cancel'],
     ['active', 'session-error'],
     ['hide-typing'],
     ['fast-forward', 'session-error'],
@@ -948,11 +1001,6 @@ test('runSendCatchFlow suppresses cancelled or interrupted errors without touchi
     streamCtrl: {
       cancel: () => calls.push(['stream-cancel']),
     },
-    getActiveGeneration: () => ({
-      _messageQueue: {
-        cancel: () => calls.push(['queue-cancel']),
-      },
-    }),
     isGenerationInterrupted: generationId => {
       calls.push(['interrupted', generationId]);
       return true;
@@ -978,7 +1026,6 @@ test('runSendCatchFlow suppresses cancelled or interrupted errors without touchi
   });
   assert.deepEqual(calls, [
     ['interrupted', 18],
-    ['queue-cancel'],
   ]);
 });
 
@@ -1038,6 +1085,36 @@ test('runSendFinallyFlow preserves successful send cleanup order', () => {
       errorMessage: undefined,
     }],
   ]);
+});
+
+test('runSendFinallyFlow releases the send lock at commit while background reveal is still pending', async () => {
+  let activeGeneration = { id: 42 };
+  let isSending = true;
+  let revealSettled = false;
+  let finishReveal = null;
+  const backgroundReveal = new Promise(resolve => {
+    finishReveal = () => {
+      revealSettled = true;
+      resolve();
+    };
+  });
+
+  const result = runSendFinallyFlow({
+    sendSucceeded: true,
+    sessionId: 'session-background-reveal',
+    generationId: 42,
+    getActiveGeneration: () => activeGeneration,
+    setActiveGeneration: next => { activeGeneration = next; },
+    setSendingState: next => { isSending = next; },
+  });
+
+  assert.equal(result, true);
+  assert.equal(activeGeneration, null, '提交完成即释放 generation 所有权');
+  assert.equal(isSending, false, '发送锁不得等待揭示动画');
+  assert.equal(revealSettled, false, '后台揭示仍可独立继续');
+
+  finishReveal();
+  await backgroundReveal;
 });
 
 test('runSendFinallyFlow skips success-only cleanup and preserves other active generation', () => {
@@ -1157,6 +1234,28 @@ test('resolveSyspromptProtocolFlags lets moment creation override chat mode and 
       disableSummaryForThis: true,
     },
   );
+});
+
+test('handleSend timeout wiring keeps pre-creation abort, timeout labeling, and repair-wait race contracts', async () => {
+  const appSource = await readFile(new URL('../../src/scripts/ui/app.js', import.meta.url), 'utf8');
+  // 预中止必须在任何 generation record 建立之前拦截（迟到的超时不得再启动生成）。
+  const firstRecordCreation = appSource.indexOf('activeGeneration = createActiveGenerationRecord({');
+  assert.ok(firstRecordCreation > 0);
+  assert.ok(
+    appSource.lastIndexOf('throwIfSendAborted();') < firstRecordCreation,
+    'throwIfSendAborted 检查必须全部位于 generation record 创建之前',
+  );
+  // 工具超时导致的中止必须改写为 generation_failed，不得伪装成 user_aborted。
+  assert.match(appSource, /toolTimeoutAborted && result\?\.cancelled === true/);
+  assert.match(
+    appSource.slice(
+      appSource.indexOf('toolTimeoutAborted && result?.cancelled === true'),
+      appSource.indexOf('toolTimeoutAborted && result?.cancelled === true') + 600,
+    ),
+    /failureCode:\s*'generation_failed'/,
+  );
+  // 被拒路径的修复等待必须与中止信号竞速，超时后在宽限内以 protocol_rejected 收口。
+  assert.match(appSource, /Promise\.race\(\[maidProtocolRepairCompletion, abortWait\]\)/);
 });
 
 let failed = 0;

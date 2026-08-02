@@ -3947,6 +3947,15 @@ export class AgentCenterPanel {
         const activity = this.view.activity || {};
         const runs = activity.runs || [];
         const meta = activity.meta || {};
+        const formatCandidateQuery = (this.getActions?.() || {}).hasAgentFormatRepairCandidate;
+        const hasFormatRepairCandidate = runId => {
+            if (typeof formatCandidateQuery !== 'function') return false;
+            try {
+                return formatCandidateQuery({ runId: trim(runId) }) === true;
+            } catch {
+                return false;
+            }
+        };
         const statusCounts = this.surface ? (meta.scopedStatusCounts || meta.statusCounts || {}) : (meta.statusCounts || {});
         const activeStatus = normalizeActivityStatus(this.activityStatus);
         const filters = [
@@ -4008,7 +4017,9 @@ export class AgentCenterPanel {
                 ${renderChatFormatReview(run.review)}
                 ${run.status === 'waiting_permission' ? `
                     <div class="agent-center-card-actions">
-                        ${run.review?.protocolParseFailure === true && run.review?.modelReviewDetail?.canRepair === true
+                        ${run.review?.protocolParseFailure === true &&
+                          run.review?.modelReviewDetail?.canRepair === true &&
+                          hasFormatRepairCandidate(run.id)
                           ? `<button type="button" class="agent-center-card-action" data-agent-run-review-action="apply" data-run-id="${escapeHtml(run.id)}">应用修复</button>`
                           : ''}
                         <button type="button" class="agent-center-card-action is-danger" data-agent-run-review-action="reject" data-run-id="${escapeHtml(run.id)}">打回</button>

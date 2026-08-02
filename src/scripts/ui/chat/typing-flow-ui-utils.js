@@ -141,6 +141,7 @@ export const enqueueMessagesCore = ({
   random = Math.random,
 } = {}) => {
   let cancelled = false;
+  let fastForwarded = false;
   let resolveSleep = null;
   const cancel = () => {
     cancelled = true;
@@ -152,6 +153,20 @@ export const enqueueMessagesCore = ({
       resolveSleep = null;
     }
     hideTyping?.();
+  };
+  const fastForward = () => {
+    if (cancelled || fastForwarded) return false;
+    fastForwarded = true;
+    clearMessageQueueTimer?.();
+    if (resolveSleep) {
+      try {
+        resolveSleep();
+      } catch {}
+      resolveSleep = null;
+    }
+    removeThinkPause?.();
+    hideTyping?.();
+    return true;
   };
 
   const calcDelay = charCount => calculateMessageQueueDelay(charCount, { random });
@@ -169,7 +184,7 @@ export const enqueueMessagesCore = ({
       if (cancelled) break;
       const item = items[i];
 
-      if (i > 0) {
+      if (i > 0 && !fastForwarded) {
         const prevContent = String(items[i - 1]?.message?.content || '');
         const delay = calcDelay(prevContent.length);
         const isPrivate = !Array.isArray(options.typingOptions?.groupMembers) || options.typingOptions.groupMembers.length === 0;
@@ -191,19 +206,19 @@ export const enqueueMessagesCore = ({
           const segments = pauseCount + 1;
           const segmentBase = delay / (segments + pauseCount * 0.4);
           for (let p = 0; p < pauseCount; p += 1) {
-            if (cancelled) break;
+            if (cancelled || fastForwarded) break;
             const nearBottom = isNearBottom?.();
             const typingTime = segmentBase * (0.8 + random() * 0.4);
             await sleep(typingTime);
-            if (cancelled) break;
+            if (cancelled || fastForwarded) break;
             applyThinkPause?.();
             const pauseTime = 600 + random() * 900;
             await sleep(pauseTime);
-            if (cancelled) break;
+            if (cancelled || fastForwarded) break;
             removeThinkPause?.();
             if (nearBottom) scheduleFrame(() => scrollToBottom?.());
           }
-          if (!cancelled) {
+          if (!cancelled && !fastForwarded) {
             const remaining = segmentBase * (0.8 + random() * 0.4);
             await sleep(remaining);
           }
@@ -220,7 +235,7 @@ export const enqueueMessagesCore = ({
       }
     }
 
-    if (!cancelled && items.length > 1 && random() < 0.05) {
+    if (!cancelled && !fastForwarded && items.length > 1 && random() < 0.05) {
       await sleep(800 + random() * 1500);
       if (!cancelled) {
         showTyping?.(options.avatarUrl || '', options.typingOptions || {});
@@ -232,5 +247,5 @@ export const enqueueMessagesCore = ({
     }
   })();
 
-  return { cancel, promise };
+  return { cancel, fastForward, promise };
 };

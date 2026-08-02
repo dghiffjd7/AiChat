@@ -1529,7 +1529,11 @@ const agentCenterPanelSource = await readFile(
 }
 
 {
-  const panel = new AgentCenterPanel();
+  const panel = new AgentCenterPanel({
+    getActions: () => ({
+      hasAgentFormatRepairCandidate: ({ runId }) => runId === 'run-rejected-format',
+    }),
+  });
   panel.activeTab = 'activity';
   panel.view = {
     activity: {
@@ -1551,6 +1555,34 @@ const agentCenterPanelSource = await readFile(
   assert.match(html, />应用修复<\/button>/);
   assert.match(html, /data-agent-run-review-action="reject"/);
   console.log('ok - agent center exposes apply only for rejected-reply format candidates');
+}
+
+{
+  const panel = new AgentCenterPanel({
+    getActions: () => ({
+      hasAgentFormatRepairCandidate: () => false,
+    }),
+  });
+  panel.activeTab = 'activity';
+  panel.view = {
+    activity: {
+      meta: { total: 1, active: 1, failures: 0, statusCounts: { waiting_permission: 1 } },
+      runs: [{
+        id: 'run-restarted-format',
+        kind: 'chat_format_guardian',
+        title: '重启后的格式候选',
+        status: 'waiting_permission',
+        review: {
+          protocolParseFailure: true,
+          modelReviewDetail: { canRepair: true },
+        },
+      }],
+    },
+  };
+  const html = panel.renderActivity();
+  assert.doesNotMatch(html, /data-agent-run-review-action="apply"/);
+  assert.match(html, /data-agent-run-review-action="reject"/);
+  console.log('ok - agent center hides stale format apply after its volatile candidate is gone');
 }
 
 {

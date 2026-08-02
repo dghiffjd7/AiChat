@@ -494,6 +494,7 @@ const createStorage = () => {
   );
   assert.match(appSource, /resetRpHistory\(getRpSessionId\(activePersonaId\), \{ withArchive: true \}\)/);
   assert.match(appSource, /当前剧情会先存档/);
+  assert.match(appSource, /正文与记忆表可在历史存档中切回；变量状态目前不会随存档恢复/);
   const snapshotFlowStart = appSource.indexOf('const buildSwipeMemoryTableSnapshot = async');
   const snapshotFlowEnd = appSource.indexOf('const attachAssistantMemoryStateToMeta', snapshotFlowStart);
   assert.ok(snapshotFlowStart >= 0 && snapshotFlowEnd > snapshotFlowStart);

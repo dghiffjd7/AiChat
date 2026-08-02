@@ -2314,6 +2314,14 @@ const runGeneratedMediaQuotaProbe = async input => {
 
 {
   const probe = await runGeneratedMediaQuotaProbe(
+    '给岑夏生成一张聊天室壁纸并设置，画风参考另一张附件。',
+  );
+  assert.equal(probe.generated, 1, '前置“画风参考”修饰的另一张附件不得扩大输出生图额度');
+  console.log('ok - leading style-reference wording does not grant another generated image');
+}
+
+{
+  const probe = await runGeneratedMediaQuotaProbe(
     '给岑夏生成聊天室壁纸并设置，一张白天，另一张夜景。',
   );
   assert.equal(probe.generated, 2, '继承同一目标与用途的裸“另一张”应授权第二个变体');

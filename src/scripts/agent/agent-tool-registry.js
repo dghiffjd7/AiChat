@@ -138,6 +138,7 @@ export const normalizeAgentToolDefinition = (definition = {}) => {
     schema: isPlainObject(src.schema) ? clone(src.schema) : { type: 'object' },
     timeoutMs: Math.max(0, Number(src.timeoutMs || 0) || 0),
     timeoutErrorCode: trim(src.timeoutErrorCode),
+    timeoutSettleGraceMs: Math.max(0, Number(src.timeoutSettleGraceMs ?? DEFAULT_TIMEOUT_SETTLE_GRACE_MS) || 0),
     outputLimit: Math.max(0, Number(src.outputLimit || 0) || 0),
     prepareArguments: typeof src.prepareArguments === 'function' ? src.prepareArguments : null,
     summarizeResult: typeof src.summarizeResult === 'function' ? src.summarizeResult : null,
@@ -227,8 +228,11 @@ const summarizeResultValue = (result, outputLimit = 0) => {
   return `${raw.slice(0, outputLimit)}...`;
 };
 
+const DEFAULT_TIMEOUT_SETTLE_GRACE_MS = 3000;
+
 const runWithTimeout = async (task, timeoutMs = 0, signal = null, {
   timeoutErrorCode = '',
+  timeoutSettleGraceMs = DEFAULT_TIMEOUT_SETTLE_GRACE_MS,
   toolName = '',
 } = {}) => {
   if (signal?.aborted) throw createAbortError();
@@ -244,6 +248,7 @@ const runWithTimeout = async (task, timeoutMs = 0, signal = null, {
   };
   signal?.addEventListener?.('abort', relayAbort, { once: true });
   let timeoutId = null;
+  let graceId = null;
   try {
     return await Promise.race([
       task(executionSignal),
@@ -256,15 +261,22 @@ const runWithTimeout = async (task, timeoutMs = 0, signal = null, {
               details: { timeoutMs },
             })
             : createAbortError('Agent tool timed out');
-          reject(timeoutError);
           try {
             timeoutController?.abort?.(timeoutError);
           } catch {}
+          if (!timeoutErrorCode || !timeoutController || !(timeoutSettleGraceMs > 0)) {
+            reject(timeoutError);
+            return;
+          }
+          // 域超时先中止执行信号，留短宽限让任务用真实终态收尾（如已落库/协议被拒），
+          // 宽限内未收尾才回退到笼统超时错误——避免结果已定却误报 timeout 码。
+          graceId = setTimeout(() => reject(timeoutError), timeoutSettleGraceMs);
         }, timeoutMs);
       }),
     ]);
   } finally {
     if (timeoutId) clearTimeout(timeoutId);
+    if (graceId) clearTimeout(graceId);
     signal?.removeEventListener?.('abort', relayAbort);
   }
 };
@@ -625,6 +637,7 @@ export const createAgentToolRegistry = ({
         context.signal,
         {
           timeoutErrorCode: tool.timeoutErrorCode,
+          timeoutSettleGraceMs: tool.timeoutSettleGraceMs,
           toolName: tool.name,
         },
       );

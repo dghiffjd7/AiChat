@@ -1509,6 +1509,11 @@ export class ChatUI {
     this.updateSendButtonState();
   }
 
+  setRevealingState(isRevealing) {
+    this.isRevealing = Boolean(isRevealing);
+    this.updateSendButtonState();
+  }
+
   setSendEnabled(enabled) {
     this.isOnline = Boolean(enabled);
     this.updateSendButtonState();
@@ -1519,6 +1524,7 @@ export class ChatUI {
       sendBtn: this.sendBtn,
       isSending: this.isSending,
       isStreaming: this.isStreaming,
+      isRevealing: this.isRevealing,
       isOnline: this.isOnline,
       continueButton: document.getElementById('rp-continue-btn'),
     });

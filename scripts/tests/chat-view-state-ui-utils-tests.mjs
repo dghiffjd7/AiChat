@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 
 import {
   clearInputCore,
@@ -117,6 +118,55 @@ const createClassList = () => {
 }
 
 {
+  const makeSendBtn = () => ({
+    disabled: false,
+    classList: createClassList(),
+    attrs: new Map(),
+    setAttribute(name, value) { this.attrs.set(name, value); },
+  });
+
+  // 揭示动画播放中：发送键化为跳过键（无论输入内容），标签与样式态都要切换。
+  const revealBtn = makeSendBtn();
+  const revealState = updateSendButtonStateCore({
+    sendBtn: revealBtn,
+    isSending: false,
+    isStreaming: false,
+    isRevealing: true,
+    isOnline: true,
+  });
+  assert.equal(revealState.revealing, true);
+  assert.equal(revealBtn.classList.contains('is-revealing'), true);
+  assert.equal(revealBtn.classList.contains('is-generating'), false);
+  assert.equal(revealBtn.attrs.get('aria-label'), '跳过动画');
+  assert.equal(revealBtn.attrs.get('title'), '跳过动画');
+
+  // 生成中的停止语义优先于跳过。
+  const busyBtn = makeSendBtn();
+  const busyState = updateSendButtonStateCore({
+    sendBtn: busyBtn,
+    isSending: true,
+    isRevealing: true,
+    isOnline: true,
+  });
+  assert.equal(busyState.revealing, false);
+  assert.equal(busyBtn.classList.contains('is-generating'), true);
+  assert.equal(busyBtn.classList.contains('is-revealing'), false);
+  assert.equal(busyBtn.attrs.get('aria-label'), '停止生成');
+
+  // 揭示结束后回到发送态。
+  const idleBtn = makeSendBtn();
+  const idleState = updateSendButtonStateCore({
+    sendBtn: idleBtn,
+    isRevealing: false,
+    isOnline: true,
+  });
+  assert.equal(idleState.revealing, false);
+  assert.equal(idleBtn.classList.contains('is-revealing'), false);
+  assert.equal(idleBtn.attrs.get('aria-label'), '发送');
+  console.log('ok - updateSendButtonStateCore turns the send button into a skip key only while revealing');
+}
+
+{
   const scrollEl = { scrollTop: 0, scrollHeight: 320 };
   let autoFollow = false;
   scrollToBottomCore({
@@ -150,4 +200,54 @@ const createClassList = () => {
   assert.equal(resolved, target);
   assert.equal(scrollEl.scrollTop, 76);
   console.log('ok - scrollToMessageCore resolves target wrapper and scrolls near it');
+}
+
+{
+  const [indexSource, cssSource, appSource, chatUiSource] = await Promise.all([
+    readFile(new URL('../../src/index.html', import.meta.url), 'utf8'),
+    readFile(new URL('../../src/assets/css/qq-legacy.css', import.meta.url), 'utf8'),
+    readFile(new URL('../../src/scripts/ui/app.js', import.meta.url), 'utf8'),
+    readFile(new URL('../../src/scripts/ui/chat/chat-ui.js', import.meta.url), 'utf8'),
+  ]);
+  // 跳过键 SVG 必须挂在发送按钮内，样式只消费主题 token。
+  const sendButtonBlock = indexSource.slice(
+    indexSource.indexOf('id="send-button"'),
+    indexSource.indexOf('</button>', indexSource.indexOf('id="send-button"')),
+  );
+  assert.match(sendButtonBlock, /class="chat-skip-icon"/);
+  assert.equal(
+    (sendButtonBlock.match(/chat-skip-icon-play/g) || []).length,
+    2,
+    '跳过键必须是圆角实心双三角',
+  );
+  assert.match(
+    cssSource,
+    /\.chat-send-btn\.is-revealing\s*\{[\s\S]*?var\(--app-text-primary\)[\s\S]*?var\(--app-surface-card\)[\s\S]*?var\(--app-shadow-sm\)/,
+    '跳过键底座必须消费主题 token（深浅色自动翻转）',
+  );
+  assert.match(cssSource, /\.chat-skip-icon-play\s*\{[\s\S]*?fill:\s*currentColor[\s\S]*?stroke-linejoin:\s*round/);
+  assert.match(cssSource, /\.chat-send-btn\.is-revealing \.chat-send-icon\s*\{\s*display:\s*none/);
+  // 揭示态由投放 runtime 驱动：调度、完成与进房都要同步按钮态；点击在停止语义之后、发送之前拦截为跳过。
+  assert.match(appSource, /const syncProtocolRevealButtonState = \(\) =>/);
+  const scheduleBlock = appSource.slice(
+    appSource.indexOf('const scheduleProtocolDeliveryQueue'),
+    appSource.indexOf('const fastForwardProtocolDeliveryQueues'),
+  );
+  assert.equal(
+    (scheduleBlock.match(/syncProtocolRevealButtonState\(\)/g) || []).length,
+    2,
+    '队列调度与完成清理都必须同步跳过键状态',
+  );
+  const composerBlock = appSource.slice(
+    appSource.indexOf('const handleComposerSend = () => {'),
+    appSource.indexOf('handleSend();', appSource.indexOf('const handleComposerSend = () => {')),
+  );
+  assert.match(composerBlock, /cancelActiveGeneration\('user'\)/);
+  assert.match(composerBlock, /protocolDeliveryQueuesBySession\.has\(revealSid\)/);
+  assert.ok(
+    composerBlock.indexOf("cancelActiveGeneration('user')") < composerBlock.indexOf('protocolDeliveryQueuesBySession.has(revealSid)'),
+    '生成中的停止语义必须优先于跳过动画',
+  );
+  assert.match(chatUiSource, /setRevealingState\(isRevealing\)/);
+  console.log('ok - skip-animation send button is wired through delivery runtime, composer, and themed svg');
 }

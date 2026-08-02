@@ -66,13 +66,22 @@ export const runAbortableSendFlow = async ({
   abortGeneration = null,
 } = {}) => {
   if (typeof runSend !== 'function') return false;
+  let abortListenerArmed = true;
   const handleAbort = () => {
+    if (!abortListenerArmed) return;
     try {
       abortGeneration?.(signal?.reason);
     } catch {}
   };
+  const disarmAbort = () => {
+    if (!abortListenerArmed) return false;
+    abortListenerArmed = false;
+    signal?.removeEventListener?.('abort', handleAbort);
+    return true;
+  };
   if (signal?.aborted) {
     handleAbort();
+    disarmAbort();
     if (signal.reason instanceof Error) throw signal.reason;
     const error = new Error('Chat send aborted');
     error.name = 'AbortError';
@@ -80,10 +89,41 @@ export const runAbortableSendFlow = async ({
   }
   signal?.addEventListener?.('abort', handleAbort, { once: true });
   try {
-    return await runSend();
+    return await runSend({ disarmAbort });
   } finally {
-    signal?.removeEventListener?.('abort', handleAbort);
+    disarmAbort();
   }
+};
+
+export const createSendGenerationAbortGuard = ({
+  getActiveGeneration = () => null,
+  cancelGeneration = () => {},
+} = {}) => {
+  let ownedGenerationId = 0;
+  let armed = true;
+  return {
+    bindGeneration(generationId = 0) {
+      if (!armed) return false;
+      const id = Number(generationId) || 0;
+      if (!id) return false;
+      ownedGenerationId = id;
+      return true;
+    },
+    disarm() {
+      armed = false;
+      ownedGenerationId = 0;
+    },
+    abort(reason = null) {
+      if (!armed || !ownedGenerationId) return false;
+      const activeGeneration = getActiveGeneration?.() || null;
+      if (Number(activeGeneration?.id || 0) !== ownedGenerationId) return false;
+      cancelGeneration?.(reason, ownedGenerationId);
+      return true;
+    },
+    getState() {
+      return { armed, generationId: ownedGenerationId };
+    },
+  };
 };
 
 export const buildSendFlowTraceEvent = ({
@@ -457,6 +497,12 @@ export const normalizeHandleSendOptions = (options = {}) => {
     continueTarget,
     partialCommitHandler:
       typeof raw.partialCommitHandler === 'function' ? raw.partialCommitHandler : null,
+    onGenerationStarted:
+      typeof raw.onGenerationStarted === 'function' ? raw.onGenerationStarted : null,
+    onAssistantDelivered:
+      typeof raw.onAssistantDelivered === 'function' ? raw.onAssistantDelivered : null,
+    abortSignal:
+      raw.abortSignal && typeof raw.abortSignal === 'object' ? raw.abortSignal : null,
     swipeTarget: raw.swipeTarget && typeof raw.swipeTarget === 'object' ? raw.swipeTarget : null,
     excludeMessageIds,
     includeAttachments: raw.includeAttachments !== false,
@@ -959,7 +1005,6 @@ export const runSendCatchFlow = ({
   generationId = 0,
   suppressErrorUI = false,
   streamCtrl = null,
-  getActiveGeneration = () => null,
   isGenerationInterrupted = () => false,
   sessionId = '',
   isSessionActive = () => false,
@@ -973,12 +1018,6 @@ export const runSendCatchFlow = ({
   const isCancelled = Boolean(error?.cancelled || generationInterrupted);
   if (!isCancelled) {
     streamCtrl?.cancel?.();
-  }
-  const activeGeneration = getActiveGeneration();
-  if (activeGeneration?._messageQueue) {
-    try {
-      activeGeneration._messageQueue.cancel();
-    } catch {}
   }
   if (!generationInterrupted && isSessionActive(sessionId)) {
     hideTyping();
