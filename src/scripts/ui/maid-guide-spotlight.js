@@ -1134,7 +1134,7 @@ export const createMaidGuideSpotlight = ({
     const head = createElement(documentRef, 'div', 'maid-spotlight-card-head');
     const visual = createElement(documentRef, 'div', 'maid-spotlight-done-visual');
     const avatar = createElement(documentRef, 'span', 'maid-spotlight-done-avatar');
-    applyMaidGuideExpression(avatar, 'complete');
+    applyMaidGuideExpression(avatar, 'complete', { variant: 'full' });
     avatar.setAttribute?.('aria-hidden', 'true');
     const icon = createElement(documentRef, 'div', 'maid-spotlight-done-icon');
     icon.innerHTML = ICONS.trophy;

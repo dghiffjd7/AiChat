@@ -1,6 +1,22 @@
 export const MAID_GUIDE_EXPRESSION_SHEET_SRC = './assets/media/maid-guide-expression-sheet.webp';
+export const MAID_GUIDE_EXPRESSION_SHEET_COMPACT_SRC = './assets/media/maid-guide-expression-sheet-compact.webp';
+// 高 DPR 端使用按显示尺寸（72px@3x=216px/格）离线 Lanczos+锐化的预缩表；
+// 桌面低 DPR 让浏览器从 1280 大表一次缩放更清晰，预缩+锐化在低 DPR 下反而劣化。
+export const MAID_GUIDE_EXPRESSION_SHEET_HDPI_SRC = './assets/media/maid-guide-expression-sheet-hdpi.webp';
+export const MAID_GUIDE_EXPRESSION_HDPI_MIN_RATIO = 2;
 export const MAID_GUIDE_EXPRESSION_ZOOM = 1;
 export const MAID_GUIDE_EXPRESSION_BACKGROUND = '#efedf7';
+
+export const resolveMaidGuideExpressionSheetSrc = (
+  devicePixelRatio = globalThis.devicePixelRatio,
+  variant = 'full',
+) => {
+  if (variant === 'compact') return MAID_GUIDE_EXPRESSION_SHEET_COMPACT_SRC;
+  const ratio = Number(devicePixelRatio) || 1;
+  return ratio >= MAID_GUIDE_EXPRESSION_HDPI_MIN_RATIO
+    ? MAID_GUIDE_EXPRESSION_SHEET_HDPI_SRC
+    : MAID_GUIDE_EXPRESSION_SHEET_SRC;
+};
 
 const EXPRESSION_GRID_SIZE = 4;
 const getCellPosition = (index) => {
@@ -55,13 +71,17 @@ export const resolveMaidGuideExpressionState = ({ phase = 'steps', step = null, 
   return Number(index) > 0 ? 'explain' : 'welcome';
 };
 
-export const applyMaidGuideExpression = (element = null, state = 'welcome') => {
+export const applyMaidGuideExpression = (
+  element = null,
+  state = 'welcome',
+  { variant = 'compact' } = {},
+) => {
   if (!element) return null;
   const expression = getMaidGuideExpression(state);
   element.classList?.add?.('maid-guide-expression');
   if (element.dataset) element.dataset.maidExpression = expression.state;
   if (element.style) {
-    element.style.backgroundImage = `url("${MAID_GUIDE_EXPRESSION_SHEET_SRC}")`;
+    element.style.backgroundImage = `url("${resolveMaidGuideExpressionSheetSrc(undefined, variant)}")`;
     element.style.backgroundPosition = `${expression.x} ${expression.y}`;
     element.style.backgroundRepeat = 'no-repeat';
     element.style.backgroundSize = `${EXPRESSION_GRID_SIZE * MAID_GUIDE_EXPRESSION_ZOOM * 100}% ${EXPRESSION_GRID_SIZE * MAID_GUIDE_EXPRESSION_ZOOM * 100}%`;
