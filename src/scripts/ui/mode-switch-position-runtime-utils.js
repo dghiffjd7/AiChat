@@ -140,11 +140,17 @@ export const createModeSwitchPositionRuntime = ({
       modeSwitchEl.style.pointerEvents = 'none';
       return;
     }
-    const x = rect.left + rect.width / 2;
+    let x = rect.left + rect.width / 2;
     let y = rect.top - 8 - modeSwitchSize / 2;
     if (mode === 'dock') {
-      const baseTop = dockRect?.top ?? rect.top;
-      y = baseTop - modeSwitchSlot - modeSwitchSize / 2;
+      const dock = dockRect || rect;
+      // 桌面端导航是左侧全高竖排侧栏时，“底部导航上方”会算到视口外，改为贴在侧栏右侧、锚点按钮旁
+      if (Number(dock.height) > Number(dock.width)) {
+        x = dock.left + dock.width + modeSwitchSlot + modeSwitchSize / 2;
+        y = rect.top + rect.height / 2;
+      } else {
+        y = dock.top - modeSwitchSlot - modeSwitchSize / 2;
+      }
     }
     modeSwitchEl.style.left = `${Math.round(x)}px`;
     modeSwitchEl.style.top = `${Math.round(y)}px`;

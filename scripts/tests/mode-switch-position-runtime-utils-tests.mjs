@@ -128,6 +128,33 @@ const createStorage = () => {
 }
 
 {
+  // 桌面端（>=900px）社交模式：.bottom-nav 是左侧全高侧栏（top=0），
+  // 未固定位置时悬浮球应贴在侧栏右侧、联系人按钮旁，而不是按“底部导航上方”公式飞出屏幕顶端
+  const modeSwitchEl = createModeSwitchEl();
+  const runtime = createModeSwitchPositionRuntime({
+    modeSwitchEl,
+    getSafeInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
+    getModeSwitchPos: () => null,
+    isModeSwitchPinned: () => false,
+    setModeSwitchPinned: () => {},
+    isChatRoomActive: () => false,
+    getUiMode: () => 'chat',
+    getBottomNavRect: () => ({ top: 0, left: 0, width: 84, height: 800 }),
+    getContactsButtonRect: () => ({ left: 17, top: 132, width: 50, height: 50 }),
+    getViewportSize: () => ({ w: 1280, h: 800 }),
+  });
+  runtime.syncPosition();
+  const top = parseFloat(modeSwitchEl.style.top);
+  const left = parseFloat(modeSwitchEl.style.left);
+  assert.equal(modeSwitchEl.classList.contains('is-hidden'), false);
+  assert.ok(top >= 13, `悬浮球应完整落在视口内，实际 top=${modeSwitchEl.style.top}`);
+  assert.equal(modeSwitchEl.style.top, '157px');
+  assert.equal(modeSwitchEl.style.left, '107px');
+  assert.ok(left > 84, '悬浮球应位于左侧导航栏右侧');
+  console.log('ok - createModeSwitchPositionRuntime docks beside vertical desktop nav rail instead of off-screen');
+}
+
+{
   const modeSwitchEl = createModeSwitchEl();
   let scheduled = 0;
   const positionSnapshots = [];
