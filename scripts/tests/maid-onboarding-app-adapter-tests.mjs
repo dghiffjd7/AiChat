@@ -67,6 +67,51 @@ await adapter.runFallback({ step: { fallback: { kind: 'open-agent-center' } } })
 assert.deepEqual(calls.slice(-3), ['maid:close', 'agent:open', 'emit:agent-center-opened']);
 assert.equal(adapter.hasConfiguredProfile(), true);
 
+{
+  const backCalls = [];
+  const backAdapter = createMaidOnboardingAppAdapter({
+    documentRef: { querySelectorAll: () => [] },
+    targetSelectors: {
+      'settings-api-config': ['#settings-api'],
+      'quick-add-friend': ['#quick-add'],
+      'add-friend-recommendation': ['#recommendation'],
+      'agent-center-entry': ['#agent-entry'],
+      'agent-center-detail-close': ['#agent-detail-close'],
+    },
+    isElementVisible: () => false,
+    delay: async ms => backCalls.push(`delay:${ms}`),
+    openSettingsMenu: () => backCalls.push('settings:open'),
+    openQuickMenu: () => backCalls.push('quick:open'),
+    closeMenus: () => backCalls.push('menus:close'),
+    closeApiConfig: () => backCalls.push('config:close'),
+    closeAddFriend: () => backCalls.push('friend:close'),
+    cancelAddFriendConfirm: () => backCalls.push('friend-confirm:cancel'),
+    openAgentCenter: () => backCalls.push('agent:open'),
+    closeAgentCenter: () => backCalls.push('agent:close'),
+    openAgentCenterDetail: () => backCalls.push('agent-detail:open'),
+    closeAgentCenterDetail: () => backCalls.push('agent-detail:close'),
+    closeMaidCommand: () => backCalls.push('maid:close'),
+    switchPage: page => backCalls.push(`page:${page}`),
+  });
+
+  await backAdapter.prepareStep({ step: { target: 'settings-api-config' }, meta: { reason: 'prev' } });
+  assert.deepEqual(backCalls.splice(0), ['config:close', 'settings:open']);
+  await backAdapter.prepareStep({ step: { target: 'quick-add-friend' }, meta: { reason: 'prev' } });
+  assert.deepEqual(backCalls.splice(0), [
+    'friend-confirm:cancel',
+    'friend:close',
+    'delay:260',
+    'quick:open',
+  ]);
+  await backAdapter.prepareStep({ step: { target: 'add-friend-recommendation' }, meta: { reason: 'prev' } });
+  assert.deepEqual(backCalls.splice(0), ['friend-confirm:cancel', 'delay:220']);
+  await backAdapter.prepareStep({ step: { target: 'agent-center-entry' }, meta: { reason: 'prev' } });
+  assert.deepEqual(backCalls.splice(0), ['agent:close', 'maid:close', 'settings:open', 'page:moments']);
+  await backAdapter.prepareStep({ step: { target: 'agent-center-detail-close' }, meta: { reason: 'prev' } });
+  assert.deepEqual(backCalls.splice(0), ['agent:open', 'agent-detail:open']);
+  console.log('ok - onboarding previous steps restore their parent surfaces before spotlight rendering');
+}
+
 const vertexAdapter = createMaidOnboardingAppAdapter({
   configManager: {
     getProfiles: () => [{ id: 'vertex', model: 'gemini-2.5-pro', vertexaiServiceAccount: 'encoded-json' }],

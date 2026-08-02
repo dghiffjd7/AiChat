@@ -1491,6 +1491,7 @@ const initApp = async () => {
     personaStore,
     getPersonaScopeKey,
     onFriendAdded: detail => maidGuideEmit(window, 'friend-added', detail),
+    enterChatRoom: (...args) => enterChatRoom(...args),
   });
   try {
     window.__sessionPanel = sessionPanel;
@@ -23917,10 +23918,14 @@ Phase G（Frame 36）：循环衔接
     openSettingsMenu: openMaidSettingsMenuForGuide,
     openApiConfig: options => openMaidApiConfigPanel(options),
     openQuickMenu: openMaidQuickMenuForGuide,
+    closeMenus: () => hideMenus({ force: true, immediate: true }),
+    closeApiConfig: () => configPanel.hide(),
     openAddFriend: async () => {
       await sessionPanel.show();
       return sessionPanel;
     },
+    closeAddFriend: () => sessionPanel.hide(),
+    cancelAddFriendConfirm: () => sessionPanel.addFriendFeedbackUi?.cancelConfirm?.(),
     isChatRoomVisible,
     exitChatRoom,
     switchPage,
@@ -23928,6 +23933,16 @@ Phase G（Frame 36）：循环衔接
     closeMaidCommand: () => maidCommandInputRuntime?.close?.(),
     openAgentCenter: () => agentCenterPanel.show(),
     closeAgentCenter: () => agentCenterPanel.hide(),
+    closeAgentCenterDetail: () => agentCenterPanel.closeFloatingAgentCard(),
+    openAgentCenterDetail: async () => {
+      agentCenterPanel.show();
+      await agentCenterPanel.refresh?.();
+      const card = agentCenterPanel.contentElement?.querySelector?.('[data-maid-guide-target="agent-center-card"]');
+      const agentId = String(card?.dataset?.agentCardOpen || '').trim();
+      if (!agentId) return false;
+      agentCenterPanel.openFloatingAgentCard(agentId);
+      return true;
+    },
     emit: (event, payload) => maidGuideEmit(window, event, payload),
     configManager: {
       getProfiles: () => window.appBridge?.getConfigProfiles?.() || chatConfigManager.getProfiles?.() || [],
@@ -26642,6 +26657,17 @@ Phase G（Frame 36）：循环衔接
       fallbackSessionId: sourceSid,
       turnId: repairTurnId,
     });
+    const repairedAssistant = capturedMessages.find((item) => (
+      chatStore.findMessage(item?.messageId, item?.targetSessionId)?.role === 'assistant'
+    ));
+    if (repairedAssistant) {
+      maidGuideEmit(window, 'chat-message-received', {
+        sessionId: String(repairedAssistant.targetSessionId || sourceSid).trim(),
+        messageId: String(repairedAssistant.messageId || '').trim(),
+        role: 'assistant',
+        repaired: true,
+      });
+    }
     refreshChatAndContacts();
     if (sourceSid) rejectedFormatRepairBannerRuntime?.clear?.(sourceSid);
     return {
@@ -27147,7 +27173,7 @@ Phase G（Frame 36）：循环衔接
     const activeUser = getActiveUserProfile();
     const base = buildChatFormatGuardianOptions(sid);
     const featureState = agentFeatureSettingsStore.getSettings()?.features?.[AGENT_FEATURE_IDS.replyCheck] || {};
-    const modelMode = String(featureState.modelMode || 'follow_current').trim() || 'follow_current';
+    const modelMode = String(featureState.modelMode || 'none').trim() || 'none';
     return {
       ...base,
       enabled: agentFeatureSettingsStore.isEnabled(AGENT_FEATURE_IDS.replyCheck),
@@ -27260,6 +27286,42 @@ Phase G（Frame 36）：循环衔接
     }
     const baseRevision = createFormatPatchRevisionToken();
     const repairTarget = buildRejectedProtocolRepairTarget(sid, envelope);
+    const featureState = agentFeatureSettingsStore.getSettings()?.features?.[AGENT_FEATURE_IDS.replyCheck] || {};
+    const guardianEnabled = agentFeatureSettingsStore.isEnabled(AGENT_FEATURE_IDS.replyCheck);
+    const triggerMode = String(featureState.triggerMode || 'auto').trim() || 'auto';
+    const modelMode = String(featureState.modelMode || 'none').trim() || 'none';
+    const baseOptions = manualTrigger
+      ? buildManualChatFormatGuardianOptions(sid)
+      : buildChatFormatGuardianOptions(sid);
+    if (!guardianEnabled) {
+      const message = '格式修复 Agent 尚未开启。请先前往 Agent Center 开启并配置模型。';
+      rejectedFormatRepairBannerRuntime?.markGuardianUnavailable?.({
+        sessionId: sid,
+        reason: 'guardian_disabled',
+        message,
+      });
+      if (manualTrigger) window.toastr?.warning?.(message);
+      return { started: false, modelReviewQueued: false, completion: null };
+    }
+    if (
+      modelMode === 'none'
+      || (
+        baseOptions?.modelReview?.enabled !== true
+        || typeof baseOptions?.modelReview?.backgroundChat !== 'function'
+      )
+    ) {
+      const message = '格式修复 Agent 没有可用模型。请前往 Agent Center 检查模型配置。';
+      rejectedFormatRepairBannerRuntime?.markGuardianUnavailable?.({
+        sessionId: sid,
+        reason: 'guardian_model_unavailable',
+        message,
+      });
+      if (manualTrigger) window.toastr?.warning?.(message);
+      return { started: false, modelReviewQueued: false, completion: null };
+    }
+    if (!manualTrigger && triggerMode === 'manual') {
+      return { started: false, modelReviewQueued: false, completion: null };
+    }
     let settleCompletion = null;
     const completion = new Promise((resolve) => {
       settleCompletion = resolve;
@@ -27277,9 +27339,6 @@ Phase G（Frame 36）：循环衔接
         formatRepairTurnId: repairTarget.turnId,
       },
     };
-    const baseOptions = manualTrigger
-      ? buildManualChatFormatGuardianOptions(sid)
-      : buildChatFormatGuardianOptions(sid);
     const preview = runChatFormatGuardianPreview({
       message: repairMessage,
       sessionId: sid,
@@ -27527,6 +27586,14 @@ Phase G（Frame 36）：循环衔接
         manualTrigger: true,
       },
     ),
+    onOpenGuardianSettings: () => {
+      agentCenterPanel.show({
+        tab: 'agents',
+        agentId: AGENT_FEATURE_IDS.replyCheck,
+        configure: true,
+        aboveGuide: maidOnboardingRuntime?.isActive?.() === true,
+      });
+    },
     onRegenerate: async (state) => {
       if (!isSessionActive(state.sessionId)) {
         window.toastr?.warning?.('请先打开对应聊天室再重新生成');
@@ -29692,6 +29759,10 @@ Phase G（Frame 36）：循环衔接
           turnId: formatRepairTurnId,
         });
         rejectedFormatRepairBannerRuntime?.markRejected?.({ sessionId });
+        maidGuideEmit(window, 'chat-reply-rejected', {
+          sessionId,
+          reason: 'protocol_parse_failure',
+        });
         const repairRun = runChatFormatGuardianProtocolParseFailureRepair(raw, {
           sessionId,
           source: mode ? `protocol_${mode}_parse_failure` : 'protocol_parse_failure',
@@ -32662,7 +32733,7 @@ Phase G（Frame 36）：循环衔接
     return true;
   };
   const panelBackClosers = [
-    () => legacyMaidGuideSpotlightActive ? activeLegacyGuideSkip?.() : maidOnboardingRuntime?.skip?.(),
+    () => legacyMaidGuideSpotlightActive ? activeLegacyGuideSkip?.() : maidOnboardingRuntime?.back?.(),
     () => maidSettingsPanel.hide(),
     () => closeChatSettings(),
     () => rawReplyModal.hide(),
@@ -32723,6 +32794,16 @@ Phase G（Frame 36）：循环衔接
     if (ui.hasVisibleCodeViewer?.()) {
       return dryRun ? true : ui.closeCodeViewer?.() === true;
     }
+    if (closeVisibleBySelector(
+      '.app-confirm-modal .app-confirm-cancel, .app-confirm-modal.is-choice .app-confirm-close',
+      null,
+      { dryRun },
+    )) return true;
+    if (closeVisibleBySelector(
+      '.session-add-confirm-layer:not(.is-leaving) .session-add-confirm-action.is-cancel',
+      null,
+      { dryRun },
+    )) return true;
     if (closeVisibleBySelector(
       '#contact-detail.is-active',
       () => contactDetailRuntime?.clear?.(),

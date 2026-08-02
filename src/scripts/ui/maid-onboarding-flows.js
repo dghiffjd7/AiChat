@@ -98,6 +98,10 @@ export const MAID_ONBOARDING_TARGET_SELECTORS = Object.freeze({
     '#chat-messages',
     '.msgcontent',
   ],
+  'format-repair-banner': [
+    '[data-maid-guide-target="format-repair-banner"]',
+    '#rejected-format-repair-banner',
+  ],
   'maid-ball': ['#mode-switch'],
   'maid-command-input': ['.maid-command-input-field'],
   'maid-command-settings': ['.maid-command-input-settings'],
@@ -422,7 +426,7 @@ export const createMaidExistingApiReviewFlow = (
         primaryLabel: '沿用当前连线',
       },
       {
-        target: 'config-model-picker',
+        target: 'config-model-section',
         placement: 'left',
         action: 'wait-event',
         text: '再确认这份设置档里的模型。模型可以改选或手动填写；若当前值就是主人要的，直接保存即可。',

@@ -24,7 +24,7 @@ const injectStyle = (documentRef) => {
   bottom: calc(86px + env(safe-area-inset-bottom, 0px));
   width: min(344px, calc(100vw - 28px));
   display: grid;
-  grid-template-columns: 46px minmax(0, 1fr) 40px;
+  grid-template-columns: 50px minmax(0, 1fr) 40px;
   align-items: center;
   gap: 10px;
   padding: 10px 8px 10px 10px;
@@ -53,8 +53,8 @@ const injectStyle = (documentRef) => {
   background-color: var(--app-surface-subtle, #f8fafc);
 }
 .maid-onboarding-hint-avatar {
-  width: 46px;
-  height: 46px;
+  width: 50px;
+  height: 50px;
   border: 2px solid color-mix(in srgb, var(--app-accent-secondary, #db2777) 24%, transparent);
   border-radius: 15px;
 }
@@ -126,7 +126,7 @@ const injectStyle = (documentRef) => {
 }
 .maid-onboarding-welcome-head {
   display: grid;
-  grid-template-columns: 50px minmax(0, 1fr) 40px;
+  grid-template-columns: 54px minmax(0, 1fr) 40px;
   align-items: center;
   gap: 10px;
   padding: 13px 11px 12px 13px;
@@ -135,12 +135,12 @@ const injectStyle = (documentRef) => {
 }
 .maid-onboarding-welcome-avatar-wrap {
   position: relative;
-  width: 48px;
-  height: 48px;
+  width: 52px;
+  height: 52px;
 }
 .maid-onboarding-welcome-avatar {
-  width: 48px;
-  height: 48px;
+  width: 52px;
+  height: 52px;
   display: block;
   overflow: hidden;
   border: 2px solid color-mix(in srgb, var(--app-accent-secondary, #db2777) 26%, transparent);
@@ -301,7 +301,7 @@ const injectStyle = (documentRef) => {
   transform: translateX(-50%);
   animation: maid-onboarding-toast-in 320ms cubic-bezier(.22,1,.36,1) both;
 }
-.maid-onboarding-toast-icon { width: 40px; height: 40px; border-radius: 13px; }
+.maid-onboarding-toast-icon { width: 46px; height: 46px; border-radius: 14px; }
 .maid-onboarding-toast-copy { min-width: 0; flex: 1; }
 .maid-onboarding-toast-title { font-size: 13px; font-weight: 850; }
 .maid-onboarding-toast-sub { margin-top: 2px; color: var(--app-text-secondary, #64748b); font-size: 11px; }
@@ -342,11 +342,11 @@ const injectStyle = (documentRef) => {
   to { opacity: 1; transform: translate3d(-50%, 0, 0) scale(1); }
 }
 @media (max-width: 520px) {
-  .maid-onboarding-hint { width: min(340px, calc(100vw - 24px)); grid-template-columns: 42px minmax(0, 1fr) 40px; }
-  .maid-onboarding-hint-avatar { width: 42px; height: 42px; }
-  .maid-onboarding-welcome-head { grid-template-columns: 46px minmax(0, 1fr) 40px; padding-left: 11px; }
+  .maid-onboarding-hint { width: min(340px, calc(100vw - 24px)); grid-template-columns: 46px minmax(0, 1fr) 40px; }
+  .maid-onboarding-hint-avatar { width: 46px; height: 46px; }
+  .maid-onboarding-welcome-head { grid-template-columns: 50px minmax(0, 1fr) 40px; padding-left: 11px; }
   .maid-onboarding-welcome-avatar-wrap,
-  .maid-onboarding-welcome-avatar { width: 44px; height: 44px; border-radius: 15px; }
+  .maid-onboarding-welcome-avatar { width: 48px; height: 48px; border-radius: 15px; }
   .maid-onboarding-welcome-section { padding-right: 10px; padding-left: 10px; }
   .maid-onboarding-welcome-task { min-height: 64px; gap: 8px; padding: 8px; }
   .maid-onboarding-welcome-task-action { min-width: 62px; padding: 0 9px; }

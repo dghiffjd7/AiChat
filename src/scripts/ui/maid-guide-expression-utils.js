@@ -1,5 +1,5 @@
 export const MAID_GUIDE_EXPRESSION_SHEET_SRC = './assets/media/maid-guide-expression-sheet.webp';
-export const MAID_GUIDE_EXPRESSION_ZOOM = 1.18;
+export const MAID_GUIDE_EXPRESSION_ZOOM = 1;
 export const MAID_GUIDE_EXPRESSION_BACKGROUND = '#efedf7';
 
 const EXPRESSION_GRID_SIZE = 4;

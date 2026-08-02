@@ -8,6 +8,69 @@ assert.equal(MAID_SETUP_HINT_ID, 'maid-onboarding-welcome-v2', 'new dismissal se
 
 {
   const shown = [];
+  const prepared = [];
+  const backOrder = [];
+  const listeners = new Map();
+  const documentRef = {
+    addEventListener: (type, handler) => listeners.set(type, handler),
+    removeEventListener: type => listeners.delete(type),
+  };
+  const windowRef = {
+    addEventListener() {},
+    removeEventListener() {},
+  };
+  const flow = {
+    id: 'back-flow',
+    title: '返回流程',
+    steps: [
+      { action: 'observe', text: '第一步' },
+      { action: 'observe', text: '第二步' },
+    ],
+  };
+  const runtime = createMaidOnboardingRuntime({
+    documentRef,
+    windowRef,
+    getFlow: id => id === flow.id ? flow : null,
+    tasks: [],
+    prepareStep: async ({ index, meta }) => {
+      prepared.push({ index, reason: meta?.reason || '' });
+      if (meta?.reason === 'prev') backOrder.push('prepare-previous');
+    },
+    spotlight: { show: value => shown.push(value), hide() {}, destroy() {} },
+    entryUi: { hideHint() {}, hideWelcome() {}, destroy() {} },
+  });
+  runtime.bind();
+  runtime.startFlow(flow.id);
+  await flush();
+  shown.at(-1).onNext();
+  await flush();
+  assert.equal(runtime.getState().idx, 1);
+  assert.equal(runtime.back(), true);
+  await flush();
+  assert.equal(runtime.getState().idx, 0);
+  assert.deepEqual(prepared.at(-1), { index: 0, reason: 'prev' });
+
+  shown.at(-1).onNext();
+  await flush();
+  const backButton = {
+    dataset: { maidGuideBack: 'test-panel' },
+    closest: selector => selector.includes('button[data-maid-guide-back]') ? backButton : null,
+  };
+  backOrder.length = 0;
+  listeners.get('click')?.({ target: backButton, composedPath: () => [backButton] });
+  backOrder.push('native-close');
+  await flush();
+  assert.equal(runtime.getState().idx, 0, '面板返回控件必须回到引导上一步');
+  assert.deepEqual(backOrder, ['native-close', 'prepare-previous'], '应先让面板按钮完成关闭，再恢复上一步界面');
+  assert.equal(runtime.back(), true, '第一步返回应结束引导而不是卡住');
+  await flush();
+  assert.equal(runtime.getState().phase, 'idle');
+  runtime.destroy();
+  console.log('ok - onboarding back controls and system back share previous-step semantics');
+}
+
+{
+  const shown = [];
   const completed = new Map();
   const completionToasts = [];
   const dismissed = [];
@@ -259,7 +322,7 @@ assert.equal(MAID_SETUP_HINT_ID, 'maid-onboarding-welcome-v2', 'new dismissal se
   shown.at(-1).onNext();
   await flush();
   const modelView = shown.at(-1).flow.steps[shown.at(-1).index];
-  assert.equal(modelView.target, 'config-model-picker');
+  assert.equal(modelView.target, 'config-model-section');
   assert.equal(runtime.emit('config-model-selected', { model: 'gpt-saved' }), false, 'model selection stays optional');
   shown.at(-1).onFallback();
   assert.equal(fallbacks.at(-1).step.fallback.target, 'config-save-btn');
@@ -324,6 +387,85 @@ assert.equal(MAID_SETUP_HINT_ID, 'maid-onboarding-welcome-v2', 'new dismissal se
   await flush();
   assert.equal(shown.at(-1).flow.steps[shown.at(-1).index].target, 'config-save-btn');
   console.log('ok - onboarding runtime keeps fresh custom API setup on each required interaction');
+}
+
+{
+  const values = {
+    provider: { value: 'openai' },
+    apiKey: { value: 'sk-existing', dataset: { hasKey: 'true' } },
+    serviceAccount: { value: '' },
+    baseUrl: { value: '' },
+    model: { value: 'gpt-existing' },
+  };
+  const documentRef = {
+    querySelector: (selector) => {
+      if (selector.includes('config-provider')) return values.provider;
+      if (selector.includes('config-api-key')) return values.apiKey;
+      if (selector.includes('config-service-account') || selector.includes('config-serviceaccount')) return values.serviceAccount;
+      if (selector.includes('config-baseurl')) return values.baseUrl;
+      if (selector.includes('config-model-select') || selector.includes('config-model')) return values.model;
+      return null;
+    },
+  };
+  const shown = [];
+  const runtime = createMaidOnboardingRuntime({
+    documentRef,
+    tasks: [],
+    hasConfiguredProfile: () => false,
+    spotlight: { show: value => shown.push(value), hide() {}, destroy() {} },
+    entryUi: { hideHint() {}, hideWelcome() {}, destroy() {} },
+  });
+  runtime.startFlow('setup-api');
+  await flush();
+  shown.at(-1).onNext();
+  await flush();
+  runtime.emit('target-click', { target: 'settings-entry' });
+  await flush();
+  runtime.emit('target-click', { target: 'settings-api-config' });
+  await flush();
+  runtime.emit('config-provider-confirmed', { provider: 'openai' });
+  await flush();
+  assert.equal(shown.at(-1).flow.steps[shown.at(-1).index].target, 'config-model-section');
+  shown.at(-1).onPrev();
+  await flush();
+  assert.equal(
+    shown.at(-1).flow.steps[shown.at(-1).index].target,
+    'config-api-key-input',
+    '回退到已填写的凭据步时必须停留一轮，不能被自动推进原地弹回',
+  );
+  runtime.destroy();
+  console.log('ok - setup API back navigation suppresses one credential auto-advance pass');
+}
+
+{
+  const shown = [];
+  const runtime = createMaidOnboardingRuntime({
+    tasks: [],
+    spotlight: { show: value => shown.push(value), hide() {}, destroy() {} },
+    entryUi: { hideHint() {}, hideWelcome() {}, destroy() {} },
+  });
+  runtime.startFlow('first-chat');
+  await flush();
+  shown.at(-1).onNext();
+  await flush();
+  runtime.emit('chat-room-entered', { sessionId: 'Aria' });
+  await flush();
+  runtime.emit('chat-composer-input', { length: 2 });
+  await flush();
+  runtime.emit('chat-message-sent', { sessionId: 'Aria' });
+  await flush();
+  assert.equal(shown.at(-1).flow.steps[shown.at(-1).index].target, 'chat-body');
+  assert.equal(runtime.emit('chat-reply-rejected', { sessionId: 'Aria' }), true);
+  await flush();
+  const recoveryView = shown.at(-1).flow.steps[shown.at(-1).index];
+  assert.equal(runtime.getState().phase, 'steps');
+  assert.equal(recoveryView.target, 'format-repair-banner');
+  assert.match(recoveryView.text, /格式|重新检查|重新生成/);
+  assert.equal(runtime.emit('chat-message-received', { sessionId: 'Aria', role: 'assistant' }), true);
+  await flush();
+  assert.equal(runtime.getState().phase, 'done');
+  runtime.destroy();
+  console.log('ok - first chat guide switches to format-rejection recovery instead of hanging');
 }
 
 {

@@ -155,6 +155,7 @@ export class SessionPanel {
   constructor(chatStore, contactsStore, ui, {
     onUpdated,
     onFriendAdded,
+    enterChatRoom,
     personaStore,
     getPersonaScopeKey,
     getChatSessionId,
@@ -171,6 +172,7 @@ export class SessionPanel {
     this.nameInput = null;
     this.onUpdated = typeof onUpdated === 'function' ? onUpdated : null;
     this.onFriendAdded = typeof onFriendAdded === 'function' ? onFriendAdded : null;
+    this.enterChatRoom = typeof enterChatRoom === 'function' ? enterChatRoom : null;
     this.personaStore = personaStore || null;
     this.getPersonaScopeKey = typeof getPersonaScopeKey === 'function' ? getPersonaScopeKey : null;
     this.getChatSessionId =
@@ -1123,12 +1125,21 @@ export class SessionPanel {
       if (!result?.ok) return;
       feedbackUi.showSuccess({
         name: result.name || name,
-        onAction: () => {
+        onAction: async () => {
           const sessionId = String(result.sessionId || '').trim();
           if (!sessionId) return;
-          this.jumpToContactsOnClose = false;
-          this.switchTo(sessionId);
-          this.hide();
+          try {
+            this.jumpToContactsOnClose = false;
+            if (this.enterChatRoom) {
+              await this.enterChatRoom(sessionId, result.name || name, 'chat');
+            } else {
+              this.switchTo(sessionId);
+            }
+            this.hide();
+          } catch (error) {
+            logger.warn('进入新好友聊天室失败', error);
+            window.toastr?.warning?.('聊天室已创建，但暂时无法打开');
+          }
         },
       });
     } catch (error) {
@@ -1261,6 +1272,7 @@ export class SessionPanel {
   createUI() {
     this.overlay = document.createElement('div');
     this.overlay.className = 'session-panel-overlay app-themed-overlay';
+    this.overlay.dataset.maidGuideBack = 'add-friend-panel';
     this.overlay.onclick = () => this.hide();
 
     this.panel = document.createElement('div');
@@ -1272,7 +1284,7 @@ export class SessionPanel {
               <div>
                 <div class="session-panel-title has-help" data-help="点击好友可切换聊天室">好友列表</div>
               </div>
-              <button class="session-panel-close" type="button" aria-label="关闭">×</button>
+              <button class="session-panel-close" type="button" data-maid-guide-back="add-friend-panel" aria-label="关闭">×</button>
             </div>
             <div class="session-panel-form">
                 <button id="session-avatar-btn" type="button" title="设置好友头像" class="session-avatar-btn">

@@ -222,3 +222,31 @@ const { SessionPanel, __sessionPanelInternals } = await import('../../src/script
   assert.equal(updated, 1);
   console.log('ok - adding a recommended friend returns navigation data for the success action');
 }
+
+{
+  const entered = [];
+  let successOptions = null;
+  let hidden = 0;
+  const panel = new SessionPanel(
+    {},
+    { scopeId: 'persona_1' },
+    {},
+    {
+      enterChatRoom: async (...args) => entered.push(args),
+    },
+  );
+  panel.resolveAvatarSrc = () => '';
+  panel.addCharacterFromLibrary = async () => ({ ok: true, sessionId: '雪乃', name: '雪乃' });
+  panel.ensureAddFriendFeedbackUi = () => ({
+    requestAdd: async ({ run }) => run(),
+    showSuccess: options => { successOptions = options; },
+  });
+  panel.hide = () => { hidden += 1; };
+
+  await panel.confirmAddCharacter({ id: 'yukino', name: '雪乃' });
+  await successOptions.onAction();
+
+  assert.deepEqual(entered, [['雪乃', '雪乃', 'chat']]);
+  assert.equal(hidden, 1);
+  console.log('ok - add-friend success action enters the created chat room before closing the panel');
+}

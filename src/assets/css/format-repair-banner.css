@@ -26,6 +26,10 @@
   --format-repair-accent: var(--app-danger-text);
 }
 
+.format-repair-banner[data-status='guardian_unavailable'] {
+  --format-repair-accent: var(--app-warning-text);
+}
+
 .format-repair-banner-mark {
   width: 30px;
   height: 30px;
@@ -110,6 +114,12 @@
   border-color: transparent;
   background: var(--format-repair-accent);
   color: var(--app-text-inverse);
+}
+
+.format-repair-banner-actions [data-format-repair-banner-action='settings']:not([hidden]) {
+  border-color: transparent;
+  background: var(--format-repair-accent);
+  color: var(--app-text-on-accent, var(--app-text-inverse));
 }
 
 .format-repair-banner-actions .format-repair-banner-dismiss {

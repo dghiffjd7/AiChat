@@ -142,6 +142,8 @@ export const createSessionAddFriendFeedbackUi = ({
 
     confirmOverlay = createElement(documentRef, 'div', 'session-add-confirm-overlay is-entering');
     confirmLayer = createElement(documentRef, 'div', 'session-add-confirm-layer is-entering');
+    confirmOverlay.dataset.maidGuideBack = 'add-friend-confirm';
+    confirmLayer.dataset.maidGuideBack = 'add-friend-confirm';
     confirmLayer.setAttribute?.('role', 'presentation');
     confirmCard = createElement(documentRef, 'section', 'session-add-confirm-card');
     confirmCard.setAttribute?.('role', 'dialog');
@@ -151,6 +153,7 @@ export const createSessionAddFriendFeedbackUi = ({
     const accent = createElement(documentRef, 'div', 'session-add-confirm-accent');
     closeButton = createElement(documentRef, 'button', 'session-add-confirm-close');
     closeButton.type = 'button';
+    closeButton.dataset.maidGuideBack = 'add-friend-confirm';
     closeButton.setAttribute?.('aria-label', '关闭');
     appendIcon(closeButton, ICONS.close);
 
@@ -195,6 +198,7 @@ export const createSessionAddFriendFeedbackUi = ({
     const actions = createElement(documentRef, 'div', 'session-add-confirm-actions');
     cancelButton = createElement(documentRef, 'button', 'session-add-confirm-action is-cancel', '取消');
     cancelButton.type = 'button';
+    cancelButton.dataset.maidGuideBack = 'add-friend-confirm';
     confirmButton = createElement(documentRef, 'button', 'session-add-confirm-action is-confirm');
     confirmButton.type = 'button';
     confirmButton.dataset.maidGuideTarget = 'add-friend-confirm';

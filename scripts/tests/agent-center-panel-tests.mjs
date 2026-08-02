@@ -23,6 +23,10 @@ const agentCenterPanelSource = await readFile(
   panel.show({ tab: 'activity', activityStatus: 'failure' });
   assert.equal(panel.activeTab, 'activity');
   assert.equal(panel.activityStatus, 'failure');
+  panel.show({ tab: 'agents', agentId: 'reply_check', configure: true, aboveGuide: true });
+  assert.equal(panel.activeTab, 'agents');
+  assert.equal(panel.floatingAgentId, 'reply_check');
+  assert.equal(panel.floatingAgentFlipped, true);
   console.log('ok - agent center panel restores the last tab unless a tab is explicit');
 }
 
@@ -152,6 +156,8 @@ const agentCenterPanelSource = await readFile(
   const floatingHtml = panel.renderFloatingAgentCard();
   assert.match(floatingHtml, /agent-center-floating-card/);
   assert.match(floatingHtml, /data-agent-feature-model-select="reply_check"/);
+  assert.match(floatingHtml, /data-agent-feature-action="enable"/);
+  assert.match(floatingHtml, /data-agent-feature-id="reply_check"/);
   assert.match(floatingHtml, /data-agent-feature-trigger="reply_check"/);
   assert.match(floatingHtml, /data-agent-prompt-preview="reply_check"/);
   assert.match(floatingHtml, /data-reply-check-preview-target/);

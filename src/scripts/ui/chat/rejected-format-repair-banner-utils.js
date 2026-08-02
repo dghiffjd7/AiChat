@@ -113,6 +113,7 @@ export const createRejectedFormatRepairBannerRuntime = ({
   onApply = null,
   onRecheck = null,
   onRegenerate = null,
+  onOpenGuardianSettings = null,
 } = {}) => {
   const states = new Map();
   const dismissedKeys = new Set();
@@ -121,6 +122,7 @@ export const createRejectedFormatRepairBannerRuntime = ({
   const statusEl = root?.querySelector?.('[data-format-repair-banner-status]') || null;
   const applyButton = root?.querySelector?.('[data-format-repair-banner-action="apply"]') || null;
   const recheckButton = root?.querySelector?.('[data-format-repair-banner-action="recheck"]') || null;
+  const settingsButton = root?.querySelector?.('[data-format-repair-banner-action="settings"]') || null;
 
   const readEnvelope = sessionId => normalizeEnvelope(getEnvelope?.(sessionId));
   const readRepairAvailability = state => {
@@ -190,19 +192,27 @@ export const createRejectedFormatRepairBannerRuntime = ({
       return false;
     }
     const availability = readRepairAvailability(state);
-    const status = availability.available ? state.status : 'dispatcher_unavailable';
+    const guardianUnavailable = state.status === 'guardian_unavailable';
+    const status = guardianUnavailable
+      ? 'guardian_unavailable'
+      : (availability.available ? state.status : 'dispatcher_unavailable');
     root.dataset.status = status;
     if (titleEl) titleEl.textContent = '回复格式未通过';
-    if (statusEl) statusEl.textContent = availability.available
+    if (statusEl) statusEl.textContent = guardianUnavailable || availability.available
       ? state.statusText
       : availability.message;
     if (applyButton) {
       applyButton.disabled = !availability.available || !state.candidate || state.status === 'applying';
     }
     if (recheckButton) {
-      recheckButton.disabled = !availability.available || state.status === 'checking' || state.status === 'applying';
+      recheckButton.disabled = (
+        !availability.available
+        || state.status === 'checking'
+        || state.status === 'applying'
+      );
       recheckButton.textContent = availability.available && state.status === 'checking' ? '检查中…' : '重新检查';
     }
+    if (settingsButton) settingsButton.hidden = !guardianUnavailable;
     return true;
   };
 
@@ -237,6 +247,22 @@ export const createRejectedFormatRepairBannerRuntime = ({
     state.statusText = '正在检查并生成最小格式补丁…';
   });
 
+  const markGuardianUnavailable = ({
+    sessionId = '',
+    reason = 'guardian_unavailable',
+    message = '格式修复 Agent 尚未开启或没有可用模型。',
+  } = {}) => mutate(sessionId, (state) => {
+    state.status = 'guardian_unavailable';
+    state.statusText = trim(message) || '格式修复 Agent 尚未开启或没有可用模型。';
+    state.runId = '';
+    state.result = {
+      status: 'guardian_unavailable',
+      reason: trim(reason) || 'guardian_unavailable',
+      summary: state.statusText,
+    };
+    state.candidate = null;
+  });
+
   const updateReview = ({ sessionId = '', runId = '', result = null } = {}) => mutate(sessionId, (state) => {
     const candidate = resolveReviewCandidate(result);
     state.runId = trim(runId);
@@ -266,6 +292,7 @@ export const createRejectedFormatRepairBannerRuntime = ({
     const state = getCurrentState(sessionId);
     if (!state) return null;
     if (kind === 'view') return onViewOriginal?.(state);
+    if (kind === 'settings') return onOpenGuardianSettings?.(state);
     if ((kind === 'recheck' || kind === 'apply') && !readRepairAvailability(state).available) {
       render();
       return null;
@@ -359,6 +386,7 @@ export const createRejectedFormatRepairBannerRuntime = ({
     render,
     markRejected,
     markChecking,
+    markGuardianUnavailable,
     updateReview,
     settleChecking,
     hasRunCandidate,

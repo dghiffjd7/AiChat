@@ -9,6 +9,10 @@ export const createMaidOnboardingAppAdapter = ({
   openApiConfig = null,
   openQuickMenu = null,
   openAddFriend = null,
+  closeMenus = null,
+  closeApiConfig = null,
+  closeAddFriend = null,
+  cancelAddFriendConfirm = null,
   isChatRoomVisible = () => false,
   exitChatRoom = null,
   switchPage = null,
@@ -16,6 +20,8 @@ export const createMaidOnboardingAppAdapter = ({
   closeMaidCommand = null,
   openAgentCenter = null,
   closeAgentCenter = null,
+  openAgentCenterDetail = null,
+  closeAgentCenterDetail = null,
   emit = null,
   configManager = null,
 } = {}) => {
@@ -31,9 +37,66 @@ export const createMaidOnboardingAppAdapter = ({
     return null;
   };
 
-  const prepareStep = async ({ step = null } = {}) => {
+  const preparePreviousStep = async (target = '') => {
+    if (target === 'settings-entry') {
+      await closeApiConfig?.();
+      await closeMenus?.();
+      return false;
+    }
+    if (target === 'settings-api-config') {
+      await closeApiConfig?.();
+      return false;
+    }
+    if (target === 'top-plus-entry') {
+      await cancelAddFriendConfirm?.();
+      await closeAddFriend?.();
+      await delay(260);
+      await closeMenus?.();
+      return false;
+    }
+    if (target === 'quick-add-friend') {
+      await cancelAddFriendConfirm?.();
+      await closeAddFriend?.();
+      await delay(260);
+      return false;
+    }
+    if (target === 'add-friend-recommendation') {
+      await cancelAddFriendConfirm?.();
+      await delay(220);
+      return true;
+    }
+    if (target === 'maid-ball') {
+      await closeAgentCenter?.();
+      await closeMaidCommand?.();
+      await closeMenus?.();
+      return false;
+    }
+    if (target === 'maid-command-input') {
+      await closeAgentCenter?.();
+      await closeMenus?.();
+      return false;
+    }
+    if (target === 'agent-center-entry') {
+      await closeAgentCenter?.();
+      return false;
+    }
+    if (target === 'agent-center-card') {
+      await closeAgentCenterDetail?.();
+      return false;
+    }
+    if (target === 'agent-center-detail-close') {
+      await openAgentCenter?.();
+      await openAgentCenterDetail?.();
+      return true;
+    }
+    return false;
+  };
+
+  const prepareStep = async ({ step = null, meta = null } = {}) => {
     const target = trim(step?.target);
-    await delay(0);
+    const isPrevious = trim(meta?.reason) === 'prev';
+    if (isPrevious && await preparePreviousStep(target)) return;
+    if (!isPrevious) await delay(0);
     if (target === 'settings-api-config' && !resolveTarget(target)) {
       await openSettingsMenu?.();
       return;
@@ -66,6 +129,11 @@ export const createMaidOnboardingAppAdapter = ({
     }
     if (target === 'maid-command-settings' && !resolveTarget(target)) {
       await openMaidCommand?.();
+      return;
+    }
+    if (target === 'agent-center-detail-close' && !resolveTarget(target)) {
+      await openAgentCenter?.();
+      await openAgentCenterDetail?.();
       return;
     }
     if ((target === 'agent-center-card' || target === 'agent-center-close') && !resolveTarget(target)) {

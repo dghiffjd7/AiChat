@@ -332,6 +332,7 @@ export class ConfigPanel {
         this.overlayElement = document.createElement('div');
         this.overlayElement.id = 'config-overlay';
         this.overlayElement.className = 'api-config-overlay';
+        this.overlayElement.dataset.maidGuideBack = 'api-config';
         this.overlayElement.style.cssText = `
             display: none;
             position: fixed;
@@ -352,7 +353,7 @@ export class ConfigPanel {
                     </div>
                     <div class="api-config-header-actions">
                         <span class="api-config-live-note">保存后立即生效</span>
-                        <button type="button" id="config-close" class="api-config-close" aria-label="关闭 API 配置" title="关闭">
+                        <button type="button" id="config-close" class="api-config-close" data-maid-guide-back="api-config" aria-label="关闭 API 配置" title="关闭">
                             ${API_CONFIG_ICONS.close}
                         </button>
                     </div>
@@ -384,7 +385,7 @@ export class ConfigPanel {
                     </button>
                 </div>
 
-                <div class="api-config-field">
+                <div class="api-config-field" data-maid-guide-target="config-profile-select">
                     <label class="api-config-field-label">
                         <span class="has-help" data-help="保存多份连线配置，随时切换">连线设置档</span>
                         <div class="api-config-field-tools">
@@ -608,7 +609,7 @@ export class ConfigPanel {
                     <button id="config-test" class="api-config-button is-secondary">
                         ${API_CONFIG_ICONS.zap}<span>测试连接</span>
                     </button>
-                    <button id="config-cancel" class="api-config-button is-secondary">
+                    <button id="config-cancel" class="api-config-button is-secondary" data-maid-guide-back="api-config">
                         取消
                     </button>
                     <button id="config-save" class="api-config-button is-primary" data-maid-guide-target="config-save-btn">

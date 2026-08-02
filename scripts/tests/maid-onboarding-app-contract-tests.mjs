@@ -29,7 +29,9 @@ for (const target of [
 ]) {
   assert.match(configSource, new RegExp(`data-maid-guide-target=["']${target}["']`));
 }
+assert.match(configSource, /<div class="api-config-field" data-maid-guide-target="config-profile-select">[\s\S]*?id="profile-new"/);
 assert.match(configSource, /config-models-refreshed/);
+assert.match(configSource, /data-maid-guide-back="api-config"/);
 assert.match(configSource, /world-app-select-menu[\s\S]*?is-maid-guide-menu/);
 assert.match(appSource, /document\.body\?\.dataset\?\.maidSpotlight === 'on'/);
 assert.match(appSource, /maidGuideEmit\(window, 'config-profile-saved'/);
@@ -37,6 +39,7 @@ assert.match(appSource, /const bindMaidToSavedApiProfile[\s\S]*?maidSettingsStor
 assert.match(appSource, /const openMaidApiConfigPanel[\s\S]*?onSaved:\s*bindMaidToSavedApiProfile/);
 assert.match(appSource, /maidGuideEmit\(window, 'chat-message-sent'/);
 assert.match(appSource, /maidGuideEmit\(window, 'chat-message-received'/);
+assert.match(appSource, /maidGuideEmit\(window, 'chat-reply-rejected'/);
 assert.match(appSource, /maidGuideEmit\(window, 'chat-room-entered'/);
 assert.match(appSource, /registerGuideStartFlowTools/);
 assert.match(appSource, /maidOnboardingRuntime\?\.getSpotlight\?\.\(\)/);
@@ -65,13 +68,17 @@ assert.match(appSource, /waitForMaidGuideStepAdvance\(targetExpected[\s\S]*?\(\)
 assert.match(appSource, /document\.addEventListener\('click', onTargetClick, true\)/);
 
 assert.match(sessionSource, /onFriendAdded/);
+assert.match(sessionSource, /enterChatRoom/);
 assert.match(sessionSource, /maidGuideTarget = 'add-friend-recommendation'/);
 assert.match(sessionSource, /data-maid-guide-target="add-friend-search-input"/);
+assert.match(sessionSource, /maidGuideBack = 'add-friend-panel'/);
 assert.match(sessionSource, /id="session-add"[^>]*data-maid-guide-target="session-add-submit"/);
 assert.match(feedbackSource, /maidGuideTarget = 'add-friend-confirm'/);
+assert.match(feedbackSource, /maidGuideBack = 'add-friend-confirm'/);
 assert.match(agentCenterSource, /data-maid-guide-target="agent-center-card"/);
 assert.match(agentCenterSource, /data-maid-guide-target="agent-center-close"/);
 assert.match(agentCenterSource, /data-maid-guide-target="agent-center-detail-close"/);
+assert.match(agentCenterSource, /data-maid-guide-back="agent-center"/);
 assert.match(agentStatusSource, /button\.dataset\.maidGuideTarget = 'agent-center-entry'/);
 assert.match(indexSource, /data-action="settings"[^>]*data-maid-guide-target="settings-general"/);
 assert.match(indexSource, /data-action="chat-settings"[^>]*data-maid-guide-target="chatroom-chat-settings"/);
@@ -106,4 +113,12 @@ const openCommandBlock = appSource.slice(
 );
 assert.match(openCommandBlock, /maidCommandInputRuntime\?\.open\(\{ autoFocus \}\)/);
 assert.doesNotMatch(openCommandBlock, /openMaidApiConfigPanel/);
+
+const appBackGuideBlock = appSource.slice(
+  appSource.indexOf('const panelBackClosers'),
+  appSource.indexOf('const panelBackOpenChecks'),
+);
+assert.match(appBackGuideBlock, /maidOnboardingRuntime\?\.back\?\.\(\)/);
+assert.doesNotMatch(appBackGuideBlock, /maidOnboardingRuntime\?\.skip\?\.\(\)/);
+assert.match(appSource, /\.app-confirm-modal \.app-confirm-cancel,[\s\S]*?\.session-add-confirm-layer:not\(\.is-leaving\) \.session-add-confirm-action\.is-cancel[\s\S]*?const activeSelectors/);
 console.log('ok - app onboarding contract wires real anchors, completion events, offline command access, and spotlight reuse');

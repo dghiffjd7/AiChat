@@ -220,6 +220,60 @@ import {
 }
 
 {
+  const envelope = {
+    text: '<private_chat>broken</private_ch',
+    at: 102,
+    turnId: 'turn-guardian-off',
+    sourceSessionId: 'source-room',
+    sourceKind: FORMAT_REPAIR_SOURCE_KINDS.socialTurnRaw,
+    sourceMessageIds: [],
+    pendingRepair: true,
+  };
+  const nodes = Object.fromEntries(['title', 'status', 'apply', 'recheck', 'settings'].map(name => [name, {
+    textContent: '',
+    disabled: false,
+    hidden: false,
+  }]));
+  let clickHandler = null;
+  let settingsCalls = 0;
+  const root = {
+    hidden: true,
+    dataset: {},
+    querySelector: selector => ({
+      '[data-format-repair-banner-title]': nodes.title,
+      '[data-format-repair-banner-status]': nodes.status,
+      '[data-format-repair-banner-action="apply"]': nodes.apply,
+      '[data-format-repair-banner-action="recheck"]': nodes.recheck,
+      '[data-format-repair-banner-action="settings"]': nodes.settings,
+    })[selector] || null,
+    addEventListener(name, handler) {
+      if (name === 'click') clickHandler = handler;
+    },
+  };
+  const runtime = createRejectedFormatRepairBannerRuntime({
+    root,
+    getEnvelope: () => envelope,
+    onOpenGuardianSettings: () => { settingsCalls += 1; },
+  });
+  runtime.sync('source-room');
+  assert.equal(nodes.settings.hidden, true);
+  runtime.markGuardianUnavailable({
+    sessionId: 'source-room',
+    reason: 'guardian_disabled',
+    message: '格式修复 Agent 尚未开启。',
+  });
+  assert.equal(root.dataset.status, 'guardian_unavailable');
+  assert.equal(nodes.settings.hidden, false);
+  assert.match(nodes.status.textContent, /尚未开启/);
+  clickHandler({
+    target: { closest: () => ({ dataset: { formatRepairBannerAction: 'settings' } }) },
+    preventDefault() {},
+  });
+  assert.equal(settingsCalls, 1);
+  console.log('ok - unavailable format guardian exposes an Agent Center deep link');
+}
+
+{
   // 历史遗留信封、普通成功回复与重派成功后的原文都缺少 pendingRepair 标记，不能靠“没有消息 id”反推。
   assert.equal(isRejectedProtocolRawEnvelope({
     text: '<private_chat>历史成功回复</private_chat>',
@@ -238,9 +292,10 @@ import {
 }
 
 const createBannerHarness = ({ envelope, ...handlers } = {}) => {
-  const nodes = Object.fromEntries(['title', 'status', 'apply', 'recheck'].map(name => [name, {
+  const nodes = Object.fromEntries(['title', 'status', 'apply', 'recheck', 'settings'].map(name => [name, {
     textContent: '',
     disabled: false,
+    hidden: false,
   }]));
   let clickHandler = null;
   const root = {
@@ -251,6 +306,7 @@ const createBannerHarness = ({ envelope, ...handlers } = {}) => {
       '[data-format-repair-banner-status]': nodes.status,
       '[data-format-repair-banner-action="apply"]': nodes.apply,
       '[data-format-repair-banner-action="recheck"]': nodes.recheck,
+      '[data-format-repair-banner-action="settings"]': nodes.settings,
     })[selector] || null,
     addEventListener(name, handler) {
       if (name === 'click') clickHandler = handler;
@@ -292,6 +348,64 @@ const buildRejectedEnvelope = (at = 200) => ({
   sourceMessageIds: [],
   pendingRepair: true,
 });
+
+{
+  const envelope = buildRejectedEnvelope(105);
+  let runtime = null;
+  let recheckCalls = 0;
+  const harness = createBannerHarness({
+    envelope,
+    onRecheck: async () => {
+      recheckCalls += 1;
+      runtime.updateReview({
+        sessionId: 'source-room',
+        runId: 'run-after-config',
+        result: readyCandidateResult,
+      });
+    },
+  });
+  ({ runtime } = harness);
+  runtime.sync('source-room');
+  runtime.markGuardianUnavailable({
+    sessionId: 'source-room',
+    reason: 'guardian_model_unavailable',
+    message: '格式修复 Agent 没有可用模型。',
+  });
+  assert.equal(harness.nodes.settings.hidden, false);
+  harness.click('recheck');
+  await new Promise(resolve => { setTimeout(resolve, 0); });
+  assert.equal(recheckCalls, 1);
+  assert.equal(harness.root.dataset.status, 'candidate_ready');
+  assert.equal(harness.nodes.settings.hidden, true, '配置完成并重查成功后必须退出不可用状态');
+  assert.equal(harness.nodes.apply.disabled, false);
+  console.log('ok - guardian unavailable exits through a successful recheck after configuration');
+}
+
+{
+  const envelope = buildRejectedEnvelope(106);
+  let recheckCalls = 0;
+  const { nodes, root, runtime, click } = createBannerHarness({
+    envelope,
+    getRepairAvailability: () => ({
+      available: false,
+      reason: 'protocol_dispatcher_unavailable',
+      message: '应用通道不可用。',
+    }),
+    onRecheck: () => { recheckCalls += 1; },
+  });
+  runtime.sync('source-room');
+  runtime.markGuardianUnavailable({
+    sessionId: 'source-room',
+    reason: 'guardian_disabled',
+    message: '格式修复 Agent 尚未开启。',
+  });
+  assert.equal(root.dataset.status, 'guardian_unavailable');
+  assert.equal(nodes.settings.hidden, false);
+  assert.equal(nodes.recheck.disabled, true, '守卫和应用通道同时不可用时重查按钮必须真实禁用');
+  click('recheck');
+  assert.equal(recheckCalls, 0);
+  console.log('ok - combined guardian and dispatcher unavailability exposes no dead recheck action');
+}
 
 {
   const envelope = buildRejectedEnvelope(201);
@@ -827,6 +941,7 @@ const buildRejectedEnvelope = (at = 200) => ({
   assert.match(indexSource, /data-format-repair-banner-action="apply"/);
   assert.match(indexSource, /data-format-repair-banner-action="recheck"/);
   assert.match(indexSource, /data-format-repair-banner-action="regenerate"/);
+  assert.match(indexSource, /data-format-repair-banner-action="settings"/);
   assert.match(cssSource, /body\[data-theme-mode='dark'\] \.format-repair-banner/);
   assert.match(cssSource, /prefers-reduced-motion:\s*reduce/);
   assert.doesNotMatch(cssSource, /backdrop-filter/);
@@ -838,7 +953,29 @@ const buildRejectedEnvelope = (at = 200) => ({
   );
   assert.match(localReviewBranch, /rejectedFormatRepairBannerRuntime\?\.updateReview/, '仅本地检查完成也必须退出 checking 状态');
   assert.match(appSource, /protocol_dispatcher_revision_mismatch/);
+  assert.match(appSource, /markGuardianUnavailable/);
+  assert.match(appSource, /agentId:\s*AGENT_FEATURE_IDS\.replyCheck/);
   assert.match(appSource, /applyAgentFormatRepairRun/);
+  const manualGuardianOptionsBlock = appSource.slice(
+    appSource.indexOf('const buildManualChatFormatGuardianOptions'),
+    appSource.indexOf('// 格式修复进行中的会话'),
+  );
+  assert.match(manualGuardianOptionsBlock, /featureState\.modelMode \|\| 'none'/);
+  assert.doesNotMatch(manualGuardianOptionsBlock, /follow_current/);
+  const unavailableGuardBlock = appSource.slice(
+    appSource.indexOf('const runChatFormatGuardianProtocolParseFailureRepair'),
+    appSource.indexOf('let settleCompletion', appSource.indexOf('const runChatFormatGuardianProtocolParseFailureRepair')),
+  );
+  assert.match(
+    unavailableGuardBlock,
+    /modelMode === 'none'\s*\|\|/,
+    '未选择格式修复模型时必须留在 guardian_unavailable，而不是落回通用检查失败',
+  );
+  assert.equal(
+    (unavailableGuardBlock.match(/if \(manualTrigger\) window\.toastr\?\.warning\?\./g) || []).length,
+    2,
+    '用户手动重查守卫未启用或模型不可用时必须得到可见反馈',
+  );
   // 待修复标记只能打在协议驳回现场，否则历史会话与成功回复都会误显示横幅。
   const rejectionBranch = appSource.slice(
     appSource.indexOf("if (protocolState?.handled !== true) {"),

@@ -83,6 +83,9 @@ const PANEL_CSS = `
     background: rgba(15, 23, 42, 0.28);
     opacity: 0;
 }
+.agent-center-overlay.is-above-maid-guide {
+    z-index: 40100;
+}
 .agent-center-overlay[style*="flex"] {
     opacity: 1;
     animation: agent-center-overlay-in 180ms ease-out backwards;
@@ -2282,6 +2285,7 @@ export class AgentCenterPanel {
         const overlay = document.createElement('div');
         overlay.className = 'agent-center-overlay';
         overlay.dataset.agentCenterOverlay = 'true';
+        overlay.dataset.maidGuideBack = 'agent-center';
         overlay.innerHTML = `
             <section class="agent-center-panel" role="dialog" aria-modal="true" aria-labelledby="agent-center-title">
                 <header class="agent-center-header">
@@ -2294,7 +2298,7 @@ export class AgentCenterPanel {
                     </div>
                     <div class="agent-center-actions">
                         <button type="button" class="agent-center-button" data-action="export" title="导出" aria-label="导出">${ICONS.export}</button>
-                        <button type="button" class="agent-center-button" data-action="close" data-maid-guide-target="agent-center-close" title="关闭" aria-label="关闭">${ICONS.close}</button>
+                        <button type="button" class="agent-center-button" data-action="close" data-maid-guide-target="agent-center-close" data-maid-guide-back="agent-center" title="关闭" aria-label="关闭">${ICONS.close}</button>
                     </div>
                 </header>
                 <nav class="agent-center-tabs" aria-label="Agent Center tabs"></nav>
@@ -2429,16 +2433,23 @@ export class AgentCenterPanel {
     show(options = {}) {
         const opts = options && typeof options === 'object' ? options : {};
         const tab = Object.prototype.hasOwnProperty.call(opts, 'tab') ? opts.tab : this.activeTab;
+        const agentId = trim(opts.agentId || opts.cardId);
         this.ensureDom();
         const wasVisible = this.isVisible();
         this.activeTab = trim(tab, 'agents');
         this.activityStatus = normalizeActivityStatus(opts.activityStatus || opts.status || '');
         this.surface = normalizeSurface(opts.surface || '');
+        if (agentId) {
+            this.floatingAgentId = agentId;
+            this.floatingAgentFlipped = opts.configure === true;
+            this.floatingAgentEntryPending = true;
+        }
         if (!wasVisible) {
             clearTimeout(this.cardEntryAnimationTimer);
             this.cardEntryAnimationTimer = null;
             this.cardEntryAnimationUntil = Number.POSITIVE_INFINITY;
         }
+        this.overlayElement?.classList?.toggle?.('is-above-maid-guide', opts.aboveGuide === true);
         if (this.overlayElement) this.overlayElement.style.display = 'flex';
         this.refresh();
     }
@@ -2448,6 +2459,7 @@ export class AgentCenterPanel {
         this.floatingAgentId = '';
         this.floatingAgentFlipped = false;
         this.floatingAgentEntryPending = false;
+        this.overlayElement?.classList?.remove?.('is-above-maid-guide');
         if (this.overlayElement) this.overlayElement.style.display = 'none';
     }
 
@@ -2959,6 +2971,27 @@ export class AgentCenterPanel {
         `;
     }
 
+    renderAgentEnabledSetting(agent = {}) {
+        if (!isFeatureAgentCard(agent) || !agent.implemented) return '';
+        const action = agent.enabled === true ? 'disable' : 'enable';
+        const title = agent.title || displayAgentFeature(agent.id);
+        return `
+            <div class="agent-center-setting-row">
+                <span class="agent-center-setting-label">状态</span>
+                <span class="agent-center-setting-value">${agent.enabled ? '已开启' : '已关闭'}</span>
+                <button
+                    type="button"
+                    class="agent-center-switch${agent.enabled ? ' is-on' : ''}"
+                    role="switch"
+                    aria-checked="${agent.enabled === true}"
+                    aria-label="${escapeHtml(`${action === 'enable' ? '开启' : '关闭'}${title}`)}"
+                    data-agent-feature-action="${action}"
+                    data-agent-feature-id="${escapeHtml(agent.id)}"
+                ><span class="agent-center-switch-track" aria-hidden="true"><span class="agent-center-switch-thumb"></span></span></button>
+            </div>
+        `;
+    }
+
     renderAgentFront(agent = {}) {
         const title = agent.title || displayAgentFeature(agent.id);
         const isDiagnosticView = trim(agent.cardGroup || agent.category) === 'diagnostic';
@@ -3058,7 +3091,7 @@ export class AgentCenterPanel {
                 </div>
                 <div class="agent-center-floating-toolbar">
                     <button type="button" class="agent-center-icon-button" data-agent-float-flip title="切换到配置" aria-label="切换到配置" aria-pressed="false">${ICONS.refresh}</button>
-                    <button type="button" class="agent-center-icon-button" data-agent-float-close data-maid-guide-target="agent-center-detail-close" title="关闭" aria-label="关闭">${ICONS.close}</button>
+                    <button type="button" class="agent-center-icon-button" data-agent-float-close data-maid-guide-target="agent-center-detail-close" data-maid-guide-back="agent-center-detail" title="关闭" aria-label="关闭">${ICONS.close}</button>
                 </div>
             </div>
             ${renderChips([
@@ -3089,9 +3122,10 @@ export class AgentCenterPanel {
                 </div>
                 <div class="agent-center-floating-toolbar">
                     <button type="button" class="agent-center-icon-button" data-agent-float-flip title="切换到详情" aria-label="切换到详情" aria-pressed="true">${ICONS.refresh}</button>
-                    <button type="button" class="agent-center-icon-button" data-agent-float-close data-maid-guide-target="agent-center-detail-close" title="关闭" aria-label="关闭">${ICONS.close}</button>
+                    <button type="button" class="agent-center-icon-button" data-agent-float-close data-maid-guide-target="agent-center-detail-close" data-maid-guide-back="agent-center-detail" title="关闭" aria-label="关闭">${ICONS.close}</button>
                 </div>
             </div>
+            ${this.renderAgentEnabledSetting(agent)}
             ${this.renderAgentFeatureSettings(agent)}
             ${this.renderAgentPromptPreviewAction(agent)}
             ${this.renderReplyCheckPromptInfo(agent)}

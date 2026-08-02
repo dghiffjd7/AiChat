@@ -466,13 +466,13 @@ const injectStyle = (documentRef) => {
 }
 .maid-spotlight-card-avatar-wrap {
   position: relative;
-  width: 42px;
-  height: 42px;
-  flex: 0 0 42px;
+  width: 50px;
+  height: 50px;
+  flex: 0 0 50px;
 }
 .maid-spotlight-card-avatar {
-  width: 42px;
-  height: 42px;
+  width: 50px;
+  height: 50px;
   display: block;
   overflow: hidden;
   border: 2px solid color-mix(in srgb, var(--app-accent-secondary, #db2777) 18%, transparent);
@@ -483,8 +483,8 @@ const injectStyle = (documentRef) => {
   position: absolute;
   right: -1px;
   bottom: -1px;
-  width: 10px;
-  height: 10px;
+  width: 11px;
+  height: 11px;
   box-sizing: border-box;
   border: 2px solid var(--app-surface-card, #fff);
   border-radius: 50%;
@@ -606,12 +606,12 @@ const injectStyle = (documentRef) => {
 .maid-spotlight-card.is-done .maid-spotlight-card-head { justify-content: center; padding-top: 22px; }
 .maid-spotlight-done-visual {
   position: relative;
-  width: 68px;
-  height: 64px;
+  width: 76px;
+  height: 72px;
 }
 .maid-spotlight-done-avatar {
-  width: 64px;
-  height: 64px;
+  width: 72px;
+  height: 72px;
   display: block;
   overflow: hidden;
   border: 2px solid color-mix(in srgb, var(--app-warning-text, #b45309) 24%, transparent);

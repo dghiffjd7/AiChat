@@ -4,6 +4,13 @@ const MAX_BACK_DIAGNOSTIC_EVENTS = 40;
 
 const isEditableElement = (element) => {
   if (!element || typeof element !== 'object') return false;
+  try {
+    if (typeof element.checkVisibility === 'function' && !element.checkVisibility({
+      checkOpacity: true,
+      checkVisibilityCSS: true,
+    })) return false;
+  } catch {}
+  if (typeof element.getClientRects === 'function' && element.getClientRects().length === 0) return false;
   const tag = String(element.tagName || '').toLowerCase();
   if (tag === 'textarea' || tag === 'select') return true;
   if (tag === 'input') {

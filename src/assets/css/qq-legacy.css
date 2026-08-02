@@ -6417,7 +6417,7 @@ body[data-ui-mode='rp'] .QQ_chat_page.sticker-preview-active .msgcontent {
 .session-add-success-viewport {
   position: fixed;
   inset: auto 16px max(36px, calc(18px + env(safe-area-inset-bottom, 0px)));
-  z-index: 39200;
+  z-index: 40100;
   display: flex;
   justify-content: center;
   pointer-events: none;
@@ -7222,6 +7222,14 @@ body[data-reduced-motion='on'] .session-add-success-viewport * {
   box-shadow: 0 12px 30px rgba(0, 0, 0, 0.3);
   z-index: 39001;
   overflow: hidden;
+}
+
+body[data-maid-spotlight='on'] .app-confirm-overlay {
+  z-index: 40200;
+}
+
+body[data-maid-spotlight='on'] .app-confirm-modal {
+  z-index: 40201;
 }
 
 .app-confirm-header {

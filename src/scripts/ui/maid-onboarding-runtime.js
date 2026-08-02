@@ -178,6 +178,7 @@ export const createMaidOnboardingRuntime = ({
   let activeFlowOverride = null;
   let setupApiReplayConfigured = false;
   let setupApiCustomBaseConfirmed = false;
+  let firstChatReplyRejected = false;
 
   const taskForFlow = flowId => taskList.find(task => trim(task?.flowId) === trim(flowId)) || null;
   const resolveFlow = flowId => (
@@ -267,11 +268,12 @@ export const createMaidOnboardingRuntime = ({
     }
     return false;
   };
-  const renderState = async (state = {}) => {
+  const renderState = async (state = {}, meta = {}) => {
     const version = ++renderVersion;
     if (state.phase === 'idle') {
       spotlightUi.hide?.();
       activeFlowOverride = null;
+      firstChatReplyRejected = false;
       try { onFlowEnd?.(); } catch {}
       const completion = pendingCompletion;
       pendingCompletion = null;
@@ -286,16 +288,28 @@ export const createMaidOnboardingRuntime = ({
     const index = Math.max(0, Math.trunc(Number(state.idx) || 0));
     const sourceStep = flow.steps?.[index] || null;
     const configState = flow.id === 'setup-api' ? readMaidApiSetupState(documentRef) : null;
-    const step = sourceStep?.configRequirement === 'credentials'
+    let step = sourceStep?.configRequirement === 'credentials'
       ? resolveMaidApiCredentialStepView(sourceStep, configState)
       : sourceStep;
+    if (
+      firstChatReplyRejected
+      && flow.id === 'first-chat'
+      && sourceStep?.target === 'chat-body'
+    ) {
+      step = {
+        ...sourceStep,
+        target: 'format-repair-banner',
+        text: '这次回复没有通过格式验收，所以没有投放成聊天气泡。请在下方提示中开启或配置格式修复 Agent，再重新检查；也可以直接重新生成。收到一条完整回复后，我会继续完成引导。',
+        hint: '使用格式修复提示中的操作继续',
+      };
+    }
     if (state.phase === 'steps') {
       try {
-        await prepareStep?.({ flow, step, index, state });
+        await prepareStep?.({ flow, step, index, state, meta });
       } catch (error) {
         logger?.warn?.('maid onboarding step preparation failed', error);
       }
-      autoAdvanceSetupApiStep(flow, sourceStep);
+      if (trim(meta?.reason) !== 'prev') autoAdvanceSetupApiStep(flow, sourceStep);
       const latest = engine?.getState?.() || {};
       if (version !== renderVersion || latest.phase !== 'steps' || latest.flowId !== state.flowId || latest.idx !== index) return;
     }
@@ -322,7 +336,7 @@ export const createMaidOnboardingRuntime = ({
       index,
       phase: state.phase,
       onNext: () => engine.next(),
-      onPrev: () => engine.prev(),
+      onPrev: () => handleBack(),
       onSkip: () => engine.skip(),
       onFallback: () => engine.runFallback(),
       onFinish: () => engine.skip(),
@@ -331,8 +345,8 @@ export const createMaidOnboardingRuntime = ({
 
   engine = createMaidGuideFlowEngine({
     getFlow: resolveFlow,
-    onStateChange: state => {
-      void renderState(state).catch(error => logger?.warn?.('maid onboarding render failed', error));
+    onStateChange: (state, meta) => {
+      void renderState(state, meta).catch(error => logger?.warn?.('maid onboarding render failed', error));
     },
     onFallback: context => {
       const result = runFallback?.(context);
@@ -341,9 +355,43 @@ export const createMaidOnboardingRuntime = ({
     },
   });
 
+  const emitGuideEvent = (event = '', payload = undefined) => {
+    const name = trim(event);
+    const state = engine.getState();
+    if (
+      name === 'chat-reply-rejected'
+      && state.phase === 'steps'
+      && state.flowId === 'first-chat'
+      && resolveFlow(state.flowId)?.steps?.[state.idx]?.target === 'chat-body'
+    ) {
+      firstChatReplyRejected = true;
+      void renderState(state, { reason: `event:${name}` })
+        .catch(error => logger?.warn?.('maid onboarding rejection recovery render failed', error));
+      return true;
+    }
+    const advanced = engine.emit(name, payload);
+    if (name === 'chat-message-received' && advanced) firstChatReplyRejected = false;
+    return advanced;
+  };
+
+  const handleBack = () => {
+    const state = engine.getState();
+    if (state.phase === 'idle') return false;
+    firstChatReplyRejected = false;
+    if (state.phase === 'steps' && state.idx > 0) return engine.prev();
+    return engine.skip();
+  };
+
+  const isGuideBackControl = event => {
+    const clicked = event?.target || null;
+    if (trim(clicked?.dataset?.maidGuideBack)) return true;
+    const button = clicked?.closest?.('button[data-maid-guide-back], [role="button"][data-maid-guide-back]');
+    return Boolean(trim(button?.dataset?.maidGuideBack));
+  };
+
   const onGuideEvent = (event) => {
     const detail = event?.detail || {};
-    engine.emit(trim(detail.event), detail.payload);
+    emitGuideEvent(detail.event, detail.payload);
   };
   const onSessionChanged = event => engine.emit('session-changed', event?.detail || {});
   const onDocumentClick = event => {
@@ -356,9 +404,16 @@ export const createMaidOnboardingRuntime = ({
         target = trim(resolveFlow(state.flowId)?.steps?.[state.idx]?.target);
       }
     }
-    if (!target) return;
-    engine.emit('target-click', { target });
-    if (target === 'agent-center-close') engine.emit('agent-center-closed', {});
+    let advanced = false;
+    if (target) {
+      advanced = engine.emit('target-click', { target });
+      if (!advanced && target === 'agent-center-close') {
+        advanced = engine.emit('agent-center-closed', {});
+      }
+    }
+    if (!advanced && isGuideBackControl(event)) {
+      Promise.resolve().then(() => handleBack());
+    }
   };
   const onDocumentInput = event => {
     const target = readTargetKey(event);
@@ -451,6 +506,7 @@ export const createMaidOnboardingRuntime = ({
 
   const startFlow = (flowId) => {
     const id = trim(flowId);
+    firstChatReplyRejected = false;
     const baseFlow = getFlow?.(id);
     const configured = id === 'setup-api' && hasConfiguredProfile?.() === true;
     const setupTask = id === 'setup-api' ? taskForFlow(id) : null;
@@ -470,6 +526,7 @@ export const createMaidOnboardingRuntime = ({
   };
 
   return {
+    back: handleBack,
     bind,
     destroy() {
       unbind();
@@ -479,7 +536,7 @@ export const createMaidOnboardingRuntime = ({
       spotlightUi.destroy?.();
       entry.destroy?.();
     },
-    emit: (event, payload) => engine.emit(event, payload),
+    emit: emitGuideEvent,
     finish: () => engine.skip(),
     getState: () => engine.getState(),
     handleCommandInputOpen,

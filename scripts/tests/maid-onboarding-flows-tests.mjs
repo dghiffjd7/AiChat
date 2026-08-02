@@ -68,7 +68,7 @@ import {
       'settings-entry',
       'settings-api-config',
       'config-profile-select',
-      'config-model-picker',
+      'config-model-section',
     ],
   );
   const profileStep = setup.steps[3];
@@ -90,6 +90,7 @@ import {
   const firstChat = getMaidOnboardingFlow('first-chat');
   assert.equal(firstChat.steps[1].canAdvance('chat-room-entered', { sessionId: 'Aria' }), true);
   assert.equal(firstChat.steps.at(-1).canAdvance('chat-message-received', { role: 'assistant' }), true);
+  assert.ok(MAID_ONBOARDING_TARGET_SELECTORS['format-repair-banner'].includes('#rejected-format-repair-banner'));
   const meetMaid = getMaidOnboardingFlow('meet-maid');
   assert.deepEqual(
     meetMaid.steps.map(step => step.target || ''),

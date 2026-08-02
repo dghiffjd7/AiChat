@@ -173,6 +173,51 @@ const createInput = () => ({
 }
 
 {
+  const hiddenInput = {
+    ...createInput(),
+    getClientRects: () => [],
+  };
+  let closed = 0;
+  const runtime = createAppBackNavigationRuntime({
+    windowRef: { history: { state: null, pushState() {} }, addEventListener() {}, removeEventListener() {} },
+    historyRef: { state: null, pushState() {} },
+    documentRef: { activeElement: hiddenInput },
+    getFocusedElement: () => hiddenInput,
+    closeTopLayer: ({ dryRun }) => {
+      if (!dryRun) closed += 1;
+      return true;
+    },
+  });
+  const result = runtime.handleBack('test');
+  assert.equal(result.action, 'close-layer');
+  assert.equal(closed, 1);
+  assert.equal(hiddenInput.blurred, false);
+  console.log('ok - hidden focused editors cannot swallow Android back from a visible layer');
+}
+
+{
+  const transparentAncestorInput = {
+    ...createInput(),
+    getClientRects: () => [{}],
+    checkVisibility: () => false,
+  };
+  let closed = 0;
+  const runtime = createAppBackNavigationRuntime({
+    windowRef: { history: { state: null, pushState() {} }, addEventListener() {}, removeEventListener() {} },
+    historyRef: { state: null, pushState() {} },
+    documentRef: { activeElement: transparentAncestorInput },
+    getFocusedElement: () => transparentAncestorInput,
+    closeTopLayer: ({ dryRun }) => {
+      if (!dryRun) closed += 1;
+      return true;
+    },
+  });
+  assert.equal(runtime.handleBack('test').action, 'close-layer');
+  assert.equal(closed, 1);
+  console.log('ok - editors inside transparent animation shells cannot swallow Android back');
+}
+
+{
   let activePage = 'moments';
   let inChatRoom = true;
   let closeDryRunCalls = 0;

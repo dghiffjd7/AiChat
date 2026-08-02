@@ -20,6 +20,9 @@ assert.doesNotMatch(panelSource, /delta\s*>\s*32\)\s*onMaybeRefresh/);
 assert.doesNotMatch(panelSource, /calculateStaggerDelay/);
 
 assert.match(feedbackSource, /createSessionAddFriendFeedbackUi/);
+assert.match(css, /\.session-add-success-viewport\s*\{[\s\S]*?z-index:\s*40100;/);
+assert.match(css, /body\[data-maid-spotlight='on'\]\s+\.app-confirm-overlay\s*\{[\s\S]*?z-index:\s*40200;/);
+assert.match(css, /body\[data-maid-spotlight='on'\]\s+\.app-confirm-modal\s*\{[\s\S]*?z-index:\s*40201;/);
 assert.match(feedbackSource, /session-add-confirm-card/);
 assert.match(feedbackSource, /确认后会自动创建专属聊天室/);
 assert.match(feedbackSource, /session-add-success-toast/);
