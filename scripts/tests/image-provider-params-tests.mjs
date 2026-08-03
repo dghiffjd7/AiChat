@@ -337,6 +337,67 @@ import {
 }
 
 {
+  const modelOptions = new Map([
+    ['gemini-3.6-flash', ['auto', 'minimal', 'low', 'medium', 'high']],
+    ['gemini-3.5-flash', ['auto', 'minimal', 'low', 'medium', 'high']],
+    ['gemini-3.1-flash-lite', ['auto', 'minimal', 'low', 'medium', 'high']],
+    ['gemini-3.1-flash-lite-image', ['auto', 'minimal', 'high']],
+    ['gemini-3.1-pro-preview', ['auto', 'low', 'medium', 'high']],
+    ['gemini-3-pro-preview', ['auto', 'low', 'high']],
+  ]);
+  modelOptions.forEach((expectedOptions, model) => {
+    const capability = getReasoningCapability({ provider: 'gemini', model });
+    assert.deepEqual(capability.effortOptions.map(option => option.value), expectedOptions, model);
+    assert.equal(capability.allowCustomEffort, true, model);
+  });
+  const capability = getReasoningCapability({ provider: 'gemini', model: 'gemini-3.5-flash' });
+  assert.equal(capability.allowCustomEffort, true);
+  assert.deepEqual(
+    buildReasoningRequestOptions({
+      provider: 'gemini',
+      model: 'gemini-3.5-flash',
+      requestReasoning: true,
+      reasoningEffort: 'minimal',
+    }),
+    { thinkingLevel: 'minimal' },
+  );
+  assert.deepEqual(
+    buildReasoningRequestOptions({
+      provider: 'gemini',
+      model: 'gemini-3.5-flash',
+      requestReasoning: true,
+      reasoningEffort: 'medium',
+    }),
+    { thinkingLevel: 'medium' },
+  );
+  assert.deepEqual(
+    buildReasoningRequestOptions({
+      provider: 'gemini',
+      model: 'gemini-3.5-flash',
+      requestReasoning: true,
+      reasoningEffort: 'ultra_low',
+    }),
+    { thinkingLevel: 'ultra_low' },
+  );
+  console.log('ok - native Gemini Flash exposes current levels and preserves custom raw values');
+}
+
+{
+  const capability = getReasoningCapability({ provider: 'openai', model: 'gpt-5-pro' });
+  assert.equal(capability.allowCustomEffort, false);
+  assert.deepEqual(
+    buildReasoningRequestOptions({
+      provider: 'openai',
+      model: 'gpt-5-pro',
+      requestReasoning: true,
+      reasoningEffort: 'ultra_low',
+    }),
+    { reasoning_effort: 'ultra_low' },
+  );
+  console.log('ok - fixed-level OpenAI models do not offer custom entry but preserve existing custom raw values');
+}
+
+{
   const capability = getReasoningCapability({
     provider: 'anthropic',
     model: 'claude-fable-5',

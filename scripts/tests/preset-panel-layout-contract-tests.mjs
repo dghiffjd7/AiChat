@@ -3,6 +3,12 @@ import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
+import {
+    buildReasoningEffortComboboxOptions,
+    filterReasoningEffortOptions,
+    resolveReasoningEffortInput,
+} from '../../src/scripts/ui/reasoning-effort-combobox-utils.js';
+
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const source = await readFile(path.join(root, 'src/scripts/ui/preset-panel.js'), 'utf8');
 const sessionConfigSource = await readFile(path.join(root, 'src/scripts/ui/session-config-panel.js'), 'utf8');
@@ -84,5 +90,26 @@ assert.doesNotMatch(source, /class="pp-diff-(?:accept|reject)"[^>]*>[✔×]<\/bu
 assert.doesNotMatch(source.match(/const diffAcceptSvg = `([\s\S]*?)`;/)?.[1] || '', /<circle|pp-diff-icon-ring/, '接受图标不应再带内框');
 assert.doesNotMatch(source.match(/const diffRejectSvg = `([\s\S]*?)`;/)?.[1] || '', /<circle|pp-diff-icon-ring/, '舍弃图标不应再带内框');
 assert.match(source, /\.pp-diff-accept, \.pp-diff-reject\s*\{[\s\S]*border:\s*0;[\s\S]*background:\s*transparent;[\s\S]*box-shadow:\s*none;/, '编辑图标按钮应保持无外框透明背景');
+
+const reasoningOptions = [
+    { value: 'auto', label: '自动' },
+    { value: 'minimal', label: '极低' },
+    { value: 'low', label: '低' },
+    { value: 'medium', label: '中' },
+    { value: 'high', label: '高' },
+];
+assert.deepEqual(filterReasoningEffortOptions(reasoningOptions, '最低').map(item => item.value), ['minimal'], '推理强度应支持中文别名筛选');
+assert.deepEqual(filterReasoningEffortOptions(reasoningOptions, 'mini').map(item => item.value), ['minimal'], '推理强度应支持 API 原始值筛选');
+assert.deepEqual(resolveReasoningEffortInput(reasoningOptions, '极低'), { type: 'existing', value: 'minimal' }, '已知中文标签应解析为 API 英文值');
+assert.deepEqual(resolveReasoningEffortInput(reasoningOptions, 'ultra_low'), { type: 'create', value: 'ultra_low' }, '合法的未知 API 英文值应允许新增');
+assert.equal(resolveReasoningEffortInput(reasoningOptions, '超低').type, 'invalid', '未知中文不得作为 API 原始值发送');
+const reasoningOptionsWithCustom = buildReasoningEffortComboboxOptions(reasoningOptions, 'ultra_low');
+assert.equal(reasoningOptionsWithCustom.at(-1)?.custom, true, '已保存的自定义值应重新出现在选项中');
+assert.match(reasoningOptionsWithCustom.at(-1)?.label || '', /自定义.*未验证/, '自定义值必须标记为未验证');
+assert.match(source, /bindReasoningEffortCombobox\s*\(/, '推理强度应绑定专用可编辑 combobox');
+assert.match(source, /setAttribute\('role', 'combobox'\)/, '推理强度输入框应声明 combobox 语义');
+assert.match(source, /新增：/, '推理强度下拉应提供自定义值新增入口');
+assert.match(source, /\.pp-reasoning-effort-combobox\s*\{/, '推理强度可编辑下拉应具有独立布局样式');
+assert.doesNotMatch(source, /API 值：\$\{option\.value\}/, '推理强度选项应直接显示英文值，不添加“API 值”前缀');
 
 console.log('ok - preset panel pages are stacked and compact on small viewports');

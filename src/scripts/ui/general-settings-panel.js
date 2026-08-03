@@ -2778,9 +2778,8 @@ export class GeneralSettingsPanel {
           savedPath = String(pick.path);
         }
         if (!savedPath && hasTauriRuntime()) {
-          const resp = await safeInvoke('save_attachment_bytes', {
-            sessionId: 'theme-export',
-            base64: encodeTextBase64(text),
+          const resp = await safeInvoke('export_attachment', {
+            dataUrl: `data:application/json;base64,${encodeTextBase64(text)}`,
             fileName,
           });
           savedPath = String(resp?.path || '').trim();

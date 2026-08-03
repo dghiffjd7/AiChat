@@ -116,6 +116,7 @@ const splitScriptSteps = script =>
   const transferSteps = splitScriptSteps(scripts['test:transfer']);
   assert.deepEqual(transferSteps, [
     'node scripts/tests/regex-transfer-tests.mjs',
+    'node scripts/tests/mobile-export-download-contract-tests.mjs',
     'node scripts/tests/zip-entry-utils-tests.mjs',
     'node scripts/tests/import-package-kind-utils-tests.mjs',
     'node scripts/tests/transfer-worldbook-utils-tests.mjs',

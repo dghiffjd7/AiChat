@@ -121,57 +121,76 @@ const normalizeBind = (bind) => {
     return null;
 };
 
-/**
- * Normalize a regex script (ST-like)
- * Back-compat: also accepts legacy {when/pattern/flags/replacement} rules and converts.
- */
-const normalizeRule = (r = {}) => {
-    // Legacy format -> ST-like
-    const hasLegacy = ('pattern' in r) || ('when' in r) || ('replacement' in r);
-    if (hasLegacy && !('findRegex' in r)) {
-        const when = (r.when === 'input' || r.when === 'output' || r.when === 'both') ? r.when : 'both';
-        const pattern = String(r.pattern || '');
-        const flags = (r.flags === undefined || r.flags === null) ? 'g' : String(r.flags);
-        const repl = String(r.replacement ?? '');
-        const placement = [];
-        if (when === 'input' || when === 'both') placement.push(regex_placement.USER_INPUT);
-        if (when === 'output' || when === 'both') placement.push(regex_placement.AI_OUTPUT);
-        const findRegex = pattern ? `/${pattern}/${flags}` : '';
-        return {
-            id: r.id || genId('re'),
-            scriptName: String(r.name || '').trim(),
-            findRegex,
-            replaceString: repl,
-            trimStrings: [],
-            placement,
-            disabled: r.enabled === false,
-            markdownOnly: false,
-            promptOnly: false,
-            runOnEdit: false,
-            substituteRegex: substitute_find_regex.NONE,
-            minDepth: null,
-            maxDepth: null,
-        };
+const normalizeRulePlacement = (rule = {}, { legacyDefaultBoth = false } = {}) => {
+    if (Array.isArray(rule.placement)) {
+        return rule.placement.map((value) => Number(value)).filter(Number.isFinite);
     }
 
-    // ST-like format
-    const placement = Array.isArray(r.placement) ? r.placement.map((x) => Number(x)).filter((n) => Number.isFinite(n)) : [];
+    const source = rule.source && typeof rule.source === 'object' ? rule.source : null;
+    if (source) {
+        const placement = [];
+        if (source.user_input) placement.push(regex_placement.USER_INPUT);
+        if (source.ai_output) placement.push(regex_placement.AI_OUTPUT);
+        if (source.slash_command) placement.push(regex_placement.SLASH_COMMAND);
+        if (source.world_info) placement.push(regex_placement.WORLD_INFO);
+        if (source.reasoning) placement.push(regex_placement.REASONING);
+        return placement;
+    }
+
+    const when = String(rule.when || '').trim().toLowerCase();
+    if (when === 'input') return [regex_placement.USER_INPUT];
+    if (when === 'output') return [regex_placement.AI_OUTPUT];
+    if (when === 'both' || legacyDefaultBoth) {
+        return [regex_placement.USER_INPUT, regex_placement.AI_OUTPUT];
+    }
+    return [];
+};
+
+/**
+ * Canonical regex-rule normalization shared by storage and every import path.
+ * Accepts ST camelCase, TavernHelper snake_case, and legacy pattern rules.
+ */
+export const normalizeRegexRule = (rule = {}) => {
+    const r = rule && typeof rule === 'object' ? rule : {};
+    const hasFindRegex = Object.prototype.hasOwnProperty.call(r, 'findRegex')
+        || Object.prototype.hasOwnProperty.call(r, 'find_regex');
+    const legacyRule = !hasFindRegex && (
+        Object.prototype.hasOwnProperty.call(r, 'pattern')
+        || Object.prototype.hasOwnProperty.call(r, 'when')
+        || Object.prototype.hasOwnProperty.call(r, 'replacement')
+    );
+    const pattern = legacyRule ? String(r.pattern || '') : '';
+    const flags = legacyRule
+        ? ((r.flags === undefined || r.flags === null) ? 'g' : String(r.flags))
+        : '';
+    const findRegex = legacyRule
+        ? (pattern ? `/${pattern}/${flags}` : '')
+        : String(r.findRegex || r.find_regex || '');
+    const destination = r.destination && typeof r.destination === 'object' ? r.destination : {};
+    const hasEnabled = typeof r.enabled === 'boolean';
+    const hasDisabled = typeof r.disabled === 'boolean';
+    const substituteRegex = Number(r.substituteRegex ?? r.substitute_regex ?? 0);
+
     return {
         id: r.id || genId('re'),
-        scriptName: String(r.scriptName || r.name || '').trim(),
-        findRegex: String(r.findRegex || ''),
-        replaceString: String(r.replaceString ?? r.replacement ?? ''),
-        trimStrings: Array.isArray(r.trimStrings) ? r.trimStrings.map((s) => String(s || '')).filter(Boolean) : [],
-        placement,
-        disabled: Boolean(r.disabled),
-        markdownOnly: Boolean(r.markdownOnly),
-        promptOnly: Boolean(r.promptOnly),
-        runOnEdit: Boolean(r.runOnEdit),
-        substituteRegex: (r.substituteRegex === 1 || r.substituteRegex === 2) ? Number(r.substituteRegex) : 0,
-        minDepth: ensureNumOrNull(r.minDepth),
-        maxDepth: ensureNumOrNull(r.maxDepth),
+        scriptName: String(r.scriptName || r.script_name || r.name || '').trim(),
+        findRegex,
+        replaceString: String(r.replaceString ?? r.replace_string ?? r.replacement ?? ''),
+        trimStrings: ensureArr(r.trimStrings || r.trim_strings).map((value) => String(value || '')).filter(Boolean),
+        placement: normalizeRulePlacement(r, { legacyDefaultBoth: legacyRule }),
+        disabled: hasDisabled ? r.disabled : (hasEnabled ? !r.enabled : false),
+        markdownOnly: Boolean(r.markdownOnly ?? r.markdown_only ?? destination.display),
+        promptOnly: Boolean(r.promptOnly ?? r.prompt_only ?? destination.prompt),
+        runOnEdit: Boolean(r.runOnEdit ?? r.run_on_edit),
+        substituteRegex: substituteRegex === 1 || substituteRegex === 2
+            ? substituteRegex
+            : substitute_find_regex.NONE,
+        minDepth: ensureNumOrNull(r.minDepth ?? r.min_depth),
+        maxDepth: ensureNumOrNull(r.maxDepth ?? r.max_depth),
     };
 };
+
+const normalizeRule = normalizeRegexRule;
 
 const normalizeLocalSet = (s = {}) => {
     const bind = normalizeBind(s.bind);

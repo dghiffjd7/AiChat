@@ -1145,7 +1145,7 @@ export class RegexPanel {
                 scriptName: el.querySelector('.re-name')?.value || '',
                 findRegex: el.querySelector('.re-find')?.value || '',
                 replaceString: el.querySelector('.re-repl')?.value ?? '',
-                trimStrings: String(el.querySelector('.re-trim')?.value || '').split('\n').map(s => s.trim()).filter(Boolean),
+                trimStrings: String(el.querySelector('.re-trim')?.value || '').split('\n').filter(s => s.length !== 0),
                 placement,
                 disabled: el.querySelector('.re-disabled')?.checked === true,
                 markdownOnly: el.querySelector('.re-md-only')?.checked === true,

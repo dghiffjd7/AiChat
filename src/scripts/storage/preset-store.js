@@ -709,7 +709,7 @@ const normalizeBindingBucket = (raw) => {
         if (!sessionId || !val || typeof val !== 'object') continue;
         next.sessionReasoning[sessionId] = {
             request_reasoning: val.request_reasoning === true,
-            reasoning_effort: normalizeReasoningEffort(val.reasoning_effort, 'high'),
+            reasoning_effort: normalizeReasoningEffort(val.reasoning_effort, 'high', { allowCustom: true }),
         };
     }
 
@@ -724,7 +724,7 @@ const normalizeBindingBucket = (raw) => {
         if (val && typeof val === 'object') {
             next.modeReasoning[mode] = {
                 request_reasoning: val.request_reasoning === true,
-                reasoning_effort: normalizeReasoningEffort(val.reasoning_effort, 'high'),
+                reasoning_effort: normalizeReasoningEffort(val.reasoning_effort, 'high', { allowCustom: true }),
             };
         }
     }
@@ -784,7 +784,7 @@ const normalizeOpenAIPreset = (preset) => {
     if (!preset || typeof preset !== 'object') return;
 
     preset.request_reasoning = normalizeBoolean(preset.request_reasoning, true);
-    preset.reasoning_effort = normalizeReasoningEffort(preset.reasoning_effort, 'high');
+    preset.reasoning_effort = normalizeReasoningEffort(preset.reasoning_effort, 'high', { allowCustom: true });
     preset.response_target_chat = normalizeResponseTarget(preset.response_target_chat, 'character');
     preset.response_target_rp = normalizeResponseTarget(preset.response_target_rp, 'user');
     preset.memory_data_position = normalizeMemoryDataPosition(preset.memory_data_position);
@@ -1616,7 +1616,7 @@ export class PresetStore {
         if (!val || typeof val !== 'object') return null;
         return {
             request_reasoning: val.request_reasoning === true,
-            reasoning_effort: normalizeReasoningEffort(val.reasoning_effort, 'high'),
+            reasoning_effort: normalizeReasoningEffort(val.reasoning_effort, 'high', { allowCustom: true }),
         };
     }
 
@@ -1630,7 +1630,7 @@ export class PresetStore {
         this.state.bindings.byType[t] = normalizeBindingBucket(this.state.bindings.byType[t]);
         this.state.bindings.byType[t].sessionReasoning[sid] = {
             request_reasoning: reasoning?.request_reasoning === true,
-            reasoning_effort: normalizeReasoningEffort(reasoning?.reasoning_effort, 'high'),
+            reasoning_effort: normalizeReasoningEffort(reasoning?.reasoning_effort, 'high', { allowCustom: true }),
         };
         await this.persist();
         return this.getBindings(t);
@@ -1680,7 +1680,7 @@ export class PresetStore {
         if (!val || typeof val !== 'object') return null;
         return {
             request_reasoning: val.request_reasoning === true,
-            reasoning_effort: normalizeReasoningEffort(val.reasoning_effort, 'high'),
+            reasoning_effort: normalizeReasoningEffort(val.reasoning_effort, 'high', { allowCustom: true }),
         };
     }
 
@@ -1693,7 +1693,7 @@ export class PresetStore {
         this.state.bindings.byType[t] = normalizeBindingBucket(this.state.bindings.byType[t]);
         this.state.bindings.byType[t].modeReasoning[m] = {
             request_reasoning: reasoning?.request_reasoning === true,
-            reasoning_effort: normalizeReasoningEffort(reasoning?.reasoning_effort, 'high'),
+            reasoning_effort: normalizeReasoningEffort(reasoning?.reasoning_effort, 'high', { allowCustom: true }),
         };
         await this.persist();
         return this.getBindings(t);

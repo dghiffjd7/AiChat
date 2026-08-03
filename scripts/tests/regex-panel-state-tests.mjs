@@ -131,6 +131,37 @@ const makePanel = () => {
   console.log('ok - regex panel batch actions update selected local sets');
 }
 
+{
+  const { panel } = makePanel();
+  const fields = new Map([
+    ['.re-name', { value: 'Preserve trim strings' }],
+    ['.re-find', { value: '/foo/g' }],
+    ['.re-repl', { value: 'bar' }],
+    ['.re-trim', { value: '  leading\ntrailing  \n' }],
+    ['.re-disabled', { checked: false }],
+    ['.re-md-only', { checked: true }],
+    ['.re-prompt-only', { checked: false }],
+    ['.re-run-on-edit', { checked: true }],
+    ['.re-substitute', { value: '0' }],
+    ['.re-min-depth', { value: '' }],
+    ['.re-max-depth', { value: '' }],
+  ]);
+  const ruleElement = {
+    dataset: { ruleId: 'trim-rule' },
+    querySelector: selector => fields.get(selector) || null,
+    querySelectorAll: selector => selector === '.re-place'
+      ? [{ checked: true, value: '2' }]
+      : [],
+  };
+  const rules = panel.collectRules({
+    querySelectorAll: selector => selector === '.regex-rule:not([data-removing="true"])'
+      ? [ruleElement]
+      : [],
+  });
+  assert.deepEqual(rules[0].trimStrings, ['  leading', 'trailing  ']);
+  console.log('ok - regex global editor preserves significant trim-string whitespace on save');
+}
+
 if (previousWindow === undefined) delete globalThis.window;
 else globalThis.window = previousWindow;
 

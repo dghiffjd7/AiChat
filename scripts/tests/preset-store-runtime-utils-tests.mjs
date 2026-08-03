@@ -70,6 +70,16 @@ import {
     const switched = await store.setActive('openai', created);
     assert.equal(Boolean(switched), true, 'valid preset id must switch');
     assert.equal(store.getActiveId('openai'), created);
+    await store.upsert('openai', {
+      id: created,
+      name: '存在的预设',
+      data: {
+        ...store.getActive('openai'),
+        request_reasoning: true,
+        reasoning_effort: 'ultra_low',
+      },
+    });
+    assert.equal(store.getActive('openai').reasoning_effort, 'ultra_low');
     console.log('ok - preset store setActive fails explicitly on unknown id and switches on valid id');
   } finally {
     globalThis.window = previousWindow;

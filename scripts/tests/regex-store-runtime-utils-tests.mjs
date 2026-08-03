@@ -173,6 +173,35 @@ test('regex store activates selected preset and preserves preset-before-world pr
       'cleaned',
     );
 
+    const snakeCaseId = await store.upsertLocalSet({
+      name: 'TavernHelper character regex',
+      enabled: true,
+      bind: { type: 'world', worldId: 'world-helper' },
+      rules: [{
+        id: 'helper-rule',
+        script_name: 'Helper character rule',
+        enabled: true,
+        find_regex: '/helper/g',
+        replace_string: 'normalized',
+        trim_strings: ['  exact  '],
+        source: { ai_output: true, reasoning: true },
+        destination: { display: true, prompt: false },
+        run_on_edit: true,
+        min_depth: 0,
+        max_depth: 2,
+      }],
+    });
+    const snakeCaseRule = store.getLocalSet(snakeCaseId).rules[0];
+    assert.equal(snakeCaseRule.scriptName, 'Helper character rule');
+    assert.equal(snakeCaseRule.findRegex, '/helper/g');
+    assert.equal(snakeCaseRule.replaceString, 'normalized');
+    assert.deepEqual(snakeCaseRule.trimStrings, ['  exact  ']);
+    assert.deepEqual(snakeCaseRule.placement, [regex_placement.AI_OUTPUT, regex_placement.REASONING]);
+    assert.equal(snakeCaseRule.markdownOnly, true);
+    assert.equal(snakeCaseRule.runOnEdit, true);
+    assert.equal(snakeCaseRule.minDepth, 0);
+    assert.equal(snakeCaseRule.maxDepth, 2);
+
     await store.syncPresetBindings({ openai: 'preset-b' });
     assert.equal(store.getLocalSet(id).enabled, true);
     await store.syncPresetBindings({ openai: 'preset-c' });

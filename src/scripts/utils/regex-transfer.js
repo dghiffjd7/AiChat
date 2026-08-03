@@ -1,5 +1,5 @@
-import { regex_placement, substitute_find_regex } from '../storage/regex-store.js';
-import { hasTauriRuntime, isAndroidDevice, pickSavePath } from './save-dialog.js';
+import { normalizeRegexRule } from '../storage/regex-store.js';
+import { hasTauriRuntime, pickSavePath } from './save-dialog.js';
 import { safeInvoke } from './tauri.js';
 
 export const genRegexId = (prefix = 're') =>
@@ -7,67 +7,7 @@ export const genRegexId = (prefix = 're') =>
 
 const asArray = (value) => Array.isArray(value) ? value : [];
 
-const ensureNumOrNull = (value) => {
-  if (value === null || value === undefined || value === '') return null;
-  const n = Number(value);
-  return Number.isFinite(n) ? n : null;
-};
-
-const normalizePlacement = (rule = {}) => {
-  if (Array.isArray(rule.placement)) {
-    return rule.placement.map((n) => Number(n)).filter(Number.isFinite);
-  }
-
-  const source = rule.source && typeof rule.source === 'object' ? rule.source : null;
-  if (source) {
-    const placement = [];
-    if (source.user_input) placement.push(regex_placement.USER_INPUT);
-    if (source.ai_output) placement.push(regex_placement.AI_OUTPUT);
-    if (source.slash_command) placement.push(regex_placement.SLASH_COMMAND);
-    if (source.world_info) placement.push(regex_placement.WORLD_INFO);
-    if (source.reasoning) placement.push(regex_placement.REASONING);
-    return placement;
-  }
-
-  const when = String(rule.when || '').trim().toLowerCase();
-  if (when === 'input') return [regex_placement.USER_INPUT];
-  if (when === 'output') return [regex_placement.AI_OUTPUT];
-  if (when === 'both') return [regex_placement.USER_INPUT, regex_placement.AI_OUTPUT];
-  return [];
-};
-
-export const normalizeRegexScript = (rule = {}) => {
-  const r = rule && typeof rule === 'object' ? rule : {};
-  const legacyPattern = !('findRegex' in r) && !('find_regex' in r) && ('pattern' in r);
-  const pattern = legacyPattern ? String(r.pattern || '') : '';
-  const flags = legacyPattern
-    ? ((r.flags === undefined || r.flags === null) ? 'g' : String(r.flags))
-    : '';
-  const findRegex = legacyPattern
-    ? (pattern ? `/${pattern}/${flags}` : '')
-    : String(r.findRegex || r.find_regex || '');
-  const destination = r.destination && typeof r.destination === 'object' ? r.destination : {};
-  const hasEnabled = typeof r.enabled === 'boolean';
-  const hasDisabled = typeof r.disabled === 'boolean';
-
-  return {
-    id: r.id || genRegexId('re'),
-    scriptName: String(r.scriptName || r.script_name || r.name || '').trim(),
-    findRegex,
-    replaceString: String(r.replaceString ?? r.replace_string ?? r.replacement ?? ''),
-    trimStrings: asArray(r.trimStrings || r.trim_strings).map((s) => String(s || '')).filter(Boolean),
-    placement: normalizePlacement(r),
-    disabled: hasDisabled ? r.disabled : (hasEnabled ? !r.enabled : false),
-    markdownOnly: Boolean(r.markdownOnly ?? r.markdown_only ?? destination.display),
-    promptOnly: Boolean(r.promptOnly ?? r.prompt_only ?? destination.prompt),
-    runOnEdit: Boolean(r.runOnEdit ?? r.run_on_edit),
-    substituteRegex: (r.substituteRegex === 1 || r.substituteRegex === 2 || r.substitute_regex === 1 || r.substitute_regex === 2)
-      ? Number(r.substituteRegex ?? r.substitute_regex)
-      : substitute_find_regex.NONE,
-    minDepth: ensureNumOrNull(r.minDepth ?? r.min_depth),
-    maxDepth: ensureNumOrNull(r.maxDepth ?? r.max_depth),
-  };
-};
+export const normalizeRegexScript = normalizeRegexRule;
 
 export const getRegexRuleSignature = (rule = {}) => {
   const r = normalizeRegexScript(rule);
@@ -169,7 +109,9 @@ export const getRegexImportSetName = (name, rules = [], fallbackName = '导入�
 const normalizeSet = (set = {}, fallbackName = '导入正则') => {
   const sourceRules = Array.isArray(set.rules)
     ? set.rules
-    : (Array.isArray(set.regexes) ? set.regexes : asArray(set.regex_scripts));
+    : (Array.isArray(set.regexes)
+      ? set.regexes
+      : (Array.isArray(set.regex_scripts) ? set.regex_scripts : asArray(set.regexScripts)));
   const rules = normalizeRuleList(sourceRules);
   if (!rules.length) return null;
   const rawName = String(set.name || set.title || '').trim();
@@ -243,7 +185,12 @@ export const parseRegexImportData = (data = {}) => {
 
   if (Array.isArray(data)) {
     const looksLikeSets = data.some((item) =>
-      item && typeof item === 'object' && (Array.isArray(item.rules) || Array.isArray(item.regexes) || Array.isArray(item.regex_scripts))
+      item && typeof item === 'object' && (
+        Array.isArray(item.rules)
+        || Array.isArray(item.regexes)
+        || Array.isArray(item.regex_scripts)
+        || Array.isArray(item.regexScripts)
+      )
     );
     if (looksLikeSets) data.forEach((item, index) => addSet(item, `导入正则 ${index + 1}`));
     else addRules(data);
@@ -252,6 +199,18 @@ export const parseRegexImportData = (data = {}) => {
 
   if (!data || typeof data !== 'object') return result;
   result.name = String(data.name || data.title || '').trim();
+
+  const hasOwn = key => Object.prototype.hasOwnProperty.call(data, key);
+  const looksLikeRule = hasOwn('findRegex')
+    || hasOwn('find_regex')
+    || (hasOwn('pattern') && (
+      hasOwn('flags')
+      || hasOwn('when')
+      || hasOwn('replacement')
+      || hasOwn('replaceString')
+      || hasOwn('replace_string')
+    ));
+  if (looksLikeRule) addRules([data]);
 
   addRules(data.rules);
   addRules(data.global?.rules);
@@ -270,7 +229,7 @@ export const parseRegexImportData = (data = {}) => {
     if (!node || depth > 10) return;
     if (typeof node === 'string') {
       const raw = node.trim();
-      if (!raw || !raw.includes('RegexBinding') || !(raw.startsWith('{') || raw.startsWith('['))) return;
+      if (!raw || !/regexbinding/i.test(raw) || !(raw.startsWith('{') || raw.startsWith('['))) return;
       try {
         visit(JSON.parse(raw), depth + 1);
       } catch {}
@@ -341,7 +300,7 @@ const browserDownloadJsonFile = (text, filename) => {
 
 export const downloadJsonFile = async (data, filename = 'regex.json') => {
   const text = JSON.stringify(data, null, 2);
-  if (!hasTauriRuntime() || isAndroidDevice()) {
+  if (!hasTauriRuntime()) {
     browserDownloadJsonFile(text, filename);
     return { saved: true, cancelled: false, path: filename };
   }

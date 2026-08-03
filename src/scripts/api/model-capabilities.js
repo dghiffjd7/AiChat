@@ -19,9 +19,30 @@ const OPENAI_GPT5_PRO_REASONING_OPTIONS = Object.freeze([
   { value: 'high', label: '高' },
 ]);
 
-const GEMINI_LEVEL_REASONING_OPTIONS = Object.freeze([
+const GEMINI_FLASH_LEVEL_REASONING_OPTIONS = Object.freeze([
+  { value: 'auto', label: '自动' },
+  { value: 'minimal', label: '极低' },
+  { value: 'low', label: '低' },
+  { value: 'medium', label: '中' },
+  { value: 'high', label: '高' },
+]);
+
+const GEMINI_PRO_LEVEL_REASONING_OPTIONS = Object.freeze([
   { value: 'auto', label: '自动' },
   { value: 'low', label: '低' },
+  { value: 'medium', label: '中' },
+  { value: 'high', label: '高' },
+]);
+
+const GEMINI_LOW_HIGH_REASONING_OPTIONS = Object.freeze([
+  { value: 'auto', label: '自动' },
+  { value: 'low', label: '低' },
+  { value: 'high', label: '高' },
+]);
+
+const GEMINI_MINIMAL_HIGH_REASONING_OPTIONS = Object.freeze([
+  { value: 'auto', label: '自动' },
+  { value: 'minimal', label: '极低' },
   { value: 'high', label: '高' },
 ]);
 
@@ -50,6 +71,7 @@ const ANTHROPIC_ADAPTIVE_REASONING_OPTIONS = Object.freeze([
 const KNOWN_REASONING_EFFORTS = new Set(
   REASONING_EFFORT_OPTIONS.map((item) => item.value),
 );
+const REASONING_EFFORT_RAW_VALUE_PATTERN = /^[a-z][a-z0-9_-]{0,63}$/;
 
 const normalizeText = (value) => String(value || '').trim().toLowerCase();
 const modelSlug = (model) => {
@@ -58,10 +80,20 @@ const modelSlug = (model) => {
   return slash >= 0 ? raw.slice(slash + 1) : raw;
 };
 
-export const normalizeReasoningEffort = (value, fallback = 'high') => {
+export const isKnownReasoningEffort = (value) => KNOWN_REASONING_EFFORTS.has(normalizeText(value));
+
+export const isValidReasoningEffortValue = (value) => (
+  REASONING_EFFORT_RAW_VALUE_PATTERN.test(normalizeText(value))
+);
+
+export const normalizeReasoningEffort = (value, fallback = 'high', { allowCustom = false } = {}) => {
   const next = normalizeText(value);
   if (KNOWN_REASONING_EFFORTS.has(next)) return next;
-  return KNOWN_REASONING_EFFORTS.has(fallback) ? fallback : 'high';
+  if (allowCustom && isValidReasoningEffortValue(next)) return next;
+  const safeFallback = normalizeText(fallback);
+  if (KNOWN_REASONING_EFFORTS.has(safeFallback)) return safeFallback;
+  if (allowCustom && isValidReasoningEffortValue(safeFallback)) return safeFallback;
+  return 'high';
 };
 
 const isOpenAIReasoningModel = (model) => {
@@ -117,6 +149,14 @@ const isAnthropicAdaptiveThinkingModel = (model) => (
 const isGeminiBudgetModel = (model) => normalizeText(model).includes('gemini-2.5');
 const isGeminiLevelModel = (model) => normalizeText(model).includes('gemini-3');
 
+const getGeminiLevelReasoningOptions = (model) => {
+  const m = normalizeText(model);
+  if (m.includes('flash-lite-image')) return GEMINI_MINIMAL_HIGH_REASONING_OPTIONS;
+  if (m.includes('gemini-3.1-pro')) return GEMINI_PRO_LEVEL_REASONING_OPTIONS;
+  if (m.includes('flash')) return GEMINI_FLASH_LEVEL_REASONING_OPTIONS;
+  return GEMINI_LOW_HIGH_REASONING_OPTIONS;
+};
+
 const isOpenRouterReasoningModel = (model) => {
   const m = normalizeText(model);
   return (
@@ -158,11 +198,20 @@ const budgetFromEffort = ({ effort, maxOutputTokens }) => {
   return Math.max(1024, Math.trunc(safeMax * 0.5));
 };
 
-const geminiLevelFromEffort = (effort) => {
-  const normalized = normalizeReasoningEffort(effort, 'high');
+const geminiLevelFromEffort = (effort, supportedOptions = []) => {
+  const normalized = normalizeReasoningEffort(effort, 'high', { allowCustom: true });
   if (normalized === 'auto') return null;
-  if (normalized === 'high' || normalized === 'xhigh') return 'high';
-  return 'low';
+  const supported = new Set(
+    (Array.isArray(supportedOptions) ? supportedOptions : [])
+      .map((option) => normalizeText(option?.value))
+      .filter(Boolean),
+  );
+  if (supported.has(normalized)) return normalized;
+  if (!isKnownReasoningEffort(normalized)) return normalized;
+  if ((normalized === 'high' || normalized === 'xhigh' || normalized === 'max') && supported.has('high')) return 'high';
+  if (normalized === 'minimal' && supported.has('low')) return 'low';
+  if (normalized === 'medium' && supported.has('low')) return 'low';
+  return supported.has('high') ? 'high' : (supported.values().next().value || 'high');
 };
 
 const deepSeekEffortFromSetting = (effort) => {
@@ -172,23 +221,23 @@ const deepSeekEffortFromSetting = (effort) => {
 };
 
 const anthropicAdaptiveEffortFromSetting = (effort) => {
-  const normalized = normalizeReasoningEffort(effort, 'high');
+  const normalized = normalizeReasoningEffort(effort, 'high', { allowCustom: true });
   if (normalized === 'auto') return null;
   if (normalized === 'minimal') return 'low';
   return normalized;
 };
 
 const openRouterReasoningEffortFromSetting = (effort) => {
-  const normalized = normalizeReasoningEffort(effort, 'high');
+  const normalized = normalizeReasoningEffort(effort, 'high', { allowCustom: true });
   if (normalized === 'auto') return null;
   if (normalized === 'max') return 'xhigh';
   return normalized;
 };
 
 const openAIReasoningEffortFromSetting = ({ model, effort }) => {
-  const normalized = normalizeReasoningEffort(effort, 'high');
+  const normalized = normalizeReasoningEffort(effort, 'high', { allowCustom: true });
   if (normalized === 'auto') return null;
-  if (isGpt5ProFamily(model)) return 'high';
+  if (isGpt5ProFamily(model)) return isKnownReasoningEffort(normalized) ? 'high' : normalized;
   if (isGpt51Family(model)) {
     if (normalized === 'minimal' || normalized === 'xhigh') return 'high';
     return normalized;
@@ -197,11 +246,12 @@ const openAIReasoningEffortFromSetting = ({ model, effort }) => {
 };
 
 const geminiOpenAIReasoningEffortFromSetting = (effort) => {
-  const normalized = normalizeReasoningEffort(effort, 'high');
+  const normalized = normalizeReasoningEffort(effort, 'high', { allowCustom: true });
   if (normalized === 'auto') return null;
   if (normalized === 'minimal') return 'minimal';
   if (normalized === 'low') return 'low';
   if (normalized === 'medium') return 'medium';
+  if (!isKnownReasoningEffort(normalized)) return normalized;
   return 'high';
 };
 
@@ -217,6 +267,7 @@ export const getReasoningCapability = ({ provider, model, baseUrl } = {}) => {
       requestControl: true,
       effortControl: true,
       effortOptions: ANTHROPIC_ADAPTIVE_REASONING_OPTIONS,
+      allowCustomEffort: true,
       samplingRestricted: alwaysOn,
       hint: alwaysOn
         ? '该 Claude 模型的自适应推理始终开启，不能关闭；勾选后会请求返回推理摘要，并用 effort 控制强度。thinking 始终开启时会自动停用 temperature/top_p/top_k。'
@@ -231,6 +282,7 @@ export const getReasoningCapability = ({ provider, model, baseUrl } = {}) => {
       requestControl: true,
       effortControl: true,
       effortOptions: REASONING_EFFORT_OPTIONS,
+      allowCustomEffort: false,
       hint: '会从最大输出中划出一部分给推理预算：极低 1024，低 10%，中 25%，高 50%，极高 95%，最低 1024；自动则不额外请求推理。',
     };
   }
@@ -242,6 +294,7 @@ export const getReasoningCapability = ({ provider, model, baseUrl } = {}) => {
       requestControl: true,
       effortControl: true,
       effortOptions: REASONING_EFFORT_OPTIONS,
+      allowCustomEffort: false,
       hint: 'Gemini 2.5 使用 thinkingBudget；极低 1024，低 10%，中 25%，高 50%，极高 95%，自动则不额外请求推理预算。',
     };
   }
@@ -252,8 +305,9 @@ export const getReasoningCapability = ({ provider, model, baseUrl } = {}) => {
       strategy: 'gemini-level',
       requestControl: true,
       effortControl: true,
-      effortOptions: GEMINI_LEVEL_REASONING_OPTIONS,
-      hint: 'Gemini 3 使用 thinkingLevel，目前只支持低 / 高两档。',
+      effortOptions: getGeminiLevelReasoningOptions(m),
+      allowCustomEffort: true,
+      hint: 'Gemini 3 使用 thinkingLevel；选项会按当前具体型号筛选。自定义值会作为未验证的 API 原始值发送。',
     };
   }
 
@@ -264,6 +318,7 @@ export const getReasoningCapability = ({ provider, model, baseUrl } = {}) => {
       requestControl: true,
       effortControl: true,
       effortOptions: DEEPSEEK_REASONING_OPTIONS,
+      allowCustomEffort: false,
       hint: 'DeepSeek 推理强度：高（默认）/ 最大；low/medium 会被映射为 high。思考模式下 temperature 等采样参数会被忽略。',
     };
   }
@@ -279,6 +334,7 @@ export const getReasoningCapability = ({ provider, model, baseUrl } = {}) => {
         : isGpt51Family(m)
           ? OPENAI_GPT51_REASONING_OPTIONS
           : REASONING_EFFORT_OPTIONS,
+      allowCustomEffort: !isGpt5ProFamily(m),
       hint: 'OpenAI 推理模型会映射到 reasoning_effort。',
     };
   }
@@ -290,6 +346,7 @@ export const getReasoningCapability = ({ provider, model, baseUrl } = {}) => {
       requestControl: true,
       effortControl: true,
       effortOptions: REASONING_EFFORT_OPTIONS,
+      allowCustomEffort: true,
       hint: 'OpenRouter 推理模型使用 reasoning.effort；OpenRouter 会按底层模型映射到对应 thinking/reasoning 参数。',
     };
   }
@@ -302,6 +359,7 @@ export const getReasoningCapability = ({ provider, model, baseUrl } = {}) => {
         requestControl: true,
         effortControl: true,
         effortOptions: DEEPSEEK_REASONING_OPTIONS,
+        allowCustomEffort: false,
         hint: 'DeepSeek 推理强度：高（默认）/ 最大；思考模式下 temperature 等采样参数会被忽略。',
       };
     }
@@ -312,6 +370,7 @@ export const getReasoningCapability = ({ provider, model, baseUrl } = {}) => {
         requestControl: true,
         effortControl: true,
         effortOptions: GEMINI_OPENAI_REASONING_OPTIONS,
+        allowCustomEffort: true,
         hint: '自定义 Gemini OpenAI 兼容端点按 reasoning_effort 发送；不要同时发送 thinkingLevel/thinkingBudget。',
       };
     }
@@ -326,6 +385,7 @@ export const getReasoningCapability = ({ provider, model, baseUrl } = {}) => {
           : isGpt51Family(m)
             ? OPENAI_GPT51_REASONING_OPTIONS
             : REASONING_EFFORT_OPTIONS,
+        allowCustomEffort: !isGpt5ProFamily(m),
         hint: '自定义 OpenAI 兼容端点当前按 reasoning_effort 发送。',
       };
     }
@@ -337,6 +397,7 @@ export const getReasoningCapability = ({ provider, model, baseUrl } = {}) => {
     requestControl: false,
     effortControl: false,
     effortOptions: [],
+    allowCustomEffort: false,
     hint: '',
   };
 };
@@ -380,7 +441,7 @@ export const buildReasoningRequestOptions = ({
       return budget ? { thinkingBudget: budget } : {};
     }
     case 'gemini-level': {
-      const thinkingLevel = geminiLevelFromEffort(reasoningEffort);
+      const thinkingLevel = geminiLevelFromEffort(reasoningEffort, capability.effortOptions);
       return thinkingLevel ? { thinkingLevel } : {};
     }
     case 'deepseek-thinking': {

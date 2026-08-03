@@ -19,6 +19,7 @@ if (!globalThis.localStorage) {
 globalThis.setTimeout = () => 0;
 
 const {
+  downloadJsonFile,
   flattenRegexImportRules,
   getRegexImportSetName,
   normalizeRegexScript,
@@ -32,6 +33,7 @@ const {
   listRegexCustomPromptPresetChoices,
   resolveImportedRegexPresetBindTarget,
 } = await import('../../src/scripts/ui/regex-preset-binding-utils.js');
+const { PresetPanel } = await import('../../src/scripts/ui/preset-panel.js');
 
 test('normalizeRegexScript accepts JS-Slash Runner tavern regex shape', () => {
   const rule = normalizeRegexScript({
@@ -65,6 +67,70 @@ test('normalizeRegexScript accepts JS-Slash Runner tavern regex shape', () => {
   assert.equal(rule.runOnEdit, true);
   assert.equal(rule.minDepth, 0);
   assert.equal(rule.maxDepth, 4);
+});
+
+test('parseRegexImportText accepts ST and TavernHelper standalone single-rule exports', () => {
+  const stRule = {
+    id: 'st-single',
+    scriptName: 'ST 单条',
+    findRegex: '/foo/g',
+    replaceString: 'bar',
+    placement: [2],
+  };
+  const tavernRule = {
+    id: 'helper-single',
+    script_name: 'Helper 单条',
+    enabled: true,
+    find_regex: '/alpha/g',
+    replace_string: 'beta',
+    source: { ai_output: true },
+    destination: { display: true, prompt: false },
+  };
+
+  const parsedSt = flattenRegexImportRules(parseRegexImportText(JSON.stringify(stRule)));
+  const parsedTavern = flattenRegexImportRules(parseRegexImportText(JSON.stringify(tavernRule)));
+  assert.equal(parsedSt.length, 1);
+  assert.equal(parsedSt[0].findRegex, '/foo/g');
+  assert.equal(parsedTavern.length, 1);
+  assert.equal(parsedTavern[0].scriptName, 'Helper 单条');
+  assert.deepEqual(parsedTavern[0].placement, [2]);
+});
+
+test('legacy regex rules without when default to user input and AI output', () => {
+  const rule = normalizeRegexScript({
+    name: '旧格式',
+    pattern: 'hello',
+    flags: 'gi',
+    replacement: 'hi',
+  });
+  assert.deepEqual(rule.placement, [1, 2]);
+});
+
+test('preset bundled regex conversion uses the shared snake-case normalizer', () => {
+  const panel = new PresetPanel({ store: {} });
+  const rules = panel.convertStRegexScriptsToRules([{
+    id: 'preset-helper',
+    script_name: '预设 Helper',
+    enabled: true,
+    find_regex: '/state/g',
+    replace_string: 'status',
+    trim_strings: ['  keep  '],
+    source: { ai_output: true, reasoning: true },
+    destination: { display: true, prompt: false },
+    run_on_edit: true,
+    min_depth: 0,
+    max_depth: 3,
+  }]);
+
+  assert.equal(rules.length, 1);
+  assert.equal(rules[0].scriptName, '预设 Helper');
+  assert.equal(rules[0].findRegex, '/state/g');
+  assert.deepEqual(rules[0].trimStrings, ['  keep  ']);
+  assert.deepEqual(rules[0].placement, [2, 6]);
+  assert.equal(rules[0].markdownOnly, true);
+  assert.equal(rules[0].runOnEdit, true);
+  assert.equal(rules[0].minDepth, 0);
+  assert.equal(rules[0].maxDepth, 3);
 });
 
 test('parseRegexImportText reads character card extension regex scripts', () => {
@@ -175,6 +241,27 @@ test('parseRegexImportText reads ST RegexBinding from preset extensions', () => 
   assert.equal(parsed.sets[0].rules[0].scriptName, '替换状态栏');
 });
 
+test('parseRegexImportText reads lowercase regexBinding embedded as JSON text', () => {
+  const parsed = parseRegexImportText(JSON.stringify({
+    metadata: JSON.stringify({
+      regexBinding: {
+        rules: [
+          {
+            script_name: '嵌入式 Helper 正则',
+            find_regex: '/embedded/g',
+            replace_string: 'parsed',
+            source: { ai_output: true },
+          },
+        ],
+      },
+    }),
+  }));
+
+  assert.equal(parsed.sets.length, 1);
+  assert.equal(parsed.sets[0].rules[0].scriptName, '嵌入式 Helper 正则');
+  assert.equal(parsed.sets[0].rules[0].findRegex, '/embedded/g');
+});
+
 test('getRegexImportSetName removes RegexBinding and Regex Scripts generic names', () => {
   const rules = [
     {
@@ -235,4 +322,36 @@ test('parseRegexImportText preserves exported bound regex sets', () => {
   assert.equal(parsed.sets[0].enabled, false);
   assert.equal(parsed.sets[0].rules[0].findRegex, '/hello/gi');
   assert.deepEqual(parsed.sets[0].rules[0].placement, [1, 2]);
+});
+
+test('downloadJsonFile publishes Android Tauri exports through the native download command', async () => {
+  const originalTauri = globalThis.__TAURI__;
+  const navigatorDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
+  const calls = [];
+  globalThis.__TAURI__ = {
+    core: {
+      invoke: async (command, payload) => {
+        calls.push([command, payload]);
+        return { path: '/storage/emulated/0/Download/regex.json' };
+      },
+    },
+  };
+  Object.defineProperty(globalThis, 'navigator', {
+    configurable: true,
+    value: { userAgent: 'Mozilla/5.0 Android 15' },
+  });
+
+  try {
+    const result = await downloadJsonFile({ rules: [] }, 'regex.json');
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0][0], 'export_attachment');
+    assert.equal(calls[0][1].fileName, 'regex.json');
+    assert.equal(calls[0][1].path, undefined);
+    assert.equal(result.path, '/storage/emulated/0/Download/regex.json');
+  } finally {
+    if (originalTauri === undefined) delete globalThis.__TAURI__;
+    else globalThis.__TAURI__ = originalTauri;
+    if (navigatorDescriptor) Object.defineProperty(globalThis, 'navigator', navigatorDescriptor);
+    else delete globalThis.navigator;
+  }
 });
