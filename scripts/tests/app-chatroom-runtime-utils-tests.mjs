@@ -8,11 +8,11 @@ import {
 {
   assert.equal(
     formatWorldIndicatorLabel({
-      globalId: 'g1',
+      globalIds: ['g1', 'g2', 'g3'],
       roleIds: ['r1', 'r2', 'r3'],
       currentIds: ['c1'],
     }),
-    '全局:g1 / 角色:r1 + r2 + ... / 会话:c1',
+    '全局:g1 + g2 + ... / 角色:r1 + r2 + ... / 会话:c1',
   );
   assert.equal(formatWorldIndicatorLabel(), '未启用');
   console.log('ok - formatWorldIndicatorLabel composes world source labels and fallback text');
@@ -62,6 +62,7 @@ import {
     addComposerAttachment: (attachment) => calls.push(['attach', attachment]),
     getBridge: () => ({
       globalWorldId: 'global-world',
+      globalWorldIds: ['global-world', 'global-extra'],
       getRoleWorldIds: () => ['role-a', 'role-b'],
       currentWorldIds: ['scene-a', 'scene-b', 'scene-c'],
     }),
@@ -119,7 +120,7 @@ import {
   assert.deepEqual(calls[8], ['attach', documentAttachment]);
 
   const label = runtime.updateWorldIndicator();
-  assert.equal(label, '全局:global-world / 角色:role-a + role-b / 会话:scene-a + scene-b + ...');
+  assert.equal(label, '全局:global-world + global-extra / 角色:role-a + role-b / 会话:scene-a + scene-b + ...');
   assert.deepEqual(calls[9], ['world', label]);
   console.log('ok - createAppChatroomRuntime handles sticker/image/music/document input and updates world indicator labels');
 }

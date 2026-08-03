@@ -350,6 +350,7 @@ import {
   createFormatRepairMomentTransactionRuntime,
 } from './chat/format-repair-moment-transaction-utils.js';
 import {
+  buildAssistantReasoningEditPatch,
   buildUserMessageEditPatch,
   hasDownstreamConversationContext,
 } from './chat/message-edit-transaction-utils.js';
@@ -1855,6 +1856,7 @@ const initApp = async () => {
         getCurrentWorldId: window.appBridge.getCurrentWorldId?.bind(window.appBridge),
         getCurrentWorldIds: window.appBridge.getCurrentWorldIds?.bind(window.appBridge),
         getGlobalWorldId: window.appBridge.getGlobalWorldId?.bind(window.appBridge),
+        getGlobalWorldIds: window.appBridge.getGlobalWorldIds?.bind(window.appBridge),
         emitWorldInfoChanged: window.appBridge.emitWorldInfoChanged?.bind(window.appBridge),
         setCurrentWorld: window.appBridge.setCurrentWorld?.bind(window.appBridge),
         replaceWorldSessionMap: window.appBridge.replaceWorldSessionMap?.bind(window.appBridge),
@@ -3192,6 +3194,7 @@ const initApp = async () => {
     getWorldIdsForSession: sessionId => window.appBridge.getWorldIdsForSession?.(sessionId),
     getWorldSessionMap: () => window.appBridge.getWorldSessionMap?.(),
     getGlobalWorldId: () => window.appBridge.getGlobalWorldId?.(),
+    getGlobalWorldIds: () => window.appBridge.getGlobalWorldIds?.(),
     assignWorldToPersona: (personaId, worldId, options) => window.appBridge.assignRoleWorldToPersona?.(personaId, worldId, options || {}),
     getRpSessionId: personaId => getRpSessionId(personaId),
     bindWorldToSession: (sessionId, worldIds, options) => window.appBridge.bindWorldToSession?.(sessionId, worldIds, options || {}),
@@ -16936,7 +16939,9 @@ Phase G（Frame 36）：循环衔接
         isGroupChat: Boolean(contact?.isGroup) || id.startsWith('group:'),
         groupMemberIds: Array.isArray(contact?.members) ? contact.members : [],
       }) || {};
-      addWorldBinding(nodeId, scopeId, resolvedWorldState.globalWorldId, 'global');
+      (Array.isArray(resolvedWorldState.globalWorldIds) ? resolvedWorldState.globalWorldIds : []).forEach(
+        worldId => addWorldBinding(nodeId, scopeId, worldId, 'global'),
+      );
       (Array.isArray(resolvedWorldState.roleWorldIds) ? resolvedWorldState.roleWorldIds : []).forEach(worldId => addWorldBinding(nodeId, scopeId, worldId, 'role'));
       (Array.isArray(resolvedWorldState.sessionWorldIds) ? resolvedWorldState.sessionWorldIds : []).forEach(worldId => addWorldBinding(nodeId, scopeId, worldId, 'session'));
       const profile = profileByContact.get(id);
@@ -23926,6 +23931,7 @@ Phase G（Frame 36）：循环衔接
     },
     closeAddFriend: () => sessionPanel.hide(),
     cancelAddFriendConfirm: () => sessionPanel.addFriendFeedbackUi?.cancelConfirm?.(),
+    closeContactDetail: () => contactDetailRuntime?.clear?.(),
     isChatRoomVisible,
     exitChatRoom,
     switchPage,
@@ -30816,6 +30822,17 @@ Phase G（Frame 36）：循环衔接
       const current = ensureRenderedCancelledPartialPersisted(message) || chatStore.findMessage(message.id, sessionId) || message;
       return runManualChatFormatGuardianCheck(current, sessionId);
     }
+    if (action === 'copy-reasoning' && message?.role === 'assistant') {
+      const text = String(
+        payload?.text
+        ?? message?.meta?.reasoningDisplay
+        ?? message?.meta?.reasoning
+        ?? '',
+      );
+      const ok = Boolean(text) && await ui.copyToClipboard(text);
+      ok ? window.toastr?.success?.('已复制思维链') : window.toastr?.warning?.('复制失败');
+      return ok;
+    }
     if (action === 'copy-text') {
       let text = '';
       if (message?.role === 'assistant' && message?.meta?.renderRich) {
@@ -30972,6 +30989,29 @@ Phase G（Frame 36）：循环衔接
         return true;
       }
       await deleteWholeMessage(message);
+      return true;
+    }
+    if (action === 'edit-assistant-reasoning' && message.role === 'assistant') {
+      const targetSessionId = String(payload?.sessionId || '').trim() || sessionId;
+      const current = chatStore.findMessage(message.id, targetSessionId) || message;
+      const source = String(current?.meta?.reasoningSource || '');
+      let loadedRawOriginal;
+      if (!source.startsWith('native')) {
+        loadedRawOriginal = await chatStore.loadRawOriginal?.(current, targetSessionId);
+      }
+      const preset = getReasoningPreset?.() || {};
+      const patch = buildAssistantReasoningEditPatch({
+        message: current,
+        text: String(payload?.text ?? ''),
+        rawOriginal: typeof loadedRawOriginal === 'string' ? loadedRawOriginal : undefined,
+        reasoningPrefix: String(preset?.prefix ?? ''),
+        reasoningSuffix: String(preset?.suffix ?? ''),
+        applyReasoningRegex,
+      });
+      const updated = chatStore.updateMessage(message.id, patch, targetSessionId);
+      if (!updated) return false;
+      if (isSessionActive(targetSessionId)) ui.updateMessage(message.id, updated);
+      refreshChatAndContacts();
       return true;
     }
     if (action === 'edit-assistant-raw' && message.role === 'assistant') {
@@ -32732,8 +32772,14 @@ Phase G（Frame 36）：循环衔接
     }
     return true;
   };
+  const closeMaidOnboardingBackLayer = () => (
+    legacyMaidGuideSpotlightActive ? activeLegacyGuideSkip?.() : maidOnboardingRuntime?.back?.()
+  );
+  const isMaidOnboardingBackLayerOpen = () => (
+    legacyMaidGuideSpotlightActive || maidOnboardingRuntime?.isActive?.() === true
+  );
   const panelBackClosers = [
-    () => legacyMaidGuideSpotlightActive ? activeLegacyGuideSkip?.() : maidOnboardingRuntime?.back?.(),
+    closeMaidOnboardingBackLayer,
     () => maidSettingsPanel.hide(),
     () => closeChatSettings(),
     () => rawReplyModal.hide(),
@@ -32762,7 +32808,7 @@ Phase G（Frame 36）：循环衔接
     () => momentSummaryPanel.hide(),
   ];
   const panelBackOpenChecks = [
-    () => legacyMaidGuideSpotlightActive || maidOnboardingRuntime?.isActive?.() === true,
+    isMaidOnboardingBackLayerOpen,
     () => isBackLayerVisible(maidSettingsPanel.getElements?.().overlay),
     () => isBackLayerVisible(chatSettingsOverlay) || isBackLayerVisible(chatSettingsModal),
     () => isBackLayerVisible(document.getElementById('raw-reply-overlay')),
@@ -32804,6 +32850,18 @@ Phase G（Frame 36）：循环衔接
       null,
       { dryRun },
     )) return true;
+    let onboardingOpen = false;
+    try {
+      onboardingOpen = Boolean(isMaidOnboardingBackLayerOpen());
+    } catch {}
+    if (onboardingOpen) {
+      if (!dryRun) {
+        try {
+          closeMaidOnboardingBackLayer();
+        } catch {}
+      }
+      return true;
+    }
     if (closeVisibleBySelector(
       '#contact-detail.is-active',
       () => contactDetailRuntime?.clear?.(),
@@ -32820,6 +32878,7 @@ Phase G（Frame 36）：循环衔接
       if (closeVisibleBySelector(selector, null, { dryRun })) return true;
     }
     for (let idx = 0; idx < panelBackOpenChecks.length; idx += 1) {
+      if (panelBackOpenChecks[idx] === isMaidOnboardingBackLayerOpen) continue;
       let open = false;
       try {
         open = Boolean(panelBackOpenChecks[idx]?.());

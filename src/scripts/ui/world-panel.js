@@ -20,7 +20,7 @@ import {
     upsertRegexLocalSet,
     waitForRegexStoreReady,
 } from './regex-store-runtime-utils.js';
-import { emitWorldInfoChanged, getCurrentWorldId, getGlobalWorldId } from './world-session-runtime-utils.js';
+import { emitWorldInfoChanged, getCurrentWorldId, getGlobalWorldId, getGlobalWorldIds } from './world-session-runtime-utils.js';
 
 const SCOPE_BADGE_STYLE = 'display:inline-flex; align-items:center; width:max-content; max-width:100%; padding:4px 8px; border:1px solid var(--app-border-default); border-radius:999px; background:var(--app-surface-subtle); color:var(--app-text-secondary); font-size:11px; line-height:1.3; cursor:help;';
 
@@ -387,8 +387,8 @@ export class WorldPanel {
                 targetType: this.scope === 'global' ? 'global' : 'session_manage',
             });
             const visibleSessionIds = (window.appBridge?.getWorldIdsForSession?.(sessionKey) || []).filter((id) => id !== BUILTIN_PHONE_FORMAT_WORLDBOOK_ID);
-            const globalId = getGlobalWorldId(window.appBridge);
-            const normalizedGlobalId = globalId === BUILTIN_PHONE_FORMAT_WORLDBOOK_ID ? '' : globalId;
+            const normalizedGlobalIds = getGlobalWorldIds(window.appBridge)
+                .filter((id) => id !== BUILTIN_PHONE_FORMAT_WORLDBOOK_ID);
             const roleBindings = this.getRoleBindings(sessionKey, { includeEmpty: true })
                 .filter((item) => item?.hasWorld || item?.isActive);
             const activeRoleBindings = roleBindings.filter((item) => item?.isActive);
@@ -477,7 +477,7 @@ export class WorldPanel {
 
             if (indicator) {
                 if (this.scope === 'global') {
-                    indicator.textContent = `全局当前：${normalizedGlobalId || '未启用'}`;
+                    indicator.textContent = `全局当前：${normalizedGlobalIds.length ? normalizedGlobalIds.join(' + ') : '未启用'}`;
                 } else if (isGroupSession) {
                     indicator.textContent = `群聊 ${contact?.name || sessionKey}：角色 ${roleSummary} / 成员附加自动合并`;
                 } else if (isRpSession) {
@@ -750,18 +750,22 @@ export class WorldPanel {
                     title: '全局世界书',
                     description: '全局世界书在聊天界面与创意写作界面共用，深度和预算配置由下面的全局设置统一控制。',
                 });
-                if (!normalizedGlobalId) {
+                if (!normalizedGlobalIds.length) {
                     appendEmpty(globalSection.body, '尚未启用全局世界书。');
                 } else {
-                    const card = await buildWorldCard(normalizedGlobalId, {
-                        subtitle: '聊天 / 创意写作共用',
-                        onToggle: async () => {
-                            await window.appBridge.setGlobalWorld('');
-                            window.toastr?.success?.('已停用全局世界书');
-                            await this.refreshList();
-                        },
-                    });
-                    globalSection.body.appendChild(card);
+                    for (const worldId of normalizedGlobalIds) {
+                        const card = await buildWorldCard(worldId, {
+                            subtitle: '聊天 / 创意写作共用',
+                            onToggle: async () => {
+                                await window.appBridge.setGlobalWorldIds(
+                                    normalizedGlobalIds.filter((id) => id !== worldId),
+                                );
+                                window.toastr?.success?.('已停用全局世界书');
+                                await this.refreshList();
+                            },
+                        });
+                        globalSection.body.appendChild(card);
+                    }
                 }
             } else if (isGroupSession) {
                 const roleSection = createSection({
@@ -981,7 +985,7 @@ export class WorldPanel {
 
             let boundIds = [];
             if (this.libraryTarget.type === 'global') {
-                boundIds = normalizedGlobalId ? [normalizedGlobalId] : [];
+                boundIds = normalizedGlobalIds;
             } else if (this.libraryTarget.type === 'role') {
                 const binding = roleBindings.find((item) => item.personaId === this.libraryTarget.personaId);
                 boundIds = binding?.worldId ? [binding.worldId] : [];
@@ -1145,11 +1149,14 @@ export class WorldPanel {
                 labelOff: scopeKey === 'global' ? '未启用' : '未绑定',
                 onClick: async () => {
                     if (scopeKey === 'global') {
+                        const next = new Set(boundSet);
                         if (boundSet.has(item.name)) {
-                            await window.appBridge.setGlobalWorld('');
+                            next.delete(item.name);
+                            await window.appBridge.setGlobalWorldIds(Array.from(next));
                             window.toastr?.success('已停用世界书');
                         } else {
-                            await window.appBridge.setGlobalWorld(item.name);
+                            next.add(item.name);
+                            await window.appBridge.setGlobalWorldIds(Array.from(next));
                             const data = await window.appBridge.getWorldInfo(item.name);
                             logger.info('Activated world', item.name, data);
                             window.toastr?.success(`已启用世界书：${item.name}`);
@@ -1254,7 +1261,8 @@ export class WorldPanel {
             await window.appBridge.saveWorldInfo(name, blank);
 
             if (target.type === 'global' || this.scope === 'global') {
-                await window.appBridge.setGlobalWorld(name);
+                const current = getGlobalWorldIds(window.appBridge);
+                await window.appBridge.setGlobalWorldIds(Array.from(new Set([...current, name])));
             } else if (target.type === 'role') {
                 await window.appBridge?.assignRoleWorldToPersona?.(String(target.personaId || '').trim(), name, { enabled: true });
             } else {

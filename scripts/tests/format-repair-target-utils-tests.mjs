@@ -955,6 +955,13 @@ const buildRejectedEnvelope = (at = 200) => ({
   assert.match(appSource, /protocol_dispatcher_revision_mismatch/);
   assert.match(appSource, /markGuardianUnavailable/);
   assert.match(appSource, /agentId:\s*AGENT_FEATURE_IDS\.replyCheck/);
+  const guardianSettingsDeepLink = appSource.slice(
+    appSource.indexOf('onOpenGuardianSettings: () =>'),
+    appSource.indexOf('onRegenerate:', appSource.indexOf('onOpenGuardianSettings: () =>')),
+  );
+  assert.match(guardianSettingsDeepLink, /agentId:\s*AGENT_FEATURE_IDS\.replyCheck/);
+  assert.match(guardianSettingsDeepLink, /configure:\s*true/);
+  assert.match(guardianSettingsDeepLink, /aboveGuide:\s*maidOnboardingRuntime\?\.isActive\?\.\(\)\s*===\s*true/);
   assert.match(appSource, /applyAgentFormatRepairRun/);
   const manualGuardianOptionsBlock = appSource.slice(
     appSource.indexOf('const buildManualChatFormatGuardianOptions'),

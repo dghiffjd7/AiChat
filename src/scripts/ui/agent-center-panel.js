@@ -3881,13 +3881,20 @@ export class AgentCenterPanel {
 
     openAgentModelSelect(featureId = '') {
         const id = trim(featureId);
-        if (!id || !this.contentElement) return;
+        if (!id || !this.contentElement || !this.getAgentCardById(id)) return false;
+        if (this.floatingAgentId !== id || this.floatingAgentFlipped !== true) {
+            const mountedCard = this.contentElement.querySelector?.('.agent-center-floating-card');
+            this.floatingAgentEntryPending = !mountedCard || this.floatingAgentId !== id;
+            this.floatingAgentId = id;
+            this.floatingAgentFlipped = true;
+            this.render();
+        }
         const button = Array.from(this.contentElement.querySelectorAll('[data-agent-feature-model-button]'))
             .find(item => item?.dataset?.agentFeatureModelButton === id);
-        if (button instanceof HTMLElement && !button.disabled) {
-            button.focus();
-            button.click();
-        }
+        if (!button || button.disabled || typeof button.click !== 'function') return false;
+        button.focus?.();
+        button.click();
+        return true;
     }
 
     async handleAgentFeatureTriggerMode(featureId = '') {

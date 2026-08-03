@@ -97,7 +97,7 @@ import { createRegexStoreRuntimeAdapter } from './regex-store-runtime-utils.js';
 import { emitMemoryRowsUpdated } from './session-memory-event-utils.js';
 import { batchCreateMemoriesWithFallback } from './session-memory-write-utils.js';
 import { hasStoredWorldInfo, waitForWorldStoreReady } from './world-store-runtime-utils.js';
-import { emitWorldInfoChanged, getGlobalWorldId, getWorldSessionMap, replaceWorldSessionMap } from './world-session-runtime-utils.js';
+import { emitWorldInfoChanged, getGlobalWorldId, getGlobalWorldIds, getWorldSessionMap, replaceWorldSessionMap } from './world-session-runtime-utils.js';
 import { normalizeWorldIdList } from './world-id-utils.js';
 import { buildZipEntryMap, readZipEntryJson } from './zip-entry-utils.js';
 
@@ -105,6 +105,7 @@ const CUSTOM_BUNDLE_FORMAT = 'chatapp.custom-bundle.v1';
 const CUSTOM_BUNDLE_VERSION = 1;
 const CUSTOM_BUNDLE_EXTENSION = 'zip';
 const WORLDINFO_STORE_KEY = 'worldinfo_store';
+const WORLD_GLOBAL_IDS_SHARED_KEY = 'global_world_ids_shared_v1';
 const WORLD_GLOBAL_ID_SHARED_KEY = 'global_world_id_shared_v1';
 const WORLD_GLOBAL_SETTINGS_SHARED_KEY = 'world_global_settings_shared_v1';
 const PRESET_TYPES = ['sysprompt', 'context', 'instruct', 'openai', 'reasoning'];
@@ -860,6 +861,7 @@ export class CustomBundleExporter {
         momentSummaryStore: this.momentSummaryStore,
         worldSessionMap: getWorldSessionMap(this.appBridge),
         globalWorldId: getGlobalWorldId(this.appBridge),
+        globalWorldIds: getGlobalWorldIds(this.appBridge),
         worldGlobalSettings:
           this.appBridge?.worldGlobalSettings && typeof this.appBridge.worldGlobalSettings === 'object'
             ? this.appBridge.worldGlobalSettings
@@ -884,15 +886,28 @@ export class CustomBundleExporter {
         momentSummaryStore.ready,
       ]);
       const worldSessionMap = (await this.loadScopedKv('world_session_map_v1', normalized)) || {};
-      let globalWorldId = '';
+      let globalWorldIds = [];
+      let globalWorldIdsLoaded = false;
       try {
-        const shared = await safeInvoke('load_kv', { name: WORLD_GLOBAL_ID_SHARED_KEY });
-        if (typeof shared === 'string') globalWorldId = shared.trim();
+        const shared = await safeInvoke('load_kv', { name: WORLD_GLOBAL_IDS_SHARED_KEY });
+        if (Array.isArray(shared) || typeof shared === 'string') {
+          globalWorldIds = normalizeWorldIdList(shared);
+          globalWorldIdsLoaded = true;
+        }
       } catch {}
-      if (!globalWorldId) {
+      if (!globalWorldIdsLoaded) {
+        try {
+          const shared = await safeInvoke('load_kv', { name: WORLD_GLOBAL_ID_SHARED_KEY });
+          if (typeof shared === 'string') {
+            globalWorldIds = normalizeWorldIdList(shared);
+            globalWorldIdsLoaded = true;
+          }
+        } catch {}
+      }
+      if (!globalWorldIdsLoaded) {
         try {
           const legacy = await safeInvoke('load_kv', { name: makeScopedKey('global_world_id_v1', normalized) });
-          if (typeof legacy === 'string') globalWorldId = legacy.trim();
+          if (typeof legacy === 'string') globalWorldIds = normalizeWorldIdList(legacy);
         } catch {}
       }
       let worldGlobalSettings = {};
@@ -918,7 +933,8 @@ export class CustomBundleExporter {
         momentsStore,
         momentSummaryStore,
         worldSessionMap: worldSessionMap && typeof worldSessionMap === 'object' ? worldSessionMap : {},
-        globalWorldId: String(globalWorldId || '').trim(),
+        globalWorldId: globalWorldIds[0] || '',
+        globalWorldIds,
         worldGlobalSettings: worldGlobalSettings && typeof worldGlobalSettings === 'object' ? worldGlobalSettings : {},
       };
     })();
@@ -2221,6 +2237,7 @@ export class CustomBundleExporter {
       world: {
         worldIds,
         globalWorldId: String(runtime?.globalWorldId || '').trim(),
+        globalWorldIds: normalizeWorldIdList(runtime?.globalWorldIds),
         globalSettings: cloneJson(runtime?.worldGlobalSettings || {}, {}),
       },
       regex: this.collectRegexBundle(sid, exportWorldIds),

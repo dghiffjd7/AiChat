@@ -1,4 +1,4 @@
-import { getCurrentWorldIds, getGlobalWorldId } from './world-session-runtime-utils.js';
+import { getCurrentWorldIds, getGlobalWorldIds } from './world-session-runtime-utils.js';
 
 const formatWorldIdsLabel = (ids) => {
   if (!Array.isArray(ids) || !ids.length) return '';
@@ -8,13 +8,18 @@ const formatWorldIdsLabel = (ids) => {
 
 export const formatWorldIndicatorLabel = ({
   globalId = '',
+  globalIds = [],
   roleIds = [],
   currentIds = [],
 } = {}) => {
   const parts = [];
+  const globalLabel = formatWorldIdsLabel(Array.from(new Set([
+    ...(Array.isArray(globalIds) ? globalIds : []),
+    globalId,
+  ].map(item => String(item || '').trim()).filter(Boolean))));
   const roleLabel = formatWorldIdsLabel(roleIds);
   const currentLabel = formatWorldIdsLabel(currentIds);
-  if (globalId) parts.push(`全局:${globalId}`);
+  if (globalLabel) parts.push(`全局:${globalLabel}`);
   if (roleLabel) parts.push(`角色:${roleLabel}`);
   if (currentLabel) parts.push(`会话:${currentLabel}`);
   return parts.length ? parts.join(' / ') : '未启用';
@@ -142,11 +147,11 @@ export function createAppChatroomRuntime({
 
     updateWorldIndicator() {
       const bridge = getBridge?.();
-      const globalId = getGlobalWorldId(bridge);
+      const globalIds = getGlobalWorldIds(bridge);
       const roleIds = bridge?.getRoleWorldIds?.(getCurrentSessionId?.()) || [];
       const currentIds = getCurrentWorldIds(bridge);
       const label = formatWorldIndicatorLabel({
-        globalId,
+        globalIds,
         roleIds,
         currentIds,
       });

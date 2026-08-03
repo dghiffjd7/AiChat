@@ -1423,10 +1423,70 @@ body[data-ui-mode='rp'] .rp-swipe-indicator {
 }
 
 .QQ_chat_msgdiv .chat-reasoning-summary {
+  position: relative;
+  min-height: 28px;
+  padding-right: 58px;
   cursor: pointer;
   font-size: 12px;
   color: var(--app-text-muted);
   font-weight: 600;
+}
+
+.QQ_chat_msgdiv .chat-reasoning-label {
+  line-height: 28px;
+}
+
+.chat-reasoning-actions {
+  position: absolute;
+  top: 50%;
+  right: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 1px;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-50%);
+  transition: opacity 0.16s ease;
+}
+
+.chat-reasoning-action {
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  color: var(--app-text-muted);
+  cursor: pointer;
+}
+
+.chat-reasoning-action:hover,
+.chat-reasoning-action:focus-visible {
+  color: var(--app-accent-primary);
+  background: color-mix(in srgb, var(--app-accent-primary) 9%, transparent);
+}
+
+.chat-reasoning-action svg {
+  display: block;
+  pointer-events: none;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .chat-reasoning:hover .chat-reasoning-actions,
+  .chat-reasoning:focus-within .chat-reasoning-actions {
+    opacity: 1;
+    pointer-events: auto;
+  }
+}
+
+@media (hover: none), (pointer: coarse) {
+  .chat-reasoning-actions {
+    opacity: 1;
+    pointer-events: auto;
+  }
 }
 
 .QQ_chat_msgdiv .chat-reasoning-summary::marker,
@@ -1440,6 +1500,46 @@ body[data-ui-mode='rp'] .rp-swipe-indicator {
   font-size: 12px;
   line-height: 1.5;
   color: var(--app-text-secondary);
+}
+
+.QQ_chat_msgdiv .chat-reasoning-content.is-editing {
+  display: grid;
+  gap: 8px;
+}
+
+.chat-reasoning-edit-textarea {
+  width: 100%;
+  min-height: 132px;
+  resize: vertical;
+  padding: 9px 10px;
+  border: 1px solid var(--app-border-default);
+  border-radius: 9px;
+  background: var(--app-surface-input, var(--app-surface-card));
+  color: var(--app-text-primary);
+  font: inherit;
+  line-height: 1.55;
+}
+
+.chat-reasoning-edit-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 7px;
+}
+
+.chat-reasoning-edit-actions button {
+  min-height: 30px;
+  padding: 5px 11px;
+  border: 1px solid var(--app-border-default);
+  border-radius: 8px;
+  background: var(--app-surface-card);
+  color: var(--app-text-secondary);
+  cursor: pointer;
+}
+
+.chat-reasoning-edit-actions .chat-reasoning-edit-save {
+  border-color: transparent;
+  background: var(--app-accent-primary);
+  color: var(--app-text-inverse);
 }
 
 .QQ_chat_msgdiv .chat-message-content {

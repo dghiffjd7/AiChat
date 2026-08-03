@@ -6,6 +6,7 @@ import {
   getCurrentWorldId,
   getCurrentWorldIds,
   getGlobalWorldId,
+  getGlobalWorldIds,
   getWorldIdsForSession,
   getWorldSessionMap,
   persistWorldSessionMap,
@@ -58,11 +59,13 @@ import {
     getCurrentWorldId: () => 'w1',
     getCurrentWorldIds: () => ['w1', 'w2'],
     getGlobalWorldId: () => 'global',
+    getGlobalWorldIds: () => ['global', 'global-extra'],
     getWorldIdsForSession: sessionId => (sessionId === 's1' ? ['w3'] : []),
   };
   assert.equal(getCurrentWorldId(bridge), 'w1');
   assert.deepEqual(getCurrentWorldIds(bridge), ['w1', 'w2']);
   assert.equal(getGlobalWorldId(bridge), 'global');
+  assert.deepEqual(getGlobalWorldIds(bridge), ['global', 'global-extra']);
   assert.deepEqual(getWorldIdsForSession(bridge, 's1'), ['w3']);
   console.log('ok - world session runtime helper prefers explicit world state getters');
 }
@@ -72,11 +75,13 @@ import {
     currentWorldId: 'legacy-current',
     currentWorldIds: ['legacy-current', 'legacy-extra'],
     globalWorldId: 'legacy-global',
+    globalWorldIds: ['legacy-global', 'legacy-global-extra'],
     worldSessionMap: { s1: ['legacy-session'] },
   };
   assert.equal(getCurrentWorldId(bridge), 'legacy-current');
   assert.deepEqual(getCurrentWorldIds(bridge), ['legacy-current', 'legacy-extra']);
   assert.equal(getGlobalWorldId(bridge), 'legacy-global');
+  assert.deepEqual(getGlobalWorldIds(bridge), ['legacy-global', 'legacy-global-extra']);
   assert.deepEqual(getWorldIdsForSession(bridge, 's1'), ['legacy-session']);
   console.log('ok - world session runtime helper keeps legacy world state fallback');
 }

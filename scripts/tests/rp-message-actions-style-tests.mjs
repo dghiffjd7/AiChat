@@ -14,6 +14,9 @@ assert.match(css, /\.rp-message-actions\s*\{[^}]*opacity:\s*0/s);
 assert.match(css, /\.rp-message-actions\.is-user\s*\{[^}]*width:\s*auto/s);
 assert.match(css, /@media\s*\(hover:\s*hover\)\s*and\s*\(pointer:\s*fine\)[\s\S]*\.has-rp-message-actions:hover\s+\.rp-message-actions[\s\S]*opacity:\s*1/);
 assert.match(css, /\.has-rp-message-actions\.is-rp-actions-visible\s+\.rp-message-actions\s*\{[^}]*opacity:\s*1/s);
+assert.match(css, /\.chat-reasoning-actions\s*\{[^}]*opacity:\s*0[^}]*pointer-events:\s*none/s);
+assert.match(css, /@media\s*\(hover:\s*hover\)\s*and\s*\(pointer:\s*fine\)[\s\S]*\.chat-reasoning:hover\s+\.chat-reasoning-actions[\s\S]*opacity:\s*1/s);
+assert.match(css, /@media\s*\(hover:\s*none\),\s*\(pointer:\s*coarse\)[\s\S]*\.chat-reasoning-actions[\s\S]*opacity:\s*1/s);
 assert.match(creativeCss, /body:not\(\[data-theme-mode='dark'\]\)\[data-ui-mode='rp'\][\s\S]*\.QQ_chat_charmsg\.has-rp-message-chrome[\s\S]*background:\s*var\(--app-surface-card\)/s);
 assert.doesNotMatch(creativeCss, /body\[data-theme-mode='dark'\]\[data-ui-mode='rp'\][\s\S]*\.QQ_chat_charmsg\.has-rp-message-chrome[\s\S]*background:/s);
 assert.match(creativeCss, /body\[data-ui-mode='rp'\]\s+#chat-room\s+\.chat-back-btn\s*\{[^}]*display:\s*none/s);
@@ -90,6 +93,26 @@ assert.match(creativeCss, /\.is-rp-greeting-message\s+\.QQ_chat_msgdiv\s*\{[^}]*
 assert.match(creativeCss, /\.rp-greeting-editor-overlay:not\(\.is-closing\)\s+\.rp-greeting-editor\s*\{[^}]*animation:\s*rp-greeting-editor-in/s);
 assert.match(creativeCss, /@media\s*\(prefers-reduced-motion:\s*reduce\)[\s\S]*\.rp-greeting-sheet\.is-opening[\s\S]*animation:\s*none\s*!important/s);
 assert.match(creativeCss, /body\[data-reduced-motion='on'\][\s\S]*\.rp-greeting-sheet\.is-opening[\s\S]*animation:\s*none\s*!important/s);
+assert.match(
+  creativeCss,
+  /@media\s*\(max-width:\s*600px\)[\s\S]*body\[data-ui-mode='rp'\]\s+\.QQ_chat_charmsg\.has-rp-message-chrome\s*\{[^}]*width:\s*calc\(100%\s*-\s*16px\)/s,
+);
+assert.match(
+  creativeCss,
+  /@media\s*\(max-width:\s*600px\)[\s\S]*body\[data-ui-mode='rp'\]\s+\.QQ_chat_charmsg\.is-rp-greeting-message\s*\{[^}]*width:\s*100%/s,
+);
+assert.doesNotMatch(
+  creativeCss,
+  /@media\s*\(max-width:\s*600px\)[\s\S]*body\[data-ui-mode='rp'\]\s+\.QQ_chat_charmsg\.is-rp-greeting-message\s*\{[^}]*width:\s*calc\(100%\s*-\s*20px\)/s,
+);
+assert.match(
+  creativeCss,
+  /@media\s*\(max-width:\s*600px\)[\s\S]*\.QQ_chat_charmsg\.has-rp-message-chrome\s+\.chat-message-stack\s*\{[^}]*display:\s*contents\s*!important/s,
+);
+assert.match(
+  creativeCss,
+  /@media\s*\(max-width:\s*600px\)[\s\S]*\.QQ_chat_charmsg\.has-rp-message-chrome\s+\.chat-bubble-stack\s*\{[^}]*grid-column:\s*1\s*\/\s*-1[^}]*width:\s*100%/s,
+);
 assert.match(appSource, /class="rp-greeting-editor-macros"[\s\S]*data-rp-greeting-macro="\{\{user\}\}"[\s\S]*data-rp-greeting-macro="\{\{char\}\}"[\s\S]*data-rp-greeting-macro="\{\{time\}\}"/s);
 assert.match(appSource, /overlay\.classList\.add\('is-closing'\)[\s\S]*prefers-reduced-motion:\s*reduce/s);
 assert.match(appSource, /className = 'rp-greeting-sheet-item-index'[\s\S]*className = 'rp-greeting-sheet-item-preview'[\s\S]*className = 'rp-greeting-sheet-item-radio'/s);

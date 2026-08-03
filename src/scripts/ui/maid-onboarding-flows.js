@@ -80,10 +80,14 @@ export const MAID_ONBOARDING_TARGET_SELECTORS = Object.freeze({
     '[data-maid-guide-target="add-friend-confirm"]',
     '.session-add-confirm-action.is-confirm',
   ],
-  'chat-list-entry': [
-    '[data-maid-guide-target="chat-list-entry"]',
-    '#chat-list .chat-list-item',
+  'contact-list-entry': [
+    '[data-maid-guide-target="contact-list-entry"]',
     '.contact-item',
+  ],
+  'contact-detail-message': [
+    '[data-maid-guide-target="contact-detail-message"]',
+    '[data-action="contact-detail-message"]',
+    '#contact-detail [data-action="contact-detail-message"]',
   ],
   'chat-input': [
     '[data-maid-guide-target="chat-input"]',
@@ -288,14 +292,21 @@ export const MAID_ONBOARDING_FLOWS = Object.freeze([
         primaryLabel: '开始聊天',
       },
       {
-        target: 'chat-list-entry',
+        target: 'contact-list-entry',
         placement: 'right',
+        action: 'click',
+        text: '先打开「联系人」，选择任意一位联系人或群聊。没有聊过的人也会显示在这里。',
+        hint: '选择一位联系人',
+        canAdvance: clicked('contact-list-entry'),
+      },
+      {
+        target: 'contact-detail-message',
+        placement: 'top',
         action: 'wait-event',
-        text: '从联系人列表进入任意一个私聊或群聊。',
-        hint: '选择一间聊天室',
+        text: '在联系人详情里点击「发消息」；群聊则点击「进入群聊」。',
+        hint: '点击发消息进入聊天室',
         canAdvance: (event, payload) => (
-          (event === 'chat-room-entered' && Boolean(payload?.sessionId)) ||
-          (event === 'session-changed' && Boolean(payload?.id))
+          event === 'chat-room-entered' && Boolean(payload?.sessionId)
         ),
       },
       {

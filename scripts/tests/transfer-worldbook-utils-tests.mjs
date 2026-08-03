@@ -12,8 +12,9 @@ const {
   const worldIds = buildTransferWorldIdList({
     sessionWorldIds: [' world:main ', 'world:main', '', BUILTIN_PHONE_FORMAT_WORLDBOOK_ID],
     globalWorldId: ' world:global ',
+    globalWorldIds: [' world:global ', 'world:global-extra'],
   });
-  assert.deepEqual(worldIds, ['world:main', 'world:global']);
+  assert.deepEqual(worldIds, ['world:main', 'world:global', 'world:global-extra']);
   console.log('ok - buildTransferWorldIdList normalizes deduplicates and skips builtin worldbooks');
 }
 
@@ -37,6 +38,7 @@ const {
     sessionId: ' session:a ',
     appBridge: {
       globalWorldId: ' world:global ',
+      globalWorldIds: [' world:global ', 'world:global-extra'],
       getWorldIdsForSession(sessionId) {
         assert.equal(sessionId, 'session:a');
         return [' world:main ', 'world:main', BUILTIN_PHONE_FORMAT_WORLDBOOK_ID, 'world:fail'];
@@ -44,6 +46,7 @@ const {
       async getWorldInfo(id) {
         calls.push(id);
         if (id === 'world:fail') throw new Error('load failed');
+        if (id === 'world:global-extra') return { id, name: 'Global Extra', entries: [] };
         return sourceWorldbooks[id];
       },
     },
@@ -51,11 +54,12 @@ const {
     onError: (err, id) => errors.push({ id, message: err.message }),
   });
 
-  assert.deepEqual(bundle.worldIds, ['world:main', 'world:fail', 'world:global']);
+  assert.deepEqual(bundle.worldIds, ['world:main', 'world:fail', 'world:global', 'world:global-extra']);
   assert.equal(bundle.globalWorldId, 'world:global');
-  assert.deepEqual(calls, ['world:main', 'world:fail', 'world:global']);
+  assert.deepEqual(bundle.globalWorldIds, ['world:global', 'world:global-extra']);
+  assert.deepEqual(calls, ['world:main', 'world:fail', 'world:global', 'world:global-extra']);
   assert.deepEqual(errors, [{ id: 'world:fail', message: 'load failed' }]);
-  assert.deepEqual(Object.keys(bundle.worldbooks), ['world:main', 'world:global']);
+  assert.deepEqual(Object.keys(bundle.worldbooks), ['world:main', 'world:global', 'world:global-extra']);
   assert.equal(bundle.worldbooks['world:main'].name, 'world:main');
   bundle.worldbooks['world:main'].entries[0].key = 'changed';
   assert.equal(sourceWorldbooks['world:main'].entries[0].key, 'main');
@@ -80,6 +84,7 @@ const {
   assert.deepEqual(bundle.worldIds, [' raw ', 'raw']);
   assert.deepEqual(calls, [' raw ', 'raw']);
   assert.equal(bundle.globalWorldId, '');
+  assert.deepEqual(bundle.globalWorldIds, []);
   assert.deepEqual(Object.keys(bundle.worldbooks), [' raw ', 'raw']);
   console.log('ok - collectTransferWorldbookBundle preserves card export raw world id compatibility');
 }

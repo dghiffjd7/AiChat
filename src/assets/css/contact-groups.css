@@ -184,6 +184,16 @@
     flex-shrink: 0;
 }
 
+/* 拼图图片由各自 grid area 决定尺寸，避免百分比按整个联系人头像计算而互相重叠；
+   通用 .contact-item img 的圆角会把小格切成圆球，小格保持方形由容器统一裁切。 */
+.contact-avatar.group-avatar-collage .group-avatar-collage-cell {
+    width: auto;
+    height: auto;
+    align-self: stretch;
+    justify-self: stretch;
+    border-radius: 0;
+}
+
 .contact-info {
     flex: 1;
     min-width: 0;

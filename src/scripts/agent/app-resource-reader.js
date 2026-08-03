@@ -286,6 +286,7 @@ const createWorldbookReader = deps => async (args = {}) => {
   ids.push(...asArray(await callMethod(bridge, 'getWorldIdsForSession', sid)).map(normalizeWorldId));
   ids.push(...asArray(await callMethod(bridge, 'getCurrentWorldIds', sid)).map(normalizeWorldId));
   ids.push(normalizeWorldId(await callMethod(bridge, 'getCurrentWorldId', sid)));
+  ids.push(...asArray(await callMethod(bridge, 'getGlobalWorldIds')).map(normalizeWorldId));
   ids.push(normalizeWorldId(await callMethod(bridge, 'getGlobalWorldId')));
   const list = asArray(await callMethod(bridge, 'listWorlds')).map(normalizeWorldId);
   const targetWorldId = toText(args.worldbookId || args.name || args.id);
@@ -323,6 +324,7 @@ const createWorldbookReader = deps => async (args = {}) => {
     sessionLookup: sanitizeAppResourceValue(session),
     currentWorldIds: Array.from(new Set(ids.filter(Boolean))),
     globalWorldId: normalizeWorldId(await callMethod(bridge, 'getGlobalWorldId')),
+    globalWorldIds: normalizeStringList(await callMethod(bridge, 'getGlobalWorldIds')),
     globalSettings: sanitizeAppResourceValue(await callMethod(bridge, 'getWorldGlobalSettings') || {}),
     aiGeneration: readWorldAiGenerationSettings(),
     count: uniqueIds.length,
@@ -499,6 +501,7 @@ const createSessionReader = deps => async (args = {}) => {
         roleWorldIds: normalizeStringList(resolved?.roleWorldIds),
         resolvedWorldIds: normalizeStringList(resolved?.worldIds),
         globalWorldId: toText(resolved?.globalWorldId),
+        globalWorldIds: normalizeStringList(resolved?.globalWorldIds),
       };
     }
     sessions.push(sanitizeAppResourceValue(projected));

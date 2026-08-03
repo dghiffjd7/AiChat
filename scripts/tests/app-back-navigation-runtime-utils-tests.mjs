@@ -173,6 +173,61 @@ const createInput = () => ({
 }
 
 {
+  const listeners = new Map();
+  let now = 50000;
+  let closeCalls = 0;
+  const historyRef = {
+    state: null,
+    pushState(state) {
+      this.state = state;
+    },
+  };
+  const runtime = createAppBackNavigationRuntime({
+    windowRef: {
+      history: historyRef,
+      addEventListener(type, handler) {
+        listeners.set(type, handler);
+      },
+      removeEventListener(type) {
+        listeners.delete(type);
+      },
+    },
+    historyRef,
+    documentRef: { activeElement: { tagName: 'div' }, visibilityState: 'visible' },
+    getActivePage: () => 'chat',
+    isChatRoomVisible: () => false,
+    closeTopLayer: ({ dryRun } = {}) => {
+      if (!dryRun) closeCalls += 1;
+      return true;
+    },
+    nowFn: () => now,
+  });
+  runtime.start();
+  const popstateBack = listeners.get('popstate');
+  const customBack = listeners.get('chatapp-android-back');
+  assert.equal(typeof popstateBack, 'function');
+  assert.equal(typeof customBack, 'function');
+
+  const first = popstateBack();
+  assert.equal(first.action, 'close-layer');
+  assert.equal(closeCalls, 1);
+  now += 182;
+  let prevented = false;
+  const duplicate = customBack({ preventDefault: () => { prevented = true; } });
+  assert.equal(duplicate.action, 'dedupe-back-event');
+  assert.equal(duplicate.handled, true);
+  assert.equal(prevented, true);
+  assert.equal(closeCalls, 1);
+
+  now += 400;
+  const later = customBack({ preventDefault() {} });
+  assert.equal(later.action, 'close-layer');
+  assert.equal(closeCalls, 2);
+  runtime.stop();
+  console.log('ok - one Android hardware back is deduped across popstate and native custom dispatch');
+}
+
+{
   const hiddenInput = {
     ...createInput(),
     getClientRects: () => [],

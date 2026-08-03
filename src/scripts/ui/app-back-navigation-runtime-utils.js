@@ -1,6 +1,7 @@
 const BACK_SENTINEL_KEY = '__chatappBackSentinel';
 const BACK_DIAGNOSTICS_STORAGE_KEY = 'chatapp_android_back_diagnostics_v1';
 const MAX_BACK_DIAGNOSTIC_EVENTS = 40;
+const PHYSICAL_BACK_SOURCES = new Set(['popstate', 'native-back-button', 'custom-event']);
 
 const isEditableElement = (element) => {
   if (!element || typeof element !== 'object') return false;
@@ -111,6 +112,7 @@ export const createAppBackNavigationRuntime = ({
   setTimeoutFn = (fn, ms) => setTimeout(fn, ms),
   clearTimeoutFn = timer => clearTimeout(timer),
   doublePressMs = 1400,
+  crossSourceDedupMs = 350,
   registerNativeBackButton = null,
   exitNativeApp = null,
   storageRef = null,
@@ -123,6 +125,7 @@ export const createAppBackNavigationRuntime = ({
   let lastRootBackAt = 0;
   let rootExitHintTimer = null;
   let nativeBackUnlisten = null;
+  let lastBackDispatch = null;
   let nativeBackStatus = typeof registerNativeBackButton === 'function' ? 'pending' : 'missing';
   let nativeBackStatusDetail = '';
   const storedDiagnostics = readStoredBackDiagnostics(diagnosticStorageRef, diagnosticStorageKey);
@@ -342,6 +345,40 @@ export const createAppBackNavigationRuntime = ({
     return result;
   };
 
+  const handleBackDispatch = (source = 'history') => {
+    const now = Number(nowFn?.() || Date.now());
+    const previous = lastBackDispatch;
+    const duplicate = PHYSICAL_BACK_SOURCES.has(source)
+      && PHYSICAL_BACK_SOURCES.has(previous?.source)
+      && previous.source !== source
+      && previous.handled === true
+      && now >= previous.at
+      && now - previous.at <= Math.max(0, Number(crossSourceDedupMs) || 0);
+    if (duplicate) {
+      const result = {
+        handled: true,
+        action: 'dedupe-back-event',
+        source,
+        duplicateOf: previous.source,
+      };
+      recordBackDiagnosticEvent({
+        phase: 'handle-back',
+        ...result,
+      });
+      return result;
+    }
+    const result = handleBack(source);
+    if (PHYSICAL_BACK_SOURCES.has(source)) {
+      lastBackDispatch = {
+        source,
+        at: now,
+        handled: result.handled === true,
+        action: result.action,
+      };
+    }
+    return result;
+  };
+
   const clearRootExitHintTimer = () => {
     if (!rootExitHintTimer) return;
     try {
@@ -388,7 +425,7 @@ export const createAppBackNavigationRuntime = ({
       source: 'native-back-button',
       payload: event?.payload || null,
     });
-    const result = handleBack('native-back-button');
+    const result = handleBackDispatch('native-back-button');
     if (result.handled) {
       clearRootExitHintTimer();
       ensureSentinel();
@@ -411,7 +448,7 @@ export const createAppBackNavigationRuntime = ({
   };
 
   const handlePopState = () => {
-    const result = handleBack('popstate');
+    const result = handleBackDispatch('popstate');
     if (result.handled) {
       if (result.action === 'show-root-exit-hint') rearmSentinelAfterExitWindow();
       else {
@@ -464,7 +501,7 @@ export const createAppBackNavigationRuntime = ({
   };
 
   const handleCustomBackEvent = (event) => {
-    const result = handleBack('custom-event');
+    const result = handleBackDispatch('custom-event');
     if (result.handled) {
       try {
         event?.preventDefault?.();
@@ -491,6 +528,7 @@ export const createAppBackNavigationRuntime = ({
   const start = () => {
     if (started || !windowRef) return false;
     started = true;
+    lastBackDispatch = null;
     ensureSentinel();
     windowRef.addEventListener?.('popstate', handlePopState);
     windowRef.addEventListener?.('chatapp-android-back', handleCustomBackEvent);
@@ -511,6 +549,7 @@ export const createAppBackNavigationRuntime = ({
       nativeBackUnlisten?.();
     } catch {}
     nativeBackUnlisten = null;
+    lastBackDispatch = null;
     windowRef.removeEventListener?.('popstate', handlePopState);
     windowRef.removeEventListener?.('chatapp-android-back', handleCustomBackEvent);
     recordBackDiagnosticEvent({

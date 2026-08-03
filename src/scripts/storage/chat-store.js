@@ -1267,6 +1267,26 @@ const ensureId = msg => {
   return msg;
 };
 
+const dedupeMessagesById = (messages = []) => {
+  const out = [];
+  const indexById = new Map();
+  (Array.isArray(messages) ? messages : []).forEach((message) => {
+    const id = String(message?.id || '').trim();
+    if (!id) {
+      out.push(message);
+      return;
+    }
+    const existingIndex = indexById.get(id);
+    if (existingIndex === undefined) {
+      indexById.set(id, out.length);
+      out.push(message);
+      return;
+    }
+    out[existingIndex] = message;
+  });
+  return out;
+};
+
 const BASE_STORE_KEY = 'chat_store_v1';
 const LEGACY_MIGRATION_KEY = `${BASE_STORE_KEY}__scoped_migrated`;
 
@@ -1299,6 +1319,7 @@ export class ChatStore {
     this._useV2 = false;
     this._v2 = new ChatStoreV2({ scopeId: this.scopeId });
     this._v2ThreadState = new Map();
+    this._recentMessageLoads = new Map();
     this._diskBacked = false;
     this._lsDisabled = false;
     this._lsQuotaWarned = false;
@@ -1674,53 +1695,67 @@ export class ChatStore {
     const sid = String(id || '').trim();
     if (!sid) return [];
     if (this._isScopeStale(token, scopeId)) return [];
-    this._ensureSession(sid);
     const aid = String(archiveId || '').trim();
-    const entry = this._v2.ensureSession(sid);
-    const thread = this._v2.getThread(sid, aid);
-    const currentMessages = Array.isArray(this.state.sessions[sid]?.messages) ? this.state.sessions[sid].messages.slice() : [];
-    const currentLoadedThreadKey = String(this.state.sessions[sid]?._loadedThreadKey || '').trim();
-    if (!entry || !thread) {
-      this.state.sessions[sid].messages = [];
-      return [];
-    }
-    const parts = Array.isArray(thread.parts) ? thread.parts : [];
-    const ids = parts.slice(-partCount).map(p => p.id);
     const threadKey = this._getThreadKey(sid, aid);
-    const threadState = this._getThreadState(threadKey, { reset: true });
-    const merged = [];
-    for (const partId of ids) {
-      const existing = await this._v2.readPart(entry, thread, partId);
-      if (this._isScopeStale(token, scopeId)) return [];
-      const list = Array.isArray(existing) ? existing : [];
-      for (const msg of list) {
-        const mid = String(msg?.id || '');
-        if (mid) threadState.messagePartMap.set(mid, partId);
+    const loadKey = `${token}:${threadKey}`;
+    const pending = this._recentMessageLoads.get(loadKey);
+    if (pending) return pending;
+    const loadPromise = (async () => {
+      this._ensureSession(sid);
+      const entry = this._v2.ensureSession(sid);
+      const thread = this._v2.getThread(sid, aid);
+      const currentMessages = Array.isArray(this.state.sessions[sid]?.messages) ? this.state.sessions[sid].messages.slice() : [];
+      const currentLoadedThreadKey = String(this.state.sessions[sid]?._loadedThreadKey || '').trim();
+      if (!entry || !thread) {
+        this.state.sessions[sid].messages = [];
+        return [];
       }
-      merged.push(...list);
+      const parts = Array.isArray(thread.parts) ? thread.parts : [];
+      const ids = parts.slice(-partCount).map(p => p.id);
+      const threadState = this._getThreadState(threadKey, { reset: true });
+      const merged = [];
+      for (const partId of ids) {
+        const existing = await this._v2.readPart(entry, thread, partId);
+        if (this._isScopeStale(token, scopeId)) return [];
+        const list = Array.isArray(existing) ? existing : [];
+        for (const msg of list) {
+          const mid = String(msg?.id || '');
+          if (mid) threadState.messagePartMap.set(mid, partId);
+        }
+        merged.push(...list);
+      }
+      const canPreserveInMemoryTail = !currentLoadedThreadKey || currentLoadedThreadKey === threadKey;
+      if (canPreserveInMemoryTail && currentMessages.length) {
+        const loadedIds = new Set(merged.map(msg => String(msg?.id || '').trim()).filter(Boolean));
+        const tail = [];
+        for (let i = currentMessages.length - 1; i >= 0; i -= 1) {
+          const msg = currentMessages[i];
+          const mid = String(msg?.id || '').trim();
+          if (mid && loadedIds.has(mid)) break;
+          tail.push(msg);
+        }
+        if (tail.length) {
+          tail.reverse();
+          merged.push(...tail);
+          logger.debug(
+            `[chat-store] preserved in-memory tail sid=${sid} scope=${this.scopeId || 'default'} loaded=${ids.length} tail=${tail.length}`
+          );
+        }
+      }
+      const nextMessages = dedupeMessagesById(merged);
+      threadState.loadedParts = ids;
+      this.state.sessions[sid].messages = nextMessages;
+      this.state.sessions[sid]._loadedThreadKey = threadKey;
+      return nextMessages;
+    })();
+    this._recentMessageLoads.set(loadKey, loadPromise);
+    try {
+      return await loadPromise;
+    } finally {
+      if (this._recentMessageLoads.get(loadKey) === loadPromise) {
+        this._recentMessageLoads.delete(loadKey);
+      }
     }
-    const canPreserveInMemoryTail = !currentLoadedThreadKey || currentLoadedThreadKey === threadKey;
-    if (canPreserveInMemoryTail && currentMessages.length) {
-      const loadedIds = new Set(merged.map(msg => String(msg?.id || '').trim()).filter(Boolean));
-      const tail = [];
-      for (let i = currentMessages.length - 1; i >= 0; i -= 1) {
-        const msg = currentMessages[i];
-        const mid = String(msg?.id || '').trim();
-        if (mid && loadedIds.has(mid)) break;
-        tail.push(msg);
-      }
-      if (tail.length) {
-        tail.reverse();
-        merged.push(...tail);
-        logger.debug(
-          `[chat-store] preserved in-memory tail sid=${sid} scope=${this.scopeId || 'default'} loaded=${ids.length} tail=${tail.length}`
-        );
-      }
-    }
-    threadState.loadedParts = ids;
-    this.state.sessions[sid].messages = merged;
-    this.state.sessions[sid]._loadedThreadKey = threadKey;
-    return merged;
   }
 
   async ensureRecentMessagesLoaded(id = this.currentId, archiveId = '') {
@@ -1786,10 +1821,15 @@ export class ChatStore {
       older.push(...list);
     }
     state.loadedParts = pick.concat(loaded);
-    const current = this.state.sessions[sid].messages || [];
-    this.state.sessions[sid].messages = older.concat(current);
+    const current = dedupeMessagesById(this.state.sessions[sid].messages || []);
+    const currentIds = new Set(current.map(message => String(message?.id || '').trim()).filter(Boolean));
+    const prepended = dedupeMessagesById(older).filter((message) => {
+      const id = String(message?.id || '').trim();
+      return !id || !currentIds.has(id);
+    });
+    this.state.sessions[sid].messages = dedupeMessagesById(prepended.concat(current));
     this.state.sessions[sid]._loadedThreadKey = threadKey;
-    return older;
+    return prepended;
   }
 
   async exportThreadMessages(id = this.currentId, archiveId = '') {
@@ -1923,6 +1963,7 @@ export class ChatStore {
     this._useV2 = false;
     this._skipMessagePersist = false;
     this._v2ThreadState.clear();
+    this._recentMessageLoads.clear();
     this._v2 = new ChatStoreV2({ scopeId: this.scopeId });
     this._diskBacked = false;
     this._lsDisabled = false;

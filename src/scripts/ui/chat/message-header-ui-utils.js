@@ -1,3 +1,5 @@
+import { createRpMessageIconMarkup } from './rp-message-actions-ui-utils.js';
+
 export const normalizeReasoningDisplayText = (value = '') => (
   String(value ?? '')
     .replace(/&amp;lt;\s*br\s*\/?\s*&amp;gt;/gi, '\n')
@@ -68,6 +70,96 @@ export const createMessageHeaderUiRuntime = ({
     resolveReasoningOpenState(message) {
       return resolveReasoningOpenState(message, { appSettings });
     },
+    startReasoningEdit(reasoningEl) {
+      if (!reasoningEl || !documentLike?.createElement) return false;
+      const content = reasoningEl.querySelector?.('.chat-reasoning-content');
+      if (!content || content.classList?.contains?.('is-editing')) return false;
+      const message = reasoningEl.__chatappReasoningMessage;
+      if (!message || message.role !== 'assistant') return false;
+      const originalText = runtime.getReasoningText(message);
+      reasoningEl.open = true;
+      content.classList?.add?.('is-editing');
+      content.innerHTML = '';
+
+      const textarea = documentLike.createElement('textarea');
+      textarea.className = 'chat-reasoning-edit-textarea';
+      textarea.value = originalText;
+      textarea.setAttribute?.('aria-label', '编辑思维链');
+      const actions = documentLike.createElement('div');
+      actions.className = 'chat-reasoning-edit-actions';
+      const cancelButton = documentLike.createElement('button');
+      cancelButton.type = 'button';
+      cancelButton.className = 'chat-reasoning-edit-cancel';
+      cancelButton.textContent = '取消';
+      const saveButton = documentLike.createElement('button');
+      saveButton.type = 'button';
+      saveButton.className = 'chat-reasoning-edit-save';
+      saveButton.textContent = '保存';
+      actions.appendChild(cancelButton);
+      actions.appendChild(saveButton);
+      content.appendChild(textarea);
+      content.appendChild(actions);
+
+      let saving = false;
+      let composing = false;
+      const restore = (value) => {
+        content.classList?.remove?.('is-editing');
+        content.innerHTML = '';
+        content.textContent = String(value ?? '');
+      };
+      const cancel = (event) => {
+        event?.preventDefault?.();
+        event?.stopPropagation?.();
+        if (!saving) restore(originalText);
+      };
+      const save = async (event) => {
+        event?.preventDefault?.();
+        event?.stopPropagation?.();
+        if (saving || composing) return false;
+        saving = true;
+        textarea.disabled = true;
+        cancelButton.disabled = true;
+        saveButton.disabled = true;
+        try {
+          const nextText = String(textarea.value ?? '');
+          const applied = await onAction?.('edit-assistant-reasoning', message, { text: nextText });
+          if (applied !== true) {
+            textarea.disabled = false;
+            cancelButton.disabled = false;
+            saveButton.disabled = false;
+            warningToast?.('思维链保存失败');
+            return false;
+          }
+          const updatedMessage = reasoningEl.__chatappReasoningMessage || message;
+          restore(runtime.getReasoningText(updatedMessage));
+          return true;
+        } catch {
+          textarea.disabled = false;
+          cancelButton.disabled = false;
+          saveButton.disabled = false;
+          warningToast?.('思维链保存失败');
+          return false;
+        } finally {
+          saving = false;
+        }
+      };
+      cancelButton.addEventListener?.('click', cancel);
+      saveButton.addEventListener?.('click', save);
+      textarea.addEventListener?.('compositionstart', () => { composing = true; });
+      textarea.addEventListener?.('compositionend', () => { composing = false; });
+      textarea.addEventListener?.('keydown', (event) => {
+        if (event?.key === 'Escape') {
+          cancel(event);
+          return;
+        }
+        if (!composing && event?.key === 'Enter' && (event?.ctrlKey || event?.metaKey)) {
+          void save(event);
+        }
+      });
+      textarea.focus?.();
+      textarea.setSelectionRange?.(textarea.value.length, textarea.value.length);
+      return true;
+    },
     syncReasoningElement(details, message) {
       const meta = message?.meta;
       if (!meta || typeof meta !== 'object' || !documentLike?.createElement) return null;
@@ -86,14 +178,50 @@ export const createMessageHeaderUiRuntime = ({
         summary.className = 'chat-reasoning-summary';
         reasoningEl.appendChild(summary);
       }
-      summary.textContent = label;
+      let labelEl = summary.querySelector?.('.chat-reasoning-label') || null;
+      if (!labelEl) {
+        labelEl = documentLike.createElement('span');
+        labelEl.className = 'chat-reasoning-label';
+        summary.appendChild(labelEl);
+      }
+      labelEl.textContent = label;
+      let actionWrap = summary.querySelector?.('.chat-reasoning-actions') || null;
+      if (!actionWrap) {
+        actionWrap = documentLike.createElement('span');
+        actionWrap.className = 'chat-reasoning-actions';
+        const buildAction = (action, actionLabel) => {
+          const button = documentLike.createElement('button');
+          button.type = 'button';
+          button.className = `chat-reasoning-action is-${action}`;
+          button.dataset.reasoningAction = action;
+          button.setAttribute?.('aria-label', actionLabel);
+          button.title = actionLabel;
+          button.innerHTML = createRpMessageIconMarkup(action, { size: 14 });
+          button.addEventListener?.('click', async (event) => {
+            event?.preventDefault?.();
+            event?.stopPropagation?.();
+            const targetMessage = reasoningEl.__chatappReasoningMessage;
+            if (action === 'edit') {
+              runtime.startReasoningEdit(reasoningEl);
+              return;
+            }
+            await onAction?.('copy-reasoning', targetMessage, {
+              text: runtime.getReasoningText(targetMessage),
+            });
+          });
+          return button;
+        };
+        actionWrap.appendChild(buildAction('copy', '复制思维链'));
+        actionWrap.appendChild(buildAction('edit', '编辑思维链'));
+        summary.appendChild(actionWrap);
+      }
       let content = reasoningEl.querySelector?.('.chat-reasoning-content') || null;
       if (!content) {
         content = documentLike.createElement('div');
         content.className = 'chat-reasoning-content';
         reasoningEl.appendChild(content);
       }
-      content.textContent = text;
+      if (!content.classList?.contains?.('is-editing')) content.textContent = text;
       if (isNew) {
         reasoningEl.open = runtime.resolveReasoningOpenState(message);
       }

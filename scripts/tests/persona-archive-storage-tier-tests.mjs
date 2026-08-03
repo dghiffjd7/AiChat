@@ -71,6 +71,12 @@ const archiveState = (id, name = id) => ({
     stats: {},
   }],
 });
+const emptyArchiveState = ({ updatedAt = 0 } = {}) => ({
+  version: 1,
+  currentArchiveId: '',
+  archives: [],
+  updatedAt,
+});
 
 const flushMicrotasks = () => new Promise(resolve => setTimeout(resolve, 0));
 
@@ -198,14 +204,45 @@ try {
 
   {
     const key = 'persona_archive_store_v1__equal_time_conflict';
+    const backupKey = `${key}__legacy_tie_backup_v1`;
     const calls = [];
     const storage = installTauri(async (cmd, args) => {
       calls.push([cmd, args]);
       if (cmd === 'load_kv') return archiveState('disk');
-      if (cmd === 'save_kv') throw new Error('ambiguous tie must remain blocked');
+      if (cmd === 'save_kv') return true;
       return null;
     }, new MemoryLocalStorageMock({ [key]: JSON.stringify(archiveState('local')) }));
     const store = new PersonaArchiveStore({ scopeId: 'equal_time_conflict' });
+    await store.ready;
+
+    assert.deepEqual(store.listArchives().map(item => item.id), ['local']);
+    assert.equal(store.persistenceBlocked, false);
+    assert.equal(storage.map.has(key), false);
+    const backupCall = calls.find(([cmd, args]) => cmd === 'save_kv' && args.name === backupKey);
+    assert.deepEqual(backupCall?.[1]?.data?.local?.archives?.map(item => item.id), ['local']);
+    assert.deepEqual(backupCall?.[1]?.data?.kv?.archives?.map(item => item.id), ['disk']);
+    assert.equal(Number.isFinite(backupCall?.[1]?.data?.resolvedAt), true);
+    assert.equal(
+      calls.some(([cmd, args]) => cmd === 'save_kv' && args.name === key && args.data?.archives?.[0]?.id === 'local'),
+      true,
+    );
+    store.addArchive({ id: 'next', name: '可继续写入' });
+    await flushMicrotasks();
+    console.log('ok - legacy equal-time divergent persona archives back up both sides and adopt local recovery');
+  }
+
+  {
+    const key = 'persona_archive_store_v1__modern_equal_time_conflict';
+    const calls = [];
+    const storage = installTauri(async (cmd, args) => {
+      calls.push([cmd, args]);
+      if (cmd === 'load_kv') return { ...archiveState('disk'), updatedAt: 20 };
+      if (cmd === 'save_kv') throw new Error('modern tie must remain blocked');
+      return null;
+    }, new MemoryLocalStorageMock({
+      [key]: JSON.stringify({ ...archiveState('local'), updatedAt: 20 }),
+    }));
+    const store = new PersonaArchiveStore({ scopeId: 'modern_equal_time_conflict' });
     await store.ready;
 
     assert.deepEqual(store.listArchives().map(item => item.id), ['local']);
@@ -216,7 +253,123 @@ try {
       error => error?.code === 'persona_archive_store_read_unavailable',
     );
     assert.equal(calls.some(([cmd]) => cmd === 'save_kv'), false);
-    console.log('ok - equal-time divergent persona archives retain local recovery instead of silently preferring KV');
+    console.log('ok - modern equal-time divergent persona archives remain read-only');
+  }
+
+  {
+    const key = 'persona_archive_store_v1__legacy_empty_local';
+    const calls = [];
+    const storage = installTauri(async (cmd, args) => {
+      calls.push([cmd, args]);
+      if (cmd === 'load_kv') return archiveState('disk');
+      if (cmd === 'save_kv') throw new Error('KV adoption must not write');
+      return null;
+    }, new MemoryLocalStorageMock({ [key]: JSON.stringify(emptyArchiveState()) }));
+    const store = new PersonaArchiveStore({ scopeId: 'legacy_empty_local' });
+    await store.ready;
+
+    assert.deepEqual(store.listArchives().map(item => item.id), ['disk']);
+    assert.equal(store.persistenceBlocked, false);
+    assert.equal(storage.map.has(key), false);
+    assert.equal(calls.some(([cmd]) => cmd === 'save_kv'), false);
+    console.log('ok - legacy persona archive tie adopts non-empty KV when the local mirror is empty');
+  }
+
+  {
+    const key = 'persona_archive_store_v1__legacy_empty_kv';
+    const backupKey = `${key}__legacy_tie_backup_v1`;
+    const calls = [];
+    const storage = installTauri(async (cmd, args) => {
+      calls.push([cmd, args]);
+      if (cmd === 'load_kv') return emptyArchiveState();
+      if (cmd === 'save_kv' && args.name === key) return true;
+      throw new Error(`unexpected ${cmd}:${args.name}`);
+    }, new MemoryLocalStorageMock({ [key]: JSON.stringify(archiveState('local')) }));
+    const store = new PersonaArchiveStore({ scopeId: 'legacy_empty_kv' });
+    await store.ready;
+
+    assert.deepEqual(store.listArchives().map(item => item.id), ['local']);
+    assert.equal(store.persistenceBlocked, false);
+    assert.equal(storage.map.has(key), false);
+    assert.equal(calls.some(([cmd, args]) => cmd === 'save_kv' && args.name === key), true);
+    assert.equal(calls.some(([cmd, args]) => cmd === 'save_kv' && args.name === backupKey), false);
+    console.log('ok - legacy persona archive tie backfills local state over an empty shaped KV state');
+  }
+
+  {
+    const key = 'persona_archive_store_v1__legacy_backup_failure';
+    const backupKey = `${key}__legacy_tie_backup_v1`;
+    const calls = [];
+    const storage = installTauri(async (cmd, args) => {
+      calls.push([cmd, args]);
+      if (cmd === 'load_kv') return archiveState('disk');
+      if (cmd === 'save_kv' && args.name === backupKey) throw new Error('backup unavailable');
+      if (cmd === 'save_kv' && args.name === key) throw new Error('main write must not run');
+      return null;
+    }, new MemoryLocalStorageMock({ [key]: JSON.stringify(archiveState('local')) }));
+    const store = new PersonaArchiveStore({ scopeId: 'legacy_backup_failure' });
+    await store.ready;
+
+    assert.equal(store.persistenceBlocked, true);
+    assert.equal(storage.map.has(key), true);
+    assert.equal(calls.some(([cmd, args]) => cmd === 'save_kv' && args.name === backupKey), true);
+    assert.equal(calls.some(([cmd, args]) => cmd === 'save_kv' && args.name === key), false);
+    console.log('ok - failed persona archive legacy tie backup keeps the store blocked and mirror intact');
+  }
+
+  {
+    const key = 'persona_archive_store_v1__legacy_main_write_failure';
+    const backupKey = `${key}__legacy_tie_backup_v1`;
+    const calls = [];
+    const storage = installTauri(async (cmd, args) => {
+      calls.push([cmd, args]);
+      if (cmd === 'load_kv') return archiveState('disk');
+      if (cmd === 'save_kv' && args.name === backupKey) return true;
+      if (cmd === 'save_kv' && args.name === key) throw new Error('main unavailable');
+      return null;
+    }, new MemoryLocalStorageMock({ [key]: JSON.stringify(archiveState('local')) }));
+    const store = new PersonaArchiveStore({ scopeId: 'legacy_main_write_failure' });
+    await store.ready;
+
+    assert.equal(store.persistenceBlocked, true);
+    assert.equal(storage.map.has(key), true);
+    assert.equal(calls.some(([cmd, args]) => cmd === 'save_kv' && args.name === backupKey), true);
+    assert.equal(calls.some(([cmd, args]) => cmd === 'save_kv' && args.name === key), true);
+    console.log('ok - failed persona archive legacy tie main write keeps the store blocked after backup');
+  }
+
+  {
+    const legacyKey = 'persona_archive_store_v1__legacy_conflict';
+    const modernKey = 'persona_archive_store_v1__modern_conflict';
+    const legacyBackupKey = `${legacyKey}__legacy_tie_backup_v1`;
+    const calls = [];
+    const storage = installTauri(async (cmd, args) => {
+      calls.push([cmd, args]);
+      if (cmd === 'load_kv' && args.name === legacyKey) return archiveState('disk');
+      if (cmd === 'load_kv' && args.name === modernKey) return { ...archiveState('disk-modern'), updatedAt: 10 };
+      if (cmd === 'save_kv' && (args.name === legacyBackupKey || args.name === legacyKey)) return true;
+      throw new Error(`unexpected ${cmd}:${args.name}`);
+    }, new MemoryLocalStorageMock({
+      [legacyKey]: JSON.stringify(archiveState('local')),
+      [modernKey]: JSON.stringify({ ...archiveState('local-modern'), updatedAt: 10 }),
+    }));
+
+    const result = await migratePersonaArchiveLocalMirrors();
+
+    assert.deepEqual(result, {
+      scanned: 2,
+      removed: 1,
+      backfilled: 0,
+      retained: 1,
+    });
+    assert.equal(storage.map.has(legacyKey), false);
+    assert.equal(storage.map.has(modernKey), true);
+    assert.equal(calls.some(([cmd, args]) => cmd === 'save_kv' && args.name === legacyBackupKey), true);
+    assert.equal(
+      calls.some(([cmd, args]) => cmd === 'save_kv' && args.name === legacyKey && args.data?.archives?.[0]?.id === 'local'),
+      true,
+    );
+    console.log('ok - bulk persona archive migration resolves legacy ties and retains modern conflicts');
   }
 
   {
@@ -226,13 +379,15 @@ try {
     const storage = installTauri(async (cmd, args) => {
       if (cmd === 'load_kv' && args.name === sameKey) return archiveState('same');
       if (cmd === 'load_kv' && args.name === missingKey) return {};
-      if (cmd === 'load_kv' && args.name === conflictKey) return archiveState('disk-conflict');
+      if (cmd === 'load_kv' && args.name === conflictKey) {
+        return { ...archiveState('disk-conflict'), updatedAt: 10 };
+      }
       if (cmd === 'save_kv' && args.name === missingKey) return true;
       throw new Error(`unexpected ${cmd}:${args.name}`);
     }, new MemoryLocalStorageMock({
       [sameKey]: JSON.stringify(archiveState('same')),
       [missingKey]: JSON.stringify(archiveState('missing')),
-      [conflictKey]: JSON.stringify(archiveState('local-conflict')),
+      [conflictKey]: JSON.stringify({ ...archiveState('local-conflict'), updatedAt: 10 }),
     }));
 
     const result = await migratePersonaArchiveLocalMirrors();

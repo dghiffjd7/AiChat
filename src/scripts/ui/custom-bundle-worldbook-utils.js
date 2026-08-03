@@ -7,10 +7,11 @@ export const getCustomBundleSessionWorldIds = (runtime = null, sessionId = '') =
   const sid = String(sessionId || '').trim();
   if (!sid) return [];
   const list = normalizeWorldIdList(runtime?.worldSessionMap?.[sid]);
-  const globalWorldId = String(runtime?.globalWorldId || '').trim();
-  if (globalWorldId && globalWorldId !== BUILTIN_PHONE_FORMAT_WORLDBOOK_ID) {
-    list.push(globalWorldId);
-  }
+  const globalWorldIds = normalizeWorldIdList([
+    runtime?.globalWorldId,
+    ...ensureArray(runtime?.globalWorldIds),
+  ], { excludeBuiltin: BUILTIN_PHONE_FORMAT_WORLDBOOK_ID });
+  list.push(...globalWorldIds);
   return normalizeWorldIdList(list, { excludeBuiltin: BUILTIN_PHONE_FORMAT_WORLDBOOK_ID });
 };
 

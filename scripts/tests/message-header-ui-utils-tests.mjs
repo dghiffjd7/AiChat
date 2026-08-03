@@ -247,6 +247,64 @@ const createRuntime = (overrides = {}) => {
 }
 
 {
+  const actionCalls = [];
+  const { runtime } = createRuntime({
+    onAction: async (...args) => {
+      actionCalls.push(args);
+      if (args[0] === 'edit-assistant-reasoning') {
+        args[1].meta.reasoningDisplay = '正则显示第一行<br>正则显示第二行';
+      }
+      return true;
+    },
+  });
+  const message = {
+    id: 'assistant-thought',
+    role: 'assistant',
+    meta: {
+      reasoningDisplay: '原始思维链',
+      reasoningLabel: 'Thought for 9 秒',
+    },
+  };
+  const details = runtime.buildReasoningElement(message);
+  const summary = details.children[0];
+  const content = details.children[1];
+  const label = summary.children[0];
+  const actions = summary.children[1];
+  assert.equal(label.className, 'chat-reasoning-label');
+  assert.equal(label.textContent, 'Thought for 9 秒');
+  assert.deepEqual(
+    actions.children.map(button => button.dataset.reasoningAction),
+    ['copy', 'edit'],
+  );
+
+  await actions.children[0].emit('click', {
+    preventDefault() {},
+    stopPropagation() {},
+  });
+  assert.equal(actionCalls[0][0], 'copy-reasoning');
+  assert.equal(actionCalls[0][2].text, '原始思维链');
+
+  actions.children[1].emit('click', {
+    preventDefault() {},
+    stopPropagation() {},
+  });
+  assert.equal(details.open, true);
+  assert.equal(content.className.includes('is-editing'), true);
+  const textarea = content.children[0];
+  const editActions = content.children[1];
+  textarea.value = '只修改后的思维链';
+  await editActions.children[1].emit('click', {
+    preventDefault() {},
+    stopPropagation() {},
+  });
+  assert.equal(actionCalls[1][0], 'edit-assistant-reasoning');
+  assert.equal(actionCalls[1][2].text, '只修改后的思维链');
+  assert.equal(content.className, 'chat-reasoning-content');
+  assert.equal(content.textContent, '正则显示第一行\n正则显示第二行');
+  console.log('ok - reasoning header exposes hover actions and edits only the reasoning payload');
+}
+
+{
   const { runtime, documentLike, greetingSheetCalls } = createRuntime();
   documentLike.body.dataset.uiMode = 'rp';
   const el = runtime.buildGreetingSwitch({

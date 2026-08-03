@@ -2043,6 +2043,60 @@ body[data-theme-mode='dark'] .rp-greeting-editor-macros button {
 }
 
 @media (max-width: 600px) {
+  body[data-ui-mode='rp'] .QQ_chat_charmsg.has-rp-message-chrome {
+    width: calc(100% - 16px);
+    grid-template-columns: 32px minmax(0, 1fr);
+    grid-template-rows: auto auto auto;
+    column-gap: 8px;
+    row-gap: 6px;
+  }
+
+  body[data-ui-mode='rp']
+    .QQ_chat_charmsg.has-rp-message-chrome
+    > .QQ_chat_head {
+    grid-column: 1;
+    grid-row: 1;
+    align-self: center;
+    margin-top: 0;
+  }
+
+  body[data-ui-mode='rp']
+    .QQ_chat_charmsg.has-rp-message-chrome
+    .chat-message-stack {
+    display: contents !important;
+  }
+
+  body[data-ui-mode='rp']
+    .QQ_chat_charmsg.has-rp-message-chrome
+    .rp-message-header {
+    grid-column: 2;
+    grid-row: 1;
+    align-self: center;
+    width: auto;
+    padding: 0;
+  }
+
+  body[data-ui-mode='rp']
+    .QQ_chat_charmsg.has-rp-message-chrome
+    .chat-bubble-stack {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    width: 100%;
+  }
+
+  body[data-ui-mode='rp']
+    .QQ_chat_charmsg.has-rp-message-chrome
+    .QQ_chat_msgdiv {
+    width: 100%;
+  }
+
+  body[data-ui-mode='rp']
+    .QQ_chat_charmsg.has-rp-message-chrome
+    .rp-message-actions {
+    grid-column: 1 / -1;
+    grid-row: 3;
+  }
+
   body[data-ui-mode='rp'] .rp-toolbar {
     padding: 9px 12px 4px;
   }
@@ -2082,7 +2136,7 @@ body[data-theme-mode='dark'] .rp-greeting-editor-macros button {
   }
 
   body[data-ui-mode='rp'] .QQ_chat_charmsg.is-rp-greeting-message {
-    width: calc(100% - 20px);
+    width: 100%;
     margin-top: 8px;
   }
 

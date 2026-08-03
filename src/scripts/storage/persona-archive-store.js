@@ -1,11 +1,13 @@
 import { safeInvoke } from '../utils/tauri.js';
 import { logger } from '../utils/logger.js';
+import { resolveLegacyStateTie } from './legacy-state-tie-utils.js';
 import { makeScopedKey, normalizeScopeId } from './store-scope.js';
 
 const BASE_STORE_KEY = 'persona_archive_store_v1';
 const MAX_ARCHIVES = 80;
 const LOCAL_MIGRATION_YIELD_EVERY = 12;
 const KV_LOAD_RETRY_DELAYS = [40, 120];
+const LEGACY_TIE_BACKUP_SUFFIX = '__legacy_tie_backup_v1';
 
 const getTauriInvoker = () => {
   const g = typeof globalThis !== 'undefined' ? globalThis : window;
@@ -108,6 +110,39 @@ const normalizeState = (raw = {}) => {
   };
 };
 
+const isArchiveStateEmpty = state => !Array.isArray(state?.archives) || state.archives.length === 0;
+
+const resolveArchiveLegacyTieOnDisk = async ({ key, localState, kvState }) => {
+  const decision = resolveLegacyStateTie({
+    local: localState,
+    kv: kvState,
+    isEmpty: isArchiveStateEmpty,
+  });
+  if (decision.action === 'keep_blocked') {
+    return { resolved: false, state: localState, adopted: '', backedUp: false };
+  }
+  if (decision.action === 'adopt_kv') {
+    return { resolved: true, state: kvState, adopted: 'kv', backedUp: false };
+  }
+  if (decision.backupRequired) {
+    await safeInvoke('save_kv', {
+      name: `${key}${LEGACY_TIE_BACKUP_SUFFIX}`,
+      data: {
+        local: localState,
+        kv: kvState,
+        resolvedAt: Date.now(),
+      },
+    });
+  }
+  await safeInvoke('save_kv', { name: key, data: localState });
+  return {
+    resolved: true,
+    state: localState,
+    adopted: 'local',
+    backedUp: decision.backupRequired,
+  };
+};
+
 const listLocalArchiveKeys = () => {
   const storage = globalThis?.localStorage;
   const length = Number(storage?.length || 0);
@@ -155,10 +190,29 @@ export const migratePersonaArchiveLocalMirrors = async () => {
 
     const normalizedLocal = normalizeState(localState);
     if (hasArchiveStateShape(kv)) {
-      if (JSON.stringify(normalizeState(kv)) !== JSON.stringify(normalizedLocal)) {
-        logger.warn('persona archive local/KV conflict retained for recovery', { key });
-        result.retained += 1;
-        continue;
+      const normalizedKv = normalizeState(kv);
+      if (JSON.stringify(normalizedKv) !== JSON.stringify(normalizedLocal)) {
+        try {
+          const resolution = await resolveArchiveLegacyTieOnDisk({
+            key,
+            localState: normalizedLocal,
+            kvState: normalizedKv,
+          });
+          if (!resolution.resolved) {
+            logger.warn('persona archive local/KV conflict retained for recovery', { key });
+            result.retained += 1;
+            continue;
+          }
+          logger.info('persona archive legacy tie resolved during local migration', {
+            key,
+            adopted: resolution.adopted,
+            backedUp: resolution.backedUp,
+          });
+        } catch (err) {
+          logger.warn('persona archive legacy tie migration failed; mirror retained', { key, error: err });
+          result.retained += 1;
+          continue;
+        }
       }
     } else if (isPlainRecord(kv) && !Object.keys(kv).length) {
       try {
@@ -246,10 +300,36 @@ export class PersonaArchiveStore {
           && JSON.stringify(normalizedLocal) === JSON.stringify(normalizedKv);
         if (normalizedLocal && normalizedLocal.updatedAt === normalizedKv.updatedAt && !statesMatch) {
           this.state = normalizedLocal;
-          this.persistenceBlocked = true;
-          logger.warn('persona archive local/KV timestamps tie with different content; writes blocked', {
-            key: storeKey,
-          });
+          try {
+            const resolution = await resolveArchiveLegacyTieOnDisk({
+              key: storeKey,
+              localState: normalizedLocal,
+              kvState: normalizedKv,
+            });
+            if (token !== this._scopeToken || storeKey !== this.storeKey || scopeId !== this.scopeId) return;
+            if (!resolution.resolved) {
+              this.persistenceBlocked = true;
+              logger.warn('persona archive local/KV timestamps tie with different content; writes blocked', {
+                key: storeKey,
+              });
+            } else {
+              this.state = resolution.state;
+              this.persistenceBlocked = false;
+              try { localStorage.removeItem(storeKey); } catch {}
+              logger.info('persona archive legacy tie resolved', {
+                key: storeKey,
+                adopted: resolution.adopted,
+                backedUp: resolution.backedUp,
+              });
+            }
+          } catch (err) {
+            if (token !== this._scopeToken || storeKey !== this.storeKey || scopeId !== this.scopeId) return;
+            this.persistenceBlocked = true;
+            logger.warn('persona archive legacy tie recovery failed; mirror retained and writes blocked', {
+              key: storeKey,
+              error: err,
+            });
+          }
         } else if (normalizedLocal && normalizedLocal.updatedAt > normalizedKv.updatedAt) {
           try {
             await safeInvoke('save_kv', { name: storeKey, data: normalizedLocal });

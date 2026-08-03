@@ -648,6 +648,55 @@ const agentCenterPanelSource = await readFile(
 }
 
 {
+  let clicked = 0;
+  let focused = 0;
+  let rendered = 0;
+  const modelButton = {
+    dataset: { agentFeatureModelButton: 'reply_check' },
+    disabled: false,
+    focus() { focused += 1; },
+    click() { clicked += 1; },
+  };
+  const panel = new AgentCenterPanel({
+    choice: async () => 'select_model',
+    getActions: () => ({
+      setAgentFeatureEnabled: () => ({ ok: true }),
+    }),
+  });
+  panel.view = {
+    agents: [{
+      id: 'reply_check',
+      title: '检查回复格式',
+      enabled: false,
+      implemented: true,
+      supportsModel: true,
+      modelMode: 'none',
+    }],
+  };
+  panel.contentElement = {
+    querySelector: () => null,
+    querySelectorAll(selector) {
+      if (
+        selector === '[data-agent-feature-model-button]'
+        && panel.floatingAgentId === 'reply_check'
+        && panel.floatingAgentFlipped === true
+      ) return [modelButton];
+      return [];
+    },
+  };
+  panel.render = () => { rendered += 1; };
+  panel.refresh = async () => {};
+
+  await panel.handleAgentFeatureToggle('enable', 'reply_check');
+  assert.equal(panel.floatingAgentId, 'reply_check');
+  assert.equal(panel.floatingAgentFlipped, true);
+  assert.equal(rendered, 1);
+  assert.equal(focused, 1);
+  assert.equal(clicked, 1);
+  console.log('ok - selecting a model after enabling reply check opens its configuration face before activating the picker');
+}
+
+{
   let refreshed = 0;
   const panel = new AgentCenterPanel();
   panel.activeTab = 'agents';

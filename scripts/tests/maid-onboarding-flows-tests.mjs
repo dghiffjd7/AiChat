@@ -88,8 +88,17 @@ import {
   const addFriend = getMaidOnboardingFlow('add-friend');
   assert.equal(addFriend.steps.at(-1).canAdvance('friend-added', { sessionId: 'Aria' }), true);
   const firstChat = getMaidOnboardingFlow('first-chat');
-  assert.equal(firstChat.steps[1].canAdvance('chat-room-entered', { sessionId: 'Aria' }), true);
+  assert.deepEqual(
+    firstChat.steps.map(step => step.target || ''),
+    ['', 'contact-list-entry', 'contact-detail-message', 'chat-input', 'chat-send', 'chat-body'],
+  );
+  assert.equal(firstChat.steps[1].canAdvance('target-click', { target: 'contact-list-entry' }), true);
+  assert.equal(firstChat.steps[2].canAdvance('target-click', { target: 'contact-detail-message' }), false);
+  assert.equal(firstChat.steps[2].canAdvance('chat-room-entered', { sessionId: 'Aria' }), true);
   assert.equal(firstChat.steps.at(-1).canAdvance('chat-message-received', { role: 'assistant' }), true);
+  assert.ok(MAID_ONBOARDING_TARGET_SELECTORS['contact-list-entry'].includes('.contact-item'));
+  assert.ok(MAID_ONBOARDING_TARGET_SELECTORS['contact-detail-message'].includes('[data-action="contact-detail-message"]'));
+  assert.equal(Object.hasOwn(MAID_ONBOARDING_TARGET_SELECTORS, 'chat-list-entry'), false);
   assert.ok(MAID_ONBOARDING_TARGET_SELECTORS['format-repair-banner'].includes('#rejected-format-repair-banner'));
   const meetMaid = getMaidOnboardingFlow('meet-maid');
   assert.deepEqual(

@@ -670,5 +670,19 @@ import {
     removeBody.indexOf("safeInvoke('delete_world_info'") < removeBody.indexOf('await this.worldStore.remove(target)'),
     '原生删除必须先于前端删除（真错误重抛时保持双存储一致可重试）',
   );
+
+  assert.match(bridgeSource, /getGlobalWorldIdsKey\(\) \{\s*return 'global_world_ids_shared_v1';\s*\}/);
+  assert.match(bridgeSource, /getResolvedWorldState[\s\S]*?globalWorldId: globalWorldIds\[0\] \|\| '',\s*globalWorldIds,/);
+  assert.match(bridgeSource, /safeInvoke\('save_kv', \{ name: this\.getGlobalWorldIdsKey\(\), data: this\.globalWorldIds \}\)/);
+  assert.match(renameBody, /const globalWorldIds = this\.getGlobalWorldIds\(\)[\s\S]*?globalWorldIds\.includes\(from\)/);
+  const deleteStart = bridgeSource.indexOf('async deleteWorldInfo(');
+  const deleteEnd = bridgeSource.indexOf('async listWorlds(', deleteStart);
+  const deleteBody = bridgeSource.slice(deleteStart, deleteEnd);
+  assert.match(deleteBody, /const globalWorldIds = this\.getGlobalWorldIds\(\)[\s\S]*?filter\(id => id !== target\)/);
+  assert.equal(
+    (bridgeSource.match(/resolvedWorldState\.globalWorldIds\.forEach\(\(id\) =>/g) || []).length >= 3,
+    true,
+    'all prompt assembly paths must collect every enabled global worldbook',
+  );
   console.log('ok - renameWorldInfo lifecycle markers stay present and ordered (incl. old native file cleanup)');
 }

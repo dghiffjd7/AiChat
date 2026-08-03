@@ -53,7 +53,21 @@ export const getGlobalWorldId = (bridge = null) => {
   if (typeof runtime?.getGlobalWorldId === 'function') {
     return String(runtime.getGlobalWorldId() || '').trim();
   }
+  if (Array.isArray(runtime?.['globalWorldIds'])) {
+    return normalizeWorldIds(runtime['globalWorldIds'])[0] || '';
+  }
   return String(runtime?.['globalWorldId'] || '').trim();
+};
+
+export const getGlobalWorldIds = (bridge = null) => {
+  const runtime = resolveWorldSessionBridge(bridge);
+  if (typeof runtime?.getGlobalWorldIds === 'function') {
+    return Array.from(new Set(normalizeWorldIds(runtime.getGlobalWorldIds())));
+  }
+  if (Array.isArray(runtime?.['globalWorldIds'])) {
+    return Array.from(new Set(normalizeWorldIds(runtime['globalWorldIds'])));
+  }
+  return Array.from(new Set(normalizeWorldIds(runtime?.['globalWorldId'])));
 };
 
 export const emitWorldInfoChanged = (bridge = null, detail = {}) => {

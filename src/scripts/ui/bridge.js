@@ -524,7 +524,8 @@ class AppBridge {
     this.currentWorldId = null;
     this.currentWorldIds = [];
     this.scopeId = '';
-    this.globalWorldId = this.loadGlobalWorldId();
+    this.globalWorldIds = this.loadGlobalWorldIds();
+    this.globalWorldId = this.globalWorldIds[0] || null;
     this.worldGlobalSettings = this.loadWorldGlobalSettings();
     this.activeSessionId = 'default';
     this.worldSessionMap = this.loadWorldSessionMap();
@@ -770,7 +771,9 @@ class AppBridge {
       ? options.groupMemberIds.map(item => String(item || '').trim()).filter(Boolean)
       : (isGroupChat && Array.isArray(contact?.members) ? contact.members.map(item => String(item || '').trim()).filter(Boolean) : []);
     const normalizeVisibleIds = (value) => this.normalizeWorldIds(value).filter((id) => id !== BUILTIN_PHONE_FORMAT_WORLDBOOK_ID);
-    const globalWorldId = String(this.globalWorldId || '').trim();
+    const globalWorldIds = normalizeVisibleIds(
+      Array.isArray(this.globalWorldIds) ? this.globalWorldIds : this.globalWorldId,
+    );
     const roleWorldIds = normalizeVisibleIds(this.getRoleWorldIds(sid, { ...(options || {}), uiMode, isGroupChat, groupMemberIds }));
     const sessionWorldIds = resolveVisibleSessionWorldIds({
       uiMode,
@@ -786,7 +789,7 @@ class AppBridge {
       if (!worldId || worldId === BUILTIN_PHONE_FORMAT_WORLDBOOK_ID || worldIds.includes(worldId)) return;
       worldIds.push(worldId);
     };
-    pushUnique(globalWorldId);
+    globalWorldIds.forEach(pushUnique);
     roleWorldIds.forEach(pushUnique);
     sessionWorldIds.forEach(pushUnique);
     return {
@@ -794,7 +797,8 @@ class AppBridge {
       uiMode,
       isGroupChat,
       groupMemberIds,
-      globalWorldId: globalWorldId && globalWorldId !== BUILTIN_PHONE_FORMAT_WORLDBOOK_ID ? globalWorldId : '',
+      globalWorldId: globalWorldIds[0] || '',
+      globalWorldIds,
       roleWorldIds,
       sessionWorldIds,
       worldIds,
@@ -808,6 +812,7 @@ class AppBridge {
         worldId: this.currentWorldId,
         worldIds: this.currentWorldIds,
         globalWorldId: this.globalWorldId,
+        globalWorldIds: this.getGlobalWorldIds(),
         roleWorldIds: resolved.roleWorldIds,
         resolvedWorldIds: resolved.worldIds,
         ...(detail || {}),
@@ -2566,6 +2571,10 @@ class AppBridge {
     return 'global_world_id_shared_v1';
   }
 
+  getGlobalWorldIdsKey() {
+    return 'global_world_ids_shared_v1';
+  }
+
   getLegacyScopedGlobalWorldIdKey() {
     return makeScopedKey('global_world_id_v1', this.scopeId);
   }
@@ -2592,7 +2601,8 @@ class AppBridge {
     if (next === this.scopeId) return;
     this.scopeId = next;
     this.worldSessionMap = this.loadWorldSessionMap();
-    this.globalWorldId = this.loadGlobalWorldId();
+    this.globalWorldIds = this.loadGlobalWorldIds();
+    this.globalWorldId = this.globalWorldIds[0] || null;
     this.worldGlobalSettings = this.loadWorldGlobalSettings();
     this.currentWorldIds = this.activeSessionId ? this.normalizeWorldIds(this.worldSessionMap[this.activeSessionId]) : [];
     this.currentWorldId = this.currentWorldIds[0] || null;
@@ -2603,21 +2613,41 @@ class AppBridge {
     this.emitWorldInfoChanged({ scopeId: this.scopeId });
   }
 
-  loadGlobalWorldId() {
-    try {
-      const raw = localStorage.getItem(this.getGlobalWorldIdKey());
-      if (raw) return String(raw);
-      const legacy = localStorage.getItem(this.getLegacyScopedGlobalWorldIdKey());
-      if (legacy) {
-        try {
-          localStorage.setItem(this.getGlobalWorldIdKey(), String(legacy));
-        } catch {}
-        return String(legacy);
-      }
-      return null;
-    } catch {
-      return null;
+  normalizeStoredGlobalWorldIds(value) {
+    if (Array.isArray(value)) return Array.from(new Set(this.normalizeWorldIds(value)));
+    const raw = String(value ?? '').trim();
+    if (!raw) return [];
+    if (raw.startsWith('[') || raw.startsWith('"')) {
+      try {
+        return Array.from(new Set(this.normalizeWorldIds(JSON.parse(raw))));
+      } catch {}
     }
+    return Array.from(new Set(this.normalizeWorldIds(raw)));
+  }
+
+  loadGlobalWorldIds() {
+    try {
+      const plural = localStorage.getItem(this.getGlobalWorldIdsKey());
+      if (plural !== null) return this.normalizeStoredGlobalWorldIds(plural);
+      const raw = localStorage.getItem(this.getGlobalWorldIdKey());
+      if (raw !== null) return this.normalizeStoredGlobalWorldIds(raw);
+      const legacy = localStorage.getItem(this.getLegacyScopedGlobalWorldIdKey());
+      if (legacy !== null) {
+        const migrated = this.normalizeStoredGlobalWorldIds(legacy);
+        try {
+          localStorage.setItem(this.getGlobalWorldIdsKey(), JSON.stringify(migrated));
+          localStorage.setItem(this.getGlobalWorldIdKey(), migrated[0] || '');
+        } catch {}
+        return migrated;
+      }
+      return [];
+    } catch {
+      return [];
+    }
+  }
+
+  loadGlobalWorldId() {
+    return this.loadGlobalWorldIds()[0] || null;
   }
 
   getDefaultWorldGlobalSettings() {
@@ -2749,17 +2779,27 @@ class AppBridge {
 
   async hydrateGlobalWorldId() {
     try {
-      const kv = await safeInvoke('load_kv', { name: this.getGlobalWorldIdKey() });
-      if (kv && typeof kv === 'string' && kv.trim()) {
-        this.globalWorldId = kv.trim();
+      const plural = await safeInvoke('load_kv', { name: this.getGlobalWorldIdsKey() });
+      if (Array.isArray(plural) || typeof plural === 'string') {
+        this.globalWorldIds = this.normalizeStoredGlobalWorldIds(plural);
+        this.globalWorldId = this.globalWorldIds[0] || null;
         try {
-          localStorage.setItem(this.getGlobalWorldIdKey(), this.globalWorldId);
+          localStorage.setItem(this.getGlobalWorldIdsKey(), JSON.stringify(this.globalWorldIds));
+          localStorage.setItem(this.getGlobalWorldIdKey(), this.globalWorldId || '');
         } catch {}
         return;
       }
+      const kv = await safeInvoke('load_kv', { name: this.getGlobalWorldIdKey() });
+      if (typeof kv === 'string') {
+        this.globalWorldIds = this.normalizeStoredGlobalWorldIds(kv);
+        this.globalWorldId = this.globalWorldIds[0] || null;
+        this.persistGlobalWorldId();
+        return;
+      }
       const legacy = await safeInvoke('load_kv', { name: this.getLegacyScopedGlobalWorldIdKey() });
-      if (legacy && typeof legacy === 'string' && legacy.trim()) {
-        this.globalWorldId = legacy.trim();
+      if (typeof legacy === 'string') {
+        this.globalWorldIds = this.normalizeStoredGlobalWorldIds(legacy);
+        this.globalWorldId = this.globalWorldIds[0] || null;
         this.persistGlobalWorldId();
       }
     } catch (err) {
@@ -2827,10 +2867,16 @@ class AppBridge {
   }
 
   persistGlobalWorldId() {
+    this.globalWorldIds = Array.from(new Set(this.normalizeWorldIds(
+      Array.isArray(this.globalWorldIds) ? this.globalWorldIds : this.globalWorldId,
+    )));
+    this.globalWorldId = this.globalWorldIds[0] || null;
     try {
+      localStorage.setItem(this.getGlobalWorldIdsKey(), JSON.stringify(this.globalWorldIds));
       localStorage.setItem(this.getGlobalWorldIdKey(), this.globalWorldId || '');
     } catch {}
-    // 保存为 string（kv 支持任意 JSON；这里用 string 简化）
+    safeInvoke('save_kv', { name: this.getGlobalWorldIdsKey(), data: this.globalWorldIds }).catch(() => {});
+    // 同步旧单值键，确保降级到旧版本时仍可读取第一本全局世界书。
     safeInvoke('save_kv', { name: this.getGlobalWorldIdKey(), data: String(this.globalWorldId || '') }).catch(() => {});
   }
 
@@ -4920,7 +4966,7 @@ class AppBridge {
           groupMemberIds: [],
           sessionWorldIds: [],
           worldIds: [
-            resolvedWorldStateBase.globalWorldId,
+            ...(Array.isArray(resolvedWorldStateBase.globalWorldIds) ? resolvedWorldStateBase.globalWorldIds : []),
             ...(Array.isArray(resolvedWorldStateBase.roleWorldIds) ? resolvedWorldStateBase.roleWorldIds : []),
           ].filter(Boolean),
         }
@@ -5703,10 +5749,11 @@ const stringifyMessageContent = (content) => {
             }));
             builtinPhoneFormatEntries.push(...builtinEntries);
           }
-          const globalEntries =
-            resolvedWorldState.globalWorldId
-              ? collectEntries(resolvedWorldState.globalWorldId)
-              : [];
+          const globalEntries = [];
+          resolvedWorldState.globalWorldIds.forEach((id) => {
+            if (!id) return;
+            globalEntries.push(...collectEntries(id));
+          });
           globalEntries.forEach(entry => captureWorldDebugEntry(worldDebugRaw.globalEntries, entry, {
             sourceKind: 'global',
           }));
@@ -7429,7 +7476,7 @@ const stringifyMessageContent = (content) => {
     const nativeOnlyIds = nativeIds.filter(id => !indexedSet.has(id));
     const referencedIds = new Set([
       ...this.normalizeWorldIds(this.currentWorldIds),
-      String(this.globalWorldId || '').trim(),
+      ...this.getGlobalWorldIds(),
       ...Object.values(this.worldSessionMap || {}).flatMap(value => this.normalizeWorldIds(value)),
     ].filter(Boolean));
     return {
@@ -7586,8 +7633,10 @@ const stringifyMessageContent = (content) => {
     }
 
     let globalChanged = false;
-    if (this.globalWorldId === from) {
-      this.globalWorldId = to;
+    const globalWorldIds = this.getGlobalWorldIds();
+    if (globalWorldIds.includes(from)) {
+      this.globalWorldIds = Array.from(new Set(globalWorldIds.map(id => (id === from ? to : id)))).filter(Boolean);
+      this.globalWorldId = this.globalWorldIds[0] || null;
       this.persistGlobalWorldId();
       globalChanged = true;
     }
@@ -7675,8 +7724,10 @@ const stringifyMessageContent = (content) => {
         currentChanged = true;
       }
       let globalChanged = false;
-      if (this.globalWorldId === target) {
-        this.globalWorldId = null;
+      const globalWorldIds = this.getGlobalWorldIds();
+      if (globalWorldIds.includes(target)) {
+        this.globalWorldIds = globalWorldIds.filter(id => id !== target);
+        this.globalWorldId = this.globalWorldIds[0] || null;
         this.persistGlobalWorldId();
         globalChanged = true;
       }
@@ -7801,7 +7852,13 @@ const stringifyMessageContent = (content) => {
   }
 
   getGlobalWorldId() {
-    return this.globalWorldId || '';
+    return this.getGlobalWorldIds()[0] || '';
+  }
+
+  getGlobalWorldIds() {
+    return Array.from(new Set(this.normalizeWorldIds(
+      Array.isArray(this.globalWorldIds) ? this.globalWorldIds : this.globalWorldId,
+    )));
   }
 
   setSessionWorldIds(sessionId, worldIds, { silent = true } = {}) {
@@ -7831,10 +7888,25 @@ const stringifyMessageContent = (content) => {
   }
 
   setGlobalWorld(worldId) {
-    this.globalWorldId = worldId || null;
+    this.setGlobalWorldIds(worldId ? [worldId] : []);
+  }
+
+  setGlobalWorldIds(worldIds) {
+    this.globalWorldIds = Array.from(new Set(this.normalizeWorldIds(worldIds)));
+    this.globalWorldId = this.globalWorldIds[0] || null;
     this.persistGlobalWorldId();
     this.syncWorldRegexBindings?.();
     this.emitWorldInfoChanged();
+  }
+
+  toggleGlobalWorld(worldId) {
+    const id = String(worldId || '').trim();
+    if (!id) return;
+    const next = this.getGlobalWorldIds();
+    const index = next.indexOf(id);
+    if (index >= 0) next.splice(index, 1);
+    else next.push(id);
+    this.setGlobalWorldIds(next);
   }
 
   getWorldGlobalSettings() {
@@ -8423,7 +8495,11 @@ const stringifyMessageContent = (content) => {
     const worldSettings = this.getWorldGlobalSettings?.() || this.worldGlobalSettings || {};
     const insertionStrategy = normalizeWorldInsertionStrategy(worldSettings.insertionStrategy, 'role_first');
     const resolvedWorldState = this.getResolvedWorldState(sid, { uiMode: mode });
-    const globalEntries = resolvedWorldState.globalWorldId ? collectEntries(resolvedWorldState.globalWorldId) : [];
+    const globalEntries = [];
+    resolvedWorldState.globalWorldIds.forEach((id) => {
+      if (!id) return;
+      globalEntries.push(...collectEntries(id));
+    });
     const roleEntries = [];
     resolvedWorldState.roleWorldIds.forEach((id) => {
       if (!id) return;
@@ -8619,7 +8695,11 @@ const stringifyMessageContent = (content) => {
       autoImagePromptEnabled: appSettings.get().autoImagePromptEnabled === true,
     });
     const builtinPart = builtinEntries.map(e => e.content).join('\n\n');
-    const globalEntries = resolvedWorldState.globalWorldId ? collectEntries(resolvedWorldState.globalWorldId) : [];
+    const globalEntries = [];
+    resolvedWorldState.globalWorldIds.forEach((id) => {
+      if (!id) return;
+      globalEntries.push(...collectEntries(id));
+    });
     const roleEntries = [];
     resolvedWorldState.roleWorldIds.forEach((id) => {
       if (!id) return;

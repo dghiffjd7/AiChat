@@ -161,7 +161,7 @@ export const buildContactDetailMarkup = ({ model, avatar = '', personaFields = [
             </div>
           `).join('')}
         </div>
-        <button type="button" class="contact-detail-message" data-action="contact-detail-message">
+        <button type="button" class="contact-detail-message" data-action="contact-detail-message" data-maid-guide-target="contact-detail-message">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4Z"></path></svg>
           <span>${model.isGroup ? '进入群聊' : '发消息'}</span>
         </button>

@@ -91,7 +91,11 @@ export const resolveRpInitVarWorldIds = ({
   }
   const fallback = [];
   try {
-    fallback.push(bridge?.getGlobalWorldId?.());
+    if (typeof bridge?.getGlobalWorldIds === 'function') {
+      fallback.push(...(bridge.getGlobalWorldIds() || []));
+    } else {
+      fallback.push(bridge?.getGlobalWorldId?.());
+    }
   } catch {}
   try {
     fallback.push(...(bridge?.getWorldIdsForSession?.(sid) || []));

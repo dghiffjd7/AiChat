@@ -112,6 +112,43 @@ assert.equal(adapter.hasConfiguredProfile(), true);
   console.log('ok - onboarding previous steps restore their parent surfaces before spotlight rendering');
 }
 
+{
+  const navigationCalls = [];
+  const navigationAdapter = createMaidOnboardingAppAdapter({
+    documentRef: { querySelectorAll: () => [] },
+    targetSelectors: {},
+    isElementVisible: () => false,
+    delay: async () => {},
+    isChatRoomVisible: () => true,
+    exitChatRoom: options => navigationCalls.push(['exit', options]),
+    switchPage: (page, options) => navigationCalls.push(['page', page, options]),
+    closeContactDetail: () => navigationCalls.push(['contact-detail:close']),
+  });
+
+  await navigationAdapter.prepareStep({ step: { target: 'settings-entry' } });
+  assert.deepEqual(navigationCalls.splice(0), [
+    ['exit', { animate: false, source: 'maid-onboarding' }],
+    ['page', 'chat', { animate: false }],
+  ]);
+
+  await navigationAdapter.prepareStep({ step: { target: 'contact-list-entry' } });
+  assert.deepEqual(navigationCalls.splice(0), [
+    ['exit', { animate: false, source: 'maid-onboarding' }],
+    ['contact-detail:close'],
+    ['page', 'contacts', { animate: false }],
+  ]);
+
+  await navigationAdapter.prepareStep({ step: { target: 'contact-detail-message' }, meta: { reason: 'prev' } });
+  assert.deepEqual(navigationCalls.splice(0), [
+    ['exit', { animate: false, source: 'maid-onboarding' }],
+    ['page', 'contacts', { animate: false }],
+  ]);
+
+  await navigationAdapter.prepareStep({ step: { target: 'chat-list-entry' } });
+  assert.deepEqual(navigationCalls.splice(0), []);
+  console.log('ok - onboarding exposes settings and first-chat contact surfaces when started or reversed from a room');
+}
+
 const vertexAdapter = createMaidOnboardingAppAdapter({
   configManager: {
     getProfiles: () => [{ id: 'vertex', model: 'gemini-2.5-pro', vertexaiServiceAccount: 'encoded-json' }],

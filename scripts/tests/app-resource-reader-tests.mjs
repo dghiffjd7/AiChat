@@ -340,6 +340,7 @@ const makeDeps = () => {
     roleWorldIds: ['海贼王'],
     resolvedWorldIds: ['海贼王'],
     globalWorldId: '',
+    globalWorldIds: [],
   });
   assert.deepEqual(result.sessions[1].worldbooks.directWorldIds, ['unexpected-direct-world']);
   assert.deepEqual(result.sessions[1].members, [{ id: '路飞', name: '路飞' }]);

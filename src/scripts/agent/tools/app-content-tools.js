@@ -585,6 +585,7 @@ export const createAppContentAgentTools = ({
   getWorldIdsForSession = null,
   getWorldSessionMap = null,
   getGlobalWorldId = null,
+  getGlobalWorldIds = null,
   assignWorldToPersona = null,
   getRpSessionId = null,
   bindWorldToSession = null,
@@ -615,9 +616,14 @@ export const createAppContentAgentTools = ({
     return [];
   };
 
-  const getGlobalWorld = async () => (
-    typeof getGlobalWorldId === 'function' ? trim(await getGlobalWorldId()) : ''
-  );
+  const getGlobalWorlds = async () => {
+    if (typeof getGlobalWorldIds === 'function') {
+      return Array.from(new Set(normalizeStringList(await getGlobalWorldIds())));
+    }
+    return typeof getGlobalWorldId === 'function'
+      ? normalizeStringList(await getGlobalWorldId())
+      : [];
+  };
 
   const readWorldbookRecord = async (worldbookId = '') => {
     const id = trim(worldbookId);
@@ -645,7 +651,7 @@ export const createAppContentAgentTools = ({
     if (explicit) return explicit;
     const sessionIds = await getSessionWorldIds(args.sessionId);
     if (sessionIds.length) return sessionIds[0];
-    return await getGlobalWorld();
+    return (await getGlobalWorlds())[0] || '';
   };
 
   const resolveWorldbookCreateTarget = async (args = {}) => {
@@ -806,7 +812,7 @@ export const createAppContentAgentTools = ({
     const worldSessionMap = typeof getWorldSessionMap === 'function'
       ? await getWorldSessionMap()
       : {};
-    const globalWorldId = await getGlobalWorld();
+    const globalWorldIds = await getGlobalWorlds();
     const personas = listStoreItems(personaStore);
     const selectedIds = new Set();
     const resolveStoredId = target => (
@@ -819,7 +825,7 @@ export const createAppContentAgentTools = ({
           if (normalizeStringList(value).includes(worldbookId)) count += 1;
         });
       }
-      if (globalWorldId === worldbookId) count += 1;
+      if (globalWorldIds.includes(worldbookId)) count += 1;
       personas.forEach(persona => {
         if (trim(persona?.source?.worldbookId) === worldbookId) count += 1;
       });
@@ -2206,16 +2212,16 @@ export const createAppContentAgentTools = ({
     execute: async (args = {}) => {
       await waitForWorldStoreReady?.();
       const sessionIds = await getSessionWorldIds(args.sessionId);
-      const globalId = args.includeGlobal === false ? '' : await getGlobalWorld();
+      const globalIds = args.includeGlobal === false ? [] : await getGlobalWorlds();
       const storedIds = typeof listWorlds === 'function' ? normalizeStringList(await listWorlds()) : [];
-      const ids = Array.from(new Set([...storedIds, ...sessionIds, globalId].filter(Boolean)));
+      const ids = Array.from(new Set([...storedIds, ...sessionIds, ...globalIds].filter(Boolean)));
       const limit = Math.max(1, Math.min(200, Number(args.limit || 80) || 80));
       const worldbooks = [];
       for (const id of ids.slice(0, limit)) {
         const data = typeof getWorldInfo === 'function' ? await getWorldInfo(id) : null;
         worldbooks.push(summarizeWorldbook(id, data, {
           boundToCurrentSession: sessionIds.includes(id),
-          global: Boolean(globalId && id === globalId),
+          global: globalIds.includes(id),
         }));
       }
       return {

@@ -448,6 +448,8 @@ assert.equal(MAID_SETUP_HINT_ID, 'maid-onboarding-welcome-v2', 'new dismissal se
   await flush();
   shown.at(-1).onNext();
   await flush();
+  runtime.emit('target-click', { target: 'contact-list-entry' });
+  await flush();
   runtime.emit('chat-room-entered', { sessionId: 'Aria' });
   await flush();
   runtime.emit('chat-composer-input', { length: 2 });

@@ -184,6 +184,11 @@ export const APP_BRIDGE_GAP_POLICY = Object.freeze({
     priority: 'medium',
     recommendation: 'World state should remain visible until world runtime owns binding state.',
   },
+  globalWorldIds: {
+    status: APP_BRIDGE_GAP_STATUS.runtimeState,
+    priority: 'medium',
+    recommendation: 'World state should remain visible until world runtime owns binding state.',
+  },
   currentWorldId: {
     status: APP_BRIDGE_GAP_STATUS.runtimeState,
     priority: 'medium',

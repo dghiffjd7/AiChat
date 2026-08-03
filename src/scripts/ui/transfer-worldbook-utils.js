@@ -1,11 +1,12 @@
 import { BUILTIN_PHONE_FORMAT_WORLDBOOK_ID } from '../storage/builtin-worldbooks.js';
-import { getGlobalWorldId } from './world-session-runtime-utils.js';
+import { getGlobalWorldId, getGlobalWorldIds } from './world-session-runtime-utils.js';
 
 const ensureArray = value => (Array.isArray(value) ? value : []);
 
 export const buildTransferWorldIdList = ({
   sessionWorldIds = [],
   globalWorldId = '',
+  globalWorldIds = [],
   normalizeSessionWorldIds = true,
 } = {}) => {
   const normalizedSessionWorldIds = normalizeSessionWorldIds
@@ -13,10 +14,13 @@ export const buildTransferWorldIdList = ({
       .map(id => String(id || '').trim())
       .filter(id => id && id !== BUILTIN_PHONE_FORMAT_WORLDBOOK_ID)
     : ensureArray(sessionWorldIds);
-  const sharedWorldId = String(globalWorldId || '').trim();
+  const sharedWorldIds = Array.from(new Set([
+    globalWorldId,
+    ...ensureArray(globalWorldIds),
+  ].map(id => String(id || '').trim()).filter(Boolean)));
   return Array.from(new Set([
     ...normalizedSessionWorldIds,
-    ...(sharedWorldId && sharedWorldId !== BUILTIN_PHONE_FORMAT_WORLDBOOK_ID ? [sharedWorldId] : []),
+    ...sharedWorldIds.filter(id => id !== BUILTIN_PHONE_FORMAT_WORLDBOOK_ID),
   ])).filter(id => id && id !== BUILTIN_PHONE_FORMAT_WORLDBOOK_ID);
 };
 
@@ -29,9 +33,11 @@ export const collectTransferWorldbookBundle = async ({
 } = {}) => {
   const sid = String(sessionId || '').trim();
   const globalWorldId = getGlobalWorldId(appBridge);
+  const globalWorldIds = getGlobalWorldIds(appBridge);
   const worldIds = buildTransferWorldIdList({
     sessionWorldIds: appBridge?.getWorldIdsForSession?.(sid),
     globalWorldId,
+    globalWorldIds,
     normalizeSessionWorldIds,
   });
   const worldbooks = {};
@@ -51,6 +57,7 @@ export const collectTransferWorldbookBundle = async ({
   return {
     worldIds,
     globalWorldId: globalWorldId && globalWorldId !== BUILTIN_PHONE_FORMAT_WORLDBOOK_ID ? globalWorldId : '',
+    globalWorldIds: globalWorldIds.filter(id => id !== BUILTIN_PHONE_FORMAT_WORLDBOOK_ID),
     worldbooks,
   };
 };

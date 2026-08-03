@@ -115,10 +115,25 @@ assert.match(openCommandBlock, /maidCommandInputRuntime\?\.open\(\{ autoFocus \}
 assert.doesNotMatch(openCommandBlock, /openMaidApiConfigPanel/);
 
 const appBackGuideBlock = appSource.slice(
-  appSource.indexOf('const panelBackClosers'),
+  appSource.indexOf('const closeMaidOnboardingBackLayer'),
   appSource.indexOf('const panelBackOpenChecks'),
 );
 assert.match(appBackGuideBlock, /maidOnboardingRuntime\?\.back\?\.\(\)/);
 assert.doesNotMatch(appBackGuideBlock, /maidOnboardingRuntime\?\.skip\?\.\(\)/);
 assert.match(appSource, /\.app-confirm-modal \.app-confirm-cancel,[\s\S]*?\.session-add-confirm-layer:not\(\.is-leaving\) \.session-add-confirm-action\.is-cancel[\s\S]*?const activeSelectors/);
+const closeTopLayerBlock = appSource.slice(
+  appSource.indexOf('const closeTopAppLayer'),
+  appSource.indexOf('const nativeBackButtonRegistrar'),
+);
+assert.ok(
+  closeTopLayerBlock.indexOf('isMaidOnboardingBackLayerOpen()') >= 0
+    && closeTopLayerBlock.indexOf('isMaidOnboardingBackLayerOpen()') < closeTopLayerBlock.indexOf("'#contact-detail.is-active'"),
+  'active onboarding must own Android back before the underlying contact detail layer',
+);
+assert.match(appSource, /const closeMaidOnboardingBackLayer = \(\) =>/);
+assert.match(appSource, /const isMaidOnboardingBackLayerOpen = \(\) =>/);
+assert.match(appSource, /const panelBackClosers = \[\s*closeMaidOnboardingBackLayer,/);
+assert.match(appSource, /const panelBackOpenChecks = \[\s*isMaidOnboardingBackLayerOpen,/);
+assert.doesNotMatch(closeTopLayerBlock, /panelBack(?:OpenChecks|Closers)\[0\]/);
+assert.doesNotMatch(closeTopLayerBlock, /for \(let idx = 1;/);
 console.log('ok - app onboarding contract wires real anchors, completion events, offline command access, and spotlight reuse');

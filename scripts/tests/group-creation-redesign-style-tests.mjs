@@ -3,6 +3,7 @@ import fs from 'node:fs';
 
 const html = fs.readFileSync(new URL('../../src/index.html', import.meta.url), 'utf8');
 const css = fs.readFileSync(new URL('../../src/assets/css/group-creation-redesign.css', import.meta.url), 'utf8');
+const contactCss = fs.readFileSync(new URL('../../src/assets/css/contact-groups.css', import.meta.url), 'utf8');
 const createPanel = fs.readFileSync(new URL('../../src/scripts/ui/group-chat-panels.js', import.meta.url), 'utf8');
 const groupPanel = fs.readFileSync(new URL('../../src/scripts/ui/group-panel.js', import.meta.url), 'utf8');
 const app = fs.readFileSync(new URL('../../src/scripts/ui/app.js', import.meta.url), 'utf8');
@@ -45,6 +46,20 @@ assert.match(
 assert.match(css, /\.group-redesign-overlay[\s\S]*?backdrop-filter:\s*blur\(7px\)/);
 assert.match(css, /\.group-redesign-panel\.is-open/);
 assert.match(css, /\.group-avatar-collage\[data-layout='trio'\][\s\S]*?grid-row:\s*span 2/);
+assert.match(
+  contactCss,
+  /\.contact-avatar\.group-avatar-collage\s+\.group-avatar-collage-cell\s*\{[^}]*width:\s*auto[^}]*height:\s*auto[^}]*align-self:\s*stretch[^}]*justify-self:\s*stretch/s,
+);
+// 联系人页 .contact-item img 的通用圆角会把拼图小格切成一颗颗圆球，
+// 小格必须保持方形、由容器统一裁切，与聊天列表观感一致
+assert.match(
+  contactCss,
+  /\.contact-avatar\.group-avatar-collage\s+\.group-avatar-collage-cell\s*\{[^}]*border-radius:\s*0/s,
+);
+assert.doesNotMatch(
+  contactCss,
+  /\.contact-avatar\.group-avatar-collage\[data-layout='trio'\][\s\S]*?\.group-avatar-collage-cell\[data-collage-lead='true'\]/s,
+);
 assert.match(
   css,
   /\.group-create-member-row\s*\{[\s\S]*?min-height:\s*63px[\s\S]*?flex:\s*0 0 auto[\s\S]*?gap:\s*12px[\s\S]*?padding:\s*10px 12px/,

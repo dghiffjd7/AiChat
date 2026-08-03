@@ -33,6 +33,7 @@ class MemoryLocalStorageMock {
 
 const previousGlobals = {
   localStorage: globalThis.localStorage,
+  requestIdleCallback: globalThis.requestIdleCallback,
   tauri: globalThis.__TAURI__,
   tauriInvoke: globalThis.__TAURI_INVOKE__,
   tauriInternals: globalThis.__TAURI_INTERNALS__,
@@ -40,6 +41,7 @@ const previousGlobals = {
 
 const installWeb = (storage = new MemoryLocalStorageMock()) => {
   globalThis.localStorage = storage;
+  globalThis.requestIdleCallback = () => 0;
   delete globalThis.__TAURI__;
   delete globalThis.__TAURI_INVOKE__;
   delete globalThis.__TAURI_INTERNALS__;
@@ -58,6 +60,12 @@ const largeGreeting = {
   title: '大开场',
   content: 'x'.repeat(170_000),
 };
+const rpState = (id = '', content = '', { updatedAt = 0 } = {}) => ({
+  greetings: id ? [{ id, title: '', content }] : [],
+  activeGreetingId: id,
+  syncEvents: [],
+  updatedAt,
+});
 
 try {
   installWeb();
@@ -250,30 +258,50 @@ try {
 
   {
     const key = 'rp_session_v1__persona_equal_time_conflict';
-    const localState = {
-      greetings: [{ id: 'local', title: '', content: '本地增量' }],
-      activeGreetingId: 'local',
-      syncEvents: [],
-      updatedAt: 0,
-    };
+    const backupKey = `${key}__legacy_tie_backup_v1`;
+    const localState = rpState('local', '本地增量');
+    const kvState = rpState('disk', '磁盘旧值');
     const calls = [];
     const storage = installTauri(async (cmd, args) => {
       calls.push([cmd, args]);
-      if (cmd === 'load_kv') {
-        return {
-          greetings: [{ id: 'disk', title: '', content: '磁盘旧值' }],
-          activeGreetingId: 'disk',
-          syncEvents: [],
-          updatedAt: 0,
-        };
-      }
-      if (cmd === 'save_kv') throw new Error('ambiguous tie must remain blocked');
+      if (cmd === 'load_kv' && args.name === key) return kvState;
+      if (cmd === 'save_kv') return true;
       return null;
     }, new MemoryLocalStorageMock({ [key]: JSON.stringify(localState) }));
     const store = new RpSessionStore({ scopeId: 'persona:equal_time_conflict' });
     await store.ready;
 
     assert.equal(store.getGreetings()[0]?.content, '本地增量');
+    assert.equal(store.persistenceBlocked, false);
+    assert.equal(storage.map.has(key), false);
+    const backupCall = calls.find(([cmd, args]) => cmd === 'save_kv' && args.name === backupKey);
+    assert.equal(backupCall?.[1]?.data?.local?.greetings?.[0]?.content, '本地增量');
+    assert.equal(backupCall?.[1]?.data?.kv?.greetings?.[0]?.content, '磁盘旧值');
+    assert.equal(Number.isFinite(backupCall?.[1]?.data?.resolvedAt), true);
+    assert.equal(
+      calls.some(([cmd, args]) => cmd === 'save_kv' && args.name === key && args.data?.greetings?.[0]?.content === '本地增量'),
+      true,
+    );
+    assert.equal(store.setActiveGreeting('local'), 'local');
+    await flushMicrotasks();
+    console.log('ok - legacy equal-time divergent RP states back up both sides and adopt local recovery');
+  }
+
+  {
+    const key = 'rp_session_v1__persona_modern_equal_time_conflict';
+    const calls = [];
+    const storage = installTauri(async (cmd, args) => {
+      calls.push([cmd, args]);
+      if (cmd === 'load_kv') return rpState('disk', '磁盘现代值', { updatedAt: 20 });
+      if (cmd === 'save_kv') throw new Error('modern tie must remain blocked');
+      return null;
+    }, new MemoryLocalStorageMock({
+      [key]: JSON.stringify(rpState('local', '本地现代值', { updatedAt: 20 })),
+    }));
+    const store = new RpSessionStore({ scopeId: 'persona:modern_equal_time_conflict' });
+    await store.ready;
+
+    assert.equal(store.getGreetings()[0]?.content, '本地现代值');
     assert.equal(store.persistenceBlocked, true);
     assert.equal(storage.map.has(key), true);
     assert.throws(
@@ -281,7 +309,129 @@ try {
       error => error?.code === 'rp_session_store_read_unavailable',
     );
     assert.equal(calls.some(([cmd]) => cmd === 'save_kv'), false);
-    console.log('ok - equal-time divergent RP states retain local recovery instead of silently preferring KV');
+    console.log('ok - modern equal-time divergent RP states remain read-only');
+  }
+
+  {
+    const key = 'rp_session_v1__persona_legacy_empty_local';
+    const calls = [];
+    const storage = installTauri(async (cmd, args) => {
+      calls.push([cmd, args]);
+      if (cmd === 'load_kv') return rpState('disk', '磁盘有内容');
+      if (cmd === 'save_kv') throw new Error('KV adoption must not write');
+      return null;
+    }, new MemoryLocalStorageMock({ [key]: JSON.stringify(rpState()) }));
+    const store = new RpSessionStore({ scopeId: 'persona:legacy_empty_local' });
+    await store.ready;
+
+    assert.equal(store.getGreetings()[0]?.content, '磁盘有内容');
+    assert.equal(store.persistenceBlocked, false);
+    assert.equal(storage.map.has(key), false);
+    assert.equal(calls.some(([cmd]) => cmd === 'save_kv'), false);
+    console.log('ok - legacy RP tie adopts non-empty KV when the local mirror is empty');
+  }
+
+  {
+    const key = 'rp_session_v1__persona_legacy_empty_kv';
+    const backupKey = `${key}__legacy_tie_backup_v1`;
+    const calls = [];
+    const storage = installTauri(async (cmd, args) => {
+      calls.push([cmd, args]);
+      if (cmd === 'load_kv') return rpState();
+      if (cmd === 'save_kv' && args.name === key) return true;
+      throw new Error(`unexpected ${cmd}:${args.name}`);
+    }, new MemoryLocalStorageMock({
+      [key]: JSON.stringify(rpState('local', '本地有内容')),
+    }));
+    const store = new RpSessionStore({ scopeId: 'persona:legacy_empty_kv' });
+    await store.ready;
+
+    assert.equal(store.getGreetings()[0]?.content, '本地有内容');
+    assert.equal(store.persistenceBlocked, false);
+    assert.equal(storage.map.has(key), false);
+    assert.equal(calls.some(([cmd, args]) => cmd === 'save_kv' && args.name === key), true);
+    assert.equal(calls.some(([cmd, args]) => cmd === 'save_kv' && args.name === backupKey), false);
+    console.log('ok - legacy RP tie backfills non-empty local state over an empty shaped KV state');
+  }
+
+  {
+    const key = 'rp_session_v1__persona_legacy_backup_failure';
+    const backupKey = `${key}__legacy_tie_backup_v1`;
+    const calls = [];
+    const storage = installTauri(async (cmd, args) => {
+      calls.push([cmd, args]);
+      if (cmd === 'load_kv') return rpState('disk', '磁盘值');
+      if (cmd === 'save_kv' && args.name === backupKey) throw new Error('backup unavailable');
+      if (cmd === 'save_kv' && args.name === key) throw new Error('main write must not run');
+      return null;
+    }, new MemoryLocalStorageMock({
+      [key]: JSON.stringify(rpState('local', '本地值')),
+    }));
+    const store = new RpSessionStore({ scopeId: 'persona:legacy_backup_failure' });
+    await store.ready;
+
+    assert.equal(store.persistenceBlocked, true);
+    assert.equal(storage.map.has(key), true);
+    assert.equal(calls.some(([cmd, args]) => cmd === 'save_kv' && args.name === backupKey), true);
+    assert.equal(calls.some(([cmd, args]) => cmd === 'save_kv' && args.name === key), false);
+    console.log('ok - failed RP legacy tie backup keeps the store blocked and mirror intact');
+  }
+
+  {
+    const key = 'rp_session_v1__persona_legacy_main_write_failure';
+    const backupKey = `${key}__legacy_tie_backup_v1`;
+    const calls = [];
+    const storage = installTauri(async (cmd, args) => {
+      calls.push([cmd, args]);
+      if (cmd === 'load_kv') return rpState('disk', '磁盘值');
+      if (cmd === 'save_kv' && args.name === backupKey) return true;
+      if (cmd === 'save_kv' && args.name === key) throw new Error('main unavailable');
+      return null;
+    }, new MemoryLocalStorageMock({
+      [key]: JSON.stringify(rpState('local', '本地值')),
+    }));
+    const store = new RpSessionStore({ scopeId: 'persona:legacy_main_write_failure' });
+    await store.ready;
+
+    assert.equal(store.persistenceBlocked, true);
+    assert.equal(storage.map.has(key), true);
+    assert.equal(calls.some(([cmd, args]) => cmd === 'save_kv' && args.name === backupKey), true);
+    assert.equal(calls.some(([cmd, args]) => cmd === 'save_kv' && args.name === key), true);
+    console.log('ok - failed RP legacy tie main write keeps the store blocked after a successful backup');
+  }
+
+  {
+    const legacyKey = 'rp_session_v1__legacy_conflict';
+    const modernKey = 'rp_session_v1__modern_conflict';
+    const legacyBackupKey = `${legacyKey}__legacy_tie_backup_v1`;
+    const calls = [];
+    const storage = installTauri(async (cmd, args) => {
+      calls.push([cmd, args]);
+      if (cmd === 'load_kv' && args.name === legacyKey) return rpState('disk', '磁盘旧值');
+      if (cmd === 'load_kv' && args.name === modernKey) return rpState('disk-modern', '磁盘现代值', { updatedAt: 10 });
+      if (cmd === 'save_kv' && (args.name === legacyBackupKey || args.name === legacyKey)) return true;
+      throw new Error(`unexpected ${cmd}:${args.name}`);
+    }, new MemoryLocalStorageMock({
+      [legacyKey]: JSON.stringify(rpState('local', '本地旧值')),
+      [modernKey]: JSON.stringify(rpState('local-modern', '本地现代值', { updatedAt: 10 })),
+    }));
+
+    const result = await migrateRpSessionLocalMirrors();
+
+    assert.deepEqual(result, {
+      scanned: 2,
+      removed: 1,
+      backfilled: 0,
+      retained: 1,
+    });
+    assert.equal(storage.map.has(legacyKey), false);
+    assert.equal(storage.map.has(modernKey), true);
+    assert.equal(calls.some(([cmd, args]) => cmd === 'save_kv' && args.name === legacyBackupKey), true);
+    assert.equal(
+      calls.some(([cmd, args]) => cmd === 'save_kv' && args.name === legacyKey && args.data?.greetings?.[0]?.content === '本地旧值'),
+      true,
+    );
+    console.log('ok - bulk RP migration resolves legacy ties and retains modern conflicts');
   }
 
   {
@@ -369,6 +519,8 @@ try {
 } finally {
   if (previousGlobals.localStorage === undefined) delete globalThis.localStorage;
   else globalThis.localStorage = previousGlobals.localStorage;
+  if (previousGlobals.requestIdleCallback === undefined) delete globalThis.requestIdleCallback;
+  else globalThis.requestIdleCallback = previousGlobals.requestIdleCallback;
   if (previousGlobals.tauri === undefined) delete globalThis.__TAURI__;
   else globalThis.__TAURI__ = previousGlobals.tauri;
   if (previousGlobals.tauriInvoke === undefined) delete globalThis.__TAURI_INVOKE__;

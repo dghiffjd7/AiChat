@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 
 const previousLocalStorage = globalThis.localStorage;
 const previousDocument = globalThis.document;
@@ -79,6 +80,15 @@ try {
     assert.match(text, /绑定到该世界书/);
     assert.match(text, /取消只保留世界书/);
     console.log('ok - world regex import impact describes optional regex side effects');
+  }
+
+  {
+    const source = await readFile(new URL('../../src/scripts/ui/world-panel.js', import.meta.url), 'utf8');
+    assert.match(source, /const normalizedGlobalIds = getGlobalWorldIds\(window\.appBridge\)/);
+    assert.match(source, /for \(const worldId of normalizedGlobalIds\)/);
+    assert.match(source, /setGlobalWorldIds\(Array\.from\(next\)\)/);
+    assert.match(source, /Array\.from\(new Set\(\[\.\.\.current, name\]\)\)/);
+    console.log('ok - global worldbook panel binds toggles and new books through the multi-select contract');
   }
 } finally {
   if (previousLocalStorage === undefined) delete globalThis.localStorage;

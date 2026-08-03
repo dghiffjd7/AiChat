@@ -40,6 +40,7 @@ import {
   assert.equal(highRisk.some(contract => contract.id === 'memory-snapshots'), true);
   assert.equal(highRisk.some(contract => contract.id === 'turn-checkpoints'), true);
   assert.equal(findStorageMigrationContract('world-global-id').scopeStrategy, 'shared-with-scoped-legacy-read');
+  assert.equal(findStorageMigrationContract('world-global-id').currentKey, 'global_world_ids_shared_v1');
   assert.deepEqual(findStorageMigrationContract('prompt-presets').legacyReadKeys, ['prompt_preset_store_v1']);
   assert.equal(findStorageMigrationContract('prompt-presets').writeTargets.includes('prompt_preset_store_v2_index'), true);
   assert.equal(findStorageMigrationContract('missing'), null);
@@ -52,8 +53,9 @@ import {
   const globalId = checklist.find(item => item.id === 'world-global-id');
   assert.equal(contacts.scopedKeyExample, 'contacts_store_v1__persona_Alice___');
   assert.deepEqual(contacts.writeTargets, ['contacts_store_v1__<scope>']);
-  assert.equal(globalId.scopedKeyExample, 'global_world_id_shared_v1__persona_Alice___');
-  assert.deepEqual(globalId.legacyReadKeys, ['global_world_id_v1__<scope>']);
+  assert.equal(globalId.scopedKeyExample, 'global_world_ids_shared_v1__persona_Alice___');
+  assert.deepEqual(globalId.legacyReadKeys, ['global_world_id_shared_v1', 'global_world_id_v1__<scope>']);
+  assert.deepEqual(globalId.writeTargets, ['global_world_ids_shared_v1', 'global_world_id_shared_v1']);
   assert.notEqual(contacts.writeTargets, STORAGE_MIGRATION_CONTRACTS[0].writeTargets);
   contacts.writeTargets.push('mutated');
   assert.deepEqual(STORAGE_MIGRATION_CONTRACTS[0].writeTargets, ['contacts_store_v1__<scope>']);

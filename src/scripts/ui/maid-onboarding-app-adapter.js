@@ -13,6 +13,7 @@ export const createMaidOnboardingAppAdapter = ({
   closeApiConfig = null,
   closeAddFriend = null,
   cancelAddFriendConfirm = null,
+  closeContactDetail = null,
   isChatRoomVisible = () => false,
   exitChatRoom = null,
   switchPage = null,
@@ -101,6 +102,11 @@ export const createMaidOnboardingAppAdapter = ({
       await openSettingsMenu?.();
       return;
     }
+    if (target === 'settings-entry') {
+      if (isChatRoomVisible?.()) await exitChatRoom?.({ animate: false, source: 'maid-onboarding' });
+      await switchPage?.('chat', { animate: false });
+      return;
+    }
     if (target.startsWith('config-') && !resolveTarget(target)) {
       await openApiConfig?.({ reason: 'guide' });
       return;
@@ -114,9 +120,15 @@ export const createMaidOnboardingAppAdapter = ({
       if (target === 'add-friend-recommendation') panel?.nameInput?.focus?.();
       return;
     }
-    if (target === 'chat-list-entry') {
+    if (target === 'contact-list-entry') {
       if (isChatRoomVisible?.()) await exitChatRoom?.({ animate: false, source: 'maid-onboarding' });
-      await switchPage?.('chat', { animate: false });
+      await closeContactDetail?.();
+      await switchPage?.('contacts', { animate: false });
+      return;
+    }
+    if (target === 'contact-detail-message' && !resolveTarget(target)) {
+      if (isChatRoomVisible?.()) await exitChatRoom?.({ animate: false, source: 'maid-onboarding' });
+      await switchPage?.('contacts', { animate: false });
       return;
     }
     if (target === 'agent-center-entry') {

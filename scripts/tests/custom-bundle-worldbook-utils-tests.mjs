@@ -13,11 +13,12 @@ const {
 {
   const ids = getCustomBundleSessionWorldIds({
     globalWorldId: ' world:global ',
+    globalWorldIds: [' world:global ', 'world:global-extra'],
     worldSessionMap: {
       'session:a': [' world:main ', 'world:main', '', BUILTIN_PHONE_FORMAT_WORLDBOOK_ID],
     },
   }, ' session:a ');
-  assert.deepEqual(ids, ['world:main', 'world:global']);
+  assert.deepEqual(ids, ['world:main', 'world:global', 'world:global-extra']);
   console.log('ok - getCustomBundleSessionWorldIds normalizes session and global world ids');
 }
 

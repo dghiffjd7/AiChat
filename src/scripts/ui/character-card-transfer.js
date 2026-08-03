@@ -214,6 +214,7 @@ export class CharacterCardTransfer {
     const {
       worldIds: exportWorldIds,
       globalWorldId,
+      globalWorldIds,
       worldbooks,
     } = await collectTransferWorldbookBundle({
       appBridge: this.appBridge,
@@ -260,6 +261,7 @@ export class CharacterCardTransfer {
         id: sid,
         worldIds: exportWorldIds,
         globalWorldId: globalWorldId || '',
+        globalWorldIds,
       },
       variables,
       regex: {

@@ -196,6 +196,79 @@ const makeSession = (timestamp = 1) => ({
 }
 
 {
+  const sid = 'rp:persona_recent_race';
+  const store = new ChatStore({ scopeId: 'persona_recent_race' });
+  store.state = {
+    currentId: sid,
+    sessions: {
+      [sid]: { messages: [], currentArchiveId: null },
+    },
+  };
+  store.currentId = sid;
+  store._useV2 = true;
+  const entry = {};
+  const thread = { parts: [{ id: 'part_0001' }] };
+  let releaseRead;
+  const readGate = new Promise(resolve => { releaseRead = resolve; });
+  let readCount = 0;
+  store._v2 = {
+    ensureSession: () => entry,
+    getThread: () => thread,
+    readPart: async () => {
+      readCount += 1;
+      await readGate;
+      return [{ id: 'greeting-1', role: 'assistant', content: '开场白' }];
+    },
+  };
+
+  const firstLoad = store.ensureRecentMessagesLoaded(sid);
+  const secondLoad = store.ensureRecentMessagesLoaded(sid);
+  await Promise.resolve();
+  assert.equal(readCount, 1);
+  releaseRead();
+  const [firstMessages, secondMessages] = await Promise.all([firstLoad, secondLoad]);
+  assert.deepEqual(firstMessages.map(message => message.id), ['greeting-1']);
+  assert.deepEqual(secondMessages.map(message => message.id), ['greeting-1']);
+  assert.deepEqual(store.getMessages(sid).map(message => message.id), ['greeting-1']);
+  console.log('ok - ChatStore coalesces concurrent recent-message loads for the same V2 thread');
+}
+
+{
+  const sid = 'rp:persona_older_overlap';
+  const store = new ChatStore({ scopeId: 'persona_older_overlap' });
+  store.state = {
+    currentId: sid,
+    sessions: {
+      [sid]: {
+        messages: [{ id: 'greeting-1', role: 'assistant', content: '当前开场白' }],
+        currentArchiveId: null,
+        _loadedThreadKey: `${sid}::current`,
+      },
+    },
+  };
+  store.currentId = sid;
+  store._useV2 = true;
+  const entry = {};
+  const thread = { parts: [{ id: 'part_0001' }, { id: 'part_0002' }] };
+  store._v2 = {
+    ensureSession: () => entry,
+    getThread: () => thread,
+    readPart: async (_entry, _thread, partId) => (
+      partId === 'part_0001'
+        ? [{ id: 'greeting-1', role: 'assistant', content: '磁盘旧副本' }]
+        : []
+    ),
+  };
+  store._getThreadState(`${sid}::current`).loadedParts = ['part_0002'];
+
+  const prepended = await store.loadOlderMessages(sid);
+  assert.deepEqual(prepended, []);
+  assert.equal(store.getMessages(sid).length, 1);
+  assert.equal(store.getMessages(sid)[0].content, '当前开场白');
+  console.log('ok - ChatStore does not prepend a V2 message id already present in the current thread');
+}
+
+{
   const contacts = __contactsStoreInternals;
   assert.equal(contacts.isScopedDataMatch({ contacts: {} }, 'persona_1'), false);
   assert.equal(contacts.isScopedDataMatch({ contacts: {} }, 'default'), true);
