@@ -15,6 +15,11 @@ const maidSettingsSource = fs.readFileSync(
   assert.match(maidSettingsSource, /\.maid-settings-overlay\.is-open\s+\.maid-settings-panel\s*\{/);
   assert.match(maidSettingsSource, /body\[data-reduced-motion=['"]on['"]\]\s+\.maid-settings-overlay/);
   assert.match(maidSettingsSource, /@media\s*\(max-width:\s*640px\)[\s\S]*?\.maid-settings-panel\s*\{[\s\S]*?border-radius:\s*0/);
+  assert.match(
+    maidSettingsSource,
+    /\.maid-memory-card\s*\{[^}]*?flex:\s*0\s+0\s+auto\s*;/,
+    'semantic-memory cards must keep their natural height inside the scrolling flex list',
+  );
   assert.match(maidSettingsSource, /maid-settings-header-copy/);
   assert.match(maidSettingsSource, /ARIA Assistant/);
   assert.match(maidSettingsSource, /maid-settings-section-caption/);

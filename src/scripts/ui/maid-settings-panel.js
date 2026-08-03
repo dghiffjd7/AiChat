@@ -1153,6 +1153,7 @@ const injectStyle = (documentRef) => {
 .maid-memory-card {
   position: relative;
   display: grid;
+  flex: 0 0 auto;
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 10px 14px;
   overflow: hidden;

@@ -7,9 +7,13 @@ globalThis.localStorage = {
   setItem: () => {},
   removeItem: () => {},
 };
+// buildIframeSrcDoc 构建期只读父文档主题标记；Node 下无 document 全局，补最小 stub。
+globalThis.document ??= { body: { dataset: {} } };
 
 const {
   captureRichDetailsOpenStates,
+  buildIframeSrcDoc,
+  buildRichTextRenderPlan,
   buildFrameworkGlobalShim,
   buildMvuCompatBridge,
   expandRichImageTokensForHtml,
@@ -193,6 +197,399 @@ tests.push({
     const parts = splitFencedCodeBlocks(text);
     assert.equal(parts.length, 1);
     assert.equal(parts[0].type, 'text');
+  },
+});
+
+tests.push({
+  name: 'plain creative prose stays on the text path with original line breaks',
+  fn: () => {
+    const text = '第一段正文\n\n第二段正文\n第三行';
+    const plan = buildRichTextRenderPlan(text);
+    assert.equal(plan.wholeLooksLikeHtml, false);
+    assert.equal(plan.hasEscapedHtmlDocumentWrapper, false);
+    assert.deepEqual(plan.parts, [{ type: 'text', text }]);
+  },
+});
+
+tests.push({
+  name: 'raw or escaped body mentioned inside prose stays literal text',
+  fn: () => {
+    const samples = [
+      '正文说明：示例是 <body>hello</body>，不要执行。',
+      '正文说明：示例是 &lt;body&gt;hello&lt;/body&gt;，不要执行。',
+    ];
+    samples.forEach((text) => {
+      const plan = buildRichTextRenderPlan(text);
+      assert.equal(plan.wholeLooksLikeHtml, false);
+      assert.equal(plan.hasEscapedHtmlDocumentWrapper, false);
+      assert.deepEqual(plan.parts, [{ type: 'text', text }]);
+    });
+  },
+});
+
+tests.push({
+  name: 'splits prose from a complete escaped HTML document pre-code wrapper',
+  fn: () => {
+    const prose = '第一段正文\n\n第二段正文\n\n';
+    const wrapped = [
+      '<pre><code>&lt;body&gt;',
+      '&lt;style&gt;body{color:red}&lt;/style&gt;',
+      '&lt;div id=&quot;status&quot;&gt;状态栏&lt;/div&gt;',
+      '&lt;script&gt;window.ready=true;&lt;/script&gt;',
+      '&lt;/body&gt;</code></pre>',
+    ].join('\n');
+    const plan = buildRichTextRenderPlan(`${prose}${wrapped}`);
+    assert.equal(plan.wholeLooksLikeHtml, false);
+    assert.equal(plan.hasEscapedHtmlDocumentWrapper, true);
+    assert.deepEqual(plan.parts.map(part => part.type), ['text', 'code']);
+    assert.equal(plan.parts[0].text, prose);
+    assert.match(plan.parts[1].code, /^<body>/);
+    assert.match(plan.parts[1].code, /<script>window\.ready=true;<\/script>/);
+    assert.doesNotMatch(plan.parts[1].code, /<pre|<code/i);
+  },
+});
+
+tests.push({
+  name: 'expands markdown fences in prose around an escaped document wrapper',
+  fn: () => {
+    const prose1 = '先看这段代码：\n';
+    const fence = '```js\nconsole.log(1);\n```';
+    const prose2 = '\n然后是正文结尾。\n';
+    const wrapped = '<pre><code>&lt;body&gt;&lt;div&gt;状态&lt;/div&gt;&lt;script&gt;window.ready=true;&lt;/script&gt;&lt;/body&gt;</code></pre>';
+    const plan = buildRichTextRenderPlan(`${prose1}${fence}${prose2}${wrapped}`);
+    assert.equal(plan.hasEscapedHtmlDocumentWrapper, true);
+    assert.deepEqual(plan.parts.map(part => part.type), ['text', 'code', 'text', 'code']);
+    assert.equal(plan.parts[0].text, prose1);
+    assert.equal(plan.parts[1].lang, 'js');
+    assert.equal(plan.parts[1].code, 'console.log(1);');
+    assert.equal(plan.parts[2].text, prose2);
+    assert.equal(plan.parts[3].lang, 'html');
+    assert.match(plan.parts[3].code, /^<body>/);
+  },
+});
+
+tests.push({
+  name: 'expands a fence after the wrapper and keeps part order',
+  fn: () => {
+    const wrapped = '<pre><code>&lt;body&gt;&lt;div&gt;状态&lt;/div&gt;&lt;/body&gt;</code></pre>';
+    const tail = '\n补充示例：\n```html\n<span>demo</span>\n```\n完。';
+    const plan = buildRichTextRenderPlan(`正文开头\n${wrapped}${tail}`);
+    assert.equal(plan.hasEscapedHtmlDocumentWrapper, true);
+    assert.deepEqual(plan.parts.map(part => part.type), ['text', 'code', 'text', 'code', 'text']);
+    assert.equal(plan.parts[1].lang, 'html');
+    assert.match(plan.parts[1].code, /^<body>/);
+    assert.equal(plan.parts[3].lang, 'html');
+    assert.equal(plan.parts[3].code, '<span>demo</span>');
+    assert.equal(plan.parts[4].text, '\n完。');
+  },
+});
+
+tests.push({
+  name: 'normalizes br tags to newlines in wrapper-path prose but not in code parts',
+  fn: () => {
+    const prose = '第一行<br>第二行&lt;br/&gt;第三行\n';
+    const wrapped = '<pre><code>&lt;body&gt;&lt;div&gt;a&lt;br&gt;b&lt;/div&gt;&lt;/body&gt;</code></pre>';
+    const plan = buildRichTextRenderPlan(`${prose}${wrapped}`);
+    assert.equal(plan.hasEscapedHtmlDocumentWrapper, true);
+    assert.equal(plan.parts[0].text, '第一行\n第二行\n第三行\n');
+    assert.match(plan.parts[1].code, /<br>/i);
+  },
+});
+
+tests.push({
+  name: 'incomplete escaped HTML pre-code wrapper fails closed as text',
+  fn: () => {
+    const text = '正文\n<pre><code>&lt;body&gt;&lt;div&gt;状态&lt;/div&gt;&lt;/body&gt;</code>';
+    const plan = buildRichTextRenderPlan(text);
+    assert.equal(plan.wholeLooksLikeHtml, false);
+    assert.equal(plan.hasEscapedHtmlDocumentWrapper, false);
+    assert.deepEqual(plan.parts, [{ type: 'text', text }]);
+  },
+});
+
+tests.push({
+  name: 'head-first full page routes to the whole-page sandbox',
+  fn: () => {
+    const text = [
+      '<head>',
+      '  <meta charset="utf-8">',
+      '  <title>状态栏</title>',
+      '  <style>body{margin:0}</style>',
+      '  <script>window.boot=1;</script>',
+      '</head>',
+      '<body><div id="app">页面</div></body>',
+    ].join('\n');
+    const plan = buildRichTextRenderPlan(text);
+    assert.equal(plan.wholeLooksLikeHtml, true);
+    assert.equal(plan.parts.length, 1);
+    assert.equal(plan.parts[0].type, 'code');
+    assert.equal(plan.parts[0].lang, 'html');
+  },
+});
+
+tests.push({
+  name: 'prose that starts with a head tag stays text',
+  fn: () => {
+    const text = '<head>是他的口头禅。他随手写下 <body>hello</body> 当作示例。';
+    const plan = buildRichTextRenderPlan(text);
+    assert.equal(plan.wholeLooksLikeHtml, false);
+    assert.deepEqual(plan.parts.map(part => part.type), ['text']);
+  },
+});
+
+tests.push({
+  name: 'malformed head with bare prose inside fails closed as text',
+  fn: () => {
+    const text = '<head>这里是裸文本<meta charset="utf-8"></head>\n<body>页面</body>';
+    const plan = buildRichTextRenderPlan(text);
+    assert.equal(plan.wholeLooksLikeHtml, false);
+    assert.deepEqual(plan.parts.map(part => part.type), ['text']);
+  },
+});
+
+tests.push({
+  name: 'leading HTML comments do not block the whole-page route',
+  fn: () => {
+    const text = '<!-- theme: dark -->\n<!-- v2 -->\n<body><script>window.ready=1;</script>页面</body>';
+    const plan = buildRichTextRenderPlan(text);
+    assert.equal(plan.wholeLooksLikeHtml, true);
+    assert.equal(plan.parts.length, 1);
+    assert.equal(plan.parts[0].type, 'code');
+  },
+});
+
+tests.push({
+  name: 'escaped head-first page inside a pre-code wrapper splits from prose',
+  fn: () => {
+    const prose = '正文段落\n\n';
+    const wrapped = [
+      '<pre><code>&lt;head&gt;&lt;style&gt;#s{color:red}&lt;/style&gt;&lt;/head&gt;',
+      '&lt;body&gt;&lt;div id=&quot;s&quot;&gt;状态&lt;/div&gt;&lt;/body&gt;</code></pre>',
+    ].join('\n');
+    const plan = buildRichTextRenderPlan(`${prose}${wrapped}`);
+    assert.equal(plan.hasEscapedHtmlDocumentWrapper, true);
+    assert.deepEqual(plan.parts.map(part => part.type), ['text', 'code']);
+    assert.equal(plan.parts[0].text, prose);
+    assert.match(plan.parts[1].code, /^<head>/);
+    assert.match(plan.parts[1].code, /<\/body>$/);
+  },
+});
+
+tests.push({
+  name: 'head validator tolerates > inside attribute values',
+  fn: () => {
+    const text = '<head><meta content="a > b"><title>页</title></head>\n<body>正文</body>';
+    const plan = buildRichTextRenderPlan(text);
+    assert.equal(plan.wholeLooksLikeHtml, true);
+    assert.deepEqual(plan.parts.map(part => part.type), ['code']);
+  },
+});
+
+tests.push({
+  name: 'head validator skips a "</head>" literal inside script content',
+  fn: () => {
+    const text = '<head><script>const s = "</head>";window.a=1;</script></head>\n<body>正文</body>';
+    const plan = buildRichTextRenderPlan(text);
+    assert.equal(plan.wholeLooksLikeHtml, true);
+    assert.deepEqual(plan.parts.map(part => part.type), ['code']);
+  },
+});
+
+tests.push({
+  name: 'template counts as a legal head metadata element',
+  fn: () => {
+    const text = '<head><template><div>tpl</div></template><style>i{}</style></head>\n<body>正文</body>';
+    const plan = buildRichTextRenderPlan(text);
+    assert.equal(plan.wholeLooksLikeHtml, true);
+    assert.deepEqual(plan.parts.map(part => part.type), ['code']);
+  },
+});
+
+tests.push({
+  name: 'head validator accepts nested template metadata content',
+  fn: () => {
+    const text = '<head><template><template><span>nested</span></template></template></head>\n<body>正文</body>';
+    const plan = buildRichTextRenderPlan(text);
+    assert.equal(plan.wholeLooksLikeHtml, true);
+    assert.deepEqual(plan.parts.map(part => part.type), ['code']);
+  },
+});
+
+tests.push({
+  name: 'escaped doctype+head document without html tag is a complete shell',
+  fn: () => {
+    const prose = '正文\n\n';
+    const wrapped = '<pre><code>&lt;!doctype html&gt;&lt;head&gt;&lt;title&gt;s&lt;/title&gt;&lt;/head&gt;&lt;body&gt;页&lt;/body&gt;</code></pre>';
+    const plan = buildRichTextRenderPlan(`${prose}${wrapped}`);
+    assert.equal(plan.hasEscapedHtmlDocumentWrapper, true);
+    assert.deepEqual(plan.parts.map(part => part.type), ['text', 'code']);
+    assert.match(plan.parts[1].code, /^<!doctype html>/i);
+  },
+});
+
+tests.push({
+  name: 'streaming keeps a head-first page intact in one sandbox part',
+  fn: () => {
+    const text = [
+      '<head><title>状态</title><style>#a{}</style></head>',
+      '<body><div id="a">页面</div><script>window.x=1;</script></body>',
+    ].join('\n');
+    const plan = buildRichTextRenderPlan(text, { streaming: true });
+    assert.equal(plan.wholeLooksLikeHtml, true);
+    assert.deepEqual(plan.parts.map(part => part.type), ['code']);
+    assert.match(plan.parts[0].code, /^<head>/);
+    assert.match(plan.parts[0].code, /<\/body>$/);
+  },
+});
+
+tests.push({
+  name: 'streaming keeps an unfinished head-first body out of the text path',
+  fn: () => {
+    const text = '<head><script>window.x=1;</script></head><body><div>partial';
+    const plan = buildRichTextRenderPlan(text, { streaming: true });
+    assert.equal(plan.wholeLooksLikeHtml, true);
+    assert.deepEqual(plan.parts.map(part => part.type), ['code']);
+    assert.equal(plan.parts[0].code, text);
+  },
+});
+
+tests.push({
+  name: 'streaming script-first page with trailing body stays one sandbox part',
+  fn: () => {
+    const text = '<script>window.config={a:1};</' + 'script>\n<body><div id="app">页面</div></body>';
+    const plan = buildRichTextRenderPlan(text, { streaming: true });
+    assert.equal(plan.wholeLooksLikeHtml, true);
+    assert.deepEqual(plan.parts.map(part => part.type), ['code']);
+    assert.match(plan.parts[0].code, /<\/body>$/);
+  },
+});
+
+tests.push({
+  name: 'streaming standalone script snippet still closes at its own end tag',
+  fn: () => {
+    const text = '<script>window.only=1;</' + 'script>';
+    const plan = buildRichTextRenderPlan(text, { streaming: true });
+    assert.equal(plan.wholeLooksLikeHtml, true);
+    assert.deepEqual(plan.parts.map(part => part.type), ['code']);
+    assert.match(plan.parts[0].code, /<\/script>$/);
+  },
+});
+
+tests.push({
+  name: 'streaming unclosed script with a "</body>" string stays one sandbox part',
+  fn: () => {
+    const text = '<script>const tpl="</body>";window.x=1';
+    const plan = buildRichTextRenderPlan(text, { streaming: true });
+    assert.equal(plan.wholeLooksLikeHtml, true);
+    assert.deepEqual(plan.parts.map(part => part.type), ['code']);
+    assert.equal(plan.parts[0].code, text);
+  },
+});
+
+tests.push({
+  name: 'streaming closed script with an unfinished trailing body stays one sandbox part',
+  fn: () => {
+    const text = '<script>window.x=1;</' + 'script><body><div>partial';
+    const plan = buildRichTextRenderPlan(text, { streaming: true });
+    assert.equal(plan.wholeLooksLikeHtml, true);
+    assert.deepEqual(plan.parts.map(part => part.type), ['code']);
+    assert.equal(plan.parts[0].code, text);
+  },
+});
+
+tests.push({
+  name: 'streaming body-first page ignores a "</body>" string inside script content',
+  fn: () => {
+    const text = '<body><script>const tpl="</body>";window.y=2';
+    const plan = buildRichTextRenderPlan(text, { streaming: true });
+    assert.equal(plan.wholeLooksLikeHtml, true);
+    assert.deepEqual(plan.parts.map(part => part.type), ['code']);
+    assert.equal(plan.parts[0].code, text);
+  },
+});
+
+tests.push({
+  name: 'streaming iframe-first page with an unfinished trailing body stays one sandbox part',
+  fn: () => {
+    const text = '<iframe src="https://example.com/"></iframe><body><div>partial';
+    const plan = buildRichTextRenderPlan(text, { streaming: true });
+    assert.equal(plan.wholeLooksLikeHtml, true);
+    assert.deepEqual(plan.parts.map(part => part.type), ['code']);
+    assert.equal(plan.parts[0].code, text);
+  },
+});
+
+tests.push({
+  name: 'streaming complete body page still ends at its real close tag',
+  fn: () => {
+    const text = '<body><script>const tpl="</body>";</' + 'script><div>页面</div></body>\n尾注';
+    const plan = buildRichTextRenderPlan(text, { streaming: true });
+    assert.equal(plan.wholeLooksLikeHtml, true);
+    assert.deepEqual(plan.parts.map(part => part.type), ['code', 'text']);
+    assert.match(plan.parts[0].code, /<\/body>$/);
+    assert.match(plan.parts[1].text, /尾注/);
+  },
+});
+
+tests.push({
+  name: 'iframe srcdoc keeps head-first metadata inside the head',
+  fn: () => {
+    const doc = buildIframeSrcDoc(
+      '<head><title>状态栏</title><base href="https://example.com/"></head>\n<body>页面正文</body>',
+      { vhViewportHeight: 800 },
+    );
+    const headClose = doc.search(/<\/head\s*>/i);
+    const bodyOpen = doc.search(/<body\b/i);
+    const titleIdx = doc.indexOf('<title>状态栏</title>');
+    const baseIdx = doc.indexOf('<base href="https://example.com/">');
+    assert.ok(headClose >= 0 && bodyOpen >= 0, 'doc must contain head close and body open');
+    assert.ok(titleIdx >= 0 && titleIdx < headClose, 'title must stay inside head');
+    assert.ok(baseIdx >= 0 && baseIdx < headClose, 'base must stay inside head');
+    assert.ok(headClose < bodyOpen, 'head must close before body opens');
+    assert.match(doc, /页面正文/);
+  },
+});
+
+tests.push({
+  name: 'iframe srcdoc preserves quoted greater-than signs on the head tag',
+  fn: () => {
+    const doc = buildIframeSrcDoc(
+      '<head data-note="a > b"><title>状态栏</title></head>\n<body>页面正文</body>',
+      { injectBridgeScript: false, vhViewportHeight: 800 },
+    );
+    const headOpen = doc.indexOf('<head data-note="a > b">');
+    const headClose = doc.search(/<\/head\s*>/i);
+    const titleIdx = doc.indexOf('<title>状态栏</title>');
+    assert.ok(headOpen >= 0, 'quoted head attribute must remain byte-stable');
+    assert.ok(titleIdx > headOpen && titleIdx < headClose, 'title must remain inside the attributed head');
+  },
+});
+
+tests.push({
+  name: 'iframe srcdoc does not duplicate an existing viewport meta',
+  fn: () => {
+    const viewport = '<meta name="viewport" content="width=320,initial-scale=2">';
+    const doc = buildIframeSrcDoc(
+      `<head>${viewport}<title>状态栏</title></head>\n<body>页面正文</body>`,
+      { injectBridgeScript: false, vhViewportHeight: 800 },
+    );
+    assert.equal((doc.match(/<meta\b[^>]*\bname=["']viewport["'][^>]*>/gi) || []).length, 1);
+    assert.match(doc, /content="width=320,initial-scale=2"/i);
+  },
+});
+
+tests.push({
+  name: 'standalone escaped HTML document keeps existing sandbox route',
+  fn: () => {
+    const text = '&lt;body&gt;&lt;script&gt;window.ready=true;&lt;/script&gt;&lt;/body&gt;';
+    const plan = buildRichTextRenderPlan(text);
+    assert.equal(plan.wholeLooksLikeHtml, true);
+    assert.equal(plan.hasEscapedHtmlDocumentWrapper, false);
+    assert.deepEqual(plan.parts, [{
+      type: 'code',
+      lang: 'html',
+      code: '<body><script>window.ready=true;</script></body>',
+    }]);
   },
 });
 

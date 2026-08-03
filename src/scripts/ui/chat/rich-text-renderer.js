@@ -3994,16 +3994,51 @@ const STREAMING_INTERACTIVE_CODE_PLACEHOLDER = '[已隐藏重型交互代码块�
 const splitWholeHtmlDocumentParts = (text) => {
     const source = String(text ?? '');
     if (!source.trim()) return null;
-    const openerRe = /<!doctype\s+html|<(script|body|html|iframe)\b/i;
-    const closeRe = /<\/(?:html|body|iframe|script)\s*>/ig;
+    const openerRe = /<!doctype\s+html|<(script|body|html|iframe|head)\b/i;
     const opener = openerRe.exec(source);
     if (!opener || !Number.isFinite(opener.index)) return null;
-    let closer = null;
-    let match;
-    while ((match = closeRe.exec(source))) closer = match;
-    if (!closer || !Number.isFinite(closer.index)) return null;
+    const openerName = String(opener[1] || 'doctype').toLowerCase();
     const start = opener.index;
-    const end = closer.index + closer[0].length;
+    // 流式感知扫描：注释与 script/style/iframe 原文区整段跳过（其中的 "</body>"
+    // 字面量不算文档闭合）；</body>/</html> 是文档级终止符；script/iframe 自身
+    // 闭合仅当文档以它开头时作为候选结束，其后再展开文档壳则必须等真正闭合；
+    // 壳已开未闭或原文区未闭时返回 null，整段保持为单一沙盒代码。
+    let pos = start;
+    let end = -1;
+    let pendingShell = false;
+    let growing = false;
+    for (;;) {
+        const commentAt = source.indexOf('<!--', pos);
+        HTML_TAG_TOKEN_RE.lastIndex = pos;
+        const token = HTML_TAG_TOKEN_RE.exec(source);
+        if (commentAt >= 0 && (!token || commentAt < token.index)) {
+            const commentEnd = source.indexOf('-->', commentAt + 4);
+            if (commentEnd < 0) { growing = true; break; }
+            pos = commentEnd + 3;
+            continue;
+        }
+        if (!token) break;
+        const name = token[2].toLowerCase();
+        const isClose = Boolean(token[1]);
+        const tokenStart = token.index;
+        pos = HTML_TAG_TOKEN_RE.lastIndex;
+        if (!isClose && (name === 'script' || name === 'style' || name === 'iframe')) {
+            const closeMatch = new RegExp(`</${name}\\s*>`, 'i').exec(source.slice(pos));
+            if (!closeMatch) { growing = true; break; }
+            pos += closeMatch.index + closeMatch[0].length;
+            if (tokenStart === start && name === openerName && end < 0) end = pos;
+            continue;
+        }
+        if (!isClose && (name === 'body' || name === 'html' || name === 'head')) {
+            pendingShell = true;
+            continue;
+        }
+        if (isClose && (name === 'body' || name === 'html')) {
+            end = pos;
+            pendingShell = false;
+        }
+    }
+    if (growing || pendingShell) return null;
     if (end <= start) return null;
     const prefix = source.slice(0, start);
     const code = source.slice(start, end);
@@ -5024,7 +5059,36 @@ const copyToClipboard = async (text) => {
     }
 };
 
-const buildIframeSrcDoc = (
+const HTML_HEAD_OPEN_TAG_RE = new RegExp(
+    String.raw`<head\b(?:"[^"]*"|'[^']*'|[^>"'])*>`,
+    'i',
+);
+const HTML_META_OPEN_TAG_RE = new RegExp(
+    String.raw`<meta\b(?:"[^"]*"|'[^']*'|[^>"'])*>`,
+    'gi',
+);
+
+const buildMissingHeadDefaults = (input) => {
+    const metaTags = String(input ?? '').match(HTML_META_OPEN_TAG_RE) || [];
+    const hasCharset = metaTags.some(tag => /\bcharset\s*=/i.test(tag));
+    const hasViewport = metaTags.some(tag => (
+        /\bname\s*=\s*(?:"\s*viewport\s*"|'\s*viewport\s*'|viewport(?=[\s/>]))/i.test(tag)
+    ));
+    return `${hasCharset ? '' : '<meta charset="utf-8">'}${hasViewport ? '' : '<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">'}`;
+};
+
+// head-first 完整文档（无 <html> 壳）：判定层已接受，组装层若照旧塞进生成的
+// <body> 会让 title/meta/base 失去 head 语义；这里识别后补 <html> 壳保留结构。
+const startsWithHtmlHeadShell = (input) => {
+    const text = stripLeadingHtmlComments(input);
+    const rest = /^<!doctype\b[^>]*>/i.exec(text)
+        ? stripLeadingHtmlComments(text.replace(/^<!doctype\b[^>]*>/i, ''))
+        : text;
+    const headOpen = HTML_HEAD_OPEN_TAG_RE.exec(rest);
+    return Boolean(headOpen && headOpen.index === 0);
+};
+
+export const buildIframeSrcDoc = (
     htmlBodyOrDocument,
     {
         iframeId,
@@ -5086,6 +5150,16 @@ const buildIframeSrcDoc = (
         if (iframeIdValue) {
             doc = addBodyAttr(doc, 'data-chatapp-iframe-id', iframeIdValue);
         }
+    } else if (startsWithHtmlHeadShell(content)) {
+        const inner = stripLeadingHtmlComments(content).replace(/^<!doctype\b[^>]*>\s*/i, '');
+        const headDefaults = buildMissingHeadDefaults(inner);
+        const withDefaults = headDefaults
+            ? inner.replace(HTML_HEAD_OPEN_TAG_RE, match => `${match}${headDefaults}`)
+            : inner;
+        doc = `<!doctype html><html>${preserveNewlines ? addBodyClass(withDefaults, '__chatapp-prewrap') : withDefaults}</html>`;
+        if (iframeIdValue) {
+            doc = addBodyAttr(doc, 'data-chatapp-iframe-id', iframeIdValue);
+        }
     } else {
         const bodyClass = preserveNewlines ? ' class="__chatapp-prewrap"' : '';
         const wrapped = preserveNewlines ? `<div class="__chatapp-prewrap">${content}</div>` : content;
@@ -5094,8 +5168,8 @@ const buildIframeSrcDoc = (
     }
     const headPrependHtml = headPrepend ? String(headPrepend) : '';
     if (headPrependHtml) {
-        if (/<head[^>]*>/i.test(doc)) {
-            doc = doc.replace(/<head([^>]*)>/i, `<head$1>${headPrependHtml}`);
+        if (HTML_HEAD_OPEN_TAG_RE.test(doc)) {
+            doc = doc.replace(HTML_HEAD_OPEN_TAG_RE, match => `${match}${headPrependHtml}`);
         } else if (/<html[^>]*>/i.test(doc)) {
             doc = doc.replace(/<html([^>]*)>/i, `<html$1><head>${headPrependHtml}</head>`);
         } else {
@@ -5905,8 +5979,8 @@ window.addEventListener('message', (e) => {
     if (/<\/body>/i.test(doc)) {
         // base/reset 必须在用户样式之前（打底语义）：插到 <head> 开标签后；
         // 插在 </head> 前会让同特异性的 reset（如 body{min-height:0}）覆盖面板自身样式。
-        if (/<head(\s[^>]*)?>/i.test(doc)) {
-            const withHead = doc.replace(/<head(\s[^>]*)?>/i, match => `${match}${headInject}`);
+        if (HTML_HEAD_OPEN_TAG_RE.test(doc)) {
+            const withHead = doc.replace(HTML_HEAD_OPEN_TAG_RE, match => `${match}${headInject}`);
             return withHead.replace(/<\/body>/i, `${bodyInject}</body>`);
         }
         if (/<\/head>/i.test(doc)) {
@@ -9434,6 +9508,216 @@ export const setupIframeResizeListener = () => {
     });
 };
 
+const RICH_ESCAPED_HTML_TAG_RE = /&lt;(style|details|div|body|html|table|section|article|main|svg|iframe)\b/i;
+const RICH_ESCAPED_HTML_CLOSE_RE = /&lt;\/(style|details|div|body|html|table|section|article|main|svg|iframe)\b/i;
+const RICH_HTML_DOCUMENT_TAG_RE = /<(script|body|html|iframe)\b/i;
+const RICH_HTML_DOCUMENT_CLOSE_RE = /<\/(script|body|html|iframe)\b/i;
+
+const stripLeadingHtmlComments = (input) => {
+    let text = String(input ?? '').trim();
+    while (text.startsWith('<!--')) {
+        const end = text.indexOf('-->');
+        if (end < 0) return text;
+        text = text.slice(end + 3).trimStart();
+    }
+    return text;
+};
+
+// 引号感知的标签 token：属性值里的 > 不会截断标签边界。
+const HTML_TAG_TOKEN_RE = /<(\/?)([a-zA-Z][a-zA-Z0-9-]*)((?:"[^"]*"|'[^']*'|[^>"'])*)>/g;
+const HEAD_VOID_ELEMENT_RE = /^(?:meta|link|base)$/i;
+const HEAD_RAW_TEXT_ELEMENT_RE = /^(?:title|style|script|noscript)$/i;
+const TEMPLATE_RAW_TEXT_ELEMENT_RE = /^(?:script|style|title|textarea|xmp|iframe|noembed|noframes|noscript)$/i;
+
+const findTemplateElementEnd = (input, startIndex) => {
+    const text = String(input ?? '');
+    let pos = Math.max(0, Number(startIndex) || 0);
+    let depth = 1;
+    while (pos < text.length) {
+        const commentAt = text.indexOf('<!--', pos);
+        HTML_TAG_TOKEN_RE.lastIndex = pos;
+        const token = HTML_TAG_TOKEN_RE.exec(text);
+        if (commentAt >= 0 && (!token || commentAt < token.index)) {
+            const commentEnd = text.indexOf('-->', commentAt + 4);
+            if (commentEnd < 0) return -1;
+            pos = commentEnd + 3;
+            continue;
+        }
+        if (!token) return -1;
+        const name = token[2].toLowerCase();
+        pos = HTML_TAG_TOKEN_RE.lastIndex;
+        if (!token[1] && TEMPLATE_RAW_TEXT_ELEMENT_RE.test(name)) {
+            const closeMatch = new RegExp(`</${name}\\s*>`, 'i').exec(text.slice(pos));
+            if (!closeMatch) return -1;
+            pos += closeMatch.index + closeMatch[0].length;
+            continue;
+        }
+        if (name !== 'template') continue;
+        depth += token[1] ? -1 : 1;
+        if (depth === 0) return pos;
+    }
+    return -1;
+};
+
+// HTML 规范中 head 只允许元数据元素（不允许裸文本）；据此区分真实整页与
+// 恰好以 <head> 开头的散文。用顺序扫描而非正则剥离：title/style/script/
+// noscript/template 按原文内容整段跳到各自闭合（脚本字符串里的 "</head>"
+// 不会误判），其余位置只允许空白、注释、空元素与 </head>。
+const looksLikeRealHtmlHeadDocument = (input) => {
+    const text = String(input ?? '');
+    HTML_TAG_TOKEN_RE.lastIndex = 0;
+    const open = HTML_TAG_TOKEN_RE.exec(text);
+    if (!open || open.index !== 0 || open[1] || !/^head$/i.test(open[2])) return false;
+    let pos = HTML_TAG_TOKEN_RE.lastIndex;
+    for (;;) {
+        while (pos < text.length && /\s/.test(text[pos])) pos += 1;
+        if (pos >= text.length) return false;
+        if (text.startsWith('<!--', pos)) {
+            const end = text.indexOf('-->', pos + 4);
+            if (end < 0) return false;
+            pos = end + 3;
+            continue;
+        }
+        HTML_TAG_TOKEN_RE.lastIndex = pos;
+        const token = HTML_TAG_TOKEN_RE.exec(text);
+        if (!token || token.index !== pos) return false;
+        const name = token[2].toLowerCase();
+        if (token[1]) {
+            if (name !== 'head') return false;
+            return /^<body\b/i.test(stripLeadingHtmlComments(text.slice(HTML_TAG_TOKEN_RE.lastIndex)));
+        }
+        pos = HTML_TAG_TOKEN_RE.lastIndex;
+        if (HEAD_VOID_ELEMENT_RE.test(name)) continue;
+        if (name === 'template') {
+            const templateEnd = findTemplateElementEnd(text, pos);
+            if (templateEnd < 0) return false;
+            pos = templateEnd;
+            continue;
+        }
+        if (HEAD_RAW_TEXT_ELEMENT_RE.test(name)) {
+            const closeMatch = new RegExp(`</${name}\\s*>`, 'i').exec(text.slice(pos));
+            if (!closeMatch) return false;
+            pos += closeMatch.index + closeMatch[0].length;
+            continue;
+        }
+        return false;
+    }
+};
+
+const isCompleteHtmlDocumentShell = (input) => {
+    let text = stripLeadingHtmlComments(input);
+    const doctype = /^<!doctype\s+html\b[^>]*>/i.exec(text);
+    if (doctype) text = stripLeadingHtmlComments(text.slice(doctype[0].length));
+    if (!text) return false;
+    if (/^<body\b/i.test(text)) return /<\/body\s*>$/i.test(text);
+    if (/^<iframe\b/i.test(text)) return /<\/iframe\s*>$/i.test(text);
+    if (/^<html\b/i.test(text)) return /<\/html\s*>$/i.test(text);
+    if (/^<head\b/i.test(text)) {
+        return looksLikeRealHtmlHeadDocument(text) && /<\/(body|html)\s*>$/i.test(text);
+    }
+    return false;
+};
+
+const decodeStandaloneEscapedHtmlDocument = (input) => {
+    const raw = String(input ?? '');
+    if (!RICH_INTERACTIVE_ESCAPED_HTML_RE.test(raw)) return '';
+    const decoded = decodeBasicHtmlEntities(raw).trim();
+    return isCompleteHtmlDocumentShell(decoded) ? decoded : '';
+};
+
+// Tavern regex replacements may append an encoded full page after prose inside a literal
+// pre/code wrapper. Only unwrap a paired, complete document; ambiguous input stays text.
+export const splitEscapedHtmlDocumentCodeBlocks = (input) => {
+    const source = String(input ?? '');
+    if (!source || !/<pre\b/i.test(source) || !/<code\b/i.test(source)) return null;
+    const wrapperRe = /<pre\b[^>]*>\s*<code\b[^>]*>([\s\S]*?)<\/code\s*>\s*<\/pre\s*>/gi;
+    const parts = [];
+    let cursor = 0;
+    let found = false;
+    let match;
+    while ((match = wrapperRe.exec(source))) {
+        const decodedDocument = decodeStandaloneEscapedHtmlDocument(match[1]);
+        if (!decodedDocument) continue;
+        if (match.index > cursor) parts.push({ type: 'text', text: source.slice(cursor, match.index) });
+        parts.push({ type: 'code', lang: 'html', code: decodedDocument });
+        cursor = wrapperRe.lastIndex;
+        found = true;
+        if (match.index === wrapperRe.lastIndex) wrapperRe.lastIndex += 1;
+    }
+    if (!found) return null;
+    if (cursor < source.length) parts.push({ type: 'text', text: source.slice(cursor) });
+    return parts;
+};
+
+const convertBrTagsToNewlines = (input) => String(input ?? '')
+    .replace(/&lt;br\s*\/?&gt;/gi, '\n')
+    .replace(/<br\s*\/?>/gi, '\n');
+
+// Wrapper-path prose may still carry markdown fences and <br> tags; expand fences into
+// real code parts and keep br→newline behavior consistent with the plain-text route.
+const expandEscapedDocumentTextParts = (parts) => parts.flatMap((part) => {
+    if (part.type !== 'text') return [part];
+    const segments = /```/.test(part.text) ? splitFencedCodeBlocks(part.text) : [part];
+    return segments.map(segment => (segment.type === 'text'
+        ? { ...segment, text: convertBrTagsToNewlines(segment.text) }
+        : segment));
+});
+
+const startsAsStandaloneHtml = (input) => {
+    const text = stripLeadingHtmlComments(input);
+    if (/^<head\b/i.test(text)) return looksLikeRealHtmlHeadDocument(text);
+    return /^<!doctype\s+html\b/i.test(text)
+        || /^<(script|body|html|iframe|style|details|div|main|section|article|pre)\b/i.test(text);
+};
+
+export const buildRichTextRenderPlan = (text, { streaming = false } = {}) => {
+    const rawText = String(text ?? '');
+    const escapedDocumentParts = splitEscapedHtmlDocumentCodeBlocks(rawText);
+    const hasEscapedHtmlDocumentWrapper = Boolean(escapedDocumentParts?.some(part => part.type === 'code'));
+    const hasEscapedHtml = RICH_ESCAPED_HTML_TAG_RE.test(rawText) && RICH_ESCAPED_HTML_CLOSE_RE.test(rawText);
+    const rawHasCodeFence = /```/.test(rawText);
+    const standaloneEscapedDocument = !hasEscapedHtmlDocumentWrapper
+        ? decodeStandaloneEscapedHtmlDocument(rawText)
+        : '';
+    const htmlCandidateText = standaloneEscapedDocument || (
+        !hasEscapedHtmlDocumentWrapper && rawHasCodeFence && hasEscapedHtml
+            ? decodeBasicHtmlEntities(rawText)
+            : rawText
+    );
+    const trimmed = htmlCandidateText.trim();
+    const hasHtmlDocTag = RICH_HTML_DOCUMENT_TAG_RE.test(trimmed) || /^\s*<!doctype\s+html/i.test(trimmed);
+    const hasHtmlDocClose = RICH_HTML_DOCUMENT_CLOSE_RE.test(trimmed)
+        || /<\/html\s*>/i.test(trimmed)
+        || /<\/body\s*>/i.test(trimmed);
+    const wholeLooksLikeHtml = !hasEscapedHtmlDocumentWrapper
+        && startsAsStandaloneHtml(trimmed)
+        && hasHtmlDocTag
+        && (hasHtmlDocClose || /<script[\s>]/i.test(trimmed));
+    const textWithBreaks = convertBrTagsToNewlines(rawText);
+    const hasCodeFence = !hasEscapedHtmlDocumentWrapper && /```/.test(htmlCandidateText);
+    const wholeHtmlParts = streaming && !hasCodeFence && wholeLooksLikeHtml
+        ? splitWholeHtmlDocumentParts(htmlCandidateText)
+        : null;
+    const parts = escapedDocumentParts
+        ? expandEscapedDocumentTextParts(escapedDocumentParts)
+        : hasCodeFence
+            ? splitFencedCodeBlocks(htmlCandidateText)
+            : wholeHtmlParts?.length
+                ? wholeHtmlParts
+                : wholeLooksLikeHtml
+                    ? [{ type: 'code', lang: 'html', code: trimmed }]
+                    : [{ type: 'text', text: textWithBreaks }];
+    return {
+        hasCodeFence,
+        hasEscapedHtml,
+        hasEscapedHtmlDocumentWrapper,
+        htmlCandidateText,
+        parts,
+        rawText,
+        wholeLooksLikeHtml,
+    };
+};
+
 export const renderRichText = (
     containerEl,
     text,
@@ -9471,20 +9755,15 @@ export const renderRichText = (
 
     const STATUS_TOKEN = '__CHATAPP_STATUS__';
     const rawText = String(text ?? '');
-    const decodeHtmlEntities = (input) => {
-        const s = String(input ?? '');
-        if (!s.includes('&')) return s;
-        return s
-            .replace(/&lt;/gi, '<')
-            .replace(/&gt;/gi, '>')
-            .replace(/&quot;/gi, '"')
-            .replace(/&#39;|&#x27;/gi, "'")
-            .replace(/&amp;/gi, '&');
-    };
-    const htmlEntityTagRe = /&lt;(style|details|div|body|html|table|section|article|main|svg|iframe)\b/i;
-    const htmlEntityCloseRe = /&lt;\/(style|details|div|body|html|table|section|article|main|svg|iframe)\b/i;
-    const hasEscapedHtml = htmlEntityTagRe.test(rawText) && htmlEntityCloseRe.test(rawText);
-    const htmlCandidateText = hasEscapedHtml ? decodeHtmlEntities(rawText) : rawText;
+    const renderPlan = buildRichTextRenderPlan(rawText, { streaming });
+    const {
+        hasCodeFence,
+        hasEscapedHtml,
+        hasEscapedHtmlDocumentWrapper,
+        htmlCandidateText,
+        wholeLooksLikeHtml,
+    } = renderPlan;
+    let parts = renderPlan.parts;
     const escapeHtml = (value) => (
         String(value ?? '')
             .replace(/&/g, '&amp;')
@@ -9502,31 +9781,10 @@ export const renderRichText = (
         if (/<\/html>/i.test(html)) return html.replace(/<\/html>/i, `${tail}</html>`);
         return `${html}${tail}`;
     };
-    // 酒馆助手/正则常见用法：
-    // - 直接把可渲染的 HTML 片段塞进消息（例如把 <thinking> 替换为 <style>+<details>）
-    // - 普通 markdown / HTML 片段走“消息内安全渲染”
-    // - 带 <script>/<body>/<html>/<iframe> 的完整页面仍走 iframe 沙盒
-    const trimmed = htmlCandidateText.trim();
-    const htmlDocTagRe = /<(script|body|html|iframe)\b/i;
-    const htmlDocCloseRe = /<\/(script|body|html|iframe)\b/i;
-    const hasHtmlDocTag = htmlDocTagRe.test(trimmed) || /^\s*<!doctype\s+html/i.test(trimmed);
-    const hasHtmlDocClose = htmlDocCloseRe.test(trimmed) || /<\/html\s*>/i.test(trimmed) || /<\/body\s*>/i.test(trimmed);
-    const wholeLooksLikeHtml = hasHtmlDocTag && (hasHtmlDocClose || /<script[\s>]/i.test(trimmed));
-    const textWithBreaks = rawText
-        .replace(/&lt;br\s*\/?&gt;/gi, '\n')
-        .replace(/<br\s*\/?>/gi, '\n');
-    const hasCodeFence = /```/.test(htmlCandidateText);
-    const wholeHtmlParts = streaming && !hasCodeFence && wholeLooksLikeHtml ? splitWholeHtmlDocumentParts(htmlCandidateText) : null;
-    let parts = (hasCodeFence ? splitFencedCodeBlocks(htmlCandidateText)
-        : wholeHtmlParts?.length
-            ? wholeHtmlParts
-            : wholeLooksLikeHtml
-                ? [{ type: 'code', lang: 'html', code: trimmed }]
-                : [{ type: 'text', text: textWithBreaks }]);
     const hasInteractiveHtmlLikeText = (val) => {
         const raw = String(val || '');
         if (!raw) return false;
-        const hasTag = htmlDocTagRe.test(raw) && htmlDocCloseRe.test(raw);
+        const hasTag = RICH_HTML_DOCUMENT_TAG_RE.test(raw) && RICH_HTML_DOCUMENT_CLOSE_RE.test(raw);
         const escapedTag = RICH_INTERACTIVE_ESCAPED_HTML_RE.test(raw);
         return hasTag || escapedTag;
     };
@@ -9534,7 +9792,7 @@ export const renderRichText = (
         parts = parts.flatMap((p) => {
             if (p.type !== 'text') return [p];
             if (!hasInteractiveHtmlLikeText(p.text)) return [p];
-            const decoded = decodeHtmlEntities(p.text);
+            const decoded = decodeBasicHtmlEntities(p.text);
             return [{ type: 'code', lang: 'html', code: decoded }];
         });
         const stripStandaloneContentWrapperLines = (value) => String(value || '').replace(
@@ -9553,7 +9811,7 @@ export const renderRichText = (
     if (Boolean(debugTag) || shouldLogRichDebug()) {
         const fragmentHint = hasRichFragmentHint(htmlCandidateText);
         if (fragmentHint || hasCodeFence || wholeLooksLikeHtml) {
-            const msg = `render msg=${String(messageId || '')} codeFence=${hasCodeFence} html=${wholeLooksLikeHtml} escaped=${hasEscapedHtml} parts=${parts.length}${debugTag ? ` tag=${debugTag}` : ''}`;
+            const msg = `render msg=${String(messageId || '')} codeFence=${hasCodeFence} html=${wholeLooksLikeHtml} escaped=${hasEscapedHtml} wrapped=${hasEscapedHtmlDocumentWrapper ? 1 : 0} parts=${parts.length}${debugTag ? ` tag=${debugTag}` : ''}`;
             emitDebugLog({ source: 'rich', type: 'info', message: msg, force: true });
             logger.debug(`[rich] ${msg}`);
         }
