@@ -74,4 +74,13 @@ console.log('ok - theme audit core detects risky literals and baseline drift');
   assert.ok(!/rgba\(37, 99, 235,/.test(mainCss.replace(/rgba\(var\(--app-accent-rgb, 37, 99, 235\),/g, '')), 'main.css 固定蓝已 token 化');
   assert.match(read('src/assets/css/qq-legacy.css'), /--qq-color-primary:\s*var\(--app-accent-primary, #199aff\)/, 'qq-legacy 主色跟随 accent token');
   console.log('ok - paper-ink phase-1 compat contracts hold');
+
+  // Phase 2 质感层契约
+  assert.match(paperCss, /body\[data-theme-preset='paper-ink'\]::after[\s\S]*fractalNoise/, '纸张噪点覆盖层存在');
+  assert.match(paperCss, /::after[\s\S]*pointer-events:\s*none/, '噪点层不拦截交互');
+  assert.match(paperCss, /--app-scrollbar-thumb:/, '滚动条走 token 覆盖');
+  assert.match(paperCss, /Noto Serif SC/, '衬线标题字族存在');
+  assert.match(paperCss, /@keyframes paper-ink-focus-breathe/, 'focus 呼吸动画存在');
+  assert.match(paperCss, /animation:\s*paper-ink-focus-breathe/, 'focus 呼吸动画已挂到输入控件');
+  console.log('ok - paper-ink phase-2 texture contracts hold');
 }

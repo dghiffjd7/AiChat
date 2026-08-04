@@ -6,4 +6,47 @@
    否则渐变（同属背景图层）会被一并清掉）。 */
 body[data-theme-preset='paper-ink'] {
   background: linear-gradient(135deg, var(--app-surface-page) 0%, var(--app-surface-page-alt) 100%) !important;
+  /* Phase 2：细滚动条走既有滚动条 token，常态淡暖灰、hover 加深 */
+  --app-scrollbar-thumb: rgba(38, 34, 28, 0.14);
+  --app-scrollbar-thumb-hover: rgba(38, 34, 28, 0.32);
+}
+
+/* ——— Phase 2 质感层 ——— */
+
+/* 纸张噪点：fractalNoise 覆盖层，极低不透明度，不拦截交互。
+   Android 真机若有性能问题可整块移除，不影响配色层。 */
+body[data-theme-preset='paper-ink']::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 99990;
+  opacity: 0.028;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 250 250' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.7' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+/* 衬线显示字：仅限定少量标题面，不动正文与控件 */
+body[data-theme-preset='paper-ink'] .chat-room-title,
+body[data-theme-preset='paper-ink'] .moments-title,
+body[data-theme-preset='paper-ink'] .general-settings-title,
+body[data-theme-preset='paper-ink'] .desktop-rail-brand {
+  font-family: 'Noto Serif SC', 'Source Han Serif SC', 'Songti SC', 'STSong', 'SimSun', serif;
+  letter-spacing: 0.02em;
+}
+
+/* focus 朱红呼吸：文本输入聚焦时柔和脉动；reduced-motion 由全局规则关闭 */
+body[data-theme-preset='paper-ink'] input:focus-visible,
+body[data-theme-preset='paper-ink'] textarea:focus-visible,
+body[data-theme-preset='paper-ink'] select:focus-visible {
+  animation: paper-ink-focus-breathe 2.6s ease-in-out infinite;
+}
+
+@keyframes paper-ink-focus-breathe {
+  0%,
+  100% {
+    box-shadow: 0 0 0 3px rgba(var(--app-accent-rgb, 188, 74, 38), 0.1);
+  }
+  50% {
+    box-shadow: 0 0 0 5px rgba(var(--app-accent-rgb, 188, 74, 38), 0.16);
+  }
 }

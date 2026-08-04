@@ -5235,7 +5235,7 @@ body,
 
 .search-box-wrapper-inner.is-active {
   border-color: rgba(var(--app-accent-rgb, 25, 154, 255), 0.6);
-  background: rgba(239, 243, 255, 0.95);
+  background: var(--app-accent-soft, rgba(239, 243, 255, 0.95));
 }
 
 .search-box-wrapper-inner.is-focus {
@@ -5286,7 +5286,7 @@ body,
 
 .chat-search-session-item:active,
 .chat-search-message-item:active {
-  background: rgba(239, 243, 255, 0.96);
+  background: var(--app-accent-soft, rgba(239, 243, 255, 0.96));
 }
 
 .chat-search-session-meta,
