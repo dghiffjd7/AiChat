@@ -6,6 +6,7 @@
 
 import { logger } from '../../utils/logger.js';
 import { emitDebugLog } from '../../utils/debug-log.js';
+import { recordDebugTraceEvent } from '../debug-ui-registry-utils.js';
 import { appSettings } from '../../storage/app-settings.js';
 import { serializeForInlineScript } from '../../utils/inline-script.js';
 import { buildVariableStatusSnapshot } from '../variable-status-card.js';
@@ -3473,6 +3474,41 @@ const getHeightSourcePriority = (source) => {
     return Number(IFRAME_HEIGHT_SOURCE_PRIORITY[key] || 0);
 };
 
+export const buildIframeHeightTraceEvent = ({
+    id = '',
+    sessionId = '',
+    messageId = '',
+    seq = null,
+    source = 'bridge',
+    mode = 'document',
+    raw = 0,
+    applied = 0,
+    authority = IFRAME_AUTHORITY_HOST,
+    lock = false,
+    event = 'apply',
+} = {}) => {
+    const normalizedEvent = String(event || 'apply').trim().toLowerCase().replace(/[^a-z0-9-]+/g, '-') || 'apply';
+    return {
+        category: 'rich-render',
+        phase: `iframe-height-${normalizedEvent}`,
+        sessionId: String(sessionId || '').trim(),
+        messageId: String(messageId || '').trim(),
+        source: 'rich-text-renderer',
+        status: normalizedEvent === 'feedback-loop' ? 'warn' : 'info',
+        summary: `raw=${Math.round(Number(raw) || 0)} applied=${Math.round(Number(applied) || 0)} authority=${String(authority || IFRAME_AUTHORITY_HOST)} lock=${lock ? 1 : 0}`,
+        details: {
+            iframeId: String(id || '').trim(),
+            sequence: Number.isFinite(Number(seq)) ? Math.trunc(Number(seq)) : -1,
+            source: normalizeHeightSource(source),
+            mode: normalizeHeightMode(mode),
+            rawHeight: Number.isFinite(Number(raw)) ? Number(raw) : 0,
+            appliedHeight: Number.isFinite(Number(applied)) ? Number(applied) : 0,
+            authority: String(authority || IFRAME_AUTHORITY_HOST),
+            locked: Boolean(lock),
+        },
+    };
+};
+
 const clampIframeHeight = (height) => {
     const raw = Number(height);
     if (!Number.isFinite(raw)) return IFRAME_HEIGHT_MIN;
@@ -3492,6 +3528,22 @@ const logIframeHeight = ({
     level = 'info',
     extra = '',
 }) => {
+    const state = getIframeState(String(id || ''));
+    const traceEvent = buildIframeHeightTraceEvent({
+        id,
+        sessionId: String(state?.sessionId || ''),
+        messageId: String(state?.messageId || ''),
+        seq,
+        source,
+        mode,
+        raw,
+        applied,
+        authority,
+        lock,
+        event,
+    });
+    const appBridge = typeof window !== 'undefined' ? window.appBridge : null;
+    recordDebugTraceEvent(appBridge, traceEvent);
     const msg = [
         `[iframe-height] event=${event}`,
         `id=${id || 'unknown'}`,
@@ -8158,6 +8210,7 @@ const makeCodeBlock = ({
             iframe.setAttribute('sandbox', 'allow-scripts');
         }
         getIframeState(iframeId, {
+            sessionId: String(resolvedSessionId || ''),
             messageId: String(messageId || ''),
             createdAt: Date.now(),
             readyAt: 0,

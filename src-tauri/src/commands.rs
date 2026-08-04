@@ -35,6 +35,11 @@ fn get_data_dir(app: &AppHandle) -> Result<PathBuf, String> {
     app.path().app_data_dir().map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+pub fn exit_app(app: AppHandle) {
+    app.exit(0);
+}
+
 fn is_kv_debug_enabled() -> bool {
     std::env::var("CHATAPP_DEBUG_KV")
         .map(|value| {

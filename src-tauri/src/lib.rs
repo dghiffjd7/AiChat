@@ -15,6 +15,7 @@ pub fn run() {
     let builder = builder.plugin(tauri_plugin_dialog::init());
     builder
         .invoke_handler(tauri::generate_handler![
+            commands::exit_app,
             commands::save_config,
             commands::load_config,
             commands::save_chat_history,

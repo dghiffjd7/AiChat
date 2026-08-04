@@ -1,6 +1,6 @@
 {
   "productName": "ChatApp",
-  "version": "0.7.0-preview.4",
+  "version": "0.7.0-diagnose",
   "identifier": "com.chatapp.dev",
   "build": {
     "beforeDevCommand": "",
@@ -27,7 +27,7 @@
     },
     "android": {
       "minSdkVersion": 24,
-      "versionCode": 7003
+      "versionCode": 7004
     }
   },
   "app": {

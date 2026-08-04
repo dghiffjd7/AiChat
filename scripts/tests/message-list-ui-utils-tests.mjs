@@ -2,7 +2,9 @@ import assert from 'node:assert/strict';
 
 import {
   addMessageCore,
+  buildHistoryRenderDiagnostics,
   buildHistoryRenderMessage,
+  buildRenderedHistoryDiagnostics,
   preloadHistoryCore,
   prependHistoryCore,
   refreshAvatarsCore,
@@ -69,6 +71,42 @@ const createFragment = () => ({
 }
 
 {
+  const diagnostics = buildHistoryRenderDiagnostics([
+    { id: 'user-1', role: 'user', content: 'question', timestamp: 10 },
+    { id: 'assistant-1', role: 'assistant', content: 'private duplicate reply', rawOriginal: 'raw-a', timestamp: 20 },
+    { id: 'assistant-2', role: 'assistant', content: 'private duplicate reply', rawOriginal: 'raw-b', timestamp: 21 },
+    { id: 'assistant-2', role: 'assistant', content: 'private duplicate reply', rawOriginal: 'raw-b', timestamp: 21 },
+  ]);
+  assert.equal(diagnostics.totalMessages, 4);
+  assert.deepEqual(diagnostics.duplicateMessageIds, [{ messageId: 'assistant-2', count: 2 }]);
+  assert.deepEqual(diagnostics.identicalDisplayGroups, [{
+    group: 'display-duplicate-1',
+    count: 3,
+    messageIds: ['assistant-1', 'assistant-2', 'assistant-2'],
+    indexes: [1, 2, 3],
+  }]);
+  assert.equal(diagnostics.tail[1].contentLength, 23);
+  assert.equal(JSON.stringify(diagnostics).includes('private duplicate reply'), false);
+  assert.equal(JSON.stringify(diagnostics).includes('raw-a'), false);
+
+  let renderedSelector = '';
+  const rendered = buildRenderedHistoryDiagnostics({
+    querySelectorAll: (selector) => {
+      renderedSelector = selector;
+      return [
+        { dataset: { msgId: 'assistant-1' } },
+        { dataset: { msgId: 'assistant-2' } },
+        { dataset: { msgId: 'assistant-2' } },
+      ];
+    },
+  });
+  assert.equal(renderedSelector, '[data-msg-id][data-role]');
+  assert.equal(rendered.renderedMessages, 3);
+  assert.deepEqual(rendered.duplicateMessageIds, [{ messageId: 'assistant-2', count: 2 }]);
+  console.log('ok - history render diagnostics identify duplicate ids and equal payloads without exporting text');
+}
+
+{
   const anchor = { dataset: { msgId: 'anchor' } };
   const tail = { dataset: { msgId: 'tail' } };
   anchor.nextSibling = tail;
@@ -124,6 +162,7 @@ const createFragment = () => ({
 
 {
   const appended = [];
+  const renderDiagnostics = [];
   const documentLike = {
     createDocumentFragment: () => createFragment(),
   };
@@ -148,11 +187,15 @@ const createFragment = () => ({
     },
     refreshScrollDateBadge() {},
     scheduleScrollBottomButtonRefresh() {},
+    onRenderDiagnostics: diagnostics => renderDiagnostics.push(diagnostics),
   });
   assert.equal(appended.length, 1);
   assert.equal(appended[0].children.length, 4);
   assert.equal(appended[0].children[1].dataset.rpFloor, '3');
   assert.equal(appended[0].children[3].message.__lazyRichMount, false);
+  assert.equal(renderDiagnostics.length, 1);
+  assert.equal(renderDiagnostics[0].rendered, true);
+  assert.equal(renderDiagnostics[0].input.totalMessages, 2);
   console.log('ok - preloadHistoryCore appends floor markers and history items into a fragment');
 }
 

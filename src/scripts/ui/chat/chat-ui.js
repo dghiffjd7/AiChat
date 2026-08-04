@@ -2602,6 +2602,21 @@ export class ChatUI {
       scrollToBottom: () => this.scrollToBottom(),
       refreshScrollDateBadge: () => this.refreshScrollDateBadge(),
       scheduleScrollBottomButtonRefresh: options => this.scheduleScrollBottomButtonRefresh(options),
+      onRenderDiagnostics: (diagnostics) => {
+        const bridge = typeof window !== 'undefined' ? window.appBridge : null;
+        const inputDuplicates = Number(diagnostics?.input?.duplicateMessageIds?.length || 0);
+        const displayDuplicates = Number(diagnostics?.input?.identicalDisplayGroups?.length || 0);
+        const domDuplicates = Number(diagnostics?.dom?.duplicateMessageIds?.length || 0);
+        recordDebugTraceEvent(bridge, {
+          category: 'session-history',
+          phase: 'history-preload',
+          sessionId: String(bridge?.getActiveSessionId?.() || '').trim(),
+          source: 'chat-ui',
+          status: (inputDuplicates || displayDuplicates || domDuplicates) ? 'warn' : 'info',
+          summary: `messages=${Number(diagnostics?.input?.totalMessages || 0)} inputDup=${inputDuplicates} displayDup=${displayDuplicates} domDup=${domDuplicates}`,
+          details: diagnostics,
+        });
+      },
     });
   }
 

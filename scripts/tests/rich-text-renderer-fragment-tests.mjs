@@ -12,6 +12,7 @@ globalThis.document ??= { body: { dataset: {} } };
 
 const {
   captureRichDetailsOpenStates,
+  buildIframeHeightTraceEvent,
   buildIframeSrcDoc,
   buildRichTextRenderPlan,
   buildFrameworkGlobalShim,
@@ -27,6 +28,40 @@ const {
 } = await import('../../src/scripts/ui/chat/rich-text-renderer.js');
 
 const tests = [];
+
+tests.push({
+  name: 'iframe height trace contains sizing evidence without rendered text',
+  fn: () => {
+    const event = buildIframeHeightTraceEvent({
+      id: 'iframe-1',
+      sessionId: 'session-1',
+      messageId: 'message-1',
+      seq: 8,
+      source: 'observer',
+      mode: 'document',
+      raw: 816,
+      applied: 820,
+      authority: 'iframe',
+      lock: false,
+      event: 'apply',
+    });
+    assert.equal(event.category, 'rich-render');
+    assert.equal(event.phase, 'iframe-height-apply');
+    assert.equal(event.sessionId, 'session-1');
+    assert.equal(event.messageId, 'message-1');
+    assert.deepEqual(event.details, {
+      iframeId: 'iframe-1',
+      sequence: 8,
+      source: 'observer',
+      mode: 'document',
+      rawHeight: 816,
+      appliedHeight: 820,
+      authority: 'iframe',
+      locked: false,
+    });
+    assert.equal(JSON.stringify(event).includes('rendered text'), false);
+  },
+});
 
 tests.push({
   name: 'framework shim orders Vue and VueDemi before Pinia',

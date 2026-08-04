@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 
 import {
   createAppBackNavigationRuntime,
@@ -132,8 +133,23 @@ const createInput = () => ({
   assert.equal(invokeCalls[1].cmd, 'plugin:app|remove_listener');
 
   assert.equal(requestTauriNativeExit({ safeInvokeFn: async (cmd) => invokeCalls.push({ cmd }) }), true);
-  assert.equal(invokeCalls[2].cmd, 'plugin:app|exit');
+  assert.equal(invokeCalls[2].cmd, 'exit_app');
   console.log('ok - native Android back registrar resolves global and invoke fallback paths');
+}
+
+{
+  const commandsSource = fs.readFileSync(
+    new URL('../../src-tauri/src/commands.rs', import.meta.url),
+    'utf8',
+  );
+  const libSource = fs.readFileSync(
+    new URL('../../src-tauri/src/lib.rs', import.meta.url),
+    'utf8',
+  );
+  assert.match(commandsSource, /#\[tauri::command\]\s*pub fn exit_app\s*\(/);
+  assert.match(commandsSource, /app\.exit\(0\)/);
+  assert.match(libSource, /commands::exit_app/);
+  console.log('ok - Android double-back exit uses a registered application command');
 }
 
 {
@@ -156,12 +172,15 @@ const createInput = () => ({
     },
   };
   const input = createInput();
+  input.value = '不得进入诊断文件的输入内容';
+  const globalTraceEvents = [];
   const documentRef = { activeElement: input };
   const runtime = createAppBackNavigationRuntime({
     windowRef,
     historyRef,
     documentRef,
     getFocusedElement: () => documentRef.activeElement,
+    recordTraceEvent: event => globalTraceEvents.push(event),
   });
   assert.equal(runtime.start(), true);
   assert.equal(pushedStates.length, 1);
@@ -169,6 +188,9 @@ const createInput = () => ({
   const result = runtime.handleBack('test');
   assert.deepEqual(result, { handled: true, action: 'blur-active-element', source: 'test' });
   assert.equal(input.blurred, true);
+  assert.deepEqual(globalTraceEvents.map(event => event.phase), ['runtime-start', 'handle-back']);
+  assert.equal(globalTraceEvents.every(event => event.category === 'android-back'), true);
+  assert.equal(JSON.stringify(globalTraceEvents).includes('不得进入诊断文件的输入内容'), false);
   console.log('ok - createAppBackNavigationRuntime installs sentinel and blurs focused editor first');
 }
 
@@ -389,6 +411,7 @@ const createInput = () => ({
   let exitRequests = 0;
   let hints = 0;
   let now = 10000;
+  const globalTraceEvents = [];
   const pushedStates = [];
   const historyRef = {
     state: null,
@@ -416,6 +439,7 @@ const createInput = () => ({
     },
     exitNativeApp: () => { exitRequests += 1; },
     doublePressMs: 1400,
+    recordTraceEvent: event => globalTraceEvents.push(event),
   });
   runtime.start();
   assert.equal(typeof nativeHandler, 'function');
@@ -433,6 +457,9 @@ const createInput = () => ({
   assert.equal(second.handled, false);
   assert.equal(second.nativeExitRequested, true);
   assert.equal(exitRequests, 1);
+  const nativeExitTrace = globalTraceEvents.find(event => event.phase === 'native-exit-request');
+  assert.equal(nativeExitTrace?.details?.action, 'allow-native-exit');
+  assert.equal(nativeExitTrace?.details?.nativeExitRequested, true);
 
   runtime.stop();
   assert.equal(nativeUnregistered, true);

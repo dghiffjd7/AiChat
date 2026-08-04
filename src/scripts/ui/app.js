@@ -14745,6 +14745,8 @@ Phase G（Frame 36）：循环衔接
   let captureKeyboardVisibleDebugInfo = () => {};
   const buildViewportKeyboardDebugInfo = (base, { includeLast = true } = {}) => ({
     ...base,
+    // 与 package.json / tauri.conf.json 保持一致，供诊断导出确认用户所装版本
+    appVersion: '0.7.0-diagnose',
     capturedAt: new Date().toISOString(),
     appState: {
       uiMode,
@@ -14798,6 +14800,7 @@ Phase G（Frame 36）：循环衔接
     },
     requestAnimationFrameFn: typeof requestAnimationFrame === 'function' ? requestAnimationFrame : null,
     setTimeoutFn: typeof setTimeout === 'function' ? setTimeout : null,
+    recordTraceEvent: recordDebugTraceEvent,
     logger,
   });
   viewportKeyboardRuntime.start();
@@ -32932,6 +32935,7 @@ Phase G（Frame 36）：循环衔接
     nowFn: () => Date.now(),
     registerNativeBackButton: nativeBackButtonRegistrar,
     exitNativeApp: () => requestTauriNativeExit({ safeInvokeFn: safeInvoke, logger }),
+    recordTraceEvent: recordDebugTraceEvent,
     logger,
   });
   androidBackRuntime.start();

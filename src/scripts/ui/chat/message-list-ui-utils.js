@@ -2,6 +2,81 @@ const resolveHistoryRole = (message) => (
   message?.role === 'system' ? 'system' : message?.role === 'user' ? 'user' : 'assistant'
 );
 
+const listDuplicateMessageIds = (entries = []) => {
+  const counts = new Map();
+  (Array.isArray(entries) ? entries : []).forEach((entry) => {
+    const messageId = String(entry?.messageId || '').trim();
+    if (!messageId) return;
+    counts.set(messageId, Number(counts.get(messageId) || 0) + 1);
+  });
+  return [...counts.entries()]
+    .filter(([, count]) => count > 1)
+    .map(([messageId, count]) => ({ messageId, count }));
+};
+
+export const buildHistoryRenderDiagnostics = (messages = [], { tailLimit = 12 } = {}) => {
+  const list = Array.isArray(messages) ? messages : [];
+  const limit = Math.max(1, Number(tailLimit) || 12);
+  const startIndex = Math.max(0, list.length - limit);
+  const sourceTail = list.slice(startIndex);
+  const tail = sourceTail.map((message, offset) => ({
+    index: startIndex + offset,
+    fromEnd: sourceTail.length - offset,
+    messageId: String(message?.id || '').trim(),
+    role: resolveHistoryRole(message),
+    type: String(message?.type || 'text'),
+    timestamp: Number(message?.timestamp || 0) || 0,
+    contentLength: typeof message?.content === 'string' ? message.content.length : 0,
+    rawLength: typeof message?.raw === 'string' ? message.raw.length : 0,
+    rawSourceLength: typeof message?.rawSource === 'string' ? message.rawSource.length : 0,
+    rawOriginalLength: typeof message?.rawOriginal === 'string' ? message.rawOriginal.length : 0,
+    renderRich: message?.meta?.renderRich === true,
+    status: String(message?.status || ''),
+  }));
+  const identicalByDisplay = new Map();
+  sourceTail.forEach((message, offset) => {
+    const content = typeof message?.content === 'string' ? message.content : '';
+    if (!content) return;
+    const key = `${resolveHistoryRole(message)}\u0000${String(message?.type || 'text')}\u0000${content}`;
+    const group = identicalByDisplay.get(key) || [];
+    group.push({
+      messageId: String(message?.id || '').trim(),
+      index: startIndex + offset,
+    });
+    identicalByDisplay.set(key, group);
+  });
+  let groupIndex = 0;
+  const identicalDisplayGroups = [...identicalByDisplay.values()]
+    .filter(group => group.length > 1)
+    .map((group) => ({
+      group: `display-duplicate-${groupIndex += 1}`,
+      count: group.length,
+      messageIds: group.map(entry => entry.messageId),
+      indexes: group.map(entry => entry.index),
+    }));
+  return {
+    capturesText: false,
+    totalMessages: list.length,
+    tailStartIndex: startIndex,
+    tail,
+    duplicateMessageIds: listDuplicateMessageIds(tail),
+    identicalDisplayGroups,
+  };
+};
+
+export const buildRenderedHistoryDiagnostics = (scrollEl, { tailLimit = 20 } = {}) => {
+  const nodes = Array.from(scrollEl?.querySelectorAll?.('[data-msg-id][data-role]') || []);
+  const entries = nodes.map(node => ({
+    messageId: String(node?.dataset?.msgId || '').trim(),
+  }));
+  const limit = Math.max(1, Number(tailLimit) || 20);
+  return {
+    renderedMessages: entries.length,
+    tailMessageIds: entries.slice(-limit).map(entry => entry.messageId),
+    duplicateMessageIds: listDuplicateMessageIds(entries),
+  };
+};
+
 const findInsertBeforeNode = (scrollEl, insertAfterMessageId = '') => {
   const targetId = String(insertAfterMessageId || '').trim();
   if (!scrollEl || !targetId) return null;
@@ -86,9 +161,18 @@ export const preloadHistoryCore = ({
   scrollToBottom,
   refreshScrollDateBadge,
   scheduleScrollBottomButtonRefresh,
+  onRenderDiagnostics,
 } = {}) => {
   const list = Array.isArray(messages) ? messages : [];
-  if (!list.length || !scrollEl) return false;
+  const inputDiagnostics = buildHistoryRenderDiagnostics(list);
+  if (!list.length || !scrollEl) {
+    onRenderDiagnostics?.({
+      input: inputDiagnostics,
+      dom: buildRenderedHistoryDiagnostics(scrollEl),
+      rendered: false,
+    });
+    return false;
+  }
   const eagerTailCount = 8;
   const eagerStart = Math.max(0, list.length - eagerTailCount);
   const fragment = documentLike.createDocumentFragment();
@@ -112,6 +196,11 @@ export const preloadHistoryCore = ({
   if (!keepScroll) scrollToBottom?.();
   refreshScrollDateBadge?.();
   scheduleScrollBottomButtonRefresh?.({ immediate: true });
+  onRenderDiagnostics?.({
+    input: inputDiagnostics,
+    dom: buildRenderedHistoryDiagnostics(scrollEl),
+    rendered: true,
+  });
   return true;
 };
 

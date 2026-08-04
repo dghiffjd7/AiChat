@@ -17,6 +17,8 @@ Current target regressions:
 - vivo y500: keyboard must not cover composer.
 - Redmi Note12T Pro: preset detail/binding content must remain readable on short visual viewport.
 - Xiaomi/Redmi: editing a creative-writing user bubble or the maid persona prompt must not jump in height.
+- Conversation reopen: the newest assistant floor must render once after leaving and reopening a room.
+- Rich regex output: the blank area below a rendered card must stop growing after layout settles.
 - Android back gesture/key: must navigate app state before exiting.
 
 ## Viewport And Keyboard
@@ -41,9 +43,10 @@ For Xiaomi/Redmi editing reports, reproduce one surface at a time before exporti
 - Creative writing: open a user bubble with the pencil action, type/edit, then save or cancel.
 - Maid settings: open Prompt -> Persona, focus the editable prompt, then type/edit.
 
-The export contains a rolling window of the latest 120 viewport/keyboard events. The two tracked editors add focus,
-IME composition, and layout-change events under `creative-user-bubble-edit` or `maid-persona-prompt`. Text values are
-not captured.
+The keyboard inspector keeps a rolling window of the latest 120 viewport/keyboard events. The same events are also
+mirrored into Diagnostic -> Timeline, so a combined reproduction can use one Timeline TXT export. The two tracked
+editors add focus, IME composition, and layout-change events under `creative-user-bubble-edit` or
+`maid-persona-prompt`. Text values are not captured.
 
 Expected:
 
@@ -71,8 +74,45 @@ Expected:
 5. On Chat tab root, press back once: app shows exit hint.
 6. Press back again after the hint: native exit flow is allowed.
 
+Expected: the second root-level back exits the Tauri application instead of showing the hint again or remaining open.
+
+## Conversation Reopen And Rich Regex
+
+Before reproducing, enable the diagnostic button under Settings -> Advanced.
+
+For one combined diagnostic run, reproduce in this order:
+
+1. Edit the creative-writing user bubble.
+2. Edit the maid Prompt -> Persona field.
+3. Leave and reopen the affected conversation to check the newest assistant floor.
+4. Trigger the rich-regex blank-space growth last, leave it visible for a few seconds, then immediately export
+   Diagnostic -> Timeline.
+
+Android back events are also mirrored into the same timeline. Test the final root-level second-back exit only after
+the TXT has been exported: a successful result closes the process, while a failed result leaves the app open and can
+be followed by another Timeline export.
+
+For a duplicated newest assistant floor:
+
+1. Note that the newest assistant reply appears once.
+2. Leave the room, then reopen the same conversation.
+3. If the newest reply appears twice, do not edit or delete either copy.
+4. Immediately open Diagnostic -> Timeline and export the TXT file.
+
+For continuously growing blank space below regex-rendered output:
+
+1. Open the affected conversation with the same enabled regex/card configuration.
+2. Leave the growing blank area visible for several seconds.
+3. Open Diagnostic -> Timeline and export the TXT file while the issue is still active.
+
+The timeline records message IDs, roles, lengths, duplicate group positions, and iframe height decisions. It does not
+export chat text, prompt text, or regex replacement content.
+
 ## Release Notes
 
 - Capture screenshot/video on any failed matrix item.
-- Include the Diagnostic -> Keyboard export, or `window.__chatappViewportDebugInfo?.()` output in developer builds, with bug reports for keyboard or visual-offset issues.
+- Prefer one Diagnostic -> Timeline export for the combined keyboard/editor, Android back, duplicated-history, and
+  rich-regex reproduction. Use the separate Keyboard or Back export only when deeper follow-up is requested.
+- `window.__chatappViewportDebugInfo?.()` remains available as a developer-build fallback for keyboard or
+  visual-offset issues.
 - If an OEM device differs, record WebView version, Android version, display size, font size, and whether gesture navigation is enabled.

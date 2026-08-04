@@ -232,6 +232,7 @@ const createElement = ({ tagName = 'div', type = '', id = '' } = {}) => ({
   const input = createElement({ tagName: 'textarea', id: 'composer-input' });
   input.dataset.viewportKeyboardDiagnostic = 'maid-persona-prompt';
   input.value = '不得进入诊断文件的私密提示词';
+  const globalTraceEvents = [];
   const chatRoom = createElement({ tagName: 'div', id: 'chat-room' });
   const listeners = new Map();
   const visualListeners = new Map();
@@ -286,6 +287,7 @@ const createElement = ({ tagName = 'div', type = '', id = '' } = {}) => ({
     targets: [{ element: chatRoom, activeClass: 'keyboard-visible', fixedToVisualViewport: true }],
     getFocusedElement: () => documentRef.activeElement,
     requestAnimationFrameFn: fn => fn(),
+    recordTraceEvent: event => globalTraceEvents.push(event),
   });
   const closed = runtime.start();
   assert.equal(closed.keyboardVisible, false);
@@ -328,7 +330,13 @@ const createElement = ({ tagName = 'div', type = '', id = '' } = {}) => ({
   assert.equal(inputEvent.details.surface, 'maid-persona-prompt');
   assert.equal(inputEvent.details.element.scrollHeight, 96);
   assert.equal(inputEvent.details.element.inlineHeight, '96px');
+  assert.deepEqual(
+    globalTraceEvents.map(event => event.phase),
+    debugInfo.eventTimeline.events.map(event => event.phase),
+  );
+  assert.equal(globalTraceEvents.every(event => event.category === 'viewport-keyboard'), true);
   assert.equal(JSON.stringify(debugInfo).includes('不得进入诊断文件的私密提示词'), false);
+  assert.equal(JSON.stringify(globalTraceEvents).includes('不得进入诊断文件的私密提示词'), false);
   runtime.stop();
   assert.equal(typeof windowRef.__chatappAndroidImeInsets, 'undefined');
   console.log('ok - createViewportKeyboardRuntime bridges native Android IME inset into visible layout');

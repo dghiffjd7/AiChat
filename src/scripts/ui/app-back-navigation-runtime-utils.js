@@ -117,6 +117,7 @@ export const createAppBackNavigationRuntime = ({
   exitNativeApp = null,
   storageRef = null,
   diagnosticStorageKey = BACK_DIAGNOSTICS_STORAGE_KEY,
+  recordTraceEvent = null,
   logger = null,
 } = {}) => {
   const historyObj = historyRef || windowRef?.history || null;
@@ -233,6 +234,43 @@ export const createAppBackNavigationRuntime = ({
     };
     diagnostics.events = [...diagnostics.events, entry].slice(-MAX_BACK_DIAGNOSTIC_EVENTS);
     persistDiagnostics();
+    const traceDetails = {
+      action: String(entry.action || ''),
+      handled: typeof entry.handled === 'boolean' ? entry.handled : null,
+      nativeExitRequested: typeof entry.nativeExitRequested === 'boolean'
+        ? entry.nativeExitRequested
+        : null,
+      duplicateOf: String(entry.duplicateOf || ''),
+      activePage: String(entry.snapshot?.activePage || ''),
+      uiMode: String(entry.snapshot?.uiMode || ''),
+      isChatRoomVisible: Boolean(entry.snapshot?.isChatRoomVisible),
+      documentVisibility: String(entry.snapshot?.documentVisibility || ''),
+      historyLength: Number(entry.snapshot?.history?.length || 0) || 0,
+      hasSentinel: Boolean(entry.snapshot?.history?.hasSentinel),
+      nativeBackStatus: String(entry.snapshot?.nativeBack?.status || ''),
+      focusedElement: entry.snapshot?.focusedElement || null,
+      lastRootBackAt: Number(entry.snapshot?.lastRootBackAt || 0) || 0,
+      doublePressMs: Number(entry.snapshot?.doublePressMs || doublePressMs) || doublePressMs,
+    };
+    const summary = [
+      traceDetails.action ? `action=${traceDetails.action}` : '',
+      traceDetails.handled == null ? '' : `handled=${traceDetails.handled ? 1 : 0}`,
+      traceDetails.nativeExitRequested == null
+        ? ''
+        : `nativeExitRequested=${traceDetails.nativeExitRequested ? 1 : 0}`,
+    ].filter(Boolean).join(' ');
+    try {
+      recordTraceEvent?.({
+        category: 'android-back',
+        phase: String(entry.phase || 'event'),
+        source: String(entry.source || 'app-back-runtime'),
+        status: entry.phase === 'native-exit-request' && entry.nativeExitRequested !== true
+          ? 'warn'
+          : 'info',
+        summary,
+        details: traceDetails,
+      });
+    } catch {}
     return entry;
   };
 

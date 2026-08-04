@@ -145,7 +145,7 @@ export const requestTauriNativeExit = ({
 } = {}) => {
   if (typeof safeInvokeFn !== 'function') return false;
   try {
-    const result = safeInvokeFn('plugin:app|exit', {});
+    const result = safeInvokeFn('exit_app', {});
     if (result && typeof result.catch === 'function') {
       result.catch(err => warn(logger, 'android native back exit request failed', err));
     }

@@ -271,6 +271,7 @@ export const createViewportKeyboardRuntime = ({
   logger = null,
   keyboardThreshold = 80,
   diagnosticTimelineLimit = VIEWPORT_KEYBOARD_DIAGNOSTIC_EVENT_LIMIT,
+  recordTraceEvent = null,
   nowFn = Date.now,
 } = {}) => {
   const docEl = rootEl || documentRef?.documentElement || null;
@@ -313,14 +314,19 @@ export const createViewportKeyboardRuntime = ({
       body,
       nativeIme: nativeImeState,
     });
-    return diagnosticTimeline.record({
+    const traceEvent = {
       category: 'viewport-keyboard',
       phase,
       source: 'viewport-keyboard-runtime',
       status: 'info',
       summary: resolvedSurface ? `surface=${resolvedSurface}` : '',
       details,
-    });
+    };
+    const recorded = diagnosticTimeline.record(traceEvent);
+    try {
+      recordTraceEvent?.(traceEvent);
+    } catch {}
+    return recorded;
   };
 
   const readSnapshot = () => {
