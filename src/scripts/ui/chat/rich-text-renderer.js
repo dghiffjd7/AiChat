@@ -3469,6 +3469,31 @@ const normalizeHeightMode = (value) => {
     return 'document';
 };
 
+export const shouldDropLegacyIframeHeightEcho = ({
+    source = 'bridge',
+    mode = 'document',
+    hasIncomingSeq = false,
+    rawHeight = 0,
+    currentHeight = 0,
+    lastAppliedHeight = 0,
+    lock = false,
+    unlock = false,
+} = {}) => {
+    if (normalizeHeightSource(source) !== 'legacy') return false;
+    if (normalizeHeightMode(mode) !== 'document' || hasIncomingSeq) return false;
+    if (lock || unlock) return false;
+    const raw = Number(rawHeight);
+    const current = Number(currentHeight);
+    const lastApplied = Number(lastAppliedHeight);
+    return Number.isFinite(raw)
+        && Number.isFinite(current)
+        && Number.isFinite(lastApplied)
+        && current > 0
+        && lastApplied > 0
+        && Math.abs(current - lastApplied) <= 1
+        && Math.abs(raw - current) <= 1;
+};
+
 const getHeightSourcePriority = (source) => {
     const key = normalizeHeightSource(source);
     return Number(IFRAME_HEIGHT_SOURCE_PRIORITY[key] || 0);
@@ -3710,7 +3735,6 @@ const applyIframeResizeUpdate = (iframe, {
     const normalizedMode = normalizeHeightMode(mode);
     const raw = Number(rawHeight);
     if (!Number.isFinite(raw)) return false;
-    const appliedHeight = clampIframeHeight(raw);
 
     const hasIncomingSeq = (
         seq !== null &&
@@ -3718,6 +3742,37 @@ const applyIframeResizeUpdate = (iframe, {
         seq !== '' &&
         Number.isFinite(Number(seq))
     );
+    const current = parseFloat(iframe.style.height || '') || 0;
+    if (shouldDropLegacyIframeHeightEcho({
+        source: normalizedSource,
+        mode: normalizedMode,
+        hasIncomingSeq,
+        rawHeight: raw,
+        currentHeight: current,
+        lastAppliedHeight: st.lastAppliedHeight,
+        lock,
+        unlock,
+    })) {
+        const now = Number.isFinite(Number(ts)) ? Math.trunc(Number(ts)) : Date.now();
+        if ((now - Number(st.lastLegacyEchoLogAt || 0)) >= 1000) {
+            st.lastLegacyEchoLogAt = now;
+            logIframeHeight({
+                id,
+                seq: st.lastSeq,
+                source: normalizedSource,
+                mode: normalizedMode,
+                raw,
+                applied: current,
+                authority: getIframeAuthority(iframe, st),
+                lock: Boolean(st.lock),
+                event: 'legacy-echo-drop',
+                level: 'info',
+            });
+        }
+        return false;
+    }
+    const appliedHeight = clampIframeHeight(raw);
+
     const prevSeqBase = (st.lastSeq ?? -1);
     const incomingSeq = hasIncomingSeq ? Math.trunc(Number(seq)) : (Math.trunc(Number(prevSeqBase)) + 1);
     const prevSeq = Number.isFinite(Number(st.lastSeq)) ? Math.trunc(Number(st.lastSeq)) : -1;
@@ -3807,7 +3862,6 @@ const applyIframeResizeUpdate = (iframe, {
         }
     }
 
-    const current = parseFloat(iframe.style.height || '') || 0;
     if (Math.abs(current - appliedHeight) > 1) {
         setIframeStyleHeight(iframe, `${appliedHeight}px`);
     }

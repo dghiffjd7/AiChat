@@ -86,7 +86,7 @@ export const normalizeViewportSnapshot = ({
     ? Math.max(roundPx(screenHeight), roundPx(screenWidth))
     : 0;
   let baseHeight = Math.max(retainedBaseHeight, layoutHeight, visualHeight, screenHeightCandidate);
-  const viewportKeyboardInsetBottom = Math.max(0, roundPx(baseHeight - visualHeight - visualOffsetTop));
+  const viewportKeyboardInsetBottom = Math.max(0, roundPx(baseHeight - visualHeight));
   const nativeKeyboardInsetBottom = nativeImeState.visible ? nativeImeState.insetBottom : 0;
   const keyboardInsetBottom = Math.max(viewportKeyboardInsetBottom, nativeKeyboardInsetBottom);
   const keyboardVisible = Boolean(
@@ -100,7 +100,7 @@ export const normalizeViewportSnapshot = ({
     && nativeKeyboardInsetBottom >= keyboardThreshold
     && viewportKeyboardInsetBottom < keyboardThreshold;
   const appliedVisualHeight = shouldApplyNativeVisibleHeight
-    ? Math.max(0, roundPx(layoutHeight - nativeKeyboardInsetBottom - visualOffsetTop))
+    ? Math.max(0, roundPx(layoutHeight - nativeKeyboardInsetBottom))
     : visualHeight;
 
   return {
@@ -351,7 +351,7 @@ export const createViewportKeyboardRuntime = ({
     return snapshot;
   };
 
-  const applySnapshot = (snapshot) => {
+  const applySnapshot = (snapshot, { shouldScrollFocusedElement = false } = {}) => {
     if (docEl) {
       setStyleVar(docEl, '--app-layout-height', `${snapshot.layoutHeight}px`);
       setStyleVar(docEl, '--app-visual-height', `${snapshot.visualHeight}px`);
@@ -364,7 +364,7 @@ export const createViewportKeyboardRuntime = ({
       body.dataset.keyboardVisible = snapshot.keyboardVisible ? 'true' : 'false';
     }
     targets.forEach(target => applyTargetSnapshot(target, snapshot));
-    if (snapshot.keyboardVisible) {
+    if (snapshot.keyboardVisible && shouldScrollFocusedElement) {
       scheduleWithRaf(raf, () => {
         const focusedElement = getCurrentFocusedElement();
         if (isEditableElement(focusedElement)) {
@@ -379,13 +379,22 @@ export const createViewportKeyboardRuntime = ({
 
   const refresh = (phase = 'manual-refresh', element = null, surface = '') => {
     const queued = pendingRefreshDiagnostic;
+    const refreshPhases = queued?.phases?.length
+      ? queued.phases
+      : [String(phase || 'manual-refresh')];
     pendingRefresh = false;
     pendingRefreshDiagnostic = null;
+    const previousSnapshot = lastSnapshot;
     const snapshot = readSnapshot();
     lastSnapshot = snapshot;
-    applySnapshot(snapshot);
+    applySnapshot(snapshot, {
+      shouldScrollFocusedElement: snapshot.keyboardVisible && (
+        !previousSnapshot?.keyboardVisible
+        || refreshPhases.some(item => item === 'surface-focusin' || item === 'document-focusin')
+      ),
+    });
     recordDiagnosticEvent({
-      phase: queued?.phases?.join('+') || String(phase || 'manual-refresh'),
+      phase: refreshPhases.join('+'),
       snapshot,
       element: queued?.element || element || getCurrentFocusedElement(),
       surface: queued?.surface || surface,

@@ -13,6 +13,7 @@ globalThis.document ??= { body: { dataset: {} } };
 const {
   captureRichDetailsOpenStates,
   buildIframeHeightTraceEvent,
+  shouldDropLegacyIframeHeightEcho,
   buildIframeSrcDoc,
   buildRichTextRenderPlan,
   buildFrameworkGlobalShim,
@@ -60,6 +61,86 @@ tests.push({
       locked: false,
     });
     assert.equal(JSON.stringify(event).includes('rendered text'), false);
+  },
+});
+
+tests.push({
+  name: 'drops only unsequenced legacy document-height echoes',
+  fn: () => {
+    assert.equal(shouldDropLegacyIframeHeightEcho({
+      source: 'legacy',
+      mode: 'document',
+      hasIncomingSeq: false,
+      rawHeight: 274,
+      currentHeight: 274,
+      lastAppliedHeight: 274,
+    }), true);
+    assert.equal(shouldDropLegacyIframeHeightEcho({
+      source: 'legacy',
+      mode: 'document',
+      hasIncomingSeq: false,
+      rawHeight: 274.8,
+      currentHeight: 274,
+      lastAppliedHeight: 274,
+    }), true);
+    assert.equal(shouldDropLegacyIframeHeightEcho({
+      source: 'legacy',
+      mode: 'document',
+      hasIncomingSeq: false,
+      rawHeight: 120,
+      currentHeight: 120,
+      lastAppliedHeight: 0,
+    }), false);
+    assert.equal(shouldDropLegacyIframeHeightEcho({
+      source: 'legacy',
+      mode: 'document',
+      hasIncomingSeq: false,
+      rawHeight: 350,
+      currentHeight: 274,
+      lastAppliedHeight: 274,
+    }), false);
+    assert.equal(shouldDropLegacyIframeHeightEcho({
+      source: 'legacy',
+      mode: 'document',
+      hasIncomingSeq: true,
+      rawHeight: 274,
+      currentHeight: 274,
+      lastAppliedHeight: 274,
+    }), false);
+    assert.equal(shouldDropLegacyIframeHeightEcho({
+      source: 'observer',
+      mode: 'document',
+      hasIncomingSeq: false,
+      rawHeight: 274,
+      currentHeight: 274,
+      lastAppliedHeight: 274,
+    }), false);
+    assert.equal(shouldDropLegacyIframeHeightEcho({
+      source: 'legacy',
+      mode: 'viewport',
+      hasIncomingSeq: false,
+      rawHeight: 274,
+      currentHeight: 274,
+      lastAppliedHeight: 274,
+    }), false);
+    assert.equal(shouldDropLegacyIframeHeightEcho({
+      source: 'legacy',
+      mode: 'document',
+      hasIncomingSeq: false,
+      rawHeight: 274,
+      currentHeight: 274,
+      lastAppliedHeight: 274,
+      lock: true,
+    }), false);
+    assert.equal(shouldDropLegacyIframeHeightEcho({
+      source: 'legacy',
+      mode: 'document',
+      hasIncomingSeq: false,
+      rawHeight: 274,
+      currentHeight: 274,
+      lastAppliedHeight: 274,
+      unlock: true,
+    }), false);
   },
 });
 

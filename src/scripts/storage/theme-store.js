@@ -282,6 +282,87 @@ const BUILTIN_THEMES = Object.freeze([
       importedFrom: 'builtin',
     },
   },
+  {
+    id: 'paper-ink',
+    name: '纸墨 Paper Ink',
+    version: 1,
+    source: 'chat-app-builtin',
+    mode: 'light',
+    tokens: {
+      surface: {
+        page: '#f3f1ec',
+        pageAlt: '#eceae2',
+        card: '#ffffff',
+        panel: '#fdfcfa',
+        topbar: 'rgba(253, 252, 250, 0.92)',
+        input: '#ffffff',
+        overlay: 'rgba(38, 34, 28, 0.45)',
+        subtle: '#faf8f4',
+        hover: '#f0ede4',
+        elevated: '#fffdf8',
+      },
+      text: {
+        primary: '#26221c',
+        secondary: '#6e665b',
+        muted: '#746c5e',
+        inverse: '#fffdf8',
+        quote: '#6e665b',
+        link: '#a03c1c',
+      },
+      accent: {
+        primary: '#bc4a26',
+        strong: '#a03c1c',
+        soft: 'rgba(188, 74, 38, 0.12)',
+      },
+      tint: {
+        neutral: '#a89e90',
+        slate: '#8d867b',
+      },
+      status: {
+        danger: '#bf3a2b',
+        dangerStrong: '#9e3b22',
+        warning: '#a8761a',
+        warningText: '#8a6116',
+        success: '#3f8e5c',
+        successText: '#2f7d5b',
+        // 参考稿全暖调无冷蓝：info/task 用降饱和墨青/暖紫，避免破坏纸墨氛围。
+        info: '#4a6f8a',
+        infoText: '#3d5f78',
+        task: '#7c5cad',
+      },
+      border: {
+        subtle: 'rgba(38, 34, 28, 0.08)',
+        default: '#e7e1d7',
+        strong: '#d7d2c6',
+      },
+      bubble: {
+        user: '#bc4a26',
+        assistant: '#ffffff',
+        assistantAlt: '#faf8f4',
+        meta: 'rgba(255, 248, 240, 0.8)',
+      },
+      shadow: {
+        sm: '0 1px 2px rgba(38, 34, 28, 0.05)',
+        md: '0 16px 40px -12px rgba(38, 34, 28, 0.22)',
+        bubble: '0 12px 32px -14px rgba(38, 34, 28, 0.18)',
+        color: 'rgba(38, 34, 28, 0.2)',
+      },
+      radius: {
+        sm: '8px',
+        md: '12px',
+        lg: '18px',
+        pill: '999px',
+        avatar: '18px',
+      },
+    },
+    appearance: DEFAULT_APPEARANCE,
+    meta: {
+      builtin: true,
+      createdAt: '2026-08-04T00:00:00.000Z',
+      updatedAt: '2026-08-04T00:00:00.000Z',
+      importedFrom: 'builtin',
+    },
+  },
 ]);
 
 const BUILTIN_ID_SET = new Set(BUILTIN_THEMES.map((item) => item.id));
@@ -312,7 +393,8 @@ const normalizeThemePreset = (input = {}, fallback = null) => {
     tokens,
     appearance: normalizeAppearance(raw.appearance, base.appearance || DEFAULT_APPEARANCE),
     meta: {
-      builtin: raw?.meta?.builtin === true || base?.meta?.builtin === true,
+      // builtin 只认输入的显式声明：merge base（内建主题）不得把 builtin 泄漏给自定义主题。
+      builtin: raw?.meta?.builtin === true,
       createdAt: String(raw?.meta?.createdAt || base?.meta?.createdAt || new Date().toISOString()),
       updatedAt: String(raw?.meta?.updatedAt || new Date().toISOString()),
       importedFrom: String(raw?.meta?.importedFrom || base?.meta?.importedFrom || raw.source || 'chat-app'),

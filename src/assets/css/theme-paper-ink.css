@@ -1,0 +1,9 @@
+/* 纸墨主题专属兼容层：仅 body[data-theme-preset='paper-ink'] 生效。
+   仅存放通用 token 无法接管的差异；新增规则前优先考虑 token 化。 */
+
+/* 以暖纸渐变整体替换 .bg-legacy 旧背景图（shorthand 会一并覆盖背景图层，
+   与 data-theme-mode='dark' 的处理等效；不要再单独把背景图层清空为 none，
+   否则渐变（同属背景图层）会被一并清掉）。 */
+body[data-theme-preset='paper-ink'] {
+  background: linear-gradient(135deg, var(--app-surface-page) 0%, var(--app-surface-page-alt) 100%) !important;
+}

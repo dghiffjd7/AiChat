@@ -17,7 +17,7 @@
   --qq-color-text-secondary: #a1a1a1; /* 次要文本（时间戳） */
   --qq-color-border: #000000; /* 边框颜色 */
   --qq-color-divider: rgb(240, 244, 245); /* 分割线 */
-  --qq-color-primary: #199aff; /* 主题色（天空蓝） */
+  --qq-color-primary: var(--app-accent-primary, #199aff); /* 主题色（天空蓝） */
   --qq-color-status-bg: rgba(255, 255, 255, 0.8); /* 状态标签背景 */
 
   /* 尺寸 */
@@ -272,7 +272,7 @@
   border-radius: 999px;
   background: var(--app-border-default);
   transform: translateX(-50%);
-  box-shadow: 0 0 6px rgba(96, 165, 250, 0.75);
+  box-shadow: 0 0 6px rgba(var(--app-accent-rgb, 96, 165, 250), 0.75);
 }
 
 .mode-switch[data-mode='rp'] .mode-switch-indicator {
@@ -479,13 +479,13 @@ body[data-ui-mode='rp'] .bottom-nav {
 }
 
 .rp-greeting-sheet-item.active {
-  background: rgba(59, 130, 246, 0.08);
+  background: rgba(var(--app-accent-rgb, 59, 130, 246), 0.08);
 }
 
 .rp-greeting-sheet-item-check {
   width: 20px;
   font-size: 14px;
-  color: #3b82f6;
+  color: var(--app-accent-primary, #3b82f6);
   flex-shrink: 0;
   text-align: center;
 }
@@ -501,7 +501,7 @@ body[data-ui-mode='rp'] .bottom-nav {
 
 .rp-greeting-sheet-item.active .rp-greeting-sheet-item-text {
   font-weight: 600;
-  color: #3b82f6;
+  color: var(--app-accent-primary, #3b82f6);
 }
 
 .rp-greeting-sheet-item[disabled] {
@@ -552,8 +552,8 @@ body[data-ui-mode='rp'] .bottom-nav {
 }
 
 #rp-greeting-sheet-add {
-  background: rgba(59, 130, 246, 0.10);
-  color: #2563eb;
+  background: rgba(var(--app-accent-rgb, 59, 130, 246), 0.10);
+  color: var(--app-accent-strong, #2563eb);
 }
 
 .rp-greeting-sheet-footer button:active {
@@ -561,7 +561,7 @@ body[data-ui-mode='rp'] .bottom-nav {
 }
 
 #rp-greeting-sheet-add:active {
-  background: rgba(59, 130, 246, 0.18);
+  background: rgba(var(--app-accent-rgb, 59, 130, 246), 0.18);
 }
 
 .rp-greeting-editor-overlay {
@@ -669,7 +669,7 @@ body[data-ui-mode='rp'] .bottom-nav {
 }
 
 .rp-greeting-editor-submit {
-  background: #2563eb;
+  background: var(--app-accent-strong, #2563eb);
   color: #fff;
 }
 
@@ -852,7 +852,7 @@ body[data-ui-mode='rp'] .chat-scroll-date-badge {
   border: 1px solid rgba(148, 163, 184, 0.28);
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.64);
-  color: rgba(37, 99, 235, 0.92);
+  color: rgba(var(--app-accent-rgb, 37, 99, 235), 0.92);
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -1631,7 +1631,7 @@ body[data-ui-mode='rp'] .rp-swipe-indicator {
 
 .QQ_chat_msgdiv.chat-rich-fragment a,
 .QQ_chat_msgdiv .chat-rich-fragment a {
-  color: #2563eb;
+  color: var(--app-text-link, #2563eb);
   text-decoration: underline;
   word-break: break-all;
 }
@@ -1876,7 +1876,7 @@ body[data-ui-mode='rp'] .rp-swipe-indicator {
 
 .chat-reaction-chip.is-self {
   background: var(--app-accent-soft);
-  border-color: rgba(25, 154, 255, 0.32);
+  border-color: rgba(var(--app-accent-rgb, 25, 154, 255), 0.32);
   color: var(--app-accent-strong);
 }
 
@@ -1931,7 +1931,7 @@ body[data-ui-mode='rp'] .rp-swipe-indicator {
 
 .chat-reaction-option.is-active {
   background: var(--app-accent-soft);
-  border-color: rgba(25, 154, 255, 0.32);
+  border-color: rgba(var(--app-accent-rgb, 25, 154, 255), 0.32);
 }
 
 .chat-reaction-picker {
@@ -2072,10 +2072,10 @@ body[data-ui-mode='rp'] .chat-reply-draft {
   inset: -7px -12px;
   border-radius: 18px;
   background:
-    linear-gradient(90deg, rgba(59, 130, 246, 0) 0%, rgba(96, 165, 250, 0.16) 16%, rgba(56, 189, 248, 0.26) 50%, rgba(96, 165, 250, 0.16) 84%, rgba(59, 130, 246, 0) 100%);
+    linear-gradient(90deg, rgba(var(--app-accent-rgb, 59, 130, 246), 0) 0%, rgba(var(--app-accent-rgb, 96, 165, 250), 0.16) 16%, rgba(var(--app-accent-rgb, 56, 189, 248), 0.26) 50%, rgba(var(--app-accent-rgb, 96, 165, 250), 0.16) 84%, rgba(var(--app-accent-rgb, 59, 130, 246), 0) 100%);
   box-shadow:
-    inset 0 0 0 1px rgba(96, 165, 250, 0.22),
-    0 10px 28px rgba(56, 189, 248, 0.14);
+    inset 0 0 0 1px rgba(var(--app-accent-rgb, 96, 165, 250), 0.22),
+    0 10px 28px rgba(var(--app-accent-rgb, 56, 189, 248), 0.14);
   pointer-events: none;
   z-index: 0;
   opacity: 0;
@@ -2090,12 +2090,12 @@ body[data-ui-mode='rp'] .chat-reply-draft {
 }
 
 .QQ_chat_unread-divider.chat-jump-focus-line .QQ_chat_unread-line {
-  color: rgba(37, 99, 235, 0.92);
+  color: rgba(var(--app-accent-rgb, 37, 99, 235), 0.92);
 }
 
 .QQ_chat_unread-divider.chat-jump-focus-line .QQ_chat_unread-line::before,
 .QQ_chat_unread-divider.chat-jump-focus-line .QQ_chat_unread-line::after {
-  background: linear-gradient(90deg, rgba(59, 130, 246, 0.12), rgba(59, 130, 246, 0.65), rgba(59, 130, 246, 0.12));
+  background: linear-gradient(90deg, rgba(var(--app-accent-rgb, 59, 130, 246), 0.12), rgba(var(--app-accent-rgb, 59, 130, 246), 0.65), rgba(var(--app-accent-rgb, 59, 130, 246), 0.12));
 }
 
 .chat-jump-keyword {
@@ -2301,8 +2301,8 @@ body[data-ui-mode='rp'] .chat-reply-draft {
 }
 
 .chat-input-container.is-image-dragover {
-  border-top-color: rgba(37, 99, 235, 0.32);
-  box-shadow: inset 0 0 0 2px rgba(37, 99, 235, 0.16);
+  border-top-color: rgba(var(--app-accent-rgb, 37, 99, 235), 0.32);
+  box-shadow: inset 0 0 0 2px rgba(var(--app-accent-rgb, 37, 99, 235), 0.16);
 }
 
 .QQ_chat_page.keyboard-visible .chat-input-container {
@@ -2356,7 +2356,7 @@ body[data-ui-mode='rp'] .chat-reply-draft {
 
 .chat-action-btn[data-action='generate-image']::after {
   content: 'AI';
-  color: #2563eb;
+  color: var(--app-accent-strong, #2563eb);
   font-size: 11px;
   font-weight: 800;
   letter-spacing: 0.02em;
@@ -2474,7 +2474,7 @@ body[data-ui-mode='rp'] .chat-reply-draft {
 .chat-attachment-item.is-generated-image {
   width: 72px;
   height: 72px;
-  border-color: rgba(37, 99, 235, 0.2);
+  border-color: rgba(var(--app-accent-rgb, 37, 99, 235), 0.2);
 }
 
 .chat-attachment-badge {
@@ -2626,9 +2626,9 @@ body[data-ui-mode='rp'] .chat-sticker-btn {
   height: 36px;
   padding: 0 12px;
   border-radius: 18px;
-  border: 1.5px solid rgba(59, 130, 246, 0.3);
-  background: rgba(59, 130, 246, 0.06);
-  color: #3b82f6;
+  border: 1.5px solid rgba(var(--app-accent-rgb, 59, 130, 246), 0.3);
+  background: rgba(var(--app-accent-rgb, 59, 130, 246), 0.06);
+  color: var(--app-accent-primary, #3b82f6);
   font-size: 13px;
   font-weight: 600;
   cursor: pointer;
@@ -2644,8 +2644,8 @@ body[data-ui-mode='rp'] .rp-continue-btn {
 }
 
 .rp-continue-btn:active {
-  background: rgba(59, 130, 246, 0.14);
-  border-color: rgba(59, 130, 246, 0.5);
+  background: rgba(var(--app-accent-rgb, 59, 130, 246), 0.14);
+  border-color: rgba(var(--app-accent-rgb, 59, 130, 246), 0.5);
 }
 
 .rp-continue-btn:disabled {
@@ -2804,7 +2804,7 @@ body[data-ui-mode='rp'] .rp-continue-btn {
   max-width: 100%;
   margin: 0 0 -2px 48px;
   padding: 5px 8px;
-  border: 1px solid rgba(37, 99, 235, 0.22);
+  border: 1px solid rgba(var(--app-accent-rgb, 37, 99, 235), 0.22);
   border-radius: 10px;
   background: var(--app-surface-card);
   color: var(--app-text-secondary);
@@ -2836,9 +2836,9 @@ body[data-ui-mode='rp'] .rp-continue-btn {
 }
 
 .slash-image-ref-add {
-  border: 1px solid rgba(37, 99, 235, 0.18);
+  border: 1px solid rgba(var(--app-accent-rgb, 37, 99, 235), 0.18);
   border-radius: 999px;
-  background: rgba(37, 99, 235, 0.08);
+  background: rgba(var(--app-accent-rgb, 37, 99, 235), 0.08);
   color: #1d4ed8;
   padding: 3px 8px;
   font-size: 12px;
@@ -2968,8 +2968,8 @@ body[data-ui-mode='rp'] .rp-continue-btn {
 }
 
 .chat-image-gen-textarea:focus {
-  border-color: rgba(37, 99, 235, 0.45);
-  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
+  border-color: rgba(var(--app-accent-rgb, 37, 99, 235), 0.45);
+  box-shadow: 0 0 0 3px rgba(var(--app-accent-rgb, 37, 99, 235), 0.12);
 }
 
 .chat-image-gen-negative {
@@ -3041,8 +3041,8 @@ body[data-ui-mode='rp'] .rp-continue-btn {
 
 .chat-image-gen-ref-add {
   border-radius: 999px;
-  border: 1px solid rgba(37, 99, 235, 0.18);
-  background: rgba(37, 99, 235, 0.08);
+  border: 1px solid rgba(var(--app-accent-rgb, 37, 99, 235), 0.18);
+  background: rgba(var(--app-accent-rgb, 37, 99, 235), 0.08);
   color: #1d4ed8;
   padding: 7px 12px;
   font-weight: 800;
@@ -3123,8 +3123,8 @@ body[data-ui-mode='rp'] .rp-continue-btn {
 
 .chat-image-gen-advanced-open,
 .chat-image-gen-secondary {
-  border-color: rgba(37, 99, 235, 0.18);
-  background: rgba(37, 99, 235, 0.08);
+  border-color: rgba(var(--app-accent-rgb, 37, 99, 235), 0.18);
+  background: rgba(var(--app-accent-rgb, 37, 99, 235), 0.08);
   color: #1d4ed8;
 }
 
@@ -3135,8 +3135,8 @@ body[data-ui-mode='rp'] .rp-continue-btn {
 }
 
 .chat-image-gen-submit {
-  border-color: rgba(37, 99, 235, 0.26);
-  background: #2563eb;
+  border-color: rgba(var(--app-accent-rgb, 37, 99, 235), 0.26);
+  background: var(--app-accent-strong, #2563eb);
   color: #fff;
 }
 
@@ -3209,8 +3209,8 @@ body[data-ui-mode='rp'] .rp-continue-btn {
 }
 
 .chat-image-gen-param-field:focus {
-  border-color: rgba(37, 99, 235, 0.45);
-  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
+  border-color: rgba(var(--app-accent-rgb, 37, 99, 235), 0.45);
+  box-shadow: 0 0 0 3px rgba(var(--app-accent-rgb, 37, 99, 235), 0.12);
 }
 
 .chat-image-gen-param-help {
@@ -3225,8 +3225,8 @@ body[data-ui-mode='rp'] .rp-continue-btn {
 }
 
 .chat-image-gen-param-done {
-  border-color: rgba(37, 99, 235, 0.26);
-  background: #2563eb;
+  border-color: rgba(var(--app-accent-rgb, 37, 99, 235), 0.26);
+  background: var(--app-accent-strong, #2563eb);
   color: #fff;
 }
 
@@ -3326,14 +3326,14 @@ body[data-ui-mode='rp'] .rp-continue-btn {
 .writing-media-assets-toolbar button,
 .moment-compose-generate,
 .moment-compose-publish {
-  border-color: rgba(37, 99, 235, 0.26);
-  background: #2563eb !important;
+  border-color: rgba(var(--app-accent-rgb, 37, 99, 235), 0.26);
+  background: var(--app-accent-strong, #2563eb) !important;
   color: #fff !important;
 }
 
 .moment-compose-advanced {
-  border-color: rgba(37, 99, 235, 0.18) !important;
-  background: rgba(37, 99, 235, 0.08) !important;
+  border-color: rgba(var(--app-accent-rgb, 37, 99, 235), 0.18) !important;
+  background: rgba(var(--app-accent-rgb, 37, 99, 235), 0.08) !important;
   color: #1d4ed8 !important;
 }
 
@@ -3509,8 +3509,8 @@ body[data-ui-mode='rp'] .rp-continue-btn {
 
 .generated-image-album-detail-actions button {
   border-radius: 999px;
-  border: 1px solid rgba(37, 99, 235, 0.26);
-  background: #2563eb;
+  border: 1px solid rgba(var(--app-accent-rgb, 37, 99, 235), 0.26);
+  background: var(--app-accent-strong, #2563eb);
   color: #fff;
   padding: 8px 12px;
   font-weight: 700;
@@ -3627,7 +3627,7 @@ body[data-ui-mode='rp'] .rp-continue-btn {
 }
 
 .chat-generated-image-preview-thumb.is-active {
-  border-color: #2563eb;
+  border-color: var(--app-accent-strong, #2563eb);
 }
 
 .chat-generated-image-preview-thumb img {
@@ -3664,8 +3664,8 @@ body[data-ui-mode='rp'] .rp-continue-btn {
 .chat-generated-image-preview-actions button {
   flex: 1;
   border-radius: 999px;
-  border: 1px solid rgba(37, 99, 235, 0.24);
-  background: #2563eb;
+  border: 1px solid rgba(var(--app-accent-rgb, 37, 99, 235), 0.24);
+  background: var(--app-accent-strong, #2563eb);
   color: #fff;
   padding: 8px 10px;
   font-weight: 800;
@@ -3764,7 +3764,7 @@ body[data-ui-mode='rp'] .rp-continue-btn {
 .writing-media-assets-close:hover,
 .writing-media-assets-toolbar button:hover,
 .writing-media-asset-actions button:hover {
-  border-color: rgba(37, 99, 235, 0.30);
+  border-color: rgba(var(--app-accent-rgb, 37, 99, 235), 0.30);
   background: var(--app-surface-hover);
 }
 
@@ -3775,7 +3775,7 @@ body[data-ui-mode='rp'] .rp-continue-btn {
 .writing-media-assets-close:focus-visible,
 .writing-media-assets-toolbar button:focus-visible,
 .writing-media-asset-actions button:focus-visible {
-  outline: 2px solid rgba(37, 99, 235, 0.34);
+  outline: 2px solid rgba(var(--app-accent-rgb, 37, 99, 235), 0.34);
   outline-offset: 2px;
 }
 
@@ -3941,8 +3941,8 @@ body[data-ui-mode='rp'] .sticker-panel {
 
 .sticker-tab.is-active {
   background: var(--app-surface-card);
-  border-color: rgba(25, 154, 255, 0.4);
-  box-shadow: 0 2px 8px rgba(25, 154, 255, 0.12);
+  border-color: rgba(var(--app-accent-rgb, 25, 154, 255), 0.4);
+  box-shadow: 0 2px 8px rgba(var(--app-accent-rgb, 25, 154, 255), 0.12);
 }
 
 .sticker-tab-icon {
@@ -4020,8 +4020,8 @@ body[data-ui-mode='rp'] .sticker-panel {
 }
 
 .sticker-ai-toggle.is-enabled {
-  background: rgba(25, 154, 255, 0.12);
-  border-color: rgba(25, 154, 255, 0.35);
+  background: rgba(var(--app-accent-rgb, 25, 154, 255), 0.12);
+  border-color: rgba(var(--app-accent-rgb, 25, 154, 255), 0.35);
   color: var(--app-accent-strong);
 }
 
@@ -4062,7 +4062,7 @@ body[data-ui-mode='rp'] .sticker-panel {
 }
 
 .sticker-ai-toggle.is-enabled .sticker-ai-dot {
-  background: rgba(25, 154, 255, 0.9);
+  background: rgba(var(--app-accent-rgb, 25, 154, 255), 0.9);
 }
 
 .sticker-tab-ai {
@@ -4145,7 +4145,7 @@ body[data-ui-mode='rp'] .sticker-panel {
 }
 
 .sticker-dot.is-active {
-  background: rgba(25, 154, 255, 0.85);
+  background: rgba(var(--app-accent-rgb, 25, 154, 255), 0.85);
 }
 
 .sticker-preview {
@@ -4523,8 +4523,8 @@ body[data-ui-mode='rp'] .QQ_chat_page.sticker-preview-active .msgcontent {
 }
 
 .sticker-ai-btn.primary {
-  background: #199aff;
-  border-color: #199aff;
+  background: var(--app-accent-primary, #199aff);
+  border-color: var(--app-accent-primary, #199aff);
   color: var(--app-text-inverse);
 }
 
@@ -4571,8 +4571,8 @@ body[data-ui-mode='rp'] .QQ_chat_page.sticker-preview-active .msgcontent {
 }
 
 .sticker-ai-preview img.is-selected {
-  border-color: #199aff;
-  box-shadow: 0 0 0 2px rgba(25, 154, 255, 0.2);
+  border-color: var(--app-accent-primary, #199aff);
+  box-shadow: 0 0 0 2px rgba(var(--app-accent-rgb, 25, 154, 255), 0.2);
 }
 
 .sticker-ai-preview-download {
@@ -4686,7 +4686,7 @@ body[data-ui-mode='rp'] .QQ_chat_page.sticker-preview-active .msgcontent {
 }
 
 .sticker-ai-guide-line {
-  stroke: #199aff;
+  stroke: var(--app-accent-primary, #199aff);
   stroke-width: 2;
   vector-effect: non-scaling-stroke;
   stroke-linecap: round;
@@ -4753,7 +4753,7 @@ body[data-ui-mode='rp'] .QQ_chat_page.sticker-preview-active .msgcontent {
   min-width: 56px;
   padding: 6px 10px;
   border-radius: 999px;
-  background: rgba(25, 154, 255, 0.1);
+  background: rgba(var(--app-accent-rgb, 25, 154, 255), 0.1);
   color: #0369a1;
   font-size: 12px;
   font-weight: 700;
@@ -5095,13 +5095,13 @@ body[data-ui-mode='rp'] .QQ_chat_page.sticker-preview-active .msgcontent {
 }
 
 .sticker-pack-bind-toggle.is-on {
-  border-color: rgba(25, 154, 255, 0.4);
-  background: rgba(25, 154, 255, 0.12);
+  border-color: rgba(var(--app-accent-rgb, 25, 154, 255), 0.4);
+  background: rgba(var(--app-accent-rgb, 25, 154, 255), 0.12);
   color: var(--app-accent-strong);
 }
 
 .sticker-pack-bind-toggle.is-on .sticker-pack-bind-dot {
-  background: rgba(25, 154, 255, 0.9);
+  background: rgba(var(--app-accent-rgb, 25, 154, 255), 0.9);
 }
 
 .sticker-pack-bind-hint {
@@ -5169,7 +5169,7 @@ body[data-ui-mode='rp'] .QQ_chat_page.sticker-preview-active .msgcontent {
 }
 
 .sticker-pack-preview.is-dragging {
-  border-color: rgba(25, 154, 255, 0.6);
+  border-color: rgba(var(--app-accent-rgb, 25, 154, 255), 0.6);
 }
 
 .sticker-pack-controls {
@@ -5197,7 +5197,7 @@ body[data-ui-mode='rp'] .QQ_chat_page.sticker-preview-active .msgcontent {
 .sticker-pack-move button:hover,
 .sticker-pack-keywords-actions button:hover,
 .sticker-pack-footer button:hover {
-  border-color: rgba(59, 130, 246, 0.5);
+  border-color: rgba(var(--app-accent-rgb, 59, 130, 246), 0.5);
   color: var(--app-text-primary);
 }
 
@@ -5291,7 +5291,7 @@ body[data-ui-mode='rp'] .QQ_chat_page.sticker-preview-active .msgcontent {
 }
 
 .sticker-pack-item.is-selected {
-  border-color: rgba(59, 130, 246, 0.6);
+  border-color: rgba(var(--app-accent-rgb, 59, 130, 246), 0.6);
   background: rgba(219, 234, 254, 0.6);
 }
 
@@ -6047,8 +6047,8 @@ body[data-ui-mode='rp'] .QQ_chat_page.sticker-preview-active .msgcontent {
 }
 
 .session-recommend-row:focus-within {
-  border-color: rgba(37, 99, 235, 0.38);
-  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.10);
+  border-color: rgba(var(--app-accent-rgb, 37, 99, 235), 0.38);
+  box-shadow: 0 0 0 3px rgba(var(--app-accent-rgb, 37, 99, 235), 0.10);
 }
 
 .session-recommend-row:active {
@@ -6147,8 +6147,8 @@ body[data-ui-mode='rp'] .QQ_chat_page.sticker-preview-active .msgcontent {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  border: 1px solid rgba(37, 99, 235, 0.32);
-  background: rgba(37, 99, 235, 0.10);
+  border: 1px solid rgba(var(--app-accent-rgb, 37, 99, 235), 0.32);
+  background: rgba(var(--app-accent-rgb, 37, 99, 235), 0.10);
   color: var(--app-accent-strong);
   border-radius: 999px;
   padding: 8px 13px;
@@ -6174,7 +6174,7 @@ body[data-ui-mode='rp'] .QQ_chat_page.sticker-preview-active .msgcontent {
 }
 
 .session-recommend-add:focus-visible {
-  outline: 2px solid rgba(37, 99, 235, 0.34);
+  outline: 2px solid rgba(var(--app-accent-rgb, 37, 99, 235), 0.34);
   outline-offset: 2px;
 }
 
@@ -8000,8 +8000,8 @@ body[data-maid-spotlight='on'] .app-confirm-modal {
 
 /* pending 状态的气泡增加蓝色边框提示 */
 .message-pending[data-status='pending'] .QQ_chat_msg {
-  border: 1px dashed rgba(25, 154, 255, 0.4);
-  box-shadow: 0 0 8px rgba(25, 154, 255, 0.1);
+  border: 1px dashed rgba(var(--app-accent-rgb, 25, 154, 255), 0.4);
+  box-shadow: 0 0 8px rgba(var(--app-accent-rgb, 25, 154, 255), 0.1);
 }
 
 /* sending 状态：略微减少透明度 */
@@ -8016,9 +8016,9 @@ body[data-maid-spotlight='on'] .app-confirm-modal {
   top: -18px;
   right: 10px;
   font-size: 11px;
-  color: #199aff;
+  color: var(--app-accent-primary, #199aff);
   font-weight: 600;
-  background: rgba(25, 154, 255, 0.1);
+  background: rgba(var(--app-accent-rgb, 25, 154, 255), 0.1);
   padding: 2px 8px;
   border-radius: 10px;
   pointer-events: none;
@@ -8032,7 +8032,7 @@ body[data-maid-spotlight='on'] .app-confirm-modal {
   width: 260px;
   max-width: 72%;
   background: rgba(255, 255, 255, 0.88);
-  border: 1px solid rgba(25, 154, 255, 0.18);
+  border: 1px solid rgba(var(--app-accent-rgb, 25, 154, 255), 0.18);
   box-shadow: 0 8px 18px rgba(0, 0, 0, 0.1);
   border-radius: 14px;
   padding: 8px 10px;
@@ -8074,8 +8074,8 @@ body[data-maid-spotlight='on'] .app-confirm-modal {
 }
 
 .pending-float-item {
-  border: 1px solid rgba(25, 154, 255, 0.14);
-  background: rgba(25, 154, 255, 0.06);
+  border: 1px solid rgba(var(--app-accent-rgb, 25, 154, 255), 0.14);
+  background: rgba(var(--app-accent-rgb, 25, 154, 255), 0.06);
   color: #1a2b3b;
   border-radius: 12px;
   padding: 6px 10px;
@@ -8776,7 +8776,7 @@ body[data-theme-mode='dark'] .creative-execution-root {
   padding: 7px 11px 7px 14px;
   border: 1px solid rgba(148, 163, 184, 0.24);
   border-radius: 14px;
-  background: color-mix(in srgb, var(--cel-surface) 94%, rgba(37, 99, 235, 0.08));
+  background: color-mix(in srgb, var(--cel-surface) 94%, rgba(var(--app-accent-rgb, 37, 99, 235), 0.08));
   color: var(--cel-text);
   text-align: left;
   cursor: pointer;
@@ -9173,7 +9173,7 @@ body[data-reduced-motion='on'] .creative-execution-root *::after {
   transition: border-color 140ms ease, background 140ms ease;
 }
 .maid-api-nav-item:hover {
-  border-color: rgba(37, 99, 235, 0.35);
+  border-color: rgba(var(--app-accent-rgb, 37, 99, 235), 0.35);
   background: var(--app-surface-card);
 }
 .maid-api-nav-title {
@@ -9278,7 +9278,7 @@ body[data-reduced-motion='on'] .creative-execution-root *::after {
   gap: 2px;
 }
 .maid-subagent-item.is-editing {
-  border-color: rgba(37, 99, 235, 0.4);
+  border-color: rgba(var(--app-accent-rgb, 37, 99, 235), 0.4);
 }
 .maid-settings-subtitle {
   font-size: 13px;

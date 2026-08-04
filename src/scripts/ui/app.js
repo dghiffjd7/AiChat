@@ -1956,6 +1956,9 @@ const initApp = async () => {
   const DEFAULT_USER_TEXT_COLOR = '#1F2937'; // theme-audit-ignore: light-mode default token
   const DEFAULT_DARK_USER_BUBBLE_COLOR = '#2F3C52';
   const DEFAULT_DARK_USER_TEXT_COLOR = '#F8FAFC';
+  // 纸墨主题下用户默认气泡改朱红淡底+墨字；用户显式自定义色不受影响。
+  const PAPER_INK_USER_DEFAULTS = { bubbleColor: '#F6E9E1', textColor: '#26221C' };
+  const isPaperInkThemePreset = () => String(document.body?.dataset?.themePreset || '') === 'paper-ink';
 
   const normalizeHexColor = (value, fallback) => {
     const raw = String(value || '').trim();
@@ -1990,23 +1993,25 @@ const initApp = async () => {
       : raw === DEFAULT_USER_BUBBLE_COLOR.toLowerCase();
   };
 
-  const getThemeAwareUserDefaults = () => (
-    isDarkThemeMode()
-      ? {
-          bubbleColor: DEFAULT_DARK_USER_BUBBLE_COLOR,
-          textColor: DEFAULT_DARK_USER_TEXT_COLOR,
-        }
-      : {
-          bubbleColor: DEFAULT_USER_BUBBLE_COLOR,
-          textColor: DEFAULT_USER_TEXT_COLOR,
-        }
-  );
+  const getThemeAwareUserDefaults = () => {
+    if (isDarkThemeMode()) {
+      return {
+        bubbleColor: DEFAULT_DARK_USER_BUBBLE_COLOR,
+        textColor: DEFAULT_DARK_USER_TEXT_COLOR,
+      };
+    }
+    if (isPaperInkThemePreset()) return { ...PAPER_INK_USER_DEFAULTS };
+    return {
+      bubbleColor: DEFAULT_USER_BUBBLE_COLOR,
+      textColor: DEFAULT_USER_TEXT_COLOR,
+    };
+  };
 
   const getUserBubbleColor = (sessionId = chatStore.getCurrent()) => {
     const user = getActiveUserProfile();
     const defaults = getThemeAwareUserDefaults();
     const raw = String(user?.userBubbleColor || '').trim();
-    if (isDarkThemeMode() && isLegacyUserDefaultColor(raw, 'bubble')) return defaults.bubbleColor;
+    if ((isDarkThemeMode() || isPaperInkThemePreset()) && isLegacyUserDefaultColor(raw, 'bubble')) return defaults.bubbleColor;
     return normalizeHexColor(raw, defaults.bubbleColor);
   };
 
@@ -2015,7 +2020,7 @@ const initApp = async () => {
     const defaults = getThemeAwareUserDefaults();
     const raw = String(user?.userTextColor || '').trim();
     if (!raw) return defaults.textColor;
-    if (isDarkThemeMode() && isLegacyUserDefaultColor(raw, 'text')) return defaults.textColor;
+    if ((isDarkThemeMode() || isPaperInkThemePreset()) && isLegacyUserDefaultColor(raw, 'text')) return defaults.textColor;
     return normalizeHexColor(raw, defaults.textColor);
   };
 
@@ -14781,7 +14786,15 @@ Phase G（Frame 36）：循环衔接
         activeClass: 'keyboard-visible',
         fixedToVisualViewport: true,
         onApply: (snapshot) => {
-          if (!snapshot.keyboardVisible) return;
+          const activeElement = document.activeElement;
+          if (
+            !snapshot.keyboardVisible
+            || !activeElement
+            || (
+              activeElement !== composerInput
+              && !chatInputContainer?.contains?.(activeElement)
+            )
+          ) return;
           requestAnimationFrame(() => {
             chatScroll?.scrollTo?.({ top: chatScroll.scrollHeight, behavior: 'instant' });
           });

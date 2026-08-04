@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 
 import {
   createViewportKeyboardRuntime,
@@ -145,6 +146,60 @@ const createElement = ({ tagName = 'div', type = '', id = '' } = {}) => ({
 }
 
 {
+  for (const visualOffsetTop of [261, 324]) {
+    const snapshot = normalizeViewportSnapshot({
+      innerWidth: 393,
+      innerHeight: 894,
+      documentClientWidth: 393,
+      documentClientHeight: 894,
+      visualViewport: { width: 393, height: 571, offsetTop: visualOffsetTop, offsetLeft: 0 },
+      screenWidth: 393,
+      screenHeight: 895,
+      previousBaseHeight: 895,
+      previousBaseWidth: 393,
+      hasFocusedEditable: true,
+      nativeIme: {
+        visible: true,
+        insetBottom: 324,
+        rawInsetBottom: 324,
+        density: 2.75,
+        source: 'android-window-insets',
+      },
+    });
+    assert.equal(snapshot.keyboardVisible, true);
+    assert.equal(snapshot.viewportKeyboardInsetBottom, 324);
+    assert.equal(snapshot.visualHeight, 571);
+  }
+  console.log('ok - normalizeViewportSnapshot keeps shrunken Xiaomi visual viewport height while it pans');
+}
+
+{
+  const snapshot = normalizeViewportSnapshot({
+    innerWidth: 393,
+    innerHeight: 894,
+    documentClientWidth: 393,
+    documentClientHeight: 894,
+    visualViewport: { width: 393, height: 894, offsetTop: 261, offsetLeft: 0 },
+    screenWidth: 393,
+    screenHeight: 895,
+    previousBaseHeight: 895,
+    previousBaseWidth: 393,
+    hasFocusedEditable: true,
+    nativeIme: {
+      visible: true,
+      insetBottom: 324,
+      rawInsetBottom: 324,
+      density: 2.75,
+      source: 'android-window-insets',
+    },
+  });
+  assert.equal(snapshot.keyboardVisible, true);
+  assert.equal(snapshot.visualHeight, 570);
+  assert.equal(snapshot.visualOffsetTop, 261);
+  console.log('ok - normalizeViewportSnapshot native fallback does not subtract visual viewport offset');
+}
+
+{
   const root = createElement({ tagName: 'html' });
   const body = { dataset: {} };
   const input = createElement({ tagName: 'input', type: 'text', id: 'composer-input' });
@@ -212,6 +267,9 @@ const createElement = ({ tagName = 'div', type = '', id = '' } = {}) => ({
   assert.equal(chatRoom.classList.contains('keyboard-visible'), true);
   assert.equal(chatRoom.style.bottom, 'auto');
   assert.equal(chatRoom.style.height, '500px');
+  assert.deepEqual(input.scrollCalls, [{ block: 'nearest', inline: 'nearest' }]);
+
+  visualListeners.get('scroll')?.();
   assert.deepEqual(input.scrollCalls, [{ block: 'nearest', inline: 'nearest' }]);
 
   windowRef.visualViewport.height = 800;
@@ -415,4 +473,19 @@ const createElement = ({ tagName = 'div', type = '', id = '' } = {}) => ({
     false,
   );
   console.log('ok - createViewportKeyboardRuntime does not treat desktop refocus as keyboard open');
+}
+
+{
+  const appSource = fs.readFileSync(
+    new URL('../../src/scripts/ui/app.js', import.meta.url),
+    'utf8',
+  );
+  const runtimeStart = appSource.indexOf('const viewportKeyboardRuntime = createViewportKeyboardRuntime({');
+  const runtimeEnd = appSource.indexOf('getFocusedElement:', runtimeStart);
+  const targetApplyBlock = appSource.slice(runtimeStart, runtimeEnd);
+  assert.ok(runtimeStart >= 0 && runtimeEnd > runtimeStart);
+  assert.match(targetApplyBlock, /activeElement\s*!==\s*composerInput/);
+  assert.match(targetApplyBlock, /chatInputContainer\?\.contains\?\.\(activeElement\)/);
+  assert.ok(targetApplyBlock.indexOf('activeElement !== composerInput') < targetApplyBlock.indexOf('chatScroll?.scrollTo?.'));
+  console.log('ok - app only scrolls chat to bottom for the main composer area');
 }

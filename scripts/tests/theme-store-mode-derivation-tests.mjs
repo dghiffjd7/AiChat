@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 
-import { normalizeThemePreset } from '../../src/scripts/storage/theme-store.js';
+import { normalizeThemePreset, themeStore } from '../../src/scripts/storage/theme-store.js';
 
 const tests = [];
 const test = (name, fn) => tests.push({ name, fn });
@@ -97,6 +97,85 @@ test('内建 classic-dark 形态（深表面+mode dark）→ 仍 dark', () => {
     tokens: { surface: { page: '#171b20' } },
   });
   assert.equal(t.mode, 'dark');
+});
+
+// --- 内建主题契约：纸墨 paper-ink ---
+
+const relLum = (hex) => {
+  const c = hex.replace('#', '');
+  const [r, g, b] = [0, 2, 4]
+    .map((i) => parseInt(c.slice(i, i + 2), 16) / 255)
+    .map((v) => (v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4));
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+};
+const contrast = (a, b) => {
+  const [hi, lo] = [relLum(a), relLum(b)].sort((x, y) => y - x);
+  return (hi + 0.05) / (lo + 0.05);
+};
+
+test('内建主题共 3 个、id 唯一，包含 paper-ink', () => {
+  const builtins = themeStore.getBuiltinThemes();
+  assert.equal(builtins.length, 3);
+  const ids = builtins.map((t) => t.id);
+  assert.equal(new Set(ids).size, 3);
+  assert.ok(ids.includes('paper-ink'));
+});
+
+test('paper-ink 元数据完整且为浅色内建主题', () => {
+  const paper = themeStore.getBuiltinThemes().find((t) => t.id === 'paper-ink');
+  assert.ok(paper);
+  assert.equal(paper.mode, 'light');
+  assert.equal(paper.version, 1);
+  assert.equal(paper.source, 'chat-app-builtin');
+  assert.equal(paper.meta.builtin, true);
+  assert.equal(paper.meta.importedFrom, 'builtin');
+  assert.ok(paper.meta.createdAt && paper.meta.updatedAt);
+});
+
+test('paper-ink token 键集合与 classic-light 完全同构（round-trip 不丢不漏）', () => {
+  const builtins = themeStore.getBuiltinThemes();
+  const paper = builtins.find((t) => t.id === 'paper-ink');
+  const light = builtins.find((t) => t.id === 'classic-light');
+  assert.ok(paper && light);
+  assert.deepEqual(Object.keys(paper.tokens).sort(), Object.keys(light.tokens).sort());
+  for (const group of Object.keys(light.tokens)) {
+    assert.deepEqual(
+      Object.keys(paper.tokens[group]).sort(),
+      Object.keys(light.tokens[group]).sort(),
+      `token 组 ${group} 键集合应与 classic-light 一致`,
+    );
+  }
+  // normalize round-trip：merge base 不应改动任何 token，亮度推导为 light
+  const t = normalizeThemePreset(paper);
+  assert.equal(t.mode, 'light');
+  assert.deepEqual(t.tokens, paper.tokens);
+});
+
+test('paper-ink 自有文字满足对比度门槛（普通字 4.5:1）', () => {
+  const paper = themeStore.getBuiltinThemes().find((t) => t.id === 'paper-ink');
+  assert.ok(paper);
+  const { surface, text, bubble } = paper.tokens;
+  assert.ok(contrast(text.primary, surface.page) >= 4.5, 'primary/page');
+  assert.ok(contrast(text.secondary, surface.page) >= 4.5, 'secondary/page');
+  assert.ok(contrast(text.muted, surface.page) >= 4.5, 'muted/page');
+  assert.ok(contrast(text.muted, '#ffffff') >= 4.5, 'muted/card');
+  assert.ok(contrast(text.link, surface.page) >= 4.5, 'link/page');
+  assert.ok(contrast(text.inverse, bubble.user) >= 4.5, 'inverse/bubble.user');
+  assert.ok(contrast(text.primary, bubble.assistant) >= 4.5, 'primary/bubble.assistant');
+});
+
+test('builtin id 不可被自定义主题覆盖（paper-ink 同 id 保存会改派新 id）', async () => {
+  const saved = await themeStore.saveTheme({
+    id: 'paper-ink',
+    name: 'fake paper',
+    tokens: { surface: { page: '#101010' } },
+  });
+  assert.notEqual(saved.id, 'paper-ink');
+  assert.equal(saved.meta.builtin, false);
+  const resolved = themeStore.getTheme('paper-ink');
+  assert.equal(resolved.meta.builtin, true);
+  assert.equal(resolved.mode, 'light');
+  await themeStore.deleteTheme(saved.id);
 });
 
 let failed = 0;

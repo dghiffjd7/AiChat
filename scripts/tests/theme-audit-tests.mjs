@@ -48,3 +48,30 @@ import {
 }
 
 console.log('ok - theme audit core detects risky literals and baseline drift');
+
+// --- 纸墨主题 Phase 1 兼容契约（源码级） ---
+{
+  const fs = await import('node:fs');
+  const read = (rel) => fs.readFileSync(new URL(`../../${rel}`, import.meta.url), 'utf8');
+
+  const paperCss = read('src/assets/css/theme-paper-ink.css');
+  assert.match(paperCss, /body\[data-theme-preset='paper-ink'\]\s*\{\s*background:\s*linear-gradient/, '纸墨用暖纸渐变整体替换旧背景图');
+  assert.ok(!/background-image:\s*none/.test(paperCss), '不得用 background-image:none 误杀渐变');
+
+  const indexHtml = read('src/index.html');
+  assert.ok(indexHtml.includes('theme-paper-ink.css'), 'index.html 挂载纸墨兼容 CSS');
+
+  const appSource = read('src/scripts/ui/app.js');
+  assert.match(appSource, /PAPER_INK_USER_DEFAULTS\s*=\s*\{\s*bubbleColor:\s*'#F6E9E1'/, '纸墨用户气泡默认为朱红淡底');
+  assert.match(appSource, /if \(isPaperInkThemePreset\(\)\) return \{ \.\.\.PAPER_INK_USER_DEFAULTS \};/, '浅色分支按纸墨预设切默认');
+  assert.match(
+    appSource,
+    /\(isDarkThemeMode\(\) \|\| isPaperInkThemePreset\(\)\) && isLegacyUserDefaultColor\(raw, 'bubble'\)/,
+    '纸墨下旧浅蓝默认气泡色重映射，自定义色不受影响',
+  );
+
+  const mainCss = read('src/assets/css/main.css');
+  assert.ok(!/rgba\(37, 99, 235,/.test(mainCss.replace(/rgba\(var\(--app-accent-rgb, 37, 99, 235\),/g, '')), 'main.css 固定蓝已 token 化');
+  assert.match(read('src/assets/css/qq-legacy.css'), /--qq-color-primary:\s*var\(--app-accent-primary, #199aff\)/, 'qq-legacy 主色跟随 accent token');
+  console.log('ok - paper-ink phase-1 compat contracts hold');
+}

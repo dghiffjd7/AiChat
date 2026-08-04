@@ -1324,7 +1324,7 @@ export class GeneralSettingsPanel {
         flex: 0 0 auto;
         min-width: 48px;
         text-align: right;
-        color: #2563eb;
+        color: var(--app-accent-strong, #2563eb);
         font-size: 12px;
         font-weight: 800;
       }
@@ -1366,9 +1366,9 @@ export class GeneralSettingsPanel {
           transform 160ms ease;
       }
       #general-settings-panel .general-settings-fold-btn:hover {
-        background: #eff6ff;
-        border-color: #bfdbfe;
-        color: #2563eb;
+        background: var(--app-accent-soft, #eff6ff);
+        border-color: rgba(var(--app-accent-rgb, 37, 99, 235), 0.35);
+        color: var(--app-accent-strong, #2563eb);
       }
       #general-settings-panel .general-settings-fold-btn:active {
         transform: scale(0.92);
@@ -1378,9 +1378,9 @@ export class GeneralSettingsPanel {
         outline-offset: 1px;
       }
       #general-settings-panel .general-settings-fold-btn[data-expanded='1'] {
-        color: #2563eb;
-        background: #eff6ff;
-        border-color: #bfdbfe;
+        color: var(--app-accent-strong, #2563eb);
+        background: var(--app-accent-soft, #eff6ff);
+        border-color: rgba(var(--app-accent-rgb, 37, 99, 235), 0.35);
       }
       #general-settings-panel .general-settings-fold-btn-label {
         white-space: nowrap;
@@ -1435,9 +1435,9 @@ export class GeneralSettingsPanel {
         border-color: var(--app-border-strong);
       }
       #general-settings-panel .general-settings-toggle-row.is-on {
-        background: #f8fbff;
-        border-color: #cfe1ff;
-        box-shadow: 0 8px 18px rgba(37, 99, 235, 0.06);
+        background: rgba(var(--app-accent-rgb, 37, 99, 235), 0.05);
+        border-color: rgba(var(--app-accent-rgb, 37, 99, 235), 0.3);
+        box-shadow: 0 8px 18px rgba(var(--app-accent-rgb, 37, 99, 235), 0.06);
       }
       #general-settings-panel .general-settings-toggle-row.is-off {
         background: var(--app-surface-card);
@@ -1487,8 +1487,8 @@ export class GeneralSettingsPanel {
         fill: none;
       }
       #general-settings-panel .general-settings-toggle-row.is-on .general-settings-row-icon {
-        background: #e0ecff;
-        color: #2563eb;
+        background: rgba(var(--app-accent-rgb, 37, 99, 235), 0.12);
+        color: var(--app-accent-strong, #2563eb);
       }
       #general-settings-panel .general-settings-toggle-row.has-risk.is-on .general-settings-row-icon {
         background: #fee2e2;
@@ -1542,7 +1542,7 @@ export class GeneralSettingsPanel {
         transition: transform 180ms ease;
       }
       #general-settings-panel .general-settings-toggle-row.is-on .general-settings-switch {
-        background: #2563eb;
+        background: var(--app-accent-strong, #2563eb);
       }
       #general-settings-panel .general-settings-toggle-row.is-on .general-settings-switch::after {
         transform: translateX(18px);
@@ -1564,13 +1564,13 @@ export class GeneralSettingsPanel {
         width: 10px;
         height: 10px;
         border-radius: 999px;
-        background: #2563eb;
+        background: var(--app-accent-strong, #2563eb);
         transform: translate(-50%, -50%) scale(0);
         transition: transform 160ms ease;
       }
       #general-settings-panel .general-settings-toggle-row.is-on .general-settings-radio {
-        border-color: #60a5fa;
-        background: #eff6ff;
+        border-color: rgba(var(--app-accent-rgb, 37, 99, 235), 0.6);
+        background: var(--app-accent-soft, #eff6ff);
       }
       #general-settings-panel .general-settings-toggle-row.is-on .general-settings-radio::after {
         transform: translate(-50%, -50%) scale(1);
