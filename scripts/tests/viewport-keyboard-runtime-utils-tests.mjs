@@ -44,9 +44,17 @@ const createElement = ({ tagName = 'div', type = '', id = '' } = {}) => ({
   type,
   id,
   className: '',
+  dataset: {},
+  clientWidth: 240,
+  clientHeight: 48,
+  scrollWidth: 240,
+  scrollHeight: 48,
   style: createStyle(),
   classList: createClassList(),
   scrollCalls: [],
+  getBoundingClientRect() {
+    return { top: 100, right: 340, bottom: 148, left: 100, width: 240, height: 48 };
+  },
   scrollIntoView(options) {
     this.scrollCalls.push(options);
   },
@@ -222,6 +230,8 @@ const createElement = ({ tagName = 'div', type = '', id = '' } = {}) => ({
   const root = createElement({ tagName: 'html' });
   const body = { dataset: {} };
   const input = createElement({ tagName: 'textarea', id: 'composer-input' });
+  input.dataset.viewportKeyboardDiagnostic = 'maid-persona-prompt';
+  input.value = '不得进入诊断文件的私密提示词';
   const chatRoom = createElement({ tagName: 'div', id: 'chat-room' });
   const listeners = new Map();
   const visualListeners = new Map();
@@ -279,6 +289,13 @@ const createElement = ({ tagName = 'div', type = '', id = '' } = {}) => ({
   });
   const closed = runtime.start();
   assert.equal(closed.keyboardVisible, false);
+  listeners.get('focusin')?.({ target: input });
+  input.scrollHeight = 96;
+  input.style.height = '96px';
+  listeners.get('input')?.({ target: input });
+  listeners.get('input')?.({ target: input });
+  listeners.get('compositionstart')?.({ target: input });
+  listeners.get('compositionend')?.({ target: input });
   windowRef.__chatappAndroidImeInsets({
     visible: true,
     insetBottom: 280,
@@ -292,7 +309,26 @@ const createElement = ({ tagName = 'div', type = '', id = '' } = {}) => ({
   assert.equal(root.style.getPropertyValue('--app-visual-height'), '517px');
   assert.equal(root.style.getPropertyValue('--app-keyboard-inset-bottom'), '280px');
   assert.equal(chatRoom.style.height, '517px');
-  assert.equal(runtime.getDebugInfo().nativeIme.source, 'android-window-insets');
+  const debugInfo = runtime.getDebugInfo();
+  assert.equal(debugInfo.nativeIme.source, 'android-window-insets');
+  assert.equal(debugInfo.eventTimeline.capturesText, false);
+  assert.equal(debugInfo.eventTimeline.maxEvents, 120);
+  assert.deepEqual(
+    debugInfo.eventTimeline.events.map(event => event.phase),
+    [
+      'runtime-start',
+      'surface-focusin',
+      'surface-input-layout',
+      'surface-compositionstart',
+      'surface-compositionend',
+      'native-ime-insets',
+    ],
+  );
+  const inputEvent = debugInfo.eventTimeline.events.find(event => event.phase === 'surface-input-layout');
+  assert.equal(inputEvent.details.surface, 'maid-persona-prompt');
+  assert.equal(inputEvent.details.element.scrollHeight, 96);
+  assert.equal(inputEvent.details.element.inlineHeight, '96px');
+  assert.equal(JSON.stringify(debugInfo).includes('不得进入诊断文件的私密提示词'), false);
   runtime.stop();
   assert.equal(typeof windowRef.__chatappAndroidImeInsets, 'undefined');
   console.log('ok - createViewportKeyboardRuntime bridges native Android IME inset into visible layout');
@@ -358,6 +394,7 @@ const createElement = ({ tagName = 'div', type = '', id = '' } = {}) => ({
     requestAnimationFrameFn: fn => fn(),
   });
   const snapshot = runtime.start();
+  listeners.get('input')?.({ target: input });
   assert.equal(snapshot.keyboardVisible, false);
   assert.equal(snapshot.keyboardInsetBottom, 0);
   assert.equal(body.dataset.keyboardVisible, 'false');
@@ -365,5 +402,9 @@ const createElement = ({ tagName = 'div', type = '', id = '' } = {}) => ({
   assert.equal(chatRoom.style.height, '');
   assert.deepEqual(input.scrollCalls, []);
   assert.equal(runtime.getDebugInfo().keyboard.visible, false);
+  assert.equal(
+    runtime.getDebugInfo().eventTimeline.events.some(event => event.phase === 'surface-input-layout'),
+    false,
+  );
   console.log('ok - createViewportKeyboardRuntime does not treat desktop refocus as keyboard open');
 }

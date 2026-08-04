@@ -48,6 +48,13 @@ export const createInlineEditUiRuntime = ({
     `;
     const ta = documentLike.createElement('textarea');
     ta.className = 'chat-inline-edit-textarea';
+    if (
+      message?.role === 'user'
+      && String(documentLike?.body?.dataset?.uiMode || '').trim().toLowerCase() === 'rp'
+      && ta.dataset
+    ) {
+      ta.dataset.viewportKeyboardDiagnostic = 'creative-user-bubble-edit';
+    }
     ta.value = originalText;
     ta.style.cssText = `
             width: 100%;

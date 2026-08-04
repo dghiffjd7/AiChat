@@ -16,6 +16,7 @@ Current target regressions:
 
 - vivo y500: keyboard must not cover composer.
 - Redmi Note12T Pro: preset detail/binding content must remain readable on short visual viewport.
+- Xiaomi/Redmi: editing a creative-writing user bubble or the maid persona prompt must not jump in height.
 - Android back gesture/key: must navigate app state before exiting.
 
 ## Viewport And Keyboard
@@ -34,6 +35,15 @@ window.__chatappViewportDebugInfo?.()
 ```
 
 The console function is kept as a fallback for developer builds.
+
+For Xiaomi/Redmi editing reports, reproduce one surface at a time before exporting:
+
+- Creative writing: open a user bubble with the pencil action, type/edit, then save or cancel.
+- Maid settings: open Prompt -> Persona, focus the editable prompt, then type/edit.
+
+The export contains a rolling window of the latest 120 viewport/keyboard events. The two tracked editors add focus,
+IME composition, and layout-change events under `creative-user-bubble-edit` or `maid-persona-prompt`. Text values are
+not captured.
 
 Expected:
 

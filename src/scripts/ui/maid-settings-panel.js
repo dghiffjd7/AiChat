@@ -2921,6 +2921,9 @@ export const createMaidSettingsPanel = ({
     promptCountEl.textContent = '0 字';
     promptFieldHeader.append(promptLabel, promptCountEl);
     promptTextarea = createTextarea(documentRef);
+    if (promptTextarea?.dataset) {
+      promptTextarea.dataset.viewportKeyboardDiagnostic = 'maid-persona-prompt';
+    }
     promptTextarea.placeholder = '女仆基础提示词';
     promptTextarea.addEventListener?.('input', () => {
       if (promptCountEl) promptCountEl.textContent = `${promptTextarea?.value?.length || 0} 字`;

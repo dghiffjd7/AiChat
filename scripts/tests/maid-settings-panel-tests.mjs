@@ -203,6 +203,7 @@ const flushMicrotasks = () => new Promise(resolve => setTimeout(resolve, 0));
   assert.equal(elements.promptTabButtons.has('memoryTable'), true);
   assert.equal(elements.promptTabButtons.has('lastResponse'), true);
   assert.equal(elements.promptTextarea.value, '旧提示词');
+  assert.equal(elements.promptTextarea.dataset.viewportKeyboardDiagnostic, 'maid-persona-prompt');
   assert.equal(elements.promptCountEl.textContent, '4 字');
   assert.equal(elements.overlay.attributes['aria-hidden'], 'false');
   assert.equal(elements.panel.attributes.role, 'dialog');

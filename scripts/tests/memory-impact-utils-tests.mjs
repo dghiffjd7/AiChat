@@ -56,7 +56,7 @@ import {
     contactId: 'rp:persona',
     action: 'export_worldbook',
   });
-  assert.match(text, /创意写作\/RP「rp:persona」记忆/);
+  assert.match(text, /创意写作「rp:persona」记忆/);
   assert.match(text, /追加到目标世界书/);
   assert.match(text, /后续消息可能被世界书条目触发/);
   console.log('ok - memory worldbook export impact describes cross-surface effects');

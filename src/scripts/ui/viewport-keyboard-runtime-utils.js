@@ -1,3 +1,7 @@
+import { createDebugTraceTimeline } from './debug-trace-timeline-utils.js';
+
+const VIEWPORT_KEYBOARD_DIAGNOSTIC_EVENT_LIMIT = 120;
+
 const toFiniteNumber = (value, fallback = 0) => {
   const num = Number(value);
   return Number.isFinite(num) ? num : fallback;
@@ -182,7 +186,76 @@ const buildActiveElementDebug = (element) => {
     className: String(element.className || ''),
     type: String(element.type || ''),
     isEditable: isEditableElement(element),
+    diagnosticSurface: String(element?.dataset?.viewportKeyboardDiagnostic || ''),
   };
+};
+
+const roundDiagnosticValue = (value) => {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? Math.round(numeric * 100) / 100 : 0;
+};
+
+const readDiagnosticRect = (element) => {
+  try {
+    const rect = element?.getBoundingClientRect?.();
+    if (!rect) return null;
+    return {
+      top: roundDiagnosticValue(rect.top),
+      right: roundDiagnosticValue(rect.right),
+      bottom: roundDiagnosticValue(rect.bottom),
+      left: roundDiagnosticValue(rect.left),
+      width: roundDiagnosticValue(rect.width),
+      height: roundDiagnosticValue(rect.height),
+    };
+  } catch {
+    return null;
+  }
+};
+
+const getViewportKeyboardDiagnosticSurface = (element) => String(
+  element?.dataset?.viewportKeyboardDiagnostic
+  || element?.getAttribute?.('data-viewport-keyboard-diagnostic')
+  || '',
+).trim();
+
+const buildViewportKeyboardDiagnosticElement = (element) => {
+  if (!element) return null;
+  return {
+    ...buildActiveElementDebug(element),
+    rect: readDiagnosticRect(element),
+    clientHeight: roundPx(element.clientHeight),
+    scrollHeight: roundPx(element.scrollHeight),
+    inlineHeight: String(element?.style?.height || ''),
+  };
+};
+
+const buildViewportKeyboardDiagnosticDetails = ({
+  snapshot = null,
+  element = null,
+  surface = '',
+  body = null,
+  nativeIme = null,
+} = {}) => ({
+  surface: String(surface || getViewportKeyboardDiagnosticSurface(element) || ''),
+  uiMode: String(body?.dataset?.uiMode || ''),
+  bodyKeyboardVisible: String(body?.dataset?.keyboardVisible || ''),
+  snapshot: snapshot ? { ...snapshot } : null,
+  nativeIme: snapshot ? {
+    density: toFiniteNumber(nativeIme?.density, 0),
+    source: String(nativeIme?.source || ''),
+    timestamp: String(nativeIme?.timestamp || ''),
+  } : null,
+  element: buildViewportKeyboardDiagnosticElement(element),
+});
+
+const buildViewportKeyboardElementLayoutSignature = (element, surface = '') => {
+  if (!element) return '';
+  return JSON.stringify({
+    surface,
+    clientHeight: roundPx(element.clientHeight),
+    scrollHeight: roundPx(element.scrollHeight),
+    inlineHeight: String(element?.style?.height || ''),
+  });
 };
 
 export const createViewportKeyboardRuntime = ({
@@ -197,6 +270,8 @@ export const createViewportKeyboardRuntime = ({
   setTimeoutFn = null,
   logger = null,
   keyboardThreshold = 80,
+  diagnosticTimelineLimit = VIEWPORT_KEYBOARD_DIAGNOSTIC_EVENT_LIMIT,
+  nowFn = Date.now,
 } = {}) => {
   const docEl = rootEl || documentRef?.documentElement || null;
   const body = bodyEl || documentRef?.body || null;
@@ -210,11 +285,46 @@ export const createViewportKeyboardRuntime = ({
   let nativeImeState = normalizeNativeImeState();
   let previousNativeImeHandler = null;
   let nativeImeBridgeInstalled = false;
+  const diagnosticTimeline = createDebugTraceTimeline({
+    maxEvents: diagnosticTimelineLimit,
+    now: nowFn,
+  });
+  const surfaceLayoutSignatures = new Map();
+  let pendingRefreshDiagnostic = null;
+
+  const getCurrentFocusedElement = () => (
+    typeof getFocusedElement === 'function'
+      ? getFocusedElement()
+      : documentRef?.activeElement
+  );
+
+  const recordDiagnosticEvent = ({
+    phase = 'snapshot',
+    snapshot = lastSnapshot,
+    element = null,
+    surface = '',
+  } = {}) => {
+    const target = element || getCurrentFocusedElement();
+    const resolvedSurface = String(surface || getViewportKeyboardDiagnosticSurface(target) || '').trim();
+    const details = buildViewportKeyboardDiagnosticDetails({
+      snapshot,
+      element: target,
+      surface: resolvedSurface,
+      body,
+      nativeIme: nativeImeState,
+    });
+    return diagnosticTimeline.record({
+      category: 'viewport-keyboard',
+      phase,
+      source: 'viewport-keyboard-runtime',
+      status: 'info',
+      summary: resolvedSurface ? `surface=${resolvedSurface}` : '',
+      details,
+    });
+  };
 
   const readSnapshot = () => {
-    const focusedElement = typeof getFocusedElement === 'function'
-      ? getFocusedElement()
-      : documentRef?.activeElement;
+    const focusedElement = getCurrentFocusedElement();
     const snapshot = normalizeViewportSnapshot({
       innerWidth: windowRef?.innerWidth,
       innerHeight: windowRef?.innerHeight,
@@ -250,9 +360,7 @@ export const createViewportKeyboardRuntime = ({
     targets.forEach(target => applyTargetSnapshot(target, snapshot));
     if (snapshot.keyboardVisible) {
       scheduleWithRaf(raf, () => {
-        const focusedElement = typeof getFocusedElement === 'function'
-          ? getFocusedElement()
-          : documentRef?.activeElement;
+        const focusedElement = getCurrentFocusedElement();
         if (isEditableElement(focusedElement)) {
           focusedElement.scrollIntoView?.({ block: 'nearest', inline: 'nearest' });
         }
@@ -263,24 +371,84 @@ export const createViewportKeyboardRuntime = ({
     } catch {}
   };
 
-  const refresh = () => {
+  const refresh = (phase = 'manual-refresh', element = null, surface = '') => {
+    const queued = pendingRefreshDiagnostic;
     pendingRefresh = false;
+    pendingRefreshDiagnostic = null;
     const snapshot = readSnapshot();
     lastSnapshot = snapshot;
     applySnapshot(snapshot);
+    recordDiagnosticEvent({
+      phase: queued?.phases?.join('+') || String(phase || 'manual-refresh'),
+      snapshot,
+      element: queued?.element || element || getCurrentFocusedElement(),
+      surface: queued?.surface || surface,
+    });
     return snapshot;
   };
 
-  const scheduleRefresh = () => {
+  const scheduleRefresh = (phase = 'scheduled-refresh', element = null, surface = '') => {
+    const nextPhase = String(phase || 'scheduled-refresh');
+    if (pendingRefreshDiagnostic) {
+      if (!pendingRefreshDiagnostic.phases.includes(nextPhase)) {
+        pendingRefreshDiagnostic.phases.push(nextPhase);
+      }
+      if (element) pendingRefreshDiagnostic.element = element;
+      if (surface) pendingRefreshDiagnostic.surface = String(surface);
+    } else {
+      pendingRefreshDiagnostic = {
+        phases: [nextPhase],
+        element,
+        surface: String(surface || ''),
+      };
+    }
     if (pendingRefresh) return;
     pendingRefresh = true;
     if (typeof raf === 'function') {
-      raf(refresh);
+      raf(() => refresh());
     } else if (typeof setTimer === 'function') {
-      setTimer(refresh, 0);
+      setTimer(() => refresh(), 0);
     } else {
       refresh();
     }
+  };
+
+  const handleTrackedSurfaceInput = (event) => {
+    const element = event?.target || null;
+    const surface = getViewportKeyboardDiagnosticSurface(element);
+    if (!surface) return;
+    const signature = buildViewportKeyboardElementLayoutSignature(element, surface);
+    if (signature && surfaceLayoutSignatures.get(surface) === signature) return;
+    if (signature) surfaceLayoutSignatures.set(surface, signature);
+    recordDiagnosticEvent({ phase: 'surface-input-layout', element, surface });
+  };
+
+  const handleWindowResize = () => scheduleRefresh('window-resize');
+  const handleOrientationChange = () => scheduleRefresh('orientation-change');
+  const handleVisualViewportResize = () => scheduleRefresh('visual-viewport-resize');
+  const handleVisualViewportScroll = () => scheduleRefresh('visual-viewport-scroll');
+  const handleDocumentFocusIn = (event) => {
+    const element = event?.target || null;
+    const surface = getViewportKeyboardDiagnosticSurface(element);
+    if (surface) surfaceLayoutSignatures.delete(surface);
+    scheduleRefresh(surface ? 'surface-focusin' : 'document-focusin', element, surface);
+  };
+  const handleDocumentFocusOut = (event) => {
+    const element = event?.target || null;
+    const surface = getViewportKeyboardDiagnosticSurface(element);
+    scheduleRefresh(surface ? 'surface-focusout' : 'document-focusout', element, surface);
+  };
+  const handleTrackedSurfaceCompositionStart = (event) => {
+    const element = event?.target || null;
+    const surface = getViewportKeyboardDiagnosticSurface(element);
+    if (!surface) return;
+    recordDiagnosticEvent({ phase: 'surface-compositionstart', element, surface });
+  };
+  const handleTrackedSurfaceCompositionEnd = (event) => {
+    const element = event?.target || null;
+    const surface = getViewportKeyboardDiagnosticSurface(element);
+    if (!surface) return;
+    recordDiagnosticEvent({ phase: 'surface-compositionend', element, surface });
   };
 
   const handleNativeImeInsets = (payload = null) => {
@@ -288,7 +456,7 @@ export const createViewportKeyboardRuntime = ({
     if (typeof previousNativeImeHandler === 'function') {
       try { previousNativeImeHandler(payload); } catch {}
     }
-    scheduleRefresh();
+    scheduleRefresh('native-ime-insets');
   };
 
   const installNativeImeBridge = () => {
@@ -315,27 +483,33 @@ export const createViewportKeyboardRuntime = ({
   };
 
   const start = () => {
-    if (started || !windowRef || !documentRef) return refresh();
+    if (started || !windowRef || !documentRef) return refresh('runtime-refresh');
     started = true;
     installNativeImeBridge();
-    windowRef.addEventListener?.('resize', scheduleRefresh, { passive: true });
-    windowRef.addEventListener?.('orientationchange', scheduleRefresh, { passive: true });
-    windowRef.visualViewport?.addEventListener?.('resize', scheduleRefresh, { passive: true });
-    windowRef.visualViewport?.addEventListener?.('scroll', scheduleRefresh, { passive: true });
-    documentRef.addEventListener?.('focusin', scheduleRefresh, true);
-    documentRef.addEventListener?.('focusout', scheduleRefresh, true);
-    return refresh();
+    windowRef.addEventListener?.('resize', handleWindowResize, { passive: true });
+    windowRef.addEventListener?.('orientationchange', handleOrientationChange, { passive: true });
+    windowRef.visualViewport?.addEventListener?.('resize', handleVisualViewportResize, { passive: true });
+    windowRef.visualViewport?.addEventListener?.('scroll', handleVisualViewportScroll, { passive: true });
+    documentRef.addEventListener?.('focusin', handleDocumentFocusIn, true);
+    documentRef.addEventListener?.('focusout', handleDocumentFocusOut, true);
+    documentRef.addEventListener?.('input', handleTrackedSurfaceInput);
+    documentRef.addEventListener?.('compositionstart', handleTrackedSurfaceCompositionStart);
+    documentRef.addEventListener?.('compositionend', handleTrackedSurfaceCompositionEnd);
+    return refresh('runtime-start');
   };
 
   const stop = () => {
     if (!started || !windowRef || !documentRef) return;
     started = false;
-    windowRef.removeEventListener?.('resize', scheduleRefresh, { passive: true });
-    windowRef.removeEventListener?.('orientationchange', scheduleRefresh, { passive: true });
-    windowRef.visualViewport?.removeEventListener?.('resize', scheduleRefresh, { passive: true });
-    windowRef.visualViewport?.removeEventListener?.('scroll', scheduleRefresh, { passive: true });
-    documentRef.removeEventListener?.('focusin', scheduleRefresh, true);
-    documentRef.removeEventListener?.('focusout', scheduleRefresh, true);
+    windowRef.removeEventListener?.('resize', handleWindowResize, { passive: true });
+    windowRef.removeEventListener?.('orientationchange', handleOrientationChange, { passive: true });
+    windowRef.visualViewport?.removeEventListener?.('resize', handleVisualViewportResize, { passive: true });
+    windowRef.visualViewport?.removeEventListener?.('scroll', handleVisualViewportScroll, { passive: true });
+    documentRef.removeEventListener?.('focusin', handleDocumentFocusIn, true);
+    documentRef.removeEventListener?.('focusout', handleDocumentFocusOut, true);
+    documentRef.removeEventListener?.('input', handleTrackedSurfaceInput);
+    documentRef.removeEventListener?.('compositionstart', handleTrackedSurfaceCompositionStart);
+    documentRef.removeEventListener?.('compositionend', handleTrackedSurfaceCompositionEnd);
     removeNativeImeBridge();
     if (docEl) {
       removeStyleVar(docEl, '--app-keyboard-inset-bottom');
@@ -355,10 +529,8 @@ export const createViewportKeyboardRuntime = ({
   };
 
   const getDebugInfo = () => {
-    const snapshot = lastSnapshot || refresh();
-    const activeElement = typeof getFocusedElement === 'function'
-      ? getFocusedElement()
-      : documentRef?.activeElement;
+    const snapshot = lastSnapshot || refresh('debug-initial-snapshot');
+    const activeElement = getCurrentFocusedElement();
     return {
       timestamp: new Date().toISOString(),
       userAgent: String(windowRef?.navigator?.userAgent || ''),
@@ -408,6 +580,11 @@ export const createViewportKeyboardRuntime = ({
         timestamp: nativeImeState.timestamp,
       },
       activeElement: buildActiveElementDebug(activeElement),
+      eventTimeline: {
+        capturesText: false,
+        maxEvents: diagnosticTimeline.maxEvents,
+        events: diagnosticTimeline.snapshot(),
+      },
     };
   };
 

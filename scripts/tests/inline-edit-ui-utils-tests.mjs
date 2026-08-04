@@ -21,6 +21,7 @@ const createFakeDocument = () => {
       this.className = '';
       this.textContent = '';
       this.value = '';
+      this.dataset = {};
       this.scrollHeight = 72;
       this.listeners = new Map();
     }
@@ -54,6 +55,7 @@ const createFakeDocument = () => {
 
 {
   const documentLike = createFakeDocument();
+  documentLike.body = { dataset: { uiMode: 'rp' } };
   const scheduled = [];
   const confirms = [];
   const bubble = {
@@ -99,7 +101,7 @@ const createFakeDocument = () => {
   });
   runtime.startInlineEdit({
     scrollEl,
-    message: { id: 'm1', content: 'hello' },
+    message: { id: 'm1', role: 'user', content: 'hello' },
   });
   const shell = bubble.lastChild;
   const textarea = shell.children[0];
@@ -107,6 +109,7 @@ const createFakeDocument = () => {
   textarea.value = '  next text  ';
   scheduled[0]();
   assert.equal(textarea.className, 'chat-inline-edit-textarea');
+  assert.equal(textarea.dataset.viewportKeyboardDiagnostic, 'creative-user-bubble-edit');
   assert.equal(textarea.focused, true);
   assert.deepEqual(textarea.selection, [13, 13]);
   textarea.emit('keydown', {
