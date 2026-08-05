@@ -7,7 +7,7 @@ import { avatarDataUrlFromFile } from '../utils/image.js';
 import { appSettings } from '../storage/app-settings.js';
 import { getSummaryTableIdsForContext, isRpSessionId } from '../memory/memory-context-utils.js';
 import { MemoryTableEditor } from './memory-table-editor.js';
-import { appChoice, appConfirm } from './app-confirm.js';
+import { appChoice, appConfirm, appPromptText } from './app-confirm.js';
 import { normalizeBadgeList } from '../utils/name-badges.js';
 import { FEATHER_DEFAULT, resolveLineAvatar } from '../utils/line-avatar.js';
 import { bindCustomSelectButton, closeCustomSelectMenu, refreshCustomSelectButton } from './custom-select.js';
@@ -737,7 +737,12 @@ export class ContactSettingsPanel {
             resolveSessionMode: ({ sessionId }) => isRpSessionId(sessionId) ? 'rp' : 'chat',
             getMemoryStorageMode,
             askMemoryTableNewChatMode,
-            promptForArchiveName: () => prompt('请输入当前聊天的存档名称（留空将自动命名）：'),
+            promptForArchiveName: () => appPromptText({
+                title: '为当前聊天存档',
+                message: '留空会自动命名；取消则不会开启新聊天。',
+                placeholder: '存档名称（可选）',
+                confirmText: '继续',
+            }),
             buildMemoryTableSnapshot: ({ sessionId, isGroup }) => this.buildMemoryTableSnapshot({ sessionId, isGroup }),
             captureArchivePointer: (sessionId, options) =>
                 window.appBridge?.buildArchivePointerFromCurrentThread?.(sessionId, options),

@@ -47,12 +47,13 @@ export const appendStatusPlaceholderIfNeeded = ({
   nextStored = '',
   nextSource = '',
   isTavernMvuSession = false,
+  shouldAppendStatusPlaceholder = isTavernMvuSession,
 } = {}) => {
   const rawHasPlaceholder = STATUS_PLACEHOLDER_RE.test(String(raw || ''));
   const sourceHasPlaceholder = STATUS_PLACEHOLDER_RE.test(String(sourceText || ''));
   const storedHasPlaceholder = STATUS_PLACEHOLDER_RE.test(String(baseStoredRaw || ''));
   const shouldAppendPlaceholder =
-    Boolean(isTavernMvuSession) &&
+    Boolean(shouldAppendStatusPlaceholder) &&
     !(rawHasPlaceholder || sourceHasPlaceholder || storedHasPlaceholder);
   if (!shouldAppendPlaceholder) {
     return {
@@ -147,6 +148,7 @@ export const buildUpdateVariableApplyPlan = ({
   message,
   raw = '',
   isTavernMvuSession = false,
+  shouldAppendStatusPlaceholder = isTavernMvuSession,
   stripBlocks = stripUpdateVariableBlocks,
   transformStored,
   transformDisplay,
@@ -195,6 +197,7 @@ export const buildUpdateVariableApplyPlan = ({
     nextStored,
     nextSource,
     isTavernMvuSession,
+    shouldAppendStatusPlaceholder,
   });
   nextStored = placeholderState.nextStored;
   nextSource = placeholderState.nextSource;

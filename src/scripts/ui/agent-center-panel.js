@@ -5,6 +5,7 @@ import { WRITE_PREVIEW_PROVIDER_MODEL_CONTEXT_TOOLS } from '../agent/provider-to
 import { PROVIDER_TOOL_PERMISSION_ACTIONS } from '../agent/provider-tool-permission-actions.js';
 import { appSettings } from '../storage/app-settings.js';
 import { appChoice, appConfirm } from './app-confirm.js';
+import { bindBackdropActivation } from './backdrop-activation-utils.js';
 import { bindCustomSelectButton, closeCustomSelectMenu } from './custom-select.js';
 import { buildDebugTextFilename } from './debug-panel-utils.js';
 import { exportDebugTextFile } from './debug-panel-export-utils.js';
@@ -2305,8 +2306,8 @@ export class AgentCenterPanel {
                 <main class="agent-center-content"></main>
             </section>
         `;
-        overlay.addEventListener('click', (event) => {
-            if (event.target === overlay) this.hide();
+        bindBackdropActivation(overlay, {
+            onActivate: () => this.hide(),
         });
         overlay.querySelector('[data-action="close"]')?.addEventListener('click', () => this.hide());
         overlay.querySelector('[data-action="export"]')?.addEventListener('click', () => this.handleExport());

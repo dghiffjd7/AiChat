@@ -6,6 +6,7 @@
  */
 
 import { LLMClient } from '../api/client.js';
+import { bindBackdropActivation } from './backdrop-activation-utils.js';
 import { canInitClient as canUseApiConfig } from '../api/client-config-utils.js';
 import { ConfigManager } from '../storage/config.js';
 import { logger } from '../utils/logger.js';
@@ -1153,9 +1154,9 @@ export class WorldEditorModal {
         this.overlay.style.boxSizing = 'border-box';
         this.overlay.style.alignItems = 'center';
         this.overlay.style.justifyContent = 'center';
-        this.overlay.onclick = (e) => {
-            if (e.target === this.overlay) this.hide();
-        };
+        bindBackdropActivation(this.overlay, {
+            onActivate: () => this.hide(),
+        });
 
         this.modal = document.createElement('div');
         this.modal.id = 'world-editor-modal';

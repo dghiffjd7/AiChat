@@ -1,6 +1,9 @@
 import { applyUpdateVariableCommandsWithStore } from './update-variable-apply-utils.js';
 import { applyUpdateVariableFromAssistantMessage } from './update-variable-message-apply-utils.js';
-import { isTavernMvuVariableSession } from './update-variable-session-utils.js';
+import {
+  isStatusPlaceholderDisplaySession,
+  isTavernMvuVariableSession,
+} from './update-variable-session-utils.js';
 
 export const createUpdateVariableCommandApplier = ({
   chatStore,
@@ -49,6 +52,7 @@ export const createUpdateVariableCommandApplier = ({
 export const createUpdateVariableMessageApplier = ({
   getEffectivePersona,
   listVariableSchemas,
+  listActiveRegexRules,
   extractBlocks,
   parseCommands,
   applyCommands,
@@ -66,10 +70,15 @@ export const createUpdateVariableMessageApplier = ({
     getEffectivePersona,
     listVariableSchemas,
   });
+  const shouldAppendStatusPlaceholder = isTavernMvuSession || isStatusPlaceholderDisplaySession(sid, {
+    getEffectivePersona,
+    listActiveRegexRules,
+  });
   return applyUpdateVariableFromAssistantMessage({
     message,
     sessionId,
     isTavernMvuSession,
+    shouldAppendStatusPlaceholder,
     extractBlocks,
     parseCommands,
     applyCommands,

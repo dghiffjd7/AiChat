@@ -586,10 +586,10 @@ export class ChatUI {
     this.cleanupRichTextMounts(bubble);
     bubble.classList.remove('rp-swipe-draft-placeholder');
     bubble.style.removeProperty('white-space');
-    bubble.innerHTML = '';
     const target = this.prepareTextContainer(bubble, renderMsg);
     target.classList.remove('rp-swipe-draft-placeholder');
     target.style.removeProperty('white-space');
+    target.innerHTML = '';
     const text = renderMsg.meta?.renderRich
       ? resolveCreativeRichRenderSource(renderMsg, content)
       : String(content ?? '');

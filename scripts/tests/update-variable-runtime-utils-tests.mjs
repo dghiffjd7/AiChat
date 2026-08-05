@@ -120,6 +120,56 @@ test('createUpdateVariableMessageApplier builds tavern placeholder flow from run
   ]);
 });
 
+test('createUpdateVariableMessageApplier appends placeholder for an unconverted card with an active status display regex', () => {
+  const calls = [];
+  const applyMessage = createUpdateVariableMessageApplier({
+    getEffectivePersona() {
+      return { source: { type: 'character_card', mvuConverted: false, mvuSource: 'none' } };
+    },
+    listVariableSchemas() {
+      return {};
+    },
+    listActiveRegexRules() {
+      return [{
+        findRegex: '<StatusPlaceHolderImpl/>',
+        placement: [2],
+        disabled: false,
+        markdownOnly: true,
+        promptOnly: false,
+      }];
+    },
+    extractBlocks: () => ({ blocks: [], cleaned: 'hello' }),
+    parseCommands: () => [],
+    transformDisplay: text => `display:${text}`,
+    updateMessage(messageId, payload, sessionId) {
+      calls.push(['update', messageId, payload, sessionId]);
+      return { id: messageId, ...payload };
+    },
+    isSessionActive() {
+      return false;
+    },
+    logger: { info() {}, warn() {} },
+  });
+
+  assert.equal(applyMessage({
+    id: 'm-status',
+    role: 'assistant',
+    rawSource: 'hello',
+    raw: 'hello',
+    content: 'hello',
+  }, 'status-card'), true);
+  assert.deepEqual(calls, [[
+    'update',
+    'm-status',
+    {
+      raw: 'hello\n\n<StatusPlaceHolderImpl/>',
+      content: 'display:hello\n\n<StatusPlaceHolderImpl/>',
+      rawSource: 'hello\n\n<StatusPlaceHolderImpl/>',
+    },
+    'status-card',
+  ]]);
+});
+
 let failed = 0;
 for (const t of tests) {
   try {

@@ -1,5 +1,6 @@
 import { appSettings } from '../storage/app-settings.js';
 import { appConfirm } from './app-confirm.js';
+import { bindBackdropActivation } from './backdrop-activation-utils.js';
 import { getCharacterCardDisplayName } from '../utils/character-card-display.js';
 import { bindCustomSelectButton, closeCustomSelectMenu, createCustomSelectWrapper } from './custom-select.js';
 import { restartScriptWorker } from './script-runtime-utils.js';
@@ -438,13 +439,14 @@ const openScriptEditor = ({ script, title = '编辑脚本' } = {}) => new Promis
   document.body.appendChild(overlay);
 
   const close = (result) => {
+    unbindBackdropActivation();
     overlay.remove();
     resolve(result);
   };
   panel.querySelector('#script-editor-close')?.addEventListener('click', () => close(null));
   panel.querySelector('#script-editor-cancel')?.addEventListener('click', () => close(null));
-  overlay.addEventListener('click', (e) => {
-    if (e.target === overlay) close(null);
+  const unbindBackdropActivation = bindBackdropActivation(overlay, {
+    onActivate: () => close(null),
   });
 
   const nameInput = panel.querySelector('#script-editor-name');

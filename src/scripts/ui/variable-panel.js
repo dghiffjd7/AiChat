@@ -1,4 +1,5 @@
 import { appConfirm } from './app-confirm.js';
+import { bindBackdropActivation } from './backdrop-activation-utils.js';
 import { VariablePanel as VariablePanelRuntime } from './variable-panel-runtime.js';
 import {
     buildVariableListRows,
@@ -131,8 +132,8 @@ export class VariablePanel extends VariablePanelRuntime {
         const overlay = document.createElement('div');
         overlay.className = 'app-themed-overlay variable-panel-overlay variable-manager-overlay';
         overlay.style.display = 'none';
-        overlay.addEventListener('click', event => {
-            if (event.target === overlay) this.hide();
+        bindBackdropActivation(overlay, {
+            onActivate: () => this.hide(),
         });
 
         const panel = document.createElement('div');

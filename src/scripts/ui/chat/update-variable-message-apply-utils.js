@@ -9,6 +9,7 @@ export const applyUpdateVariableFromAssistantMessage = ({
   message,
   sessionId = '',
   isTavernMvuSession = false,
+  shouldAppendStatusPlaceholder = isTavernMvuSession,
   extractBlocks,
   parseCommands,
   applyCommands,
@@ -30,7 +31,7 @@ export const applyUpdateVariableFromAssistantMessage = ({
     extractBlocks,
     parseCommands,
   });
-  if (!blocks.length && !commands.length && !isTavernMvuSession) return false;
+  if (!blocks.length && !commands.length && !shouldAppendStatusPlaceholder) return false;
   if (blocks.length || commands.length) {
     logger?.info?.(
       `[update-variable] parse messageId=${String(message?.id || '')} session=${sid} blocks=${blocks.length} commands=${commands.length}`,
@@ -54,6 +55,7 @@ export const applyUpdateVariableFromAssistantMessage = ({
     message,
     raw,
     isTavernMvuSession,
+    shouldAppendStatusPlaceholder,
     transformStored,
     transformDisplay,
     forceRenderRich,
@@ -65,7 +67,7 @@ export const applyUpdateVariableFromAssistantMessage = ({
     : fallbackUpdatedMessage;
   if (placeholderInjected) {
     logger?.info?.(
-      `[update-variable] placeholder-injected messageId=${String(message?.id || '')} session=${sid} source=tavern-mvu`,
+      `[update-variable] placeholder-injected messageId=${String(message?.id || '')} session=${sid} source=${isTavernMvuSession ? 'tavern-mvu' : 'status-display-regex'}`,
     );
   }
   if (updated && typeof isSessionActive === 'function' && isSessionActive(sessionId) && typeof updateUiMessage === 'function') {

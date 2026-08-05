@@ -782,6 +782,7 @@ import {
   writeModeSwitchPosition,
 } from './mode-switch-position-runtime-utils.js';
 import { appConfirm, appChoice, appPromptText } from './app-confirm.js';
+import { bindBackdropActivation } from './backdrop-activation-utils.js';
 import {
   clearRuntimeNoiseStorage,
   finishAppBootTrace,
@@ -17972,6 +17973,9 @@ Phase G（Frame 36）：循环衔接
   const applyUpdateVariableFromMessage = createUpdateVariableMessageApplier({
     getEffectivePersona,
     listVariableSchemas: id => chatStore.listVariableSchemas?.(id),
+    listActiveRegexRules: id => getRegexStore(window.appBridge)?.computeActiveRules?.(
+      window.appBridge?.getRegexContext?.({ sessionId: id }) || {},
+    ) || [],
     extractBlocks: extractUpdateVariableBlocks,
     parseCommands: block => updateParser.parseCommands(block),
     applyCommands: applyUpdateVariableCommands,
@@ -18644,8 +18648,9 @@ Phase G（Frame 36）：循环衔接
         if (typeof handler === 'function') handler();
       });
       submitBtn?.addEventListener('click', submit);
-      overlay.addEventListener('click', event => {
-        if (event.target === overlay) close(null);
+      bindBackdropActivation(overlay, {
+        documentLike: document,
+        onActivate: () => close(null),
       });
       refAddBtn?.addEventListener('click', () => handleAddReferences());
       refListEl?.addEventListener('click', (event) => {
@@ -21332,8 +21337,9 @@ Phase G（Frame 36）：循环衔接
 	          activeDetailAsset = null;
 	        }
 	      });
-	      overlay.addEventListener('click', event => {
-	        if (event.target === overlay) closeAlbum();
+	      bindBackdropActivation(overlay, {
+	        documentLike: document,
+	        onActivate: () => closeAlbum(),
 	      });
 	      const openDetail = (asset = {}) => {
 	        const url = resolveGeneratedImagePreviewUrl(asset);
@@ -21542,8 +21548,9 @@ Phase G（Frame 36）：循环衔接
 	      listEl = overlay.querySelector('.writing-media-assets-list');
 	      countEl = overlay.querySelector('.writing-media-assets-count');
 	      overlay.querySelector('.writing-media-assets-close')?.addEventListener('click', () => overlay.classList.remove('is-active'));
-	      overlay.addEventListener('click', event => {
-	        if (event.target === overlay) overlay.classList.remove('is-active');
+	      bindBackdropActivation(overlay, {
+	        documentLike: document,
+	        onActivate: () => overlay.classList.remove('is-active'),
 	      });
 	      overlay.addEventListener('click', async event => {
 	        const btn = event.target?.closest?.('button[data-action]');
@@ -22096,8 +22103,9 @@ Phase G（Frame 36）：循环衔接
 	        const img = event.target?.closest?.('.moment-compose-image-card img');
 	        if (img?.src) ui.openLightbox?.(img.src);
 	      });
-	      overlay.addEventListener('click', event => {
-	        if (event.target === overlay) close();
+	      bindBackdropActivation(overlay, {
+	        documentLike: document,
+	        onActivate: () => close(),
 	      });
 	      window.addEventListener('config-draft-changed', refreshGenerationParamContext);
 	      window.addEventListener('config-profile-changed', refreshGenerationParamContext);
@@ -22704,8 +22712,10 @@ Phase G（Frame 36）：循环衔接
     `;
     let closing = false;
     let closeTimer = null;
+    let unbindBackdropActivation = () => {};
     const finishClose = (value) => {
       if (closeTimer) clearTimeout(closeTimer);
+      unbindBackdropActivation();
       document.removeEventListener('keydown', onKeyDown);
       overlay.remove();
       resolve(value);
@@ -22778,8 +22788,9 @@ Phase G（Frame 36）：循环衔接
         updateCount();
       });
     });
-    overlay.addEventListener('click', event => {
-      if (event.target === overlay) close(null);
+    unbindBackdropActivation = bindBackdropActivation(overlay, {
+      documentLike: document,
+      onActivate: () => close(null),
     });
     contentInput?.addEventListener('input', updateCount);
     contentInput?.addEventListener('keydown', event => {
@@ -25506,7 +25517,7 @@ Phase G（Frame 36）：循环衔接
 	        nextMeta.autoImagePromptRawContent = sourceAutoImageRawContent;
 	        nextMeta.autoImagePromptPlaceholders = sourceAutoImagePlaceholders;
 	      }
-	      const updated = chatStore.updateMessage(msgId, {
+	      let updated = chatStore.updateMessage(msgId, {
 	        content: newBranch.content,
 	        raw: newBranch.raw,
 	        rawSource: newBranch.rawSource,
@@ -25520,6 +25531,14 @@ Phase G（Frame 36）：循环衔接
 	        rawOriginal: newBranch.rawOriginal,
 	        meta: nextMeta,
 	      };
+      if (!partial && !cancelled) {
+        try {
+          captureVariableSnapshotToMessage(sid, updated);
+          updated = chatStore.findMessage(msgId, sid) || updated;
+        } catch (err) {
+          logger.warn('capture swipe variable state after commit failed', err);
+        }
+      }
       const wrapper = ui.scrollEl?.querySelector(`[data-msg-id="${CSS.escape(msgId)}"]`);
       if (wrapper && wrapper.isConnected) {
         wrapper.__chatappMessage = updated;
@@ -25729,6 +25748,13 @@ Phase G（Frame 36）：循环衔接
         return;
       }
 
+      try {
+        applyUpdateVariableFromMessage(newAiMsg, sid);
+      } catch (err) {
+        logger.warn('apply UpdateVariable before swipe commit failed', err);
+      }
+      const finalizedNewAiMsg = chatStore.findMessage(newAiMsg.id, sid) || newAiMsg;
+
       let branchMemorySnapshot = null;
       let branchMemoryUpdateEntry = undefined;
       if (getMemoryStorageMode() === 'table') {
@@ -25739,7 +25765,7 @@ Phase G（Frame 36）：循环衔接
           logger.warn('capture swipe memory state failed', err);
         }
       }
-      commitBranch(newAiMsg, {
+      commitBranch(finalizedNewAiMsg, {
         memoryTableSnapshot: branchMemorySnapshot,
         memoryUpdateEntry: branchMemoryUpdateEntry,
       });

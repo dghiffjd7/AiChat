@@ -1,6 +1,7 @@
 import { appSettings } from '../storage/app-settings.js';
 import { logger } from '../utils/logger.js';
 import { emitDebugLog } from '../utils/debug-log.js';
+import { buildVariableContext } from '../variables/variable-path-utils.js';
 
 const CACHE_LIMIT = 120;
 const TEMPLATE_LOG_LIMIT = 50;
@@ -11,6 +12,13 @@ const TEMPLATE_PAYLOAD_LIMIT = 1200000;
 const TEMPLATE_RENDER_CHUNK_SIZE = 8192;
 const TEMPLATE_RENDER_RESULT_LIMIT = 3000000;
 const TEMPLATE_WORKER_SOURCE_URL = 'chatapp-template-worker.js';
+const TEMPLATE_VARIABLE_CONTEXT_ROOTS = new Set([
+  'stat_data',
+  'variables',
+  'status_current_variables',
+  'global_variables',
+  'local_variables',
+]);
 const templateCache = new Map();
 const templateExecutionLogs = [];
 let templateWorkerInstance = null;
@@ -69,6 +77,13 @@ const TEMPLATE_GUARD_LIMIT = ${TEMPLATE_GUARD_LIMIT};
 const TEMPLATE_OUTPUT_LIMIT = ${TEMPLATE_OUTPUT_LIMIT};
 const DEFAULT_RESULT_LIMIT = ${TEMPLATE_PAYLOAD_LIMIT};
 const DEFAULT_CHUNK_SIZE = ${TEMPLATE_RENDER_CHUNK_SIZE};
+const VARIABLE_CONTEXT_ROOTS = new Set([
+  'stat_data',
+  'variables',
+  'status_current_variables',
+  'global_variables',
+  'local_variables',
+]);
 const templateCache = new Map();
 
 const nowMs = () => {
@@ -119,6 +134,29 @@ const setByPath = (obj, path, value) => {
   return obj;
 };
 
+const buildNestedVars = (flat = {}) => {
+  const root = {};
+  Object.entries(flat || {}).forEach(([key, value]) => {
+    const name = String(key || '').trim();
+    if (name) setByPath(root, name, value);
+  });
+  return root;
+};
+
+const buildRuntimeVariableContext = ({ baseVars = {}, globalVars = {}, localVars = {} } = {}) => {
+  const baseVarsNested = buildNestedVars(baseVars);
+  const globalVarsNested = buildNestedVars(globalVars);
+  const localVarsNested = buildNestedVars(localVars);
+  return {
+    ...baseVars,
+    stat_data: { ...baseVars, ...baseVarsNested },
+    variables: { ...baseVars, ...baseVarsNested },
+    status_current_variables: { ...baseVars, ...baseVarsNested },
+    global_variables: { ...globalVars, ...globalVarsNested },
+    local_variables: { ...localVars, ...localVarsNested },
+  };
+};
+
 const cloneValue = (value) => {
   try {
     return JSON.parse(JSON.stringify(value));
@@ -167,7 +205,7 @@ const parseOptions = (raw) => {
 const compileTemplate = (template) => {
   const cached = templateCache.get(template);
   if (cached) return cached;
-  const re = /<%([=#-]?)([\\s\\S]*?)%>/g;
+  const re = /<%([_=#-]?)([\\s\\S]*?)([-_]?)%>/g;
   let cursor = 0;
   let src = "let __out = '';\\n";
   src += 'const __emit = typeof ctx.__emit === "function" ? ctx.__emit : null;\\n';
@@ -180,8 +218,9 @@ const compileTemplate = (template) => {
   src += 'const __guard = ctx.__guard;\\n';
   src += 'if (__guard) __guard();\\n';
   const guardLine = '__guard && __guard();\\n';
-  template.replace(re, (match, flag, code, index) => {
-    const text = template.slice(cursor, index);
+  template.replace(re, (match, flag, code, closeFlag, index) => {
+    let text = template.slice(cursor, index);
+    if (flag === '_') text = text.replace(/\\s+$/, '');
     if (text) src += '__out += ' + JSON.stringify(text) + ';\\n__ensureOut();\\n__flush();\\n';
     if (flag === '#') {
       // comment, ignore
@@ -197,6 +236,13 @@ const compileTemplate = (template) => {
       src += '__flush();\\n';
     }
     cursor = index + match.length;
+    if (closeFlag === '_') {
+      const whitespace = template.slice(cursor).match(/^\\s+/)?.[0] || '';
+      cursor += whitespace.length;
+    } else if (closeFlag === '-') {
+      const newline = template.slice(cursor).match(/^\\r?\\n/)?.[0] || '';
+      cursor += newline.length;
+    }
     return '';
   });
   const rest = template.slice(cursor);
@@ -220,7 +266,10 @@ const renderTemplate = (template, runtime) => {
   }
   try {
     const fn = compileTemplate(template);
-    const text = fn(runtime, escapeHtml);
+    const escapeValue = runtime?.__escapeTemplateOutput === false
+      ? (value => String(value ?? ''))
+      : escapeHtml;
+    const text = fn(runtime, escapeValue);
     return { text: String(text ?? ''), error: null };
   } catch (err) {
     return { text: template, error: err };
@@ -315,6 +364,25 @@ const createRuntime = (payload) => {
   const worldMeta = payload?.worldMeta || {};
   const worlds = Array.isArray(payload?.worlds) ? payload.worlds : [];
   const worldUpdates = [];
+  let variableContextCache = null;
+
+  const getVariableContext = () => {
+    if (!variableContextCache) {
+      const baseVars = context?.meta?.useGlobalVariables === true ? globals : locals;
+      variableContextCache = buildRuntimeVariableContext({
+        baseVars,
+        globalVars: globals,
+        localVars: locals,
+      });
+    }
+    return variableContextCache;
+  };
+
+  const readCompatibilityVar = (path) => {
+    const root = String(path?.[0] || '');
+    if (!VARIABLE_CONTEXT_ROOTS.has(root)) return { matched: false, value: undefined };
+    return { matched: true, value: getByPath(getVariableContext(), path) };
+  };
 
   const getScopedStore = (scope) => {
     if (scope === 'global') return globals;
@@ -331,6 +399,10 @@ const createRuntime = (payload) => {
     const path = toPath(key);
     if (!path.length) return undefined;
     if (scope === 'cache') {
+      const compatibility = readCompatibilityVar(path);
+      if (compatibility.matched) {
+        return compatibility.value === undefined ? opts.defaults : compatibility.value;
+      }
       const ordered = [msgVars, locals, globals, initials];
       for (const store of ordered) {
         const val = getByPath(store, path);
@@ -358,12 +430,14 @@ const createRuntime = (payload) => {
       if (!root) return false;
       if (path.length === 1) {
         globals[root] = value;
+        variableContextCache = null;
         return true;
       }
       const next = cloneValue(globals[root]);
       const base = (next && typeof next === 'object') ? next : {};
       setByPath(base, path.slice(1), value);
       globals[root] = base;
+      variableContextCache = null;
       return true;
     }
     if (scope === 'local') {
@@ -371,12 +445,14 @@ const createRuntime = (payload) => {
       if (!root) return false;
       if (path.length === 1) {
         locals[root] = value;
+        variableContextCache = null;
         return true;
       }
       const next = cloneValue(locals[root]);
       const base = (next && typeof next === 'object') ? next : {};
       setByPath(base, path.slice(1), value);
       locals[root] = base;
+      variableContextCache = null;
       return true;
     }
     return false;
@@ -559,6 +635,7 @@ const createRuntime = (payload) => {
     user: context?.user || {},
     character: payload?.character || context?.character || {},
     session: context?.session || {},
+    __escapeTemplateOutput: payload?.escapeTemplateOutput !== false,
   };
 
   Object.entries(shared.defines || {}).forEach(([key, value]) => {
@@ -923,7 +1000,7 @@ const shouldRunTemplate = (stage, context) => {
 const compileTemplate = (template) => {
   const cached = templateCache.get(template);
   if (cached) return cached;
-  const re = /<%([=#-]?)([\s\S]*?)%>/g;
+  const re = /<%([_=#-]?)([\s\S]*?)([-_]?)%>/g;
   let cursor = 0;
   let src = "let __out = '';\n";
   src += 'const __emit = typeof ctx.__emit === "function" ? ctx.__emit : null;\n';
@@ -936,8 +1013,9 @@ const compileTemplate = (template) => {
   src += 'const __guard = ctx.__guard;\n';
   src += 'if (__guard) __guard();\n';
   const guardLine = '__guard && __guard();\n';
-  template.replace(re, (match, flag, code, index) => {
-    const text = template.slice(cursor, index);
+  template.replace(re, (match, flag, code, closeFlag, index) => {
+    let text = template.slice(cursor, index);
+    if (flag === '_') text = text.replace(/\s+$/, '');
     if (text) src += '__out += ' + JSON.stringify(text) + ';\n__ensureOut();\n__flush();\n';
     if (flag === '#') {
       // comment, ignore
@@ -953,6 +1031,13 @@ const compileTemplate = (template) => {
       src += '__flush();\n';
     }
     cursor = index + match.length;
+    if (closeFlag === '_') {
+      const whitespace = template.slice(cursor).match(/^\s+/)?.[0] || '';
+      cursor += whitespace.length;
+    } else if (closeFlag === '-') {
+      const newline = template.slice(cursor).match(/^\r?\n/)?.[0] || '';
+      cursor += newline.length;
+    }
     return '';
   });
   const rest = template.slice(cursor);
@@ -979,6 +1064,25 @@ const createRuntime = ({ chatStore, sessionId, messageVars, initialVars, state, 
   const runtimeContext = readOnly ? cloneValue(context || {}) : (context || {});
   const shared = state || { defines: Object.create(null) };
   const appBridge = (typeof window !== 'undefined' && window.appBridge) ? window.appBridge : null;
+  let variableContextCache = null;
+
+  const getVariableContext = () => {
+    if (!variableContextCache) {
+      const baseVars = runtimeContext?.meta?.useGlobalVariables === true ? globals : locals;
+      variableContextCache = buildVariableContext({
+        baseVars,
+        globalVars: globals,
+        localVars: locals,
+      }).variableContext;
+    }
+    return variableContextCache;
+  };
+
+  const readCompatibilityVar = (path) => {
+    const root = String(path?.[0] || '');
+    if (!TEMPLATE_VARIABLE_CONTEXT_ROOTS.has(root)) return { matched: false, value: undefined };
+    return { matched: true, value: getByPath(getVariableContext(), path) };
+  };
 
   const getScopedStore = (scope) => {
     if (scope === 'global') return globals;
@@ -995,6 +1099,10 @@ const createRuntime = ({ chatStore, sessionId, messageVars, initialVars, state, 
     const path = toPath(key);
     if (!path.length) return undefined;
     if (scope === 'cache') {
+      const compatibility = readCompatibilityVar(path);
+      if (compatibility.matched) {
+        return compatibility.value === undefined ? opts.defaults : compatibility.value;
+      }
       const ordered = [msgVars, locals, globals, initials];
       for (const store of ordered) {
         const val = getByPath(store, path);
@@ -1026,6 +1134,7 @@ const createRuntime = ({ chatStore, sessionId, messageVars, initialVars, state, 
       if (!root) return false;
       if (path.length === 1) {
         globals[root] = value;
+        variableContextCache = null;
         if (!readOnly) chatStore?.setGlobalVariable?.(root, value);
         return true;
       }
@@ -1033,6 +1142,7 @@ const createRuntime = ({ chatStore, sessionId, messageVars, initialVars, state, 
       const base = (next && typeof next === 'object') ? next : {};
       setByPath(base, path.slice(1), value);
       globals[root] = base;
+      variableContextCache = null;
       if (!readOnly) chatStore?.setGlobalVariable?.(root, base);
       return true;
     }
@@ -1041,6 +1151,7 @@ const createRuntime = ({ chatStore, sessionId, messageVars, initialVars, state, 
       if (!root) return false;
       if (path.length === 1) {
         locals[root] = value;
+        variableContextCache = null;
         if (!readOnly) chatStore?.setVariable?.(root, value, sessionId);
         return true;
       }
@@ -1048,6 +1159,7 @@ const createRuntime = ({ chatStore, sessionId, messageVars, initialVars, state, 
       const base = (next && typeof next === 'object') ? next : {};
       setByPath(base, path.slice(1), value);
       locals[root] = base;
+      variableContextCache = null;
       if (!readOnly) chatStore?.setVariable?.(root, base, sessionId);
       return true;
     }
@@ -1509,7 +1621,7 @@ const applyWorldUpdates = (updates = []) => {
   });
 };
 
-const renderTemplate = (template, { runtime }) => {
+const renderTemplate = (template, { runtime }, { escapeTemplateOutput = true } = {}) => {
   if (!template || typeof template !== 'string') {
     return { text: template, error: null };
   }
@@ -1518,7 +1630,10 @@ const renderTemplate = (template, { runtime }) => {
   }
   try {
     const fn = compileTemplate(template);
-    const text = fn(runtime, escapeHtml);
+    const escapeValue = escapeTemplateOutput
+      ? escapeHtml
+      : (value => String(value ?? ''));
+    const text = fn(runtime, escapeValue);
     return { text: String(text ?? ''), error: null };
   } catch (err) {
     return { text: template, error: err };
@@ -1570,7 +1685,9 @@ export const renderTemplateText = (rawText, options = {}) => {
       }
     };
   }
-  const result = renderTemplate(template, runtimePack);
+  const result = renderTemplate(template, runtimePack, {
+    escapeTemplateOutput: stage !== 'generate',
+  });
   const durationMs = Math.round(nowMs() - startAt);
   if (hasTemplate || result.error) {
     recordTemplateExecution({
@@ -1634,6 +1751,7 @@ export const renderTemplateTextAsync = async (rawText, options = {}) => {
     worldMeta,
     character: safeContext?.character,
     preset: safeContext?.preset,
+    escapeTemplateOutput: stage !== 'generate',
   };
   if (stage === 'render') {
     payload.chunked = true;

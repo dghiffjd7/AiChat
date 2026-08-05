@@ -25,6 +25,97 @@ globalThis.window = {
 const { renderTemplateMessages } = await import('../../src/scripts/plugins/template-engine.js');
 
 {
+  const result = await renderTemplateMessages([{
+    role: 'system',
+    content: `  <%_ {
+      const projection = { value: 1 };
+    _%>
+    <%= projection.value %>
+    <%_ } _%>  `,
+  }], {
+    stage: 'generate',
+    chatStore: {
+      listGlobalVariables: () => ({}),
+      listVariables: () => ({}),
+      listInitialVariables: () => ({}),
+    },
+    sessionId: 'trim-delimiter-session',
+    context: {},
+    readOnly: true,
+  });
+
+  assert.deepEqual(result.errors, []);
+  assert.equal(result.messages[0].content, '1');
+  console.log('ok - EJS underscore delimiters trim surrounding whitespace without entering JavaScript source');
+}
+
+{
+  const result = await renderTemplateMessages([{
+    role: 'system',
+    content: `<%_ {
+      const current = getvar('stat_data');
+      if (current && typeof current === 'object' && !Array.isArray(current)) {
+        const business = Object.fromEntries(
+          Object.entries(current).filter(([key]) => key !== '$internal' && key !== 'technical'),
+        );
+        const counters = current.technical?.uid_counters;
+        const projection = counters && typeof counters === 'object'
+          ? { ...business, technical: { uid_counters: counters } }
+          : business;
+    _%>
+    <status_current_variables>
+    <%= JSON.stringify(projection) %>
+    </status_current_variables>
+    <%_
+      }
+    } _%>`,
+  }], {
+    stage: 'generate',
+    chatStore: {
+      listGlobalVariables: () => ({
+        story: { chapter: 3 },
+        technical: { uid_counters: { event: 7 }, hidden: true },
+        $internal: { revision: 9 },
+      }),
+      listVariables: () => ({ localOnly: true }),
+      listInitialVariables: () => ({}),
+    },
+    sessionId: 'shared-variable-session',
+    context: { meta: { useGlobalVariables: true } },
+    readOnly: true,
+  });
+
+  assert.deepEqual(result.errors, []);
+  const match = result.messages[0].content.match(/<status_current_variables>\s*([\s\S]*?)\s*<\/status_current_variables>/);
+  assert.ok(match, 'stat_data 应解析为当前变量对象并输出状态段');
+  assert.deepEqual(JSON.parse(match[1]), {
+    story: { chapter: 3 },
+    technical: { uid_counters: { event: 7 } },
+  });
+  console.log('ok - EJS stat_data compatibility alias follows the active shared-variable scope');
+}
+
+{
+  const result = await renderTemplateMessages([{
+    role: 'assistant',
+    content: `<%= '<b>safe</b>' %>`,
+  }], {
+    stage: 'render',
+    chatStore: {
+      listGlobalVariables: () => ({}),
+      listVariables: () => ({}),
+      listInitialVariables: () => ({}),
+    },
+    sessionId: 'render-escape-session',
+    context: {},
+    readOnly: true,
+  });
+
+  assert.equal(result.messages[0].content, '&lt;b&gt;safe&lt;/b&gt;');
+  console.log('ok - render-stage EJS interpolation keeps HTML escaping');
+}
+
+{
   const variableWrites = [];
   const chatStore = {
     listGlobalVariables: () => ({}),

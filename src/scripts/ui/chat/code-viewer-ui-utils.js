@@ -3,6 +3,7 @@ import {
   createFormatPatchReviewSelection,
   updateFormatPatchReviewSelection,
 } from './format-patch-review-utils.js';
+import { bindBackdropActivation } from '../backdrop-activation-utils.js';
 
 const FORMAT_SOURCE_LABELS = Object.freeze({
   private_chat: '私聊场景',
@@ -434,7 +435,10 @@ export const createCodeViewerUiRuntime = ({
       refs.applyReviewBtn.disabled = validation.canApply === false;
     };
 
-    overlay.addEventListener('click', () => hideViewer(overlay));
+    bindBackdropActivation(overlay, {
+      documentLike,
+      onActivate: () => hideViewer(overlay),
+    });
     closeBtn.addEventListener('click', () => hideViewer(overlay));
     reviewCancelBtn.addEventListener('click', () => hideViewer(overlay, { force: true }));
     acceptAllBtn.addEventListener('click', () => {

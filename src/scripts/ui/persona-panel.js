@@ -2,6 +2,7 @@
 import { MediaPicker } from './media-picker.js';
 import { avatarDataUrlFromFile } from '../utils/image.js';
 import { appConfirm } from './app-confirm.js';
+import { bindBackdropActivation } from './backdrop-activation-utils.js';
 import { appSettings } from '../storage/app-settings.js';
 import { CharacterCardImporter } from './character-card-importer.js';
 import { getCharacterCardDisplayName, getCharacterCardSource } from '../utils/character-card-display.js';
@@ -273,8 +274,8 @@ export class PersonaPanel {
             align-items:center;
             justify-content:center;
         `;
-        overlay.addEventListener('click', (event) => {
-            if (event.target === overlay) this.hideRoleArchiveModal();
+        bindBackdropActivation(overlay, {
+            onActivate: () => this.hideRoleArchiveModal(),
         });
 
         const panel = document.createElement('div');
@@ -522,8 +523,8 @@ export class PersonaPanel {
         this.overlay.style.boxSizing = 'border-box';
         
         // Handle clicking outside to close
-        this.overlay.addEventListener('click', (e) => {
-            if (e.target === this.overlay) this.hide();
+        bindBackdropActivation(this.overlay, {
+            onActivate: () => this.hide(),
         });
 
         this.panel = document.createElement('div');
@@ -697,8 +698,8 @@ export class PersonaPanel {
             align-items:center;
             justify-content:center;
         `;
-        overlay.addEventListener('click', (e) => {
-            if (e.target === overlay) this.hideImportModal();
+        bindBackdropActivation(overlay, {
+            onActivate: () => this.hideImportModal(),
         });
 
         const modal = document.createElement('div');
@@ -799,8 +800,8 @@ export class PersonaPanel {
             padding: calc(10px + env(safe-area-inset-top, 0px)) 10px calc(10px + env(safe-area-inset-bottom, 0px)) 10px;
             box-sizing: border-box;
         `;
-        overlay.addEventListener('click', (e) => {
-            if (e.target === overlay) this.hideBulkModal();
+        bindBackdropActivation(overlay, {
+            onActivate: () => this.hideBulkModal(),
         });
 
         const panel = document.createElement('div');

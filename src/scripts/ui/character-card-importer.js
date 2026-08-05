@@ -6,6 +6,7 @@ import { avatarDataUrlFromFile } from '../utils/image.js';
 import { safeInvoke } from '../utils/tauri.js';
 import { appSettings } from '../storage/app-settings.js';
 import { appConfirm, appChoice } from './app-confirm.js';
+import { bindBackdropActivation } from './backdrop-activation-utils.js';
 import {
   buildCharacterCardMvuConversion,
   extractMvuTavernHelperScripts,
@@ -117,11 +118,12 @@ const promptImportOptions = ({ displayName, fileName, worldCount, greetingCount,
     document.body.appendChild(overlay);
 
     const cleanup = (result) => {
+      unbindBackdropActivation();
       overlay.remove();
       resolve(result);
     };
-    overlay.addEventListener('click', (e) => {
-      if (e.target === overlay) cleanup(null);
+    const unbindBackdropActivation = bindBackdropActivation(overlay, {
+      onActivate: () => cleanup(null),
     });
     const worldEl = panel.querySelector('#cc-opt-world');
     const greetEl = panel.querySelector('#cc-opt-greeting');

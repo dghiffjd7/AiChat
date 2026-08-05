@@ -1,4 +1,5 @@
 import { appConfirm } from './app-confirm.js';
+import { bindBackdropActivation } from './backdrop-activation-utils.js';
 import { bindCustomSelectButton, closeCustomSelectMenu, refreshCustomSelectButton } from './custom-select.js';
 import { applyTemplate, listVariableTemplates } from '../variables/variable-templates.js';
 // Compatibility runtime retained while the redesigned shell composes these
@@ -70,8 +71,8 @@ export class VariablePanel {
             padding: calc(10px + env(safe-area-inset-top, 0px)) 10px calc(10px + env(safe-area-inset-bottom, 0px)) 10px;
             box-sizing: border-box;
         `;
-        overlay.addEventListener('click', (e) => {
-            if (e.target === overlay) this.hide();
+        bindBackdropActivation(overlay, {
+            onActivate: () => this.hide(),
         });
 
         const panel = document.createElement('div');
@@ -182,8 +183,8 @@ export class VariablePanel {
             padding: calc(12px + env(safe-area-inset-top, 0px)) 12px calc(12px + env(safe-area-inset-bottom, 0px)) 12px;
             box-sizing: border-box;
         `;
-        overlay.addEventListener('click', (e) => {
-            if (e.target === overlay) this.hideSchemaModal();
+        bindBackdropActivation(overlay, {
+            onActivate: () => this.hideSchemaModal(),
         });
 
         const panel = document.createElement('div');
@@ -331,8 +332,8 @@ export class VariablePanel {
             padding: calc(12px + env(safe-area-inset-top, 0px)) 12px calc(12px + env(safe-area-inset-bottom, 0px)) 12px;
             box-sizing: border-box;
         `;
-        overlay.addEventListener('click', (e) => {
-            if (e.target === overlay) this.hideRules();
+        bindBackdropActivation(overlay, {
+            onActivate: () => this.hideRules(),
         });
 
         const panel = document.createElement('div');
@@ -385,8 +386,8 @@ export class VariablePanel {
             padding: calc(12px + env(safe-area-inset-top, 0px)) 12px calc(12px + env(safe-area-inset-bottom, 0px)) 12px;
             box-sizing: border-box;
         `;
-        overlay.addEventListener('click', (e) => {
-            if (e.target === overlay) this.hideRuleEditor();
+        bindBackdropActivation(overlay, {
+            onActivate: () => this.hideRuleEditor(),
         });
 
         const panel = document.createElement('div');
@@ -680,8 +681,8 @@ export class VariablePanel {
             padding: calc(12px + env(safe-area-inset-top, 0px)) 12px calc(12px + env(safe-area-inset-bottom, 0px)) 12px;
             box-sizing: border-box;
         `;
-        overlay.addEventListener('click', (e) => {
-            if (e.target === overlay) this.hideTemplateModal();
+        bindBackdropActivation(overlay, {
+            onActivate: () => this.hideTemplateModal(),
         });
 
         const panel = document.createElement('div');
@@ -724,8 +725,8 @@ export class VariablePanel {
             padding: calc(12px + env(safe-area-inset-top, 0px)) 12px calc(12px + env(safe-area-inset-bottom, 0px)) 12px;
             box-sizing: border-box;
         `;
-        overlay.addEventListener('click', (e) => {
-            if (e.target === overlay) this.hideDataModal();
+        bindBackdropActivation(overlay, {
+            onActivate: () => this.hideDataModal(),
         });
 
         const panel = document.createElement('div');

@@ -1,6 +1,7 @@
 import { MediaPicker } from './media-picker.js';
 import { avatarDataUrlFromFile } from '../utils/image.js';
 import { appConfirm } from './app-confirm.js';
+import { bindBackdropActivation } from './backdrop-activation-utils.js';
 import { getCharacterCardBoundUserId, getCharacterCardDisplayName, getCharacterCardSource } from '../utils/character-card-display.js';
 import { getDefaultAppIcon } from '../utils/default-icon.js';
 import { bindCustomSelectButton, closeCustomSelectMenu, refreshCustomSelectButton } from './custom-select.js';
@@ -101,8 +102,8 @@ export class UserPanel {
             justify-content:center;
             align-items:center;
         `;
-        this.overlay.addEventListener('click', (event) => {
-            if (event.target === this.overlay) this.hide();
+        bindBackdropActivation(this.overlay, {
+            onActivate: () => this.hide(),
         });
 
         this.panel = document.createElement('div');
@@ -489,8 +490,8 @@ export class UserPanel {
             padding: calc(10px + env(safe-area-inset-top, 0px)) 10px calc(10px + env(safe-area-inset-bottom, 0px)) 10px;
             box-sizing: border-box;
         `;
-        overlay.addEventListener('click', (e) => {
-            if (e.target === overlay) this.hideBindingModal();
+        bindBackdropActivation(overlay, {
+            onActivate: () => this.hideBindingModal(),
         });
 
         const panel = document.createElement('div');

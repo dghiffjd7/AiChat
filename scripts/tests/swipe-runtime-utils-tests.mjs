@@ -456,3 +456,60 @@ const createWrapper = (message = null) => {
   assert.equal(partial.meta.cancelled, true);
   console.log('ok - createSwipeGenerationStreamCore keeps reasoning-only partial on cancel');
 }
+
+{
+  globalThis.window = {};
+  globalThis.localStorage = {
+    getItem() { return null; },
+    setItem() {},
+  };
+  globalThis.document = {
+    body: { dataset: {} },
+    getElementById() { return null; },
+    querySelector() { return null; },
+  };
+  const { ChatUI } = await import('../../src/scripts/ui/chat/chat-ui.js');
+  let bubbleClearCount = 0;
+  let contentClearCount = 0;
+  const bubble = {
+    classList: createClassList(),
+    style: { removeProperty() {} },
+    set innerHTML(value) {
+      if (value === '') bubbleClearCount += 1;
+    },
+  };
+  const contentTarget = {
+    classList: createClassList(),
+    style: {
+      removeProperty() {},
+      whiteSpace: '',
+    },
+    textContent: '',
+    set innerHTML(value) {
+      if (value === '') contentClearCount += 1;
+    },
+  };
+  const wrapper = {
+    querySelector(selector) {
+      return selector === '.QQ_chat_msgdiv' ? bubble : null;
+    },
+  };
+  const ui = Object.create(ChatUI.prototype);
+  ui.cleanupRichTextMounts = () => {};
+  ui.prepareTextContainer = () => contentTarget;
+  ui.normalizeAssistantLineBreaks = value => String(value ?? '');
+  ui.renderTextWithStickers = () => false;
+
+  const rendered = ui._renderSwipeContent(
+    wrapper,
+    { id: 'm-swipe-reasoning', meta: { reasoningDisplay: '推理中' } },
+    '正文',
+    { streaming: true },
+  );
+
+  assert.equal(rendered, true);
+  assert.equal(bubbleClearCount, 0);
+  assert.equal(contentClearCount, 1);
+  assert.equal(contentTarget.textContent, '正文');
+  console.log('ok - swipe stream clears only the body target so reasoning action nodes remain mounted');
+}

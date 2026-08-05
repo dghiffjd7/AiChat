@@ -495,6 +495,17 @@ const createStorage = () => {
   assert.match(appSource, /resetRpHistory\(getRpSessionId\(activePersonaId\), \{ withArchive: true \}\)/);
   assert.match(appSource, /当前剧情会先存档/);
   assert.match(appSource, /正文与记忆表可在历史存档中切回；变量状态目前不会随存档恢复/);
+  const greetingEditorStart = appSource.indexOf('const promptRpGreetingEditor =');
+  const greetingEditorEnd = appSource.indexOf('const promptRpGreetingCreate =', greetingEditorStart);
+  assert.ok(greetingEditorStart >= 0 && greetingEditorEnd > greetingEditorStart);
+  const greetingEditorSource = appSource.slice(greetingEditorStart, greetingEditorEnd);
+  assert.match(appSource, /import\s*\{\s*bindBackdropActivation\s*\}\s*from\s*'\.\/backdrop-activation-utils\.js'/);
+  assert.match(greetingEditorSource, /let unbindBackdropActivation = \(\) => \{\};/);
+  assert.match(greetingEditorSource, /unbindBackdropActivation\(\);/);
+  assert.match(
+    greetingEditorSource,
+    /unbindBackdropActivation = bindBackdropActivation\(overlay, \{[\s\S]*documentLike: document,[\s\S]*onActivate: \(\) => close\(null\)/,
+  );
   const snapshotFlowStart = appSource.indexOf('const buildSwipeMemoryTableSnapshot = async');
   const snapshotFlowEnd = appSource.indexOf('const attachAssistantMemoryStateToMeta', snapshotFlowStart);
   assert.ok(snapshotFlowStart >= 0 && snapshotFlowEnd > snapshotFlowStart);
@@ -517,6 +528,28 @@ const createStorage = () => {
   assert.match(
     appSource.slice(restoreCheckpointStart, restoreCheckpointEnd),
     /getMemoryStorageModeForSession\(sid\)\s*!==\s*'table'/,
+  );
+  const swipeRegenStart = appSource.indexOf('ui.onSwipeRegen(async');
+  const swipeRegenEnd = appSource.indexOf('// Button: open config', swipeRegenStart);
+  assert.ok(swipeRegenStart >= 0 && swipeRegenEnd > swipeRegenStart);
+  const updateVariableApplyDeclaration = appSource.indexOf('const applyUpdateVariableFromMessage =');
+  assert.ok(
+    updateVariableApplyDeclaration >= 0 && updateVariableApplyDeclaration < swipeRegenStart,
+    '右滑处理只能调用其词法作用域内已经完成装配的 UpdateVariable 函数',
+  );
+  const swipeRegenSource = appSource.slice(swipeRegenStart, swipeRegenEnd);
+  assert.match(
+    swipeRegenSource,
+    /applyUpdateVariableFromMessage\(newAiMsg, sid\);[\s\S]*const finalizedNewAiMsg = chatStore\.findMessage\(newAiMsg\.id, sid\) \|\| newAiMsg;[\s\S]*commitBranch\(finalizedNewAiMsg, \{/,
+    '右滑最终回复必须先补跑 UpdateVariable/状态栏占位符，再提交为正式分支',
+  );
+  const swipeCommitStart = swipeRegenSource.indexOf('const commitBranch =');
+  const swipeCommitEnd = swipeRegenSource.indexOf('const commitBufferedSwipePartial =', swipeCommitStart);
+  assert.ok(swipeCommitStart >= 0 && swipeCommitEnd > swipeCommitStart);
+  assert.match(
+    swipeRegenSource.slice(swipeCommitStart, swipeCommitEnd),
+    /if \(!partial && !cancelled\) \{[\s\S]*captureVariableSnapshotToMessage\(sid, updated\);[\s\S]*updated = chatStore\.findMessage\(msgId, sid\) \|\| updated;/,
+    '右滑正式分支必须在 UpdateVariable 应用后保存该分支变量快照',
   );
   console.log('ok - app wires safe RP exit cleanup and all three greeting write entry points');
 }

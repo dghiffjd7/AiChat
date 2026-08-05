@@ -12,6 +12,7 @@ import {
     splitGenerationParamFilterInput,
 } from '../utils/generation-param-filter-utils.js';
 import { appConfirm } from './app-confirm.js';
+import { bindBackdropActivation } from './backdrop-activation-utils.js';
 import { rankModelCandidates } from '../utils/model-candidates.js';
 import {
     reloadBridgeConfig,
@@ -1046,6 +1047,7 @@ export class ConfigPanel {
         };
         const close = (apply = false) => {
             if (apply) this.setExcludedGenerationParams(draft, { emit: true });
+            unbindBackdropActivation();
             overlay.remove();
         };
         const addFromInput = () => {
@@ -1062,11 +1064,10 @@ export class ConfigPanel {
             render();
         };
 
+        const unbindBackdropActivation = bindBackdropActivation(overlay, {
+            onActivate: () => close(false),
+        });
         overlay.addEventListener('click', (event) => {
-            if (event.target === overlay) {
-                close(false);
-                return;
-            }
             const btn = event.target?.closest?.('[data-param-filter-action]');
             if (!btn || !overlay.contains(btn)) return;
             const action = btn.dataset.paramFilterAction || '';

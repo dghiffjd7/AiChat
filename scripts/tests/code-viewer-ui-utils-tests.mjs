@@ -32,10 +32,20 @@ const createFakeDocument = () => {
       this.focused = true;
     }
   }
+  const listeners = new Map();
   return {
     body: new FakeElement('body'),
     createElement(tagName) {
       return new FakeElement(tagName);
+    },
+    addEventListener(type, handler) {
+      listeners.set(type, handler);
+    },
+    removeEventListener(type, handler) {
+      if (listeners.get(type) === handler) listeners.delete(type);
+    },
+    emit(type, event = {}) {
+      return listeners.get(type)?.(event);
     },
   };
 };
@@ -105,9 +115,37 @@ const createFakeDocument = () => {
     canSave: false,
   });
   assert.equal(overlay.__chatappRefs.saveBtn.style.display, 'none');
-  overlay.emit('click');
+  documentLike.emit('pointerdown', { target: overlay, pointerId: 1 });
+  documentLike.emit('pointerup', { target: overlay, pointerId: 1 });
+  overlay.emit('click', { target: overlay });
   assert.equal(overlay.style.display, 'none');
   console.log('ok - code viewer hides save button for non-editable messages and closes on backdrop click');
+}
+
+{
+  const documentLike = createFakeDocument();
+  const runtime = createCodeViewerUiRuntime({
+    documentLike,
+    windowLike: { addEventListener() {} },
+    schedule: cb => cb(),
+    onSaveEdit: async () => true,
+  });
+  const overlay = runtime.openCodeViewer(null, {
+    message: { role: 'assistant', id: 'm-drag' },
+    text: 'select this text',
+    canSave: true,
+  });
+  const textarea = overlay.__chatappRefs.codeEl;
+  documentLike.emit('pointerdown', { target: textarea, pointerId: 2 });
+  documentLike.emit('pointerup', { target: overlay, pointerId: 2 });
+  overlay.emit('click', { target: overlay });
+  assert.equal(overlay.style.display, 'block');
+
+  documentLike.emit('pointerdown', { target: overlay, pointerId: 3 });
+  documentLike.emit('pointerup', { target: overlay, pointerId: 3 });
+  overlay.emit('click', { target: overlay });
+  assert.equal(overlay.style.display, 'none');
+  console.log('ok - code viewer keeps editing open when text selection drags out and closes on a genuine backdrop click');
 }
 
 {

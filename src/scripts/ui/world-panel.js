@@ -12,6 +12,7 @@ import { hasTauriRuntime, pickSavePath } from '../utils/save-dialog.js';
 import { safeInvoke } from '../utils/tauri.js';
 import { WorldEditorModal } from './world-editor.js';
 import { appConfirm } from './app-confirm.js';
+import { bindBackdropActivation } from './backdrop-activation-utils.js';
 import { bindCustomSelectButton, closeCustomSelectMenu, refreshCustomSelectButton } from './custom-select.js';
 import { isWorldMotionReduced, setWorldDisclosureState } from './world-management-motion-utils.js';
 import {
@@ -1709,7 +1710,9 @@ export class WorldPanel {
         this.openLibraryModal = openLibrary;
         this.closeLibraryModal = closeLibrary;
 
-        this.libraryOverlay.addEventListener('click', () => closeLibrary());
+        bindBackdropActivation(this.libraryOverlay, {
+            onActivate: () => closeLibrary(),
+        });
         this.libraryModal?.addEventListener('click', (event) => event.stopPropagation());
         this.libraryOverlay.querySelector('.sticker-bind-close')?.addEventListener('click', () => closeLibrary());
         this.libraryOverlay.querySelector('#world-library-close')?.addEventListener('click', () => closeLibrary());

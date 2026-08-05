@@ -4969,7 +4969,7 @@ body[data-ui-mode='rp'] .QQ_chat_page.sticker-preview-active .msgcontent {
   align-items: center;
   justify-content: center;
   padding: 16px;
-  z-index: 1400;
+  z-index: 22000;
 }
 
 .sticker-pack-overlay.is-active {
@@ -5354,7 +5354,7 @@ body[data-ui-mode='rp'] .QQ_chat_page.sticker-preview-active .msgcontent {
   align-items: center;
   justify-content: center;
   padding: 16px;
-  z-index: 1500;
+  z-index: 23000;
 }
 
 .sticker-bind-overlay.is-active {
