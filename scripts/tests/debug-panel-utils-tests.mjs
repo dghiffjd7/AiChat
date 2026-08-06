@@ -428,6 +428,20 @@ import {
   ];
   assert.deepEqual(collectErrorLogs(logs), [logs[1], logs[2]]);
   assert.equal(formatErrorLogs(logs), '⚠️[10:00:01] warn\n❌[10:00:02] error');
+  const withCompat = formatErrorLogs(logs, [{
+    status: 'confirmed',
+    api: '_.camelCase',
+    scopeFingerprint: 'scope-a',
+    revisionFingerprint: 'revision-a',
+    candidateCount: 1,
+    confirmedCount: 1,
+    errorCategory: 'api_shape',
+    firstSeenAt: 1000,
+    lastSeenAt: 1200,
+  }]);
+  assert.match(withCompat, /【兼容缺口报告】/);
+  assert.match(withCompat, /_\.camelCase/);
+  assert.match(withCompat, /scope-a/);
   console.log('ok - collectErrorLogs and formatErrorLogs keep only warn/error entries in export order');
 }
 

@@ -80,12 +80,10 @@ console.log('ok - theme audit core detects risky literals and baseline drift');
   assert.match(paperCss, /::after[\s\S]*pointer-events:\s*none/, '噪点层不拦截交互');
   assert.match(paperCss, /--app-scrollbar-thumb:/, '滚动条走 token 覆盖');
   assert.match(paperCss, /Noto Serif SC/, '衬线标题字族存在');
-  assert.match(paperCss, /@keyframes paper-ink-focus-breathe/, 'focus 呼吸动画存在');
-  assert.match(paperCss, /animation:\s*paper-ink-focus-breathe/, 'focus 呼吸动画已挂到输入控件');
-  assert.match(
+  assert.doesNotMatch(
     paperCss,
-    /@media\s*\(prefers-reduced-motion:\s*reduce\)\s*\{[\s\S]*?body\[data-theme-preset='paper-ink'\]\s+input:focus-visible,[\s\S]*?body\[data-theme-preset='paper-ink'\]\s+textarea:focus-visible,[\s\S]*?body\[data-theme-preset='paper-ink'\]\s+select:focus-visible\s*\{[\s\S]*?animation:\s*none\s*!important;?[\s\S]*?\}\s*\}/,
-    '系统 reduced-motion 会关闭纸墨 focus 呼吸动画',
+    /paper-ink-focus-breathe/,
+    '纸墨不得为所有输入控件追加主题专属 focus 呼吸外框',
   );
   console.log('ok - paper-ink phase-2 texture contracts hold');
 }

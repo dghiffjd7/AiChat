@@ -314,7 +314,8 @@ export class GeneralSettingsPanel {
     this.setBundleProgress({ visible: false, progress: 0, text: '', indeterminate: false, tone: 'normal' });
   }
 
-  show() {
+  show(options = {}) {
+    const opts = options && typeof options === 'object' ? options : {};
     if (!this.element) {
       this.createUI();
     }
@@ -563,6 +564,7 @@ export class GeneralSettingsPanel {
     this.applyCreativeWideSetting(Boolean(settings.creativeWideBubble));
     this.element.style.display = 'block';
     this.overlayElement.style.display = 'block';
+    if (opts.revealRichIframeScripts === true) this.revealRichIframeScriptsSetting();
   }
 
   hide() {
@@ -1053,6 +1055,16 @@ export class GeneralSettingsPanel {
     this.syncAdvancedFoldVisibility();
     if (typeof afterToggle === 'function') afterToggle(nextExpanded);
     if (nextExpanded) this.scrollFoldSectionIntoView(toggle, wrap);
+  }
+
+  revealRichIframeScriptsSetting() {
+    if (!this.uiAdvancedToggle || !this.uiAdvancedWrap || !this.richIframeScriptsToggle) return false;
+    if (!this.isFoldExpanded(this.uiAdvancedToggle)) {
+      this.uiAdvancedToggle.dataset.expanded = '1';
+      this.syncAdvancedFoldVisibility();
+    }
+    this.scrollFoldSectionIntoView(this.uiAdvancedToggle, this.uiAdvancedWrap);
+    return true;
   }
 
   initSelectableCards() {
@@ -1691,9 +1703,12 @@ export class GeneralSettingsPanel {
     return GENERAL_SETTINGS_ICONS[name] || GENERAL_SETTINGS_ICONS.sliders;
   }
 
-  renderFoldButton(id, label = '高级选项') {
+  renderFoldButton(id, label = '高级选项', guideTarget = '') {
+    const guideAttr = String(guideTarget || '').trim()
+      ? ` data-maid-guide-target="${String(guideTarget).replace(/"/g, '&quot;')}"`
+      : '';
     return `
-      <button type="button" id="${id}" class="general-settings-fold-btn" data-expanded="0" aria-expanded="false">
+      <button type="button" id="${id}" class="general-settings-fold-btn" data-expanded="0" aria-expanded="false"${guideAttr}>
         <span class="general-settings-fold-btn-label">${label}</span>
         <svg viewBox="0 0 24 24" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>
       </button>
@@ -1711,7 +1726,11 @@ export class GeneralSettingsPanel {
     nested = false,
     risk = false,
     extraClass = '',
+    guideTarget = '',
   } = {}) {
+    const guideAttr = String(guideTarget || '').trim()
+      ? ` data-maid-guide-target="${String(guideTarget).replace(/"/g, '&quot;')}"`
+      : '';
     const inputAttrs = type === 'radio'
       ? `type="radio" id="${id}" name="${name}" value="${value}"`
       : `type="checkbox" id="${id}"`;
@@ -1724,7 +1743,7 @@ export class GeneralSettingsPanel {
       ? '<span class="general-settings-control general-settings-radio" aria-hidden="true"></span>'
       : '<span class="general-settings-control general-settings-switch" aria-hidden="true"></span>';
     return `
-      <label class="${classes}">
+      <label class="${classes}"${guideAttr}>
         <input ${inputAttrs}>
         <span class="general-settings-row-main">
           <span class="general-settings-row-icon" aria-hidden="true">${this.getSettingIcon(icon)}</span>
@@ -1992,7 +2011,7 @@ export class GeneralSettingsPanel {
             <div>
               <div class="general-settings-card-title has-help" data-help="显示、动画与调试辅助选项。">界面与调试</div>
             </div>
-            ${this.renderFoldButton('general-ui-advanced-toggle', '调试选项')}
+            ${this.renderFoldButton('general-ui-advanced-toggle', '调试选项', 'general-ui-advanced')}
           </div>
 
           <div class="general-settings-setting-list">
@@ -2047,6 +2066,7 @@ export class GeneralSettingsPanel {
                   icon: 'code',
                   nested: true,
                   risk: true,
+                  guideTarget: 'general-rich-iframe-scripts',
                 })}
                 ${this.renderSettingRow({
                   id: 'general-toast-enabled',
@@ -2831,7 +2851,12 @@ export class GeneralSettingsPanel {
           return;
         }
       }
-      appSettings.update({ allowRichIframeScripts: enabled });
+      const settings = appSettings.update({ allowRichIframeScripts: enabled });
+      const value = settings?.allowRichIframeScripts === true;
+      if (target) target.checked = value;
+      window.dispatchEvent(new CustomEvent('app-settings-changed', {
+        detail: { key: 'allowRichIframeScripts', value },
+      }));
     });
     this.toastEnabledToggle?.addEventListener('change', (e) => {
       const enabled = Boolean(e?.target?.checked);

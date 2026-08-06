@@ -3,6 +3,7 @@ import {
   buildAgentRunListView,
   formatAgentRunDiagnostics,
 } from '../agent/agent-run-view-model.js';
+import { formatCompatGapReports } from '../storage/compat-gap-report-store.js';
 
 export const formatCustomBundleDiagnostics = (snapshot) => {
   if (!snapshot || typeof snapshot !== 'object') return '暂无自定义资料包导入诊断';
@@ -445,10 +446,14 @@ export const collectErrorLogs = (logs = []) => (
   Array.isArray(logs) ? logs : []
 ).filter((log) => log?.type === 'error' || log?.type === 'warn');
 
-export const formatErrorLogs = (logs = []) => {
+export const formatErrorLogs = (logs = [], compatReports = []) => {
   const list = collectErrorLogs(logs);
-  if (!list.length) return '暂无错误日志';
-  return list.map((log) => `${log.prefix}[${log.timestamp}] ${log.message}`).join('\n');
+  const runtimeText = list.length
+    ? list.map((log) => `${log.prefix}[${log.timestamp}] ${log.message}`).join('\n')
+    : '暂无错误日志';
+  const gaps = Array.isArray(compatReports) ? compatReports : [];
+  if (!gaps.length) return runtimeText;
+  return `【运行错误日志】\n${runtimeText}\n\n【兼容缺口报告】\n${formatCompatGapReports(gaps)}`;
 };
 
 export const buildDebugTextFilename = (prefix, date = new Date()) => {

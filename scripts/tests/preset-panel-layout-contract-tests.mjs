@@ -20,6 +20,10 @@ assert.match(source, /\.pp-pages\[data-view="detail"\]\s+\.pp-page\[data-panel-p
 assert.match(source, /data-panel-page="root"/);
 assert.match(source, /data-panel-page="detail"/);
 assert.match(source, /data-panel-page="bindings"/);
+assert.match(source, /setPreviewDiscoveryGuide\(guide = null\)/, '预设面板应支持注入独立的一次性预览发现引导');
+assert.match(source, /currentPage !== 'detail'[\s\S]*?guide\.hide/, '一次性标记只应出现在预设二级页');
+assert.match(source, /openPreview\(\)[\s\S]*?previewDiscoveryGuide\?\.complete\?\.\(\)/, '实际展开请求预览后才应永久完成发现引导');
+assert.match(source, /hide\(\)[\s\S]*?previewDiscoveryGuide\?\.hide\?\.\(\)/, '仅关闭预设面板不得消耗一次性引导');
 assert.match(source, /buildModeCard\('moments', '动态任务'\)/);
 assert.match(sessionConfigSource, /renderModeCard\(wrap, 'moments', '动态任务默认'/);
 assert.match(presetStoreSource, /PRESET_BINDING_MODES = \['chat', 'rp', 'moments'\]/);

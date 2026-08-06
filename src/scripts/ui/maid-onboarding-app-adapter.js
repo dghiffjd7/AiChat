@@ -6,10 +6,12 @@ export const createMaidOnboardingAppAdapter = ({
   isElementVisible = element => Boolean(element),
   delay = async () => {},
   openSettingsMenu = null,
+  openGeneralSettings = null,
   openApiConfig = null,
   openQuickMenu = null,
   openAddFriend = null,
   closeMenus = null,
+  closeGeneralSettings = null,
   closeApiConfig = null,
   closeAddFriend = null,
   cancelAddFriendConfirm = null,
@@ -47,6 +49,18 @@ export const createMaidOnboardingAppAdapter = ({
     if (target === 'settings-api-config') {
       await closeApiConfig?.();
       return false;
+    }
+    if (target === 'settings-general') {
+      await closeGeneralSettings?.();
+      return false;
+    }
+    if (target === 'general-ui-advanced') {
+      await openGeneralSettings?.({ revealRichIframeScripts: false });
+      return true;
+    }
+    if (target === 'general-rich-iframe-scripts') {
+      await openGeneralSettings?.({ revealRichIframeScripts: true });
+      return true;
     }
     if (target === 'top-plus-entry') {
       await cancelAddFriendConfirm?.();
@@ -93,7 +107,7 @@ export const createMaidOnboardingAppAdapter = ({
     return false;
   };
 
-  const prepareStep = async ({ step = null, meta = null } = {}) => {
+  const prepareStep = async ({ flow = null, step = null, meta = null } = {}) => {
     const target = trim(step?.target);
     const isPrevious = trim(meta?.reason) === 'prev';
     if (isPrevious && await preparePreviousStep(target)) return;
@@ -102,9 +116,25 @@ export const createMaidOnboardingAppAdapter = ({
       await openSettingsMenu?.();
       return;
     }
+    if (target === 'settings-general' && !resolveTarget(target)) {
+      await openSettingsMenu?.();
+      return;
+    }
     if (target === 'settings-entry') {
-      if (isChatRoomVisible?.()) await exitChatRoom?.({ animate: false, source: 'maid-onboarding' });
-      await switchPage?.('chat', { animate: false });
+      if (trim(flow?.id) !== 'rich-script-permission') {
+        if (isChatRoomVisible?.()) await exitChatRoom?.({ animate: false, source: 'maid-onboarding' });
+        await switchPage?.('chat', { animate: false });
+      }
+      return;
+    }
+    if (target === 'general-ui-advanced' && !resolveTarget(target)) {
+      await closeMenus?.();
+      await openGeneralSettings?.({ revealRichIframeScripts: false });
+      return;
+    }
+    if (target === 'general-rich-iframe-scripts' && !resolveTarget(target)) {
+      await closeMenus?.();
+      await openGeneralSettings?.({ revealRichIframeScripts: true });
       return;
     }
     if (target.startsWith('config-') && !resolveTarget(target)) {
@@ -169,6 +199,12 @@ export const createMaidOnboardingAppAdapter = ({
     if (kind === 'open-api-config') {
       if (typeof openApiConfig !== 'function') return false;
       return runClickFallback(() => openApiConfig?.({ reason: 'guide' }), 'settings-api-config');
+    }
+    if (kind === 'open-general-settings') {
+      return runClickFallback(
+        () => openGeneralSettings?.({ revealRichIframeScripts: false }),
+        'settings-general',
+      );
     }
     if (kind === 'open-quick-menu') {
       return runClickFallback(openQuickMenu, 'top-plus-entry');

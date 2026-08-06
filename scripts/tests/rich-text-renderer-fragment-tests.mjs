@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
+import vm from 'node:vm';
 
 globalThis.localStorage = {
   getItem: () => null,
@@ -16,6 +17,7 @@ const {
   shouldDropLegacyIframeHeightEcho,
   buildIframeSrcDoc,
   buildRichTextRenderPlan,
+  buildDollarGlobalShim,
   buildFrameworkGlobalShim,
   buildMvuCompatBridge,
   expandRichImageTokensForHtml,
@@ -145,7 +147,242 @@ tests.push({
 });
 
 tests.push({
-  name: 'framework shim orders Vue and VueDemi before Pinia',
+  name: 'lodash fallback supports the card entries-sort-map-join chain',
+  fn: () => {
+    const shim = buildDollarGlobalShim({
+      iframeId: 'lodash-chain-test',
+      appOrigin: '',
+    });
+    const inlineScript = shim.match(/<script>\s*([\s\S]*?)<\/script>\s*$/)?.[1] || '';
+    assert.ok(inlineScript, 'fallback shim must contain an inline script');
+    const windowRef = { postMessage() {} };
+    windowRef.parent = windowRef;
+    windowRef.top = windowRef;
+    vm.runInNewContext(inlineScript, {
+      window: windowRef,
+      parent: windowRef,
+      document: {
+        head: null,
+        documentElement: null,
+        body: null,
+        readyState: 'complete',
+      },
+      console,
+      setTimeout,
+      clearTimeout,
+      structuredClone,
+    });
+    assert.equal(
+      windowRef._({ type: 'message', message_id: -1 })
+        .entries()
+        .sortBy(([key]) => key)
+        .map(([, value]) => value)
+        .join('.'),
+      '-1.message',
+    );
+    assert.deepEqual(
+      Array.from(windowRef._.entries({ first: 1, second: 2 }), pair => Array.from(pair)),
+      [['first', 1], ['second', 2]],
+    );
+    assert.equal(
+      windowRef._.isEqual(
+        { nested: { value: 1 }, list: ['a', { enabled: true }] },
+        { nested: { value: 1 }, list: ['a', { enabled: true }] },
+      ),
+      true,
+    );
+    assert.equal(windowRef._.isEqual({ value: 1 }, { value: 2 }), false);
+  },
+});
+
+tests.push({
+  name: 'mini jquery fallback supports namespaced delegated on/off plus data and val',
+  fn: () => {
+    const shim = buildDollarGlobalShim({
+      iframeId: 'jquery-events-test',
+      appOrigin: '',
+    });
+    const inlineScript = shim.match(/<script>\s*([\s\S]*?)<\/script>\s*$/)?.[1] || '';
+    class FakeElement {
+      constructor({ selectors = [], dataset = {}, value = '' } = {}) {
+        this.selectors = new Set(selectors);
+        this.dataset = { ...dataset };
+        this.value = value;
+        this.parent = null;
+        this.listeners = new Map();
+      }
+
+      addEventListener(type, listener) {
+        const list = this.listeners.get(type) || [];
+        list.push(listener);
+        this.listeners.set(type, list);
+      }
+
+      removeEventListener(type, listener) {
+        this.listeners.set(type, (this.listeners.get(type) || []).filter(item => item !== listener));
+      }
+
+      closest(selector) {
+        let current = this;
+        while (current) {
+          if (current.selectors?.has(selector)) return current;
+          current = current.parent;
+        }
+        return null;
+      }
+
+      contains(candidate) {
+        let current = candidate;
+        while (current) {
+          if (current === this) return true;
+          current = current.parent;
+        }
+        return false;
+      }
+
+      dispatch(type, target = this) {
+        const event = { type, target };
+        (this.listeners.get(type) || []).slice().forEach(listener => listener.call(this, event));
+      }
+
+      getAttribute(name) {
+        if (!String(name).startsWith('data-')) return null;
+        const key = String(name).slice(5).replace(/-([a-z])/g, (_match, letter) => letter.toUpperCase());
+        return Object.prototype.hasOwnProperty.call(this.dataset, key) ? this.dataset[key] : null;
+      }
+    }
+    const documentRef = {
+      head: null,
+      documentElement: null,
+      body: null,
+      readyState: 'complete',
+      querySelectorAll: () => [],
+      addEventListener: () => {},
+      removeEventListener: () => {},
+    };
+    const windowRef = { postMessage() {} };
+    windowRef.parent = windowRef;
+    windowRef.top = windowRef;
+    vm.runInNewContext(inlineScript, {
+      window: windowRef,
+      parent: windowRef,
+      document: documentRef,
+      Element: FakeElement,
+      Node: FakeElement,
+      console,
+      setTimeout,
+      clearTimeout,
+      structuredClone,
+    });
+
+    const root = new FakeElement();
+    const tab = new FakeElement({ selectors: ['.tab'], dataset: { char: 'alice' } });
+    tab.parent = root;
+    const select = new FakeElement({ value: 'story' });
+    let firstCalls = 0;
+    let secondCalls = 0;
+    windowRef.$(root).on('click.card', '.tab', function handler() {
+      firstCalls += 1;
+      assert.equal(this, tab);
+    });
+    root.dispatch('click', tab);
+    windowRef.$(root)
+      .off('click.card')
+      .on('click.card', '.tab', () => { secondCalls += 1; });
+    root.dispatch('click', tab);
+
+    assert.equal(firstCalls, 1);
+    assert.equal(secondCalls, 1);
+    assert.equal(windowRef.$(tab).data('char'), 'alice');
+    assert.equal(windowRef.$(select).val(), 'story');
+    const wrappedSelect = windowRef.$(select);
+    assert.equal(wrappedSelect.val('sandbox'), wrappedSelect);
+    assert.equal(select.value, 'sandbox');
+  },
+});
+
+tests.push({
+  name: 'shim compat-miss probes report unknown $ and _ APIs once via structured messages',
+  fn: () => {
+    const shim = buildDollarGlobalShim({
+      iframeId: 'compat-miss-test',
+      debugTag: 'miss-tag',
+      appOrigin: '',
+    });
+    const inlineScript = shim.match(/<script>\s*([\s\S]*?)<\/script>\s*$/)?.[1] || '';
+    const posts = [];
+    const windowRef = { postMessage: (msg) => posts.push(msg) };
+    windowRef.parent = windowRef;
+    windowRef.top = windowRef;
+    class FakeShimElement {}
+    vm.runInNewContext(inlineScript, {
+      window: windowRef,
+      parent: windowRef,
+      document: {
+        head: null,
+        documentElement: null,
+        body: null,
+        readyState: 'complete',
+        querySelectorAll: () => [],
+        addEventListener: () => {},
+        removeEventListener: () => {},
+      },
+      Element: FakeShimElement,
+      Node: FakeShimElement,
+      console,
+      setTimeout,
+      clearTimeout,
+      structuredClone,
+    });
+    assert.equal(typeof windowRef.__chatappWithCompatMissProbe, 'function');
+
+    windowRef._.get({ a: 1 }, 'a');
+    windowRef._([1, 2]).entries().value();
+    void windowRef.$('.missing').text();
+
+    void windowRef.$.ajax;
+    void windowRef.$.ajax;
+    void windowRef.$('.missing').animate;
+    void windowRef._.camelCase;
+    void windowRef._([1]).groupBy;
+    void windowRef._([1, 2]).filter(() => true).uniq;
+
+    const misses = posts.filter(post => post?.type === 'chatapp:compat-miss');
+    assert.deepEqual(misses.map(item => item.api), [
+      '$.ajax',
+      '$().animate',
+      '_.camelCase',
+      '_().groupBy',
+      '_().uniq',
+    ], 'known APIs stay silent; unknown APIs report exactly once, including chained links');
+    misses.forEach((item) => {
+      assert.equal(item.id, 'compat-miss-test');
+      assert.equal(Object.prototype.hasOwnProperty.call(item, 'tag'), false);
+    });
+  },
+});
+
+tests.push({
+  name: 'host bridge aggregates compat-miss reports and mvu bridge minis reuse the probe',
+  fn: () => {
+    const source = fs.readFileSync(path.join(process.cwd(), 'src/scripts/ui/chat/rich-text-renderer.js'), 'utf8');
+    assert.match(source, /data\.type === 'chatapp:compat-miss'/);
+    assert.match(source, /resolveCompatGapMessage\(\{/);
+    assert.match(source, /getCompatGapReportStore\(\)\.record\(resolved\.report\)/);
+    assert.doesNotMatch(source, /reportedCompatMisses/);
+    assert.match(source, /window\.__chatappWithCompatMissProbe = withCompatMissProbe/);
+    const bridgeProbeUses = source.match(/window\.\$ = probeWrap\(mini, '\$\.'\);/g) || [];
+    assert.equal(bridgeProbeUses.length, 2, 'both mvu bridge minis must reuse the compat-miss probe');
+    assert.match(
+      source,
+      /!window\.\$\.__chatappMini && window\.\$\.fn && window\.\$\.fn\.jquery/,
+      'bridge jQuery detection must short-circuit before touching .fn on a probed mini',
+    );
+  },
+});
+
+tests.push({
+  name: 'framework shim defines Vue production flags before Pinia',
   fn: () => {
     const html = buildFrameworkGlobalShim({
       iframeId: 'framework-order-test',
@@ -157,6 +394,9 @@ tests.push({
     const routerAt = html.indexOf('data-chatapp-framework="vue-router"');
     const piniaAt = html.indexOf('data-chatapp-framework="pinia"');
     const readyAt = html.indexOf('data-chatapp-framework="ready"');
+    const prodDevtoolsFlagAt = html.indexOf('globalThis.__VUE_PROD_DEVTOOLS__ = false');
+    assert.ok(prodDevtoolsFlagAt > 0);
+    assert.ok(prodDevtoolsFlagAt < piniaAt);
     assert.ok(vueAt > 0);
     assert.ok(vueAt < demiAt);
     assert.ok(demiAt < routerAt);
@@ -250,6 +490,13 @@ tests.push({
       '秦素霜.倾心值': 0,
       秦素霜: { 倾心值: 0 },
     });
+    assert.deepEqual(
+      fakeWindow.getVariables({ type: 'message', message_id: -1 }).stat_data,
+      {
+        '秦素霜.倾心值': 0,
+        秦素霜: { 倾心值: 0 },
+      },
+    );
     assert.equal(fakeWindow.getAllVariables().stat_data['秦素霜.倾心值'], 0);
     assert.equal(fakeWindow.getChatMessages(0)[0].data.stat_data['秦素霜.倾心值'], 0);
 
@@ -292,6 +539,35 @@ tests.push({
     assert.equal(parts[1].code, 'const a = 1;');
     assert.equal(parts[3].code, 'plain');
     assert.ok(parts[4].text.includes('after'));
+  },
+});
+
+tests.push({
+  name: 'splitFencedCodeBlocks repairs adjacent card html fences joined by a separator',
+  fn: () => {
+    // 真实社区卡形态：两条 display regex 依次追加完整 HTML，前一条闭围栏与
+    // 后一条 `====` 无换行粘连。不得把第二份文档吞进第一份代码块。
+    const welcome = [
+      '====',
+      '```html',
+      '<!doctype html>',
+      '<html><body><main id="welcome">welcome</main></body></html>',
+      '```',
+    ].join('\n');
+    const status = [
+      '====',
+      '```html',
+      '<!doctype html>',
+      '<html><body><aside id="status">status</aside></body></html>',
+      '```',
+    ].join('\n');
+    const parts = splitFencedCodeBlocks(welcome + status);
+    const codeParts = parts.filter(part => part.type === 'code');
+    assert.equal(codeParts.length, 2);
+    assert.deepEqual(parts.map(part => part.type), ['code', 'code']);
+    assert.ok(codeParts[0].code.includes('id="welcome"'));
+    assert.ok(codeParts[1].code.includes('id="status"'));
+    assert.equal(codeParts[0].code.includes('```html'), false);
   },
 });
 

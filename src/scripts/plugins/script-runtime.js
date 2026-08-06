@@ -2,11 +2,27 @@ import { appSettings } from '../storage/app-settings.js';
 import { logger } from '../utils/logger.js';
 import { emitDebugLog } from '../utils/debug-log.js';
 import { serializeForInlineScript } from '../utils/inline-script.js';
+import {
+  analyzeScriptCompatibility,
+  buildScriptRuntimeErrorDiagnostic,
+  hasTopLevelAwait,
+  resolveScriptCompatibility,
+} from '../import/script-capability-preflight.js';
 
 const SCRIPT_MAX_BYTES = 2 * 1024 * 1024;
 const SCRIPT_TOTAL_BYTES = 8 * 1024 * 1024;
 const SCRIPT_PAYLOAD_LIMIT = 1200000;
 const ST_PROMPT_ORDER_DUMMY_ID = 100001;
+
+const getScriptDiagnosticRevision = (value) => {
+  const content = String(value || '');
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < content.length; index += 1) {
+    hash ^= content.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return `${content.length}:${(hash >>> 0).toString(16)}`;
+};
 
 const buildWorkerScript = () => `
 const scripts = new Map();
@@ -3967,7 +3983,18 @@ const compileScript = (record) => {
     else if (module.exports && typeof module.exports.default === 'function') defaultHandler = module.exports.default;
     else if (exports && typeof exports.default === 'function') defaultHandler = exports.default;
   } catch (err) {
-    callRpc('log', { level: 'error', args: ['脚本加载失败', record.name, String(err?.message || err)] }).catch(() => {});
+    const error = String(err?.message || err);
+    callRpc('log', {
+      level: 'error',
+      args: ['脚本加载失败', record.name, error],
+      scriptError: {
+        phase: 'load',
+        scriptId: record.id,
+        scriptName: record.name,
+        error,
+        compatibility: record.compatibility || null,
+      },
+    }).catch(() => {});
   }
   return { record, handlers, defaultHandler, api, script };
 };
@@ -3990,7 +4017,18 @@ const runHandlers = async (entry, eventName, payload, allowMutate) => {
         data = res;
       }
     } catch (err) {
-      callRpc('log', { level: 'warn', args: ['脚本执行失败', entry.record?.name || '', String(err?.message || err)] }).catch(() => {});
+      const error = String(err?.message || err);
+      callRpc('log', {
+        level: 'warn',
+        args: ['脚本执行失败', entry.record?.name || '', error],
+        scriptError: {
+          phase: 'execute',
+          scriptId: entry.record?.id || '',
+          scriptName: entry.record?.name || '',
+          error,
+          compatibility: entry.record?.compatibility || null,
+        },
+      }).catch(() => {});
     }
   }
   return data;
@@ -4285,13 +4323,17 @@ const toScriptGenerationMessage = (entry) => {
   };
 };
 
-const isEsmLikeScript = (content) => {
+const isEsmLikeScript = (content, compatibility = null) => {
   const text = String(content || '');
   if (!text) return false;
   // 只认语句起点的模块语法：脚本内嵌 HTML/字符串里的 `id="btn-import"`、`bam-btn-export`
   // 一类字面量不能把普通 worker 脚本改判进 iframe（iframe API 面更窄，误判会静默丢功能）。
-  return /(^|[;{}()\n])\s*import\s*(?:['"]|\{|\*|[\w$]+\s+from\s)/.test(text) ||
-    /(^|[;{}()\n])\s*export\s*(?:default\s|const\s|let\s|var\s|function[\s(*]|class\s|async\s|\{|\*)/.test(text);
+  if (/(^|[;{}()\n])\s*import\s*(?:['"]|\{|\*|[\w$]+\s+from\s)/.test(text)) return true;
+  if (/(^|[;{}()\n])\s*export\s*(?:default\s|const\s|let\s|var\s|function[\s(*]|class\s|async\s|\{|\*)/.test(text)) return true;
+  if (typeof compatibility?.signals?.topLevelAwait === 'boolean') {
+    return compatibility.signals.topLevelAwait;
+  }
+  return hasTopLevelAwait(text);
 };
 
 export const isEsmLikeScriptForTests = isEsmLikeScript;
@@ -5000,8 +5042,14 @@ ${allowNetwork ? `
       return;
     }
     if (msg.type === 'script-iframe-error') {
-      logger.warn('[script-iframe]', msg.scriptId || '', msg.error || '');
-      emitDebugLog({ message: String(msg.error || 'script iframe error'), type: 'warn', source: 'script' });
+      const record = this.iframes.get(sourceScriptId)?.record || {};
+      this.owner.reportScriptRuntimeError?.({
+        phase: 'load',
+        scriptId: sourceScriptId,
+        scriptName: record.name || '',
+        error: String(msg.error || 'script iframe error'),
+        compatibility: resolveScriptCompatibility(record),
+      });
     }
   }
 }
@@ -5045,6 +5093,8 @@ export class ScriptRuntime {
     this.workerWarmingUp = false;
     // 酒馆脚本 prompt 注入表：sessionId -> Map(entryKey -> block)；脚本每次 sync 全量重跑，表随 sync 清空。
     this.scriptPromptInjections = new Map();
+    this.scriptDiagnosticSignatures = new Map();
+    this.scriptDiagnosticRevisions = new Map();
     this.context = {
       sessionId: '',
       personaId: '',
@@ -6052,6 +6102,74 @@ export class ScriptRuntime {
     return table ? Array.from(table.values()) : [];
   }
 
+  rememberScriptDiagnosticSignature(scriptId, signature) {
+    const normalizedScriptId = String(scriptId || 'unknown-script').trim() || 'unknown-script';
+    this.scriptDiagnosticSignatures ||= new Map();
+    let signatures = this.scriptDiagnosticSignatures.get(normalizedScriptId);
+    if (!signatures) {
+      signatures = new Set();
+      this.scriptDiagnosticSignatures.set(normalizedScriptId, signatures);
+    }
+    if (signatures.has(signature)) return false;
+    signatures.add(signature);
+    return true;
+  }
+
+  syncScriptDiagnosticRevision(record = {}) {
+    const scriptId = String(record?.id || record?.scriptId || 'unknown-script').trim() || 'unknown-script';
+    const revision = getScriptDiagnosticRevision(record?.content);
+    this.scriptDiagnosticRevisions ||= new Map();
+    const previousRevision = this.scriptDiagnosticRevisions.get(scriptId);
+    if (previousRevision !== undefined && previousRevision !== revision) {
+      this.scriptDiagnosticSignatures?.delete(scriptId);
+    }
+    this.scriptDiagnosticRevisions.set(scriptId, revision);
+    return scriptId;
+  }
+
+  finishScriptDiagnosticSync(activeScriptIds = new Set()) {
+    const active = activeScriptIds instanceof Set ? activeScriptIds : new Set(activeScriptIds || []);
+    this.scriptDiagnosticSignatures ||= new Map();
+    this.scriptDiagnosticRevisions ||= new Map();
+    this.scriptDiagnosticSignatures.forEach((_signatures, scriptId) => {
+      if (!active.has(scriptId)) this.scriptDiagnosticSignatures.delete(scriptId);
+    });
+    this.scriptDiagnosticRevisions.forEach((_revision, scriptId) => {
+      if (!active.has(scriptId)) this.scriptDiagnosticRevisions.delete(scriptId);
+    });
+  }
+
+  reportScriptRuntimeError(payload = {}) {
+    const compatibility = payload.compatibility && typeof payload.compatibility === 'object'
+      ? payload.compatibility
+      : analyzeScriptCompatibility(payload.content || '');
+    const diagnostic = buildScriptRuntimeErrorDiagnostic({
+      scriptId: payload.scriptId,
+      phase: payload.phase,
+      error: payload.error,
+      compatibility,
+    });
+    const scriptId = String(payload.scriptId || 'unknown-script').trim() || 'unknown-script';
+    if (!this.rememberScriptDiagnosticSignature(scriptId, diagnostic.signature)) return false;
+    const name = String(payload.scriptName || payload.scriptId || '未命名脚本');
+    const error = String(payload.error || 'unknown error');
+    const message = `[兼容性 ${diagnostic.signature}] ${name}：${error}${diagnostic.identifier ? `（缺失 API：${diagnostic.identifier}）` : ''}`;
+    logger.warn(message);
+    emitDebugLog({ message, type: 'warn', source: 'script' });
+    return true;
+  }
+
+  reportBlockedScript(record, compatibility) {
+    const scriptId = String(record?.id || 'unknown-script').trim() || 'unknown-script';
+    const signature = `${scriptId}:preflight:blocked:${compatibility.fingerprint}`;
+    if (!this.rememberScriptDiagnosticSignature(scriptId, signature)) return false;
+    const name = String(record?.name || record?.id || '未命名脚本');
+    const message = `[兼容性 ${signature}] ${name}：${compatibility.message}`;
+    logger.warn(message);
+    emitDebugLog({ message, type: 'warn', source: 'script' });
+    return true;
+  }
+
   async syncScripts(contextOverride) {
     const context = contextOverride
       ? { ...this.buildContext(contextOverride.sessionId), ...contextOverride }
@@ -6081,11 +6199,13 @@ export class ScriptRuntime {
         this.iframeRuntime.syncScripts([], this.context, runtimeSettings);
       }
       this.clearWorkerUi();
+      this.finishScriptDiagnosticSync(new Set());
       return;
     }
     const scripts = [];
     const oneTime = this.oneTimeScripts.get(this.context.sessionId) || null;
     const seen = new Set();
+    const diagnosticScriptIds = new Set();
     const push = (scope, scopeId) => {
       if (!this.store?.getScripts) return;
       const list = this.store.getScripts(scope, scopeId);
@@ -6096,13 +6216,19 @@ export class ScriptRuntime {
         const isActive = s.enabled === true && s.authorized === true;
         const allowOnce = oneTime && oneTime.has(id);
         if (!isActive && !allowOnce) return;
-        const next = { ...s, scope, scopeId };
+        seen.add(id);
+        diagnosticScriptIds.add(this.syncScriptDiagnosticRevision(s));
+        const compatibility = resolveScriptCompatibility(s);
+        if (compatibility.blocked === true) {
+          this.reportBlockedScript(s, compatibility);
+          return;
+        }
+        const next = { ...s, compatibility, scope, scopeId };
         if (allowOnce) {
           next.enabled = true;
           next.authorized = true;
         }
         scripts.push(next);
-        seen.add(id);
       });
     };
     push('global', 'global');
@@ -6112,6 +6238,7 @@ export class ScriptRuntime {
       : [];
     if (!activePresetIds.length && this.context.presetId) activePresetIds.push(String(this.context.presetId || '').trim());
     activePresetIds.forEach((id) => push('preset', id));
+    this.finishScriptDiagnosticSync(diagnosticScriptIds);
     let totalSize = 0;
     const filtered = [];
     const skipped = [];
@@ -6138,7 +6265,7 @@ export class ScriptRuntime {
     const iframeScripts = [];
     filtered.forEach((script) => {
       const content = String(script?.content || '');
-      if (isEsmLikeScript(content)) iframeScripts.push(script);
+      if (isEsmLikeScript(content, script.compatibility)) iframeScripts.push(script);
       else workerScripts.push(script);
     });
     if (workerScripts.length && !this.worker) {
@@ -7095,6 +7222,10 @@ export class ScriptRuntime {
       return true;
     }
     if (method === 'log') {
+      if (params.scriptError && typeof params.scriptError === 'object') {
+        this.reportScriptRuntimeError(params.scriptError);
+        return true;
+      }
       const level = params.level || 'log';
       const args = Array.isArray(params.args) ? params.args : [params.args];
       logger[level]?.('[script]', ...args);

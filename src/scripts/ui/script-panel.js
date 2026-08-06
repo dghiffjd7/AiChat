@@ -4,6 +4,7 @@ import { bindBackdropActivation } from './backdrop-activation-utils.js';
 import { getCharacterCardDisplayName } from '../utils/character-card-display.js';
 import { bindCustomSelectButton, closeCustomSelectMenu, createCustomSelectWrapper } from './custom-select.js';
 import { restartScriptWorker } from './script-runtime-utils.js';
+import { analyzeScriptCompatibility } from '../import/script-capability-preflight.js';
 
 const SCRIPT_PANEL_STYLE_ID = 'script-panel-polish-style';
 
@@ -716,6 +717,9 @@ export class ScriptPanel {
     if (type === 'error') {
       background = 'rgba(254,226,226,0.9)';
       color = '#b91c1c';
+    } else if (type === 'warning') {
+      background = 'rgba(254,243,199,0.9)';
+      color = '#92400e';
     } else if (type === 'success') {
       background = 'rgba(220,252,231,0.9)';
       color = '#166534';
@@ -760,25 +764,40 @@ export class ScriptPanel {
       return;
     }
     const scopeId = this.getScopeId();
-    const { count, ids } = await this.store.importTavernHelperScripts({
+    const result = await this.store.importTavernHelperScripts({
       scripts,
       scope: this.tab,
       scopeId,
       source: 'import',
     });
+    const count = Math.max(0, Number(result?.count) || 0);
+    const ids = Array.isArray(result?.ids) ? result.ids : [];
     if (!count) {
       this.showStatus('没有可导入的脚本', 'error');
       return;
     }
-    this.showStatus(`已导入 ${count} 个脚本`, 'success');
-    const ok = await appConfirm({
-      title: '导入脚本',
-      message: `已导入 ${count} 个脚本，是否立即启用？`,
-    });
-    if (ok) {
-      for (const id of ids) {
-        await this.store.toggleScript(this.tab, scopeId, id, true);
+    const runnableIds = Array.isArray(result?.runnableIds) ? result.runnableIds : ids;
+    const blockedCount = Math.max(0, Number(result?.compatibility?.blockedCount) || 0);
+    if (blockedCount > 0) {
+      this.showStatus(`已导入 ${count} 个脚本；${blockedCount} 个需要作为 SillyTavern 外部扩展安装，已保持禁用`, 'warning');
+    } else {
+      this.showStatus(`已导入 ${count} 个脚本`, 'success');
+    }
+    if (runnableIds.length) {
+      const ok = await appConfirm({
+        title: '导入脚本',
+        message: blockedCount > 0
+          ? `其中 ${runnableIds.length} 个脚本可运行，是否立即启用？`
+          : `已导入 ${count} 个脚本，是否立即启用？`,
+      });
+      if (ok) {
+        for (const id of runnableIds) {
+          await this.store.toggleScript(this.tab, scopeId, id, true);
+        }
       }
+    }
+    if (!runnableIds.length && blockedCount > 0) {
+      window.toastr?.warning?.('检测到外部扩展加载器；已保留在脚本列表，但不会启用');
     }
     this.refresh();
   }
@@ -797,8 +816,11 @@ export class ScriptPanel {
       return;
     }
     scripts.forEach(script => {
+      const compatibility = analyzeScriptCompatibility(script);
+      const blocked = compatibility.blocked === true;
       const card = document.createElement('div');
       card.className = 'script-panel-card';
+      if (blocked) card.classList.add('is-compatibility-blocked');
       if (shouldAnimateCards) card.classList.add('is-entering');
       card.style.cssText = 'border:1px solid var(--app-border-default);border-radius:12px;padding:12px;display:flex;gap:10px;align-items:center;justify-content:space-between;';
       if (shouldAnimateCards) card.style.animationDelay = `${Math.min(this.scriptList.children.length * 24, 120)}ms`;
@@ -812,7 +834,10 @@ export class ScriptPanel {
       const meta = document.createElement('div');
       meta.className = 'script-panel-card-meta';
       const sourceLabel = SOURCE_LABELS[script.source] || script.source || '脚本';
-      meta.textContent = `${sourceLabel}${script.authorized ? '' : ' · 未授权'}`;
+      meta.textContent = blocked
+        ? `${sourceLabel} · 外部扩展 · 已阻止`
+        : `${sourceLabel}${script.authorized ? '' : ' · 未授权'}`;
+      if (compatibility.message) meta.title = compatibility.message;
       meta.style.cssText = 'font-size:12px;color:var(--app-text-muted);margin-top:4px;';
       left.appendChild(title);
       left.appendChild(meta);
@@ -825,7 +850,9 @@ export class ScriptPanel {
       const toggle = document.createElement('input');
       toggle.className = 'script-panel-card-toggle';
       toggle.type = 'checkbox';
-      toggle.checked = Boolean(script.enabled);
+      toggle.checked = blocked ? false : Boolean(script.enabled);
+      toggle.disabled = blocked;
+      if (blocked) toggle.title = compatibility.message;
       toggle.style.cssText = 'width:18px;height:18px;';
       toggle.addEventListener('change', async () => {
         if (toggle.checked && !script.authorized) {
@@ -838,7 +865,12 @@ export class ScriptPanel {
             return;
           }
         }
-        await this.store.toggleScript(this.tab, scopeId, script.id, toggle.checked);
+        const changed = await this.store.toggleScript(this.tab, scopeId, script.id, toggle.checked);
+        if (!changed && toggle.checked) {
+          toggle.checked = false;
+          this.showStatus(compatibility.message || '该脚本无法在当前沙箱中启用', 'warning');
+          return;
+        }
         try {
           restartScriptWorker(this.appBridge, '脚本已重新加载');
         } catch {}

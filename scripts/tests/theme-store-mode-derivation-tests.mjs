@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 
+import { appSettings } from '../../src/scripts/storage/app-settings.js';
 import { normalizeThemePreset, themeStore } from '../../src/scripts/storage/theme-store.js';
 
 const tests = [];
@@ -101,6 +102,10 @@ test('内建 classic-dark 形态（深表面+mode dark）→ 仍 dark', () => {
 
 // --- 内建主题契约：纸墨 paper-ink ---
 
+test('无已保存设置时默认启用 paper-ink', () => {
+  assert.equal(appSettings.get().uiThemePresetId, 'paper-ink');
+});
+
 const relLum = (hex) => {
   const c = hex.replace('#', '');
   const [r, g, b] = [0, 2, 4]
@@ -119,6 +124,14 @@ test('内建主题共 3 个、id 唯一，包含 paper-ink', () => {
   const ids = builtins.map((t) => t.id);
   assert.equal(new Set(ids).size, 3);
   assert.ok(ids.includes('paper-ink'));
+});
+
+test('前两个内建主题显示为经典白、经典黑', () => {
+  const [light, dark] = themeStore.getBuiltinThemes();
+  assert.deepEqual(
+    [light.id, light.name, dark.id, dark.name],
+    ['classic-light', '经典白', 'classic-dark', '经典黑'],
+  );
 });
 
 test('paper-ink 元数据完整且为浅色内建主题', () => {

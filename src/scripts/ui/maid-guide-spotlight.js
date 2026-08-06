@@ -68,6 +68,43 @@ export const advanceMaidSpotlightBox = ({
   return { box, settled };
 };
 
+export const resolveMaidSpotlightMaskGeometry = ({
+  viewport = {},
+  hole = {},
+  devicePixelRatio = 1,
+} = {}) => {
+  const w = Math.max(0, Number(viewport.w || viewport.width || 0) || 0);
+  const h = Math.max(0, Number(viewport.h || viewport.height || 0) || 0);
+  const sampledRatio = Number(devicePixelRatio);
+  const ratio = Number.isFinite(sampledRatio) && sampledRatio > 0 ? sampledRatio : 1;
+  const snapEdge = (value, max) => clamp(
+    Math.round(clamp(value, 0, max) * ratio) / ratio,
+    0,
+    max,
+  );
+  const rawLeft = rectValue(hole, 'left');
+  const rawTop = rectValue(hole, 'top');
+  const left = snapEdge(rawLeft, w);
+  const top = snapEdge(rawTop, h);
+  const right = Math.max(left, snapEdge(rawLeft + Math.max(0, rectValue(hole, 'width')), w));
+  const bottom = Math.max(top, snapEdge(rawTop + Math.max(0, rectValue(hole, 'height')), h));
+  const snappedHole = {
+    left,
+    top,
+    width: right - left,
+    height: bottom - top,
+  };
+  return {
+    hole: snappedHole,
+    panes: {
+      top: { left: 0, top: 0, width: w, height: top },
+      bottom: { left: 0, top: bottom, width: w, height: Math.max(0, h - bottom) },
+      left: { left: 0, top, width: left, height: bottom - top },
+      right: { left: right, top, width: Math.max(0, w - right), height: bottom - top },
+    },
+  };
+};
+
 export const isMaidGuideMotionReduced = (
   documentRef = globalThis?.document || null,
   matchMediaFn = globalThis?.matchMedia || null,
@@ -866,7 +903,7 @@ export const createMaidGuideSpotlight = ({
     if (element.style[property] !== value) element.style[property] = value;
   };
 
-  const geometryPx = value => `${Math.round((Number(value) || 0) * 100) / 100}px`;
+  const geometryPx = value => `${Math.round((Number(value) || 0) * 1_000_000) / 1_000_000}px`;
 
   const applyBox = (element, box = {}) => {
     applyStyleValue(element, 'left', geometryPx(box.left));
@@ -995,30 +1032,20 @@ export const createMaidGuideSpotlight = ({
       reducedMotion,
     });
     renderedHole = holeStep.box;
-    applyBox(dims[0], { left: 0, top: 0, width: viewport.w, height: renderedHole.top });
-    applyBox(dims[1], {
-      left: 0,
-      top: renderedHole.top + renderedHole.height,
-      width: viewport.w,
-      height: Math.max(0, viewport.h - renderedHole.top - renderedHole.height),
+    const maskGeometry = resolveMaidSpotlightMaskGeometry({
+      viewport,
+      hole: renderedHole,
+      devicePixelRatio: windowRef?.devicePixelRatio,
     });
-    applyBox(dims[2], {
-      left: 0,
-      top: renderedHole.top,
-      width: renderedHole.left,
-      height: renderedHole.height,
-    });
-    applyBox(dims[3], {
-      left: renderedHole.left + renderedHole.width,
-      top: renderedHole.top,
-      width: Math.max(0, viewport.w - renderedHole.left - renderedHole.width),
-      height: renderedHole.height,
-    });
-    applyBox(holeEl, renderedHole);
+    applyBox(dims[0], maskGeometry.panes.top);
+    applyBox(dims[1], maskGeometry.panes.bottom);
+    applyBox(dims[2], maskGeometry.panes.left);
+    applyBox(dims[3], maskGeometry.panes.right);
+    applyBox(holeEl, maskGeometry.hole);
     if (layout.hole) {
       if (handEl?.style) {
-        applyStyleValue(handEl, 'left', geometryPx(clamp(renderedHole.left + renderedHole.width - 18, 8, viewport.w - 116)));
-        applyStyleValue(handEl, 'top', geometryPx(clamp(renderedHole.top - 15, 8, viewport.h - 34)));
+        applyStyleValue(handEl, 'left', geometryPx(clamp(maskGeometry.hole.left + maskGeometry.hole.width - 18, 8, viewport.w - 116)));
+        applyStyleValue(handEl, 'top', geometryPx(clamp(maskGeometry.hole.top - 15, 8, viewport.h - 34)));
       }
     }
     root.classList?.toggle?.('has-target', Boolean(layout.hole));

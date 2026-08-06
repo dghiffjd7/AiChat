@@ -6,6 +6,7 @@ import {
   calculateMaidSpotlightLayout,
   isMaidGuideMotionReduced,
   isMaidGuideTargetOutsideViewport,
+  resolveMaidSpotlightMaskGeometry,
 } from '../../src/scripts/ui/maid-guide-spotlight.js';
 
 const source = fs.readFileSync(
@@ -122,6 +123,36 @@ const source = fs.readFileSync(
   assert.equal(reduced.settled, true);
   assert.deepEqual(reduced.box, { left: 120, top: 800, width: 100, height: 60 });
   console.log('ok - maid spotlight uses one smooth geometry channel for travel and moving-target pursuit');
+}
+
+{
+  const devicePixelRatio = 1.5;
+  const geometry = resolveMaidSpotlightMaskGeometry({
+    viewport: { w: 1200, h: 800 },
+    hole: {
+      left: 83.127,
+      top: 157.219,
+      width: 218.447,
+      height: 74.163,
+    },
+    devicePixelRatio,
+  });
+  const { hole, panes } = geometry;
+  const right = hole.left + hole.width;
+  const bottom = hole.top + hole.height;
+  [hole.left, hole.top, right, bottom].forEach((edge) => {
+    assert.ok(
+      Math.abs(edge * devicePixelRatio - Math.round(edge * devicePixelRatio)) < 1e-9,
+      `mask edge ${edge} must align to a device pixel`,
+    );
+  });
+  assert.equal(panes.top.height, hole.top);
+  assert.equal(panes.bottom.top, bottom);
+  assert.equal(panes.left.top, hole.top);
+  assert.equal(panes.right.top, hole.top);
+  assert.ok(Math.abs(panes.left.top + panes.left.height - bottom) < 1e-9);
+  assert.ok(Math.abs(panes.right.top + panes.right.height - bottom) < 1e-9);
+  console.log('ok - maid spotlight mask panes share device-pixel-aligned hole edges');
 }
 
 {

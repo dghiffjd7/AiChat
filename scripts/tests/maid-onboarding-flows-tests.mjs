@@ -12,6 +12,17 @@ import {
   assert.deepEqual(ids, ['setup-api', 'add-friend', 'first-chat', 'meet-maid']);
   assert.equal(ONBOARDING_TASKS.find(task => task.flowId === 'first-chat')?.requires, 'setup-api');
   ids.forEach(id => assert.ok(getMaidOnboardingFlow(id)?.steps?.length > 1, `${id} should define a flow`));
+  const richScript = getMaidOnboardingFlow('rich-script-permission');
+  assert.deepEqual(
+    richScript.steps.map(step => step.target || ''),
+    ['', 'settings-entry', 'settings-general', 'general-ui-advanced', 'general-rich-iframe-scripts'],
+  );
+  assert.equal(richScript.steps.at(-1).canAdvance('rich-script-enabled', { enabled: true }), true);
+  assert.equal(richScript.steps.at(-1).canAdvance('rich-script-enabled', { enabled: false }), false);
+  assert.equal(ids.includes('rich-script-permission'), false, 'contextual security help must not become a first-run checklist task');
+  assert.ok(MAID_ONBOARDING_TARGET_SELECTORS['settings-general'].includes('#settings-menu button[data-action="settings"]'));
+  assert.ok(MAID_ONBOARDING_TARGET_SELECTORS['general-ui-advanced'].includes('#general-ui-advanced-toggle'));
+  assert.ok(MAID_ONBOARDING_TARGET_SELECTORS['general-rich-iframe-scripts'].includes('#general-rich-iframe-scripts'));
   console.log('ok - maid onboarding exports the four planned tasks and their dependency');
 }
 

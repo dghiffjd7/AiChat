@@ -7,6 +7,7 @@ import {
   applyRpGreetingUpdateVariables,
   normalizeUiMode,
   readUiMode,
+  refreshImportedRpGreetingsIfActive,
   removeLegacySendModeState,
   resetRpGreetingVariableState,
   resolveRpInitVarWorldIds,
@@ -15,6 +16,46 @@ import {
   runExitRpModeFlow,
   writeUiMode,
 } from '../../src/scripts/ui/chat/rp-mode-runtime-utils.js';
+
+{
+  const calls = [];
+  const refreshed = await refreshImportedRpGreetingsIfActive({
+    uiMode: 'rp',
+    personaId: 'persona_new',
+    activePersonaId: 'persona_new',
+    currentSessionId: 'rp:persona_new',
+    getRpSessionId: personaId => `rp:${personaId}`,
+    seedRpGreetingIfNeeded: async sessionId => {
+      calls.push(['seed', sessionId]);
+      return true;
+    },
+    refreshRpToolbar: sessionId => calls.push(['toolbar', sessionId]),
+  });
+  assert.equal(refreshed, true);
+  assert.deepEqual(calls, [
+    ['seed', 'rp:persona_new'],
+    ['toolbar', 'rp:persona_new'],
+  ]);
+
+  for (const inactive of [
+    { uiMode: 'chat', activePersonaId: 'persona_new', currentSessionId: 'rp:persona_new' },
+    { uiMode: 'rp', activePersonaId: 'persona_old', currentSessionId: 'rp:persona_new' },
+    { uiMode: 'rp', activePersonaId: 'persona_new', currentSessionId: 'rp:persona_old' },
+  ]) {
+    assert.equal(await refreshImportedRpGreetingsIfActive({
+      ...inactive,
+      personaId: 'persona_new',
+      getRpSessionId: personaId => `rp:${personaId}`,
+      seedRpGreetingIfNeeded: async () => {
+        throw new Error('inactive import must not seed');
+      },
+      refreshRpToolbar: () => {
+        throw new Error('inactive import must not refresh');
+      },
+    }), false);
+  }
+  console.log('ok - imported greetings refresh the active creative-writing session without a mode toggle');
+}
 
 {
   const warnings = [];
@@ -424,6 +465,28 @@ const createStorage = () => {
   const appSource = await readFile(
     new URL('../../src/scripts/ui/app.js', import.meta.url),
     'utf8',
+  );
+  const importerSource = await readFile(
+    new URL('../../src/scripts/ui/character-card-importer.js', import.meta.url),
+    'utf8',
+  );
+  const personaPanelSource = await readFile(
+    new URL('../../src/scripts/ui/persona-panel.js', import.meta.url),
+    'utf8',
+  );
+  const greetingWriteIndex = importerSource.indexOf('this.rpSessionStore.setGreetings(');
+  const importFinalizedIndex = importerSource.indexOf('emitWorldInfoChanged(');
+  const greetingReadyIndex = importerSource.indexOf('this.onGreetingsImported?.(');
+  assert.ok(greetingWriteIndex >= 0);
+  assert.ok(importFinalizedIndex > greetingWriteIndex);
+  assert.ok(
+    greetingReadyIndex > importFinalizedIndex,
+    '导入完成回调必须等世界书、正则和角色来源资料完成后，才播种并刷新开场白',
+  );
+  assert.match(personaPanelSource, /onGreetingsImported:[\s\S]*this\.notifyGreetingsImported/);
+  assert.match(
+    appSource,
+    /onGreetingsImported:\s*\(\{\s*personaId\s*\}\)\s*=>\s*refreshImportedRpGreetingsIfActive\(\{/,
   );
   const scopeFlowStart = appSource.indexOf('const applyPersonaScopeNow = async');
   const scopeFlowEnd = appSource.indexOf('const applyPersonaScope =', scopeFlowStart);

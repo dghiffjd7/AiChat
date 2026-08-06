@@ -33,28 +33,3 @@ body[data-theme-preset='paper-ink'] .desktop-rail-brand {
   font-family: 'Noto Serif SC', 'Source Han Serif SC', 'Songti SC', 'STSong', 'SimSun', serif;
   letter-spacing: 0.02em;
 }
-
-/* focus 朱红呼吸：文本输入聚焦时柔和脉动；APP 与系统 reduced-motion 均关闭 */
-body[data-theme-preset='paper-ink'] input:focus-visible,
-body[data-theme-preset='paper-ink'] textarea:focus-visible,
-body[data-theme-preset='paper-ink'] select:focus-visible {
-  animation: paper-ink-focus-breathe 2.6s ease-in-out infinite;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  body[data-theme-preset='paper-ink'] input:focus-visible,
-  body[data-theme-preset='paper-ink'] textarea:focus-visible,
-  body[data-theme-preset='paper-ink'] select:focus-visible {
-    animation: none !important;
-  }
-}
-
-@keyframes paper-ink-focus-breathe {
-  0%,
-  100% {
-    box-shadow: 0 0 0 3px rgba(var(--app-accent-rgb, 188, 74, 38), 0.1);
-  }
-  50% {
-    box-shadow: 0 0 0 5px rgba(var(--app-accent-rgb, 188, 74, 38), 0.16);
-  }
-}

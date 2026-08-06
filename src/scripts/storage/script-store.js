@@ -1,6 +1,10 @@
 import { safeInvoke } from '../utils/tauri.js';
 import { logger } from '../utils/logger.js';
 import { shouldRestoreLegacyExecutableScript } from '../import/mvu-script-classification.js';
+import {
+  analyzeScriptCompatibility,
+  resolveScriptCompatibility,
+} from '../import/script-capability-preflight.js';
 
 const STORE_KEY = 'script_store_v1';
 const STORE_VERSION = 2;
@@ -58,19 +62,22 @@ const saveKv = async (name, data) => {
 const normalizeScript = (raw = {}, overrides = {}) => {
   const base = raw && typeof raw === 'object' ? raw : {};
   const schemaOnly = base.schemaOnly === true;
+  const content = String(base.content || '');
+  const compatibility = analyzeScriptCompatibility(content);
   return {
     id: String(base.id || overrides.id || genId('script')),
     name: String(base.name || overrides.name || '未命名脚本').trim() || '未命名脚本',
-    content: String(base.content || ''),
+    content,
     info: String(base.info || ''),
-    enabled: base.enabled === true,
-    authorized: base.authorized === true,
+    enabled: base.enabled === true && compatibility.blocked !== true,
+    authorized: base.authorized === true && compatibility.blocked !== true,
     schemaOnly,
     schemaOnlyReason: schemaOnly ? String(base.schemaOnlyReason || '') : '',
     data: base.data && typeof base.data === 'object' ? base.data : {},
     createdAt: Number.isFinite(Number(base.createdAt)) ? Number(base.createdAt) : Date.now(),
     updatedAt: Date.now(),
     source: String(base.source || overrides.source || 'user'),
+    compatibility,
   };
 };
 
@@ -261,6 +268,14 @@ export class ScriptStore {
     if (!bucket) return false;
     const item = bucket.scripts.find(s => s.id === scriptId);
     if (!item) return false;
+    item.compatibility = resolveScriptCompatibility(item);
+    if (enabled && item.compatibility.blocked === true) {
+      item.enabled = false;
+      item.authorized = false;
+      item.updatedAt = Date.now();
+      await this.persist();
+      return false;
+    }
     item.enabled = Boolean(enabled);
     if (item.enabled) item.authorized = true;
     item.updatedAt = Date.now();
@@ -306,7 +321,9 @@ export class ScriptStore {
     const push = (scope, scopeId, list) => {
       (list || []).forEach(s => {
         if (!s || s.enabled !== true || s.authorized !== true) return;
-        out.push({ ...clone(s), scope, scopeId });
+        const compatibility = resolveScriptCompatibility(s);
+        if (compatibility.blocked === true) return;
+        out.push({ ...clone(s), compatibility, scope, scopeId });
       });
     };
     push('global', 'global', this.state.global?.scripts || []);
@@ -329,7 +346,15 @@ export class ScriptStore {
       normalized.authorized = false;
       return normalized;
     });
-    if (!incoming.length) return { count: 0, ids: [] };
+    if (!incoming.length) {
+      return {
+        count: 0,
+        ids: [],
+        runnableIds: [],
+        blockedIds: [],
+        compatibility: { runnableCount: 0, blockedCount: 0, blocked: [] },
+      };
+    }
     const existingIds = new Set(bucket.scripts.map(s => s.id));
     incoming.forEach(s => {
       if (existingIds.has(s.id)) {
@@ -338,6 +363,25 @@ export class ScriptStore {
       bucket.scripts.push(s);
     });
     await this.persist();
-    return { count: incoming.length, ids: incoming.map(s => s.id) };
+    const blocked = incoming.filter(script => script.compatibility?.blocked === true);
+    const runnable = incoming.filter(script => script.compatibility?.blocked !== true);
+    return {
+      count: incoming.length,
+      ids: incoming.map(s => s.id),
+      runnableIds: runnable.map(s => s.id),
+      blockedIds: blocked.map(s => s.id),
+      compatibility: {
+        runnableCount: runnable.length,
+        blockedCount: blocked.length,
+        blocked: blocked.map(script => ({
+          id: script.id,
+          name: script.name,
+          level: script.compatibility.level,
+          reasons: [...script.compatibility.reasons],
+          fingerprint: script.compatibility.fingerprint,
+          message: script.compatibility.message,
+        })),
+      },
+    };
   }
 }

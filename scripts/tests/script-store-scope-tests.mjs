@@ -72,3 +72,92 @@ const emptyState = () => ({
   assert.equal(store.persistArgs.at(-1), undefined);
   console.log('ok - script store prunes empty buckets and can remove an orphan scope atomically');
 }
+
+{
+  const store = makeStore(emptyState());
+  const externalLoader = {
+    id: 'external-loader',
+    name: '外部扩展加载器',
+    enabled: true,
+    authorized: true,
+    content: [
+      'const root = window.parent ?? window;',
+      "const version = await fetch('https://example.com/version.json');",
+      "const script = root.document.createElement('script');",
+      "script.src = 'https://example.com/extension.js';",
+      'root.document.head.appendChild(script);',
+    ].join('\n'),
+  };
+  const ordinary = {
+    id: 'ordinary-script',
+    name: '普通事件脚本',
+    content: "eventOn('ready', () => api.log('ready'));",
+  };
+  const result = await store.importTavernHelperScripts({
+    scripts: [externalLoader, ordinary],
+    scope: 'character',
+    scopeId: 'card-1',
+    source: 'card',
+  });
+  assert.equal(result.count, 2);
+  assert.deepEqual(result.runnableIds, ['ordinary-script']);
+  assert.deepEqual(result.blockedIds, ['external-loader']);
+  assert.equal(result.compatibility.blockedCount, 1);
+  assert.equal(result.compatibility.runnableCount, 1);
+
+  const imported = store.getScripts('character', 'card-1');
+  const blocked = imported.find(script => script.id === 'external-loader');
+  assert.equal(blocked.compatibility.level, 'external_extension');
+  assert.equal(blocked.enabled, false);
+  assert.equal(blocked.authorized, false);
+  assert.equal(await store.toggleScript('character', 'card-1', blocked.id, true), false);
+  assert.equal(await store.toggleScript('character', 'card-1', 'ordinary-script', true), true);
+  assert.deepEqual(
+    store.getActiveScripts({ personaId: 'card-1' }).map(script => script.id),
+    ['ordinary-script'],
+  );
+  console.log('ok - script store keeps external extension loaders imported but blocked');
+}
+
+{
+  const storedCompatibility = {
+    version: 1,
+    level: 'module',
+    blocked: false,
+    reasons: ['top_level_await'],
+    signals: {
+      topLevelAwait: true,
+      hostDomAccess: false,
+      remoteAssetLoader: false,
+      nativeExtensionApi: false,
+    },
+    fingerprint: 'module:top_level_await',
+    message: 'stored compatibility',
+    marker: 'stored-result',
+  };
+  const state = emptyState();
+  state.global.scripts.push({
+    id: 'stored-module',
+    name: '已归一化模块脚本',
+    content: 'const value = await Promise.resolve(1);',
+    enabled: true,
+    authorized: true,
+    compatibility: storedCompatibility,
+  });
+  const store = makeStore(state);
+  const NativeFunction = globalThis.Function;
+  let compileCount = 0;
+  globalThis.Function = function (...args) {
+    compileCount += 1;
+    return NativeFunction(...args);
+  };
+  let active;
+  try {
+    active = store.getActiveScripts();
+  } finally {
+    globalThis.Function = NativeFunction;
+  }
+  assert.equal(compileCount, 0);
+  assert.equal(active[0]?.compatibility?.marker, 'stored-result');
+  console.log('ok - active script reads reuse normalized compatibility metadata');
+}

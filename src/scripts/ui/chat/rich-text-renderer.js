@@ -13,13 +13,23 @@ import { buildVariableStatusSnapshot } from '../variable-status-card.js';
 import { getChatUI } from '../chat-ui-runtime-utils.js';
 import { buildVariableContext } from '../../variables/variable-path-utils.js';
 import {
+    fingerprintCompatGapValue,
+    getCompatGapReportStore,
+} from '../../storage/compat-gap-report-store.js';
+import {
     detectPlainTextRichRoute,
     detectRichCodeBlockRoute,
+    detectRichScriptExecutionRequirement,
     RICH_RENDER_EXECUTION,
     RICH_RENDER_LEVELS,
+    RICH_SCRIPT_EXECUTION_REQUIRED_EVENT,
 } from './rich-render-routing.js';
 import { hideCreativeContentTagsForDisplay } from './creative-content-display-utils.js';
 import { mergeRichCompatInputText } from './rich-input-compat.js';
+import {
+    CompatGapCorrelationTracker,
+    resolveCompatGapMessage,
+} from './compat-gap-report-runtime.js';
 import {
     buildMvuCompatWindowContext,
     cloneMvuCompatValue,
@@ -41,6 +51,7 @@ import {
 
 const iframeDebugState = new Map();
 const directLoadCache = new Map();
+const compatGapCorrelationTracker = new CompatGapCorrelationTracker();
 const DIRECT_LOAD_CACHE_TTL = 5 * 60 * 1000;
 const DIRECT_LOAD_CACHE_LIMIT = 6;
 const COMPAT_SEND_TEXTAREA_ID = 'send_textarea';
@@ -1191,8 +1202,23 @@ export const buildMvuCompatBridge = ({ iframeId, sessionId, debugTag, messageId,
     setVars(vars);
     return getScopedVars(vars, option);
   };
+  const getCompatVariables = (option = { type: 'message' }) => {
+    const scoped = getScopedVars(state.vars, option);
+    const isExplicitMessage = normalizeMvuCompatOptionType(option) === 'message'
+      && option && typeof option === 'object' && !Array.isArray(option)
+      && (
+        Object.prototype.hasOwnProperty.call(option, 'message_id')
+        || Object.prototype.hasOwnProperty.call(option, 'messageId')
+      );
+    if (!isExplicitMessage) return scoped;
+    const messageVars = cloneVars(normalizeVars(state.vars));
+    messageVars.stat_data = cloneVars(scoped);
+    messageVars.variables = cloneVars(scoped);
+    messageVars.status_current_variables = cloneVars(scoped);
+    return messageVars;
+  };
   compatApi.getAllVariables = () => state.vars;
-  compatApi.getVariables = (option = { type: 'message' }) => getScopedVars(state.vars, option);
+  compatApi.getVariables = (option = { type: 'message' }) => getCompatVariables(option);
   compatApi.getCurrentMessageId = () => resolveCompatCurrentMessageId();
   compatApi.getChatMessages = (...args) => {
     const all = exportCompatEntries()
@@ -1767,8 +1793,11 @@ export const buildMvuCompatBridge = ({ iframeId, sessionId, debugTag, messageId,
   };
 
   const ensureMiniQuery = () => {
-    const hasJq = typeof window.$ === 'function' && window.$.fn && window.$.fn.jquery;
+    // 先查 __chatappMini 短路：dollar shim 的探针代理会把 .fn 特性探测当卡缺口误报。
+    const hasJq = typeof window.$ === 'function' && !window.$.__chatappMini && window.$.fn && window.$.fn.jquery;
     if (hasJq) return;
+    const probeApi = typeof window.__chatappWithCompatMissProbe === 'function' ? window.__chatappWithCompatMissProbe : null;
+    const probeWrap = (api, prefix) => (probeApi ? probeApi(api, prefix) : api);
     if (typeof window.$ === 'function' && window.$.__chatappMini && window.$.__chatappMiniRich) return;
     const parseLoadTarget = (input) => {
       const raw = String(input || '').trim();
@@ -1842,7 +1871,7 @@ export const buildMvuCompatBridge = ({ iframeId, sessionId, debugTag, messageId,
       } catch {}
       return api;
     };
-    const wrap = (nodes) => asIndexedApi({
+    const wrap = (nodes) => probeWrap(asIndexedApi({
       __chatappMini: true,
       __chatappMiniRich: true,
       nodes,
@@ -1990,7 +2019,7 @@ export const buildMvuCompatBridge = ({ iframeId, sessionId, debugTag, messageId,
           .catch(onFailed);
         return this;
       },
-    }, nodes);
+    }, nodes), '$().');
     const mini = (input) => {
       if (typeof input === 'function') {
         if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', input);
@@ -2001,7 +2030,7 @@ export const buildMvuCompatBridge = ({ iframeId, sessionId, debugTag, messageId,
     };
     mini.__chatappMini = true;
     mini.__chatappMiniRich = true;
-    window.$ = mini;
+    window.$ = probeWrap(mini, '$.');
   };
 
   ensureMvu();
@@ -2669,8 +2698,11 @@ const buildMvuCompatBridgeLegacy = ({ iframeId, sessionId, messageId, messageInd
   };
 
   const ensureMiniQuery = () => {
-    const hasJq = typeof window.$ === 'function' && window.$.fn && window.$.fn.jquery;
+    // 先查 __chatappMini 短路：dollar shim 的探针代理会把 .fn 特性探测当卡缺口误报。
+    const hasJq = typeof window.$ === 'function' && !window.$.__chatappMini && window.$.fn && window.$.fn.jquery;
     if (hasJq) return;
+    const probeApi = typeof window.__chatappWithCompatMissProbe === 'function' ? window.__chatappWithCompatMissProbe : null;
+    const probeWrap = (api, prefix) => (probeApi ? probeApi(api, prefix) : api);
     if (typeof window.$ === 'function' && window.$.__chatappMini && window.$.__chatappMiniRich) return;
     const toNodes = (input) => {
       if (!input) return [];
@@ -2687,7 +2719,7 @@ const buildMvuCompatBridgeLegacy = ({ iframeId, sessionId, messageId, messageInd
       } catch {}
       return api;
     };
-    const wrap = (nodes) => asIndexedApi({
+    const wrap = (nodes) => probeWrap(asIndexedApi({
       __chatappMini: true,
       __chatappMiniRich: true,
       nodes,
@@ -2809,7 +2841,7 @@ const buildMvuCompatBridgeLegacy = ({ iframeId, sessionId, messageId, messageInd
         });
         return this;
       },
-    }, nodes);
+    }, nodes), '$().');
     const mini = (input) => {
       if (typeof input === 'function') {
         if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', input);
@@ -2820,7 +2852,7 @@ const buildMvuCompatBridgeLegacy = ({ iframeId, sessionId, messageId, messageInd
     };
     mini.__chatappMini = true;
     mini.__chatappMiniRich = true;
-    window.$ = mini;
+    window.$ = probeWrap(mini, '$.');
   };
 
   ensureMvu();
@@ -4073,7 +4105,14 @@ const observeIframeContent = (iframe) => {
 };
 
 export const splitFencedCodeBlocks = (text) => {
-    const src = String(text ?? '');
+    // 部分社区卡会让一条 display regex 的闭围栏与下一条规则的 `====` 直接
+    // 粘连成 ```====。只在后方明确紧跟完整 HTML 围栏时补回缺失换行，避免
+    // 放宽通用闭围栏规则而误切脚本字符串中的行内反引号。
+    const rawSrc = String(text ?? '');
+    const joinedHtmlFenceBoundaryRe = /(\r?\n[ \t]{0,3}```[ \t]*)(={4,}[ \t]*\r?\n[ \t]{0,3}```[ \t]*html[ \t]*\r?\n(?=[ \t]*(?:<!doctype\s+html\b|<html\b|<head\b|<body\b)))/gi;
+    const hasJoinedHtmlFenceBoundary = joinedHtmlFenceBoundaryRe.test(rawSrc);
+    joinedHtmlFenceBoundaryRe.lastIndex = 0;
+    const src = rawSrc.replace(joinedHtmlFenceBoundaryRe, '$1\n$2');
     const out = [];
     // CommonMark 语义：开/闭围栏都必须在行首（≤3 空格缩进），闭围栏后只允许行尾空白；
     // 未闭合围栏延伸到文本末尾（兼容流式截断）。行内 ```（如脚本字符串/正则字面量中的
@@ -4092,7 +4131,9 @@ export const splitFencedCodeBlocks = (text) => {
         if (m.index === re.lastIndex) re.lastIndex += 1;
     }
     if (last < src.length) out.push({ type: 'text', text: src.slice(last) });
-    return out;
+    if (!hasJoinedHtmlFenceBoundary) return out;
+    // 同一异常形态中的 `====` 是各条 HTML replacement 的拼接标记，不是正文。
+    return out.filter(part => part.type !== 'text' || !/^\s*={4,}\s*$/.test(part.text));
 };
 
 const STREAMING_INTERACTIVE_CODE_PLACEHOLDER = '[已隐藏重型交互代码块，输出完成后自动渲染]';
@@ -6487,6 +6528,9 @@ export const buildFrameworkGlobalShim = ({ iframeId = '', debugTag = '', vueMajo
     const localPiniaScript = major === 3 ? parserScript('pinia', piniaUrls[0]) : '';
     return `<script>
 (() => {
+  if (typeof globalThis.__VUE_PROD_DEVTOOLS__ === 'undefined') {
+    globalThis.__VUE_PROD_DEVTOOLS__ = false;
+  }
   const CHATAPP_IFRAME_ID = ${serializeForInlineScript(id)};
   const CHATAPP_DEBUG_TAG = ${serializeForInlineScript(tag)};
   const withTag = (msg) => CHATAPP_DEBUG_TAG ? ('tag=' + CHATAPP_DEBUG_TAG + ' ' + String(msg || '')) : String(msg || '');
@@ -6643,7 +6687,7 @@ ${localPiniaScript}
 </script>`;
 };
 
-const buildDollarGlobalShim = ({
+export const buildDollarGlobalShim = ({
     iframeId = '',
     debugTag = '',
     appOrigin = '',
@@ -6692,6 +6736,35 @@ const buildDollarGlobalShim = ({
       }, '*');
     } catch {}
   };
+  // 兼容缺口上报：卡脚本访问 shim 未实现的 API 时结构化上报一次，宿主聚合成适配待办。
+  const compatMissSeen = new Set();
+  const COMPAT_MISS_LIMIT = 48;
+  const reportCompatMiss = (api) => {
+    const name = String(api || '');
+    if (!name || compatMissSeen.has(name) || compatMissSeen.size >= COMPAT_MISS_LIMIT) return;
+    compatMissSeen.add(name);
+    try {
+      parent.postMessage({
+        type: 'chatapp:compat-miss',
+        id: CHATAPP_IFRAME_ID,
+        api: name,
+      }, '*');
+    } catch {}
+  };
+  const withCompatMissProbe = (target, prefix) => new Proxy(target, {
+    get(obj, prop, receiver) {
+      if (Reflect.has(obj, prop)) return Reflect.get(obj, prop, receiver);
+      if (typeof prop === 'string' && prop && prop !== 'then' && !prop.startsWith('__')) {
+        reportCompatMiss(prefix + prop);
+      }
+      return undefined;
+    },
+  });
+  // mvu bridge 的 mini-$ 在后续 script 块里会替换本 IIFE 的版本；helper 挂 window 供其复用。
+  try {
+    window.__chatappReportCompatMiss = reportCompatMiss;
+    window.__chatappWithCompatMissProbe = withCompatMissProbe;
+  } catch {}
   if (!window.__chatappCompat || typeof window.__chatappCompat !== 'object') {
     window.__chatappCompat = {};
   }
@@ -7238,7 +7311,38 @@ const buildDollarGlobalShim = ({
         } catch {}
         return api;
       };
-      const wrap = (nodes) => asIndexedApi({
+      const miniEventStore = new WeakMap();
+      const miniDataStore = new WeakMap();
+      const parseMiniEventToken = (value) => {
+        const parts = String(value || '').trim().split('.');
+        return {
+          type: String(parts.shift() || '').trim(),
+          namespaces: parts.map(part => String(part || '').trim()).filter(Boolean).sort(),
+        };
+      };
+      const parseMiniEventList = (value) => String(value || '').trim()
+        .split(/\s+/)
+        .map(parseMiniEventToken)
+        .filter(item => item.type || item.namespaces.length);
+      const miniEventMatches = (record, filter) => {
+        if (filter.type && record.type !== filter.type) return false;
+        return filter.namespaces.every(namespace => record.namespaces.includes(namespace));
+      };
+      const readMiniDataValue = (value) => {
+        if (typeof value !== 'string') return value;
+        const text = value.trim();
+        if (text === 'true') return true;
+        if (text === 'false') return false;
+        if (text === 'null') return null;
+        if (text && String(Number(text)) === text) return Number(text);
+        if ((text.startsWith('{') && text.endsWith('}')) || (text.startsWith('[') && text.endsWith(']'))) {
+          try { return JSON.parse(text); } catch {}
+        }
+        return value;
+      };
+      const toMiniDataKey = (value) => String(value || '').replace(/-([a-z])/g, (_match, letter) => letter.toUpperCase());
+      const toMiniDataAttribute = (value) => 'data-' + String(value || '').replace(/[A-Z]/g, letter => '-' + letter.toLowerCase());
+      const wrap = (nodes) => withCompatMissProbe(asIndexedApi({
         __chatappMini: true,
         __chatappMiniLite: true,
         nodes,
@@ -7262,6 +7366,93 @@ const buildDollarGlobalShim = ({
           const hit = this.get(index);
           return wrap(hit ? [hit] : []);
         },
+        on(events, selectorOrHandler, maybeHandler) {
+          const selector = typeof selectorOrHandler === 'string' ? selectorOrHandler : '';
+          const handler = typeof selectorOrHandler === 'function' ? selectorOrHandler : maybeHandler;
+          if (typeof handler !== 'function') return this;
+          const eventList = parseMiniEventList(events).filter(item => item.type);
+          nodes.forEach(node => {
+            if (!node || typeof node.addEventListener !== 'function') return;
+            const records = miniEventStore.get(node) || [];
+            eventList.forEach(eventInfo => {
+              const listener = (event) => {
+                let context = node;
+                if (selector) {
+                  const matched = event?.target?.closest?.(selector) || null;
+                  if (!matched) return;
+                  if (node !== document && typeof node.contains === 'function' && !node.contains(matched)) return;
+                  context = matched;
+                }
+                handler.call(context, event);
+              };
+              node.addEventListener(eventInfo.type, listener);
+              records.push({
+                type: eventInfo.type,
+                namespaces: eventInfo.namespaces,
+                selector,
+                handler,
+                listener,
+              });
+            });
+            miniEventStore.set(node, records);
+          });
+          return this;
+        },
+        off(events, selectorOrHandler, maybeHandler) {
+          const selector = typeof selectorOrHandler === 'string' ? selectorOrHandler : '';
+          const handler = typeof selectorOrHandler === 'function' ? selectorOrHandler : maybeHandler;
+          const filters = events === undefined || events === null || String(events).trim() === ''
+            ? []
+            : parseMiniEventList(events);
+          nodes.forEach(node => {
+            if (!node || typeof node.removeEventListener !== 'function') return;
+            const records = miniEventStore.get(node) || [];
+            const keep = [];
+            records.forEach(record => {
+              const eventMatches = !filters.length || filters.some(filter => miniEventMatches(record, filter));
+              const selectorMatches = !selector || record.selector === selector;
+              const handlerMatches = typeof handler !== 'function' || record.handler === handler;
+              if (eventMatches && selectorMatches && handlerMatches) {
+                node.removeEventListener(record.type, record.listener);
+              } else {
+                keep.push(record);
+              }
+            });
+            if (keep.length) miniEventStore.set(node, keep);
+            else miniEventStore.delete(node);
+          });
+          return this;
+        },
+        data(key, value) {
+          const dataKey = toMiniDataKey(key);
+          if (!dataKey) {
+            const node = nodes[0];
+            return node ? { ...(node.dataset || {}), ...(miniDataStore.get(node) || {}) } : undefined;
+          }
+          if (value === undefined) {
+            const node = nodes[0];
+            if (!node) return undefined;
+            const stored = miniDataStore.get(node) || {};
+            if (Object.prototype.hasOwnProperty.call(stored, dataKey)) return stored[dataKey];
+            const datasetValue = node.dataset?.[dataKey];
+            if (datasetValue !== undefined) return readMiniDataValue(datasetValue);
+            return readMiniDataValue(node.getAttribute?.(toMiniDataAttribute(dataKey)) ?? undefined);
+          }
+          nodes.forEach(node => {
+            if (!node) return;
+            const stored = miniDataStore.get(node) || {};
+            stored[dataKey] = value;
+            miniDataStore.set(node, stored);
+          });
+          return this;
+        },
+        val(value) {
+          if (value === undefined) return nodes[0]?.value;
+          nodes.forEach(node => {
+            if (node && 'value' in node) node.value = value;
+          });
+          return this;
+        },
         text(value) {
           if (value === undefined) return nodes[0]?.textContent ?? '';
           nodes.forEach(n => { n.textContent = String(value); });
@@ -7284,7 +7475,7 @@ const buildDollarGlobalShim = ({
           nodes.forEach(n => { n.innerHTML = ''; });
           return this;
         },
-      }, nodes);
+      }, nodes), '$().');
       const mini = (input) => {
         if (typeof input === 'function') {
           if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', input);
@@ -7295,7 +7486,7 @@ const buildDollarGlobalShim = ({
       };
       mini.__chatappMini = true;
       mini.__chatappMiniLite = true;
-      window.$ = mini;
+      window.$ = withCompatMissProbe(mini, '$.');
     }
   }
   if (typeof window.jQuery !== 'function') window.jQuery = window.$;
@@ -7404,7 +7595,8 @@ const buildDollarGlobalShim = ({
     const existing = (window._ && typeof window._ === 'object') ? window._ : {};
     const makeChain = (initial) => {
       let current = initial;
-      const api = {
+      // let + 末尾重绑定：方法体闭包引用 api，链上每一环都拿到探针代理。
+      let api = {
         value() { return current; },
         map(fn) {
           if (Array.isArray(current)) current = current.map((v, i) => fn(v, i));
@@ -7416,6 +7608,11 @@ const buildDollarGlobalShim = ({
           current = Array.isArray(current) ? current.filter((v, i) => fn(v, i)) : [];
           return api;
         },
+        entries() {
+          current = current == null ? [] : Object.entries(Object(current));
+          return api;
+        },
+        toPairs() { return api.entries(); },
         sortBy(iteratee) {
           const arr = Array.isArray(current) ? current.slice() : [];
           const getter = typeof iteratee === 'function'
@@ -7441,7 +7638,11 @@ const buildDollarGlobalShim = ({
           return api;
         },
         each(fn) { return api.forEach(fn); },
+        join(separator = ',') {
+          return Array.isArray(current) ? current.join(separator) : '';
+        },
       };
+      api = withCompatMissProbe(api, '_().');
       return api;
     };
     const lodashLite = (value) => makeChain(value);
@@ -7450,6 +7651,20 @@ const buildDollarGlobalShim = ({
     window._ = lodashLite;
     if (typeof window._.isArray !== 'function') window._.isArray = Array.isArray;
     if (typeof window._.isObject !== 'function') window._.isObject = (v) => v !== null && typeof v === 'object';
+    if (typeof window._.isEqual !== 'function') {
+      window._.isEqual = (left, right) => {
+        const equal = (a, b) => {
+          if (Object.is(a, b)) return true;
+          if (!a || !b || typeof a !== 'object' || typeof b !== 'object') return false;
+          if (Array.isArray(a) !== Array.isArray(b)) return false;
+          const aKeys = Object.keys(a);
+          const bKeys = Object.keys(b);
+          if (aKeys.length !== bKeys.length) return false;
+          return aKeys.every((key) => Object.prototype.hasOwnProperty.call(b, key) && equal(a[key], b[key]));
+        };
+        return equal(left, right);
+      };
+    }
     if (typeof window._.isPlainObject !== 'function') {
       window._.isPlainObject = (v) => {
         if (v === null || typeof v !== 'object') return false;
@@ -7547,6 +7762,9 @@ const buildDollarGlobalShim = ({
     if (typeof window._.constant !== 'function') window._.constant = (v) => () => v;
     if (typeof window._.keys !== 'function') window._.keys = (obj) => Object.keys(obj || {});
     if (typeof window._.values !== 'function') window._.values = (obj) => Object.values(obj || {});
+    if (typeof window._.entries !== 'function') window._.entries = (obj) => (obj == null ? [] : Object.entries(Object(obj)));
+    if (typeof window._.toPairs !== 'function') window._.toPairs = window._.entries;
+    if (typeof window._.join !== 'function') window._.join = (list, separator = ',') => (Array.isArray(list) ? list.join(separator) : '');
     if (typeof window._.size !== 'function') {
       window._.size = (obj) => {
         if (obj == null) return 0;
@@ -7773,19 +7991,8 @@ const buildDollarGlobalShim = ({
     if (typeof window._.trim !== 'function') window._.trim = (v) => String(v ?? '').trim();
     if (typeof window._.split !== 'function') window._.split = (v, sep, limit) => String(v ?? '').split(sep, limit);
     if (!(window._ && window._.__chatappProbe)) {
-      const seen = new Set();
-      const missingLimit = 24;
       const target = window._;
-      window._ = new Proxy(target, {
-        get(obj, prop, receiver) {
-          if (Reflect.has(obj, prop)) return Reflect.get(obj, prop, receiver);
-          if (typeof prop === 'string' && prop && !prop.startsWith('__') && seen.size < missingLimit) {
-            seen.add(prop);
-            log('warn', 'lodash-missing-method-access name=' + prop);
-          }
-          return undefined;
-        },
-      });
+      window._ = withCompatMissProbe(target, '_.');
       window._.__chatappProbe = true;
       log('info', 'lodash-shim-fallback');
     }
@@ -7994,6 +8201,9 @@ const makeCodeBlock = ({
 
     const allowScripts = allowRichIframeScripts();
     const renderRoute = detectRichCodeBlockRoute({ lang, code, allowScripts });
+    const richScriptRequirement = debugTag === 'rp-greeting'
+        ? detectRichScriptExecutionRequirement({ lang, code, allowScripts, route: renderRoute })
+        : null;
     const {
         execution: renderExecution,
         hasInteractiveHtml,
@@ -8035,6 +8245,22 @@ const makeCodeBlock = ({
             return String(sessionId || window.appBridge?.getActiveSessionId?.() || '').trim();
         }
     })();
+    if (richScriptRequirement?.required) {
+        try {
+            const CustomEventCtor = window.CustomEvent || globalThis.CustomEvent;
+            if (typeof CustomEventCtor === 'function') {
+                window.dispatchEvent(new CustomEventCtor(RICH_SCRIPT_EXECUTION_REQUIRED_EVENT, {
+                    detail: {
+                        reason: richScriptRequirement.reason,
+                        sessionId: String(resolvedSessionId || ''),
+                        messageId: String(messageId || ''),
+                        level: richScriptRequirement.level,
+                        execution: richScriptRequirement.execution,
+                    },
+                }));
+            }
+        } catch {}
+    }
     const messageIndex = (() => {
         try {
             const sid = String(resolvedSessionId || '').trim();
@@ -8128,7 +8354,7 @@ const makeCodeBlock = ({
     const useLegacyMvuBridge = !directBodyLoadUrl;
     const mvuBridgeBuilder = useLegacyMvuBridge ? buildMvuCompatBridgeLegacy : buildMvuCompatBridge;
     const sourceCompat = analyzeCompatProfile(code, { directLoad: Boolean(directBodyLoadUrl) });
-    if (debugTag === 'rp-greeting' && renderLevel === RICH_RENDER_LEVELS.SANDBOX && !allowScripts) {
+    if (debugTag === 'rp-greeting' && richScriptRequirement?.blocked) {
         const tip = 'rp-greeting scripts-disabled: enable `allowRichIframeScripts` to run <script> / $.load()';
         emitDebugLog({ source: 'rich', type: 'warn', message: tip, force: true });
         logger.warn(`[rich] ${tip}`);
@@ -8250,6 +8476,7 @@ const makeCodeBlock = ({
         const iframeId = `msg-${String(messageId || 'x')}-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
         iframe.dataset.iframeId = iframeId;
         iframe.dataset.msgId = String(messageId || '');
+        iframe.dataset.compatRevision = fingerprintCompatGapValue(code);
         if (resolvedSessionId) iframe.dataset.sessionId = String(resolvedSessionId || '');
         iframe.dataset.iframeSource = 'host';
         iframe.dataset.iframeAllowScripts = renderExecution === RICH_RENDER_EXECUTION.EXECUTE ? '1' : '0';
@@ -8482,6 +8709,7 @@ const makeCodeBlock = ({
                     const rewriteResult = maybeRewriteStHelperGlobals(directHtml, { directLoad: true });
                     directHtml = rewriteResult.html;
                     directHtml = ensureBabelScriptDefaults(directHtml);
+                    iframe.dataset.compatRevision = fingerprintCompatGapValue(directHtml);
                     const directProfile = analyzeCompatProfile(directHtml, { directLoad: true });
                     logDirect('info', `direct-load-profile id=${iframeId} profile=${directProfile.profile} flags=${summarizeCompatFlags(directProfile.flags) || 'none'} source=cache`);
                     if (pathRewrite.failed) {
@@ -8571,6 +8799,7 @@ const makeCodeBlock = ({
                     const rewriteResult = maybeRewriteStHelperGlobals(directHtml, { directLoad: true });
                     directHtml = rewriteResult.html;
                     directHtml = ensureBabelScriptDefaults(directHtml);
+                    iframe.dataset.compatRevision = fingerprintCompatGapValue(directHtml);
                     const directProfile = analyzeCompatProfile(directHtml, { directLoad: true });
                     logDirect('info', `direct-load-profile id=${iframeId} profile=${directProfile.profile} flags=${summarizeCompatFlags(directProfile.flags) || 'none'} source=fetch`);
                     if (pathRewrite.failed) {
@@ -9496,12 +9725,33 @@ export const setupIframeResizeListener = () => {
             if (st) st.lastPongAt = Date.now();
             return;
         }
+        if (data.type === 'chatapp:compat-miss') {
+            const resolved = resolveCompatGapMessage({
+                event: e,
+                iframes: document.querySelectorAll('iframe[data-iframe-id]'),
+            });
+            if (!resolved.accepted) return;
+            compatGapCorrelationTracker.remember(resolved);
+            void getCompatGapReportStore().record(resolved.report);
+            const message = `[compat-gap:candidate] api=${resolved.report.api} scope=${resolved.report.scopeFingerprint} revision=${resolved.report.revisionFingerprint}`;
+            emitDebugLog({ source: 'compat', type: 'info', message, force: true });
+            return;
+        }
         if (data.type === 'chatapp:iframe-error') {
             const id = String(data.id || '');
             const message = String(data.message || '');
             if (!id) return;
             const iframe = document.querySelector(`iframe[data-iframe-id="${esc(id)}"]`);
             if (!iframe) return;
+            const sourceIframe = findIframeBySource(e?.source);
+            if (sourceIframe === iframe && String(iframe.dataset.iframeId || '') === id) {
+                const confirmed = compatGapCorrelationTracker.confirm({ iframeId: id, error: message });
+                if (confirmed) {
+                    void getCompatGapReportStore().record(confirmed);
+                    const reportMessage = `[compat-gap:confirmed] api=${confirmed.api} category=${confirmed.errorCategory} scope=${confirmed.scopeFingerprint} revision=${confirmed.revisionFingerprint}`;
+                    emitDebugLog({ source: 'compat', type: 'info', message: reportMessage, force: true });
+                }
+            }
             if (isNonCriticalIframeResourceError(message)) {
                 logger.debug(`[iframe] resource-load id=${id} ${message}`);
                 return;

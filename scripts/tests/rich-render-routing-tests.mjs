@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
 import {
+  detectRichScriptExecutionRequirement,
   detectPlainTextRichRoute,
   detectRichCodeBlockRoute,
+  isLikelyBlankRichStaticDocument,
   RICH_RENDER_EXECUTION,
   RICH_RENDER_LEVELS,
 } from '../../src/scripts/ui/chat/rich-render-routing.js';
@@ -65,6 +67,41 @@ test('plain text fragments use level1 only for non-interactive rich fragments', 
 
   const interactiveRoute = detectPlainTextRichRoute('<script>alert(1)</script>');
   assert.equal(interactiveRoute.level, RICH_RENDER_LEVELS.SAFE);
+});
+
+test('empty app shells driven by executable scripts are high-confidence script requirements', () => {
+  const code = '<html><body><div id="app"></div><script>Vue.createApp(App).mount("#app")</script></body></html>';
+  const requirement = detectRichScriptExecutionRequirement({ code, allowScripts: false });
+  assert.equal(requirement.required, true);
+  assert.equal(requirement.blocked, true);
+  assert.equal(requirement.hasExecutableScript, true);
+  assert.equal(requirement.reason, 'framework-mount');
+  assert.equal(isLikelyBlankRichStaticDocument(code), true);
+});
+
+test('direct body loaders are treated as required even when they render a loading label first', () => {
+  const code = '<body><div>正在加载角色面板…</div><script>$("body").load("https://example.test/card.html")</script></body>';
+  const requirement = detectRichScriptExecutionRequirement({ code, allowScripts: false });
+  assert.equal(requirement.required, true);
+  assert.equal(requirement.reason, 'body-loader');
+});
+
+test('static cards with incidental scripts do not trigger the permission guide', () => {
+  const code = '<html><body><div>角色资料</div><script>console.log("analytics")</script></body></html>';
+  const requirement = detectRichScriptExecutionRequirement({ code, allowScripts: false });
+  assert.equal(requirement.required, false);
+  assert.equal(requirement.blocked, true);
+  assert.equal(isLikelyBlankRichStaticDocument(code), false);
+});
+
+test('non-executable data scripts and already-enabled execution never require a guide', () => {
+  const dataOnly = '<html><body><div id="app"></div><script type="application/json">{"name":"card"}</script></body></html>';
+  assert.equal(detectRichScriptExecutionRequirement({ code: dataOnly, allowScripts: false }).required, false);
+
+  const executable = '<body><script>document.body.textContent = "ready"</script></body>';
+  const enabled = detectRichScriptExecutionRequirement({ code: executable, allowScripts: true });
+  assert.equal(enabled.required, false);
+  assert.equal(enabled.blocked, false);
 });
 
 let failed = 0;

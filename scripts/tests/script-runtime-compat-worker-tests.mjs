@@ -135,7 +135,98 @@ assert.equal(isEsmLikeScriptForTests("$('#bam-btn-import').addEventListener('cli
 assert.equal(isEsmLikeScriptForTests("const exportBtn = doc.getElementById('bam-btn-export');"), false);
 assert.equal(isEsmLikeScriptForTests('module.exports = {}; exports.foo = 1;'), false);
 assert.equal(isEsmLikeScriptForTests('const data = { import: fn, export: gn };'), false);
+assert.equal(isEsmLikeScriptForTests('const value = await Promise.resolve(1);'), true);
+assert.equal(isEsmLikeScriptForTests('async function load() { return await Promise.resolve(1); }'), false);
 console.log('ok - script runtime recognizes actual ESM import and export syntax');
+
+{
+  const runtime = Object.create(ScriptRuntime.prototype);
+  runtime.scriptDiagnosticSignatures = new Map();
+  runtime.scriptDiagnosticRevisions = new Map();
+  const payload = {
+    phase: 'load',
+    scriptId: 'external-loader',
+    scriptName: '外部扩展加载器',
+    error: 'await is only valid in async functions and the top level bodies of modules',
+    compatibility: {
+      level: 'external_extension',
+      blocked: true,
+      reasons: ['host_dom_access', 'remote_asset_loader', 'top_level_await'],
+      fingerprint: 'external_extension:host_dom_access+remote_asset_loader+top_level_await',
+    },
+  };
+  runtime.syncScriptDiagnosticRevision({ id: payload.scriptId, content: 'missingGlobal();' });
+  assert.equal(runtime.reportScriptRuntimeError(payload), true);
+  assert.equal(runtime.reportScriptRuntimeError(payload), false);
+  assert.equal(runtime.reportScriptRuntimeError({
+    ...payload,
+    scriptId: 'external-loader-2',
+    scriptName: '另一个外部扩展加载器',
+  }), true);
+  runtime.syncScriptDiagnosticRevision({ id: payload.scriptId, content: 'missingGlobal(); // edited' });
+  assert.equal(runtime.reportScriptRuntimeError(payload), true);
+  assert.equal(runtime.reportScriptRuntimeError(payload), false);
+  console.log('ok - script runtime deduplicates by script revision without hiding sibling errors');
+}
+
+{
+  const runtime = new ScriptRuntime({ ready: Promise.resolve(), getScripts: () => [] });
+  await runtime.ready;
+  const storedCompatibility = {
+    version: 1,
+    level: 'module',
+    blocked: false,
+    reasons: ['top_level_await'],
+    signals: {
+      topLevelAwait: true,
+      hostDomAccess: false,
+      remoteAssetLoader: false,
+      nativeExtensionApi: false,
+    },
+    fingerprint: 'module:top_level_await',
+    message: 'stored compatibility',
+    marker: 'stored-result',
+  };
+  runtime.store = {
+    getScripts: scope => scope === 'global' ? [{
+      id: 'stored-module',
+      name: '已归一化模块脚本',
+      content: 'const value = await Promise.resolve(1);',
+      enabled: true,
+      authorized: true,
+      compatibility: storedCompatibility,
+    }] : [],
+  };
+  runtime.buildContext = () => ({
+    sessionId: 'session-compat-reuse',
+    personaId: '',
+    presetId: '',
+    presetIds: [],
+  });
+  runtime.isEnabled = () => true;
+  runtime.worker = null;
+  let iframeScripts = [];
+  runtime.iframeRuntime = {
+    syncScripts: list => {
+      iframeScripts = list;
+    },
+  };
+  const NativeFunction = globalThis.Function;
+  let compileCount = 0;
+  globalThis.Function = function (...args) {
+    compileCount += 1;
+    return NativeFunction(...args);
+  };
+  try {
+    await runtime.syncScripts();
+  } finally {
+    globalThis.Function = NativeFunction;
+  }
+  assert.equal(compileCount, 0);
+  assert.equal(iframeScripts.length, 1);
+  assert.equal(iframeScripts[0].compatibility.marker, 'stored-result');
+  console.log('ok - runtime sync reuses stored compatibility without recompiling top-level await');
+}
 
 {
   const runtime = new ScriptRuntime({ ready: Promise.resolve(), getScripts: () => [] });

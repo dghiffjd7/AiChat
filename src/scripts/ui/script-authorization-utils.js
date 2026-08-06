@@ -7,4 +7,19 @@ export const buildScriptPermissionLines = (settings = {}) => [
 export const buildScriptAuthorizationMessage = ({
   leadText = '检测到脚本。',
   settings = {},
-} = {}) => `${leadText}\n脚本可能需要权限：\n- ${buildScriptPermissionLines(settings).join('\n- ')}`;
+  compatibility = null,
+} = {}) => {
+  const blockedCount = Math.max(0, Number(compatibility?.blockedCount) || 0);
+  const hasCompatibilitySummary = compatibility && typeof compatibility === 'object' && blockedCount > 0;
+  const runnableCount = hasCompatibilitySummary
+    ? Math.max(0, Number(compatibility?.runnableCount) || 0)
+    : null;
+  const lines = [leadText];
+  if (hasCompatibilitySummary) {
+    lines.push(`兼容性预检：${runnableCount} 条可运行；${blockedCount} 条需要作为 SillyTavern 外部扩展安装，已保留但不会启用。`);
+  }
+  if (!hasCompatibilitySummary || runnableCount > 0) {
+    lines.push(`${hasCompatibilitySummary ? '可运行脚本' : '脚本'}可能需要权限：\n- ${buildScriptPermissionLines(settings).join('\n- ')}`);
+  }
+  return lines.join('\n');
+};

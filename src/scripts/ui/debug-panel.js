@@ -3,6 +3,7 @@
  */
 
 import { appSettings } from '../storage/app-settings.js';
+import { getCompatGapReportStore } from '../storage/compat-gap-report-store.js';
 import { createDebugPanelDom } from './debug-panel-dom-utils.js';
 import {
     buildCustomBundleDiagnosticsMeta,
@@ -135,6 +136,7 @@ export class DebugPanel {
         this.errorLogText = null;
         this.errorLogRefresh = null;
         this.errorLogExport = null;
+        this.compatGapReportStore = getCompatGapReportStore();
         this.debugLogListener = null;
     }
 
@@ -279,6 +281,7 @@ export class DebugPanel {
     clear() {
         this.logs = [];
         this.seenMessages.clear();
+        void this.compatGapReportStore.clear();
         if (this.logContainer) {
             this.logContainer.innerHTML = '';
         }
@@ -984,14 +987,16 @@ export class DebugPanel {
         setDebugViewerVisibility({ overlay: this.errorLogOverlay, visible: false });
     }
 
-    refreshErrorLogs() {
+    async refreshErrorLogs() {
         const viewer = createDebugViewerTextBindings({
             metaEl: this.errorLogMeta,
             textEl: this.errorLogText,
         });
         if (!this.errorLogOverlay || !viewer.hasViewer()) return;
+        const compatReports = await this.compatGapReportStore.getReports().catch(() => []);
         refreshErrorLogView({
             logs: this.logs,
+            compatReports,
             setMeta: viewer.setMeta,
             setText: viewer.setText,
         });
@@ -1005,9 +1010,10 @@ export class DebugPanel {
         });
     }
 
-    exportErrorLogs() {
-        void exportDebugTextFlow({
-            text: formatErrorLogs(this.logs),
+    async exportErrorLogs() {
+        const compatReports = await this.compatGapReportStore.getReports().catch(() => []);
+        await exportDebugTextFlow({
+            text: formatErrorLogs(this.logs, compatReports),
             filenamePrefix: 'app-debug-errors',
             successLabel: '错误日志已导出',
             emptyMessage: '暂无内容可导出',

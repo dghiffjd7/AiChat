@@ -289,14 +289,18 @@ export const handleAgentRunDiagnosticsLoadError = ({
 
 export const refreshErrorLogView = ({
   logs = [],
+  compatReports = [],
   setMeta = () => {},
   setText = () => {},
 } = {}) => {
   const list = collectErrorLogs(logs);
-  const text = formatErrorLogs(logs);
-  setMeta?.(`共 ${list.length} 条`);
+  const gaps = Array.isArray(compatReports) ? compatReports : [];
+  const text = formatErrorLogs(logs, gaps);
+  setMeta?.(gaps.length ? `错误 ${list.length} 条 · 兼容缺口 ${gaps.length} 条` : `共 ${list.length} 条`);
   setText?.(text);
-  return { count: list.length, text };
+  return gaps.length
+    ? { count: list.length, compatCount: gaps.length, text }
+    : { count: list.length, text };
 };
 
 export const copyDebugTextFlow = async ({

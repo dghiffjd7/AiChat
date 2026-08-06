@@ -1849,6 +1849,7 @@ export class PresetPanel {
     constructor({ store = null } = {}) {
         const bridge = typeof window !== 'undefined' ? window.appBridge : null;
         this.store = store || getPresetStore(bridge) || new PresetStore();
+        this.previewDiscoveryGuide = null;
         this.element = null;
         this.overlayElement = null;
         this.statusEl = null;
@@ -2542,6 +2543,7 @@ export class PresetPanel {
         if (section && this.detailScrollEl) this.detailScrollEl.scrollTop = 0;
         this.element.style.display = 'flex';
         this.overlayElement.style.display = 'block';
+        this.syncPreviewDiscoveryGuide();
     }
 
     /* 取消 = 确认后回滚未保存编辑；×/遮罩关闭 = 缓存编辑（发送始终用已保存内容，保存才更新） */
@@ -2583,8 +2585,27 @@ export class PresetPanel {
     hide() {
         this.captureCurrentDetailDraft();
         this.closeCustomSelectMenu();
+        this.previewDiscoveryGuide?.hide?.();
         if (this.element) this.element.style.display = 'none';
         if (this.overlayElement) this.overlayElement.style.display = 'none';
+    }
+
+    setPreviewDiscoveryGuide(guide = null) {
+        this.previewDiscoveryGuide?.hide?.();
+        this.previewDiscoveryGuide = guide || null;
+        this.syncPreviewDiscoveryGuide();
+    }
+
+    syncPreviewDiscoveryGuide() {
+        const guide = this.previewDiscoveryGuide;
+        if (!guide) return false;
+        const panelVisible = Boolean(this.element && this.element.style?.display !== 'none');
+        if (!panelVisible || this.currentPage !== 'detail' || (this.previewState || 'closed') !== 'closed') {
+            guide.hide?.();
+            return false;
+        }
+        const target = this.element?.querySelector?.('.pp-page[data-panel-page="detail"] .pp-preview-edge') || null;
+        return guide.show?.(target) === true;
     }
 
     /* ════════════════════════════════════════
@@ -3066,6 +3087,7 @@ export class PresetPanel {
         const next = ['bindings', 'detail', 'block'].includes(view) ? view : 'root';
         this.pagesEl.dataset.view = next;
         if (this.element) this.element.dataset.view = next;
+        this.syncPreviewDiscoveryGuide();
     }
 
     renderDetailSection(sec) {
@@ -5877,6 +5899,7 @@ export class PresetPanel {
         const prev = this.previewState || 'closed';
         if (prev === state) return;
         this.previewState = state;
+        if (state !== 'closed') this.previewDiscoveryGuide?.hide?.();
         const el = this.element;
         if (!el) return;
         const apply = (s) => {
@@ -6415,6 +6438,7 @@ export class PresetPanel {
         if (!this.previewPaneEl) return;
         this._lastFlashBlockId = ''; // 重新展开时首次定位允许闪一次
         this.setPreviewState(this.isPreviewPhoneLayout() ? 'full' : 'split');
+        this.previewDiscoveryGuide?.complete?.();
         if (!this.previewSkeleton) this.rebuildPreviewSkeleton();
         else {
             this.renderPreviewBody();
@@ -6424,6 +6448,7 @@ export class PresetPanel {
 
     closePreview({ animate = true } = {}) {
         this.setPreviewState('closed', { animate });
+        this.syncPreviewDiscoveryGuide();
     }
 
     /* 预览组装场景由注入选择条驱动：选了私聊/群聊或加入了聊天类项 → chat，否则创意写作 */
@@ -7579,24 +7604,43 @@ export class PresetPanel {
                     });
                     if (result?.count) {
                         const settings = appSettings.get();
-                        const choice = await appChoice({
-                            title: '脚本授权',
-                            message: buildScriptAuthorizationMessage({
-                                leadText: `已导入 ${result.count} 条绑定脚本。`,
-                                settings,
-                            }),
-                            actions: [
-                                { id: 'allow', label: '允许并启用', primary: true },
-                                { id: 'later', label: '稍后处理' },
-                            ],
-                            defaultActionId: 'allow',
+                        const ids = Array.isArray(result.ids) ? result.ids : [];
+                        const runnableIds = Array.isArray(result.runnableIds) ? result.runnableIds : ids;
+                        const compatibility = result.compatibility && typeof result.compatibility === 'object'
+                            ? result.compatibility
+                            : null;
+                        const authorizationMessage = buildScriptAuthorizationMessage({
+                            leadText: `已导入 ${result.count} 条绑定脚本。`,
+                            settings,
+                            compatibility,
                         });
-                        if (choice === 'allow') {
-                            if (settings.scriptEnabled !== true) appSettings.update({ scriptEnabled: true });
-                            const ids = Array.isArray(result.ids) ? result.ids : [];
-                            await Promise.all(ids.map((id) => scriptStore.toggleScript('preset', presetId, id, true)));
+                        if (runnableIds.length) {
+                            const choice = await appChoice({
+                                title: '脚本授权',
+                                message: authorizationMessage,
+                                actions: [
+                                    { id: 'allow', label: '允许并启用', primary: true },
+                                    { id: 'later', label: '稍后处理' },
+                                ],
+                                defaultActionId: 'allow',
+                            });
+                            if (choice === 'allow') {
+                                if (settings.scriptEnabled !== true) appSettings.update({ scriptEnabled: true });
+                                await Promise.all(runnableIds.map((id) => scriptStore.toggleScript('preset', presetId, id, true)));
+                            } else {
+                                window.toastr?.info?.('脚本已导入到该预设，尚未启用');
+                            }
                         } else {
-                            window.toastr?.info?.('脚本已导入到该预设，尚未启用');
+                            await appChoice({
+                                title: '脚本兼容性提示',
+                                message: authorizationMessage,
+                                actions: [{ id: 'ok', label: '知道了', primary: true }],
+                                defaultActionId: 'ok',
+                            });
+                        }
+                        const blockedCount = Math.max(0, Number(compatibility?.blockedCount) || 0);
+                        if (blockedCount > 0) {
+                            window.toastr?.warning?.(`${blockedCount} 条外部扩展加载器已保留并保持禁用`);
                         }
                     }
                 }

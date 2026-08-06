@@ -140,6 +140,30 @@ export const runRpGreetingStoreWrite = ({
   }
 };
 
+export const refreshImportedRpGreetingsIfActive = async ({
+  uiMode = 'chat',
+  personaId = '',
+  activePersonaId = '',
+  currentSessionId = '',
+  getRpSessionId = () => '',
+  seedRpGreetingIfNeeded = async () => false,
+  refreshRpToolbar = () => {},
+} = {}) => {
+  const targetPersonaId = normalizeSessionId(personaId);
+  if (
+    normalizeUiMode(uiMode) !== 'rp'
+    || !targetPersonaId
+    || targetPersonaId !== normalizeSessionId(activePersonaId)
+  ) {
+    return false;
+  }
+  const sessionId = normalizeSessionId(getRpSessionId?.(targetPersonaId));
+  if (!sessionId || sessionId !== normalizeSessionId(currentSessionId)) return false;
+  await seedRpGreetingIfNeeded?.(sessionId);
+  refreshRpToolbar?.(sessionId);
+  return true;
+};
+
 export const runEnterRpModeFlow = async ({
   uiMode = 'chat',
   captureSocial = true,

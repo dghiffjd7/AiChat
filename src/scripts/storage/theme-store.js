@@ -189,7 +189,7 @@ const DEFAULT_APPEARANCE = Object.freeze({
 const BUILTIN_THEMES = Object.freeze([
   {
     id: 'classic-light',
-    name: 'Classic Light',
+    name: '经典白',
     version: 1,
     source: 'chat-app-builtin',
     mode: 'light',
@@ -204,7 +204,7 @@ const BUILTIN_THEMES = Object.freeze([
   },
   {
     id: 'classic-dark',
-    name: 'Classic Dark',
+    name: '经典黑',
     version: 1,
     source: 'chat-app-builtin',
     mode: 'dark',

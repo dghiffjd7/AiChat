@@ -37,6 +37,37 @@ test('buildScriptAuthorizationMessage composes intro text and bullet list', () =
   );
 });
 
+test('buildScriptAuthorizationMessage distinguishes runnable scripts from external extensions', () => {
+  assert.equal(
+    buildScriptAuthorizationMessage({
+      leadText: '已导入 2 条绑定脚本。',
+      settings: {
+        scriptAllowReadMessages: true,
+        scriptAllowModifyVariables: true,
+        scriptAllowNetwork: false,
+      },
+      compatibility: {
+        runnableCount: 1,
+        blockedCount: 1,
+      },
+    }),
+    '已导入 2 条绑定脚本。\n兼容性预检：1 条可运行；1 条需要作为 SillyTavern 外部扩展安装，已保留但不会启用。\n可运行脚本可能需要权限：\n- 读取聊天记录：允许\n- 修改变量：允许\n- 访问网络：禁用',
+  );
+});
+
+test('buildScriptAuthorizationMessage omits permission choices when every script is blocked', () => {
+  assert.equal(
+    buildScriptAuthorizationMessage({
+      leadText: '检测到 1 条脚本。',
+      compatibility: {
+        runnableCount: 0,
+        blockedCount: 1,
+      },
+    }),
+    '检测到 1 条脚本。\n兼容性预检：0 条可运行；1 条需要作为 SillyTavern 外部扩展安装，已保留但不会启用。',
+  );
+});
+
 let failed = 0;
 for (const t of tests) {
   try {

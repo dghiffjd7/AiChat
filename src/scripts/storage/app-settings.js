@@ -113,7 +113,7 @@ const defaults = {
   chatDefaultColorMode: 'theme',
   chatDefaultBubbleColor: '#c9c9c9',
   chatDefaultTextColor: '#1F2937',
-  uiThemePresetId: 'classic-dark',
+  uiThemePresetId: 'paper-ink',
   uiThemeAvatarStyle: 'system',
   uiThemeChatDisplay: 'default',
   uiThemeToastrPosition: 'toast-top-right',

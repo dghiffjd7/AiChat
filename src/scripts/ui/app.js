@@ -235,6 +235,8 @@ import {
 import { createMaidCommandInputRuntime } from './maid-command-input-runtime-utils.js';
 import { createMaidSettingsPanel } from './maid-settings-panel.js';
 import { createMaidOnboardingRuntime, maidGuideEmit } from './maid-onboarding-runtime.js';
+import { createMaidRichScriptGuideRuntime } from './maid-rich-script-guide-runtime.js';
+import { createPresetPreviewDiscoveryGuide } from './preset-preview-discovery-guide.js';
 import {
   MAID_ONBOARDING_TARGET_SELECTORS,
 } from './maid-onboarding-flows.js';
@@ -457,6 +459,7 @@ import { createReasoningRuntime } from './chat/reasoning-runtime-utils.js';
 import {
   applyRpGreetingUpdateVariables,
   readUiMode,
+  refreshImportedRpGreetingsIfActive,
   removeLegacySendModeState,
   resetRpGreetingVariableState,
   resolveRpInitVarWorldIds,
@@ -841,6 +844,7 @@ const recordAppDebugTraceEvent = event => recordDebugTraceEventCore(window.appBr
 const initApp = async () => {
   const ui = new ChatUI();
   let maidOnboardingRuntime = null;
+  let maidRichScriptGuideRuntime = null;
   let hasConfiguredMaidProfile = () => false;
   const applyTypingDotsSetting = () => {
     const enabled = appSettings.get().typingDotsEnabled !== false;
@@ -2284,6 +2288,15 @@ const initApp = async () => {
         refreshRenderedMessageAvatars(currentSessionId);
       }
     },
+    onGreetingsImported: ({ personaId }) => refreshImportedRpGreetingsIfActive({
+      uiMode,
+      personaId,
+      activePersonaId: personaStore.getActive?.()?.id,
+      currentSessionId: chatStore.getCurrent(),
+      getRpSessionId,
+      seedRpGreetingIfNeeded,
+      refreshRpToolbar,
+    }),
     onRoleNewChatFinished: async () => {
       try {
         clearGroupSpeakerCaches();
@@ -3539,6 +3552,19 @@ const initApp = async () => {
   } catch (err) {
     logger.debug('maid guide store hydrate skipped', err);
   }
+  const presetPreviewDiscoveryGuide = createPresetPreviewDiscoveryGuide({
+    documentRef: document,
+    windowRef: window,
+    guideStore: maidGuideStore,
+  });
+  presetPanel.setPreviewDiscoveryGuide(presetPreviewDiscoveryGuide);
+  maidRichScriptGuideRuntime = createMaidRichScriptGuideRuntime({
+    windowRef: window,
+    guideStore: maidGuideStore,
+    getOnboardingRuntime: () => maidOnboardingRuntime,
+    isExecutionEnabled: () => appSettings.get().allowRichIframeScripts === true,
+  });
+  maidRichScriptGuideRuntime.bind();
   let showMaidGuide = async (guide) => {
     if (guide?.message) window.toastr?.info?.(guide.message);
   };
@@ -23948,9 +23974,11 @@ Phase G（Frame 36）：循环衔接
     isElementVisible: isMaidGuideElementVisible,
     delay: maidGuideDelay,
     openSettingsMenu: openMaidSettingsMenuForGuide,
+    openGeneralSettings: options => generalSettingsPanel.show(options),
     openApiConfig: options => openMaidApiConfigPanel(options),
     openQuickMenu: openMaidQuickMenuForGuide,
     closeMenus: () => hideMenus({ force: true, immediate: true }),
+    closeGeneralSettings: () => generalSettingsPanel.hide(),
     closeApiConfig: () => configPanel.hide(),
     openAddFriend: async () => {
       await sessionPanel.show();
@@ -23997,10 +24025,14 @@ Phase G（Frame 36）：循环衔接
       maidCommandInputRuntime?.close?.();
       maidSettingsPanel.show({ tab: 'tasks' });
     },
-    onFlowEnd: () => hideMenus({ force: true }),
+    onFlowEnd: () => {
+      hideMenus({ force: true });
+      Promise.resolve().then(() => maidRichScriptGuideRuntime?.retryPending?.());
+    },
     logger,
   });
   maidOnboardingRuntime.bind();
+  maidRichScriptGuideRuntime.retryPending();
   maidOnboardingRuntime.maybeOfferSetupHint();
 
   patchDebugUiRegistry((registry) => {
@@ -31534,6 +31566,11 @@ Phase G（Frame 36）：循环衔接
     setRenderState: (sid, state) => chatRenderState.set(sid, state),
     refreshChatAndContacts,
     pageSize: 90,
+  });
+
+  window.addEventListener('app-settings-changed', (event) => {
+    if (String(event?.detail?.key || '').trim() !== 'allowRichIframeScripts') return;
+    void rerenderCurrentSession();
   });
 
   window.addEventListener('worldinfo-changed', () => {

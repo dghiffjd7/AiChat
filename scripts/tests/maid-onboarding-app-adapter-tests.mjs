@@ -68,6 +68,31 @@ assert.deepEqual(calls.slice(-3), ['maid:close', 'agent:open', 'emit:agent-cente
 assert.equal(adapter.hasConfiguredProfile(), true);
 
 {
+  const richCalls = [];
+  const richAdapter = createMaidOnboardingAppAdapter({
+    documentRef: { querySelectorAll: () => [] },
+    targetSelectors: {
+      'settings-general': ['#settings-general'],
+      'general-ui-advanced': ['#general-ui-advanced-toggle'],
+      'general-rich-iframe-scripts': ['#general-rich-iframe-scripts'],
+    },
+    isElementVisible: () => false,
+    delay: async () => {},
+    openSettingsMenu: () => richCalls.push(['settings:open']),
+    openGeneralSettings: options => richCalls.push(['general:open', options]),
+  });
+  await richAdapter.prepareStep({ step: { target: 'settings-general' } });
+  await richAdapter.prepareStep({ step: { target: 'general-ui-advanced' } });
+  await richAdapter.prepareStep({ step: { target: 'general-rich-iframe-scripts' } });
+  assert.deepEqual(richCalls, [
+    ['settings:open'],
+    ['general:open', { revealRichIframeScripts: false }],
+    ['general:open', { revealRichIframeScripts: true }],
+  ]);
+  console.log('ok - onboarding adapter exposes the general settings fold and rich iframe switch');
+}
+
+{
   const backCalls = [];
   const backAdapter = createMaidOnboardingAppAdapter({
     documentRef: { querySelectorAll: () => [] },
@@ -130,6 +155,12 @@ assert.equal(adapter.hasConfiguredProfile(), true);
     ['exit', { animate: false, source: 'maid-onboarding' }],
     ['page', 'chat', { animate: false }],
   ]);
+
+  await navigationAdapter.prepareStep({
+    flow: { id: 'rich-script-permission' },
+    step: { target: 'settings-entry' },
+  });
+  assert.deepEqual(navigationCalls.splice(0), [], 'the contextual rich-card guide must keep the current room in place');
 
   await navigationAdapter.prepareStep({ step: { target: 'contact-list-entry' } });
   assert.deepEqual(navigationCalls.splice(0), [

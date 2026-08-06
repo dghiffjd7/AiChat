@@ -43,6 +43,7 @@ export class PersonaPanel {
         getPersonaScopeKey = null,
         getRpSessionIdForPersona = null,
         onPersonaChanged,
+        onGreetingsImported = null,
         onRoleNewChatFinished = null,
     }) {
         this.store = personaStore;
@@ -60,6 +61,7 @@ export class PersonaPanel {
         this.getPersonaScopeKey = typeof getPersonaScopeKey === 'function' ? getPersonaScopeKey : null;
         this.getRpSessionIdForPersona = typeof getRpSessionIdForPersona === 'function' ? getRpSessionIdForPersona : null;
         this.onPersonaChanged = onPersonaChanged;
+        this.onGreetingsImported = typeof onGreetingsImported === 'function' ? onGreetingsImported : null;
         this.onRoleNewChatFinished = typeof onRoleNewChatFinished === 'function' ? onRoleNewChatFinished : null;
         this.overlay = null;
         this.panel = null;
@@ -84,6 +86,7 @@ export class PersonaPanel {
             appBridge: window.appBridge,
             rpSessionStore: this.rpSessionStore,
             onPersonaChanged: () => this.notifyPersonaChanged(),
+            onGreetingsImported: payload => this.notifyGreetingsImported(payload),
         });
         this.importInput = null;
         this.importOverlay = null;
@@ -100,6 +103,11 @@ export class PersonaPanel {
     async notifyPersonaChanged() {
         if (typeof this.onPersonaChanged !== 'function') return;
         await Promise.resolve(this.onPersonaChanged());
+    }
+
+    async notifyGreetingsImported(payload = {}) {
+        if (typeof this.onGreetingsImported !== 'function') return;
+        await Promise.resolve(this.onGreetingsImported(payload));
     }
 
     getPersonaScopeId(personaId) {

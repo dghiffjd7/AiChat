@@ -207,13 +207,21 @@ const ensureUniqueWorldbookId = (baseName, hasWorldInfo) => {
 };
 
 export class CharacterCardImporter {
-  constructor({ personaStore, appBridge, presetStore = null, rpSessionStore, onPersonaChanged } = {}) {
+  constructor({
+    personaStore,
+    appBridge,
+    presetStore = null,
+    rpSessionStore,
+    onPersonaChanged,
+    onGreetingsImported,
+  } = {}) {
     this.personaStore = personaStore || null;
     this.appBridge = appBridge || window.appBridge;
     this.presetStore = presetStore || getPresetStore(this.appBridge);
     this.regexStore = createRegexStoreRuntimeAdapter(this.appBridge);
     this.rpSessionStore = rpSessionStore || null;
     this.onPersonaChanged = onPersonaChanged;
+    this.onGreetingsImported = onGreetingsImported;
   }
 
   async importFromUrl(url) {
@@ -319,10 +327,12 @@ export class CharacterCardImporter {
       logger.warn('save persona card failed', err);
     }
 
+    let importedGreetingCount = 0;
     try {
       if (options.importGreetings && this.rpSessionStore && greetings.length) {
         await this.rpSessionStore.ready;
         this.rpSessionStore.setGreetings(greetings, { activeId: greetings[0]?.id || '' });
+        importedGreetingCount = greetings.length;
       }
     } catch (err) {
       logger.warn('import rp greetings failed', err);
@@ -445,33 +455,53 @@ export class CharacterCardImporter {
         });
         if (result?.count) {
           const settings = appSettings.get();
-          const choice = await appChoice({
-            title: '脚本授权',
-            message: buildScriptAuthorizationMessage({
-              leadText: `检测到 ${result.count} 条脚本。`,
-              settings,
-            }),
-            actions: [
-              { id: 'allow', label: '允许并启用', primary: true },
-              { id: 'once', label: '仅本次允许' },
-              { id: 'deny', label: '拒绝', variant: 'danger' },
-            ],
-            defaultActionId: 'allow',
-          });
           const ids = Array.isArray(result.ids) ? result.ids : [];
-          if (choice === 'allow') {
-            if (settings.scriptEnabled !== true) appSettings.update({ scriptEnabled: true });
-            await Promise.all(ids.map((id) => scriptStore.toggleScript('character', persona.id, id, true)));
-          } else if (choice === 'once') {
-            const sid = this.appBridge?.chatStore?.getCurrent?.() || '';
-            const scriptRuntime = getScriptRuntime(this.appBridge);
-            if (sid && scriptRuntime?.allowOnce) {
-              allowScriptOnce(this.appBridge, sid, ids);
-            } else {
-              window.toastr?.info?.('当前未打开会话，脚本已导入但未启用');
+          const runnableIds = Array.isArray(result.runnableIds) ? result.runnableIds : ids;
+          const compatibility = result.compatibility && typeof result.compatibility === 'object'
+            ? result.compatibility
+            : null;
+          const authorizationMessage = buildScriptAuthorizationMessage({
+            leadText: `检测到 ${result.count} 条脚本。`,
+            settings,
+            compatibility,
+          });
+          if (runnableIds.length) {
+            const choice = await appChoice({
+              title: '脚本授权',
+              message: authorizationMessage,
+              actions: [
+                { id: 'allow', label: '允许并启用', primary: true },
+                { id: 'once', label: '仅本次允许' },
+                { id: 'deny', label: '拒绝', variant: 'danger' },
+              ],
+              defaultActionId: 'allow',
+            });
+            if (choice === 'allow') {
+              if (settings.scriptEnabled !== true) appSettings.update({ scriptEnabled: true });
+              await Promise.all(runnableIds.map((id) => scriptStore.toggleScript('character', persona.id, id, true)));
+            } else if (choice === 'once') {
+              const sid = this.appBridge?.chatStore?.getCurrent?.() || '';
+              const scriptRuntime = getScriptRuntime(this.appBridge);
+              if (sid && scriptRuntime?.allowOnce) {
+                allowScriptOnce(this.appBridge, sid, runnableIds);
+              } else {
+                window.toastr?.info?.('当前未打开会话，脚本已导入但未启用');
+              }
             }
+          } else {
+            await appChoice({
+              title: '脚本兼容性提示',
+              message: authorizationMessage,
+              actions: [{ id: 'ok', label: '知道了', primary: true }],
+              defaultActionId: 'ok',
+            });
           }
-          window.toastr?.success?.('脚本已导入');
+          const blockedCount = Math.max(0, Number(compatibility?.blockedCount) || 0);
+          if (blockedCount > 0) {
+            window.toastr?.warning?.(`脚本已导入；${blockedCount} 条外部扩展加载器已保持禁用`);
+          } else {
+            window.toastr?.success?.('脚本已导入');
+          }
         }
       } catch (err) {
         logger.warn('import tavern helper scripts failed', err);
@@ -505,6 +535,17 @@ export class CharacterCardImporter {
       const scopeId = normalizeScopeId(this.appBridge?.scopeId || '');
       logger.info(`[character-card] imported persona=${persona.id} scope=${scopeId} world=${worldId || 'none'}`);
     } catch {}
+
+    if (importedGreetingCount > 0) {
+      try {
+        await Promise.resolve(this.onGreetingsImported?.({
+          personaId: persona.id,
+          greetingCount: importedGreetingCount,
+        }));
+      } catch (err) {
+        logger.warn('refresh imported rp greetings failed', err);
+      }
+    }
 
     window.toastr?.success?.('角色卡导入完成（已切换角色卡）');
     return true;

@@ -9,6 +9,18 @@ export const MAID_ONBOARDING_TARGET_SELECTORS = Object.freeze({
     '[data-maid-guide-target="settings-api-config"]',
     '#settings-menu button[data-action="config"]',
   ],
+  'settings-general': [
+    '[data-maid-guide-target="settings-general"]',
+    '#settings-menu button[data-action="settings"]',
+  ],
+  'general-ui-advanced': [
+    '[data-maid-guide-target="general-ui-advanced"]',
+    '#general-ui-advanced-toggle',
+  ],
+  'general-rich-iframe-scripts': [
+    '[data-maid-guide-target="general-rich-iframe-scripts"]',
+    '#general-rich-iframe-scripts',
+  ],
   'config-profile-select': [
     '[data-maid-guide-target="config-profile-select"]',
     '#config-profile-btn',
@@ -408,6 +420,58 @@ export const MAID_ONBOARDING_FLOWS = Object.freeze([
           event === 'agent-center-closed'
           || (event === 'target-click' && payload?.target === 'agent-center-close')
         ),
+      },
+    ],
+  },
+  {
+    id: 'rich-script-permission',
+    title: '让角色卡完成动态渲染',
+    goal: '在信任角色卡来源时开启富文本 iframe 脚本',
+    doneText: '动态角色卡设置 · 完成',
+    steps: [
+      {
+        action: 'observe',
+        expression: 'surprise',
+        text: '这张角色卡的开场页面由脚本动态生成；当前安全模式已拦截脚本，所以只剩静态空壳。这个开关会影响所有富文本卡，仅在你信任角色卡来源时开启。',
+        hint: '不会自动开启，仍需你确认安全提示',
+        primaryLabel: '带我去设置',
+      },
+      {
+        target: 'settings-entry',
+        placement: 'bottom',
+        action: 'click',
+        text: '先打开右上角的设置菜单。角色卡与聊天会保留在原处。',
+        hint: '点击高亮的设置按钮',
+        fallback: { kind: 'open-settings-menu' },
+        canAdvance: clicked('settings-entry'),
+      },
+      {
+        target: 'settings-general',
+        placement: 'left',
+        action: 'click',
+        text: '选择「设定」，进入通用设置。',
+        hint: '点击设定',
+        fallback: { kind: 'open-general-settings' },
+        canAdvance: clicked('settings-general'),
+      },
+      {
+        target: 'general-ui-advanced',
+        placement: 'left',
+        action: 'click',
+        text: '在「界面与调试」卡片右上角展开「调试选项」。',
+        hint: '展开调试选项',
+        fallback: { kind: 'click-target' },
+        canAdvance: clicked('general-ui-advanced'),
+      },
+      {
+        target: 'general-rich-iframe-scripts',
+        placement: 'left',
+        action: 'wait-event',
+        expression: 'point',
+        text: '开启「富文本 iframe 执行脚本」，再阅读并确认安全提示。只有设置真正启用后，这一步才会完成；不信任来源时请直接退出引导。',
+        hint: '仅信任来源时开启并确认',
+        fallback: { kind: 'click-target' },
+        canAdvance: (event, payload) => event === 'rich-script-enabled' && payload?.enabled === true,
       },
     ],
   },

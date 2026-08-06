@@ -355,6 +355,31 @@ import {
 }
 
 {
+  let meta = '';
+  let text = '';
+  const result = refreshErrorLogView({
+    logs: [],
+    compatReports: [{
+      status: 'candidate',
+      api: '$().animate',
+      scopeFingerprint: 'scope-b',
+      revisionFingerprint: 'revision-b',
+      candidateCount: 1,
+      confirmedCount: 0,
+      firstSeenAt: 1000,
+      lastSeenAt: 1000,
+    }],
+    setMeta: (value) => { meta = value; },
+    setText: (value) => { text = value; },
+  });
+  assert.equal(result.count, 0);
+  assert.equal(result.compatCount, 1);
+  assert.equal(meta, '错误 0 条 · 兼容缺口 1 条');
+  assert.match(text, /\$\(\)\.animate/);
+  console.log('ok - refreshErrorLogView includes persisted compatibility gaps');
+}
+
+{
   const calls = [];
   const result = await copyDebugTextFlow({
     text: 'copy me',
