@@ -204,6 +204,7 @@ import {
   const appBridge = {};
   registerWorldStoreBridgeContract(appBridge, {
     getWorldInfo: async id => ({ id }),
+    getWorldInfoSnapshot: async id => ({ worldbookId: id, revision: 1, generation: 1 }),
     saveWorldInfo: async (id, data) => calls.push(['save', id, data]),
     worldInfoExists: async id => id === 'w1',
     auditWorldInfoStorage: async () => ({ nativeOnlyIds: ['legacy'] }),
@@ -216,6 +217,11 @@ import {
     renameWorldInfo: async (from, to) => calls.push(['rename', from, to]),
   });
   assert.deepEqual(await appBridge.getWorldInfo('w1'), { id: 'w1' });
+  assert.deepEqual(await appBridge.getWorldInfoSnapshot('w1'), {
+    worldbookId: 'w1',
+    revision: 1,
+    generation: 1,
+  });
   await appBridge.saveWorldInfo('w1', { name: 'World' });
   assert.equal(await appBridge.worldInfoExists('w1'), true);
   assert.deepEqual(await appBridge.auditWorldInfoStorage(), { nativeOnlyIds: ['legacy'] });
@@ -234,6 +240,7 @@ import {
   ]);
   const registry = getBridgeContractRegistry(appBridge);
   assert.equal(registry.contracts.saveWorldInfo.domain, BRIDGE_CONTRACT_DOMAINS.worldStore);
+  assert.equal(registry.contracts.getWorldInfoSnapshot.domain, BRIDGE_CONTRACT_DOMAINS.worldStore);
   assert.equal(registry.contracts.worldInfoExists.domain, BRIDGE_CONTRACT_DOMAINS.worldStore);
   assert.equal(registry.contracts.auditWorldInfoStorage.domain, BRIDGE_CONTRACT_DOMAINS.worldStore);
   assert.equal(registry.domains[BRIDGE_CONTRACT_DOMAINS.worldStore].waitForWorldStoreReady, true);
@@ -250,6 +257,8 @@ import {
   registerWorldSessionBridgeContract(appBridge, {
     getWorldSessionMap: () => worldSessionMap,
     getWorldIdsForSession: sessionId => worldSessionMap?.[sessionId] || [],
+    getWorldSessionBindingSnapshot: sessionId => ({ sessionId, scopeId: 'p1', worldbookIds: [] }),
+    updateWorldSessionBinding: (sessionId, options) => ({ sessionId, options }),
     getCurrentWorldId: () => 'w1',
     getCurrentWorldIds: () => ['w1'],
     getGlobalWorldId: () => 'global',
@@ -262,6 +271,15 @@ import {
   });
   assert.equal(appBridge.getWorldSessionMap(), worldSessionMap);
   assert.deepEqual(appBridge.getWorldIdsForSession('s1'), ['w1']);
+  assert.deepEqual(appBridge.getWorldSessionBindingSnapshot('s1'), {
+    sessionId: 's1',
+    scopeId: 'p1',
+    worldbookIds: [],
+  });
+  assert.deepEqual(appBridge.updateWorldSessionBinding('s1', { worldbookId: 'w2' }), {
+    sessionId: 's1',
+    options: { worldbookId: 'w2' },
+  });
   assert.equal(appBridge.getCurrentWorldId(), 'w1');
   assert.deepEqual(appBridge.getCurrentWorldIds(), ['w1']);
   assert.equal(appBridge.getGlobalWorldId(), 'global');
@@ -274,6 +292,8 @@ import {
   const registry = getBridgeContractRegistry(appBridge);
   assert.equal(registry.contracts.getWorldSessionMap.domain, BRIDGE_CONTRACT_DOMAINS.worldSession);
   assert.equal(registry.domains[BRIDGE_CONTRACT_DOMAINS.worldSession].getWorldIdsForSession, true);
+  assert.equal(registry.domains[BRIDGE_CONTRACT_DOMAINS.worldSession].getWorldSessionBindingSnapshot, true);
+  assert.equal(registry.domains[BRIDGE_CONTRACT_DOMAINS.worldSession].updateWorldSessionBinding, true);
   assert.equal(registry.domains[BRIDGE_CONTRACT_DOMAINS.worldSession].getCurrentWorldId, true);
   assert.equal(registry.domains[BRIDGE_CONTRACT_DOMAINS.worldSession].getCurrentWorldIds, true);
   assert.equal(registry.domains[BRIDGE_CONTRACT_DOMAINS.worldSession].getGlobalWorldId, true);
@@ -629,7 +649,7 @@ import {
 }
 
 // rename 生命周期源码契约：真实 AppBridge 无法在 Node 中安全实例化（模块顶层实例化多个 store），
-// 行为验证依赖真机 CDP；此处锁定生命周期步骤存在且顺序不被意外重排/删除。
+// 行为验证依赖真机 CDP；此处锁定 CAS 写入、绑定迁移、原资源删除与 revision 提交顺序。
 {
   const fs = await import('node:fs');
   const bridgeSource = fs.readFileSync(
@@ -641,12 +661,14 @@ import {
   const renameEnd = bridgeSource.indexOf('async deleteWorldInfo(', renameStart);
   const renameBody = bridgeSource.slice(renameStart, renameEnd);
   const orderedMarkers = [
-    'await this.saveWorldInfo(to, { ...(data || {}), name: to })',
+    'await this._saveWorldInfoStorage(to, { ...(data || {}), name: to })',
+    'this.worldInfoConcurrency.commitSave(to, payload)',
     'this.persistWorldSessionMap()',
     'this.persistGlobalWorldId()',
     'await this.regex.persist()',
     "await this.worldLifecycleHandler?.({ type: 'rename', from, to })",
     'await this._removeWorldInfoStorage(from)',
+    'this.worldInfoConcurrency.commitDelete(from)',
   ];
   let cursor = -1;
   for (const marker of orderedMarkers) {
@@ -663,13 +685,30 @@ import {
     '_removeWorldInfoStorage 必须调用原生 delete_world_info（否则旧原生文件成孤儿）',
   );
   assert.ok(
-    removeBody.includes('await this.worldStore.remove(target)'),
+    removeBody.includes('await this.worldStore.remove(target, { skipNative: nativeAvailable, nativeDeleted })'),
     '_removeWorldInfoStorage 必须清理前端 worldStore 条目',
   );
   assert.ok(
-    removeBody.indexOf("safeInvoke('delete_world_info'") < removeBody.indexOf('await this.worldStore.remove(target)'),
+    removeBody.indexOf("safeInvoke('delete_world_info'")
+      < removeBody.indexOf('await this.worldStore.remove(target, { skipNative: nativeAvailable, nativeDeleted })'),
     '原生删除必须先于前端删除（真错误重抛时保持双存储一致可重试）',
   );
+  assert.match(
+    renameBody,
+    /const refCandidates = names\.filter[\s\S]*?this\.worldStore\?\.getMetadata\?\.\(wid\)[\s\S]*?for \(const wid of refCandidates\)/,
+    'rename 必须先用索引 refs 筛选引用者，再读取正文',
+  );
+  assert.match(
+    renameBody,
+    /for \(let attempt = 0; attempt < 3 && !settled[\s\S]*?rename world refs rewrite conflicted repeatedly/,
+    'rename refs 重写冲突必须重读快照重试，重试耗尽必须告警而非静默跳过',
+  );
+
+  const waitReadyStart = bridgeSource.indexOf('async waitForWorldStoreReady()');
+  const waitReadyEnd = bridgeSource.indexOf('getWorldInfoMetadata(', waitReadyStart);
+  const waitReadyBody = bridgeSource.slice(waitReadyStart, waitReadyEnd);
+  assert.match(waitReadyBody, /await this\.worldStore\.ready/);
+  assert.doesNotMatch(waitReadyBody, /loadAll/);
 
   assert.match(bridgeSource, /getGlobalWorldIdsKey\(\) \{\s*return 'global_world_ids_shared_v1';\s*\}/);
   assert.match(bridgeSource, /getResolvedWorldState[\s\S]*?globalWorldId: globalWorldIds\[0\] \|\| '',\s*globalWorldIds,/);
@@ -685,4 +724,34 @@ import {
     'all prompt assembly paths must collect every enabled global worldbook',
   );
   console.log('ok - renameWorldInfo lifecycle markers stay present and ordered (incl. old native file cleanup)');
+}
+
+{
+  const fs = await import('node:fs');
+  const appSource = fs.readFileSync(
+    new URL('../../src/scripts/ui/app.js', import.meta.url),
+    'utf8',
+  );
+  const greetingStart = appSource.indexOf('const seedRpGreetingIfNeeded = async');
+  const greetingEnd = appSource.indexOf('const resetRpHistory', greetingStart);
+  const greetingBody = appSource.slice(greetingStart, greetingEnd);
+  assert.ok(
+    greetingBody.indexOf('await ensureWorldsForSessionDisplay(sid)')
+      < greetingBody.indexOf('buildRpGreetingMessage(greeting, sid)'),
+    'RP 开场白必须在解析 initvar 前载入绑定世界书',
+  );
+  assert.equal(
+    (appSource.match(/ensureRecentMessagesLoaded: sid => ensureRecentMessagesAndWorlds\(sid\)/g) || []).length,
+    3,
+    '首次进房、当前会话重绘与 session-changed 都必须先载入世界书再渲染历史',
+  );
+  const startupHistoryStart = appSource.indexOf('// Preload chat history if available');
+  const startupHistoryEnd = appSource.indexOf('// Track the current in-flight generation', startupHistoryStart);
+  assert.ok(
+    appSource.slice(startupHistoryStart, startupHistoryEnd).includes(
+      'await ensureRecentMessagesAndWorlds(currentId)',
+    ),
+    '冷启动预载当前会话历史前必须先定向载入世界书',
+  );
+  console.log('ok - cold session rendering and RP greeting preload targeted worldbooks');
 }

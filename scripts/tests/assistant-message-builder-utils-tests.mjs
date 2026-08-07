@@ -90,8 +90,9 @@ test('buildAssistantMessageFromText supports template injection/render and group
     isGroupChat: true,
     maybePromptTemplateGate: ({ sampleText }) => calls.push(`gate:${sampleText}`),
     shouldRunTemplate: () => true,
-    getTemplateInjections: ({ content }) => {
+    getTemplateInjections: async ({ content }) => {
       calls.push(`inject:${content}`);
+      await Promise.resolve();
       return { before: ['before'], after: ['after'] };
     },
     renderTemplateText: async (content) => {

@@ -302,43 +302,69 @@
     };
   };
 
-  const getStoredLorebook = async (name) => {
+  const getStoredLorebookSnapshot = async (name) => {
     const bridge = getParentBridge();
     const target = String(name || '').trim();
     if (!bridge || !target) return null;
     try {
-      if (bridge.worldStore?.ready) await bridge.worldStore.ready;
-    } catch {}
-    try {
-      if (typeof bridge.worldStore?.load === 'function') {
-        const local = bridge.worldStore.load(target);
-        if (local) return local;
+      if (typeof bridge.getWorldInfoSnapshot === 'function') {
+        const snapshot = await bridge.getWorldInfoSnapshot(target);
+        if (snapshot && typeof snapshot === 'object') return snapshot;
       }
     } catch {}
     try {
-      if (typeof bridge.getWorldInfo === 'function') return await bridge.getWorldInfo(target);
+      if (typeof bridge.getWorldInfo === 'function') {
+        const data = await bridge.getWorldInfo(target);
+        return {
+          worldbookId: target,
+          exists: data !== null && data !== undefined,
+          revision: null,
+          generation: null,
+          data,
+        };
+      }
     } catch {}
     return null;
   };
 
-  const saveStoredLorebook = async (name, data) => {
+  const getStoredLorebook = async (name) => {
+    const snapshot = await getStoredLorebookSnapshot(name);
+    return snapshot?.data ?? null;
+  };
+
+  const saveStoredLorebook = async (name, data, snapshot = null) => {
     const bridge = getParentBridge();
     const target = String(name || '').trim();
     if (!bridge || !target) return false;
-    try {
-      if (typeof bridge.saveWorldInfo === 'function') {
-        await bridge.saveWorldInfo(target, data);
-        return true;
-      }
-    } catch {}
-    try {
-      if (bridge.worldStore?.ready) await bridge.worldStore.ready;
-      if (typeof bridge.worldStore?.save === 'function') {
-        await bridge.worldStore.save(target, data);
-        return true;
-      }
-    } catch {}
-    return false;
+    if (typeof bridge.saveWorldInfo !== 'function') return false;
+    const hasRevision = snapshot?.revision !== null && snapshot?.revision !== undefined;
+    const hasGeneration = snapshot?.generation !== null && snapshot?.generation !== undefined;
+    const expectedRevision = Number(snapshot?.revision);
+    const expectedGeneration = Number(snapshot?.generation);
+    if (
+      !hasRevision ||
+      !hasGeneration ||
+      !Number.isFinite(expectedRevision) ||
+      !Number.isFinite(expectedGeneration) ||
+      typeof snapshot?.exists !== 'boolean'
+    ) {
+      const error = new Error('无法取得世界书版本快照，已取消写入。');
+      error.code = 'worldbook_snapshot_unavailable';
+      throw error;
+    }
+    const result = await bridge.saveWorldInfo(target, data, {
+      expectedRevision,
+      expectedGeneration,
+      expectedExists: snapshot.exists,
+      conflictMode: 'return',
+    });
+    if (result?.conflict || result?.ok === false) {
+      const error = new Error('世界书已被其他操作修改，请重新读取后重试。');
+      error.code = String(result?.reason || 'worldbook_revision_conflict');
+      error.details = result;
+      throw error;
+    }
+    return true;
   };
 
   const listLorebookNames = async () => {
@@ -416,12 +442,13 @@
     });
 
     exposeGlobalCompatFunction('setLorebookEntries', async (name, entries = []) => {
-      try {
-        if (typeof parent?.setLorebookEntries === 'function') return await parent.setLorebookEntries(name, entries);
-      } catch {}
+      let parentSetter = null;
+      try { parentSetter = typeof parent?.setLorebookEntries === 'function' ? parent.setLorebookEntries : null; } catch {}
+      if (parentSetter) return await parentSetter.call(parent, name, entries);
       const target = String(name || '').trim();
       if (!target) return false;
-      const current = await getStoredLorebook(target);
+      const snapshot = await getStoredLorebookSnapshot(target);
+      const current = snapshot?.data ?? null;
       const existingEntries = Array.isArray(current?.entries) ? current.entries : [];
       const nextEntries = existingEntries.map((entry, index) => normalizeLorebookEntry(entry, index));
       const keyFor = (entry, index) => {
@@ -445,7 +472,7 @@
         name: current?.name || target,
         entries: nextEntries,
       };
-      await saveStoredLorebook(target, payload);
+      await saveStoredLorebook(target, payload, snapshot);
       return true;
     });
 

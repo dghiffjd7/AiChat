@@ -36,6 +36,7 @@ export const removeSessionCore = async ({
   contactsStore = null,
   appBridge = globalThis.window?.appBridge || null,
   invoke = safeInvoke,
+  beforeDeleteSession = null,
   logger = console,
 } = {}) => {
   const sid = trim(sessionId);
@@ -44,7 +45,36 @@ export const removeSessionCore = async ({
     return { ok: true, deleted: false, reason: 'already_absent', sessionId: sid };
   }
 
+  let deleteGuard = null;
+  if (typeof beforeDeleteSession === 'function') {
+    try {
+      const guard = await beforeDeleteSession(sid);
+      if (guard?.ok === false) {
+        return {
+          ok: false,
+          deleted: false,
+          reason: trim(guard.reason) || 'session_busy',
+          sessionId: sid,
+          guard,
+        };
+      }
+      deleteGuard = guard;
+    } catch (error) {
+      return {
+        ok: false,
+        deleted: false,
+        reason: 'session_delete_guard_failed',
+        sessionId: sid,
+        errorMessage: trim(error?.message || error),
+      };
+    }
+  }
+
   const warnings = [];
+  const releaseDeleteGuard = () => {
+    try { deleteGuard?.release?.(); } catch {}
+    deleteGuard = null;
+  };
   const warn = (stage, error) => {
     warnings.push({
       stage,
@@ -103,7 +133,20 @@ export const removeSessionCore = async ({
     warn('清理世界书映射', error);
   }
 
-  chatStore?.delete?.(sid);
+  try {
+    chatStore?.delete?.(sid);
+  } catch (error) {
+    warn('删除聊天室', error);
+    releaseDeleteGuard();
+    return {
+      ok: false,
+      deleted: false,
+      reason: 'session_delete_failed',
+      sessionId: sid,
+      deletedDerivedWorldbookIds,
+      warnings,
+    };
+  }
 
   try {
     await appBridge?.clearSessionTurnCheckpointState?.(sid);
@@ -111,7 +154,13 @@ export const removeSessionCore = async ({
     warn('清理检查点', error);
   }
 
-  contactsStore?.removeContact?.(sid);
+  try {
+    contactsStore?.removeContact?.(sid);
+  } catch (error) {
+    warn('删除联系人', error);
+  }
+
+  releaseDeleteGuard();
 
   return {
     ok: true,

@@ -1224,10 +1224,19 @@ export class MemoryTableEditor {
         });
         if (!ok) return '';
         worldId = 'memory-table-global';
-        appBridge.setGlobalWorld?.(worldId);
         try {
-          await appBridge.saveWorldInfo(worldId, { name: worldId, entries: [] });
-        } catch {}
+          const snapshot = await appBridge.getWorldInfoSnapshot?.(worldId);
+          if (!snapshot?.exists) {
+            await appBridge.saveWorldInfo(worldId, { name: worldId, entries: [] }, snapshot ? {
+              expectedRevision: snapshot.revision,
+              expectedGeneration: snapshot.generation,
+              expectedExists: false,
+            } : undefined);
+          }
+          appBridge.setGlobalWorld?.(worldId);
+        } catch {
+          return '';
+        }
       }
       return worldId;
     }
@@ -1241,10 +1250,19 @@ export class MemoryTableEditor {
       const rawId = sessionId || 'default';
       const safeId = rawId.replace(/[^a-zA-Z0-9_-]+/g, '_').slice(0, 80) || 'default';
       worldId = `memory-table-${safeId}`;
-      setCurrentWorld(appBridge, worldId, sessionId);
       try {
-        await appBridge.saveWorldInfo(worldId, { name: worldId, entries: [] });
-      } catch {}
+        const snapshot = await appBridge.getWorldInfoSnapshot?.(worldId);
+        if (!snapshot?.exists) {
+          await appBridge.saveWorldInfo(worldId, { name: worldId, entries: [] }, snapshot ? {
+            expectedRevision: snapshot.revision,
+            expectedGeneration: snapshot.generation,
+            expectedExists: false,
+          } : undefined);
+        }
+        setCurrentWorld(appBridge, worldId, sessionId);
+      } catch {
+        return '';
+      }
     }
     return worldId;
   }

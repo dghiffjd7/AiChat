@@ -66,6 +66,19 @@ const makeSession = (timestamp = 1) => ({
 }
 
 {
+  const store = new ChatStore({ scopeId: 'deleted_summary_reads' });
+  store.state = { currentId: '', sessions: {} };
+  store.currentId = '';
+
+  assert.deepEqual(store.getSummaries('deleted-session'), []);
+  assert.equal(store.getCompactedSummary('deleted-session'), null);
+  assert.equal(store.getCompactedSummaryRaw('deleted-session'), '');
+  assert.equal(store.hasSession('deleted-session'), false);
+  assert.deepEqual(store.listSessions(), []);
+  console.log('ok - summary reads do not recreate an absent session');
+}
+
+{
   const store = new ChatStore({ scopeId: 'persona_archive_name' });
   store.state = {
     currentId: 's-name',

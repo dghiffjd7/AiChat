@@ -1,6 +1,7 @@
 import { normalizeMaidImageAttachments } from '../maid-attachment-parts.js';
 import { validateMaidWorldbookSourcePlan } from '../maid-source-grounding.js';
 import { BUILTIN_PHONE_FORMAT_WORLDBOOK_ID } from '../../storage/builtin-worldbooks.js';
+import { resolveWorldSessionBindingMutation } from '../../storage/world-session-binding-utils.js';
 
 const trim = (value, fallback = '') => {
   const text = String(value ?? '').trim();
@@ -91,6 +92,28 @@ const summarizeProfile = profile => ({
   description: trim(profile?.description),
 });
 
+const readPersonaGenerationToken = profile => {
+  if (!profile || typeof profile !== 'object') return '';
+  for (const key of ['created', 'createdAt']) {
+    if (!hasOwn(profile, key)) continue;
+    const value = profile[key];
+    if (value === null || value === undefined || value === '') continue;
+    return `${key}:${String(value)}`;
+  }
+  return '';
+};
+
+const readPersonaRevisionToken = profile => {
+  if (!profile || typeof profile !== 'object') return '';
+  for (const key of ['updated', 'updatedAt']) {
+    if (!hasOwn(profile, key)) continue;
+    const value = profile[key];
+    if (value === null || value === undefined || value === '') continue;
+    return `${key}:${String(value)}`;
+  }
+  return '';
+};
+
 const resolveProfileSwitchTarget = (args = {}, keys = []) => {
   for (const key of keys) {
     const value = trim(args?.[key]);
@@ -104,6 +127,7 @@ const buildSwitchProfileResult = async ({
   args = {},
   store = null,
   switchProfile = null,
+  canSwitchProfile = null,
   targetKeys = ['target', 'id', 'name'],
 } = {}) => {
   const target = resolveProfileSwitchTarget(args, targetKeys);
@@ -116,6 +140,28 @@ const buildSwitchProfileResult = async ({
       reason: `${kind}_not_found`,
       target,
     };
+  }
+  const activeId = trim(getActiveStoreItem(store)?.id);
+  if (activeId !== trim(profile.id) && typeof canSwitchProfile === 'function') {
+    const gate = await canSwitchProfile({
+      kind,
+      target,
+      profile,
+      profileId: trim(profile.id),
+      [`${kind}Id`]: trim(profile.id),
+    });
+    if (gate === false || gate?.ok === false) {
+      return {
+        ok: false,
+        switched: false,
+        reason: trim(gate?.reason, `${kind}_switch_blocked`),
+        target,
+        profile: summarizeProfile(profile),
+        ...(Number(gate?.retryAfterMs) > 0
+          ? { retryAfterMs: Math.ceil(Number(gate.retryAfterMs)) }
+          : {}),
+      };
+    }
   }
   let switched = false;
   if (typeof switchProfile === 'function') {
@@ -537,6 +583,25 @@ const applyWorldbookEntryUpdate = (entry = {}, update = {}, index = 0) => {
   return normalizeWorldEntry(next, index);
 };
 
+const sameSerializableValue = (left, right) => {
+  try {
+    return JSON.stringify(left) === JSON.stringify(right);
+  } catch {
+    return left === right;
+  }
+};
+
+const worldbookSelectorsOverlapChanges = (beforeEntries = [], latestEntries = [], selectors = []) => (
+  (Array.isArray(selectors) ? selectors : []).some((selector) => {
+    const normalized = normalizeWorldbookEntrySelector(selector);
+    const beforeIndex = findWorldbookEntryIndex(beforeEntries, normalized);
+    const latestIndex = findWorldbookEntryIndex(latestEntries, normalized);
+    if (beforeIndex !== latestIndex && (beforeIndex < 0 || latestIndex < 0)) return true;
+    if (beforeIndex < 0 && latestIndex < 0) return false;
+    return !sameSerializableValue(beforeEntries[beforeIndex], latestEntries[latestIndex]);
+  })
+);
+
 const hasWorldbookEntryOverwriteFields = (updates = []) => (
   (Array.isArray(updates) ? updates : []).some(update => (
     isPlainObject(update) &&
@@ -547,10 +612,13 @@ const hasWorldbookEntryOverwriteFields = (updates = []) => (
 
 const summarizeWorldbook = (worldId = '', data = null, meta = {}) => {
   const entries = getWorldEntries(data);
+  const metadataEntryCount = Number(meta.entriesCount ?? meta.entryCount);
   return {
     id: trim(worldId || data?.id || data?.name),
     name: trim(data?.name || worldId || data?.id),
-    entryCount: entries.length,
+    entryCount: data && typeof data === 'object'
+      ? entries.length
+      : (Number.isFinite(metadataEntryCount) && metadataEntryCount >= 0 ? Math.trunc(metadataEntryCount) : null),
     boundToCurrentSession: meta.boundToCurrentSession === true,
     global: meta.global === true,
   };
@@ -572,10 +640,13 @@ export const createAppContentAgentTools = ({
   chatStore = null,
   switchPersona = null,
   switchUserProfile = null,
+  canSwitchPersona = null,
   deletePersona = null,
   notifyPersonaChanged = null,
   saveWorldInfo = null,
   getWorldInfo = null,
+  getWorldInfoMetadata = null,
+  getWorldInfoSnapshot = null,
   worldInfoExists = null,
   listWorlds = null,
   deleteWorldInfo = null,
@@ -583,6 +654,8 @@ export const createAppContentAgentTools = ({
   getCurrentWorldId = null,
   getCurrentWorldIds = null,
   getWorldIdsForSession = null,
+  getWorldSessionBindingSnapshot = null,
+  updateWorldSessionBinding = null,
   getWorldSessionMap = null,
   getGlobalWorldId = null,
   getGlobalWorldIds = null,
@@ -616,6 +689,60 @@ export const createAppContentAgentTools = ({
     return [];
   };
 
+  const readSessionBindingSnapshot = async (sessionId = '') => {
+    const sid = trim(sessionId);
+    if (typeof getWorldSessionBindingSnapshot === 'function') {
+      const snapshot = await getWorldSessionBindingSnapshot(sid);
+      if (snapshot && typeof snapshot === 'object') {
+        return {
+          sessionId: trim(snapshot.sessionId || sid),
+          scopeId: trim(snapshot.scopeId ?? chatStore?.scopeId ?? contactsStore?.scopeId),
+          worldbookIds: Array.from(new Set(normalizeStringList(snapshot.worldbookIds))),
+        };
+      }
+    }
+    return {
+      sessionId: sid,
+      scopeId: trim(chatStore?.scopeId ?? contactsStore?.scopeId),
+      worldbookIds: await getSessionWorldIds(sid),
+    };
+  };
+
+  const applySessionBindingMutation = async ({
+    sessionId = '',
+    worldbookId = '',
+    mode = 'append',
+    bindingSnapshot = {},
+  } = {}) => {
+    const sid = trim(sessionId);
+    const expectedWorldbookIds = Array.from(new Set(normalizeStringList(bindingSnapshot.worldbookIds)));
+    if (typeof updateWorldSessionBinding === 'function') {
+      const result = await updateWorldSessionBinding(sid, {
+        worldbookId,
+        mode,
+        expectedWorldbookIds,
+        expectedScopeId: trim(bindingSnapshot.scopeId),
+        silent: false,
+      });
+      return result && typeof result === 'object'
+        ? result
+        : { ok: false, reason: 'binding_update_failed', worldbookIds: expectedWorldbookIds };
+    }
+    if (typeof bindWorldToSession !== 'function') {
+      return { ok: false, reason: 'worldbook_session_binding_unavailable', worldbookIds: expectedWorldbookIds };
+    }
+    const currentWorldbookIds = await getSessionWorldIds(sid);
+    const mutation = resolveWorldSessionBindingMutation({
+      currentWorldbookIds,
+      expectedWorldbookIds,
+      worldbookId,
+      mode,
+    });
+    if (!mutation.ok || !mutation.changed) return mutation;
+    await bindWorldToSession(sid, mutation.worldbookIds, { silent: false });
+    return mutation;
+  };
+
   const getGlobalWorlds = async () => {
     if (typeof getGlobalWorldIds === 'function') {
       return Array.from(new Set(normalizeStringList(await getGlobalWorldIds())));
@@ -646,6 +773,69 @@ export const createAppContentAgentTools = ({
     };
   };
 
+  const readWorldbookSnapshot = async (worldbookId = '') => {
+    const id = trim(worldbookId);
+    if (!id) {
+      return { worldbookId: '', exists: false, data: null, revision: null, generation: null };
+    }
+    if (typeof getWorldInfoSnapshot === 'function') {
+      const snapshot = await getWorldInfoSnapshot(id);
+      if (snapshot && typeof snapshot === 'object') {
+        const data = isPlainObject(snapshot.data) ? snapshot.data : null;
+        return {
+          worldbookId: id,
+          exists: typeof snapshot.exists === 'boolean' ? snapshot.exists : Boolean(data),
+          data,
+          revision: Number.isFinite(Number(snapshot.revision)) ? Number(snapshot.revision) : null,
+          generation: Number.isFinite(Number(snapshot.generation)) ? Number(snapshot.generation) : null,
+        };
+      }
+    }
+    const record = await readWorldbookRecord(id);
+    return {
+      worldbookId: id,
+      exists: record.exists,
+      data: record.data,
+      revision: null,
+      generation: null,
+    };
+  };
+
+  const getWorldbookWriteOptions = (snapshot = {}) => ({
+    ...(snapshot.revision !== null && snapshot.revision !== undefined
+      ? { expectedRevision: snapshot.revision }
+      : {}),
+    ...(snapshot.generation !== null && snapshot.generation !== undefined
+      ? { expectedGeneration: snapshot.generation }
+      : {}),
+    expectedExists: snapshot.exists === true,
+    conflictMode: 'return',
+  });
+
+  const saveWorldbookSnapshot = async (worldbookId, payload, snapshot = {}) => {
+    const result = await saveWorldInfo(worldbookId, payload, getWorldbookWriteOptions(snapshot));
+    if (result?.ok === false) return result;
+    return { ok: true, ...(result && typeof result === 'object' ? result : {}) };
+  };
+
+  const isWorldbookRevisionConflict = result => (
+    result?.ok === false && result?.reason === 'worldbook_revision_conflict'
+  );
+
+  const refreshWorldbookConflictSnapshot = async (worldbookId, result = {}) => {
+    const snapshot = result?.latestSnapshot;
+    if (snapshot && typeof snapshot === 'object') {
+      return {
+        worldbookId: trim(worldbookId),
+        exists: typeof snapshot.exists === 'boolean' ? snapshot.exists : Boolean(snapshot.data),
+        data: isPlainObject(snapshot.data) ? snapshot.data : null,
+        revision: Number.isFinite(Number(snapshot.revision)) ? Number(snapshot.revision) : null,
+        generation: Number.isFinite(Number(snapshot.generation)) ? Number(snapshot.generation) : null,
+      };
+    }
+    return await readWorldbookSnapshot(worldbookId);
+  };
+
   const resolveWorldbookId = async (args = {}) => {
     const explicit = trim(args.worldbookId || args.id || args.name);
     if (explicit) return explicit;
@@ -664,7 +854,8 @@ export const createAppContentAgentTools = ({
       : '女仆创建的世界书';
     const explicitName = trim(args.name);
     const name = trim(explicitName, fallbackWorldName);
-    const existing = (await readWorldbookRecord(name)).data;
+    const snapshot = await readWorldbookSnapshot(name);
+    const existing = snapshot.data;
     const existingEntries = getWorldEntries(existing);
     const requestedMode = trim(args.mode, 'append');
     const mode = requestedMode === 'replace'
@@ -677,18 +868,21 @@ export const createAppContentAgentTools = ({
       name,
       existing,
       existingEntries,
+      snapshot,
       mode,
     };
   };
 
   const resolveWorldbookUpdateTarget = async (args = {}) => {
     const worldbookId = await resolveWorldbookId(args);
-    const existing = (await readWorldbookRecord(worldbookId)).data;
+    const snapshot = await readWorldbookSnapshot(worldbookId);
+    const existing = snapshot.data;
     const existingEntries = getWorldEntries(existing);
     return {
       worldbookId,
       existing,
       existingEntries,
+      snapshot,
       updates: Array.isArray(args.updates) ? args.updates : [],
       createMissing: args.createMissing === true,
     };
@@ -702,12 +896,14 @@ export const createAppContentAgentTools = ({
       : [];
     // 删除不得回退到当前/全局世界书；必须显式给出书或明确会话绑定。
     const worldbookId = directWorldbookId || trim(sessionWorldIds[0]);
-    const existing = (await readWorldbookRecord(worldbookId)).data;
+    const snapshot = await readWorldbookSnapshot(worldbookId);
+    const existing = snapshot.data;
     const existingEntries = getWorldEntries(existing);
     return {
       worldbookId,
       existing,
       existingEntries,
+      snapshot,
       deletePlan: buildWorldbookDeletePlan(existingEntries, args),
     };
   };
@@ -723,6 +919,9 @@ export const createAppContentAgentTools = ({
   const isWorldbookUpdateAllowed = (context = {}) => hasAllowedToolSafety(context, 'worldbook.update_entries');
   const isWorldbookDeleteAllowed = (context = {}) => hasAllowedToolSafety(context, 'worldbook.delete_entries');
   const personaDeleteSnapshots = new WeakMap();
+  const worldbookCreateTargets = new WeakMap();
+  const worldbookUpdateTargets = new WeakMap();
+  const worldbookDeleteEntryTargets = new WeakMap();
   const worldbookDeleteSnapshots = new WeakMap();
 
   const compactPersonaDeleteItem = (item = {}) => ({
@@ -767,6 +966,9 @@ export const createAppContentAgentTools = ({
         personaId,
         name: trim(persona?.name || personaId),
         avatar: trim(persona?.avatar),
+        personaGeneration: readPersonaGenerationToken(persona),
+        personaRevision: readPersonaRevisionToken(persona),
+        personaRef: persona,
         status: 'planned',
         reason: '',
       };
@@ -836,9 +1038,9 @@ export const createAppContentAgentTools = ({
     for (const target of requested) {
       const worldbookId = resolveStoredId(target);
       const isBuiltin = worldbookId === BUILTIN_PHONE_FORMAT_WORLDBOOK_ID;
-      const record = await readWorldbookRecord(worldbookId);
-      const existing = record.data;
-      const exists = record.exists || storedIds.includes(worldbookId);
+      const snapshot = await readWorldbookSnapshot(worldbookId);
+      const existing = snapshot.data;
+      const exists = snapshot.exists || storedIds.includes(worldbookId);
       const name = trim(existing?.name || worldbookId || target);
       if (isBuiltin) {
         items.push({
@@ -846,6 +1048,8 @@ export const createAppContentAgentTools = ({
           worldbookId,
           name,
           bindingCount: countBindings(worldbookId),
+          revision: snapshot.revision,
+          generation: snapshot.generation,
           status: 'protected',
           reason: 'builtin_worldbook_protected',
         });
@@ -868,6 +1072,8 @@ export const createAppContentAgentTools = ({
           worldbookId,
           name,
           bindingCount: countBindings(worldbookId),
+          revision: snapshot.revision,
+          generation: snapshot.generation,
           status: 'skipped',
           reason: 'duplicate_target',
         });
@@ -879,6 +1085,8 @@ export const createAppContentAgentTools = ({
         worldbookId,
         name,
         bindingCount: countBindings(worldbookId),
+        revision: snapshot.revision,
+        generation: snapshot.generation,
         status: 'planned',
         reason: '',
       });
@@ -924,6 +1132,164 @@ export const createAppContentAgentTools = ({
       return { found: false, target, sessionId: target, reason: 'session_not_found' };
     }
     return { found: true, target, sessionId: target, sessionName: target };
+  };
+
+  const captureSessionBindingTarget = async (value = '') => {
+    const resolved = await resolveSessionBindingTarget(value);
+    const sessionId = trim(resolved.sessionId);
+    const contact = resolved.found && sessionId
+      ? findStoreItem(contactsStore, sessionId)
+      : null;
+    const sessions = chatStore?.state?.sessions;
+    const hasSessionRecord = Boolean(
+      sessionId && sessions && typeof sessions === 'object' && hasOwn(sessions, sessionId),
+    );
+    return {
+      ...resolved,
+      chatScopeId: trim(chatStore?.scopeId),
+      contactsScopeId: trim(contactsStore?.scopeId),
+      contactId: trim(contact?.id),
+      contactGeneration: contact
+        ? (contact.addedAt ?? contact.createdAt ?? contact.created ?? null)
+        : null,
+      contactRef: contact,
+      hasSessionRecord,
+      sessionRecordRef: hasSessionRecord ? sessions[sessionId] : null,
+    };
+  };
+
+  const validateSessionBindingTarget = (snapshot = {}) => {
+    if (
+      trim(snapshot.chatScopeId) !== trim(chatStore?.scopeId) ||
+      trim(snapshot.contactsScopeId) !== trim(contactsStore?.scopeId)
+    ) {
+      return { ok: false, reason: 'target_scope_changed' };
+    }
+    const sessionId = trim(snapshot.sessionId);
+    if (!snapshot.found || !sessionId) {
+      return { ok: false, reason: trim(snapshot.reason, 'session_not_found') };
+    }
+    if (snapshot.contactId) {
+      const currentContact = findStoreItem(contactsStore, snapshot.contactId);
+      if (!currentContact) return { ok: false, reason: 'session_target_changed' };
+      const currentGeneration = currentContact.addedAt ?? currentContact.createdAt ?? currentContact.created ?? null;
+      if (
+        snapshot.contactGeneration !== null && snapshot.contactGeneration !== undefined
+          ? currentGeneration !== snapshot.contactGeneration
+          : currentContact !== snapshot.contactRef
+      ) {
+        return { ok: false, reason: 'session_target_changed' };
+      }
+    }
+    if (snapshot.hasSessionRecord) {
+      const sessions = chatStore?.state?.sessions;
+      if (!sessions || !hasOwn(sessions, sessionId) || sessions[sessionId] !== snapshot.sessionRecordRef) {
+        return { ok: false, reason: 'session_target_changed' };
+      }
+    } else if (typeof chatStore?.hasSession === 'function' && !chatStore.hasSession(sessionId)) {
+      return { ok: false, reason: 'session_target_changed' };
+    }
+    return { ok: true, reason: '' };
+  };
+
+  const capturePersonaBindingTarget = (args = {}) => {
+    const personaQuery = trim(args.personaId || args.personaName || args.target);
+    const persona = personaQuery
+      ? findStoreItem(personaStore, personaQuery)
+      : getActiveStoreItem(personaStore);
+    return {
+      personaQuery,
+      persona,
+      personaId: trim(persona?.id),
+      personaGeneration: persona
+        ? (persona.created ?? persona.createdAt ?? null)
+        : null,
+      personaRef: persona,
+    };
+  };
+
+  const validatePersonaBindingTarget = (snapshot = {}) => {
+    const personaId = trim(snapshot.personaId);
+    if (!personaId) {
+      return {
+        ok: false,
+        reason: snapshot.personaQuery ? 'persona_not_found' : 'active_persona_not_found',
+      };
+    }
+    const current = findStoreItem(personaStore, personaId);
+    if (!current) return { ok: false, reason: 'persona_target_changed' };
+    const currentGeneration = current.created ?? current.createdAt ?? null;
+    if (
+      snapshot.personaGeneration !== null && snapshot.personaGeneration !== undefined
+        ? currentGeneration !== snapshot.personaGeneration
+        : current !== snapshot.personaRef
+    ) {
+      return { ok: false, reason: 'persona_target_changed' };
+    }
+    return { ok: true, reason: '' };
+  };
+
+  const validateWorldbookBindingIdentity = (initial = {}, latest = {}) => {
+    if (!latest.exists) return { ok: false, reason: 'worldbook_deleted_during_operation' };
+    if (
+      initial.generation !== null && initial.generation !== undefined &&
+      latest.generation !== null && latest.generation !== undefined &&
+      Number(initial.generation) !== Number(latest.generation)
+    ) {
+      return { ok: false, reason: 'worldbook_recreated_during_operation' };
+    }
+    return { ok: true, reason: '' };
+  };
+
+  const batchSessionBindingSnapshots = new WeakMap();
+  const buildBatchSessionBindingSnapshot = async (args = {}) => {
+    const worldbookId = trim(args.worldbookId);
+    const targets = normalizeStringList(args.sessions).slice(0, 100);
+    const mode = trim(args.mode, 'append') === 'replace' ? 'replace' : 'append';
+    let worldbookSnapshot = null;
+    let worldbookReadError = '';
+    try {
+      await waitForWorldStoreReady?.();
+      worldbookSnapshot = await readWorldbookSnapshot(worldbookId);
+    } catch (error) {
+      worldbookReadError = trim(error?.message || error);
+    }
+    const items = [];
+    const seenSessionIds = new Set();
+    for (const target of targets) {
+      const targetSnapshot = await captureSessionBindingTarget(target);
+      const sessionId = trim(targetSnapshot.sessionId);
+      if (!targetSnapshot.found) {
+        items.push({ target, targetSnapshot, sessionId, status: 'failed', reason: targetSnapshot.reason });
+        continue;
+      }
+      if (seenSessionIds.has(sessionId)) {
+        items.push({ target, targetSnapshot, sessionId, status: 'skipped', reason: 'duplicate_target' });
+        continue;
+      }
+      seenSessionIds.add(sessionId);
+      try {
+        const bindingSnapshot = await readSessionBindingSnapshot(sessionId);
+        items.push({ target, targetSnapshot, bindingSnapshot, sessionId, status: 'planned', reason: '' });
+      } catch (error) {
+        items.push({
+          target,
+          targetSnapshot,
+          sessionId,
+          status: 'failed',
+          reason: 'binding_state_read_failed',
+          errorMessage: trim(error?.message || error),
+        });
+      }
+    }
+    return {
+      worldbookId,
+      targets,
+      mode,
+      worldbookSnapshot,
+      worldbookReadError,
+      items,
+    };
   };
 
   return [
@@ -1106,6 +1472,35 @@ export const createAppContentAgentTools = ({
             ...item,
             status: 'skipped',
             reason: 'already_absent',
+          }));
+          continue;
+        }
+        const currentGeneration = readPersonaGenerationToken(currentPersona);
+        const currentRevision = readPersonaRevisionToken(currentPersona);
+        if (
+          item.personaGeneration &&
+          currentGeneration !== item.personaGeneration
+        ) {
+          results.push(compactPersonaDeleteItem({
+            ...item,
+            status: 'skipped',
+            reason: 'persona_recreated_during_confirmation',
+          }));
+          continue;
+        }
+        if (
+          currentPersona !== item.personaRef ||
+          currentRevision !== item.personaRevision
+        ) {
+          results.push(compactPersonaDeleteItem({
+            ...item,
+            status: 'skipped',
+            reason: (
+              currentPersona !== item.personaRef &&
+              currentRevision === item.personaRevision
+            )
+              ? 'persona_recreated_during_confirmation'
+              : 'persona_changed_during_confirmation',
           }));
           continue;
         }
@@ -1351,6 +1746,7 @@ export const createAppContentAgentTools = ({
       args,
       store: personaStore,
       switchProfile: switchPersona,
+      canSwitchProfile: canSwitchPersona,
       targetKeys: ['target', 'personaId', 'id', 'name'],
     }),
     summarizeResult: result => result?.switched
@@ -1465,35 +1861,45 @@ export const createAppContentAgentTools = ({
       }
       // 写入：已有同名世界书则追加，否则新建（不做 replace，安全语义最窄）
       await waitForWorldStoreReady?.();
-      const existing = (await readWorldbookRecord(worldbookName)).data;
-      const existingEntries = getWorldEntries(existing);
-      const reserved = existingEntries.map(entry => clone(entry));
-      const incoming = generated.map((entry, index) => {
-        const normalized = normalizeWorldEntry(entry, index);
-        normalized.id = makeUniqueWorldEntryId(normalized, reserved, index);
-        reserved.push(normalized);
-        return normalized;
-      });
-      const payload = {
-        ...(isPlainObject(existing) ? existing : {}),
-        name: worldbookName,
-        entries: [...existingEntries.map(entry => clone(entry)), ...incoming],
-        updatedBy: 'maid',
-        updatedAt: Number(now?.() || Date.now()) || Date.now(),
-      };
-      await saveWorldInfo(worldbookName, payload);
-      return {
-        ok: true,
-        created: !existing,
-        appended: Boolean(existing),
-        worldbook: worldbookName,
-        entryCount: payload.entries.length,
-        generatedCount: generated.length,
-        delegated,
-        ...(modelUsed ? { modelUsed } : {}),
-        ...(subAgentName ? { subAgentName } : {}),
-        generatedTitles: generated.map(entry => entry.title),
-      };
+      let workingSnapshot = await readWorldbookSnapshot(worldbookName);
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        const existing = workingSnapshot.data;
+        const existingEntries = getWorldEntries(existing);
+        const reserved = existingEntries.map(entry => clone(entry));
+        const incoming = generated.map((entry, index) => {
+          const normalized = normalizeWorldEntry(entry, index);
+          normalized.id = makeUniqueWorldEntryId(normalized, reserved, index);
+          reserved.push(normalized);
+          return normalized;
+        });
+        const payload = {
+          ...(isPlainObject(existing) ? existing : {}),
+          name: worldbookName,
+          entries: [...existingEntries.map(entry => clone(entry)), ...incoming],
+          updatedBy: 'maid',
+          updatedAt: Number(now?.() || Date.now()) || Date.now(),
+        };
+        const saveResult = await saveWorldbookSnapshot(worldbookName, payload, workingSnapshot);
+        if (saveResult.ok !== false) {
+          return {
+            ok: true,
+            created: !existing,
+            appended: Boolean(existing),
+            worldbook: worldbookName,
+            entryCount: payload.entries.length,
+            generatedCount: generated.length,
+            delegated,
+            ...(modelUsed ? { modelUsed } : {}),
+            ...(subAgentName ? { subAgentName } : {}),
+            generatedTitles: generated.map(entry => entry.title),
+          };
+        }
+        if (!isWorldbookRevisionConflict(saveResult)) {
+          return { ok: false, reason: saveResult.reason || 'worldbook_save_failed', worldbook: worldbookName };
+        }
+        workingSnapshot = await refreshWorldbookConflictSnapshot(worldbookName, saveResult);
+      }
+      return { ok: false, reason: 'worldbook_busy', worldbook: worldbookName };
     },
     summarizeResult: result => (result?.ok === false
       ? `worldbook generate failed: ${result?.reason || 'unknown'}`
@@ -1533,6 +1939,15 @@ export const createAppContentAgentTools = ({
       destructive: 'conditional',
       preflight: async (args = {}) => {
         const target = await resolveWorldbookCreateTarget(args);
+        worldbookCreateTargets.set(args, Object.freeze({
+          name: target.name,
+          personaId: trim(target.persona?.id),
+          personaQuery: target.personaQuery,
+          explicitName: target.explicitName,
+          revision: target.snapshot?.revision ?? null,
+          generation: target.snapshot?.generation ?? null,
+          exists: target.snapshot?.exists === true,
+        }));
         if (target.mode !== 'replace' || !target.existingEntries.length) {
           return { destructive: false, operationType: target.mode };
         }
@@ -1547,6 +1962,9 @@ export const createAppContentAgentTools = ({
           danger: true,
           details: {
             worldbookId: target.name,
+            personaId: trim(target.persona?.id),
+            baseRevision: target.snapshot?.revision ?? null,
+            baseGeneration: target.snapshot?.generation ?? null,
             currentEntryCount: target.existingEntries.length,
             nextEntryCount: args.entries.length,
           },
@@ -1568,15 +1986,20 @@ export const createAppContentAgentTools = ({
         grounding: context?.maidSourceGrounding,
       });
       if (!sourceValidation.ok) return sourceValidation;
-      const {
-        personaQuery,
-        persona,
-        explicitName,
-        name,
-        existing,
-        existingEntries,
-        mode,
-      } = await resolveWorldbookCreateTarget(args);
+      const resolvedTarget = await resolveWorldbookCreateTarget(args);
+      const pinnedTarget = worldbookCreateTargets.get(args);
+      const confirmedDetails = context?.toolSafety?.request?.details || {};
+      const name = trim(pinnedTarget?.name || confirmedDetails.worldbookId || resolvedTarget.name);
+      const pinnedPersonaId = trim(pinnedTarget?.personaId || confirmedDetails.personaId);
+      const persona = pinnedPersonaId
+        ? findStoreItem(personaStore, pinnedPersonaId)
+        : resolvedTarget.persona;
+      const personaQuery = pinnedTarget?.personaQuery ?? resolvedTarget.personaQuery;
+      const explicitName = pinnedTarget?.explicitName ?? resolvedTarget.explicitName;
+      const mode = resolvedTarget.mode;
+      const initialSnapshot = await readWorldbookSnapshot(name);
+      const existing = initialSnapshot.data;
+      const existingEntries = getWorldEntries(existing);
       if (!Array.isArray(args.entries) || !args.entries.length) {
         return { ok: false, created: false, reason: 'missing_entries' };
       }
@@ -1586,7 +2009,6 @@ export const createAppContentAgentTools = ({
       let targetName = mode === 'create_new'
         ? await makeUniqueWorldbookName(name, { listWorlds, getWorldInfo, worldInfoExists })
         : name;
-      let targetExisting = targetName === name ? existing : null;
       let overwritten = false;
       let fallbackCreated = hasFallbackToolSafety(context, 'worldbook.replace');
       if (mode === 'replace' && existingEntries.length) {
@@ -1609,31 +2031,70 @@ export const createAppContentAgentTools = ({
           overwritten = true;
         } else {
           targetName = await makeUniqueWorldbookName(name, { listWorlds, getWorldInfo, worldInfoExists });
-          targetExisting = null;
           fallbackCreated = true;
         }
       }
-      const targetExistingEntries = getWorldEntries(targetExisting);
-      const reservedEntries = mode === 'replace' && !fallbackCreated
-        ? []
-        : targetExistingEntries.map(entry => clone(entry));
-      const incomingEntries = args.entries.map((entry, index) => {
-        const normalized = normalizeWorldEntry(entry, index);
-        normalized.id = makeUniqueWorldEntryId(normalized, reservedEntries, index);
-        reservedEntries.push(normalized);
-        return normalized;
-      });
-      const nextEntries = mode === 'append' && targetExisting
-        ? [...targetExistingEntries.map(entry => clone(entry)), ...incomingEntries]
-        : incomingEntries;
-      const payload = {
-        ...(isPlainObject(targetExisting) ? targetExisting : {}),
-        name: targetName,
-        entries: nextEntries,
-        updatedBy: 'maid',
-        updatedAt: Number(now?.() || Date.now()) || Date.now(),
-      };
-      await saveWorldInfo(targetName, payload);
+      if (overwritten) {
+        const confirmedRevision = pinnedTarget?.revision ?? confirmedDetails.baseRevision ?? initialSnapshot.revision;
+        const confirmedGeneration = pinnedTarget?.generation ?? confirmedDetails.baseGeneration ?? initialSnapshot.generation;
+        const latest = await readWorldbookSnapshot(name);
+        const changed = confirmedRevision !== null && latest.revision !== null
+          ? confirmedRevision !== latest.revision || confirmedGeneration !== latest.generation
+          : !sameSerializableValue(existing, latest.data);
+        if (changed) {
+          return {
+            ok: false,
+            created: false,
+            reason: 'worldbook_changed_since_confirmation',
+            worldbookId: name,
+            currentRevision: latest.revision,
+          };
+        }
+      }
+
+      let savedState = null;
+      let workingSnapshot = await readWorldbookSnapshot(targetName);
+      for (let attempt = 0; attempt < 4; attempt += 1) {
+        if ((mode === 'create_new' || fallbackCreated) && workingSnapshot.exists) {
+          targetName = await makeUniqueWorldbookName(name, { listWorlds, getWorldInfo, worldInfoExists });
+          workingSnapshot = await readWorldbookSnapshot(targetName);
+          continue;
+        }
+        const targetExisting = workingSnapshot.data;
+        const targetExistingEntries = getWorldEntries(targetExisting);
+        const reservedEntries = mode === 'replace' && !fallbackCreated
+          ? []
+          : targetExistingEntries.map(entry => clone(entry));
+        const incomingEntries = args.entries.map((entry, index) => {
+          const normalized = normalizeWorldEntry(entry, index);
+          normalized.id = makeUniqueWorldEntryId(normalized, reservedEntries, index);
+          reservedEntries.push(normalized);
+          return normalized;
+        });
+        const nextEntries = mode === 'append' && targetExisting
+          ? [...targetExistingEntries.map(entry => clone(entry)), ...incomingEntries]
+          : incomingEntries;
+        const payload = {
+          ...(isPlainObject(targetExisting) ? targetExisting : {}),
+          name: targetName,
+          entries: nextEntries,
+          updatedBy: 'maid',
+          updatedAt: Number(now?.() || Date.now()) || Date.now(),
+        };
+        const saveResult = await saveWorldbookSnapshot(targetName, payload, workingSnapshot);
+        if (saveResult.ok !== false) {
+          savedState = { targetExisting, targetExistingEntries, incomingEntries, nextEntries };
+          break;
+        }
+        if (!isWorldbookRevisionConflict(saveResult)) {
+          return { ok: false, created: false, reason: saveResult.reason || 'worldbook_save_failed', worldbookId: targetName };
+        }
+        if (mode === 'replace' && !fallbackCreated) {
+          return { ok: false, created: false, reason: 'worldbook_changed_since_confirmation', worldbookId: targetName };
+        }
+        workingSnapshot = await refreshWorldbookConflictSnapshot(targetName, saveResult);
+      }
+      if (!savedState) return { ok: false, created: false, reason: 'worldbook_busy', worldbookId: targetName };
       let boundPersonaId = '';
       const shouldBindPersona = args.bindToPersona === true || Boolean(personaQuery) || (!explicitName && persona?.id);
       if (shouldBindPersona && persona?.id && typeof assignWorldToPersona === 'function') {
@@ -1642,15 +2103,15 @@ export const createAppContentAgentTools = ({
       }
       return {
         ok: true,
-        created: !targetExisting,
+        created: !savedState.targetExisting,
         overwritten,
         fallbackCreated,
         mode: fallbackCreated ? 'create_new' : mode,
         worldbookId: targetName,
         previousWorldbookId: targetName === name ? '' : name,
-        previousEntryCount: targetExistingEntries.length,
-        addedEntryCount: incomingEntries.length,
-        entryCount: nextEntries.length,
+        previousEntryCount: savedState.targetExistingEntries.length,
+        addedEntryCount: savedState.incomingEntries.length,
+        entryCount: savedState.nextEntries.length,
         boundPersonaId,
       };
     },
@@ -1693,6 +2154,12 @@ export const createAppContentAgentTools = ({
       destructive: 'conditional',
       preflight: async (args = {}) => {
         const target = await resolveWorldbookUpdateTarget(args);
+        worldbookUpdateTargets.set(args, Object.freeze({
+          worldbookId: target.worldbookId,
+          revision: target.snapshot?.revision ?? null,
+          generation: target.snapshot?.generation ?? null,
+          exists: target.snapshot?.exists === true,
+        }));
         if (!target.worldbookId || !target.existingEntries.length || !hasWorldbookEntryOverwriteFields(target.updates)) {
           return { destructive: false, operationType: 'update_worldbook_entries' };
         }
@@ -1725,7 +2192,12 @@ export const createAppContentAgentTools = ({
       });
       if (!sourceValidation.ok) return sourceValidation;
       await waitForWorldStoreReady?.();
-      const target = await resolveWorldbookUpdateTarget(args);
+      const pinnedTarget = worldbookUpdateTargets.get(args);
+      const confirmedWorldbookId = trim(context?.toolSafety?.request?.details?.worldbookId);
+      const pinnedWorldbookId = trim(pinnedTarget?.worldbookId || confirmedWorldbookId);
+      const target = await resolveWorldbookUpdateTarget(
+        pinnedWorldbookId ? { ...args, worldbookId: pinnedWorldbookId } : args,
+      );
       if (!Array.isArray(args.updates) || !args.updates.length) {
         return { ok: false, updated: false, reason: 'missing_updates' };
       }
@@ -1762,64 +2234,89 @@ export const createAppContentAgentTools = ({
         }
       }
 
-      const nextEntries = target.existingEntries.map(entry => clone(entry));
-      const skippedUpdates = [];
-      const updatedEntries = [];
-      let createdEntryCount = 0;
-      args.updates.forEach((update, index) => {
-        if (!isPlainObject(update)) {
-          skippedUpdates.push({ index, reason: 'invalid_update' });
-          return;
+      let workingSnapshot = await readWorldbookSnapshot(target.worldbookId);
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        if (!workingSnapshot.exists || !workingSnapshot.data) {
+          return { ok: false, updated: false, reason: 'worldbook_not_found', worldbookId: target.worldbookId };
         }
-        const matchIndex = findWorldbookEntryIndex(nextEntries, update);
-        if (matchIndex < 0) {
-          if (args.createMissing === true) {
-            const normalized = normalizeWorldEntry(update, nextEntries.length);
-            normalized.id = makeUniqueWorldEntryId(normalized, nextEntries, nextEntries.length);
-            nextEntries.push(normalized);
-            createdEntryCount += 1;
-            updatedEntries.push(normalizeWorldbookEntrySummary(normalized, nextEntries.length - 1));
+        const workingEntries = getWorldEntries(workingSnapshot.data);
+        const nextEntries = workingEntries.map(entry => clone(entry));
+        const skippedUpdates = [];
+        const updatedEntries = [];
+        let createdEntryCount = 0;
+        args.updates.forEach((update, index) => {
+          if (!isPlainObject(update)) {
+            skippedUpdates.push({ index, reason: 'invalid_update' });
             return;
           }
-          skippedUpdates.push({
-            index,
-            reason: 'entry_not_found',
-            target: trim(update.entryId || update.entryTitle || update.title || update.name || update.query, `update-${index + 1}`),
-          });
-          return;
-        }
-        const nextEntry = applyWorldbookEntryUpdate(nextEntries[matchIndex], update, matchIndex);
-        nextEntries[matchIndex] = nextEntry;
-        updatedEntries.push(normalizeWorldbookEntrySummary(nextEntry, matchIndex));
-      });
+          const matchIndex = findWorldbookEntryIndex(nextEntries, update);
+          if (matchIndex < 0) {
+            if (args.createMissing === true) {
+              const normalized = normalizeWorldEntry(update, nextEntries.length);
+              normalized.id = makeUniqueWorldEntryId(normalized, nextEntries, nextEntries.length);
+              nextEntries.push(normalized);
+              createdEntryCount += 1;
+              updatedEntries.push(normalizeWorldbookEntrySummary(normalized, nextEntries.length - 1));
+              return;
+            }
+            skippedUpdates.push({
+              index,
+              reason: 'entry_not_found',
+              target: trim(update.entryId || update.entryTitle || update.title || update.name || update.query, `update-${index + 1}`),
+            });
+            return;
+          }
+          const nextEntry = applyWorldbookEntryUpdate(nextEntries[matchIndex], update, matchIndex);
+          nextEntries[matchIndex] = nextEntry;
+          updatedEntries.push(normalizeWorldbookEntrySummary(nextEntry, matchIndex));
+        });
 
-      if (!updatedEntries.length && !createdEntryCount) {
-        return {
-          ok: false,
-          updated: false,
-          reason: 'no_matching_entries',
-          worldbookId: target.worldbookId,
-          skippedUpdates,
+        if (!updatedEntries.length && !createdEntryCount) {
+          return {
+            ok: false,
+            updated: false,
+            reason: 'no_matching_entries',
+            worldbookId: target.worldbookId,
+            skippedUpdates,
+          };
+        }
+        const payload = {
+          ...workingSnapshot.data,
+          name: trim(workingSnapshot.data?.name || target.worldbookId),
+          entries: nextEntries,
+          updatedBy: 'maid',
+          updatedAt: Number(now?.() || Date.now()) || Date.now(),
         };
+        const saveResult = await saveWorldbookSnapshot(target.worldbookId, payload, workingSnapshot);
+        if (saveResult.ok !== false) {
+          return {
+            ok: true,
+            updated: true,
+            worldbookId: target.worldbookId,
+            updatedEntryCount: updatedEntries.length - createdEntryCount,
+            createdEntryCount,
+            entryCount: nextEntries.length,
+            skippedUpdates,
+            updatedEntries,
+          };
+        }
+        if (!isWorldbookRevisionConflict(saveResult)) {
+          return { ok: false, updated: false, reason: saveResult.reason || 'worldbook_save_failed', worldbookId: target.worldbookId };
+        }
+        const latestSnapshot = await refreshWorldbookConflictSnapshot(target.worldbookId, saveResult);
+        const latestEntries = getWorldEntries(latestSnapshot.data);
+        if (worldbookSelectorsOverlapChanges(workingEntries, latestEntries, args.updates)) {
+          return {
+            ok: false,
+            updated: false,
+            reason: 'worldbook_target_changed_during_update',
+            worldbookId: target.worldbookId,
+            currentRevision: latestSnapshot.revision,
+          };
+        }
+        workingSnapshot = latestSnapshot;
       }
-      const payload = {
-        ...(isPlainObject(target.existing) ? target.existing : {}),
-        name: trim(target.existing?.name || target.worldbookId),
-        entries: nextEntries,
-        updatedBy: 'maid',
-        updatedAt: Number(now?.() || Date.now()) || Date.now(),
-      };
-      await saveWorldInfo(target.worldbookId, payload);
-      return {
-        ok: true,
-        updated: true,
-        worldbookId: target.worldbookId,
-        updatedEntryCount: updatedEntries.length - createdEntryCount,
-        createdEntryCount,
-        entryCount: nextEntries.length,
-        skippedUpdates,
-        updatedEntries,
-      };
+      return { ok: false, updated: false, reason: 'worldbook_busy', worldbookId: target.worldbookId };
     },
     summarizeResult: result => result?.ok === false
       ? `update worldbook entries failed: ${trim(result?.reason, 'unknown')}`
@@ -1875,6 +2372,12 @@ export const createAppContentAgentTools = ({
       destructive: 'conditional',
       preflight: async (args = {}) => {
         const target = await resolveWorldbookDeleteTarget(args);
+        worldbookDeleteEntryTargets.set(args, Object.freeze({
+          worldbookId: target.worldbookId,
+          revision: target.snapshot?.revision ?? null,
+          generation: target.snapshot?.generation ?? null,
+          exists: target.snapshot?.exists === true,
+        }));
         if (!target.worldbookId || !target.existingEntries.length || !target.deletePlan.deleteCount) {
           return { destructive: false, operationType: 'delete_worldbook_entries' };
         }
@@ -1908,7 +2411,12 @@ export const createAppContentAgentTools = ({
     },
     execute: async (args = {}, context = {}) => {
       await waitForWorldStoreReady?.();
-      const target = await resolveWorldbookDeleteTarget(args);
+      const pinnedTarget = worldbookDeleteEntryTargets.get(args);
+      const confirmedWorldbookId = trim(context?.toolSafety?.request?.details?.worldbookId);
+      const pinnedWorldbookId = trim(pinnedTarget?.worldbookId || confirmedWorldbookId);
+      const target = await resolveWorldbookDeleteTarget(
+        pinnedWorldbookId ? { ...args, worldbookId: pinnedWorldbookId } : args,
+      );
       if (!target.worldbookId) return { ok: false, deleted: false, reason: 'missing_worldbook_id' };
       if (target.deletePlan.invalidReason) {
         return {
@@ -1958,26 +2466,56 @@ export const createAppContentAgentTools = ({
           };
         }
       }
-      const nextEntries = target.existingEntries
-        .filter((entry, index) => !target.deletePlan.deleteIndexes.has(index))
+      const confirmedRevision = pinnedTarget?.revision ?? target.snapshot?.revision ?? null;
+      const confirmedGeneration = pinnedTarget?.generation ?? target.snapshot?.generation ?? null;
+      const workingSnapshot = await readWorldbookSnapshot(target.worldbookId);
+      const revisionChanged = confirmedRevision !== null && workingSnapshot.revision !== null
+        ? confirmedRevision !== workingSnapshot.revision || confirmedGeneration !== workingSnapshot.generation
+        : !sameSerializableValue(target.existing, workingSnapshot.data);
+      if (revisionChanged) {
+        return {
+          ok: false,
+          deleted: false,
+          reason: 'worldbook_changed_since_confirmation',
+          worldbookId: target.worldbookId,
+          currentRevision: workingSnapshot.revision,
+        };
+      }
+      if (!workingSnapshot.exists || !workingSnapshot.data) {
+        return { ok: false, deleted: false, reason: 'worldbook_not_found', worldbookId: target.worldbookId };
+      }
+      const workingEntries = getWorldEntries(workingSnapshot.data);
+      const deletePlan = buildWorldbookDeletePlan(workingEntries, args);
+      const nextEntries = workingEntries
+        .filter((entry, index) => !deletePlan.deleteIndexes.has(index))
         .map(entry => clone(entry));
       const payload = {
-        ...(isPlainObject(target.existing) ? target.existing : {}),
-        name: trim(target.existing?.name || target.worldbookId),
+        ...workingSnapshot.data,
+        name: trim(workingSnapshot.data?.name || target.worldbookId),
         entries: nextEntries,
         updatedBy: 'maid',
         updatedAt: Number(now?.() || Date.now()) || Date.now(),
       };
-      await saveWorldInfo(target.worldbookId, payload);
+      const saveResult = await saveWorldbookSnapshot(target.worldbookId, payload, workingSnapshot);
+      if (saveResult.ok === false) {
+        return {
+          ok: false,
+          deleted: false,
+          reason: isWorldbookRevisionConflict(saveResult)
+            ? 'worldbook_changed_since_confirmation'
+            : (saveResult.reason || 'worldbook_save_failed'),
+          worldbookId: target.worldbookId,
+        };
+      }
       return {
         ok: true,
         deleted: true,
         worldbookId: target.worldbookId,
-        previousEntryCount: target.existingEntries.length,
-        deletedEntryCount: target.deletePlan.deleteCount,
+        previousEntryCount: workingEntries.length,
+        deletedEntryCount: deletePlan.deleteCount,
         entryCount: nextEntries.length,
-        deletedEntries: target.deletePlan.deletedEntries,
-        skippedDeletes: target.deletePlan.skippedDeletes,
+        deletedEntries: deletePlan.deletedEntries,
+        skippedDeletes: deletePlan.skippedDeletes,
       };
     },
     summarizeResult: result => result?.ok === false
@@ -2120,7 +2658,26 @@ export const createAppContentAgentTools = ({
           continue;
         }
         try {
-          await deleteWorldInfo(worldbookId);
+          const deleteResult = await deleteWorldInfo(worldbookId, {
+            ...(item.revision !== null && item.revision !== undefined
+              ? { expectedRevision: item.revision }
+              : {}),
+            ...(item.generation !== null && item.generation !== undefined
+              ? { expectedGeneration: item.generation }
+              : {}),
+            expectedExists: true,
+            conflictMode: 'return',
+          });
+          if (deleteResult?.ok === false) {
+            results.push(compactWorldbookDeleteItem({
+              ...item,
+              status: 'skipped',
+              reason: isWorldbookRevisionConflict(deleteResult)
+                ? 'worldbook_changed_since_confirmation'
+                : (deleteResult.reason || 'delete_failed'),
+            }));
+            continue;
+          }
           const stillExists = typeof worldInfoExists === 'function'
             ? await worldInfoExists(worldbookId)
             : Boolean(typeof getWorldInfo === 'function'
@@ -2218,8 +2775,10 @@ export const createAppContentAgentTools = ({
       const limit = Math.max(1, Math.min(200, Number(args.limit || 80) || 80));
       const worldbooks = [];
       for (const id of ids.slice(0, limit)) {
-        const data = typeof getWorldInfo === 'function' ? await getWorldInfo(id) : null;
+        const metadata = typeof getWorldInfoMetadata === 'function' ? await getWorldInfoMetadata(id) : null;
+        const data = metadata ? null : (typeof getWorldInfo === 'function' ? await getWorldInfo(id) : null);
         worldbooks.push(summarizeWorldbook(id, data, {
+          entriesCount: metadata?.entriesCount,
           boundToCurrentSession: sessionIds.includes(id),
           global: globalIds.includes(id),
         }));
@@ -2269,36 +2828,82 @@ export const createAppContentAgentTools = ({
       },
     },
     execute: async (args = {}) => {
-      await waitForWorldStoreReady?.();
       const rawSessionId = trim(args.sessionId || args.sessionName || args.target || args.chatName || chatStore?.getCurrent?.());
-      const session = await resolveSessionBindingTarget(rawSessionId);
-      const sessionId = trim(session.sessionId);
-      if (!session.found) return { ok: false, bound: false, reason: session.reason, sessionId };
+      const targetSnapshot = await captureSessionBindingTarget(rawSessionId);
+      const sessionId = trim(targetSnapshot.sessionId);
+      if (!targetSnapshot.found) {
+        return { ok: false, bound: false, reason: targetSnapshot.reason, sessionId };
+      }
+      await waitForWorldStoreReady?.();
       const worldbookId = trim(args.worldbookId || args.id || args.name);
       if (!worldbookId) return { ok: false, bound: false, reason: 'missing_worldbook_id', sessionId };
-      if (typeof bindWorldToSession !== 'function') {
+      if (typeof updateWorldSessionBinding !== 'function' && typeof bindWorldToSession !== 'function') {
         return { ok: false, bound: false, reason: 'worldbook_session_binding_unavailable', sessionId, worldbookId };
       }
-      if (!(await readWorldbookRecord(worldbookId)).exists) {
+      const worldbookSnapshot = await readWorldbookSnapshot(worldbookId);
+      if (!worldbookSnapshot.exists) {
         return { ok: false, bound: false, reason: 'worldbook_not_found', sessionId, worldbookId };
       }
-      const currentIds = await getSessionWorldIds(sessionId);
+      let bindingSnapshot = null;
+      try {
+        bindingSnapshot = await readSessionBindingSnapshot(sessionId);
+      } catch (error) {
+        return {
+          ok: false,
+          bound: false,
+          reason: 'binding_state_read_failed',
+          sessionId,
+          worldbookId,
+          errorMessage: trim(error?.message || error),
+        };
+      }
       const mode = trim(args.mode, 'append') === 'replace' ? 'replace' : 'append';
-      const nextIds = mode === 'replace'
-        ? [worldbookId]
-        : Array.from(new Set([...currentIds, worldbookId].filter(Boolean)));
-      await bindWorldToSession(sessionId, nextIds, { silent: false });
-      refreshChatAndContacts?.({ immediate: true });
+      const latestWorldbookSnapshot = await readWorldbookSnapshot(worldbookId);
+      const worldbookIdentity = validateWorldbookBindingIdentity(worldbookSnapshot, latestWorldbookSnapshot);
+      if (!worldbookIdentity.ok) {
+        return { ok: false, bound: false, reason: worldbookIdentity.reason, sessionId, worldbookId };
+      }
+      const targetIdentity = validateSessionBindingTarget(targetSnapshot);
+      if (!targetIdentity.ok) {
+        return { ok: false, bound: false, reason: targetIdentity.reason, sessionId, worldbookId };
+      }
+      let mutation = null;
+      try {
+        mutation = await applySessionBindingMutation({ sessionId, worldbookId, mode, bindingSnapshot });
+      } catch (error) {
+        return {
+          ok: false,
+          bound: false,
+          reason: 'bind_failed',
+          sessionId,
+          worldbookId,
+          errorMessage: trim(error?.message || error),
+        };
+      }
+      if (!mutation?.ok) {
+        return {
+          ok: false,
+          bound: false,
+          reason: trim(mutation?.reason, 'binding_update_failed'),
+          sessionId,
+          worldbookId,
+          previousWorldbookIds: normalizeStringList(mutation?.previousWorldbookIds),
+          worldbookIds: normalizeStringList(mutation?.worldbookIds),
+        };
+      }
+      if (mutation.changed) refreshChatAndContacts?.({ immediate: true });
       return {
         ok: true,
         bound: true,
-        added: !currentIds.includes(worldbookId),
+        added: mutation.added === true,
         mode,
         sessionId,
-        sessionName: trim(session.sessionName || sessionId),
+        sessionName: trim(targetSnapshot.sessionName || sessionId),
         worldbookId,
-        previousWorldbookIds: currentIds,
-        worldbookIds: nextIds,
+        previousWorldbookIds: normalizeStringList(
+          mutation.previousWorldbookIds ?? bindingSnapshot.worldbookIds,
+        ),
+        worldbookIds: normalizeStringList(mutation.worldbookIds),
       };
     },
     summarizeResult: result => result?.ok === false
@@ -2341,12 +2946,9 @@ export const createAppContentAgentTools = ({
       },
     },
     execute: async (args = {}) => {
-      await waitForWorldStoreReady?.();
-      const personaQuery = trim(args.personaId || args.personaName || args.target);
-      const persona = personaQuery
-        ? findStoreItem(personaStore, personaQuery)
-        : getActiveStoreItem(personaStore);
-      const personaId = trim(persona?.id);
+      const targetSnapshot = capturePersonaBindingTarget(args);
+      const { personaQuery, persona } = targetSnapshot;
+      const personaId = trim(targetSnapshot.personaId);
       if (!personaId) {
         return {
           ok: false,
@@ -2355,6 +2957,7 @@ export const createAppContentAgentTools = ({
           personaQuery,
         };
       }
+      await waitForWorldStoreReady?.();
       if (typeof getRpSessionId !== 'function') {
         return { ok: false, bound: false, reason: 'rp_session_resolution_unavailable', personaId };
       }
@@ -2364,31 +2967,92 @@ export const createAppContentAgentTools = ({
       }
       const worldbookId = trim(args.worldbookId || args.id || args.name);
       if (!worldbookId) return { ok: false, bound: false, reason: 'missing_worldbook_id', personaId, rpSessionId };
-      if (typeof bindWorldToSession !== 'function') {
+      if (typeof updateWorldSessionBinding !== 'function' && typeof bindWorldToSession !== 'function') {
         return { ok: false, bound: false, reason: 'worldbook_session_binding_unavailable', personaId, rpSessionId, worldbookId };
       }
-      if (!(await readWorldbookRecord(worldbookId)).exists) {
+      const worldbookSnapshot = await readWorldbookSnapshot(worldbookId);
+      if (!worldbookSnapshot.exists) {
         return { ok: false, bound: false, reason: 'worldbook_not_found', personaId, rpSessionId, worldbookId };
       }
-      const currentIds = await getSessionWorldIds(rpSessionId);
+      let bindingSnapshot = null;
+      try {
+        bindingSnapshot = await readSessionBindingSnapshot(rpSessionId);
+      } catch (error) {
+        return {
+          ok: false,
+          bound: false,
+          reason: 'binding_state_read_failed',
+          personaId,
+          rpSessionId,
+          worldbookId,
+          errorMessage: trim(error?.message || error),
+        };
+      }
+      const bindingScopeId = trim(bindingSnapshot.scopeId);
+      if (bindingScopeId && bindingScopeId !== personaId) {
+        return {
+          ok: false,
+          bound: false,
+          reason: 'target_scope_changed',
+          personaId,
+          rpSessionId,
+          worldbookId,
+          expectedScopeId: personaId,
+          currentScopeId: bindingScopeId,
+        };
+      }
+      bindingSnapshot = { ...bindingSnapshot, scopeId: personaId };
       const mode = trim(args.mode, 'append') === 'replace' ? 'replace' : 'append';
-      const nextIds = mode === 'replace'
-        ? [worldbookId]
-        : Array.from(new Set([...currentIds, worldbookId].filter(Boolean)));
-      await bindWorldToSession(rpSessionId, nextIds, { silent: false });
-      refreshChatAndContacts?.({ immediate: true });
+      const latestWorldbookSnapshot = await readWorldbookSnapshot(worldbookId);
+      const worldbookIdentity = validateWorldbookBindingIdentity(worldbookSnapshot, latestWorldbookSnapshot);
+      if (!worldbookIdentity.ok) {
+        return { ok: false, bound: false, reason: worldbookIdentity.reason, personaId, rpSessionId, worldbookId };
+      }
+      const targetIdentity = validatePersonaBindingTarget(targetSnapshot);
+      if (!targetIdentity.ok) {
+        return { ok: false, bound: false, reason: targetIdentity.reason, personaId, rpSessionId, worldbookId };
+      }
+      let mutation = null;
+      try {
+        mutation = await applySessionBindingMutation({ sessionId: rpSessionId, worldbookId, mode, bindingSnapshot });
+      } catch (error) {
+        return {
+          ok: false,
+          bound: false,
+          reason: 'bind_failed',
+          personaId,
+          rpSessionId,
+          worldbookId,
+          errorMessage: trim(error?.message || error),
+        };
+      }
+      if (!mutation?.ok) {
+        return {
+          ok: false,
+          bound: false,
+          reason: trim(mutation?.reason, 'binding_update_failed'),
+          personaId,
+          rpSessionId,
+          worldbookId,
+          previousWorldbookIds: normalizeStringList(mutation?.previousWorldbookIds),
+          worldbookIds: normalizeStringList(mutation?.worldbookIds),
+        };
+      }
+      if (mutation.changed) refreshChatAndContacts?.({ immediate: true });
       return {
         ok: true,
         bound: true,
-        added: !currentIds.includes(worldbookId),
+        added: mutation.added === true,
         scope: 'rp_only',
         mode,
         personaId,
         personaName: trim(persona?.name || personaId),
         rpSessionId,
         worldbookId,
-        previousWorldbookIds: currentIds,
-        worldbookIds: nextIds,
+        previousWorldbookIds: normalizeStringList(
+          mutation.previousWorldbookIds ?? bindingSnapshot.worldbookIds,
+        ),
+        worldbookIds: normalizeStringList(mutation.worldbookIds),
       };
     },
     summarizeResult: result => result?.ok === false
@@ -2417,8 +3081,13 @@ export const createAppContentAgentTools = ({
       description: 'Changes worldbook bindings for multiple chat sessions in one operation.',
       preflight: async (args = {}) => {
         if (args.preview === true) return { destructive: false };
-        const sessions = normalizeStringList(args.sessions);
-        const mode = trim(args.mode, 'append') === 'replace' ? 'replace' : 'append';
+        const snapshot = await buildBatchSessionBindingSnapshot(args);
+        batchSessionBindingSnapshots.set(args, snapshot);
+        if (snapshot.worldbookReadError || !snapshot.worldbookSnapshot?.exists) {
+          return { destructive: false };
+        }
+        const sessions = snapshot.targets;
+        const mode = snapshot.mode;
         return {
           requiresConfirmation: true,
           kind: 'worldbook.bind_sessions',
@@ -2431,9 +3100,18 @@ export const createAppContentAgentTools = ({
           cancelText: '取消',
           danger: mode === 'replace',
           argsPreview: {
-            worldbookId: trim(args.worldbookId),
-            sessions,
+            worldbookId: snapshot.worldbookId,
+            sessions: snapshot.items.map(item => trim(item.targetSnapshot?.sessionName || item.target)),
             mode,
+          },
+          details: {
+            items: snapshot.items.map(item => ({
+              target: item.target,
+              sessionId: item.sessionId,
+              sessionName: trim(item.targetSnapshot?.sessionName || item.sessionId || item.target),
+              status: item.status,
+              reason: item.reason,
+            })),
           },
           onDeny: {
             action: 'skip',
@@ -2466,27 +3144,34 @@ export const createAppContentAgentTools = ({
       },
     },
     execute: async (args = {}) => {
-      await waitForWorldStoreReady?.();
-      const worldbookId = trim(args.worldbookId);
-      const targets = normalizeStringList(args.sessions).slice(0, 100);
-      const mode = trim(args.mode, 'append') === 'replace' ? 'replace' : 'append';
       const preview = args.preview === true;
+      let snapshot = batchSessionBindingSnapshots.get(args) || null;
+      batchSessionBindingSnapshots.delete(args);
+      try {
+        snapshot = snapshot || await buildBatchSessionBindingSnapshot(args);
+      } catch (error) {
+        const targets = normalizeStringList(args.sessions).slice(0, 100);
+        return {
+          ok: false,
+          reason: 'binding_snapshot_failed',
+          worldbookId: trim(args.worldbookId),
+          errorMessage: trim(error?.message || error),
+          results: targets.map(target => ({ target, status: 'failed', reason: 'binding_snapshot_failed' })),
+        };
+      }
+      const { worldbookId, targets, mode } = snapshot;
       if (!worldbookId) return { ok: false, reason: 'missing_worldbook_id', results: [] };
       if (!targets.length) return { ok: false, reason: 'missing_sessions', results: [] };
-
-      let worldbookRecord = null;
-      try {
-        worldbookRecord = await readWorldbookRecord(worldbookId);
-      } catch (error) {
+      if (snapshot.worldbookReadError) {
         return {
           ok: false,
           reason: 'worldbook_read_failed',
           worldbookId,
-          errorMessage: trim(error?.message || error),
+          errorMessage: snapshot.worldbookReadError,
           results: targets.map(target => ({ target, status: 'failed', reason: 'worldbook_read_failed' })),
         };
       }
-      if (!worldbookRecord.exists) {
+      if (!snapshot.worldbookSnapshot?.exists) {
         return {
           ok: false,
           reason: 'worldbook_not_found',
@@ -2494,7 +3179,11 @@ export const createAppContentAgentTools = ({
           results: targets.map(target => ({ target, status: 'failed', reason: 'worldbook_not_found' })),
         };
       }
-      if (!preview && typeof bindWorldToSession !== 'function') {
+      if (
+        !preview &&
+        typeof updateWorldSessionBinding !== 'function' &&
+        typeof bindWorldToSession !== 'function'
+      ) {
         return {
           ok: false,
           reason: 'worldbook_session_binding_unavailable',
@@ -2509,100 +3198,136 @@ export const createAppContentAgentTools = ({
 
       const results = [];
       const compensationSessions = [];
-      const seenSessionIds = new Set();
-      for (const target of targets) {
-        const session = await resolveSessionBindingTarget(target);
-        const sessionId = trim(session.sessionId);
-        if (!session.found) {
+      for (const item of snapshot.items) {
+        const target = item.target;
+        const sessionId = trim(item.sessionId);
+        const sessionName = trim(item.targetSnapshot?.sessionName || sessionId);
+        if (item.status === 'failed') {
           results.push({
             target,
             sessionId,
+            sessionName,
             status: 'failed',
-            reason: session.reason,
+            reason: item.reason,
+            ...(item.errorMessage ? { errorMessage: item.errorMessage } : {}),
           });
           continue;
         }
-        if (seenSessionIds.has(sessionId)) {
+        if (item.status === 'skipped') {
           results.push({
             target,
             sessionId,
-            sessionName: trim(session.sessionName || sessionId),
+            sessionName,
             status: 'skipped',
-            reason: 'duplicate_target',
+            reason: item.reason,
           });
           continue;
         }
-        seenSessionIds.add(sessionId);
-
-        let previousWorldbookIds = [];
-        try {
-          previousWorldbookIds = await getSessionWorldIds(sessionId);
-        } catch (error) {
-          results.push({
-            target,
-            sessionId,
-            sessionName: trim(session.sessionName || sessionId),
-            status: 'failed',
-            reason: 'binding_state_read_failed',
-            errorMessage: trim(error?.message || error),
-          });
-          continue;
-        }
-        const nextWorldbookIds = mode === 'replace'
-          ? [worldbookId]
-          : Array.from(new Set([...previousWorldbookIds, worldbookId].filter(Boolean)));
-        const unchanged = nextWorldbookIds.length === previousWorldbookIds.length &&
-          nextWorldbookIds.every((id, index) => id === previousWorldbookIds[index]);
-        if (unchanged) {
-          results.push({
-            target,
-            sessionId,
-            sessionName: trim(session.sessionName || sessionId),
-            status: 'skipped',
-            reason: 'already_bound',
-            verified: true,
-            mode,
-            previousWorldbookIds,
-            worldbookIds: previousWorldbookIds,
-          });
-          continue;
-        }
+        const bindingSnapshot = item.bindingSnapshot || { worldbookIds: [], scopeId: '' };
+        const previewMutation = resolveWorldSessionBindingMutation({
+          currentWorldbookIds: bindingSnapshot.worldbookIds,
+          expectedWorldbookIds: bindingSnapshot.worldbookIds,
+          worldbookId,
+          mode,
+        });
         if (preview) {
           results.push({
             target,
             sessionId,
-            sessionName: trim(session.sessionName || sessionId),
-            status: 'planned',
-            reason: 'preview_only',
-            verified: false,
+            sessionName,
+            status: previewMutation.changed ? 'planned' : 'skipped',
+            reason: previewMutation.changed ? 'preview_only' : 'already_bound',
+            verified: !previewMutation.changed,
             mode,
-            previousWorldbookIds,
-            worldbookIds: nextWorldbookIds,
+            previousWorldbookIds: normalizeStringList(bindingSnapshot.worldbookIds),
+            worldbookIds: normalizeStringList(previewMutation.worldbookIds),
           });
           continue;
         }
 
+        let latestWorldbookSnapshot = null;
         try {
-          await bindWorldToSession(sessionId, nextWorldbookIds, { silent: false });
+          latestWorldbookSnapshot = await readWorldbookSnapshot(worldbookId);
         } catch (error) {
           results.push({
             target,
             sessionId,
-            sessionName: trim(session.sessionName || sessionId),
+            sessionName,
+            status: 'failed',
+            reason: 'worldbook_read_failed',
+            errorMessage: trim(error?.message || error),
+          });
+          continue;
+        }
+        const worldbookIdentity = validateWorldbookBindingIdentity(
+          snapshot.worldbookSnapshot,
+          latestWorldbookSnapshot,
+        );
+        if (!worldbookIdentity.ok) {
+          results.push({
+            target,
+            sessionId,
+            sessionName,
+            status: 'failed',
+            reason: worldbookIdentity.reason,
+          });
+          continue;
+        }
+        const targetIdentity = validateSessionBindingTarget(item.targetSnapshot);
+        if (!targetIdentity.ok) {
+          results.push({
+            target,
+            sessionId,
+            sessionName,
+            status: 'failed',
+            reason: targetIdentity.reason,
+          });
+          continue;
+        }
+
+        let mutation = null;
+        try {
+          mutation = await applySessionBindingMutation({ sessionId, worldbookId, mode, bindingSnapshot });
+        } catch (error) {
+          results.push({
+            target,
+            sessionId,
+            sessionName,
             status: 'failed',
             reason: 'bind_failed',
             errorMessage: trim(error?.message || error),
             mode,
-            previousWorldbookIds,
-            worldbookIds: nextWorldbookIds,
+            previousWorldbookIds: normalizeStringList(bindingSnapshot.worldbookIds),
+            worldbookIds: normalizeStringList(bindingSnapshot.worldbookIds),
           });
           continue;
         }
-        compensationSessions.push({
-          sessionId,
-          sessionName: trim(session.sessionName || sessionId),
-          previousWorldbookIds,
-        });
+        if (!mutation?.ok) {
+          results.push({
+            target,
+            sessionId,
+            sessionName,
+            status: 'failed',
+            reason: trim(mutation?.reason, 'binding_update_failed'),
+            mode,
+            previousWorldbookIds: normalizeStringList(
+              mutation?.previousWorldbookIds ?? bindingSnapshot.worldbookIds,
+            ),
+            worldbookIds: normalizeStringList(mutation?.worldbookIds),
+          });
+          continue;
+        }
+        const previousWorldbookIds = normalizeStringList(
+          mutation.previousWorldbookIds ?? bindingSnapshot.worldbookIds,
+        );
+        const expectedWorldbookIds = normalizeStringList(mutation.worldbookIds);
+        if (mutation.changed) {
+          compensationSessions.push({
+            sessionId,
+            sessionName,
+            previousWorldbookIds,
+          });
+        }
 
         let observedWorldbookIds = [];
         try {
@@ -2610,20 +3335,20 @@ export const createAppContentAgentTools = ({
         } catch {}
         const verified = mode === 'replace'
           ? observedWorldbookIds.length === 1 && observedWorldbookIds[0] === worldbookId
-          : previousWorldbookIds.every(id => observedWorldbookIds.includes(id)) &&
+          : expectedWorldbookIds.every(id => observedWorldbookIds.includes(id)) &&
             observedWorldbookIds.includes(worldbookId);
         results.push({
           target,
           sessionId,
-          sessionName: trim(session.sessionName || sessionId),
-          status: verified ? 'succeeded' : 'failed',
-          reason: verified ? '' : 'verification_failed',
+          sessionName,
+          status: verified ? (mutation.changed ? 'succeeded' : 'skipped') : 'failed',
+          reason: verified ? (mutation.changed ? '' : 'already_bound') : 'verification_failed',
           verified,
-          added: !previousWorldbookIds.includes(worldbookId),
+          added: mutation.added === true,
           mode,
           previousWorldbookIds,
           worldbookIds: observedWorldbookIds,
-          expectedWorldbookIds: nextWorldbookIds,
+          expectedWorldbookIds,
         });
       }
 

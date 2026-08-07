@@ -1308,7 +1308,12 @@ export class ContactSettingsPanel {
                 { id },
             ));
             if (!result?.ok) {
-                window.toastr?.error?.(approving ? '保存画像失败' : '忽略候选失败');
+                const conflictMessage = result?.reason === 'profile_changed_during_operation'
+                    ? '画像在候选生成后已被修改，请忽略旧候选并重新生成'
+                    : (result?.reason === 'target_scope_changed'
+                        ? '当前角色已切换，请返回原角色后再处理候选'
+                        : '');
+                window.toastr?.error?.(conflictMessage || (approving ? '保存画像失败' : '忽略候选失败'));
                 return;
             }
             window.toastr?.success?.(approving ? '已保存画像' : '已忽略候选');

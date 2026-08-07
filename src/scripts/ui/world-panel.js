@@ -37,6 +37,50 @@ const normalizeWorldTarget = (value, fallbackScope = 'session') => {
     return 'session_manage';
 };
 
+export const getWorldbookRegexRuleSignature = (rule = {}) => {
+    const findRegex = String(rule?.findRegex || '').trim();
+    const replaceString = String(rule?.replaceString ?? '');
+    const trim = Array.isArray(rule?.trimStrings) ? rule.trimStrings.map(String).join('\n') : '';
+    const placement = Array.isArray(rule?.placement)
+        ? rule.placement.map(Number).filter(Number.isFinite).sort((a, b) => a - b).join(',')
+        : '';
+    const disabled = rule?.disabled ? '1' : '0';
+    const markdownOnly = rule?.markdownOnly ? '1' : '0';
+    const promptOnly = rule?.promptOnly ? '1' : '0';
+    const runOnEdit = rule?.runOnEdit ? '1' : '0';
+    const substituteRegex = String(Number(rule?.substituteRegex ?? 0));
+    const minDepth = (rule?.minDepth === null || rule?.minDepth === undefined || rule?.minDepth === '')
+        ? ''
+        : String(rule.minDepth);
+    const maxDepth = (rule?.maxDepth === null || rule?.maxDepth === undefined || rule?.maxDepth === '')
+        ? ''
+        : String(rule.maxDepth);
+    if (!findRegex && !String(rule?.pattern || '').trim()) {
+        const when = String(rule?.when || 'both');
+        const pattern = String(rule?.pattern || '').trim();
+        const flags = (rule?.flags === undefined || rule?.flags === null) ? 'g' : String(rule.flags);
+        const replacement = String(rule?.replacement ?? '');
+        return `${when}\u0000${pattern}\u0000${flags}\u0000${replacement}`;
+    }
+    return [
+        findRegex, replaceString, trim, placement,
+        disabled, markdownOnly, promptOnly, runOnEdit, substituteRegex, minDepth, maxDepth,
+    ].join('\u0000');
+};
+
+export const collectWorldbookRegexSignaturesForWorld = (sets = [], worldId = '') => {
+    const target = String(worldId || '').trim();
+    const signatures = new Set();
+    if (!target) return signatures;
+    (Array.isArray(sets) ? sets : []).forEach((set) => {
+        if (set?.bind?.type !== 'world' || String(set.bind.worldId || '').trim() !== target) return;
+        (Array.isArray(set?.rules) ? set.rules : []).forEach((rule) => {
+            signatures.add(getWorldbookRegexRuleSignature(rule));
+        });
+    });
+    return signatures;
+};
+
 export const formatWorldScopeLabel = ({
     scope = 'session',
     sessionId = '',
@@ -578,7 +622,14 @@ export class WorldPanel {
                     danger: true,
                 });
                 if (!ok) return false;
-                await window.appBridge.deleteWorldInfo(worldId);
+                const result = await window.appBridge.deleteWorldInfo(worldId, {
+                    expectedExists: true,
+                    conflictMode: 'return',
+                });
+                if (result?.ok === false) {
+                    window.toastr?.warning?.('世界书已不存在或状态已变化，请刷新后重试');
+                    return false;
+                }
                 window.toastr?.success('已删除世界书');
                 await this.refreshList();
                 return true;
@@ -1005,9 +1056,39 @@ export class WorldPanel {
         }
     }
 
+    formatLibraryRowMeta(entriesCount, updatedAt) {
+        const timeText = updatedAt ? new Date(updatedAt).toLocaleString('zh-CN', { hour12: false }) : '';
+        const countText = entriesCount === null ? '条目数待载入' : `${entriesCount} 条目`;
+        return timeText ? `${countText} · 更新：${timeText}` : countText;
+    }
+
+    // 懒加载下条目数首次载入正文时才可知；只回填对应行文本，不整表重渲染。
+    updateLibraryRowEntriesCount(worldId, metadata = {}) {
+        const name = String(worldId || '').trim();
+        if (!name || !this.libraryListEl?.isConnected) return;
+        const rows = this.libraryListEl.querySelectorAll(':scope > .world-library-row');
+        for (const row of rows) {
+            if (row.dataset.worldName !== name) continue;
+            const meta = row.querySelector('.sticker-bind-meta');
+            if (!meta) return;
+            const countRaw = Number(metadata?.entriesCount);
+            const entriesCount = Number.isFinite(countRaw) && countRaw >= 0 ? Math.trunc(countRaw) : null;
+            if (entriesCount === null) return;
+            meta.textContent = this.formatLibraryRowMeta(
+                entriesCount,
+                Number(metadata?.updatedAt || metadata?.createdAt || 0),
+            );
+            return;
+        }
+    }
+
     async renderLibraryList({ names = [], boundIds = [], sessionId = '', scope = 'session_extra', personaId = '' } = {}) {
         if (!this.libraryListEl) return;
         const listEl = this.libraryListEl;
+        const worldStore = window.appBridge?.worldStore;
+        if (worldStore && typeof worldStore === 'object') {
+            worldStore.onEntriesCountBackfill = (id, metadata) => this.updateLibraryRowEntriesCount(id, metadata);
+        }
         listEl.innerHTML = '';
         const animateRows = this.libraryEntryMotionPending;
         this.libraryEntryMotionPending = false;
@@ -1063,24 +1144,17 @@ export class WorldPanel {
         const dir = this.librarySortDir === 'asc' ? 'asc' : 'desc';
 
         const boundSet = new Set(Array.isArray(boundIds) ? boundIds : []);
-        const items = await Promise.all(
-            names.map(async (name, index) => {
-                let data = null;
-                try {
-                    data = await window.appBridge.getWorldInfo(name);
-                } catch (err) {
-                    data = null;
-                }
-                const entries = Array.isArray(data?.entries) ? data.entries : [];
-                const updatedAt = Number(data?.updatedAt || data?.updated_at || data?.createdAt || data?.created_at || 0);
-                return {
-                    name,
-                    index,
-                    entriesCount: entries.length,
-                    updatedAt,
-                };
-            }),
-        );
+        const items = names.map((name, index) => {
+            const metadata = window.appBridge.getWorldInfoMetadata?.(name) || null;
+            const hasEntryCount = metadata?.entriesCount !== null && metadata?.entriesCount !== undefined;
+            const countRaw = hasEntryCount ? Number(metadata.entriesCount) : Number.NaN;
+            return {
+                name,
+                index,
+                entriesCount: Number.isFinite(countRaw) && countRaw >= 0 ? Math.trunc(countRaw) : null,
+                updatedAt: Number(metadata?.updatedAt || metadata?.createdAt || 0),
+            };
+        });
 
         let filtered = keyword
             ? items.filter(item => String(item.name).toLowerCase().includes(keyword))
@@ -1106,6 +1180,7 @@ export class WorldPanel {
         filtered.forEach((item, motionIndex) => {
             const row = document.createElement('div');
             row.className = 'sticker-bind-row world-library-row';
+            row.dataset.worldName = item.name;
             row.style.justifyContent = 'space-between';
             row.style.alignItems = 'center';
             if (animateRows && motionIndex < 12) {
@@ -1123,8 +1198,7 @@ export class WorldPanel {
             title.textContent = item.name;
             const meta = document.createElement('div');
             meta.className = 'sticker-bind-meta';
-            const timeText = item.updatedAt ? new Date(item.updatedAt).toLocaleString('zh-CN', { hour12: false }) : '';
-            meta.textContent = timeText ? `${item.entriesCount} 条目 · 更新：${timeText}` : `${item.entriesCount} 条目`;
+            meta.textContent = this.formatLibraryRowMeta(item.entriesCount, item.updatedAt);
             info.appendChild(title);
             info.appendChild(meta);
 
@@ -1158,8 +1232,7 @@ export class WorldPanel {
                         } else {
                             next.add(item.name);
                             await window.appBridge.setGlobalWorldIds(Array.from(next));
-                            const data = await window.appBridge.getWorldInfo(item.name);
-                            logger.info('Activated world', item.name, data);
+                            logger.info('Activated world', item.name, window.appBridge.getWorldInfoMetadata?.(item.name));
                             window.toastr?.success(`已启用世界书：${item.name}`);
                         }
                     } else if (scopeKey === 'role') {
@@ -1173,8 +1246,7 @@ export class WorldPanel {
                             window.toastr?.success?.('已解绑角色世界书');
                         } else {
                             await window.appBridge?.assignRoleWorldToPersona?.(pid, item.name, { enabled: true });
-                            const data = await window.appBridge.getWorldInfo(item.name);
-                            logger.info('Activated role world', item.name, data);
+                            logger.info('Activated role world', item.name, window.appBridge.getWorldInfoMetadata?.(item.name));
                             window.toastr?.success?.(`已绑定角色世界书：${item.name}`);
                         }
                     } else {
@@ -1184,8 +1256,7 @@ export class WorldPanel {
                             window.toastr?.success('已停用世界书');
                         } else {
                             next.add(item.name);
-                            const data = await window.appBridge.getWorldInfo(item.name);
-                            logger.info('Activated world', item.name, data);
+                            logger.info('Activated world', item.name, window.appBridge.getWorldInfoMetadata?.(item.name));
                             window.toastr?.success(`已启用世界书：${item.name}`);
                         }
                         const activeSessionId = String(window.appBridge?.getActiveSessionId?.() || '').trim();
@@ -1217,7 +1288,14 @@ export class WorldPanel {
                     danger: true,
                 });
                 if (!ok) return;
-                await window.appBridge.deleteWorldInfo(item.name);
+                const result = await window.appBridge.deleteWorldInfo(item.name, {
+                    expectedExists: true,
+                    conflictMode: 'return',
+                });
+                if (result?.ok === false) {
+                    window.toastr?.warning?.('世界书已不存在或状态已变化，请刷新后重试');
+                    return;
+                }
                 window.toastr?.success('已删除世界书');
                 await this.refreshList();
             };
@@ -1259,7 +1337,16 @@ export class WorldPanel {
             }
 
             const blank = { name, entries: [] };
-            await window.appBridge.saveWorldInfo(name, blank);
+            const snapshot = await window.appBridge.getWorldInfoSnapshot?.(name);
+            if (snapshot?.exists) {
+                window.toastr?.warning('名称已存在，请换一个');
+                return;
+            }
+            await window.appBridge.saveWorldInfo(name, blank, snapshot ? {
+                expectedRevision: snapshot.revision,
+                expectedGeneration: snapshot.generation,
+                expectedExists: false,
+            } : undefined);
 
             if (target.type === 'global' || this.scope === 'global') {
                 const current = getGlobalWorldIds(window.appBridge);
@@ -1766,7 +1853,12 @@ export class WorldPanel {
             const nameFromJson = json.name || json.title || '';
             const name = nameFromJson || nameHint || 'imported';
             const simplified = convertSTWorld(json, name);
-            await window.appBridge.saveWorldInfo(name, simplified);
+            const snapshot = await window.appBridge.getWorldInfoSnapshot?.(name);
+            await window.appBridge.saveWorldInfo(name, simplified, snapshot ? {
+                expectedRevision: snapshot.revision,
+                expectedGeneration: snapshot.generation,
+                expectedExists: snapshot.exists,
+            } : undefined);
 
             // 若导入文件包含绑定的正则集合，则一并导入并绑定到该世界书
             const boundSets = json?.boundRegexSets || json?.bound_regex_sets || json?.bound_regex_sets_v1 || null;
@@ -1793,47 +1885,24 @@ export class WorldPanel {
                     }
 
                     await waitForRegexStoreReady(window.appBridge);
-                    const ruleSig = (r) => {
-                        const findRegex = String(r?.findRegex || '').trim();
-                        const replaceString = String(r?.replaceString ?? '');
-                        const trim = Array.isArray(r?.trimStrings) ? r.trimStrings.map(String).join('\n') : '';
-                        const placement = Array.isArray(r?.placement) ? r.placement.map(n => Number(n)).filter(Number.isFinite).sort((a, b) => a - b).join(',') : '';
-                        const disabled = r?.disabled ? '1' : '0';
-                        const markdownOnly = r?.markdownOnly ? '1' : '0';
-                        const promptOnly = r?.promptOnly ? '1' : '0';
-                        const runOnEdit = r?.runOnEdit ? '1' : '0';
-                        const sub = String(Number(r?.substituteRegex ?? 0));
-                        const minD = (r?.minDepth === null || r?.minDepth === undefined || r?.minDepth === '') ? '' : String(r?.minDepth);
-                        const maxD = (r?.maxDepth === null || r?.maxDepth === undefined || r?.maxDepth === '') ? '' : String(r?.maxDepth);
-                        if (!findRegex && !String(r?.pattern || '').trim()) {
-                            // legacy fallback signature
-                            const when = String(r?.when || 'both');
-                            const pattern = String(r?.pattern || '').trim();
-                            const flags = (r?.flags === undefined || r?.flags === null) ? 'g' : String(r?.flags);
-                            const replacement = String(r?.replacement ?? '');
-                            return `${when}\u0000${pattern}\u0000${flags}\u0000${replacement}`;
-                        }
-                        return [
-                            findRegex, replaceString, trim, placement,
-                            disabled, markdownOnly, promptOnly, runOnEdit, sub, minD, maxD
-                        ].join('\u0000');
-                    };
-
-                    const existingSigs = new Set();
+                    let existingSigs = new Set();
                     try {
                         const sets = listRegexLocalSets(window.appBridge);
-                        sets.forEach(s => (Array.isArray(s?.rules) ? s.rules : []).forEach(r => {
-                            existingSigs.add(ruleSig(r));
-                        }));
+                        existingSigs = collectWorldbookRegexSignaturesForWorld(sets, name);
                     } catch {}
 
+                    let importedRuleCount = 0;
+                    let skippedRuleCount = 0;
                     for (const s of boundSets) {
                         const rulesRaw = Array.isArray(s?.rules) ? s.rules : [];
                         const rules = [];
                         const localSeen = new Set();
                         for (const rr of rulesRaw) {
-                            const sig = ruleSig(rr);
-                            if (!sig || localSeen.has(sig) || existingSigs.has(sig)) continue;
+                            const sig = getWorldbookRegexRuleSignature(rr);
+                            if (!sig || localSeen.has(sig) || existingSigs.has(sig)) {
+                                skippedRuleCount += 1;
+                                continue;
+                            }
                             localSeen.add(sig);
                             existingSigs.add(sig);
                             rules.push(rr);
@@ -1846,8 +1915,10 @@ export class WorldPanel {
                             bind: { type: 'world', worldId: name },
                             rules,
                         });
+                        importedRuleCount += rules.length;
                     }
-                    window.toastr?.success('已导入并绑定正则');
+                    const skippedText = skippedRuleCount > 0 ? `，跳过目标世界书已有或重复规则 ${skippedRuleCount} 条` : '';
+                    window.toastr?.success(`已导入并绑定正则：${importedRuleCount} 条${skippedText}`);
                     window.dispatchEvent(new CustomEvent('regex-changed'));
                 } catch (err) {
                     logger.warn('导入绑定正则失败', err);

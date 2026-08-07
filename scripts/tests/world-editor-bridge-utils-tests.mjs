@@ -22,7 +22,8 @@ test('ensureUniqueWorldbookIdCore waits for store and appends suffix on collisio
   const calls = [];
   const worldStore = {
     ready: Promise.resolve().then(() => calls.push('ready')),
-    load: id => ['book', 'book_1'].includes(id),
+    has: id => ['book', 'book_1'].includes(id),
+    load: () => { throw new Error('cold bodies must not be loaded for collision checks'); },
   };
   const id = await ensureUniqueWorldbookIdCore({
     worldStore,

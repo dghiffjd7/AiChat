@@ -14,6 +14,38 @@ import {
   replaceWorldSessionMap,
   setCurrentWorld,
 } from '../../src/scripts/ui/world-session-runtime-utils.js';
+import { resolveWorldSessionBindingMutation } from '../../src/scripts/storage/world-session-binding-utils.js';
+
+{
+  const append = resolveWorldSessionBindingMutation({
+    currentWorldbookIds: ['keep', 'concurrent-add'],
+    expectedWorldbookIds: ['keep', 'removed-by-user'],
+    worldbookId: 'maid-add',
+    mode: 'append',
+  });
+  assert.equal(append.ok, true);
+  assert.equal(append.changed, true);
+  assert.deepEqual(append.worldbookIds, ['keep', 'concurrent-add', 'maid-add']);
+
+  const targetRemoved = resolveWorldSessionBindingMutation({
+    currentWorldbookIds: ['keep'],
+    expectedWorldbookIds: ['keep', 'maid-add'],
+    worldbookId: 'maid-add',
+    mode: 'append',
+  });
+  assert.equal(targetRemoved.ok, false);
+  assert.equal(targetRemoved.reason, 'binding_changed_during_operation');
+
+  const replaceConflict = resolveWorldSessionBindingMutation({
+    currentWorldbookIds: ['keep', 'user-change'],
+    expectedWorldbookIds: ['keep'],
+    worldbookId: 'replacement',
+    mode: 'replace',
+  });
+  assert.equal(replaceConflict.ok, false);
+  assert.equal(replaceConflict.reason, 'binding_changed_during_operation');
+  console.log('ok - world session binding mutation preserves unrelated changes and rejects stale target state');
+}
 
 {
   const worldSessionMap = { s1: ['w1'] };

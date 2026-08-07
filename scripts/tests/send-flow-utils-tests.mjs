@@ -18,6 +18,7 @@ import {
   resolveMaidChatSendCompletionResult,
   resolveRegenerateFromUserIndexPlan,
   resolveSendPreflightBlock,
+  isChatSendTargetAvailable,
   resolveSyspromptProtocolFlags,
   runAbortableSendFlow,
   runPendingSendPreparationFlow,
@@ -193,6 +194,20 @@ test('resolveMaidChatSendCompletionResult keeps the cancelled flag on a post-tri
     sessionId: 'elf',
   });
   assert.equal('cancelled' in delivered, false, '非中止结果不应出现 cancelled 字段');
+});
+
+test('resolveMaidChatSendCompletionResult reports target deletion distinctly from user abort', () => {
+  const result = resolveMaidChatSendCompletionResult({
+    requestTriggered: true,
+    cancelled: true,
+    cancelReason: 'session_deleted',
+    sessionId: 'deleted-room',
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.cancelled, true);
+  assert.equal(result.failureCode, 'session_deleted');
+  assert.equal(result.reason, 'session_deleted');
+  assert.match(result.message, /聊天室已删除/);
 });
 
 test('normalizeHandleSendInvocation treats DOM-style events as empty send arguments', () => {
@@ -1236,6 +1251,23 @@ test('resolveSyspromptProtocolFlags lets moment creation override chat mode and 
   );
 });
 
+test('isChatSendTargetAvailable rejects a deleted target and accepts stored or contact-only sessions', () => {
+  const sessions = new Set(['stored-room']);
+  const contacts = new Map([['contact-room', { id: 'contact-room' }]]);
+  const deps = {
+    chatStore: {
+      hasSession: id => sessions.has(id),
+    },
+    contactsStore: {
+      getContact: id => contacts.get(id) || null,
+    },
+  };
+  assert.equal(isChatSendTargetAvailable({ sessionId: 'stored-room', ...deps }), true);
+  assert.equal(isChatSendTargetAvailable({ sessionId: 'contact-room', ...deps }), true);
+  assert.equal(isChatSendTargetAvailable({ sessionId: 'deleted-room', ...deps }), false);
+  assert.equal(isChatSendTargetAvailable({ sessionId: 'legacy-room' }), true, '无法检查的旧测试替身保持兼容');
+});
+
 test('handleSend timeout wiring keeps pre-creation abort, timeout labeling, and repair-wait race contracts', async () => {
   const appSource = await readFile(new URL('../../src/scripts/ui/app.js', import.meta.url), 'utf8');
   // 预中止必须在任何 generation record 建立之前拦截（迟到的超时不得再启动生成）。
@@ -1256,6 +1288,16 @@ test('handleSend timeout wiring keeps pre-creation abort, timeout labeling, and 
   );
   // 被拒路径的修复等待必须与中止信号竞速，超时后在宽限内以 protocol_rejected 收口。
   assert.match(appSource, /Promise\.race\(\[maidProtocolRepairCompletion, abortWait\]\)/);
+});
+
+test('handleSend and image generation register target-scoped work before session deletion', async () => {
+  const appSource = await readFile(new URL('../../src/scripts/ui/app.js', import.meta.url), 'utf8');
+  assert.match(appSource, /beforeRemove:\s*sessionId\s*=>\s*sessionAsyncWorkRuntime\.cancelAndWait\(sessionId/);
+  assert.match(appSource, /holdClosing:\s*true/);
+  assert.match(appSource, /kind:\s*'chat_generation'/);
+  assert.match(appSource, /kind:\s*'image_generation'/);
+  assert.match(appSource, /sessionAsyncWorkRuntime\.isClosing\(sessionId\)/);
+  assert.match(appSource, /isChatSendTargetAvailable\(\{\s*sessionId,\s*chatStore,\s*contactsStore\s*\}\)/);
 });
 
 let failed = 0;

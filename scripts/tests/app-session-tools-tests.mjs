@@ -255,5 +255,62 @@ const createHarness = () => {
   console.log('ok - session.delete_many rechecks frozen ids and treats TOCTOU disappearance as skipped');
 }
 
+{
+  const contacts = new Map([
+    ['room-changed', { id: 'room-changed', name: '确认期间收到新消息' }],
+  ]);
+  const messages = new Map([
+    ['room-changed', [{ id: 'before-confirm', role: 'user', content: '确认前消息' }]],
+  ]);
+  const deleted = [];
+  const tools = createAppSessionAgentTools({
+    contactsStore: {
+      listContacts: () => Array.from(contacts.values()),
+      getContact: id => contacts.get(id) || null,
+    },
+    chatStore: {
+      getCurrent: () => 'other-room',
+      listSessions: () => Array.from(contacts.keys()),
+      getMessages: id => messages.get(id) || [],
+      getPendingMessages: () => [],
+      getDraft: () => '',
+      getSessionSettings: () => ({}),
+    },
+    deleteSession: async id => {
+      deleted.push(id);
+      contacts.delete(id);
+      messages.delete(id);
+      return { ok: true, deleted: true, sessionId: id };
+    },
+  });
+  const registry = createAgentToolRegistry({
+    permissionEvaluator: createAgentPermissionEvaluator({
+      defaultDecision: AGENT_PERMISSION_DECISIONS.allow,
+    }),
+    logger: { warn() {} },
+  });
+  registry.registerMany(tools);
+
+  const output = await registry.executeTool('session.delete_many', {
+    sessions: ['room-changed'],
+  }, {
+    operationIntentPolicy: { mode: 'write_allowed' },
+    requestToolConfirmation: () => {
+      messages.get('room-changed').push({
+        id: 'during-confirm',
+        role: 'assistant',
+        content: '确认期间的新回复',
+      });
+      return true;
+    },
+  });
+
+  assert.deepEqual(deleted, [], '确认内容变化后不得继续删除会话');
+  assert.equal(output.result.succeededCount, 0);
+  assert.equal(output.result.skippedCount, 1);
+  assert.equal(output.result.results[0].reason, 'session_changed_during_confirmation');
+  console.log('ok - session.delete_many invalidates confirmation when target chat content changes');
+}
+
 console.log('app-session-tools-tests passed');
 await import('./group-chat-agent-tools-tests.mjs');

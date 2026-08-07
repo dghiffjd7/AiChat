@@ -547,7 +547,6 @@ body.chat-room-active .bottom-nav {
   -webkit-overflow-scrolling: touch;
   flex: 0 0 auto;
   height: auto;
-  max-height: 260px;
   scrollbar-width: none;
 }
 
@@ -558,6 +557,7 @@ body.chat-room-active .bottom-nav {
 
 .world-entry-page {
   flex: 0 0 100%;
+  min-width: 0;
   scroll-snap-align: start;
   box-sizing: border-box;
   padding: 10px;
@@ -568,9 +568,14 @@ body.chat-room-active .bottom-nav {
   max-height: 260px;
   overflow-y: auto;
   overflow-x: hidden;
+  scrollbar-gutter: stable;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 7px;
+}
+
+.world-entries-list.is-page-transitioning .world-entry-page {
+  pointer-events: none;
 }
 
 .world-entry-empty {
@@ -588,17 +593,40 @@ body.chat-room-active .bottom-nav {
 }
 
 .world-entries-dot {
-  width: 6px;
-  height: 6px;
+  width: 5px;
+  height: 5px;
   border-radius: 50%;
   border: none;
   padding: 0;
   background: var(--app-border-strong);
   cursor: pointer;
+  opacity: 0.45;
+  transition: width 140ms ease, height 140ms ease, opacity 140ms ease, background 140ms ease;
+}
+
+.world-entries-dot.distance-2 {
+  width: 6px;
+  height: 6px;
+  opacity: 0.62;
+}
+
+.world-entries-dot.distance-1 {
+  width: 8px;
+  height: 8px;
+  opacity: 0.82;
 }
 
 .world-entries-dot.active {
+  width: 10px;
+  height: 10px;
   background: var(--app-text-secondary);
+  opacity: 1;
+}
+
+.world-entries-ellipsis {
+  color: var(--app-text-muted);
+  font-size: 11px;
+  line-height: 1;
 }
 
 .world-entry-item {
@@ -1728,6 +1756,11 @@ body[data-reduced-motion='on'] :is(
 
 .world-content-card {
   position: relative;
+}
+
+/* 浮起时替内容卡占住文档流位置（高度由 JS 量取内联写入），防止下方设置卡上跳 */
+.world-block-shell-placeholder {
+  margin-top: 8px;
 }
 
 .world-content-title {

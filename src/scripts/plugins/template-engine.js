@@ -1283,8 +1283,10 @@ const createRuntime = ({ chatStore, sessionId, messageVars, initialVars, state, 
   const resolveWorldData = (nameRaw) => {
     if (!appBridge) return null;
     const loadWorld = (id) => {
+      const guarded = appBridge.loadStoredWorldInfo?.(id) || null;
+      if (guarded) return guarded;
       const loaded = appBridge.worldStore?.load?.(id) || null;
-      return readOnly && loaded ? cloneValue(loaded) : loaded;
+      return loaded ? cloneValue(loaded) : null;
     };
     const name = String(nameRaw || '').trim();
     if (name) {
@@ -1297,8 +1299,7 @@ const createRuntime = ({ chatStore, sessionId, messageVars, initialVars, state, 
     return null;
   };
 
-  const findWorldEntry = (world, title) => {
-    const data = resolveWorldData(world);
+  const findWorldEntryInData = (data, title) => {
     const entries = Array.isArray(data?.entries) ? data.entries : [];
     if (!entries.length) return null;
     if (title == null || title === '') return null;
@@ -1318,6 +1319,8 @@ const createRuntime = ({ chatStore, sessionId, messageVars, initialVars, state, 
       null
     );
   };
+
+  const findWorldEntry = (world, title) => findWorldEntryInData(resolveWorldData(world), title);
 
   const getwi = (lorebook, title, data) => {
     let targetWorld = lorebook;
@@ -1367,15 +1370,15 @@ const createRuntime = ({ chatStore, sessionId, messageVars, initialVars, state, 
     }
     const worldData = resolveWorldData(targetWorld);
     if (!worldData || !Array.isArray(worldData.entries)) return null;
-    const entry = findWorldEntry(targetWorld, targetTitle);
+    const entry = findWorldEntryInData(worldData, targetTitle);
     if (!entry) return null;
     entry.disable = false;
     if (forceFlag) entry.constant = true;
     try {
       const worldId = String(worldData.name || targetWorld || appBridge?.currentWorldId || '').trim();
-      if (!readOnly && worldId && appBridge?.worldStore?.save) {
+      if (!readOnly && worldId && appBridge?.saveWorldInfo) {
         Promise.resolve(
-          appBridge.worldStore.save(worldId, { ...worldData, entries: worldData.entries }),
+          appBridge.saveWorldInfo(worldId, { ...worldData, entries: worldData.entries }),
         ).catch((error) => {
           logger.warn('template activewi worldbook save failed', error);
         });
@@ -1486,7 +1489,67 @@ const sanitizeContextForWorker = (context) => {
   return out;
 };
 
-const buildWorldSnapshot = (context) => {
+const collectLiteralWorldIds = (template = '') => {
+  const ids = new Set();
+  const callPattern = /\b(?:getwi|getWorldInfo|activewi|activateWorldInfo)\s*\(\s*(?:"((?:\\.|[^"\\])*)"|'((?:\\.|[^'\\])*)'|`((?:\\.|[^`\\])*)`)\s*,/g;
+  let match = null;
+  while ((match = callPattern.exec(String(template || ''))) !== null) {
+    const raw = match[1] ?? match[2] ?? match[3] ?? '';
+    if (match[3] !== undefined && raw.includes('${')) continue;
+    const id = raw.replace(/\\([\\'"`])/g, '$1').trim();
+    if (id) ids.add(id);
+  }
+  return Array.from(ids);
+};
+
+const decodeTemplateLiteral = (match, offset = 0) => {
+  const raw = match[offset] ?? match[offset + 1] ?? match[offset + 2] ?? '';
+  if (match[offset + 2] !== undefined && raw.includes('${')) return '';
+  return raw.replace(/\\([\\'"`])/g, '$1').trim();
+};
+
+const collectLiteralWorldEntryRequests = (template = '') => {
+  const source = String(template || '');
+  const totalCallCount = (source.match(/\b(?:getwi|getWorldInfo|activewi|activateWorldInfo)\s*\(/g) || []).length;
+  const callPattern = /\b(getwi|getWorldInfo|activewi|activateWorldInfo)\s*\(\s*(?:"((?:\\.|[^"\\])*)"|'((?:\\.|[^'\\])*)'|`((?:\\.|[^`\\])*)`)\s*,\s*(?:"((?:\\.|[^"\\])*)"|'((?:\\.|[^'\\])*)'|`((?:\\.|[^`\\])*)`)\s*(?=([,)]))/g;
+  const entryTitlesByWorld = new Map();
+  let matchedCallCount = 0;
+  let hasNestedPayloadCall = false;
+  let match = null;
+  while ((match = callPattern.exec(source)) !== null) {
+    const method = String(match[1] || '');
+    const worldId = decodeTemplateLiteral(match, 2);
+    const entryTitle = decodeTemplateLiteral(match, 5);
+    if (!worldId || !entryTitle) continue;
+    matchedCallCount += 1;
+    if ((method === 'getwi' || method === 'getWorldInfo') && match[8] === ',') {
+      hasNestedPayloadCall = true;
+    }
+    if (!entryTitlesByWorld.has(worldId)) entryTitlesByWorld.set(worldId, new Set());
+    entryTitlesByWorld.get(worldId).add(entryTitle);
+  }
+  return {
+    entryTitlesByWorld,
+    canFilterEntries: totalCallCount > 0 && matchedCallCount === totalCallCount && !hasNestedPayloadCall,
+  };
+};
+
+const ensureTemplateWorldsLoaded = async (template, context) => {
+  const appBridge = (typeof window !== 'undefined' && window.appBridge) ? window.appBridge : null;
+  const explicitWorldIds = collectLiteralWorldIds(template);
+  const literalRequests = collectLiteralWorldEntryRequests(template);
+  if (typeof appBridge?.ensureWorldsForContext === 'function') {
+    await appBridge.ensureWorldsForContext(context || {});
+  } else if (appBridge?.worldStore?.ready) {
+    await appBridge.worldStore.ready;
+  }
+  if (explicitWorldIds.length) {
+    await appBridge?.worldStore?.ensureLoadedMany?.(explicitWorldIds, { includeRefs: false });
+  }
+  return { explicitWorldIds, ...literalRequests };
+};
+
+const buildWorldSnapshot = (context, templateWorlds = {}) => {
   const appBridge = (typeof window !== 'undefined' && window.appBridge) ? window.appBridge : null;
   const worldStore = appBridge?.worldStore;
   if (!worldStore?.load) return { worlds: [], worldMeta: {} };
@@ -1501,8 +1564,15 @@ const buildWorldSnapshot = (context) => {
     : (Array.isArray(appBridge?.currentWorldIds) ? appBridge.currentWorldIds : []);
   const currentId = String(appBridge?.currentWorldId || '').trim();
   const globalId = String(appBridge?.globalWorldId || '').trim();
+  const explicitWorldIds = Array.isArray(templateWorlds?.explicitWorldIds)
+    ? templateWorlds.explicitWorldIds
+    : [];
   if (currentId) ids.add(currentId);
   if (globalId) ids.add(globalId);
+  (Array.isArray(explicitWorldIds) ? explicitWorldIds : []).forEach(id => {
+    const key = String(id || '').trim();
+    if (key) ids.add(key);
+  });
   list.forEach(id => {
     const key = String(id || '').trim();
     if (key) ids.add(key);
@@ -1518,7 +1588,25 @@ const buildWorldSnapshot = (context) => {
   ids.forEach((id) => {
     const raw = worldStore.load(id);
     if (!raw || typeof raw !== 'object') return;
-    const entries = Array.isArray(raw.entries) ? raw.entries : [];
+    let entries = Array.isArray(raw.entries) ? raw.entries : [];
+    const requestedTitles = templateWorlds?.canFilterEntries === true
+      ? templateWorlds?.entryTitlesByWorld?.get?.(id)
+      : null;
+    if (requestedTitles?.size) {
+      const requestedTitleList = Array.from(requestedTitles);
+      entries = entries.filter((entry) => {
+        const uid = entry?.uid;
+        const entryId = String(entry?.id ?? '').trim();
+        const entryTitle = String(entry?.comment || entry?.title || '').trim();
+        return requestedTitleList.some((title) => {
+          const target = String(title || '').trim();
+          if (!target) return false;
+          const numeric = Number(target);
+          if (Number.isFinite(numeric) && (Number(uid) === numeric || Number(entry?.id) === numeric)) return true;
+          return entryId === target || entryTitle === target;
+        });
+      });
+    }
     worlds.push({
       id: String(raw.name || id || ''),
       name: String(raw.name || id || ''),
@@ -1580,7 +1668,7 @@ const applyVariableUpdates = ({ chatStore, sessionId, before, after, scope } = {
 const applyWorldUpdates = (updates = []) => {
   const appBridge = (typeof window !== 'undefined' && window.appBridge) ? window.appBridge : null;
   const worldStore = appBridge?.worldStore;
-  if (!worldStore?.load || !worldStore?.save) return;
+  if (!worldStore?.load || !appBridge?.saveWorldInfo) return;
   const grouped = new Map();
   (Array.isArray(updates) ? updates : []).forEach(update => {
     const worldId = String(update?.worldId || '').trim();
@@ -1589,12 +1677,13 @@ const applyWorldUpdates = (updates = []) => {
     grouped.get(worldId).push(update);
   });
   grouped.forEach((list, worldId) => {
-    const world = worldStore.load(worldId);
+    const world = appBridge.loadStoredWorldInfo?.(worldId)
+      || cloneValue(worldStore.load(worldId));
     if (!world || !Array.isArray(world.entries)) return;
+    const nextEntries = world.entries.map(entry => ({ ...entry }));
     let mutated = false;
     list.forEach(update => {
-      const entries = world.entries;
-      const match = entries.find(entry => {
+      const match = nextEntries.find(entry => {
         if (update?.uid != null && Number(entry?.uid) === Number(update.uid)) return true;
         if (update?.id != null && String(entry?.id || '') === String(update.id)) return true;
         const comment = String(entry?.comment || entry?.title || '').trim();
@@ -1610,7 +1699,7 @@ const applyWorldUpdates = (updates = []) => {
     if (mutated) {
       try {
         Promise.resolve(
-          worldStore.save(worldId, { ...world, entries: world.entries }),
+          appBridge.saveWorldInfo(worldId, { ...world, entries: nextEntries }),
         ).catch((error) => {
           logger.warn('template worldbook update save failed', error);
         });
@@ -1729,6 +1818,7 @@ export const renderTemplateTextAsync = async (rawText, options = {}) => {
     };
   }
   const startAt = nowMs();
+  const templateWorlds = await ensureTemplateWorldsLoaded(template, options.context);
   const safeContext = sanitizeContextForWorker(options.context);
   const snapshot = createRuntimeSnapshot({
     chatStore: options.chatStore,
@@ -1738,7 +1828,7 @@ export const renderTemplateTextAsync = async (rawText, options = {}) => {
     state,
     context: safeContext,
   });
-  const { worlds, worldMeta } = buildWorldSnapshot(safeContext);
+  const { worlds, worldMeta } = buildWorldSnapshot(safeContext, templateWorlds);
   const payload = {
     template,
     globals: snapshot.globals,

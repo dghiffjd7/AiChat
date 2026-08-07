@@ -33,6 +33,7 @@ export const createMemoryUpdateRuntime = ({
   logger,
   memoryUpdateConfigManager,
   recordTraceEvent = null,
+  sessionAsyncWorkRuntime = null,
   syncTurnCheckpointForMessage,
 } = {}) => {
   const memoryUpdateRunning = new Set();
@@ -213,6 +214,7 @@ export const createMemoryUpdateRuntime = ({
         try {
           targetCurrent = await isMemoryUpdateTargetCurrent(sessionId, checkpointMessageId);
         } catch (err) {
+          targetCurrent = false;
           logger?.warn?.('memory update target validation failed', err);
         }
         if (!targetCurrent) {
@@ -273,9 +275,18 @@ export const createMemoryUpdateRuntime = ({
           const task = queue.pending.shift();
           const ac = new AbortController();
           memoryUpdateAbortControllers.set(sessionId, ac);
-          await runMemoryUpdateTask(sessionId, task.isGroup, task.baseContext, task.checkpointMessageId, ac.signal);
-          if (memoryUpdateAbortControllers.get(sessionId) === ac) {
-            memoryUpdateAbortControllers.delete(sessionId);
+          const workLease = sessionAsyncWorkRuntime?.register?.({
+            sessionId,
+            kind: 'memory_update',
+            cancel: () => abortMemoryUpdate(sessionId),
+          });
+          try {
+            await runMemoryUpdateTask(sessionId, task.isGroup, task.baseContext, task.checkpointMessageId, ac.signal);
+          } finally {
+            workLease?.settle?.();
+            if (memoryUpdateAbortControllers.get(sessionId) === ac) {
+              memoryUpdateAbortControllers.delete(sessionId);
+            }
           }
         }
       } finally {

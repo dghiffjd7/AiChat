@@ -21,6 +21,18 @@ const keywordPrevRe = extractRegex('keywordPrevRe');
 const loadingOverlaySignalRe = extractRegex('loadingOverlaySignalRe');
 const fontAwesomeCdnCssRe = extractRegex('fontAwesomeCdnCssRe');
 
+const extractArrow = (name, nextName, sandbox = {}) => {
+  const marker = `  const ${name} = `;
+  const nextMarker = `\n\n  const ${nextName} = `;
+  const start = source.indexOf(marker);
+  assert.ok(start >= 0, `missing ${name}`);
+  const expressionStart = start + marker.length;
+  const end = source.indexOf(nextMarker, expressionStart);
+  assert.ok(end > expressionStart, `missing end marker for ${name}`);
+  const expression = source.slice(expressionStart, end).trim().replace(/;$/, '');
+  return vm.runInNewContext(`(${expression})`, sandbox);
+};
+
 // 可选元素存在性检查是重前端卡常用的 feature detection。宿主不得把任意
 // 缺失 ID 伪造成 truthy 元素；需要的酒馆宿主节点应通过明确的 DOM proxy 提供。
 assert.doesNotMatch(source, /Document\.prototype\.getElementById\s*=/);
@@ -144,6 +156,76 @@ const normalizeExecutableScriptSource = (code) => {
     fontAwesomeCdnCssRe,
   );
   assert.doesNotMatch('https://example.com/font-awesome.css', fontAwesomeCdnCssRe);
+}
+
+{
+  let directLoadCalls = 0;
+  const snapshot = {
+    worldbookId: 'book-a',
+    exists: true,
+    revision: 7,
+    generation: 2,
+    data: { name: 'book-a', entries: [{ id: 'a' }] },
+  };
+  const getStoredLorebookSnapshot = extractArrow('getStoredLorebookSnapshot', 'getStoredLorebook', {
+    getParentBridge: () => ({
+      getWorldInfoSnapshot: async () => snapshot,
+      worldStore: { load: () => { directLoadCalls += 1; } },
+    }),
+  });
+  assert.deepEqual(await getStoredLorebookSnapshot('book-a'), snapshot);
+  assert.equal(directLoadCalls, 0);
+  console.log('ok - iframe lorebook reads prefer a revision-bearing bridge snapshot');
+}
+
+{
+  const calls = [];
+  let directSaveCalls = 0;
+  const saveStoredLorebook = extractArrow('saveStoredLorebook', 'listLorebookNames', {
+    getParentBridge: () => ({
+      saveWorldInfo: async (...args) => {
+        calls.push(args);
+        return { ok: false, conflict: true, reason: 'worldbook_revision_conflict' };
+      },
+      worldStore: { save: () => { directSaveCalls += 1; } },
+    }),
+  });
+  await assert.rejects(
+    () => saveStoredLorebook('book-a', { name: 'book-a', entries: [] }, {
+      exists: true,
+      revision: 7,
+      generation: 2,
+    }),
+    error => error?.code === 'worldbook_revision_conflict',
+  );
+  assert.equal(calls.length, 1);
+  assert.deepEqual({ ...calls[0][2] }, {
+    expectedRevision: 7,
+    expectedGeneration: 2,
+    expectedExists: true,
+    conflictMode: 'return',
+  });
+  assert.equal(directSaveCalls, 0);
+  console.log('ok - iframe lorebook writes surface CAS conflicts without direct-store fallback');
+}
+
+{
+  let saveCalls = 0;
+  const saveStoredLorebook = extractArrow('saveStoredLorebook', 'listLorebookNames', {
+    getParentBridge: () => ({
+      saveWorldInfo: async () => { saveCalls += 1; },
+    }),
+  });
+  await assert.rejects(
+    () => saveStoredLorebook('book-a', { name: 'book-a', entries: [] }, {
+      exists: true,
+      revision: null,
+      generation: null,
+    }),
+    error => error?.code === 'worldbook_snapshot_unavailable',
+  );
+  assert.equal(saveCalls, 0);
+  console.log('ok - iframe lorebook writes fail closed when no revision snapshot is available');
 }
 
 console.log('iframe-host-normalize-tests passed');

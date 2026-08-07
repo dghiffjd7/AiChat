@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 
 import { createMemoryUpdateRuntime } from '../../src/scripts/ui/chat/memory-update-runtime.js';
+import { createSessionAsyncWorkRuntime } from '../../src/scripts/ui/chat/session-async-work-runtime-utils.js';
 
 const createDeps = (overrides = {}) => {
   const calls = {
@@ -122,6 +123,56 @@ const createDeps = (overrides = {}) => {
     ['update.finish', 'skipped', { reason: 'stale-checkpoint', checkpointMessageId: 'gone-1' }],
   ]);
   console.log('ok - createMemoryUpdateRuntime skips stale checkpoint targets before applying memory edits');
+}
+
+{
+  const sessionAsyncWorkRuntime = createSessionAsyncWorkRuntime();
+  let notifyChatStarted = null;
+  const chatStarted = new Promise(resolve => { notifyChatStarted = resolve; });
+  const { calls, runtime } = createDeps({
+    sessionAsyncWorkRuntime,
+    createClient: () => ({
+      chat: async (_messages, { signal } = {}) => {
+        notifyChatStarted();
+        return new Promise((resolve, reject) => {
+          signal?.addEventListener?.('abort', () => {
+            const error = new Error('aborted by session deletion');
+            error.name = 'AbortError';
+            reject(error);
+          }, { once: true });
+        });
+      },
+    }),
+  });
+  const task = runtime.runMemoryUpdateAfterChat('s-delete', false, {}, { checkpointMessageId: 'm-delete' });
+  await chatStarted;
+  const guard = await sessionAsyncWorkRuntime.cancelAndWait('s-delete', {
+    reason: 'session_deleted',
+    timeoutMs: 1000,
+  });
+  if (guard.cancelledCount === 0) runtime.abortMemoryUpdate('s-delete');
+  await task;
+  assert.equal(guard.ok, true);
+  assert.equal(guard.cancelledCount, 1);
+  assert.equal(sessionAsyncWorkRuntime.count('s-delete'), 0);
+  assert.equal(calls.edits.length, 0);
+  assert.equal(calls.traces.at(-1)?.details?.reason, 'aborted');
+  console.log('ok - session deletion cancels and waits for an in-flight memory update');
+}
+
+{
+  const { calls, runtime } = createDeps({
+    isMemoryUpdateTargetCurrent: async () => {
+      throw new Error('checkpoint store unavailable');
+    },
+  });
+  await runtime.runMemoryUpdateAfterChat('s-validation-error', false, {}, {
+    checkpointMessageId: 'm-validation-error',
+  });
+  assert.equal(calls.edits.length, 0);
+  assert.equal(calls.traces.at(-1)?.details?.reason, 'stale-checkpoint');
+  assert.equal(calls.warnings.length, 1);
+  console.log('ok - memory checkpoint validation errors fail closed');
 }
 
 {

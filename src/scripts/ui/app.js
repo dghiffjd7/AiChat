@@ -242,10 +242,7 @@ import {
 } from './maid-onboarding-flows.js';
 import { matchMaidIntent } from './maid-intent-presets.js';
 import { createMaidOnboardingAppAdapter } from './maid-onboarding-app-adapter.js';
-import {
-  buildElementUiSummary,
-  isReadableElementVisible,
-} from './agent-ui-inspect-utils.js';
+import { createAgentUiClickRuntime } from './agent-ui-click-runtime.js';
 import { buildMaidRunResumePrompt } from './maid-run-resume-utils.js';
 import {
   createAppBackNavigationRuntime,
@@ -360,6 +357,7 @@ import { registerChatFormatRepairTools } from '../agent/tools/chat-format-tools.
 import {
   buildChatBodyOptimizeModelPrompt,
   normalizeChatBodyOptimizeModelResult,
+  resolveChatBodyOptimizeWritebackTarget,
 } from './chat/chat-body-optimize-utils.js';
 import { createMaidFormatProfileStore } from '../storage/maid-format-profile-store.js';
 import { showTextDiffConfirmDialog } from './text-diff-view-utils.js';
@@ -627,6 +625,7 @@ import {
   adoptRenderedRegenerateRoundMessages,
   collectMaidAssistantMessageRefs,
   createSendGenerationAbortGuard,
+  isChatSendTargetAvailable,
   normalizeHandleSendInvocation,
   normalizeHandleSendOptions,
   resolveMaidChatSendCompletionResult,
@@ -638,6 +637,7 @@ import {
   runSendCatchFlow,
   runSendFinallyFlow,
 } from './chat/send-flow-utils.js';
+import { createSessionAsyncWorkRuntime } from './chat/session-async-work-runtime-utils.js';
 import {
   createPendingUserMessage,
   getMessageSendText,
@@ -1493,11 +1493,17 @@ const initApp = async () => {
     applyReasoningStoredRegex: window.appBridge.applyReasoningStoredRegex?.bind(window.appBridge),
     applyReasoningDisplayRegex: window.appBridge.applyReasoningDisplayRegex?.bind(window.appBridge),
   });
+  const sessionAsyncWorkRuntime = createSessionAsyncWorkRuntime();
   const sessionPanel = new SessionPanel(chatStore, contactsStore, ui, {
     personaStore,
     getPersonaScopeKey,
     onFriendAdded: detail => maidGuideEmit(window, 'friend-added', detail),
     enterChatRoom: (...args) => enterChatRoom(...args),
+    beforeRemove: sessionId => sessionAsyncWorkRuntime.cancelAndWait(sessionId, {
+      reason: 'session_deleted',
+      timeoutMs: 5000,
+      holdClosing: true,
+    }),
   });
   try {
     window.__sessionPanel = sessionPanel;
@@ -1844,6 +1850,7 @@ const initApp = async () => {
       });
       registerWorldStoreBridgeContract(window.appBridge, {
         getWorldInfo: window.appBridge.getWorldInfo?.bind(window.appBridge),
+        getWorldInfoSnapshot: window.appBridge.getWorldInfoSnapshot?.bind(window.appBridge),
         saveWorldInfo: window.appBridge.saveWorldInfo?.bind(window.appBridge),
         worldInfoExists: window.appBridge.worldInfoExists?.bind(window.appBridge),
         auditWorldInfoStorage: window.appBridge.auditWorldInfoStorage?.bind(window.appBridge),
@@ -1858,6 +1865,8 @@ const initApp = async () => {
       registerWorldSessionBridgeContract(window.appBridge, {
         getWorldSessionMap: window.appBridge.getWorldSessionMap?.bind(window.appBridge),
         getWorldIdsForSession: window.appBridge.getWorldIdsForSession?.bind(window.appBridge),
+        getWorldSessionBindingSnapshot: window.appBridge.getWorldSessionBindingSnapshot?.bind(window.appBridge),
+        updateWorldSessionBinding: window.appBridge.updateWorldSessionBinding?.bind(window.appBridge),
         getCurrentWorldId: window.appBridge.getCurrentWorldId?.bind(window.appBridge),
         getCurrentWorldIds: window.appBridge.getCurrentWorldIds?.bind(window.appBridge),
         getGlobalWorldId: window.appBridge.getGlobalWorldId?.bind(window.appBridge),
@@ -2262,6 +2271,19 @@ const initApp = async () => {
     return personaScopeApplyCoordinator.enqueue(scopeRun => applyPersonaScopeNow(options, scopeRun));
   };
 
+  const PERSONA_SWITCH_INTERACTION_LEASE_MS = 3000;
+  let lastUserPersonaSwitchAt = 0;
+  const markUserPersonaSwitch = () => {
+    lastUserPersonaSwitchAt = Date.now();
+  };
+  const canAgentSwitchPersona = ({ personaId = '' } = {}) => {
+    if (String(personaStore.getActive?.()?.id || '') === String(personaId || '')) return { ok: true };
+    const retryAfterMs = PERSONA_SWITCH_INTERACTION_LEASE_MS - (Date.now() - lastUserPersonaSwitchAt);
+    return retryAfterMs > 0
+      ? { ok: false, reason: 'user_persona_switch_lease_active', retryAfterMs }
+      : { ok: true };
+  };
+
   const personaPanel = new PersonaPanel({
     personaStore,
     userStore,
@@ -2277,6 +2299,7 @@ const initApp = async () => {
     getMemoryStorageMode,
     getPersonaScopeKey,
     getRpSessionIdForPersona: personaId => getRpSessionId(personaId),
+    onUserPersonaSwitch: markUserPersonaSwitch,
     onPersonaChanged: async () => {
       await applyPersonaScope({ personaId: personaStore.getActive?.()?.id });
       await syncBoundUserForCharacterCard(personaStore.getActive?.());
@@ -2927,13 +2950,9 @@ const initApp = async () => {
   registerWorldbookAgentTools(agentToolRegistry, {
     getPreviewWorldbookActions: () => agentWritePreviewRuntimes.previewWorldbookActions,
   });
-  const isAgentReadableElementVisible = (element = null) => isReadableElementVisible(element);
-  // ui.click_element 的元素引用表：每次 inspect 重建，ref 只在最近一次 inspect 内有效
-  const uiClickRefs = new Map();
-  const buildAgentVisiblePanelSummary = ({ panel = '', maxTextLength = 1800 } = {}) => {
-    uiClickRefs.clear();
-    const wanted = String(panel || '').trim().toLowerCase().replace(/_/g, '-');
-    const candidates = [
+  const agentUiClickRuntime = createAgentUiClickRuntime({
+    documentRef: document,
+    getPanels: () => [
       { id: 'agent-center', title: 'Agent Center', element: agentCenterPanel?.panelElement },
       { id: 'config', title: 'API 配置', element: configPanel?.element },
       { id: 'session', title: '聊天室列表', element: sessionPanel?.panel },
@@ -2949,85 +2968,17 @@ const initApp = async () => {
       { id: 'extensions', title: '扩展', element: extensionsPanel?.element, aliases: ['plugin', 'plugins'] },
       { id: 'settings', title: '设置', element: generalSettingsPanel?.panel },
       { id: 'chat', title: '聊天室', element: chatRoom, aliases: ['room'] },
-    ];
-    const panels = candidates
-      .filter(item => !wanted || item.id === wanted || item.aliases?.includes?.(wanted))
-      .filter(item => isAgentReadableElementVisible(item.element))
-      .map((item) => {
-        const summary = buildElementUiSummary(item.element, {
-          maxTextLength,
-          refPrefix: `${item.id}:`,
-          collectRef: (ref, node) => uiClickRefs.set(ref, node),
-        });
-        return {
-          id: item.id,
-          title: item.title,
-          text: summary.text,
-          buttons: summary.buttons,
-          fields: summary.fields,
-        };
-      })
-      .filter(item => item.text || item.buttons.length || item.fields.length);
-    return {
-      ok: true,
+    ],
+    getState: () => ({
       activePage,
       uiMode,
       sessionId: chatStore.getCurrent(),
-      panels,
-    };
-  };
-  // 结构化点击执行体：只接受 inspect 产出的 ref 或按 label 唯一匹配，禁止坐标点击
-  const clickAgentUiElement = async ({ ref = '', label = '', panel = '' } = {}) => {
-    let node = null;
-    let matchedLabel = '';
-    const wantedRef = String(ref || '').trim();
-    if (wantedRef) {
-      node = uiClickRefs.get(wantedRef) || null;
-      if (!node) {
-        return { ok: false, reason: 'ref_not_found', message: '元素引用已失效，请先重新 app.ui.inspect 获取最新 ref。' };
-      }
-    } else {
-      const wantedLabel = String(label || '').trim();
-      if (!wantedLabel) return { ok: false, reason: 'missing_target', message: '需要 ref 或 label。' };
-      const summary = buildAgentVisiblePanelSummary({ panel });
-      const matches = [];
-      (summary.panels || []).forEach((item) => {
-        (item.buttons || []).forEach((btn) => {
-          if (String(btn.label || '') === wantedLabel || String(btn.label || '').includes(wantedLabel)) {
-            matches.push({ ...btn, panelId: item.id });
-          }
-        });
-      });
-      if (!matches.length) return { ok: false, reason: 'label_not_found', message: `当前可见界面没有「${wantedLabel}」按钮。` };
-      if (matches.length > 1) {
-        return {
-          ok: false,
-          reason: 'ambiguous_label',
-          message: `「${wantedLabel}」匹配到 ${matches.length} 个按钮，请改用 ref 指定。`,
-          candidates: matches.map(item => ({ ref: item.ref, label: item.label, panel: item.panelId })),
-        };
-      }
-      node = uiClickRefs.get(matches[0].ref) || null;
-      matchedLabel = matches[0].label;
-      if (!node) return { ok: false, reason: 'ref_not_found', message: '元素引用已失效。' };
-    }
-    if (!document.documentElement.contains(node)) {
-      return { ok: false, reason: 'element_detached', message: '目标元素已不在界面上，请重新 inspect。' };
-    }
-    if (node.disabled === true) {
-      return { ok: false, reason: 'element_disabled', message: '目标按钮当前不可用（disabled）。' };
-    }
-    const clickedLabel = matchedLabel || String(node.innerText || node.textContent || '').trim().slice(0, 60);
-    try {
-      node.click();
-    } catch (err) {
-      return { ok: false, reason: 'click_failed', message: err?.message || '点击执行失败。' };
-    }
-    await new Promise(resolve => setTimeout(resolve, 350));
-    // 点击后自动回带最新界面摘要（re-inspect），供女仆断言状态变化
-    const after = buildAgentVisiblePanelSummary({});
-    return { ok: true, clicked: clickedLabel, after };
-  };
+    }),
+  });
+  const buildAgentVisiblePanelSummary = options => agentUiClickRuntime.buildVisiblePanelSummary(options);
+  const describeAgentUiElement = options => agentUiClickRuntime.describeElement(options);
+  const beginAgentUiElementConfirmation = options => agentUiClickRuntime.beginConfirmation(options);
+  const clickAgentUiElement = options => agentUiClickRuntime.clickElement(options);
   const readAgentAppResource = createAppResourceReader({
     appBridge: window.appBridge,
     chatStore,
@@ -3068,6 +3019,8 @@ const initApp = async () => {
       modeSwitchPos,
     }),
     getVisiblePanelSummary: buildAgentVisiblePanelSummary,
+    describeUiElement: describeAgentUiElement,
+    beginUiElementConfirmation: beginAgentUiElementConfirmation,
     clickUiElement: clickAgentUiElement,
     readResource: readAgentAppResource,
     listRecentErrors: ({ limit = 10 } = {}) => agentRunStore
@@ -3200,17 +3153,22 @@ const initApp = async () => {
     chatStore,
     switchPersona,
     switchUserProfile,
+    canSwitchPersona: canAgentSwitchPersona,
     deletePersona: (personaId, options) => personaPanel.deleteCore(personaId, options),
     notifyPersonaChanged: () => personaPanel.notifyPersonaChanged(),
-    saveWorldInfo: (id, data) => window.appBridge.saveWorldInfo?.(id, data),
+    saveWorldInfo: (id, data, options) => window.appBridge.saveWorldInfo?.(id, data, options),
     getWorldInfo: id => window.appBridge.getWorldInfo?.(id),
+    getWorldInfoMetadata: id => window.appBridge.getWorldInfoMetadata?.(id),
+    getWorldInfoSnapshot: id => window.appBridge.getWorldInfoSnapshot?.(id),
     worldInfoExists: id => window.appBridge.worldInfoExists?.(id),
     listWorlds: () => window.appBridge.listWorlds?.(),
-    deleteWorldInfo: id => window.appBridge.deleteWorldInfo?.(id),
+    deleteWorldInfo: (id, options) => window.appBridge.deleteWorldInfo?.(id, options),
     waitForWorldStoreReady: () => window.appBridge.waitForWorldStoreReady?.(),
     getCurrentWorldId: sessionId => window.appBridge.getCurrentWorldId?.(sessionId),
     getCurrentWorldIds: sessionId => window.appBridge.getCurrentWorldIds?.(sessionId),
     getWorldIdsForSession: sessionId => window.appBridge.getWorldIdsForSession?.(sessionId),
+    getWorldSessionBindingSnapshot: sessionId => window.appBridge.getWorldSessionBindingSnapshot?.(sessionId),
+    updateWorldSessionBinding: (sessionId, options) => window.appBridge.updateWorldSessionBinding?.(sessionId, options || {}),
     getWorldSessionMap: () => window.appBridge.getWorldSessionMap?.(),
     getGlobalWorldId: () => window.appBridge.getGlobalWorldId?.(),
     getGlobalWorldIds: () => window.appBridge.getGlobalWorldIds?.(),
@@ -3507,6 +3465,10 @@ const initApp = async () => {
       dataUrl: String(payload?.dataUrl || ''),
       fileName: String(payload?.fileName || ''),
       previousPath: String(payload?.previousPath || ''),
+    }),
+    deleteWallpaper: payload => safeInvoke('delete_wallpaper', {
+      sessionId: String(payload?.sessionId || '').trim(),
+      path: String(payload?.path || ''),
     }),
     applyChatSettings: (sessionId, settings) => applyChatSettings(sessionId, settings),
     refreshChatAndContacts: (...args) => refreshChatAndContacts(...args),
@@ -3896,6 +3858,7 @@ const initApp = async () => {
       stores: {
         chatStore,
         contactsStore,
+        sessionAsyncWorkRuntime,
         memoryTableStore,
         memoryTemplateStore,
         personaStore,
@@ -4281,14 +4244,9 @@ const initApp = async () => {
         approveContactProfilePendingUpdate: ({ id } = {}) => {
           const pendingId = String(id || '').trim();
           if (!pendingId) return { ok: false, reason: 'missing_id' };
-          const pending = (contactProfileStore.listPendingUpdates?.() || [])
-            .find(item => String(item?.id || '').trim() === pendingId);
-          if (!pending?.profile) return { ok: false, reason: 'missing_pending_update' };
-          const saved = contactProfileStore.upsertProfile?.(pending.profile) || null;
-          if (saved) contactProfileStore.clearPendingUpdate?.(pendingId);
-          return {
-            ok: Boolean(saved),
-            contactId: String(saved?.contactId || pending?.contactId || '').trim(),
+          return contactProfileStore.approvePendingUpdate?.({ id: pendingId }) || {
+            ok: false,
+            reason: 'pending_update_approval_unavailable',
           };
         },
         denyContactProfilePendingUpdate: ({ id } = {}) => {
@@ -5767,6 +5725,37 @@ const initApp = async () => {
       }
       return setCachedDecoratedMessage(m, sid, decorationSignature, { ...m, avatar, status: m.status, sessionId: sid, meta }); // 保留 status 字段
     });
+  };
+
+  const ensureWorldsForSessionDisplay = async (sessionId, { throwOnError = false } = {}) => {
+    const sid = String(sessionId || '').trim();
+    if (!sid || typeof window.appBridge?.ensureWorldsForContext !== 'function') return true;
+    const contact = contactsStore.getContact(sid);
+    try {
+      await window.appBridge.ensureWorldsForContext({
+        session: {
+          id: sid,
+          isGroup: Boolean(contact?.isGroup) || sid.startsWith('group:'),
+        },
+        group: {
+          members: Array.isArray(contact?.members) ? contact.members : [],
+        },
+        meta: {
+          uiMode: isRpSessionId(sid) ? 'rp' : 'chat',
+        },
+      });
+      return true;
+    } catch (err) {
+      logger.warn('载入会话世界书失败', { sessionId: sid, error: err });
+      if (throwOnError) throw err;
+      return false;
+    }
+  };
+
+  const ensureRecentMessagesAndWorlds = async (sessionId) => {
+    const messages = await chatStore.ensureRecentMessagesLoaded(sessionId);
+    await ensureWorldsForSessionDisplay(sessionId);
+    return messages;
   };
 
   const refreshRenderedMessageAvatars = (sessionId = '') => {
@@ -14778,7 +14767,7 @@ Phase G（Frame 36）：循环衔接
   const buildViewportKeyboardDebugInfo = (base, { includeLast = true } = {}) => ({
     ...base,
     // 与 package.json / tauri.conf.json 保持一致，供诊断导出确认用户所装版本
-    appVersion: '0.7.0-diagnose',
+    appVersion: '0.7.0',
     capturedAt: new Date().toISOString(),
     appState: {
       uiMode,
@@ -19071,6 +19060,13 @@ Phase G（Frame 36）：循环衔接
 	    const negativeCapability = resolveImageNegativePromptCapability(config);
 	    const negativePromptText = negativeCapability?.supported ? String(negativePrompt || '').trim() : '';
 	    await imageGenerationParamsStore.ready;
+      if (
+        sessionAsyncWorkRuntime.isClosing(sessionId) ||
+        !isChatSendTargetAvailable({ sessionId, chatStore, contactsStore })
+      ) {
+        lastChatImageGenerationError = '目标聊天室已删除';
+        return false;
+      }
 	    const imageParamsPreset = imageGenerationParamsStore.getActive();
 	    const generationExtra = {};
 	    if (referenceImageCount) {
@@ -19158,6 +19154,11 @@ Phase G（Frame 36）：循环衔接
 
     const controller = new AbortController();
     chatImageGenerationControllers.set(savedPending.id, controller);
+    const imageWorkLease = sessionAsyncWorkRuntime.register({
+      sessionId,
+      kind: 'image_generation',
+      cancel: reason => controller.abort(reason || 'session_deleted'),
+    });
     try {
       const runImageRequest = () => {
         if (controller.signal.aborted) throw makeAbortError();
@@ -19177,6 +19178,13 @@ Phase G（Frame 36）：循环衔接
       const asset = autoGenerated
         ? await enqueueAutoImageGeneration(runImageRequest)
         : await runImageRequest();
+      if (
+        controller.signal.aborted ||
+        sessionAsyncWorkRuntime.isClosing(sessionId) ||
+        !isChatSendTargetAvailable({ sessionId, chatStore, contactsStore })
+      ) {
+        throw makeAbortError();
+      }
 	      if (!autoGenerated && mediaSurface === 'chat' && !sourceMessageId) {
 	        removeChatImageGenerationMessage(savedPending.id, sessionId);
 	        const previewAsset = {
@@ -19229,9 +19237,14 @@ Phase G（Frame 36）：循环衔接
 		      return true;
 	    } catch (err) {
 	      const aborted = controller.signal.aborted || err?.name === 'AbortError';
+	      const sessionDeleted = controller.signal.reason === 'session_deleted' ||
+          sessionAsyncWorkRuntime.isClosing(sessionId) ||
+          !isChatSendTargetAvailable({ sessionId, chatStore, contactsStore });
 	      const briefError = getImageGenerationBriefError(err);
 	      const detailError = getImageGenerationErrorText(err);
-	      lastChatImageGenerationError = aborted ? '用户中止了图片生成' : (detailError || briefError || String(err?.message || err || ''));
+	      lastChatImageGenerationError = sessionDeleted
+          ? '目标聊天室已删除'
+          : (aborted ? '用户中止了图片生成' : (detailError || briefError || String(err?.message || err || '')));
 	      patchChatImageGenerationMessage(savedPending.id, {
 	        role: sender.role,
 	        type: 'text',
@@ -19256,6 +19269,7 @@ Phase G（Frame 36）：循环衔接
 	      }
       return false;
     } finally {
+      imageWorkLease.settle();
       chatImageGenerationControllers.delete(savedPending.id);
     }
   };
@@ -22286,7 +22300,7 @@ Phase G（Frame 36）：循环衔接
         isGroupSession,
         isAndroid: isLikelyAndroidDevice(),
         jumpTargetMessageId,
-        ensureRecentMessagesLoaded: sid => chatStore.ensureRecentMessagesLoaded(sid),
+        ensureRecentMessagesLoaded: sid => ensureRecentMessagesAndWorlds(sid),
         isRequestStale: () => isChatEnterRequestStale(enterRequest),
         getFirstUnreadMessageId: sid => chatStore.getFirstUnreadMessageId(sid),
         injectUnreadDivider,
@@ -23425,6 +23439,11 @@ Phase G（Frame 36）：循环衔接
       return false;
     }
     const greeting = ensureRpGreetingActive();
+    const worldsReady = await ensureWorldsForSessionDisplay(sid);
+    if (!worldsReady) {
+      logRpGreetingDebug('seed-wait-worlds', { session: sid });
+      return false;
+    }
     const result = buildRpGreetingMessage(greeting, sid);
     const msg = result?.message || null;
     if (!msg) {
@@ -25848,7 +25867,7 @@ Phase G（Frame 36）：循环衔接
   try {
     const sessions = chatStore.listSessions();
     const currentId = chatStore.getCurrent();
-    const history = await chatStore.ensureRecentMessagesLoaded(currentId);
+    const history = await ensureRecentMessagesAndWorlds(currentId);
     ui.setSessionLabel(currentId);
     if (history && history.length) {
       const PAGE = 90;
@@ -27213,12 +27232,31 @@ Phase G（Frame 36）：循环衔接
     if (typeof ui.actionHandler !== 'function') {
       return { ok: false, reason: 'message_editor_unavailable', message: '消息编辑处理器未就绪。' };
     }
-    await ui.actionHandler('edit-assistant-raw', message, {
+    const writebackTarget = resolveChatBodyOptimizeWritebackTarget({
+      snapshotText: inputText,
+      currentMessage: chatStore.findMessage(message.id, sid),
+      resolveInputText: resolveChatFormatGuardianInputText,
+    });
+    if (!writebackTarget.ok) {
+      return {
+        ok: false,
+        applied: false,
+        reason: writebackTarget.reason,
+        message: writebackTarget.reason === 'message_not_found'
+          ? '目标消息已删除，请重新选择要优化的回复。'
+          : '原文已变化，请重新发起正文优化。',
+      };
+    }
+    const applied = await ui.actionHandler('edit-assistant-raw', writebackTarget.message, {
       text: optimize.optimizedText,
       regexEditMode: false,
       sessionId: sid,
       source: 'maid_body_optimize',
+      sourceSnapshot: inputText,
     });
+    if (applied === false) {
+      return { ok: false, applied: false, reason: 'revision_expired', message: '原文已变化，请重新发起正文优化。' };
+    }
     return {
       ok: true,
       applied: true,
@@ -27896,6 +27934,16 @@ Phase G（Frame 36）：循环衔接
     const hasAttachments = attachmentQueue.length > 0;
     const hasRequestAttachments = hasAttachments || resendAttachmentParts.length > 0;
     const sessionId = chatStore.getCurrent();
+    const isSendTargetWritable = () => (
+      !sessionAsyncWorkRuntime.isClosing(sessionId) &&
+      isChatSendTargetAvailable({ sessionId, chatStore, contactsStore })
+    );
+    const rejectDeletedSendTarget = () => (returnMaidCompletionOutcome
+      ? resolveMaidChatSendCompletionResult({
+          blockedReason: 'session_deleted',
+          sessionId,
+        })
+      : false);
     const assistantMessageIdsBefore = new Set(
       (chatStore.getMessages(sessionId) || [])
         .filter(message => message?.role === 'assistant')
@@ -27915,6 +27963,19 @@ Phase G（Frame 36）：循环衔接
     const previewMacroVariableState = previewOnly ? new Map() : null;
     let outgoingReplyContexts = [];
     let generationId = 0;
+    let generationRecord = null;
+    let generationWorkLease = null;
+    const registerGenerationWork = () => {
+      const ownedGenerationId = generationId;
+      generationWorkLease = sessionAsyncWorkRuntime.register({
+        sessionId,
+        kind: 'chat_generation',
+        cancel: reason => {
+          if (Number(activeGeneration?.id || 0) !== Number(ownedGenerationId || 0)) return false;
+          return cancelActiveGeneration(String(reason || 'session_deleted'));
+        },
+      });
+    };
     let assistantDeliveredNotified = false;
     const notifyAssistantDelivered = () => {
       if (assistantDeliveredNotified) return;
@@ -28050,6 +28111,7 @@ Phase G（Frame 36）：循环衔接
     if (!previewOnly) {
       await fastForwardProtocolDeliveryQueues(sessionId);
       throwIfSendAborted();
+      if (!isSendTargetWritable()) return rejectDeletedSendTarget();
     }
     let pendingMessagesToConfirm = [];
     let text = '';
@@ -28905,6 +28967,7 @@ Phase G（Frame 36）：循环衔接
       logger,
       memoryUpdateConfigManager,
       recordTraceEvent: recordDebugTraceEvent,
+      sessionAsyncWorkRuntime,
       syncTurnCheckpointForMessage,
     });
     currentMemoryUpdateRuntime = memoryUpdateRuntime;
@@ -28941,15 +29004,18 @@ Phase G（Frame 36）：循环衔接
           session: { id: sessionKey, settings: chatStore.getSessionSettings?.(sessionKey) || {} },
           meta,
         }),
-        getTemplateInjections: ({ content }) => window.appBridge?.getTemplateRenderInjections?.({
-          sessionId: sessionKey,
-          uiMode,
-          content,
-          userName: promptUserName,
-          characterName,
-          groupName: isGroupChat ? characterName : '',
-          membersText,
-        }),
+        getTemplateInjections: async ({ content }) => {
+          await ensureWorldsForSessionDisplay(sessionKey, { throwOnError: true });
+          return window.appBridge?.getTemplateRenderInjections?.({
+            sessionId: sessionKey,
+            uiMode,
+            content,
+            userName: promptUserName,
+            characterName,
+            groupName: isGroupChat ? characterName : '',
+            membersText,
+          });
+        },
         renderTemplateText: (content, { meta }) => renderTemplateTextAsync(content, {
           stage: 'render',
           chatStore,
@@ -29389,6 +29455,7 @@ Phase G（Frame 36）：循环衔接
         logger.warn('ensure baseline checkpoint before send failed', err);
       }
     }
+    if (!previewOnly && !isSendTargetWritable()) return rejectDeletedSendTarget();
     let attachmentMessages = [];
     let attachmentPrimaryId = '';
     if (hasAttachments) {
@@ -29565,7 +29632,9 @@ Phase G（Frame 36）：循环衔接
         partialCommitHandler: resolvedPartialCommitHandler,
         swipeTarget,
       });
+      generationRecord = activeGeneration;
       generationId = activeGeneration.id;
+      registerGenerationWork();
       try {
         onGenerationStarted?.(generationId);
       } catch {}
@@ -29583,7 +29652,9 @@ Phase G（Frame 36）：循环衔接
         partialCommitHandler: resolvedPartialCommitHandler,
         swipeTarget,
       });
+      generationRecord = activeGeneration;
       generationId = activeGeneration.id;
+      registerGenerationWork();
       try {
         onGenerationStarted?.(generationId);
       } catch {}
@@ -30387,7 +30458,10 @@ Phase G（Frame 36）：循环衔接
           creativeExecutionLaneRuntime?.failRun?.(sendErrorMessage || '发送失败');
         }
       }
-      if (!returnMaidCompletionOutcome) return finallyResult;
+      if (!returnMaidCompletionOutcome) {
+        generationWorkLease?.settle();
+        return finallyResult;
+      }
       if (maidProtocolRepairCompletion) {
         // 工具超时中止后不再等待后台修复收尾：立即以 protocol_rejected 收口，
         // 修复结果仍由横幅/Agent Center 承接（后台守卫继续跑）。
@@ -30413,6 +30487,7 @@ Phase G（Frame 36）：循环衔接
           if (abortNotify) abortSignal.removeEventListener('abort', abortNotify);
         }
       }
+      generationWorkLease?.settle();
       const assistantMessageRefs = collectMaidAssistantMessageRefs({
         sourceSessionId: sessionId,
         assistantMessageIdsBefore,
@@ -30430,6 +30505,7 @@ Phase G（Frame 36）：循环衔接
         protocolAccepted: maidProtocolAccepted,
         repairFailed: maidProtocolRepairFailed,
         cancelled: interruptedBeforeFinally || suppressErrorUI,
+        cancelReason: generationRecord?.cancelReason || '',
         errorMessage: sendErrorMessage,
         assistantMessageIds,
         assistantMessageRefs,
@@ -31096,7 +31172,8 @@ Phase G（Frame 36）：循环衔接
       const next = String(payload?.text ?? '');
       const isFormatRepairWrite = payload?.source === 'chat_format_guardian' ||
         payload?.source === 'maid_format_repair';
-      const currentStoredMessage = chatStore.findMessage(message.id, sessionId) || message;
+      const persistedMessage = chatStore.findMessage(message.id, sessionId);
+      const currentStoredMessage = persistedMessage || message;
       const currentStoredMeta = currentStoredMessage?.meta && typeof currentStoredMessage.meta === 'object'
         ? currentStoredMessage.meta
         : {};
@@ -31151,6 +31228,20 @@ Phase G（Frame 36）：循环衔接
           return false;
         }
         sourceSnapshot = activeManualSocialTarget.sourceText;
+      } else if (payload?.source === 'maid_body_optimize') {
+        const writebackTarget = resolveChatBodyOptimizeWritebackTarget({
+          snapshotText: payload?.sourceSnapshot,
+          currentMessage: persistedMessage,
+          resolveInputText: resolveChatFormatGuardianInputText,
+        });
+        if (!writebackTarget.ok) {
+          window.toastr?.warning?.(writebackTarget.reason === 'message_not_found'
+            ? '目标消息已删除，请重新选择要优化的回复'
+            : '原文已变化，请重新发起正文优化');
+          return false;
+        }
+        message = writebackTarget.message;
+        sourceSnapshot = writebackTarget.currentText;
       } else if (typeof payload?.sourceSnapshot === 'string') {
         if (!validateFormatPatchRevision({
           snapshotText: payload.sourceSnapshot,
@@ -31558,7 +31649,7 @@ Phase G（Frame 36）：循环衔接
   });
   const rerenderCurrentSession = async () => rerenderCurrentSessionHistory({
     getCurrentSessionId: () => chatStore.getCurrent(),
-    ensureRecentMessagesLoaded: sid => chatStore.ensureRecentMessagesLoaded(sid),
+    ensureRecentMessagesLoaded: sid => ensureRecentMessagesAndWorlds(sid),
     cancelInitialHistoryFill,
     clearMessages: () => ui.clearMessages(),
     decorateMessagesForDisplay,
@@ -31639,7 +31730,7 @@ Phase G（Frame 36）：循环衔接
           setSessionLabel: sid => ui.setSessionLabel(sid),
           updatePendingFloat,
         }),
-        ensureRecentMessagesLoaded: sid => chatStore.ensureRecentMessagesLoaded(sid),
+        ensureRecentMessagesLoaded: sid => ensureRecentMessagesAndWorlds(sid),
         isRequestStale: request => isChatEnterRequestStale(request),
         renderChangedHistoryStageFn: ({ sessionId, messages }) => renderSessionChangedHistoryStage({
           sessionId,

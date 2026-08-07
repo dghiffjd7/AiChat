@@ -25,6 +25,12 @@ import { PresetStore } from '../storage/preset-store.js';
 import { RegexStore, regex_placement } from '../storage/regex-store.js';
 import { ScriptStore } from '../storage/script-store.js';
 import { WorldInfoStore, convertSTWorld } from '../storage/worldinfo.js';
+import { resolveWorldSessionBindingMutation } from '../storage/world-session-binding-utils.js';
+import {
+  cloneWorldInfoValue,
+  WorldInfoConcurrencyCoordinator,
+  WORLDINFO_REVISION_CONFLICT,
+} from '../storage/worldinfo-concurrency.js';
 import { stickerPackStore } from '../storage/sticker-pack-store.js';
 import { makeScopedKey, normalizeScopeId } from '../storage/store-scope.js';
 import { appSettings } from '../storage/app-settings.js';
@@ -185,6 +191,39 @@ import {
 const isTauriInvokeUnavailableError = error => (
   /tauri invoke not available/i.test(String(error?.message || error || ''))
 );
+
+const WORLDINFO_REVISION_META = Symbol.for('tauri-chat-app.worldinfo-revision');
+const hasOwn = (value, key) => Object.prototype.hasOwnProperty.call(value || {}, key);
+const attachWorldInfoRevisionMeta = (data, snapshot = {}) => {
+  if (!data || typeof data !== 'object') return data;
+  try {
+    Object.defineProperty(data, WORLDINFO_REVISION_META, {
+      configurable: true,
+      enumerable: true,
+      value: Object.freeze({
+        revision: snapshot.revision,
+        generation: snapshot.generation,
+        exists: snapshot.exists,
+      }),
+    });
+  } catch {}
+  return data;
+};
+
+const getWorldInfoWriteExpectation = (data, options = {}) => {
+  const explicit = options && typeof options === 'object' ? options : {};
+  const implicit = data && typeof data === 'object' ? data[WORLDINFO_REVISION_META] : null;
+  return {
+    ...(implicit && typeof implicit === 'object' ? {
+      expectedRevision: implicit.revision,
+      expectedGeneration: implicit.generation,
+      expectedExists: implicit.exists,
+    } : {}),
+    ...(hasOwn(explicit, 'expectedRevision') ? { expectedRevision: explicit.expectedRevision } : {}),
+    ...(hasOwn(explicit, 'expectedGeneration') ? { expectedGeneration: explicit.expectedGeneration } : {}),
+    ...(hasOwn(explicit, 'expectedExists') ? { expectedExists: explicit.expectedExists } : {}),
+  };
+};
 
 const makeCancelledError = (reason = 'user') => {
   const e = new Error('cancelled');
@@ -515,6 +554,7 @@ class AppBridge {
     this.config = new ConfigManager();
     this.chatStorage = new ChatStorage();
     this.worldStore = new WorldInfoStore();
+    this.worldInfoConcurrency = new WorldInfoConcurrencyCoordinator();
     this.presets = new PresetStore();
     this.regex = new RegexStore();
     this.scriptStore = new ScriptStore();
@@ -688,6 +728,9 @@ class AppBridge {
   }
 
   approveContactProfilePendingUpdate(request = {}) {
+    if (typeof this.contactProfileStore?.approvePendingUpdate === 'function') {
+      return this.contactProfileStore.approvePendingUpdate(request);
+    }
     const id = String(typeof request === 'string' ? request : request?.id || '').trim();
     if (!id) return { ok: false, reason: 'missing_id' };
     const pending = (this.contactProfileStore?.listPendingUpdates?.() || [])
@@ -803,6 +846,30 @@ class AppBridge {
       sessionWorldIds,
       worldIds,
     };
+  }
+
+  async ensureWorldsForContext(context = {}) {
+    if (this.worldStore?.ready) await this.worldStore.ready;
+    const isMomentCommentTask = String(context?.task?.type || '').trim().toLowerCase() === 'moment_comment';
+    const sessionId = String(
+      (isMomentCommentTask ? context?.task?.targetSessionId : '')
+      || context?.session?.id
+      || this.activeSessionId
+      || 'default',
+    ).trim() || 'default';
+    const groupMemberIds = isMomentCommentTask
+      ? []
+      : (Array.isArray(context?.group?.members) ? context.group.members : []);
+    const resolved = this.getResolvedWorldState(sessionId, {
+      uiMode: isMomentCommentTask ? 'chat' : context?.meta?.uiMode,
+      isGroupChat: isMomentCommentTask ? false : context?.session?.isGroup,
+      groupMemberIds,
+    });
+    const ids = isMomentCommentTask
+      ? [...resolved.globalWorldIds, ...resolved.roleWorldIds]
+      : resolved.worldIds;
+    await this.worldStore?.ensureLoadedMany?.(ids, { includeRefs: true });
+    return ids;
   }
 
   emitWorldInfoChanged(detail = {}) {
@@ -2329,10 +2396,21 @@ class AppBridge {
   async ensureBuiltinWorldbooks() {
     await this.worldStore.ready;
     try {
-      const existing = this.worldStore.load(BUILTIN_PHONE_FORMAT_WORLDBOOK_ID);
+      const snapshot = await this.getWorldInfoSnapshot(BUILTIN_PHONE_FORMAT_WORLDBOOK_ID);
+      const existing = snapshot.data;
       const incoming = BUILTIN_PHONE_FORMAT_WORLDBOOK;
+      const saveOptions = {
+        expectedRevision: snapshot.revision,
+        expectedGeneration: snapshot.generation,
+        expectedExists: snapshot.exists,
+        conflictMode: 'return',
+      };
       if (!existing || !Array.isArray(existing.entries)) {
-        await this.worldStore.save(BUILTIN_PHONE_FORMAT_WORLDBOOK_ID, incoming);
+        const result = await this.saveWorldInfo(BUILTIN_PHONE_FORMAT_WORLDBOOK_ID, incoming, saveOptions);
+        if (result?.ok === false) {
+          logger.warn('内置世界书迁移期间内容已变化，本次跳过');
+          return;
+        }
         logger.info(`已写入内置世界书：${BUILTIN_PHONE_FORMAT_WORLDBOOK_ID}`);
         return;
       }
@@ -2364,7 +2442,15 @@ class AppBridge {
         merged.push(e);
       }
       if (changed) {
-        await this.worldStore.save(BUILTIN_PHONE_FORMAT_WORLDBOOK_ID, { ...existing, entries: merged });
+        const result = await this.saveWorldInfo(
+          BUILTIN_PHONE_FORMAT_WORLDBOOK_ID,
+          { ...existing, entries: merged },
+          saveOptions,
+        );
+        if (result?.ok === false) {
+          logger.warn('内置世界书迁移期间内容已变化，本次跳过');
+          return;
+        }
         logger.info(`已更新内置世界书：${BUILTIN_PHONE_FORMAT_WORLDBOOK_ID}`);
       }
     } catch (err) {
@@ -3525,6 +3611,7 @@ class AppBridge {
       if (!this.worldBootstrapCompleted) {
         await this.runDeferredWorldBootstrap();
       }
+      await this.ensureWorldsForContext(context);
 
       if (!previewOnly && !this.isConfigured()) {
         throw new Error('请先配置 API 信息');
@@ -7397,25 +7484,37 @@ const stringifyMessageContent = (content) => {
   }
 
   /**
-   * 获取世界书数据
+   * 获取世界书数据（调用方拿到副本，附带不会写入 JSON 的运行时 revision 标记）。
    */
+  async _getWorldInfoUnlocked(characterId) {
+    const id = String(characterId || this.currentCharacterId || '').trim();
+    if (!id) return null;
+    if (this.worldStore.ready) {
+      await this.worldStore.ready;
+    }
+    try {
+      return await this.worldStore.ensureLoaded(id);
+    } catch (err) {
+      logger.debug('世界书按本读取失败，使用空白', err);
+      return null;
+    }
+  }
+
+  async getWorldInfoSnapshot(characterId) {
+    const id = String(characterId || this.currentCharacterId || '').trim();
+    if (!id) {
+      return Object.freeze({ worldbookId: '', exists: false, revision: 0, generation: 0, data: null });
+    }
+    return await this.worldInfoConcurrency.enqueue(id, async () => {
+      const data = await this._getWorldInfoUnlocked(id);
+      return this.worldInfoConcurrency.snapshot(id, data);
+    });
+  }
+
   async getWorldInfo(characterId) {
     try {
-      const id = characterId || this.currentCharacterId;
-      if (this.worldStore.ready) {
-        await this.worldStore.ready;
-      }
-      const local = this.worldStore.load(id);
-      if (local) return local;
-
-      // 后端佔位（若已實作）
-      try {
-        const res = await safeInvoke('get_world_info', { characterId: id });
-        return res;
-      } catch (err) {
-        logger.debug('后端世界书命令不可用，使用空白', err);
-      }
-      return null;
+      const snapshot = await this.getWorldInfoSnapshot(characterId);
+      return attachWorldInfoRevisionMeta(cloneWorldInfoValue(snapshot.data), snapshot);
     } catch (error) {
       logger.error('获取世界书失败:', error);
       return {};
@@ -7431,7 +7530,7 @@ const stringifyMessageContent = (content) => {
     if (this.worldStore.ready) {
       await this.worldStore.ready;
     }
-    if (this.worldStore.load(id)) return true;
+    if (this.worldStore.has?.(id)) return true;
     try {
       return Boolean(await safeInvoke('world_info_exists', { characterId: id }));
     } catch (error) {
@@ -7493,33 +7592,58 @@ const stringifyMessageContent = (content) => {
   /**
    * 保存世界书数据
    */
-  async saveWorldInfo(characterId, data) {
+  async _saveWorldInfoStorage(characterId, data) {
+    const id = characterId || this.currentCharacterId;
+    if (this.worldStore.ready) {
+      await this.worldStore.ready;
+    }
+    const now = Date.now();
+    const base = (data && typeof data === 'object') ? data : { name: id, entries: [] };
+    const existing = await this.worldStore.ensureLoaded?.(id);
+    const createdAtRaw = Number(base?.createdAt || base?.created_at || existing?.createdAt || existing?.created_at || 0);
+    const payload = {
+      ...base,
+      createdAt: Number.isFinite(createdAtRaw) && createdAtRaw > 0 ? createdAtRaw : now,
+      updatedAt: now,
+    };
+    try { delete payload[WORLDINFO_REVISION_META]; } catch {}
+    let nativeAvailable = true;
+    // 正文先原子落盘，再更新轻量索引，避免索引指向尚不存在的 sidecar。
     try {
-      const id = characterId || this.currentCharacterId;
-      if (this.worldStore.ready) {
-        await this.worldStore.ready;
-      }
-      const now = Date.now();
-      const base = (data && typeof data === 'object') ? data : { name: id, entries: [] };
-      const existing = this.worldStore.load(id);
-      const createdAtRaw = Number(base?.createdAt || base?.created_at || existing?.createdAt || existing?.created_at || 0);
-      const payload = {
-        ...base,
-        createdAt: Number.isFinite(createdAtRaw) && createdAtRaw > 0 ? createdAtRaw : now,
-        updatedAt: now,
-      };
-      await this.worldStore.save(id, payload);
+      await safeInvoke('save_world_info', { characterId: id, data: payload });
+    } catch (error) {
+      if (isTauriInvokeUnavailableError(error)) nativeAvailable = false;
+      else throw error;
+    }
+    await this.worldStore.save(id, payload, { skipNative: nativeAvailable });
+    return payload;
+  }
 
-      // 等待原生侧完成，避免保存尚未落盘时紧接删除又被迟到写入复活。
-      try {
-        await safeInvoke('save_world_info', { characterId: id, data: payload });
-      } catch (error) {
-        if (!isTauriInvokeUnavailableError(error)) {
-          logger.warn('原生世界书同步保存失败（KV 已保存）', error);
+  async saveWorldInfo(characterId, data, options = {}) {
+    const id = String(characterId || this.currentCharacterId || '').trim();
+    try {
+      return await this.worldInfoConcurrency.enqueue(id, async () => {
+        const current = await this._getWorldInfoUnlocked(id);
+        const latestSnapshot = this.worldInfoConcurrency.snapshot(id, current);
+        const expectation = getWorldInfoWriteExpectation(data, options);
+        const conflict = this.worldInfoConcurrency.validate(id, expectation);
+        if (conflict) {
+          const result = { ...conflict, latestSnapshot, latestData: latestSnapshot.data };
+          if (options?.conflictMode === 'return') return result;
+          const error = new Error('世界书已被其他操作修改，请载入最新内容后重试。');
+          error.code = WORLDINFO_REVISION_CONFLICT;
+          error.details = result;
+          throw error;
         }
-      }
-
-      logger.debug('世界书已保存', id);
+        const payload = await this._saveWorldInfoStorage(id, data);
+        const metadata = this.worldInfoConcurrency.commitSave(id, payload);
+        logger.debug('世界书已保存', id);
+        return {
+          ok: true,
+          ...metadata,
+          data: cloneWorldInfoValue(payload),
+        };
+      });
     } catch (error) {
       logger.error('保存世界书失败:', error);
       throw error;
@@ -7592,159 +7716,244 @@ const stringifyMessageContent = (content) => {
         throw error;
       }
     }
-    await this.worldStore.remove(target);
+    await this.worldStore.remove(target, { skipNative: nativeAvailable, nativeDeleted });
     return { nativeAvailable, nativeDeleted };
   }
 
-  async renameWorldInfo(fromId, toId, data) {
+  async renameWorldInfo(fromId, toId, data, options = {}) {
     const from = String(fromId || '').trim();
     const to = String(toId || '').trim();
     if (!from || !to) return;
     if (from === to) {
-      await this.saveWorldInfo(to, data);
-      return;
+      return await this.saveWorldInfo(to, data, options);
     }
     if (this.worldStore.ready) {
       await this.worldStore.ready;
     }
 
-    await this.saveWorldInfo(to, { ...(data || {}), name: to });
-
     let mapChanged = false;
-    const map = this.worldSessionMap || {};
-    for (const [sid, val] of Object.entries(map)) {
-      const list = this.normalizeWorldIds(val);
-      if (!list.includes(from)) continue;
-      const next = Array.from(new Set(list.map(id => (id === from ? to : id)))).filter(Boolean);
-      if (!next.length) {
-        delete map[sid];
-      } else {
-        map[sid] = next;
-      }
-      mapChanged = true;
-    }
-    if (mapChanged) this.persistWorldSessionMap();
-
     let currentChanged = false;
-    if (Array.isArray(this.currentWorldIds) && this.currentWorldIds.includes(from)) {
-      this.currentWorldIds = Array.from(new Set(this.currentWorldIds.map(id => (id === from ? to : id)))).filter(Boolean);
-      this.currentWorldId = this.currentWorldIds[0] || null;
-      currentChanged = true;
-    }
-
     let globalChanged = false;
-    const globalWorldIds = this.getGlobalWorldIds();
-    if (globalWorldIds.includes(from)) {
-      this.globalWorldIds = Array.from(new Set(globalWorldIds.map(id => (id === from ? to : id)))).filter(Boolean);
-      this.globalWorldId = this.globalWorldIds[0] || null;
-      this.persistGlobalWorldId();
-      globalChanged = true;
-    }
-
     let regexChanged = false;
-    try {
-      await this.regex?.ready;
-      const sets = this.regex?.state?.local?.sets || null;
-      if (sets) {
-        for (const s of Object.values(sets)) {
-          if (!s || typeof s !== 'object') continue;
-          if (s.bind?.type !== 'world') continue;
-          if (String(s.bind.worldId || '') !== from) continue;
-          s.bind = { ...s.bind, worldId: to };
-          s.updatedAt = Date.now();
-          regexChanged = true;
-        }
-        if (regexChanged) await this.regex.persist();
+    let roleChanged = false;
+    const storageResult = await this.worldInfoConcurrency.enqueueMany([from, to], async () => {
+      const sourceData = await this._getWorldInfoUnlocked(from);
+      const sourceSnapshot = this.worldInfoConcurrency.snapshot(from, sourceData);
+      const sourceConflict = this.worldInfoConcurrency.validate(
+        from,
+        getWorldInfoWriteExpectation(data, options),
+      );
+      if (sourceConflict) {
+        const result = { ...sourceConflict, latestSnapshot: sourceSnapshot, latestData: sourceSnapshot.data };
+        if (options?.conflictMode === 'return') return result;
+        const error = new Error('世界书已被其他操作修改，请载入最新内容后重试。');
+        error.code = WORLDINFO_REVISION_CONFLICT;
+        error.details = result;
+        throw error;
       }
-    } catch {}
+      if (!sourceSnapshot.exists) {
+        return {
+          ok: false,
+          reason: 'worldbook_not_found',
+          worldbookId: from,
+          latestSnapshot: sourceSnapshot,
+          latestData: sourceSnapshot.data,
+        };
+      }
+
+      const targetData = await this._getWorldInfoUnlocked(to);
+      const targetSnapshot = this.worldInfoConcurrency.snapshot(to, targetData);
+      if (targetSnapshot.exists) {
+        return {
+          ok: false,
+          reason: 'worldbook_name_conflict',
+          worldbookId: from,
+          targetWorldbookId: to,
+          latestSnapshot: sourceSnapshot,
+          latestData: sourceSnapshot.data,
+        };
+      }
+
+      const payload = await this._saveWorldInfoStorage(to, { ...(data || {}), name: to });
+      const targetMetadata = this.worldInfoConcurrency.commitSave(to, payload);
+
+      const map = this.worldSessionMap || {};
+      for (const [sid, val] of Object.entries(map)) {
+        const list = this.normalizeWorldIds(val);
+        if (!list.includes(from)) continue;
+        const next = Array.from(new Set(list.map(id => (id === from ? to : id)))).filter(Boolean);
+        if (!next.length) delete map[sid];
+        else map[sid] = next;
+        mapChanged = true;
+      }
+      if (mapChanged) this.persistWorldSessionMap();
+
+      if (Array.isArray(this.currentWorldIds) && this.currentWorldIds.includes(from)) {
+        this.currentWorldIds = Array.from(new Set(this.currentWorldIds.map(id => (id === from ? to : id)))).filter(Boolean);
+        this.currentWorldId = this.currentWorldIds[0] || null;
+        currentChanged = true;
+      }
+
+      const globalWorldIds = this.getGlobalWorldIds();
+      if (globalWorldIds.includes(from)) {
+        this.globalWorldIds = Array.from(new Set(globalWorldIds.map(id => (id === from ? to : id)))).filter(Boolean);
+        this.globalWorldId = this.globalWorldIds[0] || null;
+        this.persistGlobalWorldId();
+        globalChanged = true;
+      }
+
+      try {
+        await this.regex?.ready;
+        const sets = this.regex?.state?.local?.sets || null;
+        if (sets) {
+          for (const s of Object.values(sets)) {
+            if (!s || typeof s !== 'object') continue;
+            if (s.bind?.type !== 'world') continue;
+            if (String(s.bind.worldId || '') !== from) continue;
+            s.bind = { ...s.bind, worldId: to };
+            s.updatedAt = Date.now();
+            regexChanged = true;
+          }
+          if (regexChanged) await this.regex.persist();
+        }
+      } catch {}
+
+      try {
+        roleChanged = Boolean(await this.worldLifecycleHandler?.({ type: 'rename', from, to }));
+      } catch (err) {
+        logger.warn('rename role world refs failed', err);
+      }
+
+      await this._removeWorldInfoStorage(from);
+      this.worldInfoConcurrency.commitDelete(from);
+      return {
+        ok: true,
+        worldbookId: to,
+        renamedFrom: from,
+        ...targetMetadata,
+        data: cloneWorldInfoValue(payload),
+      };
+    });
+    if (storageResult?.ok === false) return storageResult;
 
     let refsChanged = false;
     try {
-      if (this.worldStore.ready) {
-        await this.worldStore.ready;
-      }
-      const names = this.worldStore.list();
-      for (const wid of names) {
-        if (!wid || wid === from) continue;
-        const data = this.worldStore.load(wid);
-        if (!data || !Array.isArray(data.refs)) continue;
-        let changed = false;
-        const nextRefs = data.refs.map((ref) => {
-          if (!ref || typeof ref !== 'object') return ref;
-          const sourceId = String(ref.sourceId || ref.worldId || ref.source || '').trim();
-          if (sourceId !== from) return ref;
-          changed = true;
-          return { ...ref, sourceId: to };
-        });
-        if (!changed) continue;
-        await this.saveWorldInfo(wid, { ...(data || {}), refs: nextRefs });
-        refsChanged = true;
+      const names = await this.listWorlds();
+      const refCandidates = names.filter((wid) => {
+        if (!wid || wid === from) return false;
+        const metadata = this.worldStore?.getMetadata?.(wid) || null;
+        if (!metadata || metadata.entriesCount === null) return true;
+        return Array.isArray(metadata.refs) && metadata.refs.includes(from);
+      });
+      for (const wid of refCandidates) {
+        // refs 重写在 rename 锁外逐本 CAS：并发保存会造成冲突，重读快照重试；
+        // 重试耗尽仍冲突则告警，避免悬挂引用被静默跳过。
+        let settled = false;
+        for (let attempt = 0; attempt < 3 && !settled; attempt += 1) {
+          const snapshot = await this.getWorldInfoSnapshot(wid);
+          const worldData = snapshot.data;
+          if (!worldData || !Array.isArray(worldData.refs)) {
+            settled = true;
+            break;
+          }
+          let changed = false;
+          const nextRefs = worldData.refs.map((ref) => {
+            if (!ref || typeof ref !== 'object') return ref;
+            const sourceId = String(ref.sourceId || ref.worldId || ref.source || '').trim();
+            if (sourceId !== from) return ref;
+            changed = true;
+            return { ...ref, sourceId: to };
+          });
+          if (!changed) {
+            settled = true;
+            break;
+          }
+          const result = await this.saveWorldInfo(wid, { ...worldData, refs: nextRefs }, {
+            expectedRevision: snapshot.revision,
+            expectedGeneration: snapshot.generation,
+            expectedExists: true,
+            conflictMode: 'return',
+          });
+          if (result?.ok) {
+            refsChanged = true;
+            settled = true;
+          }
+        }
+        if (!settled) {
+          logger.warn('rename world refs rewrite conflicted repeatedly', { worldbookId: wid, from, to });
+        }
       }
     } catch {}
-
-    let roleChanged = false;
-    try {
-      roleChanged = Boolean(await this.worldLifecycleHandler?.({ type: 'rename', from, to }));
-    } catch (err) {
-      logger.warn('rename role world refs failed', err);
-    }
-
-    await this._removeWorldInfoStorage(from);
 
     if (mapChanged || currentChanged || globalChanged || refsChanged || roleChanged) {
       this.syncWorldRegexBindings?.();
       this.emitWorldInfoChanged({ renamedFrom: from, renamedTo: to });
     }
     if (regexChanged) window.dispatchEvent(new CustomEvent('regex-changed'));
+    return storageResult;
   }
 
   /**
    * 删除世界书
    */
-  async deleteWorldInfo(worldId) {
+  async deleteWorldInfo(worldId, options = {}) {
     try {
       const target = String(worldId || '').trim();
       if (!target) return;
-      const storageResult = await this._removeWorldInfoStorage(target);
+      return await this.worldInfoConcurrency.enqueue(target, async () => {
+        const current = await this._getWorldInfoUnlocked(target);
+        const latestSnapshot = this.worldInfoConcurrency.snapshot(target, current);
+        const conflict = this.worldInfoConcurrency.validate(target, options);
+        if (conflict) {
+          const result = { ...conflict, latestSnapshot, latestData: latestSnapshot.data };
+          if (options?.conflictMode === 'return') return result;
+          const error = new Error('世界书已在确认后发生变化，请重新确认删除。');
+          error.code = WORLDINFO_REVISION_CONFLICT;
+          error.details = result;
+          throw error;
+        }
+        const storageResult = await this._removeWorldInfoStorage(target);
 
-      let mapChanged = false;
-      for (const [sid, val] of Object.entries(this.worldSessionMap || {})) {
-        const next = this.normalizeWorldIds(val).filter((id) => id !== target);
-        if (next.length === this.normalizeWorldIds(val).length) continue;
-        if (!next.length) delete this.worldSessionMap[sid];
-        else this.worldSessionMap[sid] = next;
-        mapChanged = true;
-      }
-      if (mapChanged) this.persistWorldSessionMap();
+        let mapChanged = false;
+        for (const [sid, val] of Object.entries(this.worldSessionMap || {})) {
+          const next = this.normalizeWorldIds(val).filter((id) => id !== target);
+          if (next.length === this.normalizeWorldIds(val).length) continue;
+          if (!next.length) delete this.worldSessionMap[sid];
+          else this.worldSessionMap[sid] = next;
+          mapChanged = true;
+        }
+        if (mapChanged) this.persistWorldSessionMap();
 
-      let currentChanged = false;
-      if (Array.isArray(this.currentWorldIds) && this.currentWorldIds.includes(target)) {
-        this.currentWorldIds = this.currentWorldIds.filter((id) => id !== target);
-        this.currentWorldId = this.currentWorldIds[0] || null;
-        currentChanged = true;
-      }
-      let globalChanged = false;
-      const globalWorldIds = this.getGlobalWorldIds();
-      if (globalWorldIds.includes(target)) {
-        this.globalWorldIds = globalWorldIds.filter(id => id !== target);
-        this.globalWorldId = this.globalWorldIds[0] || null;
-        this.persistGlobalWorldId();
-        globalChanged = true;
-      }
+        let currentChanged = false;
+        if (Array.isArray(this.currentWorldIds) && this.currentWorldIds.includes(target)) {
+          this.currentWorldIds = this.currentWorldIds.filter((id) => id !== target);
+          this.currentWorldId = this.currentWorldIds[0] || null;
+          currentChanged = true;
+        }
+        let globalChanged = false;
+        const globalWorldIds = this.getGlobalWorldIds();
+        if (globalWorldIds.includes(target)) {
+          this.globalWorldIds = globalWorldIds.filter(id => id !== target);
+          this.globalWorldId = this.globalWorldIds[0] || null;
+          this.persistGlobalWorldId();
+          globalChanged = true;
+        }
 
-      let roleChanged = false;
-      try {
-        roleChanged = Boolean(await this.worldLifecycleHandler?.({ type: 'delete', worldId: target }));
-      } catch (err) {
-        logger.warn('delete role world refs failed', err);
-      }
+        let roleChanged = false;
+        try {
+          roleChanged = Boolean(await this.worldLifecycleHandler?.({ type: 'delete', worldId: target }));
+        } catch (err) {
+          logger.warn('delete role world refs failed', err);
+        }
 
-      if (mapChanged || currentChanged || globalChanged || roleChanged) {
-        this.syncWorldRegexBindings?.();
-        this.emitWorldInfoChanged({ deletedWorldId: target });
-      }
-      logger.debug('世界书已删除', worldId);
-      return { ok: true, worldId: target, ...storageResult };
+        if (mapChanged || currentChanged || globalChanged || roleChanged) {
+          this.syncWorldRegexBindings?.();
+          this.emitWorldInfoChanged({ deletedWorldId: target });
+        }
+        const metadata = this.worldInfoConcurrency.commitDelete(target);
+        logger.debug('世界书已删除', worldId);
+        return { ok: true, worldId: target, ...storageResult, ...metadata };
+      });
     } catch (error) {
       logger.error('删除世界书失败:', error);
       throw error;
@@ -7759,20 +7968,28 @@ const stringifyMessageContent = (content) => {
   }
 
   async waitForWorldStoreReady() {
-    if (this.worldStore?.ready) {
-      await this.worldStore.ready;
-    }
+    if (this.worldStore?.ready) await this.worldStore.ready;
     return true;
+  }
+
+  getWorldInfoMetadata(worldId) {
+    const id = String(worldId || '').trim();
+    if (!id) return null;
+    return this.worldStore?.getMetadata?.(id) || null;
   }
 
   loadStoredWorldInfo(worldId) {
     const id = String(worldId || '').trim();
     if (!id) return null;
-    return this.worldStore?.load?.(id) || null;
+    const data = this.worldStore?.load?.(id) || null;
+    if (!data) return null;
+    const snapshot = this.worldInfoConcurrency.snapshot(id, data);
+    return attachWorldInfoRevisionMeta(cloneWorldInfoValue(snapshot.data), snapshot);
   }
 
   hasStoredWorldInfo(worldId) {
-    return Boolean(this.loadStoredWorldInfo(worldId));
+    const id = String(worldId || '').trim();
+    return Boolean(id && (this.worldStore?.has?.(id) || this.loadStoredWorldInfo(id)));
   }
 
   getRegexStore() {
@@ -7841,6 +8058,55 @@ const stringifyMessageContent = (content) => {
 
   getWorldIdsForSession(sessionId = this.activeSessionId) {
     return this.normalizeWorldIds(this.worldSessionMap[sessionId]);
+  }
+
+  getWorldSessionBindingSnapshot(sessionId = this.activeSessionId) {
+    const sid = String(sessionId || '').trim();
+    return {
+      sessionId: sid,
+      scopeId: String(this.scopeId || '').trim(),
+      worldbookIds: sid ? this.getWorldIdsForSession(sid) : [],
+    };
+  }
+
+  updateWorldSessionBinding(sessionId, options = {}) {
+    const sid = String(sessionId || '').trim();
+    const scopeId = String(this.scopeId || '').trim();
+    if (!sid) {
+      return {
+        ok: false,
+        conflict: false,
+        reason: 'missing_session_id',
+        sessionId: sid,
+        scopeId,
+        worldbookIds: [],
+      };
+    }
+    if (
+      Object.prototype.hasOwnProperty.call(options || {}, 'expectedScopeId') &&
+      String(options.expectedScopeId || '').trim() !== scopeId
+    ) {
+      return {
+        ok: false,
+        conflict: true,
+        reason: 'target_scope_changed',
+        sessionId: sid,
+        scopeId,
+        expectedScopeId: String(options.expectedScopeId || '').trim(),
+        worldbookIds: this.getWorldIdsForSession(sid),
+      };
+    }
+    const mutation = resolveWorldSessionBindingMutation({
+      currentWorldbookIds: this.getWorldIdsForSession(sid),
+      expectedWorldbookIds: options.expectedWorldbookIds,
+      worldbookId: options.worldbookId,
+      mode: options.mode,
+    });
+    if (!mutation.ok) return { ...mutation, sessionId: sid, scopeId };
+    if (mutation.changed) {
+      this.bindWorldToSession(sid, mutation.worldbookIds, { silent: options.silent !== false });
+    }
+    return { ...mutation, sessionId: sid, scopeId };
   }
 
   getCurrentWorldId() {
@@ -8751,7 +9017,12 @@ window.saveWorldInfo = async data => {
 // 兼容：从 ST world JSON 导入（期望前端读取后调用）
 window.importSTWorld = async (jsonObj, name = 'imported') => {
   const simplified = convertSTWorld(jsonObj, name);
-  await window.appBridge.saveWorldInfo(name, simplified);
+  const snapshot = await window.appBridge.getWorldInfoSnapshot(name);
+  await window.appBridge.saveWorldInfo(name, simplified, {
+    expectedRevision: snapshot.revision,
+    expectedGeneration: snapshot.generation,
+    expectedExists: snapshot.exists,
+  });
   return simplified;
 };
 

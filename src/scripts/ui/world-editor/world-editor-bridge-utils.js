@@ -17,6 +17,7 @@ export const resolveWorldEditorBridgeContext = (options = {}) => {
         chatStore: options?.chatStore || bridge?.chatStore || null,
         regexStore: options?.regexStore || bridge?.regex || null,
         getWorldInfo: options?.getWorldInfo || bindBridgeMethod(bridge, 'getWorldInfo'),
+        getWorldInfoSnapshot: options?.getWorldInfoSnapshot || bindBridgeMethod(bridge, 'getWorldInfoSnapshot'),
         saveWorldInfo: options?.saveWorldInfo || bindBridgeMethod(bridge, 'saveWorldInfo'),
         listWorlds: options?.listWorlds || bindBridgeMethod(bridge, 'listWorlds'),
         renameWorldInfo: options?.renameWorldInfo || bindBridgeMethod(bridge, 'renameWorldInfo'),
@@ -44,11 +45,16 @@ export const ensureUniqueWorldbookIdCore = async (options = {}) => {
         await worldStore?.ready;
     } catch {}
     const base = sanitizeWorldbookId(baseName, { allowUnicode, fallback: 'worldbook' });
-    if (!worldStore?.load?.(base)) return base;
+    const exists = (id) => (
+        typeof worldStore?.has === 'function'
+            ? worldStore.has(id)
+            : Boolean(worldStore?.load?.(id))
+    );
+    if (!exists(base)) return base;
     let idx = 1;
     while (idx < 9999) {
         const next = `${base}_${idx}`;
-        if (!worldStore?.load?.(next)) return next;
+        if (!exists(next)) return next;
         idx += 1;
     }
     return `${base}_${now()}`;
@@ -129,6 +135,8 @@ export const saveWorldInfoWithName = async (options = {}) => {
         listWorlds = null,
         renameWorldInfo = null,
         saveWorldInfo = null,
+        expectedRevision = null,
+        expectedGeneration = null,
     } = options || {};
     const current = String(currentName || '').trim();
     const next = String(nextName || '').trim();
@@ -139,15 +147,42 @@ export const saveWorldInfoWithName = async (options = {}) => {
             return { ok: false, reason: 'duplicate-name', worldName: current };
         }
         if (typeof renameWorldInfo === 'function') {
-            await renameWorldInfo(current, next, payload);
+            const result = await renameWorldInfo(current, next, payload, {
+                expectedRevision,
+                expectedGeneration,
+                expectedExists: true,
+                conflictMode: 'return',
+            });
+            if (result?.ok === false) return { ...result, worldName: current };
+            return {
+                ok: true,
+                reason: 'renamed',
+                worldName: next,
+                ...(result?.revision !== undefined ? { revision: result.revision } : {}),
+                ...(result?.generation !== undefined ? { generation: result.generation } : {}),
+                ...(result?.data !== undefined ? { data: result.data } : {}),
+            };
         }
-        return { ok: true, reason: 'renamed', worldName: next };
+        return { ok: false, reason: 'rename-unavailable', worldName: current };
     }
     if (typeof saveWorldInfo !== 'function') {
         throw new Error('saveWorldInfo is unavailable');
     }
-    await saveWorldInfo(current, payload);
-    return { ok: true, reason: 'saved', worldName: current };
+    const result = await saveWorldInfo(current, payload, {
+        expectedRevision,
+        expectedGeneration,
+        expectedExists: true,
+        conflictMode: 'return',
+    });
+    if (result?.ok === false) return { ...result, worldName: current };
+    return {
+        ok: true,
+        reason: 'saved',
+        worldName: current,
+        ...(result?.revision !== undefined ? { revision: result.revision } : {}),
+        ...(result?.generation !== undefined ? { generation: result.generation } : {}),
+        ...(result?.data !== undefined ? { data: result.data } : {}),
+    };
 };
 
 export const getWorldEntryActivationExplanationCore = (options = {}) => {

@@ -1281,15 +1281,22 @@ console.log('ok - script runtime recognizes actual ESM import and export syntax'
       return true;
     },
   };
+  const liveWorld = {
+    entries: [{ id: 'entry-1', comment: 'Entry', content: 'world content', disable: false, constant: false }],
+  };
+  const worldSaveCalls = [];
   runtime.bridge = {
     isSharedVariableSession: () => false,
     currentWorldId: 'World',
     currentWorldIds: ['World', 'Extra'],
     worldStore: {
       list: () => ['World', 'Extra'],
-      load: id => (id === 'World' ? {
-        entries: [{ id: 'entry-1', comment: 'Entry', content: 'world content', disable: false }],
-      } : null),
+      load: id => (id === 'World' ? liveWorld : null),
+    },
+    getWorldInfo: async id => (id === 'World' ? structuredClone(liveWorld) : null),
+    saveWorldInfo: async (id, data) => {
+      worldSaveCalls.push([id, structuredClone(data)]);
+      return { ok: true };
     },
   };
   runtime.presets = {
@@ -1339,6 +1346,17 @@ console.log('ok - script runtime recognizes actual ESM import and export syntax'
   assert.equal(worldbook[0].uid, 'entry-1');
   assert.equal(worldbook[0].name, 'Entry');
   assert.equal(worldbook[0].enabled, true);
+
+  assert.equal(await runtime.processRpc('world.activate', {
+    world: 'World',
+    title: 'Entry',
+    force: true,
+    sessionId: 's1',
+  }), true);
+  assert.equal(liveWorld.entries[0].constant, false, 'world.activate must not mutate the live store before CAS');
+  assert.equal(worldSaveCalls.length, 1);
+  assert.equal(worldSaveCalls[0][0], 'World');
+  assert.equal(worldSaveCalls[0][1].entries[0].constant, true);
 
   const preset = await runtime.processRpc('context.getPreset', { name: 'in_use', sessionId: 's1' });
   assert.equal(preset.prompts[0].name, 'Rule');

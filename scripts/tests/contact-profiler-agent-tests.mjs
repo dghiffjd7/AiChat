@@ -7,16 +7,43 @@ import { AgentRunStore } from '../../src/scripts/storage/agent-run-store.js';
 
 const makeStore = (settings = {}) => {
   const profiles = new Map();
+  const revisions = new Map();
   const pendingUpdates = [];
-  return {
+  const store = {
     scopeId: 'scope-a',
+    scopeToken: 0,
     getSettings: () => ({ ...settings }),
     getProfile: contactId => profiles.get(String(contactId || '').trim()) || null,
+    getProfileSnapshot: (contactId) => {
+      const id = String(contactId || '').trim();
+      const profile = profiles.get(id) || null;
+      return {
+        contactId: id,
+        scopeId: store.scopeId,
+        scopeToken: store.scopeToken,
+        exists: Boolean(profile),
+        revision: revisions.get(id) || 0,
+        profile,
+      };
+    },
     upsertProfile: (profile) => {
       const normalized = normalizeContactProfile(profile);
       if (!normalized) return null;
       profiles.set(normalized.contactId, normalized);
+      revisions.set(normalized.contactId, (revisions.get(normalized.contactId) || 0) + 1);
       return normalized;
+    },
+    upsertProfileIfUnchanged: (profile, expected = {}) => {
+      const normalized = normalizeContactProfile(profile);
+      if (!normalized) return { ok: false, saved: false, reason: 'missing_contact_id' };
+      if (expected.scopeId !== store.scopeId || expected.scopeToken !== store.scopeToken) {
+        return { ok: false, saved: false, conflict: true, reason: 'target_scope_changed' };
+      }
+      if ((revisions.get(normalized.contactId) || 0) !== expected.revision) {
+        return { ok: false, saved: false, conflict: true, reason: 'profile_changed_during_operation' };
+      }
+      const saved = store.upsertProfile(normalized);
+      return { ok: true, saved: true, profile: saved };
     },
     addPendingUpdate: (update) => {
       const saved = {
@@ -27,9 +54,26 @@ const makeStore = (settings = {}) => {
       pendingUpdates.push(saved);
       return saved;
     },
+    addPendingUpdateIfCurrent: (update, expected = {}) => {
+      if (expected.scopeId !== store.scopeId || expected.scopeToken !== store.scopeToken) {
+        return { ok: false, conflict: true, reason: 'target_scope_changed', pending: null };
+      }
+      const current = store.getProfileSnapshot(update.contactId);
+      if (expected.revision !== current.revision || expected.exists !== current.exists) {
+        return {
+          ok: false,
+          conflict: true,
+          reason: 'profile_changed_during_operation',
+          pending: null,
+        };
+      }
+      const pending = store.addPendingUpdate(update);
+      return { ok: Boolean(pending), conflict: false, reason: '', pending };
+    },
     listPendingUpdates: () => pendingUpdates.slice(),
     listProfiles: () => Array.from(profiles.values()),
   };
+  return store;
 };
 
 {
@@ -161,4 +205,81 @@ const makeStore = (settings = {}) => {
   assert.equal(builds, 1);
   assert.equal(runtime.listRuns({ kind: 'contact_profile_update' }).length, 1);
   console.log('ok - ContactProfilerAgent coalesces duplicate contact update runs');
+}
+
+{
+  let releaseCandidate = () => {};
+  let candidateStartedResolve = () => {};
+  const candidateStarted = new Promise(resolve => { candidateStartedResolve = resolve; });
+  const candidateGate = new Promise(resolve => { releaseCandidate = resolve; });
+  const store = makeStore({
+    backgroundUpdateEnabled: true,
+    backgroundAutoSave: true,
+    backgroundRequireConfirm: false,
+  });
+  store.upsertProfile({ contactId: 'alice', displayName: 'Base Alice' });
+  const runtime = createAgentTaskRuntime({
+    store: new AgentRunStore(),
+    logger: { warn: () => {} },
+  });
+  const agent = createContactProfilerAgent({
+    agentTaskRuntime: runtime,
+    contactProfileStore: store,
+    getContact: contactId => ({ id: contactId, name: 'Alice' }),
+    getMessages: () => [{ id: 'm5', content: 'Alice likes careful edits.' }],
+    buildProfileCandidate: async ({ existingProfile }) => {
+      candidateStartedResolve();
+      await candidateGate;
+      return { ...existingProfile, contactId: 'alice', displayName: 'Maid Alice' };
+    },
+    logger: { debug: () => {} },
+  });
+
+  const running = agent.runProfileUpdate({ contactId: 'alice', sessionId: 'alice' });
+  await candidateStarted;
+  store.upsertProfile({ contactId: 'alice', displayName: 'User Alice' });
+  releaseCandidate();
+  const result = await running;
+
+  assert.equal(result.status, 'conflict');
+  assert.equal(result.reason, 'profile_changed_during_operation');
+  assert.equal(store.getProfile('alice').displayName, 'User Alice');
+  console.log('ok - ContactProfilerAgent autosave rejects a concurrent user profile edit');
+}
+
+{
+  let releaseCandidate = () => {};
+  let candidateStartedResolve = () => {};
+  const candidateStarted = new Promise(resolve => { candidateStartedResolve = resolve; });
+  const candidateGate = new Promise(resolve => { releaseCandidate = resolve; });
+  const store = makeStore({ backgroundUpdateEnabled: true });
+  store.upsertProfile({ contactId: 'alice', displayName: 'Base Alice' });
+  const runtime = createAgentTaskRuntime({
+    store: new AgentRunStore(),
+    logger: { warn: () => {} },
+  });
+  const agent = createContactProfilerAgent({
+    agentTaskRuntime: runtime,
+    contactProfileStore: store,
+    getContact: contactId => ({ id: contactId, name: 'Alice' }),
+    getMessages: () => [{ id: 'm6', content: 'Alice likes safe candidates.' }],
+    buildProfileCandidate: async ({ existingProfile }) => {
+      candidateStartedResolve();
+      await candidateGate;
+      return { ...existingProfile, contactId: 'alice', displayName: 'Candidate Alice' };
+    },
+    logger: { debug: () => {} },
+  });
+
+  const running = agent.runProfileUpdate({ contactId: 'alice', sessionId: 'alice' });
+  await candidateStarted;
+  store.upsertProfile({ contactId: 'alice', displayName: 'User Alice' });
+  releaseCandidate();
+  const result = await running;
+
+  assert.equal(result.status, 'conflict');
+  assert.equal(result.reason, 'profile_changed_during_operation');
+  assert.equal(store.listPendingUpdates().length, 0);
+  assert.equal(store.getProfile('alice').displayName, 'User Alice');
+  console.log('ok - ContactProfilerAgent skips a stale pending candidate after user edit');
 }

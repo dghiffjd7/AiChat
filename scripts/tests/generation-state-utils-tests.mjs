@@ -87,6 +87,7 @@ test('createActiveGenerationRecord keeps caller ownership fields and initializes
     partialCommitHandler,
     swipeTarget,
     cancelled: false,
+    cancelReason: '',
   });
 });
 
@@ -427,6 +428,7 @@ test('runActiveGenerationCancelFlow preserves cancel side-effect order and commi
   });
 
   assert.equal(result.cancelled, true);
+  assert.equal(generation.cancelReason, 'user');
   assert.equal(result.hasPartial, true);
   assert.equal(result.commitResult.appended, true);
   assert.equal(generation.cancelled, true);

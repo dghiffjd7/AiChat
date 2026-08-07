@@ -1337,14 +1337,6 @@ export class ChatStore {
   _ensureSession(id) {
     const sid = String(id || '').trim();
     if (!sid) return null;
-    // TEMP-GHOST-TRACE: 幽灵会话溯源探针，定位后删除
-    if (sid === 'group:1768668321145-6210c5' && !this.state.sessions[sid]) {
-      (globalThis.__ghostTrace = globalThis.__ghostTrace || []).push({
-        scope: this.scopeId,
-        at: Date.now(),
-        stack: new Error('ghost').stack,
-      });
-    }
     const defaults = getGlobalChatColorDefaults();
     if (!this.state.sessions[sid]) {
       this.state.sessions[sid] = {
@@ -2242,14 +2234,13 @@ export class ChatStore {
   getLastReadMessageId(id = this.currentId) {
     const sid = String(id || '').trim();
     if (!sid) return '';
-    this._ensureSession(sid);
     return String(this.state.sessions[sid]?.lastReadMessageId || '');
   }
 
   getFirstUnreadMessageId(id = this.currentId) {
     const sid = String(id || '').trim();
     if (!sid) return '';
-    this._ensureSession(sid);
+    if (!this.state.sessions[sid]) return '';
     const msgs = this.getMessages(sid) || [];
     const lastRead = this.getLastReadMessageId(sid);
     const startIdx = lastRead ? msgs.findIndex(m => String(m?.id || '') === lastRead) : -1;
@@ -2290,7 +2281,7 @@ export class ChatStore {
   getUnreadCount(id = this.currentId) {
     const sid = String(id || '').trim();
     if (!sid) return 0;
-    this._ensureSession(sid);
+    if (!this.state.sessions[sid]) return 0;
     if (this._useV2 && Number.isFinite(this.state.sessions[sid]?.unreadCount)) {
       return Number(this.state.sessions[sid].unreadCount || 0);
     }
@@ -2388,10 +2379,9 @@ export class ChatStore {
   getInitialVariable(key, id = this.currentId) {
     const sid = String(id || '').trim();
     if (!sid) return undefined;
-    this._ensureSession(sid);
     const name = String(key || '').trim();
     if (!name) return undefined;
-    return this.state.sessions[sid].initialVariables?.[name];
+    return this.state.sessions[sid]?.initialVariables?.[name];
   }
 
   setInitialVariable(key, value, id = this.currentId) {
@@ -2410,8 +2400,7 @@ export class ChatStore {
   listInitialVariables(id = this.currentId) {
     const sid = String(id || '').trim();
     if (!sid) return {};
-    this._ensureSession(sid);
-    const vars = this.state.sessions[sid].initialVariables || {};
+    const vars = this.state.sessions[sid]?.initialVariables || {};
     return { ...vars };
   }
 
@@ -2458,26 +2447,23 @@ export class ChatStore {
   listVariables(id = this.currentId) {
     const sid = String(id || '').trim();
     if (!sid) return {};
-    this._ensureSession(sid);
-    const vars = this.state.sessions[sid].variables || {};
+    const vars = this.state.sessions[sid]?.variables || {};
     return { ...vars };
   }
 
   getVariableSchema(key, id = this.currentId) {
     const sid = String(id || '').trim();
     if (!sid) return null;
-    this._ensureSession(sid);
     const k = String(key || '').trim();
     if (!k) return null;
-    const schema = this.state.sessions[sid].variableSchemas?.[k];
+    const schema = this.state.sessions[sid]?.variableSchemas?.[k];
     return schema ? normalizeVariableSchema(schema) : null;
   }
 
   listVariableSchemas(id = this.currentId) {
     const sid = String(id || '').trim();
     if (!sid) return {};
-    this._ensureSession(sid);
-    const schemas = this.state.sessions[sid].variableSchemas || {};
+    const schemas = this.state.sessions[sid]?.variableSchemas || {};
     const out = {};
     Object.entries(schemas).forEach(([k, v]) => {
       out[String(k)] = normalizeVariableSchema(v);
@@ -2529,8 +2515,7 @@ export class ChatStore {
   listVariableRules(id = this.currentId) {
     const sid = String(id || '').trim();
     if (!sid) return [];
-    this._ensureSession(sid);
-    return Array.isArray(this.state.sessions[sid].variableRules)
+    return Array.isArray(this.state.sessions[sid]?.variableRules)
       ? [...this.state.sessions[sid].variableRules]
       : [];
   }
@@ -2548,8 +2533,7 @@ export class ChatStore {
   getStageSchema(id = this.currentId) {
     const sid = String(id || '').trim();
     if (!sid) return null;
-    this._ensureSession(sid);
-    const schema = this.state.sessions[sid].stageSchema;
+    const schema = this.state.sessions[sid]?.stageSchema;
     return schema && typeof schema === 'object' ? { ...schema } : null;
   }
 
@@ -3265,8 +3249,8 @@ export class ChatStore {
   getSummaries(id = this.currentId) {
     const sid = String(id || '').trim();
     if (!sid) return [];
-    this._ensureSession(sid);
     const session = this.state.sessions[sid];
+    if (!session) return [];
     const curAid = session.currentArchiveId;
     if (curAid && Array.isArray(session.archives)) {
       const arc = session.archives.find(a => a.id === curAid);
@@ -3367,8 +3351,8 @@ export class ChatStore {
   getCompactedSummary(id = this.currentId) {
     const sid = String(id || '').trim();
     if (!sid) return null;
-    this._ensureSession(sid);
     const session = this.state.sessions[sid];
+    if (!session) return null;
     const curAid = session.currentArchiveId;
     if (curAid && Array.isArray(session.archives)) {
       const arc = session.archives.find(a => a.id === curAid);
@@ -3394,8 +3378,8 @@ export class ChatStore {
   getCompactedSummaryRaw(id = this.currentId) {
     const sid = String(id || '').trim();
     if (!sid) return '';
-    this._ensureSession(sid);
     const session = this.state.sessions[sid];
+    if (!session) return '';
     const curAid = session.currentArchiveId;
     if (curAid && Array.isArray(session.archives)) {
       const arc = session.archives.find(a => a.id === curAid);
@@ -3571,8 +3555,7 @@ export class ChatStore {
   getPendingMessages(id = this.currentId) {
     const sid = String(id || '').trim();
     if (!sid) return [];
-    this._ensureSession(sid);
-    return this.state.sessions[sid].pending || [];
+    return this.state.sessions[sid]?.pending || [];
   }
 
   /**

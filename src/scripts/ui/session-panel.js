@@ -160,6 +160,7 @@ export class SessionPanel {
     getPersonaScopeKey,
     getChatSessionId,
     getSocialSessionId,
+    beforeRemove,
   } = {}) {
     this.store = chatStore;
     this.contactsStore = contactsStore;
@@ -178,6 +179,7 @@ export class SessionPanel {
     this.getChatSessionId =
       typeof getChatSessionId === 'function' ? getChatSessionId : typeof getSocialSessionId === 'function' ? getSocialSessionId : null;
     this.getSocialSessionId = typeof getSocialSessionId === 'function' ? getSocialSessionId : this.getChatSessionId;
+    this.beforeRemove = typeof beforeRemove === 'function' ? beforeRemove : null;
     this.otherContacts = [];
     this.sharedLoading = false;
     this.sharedHardLoading = false;
@@ -510,6 +512,7 @@ export class SessionPanel {
       chatStore: this.store,
       contactsStore: this.contactsStore,
       appBridge: window.appBridge,
+      beforeDeleteSession: this.beforeRemove,
       logger,
     });
   }
@@ -1189,7 +1192,12 @@ export class SessionPanel {
     };
     const worldData = { name: worldId, entries: [entry] };
     try {
-      await bridge.saveWorldInfo(worldId, worldData);
+      const snapshot = await bridge.getWorldInfoSnapshot?.(worldId);
+      await bridge.saveWorldInfo(worldId, worldData, snapshot ? {
+        expectedRevision: snapshot.revision,
+        expectedGeneration: snapshot.generation,
+        expectedExists: false,
+      } : undefined);
       bridge.bindWorldToSession(worldId, worldId, { silent: true });
     } catch (err) {
       logger.warn('自动创建/绑定世界书失败', err);

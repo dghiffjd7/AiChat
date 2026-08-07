@@ -43,6 +43,7 @@ export class PersonaPanel {
         getPersonaScopeKey = null,
         getRpSessionIdForPersona = null,
         onPersonaChanged,
+        onUserPersonaSwitch = null,
         onGreetingsImported = null,
         onRoleNewChatFinished = null,
     }) {
@@ -61,6 +62,7 @@ export class PersonaPanel {
         this.getPersonaScopeKey = typeof getPersonaScopeKey === 'function' ? getPersonaScopeKey : null;
         this.getRpSessionIdForPersona = typeof getRpSessionIdForPersona === 'function' ? getRpSessionIdForPersona : null;
         this.onPersonaChanged = onPersonaChanged;
+        this.onUserPersonaSwitch = typeof onUserPersonaSwitch === 'function' ? onUserPersonaSwitch : null;
         this.onGreetingsImported = typeof onGreetingsImported === 'function' ? onGreetingsImported : null;
         this.onRoleNewChatFinished = typeof onRoleNewChatFinished === 'function' ? onRoleNewChatFinished : null;
         this.overlay = null;
@@ -1208,6 +1210,12 @@ export class PersonaPanel {
             item.addEventListener('click', async (e) => {
                 // Ignore if clicked edit button
                 if (e.target.closest('.edit-btn, .persona-new-chat-btn')) return;
+                if (String(this.store.activeId || '') !== String(p.id || '')) {
+                    this.onUserPersonaSwitch?.({
+                        fromPersonaId: String(this.store.activeId || ''),
+                        toPersonaId: String(p.id || ''),
+                    });
+                }
                 await this.store.setActive(p.id);
                 this.renderList();
                 await this.notifyPersonaChanged();

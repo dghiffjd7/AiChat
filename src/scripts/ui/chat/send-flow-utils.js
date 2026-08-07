@@ -301,6 +301,33 @@ export const resolveSendPreflightBlock = ({
   };
 };
 
+export const isChatSendTargetAvailable = ({
+  sessionId = '',
+  chatStore = null,
+  contactsStore = null,
+} = {}) => {
+  const sid = String(sessionId || '').trim();
+  if (!sid) return false;
+  let checked = false;
+  try {
+    if (typeof chatStore?.hasSession === 'function') {
+      checked = true;
+      if (chatStore.hasSession(sid)) return true;
+    } else if (typeof chatStore?.listSessions === 'function') {
+      checked = true;
+      const ids = chatStore.listSessions();
+      if (Array.isArray(ids) && ids.some(id => String(id || '').trim() === sid)) return true;
+    }
+  } catch {}
+  try {
+    if (typeof contactsStore?.getContact === 'function') {
+      checked = true;
+      if (contactsStore.getContact(sid)) return true;
+    }
+  } catch {}
+  return checked ? false : true;
+};
+
 export const resolveMaidChatSendCompletionResult = ({
   pipelineSucceeded = false,
   requestTriggered = false,
@@ -309,6 +336,7 @@ export const resolveMaidChatSendCompletionResult = ({
   repairFailed = false,
   blockedReason = '',
   cancelled = false,
+  cancelReason = '',
   waitForReply = true,
   errorMessage = '',
   assistantMessageIds = [],
@@ -316,6 +344,7 @@ export const resolveMaidChatSendCompletionResult = ({
   sessionId = '',
 } = {}) => {
   const blocked = String(blockedReason || '').trim();
+  const normalizedCancelReason = String(cancelReason || '').trim();
   const refs = [];
   const seenRefs = new Set();
   for (const item of (Array.isArray(assistantMessageRefs) ? assistantMessageRefs : [])) {
@@ -352,9 +381,15 @@ export const resolveMaidChatSendCompletionResult = ({
     message = blocked === 'offline' ? '当前离线，回复请求未开始。' : '回复请求未开始。';
   } else if (cancelled) {
     completionOutcome = requestTriggered ? 'request_triggered' : 'request_rejected';
-    failureCode = 'user_aborted';
-    reason = 'user_aborted';
-    message = '用户已中止本次发送或回复生成。';
+    if (normalizedCancelReason === 'session_deleted') {
+      failureCode = 'session_deleted';
+      reason = 'session_deleted';
+      message = '目标聊天室已删除，本次发送与回复生成已中止。';
+    } else {
+      failureCode = 'user_aborted';
+      reason = 'user_aborted';
+      message = '用户已中止本次发送或回复生成。';
+    }
   } else if (waitForReply === false && requestTriggered) {
     ok = true;
     completionOutcome = 'request_triggered';

@@ -121,3 +121,46 @@ export const normalizeChatBodyOptimizeModelResult = (raw = '', { originalText = 
     rawPreview: truncatePreview(sourceText, 240),
   };
 };
+
+export const resolveChatBodyOptimizeWritebackTarget = ({
+  snapshotText = '',
+  currentMessage = null,
+  resolveInputText = null,
+} = {}) => {
+  if (!currentMessage || currentMessage.role !== 'assistant') {
+    return {
+      ok: false,
+      reason: 'message_not_found',
+      currentText: '',
+      message: null,
+    };
+  }
+  let resolved = null;
+  try {
+    resolved = typeof resolveInputText === 'function'
+      ? resolveInputText(currentMessage)
+      : null;
+  } catch {}
+  const currentText = String(
+    resolved?.text
+      ?? currentMessage.rawOriginal
+      ?? currentMessage.rawSource
+      ?? currentMessage.raw
+      ?? currentMessage.content
+      ?? '',
+  ).trim();
+  if (String(snapshotText ?? '').trim() !== currentText) {
+    return {
+      ok: false,
+      reason: 'revision_expired',
+      currentText,
+      message: currentMessage,
+    };
+  }
+  return {
+    ok: true,
+    reason: '',
+    currentText,
+    message: currentMessage,
+  };
+};

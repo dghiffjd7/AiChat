@@ -1169,7 +1169,14 @@ class PluginInstance {
           respond('rpc_error', { error: { message: 'invalid params' } });
           return;
         }
-        await bridge.saveWorldInfo(worldId, data);
+        const snapshot = typeof bridge.getWorldInfoSnapshot === 'function'
+          ? await bridge.getWorldInfoSnapshot(worldId)
+          : null;
+        await bridge.saveWorldInfo(worldId, data, snapshot ? {
+          expectedRevision: snapshot.revision,
+          expectedGeneration: snapshot.generation,
+          expectedExists: snapshot.exists,
+        } : undefined);
         respond('rpc_result', { result: true });
         return;
       }

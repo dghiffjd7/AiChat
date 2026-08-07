@@ -66,3 +66,59 @@ import { createContactProfileAgentTools } from '../../src/scripts/agent/tools/co
   );
   console.log('ok - contact profile agent tools require a store dependency');
 }
+
+{
+  let revision = 1;
+  let profile = {
+    contactId: 'alice',
+    displayName: 'Base Alice',
+  };
+  const store = {
+    scopeId: 'scope-a',
+    getProfileSnapshot: contactId => ({
+      contactId,
+      scopeId: 'scope-a',
+      scopeToken: 0,
+      exists: Boolean(profile),
+      revision,
+      profile: profile ? { ...profile } : null,
+    }),
+    upsertProfileIfUnchanged: (nextProfile, expected = {}) => {
+      if (expected.revision !== revision) {
+        return {
+          ok: false,
+          saved: false,
+          conflict: true,
+          reason: 'profile_changed_during_operation',
+        };
+      }
+      revision += 1;
+      profile = { ...nextProfile };
+      return { ok: true, saved: true, profile: { ...profile } };
+    },
+    upsertProfile: (nextProfile) => {
+      revision += 1;
+      profile = { ...nextProfile };
+      return { ...profile };
+    },
+  };
+  const upsertTool = createContactProfileAgentTools({ contactProfileStore: store })
+    .find(tool => tool.name === 'contact_profile.upsert');
+  const args = {
+    profile: {
+      contactId: 'alice',
+      displayName: 'Maid Alice',
+    },
+  };
+
+  const preflight = await upsertTool.safety.preflight(args);
+  assert.equal(preflight.requiresConfirmation, true);
+  store.upsertProfile({ contactId: 'alice', displayName: 'User Alice' });
+  const result = await upsertTool.execute(args);
+
+  assert.equal(result.saved, false);
+  assert.equal(result.conflict, true);
+  assert.equal(result.reason, 'profile_changed_during_operation');
+  assert.equal(profile.displayName, 'User Alice');
+  console.log('ok - contact profile upsert confirmation snapshot rejects a later user edit');
+}

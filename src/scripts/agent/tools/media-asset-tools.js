@@ -25,6 +25,150 @@ const clone = (value) => {
   }
 };
 
+const normalizeMediaAssetRevisionValue = (value) => {
+  if (Array.isArray(value)) return value.map(normalizeMediaAssetRevisionValue);
+  if (!isPlainObject(value)) return value;
+  return Object.keys(value).sort().reduce((result, key) => {
+    result[key] = normalizeMediaAssetRevisionValue(value[key]);
+    return result;
+  }, {});
+};
+
+const fingerprintMediaAssetValue = (value) => {
+  let input = '';
+  try {
+    input = typeof value === 'string'
+      ? `s:${value}`
+      : JSON.stringify(normalizeMediaAssetRevisionValue(value));
+  } catch {
+    input = String(value ?? '');
+  }
+  let first = 0x811c9dc5;
+  let second = 0x9e3779b9;
+  for (let index = 0; index < input.length; index += 1) {
+    const code = input.charCodeAt(index);
+    first = Math.imul(first ^ code, 0x01000193);
+    second ^= code + ((second << 6) >>> 0) + (second >>> 2);
+  }
+  return `${input.length}:${first >>> 0}:${second >>> 0}`;
+};
+
+export const createMediaAssetFieldRevision = value => `asset:${fingerprintMediaAssetValue(value)}`;
+
+const getStoreScopeId = store => trim(store?.scopeId);
+
+const getTargetGenerationToken = (target) => {
+  if (!target || typeof target !== 'object') return '';
+  for (const key of ['created', 'createdAt', 'addedAt']) {
+    if (!Object.prototype.hasOwnProperty.call(target, key)) continue;
+    const value = target[key];
+    if (value === null || value === undefined || value === '') continue;
+    return `${key}:${String(value)}`;
+  }
+  return '';
+};
+
+const createAvatarWriteSnapshot = ({ target = null, store = null } = {}) => ({
+  targetId: trim(target?.id),
+  scopeId: getStoreScopeId(store),
+  generation: getTargetGenerationToken(target),
+  avatarRevision: createMediaAssetFieldRevision(trim(target?.avatar)),
+});
+
+const validateAvatarWriteSnapshot = ({ snapshot = null, store = null } = {}) => {
+  const targetId = trim(snapshot?.targetId);
+  if (!targetId) return { ok: false, reason: 'target_not_found', target: null };
+  if (getStoreScopeId(store) !== trim(snapshot?.scopeId)) {
+    return { ok: false, reason: 'target_scope_changed', target: null };
+  }
+  const target = getStoreItem(store, targetId);
+  if (!target) return { ok: false, reason: 'target_not_found', target: null };
+  const generation = trim(snapshot?.generation);
+  if (generation && getTargetGenerationToken(target) !== generation) {
+    return { ok: false, reason: 'target_recreated_during_operation', target };
+  }
+  if (createMediaAssetFieldRevision(trim(target.avatar)) !== snapshot?.avatarRevision) {
+    return { ok: false, reason: 'avatar_changed_during_operation', target };
+  }
+  return { ok: true, reason: '', target };
+};
+
+const buildAvatarWriteConflict = ({ validation, kind, target, stage = 'prepare' } = {}) => ({
+  ok: false,
+  reason: validation?.reason || 'avatar_changed_during_operation',
+  message: stage === 'confirm'
+    ? '确认期间目标头像或身份已变化，请重新执行头像设置。'
+    : '图片准备期间目标头像或身份已变化，未覆盖用户的新内容。',
+  kind,
+  target: summarizeProfile(validation?.target || target),
+});
+
+const getWallpaperRevisionValue = settings => ({
+  wallpaper: isPlainObject(settings?.wallpaper) ? settings.wallpaper : null,
+  chatBg: settings?.chatBg ?? null,
+});
+
+const createWallpaperWriteSnapshot = ({ target = null, chatStore = null, contactsStore = null } = {}) => {
+  const sessionId = trim(target?.id);
+  const contact = getStoreItem(contactsStore, sessionId);
+  const currentSettings = chatStore?.getSessionSettings?.(sessionId);
+  const settings = isPlainObject(currentSettings) ? currentSettings : {};
+  const canCheckSession = typeof chatStore?.hasSession === 'function';
+  return {
+    sessionId,
+    chatScopeId: getStoreScopeId(chatStore),
+    contactsScopeId: getStoreScopeId(contactsStore),
+    contactExpected: Boolean(contact),
+    contactGeneration: getTargetGenerationToken(contact),
+    sessionExpected: canCheckSession ? chatStore.hasSession(sessionId) === true : null,
+    wallpaperRevision: createMediaAssetFieldRevision(getWallpaperRevisionValue(settings)),
+    hasExistingWallpaper: Boolean(settings?.wallpaper?.path || settings?.wallpaper?.url || settings?.chatBg),
+    previousPath: trim(settings?.wallpaper?.path),
+  };
+};
+
+const validateWallpaperWriteSnapshot = ({ snapshot = null, chatStore = null, contactsStore = null } = {}) => {
+  const sessionId = trim(snapshot?.sessionId);
+  if (!sessionId) return { ok: false, reason: 'session_not_found', settings: null, target: null };
+  if (
+    getStoreScopeId(chatStore) !== trim(snapshot?.chatScopeId) ||
+    getStoreScopeId(contactsStore) !== trim(snapshot?.contactsScopeId)
+  ) {
+    return { ok: false, reason: 'target_scope_changed', settings: null, target: null };
+  }
+  const contact = getStoreItem(contactsStore, sessionId);
+  if (snapshot?.contactExpected === true && !contact) {
+    return { ok: false, reason: 'session_not_found', settings: null, target: null };
+  }
+  const contactGeneration = trim(snapshot?.contactGeneration);
+  if (contactGeneration && getTargetGenerationToken(contact) !== contactGeneration) {
+    return { ok: false, reason: 'target_recreated_during_operation', settings: null, target: contact };
+  }
+  if (
+    snapshot?.sessionExpected === true &&
+    typeof chatStore?.hasSession === 'function' &&
+    chatStore.hasSession(sessionId) !== true
+  ) {
+    return { ok: false, reason: 'session_not_found', settings: null, target: contact };
+  }
+  const currentSettings = chatStore?.getSessionSettings?.(sessionId);
+  const settings = isPlainObject(currentSettings) ? currentSettings : {};
+  if (createMediaAssetFieldRevision(getWallpaperRevisionValue(settings)) !== snapshot?.wallpaperRevision) {
+    return { ok: false, reason: 'wallpaper_changed_during_operation', settings, target: contact };
+  }
+  return { ok: true, reason: '', settings, target: contact };
+};
+
+const buildWallpaperWriteConflict = ({ validation, target, sessionId, stage = 'prepare' } = {}) => ({
+  ok: false,
+  reason: validation?.reason || 'wallpaper_changed_during_operation',
+  message: stage === 'confirm'
+    ? '确认期间目标聊天室或壁纸已变化，请重新执行壁纸设置。'
+    : '图片准备期间目标聊天室或壁纸已变化，未覆盖用户的新内容。',
+  sessionId,
+  sessionName: trim(target?.name || sessionId),
+});
+
 const normalizeKey = value => trim(value).toLowerCase().replace(/\s+/g, '');
 
 const listStoreItems = store => (
@@ -188,6 +332,7 @@ export const createMaidMediaAssetTools = ({
   chatStore = null,
   prepareImage = defaultPrepareImage,
   saveWallpaper = null,
+  deleteWallpaper = null,
   applyChatSettings = null,
   refreshChatAndContacts = null,
   getCurrentSessionId = () => '',
@@ -201,6 +346,10 @@ export const createMaidMediaAssetTools = ({
   // 工具运行期图片池：联网下载与生图写入，头像/壁纸工具经 attachmentId 取用。
   const fetchedImages = [];
   const FETCHED_IMAGE_LIMIT = 6;
+  const personaAvatarPreflightSnapshots = new WeakMap();
+  const userAvatarPreflightSnapshots = new WeakMap();
+  const contactAvatarPreflightSnapshots = new WeakMap();
+  const wallpaperPreflightSnapshots = new WeakMap();
   const prepareAndCacheImage = async ({
     args = {},
     context = {},
@@ -281,8 +430,16 @@ export const createMaidMediaAssetTools = ({
     (!kind || context?.toolSafety?.request?.kind === kind)
   );
 
-  const buildAvatarSafetyPreflight = ({ kind = 'profile', resolveTarget = null, title = '覆盖头像' } = {}) => async (args = {}) => {
+  const buildAvatarSafetyPreflight = ({
+    kind = 'profile',
+    store = null,
+    resolveTarget = null,
+    snapshots = null,
+    title = '覆盖头像',
+  } = {}) => async (args = {}) => {
     const target = resolveTarget?.(args);
+    const snapshot = createAvatarWriteSnapshot({ target, store });
+    if (args && typeof args === 'object') snapshots?.set?.(args, snapshot);
     if (!target?.id || !trim(target.avatar)) {
       return { destructive: false, operationType: 'set_avatar' };
     }
@@ -297,6 +454,7 @@ export const createMaidMediaAssetTools = ({
       danger: true,
       details: {
         targetId: trim(target.id),
+        targetScopeId: snapshot.scopeId,
       },
       onDeny: {
         action: 'skip',
@@ -305,13 +463,33 @@ export const createMaidMediaAssetTools = ({
     };
   };
 
-  const makeAvatarSetter = ({ kind = 'persona', store = null, resolveTarget = null, update = null } = {}) => async (args = {}, context = {}) => {
-    const target = resolveTarget?.(args);
+  const makeAvatarSetter = ({
+    kind = 'persona',
+    store = null,
+    resolveTarget = null,
+    update = null,
+    snapshots = null,
+    targetLabel = kind,
+    afterUpdate = null,
+    updateAvailable = null,
+    updateUnavailableReason = `${kind}_update_unavailable`,
+    updateUnavailableMessage = '头像写入能力不可用。',
+  } = {}) => async (args = {}, context = {}) => {
+    const preflightSnapshot = args && typeof args === 'object' ? snapshots?.get?.(args) : null;
+    const initiallyResolved = preflightSnapshot?.targetId
+      ? getStoreItem(store, preflightSnapshot.targetId)
+      : resolveTarget?.(args);
+    const snapshot = preflightSnapshot || createAvatarWriteSnapshot({ target: initiallyResolved, store });
+    let validation = validateAvatarWriteSnapshot({ snapshot, store });
+    const target = validation.target || initiallyResolved;
     if (!target?.id) {
-      return { ok: false, reason: `${kind}_not_found`, message: `没有找到要设置头像的${kind}。` };
+      return { ok: false, reason: `${kind}_not_found`, message: `没有找到要设置头像的${targetLabel}。` };
     }
-    if (typeof update !== 'function') {
-      return { ok: false, reason: `${kind}_update_unavailable`, message: '头像写入能力不可用。' };
+    if (!validation.ok) {
+      return buildAvatarWriteConflict({ validation, kind, target, stage: 'confirm' });
+    }
+    if (typeof update !== 'function' || updateAvailable?.() === false) {
+      return { ok: false, reason: updateUnavailableReason, message: updateUnavailableMessage };
     }
     if (trim(target.avatar) && !hasAllowedToolSafety(context, `${kind}.avatar.replace`)) {
       const confirmed = typeof confirmDestructiveWrite === 'function'
@@ -335,12 +513,21 @@ export const createMaidMediaAssetTools = ({
         };
       }
     }
+    validation = validateAvatarWriteSnapshot({ snapshot, store });
+    if (!validation.ok) {
+      return buildAvatarWriteConflict({ validation, kind, target, stage: 'confirm' });
+    }
     const image = await prepareAndCacheImage({ args, context, purpose: 'avatar', target });
     if (image?.ok === false) return image;
-    const updated = await update(target, image.dataUrl);
+    validation = validateAvatarWriteSnapshot({ snapshot, store });
+    if (!validation.ok) {
+      return buildAvatarWriteConflict({ validation, kind, target });
+    }
+    const updated = await update(validation.target, image.dataUrl);
     if (!updated) {
       return { ok: false, reason: `${kind}_update_failed`, target: summarizeProfile(target) };
     }
+    await afterUpdate?.(updated || validation.target);
     return {
       ok: true,
       kind,
@@ -676,7 +863,9 @@ export const createMaidMediaAssetTools = ({
         destructive: 'conditional',
         preflight: buildAvatarSafetyPreflight({
           kind: 'persona',
+          store: personaStore,
           resolveTarget: resolvePersonaTarget,
+          snapshots: personaAvatarPreflightSnapshots,
           title: '覆盖头像',
         }),
       },
@@ -685,6 +874,8 @@ export const createMaidMediaAssetTools = ({
         store: personaStore,
         resolveTarget: resolvePersonaTarget,
         update: (target, avatar) => setStoreAvatar(personaStore, target, avatar),
+        snapshots: personaAvatarPreflightSnapshots,
+        targetLabel: '角色',
       }),
       summarizeResult: result => result?.ok
         ? `set character avatar ${trim(result?.target?.name, result?.target?.id || '-')}`
@@ -723,7 +914,9 @@ export const createMaidMediaAssetTools = ({
         destructive: 'conditional',
         preflight: buildAvatarSafetyPreflight({
           kind: 'user',
+          store: userStore,
           resolveTarget: resolveUserTarget,
+          snapshots: userAvatarPreflightSnapshots,
           title: '覆盖头像',
         }),
       },
@@ -732,6 +925,8 @@ export const createMaidMediaAssetTools = ({
         store: userStore,
         resolveTarget: resolveUserTarget,
         update: (target, avatar) => setStoreAvatar(userStore, target, avatar),
+        snapshots: userAvatarPreflightSnapshots,
+        targetLabel: '用户',
       }),
       summarizeResult: result => result?.ok
         ? `set user avatar ${trim(result?.target?.name, result?.target?.id || '-')}`
@@ -772,52 +967,30 @@ export const createMaidMediaAssetTools = ({
         destructive: 'conditional',
         preflight: buildAvatarSafetyPreflight({
           kind: 'contact',
+          store: contactsStore,
           resolveTarget: resolveContactTarget,
+          snapshots: contactAvatarPreflightSnapshots,
           title: '覆盖联系人头像',
         }),
       },
-      execute: async (args = {}, context = {}) => {
-        const target = resolveContactTarget(args);
-        if (!target?.id) {
-          return { ok: false, reason: 'contact_not_found', message: '没有找到要设置头像的联系人或聊天室。' };
-        }
-        if (typeof contactsStore?.upsertContact !== 'function') {
-          return { ok: false, reason: 'contacts_store_unavailable', message: '联系人写入能力不可用。' };
-        }
-        if (trim(target.avatar) && !hasAllowedToolSafety(context, 'contact.avatar.replace')) {
-          const confirmed = typeof confirmDestructiveWrite === 'function'
-            ? await confirmDestructiveWrite({
-              kind: 'contact.avatar.replace',
-              title: '覆盖联系人头像',
-              message: `「${trim(target.name || target.id)}」已有头像。这个动作会替换现有头像。`,
-              confirmText: '覆盖',
-              cancelText: '取消',
-              danger: true,
-              targetId: trim(target.id),
-            })
-            : false;
-          if (confirmed !== true) {
-            return {
-              ok: false,
-              skipped: true,
-              reason: 'destructive_write_cancelled',
-              kind: 'contact',
-              target: summarizeProfile(target),
-            };
-          }
-        }
-        const image = await prepareAndCacheImage({ args, context, purpose: 'avatar', target });
-        if (image?.ok === false) return image;
-        contactsStore.upsertContact({ ...target, avatar: image.dataUrl });
-        await refreshChatAndContacts?.({ reason: 'maid_contact_avatar', sessionId: target.id });
-        const next = findStoreItem(contactsStore, target.id) || { ...target, avatar: image.dataUrl };
-        return {
-          ok: true,
-          kind: 'contact',
-          target: summarizeProfile(next),
-          image: publicImageMeta(image),
-        };
-      },
+      execute: makeAvatarSetter({
+        kind: 'contact',
+        store: contactsStore,
+        resolveTarget: resolveContactTarget,
+        snapshots: contactAvatarPreflightSnapshots,
+        targetLabel: '联系人或聊天室',
+        updateAvailable: () => typeof contactsStore?.upsertContact === 'function',
+        updateUnavailableReason: 'contacts_store_unavailable',
+        updateUnavailableMessage: '联系人写入能力不可用。',
+        update: async (target, avatar) => {
+          contactsStore.upsertContact({ id: target.id, avatar });
+          return findStoreItem(contactsStore, target.id) || { ...target, avatar };
+        },
+        afterUpdate: target => refreshChatAndContacts?.({
+          reason: 'maid_contact_avatar',
+          sessionId: target.id,
+        }),
+      }),
       summarizeResult: result => result?.ok
         ? `set contact avatar ${trim(result?.target?.name, result?.target?.id || '-')}`
         : `set contact avatar failed: ${trim(result?.reason, 'failed')}`,
@@ -860,10 +1033,9 @@ export const createMaidMediaAssetTools = ({
         preflight: async (args = {}) => {
           const target = resolveSessionTarget(args);
           const sessionId = trim(target?.id);
-          const existing = isPlainObject(chatStore?.getSessionSettings?.(sessionId))
-            ? chatStore.getSessionSettings(sessionId)
-            : {};
-          if (!sessionId || !(existing?.wallpaper?.path || existing?.wallpaper?.url || existing?.chatBg)) {
+          const snapshot = createWallpaperWriteSnapshot({ target, chatStore, contactsStore });
+          if (args && typeof args === 'object') wallpaperPreflightSnapshots.set(args, snapshot);
+          if (!sessionId || !snapshot.hasExistingWallpaper) {
             return { destructive: false, operationType: 'set_wallpaper' };
           }
           return {
@@ -877,6 +1049,7 @@ export const createMaidMediaAssetTools = ({
             danger: true,
             details: {
               sessionId,
+              targetScopeId: snapshot.chatScopeId,
             },
             onDeny: {
               action: 'skip',
@@ -886,17 +1059,33 @@ export const createMaidMediaAssetTools = ({
         },
       },
       execute: async (args = {}, context = {}) => {
-        const target = resolveSessionTarget(args);
+        const preflightSnapshot = args && typeof args === 'object'
+          ? wallpaperPreflightSnapshots.get(args)
+          : null;
+        const initiallyResolved = preflightSnapshot?.sessionId
+          ? (findStoreItem(contactsStore, preflightSnapshot.sessionId) || {
+              id: preflightSnapshot.sessionId,
+              name: preflightSnapshot.sessionId,
+            })
+          : resolveSessionTarget(args);
+        const snapshot = preflightSnapshot || createWallpaperWriteSnapshot({
+          target: initiallyResolved,
+          chatStore,
+          contactsStore,
+        });
+        let validation = validateWallpaperWriteSnapshot({ snapshot, chatStore, contactsStore });
+        const target = validation.target || initiallyResolved;
         const sessionId = trim(target?.id);
         if (!sessionId) {
           return { ok: false, reason: 'session_not_found', message: '没有找到要设置壁纸的聊天室。' };
         }
+        if (!validation.ok) {
+          return buildWallpaperWriteConflict({ validation, target, sessionId, stage: 'confirm' });
+        }
         if (!chatStore || typeof chatStore.setSessionSettings !== 'function') {
           return { ok: false, reason: 'chat_settings_unavailable', message: '聊天室设置写入能力不可用。' };
         }
-        const existing = isPlainObject(chatStore.getSessionSettings?.(sessionId))
-          ? chatStore.getSessionSettings(sessionId)
-          : {};
+        const existing = validation.settings || {};
         if ((existing?.wallpaper?.path || existing?.wallpaper?.url || existing?.chatBg) && !hasAllowedToolSafety(context, 'session.wallpaper.replace')) {
           const confirmed = typeof confirmDestructiveWrite === 'function'
             ? await confirmDestructiveWrite({
@@ -919,8 +1108,16 @@ export const createMaidMediaAssetTools = ({
             };
           }
         }
+        validation = validateWallpaperWriteSnapshot({ snapshot, chatStore, contactsStore });
+        if (!validation.ok) {
+          return buildWallpaperWriteConflict({ validation, target, sessionId, stage: 'confirm' });
+        }
         const image = await prepareAndCacheImage({ args, context, purpose: 'wallpaper', target });
         if (image?.ok === false) return image;
+        validation = validateWallpaperWriteSnapshot({ snapshot, chatStore, contactsStore });
+        if (!validation.ok) {
+          return buildWallpaperWriteConflict({ validation, target, sessionId });
+        }
         let saved = null;
         if (typeof saveWallpaper === 'function') {
           try {
@@ -929,9 +1126,23 @@ export const createMaidMediaAssetTools = ({
               dataUrl: image.dataUrl,
               fileName: image.name || 'wallpaper',
               mimeType: image.mime,
-              previousPath: trim(existing?.wallpaper?.path),
+              previousPath: '',
             });
           } catch {}
+        }
+        validation = validateWallpaperWriteSnapshot({ snapshot, chatStore, contactsStore });
+        if (!validation.ok) {
+          const orphanPath = trim(saved?.path);
+          if (orphanPath && typeof deleteWallpaper === 'function') {
+            try { await deleteWallpaper({ sessionId, path: orphanPath }); } catch {}
+          }
+          return {
+            ok: false,
+            reason: validation.reason,
+            message: '壁纸保存期间用户已更换目标壁纸，女仆结果未写回。',
+            sessionId,
+            sessionName: trim(target?.name || sessionId),
+          };
         }
         const opacity = Math.max(0.1, Math.min(1, Number(args.opacity || 1) || 1));
         const wallpaper = saved?.path
@@ -963,12 +1174,20 @@ export const createMaidMediaAssetTools = ({
               source: 'maid',
             };
         const nextSettings = {
-          ...existing,
+          ...(validation.settings || {}),
           wallpaper,
         };
         delete nextSettings.chatBg;
         chatStore.setSessionSettings(sessionId, nextSettings);
         await applyChatSettings?.(sessionId, nextSettings);
+        const previousPath = trim(snapshot.previousPath);
+        if (
+          previousPath &&
+          previousPath !== trim(wallpaper.path) &&
+          typeof deleteWallpaper === 'function'
+        ) {
+          try { await deleteWallpaper({ sessionId, path: previousPath }); } catch {}
+        }
         await refreshChatAndContacts?.({ reason: 'maid_session_wallpaper', sessionId });
         return {
           ok: true,

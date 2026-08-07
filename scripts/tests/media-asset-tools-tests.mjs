@@ -486,3 +486,390 @@ const attachment = {
   assert.equal(generatedCalls.length, 1, '宽高比不符必须在付费生图前拦截');
   console.log('ok - media generation enforces frozen design and aspect before paid calls');
 }
+
+{
+  const personas = new Map([
+    ['p1', { id: 'p1', name: '角色A', avatar: 'old-a', created: 1 }],
+    ['p2', { id: 'p2', name: '角色B', avatar: 'old-b', created: 2 }],
+  ]);
+  let activeId = 'p1';
+  const tools = createMaidMediaAssetTools({
+    personaStore: {
+      getAll: () => Array.from(personas.values()),
+      get: id => personas.get(id) || null,
+      getActive: () => personas.get(activeId),
+      update: async (id, patch) => {
+        const next = { ...personas.get(id), ...patch };
+        personas.set(id, next);
+        return next;
+      },
+    },
+    prepareImage: async () => ({
+      dataUrl: 'maid-avatar',
+      width: 256,
+      height: 256,
+      mime: 'image/webp',
+      bytes: 100,
+    }),
+  });
+  const registry = createAgentToolRegistry({
+    permissionEvaluator: createAgentPermissionEvaluator({
+      defaultDecision: AGENT_PERMISSION_DECISIONS.allow,
+    }),
+    logger: { warn() {} },
+  });
+  registry.registerMany(tools);
+  const output = await registry.executeTool('persona.set_avatar', {}, {
+    maidAttachments: [attachment],
+    requestToolConfirmation: () => {
+      activeId = 'p2';
+      return true;
+    },
+  });
+  assert.equal(output.result.ok, true);
+  assert.equal(personas.get('p1').avatar, 'maid-avatar', '确认时固定的角色必须保持为写入目标');
+  assert.equal(personas.get('p2').avatar, 'old-b', '切换后的当前角色不得被误写');
+  console.log('ok - avatar confirmation pins the original active target');
+}
+
+{
+  const personas = new Map([
+    ['p1', { id: 'p1', name: '角色A', avatar: 'old-avatar', created: 1 }],
+  ]);
+  const tools = createMaidMediaAssetTools({
+    personaStore: {
+      getAll: () => Array.from(personas.values()),
+      get: id => personas.get(id) || null,
+      getActive: () => personas.get('p1'),
+      update: async (id, patch) => {
+        const next = { ...personas.get(id), ...patch };
+        personas.set(id, next);
+        return next;
+      },
+    },
+    confirmDestructiveWrite: async () => true,
+    prepareImage: async () => {
+      personas.set('p1', { ...personas.get('p1'), avatar: 'user-avatar' });
+      return {
+        dataUrl: 'maid-avatar',
+        width: 256,
+        height: 256,
+        mime: 'image/webp',
+        bytes: 100,
+      };
+    },
+  });
+  const result = await getTool(tools, 'persona.set_avatar').execute(
+    { target: '角色A' },
+    { maidAttachments: [attachment] },
+  );
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, 'avatar_changed_during_operation');
+  assert.equal(personas.get('p1').avatar, 'user-avatar');
+  console.log('ok - avatar writeback rejects a user replacement during image preparation');
+}
+
+{
+  const contacts = new Map([
+    ['room-1', {
+      id: 'room-1',
+      name: '聊天室A',
+      avatar: 'old-avatar',
+      description: '旧简介',
+      labels: ['旧标签'],
+      addedAt: 1,
+    }],
+  ]);
+  const contactsStore = {
+    scopeId: 'persona-a',
+    listContacts: () => Array.from(contacts.values()),
+    getContact: id => contacts.get(id) || null,
+    upsertContact: patch => contacts.set(patch.id, { ...contacts.get(patch.id), ...patch }),
+  };
+  const tools = createMaidMediaAssetTools({
+    contactsStore,
+    getCurrentSessionId: () => 'room-1',
+    confirmDestructiveWrite: async () => true,
+    prepareImage: async () => {
+      contacts.set('room-1', {
+        ...contacts.get('room-1'),
+        description: '用户新简介',
+        labels: ['用户新标签'],
+      });
+      return {
+        dataUrl: 'maid-avatar',
+        width: 256,
+        height: 256,
+        mime: 'image/webp',
+        bytes: 100,
+      };
+    },
+  });
+  const result = await getTool(tools, 'contact.set_avatar').execute(
+    { target: '聊天室A' },
+    { maidAttachments: [attachment] },
+  );
+  assert.equal(result.ok, true);
+  assert.equal(contacts.get('room-1').avatar, 'maid-avatar');
+  assert.equal(contacts.get('room-1').description, '用户新简介');
+  assert.deepEqual(contacts.get('room-1').labels, ['用户新标签']);
+  console.log('ok - contact avatar patch preserves non-overlapping user profile edits');
+}
+
+{
+  const contacts = new Map([
+    ['room-a', { id: 'room-a', name: '聊天室A', avatar: '', addedAt: 1 }],
+    ['room-b', { id: 'room-b', name: '聊天室B', avatar: '', addedAt: 2 }],
+  ]);
+  const settings = new Map([
+    ['room-a', { wallpaper: { path: 'wallpapers/room-a/old.jpg', updatedAt: 1 } }],
+    ['room-b', { wallpaper: { path: 'wallpapers/room-b/old.jpg', updatedAt: 1 } }],
+  ]);
+  let currentSessionId = 'room-a';
+  const tools = createMaidMediaAssetTools({
+    contactsStore: {
+      scopeId: 'persona-a',
+      listContacts: () => Array.from(contacts.values()),
+      getContact: id => contacts.get(id) || null,
+    },
+    chatStore: {
+      scopeId: 'persona-a',
+      getSessionSettings: id => settings.get(id) || {},
+      setSessionSettings: (id, next) => settings.set(id, next),
+    },
+    getCurrentSessionId: () => currentSessionId,
+    prepareImage: async () => ({
+      dataUrl: 'maid-wallpaper',
+      width: 1600,
+      height: 900,
+      mime: 'image/jpeg',
+      bytes: 100,
+    }),
+    saveWallpaper: async ({ sessionId }) => ({ path: `wallpapers/${sessionId}/maid.jpg` }),
+    deleteWallpaper: async () => true,
+  });
+  const registry = createAgentToolRegistry({
+    permissionEvaluator: createAgentPermissionEvaluator({
+      defaultDecision: AGENT_PERMISSION_DECISIONS.allow,
+    }),
+    logger: { warn() {} },
+  });
+  registry.registerMany(tools);
+  const output = await registry.executeTool('session.set_wallpaper', {}, {
+    maidAttachments: [attachment],
+    requestToolConfirmation: () => {
+      currentSessionId = 'room-b';
+      return true;
+    },
+  });
+  assert.equal(output.result.ok, true);
+  assert.equal(settings.get('room-a').wallpaper.path, 'wallpapers/room-a/maid.jpg');
+  assert.equal(settings.get('room-b').wallpaper.path, 'wallpapers/room-b/old.jpg');
+  console.log('ok - wallpaper confirmation pins the original current session');
+}
+
+{
+  const contacts = new Map([
+    ['room-1', { id: 'room-1', name: '聊天室A', avatar: '', addedAt: 1 }],
+  ]);
+  const settings = new Map([
+    ['room-1', {
+      bubbleColor: '#111111',
+      wallpaper: { path: 'wallpapers/room-1/old.jpg', updatedAt: 1 },
+    }],
+  ]);
+  const deletedPaths = [];
+  const tools = createMaidMediaAssetTools({
+    contactsStore: {
+      scopeId: 'persona-a',
+      listContacts: () => Array.from(contacts.values()),
+      getContact: id => contacts.get(id) || null,
+    },
+    chatStore: {
+      scopeId: 'persona-a',
+      getSessionSettings: id => settings.get(id) || {},
+      setSessionSettings: (id, next) => settings.set(id, next),
+    },
+    getCurrentSessionId: () => 'room-1',
+    confirmDestructiveWrite: async () => true,
+    prepareImage: async () => {
+      settings.set('room-1', { ...settings.get('room-1'), bubbleColor: '#abcdef' });
+      return {
+        dataUrl: 'maid-wallpaper',
+        width: 1600,
+        height: 900,
+        mime: 'image/jpeg',
+        bytes: 100,
+      };
+    },
+    saveWallpaper: async () => ({ path: 'wallpapers/room-1/maid.jpg' }),
+    deleteWallpaper: async ({ path }) => deletedPaths.push(path),
+  });
+  const result = await getTool(tools, 'session.set_wallpaper').execute(
+    { target: '聊天室A' },
+    { maidAttachments: [attachment] },
+  );
+  assert.equal(result.ok, true);
+  assert.equal(settings.get('room-1').bubbleColor, '#abcdef');
+  assert.equal(settings.get('room-1').wallpaper.path, 'wallpapers/room-1/maid.jpg');
+  assert.deepEqual(deletedPaths, ['wallpapers/room-1/old.jpg']);
+  console.log('ok - wallpaper patch preserves non-overlapping settings and retires the old file after commit');
+}
+
+{
+  const contacts = new Map([
+    ['room-1', { id: 'room-1', name: '聊天室A', avatar: '', addedAt: 1 }],
+  ]);
+  const userWallpaper = { path: 'wallpapers/room-1/user.jpg', updatedAt: 2 };
+  const settings = new Map([
+    ['room-1', { wallpaper: { path: 'wallpapers/room-1/old.jpg', updatedAt: 1 } }],
+  ]);
+  const cleaned = [];
+  const tools = createMaidMediaAssetTools({
+    contactsStore: {
+      scopeId: 'persona-a',
+      listContacts: () => Array.from(contacts.values()),
+      getContact: id => contacts.get(id) || null,
+    },
+    chatStore: {
+      scopeId: 'persona-a',
+      getSessionSettings: id => settings.get(id) || {},
+      setSessionSettings: (id, next) => settings.set(id, next),
+    },
+    getCurrentSessionId: () => 'room-1',
+    confirmDestructiveWrite: async () => true,
+    prepareImage: async () => ({
+      dataUrl: 'maid-wallpaper',
+      width: 1600,
+      height: 900,
+      mime: 'image/jpeg',
+      bytes: 100,
+    }),
+    saveWallpaper: async () => {
+      settings.set('room-1', { ...settings.get('room-1'), wallpaper: userWallpaper });
+      return { path: 'wallpapers/room-1/maid.jpg' };
+    },
+    deleteWallpaper: async ({ path }) => cleaned.push(path),
+  });
+  const result = await getTool(tools, 'session.set_wallpaper').execute(
+    { target: '聊天室A' },
+    { maidAttachments: [attachment] },
+  );
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, 'wallpaper_changed_during_operation');
+  assert.equal(settings.get('room-1').wallpaper, userWallpaper);
+  assert.deepEqual(cleaned, ['wallpapers/room-1/maid.jpg'], '冲突后只清理女仆刚保存的孤儿文件');
+  console.log('ok - wallpaper writeback rejects a user replacement during native save');
+}
+
+{
+  const contacts = new Map([
+    ['room-1', { id: 'room-1', name: '聊天室A', avatar: '', addedAt: 1 }],
+  ]);
+  const chatStore = {
+    scopeId: 'persona-a',
+    getSessionSettings: () => ({}),
+    setSessionSettings: () => { throw new Error('scope drift must block before write'); },
+  };
+  let saved = 0;
+  const tools = createMaidMediaAssetTools({
+    contactsStore: {
+      scopeId: 'persona-a',
+      listContacts: () => Array.from(contacts.values()),
+      getContact: id => contacts.get(id) || null,
+    },
+    chatStore,
+    getCurrentSessionId: () => 'room-1',
+    prepareImage: async () => {
+      chatStore.scopeId = 'persona-b';
+      return {
+        dataUrl: 'maid-wallpaper',
+        width: 1600,
+        height: 900,
+        mime: 'image/jpeg',
+        bytes: 100,
+      };
+    },
+    saveWallpaper: async () => {
+      saved += 1;
+      return { path: 'wallpapers/room-1/maid.jpg' };
+    },
+  });
+  const result = await getTool(tools, 'session.set_wallpaper').execute(
+    { target: '聊天室A' },
+    { maidAttachments: [attachment] },
+  );
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, 'target_scope_changed');
+  assert.equal(saved, 0);
+  console.log('ok - wallpaper writeback rejects a persona scope switch before persistence');
+}
+
+{
+  const personas = new Map([
+    ['p1', { id: 'p1', name: '角色A', avatar: 'same-avatar', created: 1 }],
+  ]);
+  const tools = createMaidMediaAssetTools({
+    personaStore: {
+      getAll: () => Array.from(personas.values()),
+      get: id => personas.get(id) || null,
+      getActive: () => personas.get('p1'),
+      update: async (id, patch) => {
+        const next = { ...personas.get(id), ...patch };
+        personas.set(id, next);
+        return next;
+      },
+    },
+    confirmDestructiveWrite: async () => true,
+    prepareImage: async () => {
+      personas.set('p1', { id: 'p1', name: '重建角色', avatar: 'same-avatar', created: 2 });
+      return {
+        dataUrl: 'maid-avatar',
+        width: 256,
+        height: 256,
+        mime: 'image/webp',
+        bytes: 100,
+      };
+    },
+  });
+  const result = await getTool(tools, 'persona.set_avatar').execute(
+    { target: '角色A' },
+    { maidAttachments: [attachment] },
+  );
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, 'target_recreated_during_operation');
+  assert.equal(personas.get('p1').avatar, 'same-avatar');
+  console.log('ok - avatar writeback rejects delete-and-recreate ABA even when the field value matches');
+}
+
+{
+  const users = new Map([
+    ['u1', { id: 'u1', name: '用户A', avatar: '', created: 1 }],
+  ]);
+  const tools = createMaidMediaAssetTools({
+    userStore: {
+      getAll: () => Array.from(users.values()),
+      get: id => users.get(id) || null,
+      getActive: () => users.get('u1'),
+      update: async (id, patch) => {
+        const next = { ...users.get(id), ...patch };
+        users.set(id, next);
+        return next;
+      },
+    },
+    prepareImage: async () => ({
+      dataUrl: 'maid-user-avatar',
+      width: 256,
+      height: 256,
+      mime: 'image/webp',
+      bytes: 100,
+    }),
+  });
+  const result = await getTool(tools, 'user.set_avatar').execute(
+    { target: '用户A' },
+    { maidAttachments: [attachment] },
+  );
+  assert.equal(result.ok, true);
+  assert.equal(users.get('u1').avatar, 'maid-user-avatar');
+  console.log('ok - shared guarded avatar setter is wired for user profiles');
+}

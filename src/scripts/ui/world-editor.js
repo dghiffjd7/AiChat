@@ -7,6 +7,7 @@
 
 import { LLMClient } from '../api/client.js';
 import { bindBackdropActivation } from './backdrop-activation-utils.js';
+import { appChoice } from './app-confirm.js';
 import { canInitClient as canUseApiConfig } from '../api/client-config-utils.js';
 import { ConfigManager } from '../storage/config.js';
 import { logger } from '../utils/logger.js';
@@ -71,6 +72,14 @@ import {
     resolveWorldEditorBridgeContext,
     saveWorldInfoWithName,
 } from './world-editor/world-editor-bridge-utils.js';
+import {
+    formatWorldbookConflictPath,
+    mergeWorldbookChanges,
+} from './world-editor/worldbook-merge-utils.js';
+import {
+    getCompactPageItems,
+    paginateWorldEntries,
+} from './world-editor/world-editor-pagination-utils.js';
 import { isWorldMotionReduced, setWorldDisclosureState } from './world-management-motion-utils.js';
 import {
     ensureWorldVariableInStore,
@@ -218,6 +227,32 @@ const deepClone = (obj) => {
     } catch {
         return JSON.parse(JSON.stringify(obj || {}));
     }
+};
+
+const ENTRY_SAVE_ORIGIN = Symbol('world-editor-entry-save-origin');
+const hasOwn = (value, key) => Boolean(value && Object.prototype.hasOwnProperty.call(value, key));
+
+const getEntrySaveOrigin = (entry, index) => {
+    const inherited = entry?.[ENTRY_SAVE_ORIGIN];
+    if (inherited && typeof inherited === 'object') return inherited;
+    return Object.freeze({
+        promptBlocks: hasOwn(entry, 'promptBlocks'),
+        promptMode: hasOwn(entry, 'promptMode'),
+        nodeGraph: hasOwn(entry, 'nodeGraph'),
+        when: hasOwn(entry, 'when'),
+        scope: hasOwn(entry, 'scope'),
+        latestUserAnchor: hasOwn(entry, 'latestUserAnchor') || hasOwn(entry, 'promptAnchor'),
+        selectiveExplicit: hasOwn(entry, 'selectiveExplicit'),
+        syntheticPromptBlockTitle: String(entry?.comment ?? entry?.title ?? '').trim() || `内容 ${index + 1}`,
+    });
+};
+
+const attachEntrySaveOrigin = (entry, origin) => {
+    Object.defineProperty(entry, ENTRY_SAVE_ORIGIN, {
+        value: origin,
+        configurable: true,
+    });
+    return entry;
 };
 
 const escapeHtml = (value) => String(value ?? '')
@@ -469,6 +504,7 @@ const buildWorldAiContinueMessages = (template, inputText, draft) => {
 };
 
 const normalizeEntry = (entry = {}, index = 0, options = {}) => {
+    const saveOrigin = getEntrySaveOrigin(entry, index);
     const e = { ...entry };
     const isCharacterCardWorld = options?.characterCardWorld === true;
 
@@ -571,7 +607,30 @@ const normalizeEntry = (entry = {}, index = 0, options = {}) => {
     }
     const firstContent = String(e.promptBlocks?.[0]?.content || '').trim();
     if (firstContent) e.content = firstContent;
-    return e;
+    return attachEntrySaveOrigin(e, saveOrigin);
+};
+
+const compactNormalizedEntryForSave = (entry, index = 0) => {
+    const origin = getEntrySaveOrigin(entry, index);
+    const blocks = Array.isArray(entry.promptBlocks) ? entry.promptBlocks : [];
+    const onlyBlock = blocks.length === 1 ? blocks[0] : null;
+    const isSyntheticPromptBlock = !origin.promptBlocks
+        && onlyBlock
+        && String(onlyBlock.title || '').trim() === origin.syntheticPromptBlockTitle
+        && onlyBlock.enabled === true
+        && String(onlyBlock.content ?? '').trim() === String(entry.content ?? '').trim()
+        && Number(onlyBlock.role) === 0
+        && Number(onlyBlock.priority) === 100
+        && onlyBlock.nodeGraph == null
+        && isTrivialConditionTree(onlyBlock.when);
+    if (isSyntheticPromptBlock) delete entry.promptBlocks;
+    if (!origin.promptMode && entry.promptMode === 'hybrid') delete entry.promptMode;
+    if (!origin.nodeGraph && entry.nodeGraph == null) delete entry.nodeGraph;
+    if (!origin.when && entry.when == null) delete entry.when;
+    if (!origin.scope && Array.isArray(entry.scope) && entry.scope.length === 0) delete entry.scope;
+    if (!origin.latestUserAnchor && !String(entry.latestUserAnchor || '').trim()) delete entry.latestUserAnchor;
+    if (!origin.selectiveExplicit && entry.selectiveExplicit === false) delete entry.selectiveExplicit;
+    return entry;
 };
 
 const createDefaultEntry = (index = 0) => normalizeEntry({ constant: true, selective: false }, index);
@@ -601,6 +660,10 @@ export class WorldEditorModal {
         this.worldName = '';
         this.originalName = '';
         this.data = { name: '', entries: [] };
+        this.baseWorldData = null;
+        this.baseRevision = null;
+        this.baseGeneration = null;
+        this.refBaseEntries = null;
         this.currentIndex = 0;
         this.onSaved = onSaved;
         this.aiOverlay = null;
@@ -688,7 +751,10 @@ export class WorldEditorModal {
         this.refSyncInFlight = false;
         this.refSyncPending = false;
         this.entrySearchTerm = '';
-        this.entryPageSize = 5;
+        this.entrySearchTimer = null;
+        this.entryCommentRenderTimer = null;
+        this.entrySearchCache = new WeakMap();
+        this.entryPageSize = 4;
         this.entryPageIndex = 0;
         this.entrySearchEl = null;
         this.entryPageSizeEl = null;
@@ -696,7 +762,10 @@ export class WorldEditorModal {
         this.entryPageNextBtn = null;
         this.entryPageIndicatorEl = null;
         this.entryDotsEl = null;
-        this.entryPageScrollLock = false;
+        this.entryPageTransitionTimer = null;
+        this.entryPageTransitionTargetEl = null;
+        this.entryPageTransitionScrollEndHandler = null;
+        this.entryPageTransitionToken = 0;
         this.entryTotalPages = 1;
         this.customSelectMenuEl = null;
         this.customSelectMenuAnchor = null;
@@ -706,6 +775,7 @@ export class WorldEditorModal {
         this.blockExpandMap = new Map();
         this.blockExpandMotionPending = '';
         this.blockCollapseTimer = null;
+        this.blockShellPlaceholderHeight = 0;
         this.blockBackViewMap = new Map();
         this.blockConditionTargetMap = new Map();
         this.blockEditorFocusMap = new Map();
@@ -755,11 +825,32 @@ export class WorldEditorModal {
         if (!this.modal) {
             this.createUI();
         }
+        let sourceData = data;
+        let sourceSnapshot = options?.snapshot && typeof options.snapshot === 'object'
+            ? options.snapshot
+            : null;
+        if (!sourceSnapshot) {
+            const { getWorldInfoSnapshot } = resolveWorldEditorBridgeContext();
+            if (typeof getWorldInfoSnapshot === 'function') {
+                try {
+                    sourceSnapshot = await getWorldInfoSnapshot(name);
+                } catch {}
+            }
+        }
+        if (sourceSnapshot?.data && typeof sourceSnapshot.data === 'object') {
+            sourceData = sourceSnapshot.data;
+        }
         const wasClosing = this.modal?.classList.contains('is-closing');
         const wasVisible = this.modal?.style.display !== 'none';
         this.worldName = name;
         this.originalName = name;
-        this.data = deepClone(data || { name, entries: [] });
+        this.data = deepClone(sourceData || { name, entries: [] });
+        this.baseRevision = Number.isFinite(Number(sourceSnapshot?.revision))
+            ? Number(sourceSnapshot.revision)
+            : null;
+        this.baseGeneration = Number.isFinite(Number(sourceSnapshot?.generation))
+            ? Number(sourceSnapshot.generation)
+            : null;
         if (!Array.isArray(this.data.entries)) this.data.entries = [];
         const hasRefs = Array.isArray(this.data.refs) && this.data.refs.length > 0;
         const hasEntries = this.data.entries.length > 0;
@@ -792,18 +883,32 @@ export class WorldEditorModal {
         }
         this.blockManageEntryId = '';
         this.entrySearchTerm = '';
+        this.entrySearchCache = new WeakMap();
+        if (this.entryCommentRenderTimer) {
+            clearTimeout(this.entryCommentRenderTimer);
+            this.entryCommentRenderTimer = null;
+        }
         this.entryPageIndex = 0;
         this.updateBatchBar();
         if (this.nameInputEl) {
             const displayName = String(this.data?.name || name || '').trim();
             this.nameInputEl.value = displayName || '';
         }
+        const baseName = String(this.nameInputEl?.value || this.data?.name || name || '').trim();
+        this.baseWorldData = this.refMode ? null : deepClone(this.prepareForSave(baseName));
+        this.refBaseEntries = this.refMode
+            ? this.data.entries.map((entry, index) => deepClone(compactNormalizedEntryForSave(
+                normalizeEntry(entry, index, { characterCardWorld: isCharacterCardWorld }),
+                index,
+            )))
+            : null;
         if (this.entrySearchEl) this.entrySearchEl.value = '';
-        this.currentIndex = 0;
+        const firstEnabledIndex = this.data.entries.findIndex(entry => !entry?.disable);
+        this.currentIndex = firstEnabledIndex >= 0 ? firstEnabledIndex : 0;
         this.entryListMotionPending = !wasVisible || wasClosing;
         this.editorMotionEntryId = '';
         this.renderList();
-        this.selectEntry(0);
+        this.selectEntry(this.currentIndex);
         this.applyDebugFocus(options);
         this.updateRefModeUI();
         if (this.closeMotionTimer) {
@@ -833,10 +938,19 @@ export class WorldEditorModal {
             clearTimeout(this.refSyncTimer);
             this.refSyncTimer = null;
         }
+        if (this.entrySearchTimer) {
+            clearTimeout(this.entrySearchTimer);
+            this.entrySearchTimer = null;
+        }
+        if (this.entryCommentRenderTimer) {
+            clearTimeout(this.entryCommentRenderTimer);
+            this.entryCommentRenderTimer = null;
+        }
         if (this.blockCollapseTimer) {
             clearTimeout(this.blockCollapseTimer);
             this.blockCollapseTimer = null;
         }
+        this.finishEntryPageTransition();
         if (!this.overlay || !this.modal || this.modal.style.display === 'none') return;
         if (this.modal.classList.contains('is-closing')) return;
 
@@ -1149,7 +1263,7 @@ export class WorldEditorModal {
         this.overlay.style.position = 'fixed';
         this.overlay.style.inset = '0';
         this.overlay.style.background = 'rgba(0,0,0,0.45)';
-        this.overlay.style.zIndex = '22000';
+        this.overlay.style.zIndex = '23000';
         this.overlay.style.padding = 'calc(10px + env(safe-area-inset-top, 0px)) calc(10px + env(safe-area-inset-right, 0px)) calc(10px + env(safe-area-inset-bottom, 0px)) calc(10px + env(safe-area-inset-left, 0px))';
         this.overlay.style.boxSizing = 'border-box';
         this.overlay.style.alignItems = 'center';
@@ -1195,13 +1309,17 @@ export class WorldEditorModal {
                         </div>
                         <div class="world-entries-pager">
                             <span class="world-entries-pager-label">每页</span>
-                            <input id="world-entry-page-size" type="number" min="1" max="200" step="1" list="world-entry-page-sizes" value="5">
+                            <input id="world-entry-page-size" type="number" min="1" max="200" step="1" list="world-entry-page-sizes" value="4">
                             <datalist id="world-entry-page-sizes">
+                                <option value="4"></option>
                                 <option value="5"></option>
                                 <option value="10"></option>
                                 <option value="50"></option>
                                 <option value="100"></option>
                             </datalist>
+                            <button id="world-entry-page-prev" type="button" aria-label="上一页">‹</button>
+                            <span id="world-entry-page-indicator">1/1</span>
+                            <button id="world-entry-page-next" type="button" aria-label="下一页">›</button>
                         </div>
                     </div>
                     <ul id="world-entries-list" class="world-entries-list"></ul>
@@ -1232,9 +1350,13 @@ export class WorldEditorModal {
         if (this.manageBtn) this.manageBtn.onclick = () => this.showManageModal();
         if (this.entrySearchEl) {
             this.entrySearchEl.addEventListener('input', () => {
-                this.entrySearchTerm = String(this.entrySearchEl.value || '');
-                this.entryPageIndex = 0;
-                this.renderList();
+                if (this.entrySearchTimer) clearTimeout(this.entrySearchTimer);
+                this.entrySearchTimer = setTimeout(() => {
+                    this.entrySearchTimer = null;
+                    this.entrySearchTerm = String(this.entrySearchEl.value || '');
+                    this.entryPageIndex = 0;
+                    this.renderList();
+                }, 160);
             });
         }
         if (this.entryPageSizeEl) {
@@ -1248,17 +1370,12 @@ export class WorldEditorModal {
                 this.renderList();
             });
         }
-        if (this.entriesListEl) {
-            this.entriesListEl.addEventListener('scroll', () => {
-                if (this.entryPageScrollLock) return;
-                const width = this.entriesListEl.clientWidth || 1;
-                const idx = Math.round(this.entriesListEl.scrollLeft / width);
-                if (idx !== this.entryPageIndex) {
-                    this.entryPageIndex = idx;
-                    this.updateEntryPageIndicator();
-                }
-            });
-        }
+        this.entryPagePrevBtn?.addEventListener('click', () => {
+            this.changeEntryPage(this.entryPageIndex - 1);
+        });
+        this.entryPageNextBtn?.addEventListener('click', () => {
+            this.changeEntryPage(this.entryPageIndex + 1);
+        });
 
         this.overlay.appendChild(this.modal);
         document.body.appendChild(this.overlay);
@@ -2562,6 +2679,13 @@ export class WorldEditorModal {
                 return;
             }
         }
+        if (next && this.blockExpandMap.get(id) !== true) {
+            // 浮起后卡片脱离文档流；先量下方高度（取小数避免整数取整造成 1px 跳动），
+            // 渲染时用等高占位符防止“基础触发设置”上跳。
+            const shell = this.editorEl?.querySelector?.('#we-block-shell:not(.is-expanded)');
+            const height = Number(shell?.getBoundingClientRect?.().height) || 0;
+            if (height > 0) this.blockShellPlaceholderHeight = height;
+        }
         this.blockExpandMap.set(id, next);
         if (next) this.blockExpandMotionPending = id;
         if (!next) {
@@ -2657,6 +2781,7 @@ export class WorldEditorModal {
             : this.ensureEntryPromptBlocks(entry);
         const first = blocks[0];
         entry.content = String(first?.content || '').trim();
+        this.entrySearchCache?.delete?.(entry);
     }
 
     addPromptBlock(entry) {
@@ -3470,25 +3595,96 @@ export class WorldEditorModal {
         this.customSelectMenuAnchor = anchorEl;
     }
 
-    renderList() {
+    changeEntryPage(nextPageIndex) {
+        const next = Number(nextPageIndex);
+        const total = Math.max(1, Number(this.entryTotalPages) || 1);
+        if (!Number.isInteger(next) || next < 0 || next >= total || next === this.entryPageIndex) return false;
+        const pageDirection = next > this.entryPageIndex ? 1 : -1;
+        this.entryPageIndex = next;
+        this.renderList({ pageDirection });
+        return true;
+    }
+
+    finishEntryPageTransition() {
+        this.entryPageTransitionToken += 1;
+        if (this.entryPageTransitionTimer) {
+            clearTimeout(this.entryPageTransitionTimer);
+            this.entryPageTransitionTimer = null;
+        }
+        const list = this.entriesListEl;
+        if (list && this.entryPageTransitionScrollEndHandler) {
+            list.removeEventListener('scrollend', this.entryPageTransitionScrollEndHandler);
+        }
+        this.entryPageTransitionScrollEndHandler = null;
+        const target = this.entryPageTransitionTargetEl;
+        this.entryPageTransitionTargetEl = null;
+        if (list) {
+            list.classList.remove('is-page-transitioning');
+            target?.classList.remove('is-page-incoming');
+            if (target && list.contains(target)) list.replaceChildren(target);
+            list.scrollLeft = 0;
+        }
+    }
+
+    mountEntryPage(pageEl, previousPageEl = null, pageDirection = 0) {
+        const list = this.entriesListEl;
+        if (!list || !pageEl) return;
+        const direction = Math.sign(Number(pageDirection) || 0);
+        const canSlide = direction !== 0
+            && previousPageEl
+            && previousPageEl.parentElement === list
+            && list.clientWidth > 0
+            && !isWorldMotionReduced();
+        if (!canSlide) {
+            list.replaceChildren(pageEl);
+            list.scrollLeft = 0;
+            return;
+        }
+
+        const width = list.clientWidth;
+        const targetLeft = direction > 0 ? width : 0;
+        pageEl.classList.add('is-page-incoming');
+        previousPageEl.classList.add('is-page-outgoing');
+        list.classList.add('is-page-transitioning');
+        if (direction > 0) {
+            list.replaceChildren(previousPageEl, pageEl);
+            list.scrollLeft = 0;
+        } else {
+            list.replaceChildren(pageEl, previousPageEl);
+            list.scrollLeft = width;
+        }
+        this.entryPageTransitionTargetEl = pageEl;
+        const token = ++this.entryPageTransitionToken;
+        const finish = () => {
+            if (token !== this.entryPageTransitionToken) return;
+            this.finishEntryPageTransition();
+        };
+        const beginScroll = () => {
+            if (token !== this.entryPageTransitionToken || this.entryPageTransitionTargetEl !== pageEl) return;
+            this.entryPageTransitionScrollEndHandler = finish;
+            list.addEventListener('scrollend', finish, { once: true });
+            list.scrollTo({ left: targetLeft, behavior: 'smooth' });
+            this.entryPageTransitionTimer = setTimeout(finish, 520);
+        };
+        requestAnimationFrame(() => requestAnimationFrame(beginScroll));
+    }
+
+    renderList({ pageDirection = 0 } = {}) {
         if (!this.entriesListEl) return;
         this.updateBatchBar();
-        this.entriesListEl.innerHTML = '';
+        this.finishEntryPageTransition();
+        const previousPageEl = this.entriesListEl.querySelector(':scope > .world-entry-page');
         const animateRows = this.entryListMotionPending;
         this.entryListMotionPending = false;
         let motionIndex = 0;
         const searchTerm = this.getEntrySearchTerm();
         const filtered = this.getFilteredEntries(searchTerm);
 
-        const rawSize = Number(this.entryPageSize);
-        const pageSize = Math.max(1, Math.min(200, Number.isFinite(rawSize) ? Math.trunc(rawSize) : 5));
-        this.entryPageSize = pageSize;
-        if (this.entryPageSizeEl) this.entryPageSizeEl.value = String(pageSize);
-
-        const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
-        this.entryTotalPages = totalPages;
-
-        this.entryPageIndex = Math.min(Math.max(0, this.entryPageIndex), totalPages - 1);
+        const page = paginateWorldEntries(filtered, this.entryPageIndex, this.entryPageSize);
+        this.entryPageSize = page.pageSize;
+        this.entryPageIndex = page.pageIndex;
+        this.entryTotalPages = page.totalPages;
+        if (this.entryPageSizeEl) this.entryPageSizeEl.value = String(page.pageSize);
 
         const buildEntryItem = (entry, i) => {
             const entryId = this.getEntryId(entry, i);
@@ -3581,28 +3777,21 @@ export class WorldEditorModal {
             empty.textContent = searchTerm ? '没有匹配的条目' : '（无条目）';
             list.appendChild(empty);
             pageEl.appendChild(list);
-            this.entriesListEl.appendChild(pageEl);
+            this.mountEntryPage(pageEl, previousPageEl, pageDirection);
             this.updateEntryPageIndicator();
-            requestAnimationFrame(() => this.scrollEntryListToPage());
             return;
         }
 
-        for (let page = 0; page < totalPages; page += 1) {
-            const pageEl = document.createElement('li');
-            pageEl.className = 'world-entry-page';
-            const list = document.createElement('div');
-            list.className = 'world-entry-page-list';
-            const start = page * pageSize;
-            const end = Math.min(start + pageSize, filtered.length);
-            for (let idx = start; idx < end; idx += 1) {
-                const { entry, idx: originalIndex } = filtered[idx];
-                list.appendChild(buildEntryItem(entry, originalIndex));
-            }
-            pageEl.appendChild(list);
-            this.entriesListEl.appendChild(pageEl);
-        }
+        const pageEl = document.createElement('li');
+        pageEl.className = 'world-entry-page';
+        const list = document.createElement('div');
+        list.className = 'world-entry-page-list';
+        page.items.forEach(({ entry, idx: originalIndex }) => {
+            list.appendChild(buildEntryItem(entry, originalIndex));
+        });
+        pageEl.appendChild(list);
+        this.mountEntryPage(pageEl, previousPageEl, pageDirection);
         this.updateEntryPageIndicator();
-        requestAnimationFrame(() => this.scrollEntryListToPage());
     }
 
     getEntrySearchTerm() {
@@ -3614,15 +3803,19 @@ export class WorldEditorModal {
             .map((entry, idx) => ({ entry, idx }))
             .filter(({ entry }) => {
                 if (!searchTerm) return true;
-                const parts = [];
-                if (entry?.comment) parts.push(entry.comment);
-                if (entry?.content) parts.push(entry.content);
-                if (Array.isArray(entry?.key)) parts.push(entry.key.join(' '));
-                if (!Array.isArray(entry?.key) && entry?.key) parts.push(entry.key);
-                if (Array.isArray(entry?.keysecondary)) parts.push(entry.keysecondary.join(' '));
-                if (!Array.isArray(entry?.keysecondary) && entry?.keysecondary) parts.push(entry.keysecondary);
-                if (entry?.id) parts.push(entry.id);
-                const haystack = parts.join(' ').toLowerCase();
+                let haystack = this.entrySearchCache.get(entry);
+                if (typeof haystack !== 'string') {
+                    const parts = [];
+                    if (entry?.comment) parts.push(entry.comment);
+                    if (entry?.content) parts.push(entry.content);
+                    if (Array.isArray(entry?.key)) parts.push(entry.key.join(' '));
+                    if (!Array.isArray(entry?.key) && entry?.key) parts.push(entry.key);
+                    if (Array.isArray(entry?.keysecondary)) parts.push(entry.keysecondary.join(' '));
+                    if (!Array.isArray(entry?.keysecondary) && entry?.keysecondary) parts.push(entry.keysecondary);
+                    if (entry?.id) parts.push(entry.id);
+                    haystack = parts.join(' ').toLowerCase();
+                    this.entrySearchCache.set(entry, haystack);
+                }
                 return haystack.includes(searchTerm);
             })
             .sort((a, b) => {
@@ -3646,30 +3839,24 @@ export class WorldEditorModal {
                 return;
             }
             this.entryDotsEl.style.display = 'flex';
-            for (let i = 0; i < total; i += 1) {
+            getCompactPageItems(total, current).forEach((item) => {
+                if (item === 'ellipsis') {
+                    const ellipsis = document.createElement('span');
+                    ellipsis.className = 'world-entries-ellipsis';
+                    ellipsis.textContent = '…';
+                    this.entryDotsEl.appendChild(ellipsis);
+                    return;
+                }
+                const i = item;
                 const dot = document.createElement('button');
                 dot.type = 'button';
-                dot.className = `world-entries-dot${i === current ? ' active' : ''}`;
+                const distance = Math.min(3, Math.abs(i - current));
+                dot.className = `world-entries-dot distance-${distance}${i === current ? ' active' : ''}`;
                 dot.setAttribute('aria-label', `第 ${i + 1} 页`);
-                dot.addEventListener('click', () => {
-                    this.entryPageIndex = i;
-                    this.renderList();
-                });
+                dot.addEventListener('click', () => this.changeEntryPage(i));
                 this.entryDotsEl.appendChild(dot);
-            }
+            });
         }
-    }
-
-    scrollEntryListToPage() {
-        if (!this.entriesListEl) return;
-        const width = this.entriesListEl.clientWidth;
-        if (!width) return;
-        const target = Math.round(width * this.entryPageIndex);
-        this.entryPageScrollLock = true;
-        this.entriesListEl.scrollTo({ left: target, behavior: 'auto' });
-        window.setTimeout(() => {
-            this.entryPageScrollLock = false;
-        }, 120);
     }
 
     refreshEntryListSelection() {
@@ -3713,7 +3900,7 @@ export class WorldEditorModal {
         let shouldRenderList = Boolean(forceRenderList);
         if (currentPos >= 0) {
             const rawSize = Number(this.entryPageSize);
-            const pageSize = Math.max(1, Math.min(200, Number.isFinite(rawSize) ? Math.trunc(rawSize) : 5));
+            const pageSize = Math.max(1, Math.min(200, Number.isFinite(rawSize) ? Math.trunc(rawSize) : 4));
             const nextPageIndex = Math.floor(currentPos / pageSize);
             if (nextPageIndex !== previousPageIndex) shouldRenderList = true;
             this.entryPageIndex = nextPageIndex;
@@ -3798,6 +3985,9 @@ export class WorldEditorModal {
 
                     <div class="world-content-title">内容</div>
                     <div class="world-block-overlay ${blockExpanded ? 'show' : ''}${blockExpandEntering ? ' is-entering' : ''}" id="we-block-overlay"></div>
+                    ${blockExpanded && this.blockShellPlaceholderHeight > 0 ? `
+                        <div class="world-block-shell-placeholder" style="height: ${Number(this.blockShellPlaceholderHeight).toFixed(2)}px" aria-hidden="true"></div>
+                    ` : ''}
                     <div class="world-flip-card world-content-card ${blockFlipped ? 'is-flipped' : ''} ${blockExpanded ? 'is-expanded' : ''}${blockExpandEntering ? ' is-entering' : ''}" id="we-block-shell">
                         <button type="button" class="world-block-corner-btn" id="we-block-corner-btn" aria-label="${blockExpanded ? '翻转' : '展开'}">
                             ${blockExpanded ? BLOCK_FLIP_ICON_SVG : BLOCK_EXPAND_ICON_SVG}
@@ -4034,7 +4224,16 @@ export class WorldEditorModal {
             if (!el) return;
             el.addEventListener('input', () => {
                 entry[key] = map(el.value);
-                if (key === 'comment') this.renderList();
+                if (key === 'comment' || key === 'key' || key === 'keysecondary') {
+                    this.entrySearchCache?.delete?.(entry);
+                }
+                if (key === 'comment') {
+                    if (this.entryCommentRenderTimer) clearTimeout(this.entryCommentRenderTimer);
+                    this.entryCommentRenderTimer = setTimeout(() => {
+                        this.entryCommentRenderTimer = null;
+                        this.renderList();
+                    }, 160);
+                }
                 markRefDirty();
             });
         };
@@ -4601,7 +4800,7 @@ export class WorldEditorModal {
             e.triggers = e.key;
             e.secondary = e.keysecondary;
             e.priority = e.order;
-            return e;
+            return compactNormalizedEntryForSave(e, i);
         });
         return { ...(this.data || {}), name: nameOverride, entries };
     }
@@ -4625,59 +4824,156 @@ export class WorldEditorModal {
                 if (showToast) window.toastr?.warning?.('没有可同步的条目');
                 return false;
             }
-            const updatesBySource = new Map();
-            list.forEach((entry, idx) => {
-                const sourceId = String(entry?._refSourceId || '').trim();
-                if (!sourceId) return;
-                const targetId = String(entry?._refEntryId ?? entry?.id ?? entry?.uid ?? '').trim();
-                const fallbackIndex = Number.isFinite(Number(entry?._refEntryIndex)) ? Number(entry._refEntryIndex) : idx;
-                const cleaned = normalizeEntry(deepClone(entry), idx);
+            const cleanRefEntry = (entry, idx, targetId = '') => {
+                const cleaned = compactNormalizedEntryForSave(normalizeEntry(entry, idx), idx);
                 delete cleaned._refSourceId;
                 delete cleaned._refWorldId;
                 delete cleaned._refEntryId;
                 delete cleaned._refEntryIndex;
                 if (targetId) cleaned.id = targetId;
                 if (cleaned.uid == null && /^\d+$/.test(cleaned.id)) cleaned.uid = Number(cleaned.id);
+                return cleaned;
+            };
+            const refEntryKey = (entry, idx) => {
+                const sourceId = String(entry?._refSourceId || '').trim();
+                const targetId = String(entry?._refEntryId ?? entry?.id ?? entry?.uid ?? '').trim();
+                const fallbackIndex = Number.isFinite(Number(entry?._refEntryIndex))
+                    ? Number(entry._refEntryIndex)
+                    : idx;
+                return `${sourceId}\u0000${targetId || `index:${fallbackIndex}`}`;
+            };
+            const baseByKey = new Map();
+            (Array.isArray(this.refBaseEntries) ? this.refBaseEntries : []).forEach((entry, idx) => {
+                const targetId = String(entry?._refEntryId ?? entry?.id ?? entry?.uid ?? '').trim();
+                baseByKey.set(refEntryKey(entry, idx), cleanRefEntry(entry, idx, targetId));
+            });
+            const updatesBySource = new Map();
+            list.forEach((entry, idx) => {
+                const sourceId = String(entry?._refSourceId || '').trim();
+                if (!sourceId) return;
+                const targetId = String(entry?._refEntryId ?? entry?.id ?? entry?.uid ?? '').trim();
+                const fallbackIndex = Number.isFinite(Number(entry?._refEntryIndex)) ? Number(entry._refEntryIndex) : idx;
+                const cleaned = cleanRefEntry(entry, idx, targetId);
                 if (!updatesBySource.has(sourceId)) updatesBySource.set(sourceId, []);
-                updatesBySource.get(sourceId).push({ targetId, fallbackIndex, data: cleaned });
+                updatesBySource.get(sourceId).push({
+                    targetId,
+                    fallbackIndex,
+                    key: refEntryKey(entry, idx),
+                    data: cleaned,
+                    baseData: baseByKey.get(refEntryKey(entry, idx)) || null,
+                });
             });
             if (!updatesBySource.size) {
                 if (showToast) window.toastr?.warning?.('未找到可同步的来源世界书');
                 return false;
             }
             const { getWorldInfo, saveWorldInfo } = resolveWorldEditorBridgeContext();
+            if (typeof getWorldInfo !== 'function' || typeof saveWorldInfo !== 'function') {
+                if (showToast) window.toastr?.warning?.('来源世界书暂时不可用');
+                return false;
+            }
             const updatedSources = [];
             let updatedCount = 0;
             let failedCount = 0;
-            for (const [sourceId, updates] of updatesBySource.entries()) {
-                let sourceData = null;
-                try {
-                    sourceData = await getWorldInfo?.(sourceId);
-                } catch {}
-                if (!sourceData || !Array.isArray(sourceData.entries)) {
-                    failedCount += updates.length;
-                    continue;
-                }
-                const nextEntries = sourceData.entries.map((item) => ({ ...item }));
-                let localUpdated = 0;
-                updates.forEach(({ targetId, fallbackIndex, data }) => {
-                    let idx = -1;
-                    if (targetId) {
-                        idx = nextEntries.findIndex(item => String(item?.id ?? item?.uid ?? '').trim() === targetId);
-                    }
-                    if (idx < 0 && Number.isFinite(fallbackIndex) && fallbackIndex >= 0 && fallbackIndex < nextEntries.length) {
-                        idx = fallbackIndex;
-                    }
-                    if (idx < 0) return;
-                    nextEntries[idx] = { ...nextEntries[idx], ...data };
-                    localUpdated += 1;
+            const appliedEntries = new Map();
+            const applySavedEntries = () => {
+                if (!appliedEntries.size) return;
+                this.data.entries = this.data.entries.map((entry, idx) => {
+                    const merged = appliedEntries.get(refEntryKey(entry, idx));
+                    if (!merged) return entry;
+                    return {
+                        ...deepClone(merged),
+                        _refSourceId: entry._refSourceId,
+                        ...(entry._refWorldId !== undefined ? { _refWorldId: entry._refWorldId } : {}),
+                        _refEntryId: entry._refEntryId,
+                        _refEntryIndex: entry._refEntryIndex,
+                    };
                 });
-                if (localUpdated > 0) {
-                    await saveWorldInfo?.(sourceId, { ...sourceData, entries: nextEntries });
-                    updatedCount += localUpdated;
-                    updatedSources.push(sourceId);
+                this.refBaseEntries = deepClone(this.data.entries);
+            };
+            for (const [sourceId, updates] of updatesBySource.entries()) {
+                let sourceSaved = false;
+                let plannedCount = 0;
+                for (let attempt = 0; attempt < 4; attempt += 1) {
+                    let sourceData = null;
+                    try {
+                        sourceData = await getWorldInfo?.(sourceId);
+                    } catch {}
+                    if (!sourceData || !Array.isArray(sourceData.entries)) break;
+                    const nextEntries = sourceData.entries.map((item) => ({ ...item }));
+                    const mergedUpdates = [];
+                    const conflicts = [];
+                    updates.forEach(({ targetId, fallbackIndex, key, data, baseData }) => {
+                        let idx = -1;
+                        if (targetId) {
+                            idx = nextEntries.findIndex(item => String(item?.id ?? item?.uid ?? '').trim() === targetId);
+                        }
+                        const mayUseLegacyIndex = !targetId || /^entry-\d+$/.test(targetId);
+                        if (
+                            idx < 0
+                            && mayUseLegacyIndex
+                            && Number.isFinite(fallbackIndex)
+                            && fallbackIndex >= 0
+                            && fallbackIndex < nextEntries.length
+                        ) {
+                            idx = fallbackIndex;
+                        }
+                        if (idx < 0) {
+                            conflicts.push({
+                                sourceId,
+                                path: `entries.${targetId || `index:${fallbackIndex}`}`,
+                                base: baseData,
+                                local: data,
+                                latest: undefined,
+                            });
+                            return;
+                        }
+                        let mergedEntry = { ...nextEntries[idx], ...data };
+                        if (baseData) {
+                            const baseWorld = { entries: [baseData] };
+                            const latestWorld = this.normalizeWorldDataForMerge(
+                                { entries: [nextEntries[idx]] },
+                                sourceId,
+                                baseWorld,
+                            );
+                            const merge = mergeWorldbookChanges({
+                                base: baseWorld,
+                                local: { entries: [data] },
+                                latest: latestWorld,
+                            });
+                            if (merge.conflicts.length) {
+                                conflicts.push(...merge.conflicts.map(conflict => ({ ...conflict, sourceId })));
+                                return;
+                            }
+                            mergedEntry = merge.merged.entries[0];
+                        }
+                        nextEntries[idx] = mergedEntry;
+                        mergedUpdates.push({ key, data: mergedEntry });
+                    });
+                    plannedCount = mergedUpdates.length;
+                    if (conflicts.length) {
+                        applySavedEntries();
+                        await this.reviewRefWorldSaveConflict({ conflicts });
+                        return false;
+                    }
+                    if (!plannedCount) break;
+                    try {
+                        const result = await saveWorldInfo?.(sourceId, { ...sourceData, entries: nextEntries });
+                        if (result?.ok === false && result?.reason === 'worldbook_revision_conflict') continue;
+                        mergedUpdates.forEach(item => appliedEntries.set(item.key, item.data));
+                        updatedCount += plannedCount;
+                        updatedSources.push(sourceId);
+                        sourceSaved = true;
+                        break;
+                    } catch (error) {
+                        const reason = String(error?.code || error?.details?.reason || '').trim();
+                        if (reason === 'worldbook_revision_conflict') continue;
+                        throw error;
+                    }
                 }
+                if (!sourceSaved) failedCount += updates.length || plannedCount;
             }
+            applySavedEntries();
             if (showToast) {
                 if (updatedCount > 0) {
                     const labels = updatedSources.length ? `（${updatedSources.join('、')}）` : '';
@@ -4775,6 +5071,255 @@ export class WorldEditorModal {
         }
     }
 
+    normalizeWorldDataForMerge(data, fallbackName = this.worldName, alignPromptBlockIdsFrom = null) {
+        const source = deepClone(data || { name: fallbackName, entries: [] });
+        const isCharacterCardWorld = String(source?.source || '').trim() === 'character_card';
+        const entryIdentity = (entry, index) => {
+            const id = String(entry?.id ?? '').trim();
+            if (id) return id;
+            if (entry?.uid !== null && entry?.uid !== undefined && String(entry.uid).trim()) {
+                return `uid:${String(entry.uid).trim()}`;
+            }
+            return `index:${index}`;
+        };
+        const referenceEntries = Array.isArray(alignPromptBlockIdsFrom?.entries)
+            ? alignPromptBlockIdsFrom.entries
+            : [];
+        const referenceById = new Map(
+            referenceEntries.map((entry, index) => [entryIdentity(entry, index), entry]),
+        );
+        const entries = (Array.isArray(source.entries) ? source.entries : []).map((entry, index) => {
+            const normalized = normalizeEntry(entry, index, { characterCardWorld: isCharacterCardWorld });
+            const sourceBlocks = Array.isArray(entry?.promptBlocks) ? entry.promptBlocks : [];
+            const referenceBlocks = referenceById.get(entryIdentity(entry, index))?.promptBlocks;
+            if (Array.isArray(referenceBlocks)) {
+                normalized.promptBlocks.forEach((block, blockIndex) => {
+                    const sourceId = String(sourceBlocks[blockIndex]?.id || '').trim();
+                    const referenceId = String(referenceBlocks[blockIndex]?.id || '').trim();
+                    if (!sourceId && referenceId) block.id = referenceId;
+                });
+            }
+            normalized.title = normalized.comment;
+            normalized.triggers = normalized.key;
+            normalized.secondary = normalized.keysecondary;
+            normalized.priority = normalized.order;
+            return compactNormalizedEntryForSave(normalized, index);
+        });
+        return {
+            ...source,
+            name: String(source?.name || fallbackName || '').trim(),
+            entries,
+        };
+    }
+
+    async resolveWorldConflictSnapshot(result = {}) {
+        if (result?.latestSnapshot && typeof result.latestSnapshot === 'object') {
+            return result.latestSnapshot;
+        }
+        const { getWorldInfoSnapshot, getWorldInfo } = resolveWorldEditorBridgeContext();
+        if (typeof getWorldInfoSnapshot === 'function') {
+            return await getWorldInfoSnapshot(this.worldName);
+        }
+        const data = typeof getWorldInfo === 'function' ? await getWorldInfo(this.worldName) : null;
+        return { worldbookId: this.worldName, exists: Boolean(data), data, revision: null, generation: null };
+    }
+
+    async makeConflictCopyName(nextName = this.worldName) {
+        const { listWorlds } = resolveWorldEditorBridgeContext();
+        const existing = new Set(
+            (typeof listWorlds === 'function' ? await listWorlds() : [])
+                ?.map?.(item => String(item || '').trim())
+                .filter(Boolean) || [],
+        );
+        const base = `${String(nextName || this.worldName || '世界书').trim()}（冲突副本）`;
+        if (!existing.has(base)) return base;
+        let index = 2;
+        while (existing.has(`${base} ${index}`) && index < 1000) index += 1;
+        return `${base} ${index}`;
+    }
+
+    async saveWorldConflictCopy(nextName, payload) {
+        const { getWorldInfoSnapshot, saveWorldInfo } = resolveWorldEditorBridgeContext();
+        if (typeof saveWorldInfo !== 'function') return { ok: false, reason: 'save-unavailable' };
+        for (let attempt = 0; attempt < 4; attempt += 1) {
+            const copyName = await this.makeConflictCopyName(nextName);
+            const snapshot = typeof getWorldInfoSnapshot === 'function'
+                ? await getWorldInfoSnapshot(copyName)
+                : { exists: false, revision: null, generation: null };
+            const copyPayload = { ...deepClone(payload), name: copyName };
+            const result = await saveWorldInfo(copyName, copyPayload, {
+                ...(snapshot?.revision !== null && snapshot?.revision !== undefined
+                    ? { expectedRevision: snapshot.revision }
+                    : {}),
+                ...(snapshot?.generation !== null && snapshot?.generation !== undefined
+                    ? { expectedGeneration: snapshot.generation }
+                    : {}),
+                expectedExists: false,
+                conflictMode: 'return',
+            });
+            if (result?.ok === false && result?.reason === 'worldbook_revision_conflict') continue;
+            if (result?.ok === false) return result;
+            return {
+                ok: true,
+                worldName: copyName,
+                payload: result?.data || copyPayload,
+                revision: result?.revision ?? null,
+                generation: result?.generation ?? null,
+                savedAsCopy: true,
+            };
+        }
+        return { ok: false, reason: 'worldbook_busy' };
+    }
+
+    async reviewWorldSaveConflict({ nextName, payload, latestSnapshot, conflicts }) {
+        const items = conflicts.slice(0, 20).map((conflict, index) => ({
+            id: `conflict-${index + 1}`,
+            label: formatWorldbookConflictPath(conflict.path),
+            meta: '你的草稿与最新内容都修改了这里',
+            status: '冲突',
+            warning: true,
+        }));
+        const message = `世界书在编辑期间被其他操作修改，发现 ${conflicts.length} 处重叠。APP 不会自动覆盖任何一方。`;
+        let choice = await appChoice({
+            title: '世界书内容冲突',
+            message,
+            actions: [
+                { id: 'review', label: '查看冲突', primary: true },
+                { id: 'load_latest', label: '载入最新' },
+                { id: 'save_copy', label: '另存副本' },
+                { id: 'cancel', label: '保留草稿' },
+            ],
+            defaultActionId: 'review',
+        });
+        if (choice === 'review') {
+            choice = await appChoice({
+                title: '冲突字段',
+                message: `${message}\n请选择处理方式。`,
+                items,
+                actions: [
+                    { id: 'load_latest', label: '载入最新' },
+                    { id: 'save_copy', label: '另存副本', primary: true },
+                    { id: 'cancel', label: '保留草稿' },
+                ],
+                defaultActionId: 'save_copy',
+            });
+        }
+        if (choice === 'load_latest') {
+            await this.show(this.worldName, latestSnapshot?.data, { snapshot: latestSnapshot });
+            window.toastr?.info?.('已载入最新世界书；原草稿未覆盖远端内容');
+            return { ok: false, handled: true, reason: 'loaded-latest' };
+        }
+        if (choice === 'save_copy') {
+            const copy = await this.saveWorldConflictCopy(nextName, payload);
+            if (!copy.ok) window.toastr?.warning?.('另存副本失败，请稍后重试');
+            return copy;
+        }
+        window.toastr?.info?.('已保留当前草稿，尚未写入世界书');
+        return { ok: false, handled: true, reason: 'draft-kept' };
+    }
+
+    async reviewRefWorldSaveConflict({ conflicts = [] } = {}) {
+        const items = conflicts.slice(0, 20).map((conflict, index) => ({
+            id: `ref-conflict-${index + 1}`,
+            label: `${String(conflict.sourceId || '来源世界书')} / ${formatWorldbookConflictPath(conflict.path)}`,
+            meta: '你的引用草稿与来源世界书最新内容都修改了这里',
+            status: '冲突',
+            warning: true,
+        }));
+        const message = `引用来源在编辑期间被其他操作修改，发现 ${conflicts.length} 处重叠。APP 不会自动覆盖任何一方。`;
+        let choice = await appChoice({
+            title: '引用世界书内容冲突',
+            message,
+            actions: [
+                { id: 'review', label: '查看冲突', primary: true },
+                { id: 'load_latest', label: '载入最新' },
+                { id: 'cancel', label: '保留草稿' },
+            ],
+            defaultActionId: 'review',
+        });
+        if (choice === 'review') {
+            choice = await appChoice({
+                title: '引用来源冲突字段',
+                message: `${message}\n请选择处理方式。`,
+                items,
+                actions: [
+                    { id: 'load_latest', label: '载入最新', primary: true },
+                    { id: 'cancel', label: '保留草稿' },
+                ],
+                defaultActionId: 'load_latest',
+            });
+        }
+        if (choice === 'load_latest') {
+            const { getWorldInfoSnapshot, getWorldInfo } = resolveWorldEditorBridgeContext();
+            const snapshot = typeof getWorldInfoSnapshot === 'function'
+                ? await getWorldInfoSnapshot(this.worldName)
+                : null;
+            const data = snapshot?.data || (typeof getWorldInfo === 'function'
+                ? await getWorldInfo(this.worldName)
+                : null);
+            await this.show(this.worldName, data, snapshot ? { snapshot } : {});
+            window.toastr?.info?.('已重新载入引用来源的最新内容');
+            return false;
+        }
+        window.toastr?.info?.('已保留当前引用草稿，冲突字段尚未写入来源世界书');
+        return false;
+    }
+
+    async commitWorldPayload(nextName, payload) {
+        let base = deepClone(this.baseWorldData || this.normalizeWorldDataForMerge(this.data, this.worldName));
+        let candidate = deepClone(payload);
+        let expectedRevision = this.baseRevision;
+        let expectedGeneration = this.baseGeneration;
+        for (let attempt = 0; attempt < 4; attempt += 1) {
+            const saveResult = await saveWorldInfoWithName({
+                ...resolveWorldEditorBridgeContext(),
+                currentName: this.worldName,
+                nextName,
+                payload: candidate,
+                expectedRevision,
+                expectedGeneration,
+            });
+            if (saveResult.ok) {
+                return {
+                    ok: true,
+                    worldName: saveResult.worldName,
+                    payload: saveResult.data || candidate,
+                    revision: saveResult.revision ?? null,
+                    generation: saveResult.generation ?? null,
+                };
+            }
+            if (saveResult.reason === 'duplicate-name' || saveResult.reason === 'worldbook_name_conflict') {
+                return { ok: false, reason: 'duplicate-name' };
+            }
+            if (saveResult.reason !== 'worldbook_revision_conflict') return saveResult;
+
+            const latestSnapshot = await this.resolveWorldConflictSnapshot(saveResult);
+            if (!latestSnapshot?.exists || !latestSnapshot?.data) {
+                return await this.reviewWorldSaveConflict({
+                    nextName,
+                    payload: candidate,
+                    latestSnapshot,
+                    conflicts: [{ path: '世界书', local: candidate, latest: undefined }],
+                });
+            }
+            const latest = this.normalizeWorldDataForMerge(latestSnapshot.data, this.worldName, base);
+            const merge = mergeWorldbookChanges({ base, local: candidate, latest });
+            if (merge.conflicts.length) {
+                return await this.reviewWorldSaveConflict({
+                    nextName,
+                    payload: candidate,
+                    latestSnapshot,
+                    conflicts: merge.conflicts,
+                });
+            }
+            base = latest;
+            candidate = merge.merged;
+            expectedRevision = latestSnapshot.revision ?? null;
+            expectedGeneration = latestSnapshot.generation ?? null;
+        }
+        return { ok: false, reason: 'worldbook_busy' };
+    }
+
     async saveWorld() {
         try {
             if (this.refMode) {
@@ -4789,20 +5334,24 @@ export class WorldEditorModal {
                 return;
             }
             const payload = this.prepareForSave(nextName);
-            const saveResult = await saveWorldInfoWithName({
-                ...resolveWorldEditorBridgeContext(),
-                currentName: this.worldName,
-                nextName,
-                payload,
-            });
+            const saveResult = await this.commitWorldPayload(nextName, payload);
             if (saveResult.reason === 'duplicate-name') {
                 window.toastr?.warning('名称已存在，请换一个');
                 return;
             }
-            if (!saveResult.ok) return;
+            if (!saveResult.ok) {
+                if (!saveResult.handled) window.toastr?.warning?.('世界书暂时无法保存，请稍后重试');
+                return;
+            }
             this.worldName = saveResult.worldName;
-            window.toastr?.success(`世界书已保存：${this.worldName}`);
-            this.onSaved?.(this.worldName, payload);
+            this.data = deepClone(saveResult.payload || payload);
+            this.baseWorldData = deepClone(this.data);
+            this.baseRevision = saveResult.revision;
+            this.baseGeneration = saveResult.generation;
+            window.toastr?.success(saveResult.savedAsCopy
+                ? `已另存冲突副本：${this.worldName}`
+                : `世界书已保存：${this.worldName}`);
+            this.onSaved?.(this.worldName, this.data);
             this.hide();
         } catch (err) {
             logger.error('保存世界书失败', err);
@@ -4850,12 +5399,7 @@ export class WorldEditorModal {
                 return false;
             }
             const payload = this.prepareForSave(nextName);
-            const saveResult = await saveWorldInfoWithName({
-                ...resolveWorldEditorBridgeContext(),
-                currentName: this.worldName,
-                nextName,
-                payload,
-            });
+            const saveResult = await this.commitWorldPayload(nextName, payload);
             if (saveResult.reason === 'duplicate-name') {
                 if (showToast) window.toastr?.warning?.('名称已存在，无法自动保存');
                 if (this.isAiTraceWatchActive()) {
@@ -4865,10 +5409,19 @@ export class WorldEditorModal {
                 }
                 return false;
             }
-            if (!saveResult.ok) return false;
+            if (!saveResult.ok) {
+                if (showToast && !saveResult.handled) window.toastr?.warning?.('世界书暂时无法保存，请稍后重试');
+                return false;
+            }
             this.worldName = saveResult.worldName;
-            this.onSaved?.(this.worldName, payload);
-            if (showToast) window.toastr?.success?.(`世界书已保存：${this.worldName}`);
+            this.data = deepClone(saveResult.payload || payload);
+            this.baseWorldData = deepClone(this.data);
+            this.baseRevision = saveResult.revision;
+            this.baseGeneration = saveResult.generation;
+            this.onSaved?.(this.worldName, this.data);
+            if (showToast) window.toastr?.success?.(saveResult.savedAsCopy
+                ? `已另存冲突副本：${this.worldName}`
+                : `世界书已保存：${this.worldName}`);
             if (this.isAiTraceWatchActive()) {
                 this.traceAi('save.silent.finish', {
                     refMode: false,

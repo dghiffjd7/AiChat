@@ -17,7 +17,9 @@ globalThis.document = {
 try {
   const {
     buildWorldbookImpactText,
+    collectWorldbookRegexSignaturesForWorld,
     formatWorldScopeLabel,
+    getWorldbookRegexRuleSignature,
   } = await import('../../src/scripts/ui/world-panel.js');
 
   {
@@ -83,11 +85,29 @@ try {
   }
 
   {
+    const sharedRule = { findRegex: '/shared/g', replaceString: 'x', placement: [1, 2] };
+    const targetRule = { findRegex: '/target/g', replaceString: 'y', placement: [2] };
+    const signatures = collectWorldbookRegexSignaturesForWorld([
+      { bind: { type: 'world', worldId: 'other-world' }, rules: [sharedRule] },
+      { bind: { type: 'world', worldId: 'target-world' }, rules: [targetRule] },
+      { bind: { type: 'preset', presetId: 'preset-a' }, rules: [sharedRule] },
+    ], 'target-world');
+    assert.equal(signatures.has(getWorldbookRegexRuleSignature(targetRule)), true);
+    assert.equal(signatures.has(getWorldbookRegexRuleSignature(sharedRule)), false);
+    console.log('ok - world regex import dedupe only considers rules already bound to the target world');
+  }
+
+  {
     const source = await readFile(new URL('../../src/scripts/ui/world-panel.js', import.meta.url), 'utf8');
     assert.match(source, /const normalizedGlobalIds = getGlobalWorldIds\(window\.appBridge\)/);
     assert.match(source, /for \(const worldId of normalizedGlobalIds\)/);
     assert.match(source, /setGlobalWorldIds\(Array\.from\(next\)\)/);
     assert.match(source, /Array\.from\(new Set\(\[\.\.\.current, name\]\)\)/);
+    const confirmDeleteStart = source.indexOf('const confirmDeleteWorld = async');
+    const confirmDeleteEnd = source.indexOf('const buildWorldCard = async', confirmDeleteStart);
+    const confirmDeleteBody = source.slice(confirmDeleteStart, confirmDeleteEnd);
+    assert.doesNotMatch(confirmDeleteBody, /getWorldInfoSnapshot/);
+    assert.match(confirmDeleteBody, /expectedExists: true/);
     console.log('ok - global worldbook panel binds toggles and new books through the multi-select contract');
   }
 } finally {

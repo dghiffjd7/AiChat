@@ -33,6 +33,7 @@ pub fn run() {
             commands::delete_persona_card,
             commands::save_kv,
             commands::load_kv,
+            commands::delete_worldinfo_legacy_store,
             commands::list_contacts_by_scopes,
             commands::cleanup_persona_scoped_data,
             commands::chat_store_v2_read_index,

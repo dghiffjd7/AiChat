@@ -120,6 +120,10 @@ try {
     assert.match(css, /\.world-panel-shell\.is-opening/);
     assert.match(css, /\.world-library-modal\.is-opening/);
     assert.match(css, /#world-editor-modal\.is-opening/);
+    assert.match(css, /#world-editor-overlay\s*\{[^}]*z-index:\s*23000;/);
+    assert.match(editorSource, /this\.overlay\.style\.zIndex\s*=\s*'23000'/);
+    assert.doesNotMatch(editorSource, /this\.overlay\.style\.zIndex\s*=\s*'22000'/);
+    assert.match(css, /\.world-entry-page\s*\{[^}]*min-width:\s*0;/);
     assert.match(css, /\.world-entry-form\.is-entering/);
     assert.match(css, /@keyframes world-content-layer-in/);
     assert.match(css, /\.world-content-card\.is-expanded\.is-closing/);
@@ -131,6 +135,11 @@ try {
     assert.match(panelSource, /animateRows && motionIndex < 12/);
     assert.match(editorSource, /setWorldDisclosureState\(advancedClip/);
     assert.match(editorSource, /blockCollapseTimer = setTimeout/);
+    // 浮起卡片必须留等高占位符：展开前量高度，展开期间渲染进文档流，防止下方卡片上跳/闪烁
+    assert.match(editorSource, /#we-block-shell:not\(\.is-expanded\)/);
+    assert.match(editorSource, /blockShellPlaceholderHeight = height/);
+    assert.match(editorSource, /world-block-shell-placeholder/);
+    assert.match(css, /\.world-block-shell-placeholder\s*\{/);
     console.log('ok - world manager, library, editor, and both accordions share the motion contract');
   }
 } finally {

@@ -22,6 +22,26 @@ export const createContactProfileAgentTools = ({
     if (!contactProfileStore || typeof contactProfileStore !== 'object') return null;
     return contactProfileStore;
   };
+  const upsertPlans = new WeakMap();
+  const captureUpsertPlan = (args = {}) => {
+    const store = resolveStore();
+    const profile = clone(isPlainObject(args.profile) ? args.profile : {});
+    const contactId = trim(
+      profile.contactId || profile.contact_id || profile.sessionId || profile.id ||
+      profile.displayName || profile.name || profile.label,
+    );
+    const snapshot = typeof store?.getProfileSnapshot === 'function'
+      ? store.getProfileSnapshot(contactId)
+      : {
+        contactId,
+        scopeId: trim(store?.scopeId),
+        scopeToken: Number(store?.scopeToken || 0),
+        exists: Boolean(store?.getProfile?.(contactId)),
+        revision: null,
+        profile: clone(store?.getProfile?.(contactId)) || null,
+      };
+    return { store, profile, contactId, snapshot };
+  };
 
   return [
     {
@@ -148,7 +168,7 @@ export const createContactProfileAgentTools = ({
     {
       name: 'contact_profile.upsert',
       title: 'Upsert contact profile',
-      description: 'Create or update a contact profile in the current scope.',
+      description: 'Create or update a contact profile in the pinned scope when its baseline is still current.',
       source: 'contact-profile-store',
       permissions: ['storage'],
       riskLevel: 'medium',
@@ -161,6 +181,46 @@ export const createContactProfileAgentTools = ({
         modelContext: 'none',
         confirmation: 'required',
       },
+      safety: {
+        operationType: 'upsert_contact_profile',
+        destructive: 'conditional',
+        description: 'Replaces one complete contact profile only when its confirmed scope and revision are unchanged.',
+        preflight: async (args = {}) => {
+          const plan = captureUpsertPlan(args);
+          upsertPlans.set(args, plan);
+          if (!plan.contactId) return { destructive: false };
+          return {
+            requiresConfirmation: true,
+            kind: 'contact_profile.upsert',
+            operationType: 'upsert_contact_profile',
+            title: plan.snapshot?.exists ? '确认更新联系人画像' : '确认创建联系人画像',
+            message: plan.snapshot?.exists
+              ? `将替换联系人「${plan.contactId}」的完整画像；确认期间若画像变化，本次写入会被拒绝。`
+              : `将为联系人「${plan.contactId}」创建画像；确认期间若已有画像出现，本次写入会被拒绝。`,
+            confirmText: '确认保存',
+            cancelText: '取消',
+            danger: plan.snapshot?.exists === true,
+            allowAlways: false,
+            argsPreview: {
+              contactId: plan.contactId,
+              scopeId: trim(plan.snapshot?.scopeId),
+              exists: plan.snapshot?.exists === true,
+              revision: plan.snapshot?.revision,
+            },
+            onDeny: {
+              action: 'skip',
+              reason: 'contact_profile_upsert_cancelled',
+              result: {
+                ok: false,
+                saved: false,
+                skipped: true,
+                reason: 'contact_profile_upsert_cancelled',
+                contactId: plan.contactId,
+              },
+            },
+          };
+        },
+      },
       schema: {
         type: 'object',
         required: ['profile'],
@@ -170,21 +230,50 @@ export const createContactProfileAgentTools = ({
         },
       },
       execute: async (args = {}) => {
-        const store = resolveStore();
+        const plan = upsertPlans.get(args) || captureUpsertPlan(args);
+        upsertPlans.delete(args);
+        const store = plan.store || resolveStore();
         if (!store || typeof store.upsertProfile !== 'function') {
           throw new Error('contact profile store not available');
         }
-        const profile = isPlainObject(args.profile) ? args.profile : {};
-        const saved = store.upsertProfile(profile);
+        const profile = plan.profile;
+        if (!plan.contactId) {
+          return {
+            ok: false,
+            saved: false,
+            conflict: false,
+            reason: 'missing_contact_id',
+            contactId: '',
+            profile: null,
+          };
+        }
+        const mutation = typeof store.upsertProfileIfUnchanged === 'function'
+          ? store.upsertProfileIfUnchanged(profile, plan.snapshot)
+          : { ok: true, saved: true, profile: store.upsertProfile(profile) };
+        if (!mutation?.ok || !mutation?.saved) {
+          return {
+            ok: false,
+            saved: false,
+            conflict: mutation?.conflict === true,
+            reason: trim(mutation?.reason, 'profile_save_failed'),
+            contactId: plan.contactId,
+            profile: null,
+            latestProfile: clone(mutation?.latestSnapshot?.profile) || null,
+          };
+        }
+        const saved = mutation.profile;
         return {
+          ok: true,
           saved: Boolean(saved),
-          contactId: trim(saved?.contactId || profile.contactId || profile.id),
+          conflict: false,
+          reason: '',
+          contactId: trim(saved?.contactId || plan.contactId),
           profile: clone(saved) || null,
         };
       },
       summarizeResult: result => (result?.saved
         ? `contact profile saved for ${trim(result.contactId)}`
-        : 'contact profile save skipped'),
+        : `contact profile save skipped: ${trim(result?.reason, 'unknown')}`),
     },
   ];
 };

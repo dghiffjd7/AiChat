@@ -481,7 +481,17 @@ export const createSillyTavernSlashCompat = ({
     const bridge = getBridge();
     const id = normalizeKey(resolveVariableRef(worldId));
     if (!id || typeof bridge?.saveWorldInfo !== 'function') return false;
-    await bridge.saveWorldInfo(id, { name: id, entries: [], ...(world || {}) });
+    const revisionMeta = world && typeof world === 'object'
+      ? world[Symbol.for('tauri-chat-app.worldinfo-revision')]
+      : null;
+    const snapshot = !revisionMeta && typeof bridge.getWorldInfoSnapshot === 'function'
+      ? await bridge.getWorldInfoSnapshot(id)
+      : null;
+    await bridge.saveWorldInfo(id, { name: id, entries: [], ...(world || {}) }, snapshot ? {
+      expectedRevision: snapshot.revision,
+      expectedGeneration: snapshot.generation,
+      expectedExists: snapshot.exists,
+    } : undefined);
     return true;
   };
 

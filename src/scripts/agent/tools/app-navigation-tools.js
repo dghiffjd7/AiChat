@@ -119,6 +119,8 @@ export const createAppNavigationAgentTools = ({
   actions = {},
   getCurrentState = () => ({}),
   getVisiblePanelSummary = null,
+  describeUiElement = null,
+  beginUiElementConfirmation = null,
   clickUiElement = null,
   readResource = null,
   listRecentErrors = null,
@@ -287,7 +289,22 @@ export const createAppNavigationAgentTools = ({
       if (typeof clickUiElement !== 'function') {
         return { ok: false, reason: 'ui_click_unavailable' };
       }
-      const targetText = trim(args.label) || trim(args.ref);
+      const targetRef = trim(args.ref);
+      let targetText = trim(args.label);
+      let targetPanel = trim(args.panel);
+      if (targetRef) {
+        if (typeof describeUiElement !== 'function') {
+          return { ok: false, reason: 'ui_describe_unavailable' };
+        }
+        const described = await describeUiElement({ ref: targetRef });
+        if (described?.ok === false) return described;
+        targetText = trim(described?.label);
+        targetPanel = trim(described?.panel) || targetPanel;
+        if (!targetText) {
+          return { ok: false, reason: 'element_label_unavailable', message: '无法核验目标元素的真实文案。' };
+        }
+      }
+      if (!targetText) targetText = targetRef;
       // 危险按钮（删除/覆盖/发送等）必须经用户确认；只读导航类放行
       if (UI_CLICK_DANGER_PATTERN.test(targetText)) {
         if (context?.operationIntentPolicy?.mode === 'read_only') {
@@ -300,6 +317,9 @@ export const createAppNavigationAgentTools = ({
         }
         const confirm = context?.requestToolConfirmation;
         let allowed = false;
+        const endConfirmation = typeof beginUiElementConfirmation === 'function'
+          ? beginUiElementConfirmation({ ref: targetRef, label: targetText, panel: targetPanel })
+          : null;
         if (typeof confirm === 'function') {
           try {
             const decision = await confirm({
@@ -316,13 +336,17 @@ export const createAppNavigationAgentTools = ({
             allowed = decision === true || ['allow', 'allow_once', 'allow_always'].includes(String(decision?.decision || ''));
           } catch {
             allowed = false;
+          } finally {
+            if (typeof endConfirmation === 'function') endConfirmation();
           }
+        } else if (typeof endConfirmation === 'function') {
+          endConfirmation();
         }
         if (!allowed) {
           return { ok: false, reason: 'user_declined', cancelled: true, message: `用户未允许点击「${targetText}」。` };
         }
       }
-      return clickUiElement({ ref: trim(args.ref), label: trim(args.label), panel: trim(args.panel) });
+      return clickUiElement({ ref: targetRef, label: targetText, panel: targetPanel });
     },
     summarizeResult: result => (result?.ok === false
       ? `ui click failed: ${trim(result?.reason, 'unknown')}`

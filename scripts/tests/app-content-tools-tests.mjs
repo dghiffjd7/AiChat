@@ -24,6 +24,8 @@ const createProfileStore = (prefix = 'profile') => {
         description: data.description || '',
         avatar: data.avatar || '',
         source: data.source || null,
+        created: seq,
+        updated: seq,
       };
       items.set(item.id, item);
       return item;
@@ -104,6 +106,35 @@ const createProfileStore = (prefix = 'profile') => {
 
 {
   const personaStore = createProfileStore('persona');
+  const original = await personaStore.create({ name: '原角色' });
+  const requested = await personaStore.create({ name: '女仆目标' });
+  await personaStore.setActive(original.id);
+  const switched = [];
+  const tools = createAppContentAgentTools({
+    personaStore,
+    switchPersona: async id => {
+      switched.push(id);
+      return personaStore.setActive(id);
+    },
+    canSwitchPersona: ({ personaId }) => (
+      personaId === requested.id
+        ? { ok: false, reason: 'user_persona_switch_lease_active', retryAfterMs: 1800 }
+        : { ok: true }
+    ),
+  });
+
+  const result = await getTool(tools, 'persona.switch').execute({ target: requested.id });
+  assert.equal(result.ok, false);
+  assert.equal(result.switched, false);
+  assert.equal(result.reason, 'user_persona_switch_lease_active');
+  assert.equal(result.retryAfterMs, 1800);
+  assert.deepEqual(switched, []);
+  assert.equal(personaStore.getActiveId(), original.id);
+  console.log('ok - persona.switch respects a recent manual persona interaction lease');
+}
+
+{
+  const personaStore = createProfileStore('persona');
   const keep = await personaStore.create({ name: '保留角色', avatar: 'data:image/png;base64,KEEP' });
   const deleteA = await personaStore.create({ name: '测试角色 A', avatar: 'data:image/png;base64,A' });
   const deleteB = await personaStore.create({ name: '测试角色 B', avatar: 'data:image/png;base64,B' });
@@ -169,6 +200,60 @@ const createProfileStore = (prefix = 'profile') => {
   assert.equal(JSON.stringify(result.result).includes('data:image'), false);
   assert.deepEqual(result.result.audit.items, [{ id: deleteA.id, name: '测试角色 A' }]);
   console.log('ok - persona.delete_many protects one persona, rechecks TOCTOU, and preserves bound resources');
+}
+
+{
+  const personaStore = createProfileStore('persona');
+  const keep = await personaStore.create({ name: '保留角色' });
+  const edited = await personaStore.create({ name: '确认期编辑' });
+  const recreated = await personaStore.create({ name: '确认期重建' });
+  await personaStore.setActive(keep.id);
+  const deleteCalls = [];
+  const tools = createAppContentAgentTools({
+    personaStore,
+    deletePersona: async personaId => {
+      deleteCalls.push(personaId);
+      const deleted = await personaStore.delete(personaId);
+      return { ok: deleted, deleted, personaId };
+    },
+  });
+  const registry = createAgentToolRegistry({
+    permissionEvaluator: createAgentPermissionEvaluator({
+      defaultDecision: AGENT_PERMISSION_DECISIONS.allow,
+    }),
+    logger: { warn: () => {} },
+  });
+  registry.registerMany(tools);
+
+  const result = await registry.executeTool('persona.delete_many', {
+    personas: [edited.id, recreated.id],
+  }, {
+    operationIntentPolicy: { mode: 'write_allowed' },
+    requestToolConfirmation: () => {
+      personaStore.items.set(edited.id, {
+        ...edited,
+        description: '用户在确认期间写入的新内容',
+        updated: edited.updated + 1,
+      });
+      personaStore.items.set(recreated.id, {
+        ...recreated,
+        name: '同 ID 新实例',
+        created: recreated.created + 100,
+        updated: recreated.updated + 100,
+      });
+      return true;
+    },
+  });
+
+  assert.equal(result.status, 'succeeded');
+  assert.equal(result.result.succeededCount, 0);
+  assert.equal(result.result.skippedCount, 2);
+  assert.equal(result.result.results.find(item => item.personaId === edited.id).reason, 'persona_changed_during_confirmation');
+  assert.equal(result.result.results.find(item => item.personaId === recreated.id).reason, 'persona_recreated_during_confirmation');
+  assert.deepEqual(deleteCalls, []);
+  assert.equal(personaStore.get(edited.id).description, '用户在确认期间写入的新内容');
+  assert.equal(personaStore.get(recreated.id).name, '同 ID 新实例');
+  console.log('ok - persona.delete_many rejects edited and same-id recreated confirmation targets');
 }
 
 {
@@ -381,11 +466,18 @@ const createProfileStore = (prefix = 'profile') => {
   const saved = new Map();
   const bound = [];
   const boundSessions = [];
+  let worldBodyReads = 0;
   const sessionWorldIds = new Map([['chat-a', ['Role A World']]]);
   const tools = createAppContentAgentTools({
     personaStore,
     saveWorldInfo: async (id, data) => saved.set(id, data),
-    getWorldInfo: async id => saved.get(id) || null,
+    getWorldInfo: async id => {
+      worldBodyReads += 1;
+      return saved.get(id) || null;
+    },
+    getWorldInfoMetadata: id => saved.has(id)
+      ? { name: id, entriesCount: saved.get(id)?.entries?.length ?? null, refs: [] }
+      : null,
     listWorlds: async () => Array.from(saved.keys()),
     waitForWorldStoreReady: async () => true,
     getWorldIdsForSession: async sessionId => sessionWorldIds.get(sessionId) || [],
@@ -436,8 +528,10 @@ const createProfileStore = (prefix = 'profile') => {
   assert.deepEqual(bound.at(-1), { personaId: persona.id, worldId: 'Role A 世界书', options: { enabled: true } });
 
   saved.set('Global World', { name: 'Global World', entries: [] });
+  const bodyReadsBeforeList = worldBodyReads;
   const listResult = await getTool(tools, 'worldbook.list').execute({ sessionId: 'chat-a' });
   assert.equal(listResult.ok, true);
+  assert.equal(worldBodyReads, bodyReadsBeforeList, 'worldbook.list must use metadata without loading bodies');
   assert.ok(listResult.worldbooks.some(item => item.id === 'Role A World' && item.boundToCurrentSession === true));
   assert.ok(listResult.worldbooks.some(item => item.id === 'Global World' && item.global === true));
 
@@ -682,6 +776,271 @@ const createProfileStore = (prefix = 'profile') => {
   assert.match(confirmations[1].message, /2 个聊天室/);
   assert.deepEqual(bindCalls, ['chat-a', 'chat-b']);
   console.log('ok - worldbook.bind_sessions requires one registry confirmation for the whole batch');
+}
+
+{
+  const worldbooks = new Map([
+    ['Concurrent A', { name: 'Concurrent A', entries: [] }],
+    ['Concurrent B', { name: 'Concurrent B', entries: [] }],
+  ]);
+  const sessionWorldIds = new Map([['chat-a', ['base']]]);
+  let snapshotReadCount = 0;
+  let releaseSnapshotReads;
+  const snapshotReadsReleased = new Promise(resolve => { releaseSnapshotReads = resolve; });
+  const readBindingSnapshot = async sessionId => {
+    const worldbookIds = [...(sessionWorldIds.get(sessionId) || [])];
+    snapshotReadCount += 1;
+    if (snapshotReadCount === 2) releaseSnapshotReads();
+    if (snapshotReadCount <= 2) await snapshotReadsReleased;
+    return { sessionId, scopeId: 'persona-a', worldbookIds };
+  };
+  const tools = createAppContentAgentTools({
+    chatStore: {
+      scopeId: 'persona-a',
+      state: { sessions: { 'chat-a': { messages: [] } } },
+      listSessions: () => ['chat-a'],
+    },
+    getWorldInfo: async id => worldbooks.get(id) || null,
+    getWorldInfoSnapshot: async id => ({
+      worldbookId: id,
+      exists: worldbooks.has(id),
+      data: worldbooks.get(id) || null,
+      revision: 1,
+      generation: 1,
+    }),
+    getWorldIdsForSession: async sessionId => (await readBindingSnapshot(sessionId)).worldbookIds,
+    getWorldSessionBindingSnapshot: readBindingSnapshot,
+    updateWorldSessionBinding: (sessionId, options = {}) => {
+      const current = [...(sessionWorldIds.get(sessionId) || [])];
+      const next = Array.from(new Set([...current, options.worldbookId]));
+      sessionWorldIds.set(sessionId, next);
+      return {
+        ok: true,
+        changed: !current.includes(options.worldbookId),
+        added: !current.includes(options.worldbookId),
+        previousWorldbookIds: current,
+        worldbookIds: next,
+      };
+    },
+    bindWorldToSession: async (sessionId, worldbookIds) => {
+      sessionWorldIds.set(sessionId, [...worldbookIds]);
+    },
+  });
+  const bindTool = getTool(tools, 'worldbook.bind_session');
+  const [first, second] = await Promise.all([
+    bindTool.execute({ sessionId: 'chat-a', worldbookId: 'Concurrent A' }),
+    bindTool.execute({ sessionId: 'chat-a', worldbookId: 'Concurrent B' }),
+  ]);
+  assert.equal(first.ok, true);
+  assert.equal(second.ok, true);
+  assert.equal(sessionWorldIds.get('chat-a').length, 3);
+  assert.ok(sessionWorldIds.get('chat-a').includes('base'));
+  assert.ok(sessionWorldIds.get('chat-a').includes('Concurrent A'));
+  assert.ok(sessionWorldIds.get('chat-a').includes('Concurrent B'));
+  console.log('ok - concurrent worldbook append bindings preserve both writes');
+}
+
+{
+  let currentSessionId = 'chat-a';
+  const sessionWorldIds = new Map();
+  const tools = createAppContentAgentTools({
+    chatStore: {
+      scopeId: 'persona-a',
+      state: {
+        sessions: {
+          'chat-a': { messages: [] },
+          'chat-b': { messages: [] },
+        },
+      },
+      getCurrent: () => currentSessionId,
+      listSessions: () => ['chat-a', 'chat-b'],
+    },
+    waitForWorldStoreReady: async () => { currentSessionId = 'chat-b'; },
+    getWorldInfo: async id => ({ name: id, entries: [] }),
+    getWorldInfoSnapshot: async id => ({
+      worldbookId: id,
+      exists: true,
+      data: { name: id, entries: [] },
+      revision: 1,
+      generation: 1,
+    }),
+    getWorldSessionBindingSnapshot: sessionId => ({
+      sessionId,
+      scopeId: 'persona-a',
+      worldbookIds: sessionWorldIds.get(sessionId) || [],
+    }),
+    updateWorldSessionBinding: (sessionId, options = {}) => {
+      sessionWorldIds.set(sessionId, [options.worldbookId]);
+      return {
+        ok: true,
+        changed: true,
+        added: true,
+        previousWorldbookIds: [],
+        worldbookIds: [options.worldbookId],
+      };
+    },
+    bindWorldToSession: async (sessionId, worldbookIds) => sessionWorldIds.set(sessionId, [...worldbookIds]),
+  });
+  const result = await getTool(tools, 'worldbook.bind_session').execute({ worldbookId: 'Pinned World' });
+  assert.equal(result.ok, true);
+  assert.equal(result.sessionId, 'chat-a');
+  assert.deepEqual(sessionWorldIds.get('chat-a'), ['Pinned World']);
+  assert.equal(sessionWorldIds.has('chat-b'), false);
+  console.log('ok - worldbook.bind_session pins the active chat before awaiting world storage');
+}
+
+{
+  const personaStore = createProfileStore('persona');
+  const personaA = await personaStore.create({ name: 'Role A' });
+  const personaB = await personaStore.create({ name: 'Role B' });
+  await personaStore.setActive(personaA.id);
+  const sessionWorldIds = new Map();
+  let updateCalls = 0;
+  const tools = createAppContentAgentTools({
+    personaStore,
+    waitForWorldStoreReady: async () => { await personaStore.setActive(personaB.id); },
+    getWorldInfo: async id => ({ name: id, entries: [] }),
+    getWorldInfoSnapshot: async id => ({
+      worldbookId: id,
+      exists: true,
+      data: { name: id, entries: [] },
+      revision: 1,
+      generation: 1,
+    }),
+    getRpSessionId: personaId => `rp:${personaId}`,
+    getWorldSessionBindingSnapshot: sessionId => ({
+      sessionId,
+      scopeId: personaStore.getActive().id,
+      worldbookIds: sessionWorldIds.get(sessionId) || [],
+    }),
+    updateWorldSessionBinding: (sessionId, options = {}) => {
+      updateCalls += 1;
+      sessionWorldIds.set(sessionId, [options.worldbookId]);
+      return {
+        ok: true,
+        changed: true,
+        added: true,
+        previousWorldbookIds: [],
+        worldbookIds: [options.worldbookId],
+      };
+    },
+    bindWorldToSession: async (sessionId, worldbookIds) => sessionWorldIds.set(sessionId, [...worldbookIds]),
+  });
+  const result = await getTool(tools, 'worldbook.bind_rp_session').execute({ worldbookId: 'RP World' });
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, 'target_scope_changed');
+  assert.equal(updateCalls, 0);
+  assert.equal(sessionWorldIds.has(`rp:${personaA.id}`), false);
+  assert.equal(sessionWorldIds.has(`rp:${personaB.id}`), false);
+  console.log('ok - worldbook.bind_rp_session rejects an active persona scope switch before commit');
+}
+
+{
+  let generation = 1;
+  let updateCalls = 0;
+  const tools = createAppContentAgentTools({
+    chatStore: {
+      scopeId: 'persona-a',
+      state: { sessions: { 'chat-a': { messages: [] } } },
+      listSessions: () => ['chat-a'],
+    },
+    getWorldInfo: async id => ({ name: id, entries: [] }),
+    getWorldInfoSnapshot: async id => ({
+      worldbookId: id,
+      exists: true,
+      data: { name: id, entries: [] },
+      revision: generation,
+      generation,
+    }),
+    getWorldSessionBindingSnapshot: sessionId => {
+      generation = 2;
+      return { sessionId, scopeId: 'persona-a', worldbookIds: [] };
+    },
+    updateWorldSessionBinding: () => {
+      updateCalls += 1;
+      return { ok: true, changed: true, worldbookIds: ['ABA World'] };
+    },
+    getWorldIdsForSession: async () => {
+      generation = 2;
+      return [];
+    },
+    bindWorldToSession: async () => { updateCalls += 1; },
+  });
+  const result = await getTool(tools, 'worldbook.bind_session').execute({
+    sessionId: 'chat-a',
+    worldbookId: 'ABA World',
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, 'worldbook_recreated_during_operation');
+  assert.equal(updateCalls, 0);
+  console.log('ok - worldbook binding rejects a deleted and recreated worldbook generation');
+}
+
+{
+  const contacts = new Map([
+    ['chat-a', { id: 'chat-a', name: '同名会话', addedAt: 100 }],
+  ]);
+  const sessionWorldIds = new Map();
+  const bindCalls = [];
+  const tools = createAppContentAgentTools({
+    contactsStore: {
+      scopeId: 'persona-a',
+      getContact: id => contacts.get(id) || null,
+      listContacts: () => Array.from(contacts.values()),
+    },
+    chatStore: {
+      scopeId: 'persona-a',
+      state: { sessions: { 'chat-a': { messages: [] }, 'chat-b': { messages: [] } } },
+      listSessions: () => ['chat-a', 'chat-b'],
+    },
+    getWorldInfo: async id => ({ name: id, entries: [] }),
+    getWorldInfoSnapshot: async id => ({
+      worldbookId: id,
+      exists: true,
+      data: { name: id, entries: [] },
+      revision: 1,
+      generation: 1,
+    }),
+    getWorldSessionBindingSnapshot: sessionId => ({
+      sessionId,
+      scopeId: 'persona-a',
+      worldbookIds: sessionWorldIds.get(sessionId) || [],
+    }),
+    updateWorldSessionBinding: (sessionId, options = {}) => {
+      bindCalls.push(sessionId);
+      sessionWorldIds.set(sessionId, [options.worldbookId]);
+      return { ok: true, changed: true, worldbookIds: [options.worldbookId] };
+    },
+    getWorldIdsForSession: async sessionId => sessionWorldIds.get(sessionId) || [],
+    bindWorldToSession: async (sessionId, worldbookIds) => {
+      bindCalls.push(sessionId);
+      sessionWorldIds.set(sessionId, [...worldbookIds]);
+    },
+  });
+  const registry = createAgentToolRegistry({
+    permissionEvaluator: createAgentPermissionEvaluator({
+      defaultDecision: AGENT_PERMISSION_DECISIONS.allow,
+    }),
+    logger: { warn: () => {} },
+  });
+  registry.registerMany(tools);
+  const result = await registry.executeTool('worldbook.bind_sessions', {
+    worldbookId: 'Pinned Batch World',
+    sessions: ['同名会话'],
+  }, {
+    operationIntentPolicy: { mode: 'write_allowed' },
+    requestToolConfirmation: () => {
+      contacts.delete('chat-a');
+      contacts.set('chat-b', { id: 'chat-b', name: '同名会话', addedAt: 200 });
+      return true;
+    },
+  });
+  assert.equal(result.status, 'succeeded');
+  assert.equal(result.result.ok, false);
+  assert.equal(result.result.results[0].reason, 'session_target_changed');
+  assert.deepEqual(bindCalls, []);
+  assert.equal(sessionWorldIds.has('chat-b'), false);
+  console.log('ok - confirmed batch worldbook binding never re-resolves a recreated same-name session');
 }
 
 {
@@ -1312,4 +1671,214 @@ const createProfileStore = (prefix = 'profile') => {
   assert.equal(read.entries[0].sourceLayer, 'canon');
   assert.deepEqual(read.entries[0].sourceRefs, ['https://example.com/canon']);
   console.log('ok - worldbook writes enforce strict source layers and preserve provenance for readback');
+}
+
+{
+  const clone = value => JSON.parse(JSON.stringify(value));
+  const saved = new Map([[
+    'Concurrent World',
+    {
+      name: 'Concurrent World',
+      entries: [
+        { id: 'entry-a', comment: 'A', content: 'initial-A' },
+        { id: 'entry-b', comment: 'B', content: 'initial-B' },
+      ],
+    },
+  ]]);
+  const tools = createAppContentAgentTools({
+    getWorldInfo: async id => clone(saved.get(id) || null),
+    saveWorldInfo: async (id, data) => saved.set(id, clone(data)),
+  });
+  const registry = createAgentToolRegistry({
+    permissionEvaluator: createAgentPermissionEvaluator({
+      defaultDecision: AGENT_PERMISSION_DECISIONS.allow,
+    }),
+    logger: { warn: () => {} },
+  });
+  registry.registerMany(tools);
+
+  const output = await registry.executeTool('worldbook.update_entries', {
+    worldbookId: 'Concurrent World',
+    updates: [{ entryId: 'entry-a', content: 'maid-A' }],
+  }, {
+    requestToolConfirmation: request => {
+      assert.equal(request.details.worldbookId, 'Concurrent World');
+      const userWrite = clone(saved.get('Concurrent World'));
+      userWrite.entries[1].content = 'user-B-during-confirmation';
+      saved.set('Concurrent World', userWrite);
+      return { decision: 'allow' };
+    },
+  });
+
+  assert.equal(output.status, 'succeeded');
+  assert.equal(output.result.worldbookId, 'Concurrent World');
+  assert.deepEqual(
+    saved.get('Concurrent World').entries.map(entry => entry.content),
+    ['maid-A', 'user-B-during-confirmation'],
+    '执行阶段应重新读取确认期间的用户改动，再只修改指定条目',
+  );
+  console.log('ok - worldbook update re-reads after confirmation and preserves intervening user edits');
+}
+
+{
+  const clone = value => (value == null ? value : JSON.parse(JSON.stringify(value)));
+  const records = new Map([
+    ['Pinned A', { name: 'Pinned A', entries: [{ id: 'a', comment: 'A', content: 'initial-A' }] }],
+    ['Pinned B', { name: 'Pinned B', entries: [{ id: 'a', comment: 'A', content: 'initial-B' }] }],
+  ]);
+  const versions = new Map([
+    ['Pinned A', { revision: 1, generation: 1 }],
+    ['Pinned B', { revision: 1, generation: 1 }],
+  ]);
+  const snapshot = async id => {
+    const data = clone(records.get(id) || null);
+    const version = versions.get(id) || { revision: 0, generation: 0 };
+    return { worldbookId: id, exists: Boolean(data), data, ...version };
+  };
+  const save = async (id, data, options = {}) => {
+    const current = await snapshot(id);
+    if ((options.expectedRevision ?? current.revision) !== current.revision
+      || (options.expectedGeneration ?? current.generation) !== current.generation
+      || (typeof options.expectedExists === 'boolean' && options.expectedExists !== current.exists)) {
+      return { ok: false, reason: 'worldbook_revision_conflict', latestSnapshot: current };
+    }
+    const next = {
+      revision: current.revision + 1,
+      generation: current.exists ? current.generation : current.generation + 1,
+    };
+    records.set(id, clone(data));
+    versions.set(id, next);
+    return { ok: true, ...next };
+  };
+  let boundWorldbookId = 'Pinned A';
+  const tools = createAppContentAgentTools({
+    getWorldInfo: async id => clone(records.get(id) || null),
+    getWorldInfoSnapshot: snapshot,
+    saveWorldInfo: save,
+    worldInfoExists: async id => records.has(id),
+    getWorldIdsForSession: async () => [boundWorldbookId],
+  });
+  const registry = createAgentToolRegistry({
+    permissionEvaluator: createAgentPermissionEvaluator({
+      defaultDecision: AGENT_PERMISSION_DECISIONS.allow,
+    }),
+    logger: { warn: () => {} },
+  });
+  registry.registerMany(tools);
+
+  const output = await registry.executeTool('worldbook.update_entries', {
+    sessionId: 'session-1',
+    updates: [{ entryId: 'a', content: 'maid-pinned' }],
+  }, {
+    requestToolConfirmation: request => {
+      assert.equal(request.details.worldbookId, 'Pinned A');
+      boundWorldbookId = 'Pinned B';
+      return { decision: 'allow' };
+    },
+  });
+
+  assert.equal(output.result.worldbookId, 'Pinned A');
+  assert.equal(records.get('Pinned A').entries[0].content, 'maid-pinned');
+  assert.equal(records.get('Pinned B').entries[0].content, 'initial-B');
+  console.log('ok - worldbook update pins the confirmed target across a session binding switch');
+}
+
+{
+  const clone = value => (value == null ? value : JSON.parse(JSON.stringify(value)));
+  let data = {
+    name: 'CAS World',
+    entries: [
+      { id: 'a', comment: 'A', content: 'initial-A' },
+      { id: 'b', comment: 'B', content: 'initial-B' },
+    ],
+  };
+  let revision = 1;
+  let injected = false;
+  const getSnapshot = async () => ({
+    worldbookId: 'CAS World',
+    exists: true,
+    data: clone(data),
+    revision,
+    generation: 1,
+  });
+  const tools = createAppContentAgentTools({
+    getWorldInfo: async () => clone(data),
+    getWorldInfoSnapshot: getSnapshot,
+    saveWorldInfo: async (_id, next, options = {}) => {
+      if (!injected) {
+        injected = true;
+        data.entries[1].content = 'user-B-after-maid-read';
+        revision += 1;
+      }
+      if (options.expectedRevision !== revision) {
+        return { ok: false, reason: 'worldbook_revision_conflict', latestSnapshot: await getSnapshot() };
+      }
+      data = clone(next);
+      revision += 1;
+      return { ok: true, revision, generation: 1 };
+    },
+  });
+
+  const result = await getTool(tools, 'worldbook.update_entries').execute({
+    worldbookId: 'CAS World',
+    updates: [{ entryId: 'a', content: 'maid-A' }],
+  }, {
+    toolSafety: { decision: 'allow', request: { kind: 'worldbook.update_entries', details: { worldbookId: 'CAS World' } } },
+  });
+  assert.equal(result.ok, true);
+  assert.deepEqual(data.entries.map(entry => entry.content), ['maid-A', 'user-B-after-maid-read']);
+  console.log('ok - worldbook CAS retries preserve non-overlapping writes in the final read/save window');
+}
+
+{
+  const clone = value => (value == null ? value : JSON.parse(JSON.stringify(value)));
+  let data = { name: 'ABA World', entries: [{ id: 'a', comment: 'A', content: 'original' }] };
+  let revision = 1;
+  let generation = 1;
+  let deleteCalls = 0;
+  const snapshot = async id => ({
+    worldbookId: id,
+    exists: Boolean(data),
+    data: clone(data),
+    revision,
+    generation,
+  });
+  const tools = createAppContentAgentTools({
+    listWorlds: async () => (data ? ['ABA World'] : []),
+    getWorldInfo: async () => clone(data),
+    getWorldInfoSnapshot: snapshot,
+    worldInfoExists: async () => Boolean(data),
+    deleteWorldInfo: async (_id, options = {}) => {
+      deleteCalls += 1;
+      if (options.expectedRevision !== revision || options.expectedGeneration !== generation) {
+        return { ok: false, reason: 'worldbook_revision_conflict', latestSnapshot: await snapshot('ABA World') };
+      }
+      data = null;
+      revision += 1;
+      return { ok: true };
+    },
+  });
+  const registry = createAgentToolRegistry({
+    permissionEvaluator: createAgentPermissionEvaluator({
+      defaultDecision: AGENT_PERMISSION_DECISIONS.allow,
+    }),
+    logger: { warn: () => {} },
+  });
+  registry.registerMany(tools);
+
+  const output = await registry.executeTool('worldbook.delete_many', {
+    worldbooks: ['ABA World'],
+  }, {
+    requestToolConfirmation: () => {
+      data = { name: 'ABA World', entries: [{ id: 'a', comment: 'A', content: 'recreated' }] };
+      revision += 2;
+      generation += 1;
+      return { decision: 'allow' };
+    },
+  });
+  assert.equal(output.result.succeededCount, 0);
+  assert.equal(output.result.results[0].reason, 'worldbook_changed_since_confirmation');
+  assert.equal(data.entries[0].content, 'recreated');
+  assert.equal(deleteCalls, 1);
+  console.log('ok - worldbook delete confirmation expires after delete/recreate ABA');
 }

@@ -9,15 +9,39 @@ const world = {
   name: 'world-a',
   entries: [{ id: 'entry-a', comment: 'Entry', content: 'content', disable: true, constant: false }],
 };
+const coldWorld = {
+  name: 'cold-world',
+  entries: [
+    { id: 'cold-entry', comment: 'Cold Entry', content: 'cold content' },
+    ...Array.from({ length: 1300 }, (_, index) => ({
+      id: `cold-decoy-${index}`,
+      comment: `Cold Decoy ${index}`,
+      content: 'x'.repeat(1000),
+    })),
+  ],
+};
 const worldWrites = [];
+const worldLoadCalls = [];
+const worldCache = new Map([['world-a', world]]);
+const indexedWorldIds = ['world-a', 'cold-world', 'unused-1', 'unused-2', 'unused-3', 'unused-4', 'unused-5'];
 globalThis.window = {
   appBridge: {
     currentWorldId: 'world-a',
     globalWorldId: '',
     worldStore: {
-      load: () => world,
-      list: () => ['world-a'],
+      load: id => worldCache.get(String(id || '').trim()) || null,
+      list: () => indexedWorldIds.slice(),
+      ensureLoadedMany: async (ids) => {
+        const requested = Array.isArray(ids) ? ids.map(id => String(id || '').trim()).filter(Boolean) : [];
+        worldLoadCalls.push(requested);
+        if (requested.includes('cold-world')) worldCache.set('cold-world', coldWorld);
+        return requested.map(id => worldCache.get(id)).filter(Boolean);
+      },
       save: (...args) => worldWrites.push(args),
+    },
+    saveWorldInfo: (...args) => {
+      worldWrites.push(args);
+      return Promise.resolve({ ok: true });
     },
   },
 };
@@ -113,6 +137,29 @@ const { renderTemplateMessages } = await import('../../src/scripts/plugins/templ
 
   assert.equal(result.messages[0].content, '&lt;b&gt;safe&lt;/b&gt;');
   console.log('ok - render-stage EJS interpolation keeps HTML escaping');
+}
+
+{
+  worldCache.delete('cold-world');
+  worldLoadCalls.length = 0;
+  const result = await renderTemplateMessages([{
+    role: 'system',
+    content: "<%= getwi('cold-world','Cold Entry') %>",
+  }], {
+    stage: 'generate',
+    chatStore: {
+      listGlobalVariables: () => ({}),
+      listVariables: () => ({}),
+      listInitialVariables: () => ({}),
+    },
+    sessionId: 'cold-world-session',
+    context: {},
+    readOnly: true,
+  });
+
+  assert.equal(result.messages[0].content, 'cold content');
+  assert.deepEqual(worldLoadCalls, [['cold-world']]);
+  console.log('ok - explicit getwi loads an unbound cold worldbook before building the worker snapshot');
 }
 
 {
@@ -215,7 +262,11 @@ const { renderTemplateMessages } = await import('../../src/scripts/plugins/templ
     unhandled = reason;
   };
   process.once('unhandledRejection', onUnhandled);
-  window.appBridge.worldStore.save = () => Promise.reject(new Error('world store is read-only'));
+  worldWrites.length = 0;
+  window.appBridge.saveWorldInfo = (...args) => {
+    worldWrites.push(args);
+    return Promise.reject(new Error('world store is read-only'));
+  };
   world.entries[0].disable = true;
   world.entries[0].constant = false;
 
@@ -236,6 +287,11 @@ const { renderTemplateMessages } = await import('../../src/scripts/plugins/templ
   process.removeListener('unhandledRejection', onUnhandled);
 
   assert.equal(result.messages[0].content, 'done');
-  assert.equal(unhandled, null, 'blocked worldStore.save must be observed instead of becoming an unhandled rejection');
-  console.log('ok - template worldbook activation observes asynchronous persistence rejection');
+  assert.equal(unhandled, null, 'blocked saveWorldInfo must be observed instead of becoming an unhandled rejection');
+  assert.equal(world.entries[0].disable, true, 'template activation must not mutate the live worldStore object before CAS');
+  assert.equal(world.entries[0].constant, false);
+  assert.equal(worldWrites.length, 1);
+  assert.equal(worldWrites[0][1].entries[0].disable, false);
+  assert.equal(worldWrites[0][1].entries[0].constant, true);
+  console.log('ok - template worldbook activation writes a clone and observes persistence rejection');
 }

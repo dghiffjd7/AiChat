@@ -255,6 +255,7 @@ const escapeRegex = value => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'
     ['B', { id: 'B', name: 'Beta', isGroup: false }],
   ]);
   const messages = new Map();
+  const sessionWorldIds = new Map();
   const navTools = createAppNavigationAgentTools({
     clickUiElement: async ({ ref, label }) => ({ ok: true, clicked: label || ref, after: { panels: [] } }),
     actions: {
@@ -355,11 +356,14 @@ const escapeRegex = value => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'
     getWorldInfo: async id => savedWorlds.get(id) || null,
     listWorlds: async () => Array.from(savedWorlds.keys()),
     waitForWorldStoreReady: async () => true,
-    getWorldIdsForSession: async () => ['CatalogWorld'],
+    getWorldIdsForSession: async sessionId => sessionWorldIds.get(sessionId) || [],
     getGlobalWorldId: async () => '',
     assignWorldToPersona: async (personaId, worldId, options) => boundWorlds.push({ personaId, worldId, options }),
     getRpSessionId: personaId => `rp:${personaId}`,
-    bindWorldToSession: async (sessionId, worldIds, options) => boundWorlds.push({ sessionId, worldIds, options }),
+    bindWorldToSession: async (sessionId, worldIds, options) => {
+      sessionWorldIds.set(sessionId, [...worldIds]);
+      boundWorlds.push({ sessionId, worldIds, options });
+    },
     enterChatRoom: async id => {
       openedSessions.push(id);
       return { blocked: false };

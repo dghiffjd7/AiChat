@@ -56,6 +56,80 @@ const normalizeStringList = value => (
   Array.isArray(value) ? value : (value ? [value] : [])
 ).map(item => trim(item)).filter(Boolean);
 
+const fingerprintSessionDeleteValue = (value) => {
+  const state = { first: 0x811c9dc5, second: 0x9e3779b9, length: 0 };
+  const seen = new Set();
+  const feed = (text) => {
+    const input = String(text ?? '');
+    state.length += input.length;
+    for (let index = 0; index < input.length; index += 1) {
+      const code = input.charCodeAt(index);
+      state.first ^= code;
+      state.first = Math.imul(state.first, 0x01000193);
+      state.second ^= code + ((state.second << 6) >>> 0) + (state.second >>> 2);
+    }
+  };
+  const visit = (input) => {
+    if (input === null) { feed('null'); return; }
+    if (input === undefined) { feed('undefined'); return; }
+    if (typeof input === 'string') { feed('s'); feed(input); return; }
+    if (typeof input === 'number') { feed(`n${Number.isFinite(input) ? input : 'null'}`); return; }
+    if (typeof input === 'boolean') { feed(input ? 'true' : 'false'); return; }
+    if (typeof input !== 'object') { feed(`${typeof input}:${String(input)}`); return; }
+    if (seen.has(input)) { feed('[Circular]'); return; }
+    seen.add(input);
+    if (Array.isArray(input)) {
+      feed('[');
+      input.forEach(visit);
+      feed(']');
+    } else {
+      feed('{');
+      Object.keys(input)
+        .filter(key => !key.startsWith('_'))
+        .sort()
+        .forEach((key) => {
+          feed(key);
+          visit(input[key]);
+        });
+      feed('}');
+    }
+    seen.delete(input);
+  };
+  visit(value);
+  return `${state.length}:${state.first >>> 0}:${state.second >>> 0}`;
+};
+
+export const createSessionDeleteRevisionToken = ({
+  sessionId = '',
+  chatStore = null,
+  contactsStore = null,
+} = {}) => {
+  const sid = trim(sessionId);
+  if (!sid) return 'session:missing';
+  const contact = findContact(contactsStore, sid);
+  const storedSession = chatStore?.state?.sessions?.[sid];
+  const session = storedSession && typeof storedSession === 'object'
+    ? storedSession
+    : {
+        messages: chatStore?.getMessages?.(sid) || [],
+        pending: chatStore?.getPendingMessages?.(sid) || [],
+        draft: chatStore?.getDraft?.(sid) || '',
+        settings: chatStore?.getSessionSettings?.(sid) || null,
+      };
+  const contactSnapshot = contact
+    ? {
+        id: trim(contact.id),
+        name: trim(contact.name),
+        avatar: trim(contact.avatar),
+        isGroup: contact.isGroup === true,
+        members: Array.isArray(contact.members) ? contact.members.map(item => trim(item)).filter(Boolean) : [],
+        addedAt: Number(contact.addedAt || 0) || 0,
+        updatedAt: Number(contact.updatedAt || 0) || 0,
+      }
+    : null;
+  return `session:${fingerprintSessionDeleteValue({ contact: contactSnapshot, session })}`;
+};
+
 const resolveCreateSessionNames = (args = {}) => {
   const names = Array.isArray(args.names)
     ? args.names
@@ -232,6 +306,7 @@ export const createAppSessionAgentTools = ({
         status: 'planned',
         reason: '',
         isGroup,
+        revision: createSessionDeleteRevisionToken({ sessionId, chatStore, contactsStore }),
       });
     }
     return {
@@ -537,6 +612,19 @@ export const createAppSessionAgentTools = ({
               ...item,
               status: 'skipped',
               reason: 'already_absent',
+            }));
+            continue;
+          }
+          const currentRevision = createSessionDeleteRevisionToken({
+            sessionId,
+            chatStore,
+            contactsStore,
+          });
+          if (item.revision && currentRevision !== item.revision) {
+            results.push(compactDeleteItem({
+              ...item,
+              status: 'skipped',
+              reason: 'session_changed_during_confirmation',
             }));
             continue;
           }

@@ -124,3 +124,82 @@ const getTool = (tools, name) => tools.find(tool => tool.name === name);
   assert.equal(clicks.length, 1);
   console.log('ok - read-only intent allows navigation clicks but blocks dangerous UI actions');
 }
+
+{
+  const clicks = [];
+  let confirmationScopesStarted = 0;
+  let confirmationScopesEnded = 0;
+  const tools = createAppNavigationAgentTools({
+    describeUiElement: ({ ref }) => ({ ok: true, ref, label: '删除记录' }),
+    beginUiElementConfirmation: () => {
+      confirmationScopesStarted += 1;
+      return () => { confirmationScopesEnded += 1; };
+    },
+    clickUiElement: async args => {
+      clicks.push(args);
+      return { ok: true, clicked: '删除记录' };
+    },
+  });
+  const clickTool = getTool(tools, 'ui.click_element');
+  const readOnly = await clickTool.execute({ ref: 'settings:r1:btn-2' }, {
+    operationIntentPolicy: { mode: 'read_only' },
+    requestToolConfirmation: () => ({ decision: 'allow' }),
+  });
+  assert.equal(readOnly.ok, false);
+  assert.equal(readOnly.reason, 'agent_tool_write_intent_required');
+  assert.equal(clicks.length, 0);
+  assert.equal(confirmationScopesStarted, 0);
+
+  let confirmation = null;
+  const allowed = await clickTool.execute({ ref: 'settings:r1:btn-2' }, {
+    operationIntentPolicy: { mode: 'write_allowed' },
+    requestToolConfirmation: request => {
+      confirmation = request;
+      return { decision: 'allow' };
+    },
+  });
+  assert.equal(allowed.ok, true);
+  assert.equal(clicks.length, 1);
+  assert.equal(confirmationScopesStarted, 1);
+  assert.equal(confirmationScopesEnded, 1);
+  assert.match(confirmation.message, /删除记录/);
+  console.log('ok - ref-only dangerous UI clicks resolve their label before intent and confirmation checks');
+}
+
+{
+  const clicks = [];
+  const tools = createAppNavigationAgentTools({
+    describeUiElement: ({ ref }) => ({ ok: true, ref, label: '删除记录', panel: 'settings' }),
+    clickUiElement: async args => {
+      clicks.push(args);
+      return { ok: true, clicked: '删除记录' };
+    },
+  });
+  const clickTool = getTool(tools, 'ui.click_element');
+  const disguised = await clickTool.execute({
+    ref: 'settings:r1:btn-2',
+    label: '活动',
+  }, {
+    operationIntentPolicy: { mode: 'read_only' },
+    requestToolConfirmation: () => ({ decision: 'allow' }),
+  });
+  assert.equal(disguised.ok, false);
+  assert.equal(disguised.reason, 'agent_tool_write_intent_required');
+  assert.equal(clicks.length, 0);
+
+  let confirmation = null;
+  const allowed = await clickTool.execute({
+    ref: 'settings:r1:btn-2',
+    label: '活动',
+  }, {
+    operationIntentPolicy: { mode: 'write_allowed' },
+    requestToolConfirmation: request => {
+      confirmation = request;
+      return { decision: 'allow' };
+    },
+  });
+  assert.equal(allowed.ok, true);
+  assert.match(confirmation.message, /删除记录/);
+  assert.equal(clicks[0].label, '删除记录');
+  console.log('ok - ref clicks use the inspected label instead of a caller supplied harmless label');
+}

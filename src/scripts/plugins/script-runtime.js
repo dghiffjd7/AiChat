@@ -6990,13 +6990,21 @@ export class ScriptRuntime {
       const title = params.title;
       const force = params.force === true;
       if (!worldId) return false;
-      const world = this.bridge?.worldStore?.load?.(worldId);
+      const usesGuardedRead = typeof this.bridge?.getWorldInfo === 'function';
+      const loaded = usesGuardedRead
+        ? await this.bridge.getWorldInfo(worldId)
+        : this.bridge?.worldStore?.load?.(worldId);
+      const world = loaded ? (usesGuardedRead ? loaded : clonePlain(loaded)) : null;
       const entries = Array.isArray(world?.entries) ? world.entries : [];
       const entry = entries.find(e => String(e?.comment || e?.title || e?.id || '') === String(title || '').trim());
       if (!entry) return false;
       entry.disable = false;
       if (force) entry.constant = true;
-      await this.bridge?.worldStore?.save?.(worldId, { ...world, entries });
+      if (typeof this.bridge?.saveWorldInfo === 'function') {
+        await this.bridge.saveWorldInfo(worldId, { ...world, entries });
+      } else {
+        await this.bridge?.worldStore?.save?.(worldId, { ...world, entries });
+      }
       return true;
     }
     if (method === 'context.getCharacter') {

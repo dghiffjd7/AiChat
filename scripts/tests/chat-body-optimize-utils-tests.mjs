@@ -4,6 +4,7 @@ import {
   DEFAULT_CHAT_BODY_OPTIMIZE_INSTRUCTION,
   buildChatBodyOptimizeModelPrompt,
   normalizeChatBodyOptimizeModelResult,
+  resolveChatBodyOptimizeWritebackTarget,
 } from '../../src/scripts/ui/chat/chat-body-optimize-utils.js';
 
 {
@@ -75,6 +76,44 @@ import {
   assert.equal(declined.canOptimize, false);
   assert.equal(declined.summary, '指示与正文无关');
   console.log('ok - 无需优化与拒绝优化路径');
+}
+
+{
+  const original = {
+    id: 'assistant-1',
+    role: 'assistant',
+    rawOriginal: '等待优化的原文',
+  };
+  const current = {
+    ...original,
+    rawOriginal: '用户已经手动改过的正文',
+  };
+  const resolveInputText = message => ({ text: message?.rawOriginal || message?.content || '' });
+
+  const unchanged = resolveChatBodyOptimizeWritebackTarget({
+    snapshotText: original.rawOriginal,
+    currentMessage: original,
+    resolveInputText,
+  });
+  assert.equal(unchanged.ok, true);
+  assert.equal(unchanged.message, original);
+
+  const edited = resolveChatBodyOptimizeWritebackTarget({
+    snapshotText: original.rawOriginal,
+    currentMessage: current,
+    resolveInputText,
+  });
+  assert.equal(edited.ok, false);
+  assert.equal(edited.reason, 'revision_expired');
+
+  const deleted = resolveChatBodyOptimizeWritebackTarget({
+    snapshotText: original.rawOriginal,
+    currentMessage: null,
+    resolveInputText,
+  });
+  assert.equal(deleted.ok, false);
+  assert.equal(deleted.reason, 'message_not_found');
+  console.log('ok - 正文优化写回会拒绝用户已编辑或删除的目标消息');
 }
 
 console.log('chat-body-optimize-utils-tests passed');

@@ -2614,7 +2614,7 @@ pub async fn save_world_info(
         .map_err(|e| e.to_string())?;
 
     let json = serde_json::to_string_pretty(&data).map_err(|e| e.to_string())?;
-    fs::write(world_file, json).map_err(|e| e.to_string())?;
+    write_file_atomically(&world_file, json.as_bytes())?;
 
     Ok(())
 }
@@ -2897,6 +2897,19 @@ pub async fn load_kv(app: AppHandle, name: String) -> Result<Value, String> {
     }
 
     Ok(data)
+}
+
+/// 删除已完成 sidecar 迁移后的旧世界书聚合 KV。
+/// 固定文件名，避免把通用 KV 删除能力暴露给 WebView 调用方。
+#[tauri::command]
+pub async fn delete_worldinfo_legacy_store(app: AppHandle) -> Result<bool, String> {
+    let data_dir = get_data_dir(&app)?;
+    let file = data_dir.join("worldinfo_store.json");
+    if !file.exists() {
+        return Ok(false);
+    }
+    fs::remove_file(&file).map_err(|e| e.to_string())?;
+    Ok(true)
 }
 
 #[tauri::command]

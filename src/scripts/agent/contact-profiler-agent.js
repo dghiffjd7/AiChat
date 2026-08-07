@@ -202,10 +202,39 @@ export const createContactProfilerAgent = ({
     }
   };
 
+  const captureScopeSnapshot = (store) => {
+    if (typeof store?.getScopeSnapshot === 'function') return store.getScopeSnapshot();
+    return {
+      scopeId: trim(store?.scopeId),
+      scopeToken: Number.isFinite(Number(store?.scopeToken)) ? Number(store.scopeToken) : null,
+    };
+  };
+
+  const isScopeSnapshotCurrent = (store, snapshot = {}) => {
+    const current = captureScopeSnapshot(store);
+    if (trim(current.scopeId) !== trim(snapshot.scopeId)) return false;
+    if (snapshot.scopeToken === null || snapshot.scopeToken === undefined) return true;
+    return Number(current.scopeToken) === Number(snapshot.scopeToken);
+  };
+
+  const captureProfileSnapshot = (store, contactId = '') => {
+    if (typeof store?.getProfileSnapshot === 'function') return store.getProfileSnapshot(contactId);
+    const profile = store?.getProfile?.(contactId) || null;
+    const scope = captureScopeSnapshot(store);
+    return {
+      contactId,
+      ...scope,
+      exists: Boolean(profile),
+      revision: null,
+      profile,
+    };
+  };
+
   const runProfileUpdate = (request = {}) => {
     const src = isPlainObject(request) ? request : {};
     const store = resolveStore();
     const settings = resolveSettings();
+    const scopeSnapshot = captureScopeSnapshot(store);
     const sessionId = trim(src.sessionId || getCurrentSessionId?.());
     const contactId = trim(src.contactId || settings.backgroundUpdateProfileId || sessionId);
     const force = src.force === true;
@@ -240,7 +269,7 @@ export const createContactProfilerAgent = ({
     const targetSessionId = sessionId || contactId;
     const messageLimit = normalizePositiveInteger(src.messageLimit, 20, 1, 200);
     const maxRawChars = normalizePositiveInteger(settings.backgroundMaxTokens * 2, 2400, 500, 120000);
-    const coalesceKey = `contact_profile:${contactId}`;
+    const coalesceKey = `contact_profile:${trim(scopeSnapshot.scopeId)}:${contactId}`;
     return agentTaskRuntime.enqueue({
       kind: 'contact_profile_update',
       title: 'Contact profile update',
@@ -250,6 +279,7 @@ export const createContactProfilerAgent = ({
       summary: `contact profile update: ${contactId}`,
       metadata: {
         contactId,
+        scopeId: trim(scopeSnapshot.scopeId),
         force,
       },
       coalesceKey,
@@ -262,6 +292,16 @@ export const createContactProfilerAgent = ({
           logger?.debug?.('contact profile store ready skipped', err);
         }
       }
+      if (!isScopeSnapshotCurrent(store, scopeSnapshot)) {
+        return {
+          runId,
+          status: 'conflict',
+          saved: false,
+          conflict: true,
+          reason: 'target_scope_changed',
+          contactId,
+        };
+      }
       const contextStep = startStep({
         type: 'contact_profile.collect_context',
         summary: 'collect contact profile context',
@@ -271,7 +311,22 @@ export const createContactProfilerAgent = ({
       const contact = await getContact(contactId, { sessionId: targetSessionId });
       const rawMessages = await getMessages(targetSessionId, { contactId });
       const messages = normalizeMessages(rawMessages, { limit: messageLimit, maxRawChars });
-      const existingProfile = store.getProfile?.(contactId) || null;
+      if (!isScopeSnapshotCurrent(store, scopeSnapshot)) {
+        finishStep(contextStep.id, {
+          status: 'skipped',
+          output: { contactId, reason: 'target_scope_changed' },
+        });
+        return {
+          runId,
+          status: 'conflict',
+          saved: false,
+          conflict: true,
+          reason: 'target_scope_changed',
+          contactId,
+        };
+      }
+      const profileSnapshot = captureProfileSnapshot(store, contactId);
+      const existingProfile = profileSnapshot.profile || null;
       finishStep(contextStep.id, {
         status: 'succeeded',
         output: {
@@ -292,7 +347,7 @@ export const createContactProfilerAgent = ({
         contact,
         existingProfile,
         messages,
-        scopeId: store.scopeId || '',
+        scopeId: scopeSnapshot.scopeId || '',
         settings,
         now,
       }));
@@ -313,40 +368,78 @@ export const createContactProfilerAgent = ({
       });
       const shouldAutoSave = settings.backgroundAutoSave === true && settings.backgroundRequireConfirm === false;
       if (shouldAutoSave) {
-        const saved = await store.upsertProfile?.(candidate);
+        const mutation = typeof store.upsertProfileIfUnchanged === 'function'
+          ? await store.upsertProfileIfUnchanged(candidate, profileSnapshot)
+          : (!isScopeSnapshotCurrent(store, scopeSnapshot)
+            ? { ok: false, saved: false, conflict: true, reason: 'target_scope_changed' }
+            : { ok: true, saved: true, profile: await store.upsertProfile?.(candidate) });
+        const saved = mutation?.profile || null;
         finishStep(saveStep.id, {
-          status: saved ? 'succeeded' : 'skipped',
+          status: mutation?.ok && saved ? 'succeeded' : 'skipped',
           output: {
             contactId,
             mode: 'autosave',
             saved: Boolean(saved),
+            reason: trim(mutation?.reason),
           },
         });
+        if (!mutation?.ok || !saved) {
+          return {
+            runId,
+            status: mutation?.conflict ? 'conflict' : 'skipped',
+            saved: false,
+            conflict: mutation?.conflict === true,
+            reason: trim(mutation?.reason, 'profile_save_failed'),
+            contactId,
+          };
+        }
         return {
           runId,
-          status: saved ? 'saved' : 'skipped',
+          status: 'saved',
           contactId,
-          profile: clone(saved || candidate),
+          profile: clone(saved),
         };
       }
-      const pending = await store.addPendingUpdate?.({
+      const pendingPayload = {
         contactId,
         status: 'pending',
         reason,
         profile: candidate,
+        scopeId: profileSnapshot.scopeId,
+        baseRevision: profileSnapshot.revision,
+        baseExists: profileSnapshot.exists,
         raw: buildRawSnippet(messages, maxRawChars),
         createdAt: resolveTimestamp(now),
         updatedAt: resolveTimestamp(now),
-      });
+      };
+      const pendingMutation = typeof store.addPendingUpdateIfCurrent === 'function'
+        ? await store.addPendingUpdateIfCurrent(pendingPayload, profileSnapshot)
+        : (!isScopeSnapshotCurrent(store, scopeSnapshot)
+          ? { ok: false, conflict: true, reason: 'target_scope_changed', pending: null }
+          : { ok: true, conflict: false, pending: await store.addPendingUpdate?.(pendingPayload) });
+      const pending = pendingMutation?.pending || null;
       finishStep(saveStep.id, {
-        status: pending ? 'succeeded' : 'failed',
+        status: pending ? 'succeeded' : (pendingMutation?.conflict ? 'skipped' : 'failed'),
         output: {
           contactId,
           mode: 'pending_confirmation',
           pendingUpdateId: pending?.id || '',
+          reason: trim(pendingMutation?.reason),
         },
       });
-      if (!pending) throw new Error('contact profile pending update was not saved');
+      if (!pending) {
+        if (pendingMutation?.conflict) {
+          return {
+            runId,
+            status: 'conflict',
+            saved: false,
+            conflict: true,
+            reason: trim(pendingMutation.reason, 'target_scope_changed'),
+            contactId,
+          };
+        }
+        throw new Error('contact profile pending update was not saved');
+      }
       return {
         runId,
         status: 'pending_confirmation',

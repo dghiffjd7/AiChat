@@ -93,7 +93,7 @@ export const buildAssistantMessageFromText = async (
     try {
       const inject =
         typeof getTemplateInjections === 'function'
-          ? getTemplateInjections({
+          ? await getTemplateInjections({
             sessionId: sessionKey,
             content: displayText,
             templateInjectionContext,

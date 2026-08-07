@@ -93,6 +93,7 @@ export const createActiveGenerationRecord = ({
   partialCommitHandler,
   swipeTarget,
   cancelled: false,
+  cancelReason: '',
   startedAt: Date.now(),
 });
 
@@ -306,6 +307,7 @@ export const runActiveGenerationCancelFlow = ({
 
   try {
     currentGeneration.cancelled = true;
+    currentGeneration.cancelReason = String(reason || '').trim();
   } catch {}
 
   const sessionId = String(currentGeneration.sessionId || '').trim();
