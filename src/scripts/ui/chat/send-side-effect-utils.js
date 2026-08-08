@@ -628,6 +628,7 @@ export const finalizeLegacyStreamAssistantResponse = async (
         formatTime,
         parseSpecialMessage,
         usage: appBridge?.consumeLastGenerationUsage?.() ?? null,
+        sources: appBridge?.consumeLastGenerationSources?.() ?? null,
       })
     : {
         role: 'assistant',
@@ -868,6 +869,7 @@ export const finalizeCreativeStreamAssistantResponse = async (
         captureAssistantMemoryState,
         attachAssistantMemoryStateToMeta,
         usage: appBridge?.consumeLastGenerationUsage?.() ?? null,
+        sources: appBridge?.consumeLastGenerationSources?.() ?? null,
       })
     : {
         role: 'assistant',
@@ -996,6 +998,7 @@ export const finalizeBufferedCreativeAssistantResponse = async (
         captureAssistantMemoryState,
         attachAssistantMemoryStateToMeta,
         usage: appBridge?.consumeLastGenerationUsage?.() ?? null,
+        sources: appBridge?.consumeLastGenerationSources?.() ?? null,
       })
     : {
         role: 'assistant',
@@ -1108,6 +1111,7 @@ export const finalizeBufferedLegacyAssistantResponse = (
         applyChatModeAssistantRegex,
         parseSpecialMessage,
         usage: appBridge?.consumeLastGenerationUsage?.() ?? null,
+        sources: appBridge?.consumeLastGenerationSources?.() ?? null,
       })
     : {
         role: 'assistant',

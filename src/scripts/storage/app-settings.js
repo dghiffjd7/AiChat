@@ -273,7 +273,7 @@ const migrateSettings = (settings = {}) => {
   });
   next.chatDefaultColorMode = inferChatColorMode(next, defaults.chatDefaultColorMode);
   const searchProvider = String(next.webSearchProvider || '').trim().toLowerCase().replace(/[\s-]+/g, '_');
-  next.webSearchProvider = ['duckduckgo', 'brave', 'tavily', 'serpapi', 'bing'].includes(searchProvider)
+  next.webSearchProvider = ['duckduckgo', 'brave', 'tavily', 'serpapi'].includes(searchProvider)
     ? searchProvider
     : defaults.webSearchProvider;
   next.webSearchLocale = String(next.webSearchLocale || defaults.webSearchLocale).trim() || defaults.webSearchLocale;
@@ -307,9 +307,24 @@ export const appSettings = {
     return settings;
   },
   update(patch = {}) {
-    const next = { ...defaults, ...migrateSettings(readSettings()), ...patch };
+    const current = migrateSettings(readSettings());
+    const { webSearchApiKey: _ignoredPlaintextSearchKey, ...safePatch } = patch || {};
+    const next = { ...defaults, ...current, ...safePatch };
     delete next.__updatedAt;
+    // 普通设置写入既不能新增明文凭证，也不能在迁移失败时误删尚待重试的旧凭证。
+    next.webSearchApiKey = String(current.webSearchApiKey || '');
     writeSettings(next);
     return next;
+  },
+  clearLegacyWebSearchApiKey(expectedKey = '') {
+    const current = migrateSettings(readSettings());
+    const storedKey = String(current.webSearchApiKey || '');
+    const expected = String(expectedKey || '');
+    if (expected && storedKey !== expected) return false;
+    if (!storedKey) return true;
+    const next = { ...defaults, ...current, webSearchApiKey: '' };
+    delete next.__updatedAt;
+    writeSettings(next);
+    return true;
   },
 };

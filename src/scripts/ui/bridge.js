@@ -6,6 +6,10 @@ import { LLMClient } from '../api/client.js';
 import { canInitClient } from '../api/client-config-utils.js';
 import { buildReasoningRequestOptions, getReasoningSamplerPolicy } from '../api/model-capabilities.js';
 import { isReasoningStreamEvent } from '../api/native-reasoning.js';
+import {
+  buildWebSearchRequestPlan,
+  mergeWebSources,
+} from '../api/web-search-runtime.js';
 import { applyGenerationParamFilter } from '../utils/generation-param-filter-utils.js';
 import {
   isDeepSeekApiRequest,
@@ -81,6 +85,7 @@ import {
 } from './bridge-cancel-utils.js';
 import { buildProviderToolBridgeLoopPlan } from '../agent/provider-tool-bridge-loop-plan.js';
 import { buildProviderToolRequestSchema } from '../agent/provider-tool-request-schema.js';
+import { createWebSearchGenerationClient } from './chat/web-search-generation-client.js';
 import {
   dispatchRuntimeHookLifecycleEvent,
   runRuntimeHookLifecycleEvent,
@@ -589,10 +594,13 @@ class AppBridge {
     this.chatUI = null; // Injected
     this.pluginRuntime = null; // Injected
     this.scriptRuntime = null; // Injected
+    this.webSearchToolRuntime = null; // Injected read-only web.search/web.research runtime
     this.contextBuilder = null; // Injected (from UI)
     this.roleWorldResolver = null; // Injected (from UI)
     this.worldLifecycleHandler = null; // Injected (from UI)
     this.lastMemoryPlan = null;
+    this.lastGenerationUsage = null;
+    this.lastGenerationSources = null;
     this.lastMemoryUpdateBySession = {};
     this.lastWorldBudgetWarningAt = 0;
     this.lastWorldInjectionDebug = null;
@@ -637,6 +645,10 @@ class AppBridge {
 
   setScriptRuntime(runtime) {
     this.scriptRuntime = runtime || null;
+  }
+
+  setWebSearchToolRuntime(runtime) {
+    this.webSearchToolRuntime = runtime && typeof runtime === 'object' ? runtime : null;
   }
 
   getScriptStore() {
@@ -3526,6 +3538,14 @@ class AppBridge {
     return usage;
   }
 
+  consumeLastGenerationSources() {
+    const sources = Array.isArray(this.lastGenerationSources)
+      ? this.lastGenerationSources.slice()
+      : null;
+    this.lastGenerationSources = null;
+    return sources?.length ? sources : null;
+  }
+
   getTokenCalibration(provider = '', model = '') {
     return tokenCalibrationStore.get(provider, model);
   }
@@ -3593,6 +3613,7 @@ class AppBridge {
     const previousLastMemoryPlan = this.lastMemoryPlan;
     const previousLastRequest = this.lastRequest;
     const previousLastGenerationUsage = this.lastGenerationUsage;
+    const previousLastGenerationSources = this.lastGenerationSources;
     const previousLastWorldInjectionDebug = this.lastWorldInjectionDebug;
     const previousLastDeepSeekFormatDebug = this.lastDeepSeekFormatDebug;
     const previousLastPromptSegmentDebug = this.lastPromptSegmentDebug;
@@ -4002,10 +4023,40 @@ class AppBridge {
         sessionId,
         existingOptions: [genOptions, providerDirectives],
       });
+      const fallbackToolDefinitions = ['web.search', 'web.research', 'web.fetch_url']
+        .map(name => this.webSearchToolRuntime?.getTool?.(name))
+        .filter(Boolean);
+      const webSearchPlan = buildWebSearchRequestPlan({
+        enabled: config?.webSearchEnabled === true,
+        provider: config?.provider,
+        model: config?.model,
+        existingOptions: [
+          genOptions,
+          providerDirectives,
+          providerToolRequestSchema.requestOptions,
+        ],
+        fallbackToolDefinitions,
+      });
+      if (config?.webSearchEnabled === true && webSearchPlan.enabled !== true) {
+        const warningSignature = `${webSearchPlan.route}:${webSearchPlan.diagnostics?.reason || ''}`;
+        if (this.lastWebSearchWarningSignature !== warningSignature) {
+          this.lastWebSearchWarningSignature = warningSignature;
+          try {
+            window.dispatchEvent(new CustomEvent('chatapp-web-search-unavailable', {
+              detail: {
+                reason: String(webSearchPlan.diagnostics?.reason || '当前模型无法启用联网'),
+                provider: String(config?.provider || ''),
+                model: String(config?.model || ''),
+              },
+            }));
+          } catch {}
+        }
+      }
       const requestOptions = applyRuntimeParamFilter({
         ...(genOptions || {}),
         ...(providerDirectives || {}),
         ...(providerToolRequestSchema.requestOptions || {}),
+        ...(webSearchPlan.requestOptions || {}),
         signal: abortController.signal,
         nativeRequestId,
         ...(providerToolBridgeLoopPlan.requestOptions || {}),
@@ -4014,6 +4065,7 @@ class AppBridge {
       // 在 param filter 之后注入回调，避免被参数过滤剥掉；主流程 finalize 消息时 consume 一次挂到 meta.usage。
       // consume-once：协议路径一次生成可 emit 多条消息，usage 属于整次生成，只挂到首条，避免重复计量。
       this.lastGenerationUsage = null;
+      this.lastGenerationSources = null;
       const generationStartedAt = Date.now();
       let rawEstimatedPromptTokens = 0;
       let calibrationRecorded = false;
@@ -4061,13 +4113,41 @@ class AppBridge {
           );
         }
       };
-      const preparedRequest = requestClient?.prepareChatRequest?.(messages, requestOptions) || null;
+      requestOptions.onProviderSources = (sources) => {
+        this.lastGenerationSources = mergeWebSources(this.lastGenerationSources || [], sources || []);
+      };
+      if (webSearchPlan.fallback === true) {
+        requestOptions.onWebSearchStatus = (status = {}) => {
+          const detail = {
+            state: String(status?.state || '').trim(),
+            message: String(status?.message || '').trim(),
+            sessionId,
+            requestId: nativeRequestId,
+          };
+          if (this.lastRequest?.requestId === nativeRequestId) {
+            this.lastRequest.webSearchStatus = { ...detail };
+          }
+          try {
+            window.dispatchEvent(new CustomEvent('chatapp-web-search-status', { detail }));
+          } catch {}
+        };
+      }
+      const generationClient = createWebSearchGenerationClient({
+        client: requestClient,
+        plan: webSearchPlan,
+        toolRuntime: this.webSearchToolRuntime,
+        provider: config?.provider,
+        model: config?.model,
+        sessionId,
+      });
+      const preparedRequest = generationClient?.prepareChatRequest?.(messages, requestOptions) || null;
       const responsePrefix = String(preparedRequest?.responsePrefix || '');
       const finalRequestMessages = preparedRequest?.messages || messages;
       rawEstimatedPromptTokens = estimatePromptMessagesTokens(finalRequestMessages, 'rough');
       // 带图/语音请求不进校准样本：估算把附件折成占位符，而 usage 含真实附件 token，
       // 比值会被顶到上限并经 EWMA 拉高系数，之后纯文本请求会被系统性高估。
-      calibrationEligible = !promptMessagesContainNonTextContent(finalRequestMessages);
+      calibrationEligible = config?.webSearchEnabled !== true
+        && !promptMessagesContainNonTextContent(finalRequestMessages);
       const injectionAudit = buildRequestInjectionAudit({
         memoryPlan: this.lastMemoryPlan,
         history: nextContext?.history,
@@ -4123,10 +4203,12 @@ class AppBridge {
             ...(genOptions || {}),
             ...(providerDirectives || {}),
             ...(providerToolRequestSchema.requestOptions || {}),
+            ...(webSearchPlan.requestOptions || {}),
           }),
         },
         providerToolRequestSchema: providerToolRequestSchema.diagnostics,
         providerToolBridgeLoop: providerToolBridgeLoopPlan.diagnostics,
+        webSearch: webSearchPlan.diagnostics,
         messages: finalRequestMessages,
         responsePrefix,
         worldDebug: this.lastWorldInjectionDebug || null,
@@ -4160,7 +4242,7 @@ class AppBridge {
         streaming = true;
         const inner = this.generateStream(messages, requestOptions, originalInput, {
           responsePrefix,
-          client: requestClient,
+          client: generationClient,
           config,
           requestId: nativeRequestId,
           requestStartedAt: generationStartedAt,
@@ -4173,7 +4255,7 @@ class AppBridge {
           }
         })();
       } else {
-        const response = await retryWithBackoff(() => requestClient.chat(messages, requestOptions), {
+        const response = await retryWithBackoff(() => generationClient.chat(messages, requestOptions), {
           maxRetries: config.maxRetries || 3,
           shouldRetry: err => !abortController.signal.aborted && isRetryableError(err),
         });
@@ -4209,6 +4291,7 @@ class AppBridge {
         this.lastMemoryPlan = previousLastMemoryPlan;
         this.lastRequest = previousLastRequest;
         this.lastGenerationUsage = previousLastGenerationUsage;
+        this.lastGenerationSources = previousLastGenerationSources;
         this.lastWorldInjectionDebug = previousLastWorldInjectionDebug;
         this.lastDeepSeekFormatDebug = previousLastDeepSeekFormatDebug;
         this.lastPromptSegmentDebug = previousLastPromptSegmentDebug;

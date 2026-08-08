@@ -71,6 +71,7 @@ pub fn run() {
             commands::import_data_bundle,
             commands::import_data_bundle_bytes,
             commands::http_request,
+            commands::public_http_request,
             commands::http_stream_request_start,
             commands::http_stream_request_read,
             commands::http_stream_request_close,

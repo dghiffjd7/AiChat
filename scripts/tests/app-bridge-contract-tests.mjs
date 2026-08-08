@@ -401,10 +401,18 @@ import {
     generate: async text => `generated:${text}`,
     buildMessages: text => [{ role: 'user', content: text }],
     backgroundChat: async messages => `background:${messages.length}`,
+    consumeLastGenerationUsage: () => ({ totalTokens: 3 }),
+    consumeLastGenerationSources: () => [{ url: 'https://example.com' }],
+    setWebSearchToolRuntime: runtime => { appBridge.webSearchToolRuntime = runtime; },
   });
   assert.equal(await appBridge.generate('hello'), 'generated:hello');
   assert.deepEqual(appBridge.buildMessages('hi'), [{ role: 'user', content: 'hi' }]);
   assert.equal(await appBridge.backgroundChat([{ role: 'user' }]), 'background:1');
+  assert.deepEqual(appBridge.consumeLastGenerationUsage(), { totalTokens: 3 });
+  assert.deepEqual(appBridge.consumeLastGenerationSources(), [{ url: 'https://example.com' }]);
+  const webRuntime = { executeTool: () => {} };
+  appBridge.setWebSearchToolRuntime(webRuntime);
+  assert.equal(appBridge.webSearchToolRuntime, webRuntime);
   const registry = getBridgeContractRegistry(appBridge);
   assert.equal(registry.contracts.generate.domain, BRIDGE_CONTRACT_DOMAINS.generation);
   assert.deepEqual(registry.contracts.generate.params, ['userMessage: string', 'context?: generation context']);
@@ -414,6 +422,8 @@ import {
   assert.equal(registry.contracts.generate.status, 'covered');
   assert.equal(registry.contracts.buildMessages.returns, 'Provider message[]');
   assert.equal(registry.contracts.backgroundChat.sideEffects.includes('does not write chat history'), true);
+  assert.equal(registry.contracts.consumeLastGenerationSources.status, 'covered');
+  assert.equal(registry.contracts.setWebSearchToolRuntime.domain, BRIDGE_CONTRACT_DOMAINS.generation);
   assert.equal(registry.domains[BRIDGE_CONTRACT_DOMAINS.generation].backgroundChat, true);
   console.log('ok - registerGenerationBridgeContract assigns generation helpers and metadata');
 }

@@ -101,6 +101,28 @@ const createWrapper = (message = {}) => {
 }
 
 {
+  const runtime = createMessagePatchUiRuntime({
+    normalizeReplyTarget: value => value ?? null,
+    normalizeReactionEntries: value => value ?? [],
+    resolveActiveSwipeMessage: message => message,
+    applyCreativeBubbleState: () => {},
+  });
+  const withoutSources = runtime.getMessageRenderSignature({
+    role: 'assistant',
+    type: 'text',
+    content: 'same',
+  });
+  const withSources = runtime.getMessageRenderSignature({
+    role: 'assistant',
+    type: 'text',
+    content: 'same',
+    meta: { sources: [{ url: 'https://example.com', title: 'Example' }] },
+  });
+  assert.notEqual(withoutSources, withSources);
+  console.log('ok - getMessageRenderSignature tracks late web source metadata');
+}
+
+{
   const creativeCalls = [];
   const runtime = createMessagePatchUiRuntime({
     normalizeReplyTarget: value => value ?? null,

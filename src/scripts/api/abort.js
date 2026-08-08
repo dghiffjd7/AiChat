@@ -8,14 +8,17 @@ export const splitRequestOptions = (options = {}) => {
   const requestId = String(nativeRequestIdRaw || '').trim();
   const onProviderToolCallDelta =
     typeof src.onProviderToolCallDelta === 'function' ? src.onProviderToolCallDelta : null;
+  const onProviderSources =
+    typeof src.onProviderSources === 'function' ? src.onProviderSources : null;
   const {
     signal: _signal,
     nativeRequestId: _nativeRequestId,
     requestId: _requestId,
     onProviderToolCallDelta: _onProviderToolCallDelta,
+    onProviderSources: _onProviderSources,
     ...rest
   } = src;
-  return { signal, requestId, onProviderToolCallDelta, options: rest };
+  return { signal, requestId, onProviderToolCallDelta, onProviderSources, options: rest };
 };
 
 export const createLinkedAbortController = ({ timeoutMs, signal } = {}) => {

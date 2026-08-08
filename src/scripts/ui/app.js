@@ -368,6 +368,7 @@ import {
 import { createChatEmitPendingCommitActions } from './chat/chat-emit-pending-commit-actions.js';
 import {
   applyChatModeAssistantRegex as applyChatModeAssistantRegexCore,
+  buildAssistantReplySources,
   buildAssistantReplyUsage,
   buildAssistantMessageFromText as buildAssistantMessageFromTextCore,
   buildChatModeAssistantMessage as buildChatModeAssistantMessageCore,
@@ -571,6 +572,7 @@ import {
 import {
   SWIPE_REASONING_KEYS,
   applySwipeReasoningStateToMeta,
+  applySwipeSourcesStateToMeta,
 } from './chat/swipe-ui-utils.js';
 import {
   buildTurnCheckpointHydrationThreadKey as buildTurnCheckpointHydrationThreadKeyCore,
@@ -940,7 +942,32 @@ const initApp = async () => {
   };
   let stageManager = null;
   let stageTimeline = null;
+  const chatConfigManager = new ConfigManager();
+  const imageConfigManager = new ConfigManager({ scope: 'image' });
+  const webSearchCredentialManager = new ConfigManager({
+    scope: 'web_search_credentials',
+    credentialsOnly: true,
+  });
+  const legacyWebSearchSettings = appSettings.get();
+  if (String(legacyWebSearchSettings.webSearchApiKey || '').trim()) {
+    try {
+      const migrationResult = await webSearchCredentialManager.migrateLegacyWebSearchApiKey(
+        legacyWebSearchSettings.webSearchProvider,
+        legacyWebSearchSettings.webSearchApiKey,
+      );
+      if (migrationResult.status === 'migrated' || migrationResult.status === 'existing') {
+        appSettings.clearLegacyWebSearchApiKey(legacyWebSearchSettings.webSearchApiKey);
+      } else if (migrationResult.status === 'blocked') {
+        logger.warn('旧版搜索 API Key 未迁移：目标槽位已有无法读取的凭证，已保留旧值');
+      }
+    } catch (error) {
+      logger.warn('旧版搜索 API Key 迁移到加密 keyring 失败，暂不清除原值', error);
+    }
+  }
   const configPanel = new ConfigPanel({
+    chatConfigManager,
+    imageConfigManager,
+    webSearchCredentialManager,
     onSaved: (payload = {}) => {
       if (payload.tab !== 'chat') return;
       maidGuideEmit(window, 'config-profile-saved', {
@@ -949,8 +976,38 @@ const initApp = async () => {
       });
     },
   });
-  const chatConfigManager = new ConfigManager();
-  const imageConfigManager = new ConfigManager({ scope: 'image' });
+  window.addEventListener('chatapp-web-search-status', (event) => {
+    const detail = event?.detail || {};
+    if (String(detail.sessionId || '') !== String(chatStore.getCurrent() || '')) return;
+    const state = String(detail.state || '');
+    const isActive = state === 'searching' || state === 'continuing';
+    const requestId = String(detail.requestId || '');
+    document.querySelectorAll('.chat-web-search-status').forEach((element) => {
+      if (!requestId || element.dataset.requestId === requestId) element.remove();
+    });
+    const typingLabel = document.querySelector('#typing-indicator .typing-private-label, #typing-indicator .typing-group-label');
+    if (!isActive) {
+      if (typingLabel?.classList.contains('typing-private-label')) typingLabel.textContent = '输入中';
+      return;
+    }
+    if (typingLabel) typingLabel.textContent = detail.message || '正在联网搜索…';
+    const placeholders = document.querySelectorAll('[data-typing-placeholder="1"]');
+    const wrapper = placeholders[placeholders.length - 1];
+    if (!wrapper) return;
+    const status = document.createElement('span');
+    status.className = 'chat-web-search-status';
+    status.dataset.requestId = requestId;
+    status.dataset.state = state;
+    status.textContent = detail.message || '正在联网搜索…';
+    wrapper.appendChild(status);
+  });
+  window.addEventListener('chatapp-web-search-unavailable', (event) => {
+    const reason = String(event?.detail?.reason || '').trim();
+    window.toastr?.warning?.(
+      reason ? `当前模型的联网请求已安全跳过：${reason}` : '当前模型暂不支持这组联网工具。',
+      '联网未启用',
+    );
+  });
   const imageGenerationParamsStore = getImageGenerationParamsStore();
   let imageConfigNeedsReload = false;
   let imagePromptModelHintCache = '';
@@ -1484,6 +1541,9 @@ const initApp = async () => {
     generate: window.appBridge.generate?.bind(window.appBridge),
     buildMessages: window.appBridge.buildMessages?.bind(window.appBridge),
     backgroundChat: window.appBridge.backgroundChat?.bind(window.appBridge),
+    consumeLastGenerationUsage: window.appBridge.consumeLastGenerationUsage?.bind(window.appBridge),
+    consumeLastGenerationSources: window.appBridge.consumeLastGenerationSources?.bind(window.appBridge),
+    setWebSearchToolRuntime: window.appBridge.setWebSearchToolRuntime?.bind(window.appBridge),
   });
   registerRegexTransformBridgeContract(window.appBridge, {
     applyInputStoredRegex: window.appBridge.applyInputStoredRegex?.bind(window.appBridge),
@@ -2766,6 +2826,7 @@ const initApp = async () => {
         sessionId: sid,
         time: time || formatNowTime(),
         usage: window.appBridge?.consumeLastGenerationUsage?.() ?? null,
+        sources: window.appBridge?.consumeLastGenerationSources?.() ?? null,
         name,
         avatar,
         showName,
@@ -3502,8 +3563,28 @@ const initApp = async () => {
     startFlow: flowId => maidOnboardingRuntime?.startFlow?.(flowId) === true,
   });
   registerWebSearchAgentTools(agentToolRegistry, {
-    httpRequest: payload => safeInvoke('http_request', payload),
-    getSearchConfig: () => appSettings.get(),
+    httpRequest: payload => safeInvoke('public_http_request', payload),
+    abortHttpRequest: requestId => safeInvoke('http_abort_request', { requestId }),
+    getSearchConfig: async () => {
+      const settings = appSettings.get();
+      return {
+        webSearchProvider: settings.webSearchProvider,
+        webSearchLocale: settings.webSearchLocale,
+        apiKey: await webSearchCredentialManager.getWebSearchApiKey(settings.webSearchProvider),
+      };
+    },
+  });
+  window.appBridge?.setWebSearchToolRuntime?.({
+    getTool: name => agentToolRegistry.get(name),
+    executeTool: (name, args, context = {}) => agentToolRegistry.executeTool(name, args, {
+      ...context,
+      source: 'chat-web-search-fallback',
+      operationIntentPolicy: {
+        mode: 'read_only',
+        source: 'api_profile_web_search',
+        reason: 'profile switch only authorizes public web lookup',
+      },
+    }),
   });
   const maidGuideStore = new MaidGuideStore({
     loadKv: name => safeInvoke('load_kv', { name }),
@@ -25359,6 +25440,7 @@ Phase G（Frame 36）：循环衔接
       }
     }
 	    let nextMeta = applySwipeReasoningStateToMeta({ ...sourceMeta, swipes, activeSwipe: index }, activeBranch || {}, index);
+	    nextMeta = applySwipeSourcesStateToMeta(nextMeta, activeBranch || {}, index);
 	    if (nextMeta && typeof nextMeta === 'object' && 'activeSwipeDraft' in nextMeta) {
 	      delete nextMeta.activeSwipeDraft;
 	    }
@@ -25483,6 +25565,7 @@ Phase G（Frame 36）：循环衔接
       SWIPE_REASONING_KEYS.forEach((key) => {
         delete nextMeta[key];
       });
+      delete nextMeta.sources;
       markActiveSwipeGeneration();
       const current = chatStore.findMessage(msgId, sid) || storedMsg || message;
       const updated = chatStore.updateMessage(msgId, {
@@ -25551,14 +25634,20 @@ Phase G（Frame 36）：循环衔接
 	      }
 	      if (partial) newBranch.partial = true;
 	      if (cancelled) newBranch.cancelled = true;
+	      const branchSources = buildAssistantReplySources([
+	        ...(Array.isArray(sourceMessageMeta.sources) ? sourceMessageMeta.sources : []),
+	        ...(window.appBridge?.consumeLastGenerationSources?.() ?? []),
+	      ]);
+	      if (branchSources) newBranch.sources = branchSources;
 	      if (memoryTableSnapshot) newBranch.memoryTableSnapshot = cloneSwipePlainObject(memoryTableSnapshot);
 	      if (memoryUpdateEntry !== undefined) newBranch.memoryUpdateEntry = cloneSwipeMemoryUpdateEntry(memoryUpdateEntry);
 	      const merged = [...swipesBefore, newBranch];
-	      const nextMeta = applySwipeReasoningStateToMeta(
+	      let nextMeta = applySwipeReasoningStateToMeta(
 	        { ...sourceMeta, swipes: merged, activeSwipe: merged.length - 1 },
 	        newBranch,
 	        merged.length - 1,
 	      );
+	      nextMeta = applySwipeSourcesStateToMeta(nextMeta, newBranch, merged.length - 1);
 	      delete nextMeta.swipeRegenerating;
 	      delete nextMeta.activeSwipeDraft;
 	      delete nextMeta.autoImagePrompt;
@@ -25635,11 +25724,12 @@ Phase G（Frame 36）：循环衔接
         : [{ content: storedMsg?.content ?? message?.content ?? '', raw: storedMsg?.raw ?? message?.raw }];
       const restoredActive = Math.min(Math.max(0, previousActive), Math.max(0, restoredSwipes.length - 1));
       const branch = restoredSwipes[restoredActive] || restoredSwipes[0] || {};
-      const restoredMeta = applySwipeReasoningStateToMeta(
+      let restoredMeta = applySwipeReasoningStateToMeta(
         { ...sourceMeta, swipes: restoredSwipes, activeSwipe: restoredActive },
         branch,
         restoredActive,
       );
+      restoredMeta = applySwipeSourcesStateToMeta(restoredMeta, branch, restoredActive);
       delete restoredMeta.swipeRegenerating;
       delete restoredMeta.activeSwipeDraft;
       try {
@@ -28991,6 +29081,7 @@ Phase G（Frame 36）：循环衔接
         sessionId: sessionKey,
         time: time || formatNowTime(),
         usage: window.appBridge?.consumeLastGenerationUsage?.() ?? null,
+        sources: window.appBridge?.consumeLastGenerationSources?.() ?? null,
         name,
         avatar,
         showName,
@@ -30046,21 +30137,32 @@ Phase G（Frame 36）：循环衔接
         });
       }
     }
-    // Phase B 主任务计量兜底：部分 provider 把 usage 放在内容之后的尾部 SSE chunk，
-    // 消息在内容结束时已 finalize（consume 时 usage 尚未到）。生成完全结束后再兜底 patch 末条回复。
-    // 非竞态路径已在构建时 consume（此时 bridge usage 为 null → 空操作，不重复挂）。
-    const patchTrailingAssistantUsage = (patchSid) => {
+    // 部分 provider 把 usage / 联网来源放在内容之后的尾部 SSE chunk，消息可能已经 finalize。
+    // 生成完全结束后兜底 patch 末条回复；非竞态路径已在构建时 consume，不会重复挂。
+    const patchTrailingAssistantGenerationMeta = (patchSid) => {
       try {
         const usage = window.appBridge?.consumeLastGenerationUsage?.();
         const replyUsage = buildAssistantReplyUsage(usage);
-        if (!replyUsage) return;
+        const sources = window.appBridge?.consumeLastGenerationSources?.();
+        const replySources = buildAssistantReplySources(sources);
+        if (!replyUsage && !replySources) return;
         const sid = String(patchSid || '').trim();
         const msgs = chatStore.getMessages(sid) || [];
         for (let i = msgs.length - 1; i >= 0; i -= 1) {
           const m = msgs[i];
           if (m?.role !== 'assistant') continue;
-          if (m?.meta?.usage) return; // 末条已带 usage → 不动
-          chatStore.updateMessage(m.id, { meta: { ...(m.meta || {}), usage: replyUsage } }, sid);
+          const nextMeta = { ...(m.meta || {}) };
+          let changed = false;
+          if (replyUsage && !nextMeta.usage) {
+            nextMeta.usage = replyUsage;
+            changed = true;
+          }
+          if (replySources && !Array.isArray(nextMeta.sources)) {
+            nextMeta.sources = replySources;
+            changed = true;
+          }
+          if (!changed) return;
+          chatStore.updateMessage(m.id, { meta: nextMeta }, sid);
           if (isSessionActive(sid)) ui.updateMessage(m.id, chatStore.findMessage?.(m.id, sid) || m);
           return;
         }
@@ -30333,8 +30435,8 @@ Phase G（Frame 36）：循环衔接
           sendSucceeded = true;
         }
       }
-      // 生成成功完成后兜底挂 usage（覆盖 usage 尾部到达的流式协议路径）
-      patchTrailingAssistantUsage(sessionId);
+      // 生成成功完成后兜底挂 usage / 联网来源（覆盖尾部到达的流式协议路径）
+      patchTrailingAssistantGenerationMeta(sessionId);
       if (sendSucceeded) notifyAssistantDelivered();
     } catch (error) {
       const catchResult = runSendCatchFlow({

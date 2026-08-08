@@ -14,6 +14,7 @@ use std::fs;
 use std::fs::OpenOptions;
 use std::io::Cursor;
 use std::io::{Read, Seek, Write};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -1159,6 +1160,24 @@ fn is_keyring_master_store_file_name(name: &str) -> bool {
         || (lower.starts_with("llm_keyring_master_") && lower.ends_with("_v1.json"))
 }
 
+fn is_app_settings_store_file_name(name: &str) -> bool {
+    name.trim().eq_ignore_ascii_case("app_settings_v1.json")
+}
+
+fn sanitize_app_settings_store_value(mut value: Value) -> Value {
+    if let Some(root) = value.as_object_mut() {
+        for field in [
+            "webSearchApiKey",
+            "braveSearchApiKey",
+            "tavilyApiKey",
+            "serpApiKey",
+        ] {
+            root.remove(field);
+        }
+    }
+    value
+}
+
 fn sanitize_profile_store_value(mut value: Value) -> Value {
     if let Some(root) = value.as_object_mut() {
         if let Some(profiles_value) = root.get_mut("profiles") {
@@ -1166,6 +1185,7 @@ fn sanitize_profile_store_value(mut value: Value) -> Value {
                 for profile in profiles.values_mut() {
                     if let Some(obj) = profile.as_object_mut() {
                         obj.insert("activeKeyId".to_string(), Value::Null);
+                        obj.insert("webSearchEnabled".to_string(), Value::Bool(false));
                         obj.insert("proxyAuthToken".to_string(), Value::String(String::new()));
                         obj.insert(
                             "vertexaiServiceAccount".to_string(),
@@ -1272,6 +1292,22 @@ fn add_dir_to_zip<W: Write + Seek>(
         .strip_prefix(base)
         .map_err(|_| "invalid base path".to_string())?;
     let name = rel.to_string_lossy().replace('\\', "/");
+    if dir
+        .file_name()
+        .and_then(|value| value.to_str())
+        .map(is_app_settings_store_file_name)
+        .unwrap_or(false)
+    {
+        let raw = fs::read_to_string(dir).map_err(|e| e.to_string())?;
+        let value: Value = serde_json::from_str(&raw).map_err(|e| e.to_string())?;
+        let safe = sanitize_app_settings_store_value(value);
+        let json = serde_json::to_vec_pretty(&safe).map_err(|e| e.to_string())?;
+        writer
+            .start_file(name, options)
+            .map_err(|e| e.to_string())?;
+        writer.write_all(&json).map_err(|e| e.to_string())?;
+        return Ok(1);
+    }
     writer
         .start_file(name, options)
         .map_err(|e| e.to_string())?;
@@ -1334,6 +1370,55 @@ fn import_bundle_from_reader<R: Read + Seek>(
                 eprintln!("[import_bundle] mkdir failed: {} ({})", name, err);
                 continue;
             }
+        }
+        if out_path
+            .file_name()
+            .and_then(|value| value.to_str())
+            .map(is_app_settings_store_file_name)
+            .unwrap_or(false)
+        {
+            let mut raw = String::new();
+            if let Err(err) = file.read_to_string(&mut raw) {
+                skipped += 1;
+                eprintln!(
+                    "[import_bundle] read app settings failed: {} ({})",
+                    name, err
+                );
+                continue;
+            }
+            let value: Value = match serde_json::from_str(&raw) {
+                Ok(value) => value,
+                Err(err) => {
+                    skipped += 1;
+                    eprintln!(
+                        "[import_bundle] parse app settings failed: {} ({})",
+                        name, err
+                    );
+                    continue;
+                }
+            };
+            let safe = sanitize_app_settings_store_value(value);
+            let safe_json = match serde_json::to_vec_pretty(&safe) {
+                Ok(value) => value,
+                Err(err) => {
+                    skipped += 1;
+                    eprintln!(
+                        "[import_bundle] encode app settings failed: {} ({})",
+                        name, err
+                    );
+                    continue;
+                }
+            };
+            if let Err(err) = fs::write(&out_path, safe_json) {
+                skipped += 1;
+                eprintln!(
+                    "[import_bundle] write app settings failed: {} ({})",
+                    name, err
+                );
+                continue;
+            }
+            files += 1;
+            continue;
         }
         let mut outfile = match fs::File::create(&out_path) {
             Ok(f) => f,
@@ -2338,7 +2423,8 @@ pub async fn export_data_bundle(
             "llm_keyring_master_v1.json"
         ],
         "redactedIncluded": [
-            "llm_profiles*_v1.json"
+            "llm_profiles*_v1.json",
+            "app_settings_v1.json"
         ]
     });
     writer
@@ -3887,6 +3973,267 @@ fn finish_http_stream(
     }
 }
 
+const DEFAULT_PUBLIC_HTTP_RESPONSE_BYTES: usize = 1024 * 1024;
+const MAX_PUBLIC_HTTP_RESPONSE_BYTES: usize = 2 * 1024 * 1024;
+const MAX_PUBLIC_HTTP_REDIRECTS: usize = 5;
+
+fn is_public_ipv4(ip: Ipv4Addr) -> bool {
+    let [a, b, c, _d] = ip.octets();
+    !(a == 0
+        || a == 10
+        || (a == 100 && (64..=127).contains(&b))
+        || a == 127
+        || (a == 169 && b == 254)
+        || (a == 172 && (16..=31).contains(&b))
+        || (a == 192 && b == 0 && c == 0)
+        || (a == 192 && b == 0 && c == 2)
+        || (a == 192 && b == 88 && c == 99)
+        || (a == 192 && b == 168)
+        || (a == 198 && (b == 18 || b == 19))
+        || (a == 198 && b == 51 && c == 100)
+        || (a == 203 && b == 0 && c == 113)
+        || a >= 224)
+}
+
+fn is_public_ipv6(ip: Ipv6Addr) -> bool {
+    if let Some(mapped) = ip.to_ipv4() {
+        return is_public_ipv4(mapped);
+    }
+    let segments = ip.segments();
+    !(ip.is_unspecified()
+        || ip.is_loopback()
+        || ip.is_multicast()
+        || (segments[0] & 0xfe00) == 0xfc00
+        || (segments[0] & 0xffc0) == 0xfe80
+        || (segments[0] == 0x2001 && segments[1] == 0x0db8))
+}
+
+fn is_public_ip(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(value) => is_public_ipv4(value),
+        IpAddr::V6(value) => is_public_ipv6(value),
+    }
+}
+
+async fn resolve_public_http_target(url: &reqwest::Url) -> Result<Vec<SocketAddr>, String> {
+    if !matches!(url.scheme(), "http" | "https") {
+        return Err("public web request only supports http/https".to_string());
+    }
+    if !url.username().is_empty() || url.password().is_some() {
+        return Err("public web request URL credentials are not allowed".to_string());
+    }
+    let host = url
+        .host_str()
+        .ok_or_else(|| "public web request URL has no host".to_string())?;
+    let port = url
+        .port_or_known_default()
+        .ok_or_else(|| "public web request URL has no valid port".to_string())?;
+    if let Ok(ip) = host.parse::<IpAddr>() {
+        if !is_public_ip(ip) {
+            return Err("public web request blocked a non-public IP address".to_string());
+        }
+        return Ok(vec![SocketAddr::new(ip, port)]);
+    }
+
+    let mut addresses = Vec::new();
+    for address in tokio::net::lookup_host((host, port))
+        .await
+        .map_err(|error| format!("public web DNS lookup failed: {error}"))?
+    {
+        if !is_public_ip(address.ip()) {
+            return Err("public web request DNS resolved to a non-public IP address".to_string());
+        }
+        if !addresses.contains(&address) {
+            addresses.push(address);
+        }
+    }
+    if addresses.is_empty() {
+        return Err("public web DNS lookup returned no addresses".to_string());
+    }
+    Ok(addresses)
+}
+
+fn public_http_content_type_allowed(headers: &reqwest::header::HeaderMap) -> bool {
+    let Some(value) = headers.get(reqwest::header::CONTENT_TYPE) else {
+        return true;
+    };
+    let Ok(raw) = value.to_str() else {
+        return false;
+    };
+    let mime = raw
+        .split(';')
+        .next()
+        .unwrap_or("")
+        .trim()
+        .to_ascii_lowercase();
+    mime.starts_with("text/")
+        || mime == "application/json"
+        || mime.ends_with("+json")
+        || mime == "application/xml"
+        || mime.ends_with("+xml")
+        || mime == "application/xhtml+xml"
+}
+
+fn public_http_has_sensitive_headers(headers: &reqwest::header::HeaderMap) -> bool {
+    [
+        "authorization",
+        "proxy-authorization",
+        "cookie",
+        "x-api-key",
+        "x-subscription-token",
+    ]
+    .iter()
+    .any(|name| headers.contains_key(*name))
+}
+
+async fn execute_public_http_request(
+    url: String,
+    method: String,
+    headers: HashMap<String, String>,
+    body: Option<String>,
+    timeout_ms: Option<u64>,
+    max_response_bytes: Option<usize>,
+) -> Result<HttpResponse, String> {
+    let method = reqwest::Method::from_bytes(method.as_bytes()).map_err(|e| e.to_string())?;
+    let mut current_url = reqwest::Url::parse(&url).map_err(|e| e.to_string())?;
+    let mut header_map = reqwest::header::HeaderMap::new();
+    for (key, value) in headers {
+        let name =
+            reqwest::header::HeaderName::from_bytes(key.as_bytes()).map_err(|e| e.to_string())?;
+        let value = reqwest::header::HeaderValue::from_str(&value).map_err(|e| e.to_string())?;
+        header_map.insert(name, value);
+    }
+    let timeout =
+        std::time::Duration::from_millis(timeout_ms.unwrap_or(12_000).clamp(1_000, 30_000));
+    let response_limit = max_response_bytes
+        .unwrap_or(DEFAULT_PUBLIC_HTTP_RESPONSE_BYTES)
+        .clamp(1024, MAX_PUBLIC_HTTP_RESPONSE_BYTES);
+
+    for redirect_count in 0..=MAX_PUBLIC_HTTP_REDIRECTS {
+        let resolved = resolve_public_http_target(&current_url).await?;
+        let host = current_url
+            .host_str()
+            .ok_or_else(|| "public web request URL has no host".to_string())?;
+        let mut client_builder = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .no_proxy()
+            .timeout(timeout);
+        if host.parse::<IpAddr>().is_err() {
+            client_builder = client_builder.resolve_to_addrs(host, &resolved);
+        }
+        let client = client_builder.build().map_err(|e| e.to_string())?;
+        let mut request = client
+            .request(method.clone(), current_url.clone())
+            .headers(header_map.clone());
+        if let Some(value) = body.as_ref() {
+            request = request.body(value.clone());
+        }
+        let mut response = request.send().await.map_err(|e| e.to_string())?;
+        let status = response.status();
+
+        if status.is_redirection() {
+            if redirect_count >= MAX_PUBLIC_HTTP_REDIRECTS {
+                return Err("public web request exceeded redirect limit".to_string());
+            }
+            if method != reqwest::Method::GET && method != reqwest::Method::HEAD {
+                return Err(
+                    "public web request refused a redirect for a non-GET request".to_string(),
+                );
+            }
+            if public_http_has_sensitive_headers(&header_map) {
+                return Err("public web request refused to redirect credentials".to_string());
+            }
+            let location = response
+                .headers()
+                .get(reqwest::header::LOCATION)
+                .and_then(|value| value.to_str().ok())
+                .ok_or_else(|| "public web redirect has no valid location".to_string())?;
+            current_url = current_url.join(location).map_err(|e| e.to_string())?;
+            continue;
+        }
+
+        if !public_http_content_type_allowed(response.headers()) {
+            return Err("public web request blocked a non-text response".to_string());
+        }
+        if response
+            .content_length()
+            .map(|length| length > response_limit as u64)
+            .unwrap_or(false)
+        {
+            return Err("public web response exceeds the size limit".to_string());
+        }
+
+        let mut out_headers = HashMap::new();
+        for (key, value) in response.headers().iter() {
+            if let Ok(value) = value.to_str() {
+                out_headers.insert(key.as_str().to_string(), value.to_string());
+            }
+        }
+        let mut bytes = Vec::new();
+        while let Some(chunk) = response.chunk().await.map_err(|e| e.to_string())? {
+            if bytes.len().saturating_add(chunk.len()) > response_limit {
+                return Err("public web response exceeds the size limit".to_string());
+            }
+            bytes.extend_from_slice(&chunk);
+        }
+        return Ok(HttpResponse {
+            status: status.as_u16(),
+            ok: status.is_success(),
+            headers: out_headers,
+            body: String::from_utf8_lossy(&bytes).to_string(),
+        });
+    }
+    Err("public web request exceeded redirect limit".to_string())
+}
+
+/// Text-only public network request for web search tools. Unlike `http_request`, this rejects
+/// local/private targets, pins validated DNS results, checks every redirect, and caps the body.
+#[tauri::command]
+pub async fn public_http_request(
+    url: String,
+    method: String,
+    headers: HashMap<String, String>,
+    body: Option<String>,
+    timeout_ms: Option<u64>,
+    request_id: Option<String>,
+    max_response_bytes: Option<usize>,
+    abort_state: State<'_, HttpAbortState>,
+) -> Result<HttpResponse, String> {
+    let request_key = match request_id {
+        Some(raw) => Some(validate_safe_key(&raw, "request_id")?),
+        None => None,
+    };
+    let task = tokio::spawn(execute_public_http_request(
+        url,
+        method,
+        headers,
+        body,
+        timeout_ms,
+        max_response_bytes,
+    ));
+    if let Some(key) = request_key.clone() {
+        let abort_handle = task.abort_handle();
+        let mut map = abort_state
+            .inner
+            .lock()
+            .map_err(|_| "http abort state lock poisoned".to_string())?;
+        if let Some(previous) = map.insert(key, abort_handle) {
+            previous.abort();
+        }
+    }
+    let joined = task.await;
+    if let Some(key) = request_key {
+        if let Ok(mut map) = abort_state.inner.lock() {
+            map.remove(&key);
+        }
+    }
+    match joined {
+        Ok(result) => result,
+        Err(error) if error.is_cancelled() => Err("aborted".to_string()),
+        Err(error) => Err(error.to_string()),
+    }
+}
+
 /// Native HTTP request to bypass WebView CORS (used by OpenAI-compatible providers like DeepSeek).
 #[tauri::command]
 pub async fn http_request(
@@ -4308,6 +4655,93 @@ mod tests {
             fs::create_dir_all(parent).unwrap();
         }
         fs::write(path, serde_json::to_vec(&value).unwrap()).unwrap();
+    }
+
+    #[test]
+    fn public_http_ip_filter_rejects_local_and_special_ranges() {
+        for blocked in [
+            "0.0.0.0",
+            "10.0.0.1",
+            "100.64.0.1",
+            "127.0.0.1",
+            "169.254.169.254",
+            "172.16.0.1",
+            "192.168.1.1",
+            "198.18.0.1",
+            "224.0.0.1",
+            "::",
+            "::1",
+            "fc00::1",
+            "fe80::1",
+            "::ffff:127.0.0.1",
+            "::127.0.0.1",
+        ] {
+            assert!(
+                !is_public_ip(blocked.parse().unwrap()),
+                "{blocked} must be blocked"
+            );
+        }
+        for allowed in ["1.1.1.1", "8.8.8.8", "2606:4700:4700::1111"] {
+            assert!(
+                is_public_ip(allowed.parse().unwrap()),
+                "{allowed} must be allowed"
+            );
+        }
+    }
+
+    #[test]
+    fn backup_sanitizers_remove_web_credentials_and_disable_imported_networking() {
+        let settings = sanitize_app_settings_store_value(serde_json::json!({
+            "uiThemePresetId": "paper-ink",
+            "webSearchApiKey": "secret",
+            "braveSearchApiKey": "other-secret"
+        }));
+        assert_eq!(
+            settings.get("uiThemePresetId").and_then(Value::as_str),
+            Some("paper-ink")
+        );
+        assert!(settings.get("webSearchApiKey").is_none());
+        assert!(settings.get("braveSearchApiKey").is_none());
+
+        let profiles = sanitize_profile_store_value(serde_json::json!({
+            "profiles": {
+                "p1": { "activeKeyId": "key-1", "webSearchEnabled": true }
+            }
+        }));
+        let profile = &profiles["profiles"]["p1"];
+        assert!(profile.get("activeKeyId").unwrap().is_null());
+        assert_eq!(
+            profile.get("webSearchEnabled").and_then(Value::as_bool),
+            Some(false)
+        );
+    }
+
+    #[test]
+    fn data_bundle_zip_redacts_search_credentials_from_app_settings() {
+        let data_dir = unique_temp_data_dir("bundle-search-secret-redaction");
+        write_json(
+            &data_dir.join("app_settings_v1.json"),
+            serde_json::json!({
+                "uiThemePresetId": "paper-ink",
+                "webSearchApiKey": "must-not-export"
+            }),
+        );
+        let cursor = Cursor::new(Vec::new());
+        let mut writer = ZipWriter::new(cursor);
+        let options = FileOptions::default().compression_method(CompressionMethod::Deflated);
+        assert_eq!(
+            add_dir_to_zip(&mut writer, &data_dir, &data_dir, options, None).unwrap(),
+            1
+        );
+        let bytes = writer.finish().unwrap().into_inner();
+        let mut archive = ZipArchive::new(Cursor::new(bytes)).unwrap();
+        let mut entry = archive.by_name("app_settings_v1.json").unwrap();
+        let mut json = String::new();
+        entry.read_to_string(&mut json).unwrap();
+        assert!(json.contains("paper-ink"));
+        assert!(!json.contains("must-not-export"));
+        assert!(!json.contains("webSearchApiKey"));
+        let _ = fs::remove_dir_all(data_dir);
     }
 
     #[test]

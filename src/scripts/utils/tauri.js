@@ -7,7 +7,7 @@
 // IPC 挂死防护：Tauri IPC 通道故障时 invoke 会永久 pending（无响应也无拒绝，catch 不到）。
 // 按命令给 IPC 级超时：http_request 用自身 timeoutMs+缓冲，其余命令 20s；超时抛错让调用方 fallback 生效。
 const resolveInvokeTimeoutMs = (cmd, args) => {
-    if (cmd === 'http_request') {
+    if (cmd === 'http_request' || cmd === 'public_http_request') {
         const requestTimeout = Number(args?.timeoutMs);
         return (Number.isFinite(requestTimeout) && requestTimeout > 0 ? requestTimeout : 240000) + 30000;
     }

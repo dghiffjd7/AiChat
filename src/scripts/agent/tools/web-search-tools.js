@@ -28,7 +28,6 @@ const normalizeProviderName = (value = '', fallback = 'duckduckgo') => {
   if (['brave', 'brave_search'].includes(raw)) return 'brave';
   if (['tavily'].includes(raw)) return 'tavily';
   if (['serpapi', 'serp_api'].includes(raw)) return 'serpapi';
-  if (['bing', 'bing_search'].includes(raw)) return 'bing';
   return fallback;
 };
 
@@ -54,10 +53,15 @@ const extractTitle = (html = '') => {
   return trim(stripHtml(match?.[1] || '', 300));
 };
 
-const requestWithFetch = async ({ url, method = 'GET', headers = {}, body = null, timeoutMs = 12000 } = {}) => {
+const requestWithFetch = async ({ url, method = 'GET', headers = {}, body = null, timeoutMs = 12000 } = {}, {
+  signal = null,
+} = {}) => {
   if (typeof fetch !== 'function') throw new Error('fetch unavailable');
   const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
   let timeoutId = null;
+  const onAbort = () => controller?.abort();
+  if (signal?.aborted) onAbort();
+  else signal?.addEventListener?.('abort', onAbort, { once: true });
   if (controller && timeoutMs > 0) {
     timeoutId = setTimeout(() => controller.abort(), timeoutMs);
   }
@@ -80,7 +84,45 @@ const requestWithFetch = async ({ url, method = 'GET', headers = {}, body = null
     };
   } finally {
     if (timeoutId) clearTimeout(timeoutId);
+    signal?.removeEventListener?.('abort', onAbort);
   }
+};
+
+const createAbortError = () => {
+  try {
+    return new DOMException('Web request aborted', 'AbortError');
+  } catch {
+    const error = new Error('Web request aborted');
+    error.name = 'AbortError';
+    return error;
+  }
+};
+
+const createWebRequestId = () => `web-${Date.now()}-${Math.random().toString(16).slice(2, 10)}`;
+
+const createScopedHttpRequest = (request, abortHttpRequest, context = {}) => async (payload = {}) => {
+  const signal = context?.signal || null;
+  if (signal?.aborted) throw createAbortError();
+  const requestId = createWebRequestId();
+  const task = Promise.resolve(request({ ...payload, requestId }, { signal }));
+  if (!signal) return task;
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const settle = (callback, value) => {
+      if (settled) return;
+      settled = true;
+      signal.removeEventListener('abort', onAbort);
+      callback(value);
+    };
+    const onAbort = () => {
+      try {
+        Promise.resolve(abortHttpRequest?.(requestId)).catch(() => {});
+      } catch {}
+      settle(reject, createAbortError());
+    };
+    signal.addEventListener('abort', onAbort, { once: true });
+    task.then(value => settle(resolve, value), error => settle(reject, error));
+  });
 };
 
 const readHttpText = async (request, payload = {}) => {
@@ -195,20 +237,18 @@ const resolveSearchConfig = ({
   apiKey = '',
 } = {}) => {
   const provider = normalizeProviderName(
-    args.provider ||
     baseConfig.webSearchProvider ||
     baseConfig.provider ||
     searchProvider,
     'duckduckgo',
   );
   const key = getSearchConfigValue(baseConfig, [
-    'webSearchApiKey',
     `${provider}ApiKey`,
     `${provider}SearchApiKey`,
     provider === 'brave' ? 'braveSearchApiKey' : '',
     provider === 'tavily' ? 'tavilyApiKey' : '',
     provider === 'serpapi' ? 'serpApiKey' : '',
-    provider === 'bing' ? 'bingSearchApiKey' : '',
+    'apiKey',
   ].filter(Boolean), apiKey);
   return {
     provider,
@@ -798,36 +838,6 @@ const performSerpApiSearch = async (request, { query = '', limit = 5, apiKey = '
   });
 };
 
-const performBingSearch = async (request, { query = '', limit = 5, apiKey = '', locale = 'zh-tw' } = {}) => {
-  const missing = requireApiKey('bing', apiKey);
-  if (missing) return missing;
-  const url = new URL('https://api.bing.microsoft.com/v7.0/search');
-  url.searchParams.set('q', query);
-  url.searchParams.set('count', String(Math.max(1, Math.min(10, limit))));
-  if (locale) url.searchParams.set('mkt', locale);
-  const body = await readHttpText(request, {
-    url: url.toString(),
-    method: 'GET',
-    headers: {
-      accept: 'application/json',
-      'Ocp-Apim-Subscription-Key': apiKey,
-    },
-    body: null,
-    timeoutMs: 12000,
-  });
-  const data = parseJsonBody(body);
-  return normalizeGenericResults(data?.webPages?.value || [], {
-    limit,
-    provider: 'bing',
-    map: item => ({
-      title: item?.name,
-      snippet: item?.snippet,
-      url: item?.url,
-      source: 'bing',
-    }),
-  });
-};
-
 const performSearch = async (request, {
   provider = 'duckduckgo',
   query = '',
@@ -838,7 +848,6 @@ const performSearch = async (request, {
   if (provider === 'brave') return performBraveSearch(request, { query, limit, locale, apiKey });
   if (provider === 'tavily') return performTavilySearch(request, { query, limit, apiKey });
   if (provider === 'serpapi') return performSerpApiSearch(request, { query, limit, locale, apiKey });
-  if (provider === 'bing') return performBingSearch(request, { query, limit, locale, apiKey });
   return performDuckDuckGoSearch(request, { query, limit, locale });
 };
 
@@ -905,14 +914,15 @@ const fetchReadableUrl = async (request, {
 
 export const createWebSearchAgentTools = ({
   httpRequest = requestWithFetch,
+  abortHttpRequest = null,
   getSearchConfig = null,
   searchProvider = 'duckduckgo',
   apiKey = '',
 } = {}) => {
   const request = typeof httpRequest === 'function' ? httpRequest : requestWithFetch;
-  const readConfig = () => {
+  const readConfig = async () => {
     try {
-      return typeof getSearchConfig === 'function' ? (getSearchConfig() || {}) : {};
+      return typeof getSearchConfig === 'function' ? (await getSearchConfig() || {}) : {};
     } catch {
       return {};
     }
@@ -942,20 +952,20 @@ export const createWebSearchAgentTools = ({
           query: { type: 'string', minLength: 1, maxLength: 240 },
           limit: { type: 'integer', minimum: 1, maximum: 10 },
           locale: { type: 'string', maxLength: 20 },
-          provider: { type: 'string', maxLength: 40 },
         },
       },
-      execute: async (args = {}) => {
+      execute: async (args = {}, context = {}) => {
+        const scopedRequest = createScopedHttpRequest(request, abortHttpRequest, context);
         const query = trim(args.query);
         const limit = Math.max(1, Math.min(10, Math.trunc(Number(args.limit || 0)) || 5));
         const config = resolveSearchConfig({
           args,
-          baseConfig: readConfig(),
+          baseConfig: await readConfig(),
           searchProvider,
           apiKey,
         });
         try {
-          const results = await performSearch(request, {
+          const results = await performSearch(scopedRequest, {
             ...config,
             query,
             limit,
@@ -966,6 +976,7 @@ export const createWebSearchAgentTools = ({
             results,
           });
         } catch (error) {
+          if (error?.name === 'AbortError') throw error;
           return {
             ok: false,
             query,
@@ -1012,7 +1023,8 @@ export const createWebSearchAgentTools = ({
           },
         },
       },
-      execute: async (args = {}) => {
+      execute: async (args = {}, context = {}) => {
+        const scopedRequest = createScopedHttpRequest(request, abortHttpRequest, context);
         let query = trim(args.query);
         const tags = trim(args.tags);
         if (!query && !tags) {
@@ -1042,18 +1054,18 @@ export const createWebSearchAgentTools = ({
         const providers = [];
         const preferAnime = style !== 'photo';
         if (purpose === 'wallpaper') {
-          providers.push(['wallhaven', () => performWallhavenImageSearch(request, { query, limit, animeOnly: preferAnime })]);
-          if (preferAnime) providers.push(['safebooru', () => performSafebooruImageSearch(request, { query, tags, limit })]);
-          if (style === 'photo') providers.push(['openverse', () => performOpenverseImageSearch(request, { query, limit })]);
+          providers.push(['wallhaven', () => performWallhavenImageSearch(scopedRequest, { query, limit, animeOnly: preferAnime })]);
+          if (preferAnime) providers.push(['safebooru', () => performSafebooruImageSearch(scopedRequest, { query, tags, limit })]);
+          if (style === 'photo') providers.push(['openverse', () => performOpenverseImageSearch(scopedRequest, { query, limit })]);
         } else if (style === 'photo') {
-          providers.push(['openverse', () => performOpenverseImageSearch(request, { query, limit })]);
+          providers.push(['openverse', () => performOpenverseImageSearch(scopedRequest, { query, limit })]);
         } else {
-          providers.push(['safebooru', () => performSafebooruImageSearch(request, { query, tags, limit })]);
-          providers.push(['danbooru', () => performDanbooruImageSearch(request, { query, tags, limit })]);
-          if (style === 'any') providers.push(['openverse', () => performOpenverseImageSearch(request, { query, limit })]);
+          providers.push(['safebooru', () => performSafebooruImageSearch(scopedRequest, { query, tags, limit })]);
+          providers.push(['danbooru', () => performDanbooruImageSearch(scopedRequest, { query, tags, limit })]);
+          if (style === 'any') providers.push(['openverse', () => performOpenverseImageSearch(scopedRequest, { query, limit })]);
         }
-        providers.push(['bing_images', () => performBingImageSearch(request, { query, limit })]);
-        providers.push(['duckduckgo_images', () => performDuckDuckGoImageSearch(request, { query, limit })]);
+        providers.push(['bing_images', () => performBingImageSearch(scopedRequest, { query, limit })]);
+        providers.push(['duckduckgo_images', () => performDuckDuckGoImageSearch(scopedRequest, { query, limit })]);
 
         const attempted = [];
         const outcomes = [];
@@ -1074,6 +1086,7 @@ export const createWebSearchAgentTools = ({
             outcomes.push(`${name}:${trim(result?.reason || result?.message, '无结果')}`);
             if (result?.degraded) lastError = new Error(result.message || 'provider degraded');
           } catch (error) {
+            if (error?.name === 'AbortError') throw error;
             outcomes.push(`${name}:${trim(error?.message, 'error')}`);
             lastError = error;
           }
@@ -1119,9 +1132,10 @@ export const createWebSearchAgentTools = ({
           maxTextLength: { type: 'integer', minimum: 500, maximum: 12000 },
         },
       },
-      execute: async (args = {}) => {
+      execute: async (args = {}, context = {}) => {
+        const scopedRequest = createScopedHttpRequest(request, abortHttpRequest, context);
         const maxTextLength = Math.max(500, Math.min(12000, Math.trunc(Number(args.maxTextLength || 0)) || 5000));
-        return fetchReadableUrl(request, {
+        return fetchReadableUrl(scopedRequest, {
           url: args.url,
           maxTextLength,
         });
@@ -1155,7 +1169,6 @@ export const createWebSearchAgentTools = ({
           limit: { type: 'integer', minimum: 1, maximum: 10 },
           fetchTop: { type: 'integer', minimum: 0, maximum: 5 },
           locale: { type: 'string', maxLength: 20 },
-          provider: { type: 'string', maxLength: 40 },
           maxTextLength: { type: 'integer', minimum: 500, maximum: 12000 },
           target: {
             type: 'string',
@@ -1170,7 +1183,8 @@ export const createWebSearchAgentTools = ({
           },
         },
       },
-      execute: async (args = {}) => {
+      execute: async (args = {}, context = {}) => {
+        const scopedRequest = createScopedHttpRequest(request, abortHttpRequest, context);
         const query = trim(args.query);
         const limit = Math.max(1, Math.min(10, Math.trunc(Number(args.limit || 0)) || 5));
         const hasFetchTop = Object.prototype.hasOwnProperty.call(args, 'fetchTop');
@@ -1181,19 +1195,20 @@ export const createWebSearchAgentTools = ({
         const maxTextLength = Math.max(500, Math.min(12000, Math.trunc(Number(args.maxTextLength || 0)) || 4000));
         const config = resolveSearchConfig({
           args,
-          baseConfig: readConfig(),
+          baseConfig: await readConfig(),
           searchProvider,
           apiKey,
         });
         const search = await (async () => {
           try {
-            const results = await performSearch(request, {
+            const results = await performSearch(scopedRequest, {
               ...config,
               query,
               limit,
             });
             return normalizeSearchOutput({ query, provider: config.provider, results });
           } catch (error) {
+            if (error?.name === 'AbortError') throw error;
             return {
               ok: false,
               query,
@@ -1208,7 +1223,7 @@ export const createWebSearchAgentTools = ({
         if (search.ok && fetchTop > 0) {
           for (const result of search.results.slice(0, fetchTop)) {
             try {
-              const document = await fetchReadableUrl(request, {
+              const document = await fetchReadableUrl(scopedRequest, {
                 url: result.url,
                 maxTextLength,
               });
@@ -1221,6 +1236,7 @@ export const createWebSearchAgentTools = ({
                 reason: trim(document.reason),
               });
             } catch (error) {
+              if (error?.name === 'AbortError') throw error;
               documents.push({
                 ok: false,
                 title: trim(result.title),

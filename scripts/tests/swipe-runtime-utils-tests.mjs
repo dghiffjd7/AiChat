@@ -70,9 +70,22 @@ const createWrapper = (message = null) => {
 	    meta: {
 	      activeSwipe: 0,
 	      reasoningDisplay: 'old reasoning',
+	      sources: [{ url: 'https://first.example', title: 'First' }],
 	      swipes: [
-	        { content: 'a', raw: 'ra', rawSource: 'source-a', reasoningDisplay: 'reason-a' },
-	        { content: 'b', raw: 'rb', rawSource: 'source-b', rawOriginal: 'original-b' },
+	        {
+	          content: 'a',
+	          raw: 'ra',
+	          rawSource: 'source-a',
+	          reasoningDisplay: 'reason-a',
+	          sources: [{ url: 'https://first.example', title: 'First' }],
+	        },
+	        {
+	          content: 'b',
+	          raw: 'rb',
+	          rawSource: 'source-b',
+	          rawOriginal: 'original-b',
+	          sources: [{ url: 'https://second.example', title: 'Second' }],
+	        },
 	      ],
 	    },
 	  };
@@ -95,6 +108,7 @@ const createWrapper = (message = null) => {
 	  assert.equal(message.rawSource, 'source-b');
 	  assert.equal(message.rawOriginal, 'original-b');
 	  assert.equal(message.meta.reasoningDisplay, undefined);
+	  assert.deepEqual(message.meta.sources, [{ url: 'https://second.example', title: 'Second' }]);
 	  assert.equal(renders.length, 1);
   assert.equal(syncs.length, 1);
   assert.equal(change.index, 1);

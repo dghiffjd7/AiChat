@@ -54,6 +54,14 @@ const normalizePromptPostProcessing = (mode) => {
 const PROFILE_STORE_KEY = 'llm_profiles_v1';
 const KEYRING_STORE_KEY = 'llm_keyring_v1';
 const KEYRING_MASTER_KEY = 'llm_keyring_master_v1';
+const WEB_SEARCH_KEYRING_PREFIX = '__web_search__:';
+
+const normalizeWebSearchProvider = (value) => {
+    const provider = String(value || '').trim().toLowerCase().replace(/[\s-]+/g, '_');
+    return ['duckduckgo', 'brave', 'tavily', 'serpapi'].includes(provider)
+        ? provider
+        : 'duckduckgo';
+};
 
 const resolveStoreKeys = (scope) => {
     const raw = String(scope || '').trim().toLowerCase();
@@ -130,6 +138,7 @@ const normalizeProfile = (p = {}, { touchUpdatedAt = false } = {}) => {
         forwardProviderAuth: p.forwardProviderAuth !== false,
         promptPostProcessing: normalizePromptPostProcessing(p.promptPostProcessing),
         model: p.model || 'gpt-3.5-turbo',
+        webSearchEnabled: p.webSearchEnabled === true,
         stream: p.stream !== false,
         excludedGenerationParams: normalizeGenerationParamFilterList(p.excludedGenerationParams),
         timeout: typeof p.timeout === 'number' ? p.timeout : 60000,
@@ -242,6 +251,7 @@ export class ConfigManager {
         const scope = String(options.scope || 'chat').trim().toLowerCase();
         const keys = resolveStoreKeys(scope);
         this.scope = scope || 'chat';
+        this.credentialsOnly = options.credentialsOnly === true;
         this.profileStoreKey = keys.profile;
         this.keyringStoreKey = keys.keyring;
         this.keyringMasterKey = keys.master;
@@ -362,6 +372,7 @@ export class ConfigManager {
             forwardProviderAuth: true,
             promptPostProcessing: 'none',
             model: isImage ? 'gpt-image-2' : 'gpt-3.5-turbo',
+            webSearchEnabled: false,
             stream: true,
             excludedGenerationParams: [],
             timeout: 60000,
@@ -496,7 +507,7 @@ export class ConfigManager {
 
         // migration: if no profile, create default from old config
         const hasAnyProfile = Object.keys(this.profileStore.profiles || {}).length > 0;
-        if (!hasAnyProfile) {
+        if (!hasAnyProfile && !this.credentialsOnly) {
             const base = await this.migrateLegacyConfig();
             const profile = normalizeProfile({ ...base, name: '默认' });
             this.profileStore.profiles[profile.id] = profile;
@@ -810,6 +821,59 @@ export class ConfigManager {
         return '';
     }
 
+    async getWebSearchApiKey(provider) {
+        await this.ensureStores();
+        const pid = `${WEB_SEARCH_KEYRING_PREFIX}${normalizeWebSearchProvider(provider)}`;
+        const records = (this.keyringStore?.keysByProfile?.[pid] || [])
+            .slice()
+            .sort((a, b) => Number(b?.createdAt || 0) - Number(a?.createdAt || 0));
+        const current = records[0];
+        if (!current) return '';
+        try {
+            return await this.decryptKey(pid, current.id);
+        } catch (error) {
+            logger.warn(`搜索凭证解密失败: ${normalizeWebSearchProvider(provider)}`, error);
+            return '';
+        }
+    }
+
+    async migrateLegacyWebSearchApiKey(provider, plainKey) {
+        await this.ensureStores();
+        const normalizedProvider = normalizeWebSearchProvider(provider);
+        const pid = `${WEB_SEARCH_KEYRING_PREFIX}${normalizedProvider}`;
+        const key = String(plainKey || '').trim();
+        if (!key) return { status: 'empty', provider: normalizedProvider };
+
+        const records = this.keyringStore?.keysByProfile?.[pid] || [];
+        if (records.length > 0) {
+            const existingKey = await this.getWebSearchApiKey(normalizedProvider);
+            return {
+                status: existingKey ? 'existing' : 'blocked',
+                provider: normalizedProvider,
+            };
+        }
+
+        await this.setWebSearchApiKey(normalizedProvider, key);
+        return { status: 'migrated', provider: normalizedProvider };
+    }
+
+    async setWebSearchApiKey(provider, plainKey) {
+        await this.ensureStores();
+        const normalizedProvider = normalizeWebSearchProvider(provider);
+        const pid = `${WEB_SEARCH_KEYRING_PREFIX}${normalizedProvider}`;
+        const key = String(plainKey || '').trim();
+        if (!key) {
+            delete this.keyringStore.keysByProfile[pid];
+            await this.persistKeyring();
+            return '';
+        }
+        const keyId = await this.addKey(pid, key, `${normalizedProvider} Search API Key`);
+        const records = this.keyringStore.keysByProfile[pid] || [];
+        this.keyringStore.keysByProfile[pid] = records.filter(record => record.id === keyId);
+        await this.persistKeyring();
+        return keyId;
+    }
+
     async buildRuntimeConfig(profile) {
         const p = normalizeProfile(profile);
         const runtime = {
@@ -822,6 +886,7 @@ export class ConfigManager {
             forwardProviderAuth: p.forwardProviderAuth !== false,
             promptPostProcessing: normalizePromptPostProcessing(p.promptPostProcessing),
             model: p.model,
+            webSearchEnabled: p.webSearchEnabled === true,
             stream: p.stream,
             excludedGenerationParams: normalizeGenerationParamFilterList(p.excludedGenerationParams),
             timeout: p.timeout,

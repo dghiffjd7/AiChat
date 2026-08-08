@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 
 import {
   createSwipeIndicatorElement,
@@ -61,7 +62,10 @@ const createFakeDocument = () => {
     raw: 'raw-a',
     rawSource: 'source-a',
     rawOriginal: 'original-a',
-    meta: { reasoningDisplay: 'think-a' },
+    meta: {
+      reasoningDisplay: 'think-a',
+      sources: [{ url: 'https://first.example', title: 'First' }],
+    },
   };
   const meta = ensureSwipeMeta(message);
   assert.equal(Array.isArray(meta.swipes), true);
@@ -70,8 +74,63 @@ const createFakeDocument = () => {
   assert.equal(meta.swipes[0].rawSource, 'source-a');
   assert.equal(meta.swipes[0].rawOriginal, 'original-a');
   assert.equal(meta.swipes[0].reasoningDisplay, 'think-a');
+  assert.deepEqual(meta.swipes[0].sources, [{ url: 'https://first.example', title: 'First' }]);
   assert.equal(meta.activeSwipe, 0);
   console.log('ok - ensureSwipeMeta seeds swipe branches and active index');
+}
+
+{
+  const resolved = resolveActiveSwipeMessageCore({
+    id: 'm-sources',
+    content: 'first',
+    meta: {
+      sources: [{ url: 'https://first.example', title: 'First' }],
+      activeSwipe: 1,
+      swipes: [
+        {
+          content: 'first',
+          sources: [{ url: 'https://first.example', title: 'First' }],
+        },
+        {
+          content: 'second',
+          sources: [{ url: 'https://second.example', title: 'Second' }],
+        },
+      ],
+    },
+  });
+  assert.deepEqual(resolved.meta.sources, [{ url: 'https://second.example', title: 'Second' }]);
+  resolved.meta.activeSwipe = 0;
+  const restored = resolveActiveSwipeMessageCore(resolved);
+  assert.deepEqual(restored.meta.sources, [{ url: 'https://first.example', title: 'First' }]);
+  console.log('ok - resolveActiveSwipeMessageCore keeps citations scoped to each swipe branch');
+}
+
+{
+  const resolved = resolveActiveSwipeMessageCore({
+    id: 'm-sources-none',
+    content: 'first',
+    meta: {
+      sources: [{ url: 'https://first.example', title: 'First' }],
+      activeSwipe: 1,
+      swipes: [
+        {
+          content: 'first',
+          sources: [{ url: 'https://first.example', title: 'First' }],
+        },
+        { content: 'second' },
+      ],
+    },
+  });
+  assert.equal(resolved.meta.sources, undefined);
+  console.log('ok - a swipe branch without citations clears inherited message sources');
+}
+
+{
+  const appSource = await readFile('src/scripts/ui/app.js', 'utf8');
+  assert.match(appSource, /const branchSources = buildAssistantReplySources\(\[/);
+  assert.match(appSource, /consumeLastGenerationSources\?\.\(\) \?\? \[\]/);
+  assert.match(appSource, /if \(branchSources\) newBranch\.sources = branchSources;/);
+  console.log('ok - swipe regeneration commits current-round and late-arriving citations');
 }
 
 {

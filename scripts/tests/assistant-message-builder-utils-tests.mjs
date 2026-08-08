@@ -7,6 +7,7 @@ import {
   buildChatModeAssistantMessageFromParts,
   buildChatModeAssistantMessageParts,
   buildCreativeAssistantMessage,
+  buildCreativeAssistantMessageFromParts,
   buildCreativeAssistantMessageParts,
 } from '../../src/scripts/ui/chat/assistant-message-builder-utils.js';
 
@@ -507,6 +508,47 @@ test('chat/creative builders record real provider usage on meta.usage (Phase B m
   assert.equal(creativeMsg.meta.usage.status, 'recorded');
   assert.equal(creativeMsg.meta.usage.totalTokens, 1500);
   assert.equal(creativeMsg.meta.renderRich, true);
+});
+
+test('assistant builders normalize and persist web sources on message metadata', async () => {
+  const sources = [
+    {
+      url: 'https://example.com/article#section',
+      title: 'Example article',
+      provider: 'web.search',
+      snippet: 'short excerpt persists for tooltip display',
+    },
+    { url: 'javascript:alert(1)', title: 'unsafe' },
+    { url: 'https://example.com/article', title: 'duplicate' },
+  ];
+  const chatMsg = buildChatModeAssistantMessageFromParts({
+    parts: { finalSource: 's', stored: 'st', display: 'd', resolvedReasoning: {} },
+    parseSpecialMessage: value => ({ type: 'text', content: value }),
+    sources,
+  });
+  assert.deepEqual(chatMsg.meta.sources, [{
+    url: 'https://example.com/article',
+    title: 'Example article',
+    snippet: 'short excerpt persists for tooltip display',
+    provider: 'web.search',
+  }]);
+
+  const creativeMsg = await buildCreativeAssistantMessageFromParts({
+    parts: { finalSource: 's', stored: 'st', display: 'd', resolvedReasoning: {} },
+    sources,
+  });
+  assert.deepEqual(creativeMsg.meta.sources, chatMsg.meta.sources);
+
+  const plainMsg = await buildAssistantMessageFromText('reply', {
+    sources,
+    applyChatModeAssistantRegex: value => ({
+      reasoningParsed: { content: value, reasoning: '', reasoningDisplay: '' },
+      finalSource: value,
+      stored: value,
+      display: value,
+    }),
+  });
+  assert.deepEqual(plainMsg.meta.sources, chatMsg.meta.sources);
 });
 
 let failed = 0;

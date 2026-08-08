@@ -1,4 +1,9 @@
-import { applySwipeReasoningStateToMeta, ensureSwipeMeta, resolveSwipeIndicatorState } from './swipe-ui-utils.js';
+import {
+  applySwipeReasoningStateToMeta,
+  applySwipeSourcesStateToMeta,
+  ensureSwipeMeta,
+  resolveSwipeIndicatorState,
+} from './swipe-ui-utils.js';
 
 const fallbackEscapeSelector = (value) => String(value || '').replace(/["\\]/g, '\\$&');
 
@@ -48,6 +53,7 @@ export const applySwipeCore = ({
   if (branch.rawOriginal !== undefined) message.rawOriginal = branch.rawOriginal;
   else if (newIndex > 0) delete message.rawOriginal;
   message.meta = applySwipeReasoningStateToMeta(message.meta, branch, newIndex);
+  message.meta = applySwipeSourcesStateToMeta(message.meta, branch, newIndex);
   const generating = Boolean(branch?.draft) || message.meta?.swipeRegenerating === true;
   const placeholder = branch?.draft ? String(branch?.label || '生成新回复中...') : '';
 

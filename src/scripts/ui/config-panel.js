@@ -12,6 +12,7 @@ import {
     splitGenerationParamFilterInput,
 } from '../utils/generation-param-filter-utils.js';
 import { appConfirm } from './app-confirm.js';
+import { appSettings } from '../storage/app-settings.js';
 import { bindBackdropActivation } from './backdrop-activation-utils.js';
 import { rankModelCandidates } from '../utils/model-candidates.js';
 import {
@@ -99,9 +100,18 @@ const normalizePromptPostProcessingForForm = (value) => {
 };
 
 export class ConfigPanel {
-    constructor({ onSaved = null } = {}) {
-        this.chatConfigManager = new ConfigManager();
-        this.imageConfigManager = new ConfigManager({ scope: 'image' });
+    constructor({
+        onSaved = null,
+        chatConfigManager = null,
+        imageConfigManager = null,
+        webSearchCredentialManager = null,
+    } = {}) {
+        this.chatConfigManager = chatConfigManager || new ConfigManager();
+        this.imageConfigManager = imageConfigManager || new ConfigManager({ scope: 'image' });
+        this.webSearchCredentialManager = webSearchCredentialManager || new ConfigManager({
+            scope: 'web_search_credentials',
+            credentialsOnly: true,
+        });
         this.activeTab = 'chat';
         this.configManager = this.chatConfigManager;
         this.element = null;
@@ -117,6 +127,7 @@ export class ConfigPanel {
         this.customSelectMenuCleanup = null;
         this.customSelectMenuAnchor = null;
         this.transportExpanded = false;
+        this.webSearchCredentialLoadSequence = 0;
         this.excludedGenerationParams = [];
         this.openOptions = {};
         this.onSaved = typeof onSaved === 'function' ? onSaved : null;
@@ -152,6 +163,7 @@ export class ConfigPanel {
         }
         this.refreshProfileOptions();
         this.populateForm(config);
+        await this.refreshMaidSearchInputs?.();
         this.hideImageParamsPage();
 
         this.element.classList.remove('is-open');
@@ -292,6 +304,10 @@ export class ConfigPanel {
         const generationParamFilterSection = this.element.querySelector('#config-generation-param-filter-section');
         if (generationParamFilterSection) {
             generationParamFilterSection.style.display = this.activeTab === 'chat' ? 'block' : 'none';
+        }
+        const webSearchCard = this.element.querySelector('#config-web-search-card');
+        if (webSearchCard) {
+            webSearchCard.style.display = this.activeTab === 'chat' ? 'block' : 'none';
         }
     }
 
@@ -494,6 +510,27 @@ export class ConfigPanel {
                         <div id="model-options" class="api-config-model-options" aria-label="可用模型列表" style="display:none;"></div>
                     </div>
                     <small id="model-help" style="color: var(--app-text-secondary);">要使用的模型 ID（可输入或从列表选择）</small>
+                </div>
+
+                <div id="config-web-search-card" class="api-config-stream-card">
+                    <label>
+                        <input type="checkbox" id="config-web-search" style="width: 18px; height: 18px;">
+                        <span>
+                            <strong class="has-help" data-help="允许当前聊天模型按需检索公开网页；搜索服务可能另行计费" data-help-mode="press">联网</strong>
+                            <small>默认关闭；开启后优先使用模型原生搜索，其余模型使用只读网页工具</small>
+                        </span>
+                    </label>
+                    <div id="config-maid-search-row" style="display: grid; gap: 6px; margin-top: 10px; padding-top: 10px; border-top: 1px dashed var(--app-border-subtle);">
+                        <label class="api-config-field-label has-help" data-help="女仆的 web.search 与聊天模型的兜底搜索共用此服务；全局设置，即时保存" data-help-mode="press">搜索服务</label>
+                        <select id="config-maid-search-provider" style="width: 100%; padding: 8px 10px; border-radius: 5px; border: 1px solid var(--app-border-default); font-size: 13px; box-sizing: border-box;">
+                            <option value="duckduckgo">DuckDuckGo（免 Key，默认）</option>
+                            <option value="brave">Brave（每月 2000 次免费，需 Key）</option>
+                            <option value="tavily">Tavily（每月 1000 credits 免费，需 Key）</option>
+                            <option value="serpapi">SerpAPI（Google 结果，需 Key）</option>
+                        </select>
+                        <input type="password" id="config-maid-search-key" placeholder="搜索服务 API Key（DuckDuckGo 无需填写）" autocomplete="off"
+                               style="width: 100%; padding: 8px 10px; border-radius: 5px; border: 1px solid var(--app-border-default); font-size: 13px; box-sizing: border-box;">
+                    </div>
                 </div>
 
                 <div class="api-config-stream-card">
@@ -710,6 +747,51 @@ export class ConfigPanel {
         this.element.querySelector('#config-prompt-post-processing').onchange = async () => {
             this.emitDraftChange();
         };
+        this.element.querySelector('#config-web-search')?.addEventListener('change', async (event) => {
+            const input = event.currentTarget;
+            if (input?.checked) {
+                input.disabled = true;
+                const confirmed = await appConfirm({
+                    title: '开启联网',
+                    message: '联网可能产生额外费用，并会把本次请求交给模型服务商或搜索服务处理。要为当前 API 设置档开启吗？',
+                    confirmText: '开启联网',
+                    cancelText: '保持关闭',
+                });
+                input.checked = confirmed === true;
+                input.disabled = false;
+            }
+            this.emitDraftChange();
+        });
+        // 女仆/兜底搜索服务是全局 app 设置（非 API 设置档），改动即时保存
+        const maidSearchProviderEl = this.element.querySelector('#config-maid-search-provider');
+        const maidSearchKeyEl = this.element.querySelector('#config-maid-search-key');
+        const refreshMaidSearchInputs = async () => {
+            const settings = appSettings.get();
+            const provider = settings.webSearchProvider || 'duckduckgo';
+            if (maidSearchProviderEl) maidSearchProviderEl.value = provider;
+            await this.loadWebSearchCredentialForProvider(provider, {
+                providerElement: maidSearchProviderEl,
+                keyElement: maidSearchKeyEl,
+            });
+        };
+        void refreshMaidSearchInputs();
+        this.refreshMaidSearchInputs = refreshMaidSearchInputs;
+        maidSearchProviderEl?.addEventListener('change', async () => {
+            const provider = maidSearchProviderEl.value;
+            appSettings.update({ webSearchProvider: provider });
+            await this.loadWebSearchCredentialForProvider(provider, {
+                providerElement: maidSearchProviderEl,
+                keyElement: maidSearchKeyEl,
+            });
+        });
+        maidSearchKeyEl?.addEventListener('change', async () => {
+            const provider = maidSearchProviderEl?.value || appSettings.get().webSearchProvider;
+            if (
+                maidSearchKeyEl.disabled
+                || maidSearchKeyEl.dataset.webSearchProvider !== provider
+            ) return;
+            await this.webSearchCredentialManager.setWebSearchApiKey(provider, maidSearchKeyEl.value);
+        });
         this.element.querySelector('#config-model')?.addEventListener('input', () => {
             this.emitDraftChange();
             this.scheduleModelOptionsRender();
@@ -720,6 +802,41 @@ export class ConfigPanel {
 
         document.body.appendChild(this.overlayElement);
         document.body.appendChild(this.element);
+    }
+
+    async loadWebSearchCredentialForProvider(provider, {
+        providerElement = null,
+        keyElement = null,
+    } = {}) {
+        const normalizedProvider = String(provider || 'duckduckgo').trim().toLowerCase() || 'duckduckgo';
+        const sequence = ++this.webSearchCredentialLoadSequence;
+        if (keyElement) {
+            keyElement.disabled = true;
+            keyElement.value = '';
+            keyElement.dataset.webSearchProvider = '';
+        }
+
+        let key = '';
+        try {
+            key = String(await this.webSearchCredentialManager.getWebSearchApiKey(normalizedProvider) || '');
+        } catch (error) {
+            if (sequence === this.webSearchCredentialLoadSequence) {
+                logger.warn(`读取搜索凭证失败: ${normalizedProvider}`, error);
+            }
+        }
+
+        const currentProvider = String(providerElement?.value || normalizedProvider).trim().toLowerCase();
+        if (
+            sequence !== this.webSearchCredentialLoadSequence
+            || currentProvider !== normalizedProvider
+        ) return false;
+
+        if (keyElement) {
+            keyElement.value = key;
+            keyElement.disabled = false;
+            keyElement.dataset.webSearchProvider = normalizedProvider;
+        }
+        return true;
     }
 
     ensureCustomSelectMenu() {
@@ -1208,6 +1325,7 @@ export class ConfigPanel {
         const modelEl = panel.querySelector('#config-model');
         const apiKeyEl = panel.querySelector('#config-apikey');
         const streamEl = panel.querySelector('#config-stream');
+        const webSearchEl = panel.querySelector('#config-web-search');
         const promptPostProcessingEl = panel.querySelector('#config-prompt-post-processing');
         const regionEl = panel.querySelector('#config-region');
         const saEl = panel.querySelector('#config-serviceaccount');
@@ -1229,6 +1347,9 @@ export class ConfigPanel {
         }
         if (streamEl) {
             streamEl.checked = true;
+        }
+        if (webSearchEl) {
+            webSearchEl.checked = false;
         }
         if (promptPostProcessingEl) {
             promptPostProcessingEl.value = 'none';
@@ -1370,12 +1491,14 @@ export class ConfigPanel {
             const baseEl = panel.querySelector('#config-baseurl');
             const modelEl = panel.querySelector('#config-model');
             const streamEl = panel.querySelector('#config-stream');
+            const webSearchEl = panel.querySelector('#config-web-search');
             const promptPostProcessingEl = panel.querySelector('#config-prompt-post-processing');
             const apiKeyInput = panel.querySelector('#config-apikey');
 
             if (baseEl) baseEl.value = config.baseUrl || '';
             if (modelEl) modelEl.value = config.model || '';
             if (streamEl) streamEl.checked = config.stream !== false;
+            if (webSearchEl) webSearchEl.checked = config.webSearchEnabled === true;
             if (promptPostProcessingEl) promptPostProcessingEl.value = normalizePromptPostProcessingForForm(config.promptPostProcessing);
 
             // API Key 显示为 masked
@@ -1442,6 +1565,7 @@ export class ConfigPanel {
         const baseEl = panel.querySelector('#config-baseurl');
         const modelEl = panel.querySelector('#config-model');
         const streamEl = panel.querySelector('#config-stream');
+        const webSearchEl = panel.querySelector('#config-web-search');
         const promptPostProcessingEl = panel.querySelector('#config-prompt-post-processing');
         const transportModeEl = panel.querySelector('#config-transport-mode');
         const proxyBaseEl = panel.querySelector('#config-proxy-baseurl');
@@ -1473,6 +1597,7 @@ export class ConfigPanel {
             : defaultBaseUrl;
         modelEl.value = config.model || '';
         streamEl.checked = config.stream !== false;
+        if (webSearchEl) webSearchEl.checked = config.webSearchEnabled === true;
         this.setExcludedGenerationParams(config.excludedGenerationParams || [], { emit: false });
         if (promptPostProcessingEl) promptPostProcessingEl.value = normalizePromptPostProcessingForForm(config.promptPostProcessing);
         if (transportModeEl) {
@@ -1749,6 +1874,7 @@ export class ConfigPanel {
             promptPostProcessing: normalizePromptPostProcessingForForm(panel.querySelector('#config-prompt-post-processing')?.value),
             apiKey: apiKey,
             model: (panel.querySelector('#config-model')?.value || '').trim(),
+            webSearchEnabled: Boolean(panel.querySelector('#config-web-search')?.checked),
             stream: Boolean(panel.querySelector('#config-stream')?.checked),
             excludedGenerationParams: normalizeGenerationParamFilterList(this.excludedGenerationParams),
             timeout: (() => {

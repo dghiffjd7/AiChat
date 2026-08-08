@@ -10,6 +10,7 @@ import {
 } from '../native-reasoning.js';
 import { prepareTransportRequest } from '../transport.js';
 import { reportProviderUsage } from '../provider-usage.js';
+import { reportProviderWebSources } from '../web-search-runtime.js';
 import { isStreamOptionsRejectionError, streamUsageCompat } from '../stream-usage-compat.js';
 import { emitDebugLog } from '../../utils/debug-log.js';
 import {
@@ -383,6 +384,9 @@ export class OpenAIProvider {
     if (typeof src.stop === 'string' || Array.isArray(src.stop)) out.stop = src.stop;
     if (Array.isArray(src.tools) && src.tools.length) out.tools = src.tools;
     if (Object.prototype.hasOwnProperty.call(src, 'tool_choice')) out.tool_choice = src.tool_choice;
+    if (Number.isFinite(src.max_tool_calls)) {
+      out.max_tool_calls = Math.max(1, Math.trunc(src.max_tool_calls));
+    }
 
     // Some servers reject unsupported fields (DeepSeek is stricter).
     if (isDeepSeek) {
@@ -410,7 +414,7 @@ export class OpenAIProvider {
   }
 
   prepareChatRequest(messages, options = {}) {
-    const { signal, requestId, onProviderToolCallDelta, options: rawPayloadOptions } = splitRequestOptions(options);
+    const { signal, requestId, onProviderToolCallDelta, onProviderSources, options: rawPayloadOptions } = splitRequestOptions(options);
     const payloadOptions = (rawPayloadOptions && typeof rawPayloadOptions === 'object') ? { ...rawPayloadOptions } : {};
     const deepseekPrefix = normalizeDeepSeekPrefixRequest(payloadOptions.deepseekPrefix);
     delete payloadOptions.deepseekPrefix;
@@ -450,6 +454,7 @@ export class OpenAIProvider {
       signal,
       requestId,
       onProviderToolCallDelta,
+      onProviderSources,
       url: `${requestBaseUrl}/chat/completions`,
       payload,
       messages: payloadMessages,
@@ -617,6 +622,11 @@ export class OpenAIProvider {
       body: data,
     });
 
+    try {
+      prepared.onProviderToolCallDelta?.(data, { provider: this.provider, model: this.model });
+    } catch {}
+    reportProviderWebSources(options, data, { provider: this.provider });
+
     const content = data.choices?.[0]?.message?.content ?? '';
     emitOpenAIResponseDiagnostics({
       phase: 'chat',
@@ -678,6 +688,7 @@ export class OpenAIProvider {
         prepared.onProviderToolCallDelta?.(data, { provider: this.provider, model: this.model });
       } catch {}
     };
+    const notifyProviderSources = data => reportProviderWebSources(options, data, { provider: this.provider });
     messages = prepared.messages;
     const normalized = prepared.normalizedOptions;
     if (prepared.compat.reasoner.changed) {
@@ -727,6 +738,7 @@ export class OpenAIProvider {
       let deltaCount = 0;
       const emitParsedDelta = function* (data) {
         notifyProviderToolCallDelta(data);
+        notifyProviderSources(data);
         if (data?.usage && typeof data.usage === 'object') lastUsage = data;
         const finishReason = pickOpenAICompatibleFinishReason(data);
         if (finishReason) lastFinishReason = finishReason;
@@ -898,6 +910,7 @@ export class OpenAIProvider {
       });
       for await (const data of handleSSE(response)) {
         notifyProviderToolCallDelta(data);
+        notifyProviderSources(data);
         if (data?.usage && typeof data.usage === 'object') lastUsage = data;
         const finishReason = pickOpenAICompatibleFinishReason(data);
         if (finishReason) lastFinishReason = finishReason;

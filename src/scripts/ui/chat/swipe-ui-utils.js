@@ -24,6 +24,24 @@ export const applySwipeReasoningStateToMeta = (meta = {}, branch = {}, activeInd
   return nextMeta;
 };
 
+const cloneSwipeSources = sources => (Array.isArray(sources)
+  ? sources
+      .filter(source => source && typeof source === 'object')
+      .map(source => ({ ...source }))
+  : []);
+
+export const applySwipeSourcesStateToMeta = (meta = {}, branch = {}, activeIndex = 0) => {
+  const nextMeta = meta && typeof meta === 'object' ? { ...meta } : {};
+  if (hasOwn(branch, 'sources')) {
+    const sources = cloneSwipeSources(branch.sources);
+    if (sources.length) nextMeta.sources = sources;
+    else delete nextMeta.sources;
+    return nextMeta;
+  }
+  if (Number(activeIndex) > 0) delete nextMeta.sources;
+  return nextMeta;
+};
+
 const buildSwipeBranchFromMessage = (message = {}) => {
   const meta = message?.meta && typeof message.meta === 'object' ? message.meta : {};
   const branch = { content: message?.content, raw: message?.raw };
@@ -32,6 +50,8 @@ const buildSwipeBranchFromMessage = (message = {}) => {
   for (const key of SWIPE_REASONING_KEYS) {
     if (hasOwn(meta, key)) branch[key] = meta[key];
   }
+  const sources = cloneSwipeSources(meta.sources);
+  if (sources.length) branch.sources = sources;
   return branch;
 };
 
@@ -41,6 +61,16 @@ export const ensureSwipeMeta = (message) => {
   if (!Array.isArray(message.meta.swipes)) {
     message.meta.swipes = [buildSwipeBranchFromMessage(message)];
     message.meta.activeSwipe = 0;
+  } else {
+    const rawActive = Math.trunc(Number(message.meta.activeSwipe));
+    const active = Number.isFinite(rawActive)
+      ? Math.min(Math.max(0, rawActive), Math.max(0, message.meta.swipes.length - 1))
+      : 0;
+    const activeBranch = message.meta.swipes[active];
+    const sources = cloneSwipeSources(message.meta.sources);
+    if (activeBranch && typeof activeBranch === 'object' && sources.length && !hasOwn(activeBranch, 'sources')) {
+      activeBranch.sources = sources;
+    }
   }
   return message.meta;
 };
@@ -194,6 +224,7 @@ export const resolveActiveSwipeMessageCore = (message, {
   if (activeSwipeDraft) nextMeta.activeSwipeDraft = activeSwipeDraft;
   else delete nextMeta.activeSwipeDraft;
   nextMeta = applySwipeReasoningStateToMeta(nextMeta, branch, active);
+  nextMeta = applySwipeSourcesStateToMeta(nextMeta, branch, active);
   let content = branch.content ?? message.content ?? '';
   let raw = branch.raw !== undefined
     ? branch.raw

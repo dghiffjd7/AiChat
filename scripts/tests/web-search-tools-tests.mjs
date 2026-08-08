@@ -41,9 +41,9 @@ const getTool = (tools, name) => tools.find(tool => tool.name === name);
 {
   const requests = [];
   const tools = createWebSearchAgentTools({
-    getSearchConfig: () => ({
+    getSearchConfig: async () => ({
       webSearchProvider: 'brave',
-      webSearchApiKey: 'brave-key',
+      apiKey: 'brave-key',
       webSearchLocale: 'zh-tw',
     }),
     httpRequest: async (payload) => {
@@ -70,6 +70,63 @@ const getTool = (tools, name) => tools.find(tool => tool.name === name);
   assert.match(requests[0].url, /api\.search\.brave\.com/);
   assert.equal(requests[0].headers['X-Subscription-Token'], 'brave-key');
   console.log('ok - web search tool supports configurable provider gateway');
+}
+
+{
+  const requests = [];
+  const tools = createWebSearchAgentTools({
+    getSearchConfig: async () => ({
+      webSearchProvider: 'brave',
+      apiKey: 'brave-key',
+      tavilyApiKey: 'must-not-leak',
+    }),
+    httpRequest: async (payload) => {
+      requests.push(payload);
+      return {
+        ok: true,
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ web: { results: [] } }),
+      };
+    },
+  });
+  const search = getTool(tools, 'web.search');
+  assert.equal(Object.hasOwn(search.schema.properties, 'provider'), false, '模型不得选择搜索服务商');
+  const result = await search.execute({ query: 'locked provider', provider: 'tavily' });
+  assert.equal(result.provider, 'brave');
+  assert.match(requests[0].url, /api\.search\.brave\.com/);
+  assert.equal(requests[0].headers['X-Subscription-Token'], 'brave-key');
+  assert.equal(JSON.stringify(requests[0]).includes('must-not-leak'), false);
+  console.log('ok - search provider is locked to app configuration and provider keys cannot cross routes');
+}
+
+{
+  const controller = new AbortController();
+  let requestPayload = null;
+  let abortedRequestId = '';
+  let markStarted;
+  const started = new Promise(resolve => { markStarted = resolve; });
+  const tools = createWebSearchAgentTools({
+    httpRequest: async (payload) => {
+      requestPayload = payload;
+      markStarted();
+      return new Promise(() => {});
+    },
+    abortHttpRequest: async (requestId) => {
+      abortedRequestId = requestId;
+      return true;
+    },
+  });
+  const pending = getTool(tools, 'web.fetch_url').execute(
+    { url: 'https://example.com/slow' },
+    { signal: controller.signal },
+  );
+  await started;
+  controller.abort();
+  await assert.rejects(pending, error => error?.name === 'AbortError');
+  assert.match(String(requestPayload?.requestId || ''), /^web-/);
+  assert.equal(abortedRequestId, requestPayload.requestId);
+  console.log('ok - aborting a web tool cancels its native public request');
 }
 
 {

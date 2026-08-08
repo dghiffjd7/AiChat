@@ -144,6 +144,7 @@ import { createRpFloorUiRuntime } from './rp-floor-ui-utils.js';
 import { renderTextWithStickersCore } from './sticker-text-ui-utils.js';
 import { renderMessageBubbleContentCore } from './message-bubble-content-ui-utils.js';
 import { buildAgentMessageSidecarElement } from './agent-message-sidecar-ui-utils.js';
+import { buildMessageSourcesElement } from './message-sources-ui-utils.js';
 import {
   buildChatFormatGuardianApplyRepairPayload,
   buildChatFormatGuardianRetryPlan,
@@ -1773,12 +1774,23 @@ export class ChatUI {
           errorToast: text => window.toastr?.error?.(text),
         });
       },
-      buildMessageSidecarElement: payload => buildAgentMessageSidecarElement({
-        ...payload,
-        onProviderToolPermissionAction: request => this.handleProviderToolPermissionAction(request),
-        onProviderToolContinuationAction: request => this.handleProviderToolContinuationAction(request),
-        onChatFormatGuardianAction: request => this.handleChatFormatGuardianAction(request),
-      }),
+      buildMessageSidecarElement: payload => {
+        const agentSidecar = buildAgentMessageSidecarElement({
+          ...payload,
+          onProviderToolPermissionAction: request => this.handleProviderToolPermissionAction(request),
+          onProviderToolContinuationAction: request => this.handleProviderToolContinuationAction(request),
+          onChatFormatGuardianAction: request => this.handleChatFormatGuardianAction(request),
+        });
+        const sourcesSidecar = buildMessageSourcesElement(payload);
+        if (!agentSidecar) return sourcesSidecar;
+        if (!sourcesSidecar) return agentSidecar;
+        const stack = payload.documentLike.createElement('div');
+        stack.className = 'chat-message-sidecars';
+        stack.style.cssText = 'width:100%;display:grid;gap:6px;';
+        stack.appendChild(agentSidecar);
+        stack.appendChild(sourcesSidecar);
+        return stack;
+      },
       buildReactionSummaryElement: nextMessage => this.buildReactionSummaryElement(nextMessage),
       createReactionTriggerButton,
       buildBubbleStack: payload => buildBubbleStackCore(payload),

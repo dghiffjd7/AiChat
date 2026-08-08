@@ -90,9 +90,12 @@ const extractOpenAIToolDeltas = (data = {}, context = {}) => {
   const delta = isPlainObject(choice.delta)
     ? choice.delta
     : (isPlainObject(data.delta) ? data.delta : {});
+  const message = isPlainObject(choice.message) ? choice.message : {};
   const toolCalls = Array.isArray(delta.tool_calls)
     ? delta.tool_calls
-    : (Array.isArray(data.tool_calls) ? data.tool_calls : []);
+    : (Array.isArray(message.tool_calls)
+        ? message.tool_calls
+        : (Array.isArray(data.tool_calls) ? data.tool_calls : []));
   const items = [];
   toolCalls.forEach((call, idx) => {
     const src = isPlainObject(call) ? call : {};

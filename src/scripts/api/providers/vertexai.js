@@ -7,6 +7,7 @@ import { handleSSE } from '../stream.js';
 import { createLinkedAbortController, splitRequestOptions } from '../abort.js';
 import { createReasoningStreamEvent, extractGeminiStreamParts } from '../native-reasoning.js';
 import { prepareTransportRequest } from '../transport.js';
+import { reportProviderWebSources } from '../web-search-runtime.js';
 
 const getTauriInvoker = () => {
   const g = typeof globalThis !== 'undefined' ? globalThis : undefined;
@@ -482,6 +483,7 @@ export class VertexAIProvider {
     }
 
     const candidates = data?.candidates;
+    reportProviderWebSources(options, data, { provider: 'vertexai' });
     if (!candidates || candidates.length === 0) {
       let errorMsg = 'No candidates returned';
       if (data?.promptFeedback?.blockReason) {
@@ -543,6 +545,7 @@ export class VertexAIProvider {
         }
         for (const data of parseSSEText(res.body)) {
           notifyProviderToolCallDelta(data);
+          reportProviderWebSources(options, data, { provider: 'vertexai' });
           const candidates = data?.candidates;
           if (candidates && candidates.length > 0) {
             const parts = extractGeminiStreamParts(candidates[0].content);
@@ -578,6 +581,7 @@ export class VertexAIProvider {
         }
         for await (const data of handleSSE(response)) {
           notifyProviderToolCallDelta(data);
+          reportProviderWebSources(options, data, { provider: 'vertexai' });
           const candidates = data?.candidates;
           if (candidates && candidates.length > 0) {
             const parts = extractGeminiStreamParts(candidates[0].content);

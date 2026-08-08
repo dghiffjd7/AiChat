@@ -8,6 +8,7 @@ import { createReasoningStreamEvent, extractAnthropicStreamParts } from '../nati
 import { prepareTransportRequest } from '../transport.js';
 import { emitDebugLog } from '../../utils/debug-log.js';
 import { reportProviderUsage } from '../provider-usage.js';
+import { reportProviderWebSources } from '../web-search-runtime.js';
 
 const getTauriInvoker = () => {
     const g = typeof globalThis !== 'undefined' ? globalThis : undefined;
@@ -318,6 +319,8 @@ export class AnthropicProvider {
             requestId,
         });
 
+        reportProviderWebSources(options, data, { provider: 'anthropic' });
+
         reportProviderUsage(options, {
             body: data,
             model: this.model,
@@ -377,6 +380,7 @@ export class AnthropicProvider {
 
         const emitDelta = function* (data, transportLabel) {
             notifyProviderToolCallDelta(data);
+            reportProviderWebSources(options, data, { provider: 'anthropic' });
             streamUsage = collectAnthropicStreamUsage(data, streamUsage);
             if (data?.delta?.stop_reason) streamStopReason = String(data.delta.stop_reason);
             const parts = extractAnthropicStreamParts(data, blockKinds);

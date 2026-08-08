@@ -102,6 +102,25 @@ export const BRIDGE_CONTRACT_METHOD_METADATA = Object.freeze({
       ],
       status: 'covered',
     },
+    consumeLastGenerationUsage: {
+      returns: 'Provider usage | null',
+      sideEffects: ['clears the cached main-generation usage after reading'],
+      tests: ['app-bridge-contract-tests.mjs', 'assistant-message-builder-utils-tests.mjs'],
+      status: 'covered',
+    },
+    consumeLastGenerationSources: {
+      returns: 'Web source[] | null',
+      sideEffects: ['clears the cached main-generation sources after reading'],
+      tests: ['app-bridge-contract-tests.mjs', 'web-search-runtime-tests.mjs'],
+      status: 'covered',
+    },
+    setWebSearchToolRuntime: {
+      params: ['runtime: read-only web tool runtime | null'],
+      returns: 'void',
+      sideEffects: ['sets the allowlisted web.search/web.research fallback runtime'],
+      tests: ['app-bridge-contract-tests.mjs', 'web-search-generation-client-tests.mjs'],
+      status: 'covered',
+    },
   },
   [BRIDGE_CONTRACT_DOMAINS.sessionState]: {
     getActiveSessionId: {

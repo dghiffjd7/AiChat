@@ -11,6 +11,7 @@ import {
 } from '../native-reasoning.js';
 import { prepareTransportRequest } from '../transport.js';
 import { reportProviderUsage } from '../provider-usage.js';
+import { reportProviderWebSources } from '../web-search-runtime.js';
 import { isStreamOptionsRejectionError, streamUsageCompat } from '../stream-usage-compat.js';
 
 const DEFAULT_IMAGE_MIME = 'image/png';
@@ -461,7 +462,7 @@ export class CustomProvider {
      * 准备聊天请求，供发送链路和调试面板复用同一份实际 payload。
      */
     prepareChatRequest(messages, options = {}) {
-        const { signal, requestId, onProviderToolCallDelta, options: rawPayloadOptions } = splitRequestOptions(options);
+        const { signal, requestId, onProviderToolCallDelta, onProviderSources, options: rawPayloadOptions } = splitRequestOptions(options);
         const officialGeminiOpenAIEndpoint = isOfficialGeminiOpenAIEndpoint(this.baseUrl);
         const normalizedOptions = normalizeOpenAICompatiblePayloadOptions(rawPayloadOptions, {
             officialGeminiOpenAIEndpoint,
@@ -476,6 +477,7 @@ export class CustomProvider {
             signal,
             requestId,
             onProviderToolCallDelta,
+            onProviderSources,
             url: officialGeminiOpenAIEndpoint
                 ? buildEndpointUrl(this.baseUrl, 'chat/completions')
                 : `${this.baseUrl}/chat/completions`,
@@ -502,6 +504,11 @@ export class CustomProvider {
             signal: request.signal,
             requestId: request.requestId,
         });
+
+        try {
+            request.onProviderToolCallDelta?.(data, { provider: this.provider, model: this.model });
+        } catch {}
+        reportProviderWebSources(options, data, { provider: this.provider });
 
         reportProviderUsage(options, {
             body: data,

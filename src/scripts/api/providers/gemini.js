@@ -7,6 +7,7 @@ import { handleSSE } from '../stream.js';
 import { createLinkedAbortController, splitRequestOptions } from '../abort.js';
 import { createReasoningStreamEvent, extractGeminiStreamParts } from '../native-reasoning.js';
 import { prepareTransportRequest } from '../transport.js';
+import { reportProviderWebSources } from '../web-search-runtime.js';
 
 const GEMINI_SAFETY = [
   { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_NONE' },
@@ -220,6 +221,7 @@ export class GeminiProvider {
       }
 
       const data = await response.json();
+      reportProviderWebSources(options, data, { provider: 'gemini' });
 
       // Check for candidates
       const candidates = data?.candidates;
@@ -287,6 +289,7 @@ export class GeminiProvider {
       // Handle SSE stream
       for await (const data of handleSSE(response)) {
         notifyProviderToolCallDelta(data);
+        reportProviderWebSources(options, data, { provider: 'gemini' });
         const candidates = data?.candidates;
         if (candidates && candidates.length > 0) {
           const parts = extractGeminiStreamParts(candidates[0].content);

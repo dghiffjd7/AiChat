@@ -7,6 +7,7 @@ import { handleSSE } from '../stream.js';
 import { createLinkedAbortController, splitRequestOptions } from '../abort.js';
 import { createReasoningStreamEvent, extractGeminiStreamParts } from '../native-reasoning.js';
 import { prepareTransportRequest } from '../transport.js';
+import { reportProviderWebSources } from '../web-search-runtime.js';
 
 const getTauriInvoker = () => {
   const g = typeof globalThis !== 'undefined' ? globalThis : undefined;
@@ -260,6 +261,7 @@ export class MakersuiteProvider {
         throw error;
       }
       const data = JSON.parse(res.body || '{}');
+      reportProviderWebSources(options, data, { provider: 'makersuite' });
 
       // Check for candidates
       const candidates = data?.candidates;
@@ -327,6 +329,7 @@ export class MakersuiteProvider {
       // Handle SSE stream
       for await (const data of handleSSE(response)) {
         notifyProviderToolCallDelta(data);
+        reportProviderWebSources(options, data, { provider: 'makersuite' });
         const candidates = data?.candidates;
         if (candidates && candidates.length > 0) {
           const parts = extractGeminiStreamParts(candidates[0].content);
