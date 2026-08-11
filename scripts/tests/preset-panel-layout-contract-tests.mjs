@@ -115,5 +115,12 @@ assert.match(source, /setAttribute\('role', 'combobox'\)/, '推理强度输入�
 assert.match(source, /新增：/, '推理强度下拉应提供自定义值新增入口');
 assert.match(source, /\.pp-reasoning-effort-combobox\s*\{/, '推理强度可编辑下拉应具有独立布局样式');
 assert.doesNotMatch(source, /API 值：\$\{option\.value\}/, '推理强度选项应直接显示英文值，不添加“API 值”前缀');
+assert.match(source, /async onSave\(\)[\s\S]*?showStatus\('保存中…', 'info'\)/, '保存动作应立即显示进行中反馈');
+assert.match(source, /async onSave\(\)[\s\S]*?store\.upsertMany\(toSave\)/, '保存动作应把多预设编辑合并为一次持久化');
+assert.doesNotMatch(
+    source.match(/async onSave\(\) \{[\s\S]*?\n    async onNewForStoreType/)?.[0] || '',
+    /for \(const item of toSave\)[\s\S]*?store\.upsert\(/,
+    '保存动作不得逐项触发整库持久化',
+);
 
 console.log('ok - preset panel pages are stacked and compact on small viewports');

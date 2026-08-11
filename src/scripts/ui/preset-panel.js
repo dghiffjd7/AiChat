@@ -7084,6 +7084,7 @@ export class PresetPanel {
         return this.enqueuePresetMutation(async () => {
             await this.store.ready;
             try {
+                this.showStatus('保存中…', 'info');
                 this.captureDraftsFromDOM();
 
                 const toSave = [];
@@ -7104,16 +7105,14 @@ export class PresetPanel {
                     toSave.push({ storeType: st, presetId: activeId, name, data: { ...(data || {}), name } });
                 }
 
-                for (const item of toSave) {
-                    await this.store.upsert(item.storeType, { id: item.presetId, name: item.name, data: item.data });
-                }
+                await this.store.upsertMany(toSave);
 
                 this.drafts.clear();
                 this.openaiBlockDrafts?.clear?.();
                 this.openaiDeletedBlockIds?.clear?.();
+                this.showStatus('保存成功', 'success');
                 this.renderAllSections();
                 this.updateUnsavedIndicator();
-                this.showStatus('保存成功', 'success');
                 window.dispatchEvent(new CustomEvent('preset-changed'));
             } catch (err) {
                 logger.error('保存预设失败', err);

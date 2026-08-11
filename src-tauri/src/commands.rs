@@ -4334,6 +4334,7 @@ pub async fn http_stream_request_start(
     body: Option<String>,
     timeout_ms: Option<u64>,
     request_id: String,
+    response_base64: Option<bool>,
     abort_state: State<'_, HttpAbortState>,
     stream_state: State<'_, HttpStreamState>,
 ) -> Result<bool, String> {
@@ -4351,6 +4352,7 @@ pub async fn http_stream_request_start(
     let abort_map = abort_state.inner.clone();
     let stream_map = stream_state.inner.clone();
     let request_key = key.clone();
+    let encode_binary_chunks = response_base64.unwrap_or(false);
     let task = tokio::spawn(async move {
         let result: Result<(), String> = async {
             let has_accept_encoding = headers
@@ -4400,14 +4402,24 @@ pub async fn http_stream_request_start(
 
             let mut utf8_pending: Vec<u8> = Vec::new();
             while let Some(chunk) = resp.chunk().await.map_err(|e| e.to_string())? {
-                push_http_stream_utf8_bytes(
-                    &stream_map,
-                    &request_key,
-                    &mut utf8_pending,
-                    chunk.as_ref(),
-                );
+                if encode_binary_chunks {
+                    push_http_stream_chunk(
+                        &stream_map,
+                        &request_key,
+                        BASE64_ENGINE.encode(chunk.as_ref()),
+                    );
+                } else {
+                    push_http_stream_utf8_bytes(
+                        &stream_map,
+                        &request_key,
+                        &mut utf8_pending,
+                        chunk.as_ref(),
+                    );
+                }
             }
-            finish_http_stream_utf8_bytes(&stream_map, &request_key, &mut utf8_pending);
+            if !encode_binary_chunks {
+                finish_http_stream_utf8_bytes(&stream_map, &request_key, &mut utf8_pending);
+            }
             Ok(())
         }
         .await;
@@ -4445,27 +4457,7 @@ pub async fn http_stream_request_read(
         let entry = map
             .get_mut(&key)
             .ok_or_else(|| "http stream request not found".to_string())?;
-
-        let mut chunks = Vec::new();
-        for _ in 0..take_limit {
-            if let Some(chunk) = entry.chunks.pop_front() {
-                chunks.push(chunk);
-            } else {
-                break;
-            }
-        }
-
-        (
-            HttpStreamReadResult {
-                status: entry.status,
-                ok: entry.ok,
-                headers: entry.headers.clone(),
-                chunks,
-                done: entry.done,
-                error: entry.error.clone(),
-            },
-            entry.done && entry.chunks.is_empty(),
-        )
+        read_http_stream_entry(entry, take_limit)
     };
 
     if should_remove {
@@ -4473,6 +4465,32 @@ pub async fn http_stream_request_read(
     }
 
     Ok(result)
+}
+
+fn read_http_stream_entry(
+    entry: &mut HttpStreamEntry,
+    take_limit: usize,
+) -> (HttpStreamReadResult, bool) {
+    let mut chunks = Vec::new();
+    for _ in 0..take_limit {
+        if let Some(chunk) = entry.chunks.pop_front() {
+            chunks.push(chunk);
+        } else {
+            break;
+        }
+    }
+    let should_remove = entry.done && entry.chunks.is_empty();
+    (
+        HttpStreamReadResult {
+            status: entry.status,
+            ok: entry.ok,
+            headers: entry.headers.clone(),
+            chunks,
+            done: should_remove,
+            error: entry.error.clone(),
+        },
+        should_remove,
+    )
 }
 
 #[tauri::command]
@@ -4637,6 +4655,27 @@ pub async fn delete_template(
 mod tests {
     use super::*;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn completed_http_stream_only_reports_done_after_queued_chunks_are_drained() {
+        let mut entry = HttpStreamEntry {
+            status: Some(200),
+            ok: Some(true),
+            chunks: (0..33).map(|index| index.to_string()).collect(),
+            done: true,
+            ..HttpStreamEntry::default()
+        };
+
+        let (first, first_should_remove) = read_http_stream_entry(&mut entry, 32);
+        assert_eq!(first.chunks.len(), 32);
+        assert!(!first.done);
+        assert!(!first_should_remove);
+
+        let (last, last_should_remove) = read_http_stream_entry(&mut entry, 32);
+        assert_eq!(last.chunks, vec!["32".to_string()]);
+        assert!(last.done);
+        assert!(last_should_remove);
+    }
 
     fn unique_temp_data_dir(label: &str) -> PathBuf {
         let nanos = SystemTime::now()

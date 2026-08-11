@@ -55,6 +55,7 @@ globalThis.window = {
 };
 
 const { RegexPanel } = await import('../../src/scripts/ui/regex-panel.js');
+const { RegexStore } = await import('../../src/scripts/storage/regex-store.js');
 
 const makePanel = () => {
   const store = new FakeRegexStore([
@@ -160,6 +161,107 @@ const makePanel = () => {
   });
   assert.deepEqual(rules[0].trimStrings, ['  leading', 'trailing  ']);
   console.log('ok - regex global editor preserves significant trim-string whitespace on save');
+}
+
+{
+  const { panel } = makePanel();
+  const draftRules = [
+    {
+      id: 'lazy-a',
+      scriptName: 'Never expanded A',
+      findRegex: '/a/g',
+      replaceString: 'A',
+      trimStrings: [' keep '],
+      placement: [1],
+      disabled: false,
+    },
+    {
+      id: 'lazy-b',
+      scriptName: 'Never expanded B',
+      findRegex: '/b/g',
+      replaceString: 'B',
+      placement: [2],
+      disabled: true,
+    },
+  ];
+  const rules = panel.collectRules({
+    __regexRuleDrafts: draftRules,
+    querySelectorAll: () => [],
+  });
+  assert.equal(rules.length, 2, 'unmounted lazy rule bodies must remain saveable');
+  assert.equal(rules[0].findRegex, '/a/g');
+  assert.equal(rules[0].trimStrings[0], ' keep ');
+  assert.equal(rules[1].disabled, true);
+  rules[0].trimStrings[0] = 'changed';
+  assert.equal(draftRules[0].trimStrings[0], ' keep ', 'collected output must not mutate editor drafts');
+  console.log('ok - regex editor saves JS drafts even when rule bodies were never mounted');
+}
+
+{
+  const { panel } = makePanel();
+  const rule = { scriptName: 'Cached', findRegex: '/a/g', replaceString: 'b', placement: [1] };
+  const first = panel.normalizeRuleForView(rule);
+  const second = panel.normalizeRuleForView(rule);
+  assert.equal(first, second, 'one immutable rule snapshot should reuse its normalized view');
+  console.log('ok - regex panel memoizes normalized rule snapshots during one render');
+}
+
+{
+  const store = Object.create(RegexStore.prototype);
+  store.state = {
+    local: {
+      order: ['large'],
+      sets: {
+        large: {
+          id: 'large',
+          name: 'Large set',
+          manualEnabled: true,
+          enabled: true,
+          bind: { type: 'world', worldId: 'world-a' },
+          updatedAt: 10,
+          rules: [{
+            id: 'rule-a',
+            scriptName: 'Rule A',
+            findRegex: '/very-large-pattern/g',
+            replaceString: 'very-large-replacement',
+            placement: [1, 2],
+            disabled: false,
+          }],
+        },
+      },
+    },
+  };
+  const summaries = store.listLocalSetSummaries();
+  assert.equal(summaries.length, 1);
+  assert.equal('findRegex' in summaries[0].rules[0], false, 'list summaries must not clone large rule bodies');
+  assert.deepEqual(summaries[0].rules[0], {
+    scriptName: 'Rule A',
+    placement: [1, 2],
+    disabled: false,
+  });
+  summaries[0].bind.worldId = 'changed';
+  summaries[0].rules[0].placement[0] = 9;
+  assert.equal(store.state.local.sets.large.bind.worldId, 'world-a');
+  assert.equal(store.state.local.sets.large.rules[0].placement[0], 1);
+  console.log('ok - regex store exposes lightweight isolated collection summaries');
+}
+
+{
+  const { readFile } = await import('node:fs/promises');
+  const regexPanelSource = await readFile(
+    new URL('../../src/scripts/ui/regex-panel.js', import.meta.url),
+    'utf8',
+  );
+  // 点击集合行激活编辑器时必须重取 context，不得复用 renderScoped 闭包捕获的旧值
+  assert.match(
+    regexPanelSource,
+    /transitionScopedEditor\(editor, this\.store\.getLocalSet\(activeId\), scope, this\.getActiveRegexContext\(\)\)/,
+  );
+  const renderRuleCardSource = regexPanelSource.match(/renderRuleCard\(rule,[\s\S]*?\n    animateRuleCardIn\(/)?.[0] || '';
+  assert.match(renderRuleCardSource, /const mountBody = \(\) => \{/, 'collapsed cards should defer their heavy form body');
+  assert.match(renderRuleCardSource, /if \(!collapsed\) mountBody\(\);/, 'expanding a card should mount its body on demand');
+  assert.match(renderRuleCardSource, /card\.__regexRuleDraft = r;/, 'each card should retain a JS source-of-truth draft');
+  console.log('ok - activating a regex set resolves a fresh active context for the editor');
 }
 
 if (previousWindow === undefined) delete globalThis.window;

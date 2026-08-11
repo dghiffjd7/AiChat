@@ -86,3 +86,91 @@ import {
     globalThis.localStorage = previousLocalStorage;
   }
 }
+
+{
+  const previousTauri = globalThis.__TAURI__;
+  const previousFetch = globalThis.fetch;
+  const previousWindow = globalThis.window;
+  const previousLocalStorage = globalThis.localStorage;
+  const saved = [];
+  const itemKeys = {
+    first: 'prompt_preset_store_v2_item_context_15976ig_first',
+    second: 'prompt_preset_store_v2_item_context_131lkwu_second',
+  };
+  const itemData = {
+    first: { name: '第一份', story_string: 'first' },
+    second: { name: '第二份', story_string: 'second' },
+  };
+  const index = {
+    version: 2,
+    active: { context: 'first' },
+    enabled: { context: true },
+    bindings: {},
+    items: {
+      sysprompt: {},
+      context: {
+        first: { key: itemKeys.first, name: '第一份', updatedAt: 1 },
+        second: { key: itemKeys.second, name: '第二份', updatedAt: 1 },
+      },
+      instruct: {},
+      openai: {},
+      reasoning: {},
+    },
+    savedAt: 1,
+  };
+  try {
+    globalThis.localStorage = { getItem: () => null, setItem: () => {}, removeItem: () => {} };
+    globalThis.window = {
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      dispatchEvent: () => true,
+    };
+    globalThis.fetch = async () => ({ ok: true, json: async () => ({ types: {} }) });
+    globalThis.__TAURI__ = {
+      core: {
+        invoke: async (command, args = {}) => {
+          if (command === 'load_kv') {
+            if (args.name === 'prompt_preset_store_v2_index') return structuredClone(index);
+            if (args.name === itemKeys.first) {
+              return { version: 2, type: 'context', id: 'first', data: structuredClone(itemData.first) };
+            }
+            if (args.name === itemKeys.second) {
+              return { version: 2, type: 'context', id: 'second', data: structuredClone(itemData.second) };
+            }
+            return null;
+          }
+          if (command === 'save_kv') {
+            saved.push({ name: args.name, data: structuredClone(args.data) });
+            return true;
+          }
+          throw new Error(`unexpected command: ${command}`);
+        },
+      },
+    };
+
+    const { PresetStore } = await import('../../src/scripts/storage/preset-store.js');
+    const store = new PresetStore();
+    await store.ready;
+    saved.length = 0;
+
+    await store.upsertMany([
+      { storeType: 'context', presetId: 'first', name: '第一份', data: itemData.first },
+      { storeType: 'context', presetId: 'second', name: '第二份', data: { ...itemData.second, story_string: 'changed' } },
+    ]);
+
+    assert.deepEqual(
+      saved.map(call => call.name),
+      [itemKeys.second, 'prompt_preset_store_v2_index'],
+      'one batch should write only changed item shards plus one index',
+    );
+    assert.equal(store.getActive('context').story_string, 'first');
+    assert.equal(store.list('context').find(item => item.id === 'second')?.story_string, 'changed');
+    console.log('ok - preset store batches edits and skips unchanged loaded shards');
+  } finally {
+    if (typeof previousTauri === 'undefined') delete globalThis.__TAURI__;
+    else globalThis.__TAURI__ = previousTauri;
+    globalThis.fetch = previousFetch;
+    globalThis.window = previousWindow;
+    globalThis.localStorage = previousLocalStorage;
+  }
+}

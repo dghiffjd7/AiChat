@@ -4769,14 +4769,23 @@ body[data-reduced-motion='on'] :is(
     width: 100%;
     min-height: 0;
     max-height: 38dvh;
+    overflow: hidden;
     border-right: none;
     border-bottom: 1px solid var(--app-border-subtle);
   }
   .world-entries-list {
+    flex: 1 1 auto;
+    min-height: 0;
     max-height: none;
   }
+  .world-entry-page {
+    height: 100%;
+    min-height: 0;
+  }
   .world-entry-page-list {
-    max-height: 28dvh;
+    height: 100%;
+    max-height: none;
+    min-height: 0;
     overflow: auto;
   }
   .world-entry-editor {

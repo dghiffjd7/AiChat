@@ -24,6 +24,9 @@ const SUPPORTED_PROVIDERS = [
     'a1111',
     'comfyui',
     'comfy',
+    'elevenlabs',
+    'groq',
+    'qwen_local',
 ];
 
 const IMAGE_ONLY_PROVIDERS = new Set([
@@ -43,6 +46,10 @@ const TEXT_ONLY_PROVIDERS = new Set([
     'ollama',
     'openrouter',
 ]);
+
+const VOICE_ONLY_PROVIDERS = new Set(['elevenlabs', 'groq', 'qwen_local']);
+const VOICE_PROVIDERS = new Set(['openai', 'elevenlabs', 'groq', 'qwen_local', 'custom']);
+const isVoiceScope = scope => String(scope || '').startsWith('voice_');
 
 const PROMPT_POST_PROCESSING_MODES = new Set(['none', 'merge', 'semi', 'strict', 'single']);
 
@@ -126,10 +133,11 @@ const normalizeProfile = (p = {}, { touchUpdatedAt = false } = {}) => {
     const updatedAt = touchUpdatedAt
         ? now
         : normalizeTimestamp(p.updatedAt, createdAt);
+    const provider = String(p.provider || 'openai').trim().toLowerCase() || 'openai';
     return {
         id: p.id || genId('profile'),
         name: p.name || '未命名',
-        provider: p.provider || 'openai',
+        provider,
         baseUrl: p.baseUrl || 'https://api.openai.com/v1',
         connectionMode: p.connectionMode === 'reverse_proxy' ? 'reverse_proxy' : 'direct',
         proxyBaseUrl: typeof p.proxyBaseUrl === 'string' ? p.proxyBaseUrl : '',
@@ -138,6 +146,9 @@ const normalizeProfile = (p = {}, { touchUpdatedAt = false } = {}) => {
         forwardProviderAuth: p.forwardProviderAuth !== false,
         promptPostProcessing: normalizePromptPostProcessing(p.promptPostProcessing),
         model: p.model || 'gpt-3.5-turbo',
+        ...(typeof p.ttsModel === 'string' ? { ttsModel: p.ttsModel } : {}),
+        ...(typeof p.sttModel === 'string' ? { sttModel: p.sttModel } : {}),
+        ...(typeof p.ttsVoice === 'string' ? { ttsVoice: p.ttsVoice } : {}),
         webSearchEnabled: p.webSearchEnabled === true,
         stream: p.stream !== false,
         excludedGenerationParams: normalizeGenerationParamFilterList(p.excludedGenerationParams),
@@ -361,7 +372,10 @@ export class ConfigManager {
      */
     getDefault() {
         const isImage = this.scope === 'image';
-        return {
+        const isVoiceShared = this.scope === 'voice_shared';
+        const isVoiceTts = this.scope === 'voice_tts';
+        const isVoiceStt = this.scope === 'voice_stt';
+        const defaults = {
             provider: 'openai',
             apiKey: '',
             baseUrl: 'https://api.openai.com/v1',
@@ -371,13 +385,27 @@ export class ConfigManager {
             proxyAuthToken: '',
             forwardProviderAuth: true,
             promptPostProcessing: 'none',
-            model: isImage ? 'gpt-image-2' : 'gpt-3.5-turbo',
+            model: isImage
+                ? 'gpt-image-2'
+                : isVoiceTts || isVoiceShared
+                    ? 'gpt-4o-mini-tts'
+                    : isVoiceStt
+                        ? 'gpt-transcribe'
+                        : 'gpt-3.5-turbo',
             webSearchEnabled: false,
             stream: true,
             excludedGenerationParams: [],
             timeout: 60000,
             maxRetries: 3
         };
+        if (isVoiceShared) {
+            defaults.ttsModel = 'gpt-4o-mini-tts';
+            defaults.sttModel = 'gpt-transcribe';
+            defaults.ttsVoice = 'marin';
+        } else if (isVoiceTts) {
+            defaults.ttsVoice = 'marin';
+        }
+        return defaults;
     }
 
     async ensureStores() {
@@ -508,7 +536,7 @@ export class ConfigManager {
         // migration: if no profile, create default from old config
         const hasAnyProfile = Object.keys(this.profileStore.profiles || {}).length > 0;
         if (!hasAnyProfile && !this.credentialsOnly) {
-            const base = await this.migrateLegacyConfig();
+            const base = isVoiceScope(this.scope) ? this.getDefault() : await this.migrateLegacyConfig();
             const profile = normalizeProfile({ ...base, name: '默认' });
             this.profileStore.profiles[profile.id] = profile;
             this.profileStore.activeProfileId = profile.id;
@@ -886,6 +914,9 @@ export class ConfigManager {
             forwardProviderAuth: p.forwardProviderAuth !== false,
             promptPostProcessing: normalizePromptPostProcessing(p.promptPostProcessing),
             model: p.model,
+            ...(typeof p.ttsModel === 'string' ? { ttsModel: p.ttsModel } : {}),
+            ...(typeof p.sttModel === 'string' ? { sttModel: p.sttModel } : {}),
+            ...(typeof p.ttsVoice === 'string' ? { ttsVoice: p.ttsVoice } : {}),
             webSearchEnabled: p.webSearchEnabled === true,
             stream: p.stream,
             excludedGenerationParams: normalizeGenerationParamFilterList(p.excludedGenerationParams),
@@ -930,11 +961,18 @@ export class ConfigManager {
      * 验证配置完整性
      */
     validate(config) {
-        const required = ['provider', 'baseUrl', 'model'];
+        const voiceScope = isVoiceScope(this.scope);
+        const required = this.scope === 'voice_shared'
+            ? ['provider', 'baseUrl', 'ttsModel', 'sttModel', 'ttsVoice']
+            : this.scope === 'voice_tts'
+                ? ['provider', 'baseUrl', 'model', 'ttsVoice']
+                : ['provider', 'baseUrl', 'model'];
         const provider = String(config?.provider || '').trim().toLowerCase();
-        const supportedProviders = this.scope === 'image'
-            ? SUPPORTED_PROVIDERS.filter(item => !TEXT_ONLY_PROVIDERS.has(item))
-            : SUPPORTED_PROVIDERS.filter(item => !IMAGE_ONLY_PROVIDERS.has(item));
+        const supportedProviders = voiceScope
+            ? SUPPORTED_PROVIDERS.filter(item => VOICE_PROVIDERS.has(item))
+            : this.scope === 'image'
+                ? SUPPORTED_PROVIDERS.filter(item => !TEXT_ONLY_PROVIDERS.has(item) && !VOICE_ONLY_PROVIDERS.has(item))
+                : SUPPORTED_PROVIDERS.filter(item => !IMAGE_ONLY_PROVIDERS.has(item) && !VOICE_ONLY_PROVIDERS.has(item));
 
         for (const key of required) {
             if (!config[key]) {

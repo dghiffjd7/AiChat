@@ -3216,16 +3216,13 @@ class AppBridge {
       || '',
     ).trim().toLowerCase();
     const uiMode = normalizeBridgePresetUiMode(uiModeRaw, { sessionId: sid });
-    const presetState = this.presets?.getState?.() || {};
     const activePresets = (() => {
-      const enabled = presetState?.enabled || {};
       const out = {};
       const presetTypes = ['sysprompt', 'context', 'instruct', 'openai', 'reasoning'];
       for (const type of presetTypes) {
-        if (enabled && enabled[type] === false) continue;
+        if (this.presets?.getEnabled?.(type) === false) continue;
         const resolvedId = String(
           this.presets?.getResolvedActiveId?.(type, { sessionId: sid, uiMode })?.presetId
-          || presetState?.active?.[type]
           || '',
         ).trim();
         if (!resolvedId) continue;

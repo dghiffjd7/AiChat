@@ -2919,7 +2919,7 @@ const buildMvuCompatBridgeLegacy = ({ iframeId, sessionId, messageId, messageInd
 };
 
 let iframeBridgeScriptUrl = '';
-const buildIframeBridgeScript = () => `
+export const buildIframeBridgeScript = () => `
 (() => {
   const getIframeId = () => {
     try {
@@ -3232,6 +3232,10 @@ const buildIframeBridgeScript = () => `
       return false;
     }
   };
+  const isSelectableTextTarget = (target) => {
+    if (!target || typeof target.closest !== 'function') return false;
+    return !target.closest('button, input, textarea, select, a, audio, video, canvas, summary, [role="button"], [contenteditable="true"]');
+  };
 
   const start = () => {
     const stripBodyWhitespace = () => {
@@ -3287,12 +3291,13 @@ const buildIframeBridgeScript = () => `
       pressActive = true;
       pressStartedAt = Date.now();
       sendPress('down', ev);
+      const pressDelay = isSelectableTextTarget(ev?.target) ? 680 : 520;
       pressTimer = setTimeout(() => {
         if (!pressActive || !pressStartedAt) return;
         if (Date.now() - pressStartedAt < 420) return;
         if (hasSelection()) return;
         sendPress('longpress', ev);
-      }, 520);
+      }, pressDelay);
     }, { passive: true, capture: true });
     ['pointerup','pointercancel','pointerleave','pointerout'].forEach((t) => {
       document.addEventListener(t, (ev) => {
@@ -3309,12 +3314,13 @@ const buildIframeBridgeScript = () => `
       pressActive = true;
       pressStartedAt = Date.now();
       sendPress('down', ev);
+      const pressDelay = isSelectableTextTarget(ev?.target) ? 680 : 520;
       pressTimer = setTimeout(() => {
         if (!pressActive || !pressStartedAt) return;
         if (Date.now() - pressStartedAt < 420) return;
         if (hasSelection()) return;
         sendPress('longpress', ev);
-      }, 520);
+      }, pressDelay);
     }, { passive: true, capture: true });
     document.addEventListener('touchmove', (ev) => {
       if (!pressActive || !touchStartPoint) return;
@@ -3350,6 +3356,11 @@ const buildIframeBridgeScript = () => `
       setTimeout(() => { touchActive = false; }, 120);
     }, { passive: true, capture: true });
     document.addEventListener('contextmenu', (ev) => {
+      if (isSelectableTextTarget(ev?.target)) {
+        // 不清定时器：部分 WebView 的 contextmenu 并不真正启动原生选择，保留定时器，
+        // 到点时经 hasSelection() 判空仍会送出 longpress 兜底；原生选择一旦启动由 selectstart 取消。
+        return;
+      }
       if (hasSelection()) {
         if (pressTimer) { clearTimeout(pressTimer); pressTimer = null; }
         pressActive = false;
@@ -4000,12 +4011,16 @@ const bindIframeDocumentPressFallback = (iframe, iframeId) => {
                 return false;
             }
         };
+        const isSelectableTextTarget = (target) => {
+            if (!target || typeof target.closest !== 'function') return false;
+            return !target.closest('button, input, textarea, select, a, audio, video, canvas, summary, [role="button"], [contenteditable="true"]');
+        };
         doc.addEventListener('pointerdown', (ev) => dispatch('down', ev), { passive: true, capture: true });
         ['pointerup', 'pointercancel', 'pointerleave', 'pointerout'].forEach((t) => {
             doc.addEventListener(t, (ev) => dispatch('up', ev), { passive: true, capture: true });
         });
         doc.addEventListener('contextmenu', (ev) => {
-            if (hasSelection()) return;
+            if (isSelectableTextTarget(ev?.target) || hasSelection()) return;
             try { ev.preventDefault(); } catch {}
             dispatch('longpress', ev);
         }, { passive: false, capture: true });
@@ -4187,8 +4202,10 @@ const splitWholeHtmlDocumentParts = (text) => {
     }
     if (growing || pendingShell) return null;
     if (end <= start) return null;
-    const prefix = source.slice(0, start);
-    const code = source.slice(start, end);
+    const leading = source.slice(0, start);
+    const codeStart = stripLeadingHtmlComments(leading).trim() ? start : 0;
+    const prefix = source.slice(0, codeStart);
+    const code = source.slice(codeStart, end);
     const tail = source.slice(end);
     const parts = [];
     if (String(prefix || '').trim()) parts.push({ type: 'text', text: prefix });
@@ -5785,6 +5802,10 @@ export const buildIframeSrcDoc = (
         return false;
       }
     };
+    const isSelectableTextTarget = (target) => {
+      if (!target || typeof target.closest !== 'function') return false;
+      return !target.closest('button, input, textarea, select, a, audio, video, canvas, summary, [role="button"], [contenteditable="true"]');
+    };
     const clear = () => {
       if (pressTimer) { clearTimeout(pressTimer); pressTimer = null; }
       if (pressActive) { sendPress('cancel', { clientX: 0, clientY: 0 }); pressActive = false; }
@@ -5796,10 +5817,11 @@ export const buildIframeSrcDoc = (
       clear();
       pressActive = true;
       sendPress('down', ev);
+      const pressDelay = isSelectableTextTarget(ev?.target) ? 680 : 520;
       pressTimer = setTimeout(() => {
         if (hasSelection()) return;
         sendPress('longpress', ev);
-      }, 520);
+      }, pressDelay);
     };
     let touchActive = false;
     let touchStartPoint = null;
@@ -5868,6 +5890,11 @@ export const buildIframeSrcDoc = (
     });
     // Some WebViews trigger text selection / native menu via contextmenu on long-press
     document.addEventListener('contextmenu', (ev) => {
+      if (isSelectableTextTarget(ev?.target)) {
+        // 不 clear：部分 WebView 的 contextmenu 不启动原生选择，保留定时器由 hasSelection() 兜底，
+        // 原生选择一旦启动由 selectstart 取消。
+        return;
+      }
       if (hasSelection()) {
         clear();
         return;
@@ -10052,7 +10079,7 @@ export const buildRichTextRenderPlan = (text, { streaming = false } = {}) => {
         && (hasHtmlDocClose || /<script[\s>]/i.test(trimmed));
     const textWithBreaks = convertBrTagsToNewlines(rawText);
     const hasCodeFence = !hasEscapedHtmlDocumentWrapper && /```/.test(htmlCandidateText);
-    const wholeHtmlParts = streaming && !hasCodeFence && wholeLooksLikeHtml
+    const wholeHtmlParts = !hasCodeFence && wholeLooksLikeHtml
         ? splitWholeHtmlDocumentParts(htmlCandidateText)
         : null;
     const parts = escapedDocumentParts
@@ -10073,6 +10100,37 @@ export const buildRichTextRenderPlan = (text, { streaming = false } = {}) => {
         rawText,
         wholeLooksLikeHtml,
     };
+};
+
+const appendPlainTextToHtml = (html, plainText) => {
+    const textRaw = String(plainText ?? '');
+    if (!textRaw.trim()) return html;
+    const safe = textRaw
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;')
+        .replace(/\r\n/g, '\n')
+        .replace(/\r/g, '\n')
+        .replace(/\n/g, '<br>');
+    const tail = `<div class="__chatapp-tail-text">${safe}</div>`;
+    if (/<\/body>/i.test(html)) return html.replace(/<\/body>/i, `${tail}</body>`);
+    if (/<\/html>/i.test(html)) return html.replace(/<\/html>/i, `${tail}</html>`);
+    return `${html}${tail}`;
+};
+
+export const coalesceFencedHtmlTailParts = (parts, { streaming = false } = {}) => {
+    const input = Array.isArray(parts) ? parts : [];
+    if (streaming) return input;
+    const firstCodeIdx = input.findIndex(part => part.type === 'code' && (part.lang === 'html' || part.lang === 'htm'));
+    const hasOtherCode = input.some((part, index) => part.type === 'code' && index !== firstCodeIdx);
+    if (firstCodeIdx !== 0 || hasOtherCode) return input;
+    const firstCode = String(input[0]?.code || '');
+    if (isCompleteHtmlDocumentShell(firstCode)) return input;
+    const tailText = input.slice(1).map(part => (part.type === 'text' ? part.text : '')).join('');
+    if (!String(tailText || '').trim()) return input;
+    return [{ ...input[0], code: appendPlainTextToHtml(firstCode, tailText) }];
 };
 
 export const renderRichText = (
@@ -10121,23 +10179,6 @@ export const renderRichText = (
         wholeLooksLikeHtml,
     } = renderPlan;
     let parts = renderPlan.parts;
-    const escapeHtml = (value) => (
-        String(value ?? '')
-            .replace(/&/g, '&amp;')
-            .replace(/</g, '&lt;')
-            .replace(/>/g, '&gt;')
-            .replace(/"/g, '&quot;')
-            .replace(/'/g, '&#39;')
-    );
-    const appendPlainTextToHtml = (html, plainText) => {
-        const textRaw = String(plainText ?? '');
-        if (!textRaw.trim()) return html;
-        const safe = escapeHtml(textRaw).replace(/\r\n/g, '\n').replace(/\r/g, '\n').replace(/\n/g, '<br>');
-        const tail = `<div class="__chatapp-tail-text">${safe}</div>`;
-        if (/<\/body>/i.test(html)) return html.replace(/<\/body>/i, `${tail}</body>`);
-        if (/<\/html>/i.test(html)) return html.replace(/<\/html>/i, `${tail}</html>`);
-        return `${html}${tail}`;
-    };
     const hasInteractiveHtmlLikeText = (val) => {
         const raw = String(val || '');
         if (!raw) return false;
@@ -10174,18 +10215,7 @@ export const renderRichText = (
         }
     }
     if (hasCodeFence) {
-        const firstCodeIdx = parts.findIndex(p => p.type === 'code' && (p.lang === 'html' || p.lang === 'htm'));
-        const hasOtherCode = parts.some((p, idx) => p.type === 'code' && idx !== firstCodeIdx);
-        if (!streaming && firstCodeIdx === 0 && !hasOtherCode) {
-            const tailText = parts
-                .slice(1)
-                .map(p => (p.type === 'text' ? p.text : ''))
-                .join('');
-            if (String(tailText || '').trim()) {
-                const mergedHtml = appendPlainTextToHtml(String(parts[0].code || ''), tailText);
-                parts = [{ type: 'code', lang: 'html', code: mergedHtml }];
-            }
-        }
+        parts = coalesceFencedHtmlTailParts(parts, { streaming });
         parts = parts.map(p => {
             if (p.type !== 'text') return p;
             const normalized = String(p.text || '')

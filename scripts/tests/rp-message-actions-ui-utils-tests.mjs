@@ -53,11 +53,11 @@ const createFakeDocument = () => {
   assert.equal(actions.dataset.msgId, 'm-actions');
   assert.equal(actions.children[0], swipe);
   const buttons = actions.children[1].children;
-  assert.deepEqual(buttons.map(button => button.dataset.rpMessageAction), ['regenerate', 'view-code', 'copy']);
+  assert.deepEqual(buttons.map(button => button.dataset.rpMessageAction), ['regenerate', 'speak', 'view-code', 'copy']);
   assert.equal(buttons.every(button => button.innerHTML.includes('<svg')), true);
   assert.deepEqual(
     buttons.map(button => button.attributes.get('aria-label')),
-    ['重新生成', '编辑原回复', '复制'],
+    ['重新生成', '朗读', '编辑原回复', '复制'],
   );
   console.log('ok - createRpMessageActionsElement builds swipe and svg action controls in the requested order');
 }
@@ -165,10 +165,12 @@ const createBubbleTarget = wrapper => {
   const click = listeners.get('click');
   click({ target: createActionTarget(first, 'copy'), pointerType: 'mouse' });
   click({ target: createActionTarget(first, 'regenerate'), pointerType: 'mouse' });
+  click({ target: createActionTarget(first, 'speak'), pointerType: 'mouse' });
   click({ target: createActionTarget(first, 'view-code'), pointerType: 'mouse' });
   assert.deepEqual(calls.map(([action, id]) => [action, id]), [
     ['copy', 'a1'],
     ['regenerate', 'a1'],
+    ['speak', 'a1'],
     ['view-code', 'a1'],
   ]);
 

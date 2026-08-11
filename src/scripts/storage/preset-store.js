@@ -652,6 +652,8 @@ const makePresetItemPayload = (type, id, data) => ({
     data,
 });
 
+const makePresetItemSignature = (type, id, data) => JSON.stringify(makePresetItemPayload(type, id, data));
+
 const readPresetItemPayload = (payload, type, id) => {
     if (!payload || typeof payload !== 'object' || payload._tooLarge) return null;
     const data = payload.data && typeof payload.data === 'object' ? payload.data : null;
@@ -990,6 +992,7 @@ export class PresetStore {
     constructor() {
         this.state = null;
         this.isLoaded = false;
+        this.persistedItemSignatures = new Map();
         this.ready = this.load();
     }
 
@@ -1036,7 +1039,10 @@ export class PresetStore {
                         continue;
                     }
                     const data = readPresetItemPayload(payload, type, presetId);
-                    if (data) state.presets[type][presetId] = data;
+                    if (data) {
+                        state.presets[type][presetId] = data;
+                        this.persistedItemSignatures.set(key, makePresetItemSignature(type, presetId, data));
+                    }
                     else {
                         skipPersistOnLoad = true;
                         if (isNonEmptyObject(payload)) {
@@ -1070,7 +1076,11 @@ export class PresetStore {
                 const presetId = String(id || '').trim();
                 if (!presetId) continue;
                 const key = index.items[type]?.[presetId]?.key || makePresetItemKey(type, presetId);
-                await safeInvoke('save_kv', { name: key, data: makePresetItemPayload(type, presetId, data) });
+                const payload = makePresetItemPayload(type, presetId, data);
+                const signature = JSON.stringify(payload);
+                if (this.persistedItemSignatures.get(key) === signature) continue;
+                await safeInvoke('save_kv', { name: key, data: payload });
+                this.persistedItemSignatures.set(key, signature);
             }
         }
 
@@ -1080,6 +1090,7 @@ export class PresetStore {
             if (nextKeys.has(key)) continue;
             try {
                 await safeInvoke('save_kv', { name: key, data: null });
+                this.persistedItemSignatures.delete(key);
             } catch (err) {
                 logger.debug('preset stale item cleanup failed', { key, err });
             }
@@ -1117,6 +1128,8 @@ export class PresetStore {
 
     async load() {
         if (this.isLoaded && this.state) return this.state;
+
+        this.persistedItemSignatures.clear();
 
         let state = null;
         let skipPersistOnLoad = false;
@@ -1711,8 +1724,7 @@ export class PresetStore {
         return this.getBindings(t);
     }
 
-    async upsert(type, { id, name, data, makeActive } = {}) {
-        await this.ready;
+    applyUpsert(type, { id, name, data, makeActive } = {}) {
         const t = normalizeType(type);
         const presetId = id || genId(`preset-${t}`);
         const next = { ...(data || {}), name: String(name || data?.name || presetId) };
@@ -1733,6 +1745,27 @@ export class PresetStore {
             ? makeActive
             : !id; // default: only auto-activate on create/import
         if (shouldActivate) this.state.active[t] = presetId;
+        return presetId;
+    }
+
+    async upsertMany(items = []) {
+        await this.ready;
+        const records = Array.isArray(items)
+            ? items.map(item => ({
+                ...item,
+                type: normalizeType(item?.type || item?.storeType),
+                id: item?.id || item?.presetId,
+            }))
+            : [];
+        if (!records.length) return [];
+        const ids = records.map(item => this.applyUpsert(item.type, item));
+        await this.persist();
+        return ids;
+    }
+
+    async upsert(type, options = {}) {
+        await this.ready;
+        const presetId = this.applyUpsert(type, options);
         await this.persist();
         return presetId;
     }

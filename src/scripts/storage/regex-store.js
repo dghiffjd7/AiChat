@@ -400,6 +400,24 @@ export class RegexStore {
         return order.map(id => sets[id]).filter(Boolean).map(clone);
     }
 
+    listLocalSetSummaries() {
+        const order = ensureArr(this.state?.local?.order);
+        const sets = ensureObj(this.state?.local?.sets, {});
+        return order.map(id => sets[id]).filter(Boolean).map(setObj => ({
+            id: setObj.id,
+            name: setObj.name,
+            manualEnabled: setObj.manualEnabled,
+            enabled: setObj.enabled,
+            bind: setObj.bind ? clone(setObj.bind) : null,
+            updatedAt: setObj.updatedAt,
+            rules: ensureArr(setObj.rules).map(rule => ({
+                scriptName: String(rule?.scriptName || rule?.script_name || rule?.name || '').trim(),
+                placement: ensureArr(rule?.placement).map(Number).filter(Number.isFinite),
+                disabled: rule?.disabled === true,
+            })),
+        }));
+    }
+
     getLocalSet(id) {
         const s = this.state?.local?.sets?.[id];
         return s ? clone(s) : null;

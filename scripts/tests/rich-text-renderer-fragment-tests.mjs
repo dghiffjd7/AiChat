@@ -13,6 +13,8 @@ globalThis.document ??= { body: { dataset: {} } };
 
 const {
   captureRichDetailsOpenStates,
+  coalesceFencedHtmlTailParts,
+  buildIframeBridgeScript,
   buildIframeHeightTraceEvent,
   shouldDropLegacyIframeHeightEcho,
   buildIframeSrcDoc,
@@ -720,6 +722,38 @@ tests.push({
 });
 
 tests.push({
+  name: 'non-streaming full page keeps trailing prose outside the sandbox',
+  fn: () => {
+    const text = '<body><details><summary>思维链</summary><p>隐藏内容</p></details></body>\n正文可选';
+    const plan = buildRichTextRenderPlan(text);
+    assert.equal(plan.wholeLooksLikeHtml, true);
+    assert.deepEqual(plan.parts.map(part => part.type), ['code', 'text']);
+    assert.match(plan.parts[0].code, /<\/body>$/);
+    assert.equal(plan.parts[1].text, '\n正文可选');
+  },
+});
+
+tests.push({
+  name: 'complete fenced HTML keeps following prose outside while fragments preserve legacy coalescing',
+  fn: () => {
+    const documentParts = [
+      { type: 'code', lang: 'html', code: '<body><details>折叠栏</details></body>' },
+      { type: 'text', text: '\n正文可选' },
+    ];
+    assert.deepEqual(coalesceFencedHtmlTailParts(documentParts), documentParts);
+
+    const fragmentParts = [
+      { type: 'code', lang: 'html', code: '<details>折叠栏</details>' },
+      { type: 'text', text: '\n同卡尾注' },
+    ];
+    const merged = coalesceFencedHtmlTailParts(fragmentParts);
+    assert.deepEqual(merged.map(part => part.type), ['code']);
+    assert.match(merged[0].code, /__chatapp-tail-text/);
+    assert.match(merged[0].code, /同卡尾注/);
+  },
+});
+
+tests.push({
   name: 'prose that starts with a head tag stays text',
   fn: () => {
     const text = '<head>是他的口头禅。他随手写下 <body>hello</body> 当作示例。';
@@ -939,6 +973,25 @@ tests.push({
     assert.ok(baseIdx >= 0 && baseIdx < headClose, 'base must stay inside head');
     assert.ok(headClose < bodyOpen, 'head must close before body opens');
     assert.match(doc, /页面正文/);
+  },
+});
+
+tests.push({
+  name: 'iframe bridges give selectable text time to enter native selection',
+  fn: () => {
+    const sources = [
+      buildIframeBridgeScript(),
+      buildIframeSrcDoc('<body><p>可选择正文</p></body>', { vhViewportHeight: 800 }),
+    ];
+    sources.forEach((source) => {
+      assert.match(source, /const isSelectableTextTarget = \(target\) =>/);
+      assert.match(source, /const pressDelay = isSelectableTextTarget\(ev\?\.target\) \? 680 : 520;/);
+      assert.match(source, /if \(isSelectableTextTarget\(ev\?\.target\)\) \{[\s\S]{0,180}?return;/);
+      // contextmenu 的可选文本分支不得清定时器：quirk WebView 不启动原生选择时靠定时器兜底出菜单
+      const selectableBranch = source.match(/contextmenu[\s\S]{0,120}?if \(isSelectableTextTarget\(ev\?\.target\)\) \{([\s\S]{0,300}?)return;/);
+      assert.ok(selectableBranch, 'contextmenu must keep a selectable-text branch');
+      assert.ok(!/clearTimeout|clear\(\)/.test(selectableBranch[1]), 'selectable-text branch must not cancel the long-press timer');
+    });
   },
 });
 

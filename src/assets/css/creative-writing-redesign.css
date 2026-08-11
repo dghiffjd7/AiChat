@@ -744,6 +744,23 @@ body:is([data-ui-mode='chat'], [data-ui-mode='rp'])
   transform: translateY(0) scale(1);
 }
 
+body:is([data-ui-mode='chat'], [data-ui-mode='rp'])
+  .has-rp-message-actions.is-voice-active
+  .chat-time-row
+  > :is(.QQ_chat_time, .chat-delivery-status) {
+  opacity: 0;
+  transform: translateY(-2px);
+}
+
+body:is([data-ui-mode='chat'], [data-ui-mode='rp'])
+  .has-rp-message-actions.is-voice-active
+  .chat-time-row
+  .rp-message-actions {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(0) scale(1);
+}
+
 @media (hover: hover) and (pointer: fine) {
   body:is([data-ui-mode='chat'], [data-ui-mode='rp'])
     .has-rp-message-actions:is(:hover, :focus-within)

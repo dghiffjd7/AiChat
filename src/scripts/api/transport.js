@@ -38,6 +38,7 @@ const stripProviderAuth = ({ provider, url, headers = {} } = {}) => {
     const lower = String(key || '').trim().toLowerCase();
     if (lower === 'authorization') delete nextHeaders[key];
     if (lower === 'x-api-key') delete nextHeaders[key];
+    if (lower === 'xi-api-key') delete nextHeaders[key];
   });
 
   const nextUrl = new URL(String(url || ''));

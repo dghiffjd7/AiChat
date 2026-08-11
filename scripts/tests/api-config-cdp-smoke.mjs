@@ -199,6 +199,34 @@ const exerciseExpression = String.raw`(async () => {
     && panel.element.querySelector('#config-title').textContent === '图片模型配置'
     && panel.element.querySelector('.api-config-tab[data-tab="image"]').classList.contains('is-active')
     && getComputedStyle(panel.element.querySelector('#image-params-entry')).display !== 'none';
+  const originalVoiceMode = panel.voiceConnectionMode;
+  let voiceTabActivated = false;
+  let voiceTestButtonVisible = false;
+  let sharedVoiceModeVisible = false;
+  let splitVoiceModeWorks = false;
+  try {
+    panel.element.querySelector('.api-config-tab[data-tab="voice"]').click();
+    await new Promise(resolve => setTimeout(resolve, 180));
+    await panel.setVoiceConnectionMode('shared', { persist: false });
+    voiceTabActivated = panel.activeTab === 'voice'
+      && panel.element.querySelector('#config-title').textContent === '语音模型配置'
+      && panel.element.querySelector('.api-config-tab[data-tab="voice"]').classList.contains('is-active');
+    voiceTestButtonVisible = getComputedStyle(panel.element.querySelector('#config-test')).display !== 'none';
+    sharedVoiceModeVisible = panel.configManager.scope === 'voice_shared'
+      && getComputedStyle(panel.element.querySelector('#config-voice-shared-models')).display === 'grid'
+      && getComputedStyle(panel.element.querySelector('#config-voice-capability-tabs')).display === 'none';
+    panel.element.querySelector('[data-voice-connection-mode="split"]').click();
+    await new Promise(resolve => setTimeout(resolve, 180));
+    panel.element.querySelector('[data-voice-capability="stt"]').click();
+    await new Promise(resolve => setTimeout(resolve, 180));
+    splitVoiceModeWorks = panel.voiceConnectionMode === 'split'
+      && panel.voiceCapability === 'stt'
+      && panel.configManager.scope === 'voice_stt'
+      && getComputedStyle(panel.element.querySelector('#config-voice-capability-tabs')).display === 'grid'
+      && panel.element.querySelector('#config-model-label').textContent === 'STT 模型';
+  } finally {
+    await panel.setVoiceConnectionMode(originalVoiceMode);
+  }
   panel.element.querySelector('.api-config-tab[data-tab="chat"]').click();
   await new Promise(resolve => setTimeout(resolve, 180));
   const chatTabRestored = panel.activeTab === 'chat'
@@ -217,6 +245,10 @@ const exerciseExpression = String.raw`(async () => {
     expanded,
     collapsed,
     imageTabActivated,
+    voiceTabActivated,
+    voiceTestButtonVisible,
+    sharedVoiceModeVisible,
+    splitVoiceModeWorks,
     chatTabRestored,
     reducedMotionAnimation,
     closeButtonHidPanel,
@@ -235,6 +267,7 @@ const secondaryExpression = theme => `(async () => {
     '#config-close',
     '.api-config-tab[data-tab="chat"]',
     '.api-config-tab[data-tab="image"]',
+    '.api-config-tab[data-tab="voice"]',
     '#profile-new',
     '#profile-rename',
     '#profile-delete',
@@ -368,6 +401,17 @@ const prepareSecondaryCaptureExpression = ({ theme, surface }) => `(async () => 
   return true;
 })()`;
 
+const prepareVoiceCaptureExpression = ({ theme, mode }) => `(async () => {
+  const probe = window.__apiConfigCdpProbe;
+  const panel = probe.panel;
+  probe.themeManager.applyThemePreset({ preset: probe.themes[${JSON.stringify(theme)}] });
+  await panel.show({ tab: 'voice' });
+  await panel.setVoiceConnectionMode(${JSON.stringify(mode)}, { persist: false });
+  if (${JSON.stringify(mode)} === 'split') await panel.setVoiceCapability('stt');
+  await new Promise(resolve => setTimeout(resolve, 320));
+  return true;
+})()`;
+
 const cleanupSecondaryCaptureExpression = String.raw`(() => {
   document.querySelector('.api-param-filter-header [data-param-filter-action="cancel"]')?.click();
   window.__apiConfigCdpProbe?.panel?.hide?.();
@@ -433,6 +477,10 @@ try {
   assert.equal(report.exercise.expanded, true);
   assert.equal(report.exercise.collapsed, true);
   assert.equal(report.exercise.imageTabActivated, true);
+  assert.equal(report.exercise.voiceTabActivated, true);
+  assert.equal(report.exercise.voiceTestButtonVisible, true);
+  assert.equal(report.exercise.sharedVoiceModeVisible, true);
+  assert.equal(report.exercise.splitVoiceModeWorks, true);
   assert.equal(report.exercise.chatTabRestored, true);
   assert.equal(report.exercise.reducedMotionAnimation, 'none');
   assert.equal(report.exercise.closeButtonHidPanel, true);
@@ -445,6 +493,11 @@ try {
     await evaluate(cleanupSecondaryCaptureExpression);
     await evaluate(prepareSecondaryCaptureExpression({ theme: 'light', surface: 'image' }));
     report.screenshots.push(await captureScene('api-config-image-params-desktop-light'));
+    await evaluate(cleanupSecondaryCaptureExpression);
+    await evaluate(prepareVoiceCaptureExpression({ theme: 'light', mode: 'shared' }));
+    report.screenshots.push(await captureScene('api-config-voice-shared-desktop-light'));
+    await evaluate(prepareVoiceCaptureExpression({ theme: 'light', mode: 'split' }));
+    report.screenshots.push(await captureScene('api-config-voice-split-desktop-light'));
     await evaluate(cleanupSecondaryCaptureExpression);
   }
 
@@ -471,6 +524,11 @@ try {
     await evaluate(cleanupSecondaryCaptureExpression);
     await evaluate(prepareSecondaryCaptureExpression({ theme: 'dark', surface: 'image' }));
     report.screenshots.push(await captureScene('api-config-image-params-mobile-dark'));
+    await evaluate(cleanupSecondaryCaptureExpression);
+    await evaluate(prepareVoiceCaptureExpression({ theme: 'dark', mode: 'shared' }));
+    report.screenshots.push(await captureScene('api-config-voice-shared-mobile-dark'));
+    await evaluate(prepareVoiceCaptureExpression({ theme: 'dark', mode: 'split' }));
+    report.screenshots.push(await captureScene('api-config-voice-split-mobile-dark'));
     await evaluate(cleanupSecondaryCaptureExpression);
   }
 

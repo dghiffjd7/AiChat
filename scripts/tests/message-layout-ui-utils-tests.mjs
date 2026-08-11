@@ -158,7 +158,7 @@ const createFakeDocument = () => {
   assert.equal(actions.children[0], swipeIndicator);
   assert.deepEqual(
     actions.children[1].children.map(button => button.dataset.rpMessageAction),
-    ['regenerate', 'view-code', 'copy'],
+    ['regenerate', 'speak', 'view-code', 'copy'],
   );
   assert.equal(contentWrap.children.length, 3);
   console.log('ok - appendStandardMessageLayoutCore builds compact rp assistant chrome with character header and actions');
@@ -220,7 +220,7 @@ const createFakeDocument = () => {
   assert.equal(actions.children.length, 1);
   assert.deepEqual(
     actions.children[0].children.map(button => button.dataset.rpMessageAction),
-    ['regenerate', 'view-code', 'copy'],
+    ['regenerate', 'speak', 'view-code', 'copy'],
   );
   console.log('ok - ordinary chat assistant messages expose quick actions without swipe controls');
 }

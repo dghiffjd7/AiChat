@@ -58,6 +58,26 @@ const { evaluateConditionTree } = await import('../../src/scripts/variables/worl
     /\.world-entry-page-list\s*\{[\s\S]*?scrollbar-gutter:\s*stable;/,
     'worldbook entry list should reserve the vertical scrollbar gutter during entry animation',
   );
+  assert.match(
+    css,
+    /@media \(max-width: 640px\)[\s\S]*?\.world-entries-column\s*\{[^}]*overflow:\s*hidden;/,
+    'mobile worldbook entry column should clip its own layout instead of painting over the editor',
+  );
+  assert.match(
+    css,
+    /@media \(max-width: 640px\)[\s\S]*?\.world-entries-list\s*\{[^}]*flex:\s*1 1 auto;[^}]*min-height:\s*0;/,
+    'mobile worldbook pager should consume only the remaining column height',
+  );
+  assert.match(
+    css,
+    /@media \(max-width: 640px\)[\s\S]*?\.world-entry-page-list\s*\{[^}]*height:\s*100%;[^}]*max-height:\s*none;[^}]*min-height:\s*0;/,
+    'mobile entry cards should scroll inside the elastic pager area',
+  );
+  assert.doesNotMatch(
+    css,
+    /@media \(max-width: 640px\)[\s\S]*?\.world-entry-page-list\s*\{[^}]*max-height:\s*28dvh;/,
+    'mobile entry cards should not keep an independent viewport-height budget',
+  );
   console.log('ok - worldbook entry list keeps a stable scrollbar gutter');
 }
 

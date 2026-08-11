@@ -313,6 +313,12 @@ const makePanel = () => {
       active = clone(data);
       writes.push(active.prompts[0].content);
     },
+    upsertMany: async items => {
+      for (const item of items) {
+        active = clone(item.data);
+        writes.push(active.prompts[0].content);
+      }
+    },
   };
   panel.getBlockCards = () => [];
   panel.updateUnsavedIndicator = () => {};

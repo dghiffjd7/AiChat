@@ -71,6 +71,11 @@ export const dispatchContextMenuAction = async ({
     return 'delete-selection';
   }
 
+  if (actionKey === 'speak') {
+    await tryAction?.('speak', { wrapper }, { skipFallback: true });
+    return 'speak';
+  }
+
   await tryAction?.(actionKey, undefined, { skipFallback: true });
   return actionKey || 'noop';
 };

@@ -93,6 +93,7 @@ export const buildContextMenuActions = (message, {
     });
   }
   if (message?.role === 'assistant') {
+    actions.push({ key: 'speak', label: '朗读', group: 'main' });
     if (canCheckFormat === true) {
       actions.push({ key: 'check-format', label: '检查格式', group: 'main' });
     }

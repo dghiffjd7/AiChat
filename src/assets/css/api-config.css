@@ -251,6 +251,145 @@ body #config-panel.api-config-panel .api-config-tab.is-active {
   transform: scale(0.97);
 }
 
+.api-config-voice-routing {
+  margin: 0 0 24px;
+  padding: 16px;
+  border: 1px solid var(--app-border-subtle);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--app-surface-subtle) 76%, transparent);
+}
+
+.api-config-voice-routing-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.api-config-voice-routing-heading > div {
+  display: grid;
+  gap: 3px;
+}
+
+.api-config-voice-routing-heading strong {
+  color: var(--app-text-primary);
+  font-size: 13.5px;
+}
+
+.api-config-voice-routing-heading small,
+.api-config-voice-mode small,
+.api-config-voice-model-grid small {
+  color: var(--app-text-muted);
+  font-size: 11.5px;
+  line-height: 1.45;
+}
+
+.api-config-voice-mode-grid,
+.api-config-voice-capability-tabs,
+.api-config-voice-model-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+body #config-panel.api-config-panel .api-config-voice-mode,
+body #config-panel.api-config-panel .api-config-voice-capability {
+  min-width: 0;
+  border: 1px solid var(--app-border-default) !important;
+  border-radius: 11px;
+  background: var(--app-surface-input) !important;
+  color: var(--app-text-secondary) !important;
+  cursor: pointer;
+  transition:
+    border-color 150ms ease,
+    background 150ms ease,
+    color 150ms ease,
+    transform 150ms ease;
+}
+
+body #config-panel.api-config-panel .api-config-voice-mode {
+  min-height: 58px;
+  display: grid;
+  justify-items: start;
+  gap: 3px;
+  padding: 10px 12px;
+  text-align: left;
+}
+
+body #config-panel.api-config-panel .api-config-voice-capability {
+  min-height: 38px;
+  padding: 0 10px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+body #config-panel.api-config-panel :is(.api-config-voice-mode, .api-config-voice-capability).is-active {
+  border-color: color-mix(in srgb, var(--app-accent-primary) 58%, var(--app-border-default)) !important;
+  background: var(--app-accent-soft) !important;
+  color: var(--app-accent-strong) !important;
+}
+
+body #config-panel.api-config-panel :is(.api-config-voice-mode, .api-config-voice-capability):active {
+  transform: scale(0.98);
+}
+
+.api-config-voice-capability-tabs {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px dashed var(--app-border-subtle);
+}
+
+.api-config-voice-model-grid {
+  margin-bottom: 24px;
+}
+
+#config-panel.api-config-panel .api-config-voice-model-grid .api-config-field {
+  min-width: 0;
+  margin-bottom: 0 !important;
+}
+
+.api-config-voice-model-grid small {
+  display: block;
+  margin-top: 6px;
+}
+
+#config-panel.api-config-panel .api-config-voice-ai-disclosure {
+  display: block;
+  margin-top: 5px;
+  color: var(--app-text-muted);
+  font-size: 11.5px;
+  line-height: 1.45;
+}
+
+.api-config-voice-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.api-config-voice-presets:empty {
+  display: none;
+}
+
+body #config-panel.api-config-panel .api-config-voice-preset {
+  min-height: 28px;
+  padding: 4px 10px;
+  border: 1px solid var(--app-border-default) !important;
+  border-radius: 999px;
+  background: var(--app-surface-input) !important;
+  color: var(--app-text-secondary) !important;
+  font-size: 11.5px;
+  cursor: pointer;
+}
+
+body #config-panel.api-config-panel .api-config-voice-preset.is-active {
+  border-color: color-mix(in srgb, var(--app-accent-primary) 58%, var(--app-border-default)) !important;
+  background: var(--app-accent-soft) !important;
+  color: var(--app-accent-strong) !important;
+}
+
 .api-config-scroll {
   flex: 1 1 auto;
   min-height: 0;
@@ -543,7 +682,8 @@ body #config-panel.api-config-panel .api-config-tab.is-active {
   color: var(--app-text-muted);
 }
 
-#config-model-picker {
+#config-model-picker,
+.api-config-model-picker {
   position: relative;
   display: flex;
   flex-direction: column;
@@ -1015,8 +1155,12 @@ body[data-theme-mode='dark'] #config-panel.api-config-panel :is(
 
   body #config-panel.api-config-panel .api-config-tab {
     min-width: 0;
-    flex: 1 1 50%;
-    padding: 0 10px;
+    flex: 1 1 33.333%;
+    padding: 0 6px;
+  }
+
+  .api-config-voice-model-grid {
+    grid-template-columns: 1fr;
   }
 
   .api-config-timeout-row > label {

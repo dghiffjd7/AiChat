@@ -37,6 +37,11 @@ assert.match(configSource, /world-app-select-menu[\s\S]*?is-maid-guide-menu/);
 assert.match(appSource, /document\.body\?\.dataset\?\.maidSpotlight === 'on'/);
 assert.match(appSource, /maidGuideEmit\(window, 'config-profile-saved'/);
 assert.match(appSource, /const bindMaidToSavedApiProfile[\s\S]*?maidSettingsStore\.setBoundProfileId\(savedProfileId\)/);
+assert.match(
+  appSource,
+  /const bindMaidToSavedApiProfile = async \(\{[\s\S]*?tab[\s\S]*?\} = \{\}\) => \{[\s\S]*?if \(tab !== 'chat'\) return false;[\s\S]*?maidSettingsStore\.setBoundProfileId\(savedProfileId\)/,
+  'the maid API picker must ignore saves from voice and image tabs',
+);
 assert.match(appSource, /const openMaidApiConfigPanel[\s\S]*?onSaved:\s*bindMaidToSavedApiProfile/);
 assert.match(appSource, /maidGuideEmit\(window, 'chat-message-sent'/);
 assert.match(appSource, /maidGuideEmit\(window, 'chat-message-received'/);

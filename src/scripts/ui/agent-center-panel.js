@@ -2270,6 +2270,10 @@ export class AgentCenterPanel {
         this.cardEntryAnimationUntil = 0;
         this.cardEntryAnimationTimer = null;
         this.replyCheckPreviewTarget = 'auto';
+        this.refreshToken = 0;
+        this.refreshQueued = false;
+        this.refreshInFlight = null;
+        this.agentFeatureMutationDepth = 0;
     }
 
     ensureStyle() {
@@ -2323,7 +2327,7 @@ export class AgentCenterPanel {
             if (this.isVisible()) this.refresh();
         };
         globalThis.window?.addEventListener?.('memory-storage-mode-changed', this.boundMemoryStorageModeChanged);
-        this.boundAgentFeatureSettingsChanged = () => this.handleAgentFeatureSettingsChanged();
+        this.boundAgentFeatureSettingsChanged = (event) => this.handleAgentFeatureSettingsChanged(event);
         globalThis.window?.addEventListener?.('agent-feature-settings-changed', this.boundAgentFeatureSettingsChanged);
     }
 
@@ -2336,6 +2340,15 @@ export class AgentCenterPanel {
         } catch (err) {
             this.lastError = trim(err?.message || err, `${name} failed`);
             return fallback;
+        }
+    }
+
+    async callAgentFeatureMutation(name, args = undefined, fallback = null) {
+        this.agentFeatureMutationDepth += 1;
+        try {
+            return await this.callAction(name, args, fallback);
+        } finally {
+            this.agentFeatureMutationDepth = Math.max(0, this.agentFeatureMutationDepth - 1);
         }
     }
 
@@ -2474,6 +2487,8 @@ export class AgentCenterPanel {
         this.boundAgentFeatureSettingsChanged = null;
         clearTimeout(this.cardEntryAnimationTimer);
         this.cardEntryAnimationTimer = null;
+        this.refreshToken += 1;
+        this.refreshQueued = false;
         this.overlayElement?.remove?.();
         this.overlayElement = null;
         this.panelElement = null;
@@ -2495,16 +2510,38 @@ export class AgentCenterPanel {
 
     handleAgentFeatureSettingsChanged() {
         if (!this.isVisible()) return null;
+        if (this.agentFeatureMutationDepth > 0) return null;
         return this.refresh();
     }
 
-    async refresh() {
+    refresh() {
         this.ensureDom();
-        this.view = await this.collectView();
-        if (this.activeTab === 'activity' && normalizeActivityStatus(this.activityStatus) === 'failure') {
-            this.markCurrentFailuresSeen();
-        }
-        this.render();
+        this.refreshToken += 1;
+        this.refreshQueued = true;
+        if (this.refreshInFlight) return this.refreshInFlight;
+
+        const run = async () => {
+            let rendered = false;
+            while (this.refreshQueued) {
+                this.refreshQueued = false;
+                const token = this.refreshToken;
+                const view = await this.collectView();
+                if (token !== this.refreshToken) continue;
+                this.view = view;
+                if (this.activeTab === 'activity' && normalizeActivityStatus(this.activityStatus) === 'failure') {
+                    this.markCurrentFailuresSeen();
+                }
+                this.render();
+                rendered = true;
+            }
+            return rendered;
+        };
+        let tracked = null;
+        tracked = run().finally(() => {
+            if (this.refreshInFlight === tracked) this.refreshInFlight = null;
+        });
+        this.refreshInFlight = tracked;
+        return tracked;
     }
 
     setActiveTab(tab = 'pending', { resetActivityStatus = false } = {}) {
@@ -3167,10 +3204,10 @@ export class AgentCenterPanel {
     renderCardList(cards = [], emptyMessage = '还没有可用卡片。') {
         const agents = Array.isArray(cards) ? cards : [];
         if (!agents.length) return renderEmpty(emptyMessage);
-        if (this.cardEntryAnimationUntil === Number.POSITIVE_INFINITY) {
+        const animate = this.cardEntryAnimationUntil === Number.POSITIVE_INFINITY;
+        if (animate) {
             this.cardEntryAnimationUntil = Date.now() + 650;
         }
-        const animate = Date.now() < this.cardEntryAnimationUntil;
         return `<div class="agent-center-agent-list${animate ? ' is-entering' : ''}">${agents.map((agent, index) => `
             <article
                 class="agent-center-card agent-center-agent-card${agent.enabled ? ' is-agent-on' : ''}"
@@ -3778,7 +3815,7 @@ export class AgentCenterPanel {
                 if (!ok) return false;
             }
             this.setAgentQuickToggleVisual(button, enabling, agent.title);
-            const result = await this.callAction('setAgentFeatureEnabled', {
+            const result = await this.callAgentFeatureMutation('setAgentFeatureEnabled', {
                 id,
                 enabled: enabling,
                 reason: 'agent center feature toggle',
@@ -3788,7 +3825,7 @@ export class AgentCenterPanel {
                 const reason = trim(result?.message || result?.reason || this.lastError, '当前环境不能切换 Agent');
                 this.lastError = reason;
                 this.notifyError?.(`${agent.title || 'Agent'}切换失败：${reason}`);
-                this.render();
+                await this.refresh();
                 return false;
             }
             this.notifySuccess?.(`${agent.title || 'Agent'}已${enabling ? '开启' : '关闭'}`);
@@ -3850,7 +3887,7 @@ export class AgentCenterPanel {
         const modelProfileId = selected.startsWith('profile:')
             ? selected.slice('profile:'.length)
             : '';
-        const result = await this.callAction('setAgentFeatureModel', {
+        const result = await this.callAgentFeatureMutation('setAgentFeatureModel', {
             id,
             modelMode,
             modelProfileId,
@@ -3860,7 +3897,7 @@ export class AgentCenterPanel {
         if (!result) {
             this.lastError = '当前环境不能更新 Agent 模型';
             if (selectElement) selectElement.value = previousValue;
-            this.render();
+            await this.refresh();
             return;
         }
         await this.refresh();
@@ -3915,13 +3952,13 @@ export class AgentCenterPanel {
             ],
         });
         if (!selected) return;
-        const result = await this.callAction('setAgentFeatureTriggerMode', {
+        const result = await this.callAgentFeatureMutation('setAgentFeatureTriggerMode', {
             id,
             triggerMode: selected,
         }, null);
         if (!result) {
             this.lastError = '当前环境不能更新 Agent 触发方式';
-            this.render();
+            await this.refresh();
             return;
         }
         await this.refresh();
@@ -4363,7 +4400,7 @@ export class AgentCenterPanel {
                     if (!agent) return;
                     const chosen = input.value.trim();
                     const profileModel = (input.dataset.profileModel || '').trim();
-                    await this.callAction('setAgentFeatureModel', {
+                    await this.callAgentFeatureMutation('setAgentFeatureModel', {
                         id,
                         modelMode: 'profile',
                         modelProfileId: agent.modelProfileId,

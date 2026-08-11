@@ -802,8 +802,22 @@ body[data-theme-mode='dark'] .chat-action-btn {
   border-color: var(--app-border-default) !important;
 }
 
-body[data-theme-mode='dark'] :is(.voice-btn, .chat-sticker-btn) {
+body[data-theme-mode='dark'] :is(.voice-btn, .chat-sticker-btn, .chat-voice-input-btn) {
   color: var(--app-text-primary) !important;
+}
+
+body[data-theme-mode='dark'] .chat-voice-input-btn.is-recording {
+  color: var(--app-danger-text) !important;
+  background: var(--app-danger-soft) !important;
+}
+
+body[data-theme-mode='dark'] .chat-voice-input-btn.is-transcribing {
+  color: var(--app-accent-primary) !important;
+}
+
+body[data-theme-mode='dark'] .rp-message-action-speak.is-active {
+  color: var(--app-accent-primary) !important;
+  background: rgba(var(--app-accent-rgb, 37, 99, 235), 0.12) !important;
 }
 
 body[data-theme-mode='dark'] .chat-sticker-btn {

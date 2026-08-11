@@ -4,6 +4,7 @@
 
 import { ConfigManager } from '../storage/config.js';
 import { LLMClient } from '../api/client.js';
+import { VoiceClient } from '../api/voice-client.js';
 import { canInitClient } from '../api/client-config-utils.js';
 import { logger } from '../utils/logger.js';
 import {
@@ -20,6 +21,12 @@ import {
     syncChatRuntimeConfigToBridge,
 } from './config-runtime-utils.js';
 import { ImageGenerationParamsPanel } from './image-generation-params-panel.js';
+import {
+    getVoiceProviderDefaults,
+    getVoiceProviderOptions,
+    normalizeVoiceCapability,
+    normalizeVoiceConnectionMode,
+} from './voice-config-utils.js';
 
 const escapeHtml = (value) => String(value ?? '').replace(/[&<>"]/g, (ch) => ({
     '&': '&amp;',
@@ -37,6 +44,7 @@ const apiConfigIconSvg = (content, className = '') => `
 const API_CONFIG_ICONS = Object.freeze({
     chat: apiConfigIconSvg('<path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z"/>'),
     image: apiConfigIconSvg('<rect x="3" y="5" width="18" height="14" rx="3"/><circle cx="8.5" cy="10.5" r="1.5"/><path d="m21 15-4.2-4.2a2 2 0 0 0-2.8 0L6 18"/>'),
+    voice: apiConfigIconSvg('<rect x="9" y="3" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0"/><path d="M12 18v3"/><path d="M8 21h8"/>'),
     images: apiConfigIconSvg('<rect x="4" y="4" width="16" height="14" rx="3"/><path d="M8 20h9a3 3 0 0 0 3-3V9"/><circle cx="9" cy="9" r="1.4"/><path d="m20 14-3.4-3.4a2 2 0 0 0-2.8 0L7 17"/>'),
     close: apiConfigIconSvg('<path d="M18 6 6 18"/><path d="m6 6 12 12"/>'),
     plus: apiConfigIconSvg('<path d="M12 5v14"/><path d="M5 12h14"/>'),
@@ -87,12 +95,7 @@ const IMAGE_PROVIDER_OPTIONS = [
     { value: 'custom', label: '自定义 OpenAI 兼容 API' },
 ];
 
-const ALL_PROVIDER_KEYS = Array.from(new Set([
-    ...CHAT_PROVIDER_OPTIONS.map(item => item.value),
-    ...IMAGE_PROVIDER_OPTIONS.map(item => item.value),
-]));
-
-const NO_API_KEY_PROVIDERS = new Set(['pollinations', 'automatic1111', 'a1111', 'comfyui', 'comfy']);
+const NO_API_KEY_PROVIDERS = new Set(['pollinations', 'automatic1111', 'a1111', 'comfyui', 'comfy', 'qwen_local']);
 const PROMPT_POST_PROCESSING_VALUES = new Set(['none', 'merge', 'semi', 'strict', 'single']);
 const normalizePromptPostProcessingForForm = (value) => {
     const raw = String(value || '').trim().toLowerCase();
@@ -104,21 +107,30 @@ export class ConfigPanel {
         onSaved = null,
         chatConfigManager = null,
         imageConfigManager = null,
+        voiceSharedConfigManager = null,
+        voiceTtsConfigManager = null,
+        voiceSttConfigManager = null,
         webSearchCredentialManager = null,
     } = {}) {
         this.chatConfigManager = chatConfigManager || new ConfigManager();
         this.imageConfigManager = imageConfigManager || new ConfigManager({ scope: 'image' });
+        this.voiceSharedConfigManager = voiceSharedConfigManager || new ConfigManager({ scope: 'voice_shared' });
+        this.voiceTtsConfigManager = voiceTtsConfigManager || new ConfigManager({ scope: 'voice_tts' });
+        this.voiceSttConfigManager = voiceSttConfigManager || new ConfigManager({ scope: 'voice_stt' });
         this.webSearchCredentialManager = webSearchCredentialManager || new ConfigManager({
             scope: 'web_search_credentials',
             credentialsOnly: true,
         });
         this.activeTab = 'chat';
+        this.voiceConnectionMode = normalizeVoiceConnectionMode(appSettings.get().voiceConnectionMode);
+        this.voiceCapability = 'tts';
         this.configManager = this.chatConfigManager;
         this.element = null;
         this.overlayElement = null;
         this.saveButton = null;
         this.testButton = null;
         this.modelOptions = [];
+        this.voiceModelOptions = { tts: [], stt: [] };
         this.modelFilterDebounceTimer = null;
         this.keyOverlay = null;
         this.keyModal = null;
@@ -203,12 +215,58 @@ export class ConfigPanel {
     }
 
     async setActiveTab(tab, { skipLoad = false } = {}) {
-        const next = tab === 'image' ? 'image' : 'chat';
+        const next = tab === 'image' ? 'image' : tab === 'voice' ? 'voice' : 'chat';
         this.hideImageParamsPage();
         this.activeTab = next;
-        this.configManager = next === 'image' ? this.imageConfigManager : this.chatConfigManager;
+        if (next === 'voice') {
+            this.voiceConnectionMode = normalizeVoiceConnectionMode(appSettings.get().voiceConnectionMode);
+        }
+        this.configManager = this.getConfigManagerForTab(next);
         this.updateTabUI();
         this.clearModelOptions();
+        this.clearVoiceModelOptions();
+        if (skipLoad) return;
+        let config = await this.configManager.load();
+        if (!config) config = this.configManager.getDefault();
+        this.refreshProfileOptions();
+        this.populateForm(config);
+        this.emitDraftChange();
+    }
+
+    getVoiceConfigManager() {
+        if (this.voiceConnectionMode === 'shared') return this.voiceSharedConfigManager;
+        return this.voiceCapability === 'stt' ? this.voiceSttConfigManager : this.voiceTtsConfigManager;
+    }
+
+    getConfigManagerForTab(tab = this.activeTab) {
+        if (tab === 'image') return this.imageConfigManager;
+        if (tab === 'voice') return this.getVoiceConfigManager();
+        return this.chatConfigManager;
+    }
+
+    async setVoiceConnectionMode(mode, { skipLoad = false, persist = true } = {}) {
+        this.voiceConnectionMode = normalizeVoiceConnectionMode(mode);
+        if (persist) appSettings.update({ voiceConnectionMode: this.voiceConnectionMode });
+        if (this.activeTab !== 'voice') return;
+        this.configManager = this.getVoiceConfigManager();
+        this.updateTabUI();
+        this.clearModelOptions();
+        this.clearVoiceModelOptions();
+        if (skipLoad) return;
+        let config = await this.configManager.load();
+        if (!config) config = this.configManager.getDefault();
+        this.refreshProfileOptions();
+        this.populateForm(config);
+        this.emitDraftChange();
+    }
+
+    async setVoiceCapability(capability, { skipLoad = false } = {}) {
+        this.voiceCapability = normalizeVoiceCapability(capability);
+        if (this.activeTab !== 'voice' || this.voiceConnectionMode !== 'split') return;
+        this.configManager = this.getVoiceConfigManager();
+        this.updateTabUI();
+        this.clearModelOptions();
+        this.clearVoiceModelOptions();
         if (skipLoad) return;
         let config = await this.configManager.load();
         if (!config) config = this.configManager.getDefault();
@@ -255,6 +313,12 @@ export class ConfigPanel {
     }
 
     getProviderOptions() {
+        if (this.activeTab === 'voice') {
+            return getVoiceProviderOptions({
+                mode: this.voiceConnectionMode,
+                capability: this.voiceCapability,
+            });
+        }
         return this.activeTab === 'image' ? IMAGE_PROVIDER_OPTIONS : CHAT_PROVIDER_OPTIONS;
     }
 
@@ -285,7 +349,11 @@ export class ConfigPanel {
         this.refreshProviderOptions();
         const title = this.element.querySelector('#config-title');
         if (title) {
-            title.textContent = this.activeTab === 'image' ? '图片模型配置' : '聊天模型配置';
+            title.textContent = this.activeTab === 'image'
+                ? '图片模型配置'
+                : this.activeTab === 'voice'
+                    ? '语音模型配置'
+                    : '聊天模型配置';
         }
         const tabs = Array.from(this.element.querySelectorAll('.config-tab'));
         tabs.forEach(btn => {
@@ -309,6 +377,61 @@ export class ConfigPanel {
         if (webSearchCard) {
             webSearchCard.style.display = this.activeTab === 'chat' ? 'block' : 'none';
         }
+        const voiceRouting = this.element.querySelector('#config-voice-routing');
+        if (voiceRouting) {
+            voiceRouting.style.display = this.activeTab === 'voice' ? 'block' : 'none';
+        }
+        this.element.querySelectorAll('[data-voice-connection-mode]').forEach((button) => {
+            const active = button.dataset.voiceConnectionMode === this.voiceConnectionMode;
+            button.classList.toggle('is-active', active);
+            button.setAttribute('aria-pressed', String(active));
+        });
+        const voiceCapabilityTabs = this.element.querySelector('#config-voice-capability-tabs');
+        if (voiceCapabilityTabs) {
+            voiceCapabilityTabs.style.display = this.activeTab === 'voice' && this.voiceConnectionMode === 'split'
+                ? 'grid'
+                : 'none';
+        }
+        this.element.querySelectorAll('[data-voice-capability]').forEach((button) => {
+            const active = button.dataset.voiceCapability === this.voiceCapability;
+            button.classList.toggle('is-active', active);
+            button.setAttribute('aria-pressed', String(active));
+        });
+        const sharedModels = this.element.querySelector('#config-voice-shared-models');
+        if (sharedModels) {
+            sharedModels.style.display = this.activeTab === 'voice' && this.voiceConnectionMode === 'shared'
+                ? 'grid'
+                : 'none';
+        }
+        const voiceTtsSettings = this.element.querySelector('#config-voice-tts-settings');
+        if (voiceTtsSettings) {
+            voiceTtsSettings.style.display = this.activeTab === 'voice' && (
+                this.voiceConnectionMode === 'shared' || this.voiceCapability === 'tts'
+            ) ? 'block' : 'none';
+        }
+        const modelSection = this.element.querySelector('#config-model-section');
+        if (modelSection) {
+            modelSection.style.display = this.activeTab === 'voice' && this.voiceConnectionMode === 'shared'
+                ? 'none'
+                : 'block';
+        }
+        const modelLabel = this.element.querySelector('#config-model-label');
+        if (modelLabel) {
+            modelLabel.textContent = this.activeTab === 'voice'
+                ? this.voiceCapability === 'stt' ? 'STT 模型' : 'TTS 模型'
+                : '模型';
+        }
+        const refreshModels = this.element.querySelector('#refresh-models');
+        if (refreshModels) {
+            refreshModels.style.display = this.activeTab === 'voice' && this.voiceConnectionMode === 'shared'
+                ? 'none'
+                : '';
+        }
+        const streamCard = this.element.querySelector('#config-stream-card');
+        if (streamCard) streamCard.style.display = this.activeTab === 'voice' ? 'none' : 'block';
+        const testButton = this.element.querySelector('#config-test');
+        if (testButton) testButton.style.display = 'inline-flex';
+        this.updateVoiceTtsSettings(this.element.querySelector('#config-provider')?.value || 'openai');
     }
 
     async showImageParamsPage() {
@@ -386,9 +509,35 @@ export class ConfigPanel {
                         ${API_CONFIG_ICONS.image}
                         图片模型
                     </button>
+                    <button type="button" class="config-tab api-config-tab" data-tab="voice" role="tab" aria-selected="false">
+                        ${API_CONFIG_ICONS.voice}
+                        语音模型
+                    </button>
                     </div>
                 </div>
                 <div class="api-config-scroll">
+                <section id="config-voice-routing" class="api-config-voice-routing" style="display:none;">
+                    <div class="api-config-voice-routing-heading">
+                        <div>
+                            <strong>连接方式</strong>
+                            <small>共用连接只复用服务商、地址与 API Key，TTS / STT 模型仍分别设置</small>
+                        </div>
+                    </div>
+                    <div class="api-config-voice-mode-grid" role="group" aria-label="TTS 与 STT 连接方式">
+                        <button type="button" class="api-config-voice-mode is-active" data-voice-connection-mode="shared" aria-pressed="true">
+                            <strong>共用连接</strong>
+                            <small>同一服务商与凭证</small>
+                        </button>
+                        <button type="button" class="api-config-voice-mode" data-voice-connection-mode="split" aria-pressed="false">
+                            <strong>分别配置</strong>
+                            <small>TTS / STT 可用不同服务</small>
+                        </button>
+                    </div>
+                    <div id="config-voice-capability-tabs" class="api-config-voice-capability-tabs" style="display:none;" role="group" aria-label="语音能力">
+                        <button type="button" class="api-config-voice-capability is-active" data-voice-capability="tts" aria-pressed="true">TTS · 文字转语音</button>
+                        <button type="button" class="api-config-voice-capability" data-voice-capability="stt" aria-pressed="false">STT · 语音转文字</button>
+                    </div>
+                </section>
                 <div id="image-params-entry" class="api-config-field" style="display:none;">
                     <button type="button" id="open-image-generation-params" class="api-config-row-card">
                         <span class="api-config-row-main">
@@ -497,9 +646,46 @@ export class ConfigPanel {
                     </div>
                 </div>
 
+                <div id="config-voice-shared-models" class="api-config-voice-model-grid" style="display:none;">
+                    <div class="api-config-field">
+                        <label class="api-config-field-label">
+                            <span>TTS 模型</span>
+                            <button type="button" id="refresh-voice-tts-models" class="api-config-refresh-action">
+                                ${API_CONFIG_ICONS.refresh}<span>刷新列表</span>
+                            </button>
+                        </label>
+                        <div class="api-config-model-picker">
+                            <input type="text" id="config-voice-tts-model" placeholder="gpt-4o-mini-tts">
+                            <div id="voice-tts-model-options" class="api-config-model-options" aria-label="可用 TTS 模型列表" style="display:none;"></div>
+                        </div>
+                        <small id="config-voice-tts-model-help">负责把角色回复转换成语音</small>
+                    </div>
+                    <div class="api-config-field">
+                        <label class="api-config-field-label">
+                            <span>STT 模型</span>
+                            <button type="button" id="refresh-voice-stt-models" class="api-config-refresh-action">
+                                ${API_CONFIG_ICONS.refresh}<span>刷新列表</span>
+                            </button>
+                        </label>
+                        <div class="api-config-model-picker">
+                            <input type="text" id="config-voice-stt-model" placeholder="gpt-transcribe">
+                            <div id="voice-stt-model-options" class="api-config-model-options" aria-label="可用 STT 模型列表" style="display:none;"></div>
+                        </div>
+                        <small id="config-voice-stt-model-help">负责把麦克风录音转换成文字</small>
+                    </div>
+                </div>
+
+                <div id="config-voice-tts-settings" class="api-config-field" style="display:none;">
+                    <label class="api-config-field-label">默认声音</label>
+                    <input type="text" id="config-voice-tts-voice" placeholder="marin" autocomplete="off">
+                    <div id="config-voice-tts-voice-presets" class="api-config-voice-presets" role="group" aria-label="声音快捷选择"></div>
+                    <small id="config-voice-tts-voice-help">OpenAI 声音名称；推荐 marin 或 cedar</small>
+                    <small class="api-config-voice-ai-disclosure">朗读内容使用 AI 合成语音，并非真人发声。</small>
+                </div>
+
                 <div id="config-model-section" class="api-config-field" data-maid-guide-target="config-model-section">
                     <label class="api-config-field-label">
-                        <span>模型</span>
+                        <span id="config-model-label">模型</span>
                         <button id="refresh-models" class="api-config-refresh-action" data-maid-guide-target="config-refresh-models">
                             ${API_CONFIG_ICONS.refresh}<span>刷新列表</span>
                         </button>
@@ -533,7 +719,7 @@ export class ConfigPanel {
                     </div>
                 </div>
 
-                <div class="api-config-stream-card">
+                <div id="config-stream-card" class="api-config-stream-card">
                     <label>
                         <input type="checkbox" id="config-stream" style="width: 18px; height: 18px;">
                         <span>
@@ -675,6 +861,16 @@ export class ConfigPanel {
                 await this.setActiveTab(tab);
             });
         });
+        this.element.querySelectorAll('[data-voice-connection-mode]').forEach((button) => {
+            button.addEventListener('click', async () => {
+                await this.setVoiceConnectionMode(button.dataset.voiceConnectionMode);
+            });
+        });
+        this.element.querySelectorAll('[data-voice-capability]').forEach((button) => {
+            button.addEventListener('click', async () => {
+                await this.setVoiceCapability(button.dataset.voiceCapability);
+            });
+        });
         this.updateTabUI();
 
         // 绑定事件
@@ -721,6 +917,7 @@ export class ConfigPanel {
         // Provider 切换时更新默认值和字段可见性
         this.element.querySelector('#config-provider').onchange = async (e) => {
             const provider = e.target.value;
+            if (this.activeTab === 'voice') this.clearVoiceModelOptions();
             this.updateDefaultsForProvider(provider);
             this.updateFieldVisibility(provider);
             this.emitDraftChange();
@@ -795,6 +992,33 @@ export class ConfigPanel {
         this.element.querySelector('#config-model')?.addEventListener('input', () => {
             this.emitDraftChange();
             this.scheduleModelOptionsRender();
+        });
+        this.element.querySelector('#config-voice-tts-model')?.addEventListener('input', () => {
+            this.emitDraftChange();
+            this.renderVoiceModelOptions('tts', this.voiceModelOptions.tts);
+        });
+        this.element.querySelector('#config-voice-stt-model')?.addEventListener('input', () => {
+            this.emitDraftChange();
+            this.renderVoiceModelOptions('stt', this.voiceModelOptions.stt);
+        });
+        this.element.querySelector('#refresh-voice-tts-models')?.addEventListener('click', () => {
+            void this.refreshVoiceModels('tts');
+        });
+        this.element.querySelector('#refresh-voice-stt-models')?.addEventListener('click', () => {
+            void this.refreshVoiceModels('stt');
+        });
+        this.element.querySelector('#config-voice-tts-voice')?.addEventListener('input', () => {
+            this.syncVoicePresetSelection();
+            this.emitDraftChange();
+        });
+        this.element.querySelector('#config-voice-tts-voice-presets')?.addEventListener('click', (event) => {
+            const button = event.target?.closest?.('[data-voice-preset]');
+            if (!button) return;
+            const input = this.element.querySelector('#config-voice-tts-voice');
+            if (!input) return;
+            input.value = String(button.dataset.voicePreset || '');
+            this.syncVoicePresetSelection();
+            this.emitDraftChange();
         });
         this.element.querySelector('#config-baseurl')?.addEventListener('input', () => this.emitDraftChange());
 
@@ -1230,6 +1454,15 @@ export class ConfigPanel {
      * 获取指定 provider 的默认配置
      */
     getProviderDefaults(provider, options = {}) {
+        if (this.activeTab === 'voice') {
+            const voiceDefaults = getVoiceProviderDefaults(provider);
+            return {
+                ...voiceDefaults,
+                model: this.voiceCapability === 'stt'
+                    ? voiceDefaults.sttModel
+                    : voiceDefaults.ttsModel,
+            };
+        }
         const isImage = this.activeTab === 'image';
         const regionRaw = String(options?.region || 'us-central1').trim();
         const region = regionRaw || 'us-central1';
@@ -1316,13 +1549,16 @@ export class ConfigPanel {
     }
 
     usesEditableBaseUrl(provider) {
-        return ['custom', 'ollama', 'automatic1111', 'a1111', 'comfyui', 'comfy'].includes(String(provider || '').trim().toLowerCase());
+        return ['custom', 'ollama', 'automatic1111', 'a1111', 'comfyui', 'comfy', 'qwen_local'].includes(String(provider || '').trim().toLowerCase());
     }
 
     resetFormForProvider(provider) {
         const panel = this.element || document;
         const baseEl = panel.querySelector('#config-baseurl');
         const modelEl = panel.querySelector('#config-model');
+        const ttsModelEl = panel.querySelector('#config-voice-tts-model');
+        const sttModelEl = panel.querySelector('#config-voice-stt-model');
+        const ttsVoiceEl = panel.querySelector('#config-voice-tts-voice');
         const apiKeyEl = panel.querySelector('#config-apikey');
         const streamEl = panel.querySelector('#config-stream');
         const webSearchEl = panel.querySelector('#config-web-search');
@@ -1339,6 +1575,18 @@ export class ConfigPanel {
         if (modelEl) {
             modelEl.value = defaults.model;
             modelEl.placeholder = defaults.model;
+        }
+        if (ttsModelEl && defaults.ttsModel) {
+            ttsModelEl.value = defaults.ttsModel;
+            ttsModelEl.placeholder = defaults.ttsModel;
+        }
+        if (sttModelEl && defaults.sttModel) {
+            sttModelEl.value = defaults.sttModel;
+            sttModelEl.placeholder = defaults.sttModel;
+        }
+        if (ttsVoiceEl) {
+            ttsVoiceEl.value = defaults.ttsVoice || '';
+            ttsVoiceEl.placeholder = defaults.ttsVoice || 'Voice ID';
         }
         if (apiKeyEl) {
             apiKeyEl.value = '';
@@ -1364,6 +1612,7 @@ export class ConfigPanel {
             saEl.style.webkitTextSecurity = 'none';
         }
         this.clearModelOptions();
+        this.clearVoiceModelOptions();
         this.refreshAllCustomSelects();
     }
 
@@ -1392,6 +1641,21 @@ export class ConfigPanel {
             container.style.display = 'none';
         }
         this.modelOptions = [];
+    }
+
+    clearVoiceModelOptions(capability = null) {
+        const panel = this.element || document;
+        const capabilities = capability === 'tts' || capability === 'stt'
+            ? [capability]
+            : ['tts', 'stt'];
+        capabilities.forEach((name) => {
+            const container = panel.querySelector(`#voice-${name}-model-options`);
+            if (container) {
+                container.innerHTML = '';
+                container.style.display = 'none';
+            }
+            this.voiceModelOptions[name] = [];
+        });
     }
 
     renderModelOptions(models = []) {
@@ -1433,6 +1697,43 @@ export class ConfigPanel {
                     modelInput.value = modelId;
                     modelInput.dispatchEvent(new Event('input', { bubbles: true }));
                 }
+            };
+            container.appendChild(chip);
+        });
+    }
+
+    renderVoiceModelOptions(capability, models = []) {
+        const normalized = normalizeVoiceCapability(capability);
+        const panel = this.element || document;
+        const container = panel.querySelector(`#voice-${normalized}-model-options`);
+        const modelInput = panel.querySelector(`#config-voice-${normalized}-model`);
+        if (!container || !modelInput) return;
+        if (!models.length) {
+            this.clearVoiceModelOptions(normalized);
+            return;
+        }
+
+        this.voiceModelOptions[normalized] = Array.from(models);
+        const query = String(modelInput.value || '').trim();
+        const normalizedQuery = query.toLowerCase();
+        const rankedModels = rankModelCandidates(this.voiceModelOptions[normalized], query);
+        container.innerHTML = '';
+        container.style.display = 'flex';
+        rankedModels.forEach((modelId) => {
+            const normalizedModelId = String(modelId).toLowerCase();
+            const isMatch = Boolean(normalizedQuery && normalizedModelId.includes(normalizedQuery));
+            const isSelected = String(modelInput.value || '').trim() === modelId;
+            const chip = document.createElement('button');
+            chip.textContent = modelId;
+            chip.type = 'button';
+            chip.className = 'api-config-model-chip';
+            chip.classList.toggle('is-match', isMatch);
+            chip.classList.toggle('is-selected', isSelected);
+            chip.ariaPressed = String(isSelected);
+            chip.title = isMatch ? `匹配“${query}”` : modelId;
+            chip.onclick = () => {
+                modelInput.value = modelId;
+                modelInput.dispatchEvent(new Event('input', { bubbles: true }));
             };
             container.appendChild(chip);
         });
@@ -1564,6 +1865,9 @@ export class ConfigPanel {
         const providerEl = panel.querySelector('#config-provider');
         const baseEl = panel.querySelector('#config-baseurl');
         const modelEl = panel.querySelector('#config-model');
+        const ttsModelEl = panel.querySelector('#config-voice-tts-model');
+        const sttModelEl = panel.querySelector('#config-voice-stt-model');
+        const ttsVoiceEl = panel.querySelector('#config-voice-tts-voice');
         const streamEl = panel.querySelector('#config-stream');
         const webSearchEl = panel.querySelector('#config-web-search');
         const promptPostProcessingEl = panel.querySelector('#config-prompt-post-processing');
@@ -1596,6 +1900,19 @@ export class ConfigPanel {
             ? (config.baseUrl || '')
             : defaultBaseUrl;
         modelEl.value = config.model || '';
+        const providerDefaults = this.getProviderDefaults(currentProvider, { region: currentRegion });
+        if (ttsModelEl) {
+            ttsModelEl.value = config.ttsModel || providerDefaults.ttsModel || '';
+            ttsModelEl.placeholder = providerDefaults.ttsModel || 'tts-model';
+        }
+        if (sttModelEl) {
+            sttModelEl.value = config.sttModel || providerDefaults.sttModel || '';
+            sttModelEl.placeholder = providerDefaults.sttModel || 'stt-model';
+        }
+        if (ttsVoiceEl) {
+            ttsVoiceEl.value = config.ttsVoice || providerDefaults.ttsVoice || '';
+            ttsVoiceEl.placeholder = providerDefaults.ttsVoice || 'Voice ID';
+        }
         streamEl.checked = config.stream !== false;
         if (webSearchEl) webSearchEl.checked = config.webSearchEnabled === true;
         this.setExcludedGenerationParams(config.excludedGenerationParams || [], { emit: false });
@@ -1697,7 +2014,7 @@ export class ConfigPanel {
         }
 
         // 更新字段可见性
-        this.updateFieldVisibility(config.provider || 'openai');
+        this.updateFieldVisibility(currentProvider);
         this.updateTransportVisibility();
         this.setTransportSectionExpanded(config.connectionMode === 'reverse_proxy' || Boolean(legacyProxyBaseUrl));
         this.refreshAllCustomSelects();
@@ -1754,16 +2071,22 @@ export class ConfigPanel {
         const baseUrlInput = panel.querySelector('#config-baseurl');
         const baseUrlSection = panel.querySelector('#config-baseurl-section');
         const modelInput = panel.querySelector('#config-model');
+        const ttsModelInput = panel.querySelector('#config-voice-tts-model');
+        const sttModelInput = panel.querySelector('#config-voice-stt-model');
+        const ttsVoiceInput = panel.querySelector('#config-voice-tts-voice');
         const editableBaseUrl = this.usesEditableBaseUrl(provider);
+        const providerKeys = this.getProviderOptions().map(item => item.value);
 
         if (baseUrlInput) {
             // 内建服务商固定使用默认协议地址；custom 保持可编辑。
             const currentUrl = baseUrlInput.value.trim();
             const selectedRegion = panel.querySelector('#config-region')?.value || 'us-central1';
-            const allDefaults = ALL_PROVIDER_KEYS
+            const allDefaults = providerKeys
                 .map((name) => this.getProviderDefaults(name, { region: selectedRegion }).baseUrl)
                 // ollama 云端/本地是同一 provider 的两个默认地址，切换时都视为“默认值”可替换
-                .concat([this.getProviderDefaults('ollama', { ollamaMode: 'local' }).baseUrl]);
+                .concat(this.activeTab === 'chat'
+                    ? [this.getProviderDefaults('ollama', { ollamaMode: 'local' }).baseUrl]
+                    : []);
             const isDefaultUrl = allDefaults.includes(currentUrl);
             if (!editableBaseUrl || !currentUrl || isDefaultUrl) {
                 baseUrlInput.value = defaults.baseUrl;
@@ -1782,13 +2105,78 @@ export class ConfigPanel {
         if (modelInput) {
             // 自动填写模型（如果当前为空或为其他服务商的默认值）
             const currentModel = modelInput.value.trim();
-            const allDefaults = ALL_PROVIDER_KEYS.map(p => this.getProviderDefaults(p).model);
+            const allDefaults = providerKeys.map(p => this.getProviderDefaults(p).model);
             const isDefaultModel = allDefaults.includes(currentModel);
             if (!currentModel || isDefaultModel) {
                 modelInput.value = defaults.model;
             }
             modelInput.placeholder = defaults.model;
         }
+        if (this.activeTab === 'voice' && this.voiceConnectionMode === 'shared') {
+            const allVoiceDefaults = providerKeys.map(name => this.getProviderDefaults(name));
+            const updateVoiceModel = (input, key) => {
+                if (!input) return;
+                const current = input.value.trim();
+                const isProviderDefault = allVoiceDefaults.some(item => item[key] === current);
+                if (!current || isProviderDefault) input.value = defaults[key] || '';
+                input.placeholder = defaults[key] || '';
+            };
+            updateVoiceModel(ttsModelInput, 'ttsModel');
+            updateVoiceModel(sttModelInput, 'sttModel');
+        }
+        if (this.activeTab === 'voice' && (
+            this.voiceConnectionMode === 'shared' || this.voiceCapability === 'tts'
+        )) {
+            const allVoiceDefaults = providerKeys.map(name => this.getProviderDefaults(name));
+            const currentVoice = String(ttsVoiceInput?.value || '').trim();
+            const isProviderDefault = allVoiceDefaults.some(item => item.ttsVoice === currentVoice);
+            if (ttsVoiceInput && (!currentVoice || isProviderDefault)) {
+                ttsVoiceInput.value = defaults.ttsVoice || '';
+            }
+            if (ttsVoiceInput) ttsVoiceInput.placeholder = defaults.ttsVoice || 'Voice ID';
+        }
+        this.updateVoiceTtsSettings(provider);
+    }
+
+    updateVoiceTtsSettings(provider) {
+        const panel = this.element || document;
+        const normalized = String(provider || '').trim().toLowerCase();
+        const help = panel.querySelector('#config-voice-tts-voice-help');
+        const presets = panel.querySelector('#config-voice-tts-voice-presets');
+        const input = panel.querySelector('#config-voice-tts-voice');
+        const options = normalized === 'openai'
+            ? ['marin', 'cedar', 'coral', 'nova', 'alloy', 'shimmer']
+            : normalized === 'qwen_local'
+                ? ['Serena', 'Vivian', 'Uncle_Fu', 'Dylan', 'Eric']
+            : normalized === 'custom'
+                ? ['alloy', 'marin', 'cedar']
+                : [];
+        if (presets) {
+            presets.innerHTML = options.map(value => `
+                <button type="button" class="api-config-voice-preset" data-voice-preset="${escapeHtml(value)}" aria-pressed="false">${escapeHtml(value)}</button>
+            `).join('');
+        }
+        if (help) {
+            help.textContent = normalized === 'elevenlabs'
+                ? '填写 ElevenLabs「My Voices」中的 Voice ID；默认值可直接替换'
+                : normalized === 'qwen_local'
+                    ? 'Qwen CustomVoice 内建音色；Serena 为默认中文女声，也可选择 Vivian 或直接输入其他 speaker'
+                : normalized === 'custom'
+                    ? '填写兼容服务支持的 voice 值'
+                    : 'OpenAI 声音名称；推荐 marin 或 cedar，可直接输入其他支持值';
+        }
+        if (input) input.placeholder = this.getProviderDefaults(normalized).ttsVoice || 'Voice ID';
+        this.syncVoicePresetSelection();
+    }
+
+    syncVoicePresetSelection() {
+        const panel = this.element || document;
+        const current = String(panel.querySelector('#config-voice-tts-voice')?.value || '').trim();
+        panel.querySelectorAll('[data-voice-preset]').forEach((button) => {
+            const active = String(button.dataset.voicePreset || '') === current;
+            button.classList.toggle('is-active', active);
+            button.setAttribute('aria-pressed', String(active));
+        });
     }
 
     /**
@@ -1834,6 +2222,7 @@ export class ConfigPanel {
                 apiKeyHelp.textContent = '保存后 Key 以遮罩显示（不可复制）；可在 Key 管理中保存多个';
             }
         }
+        if (this.activeTab === 'voice') this.updateVoiceTtsSettings(provider);
         this.refreshAllCustomSelects();
     }
 
@@ -1886,6 +2275,21 @@ export class ConfigPanel {
             maxRetries: 3
         };
 
+        if (this.activeTab === 'voice') {
+            formData.webSearchEnabled = false;
+            formData.promptPostProcessing = 'none';
+            formData.excludedGenerationParams = [];
+            if (this.voiceConnectionMode === 'shared') {
+                formData.ttsModel = (panel.querySelector('#config-voice-tts-model')?.value || '').trim();
+                formData.sttModel = (panel.querySelector('#config-voice-stt-model')?.value || '').trim();
+                formData.ttsVoice = (panel.querySelector('#config-voice-tts-voice')?.value || '').trim();
+                // ConfigManager 的通用运行时仍保留 model；语音运行时会分别读取 ttsModel / sttModel。
+                formData.model = formData.ttsModel;
+            } else if (this.voiceCapability === 'tts') {
+                formData.ttsVoice = (panel.querySelector('#config-voice-tts-voice')?.value || '').trim();
+            }
+        }
+
         // Add Vertex AI specific fields
         if (provider === 'vertexai') {
             const saInput = panel.querySelector('#config-serviceaccount');
@@ -1914,7 +2318,7 @@ export class ConfigPanel {
     }
 
     getDraftConfig({ tab = '' } = {}) {
-        const targetTab = tab === 'image' ? 'image' : tab === 'chat' ? 'chat' : this.activeTab;
+        const targetTab = ['chat', 'image', 'voice'].includes(tab) ? tab : this.activeTab;
         if (!this.isOpen() || targetTab !== this.activeTab) return null;
         return this.getFormData({ commitActiveInput: false });
     }
@@ -2172,7 +2576,14 @@ export class ConfigPanel {
         const formData = this.getFormData();
 
         try {
-            if (!formData.model || (this.usesEditableBaseUrl(formData.provider) && !formData.baseUrl)) {
+            const missingVoiceModel = this.activeTab === 'voice'
+                && this.voiceConnectionMode === 'shared'
+                && (!formData.ttsModel || !formData.sttModel);
+            if (missingVoiceModel || !formData.model || (this.usesEditableBaseUrl(formData.provider) && !formData.baseUrl)) {
+                if (missingVoiceModel) {
+                    this.showStatus('请填写 TTS / STT 模型', 'error');
+                    return;
+                }
                 this.showStatus(this.usesEditableBaseUrl(formData.provider) ? '请填写 Base URL / 模型' : '请填写模型', 'error');
                 return;
             }
@@ -2219,6 +2630,10 @@ export class ConfigPanel {
                 profileId: this.configManager.getActiveProfileId?.() || '',
                 profile: this.configManager.getActiveProfile?.() || null,
                 config: this.configManager.get?.() || null,
+                ...(this.activeTab === 'voice' ? {
+                    voiceConnectionMode: this.voiceConnectionMode,
+                    voiceCapability: this.voiceConnectionMode === 'split' ? this.voiceCapability : null,
+                } : {}),
             };
             const callbacks = new Set([this.onSaved, this.openOptions?.onSaved].filter(callback => typeof callback === 'function'));
             for (const callback of callbacks) {
@@ -2247,6 +2662,38 @@ export class ConfigPanel {
         try {
             setApiButtonContent(this.testButton, API_CONFIG_ICONS.loader, '测试中...');
             this.testButton.disabled = true;
+
+            if (this.activeTab === 'voice') {
+                this.configManager.validate(formData);
+                const runtime = await this.configManager.load();
+                const existingKey = String(runtime?.apiKey || '').trim();
+                const keyToUse = typeof formData.apiKey === 'string'
+                    ? formData.apiKey.trim() || existingKey
+                    : existingKey;
+                if (!keyToUse && this.providerRequiresApiKey(formData.provider, formData.baseUrl)) {
+                    this.showStatus('请先在 Key 管理中保存至少一个 API Key，或在此栏贴上 Key', 'error');
+                    return;
+                }
+                const capabilities = this.voiceConnectionMode === 'shared'
+                    ? ['tts', 'stt']
+                    : [normalizeVoiceCapability(this.voiceCapability)];
+                const client = new VoiceClient();
+                const results = await Promise.all(capabilities.map(async (capability) => {
+                    const model = this.voiceConnectionMode === 'shared'
+                        ? capability === 'stt' ? formData.sttModel : formData.ttsModel
+                        : formData.model;
+                    const models = await client.listModels({
+                        ...formData,
+                        apiKey: keyToUse,
+                        model,
+                    }, { capability });
+                    if (!models.length) throw new Error(`未获取到适用于 ${capability.toUpperCase()} 的模型`);
+                    return `${capability.toUpperCase()} ${models.length} 个模型`;
+                }));
+                this.showStatus(`连接成功：${results.join('，')}`, 'success');
+                logger.info(`语音 API 连接测试成功：${results.join('，')}`);
+                return;
+            }
 
             if (formData.provider === 'vertexai') {
                 if (!formData.vertexaiServiceAccount || !String(formData.vertexaiServiceAccount).trim()) {
@@ -2305,7 +2752,109 @@ export class ConfigPanel {
     /**
      * 刷新模型列表
      */
+    async refreshVoiceModels(capability = this.voiceCapability) {
+        const normalized = normalizeVoiceCapability(capability);
+        const shared = this.voiceConnectionMode === 'shared';
+        const panel = this.element || document;
+        const refreshBtn = panel.querySelector(shared
+            ? `#refresh-voice-${normalized}-models`
+            : '#refresh-models');
+        const modelHelp = panel.querySelector(shared
+            ? `#config-voice-${normalized}-model-help`
+            : '#model-help');
+        const originalHelpText = modelHelp?.textContent || '';
+        const capabilityLabel = normalized === 'stt' ? 'STT' : 'TTS';
+        const formData = this.getFormData();
+
+        try {
+            if (!formData.baseUrl) {
+                this.showStatus('请先填写 Base URL', 'error');
+                return;
+            }
+            const runtime = await this.configManager.load();
+            const existingKey = String(runtime?.apiKey || '').trim();
+            const keyToUse = typeof formData.apiKey === 'string'
+                ? formData.apiKey.trim()
+                : existingKey;
+            if (!keyToUse && this.providerRequiresApiKey(formData.provider, formData.baseUrl)) {
+                this.showStatus('请先在 Key 管理中保存至少一个 API Key，或在此栏贴上 Key', 'error');
+                return;
+            }
+
+            setApiButtonContent(refreshBtn, API_CONFIG_ICONS.loader, '获取中...');
+            if (refreshBtn) refreshBtn.disabled = true;
+            if (modelHelp) {
+                modelHelp.textContent = `正在获取可用 ${capabilityLabel} 模型...`;
+                modelHelp.style.color = 'var(--app-accent-strong)';
+            }
+
+            const requestConfig = {
+                ...formData,
+                apiKey: keyToUse,
+                model: shared
+                    ? (normalized === 'stt' ? formData.sttModel : formData.ttsModel)
+                    : formData.model,
+            };
+            logger.info(`正在获取 ${formData.provider} 的 ${capabilityLabel} 模型列表...`);
+            const models = await new VoiceClient().listModels(requestConfig, {
+                capability: normalized,
+            });
+            if (!models.length) {
+                throw new Error(`未获取到适用于 ${capabilityLabel} 的模型；仍可手动填写模型 ID`);
+            }
+
+            const providerStillCurrent = this.activeTab === 'voice'
+                && panel.querySelector('#config-provider')?.value === formData.provider
+                && this.voiceConnectionMode === (shared ? 'shared' : 'split')
+                && (shared || this.voiceCapability === normalized);
+            if (!providerStillCurrent) return;
+
+            if (shared) this.renderVoiceModelOptions(normalized, models);
+            else this.renderModelOptions(models);
+            try {
+                window.dispatchEvent(new CustomEvent('config-models-refreshed', {
+                    detail: {
+                        tab: 'voice',
+                        provider: formData.provider,
+                        capability: normalized,
+                        count: models.length,
+                    },
+                }));
+            } catch {}
+            this.showStatus(`成功获取 ${models.length} 个可用 ${capabilityLabel} 模型`, 'success');
+            if (modelHelp) {
+                modelHelp.textContent = `已加载 ${models.length} 个 ${capabilityLabel} 模型（可输入或从列表选择）`;
+                modelHelp.style.color = 'var(--app-accent-strong)';
+            }
+            logger.info(`成功获取 ${models.length} 个 ${capabilityLabel} 模型:`, models);
+            setTimeout(() => {
+                if (!modelHelp) return;
+                modelHelp.textContent = originalHelpText;
+                modelHelp.style.color = 'var(--app-text-secondary)';
+            }, 3000);
+        } catch (error) {
+            this.showStatus(`获取${capabilityLabel}模型列表失败: ${error.message}`, 'error');
+            logger.error(`获取 ${capabilityLabel} 模型列表失败:`, error);
+            if (modelHelp) {
+                modelHelp.textContent = '获取失败，请检查配置后重试；当前模型不会被覆盖';
+                modelHelp.style.color = 'var(--app-danger-text)';
+            }
+            setTimeout(() => {
+                if (!modelHelp) return;
+                modelHelp.textContent = originalHelpText;
+                modelHelp.style.color = 'var(--app-text-secondary)';
+            }, 5000);
+        } finally {
+            setApiButtonContent(refreshBtn, API_CONFIG_ICONS.refresh, '刷新列表');
+            if (refreshBtn) refreshBtn.disabled = false;
+        }
+    }
+
     async refreshModels() {
+        if (this.activeTab === 'voice') {
+            await this.refreshVoiceModels(this.voiceCapability);
+            return;
+        }
         const formData = this.getFormData();
         const refreshBtn = document.getElementById('refresh-models');
         const modelHelp = document.getElementById('model-help');

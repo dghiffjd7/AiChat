@@ -44,6 +44,29 @@ import {
 }
 
 {
+  const wrapper = { id: 'speech-wrapper' };
+  const calls = [];
+  const result = await dispatchContextMenuAction({
+    actionKey: 'speak',
+    message: { id: 'm-speech', role: 'assistant', content: 'hello' },
+    wrapper,
+    hideMenu: () => calls.push(['hide']),
+    clearLongPress: () => calls.push(['clear']),
+    tryAction: async (key, payload, options) => {
+      calls.push(['try', key, payload, options]);
+      return true;
+    },
+  });
+  assert.equal(result, 'speak');
+  assert.deepEqual(calls, [
+    ['hide'],
+    ['clear'],
+    ['try', 'speak', { wrapper }, { skipFallback: true }],
+  ]);
+  console.log('ok - long-press speech forwards its message wrapper for visible playback state');
+}
+
+{
   const calls = [];
   const result = await dispatchContextMenuAction({
     actionKey: 'view-code',

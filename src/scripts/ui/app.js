@@ -300,6 +300,11 @@ import {
   resolveImageGenerationParamSchema,
 } from './image-generation-params-utils.js';
 import { ChatUI } from './chat/chat-ui.js';
+import {
+  createChatVoiceRuntime,
+  createVoiceRuntimeConfigResolver,
+  resolveSpeakableMessageText,
+} from './chat/voice-interaction-runtime.js';
 import { enqueueMessagesCore } from './chat/typing-flow-ui-utils.js';
 import { createAssistantStreamRuntime, isStreamCtrlConnected } from './chat/assistant-stream-runtime.js';
 import {
@@ -975,6 +980,12 @@ const initApp = async () => {
         profileCount: configPanel.chatConfigManager.getProfiles?.().length || 0,
       });
     },
+  });
+  const resolveVoiceRuntimeConfig = createVoiceRuntimeConfigResolver({
+    getMode: () => appSettings.get().voiceConnectionMode,
+    sharedManager: configPanel.voiceSharedConfigManager,
+    ttsManager: configPanel.voiceTtsConfigManager,
+    sttManager: configPanel.voiceSttConfigManager,
   });
   window.addEventListener('chatapp-web-search-status', (event) => {
     const detail = event?.detail || {};
@@ -9410,6 +9421,23 @@ Phase G（Frame 36）：循环衔接
   const chatScroll = document.getElementById('chat-scroll');
   const composerInput = document.getElementById('composer-input');
   const chatInputContainer = document.querySelector('.chat-input-container');
+  const chatVoiceRuntime = createChatVoiceRuntime({
+    resolveConfig: resolveVoiceRuntimeConfig,
+    composerInput,
+    recorderButton: document.getElementById('voice-input-button'),
+    getSpeakableText: (message, wrapper) => resolveSpeakableMessageText(message, {
+      wrapper,
+      resolvePlainText: resolveMessagePlainText,
+      getBubbleCopyText: nextWrapper => ui.getBubbleCopyText(nextWrapper),
+    }),
+    openVoiceSettings: capability => {
+      void (async () => {
+        await configPanel.setVoiceCapability(capability, { skipLoad: true });
+        await configPanel.show({ tab: 'voice' });
+      })();
+    },
+    toast: window.toastr,
+  });
   chatListCollapseRuntime = createChatListCollapseRuntime({
     root: document.getElementById('chat-page'),
     handle: document.getElementById('chat-list-collapse-handle'),
@@ -23773,7 +23801,8 @@ Phase G（Frame 36）：循环衔接
     exitChatRoom();
   });
 
-  const bindMaidToSavedApiProfile = async ({ profileId = '', profile = null } = {}) => {
+  const bindMaidToSavedApiProfile = async ({ tab = '', profileId = '', profile = null } = {}) => {
+    if (tab !== 'chat') return false;
     const savedProfileId = String(profileId || profile?.id || '').trim();
     if (!savedProfileId) return false;
     await maidSettingsStore.setBoundProfileId(savedProfileId);
@@ -30994,6 +31023,10 @@ Phase G（Frame 36）：循环衔接
       });
       return true;
     }
+    if (action === 'speak' && message?.role === 'assistant') {
+      await chatVoiceRuntime.speak(message, { wrapper: payload?.wrapper });
+      return true;
+    }
     if (action === 'validate-format-repair-candidate' && message?.role === 'assistant') {
       const candidateText = String(payload?.text ?? '');
       const sourceKind = String(payload?.sourceKind || '').trim();
@@ -31803,6 +31836,7 @@ Phase G（Frame 36）：循环衔接
       }
     },
     onSessionChanged: async (id) => {
+      await chatVoiceRuntime.cancel();
       await runSessionChangedFlow({
         sessionId: id,
         beginEnterRequest: sid => beginChatEnterRequest(sid),

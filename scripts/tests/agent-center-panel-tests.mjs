@@ -39,11 +39,58 @@ const agentCenterPanelSource = await readFile(
   panel.overlayElement = { style: { display: 'none' } };
   panel.handleAgentFeatureSettingsChanged();
   panel.overlayElement.style.display = 'flex';
+  panel.agentFeatureMutationDepth = 1;
+  panel.handleAgentFeatureSettingsChanged({ detail: { id: 'reply_check' } });
+  assert.equal(refreshCalls, 0, 'a feature event emitted by the panel mutation must be coalesced with its explicit refresh');
+  panel.agentFeatureMutationDepth = 0;
   panel.handleAgentFeatureSettingsChanged();
   assert.equal(refreshCalls, 1);
   assert.match(agentCenterPanelSource, /addEventListener\?\.\('agent-feature-settings-changed', this\.boundAgentFeatureSettingsChanged\)/);
   assert.match(agentCenterPanelSource, /removeEventListener\?\.\('agent-feature-settings-changed', this\.boundAgentFeatureSettingsChanged\)/);
   console.log('ok - visible Agent Center refreshes for feature store broadcasts and owns its listener lifecycle');
+}
+
+{
+  // feature 变更失败分支必须走 refresh（重取 view）而非用旧 view 直接 render：
+  // 抑制窗口内被吞掉的外部事件靠这次 refresh 收敛，否则面板停留在陈旧状态
+  assert.match(agentCenterPanelSource, /不能切换 Agent'\);[\s\S]{0,220}?await this\.refresh\(\);/);
+  assert.match(agentCenterPanelSource, /不能更新 Agent 模型';[\s\S]{0,160}?await this\.refresh\(\);/);
+  assert.match(agentCenterPanelSource, /不能更新 Agent 触发方式';[\s\S]{0,120}?await this\.refresh\(\);/);
+  console.log('ok - agent feature mutation failure paths re-collect the view via refresh');
+}
+
+{
+  const panel = new AgentCenterPanel();
+  const pendingViews = [];
+  let renderCalls = 0;
+  panel.ensureDom = () => {};
+  panel.collectView = () => new Promise(resolve => pendingViews.push(resolve));
+  panel.render = () => { renderCalls += 1; };
+
+  const first = panel.refresh();
+  const second = panel.refresh();
+  assert.equal(first, second, 'overlapping refresh requests should share one in-flight task');
+  assert.equal(pendingViews.length, 1);
+  pendingViews[0]({ version: 'stale', tabs: [] });
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.equal(pendingViews.length, 2, 'one trailing collection should absorb changes received in flight');
+  assert.equal(renderCalls, 0, 'stale collection must not render before the trailing refresh');
+  pendingViews[1]({ version: 'latest', tabs: [] });
+  await first;
+  assert.equal(panel.view.version, 'latest');
+  assert.equal(renderCalls, 1);
+  console.log('ok - agent center coalesces refreshes and only renders the latest collected view');
+}
+
+{
+  const panel = new AgentCenterPanel();
+  panel.cardEntryAnimationUntil = Number.POSITIVE_INFINITY;
+  const first = panel.renderCardList([{ id: 'a', title: 'A' }]);
+  const second = panel.renderCardList([{ id: 'a', title: 'A' }]);
+  assert.match(first, /agent-center-agent-list is-entering/);
+  assert.doesNotMatch(second, /agent-center-agent-list is-entering/);
+  console.log('ok - agent center card entry animation is not replayed by an early refresh');
 }
 
 {
@@ -645,6 +692,34 @@ const agentCenterPanelSource = await readFile(
   assert.deepEqual(guideChoice.actions.map(action => action.id), ['select_model', 'manage_api', 'keep_local']);
   assert.equal(openedConfig.tab, 'chat');
   console.log('ok - agent center prompts model configuration when enabling reply check with no model');
+}
+
+{
+  let refreshCalls = 0;
+  let panel = null;
+  panel = new AgentCenterPanel({
+    getActions: () => ({
+      setAgentFeatureEnabled: () => {
+        panel.handleAgentFeatureSettingsChanged({ detail: { id: 'reply_check' } });
+        return { ok: true };
+      },
+    }),
+  });
+  panel.overlayElement = { style: { display: 'flex' } };
+  panel.view = {
+    agents: [{
+      id: 'reply_check',
+      title: '检查回复格式',
+      enabled: false,
+      implemented: true,
+      supportsModel: false,
+      modelMode: 'follow_current',
+    }],
+  };
+  panel.refresh = async () => { refreshCalls += 1; };
+  await panel.handleAgentFeatureToggle('enable', 'reply_check');
+  assert.equal(refreshCalls, 1, 'self broadcast and handler tail should result in one refresh');
+  console.log('ok - agent feature auto-save suppresses its own broadcast refresh');
 }
 
 {

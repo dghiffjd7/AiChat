@@ -125,6 +125,7 @@ const defaults = {
   webSearchProvider: 'duckduckgo',
   webSearchLocale: 'zh-tw',
   webSearchApiKey: '',
+  voiceConnectionMode: 'shared',
 };
 
 // localStorage 配额满时 setItem 会静默失败（真机已发生）；kv（Tauri 本地文件）为权威通道，
@@ -278,6 +279,9 @@ const migrateSettings = (settings = {}) => {
     : defaults.webSearchProvider;
   next.webSearchLocale = String(next.webSearchLocale || defaults.webSearchLocale).trim() || defaults.webSearchLocale;
   next.webSearchApiKey = String(next.webSearchApiKey || '');
+  next.voiceConnectionMode = String(next.voiceConnectionMode || '').trim().toLowerCase() === 'split'
+    ? 'split'
+    : defaults.voiceConnectionMode;
   return next;
 };
 
