@@ -10,7 +10,7 @@
     "tauri": "tauri",
     "memory:evaluate": "node scripts/evaluate-memory-replay.mjs",
     "test:voice-config": "node scripts/tests/voice-config-tests.mjs && node scripts/tests/voice-client-tests.mjs && node scripts/tests/voice-interaction-runtime-tests.mjs",
-    "test:variable-panel": "node scripts/tests/variable-panel-state-tests.mjs && node scripts/tests/variable-panel-views-tests.mjs && node scripts/tests/chat-store-variable-schema-tests.mjs && node scripts/tests/variable-manager-style-tests.mjs",
+    "test:variable-panel": "node scripts/tests/variable-runtime-policy-utils-tests.mjs && node scripts/tests/variable-status-card-runtime-tests.mjs && node scripts/tests/variable-panel-state-tests.mjs && node scripts/tests/variable-panel-views-tests.mjs && node scripts/tests/chat-store-variable-schema-tests.mjs && node scripts/tests/variable-manager-style-tests.mjs",
     "test:script-capability": "node scripts/tests/script-capability-preflight-tests.mjs",
     "test:compat-gap": "node scripts/tests/compat-gap-report-store-tests.mjs && node scripts/tests/compat-gap-report-runtime-tests.mjs",
     "pretest:chat-ui": "npm run test:voice-config && npm run test:variable-panel && npm run test:script-capability && npm run test:compat-gap",

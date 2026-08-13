@@ -14,7 +14,11 @@ export const buildMessageElementCore = ({
   renderMessageBubbleContent,
   buildMessageSidecarElement = null,
   buildReactionSummaryElement,
+  createReactionQuickBar,
   createReactionTriggerButton,
+  getQuickReactionEmojis,
+  onToggleReaction,
+  bindReactionQuickBarTouch,
   buildBubbleStack,
   appendStandardMessageLayout,
   isThreadingEnabledForMessage,
@@ -84,27 +88,43 @@ export const buildMessageElementCore = ({
 
   const uiMode = getUiMode?.() || '';
   const reactionSummaryEl = buildReactionSummaryElement?.(nextMessage);
-  const reactionButton = nextMessage?.role === 'assistant' || uiMode === 'chat'
+  const reactionQuickBar = uiMode === 'chat'
+    ? createReactionQuickBar?.(nextMessage, {
+      documentLike,
+      isThreadingEnabled: isThreadingEnabledForMessage?.(nextMessage),
+      emojis: getQuickReactionEmojis?.(nextMessage) || [],
+      onToggleReaction: emoji => onToggleReaction?.(nextMessage, emoji),
+      onShowPicker: (button, messageValue) => showReactionPicker?.(button, messageValue),
+    })
+    : null;
+  const reactionButton = reactionQuickBar || (nextMessage?.role === 'assistant' || uiMode === 'chat'
     ? null
     : createReactionTriggerButton?.(nextMessage, {
       documentLike,
       isThreadingEnabled: isThreadingEnabledForMessage?.(nextMessage),
       onShowPicker: (button, messageValue) => showReactionPicker?.(button, messageValue),
-    });
+    }));
   const bubbleStack = buildBubbleStack?.({
     documentLike,
     bubble,
     isUser,
     messageSidecarEl,
-    reactionSummaryEl,
     reactionButton,
   });
+  if (reactionQuickBar) {
+    bindReactionQuickBarTouch?.({
+      bubbleStack,
+      bubble,
+      quickBar: reactionQuickBar,
+    });
+  }
 
   appendStandardMessageLayout?.({
     documentLike,
     wrapper,
     avatarImg,
     bubbleStack,
+    reactionSummaryEl,
     message: nextMessage,
     isUser,
     uiMode,

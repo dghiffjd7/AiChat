@@ -66,9 +66,12 @@ const evalCondition = (expr, vars) => {
 };
 
 export class StageManager {
-  constructor({ chatStore, appBridge } = {}) {
+  constructor({ chatStore, appBridge, isVariableRuntimeEnabled } = {}) {
     this.chatStore = chatStore;
     this.appBridge = appBridge || null;
+    this.isVariableRuntimeEnabled = typeof isVariableRuntimeEnabled === 'function'
+      ? isVariableRuntimeEnabled
+      : () => true;
     this.activeSessionId = '';
     this._bound = false;
     this.warnedInvalidConditions = new Set();
@@ -118,7 +121,7 @@ export class StageManager {
     const sid = String(sessionId || '').trim();
     if (!sid) return;
     this.activeSessionId = sid;
-    this.evaluateStageTransition(sid, { force: true });
+    if (this.isVariableRuntimeEnabled(sid)) this.evaluateStageTransition(sid, { force: true });
   }
 
   getStageSchema(sessionId) {
@@ -169,9 +172,10 @@ export class StageManager {
   }
 
   resolveStage(sessionId) {
+    const sid = String(sessionId || this.activeSessionId || '').trim();
+    if (!sid || !this.isVariableRuntimeEnabled(sid)) return null;
     const schema = this.getStageSchema(sessionId);
     if (!schema) return null;
-    const sid = String(sessionId || this.activeSessionId || '').trim();
     const localVars = this.chatStore?.listVariables?.(sid) || {};
     const globalVars = this.chatStore?.listGlobalVariables?.() || {};
     const vars = buildVariableContext({
@@ -191,7 +195,7 @@ export class StageManager {
   async applyStageEffects(sessionId, stage) {
     if (!stage) return;
     const sid = String(sessionId || '').trim();
-    if (!sid) return;
+    if (!sid || !this.isVariableRuntimeEnabled(sid)) return;
     if (stage.persona) {
       try {
         await this.appBridge?.switchPersona?.(stage.persona);
@@ -214,9 +218,10 @@ export class StageManager {
   }
 
   getPromptBlocks(sessionId) {
+    const sid = String(sessionId || this.activeSessionId || '').trim();
+    if (!sid || !this.isVariableRuntimeEnabled(sid)) return [];
     const schema = this.getStageSchema(sessionId);
     if (!schema) return [];
-    const sid = String(sessionId || this.activeSessionId || '').trim();
     const currentId = String(this.chatStore?.getVariable?.(schema.currentStageVar, sid) || '').trim();
     const stage = schema.stages.find(s => s.id === currentId) || null;
     if (!stage || !stage.prompt) return [];
@@ -239,10 +244,10 @@ export class StageManager {
   }
 
   async evaluateStageTransition(sessionId, { force = false } = {}) {
+    const sid = String(sessionId || this.activeSessionId || '').trim();
+    if (!sid || !this.isVariableRuntimeEnabled(sid)) return false;
     const schema = this.getStageSchema(sessionId);
     if (!schema || !schema.stages.length) return false;
-    const sid = String(sessionId || this.activeSessionId || '').trim();
-    if (!sid) return false;
     const currentId = String(this.chatStore?.getVariable?.(schema.currentStageVar, sid) || '').trim();
     const nextStage = this.resolveStage(sid);
     if (!nextStage) return false;

@@ -24,6 +24,7 @@ import { showContextMenuCore } from '../../src/scripts/ui/chat/context-menu-orch
   let positioned = null;
   let actionOptions = null;
   const actionButtons = [];
+  const reactionToggles = [];
   const shown = showContextMenuCore({
     event: { target: {}, clientX: 12, clientY: 34 },
     message: { id: 'm1' },
@@ -52,6 +53,7 @@ import { showContextMenuCore } from '../../src/scripts/ui/chat/context-menu-orch
     normalizeReactionEntries: value => value || [],
     createContextMenuReactionRow: payload => ({ kind: 'reaction-row', payload }),
     defaultReactionEmojis: ['👍'],
+    toggleReaction: (nextMessage, emoji) => reactionToggles.push([nextMessage.id, emoji]),
     isSelfReaction: () => false,
     createContextMenuActionButton: payload => {
       const node = { kind: 'button', payload };
@@ -82,6 +84,8 @@ import { showContextMenuCore } from '../../src/scripts/ui/chat/context-menu-orch
   assert.equal(actionButtons.length, 2);
   assert.equal(actionOptions.hasRpMessageActions, true);
   assert.equal(positioned.point.x, 12);
+  appended[0].payload.onToggle('👍');
+  assert.deepEqual(reactionToggles, [['m1', '👍']]);
 
   await actionButtons[0].payload.onClick({ stopPropagation() {} });
   assert.equal(dispatched.length, 1);

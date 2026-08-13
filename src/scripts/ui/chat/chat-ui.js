@@ -33,10 +33,17 @@ import {
 import {
   buildReactionSummaryElement as buildReactionSummaryElementCore,
   createReactionPicker as createReactionPickerCore,
+  createReactionQuickBar,
+  createReactionQuickBarTouchRuntime,
   createReactionTriggerButton,
   hideReactionPicker as hideReactionPickerCore,
   showReactionPicker as showReactionPickerCore,
 } from './reaction-ui-utils.js';
+import {
+  readReactionUsage,
+  recordReactionUse,
+  resolveQuickReactionEmojis,
+} from './reaction-preference-utils.js';
 import { createMessageHeaderUiRuntime } from './message-header-ui-utils.js';
 import { createReplyDraftUiRuntime } from './reply-draft-ui-utils.js';
 import { createSelectionModeUiRuntime } from './selection-mode-ui-utils.js';
@@ -346,6 +353,7 @@ export class ChatUI {
     this.isSending = false;
     this.contextMenu = this.createContextMenu();
     this.reactionPicker = this.createReactionPicker();
+    this.reactionQuickBarTouchRuntime = createReactionQuickBarTouchRuntime({ documentLike: document });
     this.longPressTimer = null;
     this.actionHandler = null;
     this.canCheckFormatForMessage = () => false;
@@ -766,8 +774,55 @@ export class ChatUI {
     return buildReactionSummaryElementCore(message, {
       documentLike: document,
       isThreadingEnabled: this.isThreadingEnabledForMessage(message),
-      onToggleReaction: emoji => this.actionHandler?.('toggle-reaction', message, { emoji }),
+      onToggleReaction: emoji => this.toggleReactionFromUi(message, emoji),
     });
+  }
+
+  getQuickReactionEmojis() {
+    return resolveQuickReactionEmojis({ usage: readReactionUsage(), limit: 3 });
+  }
+
+  refreshReactionQuickBars() {
+    if (document?.body?.dataset?.uiMode !== 'chat') return 0;
+    const emojis = this.getQuickReactionEmojis();
+    let refreshed = 0;
+    this.scrollEl?.querySelectorAll?.('.chat-bubble-stack > .chat-reaction-quick-bar')?.forEach?.((currentBar) => {
+      const bubbleStack = currentBar.parentElement;
+      const bubble = bubbleStack?.querySelector?.('.QQ_chat_msgdiv');
+      const message = bubbleStack?.closest?.('[data-msg-id][data-role]')?.__chatappMessage;
+      if (!bubbleStack || !bubble || !message || !this.isThreadingEnabledForMessage(message)) return;
+      const nextBar = createReactionQuickBar(message, {
+        documentLike: document,
+        isThreadingEnabled: true,
+        emojis,
+        onToggleReaction: emoji => this.toggleReactionFromUi(message, emoji),
+        onShowPicker: (button, nextMessage) => this.showReactionPicker(button, nextMessage),
+      });
+      if (!nextBar) return;
+      currentBar.replaceWith?.(nextBar);
+      this.reactionQuickBarTouchRuntime.bind({ bubbleStack, bubble, quickBar: nextBar });
+      refreshed += 1;
+    });
+    return refreshed;
+  }
+
+  toggleReactionFromUi(message, emojiValue) {
+    const emoji = String(emojiValue || '').trim();
+    if (!emoji || typeof this.actionHandler !== 'function') return false;
+    const isRemoving = normalizeReactionEntries(message?.meta?.reactions).some(entry => (
+      entry.emoji === emoji && hasReactionActor(entry, SELF_REACTION_ACTOR)
+    ));
+    const recordSuccessfulUse = (result) => {
+      if (!isRemoving && result !== false) {
+        recordReactionUse(emoji);
+        this.refreshReactionQuickBars();
+      }
+      return result;
+    };
+    const result = this.actionHandler('toggle-reaction', message, { emoji });
+    return result && typeof result.then === 'function'
+      ? result.then(recordSuccessfulUse)
+      : recordSuccessfulUse(result);
   }
 
   showReactionPicker(anchor, message) {
@@ -777,7 +832,8 @@ export class ChatUI {
       anchor,
       message,
       isThreadingEnabled: this.isThreadingEnabledForMessage(message),
-      onToggleReaction: emoji => this.actionHandler?.('toggle-reaction', message, { emoji }),
+      usage: readReactionUsage(),
+      onToggleReaction: emoji => this.toggleReactionFromUi(message, emoji),
       hidePicker: () => this.hideReactionPicker(),
       windowLike: window,
       documentLike: document,
@@ -1792,7 +1848,11 @@ export class ChatUI {
         return stack;
       },
       buildReactionSummaryElement: nextMessage => this.buildReactionSummaryElement(nextMessage),
+      createReactionQuickBar,
       createReactionTriggerButton,
+      getQuickReactionEmojis: () => this.getQuickReactionEmojis(),
+      onToggleReaction: (nextMessage, emoji) => this.toggleReactionFromUi(nextMessage, emoji),
+      bindReactionQuickBarTouch: payload => this.reactionQuickBarTouchRuntime.bind(payload),
       buildBubbleStack: payload => buildBubbleStackCore(payload),
       appendStandardMessageLayout: payload => appendStandardMessageLayoutCore({
         ...payload,
@@ -2805,6 +2865,7 @@ export class ChatUI {
 
   hideReactionPicker() {
     hideReactionPickerCore(this.reactionPicker);
+    this.reactionQuickBarTouchRuntime?.close?.();
   }
 
   isThreadingEnabledForMessage(message) {
@@ -2891,6 +2952,7 @@ export class ChatUI {
       normalizeReactionEntries,
       createContextMenuReactionRow,
       defaultReactionEmojis: DEFAULT_REACTION_EMOJIS,
+      toggleReaction: (nextMessage, emoji) => this.toggleReactionFromUi(nextMessage, emoji),
       isSelfReaction: entry => hasReactionActor(entry, SELF_REACTION_ACTOR),
       createContextMenuActionButton,
       createContextMenuDivider,

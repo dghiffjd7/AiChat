@@ -379,12 +379,16 @@ const refreshLegacySession = async () => {
 const dispatchIncomingEvent = async (name, payload) => {
   const evt = String(name || '').trim();
   const data = payload || {};
+  if (evt === 'runtime.variables.resync') {
+    await refreshLegacySession();
+    return data;
+  }
   if (evt === 'variable.changed') syncLegacyVariableChange(data);
   if (evt === 'message.after_send' || evt === 'message.after_receive') {
     if (data?.message) upsertChatMessage(data.message);
   }
   if (evt === 'session.changed') {
-    refreshLegacySession();
+    await refreshLegacySession();
   }
   const result = await dispatchEvent(evt, data, { allowMutate: true });
   const aliases = legacyForward.get(evt) || [];
@@ -920,6 +924,7 @@ class PluginInstance {
     const ui = this.runtime?.ui || bridge?.chatUI || null;
     const uiManager = this.runtime?.uiManager || bridge?.pluginUiManager || null;
     const sessionId = String(bridge?.activeSessionId || chatStore?.getCurrent?.() || '').trim();
+    const variableRuntimeEnabled = bridge?.isVariableRuntimeEnabled?.(sessionId) !== false;
     const buildMessagePayload = (msg) => {
       if (!msg || typeof msg !== 'object') return null;
       return {
@@ -974,6 +979,19 @@ class PluginInstance {
         respond('rpc_error', { error: { message: '权限不足' } });
         return;
       }
+    }
+    if (!variableRuntimeEnabled && method.startsWith('variables.')) {
+      const result = method === 'variables.getAll' ? {} : (method === 'variables.get' ? undefined : false);
+      respond('rpc_result', { result });
+      return;
+    }
+    if (!variableRuntimeEnabled && (
+      method === 'legacy.getGlobalVariables'
+      || method === 'legacy.setGlobalVariables'
+      || method === 'legacy.setGlobalVariable'
+    )) {
+      respond('rpc_result', { result: method === 'legacy.getGlobalVariables' ? {} : false });
+      return;
     }
     try {
       if (method === 'storage.get') {
@@ -1473,5 +1491,14 @@ export class PluginRuntime {
       payload = next;
     }
     return payload;
+  }
+
+  async syncVariableContext(sessionId = '') {
+    const payload = { sessionId: String(sessionId || '').trim() };
+    for (const instance of this.instances.values()) {
+      if (instance.status !== 'running') continue;
+      await instance.emit('runtime.variables.resync', payload);
+    }
+    return true;
   }
 }

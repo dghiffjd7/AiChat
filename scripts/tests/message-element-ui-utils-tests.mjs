@@ -94,15 +94,18 @@ const createFakeDocument = () => ({
       return 'agent-sidecar';
     },
     buildReactionSummaryElement: () => 'summary',
-    createReactionTriggerButton: () => {
-      throw new Error('assistant messages should not build the hover reaction trigger');
+    createReactionQuickBar: (message, options) => {
+      calls.push(['quick-reactions', message.id, options.emojis]);
+      return 'quick-bar';
     },
+    getQuickReactionEmojis: () => ['👍', '❤️', '😂'],
+    onToggleReaction: () => {},
     buildBubbleStack: payload => {
       calls.push(['stack', payload.isUser, payload.messageSidecarEl, payload.reactionSummaryEl, payload.reactionButton]);
       return bubbleStack;
     },
     appendStandardMessageLayout: payload => {
-      calls.push(['layout', payload.wrapper, payload.avatarImg, payload.bubbleStack, payload.uiMode]);
+      calls.push(['layout', payload.wrapper, payload.avatarImg, payload.bubbleStack, payload.reactionSummaryEl, payload.uiMode]);
     },
     isThreadingEnabledForMessage: () => true,
     showReactionPicker: (button, message) => calls.push(['show-picker', button, message.id]),
@@ -123,17 +126,19 @@ const createFakeDocument = () => ({
     ['wrapper', 'm1', false],
     ['bubble', 'm1', 'chat:1', bubble],
     ['sidecar', 'm1'],
-    ['stack', false, 'agent-sidecar', 'summary', null],
-    ['layout', standardWrapper, avatar, bubbleStack, 'chat'],
+    ['quick-reactions', 'm1', ['👍', '❤️', '😂']],
+    ['stack', false, 'agent-sidecar', undefined, 'quick-bar'],
+    ['layout', standardWrapper, avatar, bubbleStack, 'summary', 'chat'],
     ['bind', standardWrapper, 'm1'],
     ['selection', true, 'm1'],
   ]);
-  console.log('ok - buildMessageElementCore omits the assistant hover reaction trigger while keeping reaction summaries');
+  console.log('ok - buildMessageElementCore adds the chat assistant quick reaction bar');
 }
 
 {
   let reactionButton = null;
-  let reactionSummary = null;
+  let reactionSummaryInStack = null;
+  let reactionSummaryInLayout = null;
   buildMessageElementCore({
     message: { id: 'u1', role: 'user', type: 'text', content: 'hello' },
     resolveActiveSwipeMessage: value => value,
@@ -146,20 +151,22 @@ const createFakeDocument = () => ({
     createBubble: () => ({ kind: 'bubble' }),
     renderMessageBubbleContent() {},
     buildReactionSummaryElement: () => 'user-reaction-summary',
-    createReactionTriggerButton: () => {
-      throw new Error('chat user messages should not build the hover emoji trigger');
-    },
+    createReactionQuickBar: () => 'user-quick-bar',
+    getQuickReactionEmojis: () => ['👍', '❤️', '😂'],
     buildBubbleStack: payload => {
       reactionButton = payload.reactionButton;
-      reactionSummary = payload.reactionSummaryEl;
+      reactionSummaryInStack = payload.reactionSummaryEl;
       return { kind: 'bubble-stack' };
     },
-    appendStandardMessageLayout() {},
+    appendStandardMessageLayout(payload) {
+      reactionSummaryInLayout = payload.reactionSummaryEl;
+    },
     isThreadingEnabledForMessage: () => true,
     getUiMode: () => 'chat',
     bindMessageContextInteractions: ({ wrapper }) => wrapper,
   });
-  assert.equal(reactionButton, null);
-  assert.equal(reactionSummary, 'user-reaction-summary');
-  console.log('ok - buildMessageElementCore omits the chat user hover emoji trigger while keeping reaction summaries');
+  assert.equal(reactionButton, 'user-quick-bar');
+  assert.equal(reactionSummaryInStack, undefined);
+  assert.equal(reactionSummaryInLayout, 'user-reaction-summary');
+  console.log('ok - buildMessageElementCore adds the chat user quick reaction bar while keeping summaries');
 }

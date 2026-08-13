@@ -145,6 +145,39 @@ import {
 }
 
 {
+  let writes = 0;
+  const runtime = createVariablePreviewCommitRuntime({
+    chatStore: {
+      setVariable: () => { writes += 1; return true; },
+      deleteVariable: () => { writes += 1; return true; },
+    },
+    isVariableRuntimeEnabled: () => false,
+  });
+  const commit = await runtime.commit({
+    args: { sessionId: 's1' },
+    previewResult: { updates: { hp: 12 }, rollbackSnapshot: { hp: 10 } },
+  });
+  assert.deepEqual(commit, {
+    status: 'blocked',
+    reason: 'variable_runtime_disabled',
+    writesStore: false,
+  });
+  const undo = await runtime.undo({
+    commitResult: {
+      sessionId: 's1',
+      refs: { changedKeys: ['hp'] },
+      rollbackSnapshot: { hp: 10 },
+    },
+  });
+  assert.deepEqual(undo, {
+    status: 'blocked',
+    reason: 'variable_runtime_disabled',
+  });
+  assert.equal(writes, 0);
+  console.log('ok - paused variable runtime blocks agent preview commit and undo writes');
+}
+
+{
   const row = {
     id: 'row-1',
     template_id: 'tpl-memory',

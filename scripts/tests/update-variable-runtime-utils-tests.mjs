@@ -170,6 +170,30 @@ test('createUpdateVariableMessageApplier appends placeholder for an unconverted 
   ]]);
 });
 
+test('runtime gate prevents command writes and suppresses automatic status placeholder', () => {
+  const calls = [];
+  const applyCommands = createUpdateVariableCommandApplier({
+    chatStore: {
+      listVariables: () => ({ hp: 1 }),
+      setVariable: () => calls.push('write'),
+    },
+    isVariableRuntimeEnabled: () => false,
+  });
+  assert.equal(applyCommands('s-off', [{ type: 'set', path: ['hp'], value: 2 }]), false);
+
+  const applyMessage = createUpdateVariableMessageApplier({
+    getEffectivePersona: () => ({ source: { type: 'character_card', mvuSource: 'tavern' } }),
+    listVariableSchemas: () => ({ hp: { type: 'number' } }),
+    isVariableRuntimeEnabled: () => false,
+    extractBlocks: () => ({ blocks: [], cleaned: 'hello' }),
+    parseCommands: () => [],
+    updateMessage: () => calls.push('update'),
+    logger: { info() {}, warn() {} },
+  });
+  assert.equal(applyMessage({ id: 'm-off', role: 'assistant', raw: 'hello', content: 'hello' }, 's-off'), false);
+  assert.deepEqual(calls, []);
+});
+
 let failed = 0;
 for (const t of tests) {
   try {

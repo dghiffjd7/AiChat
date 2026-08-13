@@ -5,6 +5,47 @@
 
 import { logger } from './logger.js';
 
+const VARIABLE_MACRO_COMMANDS = new Set(['setvar', 'addvar', 'incvar', 'decvar', 'getvar', 'ifvar']);
+const VARIABLE_MACRO_HEAD_RE = /^\s*(?:setvar|addvar|incvar|decvar|getvar|ifvar)\s*::/i;
+
+export const stripPausedVariableMacros = (value = '') => {
+    const text = String(value || '');
+    if (!text.includes('{{')) return text;
+    const stack = [];
+    const ranges = [];
+    for (let index = 0; index < text.length - 1; index += 1) {
+        const pair = text.slice(index, index + 2);
+        if (pair === '{{') {
+            stack.push(index);
+            index += 1;
+            continue;
+        }
+        if (pair !== '}}' || !stack.length) continue;
+        const start = stack.pop();
+        const body = text.slice(start + 2, index).replace(/：：/g, '::');
+        if (VARIABLE_MACRO_HEAD_RE.test(body)) ranges.push([start, index + 2]);
+        index += 1;
+    }
+    if (!ranges.length) return text;
+    ranges.sort((left, right) => left[0] - right[0] || right[1] - left[1]);
+    const merged = [];
+    ranges.forEach(([start, end]) => {
+        const previous = merged[merged.length - 1];
+        if (previous && start <= previous[1]) {
+            previous[1] = Math.max(previous[1], end);
+            return;
+        }
+        merged.push([start, end]);
+    });
+    let cursor = 0;
+    let output = '';
+    merged.forEach(([start, end]) => {
+        output += text.slice(cursor, start);
+        cursor = end;
+    });
+    return output + text.slice(cursor);
+};
+
 export class MacroEngine {
     constructor(chatStore) {
         this.chatStore = chatStore;
@@ -112,6 +153,9 @@ export class MacroEngine {
     }
 
     applyVariableMacros(text, context) {
+        if (context?.variableRuntimeEnabled === false) {
+            return stripPausedVariableMacros(text);
+        }
         const useGlobal =
             context?.useGlobalVariables === true ||
             String(context?.uiMode || '').trim().toLowerCase() === 'rp';
@@ -126,13 +170,13 @@ export class MacroEngine {
         })();
 
         // Replace {{setvar::name::value}} with empty string and set local variable
-        out = out.replace(/{{setvar::([^:}]+)::([^}]*)}}/gi, (_m, name, value) => {
+        out = out.replace(/{{\s*setvar\s*::([^:}]+)::([^}]*)}}/gi, (_m, name, value) => {
             const key = String(name || '').trim();
             if (key) setVar(key, String(value ?? ''));
             return '';
         });
         // {{addvar::name::value}} - numeric add when possible
-        out = out.replace(/{{addvar::([^:}]+)::([^}]*)}}/gi, (_m, name, value) => {
+        out = out.replace(/{{\s*addvar\s*::([^:}]+)::([^}]*)}}/gi, (_m, name, value) => {
             const key = String(name || '').trim();
             if (!key) return '';
             const curRaw = getVar(key);
@@ -143,21 +187,21 @@ export class MacroEngine {
             return '';
         });
         // {{incvar::name}} / {{decvar::name}} return updated value
-        out = out.replace(/{{incvar::([^}]+)}}/gi, (_m, name) => {
+        out = out.replace(/{{\s*incvar\s*::([^}]+)}}/gi, (_m, name) => {
             const key = String(name || '').trim();
             const cur = Number(getVar(key));
             const next = (Number.isFinite(cur) ? cur : 0) + 1;
             setVar(key, String(next));
             return String(next);
         });
-        out = out.replace(/{{decvar::([^}]+)}}/gi, (_m, name) => {
+        out = out.replace(/{{\s*decvar\s*::([^}]+)}}/gi, (_m, name) => {
             const key = String(name || '').trim();
             const cur = Number(getVar(key));
             const next = (Number.isFinite(cur) ? cur : 0) - 1;
             setVar(key, String(next));
             return String(next);
         });
-        out = out.replace(/{{getvar::([^}]+)}}/gi, (_m, name) => {
+        out = out.replace(/{{\s*getvar\s*::([^}]+)}}/gi, (_m, name) => {
             const key = String(name || '').trim();
             const val = getVar(key);
             return (val === undefined || val === null) ? '' : String(val);
@@ -246,7 +290,7 @@ export class MacroEngine {
         // （避免必须塞到 extraMacros 才能替换）
         try {
             for (const [k, v] of Object.entries(context || {})) {
-                if (!k || k === 'sessionId' || k === 'user' || k === 'char' || k === 'extraMacros' || k === 'macroVariableState') continue;
+                if (!k || k === 'sessionId' || k === 'user' || k === 'char' || k === 'extraMacros' || k === 'macroVariableState' || k === 'variableRuntimeEnabled') continue;
                 const normalized = this.normalizeMacroValue(v);
                 baseVars[k] = normalized;
             }
@@ -300,8 +344,11 @@ export class MacroEngine {
 
                 // 2. 解析指令 {{cmd::arg1::arg2}}
                 const parts = trimmed.split(/::/);
-                const cmd = parts[0].toLowerCase();
-                const args = parts.slice(1);
+                const cmd = parts[0].trim().toLowerCase();
+                const rawArgs = parts.slice(1);
+                const args = VARIABLE_MACRO_COMMANDS.has(cmd)
+                    ? rawArgs.map(arg => String(arg || '').trim())
+                    : rawArgs;
 
                 // 如果没有参数且不是基础变量，可能是尚未定义的变量或者无效格式
                 if (parts.length === 1 && !Object.prototype.hasOwnProperty.call(baseVars, trimmed) && !Object.prototype.hasOwnProperty.call(baseVarsLower, trimmedLower)) {
@@ -339,6 +386,7 @@ export class MacroEngine {
         switch (cmd) {
             // --- 变量操作 ---
             case 'setvar': {
+                if (context?.variableRuntimeEnabled === false) return '';
                 // {{setvar::key::value}}
                 if (args.length < 2) return '';
                 const key = args[0];
@@ -348,6 +396,7 @@ export class MacroEngine {
                 return ''; // setvar 消耗掉标签，输出为空
             }
             case 'getvar': {
+                if (context?.variableRuntimeEnabled === false) return '';
                 // {{getvar::key::default}}
                 const key = args[0];
                 const def = args[1] || '';
@@ -355,6 +404,7 @@ export class MacroEngine {
                 return (val !== undefined && val !== null) ? val : def;
             }
             case 'addvar': {
+                if (context?.variableRuntimeEnabled === false) return '';
                 // {{addvar::key::value}}
                 if (args.length < 2) return '';
                 const key = args[0];
@@ -367,6 +417,7 @@ export class MacroEngine {
                 return '';
             }
             case 'incvar': {
+                if (context?.variableRuntimeEnabled === false) return '';
                 // {{incvar::key::amount}}
                 const key = args[0];
                 const amt = Number(args[1]) || 1;
@@ -376,6 +427,7 @@ export class MacroEngine {
                 return '';
             }
             case 'decvar': {
+                if (context?.variableRuntimeEnabled === false) return '';
                 // {{decvar::key::amount}}
                 const key = args[0];
                 const amt = Number(args[1]) || 1;
@@ -411,6 +463,7 @@ export class MacroEngine {
             
             // --- 逻辑控制 (简易版) ---
             case 'ifvar': {
+                if (context?.variableRuntimeEnabled === false) return '';
                 // {{ifvar::key::value::then::else}}
                 if (args.length < 3) return '';
                 const key = args[0];

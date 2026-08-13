@@ -1412,6 +1412,26 @@ console.log('ok - script runtime recognizes actual ESM import and export syntax'
   ]);
   assert.equal(scopedVariables.preset['preset-openai'].concurrentFirst, true);
   assert.equal(scopedVariables.preset['preset-openai'].concurrentSecond, true);
+
+  const writeCountBeforePause = calls.length;
+  runtime.bridge.isVariableRuntimeEnabled = () => false;
+  const pausedContext = runtime.buildContext('s1');
+  assert.deepEqual(pausedContext.variables, {});
+  assert.deepEqual(pausedContext.localVariables, {});
+  assert.deepEqual(pausedContext.globalVariables, {});
+  assert.deepEqual(pausedContext.characterVariables, {});
+  assert.deepEqual(pausedContext.presetVariables, {});
+  assert.equal(pausedContext.variableRuntimeEnabled, false);
+  assert.equal(await runtime.processRpc('variables.get', { key: 'nested.hp', sessionId: 's1' }), undefined);
+  assert.equal(await runtime.processRpc('variables.set', { key: 'blocked', value: true, sessionId: 's1' }), false);
+  assert.equal(await runtime.processRpc('variables.inc', { key: 'gold', delta: 10, sessionId: 's1' }), undefined);
+  assert.equal(await runtime.processRpc('variables.dec', { key: 'gold', delta: 10, sessionId: 's1' }), undefined);
+  assert.equal(calls.length, writeCountBeforePause);
+  const pausedFull = await runtime.processRpc('context.getContext', { sessionId: 's1' });
+  assert.deepEqual(pausedFull.stat_data, {});
+  assert.deepEqual(pausedFull.local_variables, {});
+  assert.deepEqual(pausedFull.global_variables, {});
+  assert.equal(pausedFull.variableRuntimeEnabled, false);
   console.log('ok - script runtime context and variable RPC include snapshots and delete support');
 }
 

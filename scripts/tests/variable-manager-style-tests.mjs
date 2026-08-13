@@ -50,6 +50,11 @@ assert.match(
 assert.match(panelSource, /VARIABLE_LIST_BATCH_SIZE\s*=\s*80/);
 assert.match(panelSource, /reconvertMvuVariables/);
 assert.match(panelSource, /initializeMvuVariables/);
+assert.match(panelSource, /启用当前会话变量运行/);
+assert.match(panelSource, /role="switch"/);
+assert.match(panelSource, /setVariableRuntimeEnabled/);
+assert.match(panelSource, /result\?\.ok\s*===\s*true/);
+assert.match(css, /\.variable-runtime-control/);
 assert.match(panelSource, /graveyard/);
 assert.match(panelSource, /event\.key === '\/'/);
 assert.match(panelSource, /event\.key\.toLowerCase\(\) === 'n'/);

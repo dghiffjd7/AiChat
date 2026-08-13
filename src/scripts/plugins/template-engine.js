@@ -355,10 +355,11 @@ const renderTemplateWithRuntime = (template, runtime) => {
 };
 
 const createRuntime = (payload) => {
-  const globals = cloneValue(payload?.globals || {});
-  const locals = cloneValue(payload?.locals || {});
-  const initials = cloneValue(payload?.initials || {});
-  const msgVars = cloneValue(payload?.messageVars || {});
+  const variableRuntimeEnabled = payload?.variableRuntimeEnabled !== false;
+  const globals = variableRuntimeEnabled ? cloneValue(payload?.globals || {}) : {};
+  const locals = variableRuntimeEnabled ? cloneValue(payload?.locals || {}) : {};
+  const initials = variableRuntimeEnabled ? cloneValue(payload?.initials || {}) : {};
+  const msgVars = variableRuntimeEnabled ? cloneValue(payload?.messageVars || {}) : {};
   const shared = { defines: cloneValue(payload?.defines || {}) };
   const context = payload?.context || {};
   const worldMeta = payload?.worldMeta || {};
@@ -395,6 +396,7 @@ const createRuntime = (payload) => {
 
   const readVar = (key, options = {}) => {
     const opts = parseOptions(options);
+    if (!variableRuntimeEnabled) return opts.defaults;
     const scope = normalizeScope(opts.scope) || 'cache';
     const path = toPath(key);
     if (!path.length) return undefined;
@@ -417,6 +419,7 @@ const createRuntime = (payload) => {
   };
 
   const writeStoreValue = (scope, path, value) => {
+    if (!variableRuntimeEnabled) return false;
     if (scope === 'message') {
       setByPath(msgVars, path, value);
       return true;
@@ -1052,11 +1055,22 @@ const compileTemplate = (template) => {
   return fn;
 };
 
-const createRuntime = ({ chatStore, sessionId, messageVars, initialVars, state, context, readOnly = false }) => {
-  const sourceGlobals = chatStore?.listGlobalVariables?.() || {};
-  const sourceLocals = chatStore?.listVariables?.(sessionId) || {};
-  const sourceInitials = initialVars || chatStore?.listInitialVariables?.(sessionId) || {};
-  const sourceMessageVars = messageVars || {};
+const createRuntime = ({
+  chatStore,
+  sessionId,
+  messageVars,
+  initialVars,
+  state,
+  context,
+  readOnly = false,
+  variableRuntimeEnabled = true,
+}) => {
+  const sourceGlobals = variableRuntimeEnabled ? (chatStore?.listGlobalVariables?.() || {}) : {};
+  const sourceLocals = variableRuntimeEnabled ? (chatStore?.listVariables?.(sessionId) || {}) : {};
+  const sourceInitials = variableRuntimeEnabled
+    ? (initialVars || chatStore?.listInitialVariables?.(sessionId) || {})
+    : {};
+  const sourceMessageVars = variableRuntimeEnabled ? (messageVars || {}) : {};
   const globals = readOnly ? cloneValue(sourceGlobals) : sourceGlobals;
   const locals = readOnly ? cloneValue(sourceLocals) : sourceLocals;
   const initials = readOnly ? cloneValue(sourceInitials) : sourceInitials;
@@ -1095,6 +1109,7 @@ const createRuntime = ({ chatStore, sessionId, messageVars, initialVars, state, 
 
   const readVar = (key, options = {}) => {
     const opts = parseOptions(options);
+    if (!variableRuntimeEnabled) return opts.defaults;
     const scope = normalizeScope(opts.scope) || 'cache';
     const path = toPath(key);
     if (!path.length) return undefined;
@@ -1117,6 +1132,7 @@ const createRuntime = ({ chatStore, sessionId, messageVars, initialVars, state, 
   };
 
   const writeStoreValue = (scope, path, value) => {
+    if (!variableRuntimeEnabled) return false;
     if (scope === 'message') {
       setByPath(msgVars, path, value);
       return true;
@@ -1346,6 +1362,7 @@ const createRuntime = ({ chatStore, sessionId, messageVars, initialVars, state, 
           context: { ...runtimeContext, data: payload },
           state: shared,
           readOnly,
+          variableRuntimeEnabled,
         });
         return String(res.text ?? '');
       } catch {
@@ -1463,11 +1480,21 @@ const createRuntime = ({ chatStore, sessionId, messageVars, initialVars, state, 
   return { runtime, messageVars: msgVars, shared };
 };
 
-const createRuntimeSnapshot = ({ chatStore, sessionId, messageVars, initialVars, state, context } = {}) => {
-  const globals = chatStore?.listGlobalVariables?.() || {};
-  const locals = chatStore?.listVariables?.(sessionId) || {};
-  const initials = initialVars || chatStore?.listInitialVariables?.(sessionId) || {};
-  const msgVars = messageVars || {};
+const createRuntimeSnapshot = ({
+  chatStore,
+  sessionId,
+  messageVars,
+  initialVars,
+  state,
+  context,
+  variableRuntimeEnabled = true,
+} = {}) => {
+  const globals = variableRuntimeEnabled ? (chatStore?.listGlobalVariables?.() || {}) : {};
+  const locals = variableRuntimeEnabled ? (chatStore?.listVariables?.(sessionId) || {}) : {};
+  const initials = variableRuntimeEnabled
+    ? (initialVars || chatStore?.listInitialVariables?.(sessionId) || {})
+    : {};
+  const msgVars = variableRuntimeEnabled ? (messageVars || {}) : {};
   const shared = state || { defines: Object.create(null) };
   return {
     globals: cloneValue(globals),
@@ -1751,6 +1778,7 @@ export const renderTemplateText = (rawText, options = {}) => {
     state,
     context: options.context,
     readOnly: options.readOnly === true,
+    variableRuntimeEnabled: options.variableRuntimeEnabled !== false,
   });
   const startAt = nowMs();
   const timeoutMs = TEMPLATE_TIMEOUT_MS;
@@ -1813,7 +1841,7 @@ export const renderTemplateTextAsync = async (rawText, options = {}) => {
     return {
       text: template,
       error: null,
-      messageVars: options.messageVars || {},
+      messageVars: options.variableRuntimeEnabled === false ? {} : (options.messageVars || {}),
       state,
     };
   }
@@ -1827,6 +1855,7 @@ export const renderTemplateTextAsync = async (rawText, options = {}) => {
     initialVars: options.initialVars,
     state,
     context: safeContext,
+    variableRuntimeEnabled: options.variableRuntimeEnabled !== false,
   });
   const { worlds, worldMeta } = buildWorldSnapshot(safeContext, templateWorlds);
   const payload = {
@@ -1842,6 +1871,7 @@ export const renderTemplateTextAsync = async (rawText, options = {}) => {
     character: safeContext?.character,
     preset: safeContext?.preset,
     escapeTemplateOutput: stage !== 'generate',
+    variableRuntimeEnabled: options.variableRuntimeEnabled !== false,
   };
   if (stage === 'render') {
     payload.chunked = true;
@@ -1867,7 +1897,7 @@ export const renderTemplateTextAsync = async (rawText, options = {}) => {
     const worker = getTemplateWorker();
     const result = await worker.render(payload, TEMPLATE_TIMEOUT_MS);
     const durationMs = Math.round(nowMs() - startAt);
-    if (options.readOnly !== true && result?.globals && options.chatStore) {
+    if (options.variableRuntimeEnabled !== false && options.readOnly !== true && result?.globals && options.chatStore) {
       applyVariableUpdates({
         chatStore: options.chatStore,
         sessionId: options.sessionId,
@@ -1876,7 +1906,7 @@ export const renderTemplateTextAsync = async (rawText, options = {}) => {
         scope: 'global',
       });
     }
-    if (options.readOnly !== true && result?.locals && options.chatStore) {
+    if (options.variableRuntimeEnabled !== false && options.readOnly !== true && result?.locals && options.chatStore) {
       applyVariableUpdates({
         chatStore: options.chatStore,
         sessionId: options.sessionId,
@@ -1885,7 +1915,7 @@ export const renderTemplateTextAsync = async (rawText, options = {}) => {
         scope: 'local',
       });
     }
-    if (options.readOnly !== true && result?.initials && options.chatStore) {
+    if (options.variableRuntimeEnabled !== false && options.readOnly !== true && result?.initials && options.chatStore) {
       applyVariableUpdates({
         chatStore: options.chatStore,
         sessionId: options.sessionId,

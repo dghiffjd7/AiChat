@@ -212,6 +212,30 @@ const { renderTemplateMessages } = await import('../../src/scripts/plugins/templ
 }
 
 {
+  const variableWrites = [];
+  const chatStore = {
+    listGlobalVariables: () => ({ secret: 'global' }),
+    listVariables: () => ({ secret: 'local' }),
+    listInitialVariables: () => ({ secret: 'initial' }),
+    setVariable: (...args) => variableWrites.push(args),
+  };
+  const result = await renderTemplateMessages([{
+    role: 'system',
+    content: "<% setvar('blocked','value',{scope:'local'}) %><%= getvar('secret',{scope:'local',defaults:'empty'}) %>",
+  }], {
+    stage: 'generate',
+    chatStore,
+    sessionId: 'runtime-off-session',
+    context: {},
+    variableRuntimeEnabled: false,
+  });
+
+  assert.equal(result.messages[0].content, 'empty');
+  assert.deepEqual(variableWrites, []);
+  console.log('ok - 变量运行关闭时 EJS 不读取或写入变量存储');
+}
+
+{
   const result = await renderTemplateMessages([{
     role: 'system',
     content: "<% activewi('world-a','Entry',true) %>done",

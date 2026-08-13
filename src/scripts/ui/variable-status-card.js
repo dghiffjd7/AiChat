@@ -1,3 +1,8 @@
+import {
+  isVariableRuntimeEnabledForSession,
+  VARIABLE_RUNTIME_CHANGED_EVENT,
+} from './chat/variable-runtime-policy-utils.js';
+
 const clamp = (value, min = 0, max = 1) => Math.max(min, Math.min(max, value));
 
 const stringifyValue = (value) => {
@@ -57,6 +62,7 @@ const resolveProgress = (value, schema = {}) => {
 const collectEntries = (chatStore, sessionId) => {
   const sid = String(sessionId || '').trim();
   if (!sid) return [];
+  if (!isVariableRuntimeEnabledForSession(chatStore, sid)) return [];
   const schemas = chatStore?.listVariableSchemas?.(sid) || {};
   const vars = chatStore?.listVariables?.(sid) || {};
   return Object.entries(schemas)
@@ -158,6 +164,11 @@ export class VariableStatusCard {
       const sid = String(ev?.detail?.sessionId || '').trim();
       if (!sid) return;
       if (sid !== this.sessionId) return;
+      this.render(sid);
+    });
+    window.addEventListener(VARIABLE_RUNTIME_CHANGED_EVENT, (ev) => {
+      const sid = String(ev?.detail?.sessionId || '').trim();
+      if (!sid || sid !== this.sessionId) return;
       this.render(sid);
     });
   }

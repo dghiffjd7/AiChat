@@ -33,10 +33,18 @@ import {
 {
   const appBridge = {};
   const ok = registerVariableRuntimeBridgeContract(appBridge, {
+    isVariableRuntimeEnabled: sessionId => sessionId !== 'off',
+    setVariableRuntimeEnabled: (sessionId, enabled) => ({ sessionId, enabled }),
     initializeMvuVariables: sessionId => ({ sessionId, applied: true }),
     reconvertMvuVariables: async options => ({ ...options, recovered: true }),
   });
   assert.equal(ok, true);
+  assert.equal(appBridge.isVariableRuntimeEnabled('on'), true);
+  assert.equal(appBridge.isVariableRuntimeEnabled('off'), false);
+  assert.deepEqual(appBridge.setVariableRuntimeEnabled('s1', false), {
+    sessionId: 's1',
+    enabled: false,
+  });
   assert.deepEqual(appBridge.initializeMvuVariables('rp:hero'), {
     sessionId: 'rp:hero',
     applied: true,
@@ -763,5 +771,30 @@ import {
     ),
     '冷启动预载当前会话历史前必须先定向载入世界书',
   );
+  const snapshotStart = appSource.indexOf('const buildSessionVariableSnapshot = async');
+  const snapshotEnd = appSource.indexOf('const replayDeferredRpGreetingInitialization', snapshotStart);
+  const snapshotBody = appSource.slice(snapshotStart, snapshotEnd);
+  assert.doesNotMatch(
+    snapshotBody,
+    /isVariableRuntimeEnabled/,
+    '暂停只冻结变量执行；swipe/归档结构快照必须持续维护，避免分支基线损坏',
+  );
+  const swipeChangeStart = appSource.indexOf('ui.onSwipeChange(async');
+  const swipeChangeEnd = appSource.indexOf('ui.onSwipeRegen(async', swipeChangeStart);
+  const swipeChangeBody = appSource.slice(swipeChangeStart, swipeChangeEnd);
+  assert.match(
+    swipeChangeBody,
+    /if \(canPersistOutgoingSwipeMemoryState[\s\S]*?\n\s*}\s*\n\s*if \(variableSwipeActive/,
+    '变量分支快照持久化不能被记忆快照 tracker 的条件一起拦截',
+  );
+  const resetStart = appSource.indexOf('const resetRpHistory = async');
+  const resetEnd = appSource.indexOf('patchDebugUiRegistry', resetStart);
+  const resetBody = appSource.slice(resetStart, resetEnd);
+  assert.match(resetBody, /resetVariableState:[\s\S]*?resetRpGreetingVariableState/);
+  assert.match(resetBody, /chatStore\.clear\(sid\);\s*resetRpGreetingVariableState/);
+  assert.doesNotMatch(resetBody, /isVariableRuntimeEnabled[\s\S]*?resetRpGreetingVariableState/);
+  assert.match(greetingBody, /setVariableRuntimePendingGreetingInit/);
+  assert.match(appSource, /replayDeferredRpGreetingInitialization[\s\S]*?buildRpGreetingMessage\(greeting, sid, \{ initializationOnly: true \}\)/);
+  assert.match(appSource, /refreshWorldVariableSchemasForSession[\s\S]*?evaluateStageTransition/);
   console.log('ok - cold session rendering and RP greeting preload targeted worldbooks');
 }

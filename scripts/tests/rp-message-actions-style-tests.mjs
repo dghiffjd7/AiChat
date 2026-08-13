@@ -46,6 +46,10 @@ assert.match(
 );
 assert.match(
   creativeCss,
+  /body\[data-ui-mode='chat'\]\s+\.QQ_chat_charmsg\.has-rp-message-actions\s+\.chat-message-footer\.is-assistant\s*>\s*\.chat-time-row\.is-assistant\s*>\s*\.QQ_chat_time\s*\{[^}]*justify-self:\s*end/s,
+);
+assert.match(
+  creativeCss,
   /body:is\(\[data-ui-mode='chat'\],\s*\[data-ui-mode='rp'\]\)\s+\.QQ_chat_mymsg\.has-rp-message-actions\s+\.chat-time-row\s*>\s*\.rp-message-actions\.is-user\s*\{[^}]*margin-right:\s*0/s,
 );
 assert.match(

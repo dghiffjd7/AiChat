@@ -55,8 +55,8 @@ const createFakeDocument = () => {
   });
   assert.equal(stack.className.includes('chat-bubble-stack'), true);
   assert.equal(stack.className.includes('is-user'), true);
-  assert.deepEqual(stack.children, [bubble, reactionSummary, reactionBtn]);
-  console.log('ok - buildBubbleStackCore composes bubble reaction summary and trigger button');
+  assert.deepEqual(stack.children, [bubble, reactionBtn]);
+  console.log('ok - buildBubbleStackCore keeps persistent reactions out of the bubble content stack');
 }
 
 {
@@ -70,8 +70,34 @@ const createFakeDocument = () => {
     messageSidecarEl: sidecar,
     reactionSummaryEl: reactionSummary,
   });
-  assert.deepEqual(stack.children, [bubble, sidecar, reactionSummary]);
-  console.log('ok - buildBubbleStackCore places optional message sidecar outside bubble content before reactions');
+  assert.deepEqual(stack.children, [bubble, sidecar]);
+  console.log('ok - buildBubbleStackCore keeps optional sidecars adjacent to bubble content');
+}
+
+{
+  const documentLike = createFakeDocument();
+  const wrapper = documentLike.createElement('div');
+  const avatar = documentLike.createElement('img');
+  const bubbleStack = documentLike.createElement('div');
+  const reactionSummary = documentLike.createElement('div');
+  reactionSummary.className = 'chat-reaction-summary';
+  appendStandardMessageLayoutCore({
+    documentLike,
+    wrapper,
+    avatarImg: avatar,
+    bubbleStack,
+    reactionSummaryEl: reactionSummary,
+    message: { id: 'chat-user-reaction', role: 'user', time: '09:45', status: 'sent', meta: {} },
+    isUser: true,
+    uiMode: 'chat',
+  });
+  const reactionFooter = bubbleStack.children[0];
+  assert.equal(reactionFooter.className, 'chat-message-footer is-user');
+  assert.equal(reactionFooter.children[0], reactionSummary);
+  assert.equal(reactionFooter.children[1].className, 'chat-time-row');
+  assert.equal(reactionFooter.children[1].children.at(-1).textContent, '09:45');
+  assert.deepEqual(wrapper.children[0].children, [bubbleStack]);
+  console.log('ok - chat user reactions and metadata share one two-zone bubble footer');
 }
 
 {
@@ -195,11 +221,14 @@ const createFakeDocument = () => {
   const wrapper = documentLike.createElement('div');
   const avatar = documentLike.createElement('img');
   const bubbleStack = documentLike.createElement('div');
+  const reactionSummary = documentLike.createElement('div');
+  reactionSummary.className = 'chat-reaction-summary';
   appendStandardMessageLayoutCore({
     documentLike,
     wrapper,
     avatarImg: avatar,
     bubbleStack,
+    reactionSummaryEl: reactionSummary,
     message: { role: 'assistant', name: 'Bot', time: '11:20', meta: { showName: true } },
     isUser: false,
     uiMode: 'chat',
@@ -213,10 +242,14 @@ const createFakeDocument = () => {
   assert.equal(wrapper.className.includes('has-rp-message-actions'), true);
   assert.equal(contentWrap.children[0].textContent, 'Bot');
   assert.equal(contentWrap.children[1], bubbleStack);
-  const footer = contentWrap.children[2];
-  assert.equal(footer.className.includes('is-assistant'), true);
-  assert.equal(footer.children[0].textContent, '11:20');
-  const actions = footer.children[1];
+  assert.equal(contentWrap.children.length, 2);
+  const reactionFooter = bubbleStack.children[0];
+  assert.equal(reactionFooter.className, 'chat-message-footer is-assistant');
+  assert.equal(reactionFooter.children[0], reactionSummary);
+  const metadata = reactionFooter.children[1];
+  assert.equal(metadata.className.includes('is-assistant'), true);
+  assert.equal(metadata.children[0].textContent, '11:20');
+  const actions = metadata.children[1];
   assert.equal(actions.children.length, 1);
   assert.deepEqual(
     actions.children[0].children.map(button => button.dataset.rpMessageAction),

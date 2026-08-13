@@ -901,9 +901,11 @@ class AppBridge {
 
   processTextMacros(text, extraContext = {}) {
     if (!this.macroEngine) return text || '';
+    const sessionId = String(extraContext?.sessionId || this.activeSessionId || '').trim();
     const ctx = {
       sessionId: this.activeSessionId,
       ...extraContext,
+      variableRuntimeEnabled: this.isVariableRuntimeEnabled?.(sessionId) !== false,
     };
     return this.macroEngine.process(text, ctx);
   }
@@ -3234,12 +3236,15 @@ class AppBridge {
     const worldIds = Array.isArray(resolvedWorldState?.worldIds) ? resolvedWorldState.worldIds : [];
     let localVars = {};
     let globalVars = {};
-    try {
-      localVars = this.chatStore?.listVariables?.(sid) || {};
-    } catch {}
-    try {
-      globalVars = this.chatStore?.listGlobalVariables?.() || {};
-    } catch {}
+    const variableRuntimeEnabled = this.isVariableRuntimeEnabled?.(sid) !== false;
+    if (variableRuntimeEnabled) {
+      try {
+        localVars = this.chatStore?.listVariables?.(sid) || {};
+      } catch {}
+      try {
+        globalVars = this.chatStore?.listGlobalVariables?.() || {};
+      } catch {}
+    }
     const isShared = typeof this.isSharedVariableSession === 'function'
       ? Boolean(this.isSharedVariableSession(sid))
       : false;
@@ -3985,6 +3990,7 @@ class AppBridge {
             stage: 'generate',
             chatStore: this.chatStore,
             sessionId,
+            variableRuntimeEnabled: this.isVariableRuntimeEnabled?.(sessionId) !== false,
             context: {
               ...(nextContext || {}),
               messages,
@@ -4542,6 +4548,7 @@ class AppBridge {
         momentCommentTaskMode === 'publish_comment');
     const suppressGenericReplyPrompt = isMomentCommentTask;
     const sessionId = String(context?.session?.id || '').trim();
+    const variableRuntimeEnabled = this.isVariableRuntimeEnabled?.(sessionId) !== false;
     const uiModeRaw = String(context?.meta?.uiMode || context?.uiMode || '').trim().toLowerCase();
     const uiMode = uiModeRaw === 'rp' || (!uiModeRaw && sessionId.startsWith('rp:')) ? 'rp' : 'chat';
     const presetUiMode = normalizeBridgePresetUiMode(uiModeRaw, {
@@ -4889,7 +4896,11 @@ class AppBridge {
 	      return cleaned.join('\n\n');
 	    };
 	    const rawExtraPromptBlocks = Array.isArray(context?.meta?.extraPromptBlocks)
-	      ? context.meta.extraPromptBlocks
+	      ? context.meta.extraPromptBlocks.filter((block) => {
+	          if (variableRuntimeEnabled || !block || typeof block !== 'object') return true;
+	          const source = String(block.source || block.promptSource || '').trim().toLowerCase();
+	          return source !== 'variable_rule' && source !== 'stage';
+	        })
 	      : [];
 	    const normalizeExtraPromptPosition = (value) => {
 	      const token = String(value || '').trim().toLowerCase();
@@ -5812,6 +5823,7 @@ const stringifyMessageContent = (content) => {
                 sourceKind,
                 injectMode: 'initial_variables',
               });
+              if (!variableRuntimeEnabled) return;
               try {
                 const raw = processTextMacrosWithPendingFlag(entry?.content || '', macroContext);
                 const parsed = JSON.parse(String(raw || '').trim() || '{}');
@@ -8268,6 +8280,9 @@ const stringifyMessageContent = (content) => {
 
   buildWorldConditionRuntimeContext(sessionId = '') {
     const sid = String(sessionId || this.activeSessionId || '').trim();
+    if (this.isVariableRuntimeEnabled?.(sid) === false) {
+      return buildVariableContext({ baseVars: {}, globalVars: {}, localVars: {} });
+    }
     const useGlobalVariables = Boolean(
       sid
       && typeof this.isSharedVariableSession === 'function'
@@ -8339,6 +8354,7 @@ const stringifyMessageContent = (content) => {
     } = buildWorldActivationSettings(worldSettings);
 
     const runtimeSessionId = String(scopeSessionId || this.activeSessionId || '').trim();
+    const variableRuntimeEnabled = this.isVariableRuntimeEnabled?.(runtimeSessionId) !== false;
     const useGlobalVariables = Boolean(
       runtimeSessionId &&
       typeof this.isSharedVariableSession === 'function' &&
@@ -8351,11 +8367,19 @@ const stringifyMessageContent = (content) => {
     refreshRuntimeConditionContext();
     const evalConditionGroup = (when) => {
       if (!when || typeof when !== 'object') return true;
+      if (!variableRuntimeEnabled && !isTrivialConditionTree(when)) return false;
       return evaluateConditionTree(when, runtimeConditionContext);
     };
     const evaluateEntryWhen = (when) => {
       if (!when || typeof when !== 'object' || isTrivialConditionTree(when)) {
         return { configured: false, passed: true, explanation: null };
+      }
+      if (!variableRuntimeEnabled) {
+        return {
+          configured: true,
+          passed: false,
+          explanation: { runtimeResult: false, reason: 'variable_runtime_disabled' },
+        };
       }
       const explanation = explainConditionTree(when, runtimeConditionContext);
       return {
@@ -8414,7 +8438,7 @@ const stringifyMessageContent = (content) => {
 
     const ensureDefinedVariable = (spec) => {
       const chatStore = this.chatStore;
-      if (!chatStore || !runtimeSessionId) return;
+      if (!variableRuntimeEnabled || !chatStore || !runtimeSessionId) return;
       if (!spec || typeof spec !== 'object') return;
       const name = String(spec.name || '').trim();
       if (!name) return;
@@ -8472,10 +8496,10 @@ const stringifyMessageContent = (content) => {
       loadWorld: (sourceId) => this.worldStore.load(sourceId),
     });
     if (!baseEntries.length) return [];
-    if (variableDefineStrategy === 'legacy_eager') {
+    if (variableRuntimeEnabled && variableDefineStrategy === 'legacy_eager') {
       const changed = syncPromptBlockVariableSchemasForEntries(baseEntries);
       if (changed) refreshRuntimeConditionContext();
-    } else if (variableDefineStrategy === 'first_hit') {
+    } else if (variableRuntimeEnabled && variableDefineStrategy === 'first_hit') {
       // 条目门控先于“命中”运行；其变量若也等命中后才建立会形成永远无法命中的循环。
       const changed = syncEntryGateVariableSchemasForEntries(baseEntries);
       if (changed) refreshRuntimeConditionContext();
@@ -8497,7 +8521,7 @@ const stringifyMessageContent = (content) => {
       applyProbability: true,
       evaluateEntryWhen,
     });
-    if (variableDefineStrategy === 'first_hit') {
+    if (variableRuntimeEnabled && variableDefineStrategy === 'first_hit') {
       const changed = syncPromptBlockVariableSchemasForEntries(activation.activeEntries);
       if (changed) refreshRuntimeConditionContext();
     }
@@ -8728,6 +8752,13 @@ const stringifyMessageContent = (content) => {
           return { configured: false, passed: true, explanation: null };
         }
         const runtimeSessionId = String(matchContext?.sessionId || this.activeSessionId || '').trim();
+        if (this.isVariableRuntimeEnabled?.(runtimeSessionId) === false) {
+          return {
+            configured: true,
+            passed: false,
+            explanation: { runtimeResult: false, reason: 'variable_runtime_disabled' },
+          };
+        }
         const explanation = explainConditionTree(
           when,
           this.buildWorldConditionRuntimeContext(runtimeSessionId),

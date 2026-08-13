@@ -63,9 +63,12 @@ const evalCondition = (expr, vars) => {
 };
 
 export class VariableRuleEngine {
-  constructor({ chatStore, appBridge }) {
+  constructor({ chatStore, appBridge, isVariableRuntimeEnabled } = {}) {
     this.chatStore = chatStore;
     this.appBridge = appBridge || null;
+    this.isVariableRuntimeEnabled = typeof isVariableRuntimeEnabled === 'function'
+      ? isVariableRuntimeEnabled
+      : () => true;
     this.turnCounts = new Map();
     this.running = new Set();
     this.warnedInvalidConditions = new Set();
@@ -100,7 +103,7 @@ export class VariableRuleEngine {
 
   async handleAfterReceive({ sessionId, message, useGlobalVariables = false }) {
     const sid = String(sessionId || '').trim();
-    if (!sid) return;
+    if (!sid || !this.isVariableRuntimeEnabled(sid)) return;
     const next = (this.turnCounts.get(sid) || 0) + 1;
     this.turnCounts.set(sid, next);
     await this.runRules(sid, { type: 'every_turn', turn: next, message, useGlobalVariables });
@@ -114,7 +117,7 @@ export class VariableRuleEngine {
 
   async runRules(sessionId, context) {
     const sid = String(sessionId || '').trim();
-    if (!sid) return;
+    if (!sid || !this.isVariableRuntimeEnabled(sid)) return;
     if (this.running.has(sid)) return;
     const rules = this.getRules(sid).filter(r => r.enabled);
     if (!rules.length) return;

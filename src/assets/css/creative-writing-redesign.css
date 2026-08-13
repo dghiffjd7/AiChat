@@ -637,6 +637,14 @@ body[data-ui-mode='chat']
   justify-self: start;
 }
 
+body[data-ui-mode='chat']
+  .QQ_chat_charmsg.has-rp-message-actions
+  .chat-message-footer.is-assistant
+  > .chat-time-row.is-assistant
+  > .QQ_chat_time {
+  justify-self: end;
+}
+
 body:is([data-ui-mode='chat'], [data-ui-mode='rp'])
   .QQ_chat_mymsg.has-rp-message-actions
   .chat-time-row

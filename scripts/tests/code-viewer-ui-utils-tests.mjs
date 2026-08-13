@@ -16,6 +16,19 @@ const createFakeDocument = () => {
       this.disabled = false;
       this.listeners = new Map();
       this.focused = false;
+      this.attributes = {};
+      const classes = new Set();
+      this.classList = {
+        add: value => classes.add(value),
+        remove: value => classes.delete(value),
+        contains: value => classes.has(value),
+        toggle: (value, force) => {
+          const next = force === undefined ? !classes.has(value) : Boolean(force);
+          if (next) classes.add(value);
+          else classes.delete(value);
+          return next;
+        },
+      };
     }
     appendChild(child) {
       this.children.push(child);
@@ -30,6 +43,12 @@ const createFakeDocument = () => {
     }
     focus() {
       this.focused = true;
+    }
+    setAttribute(name, value) {
+      this.attributes[name] = String(value);
+    }
+    getAttribute(name) {
+      return this.attributes[name] ?? null;
     }
   }
   const listeners = new Map();
@@ -99,6 +118,59 @@ const createFakeDocument = () => {
   assert.deepEqual(saves, [['m2', 'after']]);
   assert.equal(overlay.style.display, 'none');
   console.log('ok - code viewer save forwards edited assistant raw text and hides viewer');
+}
+
+{
+  const documentLike = createFakeDocument();
+  const keydown = [];
+  const runtime = createCodeViewerUiRuntime({
+    documentLike,
+    windowLike: {
+      addEventListener(type, handler) {
+        keydown.push([type, handler]);
+      },
+    },
+    schedule: cb => cb(),
+    onSaveEdit: async () => true,
+  });
+  const overlay = runtime.openCodeViewer(null, {
+    message: { role: 'assistant', id: 'creative-reply' },
+    text: 'creative raw reply',
+    canSave: true,
+    context: { sourceKind: 'creative_raw_original' },
+  });
+  const { panel, maximizeBtn } = overlay.__chatappRefs;
+  assert.equal(maximizeBtn.style.display, 'inline-flex');
+  assert.equal(maximizeBtn.getAttribute('aria-label'), '放大原回复编辑器');
+  assert.equal(maximizeBtn.getAttribute('aria-pressed'), 'false');
+  assert.match(maximizeBtn.innerHTML, /code-viewer-maximize-expand/);
+  assert.match(maximizeBtn.innerHTML, /code-viewer-maximize-restore/);
+
+  maximizeBtn.emit('click', { stopPropagation() {} });
+  assert.equal(overlay.dataset.maximized, '1');
+  assert.equal(panel.style.maxWidth, 'none');
+  assert.equal(panel.style.borderRadius, '0px');
+  assert.equal(maximizeBtn.getAttribute('aria-pressed'), 'true');
+  assert.equal(maximizeBtn.getAttribute('aria-label'), '还原原回复编辑器');
+
+  keydown[0][1]({ key: 'Escape', preventDefault() {} });
+  assert.equal(overlay.style.display, 'block', '全屏时第一次 Escape 应只还原面板');
+  assert.equal(overlay.dataset.maximized, '0');
+  assert.equal(panel.style.maxWidth, '920px');
+
+  maximizeBtn.emit('click', { stopPropagation() {} });
+  overlay.__chatappRefs.closeBtn.emit('click');
+  assert.equal(overlay.style.display, 'none');
+  assert.equal(overlay.dataset.maximized, '0', '关闭编辑器时不得遗留全屏状态');
+
+  runtime.openCodeViewer(overlay, {
+    message: { role: 'assistant', id: 'social-reply' },
+    text: 'social raw reply',
+    canSave: true,
+    context: { sourceKind: 'social_turn_raw' },
+  });
+  assert.equal(maximizeBtn.style.display, 'none', '非创意写作 AI 回复不应扩张此次功能范围');
+  console.log('ok - creative reply editor maximizes, restores on Escape, and resets outside its target scope');
 }
 
 {

@@ -150,8 +150,10 @@ export const createSillyTavernSlashCompat = ({
   const getInputEl = () => getUi()?.inputEl || getDocument()?.getElementById?.('composer-input');
   const getSendButton = () => getUi()?.sendBtn || getDocument()?.getElementById?.('send-button');
   const getToaster = () => getToastr?.() || getWindow()?.toastr || null;
+  const isVariableRuntimeEnabled = () => getBridge()?.isVariableRuntimeEnabled?.(getSessionId()) !== false;
 
   const resolveVar = (key, { global = false } = {}) => {
+    if (!isVariableRuntimeEnabled()) return undefined;
     const name = normalizeKey(key);
     if (!name) return undefined;
     const store = getStore();
@@ -161,6 +163,7 @@ export const createSillyTavernSlashCompat = ({
   };
 
   const setVar = (key, value, { global = false } = {}) => {
+    if (!isVariableRuntimeEnabled()) return false;
     const name = normalizeKey(key);
     if (!name) return false;
     const store = getStore();
@@ -170,6 +173,7 @@ export const createSillyTavernSlashCompat = ({
   };
 
   const deleteVar = (key, { global = false } = {}) => {
+    if (!isVariableRuntimeEnabled()) return false;
     const name = normalizeKey(key);
     if (!name) return false;
     const store = getStore();
@@ -333,6 +337,10 @@ export const createSillyTavernSlashCompat = ({
   };
 
   const runVariableCommand = (parsed, { global = false, op = 'get' } = {}) => {
+    if (!isVariableRuntimeEnabled()) {
+      state.pipe = '';
+      return true;
+    }
     const keyWasNamed = hasOwn(parsed?.named, 'key');
     const key = getVariableKey(parsed);
     if (!key) return false;

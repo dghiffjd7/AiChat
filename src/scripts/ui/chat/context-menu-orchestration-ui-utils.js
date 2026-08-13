@@ -25,6 +25,7 @@ export const showContextMenuCore = ({
   createContextMenuReactionRow = null,
   defaultReactionEmojis = [],
   isSelfReaction = null,
+  toggleReaction = null,
   createContextMenuActionButton = null,
   createContextMenuDivider = null,
   dispatchContextMenuAction = null,
@@ -77,7 +78,8 @@ export const showContextMenuCore = ({
       isSelfReaction,
       onToggle: (emoji) => {
         contextMenu.style.display = 'none';
-        actionHandler?.('toggle-reaction', resolvedMessage, { emoji });
+        if (typeof toggleReaction === 'function') toggleReaction(resolvedMessage, emoji);
+        else actionHandler?.('toggle-reaction', resolvedMessage, { emoji });
       },
     });
     if (reactionRow) contextMenu.appendChild(reactionRow);

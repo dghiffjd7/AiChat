@@ -177,6 +177,35 @@ test('StageManager exposes diagnostics for unsupported stage condition syntax', 
   assert.equal(Boolean(state?.diagnosticsByStageId?.broken), true);
 });
 
+test('variable rules and stage runtime pause without mutating state', async () => {
+  const writes = [];
+  const chatStore = {
+    listVariableRules: () => [{
+      id: 'paused-rule',
+      enabled: true,
+      trigger: { type: 'every_turn' },
+      action: { type: 'set_value', target: 'hp', value: 0 },
+    }],
+    listVariables: () => ({ hp: 10 }),
+    listGlobalVariables: () => ({}),
+    setVariable: (...args) => writes.push(args),
+    getStageSchema: () => ({
+      currentStageVar: 'stage',
+      stages: [{ id: 'one', condition: '', prompt: '不应注入' }],
+    }),
+    getVariable: () => '',
+  };
+  const isVariableRuntimeEnabled = () => false;
+  const ruleEngine = new VariableRuleEngine({ chatStore, appBridge: null, isVariableRuntimeEnabled });
+  const stageManager = new StageManager({ chatStore, appBridge: null, isVariableRuntimeEnabled });
+
+  await ruleEngine.handleAfterReceive({ sessionId: 's-off', message: {} });
+  assert.equal(await stageManager.evaluateStageTransition('s-off', { force: true }), false);
+  assert.equal(stageManager.resolveStage('s-off'), null);
+  assert.deepEqual(stageManager.getPromptBlocks('s-off'), []);
+  assert.deepEqual(writes, []);
+});
+
 let failed = 0;
 for (const t of tests) {
   try {

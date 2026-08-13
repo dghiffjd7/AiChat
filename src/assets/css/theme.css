@@ -941,9 +941,17 @@ body[data-theme-mode='dark'] :is(.chat-message-context-menu, .chat-reaction-pick
   box-shadow: 0 18px 44px rgba(1, 4, 9, 0.52) !important;
 }
 
+body[data-theme-mode='dark'] .chat-reaction-quick-bar {
+  background: transparent !important;
+  border-color: transparent !important;
+  box-shadow: none !important;
+}
+
 body[data-theme-mode='dark'] .chat-reaction-trigger,
 body[data-theme-mode='dark'] .chat-context-menu-action-icon,
-body[data-theme-mode='dark'] .chat-context-reaction-row .chat-reaction-option {
+body[data-theme-mode='dark'] .chat-context-reaction-row .chat-reaction-option,
+body[data-theme-mode='dark'] .chat-reaction-picker-search,
+body[data-theme-mode='dark'] .chat-reaction-picker-close {
   background: rgba(var(--app-tint-neutral-rgb), 0.06) !important;
   border-color: var(--app-border-subtle) !important;
 }

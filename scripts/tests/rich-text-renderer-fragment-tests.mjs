@@ -1054,6 +1054,15 @@ test('keeps iframe diagnostic regex escapes inside generated srcdoc script', () 
   assert.doesNotMatch(source, /\*, \*::before, \*::after \{[^}]*max-width/i);
 });
 
+test('runtime toggle skips the doomed iframe broadcast for the active session', () => {
+  const source = fs.readFileSync(path.join(process.cwd(), 'src/scripts/ui/chat/rich-text-renderer.js'), 'utf8');
+  const start = source.indexOf("window.addEventListener('chatapp-variable-runtime-changed'");
+  const body = source.slice(start, source.indexOf('\n    });', start) + 8);
+  assert.match(body, /getActiveSessionId/);
+  assert.match(body, /sid\s*&&\s*sid\s*!==\s*activeSid/);
+  assert.doesNotMatch(body, /if \(sid\) broadcastMvuVars\(sid\)/);
+});
+
 test('maps Tavern swipe_id to RP alternate greetings without card-specific rules', () => {
   const greetingState = {
     greetings: [

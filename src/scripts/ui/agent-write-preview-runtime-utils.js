@@ -326,6 +326,7 @@ export const createMemoryPreviewCommitRuntime = ({
 
 export const createVariablePreviewCommitRuntime = ({
   chatStore = null,
+  isVariableRuntimeEnabled = () => true,
 } = {}) => ({
   commit: async ({ args = {}, previewResult = {} } = {}) => {
     const sid = trim(args.sessionId);
@@ -334,6 +335,9 @@ export const createVariablePreviewCommitRuntime = ({
     const changedKeys = Object.keys(updates).filter(Boolean);
     if (!sid || !changedKeys.length) {
       return { status: 'skipped', reason: 'no_changes', writesStore: false };
+    }
+    if (isVariableRuntimeEnabled(sid) === false) {
+      return { status: 'blocked', reason: 'variable_runtime_disabled', writesStore: false };
     }
     const setVar = useGlobal ? chatStore?.setGlobalVariable?.bind(chatStore) : chatStore?.setVariable?.bind(chatStore);
     const deleteVar = useGlobal ? chatStore?.deleteGlobalVariable?.bind(chatStore) : chatStore?.deleteVariable?.bind(chatStore);
@@ -375,6 +379,9 @@ export const createVariablePreviewCommitRuntime = ({
       : [];
     const snapshot = isPlainObject(commitResult?.rollbackSnapshot) ? commitResult.rollbackSnapshot : {};
     if (!sid || !keys.length) return { status: 'blocked', reason: 'variable_commit_refs_missing' };
+    if (isVariableRuntimeEnabled(sid) === false) {
+      return { status: 'blocked', reason: 'variable_runtime_disabled' };
+    }
     const setVar = useGlobal ? chatStore?.setGlobalVariable?.bind(chatStore) : chatStore?.setVariable?.bind(chatStore);
     const deleteVar = useGlobal ? chatStore?.deleteGlobalVariable?.bind(chatStore) : chatStore?.deleteVariable?.bind(chatStore);
     if (typeof setVar !== 'function') return { status: 'blocked', reason: 'variable_store_missing' };

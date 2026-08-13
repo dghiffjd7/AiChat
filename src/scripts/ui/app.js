@@ -622,6 +622,15 @@ import {
   createUpdateVariableCommandApplier,
   createUpdateVariableMessageApplier,
 } from './chat/update-variable-runtime-utils.js';
+import {
+  clearVariableRuntimePendingGreetingInit,
+  dispatchVariableRuntimeChangedForSession,
+  getVariableRuntimePendingGreetingInit,
+  isVariableRuntimeEnabledForSession,
+  resumeVariableRuntimeForSession,
+  setVariableRuntimePendingGreetingInit,
+  setVariableRuntimeEnabledForSession,
+} from './chat/variable-runtime-policy-utils.js';
 import { buildUpdateVariableParser } from './chat/update-variable-parser-utils.js';
 import {
   buildSendBlockedTraceEvent,
@@ -1062,6 +1071,37 @@ const initApp = async () => {
   const pluginPanel = new PluginPanel({ store: pluginStore, runtime: pluginRuntime });
   const chatStore = new ChatStore();
   window.appBridge.setChatStore(chatStore);
+  const isVariableRuntimeEnabled = sessionId => isVariableRuntimeEnabledForSession(
+    chatStore,
+    String(sessionId || chatStore.getCurrent() || '').trim(),
+  );
+  let reconcileVariableRuntimeAfterEnable = null;
+  const setVariableRuntimeEnabled = async (sessionId, enabled) => {
+    const sid = String(sessionId || chatStore.getCurrent() || '').trim();
+    const result = setVariableRuntimeEnabledForSession(chatStore, sid, enabled, { eventTarget: null });
+    if (!result.ok || !result.changed) return result;
+    if (result.enabled) {
+      const resumed = typeof reconcileVariableRuntimeAfterEnable === 'function'
+        ? await reconcileVariableRuntimeAfterEnable(sid)
+        : { ok: false, reason: 'runtime_not_ready' };
+      if (resumed?.ok !== true) {
+        setVariableRuntimeEnabledForSession(chatStore, sid, false, { eventTarget: null });
+        return {
+          ok: false,
+          sessionId: sid,
+          enabled: isVariableRuntimeEnabled(sid),
+          changed: false,
+          reason: String(resumed?.reason || 'resume_failed'),
+        };
+      }
+    }
+    dispatchVariableRuntimeChangedForSession(sid, result.enabled, { eventTarget: window });
+    return result;
+  };
+  registerVariableRuntimeBridgeContract(window.appBridge, {
+    isVariableRuntimeEnabled,
+    setVariableRuntimeEnabled,
+  });
   registerConfigRuntimeBridgeContract(window.appBridge, {
     getConfig: window.appBridge.getConfig?.bind(window.appBridge),
     loadConfig: window.appBridge.loadConfig?.bind(window.appBridge),
@@ -1077,7 +1117,11 @@ const initApp = async () => {
     resolveRequestRuntimeConfig: window.appBridge.resolveRequestRuntimeConfig?.bind(window.appBridge),
     isConfigured: window.appBridge.isConfigured?.bind(window.appBridge),
   });
-  const variableRuleEngine = new VariableRuleEngine({ chatStore, appBridge: window.appBridge });
+  const variableRuleEngine = new VariableRuleEngine({
+    chatStore,
+    appBridge: window.appBridge,
+    isVariableRuntimeEnabled,
+  });
   registerRuntimeServiceBridgeContract(window.appBridge, {
     init: window.appBridge.init?.bind(window.appBridge),
     setChatStore: window.appBridge.setChatStore?.bind(window.appBridge),
@@ -1089,7 +1133,11 @@ const initApp = async () => {
     variableRuleEngine,
     runVariableRules: (sessionId, ruleId) => variableRuleEngine.runManual(sessionId, ruleId),
   });
-  stageManager = new StageManager({ chatStore, appBridge: window.appBridge });
+  stageManager = new StageManager({
+    chatStore,
+    appBridge: window.appBridge,
+    isVariableRuntimeEnabled,
+  });
   registerRuntimeServiceBridgeContract(window.appBridge, {
     stageManager,
   });
@@ -1134,29 +1182,31 @@ const initApp = async () => {
         hasSession: Boolean(sid),
         changed: oldValue !== newValue,
       };
-      dispatchRuntimeHookLifecycleEvent({
-        runtime: pluginRuntime,
-        runtimeLabel: 'plugin',
-        hookName: 'variable.changed',
-        payload,
-        sessionId: sid,
-        details: traceDetails,
-        logger,
-        warningMessage: 'plugin variable.changed failed',
-        recordTraceEvent: recordAppDebugTraceEvent,
-      });
-      if (scriptRuntime) {
+      if (isVariableRuntimeEnabled(sid)) {
         dispatchRuntimeHookLifecycleEvent({
-          runtime: scriptRuntime,
-          runtimeLabel: 'script',
+          runtime: pluginRuntime,
+          runtimeLabel: 'plugin',
           hookName: 'variable.changed',
           payload,
           sessionId: sid,
           details: traceDetails,
           logger,
-          warningMessage: 'script variable.changed failed',
+          warningMessage: 'plugin variable.changed failed',
           recordTraceEvent: recordAppDebugTraceEvent,
         });
+        if (scriptRuntime) {
+          dispatchRuntimeHookLifecycleEvent({
+            runtime: scriptRuntime,
+            runtimeLabel: 'script',
+            hookName: 'variable.changed',
+            payload,
+            sessionId: sid,
+            details: traceDetails,
+            logger,
+            warningMessage: 'script variable.changed failed',
+            recordTraceEvent: recordAppDebugTraceEvent,
+          });
+        }
       }
       try {
         window.dispatchEvent(new CustomEvent('chatapp-variable-changed', {
@@ -2000,6 +2050,16 @@ const initApp = async () => {
       return { ok: false, applied: false, keys: [], useGlobal: false };
     }
     const useGlobal = isSharedVariableSession(sid);
+    if (!isVariableRuntimeEnabled(sid)) {
+      return {
+        ok: true,
+        applied: false,
+        keys: [],
+        useGlobal,
+        disabled: true,
+        reason: 'variable_runtime_disabled',
+      };
+    }
     const result = applyMvuSchemaDefaultsToStore({
       chatStore,
       sessionId: sid,
@@ -2024,6 +2084,16 @@ const initApp = async () => {
     isSharedVariableSession,
   });
   const reconvertMvuVariables = async (options = {}) => {
+    const sid = String(options?.sessionId || chatStore.getCurrent() || '').trim();
+    if (!sid || !isVariableRuntimeEnabled(sid)) {
+      return {
+        ok: false,
+        code: 'variable_runtime_disabled',
+        sessionId: sid,
+        filledKeys: [],
+        preservedKeys: [],
+      };
+    }
     const result = await runMvuVariableRecovery(options);
     if (result.ok && result.filledKeys?.length) {
       emitMvuInitialized(result.sessionId, 0, {
@@ -2511,6 +2581,8 @@ const initApp = async () => {
     chatStore,
     getSessionId: () => chatStore.getCurrent(),
     getVariableScope: sid => (isSharedVariableSession(sid) ? 'global' : 'session'),
+    isVariableRuntimeEnabled,
+    setVariableRuntimeEnabled,
   });
   const patchDebugUiRegistry = (mutator) => patchDebugUiRegistryCore(window.appBridge, mutator);
   const recordDebugTraceEvent = (event) => recordAppDebugTraceEvent(event);
@@ -2929,6 +3001,7 @@ const initApp = async () => {
   let currentMemoryUpdateRuntime = null;
   const agentWritePreviewRuntimes = createAgentWritePreviewRuntimes({
     chatStore,
+    isVariableRuntimeEnabled,
     memoryTableStore,
     memoryTemplateStore,
     loadActionContext: loadSessionMemoryActionContext,
@@ -18092,6 +18165,7 @@ Phase G（Frame 36）：循环衔接
     shouldEmitMvuEvent,
     emitStarted: emitMvuUpdateStarted,
     emitEnded: emitMvuUpdateEnded,
+    isVariableRuntimeEnabled,
     logger,
   });
   const applyUpdateVariableFromMessage = createUpdateVariableMessageApplier({
@@ -18116,6 +18190,7 @@ Phase G（Frame 36）：循环衔接
     updateMessage: (messageId, updatePayload, sessionId) => chatStore.updateMessage(messageId, updatePayload, sessionId),
     isSessionActive,
     updateUiMessage: (messageId, updated) => ui.updateMessage(messageId, updated),
+    isVariableRuntimeEnabled,
     logger,
   });
   registerUpdateVariableApplyFn(applyUpdateVariableFromMessage);
@@ -23079,7 +23154,7 @@ Phase G（Frame 36）：循环衔接
     });
   } catch {}
 
-  const buildRpGreetingMessage = (greeting, sessionId) => {
+  const buildRpGreetingMessage = (greeting, sessionId, { initializationOnly = false } = {}) => {
     const isPlainObject = (val) => (
       val && typeof val === 'object' && !Array.isArray(val)
     );
@@ -23247,7 +23322,7 @@ Phase G（Frame 36）：循环衔接
       if (yaml && typeof yaml === 'object') return yaml;
       return null;
     };
-    const extractInitVarBlocks = (text, sid, macroContext = {}) => {
+    const extractInitVarBlocks = (text, sid, macroContext = {}, { parse = true } = {}) => {
       const raw = String(text || '');
       const blocks = [];
       const re = /<(initvar)>(?:\s*```.*)?([\s\S]*?)(?:```\s*)?<\/\1>/gim;
@@ -23256,6 +23331,13 @@ Phase G（Frame 36）：循环衔接
         return '';
       });
       if (!blocks.length) return { text: raw, data: null, blockCount: 0 };
+      if (!parse) {
+        return {
+          text: cleaned.replace(/\n{3,}/g, '\n\n').trim(),
+          data: null,
+          blockCount: blocks.length,
+        };
+      }
       let merged = null;
       blocks.forEach((block) => {
         const processed = window.appBridge?.processTextMacros
@@ -23345,7 +23427,7 @@ Phase G（Frame 36）：循环衔接
     const applyInitVarToSession = (data, sid, { preferInit = false, source = '' } = {}) => {
       if (!data || typeof data !== 'object') return false;
       const sessionId = String(sid || '').trim();
-      if (!sessionId) return false;
+      if (!sessionId || !isVariableRuntimeEnabled(sessionId)) return false;
       const meta = {};
       const normalized = normalizeInitVarData(data, sessionId, meta) || {};
       if (logger?.info && shouldLogGreetingDiagnostics()) {
@@ -23448,6 +23530,7 @@ Phase G（Frame 36）：循环衔接
 
     const greetingId = String(greeting?.id || '').trim();
     const content = String(greeting?.content || '').trim();
+    const variableRuntimeEnabled = isVariableRuntimeEnabled(sessionId);
     const assistantName = String(getRpCharacterName() || '角色');
     const promptUserName = getPromptUserName(sessionId);
     const macroContext = { user: promptUserName, char: assistantName };
@@ -23456,7 +23539,9 @@ Phase G（Frame 36）：循环衔接
       greetingId: greetingId || 'none',
       rawLen: content.length,
     });
-    const initVarResult = extractInitVarBlocks(content, sessionId, macroContext);
+    const initVarResult = extractInitVarBlocks(content, sessionId, macroContext, {
+      parse: variableRuntimeEnabled,
+    });
     const baseContent = String(initVarResult.text || '').trim();
     const macroContent = window.appBridge?.processTextMacros
       ? String(window.appBridge.processTextMacros(baseContent, {
@@ -23472,10 +23557,12 @@ Phase G（Frame 36）：循环衔接
       baseLen: macroContent.length,
       hasInitVar: initVarResult.data ? 1 : 0,
     });
-    if (initVarResult.data) {
+    if (variableRuntimeEnabled && initVarResult.data) {
       applyInitVarToSession(initVarResult.data, sessionId, { preferInit: true, source: 'greeting' });
     }
-    const worldInitVars = extractInitVarFromWorldbooks(sessionId, macroContext);
+    const worldInitVars = variableRuntimeEnabled
+      ? extractInitVarFromWorldbooks(sessionId, macroContext)
+      : null;
     logRpGreetingDebug('build-world-initvar', {
       session: sessionId,
       greetingId: greetingId || 'none',
@@ -23484,12 +23571,23 @@ Phase G（Frame 36）：循环衔接
     if (worldInitVars) {
       applyInitVarToSession(worldInitVars, sessionId, { preferInit: true, source: 'worldbook' });
     }
+    if (initializationOnly) {
+      return {
+        message: null,
+        initVarData: variableRuntimeEnabled ? (initVarResult.data || worldInitVars || null) : null,
+        variableInitDeferred: !variableRuntimeEnabled,
+      };
+    }
     if (!macroContent) {
       logRpGreetingDebug('build-empty-after-initvar', {
         session: sessionId,
         greetingId: greetingId || 'none',
       });
-      return { message: null, initVarData: initVarResult.data || worldInitVars || null };
+      return {
+        message: null,
+        initVarData: variableRuntimeEnabled ? (initVarResult.data || worldInitVars || null) : null,
+        variableInitDeferred: !variableRuntimeEnabled,
+      };
     }
     let stored = macroContent;
     let display = macroContent;
@@ -23532,7 +23630,8 @@ Phase G（Frame 36）：循环衔接
         time: formatNowTime(),
         meta,
       },
-      initVarData: initVarResult.data || worldInitVars || null,
+      initVarData: variableRuntimeEnabled ? (initVarResult.data || worldInitVars || null) : null,
+      variableInitDeferred: !variableRuntimeEnabled,
     };
   };
 
@@ -23553,14 +23652,24 @@ Phase G（Frame 36）：循环衔接
       logRpGreetingDebug('seed-wait-worlds', { session: sid });
       return false;
     }
+    const variableInitDeferred = !isVariableRuntimeEnabled(sid);
+    if (variableInitDeferred && !setVariableRuntimePendingGreetingInit(chatStore, sid, {
+      greetingId: String(greeting?.id || '').trim(),
+    })) {
+      logger.warn('[rp-greeting] deferred init marker persist failed', { sessionId: sid });
+      return false;
+    }
     const result = buildRpGreetingMessage(greeting, sid);
+    if (!result?.variableInitDeferred) {
+      clearVariableRuntimePendingGreetingInit(chatStore, sid);
+    }
     const msg = result?.message || null;
     if (!msg) {
       logRpGreetingDebug('seed-no-message', {
         session: sid,
         hasInitVar: result?.initVarData ? 1 : 0,
       });
-      return Boolean(result?.initVarData);
+      return Boolean(result?.initVarData || result?.variableInitDeferred);
     }
     let savedMsg = chatStore.appendMessage(msg, sid);
     savedMsg = applyRpGreetingUpdateVariables({
@@ -24577,6 +24686,84 @@ Phase G（Frame 36）：循环衔接
     if (!snapshot) return false;
     return applySessionVariableSnapshot(sid, snapshot);
   };
+  const replayDeferredRpGreetingInitialization = async (sessionId) => {
+    const sid = String(sessionId || '').trim();
+    const pending = getVariableRuntimePendingGreetingInit(chatStore, sid);
+    if (!pending) return { ok: true, replayed: false };
+    try {
+      await chatStore.ensureRecentMessagesLoaded?.(sid);
+    } catch {}
+    const messages = chatStore.getMessages?.(sid) || [];
+    const storedGreetingId = String(
+      messages.find(message => message?.meta?.isGreeting)?.meta?.greetingId || '',
+    ).trim();
+    const greetingId = String(pending.greetingId || storedGreetingId || '').trim();
+    const greetings = getRpGreetings();
+    const greeting = greetings.find(item => String(item?.id || '').trim() === greetingId)
+      || ensureRpGreetingActive()
+      || { id: greetingId, content: '' };
+    buildRpGreetingMessage(greeting, sid, { initializationOnly: true });
+    if (!clearVariableRuntimePendingGreetingInit(chatStore, sid)) {
+      return { ok: false, reason: 'greeting_init_marker_clear_failed' };
+    }
+    return { ok: true, replayed: true };
+  };
+  const refreshWorldVariableSchemasForSession = (sessionId) => {
+    const sid = String(sessionId || '').trim();
+    if (!sid || typeof window.appBridge?.collectWorldEntries !== 'function') return false;
+    const contact = contactsStore.getContact(sid);
+    const resolved = window.appBridge.getResolvedWorldState?.(sid, {
+      uiMode: isRpSessionId(sid) ? 'rp' : 'chat',
+      isGroupChat: Boolean(contact?.isGroup) || sid.startsWith('group:'),
+      groupMemberIds: Array.isArray(contact?.members) ? contact.members : [],
+    });
+    const worldIds = Array.isArray(resolved?.worldIds) ? resolved.worldIds : [];
+    const isCurrentSession = sid === String(chatStore.getCurrent() || '').trim();
+    const history = (chatStore.getMessages?.(sid) || [])
+      .filter(message => message?.role === 'user' || message?.role === 'assistant')
+      .map(message => String(message?.rawSource || message?.raw || message?.content || ''))
+      .filter(Boolean);
+    const debugLabel = isCurrentSession
+      ? (window.appBridge.buildWorldDebugLabel?.() || {})
+      : {
+          matchText: history.join('\n'),
+          matchContext: {
+            history,
+            fullHistory: history,
+            uiMode: isRpSessionId(sid) ? 'rp' : 'chat',
+          },
+        };
+    const label = {
+      ...debugLabel,
+      matchContext: {
+        ...(debugLabel?.matchContext || {}),
+        sessionId: sid,
+      },
+    };
+    worldIds.forEach((worldId) => {
+      window.appBridge.collectWorldEntries(worldId, label);
+    });
+    return true;
+  };
+  const syncPluginVariableContext = async (sessionId) => {
+    const sid = String(sessionId || '').trim();
+    if (!pluginRuntime || !sid || sid !== String(chatStore.getCurrent() || '').trim()) return false;
+    return pluginRuntime.syncVariableContext?.(sid) ?? false;
+  };
+  reconcileVariableRuntimeAfterEnable = sessionId => resumeVariableRuntimeForSession({
+    sessionId,
+    ensureWorlds: sid => ensureWorldsForSessionDisplay(sid),
+    refreshWorldSchemas: sid => refreshWorldVariableSchemasForSession(sid),
+    replayGreetingInit: sid => replayDeferredRpGreetingInitialization(sid),
+    applySchemaDefaults: sid => applyMvuSchemaDefaults(sid, { reason: 'variable_runtime_resume' }),
+    evaluateStage: sid => stageManager?.evaluateStageTransition?.(sid, { force: true }),
+    syncScriptContext: sid => (
+      sid === String(chatStore.getCurrent() || '').trim()
+        ? scriptRuntime?.syncContext?.({ sessionId: sid })
+        : false
+    ),
+    syncPluginContext: sid => syncPluginVariableContext(sid),
+  });
   // 重新生成某楼层前：把变量回滚到「该楼层之下最近 assistant 楼层」的快照，让新生成的 UpdateVariable 在正确基线上应用。
   const restoreVariablesToFloorBelow = async (sessionId, msgId) => {
     const sid = String(sessionId || '').trim();
@@ -25428,13 +25615,14 @@ Phase G（Frame 36）：循环衔接
     const variableSwipeActive = hasSessionVariableActivity(sid, swipes);
     if (
       previousSafe !== -1 &&
-      previousSafe !== index &&
-      canPersistOutgoingSwipeMemoryState(sid, msgId, previousSafe, previousBranch)
+      previousSafe !== index
     ) {
-      try {
-        await persistSwipeBranchMemoryState(swipes, previousSafe, sid, { isGroup: isGroupScope });
-      } catch (err) {
-        logger.warn('persist swipe memory state failed', err);
+      if (canPersistOutgoingSwipeMemoryState(sid, msgId, previousSafe, previousBranch)) {
+        try {
+          await persistSwipeBranchMemoryState(swipes, previousSafe, sid, { isGroup: isGroupScope });
+        } catch (err) {
+          logger.warn('persist swipe memory state failed', err);
+        }
       }
       if (variableSwipeActive && previousBranch && previousBranch.draft !== true) {
         try {
@@ -29140,6 +29328,7 @@ Phase G（Frame 36）：循环衔接
           stage: 'render',
           chatStore,
           sessionId: sessionKey,
+          variableRuntimeEnabled: isVariableRuntimeEnabled(sessionKey),
           context: {
             session: { id: sessionKey },
             user: { name: promptUserName },
@@ -31799,6 +31988,16 @@ Phase G（Frame 36）：循环衔接
     void rerenderCurrentSession();
   });
 
+  window.addEventListener('chatapp-variable-runtime-changed', (event) => {
+    const sid = String(event?.detail?.sessionId || '').trim();
+    if (!sid || sid !== String(chatStore.getCurrent() || '').trim()) return;
+    if (event?.detail?.enabled === false) {
+      scriptRuntime?.syncContext?.({ sessionId: sid }).catch(() => {});
+      pluginRuntime?.syncVariableContext?.(sid).catch(() => {});
+    }
+    void rerenderCurrentSession();
+  });
+
   window.addEventListener('worldinfo-changed', () => {
     updateWorldIndicator();
     applyMvuSchemaDefaults(chatStore.getCurrent(), { reason: 'worldbook' });
@@ -31887,6 +32086,20 @@ Phase G（Frame 36）：循环衔接
         }),
         recordTraceEvent: recordDebugTraceEvent,
       });
+      const sid = String(id || '').trim();
+      if (
+        sid
+        && isVariableRuntimeEnabled(sid)
+        && getVariableRuntimePendingGreetingInit(chatStore, sid)
+      ) {
+        const resumed = await reconcileVariableRuntimeAfterEnable(sid);
+        if (resumed?.ok !== true) {
+          logger.warn('[variable-runtime] deferred resume reconciliation failed', {
+            sessionId: sid,
+            reason: resumed?.reason || 'unknown',
+          });
+        }
+      }
     },
   });
 
@@ -31918,6 +32131,20 @@ Phase G（Frame 36）：循环衔接
     },
     saveUiState,
   });
+  const restoredSessionId = String(chatStore.getCurrent() || '').trim();
+  if (
+    restoredSessionId
+    && isVariableRuntimeEnabled(restoredSessionId)
+    && getVariableRuntimePendingGreetingInit(chatStore, restoredSessionId)
+  ) {
+    const resumed = await reconcileVariableRuntimeAfterEnable(restoredSessionId);
+    if (resumed?.ok !== true) {
+      logger.warn('[variable-runtime] boot resume reconciliation failed', {
+        sessionId: restoredSessionId,
+        reason: resumed?.reason || 'unknown',
+      });
+    }
+  }
 
   // If stores hydrate later (e.g. after a WebView reload / offline resume), refresh UI without jumping to defaults.
   registerHydratedUiRestoreListener({

@@ -1,3 +1,5 @@
+import { createReactionEmojiVisual } from './reaction-ui-utils.js';
+
 const ACTION_ICON_MAP = {
   reply: '↩',
   'view-code': '<>',
@@ -19,8 +21,13 @@ const CHECK_FORMAT_ICON_PATHS = Object.freeze([
   'M4 18h6',
   'm14 17 2 2 4-5',
 ]);
+const SPEAK_ICON_PATHS = Object.freeze([
+  'M11 5 6 9H3v6h3l5 4V5Z',
+  'M15.5 8.5a5 5 0 0 1 0 7',
+  'M18 6a8 8 0 0 1 0 12',
+]);
 
-const createCheckFormatIcon = (documentLike) => {
+const createStrokeIcon = (documentLike, paths = []) => {
   const createSvgNode = tagName => (
     documentLike.createElementNS?.(SVG_NAMESPACE, tagName) ||
     documentLike.createElement(tagName)
@@ -38,7 +45,7 @@ const createCheckFormatIcon = (documentLike) => {
     focusable: 'false',
     'aria-hidden': 'true',
   }).forEach(([name, value]) => svg.setAttribute?.(name, value));
-  CHECK_FORMAT_ICON_PATHS.forEach((pathData) => {
+  paths.forEach((pathData) => {
     const path = createSvgNode('path');
     path.setAttribute?.('d', pathData);
     svg.appendChild(path);
@@ -62,7 +69,9 @@ export const createContextMenuReactionRow = ({
     if (currentReactions.some(entry => entry.emoji === emoji && isSelfReaction?.(entry))) {
       btn.classList.add?.('is-active');
     }
-    btn.textContent = emoji;
+    if (btn.dataset) btn.dataset.emoji = emoji;
+    btn.setAttribute?.('aria-label', `使用${emoji}回应`);
+    btn.appendChild?.(createReactionEmojiVisual(emoji, { documentLike }));
     btn.onclick = (ev) => {
       ev.stopPropagation?.();
       onToggle?.(emoji);
@@ -99,7 +108,9 @@ export const createContextMenuActionButton = ({
   if (action?.icon) {
     icon.textContent = String(action.icon);
   } else if (key === 'check-format') {
-    icon.appendChild(createCheckFormatIcon(documentLike));
+    icon.appendChild(createStrokeIcon(documentLike, CHECK_FORMAT_ICON_PATHS));
+  } else if (key === 'speak') {
+    icon.appendChild(createStrokeIcon(documentLike, SPEAK_ICON_PATHS));
   } else {
     icon.textContent = String(ACTION_ICON_MAP[key] || '');
   }

@@ -14,11 +14,14 @@ export const createUpdateVariableCommandApplier = ({
   shouldEmitMvuEvent,
   emitStarted,
   emitEnded,
+  isVariableRuntimeEnabled,
   logger,
 } = {}) => (sessionId, commands, { useGlobal = false } = {}) => {
+  const sid = String(sessionId || '').trim();
+  if (typeof isVariableRuntimeEnabled === 'function' && !isVariableRuntimeEnabled(sid)) return false;
   const listVars = useGlobal
     ? (chatStore?.listGlobalVariables?.() || {})
-    : (chatStore?.listVariables?.(String(sessionId || '').trim()) || {});
+    : (chatStore?.listVariables?.(sid) || {});
   const shouldEmitStarted = typeof shouldEmitMvuEvent === 'function'
     ? shouldEmitMvuEvent('mag_variable_update_started')
     : false;
@@ -63,20 +66,25 @@ export const createUpdateVariableMessageApplier = ({
   updateMessage,
   isSessionActive,
   updateUiMessage,
+  isVariableRuntimeEnabled,
   logger,
 } = {}) => (message, sessionId) => {
   const sid = String(sessionId || '').trim();
-  const isTavernMvuSession = isTavernMvuVariableSession(sid, {
+  const variableRuntimeEnabled = typeof isVariableRuntimeEnabled === 'function'
+    ? isVariableRuntimeEnabled(sid) !== false
+    : true;
+  const isTavernMvuSession = variableRuntimeEnabled && isTavernMvuVariableSession(sid, {
     getEffectivePersona,
     listVariableSchemas,
   });
-  const shouldAppendStatusPlaceholder = isTavernMvuSession || isStatusPlaceholderDisplaySession(sid, {
+  const shouldAppendStatusPlaceholder = variableRuntimeEnabled && (isTavernMvuSession || isStatusPlaceholderDisplaySession(sid, {
     getEffectivePersona,
     listActiveRegexRules,
-  });
+  }));
   return applyUpdateVariableFromAssistantMessage({
     message,
     sessionId,
+    variableRuntimeEnabled,
     isTavernMvuSession,
     shouldAppendStatusPlaceholder,
     extractBlocks,

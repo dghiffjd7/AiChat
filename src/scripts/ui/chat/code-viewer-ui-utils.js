@@ -26,6 +26,21 @@ const FORMAT_SOURCE_LABELS = Object.freeze({
   customFormatGuide: '自定义格式规范',
 });
 
+const CODE_VIEWER_OVERLAY_PADDING = 'calc(14px + env(safe-area-inset-top, 0px)) 14px calc(14px + env(safe-area-inset-bottom, 0px)) 14px';
+const CODE_VIEWER_MAXIMIZED_PADDING = 'env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px) env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px)';
+const CODE_VIEWER_MAXIMIZE_ICON = `<svg class="code-viewer-maximize-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+  <g class="code-viewer-maximize-expand">
+    <path class="code-viewer-maximize-depth" d="M9 4.5H6.25A1.75 1.75 0 0 0 4.5 6.25V9M15 4.5h2.75a1.75 1.75 0 0 1 1.75 1.75V9M4.5 15v2.75a1.75 1.75 0 0 0 1.75 1.75H9M19.5 15v2.75a1.75 1.75 0 0 1-1.75 1.75H15"/>
+    <path class="code-viewer-maximize-main" d="M9 4.5H6.25A1.75 1.75 0 0 0 4.5 6.25V9M15 4.5h2.75a1.75 1.75 0 0 1 1.75 1.75V9M4.5 15v2.75a1.75 1.75 0 0 0 1.75 1.75H9M19.5 15v2.75a1.75 1.75 0 0 1-1.75 1.75H15"/>
+    <path class="code-viewer-maximize-accent" d="m8.2 8.2-2.8-2.8m10.4 2.8 2.8-2.8M8.2 15.8l-2.8 2.8m10.4-2.8 2.8 2.8"/>
+  </g>
+  <g class="code-viewer-maximize-restore">
+    <path class="code-viewer-maximize-depth" d="M9.25 6.25h7.5a1.5 1.5 0 0 1 1.5 1.5v7.5a1.5 1.5 0 0 1-1.5 1.5h-1M14.75 8.75h-7.5a1.5 1.5 0 0 0-1.5 1.5v7.5a1.5 1.5 0 0 0 1.5 1.5h7.5a1.5 1.5 0 0 0 1.5-1.5v-7.5a1.5 1.5 0 0 0-1.5-1.5Z"/>
+    <path class="code-viewer-maximize-main" d="M9.25 6.25h7.5a1.5 1.5 0 0 1 1.5 1.5v7.5a1.5 1.5 0 0 1-1.5 1.5h-1M14.75 8.75h-7.5a1.5 1.5 0 0 0-1.5 1.5v7.5a1.5 1.5 0 0 0 1.5 1.5h7.5a1.5 1.5 0 0 0 1.5-1.5v-7.5a1.5 1.5 0 0 0-1.5-1.5Z"/>
+    <path class="code-viewer-maximize-accent" d="M9.25 11.75h4v4"/>
+  </g>
+</svg>`;
+
 const resolveFormatSourceLabel = value => (
   FORMAT_SOURCE_LABELS[String(value || '').trim()] ||
   String(value || '').trim()
@@ -73,6 +88,29 @@ export const createCodeViewerUiRuntime = ({
   onSaveEdit,
   confirmDiscard = null,
 } = {}) => {
+  const applyViewerMaximized = (overlay, value) => {
+    if (!overlay) return false;
+    const refs = overlay.__chatappRefs || {};
+    const panel = refs.panel;
+    const maximizeBtn = refs.maximizeBtn;
+    const maximized = value === true && overlay.__chatappCanMaximize === true;
+    overlay.__chatappMaximized = maximized;
+    overlay.dataset.maximized = maximized ? '1' : '0';
+    overlay.style.padding = maximized ? CODE_VIEWER_MAXIMIZED_PADDING : CODE_VIEWER_OVERLAY_PADDING;
+    overlay.style.background = maximized ? 'var(--app-surface-card)' : 'rgba(0,0,0,0.38)';
+    if (panel) {
+      panel.style.maxWidth = maximized ? 'none' : '920px';
+      panel.style.margin = maximized ? '0px' : '0px auto';
+      panel.style.borderRadius = maximized ? '0px' : '14px';
+      panel.style.boxShadow = maximized ? 'none' : '0 18px 50px rgba(0,0,0,0.22)';
+    }
+    maximizeBtn?.classList?.toggle?.('is-on', maximized);
+    maximizeBtn?.setAttribute?.('aria-pressed', maximized ? 'true' : 'false');
+    maximizeBtn?.setAttribute?.('aria-label', maximized ? '还原原回复编辑器' : '放大原回复编辑器');
+    if (maximizeBtn) maximizeBtn.title = maximized ? '还原面板' : '放大占满';
+    return maximized;
+  };
+
   const confirmDiscardEdit = () => {
     if (typeof confirmDiscard === 'function') return confirmDiscard() !== false;
     if (typeof windowLike?.confirm === 'function') {
@@ -111,6 +149,7 @@ export const createCodeViewerUiRuntime = ({
       return false;
     }
     if (overlay.__chatappMode === 'review') finishReview(overlay, reviewDecision);
+    applyViewerMaximized(overlay, false);
     overlay.style.display = 'none';
     overlay.__chatappMessage = null;
     overlay.__chatappContext = null;
@@ -130,7 +169,7 @@ export const createCodeViewerUiRuntime = ({
       z-index: 26240;
       display: none;
       background: rgba(0,0,0,0.38);
-      padding: calc(14px + env(safe-area-inset-top)) 14px calc(14px + env(safe-area-inset-bottom)) 14px;
+      padding: ${CODE_VIEWER_OVERLAY_PADDING};
       box-sizing: border-box;
     `;
 
@@ -166,6 +205,8 @@ export const createCodeViewerUiRuntime = ({
     hint.style.cssText = `
       font-size:12px;
       color:var(--app-text-muted);
+      flex:1;
+      min-width:0;
       margin-left:auto;
       max-width:55vw;
       overflow:hidden;
@@ -173,6 +214,14 @@ export const createCodeViewerUiRuntime = ({
       white-space:nowrap;
     `;
     hint.textContent = '未套用正则';
+    const maximizeBtn = documentLike.createElement('button');
+    maximizeBtn.type = 'button';
+    maximizeBtn.id = 'code-viewer-maximize';
+    maximizeBtn.innerHTML = CODE_VIEWER_MAXIMIZE_ICON;
+    maximizeBtn.setAttribute?.('aria-label', '放大原回复编辑器');
+    maximizeBtn.setAttribute?.('aria-pressed', 'false');
+    maximizeBtn.title = '放大占满';
+    maximizeBtn.style.display = 'none';
     const closeBtn = documentLike.createElement('button');
     closeBtn.type = 'button';
     closeBtn.textContent = '取消';
@@ -184,6 +233,7 @@ export const createCodeViewerUiRuntime = ({
     setButtonStyle(saveBtn, { primary: true });
     header.appendChild(title);
     header.appendChild(hint);
+    header.appendChild(maximizeBtn);
     header.appendChild(closeBtn);
     header.appendChild(saveBtn);
 
@@ -297,6 +347,7 @@ export const createCodeViewerUiRuntime = ({
       panel,
       title,
       hint,
+      maximizeBtn,
       saveBtn,
       closeBtn,
       editBody,
@@ -440,6 +491,11 @@ export const createCodeViewerUiRuntime = ({
       onActivate: () => hideViewer(overlay),
     });
     closeBtn.addEventListener('click', () => hideViewer(overlay));
+    maximizeBtn.addEventListener('click', (event) => {
+      event.stopPropagation?.();
+      if (overlay.__chatappCanMaximize !== true) return;
+      applyViewerMaximized(overlay, overlay.__chatappMaximized !== true);
+    });
     reviewCancelBtn.addEventListener('click', () => hideViewer(overlay, { force: true }));
     acceptAllBtn.addEventListener('click', () => {
       const state = overlay.__chatappReviewState;
@@ -462,7 +518,13 @@ export const createCodeViewerUiRuntime = ({
       gutter.scrollTop = textarea.scrollTop;
     });
     windowLike?.addEventListener?.('keydown', (event) => {
-      if (overlay.style.display !== 'none' && event.key === 'Escape') hideViewer(overlay);
+      if (overlay.style.display === 'none' || event.key !== 'Escape') return;
+      if (overlay.__chatappMaximized === true) {
+        event.preventDefault?.();
+        applyViewerMaximized(overlay, false);
+        return;
+      }
+      hideViewer(overlay);
     });
     saveBtn.addEventListener('click', async () => {
       const message = overlay.__chatappMessage;
@@ -470,6 +532,7 @@ export const createCodeViewerUiRuntime = ({
       const nextText = String(textarea.value ?? '');
       saveBtn.disabled = true;
       closeBtn.disabled = true;
+      maximizeBtn.disabled = true;
       try {
         const saved = await onSaveEdit(message, nextText, overlay.__chatappContext || {});
         if (saved === false) {
@@ -483,6 +546,7 @@ export const createCodeViewerUiRuntime = ({
       } finally {
         saveBtn.disabled = false;
         closeBtn.disabled = false;
+        maximizeBtn.disabled = false;
       }
     });
 
@@ -513,6 +577,11 @@ export const createCodeViewerUiRuntime = ({
       overlay.__chatappMode = canSave ? 'edit' : 'view';
       overlay.__chatappInitialText = content;
       overlay.__chatappDirty = false;
+      overlay.__chatappCanMaximize = Boolean(
+        canSave
+        && String(overlay.__chatappContext?.sourceKind || '').trim() === 'creative_raw_original'
+      );
+      applyViewerMaximized(overlay, false);
       if (refs.title) refs.title.textContent = String(title || '原回复');
       if (refs.hint) refs.hint.textContent = canSave ? '未套用正则' : '只读';
       if (refs.codeEl) {
@@ -524,6 +593,7 @@ export const createCodeViewerUiRuntime = ({
       if (refs.reviewBody) refs.reviewBody.style.display = 'none';
       if (refs.reviewFooter) refs.reviewFooter.style.display = 'none';
       if (refs.saveBtn) refs.saveBtn.style.display = canSave ? 'inline-block' : 'none';
+      if (refs.maximizeBtn) refs.maximizeBtn.style.display = overlay.__chatappCanMaximize ? 'inline-flex' : 'none';
       overlay.style.display = 'block';
       schedule?.(() => {
         try {
@@ -553,6 +623,8 @@ export const createCodeViewerUiRuntime = ({
       overlay.__chatappMessage = message && typeof message === 'object' ? message : null;
       overlay.__chatappMode = 'review';
       overlay.__chatappDirty = false;
+      overlay.__chatappCanMaximize = false;
+      applyViewerMaximized(overlay, false);
       overlay.__chatappReviewState = {
         originalText: String(originalText ?? ''),
         linePatches: patches,
@@ -566,6 +638,7 @@ export const createCodeViewerUiRuntime = ({
       if (refs.title) refs.title.textContent = String(title || '审阅格式修复');
       if (refs.hint) refs.hint.textContent = `${patches.length} 处补丁`;
       if (refs.saveBtn) refs.saveBtn.style.display = 'none';
+      if (refs.maximizeBtn) refs.maximizeBtn.style.display = 'none';
       if (refs.editBody) refs.editBody.style.display = 'none';
       if (refs.reviewBody) refs.reviewBody.style.display = 'block';
       if (refs.reviewFooter) refs.reviewFooter.style.display = 'flex';

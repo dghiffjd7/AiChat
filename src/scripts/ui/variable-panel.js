@@ -85,6 +85,7 @@ const recoveryErrorMessage = (code = '') => {
         card_invalid: '原始角色卡数据无效',
         no_variables: '角色卡中没有检测到 MVU 变量',
         invalid_target: '当前会话不可用',
+        variable_runtime_disabled: '当前会话的变量运行已暂停，请先开启后再转换',
     };
     return messages[String(code || '')] || '重新转换变量失败';
 };
@@ -92,6 +93,12 @@ const recoveryErrorMessage = (code = '') => {
 export class VariablePanel extends VariablePanelRuntime {
     constructor(options) {
         super(options);
+        this.isVariableRuntimeEnabled = typeof options?.isVariableRuntimeEnabled === 'function'
+            ? options.isVariableRuntimeEnabled
+            : sessionId => window.appBridge?.isVariableRuntimeEnabled?.(sessionId) !== false;
+        this.setVariableRuntimeEnabled = typeof options?.setVariableRuntimeEnabled === 'function'
+            ? options.setVariableRuntimeEnabled
+            : (sessionId, enabled) => window.appBridge?.setVariableRuntimeEnabled?.(sessionId, enabled);
         this.page = 'variables';
         this.filter = 'all';
         this.sort = 'name';
@@ -217,6 +224,19 @@ export class VariablePanel extends VariablePanelRuntime {
                         </div>
                     </header>
 
+                    <section class="variable-runtime-control" data-field="runtime-control">
+                        <div class="variable-runtime-copy">
+                            <div class="variable-runtime-title-row">
+                                <strong>启用当前会话变量运行</strong>
+                                <span data-field="runtime-status">运行中</span>
+                            </div>
+                            <p>关闭后暂停脚本、规则与宏的变量计算；分支和归档仍会恢复既有快照，避免损坏数据。</p>
+                        </div>
+                        <button type="button" class="variable-runtime-switch" data-action="toggle-variable-runtime" role="switch" aria-checked="true" aria-label="启用当前会话变量运行">
+                            <span aria-hidden="true"></span>
+                        </button>
+                    </section>
+
                     <div id="var-cards" class="variable-summary-strip"></div>
                     <section id="var-empty-recovery" class="variable-recovery-card" hidden>
                         <div class="variable-recovery-icon" aria-hidden="true">↻</div>
@@ -314,6 +334,10 @@ export class VariablePanel extends VariablePanelRuntime {
             ruleList: query('#var-rule-list'),
             ruleCount: query('[data-field="rule-count"]'),
             ruleImpact: query('[data-field="rule-impact"]'),
+            runtimeControl: query('[data-field="runtime-control"]'),
+            runtimeStatus: query('[data-field="runtime-status"]'),
+            runtimeToggle: query('[data-action="toggle-variable-runtime"]'),
+            runRules: query('[data-action="run-rules"]'),
             undoHost: query('#variable-undo-host'),
         };
         this.viewButtons = {
@@ -376,6 +400,7 @@ export class VariablePanel extends VariablePanelRuntime {
             this.renderTemplatesPage();
         });
         query('[data-action="run-rules"]')?.addEventListener('click', () => this.runRules());
+        this.elements.runtimeToggle?.addEventListener('click', () => this.toggleVariableRuntime());
         query('[data-action="add-rule"]')?.addEventListener('click', () => this.showRuleEditor(null));
 
         overlay.appendChild(panel);
@@ -399,6 +424,7 @@ export class VariablePanel extends VariablePanelRuntime {
             this.elements.meta.textContent = formatVariableScopeLabel({ scope, sessionId: sid });
         }
         this.setImpactText('#var-impact', 'manage', this.panel);
+        this.syncVariableRuntimeControl();
         this.switchPage('variables', { force: true });
         const visibilityRevision = ++this.visibilityRevision;
         this.overlay.style.display = '';
@@ -427,6 +453,54 @@ export class VariablePanel extends VariablePanelRuntime {
         };
         if (isReducedMotion()) finish();
         else setTimeout(finish, 190);
+    }
+
+    getVariableRuntimeState() {
+        const { sid } = this.resolveScope();
+        if (!sid) return { sid: '', enabled: true };
+        try {
+            return { sid, enabled: this.isVariableRuntimeEnabled(sid) !== false };
+        } catch {
+            return { sid, enabled: true };
+        }
+    }
+
+    syncVariableRuntimeControl() {
+        const { sid, enabled } = this.getVariableRuntimeState();
+        const toggle = this.elements?.runtimeToggle;
+        if (toggle) {
+            toggle.disabled = !sid;
+            toggle.setAttribute('aria-checked', enabled ? 'true' : 'false');
+            toggle.classList.toggle('is-enabled', enabled);
+        }
+        if (this.elements?.runtimeStatus) {
+            this.elements.runtimeStatus.textContent = enabled ? '运行中' : '已暂停';
+            this.elements.runtimeStatus.classList.toggle('is-paused', !enabled);
+        }
+        this.elements?.runtimeControl?.classList.toggle('is-paused', !enabled);
+        if (this.elements?.runRules) this.elements.runRules.disabled = !sid || !enabled;
+        return enabled;
+    }
+
+    async toggleVariableRuntime() {
+        const { sid, enabled } = this.getVariableRuntimeState();
+        const toggle = this.elements?.runtimeToggle;
+        if (!sid || typeof this.setVariableRuntimeEnabled !== 'function' || toggle?.disabled) return false;
+        if (toggle) toggle.disabled = true;
+        let result = null;
+        try {
+            result = await Promise.resolve(this.setVariableRuntimeEnabled(sid, !enabled));
+        } catch {}
+        const ok = result?.ok === true;
+        this.syncVariableRuntimeControl();
+        if (!ok) {
+            window.toastr?.error?.('变量运行设置保存失败');
+            return false;
+        }
+        window.toastr?.info?.(enabled
+            ? '已暂停当前会话的变量运行；已有变量仍会保留'
+            : '已恢复当前会话的变量运行');
+        return true;
     }
 
     hasVisibleLayer() {
@@ -809,6 +883,7 @@ export class VariablePanel extends VariablePanelRuntime {
         if (this.elements.ruleCount) {
             this.elements.ruleCount.textContent = `${result.enabled} / ${result.rendered} 条规则已启用`;
         }
+        this.syncVariableRuntimeControl();
         this.updatePageCounts();
     }
 
@@ -829,6 +904,10 @@ export class VariablePanel extends VariablePanelRuntime {
         const { sid } = this.getRules();
         if (!sid) {
             window.toastr?.warning?.('请先进入聊天室');
+            return false;
+        }
+        if (!this.isVariableRuntimeEnabled(sid)) {
+            window.toastr?.warning?.('当前会话的变量运行已暂停');
             return false;
         }
         if (typeof window.appBridge?.runVariableRules !== 'function') {
@@ -961,6 +1040,10 @@ export class VariablePanel extends VariablePanelRuntime {
             window.toastr?.warning?.('变量初始化服务未就绪');
             return null;
         }
+        if (!this.isVariableRuntimeEnabled(sid)) {
+            window.toastr?.warning?.('当前会话的变量运行已暂停，请先开启');
+            return null;
+        }
         const result = await Promise.resolve(initializeMvuVariables(sid, {
             reason: 'variable_manager_empty_state',
         }));
@@ -978,6 +1061,10 @@ export class VariablePanel extends VariablePanelRuntime {
         const reconvertMvuVariables = window.appBridge?.reconvertMvuVariables;
         if (!sid || typeof reconvertMvuVariables !== 'function') {
             window.toastr?.warning?.('变量重新转换服务未就绪');
+            return null;
+        }
+        if (!this.isVariableRuntimeEnabled(sid)) {
+            window.toastr?.warning?.('当前会话的变量运行已暂停，请先开启');
             return null;
         }
         const confirmed = await appConfirm({

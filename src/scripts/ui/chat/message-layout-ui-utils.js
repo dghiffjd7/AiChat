@@ -5,7 +5,6 @@ export const buildBubbleStackCore = ({
   bubble,
   isUser = false,
   messageSidecarEl = null,
-  reactionSummaryEl = null,
   reactionButton = null,
 } = {}) => {
   const bubbleStack = documentLike.createElement('div');
@@ -13,7 +12,6 @@ export const buildBubbleStackCore = ({
   if (isUser) bubbleStack.classList?.add?.('is-user');
   bubbleStack.appendChild?.(bubble);
   if (messageSidecarEl) bubbleStack.appendChild?.(messageSidecarEl);
-  if (reactionSummaryEl) bubbleStack.appendChild?.(reactionSummaryEl);
   if (reactionButton) bubbleStack.appendChild?.(reactionButton);
   return bubbleStack;
 };
@@ -25,11 +23,33 @@ const createMessageTimeElement = (documentLike, timeText) => {
   return timeEl;
 };
 
+const appendMessageFooter = ({
+  documentLike,
+  contentWrap,
+  bubbleStack,
+  timeRow,
+  reactionSummaryEl = null,
+  isUser = false,
+  uiMode = '',
+} = {}) => {
+  if (uiMode !== 'chat' || !reactionSummaryEl) {
+    contentWrap.appendChild?.(timeRow);
+    return timeRow;
+  }
+  const footer = documentLike.createElement('div');
+  footer.className = `chat-message-footer ${isUser ? 'is-user' : 'is-assistant'}`;
+  footer.appendChild?.(reactionSummaryEl);
+  footer.appendChild?.(timeRow);
+  bubbleStack.appendChild?.(footer);
+  return footer;
+};
+
 export const appendStandardMessageLayoutCore = ({
   documentLike,
   wrapper,
   avatarImg,
   bubbleStack,
+  reactionSummaryEl = null,
   message,
   isUser = false,
   uiMode = '',
@@ -70,7 +90,15 @@ export const appendStandardMessageLayoutCore = ({
     }
     timeRow.appendChild?.(statusEl);
     timeRow.appendChild?.(timeEl);
-    contentWrap.appendChild?.(timeRow);
+    appendMessageFooter({
+      documentLike,
+      contentWrap,
+      bubbleStack,
+      timeRow,
+      reactionSummaryEl,
+      isUser: true,
+      uiMode,
+    });
 
     wrapper.appendChild?.(contentWrap);
     wrapper.appendChild?.(avatarImg);
@@ -142,7 +170,14 @@ export const appendStandardMessageLayoutCore = ({
       message,
     });
     if (actions) footer.appendChild?.(actions);
-    contentWrap.appendChild?.(footer);
+    appendMessageFooter({
+      documentLike,
+      contentWrap,
+      bubbleStack,
+      timeRow: footer,
+      reactionSummaryEl,
+      uiMode,
+    });
   } else {
     contentWrap.appendChild?.(timeEl);
   }

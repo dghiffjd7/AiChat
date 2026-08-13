@@ -5887,6 +5887,11 @@ export class ScriptRuntime {
     return true;
   }
 
+  isVariableRuntimeEnabled(sessionId) {
+    const sid = String(sessionId || this.context.sessionId || this.chatStore?.getCurrent?.() || '').trim();
+    return this.bridge?.isVariableRuntimeEnabled?.(sid) !== false;
+  }
+
   allowOnce(sessionId, scriptIds = []) {
     const sid = String(sessionId || '').trim();
     if (!sid) return;
@@ -5911,6 +5916,7 @@ export class ScriptRuntime {
 
   buildContext(sessionId) {
     const sid = String(sessionId || this.chatStore?.getCurrent?.() || this.context.sessionId || '').trim();
+    const variableRuntimeEnabled = this.isVariableRuntimeEnabled(sid);
     const uiMode = sid.startsWith('rp:') ? 'rp' : 'chat';
     let personaId = '';
     let personaName = '';
@@ -5982,14 +5988,16 @@ export class ScriptRuntime {
         ? clonePlain(activeOpenAiPreset.prompts_unused)
         : [],
     };
-    const localVariables = sid && this.chatStore?.listVariables
+    const localVariables = variableRuntimeEnabled && sid && this.chatStore?.listVariables
       ? (this.chatStore.listVariables(sid) || {})
       : {};
-    const globalVariables = this.chatStore?.listGlobalVariables?.() || {};
-    const characterVariables = personaId && this.store?.getScopeVariables
+    const globalVariables = variableRuntimeEnabled
+      ? (this.chatStore?.listGlobalVariables?.() || {})
+      : {};
+    const characterVariables = variableRuntimeEnabled && personaId && this.store?.getScopeVariables
       ? this.store.getScopeVariables('character', personaId)
       : {};
-    const presetVariables = activeOpenAiPresetId && this.store?.getScopeVariables
+    const presetVariables = variableRuntimeEnabled && activeOpenAiPresetId && this.store?.getScopeVariables
       ? this.store.getScopeVariables('preset', activeOpenAiPresetId)
       : {};
     const sharedVariables = this.bridge?.isSharedVariableSession?.(sid) === true;
@@ -6015,6 +6023,7 @@ export class ScriptRuntime {
       characterVariables: clonePlain(characterVariables) || {},
       presetVariables: clonePlain(presetVariables) || {},
       sharedVariables,
+      variableRuntimeEnabled,
     };
   }
 
@@ -6465,11 +6474,19 @@ export class ScriptRuntime {
     const allowModifyVariables = settings.scriptAllowModifyVariables !== false;
     const allowNetwork = settings.scriptAllowNetwork === true;
     const sessionId = String(params.sessionId || this.context.sessionId || this.chatStore?.getCurrent?.() || '').trim();
+    const variableRuntimeEnabled = this.isVariableRuntimeEnabled(sessionId);
     const denyScriptPermission = (name) => {
       const error = new Error(`脚本权限已禁用：${name}`);
       error.name = 'ScriptPermissionError';
       throw error;
     };
+    if (!variableRuntimeEnabled && method.startsWith('variables.')) {
+      if (method === 'variables.get' || method === 'variables.inc' || method === 'variables.dec') {
+        return undefined;
+      }
+      if (method === 'variables.getAll') return {};
+      return false;
+    }
     const normalizeRpcVariableScope = (value) => {
       const raw = String(value || 'local').trim().toLowerCase();
       if (raw === 'global' || raw === 'world') return 'global';
@@ -7157,10 +7174,12 @@ export class ScriptRuntime {
       return true;
     }
     if (method === 'context.getContext') {
-      const localVariables = sessionId && this.chatStore?.listVariables
+      const localVariables = variableRuntimeEnabled && sessionId && this.chatStore?.listVariables
         ? (this.chatStore.listVariables(sessionId) || {})
         : {};
-      const globalVariables = this.chatStore?.listGlobalVariables?.() || {};
+      const globalVariables = variableRuntimeEnabled
+        ? (this.chatStore?.listGlobalVariables?.() || {})
+        : {};
       const sharedVariables = this.bridge?.isSharedVariableSession?.(sessionId) === true;
       const variables = sharedVariables ? globalVariables : localVariables;
       const chat = allowReadMessages && Array.isArray(this.chatStore?.getMessages?.(sessionId))
@@ -7178,7 +7197,10 @@ export class ScriptRuntime {
         global_variables: clonePlain(globalVariables) || {},
         localVariables: clonePlain(localVariables) || {},
         globalVariables: clonePlain(globalVariables) || {},
+        characterVariables: variableRuntimeEnabled ? (clonePlain(this.context.characterVariables) || {}) : {},
+        presetVariables: variableRuntimeEnabled ? (clonePlain(this.context.presetVariables) || {}) : {},
         sharedVariables,
+        variableRuntimeEnabled,
         powerUserSettings: {},
       };
     }

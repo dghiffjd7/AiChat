@@ -71,3 +71,38 @@ const makeStore = () => {
   assert.deepEqual(store.writes, [['local', 'real', 'ok']], '非预览宏仍应维持原有写入行为');
   console.log('ok - 非预览宏行为不变');
 }
+
+{
+  const store = makeStore();
+  const engine = new MacroEngine(store);
+  const output = engine.process(
+    'A{{getvar::seed}}B{{setvar::blocked::yes}}C{{incvar::seed}}D{{ifvar::seed::4::yes::no}}E',
+    { sessionId: 's1', variableRuntimeEnabled: false },
+  );
+  assert.equal(output, 'ABCDE', '关闭后变量宏应被安全消费但不读取或计算');
+  assert.deepEqual(store.writes, [], '关闭后变量宏不得写入存储');
+  console.log('ok - 变量运行关闭时宏不读写且不泄漏控制标记');
+}
+
+{
+  const store = makeStore();
+  const engine = new MacroEngine(store);
+  const output = engine.process(
+    'A{{ifvar::seed::4::{{getvar::seed}}::dead}}B',
+    { sessionId: 's1', variableRuntimeEnabled: false },
+  );
+  assert.equal(output, 'AB', '暂停时应完整消费含嵌套宏的外层变量宏');
+  assert.deepEqual(store.writes, []);
+  console.log('ok - 暂停变量宏使用配对边界，不留下嵌套宏残片');
+}
+
+{
+  const store = makeStore();
+  const engine = new MacroEngine(store);
+  const output = engine.process(
+    '{{ getvar :: seed }}-{{ ifvar :: seed :: 4 :: alive :: dead }}',
+    { sessionId: 's1' },
+  );
+  assert.equal(output, '4-alive', '运行与暂停应同样识别带结构空格的变量宏');
+  console.log('ok - 带空格变量宏在运行状态保持兼容');
+}

@@ -8,6 +8,7 @@ import { buildUpdateVariableApplyPlan } from './update-variable-persist-utils.js
 export const applyUpdateVariableFromAssistantMessage = ({
   message,
   sessionId = '',
+  variableRuntimeEnabled = true,
   isTavernMvuSession = false,
   shouldAppendStatusPlaceholder = isTavernMvuSession,
   extractBlocks,
@@ -42,7 +43,7 @@ export const applyUpdateVariableFromAssistantMessage = ({
   const useGlobal = typeof resolveUseGlobalVariables === 'function'
     ? Boolean(resolveUseGlobalVariables(sessionId, message, commands))
     : false;
-  const changed = commands.length && typeof applyCommands === 'function'
+  const changed = variableRuntimeEnabled !== false && commands.length && typeof applyCommands === 'function'
     ? Boolean(applyCommands(sessionId, commands, { useGlobal }))
     : false;
   const {
@@ -55,7 +56,7 @@ export const applyUpdateVariableFromAssistantMessage = ({
     message,
     raw,
     isTavernMvuSession,
-    shouldAppendStatusPlaceholder,
+    shouldAppendStatusPlaceholder: variableRuntimeEnabled !== false && shouldAppendStatusPlaceholder,
     transformStored,
     transformDisplay,
     forceRenderRich,

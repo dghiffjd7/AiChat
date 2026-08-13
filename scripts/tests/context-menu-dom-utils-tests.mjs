@@ -62,6 +62,8 @@ const createFakeDocument = () => {
   });
   assert.equal(row.children.length, 2);
   assert.equal(row.children[0].classList.contains('is-active'), true);
+  assert.equal(row.children[0].children[0].children[0].tagName, 'IMG');
+  assert.equal(row.children[0].children[0].children[0].src.endsWith('/1f44d.svg'), true);
   row.children[1].onclick({ stopPropagation() {} });
   assert.deepEqual(toggles, ['😂']);
   console.log('ok - createContextMenuReactionRow renders active self reaction state and forwards toggles');
@@ -99,6 +101,22 @@ const createFakeDocument = () => {
   assert.equal(icon.children[0].attributes.stroke, 'currentColor');
   assert.equal(icon.children[0].children.length, 4);
   console.log('ok - createContextMenuActionButton renders the check-format SVG icon');
+}
+
+{
+  const documentLike = createFakeDocument();
+  const btn = createContextMenuActionButton({
+    documentLike,
+    action: { key: 'speak', label: '朗读' },
+  });
+  const icon = btn.children[0];
+  assert.equal(icon.textContent, '');
+  assert.equal(icon.children.length, 1);
+  assert.equal(icon.children[0].tagName, 'SVG');
+  assert.equal(icon.children[0].attributes.viewBox, '0 0 24 24');
+  assert.equal(icon.children[0].attributes.stroke, 'currentColor');
+  assert.equal(icon.children[0].children.length, 3);
+  console.log('ok - createContextMenuActionButton renders the speak SVG icon');
 }
 
 {

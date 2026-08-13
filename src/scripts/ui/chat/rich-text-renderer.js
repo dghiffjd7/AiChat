@@ -8338,6 +8338,13 @@ const makeCodeBlock = ({
             const sid = String(resolvedSessionId || window.appBridge?.getActiveSessionId?.() || '').trim();
             const store = window.appBridge?.chatStore;
             if (!store || !sid) return null;
+            if (window.appBridge?.isVariableRuntimeEnabled?.(sid) === false) {
+                return pickMvuCompatSeedVars(buildVariableContext({
+                    baseVars: {},
+                    globalVars: {},
+                    localVars: {},
+                }).variableContext);
+            }
             const localVars = store?.listVariables?.(sid) || {};
             const globalVars = store?.listGlobalVariables?.() || {};
             const isShared = window.appBridge?.isSharedVariableSession
@@ -9129,6 +9136,13 @@ export const setupIframeResizeListener = () => {
         if (!sid) return null;
         const store = window.appBridge?.chatStore;
         if (!store) return null;
+        if (window.appBridge?.isVariableRuntimeEnabled?.(sid) === false) {
+            return pickMvuCompatSeedVars(buildVariableContext({
+                baseVars: {},
+                globalVars: {},
+                localVars: {},
+            }).variableContext);
+        }
         const localVars = store?.listVariables?.(sid) || {};
         const globalVars = store?.listGlobalVariables?.() || {};
         const isShared = window.appBridge?.isSharedVariableSession
@@ -9160,6 +9174,13 @@ export const setupIframeResizeListener = () => {
     };
     const buildCompatVarsSnapshot = (sessionId, scopeType = 'local') => {
         const sid = String(sessionId || window.appBridge?.getActiveSessionId?.() || '').trim();
+        if (window.appBridge?.isVariableRuntimeEnabled?.(sid) === false) {
+            return pickMvuCompatSeedVars(buildVariableContext({
+                baseVars: {},
+                globalVars: {},
+                localVars: {},
+            }).variableContext);
+        }
         const store = window.appBridge?.chatStore;
         const globalVars = store?.listGlobalVariables?.() || {};
         const localVars = sid ? (store?.listVariables?.(sid) || {}) : {};
@@ -9170,7 +9191,7 @@ export const setupIframeResizeListener = () => {
     const syncCompatScopedVariablesToStore = (scopeType, nextScoped, sessionId) => {
         const store = window.appBridge?.chatStore;
         const sid = String(sessionId || window.appBridge?.getActiveSessionId?.() || '').trim();
-        if (!store) return false;
+        if (!store || window.appBridge?.isVariableRuntimeEnabled?.(sid) === false) return false;
         if (scopeType !== 'global' && !sid) return false;
         const currentFlat = scopeType === 'global'
             ? (store.listGlobalVariables?.() || {})
@@ -9201,6 +9222,14 @@ export const setupIframeResizeListener = () => {
     };
     const applyCompatVariableMutation = ({ sessionId, mode, payload, key, options = {} }) => {
         const sid = String(sessionId || window.appBridge?.getActiveSessionId?.() || '').trim();
+        if (window.appBridge?.isVariableRuntimeEnabled?.(sid) === false) {
+            return {
+                ok: false,
+                changed: false,
+                reason: 'variable_runtime_disabled',
+                vars: collectMvuVars(sid),
+            };
+        }
         const scopeType = resolveCompatVariableStoreScope(sid, options);
         const currentVars = collectMvuVars(sid) || buildCompatVarsSnapshot(sid, scopeType);
         const currentScoped = getMvuCompatScopedVariables(currentVars, { type: scopeType });
@@ -9889,6 +9918,11 @@ export const setupIframeResizeListener = () => {
     window.addEventListener('chatapp-variable-schema-changed', (ev) => {
         const sid = String(ev?.detail?.sessionId || '').trim();
         if (sid) broadcastMvuVars(sid);
+    });
+    window.addEventListener('chatapp-variable-runtime-changed', (ev) => {
+        const sid = String(ev?.detail?.sessionId || '').trim();
+        const activeSid = String(window.appBridge?.getActiveSessionId?.() || '').trim();
+        if (sid && sid !== activeSid) broadcastMvuVars(sid);
     });
 };
 

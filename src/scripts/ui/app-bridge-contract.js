@@ -27,6 +27,23 @@ export const BRIDGE_CONTRACT_DOMAINS = Object.freeze({
 
 export const BRIDGE_CONTRACT_METHOD_METADATA = Object.freeze({
   [BRIDGE_CONTRACT_DOMAINS.variableRuntime]: {
+    isVariableRuntimeEnabled: {
+      params: ['sessionId?: string'],
+      returns: 'boolean',
+      sideEffects: [],
+      tests: ['app-bridge-contract-tests.mjs', 'variable-runtime-policy-utils-tests.mjs'],
+      status: 'covered',
+    },
+    setVariableRuntimeEnabled: {
+      params: ['sessionId: string', 'enabled: boolean'],
+      returns: 'variable runtime setting result',
+      sideEffects: [
+        'persists the current-session variable runtime policy',
+        'dispatches chatapp-variable-runtime-changed when the value changes',
+      ],
+      tests: ['app-bridge-contract-tests.mjs', 'variable-runtime-policy-utils-tests.mjs'],
+      status: 'covered',
+    },
     initializeMvuVariables: {
       params: ['sessionId?: string', 'options?: { reason?: string }'],
       returns: 'MVU initialization result',

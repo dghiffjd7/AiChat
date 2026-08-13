@@ -132,6 +132,42 @@ test('applyUpdateVariableFromAssistantMessage ignores non assistant or empty pay
   }), false);
 });
 
+test('disabled variable runtime strips explicit blocks without applying commands or appending status', () => {
+  const calls = [];
+  const result = applyUpdateVariableFromAssistantMessage({
+    message: {
+      id: 'm-disabled',
+      role: 'assistant',
+      rawSource: '正文\n<UpdateVariable>hp=10</UpdateVariable>',
+      raw: '正文\n<UpdateVariable>hp=10</UpdateVariable>',
+      content: '正文\n<UpdateVariable>hp=10</UpdateVariable>',
+    },
+    sessionId: 's-disabled',
+    variableRuntimeEnabled: false,
+    isTavernMvuSession: true,
+    shouldAppendStatusPlaceholder: true,
+    extractBlocks: () => ({ blocks: ['hp=10'], cleaned: '正文' }),
+    parseCommands: () => [{ type: 'set', path: ['hp'], value: 10 }],
+    applyCommands() {
+      calls.push('apply');
+      return true;
+    },
+    transformDisplay: text => text,
+    updateMessage(messageId, payload) {
+      calls.push(['update', messageId, payload]);
+      return null;
+    },
+    logger: { info() {}, warn() {} },
+  });
+
+  assert.equal(result, false, 'strip-only persistence must not report a variable mutation');
+  assert.deepEqual(calls, [[
+    'update',
+    'm-disabled',
+    { raw: '正文', content: '正文', rawSource: '正文' },
+  ]]);
+});
+
 let failed = 0;
 for (const t of tests) {
   try {
