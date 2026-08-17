@@ -116,10 +116,157 @@ export const buildPromptOverviewView = (request = null, {
   const messages = Array.isArray(req.messages) ? req.messages : [];
   const roles = roleCounts(messages);
   const audit = req.injectionAudit && typeof req.injectionAudit === 'object' ? req.injectionAudit : {};
+  const globalPromptAudit = audit.globalPrompt && typeof audit.globalPrompt === 'object'
+    ? audit.globalPrompt
+    : {};
+  const globalPromptBlocks = Array.isArray(globalPromptAudit.injected) ? globalPromptAudit.injected : [];
+  const globalPromptSkipped = Array.isArray(globalPromptAudit.skipped) ? globalPromptAudit.skipped : [];
   const diagnostics = req.responseDiagnostics && typeof req.responseDiagnostics === 'object'
     ? req.responseDiagnostics
     : {};
   const params = normalizeParamEntries(req);
+  const transport = req.phoneReplyTransport && typeof req.phoneReplyTransport === 'object'
+    ? req.phoneReplyTransport
+    : {};
+  const transportMode = String(transport.effectiveMode || transport.requestedMode || '').trim();
+  const transportLabels = {
+    provider_fc: '原生 FC',
+    json_terminal: 'JSON 终态',
+    legacy_text: '传统文本',
+    fc_fallback: 'FC 失败后文本回退',
+    json_fallback: 'JSON 失败后文本回退',
+  };
+  const transportLabel = transportLabels[transportMode] || transportMode;
+  const routeLayer = String(transport.routeLayer || '').trim();
+  const routeLayerLabels = {
+    verified_native_fc: '原生 FC',
+    local_observed_compatible: '本机观察兼容',
+    fc_probation: 'FC 试用',
+    json_terminal: 'JSON 终态',
+    json_after_fc_circuit: 'JSON 终态 · FC 熔断后降级',
+    legacy_text: '传统文本',
+  };
+  const routeLayerLabel = ['fc_fallback', 'json_fallback'].includes(transportMode)
+    ? transportLabel
+    : (routeLayerLabels[routeLayer] || transportLabel || '传统文本');
+  const routePreviewState = String(transport.previewState || '').trim() === 'predicted'
+    ? 'predicted'
+    : 'actual';
+  const routeStateLabel = routePreviewState === 'predicted' ? '候选路由（预测）' : '实际路由';
+  const transportReason = String(
+    transport.fallbackReason
+    || transport.routeReason
+    || transport.eligibilityReason
+    || transport.providerRolloutReason
+    || '',
+  ).trim();
+  const snapshotFingerprint = String(transport.snapshotFingerprint || '').trim();
+  const hasTransportThinking = Object.prototype.hasOwnProperty.call(transport, 'thinkingRequested')
+    || Object.prototype.hasOwnProperty.call(transport, 'thinkingEnabled')
+    || Boolean(String(transport.thinkingOverrideReason || '').trim());
+  const transportThinkingOverrideReason = String(transport.thinkingOverrideReason || '').trim();
+  const terminalToolSchema = transport.terminalToolSchema
+    && typeof transport.terminalToolSchema === 'object'
+    ? transport.terminalToolSchema
+    : null;
+  const terminalToolSchemaJson = terminalToolSchema
+    ? JSON.stringify(terminalToolSchema, null, 2)
+    : '';
+  const jsonContract = transport.jsonContract && typeof transport.jsonContract === 'object'
+    ? transport.jsonContract
+    : null;
+  const jsonContractJson = jsonContract ? JSON.stringify(jsonContract.schema || {}, null, 2) : '';
+  const schemaEstimateTokens = toFiniteNumber(transport.schemaEstimateTokens);
+  const semanticMessageEstimateTokens = toFiniteNumber(transport.semanticMessageEstimateTokens);
+  const contractInstructionEstimateTokens = toFiniteNumber(transport.contractInstructionEstimateTokens);
+  const contractSummary = transport.contractSummary && typeof transport.contractSummary === 'object'
+    ? transport.contractSummary
+    : null;
+  const contractTarget = String(contractSummary?.frozenTarget?.targetName || '').trim();
+  const summarizeTargets = value => (Array.isArray(value) ? value : [])
+    .map(item => String(item?.name || item?.id || '').trim())
+    .filter(Boolean)
+    .join('、');
+  const contractMembers = summarizeTargets(contractSummary?.frozenTarget?.members);
+  const contractMomentAuthors = summarizeTargets(contractSummary?.frozenTarget?.momentAuthors);
+  const contractPrivateTargets = summarizeTargets(contractSummary?.frozenTarget?.privateTargets);
+  const contractGroupTargets = summarizeTargets(contractSummary?.frozenTarget?.groupTargets);
+  const contractItemTypes = Array.isArray(contractSummary?.allowedItemTypes)
+    ? contractSummary.allowedItemTypes.map(String).filter(Boolean)
+    : [];
+  const contractStickers = Array.isArray(contractSummary?.allowedStickerKeywords)
+    ? contractSummary.allowedStickerKeywords.map(String).filter(Boolean)
+    : [];
+  const contractTables = Array.isArray(contractSummary?.tableTargets)
+    ? contractSummary.tableTargets.filter(item => item && typeof item === 'object')
+    : [];
+  const contractOrder = Array.isArray(contractSummary?.fixedOrder)
+    ? contractSummary.fixedOrder.map(String).filter(Boolean)
+    : [];
+  const contractSummaryRows = [
+    contractTarget ? ['冻结目标', contractTarget] : null,
+    contractMembers ? ['冻结群成员', contractMembers] : null,
+    contractMomentAuthors ? ['动态作者候选', contractMomentAuthors] : null,
+    contractPrivateTargets ? ['可选私聊目标', contractPrivateTargets] : null,
+    contractGroupTargets ? ['可选群聊目标', contractGroupTargets] : null,
+    contractItemTypes.length ? ['允许消息类型', contractItemTypes.join('、')] : null,
+    contractStickers.length ? ['贴图白名单', contractStickers.join('、')] : null,
+    contractTables.length
+      ? ['可写表与行', contractTables.map(table => (
+          `${String(table.name || table.id || '未命名表')}（${Array.isArray(table.rowIds) ? table.rowIds.length : 0} 行）`
+        )).join('、')]
+      : null,
+    contractOrder.length ? ['固定顺序', contractOrder.join(' → ')] : null,
+  ].filter(Boolean);
+  const tokenAttributionAvailable = [
+    semanticMessageEstimateTokens,
+    contractInstructionEstimateTokens,
+    schemaEstimateTokens,
+  ].some(value => value !== null);
+  const mergedRequestOptions = { ...(req.options || {}), ...(req.requestOptions || {}) };
+  const toolChoice = mergedRequestOptions.tool_choice ?? mergedRequestOptions.toolChoice;
+  const geminiFunctionCalling = mergedRequestOptions.toolConfig?.functionCallingConfig;
+  const toolChoiceLabel = (typeof toolChoice === 'string'
+    ? toolChoice
+    : String(toolChoice?.function?.name || toolChoice?.name || toolChoice?.type || '').trim())
+    || (geminiFunctionCalling
+      ? [
+          String(geminiFunctionCalling.mode || '').trim(),
+          ...(Array.isArray(geminiFunctionCalling.allowedFunctionNames)
+            ? geminiFunctionCalling.allowedFunctionNames.map(String).filter(Boolean)
+            : []),
+        ].filter(Boolean).join(' · ')
+      : '');
+  const responseFormat = mergedRequestOptions.response_format ?? mergedRequestOptions.responseFormat;
+  const responseFormatLabel = typeof responseFormat === 'string'
+    ? responseFormat
+    : String(responseFormat?.type || '').trim();
+  const reasoningEffort = String(
+    mergedRequestOptions.reasoning?.effort || mergedRequestOptions.reasoning_effort || '',
+  ).trim();
+  const parallelToolCalls = typeof mergedRequestOptions.parallel_tool_calls === 'boolean'
+    ? mergedRequestOptions.parallel_tool_calls
+    : (toolChoice?.disable_parallel_tool_use === true ? false : null);
+  const routeOptionFacts = [
+    toolChoiceLabel ? `tool_choice · ${toolChoiceLabel}` : '',
+    typeof parallelToolCalls === 'boolean'
+      ? `parallel_tool_calls · ${parallelToolCalls}`
+      : '',
+    reasoningEffort ? `reasoning.effort · ${reasoningEffort}` : '',
+    responseFormatLabel ? `response_format · ${responseFormatLabel}` : '',
+    String(mergedRequestOptions.thinking?.type || '').trim()
+      ? `thinking · ${String(mergedRequestOptions.thinking.type).trim()}`
+      : '',
+  ].filter(Boolean);
+  const routeWarning = Boolean(
+    transportMode === 'fc_fallback'
+    || transportMode === 'json_fallback'
+    || transport.circuitOpen === true
+    || Number(transport.cooldownUntil || 0) > Date.now()
+    || transportThinkingOverrideReason
+    || String(transport.routeReason || '').trim()
+    || String(transport.fallbackReason || '').trim()
+  );
   const at = req.at
     ? new Date(req.at).toLocaleString('zh-CN', { hour12: false })
     : '—';
@@ -131,15 +278,51 @@ export const buildPromptOverviewView = (request = null, {
   const usagePercent = Number.isFinite(estimatedInput) && Number.isFinite(inputBudget) && inputBudget > 0
     ? Math.max(0, Math.min(100, (estimatedInput / inputBudget) * 100))
     : null;
-  const firstTokenLatencyMs = toFiniteNumber(diagnostics.firstTokenLatencyMs);
+  const firstTokenLatencyMs = toFiniteNumber(
+    diagnostics.firstMeaningfulDeltaLatencyMs ?? diagnostics.firstTokenLatencyMs,
+  );
   const tokensPerSecond = toFiniteNumber(diagnostics.tokensPerSecond);
   const firstTokenValue = firstTokenLatencyMs !== null
-    ? formatDuration(diagnostics.firstTokenLatencyMs)
+    ? formatDuration(firstTokenLatencyMs)
     : (req.stream ? '未记录' : '非流式');
   const tpsValue = tokensPerSecond !== null
     ? `${tokensPerSecond.toFixed(1)} tok/s`
     : '—';
   const fingerprint = String(diagnostics.systemFingerprint || '').trim();
+  const responseIdentities = [
+    ['system fingerprint', fingerprint],
+    ['model version', diagnostics.modelVersion],
+    ['response id', diagnostics.responseId],
+    ['response model', diagnostics.responseModel],
+    ['routed provider', diagnostics.routedProvider],
+  ].map(([label, value]) => [label, String(value || '').trim()]).filter(([, value]) => value);
+  const providerCalls = (Array.isArray(diagnostics.providerCalls) ? diagnostics.providerCalls : [])
+    .slice(0, 12)
+    .map(call => ({
+      callIndex: Math.max(0, Math.trunc(Number(call?.callIndex) || 0)),
+      mode: String(call?.mode || ''),
+      outcome: String(call?.outcome || ''),
+      provider: String(call?.provider || ''),
+      model: String(call?.model || ''),
+      stream: call?.stream === true,
+      latencyMs: toFiniteNumber(call?.latencyMs),
+      firstMeaningfulDeltaLatencyMs: toFiniteNumber(call?.firstMeaningfulDeltaLatencyMs),
+      outputDurationMs: toFiniteNumber(call?.outputDurationMs),
+      tokensPerSecond: toFiniteNumber(call?.tokensPerSecond),
+      promptTokens: toFiniteNumber(call?.promptTokens),
+      completionTokens: toFiniteNumber(call?.completionTokens),
+      totalTokens: toFiniteNumber(call?.totalTokens),
+      finishReason: String(call?.finishReason || ''),
+      systemFingerprint: String(call?.systemFingerprint || ''),
+      modelVersion: String(call?.modelVersion || ''),
+      responseId: String(call?.responseId || ''),
+      responseModel: String(call?.responseModel || ''),
+      routedProvider: String(call?.routedProvider || ''),
+    }));
+  const providerCallsJson = providerCalls.length ? JSON.stringify(providerCalls, null, 2) : '';
+  const providerCallTotalTokens = providerCalls.reduce((sum, call) => (
+    sum + (Number.isFinite(call.totalTokens) ? call.totalTokens : 0)
+  ), 0);
   const requestRows = [
     ['request_id', req.requestId || '—'],
     ['provider', req.provider || '—'],
@@ -150,6 +333,20 @@ export const buildPromptOverviewView = (request = null, {
     ['profile', req.configProfile?.id || req.configProfile?.source || 'global'],
     ['message_count', String(messages.length)],
     ['response_prefix', req.responsePrefix ? 'present' : 'none'],
+    ...(globalPromptBlocks.length ? [['global_prompt_blocks', String(globalPromptBlocks.length)]] : []),
+    ...(transportMode ? [['reply_transport', transportMode]] : []),
+    ...(transport.previewState ? [['route_state', routePreviewState]] : []),
+    ...(routeLayer ? [['route_layer', routeLayer]] : []),
+    ...(transportReason ? [['transport_reason', transportReason]] : []),
+    ...(snapshotFingerprint ? [['semantic_snapshot', snapshotFingerprint]] : []),
+    ...(transport.capabilitySource ? [['capability_source', transport.capabilitySource]] : []),
+    ...(hasTransportThinking ? [
+      ['fc_thinking_requested', transport.thinkingRequested === true ? 'true' : 'false'],
+      ['fc_thinking_enabled', transport.thinkingEnabled === true ? 'true' : 'false'],
+    ] : []),
+    ...(transportThinkingOverrideReason
+      ? [['fc_thinking_override', transportThinkingOverrideReason]]
+      : []),
   ];
 
   const requestJsonRows = requestRows.map(([key, value], index) => `
@@ -180,12 +377,40 @@ export const buildPromptOverviewView = (request = null, {
         <span class="prompt-overview-kicker">REQUEST OVERVIEW · READ ONLY</span>
         <h2>本次请求概览</h2>
         <p>这里仅展示注入构成、请求配置与响应诊断；完整消息正文只在“完整 Prompt”分页出现。</p>
+        <details class="prompt-overview-route${routeWarning ? ' is-warning' : ''}"${routeWarning ? ' open' : ''}>
+          <summary>
+            <strong>${escapeHtml(routeStateLabel)} · ${escapeHtml(routeLayerLabel)}</strong>
+            <span>${escapeHtml(req.provider || '未配置')} · ${escapeHtml(req.model || '未配置')}</span>
+          </summary>
+          <div>
+            ${routeOptionFacts.length
+              ? routeOptionFacts.map(item => `<code>${escapeHtml(item)}</code>`).join('')
+              : '<code>本轮没有改变行为的结构化请求参数</code>'}
+            ${transportReason ? `<p>${escapeHtml(transportReason)}</p>` : ''}
+            ${routeLayer === 'json_after_fc_circuit' ? '<p>FC 熔断后降级；JSON 使用独立健康状态。</p>' : ''}
+          </div>
+        </details>
         <div class="prompt-overview-chips">
           <span>${escapeHtml(req.provider || '未配置 provider')}</span>
           <span>${escapeHtml(req.model || '未配置 model')}</span>
           <span>${messages.length} 条消息</span>
+          ${transportLabel ? `<span>${escapeHtml(transportLabel)}</span>` : ''}
+          ${globalPromptBlocks.length ? `<span>全局提示词 ×${globalPromptBlocks.length}</span>` : ''}
           <span>${escapeHtml(at)}</span>
         </div>
+        ${tokenAttributionAvailable ? `
+          <div class="prompt-overview-token-attribution">
+            <span>语义消息 ~${formatInt(semanticMessageEstimateTokens)} tok</span>
+            <span>合同指令 ~${formatInt(contractInstructionEstimateTokens)} tok</span>
+            <span>Schema ~${formatInt(schemaEstimateTokens)} tok</span>
+          </div>
+        ` : ''}
+        ${(globalPromptBlocks.length || globalPromptSkipped.length) ? `
+          <div class="prompt-overview-token-attribution">
+            <span>全局提示词 ~${formatInt(globalPromptAudit.usedTokens)} tok</span>
+            ${globalPromptSkipped.length ? `<span>护栏未注入 ${globalPromptSkipped.length} 块</span>` : ''}
+          </div>
+        ` : ''}
       </div>
 
       <div class="prompt-overview-layout">
@@ -223,6 +448,37 @@ export const buildPromptOverviewView = (request = null, {
             ${requestJsonRows}${paramRows}
             <div class="prompt-overview-code-line is-brace"><span class="prompt-overview-line-number">${requestRows.length + params.length + 1}</span><code>}</code></div>
           </div>
+          ${terminalToolSchemaJson ? `
+            <details class="prompt-overview-schema">
+              <summary>
+                <span><strong>结构化终态合同${terminalToolSchema.redacted === true ? ' · 终态工具 Schema（已脱敏）' : ''}${contractItemTypes.length ? ` · ${escapeHtml(contractItemTypes.join('/'))}` : ''}${contractTables.length ? ` · 可写表 ${contractTables.length}` : ''}</strong><small>${escapeHtml(terminalToolSchema.toolName || 'provider tool')}${schemaEstimateTokens === null ? '' : ` · ~${formatInt(schemaEstimateTokens)} tok`}</small></span>
+                <b>展开</b>
+              </summary>
+              <p>目标身份由运行时冻结；本轮只接受唯一终态调用，并在完整领域校验后一次提交。</p>
+              ${contractSummaryRows.length ? `
+                <dl class="prompt-overview-contract-summary">
+                  ${contractSummaryRows.map(([label, value]) => `<div><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value)}</dd></div>`).join('')}
+                </dl>
+              ` : ''}
+              <details class="prompt-overview-schema">
+                <summary><span><strong>完整 Schema${terminalToolSchema.redacted === true ? '（已脱敏）' : ''}</strong><small>第二层</small></span><b>展开</b></summary>
+                <pre><code>${escapeHtml(terminalToolSchemaJson)}</code></pre>
+              </details>
+            </details>
+          ` : ''}
+          ${jsonContract ? `
+            <details class="prompt-overview-schema">
+              <summary>
+                <span><strong>JSON 输出合同</strong><small>${escapeHtml(jsonContract.formatMode || 'prompt_json')}${schemaEstimateTokens === null ? '' : ` · ~${formatInt(schemaEstimateTokens)} tok`}</small></span>
+                <b>展开</b>
+              </summary>
+              <p>固定版本 ${escapeHtml(jsonContract.version || 'phone.reply.ir.v1')}；完整对象通过 IR、冻结目标与领域校验后才提交。</p>
+              <details class="prompt-overview-schema">
+                <summary><span><strong>完整 JSON Schema</strong><small>第二层</small></span><b>展开</b></summary>
+                <pre><code>${escapeHtml(jsonContractJson)}</code></pre>
+              </details>
+            </details>
+          ` : ''}
         </section>
       </div>
 
@@ -232,11 +488,22 @@ export const buildPromptOverviewView = (request = null, {
           ${diagnostics.finishReason ? `<b>finish · ${escapeHtml(diagnostics.finishReason)}</b>` : ''}
         </header>
         <div class="prompt-overview-metrics">${metrics.map(renderMetricCard).join('')}</div>
-        <div class="prompt-overview-fingerprint">
-          <span>system fingerprint</span>
-          <code title="${escapeHtml(fingerprint || '供应方未返回')}">${escapeHtml(fingerprint || '供应方未返回')}</code>
-          <small>模型运行标识 · 仅在响应提供时记录</small>
-        </div>
+        ${(responseIdentities.length ? responseIdentities : [['system fingerprint', '供应方未返回']]).map(([label, value]) => `
+          <div class="prompt-overview-fingerprint">
+            <span>${escapeHtml(label)}</span>
+            <code title="${escapeHtml(value)}">${escapeHtml(value)}</code>
+            <small>供应方响应身份 · 仅在响应提供时记录</small>
+          </div>
+        `).join('')}
+        ${providerCallsJson ? `
+          <details class="prompt-overview-schema">
+            <summary>
+              <span><strong>Provider calls · ${providerCalls.length}</strong><small>逐次分账${providerCallTotalTokens > 0 ? ` · 总计 ${formatInt(providerCallTotalTokens)} tok` : ''}</small></span>
+              <b>展开</b>
+            </summary>
+            <pre><code>${escapeHtml(providerCallsJson)}</code></pre>
+          </details>
+        ` : ''}
       </section>
     </div>
   `;
@@ -250,6 +517,25 @@ export const buildPromptOverviewView = (request = null, {
     `base url: ${req.baseUrl || '—'}`,
     `stream: ${req.stream ? 'true' : 'false'}`,
     `message count: ${messages.length}`,
+    transportMode ? `transport: ${transportMode}${transportLabel ? ` (${transportLabel})` : ''}` : '',
+    `route state: ${routePreviewState}`,
+    routeLayer ? `route layer: ${routeLayer}` : '',
+    routeOptionFacts.length ? `route options: ${routeOptionFacts.join('; ')}` : '',
+    transportReason ? `transport reason: ${transportReason}` : '',
+    snapshotFingerprint ? `snapshot: ${snapshotFingerprint}` : '',
+    hasTransportThinking ? `FC thinking requested: ${transport.thinkingRequested === true ? 'true' : 'false'}` : '',
+    hasTransportThinking ? `FC thinking enabled: ${transport.thinkingEnabled === true ? 'true' : 'false'}` : '',
+    transportThinkingOverrideReason ? `FC thinking override: ${transportThinkingOverrideReason}` : '',
+    terminalToolSchema?.toolName
+      ? `terminal tool schema: ${terminalToolSchema.toolName}${terminalToolSchema.redacted === true ? ' (redacted)' : ''}`
+      : '',
+    jsonContract ? `JSON terminal contract: ${jsonContract.version || 'phone.reply.ir.v1'} · ${jsonContract.formatMode || 'prompt_json'}` : '',
+    schemaEstimateTokens !== null ? `schema estimate: ${formatInt(schemaEstimateTokens)} token` : '',
+    semanticMessageEstimateTokens !== null ? `semantic messages estimate: ${formatInt(semanticMessageEstimateTokens)} token` : '',
+    contractInstructionEstimateTokens !== null ? `contract instruction estimate: ${formatInt(contractInstructionEstimateTokens)} token` : '',
+    globalPromptBlocks.length ? `global prompt blocks: ${globalPromptBlocks.length} · ${formatInt(globalPromptAudit.usedTokens)} token` : '',
+    ...globalPromptSkipped.map(item => `global prompt skipped: ${item.name || item.id || '-'} · ${item.message || item.reason || '-'}`),
+    ...contractSummaryRows.map(([label, value]) => `${label}: ${value}`),
     roles.length ? `roles: ${roles.map(([role, count]) => `${role} ×${count}`).join(', ')}` : '',
     params.length ? `generation params: ${params.map(item => `${item.key}=${item.value}`).join(', ')}` : '',
     injectionAuditText,
@@ -258,6 +544,13 @@ export const buildPromptOverviewView = (request = null, {
     `output speed: ${tpsValue}`,
     `completion tokens: ${formatInt(diagnostics.completionTokens)}`,
     `system fingerprint: ${fingerprint || '供应方未返回'}`,
+    diagnostics.modelVersion ? `model version: ${String(diagnostics.modelVersion)}` : '',
+    diagnostics.responseId ? `response id: ${String(diagnostics.responseId)}` : '',
+    diagnostics.responseModel ? `response model: ${String(diagnostics.responseModel)}` : '',
+    diagnostics.routedProvider ? `routed provider: ${String(diagnostics.routedProvider)}` : '',
+    ...providerCalls.map(call => (
+      `provider call #${call.callIndex}: ${call.mode || 'unknown'} · ${call.outcome || 'unknown'} · ${call.provider || 'unknown'}/${call.model || 'unknown'}`
+    )),
   ].filter(Boolean).join('\n');
 
   return { html, plain };
@@ -294,9 +587,32 @@ const roleLabel = (message, index) => {
 export const buildFullPromptDocument = (request = null, { fallbackText = '' } = {}) => {
   const req = request && typeof request === 'object' ? request : {};
   const messages = Array.isArray(req.messages) ? req.messages : [];
+  const globalPromptBlocks = Array.isArray(req.injectionAudit?.globalPrompt?.injected)
+    ? req.injectionAudit.globalPrompt.injected
+    : [];
+  const globalPromptContentBlocks = globalPromptBlocks
+    .map(block => ({
+      block,
+      content: String(block?.content || block?.renderedContent || ''),
+    }))
+    .filter(item => item.content);
   const blocks = messages.map((message, index) => {
     const role = roleLabel(message, index);
-    return { ...role, text: stringifyMessage(message) };
+    const text = stringifyMessage(message);
+    const globalPrompts = globalPromptContentBlocks
+      .filter(item => String(text || '').includes(item.content))
+      .map(item => item.block);
+    const exactGlobalPrompt = globalPrompts.length === 1
+      && String(text || '') === String(globalPrompts[0]?.content || globalPrompts[0]?.renderedContent || '')
+      ? globalPrompts[0]
+      : null;
+    return {
+      ...role,
+      text,
+      globalPrompts,
+      exactGlobalPrompt,
+      transportContract: /^本轮使用 JSON 结构化终态/u.test(String(text || '').trim()),
+    };
   });
   if (req.responsePrefix) {
     blocks.push({ role: 'assistant', label: '[assistant prefill]', text: String(truncateBase64(req.responsePrefix) || '') });
@@ -309,7 +625,26 @@ export const buildFullPromptDocument = (request = null, { fallbackText = '' } = 
   const rows = [];
   blocks.forEach((block, blockIndex) => {
     rows.push({ type: 'role', role: block.role, text: block.label });
-    String(block.text || '').split(/\r?\n/).forEach((line) => rows.push({ type: 'content', role: block.role, text: line }));
+    if (block.exactGlobalPrompt) {
+      rows.push({
+        type: 'global_prompt',
+        role: block.role,
+        text: block.text,
+        name: block.exactGlobalPrompt.name || block.exactGlobalPrompt.id || '全局提示词',
+        anchor: block.exactGlobalPrompt.anchor || '',
+      });
+    } else if (block.transportContract) {
+      rows.push({ type: 'contract', role: block.role, text: block.text });
+    } else {
+      if (block.globalPrompts?.length) {
+        rows.push({
+          type: 'global_prompt_marker',
+          role: block.role,
+          text: block.globalPrompts.map(item => item.name || item.id || '全局提示词').join('、'),
+        });
+      }
+      String(block.text || '').split(/\r?\n/).forEach((line) => rows.push({ type: 'content', role: block.role, text: line }));
+    }
     if (blockIndex < blocks.length - 1) rows.push({ type: 'content', role: block.role, text: '' });
   });
   const estimatedTokens = toFiniteNumber(req.injectionAudit?.totalEstimateTokens ?? req.injectionAudit?.usedTokens);
@@ -322,6 +657,36 @@ export const buildFullPromptDocument = (request = null, { fallbackText = '' } = 
           <span class="prompt-document-rule"></span>
           <strong>${escapeHtml(row.text)}</strong>
           <span class="prompt-document-rule"></span>
+        </div>
+      `;
+    }
+    if (row.type === 'contract') {
+      return `
+        <div class="prompt-document-line is-transport-contract" style="--prompt-line-index:${index}">
+          <span class="prompt-document-line-number" data-prompt-line-number="${lineNumber}">${lineNumber}</span>
+          <details class="prompt-document-contract">
+            <summary><strong>JSON 输出合同</strong><small>传输层 · 展开查看实际发送内容</small></summary>
+            <pre><code>${escapeHtml(row.text)}</code></pre>
+          </details>
+        </div>
+      `;
+    }
+    if (row.type === 'global_prompt') {
+      return `
+        <div class="prompt-document-line is-global-prompt" style="--prompt-line-index:${index}">
+          <span class="prompt-document-line-number" data-prompt-line-number="${lineNumber}">${lineNumber}</span>
+          <details class="prompt-document-contract" open>
+            <summary><strong>全局提示词</strong><small>${escapeHtml(row.name)}${row.anchor ? ` · ${escapeHtml(row.anchor)}` : ''}</small></summary>
+            <pre><code>${escapeHtml(row.text)}</code></pre>
+          </details>
+        </div>
+      `;
+    }
+    if (row.type === 'global_prompt_marker') {
+      return `
+        <div class="prompt-document-line is-global-prompt-marker" style="--prompt-line-index:${index}">
+          <span class="prompt-document-line-number" data-prompt-line-number="${lineNumber}">${lineNumber}</span>
+          <strong>全局提示词</strong><small>${escapeHtml(row.text)}</small>
         </div>
       `;
     }

@@ -1205,6 +1205,7 @@ export const validateChatFormatGuardianRepairCandidate = ({
   const parserReport = extractChatFormatEventDrafts(candidateText, {
     ...options,
     enabledFormats: formatProfile?.enabledFormats || modelOptions?.enabledFormats || options?.enabledFormats,
+    customFormatGuide: modelOptions?.customFormatGuide || options?.customFormatGuide || '',
     sourceMessageId: trim(options?.sourceMessageId),
   });
   const ok = parserReport.status === 'ready';

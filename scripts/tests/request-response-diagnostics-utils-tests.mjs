@@ -15,6 +15,8 @@ import {
     stream: true,
     firstTokenAt: 1640,
     firstTokenLatencyMs: 640,
+    firstMeaningfulDeltaAt: 1640,
+    firstMeaningfulDeltaLatencyMs: 640,
   });
   const repeated = buildFirstTokenResponseDiagnostics(first, {
     requestStartedAt: 1_000,
@@ -39,12 +41,21 @@ import {
       totalTokens: 1320,
       finishReason: 'stop',
       systemFingerprint: 'fp_alpha',
+      modelVersion: 'model-version-alpha',
+      responseId: 'response-alpha',
+      responseModel: 'actual-model-alpha',
+      routedProvider: 'provider-alpha',
     },
   });
   assert.equal(completed.latencyMs, 3100);
   assert.equal(completed.outputDurationMs, 2400);
   assert.equal(completed.tokensPerSecond, 50);
   assert.equal(completed.systemFingerprint, 'fp_alpha');
+  assert.equal(completed.modelVersion, 'model-version-alpha');
+  assert.equal(completed.responseId, 'response-alpha');
+  assert.equal(completed.responseModel, 'actual-model-alpha');
+  assert.equal(completed.routedProvider, 'provider-alpha');
+  assert.equal(completed.firstMeaningfulDeltaLatencyMs, 700);
   assert.equal(completed.promptTokens, 1200);
   assert.equal(completed.completionTokens, 120);
   console.log('ok - completed response diagnostics derives TPS from real usage after TTFT');
@@ -59,6 +70,7 @@ import {
   assert.equal(completed.firstTokenLatencyMs, null);
   assert.equal(completed.tokensPerSecond, null);
   assert.equal(completed.systemFingerprint, '');
+  assert.equal(completed.modelVersion, '');
+  assert.equal(completed.responseId, '');
   console.log('ok - response diagnostics does not fabricate TTFT, TPS or fingerprint');
 }
-

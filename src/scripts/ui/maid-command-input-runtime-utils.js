@@ -63,6 +63,7 @@ const ICONS = Object.freeze({
   attach: iconSvg('<path d="M12 5v14"/><path d="M5 12h14"/>'),
   settings: iconSvg('<path d="M12 8.5a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7Z"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.03.03a2.05 2.05 0 0 1-2.9 2.9l-.03-.03A1.7 1.7 0 0 0 15 19.4a1.7 1.7 0 0 0-1 .54V20a2 2 0 0 1-4 0v-.06a1.7 1.7 0 0 0-1-.54 1.7 1.7 0 0 0-1.88.34l-.03.03a2.05 2.05 0 0 1-2.9-2.9l.03-.03A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-.54-1H4a2 2 0 0 1 0-4h.06a1.7 1.7 0 0 0 .54-1 1.7 1.7 0 0 0-.34-1.88l-.03-.03a2.05 2.05 0 0 1 2.9-2.9l.03.03A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-.54V4a2 2 0 0 1 4 0v.06a1.7 1.7 0 0 0 1 .54 1.7 1.7 0 0 0 1.88-.34l.03-.03a2.05 2.05 0 0 1 2.9 2.9l-.03.03A1.7 1.7 0 0 0 19.4 9c.2.35.38.68.54 1H20a2 2 0 0 1 0 4h-.06a1.7 1.7 0 0 0-.54 1Z"/>'),
   send: iconSvg('<path d="M5 12h13"/><path d="m13 6 6 6-6 6"/>'),
+  stop: iconSvg('<rect x="7" y="7" width="10" height="10" rx="1.5"/>'),
   selection: iconSvg('<circle cx="12" cy="12" r="7"/><path d="M12 2v3"/><path d="M12 19v3"/><path d="M2 12h3"/><path d="M19 12h3"/>'),
 });
 
@@ -595,6 +596,7 @@ export const createMaidCommandInputRuntime = ({
   modeSwitchEl = null,
   getViewportSize = () => ({ w: 0, h: 0 }),
   onSubmit = async () => ({}),
+  onCancelActive = null,
   onSettings = null,
   onAttachFiles = null,
   onToggleSelection = null,
@@ -627,6 +629,8 @@ export const createMaidCommandInputRuntime = ({
   let restoreResultOnNextOpen = false;
   let submissionSeq = 0;
   let activeSubmission = null;
+  let activeAbortController = null;
+  let cancelPending = false;
   const queuedSubmissions = [];
 
   const notifyOpenStateChange = () => {
@@ -1011,6 +1015,15 @@ export const createMaidCommandInputRuntime = ({
     return true;
   };
 
+  const updateSubmitButton = () => {
+    if (!submitBtn) return;
+    submitBtn.type = isSubmitting ? 'button' : 'submit';
+    submitBtn.innerHTML = isSubmitting ? ICONS.stop : ICONS.send;
+    submitBtn.disabled = cancelPending;
+    submitBtn.setAttribute?.('aria-label', isSubmitting ? '停止女仆任务' : '发送给女仆');
+    submitBtn.title = isSubmitting ? '停止当前女仆任务' : '';
+  };
+
   const setSubmitting = (next) => {
     isSubmitting = next === true;
     if (!isSubmitting && liveStatus) {
@@ -1020,10 +1033,7 @@ export const createMaidCommandInputRuntime = ({
     rootEl?.classList.toggle('is-submitting', isSubmitting);
     rootEl?.setAttribute?.('aria-busy', isSubmitting ? 'true' : 'false');
     if (inputEl) inputEl.placeholder = isSubmitting ? '继续输入，发送后排队...' : '问女仆...';
-    if (submitBtn) {
-      submitBtn.setAttribute?.('aria-label', isSubmitting ? '加入女仆待执行队列' : '发送给女仆');
-      submitBtn.title = isSubmitting ? '加入待执行队列' : '';
-    }
+    updateSubmitButton();
   };
 
   const publicSubmission = entry => (entry ? {
@@ -1059,6 +1069,49 @@ export const createMaidCommandInputRuntime = ({
     return true;
   };
 
+  const cancelAllQueued = () => {
+    const entries = queuedSubmissions.splice(0);
+    entries.forEach((entry) => {
+      removeResultItem(`queue:${entry.id}`);
+      entry.resolve({
+        ok: false,
+        cancelled: true,
+        queued: true,
+        reason: 'queued_submission_cancelled',
+        message: '已取消排队任务。',
+      });
+    });
+    if (entries.length) setResult(`已取消 ${entries.length} 项排队任务。`, 'info');
+    return entries.length;
+  };
+
+  const cancelActive = async () => {
+    if (!activeSubmission || !activeAbortController || activeAbortController.signal.aborted || cancelPending) {
+      return false;
+    }
+    cancelPending = true;
+    updateSubmitButton();
+    try {
+      let decision = 'all_stop';
+      if (queuedSubmissions.length && typeof onCancelActive === 'function') {
+        decision = await onCancelActive({
+          active: publicSubmission(activeSubmission),
+          queued: queuedSubmissions.map(publicSubmission),
+          queuedCount: queuedSubmissions.length,
+        });
+      }
+      if (decision !== 'all_stop' && decision !== true) return false;
+      cancelAllQueued();
+      const error = new Error('Maid task stopped by user');
+      error.name = 'AbortError';
+      activeAbortController.abort(error);
+      return true;
+    } finally {
+      cancelPending = false;
+      updateSubmitButton();
+    }
+  };
+
   const showQueuedSubmission = (entry) => {
     upsertResultItem(`queue:${entry.id}`, {
       kind: 'queue',
@@ -1079,6 +1132,8 @@ export const createMaidCommandInputRuntime = ({
       while (queuedSubmissions.length) {
         const entry = queuedSubmissions.shift();
         activeSubmission = entry;
+        const submissionAbortController = new AbortController();
+        activeAbortController = submissionAbortController;
         removeResultItem(`queue:${entry.id}`);
         setResult(entry.wasQueued ? '女仆正在处理下一项排队任务...' : '女仆正在回复...', 'progress');
         let result = null;
@@ -1086,18 +1141,24 @@ export const createMaidCommandInputRuntime = ({
           result = await onSubmit(entry.text, {
             setStatus: (message = '', tone = 'thinking') => setResult(message, tone),
             attachments: entry.attachments,
+            signal: submissionAbortController.signal,
           });
           const ok = result?.ok !== false;
+          const cancelled = result?.status === 'cancelled' || result?.cancelled === true;
           setResult(
             result?.message || result?.summary || (ok ? '已完成。' : '执行失败。'),
-            ok ? 'success' : 'error',
+            cancelled ? 'info' : (ok ? 'success' : 'error'),
             { actions: result?.actions },
           );
           entry.resolve(result || { ok });
         } catch (error) {
-          setResult(error?.message || '女仆执行失败。', 'error');
-          entry.resolve({ ok: false, error });
+          const cancelled = error?.name === 'AbortError' || submissionAbortController.signal.aborted;
+          setResult(cancelled ? '任务已终止。' : (error?.message || '女仆执行失败。'), cancelled ? 'info' : 'error');
+          entry.resolve(cancelled
+            ? { ok: false, status: 'cancelled', cancelled: true, reason: 'user_aborted', message: '任务已终止。' }
+            : { ok: false, error });
         } finally {
+          if (activeAbortController === submissionAbortController) activeAbortController = null;
           activeSubmission = null;
         }
       }
@@ -1246,6 +1307,12 @@ export const createMaidCommandInputRuntime = ({
       event.preventDefault?.();
       void submit();
     });
+    submitBtn.addEventListener?.('click', (event) => {
+      if (!isSubmitting) return;
+      event.preventDefault?.();
+      event.stopPropagation?.();
+      void cancelActive();
+    });
     inputEl.addEventListener?.('keydown', (event) => {
       if (event.key === 'Escape') {
         event.preventDefault?.();
@@ -1322,7 +1389,7 @@ export const createMaidCommandInputRuntime = ({
     return rootEl;
   };
 
-  const open = ({ initialText = '', autoFocus = true } = {}) => {
+  const open = ({ initialText, autoFocus = true } = {}) => {
     const el = ensure();
     if (!el) return false;
     clearCloseTimer();
@@ -1332,7 +1399,7 @@ export const createMaidCommandInputRuntime = ({
     if (!isSubmitting) setSubmitting(false);
     if (!shouldRestoreResult && !isSubmitting) clearResult();
     restoreResultOnNextOpen = false;
-    if (!isSubmitting && inputEl) inputEl.value = trim(initialText);
+    if (!isSubmitting && inputEl && initialText != null) inputEl.value = trim(initialText);
     resizeInput();
     position();
     renderResultMessages({ forceBottom: true });
@@ -1425,6 +1492,7 @@ export const createMaidCommandInputRuntime = ({
     getQueue: () => queuedSubmissions.map(publicSubmission),
     getActiveSubmission: () => publicSubmission(activeSubmission),
     cancelQueued,
+    cancelActive,
     isOpen: () => isOpen,
     isSubmitting: () => isSubmitting,
     getElements: () => ({ rootEl, inputEl, attachBtn, fileInputEl, attachmentsEl, settingsBtn, submitBtn, resultEl }),

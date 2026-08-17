@@ -1,4 +1,8 @@
 import { PROVIDER_TOOL_RUNNER_HANDOFF_OUTPUTS } from './provider-tool-runner-handoff.js';
+import {
+  copyProviderToolContinuationContext,
+  readProviderToolContinuationContext,
+} from './provider-tool-continuation-context.js';
 import { resolveProviderToolNativeRunnerContract } from './provider-tool-native-runner-contract.js';
 import { PROVIDER_TOOL_RUNNER_PAYLOAD_KINDS } from './provider-tool-runner-request-draft.js';
 
@@ -332,18 +336,30 @@ const runProviderClient = async ({
   request,
   requestOptions = {},
 } = {}) => {
-  const options = stripRunnerRequestOptions(requestOptions);
+  const continuationContext = readProviderToolContinuationContext(request);
+  const options = {
+    ...(isPlainObject(continuationContext?.providerRequestOptions)
+      ? clone(continuationContext.providerRequestOptions)
+      : {}),
+    ...stripRunnerRequestOptions(requestOptions),
+  };
   if (boundary.clientMethod === 'runProviderToolRequest') {
-    return providerClient.runProviderToolRequest(clone(request), {
+    const nativeRequest = clone(request);
+    copyProviderToolContinuationContext(request, nativeRequest);
+    return providerClient.runProviderToolRequest(nativeRequest, {
       ...options,
       nativeRunnerContract: clone(boundary.nativeRunnerContract),
     });
   }
+  const historyMessages = Array.isArray(continuationContext?.historyMessages)
+    ? continuationContext.historyMessages
+    : [];
+  const messages = [...clone(historyMessages), ...clone(request.messages || [])];
   if (boundary.clientMethod === 'streamChat') {
-    return providerClient.streamChat(clone(request.messages), options);
+    return providerClient.streamChat(messages, options);
   }
   if (boundary.clientMethod === 'chat') {
-    return providerClient.chat(clone(request.messages), options);
+    return providerClient.chat(messages, options);
   }
   return null;
 };
@@ -410,7 +426,7 @@ export const runProviderToolRealRunnerAdapter = async ({
       request,
       requestOptions: {
         ...requestOptions,
-        requestId: trim(requestOptions?.requestId, `provider-tool-runner:${createdAt}`),
+        requestId: trim(requestOptions?.requestId, `provider-tool-runner-${createdAt}`),
       },
     });
     if (isPlainObject(raw) && Array.isArray(raw.events)) {

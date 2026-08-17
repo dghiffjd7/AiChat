@@ -232,6 +232,7 @@ export const createProviderToolPendingPermissionStore = ({
   maxEntries = 100,
 } = {}) => {
   const entries = new Map();
+  const continuationContexts = new Map();
   const readNow = () => toFiniteNumber(now?.(), Date.now());
 
   const prune = () => {
@@ -240,6 +241,7 @@ export const createProviderToolPendingPermissionStore = ({
       const firstKey = entries.keys().next().value;
       if (!firstKey) break;
       entries.delete(firstKey);
+      continuationContexts.delete(firstKey);
     }
   };
 
@@ -258,6 +260,7 @@ export const createProviderToolPendingPermissionStore = ({
         resolvedAt: at,
       };
       entries.set(id, next);
+      continuationContexts.delete(id);
       expired.push(clone(next));
     });
     return expired;
@@ -265,7 +268,15 @@ export const createProviderToolPendingPermissionStore = ({
 
   const add = (request = {}) => {
     expire();
-    const normalized = normalizeProviderToolPendingPermission(request, { now, ttlMs });
+    const sourceToolCall = isPlainObject(request?.toolCall) ? request.toolCall : {};
+    const providerContinuation = isPlainObject(sourceToolCall.providerContinuation)
+      ? clone(sourceToolCall.providerContinuation)
+      : null;
+    const { providerContinuation: _providerContinuation, ...publicToolCall } = sourceToolCall;
+    const normalized = normalizeProviderToolPendingPermission({
+      ...request,
+      toolCall: publicToolCall,
+    }, { now, ttlMs });
     const previous = entries.get(normalized.id);
     const entry = previous?.status === PROVIDER_TOOL_PENDING_PERMISSION_STATUSES.pending
       ? {
@@ -275,6 +286,12 @@ export const createProviderToolPendingPermissionStore = ({
         }
       : normalized;
     entries.set(entry.id, entry);
+    if (isPlainObject(request.continuationContext) || providerContinuation) {
+      continuationContexts.set(entry.id, clone({
+        ...(isPlainObject(request.continuationContext) ? request.continuationContext : {}),
+        ...(providerContinuation ? { providerContinuation } : {}),
+      }));
+    }
     prune();
     return clone(entry);
   };
@@ -322,6 +339,7 @@ export const createProviderToolPendingPermissionStore = ({
       resolvedAt,
     };
     entries.set(key, next);
+    if (!allowed) continuationContexts.delete(key);
     return clone(next);
   };
 
@@ -377,6 +395,9 @@ export const createProviderToolPendingPermissionStore = ({
       updatedAt: at,
     };
     entries.set(key, next);
+    if (status === PROVIDER_TOOL_PENDING_PERMISSION_CONTINUATION_STATUSES.succeeded) {
+      continuationContexts.delete(key);
+    }
     return clone(next);
   };
 
@@ -447,6 +468,7 @@ export const createProviderToolPendingPermissionStore = ({
   const clear = () => {
     const count = entries.size;
     entries.clear();
+    continuationContexts.clear();
     return { count };
   };
 
@@ -471,6 +493,11 @@ export const createProviderToolPendingPermissionStore = ({
     clear,
     expire,
     get,
+    getContinuationContext: (id = '') => {
+      expire();
+      const context = continuationContexts.get(trim(id));
+      return context ? clone(context) : null;
+    },
     getStats,
     list: listEntries,
     markCommit,

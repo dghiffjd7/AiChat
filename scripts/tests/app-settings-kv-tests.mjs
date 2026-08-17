@@ -60,4 +60,37 @@ const { appSettings } = await import('../../src/scripts/storage/app-settings.js'
   console.log('ok - localStorage 较新时不被旧 kv 覆盖');
 }
 
+{
+  assert.equal(appSettings.get().traditionalModelOutputProtocolEnabled, false, '结构化通道应为产品默认');
+  assert.equal(appSettings.get().presetScopeMigrationNoticeShown, false, '尚未提示预设迁移');
+  appSettings.update({ traditionalModelOutputProtocolEnabled: true });
+  assert.equal(appSettings.get().traditionalModelOutputProtocolEnabled, true, '兼容模式应可持久启用');
+  appSettings.update({ presetScopeMigrationNoticeShown: true });
+  assert.equal(appSettings.get().presetScopeMigrationNoticeShown, true, '预设迁移提示状态应持久化');
+  appSettings.update({ traditionalModelOutputProtocolEnabled: false });
+  assert.equal(appSettings.get().traditionalModelOutputProtocolEnabled, false, '兼容模式应可关闭');
+  console.log('ok - 通用传统输出兼容模式默认关闭且可持久切换');
+}
+
+{
+  globalThis.__quotaFull = false;
+  const kvMap = new Map();
+  await appSettings.hydrate({
+    loadKv: async key => kvMap.get(key) || null,
+    saveKv: async (key, data) => { kvMap.set(key, data); },
+  });
+  appSettings.update({ chatStructuredThinkingPreference: 'stable_format' });
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.equal(kvMap.get('app_settings_v1')?.chatStructuredThinkingPreference, 'stable_format');
+
+  const reloadedModule = await import('../../src/scripts/storage/app-settings.js?thinking-preference-reload=1');
+  await reloadedModule.appSettings.hydrate({
+    loadKv: async key => kvMap.get(key) || null,
+    saveKv: async () => {},
+  });
+  assert.equal(reloadedModule.appSettings.get().chatStructuredThinkingPreference, 'stable_format');
+  appSettings.update({ chatStructuredThinkingPreference: 'preserve' });
+  console.log('ok - structured thinking preference survives KV persistence and module reload');
+}
+
 console.log('app-settings-kv-tests passed');

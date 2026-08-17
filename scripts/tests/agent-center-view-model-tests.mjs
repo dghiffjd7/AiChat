@@ -6,7 +6,7 @@ import {
 } from '../../src/scripts/ui/agent-center-view-model.js';
 
 {
-  assert.deepEqual(AGENT_CENTER_TABS.map(tab => tab.id), ['pending', 'agents', 'prompts', 'diagnostics', 'resources', 'activity', 'safety']);
+  assert.deepEqual(AGENT_CENTER_TABS.map(tab => tab.id), ['pending', 'agents', 'prompts', 'global_prompts', 'diagnostics', 'resources', 'activity', 'safety']);
   console.log('ok - agent center exposes user-facing tabs');
 }
 

@@ -122,6 +122,9 @@ const defaults = {
   uiThemeCompactInput: false,
   uiThemeHideChatAvatars: false,
   uiThemeSchemaVersion: 2,
+  traditionalModelOutputProtocolEnabled: false,
+  chatStructuredThinkingPreference: 'preserve',
+  presetScopeMigrationNoticeShown: false,
   webSearchProvider: 'duckduckgo',
   webSearchLocale: 'zh-tw',
   webSearchApiKey: '',
@@ -273,6 +276,11 @@ const migrateSettings = (settings = {}) => {
     if (!next[key] || typeof next[key] !== 'object' || Array.isArray(next[key])) next[key] = {};
   });
   next.chatDefaultColorMode = inferChatColorMode(next, defaults.chatDefaultColorMode);
+  next.traditionalModelOutputProtocolEnabled = next.traditionalModelOutputProtocolEnabled === true;
+  next.chatStructuredThinkingPreference = String(next.chatStructuredThinkingPreference || '').trim().toLowerCase() === 'stable_format'
+    ? 'stable_format'
+    : defaults.chatStructuredThinkingPreference;
+  next.presetScopeMigrationNoticeShown = next.presetScopeMigrationNoticeShown === true;
   const searchProvider = String(next.webSearchProvider || '').trim().toLowerCase().replace(/[\s-]+/g, '_');
   next.webSearchProvider = ['duckduckgo', 'brave', 'tavily', 'serpapi'].includes(searchProvider)
     ? searchProvider

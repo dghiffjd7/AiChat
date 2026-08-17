@@ -111,6 +111,40 @@ const logger = { warn: () => {} };
 }
 
 {
+  const controller = new AbortController();
+  let confirmationSignal = null;
+  let confirmationStarted = null;
+  const started = new Promise(resolve => { confirmationStarted = resolve; });
+  const registry = createAgentToolRegistry({
+    permissionEvaluator: createAgentPermissionEvaluator({
+      defaultDecision: AGENT_PERMISSION_DECISIONS.allow,
+    }),
+    logger,
+  });
+  registry.register({
+    name: 'danger.wait_for_choice',
+    safety: { destructive: 'always' },
+    execute: async () => true,
+  });
+  const pending = registry.executeTool('danger.wait_for_choice', {}, {
+    signal: controller.signal,
+    requestToolConfirmation: (_request, options) => {
+      confirmationSignal = options?.signal || null;
+      confirmationStarted();
+      return new Promise(resolve => {
+        confirmationSignal.addEventListener('abort', () => resolve(null), { once: true });
+      });
+    },
+  });
+  await started;
+  assert.equal(confirmationSignal, controller.signal);
+  controller.abort();
+  const cancelledChoice = await pending;
+  assert.equal(cancelledChoice.status, 'skipped');
+  console.log('ok - agent safety confirmation receives the active run abort signal');
+}
+
+{
   // 域超时宽限：中止后任务若能用真实终态收尾，registry 应采纳该结果而非笼统超时码。
   const registry = createAgentToolRegistry({
     permissionEvaluator: createAgentPermissionEvaluator({

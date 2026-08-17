@@ -168,6 +168,7 @@ export class GeneralSettingsPanel {
     this.toastEnabledToggle = null;
     this.typingDotsToggle = null;
     this.richIframeScriptsToggle = null;
+    this.traditionalProtocolToggle = null;
     this.chatHistoryMaxInput = null;
     this.creativeHistoryInput = null;
     this.creativeWideToggle = null;
@@ -365,6 +366,9 @@ export class GeneralSettingsPanel {
     }
     if (this.richIframeScriptsToggle) {
       this.richIframeScriptsToggle.checked = Boolean(settings.allowRichIframeScripts);
+    }
+    if (this.traditionalProtocolToggle) {
+      this.traditionalProtocolToggle.checked = settings.traditionalModelOutputProtocolEnabled === true;
     }
     if (this.toastEnabledToggle) {
       this.toastEnabledToggle.checked = settings.toastEnabled !== false;
@@ -1908,6 +1912,22 @@ export class GeneralSettingsPanel {
         <div class="general-settings-card">
           <div class="general-settings-card-head">
             <div>
+              <div class="general-settings-card-title has-help" data-help="控制 APP 自有结构化通道与旧版文本协议之间的选择。">模型输出</div>
+            </div>
+          </div>
+          <div class="general-settings-setting-list">
+            ${this.renderSettingRow({
+              id: 'general-traditional-model-output-protocol',
+              title: '使用传统模型输出协议（兼容模式）',
+              description: '部分模型或中转不支持结构化调用时可开启；女仆会改用旧版文本规划，后续支持结构化的聊天也会同步切换。创意写作不受影响。',
+              icon: 'code',
+            })}
+          </div>
+        </div>
+
+        <div class="general-settings-card">
+          <div class="general-settings-card-head">
+            <div>
               <div class="general-settings-card-title has-help" data-help="AI 回复后自动提取标签、生成配图。">AI 图片生成</div>
             </div>
             ${this.renderFoldButton('general-auto-image-prompt-advanced-toggle', '自动生图策略')}
@@ -2490,6 +2510,7 @@ export class GeneralSettingsPanel {
     this.debugLogToggle = this.element.querySelector('#general-debug-logs');
     this.typingDotsToggle = this.element.querySelector('#general-typing-dots');
     this.richIframeScriptsToggle = this.element.querySelector('#general-rich-iframe-scripts');
+    this.traditionalProtocolToggle = this.element.querySelector('#general-traditional-model-output-protocol');
     this.toastEnabledToggle = this.element.querySelector('#general-toast-enabled');
     this.chatHistoryMaxInput = this.element.querySelector('#general-chat-history-max');
     this.creativeHistoryInput = this.element.querySelector('#general-creative-history');
@@ -2856,6 +2877,15 @@ export class GeneralSettingsPanel {
       if (target) target.checked = value;
       window.dispatchEvent(new CustomEvent('app-settings-changed', {
         detail: { key: 'allowRichIframeScripts', value },
+      }));
+    });
+    this.traditionalProtocolToggle?.addEventListener('change', (e) => {
+      const value = Boolean(e?.target?.checked);
+      const settings = appSettings.update({ traditionalModelOutputProtocolEnabled: value });
+      const enabled = settings?.traditionalModelOutputProtocolEnabled === true;
+      if (e?.target) e.target.checked = enabled;
+      window.dispatchEvent(new CustomEvent('app-settings-changed', {
+        detail: { key: 'traditionalModelOutputProtocolEnabled', value: enabled },
       }));
     });
     this.toastEnabledToggle?.addEventListener('change', (e) => {

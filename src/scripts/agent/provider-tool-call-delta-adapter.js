@@ -66,24 +66,36 @@ const buildDelta = ({
   all = false,
   source = 'provider-tool-call-delta',
   raw = null,
+  providerContinuation = null,
   now = Date.now,
-} = {}) => ({
-  type: PROVIDER_TOOL_CALL_DELTA_TYPE,
-  phase,
-  provider: trim(provider),
-  model: trim(model),
-  id: trim(id || toolCallId),
-  toolCallId: trim(toolCallId || id),
-  index: readIndex(index, -1),
-  toolName: trim(toolName),
-  argumentsDelta: String(argumentsDelta ?? ''),
-  argumentsText: String(argumentsText ?? ''),
-  arguments: isPlainObject(args) ? clone(args) : null,
-  all: all === true,
-  source,
-  raw: raw ? clone(raw) : null,
-  createdAt: Number(now?.() || Date.now()) || Date.now(),
-});
+} = {}) => {
+  const delta = {
+    type: PROVIDER_TOOL_CALL_DELTA_TYPE,
+    phase,
+    provider: trim(provider),
+    model: trim(model),
+    id: trim(id || toolCallId),
+    toolCallId: trim(toolCallId || id),
+    index: readIndex(index, -1),
+    toolName: trim(toolName),
+    argumentsDelta: String(argumentsDelta ?? ''),
+    argumentsText: String(argumentsText ?? ''),
+    arguments: isPlainObject(args) ? clone(args) : null,
+    all: all === true,
+    source,
+    raw: raw ? clone(raw) : null,
+    createdAt: Number(now?.() || Date.now()) || Date.now(),
+  };
+  if (isPlainObject(providerContinuation)) {
+    Object.defineProperty(delta, 'providerContinuation', {
+      configurable: false,
+      enumerable: false,
+      value: clone(providerContinuation),
+      writable: false,
+    });
+  }
+  return delta;
+};
 
 const extractOpenAIToolDeltas = (data = {}, context = {}) => {
   const choice = data?.choices?.[0] && typeof data.choices[0] === 'object' ? data.choices[0] : {};
@@ -143,6 +155,27 @@ const extractOpenAIToolDeltas = (data = {}, context = {}) => {
 };
 
 const extractOpenAIResponseDeltas = (data = {}, context = {}) => {
+  const response = isPlainObject(data.response) ? data.response : data;
+  const output = Array.isArray(response.output) ? response.output : [];
+  const responseCalls = output.filter(item => isPlainObject(item) && trim(item.type) === 'function_call');
+  if (responseCalls.length) {
+    return responseCalls.map((item, index) => buildDelta({
+      provider: context.provider,
+      model: context.model,
+      phase: PROVIDER_TOOL_CALL_DELTA_PHASES.complete,
+      id: item.id || item.call_id,
+      toolCallId: item.call_id || item.id,
+      index,
+      toolName: item.name,
+      argumentsText: item.arguments,
+      providerContinuation: {
+        api: 'openai_responses',
+        assistantOutput: output,
+      },
+      raw: item,
+      now: context.now,
+    }));
+  }
   const type = trim(data.type).toLowerCase();
   if (!type.startsWith('response.')) return [];
   const item = isPlainObject(data.item) ? data.item : {};
@@ -155,6 +188,10 @@ const extractOpenAIResponseDeltas = (data = {}, context = {}) => {
       toolCallId: item.call_id || item.id,
       index: data.output_index,
       toolName: item.name,
+      providerContinuation: {
+        api: 'openai_responses',
+        assistantOutput: [item],
+      },
       raw: data,
       now: context.now,
     })];
@@ -176,7 +213,7 @@ const extractOpenAIResponseDeltas = (data = {}, context = {}) => {
     return [buildDelta({
       provider: context.provider,
       model: context.model,
-      phase: PROVIDER_TOOL_CALL_DELTA_PHASES.complete,
+      phase: PROVIDER_TOOL_CALL_DELTA_PHASES.argumentsDelta,
       id: data.item_id || data.call_id,
       toolCallId: data.call_id || data.item_id,
       index: data.output_index,
@@ -195,6 +232,10 @@ const extractOpenAIResponseDeltas = (data = {}, context = {}) => {
       index: data.output_index,
       toolName: item.name,
       argumentsText: item.arguments,
+      providerContinuation: {
+        api: 'openai_responses',
+        assistantOutput: [item],
+      },
       raw: data,
       now: context.now,
     })];
@@ -204,6 +245,29 @@ const extractOpenAIResponseDeltas = (data = {}, context = {}) => {
 
 const extractAnthropicToolDeltas = (data = {}, context = {}) => {
   const type = trim(data.type).toLowerCase();
+  const content = Array.isArray(data?.content) ? data.content : [];
+  const nonStreamToolUses = content.filter(block => (
+    isPlainObject(block) && trim(block.type).toLowerCase() === 'tool_use'
+  ));
+  if (nonStreamToolUses.length) {
+    return nonStreamToolUses.map((block, index) => buildDelta({
+      provider: context.provider,
+      model: context.model,
+      phase: PROVIDER_TOOL_CALL_DELTA_PHASES.complete,
+      id: block.id,
+      toolCallId: block.id,
+      index,
+      toolName: block.name,
+      argumentsText: stringifyArguments(block.input),
+      arguments: isPlainObject(block.input) ? block.input : {},
+      providerContinuation: {
+        api: 'anthropic_messages',
+        assistantContent: content,
+      },
+      raw: block,
+      now: context.now,
+    }));
+  }
   const block = isPlainObject(data.content_block) ? data.content_block : {};
   if (type === 'content_block_start' && trim(block.type) === 'tool_use') {
     const hasInput = hasObjectKeys(block.input);
@@ -217,6 +281,10 @@ const extractAnthropicToolDeltas = (data = {}, context = {}) => {
       toolName: block.name,
       argumentsText: hasInput ? stringifyArguments(block.input) : '',
       arguments: hasInput ? block.input : null,
+      providerContinuation: {
+        api: 'anthropic_messages',
+        assistantContent: [block],
+      },
       raw: data,
       now: context.now,
     })];
@@ -248,21 +316,31 @@ const extractAnthropicToolDeltas = (data = {}, context = {}) => {
 
 const extractGeminiToolDeltas = (data = {}, context = {}) => {
   const candidates = Array.isArray(data.candidates) ? data.candidates : [];
-  const parts = candidates.flatMap(candidate => (
-    Array.isArray(candidate?.content?.parts) ? candidate.content.parts : []
-  ));
-  return parts
-    .filter(part => isPlainObject(part?.functionCall))
-    .map((part, index) => {
+  const calls = [];
+  candidates.forEach((candidate) => {
+    const content = isPlainObject(candidate?.content) ? candidate.content : {};
+    const parts = Array.isArray(content.parts) ? content.parts : [];
+    parts.forEach((part) => {
+      if (!isPlainObject(part?.functionCall)) return;
+      calls.push({ part, content });
+    });
+  });
+  return calls.map(({ part, content }, index) => {
       const call = part.functionCall;
       return buildDelta({
         provider: context.provider,
         model: context.model,
         phase: PROVIDER_TOOL_CALL_DELTA_PHASES.complete,
+        id: call.id,
+        toolCallId: call.id,
         index,
         toolName: call.name,
         arguments: isPlainObject(call.args) ? call.args : {},
         argumentsText: stringifyArguments(call.args),
+        providerContinuation: {
+          api: 'gemini_generate_content',
+          assistantContent: content,
+        },
         raw: part,
         now: context.now,
       });
@@ -290,6 +368,55 @@ export const createProviderToolCallDeltaAccumulator = ({
   now = Date.now,
 } = {}) => {
   const states = new Map();
+  const completedKeys = new Set();
+  const openAIResponseOutput = new Map();
+  const anthropicAssistantContent = new Map();
+  const anthropicPartialJson = new Map();
+
+  const collectOpenAIResponseOutput = (data = {}) => {
+    const responseOutput = Array.isArray(data?.output)
+      ? data.output
+      : (Array.isArray(data?.response?.output) ? data.response.output : []);
+    responseOutput.forEach((item, index) => {
+      if (!isPlainObject(item)) return;
+      openAIResponseOutput.set(trim(item.id || item.call_id, `index:${index}`), clone(item));
+    });
+    if (trim(data?.type).toLowerCase() === 'response.output_item.done' && isPlainObject(data?.item)) {
+      const item = data.item;
+      openAIResponseOutput.set(trim(item.id || item.call_id, `index:${readIndex(data.output_index, 0)}`), clone(item));
+    }
+  };
+
+  const collectAnthropicAssistantContent = (data = {}) => {
+    const content = Array.isArray(data?.content) ? data.content : [];
+    content.forEach((block, index) => {
+      if (isPlainObject(block)) anthropicAssistantContent.set(index, clone(block));
+    });
+    const type = trim(data?.type).toLowerCase();
+    const index = readIndex(data?.index, -1);
+    if (index < 0) return;
+    if (type === 'content_block_start' && isPlainObject(data?.content_block)) {
+      anthropicAssistantContent.set(index, clone(data.content_block));
+      return;
+    }
+    if (type !== 'content_block_delta' || !isPlainObject(data?.delta)) return;
+    const delta = data.delta;
+    const block = anthropicAssistantContent.get(index);
+    if (!isPlainObject(block)) return;
+    const deltaType = trim(delta.type).toLowerCase();
+    if (deltaType === 'input_json_delta') {
+      const partial = `${anthropicPartialJson.get(index) || ''}${String(delta.partial_json || '')}`;
+      anthropicPartialJson.set(index, partial);
+      if (partial) block.input = parseArgumentsText(partial);
+    } else if (deltaType === 'text_delta') {
+      block.text = `${String(block.text || '')}${String(delta.text || '')}`;
+    } else if (deltaType === 'thinking_delta') {
+      block.thinking = `${String(block.thinking || '')}${String(delta.thinking || '')}`;
+    } else if (deltaType === 'signature_delta') {
+      block.signature = `${String(block.signature || '')}${String(delta.signature || '')}`;
+    }
+    anthropicAssistantContent.set(index, block);
+  };
 
   const getKey = (delta = {}) => {
     const id = trim(delta.toolCallId || delta.id);
@@ -330,6 +457,7 @@ export const createProviderToolCallDeltaAccumulator = ({
       arguments: null,
       provider: trim(delta.provider, provider),
       model: trim(delta.model, model),
+      providerContinuation: null,
     };
     states.set(key, current);
     return current;
@@ -345,13 +473,34 @@ export const createProviderToolCallDeltaAccumulator = ({
     if (delta.argumentsText) state.argumentsText = String(delta.argumentsText);
     if (delta.argumentsDelta) state.argumentsText += String(delta.argumentsDelta);
     if (isPlainObject(delta.arguments)) state.arguments = clone(delta.arguments);
+    if (isPlainObject(delta.providerContinuation)) {
+      state.providerContinuation = clone(delta.providerContinuation);
+    }
     return state;
   };
 
   const completeState = (state) => {
+    const completionKey = trim(state.toolCallId || state.id)
+      ? `id:${trim(state.toolCallId || state.id)}`
+      : `index:${state.index}`;
+    if (completedKeys.has(completionKey)) {
+      states.delete(state.key);
+      return null;
+    }
     const args = isPlainObject(state.arguments)
       ? state.arguments
       : parseArgumentsText(state.argumentsText);
+    const providerContinuation = isPlainObject(state.providerContinuation)
+      ? clone(state.providerContinuation)
+      : null;
+    if (providerContinuation?.api === 'openai_responses' && openAIResponseOutput.size) {
+      providerContinuation.assistantOutput = Array.from(openAIResponseOutput.values()).map(clone);
+    }
+    if (providerContinuation?.api === 'anthropic_messages' && anthropicAssistantContent.size) {
+      providerContinuation.assistantContent = Array.from(anthropicAssistantContent.entries())
+        .sort(([left], [right]) => left - right)
+        .map(([, block]) => clone(block));
+    }
     const completed = normalizeProviderToolCall({
       id: state.id || state.toolCallId,
       toolCallId: state.toolCallId || state.id,
@@ -364,12 +513,16 @@ export const createProviderToolCallDeltaAccumulator = ({
         streamingArgumentsText: state.argumentsText,
         streamingIndex: state.index,
       },
+      providerContinuation,
     }, { provider, model, now });
+    completedKeys.add(completionKey);
     states.delete(state.key);
     return completed;
   };
 
   const push = (data = {}, context = {}) => {
+    collectOpenAIResponseOutput(data);
+    collectAnthropicAssistantContent(data);
     const deltas = normalizeProviderToolCallDeltas(data, {
       provider: trim(context.provider, provider),
       model: trim(context.model, model),
@@ -378,19 +531,36 @@ export const createProviderToolCallDeltaAccumulator = ({
     const completed = [];
     deltas.forEach((delta) => {
       if (delta.phase === PROVIDER_TOOL_CALL_DELTA_PHASES.complete && delta.all) {
-        Array.from(states.values()).forEach(state => completed.push(completeState(state)));
+        Array.from(states.values()).forEach((state) => {
+          const item = completeState(state);
+          if (item) completed.push(item);
+        });
+        return;
+      }
+      if (
+        delta.phase === PROVIDER_TOOL_CALL_DELTA_PHASES.complete
+        && !trim(delta.toolCallId || delta.id || delta.toolName)
+        && !Array.from(states.values()).some(state => state.index === readIndex(delta.index, -1))
+      ) {
         return;
       }
       const state = updateState(getState(delta), delta);
       if (delta.phase === PROVIDER_TOOL_CALL_DELTA_PHASES.complete) {
-        completed.push(completeState(state));
+        const item = completeState(state);
+        if (item) completed.push(item);
       }
     });
     return { deltas, completed };
   };
 
   return {
-    clear: () => states.clear(),
+    clear: () => {
+      states.clear();
+      completedKeys.clear();
+      openAIResponseOutput.clear();
+      anthropicAssistantContent.clear();
+      anthropicPartialJson.clear();
+    },
     getSnapshot: () => Array.from(states.values()).map(state => ({ ...state })),
     push,
   };

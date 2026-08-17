@@ -668,6 +668,7 @@ export const createMaidCapabilityRoutingRuntime = ({
     context = {},
     steps = [],
     phase = 'planner',
+    configOverride = null,
   } = {}) => {
     const startedAt = now();
     const state = requestStates.get(trim(requestId)) || {
@@ -684,7 +685,9 @@ export const createMaidCapabilityRoutingRuntime = ({
       selectionCohort: null,
     };
     if (!requestStates.has(state.id)) requestStates.set(state.id, state);
-    const currentConfig = getConfig();
+    const currentConfig = isPlainObject(configOverride)
+      ? normalizeMaidCapabilityRoutingConfig({ ...getConfig(), ...configOverride })
+      : getConfig();
     const platform = inferPlatform(context);
     const records = new Map();
     const excluded = [];

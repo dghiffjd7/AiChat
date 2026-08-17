@@ -31,6 +31,21 @@ assert.doesNotMatch(source, /\.pp-pages\s*\{[\s\S]*width:\s*300%;/);
 assert.doesNotMatch(source, /translateX\(-33\.333333%\)/);
 assert.match(source, /@media \(max-width: 520px\), \(max-height: 720px\)/);
 assert.match(source, /--pp-footer-height:\s*50px;/);
+assert.match(
+    source,
+    /top:\s*calc\(var\(--app-visual-offset-top,\s*0px\)\s*\+\s*10px\s*\+\s*env\(safe-area-inset-top,\s*0px\)\)/,
+    '预设面板的默认位置必须跟随 visual viewport 的顶部偏移',
+);
+assert.match(
+    source,
+    /top:\s*calc\(var\(--app-visual-offset-top,\s*0px\)\s*\+\s*var\(--pp-panel-margin\)\s*\+\s*env\(safe-area-inset-top,\s*0px\)\)\s*!important/,
+    '小屏幕覆盖也必须跟随 visual viewport 偏移',
+);
+assert.match(
+    source,
+    /#preset-panel\[data-maximized="1"\]\s*\{[\s\S]*?top:\s*calc\(var\(--app-visual-offset-top,\s*0px\)\s*\+\s*env\(safe-area-inset-top,\s*0px\)\)\s*!important;[\s\S]*?bottom:\s*auto\s*!important;[\s\S]*?height:\s*calc\(var\(--app-visual-height,\s*100dvh\)/,
+    '放大状态不得用 layout viewport 的 bottom:0 把底部按钮推出可视区',
+);
 assert.match(source, /\.pp-header-title\s*\{[\s\S]*white-space:\s*nowrap;/);
 assert.match(source, /\.pp-manager-actions\s*\{[\s\S]*grid-template-columns:\s*repeat\(4, minmax\(0, 1fr\)\);/);
 assert.match(source, /class="pp-block-title">\$\{escapeHtml\(title\)\}/, '导入的区块标题必须转义后再写入 HTML');
@@ -46,6 +61,19 @@ assert.match(source, /\.pp-maximize-icon-main\s*\{[\s\S]*stroke:\s*currentColor;
 assert.match(source, /\.pp-maximize-icon-accent\s*\{[\s\S]*stroke:\s*var\(--app-accent-primary\)/, '放大图标点缀应继承主题强调色');
 assert.match(source, /#preset-maximize\.is-on \.pp-maximize-expand[\s\S]*#preset-maximize\.is-on \.pp-maximize-restore/, '放大与还原图形应随状态切换');
 assert.match(source, /maxBtn\.setAttribute\('aria-pressed', on \? 'true' : 'false'\)/, '放大状态应同步给辅助技术');
+assert.match(source, /renderSyspromptEditor\(p\)[\s\S]*renderPhoneFormatPlacementEditor\(p\)/, '系统提示词页应提供可到达的文本格式位置编辑入口');
+assert.match(source, /scopeCard\.className = 'pp-scope-card'/, '适用范围必须使用自己的完整卡片结构，不能套用需要 header\/body 的通用 pp-block');
+assert.doesNotMatch(source, /scopeCard\.className = 'pp-block'/, '适用范围不得再被 pp-block 的 overflow hidden 裁切');
+assert.match(source, /normalizePresetAppScope\([\s\S]*?p\.app_scope,[\s\S]*?PRESET_APP_SCOPES\.creative,[\s\S]*?\)/, '适用范围缺值时应默认创意写作');
+assert.match(source, /current\.app_scope = normalizePresetAppScope\(appScope, PRESET_APP_SCOPES\.creative\)/, '每个预设保存时应独立规范化适用范围');
+assert.match(source, /\.pp-scope-card\s*\{[^}]*padding:\s*14px 16px;/, '桌面适用范围卡应保留完整内边距');
+assert.match(source, /\.pp-scope-card\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)\s+minmax\(220px,\s*300px\);/, '桌面适用范围卡应使用稳定两栏布局');
+assert.match(source, /@media \(max-width: 520px\), \(max-height: 720px\)[\s\S]*\.pp-scope-card\s*\{[\s\S]*grid-template-columns:\s*minmax\(0,\s*1fr\);/, '窄屏适用范围卡应切换为不裁字的单栏布局');
+for (const id of ['intro', 'chat', 'moment', 'footer']) {
+    assert.match(source, new RegExp(`phone-format-${id}-position`), `文本格式位置入口应包含 ${id} 独立锚位`);
+    assert.match(source, new RegExp(`phone-format-${id}-depth`), `文本格式位置入口应包含 ${id} 条件深度`);
+}
+assert.match(source, /仅传统文本模式生效，FC\/JSON 请求不包含这些内容/, '位置编辑入口必须说明结构化路径隔离');
 
 const previewHandleButtons = Array.from(source.matchAll(
     /<button[^>]*class="(?:pp-preview-edge|pp-pane-handle[^\"]*|pp-editor-handle)"[^>]*>([\s\S]*?)<\/button>/g,

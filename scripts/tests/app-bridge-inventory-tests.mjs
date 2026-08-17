@@ -143,6 +143,8 @@ const readSourceInfo = async (fullPath) => ({
       generate: async text => text,
       buildMessages: text => [{ role: 'user', content: text }],
       backgroundChat: async messages => messages,
+      setWebSearchToolRuntime: runtime => runtime,
+      getWebSearchToolRuntime: () => null,
     });
     registerRegexTransformBridgeContract(window.appBridge, {
       applyInputStoredRegex: text => text,
@@ -244,6 +246,8 @@ const readSourceInfo = async (fullPath) => ({
       ['generate', 'generation'],
       ['buildMessages', 'generation'],
       ['backgroundChat', 'generation'],
+      ['setWebSearchToolRuntime', 'generation'],
+      ['getWebSearchToolRuntime', 'generation'],
       ['applyInputStoredRegex', 'regex-transform'],
       ['applyInputDisplayRegex', 'regex-transform'],
       ['applyOutputStoredRegex', 'regex-transform'],

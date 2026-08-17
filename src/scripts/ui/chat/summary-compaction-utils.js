@@ -129,6 +129,7 @@ export const buildSummaryCompactionContext = ({
         }
       : null,
     history: [],
+    task: { type: 'summary_compaction' },
     meta: {
       disableChatGuide: true,
       disableScenarioHint: true,

@@ -411,16 +411,23 @@ import {
     backgroundChat: async messages => `background:${messages.length}`,
     consumeLastGenerationUsage: () => ({ totalTokens: 3 }),
     consumeLastGenerationSources: () => [{ url: 'https://example.com' }],
+    finalizeChatStructuredEvidence: async payload => ({ recorded: payload?.committed === true }),
     setWebSearchToolRuntime: runtime => { appBridge.webSearchToolRuntime = runtime; },
+    getWebSearchToolRuntime: () => appBridge.webSearchToolRuntime || null,
   });
   assert.equal(await appBridge.generate('hello'), 'generated:hello');
   assert.deepEqual(appBridge.buildMessages('hi'), [{ role: 'user', content: 'hi' }]);
   assert.equal(await appBridge.backgroundChat([{ role: 'user' }]), 'background:1');
   assert.deepEqual(appBridge.consumeLastGenerationUsage(), { totalTokens: 3 });
   assert.deepEqual(appBridge.consumeLastGenerationSources(), [{ url: 'https://example.com' }]);
+  assert.deepEqual(await appBridge.finalizeChatStructuredEvidence({
+    requestId: 'request-1',
+    committed: true,
+  }), { recorded: true });
   const webRuntime = { executeTool: () => {} };
   appBridge.setWebSearchToolRuntime(webRuntime);
   assert.equal(appBridge.webSearchToolRuntime, webRuntime);
+  assert.equal(appBridge.getWebSearchToolRuntime(), webRuntime);
   const registry = getBridgeContractRegistry(appBridge);
   assert.equal(registry.contracts.generate.domain, BRIDGE_CONTRACT_DOMAINS.generation);
   assert.deepEqual(registry.contracts.generate.params, ['userMessage: string', 'context?: generation context']);
@@ -431,7 +438,11 @@ import {
   assert.equal(registry.contracts.buildMessages.returns, 'Provider message[]');
   assert.equal(registry.contracts.backgroundChat.sideEffects.includes('does not write chat history'), true);
   assert.equal(registry.contracts.consumeLastGenerationSources.status, 'covered');
+  assert.equal(registry.contracts.finalizeChatStructuredEvidence.domain, BRIDGE_CONTRACT_DOMAINS.generation);
+  assert.equal(registry.contracts.finalizeChatStructuredEvidence.status, 'covered');
   assert.equal(registry.contracts.setWebSearchToolRuntime.domain, BRIDGE_CONTRACT_DOMAINS.generation);
+  assert.equal(registry.contracts.getWebSearchToolRuntime.domain, BRIDGE_CONTRACT_DOMAINS.generation);
+  assert.equal(registry.contracts.getWebSearchToolRuntime.returns, 'read-only web tool runtime | null');
   assert.equal(registry.domains[BRIDGE_CONTRACT_DOMAINS.generation].backgroundChat, true);
   console.log('ok - registerGenerationBridgeContract assigns generation helpers and metadata');
 }

@@ -5,6 +5,10 @@ import {
   PROVIDER_TOOL_RUNNER_PAYLOAD_KINDS,
   buildProviderToolRunnerRequestDraft,
 } from '../../src/scripts/agent/provider-tool-runner-request-draft.js';
+import {
+  attachProviderToolContinuationContext,
+  readProviderToolContinuationContext,
+} from '../../src/scripts/agent/provider-tool-continuation-context.js';
 
 const buildLoopState = (overrides = {}) => ({
   status: 'succeeded',
@@ -54,6 +58,35 @@ const buildLoopState = (overrides = {}) => ({
   requestPreview.messages[1].content = 'mutated';
   assert.equal(draft.request.messages[1].content, '{"summary":"listed"}');
   console.log('ok - provider tool runner request draft builds isolated OpenAI message payload');
+}
+
+{
+  const requestPreview = attachProviderToolContinuationContext({
+    provider: 'openai',
+    model: 'gpt-responses',
+    sessionId: 's-responses',
+    format: 'openai_responses_function_call_output',
+    network: false,
+    toolResultCount: 1,
+    input: [
+      { type: 'function_call', call_id: 'call-1', name: 'contact_profile_list', arguments: '{}' },
+      { type: 'function_call_output', call_id: 'call-1', output: '{"summary":"ok"}' },
+    ],
+  }, {
+    historyMessages: [{ role: 'user', content: 'list contacts' }],
+  });
+  const loopState = buildLoopState({ provider: 'openai', model: 'gpt-responses', sessionId: 's-responses' });
+  const runnerHandoff = buildProviderToolRunnerHandoff({ requestPreview, loopState });
+  const draft = buildProviderToolRunnerRequestDraft({ runnerHandoff, requestPreview, loopState });
+
+  assert.equal(draft.ok, true);
+  assert.equal(draft.payloadKind, PROVIDER_TOOL_RUNNER_PAYLOAD_KINDS.input);
+  assert.equal(draft.request.input[1].type, 'function_call_output');
+  assert.deepEqual(readProviderToolContinuationContext(draft.request).historyMessages, [
+    { role: 'user', content: 'list contacts' },
+  ]);
+  assert.equal(Object.keys(draft.request).includes('historyMessages'), false);
+  console.log('ok - provider tool runner request draft carries OpenAI Responses context out of diagnostics payload');
 }
 
 {

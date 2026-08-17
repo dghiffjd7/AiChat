@@ -6,6 +6,11 @@ import {
   countFormatPatchSourceLines,
   normalizeFormatPatchModelResult,
 } from './format-patch-transaction-utils.js';
+import {
+  getBuiltinPhoneFormatGuardianSnippet,
+  serializeBuiltinPhoneFormat,
+  validateBuiltinPhoneFormat,
+} from '../../utils/builtin-phone-format-contract.js';
 
 export const CHAT_FORMAT_EVENT_TYPES = Object.freeze({
   privateMessage: 'private_message',
@@ -91,55 +96,6 @@ const CHAT_FORMAT_PROMPT_LABELS = Object.freeze({
   variableUpdate: '变量更新格式',
 });
 
-const CHAT_FORMAT_PROMPT_SNIPPETS = Object.freeze({
-  phoneShell: [
-    'MiPhone_start',
-    'msg_start',
-    'msg_end',
-    'MiPhone_end',
-  ],
-  privateChat: [
-    '<{{user}}和联系人名的私聊>',
-    '说话人--正文--HH:mm',
-    '</{{user}}和联系人名的私聊>',
-  ],
-  groupChat: [
-    '<群聊:群名>',
-    '<成员>成员1,成员2</成员>',
-    '<聊天内容>',
-    '说话人--正文--HH:mm',
-    '</聊天内容>',
-    '</群聊:群名>',
-  ],
-  momentComment: [
-    'moment_reply_start',
-    'moment_id:: 动态id',
-    '评论者--评论正文--reply_to:: 评论id--reply_to_author:: 被回复者',
-    'moment_reply_end',
-  ],
-  momentPost: [
-    'moment_start',
-    'author:: 发布者',
-    'content:: 动态正文',
-    'moment_end',
-  ],
-  tableEdit: [
-    '<tableEdit>',
-    '记忆表格内容',
-    '</tableEdit>',
-  ],
-  imagePrompt: [
-    '<image_prompt>',
-    '图片提示词',
-    '</image_prompt>',
-  ],
-  variableUpdate: [
-    '<UpdateVariable>',
-    '变量更新指令',
-    '</UpdateVariable>',
-  ],
-});
-
 export const normalizeChatFormatGuardianTarget = (value = '', fallback = CHAT_FORMAT_GUARDIAN_TARGETS.auto) => {
   const raw = trim(value || fallback, fallback).toLowerCase();
   const aliases = {
@@ -217,7 +173,7 @@ const selectFormatIdsForTarget = (target = '') => {
     case CHAT_FORMAT_GUARDIAN_TARGETS.momentComment:
       return ['momentComment'];
     case CHAT_FORMAT_GUARDIAN_TARGETS.momentPost:
-      return ['momentPost'];
+      return ['phoneShell', 'momentPost'];
     case CHAT_FORMAT_GUARDIAN_TARGETS.imagePrompt:
       return ['imagePrompt'];
     case CHAT_FORMAT_GUARDIAN_TARGETS.memoryTableEdit:
@@ -284,7 +240,7 @@ const normalizeEnabledFormatEntries = (enabledFormats = {}) => {
       .map(id => ({
         id,
         label: CHAT_FORMAT_PROMPT_LABELS[id] || id,
-        snippet: CHAT_FORMAT_PROMPT_SNIPPETS[id] || [],
+        snippet: getBuiltinPhoneFormatGuardianSnippet(id),
       }));
   }
   const src = isPlainObject(enabledFormats) ? enabledFormats : {};
@@ -293,7 +249,7 @@ const normalizeEnabledFormatEntries = (enabledFormats = {}) => {
     .map(id => ({
       id,
       label: CHAT_FORMAT_PROMPT_LABELS[id],
-      snippet: CHAT_FORMAT_PROMPT_SNIPPETS[id] || [],
+      snippet: getBuiltinPhoneFormatGuardianSnippet(id),
     }));
 };
 
@@ -332,6 +288,25 @@ const collectPhoneShellWarnings = (text = '', eventDrafts = [], enabledFormats =
   return warnings;
 };
 
+const resolveBuiltinContractSurface = (eventDrafts = []) => {
+  const types = new Set(list(eventDrafts).map(event => trim(event?.type)));
+  if (types.has(CHAT_FORMAT_EVENT_TYPES.groupMessage) || types.has(CHAT_FORMAT_EVENT_TYPES.groupSystemEvent)) {
+    return CHAT_FORMAT_GUARDIAN_TARGETS.groupChat;
+  }
+  if (types.has(CHAT_FORMAT_EVENT_TYPES.privateMessage)) return CHAT_FORMAT_GUARDIAN_TARGETS.privateChat;
+  if (types.has(CHAT_FORMAT_EVENT_TYPES.momentPost)) return CHAT_FORMAT_GUARDIAN_TARGETS.momentPost;
+  if (types.has(CHAT_FORMAT_EVENT_TYPES.momentComment)) return CHAT_FORMAT_GUARDIAN_TARGETS.momentComment;
+  return '';
+};
+
+const validateEnabledBuiltinContract = (text = '', eventDrafts = [], options = {}) => {
+  if (trim(options?.customFormatGuide || options?.modelReview?.customFormatGuide)) return null;
+  const surface = resolveBuiltinContractSurface(eventDrafts);
+  const requiredFormatIds = selectFormatIdsForTarget(surface);
+  if (!surface || !requiredFormatIds.every(id => isChatFormatEnabled(options.enabledFormats, id))) return null;
+  return validateBuiltinPhoneFormat(text, { surface });
+};
+
 const serializeFormatEntries = (entries = []) => (
   entries
     .map((entry) => {
@@ -346,20 +321,17 @@ const buildPrivateChatTagName = ({ userName = '我', sessionLabel = '' } = {}) =
   `${trim(userName, '我')}和${trim(sessionLabel, '联系人名')}的私聊`;
 
 const buildPrivateDirectRepairExample = ({ userName = '我', sessionLabel = '', fallbackTime = '' } = {}) => {
-  const tagName = buildPrivateChatTagName({ userName, sessionLabel });
   const time = trim(fallbackTime, '00:00');
   return [
     '错误原文示例：',
     '联系人名: 在吗？',
     '',
     '对应的正确结构示例：',
-    'MiPhone_start',
-    'msg_start',
-    `<${tagName}>`,
-    `联系人名--在吗？--${time}`,
-    `</${tagName}>`,
-    'msg_end',
-    'MiPhone_end',
+    serializeBuiltinPhoneFormat('private_chat', {
+      userName,
+      targetName: trim(sessionLabel, '联系人名'),
+      messages: [{ speaker: '联系人名', content: '在吗？', time }],
+    }),
   ].join('\n');
 };
 
@@ -377,15 +349,11 @@ const buildDirectRepairExample = ({
       '成员A: 我到了',
       '',
       '对应的正确结构示例：',
-      'MiPhone_start',
-      'msg_start',
-      '<群聊:群名>',
-      '<聊天内容>',
-      `成员A--我到了--${time}`,
-      '</聊天内容>',
-      '</群聊:群名>',
-      'msg_end',
-      'MiPhone_end',
+      serializeBuiltinPhoneFormat('group_chat', {
+        groupName: trim(sessionLabel, '群名'),
+        members: ['成员A', '成员B'],
+        messages: [{ speaker: '成员A', content: '我到了', time }],
+      }),
     ].join('\n');
   }
   if (normalizedTarget === CHAT_FORMAT_GUARDIAN_TARGETS.momentComment) {
@@ -394,10 +362,10 @@ const buildDirectRepairExample = ({
       '评论者: 好看！',
       '',
       '对应的正确结构示例：',
-      'moment_reply_start',
-      'moment_id:: 动态id',
-      '评论者--好看！',
-      'moment_reply_end',
+      serializeBuiltinPhoneFormat('moment_comment', {
+        momentId: '动态id',
+        comments: [{ author: '评论者', content: '好看！' }],
+      }),
     ].join('\n');
   }
   if (normalizedTarget === CHAT_FORMAT_GUARDIAN_TARGETS.momentPost) {
@@ -406,10 +374,15 @@ const buildDirectRepairExample = ({
       '今天去了海边。',
       '',
       '对应的正确结构示例：',
-      'moment_start',
-      `author:: ${trim(userName, '我')}`,
-      'content:: 今天去了海边。',
-      'moment_end',
+      serializeBuiltinPhoneFormat('moment_post', {
+        posts: [{
+          author: trim(userName, '我'),
+          content: '今天去了海边。',
+          time,
+          views: 0,
+          likes: 0,
+        }],
+      }),
     ].join('\n');
   }
   if (normalizedTarget === CHAT_FORMAT_GUARDIAN_TARGETS.imagePrompt) {
@@ -530,7 +503,7 @@ export const buildChatFormatGuardianModelPrompt = ({
     'status=patch 时必须提供至少一个 linePatches；其他状态的 linePatches 必须为空。',
     `补丁数量不得超过 ${FORMAT_PATCH_MAX_PATCHES}，删除行数与新增行数合计不得超过 ${FORMAT_PATCH_MAX_CHANGED_LINES}。`,
     '每个补丁都必须提供 1-based startLine/endLine、与原文逐字一致的 originalLines、完整 replacementLines；多个补丁不得重叠。',
-    hasChatFormat ? '聊天/动态修复不要在 MiPhone_end 之后追加额外段落或无关标签。' : '',
+    hasChatFormat ? '聊天/动态修复不要在 MiPhone_end 之后追加额外段落或无关标签；已存在且合同允许的 tableEdit、UpdateVariable、摘要后置块除外，并保持其相对顺序。' : '',
   ].filter(Boolean).join('\n');
   const targetSummary = repairTarget && typeof repairTarget === 'object'
     ? {
@@ -560,7 +533,7 @@ export const buildChatFormatGuardianModelPrompt = ({
     formatSummary ? `# Required Format Examples\n${formatSummary}` : '',
     directRepairExample ? `# Correct Structure Example\n${directRepairExample}` : '',
     reminder ? `# Required Additional Format Rules\n${reminder}` : '',
-    customGuide ? `# Custom Format Guide（从会话正则/世界书/角色卡提取的自定义格式规范，修复结果必须同时满足）\n${customGuide}` : '',
+    customGuide ? `# Custom Format Guide（从会话来源核验并通过画像有效性检查的自定义格式规范，修复结果必须同时满足）\n${customGuide}` : '',
     compactReport ? `# Local Parser Report\n${JSON.stringify(compactReport, null, 2)}` : '',
     noEventsHint,
     [
@@ -827,8 +800,16 @@ export const extractChatFormatEventDrafts = (text = '', options = {}) => {
   const eventDrafts = buildChatFormatEventDraftsFromProtocolEvents(protocolEvents, options);
   const validation = validateChatFormatEventDrafts(eventDrafts);
   const shellWarnings = collectPhoneShellWarnings(text, validation.items.map(item => item.event), options.enabledFormats);
+  const contractValidation = validateEnabledBuiltinContract(
+    text,
+    validation.items.map(item => item.event),
+    options,
+  );
+  const contractWarnings = contractValidation?.valid === false
+    ? contractValidation.issues.map(issue => `built-in contract violation: ${issue}`)
+    : [];
   const errors = Array.from(new Set(validation.errors));
-  const warnings = Array.from(new Set([...validation.warnings, ...shellWarnings]));
+  const warnings = Array.from(new Set([...validation.warnings, ...shellWarnings, ...contractWarnings]));
   const status = !eventDrafts.length
     ? 'no_events'
     : (errors.length ? 'invalid' : (warnings.length ? 'needs_review' : 'ready'));
@@ -838,6 +819,7 @@ export const extractChatFormatEventDrafts = (text = '', options = {}) => {
     sourceMessageId: trim(options.sourceMessageId),
     protocolEvents,
     eventDrafts: validation.items.map(item => item.event),
+    contractValidation,
     errors,
     warnings,
     summary: eventDrafts.length

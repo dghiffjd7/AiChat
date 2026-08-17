@@ -80,7 +80,14 @@ export const renderAssistantStreamStateCore = ({
   const text = nextMessage?.meta?.renderRich
     ? resolveCreativeRichRenderSource(nextMessage)
     : String(nextMessage.content ?? '');
-  if (nextMessage?.meta?.renderRich) {
+  if (nextMessage?.meta?.plainTextOnly === true) {
+    const normalized = normalizeAssistantLineBreaks?.(text) ?? text;
+    if (!hasSameStreamRender(target, 'text-only', normalized)) {
+      target.textContent = normalized;
+      target.style.whiteSpace = 'pre-wrap';
+      rememberStreamRender(target, 'text-only', normalized);
+    }
+  } else if (nextMessage?.meta?.renderRich) {
     try {
       if (!hasSameStreamRender(target, 'rich', text)) {
         renderRichText?.(target, text, {
@@ -366,6 +373,7 @@ export const createAssistantStreamUiRuntime = ({
       const wrapperEl = messageEl?.closest?.('.QQ_chat_charmsg, .QQ_chat_mymsg') || messageEl?.parentElement || null;
       const msgId = wrapperEl?.dataset?.msgId || placeholder.id || meta?.id || '';
       if (wrapperEl) wrapperEl.dataset.typingPlaceholder = '1';
+      if (wrapperEl && meta?.disposablePreview === true) wrapperEl.dataset.disposablePreview = '1';
       if (meta?.typing !== false && messageEl && isTypingDotsEnabled?.()) {
         messageEl.innerHTML = `
                 <div class="typing">

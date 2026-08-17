@@ -66,6 +66,25 @@ const makeDeps = () => {
     getWorldInfo: async id => worlds[id],
     getWorldGlobalSettings: () => ({ scanDepth: 5, apiKey: 'secret' }),
     waitForRegexStoreReady: () => true,
+    getRegexContext: ({ sessionId } = {}) => ({ sessionId }),
+    getRegexStore: () => ({
+      computeActiveRules: () => [
+        {
+          id: 'cleanup-think',
+          scriptName: '清理思考块',
+          findRegex: '/<think>[\\s\\S]*?<\\/think>/g',
+          replaceString: '',
+          placement: [2],
+        },
+        {
+          id: 'status-format',
+          scriptName: '状态块格式转换',
+          findRegex: '/^<status>([\\s\\S]*?)<\\/status>$/g',
+          replaceString: '状态块：$1',
+          placement: [2],
+        },
+      ],
+    }),
     getRegexSession: sid => ({ sessionId: sid, enabledSetIds: ['r1'] }),
     listRegexLocalSets: () => [
       { id: 'r1', name: '输出清理', scripts: [{ findRegex: '<think>.*?</think>', replaceString: '' }] },
@@ -220,7 +239,22 @@ const makeDeps = () => {
   assert.equal(result.session.enabledSetIds[0], 'r1');
   assert.equal(result.sets.length, 1);
   assert.equal(result.sets[0].name, '输出清理');
+  assert.equal(result.contentMode, 'summary');
+  assert.equal(JSON.stringify(result.sets).includes('findRegex'), false, '默认正则资源不得把原始规则正文注入模型上下文');
+  assert.equal(result.formatEvidence.length, 1);
+  assert.deepEqual(result.formatEvidence[0].markers, ['<status>...</status>']);
+  assert.equal(JSON.stringify(result.formatEvidence).includes('replaceString'), false);
+  assert.match(result.formatEvidenceHint, /不能把原始 replacement/);
   console.log('ok - app resource reader returns regex session and local sets');
+}
+
+{
+  const readResource = createAppResourceReader(makeDeps());
+  const result = await readResource({ resource: 'regex', id: 'r1', include: ['rules'] });
+  assert.equal(result.contentMode, 'details');
+  assert.equal(result.sets[0].scripts[0].findRegex, '<think>.*?</think>');
+  assert.match(result.contentHint, /不可信数据/);
+  console.log('ok - raw regex bodies require explicit debugging expansion');
 }
 
 {

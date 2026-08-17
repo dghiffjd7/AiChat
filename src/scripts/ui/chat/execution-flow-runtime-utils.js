@@ -370,6 +370,10 @@ const injectStyle = (documentRef) => {
   cursor: pointer;
 }
 .exec-flow-btn:hover { background: var(--ef-subtle); color: var(--ef-text); }
+.exec-flow-btn.is-stop { color: rgb(var(--ef-danger-rgb)); }
+.exec-flow-btn.is-stop svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.8; }
+.exec-flow-btn.is-stop:hover { background: rgba(var(--ef-danger-rgb), 0.10); }
+.exec-flow-btn[hidden] { display: none !important; }
 .exec-flow-stream {
   overflow-y: auto;
   padding: 10px 12px 12px 20px;
@@ -490,6 +494,7 @@ export const createExecutionFlowRuntime = ({
   setTimeoutFn = globalThis?.setTimeout || null,
   // 女仆投影的首选画布：指令条结果流（返回 true 表示已消费，不再自开面板，避免双流）
   onMaidTrace = null,
+  onCancelMaidRun = null,
 } = {}) => {
   let rootEl = null;
   let chipEl = null;
@@ -497,6 +502,7 @@ export const createExecutionFlowRuntime = ({
   let streamEl = null;
   let headTitleEl = null;
   let headStatusEl = null;
+  let cancelMaidBtnEl = null;
   let maidHostEl = null;
   let creativeHostEl = null;
   let switcherEl = null;
@@ -583,6 +589,7 @@ export const createExecutionFlowRuntime = ({
               <span class="exec-flow-title" data-ef-title></span>
             </div>
             <span class="exec-flow-status" data-ef-status></span>
+            <button type="button" class="exec-flow-btn is-stop" data-ef-cancel-maid aria-label="停止女仆任务"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="7" y="7" width="10" height="10" rx="1.5"/></svg></button>
             <button type="button" class="exec-flow-btn" data-ef-toggle aria-label="收起">–</button>
             <button type="button" class="exec-flow-btn" data-ef-close aria-label="关闭">×</button>
           </div>
@@ -599,6 +606,7 @@ export const createExecutionFlowRuntime = ({
     streamEl = rootEl.querySelector?.('[data-ef-stream]') || null;
     headTitleEl = rootEl.querySelector?.('[data-ef-title]') || null;
     headStatusEl = rootEl.querySelector?.('[data-ef-status]') || null;
+    cancelMaidBtnEl = rootEl.querySelector?.('[data-ef-cancel-maid]') || null;
     rootEl.addEventListener?.('click', (event) => {
       const target = event?.target || null;
       const switchTarget = target?.closest?.('[data-ef-switch]');
@@ -612,6 +620,12 @@ export const createExecutionFlowRuntime = ({
       }
       if (target?.closest?.('[data-ef-close]')) {
         setVisible(false);
+        return;
+      }
+      if (target?.closest?.('[data-ef-cancel-maid]')) {
+        if (state.view?.terminal !== true) {
+          void onCancelMaidRun?.({ runId: state.runId, view: state.view });
+        }
         return;
       }
       if (target?.closest?.('[data-ef-toggle]')) {
@@ -742,6 +756,7 @@ export const createExecutionFlowRuntime = ({
     if (headStatusEl) {
       headStatusEl.innerHTML = `<span class="exec-flow-dot" data-tone="${view.tone}"></span>${escapeHtml(view.statusLabel)}`;
     }
+    if (cancelMaidBtnEl) cancelMaidBtnEl.hidden = view.terminal === true;
     if (streamEl) {
       const signature = JSON.stringify([
         view.runId,
@@ -890,7 +905,7 @@ export const createExecutionFlowRuntime = ({
       view: state.view ? { ...state.view } : null,
       creative: state.creative ? { ...state.creative } : null,
     }),
-    getElements: () => ({ rootEl, chipEl, panelEl, streamEl, maidHostEl, creativeHostEl, switcherEl }),
+    getElements: () => ({ rootEl, chipEl, panelEl, streamEl, cancelMaidBtnEl, maidHostEl, creativeHostEl, switcherEl }),
     _adoptEvent: adoptEvent,
   };
 };

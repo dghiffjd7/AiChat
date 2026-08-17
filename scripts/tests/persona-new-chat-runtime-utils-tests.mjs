@@ -479,6 +479,12 @@ import {
     memoryTableStore: {
       getMemories: async query => {
         calls.push(['getMemories', query]);
+        if (query.scope === 'global') {
+          return [
+            { id: 'user-profile', table_id: 'user_profile' },
+            { id: 'global-fact', table_id: 'facts' },
+          ];
+        }
         if (query.contact_id === 'contact:b') return [{ id: 'b-summary', table_id: 'chat_summary' }];
         return [];
       },
@@ -501,10 +507,14 @@ import {
     false,
   );
   assert.equal(
-    calls.some(item => item[0] === 'getMemories' && item[1]?.scope === 'global'),
+    calls.some(item => item[0] === 'delete' && item[1]?.includes?.('user-profile')),
+    true,
+  );
+  assert.equal(
+    calls.some(item => item[0] === 'delete' && item[1]?.includes?.('global-fact')),
     false,
   );
-  console.log('ok - runPersonaNewChatFlow keeps moments and global memories by default for reversible role new-chat');
+  console.log('ok - runPersonaNewChatFlow keeps moments and unrelated global memories but clears user profile');
 }
 
 {

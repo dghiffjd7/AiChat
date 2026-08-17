@@ -1,10 +1,15 @@
 import { createLinkedAbortController, splitRequestOptions } from '../api/abort.js';
 import { prepareTransportRequest } from '../api/transport.js';
+import {
+  buildOpenAIResponsesRequestBody,
+  extractOpenAIResponsesText,
+} from '../api/providers/openai-responses-utils.js';
 import { PROVIDER_TOOL_RUNNER_HANDOFF_OUTPUTS } from './provider-tool-runner-handoff.js';
 import {
   PROVIDER_TOOL_NATIVE_RUNNER_CONTRACTS,
   resolveProviderToolNativeRunnerContract,
 } from './provider-tool-native-runner-contract.js';
+import { readProviderToolContinuationContext } from './provider-tool-continuation-context.js';
 
 const GEMINI_SAFETY = Object.freeze([
   { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_NONE' },
@@ -255,6 +260,12 @@ const buildGeminiNativeBody = (request = {}, options = {}) => {
   if (request.systemInstruction) {
     body.systemInstruction = clone(request.systemInstruction);
   }
+  if (Array.isArray(options.tools) && options.tools.length) {
+    body.tools = clone(options.tools);
+  }
+  if (isPlainObject(options.toolConfig)) {
+    body.toolConfig = clone(options.toolConfig);
+  }
   return body;
 };
 
@@ -287,14 +298,25 @@ const runAnthropicNativeRequest = async ({
   now = Date.now,
 } = {}) => {
   const { signal, requestId, payloadOptions } = sanitizePayloadOptions(options);
+  const continuationContext = readProviderToolContinuationContext(request) || {};
+  const history = Array.isArray(continuationContext.historyMessages)
+    ? continuationContext.historyMessages
+    : [];
+  const converted = history.length && typeof providerObject?.convertMessages === 'function'
+    ? providerObject.convertMessages(history)
+    : { system: undefined, messages: [] };
+  const providerRequestOptions = isPlainObject(continuationContext.providerRequestOptions)
+    ? continuationContext.providerRequestOptions
+    : {};
   const maxTokens = payloadOptions.maxTokens ?? payloadOptions.max_tokens ?? 4096;
   const providerModel = request.model || providerObject?.model || '';
   const body = {
     model: providerModel,
-    messages: clone(request.messages || []),
-    system: request.system,
+    messages: [...clone(converted.messages || []), ...clone(request.messages || [])],
+    system: request.system || converted.system,
     max_tokens: maxTokens,
     stream: false,
+    ...clone(providerRequestOptions),
     ...payloadOptions,
   };
   delete body.maxTokens;
@@ -333,6 +355,24 @@ const runGeminiNativeRequest = async ({
   now = Date.now,
 } = {}) => {
   const { signal, requestId, payloadOptions } = sanitizePayloadOptions(options);
+  const continuationContext = readProviderToolContinuationContext(request) || {};
+  const history = Array.isArray(continuationContext.historyMessages)
+    ? continuationContext.historyMessages
+    : [];
+  const converted = history.length && typeof providerObject?.convertMessages === 'function'
+    ? providerObject.convertMessages(history)
+    : { contents: [], systemInstruction: '' };
+  const providerRequestOptions = isPlainObject(continuationContext.providerRequestOptions)
+    ? continuationContext.providerRequestOptions
+    : {};
+  const nativeRequest = {
+    ...request,
+    contents: [...clone(converted.contents || []), ...clone(request.contents || [])],
+    systemInstruction: request.systemInstruction || (converted.systemInstruction
+      ? { role: 'user', parts: [{ text: converted.systemInstruction }] }
+      : undefined),
+  };
+  const nativeOptions = { ...clone(providerRequestOptions), ...payloadOptions };
   const url = getGeminiUrl(providerObject, request);
   const headers = await getProviderHeaders(providerObject);
   const data = await requestJson({
@@ -341,7 +381,7 @@ const runGeminiNativeRequest = async ({
     transportProvider: providerFamily,
     url,
     headers,
-    body: buildGeminiNativeBody(request, payloadOptions),
+    body: buildGeminiNativeBody(nativeRequest, nativeOptions),
     signal,
     requestId,
     timeoutMs: providerObject?.timeout,
@@ -357,6 +397,54 @@ const runGeminiNativeRequest = async ({
       sessionId: trim(request.sessionId),
       finalText,
       adapter: PROVIDER_TOOL_NATIVE_RUNNER_CONTRACTS.geminiContents,
+      now,
+    }),
+  };
+};
+
+const runOpenAIResponsesNativeRequest = async ({
+  providerObject = null,
+  request = {},
+  options = {},
+  now = Date.now,
+} = {}) => {
+  const { signal, requestId, payloadOptions } = sanitizePayloadOptions(options);
+  const continuationContext = readProviderToolContinuationContext(request) || {};
+  const history = Array.isArray(continuationContext.historyMessages)
+    ? continuationContext.historyMessages
+    : [];
+  const providerRequestOptions = isPlainObject(continuationContext.providerRequestOptions)
+    ? continuationContext.providerRequestOptions
+    : {};
+  const providerModel = request.model || providerObject?.model || '';
+  const body = buildOpenAIResponsesRequestBody({
+    model: providerModel,
+    messages: history,
+    input: request.input,
+    options: { ...clone(providerRequestOptions), ...payloadOptions },
+  });
+  const data = await requestJson({
+    providerObject,
+    providerFamily: 'OpenAI Responses',
+    transportProvider: 'openai',
+    url: `${providerObject?.baseUrl || 'https://api.openai.com/v1'}/responses`,
+    headers: await getProviderHeaders(providerObject),
+    body,
+    signal,
+    requestId,
+    timeoutMs: providerObject?.timeout,
+    fetchFn: options.fetchFn,
+  });
+  const finalText = extractOpenAIResponsesText(data);
+  return {
+    adapter: PROVIDER_TOOL_NATIVE_RUNNER_CONTRACTS.openaiResponses,
+    finalText,
+    events: buildProviderStreamEvents({
+      provider: 'openai',
+      model: providerModel,
+      sessionId: trim(request.sessionId),
+      finalText,
+      adapter: PROVIDER_TOOL_NATIVE_RUNNER_CONTRACTS.openaiResponses,
       now,
     }),
   };
@@ -382,7 +470,9 @@ export const createProviderToolLlmClientNativeRunner = ({
         sessionId: request.sessionId,
         payloadKind: Array.isArray(request.contents)
           ? 'contents'
-          : (Array.isArray(request.messages) ? 'messages' : 'tool_results'),
+          : (Array.isArray(request.input)
+              ? 'input'
+              : (Array.isArray(request.messages) ? 'messages' : 'tool_results')),
         requestPreviewFormat: request.format,
         request,
       };
@@ -422,14 +512,16 @@ export const createProviderToolLlmClientNativeRunner = ({
       }
       const family = normalizeProviderFamily(request.provider || providerObject?.constructor?.name, request.format);
       if (family === 'openai') {
-        return {
-          ...base,
-          ok: false,
-          status: 'unsupported',
-          reason: 'OpenAI native message payloads should use streamChat/chat runner instead of LLMClient native shim',
-        };
+        if (contract.contractKind !== PROVIDER_TOOL_NATIVE_RUNNER_CONTRACTS.openaiResponses) {
+          return {
+            ...base,
+            ok: false,
+            status: 'unsupported',
+            reason: 'OpenAI native message payloads should use streamChat/chat runner instead of LLMClient native shim',
+          };
+        }
       }
-      if (family !== 'anthropic' && family !== 'gemini') {
+      if (family !== 'openai' && family !== 'anthropic' && family !== 'gemini') {
         return {
           ...base,
           ok: false,
@@ -438,15 +530,17 @@ export const createProviderToolLlmClientNativeRunner = ({
         };
       }
       const providerLabel = trim(request.provider || family).toLowerCase();
-      const result = family === 'anthropic'
-        ? await runAnthropicNativeRequest({ providerObject, request, options: { ...options, fetchFn }, now })
-        : await runGeminiNativeRequest({
-            providerObject,
-            request,
-            options: { ...options, fetchFn },
-            providerFamily: providerLabel.includes('vertex') ? 'vertexai' : (providerLabel.includes('maker') ? 'makersuite' : 'gemini'),
-            now,
-          });
+      const result = family === 'openai'
+        ? await runOpenAIResponsesNativeRequest({ providerObject, request, options: { ...options, fetchFn }, now })
+        : (family === 'anthropic'
+            ? await runAnthropicNativeRequest({ providerObject, request, options: { ...options, fetchFn }, now })
+            : await runGeminiNativeRequest({
+                providerObject,
+                request,
+                options: { ...options, fetchFn },
+                providerFamily: providerLabel.includes('vertex') ? 'vertexai' : (providerLabel.includes('maker') ? 'makersuite' : 'gemini'),
+                now,
+              }));
       return {
         ...base,
         ok: true,

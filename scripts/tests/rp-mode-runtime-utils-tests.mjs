@@ -536,6 +536,14 @@ const createStorage = () => {
     (greetingWriteSource.match(/if \(!write\.ok\) return false;/g) || []).length,
     3,
   );
+  const greetingEditStart = greetingWriteSource.indexOf('const editRpGreeting = async');
+  const greetingEditEnd = greetingWriteSource.indexOf('const getRpGreetingState =', greetingEditStart);
+  assert.ok(greetingEditStart >= 0 && greetingEditEnd > greetingEditStart);
+  assert.match(
+    greetingWriteSource.slice(greetingEditStart, greetingEditEnd),
+    /resetRpHistory\(sessionId,\s*\{\s*keepInput:\s*true\s*\}\)/,
+    '修改当前开场白的重置必须保留创意写作输入草稿',
+  );
   const resetFlowStart = appSource.indexOf('const resetRpHistory = async');
   const resetFlowEnd = appSource.indexOf('if (!chatStore.__rpGreetingWrapped)', resetFlowStart);
   const resetFlowSource = appSource.slice(resetFlowStart, resetFlowEnd);
@@ -543,6 +551,11 @@ const createStorage = () => {
   assert.match(resetFlowSource, /runRpPlotResetFlow\(\{/);
   assert.match(resetFlowSource, /captureArchivePointer:[\s\S]*buildArchivePointerFromCurrentThread/);
   assert.match(resetFlowSource, /resetVariableState:[\s\S]*resetRpGreetingVariableState/);
+  assert.match(
+    resetFlowSource,
+    /const preservedInput = keepInput[\s\S]*chatStore\.setDraft\(preservedInput, sid\)[\s\S]*ui\.setInputText\(preservedInput\)/,
+    'keepInput 必须同时恢复 ChatStore 草稿与当前输入框',
+  );
   assert.match(
     resetFlowSource,
     /startNewChat:[\s\S]*skipRpGreetingSeed:\s*true/,

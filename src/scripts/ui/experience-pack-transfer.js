@@ -35,7 +35,10 @@ import {
   normalizeExperiencePackCompactedSummary,
   normalizeExperiencePackSummaryList,
 } from './experience-pack-import-utils.js';
-import { resolveImportedPresetIdByName } from './preset-import-dedupe-utils.js';
+import {
+  bindImportedPresetToSession,
+  resolveImportedPresetIdByName,
+} from './preset-import-dedupe-utils.js';
 import { getPresetStore } from './preset-store-runtime-utils.js';
 import { collectTransferWorldbookBundle } from './transfer-worldbook-utils.js';
 import { hasStoredWorldInfo, waitForWorldStoreReady } from './world-store-runtime-utils.js';
@@ -1286,6 +1289,7 @@ export class ExperiencePackTransfer extends CharacterCardTransfer {
     }
 
     const restoredPresetIds = {};
+    const presetBindingFailures = [];
     try {
       await this.presetStore?.ready;
     } catch {}
@@ -1298,6 +1302,7 @@ export class ExperiencePackTransfer extends CharacterCardTransfer {
           type,
           presetPayload,
           upsertPayloadBuilder: buildExperiencePackPresetUpsertPayload,
+          requiredAppScope: 'all',
         });
         if (presetId) restoredPresetIds[type] = presetId;
       } catch (err) {
@@ -1306,10 +1311,21 @@ export class ExperiencePackTransfer extends CharacterCardTransfer {
     }
     for (const [type, presetId] of Object.entries(restoredPresetIds)) {
       try {
-        await this.presetStore?.setSessionBinding?.(type, sid, presetId);
+        const result = await bindImportedPresetToSession({
+          presetStore: this.presetStore,
+          type,
+          sessionId: sid,
+          presetId,
+        });
+        if (!result.ok) presetBindingFailures.push({ type, reason: result.reason });
       } catch (err) {
+        presetBindingFailures.push({ type, reason: String(err?.message || 'bind_failed') });
         logger.warn('bind imported preset to session failed', err);
       }
+    }
+    if (presetBindingFailures.length) {
+      logger.warn('experience pack preset bindings were not fully restored', presetBindingFailures);
+      window.toastr?.warning?.(`体验包已导入，但有 ${presetBindingFailures.length} 项会话预设未能还原。`);
     }
     if (packageData?.roomAgentCenterSettings) {
       try {

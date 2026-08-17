@@ -1581,7 +1581,7 @@ const buildWorldSnapshot = (context, templateWorlds = {}) => {
   const worldStore = appBridge?.worldStore;
   if (!worldStore?.load) return { worlds: [], worldMeta: {} };
   const ids = new Set();
-  const resolved = appBridge?.getResolvedWorldState?.(appBridge?.activeSessionId, {
+  const resolved = appBridge?.getResolvedWorldState?.(appBridge?.getActiveSessionId?.(), {
     uiMode: String(context?.meta?.uiMode || context?.uiMode || '').trim().toLowerCase() === 'rp' ? 'rp' : 'chat',
     groupMemberIds: Array.isArray(context?.group?.members) ? context.group.members : [],
     isGroupChat: Boolean(context?.session?.isGroup) || String(context?.session?.id || '').startsWith('group:'),

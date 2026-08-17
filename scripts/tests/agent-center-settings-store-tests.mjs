@@ -1,15 +1,50 @@
 import assert from 'node:assert/strict';
 
 import {
+  getAgentCenterGlobalSemanticPromptLibrary,
   lazyMigratePresetProfileToAgentCenterSettings,
   mergeImportedAgentCenterSettings,
   migratePresetStateToAgentCenterSettings,
+  removeAgentCenterGlobalSemanticPromptBlock,
+  reorderAgentCenterGlobalSemanticPromptBlocks,
   resolveAgentOpenAIPreset,
   resolveAgentSyspromptPreset,
   setAgentCardEnabled,
   setAgentPromptConfig,
   setMemoryAgentSettings,
+  upsertAgentCenterGlobalSemanticPromptBlock,
 } from '../../src/scripts/storage/agent-center-settings-store.js';
+
+{
+  let mutation = upsertAgentCenterGlobalSemanticPromptBlock({}, {
+    id: 'global-a',
+    name: 'A',
+    enabled: true,
+    content: 'semantic A',
+    scope: 'chat',
+    anchor: 'semantic_header',
+  }, { now: () => 100 });
+  mutation = upsertAgentCenterGlobalSemanticPromptBlock(mutation.settings, {
+    id: 'global-b',
+    name: 'B',
+    enabled: true,
+    content: 'semantic B',
+    scope: 'maid',
+    anchor: 'before_history',
+  }, { now: () => 200 });
+  assert.deepEqual(
+    getAgentCenterGlobalSemanticPromptLibrary(mutation.settings).blocks.map(block => block.id),
+    ['global-a', 'global-b'],
+  );
+  const reordered = reorderAgentCenterGlobalSemanticPromptBlocks(
+    mutation.settings,
+    ['global-b', 'global-a'],
+  );
+  assert.deepEqual(reordered.library.blocks.map(block => block.id), ['global-b', 'global-a']);
+  const removed = removeAgentCenterGlobalSemanticPromptBlock(reordered.settings, 'global-a');
+  assert.deepEqual(removed.library.blocks.map(block => block.id), ['global-b']);
+  console.log('ok - agent center global semantic prompt library stays independent and ordered');
+}
 
 {
   const migrated = migratePresetStateToAgentCenterSettings({}, {

@@ -1,4 +1,12 @@
 import { safeInvoke } from '../utils/tauri.js';
+import {
+  exportGlobalSemanticPromptLibrary,
+  importGlobalSemanticPromptLibrary,
+  normalizeGlobalSemanticPromptLibrary,
+  removeGlobalSemanticPromptBlock,
+  reorderGlobalSemanticPromptBlocks,
+  upsertGlobalSemanticPromptBlock,
+} from '../agent/global-semantic-prompt-library.js';
 
 export const AGENT_CENTER_SETTINGS_STORAGE_KEY = 'agent_center_settings_v1';
 
@@ -228,12 +236,68 @@ export const normalizeAgentCenterSettings = (settings = {}) => {
     const id = trim(key);
     if (id) cards[id] = normalizeCardState(card);
   });
+  const globalSettings = isPlainObject(src.global) ? clone(src.global, {}) : {};
   return {
     version: 1,
     migrations: isPlainObject(src.migrations) ? clone(src.migrations, {}) : {},
     cards,
     profiles,
-    global: isPlainObject(src.global) ? clone(src.global, {}) : {},
+    global: {
+      ...globalSettings,
+      semanticPromptLibrary: normalizeGlobalSemanticPromptLibrary(
+        globalSettings.semanticPromptLibrary,
+      ),
+    },
+  };
+};
+
+export const getAgentCenterGlobalSemanticPromptLibrary = (settings = {}) => (
+  normalizeAgentCenterSettings(settings).global.semanticPromptLibrary
+);
+
+const replaceGlobalSemanticPromptLibrary = (settings = {}, library = {}) => {
+  const normalized = normalizeAgentCenterSettings(settings);
+  normalized.global = {
+    ...(normalized.global || {}),
+    semanticPromptLibrary: normalizeGlobalSemanticPromptLibrary(library),
+  };
+  return normalizeAgentCenterSettings(normalized);
+};
+
+export const upsertAgentCenterGlobalSemanticPromptBlock = (settings = {}, patch = {}, options = {}) => {
+  const current = normalizeAgentCenterSettings(settings);
+  const mutation = upsertGlobalSemanticPromptBlock(
+    current.global.semanticPromptLibrary,
+    patch,
+    options,
+  );
+  return {
+    settings: replaceGlobalSemanticPromptLibrary(current, mutation.library),
+    ...mutation,
+  };
+};
+
+export const removeAgentCenterGlobalSemanticPromptBlock = (settings = {}, blockId = '') => {
+  const current = normalizeAgentCenterSettings(settings);
+  const library = removeGlobalSemanticPromptBlock(
+    current.global.semanticPromptLibrary,
+    blockId,
+  );
+  return {
+    settings: replaceGlobalSemanticPromptLibrary(current, library),
+    library,
+  };
+};
+
+export const reorderAgentCenterGlobalSemanticPromptBlocks = (settings = {}, orderedIds = []) => {
+  const current = normalizeAgentCenterSettings(settings);
+  const library = reorderGlobalSemanticPromptBlocks(
+    current.global.semanticPromptLibrary,
+    orderedIds,
+  );
+  return {
+    settings: replaceGlobalSemanticPromptLibrary(current, library),
+    library,
   };
 };
 
@@ -696,8 +760,39 @@ export const createAgentCenterSettingsStore = ({
     ...(options || {}),
     now: meta.now || Date.now,
   }));
+  const saveGlobalPromptMutation = mutation => save(mutation.settings).then(settings => ({
+    ok: true,
+    settings,
+    library: getAgentCenterGlobalSemanticPromptLibrary(settings),
+    ...(mutation.block ? { block: mutation.block } : {}),
+    ...(mutation.validation ? { validation: mutation.validation } : {}),
+    ...(mutation.forcedDisabled === true ? { forcedDisabled: true } : {}),
+  }));
   return {
     getSettings: () => normalizeAgentCenterSettings(current),
+    getGlobalSemanticPromptLibrary: () => getAgentCenterGlobalSemanticPromptLibrary(current),
+    exportGlobalSemanticPromptLibrary: options => exportGlobalSemanticPromptLibrary(
+      getAgentCenterGlobalSemanticPromptLibrary(current),
+      options || {},
+    ),
+    upsertGlobalSemanticPromptBlock: (patch = {}, options = {}) => saveGlobalPromptMutation(
+      upsertAgentCenterGlobalSemanticPromptBlock(current, patch, options),
+    ),
+    removeGlobalSemanticPromptBlock: (blockId = '') => saveGlobalPromptMutation(
+      removeAgentCenterGlobalSemanticPromptBlock(current, blockId),
+    ),
+    reorderGlobalSemanticPromptBlocks: (orderedIds = []) => saveGlobalPromptMutation(
+      reorderAgentCenterGlobalSemanticPromptBlocks(current, orderedIds),
+    ),
+    importGlobalSemanticPromptLibrary: (payload = {}, options = {}) => {
+      const imported = importGlobalSemanticPromptLibrary(payload, options);
+      if (!imported.ok) return Promise.resolve(imported);
+      return save(replaceGlobalSemanticPromptLibrary(current, imported.library)).then(settings => ({
+        ...imported,
+        settings,
+        library: getAgentCenterGlobalSemanticPromptLibrary(settings),
+      }));
+    },
     setCardEnabled: (agentId, enabled, options = {}) => save(setAgentCardEnabled(current, agentId, enabled, options)),
     setPromptConfig: (options = {}, meta = {}) => save(setAgentPromptConfig(current, options, meta)),
     setMemorySettings: (options = {}, meta = {}) => save(setMemoryAgentSettings(current, options, meta)),

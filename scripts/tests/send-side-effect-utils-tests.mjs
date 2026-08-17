@@ -2070,6 +2070,53 @@ test('syncProtocolResponseTurnCheckpoints ignores rolled-back moment mutations f
   assert.deepEqual(calls, []);
 });
 
+test('consumeCreativeAssistantStream keeps partial content when the stream errors mid-way', async () => {
+  async function* stream() {
+    yield { content: '第一段正文' };
+    yield { content: '第二段' };
+    throw new Error('native http_stream_request failed: error decoding response body');
+  }
+  const result = await consumeCreativeAssistantStream(
+    stream(),
+    { streamCtrl: null, nativeReasoningState: { chunks: [] }, streamMeta: {}, creativeStreamProcessor: null },
+    { normalizeChunk: chunk => chunk, isInterrupted: () => false },
+  );
+  assert.equal(result.full, '第一段正文第二段');
+  assert.match(result.streamError, /error decoding response body/);
+  assert.equal(result.interrupted, false);
+});
+
+test('consumeCreativeAssistantStream rethrows when no content arrived before the error', async () => {
+  async function* stream() {
+    throw new Error('connect failed');
+  }
+  await assert.rejects(
+    () => consumeCreativeAssistantStream(
+      stream(),
+      { streamCtrl: null, nativeReasoningState: { chunks: [] }, streamMeta: {}, creativeStreamProcessor: null },
+      { normalizeChunk: chunk => chunk, isInterrupted: () => false },
+    ),
+    /connect failed/,
+  );
+});
+
+test('consumeCreativeAssistantStream rethrows AbortError even with partial content', async () => {
+  async function* stream() {
+    yield { content: '一些正文' };
+    const error = new Error('aborted');
+    error.name = 'AbortError';
+    throw error;
+  }
+  await assert.rejects(
+    () => consumeCreativeAssistantStream(
+      stream(),
+      { streamCtrl: null, nativeReasoningState: { chunks: [] }, streamMeta: {}, creativeStreamProcessor: null },
+      { normalizeChunk: chunk => chunk, isInterrupted: () => false },
+    ),
+    { name: 'AbortError' },
+  );
+});
+
 let failed = 0;
 for (const t of tests) {
   try {

@@ -408,8 +408,9 @@ const {
   assert.deepEqual(payload, {
     name: 'Alice·Preset',
     data: sourceData,
+    appScope: 'all',
     makeActive: false,
   });
   assert.notEqual(payload.data, sourceData);
-  console.log('ok - buildExperiencePackPresetUpsertPayload preserves upsert payload and clones data');
+  console.log('ok - experience-pack room presets restore with all-surface eligibility without becoming active');
 }

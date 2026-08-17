@@ -131,11 +131,30 @@ export const BRIDGE_CONTRACT_METHOD_METADATA = Object.freeze({
       tests: ['app-bridge-contract-tests.mjs', 'web-search-runtime-tests.mjs'],
       status: 'covered',
     },
+    finalizeChatStructuredEvidence: {
+      params: ['payload: { requestId: string, committed: boolean }'],
+      returns: 'Promise<structured evidence finalize result>',
+      sideEffects: [
+        'commits staged structured-route success evidence only after the APP transaction succeeds',
+        'discards staged success evidence when committed is false',
+      ],
+      tests: [
+        'app-bridge-contract-tests.mjs',
+        'chat-structured-evidence-commit-runtime-tests.mjs',
+      ],
+      status: 'covered',
+    },
     setWebSearchToolRuntime: {
       params: ['runtime: read-only web tool runtime | null'],
       returns: 'void',
       sideEffects: ['sets the allowlisted web.search/web.research fallback runtime'],
       tests: ['app-bridge-contract-tests.mjs', 'web-search-generation-client-tests.mjs'],
+      status: 'covered',
+    },
+    getWebSearchToolRuntime: {
+      returns: 'read-only web tool runtime | null',
+      sideEffects: [],
+      tests: ['app-bridge-contract-tests.mjs', 'ad-hoc-web-search-runtime-tests.mjs'],
       status: 'covered',
     },
   },

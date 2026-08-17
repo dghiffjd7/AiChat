@@ -1213,4 +1213,31 @@ const createCatalogRoutingHarness = () => {
   console.log('ok - Validator rejects stale candidate schema hashes before execution');
 }
 
+{
+  const writes = [];
+  const runtime = createMaidCapabilityRoutingRuntime({
+    features,
+    toolRegistry: registry,
+    permissionEvaluator: { evaluateTool: () => ({ decision: 'allow', checks: [] }) },
+    storage: {
+      getItem: () => null,
+      setItem: (...args) => writes.push(args),
+    },
+    logger: { debug() {} },
+  });
+  assert.equal(runtime.getConfig().mode, 'shadow');
+  const request = runtime.beginRequest({ input: '看看当前状态' });
+  const snapshot = runtime.prepareDecision({
+    requestId: request.id,
+    input: '看看当前状态',
+    configOverride: { mode: 'bounded' },
+  });
+  assert.equal(snapshot.mode, 'bounded');
+  assert.equal(snapshot.useCandidates, true);
+  assert.equal(runtime.getConfig().mode, 'shadow');
+  assert.equal(writes.length, 0);
+  runtime.finishRequest(request.id, { ok: true });
+  console.log('ok - controlled capability previews can use bounded routing without persisting config');
+}
+
 console.log('maid-capability-routing-tests passed');

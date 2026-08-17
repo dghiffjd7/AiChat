@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 
 import {
+  bindImportedPresetToSession,
+  buildRestoredPresetUpsertPayload,
   findPresetIdByName,
   getImportedPresetName,
   resolveImportedPresetIdByName,
@@ -100,8 +102,70 @@ import {
     payload: {
       name: 'Model',
       data: { temperature: 0.7 },
+      appScope: 'creative',
       makeActive: false,
     },
   });
   console.log('ok - imported preset resolver caches same-name presets during one package import');
+}
+
+{
+  const upserts = [];
+  const presetStore = {
+    getState: () => ({
+      presets: {
+        openai: {
+          existing: { name: 'Shared Model', app_scope: 'creative' },
+        },
+      },
+    }),
+    upsert: async (type, payload) => {
+      upserts.push({ type, payload });
+      return 'restored-all';
+    },
+  };
+  const presetId = await resolveImportedPresetIdByName({
+    presetStore,
+    type: 'openai',
+    presetPayload: { name: 'Shared Model', data: { temperature: 0.8 } },
+    requiredAppScope: 'all',
+    upsertPayloadBuilder: buildRestoredPresetUpsertPayload,
+  });
+  assert.equal(presetId, 'restored-all');
+  assert.equal(upserts.length, 1);
+  assert.equal(upserts[0].payload.appScope, 'all');
+  console.log('ok - room restore never reuses a same-name creative-only preset for chat binding');
+}
+
+{
+  const bindings = { sessions: {} };
+  const presetStore = {
+    setSessionBinding: async (_type, sessionId, presetId) => {
+      bindings.sessions[sessionId] = presetId;
+      return bindings;
+    },
+    getSessionBindingId: (_type, sessionId) => bindings.sessions[sessionId] || null,
+  };
+  const bound = await bindImportedPresetToSession({
+    presetStore,
+    type: 'openai',
+    sessionId: 'chat-a',
+    presetId: 'restored-all',
+  });
+  assert.deepEqual(bound, {
+    ok: true,
+    reason: '',
+    actualPresetId: 'restored-all',
+  });
+
+  presetStore.setSessionBinding = async () => bindings;
+  const rejected = await bindImportedPresetToSession({
+    presetStore,
+    type: 'openai',
+    sessionId: 'chat-b',
+    presetId: 'creative-only',
+  });
+  assert.equal(rejected.ok, false);
+  assert.equal(rejected.reason, 'preset_session_binding_rejected');
+  console.log('ok - restored preset bindings are verified instead of treating a silent no-op as success');
 }

@@ -8,6 +8,11 @@ import { createLinkedAbortController, splitRequestOptions } from '../abort.js';
 import { createReasoningStreamEvent, extractGeminiStreamParts } from '../native-reasoning.js';
 import { prepareTransportRequest } from '../transport.js';
 import { reportProviderWebSources } from '../web-search-runtime.js';
+import {
+  getGeminiFinishReason,
+  mergeGeminiProviderMeta,
+  reportProviderUsage,
+} from '../provider-usage.js';
 
 const getTauriInvoker = () => {
   const g = typeof globalThis !== 'undefined' ? globalThis : undefined;
@@ -238,7 +243,7 @@ export class MakersuiteProvider {
    * Send chat message (non-streaming)
    */
   async chat(messages, options = {}) {
-    const { signal, requestId, options: payloadOptions } = splitRequestOptions(options);
+    const { signal, requestId, onProviderToolCallDelta, options: payloadOptions } = splitRequestOptions(options);
     const { controller, cleanup } = createLinkedAbortController({ timeoutMs: this.timeout, signal });
 
     try {
@@ -261,7 +266,16 @@ export class MakersuiteProvider {
         throw error;
       }
       const data = JSON.parse(res.body || '{}');
+      try {
+        onProviderToolCallDelta?.(data, { provider: 'makersuite', model: this.model });
+      } catch {}
       reportProviderWebSources(options, data, { provider: 'makersuite' });
+      reportProviderUsage(options, {
+        body: data,
+        provider: 'makersuite',
+        model: this.model,
+        finishReason: getGeminiFinishReason(data),
+      });
 
       // Check for candidates
       const candidates = data?.candidates;
@@ -275,18 +289,20 @@ export class MakersuiteProvider {
 
       // Extract text from response
       const responseContent = candidates[0].content ?? candidates[0].output;
+      const responseParts = Array.isArray(responseContent?.parts) ? responseContent.parts : [];
+      const hasFunctionCall = responseParts.some(part => part?.functionCall && typeof part.functionCall === 'object');
       const responseText = typeof responseContent === 'string'
         ? responseContent
-        : responseContent?.parts
-            ?.filter(part => !part.thought)
-            ?.map(part => part.text)
-            ?.join('\n\n');
+        : responseParts
+            .filter(part => !part.thought && typeof part?.text === 'string')
+            .map(part => part.text)
+            .join('\n\n');
 
-      if (!responseText) {
+      if (!responseText && !hasFunctionCall) {
         throw new Error('Empty response from Gemini');
       }
 
-      return responseText;
+      return responseText || '';
     } finally {
       cleanup();
     }
@@ -297,7 +313,7 @@ export class MakersuiteProvider {
    */
   async *streamChat(messages, options = {}) {
     const { signal, onProviderToolCallDelta, options: payloadOptions } = splitRequestOptions(options);
-    const { controller, cleanup } = createLinkedAbortController({ timeoutMs: this.timeout, signal });
+    const { controller, cleanup, touch } = createLinkedAbortController({ timeoutMs: this.timeout, signal, idle: true });
     const notifyProviderToolCallDelta = data => {
       try {
         onProviderToolCallDelta?.(data, { provider: 'makersuite', model: this.model });
@@ -327,7 +343,10 @@ export class MakersuiteProvider {
       }
 
       // Handle SSE stream
+      let providerMeta = null;
       for await (const data of handleSSE(response)) {
+        touch();
+        providerMeta = mergeGeminiProviderMeta(providerMeta, data);
         notifyProviderToolCallDelta(data);
         reportProviderWebSources(options, data, { provider: 'makersuite' });
         const candidates = data?.candidates;
@@ -339,6 +358,12 @@ export class MakersuiteProvider {
           if (parts.content) yield parts.content;
         }
       }
+      reportProviderUsage(options, {
+        body: providerMeta,
+        provider: 'makersuite',
+        model: this.model,
+        finishReason: providerMeta?.finishReason,
+      });
     } finally {
       cleanup();
     }

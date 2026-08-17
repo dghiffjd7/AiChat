@@ -92,6 +92,9 @@ export const createProviderToolCallRuntime = ({
             source: context.source || normalized.source,
             toolCall: normalized,
             interaction,
+            continuationContext: isPlainObject(context.providerContinuationContext)
+              ? context.providerContinuationContext
+              : null,
           })
         : null;
       parts.push(buildProviderToolPermissionRequestPart({

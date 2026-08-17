@@ -14,6 +14,15 @@ import {
     applyMemoryStorageMode,
     deriveMemoryStorageMode,
 } from './memory-storage-mode-utils.js';
+import {
+    GLOBAL_SEMANTIC_PROMPT_ANCHORS,
+    GLOBAL_SEMANTIC_PROMPT_BLOCK_TOKEN_LIMIT,
+    GLOBAL_SEMANTIC_PROMPT_SCOPE_TOKEN_LIMIT,
+    detectGlobalSemanticPromptGuard,
+    estimateGlobalSemanticPromptTokens,
+    normalizeGlobalSemanticPromptLibrary,
+    validateGlobalSemanticPromptBlock,
+} from '../agent/global-semantic-prompt-library.js';
 
 const STYLE_ID = 'agent-center-panel-style';
 
@@ -41,6 +50,7 @@ const tabIcon = (id = '') => ({
     pending: ICONS.pending,
     agents: ICONS.agent,
     prompts: ICONS.prompts,
+    global_prompts: ICONS.prompts,
     diagnostics: ICONS.diagnostics,
     resources: ICONS.resources,
     activity: ICONS.activity,
@@ -253,6 +263,107 @@ const PANEL_CSS = `
 .agent-center-model-manage:focus-visible {
     outline: 2px solid rgba(59,130,246,0.42);
     outline-offset: 2px;
+}
+.agent-center-global-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+.agent-center-global-toolbar-group {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+.agent-center-global-select,
+.agent-center-global-input,
+.agent-center-global-textarea {
+    box-sizing: border-box;
+    border: 1px solid var(--app-border-default);
+    border-radius: 12px;
+    background: var(--app-surface-card);
+    color: var(--app-text-primary);
+    font: inherit;
+}
+.agent-center-global-select,
+.agent-center-global-input {
+    min-height: 38px;
+    padding: 7px 10px;
+}
+.agent-center-global-input { width: 100%; }
+.agent-center-global-textarea {
+    width: 100%;
+    min-height: 150px;
+    padding: 11px 12px;
+    resize: vertical;
+    line-height: 1.55;
+}
+.agent-center-global-card {
+    display: grid;
+    gap: 10px;
+}
+.agent-center-global-card.is-dragging { opacity: 0.5; }
+.agent-center-global-card.is-drag-over {
+    box-shadow: 0 0 0 2px color-mix(in srgb, #3b82f6 55%, transparent);
+}
+.agent-center-global-card-head {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    gap: 10px;
+    align-items: center;
+}
+.agent-center-global-drag {
+    color: var(--app-text-secondary);
+    cursor: grab;
+    user-select: none;
+    font-size: 18px;
+    letter-spacing: -3px;
+}
+.agent-center-global-drag:active { cursor: grabbing; }
+.agent-center-global-fields {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(150px, 0.45fr) minmax(190px, 0.55fr);
+    gap: 8px;
+}
+.agent-center-global-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--app-text-secondary);
+    font-size: 12px;
+    white-space: nowrap;
+}
+.agent-center-global-warning {
+    padding: 9px 11px;
+    border-radius: 10px;
+    background: color-mix(in srgb, var(--app-danger-soft, #fee2e2) 82%, transparent);
+    color: var(--app-danger-text, #be123c);
+    font-size: 12px;
+}
+.agent-center-global-preview {
+    display: grid;
+    gap: 8px;
+    padding-top: 10px;
+    border-top: 1px solid var(--app-border-default);
+}
+.agent-center-global-preview-block {
+    padding: 10px 12px;
+    border: 1px solid color-mix(in srgb, #8b5cf6 32%, var(--app-border-default));
+    border-radius: 12px;
+    background: color-mix(in srgb, #8b5cf6 6%, var(--app-surface-card));
+}
+.agent-center-global-preview-block pre {
+    margin: 7px 0 0;
+    white-space: pre-wrap;
+    word-break: break-word;
+    font: 12px/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+@media (max-width: 760px) {
+    .agent-center-global-fields { grid-template-columns: 1fr; }
+    .agent-center-global-card-head { grid-template-columns: auto minmax(0, 1fr); }
+    .agent-center-global-card-head .agent-center-global-toggle { grid-column: 1 / -1; }
 }
 .agent-center-tabs {
     display: flex;
@@ -2274,6 +2385,9 @@ export class AgentCenterPanel {
         this.refreshQueued = false;
         this.refreshInFlight = null;
         this.agentFeatureMutationDepth = 0;
+        this.globalPromptPreviewContext = 'private_fc';
+        this.globalPromptPreview = null;
+        this.globalPromptDragId = '';
     }
 
     ensureStyle() {
@@ -4179,6 +4293,367 @@ export class AgentCenterPanel {
         `).join('')}</div>`;
     }
 
+    renderGlobalPromptPreview() {
+        const preview = this.globalPromptPreview;
+        if (!preview) return '';
+        if (preview.ok === false) {
+            return `<div class="agent-center-global-warning">${escapeHtml(preview.message || preview.reason || '预览失败')}</div>`;
+        }
+        const audit = preview.audit && typeof preview.audit === 'object' ? preview.audit : {};
+        const injected = Array.isArray(audit.injected) ? audit.injected : [];
+        const skipped = Array.isArray(audit.skipped) ? audit.skipped : [];
+        const routeLabels = {
+            provider_fc: '示例私聊 · 原生 FC',
+            json_terminal: '示例私聊 · JSON 终态',
+            legacy_text: '示例私聊 · 传统文本',
+            maid_planner: '女仆 · 主规划请求',
+        };
+        const route = trim(preview.route || preview.request?.phoneReplyTransport?.effectiveMode);
+        return `<div class="agent-center-global-preview">
+            <div class="agent-center-card-head">
+                <div>
+                    <div class="agent-center-card-title">零请求预览</div>
+                    <div class="agent-center-card-sub">${escapeHtml(routeLabels[route] || preview.label || route || '语义快照')}</div>
+                </div>
+                <span class="${escapeHtml(statusChipClass(injected.length ? 'running' : 'pending'))}">≈ ${Number(audit.usedTokens || 0)} tok</span>
+            </div>
+            ${injected.length ? injected.map(block => `
+                <div class="agent-center-global-preview-block">
+                    <div class="agent-center-card-head">
+                        <strong>${escapeHtml(block.name || block.id || '全局提示词')}</strong>
+                        <span class="${escapeHtml(statusChipClass('pending'))}">全局提示词 · ${escapeHtml(this.globalPromptAnchorLabel(block.anchor))}</span>
+                    </div>
+                    <pre>${escapeHtml(block.content || block.renderedContent || '')}</pre>
+                </div>
+            `).join('') : '<div class="agent-center-card-sub">这个语境没有启用中的全局提示词。</div>'}
+            ${skipped.length ? `<div class="agent-center-card-sub">未注入：${escapeHtml(skipped.map(item => `${item.name || item.id}（${item.message || item.reason}）`).join('；'))}</div>` : ''}
+        </div>`;
+    }
+
+    globalPromptAnchorLabel(anchor = '') {
+        return ({
+            semantic_header: '语义层头部',
+            after_character: '角色信息之后',
+            before_history: '历史之前',
+            before_latest_user: '最新用户消息之前',
+        })[trim(anchor)] || '语义层头部';
+    }
+
+    globalPromptScopeLabel(scope = '') {
+        return trim(scope) === 'maid' ? '女仆' : '聊天模式';
+    }
+
+    renderGlobalPromptLibrary() {
+        const library = normalizeGlobalSemanticPromptLibrary(this.view.globalPromptLibrary);
+        const enabledTokens = { chat: 0, maid: 0 };
+        library.blocks.forEach((block) => {
+            if (!block.enabled) return;
+            enabledTokens[block.scope] = Number(enabledTokens[block.scope] || 0)
+                + estimateGlobalSemanticPromptTokens(block.content);
+        });
+        const cards = library.blocks.map((block, index) => {
+            const validation = validateGlobalSemanticPromptBlock(block, {
+                library,
+                ignoreBlockId: block.id,
+            });
+            const guard = detectGlobalSemanticPromptGuard(block.content);
+            const visibleWarning = guard.blocked
+                ? guard.message
+                : validation.code === 'block_budget_exceeded' || validation.code === 'scope_budget_exceeded'
+                    ? validation.message
+                    : '';
+            return `<article
+                class="agent-center-card agent-center-global-card"
+                data-global-prompt-card="${escapeHtml(block.id)}"
+                draggable="true"
+            >
+                <div class="agent-center-global-card-head">
+                    <span class="agent-center-global-drag" title="拖拽排序" aria-label="拖拽排序">⠿</span>
+                    <input
+                        class="agent-center-global-input"
+                        data-global-prompt-field="name"
+                        value="${escapeHtml(block.name)}"
+                        aria-label="提示词名称"
+                    >
+                    <label class="agent-center-global-toggle">
+                        <input type="checkbox" data-global-prompt-field="enabled"${block.enabled ? ' checked' : ''}>
+                        ${block.enabled ? '已启用' : '停用草稿'}
+                    </label>
+                </div>
+                <div class="agent-center-global-fields">
+                    <select class="agent-center-global-select" data-global-prompt-field="scope" aria-label="适用范围">
+                        <option value="chat"${block.scope === 'chat' ? ' selected' : ''}>聊天模式</option>
+                        <option value="maid"${block.scope === 'maid' ? ' selected' : ''}>女仆</option>
+                    </select>
+                    <select class="agent-center-global-select" data-global-prompt-field="anchor" aria-label="注入位置">
+                        ${Object.values(GLOBAL_SEMANTIC_PROMPT_ANCHORS).map(anchor => `
+                            <option value="${escapeHtml(anchor)}"${block.anchor === anchor ? ' selected' : ''}>${escapeHtml(this.globalPromptAnchorLabel(anchor))}</option>
+                        `).join('')}
+                    </select>
+                    <div class="agent-center-card-sub">role 固定为 system</div>
+                </div>
+                <textarea
+                    class="agent-center-global-textarea"
+                    data-global-prompt-field="content"
+                    placeholder="补充跨会话通用的语义信息；可用 {{user}}、{{char}} 与时间宏。"
+                >${escapeHtml(block.content)}</textarea>
+                ${visibleWarning ? `<div class="agent-center-global-warning">${escapeHtml(visibleWarning)}；内容会保留为停用草稿，不会触发路线降级。</div>` : ''}
+                <div class="agent-center-card-head">
+                    ${renderChips([
+                        { label: `≈ ${validation.estimatedTokens} tok` },
+                        { label: this.globalPromptScopeLabel(block.scope) },
+                        { label: this.globalPromptAnchorLabel(block.anchor) },
+                    ])}
+                    <div class="agent-center-card-actions">
+                        <button type="button" class="agent-center-card-action" data-global-prompt-move="up"${index === 0 ? ' disabled' : ''}>上移</button>
+                        <button type="button" class="agent-center-card-action" data-global-prompt-move="down"${index === library.blocks.length - 1 ? ' disabled' : ''}>下移</button>
+                        <button type="button" class="agent-center-card-action is-primary" data-global-prompt-save>保存</button>
+                        <button type="button" class="agent-center-card-action is-danger" data-global-prompt-delete>删除</button>
+                    </div>
+                </div>
+            </article>`;
+        }).join('');
+        return `<div class="agent-center-list">
+            <article class="agent-center-card">
+                <div class="agent-center-global-toolbar">
+                    <div>
+                        <div class="agent-center-card-title">全局语义提示词库</div>
+                        <div class="agent-center-card-sub">只补充聊天或女仆的语义，不包含回复格式、prefill、正则或脚本。每轮在语义快照中只处理一次。</div>
+                    </div>
+                    <div class="agent-center-global-toolbar-group">
+                        <button type="button" class="agent-center-card-action" data-global-prompt-import>导入 JSON</button>
+                        <button type="button" class="agent-center-card-action" data-global-prompt-export>导出 JSON</button>
+                        <button type="button" class="agent-center-card-action is-primary" data-global-prompt-add>新增块</button>
+                    </div>
+                </div>
+                ${renderChips([
+                    { label: `单块上限 ${GLOBAL_SEMANTIC_PROMPT_BLOCK_TOKEN_LIMIT.toLocaleString('zh-CN')} tok` },
+                    { label: `聊天 ${enabledTokens.chat}/${GLOBAL_SEMANTIC_PROMPT_SCOPE_TOKEN_LIMIT} tok` },
+                    { label: `女仆 ${enabledTokens.maid}/${GLOBAL_SEMANTIC_PROMPT_SCOPE_TOKEN_LIMIT} tok` },
+                    { label: 'system-only' },
+                ])}
+                <div class="agent-center-global-toolbar">
+                    <select class="agent-center-global-select" data-global-prompt-preview-context aria-label="预览语境">
+                        <option value="private_fc"${this.globalPromptPreviewContext === 'private_fc' ? ' selected' : ''}>示例私聊 FC</option>
+                        <option value="private_text"${this.globalPromptPreviewContext === 'private_text' ? ' selected' : ''}>示例私聊文本</option>
+                        <option value="maid"${this.globalPromptPreviewContext === 'maid' ? ' selected' : ''}>女仆</option>
+                    </select>
+                    <button type="button" class="agent-center-card-action" data-global-prompt-preview>预览（零请求）</button>
+                </div>
+                ${this.renderGlobalPromptPreview()}
+            </article>
+            ${cards || renderEmpty('还没有全局提示词。新增后可先保存为停用草稿。')}
+        </div>`;
+    }
+
+    readGlobalPromptCard(card = null) {
+        if (!card) return null;
+        const read = name => card.querySelector(`[data-global-prompt-field="${name}"]`);
+        return {
+            id: trim(card.dataset.globalPromptCard),
+            name: String(read('name')?.value || ''),
+            enabled: read('enabled')?.checked === true,
+            scope: String(read('scope')?.value || 'chat'),
+            anchor: String(read('anchor')?.value || 'semantic_header'),
+            content: String(read('content')?.value || ''),
+        };
+    }
+
+    async handleGlobalPromptSave(card = null) {
+        const block = this.readGlobalPromptCard(card);
+        if (!block?.id) return;
+        const result = await this.callAction('upsertGlobalSemanticPromptBlock', { block }, null);
+        if (!result?.ok) {
+            this.notifyError(result?.message || '全局提示词保存失败');
+            return;
+        }
+        if (result.forcedDisabled) {
+            globalThis.window?.toastr?.warning?.(result.validation?.message || '这个块已保存为停用草稿');
+        } else {
+            this.notifySuccess('全局提示词已保存');
+        }
+        this.globalPromptPreview = null;
+        await this.refresh();
+    }
+
+    async handleGlobalPromptAdd() {
+        const result = await this.callAction('upsertGlobalSemanticPromptBlock', {
+            block: {
+                name: '新的全局提示词',
+                enabled: false,
+                scope: 'chat',
+                anchor: 'semantic_header',
+                content: '',
+            },
+        }, null);
+        if (!result?.ok) {
+            this.notifyError('无法新增全局提示词');
+            return;
+        }
+        this.globalPromptPreview = null;
+        await this.refresh();
+    }
+
+    async handleGlobalPromptDelete(card = null) {
+        const block = this.readGlobalPromptCard(card);
+        if (!block?.id) return;
+        const confirmed = await this.confirm({
+            title: '删除全局提示词',
+            message: `确定删除「${block.name || '未命名提示词'}」吗？`,
+            confirmText: '删除',
+            danger: true,
+        });
+        if (!confirmed) return;
+        const result = await this.callAction('removeGlobalSemanticPromptBlock', { id: block.id }, null);
+        if (!result?.ok) {
+            this.notifyError('删除失败');
+            return;
+        }
+        this.globalPromptPreview = null;
+        await this.refresh();
+    }
+
+    async reorderGlobalPromptCards(sourceId = '', targetId = '', placeAfter = false) {
+        const ids = normalizeGlobalSemanticPromptLibrary(this.view.globalPromptLibrary).blocks.map(block => block.id);
+        const source = trim(sourceId);
+        const target = trim(targetId);
+        if (!source || !target || source === target) return;
+        const next = ids.filter(id => id !== source);
+        let index = next.indexOf(target);
+        if (index < 0) return;
+        if (placeAfter) index += 1;
+        next.splice(index, 0, source);
+        const result = await this.callAction('reorderGlobalSemanticPromptBlocks', { ids: next }, null);
+        if (!result?.ok) this.notifyError('排序保存失败');
+        else await this.refresh();
+    }
+
+    async handleGlobalPromptMove(card = null, direction = '') {
+        const id = trim(card?.dataset?.globalPromptCard);
+        const ids = normalizeGlobalSemanticPromptLibrary(this.view.globalPromptLibrary).blocks.map(block => block.id);
+        const index = ids.indexOf(id);
+        const targetIndex = direction === 'up' ? index - 1 : index + 1;
+        if (index < 0 || targetIndex < 0 || targetIndex >= ids.length) return;
+        [ids[index], ids[targetIndex]] = [ids[targetIndex], ids[index]];
+        const result = await this.callAction('reorderGlobalSemanticPromptBlocks', { ids }, null);
+        if (!result?.ok) this.notifyError('排序保存失败');
+        else await this.refresh();
+    }
+
+    async handleGlobalPromptExport() {
+        const payload = await this.callAction('exportGlobalSemanticPromptLibrary', undefined, null);
+        if (!payload) {
+            this.notifyError('全局提示词导出失败');
+            return;
+        }
+        const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+        const ok = await this.exportTextFile(
+            `${JSON.stringify(payload, null, 2)}\n`,
+            `global-semantic-prompts-${stamp}.json`,
+            '全局提示词已导出',
+        );
+        if (ok === false) this.notifyError('全局提示词导出失败');
+    }
+
+    async handleGlobalPromptImport() {
+        if (typeof document === 'undefined') return;
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.accept = '.json,application/json';
+        input.addEventListener('change', async () => {
+            const file = input.files?.[0];
+            if (!file) return;
+            let payload = null;
+            try {
+                payload = JSON.parse(await file.text());
+            } catch {
+                this.notifyError('JSON 文件无法读取');
+                return;
+            }
+            const confirmed = await this.confirm({
+                title: '导入全局提示词库',
+                message: '导入会替换当前全局提示词库；超出预算或含回复格式的块会保留为停用草稿。',
+                confirmText: '导入',
+                danger: true,
+            });
+            if (!confirmed) return;
+            const result = await this.callAction('importGlobalSemanticPromptLibrary', { payload }, null);
+            if (!result?.ok) {
+                this.notifyError(result?.message || '全局提示词导入失败');
+                return;
+            }
+            const warningCount = Array.isArray(result.warnings) ? result.warnings.length : 0;
+            if (warningCount) {
+                globalThis.window?.toastr?.warning?.(`已导入；${warningCount} 个块因护栏保持停用`);
+            } else {
+                this.notifySuccess('全局提示词已导入');
+            }
+            this.globalPromptPreview = null;
+            await this.refresh();
+        }, { once: true });
+        input.click();
+    }
+
+    async handleGlobalPromptPreview() {
+        const select = this.contentElement?.querySelector?.('[data-global-prompt-preview-context]');
+        this.globalPromptPreviewContext = trim(select?.value, 'private_fc');
+        const result = await this.callAction('previewGlobalSemanticPromptLibrary', {
+            context: this.globalPromptPreviewContext,
+        }, null);
+        if (!result) {
+            this.notifyError('全局提示词预览失败');
+            return;
+        }
+        this.globalPromptPreview = result;
+        this.render();
+    }
+
+    bindGlobalPromptLibraryEvents() {
+        const root = this.contentElement;
+        if (!root) return;
+        root.querySelector('[data-global-prompt-add]')?.addEventListener('click', () => this.handleGlobalPromptAdd());
+        root.querySelector('[data-global-prompt-export]')?.addEventListener('click', () => this.handleGlobalPromptExport());
+        root.querySelector('[data-global-prompt-import]')?.addEventListener('click', () => this.handleGlobalPromptImport());
+        root.querySelector('[data-global-prompt-preview]')?.addEventListener('click', () => this.handleGlobalPromptPreview());
+        root.querySelector('[data-global-prompt-preview-context]')?.addEventListener('change', (event) => {
+            this.globalPromptPreviewContext = trim(event.target?.value, 'private_fc');
+        });
+        root.querySelectorAll('[data-global-prompt-card]').forEach((card) => {
+            card.querySelector('[data-global-prompt-save]')?.addEventListener('click', () => this.handleGlobalPromptSave(card));
+            card.querySelector('[data-global-prompt-delete]')?.addEventListener('click', () => this.handleGlobalPromptDelete(card));
+            card.querySelector('[data-global-prompt-field="enabled"]')?.addEventListener('change', () => this.handleGlobalPromptSave(card));
+            card.querySelectorAll('[data-global-prompt-move]').forEach(button => {
+                button.addEventListener('click', () => this.handleGlobalPromptMove(card, button.dataset.globalPromptMove));
+            });
+            card.addEventListener('dragstart', (event) => {
+                this.globalPromptDragId = trim(card.dataset.globalPromptCard);
+                card.classList.add('is-dragging');
+                try { event.dataTransfer.effectAllowed = 'move'; } catch {}
+            });
+            card.addEventListener('dragend', () => {
+                this.globalPromptDragId = '';
+                root.querySelectorAll('[data-global-prompt-card]').forEach(item => item.classList.remove('is-dragging', 'is-drag-over'));
+            });
+            card.addEventListener('dragover', (event) => {
+                if (!this.globalPromptDragId || this.globalPromptDragId === card.dataset.globalPromptCard) return;
+                event.preventDefault();
+                card.classList.add('is-drag-over');
+            });
+            card.addEventListener('dragleave', () => card.classList.remove('is-drag-over'));
+            card.addEventListener('drop', (event) => {
+                event.preventDefault();
+                card.classList.remove('is-drag-over');
+                const rect = card.getBoundingClientRect();
+                const placeAfter = event.clientY > rect.top + (rect.height / 2);
+                void this.reorderGlobalPromptCards(
+                    this.globalPromptDragId,
+                    card.dataset.globalPromptCard,
+                    placeAfter,
+                );
+            });
+        });
+    }
+
     renderSafety() {
         const safety = this.view.safety || {};
         const gate = safety.sessionGate || {};
@@ -4267,6 +4742,8 @@ export class AgentCenterPanel {
                 ? this.renderAgents()
                 : this.activeTab === 'prompts'
                     ? this.renderPromptModules()
+                    : this.activeTab === 'global_prompts'
+                        ? this.renderGlobalPromptLibrary()
                     : this.activeTab === 'diagnostics'
                         ? this.renderDiagnostics()
                         : this.activeTab === 'resources'
@@ -4337,6 +4814,9 @@ export class AgentCenterPanel {
             this.contentElement.querySelectorAll('[data-resource-pending]').forEach((button) => {
                 button.addEventListener('click', () => this.handleResourcePending(button.dataset.resourcePending || ''));
             });
+        }
+        if (this.activeTab === 'global_prompts') {
+            this.bindGlobalPromptLibraryEvents();
         }
         if (['agents', 'prompts', 'diagnostics'].includes(this.activeTab)) {
             this.contentElement.querySelectorAll('[data-agent-card-open]').forEach((card) => {

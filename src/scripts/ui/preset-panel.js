@@ -5,12 +5,25 @@
  * - Tapping a category pushes into a dedicated detail page
  */
 
-import { PresetStore } from '../storage/preset-store.js';
+import {
+    PRESET_APP_SCOPES,
+    PresetStore,
+    isPresetEligibleForMode,
+    normalizePresetAppScope,
+} from '../storage/preset-store.js';
 import { appSettings } from '../storage/app-settings.js';
-import { getReasoningCapability, getReasoningSamplerPolicy, normalizeReasoningEffort } from '../api/model-capabilities.js';
+import { buildReasoningRequestOptions, getReasoningCapability, getReasoningSamplerPolicy, normalizeReasoningEffort } from '../api/model-capabilities.js';
+import { resolveChatStructuredThinkingPreference } from '../agent/provider-fc-transport.js';
+import { formatChatStructuredThinkingDisclosure } from './chat/chat-structured-profile-status.js';
 import { LLMClient } from '../api/client.js';
 import { canInitClient } from '../api/client-config-utils.js';
 import { logger } from '../utils/logger.js';
+import { buildBuiltinPhoneFormatReminder } from '../utils/builtin-phone-format-contract.js';
+import {
+    PHONE_FORMAT_PROMPT_MAX_DEPTH,
+    normalizePhoneFormatPromptDepth,
+    normalizePhoneFormatPromptPosition,
+} from '../utils/phone-format-prompt-placement.js';
 import { pickSavePath as pickNativeSavePath } from '../utils/save-dialog.js';
 import { safeInvoke } from '../utils/tauri.js';
 import { appConfirm, appChoice, appPromptText } from './app-confirm.js';
@@ -95,6 +108,13 @@ const EXT_PROMPT_ROLES = {
     USER: 1,
     ASSISTANT: 2,
 };
+
+const PHONE_FORMAT_POSITION_OPTIONS = Object.freeze([
+    { v: 'after_persona', t: '人设之后' },
+    { v: 'system_end', t: '系统提示末尾' },
+    { v: 'history_before', t: '历史之前（默认）' },
+    { v: 'history_depth', t: '历史深度' },
+]);
 
 const OPENAI_KNOWN_BLOCKS = {
     main: { label: 'Main Prompt', marker: false },
@@ -909,12 +929,12 @@ body[data-reduced-motion='on'] .pp-prev-block.pp-prev-flash {
 ::highlight(pp-preview-sel) { background: rgba(var(--app-accent-rgb, 25, 154, 255), 0.32); }
 /* 面板放大占满 */
 #preset-panel[data-maximized="1"] {
-    top: env(safe-area-inset-top, 0px) !important;
+    top: calc(var(--app-visual-offset-top, 0px) + env(safe-area-inset-top, 0px)) !important;
     left: env(safe-area-inset-left, 0px) !important;
     right: env(safe-area-inset-right, 0px) !important;
-    bottom: 0 !important;
-    height: auto !important;
-    max-height: none !important;
+    bottom: auto !important;
+    height: calc(var(--app-visual-height, 100dvh) - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px)) !important;
+    max-height: calc(var(--app-visual-height, 100dvh) - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px)) !important;
     border-radius: 0 !important;
     max-width: none !important;
     margin: 0 !important;
@@ -1388,6 +1408,93 @@ body[data-reduced-motion='on'] .pp-editor-handle::after { transition: none !impo
     line-height: 1.5;
 }
 
+/* ── preset scope ── */
+.pp-scope-card {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(220px, 300px);
+    align-items: center;
+    gap: 12px 18px;
+    margin-bottom: 12px;
+    padding: 14px 16px;
+    border: 1px solid rgba(var(--app-accent-rgb), 0.18);
+    border-radius: 14px;
+    background: color-mix(in srgb, var(--app-surface-card) 94%, var(--app-accent-primary) 6%);
+    box-shadow: 0 4px 16px rgba(15,23,42,0.045);
+    overflow: visible;
+}
+.pp-scope-card-copy {
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 11px;
+}
+.pp-scope-card-icon {
+    width: 36px;
+    height: 36px;
+    flex: 0 0 36px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid rgba(var(--app-accent-rgb), 0.18);
+    border-radius: 12px;
+    background: rgba(var(--app-accent-rgb), 0.10);
+    color: var(--app-accent-strong);
+}
+.pp-scope-card-icon svg {
+    width: 19px;
+    height: 19px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.8;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+}
+.pp-scope-card-text { min-width: 0; }
+.pp-scope-card-title {
+    display: inline-block;
+    margin: 0;
+    color: var(--app-text-primary);
+    font-size: 14px;
+    font-weight: 800;
+    line-height: 1.35;
+}
+.pp-scope-card-sub {
+    margin-top: 3px;
+    color: var(--app-text-muted);
+    font-size: 12px;
+    line-height: 1.45;
+}
+.pp-scope-card-control {
+    min-width: 0;
+    width: 100%;
+}
+.pp-scope-card-control .pp-input {
+    min-height: 42px;
+    background: var(--app-surface-card);
+}
+.pp-scope-card-note {
+    grid-column: 1 / -1;
+    min-width: 0;
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    padding: 8px 10px;
+    border-radius: 10px;
+    background: var(--app-surface-subtle);
+    color: var(--app-text-muted);
+    font-size: 12px;
+    line-height: 1.5;
+}
+.pp-scope-card-note-dot {
+    width: 6px;
+    height: 6px;
+    flex: 0 0 6px;
+    margin-top: 6px;
+    border-radius: 50%;
+    background: var(--app-accent-primary);
+    opacity: 0.72;
+}
+
 /* ── form helpers ── */
 .pp-field-label { font-weight: 700; color: var(--app-text-primary); margin-bottom: 6px; font-size: 13px; }
 .pp-textarea {
@@ -1589,7 +1696,7 @@ body[data-reduced-motion='on'] .pp-editor-handle::after { transition: none !impo
     #preset-panel {
         --pp-panel-margin: 6px;
         --pp-footer-height: 50px;
-        top: calc(var(--pp-panel-margin) + env(safe-area-inset-top, 0px)) !important;
+        top: calc(var(--app-visual-offset-top, 0px) + var(--pp-panel-margin) + env(safe-area-inset-top, 0px)) !important;
         left: calc(var(--pp-panel-margin) + env(safe-area-inset-left, 0px)) !important;
         right: calc(var(--pp-panel-margin) + env(safe-area-inset-right, 0px)) !important;
         height: calc(var(--app-visual-height, 100dvh) - var(--pp-panel-margin) - var(--pp-panel-margin) - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px)) !important;
@@ -1748,6 +1855,18 @@ body[data-reduced-motion='on'] .pp-editor-handle::after { transition: none !impo
     }
     .pp-page-scroll {
         padding: 8px 10px max(12px, env(safe-area-inset-bottom, 0px));
+    }
+    .pp-scope-card {
+        grid-template-columns: minmax(0, 1fr);
+        gap: 10px;
+        padding: 12px;
+        border-radius: 12px;
+    }
+    .pp-scope-card-control .pp-input {
+        min-height: 38px;
+    }
+    .pp-scope-card-note {
+        grid-column: 1;
     }
     .pp-block-header {
         padding: 8px 10px;
@@ -2623,7 +2742,7 @@ export class PresetPanel {
         this.element.id = 'preset-panel';
         this.element.style.cssText = `
             display:none; position:fixed;
-            top: calc(10px + env(safe-area-inset-top, 0px));
+            top: calc(var(--app-visual-offset-top, 0px) + 10px + env(safe-area-inset-top, 0px));
             bottom: auto;
             left: calc(10px + env(safe-area-inset-left, 0px));
             right: calc(10px + env(safe-area-inset-right, 0px));
@@ -3116,8 +3235,8 @@ export class PresetPanel {
         this.bindingPresetId = presetId;
         this.bindingTitleEl.textContent = `${this.getStoreTypeSectionsLabel(storeType) || this.getTypeLabel(sec.id)} · 使用位置`;
         this.bindingSubtitleEl.textContent = preset?.name
-            ? `为「${preset.name}」设定模式默认与会话覆盖；未设定时继续使用全局默认。`
-            : '为当前预设设定模式默认与会话覆盖；未设定时继续使用全局默认。';
+            ? `查看「${preset.name}」的既有绑定；新的聊天绑定请在会话配置中建立。`
+            : '查看当前预设的既有绑定；新的聊天绑定请在会话配置中建立。';
         this.bindingEditorEl.innerHTML = '';
         this.renderBindingEditor({
             storeType,
@@ -3163,6 +3282,38 @@ export class PresetPanel {
         const key = this.getDraftKey(storeType, presetId);
         const p = (key && this.drafts.has(key)) ? this.drafts.get(key) : (this.store.getActive(storeType) || {});
 
+        if (sec.id !== 'taskprompts') {
+            const scopeCard = document.createElement('div');
+            scopeCard.className = 'pp-scope-card';
+            scopeCard.innerHTML = `
+                <div class="pp-scope-card-copy">
+                    <span class="pp-scope-card-icon" aria-hidden="true">
+                        <svg viewBox="0 0 24 24"><path d="M5 6h4M15 6h4M7 6v12h4M17 6v6h-6M11 12v6h6"/><circle cx="7" cy="6" r="2"/><circle cx="17" cy="6" r="2"/><circle cx="11" cy="12" r="2"/><circle cx="17" cy="18" r="2"/></svg>
+                    </span>
+                    <div class="pp-scope-card-text">
+                        <label for="preset-app-scope" class="pp-scope-card-title has-help" data-help="适用范围只决定这个预设可在哪些界面被选择，不会自动绑定到聊天。">适用范围</label>
+                        <div class="pp-scope-card-sub">决定这个预设可以出现在哪些使用场景。</div>
+                    </div>
+                </div>
+                <div class="pp-scope-card-control">
+                    <select id="preset-app-scope" class="pp-input" aria-describedby="preset-app-scope-note">
+                        <option value="creative">创意写作</option>
+                        <option value="chat">聊天模式</option>
+                        <option value="all">全部</option>
+                    </select>
+                </div>
+                <div class="pp-scope-card-note" id="preset-app-scope-note">
+                    <span class="pp-scope-card-note-dot" aria-hidden="true"></span>
+                    <span>聊天预设请从会话配置中选择；“全部”也不会自动成为聊天默认。</span>
+                </div>
+            `;
+            scopeCard.querySelector('#preset-app-scope').value = normalizePresetAppScope(
+                p.app_scope,
+                PRESET_APP_SCOPES.creative,
+            );
+            root.appendChild(scopeCard);
+        }
+
         switch (sec.id) {
             case 'openai': root.appendChild(this.renderOpenAIParamsEditor(p)); break;
             case 'custom': root.appendChild(this.renderOpenAIBlocksEditor(p)); break;
@@ -3194,6 +3345,7 @@ export class PresetPanel {
     renderBindingEditor({ storeType, presetId, presetName }, root) {
         const wrap = document.createElement('div');
         wrap.className = 'pp-binding-stack';
+        const preset = this.store.list(storeType).find(item => String(item.id || '') === String(presetId || '')) || {};
 
         const currentContext = this.getCurrentPresetContext();
         const currentSessionId = String(currentContext?.sessionId || '').trim();
@@ -3254,8 +3406,8 @@ export class PresetPanel {
         };
 
         wrap.appendChild(makeCard({
-            title: '全局默认',
-            subtitle: '顶部“当前预设”就是这个分类的全局默认。未设置模式默认和会话覆盖时，会继续沿用这里。',
+            title: '创意写作默认',
+            subtitle: '顶部“当前预设”只决定创意写作的默认；聊天没有绑定时使用 APP 内建默认。',
             chip: presetName || '当前预设',
         }));
 
@@ -3280,13 +3432,7 @@ export class PresetPanel {
                             () => this.store.clearSessionBinding(storeType, currentSessionId),
                         ),
                     }]
-                    : [{
-                        label: '绑定当前预设到此会话',
-                        tone: 'primary',
-                        onClick: () => this.commitBindingChange(
-                            () => this.store.setSessionBinding(storeType, currentSessionId, presetId),
-                        ),
-                    }],
+                    : [],
             }));
         }
 
@@ -3294,14 +3440,20 @@ export class PresetPanel {
             const boundId = String(modeBindings?.modes?.[mode] || '').trim();
             const isCurrent = boundId === presetId;
             const boundName = boundId ? this.getPresetNameById(storeType, boundId) : '';
+            const bindingOrigin = String(modeBindings?.modeBindingOrigins?.[mode] || '').trim();
+            const legacy = bindingOrigin === 'legacy_migrated_mode_binding';
+            const creativeMode = mode === 'rp';
+            const eligible = isPresetEligibleForMode(preset || {}, mode);
             return makeCard({
                 title: `${label}默认`,
                 subtitle: isCurrent
-                    ? '当前预设已设为这个界面的默认预设。'
+                    ? (legacy
+                        ? '沿用升级前的旧设置；可以清除，清除后不会再次自动建立。'
+                        : '当前预设已设为这个界面的默认预设。')
                     : (boundName
                         ? `当前默认：${boundName}`
-                        : '未单独设置时，将回退到全局默认。'),
-                chip: label,
+                        : (creativeMode ? '未单独设置时使用创意写作默认。' : '未绑定时使用 APP 内建默认。')),
+                chip: legacy ? '沿用旧设置' : label,
                 actions: isCurrent
                     ? [{
                         label: '取消默认绑定',
@@ -3310,13 +3462,13 @@ export class PresetPanel {
                             () => this.store.clearModeBinding(storeType, mode),
                         ),
                     }]
-                    : [{
+                    : (creativeMode && eligible ? [{
                         label: `设为${label}默认`,
                         tone: 'primary',
                         onClick: () => this.commitBindingChange(
                             () => this.store.setModeBinding(storeType, mode, presetId),
                         ),
-                    }],
+                    }] : []),
             });
         };
 
@@ -3395,7 +3547,66 @@ export class PresetPanel {
         const wrap = document.createElement('div');
         wrap.appendChild(this.renderTextarea('内容', 'sysprompt-content', p.content || '', 'Write {{char}}...'));
         wrap.appendChild(this.renderTextarea('Post-History Instructions（可选）', 'sysprompt-post', p.post_history || '', '（可留空）'));
+        wrap.appendChild(this.renderPhoneFormatPlacementEditor(p));
         return wrap;
+    }
+
+    renderPhoneFormatPlacementEditor(p) {
+        const section = document.createElement('div');
+        section.className = 'pp-block';
+        section.style.marginTop = '12px';
+
+        const title = document.createElement('div');
+        title.className = 'pp-block-title';
+        title.textContent = '文本协议聊天格式位置';
+        section.appendChild(title);
+
+        const note = document.createElement('div');
+        note.className = 'pp-block-sub';
+        note.style.margin = '4px 0 10px';
+        note.textContent = '四个格式块可分别调整；仅传统文本模式生效，FC/JSON 请求不包含这些内容。';
+        section.appendChild(note);
+
+        const configs = [
+            ['phone-format-intro', '手机格式开头', 'phone_format_intro_position', 'phone_format_intro_depth'],
+            ['phone-format-chat', 'QQ聊天格式', 'phone_format_chat_position', 'phone_format_chat_depth'],
+            ['phone-format-moment', 'QQ空间格式', 'phone_format_moment_position', 'phone_format_moment_depth'],
+            ['phone-format-footer', '手机格式结尾', 'phone_format_footer_position', 'phone_format_footer_depth'],
+        ];
+        configs.forEach(([idPrefix, label, positionKey, depthKey]) => {
+            const select = document.createElement('select');
+            select.id = `${idPrefix}-position`;
+            select.className = 'pp-input';
+            select.innerHTML = PHONE_FORMAT_POSITION_OPTIONS
+                .map(option => `<option value="${option.v}">${option.t}</option>`)
+                .join('');
+            select.value = normalizePhoneFormatPromptPosition(p[positionKey]);
+
+            const depth = document.createElement('input');
+            depth.id = `${idPrefix}-depth`;
+            depth.type = 'number';
+            depth.inputMode = 'numeric';
+            depth.min = '0';
+            depth.max = String(PHONE_FORMAT_PROMPT_MAX_DEPTH);
+            depth.className = 'pp-input';
+            depth.value = String(normalizePhoneFormatPromptDepth(p[depthKey]));
+
+            const row = this.renderInputRow([
+                { label, el: select },
+                { label: '历史深度', el: depth },
+            ]);
+            const depthCell = row.children?.[1] || null;
+            const syncDepthVisibility = () => {
+                const usesDepth = select.value === 'history_depth';
+                depth.disabled = !usesDepth;
+                if (depthCell) depthCell.hidden = !usesDepth;
+            };
+            select.addEventListener('change', syncDepthVisibility);
+            syncDepthVisibility();
+            section.appendChild(row);
+        });
+
+        return section;
     }
 
     /* ── Chat prompts ── */
@@ -3489,13 +3700,15 @@ export class PresetPanel {
                     { v: EXT_PROMPT_TYPES.NONE, t: 'NONE（不注入）' },
                 ];
             pos.innerHTML = opts.map(o => `<option value="${o.v}">${o.t}</option>`).join('');
-            const fallbackPos = opts.some(o => o.v === EXT_PROMPT_TYPES.IN_PROMPT) ? EXT_PROMPT_TYPES.IN_PROMPT : opts[0]?.v;
+            const fallbackPos = cfg.defaultPosition
+                ?? (opts.some(o => o.v === EXT_PROMPT_TYPES.IN_PROMPT) ? EXT_PROMPT_TYPES.IN_PROMPT : opts[0]?.v);
             pos.value = String(p[cfg.positionKey] ?? fallbackPos);
             const posWrap = this.wrapSelectWithCustomUI(pos, '注入位置');
 
             const depth = document.createElement('input');
             depth.id = `${cfg.idPrefix}-depth`;
             depth.type = 'number'; depth.inputMode = 'numeric'; depth.min = '0';
+            if (cfg.placementMode === 'phone_format') depth.max = String(PHONE_FORMAT_PROMPT_MAX_DEPTH);
             depth.className = 'pp-input';
             depth.value = String(p[cfg.depthKey] ?? cfg.defaultDepth);
 
@@ -3510,7 +3723,26 @@ export class PresetPanel {
             role.value = String(p[cfg.roleKey] ?? EXT_PROMPT_ROLES.SYSTEM);
             const roleWrap = this.wrapSelectWithCustomUI(role, '角色');
 
-            if (cfg.showPlacementControls !== false && cfg.showDepthRole !== false) {
+            if (cfg.placementMode === 'phone_format') {
+                const row = this.renderInputRow([
+                    { label: '注入位置', el: posWrap },
+                    { label: '历史深度', el: depth },
+                ]);
+                const depthCell = row.children?.[1] || null;
+                const syncDepthVisibility = () => {
+                    const usesDepth = pos.value === 'history_depth';
+                    depth.disabled = !usesDepth;
+                    if (depthCell) depthCell.hidden = !usesDepth;
+                };
+                pos.addEventListener('change', syncDepthVisibility);
+                syncDepthVisibility();
+                body.appendChild(row);
+                this.bindCustomSelect(pos.id, row);
+                const note = document.createElement('div');
+                note.className = 'pp-block-sub';
+                note.textContent = '仅传统文本模式生效；FC/JSON 请求不包含此内容。';
+                body.appendChild(note);
+            } else if (cfg.showPlacementControls !== false && cfg.showDepthRole !== false) {
                 const row = this.renderInputRow([
                     { label: '注入位置', el: posWrap },
                     { label: '深度（IN_CHAT）', el: depth },
@@ -3556,9 +3788,10 @@ export class PresetPanel {
         list.appendChild(makePromptBlock({
             idPrefix: 'phone-format-intro', title: '手机格式开头',
             enabledKey: 'phone_format_intro_enabled',
+            positionKey: 'phone_format_intro_position', depthKey: 'phone_format_intro_depth',
             rulesKey: 'phone_format_intro_rules',
             placeholder: '手机格式开头',
-            showPlacementControls: false,
+            placementMode: 'phone_format', positionOptions: PHONE_FORMAT_POSITION_OPTIONS, defaultPosition: 'history_before', defaultDepth: 1,
             metaChips: [
                 { label: 'SYSTEM D0', tone: 'placement' },
                 { label: '顺序 1/4', tone: 'placement' },
@@ -3567,9 +3800,10 @@ export class PresetPanel {
         list.appendChild(makePromptBlock({
             idPrefix: 'phone-format-chat', title: 'QQ聊天格式',
             enabledKey: 'phone_format_chat_enabled',
+            positionKey: 'phone_format_chat_position', depthKey: 'phone_format_chat_depth',
             rulesKey: 'phone_format_chat_rules',
             placeholder: 'QQ聊天格式说明',
-            showPlacementControls: false,
+            placementMode: 'phone_format', positionOptions: PHONE_FORMAT_POSITION_OPTIONS, defaultPosition: 'history_before', defaultDepth: 1,
             metaChips: [
                 { label: 'SYSTEM D0', tone: 'placement' },
                 { label: '表情包自动填充', tone: 'dynamic' },
@@ -3578,9 +3812,10 @@ export class PresetPanel {
         list.appendChild(makePromptBlock({
             idPrefix: 'phone-format-moment', title: 'QQ空间格式',
             enabledKey: 'phone_format_moment_enabled',
+            positionKey: 'phone_format_moment_position', depthKey: 'phone_format_moment_depth',
             rulesKey: 'phone_format_moment_rules',
             placeholder: 'QQ空间格式说明',
-            showPlacementControls: false,
+            placementMode: 'phone_format', positionOptions: PHONE_FORMAT_POSITION_OPTIONS, defaultPosition: 'history_before', defaultDepth: 1,
             metaChips: [
                 { label: 'SYSTEM D0', tone: 'placement' },
                 { label: '动态格式', tone: 'dynamic' },
@@ -3589,9 +3824,10 @@ export class PresetPanel {
         list.appendChild(makePromptBlock({
             idPrefix: 'phone-format-footer', title: '手机格式结尾',
             enabledKey: 'phone_format_footer_enabled',
+            positionKey: 'phone_format_footer_position', depthKey: 'phone_format_footer_depth',
             rulesKey: 'phone_format_footer_rules',
             placeholder: '手机格式结尾',
-            showPlacementControls: false,
+            placementMode: 'phone_format', positionOptions: PHONE_FORMAT_POSITION_OPTIONS, defaultPosition: 'history_before', defaultDepth: 1,
             metaChips: [
                 { label: 'SYSTEM D0', tone: 'placement' },
                 { label: '顺序 4/4', tone: 'placement' },
@@ -3729,14 +3965,12 @@ export class PresetPanel {
             preview.textContent = [
                 '正在与XX私聊，请遵循私聊格式',
                 '',
-                '以下为格式输出顺序，请严格遵守',
-                'MiPhone_start',
-                'msg_start',
-                'msg_end',
-                'MiPhone_end',
-                '<tableEdit>',
-                '记忆表格内容',
-                '</tableEdit>',
+                buildBuiltinPhoneFormatReminder({
+                    surface: 'private_chat',
+                    userName: '我',
+                    targetName: 'XX',
+                    includeTableEdit: true,
+                }),
             ].join('\n');
             body.appendChild(preview);
             card.appendChild(body);
@@ -4133,7 +4367,22 @@ export class PresetPanel {
                 const disabledText = disabledFieldLabels.length
                     ? ` 已自动停用：${disabledFieldLabels.join(' / ')}。`
                     : '';
-                reasoningHint.textContent = `${capability.hint || ''}${disabledText}`.trim();
+                const reasoningOptions = buildReasoningRequestOptions({
+                    provider,
+                    model,
+                    baseUrl,
+                    requestReasoning: requestReasoning.checked === true,
+                    reasoningEffort: reasoningEffort?.value || normalizedReasoningEffort,
+                    maxOutputTokens: Number(maxTokens.value) || undefined,
+                });
+                const routePreference = resolveChatStructuredThinkingPreference({
+                    config: { provider, model, baseUrl },
+                    thinkingEnabled: requestReasoning.checked === true,
+                    reasoningOptions,
+                    preference: appSettings.get().chatStructuredThinkingPreference,
+                });
+                const routeHint = formatChatStructuredThinkingDisclosure(routePreference);
+                reasoningHint.textContent = `${capability.hint || ''}${disabledText}${routeHint ? ` ${routeHint}` : ''}`.trim();
             };
             requestReasoning.addEventListener('change', () => {
                 if (
@@ -6907,10 +7156,22 @@ export class PresetPanel {
 
     collectSectionData(sectionId, root, base) {
         const current = deepClone(base || {});
+        const appScope = root.querySelector('#preset-app-scope')?.value;
+        if (appScope) {
+            current.app_scope = normalizePresetAppScope(appScope, PRESET_APP_SCOPES.creative);
+        }
 
         if (sectionId === 'sysprompt') {
             current.content = root.querySelector('#sysprompt-content')?.value ?? '';
             current.post_history = root.querySelector('#sysprompt-post')?.value ?? '';
+            current.phone_format_intro_position = normalizePhoneFormatPromptPosition(root.querySelector('#phone-format-intro-position')?.value);
+            current.phone_format_intro_depth = normalizePhoneFormatPromptDepth(root.querySelector('#phone-format-intro-depth')?.value);
+            current.phone_format_chat_position = normalizePhoneFormatPromptPosition(root.querySelector('#phone-format-chat-position')?.value);
+            current.phone_format_chat_depth = normalizePhoneFormatPromptDepth(root.querySelector('#phone-format-chat-depth')?.value);
+            current.phone_format_moment_position = normalizePhoneFormatPromptPosition(root.querySelector('#phone-format-moment-position')?.value);
+            current.phone_format_moment_depth = normalizePhoneFormatPromptDepth(root.querySelector('#phone-format-moment-depth')?.value);
+            current.phone_format_footer_position = normalizePhoneFormatPromptPosition(root.querySelector('#phone-format-footer-position')?.value);
+            current.phone_format_footer_depth = normalizePhoneFormatPromptDepth(root.querySelector('#phone-format-footer-depth')?.value);
             return current;
         }
 
@@ -6919,12 +7180,20 @@ export class PresetPanel {
                 return current;
             }
             current.phone_format_intro_enabled = Boolean(root.querySelector('#phone-format-intro-enabled')?.checked);
+            current.phone_format_intro_position = normalizePhoneFormatPromptPosition(root.querySelector('#phone-format-intro-position')?.value);
+            current.phone_format_intro_depth = normalizePhoneFormatPromptDepth(root.querySelector('#phone-format-intro-depth')?.value);
             current.phone_format_intro_rules = root.querySelector('#phone-format-intro-rules')?.value ?? '';
             current.phone_format_chat_enabled = Boolean(root.querySelector('#phone-format-chat-enabled')?.checked);
+            current.phone_format_chat_position = normalizePhoneFormatPromptPosition(root.querySelector('#phone-format-chat-position')?.value);
+            current.phone_format_chat_depth = normalizePhoneFormatPromptDepth(root.querySelector('#phone-format-chat-depth')?.value);
             current.phone_format_chat_rules = root.querySelector('#phone-format-chat-rules')?.value ?? '';
             current.phone_format_moment_enabled = Boolean(root.querySelector('#phone-format-moment-enabled')?.checked);
+            current.phone_format_moment_position = normalizePhoneFormatPromptPosition(root.querySelector('#phone-format-moment-position')?.value);
+            current.phone_format_moment_depth = normalizePhoneFormatPromptDepth(root.querySelector('#phone-format-moment-depth')?.value);
             current.phone_format_moment_rules = root.querySelector('#phone-format-moment-rules')?.value ?? '';
             current.phone_format_footer_enabled = Boolean(root.querySelector('#phone-format-footer-enabled')?.checked);
+            current.phone_format_footer_position = normalizePhoneFormatPromptPosition(root.querySelector('#phone-format-footer-position')?.value);
+            current.phone_format_footer_depth = normalizePhoneFormatPromptDepth(root.querySelector('#phone-format-footer-depth')?.value);
             current.phone_format_footer_rules = root.querySelector('#phone-format-footer-rules')?.value ?? '';
             current.dialogue_enabled = Boolean(root.querySelector('#dialogue-enabled')?.checked);
             current.dialogue_position = getInt(root.querySelector('#dialogue-position')?.value, current.dialogue_position ?? EXT_PROMPT_TYPES.IN_PROMPT);
@@ -7137,7 +7406,7 @@ export class PresetPanel {
             base = this.getActivePresetSnapshot(storeType) || {};
         }
         const data = { ...deepClone(base), name };
-        const id = await this.store.upsert(storeType, { name, data });
+        const id = await this.store.upsert(storeType, { name, data, appScope: 'creative' });
         await this.store.setActive(storeType, id);
         for (const k of Array.from(this.drafts.keys())) {
             if (String(k).startsWith(`${storeType}:`)) this.drafts.delete(k);
@@ -7538,7 +7807,12 @@ export class PresetPanel {
             if (stSets.length) boundSets = stSets;
         }
 
-        const presetId = await this.store.upsert(importType, { name, data });
+        const presetId = await this.store.upsert(importType, {
+            name,
+            data,
+            appScope: 'creative',
+            makeActive: true,
+        });
 
         if (Array.isArray(boundSets) && boundSets.length) {
             try {
@@ -7647,7 +7921,8 @@ export class PresetPanel {
         }
 
         this.renderAllSections();
-        this.showStatus('已导入预设', 'success');
+        this.showStatus('已导入为创意写作预设；如需用于聊天模式，可在会话配置中选择。', 'success');
+        window.toastr?.success?.('已导入为创意写作预设；如需用于聊天模式，可在会话配置中选择。');
         window.dispatchEvent(new CustomEvent('preset-changed'));
     }
 

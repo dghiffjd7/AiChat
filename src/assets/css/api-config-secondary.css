@@ -982,3 +982,368 @@ body[data-reduced-motion='on'] .igp-panel * {
   scroll-behavior: auto !important;
   transition: none !important;
 }
+
+.api-fc-compat-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 23100;
+  background: color-mix(in srgb, var(--app-surface-overlay) 88%, transparent);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+}
+
+.api-fc-compat-panel {
+  position: fixed;
+  inset: 0;
+  z-index: 23110;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  pointer-events: none;
+}
+
+.api-fc-compat-modal {
+  width: min(720px, 100%);
+  max-height: min(90dvh, calc(100vh - 40px));
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+  color: var(--app-text-primary);
+  background: var(--app-surface-card);
+  border: 1px solid var(--app-border-default);
+  border-radius: 20px;
+  box-shadow: 0 30px 90px color-mix(in srgb, var(--app-shadow-color) 78%, transparent);
+  pointer-events: auto;
+  animation: api-config-pop-in 0.18s ease both;
+}
+
+.api-fc-compat-header,
+.api-fc-compat-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex: 0 0 auto;
+  padding: 18px 22px;
+  border-color: var(--app-border-subtle);
+}
+
+.api-fc-compat-header {
+  border-bottom: 1px solid var(--app-border-subtle);
+}
+
+.api-fc-compat-header small {
+  color: var(--app-text-muted);
+  font: 600 10px/1.3 ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.api-fc-compat-header h2 {
+  margin: 4px 0 0;
+  font-size: 20px;
+}
+
+.api-fc-compat-header button,
+.api-fc-compat-footer button,
+.api-fc-compat-actions button,
+.api-fc-compat-transfer-actions button,
+.api-fc-compat-rule-actions button {
+  min-height: 36px;
+  padding: 8px 13px;
+  color: var(--app-text-primary);
+  background: var(--app-surface-muted);
+  border: 1px solid var(--app-border-default);
+  border-radius: 10px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.api-fc-compat-header button {
+  width: 36px;
+  padding: 0;
+  font-size: 22px;
+}
+
+.api-fc-compat-scroll {
+  display: grid;
+  gap: 14px;
+  min-height: 0;
+  overflow: auto;
+  padding: 18px 22px 24px;
+}
+
+.api-fc-compat-warning {
+  padding: 12px 14px;
+  color: var(--app-warning-text, #8a5a00);
+  background: color-mix(in srgb, var(--app-warning, #d99a00) 10%, var(--app-surface-muted));
+  border: 1px solid color-mix(in srgb, var(--app-warning, #d99a00) 35%, var(--app-border-default));
+  border-radius: 12px;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.api-fc-compat-card {
+  display: grid;
+  gap: 14px;
+  padding: 16px;
+  background: var(--app-surface-muted);
+  border: 1px solid var(--app-border-subtle);
+  border-radius: 15px;
+}
+
+.api-fc-compat-section-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.api-fc-compat-transfer-actions {
+  display: flex;
+  flex-direction: row;
+  gap: 7px;
+}
+
+.api-fc-compat-transfer-actions button {
+  min-height: 32px;
+  padding: 6px 10px;
+}
+
+.api-fc-compat-section-title > div,
+.api-fc-compat-enable span {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.api-fc-compat-section-title small,
+.api-fc-compat-enable small,
+.api-fc-compat-rule small {
+  color: var(--app-text-muted);
+  font-size: 12px;
+}
+
+.api-fc-compat-field {
+  display: grid;
+  gap: 6px;
+  color: var(--app-text-secondary);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.api-fc-compat-field :is(input, select) {
+  width: 100%;
+  min-height: 42px;
+  padding: 9px 11px;
+  color: var(--app-text-primary);
+  background: var(--app-surface-card);
+  border: 1px solid var(--app-border-default);
+  border-radius: 10px;
+  font: inherit;
+  font-weight: 500;
+}
+
+.api-fc-compat-identity {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.api-fc-compat-identity > div {
+  min-width: 0;
+  padding: 9px 11px;
+  background: var(--app-surface-card);
+  border: 1px solid var(--app-border-subtle);
+  border-radius: 9px;
+}
+
+.api-fc-compat-identity span,
+.api-fc-compat-identity strong {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.api-fc-compat-identity span {
+  margin-bottom: 3px;
+  color: var(--app-text-muted);
+  font-size: 10px;
+  text-transform: uppercase;
+}
+
+.api-fc-compat-identity strong {
+  font-size: 12px;
+}
+
+.api-fc-compat-enable {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  cursor: pointer;
+}
+
+.api-fc-compat-enable input {
+  width: 18px;
+  height: 18px;
+  margin-top: 2px;
+}
+
+.api-fc-compat-test-state {
+  padding: 8px 10px;
+  color: var(--app-text-muted);
+  background: var(--app-surface-card);
+  border-radius: 9px;
+  font-size: 12px;
+}
+
+.api-fc-compat-test-state[data-state='passed'],
+.api-fc-compat-rule small[data-state='passed'] {
+  color: var(--app-success-text, #16834a);
+}
+
+.api-fc-compat-test-state[data-state='failed'],
+.api-fc-compat-test-state[data-state='error'],
+.api-fc-compat-rule small[data-state='failed'],
+.api-fc-compat-rule small[data-state='circuit'] {
+  color: var(--app-danger-text);
+}
+
+.api-fc-compat-actions,
+.api-fc-compat-rule-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.api-fc-compat-actions .is-primary {
+  color: var(--app-accent-contrast, #fff);
+  background: var(--app-accent-strong);
+  border-color: var(--app-accent-strong);
+}
+
+.api-fc-compat-panel .is-danger {
+  color: var(--app-danger-text);
+}
+
+.api-fc-compat-list {
+  display: grid;
+  gap: 10px;
+}
+
+.api-fc-compat-rule {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px;
+  background: var(--app-surface-card);
+  border: 1px solid var(--app-border-subtle);
+  border-radius: 11px;
+}
+
+.api-fc-compat-rule.is-enabled {
+  border-color: color-mix(in srgb, var(--app-accent-strong) 45%, var(--app-border-default));
+}
+
+.api-fc-compat-rule.is-circuit-open {
+  border-color: color-mix(in srgb, var(--app-danger-text) 45%, var(--app-border-default));
+}
+
+.api-fc-compat-rule-copy {
+  min-width: 0;
+}
+
+.api-fc-compat-rule-copy > div {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.api-fc-compat-rule-copy > div span {
+  padding: 2px 6px;
+  color: var(--app-text-muted);
+  background: var(--app-surface-muted);
+  border-radius: 999px;
+  font-size: 10px;
+}
+
+.api-fc-compat-rule small {
+  display: block;
+  max-width: 390px;
+  margin-top: 3px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.api-fc-compat-empty {
+  padding: 18px;
+  color: var(--app-text-muted);
+  text-align: center;
+  font-size: 13px;
+}
+
+.api-fc-compat-footer {
+  border-top: 1px solid var(--app-border-subtle);
+}
+
+.api-fc-compat-footer [data-fc-role='status'] {
+  min-width: 0;
+  color: var(--app-text-muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.api-fc-compat-footer [data-state='success'] { color: var(--app-success-text, #16834a); }
+.api-fc-compat-footer [data-state='error'] { color: var(--app-danger-text); }
+
+@media (max-width: 640px) {
+  .api-fc-compat-panel {
+    padding: calc(8px + env(safe-area-inset-top, 0px)) 8px calc(8px + env(safe-area-inset-bottom, 0px));
+  }
+
+  .api-fc-compat-modal {
+    max-height: calc(100dvh - 16px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
+    border-radius: 17px;
+  }
+
+  .api-fc-compat-header,
+  .api-fc-compat-footer,
+  .api-fc-compat-scroll {
+    padding-right: 15px;
+    padding-left: 15px;
+  }
+
+  .api-fc-compat-identity {
+    grid-template-columns: 1fr;
+  }
+
+  .api-fc-compat-section-title {
+    align-items: flex-start;
+  }
+
+  .api-fc-compat-rule {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .api-fc-compat-rule-actions > button,
+  .api-fc-compat-actions > button {
+    flex: 1 1 auto;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .api-fc-compat-modal,
+  .api-fc-compat-modal * {
+    animation: none !important;
+    scroll-behavior: auto !important;
+    transition: none !important;
+  }
+}

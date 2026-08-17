@@ -8,6 +8,12 @@ import { createLinkedAbortController, splitRequestOptions } from '../abort.js';
 import { createReasoningStreamEvent, extractGeminiStreamParts } from '../native-reasoning.js';
 import { prepareTransportRequest } from '../transport.js';
 import { reportProviderWebSources } from '../web-search-runtime.js';
+import { attachSafeProviderErrorMetadata } from '../provider-error-metadata.js';
+import {
+  getGeminiFinishReason,
+  mergeGeminiProviderMeta,
+  reportProviderUsage,
+} from '../provider-usage.js';
 
 const GEMINI_SAFETY = [
   { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_NONE' },
@@ -192,7 +198,7 @@ export class GeminiProvider {
    * Send chat message (non-streaming)
    */
   async chat(messages, options = {}) {
-    const { signal, options: payloadOptions } = splitRequestOptions(options);
+    const { signal, onProviderToolCallDelta, options: payloadOptions } = splitRequestOptions(options);
     const { controller, cleanup } = createLinkedAbortController({ timeoutMs: this.timeout, signal });
 
     try {
@@ -217,11 +223,20 @@ export class GeminiProvider {
         const error = new Error(`Gemini API Error: ${response.status} ${response.statusText}`);
         error.status = response.status;
         error.response = errorText;
-        throw error;
+        throw attachSafeProviderErrorMetadata(error, errorText);
       }
 
       const data = await response.json();
+      try {
+        onProviderToolCallDelta?.(data, { provider: 'gemini', model: this.model });
+      } catch {}
       reportProviderWebSources(options, data, { provider: 'gemini' });
+      reportProviderUsage(options, {
+        body: data,
+        provider: 'gemini',
+        model: this.model,
+        finishReason: getGeminiFinishReason(data),
+      });
 
       // Check for candidates
       const candidates = data?.candidates;
@@ -235,18 +250,20 @@ export class GeminiProvider {
 
       // Extract text from response
       const responseContent = candidates[0].content ?? candidates[0].output;
+      const responseParts = Array.isArray(responseContent?.parts) ? responseContent.parts : [];
+      const hasFunctionCall = responseParts.some(part => part?.functionCall && typeof part.functionCall === 'object');
       const responseText = typeof responseContent === 'string'
         ? responseContent
-        : responseContent?.parts
-            ?.filter(part => !part.thought)
-            ?.map(part => part.text)
-            ?.join('\n\n');
+        : responseParts
+            .filter(part => !part.thought && typeof part?.text === 'string')
+            .map(part => part.text)
+            .join('\n\n');
 
-      if (!responseText) {
+      if (!responseText && !hasFunctionCall) {
         throw new Error('Empty response from Gemini');
       }
 
-      return responseText;
+      return responseText || '';
     } finally {
       cleanup();
     }
@@ -257,7 +274,7 @@ export class GeminiProvider {
    */
   async *streamChat(messages, options = {}) {
     const { signal, onProviderToolCallDelta, options: payloadOptions } = splitRequestOptions(options);
-    const { controller, cleanup } = createLinkedAbortController({ timeoutMs: this.timeout, signal });
+    const { controller, cleanup, touch } = createLinkedAbortController({ timeoutMs: this.timeout, signal, idle: true });
     const notifyProviderToolCallDelta = data => {
       try {
         onProviderToolCallDelta?.(data, { provider: 'gemini', model: this.model });
@@ -283,11 +300,17 @@ export class GeminiProvider {
 
       if (!response.ok) {
         const errorText = await response.text();
-        throw new Error(`Gemini API Error: ${response.status} ${errorText}`);
+        const error = new Error(`Gemini API Error: ${response.status} ${response.statusText}`);
+        error.status = response.status;
+        error.response = errorText;
+        throw attachSafeProviderErrorMetadata(error, errorText);
       }
 
       // Handle SSE stream
+      let providerMeta = null;
       for await (const data of handleSSE(response)) {
+        touch();
+        providerMeta = mergeGeminiProviderMeta(providerMeta, data);
         notifyProviderToolCallDelta(data);
         reportProviderWebSources(options, data, { provider: 'gemini' });
         const candidates = data?.candidates;
@@ -299,6 +322,12 @@ export class GeminiProvider {
           if (parts.content) yield parts.content;
         }
       }
+      reportProviderUsage(options, {
+        body: providerMeta,
+        provider: 'gemini',
+        model: this.model,
+        finishReason: providerMeta?.finishReason,
+      });
     } finally {
       cleanup();
     }

@@ -4,6 +4,11 @@
  */
 
 import { OpenAIProvider } from './openai.js';
+import {
+  readOpenRouterModelCapabilities,
+  recordOpenRouterModelCapabilities,
+  recordOpenRouterModelCatalog,
+} from '../openrouter-model-capabilities.js';
 
 const OPENROUTER_BASE_URL = 'https://openrouter.ai/api/v1';
 const OPENROUTER_DEFAULT_MODEL = 'openrouter/auto';
@@ -62,10 +67,35 @@ export class OpenRouterProvider extends OpenAIProvider {
       const ids = Array.isArray(data?.data)
         ? data.data.map(model => model?.id)
         : [];
+      recordOpenRouterModelCatalog({ baseUrl: this.baseUrl, models: data?.data });
       return uniqueStrings([...OPENROUTER_DEFAULT_MODELS, ...ids]);
     } catch (error) {
       console.warn('Failed to list OpenRouter models, using defaults:', error);
       return [...OPENROUTER_DEFAULT_MODELS];
+    }
+  }
+
+  async prepareProviderFcCapabilities() {
+    const cached = readOpenRouterModelCapabilities({
+      baseUrl: this.baseUrl,
+      model: this.model,
+    });
+    if (cached.known) return cached;
+    if (!this.model || this.model === OPENROUTER_DEFAULT_MODEL) return cached;
+    const path = this.model
+      .split('/')
+      .map(part => encodeURIComponent(part))
+      .join('/');
+    try {
+      const data = await this.requestJson({
+        url: `${this.baseUrl}/model/${path}`,
+        method: 'GET',
+        headers: this.getHeaders(),
+      });
+      return recordOpenRouterModelCapabilities({ baseUrl: this.baseUrl, model: data?.data }) || cached;
+    } catch (error) {
+      console.warn('Failed to read OpenRouter model capabilities:', error);
+      return cached;
     }
   }
 }

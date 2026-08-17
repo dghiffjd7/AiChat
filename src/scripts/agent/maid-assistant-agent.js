@@ -43,6 +43,34 @@ const compactText = value => normalizeText(value).replace(/\s+/g, '');
 
 const isPlainObject = value => Boolean(value && typeof value === 'object' && !Array.isArray(value));
 
+const isMaidAbortError = (error = null, signal = null) => (
+  error?.name === 'AbortError' || signal?.aborted === true
+);
+
+const throwIfMaidAborted = (signal = null) => {
+  if (!signal?.aborted) return;
+  if (signal.reason instanceof Error) throw signal.reason;
+  const error = new Error('Maid task stopped by user');
+  error.name = 'AbortError';
+  throw error;
+};
+
+const buildMaidCancelledResult = ({ input = '', steps = [] } = {}) => {
+  const snapshots = Array.isArray(steps) ? clone(steps) : [];
+  const completedCount = snapshots.filter(step => step?.status === 'succeeded').length;
+  return {
+    ok: false,
+    status: 'cancelled',
+    cancelled: true,
+    responseType: 'react',
+    input: trim(input),
+    reason: 'user_aborted',
+    failureCode: 'user_aborted',
+    steps: snapshots,
+    message: `任务已终止；已完成 ${completedCount} 步，后续步骤未执行。`,
+  };
+};
+
 const MAID_READ_INTENT_PATTERN = /(查询|查看|检查|确认|核对|读取|只读|只查|列出|列表|清单|统计|比较|分析|告诉我|有哪些|哪些|是否|有没有|当前(?:状态|情况)?|状态|情况|是什么|怎么样|如何|\b(?:show|list|read|check|inspect|verify|status|what|which|whether|inventory|identit(?:y|ies))\b)/iu;
 const MAID_NO_TOOL_INTENT_PATTERN = /(?:(?:不要|不得|禁止|无需|不用|不必)\s*(?:再)?(?:调用|使用|动用|执行)\s*(?:任何|任意|任一)?\s*工具|(?:不调用|不使用)\s*(?:任何|任意|任一)?\s*工具|\b(?:do\s+not|don't|dont|never)\s+(?:use|call)\s+(?:any\s+)?tools?\b|\bwithout\s+(?:using\s+)?tools?\b)/iu;
 const MAID_WRITE_VERB_PATTERN = /(创建|新建|添加|追加|新增|写入|保存|绑(?:定|上|到)|启用|禁用|修改|更改|更新|编辑|替换|覆盖|删除|删掉|移除|清空|清理|发布|发送|设置|切换|应用|修复|优化|生成|上传|导入|回复)/gu;
@@ -410,12 +438,13 @@ const createMaidRunTracker = ({ agentTaskRuntime = null, input = '', context = {
     if (!run) return;
     const ok = result?.ok === true;
     const failureCode = ok ? '' : classifyMaidRunFailure(result);
+    const cancelled = trim(result?.status) === 'cancelled' || failureCode === 'user_aborted';
     const maidContext = isPlainObject(context?.maidConversationContextRef?.current)
       ? context.maidConversationContextRef.current
       : (isPlainObject(context?.maidConversationContext) ? context.maidConversationContext : {});
     const runUsage = aggregateMaidModelUsage(Array.isArray(usage) ? usage : [], {
       toolCallCount: countExecutedMaidToolCalls(result?.steps),
-      aborted: failureCode === 'user_aborted',
+      aborted: cancelled,
     });
     const continuationSnapshot = result?.continuable === true
       ? buildMaidRunContinuationSnapshot({
@@ -484,9 +513,10 @@ const createMaidRunTracker = ({ agentTaskRuntime = null, input = '', context = {
       return;
     }
     agentTaskRuntime.finishRun(run.id, {
-      status: ok ? 'succeeded' : 'failed',
+      status: cancelled ? 'cancelled' : (ok ? 'succeeded' : 'failed'),
       summary,
-      errorMessage: ok ? '' : truncateForRun(result?.reason || result?.message || ''),
+      errorMessage: ok || cancelled ? '' : truncateForRun(result?.reason || result?.message || ''),
+      ...(cancelled ? { cancelReason: 'user_cancelled' } : {}),
       usage: runUsage,
       metadata,
     });
@@ -1371,6 +1401,12 @@ const summarizeMaidStructuredRead = (obligation = {}, output = {}, step = {}) =>
     return [base, auditSummary ? `审计项：${auditSummary}` : ''].filter(Boolean).join('\n');
   }
   if (obligation.kind === 'format-profile') {
+    if (isPlainObject(output?.staleProfile) && !isPlainObject(output?.profile)) {
+      const reasons = Array.isArray(output.staleProfile.staleReasons)
+        ? output.staleProfile.staleReasons.map(trim).filter(Boolean).join('、')
+        : '';
+      return `格式画像「${obligation.target}」：已失效，需重新调查来源${reasons ? `（${reasons}）` : ''}`;
+    }
     const profile = isPlainObject(output?.profile) ? output.profile : output;
     const guide = trim(profile?.guide, '未设置');
     const sources = (Array.isArray(profile?.sources) ? profile.sources : [])
@@ -2748,11 +2784,13 @@ export const createMaidAssistantAgent = ({
   chatResponder = null,
   guidedActionRuntime = null,
   prepareConversationContext = null,
+  getCapabilityRoutingConfigOverride = null,
   maxReactSteps = 48,
   repeatedFailureLimit = 3,
   logger = console,
 } = {}) => {
   const runPlannedTool = async (plan, context = {}, tracker = null) => {
+    throwIfMaidAborted(context?.signal);
     if (tracker?.canTrack && typeof agentTaskRuntime?.executeTool === 'function') {
       const step = tracker.startToolStep(plan);
       try {
@@ -2773,10 +2811,11 @@ export const createMaidAssistantAgent = ({
         });
         return output;
       } catch (error) {
+        const cancelled = isMaidAbortError(error, context?.signal);
         tracker.finishToolStep(step, {
-          status: 'failed',
-          summary: error?.message || 'maid assistant tool failed',
-          errorMessage: error?.message || String(error || ''),
+          status: cancelled ? 'cancelled' : 'failed',
+          summary: cancelled ? '用户终止了女仆任务。' : (error?.message || 'maid assistant tool failed'),
+          errorMessage: cancelled ? '' : (error?.message || String(error || '')),
         });
         throw error;
       }
@@ -2814,10 +2853,11 @@ export const createMaidAssistantAgent = ({
           });
           return output;
         } catch (error) {
+          const cancelled = isMaidAbortError(error, context?.signal);
           finishStep?.(step?.id, {
-            status: 'failed',
-            summary: error?.message || 'maid assistant tool failed',
-            errorMessage: error?.message || String(error || ''),
+            status: cancelled ? 'cancelled' : 'failed',
+            summary: cancelled ? '用户终止了女仆任务。' : (error?.message || 'maid assistant tool failed'),
+            errorMessage: cancelled ? '' : (error?.message || String(error || '')),
           });
           throw error;
         }
@@ -2828,6 +2868,7 @@ export const createMaidAssistantAgent = ({
   };
 
   const executePlan = async (plan, context = {}, tracker = null) => {
+    throwIfMaidAborted(context?.signal);
     let executablePlan = plan;
     if (capabilityRoutingRuntime && typeof capabilityRoutingRuntime.validatePlan === 'function') {
       let validation = null;
@@ -2868,12 +2909,14 @@ export const createMaidAssistantAgent = ({
       executablePlan = validation?.plan || plan;
     }
     if (guidedActionRuntime && typeof guidedActionRuntime.run === 'function') {
+      throwIfMaidAborted(context?.signal);
       return guidedActionRuntime.run({
         plan: executablePlan,
         context,
         execute: () => runPlannedTool(executablePlan, context, tracker),
       });
     }
+    throwIfMaidAborted(context?.signal);
     const output = await runPlannedTool(executablePlan, context, tracker);
     return {
       output,
@@ -2919,6 +2962,7 @@ export const createMaidAssistantAgent = ({
     try {
       execution = await executePlan(executablePlan, context, tracker);
     } catch (error) {
+      if (isMaidAbortError(error, context?.signal)) throw error;
       logger?.warn?.('maid imported-card workflow tool failed', error);
       execution = {
         output: makeToolErrorOutput(executablePlan, error),
@@ -3185,6 +3229,7 @@ export const createMaidAssistantAgent = ({
         entries,
       }, context);
     } catch (error) {
+      if (isMaidAbortError(error, context?.signal)) throw error;
       return importedCardWorkflowFailure({
         input,
         reason: 'imported_card_classification_failed',
@@ -3836,6 +3881,7 @@ export const createMaidAssistantAgent = ({
       ...(isPlainObject(context) ? context : {}),
       operationIntentPolicy: classifyMaidOperationIntent(input),
       presentationIntent: classifyMaidPresentationIntent(input),
+      maidUserInput: trim(input),
       maidSourceGrounding: buildMaidSourceGroundingContext({ input, steps: [] }),
       maidVisualSpecLedger: isPlainObject(context?.maidVisualSpecLedger)
         ? context.maidVisualSpecLedger
@@ -3843,6 +3889,7 @@ export const createMaidAssistantAgent = ({
       maidAttachments: (Array.isArray(context?.maidAttachments) ? context.maidAttachments : [])
         .map(item => (isPlainObject(item) ? { ...item } : item)),
     };
+    throwIfMaidAborted(context?.signal);
     // 空指令直接拒绝：不进 planner，否则模型会按女仆历史重放上一条旧指令。
     const hasAttachments = Array.isArray(context?.maidAttachments) && context.maidAttachments.length > 0;
     const hasSelection = Array.isArray(context?.userSelection) && context.userSelection.length > 0;
@@ -3867,6 +3914,7 @@ export const createMaidAssistantAgent = ({
         };
       }
       try {
+        throwIfMaidAborted(context?.signal);
         const chatResult = await chatResponder(input, context, {
           plan: {
             ok: false,
@@ -3894,6 +3942,7 @@ export const createMaidAssistantAgent = ({
           message: chatResult?.message || '女仆暂时无法在不调用工具的前提下回答。',
         };
       } catch (error) {
+        if (isMaidAbortError(error, context?.signal)) throw error;
         logger?.warn?.('maid assistant no-tool chat response failed', error);
         return {
           ok: false,
@@ -3905,12 +3954,22 @@ export const createMaidAssistantAgent = ({
         };
       }
     }
+    let capabilityRoutingConfigOverride = null;
+    if (typeof getCapabilityRoutingConfigOverride === 'function') {
+      try {
+        const override = getCapabilityRoutingConfigOverride({ input, context });
+        if (isPlainObject(override)) capabilityRoutingConfigOverride = { ...override };
+      } catch (error) {
+        logger?.debug?.('maid capability routing override skipped', error);
+      }
+    }
     const callRoutedPlanner = async ({
       plannerFn,
       phase = 'planner',
       label = 'maid_planner',
       extraContext = {},
     } = {}) => {
+      throwIfMaidAborted(context?.signal);
       const decisionContext = {
         ...context,
         ...(isPlainObject(extraContext) ? extraContext : {}),
@@ -3924,6 +3983,7 @@ export const createMaidAssistantAgent = ({
             context: decisionContext,
             steps: Array.isArray(decisionContext.maidReactSteps) ? decisionContext.maidReactSteps : [],
             phase,
+            configOverride: capabilityRoutingConfigOverride,
           });
           if (snapshot) decisionContext.capabilitySnapshot = snapshot;
         } catch (error) {
@@ -3932,7 +3992,9 @@ export const createMaidAssistantAgent = ({
       }
       let decision = null;
       try {
+        throwIfMaidAborted(context?.signal);
         decision = await callModelWithTimeout(() => plannerFn(input, decisionContext), { label });
+        throwIfMaidAborted(context?.signal);
       } catch (error) {
         if (snapshot && capabilityRoutingRuntime && typeof capabilityRoutingRuntime.observeDecision === 'function') {
           try {
@@ -3980,6 +4042,7 @@ export const createMaidAssistantAgent = ({
           },
           steps: projectMaidReactStepsForModel(steps),
           phase: 'deterministic_workflow',
+          configOverride: capabilityRoutingConfigOverride,
         });
         return snapshot
           ? capabilityRoutingRuntime.observeDecision(snapshot, workflowPlan, {
@@ -4060,6 +4123,22 @@ export const createMaidAssistantAgent = ({
     }
 
     let plan = await callRoutedPlanner({ plannerFn: planner, phase: 'planner', label: 'maid_planner' });
+    if (
+      plan?.ok === true &&
+      plan?.action === 'final' &&
+      plan?.source === 'maid_provider_fc' &&
+      trim(plan?.message)
+    ) {
+      return {
+        ok: true,
+        status: 'responded',
+        responseType: 'chat',
+        source: plan.source,
+        input: trim(input),
+        finalDecision: clone(plan),
+        message: trim(plan.message),
+      };
+    }
     if (!plan?.ok) {
       let reactRecoveryFailure = null;
       if (shouldAttemptReactPlanRecovery({ input, plan, reactPlanner })) {
@@ -4110,6 +4189,7 @@ export const createMaidAssistantAgent = ({
             };
           }
         } catch (error) {
+          if (isMaidAbortError(error, context?.signal)) throw error;
           logger?.warn?.('maid assistant react recovery failed', error);
           reactRecoveryFailure = {
             ok: false,
@@ -4155,6 +4235,7 @@ export const createMaidAssistantAgent = ({
               };
             }
           } catch (error) {
+            if (isMaidAbortError(error, context?.signal)) throw error;
             logger?.warn?.('maid assistant chat response failed', error);
             return {
               ok: false,
@@ -4216,6 +4297,7 @@ export const createMaidAssistantAgent = ({
         try { globalThis.__maidLoopProbe = { stage, at: Date.now() }; } catch {}
       };
       for (let stepIndex = 0; stepIndex < maxSteps; stepIndex += 1) {
+        throwIfMaidAborted(context?.signal);
         cyclesUsed += 1;
         loopProbe(`step-${stepIndex}:start`);
         currentPlan = advanceRepeatedWorldbookPreviewToApply({
@@ -4280,9 +4362,11 @@ export const createMaidAssistantAgent = ({
         } else {
           try {
             loopProbe(`step-${stepIndex}:tool-exec`);
+            throwIfMaidAborted(context?.signal);
             execution = await executePlan(currentPlan, context, tracker);
             loopProbe(`step-${stepIndex}:tool-done`);
           } catch (error) {
+            if (isMaidAbortError(error, context?.signal)) throw error;
             logger?.warn?.('maid assistant tool execution failed', error);
             execution = {
               output: makeToolErrorOutput(currentPlan, error),
@@ -4343,8 +4427,10 @@ export const createMaidAssistantAgent = ({
             }
             let verificationExecution = null;
             try {
+              throwIfMaidAborted(context?.signal);
               verificationExecution = await executePlan(verificationPlan, context, tracker);
             } catch (error) {
+              if (isMaidAbortError(error, context?.signal)) throw error;
               logger?.warn?.('maid assistant verification failed', error);
               verificationExecution = {
                 output: makeToolErrorOutput(verificationPlan, error),
@@ -4659,6 +4745,7 @@ export const createMaidAssistantAgent = ({
         }
 
         loopProbe(`step-${stepIndex}:react-call`);
+        throwIfMaidAborted(context?.signal);
         const modelReactSteps = projectMaidReactStepsForModel(steps);
         const decision = await callRoutedPlanner({
           plannerFn: reactPlanner,
@@ -4883,6 +4970,9 @@ export const createMaidAssistantAgent = ({
         },
       };
     } catch (error) {
+      if (isMaidAbortError(error, context?.signal)) {
+        return buildMaidCancelledResult({ input, steps });
+      }
       logger?.warn?.('maid assistant run failed', error);
       return {
         ok: false,
@@ -4897,6 +4987,11 @@ export const createMaidAssistantAgent = ({
   };
 
   const runPrompt = async (input = '', context = {}) => {
+    try {
+      throwIfMaidAborted(context?.signal);
+    } catch {
+      return buildMaidCancelledResult({ input, steps: [] });
+    }
     let runContinuation = isPlainObject(context?.runContinuation)
       ? context.runContinuation
       : null;
@@ -4935,8 +5030,12 @@ export const createMaidAssistantAgent = ({
           context: requestContext,
           taskType: 'maid_assistant',
         });
+        throwIfMaidAborted(requestContext?.signal);
         if (isPlainObject(prepared)) maidConversationContextRef.current = prepared;
       } catch (error) {
+        if (isMaidAbortError(error, requestContext?.signal)) {
+          return buildMaidCancelledResult({ input, steps: [] });
+        }
         logger?.debug?.('maid conversation context preparation skipped', error);
       }
     }
@@ -4970,6 +5069,14 @@ export const createMaidAssistantAgent = ({
       tracker.finish(finalResult, modelUsageEntries);
       return finalResult;
     } catch (error) {
+      if (isMaidAbortError(error, routedContext?.signal)) {
+        const cancelledResult = buildMaidCancelledResult({ input, steps: [] });
+        if (capabilityRequest?.id && typeof capabilityRoutingRuntime?.finishRequest === 'function') {
+          try { capabilityRoutingRuntime.finishRequest(capabilityRequest.id, cancelledResult); } catch {}
+        }
+        tracker.finish(cancelledResult, modelUsageEntries);
+        return cancelledResult;
+      }
       if (capabilityRequest?.id && typeof capabilityRoutingRuntime?.finishRequest === 'function') {
         try {
           capabilityRoutingRuntime.finishRequest(capabilityRequest.id, {

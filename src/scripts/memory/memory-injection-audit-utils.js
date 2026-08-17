@@ -173,6 +173,7 @@ export const buildMemoryPlanAudit = ({
 
 export const buildRequestInjectionAudit = ({
   memoryPlan = null,
+  extraSegments = [],
   history = [],
   worldDebug = null,
   messages = [],
@@ -193,8 +194,30 @@ export const buildRequestInjectionAudit = ({
   const worldTrimmed = Array.isArray(worldDebug?.trimmedEntries)
     ? worldDebug.trimmedEntries.length
     : 0;
+  const normalizedExtraSegments = (Array.isArray(extraSegments) ? extraSegments : [])
+    .map((segment, index) => buildInjectionAuditSegment({
+      id: segment?.id || `extra_${index + 1}`,
+      label: segment?.label || '其他注入',
+      text: segment?.text || '',
+      texts: segment?.texts,
+      usedTokens: segment?.usedTokens,
+      quotaTokens: segment?.quotaTokens,
+      rowCount: segment?.rowCount,
+      messageCount: segment?.messageCount,
+      trimmedCount: segment?.trimmedCount,
+      overflowed: segment?.overflowed,
+      detail: segment?.detail,
+      tokenMode,
+    }))
+    .filter(segment => (
+      segment.usedTokens > 0
+      || segment.rowCount > 0
+      || segment.messageCount > 0
+      || segment.trimmedCount > 0
+    ));
   const segments = [
     ...memorySegments,
+    ...normalizedExtraSegments,
     buildInjectionAuditSegment({
       id: 'history',
       label: '原始前文',

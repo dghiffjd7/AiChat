@@ -21,6 +21,11 @@ import {
     syncChatRuntimeConfigToBridge,
 } from './config-runtime-utils.js';
 import { ImageGenerationParamsPanel } from './image-generation-params-panel.js';
+import { ChatFcCompatibilityPanel } from './chat-fc-compatibility-panel.js';
+import { buildReasoningRequestOptions } from '../api/model-capabilities.js';
+import { chatStructuredRouteEvidenceStore } from '../storage/chat-structured-route-evidence-store.js';
+import { getPresetStore } from './preset-store-runtime-utils.js';
+import { resolveChatStructuredProfileStatus } from './chat/chat-structured-profile-status.js';
 import {
     getVoiceProviderDefaults,
     getVoiceProviderOptions,
@@ -62,6 +67,7 @@ const API_CONFIG_ICONS = Object.freeze({
     save: apiConfigIconSvg('<path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2Z"/><path d="M17 21v-8H7v8"/><path d="M7 3v5h8"/>'),
     check: apiConfigIconSvg('<path d="m20 6-11 11-5-5"/>'),
     loader: apiConfigIconSvg('<path d="M21 12a9 9 0 1 1-6.2-8.6"/>', 'is-spinning'),
+    shield: apiConfigIconSvg('<path d="M12 3 4 6v5c0 5 3.4 8.3 8 10 4.6-1.7 8-5 8-10V6l-8-3Z"/><path d="m9 12 2 2 4-4"/>'),
 });
 
 const setApiButtonContent = (button, icon, label) => {
@@ -71,12 +77,23 @@ const setApiButtonContent = (button, icon, label) => {
 
 const MODEL_FILTER_DEBOUNCE_MS = 80;
 
+export const shouldResetDirectProviderModel = (provider = '', model = '') => {
+    const normalizedProvider = String(provider || '').trim().toLowerCase();
+    const normalizedModel = String(model || '').trim().toLowerCase();
+    if (normalizedProvider === 'kimi') return !/^(?:kimi-|moonshot-v1)/u.test(normalizedModel);
+    if (normalizedProvider === 'zhipu') return !/^glm-/u.test(normalizedModel);
+    return false;
+};
+
 const CHAT_PROVIDER_OPTIONS = [
     { value: 'openai', label: 'OpenAI' },
     { value: 'makersuite', label: 'Google AI Studio (Makersuite)' },
     { value: 'vertexai', label: 'Google Vertex AI' },
     { value: 'deepseek', label: 'Deepseek' },
     { value: 'openrouter', label: 'OpenRouter' },
+    { value: 'opencode', label: 'OpenCode Go' },
+    { value: 'kimi', label: 'Kimi (Moonshot AI)' },
+    { value: 'zhipu', label: '智谱 GLM' },
     { value: 'anthropic', label: 'Anthropic (Claude)' },
     { value: 'ollama', label: 'Ollama' },
     { value: 'custom', label: '自定义 API' },
@@ -151,6 +168,10 @@ export class ConfigPanel {
                 return await this.imageConfigManager.load();
             },
         });
+        this.chatFcCompatibilityPanel = new ChatFcCompatibilityPanel({
+            configManager: this.chatConfigManager,
+            onChanged: () => this.updateFcCompatibilitySummary(),
+        });
     }
 
     /**
@@ -176,6 +197,7 @@ export class ConfigPanel {
         this.refreshProfileOptions();
         this.populateForm(config);
         await this.refreshMaidSearchInputs?.();
+        this.updateFcCompatibilitySummary();
         this.hideImageParamsPage();
 
         this.element.classList.remove('is-open');
@@ -197,6 +219,7 @@ export class ConfigPanel {
         }
         this.hideImageParamsPage();
         this.imageGenerationParamsPanel.hide();
+        this.chatFcCompatibilityPanel.hide();
         if (this.element) {
             this.element.classList.remove('is-open');
             this.overlayElement.classList.remove('is-open');
@@ -276,6 +299,7 @@ export class ConfigPanel {
     }
 
     emitDraftChange() {
+        if (this.activeTab === 'chat') this.updateFcCompatibilitySummary();
         try {
             window.dispatchEvent(new CustomEvent('config-draft-changed', {
                 detail: { tab: this.activeTab },
@@ -372,6 +396,10 @@ export class ConfigPanel {
         const generationParamFilterSection = this.element.querySelector('#config-generation-param-filter-section');
         if (generationParamFilterSection) {
             generationParamFilterSection.style.display = this.activeTab === 'chat' ? 'block' : 'none';
+        }
+        const fcCompatibilitySection = this.element.querySelector('#config-fc-compatibility-section');
+        if (fcCompatibilitySection) {
+            fcCompatibilitySection.style.display = this.activeTab === 'chat' ? 'block' : 'none';
         }
         const webSearchCard = this.element.querySelector('#config-web-search-card');
         if (webSearchCard) {
@@ -575,6 +603,9 @@ export class ConfigPanel {
                         <option value="vertexai">Google Vertex AI</option>
                         <option value="deepseek">Deepseek</option>
                         <option value="openrouter">OpenRouter</option>
+                        <option value="opencode">OpenCode Go</option>
+                        <option value="kimi">Kimi (Moonshot AI)</option>
+                        <option value="zhipu">智谱 GLM</option>
                         <option value="anthropic">Anthropic (Claude)</option>
                         <option value="ollama">Ollama</option>
                         <option value="custom">自定义 API</option>
@@ -594,6 +625,20 @@ export class ConfigPanel {
                         </select>
                         <button type="button" id="config-ollama-mode-btn" class="world-app-select-btn" data-select-id="config-ollama-mode">
                             <span class="config-custom-select-label">云端</span>
+                            <span class="world-app-select-btn-chevron">${API_CONFIG_ICONS.chevronDown}</span>
+                        </button>
+                    </div>
+                </div>
+
+                <div id="kimi-fields" style="display: none;">
+                    <div class="api-config-field">
+                        <label class="api-config-field-label has-help" data-help="全球站与中国大陆站使用不同的 API Key；请选择生成 Key 的对应站点">Kimi 连接站点</label>
+                        <select id="config-kimi-region" style="display:none;">
+                            <option value="global">全球站（api.moonshot.ai）</option>
+                            <option value="china">中国大陆站（api.moonshot.cn）</option>
+                        </select>
+                        <button type="button" id="config-kimi-region-btn" class="world-app-select-btn" data-select-id="config-kimi-region">
+                            <span class="config-custom-select-label">全球站（api.moonshot.ai）</span>
                             <span class="world-app-select-btn-chevron">${API_CONFIG_ICONS.chevronDown}</span>
                         </button>
                     </div>
@@ -757,6 +802,19 @@ export class ConfigPanel {
                     </button>
                 </div>
 
+                <div id="config-fc-compatibility-section" class="api-config-field">
+                    <button type="button" id="open-fc-compatibility" class="api-config-row-card">
+                        <span class="api-config-row-main">
+                            <span class="api-config-row-icon">${API_CONFIG_ICONS.shield}</span>
+                            <span class="api-config-row-copy">
+                                <strong>聊天格式兼容性（高级）</strong>
+                                <small id="fc-compatibility-summary">内建兼容库 revision 1 · 0 条本地规则</small>
+                            </span>
+                        </span>
+                        ${API_CONFIG_ICONS.chevronRight}
+                    </button>
+                </div>
+
                 <div class="api-config-timeout-row">
                     <label>
                         <span>
@@ -896,6 +954,12 @@ export class ConfigPanel {
         this.element.querySelector('#open-image-generation-params')?.addEventListener('click', () => {
             this.showImageParamsPage();
         });
+        this.element.querySelector('#open-fc-compatibility')?.addEventListener('click', () => {
+            this.chatFcCompatibilityPanel.show().catch((error) => {
+                logger.error('打开 FC 兼容性面板失败', error);
+                this.showStatus(`打开 FC 兼容性失败: ${error.message}`, 'error');
+            });
+        });
 
         // 连线设置档切换
         this.element.querySelector('#config-profile').onchange = async (e) => {
@@ -932,6 +996,14 @@ export class ConfigPanel {
         this.element.querySelector('#config-ollama-mode').onchange = async () => {
             const provider = this.element.querySelector('#config-provider')?.value || 'openai';
             if (provider === 'ollama') {
+                this.updateDefaultsForProvider(provider);
+                this.updateFieldVisibility(provider);
+            }
+            this.emitDraftChange();
+        };
+        this.element.querySelector('#config-kimi-region').onchange = async () => {
+            const provider = this.element.querySelector('#config-provider')?.value || 'openai';
+            if (provider === 'kimi') {
                 this.updateDefaultsForProvider(provider);
                 this.updateFieldVisibility(provider);
             }
@@ -1185,7 +1257,7 @@ export class ConfigPanel {
     }
 
     refreshAllCustomSelects() {
-        ['config-profile', 'config-provider', 'config-region', 'config-ollama-mode', 'config-transport-mode', 'config-prompt-post-processing'].forEach((id) => this.refreshCustomSelect(id));
+        ['config-profile', 'config-provider', 'config-region', 'config-ollama-mode', 'config-kimi-region', 'config-transport-mode', 'config-prompt-post-processing'].forEach((id) => this.refreshCustomSelect(id));
     }
 
     bindCustomSelect(selectId) {
@@ -1221,7 +1293,7 @@ export class ConfigPanel {
     }
 
     initCustomSelects() {
-        ['config-profile', 'config-provider', 'config-region', 'config-ollama-mode', 'config-transport-mode', 'config-prompt-post-processing'].forEach((id) => this.bindCustomSelect(id));
+        ['config-profile', 'config-provider', 'config-region', 'config-ollama-mode', 'config-kimi-region', 'config-transport-mode', 'config-prompt-post-processing'].forEach((id) => this.bindCustomSelect(id));
         this.refreshAllCustomSelects();
     }
 
@@ -1503,6 +1575,27 @@ export class ConfigPanel {
                 model: 'openrouter/auto',
                 urlHelp: 'OpenRouter API 基础 URL'
             },
+            opencode: {
+                baseUrl: 'https://opencode.ai/zen/go/v1',
+                model: 'glm-5.3',
+                urlHelp: 'OpenCode Go API（首版仅支持 Chat Completions 模型）'
+            },
+            kimi: String(options?.kimiRegion || 'global') === 'china'
+                ? {
+                    baseUrl: 'https://api.moonshot.cn/v1',
+                    model: 'kimi-k2.6',
+                    urlHelp: 'Kimi 中国大陆开放平台；全球站 Key 与大陆站 Key 不通用'
+                }
+                : {
+                    baseUrl: 'https://api.moonshot.ai/v1',
+                    model: 'kimi-k2.6',
+                    urlHelp: 'Kimi 全球开放平台；中国大陆 Key 请切换连接站点'
+                },
+            zhipu: {
+                baseUrl: 'https://open.bigmodel.cn/api/paas/v4',
+                model: 'glm-5.2',
+                urlHelp: '智谱 BigModel API 官方地址'
+            },
             anthropic: {
                 baseUrl: 'https://api.anthropic.com/v1',
                 model: 'claude-3-5-sonnet-20241022',
@@ -1564,9 +1657,14 @@ export class ConfigPanel {
         const webSearchEl = panel.querySelector('#config-web-search');
         const promptPostProcessingEl = panel.querySelector('#config-prompt-post-processing');
         const regionEl = panel.querySelector('#config-region');
+        const kimiRegionEl = panel.querySelector('#config-kimi-region');
         const saEl = panel.querySelector('#config-serviceaccount');
 
-        const defaults = this.getProviderDefaults(provider, { region: regionEl?.value || 'us-central1' });
+        if (provider === 'kimi' && kimiRegionEl) kimiRegionEl.value = 'global';
+        const defaults = this.getProviderDefaults(provider, {
+            region: regionEl?.value || 'us-central1',
+            kimiRegion: kimiRegionEl?.value || 'global',
+        });
 
         if (baseEl) {
             baseEl.value = defaults.baseUrl;
@@ -1887,8 +1985,16 @@ export class ConfigPanel {
         providerEl.value = selectedProvider;
         const currentProvider = providerEl.value || 'openai';
         const currentRegion = config.vertexaiRegion || 'us-central1';
-        const defaultBaseUrl = this.getProviderDefaults(currentProvider, { region: currentRegion }).baseUrl;
         const storedBaseUrl = String(config.baseUrl || '').trim();
+        const kimiRegionEl = panel.querySelector('#config-kimi-region');
+        if (kimiRegionEl && currentProvider === 'kimi') {
+            kimiRegionEl.value = /api\.moonshot\.cn(?:\/|$)/iu.test(storedBaseUrl) ? 'china' : 'global';
+        }
+        const currentKimiRegion = kimiRegionEl?.value || 'global';
+        const defaultBaseUrl = this.getProviderDefaults(currentProvider, {
+            region: currentRegion,
+            kimiRegion: currentKimiRegion,
+        }).baseUrl;
         const legacyProxyBaseUrl =
             !this.usesEditableBaseUrl(currentProvider) &&
             storedBaseUrl &&
@@ -1900,7 +2006,10 @@ export class ConfigPanel {
             ? (config.baseUrl || '')
             : defaultBaseUrl;
         modelEl.value = config.model || '';
-        const providerDefaults = this.getProviderDefaults(currentProvider, { region: currentRegion });
+        const providerDefaults = this.getProviderDefaults(currentProvider, {
+            region: currentRegion,
+            kimiRegion: currentKimiRegion,
+        });
         if (ttsModelEl) {
             ttsModelEl.value = config.ttsModel || providerDefaults.ttsModel || '';
             ttsModelEl.placeholder = providerDefaults.ttsModel || 'tts-model';
@@ -2025,6 +2134,12 @@ export class ConfigPanel {
         const select = panel.querySelector('#config-profile');
         if (!select) return;
 
+        // 自定义菜单是打开瞬间的选项快照；设置档变化时先关闭，避免继续显示旧的空列表。
+        const profileButton = panel.querySelector('#config-profile-btn');
+        if (profileButton && this.customSelectMenuAnchor === profileButton) {
+            this.closeCustomSelectMenu();
+        }
+
         // 设置标志防止触发 onchange
         this.isRefreshingProfile = true;
 
@@ -2044,11 +2159,54 @@ export class ConfigPanel {
             }
             this.refreshCustomSelect(select);
         } finally {
-            // 延迟重置标志，确保 onchange 事件不会触发
-            setTimeout(() => {
-                this.isRefreshingProfile = false;
-            }, 100);
+            // DOM 直接改 value/option 不会触发 change；同步解除，避免吞掉用户紧接着的选择。
+            this.isRefreshingProfile = false;
         }
+    }
+
+    resolveCurrentChatReasoning(config = {}) {
+        const store = getPresetStore(window.appBridge);
+        const sessionId = String(window.appBridge?.lastRequest?.session?.id || '').trim();
+        const resolved = store?.getResolvedActive?.('openai', { sessionId, uiMode: 'chat' }) || null;
+        const preset = resolved?.preset || {};
+        const override = store?.getSessionReasoning?.('openai', sessionId)
+            || store?.getModeReasoning?.('openai', 'chat')
+            || null;
+        const requestReasoning = override
+            ? override.request_reasoning === true
+            : preset.request_reasoning === true;
+        const reasoningEffort = override?.reasoning_effort || preset.reasoning_effort;
+        return {
+            thinkingEnabled: requestReasoning,
+            reasoningOptions: buildReasoningRequestOptions({
+                provider: config?.provider,
+                model: config?.model,
+                baseUrl: config?.baseUrl,
+                requestReasoning,
+                reasoningEffort,
+                maxOutputTokens: Number(preset.openai_max_tokens) || undefined,
+            }),
+        };
+    }
+
+    updateFcCompatibilitySummary() {
+        const summary = this.element?.querySelector('#fc-compatibility-summary');
+        if (!summary) return;
+        const count = this.chatFcCompatibilityPanel?.getRuleCount?.() || 0;
+        const config = this.getDraftConfig?.({ tab: 'chat' })
+            || window.appBridge?.getConfig?.()
+            || this.configManager.getActiveProfile?.()
+            || {};
+        const reasoning = this.resolveCurrentChatReasoning(config);
+        const status = resolveChatStructuredProfileStatus({
+            config,
+            ...reasoning,
+            thinkingPreference: appSettings.get().chatStructuredThinkingPreference,
+            compatibilityModeEnabled: appSettings.get().traditionalModelOutputProtocolEnabled === true,
+            evidenceStore: chatStructuredRouteEvidenceStore,
+        });
+        summary.textContent = `${status.label}${status.detail ? ` · ${status.detail}` : ''}`;
+        summary.title = `仅表示当前配置档、基础私聊与当前思考设置；内建兼容库及 ${count} 条本地规则的其他能力请点入查看。`;
     }
 
     getMaskedActiveKey() {
@@ -2067,6 +2225,7 @@ export class ConfigPanel {
         const defaults = this.getProviderDefaults(provider, {
             region: panel.querySelector('#config-region')?.value || 'us-central1',
             ollamaMode: panel.querySelector('#config-ollama-mode')?.value || 'cloud',
+            kimiRegion: panel.querySelector('#config-kimi-region')?.value || 'global',
         });
         const baseUrlInput = panel.querySelector('#config-baseurl');
         const baseUrlSection = panel.querySelector('#config-baseurl-section');
@@ -2107,7 +2266,7 @@ export class ConfigPanel {
             const currentModel = modelInput.value.trim();
             const allDefaults = providerKeys.map(p => this.getProviderDefaults(p).model);
             const isDefaultModel = allDefaults.includes(currentModel);
-            if (!currentModel || isDefaultModel) {
+            if (!currentModel || isDefaultModel || shouldResetDirectProviderModel(provider, currentModel)) {
                 modelInput.value = defaults.model;
             }
             modelInput.placeholder = defaults.model;
@@ -2187,12 +2346,16 @@ export class ConfigPanel {
         const baseUrlSection = panel.querySelector('#config-baseurl-section');
         const vertexaiFields = panel.querySelector('#vertexai-fields');
         const ollamaFields = panel.querySelector('#ollama-fields');
+        const kimiFields = panel.querySelector('#kimi-fields');
         const apiKeyHelp = panel.querySelector('#apikey-help');
         if (baseUrlSection) {
             baseUrlSection.style.display = this.usesEditableBaseUrl(provider) ? 'block' : 'none';
         }
         if (ollamaFields) {
             ollamaFields.style.display = provider === 'ollama' ? 'block' : 'none';
+        }
+        if (kimiFields) {
+            kimiFields.style.display = provider === 'kimi' ? 'block' : 'none';
         }
         if (provider === 'ollama') {
             if (vertexaiFields) vertexaiFields.style.display = 'none';
@@ -2210,6 +2373,11 @@ export class ConfigPanel {
             vertexaiFields.style.display = 'block';
             if (apiKeyHelp) {
                 apiKeyHelp.textContent = 'Vertex AI 需 Service Account 后端签名；纯前端建议改用 Google AI Studio (Makersuite)';
+            }
+        } else if (provider === 'kimi') {
+            vertexaiFields.style.display = 'none';
+            if (apiKeyHelp) {
+                apiKeyHelp.textContent = '请使用所选开放平台站点创建的 API Key；全球站、中国大陆站与 Kimi Code Key 不通用。';
             }
         } else if (!this.providerRequiresApiKey(provider)) {
             vertexaiFields.style.display = 'none';
@@ -2244,6 +2412,7 @@ export class ConfigPanel {
 
         const provider = panel.querySelector('#config-provider')?.value;
         const region = panel.querySelector('#config-region')?.value || 'us-central1';
+        const kimiRegion = panel.querySelector('#config-kimi-region')?.value || 'global';
         const apiKeyInput = panel.querySelector('#config-apikey');
         const rawKey = (apiKeyInput?.value || '').trim();
         const masked = apiKeyInput?.dataset?.masked || '';
@@ -2254,7 +2423,7 @@ export class ConfigPanel {
             provider: provider,
             baseUrl: this.usesEditableBaseUrl(provider)
                 ? (panel.querySelector('#config-baseurl')?.value || '').trim()
-                : this.getProviderDefaults(provider, { region }).baseUrl,
+                : this.getProviderDefaults(provider, { region, kimiRegion }).baseUrl,
             connectionMode: panel.querySelector('#config-transport-mode')?.value === 'reverse_proxy' ? 'reverse_proxy' : 'direct',
             proxyBaseUrl: (panel.querySelector('#config-proxy-baseurl')?.value || '').trim(),
             proxyAuthHeaderName: (panel.querySelector('#config-proxy-auth-header')?.value || '').trim(),
@@ -2892,6 +3061,12 @@ export class ConfigPanel {
             // 获取模型列表
             logger.info(`正在获取 ${formData.provider} 的模型列表...`);
             const models = await tempClient.listModels();
+            if (
+                this.activeTab === 'chat'
+                && typeof tempClient.prepareProviderFcCapabilities === 'function'
+            ) {
+                await tempClient.prepareProviderFcCapabilities();
+            }
             const needsGoogleImageModels = this.activeTab === 'image'
                 && (formData.provider === 'makersuite' || formData.provider === 'vertexai');
             if (needsGoogleImageModels) {

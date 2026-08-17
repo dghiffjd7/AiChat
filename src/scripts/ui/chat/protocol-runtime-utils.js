@@ -47,6 +47,180 @@ export const commitProtocolSummary = (
   return true;
 };
 
+const findProtocolPostambleStart = (rawText = '') => {
+  const source = String(rawText ?? '');
+  const marker = /\bMiPhone_end\b/giu;
+  let last = null;
+  let match;
+  while ((match = marker.exec(source))) last = match;
+  return last ? last.index + last[0].length : -1;
+};
+
+const findPrimaryAssistantAnchor = ({
+  primarySessionId = '',
+  capturedMessages = [],
+  findMessage = null,
+} = {}) => {
+  const sessionId = String(primarySessionId || '').trim();
+  if (!sessionId || typeof findMessage !== 'function') return null;
+  const candidates = Array.isArray(capturedMessages) ? capturedMessages : [];
+  for (let index = candidates.length - 1; index >= 0; index -= 1) {
+    const item = candidates[index] || {};
+    if (String(item.targetSessionId || '').trim() !== sessionId) continue;
+    const messageId = String(item.messageId || '').trim();
+    if (!messageId) continue;
+    const message = findMessage(messageId, sessionId);
+    if (message?.role === 'assistant') return message;
+  }
+  return null;
+};
+
+const applyProtocolPostambleVariableUpdate = ({
+  rawText = '',
+  primarySessionId = '',
+  capturedMessages = [],
+  variableRuntimeEnabled = true,
+  useGlobalVariables = false,
+} = {}, {
+  extractVariableBlocks = null,
+  parseVariableCommands = null,
+  applyVariableCommands = null,
+  findMessage = null,
+  captureVariableSnapshot = null,
+  logger = null,
+} = {}) => {
+  const skipped = reason => ({
+    attempted: false,
+    applied: false,
+    changed: false,
+    commandCount: 0,
+    targetMessageId: '',
+    reason,
+  });
+  if (variableRuntimeEnabled === false) return skipped('variable_runtime_disabled');
+  const sessionId = String(primarySessionId || '').trim();
+  if (!sessionId) return skipped('session_missing');
+  const source = String(rawText ?? '');
+  const postambleStart = findProtocolPostambleStart(source);
+  if (postambleStart < 0) return skipped('phone_shell_missing');
+  const postamble = source.slice(postambleStart);
+  const balancedBlockPattern = /<\s*(update(?:variable)?|variableupdate)\b[^>]*>[\s\S]*?<\s*\/\s*\1\s*>/giu;
+  const balancedBlocks = postamble.match(balancedBlockPattern) || [];
+  const residue = postamble.replace(balancedBlockPattern, '');
+  if (/<\s*\/?\s*(?:update(?:variable)?|variableupdate)\b[^>]*>/iu.test(residue)) {
+    return skipped('postamble_block_unbalanced');
+  }
+  if (!balancedBlocks.length) return skipped('postamble_block_missing');
+  const anchor = findPrimaryAssistantAnchor({
+    primarySessionId: sessionId,
+    capturedMessages,
+    findMessage,
+  });
+  if (!anchor) return skipped('assistant_anchor_missing');
+  if (
+    typeof extractVariableBlocks !== 'function'
+    || typeof parseVariableCommands !== 'function'
+    || typeof applyVariableCommands !== 'function'
+  ) {
+    return skipped('variable_runtime_unavailable');
+  }
+  try {
+    const extracted = extractVariableBlocks(postamble) || {};
+    const blocks = Array.isArray(extracted.blocks) ? extracted.blocks : [];
+    const commands = blocks.flatMap((block) => {
+      const parsed = parseVariableCommands(block);
+      return Array.isArray(parsed) ? parsed : [];
+    });
+    if (!commands.length) return skipped('variable_commands_empty');
+    const changed = Boolean(applyVariableCommands(sessionId, commands, {
+      useGlobal: useGlobalVariables === true,
+    }));
+    try {
+      captureVariableSnapshot?.(sessionId, anchor);
+    } catch (error) {
+      logger?.warn?.('protocol variable snapshot capture failed', error);
+    }
+    return {
+      attempted: true,
+      applied: true,
+      changed,
+      commandCount: commands.length,
+      targetMessageId: String(anchor.id || '').trim(),
+      reason: '',
+    };
+  } catch (error) {
+    logger?.warn?.('protocol variable side effect failed after response commit', error);
+    return skipped('variable_apply_failed');
+  }
+};
+
+export const runProtocolCommittedFunctionalEffects = async ({
+  rawText = '',
+  primarySessionId = '',
+  capturedMessages = [],
+  protocolSummary = '',
+  summarySessionIds = null,
+  summaryEnabled = false,
+  variableRuntimeEnabled = true,
+  useGlobalVariables = false,
+  memoryOptions = {},
+} = {}, {
+  handleMemoryEditsFromRaw = null,
+  extractVariableBlocks = null,
+  parseVariableCommands = null,
+  applyVariableCommands = null,
+  findMessage = null,
+  captureVariableSnapshot = null,
+  extractSummaryBlock = null,
+  addSummary = null,
+  requestSummaryCompaction = null,
+  logger = null,
+} = {}) => {
+  const raw = String(rawText ?? '');
+  let memoryAttempted = false;
+  let memoryFailed = false;
+  if (typeof handleMemoryEditsFromRaw === 'function') {
+    memoryAttempted = true;
+    try {
+      await handleMemoryEditsFromRaw(raw, memoryOptions || {});
+    } catch (error) {
+      memoryFailed = true;
+      logger?.warn?.('protocol memory side effect failed after response commit', error);
+    }
+  }
+  const variable = applyProtocolPostambleVariableUpdate({
+    rawText: raw,
+    primarySessionId,
+    capturedMessages,
+    variableRuntimeEnabled,
+    useGlobalVariables,
+  }, {
+    extractVariableBlocks,
+    parseVariableCommands,
+    applyVariableCommands,
+    findMessage,
+    captureVariableSnapshot,
+    logger,
+  });
+  let resolvedSummary = String(protocolSummary || '').trim();
+  if (!resolvedSummary && summaryEnabled && typeof extractSummaryBlock === 'function') {
+    try {
+      resolvedSummary = String(extractSummaryBlock(raw)?.summary || '').trim();
+    } catch {}
+  }
+  const summaryCommitted = commitProtocolSummary(resolvedSummary, summarySessionIds, {
+    addSummary,
+    requestSummaryCompaction,
+  });
+  return {
+    rawLength: raw.length,
+    memoryAttempted,
+    memoryFailed,
+    variable,
+    summaryCommitted,
+  };
+};
+
 export const flushProtocolMomentsIfNeeded = async (
   mutatedMoments,
   { flushMoments = null } = {},

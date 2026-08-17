@@ -24,7 +24,8 @@ import { createLineageAgentRuntime } from '../agent/lineage-agent-runtime.js';
 import { createWorldbookAuditAgent } from '../agent/worldbook-audit-agent.js';
 import { createAgentPermissionEvaluator } from '../agent/agent-permissions.js';
 import { createAgentTaskRuntime } from '../agent/agent-task-runtime.js';
-import { createAgentToolRegistry } from '../agent/agent-tool-registry.js';
+import { createAgentToolRegistry, validateAgentToolArguments } from '../agent/agent-tool-registry.js';
+import { normalizeAgentUsage } from '../agent/agent-events.js';
 import { createAgentToolSafetyAllowStore } from '../agent/agent-tool-safety-allow-store.js';
 import { tokenCalibrationStore } from '../memory/token-calibration-utils.js';
 import { streamUsageCompat } from '../api/stream-usage-compat.js';
@@ -65,10 +66,16 @@ import {
 } from '../agent/app-feature-catalog.js';
 import { createAppResourceReader } from '../agent/app-resource-reader.js';
 import {
+  buildMaidModelPlannerMessages,
   createMaidImportedCardClassifier,
   createMaidModelBackedPlanner,
   createMaidModelBackedReActPlanner,
 } from '../agent/maid-model-planner.js';
+import {
+  buildGlobalSemanticPromptInjectionAudit,
+  resolveGlobalSemanticPromptPlan,
+} from '../agent/global-semantic-prompt-library.js';
+import { resolveMaidProviderFcRuntimeStatus } from '../agent/maid-provider-fc-planner.js';
 import { buildMaidImageGenerationContext } from '../agent/maid-image-generation-context.js';
 import {
   createMaidSemanticMemoryExtractor,
@@ -98,6 +105,8 @@ import { MaidConversationStore } from '../storage/maid-conversation-store.js';
 import { MaidSemanticMemoryStore } from '../storage/maid-semantic-memory-store.js';
 import { MaidSettingsStore } from '../storage/maid-settings-store.js';
 import { appSettings } from '../storage/app-settings.js';
+import { chatFcLocalCapabilityStore } from '../storage/chat-fc-local-capability-store.js';
+import { chatStructuredRouteEvidenceStore } from '../storage/chat-structured-route-evidence-store.js';
 import { renderTemplateTextAsync, templateSettings } from '../plugins/template-engine.js';
 import { ScriptRuntime } from '../plugins/script-runtime.js';
 import { ChatStore } from '../storage/chat-store.js';
@@ -153,6 +162,7 @@ import { safeInvoke } from '../utils/tauri.js';
 import { createMaidSelectionMode } from './maid-selection-mode.js';
 import { captureMaidViewportRegion } from './maid-region-capture-utils.js';
 import { MAID_SUB_AGENT_SKILLS } from '../storage/maid-settings-store.js';
+import { hasLegacyMigratedPresetBindings } from '../storage/preset-store.js';
 import './bridge.js';
 import {
   registerChatUiBridgeContract,
@@ -307,6 +317,12 @@ import {
 } from './chat/voice-interaction-runtime.js';
 import { enqueueMessagesCore } from './chat/typing-flow-ui-utils.js';
 import { createAssistantStreamRuntime, isStreamCtrlConnected } from './chat/assistant-stream-runtime.js';
+import { createDisposableStructuredPreviewRuntime } from './chat/structured-response-preview-runtime.js';
+import {
+  armChatStructuredCircuitRetry,
+  createChatStructuredCircuitToastTracker,
+  showChatStructuredCircuitToast,
+} from './chat/chat-structured-route-status-utils.js';
 import {
   buildChatFormatGuardianRetryInstruction,
   dispatchAfterReceiveEffects,
@@ -338,6 +354,7 @@ import {
   resolveLatestFormatRepairTarget,
   tagMessageWithFormatRepairTurn,
 } from './chat/format-repair-target-utils.js';
+import { createMaidFormatProfileSourceStateResolver } from './chat/format-profile-source-runtime-utils.js';
 import {
   createRejectedFormatRepairBannerRuntime,
   isRejectedProtocolRawEnvelope,
@@ -402,6 +419,7 @@ import {
   createMomentCommentLifecycleRuntime,
   createMomentSummaryCompactionRuntime,
   resolvePrivateChatTargetSessionIdByName,
+  runMomentCommentGeneration,
 } from './chat/moments-runtime-utils.js';
 import {
   buildMomentStructuredMentions,
@@ -597,6 +615,15 @@ import {
   collectProtocolResponseStream,
   runProtocolResponseTransaction,
 } from './chat/protocol-response-transaction-utils.js';
+import { runProtocolCommittedFunctionalEffects } from './chat/protocol-runtime-utils.js';
+import {
+  classifyProtocolGenerationError,
+  createMomentProtocolGenerationDiagnosticsRunner,
+  createProtocolGenerationDiagnosticStore,
+  createProtocolGenerationDiagnosticsRuntime,
+  inspectProtocolHistory,
+  summarizeProtocolGenerationDiagnostics,
+} from './chat/protocol-generation-diagnostics-utils.js';
 import {
   applyProtocolMomentEvent,
   appendProtocolGroupChatEventImmediate,
@@ -801,6 +828,11 @@ import {
   writeModeSwitchPosition,
 } from './mode-switch-position-runtime-utils.js';
 import { appConfirm, appChoice, appPromptText } from './app-confirm.js';
+import {
+  buildAdHocWebSearchRuntime,
+  createAdHocWebSearchToggleRuntime,
+  renderAdHocWebSources,
+} from './chat/ad-hoc-web-search-runtime.js';
 import { bindBackdropActivation } from './backdrop-activation-utils.js';
 import {
   clearRuntimeNoiseStorage,
@@ -1021,6 +1053,42 @@ const initApp = async () => {
     status.textContent = detail.message || '正在联网搜索…';
     wrapper.appendChild(status);
   });
+  const structuredRouteCircuitToastTracker = createChatStructuredCircuitToastTracker();
+  window.addEventListener('chatapp-phone-structured-route-status', (event) => {
+    const detail = event?.detail || {};
+    if (String(detail.sessionId || '') !== String(chatStore.getCurrent() || '')) return;
+    const state = String(detail.state || '').trim();
+    if (state === 'circuit_opened') {
+      if (structuredRouteCircuitToastTracker.shouldNotify(detail)) {
+        showChatStructuredCircuitToast({
+          toastr: window.toastr,
+          detail,
+          onRetry: retryDetail => armChatStructuredCircuitRetry({
+            detail: retryDetail,
+            evidenceStore: chatStructuredRouteEvidenceStore,
+            localCapabilityStore: chatFcLocalCapabilityStore,
+          }),
+        });
+      }
+    }
+    const typingLabel = document.querySelector(
+      '#typing-indicator .typing-private-label, #typing-indicator .typing-group-label',
+    );
+    if (!typingLabel) return;
+    const active = state === 'generating' || state === 'fallback';
+    if (active) {
+      if (!typingLabel.dataset.structuredRouteOriginal) {
+        typingLabel.dataset.structuredRouteOriginal = typingLabel.textContent || '输入中';
+      }
+      typingLabel.textContent = String(detail.message || '').trim()
+        || (state === 'fallback' ? '正在以传统格式重试…' : '正在生成结构化回复…');
+      return;
+    }
+    if (typingLabel.dataset.structuredRouteOriginal) {
+      typingLabel.textContent = typingLabel.dataset.structuredRouteOriginal;
+      delete typingLabel.dataset.structuredRouteOriginal;
+    }
+  });
   window.addEventListener('chatapp-web-search-unavailable', (event) => {
     const reason = String(event?.detail?.reason || '').trim();
     window.toastr?.warning?.(
@@ -1036,6 +1104,17 @@ const initApp = async () => {
   const presetStore = getPresetStore(window.appBridge);
   registerPresetStoreBridgeContract(window.appBridge, {
     getPresetStore: window.appBridge.getPresetStore?.bind(window.appBridge),
+  });
+  void Promise.resolve(presetStore?.ready).then(() => {
+    if (appSettings.get().presetScopeMigrationNoticeShown === true) return;
+    if (!hasLegacyMigratedPresetBindings(presetStore?.getState?.())) return;
+    appSettings.update({ presetScopeMigrationNoticeShown: true });
+    window.toastr?.info?.(
+      '已保留升级前的聊天预设设置，可在会话配置中查看或清除。',
+      '聊天预设已整理',
+    );
+  }).catch((error) => {
+    logger.debug('preset scope migration notice skipped', error);
   });
   const sessionConfigPanel = new SessionConfigPanel({ store: presetStore });
   const pluginStore = new PluginStore();
@@ -1604,7 +1683,9 @@ const initApp = async () => {
     backgroundChat: window.appBridge.backgroundChat?.bind(window.appBridge),
     consumeLastGenerationUsage: window.appBridge.consumeLastGenerationUsage?.bind(window.appBridge),
     consumeLastGenerationSources: window.appBridge.consumeLastGenerationSources?.bind(window.appBridge),
+    finalizeChatStructuredEvidence: window.appBridge.finalizeChatStructuredEvidence?.bind(window.appBridge),
     setWebSearchToolRuntime: window.appBridge.setWebSearchToolRuntime?.bind(window.appBridge),
+    getWebSearchToolRuntime: window.appBridge.getWebSearchToolRuntime?.bind(window.appBridge),
   });
   registerRegexTransformBridgeContract(window.appBridge, {
     applyInputStoredRegex: window.appBridge.applyInputStoredRegex?.bind(window.appBridge),
@@ -2601,6 +2682,77 @@ const initApp = async () => {
       recordDebugTraceEvent(buildMomentLifecycleTraceEvent(event));
     } catch {}
   };
+  const updateDebugTraceEvent = (eventId, patch = {}) => {
+    try {
+      return window.appBridge?.debugUiRegistry?.actions?.finishTraceEvent?.(eventId, patch) || null;
+    } catch {
+      return null;
+    }
+  };
+  const protocolGenerationDiagnosticStore = createProtocolGenerationDiagnosticStore({ maxEntries: 500 });
+  const protocolGenerationDiagnostics = createProtocolGenerationDiagnosticsRuntime({
+    recordEvent: (event) => {
+      const timelineEvent = recordDebugTraceEvent(event) || event;
+      return protocolGenerationDiagnosticStore.record(timelineEvent) || timelineEvent;
+    },
+    updateEvent: (eventId, patch = {}) => {
+      const timelineEvent = updateDebugTraceEvent(eventId, patch);
+      return protocolGenerationDiagnosticStore.update(eventId, timelineEvent || patch) || timelineEvent;
+    },
+  });
+  let deepSeekPhonePrefillExperimentEnabled = false;
+  const getDeepSeekPhonePrefillExperimentStatus = () => ({
+    enabled: deepSeekPhonePrefillExperimentEnabled,
+    defaultEnabled: false,
+    runtimeOnly: true,
+  });
+  let privateChatProviderFcExperimentEnabled = true;
+  const getPrivateChatProviderFcExperimentStatus = () => ({
+    enabled: privateChatProviderFcExperimentEnabled,
+    defaultEnabled: true,
+    runtimeOnly: true,
+    compatibilityModeEnabled: appSettings.get().traditionalModelOutputProtocolEnabled === true,
+  });
+  let maidDeepSeekProviderFcExperimentOverride = null;
+  const getMaidDeepSeekProviderFcExperimentStatus = () => resolveMaidProviderFcRuntimeStatus({
+    compatibilityModeEnabled: appSettings.get().traditionalModelOutputProtocolEnabled === true,
+    runtimeOverride: maidDeepSeekProviderFcExperimentOverride,
+  });
+  patchDebugUiRegistry((registry) => {
+    registry.actions.getProtocolGenerationDiagnosticSummary = () => (
+      summarizeProtocolGenerationDiagnostics(
+        protocolGenerationDiagnosticStore.snapshot({ category: 'chat_protocol' }),
+      )
+    );
+    registry.actions.getDeepSeekPhonePrefillExperimentStatus = getDeepSeekPhonePrefillExperimentStatus;
+    registry.actions.setDeepSeekPhonePrefillExperimentEnabled = (enabled) => {
+      deepSeekPhonePrefillExperimentEnabled = enabled === true;
+      return getDeepSeekPhonePrefillExperimentStatus();
+    };
+    registry.actions.getPrivateChatProviderFcExperimentStatus = getPrivateChatProviderFcExperimentStatus;
+    registry.actions.setPrivateChatProviderFcExperimentEnabled = (enabled) => {
+      privateChatProviderFcExperimentEnabled = enabled === true;
+      return getPrivateChatProviderFcExperimentStatus();
+    };
+    registry.actions.getMaidDeepSeekProviderFcExperimentStatus = getMaidDeepSeekProviderFcExperimentStatus;
+    registry.actions.setMaidDeepSeekProviderFcExperiment = (next = false) => {
+      const source = next && typeof next === 'object' ? next : { enabled: next };
+      maidDeepSeekProviderFcExperimentOverride = (
+        next === null || source.reset === true || source.overrideActive === false
+      )
+        ? null
+        : {
+            enabled: source.enabled === true,
+            thinkingEnabled: source.thinkingEnabled === true,
+          };
+      return getMaidDeepSeekProviderFcExperimentStatus();
+    };
+    registry.actions.clearMaidDeepSeekProviderFcExperimentOverride = () => {
+      maidDeepSeekProviderFcExperimentOverride = null;
+      return getMaidDeepSeekProviderFcExperimentStatus();
+    };
+    registry.stores.protocolGenerationDiagnostics = protocolGenerationDiagnosticStore;
+  });
   const agentRunStore = new AgentRunStore();
   try {
     await agentRunStore.load();
@@ -2759,6 +2911,7 @@ const initApp = async () => {
       allowRunnerNetwork: opts.allowRunnerNetwork === true,
       createClient: config => new LLMClient(config),
       useNativeRunnerShim: opts.useNativeRunnerShim !== false,
+      providerApi: opts.providerApi || '',
       requestId: opts.requestId || '',
     });
   };
@@ -2770,6 +2923,7 @@ const initApp = async () => {
     const currentRunner = await resolveCurrentProviderToolRunnerClient({
       ...opts,
       sessionId,
+      providerApi: opts.providerApi || pending?.toolCall?.providerContinuation?.api || '',
       enabled: opts.enabled === true || opts.enableCurrentProviderRunner === true,
       allowCurrentProviderRunner: opts.allowCurrentProviderRunner === true,
       allowRunnerNetwork: opts.allowRunnerNetwork === true,
@@ -3824,6 +3978,8 @@ const initApp = async () => {
     isConfigReady: canInitClient,
     getConversationContext: getMaidConversationContext,
     getImageGenerationContext: getCurrentMaidImageGenerationContext,
+    getProviderFcExperimentStatus: getMaidDeepSeekProviderFcExperimentStatus,
+    getGlobalSemanticPromptLibrary: () => agentCenterSettingsStore.getGlobalSemanticPromptLibrary(),
     onContextInjected: recordMaidContextInjection,
     onDebugSnapshot: recordMaidDebugSnapshot,
     logger,
@@ -3834,6 +3990,7 @@ const initApp = async () => {
     isConfigReady: canInitClient,
     getConversationContext: getMaidConversationContext,
     getImageGenerationContext: getCurrentMaidImageGenerationContext,
+    getProviderFcExperimentStatus: getMaidDeepSeekProviderFcExperimentStatus,
     onContextInjected: recordMaidContextInjection,
     onDebugSnapshot: recordMaidDebugSnapshot,
     logger,
@@ -3864,6 +4021,11 @@ const initApp = async () => {
     chatResponder: maidChatResponder,
     guidedActionRuntime: maidGuidedActionRuntime,
     prepareConversationContext: prepareMaidConversationContext,
+    getCapabilityRoutingConfigOverride: () => (
+      getMaidDeepSeekProviderFcExperimentStatus().enabled === true
+        ? { mode: 'bounded' }
+        : null
+    ),
     logger,
   });
   const maidToolSafetyAllowStore = createAgentToolSafetyAllowStore({
@@ -3891,7 +4053,7 @@ const initApp = async () => {
   } catch (err) {
     logger.debug('stream usage compat hydrate skipped', err);
   }
-  const requestMaidToolConfirmation = async request => {
+  const requestMaidToolConfirmation = async (request, { signal = null } = {}) => {
     // 只读意图升级确认：不吃 allow-always 捷径、也不提供「始终允许」——
     // 这是对单次意图误差的放行，不该沉淀成永久规则。
     const escalated = request?.escalation === 'read_only_write';
@@ -3906,6 +4068,7 @@ const initApp = async () => {
       items: request?.details?.items,
       defaultActionId: 'allow_once',
       danger,
+      signal,
       actions: [
         {
           id: 'deny',
@@ -4046,6 +4209,7 @@ const initApp = async () => {
         agentCenterSettingsStore,
         maidConversationStore,
         maidSemanticMemoryStore,
+        protocolGenerationDiagnostics: protocolGenerationDiagnosticStore,
       },
       actions: {
         getAgentTool: name => agentToolRegistry.get(name),
@@ -4181,6 +4345,21 @@ const initApp = async () => {
           return true;
         },
         getAgentCenterSettings: () => agentCenterSettingsStore.getSettings(),
+        upsertGlobalSemanticPromptBlock: (options = {}) => (
+          agentCenterSettingsStore.upsertGlobalSemanticPromptBlock(options?.block || {})
+        ),
+        removeGlobalSemanticPromptBlock: (options = {}) => (
+          agentCenterSettingsStore.removeGlobalSemanticPromptBlock(options?.id || '')
+        ),
+        reorderGlobalSemanticPromptBlocks: (options = {}) => (
+          agentCenterSettingsStore.reorderGlobalSemanticPromptBlocks(options?.ids || [])
+        ),
+        exportGlobalSemanticPromptLibrary: () => (
+          agentCenterSettingsStore.exportGlobalSemanticPromptLibrary()
+        ),
+        importGlobalSemanticPromptLibrary: (options = {}) => (
+          agentCenterSettingsStore.importGlobalSemanticPromptLibrary(options?.payload || {})
+        ),
         setAgentCardEnabled: (options = {}) => agentCenterSettingsStore.setCardEnabled(
           options?.id,
           options?.enabled === true,
@@ -4300,6 +4479,7 @@ const initApp = async () => {
           return buildProviderToolRequestSchema({
             debugUiRegistry: window.appBridge?.debugUiRegistry || null,
             provider: opts.provider || 'openai',
+            baseUrl: opts.baseUrl || '',
             model: opts.model || '',
             sessionId: opts.sessionId || chatStore.getCurrent(),
             sessionGate: opts.sessionGate || null,
@@ -4388,6 +4568,7 @@ const initApp = async () => {
           const result = await maidAssistantAgent.runPrompt(input, {
             ...maidTurnContext,
             maidAttachments: Array.isArray(opts.maidAttachments) ? opts.maidAttachments : [],
+            signal: opts.signal || null,
             resolveMaidSelectionRegion: regionId => maidSelectionMode.resolveCaptureRegion(regionId),
             requestToolConfirmation: requestMaidToolConfirmation,
           });
@@ -4397,6 +4578,60 @@ const initApp = async () => {
             context: maidTurnContext,
           });
           return result;
+        },
+        runMaidPlannerDecisionPreview: async (options = {}) => {
+          const opts = options && typeof options === 'object' ? options : {};
+          const input = String(opts.input || opts.prompt || opts.text || '').trim();
+          if (!input) return { ok: false, reason: 'empty_input' };
+          const startedAt = Date.now();
+          const modelUsageEntries = [];
+          const context = {
+            sessionId: opts.sessionId || chatStore.getCurrent(),
+            uiMode: opts.uiMode || uiMode,
+            activePage: opts.activePage || activePage,
+            userSelection: Array.isArray(opts.userSelection) ? opts.userSelection : [],
+            maidAttachments: Array.isArray(opts.maidAttachments) ? opts.maidAttachments : [],
+            maidConversationContextRef: { current: null },
+            onModelUsage: usage => {
+              if (usage && typeof usage === 'object') modelUsageEntries.push(normalizeAgentUsage(usage));
+            },
+          };
+          const request = maidCapabilityRoutingRuntime.beginRequest({ input, context });
+          let decision = null;
+          try {
+            const capabilitySnapshot = maidCapabilityRoutingRuntime.prepareDecision({
+              requestId: request.id,
+              input,
+              context,
+              phase: 'planner',
+              configOverride: { mode: 'bounded' },
+            });
+            decision = await maidPlanner(input, { ...context, capabilitySnapshot });
+            decision = maidCapabilityRoutingRuntime.observeDecision(capabilitySnapshot, decision);
+            const selectedTool = decision?.toolName
+              ? agentToolRegistry.get(decision.toolName)
+              : null;
+            const argumentValidation = selectedTool
+              ? validateAgentToolArguments(decision?.args, selectedTool.schema)
+              : { ok: true, errors: [] };
+            return {
+              decision,
+              capabilityRouting: maidCapabilityRoutingRuntime.finishRequest(request.id, decision),
+              argumentValidation: {
+                applicable: Boolean(selectedTool),
+                ok: argumentValidation.ok === true,
+                errorCount: Array.isArray(argumentValidation.errors) ? argumentValidation.errors.length : 0,
+              },
+              modelUsage: modelUsageEntries,
+              latencyMs: Math.max(0, Date.now() - startedAt),
+            };
+          } catch (error) {
+            maidCapabilityRoutingRuntime.finishRequest(request.id, {
+              ok: false,
+              reason: error?.message || String(error || ''),
+            });
+            throw error;
+          }
         },
         exportAgentRuns: options => agentRunStore.exportState(options || {}),
         runContactProfileUpdate: options => contactProfilerAgent.runProfileUpdate({
@@ -4683,6 +4918,17 @@ const initApp = async () => {
   let requestMomentSummaryCompaction = () => Promise.resolve(false);
   let momentsPanel = null;
   let addMomentsWithAutoImage = (items = []) => momentsStore.addMany(items);
+  const runMomentCommentGenerationWithDiagnostics = createMomentProtocolGenerationDiagnosticsRunner({
+    diagnostics: protocolGenerationDiagnostics,
+    runGeneration: runMomentCommentGeneration,
+    getLastRequest: () => window.appBridge?.lastRequest || null,
+    finalizeStructuredEvidence: payload => (
+      window.appBridge?.finalizeChatStructuredEvidence?.(payload)
+    ),
+    getHistory: () => inspectProtocolHistory(lastMomentRawReply
+      ? [{ role: 'assistant', raw: lastMomentRawReply }]
+      : []),
+  });
   const momentCommentRuntime = createMomentCommentLifecycleRuntime({
     getIsConfigured: () => isBridgeConfigured(window.appBridge),
     isOnline: () => typeof navigator === 'undefined' || navigator.onLine,
@@ -4744,6 +4990,7 @@ const initApp = async () => {
     onTouchedChats: () => refreshChatAndContacts(),
     onTouchedMoments: () => momentsPanel?.render({ preserveScroll: true }),
     generate: (text, payload) => window.appBridge.generate(text, payload),
+    runGeneration: runMomentCommentGenerationWithDiagnostics,
     createParser: () => new DialogueStreamParser({ userName: '我' }),
     normalizeChunk: normalizeAssistantStreamChunk,
     saveRawReply: async (raw, metadata) => {
@@ -10675,9 +10922,14 @@ Phase G（Frame 36）：循环衔接
         <div class="sticker-ai-hint">模板会与风格描述一起发送给主模型，自动生成完整提示词。</div>
 
         <div class="sticker-ai-actions">
+          <label class="sticker-ai-web-toggle" title="仅下一次生成或继续使用联网搜索">
+            <input type="checkbox" id="sticker-ai-web-search">
+            <span>本次联网</span>
+          </label>
           <button type="button" class="sticker-ai-btn" id="sticker-ai-build">生成完整提示词</button>
           <button type="button" class="sticker-ai-btn ghost" id="sticker-ai-reset">重置模板</button>
         </div>
+        <div class="ad-hoc-web-sources sticker-ai-sources" id="sticker-ai-sources" hidden></div>
 
         <label class="sticker-ai-label">参考图片（可选）</label>
         <div class="sticker-ai-ref">
@@ -10801,6 +11053,8 @@ Phase G（Frame 36）：循环衔接
     const templateInput = modal.querySelector('#sticker-ai-template');
     const finalInput = modal.querySelector('#sticker-ai-final');
     const statusEl = modal.querySelector('#sticker-ai-status');
+    const webSearchToggle = modal.querySelector('#sticker-ai-web-search');
+    const webSourcesEl = modal.querySelector('#sticker-ai-sources');
     const previewEl = modal.querySelector('#sticker-ai-preview');
     const guideStageEl = modal.querySelector('#sticker-ai-guide-stage');
     const guidePlaceholderEl = modal.querySelector('#sticker-ai-guide-placeholder');
@@ -11716,12 +11970,26 @@ Phase G（Frame 36）：循环衔接
       statusEl.dataset.tone = tone;
     };
 
+    const webSearchToggleRuntime = createAdHocWebSearchToggleRuntime({
+      toggleEl: webSearchToggle,
+      confirm: () => appConfirm({
+        title: '允许本次联网？',
+        message: '联网搜索可能产生额外费用，并会把本次生成所需的查询发送给搜索服务。此开关仅对下一次生成或继续生效。',
+        confirmText: '允许本次联网',
+        cancelText: '取消',
+      }),
+    });
+    webSearchToggle?.addEventListener('change', () => {
+      if (webSearchToggle.checked) void webSearchToggleRuntime.confirmEnabled();
+    });
+
     const setBusy = busy => {
       if (buildBtn) buildBtn.disabled = busy;
       if (renderBtn) renderBtn.disabled = busy;
       if (uploadBtn) uploadBtn.disabled = busy;
       if (resetBtn) resetBtn.disabled = busy;
       if (continueBtn) continueBtn.disabled = busy;
+      if (webSearchToggle) webSearchToggle.disabled = busy;
       if (sliceBtn) sliceBtn.disabled = busy;
       if (autoSliceBtn) autoSliceBtn.disabled = busy;
       if (saveBtn) saveBtn.disabled = busy;
@@ -13325,8 +13593,19 @@ Phase G（Frame 36）：循环衔接
       setStatus('正在生成提示词...', 'loading');
       try {
         const client = new LLMClient(config);
+        const useWebSearch = await webSearchToggleRuntime.consume();
+        renderAdHocWebSources(webSourcesEl, []);
+        const generation = buildAdHocWebSearchRuntime({
+          client,
+          config,
+          enabled: useWebSearch,
+          sessionId: `sticker-ai:${stickerAiMode}`,
+          requestOptions: { temperature: 0.6 },
+          onStatus: status => setStatus(status?.message || '', status?.state === 'unavailable' ? '' : 'loading'),
+          onSources: sources => renderAdHocWebSources(webSourcesEl, sources),
+        });
         const messages = buildPromptMessages(template, getPromptInputText());
-        const output = await client.chat(messages, { temperature: 0.6 });
+        const output = await generation.client.chat(messages, generation.requestOptions);
         finalInput.value = String(output || '').trim();
         scheduleTextSave(true);
         const modeLabel = stickerAiMode === 'sprite' ? '精灵图' : '贴图';
@@ -13356,8 +13635,19 @@ Phase G（Frame 36）：循环衔接
       setStatus('正在补全提示词...', 'loading');
       try {
         const client = new LLMClient(config);
+        const useWebSearch = await webSearchToggleRuntime.consume();
+        renderAdHocWebSources(webSourcesEl, []);
+        const generation = buildAdHocWebSearchRuntime({
+          client,
+          config,
+          enabled: useWebSearch,
+          sessionId: `sticker-ai:${stickerAiMode}`,
+          requestOptions: { temperature: 0.6 },
+          onStatus: status => setStatus(status?.message || '', status?.state === 'unavailable' ? '' : 'loading'),
+          onSources: sources => renderAdHocWebSources(webSourcesEl, sources),
+        });
         const messages = buildPromptContinueMessages(template, getPromptInputText(), draft);
-        const output = await client.chat(messages, { temperature: 0.6 });
+        const output = await generation.client.chat(messages, generation.requestOptions);
         finalInput.value = String(output || '').trim();
         scheduleTextSave(true);
         const modeLabel = stickerAiMode === 'sprite' ? '精灵图' : '贴图';
@@ -13416,6 +13706,8 @@ Phase G（Frame 36）：循环衔接
       const stored = loadStickerAiState() || {};
       applyPreviewSettings(getPreviewSettingsFromState(stored, stickerAiMode));
       scheduleTextSave(true);
+      webSearchToggleRuntime.reset();
+      renderAdHocWebSources(webSourcesEl, []);
       setStatus('');
       renderPreview();
       pruneSliceSettingsCache(generatedImages);
@@ -16697,6 +16989,7 @@ Phase G（Frame 36）：循环衔接
     previewInjectMomentCreate = true,
     includeHistory = false,
     rawBlocks = false,
+    forceLegacyText = false,
   } = {}) => {
     try {
       const request = await handleSend(null, {
@@ -16710,6 +17003,7 @@ Phase G（Frame 36）：循环衔接
         previewInjectMomentCreate,
         previewSuppressHistory: !includeHistory,
         previewRawBlocks: Boolean(rawBlocks),
+        previewForceLegacyText: Boolean(forceLegacyText),
         skipScripts: true,
       });
       if (!request || !Array.isArray(request.messages)) return null;
@@ -16719,6 +17013,56 @@ Phase G（Frame 36）：循环衔接
       return null;
     }
   };
+  patchDebugUiRegistry((registry) => {
+    registry.actions.previewGlobalSemanticPromptLibrary = async (options = {}) => {
+      const previewContext = String(options?.context || 'private_fc').trim().toLowerCase();
+      if (previewContext === 'maid') {
+        const plan = resolveGlobalSemanticPromptPlan(
+          agentCenterSettingsStore.getGlobalSemanticPromptLibrary(),
+          {
+            scope: 'maid',
+            taskType: 'maid_assistant',
+            rootPlanner: true,
+            user: '用户',
+            char: '女仆',
+            now: new Date(),
+          },
+        );
+        return {
+          ok: true,
+          route: 'maid_planner',
+          label: '女仆主规划请求',
+          messages: buildMaidModelPlannerMessages({
+            input: '示例：请帮我查看当前会话。',
+            context: { sessionId: 'preview:maid', uiMode: 'chat' },
+            globalSemanticPromptPlan: plan,
+          }),
+          audit: buildGlobalSemanticPromptInjectionAudit(plan),
+          previewOnly: true,
+        };
+      }
+      const request = await buildScenePromptPreviewRequest({
+        previewUiMode: 'chat',
+        previewScenario: 'private',
+        includeHistory: false,
+        forceLegacyText: previewContext === 'private_text',
+      });
+      if (!request) return { ok: false, message: '无法构建聊天预览' };
+      return {
+        ok: true,
+        route: String(request.phoneReplyTransport?.effectiveMode || 'legacy_text'),
+        label: previewContext === 'private_text' ? '示例私聊文本' : '示例私聊 FC',
+        request,
+        messages: request.messages,
+        audit: request.injectionAudit?.globalPrompt || {
+          injected: [],
+          skipped: [],
+          usedTokens: 0,
+        },
+        previewOnly: true,
+      };
+    };
+  });
   // 预览里单个宏 token 的悬停求值：写变量类只描述，其他宏也在隔离变量状态中运行。
   const evalScenePreviewMacro = (token = '', { previewUiMode = '' } = {}) => {
     return evaluateScenePreviewMacro(token, {
@@ -16754,9 +17098,6 @@ Phase G（Frame 36）：循环衔接
     return null;
   };
   let maidFormatProfileStore = null;
-  const getSessionFormatGuide = (sessionId = '') => (
-    String(maidFormatProfileStore?.get?.(String(sessionId || '').trim())?.guide || '').trim()
-  );
   const resolveUiModeForSession = (sessionId = '') => {
     const sid = String(sessionId || '').trim();
     if (isRpSessionId(sid)) return 'rp';
@@ -16764,6 +17105,31 @@ Phase G（Frame 36）：循环衔接
       return 'moments';
     }
     return 'chat';
+  };
+  const resolveMaidFormatProfileSourceState = createMaidFormatProfileSourceStateResolver({
+    presetStore,
+    regexStore,
+    personaStore,
+    contactsStore,
+    getUiMode: resolveUiModeForSession,
+    getRegexContext: options => window.appBridge?.getRegexContext?.(options) || {},
+    getResolvedWorldState: (sessionId, options) => window.appBridge?.getResolvedWorldState?.(sessionId, options) || {},
+    getWorldInfoMetadata: worldId => window.appBridge?.getWorldInfoMetadata?.(worldId) || null,
+  });
+  const getSessionFormatProfile = (sessionId = '') => {
+    const sid = String(sessionId || '').trim();
+    if (!sid || !maidFormatProfileStore) return null;
+    const cached = maidFormatProfileStore.peek?.(sid) || maidFormatProfileStore.get?.(sid) || null;
+    if (!cached) return null;
+    const sourceState = resolveMaidFormatProfileSourceState({
+      sessionId: sid,
+      sources: cached.sources,
+    });
+    return maidFormatProfileStore.get?.(sid, sourceState) || null;
+  };
+  const getSessionFormatGuide = (sessionId = '') => {
+    const profile = getSessionFormatProfile(sessionId);
+    return profile?.usable === false ? '' : String(profile?.guide || '').trim();
   };
   const resolveFormatTargetForSession = (sessionId = '') => {
     const sid = String(sessionId || '').trim();
@@ -18316,7 +18682,13 @@ Phase G（Frame 36）：循环衔接
                 findMessage: (messageId, sid) => chatStore.findMessage(messageId, sid),
                 isUiMessagePresent: isProtocolUiMessagePresent,
                 isSessionActive,
-                addUiMessage: (message, addOptions) => ui.addMessage(message, addOptions),
+                addUiMessage: (message, addOptions) => {
+                  ui.addMessage(message, addOptions);
+                  effects.onVisible?.({
+                    sessionId,
+                    messageId: String(message?.id || '').trim(),
+                  });
+                },
                 autoMarkReadIfActive,
                 emitPluginAfterReceive: effects.emitPluginAfterReceive,
                 maybeApplyGroupSystemOps: effects.maybeApplyGroupSystemOps,
@@ -23068,7 +23440,7 @@ Phase G（Frame 36）：循环衔接
     if (!write.ok) return false;
     refreshRpToolbar(sessionId);
     if (!locked) {
-      await resetRpHistory(sessionId);
+      await resetRpHistory(sessionId, { keepInput: true });
       window.toastr?.success?.('已新增并切换开场白');
       return true;
     }
@@ -23103,7 +23475,7 @@ Phase G（Frame 36）：循环衔接
     if (!write.ok) return false;
     refreshRpToolbar(sessionId);
     if (!locked && id === activeId) {
-      await resetRpHistory(sessionId);
+      await resetRpHistory(sessionId, { keepInput: true });
       window.toastr?.success?.('已更新当前开场白');
       return true;
     }
@@ -23694,8 +24066,16 @@ Phase G（Frame 36）：循环衔接
   const resetRpHistory = async (sessionId, { keepInput = false, withArchive = false } = {}) => {
     const sid = String(sessionId || '').trim();
     if (!sid) return { started: false, cancelled: true, archiveId: '' };
+    const preservedInput = keepInput
+      ? String(composerInput?.value ?? chatStore.getDraft(sid) ?? '')
+      : '';
+    const restorePreservedInput = () => {
+      if (!keepInput) return;
+      chatStore.setDraft(preservedInput, sid);
+      ui.setInputText(preservedInput);
+    };
     if (withArchive) {
-      return runRpPlotResetFlow({
+      const result = await runRpPlotResetFlow({
         sessionId: sid,
         keepInput,
         getMemoryStorageMode: () => getMemoryStorageMode('writing'),
@@ -23761,13 +24141,16 @@ Phase G（Frame 36）：循环衔接
         },
         logger,
       });
+      if (result?.started) restorePreservedInput();
+      return result;
     }
     chatStore.clear(sid);
     resetRpGreetingVariableState({ chatStore, sessionId: sid, applyMvuSchemaDefaults });
     ui.clearMessages();
     chatRenderState.set(sid, { start: 0 });
     await seedRpGreetingIfNeeded(sid);
-    if (!keepInput) ui.clearInput({ focus: false });
+    if (keepInput) restorePreservedInput();
+    else ui.clearInput({ focus: false });
     refreshChatAndContacts();
     updatePendingFloat(sid);
     refreshRpToolbar(sid);
@@ -24112,6 +24495,7 @@ Phase G（Frame 36）：循环衔接
       const result = await maidAssistantAgent.runPrompt(text, {
         ...maidTurnContext,
         maidAttachments: attachments,
+        signal: controls?.signal || null,
         resolveMaidSelectionRegion: regionId => maidSelectionMode.resolveCaptureRegion(regionId),
         requestToolConfirmation: requestMaidToolConfirmation,
         onStatus: (status = {}) => {
@@ -24134,7 +24518,7 @@ Phase G（Frame 36）：循环衔接
           source: 'no_model_result',
         });
       }
-      if (result?.ok === false) {
+      if (result?.ok === false && result?.status !== 'cancelled') {
         window.toastr?.warning?.(result.message || result.reason || '女仆暂时无法执行这个请求');
       } else if (
         result?.message &&
@@ -24145,6 +24529,18 @@ Phase G（Frame 36）：循环衔接
         window.toastr?.success?.('女仆已完成任务 ✓');
       }
       return result;
+    },
+    onCancelActive: async ({ queuedCount = 0 } = {}) => {
+      if (!queuedCount) return 'all_stop';
+      return appChoice({
+        title: '停止女仆任务',
+        message: `当前任务后还有 ${queuedCount} 项排队任务。是否全部停止？`,
+        defaultActionId: 'continue',
+        actions: [
+          { id: 'continue', label: '继续执行' },
+          { id: 'all_stop', label: '全部停止', primary: true, variant: 'danger' },
+        ],
+      });
     },
     onSettings: async () => {
       maidCommandInputRuntime?.close();
@@ -24202,6 +24598,7 @@ Phase G（Frame 36）：循环衔接
     getBallDragRuntime: () => modeSwitchInteractionRuntime,
     // 女仆流首选画布 = 指令条白色结果流（结构化 trace 卡原位并入，避免双流）
     onMaidTrace: view => maidCommandInputRuntime?.applyTraceView?.(view) === true,
+    onCancelMaidRun: () => maidCommandInputRuntime?.cancelActive?.(),
   });
   executionFlowRuntime.attachCreativeLane?.(creativeExecutionLaneRuntime);
   executionFlowRuntime.bind();
@@ -27160,8 +27557,8 @@ Phase G（Frame 36）：循环衔接
     let effectiveFormatHint = String(formatHint || '').trim();
     let usedProfile = false;
     if (!effectiveFormatHint) {
-      const profile = maidFormatProfileStore.get(sid);
-      if (profile?.guide) {
+      const profile = getSessionFormatProfile(sid);
+      if (profile?.usable !== false && profile?.guide) {
         effectiveFormatHint = profile.guide;
         usedProfile = true;
       }
@@ -27579,6 +27976,7 @@ Phase G（Frame 36）：循环衔接
     repairMessageFormat: repairAssistantMessageFormatForMaid,
     optimizeMessage: optimizeAssistantMessageForMaid,
     formatProfileStore: maidFormatProfileStore,
+    resolveFormatProfileSourceState: resolveMaidFormatProfileSourceState,
     resolveSessionId: ({ sessionId = '', sessionName = '' } = {}) => {
       const sid = String(sessionId || '').trim();
       if (sid) return sid;
@@ -27672,6 +28070,9 @@ Phase G（Frame 36）：循环衔接
 
   const handleChatFormatGuardianModelReviewQueued = ({ message, sessionId: previewSessionId } = {}) => {
     const sid = String(previewSessionId || '').trim();
+    protocolGenerationDiagnostics.markGuardianQueued(
+      String(message?.meta?.formatRepairTurnId || '').trim(),
+    );
     if (sid) chatFormatRepairActiveSessions.add(sid);
     if (message?.meta?.protocolParseFailure === true) {
       rejectedFormatRepairBannerRuntime?.markChecking?.({ sessionId: sid });
@@ -27707,7 +28108,7 @@ Phase G（Frame 36）：循环衔接
     const envelope = chatStore.getLastRawResponseEnvelope(sid);
     const raw = String(rawText || envelope?.text || '');
     if (!sid || !raw.trim() || !isRejectedProtocolRawEnvelope(envelope) || envelope.text !== raw) {
-      return { started: false, modelReviewQueued: false, completion: null };
+      return { started: false, modelReviewQueued: false, completion: null, reason: 'not_applicable' };
     }
     const baseRevision = createFormatPatchRevisionToken();
     const repairTarget = buildRejectedProtocolRepairTarget(sid, envelope);
@@ -27726,7 +28127,7 @@ Phase G（Frame 36）：循环衔接
         message,
       });
       if (manualTrigger) window.toastr?.warning?.(message);
-      return { started: false, modelReviewQueued: false, completion: null };
+      return { started: false, modelReviewQueued: false, completion: null, reason: 'disabled' };
     }
     if (
       modelMode === 'none'
@@ -27742,10 +28143,10 @@ Phase G（Frame 36）：循环衔接
         message,
       });
       if (manualTrigger) window.toastr?.warning?.(message);
-      return { started: false, modelReviewQueued: false, completion: null };
+      return { started: false, modelReviewQueued: false, completion: null, reason: 'model_unavailable' };
     }
     if (!manualTrigger && triggerMode === 'manual') {
-      return { started: false, modelReviewQueued: false, completion: null };
+      return { started: false, modelReviewQueued: false, completion: null, reason: 'manual_only' };
     }
     let settleCompletion = null;
     const completion = new Promise((resolve) => {
@@ -27778,6 +28179,14 @@ Phase G（Frame 36）：循环衔接
       onChatFormatGuardianRun: handleChatFormatGuardianAgentRun,
       onChatFormatGuardianModelReviewQueued: handleChatFormatGuardianModelReviewQueued,
       onChatFormatGuardianModelReviewCompleted: (payload) => {
+        protocolGenerationDiagnostics.markGuardianOutcome(repairTarget.turnId, {
+          queued: true,
+          failed: payload?.failed === true || payload?.agentRun?.status === 'failed',
+          status: payload?.result?.modelReview?.status
+            || payload?.result?.status
+            || payload?.agentRun?.status
+            || 'completed',
+        });
         settleCompletion?.({
           ...(payload || {}),
           queued: true,
@@ -27817,6 +28226,7 @@ Phase G（Frame 36）：循环衔接
       started: Boolean(preview),
       modelReviewQueued,
       completion,
+      reason: modelReviewQueued ? '' : 'not_queued',
     };
   };
 
@@ -28202,6 +28612,7 @@ Phase G（Frame 36）：循环衔接
       previewInjectMomentCreate,
       previewSuppressHistory,
       previewRawBlocks,
+      previewForceLegacyText,
       suppressAssistantDom,
       assistantStreamFactory,
       continueTarget,
@@ -28241,6 +28652,10 @@ Phase G（Frame 36）：循环衔接
     const hasAttachments = attachmentQueue.length > 0;
     const hasRequestAttachments = hasAttachments || resendAttachmentParts.length > 0;
     const sessionId = chatStore.getCurrent();
+    const messagesBeforeSend = chatStore.getMessages(sessionId) || [];
+    const protocolHistoryFacts = inspectProtocolHistory(messagesBeforeSend, {
+      lastRawResponse: chatStore.getLastRawResponse(sessionId),
+    });
     const isSendTargetWritable = () => (
       !sessionAsyncWorkRuntime.isClosing(sessionId) &&
       isChatSendTargetAvailable({ sessionId, chatStore, contactsStore })
@@ -28252,7 +28667,7 @@ Phase G（Frame 36）：循环衔接
         })
       : false);
     const assistantMessageIdsBefore = new Set(
-      (chatStore.getMessages(sessionId) || [])
+      messagesBeforeSend
         .filter(message => message?.role === 'assistant')
         .map(message => String(message?.id || '').trim())
         .filter(Boolean),
@@ -28360,6 +28775,9 @@ Phase G（Frame 36）：循环衔接
     };
     let sendTraceStarted = false;
     let sendErrorMessage = '';
+    let protocolDiagnosticTurnId = '';
+    let protocolDiagnosticRequest = null;
+    let protocolDiagnosticFailure = null;
     let creativeExecutionRunActive = false;
     let creativeExecutionMemoryTask = null;
     const creativeExecutionPlace = rpUiMode ? 'writing' : 'chat';
@@ -29586,6 +30004,7 @@ Phase G（Frame 36）：循环衔接
       isGroupChat,
       getSessionSettings: sid => chatStore.getSessionSettings?.(sid),
       getDisableSummary: () => disableSummaryForThis,
+      getFormatProfileEnabled: () => Boolean(String(getSessionFormatGuide(sessionId) || '').trim()),
       skipInputRegex,
       continueTarget,
       rpUiMode,
@@ -29669,6 +30088,7 @@ Phase G（Frame 36）：循环衔接
                 ...(nextContext.meta || {}),
                 previewOnly: true,
                 previewRawBlocks: Boolean(previewRawBlocks),
+                previewForceLegacyText: Boolean(previewForceLegacyText),
                 macroVariableState: previewMacroVariableState,
                 // 注入选择条：未加入的项在预览组装中抑制（不影响正式发送）
                 ...(previewChatFormat === false ? { disablePhoneFormat: true, previewSuppressChatFormatGuide: true } : {}),
@@ -29991,6 +30411,22 @@ Phase G（Frame 36）：循环衔接
     const { protocolEnabled } = protocolFlags;
     maidProtocolEnabled = protocolEnabled;
     disableSummaryForThis = protocolFlags.disableSummaryForThis;
+    if (!rpUiMode) {
+      const customFormatGuide = String(getSessionFormatGuide(sessionId) || '').trim();
+      protocolDiagnosticTurnId = protocolGenerationDiagnostics.start({
+        turnId: formatRepairTurnId,
+        generationId,
+        sessionId,
+        uiMode: sceneUiMode,
+        requestedSurface: isGroupChat ? 'group_chat' : 'private_chat',
+        contractEligible: protocolEnabled,
+        requestedMode: 'legacy_text',
+        effectiveMode: 'legacy_text',
+        formatProfileEnabled: Boolean(customFormatGuide),
+        formatProfileTarget: customFormatGuide ? resolveFormatTargetForSession(sessionId) : '',
+        history: protocolHistoryFacts,
+      });
+    }
     sendTraceStarted = true;
     recordSendFlowTraceEvent(buildSendStartTraceEvent({
       sessionId,
@@ -30024,6 +30460,32 @@ Phase G（Frame 36）：循环衔接
       startDeliveryAndTyping(sessionId, assistantAvatar);
       return true;
     };
+    const structuredPreviewRuntime = (
+      config.stream === true
+      && protocolEnabled
+      && !rpUiMode
+      && !suppressAssistantDom
+    )
+      ? createDisposableStructuredPreviewRuntime({
+          generationId,
+          sessionId,
+          getActiveGeneration: () => activeGeneration,
+          isGenerationInterrupted,
+          ensureAssistantStreamCtrl,
+          getStreamCtrl: () => streamCtrl,
+          setStreamCtrl: (nextCtrl) => {
+            streamCtrl = nextCtrl;
+            return streamCtrl;
+          },
+          previewMeta: {
+            avatar: assistantAvatar,
+            name: '助手',
+            time: formatNowTime(),
+          },
+          showPreviewBubble: false,
+          onFallbackPending: startDeliveryAndTypingIfCurrent,
+        })
+      : null;
     const resolveTargetMemoryTimelineTurnNumber = async (targetSessionId = sessionId) => {
       const sid = String(targetSessionId || sessionId || '').trim();
       if (!sid) return 0;
@@ -30081,6 +30543,9 @@ Phase G（Frame 36）：循环衔接
       mode = '',
     } = {}) => {
       const raw = String(rawText ?? '');
+      if (protocolDiagnosticTurnId) {
+        protocolGenerationDiagnostics.observeRaw(protocolDiagnosticTurnId, raw);
+      }
       if (isSessionActive(sessionId)) {
         ui.hideTyping();
         fastForwardDelivery(sessionId);
@@ -30176,6 +30641,7 @@ Phase G（Frame 36）：循环衔接
                 alreadyPersisted: true,
                 emitPluginAfterReceive,
                 maybeApplyGroupSystemOps,
+                onVisible: () => protocolGenerationDiagnostics.markFirstVisible(protocolDiagnosticTurnId),
               });
               continue;
             }
@@ -30185,7 +30651,10 @@ Phase G（Frame 36）：循环衔接
                 findMessage: (messageId, targetSessionId) => chatStore.findMessage(messageId, targetSessionId),
                 isUiMessagePresent: isProtocolUiMessagePresent,
                 isSessionActive,
-                addUiMessage: (message, options) => ui.addMessage(message, options),
+                addUiMessage: (message, options) => {
+                  ui.addMessage(message, options);
+                  protocolGenerationDiagnostics.markFirstVisible(protocolDiagnosticTurnId);
+                },
                 autoMarkReadIfActive,
                 emitPluginAfterReceive,
                 maybeApplyGroupSystemOps,
@@ -30200,6 +30669,9 @@ Phase G（Frame 36）：循环衔接
       });
       deferProtocolAfterReceiveEffects = false;
       deferProtocolUiMessages = false;
+      if (protocolDiagnosticTurnId) {
+        protocolGenerationDiagnostics.observeProtocolResult(protocolDiagnosticTurnId, protocolState);
+      }
       if (!committedRawSaved) setFormatRepairLastRawResponse(raw, sessionId);
 
       const summarySessionIds = new Set([
@@ -30213,6 +30685,10 @@ Phase G（Frame 36）：循环衔接
         && protocolState?.eventResults?.some(result => result?.mutatedMoments === true),
       );
       if (protocolState?.handled !== true) {
+        await window.appBridge?.finalizeChatStructuredEvidence?.({
+          requestId: protocolDiagnosticRequest?.requestId || '',
+          committed: false,
+        });
         window.toastr?.warning?.('未解析到有效对话标签，已丢弃；可在「本次 AI 回复」查看原始内容');
         chatStore.markLastRawResponsePendingRepair({
           sourceSessionId: sessionId,
@@ -30227,6 +30703,11 @@ Phase G（Frame 36）：循环衔接
           sessionId,
           source: mode ? `protocol_${mode}_parse_failure` : 'protocol_parse_failure',
         });
+        if (repairRun?.modelReviewQueued !== true) {
+          protocolGenerationDiagnostics.markGuardianOutcome(protocolDiagnosticTurnId, {
+            status: repairRun?.reason || 'not_queued',
+          });
+        }
         if (returnMaidCompletionOutcome && repairRun?.modelReviewQueued) {
           maidProtocolRepairCompletion = repairRun.completion;
         }
@@ -30239,21 +30720,30 @@ Phase G（Frame 36）：循环衔接
       }
       syncRejectedFormatRepairBanner(sessionId);
 
-      let resolvedSummary = String(protocolSummary || '').trim();
-      if (!resolvedSummary && isSummaryMemoryEnabled()) {
-        resolvedSummary = String(extractSummaryBlock(raw)?.summary || '').trim();
-      }
-      if (resolvedSummary) {
-        for (const targetSessionId of summarySessionIds) {
-          chatStore.addSummary(resolvedSummary, targetSessionId);
-          requestSummaryCompaction(targetSessionId);
-        }
-      }
-      try {
-        await handleMemoryEditsFromRaw(raw, buildProtocolMemoryOptions());
-      } catch (error) {
-        logger.warn('protocol memory side effect failed after response commit', error);
-      }
+      await runProtocolCommittedFunctionalEffects({
+        rawText: raw,
+        primarySessionId: sessionId,
+        capturedMessages: protocolState?.capturedMessages,
+        protocolSummary,
+        summarySessionIds,
+        summaryEnabled: isSummaryMemoryEnabled(),
+        variableRuntimeEnabled: isVariableRuntimeEnabled(sessionId),
+        useGlobalVariables: isSharedVariableSession(sessionId),
+        memoryOptions: buildProtocolMemoryOptions(),
+      }, {
+        handleMemoryEditsFromRaw,
+        extractVariableBlocks: extractUpdateVariableBlocks,
+        parseVariableCommands: block => updateParser.parseCommands(block),
+        applyVariableCommands: applyUpdateVariableCommands,
+        findMessage: (messageId, targetSessionId) => chatStore.findMessage(messageId, targetSessionId),
+        captureVariableSnapshot: (targetSessionId, message) => (
+          captureVariableSnapshotToMessage(targetSessionId, message)
+        ),
+        extractSummaryBlock,
+        addSummary: (summary, targetSessionId) => chatStore.addSummary(summary, targetSessionId),
+        requestSummaryCompaction,
+        logger,
+      });
       if (mutatedMoments) {
         try {
           await momentsStore.flush();
@@ -30264,6 +30754,10 @@ Phase G（Frame 36）：循环衔接
       if (protocolState?.postCommitError) {
         logger.warn('protocol post-commit UI side effect failed', protocolState.postCommitError);
       }
+      await window.appBridge?.finalizeChatStructuredEvidence?.({
+        requestId: protocolDiagnosticRequest?.requestId || '',
+        committed: true,
+      });
       return {
         ...protocolState,
         mutatedMoments,
@@ -30286,7 +30780,7 @@ Phase G（Frame 36）：循环衔接
       }
       return result;
     };
-    const requestAssistantGeneration = () => {
+    const requestAssistantGeneration = async () => {
       if (creativeExecutionRunActive) {
         creativeExecutionLaneRuntime?.activateTask?.('model', {
           summary: '模型请求已发送',
@@ -30297,14 +30791,39 @@ Phase G（Frame 36）：循环衔接
           },
         });
       }
-      return runAssistantGenerationRequest({
-        text,
-        sessionId,
-      }, {
-        consumePromptInjections,
-        buildContext: llmContext,
-        appBridge: window.appBridge,
-      });
+      const previousRequest = window.appBridge?.lastRequest || null;
+      try {
+        return await runAssistantGenerationRequest({
+          text,
+          sessionId,
+        }, {
+          consumePromptInjections,
+          buildContext: (input) => {
+            const context = llmContext(input);
+            if (!structuredPreviewRuntime) return context;
+            return {
+              ...(context || {}),
+              meta: {
+                ...(context?.meta || {}),
+                onPhoneStructuredPreview: event => structuredPreviewRuntime.handle(event),
+              },
+            };
+          },
+          appBridge: window.appBridge,
+        });
+      } finally {
+        const candidate = window.appBridge?.lastRequest || null;
+        const candidateSessionId = String(candidate?.session?.id || '').trim();
+        if (
+          protocolDiagnosticTurnId
+          && candidate
+          && candidate !== previousRequest
+          && (!candidateSessionId || candidateSessionId === String(sessionId || '').trim())
+        ) {
+          protocolDiagnosticRequest = candidate;
+          protocolGenerationDiagnostics.observeRequest(protocolDiagnosticTurnId, candidate);
+        }
+      }
     };
     if (rpUiMode) {
       creativeExecutionRunActive = Boolean(creativeExecutionLaneRuntime?.startRun?.({
@@ -30359,16 +30878,15 @@ Phase G（Frame 36）：循环衔接
     // 生成完全结束后兜底 patch 末条回复；非竞态路径已在构建时 consume，不会重复挂。
     const patchTrailingAssistantGenerationMeta = (patchSid) => {
       try {
+        const sid = String(patchSid || '').trim();
+        const msgs = chatStore.getMessages(sid) || [];
+        const m = [...msgs].reverse().find(message => message?.role === 'assistant');
+        if (!m) return;
         const usage = window.appBridge?.consumeLastGenerationUsage?.();
         const replyUsage = buildAssistantReplyUsage(usage);
         const sources = window.appBridge?.consumeLastGenerationSources?.();
         const replySources = buildAssistantReplySources(sources);
         if (!replyUsage && !replySources) return;
-        const sid = String(patchSid || '').trim();
-        const msgs = chatStore.getMessages(sid) || [];
-        for (let i = msgs.length - 1; i >= 0; i -= 1) {
-          const m = msgs[i];
-          if (m?.role !== 'assistant') continue;
           const nextMeta = { ...(m.meta || {}) };
           let changed = false;
           if (replyUsage && !nextMeta.usage) {
@@ -30382,8 +30900,6 @@ Phase G（Frame 36）：循环衔接
           if (!changed) return;
           chatStore.updateMessage(m.id, { meta: nextMeta }, sid);
           if (isSessionActive(sid)) ui.updateMessage(m.id, chatStore.findMessage?.(m.id, sid) || m);
-          return;
-        }
       } catch {}
     };
     try {
@@ -30474,6 +30990,9 @@ Phase G（Frame 36）：循环衔接
           });
           streamCtrl = creativeStreamState.streamCtrl;
           if (creativeStreamState.interrupted) return;
+          if (creativeStreamState.streamError) {
+            window.toastr?.warning?.('网络传输中断，已保留已生成的部分回复');
+          }
           checkpointTargetMessageId = creativeStreamState.checkpointTargetMessageId;
           if (creativeExecutionRunActive) {
             creativeExecutionLaneRuntime?.finishTask?.('model', 'succeeded', {
@@ -30657,6 +31176,7 @@ Phase G（Frame 36）：循环衔接
       patchTrailingAssistantGenerationMeta(sessionId);
       if (sendSucceeded) notifyAssistantDelivered();
     } catch (error) {
+      protocolDiagnosticFailure = classifyProtocolGenerationError(error);
       const catchResult = runSendCatchFlow({
         error,
         generationId,
@@ -30675,6 +31195,23 @@ Phase G（Frame 36）：循环衔接
       if (suppressErrorUI) return;
     } finally {
       const interruptedBeforeFinally = isGenerationInterrupted(generationId);
+      if (!sendSucceeded && protocolDiagnosticRequest?.requestId) {
+        await window.appBridge?.finalizeChatStructuredEvidence?.({
+          requestId: protocolDiagnosticRequest.requestId,
+          committed: false,
+        });
+      }
+      structuredPreviewRuntime?.dispose(interruptedBeforeFinally ? 'aborted' : (sendSucceeded ? 'accepted' : 'aborted'));
+      if (protocolDiagnosticTurnId) {
+        if (protocolDiagnosticRequest) {
+          protocolGenerationDiagnostics.observeRequest(protocolDiagnosticTurnId, protocolDiagnosticRequest);
+        }
+        protocolGenerationDiagnostics.finalize(protocolDiagnosticTurnId, {
+          sendSucceeded,
+          cancelled: interruptedBeforeFinally,
+          failure: protocolDiagnosticFailure,
+        });
+      }
       const finallyResult = runSendFinallyFlow({
         sendSucceeded,
         pendingMessagesToConfirm,

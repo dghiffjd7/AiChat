@@ -414,6 +414,8 @@ export const consumeCreativeAssistantStream = async (
     pendingReasoningChunk = null;
   };
 
+  let streamError = '';
+  try {
   for await (const chunk of (stream || [])) {
     if (resolveInterrupted()) {
       interrupted = true;
@@ -484,6 +486,12 @@ export const consumeCreativeAssistantStream = async (
       );
     }
   }
+  } catch (error) {
+    // 用户中止照常上抛；尚无任何正文的失败也照常上抛（行为不变）。
+    // 已经流出正文后网络/超时中断时保留 partial，让上层以部分内容收尾而不是整段丢弃。
+    if (error?.name === 'AbortError' || !full.trim()) throw error;
+    streamError = String(error?.message || error).slice(0, 300);
+  }
   flushReasoningChunk();
 
   return {
@@ -491,6 +499,7 @@ export const consumeCreativeAssistantStream = async (
     streamCtrl: nextStreamCtrl,
     nativeReasoningState,
     interrupted,
+    streamError,
   };
 };
 

@@ -3,9 +3,11 @@ import {
   toInternalProviderToolName,
   toProviderToolModelName,
 } from './provider-tool-name-map.js';
+import { attachProviderToolContinuationContext } from './provider-tool-continuation-context.js';
 
 export const PROVIDER_TOOL_RESULT_PREVIEW_FORMATS = Object.freeze({
   openai: 'openai_chat_completions_tool_result',
+  openaiResponses: 'openai_responses_function_call_output',
   anthropic: 'anthropic_messages_tool_result',
   gemini: 'gemini_function_response',
   generic: 'generic_tool_result_preview',
@@ -184,17 +186,66 @@ const buildOpenAIPreview = (items = []) => ({
   ],
 });
 
+const dedupeOpenAIResponseOutput = (items = []) => {
+  const seen = new Set();
+  const output = [];
+  items.forEach((item) => {
+    const continuation = isPlainObject(item?.toolCall?.providerContinuation)
+      ? item.toolCall.providerContinuation
+      : {};
+    const source = Array.isArray(continuation.assistantOutput)
+      ? continuation.assistantOutput
+      : [];
+    source.forEach((entry) => {
+      if (!isPlainObject(entry)) return;
+      const key = [trim(entry.type), trim(entry.id || entry.call_id), trim(entry.call_id)].join(':');
+      if (seen.has(key)) return;
+      seen.add(key);
+      output.push(cloneSanitized(entry));
+    });
+  });
+  return output;
+};
+
+const buildOpenAIResponsesPreview = (items = []) => ({
+  format: PROVIDER_TOOL_RESULT_PREVIEW_FORMATS.openaiResponses,
+  input: [
+    ...dedupeOpenAIResponseOutput(items),
+    ...items.map(item => ({
+      type: 'function_call_output',
+      call_id: item.toolCall.toolCallId,
+      output: stringifyJson(item.resultForModel),
+    })),
+  ],
+});
+
+const readSharedAssistantContent = (items = [], api = '') => {
+  for (const item of items) {
+    const continuation = isPlainObject(item?.toolCall?.providerContinuation)
+      ? item.toolCall.providerContinuation
+      : {};
+    if (api && trim(continuation.api) !== api) continue;
+    if (Array.isArray(continuation.assistantContent) && continuation.assistantContent.length) {
+      return cloneSanitized(continuation.assistantContent);
+    }
+    if (isPlainObject(continuation.assistantContent) && Array.isArray(continuation.assistantContent.parts)) {
+      return cloneSanitized(continuation.assistantContent.parts);
+    }
+  }
+  return null;
+};
+
 const buildAnthropicPreview = (items = []) => ({
   format: PROVIDER_TOOL_RESULT_PREVIEW_FORMATS.anthropic,
   messages: [
     {
       role: 'assistant',
-      content: items.map(item => ({
-        type: 'tool_use',
-        id: item.toolCall.toolCallId,
-        name: item.providerToolName,
-        input: item.toolCall.arguments || {},
-      })),
+      content: readSharedAssistantContent(items, 'anthropic_messages') || items.map(item => ({
+          type: 'tool_use',
+          id: item.toolCall.toolCallId,
+          name: item.providerToolName,
+          input: item.toolCall.arguments || {},
+        })),
     },
     {
       role: 'user',
@@ -213,12 +264,12 @@ const buildGeminiPreview = (items = []) => ({
   contents: [
     {
       role: 'model',
-      parts: items.map(item => ({
-        functionCall: {
-          name: item.providerToolName,
-          args: item.toolCall.arguments || {},
-        },
-      })),
+      parts: readSharedAssistantContent(items, 'gemini_generate_content') || items.map(item => ({
+          functionCall: {
+            name: item.providerToolName,
+            args: item.toolCall.arguments || {},
+          },
+        })),
     },
     {
       role: 'user',
@@ -250,6 +301,8 @@ export const buildProviderToolResultRequestPreview = ({
   sessionId = '',
   maxContentChars = 2000,
   allowedTools = DEFAULT_MODEL_RESULT_TOOLS,
+  historyMessages = [],
+  providerRequestOptions = {},
 } = {}) => {
   const normalizedProvider = normalizeProvider(provider);
   const toolCalls = normalizeToolCallList(assistantToolCalls, toolResults, {
@@ -269,15 +322,28 @@ export const buildProviderToolResultRequestPreview = ({
     skippedToolResultCount: skipped.length,
     skippedToolResults: skipped,
   };
-  if (!toolCalls.length || !items.length) {
+  if (!toolCalls.length || !items.length || skipped.length) {
     return {
       ...base,
       format: PROVIDER_TOOL_RESULT_PREVIEW_FORMATS.generic,
       toolResults: [],
     };
   }
-  if (normalizedProvider === 'openai') return { ...base, ...buildOpenAIPreview(items) };
-  if (normalizedProvider === 'anthropic') return { ...base, ...buildAnthropicPreview(items) };
-  if (normalizedProvider === 'gemini') return { ...base, ...buildGeminiPreview(items) };
-  return { ...base, ...buildGenericPreview(items) };
+  const usesOpenAIResponses = normalizedProvider === 'openai' && items.some(item => (
+    trim(item?.toolCall?.providerContinuation?.api) === 'openai_responses'
+  ));
+  const preview = usesOpenAIResponses
+    ? { ...base, ...buildOpenAIResponsesPreview(items) }
+    : (normalizedProvider === 'openai'
+        ? { ...base, ...buildOpenAIPreview(items) }
+        : (normalizedProvider === 'anthropic'
+            ? { ...base, ...buildAnthropicPreview(items) }
+            : (normalizedProvider === 'gemini'
+                ? { ...base, ...buildGeminiPreview(items) }
+                : { ...base, ...buildGenericPreview(items) })));
+  return attachProviderToolContinuationContext(preview, {
+    historyMessages: Array.isArray(historyMessages) ? historyMessages : [],
+    providerRequestOptions: isPlainObject(providerRequestOptions) ? providerRequestOptions : {},
+    providerApi: usesOpenAIResponses ? 'openai_responses' : '',
+  });
 };

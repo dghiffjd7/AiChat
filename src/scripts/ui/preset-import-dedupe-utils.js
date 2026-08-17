@@ -31,14 +31,29 @@ export const getImportedPresetName = ({
 export const buildImportedPresetCacheKey = ({
   type = '',
   presetName = '',
+  requiredAppScope = '',
 } = {}) => (
   `${String(type || '').trim().toLowerCase()}\u0000${normalizePresetImportNameKey(presetName)}`
+  + (requiredAppScope ? `\u0000scope:${String(requiredAppScope).trim().toLowerCase()}` : '')
 );
+
+const normalizeAppScope = (value, fallback = '') => {
+  const scope = String(value || '').trim().toLowerCase();
+  return ['creative', 'chat', 'all'].includes(scope) ? scope : fallback;
+};
+
+const presetSatisfiesAppScope = (preset = {}, requiredAppScope = '') => {
+  const required = normalizeAppScope(requiredAppScope);
+  if (!required) return true;
+  const actual = normalizeAppScope(preset?.app_scope ?? preset?.appScope, 'all');
+  return actual === 'all' || actual === required;
+};
 
 export const findPresetIdByName = ({
   presetStore = null,
   type = '',
   presetName = '',
+  requiredAppScope = '',
 } = {}) => {
   const targetNameKey = normalizePresetImportNameKey(presetName);
   if (!presetStore || !targetNameKey) return '';
@@ -50,7 +65,10 @@ export const findPresetIdByName = ({
     : null;
   if (bucket) {
     for (const [id, preset] of Object.entries(bucket)) {
-      if (normalizePresetImportNameKey(preset?.name || id) === targetNameKey) {
+      if (
+        normalizePresetImportNameKey(preset?.name || id) === targetNameKey
+        && presetSatisfiesAppScope(preset, requiredAppScope)
+      ) {
         return String(id || '').trim();
       }
     }
@@ -59,7 +77,10 @@ export const findPresetIdByName = ({
   try {
     const list = typeof presetStore.list === 'function' ? presetStore.list(t) : [];
     for (const preset of Array.isArray(list) ? list : []) {
-      if (normalizePresetImportNameKey(preset?.name || preset?.id) === targetNameKey) {
+      if (
+        normalizePresetImportNameKey(preset?.name || preset?.id) === targetNameKey
+        && presetSatisfiesAppScope(preset, requiredAppScope)
+      ) {
         return String(preset?.id || '').trim();
       }
     }
@@ -74,7 +95,13 @@ export const buildImportedPresetUpsertPayload = ({
 } = {}) => ({
   name: normalizePresetImportName(presetName),
   data: cloneJson(presetPayload?.data || {}, {}),
+  appScope: 'creative',
   makeActive: false,
+});
+
+export const buildRestoredPresetUpsertPayload = (options = {}) => ({
+  ...buildImportedPresetUpsertPayload(options),
+  appScope: 'all',
 });
 
 export const resolveImportedPresetIdByName = async ({
@@ -83,23 +110,57 @@ export const resolveImportedPresetIdByName = async ({
   presetPayload = {},
   cache = null,
   upsertPayloadBuilder = buildImportedPresetUpsertPayload,
+  requiredAppScope = '',
 } = {}) => {
   if (!presetPayload?.data || !presetStore?.upsert) return '';
   const presetName = getImportedPresetName({ presetPayload, type });
-  const cacheKey = buildImportedPresetCacheKey({ type, presetName });
+  const normalizedRequiredScope = normalizeAppScope(requiredAppScope);
+  const cacheKey = buildImportedPresetCacheKey({
+    type,
+    presetName,
+    requiredAppScope: normalizedRequiredScope,
+  });
   if (cache?.has?.(cacheKey)) return String(cache.get(cacheKey) || '').trim();
 
-  const existingId = findPresetIdByName({ presetStore, type, presetName });
+  const existingId = findPresetIdByName({
+    presetStore,
+    type,
+    presetName,
+    requiredAppScope: normalizedRequiredScope,
+  });
   if (existingId) {
     cache?.set?.(cacheKey, existingId);
     return existingId;
   }
 
-  const presetId = await presetStore.upsert(
-    type,
-    upsertPayloadBuilder({ presetPayload, presetName, type }),
-  );
+  const builtPayload = upsertPayloadBuilder({ presetPayload, presetName, type });
+  const presetId = await presetStore.upsert(type, {
+    ...(builtPayload && typeof builtPayload === 'object' ? builtPayload : {}),
+    ...(normalizedRequiredScope ? { appScope: normalizedRequiredScope } : {}),
+  });
   const nextId = String(presetId || '').trim();
   if (nextId) cache?.set?.(cacheKey, nextId);
   return nextId;
+};
+
+export const bindImportedPresetToSession = async ({
+  presetStore = null,
+  type = '',
+  sessionId = '',
+  presetId = '',
+} = {}) => {
+  const sid = String(sessionId || '').trim();
+  const expectedPresetId = String(presetId || '').trim();
+  if (!presetStore?.setSessionBinding || !sid || !expectedPresetId) {
+    return { ok: false, reason: 'preset_session_binding_unavailable', actualPresetId: '' };
+  }
+  const bindings = await presetStore.setSessionBinding(type, sid, expectedPresetId);
+  const actualPresetId = String(
+    presetStore.getSessionBindingId?.(type, sid)
+    || bindings?.sessions?.[sid]
+    || '',
+  ).trim();
+  return actualPresetId === expectedPresetId
+    ? { ok: true, reason: '', actualPresetId }
+    : { ok: false, reason: 'preset_session_binding_rejected', actualPresetId };
 };

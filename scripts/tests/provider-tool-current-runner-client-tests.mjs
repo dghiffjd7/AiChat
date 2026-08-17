@@ -152,6 +152,37 @@ const armedGate = Object.freeze({
 }
 
 {
+  const llmClient = {
+    provider: {
+      provider: 'openai',
+      requestJson: async () => ({ output: [] }),
+    },
+  };
+  const result = await resolveProviderToolCurrentRunnerClient({
+    enabled: true,
+    allowCurrentProviderRunner: true,
+    allowRunnerNetwork: true,
+    sessionGate: armedGate,
+    providerApi: 'openai_responses',
+    bridge: {
+      resolveRequestRuntimeConfig: async () => ({
+        config: {
+          provider: 'openai',
+          model: 'gpt-responses',
+          apiKey: 'secret-key',
+        },
+        client: llmClient,
+      }),
+    },
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.diagnostics.clientKind, 'llmclient_native_shim');
+  assert.equal(typeof result.providerClient.runProviderToolRequest, 'function');
+  console.log('ok - provider tool current runner client selects native shim for OpenAI Responses continuation');
+}
+
+{
   const result = await resolveProviderToolCurrentRunnerClient({
     enabled: true,
     allowCurrentProviderRunner: true,

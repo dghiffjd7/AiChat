@@ -81,7 +81,21 @@ import {
       isDefaultPreset: false,
     },
   );
-  console.log('ok - resolveOpenAIPresetFormatReminderState detects default preset by id or name');
+  assert.equal(
+    resolveOpenAIPresetFormatReminderState(
+      { presetId: 'renamed-builtin', isBuiltinDefault: true },
+      { name: '不是 Default' },
+    ).isDefaultPreset,
+    true,
+  );
+  assert.equal(
+    resolveOpenAIPresetFormatReminderState(
+      { presetId: 'default', isBuiltinDefault: false },
+      { name: 'Default' },
+    ).isDefaultPreset,
+    false,
+  );
+  console.log('ok - resolveOpenAIPresetFormatReminderState prefers resolved builtin identity over names');
 }
 
 {

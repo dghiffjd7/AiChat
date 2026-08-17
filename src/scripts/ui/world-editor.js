@@ -7,7 +7,12 @@
 
 import { LLMClient } from '../api/client.js';
 import { bindBackdropActivation } from './backdrop-activation-utils.js';
-import { appChoice } from './app-confirm.js';
+import { appChoice, appConfirm } from './app-confirm.js';
+import {
+    buildAdHocWebSearchRuntime,
+    createAdHocWebSearchToggleRuntime,
+    renderAdHocWebSources,
+} from './chat/ad-hoc-web-search-runtime.js';
 import { canInitClient as canUseApiConfig } from '../api/client-config-utils.js';
 import { ConfigManager } from '../storage/config.js';
 import { logger } from '../utils/logger.js';
@@ -674,6 +679,9 @@ export class WorldEditorModal {
         this.aiGenerateBtn = null;
         this.aiContinueBtn = null;
         this.aiCloseBtn = null;
+        this.aiWebSearchToggleEl = null;
+        this.aiWebSourcesEl = null;
+        this.aiWebSearchToggleRuntime = null;
         this.aiBusy = false;
         this.aiRequestId = 0;
         this.aiPendingEntryId = '';
@@ -1410,11 +1418,16 @@ export class WorldEditorModal {
                 <textarea id="world-ai-template" class="world-ai-textarea world-ai-template" placeholder="可编辑模板（建议保留字段结构）"></textarea>
 
                 <div class="world-ai-actions">
+                    <label class="world-ai-web-toggle" title="仅下一次生成或继续使用联网搜索">
+                        <input type="checkbox" id="world-ai-web-search">
+                        <span>本次联网</span>
+                    </label>
                     <button type="button" class="world-ai-btn ghost" id="world-ai-cancel">关闭</button>
                     <button type="button" class="world-ai-btn" id="world-ai-continue">继续</button>
                     <button type="button" class="world-ai-btn primary" id="world-ai-generate">生成</button>
                 </div>
                 <div class="world-ai-status" id="world-ai-status"></div>
+                <div class="ad-hoc-web-sources world-ai-sources" id="world-ai-sources" hidden></div>
             </div>
         `;
         this.aiModal.addEventListener('click', (e) => e.stopPropagation());
@@ -1425,7 +1438,24 @@ export class WorldEditorModal {
         this.aiGenerateBtn = this.aiModal.querySelector('#world-ai-generate');
         this.aiContinueBtn = this.aiModal.querySelector('#world-ai-continue');
         this.aiCloseBtn = this.aiModal.querySelector('.world-ai-close');
+        this.aiWebSearchToggleEl = this.aiModal.querySelector('#world-ai-web-search');
+        this.aiWebSourcesEl = this.aiModal.querySelector('#world-ai-sources');
         const cancelBtn = this.aiModal.querySelector('#world-ai-cancel');
+
+        this.aiWebSearchToggleRuntime = createAdHocWebSearchToggleRuntime({
+            toggleEl: this.aiWebSearchToggleEl,
+            confirm: () => appConfirm({
+                title: '允许本次联网？',
+                message: '联网搜索可能产生额外费用，并会把本次生成所需的查询发送给搜索服务。此开关仅对下一次生成或继续生效。',
+                confirmText: '允许本次联网',
+                cancelText: '取消',
+            }),
+        });
+        this.aiWebSearchToggleEl?.addEventListener('change', () => {
+            if (this.aiWebSearchToggleEl?.checked) {
+                void this.aiWebSearchToggleRuntime?.confirmEnabled();
+            }
+        });
 
         if (this.aiInputEl) {
             this.aiInputEl.value = loadWorldAiInput();
@@ -1468,6 +1498,8 @@ export class WorldEditorModal {
         if (this.aiTemplateEl && !String(this.aiTemplateEl.value || '').trim()) {
             this.aiTemplateEl.value = loadWorldAiTemplate();
         }
+        this.aiWebSearchToggleRuntime?.reset();
+        renderAdHocWebSources(this.aiWebSourcesEl, []);
         this.setAiStatus('');
         this.aiOverlay.style.display = 'block';
         this.aiModal.style.display = 'block';
@@ -2229,6 +2261,7 @@ export class WorldEditorModal {
         this.aiBusy = Boolean(isBusy);
         if (this.aiGenerateBtn) this.aiGenerateBtn.disabled = this.aiBusy;
         if (this.aiContinueBtn) this.aiContinueBtn.disabled = this.aiBusy;
+        if (this.aiWebSearchToggleEl) this.aiWebSearchToggleEl.disabled = this.aiBusy;
         if (this.aiBusy && entryId) {
             this.aiPendingEntryId = String(entryId);
         } else if (!this.aiBusy) {
@@ -2479,6 +2512,20 @@ export class WorldEditorModal {
         this.setAiStatus(loadingText, 'loading');
         try {
             const client = new LLMClient(config);
+            const useWebSearch = await this.aiWebSearchToggleRuntime?.consume() === true;
+            renderAdHocWebSources(this.aiWebSourcesEl, []);
+            const generation = buildAdHocWebSearchRuntime({
+                client,
+                config,
+                enabled: useWebSearch,
+                sessionId: `world-ai:${this.worldName || 'editor'}`,
+                requestOptions: { temperature: 0.6 },
+                onStatus: status => {
+                    if (requestId !== this.aiRequestId) return;
+                    this.setAiStatus(status?.message || '', status?.state === 'unavailable' ? '' : 'loading');
+                },
+                onSources: sources => renderAdHocWebSources(this.aiWebSourcesEl, sources),
+            });
             const messages = mode === 'continue'
                 ? buildWorldAiContinueMessages(template, inputText, draft)
                 : buildWorldAiMessages(template, inputText);
@@ -2488,7 +2535,7 @@ export class WorldEditorModal {
                 messageCount: messages.length,
                 firstMessageSummary: summarizeTraceText(messages?.[0]?.content || ''),
             });
-            const output = await client.chat(messages, { temperature: 0.6 });
+            const output = await generation.client.chat(messages, generation.requestOptions);
             this.traceAi('run.response', {
                 requestId,
                 mode,

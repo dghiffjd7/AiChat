@@ -110,6 +110,48 @@ import {
 }
 
 {
+  const base = [
+    'MiPhone_start',
+    'msg_start',
+    '<我和菲伦的私聊>',
+    '菲伦--今晚别一个人走。--22:10',
+    '</我和菲伦的私聊>',
+    'msg_end',
+    'MiPhone_end',
+  ];
+  const options = {
+    userName: '我',
+    enabledFormats: { phoneShell: true, privateChat: true },
+    resolvePrivateTargetId: () => 'contact:firen',
+    resolveSpeakerId: () => 'contact:firen',
+  };
+  const valid = extractChatFormatEventDrafts(base.join('\n'), options);
+  const wrongPostamble = extractChatFormatEventDrafts([
+    ...base.slice(0, -1),
+    '<UpdateVariable>',
+    '_.set("mood", "calm")',
+    '</UpdateVariable>',
+    base.at(-1),
+  ].join('\n'), options);
+  assert.equal(valid.status, 'ready');
+  assert.equal(valid.contractValidation.valid, true);
+  assert.equal(wrongPostamble.status, 'needs_review');
+  assert.equal(wrongPostamble.contractValidation.valid, false);
+  assert.ok(wrongPostamble.warnings.includes('built-in contract violation: function_block.invalid_position'));
+
+  const custom = extractChatFormatEventDrafts([
+    ...base,
+    '<custom_status>mood=calm</custom_status>',
+  ].join('\n'), {
+    ...options,
+    customFormatGuide: '<custom_status>...</custom_status>',
+  });
+  assert.equal(custom.status, 'ready');
+  assert.equal(custom.contractValidation, null);
+  console.log('ok - chat format guardian applies strict built-in validation without overriding custom guides');
+}
+
+{
   const enabledFormats = {
     phoneShell: true,
     privateChat: true,
@@ -264,6 +306,21 @@ import {
   assert.doesNotMatch(system, /<\{\{user\}\}和联系人名的私聊>/);
   assert.doesNotMatch(system, /MiPhone_end 之后/);
   console.log('ok - chat format guardian image prompt repair omits chat-only requirements');
+}
+
+{
+  const prompt = buildChatFormatGuardianModelPrompt({
+    assistantText: '今天去了海边。',
+    enabledFormats: { phoneShell: true, momentPost: true },
+    parserReport: { status: 'no_events', eventDrafts: [], errors: [], warnings: [] },
+    formatTarget: CHAT_FORMAT_GUARDIAN_TARGETS.momentPost,
+    userName: '雪乃',
+  });
+  assert.deepEqual(prompt.enabledFormatIds, ['phoneShell', 'momentPost']);
+  assert.match(prompt.messages[1].content, /雪乃--今天去了海边。--00:00--0--0/);
+  assert.match(prompt.messages[1].content, /发布者--动态正文--HH:mm--0--0/);
+  assert.doesNotMatch(prompt.messages[1].content, /author::|content::/);
+  console.log('ok - chat format guardian moment repair uses the parser-compatible shared contract');
 }
 
 {

@@ -90,17 +90,66 @@ import {
     output_index: 0,
     delta: '{"limit":',
   });
-  const done = accumulator.push({
+  const argumentsDone = accumulator.push({
     type: 'response.function_call_arguments.done',
     item_id: 'item_1',
     call_id: 'call_resp_1',
     output_index: 0,
     arguments: '{"limit":5}',
   });
+  assert.equal(argumentsDone.completed.length, 0);
+  const done = accumulator.push({
+    type: 'response.output_item.done',
+    output_index: 0,
+    item: {
+      type: 'function_call',
+      id: 'item_1',
+      call_id: 'call_resp_1',
+      name: 'contact_profile.list',
+      arguments: '{"limit":5}',
+    },
+  });
   assert.equal(done.completed.length, 1);
   assert.equal(done.completed[0].toolCallId, 'call_resp_1');
   assert.deepEqual(done.completed[0].arguments, { limit: 5 });
+  const duplicate = accumulator.push({
+    type: 'response.completed',
+    response: {
+      output: [{
+        type: 'function_call',
+        id: 'item_1',
+        call_id: 'call_resp_1',
+        name: 'contact_profile.list',
+        arguments: '{"limit":5}',
+      }],
+    },
+  });
+  assert.equal(duplicate.completed.length, 0);
   console.log('ok - provider tool delta accumulator supports OpenAI responses function call events');
+}
+
+{
+  const output = [
+    { type: 'reasoning', id: 'rs_1', encrypted_content: 'opaque-reasoning-state' },
+    {
+      type: 'function_call',
+      id: 'fc_1',
+      call_id: 'call_resp_root_1',
+      name: 'contact_profile_list',
+      arguments: '{"limit":3}',
+    },
+  ];
+  const done = createProviderToolCallDeltaAccumulator({
+    provider: 'openai',
+    model: 'gpt-responses',
+    now: () => 3500,
+  }).push({ id: 'resp_1', object: 'response', output });
+  assert.equal(done.completed.length, 1);
+  assert.equal(done.completed[0].toolCallId, 'call_resp_root_1');
+  assert.deepEqual(done.completed[0].arguments, { limit: 3 });
+  assert.equal(done.completed[0].providerContinuation.api, 'openai_responses');
+  assert.deepEqual(done.completed[0].providerContinuation.assistantOutput, output);
+  console.log('ok - provider tool delta accumulator preserves complete OpenAI Responses output state');
 }
 
 {
@@ -109,6 +158,23 @@ import {
     model: 'claude-x',
     now: () => 4000,
   });
+  accumulator.push({
+    type: 'content_block_start',
+    index: 0,
+    content_block: { type: 'thinking', thinking: '' },
+  });
+  accumulator.push({
+    type: 'content_block_delta',
+    index: 0,
+    delta: { type: 'thinking_delta', thinking: 'opaque thought' },
+  });
+  accumulator.push({
+    type: 'content_block_delta',
+    index: 0,
+    delta: { type: 'signature_delta', signature: 'opaque-signature' },
+  });
+  const thinkingDone = accumulator.push({ type: 'content_block_stop', index: 0 });
+  assert.equal(thinkingDone.completed.length, 0);
   accumulator.push({
     type: 'content_block_start',
     index: 1,
@@ -129,7 +195,41 @@ import {
   assert.equal(done.completed[0].toolCallId, 'toolu_1');
   assert.equal(done.completed[0].toolName, 'contact_profile.list');
   assert.deepEqual(done.completed[0].arguments, { limit: 7 });
-  console.log('ok - provider tool delta accumulator supports Anthropic tool_use input_json_delta');
+  assert.deepEqual(done.completed[0].providerContinuation.assistantContent, [
+    {
+      type: 'thinking',
+      thinking: 'opaque thought',
+      signature: 'opaque-signature',
+    },
+    {
+      type: 'tool_use',
+      id: 'toolu_1',
+      name: 'contact_profile.list',
+      input: { limit: 7 },
+    },
+  ]);
+  console.log('ok - provider tool delta accumulator preserves the complete Anthropic assistant turn');
+}
+
+{
+  const done = createProviderToolCallDeltaAccumulator({
+    provider: 'anthropic',
+    model: 'claude-x',
+    now: () => 4500,
+  }).push({
+    content: [{
+      type: 'tool_use',
+      id: 'toolu_nonstream_1',
+      name: 'contact_profile.list',
+      input: { limit: 8 },
+    }],
+    stop_reason: 'tool_use',
+  });
+  assert.equal(done.completed.length, 1);
+  assert.equal(done.completed[0].toolCallId, 'toolu_nonstream_1');
+  assert.equal(done.completed[0].toolName, 'contact_profile.list');
+  assert.deepEqual(done.completed[0].arguments, { limit: 8 });
+  console.log('ok - provider tool delta accumulator supports Anthropic non-stream tool_use blocks');
 }
 
 {
@@ -141,7 +241,9 @@ import {
     candidates: [{
       content: {
         parts: [{
+          thoughtSignature: 'opaque-gemini-signature',
           functionCall: {
+            id: 'gemini_call_1',
             name: 'contact_profile.list',
             args: { limit: 9 },
           },
@@ -150,7 +252,12 @@ import {
     }],
   });
   assert.equal(done.completed.length, 1);
+  assert.equal(done.completed[0].toolCallId, 'gemini_call_1');
   assert.equal(done.completed[0].toolName, 'contact_profile.list');
   assert.deepEqual(done.completed[0].arguments, { limit: 9 });
+  assert.equal(
+    done.completed[0].providerContinuation.assistantContent.parts[0].thoughtSignature,
+    'opaque-gemini-signature',
+  );
   console.log('ok - provider tool delta accumulator supports Gemini functionCall parts');
 }

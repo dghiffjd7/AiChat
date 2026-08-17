@@ -14,10 +14,122 @@ import {
   finalizeProtocolHandledFlow,
   finalizeProtocolStreamFlow,
   flushProtocolMomentsIfNeeded,
+  runProtocolCommittedFunctionalEffects,
   runProtocolBufferedResponseFlow,
   runProtocolRetryFallbacks,
   runProtocolStreamResponseFlow,
 } from '../../src/scripts/ui/chat/protocol-runtime-utils.js';
+
+{
+  const calls = [];
+  const messages = new Map([
+    ['s1:m1', { id: 'm1', role: 'assistant' }],
+    ['s2:m2', { id: 'm2', role: 'assistant' }],
+  ]);
+  const result = await runProtocolCommittedFunctionalEffects({
+    rawText: [
+      'MiPhone_start',
+      'msg_start',
+      'body',
+      'msg_end',
+      'MiPhone_end',
+      '<tableEdit>table</tableEdit>',
+      '<UpdateVariable><json_patch>[]</json_patch></UpdateVariable>',
+      '<details><summary>摘要</summary>总结</details>',
+    ].join('\n'),
+    primarySessionId: 's1',
+    capturedMessages: [
+      { messageId: 'm2', targetSessionId: 's2' },
+      { messageId: 'm1', targetSessionId: 's1' },
+    ],
+    summarySessionIds: new Set(['s1', 's2']),
+    summaryEnabled: true,
+    variableRuntimeEnabled: true,
+    useGlobalVariables: false,
+    memoryOptions: { sessionId: 's1' },
+  }, {
+    handleMemoryEditsFromRaw: async (raw, options) => calls.push(['memory', raw.length, options.sessionId]),
+    extractVariableBlocks: (postamble) => {
+      calls.push(['variable-extract', postamble.includes('MiPhone_start')]);
+      return { blocks: ['<json_patch>[]</json_patch>'] };
+    },
+    parseVariableCommands: () => [{ type: 'set', path: ['mood'], value: 'calm' }],
+    applyVariableCommands: (sessionId, commands, options) => {
+      calls.push(['variable-apply', sessionId, commands.length, options.useGlobal]);
+      return true;
+    },
+    findMessage: (messageId, sessionId) => messages.get(`${sessionId}:${messageId}`) || null,
+    captureVariableSnapshot: (sessionId, message) => calls.push(['variable-snapshot', sessionId, message.id]),
+    extractSummaryBlock: () => {
+      calls.push(['summary-extract']);
+      return { summary: '总结' };
+    },
+    addSummary: (summary, sessionId) => calls.push(['summary', sessionId, summary]),
+    requestSummaryCompaction: sessionId => calls.push(['compact', sessionId]),
+  });
+  assert.equal(result.memoryAttempted, true);
+  assert.deepEqual(result.variable, {
+    attempted: true,
+    applied: true,
+    changed: true,
+    commandCount: 1,
+    targetMessageId: 'm1',
+    reason: '',
+  });
+  assert.equal(result.summaryCommitted, true);
+  assert.deepEqual(calls, [
+    ['memory', result.rawLength, 's1'],
+    ['variable-extract', false],
+    ['variable-apply', 's1', 1, false],
+    ['variable-snapshot', 's1', 'm1'],
+    ['summary-extract'],
+    ['summary', 's1', '总结'],
+    ['summary', 's2', '总结'],
+    ['compact', 's1'],
+    ['compact', 's2'],
+  ]);
+  console.log('ok - committed protocol effects execute table, variable, then summary against the primary assistant anchor');
+}
+
+{
+  const calls = [];
+  const base = {
+    primarySessionId: 's1',
+    capturedMessages: [{ messageId: 'm1', targetSessionId: 's1' }],
+    summarySessionIds: new Set(['s1']),
+  };
+  const deps = {
+    extractVariableBlocks: () => {
+      calls.push('extract');
+      return { blocks: ['x'] };
+    },
+    parseVariableCommands: () => [{ type: 'set', path: ['x'], value: 1 }],
+    applyVariableCommands: () => calls.push('apply'),
+    findMessage: () => ({ id: 'm1', role: 'assistant' }),
+    captureVariableSnapshot: () => calls.push('snapshot'),
+  };
+  const beforeShell = await runProtocolCommittedFunctionalEffects({
+    ...base,
+    rawText: '<UpdateVariable>x</UpdateVariable>\nMiPhone_end',
+    variableRuntimeEnabled: true,
+  }, deps);
+  assert.equal(beforeShell.variable.reason, 'postamble_block_missing');
+  const unbalanced = await runProtocolCommittedFunctionalEffects({
+    ...base,
+    rawText: 'MiPhone_end\n<UpdateVariable>x',
+    variableRuntimeEnabled: true,
+  }, deps);
+  assert.equal(unbalanced.variable.reason, 'postamble_block_unbalanced');
+  const noAnchor = await runProtocolCommittedFunctionalEffects({
+    ...base,
+    capturedMessages: [],
+    rawText: 'MiPhone_end\n<UpdateVariable>x</UpdateVariable>',
+    variableRuntimeEnabled: true,
+  }, deps);
+  assert.equal(noAnchor.variable.reason, 'assistant_anchor_missing');
+  assert.deepEqual(calls, []);
+  console.log('ok - protocol variable effects fail closed outside a balanced postamble or without a branch snapshot anchor');
+}
 
 {
   const summarySessionIds = new Set(['s1']);

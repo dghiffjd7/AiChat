@@ -157,6 +157,7 @@ export const runProviderToolLoopController = async ({
   providerRunner = null,
   allowRunnerNetwork = false,
   runnerModePlan = null,
+  providerContinuationContext = null,
 } = {}) => {
   const startedAt = readTimestamp(now);
   const providerName = trim(provider, 'debug-provider');
@@ -260,6 +261,8 @@ export const runProviderToolLoopController = async ({
         sessionId: normalizedSessionId,
         assistantToolCalls: completedToolCalls,
         toolResults: results,
+        historyMessages: providerContinuationContext?.historyMessages,
+        providerRequestOptions: providerContinuationContext?.providerRequestOptions,
       })
     : null;
   push(PROVIDER_TOOL_LOOP_PHASES.requestPreview, requestPreview ? 'succeeded' : 'skipped', {

@@ -93,13 +93,30 @@ const createRegistry = ({
   });
 
   assert.equal(schema.enabled, true);
-  assert.equal(schema.diagnostics.format, PROVIDER_TOOL_REQUEST_FORMATS.openai);
+  assert.equal(schema.diagnostics.format, PROVIDER_TOOL_REQUEST_FORMATS.openaiResponses);
   assert.deepEqual(schema.diagnostics.internalToolNames, ['contact_profile.list']);
   assert.deepEqual(schema.diagnostics.providerToolNames, ['contact_profile_list']);
   assert.equal(schema.requestOptions.tool_choice, 'auto');
+  assert.equal(schema.requestOptions.openaiApi, 'responses');
+  assert.equal(schema.requestOptions.parallel_tool_calls, false);
   assert.equal(schema.requestOptions.tools[0].function.name, 'contact_profile_list');
   assert.equal(schema.requestOptions.tools[0].function.parameters.properties.limit.type, 'integer');
-  console.log('ok - provider tool request schema builds OpenAI-compatible function tools');
+  console.log('ok - official OpenAI provider tool schema selects Responses with serial function tools');
+}
+
+{
+  const schema = buildProviderToolRequestSchema({
+    debugUiRegistry: createRegistry(),
+    provider: 'openai',
+    baseUrl: 'https://proxy.example/v1',
+    model: 'gpt-tool',
+    sessionId: 's1',
+  });
+
+  assert.equal(schema.enabled, true);
+  assert.equal(schema.diagnostics.format, PROVIDER_TOOL_REQUEST_FORMATS.openai);
+  assert.equal(Object.hasOwn(schema.requestOptions, 'openaiApi'), false);
+  console.log('ok - proxied OpenAI-compatible provider tools stay on Chat Completions');
 }
 
 {

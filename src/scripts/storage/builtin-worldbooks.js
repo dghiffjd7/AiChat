@@ -22,6 +22,9 @@ export const BUILTIN_PHONE_FORMAT_CHAT_PROMPT_SPECS = Object.freeze([
         title: '手机格式开头',
         enabledKey: 'phone_format_intro_enabled',
         rulesKey: 'phone_format_intro_rules',
+        positionKey: 'phone_format_intro_position',
+        depthKey: 'phone_format_intro_depth',
+        transportLayerId: 'phone_format_intro',
         order: 5560,
     },
     {
@@ -29,6 +32,9 @@ export const BUILTIN_PHONE_FORMAT_CHAT_PROMPT_SPECS = Object.freeze([
         title: 'QQ聊天格式',
         enabledKey: 'phone_format_chat_enabled',
         rulesKey: 'phone_format_chat_rules',
+        positionKey: 'phone_format_chat_position',
+        depthKey: 'phone_format_chat_depth',
+        transportLayerId: 'phone_format_chat',
         order: 5561,
     },
     {
@@ -36,6 +42,9 @@ export const BUILTIN_PHONE_FORMAT_CHAT_PROMPT_SPECS = Object.freeze([
         title: 'QQ空间格式',
         enabledKey: 'phone_format_moment_enabled',
         rulesKey: 'phone_format_moment_rules',
+        positionKey: 'phone_format_moment_position',
+        depthKey: 'phone_format_moment_depth',
+        transportLayerId: 'phone_format_moment',
         order: 5562,
     },
     {
@@ -43,6 +52,9 @@ export const BUILTIN_PHONE_FORMAT_CHAT_PROMPT_SPECS = Object.freeze([
         title: '手机格式结尾',
         enabledKey: 'phone_format_footer_enabled',
         rulesKey: 'phone_format_footer_rules',
+        positionKey: 'phone_format_footer_position',
+        depthKey: 'phone_format_footer_depth',
+        transportLayerId: 'phone_format_footer',
         order: 5564,
     },
 ]);

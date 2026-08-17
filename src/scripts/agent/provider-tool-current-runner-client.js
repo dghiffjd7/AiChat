@@ -126,11 +126,14 @@ const createClientFromRuntime = ({
 const buildProviderClient = ({
   llmClient = null,
   provider = '',
+  providerApi = '',
   useNativeRunnerShim = true,
   now = Date.now,
 } = {}) => {
   const family = normalizeProviderFamily(provider);
-  if ((family === 'anthropic' || family === 'gemini') && useNativeRunnerShim !== false) {
+  if ((family === 'anthropic' || family === 'gemini' || (
+    family === 'openai' && trim(providerApi) === 'openai_responses'
+  )) && useNativeRunnerShim !== false) {
     return {
       providerClient: createProviderToolLlmClientNativeRunner({
         llmClient,
@@ -156,6 +159,7 @@ export const resolveProviderToolCurrentRunnerClient = async ({
   allowRunnerNetwork = false,
   createClient = null,
   useNativeRunnerShim = true,
+  providerApi = '',
   requestId = '',
   now = Date.now,
 } = {}) => {
@@ -230,6 +234,7 @@ export const resolveProviderToolCurrentRunnerClient = async ({
   const { providerClient, clientKind } = buildProviderClient({
     llmClient,
     provider: config.provider,
+    providerApi,
     useNativeRunnerShim,
     now,
   });

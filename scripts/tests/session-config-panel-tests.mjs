@@ -109,6 +109,33 @@ test('SessionConfigPanel getSessionEntries falls back to raw ids when contact or
   });
 });
 
+test('SessionConfigPanel only lists presets eligible for the selected mode', async () => {
+  await withSessionPanelWindow(async (SessionConfigPanel) => {
+    const panel = new SessionConfigPanel({
+      store: {
+        getState: () => ({
+          presets: {
+            openai: {
+              creative: { name: '创意专用', app_scope: 'creative' },
+              chat: { name: '聊天专用', app_scope: 'chat' },
+              all: { name: '全部', app_scope: 'all' },
+            },
+          },
+        }),
+      },
+    });
+
+    assert.deepEqual(panel.getPresetList('chat'), [
+      { value: 'chat', label: '聊天专用' },
+      { value: 'all', label: '全部' },
+    ]);
+    assert.deepEqual(panel.getPresetList('rp'), [
+      { value: 'creative', label: '创意专用' },
+      { value: 'all', label: '全部' },
+    ]);
+  });
+});
+
 let failed = 0;
 for (const t of tests) {
   try {

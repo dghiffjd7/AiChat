@@ -697,6 +697,68 @@ export const buildMomentCommentGroupList = (
     .join('\n');
 };
 
+export const collectMomentCommentStructuredTargets = (
+  contactsStore,
+  {
+    authorName = '',
+    userName = '',
+    publishedMoment = false,
+    maxContacts = 16,
+    maxGroups = 12,
+    maxMembers = 20,
+  } = {},
+) => {
+  const rawContacts = contactsStore?.listContacts?.();
+  const contacts = Array.isArray(rawContacts) ? rawContacts : [];
+  const blockedNames = new Set(
+    ['我', '用户', 'user', userName, ...(publishedMoment ? [authorName] : [])]
+      .map(value => String(value || '').trim().toLowerCase())
+      .filter(Boolean),
+  );
+  const privateTargets = contacts
+    .filter(contact => contact && !contact.isGroup && !isInternalMomentContact(contact))
+    .map(contact => ({
+      id: String(contact?.id || '').trim(),
+      name: String(contact?.name || contact?.id || '').trim(),
+    }))
+    .filter(item => item.id && item.name && !blockedNames.has(item.name.toLowerCase()))
+    .slice(0, Math.max(0, Math.trunc(Number(maxContacts) || 0)));
+  const contactById = new Map(privateTargets.map(item => [item.id, item]));
+  contacts
+    .filter(contact => contact && !contact.isGroup && !isInternalMomentContact(contact))
+    .forEach((contact) => {
+      const id = String(contact?.id || '').trim();
+      const name = String(contact?.name || contact?.id || '').trim();
+      if (id && name && !contactById.has(id)) contactById.set(id, { id, name });
+    });
+  const groupTargets = contacts
+    .filter(contact => contact && (contact.isGroup || String(contact?.id || '').startsWith('group:')))
+    .filter(contact => !isInternalMomentContact(contact))
+    .slice(0, Math.max(0, Math.trunc(Number(maxGroups) || 0)))
+    .map((group) => {
+      const members = [];
+      (Array.isArray(group?.members) ? group.members : []).forEach((memberId) => {
+        if (members.length >= Math.max(0, Math.trunc(Number(maxMembers) || 0))) return;
+        const id = String(memberId || '').trim();
+        const fallback = contactsStore?.getContact?.(id) || contactById.get(id) || null;
+        const name = String(fallback?.name || fallback?.id || id).trim();
+        if (!id || !name || String(id).toLowerCase().startsWith('rp:') || members.some(item => item.id === id)) return;
+        members.push({ id, name });
+      });
+      return {
+        id: String(group?.id || '').trim(),
+        name: String(group?.name || group?.id || '').trim(),
+        members,
+      };
+    })
+    .filter(group => group.id && group.name && group.members.length);
+  const authorKey = String(authorName || '').trim().toLowerCase();
+  const momentAuthors = publishedMoment
+    ? privateTargets.slice()
+    : privateTargets.filter(item => item.name.toLowerCase() === authorKey).slice(0, 1);
+  return { momentAuthors, privateTargets, groupTargets };
+};
+
 export const resolveMomentPublishCommentTarget = ({
   contactsStore = null,
   authorName = '',
@@ -729,6 +791,7 @@ export const buildMomentCommentTaskContext = ({
   target = null,
   authorName = '',
   originSessionId = '',
+  momentId = '',
   promptData = '',
   triggerText = '',
   mode = 'comment',
@@ -743,6 +806,8 @@ export const buildMomentCommentTaskContext = ({
   isReplyToComment = false,
   replyTo = null,
   mentions = [],
+  structuredTargets = null,
+  allowSideEffects = false,
 } = {}) => {
   const profile = userProfile && typeof userProfile === 'object' ? userProfile : {};
   const resolvedTarget = target && typeof target === 'object' ? target : {};
@@ -759,8 +824,26 @@ export const buildMomentCommentTaskContext = ({
     task: {
       type: 'moment_comment',
       mode: String(mode || '').trim() || 'comment',
+      momentId: String(momentId || '').trim(),
       targetSessionId: String(resolvedTarget?.sessionId || '').trim(),
       targetName: String(resolvedTarget?.name || '').trim(),
+      allowSideEffects: allowSideEffects === true,
+      structuredTargets: structuredTargets && typeof structuredTargets === 'object'
+        ? {
+            momentAuthors: Array.isArray(structuredTargets.momentAuthors)
+              ? structuredTargets.momentAuthors.map(item => ({ ...item }))
+              : [],
+            privateTargets: Array.isArray(structuredTargets.privateTargets)
+              ? structuredTargets.privateTargets.map(item => ({ ...item }))
+              : [],
+            groupTargets: Array.isArray(structuredTargets.groupTargets)
+              ? structuredTargets.groupTargets.map(item => ({
+                  ...item,
+                  members: Array.isArray(item?.members) ? item.members.map(member => ({ ...member })) : [],
+                }))
+              : [],
+          }
+        : { momentAuthors: [], privateTargets: [], groupTargets: [] },
       promptData: String(promptData || ''),
       triggerText: String(triggerText || ''),
       mentions: (Array.isArray(mentions) ? mentions : [])
@@ -1352,6 +1435,7 @@ export const runMomentCommentGeneration = async (
 ) => {
   const parser = createParser();
   let sawMomentReply = false;
+  let retryRecovered = false;
   let fullRaw = '';
 
   if (stream) {
@@ -1392,11 +1476,14 @@ export const runMomentCommentGeneration = async (
         return Boolean(result?.touchedMoments);
       };
       const handled = await retry(fullRaw, parseMomentReplyFrom);
-      if (handled) sawMomentReply = true;
+      if (handled) {
+        sawMomentReply = true;
+        retryRecovered = true;
+      }
     } catch {}
   }
 
-  return { fullRaw, sawMomentReply };
+  return { fullRaw, sawMomentReply, retryRecovered };
 };
 
 export const createMomentCommentLifecycleRuntime = ({
@@ -1573,6 +1660,20 @@ export const createMomentCommentLifecycleRuntime = ({
       normalizeText: normalizeStickerTextForPrompt,
     });
     const allowSideEffects = getAllowMomentCommentSideEffects?.() !== false;
+    const structuredTargets = collectMomentCommentStructuredTargets(contactsStore, {
+      authorName,
+      userName: activeUserName,
+      publishedMoment: isPublishedMomentComment,
+      maxContacts: 16,
+      maxGroups: allowSideEffects ? 12 : 0,
+      maxMembers: 20,
+    });
+    if (!isPublishedMomentComment && target?.sessionId && target?.name) {
+      structuredTargets.momentAuthors = [{
+        id: String(target.sessionId || '').trim(),
+        name: String(target.name || '').trim(),
+      }];
+    }
     const sideEffectInstructions = buildMomentCommentSideEffectInstructions({
       enabled: allowSideEffects,
       userName: activeUserName || '{{user}}',
@@ -1680,12 +1781,15 @@ export const createMomentCommentLifecycleRuntime = ({
         target,
         authorName,
         originSessionId,
+        momentId: id,
         promptData,
         triggerText,
         mentions: moment?.mentions || [],
         isReplyToComment,
         replyTo,
         mode: isPublishedMomentComment ? 'published_moment' : 'comment',
+        structuredTargets,
+        allowSideEffects,
         userAttachmentParts,
         memoryStorageMode,
         memoryAutoExtract: memoryStorageMode === 'table' && isMemoryAutoExtractInline?.('moments') === true,

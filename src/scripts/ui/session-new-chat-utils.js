@@ -23,7 +23,17 @@ export const clearSessionMemoriesForNewChat = async ({
   } catch {
     return false;
   }
-  if (!Array.isArray(rows) || rows.length === 0) return true;
+  let globalUserProfileRows = [];
+  if (!keepNonSummary) {
+    try {
+      const globalRows = await memoryTableStore.getMemories({
+        scope: 'global',
+        template_id: templateId,
+      });
+      globalUserProfileRows = (Array.isArray(globalRows) ? globalRows : [])
+        .filter(row => String(row?.table_id || '').trim() === 'user_profile');
+    } catch {}
+  }
   const resolvedSummaryTableIds = (() => {
     try {
       const values = resolveSummaryTableIds?.({ sessionId: sid, isGroup });
@@ -37,10 +47,15 @@ export const clearSessionMemoriesForNewChat = async ({
       .map((tableId) => String(tableId || '').trim())
       .filter(Boolean),
   );
-  const ids = rows
-    .filter((row) => row && (!keepNonSummary || summaryTableIds.has(String(row?.table_id || '').trim())))
-    .map((row) => String(row?.id || '').trim())
-    .filter(Boolean);
+  const ids = Array.from(new Set([
+    ...(Array.isArray(rows) ? rows : [])
+      .filter((row) => row && (!keepNonSummary || summaryTableIds.has(String(row?.table_id || '').trim())))
+      .map((row) => String(row?.id || '').trim())
+      .filter(Boolean),
+    ...globalUserProfileRows
+      .map(row => String(row?.id || '').trim())
+      .filter(Boolean),
+  ]));
   if (!ids.length) return true;
   try {
     await memoryTableStore.batchDeleteMemories?.(ids);

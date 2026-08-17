@@ -225,6 +225,13 @@ export const hasPersonaScopedSession = ({
   const sid = String(sessionId || '').trim();
   if (!sid) return false;
   if (isForeignRpSessionForScope(sid, scopeId)) return false;
+  if (sid.startsWith('group:')) {
+    try {
+      return Boolean(contactsStore?.getContact?.(sid));
+    } catch {
+      return false;
+    }
+  }
   try {
     if (chatStore?.hasSession?.(sid)) return true;
   } catch {}
@@ -271,6 +278,13 @@ export const canEnterPersonaScopedSession = ({
   if (!arePersonaScopedStoresReady({ scopeId, chatStore, contactsStore })) {
     return { allowed: false, reason: 'scope-mismatch' };
   }
+  if (sid.startsWith('group:')) {
+    try {
+      if (!contactsStore?.getContact?.(sid)) return { allowed: false, reason: 'orphan-group' };
+    } catch {
+      return { allowed: false, reason: 'orphan-group' };
+    }
+  }
   if (!hasPersonaScopedSession({ sessionId: sid, scopeId, chatStore, contactsStore })) {
     return { allowed: false, reason: 'unknown-session' };
   }
@@ -299,6 +313,9 @@ export const resolvePersonaScopedCurrentSession = ({
   try {
     hasContact = Boolean(contactsStore?.getContact?.(sid));
   } catch {}
+  if (sid.startsWith('group:') && !hasContact) {
+    return { sessionId: '', known: false, foreignRp: false, source: 'orphan-group' };
+  }
   if (hasChat || hasContact) {
     return {
       sessionId: sid,

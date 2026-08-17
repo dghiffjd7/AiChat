@@ -14,6 +14,9 @@ const SUPPORTED_PROVIDERS = [
     'deepseek',
     'ollama',
     'openrouter',
+    'opencode',
+    'kimi',
+    'zhipu',
     'gemini',
     'custom',
     'novelai',
@@ -45,6 +48,9 @@ const TEXT_ONLY_PROVIDERS = new Set([
     'deepseek',
     'ollama',
     'openrouter',
+    'opencode',
+    'kimi',
+    'zhipu',
 ]);
 
 const VOICE_ONLY_PROVIDERS = new Set(['elevenlabs', 'groq', 'qwen_local']);

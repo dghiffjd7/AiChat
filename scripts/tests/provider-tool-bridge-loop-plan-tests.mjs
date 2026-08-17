@@ -163,6 +163,10 @@ const deferredPermissionStrategy = sessionGateEnabled => ({
     sessionId: 's1',
     requestId: 'req-execution-loop',
     source: 'bridge.generateStream',
+    historyMessages: [{ role: 'user', content: 'history user' }],
+    providerRequestOptions: {
+      tools: [{ type: 'function', function: { name: 'contact_profile_list' } }],
+    },
   });
 
   assert.equal(plan.enabled, true);
@@ -223,6 +227,12 @@ const deferredPermissionStrategy = sessionGateEnabled => ({
     permissionStrategy: 'deferred_message_part',
     permissionInteractionMode: 'deferred_message_part',
     sessionGate: { enabled: true, source: 'session_settings' },
+    providerContinuationContext: {
+      historyMessages: [{ role: 'user', content: 'history user' }],
+      providerRequestOptions: {
+        tools: [{ type: 'function', function: { name: 'contact_profile_list' } }],
+      },
+    },
     runnerMode: 'read_only_capture',
     allowRunnerNetwork: false,
     allowRealRunner: false,

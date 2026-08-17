@@ -130,11 +130,25 @@ const getTool = (tools, name) => tools.find(tool => tool.name === name);
 
 {
   const { createMaidFormatProfileStore } = await import('../../src/scripts/storage/maid-format-profile-store.js');
+  const { buildMaidFormatProfileSourceState } = await import('../../src/scripts/storage/maid-format-profile-evidence-utils.js');
   const storage = (() => { const m = new Map(); return { getItem: k => m.get(k) ?? null, setItem: (k, v) => m.set(k, String(v)), removeItem: k => m.delete(k) }; })();
   const profileStore = createMaidFormatProfileStore({ storage, now: () => 1000 });
+  let formatRule = {
+    id: 'status-format',
+    scriptName: '状态块格式转换',
+    findRegex: '/^<status>([\\s\\S]*?)<\\/status>$/g',
+    replaceString: '状态块：$1',
+    placement: [2],
+  };
   const tools = createChatFormatRepairTools({
     formatProfileStore: profileStore,
     resolveSessionId: ({ sessionId, sessionName }) => sessionId || (sessionName === '蒂法' ? '蒂法' : ''),
+    resolveFormatProfileSourceState: ({ sources }) => buildMaidFormatProfileSourceState({
+      declaredSources: sources,
+      presets: [{ type: 'sysprompt', id: 'default', value: { output: 'status' } }],
+      regexRules: [formatRule],
+      worldbooks: [{ id: '蒂法', updatedAt: 10, entriesCount: 2 }],
+    }),
   });
   const saveTool = getTool(tools, 'chat.save_format_profile');
   const readTool = getTool(tools, 'chat.read_format_profile');
@@ -154,6 +168,64 @@ const getTool = (tools, name) => tools.find(tool => tool.name === name);
   const found = await readTool.execute({ sessionName: '蒂法' });
   assert.equal(found.hasProfile, true);
   assert.match(found.profile.guide, /status/);
+
+  formatRule = { ...formatRule, replaceString: '状态：$1（新版）' };
+  const stale = await readTool.execute({ sessionName: '蒂法' });
+  assert.equal(stale.hasProfile, false, '来源变化后旧自动画像不再作为有效画像返回');
+  assert.equal(stale.staleProfile?.sourceChanged, true);
+
+  const cleanupOnlyTools = createChatFormatRepairTools({
+    formatProfileStore: createMaidFormatProfileStore({ storage: (() => { const m = new Map(); return { getItem: k => m.get(k) ?? null, setItem: (k, v) => m.set(k, String(v)) }; })() }),
+    resolveSessionId: () => '蒂法',
+    resolveFormatProfileSourceState: ({ sources }) => buildMaidFormatProfileSourceState({
+      declaredSources: sources,
+      regexRules: [{
+        id: 'cleanup',
+        scriptName: '隐藏思考',
+        findRegex: '/<think>[\\s\\S]*?<\\/think>/g',
+        replaceString: '',
+        placement: [2],
+      }],
+    }),
+  });
+  const rejected = await getTool(cleanupOnlyTools, 'chat.save_format_profile').execute({
+    guide: '必须输出 <think>...</think>',
+    sources: [{ type: 'regex', ref: '隐藏思考' }],
+  });
+  assert.equal(rejected.ok, false);
+  assert.equal(rejected.reason, 'regex_format_evidence_untrusted');
+
+  let manualPresetRule = 'A';
+  const manualStore = createMaidFormatProfileStore({
+    storage: (() => { const m = new Map(); return { getItem: k => m.get(k) ?? null, setItem: (k, v) => m.set(k, String(v)) }; })(),
+  });
+  const manualTools = createChatFormatRepairTools({
+    formatProfileStore: manualStore,
+    resolveSessionId: () => '蒂法',
+    resolveFormatProfileSourceState: ({ sources }) => buildMaidFormatProfileSourceState({
+      declaredSources: sources,
+      presets: [{ type: 'sysprompt', id: 'manual', value: { output: manualPresetRule } }],
+    }),
+  });
+  const manualGuide = '每条回复末尾必须有 <status>好感度:N</status>';
+  const deniedManual = await getTool(manualTools, 'chat.save_format_profile').execute({
+    guide: manualGuide,
+    manualOverride: true,
+  }, { maidUserInput: '帮我记住这个格式' });
+  assert.equal(deniedManual.ok, false, '用户没有给出完整 guide 时模型不能伪造手动覆盖');
+  assert.equal(deniedManual.reason, 'manual_format_override_not_explicit');
+
+  const savedManual = await getTool(manualTools, 'chat.save_format_profile').execute({
+    guide: manualGuide,
+    manualOverride: true,
+  }, { maidUserInput: `请手动保存这份格式规范：${manualGuide}` });
+  assert.equal(savedManual.ok, true);
+  assert.equal(manualStore.peek('蒂法')?.manualOverride, true);
+  manualPresetRule = 'B';
+  const retainedManual = await getTool(manualTools, 'chat.read_format_profile').execute({});
+  assert.equal(retainedManual.hasProfile, true);
+  assert.equal(retainedManual.profile.manualOverride, true);
+  assert.equal(retainedManual.profile.sourceChanged, true);
 
   const noSession = await saveTool.execute({ sessionName: '不存在', guide: '规范内容规范' });
   assert.equal(noSession.ok, false);

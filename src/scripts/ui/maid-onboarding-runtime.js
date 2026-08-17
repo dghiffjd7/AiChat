@@ -100,6 +100,9 @@ const PROVIDER_LABELS = Object.freeze({
   vertexai: 'Google Vertex AI',
   deepseek: 'Deepseek',
   openrouter: 'OpenRouter',
+  opencode: 'OpenCode Go',
+  kimi: 'Kimi',
+  zhipu: '智谱 GLM',
   anthropic: 'Anthropic',
   custom: '自定义 API',
 });

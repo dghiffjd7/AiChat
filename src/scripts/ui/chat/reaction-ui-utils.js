@@ -188,6 +188,29 @@ const isReactionTouchTargetInteractive = (target) => Boolean(target?.closest?.(
   'a, button, input, textarea, select, summary, audio, video, canvas, iframe, [contenteditable="true"]',
 ));
 
+export const syncReactionQuickBarPlacement = ({
+  bubbleStack = null,
+  scrollBoundary = null,
+  barHeight = 30,
+  bridgeGap = 8,
+} = {}) => {
+  if (!bubbleStack?.getBoundingClientRect || !scrollBoundary?.getBoundingClientRect) return 'above';
+  let stackRect;
+  let boundaryRect;
+  try {
+    stackRect = bubbleStack.getBoundingClientRect();
+    boundaryRect = scrollBoundary.getBoundingClientRect();
+  } catch {
+    return 'above';
+  }
+  const stackTop = Number(stackRect?.top);
+  const boundaryTop = Math.max(0, Number(boundaryRect?.top) || 0);
+  const requiredHeadroom = Math.max(0, Number(barHeight) || 0) + Math.max(0, Number(bridgeGap) || 0);
+  const placeBelow = Number.isFinite(stackTop) && stackTop - boundaryTop < requiredHeadroom;
+  bubbleStack.classList?.toggle?.('is-reaction-bar-below', placeBelow);
+  return placeBelow ? 'below' : 'above';
+};
+
 export const createReactionQuickBarTouchRuntime = ({
   documentLike = document,
 } = {}) => {
@@ -203,12 +226,15 @@ export const createReactionQuickBarTouchRuntime = ({
   };
   documentLike.addEventListener?.('pointerdown', onOutsidePointerDown, { passive: true });
   return {
-    bind({ bubbleStack = null, bubble = null, quickBar = null } = {}) {
+    bind({ bubbleStack = null, bubble = null, quickBar = null, scrollBoundary = null } = {}) {
       if (!bubbleStack || !bubble || !quickBar) return false;
       if (boundBubbles.has(bubble)) return true;
       boundBubbles.add(bubble);
+      const syncPlacement = () => syncReactionQuickBarPlacement({ bubbleStack, scrollBoundary });
       let touchStart = null;
+      bubbleStack.addEventListener?.('pointerenter', syncPlacement, { passive: true });
       bubble.addEventListener?.('pointerdown', (event) => {
+        syncPlacement();
         if (event?.pointerType === 'mouse' || isReactionTouchTargetInteractive(event?.target)) {
           touchStart = null;
           return;

@@ -45,6 +45,49 @@ test('preserves an OpenAI-compatible system fingerprint when the provider return
   assert.equal(seen.systemFingerprint, 'fp_2026_08_01_alpha');
 });
 
+test('normalizes Gemini usage metadata and response identity without inventing a fingerprint', () => {
+  let seen = null;
+  reportProviderUsage({ onProviderUsage: (u) => { seen = u; } }, {
+    body: {
+      usageMetadata: {
+        promptTokenCount: 640,
+        candidatesTokenCount: 96,
+        totalTokenCount: 736,
+      },
+      modelVersion: 'gemini-3.7-flash-20260801',
+      responseId: 'gemini-response-42',
+    },
+    model: 'gemini-3.7-flash', provider: 'makersuite', finishReason: 'STOP',
+  });
+  assert.deepEqual(seen, {
+    provider: 'makersuite',
+    model: 'gemini-3.7-flash',
+    finishReason: 'STOP',
+    promptTokens: 640,
+    completionTokens: 96,
+    totalTokens: 736,
+    modelVersion: 'gemini-3.7-flash-20260801',
+    responseId: 'gemini-response-42',
+  });
+  assert.equal(Object.hasOwn(seen, 'systemFingerprint'), false);
+});
+
+test('preserves provider-returned response model and routed provider identity', () => {
+  let seen = null;
+  reportProviderUsage({ onProviderUsage: (u) => { seen = u; } }, {
+    body: {
+      id: 'gen-openrouter-1',
+      model: 'upstream/model-v2',
+      provider: 'Upstream Labs',
+      usage: { prompt_tokens: 10, completion_tokens: 4, total_tokens: 14 },
+    },
+    model: 'requested/model', provider: 'openrouter', finishReason: 'stop',
+  });
+  assert.equal(seen.responseId, 'gen-openrouter-1');
+  assert.equal(seen.responseModel, 'upstream/model-v2');
+  assert.equal(seen.routedProvider, 'Upstream Labs');
+});
+
 test('does not double count OpenAI cached prompt tokens', () => {
   assert.equal(resolveProviderPromptTokens({
     prompt_tokens: 1200,

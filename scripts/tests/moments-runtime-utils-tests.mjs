@@ -28,6 +28,7 @@ import {
   buildMomentSummaryCompactionSkippedTraceEvent,
   buildMomentSummaryCompactionStartTraceEvent,
   collectMomentCommentContactList,
+  collectMomentCommentStructuredTargets,
   createMomentCommentLifecycleRuntime,
   createMomentSummaryCompactionRuntime,
   extractMomentReplySegments,
@@ -443,6 +444,7 @@ import {
     target: { name: '发布者', sessionId: 'contact:1' },
     authorName: '发布者',
     originSessionId: 'contact:1',
+    momentId: 'moment:1',
     promptData: 'PROMPT',
     triggerText: '只用于动态世界书触发',
     memoryStorageMode: 'table',
@@ -457,9 +459,22 @@ import {
       { id: 'contact:alice', name: 'Alice', type: 'contact' },
       { id: 'rp:persona_1', name: '角色房间' },
     ],
+    structuredTargets: {
+      momentAuthors: [{ id: 'contact:1', name: '发布者' }],
+      privateTargets: [{ id: 'contact:2', name: '联系人' }],
+      groupTargets: [{
+        id: 'group:1',
+        name: '群聊',
+        members: [{ id: 'contact:1', name: '发布者' }],
+      }],
+    },
+    allowSideEffects: true,
   });
   assert.equal(ctx.user.name, '我');
   assert.equal(ctx.task.type, 'moment_comment');
+  assert.equal(ctx.task.momentId, 'moment:1');
+  assert.equal(ctx.task.allowSideEffects, true);
+  assert.deepEqual(ctx.task.structuredTargets.momentAuthors, [{ id: 'contact:1', name: '发布者' }]);
   assert.equal(ctx.meta?.uiMode, 'moments');
   assert.equal(ctx.meta?.skipScripts, true);
   assert.equal(ctx.meta?.memoryStorageMode, 'table');
@@ -478,6 +493,34 @@ import {
   ]);
   assert.equal(ctx.character.name, '发布者');
   console.log('ok - buildMomentCommentTaskContext builds task payload with optional reply metadata');
+}
+
+{
+  const contacts = [
+    { id: 'contact:alice', name: 'Alice' },
+    { id: 'contact:bob', name: 'Bob' },
+    { id: 'group:friends', name: '朋友群', isGroup: true, members: ['contact:alice', 'contact:bob'] },
+    { id: 'rp:hidden', name: 'RP 隐藏' },
+  ];
+  const targets = collectMomentCommentStructuredTargets({
+    listContacts: () => contacts,
+    getContact: id => contacts.find(item => item.id === id) || null,
+  }, {
+    authorName: 'Alice',
+    userName: '我',
+    publishedMoment: false,
+  });
+  assert.deepEqual(targets.momentAuthors, [{ id: 'contact:alice', name: 'Alice' }]);
+  assert.deepEqual(targets.privateTargets.map(item => item.id), ['contact:alice', 'contact:bob']);
+  assert.deepEqual(targets.groupTargets, [{
+    id: 'group:friends',
+    name: '朋友群',
+    members: [
+      { id: 'contact:alice', name: 'Alice' },
+      { id: 'contact:bob', name: 'Bob' },
+    ],
+  }]);
+  console.log('ok - moment structured targets preserve ids while excluding internal contacts');
 }
 
 {
@@ -785,6 +828,7 @@ import {
   });
   assert.equal(result.fullRaw, 'firstsecond');
   assert.equal(result.sawMomentReply, true);
+  assert.equal(result.retryRecovered, false);
   assert.deepEqual(pushed, ['first', 'second']);
   assert.deepEqual(saved, ['firstsecond']);
   console.log('ok - runMomentCommentGeneration streams chunks through parser and saves aggregated raw reply');
@@ -811,6 +855,7 @@ import {
   });
   assert.equal(result.fullRaw, 'RAW');
   assert.equal(result.sawMomentReply, true);
+  assert.equal(result.retryRecovered, true);
   assert.equal(retried, true);
   assert.deepEqual(parsed, ['RAW', 'RETRY']);
   console.log('ok - runMomentCommentGeneration retries with a fresh parser when initial parse misses moment replies');

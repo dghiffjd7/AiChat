@@ -20,6 +20,8 @@ const createAllowedResumedPending = ({
     result: { items: [{ id: 'c1', name: 'Alice' }] },
     summary: '1 contact available',
   },
+  continuationContext = null,
+  providerContinuation = null,
   now = () => 1000,
 } = {}) => {
   const store = createProviderToolPendingPermissionStore({ now });
@@ -32,8 +34,10 @@ const createAllowedResumedPending = ({
       provider,
       model,
       arguments: { limit: 1 },
+      ...(providerContinuation ? { providerContinuation } : {}),
     },
     permissions,
+    ...(continuationContext ? { continuationContext } : {}),
   });
   const allowed = store.resolve(entry.id, PROVIDER_TOOL_PERMISSION_ACTIONS.allowOnce);
   store.markResume(allowed.id, {
@@ -74,6 +78,47 @@ const createAllowedResumedPending = ({
   assert.equal(plan.reason.includes('resume is not succeeded'), true);
   assert.equal(store.get(allowed.id).continuationStatus, PROVIDER_TOOL_PENDING_PERMISSION_CONTINUATION_STATUSES.blocked);
   console.log('ok - provider tool pending continuation blocks before resume succeeds');
+}
+
+{
+  const historyMessages = [{ role: 'user', content: 'history stays private' }];
+  const { store, pendingId } = createAllowedResumedPending({
+    provider: 'gemini',
+    model: 'gemini-signed',
+    continuationContext: {
+      historyMessages,
+      providerRequestOptions: {
+        tools: [{ functionDeclarations: [{ name: 'contact_profile_list' }] }],
+      },
+    },
+    providerContinuation: {
+      api: 'gemini_generate_content',
+      assistantContent: {
+        role: 'model',
+        parts: [{
+          thoughtSignature: 'opaque-signature',
+          functionCall: { name: 'contact_profile_list', args: { limit: 1 } },
+        }],
+      },
+    },
+    now: () => 2500,
+  });
+  const planner = createProviderToolPendingContinuationPlanner({
+    pendingPermissionStore: store,
+    now: () => 2600,
+  });
+  const plan = await planner.plan(pendingId);
+
+  assert.equal(plan.ok, true);
+  assert.equal(plan.requestPreview.contents[0].parts[0].thoughtSignature, 'opaque-signature');
+  assert.deepEqual(store.getContinuationContext(pendingId).historyMessages, historyMessages);
+  assert.equal(
+    store.getContinuationContext(pendingId).providerContinuation.assistantContent.parts[0].thoughtSignature,
+    'opaque-signature',
+  );
+  assert.equal(Object.hasOwn(store.get(pendingId).toolCall, 'providerContinuation'), false);
+  assert.equal(Object.keys(store.get(pendingId)).includes('continuationContext'), false);
+  console.log('ok - pending continuation keeps history private and preserves Gemini signature');
 }
 
 {

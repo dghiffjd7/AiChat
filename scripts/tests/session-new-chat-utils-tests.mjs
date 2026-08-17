@@ -42,6 +42,40 @@ import {
 }
 
 {
+  const calls = [];
+  const result = await clearSessionMemoriesForNewChat({
+    sessionId: 'chat:profile-clear',
+    keepNonSummary: false,
+    memoryTableStore: {
+      getMemories: async (query) => {
+        calls.push(['get', query]);
+        if (query.scope === 'global') {
+          return [
+            { id: 'global-profile', table_id: 'user_profile' },
+            { id: 'global-unrelated', table_id: 'moment_summary' },
+          ];
+        }
+        return [{ id: 'contact-row', table_id: 'character_profile' }];
+      },
+      batchDeleteMemories: async (ids) => calls.push(['delete', ids]),
+    },
+    resolveDefaultMemoryTemplateId: async () => 'default-v1',
+  });
+  assert.equal(result, true);
+  assert.deepEqual(calls, [
+    ['get', {
+      scope: 'contact',
+      group_id: undefined,
+      contact_id: 'chat:profile-clear',
+      template_id: 'default-v1',
+    }],
+    ['get', { scope: 'global', template_id: 'default-v1' }],
+    ['delete', ['contact-row', 'global-profile']],
+  ]);
+  console.log('ok - clear-all new chat also deletes the global user profile and leaves other global tables intact');
+}
+
+{
   const deleted = [];
   const result = await clearSessionMemoriesForNewChat({
     sessionId: 'group:1',

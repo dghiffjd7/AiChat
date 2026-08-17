@@ -393,7 +393,7 @@ export const createAppNavigationAgentTools = ({
         includeContent: { type: 'boolean' },
         include: {
           type: 'array',
-          description: 'Optional fields to expand. For persona/user use associations, description, avatar, or details. For session use members and/or worldbooks.',
+          description: 'Optional fields to expand. For persona/user use associations, description, avatar, or details. For session use members and/or worldbooks. For regex use rules only when the user explicitly asks to debug raw regex bodies; format inference must use formatEvidence instead.',
           items: { type: 'string', maxLength: 80 },
           maxItems: 30,
         },

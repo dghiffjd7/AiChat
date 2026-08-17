@@ -9,6 +9,9 @@ import { GeminiProvider } from './providers/gemini.js';
 import { DeepseekProvider } from './providers/deepseek.js';
 import { OllamaProvider } from './providers/ollama.js';
 import { OpenRouterProvider } from './providers/openrouter.js';
+import { OpenCodeProvider } from './providers/opencode.js';
+import { KimiProvider } from './providers/kimi.js';
+import { ZhipuProvider } from './providers/zhipu.js';
 import { MakersuiteProvider } from './providers/makersuite.js';
 import { VertexAIProvider } from './providers/vertexai.js';
 import {
@@ -29,6 +32,9 @@ const PROVIDER_CLASSES = Object.freeze({
     deepseek: DeepseekProvider,
     ollama: OllamaProvider,
     openrouter: OpenRouterProvider,
+    opencode: OpenCodeProvider,
+    kimi: KimiProvider,
+    zhipu: ZhipuProvider,
     custom: CustomProvider,
     novelai: NovelAIImageProvider,
     stability: StabilityAIImageProvider,
@@ -91,6 +97,11 @@ export class LLMClient {
      */
     async listModels() {
         return this.provider.listModels();
+    }
+
+    async prepareProviderFcCapabilities() {
+        if (typeof this.provider?.prepareProviderFcCapabilities !== 'function') return null;
+        return this.provider.prepareProviderFcCapabilities();
     }
 
     /**

@@ -127,6 +127,28 @@ class FakeDocument {
 }
 
 {
+  const runtime = createMaidCommandInputRuntime({
+    documentRef: new FakeDocument(),
+    getViewportSize: () => ({ w: 360, h: 640 }),
+    onSubmit: async () => ({ ok: true }),
+    setTimeoutFn: () => 0,
+    clearTimeoutFn: () => {},
+  });
+  runtime.open({ autoFocus: false });
+  runtime.getElements().inputEl.value = '这是还没发送的女仆指令';
+  runtime.close();
+  runtime.open({ autoFocus: false });
+  assert.equal(
+    runtime.getElements().inputEl.value,
+    '这是还没发送的女仆指令',
+    '普通收起后重新打开不应覆盖未发送草稿',
+  );
+  runtime.open({ initialText: '显式覆盖', autoFocus: false });
+  assert.equal(runtime.getElements().inputEl.value, '显式覆盖');
+  console.log('ok - maid command input preserves an unsent draft across collapse and reopen');
+}
+
+{
   const documentRef = new FakeDocument();
   const modeSwitchEl = new FakeElement('div');
   const timeouts = [];
@@ -401,6 +423,55 @@ class FakeDocument {
   assert.equal(runtime.isSubmitting(), false);
   assert.deepEqual(runtime.getQueue(), []);
   console.log('ok - maid command input stays interactive and serializes/cancels queued submissions');
+}
+
+{
+  const documentRef = new FakeDocument();
+  const cancelPrompts = [];
+  let activeSignal = null;
+  const runtime = createMaidCommandInputRuntime({
+    documentRef,
+    getViewportSize: () => ({ w: 360, h: 640 }),
+    onSubmit: async (text, controls) => {
+      activeSignal = controls.signal;
+      return new Promise((resolve) => {
+        controls.signal.addEventListener('abort', () => resolve({
+          ok: false,
+          status: 'cancelled',
+          cancelled: true,
+          reason: 'user_aborted',
+          message: `已停止 ${text}`,
+        }), { once: true });
+      });
+    },
+    onCancelActive: async payload => {
+      cancelPrompts.push(payload);
+      return 'all_stop';
+    },
+    setTimeoutFn: () => 1,
+    clearTimeoutFn: () => {},
+  });
+
+  runtime.open();
+  const { inputEl, submitBtn } = runtime.getElements();
+  inputEl.value = '执行中任务';
+  const active = runtime.submit();
+  assert.equal(activeSignal?.aborted, false);
+  assert.equal(submitBtn.attributes['aria-label'], '停止女仆任务');
+  assert.match(submitBtn.innerHTML, /rect/);
+
+  inputEl.value = '排队任务';
+  const queued = runtime.submit();
+  assert.equal(runtime.getQueue().length, 1, 'Enter/submit API 在执行中仍应加入队列');
+  assert.equal(await runtime.cancelActive(), true);
+  assert.equal(activeSignal.aborted, true);
+  assert.equal(cancelPrompts[0].queuedCount, 1);
+  assert.deepEqual(runtime.getQueue(), []);
+  assert.equal((await queued).reason, 'queued_submission_cancelled');
+  assert.equal((await active).status, 'cancelled');
+  assert.equal(runtime.isSubmitting(), false);
+  assert.equal(submitBtn.attributes['aria-label'], '发送给女仆');
+  console.log('ok - maid stop button aborts the active run and cancels queued work after confirmation');
 }
 
 {

@@ -12,11 +12,13 @@ import {
   buildAgentPromptModuleCardList,
 } from './agent-center-card-catalog.js';
 import { buildAgentCenterResources } from './agent-center-resource-contract.js';
+import { normalizeGlobalSemanticPromptLibrary } from '../agent/global-semantic-prompt-library.js';
 
 export const AGENT_CENTER_TABS = Object.freeze([
   { id: 'pending', label: '待处理' },
   { id: 'agents', label: 'Agent' },
   { id: 'prompts', label: '提示词' },
+  { id: 'global_prompts', label: '全局提示词' },
   { id: 'diagnostics', label: '诊断' },
   { id: 'resources', label: '资源' },
   { id: 'activity', label: '活动' },
@@ -557,6 +559,7 @@ const buildTabs = ({
   runView = {},
   agents = [],
   promptModules = [],
+  globalPromptLibrary = null,
   diagnosticViews = [],
   resources = [],
 } = {}) => AGENT_CENTER_TABS.map((tab) => {
@@ -564,6 +567,7 @@ const buildTabs = ({
   if (tab.id === 'pending') count = pending.length;
   if (tab.id === 'agents') count = agents.length;
   if (tab.id === 'prompts') count = promptModules.length;
+  if (tab.id === 'global_prompts') count = Number(globalPromptLibrary?.blocks?.length || 0);
   if (tab.id === 'diagnostics') count = diagnosticViews.length;
   if (tab.id === 'resources') count = resources.filter(item => Number(item.count || 0) > 0).length;
   if (tab.id === 'activity') count = Number(runView?.meta?.scopedActive ?? runView?.meta?.active ?? 0);
@@ -643,7 +647,18 @@ export const buildAgentCenterView = ({
     safety,
     resourceStatus,
   });
-  const tabs = buildTabs({ pending, runView, agents: agentCards, promptModules, diagnosticViews, resources });
+  const globalPromptLibrary = normalizeGlobalSemanticPromptLibrary(
+    agentCenterSettings?.global?.semanticPromptLibrary,
+  );
+  const tabs = buildTabs({
+    pending,
+    runView,
+    agents: agentCards,
+    promptModules,
+    diagnosticViews,
+    resources,
+    globalPromptLibrary,
+  });
   return {
     tabs,
     meta: {
@@ -657,6 +672,7 @@ export const buildAgentCenterView = ({
       resourceAlerts: resources.filter(item => Number(item.count || 0) > 0).length,
       agents: agentCards.length,
       promptModules: promptModules.length,
+      globalPromptBlocks: globalPromptLibrary.blocks.length,
       diagnosticViews: diagnosticViews.length,
       featureAgents: normalizedAgents.length,
       enabledAgents: agentCards.filter(item => item.enabled).length,
@@ -679,6 +695,7 @@ export const buildAgentCenterView = ({
     agents: agentCards,
     agentCards,
     promptModules,
+    globalPromptLibrary,
     diagnosticViews,
     featureAgents: normalizedAgents,
     agentProfileView: isPlainObject(agentProfileView) ? agentProfileView : null,

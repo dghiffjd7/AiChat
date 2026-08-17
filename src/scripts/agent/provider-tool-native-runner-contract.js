@@ -3,6 +3,7 @@ import { PROVIDER_TOOL_RUNNER_PAYLOAD_KINDS } from './provider-tool-runner-reque
 
 export const PROVIDER_TOOL_NATIVE_RUNNER_CONTRACTS = Object.freeze({
   openaiMessages: 'openai_messages_tool_result',
+  openaiResponses: 'openai_responses_function_call_output',
   anthropicMessages: 'anthropic_messages_tool_result',
   geminiContents: 'gemini_function_response',
   genericToolResults: 'generic_tool_results',
@@ -51,6 +52,7 @@ const countGeminiParts = (contents = [], key = '') => (
 );
 
 const getPayloadCount = (request = {}) => {
+  if (Array.isArray(request?.input)) return request.input.length;
   if (Array.isArray(request?.messages)) return request.messages.length;
   if (Array.isArray(request?.contents)) return request.contents.length;
   if (Array.isArray(request?.toolResults)) return request.toolResults.length;
@@ -151,6 +153,25 @@ export const resolveProviderToolNativeRunnerContract = ({
     };
   }
 
+  if (providerFamily === 'openai' && payloadKind === PROVIDER_TOOL_RUNNER_PAYLOAD_KINDS.input && Array.isArray(request.input)) {
+    const functionCallCount = request.input.filter(item => trim(item?.type) === 'function_call').length;
+    const functionCallOutputCount = request.input.filter(item => (
+      trim(item?.type) === 'function_call_output' && trim(item?.call_id)
+    )).length;
+    if (!functionCallOutputCount) {
+      return buildUnsupported(base, 'openai responses native runner input requires a function_call_output item');
+    }
+    if (trim(request.sourceProvider || request.provider).toLowerCase() !== 'openai') {
+      return buildUnsupported(base, 'openai responses native runner only supports the official OpenAI provider');
+    }
+    return buildReady(base, PROVIDER_TOOL_NATIVE_RUNNER_CONTRACTS.openaiResponses, {
+      requestKeys: ['input'],
+      functionCallCount,
+      functionCallOutputCount,
+      requiresProviderNativeRunner: true,
+    });
+  }
+
   if (providerFamily === 'openai' && payloadKind === PROVIDER_TOOL_RUNNER_PAYLOAD_KINDS.messages && Array.isArray(request.messages)) {
     const toolMessageCount = countOpenAIToolMessages(request.messages);
     const toolCallCount = countOpenAIToolCalls(request.messages);
@@ -182,6 +203,11 @@ export const resolveProviderToolNativeRunnerContract = ({
   if (providerFamily === 'gemini' && payloadKind === PROVIDER_TOOL_RUNNER_PAYLOAD_KINDS.contents && Array.isArray(request.contents)) {
     const functionCallCount = countGeminiParts(request.contents, 'functionCall');
     const functionResponseCount = countGeminiParts(request.contents, 'functionResponse');
+    const thoughtSignatureCount = request.contents.reduce((sum, content) => (
+      sum + (Array.isArray(content?.parts)
+        ? content.parts.filter(part => trim(part?.thoughtSignature)).length
+        : 0)
+    ), 0);
     if (!functionResponseCount) {
       return buildUnsupported(base, 'gemini native runner contents require a functionResponse part');
     }
@@ -189,6 +215,7 @@ export const resolveProviderToolNativeRunnerContract = ({
       requestKeys: ['contents'],
       functionCallCount,
       functionResponseCount,
+      thoughtSignatureCount,
       requiresProviderNativeRunner: true,
     });
   }

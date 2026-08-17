@@ -91,6 +91,9 @@ export const classifyMaidToolFailure = ({
 export const classifyMaidRunFailure = (result = {}) => {
   if (result?.ok === true) return '';
   const reason = trim(result?.reason);
+  if (result?.status === 'cancelled' || result?.cancelled === true || reason === 'user_aborted') {
+    return MAID_FAILURE_CODES.userAborted;
+  }
   if (reason === 'repeated_tool_failure') return MAID_FAILURE_CODES.repeatedToolFailure;
   if (reason === 'max_steps_reached') return MAID_FAILURE_CODES.maxStepsReached;
   if (MODEL_DECISION_REASONS.has(reason)) return MAID_FAILURE_CODES.modelInvalidDecision;

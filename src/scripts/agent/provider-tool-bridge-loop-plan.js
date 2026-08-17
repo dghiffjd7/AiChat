@@ -17,6 +17,16 @@ const trim = (value, fallback = '') => {
 
 const isPlainObject = value => Boolean(value && typeof value === 'object' && !Array.isArray(value));
 
+const clone = (value) => {
+  if (value === null || value === undefined) return value;
+  if (typeof value !== 'object') return value;
+  try {
+    return JSON.parse(JSON.stringify(value));
+  } catch {
+    return Array.isArray(value) ? value.slice() : { ...value };
+  }
+};
+
 const resolveCaptureAction = (debugUiRegistry = null) => {
   const action = debugUiRegistry?.actions?.captureProviderToolCallDeltas;
   return typeof action === 'function' ? action : null;
@@ -95,6 +105,8 @@ export const buildProviderToolBridgeLoopPlan = ({
   sessionId = '',
   requestId = '',
   source = 'bridge.generateStream',
+  historyMessages = [],
+  providerRequestOptions = {},
   onCaptureError = null,
 } = {}) => {
   const captureProviderToolCallDeltas = resolveCaptureAction(debugUiRegistry);
@@ -119,6 +131,12 @@ export const buildProviderToolBridgeLoopPlan = ({
     : (captureProviderToolCallDeltas
         ? PROVIDER_TOOL_BRIDGE_LOOP_MODES.readOnlyCapture
         : PROVIDER_TOOL_BRIDGE_LOOP_MODES.disabled);
+  const providerContinuationContext = mode === PROVIDER_TOOL_BRIDGE_LOOP_MODES.executionLoop
+    ? {
+        historyMessages: Array.isArray(historyMessages) ? clone(historyMessages) : [],
+        providerRequestOptions: isPlainObject(providerRequestOptions) ? clone(providerRequestOptions) : {},
+      }
+    : null;
   const diagnostics = buildDiagnostics({
     mode,
     providerName,
@@ -179,6 +197,7 @@ export const buildProviderToolBridgeLoopPlan = ({
           permissionStrategy: permissionStrategy.mode,
           permissionInteractionMode: permissionStrategy.mode,
           sessionGate,
+          providerContinuationContext,
           runnerMode: 'read_only_capture',
           allowRunnerNetwork: false,
           allowRealRunner: false,

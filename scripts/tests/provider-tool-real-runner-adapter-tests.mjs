@@ -8,6 +8,10 @@ import {
   runProviderToolRealRunnerAdapter,
 } from '../../src/scripts/agent/provider-tool-real-runner-adapter.js';
 import { runProviderToolRunnerFacade } from '../../src/scripts/agent/provider-tool-runner-facade.js';
+import {
+  attachProviderToolContinuationContext,
+  readProviderToolContinuationContext,
+} from '../../src/scripts/agent/provider-tool-continuation-context.js';
 
 const buildDraft = (overrides = {}) => ({
   ok: true,
@@ -268,6 +272,56 @@ const buildDraft = (overrides = {}) => ({
   assert.equal(calls.length, 1);
   assert.equal(calls[0].options.nativeRunnerContract.contractKind, 'gemini_function_response');
   console.log('ok - provider real runner adapter allows provider-native runner capability');
+}
+
+{
+  const draft = buildDraft({
+    provider: 'openai',
+    payloadKind: 'input',
+    requestPreviewFormat: 'openai_responses_function_call_output',
+    request: {
+      provider: 'openai',
+      sourceProvider: 'openai',
+      model: 'gpt-responses',
+      sessionId: 's1',
+      format: 'openai_responses_function_call_output',
+      input: [
+        { type: 'function_call', call_id: 'call-1', name: 'contact_profile_list', arguments: '{}' },
+        { type: 'function_call_output', call_id: 'call-1', output: '{}' },
+      ],
+    },
+  });
+  attachProviderToolContinuationContext(draft.request, {
+    historyMessages: [{ role: 'user', content: 'private history' }],
+  });
+  const result = await runProviderToolRealRunnerAdapter({
+    runnerRequestDraft: draft,
+    providerClient: {
+      runProviderToolRequest: async (request, options) => {
+        assert.equal(options.requestId, 'provider-tool-runner-2800');
+        assert.deepEqual(readProviderToolContinuationContext(request).historyMessages, [
+          { role: 'user', content: 'private history' },
+        ]);
+        return {
+          output: 'provider_stream_events',
+          network: true,
+          writesChat: false,
+          finalText: 'responses adapter ok',
+          events: [
+            { type: 'provider_stream_start' },
+            { type: 'provider_stream_delta', textDelta: 'responses adapter ok' },
+            { type: 'provider_stream_end', finalText: 'responses adapter ok' },
+          ],
+        };
+      },
+    },
+    enabled: true,
+    allowNetwork: true,
+    now: () => 2800,
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.finalText, 'responses adapter ok');
+  console.log('ok - provider real runner adapter preserves private OpenAI Responses history context');
 }
 
 {

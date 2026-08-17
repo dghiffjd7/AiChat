@@ -2127,3 +2127,63 @@ const agentCenterPanelSource = await readFile(
   assert.equal(panel.lastError, 'run view unavailable');
   console.log('ok - agent center panel degrades to empty view when optional actions fail');
 }
+
+{
+  const panel = new AgentCenterPanel();
+  panel.view = {
+    globalPromptLibrary: {
+      schemaVersion: 1,
+      budgetVersion: 1,
+      blocks: [{
+        id: 'global-a',
+        name: '人物一致性',
+        enabled: true,
+        content: 'Keep {{char}} consistent.',
+        scope: 'chat',
+        anchor: 'semantic_header',
+      }],
+    },
+  };
+  const html = panel.renderGlobalPromptLibrary();
+  assert.match(html, /全局语义提示词库/);
+  assert.match(html, /人物一致性/);
+  assert.match(html, /语义层头部/);
+  assert.match(html, /单块上限 2,000 tok/);
+  assert.match(html, /示例私聊 FC/);
+  assert.match(html, /导入 JSON/);
+  assert.match(html, /draggable="true"/);
+  console.log('ok - agent center renders the bounded ordered global prompt editor');
+}
+
+{
+  const calls = [];
+  const panel = new AgentCenterPanel({
+    getActions: () => ({
+      upsertGlobalSemanticPromptBlock: (options) => {
+        calls.push(options);
+        return {
+          ok: true,
+          forcedDisabled: true,
+          validation: { message: '检测到回复格式指令；请放入会话预设' },
+        };
+      },
+    }),
+  });
+  panel.refresh = async () => true;
+  const fields = {
+    name: { value: '格式草稿' },
+    enabled: { checked: true },
+    scope: { value: 'chat' },
+    anchor: { value: 'semantic_header' },
+    content: { value: 'MiPhone_start' },
+  };
+  const card = {
+    dataset: { globalPromptCard: 'draft-a' },
+    querySelector: selector => fields[selector.match(/"([^"]+)"/)?.[1]] || null,
+  };
+  await panel.handleGlobalPromptSave(card);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].block.enabled, true);
+  assert.equal(calls[0].block.content, 'MiPhone_start');
+  console.log('ok - agent center keeps guarded output contracts as disabled drafts through the action layer');
+}

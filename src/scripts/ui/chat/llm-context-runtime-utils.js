@@ -56,6 +56,7 @@ export const createLlmContextBuilder = ({
   isGroupChat = false,
   getSessionSettings = null,
   getDisableSummary = null,
+  getFormatProfileEnabled = null,
   skipInputRegex = false,
   continueTarget = null,
   rpUiMode = false,
@@ -123,6 +124,7 @@ export const createLlmContextBuilder = ({
     const maxOutputTokens = Math.trunc(Number(openaiPreset?.openai_max_tokens));
     payload.meta = {
       ...(payload.meta || {}),
+      formatProfileEnabled: getFormatProfileEnabled?.() === true,
       inputBudgetContext: {
         maxContextTokens: Number.isFinite(maxContextTokens) && maxContextTokens > 0
           ? maxContextTokens

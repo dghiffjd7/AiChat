@@ -1,5 +1,5 @@
 import {
-  buildImportedPresetUpsertPayload,
+  buildRestoredPresetUpsertPayload,
   getImportedPresetName,
 } from './preset-import-dedupe-utils.js';
 
@@ -235,7 +235,7 @@ export const buildExperiencePackImportedPresetNameBase = ({
 export const buildExperiencePackPresetUpsertPayload = ({
   presetPayload = {},
   presetName = '',
-} = {}) => buildImportedPresetUpsertPayload({ presetPayload, presetName });
+} = {}) => buildRestoredPresetUpsertPayload({ presetPayload, presetName });
 
 export const buildExperiencePackImportedConnectionProfileNameBase = (packageData = {}) => (
   `${String(packageData?.manifest?.character?.name || '角色').trim() || '角色'}·连线`

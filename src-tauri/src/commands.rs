@@ -4326,6 +4326,18 @@ pub async fn http_request(
     }
 }
 
+fn describe_http_stream_error(e: &reqwest::Error) -> String {
+    use std::error::Error as _;
+    let mut msg = e.to_string();
+    let mut source = e.source();
+    while let Some(cause) = source {
+        msg.push_str(": ");
+        msg.push_str(&cause.to_string());
+        source = cause.source();
+    }
+    msg
+}
+
 #[tauri::command]
 pub async fn http_stream_request_start(
     url: String,
@@ -4373,9 +4385,13 @@ pub async fn http_stream_request_start(
                 header_map.insert(name, value);
             }
 
+            // 流式请求不使用 reqwest 总超时——它覆盖整个响应体读取，会把健康的
+            // 长流在中途杀死并伪装成 "error decoding response body"。改为
+            // 连接超时 + 响应头超时 + 块间空闲超时，仅在链路真正无数据时失败。
+            let idle_timeout = timeout_ms.map(std::time::Duration::from_millis);
             let mut builder = reqwest::Client::builder();
-            if let Some(ms) = timeout_ms {
-                builder = builder.timeout(std::time::Duration::from_millis(ms));
+            if let Some(d) = idle_timeout {
+                builder = builder.connect_timeout(d);
             }
             let client = builder.build().map_err(|e| e.to_string())?;
 
@@ -4384,7 +4400,18 @@ pub async fn http_stream_request_start(
                 req = req.body(body);
             }
 
-            let mut resp = req.send().await.map_err(|e| e.to_string())?;
+            let mut resp = match idle_timeout {
+                Some(d) => tokio::time::timeout(d, req.send())
+                    .await
+                    .map_err(|_| {
+                        format!(
+                            "http stream timed out after {}ms waiting for response headers",
+                            d.as_millis()
+                        )
+                    })?
+                    .map_err(|e| describe_http_stream_error(&e))?,
+                None => req.send().await.map_err(|e| describe_http_stream_error(&e))?,
+            };
             let status = resp.status();
             let mut out_headers: HashMap<String, String> = HashMap::new();
             for (k, v) in resp.headers().iter() {
@@ -4401,7 +4428,19 @@ pub async fn http_stream_request_start(
             );
 
             let mut utf8_pending: Vec<u8> = Vec::new();
-            while let Some(chunk) = resp.chunk().await.map_err(|e| e.to_string())? {
+            loop {
+                let next = match idle_timeout {
+                    Some(d) => tokio::time::timeout(d, resp.chunk()).await.map_err(|_| {
+                        format!(
+                            "http stream idle timeout: no data received for {}ms",
+                            d.as_millis()
+                        )
+                    })?,
+                    None => resp.chunk().await,
+                };
+                let Some(chunk) = next.map_err(|e| describe_http_stream_error(&e))? else {
+                    break;
+                };
                 if encode_binary_chunks {
                     push_http_stream_chunk(
                         &stream_map,

@@ -11,6 +11,7 @@ import {
 import { prepareTransportRequest } from '../transport.js';
 import { reportProviderUsage } from '../provider-usage.js';
 import { reportProviderWebSources } from '../web-search-runtime.js';
+import { attachSafeProviderErrorMetadata } from '../provider-error-metadata.js';
 import { isStreamOptionsRejectionError, streamUsageCompat } from '../stream-usage-compat.js';
 import { emitDebugLog } from '../../utils/debug-log.js';
 import {
@@ -20,6 +21,10 @@ import {
   normalizeDeepSeekReasonerMessages,
   resolveDeepSeekBetaBaseUrl,
 } from './deepseek-compat.js';
+import {
+  buildOpenAIResponsesRequestBody,
+  extractOpenAIResponsesText,
+} from './openai-responses-utils.js';
 
 const getTauriInvoker = () => {
   const g = typeof globalThis !== 'undefined' ? globalThis : undefined;
@@ -287,6 +292,32 @@ const normalizeDeepSeekPrefixRequest = (raw) => {
   };
 };
 
+const isOpenAIResponsesRequested = (options = {}) => (
+  String(options?.openaiApi || options?.openai_api || '').trim().toLowerCase() === 'responses'
+);
+
+const resolveOfficialResponsesUrl = ({ provider = '', baseUrl = '' } = {}) => {
+  const normalizedProvider = String(provider || '').trim().toLowerCase();
+  try {
+    const url = new URL(String(baseUrl || (
+      normalizedProvider === 'deepseek'
+        ? 'https://api.deepseek.com/v1'
+        : 'https://api.openai.com/v1'
+    )));
+    const hostname = url.hostname.toLowerCase();
+    if (normalizedProvider === 'openai' && hostname === 'api.openai.com') {
+      const basePath = url.pathname.replace(/\/+$/u, '');
+      return `${url.origin}${basePath && basePath !== '/' ? basePath : '/v1'}/responses`;
+    }
+    if (normalizedProvider === 'deepseek' && hostname === 'api.deepseek.com') {
+      return `${url.origin}/responses`;
+    }
+    return '';
+  } catch {
+    return '';
+  }
+};
+
 const buildMessageRoleWindow = (messages, index, radius = 4) => {
   const arr = Array.isArray(messages) ? messages : [];
   const idx = Math.trunc(Number(index));
@@ -363,6 +394,18 @@ export class OpenAIProvider {
     if (src.reasoning && typeof src.reasoning === 'object' && !Array.isArray(src.reasoning)) {
       out.reasoning = { ...src.reasoning };
     }
+    const responseFormat = src.response_format ?? src.responseFormat;
+    if (typeof responseFormat === 'string' && responseFormat.trim()) {
+      out.response_format = { type: responseFormat.trim() };
+    } else if (
+      responseFormat &&
+      typeof responseFormat === 'object' &&
+      !Array.isArray(responseFormat) &&
+      typeof responseFormat.type === 'string' &&
+      responseFormat.type.trim()
+    ) {
+      out.response_format = { ...responseFormat, type: responseFormat.type.trim() };
+    }
 
     // Token limits. Newer OpenAI reasoning/chat models reject max_tokens and require max_completion_tokens.
     const tokenLimit = Number.isFinite(src.max_completion_tokens)
@@ -384,14 +427,24 @@ export class OpenAIProvider {
     if (typeof src.stop === 'string' || Array.isArray(src.stop)) out.stop = src.stop;
     if (Array.isArray(src.tools) && src.tools.length) out.tools = src.tools;
     if (Object.prototype.hasOwnProperty.call(src, 'tool_choice')) out.tool_choice = src.tool_choice;
+    if (typeof src.parallel_tool_calls === 'boolean') out.parallel_tool_calls = src.parallel_tool_calls;
+    if (
+      this.provider === 'openrouter'
+      && src.provider
+      && typeof src.provider === 'object'
+      && !Array.isArray(src.provider)
+    ) {
+      out.provider = { ...src.provider };
+    }
     if (Number.isFinite(src.max_tool_calls)) {
       out.max_tool_calls = Math.max(1, Math.trunc(src.max_tool_calls));
     }
 
     // Some servers reject unsupported fields (DeepSeek is stricter).
     if (isDeepSeek) {
-      if (src.thinking && typeof src.thinking === 'object' && src.thinking.type === 'enabled') {
-        out.thinking = { type: 'enabled' };
+      const thinkingType = String(src?.thinking?.type || '').trim().toLowerCase();
+      if (thinkingType === 'enabled' || thinkingType === 'disabled') {
+        out.thinking = { type: thinkingType };
       }
     } else if (!isOpenAIRestrictedSampling) {
       if (Number.isFinite(src.n)) out.n = Math.trunc(src.n);
@@ -525,7 +578,7 @@ export class OpenAIProvider {
       const error = new Error(`OpenAI API Error: ${res.status}${detail ? ` - ${detail}` : ''}`);
       error.status = res.status;
       error.response = res.body;
-      throw error;
+      throw attachSafeProviderErrorMetadata(error, res.body);
     }
     try {
       return JSON.parse(res.body || '{}');
@@ -540,7 +593,278 @@ export class OpenAIProvider {
   /**
    * 发送聊天消息（非流式）
    */
+  async chatResponses(messages, options = {}) {
+    const prepared = this.prepareResponsesRequest(messages, options, { stream: false });
+    const { signal, requestId, onProviderToolCallDelta, body } = prepared;
+    const data = await this.requestJson({
+      url: prepared.url,
+      method: 'POST',
+      headers: this.getHeaders(),
+      body: JSON.stringify(body),
+      signal,
+      requestId,
+    });
+    try {
+      onProviderToolCallDelta?.(data, { provider: this.provider, model: this.model, api: 'responses' });
+    } catch {}
+    reportProviderWebSources(options, data, { provider: this.provider });
+    reportProviderUsage(options, {
+      body: data,
+      model: this.model,
+      provider: this.provider,
+      finishReason: String(data?.status || data?.incomplete_details?.reason || ''),
+    });
+    return extractOpenAIResponsesText(data);
+  }
+
+  prepareResponsesRequest(messages, options = {}, { stream = false } = {}) {
+    const responsesUrl = resolveOfficialResponsesUrl(this);
+    if (!responsesUrl) {
+      throw new Error('Responses API requires an official api.openai.com or api.deepseek.com endpoint');
+    }
+    const {
+      signal,
+      requestId,
+      onProviderToolCallDelta,
+      onProviderSources,
+      options: rawPayloadOptions,
+    } = splitRequestOptions(options);
+    const payloadOptions = { ...(rawPayloadOptions || {}) };
+    delete payloadOptions.openaiApi;
+    delete payloadOptions.openai_api;
+    const body = buildOpenAIResponsesRequestBody({
+      model: this.model,
+      messages,
+      options: payloadOptions,
+      stream,
+    });
+    const estimatedChars = JSON.stringify(body).length;
+    if (estimatedChars > 1_800_000) {
+      throw new Error(
+        `请求过大（约 ${Math.round(estimatedChars / 1024)} KB），可能导致 Android WebView OOM；请减少历史/摘要/世界书注入或清理该聊天室。`,
+      );
+    }
+    return {
+      signal,
+      requestId,
+      onProviderToolCallDelta,
+      onProviderSources,
+      url: responsesUrl,
+      body,
+    };
+  }
+
+  async *streamResponsesEvents(prepared = {}) {
+    const transport = prepareTransportRequest({
+      config: this.transportConfig,
+      provider: this.provider,
+      url: prepared.url,
+      headers: { ...this.getHeaders(), Accept: 'text/event-stream' },
+    });
+    const payload = JSON.stringify(prepared.body || {});
+    const { signal } = prepared;
+
+    if (this.canUseNativeHttp()) {
+      const invoker = getTauriInvoker();
+      const rawRequestId = String(
+        prepared.requestId || `responses_stream_${Date.now().toString(36)}_${Math.random().toString(16).slice(2, 10)}`,
+      ).trim();
+      const nativeRequestId = rawRequestId.replace(/[^a-z0-9._-]+/giu, '_').slice(0, 160)
+        || `responses_stream_${Date.now().toString(36)}`;
+      let started = false;
+      let responseStatus = 0;
+      let responseOk = null;
+      let rawErrorBody = '';
+      let sseBuffer = '';
+      const parseBufferedEvents = (final = false) => {
+        const normalized = String(sseBuffer || '').replace(/\r\n/gu, '\n');
+        const blocks = normalized.split('\n\n');
+        sseBuffer = final ? '' : (blocks.pop() || '');
+        const events = [];
+        for (const block of blocks) {
+          const dataText = block
+            .split('\n')
+            .filter(line => line.startsWith('data:'))
+            .map(line => line.slice(5).trimStart())
+            .join('\n')
+            .trim();
+          if (!dataText || dataText === '[DONE]') continue;
+          try { events.push(JSON.parse(dataText)); } catch {}
+        }
+        return events;
+      };
+      try {
+        if (signal?.aborted) throw makeAbortError();
+        await invoker('http_stream_request_start', {
+          url: transport.url,
+          method: 'POST',
+          headers: transport.headers,
+          body: payload,
+          timeoutMs: this.timeout,
+          requestId: nativeRequestId,
+        });
+        started = true;
+        while (true) {
+          if (signal?.aborted) throw makeAbortError();
+          const batch = await invoker('http_stream_request_read', {
+            requestId: nativeRequestId,
+            maxChunks: 32,
+          });
+          if (Number.isFinite(Number(batch?.status))) responseStatus = Number(batch.status);
+          if (typeof batch?.ok === 'boolean') responseOk = batch.ok;
+          const chunks = Array.isArray(batch?.chunks)
+            ? batch.chunks.map(chunk => String(chunk || ''))
+            : [];
+          if (responseOk === false) {
+            rawErrorBody += chunks.join('');
+          } else {
+            for (const chunk of chunks) {
+              sseBuffer += chunk;
+              for (const event of parseBufferedEvents(false)) yield event;
+            }
+          }
+          const nativeError = String(batch?.error || '').trim();
+          if (nativeError) {
+            if (/aborted/iu.test(nativeError)) throw makeAbortError();
+            const error = new Error(`native http_stream_request failed: ${nativeError}`);
+            error.status = responseStatus;
+            error.response = rawErrorBody;
+            throw error;
+          }
+          if (batch?.done) {
+            if (responseOk === false) {
+              const detail = this.extractErrorDetail(rawErrorBody);
+              const error = new Error(`OpenAI API Error: ${responseStatus}${detail ? ` - ${detail}` : ''}`);
+              error.status = responseStatus;
+              error.response = rawErrorBody;
+              throw attachSafeProviderErrorMetadata(error, rawErrorBody);
+            }
+            sseBuffer += '\n\n';
+            for (const event of parseBufferedEvents(true)) yield event;
+            return;
+          }
+          if (!chunks.length) await delay(20);
+        }
+      } finally {
+        if (started) {
+          invoker('http_stream_request_close', { requestId: nativeRequestId }).catch(() => {});
+        }
+      }
+    }
+
+    const { controller, cleanup, touch } = createLinkedAbortController({ timeoutMs: this.timeout, signal, idle: true });
+    try {
+      const response = await fetch(transport.url, {
+        method: 'POST',
+        headers: transport.headers,
+        signal: controller.signal,
+        body: payload,
+      });
+      if (!response.ok) {
+        const rawErrorBody = await response.text();
+        const detail = this.extractErrorDetail(rawErrorBody);
+        const error = new Error(`OpenAI API Error: ${response.status}${detail ? ` - ${detail}` : ''}`);
+        error.status = response.status;
+        error.response = rawErrorBody;
+        throw attachSafeProviderErrorMetadata(error, rawErrorBody);
+      }
+      for await (const event of handleSSE(response)) {
+        touch();
+        yield event;
+      }
+    } finally {
+      cleanup();
+    }
+  }
+
+  async *streamChatResponses(messages, options = {}) {
+    const prepared = this.prepareResponsesRequest(messages, options, { stream: true });
+    let finalResponse = null;
+    let outputChars = 0;
+    let reasoningChars = 0;
+    let deltaCount = 0;
+    try {
+      if (prepared.signal?.aborted) throw makeAbortError();
+      for await (const event of this.streamResponsesEvents(prepared)) {
+        const type = String(event?.type || '').trim();
+        if (type === 'error' || type === 'response.failed') {
+          const detail = event?.error?.message || event?.response?.error?.message || 'Responses stream failed';
+          const error = new Error(String(detail));
+          error.response = event;
+          throw error;
+        }
+        try {
+          prepared.onProviderToolCallDelta?.(event, {
+            provider: this.provider,
+            model: this.model,
+            api: 'responses',
+          });
+        } catch {}
+        deltaCount += 1;
+        if (type === 'response.completed') finalResponse = event?.response || null;
+        const reasoningDelta = (
+          type === 'response.reasoning_summary_text.delta'
+          || type === 'response.reasoning_text.delta'
+        ) && typeof event?.delta === 'string'
+          ? event.delta
+          : '';
+        if (reasoningDelta) {
+          reasoningChars += reasoningDelta.length;
+          yield createReasoningStreamEvent(reasoningDelta, { provider: this.provider });
+        }
+        if (type === 'response.output_text.delta' && typeof event?.delta === 'string' && event.delta) {
+          outputChars += event.delta.length;
+          yield event.delta;
+        }
+      }
+      if (finalResponse) {
+        reportProviderWebSources(options, finalResponse, { provider: this.provider });
+        reportProviderUsage(options, {
+          body: finalResponse,
+          model: this.model,
+          provider: this.provider,
+          finishReason: String(finalResponse?.status || finalResponse?.incomplete_details?.reason || ''),
+        });
+      }
+      emitOpenAIResponseDiagnostics({
+        phase: 'responses-stream',
+        provider: this.provider,
+        model: this.model,
+        stream: true,
+        transport: this.canUseNativeHttp() ? 'native-stream' : 'fetch-stream',
+        requestId: prepared.requestId,
+        status: finalResponse ? 200 : 0,
+        payload: { ...prepared.body, __timeoutMs: this.timeout },
+        finishReason: String(finalResponse?.status || ''),
+        outputChars,
+        reasoningChars,
+        deltaCount,
+        usageBody: finalResponse,
+      });
+    } catch (error) {
+      emitOpenAIResponseDiagnostics({
+        phase: 'responses-stream-error',
+        provider: this.provider,
+        model: this.model,
+        stream: true,
+        transport: this.canUseNativeHttp() ? 'native-stream' : 'fetch-stream',
+        requestId: prepared.requestId,
+        status: error?.status || 0,
+        payload: { ...prepared.body, __timeoutMs: this.timeout },
+        outputChars,
+        reasoningChars,
+        deltaCount,
+        usageBody: finalResponse,
+        errorMessage: error?.message || String(error || ''),
+      });
+      throw error;
+    }
+  }
+
   async chat(messages, options = {}) {
+    if (isOpenAIResponsesRequested(options)) {
+      return this.chatResponses(messages, options);
+    }
     const prepared = this.prepareChatRequest(messages, options);
     const { signal, requestId } = prepared;
     messages = prepared.messages;
@@ -583,7 +907,7 @@ export class OpenAIProvider {
         const error = new Error(`OpenAI API Error: ${res.status}${detail ? ` - ${detail}` : ''}`);
         error.status = res.status;
         error.response = res.body;
-        throw error;
+        throw attachSafeProviderErrorMetadata(error, res.body);
       }
       try {
         data = JSON.parse(res.body || '{}');
@@ -658,6 +982,10 @@ export class OpenAIProvider {
   // 流式带 stream_options.include_usage 才能拿到 usage 校准样本；严格中转对该字段
   // 报 4xx 点名拒绝时，记忆该端点并去掉重试一次（拒绝发生在首个增量之前，重启安全）。
   async *streamChat(messages, options = {}) {
+    if (isOpenAIResponsesRequested(options)) {
+      yield* this.streamChatResponses(messages, options);
+      return;
+    }
     // 只在尚未产出任何增量时才允许去掉 stream_options 重试一次：
     // 已产出的增量无法收回，整段重跑会把开头内容重复发给用户。
     let yieldedAny = false;
@@ -812,7 +1140,7 @@ export class OpenAIProvider {
               const error = new Error(`OpenAI API Error: ${responseStatus || 0}${detail ? ` - ${detail}` : ''}`);
               error.status = responseStatus || 0;
               error.response = rawErrorBody;
-              throw error;
+              throw attachSafeProviderErrorMetadata(error, rawErrorBody);
             }
             yield* flushSseBuffer(true);
             emitOpenAICacheDebug({
@@ -879,7 +1207,7 @@ export class OpenAIProvider {
       }
     }
 
-    const { controller, cleanup } = createLinkedAbortController({ timeoutMs: this.timeout, signal });
+    const { controller, cleanup, touch } = createLinkedAbortController({ timeoutMs: this.timeout, signal, idle: true });
     let responseStatus = 0;
     let responseHeaders = {};
     let lastUsage = null;
@@ -902,13 +1230,17 @@ export class OpenAIProvider {
         const error = new Error(`OpenAI API Error: ${response.status}${detail ? ` - ${detail}` : ''}`);
         error.status = response.status;
         error.response = txt;
-        throw attachMessageIndexDiagnostics(error, messages);
+        throw attachMessageIndexDiagnostics(
+          attachSafeProviderErrorMetadata(error, txt),
+          messages,
+        );
       }
 
       response.headers.forEach((value, key) => {
         responseHeaders[key] = value;
       });
       for await (const data of handleSSE(response)) {
+        touch();
         notifyProviderToolCallDelta(data);
         notifyProviderSources(data);
         if (data?.usage && typeof data.usage === 'object') lastUsage = data;

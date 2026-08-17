@@ -29,6 +29,17 @@ const clone = (value) => {
   }
 };
 
+const cloneForDiagnostics = (value) => {
+  if (value === null || value === undefined) return value;
+  try {
+    return JSON.parse(JSON.stringify(value, (key, child) => (
+      key === 'providerContinuation' ? undefined : child
+    )));
+  } catch {
+    return clone(value);
+  }
+};
+
 const normalizeAllowedTools = (tools = []) => (
   (Array.isArray(tools) ? tools : [tools])
     .map(tool => trim(tool))
@@ -128,9 +139,9 @@ export const createProviderToolExperimentRuntime = ({
       explicitEnabled: entry.explicitEnabled === true,
       createdAt: Number(entry.createdAt || readNow()) || readNow(),
       updatedAt: Number(entry.updatedAt || entry.createdAt || readNow()) || readNow(),
-      deltas: Array.isArray(entry.deltas) ? clone(entry.deltas) : [],
-      completedToolCalls: Array.isArray(entry.completedToolCalls) ? clone(entry.completedToolCalls) : [],
-      results: Array.isArray(entry.results) ? clone(entry.results) : [],
+      deltas: Array.isArray(entry.deltas) ? cloneForDiagnostics(entry.deltas) : [],
+      completedToolCalls: Array.isArray(entry.completedToolCalls) ? cloneForDiagnostics(entry.completedToolCalls) : [],
+      results: Array.isArray(entry.results) ? cloneForDiagnostics(entry.results) : [],
       parts: Array.isArray(entry.parts) ? clone(entry.parts) : [],
       continuation: isPlainObject(entry.continuation) ? clone(entry.continuation) : null,
       requestPreview: isPlainObject(entry.requestPreview) ? clone(entry.requestPreview) : null,
@@ -144,7 +155,7 @@ export const createProviderToolExperimentRuntime = ({
       realRunnerDebug: isPlainObject(entry.realRunnerDebug) ? clone(entry.realRunnerDebug) : null,
       permissionStrategy: isPlainObject(entry.permissionStrategy) ? clone(entry.permissionStrategy) : null,
       loopState: isPlainObject(entry.loopState) ? clone(entry.loopState) : null,
-      toolCall: entry.toolCall ? clone(entry.toolCall) : null,
+      toolCall: entry.toolCall ? cloneForDiagnostics(entry.toolCall) : null,
     };
     diagnostics.unshift(normalized);
     if (diagnostics.length > 20) diagnostics.length = 20;
@@ -293,6 +304,9 @@ export const createProviderToolExperimentRuntime = ({
       promptPermission: opts.promptPermission === true,
       permissionTimeoutMs: opts.permissionTimeoutMs,
       providerToolSessionGate: opts.sessionGate,
+      providerContinuationContext: isPlainObject(opts.providerContinuationContext)
+        ? opts.providerContinuationContext
+        : null,
       requestPermission: buildPermissionRequester(opts, normalizedToolCall),
     });
     const completed = {
@@ -374,6 +388,9 @@ export const createProviderToolExperimentRuntime = ({
       providerRunner: runnerModePlan.providerRunner || null,
       allowRunnerNetwork: runnerModePlan.allowRunnerNetwork === true,
       runnerModePlan: runnerModePlan.diagnostics,
+      providerContinuationContext: isPlainObject(opts.providerContinuationContext)
+        ? opts.providerContinuationContext
+        : null,
       executeToolCall: toolCall => run({
         ...opts,
         enabled: true,

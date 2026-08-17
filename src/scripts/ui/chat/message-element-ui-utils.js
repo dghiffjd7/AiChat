@@ -116,6 +116,7 @@ export const buildMessageElementCore = ({
       bubbleStack,
       bubble,
       quickBar: reactionQuickBar,
+      scrollBoundary: scrollEl,
     });
   }
 

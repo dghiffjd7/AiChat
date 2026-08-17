@@ -4,6 +4,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { OpenAIProvider } from '../../src/scripts/api/providers/openai.js';
 import { AnthropicProvider } from '../../src/scripts/api/providers/anthropic.js';
 import { GeminiProvider } from '../../src/scripts/api/providers/gemini.js';
+import { MakersuiteProvider } from '../../src/scripts/api/providers/makersuite.js';
 import { VertexAIProvider } from '../../src/scripts/api/providers/vertexai.js';
 import { splitRequestOptions } from '../../src/scripts/api/abort.js';
 
@@ -399,6 +400,138 @@ test('vertexai stream: should expose raw functionCall deltas without payload lea
     const payload = JSON.parse(requestBodies[0]);
     assert.equal(Object.hasOwn(payload, 'onProviderToolCallDelta'), false);
     assert.equal(Object.hasOwn(payload, 'nativeRequestId'), false);
+  });
+});
+
+test('anthropic non-stream: should expose pure tool_use responses without requiring text', async () => {
+  const requestBodies = [];
+  await withServer(async (req, res) => {
+    if (req.url !== '/messages' || req.method !== 'POST') {
+      res.writeHead(404);
+      res.end();
+      return;
+    }
+    let body = '';
+    req.setEncoding('utf8');
+    for await (const chunk of req) body += chunk;
+    requestBodies.push(body);
+    res.setHeader('Content-Type', 'application/json');
+    res.end(JSON.stringify({
+      content: [{ type: 'tool_use', id: 'toolu_1', name: 'fc_probe', input: { value: 'ok' } }],
+      stop_reason: 'tool_use',
+      usage: { input_tokens: 10, output_tokens: 5 },
+    }));
+  }, async (baseUrl) => {
+    const provider = new AnthropicProvider({
+      apiKey: 'test-key',
+      baseUrl,
+      model: 'claude-test',
+      timeout: 5000,
+    });
+    const callbackEvents = [];
+    const text = await provider.chat([{ role: 'user', content: 'go' }], {
+      nativeRequestId: 'anthropic_nonstream_tool_case',
+      tools: [{ name: 'fc_probe', input_schema: { type: 'object' } }],
+      onProviderToolCallDelta: data => callbackEvents.push(data),
+    });
+    assert.equal(text, '');
+    assert.equal(callbackEvents.length, 1);
+    assert.equal(callbackEvents[0].content[0].type, 'tool_use');
+    const payload = JSON.parse(requestBodies[0]);
+    assert.equal(Object.hasOwn(payload, 'onProviderToolCallDelta'), false);
+    assert.equal(Object.hasOwn(payload, 'nativeRequestId'), false);
+  });
+});
+
+const testGeminiFamilyNonStreamToolResponse = (label, createProvider, pathPrefix) => {
+  test(`${label} non-stream: should expose pure functionCall responses without requiring text`, async () => {
+    const requestBodies = [];
+    await withServer(async (req, res) => {
+      if (!req.url.startsWith(pathPrefix) || req.method !== 'POST') {
+        res.writeHead(404);
+        res.end();
+        return;
+      }
+      let body = '';
+      req.setEncoding('utf8');
+      for await (const chunk of req) body += chunk;
+      requestBodies.push(body);
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify({
+        candidates: [{
+          content: {
+            role: 'model',
+            parts: [{ functionCall: { id: 'call_1', name: 'fc_probe', args: { value: 'ok' } } }],
+          },
+          finishReason: 'STOP',
+        }],
+      }));
+    }, async (baseUrl) => {
+      const provider = createProvider(baseUrl);
+      const callbackEvents = [];
+      const text = await provider.chat([{ role: 'user', content: 'go' }], {
+        nativeRequestId: `${label}_nonstream_tool_case`,
+        tools: [{ functionDeclarations: [{ name: 'fc_probe' }] }],
+        onProviderToolCallDelta: data => callbackEvents.push(data),
+      });
+      assert.equal(text, '');
+      assert.equal(callbackEvents.length, 1);
+      assert.equal(callbackEvents[0].candidates[0].content.parts[0].functionCall.name, 'fc_probe');
+      const payload = JSON.parse(requestBodies[0]);
+      assert.equal(Object.hasOwn(payload, 'onProviderToolCallDelta'), false);
+      assert.equal(Object.hasOwn(payload, 'nativeRequestId'), false);
+    });
+  });
+};
+
+testGeminiFamilyNonStreamToolResponse(
+  'gemini',
+  baseUrl => new GeminiProvider({ apiKey: 'test-key', baseUrl, model: 'test-model', timeout: 5000 }),
+  '/v1beta/models/test-model:generateContent',
+);
+
+testGeminiFamilyNonStreamToolResponse(
+  'makersuite',
+  baseUrl => new MakersuiteProvider({ apiKey: 'test-key', baseUrl, model: 'test-model', timeout: 5000 }),
+  '/v1beta/models/test-model:generateContent',
+);
+
+test('vertexai non-stream: should expose pure functionCall responses without requiring text', async () => {
+  const requestBodies = [];
+  await withServer(async (req, res) => {
+    if (!req.url.startsWith('/v1/projects/proj/locations/us-central1/publishers/google/models/test-model:generateContent') || req.method !== 'POST') {
+      res.writeHead(404);
+      res.end();
+      return;
+    }
+    let body = '';
+    req.setEncoding('utf8');
+    for await (const chunk of req) body += chunk;
+    requestBodies.push(body);
+    res.setHeader('Content-Type', 'application/json');
+    res.end(JSON.stringify({
+      candidates: [{ content: { parts: [{ functionCall: { name: 'fc_probe', args: { value: 'ok' } } }] } }],
+    }));
+  }, async (baseUrl) => {
+    const provider = new VertexAIProvider({
+      vertexaiProjectId: 'proj',
+      vertexaiRegion: 'us-central1',
+      model: 'test-model',
+      timeout: 5000,
+    });
+    provider.baseHost = baseUrl;
+    provider.baseUrl = baseUrl;
+    provider.getHeaders = async () => ({ 'Content-Type': 'application/json', Authorization: 'Bearer test-token' });
+    const callbackEvents = [];
+    const text = await provider.chat([{ role: 'user', content: 'go' }], {
+      nativeRequestId: 'vertex_nonstream_tool_case',
+      tools: [{ functionDeclarations: [{ name: 'fc_probe' }] }],
+      onProviderToolCallDelta: data => callbackEvents.push(data),
+    });
+    assert.equal(text, '');
+    assert.equal(callbackEvents.length, 1);
+    assert.equal(callbackEvents[0].candidates[0].content.parts[0].functionCall.name, 'fc_probe');
+    assert.equal(Object.hasOwn(JSON.parse(requestBodies[0]), 'onProviderToolCallDelta'), false);
   });
 });
 

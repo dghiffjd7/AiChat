@@ -142,6 +142,9 @@ import { createChatEmitAgentTools } from '../../src/scripts/agent/tools/chat-emi
     sessionId: 's1',
     providerToolSessionGate: { enabled: true, sessionId: 's1' },
     promptPermission: false,
+    providerContinuationContext: {
+      historyMessages: [{ role: 'user', content: 'private history' }],
+    },
   });
   assert.equal(result.ok, false);
   assert.equal(result.status, 'failed');
@@ -155,6 +158,16 @@ import { createChatEmitAgentTools } from '../../src/scripts/agent/tools/chat-emi
   assert.equal(result.parts[1].metadata.interaction.promptModal, false);
   assert.equal(result.parts[1].metadata.pendingPermissionId, 'provider-tool-permission:s1:stream-deferred:call-2b');
   assert.equal(pendingPermissionStore.list({ status: 'pending' }).length, 1);
+  assert.deepEqual(
+    pendingPermissionStore.getContinuationContext('provider-tool-permission:s1:stream-deferred:call-2b')
+      .historyMessages,
+    [{ role: 'user', content: 'private history' }],
+  );
+  assert.equal(
+    Object.keys(pendingPermissionStore.get('provider-tool-permission:s1:stream-deferred:call-2b'))
+      .includes('continuationContext'),
+    false,
+  );
   assert.equal(result.parts[2].errorMessage.includes('Agent tool permission ask'), true);
   console.log('ok - createProviderToolCallRuntime defers provider permission without modal prompt by default');
 }

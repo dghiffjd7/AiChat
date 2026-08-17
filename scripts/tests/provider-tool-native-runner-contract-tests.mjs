@@ -57,6 +57,50 @@ const buildDraft = (overrides = {}) => ({
 {
   const contract = resolveProviderToolNativeRunnerContract({
     runnerRequestDraft: buildDraft({
+      provider: 'openai',
+      payloadKind: 'input',
+      requestPreviewFormat: 'openai_responses_function_call_output',
+      request: {
+        provider: 'openai',
+        model: 'gpt-responses',
+        format: 'openai_responses_function_call_output',
+        input: [
+          { type: 'function_call', call_id: 'call-1', name: 'contact_profile_list', arguments: '{}' },
+          { type: 'function_call_output', call_id: 'call-1', output: '{"summary":"ok"}' },
+        ],
+      },
+    }),
+  });
+  assert.equal(contract.ok, true);
+  assert.equal(contract.contractKind, PROVIDER_TOOL_NATIVE_RUNNER_CONTRACTS.openaiResponses);
+  assert.equal(contract.functionCallCount, 1);
+  assert.equal(contract.functionCallOutputCount, 1);
+  assert.equal(contract.requiresProviderNativeRunner, true);
+  console.log('ok - provider native runner contract accepts official OpenAI Responses continuation input');
+}
+
+{
+  const contract = resolveProviderToolNativeRunnerContract({
+    runnerRequestDraft: buildDraft({
+      provider: 'openai',
+      payloadKind: 'input',
+      requestPreviewFormat: 'openai_responses_function_call_output',
+      request: {
+        provider: 'openai',
+        sourceProvider: 'custom',
+        format: 'openai_responses_function_call_output',
+        input: [{ type: 'function_call_output', call_id: 'call-1', output: '{}' }],
+      },
+    }),
+  });
+  assert.equal(contract.ok, false);
+  assert.equal(contract.reason.includes('official OpenAI'), true);
+  console.log('ok - provider native runner contract rejects proxy Responses continuations');
+}
+
+{
+  const contract = resolveProviderToolNativeRunnerContract({
+    runnerRequestDraft: buildDraft({
       provider: 'vertexai',
       model: 'gemini-contract',
       payloadKind: 'contents',

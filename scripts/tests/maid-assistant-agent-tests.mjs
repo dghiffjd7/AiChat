@@ -529,6 +529,39 @@ import { AgentRunStore } from '../../src/scripts/storage/agent-run-store.js';
 }
 
 {
+  const routingCalls = [];
+  const agent = createMaidAssistantAgent({
+    capabilityRoutingRuntime: {
+      prepareDecision: (options = {}) => {
+        routingCalls.push(options);
+        return null;
+      },
+    },
+    getCapabilityRoutingConfigOverride: () => ({ mode: 'bounded' }),
+    planner: async () => ({
+      ok: true,
+      toolName: 'app.open_panel',
+      args: { panel: 'worldbook' },
+      featureId: 'worldbook.open',
+      title: '打开世界书',
+    }),
+    toolRegistry: {
+      executeTool: async toolName => ({
+        toolName,
+        status: 'succeeded',
+        result: { ok: true },
+      }),
+    },
+    logger: { warn() {}, debug() {} },
+  });
+  const result = await agent.runPrompt('只读检查当前状态');
+  assert.equal(result.ok, true);
+  assert.equal(routingCalls.length, 1);
+  assert.deepEqual(routingCalls[0].configOverride, { mode: 'bounded' });
+  console.log('ok - maid runtime can inject a non-persistent capability routing override');
+}
+
+{
   const calls = [];
   let reactIndex = 0;
   const reactDecisions = [
@@ -4418,4 +4451,90 @@ const runGeneratedMediaQuotaProbe = async input => {
   assert.equal(consumedRun.metadata.pendingWorkflow.state, 'consumed');
   assert.equal(runs[0].status, 'succeeded');
   console.log('ok - imported-card P3 freezes a zero-write preview and consumes it on natural confirmation');
+}
+
+{
+  const controller = new AbortController();
+  let plannerStarted = null;
+  const started = new Promise(resolve => { plannerStarted = resolve; });
+  const agent = createMaidAssistantAgent({
+    planner: async (_input, context) => new Promise((resolve, reject) => {
+      plannerStarted();
+      context.signal.addEventListener('abort', () => {
+        const error = new Error('stopped by user');
+        error.name = 'AbortError';
+        reject(error);
+      }, { once: true });
+    }),
+    logger: { warn() {}, debug() {} },
+  });
+  const pending = agent.runPrompt('请规划一个任务', { signal: controller.signal });
+  await started;
+  controller.abort();
+  const result = await pending;
+  assert.equal(result.ok, false);
+  assert.equal(result.status, 'cancelled');
+  assert.equal(result.reason, 'user_aborted');
+  assert.match(result.message, /已完成 0 步/);
+  console.log('ok - maid planner cancellation becomes a code-generated cancelled result');
+}
+
+{
+  const controller = new AbortController();
+  let toolStarted = null;
+  const started = new Promise(resolve => { toolStarted = resolve; });
+  const registry = createAgentToolRegistry({
+    permissionEvaluator: { evaluateTool: () => ({ decision: 'allow', checks: [] }) },
+    logger: { warn() {} },
+  });
+  registry.register({
+    name: 'test.wait_for_abort',
+    title: '等待取消',
+    description: '等待上层取消信号',
+    schema: { type: 'object', additionalProperties: false },
+    permissions: [],
+    riskLevel: 'low',
+    capabilities: {
+      read: true,
+      write: false,
+      network: false,
+      cost: 'none',
+      undo: 'none',
+      modelContext: 'none',
+      confirmation: 'never',
+    },
+    execute: async (_args, context) => new Promise((resolve, reject) => {
+      toolStarted();
+      context.signal.addEventListener('abort', () => {
+        const error = new Error('tool stopped by user');
+        error.name = 'AbortError';
+        reject(error);
+      }, { once: true });
+    }),
+  });
+  const store = new AgentRunStore();
+  const runtime = createAgentTaskRuntime({ store, toolRegistry: registry, logger: { warn() {} } });
+  const agent = createMaidAssistantAgent({
+    toolRegistry: registry,
+    agentTaskRuntime: runtime,
+    planner: async () => ({
+      ok: true,
+      action: 'tool',
+      toolName: 'test.wait_for_abort',
+      args: {},
+      title: '等待取消',
+    }),
+    logger: { warn() {}, debug() {} },
+  });
+  const pending = agent.runPrompt('执行并等待我停止', { signal: controller.signal });
+  await started;
+  controller.abort();
+  const result = await pending;
+  const run = store.listRuns({ kind: 'maid_assistant' })[0];
+  assert.equal(result.status, 'cancelled');
+  assert.equal(run.status, 'cancelled');
+  assert.equal(run.metadata.failureCode, 'user_aborted');
+  assert.equal(run.steps[0].status, 'cancelled');
+  assert.equal(run.steps.filter(step => step.status === 'cancelled').length, 1);
+  console.log('ok - maid tool cancellation stops execution and records cancelled run/step exactly once');
 }

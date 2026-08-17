@@ -237,6 +237,7 @@ export const buildProviderToolPendingContinuationPlan = async ({
   sessionGate = null,
   allowRealRunner = false,
   allowRunnerNetwork = false,
+  providerContinuationContext = null,
   now = Date.now,
 } = {}) => {
   if (!pending) {
@@ -265,14 +266,22 @@ export const buildProviderToolPendingContinuationPlan = async ({
   }
 
   const toolResult = buildToolResultForPreview(pending);
+  const privateProviderContinuation = isPlainObject(providerContinuationContext?.providerContinuation)
+    ? providerContinuationContext.providerContinuation
+    : null;
   const requestPreview = buildProviderToolResultRequestPreview({
     provider: pending.toolCall?.provider || pending.request?.provider || '',
     model: pending.toolCall?.model || pending.request?.model || '',
     sessionId: pending.sessionId,
-    assistantToolCalls: [pending.toolCall],
+    assistantToolCalls: [{
+      ...(pending.toolCall || {}),
+      ...(privateProviderContinuation ? { providerContinuation: privateProviderContinuation } : {}),
+    }],
     toolResults: [toolResult],
     maxContentChars,
     allowedTools,
+    historyMessages: providerContinuationContext?.historyMessages,
+    providerRequestOptions: providerContinuationContext?.providerRequestOptions,
   });
   const loopState = buildLoopState({
     pending,
@@ -399,6 +408,9 @@ export const createProviderToolPendingContinuationPlanner = ({
       : null;
     const result = await buildProviderToolPendingContinuationPlan({
       pending,
+      providerContinuationContext: typeof pendingPermissionStore?.getContinuationContext === 'function'
+        ? pendingPermissionStore.getContinuationContext(pending.id)
+        : null,
       allowedTools: opts.allowedTools || allowedTools,
       maxContentChars: opts.maxContentChars || maxContentChars,
       runner: opts.runner,

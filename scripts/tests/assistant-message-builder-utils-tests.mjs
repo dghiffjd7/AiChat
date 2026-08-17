@@ -485,7 +485,16 @@ test('chat/creative builders record real provider usage on meta.usage (Phase B m
   const chatMsg = buildChatModeAssistantMessageFromParts({
     parts: { finalSource: 's', stored: 'st', display: 'd', resolvedReasoning: {} },
     parseSpecialMessage: value => ({ type: 'text', content: value }),
-    usage: { provider: 'custom', model: 'claude-fable-5', promptTokens: 8500, completionTokens: 120, totalTokens: 8620, latencyMs: 4200, finishReason: 'stop' },
+    usage: {
+      provider: 'custom', model: 'claude-fable-5', promptTokens: 8500, completionTokens: 120,
+      totalTokens: 8620, latencyMs: 4200, firstMeaningfulDeltaLatencyMs: 600,
+      outputDurationMs: 3600, tokensPerSecond: 33.3, finishReason: 'stop',
+      systemFingerprint: 'fp-message', responseId: 'response-message',
+      providerCalls: [{
+        callIndex: 1, mode: 'legacy_text', outcome: 'succeeded', provider: 'custom',
+        model: 'claude-fable-5', completionTokens: 120, latencyMs: 4200,
+      }],
+    },
   });
   assert.equal(chatMsg.meta.usage.status, 'recorded');
   assert.equal(chatMsg.meta.usage.provider, 'custom');
@@ -493,6 +502,11 @@ test('chat/creative builders record real provider usage on meta.usage (Phase B m
   assert.equal(chatMsg.meta.usage.totalTokens, 8620);
   assert.equal(chatMsg.meta.usage.latencyMs, 4200);
   assert.equal(chatMsg.meta.usage.toolCallCount, 0);
+  assert.equal(chatMsg.meta.usage.firstMeaningfulDeltaLatencyMs, 600);
+  assert.equal(chatMsg.meta.usage.tokensPerSecond, 33.3);
+  assert.equal(chatMsg.meta.usage.systemFingerprint, 'fp-message');
+  assert.equal(chatMsg.meta.usage.responseId, 'response-message');
+  assert.equal(chatMsg.meta.usage.providerCalls[0].mode, 'legacy_text');
 
   // 创意写作：无 usage 时不加 meta.usage（保持既有 meta 形状）
   const creativeNoUsage = await buildCreativeAssistantMessageFromParts({

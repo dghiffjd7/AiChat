@@ -800,7 +800,12 @@ export class ChatUI {
       });
       if (!nextBar) return;
       currentBar.replaceWith?.(nextBar);
-      this.reactionQuickBarTouchRuntime.bind({ bubbleStack, bubble, quickBar: nextBar });
+      this.reactionQuickBarTouchRuntime.bind({
+        bubbleStack,
+        bubble,
+        quickBar: nextBar,
+        scrollBoundary: this.scrollEl,
+      });
       refreshed += 1;
     });
     return refreshed;

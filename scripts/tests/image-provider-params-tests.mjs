@@ -447,7 +447,7 @@ import {
   });
   assert.equal(capability.supported, true);
   assert.equal(capability.strategy, 'anthropic-adaptive');
-  assert.equal(capability.samplingRestricted, false);
+  assert.equal(capability.samplingRestricted, true);
   assert.deepEqual(
     buildReasoningRequestOptions({
       provider: 'anthropic',
@@ -461,15 +461,15 @@ import {
       output_config: { effort: 'high' },
     },
   );
-  assert.equal(
+  assert.deepEqual(
     getReasoningSamplerPolicy({
       provider: 'anthropic',
       model: 'claude-opus-4-8',
       requestReasoning: false,
-    }).active,
-    false,
+    }).disabledFields.sort(),
+    ['temperature', 'top_k', 'top_p'].sort(),
   );
-  console.log('ok - adaptive-only Claude models do not use manual budget_tokens');
+  console.log('ok - adaptive-only Claude models omit deprecated samplers and do not use manual budget_tokens');
 }
 
 {

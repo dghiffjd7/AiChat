@@ -128,7 +128,10 @@ const isAnthropicAlwaysAdaptiveThinkingModel = (model) => {
   return (
     m.includes('claude-fable-5') ||
     m.includes('claude-mythos-5') ||
-    m.includes('claude-mythos-preview')
+    m.includes('claude-mythos-preview') ||
+    // 2026-08-16 真实 400 实测：`temperature` is deprecated for this model.
+    m.includes('claude-opus-5') ||
+    m.includes('claude-sonnet-5')
   );
 };
 
@@ -261,6 +264,7 @@ export const getReasoningCapability = ({ provider, model, baseUrl } = {}) => {
 
   if (p === 'anthropic' && isAnthropicAdaptiveThinkingModel(m)) {
     const alwaysOn = isAnthropicAlwaysAdaptiveThinkingModel(m);
+    const samplerRestricted = alwaysOn || isAnthropicAdaptiveRequestModel(m);
     return {
       supported: true,
       strategy: 'anthropic-adaptive',
@@ -268,10 +272,10 @@ export const getReasoningCapability = ({ provider, model, baseUrl } = {}) => {
       effortControl: true,
       effortOptions: ANTHROPIC_ADAPTIVE_REASONING_OPTIONS,
       allowCustomEffort: true,
-      samplingRestricted: alwaysOn,
+      samplingRestricted: samplerRestricted,
       hint: alwaysOn
         ? '该 Claude 模型的自适应推理始终开启，不能关闭；勾选后会请求返回推理摘要，并用 effort 控制强度。thinking 始终开启时会自动停用 temperature/top_p/top_k。'
-        : '该 Claude 模型使用自适应推理；勾选后发送 thinking.type=adaptive，并用 effort 控制强度，不再发送 budget_tokens。',
+        : '该 Claude 模型使用自适应推理；勾选后发送 thinking.type=adaptive，并用 effort 控制强度，不再发送 budget_tokens。此型号已停用 temperature/top_p/top_k。',
     };
   }
 
@@ -411,7 +415,12 @@ export const buildReasoningRequestOptions = ({
   maxOutputTokens,
 } = {}) => {
   const capability = getReasoningCapability({ provider, model, baseUrl });
-  if (!capability.supported || requestReasoning !== true) return {};
+  if (!capability.supported) return {};
+  if (requestReasoning !== true) {
+    return normalizeText(provider) === 'deepseek' && capability.strategy === 'deepseek-thinking'
+      ? { thinking: { type: 'disabled' } }
+      : {};
+  }
 
   switch (capability.strategy) {
     case 'openai-effort': {

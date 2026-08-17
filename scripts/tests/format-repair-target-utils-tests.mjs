@@ -880,6 +880,10 @@ const buildRejectedEnvelope = (at = 200) => ({
   );
   assert.match(
     transactionSource,
+    /runProtocolCommittedFunctionalEffects\(\{[\s\S]*capturedMessages:\s*protocolState\?\.capturedMessages/,
+  );
+  assert.match(
+    transactionSource,
     /scheduleProtocolDeliveryQueue\(batch\.items,[\s\S]*alreadyPersisted:\s*true/,
   );
   assert.match(

@@ -526,6 +526,7 @@ export const normalizeHandleSendOptions = (options = {}) => {
     previewSuppressHistory: Boolean(raw.previewSuppressHistory),
     // 请求预览：自定义区块正文不做宏求值（原样显示，预览可逐字映射）
     previewRawBlocks: Boolean(raw.previewRawBlocks),
+    previewForceLegacyText: Boolean(raw.previewForceLegacyText),
     suppressAssistantDom: Boolean(raw.suppressAssistantDom),
     assistantStreamFactory:
       typeof raw.createAssistantStream === 'function' ? raw.createAssistantStream : null,

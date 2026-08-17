@@ -4,6 +4,12 @@
 
 import { LLMClient } from '../api/client.js';
 import { canInitClient } from '../api/client-config-utils.js';
+import {
+  applyDeepSeekPrefillToStream,
+  hasProviderToolRequestOptions,
+  mergeDeepSeekPrefillResponse,
+  resolveDeepSeekPhonePrefillPlan,
+} from '../api/deepseek-phone-prefill-utils.js';
 import { buildReasoningRequestOptions, getReasoningSamplerPolicy } from '../api/model-capabilities.js';
 import { isReasoningStreamEvent } from '../api/native-reasoning.js';
 import {
@@ -11,6 +17,11 @@ import {
   mergeWebSources,
 } from '../api/web-search-runtime.js';
 import { applyGenerationParamFilter } from '../utils/generation-param-filter-utils.js';
+import { resolveBuiltinPhoneFormatReminderPlan } from '../utils/builtin-phone-format-contract.js';
+import {
+  normalizePhoneFormatPromptDepth,
+  normalizePhoneFormatPromptPosition,
+} from '../utils/phone-format-prompt-placement.js';
 import {
   isDeepSeekApiRequest,
   shouldUseDeepSeekReasonerCompatibility,
@@ -38,6 +49,8 @@ import {
 import { stickerPackStore } from '../storage/sticker-pack-store.js';
 import { makeScopedKey, normalizeScopeId } from '../storage/store-scope.js';
 import { appSettings } from '../storage/app-settings.js';
+import { chatFcLocalCapabilityStore } from '../storage/chat-fc-local-capability-store.js';
+import { chatStructuredRouteEvidenceStore } from '../storage/chat-structured-route-evidence-store.js';
 import { renderTemplateMessages, templateSettings } from '../plugins/template-engine.js';
 import { getChatUI } from './chat-ui-runtime-utils.js';
 import { recordDebugTraceEvent } from './debug-ui-registry-utils.js';
@@ -73,7 +86,12 @@ import {
 import {
   buildCompletedResponseDiagnostics,
   buildFirstTokenResponseDiagnostics,
+  mergeResponseDiagnosticsIntoUsage,
 } from './chat/request-response-diagnostics-utils.js';
+import {
+  createGenerationProviderCallDiagnosticsTracker,
+  isMeaningfulTextStreamDelta,
+} from './chat/generation-provider-call-diagnostics-utils.js';
 import {
   normalizeRequestConfigUiMode,
   resolveRequestConfigProfileId,
@@ -84,8 +102,52 @@ import {
   shouldTreatBridgeStreamErrorAsCancellation,
 } from './bridge-cancel-utils.js';
 import { buildProviderToolBridgeLoopPlan } from '../agent/provider-tool-bridge-loop-plan.js';
+import {
+  buildProviderFcRequestOptionsForLocalDiagnostics,
+  buildProviderFcRequestPlan,
+  resolveChatStructuredThinkingPreference,
+  resolveChatProviderFcRelease,
+  sanitizeProviderFcInheritedRequestOptions,
+} from '../agent/provider-fc-transport.js';
+import {
+  CHAT_STRUCTURED_ROUTE_MODES,
+  classifyChatStructuredAttemptFailure,
+  getChatStructuredEvidenceKey,
+  resolveChatStructuredRoute,
+} from '../agent/chat-structured-route-evidence.js';
+import { createChatStructuredEvidenceCommitRuntime } from '../agent/chat-structured-evidence-commit-runtime.js';
+import {
+  GLOBAL_SEMANTIC_PROMPT_ANCHORS,
+  buildGlobalSemanticPromptInjectionAudit,
+  buildGlobalSemanticPromptExtraBlocks,
+  resolveGlobalSemanticPromptPlan,
+} from '../agent/global-semantic-prompt-library.js';
+import {
+  buildChatStructuredRequestEvidenceIdentity,
+  resolveChatStructuredHardBoundary,
+  resolveChatStructuredTextTransport,
+} from '../agent/chat-structured-route-request.js';
 import { buildProviderToolRequestSchema } from '../agent/provider-tool-request-schema.js';
 import { createWebSearchGenerationClient } from './chat/web-search-generation-client.js';
+import {
+  preparePrivateChatProviderFcRoute,
+  runPrivateChatProviderFcAttempt,
+} from './chat/private-chat-provider-fc.js';
+import {
+  preparePhoneBatchProviderFcRoute,
+  runPhoneBatchProviderFcAttempt,
+} from './chat/phone-batch-provider-fc.js';
+import {
+  derivePhoneReplyJsonFormatCapabilities,
+  preparePhoneReplyJsonRoute,
+  runPhoneReplyJsonAttempt,
+} from './chat/phone-reply-json-terminal.js';
+import { readOpenRouterModelCapabilities } from '../api/openrouter-model-capabilities.js';
+import { buildChatStructuredContractSummary } from './chat/chat-structured-contract-summary.js';
+import {
+  assembleLegacyTextRequest,
+  restoreDeferredLegacyTextMessages,
+} from './chat/chat-semantic-snapshot-utils.js';
 import {
   dispatchRuntimeHookLifecycleEvent,
   runRuntimeHookLifecycleEvent,
@@ -605,6 +667,10 @@ class AppBridge {
     this.lastWorldBudgetWarningAt = 0;
     this.lastWorldInjectionDebug = null;
     this.lastDeepSeekFormatDebug = null;
+    this.lastPhoneFormatTransportPlan = null;
+    this.chatStructuredEvidenceCommitRuntime = createChatStructuredEvidenceCommitRuntime({
+      store: chatStructuredRouteEvidenceStore,
+    });
     this.lastPromptCacheDebugBySession = new Map();
     this.worldBootstrapScheduled = false;
     this.worldBootstrapCompleted = false;
@@ -649,6 +715,10 @@ class AppBridge {
 
   setWebSearchToolRuntime(runtime) {
     this.webSearchToolRuntime = runtime && typeof runtime === 'object' ? runtime : null;
+  }
+
+  getWebSearchToolRuntime() {
+    return this.webSearchToolRuntime || null;
   }
 
   getScriptStore() {
@@ -1015,6 +1085,7 @@ class AppBridge {
       autoExtract,
       tableOrder: [],
       rowIndexMap: {},
+      tableTargets: [],
       audit: { version: 1, segments: [], usedTokens: 0 },
     });
 
@@ -1373,6 +1444,17 @@ class AppBridge {
     const tableData = planResult.tableData || '';
     const rowIndexMap = planResult.rowIndexMap || {};
     const tableOrderNext = planResult.tableOrder || tableOrder;
+    const tableTargets = tableOrderNext.map((tableId) => {
+      const table = tableById.get(tableId);
+      const rowIds = Array.isArray(rowIndexMap?.[tableId])
+        ? rowIndexMap[tableId].map(rowId => String(rowId || '').trim()).filter(Boolean)
+        : [];
+      return {
+        id: String(tableId || '').trim(),
+        name: String(table?.name || tableId || '').trim(),
+        rowIds,
+      };
+    }).filter(target => target.id && target.name);
     const { summaryTableId: coverageSummaryTableId } = getSummaryTableIdsForContext({
       uiMode: context?.meta?.uiMode,
       sessionId,
@@ -2292,6 +2374,7 @@ class AppBridge {
         autoExtract,
         tableOrder: tableOrderNext,
         rowIndexMap: {},
+        tableTargets,
         audit: buildPlanAudit(dataPromptText, guidePromptText),
       };
     }
@@ -2328,6 +2411,7 @@ class AppBridge {
         autoExtract,
         tableOrder: tableOrderNext,
         rowIndexMap: {},
+        tableTargets,
         audit: buildPlanAudit(dataPromptText, guidePromptText),
       };
     }
@@ -2372,6 +2456,7 @@ class AppBridge {
       autoExtract,
       tableOrder: tableOrderNext,
       rowIndexMap,
+      tableTargets,
       audit: buildPlanAudit(dataPromptText, guidePromptText),
     };
   }
@@ -2591,6 +2676,9 @@ class AppBridge {
         _refWorldId: '',
         _entryId: spec.entryId,
         _entryTitle: spec.title,
+        _transportLayerId: spec.transportLayerId,
+        _promptPosition: normalizePhoneFormatPromptPosition(source?.[spec.positionKey]),
+        _promptDepth: normalizePhoneFormatPromptDepth(source?.[spec.depthKey]),
       });
     });
     return out;
@@ -2615,6 +2703,16 @@ class AppBridge {
           }
           if (typeof preset[spec.rulesKey] !== 'string' || !preset[spec.rulesKey].trim()) {
             preset[spec.rulesKey] = String(seed[spec.rulesKey] ?? '');
+            changed = true;
+          }
+          const position = normalizePhoneFormatPromptPosition(preset[spec.positionKey]);
+          if (preset[spec.positionKey] !== position) {
+            preset[spec.positionKey] = position;
+            changed = true;
+          }
+          const depth = normalizePhoneFormatPromptDepth(preset[spec.depthKey]);
+          if (preset[spec.depthKey] !== depth) {
+            preset[spec.depthKey] = depth;
             changed = true;
           }
         });
@@ -2997,6 +3095,16 @@ class AppBridge {
       // 加载配置
       await this.presets.ready;
       await this.regex.ready;
+      try {
+        await chatFcLocalCapabilityStore.load();
+      } catch (error) {
+        logger.warn('本地 FC 兼容规则加载失败，继续使用同步镜像或内建目录', error);
+      }
+      try {
+        await chatStructuredRouteEvidenceStore.load();
+      } catch (error) {
+        logger.warn('本机结构化路由证据加载失败，本轮从未观察状态继续', error);
+      }
       this.worldStore.prewarm?.();
       this.scheduleDeferredWorldBootstrap();
       let config = await this.config.load();
@@ -3495,47 +3603,23 @@ class AppBridge {
   }
 
   mergeAssistantPrefillResponse(prefix, response) {
-    const prefill = String(prefix ?? '');
-    const text = String(response ?? '');
-    if (!prefill) return text;
-    if (!text) return prefill;
-    return text.startsWith(prefill) ? text : `${prefill}${text}`;
+    return mergeDeepSeekPrefillResponse(prefix, response);
   }
 
   async *applyAssistantPrefillToStream(stream, prefix = '') {
-    const prefill = String(prefix ?? '');
-    if (!prefill) {
-      yield* stream;
-      return;
-    }
-    let suppress = prefill;
-    yield prefill;
-    for await (const chunk of stream) {
-      if (isReasoningStreamEvent(chunk)) {
-        yield chunk;
-        continue;
-      }
-      const text = String(chunk ?? '');
-      if (!text) continue;
-      let out = '';
-      for (let i = 0; i < text.length; i += 1) {
-        const ch = text[i];
-        if (suppress && ch === suppress[0]) {
-          suppress = suppress.slice(1);
-          continue;
-        }
-        suppress = '';
-        out += text.slice(i);
-        break;
-      }
-      if (out) yield out;
-    }
+    yield* applyDeepSeekPrefillToStream(stream, prefix);
   }
 
   // Phase B：取走本次生成的真实 usage 并清空（consume-once），供 finalize 消息挂到 meta.usage。
   // 只挂首条：一次生成 emit 多条时，usage 属于整次生成，重复挂会误导每条的计量。
   consumeLastGenerationUsage() {
     const usage = this.lastGenerationUsage || null;
+    if (usage && this.lastRequest?.responseDiagnostics) {
+      this.lastRequest.responseDiagnostics = {
+        ...this.lastRequest.responseDiagnostics,
+        usagePersistenceTarget: 'assistant_message',
+      };
+    }
     this.lastGenerationUsage = null;
     return usage;
   }
@@ -3546,6 +3630,44 @@ class AppBridge {
       : null;
     this.lastGenerationSources = null;
     return sources?.length ? sources : null;
+  }
+
+  async finalizeChatStructuredEvidence({ requestId = '', committed = false } = {}) {
+    let result;
+    try {
+      result = await this.chatStructuredEvidenceCommitRuntime.finalize({
+        requestId,
+        committed,
+      });
+    } catch (error) {
+      logger.warn('结构化路由成功证据保存失败', error);
+      return { recorded: false, reason: 'evidence_store_failed', transition: null };
+    } finally {
+      chatStructuredRouteEvidenceStore.releaseHalfOpenRequest(requestId);
+    }
+    const transition = result?.transition;
+    if (this.lastRequest?.requestId === String(requestId || '').trim() && transition?.cell) {
+      this.lastRequest.phoneReplyTransport = {
+        ...(this.lastRequest.phoneReplyTransport || {}),
+        evidenceStatus: String(transition.cell.health?.status || ''),
+        evidenceStrictSuccessCount: Number(transition.cell.health?.strictSuccessCount || 0),
+        evidenceAction: String(transition.action || ''),
+      };
+    }
+    if (transition?.action === 'circuit_closed') {
+      try {
+        window.dispatchEvent(new CustomEvent('chatapp-phone-structured-route-status', {
+          detail: {
+            state: 'circuit_closed',
+            sessionId: String(this.lastRequest?.session?.id || ''),
+            requestId: String(requestId || ''),
+            evidenceKey: String(transition.cell?.key || ''),
+            circuitEpoch: Number(transition.cell?.health?.circuitEpoch || 0),
+          },
+        }));
+      } catch {}
+    }
+    return result;
   }
 
   getTokenCalibration(provider = '', model = '') {
@@ -3565,6 +3687,10 @@ class AppBridge {
    */
   async generate(userMessage, context = {}) {
     const previewOnly = context?.meta?.previewOnly === true;
+    const phoneStructuredPreviewCallback = !previewOnly
+      && typeof context?.meta?.onPhoneStructuredPreview === 'function'
+      ? context.meta.onPhoneStructuredPreview
+      : null;
     let previewBuildPromise = null;
     let releasePreviewBuild = null;
     if (previewOnly) {
@@ -3618,6 +3744,7 @@ class AppBridge {
     const previousLastGenerationSources = this.lastGenerationSources;
     const previousLastWorldInjectionDebug = this.lastWorldInjectionDebug;
     const previousLastDeepSeekFormatDebug = this.lastDeepSeekFormatDebug;
+    const previousLastPhoneFormatTransportPlan = this.lastPhoneFormatTransportPlan;
     const previousLastPromptSegmentDebug = this.lastPromptSegmentDebug;
     const previousActiveInputBudgetPlan = this.activeInputBudgetPlan;
     const previousActiveTokenEstimateMode = this.activeTokenEstimateMode;
@@ -3668,10 +3795,14 @@ class AppBridge {
             isEdit: false,
             depth: 0,
           });
+      const sanitizedContextMeta = {
+        ...(context?.meta || {}),
+      };
+      delete sanitizedContextMeta.onPhoneStructuredPreview;
       let nextContext = {
         ...(context || {}),
         meta: {
-          ...(context?.meta || {}),
+          ...sanitizedContextMeta,
           rawUserMessage: originalInput,
           userMessageProcessed: true,
         },
@@ -3921,8 +4052,24 @@ class AppBridge {
       if (!previewOnly && !requestClient) {
         throw new Error('请先配置 API 信息');
       }
+      const privateChatProviderFcStatus = (() => {
+        try {
+          const action = this.debugUiRegistry?.actions?.getPrivateChatProviderFcExperimentStatus;
+          return typeof action === 'function' ? action() : null;
+        } catch {
+          return null;
+        }
+      })();
+      const phoneProviderFcRelease = resolveChatProviderFcRelease(config);
+      const phoneStructuredRoutingRequested = privateChatProviderFcStatus?.enabled === true
+        && !(previewOnly && nextContext?.meta?.previewForceLegacyText === true);
+      const deferPhoneTransportLayers = phoneStructuredRoutingRequested
+        && appSettings.get().traditionalModelOutputProtocolEnabled !== true
+        && String(presetContext?.uiMode || '').trim().toLowerCase() !== 'rp';
       let messages = this.buildMessages(promptInput, nextContext, {
         requestConfig: config,
+        deferPhoneTransportLayers,
+        transportAnchorNamespace: nativeRequestId,
       });
       if (!previewOnly && scriptRuntime && nextContext?.meta?.skipScripts !== true) {
         const beforePrompt = messages;
@@ -4009,8 +4156,16 @@ class AppBridge {
       const applyRuntimeParamFilter = options => applyGenerationParamFilter(options, config?.excludedGenerationParams, {
         protectedParams: ['signal', 'nativeRequestId'],
       });
-      const providerDirectives = this.buildProviderRequestDirectives(nextContext, presetContext, config);
+      const configuredProviderDirectives = this.buildProviderRequestDirectives(nextContext, presetContext, config);
       const sessionId = String(nextContext?.session?.id || this.activeSessionId || 'default').trim() || 'default';
+      const providerToolRequestSchema = buildProviderToolRequestSchema({
+        debugUiRegistry: this.debugUiRegistry,
+        provider: config?.provider,
+        baseUrl: config?.baseUrl,
+        model: config?.model,
+        sessionId,
+        existingOptions: [genOptions, configuredProviderDirectives],
+      });
       const providerToolBridgeLoopPlan = buildProviderToolBridgeLoopPlan({
         debugUiRegistry: this.debugUiRegistry,
         provider: config?.provider,
@@ -4018,13 +4173,8 @@ class AppBridge {
         sessionId,
         requestId: nativeRequestId,
         source: 'bridge.generateStream',
-      });
-      const providerToolRequestSchema = buildProviderToolRequestSchema({
-        debugUiRegistry: this.debugUiRegistry,
-        provider: config?.provider,
-        model: config?.model,
-        sessionId,
-        existingOptions: [genOptions, providerDirectives],
+        historyMessages: messages,
+        providerRequestOptions: providerToolRequestSchema.requestOptions,
       });
       const fallbackToolDefinitions = ['web.search', 'web.research', 'web.fetch_url']
         .map(name => this.webSearchToolRuntime?.getTool?.(name))
@@ -4035,11 +4185,368 @@ class AppBridge {
         model: config?.model,
         existingOptions: [
           genOptions,
-          providerDirectives,
+          configuredProviderDirectives,
           providerToolRequestSchema.requestOptions,
         ],
         fallbackToolDefinitions,
       });
+      const phoneTransportPlan = this.lastPhoneFormatTransportPlan || {};
+      const privateChatProviderFcTarget = {
+        sessionId,
+        targetName: String(nextContext?.session?.name || nextContext?.character?.name || '').trim(),
+        speakerId: sessionId,
+        speakerName: String(nextContext?.character?.name || nextContext?.session?.name || '').trim(),
+        userName: String(nextContext?.user?.name || '我').trim() || '我',
+      };
+      const groupMemberIds = Array.isArray(nextContext?.group?.members)
+        ? nextContext.group.members.map(value => String(value || '').trim())
+        : [];
+      const groupMemberNames = Array.isArray(nextContext?.group?.memberNames)
+        ? nextContext.group.memberNames.map(value => String(value || '').trim())
+        : [];
+      const frozenGroupMembers = groupMemberIds.map((id, index) => ({
+        id,
+        name: groupMemberNames[index] || id,
+      })).filter(item => item.id && item.name);
+      const taskStructuredTargets = nextContext?.task?.structuredTargets && typeof nextContext.task.structuredTargets === 'object'
+        ? nextContext.task.structuredTargets
+        : {};
+      const phoneBatchProviderFcTarget = {
+        mode: String(phoneTransportPlan.surface || '').trim(),
+        sessionId,
+        targetName: String(
+          nextContext?.task?.targetName
+          || nextContext?.session?.name
+          || nextContext?.character?.name
+          || '',
+        ).trim(),
+        speakerId: sessionId,
+        speakerName: String(nextContext?.character?.name || nextContext?.session?.name || '').trim(),
+        userName: String(nextContext?.user?.name || '我').trim() || '我',
+        members: frozenGroupMembers,
+        momentId: String(nextContext?.task?.momentId || '').trim(),
+        momentAuthors: phoneTransportPlan.surface === 'moment_comment'
+          ? (Array.isArray(taskStructuredTargets.momentAuthors) ? taskStructuredTargets.momentAuthors : [])
+          : (phoneTransportPlan.surface === 'group_chat'
+            ? frozenGroupMembers
+            : [{
+                id: sessionId,
+                name: String(nextContext?.character?.name || nextContext?.session?.name || '').trim(),
+              }]),
+        privateTargets: Array.isArray(taskStructuredTargets.privateTargets)
+          ? taskStructuredTargets.privateTargets
+          : [],
+        groupTargets: Array.isArray(taskStructuredTargets.groupTargets)
+          ? taskStructuredTargets.groupTargets
+          : [],
+        tableTargets: Array.isArray(phoneTransportPlan.tableTargets)
+          ? phoneTransportPlan.tableTargets
+          : [],
+      };
+      const phoneProviderFcContext = {
+        uiMode: presetContext?.uiMode,
+        surface: phoneTransportPlan.surface,
+        isGroupChat: nextContext?.session?.isGroup === true,
+        responseTarget: phoneTransportPlan.responseTarget || nextContext?.meta?.responseTarget,
+        assistantContinuation: nextContext?.meta?.assistantContinuation?.enabled === true
+          || nextContext?.meta?.suppressPendingUserTurn === true,
+        webSearchEnabled: config?.webSearchEnabled === true,
+        hasProviderTools: hasProviderToolRequestOptions(
+          genOptions,
+          configuredProviderDirectives,
+          providerToolRequestSchema.requestOptions,
+          webSearchPlan.requestOptions,
+          providerToolBridgeLoopPlan.requestOptions,
+        ),
+        hasAssistantPrefill: Boolean(configuredProviderDirectives?.deepseekPrefix),
+        usesDefaultPreset: phoneTransportPlan.usesDefaultPreset === true,
+        usesBuiltinFormat: phoneTransportPlan.usesBuiltinContract === true,
+        protocolParserEnabled: phoneTransportPlan.protocolParserEnabled === true,
+        hasUnsupportedSideEffects: phoneTransportPlan.requiresBatch === true
+          ? phoneTransportPlan.hasUnsupportedBatchSideEffects === true
+          : phoneTransportPlan.hasUnsupportedSideEffects === true,
+        formatProfileEnabled: nextContext?.meta?.formatProfileEnabled === true,
+        compatibilityModeEnabled: appSettings.get().traditionalModelOutputProtocolEnabled === true,
+      };
+      const privateChatProviderFcAllowedItemTypes = ['text', 'sticker', 'voice', 'transfer', 'music', 'image'];
+      const privateChatProviderFcAllowedStickerKeywords = Array.isArray(phoneTransportPlan.stickerKeywords)
+        ? phoneTransportPlan.stickerKeywords
+        : [];
+      const phoneProviderFcUsesBatch = phoneTransportPlan.requiresBatch === true;
+      const phoneProviderFcAllowedItemTypes = phoneTransportPlan.surface === 'group_chat'
+        ? privateChatProviderFcAllowedItemTypes.filter(type => type !== 'transfer')
+        : privateChatProviderFcAllowedItemTypes;
+      const phoneProviderFcSnapshotContext = {
+        requestId: nativeRequestId,
+        turnId: String(nextContext?.meta?.turnId || nativeRequestId).trim(),
+        sessionId,
+        surface: String(phoneTransportPlan.surface || '').trim(),
+        responseTarget: String(
+          phoneTransportPlan.responseTarget || nextContext?.meta?.responseTarget || '',
+        ).trim(),
+        target: phoneProviderFcUsesBatch ? phoneBatchProviderFcTarget : privateChatProviderFcTarget,
+        capabilities: {
+          provider: phoneProviderFcRelease.capabilities || {},
+          reply: phoneTransportPlan.structuredCapabilities || {},
+        },
+        budget: this.lastMemoryPlan?.budget || {},
+        revisions: {
+          world: this.lastWorldInjectionDebug?.revision ?? null,
+          memory: this.lastMemoryPlan?.revision ?? null,
+        },
+      };
+      const phoneStructuredAdapter = phoneProviderFcUsesBatch ? 'phone_batch' : 'private_reply';
+      const phoneStructuredThinkingType = String(genOptions?.thinking?.type || '').trim().toLowerCase();
+      const phoneStructuredReasoningEffort = String(
+        genOptions?.reasoning?.effort || genOptions?.reasoning_effort || '',
+      ).trim().toLowerCase();
+      const phoneStructuredThinkingEnabled = Boolean(
+        ['enabled', 'adaptive'].includes(phoneStructuredThinkingType)
+        || genOptions?.request_reasoning === true
+        || (phoneStructuredReasoningEffort
+          && !['none', 'off', 'disabled', 'minimal'].includes(phoneStructuredReasoningEffort))
+      );
+      const phoneStructuredThinkingPlan = resolveChatStructuredThinkingPreference({
+        config,
+        thinkingEnabled: phoneStructuredThinkingEnabled,
+        reasoningOptions: genOptions,
+        preference: appSettings.get().chatStructuredThinkingPreference,
+      });
+      const phoneProviderFcProbation = phoneStructuredThinkingPlan.probation;
+      const phoneStructuredEffectiveThinkingEnabled = phoneStructuredThinkingPlan.thinkingEnabled;
+      const phoneStructuredTemperature = Number(genOptions?.temperature);
+      const preparedPhoneProviderFcRoute = phoneProviderFcUsesBatch
+        ? preparePhoneBatchProviderFcRoute({
+            enabled: phoneStructuredRoutingRequested
+              && (phoneProviderFcRelease.enabled === true || phoneProviderFcProbation.eligible === true),
+            config,
+            client: requestClient,
+            messages,
+            transportPlan: phoneTransportPlan,
+            context: phoneProviderFcContext,
+            target: phoneBatchProviderFcTarget,
+            capabilities: phoneTransportPlan.structuredCapabilities || {},
+            allowedItemTypes: phoneProviderFcAllowedItemTypes,
+            allowedStickerKeywords: privateChatProviderFcAllowedStickerKeywords,
+            snapshotContext: phoneProviderFcSnapshotContext,
+          })
+        : preparePrivateChatProviderFcRoute({
+            enabled: phoneStructuredRoutingRequested
+              && (phoneProviderFcRelease.enabled === true || phoneProviderFcProbation.eligible === true),
+            config,
+            client: requestClient,
+            messages,
+            transportPlan: phoneTransportPlan,
+            context: phoneProviderFcContext,
+            target: privateChatProviderFcTarget,
+            allowedItemTypes: privateChatProviderFcAllowedItemTypes,
+            allowedStickerKeywords: privateChatProviderFcAllowedStickerKeywords,
+            snapshotContext: phoneProviderFcSnapshotContext,
+          });
+      const phoneStructuredTextTransport = resolveChatStructuredTextTransport(config);
+      const phoneStructuredFcTransport = resolveChatStructuredTextTransport(config, {
+        preferProviderFc: true,
+      });
+      const phoneJsonFormatMetadata = String(config?.provider || '').trim().toLowerCase() === 'openrouter'
+        ? readOpenRouterModelCapabilities({ baseUrl: config?.baseUrl, model: config?.model })
+        : null;
+      const phoneJsonTerminalRoute = preparePhoneReplyJsonRoute({
+        enabled: phoneStructuredRoutingRequested && phoneStructuredTextTransport.supported === true,
+        config,
+        client: requestClient,
+        formatCapabilities: derivePhoneReplyJsonFormatCapabilities({
+          provider: config?.provider,
+          metadataKnown: phoneJsonFormatMetadata?.known === true,
+          supportedParameters: phoneJsonFormatMetadata?.supportedParameters || [],
+        }),
+        messages,
+        transportPlan: phoneTransportPlan,
+        context: phoneProviderFcContext,
+        target: phoneProviderFcUsesBatch ? phoneBatchProviderFcTarget : privateChatProviderFcTarget,
+        adapter: phoneStructuredAdapter,
+        capabilities: phoneTransportPlan.structuredCapabilities || {},
+        allowedItemTypes: phoneProviderFcUsesBatch
+          ? phoneProviderFcAllowedItemTypes
+          : privateChatProviderFcAllowedItemTypes,
+        allowedStickerKeywords: privateChatProviderFcAllowedStickerKeywords,
+        snapshotContext: phoneProviderFcSnapshotContext,
+      });
+      const phoneProviderFcRequestPlan = preparedPhoneProviderFcRoute.eligible === true
+        && preparedPhoneProviderFcRoute.toolDefinition
+        ? buildProviderFcRequestPlan({
+            config,
+            tools: [preparedPhoneProviderFcRoute.toolDefinition],
+            thinkingEnabled: phoneStructuredEffectiveThinkingEnabled,
+            temperature: Number.isFinite(phoneStructuredTemperature)
+              ? phoneStructuredTemperature
+              : 0.7,
+            reasoningOptions: genOptions,
+            probationMode: phoneProviderFcRelease.enabled !== true,
+          })
+        : null;
+      const phoneProviderFcEvidenceIdentityResult = buildChatStructuredRequestEvidenceIdentity({
+        config,
+        mode: CHAT_STRUCTURED_ROUTE_MODES.providerFc,
+        adapter: phoneStructuredAdapter,
+        surface: phoneTransportPlan.surface,
+        capabilities: phoneTransportPlan.structuredCapabilities || {},
+        transport: phoneStructuredFcTransport,
+      });
+      const phoneJsonEvidenceIdentityResult = buildChatStructuredRequestEvidenceIdentity({
+        config,
+        mode: CHAT_STRUCTURED_ROUTE_MODES.jsonTerminal,
+        adapter: phoneStructuredAdapter,
+        surface: phoneTransportPlan.surface,
+        capabilities: phoneTransportPlan.structuredCapabilities || {},
+        transport: phoneStructuredTextTransport,
+      });
+      const phoneProviderFcEvidence = phoneProviderFcEvidenceIdentityResult.ok
+        ? chatStructuredRouteEvidenceStore.get(
+            phoneProviderFcEvidenceIdentityResult.identity,
+            CHAT_STRUCTURED_ROUTE_MODES.providerFc,
+          )
+        : null;
+      const phoneProviderFcEvidenceKey = phoneProviderFcEvidenceIdentityResult.ok
+        ? getChatStructuredEvidenceKey(
+            phoneProviderFcEvidenceIdentityResult.identity,
+            CHAT_STRUCTURED_ROUTE_MODES.providerFc,
+          )
+        : '';
+      const phoneJsonEvidenceKey = phoneJsonEvidenceIdentityResult.ok
+        ? getChatStructuredEvidenceKey(
+            phoneJsonEvidenceIdentityResult.identity,
+            CHAT_STRUCTURED_ROUTE_MODES.jsonTerminal,
+          )
+        : '';
+      const phoneJsonEvidence = phoneJsonEvidenceIdentityResult.ok
+        ? chatStructuredRouteEvidenceStore.get(
+            phoneJsonEvidenceIdentityResult.identity,
+            CHAT_STRUCTURED_ROUTE_MODES.jsonTerminal,
+          )
+        : null;
+      const phoneStructuredHardBoundary = resolveChatStructuredHardBoundary({
+        enabled: phoneStructuredRoutingRequested,
+        context: phoneProviderFcContext,
+      });
+      const phoneProviderFcHalfOpenAvailability = phoneProviderFcEvidenceIdentityResult.ok
+        ? chatStructuredRouteEvidenceStore.getHalfOpenAvailability(
+            phoneProviderFcEvidenceIdentityResult.identity,
+            CHAT_STRUCTURED_ROUTE_MODES.providerFc,
+          )
+        : null;
+      const phoneJsonHalfOpenAvailability = phoneJsonEvidenceIdentityResult.ok
+        ? chatStructuredRouteEvidenceStore.getHalfOpenAvailability(
+            phoneJsonEvidenceIdentityResult.identity,
+            CHAT_STRUCTURED_ROUTE_MODES.jsonTerminal,
+          )
+        : null;
+      const buildPhoneStructuredRouteDecision = ({ fcLeaseAvailable = true, jsonLeaseAvailable = true } = {}) => resolveChatStructuredRoute({
+        enabled: phoneStructuredRoutingRequested,
+        hardBoundaryReason: phoneStructuredHardBoundary,
+        verifiedFc: {
+          ...phoneProviderFcRelease,
+          enabled: phoneProviderFcRelease.enabled === true
+            && phoneProviderFcProbation.reason !== 'thinking_preservation_requires_json'
+            && preparedPhoneProviderFcRoute.eligible === true
+            && phoneProviderFcRequestPlan?.ok === true,
+        },
+        fcProbation: {
+          ...phoneProviderFcProbation,
+          eligible: phoneProviderFcProbation.eligible === true
+            && preparedPhoneProviderFcRoute.eligible === true
+            && phoneProviderFcRequestPlan?.ok === true,
+          reason: phoneProviderFcRequestPlan?.ok === false
+            ? phoneProviderFcRequestPlan.reason
+            : phoneProviderFcProbation.reason,
+        },
+        jsonTerminal: {
+          eligible: phoneJsonTerminalRoute.eligible === true,
+          reason: phoneJsonTerminalRoute.reason,
+        },
+        fcEvidence: phoneProviderFcEvidence,
+        jsonEvidence: phoneJsonEvidence,
+        fcHalfOpenLeaseAvailable: fcLeaseAvailable,
+        jsonHalfOpenLeaseAvailable: jsonLeaseAvailable,
+      });
+      let phoneStructuredRouteDecision = buildPhoneStructuredRouteDecision({
+        fcLeaseAvailable: phoneProviderFcHalfOpenAvailability?.reason !== 'half_open_busy',
+        jsonLeaseAvailable: phoneJsonHalfOpenAvailability?.reason !== 'half_open_busy',
+      });
+      let phoneStructuredHalfOpenLeaseHeld = false;
+      if (phoneStructuredRouteDecision.halfOpen === true) {
+        const halfOpenIdentityResult = phoneStructuredRouteDecision.mode === CHAT_STRUCTURED_ROUTE_MODES.providerFc
+          ? phoneProviderFcEvidenceIdentityResult
+          : phoneJsonEvidenceIdentityResult;
+        phoneStructuredHalfOpenLeaseHeld = halfOpenIdentityResult.ok
+          && chatStructuredRouteEvidenceStore.tryAcquireHalfOpen(
+            halfOpenIdentityResult.identity,
+            phoneStructuredRouteDecision.mode,
+            { requestId: nativeRequestId },
+          );
+        if (!phoneStructuredHalfOpenLeaseHeld) {
+          phoneStructuredRouteDecision = buildPhoneStructuredRouteDecision({
+            fcLeaseAvailable: phoneStructuredRouteDecision.mode !== CHAT_STRUCTURED_ROUTE_MODES.providerFc,
+            jsonLeaseAvailable: phoneStructuredRouteDecision.mode !== CHAT_STRUCTURED_ROUTE_MODES.jsonTerminal,
+          });
+        }
+      }
+      const phoneStructuredRouteMode = phoneStructuredRouteDecision.mode;
+      const phoneStructuredContractSummary = buildChatStructuredContractSummary({
+        adapter: phoneStructuredAdapter,
+        surface: phoneTransportPlan.surface,
+        target: phoneProviderFcUsesBatch ? phoneBatchProviderFcTarget : privateChatProviderFcTarget,
+        capabilities: phoneTransportPlan.structuredCapabilities || {},
+        allowedItemTypes: phoneProviderFcUsesBatch
+          ? phoneProviderFcAllowedItemTypes
+          : privateChatProviderFcAllowedItemTypes,
+        allowedStickerKeywords: privateChatProviderFcAllowedStickerKeywords,
+      });
+      const phoneProviderFcRoute = phoneStructuredRouteMode === CHAT_STRUCTURED_ROUTE_MODES.providerFc
+        ? {
+            ...preparedPhoneProviderFcRoute,
+            routeMode: CHAT_STRUCTURED_ROUTE_MODES.providerFc,
+          }
+        : (phoneStructuredRouteMode === CHAT_STRUCTURED_ROUTE_MODES.jsonTerminal
+            ? {
+                ...phoneJsonTerminalRoute,
+                routeMode: CHAT_STRUCTURED_ROUTE_MODES.jsonTerminal,
+                toolSchemaDiagnostics: null,
+              }
+            : {
+                eligible: false,
+                reason: phoneStructuredRouteDecision.reason,
+                routeMode: CHAT_STRUCTURED_ROUTE_MODES.legacyText,
+                messages: [],
+                semanticSnapshot: phoneJsonTerminalRoute.semanticSnapshot
+                  || preparedPhoneProviderFcRoute.semanticSnapshot
+                  || null,
+                snapshotFingerprint: phoneJsonTerminalRoute.snapshotFingerprint
+                  || preparedPhoneProviderFcRoute.snapshotFingerprint
+                  || '',
+                promptDiagnostics: phoneJsonTerminalRoute.promptDiagnostics
+                  || preparedPhoneProviderFcRoute.promptDiagnostics
+                  || null,
+              });
+      let primaryLegacyAssembly = null;
+      if (phoneTransportPlan.transportLayersDeferred === true && !phoneProviderFcRoute.eligible) {
+        primaryLegacyAssembly = phoneProviderFcRoute.semanticSnapshot
+          ? assembleLegacyTextRequest(phoneProviderFcRoute.semanticSnapshot)
+          : restoreDeferredLegacyTextMessages({
+              messages,
+              deferredLegacyLayers: phoneTransportPlan.deferredLegacyLayers,
+            });
+        if (!primaryLegacyAssembly.ok) {
+          throw new Error(`Deferred text transport unavailable: ${primaryLegacyAssembly.reason}`);
+        }
+        messages = primaryLegacyAssembly.messages;
+      }
+      const phoneProviderFcStreamPreviewEnabled = Boolean(
+        phoneStructuredRouteMode === CHAT_STRUCTURED_ROUTE_MODES.providerFc
+        && phoneProviderFcRoute.eligible
+        && phoneProviderFcRelease.capabilities?.streamingArguments === true
+        && config?.stream === true
+        && phoneStructuredPreviewCallback,
+      );
       if (config?.webSearchEnabled === true && webSearchPlan.enabled !== true) {
         const warningSignature = `${webSearchPlan.route}:${webSearchPlan.diagnostics?.reason || ''}`;
         if (this.lastWebSearchWarningSignature !== warningSignature) {
@@ -4055,6 +4562,41 @@ class AppBridge {
           } catch {}
         }
       }
+      const prefillExperimentStatus = (() => {
+        try {
+          const action = this.debugUiRegistry?.actions?.getDeepSeekPhonePrefillExperimentStatus;
+          return typeof action === 'function' ? action() : null;
+        } catch {
+          return null;
+        }
+      })();
+      const phonePrefillPlan = resolveDeepSeekPhonePrefillPlan({
+        experimentEnabled: prefillExperimentStatus?.enabled === true,
+        provider: config?.provider,
+        model: config?.model,
+        baseUrl: config?.baseUrl,
+        uiMode: presetContext?.uiMode,
+        surface: this.lastDeepSeekFormatDebug?.contractSurface || '',
+        responseTarget: this.lastDeepSeekFormatDebug?.responseTarget || nextContext?.meta?.responseTarget,
+        assistantContinuation: nextContext?.meta?.assistantContinuation?.enabled === true
+          || nextContext?.meta?.suppressPendingUserTurn === true,
+        hasConfiguredPrefill: Boolean(configuredProviderDirectives?.deepseekPrefix),
+        usesDefaultPreset: this.lastDeepSeekFormatDebug?.isDefaultOpenAIPreset === true,
+        usesBuiltinContract: this.lastDeepSeekFormatDebug?.dsFormatInjected === true,
+        formatProfileEnabled: nextContext?.meta?.formatProfileEnabled === true,
+        webSearchEnabled: config?.webSearchEnabled === true,
+        hasProviderTools: hasProviderToolRequestOptions(
+          genOptions,
+          configuredProviderDirectives,
+          providerToolRequestSchema.requestOptions,
+          webSearchPlan.requestOptions,
+          providerToolBridgeLoopPlan.requestOptions,
+        ),
+      });
+      const providerDirectives = {
+        ...(configuredProviderDirectives || {}),
+        ...(phonePrefillPlan.requestOptions || {}),
+      };
       const requestOptions = applyRuntimeParamFilter({
         ...(genOptions || {}),
         ...(providerDirectives || {}),
@@ -4063,6 +4605,31 @@ class AppBridge {
         signal: abortController.signal,
         nativeRequestId,
         ...(providerToolBridgeLoopPlan.requestOptions || {}),
+      });
+      const phoneProviderFcRequestOptions = applyRuntimeParamFilter({
+        ...(genOptions || {}),
+        signal: abortController.signal,
+        nativeRequestId,
+      });
+      const phoneProviderFcPlanDebugOptions = buildProviderFcRequestOptionsForLocalDiagnostics(
+        phoneProviderFcRequestPlan,
+      );
+      const phoneProviderFcDebugRequestOptions = applyRuntimeParamFilter({
+        ...sanitizeProviderFcInheritedRequestOptions({
+          provider: config?.provider,
+          options: genOptions,
+        }),
+        ...phoneProviderFcPlanDebugOptions,
+      });
+      const phoneJsonTerminalRequestOptions = applyRuntimeParamFilter({
+        ...(genOptions || {}),
+        ...(phoneJsonTerminalRoute.requestOptions || {}),
+        signal: abortController.signal,
+        nativeRequestId,
+      });
+      const phoneJsonTerminalDebugRequestOptions = applyRuntimeParamFilter({
+        ...(genOptions || {}),
+        ...(phoneJsonTerminalRoute.requestOptions || {}),
       });
       // Phase B 主任务计量：本次生成的真实 provider usage（chat/stream 均经 onProviderUsage 上报）。
       // 在 param filter 之后注入回调，避免被参数过滤剥掉；主流程 finalize 消息时 consume 一次挂到 meta.usage。
@@ -4073,8 +4640,134 @@ class AppBridge {
       let rawEstimatedPromptTokens = 0;
       let calibrationRecorded = false;
       let calibrationEligible = true;
+      const providerCallTracker = createGenerationProviderCallDiagnosticsTracker();
+      let activeProviderCallId = '';
+      let generationUsage = null;
+
+      const getProviderCalls = () => providerCallTracker.snapshot();
+      const syncGenerationUsageSnapshot = () => {
+        const providerCalls = getProviderCalls();
+        const responseDiagnostics = this.lastRequest?.requestId === nativeRequestId
+          ? (this.lastRequest.responseDiagnostics || {})
+          : {};
+        const merged = mergeResponseDiagnosticsIntoUsage(
+          generationUsage,
+          responseDiagnostics,
+          { providerCalls },
+        );
+        if (!merged) {
+          this.lastGenerationUsage = null;
+          return;
+        }
+        const calibration = this.getTokenCalibration(config?.provider, config?.model);
+        this.lastGenerationUsage = {
+          provider: String(generationUsage?.provider || config?.provider || ''),
+          model: String(generationUsage?.model || config?.model || ''),
+          ...merged,
+          modelCallCount: providerCalls.length,
+          estimatedPromptTokens: rawEstimatedPromptTokens,
+          tokenCalibrationCoefficient: calibration.coefficient,
+          tokenCalibrationSamples: calibration.samples,
+        };
+      };
+      const syncProviderCallsToRequest = () => {
+        if (this.lastRequest?.requestId !== nativeRequestId) return;
+        this.lastRequest.responseDiagnostics = {
+          ...(this.lastRequest.responseDiagnostics || {}),
+          providerCalls: getProviderCalls(),
+          usagePersistenceTarget: 'generation_record',
+        };
+        syncGenerationUsageSnapshot();
+      };
+      const startProviderCall = (mode, stream) => {
+        generationUsage = null;
+        activeProviderCallId = providerCallTracker.start({
+          mode,
+          provider: config?.provider,
+          model: config?.model,
+          stream: stream === true,
+        });
+        syncProviderCallsToRequest();
+        return activeProviderCallId;
+      };
+      const markFirstProviderDelta = ({ at = Date.now() } = {}) => {
+        if (!activeProviderCallId) return;
+        if (!providerCallTracker.markFirstMeaningfulDelta(activeProviderCallId, { at })) return;
+        if (this.lastRequest?.requestId === nativeRequestId) {
+          this.lastRequest.responseDiagnostics = buildFirstTokenResponseDiagnostics(
+            this.lastRequest.responseDiagnostics,
+            {
+              requestStartedAt: generationStartedAt,
+              firstTokenAt: at,
+              stream: true,
+            },
+          );
+        }
+        syncProviderCallsToRequest();
+      };
+      const finishProviderCall = (outcome, completedAt = Date.now()) => {
+        if (!activeProviderCallId) return;
+        providerCallTracker.finish(activeProviderCallId, {
+          outcome,
+          completedAt,
+          usage: generationUsage,
+        });
+        activeProviderCallId = '';
+        syncProviderCallsToRequest();
+      };
+      const resetResponseForNextProviderCall = () => {
+        if (this.lastRequest?.requestId !== nativeRequestId) return;
+        const next = { ...(this.lastRequest.responseDiagnostics || {}) };
+        [
+          'completedAt',
+          'latencyMs',
+          'outputDurationMs',
+          'tokensPerSecond',
+          'promptTokens',
+          'completionTokens',
+          'totalTokens',
+          'finishReason',
+          'systemFingerprint',
+          'modelVersion',
+          'responseId',
+          'responseModel',
+          'routedProvider',
+        ].forEach(key => { delete next[key]; });
+        this.lastRequest.responseDiagnostics = {
+          ...next,
+          providerCalls: getProviderCalls(),
+          usagePersistenceTarget: 'generation_record',
+        };
+      };
+      const completeGenerationDiagnostics = ({ completedAt = Date.now(), stream = false } = {}) => {
+        if (this.lastRequest?.requestId !== nativeRequestId) return;
+        const providerCalls = getProviderCalls();
+        const next = buildCompletedResponseDiagnostics(
+          this.lastRequest.responseDiagnostics,
+          {
+            requestStartedAt: generationStartedAt,
+            completedAt,
+            usage: generationUsage,
+            stream,
+          },
+        );
+        if (providerCalls.length > 1) {
+          next.outputDurationMs = null;
+          next.tokensPerSecond = null;
+        }
+        this.lastRequest.responseDiagnostics = {
+          ...next,
+          providerCalls,
+          usagePersistenceTarget: 'generation_record',
+        };
+        syncGenerationUsageSnapshot();
+      };
       requestOptions.onProviderUsage = (usage) => {
         const completedAt = Date.now();
+        generationUsage = usage && typeof usage === 'object' ? { ...usage } : null;
+        if (activeProviderCallId) {
+          providerCallTracker.observeUsage(activeProviderCallId, generationUsage);
+        }
         let calibration = this.getTokenCalibration(config?.provider, config?.model);
         const actualPromptTokens = Math.trunc(Number(usage?.promptTokens));
         if (
@@ -4092,29 +4785,38 @@ class AppBridge {
           });
           calibrationRecorded = true;
         }
-        this.lastGenerationUsage = {
-          ...(usage && typeof usage === 'object' ? usage : {}),
-          latencyMs: completedAt - generationStartedAt,
-          estimatedPromptTokens: rawEstimatedPromptTokens,
-          tokenCalibrationCoefficient: calibration.coefficient,
-          tokenCalibrationSamples: calibration.samples,
-        };
         // 只允许回写到本请求自己的 audit：lastRequest 可能已被并发的后台请求
         // （agent/压缩/图片）换成别的请求，盖过去会把别档模型的系数展示到错误面板上。
         if (this.lastRequest?.injectionAudit && this.lastRequest.requestId === nativeRequestId) {
           this.lastRequest.injectionAudit.calibration = { ...calibration };
         }
         if (this.lastRequest?.requestId === nativeRequestId) {
-          this.lastRequest.responseDiagnostics = buildCompletedResponseDiagnostics(
+          const measured = buildCompletedResponseDiagnostics(
             this.lastRequest.responseDiagnostics,
             {
               requestStartedAt: generationStartedAt,
               completedAt,
-              usage: this.lastGenerationUsage,
+              usage: generationUsage,
               stream: Boolean(config?.stream),
             },
           );
+          this.lastRequest.responseDiagnostics = {
+            ...(this.lastRequest.responseDiagnostics || {}),
+            stream: measured.stream,
+            promptTokens: measured.promptTokens,
+            completionTokens: measured.completionTokens,
+            totalTokens: measured.totalTokens,
+            finishReason: measured.finishReason,
+            systemFingerprint: measured.systemFingerprint,
+            modelVersion: measured.modelVersion,
+            responseId: measured.responseId,
+            responseModel: measured.responseModel,
+            routedProvider: measured.routedProvider,
+            providerCalls: getProviderCalls(),
+            usagePersistenceTarget: 'generation_record',
+          };
         }
+        syncGenerationUsageSnapshot();
       };
       requestOptions.onProviderSources = (sources) => {
         this.lastGenerationSources = mergeWebSources(this.lastGenerationSources || [], sources || []);
@@ -4143,19 +4845,76 @@ class AppBridge {
         model: config?.model,
         sessionId,
       });
-      const preparedRequest = generationClient?.prepareChatRequest?.(messages, requestOptions) || null;
-      const responsePrefix = String(preparedRequest?.responsePrefix || '');
+      const preparedRequest = phoneProviderFcRoute.eligible
+        ? null
+        : (generationClient?.prepareChatRequest?.(messages, requestOptions) || null);
+      const legacyResponsePrefix = String(preparedRequest?.responsePrefix || '');
       const finalRequestMessages = preparedRequest?.messages || messages;
-      rawEstimatedPromptTokens = estimatePromptMessagesTokens(finalRequestMessages, 'rough');
+      const requestPayloadMessages = phoneProviderFcRoute.eligible
+        ? phoneProviderFcRoute.messages
+        : finalRequestMessages;
+      const requestPayloadOptions = phoneProviderFcRoute.eligible
+        ? (phoneStructuredRouteMode === CHAT_STRUCTURED_ROUTE_MODES.jsonTerminal
+            ? phoneJsonTerminalRequestOptions
+            : phoneProviderFcRequestOptions)
+        : requestOptions;
+      let responsePrefix = phoneProviderFcRoute.eligible ? '' : legacyResponsePrefix;
+      rawEstimatedPromptTokens = estimatePromptMessagesTokens(requestPayloadMessages, 'rough');
+      const structuredContractMessages = phoneProviderFcRoute.eligible
+        ? requestPayloadMessages.filter((message) => {
+            const content = typeof message?.content === 'string' ? message.content.trimStart() : '';
+            return content.startsWith('本轮使用结构化')
+              || content.startsWith('本轮使用 JSON 结构化终态');
+          })
+        : [];
+      const structuredContractMessageEstimateTokens = estimatePromptMessagesTokens(
+        structuredContractMessages,
+        'rough',
+      );
+      const structuredSchemaForEstimate = phoneStructuredRouteMode === CHAT_STRUCTURED_ROUTE_MODES.jsonTerminal
+        ? (phoneJsonTerminalRoute.schema || {})
+        : (phoneProviderFcRoute.toolSchemaLocal?.schema
+            || phoneProviderFcRoute.toolSchemaDiagnostics?.schema
+            || {});
+      const schemaEstimateTokens = estimateTokens(
+        JSON.stringify(structuredSchemaForEstimate),
+        'rough',
+      );
+      const embeddedJsonSchemaEstimateTokens = (
+        phoneStructuredRouteMode === CHAT_STRUCTURED_ROUTE_MODES.jsonTerminal
+        && phoneJsonTerminalRoute.formatMode !== 'json_schema'
+      ) ? schemaEstimateTokens : 0;
+      const contractInstructionEstimateTokens = Math.max(
+        0,
+        structuredContractMessageEstimateTokens - embeddedJsonSchemaEstimateTokens,
+      );
+      const semanticMessageEstimateTokens = Math.max(
+        0,
+        rawEstimatedPromptTokens - structuredContractMessageEstimateTokens,
+      );
       // 带图/语音请求不进校准样本：估算把附件折成占位符，而 usage 含真实附件 token，
       // 比值会被顶到上限并经 EWMA 拉高系数，之后纯文本请求会被系统性高估。
       calibrationEligible = config?.webSearchEnabled !== true
-        && !promptMessagesContainNonTextContent(finalRequestMessages);
+        && !promptMessagesContainNonTextContent(requestPayloadMessages);
+      const globalPromptAudit = this.lastGlobalSemanticPromptAudit
+        && typeof this.lastGlobalSemanticPromptAudit === 'object'
+        ? this.lastGlobalSemanticPromptAudit
+        : null;
+      const globalPromptAuditSegments = globalPromptAudit?.usedTokens > 0
+        ? [{
+            id: globalPromptAudit.segmentId || 'global_prompt_library',
+            label: globalPromptAudit.label || '全局提示词',
+            usedTokens: globalPromptAudit.usedTokens,
+            messageCount: globalPromptAudit.messageCount,
+            detail: `${globalPromptAudit.messageCount || 0} 个启用块`,
+          }]
+        : [];
       const injectionAudit = buildRequestInjectionAudit({
         memoryPlan: this.lastMemoryPlan,
+        extraSegments: globalPromptAuditSegments,
         history: nextContext?.history,
         worldDebug: this.lastWorldInjectionDebug,
-        messages: finalRequestMessages,
+        messages: requestPayloadMessages,
         budget: this.lastMemoryPlan?.budget,
         mode: this.lastMemoryPlan?.budget?.mode,
         tokenMode: requestTokenMode,
@@ -4163,6 +4922,7 @@ class AppBridge {
       injectionAudit.calibration = { ...requestCalibration };
       injectionAudit.coverageLine = this.lastMemoryPlan?.coverageLine || null;
       injectionAudit.historyBudgetStats = this.lastMemoryPlan?.historyBudgetStats || null;
+      injectionAudit.globalPrompt = globalPromptAudit;
       if (this.lastMemoryPlan && typeof this.lastMemoryPlan === 'object') {
         this.lastMemoryPlan = {
           ...this.lastMemoryPlan,
@@ -4179,7 +4939,11 @@ class AppBridge {
         provider: config?.provider,
         baseUrl: preparedRequest?.url ? String(preparedRequest.url).replace(/\/chat\/completions$/, '') : config?.baseUrl,
         model: config?.model,
-        stream: Boolean(config?.stream),
+        stream: phoneProviderFcRoute.eligible
+          ? (phoneStructuredRouteMode === CHAT_STRUCTURED_ROUTE_MODES.jsonTerminal
+              ? Boolean(config?.stream)
+              : phoneProviderFcStreamPreviewEnabled)
+          : Boolean(config?.stream),
         configProfile: {
           id: requestRuntime?.profileId || '',
           source: requestRuntime?.bindingSource || 'global',
@@ -4200,19 +4964,129 @@ class AppBridge {
               isReplyToComment: Boolean(nextContext.task.isReplyToComment),
             }
           : null,
-        options: preparedRequest?.normalizedOptions || genOptions,
+        options: phoneProviderFcRoute.eligible
+          ? (phoneStructuredRouteMode === CHAT_STRUCTURED_ROUTE_MODES.jsonTerminal
+              ? phoneJsonTerminalDebugRequestOptions
+              : phoneProviderFcDebugRequestOptions)
+          : (preparedRequest?.normalizedOptions || genOptions),
         requestOptions: {
-          ...applyRuntimeParamFilter({
-            ...(genOptions || {}),
-            ...(providerDirectives || {}),
-            ...(providerToolRequestSchema.requestOptions || {}),
-            ...(webSearchPlan.requestOptions || {}),
-          }),
+          ...(phoneProviderFcRoute.eligible
+            ? (phoneStructuredRouteMode === CHAT_STRUCTURED_ROUTE_MODES.jsonTerminal
+                ? phoneJsonTerminalDebugRequestOptions
+                : phoneProviderFcDebugRequestOptions)
+            : applyRuntimeParamFilter({
+                ...(genOptions || {}),
+                ...(providerDirectives || {}),
+                ...(providerToolRequestSchema.requestOptions || {}),
+                ...(webSearchPlan.requestOptions || {}),
+              })),
         },
         providerToolRequestSchema: providerToolRequestSchema.diagnostics,
         providerToolBridgeLoop: providerToolBridgeLoopPlan.diagnostics,
         webSearch: webSearchPlan.diagnostics,
-        messages: finalRequestMessages,
+        deepSeekPhonePrefill: phoneProviderFcRoute.eligible
+          ? {
+              ...(phonePrefillPlan.diagnostics || {}),
+              eligible: false,
+              reason: `${phoneStructuredRouteMode}_active`,
+            }
+          : phonePrefillPlan.diagnostics,
+        phoneReplyTransport: {
+          previewState: previewOnly ? 'predicted' : 'actual',
+          requestedMode: phoneStructuredRoutingRequested ? phoneStructuredRouteMode : 'legacy_text',
+          effectiveMode: phoneProviderFcRoute.eligible ? phoneStructuredRouteMode : 'legacy_text',
+          routeLayer: String(phoneStructuredRouteDecision.layer || ''),
+          routeReason: String(phoneStructuredRouteDecision.reason || ''),
+          fallbackFrom: String(phoneStructuredRouteDecision.fallbackFrom || ''),
+          thinkingRequested: phoneStructuredThinkingPlan.thinkingRequested === true,
+          thinkingEnabled: phoneStructuredRouteMode === CHAT_STRUCTURED_ROUTE_MODES.providerFc
+            ? phoneStructuredThinkingPlan.thinkingEnabled === true
+            : phoneStructuredThinkingPlan.thinkingRequested === true,
+          thinkingOverrideReason: phoneStructuredRouteMode === CHAT_STRUCTURED_ROUTE_MODES.providerFc
+            ? String(phoneStructuredThinkingPlan.thinkingOverrideReason || '')
+            : '',
+          adapter: phoneStructuredAdapter,
+          eligible: phoneProviderFcRoute.eligible === true,
+          eligibilityReason: String(phoneProviderFcRoute.reason || ''),
+          providerRolloutEnabled: phoneProviderFcRelease.enabled === true,
+          providerRolloutReason: String(phoneProviderFcRelease.reason || ''),
+          providerModel: String(phoneProviderFcRelease.model || config?.model || ''),
+          capabilitySource: String(phoneProviderFcRelease.capabilitySource || ''),
+          capabilityLayer: String(phoneProviderFcRelease.capabilityLayer || ''),
+          capabilityRuleId: String(phoneProviderFcRelease.capabilityRuleId || ''),
+          probationEligible: phoneProviderFcProbation.eligible === true,
+          probationReason: String(phoneProviderFcProbation.reason || ''),
+          evidenceKey: String(
+            phoneStructuredRouteMode === CHAT_STRUCTURED_ROUTE_MODES.jsonTerminal
+              ? phoneJsonEvidenceKey
+              : phoneProviderFcEvidenceKey,
+          ),
+          evidenceStatus: String(
+            phoneStructuredRouteMode === CHAT_STRUCTURED_ROUTE_MODES.jsonTerminal
+              ? (phoneJsonEvidence?.health?.status || 'unobserved')
+              : (phoneProviderFcEvidence?.health?.status || 'unobserved'),
+          ),
+          evidenceStrictSuccessCount: Number(
+            phoneStructuredRouteMode === CHAT_STRUCTURED_ROUTE_MODES.jsonTerminal
+              ? (phoneJsonEvidence?.health?.strictSuccessCount || 0)
+              : (phoneProviderFcEvidence?.health?.strictSuccessCount || 0),
+          ),
+          circuitOpen: (
+            phoneStructuredRouteMode === CHAT_STRUCTURED_ROUTE_MODES.jsonTerminal
+              ? phoneJsonEvidence?.health?.circuitOpen
+              : phoneProviderFcEvidence?.health?.circuitOpen
+          ) === true,
+          cooldownUntil: Number(
+            phoneStructuredRouteMode === CHAT_STRUCTURED_ROUTE_MODES.jsonTerminal
+              ? (phoneJsonEvidence?.health?.cooldownUntil || 0)
+              : (phoneProviderFcEvidence?.health?.cooldownUntil || 0),
+          ),
+          localRuleCircuitOpen: phoneProviderFcRelease.localRuleHealth?.circuitOpen === true,
+          localRuleFailureCount: Number(
+            phoneProviderFcRelease.localRuleHealth?.consecutiveDeterministicFailures || 0,
+          ),
+          localRuleLastFailureReason: String(
+            phoneProviderFcRelease.localRuleHealth?.lastFailureReason || '',
+          ),
+          localRuleHealthAction: '',
+          snapshotFingerprint: String(phoneProviderFcRoute.snapshotFingerprint || ''),
+          primaryAssembly: primaryLegacyAssembly
+            ? (primaryLegacyAssembly.snapshotFingerprint
+                ? 'lazy_legacy_from_snapshot'
+                : 'deferred_anchor_restore')
+            : '',
+          attempted: false,
+          fallbackReason: '',
+          toolCallCount: 0,
+          validationErrorCount: 0,
+          validationErrorCodes: [],
+          argumentRepairApplied: false,
+          argumentRepairKinds: [],
+          streamPreviewUsed: false,
+          previewUpdateCount: 0,
+          previewChars: 0,
+          previewFieldCount: 0,
+          previewTruncated: false,
+          firstPreviewLatencyMs: 0,
+          terminalToolSchema: phoneProviderFcRoute.toolSchemaLocal
+            || phoneProviderFcRoute.toolSchemaDiagnostics
+            || null,
+          contractSummary: phoneProviderFcRoute.eligible
+            ? phoneStructuredContractSummary
+            : null,
+          jsonContract: phoneStructuredRouteMode === CHAT_STRUCTURED_ROUTE_MODES.jsonTerminal
+            ? {
+                version: 'phone.reply.ir.v1',
+                formatMode: String(phoneJsonTerminalRoute.formatMode || 'prompt_json'),
+                schema: phoneJsonTerminalRoute.schema || null,
+              }
+            : null,
+          schemaEstimateTokens,
+          semanticMessageEstimateTokens,
+          contractInstructionEstimateTokens,
+          promptDiagnostics: phoneProviderFcRoute.promptDiagnostics || null,
+        },
+        messages: requestPayloadMessages,
         responsePrefix,
         worldDebug: this.lastWorldInjectionDebug || null,
         deepSeekFormatDebug: this.lastDeepSeekFormatDebug || null,
@@ -4223,10 +5097,10 @@ class AppBridge {
         scopeId: this.scopeId || sessionId,
       });
       this.lastRequest.promptCacheDebug = previewOnly
-        ? buildPromptCacheDebugSnapshot(preparedRequest?.messages || messages)
+        ? buildPromptCacheDebugSnapshot(requestPayloadMessages)
         : this.emitPromptCacheDebug(
             sessionId,
-            preparedRequest?.messages || messages,
+            requestPayloadMessages,
             {
               provider: config?.provider,
               model: config?.model,
@@ -4241,7 +5115,363 @@ class AppBridge {
         return this.lastRequest;
       }
 
+      const emitPhoneStructuredRouteStatus = (state, detail = {}) => {
+        if (!phoneProviderFcRoute.eligible) return;
+        try {
+          window.dispatchEvent(new CustomEvent('chatapp-phone-structured-route-status', {
+            detail: {
+              state,
+              mode: phoneStructuredRouteMode,
+              layer: String(phoneStructuredRouteDecision.layer || ''),
+              sessionId,
+              requestId: nativeRequestId,
+              ...detail,
+            },
+          }));
+        } catch {}
+      };
+      if (phoneProviderFcRoute.eligible) {
+        const configuredMaxTokens = Number(
+          requestPayloadOptions?.max_tokens ?? requestPayloadOptions?.maxTokens,
+        );
+        const configuredTemperature = Number(requestPayloadOptions?.temperature);
+        const structuredMaxTokens = Number.isFinite(configuredMaxTokens) && configuredMaxTokens > 0
+          ? Math.trunc(configuredMaxTokens)
+          : (phoneProviderFcUsesBatch ? 3200 : 2400);
+        emitPhoneStructuredRouteStatus('generating', {
+          message: '正在生成结构化回复…',
+        });
+        const structuredCallStream = phoneStructuredRouteMode === CHAT_STRUCTURED_ROUTE_MODES.jsonTerminal
+          ? Boolean(config?.stream)
+          : phoneProviderFcStreamPreviewEnabled;
+        startProviderCall(phoneStructuredRouteMode, structuredCallStream);
+        let phoneStructuredAttempt;
+        if (phoneStructuredRouteMode === CHAT_STRUCTURED_ROUTE_MODES.jsonTerminal) {
+          phoneStructuredAttempt = await runPhoneReplyJsonAttempt({
+            enabled: true,
+            client: requestClient,
+            config,
+            messages: phoneProviderFcRoute.messages,
+            adapter: phoneStructuredAdapter,
+            target: phoneProviderFcUsesBatch ? phoneBatchProviderFcTarget : privateChatProviderFcTarget,
+            capabilities: phoneTransportPlan.structuredCapabilities || {},
+            allowedItemTypes: phoneProviderFcUsesBatch
+              ? phoneProviderFcAllowedItemTypes
+              : privateChatProviderFcAllowedItemTypes,
+            allowedStickerKeywords: privateChatProviderFcAllowedStickerKeywords,
+            formatMode: phoneJsonTerminalRoute.formatMode,
+            schema: phoneJsonTerminalRoute.schema,
+            stream: Boolean(config?.stream),
+            maxTokens: structuredMaxTokens,
+            signal: abortController.signal,
+            requestOptions: requestPayloadOptions,
+            onProviderUsage: requestOptions.onProviderUsage,
+            onFirstProviderDelta: markFirstProviderDelta,
+          });
+        } else {
+          const sharedPhoneProviderFcAttemptOptions = {
+            enabled: true,
+            client: requestClient,
+            config,
+            messages: phoneProviderFcRoute.messages,
+            context: phoneProviderFcContext,
+            thinkingEnabled: phoneStructuredEffectiveThinkingEnabled,
+            temperature: Number.isFinite(configuredTemperature) ? configuredTemperature : 0.7,
+            maxTokens: structuredMaxTokens,
+            signal: abortController.signal,
+            requestOptions: requestPayloadOptions,
+            onProviderUsage: requestOptions.onProviderUsage,
+            allowedItemTypes: phoneProviderFcAllowedItemTypes,
+            allowedStickerKeywords: privateChatProviderFcAllowedStickerKeywords,
+            streamPreviewEnabled: phoneProviderFcStreamPreviewEnabled,
+            onStructuredPreview: phoneStructuredPreviewCallback,
+            onFirstProviderDelta: markFirstProviderDelta,
+            probationMode: phoneStructuredRouteDecision.layer !== 'verified_native_fc',
+            preparedProviderRequestPlan: phoneProviderFcRequestPlan,
+          };
+          phoneStructuredAttempt = phoneProviderFcUsesBatch
+            ? await runPhoneBatchProviderFcAttempt({
+                ...sharedPhoneProviderFcAttemptOptions,
+                target: phoneBatchProviderFcTarget,
+                capabilities: phoneTransportPlan.structuredCapabilities || {},
+              })
+            : await runPrivateChatProviderFcAttempt({
+                ...sharedPhoneProviderFcAttemptOptions,
+                target: privateChatProviderFcTarget,
+              });
+        }
+        const structuredFailure = phoneStructuredAttempt.ok
+          ? null
+          : classifyChatStructuredAttemptFailure(phoneStructuredAttempt);
+        phoneStructuredAttempt.diagnostics = {
+          ...(phoneStructuredAttempt.diagnostics || {}),
+          thinkingRequested: phoneStructuredThinkingPlan.thinkingRequested,
+          thinkingEnabled: phoneStructuredRouteMode === CHAT_STRUCTURED_ROUTE_MODES.jsonTerminal
+            ? phoneStructuredThinkingPlan.thinkingRequested
+            : phoneStructuredThinkingPlan.thinkingEnabled,
+          thinkingOverrideReason: phoneStructuredRouteMode === CHAT_STRUCTURED_ROUTE_MODES.providerFc
+            ? phoneStructuredThinkingPlan.thinkingOverrideReason
+            : '',
+        };
+        finishProviderCall(phoneStructuredAttempt.ok
+          ? 'succeeded'
+          : (structuredFailure.fallbackAllowed === true ? 'fallback' : 'failed'));
+        let localRuleHealthTransition = null;
+        if (
+          phoneStructuredRouteMode === CHAT_STRUCTURED_ROUTE_MODES.providerFc
+          && phoneProviderFcRelease.capabilityLayer === 'local_advanced'
+          && phoneProviderFcRelease.capabilityRuleId
+        ) {
+          try {
+            localRuleHealthTransition = await chatFcLocalCapabilityStore.recordAttempt(
+              phoneProviderFcRelease.capabilityRuleId,
+              phoneStructuredAttempt,
+            );
+          } catch (error) {
+            logger.warn('本地 FC 规则健康状态保存失败', error);
+          }
+        }
+        const structuredEvidenceIdentityResult = phoneStructuredRouteMode === CHAT_STRUCTURED_ROUTE_MODES.jsonTerminal
+          ? phoneJsonEvidenceIdentityResult
+          : phoneProviderFcEvidenceIdentityResult;
+        let structuredEvidenceTransition = null;
+        if (!phoneStructuredAttempt.ok && structuredEvidenceIdentityResult.ok) {
+          try {
+            structuredEvidenceTransition = await chatStructuredRouteEvidenceStore.record(
+              structuredEvidenceIdentityResult.identity,
+              phoneStructuredRouteMode,
+              {
+                ...phoneStructuredAttempt,
+              },
+            );
+          } catch (error) {
+            logger.warn('结构化路由失败证据保存失败', error);
+          }
+        }
+        if (!phoneStructuredAttempt.ok && phoneStructuredHalfOpenLeaseHeld) {
+          chatStructuredRouteEvidenceStore.releaseHalfOpenRequest(nativeRequestId);
+          phoneStructuredHalfOpenLeaseHeld = false;
+        }
+        if (['circuit_opened', 'negative_capability_recorded'].includes(structuredEvidenceTransition?.action)) {
+          emitPhoneStructuredRouteStatus('circuit_opened', {
+            message: '该模型的回复格式连续失败，已切换为传统模式。可在 API 设置中查看或重试。',
+            evidenceKey: String(structuredEvidenceTransition?.cell?.key || ''),
+            localRuleId: String(
+              phoneProviderFcRelease.capabilityLayer === 'local_advanced'
+                ? phoneProviderFcRelease.capabilityRuleId
+                : '',
+            ),
+            circuitEpoch: Number(structuredEvidenceTransition?.cell?.health?.circuitEpoch || 0),
+            circuitOpenedAt: Number(structuredEvidenceTransition?.cell?.health?.circuitOpenedAt || 0),
+          });
+        }
+        if (this.lastRequest?.requestId === nativeRequestId) {
+          const localRuleHealth = localRuleHealthTransition?.rule?.health;
+          const evidenceHealth = structuredEvidenceTransition?.cell?.health;
+          this.lastRequest.phoneReplyTransport = {
+            ...(this.lastRequest.phoneReplyTransport || {}),
+            attempted: phoneStructuredAttempt.attempted === true,
+            effectiveMode: phoneStructuredAttempt.ok
+              ? phoneStructuredRouteMode
+              : (phoneStructuredRouteMode === CHAT_STRUCTURED_ROUTE_MODES.jsonTerminal
+                  ? 'json_fallback'
+                  : 'fc_fallback'),
+            fallbackReason: phoneStructuredAttempt.ok
+              ? ''
+              : String(phoneStructuredAttempt.reason || `${phoneStructuredRouteMode}_failed`),
+            toolCallCount: Number(phoneStructuredAttempt.diagnostics?.toolCallCount || 0),
+            validationErrorCount: Number(phoneStructuredAttempt.diagnostics?.validationErrorCount || 0),
+            validationErrorCodes: Array.isArray(phoneStructuredAttempt.diagnostics?.validationErrorCodes)
+              ? phoneStructuredAttempt.diagnostics.validationErrorCodes.slice(0, 20)
+              : [],
+            failureShape: phoneStructuredAttempt.diagnostics?.failureShape || null,
+            argumentRepairApplied: phoneStructuredAttempt.diagnostics?.argumentRepairApplied === true,
+            argumentRepairKinds: Array.isArray(phoneStructuredAttempt.diagnostics?.argumentRepairKinds)
+              ? phoneStructuredAttempt.diagnostics.argumentRepairKinds.slice(0, 20)
+              : [],
+            thinkingRequested: phoneStructuredThinkingPlan.thinkingRequested === true,
+            thinkingEnabled: phoneStructuredRouteMode === CHAT_STRUCTURED_ROUTE_MODES.jsonTerminal
+              ? phoneStructuredThinkingPlan.thinkingRequested === true
+              : phoneStructuredThinkingPlan.thinkingEnabled === true,
+            thinkingOverrideReason: String(phoneStructuredAttempt.diagnostics?.thinkingOverrideReason || ''),
+            streamPreviewUsed: phoneStructuredAttempt.diagnostics?.streamPreviewUsed === true,
+            previewUpdateCount: Number(phoneStructuredAttempt.diagnostics?.previewUpdateCount || 0),
+            previewChars: Number(phoneStructuredAttempt.diagnostics?.previewChars || 0),
+            previewFieldCount: Number(phoneStructuredAttempt.diagnostics?.previewFieldCount || 0),
+            previewTruncated: phoneStructuredAttempt.diagnostics?.previewTruncated === true,
+            firstPreviewLatencyMs: Number(phoneStructuredAttempt.diagnostics?.firstPreviewLatencyMs || 0),
+            evidenceStatus: String(evidenceHealth?.status || this.lastRequest.phoneReplyTransport?.evidenceStatus || ''),
+            evidenceStrictSuccessCount: Number(
+              evidenceHealth?.strictSuccessCount
+              ?? this.lastRequest.phoneReplyTransport?.evidenceStrictSuccessCount
+              ?? 0,
+            ),
+            circuitOpen: evidenceHealth?.circuitOpen === true,
+            cooldownUntil: Number(evidenceHealth?.cooldownUntil || 0),
+            evidenceAction: String(structuredEvidenceTransition?.action || ''),
+            localRuleCircuitOpen: localRuleHealth?.circuitOpen === true,
+            localRuleFailureCount: Number(
+              localRuleHealth?.consecutiveDeterministicFailures
+              ?? this.lastRequest.phoneReplyTransport?.localRuleFailureCount
+              ?? 0,
+            ),
+            localRuleLastFailureReason: String(
+              localRuleHealth?.lastFailureReason
+              ?? this.lastRequest.phoneReplyTransport?.localRuleLastFailureReason
+              ?? '',
+            ),
+            localRuleHealthAction: String(localRuleHealthTransition?.action || ''),
+          };
+        }
+        if (phoneStructuredAttempt.ok) {
+          const structuredRaw = String(phoneStructuredAttempt.raw || '');
+          completeGenerationDiagnostics({ stream: structuredCallStream });
+          try {
+            await this.saveToHistory(originalInput, structuredRaw);
+          } catch (error) {
+            if (phoneStructuredHalfOpenLeaseHeld) {
+              chatStructuredRouteEvidenceStore.releaseHalfOpenRequest(nativeRequestId);
+              phoneStructuredHalfOpenLeaseHeld = false;
+            }
+            throw error;
+          }
+          if (structuredEvidenceIdentityResult.ok) {
+            const responseModel = String(
+              this.lastRequest?.responseDiagnostics?.responseModel || '',
+            ).trim().toLowerCase();
+            const systemFingerprint = String(
+              this.lastRequest?.responseDiagnostics?.systemFingerprint || '',
+            ).trim();
+            const requestedModel = String(config?.model || '').trim().toLowerCase();
+            this.chatStructuredEvidenceCommitRuntime.stage({
+              requestId: nativeRequestId,
+              identity: structuredEvidenceIdentityResult.identity,
+              mode: phoneStructuredRouteMode,
+              outcome: {
+                ...phoneStructuredAttempt,
+                argumentRepairApplied: phoneStructuredAttempt.diagnostics?.argumentRepairApplied === true,
+                canonicalRoundTrip: phoneStructuredAttempt.canonicalRoundTrip !== false,
+                frozenTargetMatched: phoneStructuredAttempt.frozenTargetMatched !== false,
+                domainValidated: phoneStructuredAttempt.domainValidated !== false,
+                responseIdentityStable: !responseModel || responseModel === requestedModel,
+                responseModel,
+                systemFingerprint,
+                latencyMs: phoneStructuredAttempt.diagnostics?.latencyMs,
+              },
+            });
+          }
+          emitPhoneStructuredRouteStatus('complete', { message: '' });
+          if (config.stream) {
+            return (async function* () {
+              if (structuredRaw) yield structuredRaw;
+            })();
+          }
+          return structuredRaw;
+        }
+
+        if (structuredFailure.fallbackAllowed !== true) {
+          emitPhoneStructuredRouteStatus('failed', {
+            message: structuredFailure.category === 'configuration'
+              ? '结构化请求的凭证或权限有误，请检查 API 设置。'
+              : '结构化请求失败。',
+            reason: structuredFailure.reason,
+          });
+          const error = new Error(structuredFailure.category === 'configuration'
+            ? 'API 凭证或权限错误，已停止回退以免掩盖配置问题。'
+            : `结构化请求失败：${structuredFailure.reason}`);
+          error.code = structuredFailure.category === 'configuration'
+            ? 'structured_provider_configuration_error'
+            : 'structured_provider_request_failed';
+          error.status = structuredFailure.httpStatus || 0;
+          throw error;
+        }
+        emitPhoneStructuredRouteStatus('fallback', {
+          message: '当前格式未通过，正在以传统格式重试…',
+          reason: structuredFailure.reason,
+          additionalProviderCalls: 1,
+        });
+
+        // 结构化 primary 尚未向 APP 返回任何内容，故仍位于唯一持久提交边界之前；
+        // 从同一冻结语义快照恢复文本传输层，不重跑 prompt builder 或 hook。
+        const lazyLegacyAssembly = assembleLegacyTextRequest(phoneProviderFcRoute.semanticSnapshot);
+        if (!lazyLegacyAssembly.ok) {
+          throw new Error(`Structured fallback snapshot unavailable: ${lazyLegacyAssembly.reason}`);
+        }
+        messages = lazyLegacyAssembly.messages;
+        const fallbackPreparedRequest = generationClient?.prepareChatRequest?.(messages, requestOptions) || null;
+        const fallbackRequestMessages = fallbackPreparedRequest?.messages || messages;
+        responsePrefix = String(fallbackPreparedRequest?.responsePrefix || legacyResponsePrefix);
+        rawEstimatedPromptTokens = estimatePromptMessagesTokens(fallbackRequestMessages, 'rough');
+        calibrationEligible = config?.webSearchEnabled !== true
+          && !promptMessagesContainNonTextContent(fallbackRequestMessages);
+        calibrationRecorded = false;
+        this.lastGenerationUsage = null;
+        this.lastGenerationSources = null;
+        const fallbackInjectionAudit = buildRequestInjectionAudit({
+          memoryPlan: this.lastMemoryPlan,
+          extraSegments: globalPromptAuditSegments,
+          history: nextContext?.history,
+          worldDebug: this.lastWorldInjectionDebug,
+          messages: fallbackRequestMessages,
+          budget: this.lastMemoryPlan?.budget,
+          mode: this.lastMemoryPlan?.budget?.mode,
+          tokenMode: requestTokenMode,
+        });
+        fallbackInjectionAudit.calibration = { ...requestCalibration };
+        fallbackInjectionAudit.coverageLine = this.lastMemoryPlan?.coverageLine || null;
+        fallbackInjectionAudit.historyBudgetStats = this.lastMemoryPlan?.historyBudgetStats || null;
+        fallbackInjectionAudit.globalPrompt = globalPromptAudit;
+        if (this.lastMemoryPlan && typeof this.lastMemoryPlan === 'object') {
+          this.lastMemoryPlan = {
+            ...this.lastMemoryPlan,
+            requestAudit: fallbackInjectionAudit,
+          };
+        }
+        if (this.lastRequest?.requestId === nativeRequestId) {
+          this.lastRequest.stream = Boolean(config?.stream);
+          this.lastRequest.options = fallbackPreparedRequest?.normalizedOptions || genOptions;
+          this.lastRequest.requestOptions = {
+            ...applyRuntimeParamFilter({
+              ...(genOptions || {}),
+              ...(providerDirectives || {}),
+              ...(providerToolRequestSchema.requestOptions || {}),
+              ...(webSearchPlan.requestOptions || {}),
+            }),
+          };
+          this.lastRequest.deepSeekPhonePrefill = phonePrefillPlan.diagnostics;
+          this.lastRequest.messages = fallbackRequestMessages;
+          this.lastRequest.responsePrefix = responsePrefix;
+          this.lastRequest.injectionAudit = fallbackInjectionAudit;
+          this.lastRequest.phoneReplyTransport = {
+            ...(this.lastRequest.phoneReplyTransport || {}),
+            effectiveMode: phoneStructuredRouteMode === CHAT_STRUCTURED_ROUTE_MODES.jsonTerminal
+              ? 'json_fallback'
+              : 'fc_fallback',
+            snapshotFingerprint: lazyLegacyAssembly.snapshotFingerprint,
+            fallbackAssembly: 'lazy_legacy_from_snapshot',
+            budgetRecomputed: lazyLegacyAssembly.diagnostics?.budgetRecomputed === true,
+          };
+          resetResponseForNextProviderCall();
+          this.lastRequest.lineageTrace = buildPromptTraceFromRequest(this.lastRequest, {
+            requestId: nativeRequestId,
+            scopeId: this.scopeId || sessionId,
+          });
+          this.lastRequest.promptCacheDebug = this.emitPromptCacheDebug(
+            sessionId,
+            fallbackRequestMessages,
+            {
+              provider: config?.provider,
+              model: config?.model,
+              stream: Boolean(config?.stream),
+              requestId: nativeRequestId,
+            },
+          );
+        }
+      }
+
       if (config.stream) {
+        const legacyMode = getProviderCalls().length ? 'legacy_text_fallback' : 'legacy_text';
+        startProviderCall(legacyMode, true);
         streaming = true;
         const inner = this.generateStream(messages, requestOptions, originalInput, {
           responsePrefix,
@@ -4249,6 +5479,12 @@ class AppBridge {
           config,
           requestId: nativeRequestId,
           requestStartedAt: generationStartedAt,
+          onFirstMeaningfulDelta: markFirstProviderDelta,
+          onProviderCallFinished: ({ outcome = 'succeeded', completedAt = Date.now() } = {}) => {
+            finishProviderCall(outcome, completedAt);
+            completeGenerationDiagnostics({ completedAt, stream: true });
+            emitPhoneStructuredRouteStatus(outcome === 'succeeded' ? 'complete' : 'failed', { message: '' });
+          },
         });
         return (async function* () {
           try {
@@ -4258,32 +5494,42 @@ class AppBridge {
           }
         })();
       } else {
-        const response = await retryWithBackoff(() => generationClient.chat(messages, requestOptions), {
-          maxRetries: config.maxRetries || 3,
+        const legacyMode = getProviderCalls().length ? 'legacy_text_fallback' : 'legacy_text';
+        let legacyAttempt = 0;
+        const response = await retryWithBackoff(async () => {
+          if (legacyAttempt > 0) resetResponseForNextProviderCall();
+          const mode = legacyAttempt > 0 ? `${legacyMode}_retry` : legacyMode;
+          legacyAttempt += 1;
+          startProviderCall(mode, false);
+          try {
+            return await generationClient.chat(messages, requestOptions);
+          } catch (error) {
+            finishProviderCall(abortController.signal.aborted ? 'cancelled' : 'failed');
+            throw error;
+          }
+        }, {
+          maxRetries: getProviderCalls().length > 0 ? 0 : (config.maxRetries || 3),
           shouldRetry: err => !abortController.signal.aborted && isRetryableError(err),
         });
         if (abortController.signal.aborted) {
+          finishProviderCall('cancelled');
           throw makeCancelledError('user');
         }
+        finishProviderCall('succeeded');
         const finalResponse = this.mergeAssistantPrefillResponse(responsePrefix, response);
 
-        if (this.lastRequest?.requestId === nativeRequestId && !this.lastRequest.responseDiagnostics?.completedAt) {
-          this.lastRequest.responseDiagnostics = buildCompletedResponseDiagnostics(
-            this.lastRequest.responseDiagnostics,
-            {
-              requestStartedAt: generationStartedAt,
-              completedAt: Date.now(),
-              usage: this.lastGenerationUsage,
-              stream: false,
-            },
-          );
-        }
+        completeGenerationDiagnostics({ stream: false });
 
         // 保存到历史记录
         await this.saveToHistory(originalInput, finalResponse);
+        emitPhoneStructuredRouteStatus('complete', { message: '' });
         return finalResponse;
       }
     } catch (error) {
+      if (activeProviderCallId) {
+        finishProviderCall(abortController.signal.aborted ? 'cancelled' : 'failed');
+      }
+      completeGenerationDiagnostics({ stream: Boolean(config?.stream) });
       if (abortController.signal.aborted) {
         throw makeCancelledError('user');
       }
@@ -4297,6 +5543,7 @@ class AppBridge {
         this.lastGenerationSources = previousLastGenerationSources;
         this.lastWorldInjectionDebug = previousLastWorldInjectionDebug;
         this.lastDeepSeekFormatDebug = previousLastDeepSeekFormatDebug;
+        this.lastPhoneFormatTransportPlan = previousLastPhoneFormatTransportPlan;
         this.lastPromptSegmentDebug = previousLastPromptSegmentDebug;
         this.activeInputBudgetPlan = previousActiveInputBudgetPlan;
         this.activeTokenEstimateMode = previousActiveTokenEstimateMode;
@@ -4369,6 +5616,18 @@ class AppBridge {
       : (this.config?.get?.() || {});
     const requestId = String(streamMeta?.requestId || genOptions?.nativeRequestId || '').trim();
     const requestStartedAt = Number(streamMeta?.requestStartedAt) || Date.now();
+    const onFirstMeaningfulDelta = typeof streamMeta?.onFirstMeaningfulDelta === 'function'
+      ? streamMeta.onFirstMeaningfulDelta
+      : null;
+    const onProviderCallFinished = typeof streamMeta?.onProviderCallFinished === 'function'
+      ? streamMeta.onProviderCallFinished
+      : null;
+    let providerCallFinished = false;
+    const finishProviderCall = (outcome, completedAt = Date.now()) => {
+      if (providerCallFinished) return;
+      providerCallFinished = true;
+      try { onProviderCallFinished?.({ outcome, completedAt }); } catch {}
+    };
 
     try {
       if (!requestClient?.streamChat) {
@@ -4378,7 +5637,16 @@ class AppBridge {
       const bridge = this;
       const measuredStream = (async function* () {
         for await (const chunk of stream) {
-          if (bridge.lastRequest?.requestId === requestId && !bridge.lastRequest.responseDiagnostics?.firstTokenAt) {
+          const meaningfulTextDelta = isMeaningfulTextStreamDelta(chunk);
+          if (meaningfulTextDelta) {
+            try { onFirstMeaningfulDelta?.({ at: Date.now() }); } catch {}
+          }
+          if (
+            meaningfulTextDelta
+            && bridge.lastRequest?.requestId === requestId
+            && !bridge.lastRequest.responseDiagnostics?.firstMeaningfulDeltaAt
+            && !bridge.lastRequest.responseDiagnostics?.firstTokenAt
+          ) {
             bridge.lastRequest.responseDiagnostics = buildFirstTokenResponseDiagnostics(
               bridge.lastRequest.responseDiagnostics,
               {
@@ -4398,12 +5666,15 @@ class AppBridge {
         yield chunk;
       }
 
-      if (this.lastRequest?.requestId === requestId && !this.lastRequest.responseDiagnostics?.completedAt) {
+      const completedAt = Date.now();
+      finishProviderCall('succeeded', completedAt);
+
+      if (!onProviderCallFinished && this.lastRequest?.requestId === requestId && !this.lastRequest.responseDiagnostics?.completedAt) {
         this.lastRequest.responseDiagnostics = buildCompletedResponseDiagnostics(
           this.lastRequest.responseDiagnostics,
           {
             requestStartedAt,
-            completedAt: Date.now(),
+            completedAt,
             usage: this.lastGenerationUsage,
             stream: true,
           },
@@ -4418,6 +5689,7 @@ class AppBridge {
         signal: genOptions?.signal || null,
         abortReason: this.abortReason,
       })) {
+        finishProviderCall('cancelled');
         throw makeCancelledError(resolveBridgeCancellationReason({
           signal: genOptions?.signal || null,
           abortReason: this.abortReason,
@@ -4445,9 +5717,11 @@ class AppBridge {
       })();
       if (isRecoverableNativeStreamTailError(normalized, fullResponse)) {
         logger.warn('流式收尾解码失败，但已收到正文；保留已生成内容', normalized?.message);
+        finishProviderCall('succeeded');
         await this.saveToHistory(originalUserMessage || '', fullResponse);
         return;
       }
+      finishProviderCall('failed');
       logger.error('流式生成失败:', normalized?.name, normalized?.message, normalized);
       throw normalized;
     }
@@ -4526,9 +5800,19 @@ class AppBridge {
    */
 	  buildMessages(userMessage, context = {}, options = {}) {
 	    const messages = [];
+    const deferPhoneTransportLayers = options?.deferPhoneTransportLayers === true;
+    const transportAnchorNamespace = String(options?.transportAnchorNamespace || 'request')
+      .replace(/[^a-zA-Z0-9._-]/g, '')
+      .slice(0, 80) || 'request';
+    const deferredLegacyLayers = [];
+    const createTransportAnchorMarker = id => (
+      `\uE000chat-semantic:${transportAnchorNamespace}:${String(id || '').trim()}\uE001`
+    );
     this.lastWorldInjectionDebug = null;
     this.lastDeepSeekFormatDebug = null;
+    this.lastPhoneFormatTransportPlan = null;
     this.lastPromptSegmentDebug = null;
+    this.lastGlobalSemanticPromptAudit = null;
 
     const name1 = context?.user?.name || 'user';
     const name2 = context?.character?.name || 'assistant';
@@ -4546,6 +5830,7 @@ class AppBridge {
       (momentCommentTaskMode === 'published_moment' ||
         momentCommentTaskMode === 'moment_publish' ||
         momentCommentTaskMode === 'publish_comment');
+    const explicitlyDisablePhoneFormat = Boolean(context?.meta?.disablePhoneFormat);
     const suppressGenericReplyPrompt = isMomentCommentTask;
     const sessionId = String(context?.session?.id || '').trim();
     const variableRuntimeEnabled = this.isVariableRuntimeEnabled?.(sessionId) !== false;
@@ -4597,6 +5882,32 @@ class AppBridge {
     const activeOpenAIPresetId = openAIFormatReminderState.presetId;
     const activeOpenAIPresetName = openAIFormatReminderState.presetName;
     const isDefaultOpenAIPreset = openAIFormatReminderState.isDefaultPreset;
+    const globalSemanticPromptLibrary = (() => {
+      try {
+        const action = this.debugUiRegistry?.actions?.getAgentCenterSettings;
+        const settings = typeof action === 'function' ? action() : null;
+        return settings?.global?.semanticPromptLibrary || null;
+      } catch {
+        return null;
+      }
+    })();
+    const globalSemanticPromptPlan = resolveGlobalSemanticPromptPlan(
+      globalSemanticPromptLibrary,
+      {
+        scope: 'chat',
+        taskType: String(context?.task?.type || '').trim(),
+        uiMode,
+        hasCustomChatPreset: openaiResolved?.hasCustomBinding === true,
+        user: name1,
+        char: name2,
+        now: new Date(),
+      },
+    );
+    this.lastGlobalSemanticPromptAudit = buildGlobalSemanticPromptInjectionAudit(
+      globalSemanticPromptPlan,
+    );
+    const replyTarget = resolvePresetReplyTarget(activeOpenAIPreset, presetUiMode, context?.meta?.responseTarget);
+    const disablePhoneFormat = explicitlyDisablePhoneFormat || isMomentCommentTask || replyTarget === 'user';
     const settingsSnapshot = (() => {
       try {
         return appSettings.get();
@@ -4632,28 +5943,27 @@ class AppBridge {
     const overrideLastUserMessageRaw = (typeof context?.meta?.overrideLastUserMessage === 'string')
       ? String(context.meta.overrideLastUserMessage)
       : '';
+    const scenarioSessionName = String(context?.session?.name || '').trim();
+    const scenarioCharacterName = String(context?.character?.name || '').trim();
+    const formatGroupName = String(
+      context?.group?.name || scenarioSessionName || scenarioCharacterName || context?.session?.id || '当前群聊',
+    ).trim();
+    const formatPrivateTargetName = String(
+      scenarioSessionName || scenarioCharacterName || context?.session?.id || '当前对象',
+    ).trim();
     const scenarioHintBase = (() => {
       if (disableScenarioHint) return '';
       if (isMomentCommentTask) {
         if (isPublishedMomentCommentTask) {
-          return [
-            '用户刚发布动态，请按动态评论格式输出：',
-            'moment_reply_start',
-            '评论人--评论内容',
-            'moment_reply_end',
-          ].join('\n');
+          return '用户刚发布动态，请生成与该动态相关的评论';
         }
         const isReply = Boolean(context?.task?.replyToAuthor) || Boolean(context?.task?.replyToCommentId) || Boolean(context?.task?.isReplyToComment);
         return isReply ? '在动态评论回复，注意动态评论格式' : '在动态评论，注意动态评论格式';
       }
-      const sessionName = String(context?.session?.name || '').trim();
-      const characterName = String(context?.character?.name || '').trim();
       if (isGroupChat) {
-        const groupName = String(context?.group?.name || sessionName || characterName || context?.session?.id || '当前群聊').trim();
-        return `在${groupName}中群聊，请遵循群聊格式`;
+        return `在${formatGroupName}中群聊，请遵循群聊格式`;
       }
-      const privateTargetName = String(sessionName || characterName || context?.session?.id || '当前对象').trim();
-      return `正在与${privateTargetName}私聊，请遵循私聊格式`;
+      return `正在与${formatPrivateTargetName}私聊，请遵循私聊格式`;
     })();
     const scenarioFormatReminder = scenarioHintBase
       ? scenarioHintBase
@@ -4673,36 +5983,30 @@ class AppBridge {
     let autoImagePromptRole = 0;
     const includeTableEditInFormatReminder = Boolean(context?.meta?.memoryAutoExtract)
       || Boolean(String(memoryGuidePrompt?.content || '').includes('<memory_edit_rules>'));
-    const buildOutputFormatReminderText = () => {
-      const lines = [];
-      const scenario = String(scenarioFormatReminder || '').trim();
-      if (scenario) lines.push(scenario);
-      if (!disablePhoneFormat) {
-        if (lines.length) lines.push('');
-        lines.push('以下为格式输出顺序，请严格遵守');
-        lines.push('MiPhone_start');
-        lines.push('msg_start');
-        lines.push('msg_end');
-        lines.push('MiPhone_end');
-        if (includeTableEditInFormatReminder) {
-          lines.push('<tableEdit>');
-          lines.push('记忆表格内容');
-          lines.push('</tableEdit>');
-        }
-      }
-      return lines.join('\n').trim();
-    };
+    const formatReminderSurface = isMomentCommentTask
+      ? 'moment_comment'
+      : (isGroupChat ? 'group_chat' : 'private_chat');
+    const formatReminderPlan = resolveBuiltinPhoneFormatReminderPlan({
+      hasPreset: openAIFormatReminderState.hasPreset,
+      isDefaultPreset: isDefaultOpenAIPreset,
+      contractDisabled: explicitlyDisablePhoneFormat,
+      responseTarget: replyTarget,
+      assistantContinuation: context?.meta?.assistantContinuation?.enabled === true,
+      suppressPendingUserTurn,
+      scenarioReminder: scenarioFormatReminder,
+      surface: formatReminderSurface,
+      userName: name1,
+      targetName: formatPrivateTargetName,
+      groupName: formatGroupName,
+      includeTableEdit: includeTableEditInFormatReminder,
+    });
     const pendingUserHints = [replyPromptHint].filter(Boolean);
     const pendingUserHint = pendingUserHints.join('；');
-    const appendScenarioFormatReminderToUserInput =
-      openAIFormatReminderState.hasPreset &&
-      !isDefaultOpenAIPreset &&
-      !isMomentCommentTask &&
-      Boolean(String(scenarioFormatReminder || '').trim());
+    const appendScenarioFormatReminderToUserInput = Boolean(formatReminderPlan.userScenarioText);
     const pendingUserText = buildPendingUserTextWithScenarioReminder({
       rawText: pendingUserTextRaw,
       replyHint: pendingUserHint,
-      scenarioReminder: scenarioFormatReminder,
+      scenarioReminder: formatReminderPlan.userScenarioText,
       suppressPendingUserTurn,
       appendScenarioReminder: appendScenarioFormatReminderToUserInput,
     });
@@ -4895,13 +6199,20 @@ class AppBridge {
 	      const cleaned = parts.map(trimEdgeBlankLines).filter(s => String(s || '').trim().length > 0);
 	      return cleaned.join('\n\n');
 	    };
-	    const rawExtraPromptBlocks = Array.isArray(context?.meta?.extraPromptBlocks)
-	      ? context.meta.extraPromptBlocks.filter((block) => {
+	    const contextExtraPromptBlocks = Array.isArray(context?.meta?.extraPromptBlocks)
+      ? context.meta.extraPromptBlocks.filter((block) => {
 	          if (variableRuntimeEnabled || !block || typeof block !== 'object') return true;
 	          const source = String(block.source || block.promptSource || '').trim().toLowerCase();
 	          return source !== 'variable_rule' && source !== 'stage';
 	        })
 	      : [];
+	    const globalSemanticPromptBlocks = buildGlobalSemanticPromptExtraBlocks(
+	      globalSemanticPromptPlan,
+	    );
+	    const rawExtraPromptBlocks = [
+	      ...globalSemanticPromptBlocks,
+	      ...contextExtraPromptBlocks,
+	    ];
 	    const normalizeExtraPromptPosition = (value) => {
 	      const token = String(value || '').trim().toLowerCase();
 	      if (!token) return '';
@@ -4912,6 +6223,7 @@ class AppBridge {
 	      if (token === '5' || token === 'latest_after') return PROMPT_SEGMENT_ANCHORS.AFTER_LATEST_USER;
 	      if (token === 'before_history') return 'history_before';
 	      if (token === 'after_history') return 'history_after';
+	      if (token === GLOBAL_SEMANTIC_PROMPT_ANCHORS.semanticHeader) return token;
 	      if (
 	        token === 'after_persona' ||
 	        token === 'system_end' ||
@@ -4959,6 +6271,7 @@ class AppBridge {
 	        ? context.group.memberNames.map(String).filter(Boolean).join(',')
 	        : '';
 	      const plan = {
+	        semantic_header: [],
 	        after_persona: [],
 	        system_end: [],
 	        before_chat: [],
@@ -4975,13 +6288,14 @@ class AppBridge {
 	        if (!rawContent) return;
 	        const role = normalizeExtraPromptRole(block?.role);
 	        if (
+	          block?.preRendered !== true &&
 	          !plan.consumesLastUser &&
 	          hasLastUserMessagePlaceholder(rawContent) &&
 	          canPlaceholderConsumePendingUser(role, { synthetic: true })
 	        ) {
 	          plan.consumesLastUser = true;
 	        }
-	        const rendered = processTextMacrosWithPendingFlag(rawContent, {
+	        const rendered = block?.preRendered === true ? rawContent : processTextMacrosWithPendingFlag(rawContent, {
 	          user: name1,
 	          char: name2,
 	          group: extraGroupName,
@@ -5027,7 +6341,7 @@ class AppBridge {
 	          }
 	        });
 	      });
-	      ['after_persona', 'system_end', 'before_chat', 'history_before', 'history_after'].forEach((slot) => {
+	      ['semantic_header', 'after_persona', 'system_end', 'before_chat', 'history_before', 'history_after'].forEach((slot) => {
 	        plan[slot] = plan[slot].sort((a, b) => {
 	          const ao = Number.isFinite(Number(a?.promptOrder)) ? Number(a.promptOrder) : 0;
 	          const bo = Number.isFinite(Number(b?.promptOrder)) ? Number(b.promptOrder) : 0;
@@ -5048,6 +6362,7 @@ class AppBridge {
 	      });
 	      list.length = 0;
 	    };
+	    insertExtraPromptAt(GLOBAL_SEMANTIC_PROMPT_ANCHORS.semanticHeader);
 	    // SillyTavern-like persona settings (subset)
 	    const personaRaw = String(context?.user?.persona || '');
     const personaPosition = Number.isFinite(Number(context?.user?.personaPosition))
@@ -5233,8 +6548,6 @@ class AppBridge {
         ].join('\n\n'),
       };
     };
-    const disablePhoneFormat = Boolean(context?.meta?.disablePhoneFormat) || isMomentCommentTask;
-
     // 对话模式：额外注入对话协议提示词（保存于 sysprompt 预设）
     // ST extension prompt types => IN_PROMPT:0, IN_CHAT:1, BEFORE_PROMPT:2, NONE:-1
     const dialogueEnabled = Boolean(sysp?.dialogue_enabled);
@@ -5374,7 +6687,6 @@ class AppBridge {
     const scenarioFormat = typeof openp?.scenario_format === 'string' ? openp.scenario_format : '{{scenario}}';
     const personalityFormat =
       typeof openp?.personality_format === 'string' ? openp.personality_format : '{{personality}}';
-    const replyTarget = resolvePresetReplyTarget(activeOpenAIPreset, presetUiMode, context?.meta?.responseTarget);
     const impersonationPromptRaw = replyTarget === 'user'
       ? (typeof activeOpenAIPreset?.impersonation_prompt === 'string' && activeOpenAIPreset.impersonation_prompt.trim()
         ? activeOpenAIPreset.impersonation_prompt
@@ -5503,27 +6815,30 @@ const stringifyMessageContent = (content) => {
         syspromptPresetSource: String(syspResolved?.source || '').trim(),
         dsFormatEnabledFlag: true,
         dsFormatRulesPresent: true,
-        dsFormatEnabled: isDefaultOpenAIPreset,
-        dsFormatInjected: false,
-        dsFormatInjectedRole: appendScenarioFormatReminderToUserInput ? 'user' : 'system',
+        dsFormatEnabled: isDefaultOpenAIPreset && !explicitlyDisablePhoneFormat && replyTarget !== 'user',
+        dsFormatInjected: formatReminderPlan.usesBuiltinContract,
+        dsFormatInjectedRole: formatReminderPlan.deliveryRole,
+        contractSurface: formatReminderSurface,
+        responseTarget: replyTarget,
         scenarioReminderAppendedToUserInput: appendScenarioFormatReminderToUserInput,
-        dsFormatTextPreview: '',
+        transportLayerDeferred: deferPhoneTransportLayers,
+        dsFormatTextPreview: String(
+          formatReminderPlan.systemText || formatReminderPlan.userScenarioText || '',
+        ).replace(/\s+/g, ' ').trim().slice(0, 160),
       };
-      if (!isDefaultOpenAIPreset) {
-        if (appendScenarioFormatReminderToUserInput) {
-          this.lastDeepSeekFormatDebug.dsFormatTextPreview = `（${String(scenarioFormatReminder).trim()}）`
-            .replace(/\s+/g, ' ')
-            .trim()
-            .slice(0, 160);
+      if (formatReminderPlan.systemText) {
+        if (deferPhoneTransportLayers) {
+          const marker = createTransportAnchorMarker('output_format');
+          deferredLegacyLayers.push({
+            id: 'output_format',
+            content: formatReminderPlan.systemText,
+            marker,
+          });
+          messages.push({ role: 'system', content: marker });
+        } else {
+          messages.push({ role: 'system', content: formatReminderPlan.systemText });
         }
-        return;
       }
-      const text = buildOutputFormatReminderText();
-      if (!text) return;
-      this.lastDeepSeekFormatDebug.dsFormatInjected = true;
-      this.lastDeepSeekFormatDebug.dsFormatInjectedRole = 'system';
-      this.lastDeepSeekFormatDebug.dsFormatTextPreview = String(text).replace(/\s+/g, ' ').trim().slice(0, 160);
-      messages.push({ role: 'system', content: text });
     };
 	    const buildChatGuidePlan = () => {
 	      const mode = String(context?.meta?.chatGuideMode || '').trim().toLowerCase();
@@ -5645,6 +6960,9 @@ const stringifyMessageContent = (content) => {
 	      });
 	      const rendered = String(content || '').trim();
 	      if (!rendered) return null;
+	      if (this.lastPhoneFormatTransportPlan) {
+	        this.lastPhoneFormatTransportPlan.momentCommentDataContent = rendered;
+	      }
 	      return { role: 'system', content: rendered };
 	    };
 
@@ -6100,6 +7418,7 @@ const stringifyMessageContent = (content) => {
           });
           return {
             hasKeywords: keywords.length > 0,
+            keywords,
             block: `<表情包列表>\n${keywords.join('\n')}\n</表情包列表>`,
           };
         };
@@ -6230,21 +7549,34 @@ const stringifyMessageContent = (content) => {
           String(entry?._src || '').trim() === 'builtin'
           || String(entry?._entryId || '').trim().startsWith('手机-格式')
         );
-        const worldPromptBuiltinParts = [];
+        const worldPromptBuiltinBlocks = [];
         const worldPromptDefaultRestParts = [];
         worldBuckets.defaultPrompt.forEach((entry) => {
           const content = formatWorldEntryContent(entry, { applyRegex: false });
           if (!content) return;
           if (isBuiltinPhoneFormatEntry(entry)) {
-            worldPromptBuiltinParts.push(content);
+            worldPromptBuiltinBlocks.push({
+              id: `phone_format_legacy_${worldPromptBuiltinBlocks.length + 1}`,
+              content,
+              position: 'history_before',
+              depth: 1,
+            });
           } else {
             worldPromptDefaultRestParts.push(content);
           }
         });
-        const phoneFormatPromptContent = joinPromptBlocks([
-          ...builtinPhoneFormatEntries.map(entry => formatWorldEntryContent(entry, { applyRegex: false })),
-          ...worldPromptBuiltinParts,
-        ]);
+        const phoneFormatPromptBlocks = [
+          ...builtinPhoneFormatEntries.map((entry, index) => ({
+            id: String(entry?._transportLayerId || `phone_format_${index + 1}`).trim(),
+            content: formatWorldEntryContent(entry, { applyRegex: false }),
+            position: normalizePhoneFormatPromptPosition(entry?._promptPosition),
+            depth: normalizePhoneFormatPromptDepth(entry?._promptDepth),
+          })),
+          ...worldPromptBuiltinBlocks,
+        ].filter(block => block.id && String(block.content || '').trim());
+        const phoneFormatPromptContent = joinPromptBlocks(
+          phoneFormatPromptBlocks.map(block => block.content),
+        );
         const worldPromptDefaultRest = worldPromptDefaultRestParts.join('\n\n');
         const worldPromptDefault = worldPromptDefaultRest;
         const worldPromptAfter = joinPromptBlocks(
@@ -6310,10 +7642,12 @@ const stringifyMessageContent = (content) => {
           worldPromptDefault,
           worldPromptBuiltin: phoneFormatPromptContent,
           phoneFormatPromptContent,
+          phoneFormatPromptBlocks,
           worldPromptDefaultRest,
           worldPromptAfter,
           worldPromptMessages,
           depthWorldMessages,
+          stickerKeywords: stickerListData.keywords.slice(),
           templateInject: templateInjectPlan,
           debug: worldDebug,
         };
@@ -6331,6 +7665,84 @@ const stringifyMessageContent = (content) => {
 	      const chatGuidePlan = buildChatGuidePlan();
 	      const worldInjectionPlan = buildWorldInjectionPlan();
       this.lastWorldInjectionDebug = worldInjectionPlan?.debug || null;
+	      const momentCommentProtocolRules = isMomentCommentTask
+	        ? (isPublishedMomentCommentTask
+	          ? (momentPublishCommentEnabled ? momentPublishCommentRules : '')
+	          : (momentCommentEnabled ? momentCommentRules : ''))
+	        : '';
+	      const structuredTableTargets = includeTableEditInFormatReminder
+	        && Array.isArray(this.lastMemoryPlan?.tableTargets)
+	        ? this.lastMemoryPlan.tableTargets.map(target => ({
+	            id: String(target?.id || '').trim(),
+	            name: String(target?.name || target?.id || '').trim(),
+	            rowIds: Array.isArray(target?.rowIds) ? target.rowIds.slice() : [],
+	          })).filter(target => target.id && target.name)
+	        : [];
+	      const structuredCapabilities = {
+	        momentPost: !isMomentCommentTask && Boolean(momentCreateEnabled && String(momentCreateRules || '').trim()),
+	        momentCommentSideChats: isMomentCommentTask && context?.task?.allowSideEffects === true,
+	        imagePrompt: !isMomentCommentTask && Boolean(String(autoImagePromptRules || '').trim()),
+	        tableEdit: includeTableEditInFormatReminder && structuredTableTargets.length > 0,
+	        variableUpdate: false,
+	        summary: Boolean(String(summaryRules || '').trim()),
+	      };
+	      const removableProtocolBlocks = [
+	        { id: 'memory_guide', content: String(memoryGuidePrompt?.content || '') },
+	        { id: 'summary', content: String(summaryRules || '') },
+	        { id: 'auto_image_prompt', content: String(autoImagePromptRules || '') },
+	        {
+	          id: 'moment_create',
+	          content: !shouldEmbedMomentCreateInPhoneFormat ? String(momentCreateRules || '') : '',
+	        },
+	        { id: 'moment_comment', content: String(momentCommentProtocolRules || '') },
+	      ].filter(entry => entry.content.trim());
+	      const semanticSources = [
+	        { id: 'memory_guide', content: String(memoryGuidePrompt?.content || '') },
+	        { id: 'summary', content: String(summaryRules || '') },
+	        { id: 'auto_image_prompt', content: String(autoImagePromptRules || '') },
+	        { id: 'moment_create', content: String(momentCreateRules || '') },
+	        { id: 'moment_comment', content: String(momentCommentProtocolRules || '') },
+	      ].filter(entry => entry.content.trim());
+	      this.lastPhoneFormatTransportPlan = {
+	        usesBuiltinContract: formatReminderPlan.usesBuiltinContract === true,
+	        usesDefaultPreset: isDefaultOpenAIPreset,
+	        protocolParserEnabled: isMomentCommentTask
+	          ? true
+	          : (isGroupChat
+	            ? groupEnabled && Boolean(String(groupRules || '').trim())
+	            : dialogueEnabled && Boolean(String(dialogueRules || '').trim())),
+	        hasUnsupportedSideEffects: Boolean(
+	          (momentCreateEnabled && String(momentCreateRules || '').trim())
+	          || String(summaryRules || '').trim()
+	          || String(autoImagePromptRules || '').trim()
+	          || includeTableEditInFormatReminder
+	        ),
+	        hasUnsupportedBatchSideEffects: includeTableEditInFormatReminder
+	          && structuredTableTargets.length === 0,
+	        requiresBatch: formatReminderSurface !== 'private_chat'
+	          || Object.values(structuredCapabilities).some(Boolean),
+	        structuredCapabilities,
+	        tableTargets: structuredTableTargets,
+	        removableProtocolBlocks,
+	        semanticSources,
+	        transportLayersDeferred: deferPhoneTransportLayers,
+	        deferredLegacyLayers,
+	        momentCommentDataContent: '',
+	        stickerKeywords: Array.isArray(worldInjectionPlan?.stickerKeywords)
+	          ? worldInjectionPlan.stickerKeywords.slice()
+	          : [],
+	        phoneFormatPromptLayers: Array.isArray(worldInjectionPlan?.phoneFormatPromptBlocks)
+	          ? worldInjectionPlan.phoneFormatPromptBlocks.map(block => ({
+	              id: String(block?.id || '').trim(),
+	              content: trimEdgeBlankLines(block?.content || ''),
+	            })).filter(block => block.id && block.content)
+	          : [],
+	        phoneFormatPromptContent: trimEdgeBlankLines(worldInjectionPlan?.phoneFormatPromptContent || ''),
+	        outputFormatReminder: String(formatReminderPlan.systemText || ''),
+	        scenarioReminder: scenarioFormatReminder,
+	        surface: formatReminderSurface,
+	        responseTarget: replyTarget,
+	      };
 	      const mergeDepthMessages = (...lists) => {
         const out = [];
         let seq = 0;
@@ -6343,17 +7755,65 @@ const stringifyMessageContent = (content) => {
         });
         return out;
       };
-      const buildPhoneFormatDepthMessages = () => {
-        return [];
-      };
-      let phoneFormatPromptInserted = false;
-      const insertPhoneFormatPromptBeforeHistory = () => {
-        if (phoneFormatPromptInserted) return;
-        const content = trimEdgeBlankLines(worldInjectionPlan?.phoneFormatPromptContent || '');
-        if (!content) return;
-        messages.push(buildSyntheticMessage('system', content));
-        phoneFormatPromptInserted = true;
-      };
+	      const phoneFormatPromptPlan = {
+	        after_persona: [],
+	        system_end: [],
+	        history_before: [],
+	        depthMessages: [],
+	      };
+	      (Array.isArray(worldInjectionPlan?.phoneFormatPromptBlocks)
+	        ? worldInjectionPlan.phoneFormatPromptBlocks
+	        : []).forEach((rawBlock, index) => {
+	        const id = String(rawBlock?.id || `phone_format_${index + 1}`).trim();
+	        const content = trimEdgeBlankLines(rawBlock?.content || '');
+	        if (!id || !content) return;
+	        const position = normalizePhoneFormatPromptPosition(rawBlock?.position);
+	        const depth = normalizePhoneFormatPromptDepth(rawBlock?.depth);
+	        let injectedContent = content;
+	        if (deferPhoneTransportLayers) {
+	          const marker = createTransportAnchorMarker(id);
+	          deferredLegacyLayers.push({ id, content, marker });
+	          injectedContent = marker;
+	        }
+	        const message = {
+	          role: 'system',
+	          content: injectedContent,
+	          depth,
+	          promptOrder: 5560 + index,
+	          promptSeq: index,
+	          promptSource: id,
+	        };
+	        if (position === 'history_depth') {
+	          phoneFormatPromptPlan.depthMessages.push(message);
+	        } else {
+	          phoneFormatPromptPlan[position].push(message);
+	        }
+	      });
+	      const insertPhoneFormatAt = (slot) => {
+	        const key = String(slot || '').trim();
+	        const list = Array.isArray(phoneFormatPromptPlan[key]) ? phoneFormatPromptPlan[key] : [];
+	        if (!list.length) return;
+	        const content = joinPromptBlocks(list.map(item => item.content));
+	        if (content) messages.push(buildSyntheticMessage('system', content));
+	        list.length = 0;
+	      };
+	      const buildPhoneFormatDepthMessages = () => {
+	        const grouped = new Map();
+	        phoneFormatPromptPlan.depthMessages.forEach((message) => {
+	          const depth = normalizePhoneFormatPromptDepth(message?.depth);
+	          if (!grouped.has(depth)) grouped.set(depth, []);
+	          grouped.get(depth).push(message);
+	        });
+	        phoneFormatPromptPlan.depthMessages.length = 0;
+	        return Array.from(grouped.entries()).map(([depth, list]) => ({
+	          role: 'system',
+	          content: joinPromptBlocks(list.map(item => item.content)),
+	          depth,
+	          promptOrder: list[0]?.promptOrder ?? 5560,
+	          promptSeq: list[0]?.promptSeq ?? 0,
+	          promptSource: 'phone_format',
+	        })).filter(message => message.content);
+	      };
       const buildMemoryDepthZeroMessages = (hasPendingLatest) => {
         const depthZeroAnchor = hasPendingLatest
           ? PROMPT_SEGMENT_ANCHORS.BEFORE_LATEST_USER
@@ -6798,12 +8258,14 @@ const stringifyMessageContent = (content) => {
 
 	        if (identifier === 'chatHistory') {
 	          insertMemoryPromptAt('after_persona');
+	          insertPhoneFormatAt('after_persona');
 	          insertExtraPromptAt('after_persona');
 	          insertMemoryPromptAt('system_end');
+	          insertPhoneFormatAt('system_end');
 	          insertExtraPromptAt('system_end');
 	          insertMemoryPromptAt('before_chat');
 	          insertExtraPromptAt('before_chat');
-	          insertPhoneFormatPromptBeforeHistory();
+	          insertPhoneFormatAt('history_before');
 	          insertMemoryPromptBeforeHistory();
 	          insertExtraPromptAt('history_before');
 		      messages.push(...historyRecallBlocks);
@@ -6859,6 +8321,7 @@ const stringifyMessageContent = (content) => {
 	            const content = resolveMarker(identifier);
 	            if (content) messages.push({ role: 'system', content });
 	            insertMemoryPromptAt('after_persona');
+	            insertPhoneFormatAt('after_persona');
 	            insertExtraPromptAt('after_persona');
 	            continue;
 	          }
@@ -6932,12 +8395,14 @@ const stringifyMessageContent = (content) => {
 
 	      if (!historyInserted) {
 	        insertMemoryPromptAt('after_persona');
+	        insertPhoneFormatAt('after_persona');
 	        insertExtraPromptAt('after_persona');
 	        insertMemoryPromptAt('system_end');
+	        insertPhoneFormatAt('system_end');
 	        insertExtraPromptAt('system_end');
 	        insertMemoryPromptAt('before_chat');
 	        insertExtraPromptAt('before_chat');
-	        insertPhoneFormatPromptBeforeHistory();
+	        insertPhoneFormatAt('history_before');
 	        insertMemoryPromptBeforeHistory();
 	        insertExtraPromptAt('history_before');
 	        messages.push(...historyRecallBlocks);
@@ -7118,6 +8583,7 @@ const stringifyMessageContent = (content) => {
     }
 	    if (shouldInsertStoryString) {
 	      insertMemoryPromptAt('after_persona');
+	      insertPhoneFormatAt('after_persona');
 	      insertExtraPromptAt('after_persona');
 	    }
 
@@ -7163,8 +8629,10 @@ const stringifyMessageContent = (content) => {
 	      flushWorldMessages(worldMessagesAfter);
 	    }
 	    insertMemoryPromptAt('after_persona');
+	    insertPhoneFormatAt('after_persona');
 	    insertExtraPromptAt('after_persona');
 	    insertMemoryPromptAt('system_end');
+	    insertPhoneFormatAt('system_end');
 	    insertExtraPromptAt('system_end');
 
     // 3) History
@@ -7296,7 +8764,7 @@ const stringifyMessageContent = (content) => {
 		    // 聊天提示词的 IN_CHAT 部分已按 depth/role 注入 history。
 		    insertMemoryPromptAt('before_chat');
 	      insertExtraPromptAt('before_chat');
-	      insertPhoneFormatPromptBeforeHistory();
+	      insertPhoneFormatAt('history_before');
 	      insertMemoryPromptBeforeHistory();
 	      insertExtraPromptAt('history_before');
 		    messages.push({ role: 'system', content: historyRecallNotice });

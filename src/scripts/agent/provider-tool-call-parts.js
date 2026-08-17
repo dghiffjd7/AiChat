@@ -110,6 +110,7 @@ export const normalizeProviderToolCall = (call = {}, {
     createdAt: toFiniteNumber(src.createdAt || src.startedAt, toFiniteNumber(now?.(), Date.now())),
     updatedAt: toFiniteNumber(src.updatedAt || src.finishedAt || src.createdAt || src.startedAt, toFiniteNumber(now?.(), Date.now())),
     metadata: isPlainObject(src.metadata) ? clone(src.metadata) : {},
+    providerContinuation: isPlainObject(src.providerContinuation) ? clone(src.providerContinuation) : null,
     errorMessage: trim(src.errorMessage || src.error),
   };
 };

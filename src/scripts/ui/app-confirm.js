@@ -15,6 +15,7 @@ let choiceBodyEl = null;
 let choiceActionsEl = null;
 let choiceResolve = null;
 let choiceKeyHandler = null;
+let choiceAbortCleanup = null;
 
 const trimConfirmText = (value, fallback = '') => {
   const text = String(value ?? '').trim();
@@ -177,6 +178,8 @@ const ensureConfirmUI = () => {
 };
 
 const closeChoice = (result) => {
+  choiceAbortCleanup?.();
+  choiceAbortCleanup = null;
   if (!choiceResolve) return;
   const resolve = choiceResolve;
   choiceResolve = null;
@@ -280,15 +283,22 @@ export const appChoice = (options = {}) => {
     actions = [],
     defaultActionId = '',
     danger = false,
+    signal = null,
   } = options || {};
 
   return new Promise((resolve) => {
     ensureChoiceUI();
-    if (choiceResolve) {
-      choiceResolve(null);
-      choiceResolve = null;
+    if (choiceResolve) closeChoice(null);
+    if (signal?.aborted) {
+      resolve(null);
+      return;
     }
     choiceResolve = resolve;
+    if (signal?.addEventListener) {
+      const onAbort = () => closeChoice(null);
+      signal.addEventListener('abort', onAbort, { once: true });
+      choiceAbortCleanup = () => signal.removeEventListener?.('abort', onAbort);
+    }
 
     if (choiceTitleEl) choiceTitleEl.textContent = String(title || '请选择');
     renderChoiceBody(message, items);

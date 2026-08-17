@@ -4,6 +4,7 @@ import {
   PROVIDER_TOOL_RESULT_PREVIEW_FORMATS,
   buildProviderToolResultRequestPreview,
 } from '../../src/scripts/agent/provider-tool-result-request-preview.js';
+import { readProviderToolContinuationContext } from '../../src/scripts/agent/provider-tool-continuation-context.js';
 
 {
   const preview = buildProviderToolResultRequestPreview({
@@ -110,6 +111,84 @@ import {
 }
 
 {
+  const responseOutput = [
+    { type: 'reasoning', id: 'rs-1', encrypted_content: 'opaque' },
+    {
+      type: 'function_call',
+      id: 'fc-1',
+      call_id: 'call-responses-1',
+      name: 'contact_profile_list',
+      arguments: '{"limit":1}',
+    },
+  ];
+  const historyMessages = [{ role: 'user', content: 'list one contact' }];
+  const providerRequestOptions = {
+    tools: [{ type: 'function', function: { name: 'contact_profile_list', parameters: { type: 'object' } } }],
+  };
+  const preview = buildProviderToolResultRequestPreview({
+    provider: 'openai',
+    assistantToolCalls: [{
+      id: 'call-responses-1',
+      toolName: 'contact_profile.list',
+      arguments: { limit: 1 },
+      providerContinuation: {
+        api: 'openai_responses',
+        assistantOutput: responseOutput,
+      },
+    }],
+    toolResults: [{
+      toolCallId: 'call-responses-1',
+      resultForModel: { summary: 'listed' },
+    }],
+    historyMessages,
+    providerRequestOptions,
+  });
+  const context = readProviderToolContinuationContext(preview);
+
+  assert.equal(preview.format, PROVIDER_TOOL_RESULT_PREVIEW_FORMATS.openaiResponses);
+  assert.deepEqual(preview.input.slice(0, 2), responseOutput);
+  assert.deepEqual(preview.input[2], {
+    type: 'function_call_output',
+    call_id: 'call-responses-1',
+    output: '{"summary":"listed"}',
+  });
+  assert.deepEqual(context.historyMessages, historyMessages);
+  assert.deepEqual(context.providerRequestOptions, providerRequestOptions);
+  assert.equal(Object.keys(preview).includes('historyMessages'), false);
+  console.log('ok - provider tool result preview builds stateless OpenAI Responses continuation privately');
+}
+
+{
+  const preview = buildProviderToolResultRequestPreview({
+    provider: 'gemini',
+    assistantToolCalls: [{
+      id: 'gemini-signed-1',
+      toolName: 'contact_profile.list',
+      arguments: { limit: 1 },
+      providerContinuation: {
+        api: 'gemini_generate_content',
+        assistantContent: {
+          role: 'model',
+          parts: [{
+            thoughtSignature: 'opaque-signature',
+            functionCall: {
+              id: 'gemini-signed-1',
+              name: 'contact_profile_list',
+              args: { limit: 1 },
+            },
+          }],
+        },
+      },
+    }],
+    toolResults: [{ toolCallId: 'gemini-signed-1', resultForModel: { summary: 'listed' } }],
+  });
+
+  assert.equal(preview.contents[0].parts[0].thoughtSignature, 'opaque-signature');
+  assert.equal(preview.contents[1].parts[0].functionResponse.name, 'contact_profile_list');
+  console.log('ok - provider tool result preview preserves Gemini thought signatures exactly');
+}
+
+{
   const preview = buildProviderToolResultRequestPreview({
     provider: 'unknown-provider',
     assistantToolCalls: [{
@@ -155,4 +234,23 @@ import {
   assert.equal(preview.skippedToolResults[0].toolName, 'memory.snapshot');
   assert.equal(preview.skippedToolResults[0].reason.includes('not allowed'), true);
   console.log('ok - provider tool result preview skips tools outside model-context policy');
+}
+
+{
+  const preview = buildProviderToolResultRequestPreview({
+    provider: 'anthropic',
+    assistantToolCalls: [
+      { id: 'toolu-allowed', toolName: 'contact_profile.list', arguments: {} },
+      { id: 'toolu-blocked', toolName: 'memory.snapshot', arguments: {} },
+    ],
+    toolResults: [
+      { toolCallId: 'toolu-allowed', resultForModel: { summary: 'listed' } },
+      { toolCallId: 'toolu-blocked', output: { summary: 'must stay private' } },
+    ],
+  });
+
+  assert.equal(preview.format, PROVIDER_TOOL_RESULT_PREVIEW_FORMATS.generic);
+  assert.deepEqual(preview.toolResults, []);
+  assert.equal(preview.skippedToolResultCount, 1);
+  console.log('ok - a partially disallowed assistant turn fails closed instead of sending an incomplete native continuation');
 }

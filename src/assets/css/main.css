@@ -3883,9 +3883,30 @@ body[data-reduced-motion='on'] :is(
 
 .world-ai-actions {
   display: flex;
+  align-items: center;
   justify-content: flex-end;
   gap: 8px;
   margin-top: 12px;
+}
+
+.world-ai-web-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-right: auto;
+  font-size: 12px;
+  color: var(--app-text-secondary);
+  cursor: pointer;
+  user-select: none;
+}
+
+.world-ai-web-toggle input {
+  accent-color: var(--app-accent-strong);
+}
+
+.world-ai-web-toggle:has(input:disabled) {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 
 .world-ai-btn {
@@ -3927,6 +3948,37 @@ body[data-reduced-motion='on'] :is(
 
 .world-ai-status[data-tone='error'] {
   color: #dc2626;
+}
+
+.ad-hoc-web-sources {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+  font-size: 11px;
+}
+
+.ad-hoc-web-sources[hidden] {
+  display: none;
+}
+
+.ad-hoc-web-sources-label {
+  color: var(--app-text-muted);
+}
+
+.ad-hoc-web-source-link {
+  max-width: min(260px, 72vw);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--app-accent-strong);
+  text-decoration: none;
+  border-bottom: 1px dotted currentColor;
+}
+
+.ad-hoc-web-source-link:hover {
+  text-decoration: underline;
 }
 
 /* ========================================

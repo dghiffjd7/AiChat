@@ -12,6 +12,10 @@ import {
 } from './builtin-worldbooks.js';
 import { normalizeReasoningEffort } from '../api/model-capabilities.js';
 import { logger } from '../utils/logger.js';
+import {
+    normalizePhoneFormatPromptDepth,
+    normalizePhoneFormatPromptPosition,
+} from '../utils/phone-format-prompt-placement.js';
 
 const safeInvoke = async (cmd, args) => {
     const g = typeof globalThis !== 'undefined' ? globalThis : window;
@@ -275,6 +279,8 @@ const ensurePhoneFormatPromptFields = (preset, seed = DEFAULT_PHONE_FORMAT_PROMP
         if (typeof p[spec.rulesKey] !== 'string' || !p[spec.rulesKey].trim()) {
             p[spec.rulesKey] = String(seed[spec.rulesKey] ?? '');
         }
+        p[spec.positionKey] = normalizePhoneFormatPromptPosition(p[spec.positionKey]);
+        p[spec.depthKey] = normalizePhoneFormatPromptDepth(p[spec.depthKey]);
         p[spec.rulesKey] = sanitizePhoneFormatPromptText(p[spec.rulesKey], spec);
     });
 };
@@ -538,6 +544,25 @@ const clone = (v) => {
 
 const PRESET_TYPES = ['sysprompt', 'context', 'instruct', 'openai', 'reasoning'];
 const PRESET_BINDING_MODES = ['chat', 'rp', 'moments'];
+export const PRESET_APP_SCOPES = Object.freeze({
+    creative: 'creative',
+    chat: 'chat',
+    all: 'all',
+});
+
+export const normalizePresetAppScope = (value, fallback = PRESET_APP_SCOPES.creative) => {
+    const scope = String(value || '').trim().toLowerCase();
+    return Object.values(PRESET_APP_SCOPES).includes(scope) ? scope : fallback;
+};
+
+export const isPresetEligibleForMode = (preset = {}, mode = 'chat') => {
+    const scope = normalizePresetAppScope(preset?.app_scope, PRESET_APP_SCOPES.creative);
+    const normalizedMode = String(mode || '').trim().toLowerCase();
+    return scope === PRESET_APP_SCOPES.all
+        || (normalizedMode === 'rp' || normalizedMode === 'creative'
+            ? scope === PRESET_APP_SCOPES.creative
+            : scope === PRESET_APP_SCOPES.chat);
+};
 
 const normalizeType = (type) => {
     const t = String(type || '').toLowerCase();
@@ -600,7 +625,9 @@ const normalizePresetIndex = (raw) => {
     }
     return {
         version: 2,
+        presetScopeSchemaVersion: Number(raw.presetScopeSchemaVersion) === 1 ? 1 : 0,
         active: ensureObj(raw.active, {}),
+        builtinActive: ensureObj(raw.builtinActive, {}),
         enabled: ensureObj(raw.enabled, {}),
         bindings: normalizeBindingsState(raw.bindings),
         items,
@@ -611,7 +638,9 @@ const normalizePresetIndex = (raw) => {
 const buildPresetIndex = (state) => {
     const index = {
         version: 2,
+        presetScopeSchemaVersion: 1,
         active: clone(ensureObj(state?.active, {})),
+        builtinActive: clone(ensureObj(state?.builtinActive, {})),
         enabled: clone(ensureObj(state?.enabled, {})),
         bindings: normalizeBindingsState(state?.bindings),
         items: makeEmptyPresetBuckets(),
@@ -680,6 +709,7 @@ const makeEmptyBindingBucket = () => ({
     sessionReasoning: {},
     modeProfiles: Object.fromEntries(PRESET_BINDING_MODES.map(mode => [mode, ''])),
     modeReasoning: {},
+    modeBindingOrigins: Object.fromEntries(PRESET_BINDING_MODES.map(mode => [mode, ''])),
 });
 
 const normalizeBindingBucket = (raw) => {
@@ -731,6 +761,17 @@ const normalizeBindingBucket = (raw) => {
         }
     }
 
+    const modeBindingOriginsRaw = source.modeBindingOrigins && typeof source.modeBindingOrigins === 'object'
+        ? source.modeBindingOrigins
+        : {};
+    for (const mode of PRESET_BINDING_MODES) {
+        const origin = String(modeBindingOriginsRaw[mode] || '').trim().toLowerCase();
+        next.modeBindingOrigins[mode] = ['explicit', 'legacy_migrated_mode_binding', 'cleared']
+            .includes(origin)
+            ? origin
+            : '';
+    }
+
     return next;
 };
 
@@ -741,7 +782,20 @@ const normalizeBindingsState = (raw) => {
     for (const type of PRESET_TYPES) {
         byType[type] = normalizeBindingBucket(byTypeSource[type]);
     }
-    return { byType };
+    const migrationsRaw = source.migrations && typeof source.migrations === 'object' ? source.migrations : {};
+    return {
+        byType,
+        migrations: {
+            presetScopeV1: migrationsRaw.presetScopeV1?.completed === true
+                ? {
+                    completed: true,
+                    migratedAt: Number.isFinite(Number(migrationsRaw.presetScopeV1.migratedAt))
+                        ? Math.max(0, Math.trunc(Number(migrationsRaw.presetScopeV1.migratedAt)))
+                        : 0,
+                }
+                : { completed: false, migratedAt: 0 },
+        },
+    };
 };
 
 const DEFAULT_OPENAI_IMPERSONATION_PROMPT = '[Write your next reply from the point of view of {{user}}, using the chat history so far as a guideline for the writing style of {{user}}. Don\'t write as {{char}} or system. Don\'t describe actions of {{char}}.]';
@@ -961,22 +1015,26 @@ const makeDefaultState = (defaultsByType) => {
     const openaiId = findIdByName('openai', 'Default');
     const reasoningId = findIdByName('reasoning', 'DeepSeek') || findIdByName('reasoning', 'Blank');
 
+    const presets = Object.fromEntries(PRESET_TYPES.map((type) => [
+        type,
+        Object.fromEntries(Object.entries(defaultsByType?.[type] || {}).map(([id, preset]) => [
+            id,
+            { ...(preset || {}), app_scope: PRESET_APP_SCOPES.creative },
+        ])),
+    ]));
+    const active = {
+        sysprompt: sysId,
+        context: ctxId,
+        instruct: insId,
+        openai: openaiId,
+        reasoning: reasoningId,
+    };
     return {
         version: 1,
-        presets: {
-            sysprompt: defaultsByType?.sysprompt || {},
-            context: defaultsByType?.context || {},
-            instruct: defaultsByType?.instruct || {},
-            openai: defaultsByType?.openai || {},
-            reasoning: defaultsByType?.reasoning || {},
-        },
-        active: {
-            sysprompt: sysId,
-            context: ctxId,
-            instruct: insId,
-            openai: openaiId,
-            reasoning: reasoningId,
-        },
+        presetScopeSchemaVersion: 1,
+        presets,
+        active,
+        builtinActive: { ...active },
         enabled: {
             sysprompt: true,
             context: true,
@@ -984,8 +1042,65 @@ const makeDefaultState = (defaultsByType) => {
             openai: true,
             reasoning: true,
         },
-        bindings: normalizeBindingsState(),
+        bindings: {
+            ...normalizeBindingsState(),
+            migrations: {
+                presetScopeV1: { completed: true, migratedAt: Date.now() },
+            },
+        },
     };
+};
+
+export const migratePresetScopeState = (input = {}, {
+    builtinActive = {},
+    existingInstall = true,
+    now = Date.now,
+} = {}) => {
+    const state = input && typeof input === 'object' ? input : {};
+    state.presets = ensureObj(state.presets, {});
+    state.active = ensureObj(state.active, {});
+    state.builtinActive = ensureObj(state.builtinActive, {});
+    state.bindings = normalizeBindingsState(state.bindings);
+    for (const type of PRESET_TYPES) {
+        state.presets[type] = ensureObj(state.presets[type], {});
+        for (const preset of Object.values(state.presets[type])) {
+            if (!preset || typeof preset !== 'object') continue;
+            preset.app_scope = normalizePresetAppScope(preset.app_scope, PRESET_APP_SCOPES.all);
+        }
+        const fallbackId = String(builtinActive?.[type] || '').trim();
+        const currentBuiltinId = String(state.builtinActive[type] || '').trim();
+        state.builtinActive[type] = state.presets[type][currentBuiltinId]
+            ? currentBuiltinId
+            : (state.presets[type][fallbackId] ? fallbackId : (Object.keys(state.presets[type])[0] || null));
+    }
+    state.presetScopeSchemaVersion = 1;
+    if (state.bindings.migrations.presetScopeV1.completed === true) return state;
+    if (existingInstall) {
+        for (const type of PRESET_TYPES) {
+            const bucket = state.bindings.byType[type];
+            const globalId = String(state.active[type] || '').trim();
+            if (!globalId || !state.presets[type][globalId]) continue;
+            for (const mode of ['chat', 'moments']) {
+                const existingId = String(bucket.modes[mode] || '').trim();
+                if (existingId && state.presets[type][existingId]) continue;
+                bucket.modes[mode] = globalId;
+                bucket.modeBindingOrigins[mode] = 'legacy_migrated_mode_binding';
+            }
+        }
+    }
+    state.bindings.migrations.presetScopeV1 = {
+        completed: true,
+        migratedAt: Math.max(1, Math.trunc(Number(now?.() || Date.now()) || Date.now())),
+    };
+    return state;
+};
+
+export const hasLegacyMigratedPresetBindings = (input = {}) => {
+    const bindings = normalizeBindingsState(input?.bindings);
+    return PRESET_TYPES.some(type => PRESET_BINDING_MODES.some(mode => (
+        String(bindings.byType[type]?.modes?.[mode] || '').trim()
+        && bindings.byType[type]?.modeBindingOrigins?.[mode] === 'legacy_migrated_mode_binding'
+    )));
 };
 
 export class PresetStore {
@@ -1019,8 +1134,10 @@ export class PresetStore {
 
         const state = {
             version: 1,
+            presetScopeSchemaVersion: index.presetScopeSchemaVersion,
             presets: makeEmptyPresetBuckets(),
             active: index.active,
+            builtinActive: index.builtinActive,
             enabled: index.enabled,
             bindings: index.bindings,
         };
@@ -1169,6 +1286,8 @@ export class PresetStore {
         }
 
         const defaults = await this.loadBundledDefaults();
+        const existingInstall = Boolean(state && typeof state === 'object' && state.presets);
+        const bundledActive = makeDefaultState(defaults).active;
         const persistLoadedState = async (next) => {
             if (skipPersistOnLoad) {
                 this.state = next;
@@ -1264,6 +1383,10 @@ export class PresetStore {
             try {
                 for (const p of Object.values(state.presets.openai || {})) normalizeOpenAIPreset(p);
             } catch {}
+            state = migratePresetScopeState(state, {
+                builtinActive: bundledActive,
+                existingInstall: false,
+            });
             await persistLoadedState(state);
         } else {
             // ensure structure and merge defaults (do not overwrite user edits)
@@ -1276,7 +1399,12 @@ export class PresetStore {
             for (const type of PRESET_TYPES) {
                 state.presets[type] = ensureObj(state.presets[type], {});
                 for (const [id, data] of Object.entries(defaults[type] || {})) {
-                    if (!state.presets[type][id]) state.presets[type][id] = data;
+                    if (!state.presets[type][id]) {
+                        state.presets[type][id] = {
+                            ...(data || {}),
+                            app_scope: PRESET_APP_SCOPES.creative,
+                        };
+                    }
                 }
                 if (!state.active[type] || !state.presets[type][state.active[type]]) {
                     state.active[type] = Object.keys(state.presets[type])[0] || null;
@@ -1388,6 +1516,10 @@ export class PresetStore {
             try {
                 for (const p of Object.values(state.presets.openai || {})) normalizeOpenAIPreset(p);
             } catch {}
+            state = migratePresetScopeState(state, {
+                builtinActive: bundledActive,
+                existingInstall,
+            });
             await persistLoadedState(state);
         }
 
@@ -1417,9 +1549,30 @@ export class PresetStore {
         if (!imported || typeof imported !== 'object') throw new Error('无效的预设设定档');
         if (!imported.presets || !imported.active || !imported.enabled) throw new Error('不是预设设定档格式');
 
+        const scopedBackup = Number(imported.presetScopeSchemaVersion) === 1;
+        const prepared = clone(imported);
+        for (const t of PRESET_TYPES) {
+            const bucket = prepared.presets?.[t];
+            if (!bucket || typeof bucket !== 'object') continue;
+            for (const preset of Object.values(bucket)) {
+                if (!preset || typeof preset !== 'object') continue;
+                preset.app_scope = scopedBackup
+                    ? normalizePresetAppScope(preset.app_scope, PRESET_APP_SCOPES.creative)
+                    : PRESET_APP_SCOPES.creative;
+            }
+        }
+        prepared.presetScopeSchemaVersion = 1;
+        if (!scopedBackup) {
+            prepared.bindings = normalizeBindingsState();
+            prepared.bindings.migrations.presetScopeV1 = {
+                completed: true,
+                migratedAt: Date.now(),
+            };
+        }
+
         const next = clone(this.state || {});
         if (mode === 'replace') {
-            this.state = clone(imported);
+            this.state = prepared;
             this.isLoaded = false;
             await this.persist(this.state);
             await this.load(); // normalize + merge defaults
@@ -1430,27 +1583,29 @@ export class PresetStore {
         for (const t of PRESET_TYPES) {
             next.presets ||= {};
             next.presets[t] ||= {};
-            const incoming = imported.presets?.[t];
+            const incoming = prepared.presets?.[t];
             if (incoming && typeof incoming === 'object') {
                 for (const [id, data] of Object.entries(incoming)) {
                     next.presets[t][id] = data;
                 }
             }
-            if (imported.active?.[t]) next.active ||= {};
-            if (imported.active?.[t]) next.active[t] = imported.active[t];
-            if (typeof imported.enabled?.[t] === 'boolean') {
+            if (prepared.active?.[t]) next.active ||= {};
+            if (prepared.active?.[t]) next.active[t] = prepared.active[t];
+            if (typeof prepared.enabled?.[t] === 'boolean') {
                 next.enabled ||= {};
-                next.enabled[t] = imported.enabled[t];
+                next.enabled[t] = prepared.enabled[t];
             }
         }
 
-        if (imported.bindings && typeof imported.bindings === 'object') {
-            const incomingBindings = normalizeBindingsState(imported.bindings);
+        if (scopedBackup && prepared.bindings && typeof prepared.bindings === 'object') {
+            const incomingBindings = normalizeBindingsState(prepared.bindings);
             next.bindings = normalizeBindingsState(next.bindings);
             for (const t of PRESET_TYPES) {
                 next.bindings.byType[t] = incomingBindings.byType[t];
             }
         }
+
+        next.presetScopeSchemaVersion = 1;
 
         this.state = next;
         this.isLoaded = false;
@@ -1515,19 +1670,38 @@ export class PresetStore {
         const sessionId = String(context?.sessionId || '').trim();
         const mode = normalizeBindingMode(context?.uiMode, { sessionId });
         const hasPreset = (id) => Boolean(id && presets?.[id]);
+        const hasEligiblePreset = (id) => hasPreset(id) && isPresetEligibleForMode(presets[id], mode);
+        const builtinId = String(this.state?.builtinActive?.[t] || '').trim();
+        const result = (presetId, source, bindingOrigin = '') => ({
+            presetId: presetId || null,
+            source,
+            sessionId,
+            mode,
+            bindingOrigin,
+            hasExplicitBinding: source === 'session' || source === 'mode',
+            isBuiltinDefault: Boolean(presetId && presetId === builtinId),
+            hasCustomBinding: Boolean(
+                (source === 'session' || source === 'mode')
+                && presetId
+                && presetId !== builtinId
+            ),
+        });
 
         const sessionBoundId = sessionId ? String(bucket.sessions?.[sessionId] || '').trim() : '';
-        if (sessionBoundId && hasPreset(sessionBoundId)) {
-            return { presetId: sessionBoundId, source: 'session', sessionId, mode };
+        if (sessionBoundId && hasEligiblePreset(sessionBoundId)) {
+            return result(sessionBoundId, 'session', 'explicit');
         }
 
         const modeBoundId = String(bucket.modes?.[mode] || '').trim();
-        if (modeBoundId && hasPreset(modeBoundId)) {
-            return { presetId: modeBoundId, source: 'mode', sessionId, mode };
+        if (modeBoundId && hasEligiblePreset(modeBoundId)) {
+            return result(modeBoundId, 'mode', String(bucket.modeBindingOrigins?.[mode] || 'explicit'));
         }
 
-        const globalId = String(this.state?.active?.[t] || '').trim();
-        return { presetId: globalId || null, source: 'global', sessionId, mode };
+        if (mode === 'rp') {
+            const globalId = String(this.state?.active?.[t] || '').trim();
+            if (globalId && hasEligiblePreset(globalId)) return result(globalId, 'global');
+        }
+        return result(hasEligiblePreset(builtinId) ? builtinId : null, 'builtin');
     }
 
     getResolvedActive(type, context = {}) {
@@ -1559,11 +1733,15 @@ export class PresetStore {
         const t = normalizeType(type);
         const m = normalizeBindingMode(mode);
         const nextId = String(presetId || '').trim();
-        if (nextId && !this.state?.presets?.[t]?.[nextId]) return this.getBindings(t);
+        if (nextId && (
+            !this.state?.presets?.[t]?.[nextId]
+            || !isPresetEligibleForMode(this.state.presets[t][nextId], m)
+        )) return this.getBindings(t);
         this.state.bindings ||= normalizeBindingsState();
         this.state.bindings.byType ||= {};
         this.state.bindings.byType[t] = normalizeBindingBucket(this.state.bindings.byType[t]);
         this.state.bindings.byType[t].modes[m] = nextId;
+        this.state.bindings.byType[t].modeBindingOrigins[m] = nextId ? 'explicit' : 'cleared';
         await this.persist();
         return this.getBindings(t);
     }
@@ -1578,7 +1756,11 @@ export class PresetStore {
         const sid = String(sessionId || '').trim();
         if (!sid) return this.getBindings(t);
         const nextId = String(presetId || '').trim();
-        if (nextId && !this.state?.presets?.[t]?.[nextId]) return this.getBindings(t);
+        const sessionMode = normalizeBindingMode('', { sessionId: sid });
+        if (nextId && (
+            !this.state?.presets?.[t]?.[nextId]
+            || !isPresetEligibleForMode(this.state.presets[t][nextId], sessionMode)
+        )) return this.getBindings(t);
         this.state.bindings ||= normalizeBindingsState();
         this.state.bindings.byType ||= {};
         this.state.bindings.byType[t] = normalizeBindingBucket(this.state.bindings.byType[t]);
@@ -1724,10 +1906,18 @@ export class PresetStore {
         return this.getBindings(t);
     }
 
-    applyUpsert(type, { id, name, data, makeActive } = {}) {
+    applyUpsert(type, { id, name, data, makeActive, appScope } = {}) {
         const t = normalizeType(type);
         const presetId = id || genId(`preset-${t}`);
-        const next = { ...(data || {}), name: String(name || data?.name || presetId) };
+        const existing = this.state?.presets?.[t]?.[presetId] || null;
+        const next = {
+            ...(data || {}),
+            name: String(name || data?.name || presetId),
+            app_scope: normalizePresetAppScope(
+                appScope ?? data?.app_scope ?? existing?.app_scope,
+                PRESET_APP_SCOPES.creative,
+            ),
+        };
         if (t === 'sysprompt') {
             ensurePhoneFormatPromptFields(next);
             ensureAutoImagePromptFields(next);
@@ -1770,6 +1960,16 @@ export class PresetStore {
         return presetId;
     }
 
+    async setPresetAppScope(type, id, scope = PRESET_APP_SCOPES.creative) {
+        await this.ready;
+        const t = normalizeType(type);
+        const presetId = String(id || '').trim();
+        if (!presetId || !this.state?.presets?.[t]?.[presetId]) return null;
+        this.state.presets[t][presetId].app_scope = normalizePresetAppScope(scope, PRESET_APP_SCOPES.creative);
+        await this.persist();
+        return clone(this.state.presets[t][presetId]);
+    }
+
     async remove(type, id) {
         await this.ready;
         const t = normalizeType(type);
@@ -1781,6 +1981,7 @@ export class PresetStore {
         for (const mode of PRESET_BINDING_MODES) {
             if (this.state.bindings.byType[t].modes[mode] === id) {
                 this.state.bindings.byType[t].modes[mode] = '';
+                this.state.bindings.byType[t].modeBindingOrigins[mode] = 'cleared';
             }
         }
         for (const [sid, presetId] of Object.entries(this.state.bindings.byType[t].sessions || {})) {
@@ -1789,6 +1990,9 @@ export class PresetStore {
         const ids = Object.keys(this.state.presets[t]);
         if (this.state.active[t] === id) {
             this.state.active[t] = ids[0] || null;
+        }
+        if (this.state.builtinActive?.[t] === id) {
+            this.state.builtinActive[t] = ids[0] || null;
         }
         await this.persist();
     }

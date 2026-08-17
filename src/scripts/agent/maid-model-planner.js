@@ -17,9 +17,18 @@ import {
 import { buildMaidRunContinuationPromptBlock } from './maid-run-continuation.js';
 import { buildMaidSourceGroundingPromptBlock } from './maid-source-grounding.js';
 import { buildMaidVisualSpecPromptBlock } from './maid-visual-spec.js';
+import {
+  MAID_PROMPTED_JSON_MODE,
+  MAID_PROVIDER_FC_MODE,
+  runMaidProviderFcAttempt,
+} from './maid-provider-fc-planner.js';
 import { DEFAULT_MAID_PROMPT, MAID_OPERATION_SAFETY_PROMPT } from './maid-prompt-defaults.js';
 import { buildMaidSelectionPromptBlock } from '../ui/maid-selection-utils.js';
 import { getVisionInputCapability } from '../api/vision-capabilities.js';
+import {
+  GLOBAL_SEMANTIC_PROMPT_ANCHORS,
+  resolveGlobalSemanticPromptPlan,
+} from './global-semantic-prompt-library.js';
 
 const trim = (value, fallback = '') => {
   const text = String(value ?? '').trim();
@@ -289,13 +298,15 @@ const yamlText = (value = '') => {
   return /[:#\[\]{}\n"']/g.test(text) ? JSON.stringify(text) : text;
 };
 
-export const buildMaidModelPlannerFeatureList = (features = listAppFeatures()) => (
+export const buildMaidModelPlannerFeatureList = (features = listAppFeatures(), {
+  includeSchemas = true,
+} = {}) => (
   getMaidModelFeatureContext(features).features
     .map(feature => [
       `- id: ${yamlText(feature.id)}`,
       `  title: ${yamlText(feature.title)}`,
       `  tools: [${list(feature.tools).map(yamlText).join(', ')}]`,
-      isPlainObject(feature.toolSchemas) && Object.keys(feature.toolSchemas).length
+      includeSchemas && isPlainObject(feature.toolSchemas) && Object.keys(feature.toolSchemas).length
         ? `  schemas: ${JSON.stringify(feature.toolSchemas)}`
         : '',
       feature.argsHint ? `  args: ${yamlText(feature.argsHint)}` : '',
@@ -314,9 +325,14 @@ export const buildMaidModelPlannerMessages = ({
   conversationContext = null,
   features = listAppFeatures(),
   maidPrompt = DEFAULT_MAID_PROMPT,
+  transportMode = MAID_PROMPTED_JSON_MODE,
+  globalSemanticPromptPlan = null,
 } = {}) => {
   const modelFeatureContext = getMaidModelFeatureContext(features);
-  const featureList = buildMaidModelPlannerFeatureList(modelFeatureContext.features);
+  const providerFc = trim(transportMode).toLowerCase() === MAID_PROVIDER_FC_MODE;
+  const featureList = buildMaidModelPlannerFeatureList(modelFeatureContext.features, {
+    includeSchemas: !providerFc,
+  });
   const searchContext = buildAppFeatureSearchContextText(input, {
     features: modelFeatureContext.features,
     limit: 5,
@@ -352,18 +368,23 @@ export const buildMaidModelPlannerMessages = ({
     `女仆历史上下文：\n${historyText || '（空）'}`,
     `相关功能检索：\n${searchContext}`,
   ].filter(Boolean).join('\n');
-  return [
-    {
+  const systemMessage = {
       role: 'system',
       content: [
         '你是这个 APP 内的女仆助手规划器。',
         modelFeatureContext.awareness,
         '',
         '## 输出协议',
-        '你只能从给定 APP 功能目录中选择一个功能，并输出严格 JSON，不能输出解释文字。',
-        '允许格式一：{"ok":true,"toolName":"工具名","args":{},"featureId":"功能id","title":"短标题","response":"给用户的自然短回复"}',
-        '允许格式二：{"ok":false,"reason":"unsupported_intent","message":"短原因"}',
-        '不要把工具 JSON 放进 response；response 只写执行前给用户看的短句。工具 JSON 必须是整条回复的唯一顶层 JSON。',
+        ...(providerFc ? [
+          '本轮 API 已提供当前候选范围内的 APP 函数。需要执行动作时必须调用且只调用一个业务函数，不要输出参数文本。',
+          '如果不应执行 APP 工具、需要澄清、无法支持，或已经可以直接回答，只调用 maid_planner_control。',
+          '不要输出函数参数、格式样例或额外解释文字；选择业务函数后的执行前提示由 APP 本地生成。',
+        ] : [
+          '你只能从给定 APP 功能目录中选择一个功能，并输出严格 JSON，不能输出解释文字。',
+          '允许格式一：{"ok":true,"toolName":"工具名","args":{},"featureId":"功能id","title":"短标题","response":"给用户的自然短回复"}',
+          '允许格式二：{"ok":false,"reason":"unsupported_intent","message":"短原因"}',
+          '不要把工具 JSON 放进 response；response 只写执行前给用户看的短句。工具 JSON 必须是整条回复的唯一顶层 JSON。',
+        ]),
         '',
         '## 工具与参数规则',
         '限制：不要发明工具；不要删除、覆盖或修改高风险数据；配置写入类动作只允许打开界面，不允许直接修改配置。',
@@ -402,11 +423,25 @@ export const buildMaidModelPlannerMessages = ({
         '## APP 功能目录（YAML 列表，<app_features> 内）',
         `<app_features>\n${featureList}\n</app_features>`,
       ].filter(Boolean).join('\n'),
-    },
-    {
+    };
+  const userMessage = {
       role: 'user',
       content: buildMaidUserContentWithImages(userText, imageAttachments),
-    },
+    };
+  const byAnchor = isPlainObject(globalSemanticPromptPlan?.byAnchor)
+    ? globalSemanticPromptPlan.byAnchor
+    : {};
+  const asSystemMessages = anchor => (Array.isArray(byAnchor?.[anchor]) ? byAnchor[anchor] : [])
+    .map(block => trim(block?.content))
+    .filter(Boolean)
+    .map(content => ({ role: 'system', content }));
+  return [
+    ...asSystemMessages(GLOBAL_SEMANTIC_PROMPT_ANCHORS.semanticHeader),
+    systemMessage,
+    ...asSystemMessages(GLOBAL_SEMANTIC_PROMPT_ANCHORS.afterCharacter),
+    ...asSystemMessages(GLOBAL_SEMANTIC_PROMPT_ANCHORS.beforeHistory),
+    ...asSystemMessages(GLOBAL_SEMANTIC_PROMPT_ANCHORS.beforeLatestUser),
+    userMessage,
   ];
 };
 
@@ -738,9 +773,13 @@ export const buildMaidModelReActMessages = ({
   features = listAppFeatures(),
   maidPrompt = DEFAULT_MAID_PROMPT,
   steps = [],
+  transportMode = MAID_PROMPTED_JSON_MODE,
 } = {}) => {
   const modelFeatureContext = getMaidModelFeatureContext(features);
-  const featureList = buildMaidModelPlannerFeatureList(modelFeatureContext.features);
+  const providerFc = trim(transportMode).toLowerCase() === MAID_PROVIDER_FC_MODE;
+  const featureList = buildMaidModelPlannerFeatureList(modelFeatureContext.features, {
+    includeSchemas: !providerFc,
+  });
   const prompt = trim(maidPrompt, DEFAULT_MAID_PROMPT);
   const memoryText = trim(conversationContext?.memoryText);
   const historyText = trim(conversationContext?.historyText);
@@ -796,11 +835,17 @@ export const buildMaidModelReActMessages = ({
         '',
         '## 输出协议',
         '你要在内部完成 Reason -> Act -> Observe 判断，但不要输出思考过程。',
-        '你只能输出严格 JSON，不能输出解释文字。',
-        '如果已有观察结果足够回答用户，输出：{"ok":true,"action":"final","message":"给用户的自然回答"}',
-        '如果还需要再调用一个工具，输出：{"ok":true,"action":"tool","toolName":"工具名","args":{},"featureId":"功能id","title":"短标题","response":"执行前短回复"}',
-        '如果无法继续，输出：{"ok":false,"reason":"短原因","message":"给用户看的说明"}',
-        '不要在 final message 中输出待执行的 JSON 或工具参数；如果还需要执行工具，必须输出 action:"tool" 的严格 JSON。',
+        ...(providerFc ? [
+          '本轮 API 已提供当前候选范围内的 APP 函数。仍需行动时必须调用且只调用一个业务函数。',
+          '观察结果已足够回答、需要澄清或必须停止时，只调用 maid_planner_control，并在 message 中给出自然答复。',
+          '不要输出函数参数、格式样例或额外解释文字；业务函数的执行前提示由 APP 本地生成。',
+        ] : [
+          '你只能输出严格 JSON，不能输出解释文字。',
+          '如果已有观察结果足够回答用户，输出：{"ok":true,"action":"final","message":"给用户的自然回答"}',
+          '如果还需要再调用一个工具，输出：{"ok":true,"action":"tool","toolName":"工具名","args":{},"featureId":"功能id","title":"短标题","response":"执行前短回复"}',
+          '如果无法继续，输出：{"ok":false,"reason":"短原因","message":"给用户看的说明"}',
+          '不要在 final message 中输出待执行的 JSON 或工具参数；如果还需要执行工具，必须输出 action:"tool" 的严格 JSON。',
+        ]),
         '',
         '## 工具与参数规则',
         '每次最多选择一个工具；不要发明工具；只能使用 APP 功能目录中 feature 允许的 tools。',
@@ -981,6 +1026,163 @@ const annotateCapabilitySnapshotResolvedModel = (context = {}, runtime = {}, pri
   );
 };
 
+const resolveMaidProviderFcExperimentStatus = (getStatus = null, context = {}) => {
+  if (typeof getStatus !== 'function') return { enabled: false, thinkingEnabled: false };
+  try {
+    const status = getStatus(context);
+    return isPlainObject(status)
+      ? { enabled: status.enabled === true, thinkingEnabled: status.thinkingEnabled === true }
+      : { enabled: false, thinkingEnabled: false };
+  } catch {
+    return { enabled: false, thinkingEnabled: false };
+  }
+};
+
+const buildMaidPlannerTransport = ({
+  experimentStatus = null,
+  effectiveMode = MAID_PROMPTED_JSON_MODE,
+  fallbackReason = '',
+  runtime = null,
+  config = null,
+  providerSource = 'primary',
+  capabilitySnapshot = null,
+  toolCallCount = 0,
+  providerDiagnostics = null,
+} = {}) => {
+  const primaryConfig = isPlainObject(config) ? config : {};
+  const fallbackConfig = isPlainObject(runtime?.fallbackConfig) ? runtime.fallbackConfig : {};
+  const diagnostics = isPlainObject(providerDiagnostics) ? providerDiagnostics : {};
+  const hasEffectiveThinking = Object.prototype.hasOwnProperty.call(diagnostics, 'thinkingEnabled');
+  return {
+    requestedMode: experimentStatus?.enabled === true ? MAID_PROVIDER_FC_MODE : MAID_PROMPTED_JSON_MODE,
+    effectiveMode,
+    fallbackReason: trim(fallbackReason),
+    providerSource: trim(providerSource, 'primary'),
+    primaryProvider: trim(primaryConfig.provider),
+    primaryModel: trim(primaryConfig.model),
+    fallbackProvider: trim(fallbackConfig.provider),
+    fallbackModel: trim(fallbackConfig.model),
+    thinkingRequested: Object.prototype.hasOwnProperty.call(diagnostics, 'thinkingRequested')
+      ? diagnostics.thinkingRequested === true
+      : experimentStatus?.thinkingEnabled === true,
+    thinkingEnabled: hasEffectiveThinking
+      ? diagnostics.thinkingEnabled === true
+      : experimentStatus?.thinkingEnabled === true,
+    thinkingOverrideReason: trim(diagnostics.thinkingOverrideReason),
+    providerFamily: trim(diagnostics.providerFamily),
+    providerEndpoint: trim(diagnostics.providerEndpoint),
+    candidateSnapshotId: trim(capabilitySnapshot?.id),
+    toolCallCount: Math.max(0, Math.trunc(Number(toolCallCount) || 0)),
+  };
+};
+
+const runMaidProviderFcPlanner = async ({
+  client = null,
+  messages = [],
+  input = '',
+  context = {},
+  runtime = null,
+  config = null,
+  decisionFeatures = [],
+  capabilitySnapshot = null,
+  experimentStatus = null,
+  phase = 'planner',
+  maxTokens = 8000,
+  onDebugSnapshot = null,
+  logger = console,
+} = {}) => {
+  const attempt = await runMaidProviderFcAttempt({
+    client,
+    messages,
+    config,
+    capabilitySnapshot,
+    experimentStatus,
+    phase,
+    signal: context?.signal,
+    maxTokens,
+    onModelUsage: typeof context?.onModelUsage === 'function' ? context.onModelUsage : null,
+  });
+  if (!attempt.ok) return { ok: false, attempt };
+
+  let decision = null;
+  if (attempt.kind === 'control') {
+    decision = {
+      ok: true,
+      action: 'final',
+      message: truncate(attempt.control?.message, 1200),
+      source: 'maid_provider_fc',
+      providerFcControl: trim(attempt.control?.action, 'no_tool'),
+      ...(trim(attempt.control?.reason) ? { reason: trim(attempt.control.reason) } : {}),
+    };
+  } else if (attempt.kind === 'tool') {
+    const rawPlan = {
+      ok: true,
+      action: 'tool',
+      toolName: attempt.selection?.toolName,
+      args: attempt.selection?.args,
+      featureId: attempt.selection?.featureId,
+      title: attempt.selection?.title,
+      response: attempt.selection?.response,
+    };
+    decision = trim(phase).toLowerCase() === 'react'
+      ? normalizeMaidModelReActDecision(rawPlan, {
+          features: decisionFeatures,
+          findFeature: null,
+          candidateMode: true,
+          candidateSnapshotId: capabilitySnapshot?.id || '',
+        })
+      : normalizeMaidModelPlan(rawPlan, {
+          features: decisionFeatures,
+          findFeature: null,
+          candidateMode: true,
+          candidateSnapshotId: capabilitySnapshot?.id || '',
+        });
+    if (decision?.ok) {
+      decision = {
+        ...decision,
+        source: 'maid_provider_fc',
+        ...(trim(phase).toLowerCase() === 'react' ? { action: 'tool' } : {}),
+      };
+    }
+  }
+
+  if (!decision?.ok) {
+    return {
+      ok: false,
+      attempt: {
+        ...attempt,
+        ok: false,
+        reason: decision?.reason || 'provider_fc_plan_invalid',
+      },
+    };
+  }
+  const plannerTransport = buildMaidPlannerTransport({
+    experimentStatus,
+    effectiveMode: MAID_PROVIDER_FC_MODE,
+    runtime,
+    config,
+    providerSource: 'primary',
+    capabilitySnapshot,
+    toolCallCount: attempt.toolCallCount,
+    providerDiagnostics: attempt.diagnostics,
+  });
+  const completed = { ...decision, plannerTransport };
+  emitDebugSnapshot(onDebugSnapshot, {
+    source: trim(phase).toLowerCase() === 'react' ? 'maid_provider_fc_react' : 'maid_provider_fc_planner',
+    input: trim(input),
+    messages,
+    responseText: JSON.stringify({
+      mode: MAID_PROVIDER_FC_MODE,
+      kind: attempt.kind,
+      toolName: trim(completed.toolName),
+      featureId: trim(completed.featureId),
+      control: trim(completed.providerFcControl),
+      argumentKeys: isPlainObject(completed.args) ? Object.keys(completed.args) : [],
+    }),
+  }, logger);
+  return { ok: true, decision: completed, attempt };
+};
+
 export const createMaidModelBackedPlanner = ({
   resolveRuntimeConfig = null,
   createClient = null,
@@ -988,6 +1190,8 @@ export const createMaidModelBackedPlanner = ({
   features = listAppFeatures(),
   getConversationContext = null,
   getImageGenerationContext = null,
+  getProviderFcExperimentStatus = null,
+  getGlobalSemanticPromptLibrary = null,
   onContextInjected = null,
   onDebugSnapshot = null,
   logger = console,
@@ -1039,22 +1243,73 @@ export const createMaidModelBackedPlanner = ({
       context,
       taskType: 'maid_assistant',
     });
-    const messages = buildMaidModelPlannerMessages({
-      input,
-      context: {
-        ...context,
-        subAgents: runtime?.subAgents || [],
-        ...(imageGenerationContext ? { imageGenerationContext } : {}),
+    const plannerContext = {
+      ...context,
+      subAgents: runtime?.subAgents || [],
+      ...(imageGenerationContext ? { imageGenerationContext } : {}),
+    };
+    const globalSemanticPromptPlan = resolveGlobalSemanticPromptPlan(
+      typeof getGlobalSemanticPromptLibrary === 'function'
+        ? getGlobalSemanticPromptLibrary()
+        : null,
+      {
+        scope: 'maid',
+        taskType: 'maid_assistant',
+        rootPlanner: true,
+        user: trim(context?.userName, '用户'),
+        char: trim(context?.maidName, '女仆'),
+        now: new Date(),
       },
-      conversationContext,
-      features: promptFeatures,
-      maidPrompt: runtime?.maidPrompt || runtime?.personaPrompt,
-    });
+    );
+    const providerFcExperimentStatus = resolveMaidProviderFcExperimentStatus(
+      getProviderFcExperimentStatus,
+      context,
+    );
     onContextInjected?.({
       source: 'maid_model_planner',
       input: trim(input),
       conversationContext,
     });
+    let providerFcFallbackReason = '';
+    let providerFcAttemptDiagnostics = null;
+    if (providerFcExperimentStatus.enabled) {
+      const providerFcMessages = buildMaidModelPlannerMessages({
+        input,
+        context: plannerContext,
+        conversationContext,
+        features: promptFeatures,
+        maidPrompt: runtime?.maidPrompt || runtime?.personaPrompt,
+        transportMode: MAID_PROVIDER_FC_MODE,
+        globalSemanticPromptPlan,
+      });
+      const providerFc = await runMaidProviderFcPlanner({
+        client,
+        messages: providerFcMessages,
+        input,
+        context,
+        runtime,
+        config,
+        decisionFeatures,
+        capabilitySnapshot,
+        experimentStatus: providerFcExperimentStatus,
+        phase: 'planner',
+        maxTokens: 8000,
+        onDebugSnapshot,
+        logger,
+      });
+      if (providerFc.ok) return providerFc.decision;
+      providerFcFallbackReason = trim(providerFc.attempt?.reason, 'provider_fc_unavailable');
+      providerFcAttemptDiagnostics = providerFc.attempt?.diagnostics || null;
+    }
+    const messages = buildMaidModelPlannerMessages({
+      input,
+      context: plannerContext,
+      conversationContext,
+      features: promptFeatures,
+      maidPrompt: runtime?.maidPrompt || runtime?.personaPrompt,
+      globalSemanticPromptPlan,
+    });
+    let providerSource = 'primary';
     const responseText = await chatWithFallback(
       client,
       resolveFallbackClientForMessages(runtime, messages),
@@ -1065,7 +1320,10 @@ export const createMaidModelBackedPlanner = ({
         max_tokens: 8000,
       },
       logger,
-      source => annotateCapabilitySnapshotResolvedModel(context, runtime, config, source),
+      (source) => {
+        providerSource = source;
+        annotateCapabilitySnapshotResolvedModel(context, runtime, config, source);
+      },
       typeof context?.onModelUsage === 'function' ? context.onModelUsage : null,
     );
     emitDebugSnapshot(onDebugSnapshot, {
@@ -1081,8 +1339,22 @@ export const createMaidModelBackedPlanner = ({
       candidateMode: capabilitySnapshot?.useCandidates === true,
       candidateSnapshotId: capabilitySnapshot?.id || '',
     });
-    return modelPlan;
+    if (!providerFcExperimentStatus.enabled) return modelPlan;
+    return {
+      ...modelPlan,
+      plannerTransport: buildMaidPlannerTransport({
+        experimentStatus: providerFcExperimentStatus,
+        effectiveMode: MAID_PROMPTED_JSON_MODE,
+        fallbackReason: providerFcFallbackReason,
+        runtime,
+        config,
+        providerSource,
+        capabilitySnapshot,
+        providerDiagnostics: providerFcAttemptDiagnostics,
+      }),
+    };
   } catch (error) {
+    if (error?.name === 'AbortError' || context?.signal?.aborted === true) throw error;
     logger?.warn?.('maid model planner failed', error);
     emitDebugSnapshot(onDebugSnapshot, {
       source: 'maid_model_planner',
@@ -1113,6 +1385,7 @@ export const createMaidModelBackedReActPlanner = ({
   features = listAppFeatures(),
   getConversationContext = null,
   getImageGenerationContext = null,
+  getProviderFcExperimentStatus = null,
   onContextInjected = null,
   onDebugSnapshot = null,
   logger = console,
@@ -1165,23 +1438,60 @@ export const createMaidModelBackedReActPlanner = ({
       taskType: 'maid_react',
     });
     const steps = Array.isArray(context?.maidReactSteps) ? context.maidReactSteps : [];
-    const messages = buildMaidModelReActMessages({
-      input,
-      context: {
-        ...context,
-        subAgents: runtime?.subAgents || [],
-        ...(imageGenerationContext ? { imageGenerationContext } : {}),
-      },
-      conversationContext,
-      features: promptFeatures,
-      maidPrompt: runtime?.maidPrompt || runtime?.personaPrompt,
-      steps,
-    });
+    const plannerContext = {
+      ...context,
+      subAgents: runtime?.subAgents || [],
+      ...(imageGenerationContext ? { imageGenerationContext } : {}),
+    };
+    const providerFcExperimentStatus = resolveMaidProviderFcExperimentStatus(
+      getProviderFcExperimentStatus,
+      context,
+    );
     onContextInjected?.({
       source: 'maid_model_react',
       input: trim(input),
       conversationContext,
     });
+    let providerFcFallbackReason = '';
+    let providerFcAttemptDiagnostics = null;
+    if (providerFcExperimentStatus.enabled) {
+      const providerFcMessages = buildMaidModelReActMessages({
+        input,
+        context: plannerContext,
+        conversationContext,
+        features: promptFeatures,
+        maidPrompt: runtime?.maidPrompt || runtime?.personaPrompt,
+        steps,
+        transportMode: MAID_PROVIDER_FC_MODE,
+      });
+      const providerFc = await runMaidProviderFcPlanner({
+        client,
+        messages: providerFcMessages,
+        input,
+        context,
+        runtime,
+        config,
+        decisionFeatures,
+        capabilitySnapshot,
+        experimentStatus: providerFcExperimentStatus,
+        phase: 'react',
+        maxTokens: 12000,
+        onDebugSnapshot,
+        logger,
+      });
+      if (providerFc.ok) return providerFc.decision;
+      providerFcFallbackReason = trim(providerFc.attempt?.reason, 'provider_fc_unavailable');
+      providerFcAttemptDiagnostics = providerFc.attempt?.diagnostics || null;
+    }
+    const messages = buildMaidModelReActMessages({
+      input,
+      context: plannerContext,
+      conversationContext,
+      features: promptFeatures,
+      maidPrompt: runtime?.maidPrompt || runtime?.personaPrompt,
+      steps,
+    });
+    let providerSource = 'primary';
     const responseText = await chatWithFallback(
       client,
       resolveFallbackClientForMessages(runtime, messages),
@@ -1192,7 +1502,10 @@ export const createMaidModelBackedReActPlanner = ({
         max_tokens: 12000,
       },
       logger,
-      source => annotateCapabilitySnapshotResolvedModel(context, runtime, config, source),
+      (source) => {
+        providerSource = source;
+        annotateCapabilitySnapshotResolvedModel(context, runtime, config, source);
+      },
       typeof context?.onModelUsage === 'function' ? context.onModelUsage : null,
     );
     emitDebugSnapshot(onDebugSnapshot, {
@@ -1201,12 +1514,27 @@ export const createMaidModelBackedReActPlanner = ({
       messages,
       responseText,
     }, logger);
-    return normalizeMaidModelReActResponseText(responseText, {
+    const decision = normalizeMaidModelReActResponseText(responseText, {
       features: decisionFeatures,
       candidateMode: capabilitySnapshot?.useCandidates === true,
       candidateSnapshotId: capabilitySnapshot?.id || '',
     });
+    if (!providerFcExperimentStatus.enabled) return decision;
+    return {
+      ...decision,
+      plannerTransport: buildMaidPlannerTransport({
+        experimentStatus: providerFcExperimentStatus,
+        effectiveMode: MAID_PROMPTED_JSON_MODE,
+        fallbackReason: providerFcFallbackReason,
+        runtime,
+        config,
+        providerSource,
+        capabilitySnapshot,
+        providerDiagnostics: providerFcAttemptDiagnostics,
+      }),
+    };
   } catch (error) {
+    if (error?.name === 'AbortError' || context?.signal?.aborted === true) throw error;
     logger?.warn?.('maid react planner failed', error);
     emitDebugSnapshot(onDebugSnapshot, {
       source: 'maid_model_react',

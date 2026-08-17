@@ -9,6 +9,7 @@ import { prepareTransportRequest } from '../transport.js';
 import { emitDebugLog } from '../../utils/debug-log.js';
 import { reportProviderUsage } from '../provider-usage.js';
 import { reportProviderWebSources } from '../web-search-runtime.js';
+import { attachSafeProviderErrorMetadata } from '../provider-error-metadata.js';
 
 const getTauriInvoker = () => {
     const g = typeof globalThis !== 'undefined' ? globalThis : undefined;
@@ -216,7 +217,7 @@ export class AnthropicProvider {
             const error = new Error(`Anthropic API Error: ${res.status}${detail ? ` - ${detail}` : ''}`);
             error.status = res.status;
             error.response = res.body;
-            throw error;
+            throw attachSafeProviderErrorMetadata(error, res.body);
         }
         try {
             return JSON.parse(res.body || '{}');
@@ -296,7 +297,7 @@ export class AnthropicProvider {
      * 发送聊天消息（非流式）
      */
     async chat(messages, options = {}) {
-        const { signal, requestId, options: payloadOptionsRaw } = splitRequestOptions(options);
+        const { signal, requestId, onProviderToolCallDelta, options: payloadOptionsRaw } = splitRequestOptions(options);
         const maxTokens = payloadOptionsRaw?.maxTokens ?? payloadOptionsRaw?.max_tokens;
         const payloadOptions = { ...(payloadOptionsRaw || {}) };
         delete payloadOptions.maxTokens;
@@ -318,6 +319,10 @@ export class AnthropicProvider {
             signal,
             requestId,
         });
+
+        try {
+            onProviderToolCallDelta?.(data, { provider: 'anthropic', model: this.model });
+        } catch {}
 
         reportProviderWebSources(options, data, { provider: 'anthropic' });
 
@@ -475,7 +480,7 @@ export class AnthropicProvider {
                             );
                             error.status = responseStatus || 0;
                             error.response = rawErrorBody;
-                            throw error;
+                            throw attachSafeProviderErrorMetadata(error, rawErrorBody);
                         }
                         yield* flushSseBuffer('native-stream', true);
                         logStreamDebug(
@@ -506,7 +511,7 @@ export class AnthropicProvider {
                 `transport=fetch mode=${prepared.connectionMode || 'direct'} url=${summarizeUrlForLog(prepared.url)}`,
             );
         }
-        const { controller, cleanup } = createLinkedAbortController({ timeoutMs: this.timeout, signal });
+        const { controller, cleanup, touch } = createLinkedAbortController({ timeoutMs: this.timeout, signal, idle: true });
         try {
             const response = await fetch(prepared.url, {
                 method: 'POST',
@@ -521,10 +526,11 @@ export class AnthropicProvider {
                 const error = new Error(`Anthropic API Error: ${response.status}${detail ? ` - ${detail}` : ''}`);
                 error.status = response.status;
                 error.response = txt;
-                throw error;
+                throw attachSafeProviderErrorMetadata(error, txt);
             }
 
             for await (const data of handleSSE(response)) {
+                touch();
                 yield* emitDelta(data, 'fetch');
             }
             logStreamDebug(

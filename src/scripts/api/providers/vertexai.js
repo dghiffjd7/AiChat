@@ -8,6 +8,11 @@ import { createLinkedAbortController, splitRequestOptions } from '../abort.js';
 import { createReasoningStreamEvent, extractGeminiStreamParts } from '../native-reasoning.js';
 import { prepareTransportRequest } from '../transport.js';
 import { reportProviderWebSources } from '../web-search-runtime.js';
+import {
+  getGeminiFinishReason,
+  mergeGeminiProviderMeta,
+  reportProviderUsage,
+} from '../provider-usage.js';
 
 const getTauriInvoker = () => {
   const g = typeof globalThis !== 'undefined' ? globalThis : undefined;
@@ -452,7 +457,7 @@ export class VertexAIProvider {
    * Send chat message (non-streaming)
    */
   async chat(messages, options = {}) {
-    const { signal, requestId, options: payloadOptions } = splitRequestOptions(options);
+    const { signal, requestId, onProviderToolCallDelta, options: payloadOptions } = splitRequestOptions(options);
     const headers = await this.getHeaders();
     const body = this.buildRequestBody(messages, payloadOptions);
     const tryOnce = async ({ region, baseHost }) => {
@@ -483,7 +488,16 @@ export class VertexAIProvider {
     }
 
     const candidates = data?.candidates;
+    try {
+      onProviderToolCallDelta?.(data, { provider: 'vertexai', model: this.model });
+    } catch {}
     reportProviderWebSources(options, data, { provider: 'vertexai' });
+    reportProviderUsage(options, {
+      body: data,
+      provider: 'vertexai',
+      model: this.model,
+      finishReason: getGeminiFinishReason(data),
+    });
     if (!candidates || candidates.length === 0) {
       let errorMsg = 'No candidates returned';
       if (data?.promptFeedback?.blockReason) {
@@ -493,18 +507,20 @@ export class VertexAIProvider {
     }
 
     const responseContent = candidates[0].content ?? candidates[0].output;
+    const responseParts = Array.isArray(responseContent?.parts) ? responseContent.parts : [];
+    const hasFunctionCall = responseParts.some(part => part?.functionCall && typeof part.functionCall === 'object');
     const responseText = typeof responseContent === 'string'
       ? responseContent
-      : responseContent?.parts
-          ?.filter(part => !part.thought)
-          ?.map(part => part.text)
-          ?.join('\n\n');
+      : responseParts
+          .filter(part => !part.thought && typeof part?.text === 'string')
+          .map(part => part.text)
+          .join('\n\n');
 
-    if (!responseText) {
+    if (!responseText && !hasFunctionCall) {
       throw new Error('Empty response from Vertex AI');
     }
 
-    return responseText;
+    return responseText || '';
   }
 
   /**
@@ -519,6 +535,7 @@ export class VertexAIProvider {
         onProviderToolCallDelta?.(data, { provider: 'vertexai', model: this.model });
       } catch {}
     };
+    let providerMeta = null;
 
     const invoker = getTauriInvoker();
     const tryStreamOnce = async function* ({ region, baseHost }) {
@@ -544,6 +561,7 @@ export class VertexAIProvider {
           throw err;
         }
         for (const data of parseSSEText(res.body)) {
+          providerMeta = mergeGeminiProviderMeta(providerMeta, data);
           notifyProviderToolCallDelta(data);
           reportProviderWebSources(options, data, { provider: 'vertexai' });
           const candidates = data?.candidates;
@@ -559,7 +577,7 @@ export class VertexAIProvider {
       }
 
       // Browser fallback
-      const { controller, cleanup } = createLinkedAbortController({ timeoutMs: this.timeout, signal });
+      const { controller, cleanup, touch } = createLinkedAbortController({ timeoutMs: this.timeout, signal, idle: true });
       try {
         const prepared = prepareTransportRequest({
           config: this.transportConfig,
@@ -580,6 +598,8 @@ export class VertexAIProvider {
           throw err;
         }
         for await (const data of handleSSE(response)) {
+          touch();
+          providerMeta = mergeGeminiProviderMeta(providerMeta, data);
           notifyProviderToolCallDelta(data);
           reportProviderWebSources(options, data, { provider: 'vertexai' });
           const candidates = data?.candidates;
@@ -598,10 +618,23 @@ export class VertexAIProvider {
 
     try {
       yield* tryStreamOnce({ region: this.region, baseHost: this.baseHost });
+      reportProviderUsage(options, {
+        body: providerMeta,
+        provider: 'vertexai',
+        model: this.model,
+        finishReason: providerMeta?.finishReason,
+      });
       return;
     } catch (err) {
       if (err?.status === 404 && this.region !== 'global') {
+        providerMeta = null;
         yield* tryStreamOnce({ region: 'global', baseHost: getHostForRegion('global') });
+        reportProviderUsage(options, {
+          body: providerMeta,
+          provider: 'vertexai',
+          model: this.model,
+          finishReason: providerMeta?.finishReason,
+        });
         return;
       }
       throw err;

@@ -502,18 +502,28 @@ const { logger } = await import('../../src/scripts/utils/logger.js');
   presetState.presets.context['context-existing-default'] = { name: 'Default' };
   const upserts = [];
   const bindings = [];
+  const sessionBindings = {};
   const presetStore = {
     ready: Promise.resolve(),
     getState: () => presetState,
     upsert: async (type, payload) => {
       const id = `${type}:${payload.name}`;
       upserts.push({ type, payload });
-      presetState.presets[type][id] = { ...(payload.data || {}), name: payload.name };
+      presetState.presets[type][id] = {
+        ...(payload.data || {}),
+        name: payload.name,
+        app_scope: payload.appScope,
+      };
       return id;
     },
     setSessionBinding: async (type, sessionId, presetId) => {
+      const scope = presetState.presets[type]?.[presetId]?.app_scope || 'all';
+      if (scope !== 'all' && scope !== 'chat') return { sessions: { ...sessionBindings } };
       bindings.push([type, sessionId, presetId]);
+      sessionBindings[`${type}:${sessionId}`] = presetId;
+      return { sessions: { [sessionId]: presetId } };
     },
+    getSessionBindingId: (type, sessionId) => sessionBindings[`${type}:${sessionId}`] || null,
   };
   const exporter = new CustomBundleExporter({
     personaStore: { getAll: () => [] },
@@ -554,6 +564,7 @@ const { logger } = await import('../../src/scripts/utils/logger.js');
     payload: {
       name: 'Shared Model',
       data: { name: 'Shared Model', temperature: 0.7 },
+      appScope: 'all',
       makeActive: false,
     },
   }]);
@@ -564,6 +575,115 @@ const { logger } = await import('../../src/scripts/utils/logger.js');
     ['openai', 'room-b', 'openai:Shared Model'],
   ]);
   console.log('ok - CustomBundleExporter importRoomSettingsToScope dedupes imported preset names and keeps per-session bindings');
+}
+
+{
+  const presetState = {
+    presets: {
+      openai: {
+        creativeCollision: { name: 'Room Model', app_scope: 'creative' },
+      },
+    },
+  };
+  const upserts = [];
+  const sessionBindings = {};
+  const presetStore = {
+    ready: Promise.resolve(),
+    getState: () => presetState,
+    upsert: async (type, payload) => {
+      const id = 'restored-room-model';
+      upserts.push({ type, payload });
+      presetState.presets[type][id] = {
+        ...(payload.data || {}),
+        name: payload.name,
+        app_scope: payload.appScope,
+      };
+      return id;
+    },
+    setSessionBinding: async (type, sessionId, presetId) => {
+      const scope = presetState.presets[type]?.[presetId]?.app_scope || 'all';
+      if (scope === 'all' || scope === 'chat') sessionBindings[`${type}:${sessionId}`] = presetId;
+      return { sessions: { [sessionId]: sessionBindings[`${type}:${sessionId}`] || '' } };
+    },
+    getSessionBindingId: (type, sessionId) => sessionBindings[`${type}:${sessionId}`] || null,
+  };
+  const transfer = new ExperiencePackTransfer({ presetStore, appBridge: {} });
+  await transfer.importRoomData({
+    roomConfig: {},
+    roomPresets: {
+      presets: {
+        openai: { name: 'Room Model', data: { temperature: 0.6 } },
+      },
+    },
+  }, 'experience-room');
+  assert.equal(upserts.length, 1, 'creative-only name collision must create a restorable preset');
+  assert.equal(upserts[0].payload.appScope, 'all');
+  assert.equal(sessionBindings['openai:experience-room'], 'restored-room-model');
+  console.log('ok - ExperiencePackTransfer restores room presets with verified chat-session eligibility');
+}
+
+{
+  const warnings = [];
+  const previousWarning = globalThis.window.toastr.warning;
+  globalThis.window.toastr.warning = message => warnings.push(message);
+  try {
+    const presetStore = {
+      ready: Promise.resolve(),
+      getState: () => ({ presets: { openai: {} } }),
+      upsert: async () => 'restored-but-rejected',
+      setSessionBinding: async () => ({ sessions: {} }),
+      getSessionBindingId: () => null,
+    };
+    const transfer = new ExperiencePackTransfer({ presetStore, appBridge: {} });
+    await transfer.importRoomData({
+      roomConfig: {},
+      roomPresets: {
+        presets: {
+          openai: { name: 'Rejected Model', data: { temperature: 0.4 } },
+        },
+      },
+    }, 'experience-rejected');
+    assert.equal(warnings.length, 1);
+    assert.match(warnings[0], /1 项会话预设未能还原/u);
+    console.log('ok - ExperiencePackTransfer reports a binding no-op instead of claiming a complete restore');
+  } finally {
+    globalThis.window.toastr.warning = previousWarning;
+  }
+}
+
+{
+  const diagnosticsNotes = [];
+  const presetStore = {
+    ready: Promise.resolve(),
+    getState: () => ({ presets: { openai: {} } }),
+    upsert: async () => 'bundle-rejected',
+    setSessionBinding: async () => ({ sessions: {} }),
+    getSessionBindingId: () => null,
+  };
+  const exporter = new CustomBundleExporter({
+    personaStore: { getAll: () => [] },
+    appBridge: {},
+    presetStore,
+  });
+  await exporter.importRoomSettingsToScope({
+    packageData: {},
+    runtime: {},
+    roomPackage: {
+      roomConfig: {
+        presets: {
+          presets: {
+            openai: { name: 'Rejected Model', data: { temperature: 0.4 } },
+          },
+        },
+      },
+    },
+    sessionId: 'bundle-rejected-room',
+    displayName: 'Rejected Room',
+    diagnosticsNotes,
+  });
+  assert.equal(diagnosticsNotes.length, 1);
+  assert.match(diagnosticsNotes[0], /openai 预设未能还原/u);
+  console.log('ok - CustomBundleExporter records rejected preset bindings in import diagnostics');
 }
 
 {

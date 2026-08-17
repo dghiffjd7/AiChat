@@ -12,6 +12,7 @@ import {
 import { prepareTransportRequest } from '../transport.js';
 import { reportProviderUsage } from '../provider-usage.js';
 import { reportProviderWebSources } from '../web-search-runtime.js';
+import { attachSafeProviderErrorMetadata } from '../provider-error-metadata.js';
 import { isStreamOptionsRejectionError, streamUsageCompat } from '../stream-usage-compat.js';
 
 const DEFAULT_IMAGE_MIME = 'image/png';
@@ -381,6 +382,7 @@ export class CustomProvider {
         this.baseUrl = config.baseUrl;
         this.model = config.model || 'default';
         this.timeout = config.timeout || 60000;
+        this.errorLabel = String(config.errorLabel || 'Custom API').trim() || 'Custom API';
     }
 
     getHeaders() {
@@ -450,10 +452,10 @@ export class CustomProvider {
         const res = await this.request({ url, method, headers, body, bodyBase64, signal, requestId });
         if (!res.ok) {
             const detail = extractErrorDetail(res.body);
-            const error = new Error(`Custom API Error: ${res.status}${detail ? ` - ${detail}` : ''}`);
+            const error = new Error(`${this.errorLabel} Error: ${res.status}${detail ? ` - ${detail}` : ''}`);
             error.status = res.status;
             error.response = res.body;
-            throw error;
+            throw attachSafeProviderErrorMetadata(error, res.body);
         }
         return JSON.parse(res.body || '{}');
     }
@@ -659,7 +661,7 @@ export class CustomProvider {
                     const nativeError = String(batch?.error || '').trim();
                     if (nativeError) {
                         if (/aborted/i.test(nativeError)) throw makeAbortError();
-                        const error = new Error(`native custom stream request failed: ${nativeError}`);
+                        const error = new Error(`${this.errorLabel} stream request failed: ${nativeError}`);
                         error.status = responseStatus;
                         error.response = rawErrorBody;
                         throw error;
@@ -668,10 +670,10 @@ export class CustomProvider {
                     if (batch?.done) {
                         if (responseOk === false) {
                             const detail = extractErrorDetail(rawErrorBody);
-                            const error = new Error(`Custom API Error: ${responseStatus || 0}${detail ? ` - ${detail}` : ''}`);
+                            const error = new Error(`${this.errorLabel} Error: ${responseStatus || 0}${detail ? ` - ${detail}` : ''}`);
                             error.status = responseStatus || 0;
                             error.response = rawErrorBody;
-                            throw error;
+                            throw attachSafeProviderErrorMetadata(error, rawErrorBody);
                         }
                         const parsed = parseSSEBuffer(sseBuffer, { final: true });
                         for (const data of parsed.events) yield* emitParsed(data);
@@ -689,7 +691,7 @@ export class CustomProvider {
             }
         }
 
-        const { controller, cleanup } = createLinkedAbortController({ timeoutMs: this.timeout, signal: request.signal });
+        const { controller, cleanup, touch } = createLinkedAbortController({ timeoutMs: this.timeout, signal: request.signal, idle: true });
         try {
             const prepared = prepareTransportRequest({
                 config: this.transportConfig,
@@ -707,10 +709,10 @@ export class CustomProvider {
             if (!response.ok) {
                 const txt = await response.text();
                 const detail = extractErrorDetail(txt);
-                const error = new Error(`Custom API Error: ${response.status}${detail ? ` - ${detail}` : ''}`);
+                const error = new Error(`${this.errorLabel} Error: ${response.status}${detail ? ` - ${detail}` : ''}`);
                 error.status = response.status;
                 error.response = txt;
-                throw error;
+                throw attachSafeProviderErrorMetadata(error, txt);
             }
 
             let outputChars = 0;
@@ -719,6 +721,7 @@ export class CustomProvider {
             let finishReason = '';
             let lastUsage = null;
             for await (const data of handleSSE(response)) {
+                touch();
                 notifyProviderToolCallDelta(data);
                 if (data?.usage && typeof data.usage === 'object') lastUsage = data;
                 if (hasOpenAICompatibleToolDelta(data)) toolDeltaCount += 1;

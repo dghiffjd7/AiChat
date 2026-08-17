@@ -43,6 +43,7 @@ import {
     isGroupChat: true,
     getSessionSettings: () => ({ temperature: 0.7 }),
     getDisableSummary: () => disableSummary,
+    getFormatProfileEnabled: () => true,
     skipInputRegex: true,
     continueTarget: { messageId: 'm1' },
     rpUiMode: false,
@@ -73,6 +74,7 @@ import {
 
   assert.equal(first.meta.disableSummary, false);
   assert.equal(second.meta.disableSummary, true);
+  assert.equal(second.meta.formatProfileEnabled, true);
   assert.deepEqual(first.history, [{ role: 'user', content: '输入1' }]);
   assert.deepEqual(second.history, [{ role: 'user', content: '输入2' }]);
   assert.deepEqual(second.meta.extraPromptBlocks, ['stage', 'injected']);

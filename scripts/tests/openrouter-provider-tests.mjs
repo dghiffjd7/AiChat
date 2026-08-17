@@ -6,6 +6,10 @@ import {
 } from '../../src/scripts/api/model-capabilities.js';
 import { LLMClient } from '../../src/scripts/api/client.js';
 import { OpenRouterProvider } from '../../src/scripts/api/providers/openrouter.js';
+import {
+  clearOpenRouterModelCapabilitiesForTests,
+  readOpenRouterModelCapabilities,
+} from '../../src/scripts/api/openrouter-model-capabilities.js';
 
 const tests = [];
 const test = (name, fn) => tests.push({ name, fn });
@@ -57,6 +61,21 @@ test('OpenRouterProvider prepares OpenAI-compatible chat completions', () => {
   assert.equal(prepared.payload.tool_choice, 'auto');
 });
 
+test('OpenRouterProvider preserves FC routing requirements and disables parallel calls', () => {
+  const provider = new OpenRouterProvider({ apiKey: 'or-key', model: 'openai/gpt-5.2' });
+  const prepared = provider.prepareChatRequest([{ role: 'user', content: 'hi' }], {
+    tools: [{ type: 'function', function: { name: 'emit_reply', parameters: { type: 'object' } } }],
+    tool_choice: { type: 'function', function: { name: 'emit_reply' } },
+    parallel_tool_calls: false,
+    provider: { data_collection: 'deny', require_parameters: true },
+  });
+  assert.equal(prepared.payload.parallel_tool_calls, false);
+  assert.deepEqual(prepared.payload.provider, {
+    data_collection: 'deny',
+    require_parameters: true,
+  });
+});
+
 test('OpenRouter reasoning models use reasoning.effort options', () => {
   const capability = getReasoningCapability({
     provider: 'openrouter',
@@ -88,6 +107,7 @@ test('OpenRouter reasoning models use reasoning.effort options', () => {
 });
 
 test('OpenRouterProvider lists OpenRouter models without filtering provider slugs', async () => {
+  clearOpenRouterModelCapabilitiesForTests();
   const provider = new OpenRouterProvider({ apiKey: 'or-key' });
   provider.requestJson = async ({ url, method, headers }) => {
     assert.equal(url, 'https://openrouter.ai/api/v1/models');
@@ -97,7 +117,7 @@ test('OpenRouterProvider lists OpenRouter models without filtering provider slug
       data: [
         { id: 'openrouter/auto' },
         { id: 'anthropic/claude-sonnet-4.5' },
-        { id: 'openai/gpt-5.2' },
+        { id: 'openai/gpt-5.2', canonical_slug: 'openai/gpt-5.2-202608', supported_parameters: ['tools', 'tool_choice'] },
         { id: 'deepseek/deepseek-v3.2' },
       ],
     };
@@ -108,6 +128,42 @@ test('OpenRouterProvider lists OpenRouter models without filtering provider slug
     'openai/gpt-5.2',
     'deepseek/deepseek-v3.2',
   ]);
+  assert.deepEqual(readOpenRouterModelCapabilities({
+    baseUrl: 'https://openrouter.ai/api/v1',
+    model: 'openai/gpt-5.2',
+  }), {
+    known: true,
+    id: 'openai/gpt-5.2',
+    canonicalSlug: 'openai/gpt-5.2-202608',
+    supportedParameters: ['tools', 'tool_choice'],
+    supportsTools: true,
+    supportsToolChoice: true,
+  });
+});
+
+test('OpenRouterProvider preflights one exact model and caches its tool parameters', async () => {
+  clearOpenRouterModelCapabilitiesForTests();
+  const provider = new OpenRouterProvider({ apiKey: 'or-key', model: 'vendor/tool-model:free' });
+  let calls = 0;
+  provider.requestJson = async ({ url, method, headers }) => {
+    calls += 1;
+    assert.equal(url, 'https://openrouter.ai/api/v1/model/vendor/tool-model%3Afree');
+    assert.equal(method, 'GET');
+    assert.equal(headers.Authorization, 'Bearer or-key');
+    return {
+      data: {
+        id: 'vendor/tool-model:free',
+        canonical_slug: 'vendor/tool-model',
+        supported_parameters: ['tools', 'tool_choice', 'temperature'],
+      },
+    };
+  };
+  const first = await provider.prepareProviderFcCapabilities();
+  const second = await provider.prepareProviderFcCapabilities();
+  assert.equal(calls, 1);
+  assert.equal(first.supportsTools, true);
+  assert.equal(first.supportsToolChoice, true);
+  assert.deepEqual(second, first);
 });
 
 test('OpenRouterProvider falls back to auto router when models endpoint fails', async () => {

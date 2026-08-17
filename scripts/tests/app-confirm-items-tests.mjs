@@ -1,4 +1,7 @@
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
+import { fileURLToPath } from 'node:url';
+import path from 'node:path';
 
 import { normalizeAppConfirmItems } from '../../src/scripts/ui/app-confirm.js';
 
@@ -46,3 +49,15 @@ import { normalizeAppConfirmItems } from '../../src/scripts/ui/app-confirm.js';
 }
 
 console.log('app-confirm-items-tests passed');
+
+{
+  const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
+  const source = await readFile(path.join(root, 'src/scripts/ui/app-confirm.js'), 'utf8');
+  assert.match(source, /signal\?\.aborted[\s\S]*resolve\(null\)/,
+    '已取消的 signal 不应再打开选择弹窗');
+  assert.match(source, /signal\.addEventListener\('abort', onAbort, \{ once: true \}\)/,
+    '等待选择期间应响应上层取消信号');
+  assert.match(source, /choiceAbortCleanup\?\.\(\)[\s\S]*choiceAbortCleanup = null/,
+    '选择弹窗关闭后应清除 abort listener');
+  console.log('ok - app choice closes safely when the active maid task is aborted');
+}

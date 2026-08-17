@@ -87,6 +87,41 @@ import {
 }
 
 {
+  const orphanGroupId = 'group:orphan';
+  const chatStore = { hasSession: id => id === orphanGroupId };
+  const contactsStore = { getContact: () => null };
+  assert.equal(hasPersonaScopedSession({
+    sessionId: orphanGroupId,
+    scopeId: 'persona_1',
+    chatStore,
+    contactsStore,
+  }), false, '群聊身份必须来自当前 scope 的联系人记录，不能只凭空 session 进入');
+  assert.deepEqual(canEnterPersonaScopedSession({
+    sessionId: orphanGroupId,
+    scopeId: 'persona_1',
+    chatStore: { ...chatStore, scopeId: 'persona_1' },
+    contactsStore: { ...contactsStore, scopeId: 'persona_1' },
+  }), {
+    allowed: false,
+    reason: 'orphan-group',
+  });
+  const validGroupStore = {
+    scopeId: 'persona_1',
+    getContact: id => (id === 'group:valid' ? { id, isGroup: true, members: ['member-a', 'member-b'] } : null),
+  };
+  assert.deepEqual(canEnterPersonaScopedSession({
+    sessionId: 'group:valid',
+    scopeId: 'persona_1',
+    chatStore: { scopeId: 'persona_1', hasSession: () => false },
+    contactsStore: validGroupStore,
+  }), {
+    allowed: true,
+    reason: 'known-session',
+  }, '真实群联系人即使尚未建立聊天线程也应可正常进入');
+  console.log('ok - orphan group sessions cannot be entered without a scoped group contact');
+}
+
+{
   const current = { value: 'rp:persona_2' };
   const chatStore = {
     getCurrent: () => current.value,
@@ -107,6 +142,27 @@ import {
     source: 'chat',
   });
   console.log('ok - current session resolution returns only safe current ids');
+}
+
+{
+  const orphanGroupId = 'group:orphan';
+  const chatStore = {
+    getCurrent: () => orphanGroupId,
+    hasSession: id => id === orphanGroupId,
+  };
+  const contactsStore = { getContact: () => null };
+  assert.deepEqual(resolvePersonaScopedCurrentSession({
+    scopeId: 'persona_1',
+    chatStore,
+    contactsStore,
+    allowRpSession: false,
+  }), {
+    sessionId: '',
+    known: false,
+    foreignRp: false,
+    source: 'orphan-group',
+  });
+  console.log('ok - persona scope restore rejects orphan group current ids');
 }
 
 {

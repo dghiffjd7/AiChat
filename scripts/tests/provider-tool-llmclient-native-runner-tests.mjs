@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 
 import { createProviderToolLlmClientNativeRunner } from '../../src/scripts/agent/provider-tool-llmclient-native-runner.js';
 import { runProviderToolRealRunnerAdapter } from '../../src/scripts/agent/provider-tool-real-runner-adapter.js';
+import { attachProviderToolContinuationContext } from '../../src/scripts/agent/provider-tool-continuation-context.js';
 
 const buildAnthropicRequest = () => ({
   provider: 'anthropic',
@@ -83,6 +84,106 @@ const buildDraft = (request) => ({
 }
 
 {
+  const provider = {
+    model: 'claude-history',
+    baseUrl: 'https://anthropic.test/v1',
+    getHeaders: () => ({ 'x-api-key': 'test-key' }),
+    convertMessages: () => ({
+      system: 'history system',
+      messages: [{ role: 'user', content: [{ type: 'text', text: 'history user' }] }],
+    }),
+    requestJson: async (payload) => {
+      const body = JSON.parse(payload.body);
+      assert.equal(body.system, 'history system');
+      assert.equal(body.messages[0].content[0].text, 'history user');
+      assert.equal(body.messages[1].content[0].type, 'tool_use');
+      assert.equal(body.messages[2].content[0].type, 'tool_result');
+      assert.equal(body.tools[0].name, 'contact_profile.list');
+      return { content: [{ type: 'text', text: 'anthropic history ok' }] };
+    },
+  };
+  const request = attachProviderToolContinuationContext(buildAnthropicRequest(), {
+    historyMessages: [
+      { role: 'system', content: 'history system' },
+      { role: 'user', content: 'history user' },
+    ],
+    providerRequestOptions: {
+      tools: [{ name: 'contact_profile.list', input_schema: { type: 'object', properties: {} } }],
+    },
+  });
+  const runner = createProviderToolLlmClientNativeRunner({ provider, now: () => 1250 });
+  const result = await runner.runProviderToolRequest(request);
+  assert.equal(result.ok, true);
+  assert.equal(result.finalText, 'anthropic history ok');
+  console.log('ok - LLMClient native runner shim preserves Anthropic history and tool schema');
+}
+
+{
+  const calls = [];
+  const provider = {
+    provider: 'openai',
+    model: 'gpt-responses',
+    baseUrl: 'https://api.openai.test/v1',
+    getHeaders: () => ({ Authorization: 'Bearer test-key' }),
+    requestJson: async (payload) => {
+      calls.push(payload);
+      const body = JSON.parse(payload.body);
+      assert.equal(payload.url, 'https://api.openai.test/v1/responses');
+      assert.equal(body.input[0].role, 'system');
+      assert.equal(body.input[1].role, 'user');
+      assert.equal(body.input[2].type, 'reasoning');
+      assert.equal(body.input[3].type, 'function_call');
+      assert.equal(body.input[4].type, 'function_call_output');
+      assert.equal(body.tools[0].name, 'contact_profile_list');
+      assert.equal(body.tools[0].function, undefined);
+      assert.equal(body.max_output_tokens, 77);
+      assert.equal(body.store, false);
+      return {
+        id: 'resp-final',
+        output: [{
+          type: 'message',
+          content: [{ type: 'output_text', text: 'openai responses ok' }],
+        }],
+      };
+    },
+  };
+  const request = attachProviderToolContinuationContext({
+    provider: 'openai',
+    model: 'gpt-responses',
+    sessionId: 's-native',
+    format: 'openai_responses_function_call_output',
+    input: [
+      { type: 'reasoning', id: 'rs-1', encrypted_content: 'opaque' },
+      { type: 'function_call', id: 'fc-1', call_id: 'call-1', name: 'contact_profile_list', arguments: '{}' },
+      { type: 'function_call_output', call_id: 'call-1', output: '{"summary":"ok"}' },
+    ],
+  }, {
+    historyMessages: [
+      { role: 'system', content: 'Use tools.' },
+      { role: 'user', content: 'List contacts.' },
+    ],
+    providerRequestOptions: {
+      tools: [{
+        type: 'function',
+        function: {
+          name: 'contact_profile_list',
+          description: 'List contacts',
+          parameters: { type: 'object', additionalProperties: false, properties: {} },
+        },
+      }],
+    },
+  });
+  const runner = createProviderToolLlmClientNativeRunner({ provider, now: () => 1500 });
+  const result = await runner.runProviderToolRequest(request, { maxTokens: 77 });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.adapter, 'openai_responses_function_call_output');
+  assert.equal(result.finalText, 'openai responses ok');
+  assert.equal(calls.length, 1);
+  console.log('ok - LLMClient native runner shim sends stateless OpenAI Responses function output');
+}
+
+{
   const calls = [];
   const provider = {
     model: 'gemini-provider',
@@ -117,6 +218,63 @@ const buildDraft = (request) => ({
   assert.equal(result.events[0].provider, 'gemini');
   assert.equal(calls[0].requestId, 'gemini-native-test');
   console.log('ok - LLMClient native runner shim sends Gemini functionResponse contents');
+}
+
+{
+  const calls = [];
+  const provider = {
+    model: 'gemini-signed',
+    buildUrl: () => 'https://gemini.test/v1/models/gemini-signed:generateContent',
+    getHeaders: () => ({ 'Content-Type': 'application/json' }),
+    convertMessages: messages => ({
+      contents: messages.filter(message => message.role !== 'system').map(message => ({
+        role: message.role === 'assistant' ? 'model' : 'user',
+        parts: [{ text: message.content }],
+      })),
+      systemInstruction: messages.find(message => message.role === 'system')?.content || '',
+    }),
+    request: async (payload) => {
+      calls.push(payload);
+      const body = JSON.parse(payload.body);
+      assert.equal(body.contents[0].parts[0].text, 'history user');
+      assert.equal(body.contents[1].parts[0].thoughtSignature, 'opaque-signature');
+      assert.equal(body.contents[2].parts[0].functionResponse.name, 'contact_profile.list');
+      assert.equal(body.systemInstruction.parts[0].text, 'history system');
+      assert.equal(body.tools[0].functionDeclarations[0].name, 'contact_profile.list');
+      return {
+        ok: true,
+        body: JSON.stringify({ candidates: [{ content: { parts: [{ text: 'gemini signed ok' }] } }] }),
+      };
+    },
+  };
+  const request = attachProviderToolContinuationContext({
+    ...buildGeminiRequest('gemini'),
+    contents: [
+      {
+        role: 'model',
+        parts: [{
+          thoughtSignature: 'opaque-signature',
+          functionCall: { name: 'contact_profile.list', args: { limit: 1 } },
+        }],
+      },
+      { role: 'user', parts: [{ functionResponse: { name: 'contact_profile.list', response: { summary: 'listed' } } }] },
+    ],
+  }, {
+    historyMessages: [
+      { role: 'system', content: 'history system' },
+      { role: 'user', content: 'history user' },
+    ],
+    providerRequestOptions: {
+      tools: [{ functionDeclarations: [{ name: 'contact_profile.list', parameters: { type: 'OBJECT' } }] }],
+    },
+  });
+  const runner = createProviderToolLlmClientNativeRunner({ provider, now: () => 2500 });
+  const result = await runner.runProviderToolRequest(request);
+
+  assert.equal(result.ok, true);
+  assert.equal(result.finalText, 'gemini signed ok');
+  assert.equal(calls.length, 1);
+  console.log('ok - LLMClient native runner shim preserves Gemini history and thought signature');
 }
 
 {

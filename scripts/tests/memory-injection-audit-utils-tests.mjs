@@ -80,6 +80,28 @@ assert.doesNotMatch(html, /<script>/);
 
 console.log('ok - memory injection audit aggregates memory history world and fixed prompt segments');
 
+{
+  const audit = buildRequestInjectionAudit({
+    history: [],
+    messages: [
+      { role: 'system', content: 'global semantic block' },
+      { role: 'user', content: 'hello' },
+    ],
+    extraSegments: [{
+      id: 'global_prompt_library',
+      label: '全局提示词',
+      text: 'global semantic block',
+      messageCount: 1,
+    }],
+  });
+  const global = audit.segments.find(item => item.id === 'global_prompt_library');
+  assert.equal(global?.label, '全局提示词');
+  assert.equal(global?.messageCount, 1);
+  assert.ok(global?.usedTokens > 0);
+  assert.ok(audit.segments.some(item => item.id === 'fixed'));
+  console.log('ok - request injection audit attributes global semantic prompts independently');
+}
+
 // 护栏 3 的具体报警：state 超配额 = 该表没做覆盖式更新，必须在审计里点名
 const overQuotaAudit = buildRequestInjectionAudit({
   memoryPlan: null,

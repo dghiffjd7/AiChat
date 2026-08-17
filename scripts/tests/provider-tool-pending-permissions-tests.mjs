@@ -78,6 +78,34 @@ import { PROVIDER_TOOL_PERMISSION_ACTIONS } from '../../src/scripts/agent/provid
 }
 
 {
+  const store = createProviderToolPendingPermissionStore({ now: () => 2750 });
+  const entry = store.add({
+    requestId: 'stream-private-continuation',
+    toolCall: {
+      id: 'call-private-continuation',
+      toolName: 'contact_profile.list',
+      sessionId: 's-private',
+      providerContinuation: {
+        api: 'gemini_generate_content',
+        assistantContent: { parts: [{ thoughtSignature: 'opaque' }] },
+      },
+    },
+    continuationContext: {
+      historyMessages: [{ role: 'user', content: 'private' }],
+    },
+  });
+
+  assert.equal(Object.hasOwn(entry.toolCall, 'providerContinuation'), false);
+  assert.equal(
+    store.getContinuationContext(entry.id).providerContinuation.assistantContent.parts[0].thoughtSignature,
+    'opaque',
+  );
+  store.resolve(entry.id, PROVIDER_TOOL_PERMISSION_ACTIONS.deny);
+  assert.equal(store.getContinuationContext(entry.id), null);
+  console.log('ok - pending provider continuation state stays private and is discarded on denial');
+}
+
+{
   let clock = 3000;
   const store = createProviderToolPendingPermissionStore({
     now: () => clock,

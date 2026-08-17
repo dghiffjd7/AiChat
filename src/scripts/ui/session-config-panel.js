@@ -1,4 +1,4 @@
-import { PresetStore } from '../storage/preset-store.js';
+import { PresetStore, isPresetEligibleForMode } from '../storage/preset-store.js';
 import { getReasoningCapability } from '../api/model-capabilities.js';
 import { logger } from '../utils/logger.js';
 import { getActiveConfigProfileId, getConfigProfileById, getConfigProfiles } from './config-runtime-utils.js';
@@ -304,9 +304,11 @@ export class SessionConfigPanel {
         return getConfigProfiles(window.appBridge);
     }
 
-    getPresetList() {
+    getPresetList(mode = 'chat') {
         const presets = Object.entries(this.store.getState()?.presets?.openai || {});
-        return presets.map(([id, p]) => ({ value: id, label: p?.name || id }));
+        return presets
+            .filter(([, preset]) => isPresetEligibleForMode(preset, mode))
+            .map(([id, p]) => ({ value: id, label: p?.name || id }));
     }
 
     getPresetName(presetId) {
@@ -413,13 +415,15 @@ export class SessionConfigPanel {
         wrap.className = 'pp-binding-stack';
 
         const profiles = this.getProfiles();
-        const presetList = this.getPresetList();
+        const chatPresetList = this.getPresetList('chat');
+        const rpPresetList = this.getPresetList('rp');
+        const momentsPresetList = this.getPresetList('moments');
 
-        this.renderModeCard(wrap, 'chat', '聊天默认', profiles, presetList);
-        this.renderModeCard(wrap, 'rp', '创意写作默认', profiles, presetList);
-        this.renderModeCard(wrap, 'moments', '动态任务默认', profiles, presetList);
-        this.renderSessionGroup(wrap, 'chat', '聊天对话会话', '还没有聊天室或群聊。', profiles, presetList);
-        this.renderSessionGroup(wrap, 'rp', '创意写作会话', '还没有创意写作会话。', profiles, presetList);
+        this.renderModeCard(wrap, 'chat', '聊天默认', profiles, chatPresetList);
+        this.renderModeCard(wrap, 'rp', '创意写作默认', profiles, rpPresetList);
+        this.renderModeCard(wrap, 'moments', '动态任务默认', profiles, momentsPresetList);
+        this.renderSessionGroup(wrap, 'chat', '聊天对话会话', '还没有聊天室或群聊。', profiles, chatPresetList);
+        this.renderSessionGroup(wrap, 'rp', '创意写作会话', '还没有创意写作会话。', profiles, rpPresetList);
 
         this.editorEl.appendChild(wrap);
     }
@@ -440,11 +444,13 @@ export class SessionConfigPanel {
         itemWrap.style.cssText = 'margin-top:10px; border:1px solid var(--app-border-default); border-radius:14px; background:var(--app-surface-subtle); overflow:hidden;';
 
         const boundPresetId = this.store.getModeBindingId('openai', mode) || '';
-        const globalPresetId = this.store.getActiveId('openai');
-        const presetOptions = [{ value: '', label: '跟随全局' }, ...presetList];
+        const bindingOrigin = String(this.store.getBindings('openai')?.modeBindingOrigins?.[mode] || '').trim();
+        const isLegacyBinding = boundPresetId && bindingOrigin === 'legacy_migrated_mode_binding';
+        const fallbackLabel = mode === 'rp' ? '跟随创意写作默认' : '跟随 APP 内建默认';
+        const presetOptions = [{ value: '', label: fallbackLabel }, ...presetList];
         const presetSub = boundPresetId
-            ? `已绑定：${this.getPresetName(boundPresetId)}`
-            : `跟随全局${globalPresetId ? `（${this.getPresetName(globalPresetId)}）` : ''}`;
+            ? `${isLegacyBinding ? '沿用旧设置' : '已绑定'}：${this.getPresetName(boundPresetId)}`
+            : fallbackLabel;
 
         const row = document.createElement('div');
         row.className = 'pp-binding-item';
@@ -457,7 +463,7 @@ export class SessionConfigPanel {
         const presetBtn = document.createElement('button');
         presetBtn.type = 'button';
         presetBtn.className = `pp-binding-btn ${boundPresetId ? 'is-muted' : 'is-primary'}`;
-        presetBtn.textContent = boundPresetId ? '更改预设' : '绑定预设';
+        presetBtn.textContent = boundPresetId ? (isLegacyBinding ? '更改或清除' : '更改预设') : '绑定预设';
         presetBtn.addEventListener('click', () => {
             this.openSelectMenu(presetBtn, presetOptions, boundPresetId, (val) => {
                 this.runTask(() => val
@@ -500,7 +506,7 @@ export class SessionConfigPanel {
         head.className = 'pp-binding-card-head';
         head.innerHTML = `<div>
             <div class="pp-binding-card-title">${escapeHtml(title)}</div>
-            <div class="pp-binding-card-sub">会话级绑定优先于模式默认；不设置时会继续回退。</div>
+            <div class="pp-binding-card-sub">会话级绑定优先于模式默认；不设置时使用该模式的默认预设。</div>
         </div>`;
         card.appendChild(head);
 
@@ -540,7 +546,10 @@ export class SessionConfigPanel {
             uiMode: entry.group === 'rp' ? 'rp' : 'chat',
         });
         const resolvedName = String(resolved?.preset?.name || '').trim();
-        const presetOptions = [{ value: '', label: '跟随默认' }, ...presetList];
+        const presetOptions = [{
+            value: '',
+            label: entry.group === 'rp' ? '跟随创意写作默认' : '跟随聊天默认',
+        }, ...presetList];
         const currentProfileId = this.store.getSessionProfileId('openai', entry.id) || '';
         const currentProfileName = currentProfileId ? (this.getProfileName(currentProfileId) || currentProfileId) : '跟随全局';
         const subtitle = boundPresetId

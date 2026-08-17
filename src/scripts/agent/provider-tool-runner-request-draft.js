@@ -1,8 +1,13 @@
 import { PROVIDER_TOOL_RUNNER_HANDOFF_OUTPUTS } from './provider-tool-runner-handoff.js';
+import {
+  copyProviderToolContinuationContext,
+  readProviderToolContinuationContext,
+} from './provider-tool-continuation-context.js';
 
 export const PROVIDER_TOOL_RUNNER_PAYLOAD_KINDS = Object.freeze({
   messages: 'messages',
   contents: 'contents',
+  input: 'input',
   toolResults: 'tool_results',
 });
 
@@ -26,6 +31,15 @@ const clone = (value) => {
 };
 
 const buildPayloadDraft = (requestPreview = {}) => {
+  if (Array.isArray(requestPreview.input) && requestPreview.input.length) {
+    return {
+      payloadKind: PROVIDER_TOOL_RUNNER_PAYLOAD_KINDS.input,
+      payloadCount: requestPreview.input.length,
+      request: {
+        input: clone(requestPreview.input),
+      },
+    };
+  }
   if (Array.isArray(requestPreview.messages) && requestPreview.messages.length) {
     return {
       payloadKind: PROVIDER_TOOL_RUNNER_PAYLOAD_KINDS.messages,
@@ -171,7 +185,7 @@ export const buildProviderToolRunnerRequestDraft = ({
   const provider = trim(handoff.provider || request.provider || state.provider);
   const model = trim(handoff.model || request.model || state.model);
   const sessionId = trim(handoff.sessionId || request.sessionId || state.sessionId);
-  return {
+  const draft = {
     ...base,
     ok: true,
     status: 'ready',
@@ -188,6 +202,7 @@ export const buildProviderToolRunnerRequestDraft = ({
     shouldContinue: state.shouldContinue === true,
     request: {
       provider,
+      sourceProvider: trim(request.sourceProvider, provider),
       model,
       sessionId,
       format: trim(request.format),
@@ -195,4 +210,10 @@ export const buildProviderToolRunnerRequestDraft = ({
     },
     updatedAt: readTimestamp(now),
   };
+  const context = readProviderToolContinuationContext(request);
+  if (context) {
+    copyProviderToolContinuationContext(request, draft.request);
+    copyProviderToolContinuationContext(request, draft);
+  }
+  return draft;
 };

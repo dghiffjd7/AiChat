@@ -12,8 +12,8 @@ const toNullableTokenCount = (value) => {
 //   → 基数不含 cache，必须求和；否则系数被压低、预算越用越松。
 export const resolveProviderPromptTokens = (usage) => {
   if (!usage || typeof usage !== 'object') return null;
-  const promptTokens = toNullableTokenCount(usage.prompt_tokens);
-  const inputTokens = toNullableTokenCount(usage.input_tokens);
+  const promptTokens = toNullableTokenCount(usage.prompt_tokens ?? usage.promptTokenCount);
+  const inputTokens = toNullableTokenCount(usage.input_tokens ?? usage.inputTokenCount);
   const base = promptTokens !== null ? promptTokens : inputTokens;
   if (base === null) return null;
   const hasOpenAiDetailShape = Boolean(
@@ -30,27 +30,79 @@ export const resolveProviderPromptTokens = (usage) => {
   return base + cacheRead + cacheCreation;
 };
 
+const responseIdentityText = (value) => String(value ?? '').trim().slice(0, 512);
+
+const appendResponseIdentity = (normalized, body = {}) => {
+  const systemFingerprint = responseIdentityText(
+    body?.system_fingerprint
+    ?? body?.systemFingerprint
+    ?? body?.response_metadata?.system_fingerprint,
+  );
+  const modelVersion = responseIdentityText(body?.modelVersion ?? body?.model_version);
+  const responseId = responseIdentityText(body?.responseId ?? body?.response_id ?? body?.id);
+  const responseModel = responseIdentityText(body?.responseModel ?? body?.response_model ?? body?.model);
+  const routedProvider = responseIdentityText(
+    body?.routedProvider
+    ?? body?.routed_provider
+    ?? body?.provider_name
+    ?? body?.provider,
+  );
+  if (systemFingerprint) normalized.systemFingerprint = systemFingerprint;
+  if (modelVersion) normalized.modelVersion = modelVersion;
+  if (responseId) normalized.responseId = responseId;
+  if (responseModel) normalized.responseModel = responseModel;
+  if (routedProvider) normalized.routedProvider = routedProvider;
+  return normalized;
+};
+
 export const reportProviderUsage = (options, meta) => {
   const cb = options?.onProviderUsage;
   if (typeof cb !== 'function') return;
   const { body, model, provider, finishReason } = (meta && typeof meta === 'object') ? meta : {};
-  const usage = body?.usage && typeof body.usage === 'object' ? body.usage : null;
+  const usage = body?.usage && typeof body.usage === 'object'
+    ? body.usage
+    : (body?.usageMetadata && typeof body.usageMetadata === 'object' ? body.usageMetadata : null);
   try {
     const normalized = {
       provider: String(provider || ''),
       model: String(model || ''),
       finishReason: String(finishReason || ''),
       promptTokens: resolveProviderPromptTokens(usage),
-      completionTokens: usage ? toNullableTokenCount(usage.completion_tokens ?? usage.output_tokens) : null,
-      totalTokens: usage ? toNullableTokenCount(usage.total_tokens) : null,
+      completionTokens: usage
+        ? toNullableTokenCount(
+            usage.completion_tokens
+            ?? usage.output_tokens
+            ?? usage.candidatesTokenCount
+            ?? usage.outputTokenCount,
+          )
+        : null,
+      totalTokens: usage
+        ? toNullableTokenCount(usage.total_tokens ?? usage.totalTokenCount)
+        : null,
     };
-    const systemFingerprint = String(
-      body?.system_fingerprint
-      ?? body?.systemFingerprint
-      ?? body?.response_metadata?.system_fingerprint
-      ?? '',
-    ).trim();
-    if (systemFingerprint) normalized.systemFingerprint = systemFingerprint;
-    cb(normalized);
+    cb(appendResponseIdentity(normalized, body));
   } catch {}
+};
+
+export const getGeminiFinishReason = (body = {}) => {
+  const candidates = Array.isArray(body?.candidates) ? body.candidates : [];
+  return String(candidates.find(candidate => candidate?.finishReason)?.finishReason || '');
+};
+
+// Gemini 的流式 usage 与响应身份通常只出现在尾部事件；逐片保留最后一次出现的字段，
+// 最终只上报一次，避免把同一 provider call 拆成多笔计量。
+export const mergeGeminiProviderMeta = (previous = null, body = {}) => {
+  const prior = previous && typeof previous === 'object' ? previous : {};
+  const next = body && typeof body === 'object' ? body : {};
+  const merged = { ...prior };
+  if (next.usageMetadata && typeof next.usageMetadata === 'object') {
+    merged.usageMetadata = next.usageMetadata;
+  }
+  ['modelVersion', 'responseId', 'model'].forEach((key) => {
+    const value = responseIdentityText(next[key]);
+    if (value) merged[key] = value;
+  });
+  const finishReason = getGeminiFinishReason(next);
+  if (finishReason) merged.finishReason = finishReason;
+  return merged;
 };

@@ -1425,6 +1425,17 @@ body[data-ui-mode='rp'] .rp-swipe-indicator {
   touch-action: manipulation;
 }
 
+.QQ_chat_charmsg[data-disposable-preview='1'] .QQ_chat_msgdiv::before {
+  content: '生成预览';
+  display: block;
+  margin-bottom: 3px;
+  color: var(--qq-color-text-secondary);
+  font-size: 10px;
+  line-height: 1.2;
+  letter-spacing: 0.08em;
+  opacity: 0.72;
+}
+
 .QQ_chat_msgdiv :is(
   button,
   input,
@@ -2081,6 +2092,44 @@ body[data-reduced-motion='on'] .code-viewer-maximize-restore {
   visibility: visible;
   pointer-events: auto;
   transform: translateY(0) scale(1);
+}
+
+.chat-bubble-stack.is-reaction-bar-below > .chat-reaction-quick-bar {
+  top: calc(100% + 4px);
+  transform-origin: top right;
+}
+
+.chat-bubble-stack.is-reaction-bar-below > .chat-reaction-quick-bar::after {
+  top: -8px;
+  bottom: auto;
+}
+
+#toast-container .chat-structured-route-toast-action {
+  appearance: none;
+  -webkit-appearance: none;
+  display: block;
+  width: max-content;
+  min-height: 26px;
+  margin-top: 8px;
+  padding: 4px 10px;
+  border: 1px solid color-mix(in srgb, currentColor 34%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, currentColor 12%, transparent);
+  color: inherit;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+#toast-container .chat-structured-route-toast-action:hover,
+#toast-container .chat-structured-route-toast-action:focus-visible {
+  background: color-mix(in srgb, currentColor 20%, transparent);
+  outline: none;
+}
+
+#toast-container .chat-structured-route-toast-action:disabled {
+  cursor: default;
+  opacity: 0.72;
 }
 
 .chat-reaction-quick-button {
@@ -5059,9 +5108,30 @@ body[data-ui-mode='rp'] .QQ_chat_page.sticker-preview-active .msgcontent {
 
 .sticker-ai-actions {
   display: flex;
+  align-items: center;
   gap: 8px;
   justify-content: flex-end;
   flex-wrap: wrap;
+}
+
+.sticker-ai-web-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-right: auto;
+  font-size: 11px;
+  color: var(--app-text-secondary);
+  cursor: pointer;
+  user-select: none;
+}
+
+.sticker-ai-web-toggle input {
+  accent-color: var(--app-accent-strong);
+}
+
+.sticker-ai-web-toggle:has(input:disabled) {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 
 .sticker-ai-zoom-overlay {

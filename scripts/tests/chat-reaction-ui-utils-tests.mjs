@@ -9,6 +9,7 @@ import {
   createReactionTriggerButton,
   hideReactionPicker,
   showReactionPicker,
+  syncReactionQuickBarPlacement,
 } from '../../src/scripts/ui/chat/reaction-ui-utils.js';
 import {
   REACTION_EMOJI_CATEGORIES,
@@ -254,6 +255,22 @@ const createMemoryStorage = (initial = {}) => {
 }
 
 {
+  const stack = {
+    classList: createClassList(),
+    getBoundingClientRect: () => ({ top: 18, bottom: 90 }),
+  };
+  const scrollBoundary = {
+    getBoundingClientRect: () => ({ top: 10, bottom: 620 }),
+  };
+  assert.equal(syncReactionQuickBarPlacement({ bubbleStack: stack, scrollBoundary }), 'below');
+  assert.equal(stack.classList.contains('is-reaction-bar-below'), true);
+  stack.getBoundingClientRect = () => ({ top: 80, bottom: 150 });
+  assert.equal(syncReactionQuickBarPlacement({ bubbleStack: stack, scrollBoundary }), 'above');
+  assert.equal(stack.classList.contains('is-reaction-bar-below'), false);
+  console.log('ok - reaction quick bar moves below only when the scrollport clips its upper placement');
+}
+
+{
   const documentLike = createFakeDocument();
   const runtime = createReactionQuickBarTouchRuntime({ documentLike });
   const bubbleStack = documentLike.createElement('div');
@@ -356,6 +373,14 @@ const createMemoryStorage = (initial = {}) => {
   assert.match(style, /\.chat-message-footer\s*\{[^}]*flex-wrap:\s*wrap/s);
   assert.match(style, /\.chat-message-footer\s*>\s*\.chat-time-row\s*\{[^}]*margin-left:\s*auto/s);
   assert.match(style, /\.chat-bubble-stack\.is-reaction-bar-open\s*>\s*\.chat-reaction-quick-bar/);
+  assert.match(
+    style,
+    /\.chat-bubble-stack\.is-reaction-bar-below\s*>\s*\.chat-reaction-quick-bar\s*\{[^}]*top:\s*calc\(100% \+ 4px\)[^}]*transform-origin:\s*top right/s,
+  );
+  assert.match(
+    style,
+    /\.chat-bubble-stack\.is-reaction-bar-below\s*>\s*\.chat-reaction-quick-bar::after\s*\{[^}]*top:\s*-8px[^}]*bottom:\s*auto/s,
+  );
   assert.match(style, /\.chat-reaction-picker-content\s*\{[^}]*grid-template-columns:\s*repeat\(8,/s);
   console.log('ok - reaction styles preserve viewport-safe user anchoring and categorized picker grid');
 }

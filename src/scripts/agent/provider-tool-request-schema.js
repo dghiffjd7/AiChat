@@ -2,6 +2,7 @@ import { toProviderToolModelName } from './provider-tool-name-map.js';
 
 export const PROVIDER_TOOL_REQUEST_FORMATS = Object.freeze({
   openai: 'openai_chat_completions',
+  openaiResponses: 'openai_responses',
   anthropic: 'anthropic_messages',
   gemini: 'gemini_function_declarations',
   unsupported: 'unsupported',
@@ -65,11 +66,24 @@ const clone = (value) => {
   }
 };
 
-const normalizeProviderFormat = (provider = '') => {
+const isOfficialOpenAIEndpoint = (baseUrl = '') => {
+  const raw = trim(baseUrl);
+  if (!raw) return true;
+  try {
+    return new URL(raw).hostname.toLowerCase() === 'api.openai.com';
+  } catch {
+    return false;
+  }
+};
+
+const normalizeProviderFormat = (provider = '', baseUrl = '') => {
   const value = trim(provider).toLowerCase();
   if (value === 'anthropic' || value.includes('claude')) return PROVIDER_TOOL_REQUEST_FORMATS.anthropic;
   if (value === 'gemini' || value === 'makersuite' || value === 'vertexai') {
     return PROVIDER_TOOL_REQUEST_FORMATS.gemini;
+  }
+  if (value === 'openai' && isOfficialOpenAIEndpoint(baseUrl)) {
+    return PROVIDER_TOOL_REQUEST_FORMATS.openaiResponses;
   }
   if (value === 'openai' || value === 'custom' || value === 'deepseek') {
     return PROVIDER_TOOL_REQUEST_FORMATS.openai;
@@ -173,7 +187,7 @@ const normalizeToolDefinition = (tool = {}) => {
   };
 };
 
-const buildOpenAIOptions = (tools = []) => ({
+const buildOpenAIOptions = (tools = [], { responses = false } = {}) => ({
   tools: tools.map(tool => ({
     type: 'function',
     function: {
@@ -183,6 +197,7 @@ const buildOpenAIOptions = (tools = []) => ({
     },
   })),
   tool_choice: 'auto',
+  ...(responses ? { openaiApi: 'responses', parallel_tool_calls: false } : {}),
 });
 
 const buildAnthropicOptions = (tools = []) => ({
@@ -205,6 +220,9 @@ const buildGeminiOptions = (tools = []) => ({
 
 const buildOptionsForFormat = (format, tools = []) => {
   if (format === PROVIDER_TOOL_REQUEST_FORMATS.openai) return buildOpenAIOptions(tools);
+  if (format === PROVIDER_TOOL_REQUEST_FORMATS.openaiResponses) {
+    return buildOpenAIOptions(tools, { responses: true });
+  }
   if (format === PROVIDER_TOOL_REQUEST_FORMATS.anthropic) return buildAnthropicOptions(tools);
   if (format === PROVIDER_TOOL_REQUEST_FORMATS.gemini) return buildGeminiOptions(tools);
   return {};
@@ -233,6 +251,7 @@ const disabled = (diagnostics = {}) => ({
 export const buildProviderToolRequestSchema = ({
   debugUiRegistry = null,
   provider = '',
+  baseUrl = '',
   model = '',
   sessionId = '',
   sessionGate = null,
@@ -242,7 +261,7 @@ export const buildProviderToolRequestSchema = ({
   const normalizedProvider = trim(provider);
   const normalizedModel = trim(model);
   const normalizedSessionId = trim(sessionId);
-  const format = normalizeProviderFormat(normalizedProvider);
+  const format = normalizeProviderFormat(normalizedProvider, baseUrl);
   const baseDiagnostics = {
     provider: normalizedProvider,
     model: normalizedModel,

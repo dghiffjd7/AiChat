@@ -175,6 +175,10 @@ const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '
     '共享容器应提供创意泳道插槽');
   assert.match(flowSource, /data-ef-switch="\$\{kind\}"/,
     '双投影同时可见时应提供 chip 切换入口');
+  assert.match(flowSource, /data-ef-cancel-maid[\s\S]*onCancelMaidRun\?\.\(/,
+    '女仆执行流应把非终态停止入口转发给与指令条共用的取消回调');
+  assert.match(flowSource, /cancelMaidBtnEl\.hidden = view\.terminal === true/,
+    '女仆任务进入终态后必须隐藏停止入口');
   assert.match(flowSource, /startDrag\(event,\s*\{\s*suppressLongPress:\s*true,\s*suppressClick:\s*true\s*\}\)/,
     '执行流标题转发拖拽时应消费静止单击，避免误触模式切换');
   assert.match(flowSource, /rootEl\.style\.width = 'auto';[\s\S]*?const rect = rootEl\.getBoundingClientRect/,

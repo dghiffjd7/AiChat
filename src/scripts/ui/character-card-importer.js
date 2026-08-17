@@ -409,6 +409,7 @@ export class CharacterCardImporter {
         if (presetStore?.upsert) {
           presetId = await presetStore.upsert('sysprompt', {
             name: `${displayName}·系统提示`,
+            appScope: 'creative',
             data: {
               name: `${displayName}·系统提示`,
               content: sys,

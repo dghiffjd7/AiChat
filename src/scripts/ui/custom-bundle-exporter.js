@@ -89,7 +89,8 @@ import {
 import { ensureDebugUiRegistry as ensureSharedDebugUiRegistry } from './debug-ui-registry-utils.js';
 import { getMemoryTableStore, getMemoryTemplateStore } from './memory-store-runtime-utils.js';
 import {
-  buildImportedPresetUpsertPayload,
+  bindImportedPresetToSession,
+  buildRestoredPresetUpsertPayload,
   resolveImportedPresetIdByName,
 } from './preset-import-dedupe-utils.js';
 import { getPresetStore } from './preset-store-runtime-utils.js';
@@ -2991,6 +2992,7 @@ export class CustomBundleExporter {
     displayName,
     personaLockId = '',
     presetImportCache = null,
+    diagnosticsNotes = null,
   }) {
     const sid = String(sessionId || '').trim();
     if (!sid) return {};
@@ -3054,7 +3056,8 @@ export class CustomBundleExporter {
           type,
           presetPayload,
           cache: presetImportCache,
-          upsertPayloadBuilder: buildImportedPresetUpsertPayload,
+          upsertPayloadBuilder: buildRestoredPresetUpsertPayload,
+          requiredAppScope: 'all',
         });
         if (presetId) restoredPresetIds[type] = presetId;
       } catch (err) {
@@ -3063,8 +3066,17 @@ export class CustomBundleExporter {
     }
     for (const [type, presetId] of Object.entries(restoredPresetIds)) {
       try {
-        await this.presetStore?.setSessionBinding?.(type, sid, presetId);
+        const result = await bindImportedPresetToSession({
+          presetStore: this.presetStore,
+          type,
+          sessionId: sid,
+          presetId,
+        });
+        if (!result.ok) {
+          diagnosticsNotes?.push?.(`会话「${String(displayName || sid)}」的 ${type} 预设未能还原：${result.reason}`);
+        }
       } catch (err) {
+        diagnosticsNotes?.push?.(`会话「${String(displayName || sid)}」的 ${type} 预设未能还原：${String(err?.message || 'bind_failed')}`);
         logger.warn('bind imported preset to session failed', err);
       }
     }
@@ -3281,6 +3293,7 @@ export class CustomBundleExporter {
       displayName,
       personaLockId,
       presetImportCache,
+      diagnosticsNotes,
     });
     if (roomPackage?.roomConfig?.variables?.state) {
       this.importVariableStateToStore(runtime.chatStore, roomPackage.roomConfig.variables.state, sessionId);

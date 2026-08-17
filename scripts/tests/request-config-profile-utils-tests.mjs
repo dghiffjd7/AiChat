@@ -88,7 +88,10 @@ test('generation resolves request config before building provider messages', asy
   assert.ok(resolveIndex >= 0, 'generate should resolve request runtime config');
   assert.ok(buildIndex >= 0, 'generate should pass request config into buildMessages');
   assert.ok(resolveIndex < buildIndex, 'request config must be resolved before buildMessages');
-  assert.match(body, /this\.buildMessages\(promptInput, nextContext,\s*\{\s*requestConfig: config,\s*\}\s*\)/);
+  assert.match(
+    body,
+    /this\.buildMessages\(promptInput, nextContext,\s*\{\s*requestConfig: config,\s*deferPhoneTransportLayers,\s*transportAnchorNamespace: nativeRequestId,\s*\}\s*\)/,
+  );
   assert.match(source, /buildMessages\(userMessage, context = \{\}, options = \{\}\)/);
 });
 
@@ -104,7 +107,10 @@ test('generation applies connection parameter filter to final request options', 
   const generateBody = source.slice(generateStart, backgroundStart);
   assert.match(generateBody, /const applyRuntimeParamFilter = options => applyGenerationParamFilter\(options, config\?\.excludedGenerationParams,\s*\{\s*protectedParams: \['signal', 'nativeRequestId'\]/);
   assert.match(generateBody, /const requestOptions = applyRuntimeParamFilter\(\{\s*...\(genOptions \|\| \{\}\),\s*...\(providerDirectives \|\| \{\}\),\s*...\(providerToolRequestSchema\.requestOptions \|\| \{\}\),\s*...\(webSearchPlan\.requestOptions \|\| \{\}\),\s*signal: abortController\.signal,\s*nativeRequestId,/);
-  assert.match(generateBody, /requestOptions: \{\s*...applyRuntimeParamFilter\(\{\s*...\(genOptions \|\| \{\}\),/);
+  assert.match(
+    generateBody,
+    /requestOptions:\s*\{\s*\.\.\.\(phoneProviderFcRoute\.eligible\s*\?\s*\(phoneStructuredRouteMode === CHAT_STRUCTURED_ROUTE_MODES\.jsonTerminal\s*\?\s*phoneJsonTerminalDebugRequestOptions\s*:\s*phoneProviderFcDebugRequestOptions\)\s*:\s*applyRuntimeParamFilter\(\{\s*\.\.\.\(genOptions \|\| \{\}\),/,
+  );
 
   const backgroundBody = source.slice(backgroundStart, streamStart);
   assert.match(backgroundBody, /const \{ presetContext = null, runtimeConfigOverride = null, \.\.\.requestOverrides \} = options \|\| \{\};/);

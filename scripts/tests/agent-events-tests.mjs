@@ -3,11 +3,67 @@ import assert from 'node:assert/strict';
 import {
   AGENT_EVENT_TYPES,
   buildAgentTraceEvent,
+  normalizeAgentUsage,
   normalizeAgentEvent,
   normalizeAgentRun,
   normalizeAgentStatus,
   normalizeAgentStep,
 } from '../../src/scripts/agent/agent-events.js';
+
+{
+  const usage = normalizeAgentUsage({
+    provider: 'makersuite',
+    model: 'gemini-3.7-flash',
+    promptTokens: 20,
+    completionTokens: 5,
+    totalTokens: 25,
+    latencyMs: 1600,
+    firstTokenLatencyMs: 400,
+    firstMeaningfulDeltaLatencyMs: 400,
+    outputDurationMs: 1200,
+    tokensPerSecond: 4.2,
+    systemFingerprint: '',
+    modelVersion: 'gemini-3.7-flash-20260801',
+    responseId: 'response-1',
+    responseModel: 'gemini-3.7-flash-20260801',
+    routedProvider: 'google',
+    providerCalls: [{
+      callIndex: 1,
+      mode: 'provider_fc',
+      outcome: 'succeeded',
+      provider: 'makersuite',
+      model: 'gemini-3.7-flash',
+      promptTokens: 20,
+      completionTokens: 5,
+      totalTokens: 25,
+      latencyMs: 1600,
+      firstMeaningfulDeltaLatencyMs: 400,
+      tokensPerSecond: 4.2,
+      responseId: 'response-1',
+    }],
+  });
+  assert.equal(usage.firstTokenLatencyMs, 400);
+  assert.equal(usage.firstMeaningfulDeltaLatencyMs, 400);
+  assert.equal(usage.outputDurationMs, 1200);
+  assert.equal(usage.tokensPerSecond, 4.2);
+  assert.equal(usage.modelVersion, 'gemini-3.7-flash-20260801');
+  assert.equal(usage.responseId, 'response-1');
+  assert.equal(usage.providerCalls.length, 1);
+  assert.equal(usage.providerCalls[0].mode, 'provider_fc');
+  assert.equal(usage.providerCalls[0].tokensPerSecond, 4.2);
+  console.log('ok - normalizeAgentUsage preserves response telemetry and separate provider calls');
+}
+
+{
+  const legacyUsage = normalizeAgentUsage({
+    provider: 'openai',
+    model: 'legacy-telemetry-model',
+    firstTokenLatencyMs: 275,
+  });
+  assert.equal(legacyUsage.firstTokenLatencyMs, 275);
+  assert.equal(legacyUsage.firstMeaningfulDeltaLatencyMs, 275);
+  console.log('ok - normalizeAgentUsage maps legacy-only first token latency to the canonical metric');
+}
 
 {
   assert.equal(normalizeAgentStatus(' success ', 'queued'), 'queued');

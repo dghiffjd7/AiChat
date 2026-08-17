@@ -21,7 +21,7 @@ export const splitRequestOptions = (options = {}) => {
   return { signal, requestId, onProviderToolCallDelta, onProviderSources, options: rest };
 };
 
-export const createLinkedAbortController = ({ timeoutMs, signal } = {}) => {
+export const createLinkedAbortController = ({ timeoutMs, signal, idle = false } = {}) => {
   const controller = new AbortController();
   const ms = Number(timeoutMs);
   const shouldTimeout = Number.isFinite(ms) && ms > 0;
@@ -43,11 +43,26 @@ export const createLinkedAbortController = ({ timeoutMs, signal } = {}) => {
     }
   }
 
-  if (shouldTimeout) {
+  const armTimeout = () => {
     timeoutId = setTimeout(() => {
       try { controller.abort(); } catch {}
     }, ms);
+  };
+
+  if (shouldTimeout) {
+    armTimeout();
   }
+
+  // idle 模式：timeoutMs 是「无数据空闲上限」而非总时长；每次 touch() 重置计时。
+  // 流式请求必须用它——总时长超时会把健康的长流在中途杀死。
+  const touch = () => {
+    if (!shouldTimeout || idle !== true || controller.signal.aborted) return;
+    if (timeoutId) {
+      try { clearTimeout(timeoutId); } catch {}
+      timeoutId = null;
+    }
+    armTimeout();
+  };
 
   const cleanup = () => {
     if (timeoutId) {
@@ -59,5 +74,5 @@ export const createLinkedAbortController = ({ timeoutMs, signal } = {}) => {
     }
   };
 
-  return { controller, cleanup };
+  return { controller, cleanup, touch };
 };

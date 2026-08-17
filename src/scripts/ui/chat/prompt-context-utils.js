@@ -33,9 +33,12 @@ export const resolveOpenAIPresetFormatReminderState = (openaiResolved = {}, acti
   const presetId = String(openaiResolved?.presetId || '').trim();
   const presetName = String(activeOpenAIPreset?.name || '').trim();
   const hasPreset = Boolean(presetId || presetName || activeOpenAIPreset);
-  const isDefaultPreset =
-    presetId.toLowerCase() === 'default' ||
-    presetName.toLowerCase() === 'default';
+  const isDefaultPreset = typeof openaiResolved?.isBuiltinDefault === 'boolean'
+    ? openaiResolved.isBuiltinDefault
+    : (
+        presetId.toLowerCase() === 'default'
+        || presetName.toLowerCase() === 'default'
+      );
   return {
     presetId,
     presetName,
