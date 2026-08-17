@@ -134,7 +134,10 @@ const buildSnapshotMessages = (legacyMessages, layers) => {
     if (!occurrences.length) {
       const cloned = cloneJson(message, {});
       messageSkeleton.push({ kind: 'passthrough', message: cloned });
-      semanticMessages.push(cloned);
+      // 语义视图统一清洗：与 segmented 分支同一口径，保证层位置变化（含 merge 后处理
+      // 把锚点并入邻居的情形）不改变 FC/JSON 最终 payload 的字节内容
+      const semanticContent = cleanSemanticText(message.content);
+      if (semanticContent) semanticMessages.push({ ...cloned, content: semanticContent });
       continue;
     }
 

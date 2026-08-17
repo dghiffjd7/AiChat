@@ -4,7 +4,7 @@
  */
 
 import { handleSSE, parseSSEBuffer } from '../stream.js';
-import { createLinkedAbortController, splitRequestOptions } from '../abort.js';
+import { createLinkedAbortController, invokeNativeHttpRequest, splitRequestOptions } from '../abort.js';
 import {
     createReasoningStreamEvent,
     extractOpenAICompatibleStreamParts,
@@ -409,16 +409,21 @@ export class CustomProvider {
         if (typeof invoker === 'function') {
             if (signal?.aborted) throw makeAbortError();
             try {
-                return await invoker('http_request', {
-                    url: prepared.url,
-                    method,
-                    headers: mergedHeaders,
-                    body: bodyBase64 ? null : (typeof body === 'string' ? body : body == null ? null : String(body)),
-                    bodyBase64: bodyBase64 || null,
-                    timeoutMs: this.timeout,
-                    requestId: requestId || null,
+                return await invokeNativeHttpRequest({
+                    invoker,
+                    signal,
+                    requestId,
+                    args: {
+                        url: prepared.url,
+                        method,
+                        headers: mergedHeaders,
+                        body: bodyBase64 ? null : (typeof body === 'string' ? body : body == null ? null : String(body)),
+                        bodyBase64: bodyBase64 || null,
+                        timeoutMs: this.timeout,
+                    },
                 });
             } catch (err) {
+                if (signal?.aborted || err?.name === 'AbortError') throw makeAbortError();
                 if (isTauriWebview()) {
                     const e = new Error(`native http_request failed: ${err?.message || err}`);
                     e.cause = err;

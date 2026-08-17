@@ -4538,3 +4538,135 @@ const runGeneratedMediaQuotaProbe = async input => {
   assert.equal(run.steps.filter(step => step.status === 'cancelled').length, 1);
   console.log('ok - maid tool cancellation stops execution and records cancelled run/step exactly once');
 }
+
+{
+  // 步间取消：工具正常完成后用户点停 → 下一轮 ReAct 规划前立即终止，不再调用模型
+  const controller = new AbortController();
+  let reactPlannerCalls = 0;
+  const registry = createAgentToolRegistry({
+    permissionEvaluator: { evaluateTool: () => ({ decision: 'allow', checks: [] }) },
+    logger: { warn() {} },
+  });
+  registry.register({
+    name: 'test.complete_then_stop',
+    title: '完成后停止',
+    description: '执行成功后触发用户停止',
+    schema: { type: 'object', additionalProperties: false },
+    permissions: [],
+    riskLevel: 'low',
+    capabilities: {
+      read: true,
+      write: false,
+      network: false,
+      cost: 'none',
+      undo: 'none',
+      modelContext: 'none',
+      confirmation: 'never',
+    },
+    execute: async () => {
+      controller.abort();
+      return { ok: true, message: '第一步已完成' };
+    },
+  });
+  const store = new AgentRunStore();
+  const runtime = createAgentTaskRuntime({ store, toolRegistry: registry, logger: { warn() {} } });
+  const agent = createMaidAssistantAgent({
+    toolRegistry: registry,
+    agentTaskRuntime: runtime,
+    planner: async () => ({
+      ok: true,
+      action: 'tool',
+      toolName: 'test.complete_then_stop',
+      args: {},
+      title: '完成后停止',
+    }),
+    reactPlanner: async () => {
+      reactPlannerCalls += 1;
+      return { ok: true, action: 'final', response: '不应到达这里' };
+    },
+    logger: { warn() {}, debug() {} },
+  });
+  const result = await agent.runPrompt('做完第一步就停', { signal: controller.signal });
+  const run = store.listRuns({ kind: 'maid_assistant' })[0];
+  assert.equal(result.status, 'cancelled');
+  assert.equal(result.reason, 'user_aborted');
+  assert.equal(reactPlannerCalls, 0);
+  assert.equal(run.status, 'cancelled');
+  assert.match(result.message, /已完成 1 步/);
+  console.log('ok - cancellation between steps stops before the next ReAct planner round with an honest step count');
+}
+
+{
+  // 外层 signal 未中止时，单独 AbortError 必须保留为供应商失败。
+  const agent = createMaidAssistantAgent({
+    planner: async () => {
+      const error = new Error('transport aborted');
+      error.name = 'AbortError';
+      throw error;
+    },
+    logger: { warn() {}, debug() {} },
+  });
+  const controller = new AbortController();
+  await assert.rejects(
+    () => agent.runPrompt('规划', { signal: controller.signal }),
+    error => error?.name === 'AbortError' && error?.message === 'transport aborted',
+  );
+  assert.equal(controller.signal.aborted, false);
+  console.log('ok - bare AbortError with a live caller signal is not misclassified as user cancellation');
+}
+
+{
+  // registry 会把工具结果包在 output.result；内层取消仍必须记为 cancelled。
+  const registry = createAgentToolRegistry({
+    permissionEvaluator: { evaluateTool: () => ({ decision: 'allow', checks: [] }) },
+    logger: { warn() {} },
+  });
+  registry.register({
+    name: 'test.return_cancelled',
+    title: '返回取消',
+    description: '模拟工具以业务结果返回用户取消',
+    schema: { type: 'object', additionalProperties: false },
+    permissions: [],
+    riskLevel: 'low',
+    capabilities: {
+      read: true,
+      write: false,
+      network: false,
+      cost: 'none',
+      undo: 'none',
+      modelContext: 'none',
+      confirmation: 'never',
+    },
+    execute: async () => ({
+      ok: false,
+      cancelled: true,
+      reason: 'user_aborted',
+      message: '用户已取消该工具。',
+    }),
+  });
+  const store = new AgentRunStore();
+  const runtime = createAgentTaskRuntime({ store, toolRegistry: registry, logger: { warn() {} } });
+  const agent = createMaidAssistantAgent({
+    toolRegistry: registry,
+    agentTaskRuntime: runtime,
+    planner: async () => ({
+      ok: true,
+      action: 'tool',
+      toolName: 'test.return_cancelled',
+      args: {},
+      title: '返回取消',
+    }),
+    reactPlanner: async () => {
+      throw new Error('取消后不得继续 ReAct');
+    },
+    logger: { warn() {}, debug() {} },
+  });
+  const result = await agent.runPrompt('执行后取消');
+  const run = store.listRuns({ kind: 'maid_assistant' })[0];
+  assert.equal(result.status, 'cancelled');
+  assert.equal(result.reason, 'user_aborted');
+  assert.equal(result.steps[0].status, 'cancelled');
+  assert.equal(run.status, 'cancelled');
+  assert.equal(run.steps[0].status, 'cancelled');
+  console.log('ok - registry-wrapped tool cancellation stops ReAct and records cancelled run/step');
+}

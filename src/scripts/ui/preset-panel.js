@@ -3702,7 +3702,9 @@ export class PresetPanel {
             pos.innerHTML = opts.map(o => `<option value="${o.v}">${o.t}</option>`).join('');
             const fallbackPos = cfg.defaultPosition
                 ?? (opts.some(o => o.v === EXT_PROMPT_TYPES.IN_PROMPT) ? EXT_PROMPT_TYPES.IN_PROMPT : opts[0]?.v);
-            pos.value = String(p[cfg.positionKey] ?? fallbackPos);
+            pos.value = cfg.placementMode === 'phone_format'
+                ? normalizePhoneFormatPromptPosition(p[cfg.positionKey] ?? fallbackPos)
+                : String(p[cfg.positionKey] ?? fallbackPos);
             const posWrap = this.wrapSelectWithCustomUI(pos, '注入位置');
 
             const depth = document.createElement('input');
@@ -3785,6 +3787,18 @@ export class PresetPanel {
             { v: EXT_PROMPT_TYPES.NONE, t: 'NONE（不注入）' },
         ];
 
+        const phoneFormatPlacementChip = (positionKey, depthKey) => {
+            const position = normalizePhoneFormatPromptPosition(p?.[positionKey]);
+            const label = position === 'history_depth'
+                ? `SYSTEM 深度${normalizePhoneFormatPromptDepth(p?.[depthKey])}`
+                : ({
+                    after_persona: 'SYSTEM 角色后',
+                    system_end: 'SYSTEM 系统区末',
+                    history_before: 'SYSTEM 历史前',
+                }[position] || 'SYSTEM 历史前');
+            return { label, tone: 'placement' };
+        };
+
         list.appendChild(makePromptBlock({
             idPrefix: 'phone-format-intro', title: '手机格式开头',
             enabledKey: 'phone_format_intro_enabled',
@@ -3793,7 +3807,7 @@ export class PresetPanel {
             placeholder: '手机格式开头',
             placementMode: 'phone_format', positionOptions: PHONE_FORMAT_POSITION_OPTIONS, defaultPosition: 'history_before', defaultDepth: 1,
             metaChips: [
-                { label: 'SYSTEM D0', tone: 'placement' },
+                phoneFormatPlacementChip('phone_format_intro_position', 'phone_format_intro_depth'),
                 { label: '顺序 1/4', tone: 'placement' },
             ],
         }));
@@ -3805,7 +3819,7 @@ export class PresetPanel {
             placeholder: 'QQ聊天格式说明',
             placementMode: 'phone_format', positionOptions: PHONE_FORMAT_POSITION_OPTIONS, defaultPosition: 'history_before', defaultDepth: 1,
             metaChips: [
-                { label: 'SYSTEM D0', tone: 'placement' },
+                phoneFormatPlacementChip('phone_format_chat_position', 'phone_format_chat_depth'),
                 { label: '表情包自动填充', tone: 'dynamic' },
             ],
         }));
@@ -3817,7 +3831,7 @@ export class PresetPanel {
             placeholder: 'QQ空间格式说明',
             placementMode: 'phone_format', positionOptions: PHONE_FORMAT_POSITION_OPTIONS, defaultPosition: 'history_before', defaultDepth: 1,
             metaChips: [
-                { label: 'SYSTEM D0', tone: 'placement' },
+                phoneFormatPlacementChip('phone_format_moment_position', 'phone_format_moment_depth'),
                 { label: '动态格式', tone: 'dynamic' },
             ],
         }));
@@ -3829,7 +3843,7 @@ export class PresetPanel {
             placeholder: '手机格式结尾',
             placementMode: 'phone_format', positionOptions: PHONE_FORMAT_POSITION_OPTIONS, defaultPosition: 'history_before', defaultDepth: 1,
             metaChips: [
-                { label: 'SYSTEM D0', tone: 'placement' },
+                phoneFormatPlacementChip('phone_format_footer_position', 'phone_format_footer_depth'),
                 { label: '顺序 4/4', tone: 'placement' },
             ],
         }));
@@ -7164,6 +7178,8 @@ export class PresetPanel {
         if (sectionId === 'sysprompt') {
             current.content = root.querySelector('#sysprompt-content')?.value ?? '';
             current.post_history = root.querySelector('#sysprompt-post')?.value ?? '';
+            // 位置卡未渲染时保留原字段，避免被静默重置为默认值
+            if (!root.querySelector('#phone-format-intro-position')) return current;
             current.phone_format_intro_position = normalizePhoneFormatPromptPosition(root.querySelector('#phone-format-intro-position')?.value);
             current.phone_format_intro_depth = normalizePhoneFormatPromptDepth(root.querySelector('#phone-format-intro-depth')?.value);
             current.phone_format_chat_position = normalizePhoneFormatPromptPosition(root.querySelector('#phone-format-chat-position')?.value);

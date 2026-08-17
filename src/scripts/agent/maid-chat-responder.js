@@ -13,6 +13,7 @@ import {
   buildMaidUserContentWithImages,
   getMaidImageAttachmentsFromContext,
 } from './maid-attachment-parts.js';
+import { isMaidUserAbort } from './maid-failure-codes.js';
 
 const trim = (value, fallback = '') => {
   const text = String(value ?? '').trim();
@@ -204,6 +205,7 @@ export const createMaidChatResponder = ({
       temperature: 0.7,
       maxTokens: 800,
       max_tokens: 800,
+      signal: context?.signal,
     });
     emitDebugSnapshot(onDebugSnapshot, {
       source: 'maid_chat_responder',
@@ -231,6 +233,8 @@ export const createMaidChatResponder = ({
       message: trim(responseText, '我在的。'),
     };
   } catch (error) {
+    // 用户取消要向上穿透，不能落成「女仆暂时无法回复」的普通失败
+    if (isMaidUserAbort(error, context?.signal)) throw error;
     logger?.warn?.('maid chat responder failed', error);
     emitDebugSnapshot(onDebugSnapshot, {
       source: 'maid_chat_responder',

@@ -17,6 +17,7 @@ import {
 import { buildMaidRunContinuationPromptBlock } from './maid-run-continuation.js';
 import { buildMaidSourceGroundingPromptBlock } from './maid-source-grounding.js';
 import { buildMaidVisualSpecPromptBlock } from './maid-visual-spec.js';
+import { isMaidUserAbort } from './maid-failure-codes.js';
 import {
   MAID_PROMPTED_JSON_MODE,
   MAID_PROVIDER_FC_MODE,
@@ -125,6 +126,11 @@ const chatWithFallback = async (
     probe.error = String(error?.message || error).slice(0, 120);
     probe.elapsedMs = Date.now() - startedAt;
     logger?.warn?.(`[maid-model] chat failed after ${probe.elapsedMs}ms: ${probe.error}`);
+    // 用户取消不属于主档故障，绝不转 fallback 重试（会多计费一次）
+    if (isMaidUserAbort(error, options?.signal)) {
+      reportUsage(false);
+      throw error;
+    }
     if (!fallbackClient || typeof fallbackClient.chat !== 'function') {
       reportUsage(false);
       throw error;
@@ -639,6 +645,7 @@ export const createMaidImportedCardClassifier = ({
         temperature: 0,
         maxTokens: 10000,
         max_tokens: 10000,
+        signal: context?.signal,
       },
       logger,
       null,
@@ -1318,6 +1325,7 @@ export const createMaidModelBackedPlanner = ({
         temperature: 0,
         maxTokens: 8000,
         max_tokens: 8000,
+        signal: context?.signal,
       },
       logger,
       (source) => {
@@ -1354,7 +1362,7 @@ export const createMaidModelBackedPlanner = ({
       }),
     };
   } catch (error) {
-    if (error?.name === 'AbortError' || context?.signal?.aborted === true) throw error;
+    if (isMaidUserAbort(error, context?.signal)) throw error;
     logger?.warn?.('maid model planner failed', error);
     emitDebugSnapshot(onDebugSnapshot, {
       source: 'maid_model_planner',
@@ -1500,6 +1508,7 @@ export const createMaidModelBackedReActPlanner = ({
         temperature: 0,
         maxTokens: 12000,
         max_tokens: 12000,
+        signal: context?.signal,
       },
       logger,
       (source) => {
@@ -1534,7 +1543,7 @@ export const createMaidModelBackedReActPlanner = ({
       }),
     };
   } catch (error) {
-    if (error?.name === 'AbortError' || context?.signal?.aborted === true) throw error;
+    if (isMaidUserAbort(error, context?.signal)) throw error;
     logger?.warn?.('maid react planner failed', error);
     emitDebugSnapshot(onDebugSnapshot, {
       source: 'maid_model_react',

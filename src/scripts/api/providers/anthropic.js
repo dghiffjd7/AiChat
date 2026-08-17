@@ -3,7 +3,7 @@
  */
 
 import { handleSSE } from '../stream.js';
-import { createLinkedAbortController, splitRequestOptions } from '../abort.js';
+import { createLinkedAbortController, invokeNativeHttpRequest, splitRequestOptions } from '../abort.js';
 import { createReasoningStreamEvent, extractAnthropicStreamParts } from '../native-reasoning.js';
 import { prepareTransportRequest } from '../transport.js';
 import { emitDebugLog } from '../../utils/debug-log.js';
@@ -174,15 +174,20 @@ export class AnthropicProvider {
         if (typeof invoker === 'function') {
             if (signal?.aborted) throw makeAbortError();
             try {
-                return await invoker('http_request', {
-                    url: prepared.url,
-                    method,
-                    headers: mergedHeaders,
-                    body: typeof body === 'string' ? body : body == null ? null : String(body),
-                    timeoutMs: this.timeout,
-                    requestId: requestId || null,
+                return await invokeNativeHttpRequest({
+                    invoker,
+                    signal,
+                    requestId,
+                    args: {
+                        url: prepared.url,
+                        method,
+                        headers: mergedHeaders,
+                        body: typeof body === 'string' ? body : body == null ? null : String(body),
+                        timeoutMs: this.timeout,
+                    },
                 });
             } catch (err) {
+                if (signal?.aborted || err?.name === 'AbortError') throw makeAbortError();
                 if (isTauriWebview()) {
                     const e = new Error(`native http_request failed: ${err?.message || err}`);
                     e.cause = err;

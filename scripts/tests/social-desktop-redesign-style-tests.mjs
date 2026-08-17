@@ -3,6 +3,7 @@ import fs from 'node:fs';
 
 const html = fs.readFileSync(new URL('../../src/index.html', import.meta.url), 'utf8');
 const css = fs.readFileSync(new URL('../../src/assets/css/social-desktop-redesign.css', import.meta.url), 'utf8');
+const mainCss = fs.readFileSync(new URL('../../src/assets/css/main.css', import.meta.url), 'utf8');
 const theme = fs.readFileSync(new URL('../../src/assets/css/theme.css', import.meta.url), 'utf8');
 const app = fs.readFileSync(new URL('../../src/scripts/ui/app.js', import.meta.url), 'utf8');
 const chatListHandleMarkup = html.match(/<button[^>]*id="chat-list-collapse-handle"[^>]*>([\s\S]*?)<\/button>/)?.[1] || '';
@@ -40,6 +41,11 @@ for (const block of desktopMediaBlocks.slice().reverse()) {
   cssOutsideDesktop = `${cssOutsideDesktop.slice(0, block.start)}${cssOutsideDesktop.slice(block.end)}`;
 }
 const darkThemeBlock = collectBalancedCssBlocks(theme, /body\[data-theme-mode='dark'\]\s*/)[0]?.body || '';
+const mobilePageMedia = collectBalancedCssBlocks(mainCss, /@media\s*\(max-width:\s*899px\)\s*/)
+  .map(block => block.body)
+  .join('\n');
+const mobilePageFadeIn = collectBalancedCssBlocks(mainCss, /@keyframes\s+mobilePageFadeIn\s*/)[0]?.body || '';
+const mobilePageFadeOut = collectBalancedCssBlocks(mainCss, /@keyframes\s+mobilePageFadeOut\s*/)[0]?.body || '';
 
 assert.match(html, /id="desktop-chat-placeholder"/);
 assert.match(html, /id="chat-list-collapse-handle"/);
@@ -50,6 +56,16 @@ assert.match(html, /<button[^>]+class="desktop-rail-brand"[^>]+aria-label="切�
 assert.match(html, /class="chat-room-presence-dot"/);
 assert.match(html, /id="current-chat-avatar-button"/);
 assert.match(css, /@media\s*\(min-width:\s*900px\)/);
+assert.match(mobilePageFadeIn, /from\s*\{\s*opacity:\s*0;?\s*\}[\s\S]*to\s*\{\s*opacity:\s*1;?\s*\}/, '手机版分页进入应只做淡入');
+assert.match(mobilePageFadeOut, /from\s*\{\s*opacity:\s*1;?\s*\}[\s\S]*to\s*\{\s*opacity:\s*0;?\s*\}/, '手机版分页离开应只做淡出');
+assert.doesNotMatch(`${mobilePageFadeIn}\n${mobilePageFadeOut}`, /transform\s*:/, '手机版分页不得再平移含滚动层的整页');
+assert.match(mobilePageMedia, /\.page\.active\[data-page-dir=['"]forward['"]\],[\s\S]*mobilePageFadeIn/, '手机版前后方向应共用稳定淡入');
+assert.match(mobilePageMedia, /\.page\.page-exiting\[data-page-dir=['"]forward['"]\],[\s\S]*mobilePageFadeOut/, '手机版离场页应原地淡出');
+assert.match(
+  cssOutsideDesktop,
+  /#contacts-page\.page-exiting\s*\{[^}]*position:\s*absolute;/s,
+  '手机版联系人离场页必须脱离文档流，避免把进入页挤到下半屏',
+);
 assert.ok(desktopMediaBlocks.length >= 1, '桌面规则必须存在于 min-width: 900px 媒体块');
 assert.match(cssOutsideDesktop, /\.desktop-chat-list-handle\s*\{[^}]*display:\s*none;/s, '移动端默认必须隐藏锚条热区');
 assert.doesNotMatch(

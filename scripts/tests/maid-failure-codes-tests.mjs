@@ -4,6 +4,7 @@ import {
   MAID_FAILURE_CODES,
   classifyMaidRunFailure,
   classifyMaidToolFailure,
+  isMaidUserAbort,
 } from '../../src/scripts/agent/maid-failure-codes.js';
 
 {
@@ -107,6 +108,19 @@ import {
 }
 
 console.log('maid-failure-codes-tests passed');
+
+{
+  const liveSignal = new AbortController().signal;
+  const timeoutError = new Error('provider timeout');
+  timeoutError.name = 'AbortError';
+  assert.equal(isMaidUserAbort(timeoutError, liveSignal), false);
+
+  const controller = new AbortController();
+  controller.abort();
+  assert.equal(isMaidUserAbort(timeoutError, controller.signal), true);
+  assert.equal(isMaidUserAbort({ code: 'user_aborted' }, liveSignal), true);
+  console.log('ok - 用户中止与供应商 AbortError 依外层 signal/明确错误码区分');
+}
 
 {
   // 用户中止类失败识别（不与 safetyDenied 混淆）

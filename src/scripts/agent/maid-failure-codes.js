@@ -25,6 +25,14 @@ const trim = (value, fallback = '') => {
   return text || fallback;
 };
 
+// AbortError 也会由供应商内部超时产生；只有调用方 signal 已终止或错误带明确业务码时，
+// 才能归类为用户主动停止。
+export const isMaidUserAbort = (error = null, signal = null) => {
+  if (signal?.aborted === true) return true;
+  return [error?.failureCode, error?.code, error?.reason]
+    .some(value => trim(value) === MAID_FAILURE_CODES.userAborted);
+};
+
 const TOOL_ERROR_CODE_MAP = Object.freeze({
   user_aborted: MAID_FAILURE_CODES.userAborted,
   agent_tool_args_invalid: MAID_FAILURE_CODES.invalidArgs,

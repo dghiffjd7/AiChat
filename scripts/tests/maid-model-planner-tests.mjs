@@ -1240,3 +1240,75 @@ const cloneJson = value => JSON.parse(JSON.stringify(value));
   })[0].content, /sourceLayer/);
   console.log('ok - Planner and ReAct receive source-layering rules and verified canon references');
 }
+
+{
+  // 取消贯通：signal 进入 client.chat；AbortError 不触发 fallback 重试（多计费一次），并向上穿透
+  const controller = new AbortController();
+  let capturedSignal = null;
+  let fallbackCalls = 0;
+  const planner = createMaidModelBackedPlanner({
+    resolveRuntimeConfig: async () => ({
+      configured: true,
+      client: {
+        chat: async (_messages, options) => {
+          capturedSignal = options?.signal || null;
+          controller.abort();
+          const error = new Error('stopped by user');
+          error.name = 'AbortError';
+          throw error;
+        },
+      },
+      fallbackClient: {
+        chat: async () => {
+          fallbackCalls += 1;
+          return '{"ok":true}';
+        },
+      },
+    }),
+    isConfigReady: () => true,
+    logger: { warn() {}, debug() {} },
+  });
+  await assert.rejects(
+    () => planner('打开设置', { signal: controller.signal }),
+    error => error?.name === 'AbortError',
+  );
+  assert.equal(capturedSignal, controller.signal);
+  assert.equal(fallbackCalls, 0);
+  console.log('ok - planner cancellation never retries the fallback model and rethrows AbortError');
+}
+
+{
+  // 供应商内部超时也可能抛 AbortError；外层 signal 未中止时不得冒充用户取消。
+  const controller = new AbortController();
+  let fallbackCalls = 0;
+  const planner = createMaidModelBackedPlanner({
+    resolveRuntimeConfig: async () => ({
+      configured: true,
+      client: {
+        chat: async () => {
+          const error = new Error('provider timeout aborted');
+          error.name = 'AbortError';
+          throw error;
+        },
+      },
+      fallbackClient: {
+        chat: async () => {
+          fallbackCalls += 1;
+          return JSON.stringify({
+            ok: false,
+            status: 'unsupported',
+            reason: 'fallback_used',
+            message: '已切换备用模型。',
+          });
+        },
+      },
+    }),
+    isConfigReady: () => true,
+    logger: { warn() {}, debug() {} },
+  });
+  const result = await planner('打开设置', { signal: controller.signal });
+  assert.equal(controller.signal.aborted, false);
+  assert.equal(fallbackCalls, 1);
+  assert.equal(result.reason, 'fallback_used');
+  console.log('ok - provider AbortError with a live caller signal remains a failure and may use fallback');
+}

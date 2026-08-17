@@ -346,3 +346,50 @@ const runs = [
   assert.equal(formatAgentRunDiagnostics({ runs: [] }), 'No agent runs');
   console.log('ok - buildAgentRunCacheStats summarizes run cache pressure');
 }
+
+{
+  // 用户主动停止（user_cancelled / user_aborted）不计入失败统计与失败徽章；
+  // 无 cancelReason 的异常 cancelled 仍按失败呈现（既有语义不变）
+  const userCancelled = buildAgentRunSummary({
+    id: 'run-user-cancelled',
+    kind: 'maid_assistant',
+    status: 'cancelled',
+    cancelReason: 'user_cancelled',
+    metadata: { failureCode: 'user_aborted' },
+    createdAt: 1700,
+    updatedAt: 1710,
+    finishedAt: 1710,
+  });
+  assert.equal(userCancelled.isFailure, false);
+  const orphanCancelled = buildAgentRunSummary({
+    id: 'run-orphan-cancelled',
+    kind: 'maid_assistant',
+    status: 'cancelled',
+    createdAt: 1700,
+    updatedAt: 1710,
+    finishedAt: 1710,
+  });
+  assert.equal(orphanCancelled.isFailure, true);
+  const view = buildAgentRunListView([
+    {
+      id: 'run-user-cancelled',
+      kind: 'maid_assistant',
+      status: 'cancelled',
+      cancelReason: 'user_cancelled',
+      createdAt: 1700,
+      updatedAt: 1710,
+      finishedAt: 1710,
+    },
+    {
+      id: 'run-failed',
+      kind: 'maid_assistant',
+      status: 'failed',
+      createdAt: 1700,
+      updatedAt: 1711,
+      finishedAt: 1711,
+    },
+  ], { status: 'failure' });
+  assert.deepEqual(view.runs.map(run => run.id), ['run-failed']);
+  assert.equal(view.meta.failures, 1);
+  console.log('ok - user-initiated cancellations are excluded from failure stats while orphan cancels remain visible');
+}

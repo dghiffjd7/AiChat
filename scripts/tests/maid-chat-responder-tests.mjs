@@ -178,3 +178,54 @@ import {
   assert.equal(result.reason, 'maid_profile_not_bound');
   console.log('ok - maid chat responder refuses without bound runtime client');
 }
+
+{
+  // 取消贯通：signal 传入 client.chat；AbortError 向上穿透，不转「女仆暂时无法回复」普通失败
+  const controller = new AbortController();
+  let capturedSignal = null;
+  const responder = createMaidChatResponder({
+    resolveRuntimeConfig: async () => ({
+      configured: true,
+      client: {
+        chat: async (_messages, options) => {
+          capturedSignal = options?.signal || null;
+          controller.abort();
+          const error = new Error('stopped by user');
+          error.name = 'AbortError';
+          throw error;
+        },
+      },
+    }),
+    logger: { warn() {} },
+  });
+  await assert.rejects(
+    () => responder('随便聊聊', { signal: controller.signal }),
+    error => error?.name === 'AbortError',
+  );
+  assert.equal(capturedSignal, controller.signal);
+  console.log('ok - maid chat responder forwards signal and rethrows AbortError');
+}
+
+{
+  // 外层 signal 仍存活的 AbortError 是供应商失败，不是用户点击停止。
+  const controller = new AbortController();
+  const responder = createMaidChatResponder({
+    resolveRuntimeConfig: async () => ({
+      configured: true,
+      client: {
+        chat: async () => {
+          const error = new Error('provider timeout aborted');
+          error.name = 'AbortError';
+          throw error;
+        },
+      },
+    }),
+    logger: { warn() {} },
+  });
+  const result = await responder('随便聊聊', { signal: controller.signal });
+  assert.equal(controller.signal.aborted, false);
+  assert.equal(result.ok, false);
+  assert.equal(result.status, 'failed');
+  assert.match(result.reason, /provider timeout aborted/);
+  console.log('ok - provider AbortError with a live caller signal is reported as a chat failure');
+}

@@ -13581,41 +13581,80 @@ Phase G（Frame 36）：循环衔接
       return [{ role: 'user', content: userContent }];
     };
 
+    let stickerAiTextPending = false;
+    let stickerAiTextRequestToken = 0;
+    let stickerAiTextAbortController = null;
+
+    const runStickerPromptGeneration = async ({ label, loadingText, buildMessages, doneText }) => {
+      if (stickerAiTextPending) return;
+      stickerAiTextPending = true;
+      const token = ++stickerAiTextRequestToken;
+      try {
+        const config = await ensureChatConfigReady();
+        if (!config) return;
+        setBusy(true);
+        setStatus(loadingText, 'loading');
+        try {
+          const client = new LLMClient(config);
+          const useWebSearch = await webSearchToggleRuntime.consume();
+          renderAdHocWebSources(webSourcesEl, []);
+          try { stickerAiTextAbortController?.abort(); } catch {}
+          const abortController = new AbortController();
+          stickerAiTextAbortController = abortController;
+          const generation = buildAdHocWebSearchRuntime({
+            client,
+            config,
+            enabled: useWebSearch,
+            sessionId: `sticker-ai:${stickerAiMode}`,
+            requestOptions: { temperature: 0.6, signal: abortController.signal },
+            onStatus: status => {
+              if (token !== stickerAiTextRequestToken) return;
+              setStatus(
+                status?.state === 'unavailable'
+                  ? `${status?.message || '本次联网不可用'}；继续普通生成…`
+                  : (status?.message || ''),
+                'loading',
+              );
+            },
+            onSources: sources => {
+              if (token !== stickerAiTextRequestToken) return;
+              renderAdHocWebSources(webSourcesEl, sources);
+            },
+          });
+          const messages = buildMessages();
+          const output = await generation.client.chat(messages, generation.requestOptions);
+          if (token !== stickerAiTextRequestToken) return;
+          finalInput.value = String(output || '').trim();
+          scheduleTextSave(true);
+          setStatus(doneText, 'success');
+        } catch (err) {
+          if (err?.name === 'AbortError') {
+            if (token === stickerAiTextRequestToken) setStatus('已停止本次生成', '');
+            return;
+          }
+          setStatus(`${label}失败：${err?.message || '未知错误'}`, 'error');
+          window.toastr?.error?.(`${label}失败`);
+        } finally {
+          setBusy(false);
+        }
+      } finally {
+        stickerAiTextPending = false;
+      }
+    };
+
     const handleBuildPrompt = async () => {
       const template = String(templateInput?.value || '').trim();
       if (!template) {
         window.toastr?.warning?.('请先填写提示词模板');
         return;
       }
-      const config = await ensureChatConfigReady();
-      if (!config) return;
-      setBusy(true);
-      setStatus('正在生成提示词...', 'loading');
-      try {
-        const client = new LLMClient(config);
-        const useWebSearch = await webSearchToggleRuntime.consume();
-        renderAdHocWebSources(webSourcesEl, []);
-        const generation = buildAdHocWebSearchRuntime({
-          client,
-          config,
-          enabled: useWebSearch,
-          sessionId: `sticker-ai:${stickerAiMode}`,
-          requestOptions: { temperature: 0.6 },
-          onStatus: status => setStatus(status?.message || '', status?.state === 'unavailable' ? '' : 'loading'),
-          onSources: sources => renderAdHocWebSources(webSourcesEl, sources),
-        });
-        const messages = buildPromptMessages(template, getPromptInputText());
-        const output = await generation.client.chat(messages, generation.requestOptions);
-        finalInput.value = String(output || '').trim();
-        scheduleTextSave(true);
-        const modeLabel = stickerAiMode === 'sprite' ? '精灵图' : '贴图';
-        setStatus(`提示词已生成，可继续编辑或直接生成${modeLabel}`, 'success');
-      } catch (err) {
-        setStatus(`生成提示词失败：${err?.message || '未知错误'}`, 'error');
-        window.toastr?.error?.('生成提示词失败');
-      } finally {
-        setBusy(false);
-      }
+      const modeLabel = stickerAiMode === 'sprite' ? '精灵图' : '贴图';
+      await runStickerPromptGeneration({
+        label: '生成提示词',
+        loadingText: '正在生成提示词...',
+        buildMessages: () => buildPromptMessages(template, getPromptInputText()),
+        doneText: `提示词已生成，可继续编辑或直接生成${modeLabel}`,
+      });
     };
 
     const handleContinuePrompt = async () => {
@@ -13629,35 +13668,13 @@ Phase G（Frame 36）：循环衔接
         window.toastr?.warning?.('暂无可补全的提示词草稿');
         return;
       }
-      const config = await ensureChatConfigReady();
-      if (!config) return;
-      setBusy(true);
-      setStatus('正在补全提示词...', 'loading');
-      try {
-        const client = new LLMClient(config);
-        const useWebSearch = await webSearchToggleRuntime.consume();
-        renderAdHocWebSources(webSourcesEl, []);
-        const generation = buildAdHocWebSearchRuntime({
-          client,
-          config,
-          enabled: useWebSearch,
-          sessionId: `sticker-ai:${stickerAiMode}`,
-          requestOptions: { temperature: 0.6 },
-          onStatus: status => setStatus(status?.message || '', status?.state === 'unavailable' ? '' : 'loading'),
-          onSources: sources => renderAdHocWebSources(webSourcesEl, sources),
-        });
-        const messages = buildPromptContinueMessages(template, getPromptInputText(), draft);
-        const output = await generation.client.chat(messages, generation.requestOptions);
-        finalInput.value = String(output || '').trim();
-        scheduleTextSave(true);
-        const modeLabel = stickerAiMode === 'sprite' ? '精灵图' : '贴图';
-        setStatus(`提示词已补全，可继续编辑或直接生成${modeLabel}`, 'success');
-      } catch (err) {
-        setStatus(`补全提示词失败：${err?.message || '未知错误'}`, 'error');
-        window.toastr?.error?.('补全提示词失败');
-      } finally {
-        setBusy(false);
-      }
+      const modeLabel = stickerAiMode === 'sprite' ? '精灵图' : '贴图';
+      await runStickerPromptGeneration({
+        label: '补全提示词',
+        loadingText: '正在补全提示词...',
+        buildMessages: () => buildPromptContinueMessages(template, getPromptInputText(), draft),
+        doneText: `提示词已补全，可继续编辑或直接生成${modeLabel}`,
+      });
     };
 
     const handleGenerateImage = async () => {
@@ -13724,6 +13741,8 @@ Phase G（Frame 36）：循环衔接
       overlay.classList.remove('is-active');
       modal.classList.remove('is-active');
       stopAnimationPreview();
+      // 关闭弹窗即停止在途提示词生成，避免请求与联网工具循环空耗
+      try { stickerAiTextAbortController?.abort(); } catch {}
     };
 
     overlay.addEventListener('click', () => hide());
@@ -24598,7 +24617,7 @@ Phase G（Frame 36）：循环衔接
     getBallDragRuntime: () => modeSwitchInteractionRuntime,
     // 女仆流首选画布 = 指令条白色结果流（结构化 trace 卡原位并入，避免双流）
     onMaidTrace: view => maidCommandInputRuntime?.applyTraceView?.(view) === true,
-    onCancelMaidRun: () => maidCommandInputRuntime?.cancelActive?.(),
+    onCancelMaidRun: ({ runId = '' } = {}) => maidCommandInputRuntime?.cancelActive?.({ runId }),
   });
   executionFlowRuntime.attachCreativeLane?.(creativeExecutionLaneRuntime);
   executionFlowRuntime.bind();

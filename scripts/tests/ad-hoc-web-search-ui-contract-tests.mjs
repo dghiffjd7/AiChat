@@ -21,11 +21,15 @@ assert.match(worldRun, /renderAdHocWebSources\(this\.aiWebSourcesEl, sources\)/)
 assert.match(appSource, /id="sticker-ai-web-search"/);
 assert.match(appSource, /const webSearchToggleRuntime = createAdHocWebSearchToggleRuntime\(\{/);
 const promptHandlers = appSource.slice(
-  appSource.indexOf('const handleBuildPrompt = async'),
+  appSource.indexOf('const runStickerPromptGeneration = async'),
   appSource.indexOf('const show = (options = {})'),
 );
-assert.equal((promptHandlers.match(/await webSearchToggleRuntime\.consume\(\)/g) || []).length, 2);
-assert.equal((promptHandlers.match(/generation\.client\.chat\(messages, generation\.requestOptions\)/g) || []).length, 2);
+assert.equal((promptHandlers.match(/await webSearchToggleRuntime\.consume\(\)/g) || []).length, 1);
+assert.equal((promptHandlers.match(/generation\.client\.chat\(messages, generation\.requestOptions\)/g) || []).length, 1);
+assert.equal((promptHandlers.match(/runStickerPromptGeneration\(\{/g) || []).length, 2);
+assert.match(promptHandlers, /if \(stickerAiTextPending\) return;/);
+assert.match(promptHandlers, /signal: abortController\.signal/);
+assert.match(promptHandlers, /err\?\.name === 'AbortError'/);
 const imageHandler = appSource.slice(
   appSource.indexOf('const handleGenerateImage = async'),
   appSource.indexOf('const show = (options = {})'),

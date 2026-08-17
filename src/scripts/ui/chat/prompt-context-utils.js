@@ -114,8 +114,17 @@ const mergePromptMessageContent = (left, right) => {
   return parts;
 };
 
-const mergeAdjacentPromptMessages = (messages = []) => {
+// 传输锚点占位消息（整条内容只有 chat-semantic:* 标记）：
+// merge 模式下保持独立且不阻断两侧同角色合并，保证 FC/JSON 剥离该层后的
+// 结构与「该层不存在」时完全一致（阶段 O 逐字节隔离不变量）。
+const TRANSPORT_ANCHOR_ONLY_PATTERN = /^(?:\s*\uE000chat-semantic:[^\uE001]*\uE001\s*)+$/;
+const isTransportAnchorOnlyContent = content => (
+  typeof content === 'string' && content.length > 0 && TRANSPORT_ANCHOR_ONLY_PATTERN.test(content)
+);
+
+const mergeAdjacentPromptMessages = (messages = [], { preserveTransportAnchors = false } = {}) => {
   const merged = [];
+  let lastMergeable = null;
   for (const item of Array.isArray(messages) ? messages : []) {
     const { name, tool_calls, tool_call_id, ...rest } = item || {};
     const message = {
@@ -123,11 +132,16 @@ const mergeAdjacentPromptMessages = (messages = []) => {
       role: normalizePromptMessageRole(item?.role),
       content: item?.content ?? '',
     };
-    const prev = merged[merged.length - 1];
+    if (preserveTransportAnchors && isTransportAnchorOnlyContent(message.content)) {
+      merged.push(message);
+      continue;
+    }
+    const prev = preserveTransportAnchors ? lastMergeable : merged[merged.length - 1];
     if (prev && prev.role === message.role && message.role !== 'tool') {
       prev.content = mergePromptMessageContent(prev.content, message.content);
     } else {
       merged.push(message);
+      lastMergeable = message;
     }
   }
   return merged;
@@ -136,8 +150,8 @@ const mergeAdjacentPromptMessages = (messages = []) => {
 const ensurePromptMessagesNotEmpty = (messages = []) =>
   messages.length ? messages : [{ role: 'user', content: PROMPT_EMPTY_TEXT_PLACEHOLDER }];
 
-export const applyMergePromptPostProcessing = (messages = []) =>
-  ensurePromptMessagesNotEmpty(mergeAdjacentPromptMessages(messages));
+export const applyMergePromptPostProcessing = (messages = [], { preserveTransportAnchors = false } = {}) =>
+  ensurePromptMessagesNotEmpty(mergeAdjacentPromptMessages(messages, { preserveTransportAnchors }));
 
 export const applySemiStrictPromptPostProcessing = (messages = []) => {
   const list = applyMergePromptPostProcessing(messages);
@@ -183,7 +197,8 @@ export const applySingleUserPromptPostProcessing = (messages = []) =>
 export const applyPromptPostProcessing = (messages = [], mode = 'none') => {
   switch (normalizePromptPostProcessingMode(mode)) {
     case 'merge':
-      return applyMergePromptPostProcessing(messages);
+      // merge 保留角色语义，锚点占位须独立保留（semi/strict/single 会统一角色，占位并入邻居仍可精确还原）
+      return applyMergePromptPostProcessing(messages, { preserveTransportAnchors: true });
     case 'semi':
       return applySemiStrictPromptPostProcessing(messages);
     case 'strict':

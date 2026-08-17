@@ -276,6 +276,12 @@ const injectStyle = (documentRef) => {
 .maid-command-input-submit:hover {
   background: #1d4ed8;
 }
+.maid-command-input.is-submitting .maid-command-input-submit {
+  background: #dc2626;
+}
+.maid-command-input.is-submitting .maid-command-input-submit:hover {
+  background: #b91c1c;
+}
 .maid-command-input-selection:active,
 .maid-command-input-attach:active,
 .maid-command-input-settings:active,
@@ -630,6 +636,7 @@ export const createMaidCommandInputRuntime = ({
   let submissionSeq = 0;
   let activeSubmission = null;
   let activeAbortController = null;
+  let activeRunId = '';
   let cancelPending = false;
   const queuedSubmissions = [];
 
@@ -976,6 +983,7 @@ export const createMaidCommandInputRuntime = ({
 
   const applyTraceView = (view = null) => {
     if (!view || !trim(view.runId)) return false;
+    if (activeSubmission && view.terminal !== true) activeRunId = trim(view.runId);
     if (!rootEl || !isOpen) return false; // 从未打开或已经关闭 → 交回执行流面板兜底
     const runId = trim(view.runId);
     upsertResultItem(`plan:${runId}`, {
@@ -1085,26 +1093,38 @@ export const createMaidCommandInputRuntime = ({
     return entries.length;
   };
 
-  const cancelActive = async () => {
-    if (!activeSubmission || !activeAbortController || activeAbortController.signal.aborted || cancelPending) {
+  const cancelActive = async ({ runId = '' } = {}) => {
+    if (cancelPending) return false;
+    const requestedRunId = trim(runId);
+    if (!activeSubmission || !activeAbortController || activeAbortController.signal.aborted) {
+      if (requestedRunId) setResult('该任务不是由指令条启动的当前任务，无法从这里停止。', 'info');
       return false;
     }
+    if (requestedRunId && activeRunId && requestedRunId !== activeRunId) {
+      setResult('该任务不是当前正在执行的指令，无法从这里停止。', 'info');
+      return false;
+    }
+    const submission = activeSubmission;
     cancelPending = true;
     updateSubmitButton();
     try {
       let decision = 'all_stop';
       if (queuedSubmissions.length && typeof onCancelActive === 'function') {
         decision = await onCancelActive({
-          active: publicSubmission(activeSubmission),
+          active: publicSubmission(submission),
           queued: queuedSubmissions.map(publicSubmission),
           queuedCount: queuedSubmissions.length,
         });
       }
       if (decision !== 'all_stop' && decision !== true) return false;
-      cancelAllQueued();
+      // 「全部停止」包含确认期间从队列提升为 active 的下一项；
+      // 重取现场，不再因原 controller 自然结束而整体提前返回。
+      const cancelledQueuedCount = cancelAllQueued();
+      const currentController = activeAbortController;
+      if (!currentController || currentController.signal.aborted) return cancelledQueuedCount > 0;
       const error = new Error('Maid task stopped by user');
       error.name = 'AbortError';
-      activeAbortController.abort(error);
+      currentController.abort(error);
       return true;
     } finally {
       cancelPending = false;
@@ -1160,6 +1180,7 @@ export const createMaidCommandInputRuntime = ({
         } finally {
           if (activeAbortController === submissionAbortController) activeAbortController = null;
           activeSubmission = null;
+          activeRunId = '';
         }
       }
     } finally {

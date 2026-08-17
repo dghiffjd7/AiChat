@@ -1,5 +1,14 @@
 const RUNNING_STATUSES = new Set(['queued', 'running', 'waiting_permission']);
 const FAILURE_STATUSES = new Set(['failed', 'cancelled']);
+// 用户主动停止的 run 不计入失败统计/徽章；其余 cancelled（如异常遗留）仍按失败呈现
+const USER_CANCELLED_REASONS = new Set(['user_cancelled', 'user_cancelled_pending_workflow']);
+const isUserCancelledRun = (run = {}) => (
+  String(run?.status ?? '').trim() === 'cancelled'
+  && (
+    USER_CANCELLED_REASONS.has(String(run?.cancelReason ?? '').trim())
+    || String(run?.metadata?.failureCode ?? '').trim() === 'user_aborted'
+  )
+);
 
 const isPlainObject = value => Boolean(value && typeof value === 'object' && !Array.isArray(value));
 
@@ -273,7 +282,9 @@ export const buildAgentRunSummary = (run = {}, {
     finishedAt: toFiniteNumber(run.finishedAt, 0),
     durationMs: computeDurationMs(run),
     isActive: RUNNING_STATUSES.has(status),
-    isFailure: FAILURE_STATUSES.has(status) && !['rejected', 'user_rejected'].includes(reviewDecision),
+    isFailure: FAILURE_STATUSES.has(status)
+      && !['rejected', 'user_rejected'].includes(reviewDecision)
+      && !isUserCancelledRun(run),
     stepCount: steps.length,
     toolCallCount: Array.isArray(run.toolCalls) ? run.toolCalls.length : 0,
     eventCount: runEvents.length,
@@ -401,7 +412,8 @@ export const buildAgentRunCacheStats = ({
     activeRuns: runList.filter(run => RUNNING_STATUSES.has(trim(run.status))).length,
     failedRuns: runList.filter(run => (
       FAILURE_STATUSES.has(trim(run.status)) &&
-      !['rejected', 'user_rejected'].includes(trim(run.metadata?.reviewDecision))
+      !['rejected', 'user_rejected'].includes(trim(run.metadata?.reviewDecision)) &&
+      !isUserCancelledRun(run)
     )).length,
     oldestUpdatedAt: updatedTimes[0] || 0,
     newestUpdatedAt: updatedTimes[updatedTimes.length - 1] || 0,

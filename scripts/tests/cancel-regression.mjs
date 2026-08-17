@@ -535,10 +535,11 @@ test('vertexai non-stream: should expose pure functionCall responses without req
   });
 });
 
-test('openai native http: should pass requestId and support external abort', async () => {
+test('openai native http: should allocate a request id and bridge signal to native abort', async () => {
   const prevTauri = globalThis.__TAURI__;
   const pendingById = new Map();
   let seenRequestId = '';
+  let abortedRequestId = '';
   try {
     globalThis.__TAURI__ = {
       core: {
@@ -551,6 +552,7 @@ test('openai native http: should pass requestId and support external abort', asy
           }
           if (cmd === 'http_abort_request') {
             const id = String(args?.requestId || '');
+            abortedRequestId = id;
             const pending = pendingById.get(id);
             if (!pending) return false;
             pendingById.delete(id);
@@ -570,15 +572,21 @@ test('openai native http: should pass requestId and support external abort', asy
       timeout: 5000,
     });
 
+    const controller = new AbortController();
     const pending = provider.chat([{ role: 'user', content: 'native' }], {
-      nativeRequestId: 'native_abort_case',
+      signal: controller.signal,
     });
-    setTimeout(() => {
-      globalThis.__TAURI__.core.invoke('http_abort_request', { requestId: 'native_abort_case' }).catch(() => {});
-    }, 30);
+    setTimeout(() => controller.abort(), 30);
 
-    await assert.rejects(pending, /native http_request failed: aborted/i);
-    assert.equal(seenRequestId, 'native_abort_case');
+    await assert.rejects(
+      Promise.race([
+        pending,
+        delay(500).then(() => { throw new Error('native abort bridge timeout'); }),
+      ]),
+      isAbortError,
+    );
+    assert.match(seenRequestId, /^http_[a-z0-9_]+$/i);
+    assert.equal(abortedRequestId, seenRequestId);
   } finally {
     globalThis.__TAURI__ = prevTauri;
   }

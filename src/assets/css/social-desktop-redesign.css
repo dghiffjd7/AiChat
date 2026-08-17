@@ -1014,6 +1014,10 @@ body[data-theme-mode='dark'] .moment-like-button.is-liked {
     position: relative;
   }
 
+  #contacts-page.page-exiting {
+    position: absolute;
+  }
+
   #contacts-page > .contact-detail {
     position: absolute;
     inset: 0;

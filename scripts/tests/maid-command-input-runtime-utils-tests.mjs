@@ -475,6 +475,59 @@ class FakeDocument {
 }
 
 {
+  // 确认框打开期间首项可能自然完成；「全部停止」仍应中断已被提升为 active 的原排队项。
+  const documentRef = new FakeDocument();
+  let resolveFirst = null;
+  let resolveConfirmation = null;
+  const started = [];
+  const signals = new Map();
+  const runtime = createMaidCommandInputRuntime({
+    documentRef,
+    getViewportSize: () => ({ w: 360, h: 640 }),
+    onSubmit: async (text, controls) => {
+      started.push(text);
+      signals.set(text, controls.signal);
+      if (text === '第一项') {
+        return new Promise(resolve => { resolveFirst = resolve; });
+      }
+      return new Promise((resolve) => {
+        controls.signal.addEventListener('abort', () => resolve({
+          ok: false,
+          status: 'cancelled',
+          cancelled: true,
+          reason: 'user_aborted',
+          message: `已停止 ${text}`,
+        }), { once: true });
+      });
+    },
+    onCancelActive: async () => new Promise(resolve => { resolveConfirmation = resolve; }),
+    setTimeoutFn: () => 1,
+    clearTimeoutFn: () => {},
+  });
+
+  runtime.open();
+  const { inputEl } = runtime.getElements();
+  inputEl.value = '第一项';
+  const first = runtime.submit();
+  inputEl.value = '第二项';
+  const second = runtime.submit();
+  const cancelling = runtime.cancelActive();
+
+  resolveFirst({ ok: true, message: '第一项自然完成' });
+  assert.equal((await first).ok, true);
+  await Promise.resolve();
+  assert.deepEqual(started, ['第一项', '第二项']);
+  assert.equal(signals.get('第二项')?.aborted, false);
+
+  resolveConfirmation('all_stop');
+  assert.equal(await cancelling, true);
+  assert.equal(signals.get('第二项')?.aborted, true);
+  assert.equal((await second).status, 'cancelled');
+  assert.equal(runtime.isSubmitting(), false);
+  console.log('ok - all-stop confirmation still cancels a queued task promoted while the dialog was open');
+}
+
+{
   const documentRef = new FakeDocument();
   const modeSwitchEl = new FakeElement('div');
   const outsideEl = new FakeElement('main');
@@ -771,4 +824,36 @@ class FakeDocument {
   assert.equal(String(findStatus(resultEl.children[1])?.className).includes('is-live'), false, '完成后转圈移除');
   assert.ok(String(findStatus(resultEl.children[2])?.className).includes('is-live'), '轮到的步骤转圈');
   console.log('ok - maid command input 逐卡推出与 live 转圈');
+}
+
+{
+  // runId 归属：执行流面板传入的 runId 与当前指令任务不符时不误停，且给出可见提示
+  const documentRef = new FakeDocument();
+  const runtime = createMaidCommandInputRuntime({
+    documentRef,
+    getViewportSize: () => ({ w: 360, h: 640 }),
+    onSubmit: async (_text, controls) => new Promise((resolve) => {
+      controls.signal.addEventListener('abort', () => resolve({
+        ok: false,
+        status: 'cancelled',
+        cancelled: true,
+        reason: 'user_aborted',
+        message: '已停止',
+      }), { once: true });
+    }),
+    setTimeoutFn: () => 1,
+    clearTimeoutFn: () => {},
+  });
+  runtime.open();
+  const { inputEl } = runtime.getElements();
+  inputEl.value = '当前任务';
+  const active = runtime.submit();
+  runtime.applyTraceView({ runId: 'run-current', status: 'running', terminal: false, steps: [] });
+  assert.equal(await runtime.cancelActive({ runId: 'run-other' }), false, '非当前 run 不得误停当前任务');
+  assert.equal(runtime.isSubmitting(), true);
+  assert.equal(await runtime.cancelActive({ runId: 'run-current' }), true, '匹配的 runId 正常停止');
+  assert.equal((await active).status, 'cancelled');
+  // 空闲时带 runId 的停止请求同样不抛错且返回 false
+  assert.equal(await runtime.cancelActive({ runId: 'run-current' }), false);
+  console.log('ok - execution-flow stop only cancels the submission that owns the projected run');
 }

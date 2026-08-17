@@ -1508,6 +1508,8 @@ export class WorldEditorModal {
     hideAiModal() {
         if (this.aiOverlay) this.aiOverlay.style.display = 'none';
         if (this.aiModal) this.aiModal.style.display = 'none';
+        // 关闭弹窗即停止在途生成，不再让请求与联网工具循环空耗
+        try { this.aiAbortController?.abort(); } catch {}
         this.traceAi('modal.hide', {
             aiBusy: this.aiBusy,
             pendingEntryId: this.aiPendingEntryId,
@@ -2457,9 +2459,24 @@ export class WorldEditorModal {
             this.traceAi('run.rejected.no-input', { mode }, 'warn');
             return;
         }
-        const config = await this.ensureChatConfigReady();
+        if (this.aiConfigPending) {
+            this.traceAi('run.rejected.config-pending', { mode }, 'warn');
+            return;
+        }
+        // 双击防护：config 加载 await 期间 aiBusy 尚未上锁，用独立闩挡住重入
+        this.aiConfigPending = true;
+        let config = null;
+        try {
+            config = await this.ensureChatConfigReady();
+        } finally {
+            this.aiConfigPending = false;
+        }
         if (!config) {
             this.traceAi('run.rejected.no-config', { mode }, 'warn');
+            return;
+        }
+        if (this.aiBusy) {
+            this.traceAi('run.rejected.busy', { mode, phase: 'post-config' }, 'warn');
             return;
         }
         const currentEntry = this.data.entries[this.currentIndex] || null;
@@ -2514,17 +2531,28 @@ export class WorldEditorModal {
             const client = new LLMClient(config);
             const useWebSearch = await this.aiWebSearchToggleRuntime?.consume() === true;
             renderAdHocWebSources(this.aiWebSourcesEl, []);
+            try { this.aiAbortController?.abort(); } catch {}
+            const abortController = new AbortController();
+            this.aiAbortController = abortController;
             const generation = buildAdHocWebSearchRuntime({
                 client,
                 config,
                 enabled: useWebSearch,
                 sessionId: `world-ai:${this.worldName || 'editor'}`,
-                requestOptions: { temperature: 0.6 },
+                requestOptions: { temperature: 0.6, signal: abortController.signal },
                 onStatus: status => {
                     if (requestId !== this.aiRequestId) return;
-                    this.setAiStatus(status?.message || '', status?.state === 'unavailable' ? '' : 'loading');
+                    this.setAiStatus(
+                        status?.state === 'unavailable'
+                            ? `${status?.message || '本次联网不可用'}；继续普通生成…`
+                            : (status?.message || ''),
+                        'loading',
+                    );
                 },
-                onSources: sources => renderAdHocWebSources(this.aiWebSourcesEl, sources),
+                onSources: sources => {
+                    if (requestId !== this.aiRequestId) return;
+                    renderAdHocWebSources(this.aiWebSourcesEl, sources);
+                },
             });
             const messages = mode === 'continue'
                 ? buildWorldAiContinueMessages(template, inputText, draft)
@@ -2591,6 +2619,11 @@ export class WorldEditorModal {
                 window.toastr?.warning?.(mode === 'continue' ? 'AI 已补全，但自动保存失败' : 'AI 已生成，但自动保存失败');
             }
         } catch (err) {
+            if (err?.name === 'AbortError') {
+                this.traceAi('run.aborted', { requestId, mode }, 'warn');
+                if (requestId === this.aiRequestId) this.setAiStatus('已停止本次生成', '');
+                return;
+            }
             logger.error(mode === 'continue' ? 'AI 补全世界书失败' : 'AI 生成世界书失败', err);
             this.traceAi('run.error', {
                 requestId,

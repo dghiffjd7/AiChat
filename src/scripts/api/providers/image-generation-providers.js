@@ -1,4 +1,4 @@
-import { createLinkedAbortController } from '../abort.js';
+import { createLinkedAbortController, invokeNativeHttpRequest } from '../abort.js';
 import { prepareTransportRequest } from '../transport.js';
 import { safeInvoke } from '../../utils/tauri.js';
 
@@ -154,16 +154,21 @@ class ImageProviderBase {
     if (typeof invoker === 'function') {
       if (signal?.aborted) throw makeAbortError();
       try {
-        return await invoker('http_request', {
-          url: prepared.url,
-          method,
-          headers: mergedHeaders,
-          body: typeof body === 'string' ? body : body == null ? null : String(body),
-          timeoutMs: this.timeout,
-          requestId: requestId || null,
-          responseBase64: Boolean(responseBase64),
+        return await invokeNativeHttpRequest({
+          invoker,
+          signal,
+          requestId,
+          args: {
+            url: prepared.url,
+            method,
+            headers: mergedHeaders,
+            body: typeof body === 'string' ? body : body == null ? null : String(body),
+            timeoutMs: this.timeout,
+            responseBase64: Boolean(responseBase64),
+          },
         });
       } catch (err) {
+        if (signal?.aborted || err?.name === 'AbortError') throw makeAbortError();
         if (isTauriWebview()) {
           const e = new Error(`native http_request failed: ${err?.message || err}`);
           e.cause = err;

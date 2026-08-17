@@ -5,6 +5,7 @@ import {
 import {
   classifyMaidRunFailure,
   classifyMaidToolFailure,
+  isMaidUserAbort as isMaidAbortError,
 } from './maid-failure-codes.js';
 import {
   buildMaidRunContinuationSnapshot,
@@ -42,10 +43,6 @@ const normalizeText = value => trim(value)
 const compactText = value => normalizeText(value).replace(/\s+/g, '');
 
 const isPlainObject = value => Boolean(value && typeof value === 'object' && !Array.isArray(value));
-
-const isMaidAbortError = (error = null, signal = null) => (
-  error?.name === 'AbortError' || signal?.aborted === true
-);
 
 const throwIfMaidAborted = (signal = null) => {
   if (!signal?.aborted) return;
@@ -291,6 +288,16 @@ const isToolOutputOk = (output = {}) => {
   return true;
 };
 
+const isToolOutputCancelled = (output = {}) => {
+  const result = unwrapToolOutputResult(output);
+  return [output, result].some(value => (
+    value?.cancelled === true ||
+    trim(value?.status) === 'cancelled' ||
+    trim(value?.reason) === 'user_aborted' ||
+    trim(value?.failureCode) === 'user_aborted'
+  ));
+};
+
 const summarizeToolFailure = (output = {}) => {
   const result = unwrapToolOutputResult(output);
   return trim(
@@ -377,9 +384,9 @@ const buildCapabilityPlanTrace = (plan = {}) => ({
 
 const resolveTrackedToolStepStatus = (output = {}) => {
   const outerStatus = trim(output?.status);
-  if (outerStatus === 'failed' || outerStatus === 'skipped' || outerStatus === 'cancelled') {
-    return outerStatus;
-  }
+  if (isToolOutputCancelled(output)) return 'cancelled';
+  if (outerStatus === 'skipped') return 'skipped';
+  if (outerStatus === 'failed') return 'failed';
   if (!isToolOutputOk(output)) return 'failed';
   return VALID_STEP_STATUSES.has(outerStatus) ? outerStatus : 'succeeded';
 };
@@ -2248,27 +2255,30 @@ const buildReactStepSnapshot = ({
   execution = {},
   output = {},
   ok = false,
-} = {}) => ({
-  index,
-  toolName: trim(plan?.toolName),
-  featureId: trim(plan?.featureId),
-  title: trim(plan?.title),
-  args: clone(plan?.args || {}),
-  status: ok ? 'succeeded' : 'failed',
-  guided: Boolean(execution?.guided),
-  guide: clone(execution?.guide || null),
-  guideMessage: trim(execution?.message),
-  summary: trim(output?.summary),
-  output: clone(unwrapToolOutputResult(output)),
-  metadata: clone(plan?.metadata || null),
-  ...buildCapabilityPlanTrace(plan),
-  errorMessage: trim(output?.errorMessage || (!ok ? summarizeToolFailure(output) : '')),
-  failureCode: ok ? '' : classifyMaidToolFailure({
-    errorCode: output?.errorCode,
-    message: output?.errorMessage || summarizeToolFailure(output),
-    result: unwrapToolOutputResult(output),
-  }),
-});
+} = {}) => {
+  const cancelled = isToolOutputCancelled(output);
+  return {
+    index,
+    toolName: trim(plan?.toolName),
+    featureId: trim(plan?.featureId),
+    title: trim(plan?.title),
+    args: clone(plan?.args || {}),
+    status: cancelled ? 'cancelled' : (ok ? 'succeeded' : 'failed'),
+    guided: Boolean(execution?.guided),
+    guide: clone(execution?.guide || null),
+    guideMessage: trim(execution?.message),
+    summary: trim(output?.summary),
+    output: clone(unwrapToolOutputResult(output)),
+    metadata: clone(plan?.metadata || null),
+    ...buildCapabilityPlanTrace(plan),
+    errorMessage: cancelled ? '' : trim(output?.errorMessage || (!ok ? summarizeToolFailure(output) : '')),
+    failureCode: (!ok || cancelled) ? classifyMaidToolFailure({
+      errorCode: output?.errorCode,
+      message: output?.errorMessage || summarizeToolFailure(output),
+      result: unwrapToolOutputResult(output),
+    }) : '',
+  };
+};
 
 const getObservationCharacterCount = (value) => {
   if (typeof value === 'string') return value.length;
@@ -3923,6 +3933,7 @@ export const createMaidAssistantAgent = ({
             message: '用户明确要求本轮不调用工具。',
           },
         });
+        throwIfMaidAborted(context?.signal);
         if (chatResult?.ok && trim(chatResult.message)) {
           return {
             ok: true,
@@ -3996,7 +4007,8 @@ export const createMaidAssistantAgent = ({
         decision = await callModelWithTimeout(() => plannerFn(input, decisionContext), { label });
         throwIfMaidAborted(context?.signal);
       } catch (error) {
-        if (snapshot && capabilityRoutingRuntime && typeof capabilityRoutingRuntime.observeDecision === 'function') {
+        const cancelled = isMaidAbortError(error, context?.signal);
+        if (!cancelled && snapshot && capabilityRoutingRuntime && typeof capabilityRoutingRuntime.observeDecision === 'function') {
           try {
             capabilityRoutingRuntime.observeDecision(snapshot, {
               ok: false,
@@ -4213,7 +4225,9 @@ export const createMaidAssistantAgent = ({
         );
         if (shouldTryChat) {
           try {
+            throwIfMaidAborted(context?.signal);
             const chatResult = await chatResponder(input, context, { plan });
+            throwIfMaidAborted(context?.signal);
             if (chatResult?.ok && trim(chatResult.message)) {
               return {
                 ok: true,
@@ -4453,6 +4467,16 @@ export const createMaidAssistantAgent = ({
             observedExecution = verificationExecution;
             observedOutput = verificationOutput;
           }
+        }
+        if (isToolOutputCancelled(observedOutput)) {
+          return {
+            ...buildMaidCancelledResult({ input, steps }),
+            plan: clone(observedPlan),
+            output: clone(observedOutput),
+            guided: Boolean(observedExecution?.guided),
+            guide: clone(observedExecution?.guide || null),
+            message: summarizeToolFailure(observedOutput),
+          };
         }
         lastExecution = observedExecution;
         lastOutput = observedOutput;

@@ -297,8 +297,13 @@ const agentCenterPanelSource = await readFile(
 {
   assert.match(
     agentCenterPanelSource,
-    /\.agent-center-panel\s*\{[^}]*width:\s*clamp\(660px,\s*57vw,\s*1040px\);[^}]*border-radius:\s*24px;/s,
-    '桌面 Agent Center 应采用参考稿的浮动工作窗比例与圆角',
+    /\.agent-center-panel\s*\{[^}]*width:\s*clamp\(700px,\s*72vw,\s*1180px\);[^}]*border-radius:\s*24px;/s,
+    '桌面 Agent Center 各分页应共用全局提示词页所需的工作窗宽度与圆角',
+  );
+  assert.doesNotMatch(
+    agentCenterPanelSource,
+    /\.agent-center-panel\.is-global-prompts\s*\{[^}]*width:/s,
+    '切换全局提示词分页不应再改变 Agent Center 外框宽度',
   );
   assert.match(
     agentCenterPanelSource,
@@ -364,8 +369,48 @@ const agentCenterPanelSource = await readFile(
   );
   assert.match(agentCenterPanelSource, /data-action="export"/);
   assert.match(agentCenterPanelSource, /data-action="close"/);
+  assert.match(agentCenterPanelSource, /data-action="maximize"/);
+  assert.match(agentCenterPanelSource, /aria-label="放大 Agent Center"/);
   assert.match(agentCenterPanelSource, /data-agent-float-flip/);
   console.log('ok - agent center redesign keeps the reference layout and performant pane motion contract');
+}
+
+{
+  const classes = new Set();
+  const buttonClasses = new Set();
+  const attrs = new Map();
+  const button = {
+    classList: {
+      toggle(name, on) {
+        if (on) buttonClasses.add(name);
+        else buttonClasses.delete(name);
+      },
+    },
+    setAttribute(name, value) { attrs.set(name, value); },
+    title: '',
+  };
+  const panel = new AgentCenterPanel();
+  panel.overlayElement = {
+    classList: {
+      toggle(name, on) {
+        if (on) classes.add(name);
+        else classes.delete(name);
+      },
+    },
+    querySelector(selector) {
+      return selector === '[data-action="maximize"]' ? button : null;
+    },
+  };
+  panel.setMaximized(true, { persist: false });
+  assert.equal(classes.has('is-maximized'), true);
+  assert.equal(buttonClasses.has('is-on'), true);
+  assert.equal(attrs.get('aria-pressed'), 'true');
+  assert.equal(attrs.get('aria-label'), '还原 Agent Center');
+  assert.equal(button.title, '还原面板');
+  panel.toggleMaximized({ persist: false });
+  assert.equal(classes.has('is-maximized'), false);
+  assert.equal(attrs.get('aria-pressed'), 'false');
+  console.log('ok - agent center desktop maximize control toggles a reversible full-screen state');
 }
 
 {
@@ -2150,9 +2195,252 @@ const agentCenterPanelSource = await readFile(
   assert.match(html, /语义层头部/);
   assert.match(html, /单块上限 2,000 tok/);
   assert.match(html, /示例私聊 FC/);
-  assert.match(html, /导入 JSON/);
+  assert.match(html, />导入</);
+  assert.match(html, />导出</);
+  assert.doesNotMatch(html, /导入 JSON|导出 JSON/);
+  assert.match(html, /class="agent-center-global-workspace" data-global-prompt-preview-state="closed"/);
+  assert.match(html, /data-global-prompt-preview-open/);
+  assert.match(html, /class="agent-center-global-preview-pane"/);
+  assert.match(html, /data-global-prompt-preview-expand/);
+  assert.match(html, /data-global-prompt-preview-collapse/);
+  assert.match(html, /data-global-prompt-preview-return/);
   assert.match(html, /draggable="true"/);
-  console.log('ok - agent center renders the bounded ordered global prompt editor');
+  assert.match(html, /data-global-prompt-open="global-a"/);
+  assert.doesNotMatch(html, /data-global-prompt-field="content"/);
+  assert.match(html, /class="agent-center-global-toggle is-enabled"/);
+  assert.match(html, />已启用</);
+  console.log('ok - global prompt root renders lightweight blocks that navigate to a secondary editor');
+}
+
+{
+  const panel = new AgentCenterPanel();
+  panel.view = {
+    globalPromptLibrary: {
+      schemaVersion: 1,
+      budgetVersion: 1,
+      blocks: [{
+        id: 'global-a',
+        name: '人物一致性',
+        enabled: true,
+        content: 'line one\nline two',
+        scope: 'chat',
+        anchor: 'semantic_header',
+      }],
+    },
+  };
+  panel.renderGlobalPromptLibrary();
+  panel.render = () => {};
+  panel.openGlobalPromptBlockEditor('global-a');
+  assert.equal(panel.globalPromptPage, 'block');
+  assert.equal(panel.globalPromptEditingId, 'global-a');
+  const html = panel.renderGlobalPromptLibrary();
+  assert.match(html, /data-global-prompt-back/);
+  assert.match(html, /data-global-prompt-editor-content/);
+  assert.match(html, /line one\nline two/);
+  assert.match(html, /data-global-prompt-accept-draft/);
+  assert.match(html, /data-global-prompt-reject-draft/);
+  assert.doesNotMatch(html, /data-global-prompt-open="global-a"/);
+  console.log('ok - global prompt block opens a preset-style secondary editor with draft actions');
+}
+
+{
+  const panel = new AgentCenterPanel();
+  panel.view = {
+    globalPromptLibrary: {
+      schemaVersion: 1,
+      budgetVersion: 1,
+      blocks: [{
+        id: 'global-a',
+        name: '人物一致性',
+        enabled: true,
+        content: 'alpha\nbeta\ngamma',
+        scope: 'chat',
+        anchor: 'semantic_header',
+      }],
+    },
+  };
+  panel.renderGlobalPromptLibrary();
+  panel.render = () => {};
+  panel.openGlobalPromptBlockEditor('global-a');
+  panel.updateGlobalPromptDraft('global-a', { content: 'alpha\nBETA\ngamma' });
+  panel.globalPromptPreview = {
+    ok: true,
+    route: 'provider_fc',
+    audit: { injected: [], skipped: [], usedTokens: 0 },
+  };
+  const html = panel.renderGlobalPromptPreview();
+  assert.match(html, /agent-center-global-diff-del/);
+  assert.match(html, /agent-center-global-diff-ins/);
+  assert.match(html, /data-global-prompt-accept-hunk="0"/);
+  assert.match(html, /data-global-prompt-reject-hunk="0"/);
+  panel.rejectGlobalPromptHunk('global-a', 0);
+  assert.equal(panel.globalPromptDrafts.get('global-a').content, 'alpha\nbeta\ngamma');
+  console.log('ok - global prompt preview renders and rejects preset-compatible line hunks');
+}
+
+{
+  const writes = [];
+  const panel = new AgentCenterPanel({
+    getActions: () => ({
+      upsertGlobalSemanticPromptBlock: ({ block }) => {
+        writes.push(block);
+        return {
+          ok: true,
+          block: { ...block, updatedAt: 2 },
+          library: { blocks: [{ ...block, updatedAt: 2 }] },
+        };
+      },
+    }),
+  });
+  panel.view = {
+    globalPromptLibrary: {
+      blocks: [{
+        id: 'global-a', name: 'A', enabled: true, scope: 'chat', anchor: 'semantic_header', content: 'a\nb\nc',
+      }],
+    },
+  };
+  panel.renderGlobalPromptLibrary();
+  panel.render = () => {};
+  panel.refresh = async () => true;
+  panel.openGlobalPromptBlockEditor('global-a');
+  panel.updateGlobalPromptDraft('global-a', { content: 'a\nB\nc' });
+  const accepted = await panel.acceptGlobalPromptHunk('global-a', 0);
+  assert.equal(accepted, true);
+  assert.equal(writes[0].content, 'a\nB\nc');
+  assert.equal(panel.globalPromptBases.get('global-a').content, 'a\nB\nc');
+  console.log('ok - accepting a global prompt hunk persists only the accepted content baseline');
+}
+
+{
+  let textareaValue = 'left';
+  const textarea = {
+    get value() { return textareaValue; },
+    set value(value) { textareaValue = value; },
+  };
+  const panel = new AgentCenterPanel();
+  panel.globalPromptBases.set('global-a', {
+    id: 'global-a', name: 'A', enabled: true, scope: 'chat', anchor: 'semantic_header', content: 'left',
+  });
+  panel.globalPromptDrafts.set('global-a', {
+    id: 'global-a', name: 'A', enabled: true, scope: 'chat', anchor: 'semantic_header', content: 'left',
+  });
+  panel.contentElement = {
+    querySelector: selector => selector === '[data-global-prompt-editor-content]' ? textarea : null,
+  };
+  panel.handleGlobalPromptPreviewEdited({
+    textContent: 'edited on preview',
+    getAttribute: name => name === 'data-global-prompt-preview-editor' ? 'global-a' : '',
+  });
+  assert.equal(panel.globalPromptDrafts.get('global-a').content, 'edited on preview');
+  assert.equal(textarea.value, 'edited on preview');
+  console.log('ok - editing the global preview writes through to the left-side draft editor');
+}
+
+{
+  const textarea = {
+    scrollTop: 400,
+    scrollHeight: 1000,
+    clientHeight: 200,
+  };
+  const preview = {
+    scrollTop: 0,
+    scrollHeight: 600,
+    clientHeight: 100,
+  };
+  const panel = new AgentCenterPanel();
+  panel.globalPromptPage = 'block';
+  panel.globalPromptPreviewState = 'split';
+  panel.contentElement = {
+    querySelector(selector) {
+      if (selector === '[data-global-prompt-editor-content]') return textarea;
+      if (selector === '[data-global-prompt-preview-body]') return preview;
+      return null;
+    },
+  };
+  assert.equal(panel.syncGlobalPromptPreviewToEditorScroll(textarea), true);
+  assert.equal(preview.scrollTop, 250);
+  panel.globalPromptScrollSource = '';
+  preview.scrollTop = 125;
+  assert.equal(panel.syncGlobalPromptEditorToPreviewScroll(preview), true);
+  assert.equal(textarea.scrollTop, 200);
+  clearTimeout(panel.globalPromptScrollReleaseTimer);
+  console.log('ok - global prompt editor and preview synchronize scroll progress in both directions');
+}
+
+{
+  let created = null;
+  const panel = new AgentCenterPanel({
+    promptText: async () => '跨会话约束',
+    getActions: () => ({
+      upsertGlobalSemanticPromptBlock: ({ block }) => {
+        created = { ...block, id: 'global-new' };
+        return { ok: true, block: created, library: { blocks: [created] } };
+      },
+    }),
+  });
+  panel.refresh = async () => true;
+  panel.render = () => {};
+  await panel.handleGlobalPromptAdd();
+  assert.equal(created.name, '跨会话约束');
+  assert.equal(created.enabled, false);
+  assert.equal(panel.globalPromptPage, 'block');
+  assert.equal(panel.globalPromptEditingId, 'global-new');
+  console.log('ok - adding a global prompt asks for a name and opens its secondary editor');
+}
+
+{
+  const panel = new AgentCenterPanel();
+  panel.view = {
+    globalPromptLibrary: {
+      schemaVersion: 1,
+      budgetVersion: 1,
+      blocks: [{
+        id: 'global-draft',
+        name: '草稿内容',
+        enabled: false,
+        content: 'draft',
+        scope: 'chat',
+        anchor: 'semantic_header',
+      }],
+    },
+  };
+  panel.globalPromptPreviewContext = 'private_fc';
+  panel.globalPromptPreview = {
+    ok: true,
+    route: 'provider_fc',
+    audit: { injected: [], skipped: [], usedTokens: 0 },
+  };
+  const editorHtml = panel.renderGlobalPromptLibrary();
+  assert.match(editorHtml, />启用此提示词</);
+  const html = panel.renderGlobalPromptPreview();
+  assert.match(html, /没有可注入的全局提示词/);
+  assert.match(html, /1 个聊天模式草稿尚未启用/);
+  assert.match(html, /勾选「启用此提示词」/);
+  console.log('ok - empty global prompt preview explains matching disabled drafts');
+}
+
+{
+  const panel = new AgentCenterPanel();
+  let renders = 0;
+  panel.render = () => { renders += 1; };
+  panel.globalPromptPreview = { ok: true, audit: { injected: [] } };
+  panel.isGlobalPromptPreviewPhoneLayout = () => false;
+  panel.openGlobalPromptPreview();
+  assert.equal(panel.globalPromptPreviewState, 'split');
+  panel.setGlobalPromptPreviewState('full');
+  assert.equal(panel.globalPromptPreviewState, 'full');
+  panel.returnFromGlobalPromptPreview();
+  assert.equal(panel.globalPromptPreviewState, 'split');
+  panel.closeGlobalPromptPreview();
+  assert.equal(panel.globalPromptPreviewState, 'closed');
+
+  panel.isGlobalPromptPreviewPhoneLayout = () => true;
+  panel.openGlobalPromptPreview();
+  assert.equal(panel.globalPromptPreviewState, 'full');
+  panel.returnFromGlobalPromptPreview();
+  assert.equal(panel.globalPromptPreviewState, 'closed');
+  assert.equal(renders, 6);
+  console.log('ok - global prompt preview mirrors preset split/full behavior across desktop and phone layouts');
 }
 
 {
