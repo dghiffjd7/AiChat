@@ -78,9 +78,8 @@ const makePanel = () => {
       }),
       mkNumber: value => ({ value: String(value) }),
       mkRow: () => ({}),
-      mkSaveBtn: onSave => {
+      registerSave: onSave => {
         save = onSave;
-        return {};
       },
       note: () => ({ remove: () => {} }),
       mkLabel: () => ({}),
@@ -118,9 +117,8 @@ const makePanel = () => {
     mkSelect: () => ({ value: '' }),
     mkNumber: value => ({ value: String(value) }),
     mkRow: () => ({}),
-    mkSaveBtn: onSave => {
+    registerSave: onSave => {
       save = onSave;
-      return {};
     },
     note: () => ({}),
     mkLabel: () => ({}),
@@ -158,9 +156,8 @@ const makePanel = () => {
     },
     mkNumber: value => ({ value: String(value) }),
     mkRow: () => ({}),
-    mkSaveBtn: onSave => {
+    registerSave: onSave => {
       save = onSave;
-      return {};
     },
     note: () => ({}),
     mkLabel: () => ({}),

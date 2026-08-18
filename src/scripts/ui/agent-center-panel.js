@@ -1696,6 +1696,18 @@ const PANEL_CSS = `
     grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 6px;
 }
+.agent-center-agent-editor-note {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    color: var(--app-text-secondary);
+    font-size: 12px;
+    line-height: 1.5;
+}
+.agent-center-agent-editor-note button {
+    flex: 0 0 auto;
+}
 .agent-center-agent-field {
     display: grid;
     gap: 4px;
@@ -2952,8 +2964,9 @@ const openDefaultAgentResourceTarget = async (target = {}) => {
     const panel = panels[panelName];
     if (!panel) return false;
     if (panelName === 'presetPanel') {
+        // 'chatprompts' 已不在预设面板 SECTIONS 中，落到首页；聊天格式相关默认进「系统提示词」页
         await Promise.resolve(panel.show?.({
-            section: target.section || 'chatprompts',
+            section: target.section && target.section !== 'chatprompts' ? target.section : 'sysprompt',
             focus: target.focus || '',
             promptId: target.promptId || '',
         }));
@@ -3726,6 +3739,12 @@ export class AgentCenterPanel {
                                 ${this.renderSelectOptions(PROMPT_ROLE_OPTIONS, roleValue)}
                             </select>
                         </div>
+                    </div>
+                ` : ''}
+                ${trim(agent.id) === 'phone_format_agent' ? `
+                    <div class="agent-center-agent-editor-note">
+                        <span>注入位置在「预设 → 系统提示词 → 文本协议聊天格式位置」调整；仅传统文本模式生效，FC/JSON 请求不包含此内容。</span>
+                        <button type="button" class="agent-center-card-action" data-agent-prompt-open-position>去调整</button>
                     </div>
                 ` : ''}
                 <textarea class="agent-center-agent-textarea" data-agent-prompt-rules>${escapeHtml(prompt.rules || '')}</textarea>
@@ -6572,6 +6591,11 @@ export class AgentCenterPanel {
                     button.dataset.agentPromptSave || '',
                     button,
                 ));
+            });
+            this.contentElement.querySelectorAll('[data-agent-prompt-open-position]').forEach((button) => {
+                button.addEventListener('click', () => {
+                    void openDefaultAgentResourceTarget({ panel: 'presetPanel', section: 'sysprompt' });
+                });
             });
             this.contentElement.querySelectorAll('[data-memory-agent-save]').forEach((button) => {
                 button.addEventListener('click', () => this.handleMemoryAgentSave(button));

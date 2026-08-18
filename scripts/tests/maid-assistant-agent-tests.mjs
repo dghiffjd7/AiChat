@@ -3132,9 +3132,9 @@ const runGeneratedMediaQuotaProbe = async input => {
   });
   const result = await agent.runPrompt('复合任务');
   assert.equal(result.status, 'interrupted');
-  assert.equal(result.reactStepBudget.maxSteps, 34, '4 项清单应在 30 个主动作步外保留 4 个验证/收尾步');
+  assert.equal(result.reactStepBudget.maxSteps, 40, '4 项清单应在 36 个主动作步外保留 4 个验证/收尾步');
   assert.equal(result.continuable, true);
-  console.log('ok - maid.todo.write 开场的复合任务获得 30 主动作步 + 4 验证收尾步');
+  console.log('ok - maid.todo.write 开场的复合任务获得 36 主动作步 + 4 验证收尾步');
 }
 
 {
@@ -4669,4 +4669,49 @@ const runGeneratedMediaQuotaProbe = async input => {
   assert.equal(run.status, 'cancelled');
   assert.equal(run.steps[0].status, 'cancelled');
   console.log('ok - registry-wrapped tool cancellation stops ReAct and records cancelled run/step');
+}
+
+{
+  // 用户设置的执行步数上限（context.maxReactSteps）抬高 hardMax，且类型内上限跟随生效
+  const makeAgent = () => createMaidAssistantAgent({
+    planner: async () => ({
+      ok: true,
+      toolName: 'maid.todo.write',
+      args: { todos: Array.from({ length: 10 }, (_, index) => ({ content: `item-${index}` })) },
+      featureId: 'maid.todo',
+      title: '记录任务清单',
+      response: '我先记录任务清单。',
+    }),
+    reactPlanner: (() => {
+      let round = 0;
+      const toolNames = ['app.open_panel', 'app.read_resource', 'app.get_current_state'];
+      return async () => {
+        round += 1;
+        return {
+          ok: true,
+          action: 'tool',
+          toolName: toolNames[round % toolNames.length],
+          args: { panel: `worldbook-${round}` },
+          featureId: 'worldbook.open',
+          title: '继续执行',
+          response: '继续。',
+        };
+      };
+    })(),
+    toolRegistry: { executeTool: async () => ({ ok: true }) },
+    logger: { warn() {} },
+  });
+  const defaultResult = await makeAgent().runPrompt('十项清单长任务');
+  assert.equal(defaultResult.status, 'interrupted');
+  assert.equal(defaultResult.reactStepBudget.hardMax, 48, '未设置时 hardMax 沿用出厂 48');
+  assert.equal(defaultResult.reactStepBudget.maxSteps, 48, '10 项清单预算被 hardMax 钳制');
+  const raisedResult = await makeAgent().runPrompt('十项清单长任务', { maxReactSteps: 80 });
+  assert.equal(raisedResult.status, 'interrupted');
+  assert.equal(raisedResult.reactStepBudget.hardMax, 80);
+  assert.equal(
+    raisedResult.reactStepBudget.maxSteps,
+    76,
+    '调高上限后 10 项清单应获得 72 主动作步 + 4 验证收尾步（类型内上限跟随 hardMax）',
+  );
+  console.log('ok - user-configured maxReactSteps raises both hardMax and per-type budget caps');
 }

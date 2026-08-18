@@ -4,6 +4,20 @@ import { DEFAULT_MAID_PROMPT } from '../agent/maid-prompt-defaults.js';
 export const MAID_SETTINGS_STORE_KEY = 'maid_settings_store_v1';
 export const MAID_SETTINGS_STORE_VERSION = 1;
 
+// 女仆单次任务的执行步数上限（ReAct hardMax）：与 maid-assistant-agent 的绝对上限 80 对齐
+export const MAID_REACT_STEP_LIMIT_DEFAULT = 48;
+export const MAID_REACT_STEP_LIMIT_MIN = 8;
+export const MAID_REACT_STEP_LIMIT_MAX = 80;
+
+export const normalizeMaidReactStepLimit = (value) => {
+  if (value === null || value === undefined || String(value).trim() === '') {
+    return MAID_REACT_STEP_LIMIT_DEFAULT;
+  }
+  const numeric = Math.trunc(Number(value));
+  if (!Number.isFinite(numeric) || numeric <= 0) return MAID_REACT_STEP_LIMIT_DEFAULT;
+  return Math.max(MAID_REACT_STEP_LIMIT_MIN, Math.min(MAID_REACT_STEP_LIMIT_MAX, numeric));
+};
+
 const trim = (value, fallback = '') => {
   const text = String(value ?? '').trim();
   return text || fallback;
@@ -118,6 +132,7 @@ const toPersistedMaidSettingsState = (state = {}, { now = Date.now } = {}) => {
     fallbackProfileId: normalized.fallbackProfileId,
     subAgents: normalized.subAgents,
     subAgentRemindAt: normalized.subAgentRemindAt,
+    maxReactSteps: normalized.maxReactSteps,
     memoryExtractionMode: normalized.memoryExtraction.mode,
     memoryExtractionProfileId: normalized.memoryExtraction.profileId,
     memoryExtractionModelOverride: normalized.memoryExtraction.modelOverride,
@@ -186,6 +201,7 @@ export const normalizeMaidSettingsState = (raw = {}, { now = Date.now } = {}) =>
       .filter(Boolean)
       .slice(0, 12),
     subAgentRemindAt: Number(src.subAgentRemindAt || 0) || 0,
+    maxReactSteps: normalizeMaidReactStepLimit(src.maxReactSteps),
     memoryExtraction: normalizeMaidMemoryExtractionSettings({
       mode: nestedMemoryExtraction.mode ?? src.memoryExtractionMode,
       profileId: nestedMemoryExtraction.profileId ?? src.memoryExtractionProfileId,
@@ -289,6 +305,18 @@ export class MaidSettingsStore {
         return localState.subAgents || [];
       })(),
       subAgentRemindAt: Math.max(Number(kvState?.subAgentRemindAt || 0), Number(localState.subAgentRemindAt || 0)),
+      maxReactSteps: (() => {
+        const localHas = Object.prototype.hasOwnProperty.call(localRaw, 'maxReactSteps');
+        const kvHas = Boolean(kvRaw && Object.prototype.hasOwnProperty.call(kvRaw, 'maxReactSteps'));
+        if (localHas && kvHas) {
+          return readTimestamp(kvRaw) >= readTimestamp(localRaw)
+            ? kvState?.maxReactSteps
+            : localState.maxReactSteps;
+        }
+        if (kvHas) return kvState?.maxReactSteps;
+        if (localHas) return localState.maxReactSteps;
+        return MAID_REACT_STEP_LIMIT_DEFAULT;
+      })(),
       memoryExtraction,
     }, { now: this.now });
 
@@ -393,6 +421,18 @@ export class MaidSettingsStore {
     this.ensureLoaded();
     this.state.subAgentRemindAt = Number(at) || 0;
     await this.write();
+  }
+
+  getMaxReactSteps() {
+    this.ensureLoaded();
+    return normalizeMaidReactStepLimit(this.state.maxReactSteps);
+  }
+
+  async setMaxReactSteps(value = MAID_REACT_STEP_LIMIT_DEFAULT) {
+    this.ensureLoaded();
+    this.state.maxReactSteps = normalizeMaidReactStepLimit(value);
+    await this.write();
+    return this.getMaxReactSteps();
   }
 
   getMemoryExtractionSettings() {

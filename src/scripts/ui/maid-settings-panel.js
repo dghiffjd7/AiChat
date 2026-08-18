@@ -1,4 +1,10 @@
-import { MAID_SUB_AGENT_SKILLS } from '../storage/maid-settings-store.js';
+import {
+  MAID_SUB_AGENT_SKILLS,
+  MAID_REACT_STEP_LIMIT_DEFAULT,
+  MAID_REACT_STEP_LIMIT_MIN,
+  MAID_REACT_STEP_LIMIT_MAX,
+  normalizeMaidReactStepLimit,
+} from '../storage/maid-settings-store.js';
 import { escapeHtml } from '../utils/name-badges.js';
 import { rankModelCandidates } from '../utils/model-candidates.js';
 import { ONBOARDING_TASKS } from './maid-onboarding-flows.js';
@@ -2533,6 +2539,11 @@ export const createMaidSettingsPanel = ({
                 ${profileOptions(fallbackId)}
               </select>
             </label>
+            <label class="maid-api-field">
+              <span class="maid-api-field-label">单次任务步数上限（${MAID_REACT_STEP_LIMIT_MIN}-${MAID_REACT_STEP_LIMIT_MAX}，默认 ${MAID_REACT_STEP_LIMIT_DEFAULT}）</span>
+              <input type="number" class="maid-subagent-input" data-main-max-steps inputmode="numeric" min="${MAID_REACT_STEP_LIMIT_MIN}" max="${MAID_REACT_STEP_LIMIT_MAX}" step="1" value="${escapeHtml(String(settingsStore?.getMaxReactSteps?.() ?? MAID_REACT_STEP_LIMIT_DEFAULT))}" />
+            </label>
+            <div class="maid-api-group-desc">复杂任务达到上限会先停下，你说「继续」即可接着执行。调高会让长任务少打断，但单次任务的请求次数与消耗也会随之增加。</div>
             <button type="button" class="maid-api-manage-link" data-api-open-config>管理连线配置（新增/编辑渠道）…</button>
           </div>
         `;
@@ -2775,6 +2786,12 @@ export const createMaidSettingsPanel = ({
         });
         apiSection.querySelector('[data-main-fallback]')?.addEventListener('change', (event) => {
           void settingsStore?.setFallbackProfileId?.(event.target.value);
+        });
+        const maxStepsInput = apiSection.querySelector('[data-main-max-steps]');
+        maxStepsInput?.addEventListener('change', async () => {
+          const normalized = normalizeMaidReactStepLimit(maxStepsInput.value);
+          maxStepsInput.value = String(normalized);
+          await settingsStore?.setMaxReactSteps?.(normalized);
         });
       }
       // 长期记忆提取模型页

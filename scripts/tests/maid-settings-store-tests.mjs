@@ -2,7 +2,11 @@ import assert from 'node:assert/strict';
 
 import {
   MAID_SETTINGS_STORE_KEY,
+  MAID_REACT_STEP_LIMIT_DEFAULT,
+  MAID_REACT_STEP_LIMIT_MIN,
+  MAID_REACT_STEP_LIMIT_MAX,
   MaidSettingsStore,
+  normalizeMaidReactStepLimit,
   normalizeMaidSettingsState,
 } from '../../src/scripts/storage/maid-settings-store.js';
 import { DEFAULT_MAID_PROMPT } from '../../src/scripts/agent/maid-prompt-defaults.js';
@@ -213,4 +217,47 @@ const createStorage = () => {
   assert.equal(kv.get(MAID_SETTINGS_STORE_KEY).boundProfileId, 'profile-local-bound');
   assert.equal(kv.get(MAID_SETTINGS_STORE_KEY).maidPrompt, 'new prompt only');
   console.log('ok - MaidSettingsStore merges prompt-only KV with older local binding');
+}
+
+{
+  // 执行步数上限：归一化、持久化与 KV/local 双源恢复
+  assert.equal(normalizeMaidReactStepLimit(undefined), MAID_REACT_STEP_LIMIT_DEFAULT);
+  assert.equal(normalizeMaidReactStepLimit(null), MAID_REACT_STEP_LIMIT_DEFAULT);
+  assert.equal(normalizeMaidReactStepLimit(''), MAID_REACT_STEP_LIMIT_DEFAULT);
+  assert.equal(normalizeMaidReactStepLimit('abc'), MAID_REACT_STEP_LIMIT_DEFAULT);
+  assert.equal(normalizeMaidReactStepLimit(0), MAID_REACT_STEP_LIMIT_DEFAULT);
+  assert.equal(normalizeMaidReactStepLimit(3), MAID_REACT_STEP_LIMIT_MIN);
+  assert.equal(normalizeMaidReactStepLimit(999), MAID_REACT_STEP_LIMIT_MAX);
+  assert.equal(normalizeMaidReactStepLimit(60.9), 60);
+
+  let now = 5000;
+  const storage = createStorage();
+  const kv = new Map();
+  const store = new MaidSettingsStore({
+    storage,
+    loadKv: async key => kv.get(key) || null,
+    saveKv: async (key, value) => {
+      kv.set(key, JSON.parse(JSON.stringify(value)));
+    },
+    now: () => now,
+  });
+  await store.load();
+  assert.equal(store.getMaxReactSteps(), MAID_REACT_STEP_LIMIT_DEFAULT);
+  await store.savePatch({ boundProfileId: 'profile-steps' });
+  await store.setMaxReactSteps(64);
+  assert.equal(store.getMaxReactSteps(), 64);
+  assert.equal(kv.get(MAID_SETTINGS_STORE_KEY).maxReactSteps, 64);
+
+  now = 5200;
+  const restored = new MaidSettingsStore({
+    storage,
+    loadKv: async key => kv.get(key) || null,
+    saveKv: async (key, value) => {
+      kv.set(key, JSON.parse(JSON.stringify(value)));
+    },
+    now: () => now,
+  });
+  await restored.load();
+  assert.equal(restored.getMaxReactSteps(), 64, 'load 合并列表必须保留 maxReactSteps，不得回落默认值');
+  console.log('ok - MaidSettingsStore normalizes and persists the react step limit across reloads');
 }

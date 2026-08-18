@@ -1,12 +1,14 @@
 import assert from 'node:assert/strict';
 
 import {
+  createAgentCenterSettingsStore,
   getAgentCenterGlobalSemanticPromptLibrary,
   lazyMigratePresetProfileToAgentCenterSettings,
   mergeImportedAgentCenterSettings,
   migratePresetStateToAgentCenterSettings,
   removeAgentCenterGlobalSemanticPromptBlock,
   reorderAgentCenterGlobalSemanticPromptBlocks,
+  readAgentCenterSettingsRecency,
   resolveAgentOpenAIPreset,
   resolveAgentSyspromptPreset,
   setAgentCardEnabled,
@@ -355,4 +357,57 @@ import {
     '导入内容本身也应按导出值保留',
   );
   console.log('ok - 旧版设置导入不会放大 default-off 回滚迁移');
+}
+
+{
+  // hydrate 新者优先：KV 盘态比本地旧（上次退出 KV 写失败）时不得回滚较新的本地保存
+  const newerLocal = setAgentPromptConfig({}, {
+    profileType: 'sysprompt',
+    presetId: 'p1',
+    agentId: 'dialogue_agent',
+    promptId: 'dialogue',
+    config: { depth: 7 },
+    preset: { dialogue_enabled: true, dialogue_depth: 1 },
+  }, { now: () => 2_000 });
+  const olderDisk = setAgentPromptConfig({}, {
+    profileType: 'sysprompt',
+    presetId: 'p1',
+    agentId: 'dialogue_agent',
+    promptId: 'dialogue',
+    config: { depth: 1 },
+    preset: { dialogue_enabled: true, dialogue_depth: 1 },
+  }, { now: () => 1_000 });
+  assert.ok(readAgentCenterSettingsRecency(newerLocal) > readAgentCenterSettingsRecency(olderDisk));
+
+  const makeStorage = (initial = null) => {
+    const backing = new Map();
+    if (initial) backing.set('agent_center_settings_v1', JSON.stringify(initial));
+    return {
+      getItem: key => (backing.has(key) ? backing.get(key) : null),
+      setItem: (key, value) => backing.set(key, String(value)),
+      removeItem: key => backing.delete(key),
+      backing,
+    };
+  };
+
+  const readDepth = settings => (
+    settings?.profiles?.['sysprompt:p1']?.agents?.dialogue_agent?.prompts?.dialogue?.depth ?? null
+  );
+
+  const staleKvStore = createAgentCenterSettingsStore({
+    storage: makeStorage(newerLocal),
+    loadKv: async () => JSON.parse(JSON.stringify(olderDisk)),
+    saveKv: async () => true,
+  });
+  const hydratedStale = await staleKvStore.hydrate();
+  assert.equal(readDepth(hydratedStale), 7, '旧盘态不得覆盖较新的本地保存');
+
+  const freshKvStore = createAgentCenterSettingsStore({
+    storage: makeStorage(olderDisk),
+    loadKv: async () => JSON.parse(JSON.stringify(newerLocal)),
+    saveKv: async () => true,
+  });
+  const hydratedFresh = await freshKvStore.hydrate();
+  assert.equal(readDepth(hydratedFresh), 7, '较新的盘态照常采用');
+  console.log('ok - hydrate keeps the newer of local vs KV agent-center settings');
 }

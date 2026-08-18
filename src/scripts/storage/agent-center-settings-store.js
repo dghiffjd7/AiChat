@@ -736,6 +736,29 @@ export const writeAgentCenterSettingsKv = async (settings = {}, {
   }
 };
 
+// 状态整体的“最近更新时间”：取 profiles/agents/prompts、cards 与全局提示词块的最大 updatedAt
+export const readAgentCenterSettingsRecency = (settings = {}) => {
+  const normalized = normalizeAgentCenterSettings(settings);
+  let latest = 0;
+  const track = (value) => {
+    const numeric = Number(value);
+    if (Number.isFinite(numeric) && numeric > latest) latest = numeric;
+  };
+  Object.values(normalized.profiles || {}).forEach((profile) => {
+    track(profile?.updatedAt);
+    Object.values(profile?.agents || {}).forEach((agent) => {
+      track(agent?.updatedAt);
+      Object.values(agent?.prompts || {}).forEach(prompt => track(prompt?.updatedAt));
+    });
+  });
+  Object.values(normalized.cards || {}).forEach(card => track(card?.updatedAt));
+  (normalized.global?.semanticPromptLibrary?.blocks || []).forEach((block) => {
+    track(block?.updatedAt);
+    track(block?.createdAt);
+  });
+  return latest;
+};
+
 export const createAgentCenterSettingsStore = ({
   storage = globalThis?.localStorage,
   key = AGENT_CENTER_SETTINGS_STORAGE_KEY,
@@ -802,7 +825,11 @@ export const createAgentCenterSettingsStore = ({
     replace: settings => save(settings),
     hydrate: async () => {
       const disk = await readAgentCenterSettingsKv({ key, loadKv });
-      if (disk) current = writeAgentCenterSettings(disk, { storage, key });
+      // 新者优先：KV 写盘可能在上次退出时失败/滞后，无条件采用磁盘态会把
+      // 较新的本地态（localStorage）回滚成旧值（表现为「保存过的设置重启后丢失」）
+      if (disk && readAgentCenterSettingsRecency(disk) >= readAgentCenterSettingsRecency(current)) {
+        current = writeAgentCenterSettings(disk, { storage, key });
+      }
       await writeAgentCenterSettingsKv(current, { key, saveKv });
       return normalizeAgentCenterSettings(current);
     },

@@ -4569,6 +4569,7 @@ const initApp = async () => {
             ...maidTurnContext,
             maidAttachments: Array.isArray(opts.maidAttachments) ? opts.maidAttachments : [],
             signal: opts.signal || null,
+            maxReactSteps: opts.maxReactSteps || maidSettingsStore.getMaxReactSteps?.(),
             resolveMaidSelectionRegion: regionId => maidSelectionMode.resolveCaptureRegion(regionId),
             requestToolConfirmation: requestMaidToolConfirmation,
           });
@@ -15260,7 +15261,7 @@ Phase G（Frame 36）：循环衔接
   const buildViewportKeyboardDebugInfo = (base, { includeLast = true } = {}) => ({
     ...base,
     // 与 package.json / tauri.conf.json 保持一致，供诊断导出确认用户所装版本
-    appVersion: '0.7.0',
+    appVersion: '0.7.1',
     capturedAt: new Date().toISOString(),
     appState: {
       uiMode,
@@ -24515,6 +24516,7 @@ Phase G（Frame 36）：循环衔接
         ...maidTurnContext,
         maidAttachments: attachments,
         signal: controls?.signal || null,
+        maxReactSteps: maidSettingsStore.getMaxReactSteps?.(),
         resolveMaidSelectionRegion: regionId => maidSelectionMode.resolveCaptureRegion(regionId),
         requestToolConfirmation: requestMaidToolConfirmation,
         onStatus: (status = {}) => {

@@ -660,27 +660,29 @@ const resolveReactStepBudget = ({
   const hardMax = Math.max(1, Math.min(80, Math.trunc(Number(
     context.maxReactSteps || context.reactMaxSteps || configuredMaxReactSteps || 40,
   )) || 40));
-  let recommended = 8;
+  // 2026-08-17 上调：日常任务频繁打到 6-10 的小预算后要用户手动「继续」，整体约 1.5 倍；
+  // 类型内上限从固定 40 改为跟随 hardMax，让用户设置的步数上限对长任务真实生效。
+  let recommended = 12;
   if (toolName === 'maid.todo.write') {
-    // 以任务清单开场 = 复合多步任务：按清单长度给预算（每项工具+验证+清单更新约 5 步）。
-    recommended = Math.min(40, 10 + countArrayItems(args.todos) * 5);
+    // 以任务清单开场 = 复合多步任务：按清单长度给预算（每项工具+验证+清单更新约 6 步）。
+    recommended = Math.min(hardMax, 12 + countArrayItems(args.todos) * 6);
   } else if (toolName === 'app.open_panel' || toolName === 'session.open' || toolName === 'session.open_config') {
-    recommended = 6;
+    recommended = 10;
   } else if (toolName === 'chat.send_message') {
     const explicitTargetCount = extractExplicitMaidChatWrites(input).length;
     recommended = explicitTargetCount > 1
-      ? Math.min(40, Math.max(6, explicitTargetCount * 2 + 3))
-      : 6;
+      ? Math.min(hardMax, Math.max(10, explicitTargetCount * 3 + 4))
+      : 10;
   } else if (toolName === 'app.read_resource' || toolName === 'worldbook.read' || toolName === 'worldbook.list') {
-    recommended = 10;
+    recommended = 14;
   } else if (toolName === 'web.search_images' || toolName === 'media.fetch_image') {
     // 联网找图设头像/壁纸：图源 403 换图重试是常态，多目标（头像+壁纸）步数翻倍。
-    recommended = 18;
+    recommended = 24;
   } else if (toolName === 'worldbook.create' || toolName === 'worldbook.update_entries' || toolName === 'worldbook.delete_entries') {
     const batchSize = Math.max(countArrayItems(args.entries), countArrayItems(args.updates), countArrayItems(args.deletes), 1);
-    recommended = Math.min(40, 14 + (batchSize * 3));
+    recommended = Math.min(hardMax, 18 + (batchSize * 4));
   } else if (/^(persona|user|session|contact|group)\./.test(toolName)) {
-    recommended = 10;
+    recommended = 14;
   }
   const feature = findAppFeature(trim(plan?.featureId) || toolName);
   const writeLike = toolName === 'maid.todo.write' || feature?.writes === true;

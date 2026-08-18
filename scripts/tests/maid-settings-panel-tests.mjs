@@ -469,3 +469,20 @@ const flushMicrotasks = () => new Promise(resolve => setTimeout(resolve, 0));
   }
   console.log('ok - maid settings rgb tokens are all defined by theme-manager');
 }
+
+{
+  // 主配置页提供「单次任务步数上限」输入并接到 settingsStore（源码契约）
+  const { readFileSync } = await import('node:fs');
+  const panelSource = readFileSync(new URL('../../src/scripts/ui/maid-settings-panel.js', import.meta.url), 'utf8');
+  assert.match(panelSource, /data-main-max-steps/);
+  assert.match(panelSource, /单次任务步数上限/);
+  assert.match(panelSource, /normalizeMaidReactStepLimit\(maxStepsInput\.value\)/);
+  assert.match(panelSource, /settingsStore\?\.setMaxReactSteps\?\.\(normalized\)/);
+  const appSource = readFileSync(new URL('../../src/scripts/ui/app.js', import.meta.url), 'utf8');
+  assert.equal(
+    (appSource.match(/maxReactSteps: (?:opts\.maxReactSteps \|\| )?maidSettingsStore\.getMaxReactSteps\?\.\(\)/g) || []).length,
+    2,
+    '两个女仆任务入口都必须按次读取用户设置的步数上限',
+  );
+  console.log('ok - maid settings panel exposes the react step limit and both entries consume it');
+}

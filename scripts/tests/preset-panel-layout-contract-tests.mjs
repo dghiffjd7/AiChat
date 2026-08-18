@@ -152,3 +152,39 @@ assert.doesNotMatch(
 );
 
 console.log('ok - preset panel pages are stacked and compact on small viewports');
+
+{
+  // 适用范围门控（仅创意写作预设不参与聊天注入预览）的源码契约
+  const { readFileSync } = await import('node:fs');
+  const source = readFileSync(new URL('../../src/scripts/ui/preset-panel.js', import.meta.url), 'utf8');
+  assert.match(source, /getInjectScopeEligibility\(\)\s*\{/);
+  assert.match(source, /is-scope-locked/);
+  assert.match(source, /getInjectEffectiveDisplayState\(\)/);
+  assert.match(source, /if \(!this\.getInjectScopeEligibility\(\)\.chatCapable\) return;/, 'chip 点击必须有作用域守卫');
+  assert.match(source, /改为「聊天模式」或「全部」后即可预览聊天注入/, '点击提示必须可行动且无术语');
+  const effectiveUses = (source.match(/getInjectEffectiveDisplayState\(\)/g) || []).length;
+  assert.ok(effectiveUses >= 4, `chip/卡/预览模式/预览骨架均须消费门控后的展示态（实际 ${effectiveUses} 处）`);
+  assert.match(source, /scopeSelect\.addEventListener\('change'/, '适用范围切换须实时联动');
+  // 位置卡必须自带内边距（pp-block 本体无 padding）
+  assert.match(source, /margin-top:12px; padding:12px 14px;/, '文本协议聊天格式位置卡须有内边距');
+  console.log('ok - inject chip scope gating and placement card padding contracts hold');
+}
+
+{
+  // 三级页全局「保存」必须一并提交打开中的注入编辑器（否则报保存成功但改动静默丢弃）
+  const { readFileSync } = await import('node:fs');
+  const source = readFileSync(new URL('../../src/scripts/ui/preset-panel.js', import.meta.url), 'utf8');
+  assert.match(source, /this\.injectEditorCommit = onSave;/, '注入编辑器须注册提交函数');
+  assert.match(
+    source,
+    /if \(typeof this\.injectEditorCommit === 'function' && this\.injectEditorDirty\) \{\s*await this\.injectEditorCommit\(\);/,
+    '全局保存须按 dirty 状态提交注入编辑器',
+  );
+  assert.equal((source.match(/this\.injectEditorCommit = null;/g) || []).length >= 2, true, '普通区块编辑与注入编辑切换须清理提交函数');
+  // 方案 A：注入编辑器无内部保存按钮，全局「保存」是唯一入口
+  assert.doesNotMatch(source, /mkSaveBtn/, '注入编辑器不得再有内部保存按钮');
+  assert.match(source, /const injectCount = this\.injectEditorDirty \? 1 : 0;/, '注入编辑器 dirty 须参与未保存计数');
+  assert.match(source, /host\.oninput = markInjectDirty;/, '输入变化须置 dirty');
+  assert.match(source, /系统注入 · 随右下角保存生效/, '副标题须说明单一保存入口');
+  console.log('ok - panel-level save is the single entry that commits the system-inject editor');
+}
