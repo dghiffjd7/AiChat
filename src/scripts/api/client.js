@@ -99,6 +99,13 @@ export class LLMClient {
         return this.provider.listModels();
     }
 
+    async listModelProviders(model = this.config?.model) {
+        if (typeof this.provider?.listModelProviders !== 'function') {
+            throw new Error(`当前 provider 不支持查询模型上游: ${this.config?.provider || ''}`);
+        }
+        return this.provider.listModelProviders(model);
+    }
+
     async prepareProviderFcCapabilities() {
         if (typeof this.provider?.prepareProviderFcCapabilities !== 'function') return null;
         return this.provider.prepareProviderFcCapabilities();

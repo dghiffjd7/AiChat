@@ -9,6 +9,10 @@ import {
   bindQuickMenuActions,
   bindSettingsMenuActions,
 } from '../../src/scripts/ui/app-menu-binding-runtime-utils.js';
+import {
+  bindDeveloperProfilePanel,
+  openDeveloperExternalUrl,
+} from '../../src/scripts/ui/developer-profile-panel.js';
 
 const appSource = fs.readFileSync(new URL('../../src/scripts/ui/app.js', import.meta.url), 'utf8');
 
@@ -53,6 +57,94 @@ const createMenu = (buttons = []) => ({
   assert.match(rpMenuMarkup, /data-action="extensions"[^>]*>🧩 扩展<\/button>/);
   assert.match(rpMenuMarkup, /data-action="config"[^>]*>🔌 API设定<\/button>/);
   console.log('ok - creative writing room menu exposes preset extensions and API settings entries');
+}
+
+{
+  const html = fs.readFileSync(new URL('../../src/index.html', import.meta.url), 'utf8');
+  const developerProfileCss = fs.readFileSync(new URL('../../src/assets/css/developer-profile.css', import.meta.url), 'utf8');
+  assert.match(html, /class="desktop-rail-wordmark"[^>]*data-open-developer-profile/);
+  assert.match(html, /data-action="about-aria"[^>]*data-open-developer-profile/);
+  assert.match(html, /data-developer-external-url[^>]*href="https:\/\/github\.com\/dghiffjd7\/AiChat"/);
+  assert.match(html, /data-developer-external-url[^>]*href="https:\/\/github\.com\/dghiffjd7"/);
+  assert.match(developerProfileCss, /@media \(max-width: 620px\)[\s\S]*?\.developer-profile-overlay\s*\{[\s\S]*?align-items:\s*center;/);
+  console.log('ok - developer profile entry is available from desktop brand and mobile settings');
+}
+
+{
+  const invocations = [];
+  assert.equal(await openDeveloperExternalUrl('https://github.com/dghiffjd7/AiChat', {
+    invoke: async (...args) => invocations.push(args),
+  }), true);
+  assert.deepEqual(invocations, [[
+    'open_external_url',
+    { url: 'https://github.com/dghiffjd7/AiChat' },
+  ]]);
+  assert.equal(await openDeveloperExternalUrl('https://example.com/not-allowed', {
+    invoke: async () => { throw new Error('must not invoke'); },
+  }), false);
+  console.log('ok - developer links use the allowlisted native external-browser command');
+}
+
+{
+  const createClassList = () => ({
+    values: new Set(),
+    add(token) { this.values.add(token); },
+    remove(token) { this.values.delete(token); },
+    contains(token) { return this.values.has(token); },
+  });
+  const createEventTarget = () => {
+    const listeners = {};
+    return {
+      hidden: true,
+      classList: createClassList(),
+      focused: false,
+      addEventListener(type, handler) { listeners[type] = handler; },
+      trigger(type, event = {}) { listeners[type]?.({ target: this, currentTarget: this, preventDefault() {}, ...event }); },
+      focus() { this.focused = true; },
+    };
+  };
+  const overlay = createEventTarget();
+  const closeButton = createEventTarget();
+  const trigger = createEventTarget();
+  const externalLink = Object.assign(createEventTarget(), {
+    href: 'https://github.com/dghiffjd7/AiChat',
+  });
+  const openedUrls = [];
+  let linkDefaultPrevented = false;
+  const body = { classList: createClassList() };
+  const documentListeners = {};
+  const documentRef = {
+    body,
+    activeElement: trigger,
+    getElementById(id) { return id === 'developer-profile-overlay' ? overlay : null; },
+    querySelectorAll(selector) {
+      if (selector === '[data-open-developer-profile]') return [trigger];
+      if (selector === '[data-developer-external-url]') return [externalLink];
+      return [];
+    },
+    querySelector(selector) { return selector === '#developer-profile-overlay [data-developer-profile-close]' ? closeButton : null; },
+    addEventListener(type, handler) { documentListeners[type] = handler; },
+  };
+  const panel = bindDeveloperProfilePanel({
+    documentRef,
+    openExternalUrl: async (url) => openedUrls.push(url),
+  });
+  trigger.trigger('click');
+  assert.equal(overlay.hidden, false);
+  assert.equal(overlay.classList.contains('is-open'), true);
+  assert.equal(body.classList.contains('developer-profile-open'), true);
+  assert.equal(closeButton.focused, true);
+  documentListeners.keydown?.({ key: 'Escape' });
+  assert.equal(overlay.hidden, true);
+  assert.equal(body.classList.contains('developer-profile-open'), false);
+  assert.equal(panel.isOpen(), false);
+  externalLink.trigger('click', {
+    preventDefault() { linkDefaultPrevented = true; },
+  });
+  await Promise.resolve();
+  assert.equal(linkDefaultPrevented, true);
+  assert.deepEqual(openedUrls, ['https://github.com/dghiffjd7/AiChat']);
+  console.log('ok - developer profile panel opens from shared entries and closes with Escape');
 }
 
 {

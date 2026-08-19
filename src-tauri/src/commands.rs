@@ -2887,11 +2887,7 @@ fn write_file_atomically(file: &Path, contents: &[u8]) -> Result<(), String> {
             ".{file_name}.kv-write-{}-{counter}.tmp",
             std::process::id()
         ));
-        let mut handle = match OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&temp)
-        {
+        let mut handle = match OpenOptions::new().write(true).create_new(true).open(&temp) {
             Ok(handle) => handle,
             Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => continue,
             Err(err) => return Err(err.to_string()),
@@ -4271,7 +4267,9 @@ pub async fn http_request(
 
         let mut req = client.request(method, url).headers(header_map);
         if let Some(body_base64) = body_base64 {
-            let bytes = BASE64_ENGINE.decode(body_base64).map_err(|e| e.to_string())?;
+            let bytes = BASE64_ENGINE
+                .decode(body_base64)
+                .map_err(|e| e.to_string())?;
             req = req.body(bytes);
         } else if let Some(body) = body {
             req = req.body(body);
@@ -4410,7 +4408,10 @@ pub async fn http_stream_request_start(
                         )
                     })?
                     .map_err(|e| describe_http_stream_error(&e))?,
-                None => req.send().await.map_err(|e| describe_http_stream_error(&e))?,
+                None => req
+                    .send()
+                    .await
+                    .map_err(|e| describe_http_stream_error(&e))?,
             };
             let status = resp.status();
             let mut out_headers: HashMap<String, String> = HashMap::new();

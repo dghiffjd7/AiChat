@@ -745,6 +745,54 @@ body #config-panel.api-config-panel .api-config-voice-preset.is-active {
   box-shadow: 0 3px 10px color-mix(in srgb, var(--app-accent-primary) 24%, transparent);
 }
 
+.api-config-provider-options {
+  display: flex;
+  max-height: 150px;
+  overflow-y: auto;
+  flex-wrap: wrap;
+  gap: 7px;
+  padding: 9px;
+  border: 1px solid var(--app-border-default);
+  border-radius: 12px;
+  background: var(--app-surface-subtle);
+}
+
+#config-panel.api-config-panel .api-config-provider-chip {
+  min-height: 31px;
+  padding: 5px 10px;
+  border: 1px solid var(--app-border-default);
+  border-radius: 999px;
+  background: var(--app-surface-card);
+  color: var(--app-text-secondary);
+  font-size: 12px;
+  line-height: 1.35;
+  cursor: pointer;
+  transition:
+    color 130ms ease,
+    border-color 130ms ease,
+    background 130ms ease,
+    box-shadow 130ms ease,
+    transform 130ms ease;
+}
+
+#config-panel.api-config-panel .api-config-provider-chip:hover {
+  border-color: color-mix(in srgb, var(--app-accent-primary) 34%, var(--app-border-default));
+  color: var(--app-text-primary);
+  transform: translateY(-1px);
+}
+
+#config-panel.api-config-panel .api-config-provider-chip.is-selected {
+  border-color: var(--app-accent-primary);
+  background: var(--app-accent-primary);
+  color: var(--app-text-on-accent);
+  box-shadow: 0 3px 10px color-mix(in srgb, var(--app-accent-primary) 22%, transparent);
+}
+
+#config-panel.api-config-panel .api-config-provider-chip.is-unavailable {
+  border-style: dashed;
+  opacity: 0.72;
+}
+
 .api-config-stream-card {
   margin: 0 0 24px;
   padding: 12px 16px;

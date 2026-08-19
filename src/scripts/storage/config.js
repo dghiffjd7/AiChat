@@ -5,6 +5,8 @@
 import { logger } from '../utils/logger.js';
 import { normalizeGenerationParamFilterList } from '../utils/generation-param-filter-utils.js';
 import { safeInvoke } from '../utils/tauri.js';
+import { normalizeVertexAuthMode } from '../api/vertexai-config-utils.js';
+import { normalizeOpenRouterProviderSlugs } from '../api/openrouter-provider-routing.js';
 
 const SUPPORTED_PROVIDERS = [
     'openai',
@@ -68,6 +70,7 @@ const PROFILE_STORE_KEY = 'llm_profiles_v1';
 const KEYRING_STORE_KEY = 'llm_keyring_v1';
 const KEYRING_MASTER_KEY = 'llm_keyring_master_v1';
 const WEB_SEARCH_KEYRING_PREFIX = '__web_search__:';
+const VERTEX_SERVICE_ACCOUNT_KEYRING_PREFIX = '__vertex_service_account__:';
 
 const normalizeWebSearchProvider = (value) => {
     const provider = String(value || '').trim().toLowerCase().replace(/[\s-]+/g, '_');
@@ -160,10 +163,16 @@ const normalizeProfile = (p = {}, { touchUpdatedAt = false } = {}) => {
         excludedGenerationParams: normalizeGenerationParamFilterList(p.excludedGenerationParams),
         timeout: typeof p.timeout === 'number' ? p.timeout : 60000,
         maxRetries: typeof p.maxRetries === 'number' ? p.maxRetries : 3,
+        ...(provider === 'vertexai'
+            ? { vertexaiAuthMode: normalizeVertexAuthMode(p.vertexaiAuthMode, p) }
+            : {}),
         vertexaiRegion: p.vertexaiRegion,
         vertexaiServiceAccount: p.vertexaiServiceAccount,
         openrouterReferer: typeof p.openrouterReferer === 'string' ? p.openrouterReferer : '',
         openrouterTitle: typeof p.openrouterTitle === 'string' ? p.openrouterTitle : '',
+        ...(provider === 'openrouter'
+            ? { openrouterProviderOnly: normalizeOpenRouterProviderSlugs(p.openrouterProviderOnly) }
+            : {}),
         _saEncrypted: Boolean(p._saEncrypted),
         activeKeyId: p.activeKeyId || null,
         createdAt,
@@ -333,10 +342,11 @@ export class ConfigManager {
             nextProfile.activeKeyId = keyId;
         }
 
-        // Service Account JSON：仅在用户提交新值时做 base64，避免重复编码
+        // Service Account JSON 使用与 API Key 相同的 keyring；写入成功后才清理旧字段。
         if (typeof config.vertexaiServiceAccount === 'string' && config.vertexaiServiceAccount.trim()) {
-            nextProfile.vertexaiServiceAccount = btoa(config.vertexaiServiceAccount);
-            nextProfile._saEncrypted = true;
+            await this.setVertexServiceAccount(nextProfile.id, config.vertexaiServiceAccount);
+            delete nextProfile.vertexaiServiceAccount;
+            nextProfile._saEncrypted = false;
         }
 
         this.profileStore.profiles[nextProfile.id] = nextProfile;
@@ -576,6 +586,7 @@ export class ConfigManager {
         }
 
         this.storesEnsured = true;
+        await this.migrateLegacyVertexServiceAccounts();
     }
 
     async migrateLegacyConfig() {
@@ -725,6 +736,7 @@ export class ConfigManager {
         // delete keys
         if (this.keyringStore.keysByProfile) {
             delete this.keyringStore.keysByProfile[profileId];
+            delete this.keyringStore.keysByProfile[`${VERTEX_SERVICE_ACCOUNT_KEYRING_PREFIX}${profileId}`];
             await this.persistKeyring();
         }
         const ids = Object.keys(this.profileStore.profiles);
@@ -908,6 +920,76 @@ export class ConfigManager {
         return keyId;
     }
 
+    async getVertexServiceAccount(profileId) {
+        await this.ensureStores();
+        const id = String(profileId || '').trim();
+        if (!id) return '';
+        const pid = `${VERTEX_SERVICE_ACCOUNT_KEYRING_PREFIX}${id}`;
+        const records = (this.keyringStore?.keysByProfile?.[pid] || [])
+            .slice()
+            .sort((a, b) => Number(b?.createdAt || 0) - Number(a?.createdAt || 0));
+        const current = records[0];
+        if (!current) return '';
+        try {
+            return await this.decryptKey(pid, current.id);
+        } catch (error) {
+            logger.warn('Vertex AI Service Account 解密失败', error);
+            return '';
+        }
+    }
+
+    hasVertexServiceAccount(profileId) {
+        const id = String(profileId || '').trim();
+        if (!id) return false;
+        const pid = `${VERTEX_SERVICE_ACCOUNT_KEYRING_PREFIX}${id}`;
+        if ((this.keyringStore?.keysByProfile?.[pid] || []).length > 0) return true;
+        return Boolean(String(this.profileStore?.profiles?.[id]?.vertexaiServiceAccount || '').trim());
+    }
+
+    async setVertexServiceAccount(profileId, plainJson) {
+        await this.ensureStores();
+        const id = String(profileId || '').trim();
+        if (!id) throw new Error('Vertex AI 配置档 ID 为空');
+        const pid = `${VERTEX_SERVICE_ACCOUNT_KEYRING_PREFIX}${id}`;
+        const value = String(plainJson || '').trim();
+        if (!value) {
+            delete this.keyringStore.keysByProfile[pid];
+            await this.persistKeyring();
+            return '';
+        }
+        const keyId = await this.addKey(pid, value, 'Vertex AI Service Account');
+        const records = this.keyringStore.keysByProfile[pid] || [];
+        this.keyringStore.keysByProfile[pid] = records.filter(record => record.id === keyId);
+        await this.persistKeyring();
+        return keyId;
+    }
+
+    async migrateLegacyVertexServiceAccounts() {
+        let profilesChanged = false;
+        for (const [profileId, profile] of Object.entries(this.profileStore?.profiles || {})) {
+            const storedValue = String(profile?.vertexaiServiceAccount || '').trim();
+            if (!storedValue) continue;
+            try {
+                const existing = await this.getVertexServiceAccount(profileId);
+                if (!existing) {
+                    let plain = storedValue;
+                    if (profile._saEncrypted) {
+                        try { plain = atob(storedValue); } catch {}
+                    }
+                    await this.setVertexServiceAccount(profileId, plain);
+                }
+                profile.vertexaiAuthMode = normalizeVertexAuthMode(profile.vertexaiAuthMode, profile);
+                delete profile.vertexaiServiceAccount;
+                profile._saEncrypted = false;
+                profilesChanged = true;
+            } catch (error) {
+                // 保留旧字段供本次运行和下次启动继续重试，避免瞬时写入失败造成凭证丢失。
+                logger.warn(`Vertex AI Service Account 迁移失败，保留旧配置: ${profileId}`, error);
+            }
+        }
+        if (profilesChanged) await this.persistProfiles();
+    }
+
     async buildRuntimeConfig(profile) {
         const p = normalizeProfile(profile);
         const runtime = {
@@ -928,11 +1010,19 @@ export class ConfigManager {
             excludedGenerationParams: normalizeGenerationParamFilterList(p.excludedGenerationParams),
             timeout: p.timeout,
             maxRetries: p.maxRetries,
+            ...(p.provider === 'vertexai'
+                ? { vertexaiAuthMode: normalizeVertexAuthMode(p.vertexaiAuthMode, p) }
+                : {}),
         };
         if (p.vertexaiRegion) runtime.vertexaiRegion = p.vertexaiRegion;
         if (p.openrouterReferer) runtime.openrouterReferer = p.openrouterReferer;
         if (p.openrouterTitle) runtime.openrouterTitle = p.openrouterTitle;
-        if (p.vertexaiServiceAccount) {
+        if (p.provider === 'openrouter') runtime.openrouterProviderOnly = [...p.openrouterProviderOnly];
+        if (p.provider === 'vertexai') {
+            const keyringServiceAccount = await this.getVertexServiceAccount(p.id);
+            if (keyringServiceAccount) runtime.vertexaiServiceAccount = keyringServiceAccount;
+        }
+        if (!runtime.vertexaiServiceAccount && p.vertexaiServiceAccount) {
             if (p._saEncrypted) {
                 try {
                     runtime.vertexaiServiceAccount = atob(p.vertexaiServiceAccount);

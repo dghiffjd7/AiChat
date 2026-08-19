@@ -9,6 +9,10 @@ import {
   recordOpenRouterModelCapabilities,
   recordOpenRouterModelCatalog,
 } from '../openrouter-model-capabilities.js';
+import {
+  extractOpenRouterModelProviders,
+  normalizeOpenRouterProviderSlugs,
+} from '../openrouter-provider-routing.js';
 
 const OPENROUTER_BASE_URL = 'https://openrouter.ai/api/v1';
 const OPENROUTER_DEFAULT_MODEL = 'openrouter/auto';
@@ -43,6 +47,18 @@ export class OpenRouterProvider extends OpenAIProvider {
     super(openrouterConfig);
     this.openrouterReferer = trim(config.openrouterReferer || config.httpReferer || DEFAULT_HTTP_REFERER);
     this.openrouterTitle = trim(config.openrouterTitle || config.appTitle || DEFAULT_APP_TITLE);
+    this.openrouterProviderOnly = normalizeOpenRouterProviderSlugs(config.openrouterProviderOnly);
+  }
+
+  normalizeOptions(options = {}) {
+    const normalized = super.normalizeOptions(options);
+    if (this.openrouterProviderOnly.length) {
+      normalized.provider = {
+        ...(normalized.provider || {}),
+        only: [...this.openrouterProviderOnly],
+      };
+    }
+    return normalized;
   }
 
   getHeaders() {
@@ -73,6 +89,22 @@ export class OpenRouterProvider extends OpenAIProvider {
       console.warn('Failed to list OpenRouter models, using defaults:', error);
       return [...OPENROUTER_DEFAULT_MODELS];
     }
+  }
+
+  async listModelProviders(model = this.model) {
+    const modelId = trim(model);
+    const slashIndex = modelId.indexOf('/');
+    if (slashIndex <= 0 || slashIndex >= modelId.length - 1 || modelId === OPENROUTER_DEFAULT_MODEL) {
+      throw new Error('请先选择一个具体的 OpenRouter 模型');
+    }
+    const author = encodeURIComponent(modelId.slice(0, slashIndex));
+    const slug = encodeURIComponent(modelId.slice(slashIndex + 1));
+    const data = await this.requestJson({
+      url: `${this.baseUrl}/models/${author}/${slug}/endpoints`,
+      method: 'GET',
+      headers: this.getHeaders(),
+    });
+    return extractOpenRouterModelProviders(data);
   }
 
   async prepareProviderFcCapabilities() {

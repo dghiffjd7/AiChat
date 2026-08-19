@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 
 import {
   buildReasoningRequestOptions,
@@ -76,6 +77,32 @@ test('OpenRouterProvider preserves FC routing requirements and disables parallel
   });
 });
 
+test('OpenRouterProvider restricts requests to selected upstream providers', () => {
+  const provider = new OpenRouterProvider({
+    apiKey: 'or-key',
+    model: 'moonshotai/kimi-k3',
+    openrouterProviderOnly: ['deepinfra', ' together ', 'deepinfra'],
+  });
+  const prepared = provider.prepareChatRequest([{ role: 'user', content: 'hi' }], {
+    provider: { data_collection: 'deny', require_parameters: true },
+  });
+  assert.deepEqual(prepared.payload.provider, {
+    data_collection: 'deny',
+    require_parameters: true,
+    only: ['deepinfra', 'together'],
+  });
+});
+
+test('OpenRouterProvider leaves routing unrestricted when no upstream is selected', () => {
+  const provider = new OpenRouterProvider({
+    apiKey: 'or-key',
+    model: 'moonshotai/kimi-k3',
+    openrouterProviderOnly: [],
+  });
+  const prepared = provider.prepareChatRequest([{ role: 'user', content: 'hi' }]);
+  assert.equal(Object.prototype.hasOwnProperty.call(prepared.payload, 'provider'), false);
+});
+
 test('OpenRouter reasoning models use reasoning.effort options', () => {
   const capability = getReasoningCapability({
     provider: 'openrouter',
@@ -141,6 +168,30 @@ test('OpenRouterProvider lists OpenRouter models without filtering provider slug
   });
 });
 
+test('OpenRouterProvider lists and deduplicates upstream providers for one model', async () => {
+  const provider = new OpenRouterProvider({ apiKey: 'or-key', model: 'moonshotai/kimi-k3' });
+  provider.requestJson = async ({ url, method, headers }) => {
+    assert.equal(url, 'https://openrouter.ai/api/v1/models/moonshotai/kimi-k3/endpoints');
+    assert.equal(method, 'GET');
+    assert.equal(headers.Authorization, 'Bearer or-key');
+    return {
+      data: {
+        endpoints: [
+          { provider_name: 'Morph', tag: 'morph/fast' },
+          { provider_name: 'DeepInfra', tag: 'deepinfra/bf16' },
+          { provider_name: 'Morph', tag: 'morph/quality' },
+          { provider_name: 'Together', tag: 'together' },
+        ],
+      },
+    };
+  };
+  assert.deepEqual(await provider.listModelProviders(), [
+    { slug: 'morph', name: 'Morph' },
+    { slug: 'deepinfra', name: 'DeepInfra' },
+    { slug: 'together', name: 'Together' },
+  ]);
+});
+
 test('OpenRouterProvider preflights one exact model and caches its tool parameters', async () => {
   clearOpenRouterModelCapabilitiesForTests();
   const provider = new OpenRouterProvider({ apiKey: 'or-key', model: 'vendor/tool-model:free' });
@@ -185,6 +236,40 @@ test('LLMClient can create the OpenRouter provider', () => {
   assert.equal(client.provider instanceof OpenRouterProvider, true);
 });
 
+test('ConfigManager persists OpenRouter upstream selections per profile', async () => {
+  const previousLocalStorage = globalThis.localStorage;
+  const values = new Map();
+  globalThis.localStorage = {
+    getItem: key => values.get(String(key)) ?? null,
+    setItem: (key, value) => values.set(String(key), String(value)),
+    removeItem: key => values.delete(String(key)),
+  };
+  try {
+    const { ConfigManager } = await import('../../src/scripts/storage/config.js');
+    const scope = `openrouter_routing_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+    const manager = new ConfigManager({ scope });
+    await manager.ensureStores();
+    await manager.createProfile('OpenRouter routing', {
+      provider: 'openrouter',
+      baseUrl: 'https://openrouter.ai/api/v1',
+      model: 'moonshotai/kimi-k3',
+    });
+    await manager.save({
+      provider: 'openrouter',
+      baseUrl: 'https://openrouter.ai/api/v1',
+      model: 'moonshotai/kimi-k3',
+      openrouterProviderOnly: ['deepinfra', ' together ', 'deepinfra'],
+    });
+    assert.deepEqual(manager.get().openrouterProviderOnly, ['deepinfra', 'together']);
+    assert.deepEqual(manager.getActiveProfile().openrouterProviderOnly, ['deepinfra', 'together']);
+    const reloaded = await new ConfigManager({ scope }).load();
+    assert.deepEqual(reloaded.openrouterProviderOnly, ['deepinfra', 'together']);
+  } finally {
+    if (previousLocalStorage === undefined) delete globalThis.localStorage;
+    else globalThis.localStorage = previousLocalStorage;
+  }
+});
+
 test('ConfigPanel exposes OpenRouter as a chat provider with defaults', async () => {
   const previousLocalStorage = globalThis.localStorage;
   globalThis.localStorage = previousLocalStorage || {
@@ -211,6 +296,15 @@ test('ConfigPanel exposes OpenRouter as a chat provider with defaults', async ()
       delete globalThis.localStorage;
     }
   }
+});
+
+test('ConfigPanel exposes model-specific multi-select OpenRouter routing controls', async () => {
+  const panelSource = await readFile(new URL('../../src/scripts/ui/config-panel.js', import.meta.url), 'utf8');
+  assert.match(panelSource, /id="openrouter-provider-routing"/);
+  assert.match(panelSource, /id="refresh-openrouter-providers"/);
+  assert.match(panelSource, /openrouterProviderOnly/);
+  assert.match(panelSource, /listModelProviders/);
+  assert.match(panelSource, /不指定[^\n]*全部/);
 });
 
 let failed = 0;

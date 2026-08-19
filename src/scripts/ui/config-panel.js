@@ -6,6 +6,11 @@ import { ConfigManager } from '../storage/config.js';
 import { LLMClient } from '../api/client.js';
 import { VoiceClient } from '../api/voice-client.js';
 import { canInitClient } from '../api/client-config-utils.js';
+import {
+    VERTEX_AUTH_MODE_EXPRESS,
+    normalizeVertexAuthMode,
+} from '../api/vertexai-config-utils.js';
+import { normalizeOpenRouterProviderSlugs } from '../api/openrouter-provider-routing.js';
 import { logger } from '../utils/logger.js';
 import {
     COMMON_GENERATION_PARAM_FILTERS,
@@ -76,6 +81,7 @@ const setApiButtonContent = (button, icon, label) => {
 };
 
 const MODEL_FILTER_DEBOUNCE_MS = 80;
+const VERTEX_SERVICE_ACCOUNT_MASK = '••••••••••••••••';
 
 export const shouldResetDirectProviderModel = (provider = '', model = '') => {
     const normalizedProvider = String(provider || '').trim().toLowerCase();
@@ -148,6 +154,10 @@ export class ConfigPanel {
         this.testButton = null;
         this.modelOptions = [];
         this.voiceModelOptions = { tts: [], stt: [] };
+        this.openrouterProviderOptions = [];
+        this.openrouterProviderOnly = [];
+        this.openrouterProviderModel = '';
+        this.openrouterProviderLoadRevision = 0;
         this.modelFilterDebounceTimer = null;
         this.keyOverlay = null;
         this.keyModal = null;
@@ -443,6 +453,13 @@ export class ConfigPanel {
                 ? 'none'
                 : 'block';
         }
+        const openrouterRouting = this.element.querySelector('#openrouter-provider-routing');
+        if (openrouterRouting) {
+            const provider = this.element.querySelector('#config-provider')?.value || '';
+            openrouterRouting.style.display = this.activeTab === 'chat' && provider === 'openrouter'
+                ? 'block'
+                : 'none';
+        }
         const modelLabel = this.element.querySelector('#config-model-label');
         if (modelLabel) {
             modelLabel.textContent = this.activeTab === 'voice'
@@ -667,8 +684,21 @@ export class ConfigPanel {
 
                 <div id="vertexai-fields" style="display: none;">
                     <div class="api-config-field">
+                        <label class="api-config-field-label has-help" data-help="完整模式使用 Google Cloud Service Account 与项目额度；Express 模式使用专用 API Key">连接模式</label>
+                        <select id="config-vertex-auth-mode" style="display:none;">
+                            <option value="service_account">完整模式（Service Account）</option>
+                            <option value="express">Express 模式（API Key）</option>
+                        </select>
+                        <button type="button" id="config-vertex-auth-mode-btn" class="world-app-select-btn" data-select-id="config-vertex-auth-mode">
+                            <span class="config-custom-select-label">请选择连接模式</span>
+                            <span class="world-app-select-btn-chevron">${API_CONFIG_ICONS.chevronDown}</span>
+                        </button>
+                    </div>
+
+                    <div id="vertexai-region-field" class="api-config-field">
                         <label class="api-config-field-label has-help" data-help="Vertex AI 区域">Region</label>
                         <select id="config-region" style="display:none;">
+                            <option value="global">global（推荐）</option>
                             <option value="us-central1">us-central1</option>
                             <option value="us-east1">us-east1</option>
                             <option value="us-west1">us-west1</option>
@@ -681,13 +711,14 @@ export class ConfigPanel {
                         </button>
                     </div>
 
-                    <div class="api-config-field">
+                    <div id="vertexai-service-account-field" class="api-config-field">
                         <label class="api-config-field-label">
-                            <span class="has-help" data-help="粘贴 Service Account JSON，Project ID 会自动识别；留空则用 API Key">Service Account JSON</span>
+                            <span class="has-help" data-help="粘贴从 Google Cloud 下载的 Service Account JSON；Project ID 会自动识别">Service Account JSON</span>
                             <button id="toggle-sa" class="api-config-text-action">${API_CONFIG_ICONS.eye}<span>显示</span></button>
                         </label>
                         <textarea id="config-serviceaccount" data-maid-guide-target="config-service-account-input" placeholder='{"type": "service_account", "project_id": "your-project", ...}'
                                   style="width: 100%; padding: 10px; border-radius: 5px; border: 1px solid var(--app-border-default); font-size: 12px; box-sizing: border-box; font-family: monospace; min-height: 100px; resize: vertical;"></textarea>
+                        <small>凭证会写入本机加密 Keyring；已保存内容不会再次显示。</small>
                     </div>
                 </div>
 
@@ -741,6 +772,17 @@ export class ConfigPanel {
                         <div id="model-options" class="api-config-model-options" aria-label="可用模型列表" style="display:none;"></div>
                     </div>
                     <small id="model-help" style="color: var(--app-text-secondary);">要使用的模型 ID（可输入或从列表选择）</small>
+                </div>
+
+                <div id="openrouter-provider-routing" class="api-config-field" style="display:none;">
+                    <label class="api-config-field-label">
+                        <span>上游服务商</span>
+                        <button id="refresh-openrouter-providers" class="api-config-refresh-action" type="button">
+                            ${API_CONFIG_ICONS.refresh}<span>刷新上游</span>
+                        </button>
+                    </label>
+                    <div id="openrouter-provider-options" class="api-config-provider-options" role="group" aria-label="OpenRouter 上游服务商"></div>
+                    <small id="openrouter-provider-help">不指定表示允许全部可用上游；选择后只使用已选服务商。</small>
                 </div>
 
                 <div id="config-web-search-card" class="api-config-stream-card">
@@ -946,6 +988,9 @@ export class ConfigPanel {
         this.element.querySelector('#profile-delete').onclick = () => this.deleteProfile();
         this.element.querySelector('#toggle-sa')?.addEventListener('click', () => this.toggleServiceAccount());
         this.element.querySelector('#refresh-models').onclick = () => this.refreshModels();
+        this.element.querySelector('#refresh-openrouter-providers')?.addEventListener('click', () => {
+            void this.refreshOpenRouterProviders();
+        });
         this.element.querySelector('#config-transport-toggle').onclick = () => this.toggleTransportSection();
         this.element.querySelector('#toggle-proxy-token').onclick = () => this.toggleProxyToken();
         this.element.querySelector('#open-generation-param-filter')?.addEventListener('click', () => {
@@ -983,6 +1028,9 @@ export class ConfigPanel {
             const provider = e.target.value;
             if (this.activeTab === 'voice') this.clearVoiceModelOptions();
             this.updateDefaultsForProvider(provider);
+            this.setOpenRouterProviderState({
+                model: this.element.querySelector('#config-model')?.value || '',
+            });
             this.updateFieldVisibility(provider);
             this.emitDraftChange();
         };
@@ -990,6 +1038,21 @@ export class ConfigPanel {
             const provider = this.element.querySelector('#config-provider')?.value || 'openai';
             if (provider === 'vertexai') {
                 this.updateDefaultsForProvider(provider);
+            }
+            this.emitDraftChange();
+        };
+        this.element.querySelector('#config-vertex-auth-mode').onchange = async () => {
+            const provider = this.element.querySelector('#config-provider')?.value || 'openai';
+            if (provider === 'vertexai') {
+                const authMode = normalizeVertexAuthMode(
+                    this.element.querySelector('#config-vertex-auth-mode')?.value,
+                );
+                if (authMode === VERTEX_AUTH_MODE_EXPRESS) {
+                    const regionInput = this.element.querySelector('#config-region');
+                    if (regionInput) regionInput.value = 'global';
+                }
+                this.updateDefaultsForProvider(provider);
+                this.updateFieldVisibility(provider);
             }
             this.emitDraftChange();
         };
@@ -1062,6 +1125,7 @@ export class ConfigPanel {
             await this.webSearchCredentialManager.setWebSearchApiKey(provider, maidSearchKeyEl.value);
         });
         this.element.querySelector('#config-model')?.addEventListener('input', () => {
+            this.handleOpenRouterModelInput();
             this.emitDraftChange();
             this.scheduleModelOptionsRender();
         });
@@ -1257,7 +1321,7 @@ export class ConfigPanel {
     }
 
     refreshAllCustomSelects() {
-        ['config-profile', 'config-provider', 'config-region', 'config-ollama-mode', 'config-kimi-region', 'config-transport-mode', 'config-prompt-post-processing'].forEach((id) => this.refreshCustomSelect(id));
+        ['config-profile', 'config-provider', 'config-vertex-auth-mode', 'config-region', 'config-ollama-mode', 'config-kimi-region', 'config-transport-mode', 'config-prompt-post-processing'].forEach((id) => this.refreshCustomSelect(id));
     }
 
     bindCustomSelect(selectId) {
@@ -1293,7 +1357,7 @@ export class ConfigPanel {
     }
 
     initCustomSelects() {
-        ['config-profile', 'config-provider', 'config-region', 'config-ollama-mode', 'config-kimi-region', 'config-transport-mode', 'config-prompt-post-processing'].forEach((id) => this.bindCustomSelect(id));
+        ['config-profile', 'config-provider', 'config-vertex-auth-mode', 'config-region', 'config-ollama-mode', 'config-kimi-region', 'config-transport-mode', 'config-prompt-post-processing'].forEach((id) => this.bindCustomSelect(id));
         this.refreshAllCustomSelects();
     }
 
@@ -1536,8 +1600,11 @@ export class ConfigPanel {
             };
         }
         const isImage = this.activeTab === 'image';
-        const regionRaw = String(options?.region || 'us-central1').trim();
-        const region = regionRaw || 'us-central1';
+        const regionRaw = String(options?.region || 'global').trim();
+        const region = regionRaw || 'global';
+        const vertexBaseUrl = region === 'global'
+            ? 'https://aiplatform.googleapis.com'
+            : `https://${region}-aiplatform.googleapis.com`;
         const defaults = {
             openai: {
                 baseUrl: 'https://api.openai.com/v1',
@@ -1550,9 +1617,9 @@ export class ConfigPanel {
                 urlHelp: 'Google AI Studio API URL'
             },
             vertexai: {
-                baseUrl: `https://${region}-aiplatform.googleapis.com`,
-                model: 'gemini-2.0-flash-exp',
-                urlHelp: 'Vertex AI API URL (根据 Region 自动调整)'
+                baseUrl: vertexBaseUrl,
+                model: isImage ? 'gemini-3.1-flash-image' : 'gemini-3.5-flash',
+                urlHelp: 'Vertex AI API URL（根据 Region 自动调整）'
             },
             deepseek: {
                 baseUrl: 'https://api.deepseek.com/v1',
@@ -1657,12 +1724,13 @@ export class ConfigPanel {
         const webSearchEl = panel.querySelector('#config-web-search');
         const promptPostProcessingEl = panel.querySelector('#config-prompt-post-processing');
         const regionEl = panel.querySelector('#config-region');
+        const vertexAuthModeEl = panel.querySelector('#config-vertex-auth-mode');
         const kimiRegionEl = panel.querySelector('#config-kimi-region');
         const saEl = panel.querySelector('#config-serviceaccount');
 
         if (provider === 'kimi' && kimiRegionEl) kimiRegionEl.value = 'global';
         const defaults = this.getProviderDefaults(provider, {
-            region: regionEl?.value || 'us-central1',
+            region: regionEl?.value || 'global',
             kimiRegion: kimiRegionEl?.value || 'global',
         });
 
@@ -1701,16 +1769,19 @@ export class ConfigPanel {
             promptPostProcessingEl.value = 'none';
         }
         if (regionEl) {
-            regionEl.value = 'us-central1';
+            regionEl.value = 'global';
+        }
+        if (vertexAuthModeEl) {
+            vertexAuthModeEl.value = 'service_account';
         }
         if (saEl) {
             saEl.value = '';
             saEl.dataset.hasKey = 'false';
-            saEl.dataset.originalKey = '';
             saEl.style.webkitTextSecurity = 'none';
         }
         this.clearModelOptions();
         this.clearVoiceModelOptions();
+        this.setOpenRouterProviderState({ model: modelEl?.value || '' });
         this.refreshAllCustomSelects();
     }
 
@@ -1739,6 +1810,137 @@ export class ConfigPanel {
             container.style.display = 'none';
         }
         this.modelOptions = [];
+    }
+
+    setOpenRouterProviderState({ model = '', selected = [], options = [] } = {}) {
+        this.openrouterProviderLoadRevision += 1;
+        this.openrouterProviderModel = String(model || '').trim();
+        this.openrouterProviderOnly = normalizeOpenRouterProviderSlugs(selected);
+        const seen = new Set();
+        this.openrouterProviderOptions = [];
+        [...options, ...this.openrouterProviderOnly.map(slug => ({ slug, name: slug }))].forEach((item) => {
+            const slug = normalizeOpenRouterProviderSlugs([item?.slug])[0] || '';
+            if (!slug || seen.has(slug)) return;
+            seen.add(slug);
+            this.openrouterProviderOptions.push({
+                slug,
+                name: String(item?.name || slug).trim() || slug,
+                unavailable: item?.unavailable === true,
+            });
+        });
+        this.renderOpenRouterProviderOptions();
+    }
+
+    handleOpenRouterModelInput() {
+        const panel = this.element || document;
+        if (panel.querySelector('#config-provider')?.value !== 'openrouter') return;
+        const model = String(panel.querySelector('#config-model')?.value || '').trim();
+        if (model === this.openrouterProviderModel) return;
+        this.setOpenRouterProviderState({ model });
+    }
+
+    renderOpenRouterProviderOptions() {
+        const panel = this.element || document;
+        const container = panel.querySelector('#openrouter-provider-options');
+        const help = panel.querySelector('#openrouter-provider-help');
+        if (!container) return;
+        const selected = new Set(this.openrouterProviderOnly);
+        container.innerHTML = '';
+
+        const appendChip = ({ slug = '', name = '', all = false, unavailable = false }) => {
+            const active = all ? selected.size === 0 : selected.has(slug);
+            const chip = document.createElement('button');
+            chip.type = 'button';
+            chip.className = 'api-config-provider-chip';
+            chip.classList.toggle('is-selected', active);
+            chip.classList.toggle('is-unavailable', unavailable);
+            chip.setAttribute('aria-pressed', String(active));
+            chip.textContent = all ? '全部（自动）' : name;
+            chip.title = all
+                ? '不限制上游，由 OpenRouter 自动路由'
+                : `${name} · ${slug}${unavailable ? '（当前目录未列出）' : ''}`;
+            chip.onclick = () => {
+                this.openrouterProviderOnly = all
+                    ? []
+                    : normalizeOpenRouterProviderSlugs(active
+                        ? this.openrouterProviderOnly.filter(item => item !== slug)
+                        : [...this.openrouterProviderOnly, slug]);
+                this.renderOpenRouterProviderOptions();
+                this.emitDraftChange();
+            };
+            container.appendChild(chip);
+        };
+
+        appendChip({ all: true });
+        this.openrouterProviderOptions.forEach(appendChip);
+        if (help) {
+            help.textContent = selected.size
+                ? `已指定 ${selected.size} 个上游；请求只会使用已选服务商。`
+                : this.openrouterProviderOptions.length
+                    ? '不指定（当前为全部）：由 OpenRouter 在该模型的可用上游中自动路由。'
+                    : '不指定表示全部；选择具体模型后点击“刷新上游”载入可选服务商。';
+        }
+    }
+
+    async refreshOpenRouterProviders({ notify = true } = {}) {
+        const panel = this.element || document;
+        const provider = panel.querySelector('#config-provider')?.value || '';
+        const model = String(panel.querySelector('#config-model')?.value || '').trim();
+        if (this.activeTab !== 'chat' || provider !== 'openrouter') return false;
+        if (!model || model === 'openrouter/auto' || !model.includes('/')) {
+            if (notify) this.showStatus('请先选择一个具体的 OpenRouter 模型', 'error');
+            return false;
+        }
+
+        const refreshBtn = panel.querySelector('#refresh-openrouter-providers');
+        const help = panel.querySelector('#openrouter-provider-help');
+        const revision = ++this.openrouterProviderLoadRevision;
+        try {
+            const formData = this.getFormData({ commitActiveInput: false });
+            const runtime = await this.configManager.load();
+            const existingKey = String(runtime?.apiKey || '').trim();
+            const keyToUse = typeof formData.apiKey === 'string'
+                ? formData.apiKey.trim()
+                : existingKey;
+            if (!keyToUse) {
+                if (notify) this.showStatus('请先在 Key 管理中保存 API Key，或在此栏贴上 Key', 'error');
+                return false;
+            }
+            setApiButtonContent(refreshBtn, API_CONFIG_ICONS.loader, '获取中...');
+            if (refreshBtn) refreshBtn.disabled = true;
+            if (help) help.textContent = '正在读取当前模型的可用上游...';
+
+            const client = new LLMClient({ ...formData, apiKey: keyToUse });
+            const providers = await client.listModelProviders(model);
+            if (
+                revision !== this.openrouterProviderLoadRevision
+                || panel.querySelector('#config-provider')?.value !== 'openrouter'
+                || String(panel.querySelector('#config-model')?.value || '').trim() !== model
+            ) return false;
+            if (!providers.length) throw new Error('当前模型没有返回可选上游');
+
+            const available = new Set(providers.map(item => item.slug));
+            const missingSelected = this.openrouterProviderOnly
+                .filter(slug => !available.has(slug))
+                .map(slug => ({ slug, name: slug, unavailable: true }));
+            this.openrouterProviderModel = model;
+            this.openrouterProviderOptions = [...providers, ...missingSelected];
+            this.renderOpenRouterProviderOptions();
+            if (notify) this.showStatus(`已加载 ${providers.length} 个可用上游`, 'success');
+            return true;
+        } catch (error) {
+            if (revision === this.openrouterProviderLoadRevision) {
+                if (help) help.textContent = `上游列表获取失败：${error.message}`;
+                if (notify) this.showStatus(`获取上游列表失败: ${error.message}`, 'error');
+            }
+            logger.error('获取 OpenRouter 上游列表失败:', error);
+            return false;
+        } finally {
+            if (revision === this.openrouterProviderLoadRevision) {
+                setApiButtonContent(refreshBtn, API_CONFIG_ICONS.refresh, '刷新上游');
+                if (refreshBtn) refreshBtn.disabled = false;
+            }
+        }
     }
 
     clearVoiceModelOptions(capability = null) {
@@ -1794,6 +1996,9 @@ export class ConfigPanel {
                 if (modelInput) {
                     modelInput.value = modelId;
                     modelInput.dispatchEvent(new Event('input', { bubbles: true }));
+                    if (panel.querySelector('#config-provider')?.value === 'openrouter') {
+                        void this.refreshOpenRouterProviders();
+                    }
                 }
             };
             container.appendChild(chip);
@@ -1922,18 +2127,21 @@ export class ConfigPanel {
 
             // 填充 Vertex AI 特定字段
             if (provider === 'vertexai') {
+                const authModeInput = panel.querySelector('#config-vertex-auth-mode');
                 const regionInput = panel.querySelector('#config-region');
                 const saInput = panel.querySelector('#config-serviceaccount');
 
+                if (authModeInput) {
+                    authModeInput.value = normalizeVertexAuthMode(config.vertexaiAuthMode, config);
+                }
                 if (regionInput) {
-                    regionInput.value = config.vertexaiRegion || 'us-central1';
+                    regionInput.value = config.vertexaiRegion || 'global';
                 }
 
                 if (saInput) {
                     if (config.vertexaiServiceAccount) {
-                        saInput.value = '••••••••••••••••';
+                        saInput.value = VERTEX_SERVICE_ACCOUNT_MASK;
                         saInput.dataset.hasKey = 'true';
-                        saInput.dataset.originalKey = config.vertexaiServiceAccount;
                         saInput.style.webkitTextSecurity = 'disc';
                     } else {
                         saInput.value = '';
@@ -1984,7 +2192,7 @@ export class ConfigPanel {
         const selectedProvider = allowedProviders.has(config.provider) ? config.provider : 'openai';
         providerEl.value = selectedProvider;
         const currentProvider = providerEl.value || 'openai';
-        const currentRegion = config.vertexaiRegion || 'us-central1';
+        const currentRegion = config.vertexaiRegion || 'global';
         const storedBaseUrl = String(config.baseUrl || '').trim();
         const kimiRegionEl = panel.querySelector('#config-kimi-region');
         if (kimiRegionEl && currentProvider === 'kimi') {
@@ -2006,6 +2214,10 @@ export class ConfigPanel {
             ? (config.baseUrl || '')
             : defaultBaseUrl;
         modelEl.value = config.model || '';
+        this.setOpenRouterProviderState({
+            model: modelEl.value,
+            selected: currentProvider === 'openrouter' ? config.openrouterProviderOnly : [],
+        });
         const providerDefaults = this.getProviderDefaults(currentProvider, {
             region: currentRegion,
             kimiRegion: currentKimiRegion,
@@ -2086,20 +2298,23 @@ export class ConfigPanel {
 
         // 填充 Vertex AI 特定字段
         if (config.provider === 'vertexai') {
+            const authModeInput = panel.querySelector('#config-vertex-auth-mode');
             const regionInput = panel.querySelector('#config-region');
             const saInput = panel.querySelector('#config-serviceaccount');
 
+            if (authModeInput) {
+                authModeInput.value = normalizeVertexAuthMode(config.vertexaiAuthMode, config);
+            }
             if (regionInput) {
-                regionInput.value = config.vertexaiRegion || 'us-central1';
+                regionInput.value = config.vertexaiRegion || 'global';
             }
 
             // Mask Service Account JSON
             if (saInput) {
                 setApiButtonContent(panel.querySelector('#toggle-sa'), API_CONFIG_ICONS.eye, '显示');
                 if (config.vertexaiServiceAccount) {
-                    saInput.value = '••••••••••••••••';
+                    saInput.value = VERTEX_SERVICE_ACCOUNT_MASK;
                     saInput.dataset.hasKey = 'true';
-                    saInput.dataset.originalKey = config.vertexaiServiceAccount;
                     saInput.style.webkitTextSecurity = 'disc';
                 } else {
                     saInput.value = '';
@@ -2109,14 +2324,15 @@ export class ConfigPanel {
 
                 // Clear on focus
                 saInput.onfocus = function() {
-                    if (this.dataset.hasKey === 'true' && this.value === '••••••••••••••••') {
+                    if (this.dataset.hasKey === 'true' && this.value === VERTEX_SERVICE_ACCOUNT_MASK) {
                         this.value = '';
                         this.style.webkitTextSecurity = 'none';
                     }
                 };
                 saInput.onblur = function() {
-                    if (!this.value) {
-                        this.dataset.hasKey = 'false';
+                    if (!this.value && this.dataset.hasKey === 'true') {
+                        this.value = VERTEX_SERVICE_ACCOUNT_MASK;
+                        this.style.webkitTextSecurity = 'disc';
                     }
                 };
             }
@@ -2223,7 +2439,7 @@ export class ConfigPanel {
     updateDefaultsForProvider(provider) {
         const panel = this.element || document;
         const defaults = this.getProviderDefaults(provider, {
-            region: panel.querySelector('#config-region')?.value || 'us-central1',
+            region: panel.querySelector('#config-region')?.value || 'global',
             ollamaMode: panel.querySelector('#config-ollama-mode')?.value || 'cloud',
             kimiRegion: panel.querySelector('#config-kimi-region')?.value || 'global',
         });
@@ -2239,7 +2455,7 @@ export class ConfigPanel {
         if (baseUrlInput) {
             // 内建服务商固定使用默认协议地址；custom 保持可编辑。
             const currentUrl = baseUrlInput.value.trim();
-            const selectedRegion = panel.querySelector('#config-region')?.value || 'us-central1';
+            const selectedRegion = panel.querySelector('#config-region')?.value || 'global';
             const allDefaults = providerKeys
                 .map((name) => this.getProviderDefaults(name, { region: selectedRegion }).baseUrl)
                 // ollama 云端/本地是同一 provider 的两个默认地址，切换时都视为“默认值”可替换
@@ -2345,8 +2561,11 @@ export class ConfigPanel {
         const panel = this.element || document;
         const baseUrlSection = panel.querySelector('#config-baseurl-section');
         const vertexaiFields = panel.querySelector('#vertexai-fields');
+        const vertexRegionField = panel.querySelector('#vertexai-region-field');
+        const vertexServiceAccountField = panel.querySelector('#vertexai-service-account-field');
         const ollamaFields = panel.querySelector('#ollama-fields');
         const kimiFields = panel.querySelector('#kimi-fields');
+        const openrouterRouting = panel.querySelector('#openrouter-provider-routing');
         const apiKeyHelp = panel.querySelector('#apikey-help');
         if (baseUrlSection) {
             baseUrlSection.style.display = this.usesEditableBaseUrl(provider) ? 'block' : 'none';
@@ -2356,6 +2575,11 @@ export class ConfigPanel {
         }
         if (kimiFields) {
             kimiFields.style.display = provider === 'kimi' ? 'block' : 'none';
+        }
+        if (openrouterRouting) {
+            openrouterRouting.style.display = this.activeTab === 'chat' && provider === 'openrouter'
+                ? 'block'
+                : 'none';
         }
         if (provider === 'ollama') {
             if (vertexaiFields) vertexaiFields.style.display = 'none';
@@ -2370,9 +2594,17 @@ export class ConfigPanel {
         }
 
         if (provider === 'vertexai') {
-            vertexaiFields.style.display = 'block';
+            if (vertexaiFields) vertexaiFields.style.display = 'block';
+            const authMode = normalizeVertexAuthMode(
+                panel.querySelector('#config-vertex-auth-mode')?.value,
+            );
+            const usesExpress = authMode === VERTEX_AUTH_MODE_EXPRESS;
+            if (vertexRegionField) vertexRegionField.style.display = usesExpress ? 'none' : 'block';
+            if (vertexServiceAccountField) vertexServiceAccountField.style.display = usesExpress ? 'none' : 'block';
             if (apiKeyHelp) {
-                apiKeyHelp.textContent = 'Vertex AI 需 Service Account 后端签名；纯前端建议改用 Google AI Studio (Makersuite)';
+                apiKeyHelp.textContent = usesExpress
+                    ? 'Express 模式使用 Vertex AI 专用 API Key，不需要 Project ID 或 Region。'
+                    : '完整模式使用 Service Account 与 Google Cloud 项目额度；此处 API Key 不参与鉴权。';
             }
         } else if (provider === 'kimi') {
             vertexaiFields.style.display = 'none';
@@ -2411,7 +2643,7 @@ export class ConfigPanel {
         }
 
         const provider = panel.querySelector('#config-provider')?.value;
-        const region = panel.querySelector('#config-region')?.value || 'us-central1';
+        const region = panel.querySelector('#config-region')?.value || 'global';
         const kimiRegion = panel.querySelector('#config-kimi-region')?.value || 'global';
         const apiKeyInput = panel.querySelector('#config-apikey');
         const rawKey = (apiKeyInput?.value || '').trim();
@@ -2462,20 +2694,42 @@ export class ConfigPanel {
         // Add Vertex AI specific fields
         if (provider === 'vertexai') {
             const saInput = panel.querySelector('#config-serviceaccount');
-            let serviceAccount = saInput?.value;
+            const serviceAccount = String(saInput?.value || '').trim();
 
-            // Handle masked Service Account JSON
-            if (serviceAccount === '••••••••••••••••' && saInput?.dataset.hasKey === 'true') {
-                serviceAccount = saInput.dataset.originalKey;
-            }
-
+            formData.vertexaiAuthMode = normalizeVertexAuthMode(
+                panel.querySelector('#config-vertex-auth-mode')?.value,
+            );
             if (region) formData.vertexaiRegion = region;
-            if (serviceAccount && serviceAccount.trim()) {
+            if (serviceAccount && serviceAccount !== VERTEX_SERVICE_ACCOUNT_MASK) {
                 formData.vertexaiServiceAccount = serviceAccount;
             }
         }
 
+        if (provider === 'openrouter') {
+            formData.openrouterProviderOnly = [...this.openrouterProviderOnly];
+        }
+
         return formData;
+    }
+
+    async resolveVertexRequestConfig(formData) {
+        const runtime = await this.configManager.load();
+        const merged = {
+            ...(runtime || {}),
+            ...(formData || {}),
+        };
+        merged.vertexaiAuthMode = normalizeVertexAuthMode(
+            formData?.vertexaiAuthMode || runtime?.vertexaiAuthMode,
+            merged,
+        );
+        merged.apiKey = typeof formData?.apiKey === 'string' && formData.apiKey.trim()
+            ? formData.apiKey.trim()
+            : String(runtime?.apiKey || '').trim();
+        merged.vertexaiServiceAccount = typeof formData?.vertexaiServiceAccount === 'string'
+            && formData.vertexaiServiceAccount.trim()
+            ? formData.vertexaiServiceAccount.trim()
+            : String(runtime?.vertexaiServiceAccount || '').trim();
+        return merged;
     }
 
     isOpen() {
@@ -2510,6 +2764,10 @@ export class ConfigPanel {
         const input = panel.querySelector('#config-serviceaccount');
         const btn = panel.querySelector('#toggle-sa');
         if (!input || !btn) return;
+        if (input.dataset.hasKey === 'true' && input.value === VERTEX_SERVICE_ACCOUNT_MASK) {
+            this.showStatus('已保存的 Service Account 不会回显；直接粘贴新的 JSON 即可替换', 'info');
+            return;
+        }
 
         if (input.style.webkitTextSecurity === 'disc' || input.style.webkitTextSecurity === '') {
             input.style.webkitTextSecurity = 'none';
@@ -2762,6 +3020,20 @@ export class ConfigPanel {
             const keys = this.configManager.listKeys?.(active?.id) || [];
             const hasTypedKey = typeof formData.apiKey === 'string' && formData.apiKey.trim().length > 0;
             const hasSavedKey = keys.length > 0;
+            if (formData.provider === 'vertexai') {
+                const authMode = normalizeVertexAuthMode(formData.vertexaiAuthMode, formData);
+                const hasServiceAccount = Boolean(
+                    String(formData.vertexaiServiceAccount || this.configManager.get()?.vertexaiServiceAccount || '').trim(),
+                );
+                if (authMode === VERTEX_AUTH_MODE_EXPRESS && !hasTypedKey && !hasSavedKey) {
+                    this.showStatus('Vertex AI Express 模式需要 API Key', 'error');
+                    return;
+                }
+                if (authMode !== VERTEX_AUTH_MODE_EXPRESS && !hasServiceAccount) {
+                    this.showStatus('Vertex AI 完整模式需要 Service Account JSON', 'error');
+                    return;
+                }
+            }
             if (!hasTypedKey && !hasSavedKey && this.providerRequiresApiKey(formData.provider, formData.baseUrl)) {
                 this.showStatus('请先在 Key 管理中保存至少一个 API Key，或在此栏贴上 Key 后保存', 'error');
                 return;
@@ -2865,11 +3137,16 @@ export class ConfigPanel {
             }
 
             if (formData.provider === 'vertexai') {
-                if (!formData.vertexaiServiceAccount || !String(formData.vertexaiServiceAccount).trim()) {
+                const requestConfig = await this.resolveVertexRequestConfig(formData);
+                if (requestConfig.vertexaiAuthMode === VERTEX_AUTH_MODE_EXPRESS && !requestConfig.apiKey) {
+                    this.showStatus('请先保存或填写 Vertex AI Express API Key', 'error');
+                    return;
+                }
+                if (requestConfig.vertexaiAuthMode !== VERTEX_AUTH_MODE_EXPRESS && !requestConfig.vertexaiServiceAccount) {
                     this.showStatus('请填写 Vertex AI Service Account（JSON）后再测试连接', 'error');
                     return;
                 }
-                const tempClient = new LLMClient({ ...formData, apiKey: '' });
+                const tempClient = new LLMClient(requestConfig);
                 const result = await tempClient.healthCheck();
                 if (result.ok) {
                     this.showStatus('连接成功！', 'success');
@@ -3042,8 +3319,14 @@ export class ConfigPanel {
                 this.showStatus('请先在 Key 管理中保存至少一个 API Key，或在此栏贴上 Key', 'error');
                 return;
             }
+            let requestConfig = { ...formData, apiKey: keyToUse };
             if (formData.provider === 'vertexai') {
-                if (!formData.vertexaiServiceAccount || !String(formData.vertexaiServiceAccount).trim()) {
+                requestConfig = await this.resolveVertexRequestConfig(formData);
+                if (requestConfig.vertexaiAuthMode === VERTEX_AUTH_MODE_EXPRESS && !requestConfig.apiKey) {
+                    this.showStatus('请先保存或填写 Vertex AI Express API Key', 'error');
+                    return;
+                }
+                if (requestConfig.vertexaiAuthMode !== VERTEX_AUTH_MODE_EXPRESS && !requestConfig.vertexaiServiceAccount) {
                     this.showStatus('请填写 Vertex AI Service Account（JSON）后再刷新列表', 'error');
                     return;
                 }
@@ -3056,7 +3339,7 @@ export class ConfigPanel {
             modelHelp.style.color = 'var(--app-accent-strong)';
 
             // 创建临时客户端
-            const tempClient = new LLMClient({ ...formData, apiKey: formData.provider === 'vertexai' ? '' : keyToUse });
+            const tempClient = new LLMClient(requestConfig);
 
             // 获取模型列表
             logger.info(`正在获取 ${formData.provider} 的模型列表...`);
@@ -3071,16 +3354,10 @@ export class ConfigPanel {
                 && (formData.provider === 'makersuite' || formData.provider === 'vertexai');
             if (needsGoogleImageModels) {
                 const googleImageModels = [
-                    'imagen-4.0-generate-preview-06-06',
-                    'imagen-4.0-fast-generate-preview-06-06',
-                    'imagen-4.0-ultra-generate-preview-06-06',
-                    'imagen-3.0-generate-002',
-                    'imagen-3.0-generate-001',
-                    'imagen-3.0-fast-generate-001',
-                    'imagen-3.0-capability-001',
-                    'imagegeneration@006',
-                    'imagegeneration@005',
-                    'imagegeneration@002',
+                    'gemini-3.1-flash-lite-image',
+                    'gemini-3.1-flash-image',
+                    'gemini-3-pro-image',
+                    'gemini-2.5-flash-image',
                 ];
                 const merged = Array.from(new Set([...(models || []), ...googleImageModels]));
                 models.length = 0;
@@ -3092,6 +3369,9 @@ export class ConfigPanel {
             }
 
             this.renderModelOptions(models);
+            if (formData.provider === 'openrouter') {
+                await this.refreshOpenRouterProviders({ notify: false });
+            }
             try {
                 window.dispatchEvent(new CustomEvent('config-models-refreshed', {
                     detail: {
@@ -3117,7 +3397,22 @@ export class ConfigPanel {
         } catch (e) {
             this.showStatus(`获取模型列表失败: ${e.message}`, 'error');
             logger.error('获取模型列表失败:', e);
-            modelHelp.textContent = '获取失败，请检查配置后重试';
+            const fallbackModels = Array.isArray(e?.fallbackModels) ? e.fallbackModels : [];
+            if (fallbackModels.length > 0) {
+                const fallback = [...fallbackModels];
+                if (this.activeTab === 'image') {
+                    fallback.unshift(
+                        'gemini-3.1-flash-lite-image',
+                        'gemini-3.1-flash-image',
+                        'gemini-3-pro-image',
+                        'gemini-2.5-flash-image',
+                    );
+                }
+                this.renderModelOptions(Array.from(new Set(fallback)));
+            }
+            modelHelp.textContent = fallbackModels.length > 0
+                ? '目录获取失败，已显示内建候选；请检查权限，或直接填写模型 ID'
+                : '获取失败，请检查配置后重试；当前模型不会被覆盖';
             modelHelp.style.color = 'var(--app-danger-text)';
 
             // 5秒后恢复原始提示

@@ -3,7 +3,7 @@
  * Supports both Express mode (API key) and Full mode (Service Account JSON)
  */
 
-import { handleSSE } from '../stream.js';
+import { handleSSE, parseSSEBuffer } from '../stream.js';
 import { createLinkedAbortController, invokeNativeHttpRequest, splitRequestOptions } from '../abort.js';
 import { createReasoningStreamEvent, extractGeminiStreamParts } from '../native-reasoning.js';
 import { prepareTransportRequest } from '../transport.js';
@@ -13,6 +13,11 @@ import {
   mergeGeminiProviderMeta,
   reportProviderUsage,
 } from '../provider-usage.js';
+import {
+  VERTEX_AUTH_MODE_EXPRESS,
+  VERTEX_AUTH_MODE_SERVICE_ACCOUNT,
+  normalizeVertexAuthMode,
+} from '../vertexai-config-utils.js';
 
 const getTauriInvoker = () => {
   const g = typeof globalThis !== 'undefined' ? globalThis : undefined;
@@ -55,19 +60,6 @@ const pemToArrayBuffer = (pem) => {
   const bytes = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
   return bytes.buffer;
-};
-
-const parseSSEText = function* (text) {
-  const raw = String(text ?? '');
-  const lines = raw.split('\n');
-  for (const line of lines) {
-    if (!line.startsWith('data: ')) continue;
-    const data = line.slice(6).trim();
-    if (!data || data === '[DONE]') continue;
-    try {
-      yield JSON.parse(data);
-    } catch (_e) {}
-  }
 };
 
 const makeAbortError = () => {
@@ -188,12 +180,12 @@ export class VertexAIProvider {
   constructor(config) {
     this.transportConfig = config || {};
     this.timeout = config.timeout || 60000;
-    this.model = config.model || 'gemini-2.0-flash-exp';
-    this.region = config.vertexaiRegion || 'us-central1';
+    this.model = config.model || 'gemini-3.5-flash';
+    this.region = config.vertexaiRegion || 'global';
 
-    // Check if using Service Account JSON or API key
     this.serviceAccountJson = config.vertexaiServiceAccount;
     this.apiKey = config.apiKey;
+    this.authMode = normalizeVertexAuthMode(config.vertexaiAuthMode, config);
 
     // Extract Project ID from Service Account JSON if available
     if (this.serviceAccountJson) {
@@ -212,10 +204,14 @@ export class VertexAIProvider {
       this.projectId = config.vertexaiProjectId;
     }
 
-    const derivedHost = getHostForRegion(this.region);
+    const derivedHost = this.authMode === VERTEX_AUTH_MODE_EXPRESS
+      ? getHostForRegion('global')
+      : getHostForRegion(this.region);
     const baseUrl = String(config.baseUrl || '').trim();
     // If user provided a valid aiplatform host, respect it; otherwise derive from region (ST-like behavior).
-    this.baseUrl = (baseUrl && baseUrl.includes('aiplatform.googleapis.com')) ? baseUrl : derivedHost;
+    this.baseUrl = this.authMode === VERTEX_AUTH_MODE_EXPRESS
+      ? derivedHost
+      : ((baseUrl && baseUrl.includes('aiplatform.googleapis.com')) ? baseUrl : derivedHost);
     this.baseHost = this.baseUrl;
 
     // Cache for OAuth2 token
@@ -389,8 +385,13 @@ export class VertexAIProvider {
   buildUrlFor({ stream = false, region, baseHost, model }) {
     const endpoint = stream ? 'streamGenerateContent' : 'generateContent';
 
+    if (this.authMode === VERTEX_AUTH_MODE_EXPRESS) {
+      const url = `${getHostForRegion('global')}/v1/publishers/google/models/${model}:${endpoint}`;
+      return stream ? `${url}?alt=sse` : url;
+    }
+
     if (!this.projectId) {
-      throw new Error('Vertex AI requires projectId');
+      throw new Error('Vertex AI 完整模式需要 Service Account 中的 project_id');
     }
 
     const url = `${baseHost}/v1/projects/${this.projectId}/locations/${region}/publishers/google/models/${model}:${endpoint}`;
@@ -402,15 +403,16 @@ export class VertexAIProvider {
       'Content-Type': 'application/json',
     };
 
-    // Use Service Account authentication if available
-    if (this.serviceAccountJson) {
-      const token = await this.getAccessToken();
-      headers['Authorization'] = `Bearer ${token}`;
-    }
-    else {
-      throw new Error('Vertex AI 需要 Service Account（JSON）');
+    if (this.authMode === VERTEX_AUTH_MODE_EXPRESS) {
+      const apiKey = String(this.apiKey || '').trim();
+      if (!apiKey) throw new Error('Vertex AI Express 模式需要 API Key');
+      headers['x-goog-api-key'] = apiKey;
+      return headers;
     }
 
+    if (!this.serviceAccountJson) throw new Error('Vertex AI 完整模式需要 Service Account（JSON）');
+    const token = await this.getAccessToken();
+    headers.Authorization = `Bearer ${token}`;
     return headers;
   }
 
@@ -484,7 +486,7 @@ export class VertexAIProvider {
       data = await tryOnce({ region: this.region, baseHost: this.baseHost });
     } catch (err) {
       // Some Gemini models are only available in `global` location; ST can still use them.
-      if (err?.status === 404 && this.region !== 'global') {
+      if (this.authMode === VERTEX_AUTH_MODE_SERVICE_ACCOUNT && err?.status === 404 && this.region !== 'global') {
         data = await tryOnce({ region: 'global', baseHost: getHostForRegion('global') });
       } else {
         throw err;
@@ -540,6 +542,18 @@ export class VertexAIProvider {
       } catch {}
     };
     let providerMeta = null;
+    const emitStreamData = function* (data) {
+      providerMeta = mergeGeminiProviderMeta(providerMeta, data);
+      notifyProviderToolCallDelta(data);
+      reportProviderWebSources(options, data, { provider: 'vertexai' });
+      const candidates = data?.candidates;
+      if (!candidates?.length) return;
+      const parts = extractGeminiStreamParts(candidates[0].content);
+      if (parts.reasoning) {
+        yield createReasoningStreamEvent(parts.reasoning, { provider: 'vertexai' });
+      }
+      if (parts.content) yield parts.content;
+    };
 
     const invoker = getTauriInvoker();
     const tryStreamOnce = async function* ({ region, baseHost }) {
@@ -547,37 +561,103 @@ export class VertexAIProvider {
 
       if (typeof invoker === 'function') {
         if (signal?.aborted) throw makeAbortError();
-        const res = await request({
+        const prepared = prepareTransportRequest({
+          config: this.transportConfig,
           provider: 'vertexai',
-          transportConfig: this.transportConfig,
           url,
-          method: 'POST',
           headers: { ...headers, Accept: 'text/event-stream' },
-          body: JSON.stringify(body),
-          timeoutMs: this.timeout,
-          signal,
-          requestId,
         });
-        if (!res.ok) {
-          const err = new Error(`Vertex AI Error: ${res.status}`);
-          err.status = res.status;
-          err.response = res.body;
-          throw err;
-        }
-        for (const data of parseSSEText(res.body)) {
-          providerMeta = mergeGeminiProviderMeta(providerMeta, data);
-          notifyProviderToolCallDelta(data);
-          reportProviderWebSources(options, data, { provider: 'vertexai' });
-          const candidates = data?.candidates;
-          if (candidates && candidates.length > 0) {
-            const parts = extractGeminiStreamParts(candidates[0].content);
-            if (parts.reasoning) {
-              yield createReasoningStreamEvent(parts.reasoning, { provider: 'vertexai' });
+        const rawRequestId = String(
+          requestId || `vertex_stream_${Date.now().toString(36)}_${Math.random().toString(16).slice(2, 10)}`,
+        ).trim();
+        const nativeRequestId = rawRequestId.replace(/[^a-z0-9._-]+/giu, '_').slice(0, 160)
+          || `vertex_stream_${Date.now().toString(36)}`;
+        let started = false;
+        let responseStatus = 0;
+        let responseOk = null;
+        let rawErrorBody = '';
+        let sseBuffer = '';
+        const abortNative = () => {
+          try {
+            Promise.resolve(invoker('http_abort_request', { requestId: nativeRequestId })).catch(() => {});
+          } catch {}
+        };
+        try {
+          await invoker('http_stream_request_start', {
+            url: prepared.url,
+            method: 'POST',
+            headers: prepared.headers,
+            body: JSON.stringify(body),
+            timeoutMs: this.timeout,
+            requestId: nativeRequestId,
+          });
+          started = true;
+          signal?.addEventListener?.('abort', abortNative, { once: true });
+          if (signal?.aborted) {
+            abortNative();
+            throw makeAbortError();
+          }
+
+          while (true) {
+            if (signal?.aborted) throw makeAbortError();
+            const batch = await invoker('http_stream_request_read', {
+              requestId: nativeRequestId,
+              maxChunks: 32,
+            });
+            if (Number.isFinite(Number(batch?.status))) responseStatus = Number(batch.status);
+            if (typeof batch?.ok === 'boolean') responseOk = batch.ok;
+            const chunks = Array.isArray(batch?.chunks)
+              ? batch.chunks.map(chunk => String(chunk || ''))
+              : [];
+            if (responseOk === false) {
+              rawErrorBody += chunks.join('');
+            } else {
+              for (const chunk of chunks) {
+                sseBuffer += chunk;
+                const parsed = parseSSEBuffer(sseBuffer);
+                sseBuffer = parsed.rest;
+                for (const data of parsed.events) {
+                  yield* emitStreamData(data);
+                }
+              }
             }
-            if (parts.content) yield parts.content;
+
+            const nativeError = String(batch?.error || '').trim();
+            if (nativeError) {
+              if (/aborted/iu.test(nativeError)) throw makeAbortError();
+              const err = new Error(`native http_stream_request failed: ${nativeError}`);
+              err.status = responseStatus;
+              err.response = rawErrorBody;
+              throw err;
+            }
+            if (batch?.done) {
+              if (responseOk === false) {
+                let detail = '';
+                try {
+                  const parsed = JSON.parse(rawErrorBody || '{}');
+                  detail = String(parsed?.error?.message || parsed?.message || parsed?.error || '').trim();
+                } catch {}
+                const err = new Error(`Vertex AI Error: ${responseStatus}${detail ? ` - ${detail}` : ''}`);
+                err.status = responseStatus;
+                err.response = rawErrorBody;
+                throw err;
+              }
+              const parsed = parseSSEBuffer(sseBuffer, { final: true });
+              for (const data of parsed.events) {
+                yield* emitStreamData(data);
+              }
+              return;
+            }
+            if (!chunks.length) {
+              await new Promise(resolve => setTimeout(resolve, 20));
+            }
+          }
+        } finally {
+          try { signal?.removeEventListener?.('abort', abortNative); } catch {}
+          if (started) {
+            invoker('http_stream_request_close', { requestId: nativeRequestId }).catch(() => {});
           }
         }
-        return;
       }
 
       // Browser fallback
@@ -603,17 +683,7 @@ export class VertexAIProvider {
         }
         for await (const data of handleSSE(response)) {
           touch();
-          providerMeta = mergeGeminiProviderMeta(providerMeta, data);
-          notifyProviderToolCallDelta(data);
-          reportProviderWebSources(options, data, { provider: 'vertexai' });
-          const candidates = data?.candidates;
-          if (candidates && candidates.length > 0) {
-            const parts = extractGeminiStreamParts(candidates[0].content);
-            if (parts.reasoning) {
-              yield createReasoningStreamEvent(parts.reasoning, { provider: 'vertexai' });
-            }
-            if (parts.content) yield parts.content;
-          }
+          yield* emitStreamData(data);
         }
       } finally {
         cleanup();
@@ -630,7 +700,7 @@ export class VertexAIProvider {
       });
       return;
     } catch (err) {
-      if (err?.status === 404 && this.region !== 'global') {
+      if (this.authMode === VERTEX_AUTH_MODE_SERVICE_ACCOUNT && err?.status === 404 && this.region !== 'global') {
         providerMeta = null;
         yield* tryStreamOnce({ region: 'global', baseHost: getHostForRegion('global') });
         reportProviderUsage(options, {
@@ -649,78 +719,72 @@ export class VertexAIProvider {
    * List available models
    */
   async listModels() {
+    if (this.authMode === VERTEX_AUTH_MODE_EXPRESS) {
+      const error = new Error('Vertex AI Express 模式不提供模型目录查询；已显示内建候选');
+      error.code = 'VERTEX_EXPRESS_MODEL_LIST_UNAVAILABLE';
+      error.fallbackModels = this.getFallbackModels();
+      throw error;
+    }
     try {
-      if (!this.projectId) {
-        throw new Error('Project ID required');
-      }
-
       const headers = await this.getHeaders();
       const out = [];
       const seen = new Set();
-      const collectFrom = async ({ region, baseHost }) => {
-        let pageToken = '';
-        const pageTokensSeen = new Set();
-        let pages = 0;
-        while (true) {
-          const qs = new URLSearchParams();
-          qs.set('pageSize', '1000');
-          if (pageToken) qs.set('pageToken', pageToken);
-          const url = `${baseHost}/v1/projects/${this.projectId}/locations/${region}/publishers/google/models?${qs.toString()}`;
+      let pageToken = '';
+      const pageTokensSeen = new Set();
+      let pages = 0;
+      while (true) {
+        const qs = new URLSearchParams();
+        qs.set('pageSize', '300');
+        if (pageToken) qs.set('pageToken', pageToken);
+        // Base publisher models are a global Model Garden collection. The current API
+        // explicitly rejects a projects/{project}/locations/{location} prefix here.
+        const url = `${getHostForRegion('global')}/v1beta1/publishers/google/models?${qs.toString()}`;
+        const data = await requestJson({
+          provider: 'vertexai',
+          transportConfig: this.transportConfig,
+          url,
+          method: 'GET',
+          headers,
+          timeoutMs: this.timeout,
+        });
+        const models = Array.isArray(data?.publisherModels)
+          ? data.publisherModels
+          : (Array.isArray(data?.models) ? data.models : []);
+        models.forEach((model) => {
+          const id = String(model?.name || '').split('/').pop();
+          if (!id || seen.has(id)) return;
+          seen.add(id);
+          out.push(id);
+        });
 
-          const data = await requestJson({
-            provider: 'vertexai',
-            transportConfig: this.transportConfig,
-            url,
-            method: 'GET',
-            headers,
-            timeoutMs: this.timeout,
-          });
-          const models = Array.isArray(data?.models) ? data.models : [];
-          models.forEach((m) => {
-            const id = String(m?.name || '').split('/').pop();
-            if (!id) return;
-            if (seen.has(id)) return;
-            seen.add(id);
-            out.push(id);
-          });
-
-          pageToken = String(data?.nextPageToken || '').trim();
-          pages++;
-          if (!pageToken) break;
-          if (pageTokensSeen.has(pageToken)) break;
-          pageTokensSeen.add(pageToken);
-          if (pages > 200) break;
-        }
-      };
-
-      await collectFrom({ region: this.region, baseHost: this.baseHost });
-      if (this.region !== 'global') {
-        await collectFrom({ region: 'global', baseHost: getHostForRegion('global') });
+        pageToken = String(data?.nextPageToken || '').trim();
+        pages++;
+        if (!pageToken || pageTokensSeen.has(pageToken) || pages > 200) break;
+        pageTokensSeen.add(pageToken);
       }
 
-      // ST usually shows a curated set; here we prefer gemini models on top.
       const gemini = out.filter(id => id.toLowerCase().includes('gemini'));
       const rest = out.filter(id => !id.toLowerCase().includes('gemini'));
       const merged = [...gemini, ...rest];
-      return merged.length ? merged : this.getFallbackModels();
+      if (!merged.length) throw new Error('Vertex AI 模型目录返回空列表');
+      return merged;
     } catch (error) {
       console.warn('Failed to list Vertex AI models:', error);
-      return this.getFallbackModels();
+      const wrapped = new Error(`无法从 Vertex AI 获取模型目录：${error.message}`);
+      wrapped.cause = error;
+      wrapped.status = error?.status;
+      wrapped.fallbackModels = this.getFallbackModels();
+      throw wrapped;
     }
   }
 
   getFallbackModels() {
     return [
-      'gemini-2.0-flash-exp',
-      'gemini-2.0-flash',
-      'gemini-2.0-pro-exp',
-      'gemini-1.5-pro',
-      'gemini-1.5-pro-002',
-      'gemini-1.5-flash',
-      'gemini-1.5-flash-002',
-      'gemini-1.0-pro',
-      'text-bison',
-      'chat-bison',
+      'gemini-3.5-flash',
+      'gemini-3.1-flash-lite',
+      'gemini-2.5-pro',
+      'gemini-2.5-flash',
+      'gemini-2.5-flash-lite',
     ];
   }
 

@@ -1,3 +1,8 @@
+import {
+  VERTEX_AUTH_MODE_EXPRESS,
+  normalizeVertexAuthMode,
+} from '../api/vertexai-config-utils.js';
+
 const trim = value => String(value || '').trim();
 
 export const createMaidOnboardingAppAdapter = ({
@@ -242,8 +247,14 @@ export const createMaidOnboardingAppAdapter = ({
       (configManager?.listKeys?.(profile?.id) || []).length > 0;
     const hasServiceAccount = Boolean(trim(
       profile?.vertexaiServiceAccount || profile?.serviceAccount || profile?.serviceAccountJson,
-    ));
-    return hasSavedKey || hasServiceAccount;
+    )) || configManager?.hasVertexServiceAccount?.(profile?.id) === true;
+    if (trim(profile?.provider).toLowerCase() !== 'vertexai') return hasSavedKey;
+    const authMode = normalizeVertexAuthMode(profile?.vertexaiAuthMode, {
+      ...profile,
+      apiKey: hasSavedKey ? 'saved-key' : '',
+      vertexaiServiceAccount: hasServiceAccount ? 'saved-service-account' : '',
+    });
+    return authMode === VERTEX_AUTH_MODE_EXPRESS ? hasSavedKey : hasServiceAccount;
   });
 
   return {

@@ -1,6 +1,7 @@
 // Library entry point for Android and other platforms
 
 mod commands;
+mod external_links;
 mod memory_db;
 mod screenshot;
 mod storage;
@@ -10,11 +11,12 @@ use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let builder = tauri::Builder::default();
+    let builder = tauri::Builder::default().plugin(tauri_plugin_opener::init());
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
     let builder = builder.plugin(tauri_plugin_dialog::init());
     builder
         .invoke_handler(tauri::generate_handler![
+            external_links::open_external_url,
             commands::exit_app,
             commands::save_config,
             commands::load_config,

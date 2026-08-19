@@ -534,11 +534,31 @@ body[data-theme-mode='dark'] .moment-like-button.is-liked {
 
   body[data-ui-mode='chat'] .desktop-rail-wordmark {
     margin-top: auto;
-    display: block;
+    min-width: 48px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 8px 4px;
+    border: 0;
+    border-radius: 10px;
+    background: transparent;
     color: var(--app-accent-strong);
     font-size: 10px;
     font-weight: 900;
     letter-spacing: 0.16em;
+    cursor: pointer;
+    transition: color 150ms ease, background-color 150ms ease, transform 150ms ease;
+  }
+
+  body[data-ui-mode='chat'] .desktop-rail-wordmark:hover {
+    color: var(--app-text-primary);
+    background: var(--app-accent-soft);
+    transform: translateY(-1px);
+  }
+
+  body[data-ui-mode='chat'] .desktop-rail-wordmark:focus-visible {
+    outline: 2px solid var(--app-accent-primary);
+    outline-offset: 2px;
   }
 
   body[data-ui-mode='chat'] .page,

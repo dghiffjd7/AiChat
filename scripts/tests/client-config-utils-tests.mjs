@@ -27,6 +27,29 @@ test('canInitClient accepts vertex ai service account without api key', () => {
   );
 });
 
+test('canInitClient follows the selected vertex authentication mode', () => {
+  assert.equal(canInitClient({
+    provider: 'vertexai',
+    vertexaiAuthMode: 'express',
+    apiKey: 'vertex-express-key',
+  }), true);
+  assert.equal(canInitClient({
+    provider: 'vertexai',
+    vertexaiAuthMode: 'express',
+    vertexaiServiceAccount: '{"project_id":"demo"}',
+  }), false);
+  assert.equal(canInitClient({
+    provider: 'vertexai',
+    vertexaiAuthMode: 'service_account',
+    apiKey: 'unrelated-key',
+  }), false);
+  assert.equal(canInitClient({
+    provider: 'vertexai',
+    vertexaiAuthMode: 'service_account',
+    vertexaiServiceAccount: '{"project_id":"demo"}',
+  }), true);
+});
+
 test('canInitClient rejects empty configs', () => {
   assert.equal(canInitClient(null), false);
   assert.equal(canInitClient({}), false);

@@ -182,11 +182,42 @@ assert.equal(adapter.hasConfiguredProfile(), true);
 
 const vertexAdapter = createMaidOnboardingAppAdapter({
   configManager: {
-    getProfiles: () => [{ id: 'vertex', model: 'gemini-2.5-pro', vertexaiServiceAccount: 'encoded-json' }],
+    getProfiles: () => [{ id: 'vertex', provider: 'vertexai', model: 'gemini-2.5-pro', vertexaiServiceAccount: 'encoded-json' }],
     listKeys: () => [],
   },
 });
 assert.equal(vertexAdapter.hasConfiguredProfile(), true, 'Vertex service-account profiles are configured without an API key');
+
+const migratedVertexAdapter = createMaidOnboardingAppAdapter({
+  configManager: {
+    getProfiles: () => [{ id: 'vertex-keyring', provider: 'vertexai', model: 'gemini-2.5-pro', vertexaiAuthMode: 'service_account' }],
+    listKeys: () => [],
+    hasVertexServiceAccount: profileId => profileId === 'vertex-keyring',
+  },
+});
+assert.equal(migratedVertexAdapter.hasConfiguredProfile(), true, 'keyring-backed Vertex service accounts remain discoverable');
+
+const incompleteVertexAdapters = [
+  createMaidOnboardingAppAdapter({
+    configManager: {
+      getProfiles: () => [{ id: 'vertex-full-key-only', provider: 'vertexai', model: 'gemini-3.5-flash', vertexaiAuthMode: 'service_account', activeKeyId: 'key-1' }],
+      listKeys: () => [{ id: 'key-1' }],
+      hasVertexServiceAccount: () => false,
+    },
+  }),
+  createMaidOnboardingAppAdapter({
+    configManager: {
+      getProfiles: () => [{ id: 'vertex-express-sa-only', provider: 'vertexai', model: 'gemini-3.5-flash', vertexaiAuthMode: 'express' }],
+      listKeys: () => [],
+      hasVertexServiceAccount: () => true,
+    },
+  }),
+];
+assert.equal(
+  incompleteVertexAdapters.some(adapter => adapter.hasConfiguredProfile()),
+  false,
+  'onboarding requires the credential selected by the Vertex authentication mode',
+);
 
 const keyIdAdapter = createMaidOnboardingAppAdapter({
   configManager: {
