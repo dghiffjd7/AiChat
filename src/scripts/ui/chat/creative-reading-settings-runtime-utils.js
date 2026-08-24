@@ -11,6 +11,8 @@ export const normalizeCreativeNarrativeFont = (value = '') => {
   return CREATIVE_NARRATIVE_FONTS.includes(normalized) ? normalized : 'serif';
 };
 
+export const normalizeCreativeDialogueHighlight = value => value !== false;
+
 export const applyCreativeReadingSize = ({
   bodyEl = null,
   menuEl = null,
@@ -45,6 +47,19 @@ export const applyCreativeNarrativeFont = ({
   return normalized;
 };
 
+export const applyCreativeDialogueHighlight = ({
+  bodyEl = null,
+  menuEl = null,
+  toggleEl = null,
+  value = true,
+} = {}) => {
+  const enabled = normalizeCreativeDialogueHighlight(value);
+  if (bodyEl?.dataset) bodyEl.dataset.rpDialogueHighlight = enabled ? 'on' : 'off';
+  if (menuEl?.dataset) menuEl.dataset.rpDialogueHighlight = enabled ? 'on' : 'off';
+  if (toggleEl) toggleEl.checked = enabled;
+  return enabled;
+};
+
 export const bindCreativeReadingSettings = ({
   bodyEl = null,
   buttonEl = null,
@@ -53,10 +68,14 @@ export const bindCreativeReadingSettings = ({
   writeSetting = () => {},
   readNarrativeFont = () => 'serif',
   writeNarrativeFont = () => {},
+  readDialogueHighlight = () => true,
+  writeDialogueHighlight = () => {},
+  onDialogueHighlightChanged = () => {},
   toggleSheetAt = () => {},
 } = {}) => {
   const optionButtons = Array.from(menuEl?.querySelectorAll?.('[data-rp-reading-size]') || []);
   const fontOptionButtons = Array.from(menuEl?.querySelectorAll?.('[data-rp-narrative-font]') || []);
+  const dialogueHighlightToggle = menuEl?.querySelector?.('[data-rp-dialogue-highlight]') || null;
   const sync = (value = readSetting()) => applyCreativeReadingSize({
     bodyEl,
     menuEl,
@@ -67,6 +86,12 @@ export const bindCreativeReadingSettings = ({
     bodyEl,
     menuEl,
     optionButtons: fontOptionButtons,
+    value,
+  });
+  const syncDialogueHighlight = (value = readDialogueHighlight()) => applyCreativeDialogueHighlight({
+    bodyEl,
+    menuEl,
+    toggleEl: dialogueHighlightToggle,
     value,
   });
 
@@ -93,17 +118,27 @@ export const bindCreativeReadingSettings = ({
     writeNarrativeFont(normalized);
   };
 
+  const handleDialogueHighlightChange = (event) => {
+    const enabled = syncDialogueHighlight(event?.currentTarget?.checked !== false);
+    writeDialogueHighlight(enabled);
+    onDialogueHighlightChanged(enabled);
+  };
+
   buttonEl?.addEventListener?.('click', handleButtonClick);
   menuEl?.addEventListener?.('click', handleMenuClick);
+  dialogueHighlightToggle?.addEventListener?.('change', handleDialogueHighlightChange);
   sync();
   syncNarrativeFont();
+  syncDialogueHighlight();
 
   return {
     sync,
     syncNarrativeFont,
+    syncDialogueHighlight,
     destroy() {
       buttonEl?.removeEventListener?.('click', handleButtonClick);
       menuEl?.removeEventListener?.('click', handleMenuClick);
+      dialogueHighlightToggle?.removeEventListener?.('change', handleDialogueHighlightChange);
     },
   };
 };

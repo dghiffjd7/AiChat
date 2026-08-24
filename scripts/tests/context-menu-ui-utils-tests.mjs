@@ -13,7 +13,7 @@ import {
     { role: 'assistant', type: 'image' },
     { hasCode: true, isThreadingEnabled: true },
   );
-  assert.deepEqual(actions.map(item => item.key), ['reply', 'view-code', 'download', 'generate-image', 'speak', 'copy-text', 'regenerate', 'delete']);
+  assert.deepEqual(actions.map(item => item.key), ['reply', 'view-code', 'download', 'generate-image', 'copy-text', 'regenerate', 'delete']);
   console.log('ok - buildContextMenuActions composes assistant actions with reply code and download entries');
 }
 
@@ -59,7 +59,7 @@ import {
     { role: 'assistant', type: 'text', meta: { renderRich: true } },
     { hasCode: false, isThreadingEnabled: false },
   );
-  assert.deepEqual(actions.map(item => item.key), ['view-code', 'generate-image', 'speak', 'copy-text', 'regenerate', 'delete']);
+  assert.deepEqual(actions.map(item => item.key), ['view-code', 'generate-image', 'copy-text', 'regenerate', 'delete']);
   console.log('ok - buildContextMenuActions exposes raw editor for creative assistant messages');
 }
 
@@ -69,7 +69,7 @@ import {
     hasCode: false,
     hasRpMessageActions: true,
   });
-  assert.deepEqual(actions.map(item => item.key), ['generate-image', 'speak', 'delete']);
+  assert.deepEqual(actions.map(item => item.key), ['generate-image', 'delete']);
 
   const codeActions = buildContextMenuActions(message, {
     hasCode: true,
@@ -145,7 +145,7 @@ import {
     isThreadingEnabled: false,
   });
   assert.equal(canDeleteCurrentSwipe(message), true);
-  assert.deepEqual(actions.map(item => item.key), ['generate-image', 'speak', 'copy-text', 'regenerate', 'delete']);
+  assert.deepEqual(actions.map(item => item.key), ['generate-image', 'copy-text', 'regenerate', 'delete']);
   assert.equal(buildContextMenuActions({
     ...message,
     meta: { ...message.meta, swipes: [{ content: 'only' }] },

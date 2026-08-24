@@ -2,11 +2,82 @@ import assert from 'node:assert/strict';
 
 import {
   buildMaidSelectionPromptBlock,
+  createMaidPointSelectionRect,
+  moveMaidSelectionRect,
   normalizeMaidSelectionItem,
   resolveMaidAnchoredViewportRect,
   resolveMaidUnanchoredViewportRect,
+  resizeMaidSelectionRect,
 } from '../../src/scripts/ui/maid-selection-utils.js';
 import { buildMaidModelPlannerMessages } from '../../src/scripts/agent/maid-model-planner.js';
+
+{
+  assert.deepEqual(
+    createMaidPointSelectionRect(100, 120, { size: 88, viewportWidth: 320, viewportHeight: 200 }),
+    { left: 56, top: 76, width: 88, height: 88 },
+    '点击生成的小圆应以落点为中心',
+  );
+  assert.deepEqual(
+    createMaidPointSelectionRect(10, 5, { size: 88, viewportWidth: 320, viewportHeight: 200 }),
+    { left: 0, top: 0, width: 88, height: 88 },
+    '靠近视口边缘时小圆应保持完整可见',
+  );
+  assert.deepEqual(
+    moveMaidSelectionRect(
+      { left: 20, top: 30, width: 88, height: 88 },
+      500,
+      500,
+      { viewportWidth: 320, viewportHeight: 200 },
+    ),
+    { left: 232, top: 112, width: 88, height: 88 },
+    '拖动已有选区时应限制在视口内',
+  );
+  assert.deepEqual(
+    resizeMaidSelectionRect(
+      { left: 20, top: 30, width: 80, height: 80 },
+      'e',
+      20,
+      0,
+      { roundSelection: true, minSize: 20 },
+    ),
+    { left: 20, top: 30, width: 100, height: 80 },
+    '圆形选区的左右手柄只应调整宽度，以便拉成椭圆',
+  );
+  assert.deepEqual(
+    resizeMaidSelectionRect(
+      { left: 20, top: 30, width: 80, height: 80 },
+      'n',
+      0,
+      20,
+      { roundSelection: true, minSize: 20 },
+    ),
+    { left: 20, top: 50, width: 80, height: 60 },
+    '圆形选区的上下手柄只应调整高度，以便拉成椭圆',
+  );
+  assert.deepEqual(
+    resizeMaidSelectionRect(
+      { left: 20, top: 30, width: 80, height: 80 },
+      'se',
+      32,
+      8,
+      { roundSelection: true, minSize: 20 },
+    ),
+    { left: 20, top: 30, width: 100, height: 100 },
+    '圆形选区的四角手柄应保持等比缩放',
+  );
+  assert.deepEqual(
+    resizeMaidSelectionRect(
+      { left: 20, top: 30, width: 100, height: 80 },
+      'se',
+      25,
+      20,
+      { roundSelection: true, minSize: 20 },
+    ),
+    { left: 20, top: 30, width: 125, height: 100 },
+    '椭圆选区的四角手柄应保持当前长宽比',
+  );
+  console.log('ok - 点击小圆、移动、椭圆与等比缩放几何');
+}
 
 {
   const item = normalizeMaidSelectionItem({

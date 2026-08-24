@@ -312,6 +312,7 @@ export class ContactsStore {
             source: contact.source ?? prev.source ?? '',
             // 是否为用户自建角色（角色库添加时设为 false）
             isUserCreated: contact.isUserCreated ?? prev.isUserCreated ?? true,
+            voiceRef: String(contact.voiceRef ?? prev.voiceRef ?? '').trim(),
             updatedAt: Date.now(),
         };
         try {
@@ -362,6 +363,7 @@ export class ContactsStore {
                     addedAt: Date.now(),
                     members: [],
                     description: '',
+                    voiceRef: '',
                     updatedAt: Date.now(),
                 };
                 added.push(id);

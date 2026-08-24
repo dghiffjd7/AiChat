@@ -93,7 +93,7 @@ export const buildContextMenuActions = (message, {
     });
   }
   if (message?.role === 'assistant') {
-    actions.push({ key: 'speak', label: '朗读', group: 'main' });
+    // 朗读入口改为菜单顶部的复合行（朗读 + 最近声音 chips + ⋯），不再占动作清单
     if (canCheckFormat === true) {
       actions.push({ key: 'check-format', label: '检查格式', group: 'main' });
     }

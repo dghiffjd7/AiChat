@@ -758,7 +758,7 @@ body[data-theme-mode='dark'] .rp-greeting-editor-header {
 }
 
 body[data-theme-mode='dark'] .rp-greeting-editor-field input,
-body[data-theme-mode='dark'] .rp-greeting-editor-field textarea {
+body[data-theme-mode='dark'] .rp-greeting-editor-field .rp-greeting-editor-content {
   background: rgba(var(--app-tint-neutral-rgb), 0.06) !important;
   border-color: rgba(var(--app-text-muted-rgb), 0.22) !important;
 }
@@ -956,12 +956,13 @@ body[data-theme-mode='dark'] .chat-reaction-picker-close {
   border-color: var(--app-border-subtle) !important;
 }
 
-body[data-theme-mode='dark'] :is(.chat-context-menu-action:hover, .chat-context-menu-action:focus-visible, .chat-reaction-option:hover, .chat-reaction-option:focus-visible) {
+body[data-theme-mode='dark'] :is(.chat-context-menu-action:hover, .chat-context-menu-action:focus-visible, .chat-reaction-option:hover, .chat-reaction-option:focus-visible, .chat-context-speak-main:hover, .chat-context-speak-chip:hover, .chat-context-speak-more:hover) {
   background: rgba(var(--app-tint-neutral-rgb), 0.08) !important;
 }
 
 body[data-theme-mode='dark'] .chat-context-menu-section-divider,
-body[data-theme-mode='dark'] .chat-context-reaction-row {
+body[data-theme-mode='dark'] .chat-context-reaction-row,
+body[data-theme-mode='dark'] .chat-context-speak-row {
   border-color: var(--app-border-subtle) !important;
 }
 

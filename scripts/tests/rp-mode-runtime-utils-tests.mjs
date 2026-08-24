@@ -582,6 +582,36 @@ const createStorage = () => {
     greetingEditorSource,
     /unbindBackdropActivation = bindBackdropActivation\(overlay, \{[\s\S]*documentLike: document,[\s\S]*onActivate: \(\) => close\(null\)/,
   );
+  assert.match(
+    greetingEditorSource,
+    /class="rp-greeting-editor-content"[\s\S]*contenteditable="plaintext-only"[\s\S]*spellcheck="false"/,
+    '长开场白编辑器应使用不触发 textarea 全文重排的纯文本 contenteditable',
+  );
+  assert.match(
+    greetingEditorSource,
+    /<div class="rp-greeting-editor-field rp-greeting-editor-content-field">[\s\S]*class="rp-greeting-editor-content"/,
+    '开场白内容区不能使用 label，否则点击编辑区会代理点击第一个宏按钮',
+  );
+  assert.doesNotMatch(
+    greetingEditorSource,
+    /<label class="rp-greeting-editor-field">(?:(?!<\/label>)[\s\S])*class="rp-greeting-editor-content"/,
+    'contenteditable 不应嵌套在 label 中',
+  );
+  assert.doesNotMatch(
+    greetingEditorSource,
+    /<textarea class="rp-greeting-editor-content"/,
+    '长开场白编辑器不能回退为多行大文本下逐键全量重排的 textarea',
+  );
+  assert.match(
+    greetingEditorSource,
+    /readRpGreetingContent = \(\) => String\(contentInput\?\.innerText \|\| ''\)/,
+    'contenteditable 必须用可保留原生 Enter 换行的纯文本读取方式保存',
+  );
+  assert.match(
+    greetingEditorSource,
+    /button\.addEventListener\('pointerdown', captureRpGreetingContentSelection\)[\s\S]*insertRpGreetingContentText\(macro, \{ preferSavedSelection: true \}\)/,
+    '点击宏按钮前必须保存 contenteditable 的当前选区',
+  );
   const snapshotFlowStart = appSource.indexOf('const buildSwipeMemoryTableSnapshot = async');
   const snapshotFlowEnd = appSource.indexOf('const attachAssistantMemoryStateToMeta', snapshotFlowStart);
   assert.ok(snapshotFlowStart >= 0 && snapshotFlowEnd > snapshotFlowStart);

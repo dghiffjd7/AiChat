@@ -3,10 +3,13 @@ import {
   normalizeVoiceCapability,
   normalizeVoiceConnectionMode,
 } from '../voice-config-utils.js';
+import {
+  resolveSpeechChunkMaxChars,
+  splitSpeechText,
+} from './speech-chunk-utils.js';
 
 const DEFAULT_MAX_RECORDING_MS = 60000;
-const DEFAULT_TTS_CHUNK_CHARS = 3600;
-const QWEN_LOCAL_TTS_CHUNK_CHARS = 36;
+export { resolveSpeechChunkMaxChars, splitSpeechText } from './speech-chunk-utils.js';
 
 const makeAbortError = () => {
   try {
@@ -108,36 +111,6 @@ export const resolveSpeakableMessageText = (message, {
   const sourceText = resolvePlainText?.(message, { depth: 0, preferRawSource: true });
   return String(sourceText || message?.content || '');
 };
-
-export const splitSpeechText = (value, { maxChars = DEFAULT_TTS_CHUNK_CHARS } = {}) => {
-  let remaining = String(value || '');
-  const limit = Math.max(1, Math.trunc(Number(maxChars)) || DEFAULT_TTS_CHUNK_CHARS);
-  const chunks = [];
-  while (remaining.length > limit) {
-    const windowText = remaining.slice(0, limit);
-    let cut = -1;
-    const minCut = Math.floor(limit * 0.35);
-    const findCut = pattern => {
-      for (let index = windowText.length - 1; index >= minCut; index -= 1) {
-        if (pattern.test(windowText[index])) return index + 1;
-      }
-      return -1;
-    };
-    cut = findCut(/[。！？!?；;\n]/);
-    if (cut <= 0) cut = findCut(/[，,、：:]/);
-    if (cut <= 0) cut = limit;
-    chunks.push(remaining.slice(0, cut));
-    remaining = remaining.slice(cut);
-  }
-  if (remaining) chunks.push(remaining);
-  return chunks;
-};
-
-export const resolveSpeechChunkMaxChars = config => (
-  String(config?.provider || '').trim().toLowerCase() === 'qwen_local'
-    ? QWEN_LOCAL_TTS_CHUNK_CHARS
-    : DEFAULT_TTS_CHUNK_CHARS
-);
 
 const combineBytes = (left, right) => {
   const a = left instanceof Uint8Array ? left : new Uint8Array(left || []);
@@ -266,6 +239,8 @@ const formatVoiceError = error => {
 
 export const createChatVoiceRuntime = ({
   resolveConfig,
+  resolveSpeechConfig = null,
+  buildSpeechSegments = null,
   voiceClient = new VoiceClient(),
   composerInput = null,
   recorderButton = null,
@@ -519,7 +494,7 @@ export const createChatVoiceRuntime = ({
     await stopSpeechCore();
   };
 
-  const speak = async (message, { wrapper = null } = {}) => {
+  const speak = async (message, { wrapper = null, voiceRefOverride = null } = {}) => {
     const messageId = String(message?.id || '').trim();
     const runVersion = ++speechRunVersion;
     if (speechController && messageId && messageId === speechMessageId) {
@@ -528,7 +503,9 @@ export const createChatVoiceRuntime = ({
     }
     await stopSpeechCore();
     if (runVersion !== speechRunVersion) return false;
-    const config = await resolveConfig?.('tts');
+    const config = typeof resolveSpeechConfig === 'function'
+      ? await resolveSpeechConfig({ message, voiceRefOverride })
+      : await resolveConfig?.('tts');
     if (runVersion !== speechRunVersion) return false;
     if (!validateRuntimeConfig(config, 'tts')) {
       showConfigRequired('tts');
@@ -540,6 +517,30 @@ export const createChatVoiceRuntime = ({
       return false;
     }
     const button = wrapper?.querySelector?.('[data-rp-message-action="speak"]') || null;
+    let plannedSegments = null;
+    try {
+      plannedSegments = typeof buildSpeechSegments === 'function'
+        ? await buildSpeechSegments({ message, text, wrapper, voiceRefOverride, config })
+        : null;
+    } catch (error) {
+      notify('error', formatVoiceError(error));
+      return false;
+    }
+    const segments = Array.isArray(plannedSegments) && plannedSegments.length
+      ? plannedSegments
+          .map(item => ({
+            text: String(item?.text || ''),
+            config: item?.config || config,
+            kind: String(item?.kind || ''),
+          }))
+          .filter(item => item.text && validateRuntimeConfig(item.config, 'tts'))
+      : splitSpeechText(text, {
+          maxChars: resolveSpeechChunkMaxChars(config),
+        }).map(segmentText => ({ text: segmentText, config, kind: '' }));
+    if (!segments.length) {
+      showConfigRequired('tts');
+      return false;
+    }
     const controller = new AbortController();
     const player = playerFactory({ AudioContextCtor, sampleRate: 24000 });
     speechButton = button;
@@ -547,9 +548,6 @@ export const createChatVoiceRuntime = ({
     speechMessageId = messageId;
     speechController = controller;
     speechPlayer = player;
-    const segments = splitSpeechText(text, {
-      maxChars: resolveSpeechChunkMaxChars(config),
-    });
     setSpeechState('generating', {
       segmentIndex: 1,
       segmentCount: segments.length,
@@ -567,8 +565,8 @@ export const createChatVoiceRuntime = ({
         }
         let receivedSegmentAudio = false;
         const segment = segments[index];
-        for await (const bytes of voiceClient.streamSpeech(config, {
-          text: segment,
+        for await (const bytes of voiceClient.streamSpeech(segment.config, {
+          text: segment.text,
           signal: controller.signal,
         })) {
           if (!receivedSegmentAudio && Number(bytes?.byteLength ?? bytes?.length ?? 0) > 0) {

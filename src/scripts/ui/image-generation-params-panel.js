@@ -258,6 +258,18 @@ export class ImageGenerationParamsPanel {
     const safeValue = value ?? field.defaultValue ?? '';
     const help = field.help ? `<div class="igp-field-help">${escapeHtml(field.help)}</div>` : '';
     const common = `data-param-key="${escapeHtml(field.key)}"`;
+    const placeholder = field.placeholder ? ` placeholder="${escapeHtml(field.placeholder)}"` : '';
+    const fieldClasses = [
+      'igp-field',
+      field.fullWidth ? 'is-full-width' : '',
+      field.variant ? `is-${field.variant}` : '',
+    ].filter(Boolean).join(' ');
+    const label = field.badge
+      ? `<div class="igp-field-heading">
+          <div class="igp-label">${escapeHtml(field.label)}</div>
+          <span class="igp-field-badge">${escapeHtml(field.badge)}</span>
+        </div>`
+      : `<div class="igp-label">${escapeHtml(field.label)}</div>`;
     let control = '';
     if (field.type === 'select') {
       control = `<select ${common} class="${FIELD_CLASS} igp-select">
@@ -266,13 +278,13 @@ export class ImageGenerationParamsPanel {
     } else if (field.type === 'number') {
       control = `<input ${common} class="${FIELD_CLASS} igp-input" type="number" min="${escapeHtml(field.min ?? '')}" max="${escapeHtml(field.max ?? '')}" step="${escapeHtml(field.step ?? 1)}" value="${escapeHtml(safeValue)}">`;
     } else if (field.type === 'textarea') {
-      control = `<textarea ${common} class="${FIELD_CLASS} igp-textarea">${escapeHtml(safeValue)}</textarea>`;
+      control = `<textarea ${common}${placeholder} class="${FIELD_CLASS} igp-textarea">${escapeHtml(safeValue)}</textarea>`;
     } else {
-      control = `<input ${common} class="${FIELD_CLASS} igp-input" type="text" value="${escapeHtml(safeValue)}">`;
+      control = `<input ${common}${placeholder} class="${FIELD_CLASS} igp-input" type="text" value="${escapeHtml(safeValue)}">`;
     }
     return `
-      <label class="igp-field">
-        <div class="igp-label">${escapeHtml(field.label)}</div>
+      <label class="${fieldClasses}">
+        ${label}
         ${control}
         ${help}
       </label>

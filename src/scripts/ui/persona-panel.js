@@ -1,7 +1,7 @@
 
 import { MediaPicker } from './media-picker.js';
 import { avatarDataUrlFromFile } from '../utils/image.js';
-import { appConfirm } from './app-confirm.js';
+import { appChoice, appConfirm } from './app-confirm.js';
 import { bindBackdropActivation } from './backdrop-activation-utils.js';
 import { appSettings } from '../storage/app-settings.js';
 import { CharacterCardImporter } from './character-card-importer.js';
@@ -15,6 +15,7 @@ import {
     runPersonaNewChatFlow,
 } from './persona-new-chat-runtime-utils.js';
 import { getRegexLocalSet, removeRegexLocalSet, waitForRegexStoreReady } from './regex-store-runtime-utils.js';
+import { getPresetStore } from './preset-store-runtime-utils.js';
 import { waitForScriptStoreReady } from './script-runtime-utils.js';
 import { deleteWorldSessionMapEntry } from './world-session-runtime-utils.js';
 import {
@@ -25,6 +26,10 @@ import {
 } from './session-memory-table-utils.js';
 import { emitMemoryRowsUpdated as emitSharedMemoryRowsUpdated } from './session-memory-event-utils.js';
 import { logger } from '../utils/logger.js';
+import {
+    buildPersonaGalleryDetails,
+    filterPersonaGalleryItems,
+} from './persona-gallery-utils.js';
 
 export class PersonaPanel {
     constructor({
@@ -100,6 +105,15 @@ export class PersonaPanel {
         this.roleNewChatRunning = false;
         this.roleArchiveModal = null;
         this.roleArchiveState = null;
+        this.galleryOverlay = null;
+        this.galleryPanel = null;
+        this.galleryQuery = '';
+        this.galleryFlippedId = '';
+        this.galleryDetailCache = new Map();
+        this.galleryDetailRequests = new Map();
+        this.galleryDetailOverlay = null;
+        this.galleryDetailPanel = null;
+        this.galleryKeydownHandler = null;
     }
 
     async notifyPersonaChanged() {
@@ -268,6 +282,7 @@ export class PersonaPanel {
                 btn.disabled = false;
                 btn.style.opacity = '';
             });
+            if (this.galleryPanel) this.renderGallery();
         }
     }
 
@@ -1110,6 +1125,484 @@ export class PersonaPanel {
         }
     }
 
+    ensureGalleryUI() {
+        if (this.galleryOverlay) return;
+        const overlay = document.createElement('div');
+        overlay.className = 'app-themed-overlay persona-gallery-overlay';
+        overlay.style.display = 'none';
+        bindBackdropActivation(overlay, {
+            onActivate: () => this.hideGallery(),
+        });
+
+        const panel = document.createElement('section');
+        panel.className = 'app-themed-panel persona-gallery-panel';
+        panel.setAttribute('role', 'dialog');
+        panel.setAttribute('aria-modal', 'true');
+        panel.setAttribute('aria-label', '角色卡浏览');
+        panel.addEventListener('click', event => event.stopPropagation());
+        panel.innerHTML = `
+            <header class="persona-gallery-header">
+                <div class="persona-gallery-heading-mark" aria-hidden="true">
+                    <svg viewBox="0 0 24 24"><rect x="5" y="4" width="14" height="16" rx="3"></rect><path d="M9 8h6M9 12h6M9 16h4"></path></svg>
+                </div>
+                <div class="persona-gallery-heading-copy">
+                    <h2>角色卡浏览</h2>
+                    <p>搜索角色，点击卡片查看详情</p>
+                </div>
+                <button type="button" class="persona-gallery-header-action" data-persona-gallery-manage>进入管理</button>
+                <button type="button" class="persona-gallery-close" data-persona-gallery-close aria-label="关闭">×</button>
+            </header>
+            <div class="persona-gallery-toolbar">
+                <label class="persona-gallery-search">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"></circle><path d="m16 16 4 4"></path></svg>
+                    <input type="search" placeholder="搜索名称、说明或来源文件" autocomplete="off">
+                    <button type="button" aria-label="清除搜索" data-persona-gallery-clear hidden>×</button>
+                </label>
+                <span class="persona-gallery-count" aria-live="polite"></span>
+            </div>
+            <div class="persona-gallery-scroll">
+                <div class="persona-gallery-grid"></div>
+            </div>
+            <footer class="persona-gallery-footer">卡片视图用于浏览与快速操作；导入、删除和批量整理仍在「角色卡管理」。</footer>
+        `;
+
+        const searchInput = panel.querySelector('.persona-gallery-search input');
+        const clearButton = panel.querySelector('[data-persona-gallery-clear]');
+        searchInput?.addEventListener('input', () => {
+            this.galleryQuery = String(searchInput.value || '');
+            if (clearButton) clearButton.hidden = !this.galleryQuery;
+            this.galleryFlippedId = '';
+            this.renderGallery();
+        });
+        clearButton?.addEventListener('click', () => {
+            this.galleryQuery = '';
+            if (searchInput) {
+                searchInput.value = '';
+                searchInput.focus();
+            }
+            clearButton.hidden = true;
+            this.galleryFlippedId = '';
+            this.renderGallery();
+        });
+        panel.querySelector('[data-persona-gallery-close]')?.addEventListener('click', () => this.hideGallery());
+        panel.querySelector('[data-persona-gallery-manage]')?.addEventListener('click', async () => {
+            this.hideGallery();
+            await this.show();
+        });
+
+        overlay.appendChild(panel);
+        document.body.appendChild(overlay);
+        this.galleryOverlay = overlay;
+        this.galleryPanel = panel;
+    }
+
+    async showGallery() {
+        await this.store.ready;
+        this.ensureUI();
+        this.ensureGalleryUI();
+        this.galleryFlippedId = '';
+        const searchInput = this.galleryPanel?.querySelector('.persona-gallery-search input');
+        if (searchInput) searchInput.value = this.galleryQuery;
+        const clearButton = this.galleryPanel?.querySelector('[data-persona-gallery-clear]');
+        if (clearButton) clearButton.hidden = !this.galleryQuery;
+        this.renderGallery();
+        this.galleryOverlay.style.display = 'flex';
+        this.galleryPanel.classList.remove('is-entering');
+        requestAnimationFrame(() => this.galleryPanel?.classList.add('is-entering'));
+        setTimeout(() => this.galleryPanel?.classList.remove('is-entering'), 260);
+        if (!this.galleryKeydownHandler) {
+            this.galleryKeydownHandler = (event) => {
+                if (event.key !== 'Escape') return;
+                if (this.galleryDetailOverlay?.style.display === 'flex') {
+                    this.hideGalleryDetailOverlay();
+                    return;
+                }
+                this.hideGallery();
+            };
+            document.addEventListener('keydown', this.galleryKeydownHandler);
+        }
+    }
+
+    hideGallery() {
+        this.hideGalleryDetailOverlay();
+        if (this.galleryOverlay) this.galleryOverlay.style.display = 'none';
+        this.galleryPanel?.classList.remove('is-entering');
+        this.galleryFlippedId = '';
+        if (this.galleryKeydownHandler) {
+            document.removeEventListener('keydown', this.galleryKeydownHandler);
+            this.galleryKeydownHandler = null;
+        }
+    }
+
+    formatGalleryDate(value = 0) {
+        const timestamp = Number(value || 0);
+        if (!timestamp) return '';
+        try {
+            return new Date(timestamp).toLocaleDateString();
+        } catch {
+            return '';
+        }
+    }
+
+    async loadGalleryDetails(persona) {
+        const personaId = String(persona?.id || '').trim();
+        if (!personaId) return buildPersonaGalleryDetails(persona);
+        if (this.galleryDetailCache.has(personaId)) return this.galleryDetailCache.get(personaId);
+        if (this.galleryDetailRequests.has(personaId)) return this.galleryDetailRequests.get(personaId);
+        const request = (async () => {
+            let rawCard = persona?.originalCard && typeof persona.originalCard === 'object'
+                ? persona.originalCard
+                : null;
+            let loadFailed = false;
+            if (!rawCard && persona?.source?.originalCardStored === true) {
+                try {
+                    rawCard = await window.appBridge?.loadPersonaCard?.(personaId);
+                } catch (error) {
+                    loadFailed = true;
+                    logger.debug('load persona gallery details failed', error);
+                }
+            }
+            const details = buildPersonaGalleryDetails(persona, rawCard);
+            // 读原卡失败时不落缓存，下次翻面可重试
+            if (!loadFailed) this.galleryDetailCache.set(personaId, details);
+            return details;
+        })().finally(() => this.galleryDetailRequests.delete(personaId));
+        this.galleryDetailRequests.set(personaId, request);
+        return request;
+    }
+
+    renderGalleryDetails(card, persona, details) {
+        if (!card || !details) return;
+        const intro = card.querySelector('.persona-gallery-back-intro');
+        if (intro) {
+            intro.textContent = String(details.description || details.summary || '').trim() || '暂无角色卡说明';
+        }
+        const tags = card.querySelector('.persona-gallery-back-tags');
+        if (tags) {
+            tags.replaceChildren();
+            const shown = details.tags.slice(0, 4);
+            shown.forEach(label => {
+                const tag = document.createElement('span');
+                tag.textContent = label;
+                tags.appendChild(tag);
+            });
+            if (details.tags.length > shown.length) {
+                const more = document.createElement('span');
+                more.className = 'is-more';
+                more.textContent = `+${details.tags.length - shown.length}`;
+                tags.appendChild(more);
+            }
+            tags.hidden = !tags.childElementCount;
+        }
+    }
+
+    renderGalleryDetailSections(body, details) {
+        if (!body || !details) return;
+        body.replaceChildren();
+        const addSection = (label, value, className = '') => {
+            const content = String(value || '').trim();
+            if (!content) return;
+            const section = document.createElement('section');
+            section.className = `persona-gallery-detail-section${className ? ` ${className}` : ''}`;
+            const heading = document.createElement('h4');
+            heading.textContent = label;
+            const paragraph = document.createElement('p');
+            paragraph.textContent = content;
+            section.append(heading, paragraph);
+            body.appendChild(section);
+        };
+        addSection('角色说明', details.description || details.summary);
+        addSection('性格', details.personality);
+        addSection('场景', details.scenario);
+        addSection('作者说明', details.creatorNotes);
+        if (details.tags.length) {
+            const section = document.createElement('section');
+            section.className = 'persona-gallery-detail-section';
+            const heading = document.createElement('h4');
+            heading.textContent = '标签';
+            const tags = document.createElement('div');
+            tags.className = 'persona-gallery-detail-tags';
+            details.tags.slice(0, 12).forEach(label => {
+                const tag = document.createElement('span');
+                tag.textContent = label;
+                tags.appendChild(tag);
+            });
+            section.append(heading, tags);
+            body.appendChild(section);
+        }
+        const metadata = [details.creator ? `作者 ${details.creator}` : '', details.sourceLabel].filter(Boolean).join(' · ');
+        addSection('来源', metadata);
+        if (details.tooLarge) addSection('提示', '原始角色卡过大，详情仅显示本地摘要。', 'is-note');
+        if (!body.childElementCount) addSection('角色说明', '暂无可显示的角色卡详情。');
+    }
+
+    ensureGalleryDetailOverlay() {
+        if (this.galleryDetailOverlay) return;
+        const overlay = document.createElement('div');
+        overlay.className = 'app-themed-overlay persona-gallery-detail-overlay';
+        overlay.style.display = 'none';
+        bindBackdropActivation(overlay, {
+            onActivate: () => this.hideGalleryDetailOverlay(),
+        });
+        const panel = document.createElement('section');
+        panel.className = 'app-themed-panel persona-gallery-detail-panel';
+        panel.setAttribute('role', 'dialog');
+        panel.setAttribute('aria-modal', 'true');
+        panel.setAttribute('aria-label', '角色卡完整资料');
+        panel.addEventListener('click', event => event.stopPropagation());
+        panel.innerHTML = `
+            <header class="persona-gallery-detail-header">
+                <img alt="">
+                <div class="persona-gallery-detail-title">
+                    <h3></h3>
+                    <span></span>
+                </div>
+                <button type="button" class="persona-gallery-close" data-persona-gallery-detail-close aria-label="关闭">×</button>
+            </header>
+            <div class="persona-gallery-detail-scroll"></div>
+        `;
+        panel.querySelector('[data-persona-gallery-detail-close]')?.addEventListener('click', () => this.hideGalleryDetailOverlay());
+        overlay.appendChild(panel);
+        document.body.appendChild(overlay);
+        this.galleryDetailOverlay = overlay;
+        this.galleryDetailPanel = panel;
+    }
+
+    async openGalleryDetailOverlay(personaId) {
+        const persona = this.store.get(personaId);
+        if (!persona) return;
+        this.ensureGalleryDetailOverlay();
+        const avatar = this.galleryDetailPanel.querySelector('.persona-gallery-detail-header img');
+        if (avatar) avatar.src = persona.avatar || getDefaultAppIcon();
+        const title = this.galleryDetailPanel.querySelector('.persona-gallery-detail-title h3');
+        if (title) title.textContent = this.getCharacterCardName(persona);
+        const subtitle = this.galleryDetailPanel.querySelector('.persona-gallery-detail-title span');
+        if (subtitle) subtitle.textContent = this.formatGalleryDate(persona.updated) || '';
+        const body = this.galleryDetailPanel.querySelector('.persona-gallery-detail-scroll');
+        if (body) body.replaceChildren();
+        this.galleryDetailOverlay.style.display = 'flex';
+        const details = await this.loadGalleryDetails(persona);
+        if (this.galleryDetailOverlay.style.display === 'flex') {
+            this.renderGalleryDetailSections(body, details);
+        }
+    }
+
+    hideGalleryDetailOverlay() {
+        if (this.galleryDetailOverlay) this.galleryDetailOverlay.style.display = 'none';
+    }
+
+    async openGalleryMoreMenu(personaId) {
+        const persona = this.store.get(personaId);
+        if (!persona) return;
+        const choice = await appChoice({
+            title: this.getCharacterCardName(persona),
+            message: '选择要执行的操作。',
+            actions: [
+                { id: 'edit', label: '编辑' },
+                { id: 'archive', label: '存档' },
+                { id: 'cancel', label: '取消' },
+            ],
+            defaultActionId: 'cancel',
+        });
+        if (choice === 'edit') {
+            this.hideGallery();
+            await this.show();
+            this.openEdit(personaId);
+        } else if (choice === 'archive') {
+            this.openRoleArchiveModal(personaId);
+        }
+    }
+
+    toggleGalleryCard(card, persona) {
+        if (!card || !persona) return;
+        const nextFlipped = !card.classList.contains('is-flipped');
+        this.galleryPanel?.querySelectorAll('.persona-gallery-card.is-flipped').forEach(item => {
+            item.classList.remove('is-flipped');
+            item.setAttribute('aria-pressed', 'false');
+        });
+        this.galleryFlippedId = nextFlipped ? String(persona.id || '') : '';
+        card.classList.toggle('is-flipped', nextFlipped);
+        card.setAttribute('aria-pressed', String(nextFlipped));
+        if (!nextFlipped) return;
+        this.loadGalleryDetails(persona).then(details => {
+            const mounted = Array.from(this.galleryPanel?.querySelectorAll('.persona-gallery-card') || [])
+                .find(item => String(item.dataset.personaId || '') === String(persona.id || ''));
+            if (mounted) this.renderGalleryDetails(mounted, persona, details);
+        });
+    }
+
+    async activatePersona(personaId) {
+        const targetId = String(personaId || '').trim();
+        if (!targetId || !this.store.get(targetId)) return false;
+        const currentId = String(this.store.activeId || '');
+        if (currentId !== targetId) {
+            this.onUserPersonaSwitch?.({
+                fromPersonaId: currentId,
+                toPersonaId: targetId,
+            });
+            const switched = await this.store.setActive(targetId);
+            if (!switched) return false;
+            await this.notifyPersonaChanged();
+        }
+        if (this.panel) this.renderList();
+        if (this.galleryPanel) this.renderGallery();
+        return true;
+    }
+
+    renderGallery() {
+        if (!this.galleryPanel) return;
+        const grid = this.galleryPanel.querySelector('.persona-gallery-grid');
+        const count = this.galleryPanel.querySelector('.persona-gallery-count');
+        if (!grid) return;
+        const allPersonas = this.store.getAll?.() || [];
+        const personas = filterPersonaGalleryItems(allPersonas, this.galleryQuery);
+        if (count) count.textContent = this.galleryQuery ? `${personas.length} / ${allPersonas.length} 张` : `${allPersonas.length} 张角色卡`;
+        grid.replaceChildren();
+        if (!personas.length) {
+            const empty = document.createElement('div');
+            empty.className = 'persona-gallery-empty';
+            empty.innerHTML = '<span aria-hidden="true">⌕</span><strong>没有找到角色卡</strong><p>换个名称或关键词试试</p>';
+            grid.appendChild(empty);
+            return;
+        }
+        const activeId = String(this.store.activeId || '');
+        const sessionId = this.getCurrentSessionId();
+        const lockPersonaId = sessionId ? this.getSessionLockPersonaId(sessionId) : '';
+        personas.forEach(persona => {
+            const personaId = String(persona.id || '');
+            const isActive = personaId === activeId;
+            const isLocked = Boolean(lockPersonaId && personaId === lockPersonaId);
+            const card = document.createElement('article');
+            card.className = `persona-gallery-card${isActive ? ' is-active' : ''}${this.galleryFlippedId === personaId ? ' is-flipped' : ''}`;
+            card.dataset.personaId = personaId;
+            card.tabIndex = 0;
+            card.setAttribute('role', 'button');
+            card.setAttribute('aria-label', `${this.getCharacterCardName(persona)}，点击翻面`);
+            card.setAttribute('aria-pressed', String(this.galleryFlippedId === personaId));
+
+            const inner = document.createElement('div');
+            inner.className = 'persona-gallery-card-inner';
+            const front = document.createElement('div');
+            front.className = 'persona-gallery-card-face persona-gallery-card-front';
+            front.setAttribute('data-persona-gallery-flip', 'front');
+            const cover = document.createElement('div');
+            cover.className = 'persona-gallery-cover';
+            const image = document.createElement('img');
+            image.src = persona.avatar || getDefaultAppIcon();
+            image.alt = '';
+            cover.appendChild(image);
+            const badges = document.createElement('div');
+            badges.className = 'persona-gallery-badges';
+            if (isActive) {
+                const badge = document.createElement('span');
+                badge.className = 'is-active';
+                badge.textContent = '使用中';
+                badges.appendChild(badge);
+            }
+            if (isLocked) {
+                const badge = document.createElement('span');
+                badge.textContent = '会话锁定';
+                badges.appendChild(badge);
+            }
+            cover.appendChild(badges);
+            const frontCopy = document.createElement('div');
+            frontCopy.className = 'persona-gallery-front-copy';
+            const name = document.createElement('h3');
+            name.textContent = this.getCharacterCardName(persona);
+            const summary = document.createElement('p');
+            summary.textContent = String(persona.description || '').trim() || '点击查看角色卡详情与快捷操作';
+            const hint = document.createElement('span');
+            hint.className = 'persona-gallery-flip-hint';
+            hint.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7h10v10H7z"></path><path d="m9 4-3 3 3 3M15 20l3-3-3-3"></path></svg> 查看背面';
+            frontCopy.append(name, summary, hint);
+            front.append(cover, frontCopy);
+
+            const back = document.createElement('div');
+            back.className = 'persona-gallery-card-face persona-gallery-card-back';
+            back.setAttribute('data-persona-gallery-flip', 'back');
+            const backHeader = document.createElement('div');
+            backHeader.className = 'persona-gallery-back-header';
+            const backName = document.createElement('h3');
+            backName.textContent = this.getCharacterCardName(persona);
+            const updated = document.createElement('span');
+            updated.textContent = this.formatGalleryDate(persona.updated) || '角色卡详情';
+            backHeader.append(backName, updated);
+            const backIntro = document.createElement('p');
+            backIntro.className = 'persona-gallery-back-intro';
+            const backTags = document.createElement('div');
+            backTags.className = 'persona-gallery-back-tags';
+            backTags.hidden = true;
+            const initialDetails = this.galleryDetailCache.get(personaId)
+                || buildPersonaGalleryDetails(persona, persona.originalCard);
+            const detailLink = document.createElement('button');
+            detailLink.type = 'button';
+            detailLink.className = 'persona-gallery-detail-link';
+            detailLink.dataset.personaGalleryAction = 'detail';
+            detailLink.textContent = '查看完整资料';
+            const actions = document.createElement('div');
+            actions.className = 'persona-gallery-card-actions';
+            const makeAction = (label, action, className = '') => {
+                const button = document.createElement('button');
+                button.type = 'button';
+                button.textContent = label;
+                button.dataset.personaGalleryAction = action;
+                if (className) button.className = className;
+                return button;
+            };
+            const useButton = makeAction(isActive ? '使用中' : '使用', 'activate', 'is-primary');
+            useButton.disabled = isActive;
+            const newChatButton = makeAction('新聊天', 'new-chat');
+            const moreButton = makeAction('⋯', 'more', 'is-ellipsis');
+            moreButton.setAttribute('aria-label', '更多操作');
+            moreButton.title = '更多操作';
+            actions.append(useButton, newChatButton, moreButton);
+            const flipBack = document.createElement('button');
+            flipBack.type = 'button';
+            flipBack.className = 'persona-gallery-flip-back';
+            flipBack.setAttribute('aria-label', '翻回封面');
+            flipBack.title = '翻回封面';
+            flipBack.textContent = '↩';
+            back.append(backHeader, backIntro, backTags, detailLink, actions, flipBack);
+            inner.append(front, back);
+            card.appendChild(inner);
+            this.renderGalleryDetails(card, persona, initialDetails);
+
+            card.addEventListener('click', event => {
+                if (event.target.closest('button, a, input')) return;
+                this.toggleGalleryCard(card, persona);
+            });
+            card.addEventListener('keydown', event => {
+                if (!['Enter', ' '].includes(event.key) || event.target.closest('button')) return;
+                event.preventDefault();
+                this.toggleGalleryCard(card, persona);
+            });
+            flipBack.addEventListener('click', event => {
+                event.stopPropagation();
+                this.toggleGalleryCard(card, persona);
+            });
+            useButton.addEventListener('click', async event => {
+                event.stopPropagation();
+                await this.activatePersona(personaId);
+            });
+            newChatButton.addEventListener('click', event => {
+                event.stopPropagation();
+                this.startRoleNewChat(personaId);
+            });
+            detailLink.addEventListener('click', event => {
+                event.stopPropagation();
+                this.openGalleryDetailOverlay(personaId);
+            });
+            moreButton.addEventListener('click', event => {
+                event.stopPropagation();
+                this.openGalleryMoreMenu(personaId);
+            });
+            grid.appendChild(card);
+            if (this.galleryFlippedId === personaId && !this.galleryDetailCache.has(personaId)) {
+                this.loadGalleryDetails(persona).then(details => this.renderGalleryDetails(card, persona, details));
+            }
+        });
+    }
+
     renderSessionLockBar() {
         const bar = this.panel?.querySelector?.('#persona-session-lock-bar');
         if (!bar) return;
@@ -1210,15 +1703,7 @@ export class PersonaPanel {
             item.addEventListener('click', async (e) => {
                 // Ignore if clicked edit button
                 if (e.target.closest('.edit-btn, .persona-new-chat-btn')) return;
-                if (String(this.store.activeId || '') !== String(p.id || '')) {
-                    this.onUserPersonaSwitch?.({
-                        fromPersonaId: String(this.store.activeId || ''),
-                        toPersonaId: String(p.id || ''),
-                    });
-                }
-                await this.store.setActive(p.id);
-                this.renderList();
-                await this.notifyPersonaChanged();
+                await this.activatePersona(p.id);
             });
 
             item.querySelector('.persona-new-chat-btn').addEventListener('click', (e) => {
@@ -1332,7 +1817,9 @@ export class PersonaPanel {
         if (!file) return;
         try {
             await this.cardImporter.importFromFile(file);
+            this.galleryDetailCache.clear();
             this.renderList();
+            if (this.galleryPanel) this.renderGallery();
             this.hideImportModal();
         } catch (err) {
             const msg = err?.message || '导入失败';
@@ -1349,7 +1836,9 @@ export class PersonaPanel {
         }
         try {
             await this.cardImporter.importFromUrl(url);
+            this.galleryDetailCache.clear();
             this.renderList();
+            if (this.galleryPanel) this.renderGallery();
             this.hideImportModal();
         } catch (err) {
             const msg = err?.message || '链接导入失败';
@@ -1386,6 +1875,7 @@ export class PersonaPanel {
         if (this.editingId) {
             const current = this.store.get(this.editingId);
             await this.store.update(this.editingId, { name, description, avatar, position, depth, role, source: applySourcePatch(current) });
+            this.galleryDetailCache.delete(this.editingId);
         } else {
             const newP = await this.store.create({ name, description, avatar, position, depth, role, source: applySourcePatch(null) });
             await this.store.setActive(newP.id); // Auto switch to new
@@ -1393,6 +1883,7 @@ export class PersonaPanel {
 
         this.closeEdit();
         this.renderList();
+        if (this.galleryPanel) this.renderGallery();
         await this.notifyPersonaChanged();
     }
 
@@ -1456,8 +1947,13 @@ export class PersonaPanel {
 
         const result = await this.deleteCore(deleteId, options);
         if (result.deleted) {
+            this.galleryDetailCache.delete(deleteId);
             this.closeEdit();
             this.renderList();
+            if (this.galleryPanel) this.renderGallery();
+            if (result.warnings?.length) {
+                window.toastr?.warning?.('角色卡已删除，但部分绑定数据清理失败，请查看调试日志');
+            }
         } else {
             alert('无法删除（至少保留一个角色卡）');
         }
@@ -1469,6 +1965,7 @@ export class PersonaPanel {
             : {};
         const worldId = String(source.worldbookId || '').trim();
         const regexSetId = String(source.regexSetId || '').trim();
+        const systemPresetId = String(source.systemPresetId || '').trim();
         const scriptStore = await waitForScriptStoreReady(window.appBridge);
         let scriptCount = 0;
         try {
@@ -1478,12 +1975,20 @@ export class PersonaPanel {
         } catch {}
         const hasWorld = Boolean(worldId);
         const hasRegex = Boolean(regexSetId);
+        const hasPreset = Boolean(systemPresetId);
         const hasScripts = scriptCount > 0;
         const preciseScopeCleanup = appSettings.get().personaBindContacts !== false;
+        const otherPersonas = (this.store.getAll?.() || []).filter(item => String(item?.id || '') !== String(persona?.id || ''));
+        const countOtherReferences = (key, value) => value
+            ? otherPersonas.filter(item => String(item?.source?.[key] || '').trim() === value).length
+            : 0;
+        const sharedWorldCount = countOtherReferences('worldbookId', worldId);
+        const sharedRegexCount = countOtherReferences('regexSetId', regexSetId);
+        const sharedPresetCount = countOtherReferences('systemPresetId', systemPresetId);
 
-        if (!hasWorld && !hasRegex && !hasScripts && preciseScopeCleanup) {
+        if (!hasWorld && !hasRegex && !hasPreset && !hasScripts && preciseScopeCleanup) {
             const ok = await appConfirm({ title: '删除角色卡', message: '确定要删除此角色卡吗？', danger: true });
-            return { confirm: ok, deleteWorld: false, deleteRegex: false, deleteScripts: false };
+            return { confirm: ok, deleteWorld: false, deleteRegex: false, deletePreset: false, deleteScripts: false };
         }
 
         const worldLabel = hasWorld ? worldId : '';
@@ -1498,6 +2003,14 @@ export class PersonaPanel {
             const data = await window.appBridge?.getWorldInfo?.(worldId);
             if (data?.name) worldName = data.name;
         } catch {}
+        let presetName = systemPresetId;
+        try {
+            const presetStore = getPresetStore(window.appBridge);
+            if (presetStore?.ready) await presetStore.ready;
+            const preset = presetStore?.list?.('sysprompt')?.find(item => String(item?.id || '') === systemPresetId);
+            if (preset?.name) presetName = preset.name;
+        } catch {}
+        const sharedSuffix = count => count ? `（另有 ${count} 张角色卡引用，默认保留）` : '';
         const sharedCleanupNote = preciseScopeCleanup ? '' : `
             <div style="margin-top:12px; padding:10px 12px; border-radius:10px; background:#fff7ed; color:#9a3412; font-size:12px; line-height:1.5;">
                 当前联系人未按角色隔离。本次会清理角色卡文件、绑定资源、该角色的 RP 会话，以及可识别的旧残留 scope；不会删除共享聊天或共享联系人数据。
@@ -1523,14 +2036,20 @@ export class PersonaPanel {
                     <div style="display:flex; flex-direction:column; gap:8px; font-size:13px;">
                         ${hasWorld ? `
                             <label style="display:flex; align-items:center; gap:8px;">
-                                <input type="checkbox" id="persona-del-world" checked>
-                                <span>删除绑定世界书（${worldName}）</span>
+                                <input type="checkbox" id="persona-del-world" ${sharedWorldCount ? '' : 'checked'}>
+                                <span>删除绑定世界书（${worldName}）${sharedSuffix(sharedWorldCount)}</span>
                             </label>
                         ` : ''}
                         ${hasRegex ? `
                             <label style="display:flex; align-items:center; gap:8px;">
-                                <input type="checkbox" id="persona-del-regex" checked>
-                                <span>删除绑定正则（${regexLabel}）</span>
+                                <input type="checkbox" id="persona-del-regex" ${sharedRegexCount ? '' : 'checked'}>
+                                <span>删除绑定正则（${regexLabel}）${sharedSuffix(sharedRegexCount)}</span>
+                            </label>
+                        ` : ''}
+                        ${hasPreset ? `
+                            <label style="display:flex; align-items:center; gap:8px;">
+                                <input type="checkbox" id="persona-del-preset" ${sharedPresetCount ? '' : 'checked'}>
+                                <span>删除绑定系统提示预设（${presetName}）${sharedSuffix(sharedPresetCount)}</span>
                             </label>
                         ` : ''}
                         ${hasScripts ? `
@@ -1554,9 +2073,11 @@ export class PersonaPanel {
             const okBtn = modal.querySelector('.app-confirm-ok');
             const worldBox = modal.querySelector('#persona-del-world');
             const regexBox = modal.querySelector('#persona-del-regex');
+            const presetBox = modal.querySelector('#persona-del-preset');
             const scriptBox = modal.querySelector('#persona-del-scripts');
-            if (worldBox) worldBox.checked = true;
-            if (regexBox) regexBox.checked = true;
+            if (worldBox) worldBox.checked = sharedWorldCount === 0;
+            if (regexBox) regexBox.checked = sharedRegexCount === 0;
+            if (presetBox) presetBox.checked = sharedPresetCount === 0;
             if (scriptBox) scriptBox.checked = true;
 
             const cleanup = (confirm) => {
@@ -1566,6 +2087,7 @@ export class PersonaPanel {
                     confirm,
                     deleteWorld: confirm && hasWorld ? Boolean(worldBox?.checked) : false,
                     deleteRegex: confirm && hasRegex ? Boolean(regexBox?.checked) : false,
+                    deletePreset: confirm && hasPreset ? Boolean(presetBox?.checked) : false,
                     deleteScripts: confirm && hasScripts ? Boolean(scriptBox?.checked) : false,
                 });
             };
@@ -1606,44 +2128,16 @@ export class PersonaPanel {
     }
 
     collectScopedLocalStorageCandidates(keepPersonaIds = [], explicitDeleteIds = []) {
-        const scopedKeys = [
-            'contacts_store_v1',
-            'contact_groups_v1',
-            'chat_store_v1',
-            'moments_store_v1',
-            'moment_summary_store_v1',
-            'rp_session_v1',
-            'world_session_map_v1',
-            'global_world_id_v1',
-            'world_global_settings_v1',
-        ];
         const keepSet = new Set(
             (Array.isArray(keepPersonaIds) ? keepPersonaIds : [])
                 .map(id => String(id || '').trim())
                 .filter(Boolean),
         );
-        const explicitSet = new Set(
+        return Array.from(new Set(
             (Array.isArray(explicitDeleteIds) ? explicitDeleteIds : [])
                 .map(id => String(id || '').trim())
-                .filter(Boolean),
-        );
-        const scopes = new Set();
-        try {
-            for (let i = 0; i < localStorage.length; i += 1) {
-                const key = String(localStorage.key(i) || '').trim();
-                if (!key) continue;
-                scopedKeys.forEach((base) => {
-                    const prefix = `${base}__`;
-                    if (!key.startsWith(prefix)) return;
-                    const scope = String(key.slice(prefix.length) || '').trim();
-                    if (!scope || keepSet.has(scope)) return;
-                    if (explicitSet.has(scope) || scope.startsWith('persona_')) {
-                        scopes.add(scope);
-                    }
-                });
-            }
-        } catch {}
-        return Array.from(scopes);
+                .filter(id => id && !keepSet.has(id)),
+        ));
     }
 
     async cleanupPersonaData(persona, { remainingPersonas = [] } = {}) {
@@ -1656,12 +2150,18 @@ export class PersonaPanel {
             .map(item => String(item?.id || '').trim())
             .filter(Boolean);
         let deletedScopes = [];
+        let nativeCleanupError = null;
         try {
             const result = await cleanupPersonaScopedData(window.appBridge, keepPersonaIds, [personaId]);
             deletedScopes = Array.isArray(result?.deletedScopes)
                 ? result.deletedScopes.map(scope => String(scope || '').trim()).filter(Boolean)
                 : [];
-        } catch {}
+            if (Array.isArray(result?.failedScopes) && result.failedScopes.length) {
+                nativeCleanupError = new Error(`角色资料清理失败：${result.failedScopes.map(item => item?.scope || '').filter(Boolean).join('、')}`);
+            }
+        } catch (error) {
+            nativeCleanupError = error;
+        }
 
         const localOnlyScopes = this.collectScopedLocalStorageCandidates(keepPersonaIds, [personaId]);
         if (localOnlyScopes.length) {
@@ -1672,6 +2172,7 @@ export class PersonaPanel {
             deletedScopes = [personaId];
         }
         this.cleanupScopedLocalStorage(deletedScopes);
+        if (nativeCleanupError) throw nativeCleanupError;
     }
 
     cleanupSharedPersonaArtifacts(personaId) {
@@ -1700,35 +2201,53 @@ export class PersonaPanel {
         const source = (persona.source && typeof persona.source === 'object') ? persona.source : {};
         const worldId = String(source.worldbookId || '').trim();
         const regexSetId = String(source.regexSetId || '').trim();
-        if (options.deleteWorld && worldId) {
+        const systemPresetId = String(source.systemPresetId || '').trim();
+        const failures = [];
+        const runCleanup = async (label, task) => {
             try {
-                await window.appBridge?.deleteWorldInfo?.(worldId);
-            } catch {}
+                await task();
+            } catch (error) {
+                failures.push(`${label}: ${String(error?.message || error || '未知错误')}`);
+            }
+        };
+        if (options.deleteWorld && worldId) {
+            await runCleanup('世界书', async () => {
+                const result = await window.appBridge?.deleteWorldInfo?.(worldId);
+                if (result?.ok === false) throw new Error('删除被拒绝');
+            });
         }
         if (options.deleteRegex && regexSetId) {
-            try {
+            await runCleanup('正则', async () => {
                 await waitForRegexStoreReady(window.appBridge);
                 await removeRegexLocalSet(window.appBridge, regexSetId);
-            } catch {}
+            });
+        }
+        if (options.deletePreset && systemPresetId) {
+            await runCleanup('系统提示预设', async () => {
+                const presetStore = getPresetStore(window.appBridge);
+                if (presetStore?.ready) await presetStore.ready;
+                if (typeof presetStore?.remove !== 'function') throw new Error('预设存储未就绪');
+                await presetStore.remove('sysprompt', systemPresetId);
+            });
         }
         if (options.deleteScripts) {
-            try {
+            await runCleanup('脚本', async () => {
                 const scriptStore = await waitForScriptStoreReady(window.appBridge);
                 if (typeof scriptStore?.removeScope === 'function') {
                     await scriptStore.removeScope('character', persona.id);
                 } else {
                     await scriptStore?.setScripts?.('character', persona.id, []);
                 }
-            } catch {}
+            });
         } else {
-            try {
+            await runCleanup('脚本空 scope', async () => {
                 const scriptStore = await waitForScriptStoreReady(window.appBridge);
                 const scripts = scriptStore?.getScripts?.('character', persona.id) || [];
-                const variables = scriptStore?.getScopeVariables?.('character', persona.id) || {};
-                if (!scripts.length && Object.keys(variables).length && typeof scriptStore?.removeScope === 'function') {
+                if (!scripts.length && typeof scriptStore?.removeScope === 'function') {
                     await scriptStore.removeScope('character', persona.id);
                 }
-            } catch {}
+            });
         }
+        if (failures.length) throw new Error(failures.join('；'));
     }
 }

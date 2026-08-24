@@ -11,10 +11,14 @@ import { FEATHER_DEFAULT, resolveLineAvatar } from '../utils/line-avatar.js';
 import { hasTauriRuntime, pickSavePath } from '../utils/save-dialog.js';
 import { safeInvoke } from '../utils/tauri.js';
 import { WorldEditorModal } from './world-editor.js';
-import { appConfirm } from './app-confirm.js';
+import { appChoice, appConfirm } from './app-confirm.js';
 import { bindBackdropActivation } from './backdrop-activation-utils.js';
 import { bindCustomSelectButton, closeCustomSelectMenu, refreshCustomSelectButton } from './custom-select.js';
 import { isWorldMotionReduced, setWorldDisclosureState } from './world-management-motion-utils.js';
+import {
+    WORLDBOOK_IMPORT_DECISIONS,
+    buildWorldbookImportPlan,
+} from './worldbook-import-conflict-utils.js';
 import {
     listRegexLocalSets,
     syncWorldRegexBindings,
@@ -111,7 +115,7 @@ export const buildWorldbookImpactText = ({
         return `影响范围：${target}。删除会从世界书库移除该世界书，相关全局、角色或会话绑定可能失效；取消确认不会删除，建议先导出备份。`;
     }
     if (action === 'import') {
-        return `影响范围：${target}。导入会保存为世界书，同名内容会被新文件覆盖；如包含绑定正则，需再次确认后才会一并导入。`;
+        return `影响范围：${target}。导入会保存为世界书；同名时必须明确确认，不会静默覆盖。如包含绑定正则，需再次确认后才会一并导入。`;
     }
     if (action === 'regex_import') {
         return `影响范围：${target}。一并导入会创建或更新正则集合，并绑定到该世界书；取消只保留世界书，不导入正则。`;
@@ -1506,7 +1510,7 @@ export class WorldPanel {
                     </div>
                 </div>
                 <div style="flex:1 1 100%; min-width: 0;">
-                    <div class="has-help" data-help="名称将取自 JSON 的 name 或文件名（无需手动填写）。同名内容会被新文件覆盖；含绑定正则时需再次确认才一并导入。" style="font-weight:700; margin-bottom:6px;">导入世界书</div>
+                    <div class="has-help" data-help="名称将取自 JSON 的 name 或文件名（无需手动填写）。同名时必须明确确认，不会静默覆盖；含绑定正则时需再次确认才一并导入。" style="font-weight:700; margin-bottom:6px;">导入世界书</div>
                     <div style="display:flex; gap:8px; align-items:center; margin-bottom:8px;">
                         <button id="world-file-btn" type="button" style="padding:6px 10px; border-radius:8px; border:1px solid var(--app-border-default); background:var(--app-surface-subtle); cursor:pointer;">选择文件</button>
                         <span id="world-file-name" style="font-size:12px; color:var(--app-text-muted);">未选择文件</span>
@@ -1854,11 +1858,37 @@ export class WorldPanel {
             const name = nameFromJson || nameHint || 'imported';
             const simplified = convertSTWorld(json, name);
             const snapshot = await window.appBridge.getWorldInfoSnapshot?.(name);
-            await window.appBridge.saveWorldInfo(name, simplified, snapshot ? {
-                expectedRevision: snapshot.revision,
-                expectedGeneration: snapshot.generation,
-                expectedExists: snapshot.exists,
-            } : undefined);
+            const importPlan = buildWorldbookImportPlan({
+                worldId: name,
+                incomingWorld: simplified,
+                snapshot,
+            });
+            if (importPlan.conflict) {
+                const existingCount = Array.isArray(importPlan.conflict.base?.entries)
+                    ? importPlan.conflict.base.entries.length
+                    : 0;
+                const incomingCount = Array.isArray(importPlan.conflict.incoming?.entries)
+                    ? importPlan.conflict.incoming.entries.length
+                    : 0;
+                const decision = await appChoice({
+                    title: '同名世界书已存在',
+                    message: `世界书「${name}」已存在（现有 ${existingCount} 条，导入文件 ${incomingCount} 条）。\n\n覆盖会完整替换现有世界书内容；当前会话、角色和全局对该书的绑定不会自动移除。若尚未确认差异，建议取消并先导出现有世界书备份。`,
+                    actions: [
+                        { id: WORLDBOOK_IMPORT_DECISIONS.cancel, label: '取消导入', primary: true },
+                        { id: WORLDBOOK_IMPORT_DECISIONS.overwrite, label: '覆盖现有世界书', variant: 'danger' },
+                    ],
+                    defaultActionId: WORLDBOOK_IMPORT_DECISIONS.cancel,
+                });
+                if (decision !== WORLDBOOK_IMPORT_DECISIONS.overwrite) {
+                    window.toastr?.info?.('已取消导入，现有世界书未变更');
+                    return;
+                }
+            }
+            await window.appBridge.saveWorldInfo(
+                importPlan.targetId,
+                importPlan.incomingWorld,
+                importPlan.saveOptions,
+            );
 
             // 若导入文件包含绑定的正则集合，则一并导入并绑定到该世界书
             const boundSets = json?.boundRegexSets || json?.bound_regex_sets || json?.bound_regex_sets_v1 || null;
@@ -1931,7 +1961,11 @@ export class WorldPanel {
             if (this.fileNameEl) this.fileNameEl.textContent = '未选择文件';
         } catch (err) {
             logger.error('导入世界书失败', err);
-            window.toastr?.error('导入失败，请检查 JSON', '错误');
+            if (err?.code === 'worldbook_revision_conflict') {
+                window.toastr?.warning?.('确认期间世界书已被修改，请重新导入并核对最新内容');
+            } else {
+                window.toastr?.error('导入失败，请检查 JSON', '错误');
+            }
         }
     }
 

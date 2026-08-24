@@ -43,6 +43,7 @@ const splitScriptSteps = script =>
     'npm run test:agent',
     'npm run test:contact-profile',
     'npm run test:maid-memory',
+    'npm run test:role-worldbook',
     'npm run test:web-search',
     'npm run test:chat',
     'npm run test:memory',
@@ -56,7 +57,7 @@ const splitScriptSteps = script =>
     'npm run test:release',
     'npm run test:theme',
   ]);
-  console.log('ok - test:all keeps maid-onboarding agent contact-profile maid-memory web-search chat memory variables cancel moments sessions integration transfer migration release and theme gates');
+  console.log('ok - test:all keeps maid-onboarding agent contact-profile maid-memory role-worldbook web-search chat memory variables cancel moments sessions integration transfer migration release and theme gates');
 }
 
 {
@@ -122,6 +123,8 @@ const splitScriptSteps = script =>
     'node scripts/tests/zip-entry-utils-tests.mjs',
     'node scripts/tests/import-package-kind-utils-tests.mjs',
     'node scripts/tests/transfer-worldbook-utils-tests.mjs',
+    'node scripts/tests/worldbook-import-conflict-utils-tests.mjs',
+    'node scripts/tests/import-name-conflict-utils-tests.mjs',
     'node scripts/tests/experience-pack-export-utils-tests.mjs',
     'node scripts/tests/experience-pack-import-utils-tests.mjs',
     'node scripts/tests/preset-import-dedupe-utils-tests.mjs',

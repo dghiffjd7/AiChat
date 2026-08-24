@@ -13,14 +13,46 @@ export const normalizeRegexCustomPromptPresetIds = (presetIds = []) => {
   return out;
 };
 
-export const getRegexCustomPromptPresetBindIds = (bind = null) => {
-  if (!bind || typeof bind !== 'object') return [];
-  if (bind.type !== 'preset') return [];
-  if (String(bind.presetType || '').trim() !== REGEX_CUSTOM_PROMPT_PRESET_TYPE) return [];
+export const getRegexPresetBindIds = (bind = null, presetType = '') => {
+  if (!bind || typeof bind !== 'object' || bind.type !== 'preset') return [];
+  const expectedType = String(presetType || '').trim();
+  if (expectedType && String(bind.presetType || '').trim() !== expectedType) return [];
   return normalizeRegexCustomPromptPresetIds([
     ...(Array.isArray(bind.presetIds) ? bind.presetIds : []),
     bind.presetId,
   ]);
+};
+
+export const detachRegexPresetBind = (bind = null, {
+  presetType = '',
+  presetId = '',
+} = {}) => {
+  const type = String(presetType || '').trim();
+  const id = String(presetId || '').trim();
+  const ids = getRegexPresetBindIds(bind, type);
+  if (!id || !ids.includes(id)) {
+    return { matched: false, remainingIds: ids, bind };
+  }
+  const remainingIds = ids.filter(item => item !== id);
+  if (!remainingIds.length) {
+    return { matched: true, remainingIds, bind: null };
+  }
+  const { presetIds: _presetIds, presetId: _presetId, ...base } = bind;
+  return {
+    matched: true,
+    remainingIds,
+    bind: {
+      ...base,
+      type: 'preset',
+      presetType: type || String(bind.presetType || '').trim(),
+      presetId: remainingIds[0],
+      presetIds: remainingIds,
+    },
+  };
+};
+
+export const getRegexCustomPromptPresetBindIds = (bind = null) => {
+  return getRegexPresetBindIds(bind, REGEX_CUSTOM_PROMPT_PRESET_TYPE);
 };
 
 export const buildRegexCustomPromptPresetBind = (presetIds = '') => {

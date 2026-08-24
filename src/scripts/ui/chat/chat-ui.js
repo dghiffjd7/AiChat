@@ -51,7 +51,7 @@ import { createMessagePatchUiRuntime } from './message-patch-ui-utils.js';
 import { createMessageClipboardUiRuntime } from './message-clipboard-ui-utils.js';
 import { createCodeViewerUiRuntime } from './code-viewer-ui-utils.js';
 import { buildContextMenuActions, positionContextMenu } from './context-menu-ui-utils.js';
-import { createContextMenuActionButton, createContextMenuDivider, createContextMenuReactionRow } from './context-menu-dom-utils.js';
+import { createContextMenuActionButton, createContextMenuDivider, createContextMenuReactionRow, createContextMenuSpeakRow } from './context-menu-dom-utils.js';
 import { dispatchContextMenuAction } from './context-menu-action-runtime-utils.js';
 import { createContextMenuShell, resolveContextMenuContext } from './context-menu-runtime-utils.js';
 import { showContextMenuCore } from './context-menu-orchestration-ui-utils.js';
@@ -356,6 +356,8 @@ export class ChatUI {
     this.reactionQuickBarTouchRuntime = createReactionQuickBarTouchRuntime({ documentLike: document });
     this.longPressTimer = null;
     this.actionHandler = null;
+    this.dialogueHighlightResolver = () => false;
+    this.speakQuickVoicesResolver = () => [];
     this.canCheckFormatForMessage = () => false;
     this.replyCancelHandler = null;
     this.providerContinuationCommitContext = {
@@ -606,7 +608,7 @@ export class ChatUI {
       return this.renderSwipeDraftPlaceholder(target, placeholder);
     }
     if (renderMsg.meta?.renderRich) {
-      renderRichText(target, text, {
+      this.renderRichText(target, text, {
         messageId: renderMsg.id,
         preserveHtmlNewlines: true,
         sessionId: renderMsg.sessionId,
@@ -1354,6 +1356,22 @@ export class ChatUI {
     this.mentionMemberResolver = resolver;
   }
 
+  setDialogueHighlightResolver(resolver) {
+    this.dialogueHighlightResolver = typeof resolver === 'function' ? resolver : () => false;
+  }
+
+  setSpeakQuickVoicesResolver(resolver) {
+    this.speakQuickVoicesResolver = typeof resolver === 'function' ? resolver : () => [];
+  }
+
+  renderRichText(target, text, options = {}) {
+    let highlightDialogue = false;
+    try {
+      highlightDialogue = this.dialogueHighlightResolver?.(options) === true;
+    } catch {}
+    return renderRichText(target, text, { ...options, highlightDialogue });
+  }
+
   bindMentionDetection() {
     if (!this.inputEl) return;
     this.inputEl.addEventListener('input', () => this.handleMentionInput());
@@ -1820,7 +1838,7 @@ export class ChatUI {
           registerStickerAnimation,
           toastOnce,
           openLightbox: url => this.openLightbox(url),
-          renderRichText,
+          renderRichText: (...args) => this.renderRichText(...args),
           prepareTextContainer: (target, messageValue) => this.prepareTextContainer(target, messageValue),
           renderSwipeDraftPlaceholder: (target, label) => this.renderSwipeDraftPlaceholder(target, label),
           normalizeAssistantLineBreaks: text => this.normalizeAssistantLineBreaks(text),
@@ -2624,7 +2642,7 @@ export class ChatUI {
       prepareTextContainer: (...args) => this.prepareTextContainer(...args),
       normalizeAssistantLineBreaks: text => this.normalizeAssistantLineBreaks(text),
       renderTextWithStickers: (...args) => this.renderTextWithStickers(...args),
-      renderRichText,
+      renderRichText: (...args) => this.renderRichText(...args),
       applyCreativeBubbleState: (...args) => this.applyCreativeBubbleState(...args),
     });
   }
@@ -2661,7 +2679,7 @@ export class ChatUI {
       applyReasoningUiState: (...args) => this.applyReasoningUiState(...args),
       applyCreativeBubbleState: (...args) => this.applyCreativeBubbleState(...args),
       prepareTextContainer: (...args) => this.prepareTextContainer(...args),
-      renderRichText,
+      renderRichText: (...args) => this.renderRichText(...args),
       normalizeAssistantLineBreaks: text => this.normalizeAssistantLineBreaks(text),
       renderTextWithStickers: (...args) => this.renderTextWithStickers(...args),
     });
@@ -2961,6 +2979,8 @@ export class ChatUI {
       isSelfReaction: entry => hasReactionActor(entry, SELF_REACTION_ACTOR),
       createContextMenuActionButton,
       createContextMenuDivider,
+      createContextMenuSpeakRow,
+      resolveSpeakQuickVoices: () => this.speakQuickVoicesResolver(),
       dispatchContextMenuAction,
       getPoint: nextEvent => this.getPoint(nextEvent),
       positionContextMenu,

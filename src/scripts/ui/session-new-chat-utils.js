@@ -153,6 +153,7 @@ export const runStartNewChatFlow = async ({
 export const runRpPlotResetFlow = async ({
   sessionId = '',
   keepInput = false,
+  acquireResetBarrier = async () => null,
   runStartNewChat = runStartNewChatFlow,
   startNewChat = () => '',
   resetVariableState = () => {},
@@ -165,22 +166,38 @@ export const runRpPlotResetFlow = async ({
 } = {}) => {
   const sid = String(sessionId || '').trim();
   if (!sid) return { started: false, cancelled: true, archiveId: '' };
-  const result = await runStartNewChat({
-    ...flowOptions,
-    sessionId: sid,
-    isGroup: false,
-    sessionMode: 'rp',
-    sourcePrefix: 'rp_plot_reset',
-    startNewChat: (targetSessionId, archiveName, options) => {
-      clearRenderedMessages?.();
-      resetVariableState?.(targetSessionId);
-      resetRenderState?.(targetSessionId);
-      return startNewChat?.(targetSessionId, archiveName, options) || '';
-    },
-  });
-  if (!result?.started) return result;
-  await seedGreeting?.(sid);
-  if (!keepInput) clearInput?.();
-  refreshUi?.(sid);
-  return result;
+  let barrier = null;
+  try {
+    barrier = await acquireResetBarrier?.(sid);
+    if (barrier?.ok === false) {
+      return {
+        started: false,
+        cancelled: true,
+        archiveId: '',
+        reason: String(barrier.reason || 'reset_barrier_failed'),
+      };
+    }
+    const result = await runStartNewChat({
+      ...flowOptions,
+      sessionId: sid,
+      isGroup: false,
+      sessionMode: 'rp',
+      sourcePrefix: 'rp_plot_reset',
+      startNewChat: (targetSessionId, archiveName, options) => {
+        clearRenderedMessages?.();
+        resetVariableState?.(targetSessionId);
+        resetRenderState?.(targetSessionId);
+        return startNewChat?.(targetSessionId, archiveName, options) || '';
+      },
+    });
+    if (!result?.started) return result;
+    await seedGreeting?.(sid);
+    if (!keepInput) clearInput?.();
+    refreshUi?.(sid);
+    return result;
+  } finally {
+    try {
+      barrier?.release?.();
+    } catch {}
+  }
 };

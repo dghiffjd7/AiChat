@@ -1,6 +1,11 @@
 import { createLinkedAbortController, invokeNativeHttpRequest } from '../abort.js';
 import { prepareTransportRequest } from '../transport.js';
 import { safeInvoke } from '../../utils/tauri.js';
+import {
+  NOVELAI_IMAGE_MODEL_CACHE_KEY,
+  NOVELAI_IMAGE_MODEL_CATALOG_URLS,
+  resolveNovelAIImageModelCatalog,
+} from './novelai-image-model-catalog.js';
 
 const DEFAULT_IMAGE_MIME = 'image/png';
 
@@ -142,12 +147,23 @@ class ImageProviderBase {
     return this.apiKey ? { Authorization: `Bearer ${this.apiKey}` } : {};
   }
 
-  async request({ url, method = 'GET', headers = {}, body = undefined, signal, requestId = '', responseBase64 = false } = {}) {
+  async request({
+    url,
+    method = 'GET',
+    headers = {},
+    body = undefined,
+    signal,
+    requestId = '',
+    responseBase64 = false,
+    allowProxy = true,
+    timeoutMs = this.timeout,
+  } = {}) {
     const prepared = prepareTransportRequest({
       config: this.transportConfig,
       provider: this.provider,
       url,
       headers,
+      allowProxy,
     });
     const mergedHeaders = { ...(prepared.headers || {}) };
     const invoker = getTauriInvoker();
@@ -163,7 +179,7 @@ class ImageProviderBase {
             method,
             headers: mergedHeaders,
             body: typeof body === 'string' ? body : body == null ? null : String(body),
-            timeoutMs: this.timeout,
+            timeoutMs,
             responseBase64: Boolean(responseBase64),
           },
         });
@@ -177,7 +193,7 @@ class ImageProviderBase {
       }
     }
 
-    const { controller, cleanup } = createLinkedAbortController({ timeoutMs: this.timeout, signal });
+    const { controller, cleanup } = createLinkedAbortController({ timeoutMs, signal });
     try {
       const response = await fetch(prepared.url, {
         method,
@@ -419,6 +435,29 @@ export class NovelAIImageProvider extends ImageProviderBase {
       baseUrl: config.baseUrl || 'https://image.novelai.net',
       model: config.model || 'nai-diffusion-4-5-full',
     });
+    this.lastModelCatalogSource = 'bundled';
+  }
+
+  async loadModelCatalogCache() {
+    try {
+      const cached = await safeInvoke('load_kv', { name: NOVELAI_IMAGE_MODEL_CACHE_KEY });
+      if (cached && typeof cached === 'object') return cached;
+    } catch {}
+    try {
+      const raw = globalThis.localStorage?.getItem?.(NOVELAI_IMAGE_MODEL_CACHE_KEY);
+      return raw ? JSON.parse(raw) : null;
+    } catch {
+      return null;
+    }
+  }
+
+  async saveModelCatalogCache(value) {
+    try {
+      await safeInvoke('save_kv', { name: NOVELAI_IMAGE_MODEL_CACHE_KEY, data: value });
+    } catch {}
+    try {
+      globalThis.localStorage?.setItem?.(NOVELAI_IMAGE_MODEL_CACHE_KEY, JSON.stringify(value));
+    } catch {}
   }
 
   buildPayload(prompt, options = {}) {
@@ -507,15 +546,23 @@ export class NovelAIImageProvider extends ImageProviderBase {
   }
 
   async listModels() {
-    return [
-      'nai-diffusion-4-5-full',
-      'nai-diffusion-4-5-curated',
-      'nai-diffusion-4-full',
-      'nai-diffusion-4-curated-preview',
-      'nai-diffusion-3',
-      'nai-diffusion-2',
-      'nai-diffusion-furry-3',
-    ];
+    const result = await resolveNovelAIImageModelCatalog({
+      catalogUrls: NOVELAI_IMAGE_MODEL_CATALOG_URLS,
+      fetchJson: (url, { kind } = {}) => this.requestJson({
+        url,
+        method: 'GET',
+        headers: {
+          ...(kind === 'official' ? this.authHeaders() : {}),
+          Accept: 'application/json',
+        },
+        allowProxy: false,
+        timeoutMs: 8000,
+      }),
+      loadCache: () => this.loadModelCatalogCache(),
+      saveCache: value => this.saveModelCatalogCache(value),
+    });
+    this.lastModelCatalogSource = result.source;
+    return result.models;
   }
 }
 

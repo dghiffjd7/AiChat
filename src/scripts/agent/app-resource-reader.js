@@ -1,4 +1,5 @@
 import { extractSafeRegexFormatEvidence } from '../storage/maid-format-profile-evidence-utils.js';
+import { readWorldAiGenerationSettings as readSharedWorldAiGenerationSettings } from '../utils/world-ai-generation.js';
 
 export const SUPPORTED_APP_RESOURCES = Object.freeze([
   'chat',
@@ -12,24 +13,6 @@ export const SUPPORTED_APP_RESOURCES = Object.freeze([
   'persona',
   'user',
 ]);
-
-const WORLD_AI_TEMPLATE_KEY = 'world_ai_template_v1';
-const DEFAULT_WORLD_AI_TEMPLATE = `
-name: ""
-english_name: ""
-gender: ""
-background: ""
-appearance: ""
-personality:
-  mbti: ""
-  traits: ""
-dialogue_examples:
-  note: "仅供参考，勿完全按照其输出"
-  examples:
-    - ""
-    - ""
-    - ""
-`.trim();
 
 const asArray = value => {
   if (Array.isArray(value)) return value;
@@ -57,21 +40,11 @@ const callMethod = async (target, method, ...args) => {
 
 const getBridgeFromDeps = deps => deps.appBridge || globalThis.window?.appBridge || {};
 
-const readAppLocalStorageText = (key = '') => {
-  try {
-    return toText(globalThis.localStorage?.getItem?.(key));
-  } catch {
-    return '';
-  }
-};
-
 const readWorldAiGenerationSettings = () => {
-  const storedTemplate = readAppLocalStorageText(WORLD_AI_TEMPLATE_KEY);
-  const template = storedTemplate || DEFAULT_WORLD_AI_TEMPLATE;
+  const settings = readSharedWorldAiGenerationSettings();
   return {
-    templateStorageKey: WORLD_AI_TEMPLATE_KEY,
-    hasCustomTemplate: Boolean(storedTemplate),
-    template: trimAppResourceText(template, 12000),
+    ...settings,
+    template: trimAppResourceText(settings.template, 12000),
   };
 };
 

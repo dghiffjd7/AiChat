@@ -1,20 +1,23 @@
 // 女仆选区模式 DOM runtime（女仆交互优化计划 §1，2026-07-05 改为 Windows 桌面式矩形框选）。
 // 显式进入（圈选按钮）后：
 //  - 空白/元素处按住拖拽 -> 画选区矩形（淡蓝框），松手固化；矩形内容按覆盖元素归组注入女仆。
-//  - 单击（未拖动）-> 以命中语义容器的矩形快捷建区。
-//  - 已有选区：8 个手柄（四角+四边）拖拽调整，区域内右上角 × 取消。
+//  - 单击（未拖动）-> 以落点为中心建立小圆选区，避免误框整个大容器。
+//  - 已有选区：拖动区域本体可移动；8 个手柄（四角+四边）调整，区域内右上角 × 取消。
 //  - 文字叶子上按下 -> 放行原生滑选，松手固化为文字选区项（CSS Highlight API 标记）。
 // 模式内 capture 拦截点击避免触发原有交互；滚动时选区按锚元素跟随。
 
 import {
   SEMANTIC_CONTAINER_SELECTOR,
   buildMaidSelectionPromptBlock,
+  createMaidPointSelectionRect,
   describeElementForSelection,
   describeRegionSelection,
   filterRectCoveredElements,
+  moveMaidSelectionRect,
   normalizeMaidSelectionItem,
   resolveMaidAnchoredViewportRect,
   resolveMaidUnanchoredViewportRect,
+  resizeMaidSelectionRect,
 } from './maid-selection-utils.js';
 
 const STYLE_ID = 'maid-selection-mode-style';
@@ -22,6 +25,7 @@ const HIGHLIGHT_NAME = 'maid-selection';
 const MAX_ITEMS = 8;
 const DRAG_THRESHOLD = 6;
 const MIN_REGION_SIZE = 20;
+const POINT_REGION_SIZE = 88;
 const HANDLES = ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w'];
 
 const MODE_CSS = `
@@ -35,26 +39,23 @@ const MODE_CSS = `
   align-items: center;
   gap: 8px;
   padding: 8px 12px;
-  border: 1px solid rgba(37, 99, 235, 0.32);
+  border: 1px solid rgba(var(--app-accent-rgb, 59, 130, 246), 0.30);
   border-radius: 999px;
-  background: color-mix(in srgb, var(--app-surface-card) 92%, rgba(37, 99, 235, 0.2));
+  background: color-mix(in srgb, var(--app-surface-card) 92%, var(--app-accent-soft, var(--app-accent-primary, #3b82f6)));
   color: var(--app-text-primary);
   font-size: 12px;
   font-weight: 600;
-  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.18);
+  box-shadow: var(--app-shadow-md, 0 8px 24px rgba(15, 23, 42, 0.18));
 }
 .maid-selection-bar button {
-  border: 1px solid rgba(37, 99, 235, 0.28);
+  border: 1px solid rgba(var(--app-accent-rgb, 59, 130, 246), 0.28);
   border-radius: 999px;
-  background: rgba(37, 99, 235, 0.10);
-  color: #1d4ed8;
+  background: rgba(var(--app-accent-rgb, 59, 130, 246), 0.10);
+  color: var(--app-accent-strong, var(--app-accent-primary));
   padding: 4px 10px;
   font-size: 12px;
   font-weight: 600;
   cursor: pointer;
-}
-body[data-theme-mode='dark'] .maid-selection-bar button {
-  color: #93c5fd;
 }
 .maid-selection-count {
   cursor: pointer;
@@ -97,19 +98,41 @@ body[data-theme-mode='dark'] .maid-selection-bar button {
 .maid-selection-region {
   position: fixed;
   z-index: 26088;
-  border: 2px solid #3b82f6;
+  border: 1.5px solid var(--app-accent-primary, #3b82f6);
   border-radius: 6px;
-  background: rgba(59, 130, 246, 0.14);
-  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.45);
+  background: rgba(var(--app-accent-rgb, 59, 130, 246), 0.12);
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--app-surface-card) 72%, transparent),
+    0 8px 20px -16px rgba(var(--app-accent-rgb, 59, 130, 246), 0.72);
   box-sizing: border-box;
   touch-action: none;
+  cursor: move;
+  transform-origin: center;
+  transition: transform 120ms ease-out, opacity 120ms ease-out;
 }
-body[data-theme-mode='dark'] .maid-selection-region {
-  box-shadow: 0 0 0 1px rgba(15, 23, 42, 0.55);
+.maid-selection-region.is-entering {
+  animation: maid-selection-region-in 160ms ease-out both;
+}
+.maid-selection-region.is-circle {
+  border-radius: 50%;
+}
+.maid-selection-region.is-circle .maid-selection-region-close {
+  top: 8px;
+  right: 12px;
+}
+.maid-selection-region.is-moving {
+  opacity: 0.94;
+  transform: scale(1.012);
+}
+.maid-selection-region.is-resizing {
+  opacity: 0.96;
+  transform: scale(1.006);
 }
 .maid-selection-region.is-draft {
   pointer-events: none;
   border-style: dashed;
+  animation: none;
+  transition: none;
 }
 .maid-selection-region-index {
   position: absolute;
@@ -122,9 +145,9 @@ body[data-theme-mode='dark'] .maid-selection-region {
   align-items: center;
   justify-content: center;
   border-radius: 999px;
-  border: 2px solid rgba(255, 255, 255, 0.9);
-  background: #2563eb;
-  color: #fff;
+  border: 2px solid var(--app-surface-card, #fff);
+  background: var(--app-accent-primary, #2563eb);
+  color: var(--app-text-inverse, #fff);
   font-size: 11px;
   font-weight: 700;
   pointer-events: none;
@@ -138,17 +161,20 @@ body[data-theme-mode='dark'] .maid-selection-region {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border: none;
+  border: 1px solid var(--app-border-default);
   border-radius: 999px;
-  background: rgba(15, 23, 42, 0.55);
-  color: #fff;
+  background: var(--app-surface-card);
+  color: var(--app-text-secondary);
   font-size: 12px;
   line-height: 1;
   cursor: pointer;
   padding: 0;
+  box-shadow: var(--app-shadow-sm, 0 2px 6px rgba(15, 23, 42, 0.16));
 }
 .maid-selection-region-close:hover {
-  background: rgba(190, 18, 60, 0.85);
+  border-color: rgba(var(--app-danger-rgb, 248, 81, 73), 0.42);
+  background: rgba(var(--app-danger-rgb, 248, 81, 73), 0.12);
+  color: var(--app-danger-text-strong, #b91c1c);
 }
 .maid-selection-text-close {
   position: fixed;
@@ -160,24 +186,54 @@ body[data-theme-mode='dark'] .maid-selection-region {
 }
 .maid-selection-handle {
   position: absolute;
-  width: 12px;
-  height: 12px;
-  border-radius: 3px;
-  border: 2px solid #3b82f6;
-  background: #fff;
+  width: 11px;
+  height: 11px;
+  border-radius: 999px;
+  border: 1.5px solid var(--app-accent-primary, #3b82f6);
+  background: var(--app-surface-card, #fff);
   box-sizing: border-box;
   touch-action: none;
+  box-shadow: 0 2px 6px rgba(var(--app-accent-rgb, 59, 130, 246), 0.20);
 }
-.maid-selection-handle[data-handle="nw"] { top: -7px; left: -7px; cursor: nwse-resize; }
-.maid-selection-handle[data-handle="n"]  { top: -7px; left: calc(50% - 6px); cursor: ns-resize; }
-.maid-selection-handle[data-handle="ne"] { top: -7px; right: -7px; cursor: nesw-resize; }
-.maid-selection-handle[data-handle="e"]  { top: calc(50% - 6px); right: -7px; cursor: ew-resize; }
-.maid-selection-handle[data-handle="se"] { bottom: -7px; right: -7px; cursor: nwse-resize; }
-.maid-selection-handle[data-handle="s"]  { bottom: -7px; left: calc(50% - 6px); cursor: ns-resize; }
-.maid-selection-handle[data-handle="sw"] { bottom: -7px; left: -7px; cursor: nesw-resize; }
-.maid-selection-handle[data-handle="w"]  { top: calc(50% - 6px); left: -7px; cursor: ew-resize; }
+.maid-selection-handle::after {
+  content: '';
+  position: absolute;
+  inset: -6px;
+}
+.maid-selection-handle[data-handle="n"],
+.maid-selection-handle[data-handle="s"] {
+  width: 18px;
+  height: 8px;
+}
+.maid-selection-handle[data-handle="e"],
+.maid-selection-handle[data-handle="w"] {
+  width: 8px;
+  height: 18px;
+}
+.maid-selection-handle[data-handle="nw"] { top: -6px; left: -6px; cursor: nwse-resize; }
+.maid-selection-handle[data-handle="n"]  { top: -5px; left: calc(50% - 9px); cursor: ns-resize; }
+.maid-selection-handle[data-handle="ne"] { top: -6px; right: -6px; cursor: nesw-resize; }
+.maid-selection-handle[data-handle="e"]  { top: calc(50% - 9px); right: -5px; cursor: ew-resize; }
+.maid-selection-handle[data-handle="se"] { bottom: -6px; right: -6px; cursor: nwse-resize; }
+.maid-selection-handle[data-handle="s"]  { bottom: -5px; left: calc(50% - 9px); cursor: ns-resize; }
+.maid-selection-handle[data-handle="sw"] { bottom: -6px; left: -6px; cursor: nesw-resize; }
+.maid-selection-handle[data-handle="w"]  { top: calc(50% - 9px); left: -5px; cursor: ew-resize; }
 ::highlight(${HIGHLIGHT_NAME}) {
-  background: rgba(59, 130, 246, 0.28);
+  background: rgba(var(--app-accent-rgb, 59, 130, 246), 0.28);
+}
+@keyframes maid-selection-region-in {
+  from { opacity: 0; transform: scale(0.94); }
+  to { opacity: 1; transform: scale(1); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .maid-selection-region {
+    animation: none;
+    transition: none;
+  }
+}
+body[data-reduced-motion='on'] .maid-selection-region {
+  animation: none;
+  transition: none;
 }
 `;
 
@@ -201,7 +257,7 @@ export const createMaidSelectionMode = ({
   let barEl = null;
   let listEl = null;
   let lastRange = null;
-  // 拖拽会话：{ kind: 'create'|'resize', startX, startY, draftEl?, entry?, handle?, baseRect?, moved }
+  // 拖拽会话：{ kind: 'create'|'move'|'resize', startX, startY, draftEl?, entry?, handle?, baseRect?, moved }
   let dragSession = null;
   let textSelecting = false;
   // 拖拽松手后浏览器仍会派发 click；置位让下一个 click 只做拦截不建区
@@ -312,10 +368,18 @@ export const createMaidSelectionMode = ({
 
   const positionOverlay = (entry) => {
     if (!entry?.overlayEl || !entry.rect) return;
+    entry.overlayEl.classList.toggle('is-circle', entry.shape === 'circle');
     entry.overlayEl.style.left = `${entry.rect.left}px`;
     entry.overlayEl.style.top = `${entry.rect.top}px`;
     entry.overlayEl.style.width = `${entry.rect.width}px`;
     entry.overlayEl.style.height = `${entry.rect.height}px`;
+  };
+
+  const setManipulationState = (entry, state = '') => {
+    const overlay = entry?.overlayEl;
+    if (!overlay) return;
+    overlay.classList.toggle('is-moving', state === 'move');
+    overlay.classList.toggle('is-resizing', state === 'resize');
   };
 
   const renderOverlayIndexes = () => {
@@ -328,7 +392,7 @@ export const createMaidSelectionMode = ({
   const createOverlay = (entry) => {
     if (!doc) return;
     const overlay = doc.createElement('div');
-    overlay.className = 'maid-selection-region';
+    overlay.className = `maid-selection-region is-entering${entry.shape === 'circle' ? ' is-circle' : ''}`;
     overlay.dataset.maidSelectionUi = 'true';
     overlay.innerHTML = `
       <span class="maid-selection-region-index"></span>
@@ -339,6 +403,9 @@ export const createMaidSelectionMode = ({
     entry.overlayEl = overlay;
     positionOverlay(entry);
     renderOverlayIndexes();
+    const finishEntrance = () => overlay.classList.remove('is-entering');
+    overlay.addEventListener('animationend', finishEntrance, { once: true });
+    view?.setTimeout?.(finishEntrance, 200);
   };
 
   // 矩形选区内容归组：覆盖的语义容器 -> 选区项
@@ -385,11 +452,12 @@ export const createMaidSelectionMode = ({
     emitChange();
   };
 
-  const addRegionEntry = (rect) => {
+  const addRegionEntry = (rect, { shape = 'rectangle' } = {}) => {
     if (entries.length >= MAX_ITEMS) return false;
     const entry = {
       regionId: createRegionId(),
       rect: { ...rect },
+      shape: shape === 'circle' ? 'circle' : 'rectangle',
       expand: null,
       captureScope: {
         sessionId: String(getCurrentSessionId?.() || '').trim(),
@@ -468,7 +536,7 @@ export const createMaidSelectionMode = ({
     listEl.dataset.maidSelectionUi = 'true';
     listEl.innerHTML = entries.map((entry, index) => `
       <div class="maid-selection-list-item">
-        <span>${index + 1}. ${entry.rect ? '⬚' : '“”'} ${String(entry.item.semanticSummary || entry.item.text || '').slice(0, 42).replace(/</g, '&lt;')}</span>
+        <span>${index + 1}. ${entry.rect ? (entry.shape === 'circle' ? '○' : '⬚') : '“”'} ${String(entry.item.semanticSummary || entry.item.text || '').slice(0, 42).replace(/</g, '&lt;')}</span>
         <button type="button" class="maid-selection-remove" data-selection-remove="${index}" aria-label="移除">×</button>
       </div>
     `).join('');
@@ -484,23 +552,6 @@ export const createMaidSelectionMode = ({
     width: Math.abs(x2 - x1),
     height: Math.abs(y2 - y1),
   });
-
-  const applyHandleDrag = (baseRect, handle, dx, dy) => {
-    let { left, top, width, height } = baseRect;
-    if (handle.includes('w')) { left += dx; width -= dx; }
-    if (handle.includes('e')) { width += dx; }
-    if (handle.includes('n')) { top += dy; height -= dy; }
-    if (handle.includes('s')) { height += dy; }
-    if (width < MIN_REGION_SIZE) {
-      if (handle.includes('w')) left -= (MIN_REGION_SIZE - width);
-      width = MIN_REGION_SIZE;
-    }
-    if (height < MIN_REGION_SIZE) {
-      if (handle.includes('n')) top -= (MIN_REGION_SIZE - height);
-      height = MIN_REGION_SIZE;
-    }
-    return { left, top, width, height };
-  };
 
   const handlePointerDown = (event) => {
     if (!active) return;
@@ -522,6 +573,26 @@ export const createMaidSelectionMode = ({
           baseRect: { ...entry.rect },
           moved: false,
         };
+        setManipulationState(entry, 'resize');
+      }
+      return;
+    }
+    // 选区本体：拖动移动。关闭按钮仍交给 click handler。
+    const regionEl = target?.closest?.('.maid-selection-region');
+    if (regionEl && !target?.closest?.('[data-region-close]')) {
+      const entry = entries.find(item => item.overlayEl === regionEl);
+      if (entry) {
+        event.preventDefault();
+        event.stopPropagation();
+        dragSession = {
+          kind: 'move',
+          entry,
+          startX: event.clientX,
+          startY: event.clientY,
+          baseRect: { ...entry.rect },
+          moved: false,
+        };
+        setManipulationState(entry, 'move');
       }
       return;
     }
@@ -551,7 +622,24 @@ export const createMaidSelectionMode = ({
     dragSession.moved = true;
     event.preventDefault();
     if (dragSession.kind === 'resize') {
-      dragSession.entry.rect = applyHandleDrag(dragSession.baseRect, dragSession.handle, dx, dy);
+      dragSession.entry.rect = resizeMaidSelectionRect(
+        dragSession.baseRect,
+        dragSession.handle,
+        dx,
+        dy,
+        {
+          minSize: MIN_REGION_SIZE,
+          roundSelection: dragSession.entry.shape === 'circle',
+        },
+      );
+      positionOverlay(dragSession.entry);
+      return;
+    }
+    if (dragSession.kind === 'move') {
+      dragSession.entry.rect = moveMaidSelectionRect(dragSession.baseRect, dx, dy, {
+        viewportWidth: view?.innerWidth,
+        viewportHeight: view?.innerHeight,
+      });
       positionOverlay(dragSession.entry);
       return;
     }
@@ -620,7 +708,8 @@ export const createMaidSelectionMode = ({
     if (!dragSession) return;
     const session = dragSession;
     dragSession = null;
-    if (session.kind === 'resize') {
+    setManipulationState(session.entry);
+    if (session.kind === 'resize' || session.kind === 'move') {
       if (session.moved) {
         suppressNextClick = true;
         rebuildRegionItem(session.entry);
@@ -643,7 +732,20 @@ export const createMaidSelectionMode = ({
         addRegionEntry(rect);
       }
     }
-    // 未拖动的单击由 click handler 处理（元素快捷建区）
+    // 未拖动的单击由 click handler 处理（落点小圆）
+  };
+
+  const handlePointerCancel = () => {
+    textSelecting = false;
+    if (!dragSession) return;
+    const session = dragSession;
+    dragSession = null;
+    session.draftEl?.remove();
+    setManipulationState(session.entry);
+    if (session.entry?.rect && session.baseRect) {
+      session.entry.rect = { ...session.baseRect };
+      positionOverlay(session.entry);
+    }
   };
 
   const handleCaptureClick = (event) => {
@@ -704,18 +806,13 @@ export const createMaidSelectionMode = ({
       return;
     }
     closeTextCancelButton();
-    // 单击（未拖动）：以命中语义容器的矩形快捷建区
-    const described = describeElementForSelection(target, { getCurrentSessionId });
-    const container = described?.element;
-    if (container) {
-      const rect = container.getBoundingClientRect();
-      addRegionEntry({
-        left: rect.left,
-        top: rect.top,
-        width: Math.max(MIN_REGION_SIZE, rect.width),
-        height: Math.max(MIN_REGION_SIZE, rect.height),
-      });
-    }
+    // 单击（未拖动）：只标记落点附近，不再把命中的大容器整块框入。
+    const rect = createMaidPointSelectionRect(event.clientX, event.clientY, {
+      size: POINT_REGION_SIZE,
+      viewportWidth: view?.innerWidth,
+      viewportHeight: view?.innerHeight,
+    });
+    if (rect) addRegionEntry(rect, { shape: 'circle' });
   };
 
   const captureSelectionRange = () => {
@@ -766,6 +863,7 @@ export const createMaidSelectionMode = ({
     doc.addEventListener('pointerdown', handlePointerDown, true);
     doc.addEventListener('pointermove', handlePointerMove, true);
     doc.addEventListener('pointerup', handlePointerUp, true);
+    doc.addEventListener('pointercancel', handlePointerCancel, true);
     doc.addEventListener('click', handleCaptureClick, true);
     doc.addEventListener('selectionchange', captureSelectionRange);
     bindViewportListeners();
@@ -789,6 +887,7 @@ export const createMaidSelectionMode = ({
     doc.removeEventListener('pointerdown', handlePointerDown, true);
     doc.removeEventListener('pointermove', handlePointerMove, true);
     doc.removeEventListener('pointerup', handlePointerUp, true);
+    doc.removeEventListener('pointercancel', handlePointerCancel, true);
     doc.removeEventListener('click', handleCaptureClick, true);
     doc.removeEventListener('selectionchange', captureSelectionRange);
     barEl?.remove();
@@ -796,6 +895,7 @@ export const createMaidSelectionMode = ({
     closeListPopup();
     closeTextCancelButton();
     dragSession?.draftEl?.remove();
+    setManipulationState(dragSession?.entry);
     dragSession = null;
     if (!keepItems) {
       clear();

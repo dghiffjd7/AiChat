@@ -54,6 +54,19 @@ const makeTextarea = (key, label, fallback = '', help = '') => ({
   help,
 });
 
+const makeFixedNegativePromptField = () => ({
+  ...makeTextarea(
+    'negativePrompt',
+    '固定负面提示词',
+    '',
+    '随当前参数预设保存，每次生成都会自动加入；生图弹窗中的“本次负面提示词”会接在其后。',
+  ),
+  badge: '随预设保存',
+  placeholder: '例如：low quality, blurry, bad hands…',
+  fullWidth: true,
+  variant: 'persistent-negative',
+});
+
 const BOOLEAN_OPTIONS = [
   { value: '', label: '关闭' },
   { value: 'true', label: '开启' },
@@ -333,6 +346,7 @@ export const resolveImageGenerationParamSchema = (config = {}) => {
       model,
       title: isImagen ? 'Google Imagen 参数' : 'Gemini 图片参数',
       fields: [
+        ...(isImagen ? [makeFixedNegativePromptField()] : []),
         makeNumber('n', '生成张数', { min: 1, max: 8, fallback: 1 }),
         makeSelect('aspectRatio', '比例', [
           { value: '1:1', label: '1:1' },
@@ -359,6 +373,7 @@ export const resolveImageGenerationParamSchema = (config = {}) => {
       fields: [
         makeText('promptPrefix', '固定正向前缀', '', '每次调用 NovelAI 前自动加到正向提示词开头，适合放画师串、固定画风标签。'),
         makeText('promptSuffix', '固定正向后缀', '', '每次调用 NovelAI 前自动加到正向提示词末尾。'),
+        makeFixedNegativePromptField(),
         makeNumber('width', '宽度', { min: 64, max: 2048, step: 64, fallback: 1024 }),
         makeNumber('height', '高度', { min: 64, max: 2048, step: 64, fallback: 1024 }),
         makeNumber('steps', '步数', { min: 1, max: 50, fallback: 23 }),
@@ -394,6 +409,7 @@ export const resolveImageGenerationParamSchema = (config = {}) => {
       model,
       title: 'Stability AI 参数',
       fields: [
+        makeFixedNegativePromptField(),
         makeSelect('aspectRatio', '比例', [
           { value: '1:1', label: '1:1' },
           { value: '16:9', label: '16:9' },
@@ -440,6 +456,7 @@ export const resolveImageGenerationParamSchema = (config = {}) => {
       model,
       title: 'Together AI 图片参数',
       fields: [
+        makeFixedNegativePromptField(),
         makeNumber('n', '生成张数', { min: 1, max: 4, fallback: 1 }),
         makeNumber('width', '宽度', { min: 128, max: 2048, step: 64, fallback: 1024 }),
         makeNumber('height', '高度', { min: 128, max: 2048, step: 64, fallback: 1024 }),
@@ -467,6 +484,7 @@ export const resolveImageGenerationParamSchema = (config = {}) => {
       model,
       title: 'Pollinations 参数',
       fields: [
+        makeFixedNegativePromptField(),
         makeNumber('width', '宽度', { min: 64, max: 4096, step: 64, fallback: 1024 }),
         makeNumber('height', '高度', { min: 64, max: 4096, step: 64, fallback: 1024 }),
         makeText('seed', 'Seed', '', '留空或 -1 则不传 seed；固定 seed 请填 0 或正整数。'),
@@ -481,6 +499,7 @@ export const resolveImageGenerationParamSchema = (config = {}) => {
       model,
       title: 'AUTOMATIC1111 参数',
       fields: [
+        makeFixedNegativePromptField(),
         makeNumber('n', '生成张数', { min: 1, max: 8, fallback: 1 }),
         makeNumber('width', '宽度', { min: 64, max: 4096, step: 64, fallback: 1024 }),
         makeNumber('height', '高度', { min: 64, max: 4096, step: 64, fallback: 1024 }),
@@ -501,6 +520,7 @@ export const resolveImageGenerationParamSchema = (config = {}) => {
       model,
       title: 'ComfyUI 参数',
       fields: [
+        makeFixedNegativePromptField(),
         makeNumber('width', '宽度', { min: 64, max: 4096, step: 64, fallback: 1024 }),
         makeNumber('height', '高度', { min: 64, max: 4096, step: 64, fallback: 1024 }),
         makeNumber('steps', '步数', { min: 1, max: 150, fallback: 20 }),
@@ -624,6 +644,20 @@ export const getParamsForImageConfig = (preset = {}, config = {}) => {
   return sanitizeImageGenerationParams(params, config);
 };
 
+export const combineImageNegativePrompts = (fixedPrompt = '', perRunPrompt = '') => {
+  const fixed = String(fixedPrompt || '').trim();
+  const perRun = String(perRunPrompt || '').trim();
+  if (!fixed) return perRun;
+  if (!perRun) return fixed;
+  if (perRun === fixed) return perRun;
+  if (perRun.startsWith(fixed)) {
+    const boundary = perRun.slice(fixed.length, fixed.length + 1);
+    if ([',', '，', ';', '；', '\n'].includes(boundary)) return perRun;
+  }
+  if (/[,，;；]$/.test(fixed)) return `${fixed} ${perRun}`;
+  return `${fixed}, ${perRun}`;
+};
+
 export const mergeImageGenerationRequestOptions = ({
   config = {},
   preset = null,
@@ -632,8 +666,19 @@ export const mergeImageGenerationRequestOptions = ({
 } = {}) => {
   const base = preset ? getParamsForImageConfig(preset, config) : {};
   const merged = sanitizeImageGenerationParams({ ...base, ...(isObject(overrides) ? overrides : {}) }, config);
-  return {
+  const extraOptions = isObject(extra) ? { ...extra } : {};
+  const negativePrompt = combineImageNegativePrompts(
+    merged.negativePrompt || merged.negative_prompt,
+    extraOptions.negativePrompt || extraOptions.negative_prompt,
+  );
+  delete merged.negativePrompt;
+  delete merged.negative_prompt;
+  delete extraOptions.negativePrompt;
+  delete extraOptions.negative_prompt;
+  const options = {
     ...merged,
-    ...(isObject(extra) ? extra : {}),
+    ...extraOptions,
   };
+  if (negativePrompt) options.negativePrompt = negativePrompt;
+  return options;
 };

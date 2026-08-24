@@ -37,6 +37,7 @@ import {
     normalizeVoiceCapability,
     normalizeVoiceConnectionMode,
 } from './voice-config-utils.js';
+import { VoiceRegistryPanel } from './voice-registry-panel.js';
 
 const escapeHtml = (value) => String(value ?? '').replace(/[&<>"]/g, (ch) => ({
     '&': '&amp;',
@@ -133,6 +134,7 @@ export class ConfigPanel {
         voiceSharedConfigManager = null,
         voiceTtsConfigManager = null,
         voiceSttConfigManager = null,
+        voiceRegistryStore = null,
         webSearchCredentialManager = null,
     } = {}) {
         this.chatConfigManager = chatConfigManager || new ConfigManager();
@@ -140,6 +142,7 @@ export class ConfigPanel {
         this.voiceSharedConfigManager = voiceSharedConfigManager || new ConfigManager({ scope: 'voice_shared' });
         this.voiceTtsConfigManager = voiceTtsConfigManager || new ConfigManager({ scope: 'voice_tts' });
         this.voiceSttConfigManager = voiceSttConfigManager || new ConfigManager({ scope: 'voice_stt' });
+        this.voiceRegistryStore = voiceRegistryStore;
         this.webSearchCredentialManager = webSearchCredentialManager || new ConfigManager({
             scope: 'web_search_credentials',
             credentialsOnly: true,
@@ -182,6 +185,13 @@ export class ConfigPanel {
             configManager: this.chatConfigManager,
             onChanged: () => this.updateFcCompatibilitySummary(),
         });
+        this.voiceRegistryPanel = this.voiceRegistryStore ? new VoiceRegistryPanel({
+            store: this.voiceRegistryStore,
+            sharedManager: this.voiceSharedConfigManager,
+            ttsManager: this.voiceTtsConfigManager,
+            getPreferredScope: () => this.voiceConnectionMode === 'shared' ? 'voice_shared' : 'voice_tts',
+        }) : null;
+        this.voiceRegistryStore?.subscribe?.(() => this.updateVoiceRegistrySummary());
     }
 
     /**
@@ -206,6 +216,7 @@ export class ConfigPanel {
         }
         this.refreshProfileOptions();
         this.populateForm(config);
+        this.updateVoiceRegistrySummary();
         await this.refreshMaidSearchInputs?.();
         this.updateFcCompatibilitySummary();
         this.hideImageParamsPage();
@@ -446,6 +457,12 @@ export class ConfigPanel {
             voiceTtsSettings.style.display = this.activeTab === 'voice' && (
                 this.voiceConnectionMode === 'shared' || this.voiceCapability === 'tts'
             ) ? 'block' : 'none';
+        }
+        const voiceLibraryEntry = this.element.querySelector('#config-voice-library-entry');
+        if (voiceLibraryEntry) {
+            voiceLibraryEntry.style.display = this.activeTab === 'voice' && this.voiceRegistryPanel
+                ? 'block'
+                : 'none';
         }
         const modelSection = this.element.querySelector('#config-model-section');
         if (modelSection) {
@@ -757,6 +774,19 @@ export class ConfigPanel {
                     <div id="config-voice-tts-voice-presets" class="api-config-voice-presets" role="group" aria-label="声音快捷选择"></div>
                     <small id="config-voice-tts-voice-help">OpenAI 声音名称；推荐 marin 或 cedar</small>
                     <small class="api-config-voice-ai-disclosure">朗读内容使用 AI 合成语音，并非真人发声。</small>
+                </div>
+
+                <div id="config-voice-library-entry" class="api-config-field" style="display:none;">
+                    <button type="button" id="open-voice-library" class="api-config-row-card">
+                        <span class="api-config-row-main">
+                            <span class="api-config-row-icon">${API_CONFIG_ICONS.voice}</span>
+                            <span class="api-config-row-copy">
+                                <strong>人物声音库</strong>
+                                <small id="config-voice-library-summary">建立可绑定到联系人与创意写作角色的声音</small>
+                            </span>
+                        </span>
+                        ${API_CONFIG_ICONS.chevronRight}
+                    </button>
                 </div>
 
                 <div id="config-model-section" class="api-config-field" data-maid-guide-target="config-model-section">
@@ -1155,6 +1185,9 @@ export class ConfigPanel {
             input.value = String(button.dataset.voicePreset || '');
             this.syncVoicePresetSelection();
             this.emitDraftChange();
+        });
+        this.element.querySelector('#open-voice-library')?.addEventListener('click', () => {
+            void this.voiceRegistryPanel?.show?.();
         });
         this.element.querySelector('#config-baseurl')?.addEventListener('input', () => this.emitDraftChange());
 
@@ -2542,6 +2575,15 @@ export class ConfigPanel {
         }
         if (input) input.placeholder = this.getProviderDefaults(normalized).ttsVoice || 'Voice ID';
         this.syncVoicePresetSelection();
+    }
+
+    updateVoiceRegistrySummary() {
+        const summary = this.element?.querySelector?.('#config-voice-library-summary');
+        if (!summary) return;
+        const count = this.voiceRegistryStore?.list?.().length || 0;
+        summary.textContent = count
+            ? `已建立 ${count} 个声音；可绑定到联系人或创意写作角色`
+            : '建立可绑定到联系人与创意写作角色的声音';
     }
 
     syncVoicePresetSelection() {

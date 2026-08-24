@@ -49,6 +49,7 @@ const contactResult = runContactSettingsSaveFlow({
   chatStore,
   nameInput: { value: '新好友' },
   labelsInput: { value: ' 标签A, 标签B, 标签A ' },
+  voiceSelect: { value: 'voice-new' },
   currentAvatar: 'new-avatar',
   templateToggle: { checked: true },
   scriptToggle: { checked: false },
@@ -98,7 +99,13 @@ assert.deepEqual(
 );
 assert.deepEqual(notifications, [
   ['contact-success', '已保存好友设置'],
-  ['contact-saved', { id: 'contact:2', name: '新好友', avatar: 'new-avatar', labels: ['标签A', '标签B'] }],
+  ['contact-saved', {
+    id: 'contact:2',
+    name: '新好友',
+    avatar: 'new-avatar',
+    labels: ['标签A', '标签B'],
+    voiceRef: 'voice-new',
+  }],
   ['group-success', '已保存群聊设置'],
   ['group-saved', { id: 'group:1', forceRefresh: true }],
 ]);

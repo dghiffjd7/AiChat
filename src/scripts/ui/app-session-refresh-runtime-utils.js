@@ -1,5 +1,6 @@
 export const rerenderCurrentSessionHistory = async ({
   getCurrentSessionId = () => '',
+  getHistoryRevision = null,
   ensureRecentMessagesLoaded = async () => [],
   cancelInitialHistoryFill = () => {},
   clearMessages = () => {},
@@ -11,7 +12,15 @@ export const rerenderCurrentSessionHistory = async ({
 } = {}) => {
   try {
     const sessionId = getCurrentSessionId();
+    const historyRevision = typeof getHistoryRevision === 'function'
+      ? getHistoryRevision(sessionId)
+      : null;
     const messages = await ensureRecentMessagesLoaded(sessionId);
+    if (String(getCurrentSessionId() || '') !== String(sessionId || '')) return false;
+    if (
+      typeof getHistoryRevision === 'function'
+      && getHistoryRevision(sessionId) !== historyRevision
+    ) return false;
     cancelInitialHistoryFill(sessionId);
     clearMessages();
     const limit = Math.max(0, Number(pageSize) || 0);

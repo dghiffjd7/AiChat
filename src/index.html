@@ -103,6 +103,90 @@
     <link rel="stylesheet" href="./assets/css/group-creation-redesign.css" />
     <link rel="stylesheet" href="./assets/css/developer-profile.css" />
     <link rel="stylesheet" href="./assets/css/theme-paper-ink.css" />
+    <script id="app-boot-diagnostics-bootstrap">
+      // 启动诊断引导（ES2015 以内写法，旧内核也要能跑）：最早建立诊断对象并捕获早期错误，
+      // 主模块若根本没启动，看门狗仍能据此给出结论。
+      (function () {
+        var diag = window.__chatappBootDiag;
+        if (!diag || typeof diag !== 'object') {
+          diag = {
+            startedAt: Date.now(),
+            moduleLoaded: false,
+            runtimeReady: false,
+            phases: [],
+            invoke: { ok: 0, timeout: 0, error: 0, lastTimeout: '', lastError: '', lastCommand: '' },
+            errors: []
+          };
+          window.__chatappBootDiag = diag;
+        }
+        var pushError = function (text) {
+          try {
+            var msg = String(text || '').trim();
+            if (!msg) return;
+            if (diag.errors.length >= 10) diag.errors.shift();
+            diag.errors.push({ at: Date.now() - diag.startedAt, message: msg.slice(0, 300) });
+          } catch (e) {}
+        };
+        window.addEventListener('error', function (event) {
+          var msg = event && event.message ? String(event.message) : '';
+          var target = event && event.target;
+          if (!msg && target && (target.src || target.href)) {
+            msg = 'resource load failed: ' + String(target.src || target.href).split('/').pop();
+          }
+          var where = event && event.filename
+            ? ' @' + String(event.filename).split('/').pop() + ':' + (event.lineno || 0)
+            : '';
+          pushError(msg + where);
+        }, true);
+        window.addEventListener('unhandledrejection', function (event) {
+          var reason = event && event.reason;
+          pushError('unhandledrejection: ' + (reason && reason.message ? reason.message : String(reason)));
+        });
+      })();
+    </script>
+    <script id="app-legacy-polyfills">
+      // 旧内核兼容垫片（ES2015 以内写法）：部分设备（如无 GMS 的华为机）系统 WebView 停在 Chrome 92，
+      // 缺少 Object.hasOwn(Chrome 93+) 与 Array findLast/findLastIndex(Chrome 97+)，会导致启动或女仆运行时直接崩溃。
+      (function () {
+        try {
+          if (typeof Object.hasOwn !== 'function') {
+            Object.defineProperty(Object, 'hasOwn', {
+              value: function (obj, key) {
+                return Object.prototype.hasOwnProperty.call(Object(obj), key);
+              },
+              writable: true,
+              configurable: true
+            });
+          }
+          if (typeof Array.prototype.findLast !== 'function') {
+            Object.defineProperty(Array.prototype, 'findLast', {
+              value: function (callback, thisArg) {
+                if (typeof callback !== 'function') throw new TypeError('findLast callback must be a function');
+                for (var i = this.length - 1; i >= 0; i--) {
+                  if (callback.call(thisArg, this[i], i, this)) return this[i];
+                }
+                return undefined;
+              },
+              writable: true,
+              configurable: true
+            });
+          }
+          if (typeof Array.prototype.findLastIndex !== 'function') {
+            Object.defineProperty(Array.prototype, 'findLastIndex', {
+              value: function (callback, thisArg) {
+                if (typeof callback !== 'function') throw new TypeError('findLastIndex callback must be a function');
+                for (var i = this.length - 1; i >= 0; i--) {
+                  if (callback.call(thisArg, this[i], i, this)) return i;
+                }
+                return -1;
+              },
+              writable: true,
+              configurable: true
+            });
+          }
+        } catch (e) {}
+      })();
+    </script>
     <script id="app-startup-splash-theme">
       (() => {
         const builtins = {
@@ -180,6 +264,106 @@
         loading...
       </div>
     </div>
+    <script id="app-boot-watchdog">
+      // 启动看门狗：loading 超过 12 秒仍未就绪时，把诊断信息直接渲染到 loading 界面。
+      (function () {
+        var SHOW_AFTER_MS = 12000;
+        var REFRESH_MS = 2000;
+        var panel = null;
+        var copyState = '';
+        function diag() { return window.__chatappBootDiag || {}; }
+        function fmt(ms) { return (Math.max(0, Number(ms) || 0) / 1000).toFixed(1) + 's'; }
+        function buildReport() {
+          var d = diag();
+          var inv = d.invoke || {};
+          var phases = d.phases || [];
+          var errors = d.errors || [];
+          var phaseText = phases.map(function (p) {
+            return p.name + '@' + fmt(p.at) + (p.detail ? '(' + p.detail + ')' : '');
+          }).join(' > ') || '(无)';
+          var errText = errors.map(function (e) { return '[' + fmt(e.at) + '] ' + e.message; }).join('\n') || '(无)';
+          return [
+            'ChatApp 启动诊断',
+            '耗时: ' + fmt(Date.now() - (d.startedAt || Date.now()))
+              + ' | 主模块: ' + (d.moduleLoaded ? '已加载' : '未加载')
+              + ' | 运行时就绪: ' + (d.runtimeReady ? '是' : '否'),
+            '阶段: ' + phaseText,
+            '原生调用: ok=' + (inv.ok || 0) + ' timeout=' + (inv.timeout || 0) + ' error=' + (inv.error || 0)
+              + (inv.lastTimeout ? ' | 最近超时=' + inv.lastTimeout : '')
+              + (inv.lastError ? ' | 最近错误=' + inv.lastError : '')
+              + (inv.lastCommand ? ' | 最近调用=' + inv.lastCommand : ''),
+            '错误:\n' + errText,
+            'UA: ' + String(navigator.userAgent || '').slice(0, 240)
+          ].join('\n');
+        }
+        function summarize() {
+          var d = diag();
+          var inv = d.invoke || {};
+          var phases = d.phases || [];
+          if (!d.moduleLoaded) return '主程序模块未能启动——通常是系统 WebView 内核过旧或脚本加载失败';
+          if ((inv.timeout || 0) > 0) return '原生调用持续超时（' + inv.timeout + ' 次，最近：' + inv.lastTimeout + '）——应用与系统桥接不通';
+          if ((inv.error || 0) > 0 && !(inv.ok || 0)) return '原生调用全部失败（' + inv.lastError + '）';
+          var last = phases[phases.length - 1];
+          return '卡在阶段「' + (last ? last.name : '未知') + '」';
+        }
+        function copyText(text, done) {
+          var fallback = function () {
+            try {
+              var ta = document.createElement('textarea');
+              ta.value = text;
+              ta.setAttribute('readonly', 'true');
+              ta.style.cssText = 'position:fixed; left:-9999px; top:0;';
+              document.body.appendChild(ta);
+              ta.select();
+              var ok = document.execCommand('copy');
+              ta.remove();
+              done(Boolean(ok));
+            } catch (e) { done(false); }
+          };
+          try {
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+              navigator.clipboard.writeText(text).then(function () { done(true); }, fallback);
+              return;
+            }
+          } catch (e) {}
+          fallback();
+        }
+        function makeButton(label, onClick) {
+          var btn = document.createElement('button');
+          btn.type = 'button';
+          btn.textContent = label;
+          btn.style.cssText = 'padding:6px 12px; border-radius:8px; border:1px solid rgba(248,250,252,0.3); background:rgba(248,250,252,0.12); color:#f8fafc; font:inherit; cursor:pointer;';
+          btn.onclick = onClick;
+          return btn;
+        }
+        function render() {
+          var splash = document.getElementById('app-splash');
+          if (!splash || diag().runtimeReady) return false;
+          if (!panel) {
+            panel = document.createElement('div');
+            panel.id = 'app-boot-diagnostics';
+            panel.style.cssText = 'margin-top:18px; width:min(92vw, 520px); max-height:56vh; overflow:auto; box-sizing:border-box; padding:12px 14px; border-radius:12px; background:rgba(15,23,42,0.9); color:#f8fafc; font:12px/1.5 ui-monospace,Menlo,Consolas,monospace; text-align:left; white-space:pre-wrap; word-break:break-word;';
+            splash.appendChild(panel);
+          }
+          panel.textContent = '启动耗时过长。以下是诊断信息，请截图或复制发给开发者。\n原因推断：' + summarize() + '\n\n' + buildReport();
+          var bar = document.createElement('div');
+          bar.style.cssText = 'margin-top:10px; display:flex; gap:8px; flex-wrap:wrap;';
+          bar.appendChild(makeButton(copyState || '复制诊断信息', function () {
+            copyText(buildReport(), function (ok) {
+              copyState = ok ? '已复制 ✓' : '复制失败，请截图';
+              render();
+              setTimeout(function () { copyState = ''; }, 3000);
+            });
+          }));
+          bar.appendChild(makeButton('重新启动', function () { location.reload(); }));
+          panel.appendChild(bar);
+          return true;
+        }
+        setTimeout(function tick() {
+          if (render()) setTimeout(tick, REFRESH_MS);
+        }, SHOW_AFTER_MS);
+      })();
+    </script>
     <div id="app">
       <div id="mode-switch" class="mode-switch" data-mode="social">
         <button type="button" class="mode-switch-btn" aria-pressed="false" aria-label="切换到创意写作" title="切换到创意写作">
@@ -549,6 +733,28 @@
           <button type="button" data-rp-narrative-font="serif" aria-pressed="true">宋体 · 小说感</button>
           <button type="button" data-rp-narrative-font="sans" aria-pressed="false">黑体 · 清爽</button>
         </div>
+        <label class="rp-dialogue-highlight-row">
+          <span class="rp-reading-setting-copy">
+            <strong>对白高亮</strong>
+            <small>以主题安全强调色显示引号内对白</small>
+          </span>
+          <span class="rp-reading-switch">
+            <input type="checkbox" data-rp-dialogue-highlight checked>
+            <span aria-hidden="true"></span>
+          </span>
+        </label>
+        <section class="rp-voice-settings-section" aria-label="人物朗读声音">
+          <div class="rp-reading-settings-label">人物朗读</div>
+          <label class="rp-voice-setting-field">
+            <span>旁白声音</span>
+            <select id="rp-narration-voice-select" aria-label="旁白声音"></select>
+          </label>
+          <label class="rp-voice-setting-field">
+            <span>对白声音</span>
+            <select id="rp-dialogue-voice-select" aria-label="对白声音"></select>
+          </label>
+          <small class="rp-voice-setting-help">未指定对白声音时，会沿用有效的旁白声音。</small>
+        </section>
       </div>
 
       <!-- Plus quick menu -->

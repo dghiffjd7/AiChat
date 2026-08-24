@@ -9,6 +9,8 @@ export const runContactSettingsPopulateFlow = ({
   avatarPreview = null,
   nameInput = null,
   labelsInput = null,
+  voiceSelect = null,
+  voiceSection = null,
   templateToggle = null,
   scriptToggle = null,
   rpBridgeSection = null,
@@ -26,6 +28,7 @@ export const runContactSettingsPopulateFlow = ({
 } = {}) => {
   const contact = contactsStore?.getContact?.(sessionId) || { id: sessionId, name: sessionId, avatar: '' };
   const isRpSession = isRpSessionId(sessionId);
+  const isGroupSession = contact?.isGroup === true || String(sessionId || '').startsWith('group:');
   const rpDisplayName = isRpSession ? getRpDisplayName(sessionId) : '';
 
   contactsStore?.upsertContact?.(contact);
@@ -67,6 +70,8 @@ export const runContactSettingsPopulateFlow = ({
     const labels = Array.isArray(contact?.labels) ? contact.labels : [];
     labelsInput.value = labels.join(', ');
   }
+  if (voiceSelect) voiceSelect.value = String(contact?.voiceRef || '').trim();
+  if (voiceSection) voiceSection.style.display = (isRpSession || isGroupSession) ? 'none' : 'block';
 
   const sessionSettings = chatStore?.getSessionSettings?.(sessionId) || {};
   if (templateToggle) {
@@ -111,6 +116,7 @@ export const runContactSettingsSaveFlow = ({
   chatStore = null,
   nameInput = null,
   labelsInput = null,
+  voiceSelect = null,
   currentAvatar = '',
   templateToggle = null,
   scriptToggle = null,
@@ -132,17 +138,18 @@ export const runContactSettingsSaveFlow = ({
         .filter(Boolean),
       { max: 8 },
     );
+    const voiceRef = String(voiceSelect?.value || '').trim();
 
     const sessionSettings = chatStore?.getSessionSettings?.(sessionId) || {};
     if (templateToggle) sessionSettings.templateEnabled = Boolean(templateToggle.checked);
     if (scriptToggle) sessionSettings.scriptEnabled = Boolean(scriptToggle.checked);
     chatStore?.setSessionSettings?.(sessionId, sessionSettings);
-    contactsStore?.upsertContact?.({ ...prev, id: sessionId, name, avatar, labels });
+    contactsStore?.upsertContact?.({ ...prev, id: sessionId, name, avatar, labels, voiceRef });
 
     notifySuccess(isRpSessionId(sessionId) ? '已保存设置' : '已保存好友设置');
-    onSaved?.({ id: sessionId, name, avatar, labels });
+    onSaved?.({ id: sessionId, name, avatar, labels, voiceRef });
     hide?.();
-    return { sessionId, name, avatar, labels, sessionSettings };
+    return { sessionId, name, avatar, labels, voiceRef, sessionSettings };
   } catch (error) {
     logger?.error?.('保存好友设置失败', error);
     notifyError(error?.message || '保存失败');

@@ -35,6 +35,7 @@ assert.doesNotMatch(imageParamsSource, /STYLE_ID|ensureStyles/, '图片参数页
 assert.match(imageParamsSource, /const ICONS\s*=\s*Object\.freeze/);
 assert.match(imageParamsSource, /class="igp-header"/);
 assert.match(imageParamsSource, /class="igp-fields-grid"/);
+assert.match(imageParamsSource, /field\.variant\s*\?\s*`is-\$\{field\.variant\}`/);
 assert.match(configSource, /showImageParamsPage\(\)[\s\S]*?classList\.add\('is-image-params-page'\)/);
 assert.match(configSource, /hideImageParamsPage\(\)[\s\S]*?classList\.remove\('is-image-params-page'\)/);
 assert.match(configSource, /isOpen\(\)\s*\{[\s\S]*?style\.display !== 'none'/);
@@ -48,6 +49,9 @@ assert.match(secondarySource, /\.api-param-filter-selected\s*\{/);
 assert.match(secondarySource, /#config-panel\.api-config-panel\.is-image-params-page[\s\S]*?\.api-config-header\s*\{[\s\S]*?display:\s*none/);
 assert.match(secondarySource, /\.igp-panel-embedded\s+\.igp-fields-grid\s*\{[\s\S]*?grid-template-columns:\s*repeat\(3,\s*minmax\(0,\s*1fr\)\)/);
 assert.match(secondarySource, /\.igp-field\s*\{[\s\S]*?border-radius:\s*14px[\s\S]*?padding:\s*16px/);
+assert.match(secondarySource, /\.igp-field\.is-full-width\s*\{[\s\S]*?grid-column:\s*1\s*\/\s*-1/);
+assert.match(secondarySource, /\.igp-field\.is-persistent-negative\s*\{[\s\S]*?var\(--app-accent-soft\)/);
+assert.match(secondarySource, /\.igp-field-badge\s*\{/);
 assert.match(secondarySource, /@media \(prefers-reduced-motion:\s*reduce\)/);
 assert.match(secondarySource, /body\[data-reduced-motion='on'\][\s\S]*?\.api-param-filter-dialog/);
 assert.doesNotMatch(secondarySource, /#[0-9a-fA-F]{3,8}\b/, '次级 API 配置页面应使用主题 token，不新增硬编码色值');

@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "updatedAt": "2026-08-21",
+  "officialModelsEndpoint": "",
+  "models": [
+    { "id": "nai-diffusion-5-full", "label": "NovelAI Diffusion V5 Full" },
+    { "id": "nai-diffusion-5-curated", "label": "NovelAI Diffusion V5 Curated" },
+    { "id": "nai-diffusion-4-5-full", "label": "NovelAI Diffusion V4.5 Full" },
+    { "id": "nai-diffusion-4-5-curated", "label": "NovelAI Diffusion V4.5 Curated" },
+    { "id": "nai-diffusion-4-full", "label": "NovelAI Diffusion V4 Full" },
+    { "id": "nai-diffusion-4-curated-preview", "label": "NovelAI Diffusion V4 Curated" },
+    { "id": "nai-diffusion-3", "label": "NovelAI Diffusion Anime V3" },
+    { "id": "nai-diffusion-2", "label": "NovelAI Diffusion Anime V2" },
+    { "id": "nai-diffusion-furry-3", "label": "NovelAI Diffusion Furry V3" }
+  ]
+}

@@ -2,6 +2,10 @@ import { normalizeMaidImageAttachments } from '../maid-attachment-parts.js';
 import { validateMaidWorldbookSourcePlan } from '../maid-source-grounding.js';
 import { BUILTIN_PHONE_FORMAT_WORLDBOOK_ID } from '../../storage/builtin-worldbooks.js';
 import { resolveWorldSessionBindingMutation } from '../../storage/world-session-binding-utils.js';
+import {
+  buildWorldbookEntryGenerationPrompt,
+  readWorldAiGenerationSettings,
+} from '../../utils/world-ai-generation.js';
 
 const trim = (value, fallback = '') => {
   const text = String(value ?? '').trim();
@@ -634,6 +638,7 @@ const formatNowTime = () => {
 
 export const createAppContentAgentTools = ({
   generateWithSubAgent = null,
+  getWorldAiGenerationSettings = readWorldAiGenerationSettings,
   personaStore = null,
   userStore = null,
   contactsStore = null,
@@ -1756,14 +1761,14 @@ export const createAppContentAgentTools = ({
   {
     name: 'worldbook.generate_entries',
     title: 'Generate worldbook entries (sub-agent)',
-    description: 'Generate long worldbook entry content from outlines using a configured sub-agent model (or main model), then append to the worldbook. Maid passes outlines only, not full text.',
+    description: 'Generate worldbook entries from outlines using a configured sub-agent model (or main model), optionally applying the current AI-generation template and one-shot web search, then append them to the worldbook.',
     source: 'maid-app-content',
     permissions: [],
     riskLevel: 'medium',
     capabilities: {
       read: true,
       write: true,
-      network: false,
+      network: 'opt_in',
       cost: 'variable',
       undo: 'manual',
       modelContext: 'allowlist',
@@ -1799,6 +1804,14 @@ export const createAppContentAgentTools = ({
           },
         },
         subAgentId: { type: 'string', maxLength: 80 },
+        useAiTemplate: {
+          type: 'boolean',
+          description: 'Apply the current template saved in the worldbook AI-generation panel. Use for role/character profile entries; leave false for ordinary prose lore entries.',
+        },
+        webSearch: {
+          type: 'boolean',
+          description: 'Allow web search for this generation only. Defaults to false and never persists.',
+        },
       },
     },
     execute: async (args = {}, context = {}) => {
@@ -1816,27 +1829,41 @@ export const createAppContentAgentTools = ({
       }
       const worldbookName = trim(args.name);
       const outlineEntries = (Array.isArray(args.entries) ? args.entries : []).slice(0, 8);
+      const templateSettings = typeof getWorldAiGenerationSettings === 'function'
+        ? (getWorldAiGenerationSettings() || {})
+        : {};
+      const useAiTemplate = args.useAiTemplate === true;
+      const webSearchRequested = args.webSearch === true;
+      const aiTemplate = useAiTemplate ? trim(templateSettings.template) : '';
+      if (useAiTemplate && !aiTemplate) {
+        return { ok: false, reason: 'world_ai_template_missing', message: '当前 AI 生成模板为空，请先在世界书的「AI生成」中设置模板。' };
+      }
       const generated = [];
+      const webSources = [];
       let delegated = false;
       let modelUsed = '';
       let subAgentName = '';
+      let webSearchUsed = false;
       for (const item of outlineEntries) {
         const title = trim(item?.title);
         const length = Math.max(50, Math.min(1200, Math.trunc(Number(item?.length)) || 220));
-        const prompt = [
-          `为世界书「${worldbookName}」生成条目正文。`,
-          `条目标题：${title}`,
-          `要点大纲：${trim(item?.outline)}`,
-          `资料层：${trim(item?.sourceLayer, '未标记')}`,
-          `来源引用：${normalizeStringList(item?.sourceRefs).join('、') || '无'}`,
-          trim(item?.sourceNotes) ? `来源说明：${trim(item.sourceNotes)}` : '',
-          '资料边界：只根据大纲与上述来源层写作；不得把用户原创或创意扩写伪装成原作事实。',
-          `要求：约 ${length} 字；只输出条目正文本身（纯文本，不要标题、不要解释、不要 markdown 代码块）。`,
-        ].filter(Boolean).join('\n');
+        const prompt = buildWorldbookEntryGenerationPrompt({
+          worldbookName,
+          title,
+          outline: item?.outline,
+          length,
+          sourceLayer: item?.sourceLayer,
+          sourceRefs: normalizeStringList(item?.sourceRefs),
+          sourceNotes: item?.sourceNotes,
+          template: aiTemplate,
+          useAiTemplate,
+        });
         const out = await generateWithSubAgent({
           subAgentId: trim(args.subAgentId),
           prompt,
           purposeLabel: `生成世界书条目「${title}」`,
+          webSearch: webSearchRequested,
+          sessionId: `maid-world-ai:${worldbookName}:${title}`,
           context,
         });
         if (!out?.ok || !trim(out.text)) {
@@ -1850,12 +1877,27 @@ export const createAppContentAgentTools = ({
         delegated = out.delegated === true;
         modelUsed = trim(out.modelUsed);
         subAgentName = trim(out.subAgentName);
+        webSearchUsed = webSearchUsed || out.webSearchUsed === true;
+        const generatedSources = Array.isArray(out.sources) ? out.sources : [];
+        generatedSources.forEach((source = {}) => {
+          const url = trim(source.url);
+          if (!url || webSources.some(item => item.url === url)) return;
+          webSources.push({
+            title: trim(source.title, url),
+            url,
+            snippet: trim(source.snippet),
+          });
+        });
+        const sourceRefs = Array.from(new Set([
+          ...normalizeStringList(item?.sourceRefs),
+          ...generatedSources.map(source => trim(source?.url)).filter(Boolean),
+        ])).slice(0, 12);
         generated.push({
           title,
           content: trim(out.text),
           keys: Array.isArray(item?.keys) ? item.keys : [],
           sourceLayer: trim(item?.sourceLayer),
-          sourceRefs: normalizeStringList(item?.sourceRefs),
+          sourceRefs,
           sourceNotes: trim(item?.sourceNotes),
         });
       }
@@ -1889,6 +1931,13 @@ export const createAppContentAgentTools = ({
             entryCount: payload.entries.length,
             generatedCount: generated.length,
             delegated,
+            templateApplied: useAiTemplate,
+            templateSource: useAiTemplate
+              ? (templateSettings.hasCustomTemplate === true ? 'custom' : 'default')
+              : 'none',
+            webSearchRequested,
+            webSearchUsed,
+            ...(webSources.length ? { sources: webSources.slice(0, 24) } : {}),
             ...(modelUsed ? { modelUsed } : {}),
             ...(subAgentName ? { subAgentName } : {}),
             generatedTitles: generated.map(entry => entry.title),

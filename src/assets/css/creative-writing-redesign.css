@@ -180,7 +180,7 @@ body[data-ui-mode='rp'] #chat-room :is(
 }
 
 .rp-reading-settings-menu {
-  width: min(248px, calc(100vw - 24px));
+  width: min(292px, calc(100vw - 24px));
   min-width: 0;
   box-sizing: border-box;
   padding: 12px;
@@ -195,7 +195,7 @@ body[data-ui-mode='rp'] #chat-room :is(
 
 .rp-reading-settings-label {
   margin: 0 0 7px;
-  color: #a3a3a3;
+  color: var(--app-text-muted);
   font-size: 11px;
   font-weight: 650;
   letter-spacing: 0.12em;
@@ -246,7 +246,7 @@ body[data-ui-mode='rp'] #chat-room :is(
   min-width: 0;
   padding: 7px 5px;
   border-radius: 8px;
-  color: #a3a3a3;
+  color: var(--app-text-muted);
   font-size: 12px;
   line-height: 1;
   text-align: center;
@@ -255,11 +255,11 @@ body[data-ui-mode='rp'] #chat-room :is(
 
 .rp-reading-settings-menu .rp-reading-size-options button:hover {
   background: transparent;
-  color: #525252;
+  color: var(--app-text-secondary);
 }
 
 .rp-reading-settings-menu .rp-reading-size-options button.is-active {
-  color: #262626;
+  color: var(--app-text-primary);
   font-weight: 650;
 }
 
@@ -300,7 +300,7 @@ body[data-ui-mode='rp'] #chat-room :is(
   min-width: 0;
   padding: 7px 4px;
   border-radius: 8px;
-  color: #a3a3a3;
+  color: var(--app-text-muted);
   font-size: 11px;
   line-height: 1.1;
   text-align: center;
@@ -310,12 +310,132 @@ body[data-ui-mode='rp'] #chat-room :is(
 
 .rp-reading-settings-menu .rp-narrative-font-options button:hover {
   background: transparent;
-  color: #525252;
+  color: var(--app-text-secondary);
 }
 
 .rp-reading-settings-menu .rp-narrative-font-options button.is-active {
-  color: #262626;
+  color: var(--app-text-primary);
   font-weight: 650;
+}
+
+.rp-dialogue-highlight-row {
+  display: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 14px;
+  padding: 10px 11px;
+  border: 1px solid var(--app-border-subtle);
+  border-radius: 12px;
+  background: var(--app-surface-subtle);
+  cursor: pointer;
+}
+
+body[data-ui-mode='rp'] .rp-dialogue-highlight-row {
+  display: flex;
+}
+
+.rp-reading-setting-copy {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.rp-reading-setting-copy strong {
+  color: var(--app-text-primary);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.rp-reading-setting-copy small,
+.rp-voice-setting-help {
+  color: var(--app-text-secondary);
+  font-size: 10.5px;
+  line-height: 1.45;
+}
+
+.rp-reading-switch {
+  position: relative;
+  width: 38px;
+  height: 22px;
+  flex: 0 0 38px;
+}
+
+.rp-reading-switch input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+}
+
+.rp-reading-switch span {
+  position: absolute;
+  inset: 0;
+  border-radius: 999px;
+  background: var(--app-border-strong);
+  transition: background-color 160ms ease;
+}
+
+.rp-reading-switch span::after {
+  content: '';
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--app-surface-card);
+  box-shadow: var(--app-shadow-sm);
+  transition: transform 180ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.rp-reading-switch input:checked + span {
+  background: var(--app-accent-primary);
+}
+
+.rp-reading-switch input:checked + span::after {
+  transform: translateX(16px);
+}
+
+.rp-reading-switch input:focus-visible + span {
+  outline: 2px solid var(--app-accent-primary);
+  outline-offset: 2px;
+}
+
+.rp-voice-settings-section {
+  display: none;
+  gap: 9px;
+  margin-top: 14px;
+  padding-top: 13px;
+  border-top: 1px solid var(--app-border-subtle);
+}
+
+body[data-ui-mode='rp'] .rp-voice-settings-section {
+  display: grid;
+}
+
+.rp-voice-setting-field {
+  display: grid;
+  grid-template-columns: 64px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  color: var(--app-text-secondary);
+  font-size: 11.5px;
+}
+
+.rp-voice-setting-field select {
+  width: 100%;
+  min-width: 0;
+  padding: 8px 28px 8px 9px;
+  border: 1px solid var(--app-border-default);
+  border-radius: 10px;
+  background: var(--app-surface-input);
+  color: var(--app-text-primary);
+  font: inherit;
+}
+
+.rp-dialogue-text {
+  color: var(--app-rp-dialogue-text, var(--app-text-primary));
 }
 
 body[data-ui-mode='rp'][data-rp-reading-size='compact']
@@ -858,7 +978,7 @@ body[data-ui-mode='rp'] .rp-toolbar {
 .rp-greeting-trigger:focus-visible,
 .rp-greeting-sheet button:focus-visible,
 .rp-greeting-editor button:focus-visible,
-.rp-greeting-editor :is(input, textarea):focus-visible {
+.rp-greeting-editor :is(input, .rp-greeting-editor-content):focus-visible {
   outline: 2px solid color-mix(in srgb, #c2482f 50%, transparent);
   outline-offset: 2px;
 }
@@ -1689,7 +1809,7 @@ body[data-ui-mode='rp'] .is-rp-greeting-message .QQ_chat_msgdiv {
 }
 
 .rp-greeting-editor-field input,
-.rp-greeting-editor-field textarea {
+.rp-greeting-editor-field .rp-greeting-editor-content {
   border-color: #e7e5e4;
   border-radius: 12px;
   background: var(--app-surface-card, #fff);
@@ -1712,17 +1832,20 @@ body[data-ui-mode='rp'] .is-rp-greeting-message .QQ_chat_msgdiv {
   font-size: 14px;
 }
 
-.rp-greeting-editor-field textarea {
+.rp-greeting-editor-field .rp-greeting-editor-content {
+  height: 230px;
   min-height: 230px;
   max-height: 44dvh;
+  overflow-y: auto;
   padding: 14px 14px 30px;
-  resize: none;
   font-family: 'Noto Serif SC', 'Songti SC', STSong, SimSun, serif;
   font-size: 14px;
   line-height: 1.9;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
-.rp-greeting-editor-field :is(input, textarea):focus {
+.rp-greeting-editor-field :is(input, .rp-greeting-editor-content):focus {
   border-color: #a8a29e;
   box-shadow: 0 0 0 4px rgba(120, 113, 108, 0.08);
 }
@@ -1776,6 +1899,13 @@ body[data-ui-mode='rp'] .is-rp-greeting-message .QQ_chat_msgdiv {
 .rp-greeting-editor-content-wrap {
   position: relative;
   display: block;
+}
+
+.rp-greeting-editor-content.is-empty::before {
+  content: attr(data-placeholder);
+  color: #a8a29e;
+  white-space: pre-line;
+  pointer-events: none;
 }
 
 .rp-greeting-editor-count {
@@ -1984,7 +2114,7 @@ body[data-theme-mode='dark'] .rp-greeting-card-line.is-after {
   background: linear-gradient(to left, transparent, var(--app-border-default));
 }
 
-body[data-theme-mode='dark'] .rp-greeting-editor-field :is(input, textarea),
+body[data-theme-mode='dark'] .rp-greeting-editor-field :is(input, .rp-greeting-editor-content),
 body[data-theme-mode='dark'] .rp-greeting-editor-macros button {
   border-color: var(--app-border-default);
   background: var(--app-surface-input);
@@ -2237,7 +2367,7 @@ body[data-theme-mode='dark'] .rp-greeting-editor-macros button {
   .rp-greeting-sheet-edit,
   .rp-greeting-card-change,
   .rp-greeting-editor button,
-  .rp-greeting-editor :is(input, textarea) {
+  .rp-greeting-editor :is(input, .rp-greeting-editor-content) {
     transition: none !important;
   }
 }
@@ -2263,7 +2393,7 @@ body[data-reduced-motion='on'] :is(
   .rp-greeting-card-change,
   .rp-greeting-editor button,
   .rp-greeting-editor input,
-  .rp-greeting-editor textarea
+  .rp-greeting-editor .rp-greeting-editor-content
 ) {
   transition: none !important;
 }

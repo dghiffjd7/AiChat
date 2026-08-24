@@ -149,3 +149,115 @@ import { showContextMenuCore } from '../../src/scripts/ui/chat/context-menu-orch
   assert.equal(contextMenu.style.display, 'none');
   console.log('ok - showContextMenuCore hides menu and yields a frame before dispatching slow actions');
 }
+
+{
+  const appended = [];
+  const handled = [];
+  const contextMenu = {
+    style: { display: 'block' },
+    innerHTML: '',
+    appendChild(node) { appended.push(node); },
+  };
+  let speakRowPayload = null;
+  showContextMenuCore({
+    event: { target: {}, clientX: 5, clientY: 5 },
+    message: { id: 'a1' },
+    selectionMode: false,
+    contextMenu,
+    resolveContextMenuContext: () => ({
+      wrapper: { id: 'wrap', classList: { contains: () => false } },
+      message: { id: 'a1', role: 'assistant', meta: {} },
+      codeBlock: null,
+      hasCode: false,
+    }),
+    buildContextMenuActions: () => [],
+    isThreadingEnabledForMessage: () => false,
+    createContextMenuSpeakRow: (payload) => {
+      speakRowPayload = payload;
+      return { kind: 'speak-row' };
+    },
+    resolveSpeakQuickVoices: () => [{ voiceRef: 'voice_a', label: 'A' }],
+    createContextMenuActionButton: payload => ({ kind: 'button', payload }),
+    getPoint: () => ({ x: 5, y: 5 }),
+    positionContextMenu: () => {},
+    actionHandler: async (key, message, payload) => { handled.push([key, message.id, payload]); },
+    clearLongPress() {},
+    documentLike: {},
+    windowLike: {},
+  });
+  assert.equal(appended.some(node => node.kind === 'speak-row'), true, 'assistant 消息必须渲染朗读复合行');
+  assert.deepEqual(speakRowPayload.quickVoices, [{ voiceRef: 'voice_a', label: 'A' }]);
+  speakRowPayload.onSpeak(null);
+  speakRowPayload.onSpeak('voice_a');
+  speakRowPayload.onMore();
+  await new Promise(resolve => setTimeout(resolve, 10));
+  assert.deepEqual(handled.map(([key, id, payload]) => [key, id, payload?.voiceRefOverride ?? null]), [
+    ['speak', 'a1', null],
+    ['speak', 'a1', 'voice_a'],
+    ['select-voice', 'a1', null],
+  ]);
+  console.log('ok - speak row dispatches default speak, quick override, and picker actions');
+}
+
+{
+  const appended = [];
+  const contextMenu = {
+    style: { display: 'block' },
+    innerHTML: '',
+    appendChild(node) { appended.push(node); },
+  };
+  showContextMenuCore({
+    event: { target: {}, clientX: 5, clientY: 5 },
+    message: { id: 'u1' },
+    selectionMode: false,
+    contextMenu,
+    resolveContextMenuContext: () => ({
+      wrapper: { id: 'wrap', classList: { contains: () => false } },
+      message: { id: 'u1', role: 'user', meta: {} },
+      codeBlock: null,
+      hasCode: false,
+    }),
+    buildContextMenuActions: () => [],
+    isThreadingEnabledForMessage: () => false,
+    createContextMenuSpeakRow: () => ({ kind: 'speak-row' }),
+    resolveSpeakQuickVoices: () => [],
+    createContextMenuActionButton: payload => ({ kind: 'button', payload }),
+    getPoint: () => ({ x: 5, y: 5 }),
+    positionContextMenu: () => {},
+    actionHandler: async () => {},
+    clearLongPress() {},
+    documentLike: {},
+    windowLike: {},
+  });
+  assert.equal(appended.some(node => node.kind === 'speak-row'), false, '用户消息不渲染朗读行');
+  console.log('ok - speak row is assistant-only');
+}
+
+{
+  let speakRowPayload = null;
+  showContextMenuCore({
+    event: { target: {}, clientX: 5, clientY: 5 },
+    message: { id: 'a2' },
+    selectionMode: false,
+    contextMenu: { style: { display: 'block' }, innerHTML: '', appendChild() {} },
+    resolveContextMenuContext: () => ({
+      wrapper: { id: 'wrap', classList: { contains: token => token === 'has-rp-message-actions' } },
+      message: { id: 'a2', role: 'assistant', meta: {} },
+      codeBlock: null,
+      hasCode: false,
+    }),
+    buildContextMenuActions: () => [],
+    isThreadingEnabledForMessage: () => false,
+    createContextMenuSpeakRow: (payload) => { speakRowPayload = payload; return { kind: 'speak-row' }; },
+    resolveSpeakQuickVoices: () => [],
+    createContextMenuActionButton: payload => ({ kind: 'button', payload }),
+    getPoint: () => ({ x: 5, y: 5 }),
+    positionContextMenu: () => {},
+    actionHandler: async () => {},
+    clearLongPress() {},
+    documentLike: {},
+    windowLike: {},
+  });
+  assert.equal(speakRowPayload.showSpeakButton, false, '气泡自带朗读按钮时菜单行不得重复显示朗读');
+  console.log('ok - speak row hides the duplicate speak button for bubbles with their own action bar');
+}

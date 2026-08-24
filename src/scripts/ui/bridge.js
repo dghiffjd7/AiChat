@@ -55,6 +55,11 @@ import { renderTemplateMessages, templateSettings } from '../plugins/template-en
 import { getChatUI } from './chat-ui-runtime-utils.js';
 import { recordDebugTraceEvent } from './debug-ui-registry-utils.js';
 import {
+  WORLDBOOK_IMPORT_CONFLICT_CODE,
+  WORLDBOOK_IMPORT_DECISIONS,
+  buildWorldbookImportPlan,
+} from './worldbook-import-conflict-utils.js';
+import {
   buildAutoImagePromptInstruction,
   shouldAllowAutoImagePromptByRateLimit,
 } from './chat/auto-image-prompt-utils.js';
@@ -10594,14 +10599,26 @@ window.saveWorldInfo = async data => {
 };
 
 // 兼容：从 ST world JSON 导入（期望前端读取后调用）
-window.importSTWorld = async (jsonObj, name = 'imported') => {
+window.importSTWorld = async (jsonObj, name = 'imported', options = {}) => {
   const simplified = convertSTWorld(jsonObj, name);
   const snapshot = await window.appBridge.getWorldInfoSnapshot(name);
-  await window.appBridge.saveWorldInfo(name, simplified, {
-    expectedRevision: snapshot.revision,
-    expectedGeneration: snapshot.generation,
-    expectedExists: snapshot.exists,
+  const importPlan = buildWorldbookImportPlan({
+    worldId: name,
+    incomingWorld: simplified,
+    snapshot,
   });
+  const conflictAction = String(options?.conflictAction || '').trim();
+  if (importPlan.conflict && conflictAction !== WORLDBOOK_IMPORT_DECISIONS.overwrite) {
+    const error = new Error(`同名世界书「${importPlan.targetId}」已存在，需要明确确认后才能覆盖。`);
+    error.code = WORLDBOOK_IMPORT_CONFLICT_CODE;
+    error.details = importPlan.conflict;
+    throw error;
+  }
+  await window.appBridge.saveWorldInfo(
+    importPlan.targetId,
+    importPlan.incomingWorld,
+    importPlan.saveOptions,
+  );
   return simplified;
 };
 

@@ -1,5 +1,6 @@
 import { appSettings } from '../storage/app-settings.js';
 import { themeStore, normalizeAppearance, normalizeThemePreset } from '../storage/theme-store.js';
+import { resolveRpDialogueTextColor } from './theme-dialogue-color-utils.js';
 
 export const THEME_AVATAR_STYLE_OPTIONS = Object.freeze([
   { value: 'system', label: '跟随原样' },
@@ -199,6 +200,7 @@ export class ThemeManager {
     setCssVar('--app-text-inverse', text.inverse);
     setCssVar('--app-text-quote', text.quote);
     setCssVar('--app-text-link', text.link);
+    setCssVar('--app-rp-dialogue-text', resolveRpDialogueTextColor(tokens, { mode: nextMode }).color);
 
     setCssVar('--app-accent-primary', accent.primary);
     setCssVar('--app-accent-strong', accent.strong || accent.primary);

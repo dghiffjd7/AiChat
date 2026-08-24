@@ -153,6 +153,7 @@ export class ContactSettingsPanel {
         onExportExperiencePack,
         onOpenRegex,
         onOpenVariables,
+        voiceRegistryStore = null,
     } = {}) {
         this.contactsStore = contactsStore;
         this.chatStore = chatStore;
@@ -164,6 +165,7 @@ export class ContactSettingsPanel {
         this.onExportExperiencePack = typeof onExportExperiencePack === 'function' ? onExportExperiencePack : null;
         this.onOpenRegex = typeof onOpenRegex === 'function' ? onOpenRegex : null;
         this.onOpenVariables = typeof onOpenVariables === 'function' ? onOpenVariables : null;
+        this.voiceRegistryStore = voiceRegistryStore;
         this.overlay = null;
         this.panel = null;
         this.fileInput = null;
@@ -384,6 +386,12 @@ export class ContactSettingsPanel {
                     >
                 </div>
 
+                <div id="contact-voice-section" style="margin-top:12px;">
+                    <div class="has-help" data-help="人物声音在 API 设置 → 语音模型 → 人物声音库中管理。" style="${fieldLabelStyle}">声音</div>
+                    <select id="contact-voice-select" style="${fieldInputStyle}"></select>
+                    <div style="${helperTextStyle}">默认（全局）会跟随当前 TTS 设置；声音绑定仅保存在本机。</div>
+                </div>
+
 	                <div style="${featuresSectionStyle}">
 	                    <div class="has-help" data-help="正则与变量属于高级脚本配置；重置仅清空本会话 local 变量，不影响全局变量。" style="${bridgeTitleStyle}">模板与脚本（本会话）</div>
                     <label style="${checkboxRowStyle}">
@@ -499,6 +507,8 @@ export class ContactSettingsPanel {
         this.avatarPreview = this.panel.querySelector('#contact-avatar-preview');
         this.nameInput = this.panel.querySelector('#contact-name-input');
         this.labelsInput = this.panel.querySelector('#contact-labels-input');
+        this.voiceSelect = this.panel.querySelector('#contact-voice-select');
+        this.voiceSection = this.panel.querySelector('#contact-voice-section');
         this.archivesList = this.panel.querySelector('#contact-archives-list');
         this.archiveManageButton = this.panel.querySelector('#contact-archives-manage');
         this.summariesList = this.panel.querySelector('#contact-summaries-list');
@@ -1325,6 +1335,8 @@ export class ContactSettingsPanel {
     }
 
     populate() {
+        this.syncVoiceOptions();
+        void Promise.resolve(this.voiceRegistryStore?.ready).then(() => this.syncVoiceOptions());
         return runContactSettingsPopulateFlow({
             sessionId: this.getSessionId(),
             contactsStore: this.contactsStore,
@@ -1333,6 +1345,8 @@ export class ContactSettingsPanel {
             avatarPreview: this.avatarPreview,
             nameInput: this.nameInput,
             labelsInput: this.labelsInput,
+            voiceSelect: this.voiceSelect,
+            voiceSection: this.voiceSection,
             templateToggle: this.templateToggle,
             scriptToggle: this.scriptToggle,
             rpBridgeSection: this.rpBridgeSection,
@@ -1359,6 +1373,7 @@ export class ContactSettingsPanel {
             chatStore: this.chatStore,
             nameInput: this.nameInput,
             labelsInput: this.labelsInput,
+            voiceSelect: this.voiceSelect,
             currentAvatar: this.currentAvatar,
             templateToggle: this.templateToggle,
             scriptToggle: this.scriptToggle,
@@ -1368,5 +1383,26 @@ export class ContactSettingsPanel {
             notifyError: (message) => window.toastr?.error?.(message),
             logger,
         });
+    }
+
+    syncVoiceOptions() {
+        if (!this.voiceSelect) return;
+        const current = String(
+            this.contactsStore?.getContact?.(this.getSessionId())?.voiceRef || this.voiceSelect.value || '',
+        ).trim();
+        const voices = this.voiceRegistryStore?.list?.() || [];
+        this.voiceSelect.innerHTML = '';
+        const addOption = (value, label) => {
+            const option = document.createElement('option');
+            option.value = value;
+            option.textContent = label;
+            this.voiceSelect.appendChild(option);
+        };
+        addOption('', '默认（全局）');
+        voices.forEach(record => addOption(record.id, `${record.label} · ${record.providerSnapshot || '未知服务商'}`));
+        if (current && !voices.some(record => record.id === current)) {
+            addOption(current, '当前绑定（已失效，将回退默认）');
+        }
+        this.voiceSelect.value = current;
     }
 }

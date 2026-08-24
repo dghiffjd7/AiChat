@@ -92,6 +92,51 @@ import { createAppContentAgentTools } from '../../src/scripts/agent/tools/app-co
   console.log('ok - 生成失败时如实报错');
 }
 
+{
+  const saved = {};
+  const generationCalls = [];
+  const tools = createAppContentAgentTools({
+    getWorldAiGenerationSettings: () => ({
+      templateStorageKey: 'world_ai_template_v1',
+      hasCustomTemplate: true,
+      template: 'name: ""\npersonality: ""',
+    }),
+    generateWithSubAgent: async options => {
+      generationCalls.push(options);
+      return {
+        ok: true,
+        text: 'name: "米娅"\npersonality: "温柔"',
+        webSearchUsed: true,
+        sources: [{ title: '资料', url: 'https://example.com/mia', snippet: '角色资料' }],
+      };
+    },
+    saveWorldInfo: async (name, payload) => { saved[name] = payload; },
+    getWorldInfo: async () => null,
+    listWorlds: async () => [],
+  });
+  const tool = tools.find(item => item.name === 'worldbook.generate_entries');
+  assert.equal(tool.capabilities.network, 'opt_in');
+  assert.ok(tool.schema.properties.useAiTemplate);
+  assert.ok(tool.schema.properties.webSearch);
+  const result = await tool.execute({
+    name: '角色资料',
+    useAiTemplate: true,
+    webSearch: true,
+    entries: [{ title: '基础资料', outline: '米娅的公开设定', length: 180 }],
+  }, {});
+  assert.equal(result.ok, true);
+  assert.equal(result.templateApplied, true);
+  assert.equal(result.templateSource, 'custom');
+  assert.equal(result.webSearchRequested, true);
+  assert.equal(result.webSearchUsed, true);
+  assert.match(generationCalls[0].prompt, /<ai_generation_template>/);
+  assert.equal(generationCalls[0].webSearch, true);
+  assert.match(generationCalls[0].sessionId, /^maid-world-ai:/);
+  assert.deepEqual(saved['角色资料'].entries[0].sourceRefs, ['https://example.com/mia']);
+  assert.equal(result.sources[0].url, 'https://example.com/mia');
+  console.log('ok - worldbook.generate_entries 共享 AI 模板并显式透传本次联网与来源');
+}
+
 console.log('maid-sub-agent-tests passed');
 
 {

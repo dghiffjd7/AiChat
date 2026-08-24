@@ -29,7 +29,9 @@ const {
 const {
   REGEX_CUSTOM_PROMPT_PRESET_TYPE,
   buildRegexCustomPromptPresetBind,
+  detachRegexPresetBind,
   getRegexCustomPromptPresetBindIds,
+  getRegexPresetBindIds,
   listRegexCustomPromptPresetChoices,
   resolveImportedRegexPresetBindTarget,
 } = await import('../../src/scripts/ui/regex-preset-binding-utils.js');
@@ -216,6 +218,59 @@ test('imported preset regex binding targets the imported custom prompt preset di
     presetId: 'ctx',
     presetStore: store,
   }), null);
+});
+
+test('preset regex binding detach preserves other preset owners', () => {
+  const bind = {
+    type: 'preset',
+    presetType: 'openai',
+    presetId: 'preset-a',
+    presetIds: ['preset-a', 'preset-b'],
+  };
+
+  assert.deepEqual(getRegexPresetBindIds(bind, 'openai'), ['preset-a', 'preset-b']);
+  assert.deepEqual(detachRegexPresetBind(bind, {
+    presetType: 'openai',
+    presetId: 'preset-a',
+  }), {
+    matched: true,
+    remainingIds: ['preset-b'],
+    bind: {
+      type: 'preset',
+      presetType: 'openai',
+      presetId: 'preset-b',
+      presetIds: ['preset-b'],
+    },
+  });
+  assert.deepEqual(detachRegexPresetBind(bind, {
+    presetType: 'openai',
+    presetId: 'preset-b',
+  }), {
+    matched: true,
+    remainingIds: ['preset-a'],
+    bind: {
+      type: 'preset',
+      presetType: 'openai',
+      presetId: 'preset-a',
+      presetIds: ['preset-a'],
+    },
+  });
+  assert.deepEqual(detachRegexPresetBind({
+    type: 'preset',
+    presetType: 'sysprompt',
+    presetId: 'preset-a',
+  }, {
+    presetType: 'sysprompt',
+    presetId: 'preset-a',
+  }), {
+    matched: true,
+    remainingIds: [],
+    bind: null,
+  });
+  assert.equal(detachRegexPresetBind(bind, {
+    presetType: 'context',
+    presetId: 'preset-a',
+  }).matched, false);
 });
 
 test('parseRegexImportText reads ST RegexBinding from preset extensions', () => {

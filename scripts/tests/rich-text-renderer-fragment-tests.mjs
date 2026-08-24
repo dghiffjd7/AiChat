@@ -12,6 +12,7 @@ globalThis.localStorage = {
 globalThis.document ??= { body: { dataset: {} } };
 
 const {
+  isHeadlessScriptOnlyHtml,
   captureRichDetailsOpenStates,
   coalesceFencedHtmlTailParts,
   buildIframeBridgeScript,
@@ -22,6 +23,8 @@ const {
   buildDollarGlobalShim,
   buildFrameworkGlobalShim,
   buildMvuCompatBridge,
+  cleanupRichIframeElement,
+  cleanupRichText,
   expandRichImageTokensForHtml,
   getRichDetailsStateKey,
   prepareRichFragmentDisplayHtmlForParsing,
@@ -33,6 +36,36 @@ const {
 } = await import('../../src/scripts/ui/chat/rich-text-renderer.js');
 
 const tests = [];
+
+tests.push({
+  name: 'rich text cleanup disconnects every iframe runtime before message removal',
+  fn: () => {
+    const cleared = [];
+    const deleted = [];
+    const iframe = {
+      dataset: {
+        iframeId: 'iframe-cleanup-1',
+        iframeAutoResize: '1',
+      },
+    };
+    assert.equal(cleanupRichIframeElement(iframe, {
+      clearObservers: target => cleared.push(target),
+      deleteDebugState: id => deleted.push(id),
+    }), true);
+    assert.deepEqual(cleared, [iframe]);
+    assert.deepEqual(deleted, ['iframe-cleanup-1']);
+
+    const nested = {
+      dataset: { iframeId: 'iframe-cleanup-2', iframeAutoResize: '1' },
+      contentWindow: { document: {} },
+    };
+    cleanupRichText({
+      matches: () => false,
+      querySelectorAll: selector => selector === 'iframe' ? [nested] : [],
+    });
+    assert.equal('iframeAutoResize' in nested.dataset, false);
+  },
+});
 
 tests.push({
   name: 'iframe height trace contains sizing evidence without rendered text',
@@ -1244,6 +1277,45 @@ test('restores user details open state across rich streaming rerenders', () => {
   restoreRichDetailsOpenStates(fakeDetailsContainer([rerendered]), state);
 
   assert.equal(rerendered.open, true);
+});
+
+test('plain code blocks ship a one-tap copy button for the raw payload', () => {
+  const source = fs.readFileSync(path.join(process.cwd(), 'src/scripts/ui/chat/rich-text-renderer.js'), 'utf8');
+  const plainBranch = source.indexOf("renderLevel === RICH_RENDER_LEVELS.SAFE && !(looksLikeHtmlDoc || isHtmlLang)");
+  assert.ok(plainBranch >= 0, '纯代码块分支必须存在');
+  const branchBody = source.slice(plainBranch, plainBranch + 3200);
+  const copyIndex = branchBody.indexOf("copyBtn.className = 'chat-codeblock-copy'");
+  const copySource = branchBody.indexOf('copyToClipboard(String(wrap.__chatappCode ?? code');
+  const stopIndex = branchBody.indexOf('ev.stopPropagation()');
+  const preIndex = branchBody.indexOf("document.createElement('pre')");
+  assert.ok(copyIndex >= 0, '纯代码块必须带一键复制按钮');
+  assert.ok(copySource > copyIndex, '复制内容必须来自原始代码载荷而非渲染文本');
+  assert.ok(stopIndex >= 0 && stopIndex < copySource, '复制点击必须阻止冒泡，避免误触消息交互');
+  assert.ok(preIndex > copyIndex, '头部按钮在代码区之前挂载');
+  assert.ok(branchBody.includes("createRpMessageIconMarkup('copy'"), '复制按钮必须复用气泡操作条的同一图标源');
+});
+
+test('headless script-only html blocks are detected and never trigger blank fallback', () => {
+  const konata = '<script>\n(function(){ var d = document.querySelector(".konata-thinking-details"); if (!d) { setTimeout(arguments.callee, 200); } })();\n</script>';
+  assert.equal(isHeadlessScriptOnlyHtml(konata), true, '纯 script 块');
+  assert.equal(isHeadlessScriptOnlyHtml('<style>.a{color:red}</style>\n<script>console.log("<div>inside string</div>")</script>'), true, 'style+script，脚本字符串里的标签不算可见内容');
+  assert.equal(isHeadlessScriptOnlyHtml('<!DOCTYPE html><html><head><meta charset="utf-8"><title>t</title><script>1</script></head><body></body></html>'), true, '只有脚本的完整文档骨架');
+  assert.equal(isHeadlessScriptOnlyHtml('<!-- note --><script>1</script>'), true, '注释不算内容');
+  assert.equal(isHeadlessScriptOnlyHtml('<script>1</script><div class="card">内容</div>'), false, '有可见标签不是无头块');
+  assert.equal(isHeadlessScriptOnlyHtml('<script>1</script>正文文字'), false, '有裸文本不是无头块');
+  assert.equal(isHeadlessScriptOnlyHtml('<div>no script at all</div>'), false, '没有脚本/样式不参与判定');
+  assert.equal(isHeadlessScriptOnlyHtml(''), false);
+
+  const source = fs.readFileSync(path.join(process.cwd(), 'src/scripts/ui/chat/rich-text-renderer.js'), 'utf8');
+  const gate = source.indexOf("if (iframe.dataset.richHeadless === '1') {");
+  const inspect = source.indexOf('const blankState = inspectIframeBlankState(iframe);', gate);
+  assert.ok(gate >= 0 && inspect > gate, '空白回退必须在探针之前对无头块短路');
+  assert.ok(source.includes("const headlessScriptBlock = isHeadlessScriptOnlyHtml(code);"), '沙箱分支必须判定无头块');
+  assert.ok(source.includes("wrap.dataset.richHeadless = '1';"), '无头块折叠标记');
+  const probe = source.indexOf("if (headlessScriptBlock) {\n                // 无头块不回退");
+  const fallbackCall = source.indexOf("applyIframeBlankFallbackIfNeeded(iframe, iframeId, 'post-load-blank-probe'", probe);
+  assert.ok(probe >= 0 && fallbackCall > probe, '探针定时器里无头块必须先于回退调用返回');
+  assert.ok(source.includes("wrap.dataset.richHeadless = 'revealed';"), '画出内容时要能展开');
 });
 
 let failed = 0;

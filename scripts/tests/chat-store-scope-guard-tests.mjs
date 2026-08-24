@@ -247,6 +247,98 @@ const makeSession = (timestamp = 1) => ({
 }
 
 {
+  const sid = 'rp:persona_recent_reset_race';
+  const store = new ChatStore({ scopeId: 'persona_recent_reset_race' });
+  store.state = {
+    currentId: sid,
+    sessions: {
+      [sid]: { messages: [], currentArchiveId: null },
+    },
+  };
+  store.currentId = sid;
+  store._useV2 = true;
+  const entry = {};
+  const thread = { parts: [{ id: 'part_0001' }] };
+  let releaseRead;
+  const readGate = new Promise(resolve => { releaseRead = resolve; });
+  store._v2 = {
+    ensureSession: () => entry,
+    getThread: () => thread,
+    readPart: async () => {
+      await readGate;
+      return [{ id: 'old-message', role: 'assistant', content: '旧聊天' }];
+    },
+    enqueue: task => Promise.resolve().then(task),
+    resetThread: async () => {},
+  };
+
+  const pending = store.ensureRecentMessagesLoaded(sid);
+  await Promise.resolve();
+  const beforeRevision = store.getHistoryRevision(sid);
+  store.clear(sid);
+  const afterRevision = store.getHistoryRevision(sid);
+  assert.notEqual(afterRevision, beforeRevision);
+  releaseRead();
+  assert.deepEqual(await pending, []);
+  assert.deepEqual(store.getMessages(sid), []);
+  console.log('ok - ChatStore rejects a recent-message load invalidated by clearing the thread');
+}
+
+{
+  const sid = 'rp:persona_pending_v2_append_reset';
+  const store = new ChatStore({ scopeId: 'persona_pending_v2_append_reset' });
+  store.state = {
+    currentId: sid,
+    sessions: {
+      [sid]: {
+        messages: [],
+        currentArchiveId: null,
+        archives: [],
+        detachedSummaries: [],
+        compactedSummary: null,
+      },
+    },
+  };
+  store.currentId = sid;
+  store._useV2 = true;
+  store._persist = () => {};
+  const currentThread = { total: 0 };
+  const archiveThreads = new Map();
+  let releaseAppend;
+  const appendGate = new Promise(resolve => { releaseAppend = resolve; });
+  let queue = Promise.resolve();
+  store._v2 = {
+    getThreadTotal: (_sessionId, archiveId = '') => (
+      archiveId ? Number(archiveThreads.get(archiveId)?.total || 0) : currentThread.total
+    ),
+    enqueue: task => {
+      queue = queue.then(task);
+      return queue;
+    },
+    appendMessage: async () => {
+      await appendGate;
+      currentThread.total += 1;
+      return { partId: 'part_0001', createdNewPart: true };
+    },
+    cloneCurrentToArchive: async (_sessionId, archiveId) => {
+      archiveThreads.set(archiveId, { total: currentThread.total });
+      currentThread.total = 0;
+      return true;
+    },
+  };
+
+  store.appendMessage({ role: 'assistant', content: '仍在排队写入的旧回复' }, sid);
+  const archiveId = store.startNewChat(sid, '竞态存档');
+  assert.ok(archiveId, '内存已有消息时不得因 V2 total 尚未更新而跳过归档');
+  assert.deepEqual(store.getMessages(sid), []);
+  releaseAppend();
+  await queue;
+  assert.equal(currentThread.total, 0);
+  assert.equal(archiveThreads.get(archiveId)?.total, 1);
+  console.log('ok - startNewChat archives pending V2 appends instead of letting them resurrect the cleared thread');
+}
+
+{
   const sid = 'rp:persona_older_overlap';
   const store = new ChatStore({ scopeId: 'persona_older_overlap' });
   store.state = {

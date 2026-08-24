@@ -68,7 +68,9 @@ const normalizeAgentToolCapabilities = (capabilities = {}, {
   const permissionSet = new Set(list(permissions));
   const risk = trim(riskLevel, 'low');
   const write = src.write === true || permissionSet.has('storage:write') || risk === 'medium' || risk === 'high';
-  const network = src.network === true || permissionSet.has('network');
+  const network = (src.network === true || permissionSet.has('network'))
+    ? true
+    : (src.network === 'opt_in' ? 'opt_in' : false);
   return {
     read: src.read !== false,
     write,

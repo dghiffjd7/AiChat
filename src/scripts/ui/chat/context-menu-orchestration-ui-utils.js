@@ -28,6 +28,8 @@ export const showContextMenuCore = ({
   toggleReaction = null,
   createContextMenuActionButton = null,
   createContextMenuDivider = null,
+  createContextMenuSpeakRow = null,
+  resolveSpeakQuickVoices = null,
   dispatchContextMenuAction = null,
   getPoint = null,
   positionContextMenu = null,
@@ -83,6 +85,35 @@ export const showContextMenuCore = ({
       },
     });
     if (reactionRow) contextMenu.appendChild(reactionRow);
+  }
+  if (resolvedMessage?.role === 'assistant' && typeof createContextMenuSpeakRow === 'function') {
+    const dispatchSpeakAction = async (actionKey, payload) => {
+      contextMenu.style.display = 'none';
+      clearLongPress?.();
+      await waitForMenuDismissalPaint(windowLike);
+      try {
+        await actionHandler?.(actionKey, resolvedMessage, payload);
+      } catch {}
+    };
+    let quickVoices = [];
+    try {
+      quickVoices = resolveSpeakQuickVoices?.() || [];
+    } catch {}
+    const speakRow = createContextMenuSpeakRow({
+      documentLike,
+      quickVoices,
+      showSpeakButton: wrapper?.classList?.contains?.('has-rp-message-actions') !== true,
+      onSpeak: (voiceRef) => {
+        void dispatchSpeakAction('speak', {
+          wrapper,
+          ...(voiceRef ? { voiceRefOverride: voiceRef } : {}),
+        });
+      },
+      onMore: () => {
+        void dispatchSpeakAction('select-voice', { wrapper });
+      },
+    });
+    if (speakRow) contextMenu.appendChild(speakRow);
   }
   let previousGroup = '';
   actions.forEach((action) => {

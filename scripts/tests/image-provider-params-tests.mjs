@@ -15,6 +15,11 @@ import {
   StabilityAIImageProvider,
   TogetherAIImageProvider,
 } from '../../src/scripts/api/providers/image-generation-providers.js';
+import {
+  DEFAULT_NOVELAI_IMAGE_MODELS,
+  normalizeNovelAIImageModelCatalog,
+  resolveNovelAIImageModelCatalog,
+} from '../../src/scripts/api/providers/novelai-image-model-catalog.js';
 
 {
   const provider = new OpenAIProvider({
@@ -813,6 +818,102 @@ import {
   assert.equal(ddimPayload.parameters.sm, false);
   assert.equal(ddimPayload.parameters.sm_dyn, false);
   console.log('ok - NovelAI image provider maps guidance and SMEA params');
+}
+
+{
+  const catalog = normalizeNovelAIImageModelCatalog({
+    officialModelsEndpoint: 'https://image.novelai.net/ai/models',
+    models: [
+      { id: 'nai-diffusion-5-full' },
+      'nai-diffusion-5-curated',
+      'nai-diffusion-5-full',
+      'not-a-novelai-model',
+    ],
+  });
+  assert.equal(catalog.officialModelsEndpoint, 'https://image.novelai.net/ai/models');
+  assert.deepEqual(catalog.models, [
+    'nai-diffusion-5-full',
+    'nai-diffusion-5-curated',
+  ]);
+  assert.equal(normalizeNovelAIImageModelCatalog({
+    officialModelsEndpoint: 'https://example.com/private',
+    models: [],
+  }).officialModelsEndpoint, '');
+  console.log('ok - NovelAI catalog accepts only valid model ids and its trusted official host');
+}
+
+{
+  const requests = [];
+  const saved = [];
+  const resolved = await resolveNovelAIImageModelCatalog({
+    catalogUrls: ['https://catalog.example/novelai.json'],
+    fetchJson: async (url) => {
+      requests.push(url);
+      if (url === 'https://catalog.example/novelai.json') {
+        return {
+          officialModelsEndpoint: 'https://image.novelai.net/ai/models',
+          models: ['nai-diffusion-5-curated'],
+        };
+      }
+      return { data: [{ id: 'nai-diffusion-5-full' }] };
+    },
+    loadCache: async () => ({ models: ['nai-diffusion-4-5-full'] }),
+    saveCache: async value => saved.push(value),
+  });
+  assert.deepEqual(requests, [
+    'https://catalog.example/novelai.json',
+    'https://image.novelai.net/ai/models',
+  ]);
+  assert.equal(resolved.source, 'official');
+  assert.deepEqual(resolved.models, ['nai-diffusion-5-full']);
+  assert.deepEqual(saved[0].models, ['nai-diffusion-5-full']);
+  console.log('ok - NovelAI catalog prefers a trusted official directory declared by the remote manifest');
+}
+
+{
+  const cached = await resolveNovelAIImageModelCatalog({
+    catalogUrls: ['https://catalog.example/novelai.json'],
+    fetchJson: async () => {
+      throw new Error('offline');
+    },
+    loadCache: async () => ({ models: ['nai-diffusion-5-curated'] }),
+  });
+  assert.equal(cached.source, 'cache');
+  assert.deepEqual(cached.models, ['nai-diffusion-5-curated']);
+
+  const bundled = await resolveNovelAIImageModelCatalog({
+    catalogUrls: [],
+    fetchJson: async () => ({}),
+    loadCache: async () => null,
+  });
+  assert.equal(bundled.source, 'bundled');
+  assert.equal(bundled.models.includes('nai-diffusion-5-full'), true);
+  assert.deepEqual(bundled.models, [...DEFAULT_NOVELAI_IMAGE_MODELS]);
+  console.log('ok - NovelAI catalog falls back through cache to the bundled V5-aware list');
+}
+
+{
+  const provider = new NovelAIImageProvider({
+    provider: 'novelai',
+    apiKey: 'must-not-leak',
+    model: 'nai-diffusion-5-full',
+  });
+  const requests = [];
+  provider.requestJson = async (request) => {
+    requests.push(request);
+    return { models: ['nai-diffusion-5-full', 'nai-diffusion-5-curated'] };
+  };
+  provider.loadModelCatalogCache = async () => null;
+  provider.saveModelCatalogCache = async () => {};
+  const models = await provider.listModels();
+  assert.deepEqual(models.slice(0, 2), [
+    'nai-diffusion-5-full',
+    'nai-diffusion-5-curated',
+  ]);
+  assert.equal(provider.lastModelCatalogSource, 'remote');
+  assert.equal(requests[0].allowProxy, false);
+  assert.equal(Object.keys(requests[0].headers).some(key => key.toLowerCase() === 'authorization'), false);
+  console.log('ok - NovelAI refresh fetches the remote catalog without forwarding the user token');
 }
 
 {

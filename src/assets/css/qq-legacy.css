@@ -249,7 +249,8 @@
   background: conic-gradient(from 90deg, #7dd3fc, #f0abfc, #fcd34d, #6ee7b7, #38bdf8, #7dd3fc);
   filter: blur(0.6px);
   opacity: 0.9;
-  animation: modeRingSpin 4.6s linear infinite;
+  /* steps(92) ≈ 20fps：光环常驻旋转，60fps 连续重合成会吃掉约 8% GPU，步进后 <1% */
+  animation: modeRingSpin 4.6s steps(92) infinite;
   -webkit-mask: radial-gradient(circle, transparent 58%, #000 62%);
   mask: radial-gradient(circle, transparent 58%, #000 62%);
 }
@@ -621,8 +622,9 @@ body[data-ui-mode='rp'] .bottom-nav {
 }
 
 .rp-greeting-editor-field input,
-.rp-greeting-editor-field textarea {
+.rp-greeting-editor-field .rp-greeting-editor-content {
   width: 100%;
+  box-sizing: border-box;
   border: 1px solid var(--app-border-default);
   border-radius: 10px;
   background: var(--app-surface-input, #fff);
@@ -631,13 +633,17 @@ body[data-ui-mode='rp'] .bottom-nav {
   font-weight: 500;
   padding: 10px 12px;
   outline: none;
-  resize: vertical;
 }
 
-.rp-greeting-editor-field textarea {
+.rp-greeting-editor-field .rp-greeting-editor-content {
+  height: 230px;
   min-height: 180px;
   max-height: 42vh;
+  overflow-y: auto;
   line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  cursor: text;
 }
 
 .rp-greeting-editor-status {
@@ -2526,6 +2532,87 @@ body[data-reduced-motion='on'] .code-viewer-maximize-restore {
   width: 34px;
   height: 34px;
   background: var(--app-surface-subtle);
+}
+
+/* 代码块头部复制按钮：代码块本体是固定深色，悬停态同样固定色即可 */
+.chat-codeblock-copy:hover {
+  background: rgba(148, 163, 184, 0.16);
+  color: #e2e8f0;
+}
+
+.chat-context-speak-row {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px;
+  margin-bottom: 4px;
+  border-bottom: 1px solid var(--app-border-subtle);
+}
+
+.chat-context-speak-main {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 32px;
+  padding: 4px 9px 4px 5px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--app-text-primary);
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1.25;
+}
+
+.chat-context-speak-chip {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 88px;
+  overflow: hidden;
+  min-height: 28px;
+  padding: 3px 9px;
+  border: 1px solid var(--app-border-default);
+  border-radius: 999px;
+  background: var(--app-surface-subtle);
+  color: var(--app-text-secondary);
+  cursor: pointer;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.chat-context-speak-more {
+  flex: 0 0 auto;
+  width: 28px;
+  min-height: 28px;
+  margin-left: auto;
+  padding: 0;
+  border: 1px solid var(--app-border-default);
+  border-radius: 999px;
+  background: var(--app-surface-subtle);
+  color: var(--app-text-secondary);
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+}
+
+.chat-context-speak-more.is-labeled {
+  width: 100%;
+  margin-left: 0;
+  padding: 0 12px;
+  border-radius: 8px;
+  text-align: left;
+  font-size: 13px;
+  min-height: 32px;
+}
+
+.chat-context-speak-main:hover,
+.chat-context-speak-chip:hover,
+.chat-context-speak-more:hover {
+  background: var(--app-surface-hover);
+  color: var(--app-text-primary);
 }
 
 .chat-context-menu-section-divider {

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 
 import {
   bindCreativeReadingSettings,
+  normalizeCreativeDialogueHighlight,
   normalizeCreativeNarrativeFont,
   normalizeCreativeReadingSize,
 } from '../../src/scripts/ui/chat/creative-reading-settings-runtime-utils.js';
@@ -55,6 +56,8 @@ assert.equal(normalizeCreativeReadingSize('oversized'), 'standard');
 assert.equal(normalizeCreativeNarrativeFont('sans'), 'sans');
 assert.equal(normalizeCreativeNarrativeFont(' serif '), 'serif');
 assert.equal(normalizeCreativeNarrativeFont('unknown'), 'serif');
+assert.equal(normalizeCreativeDialogueHighlight(undefined), true);
+assert.equal(normalizeCreativeDialogueHighlight(false), false);
 
 {
   const bodyEl = { dataset: {} };
@@ -70,12 +73,17 @@ assert.equal(normalizeCreativeNarrativeFont('unknown'), 'serif');
     return button;
   });
   const menuEl = createEventTarget();
+  const highlightToggle = createEventTarget();
+  highlightToggle.checked = false;
   menuEl.classList.add('hidden');
   menuEl.querySelectorAll = selector => {
     if (selector === '[data-rp-reading-size]') return options;
     if (selector === '[data-rp-narrative-font]') return fontOptions;
     return [];
   };
+  menuEl.querySelector = selector => (
+    selector === '[data-rp-dialogue-highlight]' ? highlightToggle : null
+  );
   const calls = [];
   const runtime = bindCreativeReadingSettings({
     bodyEl,
@@ -85,6 +93,9 @@ assert.equal(normalizeCreativeNarrativeFont('unknown'), 'serif');
     writeSetting: value => calls.push(['write', value]),
     readNarrativeFont: () => 'serif',
     writeNarrativeFont: value => calls.push(['font', value]),
+    readDialogueHighlight: () => false,
+    writeDialogueHighlight: value => calls.push(['highlight', value]),
+    onDialogueHighlightChanged: value => calls.push(['rerender', value]),
     toggleSheetAt: (...args) => {
       calls.push(['toggle', ...args]);
       menuEl.classList.remove('hidden');
@@ -98,6 +109,8 @@ assert.equal(normalizeCreativeNarrativeFont('unknown'), 'serif');
   assert.equal(bodyEl.dataset.rpNarrativeFont, 'serif');
   assert.equal(menuEl.dataset.rpNarrativeFont, 'serif');
   assert.equal(fontOptions[0].classList.contains('is-active'), true);
+  assert.equal(bodyEl.dataset.rpDialogueHighlight, 'off');
+  assert.equal(highlightToggle.checked, false);
 
   buttonEl.trigger('click');
   assert.deepEqual(calls[0], ['toggle', menuEl, buttonEl, { alignRight: true, kind: 'reading' }]);
@@ -127,8 +140,15 @@ assert.equal(normalizeCreativeNarrativeFont('unknown'), 'serif');
   assert.equal(fontOptions[0].classList.contains('is-active'), false);
   assert.equal(fontOptions[1].classList.contains('is-active'), true);
 
+  highlightToggle.checked = true;
+  highlightToggle.trigger('change');
+  assert.equal(bodyEl.dataset.rpDialogueHighlight, 'on');
+  assert.deepEqual(calls[3], ['highlight', true]);
+  assert.deepEqual(calls[4], ['rerender', true]);
+
   runtime.destroy();
   assert.equal(buttonEl.listeners.size, 0);
   assert.equal(menuEl.listeners.size, 0);
+  assert.equal(highlightToggle.listeners.size, 0);
   console.log('ok - creative reading settings persist independent size and narrative-font choices');
 }

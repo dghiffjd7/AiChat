@@ -1,3 +1,6 @@
+const MESSAGE_INTERACTIVE_TARGET_SELECTOR =
+  'a[href], button, input, textarea, select, audio, video, canvas, [contenteditable="true"]';
+
 export const createLongPressUiRuntime = ({
   schedule = (handler, delay = 0) => setTimeout(handler, delay),
   clearSchedule = (timerId) => clearTimeout(timerId),
@@ -9,6 +12,14 @@ export const createLongPressUiRuntime = ({
     }
   },
 } = {}) => ({
+  isInteractiveControlTarget(target = null) {
+    if (!target || typeof target.closest !== 'function') return false;
+    return Boolean(target.closest(MESSAGE_INTERACTIVE_TARGET_SELECTOR));
+  },
+  isButtonTarget(target = null) {
+    if (!target || typeof target.closest !== 'function') return false;
+    return Boolean(target.closest('button'));
+  },
   isSelectableTextTarget(target = null) {
     if (!target || typeof target.closest !== 'function') return false;
     const interactive = target.closest('button, input, textarea, select, audio, video, canvas, [contenteditable="true"]');
@@ -25,7 +36,7 @@ export const createLongPressUiRuntime = ({
     setLongPressTimer,
     onTrigger,
   }) {
-    if (selectionMode) return false;
+    if (selectionMode || this.isInteractiveControlTarget(event?.target)) return false;
     clearExisting?.();
     const point = getPoint?.(event) || null;
     setLongPressStart?.(point);
@@ -80,6 +91,15 @@ export const createLongPressUiRuntime = ({
     wrapper.addEventListener(
       'contextmenu',
       event => {
+        if (this.isInteractiveControlTarget(event?.target)) {
+          clearLongPress?.();
+          if (this.isButtonTarget(event?.target)) {
+            try {
+              event.preventDefault();
+            } catch {}
+          }
+          return;
+        }
         if (this.isSelectableTextTarget(event?.target) && hasActiveTextSelection()) {
           clearLongPress?.();
           return;

@@ -127,6 +127,8 @@ import { PluginStore } from '../storage/plugin-store.js';
 import { RpSessionStore } from '../storage/rp-session-store.js';
 import { TurnCheckpointStore, collectCheckpointSnapshotIds, collectCheckpointVariableSnapshotIds } from '../storage/turn-checkpoint-store.js';
 import { UserStore } from '../storage/user-store.js';
+import { VoiceRegistryStore, listQuickVoices, markVoiceUsed, readVoiceUsage } from '../storage/voice-registry-store.js';
+import { markBootPhase, recordBootError } from '../utils/boot-diagnostics.js';
 import { stickerPackStore } from '../storage/sticker-pack-store.js';
 import { normalizeScopeId } from '../storage/store-scope.js';
 import { avatarDataUrlFromFile, compressImageDataUrl, isGifFile } from '../utils/image.js';
@@ -315,6 +317,13 @@ import {
   createVoiceRuntimeConfigResolver,
   resolveSpeakableMessageText,
 } from './chat/voice-interaction-runtime.js';
+import {
+  createVoiceBindingConfigResolver,
+  resolveMessageVoiceContact,
+  resolveMessageVoiceRef,
+} from './chat/voice-binding-runtime-utils.js';
+import { buildDualVoiceSpeechChunks } from './chat/dialogue-segment-utils.js';
+import { resolveSpeechChunkMaxChars } from './chat/speech-chunk-utils.js';
 import { enqueueMessagesCore } from './chat/typing-flow-ui-utils.js';
 import { createAssistantStreamRuntime, isStreamCtrlConnected } from './chat/assistant-stream-runtime.js';
 import { createDisposableStructuredPreviewRuntime } from './chat/structured-response-preview-runtime.js';
@@ -404,6 +413,7 @@ import { commitContinuationMessageToStore } from './chat/continuation-message-ut
 import { createProviderContinuationCommitPolicyStore } from './chat/provider-continuation-policy.js';
 import { hideCreativeContentTagsForDisplay } from './chat/creative-content-display-utils.js';
 import { bindCreativeReadingSettings } from './chat/creative-reading-settings-runtime-utils.js';
+import { bindCreativeVoiceSettings } from './chat/creative-voice-settings-runtime.js';
 import { CreativeStreamProcessor } from './chat/creative-stream-processor.js';
 import { normalizeDialogueMessage as normalizeDialogueMessageCore } from './chat/dialogue-message-utils.js';
 import { DialogueStreamParser } from './chat/dialogue-stream-parser.js';
@@ -733,6 +743,8 @@ import {
 } from './chat/auto-image-prompt-utils.js';
 import { runCommand, getCommandList } from './command-runner.js';
 import { ConfigPanel } from './config-panel.js';
+import { VoicePickerModal } from './voice-picker-modal.js';
+import { resolveVoiceRecordDisplayStatus } from './voice-registry-panel.js';
 import { ContactDragManager } from './contact-drag-manager.js';
 import { ContactGroupRenderer } from './contact-group-renderer.js';
 import { ScriptPanel } from './script-panel.js';
@@ -849,6 +861,7 @@ import {
 import { bindCustomSelectButton, createCustomSelectWrapper, refreshCustomSelectButton } from './custom-select.js';
 import { PluginRuntime } from '../plugins/plugin-runtime.js';
 import { themeManager } from './theme-manager.js';
+import { resolveRpDialogueTextColor } from './theme-dialogue-color-utils.js';
 import { getDefaultAppIcon } from '../utils/default-icon.js';
 import { initHelpTooltips } from './help-tooltip.js';
 
@@ -876,6 +889,7 @@ const {
   getRuntimeReady: () => appRuntimeReady,
 });
 
+markBootPhase('module-evaluated');
 clearRuntimeNoiseStorage();
 registerGlobalRuntimeIssueHandlers({
   windowLike: window,
@@ -890,6 +904,7 @@ const appBootTraceEvent = startAppBootTrace({
 const recordAppDebugTraceEvent = event => recordDebugTraceEventCore(window.appBridge, event);
 
 const initApp = async () => {
+  markBootPhase('init-app');
   const ui = new ChatUI();
   let maidOnboardingRuntime = null;
   let maidRichScriptGuideRuntime = null;
@@ -990,6 +1005,7 @@ const initApp = async () => {
   let stageTimeline = null;
   const chatConfigManager = new ConfigManager();
   const imageConfigManager = new ConfigManager({ scope: 'image' });
+  const voiceRegistryStore = new VoiceRegistryStore();
   const webSearchCredentialManager = new ConfigManager({
     scope: 'web_search_credentials',
     credentialsOnly: true,
@@ -1013,6 +1029,7 @@ const initApp = async () => {
   const configPanel = new ConfigPanel({
     chatConfigManager,
     imageConfigManager,
+    voiceRegistryStore,
     webSearchCredentialManager,
     onSaved: (payload = {}) => {
       if (payload.tab !== 'chat') return;
@@ -1529,6 +1546,93 @@ const initApp = async () => {
   const personaStore = new PersonaStore();
   const userStore = new UserStore();
   const rpSessionStore = new RpSessionStore();
+  const voiceBindingConfigResolver = createVoiceBindingConfigResolver({
+    resolveGlobalConfig: () => resolveVoiceRuntimeConfig('tts'),
+    getVoiceRecord: voiceRef => voiceRegistryStore.get(voiceRef),
+    getConfigManager: scope => scope === 'voice_shared'
+      ? configPanel.voiceSharedConfigManager
+      : scope === 'voice_tts'
+        ? configPanel.voiceTtsConfigManager
+        : null,
+    warnInvalidBinding: (voiceRef, reason) => {
+      const record = voiceRegistryStore.get(voiceRef);
+      const reasonLabel = reason === 'provider_changed'
+        ? '引用的设置档已更换服务商'
+        : reason === 'profile_missing'
+          ? '引用的设置档已删除'
+          : '声音条目已删除';
+      window.toastr?.warning?.(`声音「${record?.label || voiceRef}」已失效（${reasonLabel}），本次改用默认声音。`);
+    },
+  });
+  const voicePickerModal = new VoicePickerModal({
+    store: voiceRegistryStore,
+    ensureReady: () => Promise.all([
+      configPanel.voiceSharedConfigManager?.ensureStores?.(),
+      configPanel.voiceTtsConfigManager?.ensureStores?.(),
+    ]),
+    describeRecord: record => {
+      const status = resolveVoiceRecordDisplayStatus(record, {
+        sharedManager: configPanel.voiceSharedConfigManager,
+        ttsManager: configPanel.voiceTtsConfigManager,
+      });
+      return {
+        ...status,
+        profileName: String(status.profile?.name || '').trim(),
+      };
+    },
+  });
+  const resolveRpPersonaForSession = sessionId => {
+    const sid = String(sessionId || '').trim();
+    const personaId = sid.startsWith('rp:') ? sid.slice(3) : '';
+    return (personaId ? personaStore.get(personaId) : null) || personaStore.getActive?.() || null;
+  };
+  const resolveSpeechConfig = async ({ message, voiceRefOverride = null } = {}) => {
+    const sessionId = String(chatStore.getCurrent?.() || '').trim();
+    let voiceRef = '';
+    if (voiceRefOverride !== null && voiceRefOverride !== undefined) {
+      voiceRef = String(voiceRefOverride || '').trim();
+    } else if (sessionId.startsWith('rp:')) {
+      voiceRef = String(resolveRpPersonaForSession(sessionId)?.voiceSettings?.narrationVoiceRef || '').trim();
+    } else {
+      voiceRef = resolveMessageVoiceRef({
+        message,
+        sessionId,
+        getContact: id => contactsStore.getContact(id),
+        resolveGroupSpeakerContact: (...args) => resolveGroupSpeakerContact(...args),
+      });
+    }
+    if (voiceRef) markVoiceUsed(voiceRef);
+    return voiceBindingConfigResolver(voiceRef);
+  };
+  const resolveSpeakQuickVoices = () => {
+    try {
+      return listQuickVoices(voiceRegistryStore.list(), readVoiceUsage(), { limit: 3 })
+        .map(record => ({ voiceRef: record.id, label: record.label }));
+    } catch {
+      return [];
+    }
+  };
+  const buildCreativeSpeechSegments = async ({ text, wrapper, config, voiceRefOverride = null } = {}) => {
+    const sessionId = String(chatStore.getCurrent?.() || '').trim();
+    if (
+      !sessionId.startsWith('rp:')
+      || wrapper?.querySelector?.('iframe, .chat-rich-fragment, .chat-codeblock')
+      || voiceRefOverride !== null
+    ) return null;
+    const voiceSettings = resolveRpPersonaForSession(sessionId)?.voiceSettings || {};
+    const dialogueRef = String(voiceSettings.dialogueVoiceRef || '').trim();
+    const narrationConfig = config;
+    let dialogueConfig = narrationConfig;
+    if (dialogueRef) {
+      const dialogueResult = await voiceBindingConfigResolver.resolveWithMeta(dialogueRef);
+      if (dialogueResult.valid && dialogueResult.config) dialogueConfig = dialogueResult.config;
+    }
+    return buildDualVoiceSpeechChunks(text, {
+      narrationConfig,
+      dialogueConfig,
+      resolveMaxChars: resolveSpeechChunkMaxChars,
+    });
+  };
   const experiencePackTransfer = new ExperiencePackTransfer({
     chatStore,
     contactsStore,
@@ -1543,6 +1647,11 @@ const initApp = async () => {
   let chatRoom = null;
   const RP_SESSION_PREFIX = 'rp:';
   const isRpSessionId = (sessionId) => String(sessionId || '').startsWith(RP_SESSION_PREFIX);
+  ui.setSpeakQuickVoicesResolver(() => resolveSpeakQuickVoices());
+  ui.setDialogueHighlightResolver(({ sessionId } = {}) => (
+    isRpSessionId(sessionId || chatStore.getCurrent?.())
+    && appSettings.get().creativeDialogueHighlightEnabled !== false
+  ));
   const getRpSessionId = (personaId = activePersonaId) => `${RP_SESSION_PREFIX}${personaId || 'default'}`;
   const getPersonaScopeKey = personaId => {
     const settings = appSettings.get();
@@ -1602,8 +1711,10 @@ const initApp = async () => {
     configPanel,
     getUiMode: () => (uiMode === 'rp' ? 'rp' : 'chat'),
   });
+  markBootPhase('persona-user-stores');
   await personaStore.ready;
   await userStore.ready;
+  markBootPhase('persona-user-ready');
   if (userStore.createdFromEmpty) {
     try {
       const currentCard = personaStore.getActive?.() || null;
@@ -1627,6 +1738,7 @@ const initApp = async () => {
   }
   activePersonaId = personaStore.getActive?.()?.id || 'default';
   const initialScopeKey = getPersonaScopeKey(activePersonaId);
+  markBootPhase('scope-stores');
   await Promise.all([
     chatStore.setScope?.(initialScopeKey),
     contactsStore.setScope?.(initialScopeKey),
@@ -1663,8 +1775,11 @@ const initApp = async () => {
   try {
     window.appBridge?.setPersonaScope?.(initialScopeKey);
   } catch {}
+  markBootPhase('media-assets');
   await initMediaAssets();
+  markBootPhase('regex-store');
   await waitForRegexStoreReady(window.appBridge);
+  markBootPhase('preset-store');
   await presetStore?.ready;
   try {
     await syncPresetRegexBindings(window.appBridge);
@@ -1737,6 +1852,7 @@ const initApp = async () => {
   const contactSettingsPanel = new ContactSettingsPanel({
     contactsStore,
     chatStore,
+    voiceRegistryStore,
     getSessionId: () => chatStore.getCurrent(),
     memoryTableStore,
     memoryTemplateStore,
@@ -3362,7 +3478,14 @@ const initApp = async () => {
     .map(id => MAID_SUB_AGENT_SKILLS.find(item => item.id === id)?.label || id)
     .join('、');
   // sub-agent 委派执行体：解析 sub 档 -> 委派确认（允许一次/始终允许）-> 单轮生成 -> 失败回退主模型
-  const generateWithSubAgent = async ({ subAgentId = '', prompt = '', purposeLabel = '生成内容', context = {} } = {}) => {
+  const generateWithSubAgent = async ({
+    subAgentId = '',
+    prompt = '',
+    purposeLabel = '生成内容',
+    webSearch = false,
+    sessionId = '',
+    context = {},
+  } = {}) => {
     const runtime = await resolveMaidRuntimeConfig();
     if (!runtime?.configured || !runtime.client) {
       return { ok: false, reason: 'maid_api_not_configured', message: '女仆 API 未配置。' };
@@ -3378,6 +3501,7 @@ const initApp = async () => {
     let sub = subAgentId ? subAgents.find(item => item.id === subAgentId) : null;
     if (!sub && !subAgentId && subAgents.length === 1) sub = subAgents[0];
     let client = runtime.client;
+    let clientConfig = runtime.config || {};
     let delegated = false;
     let modelUsed = String(runtime.config?.model || '');
     let subAgentName = '';
@@ -3409,6 +3533,7 @@ const initApp = async () => {
               timeout: Math.min(Number(cfg.timeout) > 0 ? Number(cfg.timeout) : 240000, 240000),
             };
             client = new LLMClient(effective);
+            clientConfig = effective;
             delegated = true;
             modelUsed = String(effective.model || '');
             subAgentName = sub.name;
@@ -3418,13 +3543,44 @@ const initApp = async () => {
         }
       }
     }
-    const runChat = c => c.chat([{ role: 'user', content: prompt }], { temperature: 0.7, maxTokens: 2400, max_tokens: 2400 });
+    const runChat = async (targetClient, targetConfig) => {
+      let sources = [];
+      const generation = buildAdHocWebSearchRuntime({
+        client: targetClient,
+        config: targetConfig,
+        enabled: webSearch === true,
+        sessionId: String(sessionId || `maid-generation:${purposeLabel}`).slice(0, 240),
+        requestOptions: {
+          temperature: 0.7,
+          maxTokens: 2400,
+          max_tokens: 2400,
+          ...(context?.signal ? { signal: context.signal } : {}),
+        },
+        onStatus: status => {
+          const message = String(status?.message || '').trim();
+          if (message) context?.onStatus?.({ message, tone: status?.state === 'unavailable' ? 'warning' : 'thinking' });
+        },
+        onSources: nextSources => {
+          sources = Array.isArray(nextSources) ? nextSources.slice() : [];
+        },
+      });
+      const text = String(await generation.client.chat(
+        [{ role: 'user', content: prompt }],
+        generation.requestOptions,
+      ) || '').trim();
+      return {
+        text,
+        sources,
+        webSearchUsed: generation.plan?.enabled === true,
+        webSearchReason: String(generation.plan?.diagnostics?.reason || ''),
+      };
+    };
     try {
-      const text = String(await runChat(client) || '').trim();
-      if (!text) throw new Error('empty response');
+      const generated = await runChat(client, clientConfig);
+      if (!generated.text) throw new Error('empty response');
       return {
         ok: true,
-        text,
+        ...generated,
         delegated,
         modelUsed,
         subAgentName,
@@ -3434,9 +3590,16 @@ const initApp = async () => {
       if (delegated) {
         // sub 档失败回退主模型一次
         try {
-          const text = String(await runChat(runtime.client) || '').trim();
-          if (!text) throw new Error('empty response');
-          return { ok: true, text, delegated: false, fallbackUsed: true, modelUsed: String(runtime.config?.model || ''), subAgentName: '' };
+          const generated = await runChat(runtime.client, runtime.config || {});
+          if (!generated.text) throw new Error('empty response');
+          return {
+            ok: true,
+            ...generated,
+            delegated: false,
+            fallbackUsed: true,
+            modelUsed: String(runtime.config?.model || ''),
+            subAgentName: '',
+          };
         } catch (err2) {
           return { ok: false, reason: 'generation_failed', message: err2?.message || '生成失败（含主模型回退）。' };
         }
@@ -3854,6 +4017,7 @@ const initApp = async () => {
     showGuide: (guide, meta) => showMaidGuide(guide, meta),
   });
   const maidSettingsStore = new MaidSettingsStore();
+  markBootPhase('maid-stores');
   await maidSettingsStore.load();
   // Phase B：统一 Agent Registry，第一种来源 = 女仆 Sub-agent 配置（投影为统一 Agent capability）。
   // planner prompt 与委派执行都从这里取，行为与直接读 store 一致；后续领域/用户/MCP Agent 复用同接口。
@@ -9744,6 +9908,8 @@ Phase G（Frame 36）：循环衔接
   const chatInputContainer = document.querySelector('.chat-input-container');
   const chatVoiceRuntime = createChatVoiceRuntime({
     resolveConfig: resolveVoiceRuntimeConfig,
+    resolveSpeechConfig,
+    buildSpeechSegments: buildCreativeSpeechSegments,
     composerInput,
     recorderButton: document.getElementById('voice-input-button'),
     getSpeakableText: (message, wrapper) => resolveSpeakableMessageText(message, {
@@ -17736,6 +17902,12 @@ Phase G（Frame 36）：循环衔接
         personaPanel.show();
         return;
       }
+      const browseCardsBtn = e?.target?.closest?.('button[data-action="browse-cards"]');
+      if (browseCardsBtn) {
+        hideMenus();
+        personaPanel.showGallery();
+        return;
+      }
       const userBtn = e?.target?.closest?.('button[data-user-id]');
       if (userBtn) {
         const userId = String(userBtn.dataset.userId || '').trim();
@@ -17850,7 +18022,48 @@ Phase G（Frame 36）：循环衔接
     writeSetting: value => appSettings.update({ creativeReadingSize: value }),
     readNarrativeFont: () => appSettings.get().creativeNarrativeFont,
     writeNarrativeFont: value => appSettings.update({ creativeNarrativeFont: value }),
+    readDialogueHighlight: () => appSettings.get().creativeDialogueHighlightEnabled,
+    writeDialogueHighlight: value => appSettings.update({ creativeDialogueHighlightEnabled: value }),
+    onDialogueHighlightChanged: () => {
+      if (isRpSessionId(chatStore.getCurrent?.())) void rerenderCurrentSession();
+    },
     toggleSheetAt,
+  });
+  bindCreativeVoiceSettings({
+    buttonEl: rpReadingSettingsBtn,
+    narrationSelectEl: document.getElementById('rp-narration-voice-select'),
+    dialogueSelectEl: document.getElementById('rp-dialogue-voice-select'),
+    readVoiceSettings: () => (
+      resolveRpPersonaForSession(chatStore.getCurrent?.())?.voiceSettings || {}
+    ),
+    writeVoiceSettings: async (voiceSettings) => {
+      const persona = resolveRpPersonaForSession(chatStore.getCurrent?.());
+      if (!persona?.id) throw new Error('找不到当前角色卡');
+      const updated = await personaStore.update(persona.id, { voiceSettings });
+      if (!updated) throw new Error('角色卡已变化，请重新选择声音');
+    },
+    listVoices: async () => {
+      await Promise.all([
+        voiceRegistryStore.ready,
+        configPanel.voiceSharedConfigManager?.ensureStores?.(),
+        configPanel.voiceTtsConfigManager?.ensureStores?.(),
+      ]);
+      return voiceRegistryStore.list().map(record => {
+        const status = resolveVoiceRecordDisplayStatus(record, {
+          sharedManager: configPanel.voiceSharedConfigManager,
+          ttsManager: configPanel.voiceTtsConfigManager,
+        });
+        return {
+          id: record.id,
+          label: record.label,
+          provider: record.providerSnapshot,
+          profileName: String(status.profile?.name || '').trim(),
+          valid: status.valid,
+        };
+      });
+    },
+    subscribeVoices: listener => voiceRegistryStore.subscribe(listener),
+    onError: error => window.toastr?.error?.(String(error?.message || error || '声音设置保存失败')),
   });
 
   const renderPersonaSwitcher = () => {
@@ -17973,7 +18186,15 @@ Phase G（Frame 36）：循环衔接
         ${items || '<div class="persona-switcher-subtitle" style="padding: 8px 4px;">暂无其他角色卡</div>'}
       </div>
       <div class="persona-switcher-actions">
-        <button type="button" data-action="manage-cards" data-maid-guide-target="manage-cards">管理角色卡</button>
+        <button type="button" class="persona-switcher-manage" data-action="manage-cards" data-maid-guide-target="manage-cards">管理角色卡</button>
+        <button type="button" class="persona-switcher-browse" data-action="browse-cards" aria-label="卡片浏览与搜索" title="卡片浏览与搜索">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <rect x="4.5" y="5" width="11" height="14" rx="2.5"></rect>
+            <path d="M8 9h4M8 12h4"></path>
+            <path d="M15.5 8.5h1.2A2.8 2.8 0 0 1 19.5 11v5.2"></path>
+            <path d="m17.2 14 2.3 2.3 2.3-2.3"></path>
+          </svg>
+        </button>
       </div>
     `;
   };
@@ -18839,6 +19060,14 @@ Phase G（Frame 36）：循环衔接
     await Promise.allSettled(queues.map(queue => queue.promise));
     return queues.length;
   };
+  const cancelProtocolDeliveryQueues = async (sessionId = '') => {
+    const sid = String(sessionId || '').trim();
+    const queues = Array.from(protocolDeliveryQueuesBySession.get(sid) || []);
+    if (!queues.length) return 0;
+    queues.forEach(queue => queue.cancel?.());
+    await Promise.allSettled(queues.map(queue => queue.promise));
+    return queues.length;
+  };
   const flushProtocolDeliveryBacklog = async ({ source = 'boot' } = {}) => {
     try {
       const result = await flushPersistedProtocolDeliveryPlans({
@@ -18921,7 +19150,7 @@ Phase G（Frame 36）：循环衔接
             <div class="chat-image-gen-negative" hidden>
               <div class="chat-image-gen-negative-head">
                 <span class="chat-image-gen-negative-label">负面提示词</span>
-                <span class="chat-image-gen-negative-hint">仅本次生成生效</span>
+                <span class="chat-image-gen-negative-hint">本次追加；固定内容由参数预设自动合并</span>
               </div>
               <textarea class="chat-image-gen-textarea chat-image-gen-negative-textarea" placeholder="不想出现的内容，例如低清、畸形手、文字水印"></textarea>
             </div>
@@ -23295,7 +23524,7 @@ Phase G（Frame 36）：循环衔接
             <span>标题</span>
             <input class="rp-greeting-editor-title-input" type="text" placeholder="例如：开场白 2">
           </label>
-          <label class="rp-greeting-editor-field">
+          <div class="rp-greeting-editor-field rp-greeting-editor-content-field">
             <span class="rp-greeting-editor-content-label">
               <span>内容</span>
               <span class="rp-greeting-editor-macros" aria-label="插入宏">
@@ -23308,10 +23537,10 @@ Phase G（Frame 36）：循环衔接
               </span>
             </span>
             <span class="rp-greeting-editor-content-wrap">
-              <textarea class="rp-greeting-editor-content" rows="9" placeholder="输入开场白内容，支持角色卡里的宏和富文本&#10;&#10;引号开头的一行会被渲染为对白&#10;**名字：** 开头的一行会渲染为角色小节标题"></textarea>
+              <div class="rp-greeting-editor-content" contenteditable="plaintext-only" spellcheck="false" autocorrect="off" autocapitalize="off" role="textbox" aria-multiline="true" aria-label="开场白内容" data-placeholder="输入开场白内容，支持角色卡里的宏和富文本&#10;&#10;引号开头的一行会被渲染为对白&#10;**名字：** 开头的一行会渲染为角色小节标题"></div>
               <span class="rp-greeting-editor-count">0 字</span>
             </span>
-          </label>
+          </div>
           <div class="rp-greeting-editor-status" role="alert"></div>
         </div>
         <div class="rp-greeting-editor-actions">
@@ -23368,14 +23597,59 @@ Phase G（Frame 36）：循环衔接
     }
     if (submitTextEl) submitTextEl.textContent = submitText;
     if (titleInput) titleInput.value = String(initialTitle || '').trim();
-    if (contentInput) contentInput.value = String(initialContent || '').trim();
+    if (contentInput) contentInput.textContent = String(initialContent || '').trim();
+    const readRpGreetingContent = () => String(contentInput?.innerText || '');
     const updateCount = () => {
-      if (countEl) countEl.textContent = `${String(contentInput?.value || '').length} 字`;
+      const content = readRpGreetingContent();
+      contentInput?.classList.toggle('is-empty', !content);
+      if (countEl) countEl.textContent = `${content.length} 字`;
       if (statusEl?.textContent) statusEl.textContent = '';
     };
     updateCount();
+    let lastContentSelection = null;
+    const captureRpGreetingContentSelection = () => {
+      const selection = window.getSelection?.();
+      if (!contentInput || !selection?.rangeCount) return;
+      const range = selection.getRangeAt(0);
+      if (!contentInput.contains(range.commonAncestorContainer)) return;
+      lastContentSelection = range.cloneRange();
+    };
+    const insertRpGreetingContentText = (text, { preferSavedSelection = false } = {}) => {
+      if (!contentInput || !text) return;
+      const selection = window.getSelection?.();
+      let range = null;
+      if (!preferSavedSelection && document.activeElement === contentInput && selection?.rangeCount) {
+        const currentRange = selection.getRangeAt(0);
+        if (contentInput.contains(currentRange.commonAncestorContainer)) {
+          range = currentRange;
+        }
+      }
+      if (!range && lastContentSelection && contentInput.contains(lastContentSelection.commonAncestorContainer)) {
+        range = lastContentSelection;
+      }
+      if (!range) {
+        range = document.createRange();
+        range.selectNodeContents(contentInput);
+        range.collapse(false);
+      }
+      contentInput.focus();
+      selection?.removeAllRanges?.();
+      selection?.addRange?.(range);
+      const inserted = document.execCommand?.('insertText', false, text) === true;
+      if (!inserted) {
+        range.deleteContents();
+        const textNode = document.createTextNode(text);
+        range.insertNode(textNode);
+        range.setStartAfter(textNode);
+        range.collapse(true);
+        selection?.removeAllRanges?.();
+        selection?.addRange?.(range);
+      }
+      captureRpGreetingContentSelection();
+      updateCount();
+    };
     const submit = () => {
-      const content = String(contentInput?.value || '').trim();
+      const content = readRpGreetingContent().trim();
       if (!content) {
         if (statusEl) statusEl.textContent = '请先填写开场白内容';
         contentInput?.focus?.();
@@ -23390,25 +23664,23 @@ Phase G（Frame 36）：循环衔接
     overlay.querySelector('.rp-greeting-editor-cancel')?.addEventListener('click', () => close(null));
     overlay.querySelector('.rp-greeting-editor-submit')?.addEventListener('click', submit);
     overlay.querySelectorAll('[data-rp-greeting-macro]').forEach((button) => {
+      button.addEventListener('pointerdown', captureRpGreetingContentSelection);
       button.addEventListener('click', () => {
         if (!contentInput) return;
         const macro = String(button.dataset.rpGreetingMacro || '');
-        const start = Number.isFinite(contentInput.selectionStart)
-          ? contentInput.selectionStart
-          : contentInput.value.length;
-        const end = Number.isFinite(contentInput.selectionEnd)
-          ? contentInput.selectionEnd
-          : start;
-        contentInput.setRangeText(macro, start, end, 'end');
-        contentInput.focus();
-        updateCount();
+        insertRpGreetingContentText(macro, { preferSavedSelection: true });
       });
     });
     unbindBackdropActivation = bindBackdropActivation(overlay, {
       documentLike: document,
       onActivate: () => close(null),
     });
-    contentInput?.addEventListener('input', updateCount);
+    contentInput?.addEventListener('input', () => {
+      captureRpGreetingContentSelection();
+      updateCount();
+    });
+    contentInput?.addEventListener('pointerup', captureRpGreetingContentSelection);
+    contentInput?.addEventListener('keyup', captureRpGreetingContentSelection);
     contentInput?.addEventListener('keydown', event => {
       if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
         event.preventDefault();
@@ -24083,6 +24355,26 @@ Phase G（Frame 36）：循环衔接
     return true;
   };
 
+  const acquireRpResetBarrier = async (sessionId) => {
+    const sid = String(sessionId || '').trim();
+    if (!sid) return { ok: false, reason: 'missing_session_id' };
+    cancelInitialHistoryFill(sid);
+    try {
+      ui.hideTyping?.();
+    } catch {}
+    const workBarrierPromise = sessionAsyncWorkRuntime.cancelAndWait(sid, {
+      reason: 'session_reset',
+      timeoutMs: 5000,
+      holdClosing: true,
+    });
+    const deliveryCancelPromise = cancelProtocolDeliveryQueues(sid).catch((err) => {
+      logger.warn('cancel protocol delivery queues before RP reset failed', err);
+      return 0;
+    });
+    const [barrier] = await Promise.all([workBarrierPromise, deliveryCancelPromise]);
+    return barrier;
+  };
+
   const resetRpHistory = async (sessionId, { keepInput = false, withArchive = false } = {}) => {
     const sid = String(sessionId || '').trim();
     if (!sid) return { started: false, cancelled: true, archiveId: '' };
@@ -24098,6 +24390,7 @@ Phase G（Frame 36）：循环衔接
       const result = await runRpPlotResetFlow({
         sessionId: sid,
         keepInput,
+        acquireResetBarrier: acquireRpResetBarrier,
         getMemoryStorageMode: () => getMemoryStorageMode('writing'),
         askMemoryTableNewChatMode,
         promptForArchiveName: () => appPromptText({
@@ -24164,17 +24457,32 @@ Phase G（Frame 36）：循环衔接
       if (result?.started) restorePreservedInput();
       return result;
     }
-    chatStore.clear(sid);
-    resetRpGreetingVariableState({ chatStore, sessionId: sid, applyMvuSchemaDefaults });
-    ui.clearMessages();
-    chatRenderState.set(sid, { start: 0 });
-    await seedRpGreetingIfNeeded(sid);
-    if (keepInput) restorePreservedInput();
-    else ui.clearInput({ focus: false });
-    refreshChatAndContacts();
-    updatePendingFloat(sid);
-    refreshRpToolbar(sid);
-    return { started: true, cancelled: false, archiveId: '' };
+    const barrier = await acquireRpResetBarrier(sid);
+    if (barrier?.ok === false) {
+      return {
+        started: false,
+        cancelled: true,
+        archiveId: '',
+        reason: String(barrier.reason || 'reset_barrier_failed'),
+      };
+    }
+    try {
+      chatStore.clear(sid);
+      resetRpGreetingVariableState({ chatStore, sessionId: sid, applyMvuSchemaDefaults });
+      ui.clearMessages();
+      chatRenderState.set(sid, { start: 0 });
+      await seedRpGreetingIfNeeded(sid);
+      if (keepInput) restorePreservedInput();
+      else ui.clearInput({ focus: false });
+      refreshChatAndContacts();
+      updatePendingFloat(sid);
+      refreshRpToolbar(sid);
+      return { started: true, cancelled: false, archiveId: '' };
+    } finally {
+      try {
+        barrier?.release?.();
+      } catch {}
+    }
   };
   patchDebugUiRegistry((registry) => {
     registry.actions.resetRpHistory = (sessionId, options = {}) => resetRpHistory(sessionId, options);
@@ -24807,6 +25115,9 @@ Phase G（Frame 36）：循环衔接
     if (!ok) return;
     const result = await resetRpHistory(getRpSessionId(activePersonaId), { withArchive: true });
     if (result?.started) window.toastr?.success?.('当前剧情已存档，并已开启新聊天');
+    else if (result?.reason === 'session_async_work_timeout') {
+      window.toastr?.error?.('仍有聊天任务未能停止，剧情未重置，请稍后再试');
+    }
   });
 
   const contactsUngroupedEl = document.getElementById('contacts-ungrouped-list');
@@ -31770,8 +32081,43 @@ Phase G（Frame 36）：循环衔接
       });
       return true;
     }
+    if (action === 'select-voice' && message?.role === 'assistant') {
+      const isCreativeSession = isRpSessionId(sessionId);
+      const contact = isCreativeSession ? null : resolveMessageVoiceContact({
+        message,
+        sessionId,
+        getContact: id => contactsStore.getContact(id),
+        resolveGroupSpeakerContact: (...args) => resolveGroupSpeakerContact(...args),
+      });
+      const selectedVoiceRef = isCreativeSession
+        ? String(resolveRpPersonaForSession(sessionId)?.voiceSettings?.narrationVoiceRef || '').trim()
+        : String(contact?.voiceRef || '').trim();
+      const choice = await voicePickerModal.show({
+        title: isCreativeSession ? '本次朗读声音' : '选择角色声音',
+        selectedVoiceRef,
+        allowPersist: !isCreativeSession && Boolean(contact),
+        persistDefault: !sessionId.startsWith('group:'),
+      });
+      if (!choice) return true;
+      if (choice.setDefault && contact) {
+        contactsStore.upsertContact({ ...contact, voiceRef: choice.voiceRef });
+        clearGroupSpeakerCaches();
+        refreshChatAndContacts({ immediate: true });
+      }
+      await chatVoiceRuntime.speak(message, {
+        wrapper: payload?.wrapper,
+        voiceRefOverride: choice.voiceRef,
+      });
+      return true;
+    }
     if (action === 'speak' && message?.role === 'assistant') {
-      await chatVoiceRuntime.speak(message, { wrapper: payload?.wrapper });
+      const voiceRefOverride = typeof payload?.voiceRefOverride === 'string'
+        ? payload.voiceRefOverride
+        : null;
+      await chatVoiceRuntime.speak(message, {
+        wrapper: payload?.wrapper,
+        ...(voiceRefOverride !== null ? { voiceRefOverride } : {}),
+      });
       return true;
     }
     if (action === 'validate-format-repair-candidate' && message?.role === 'assistant') {
@@ -32531,6 +32877,7 @@ Phase G（Frame 36）：循环衔接
   });
   const rerenderCurrentSession = async () => rerenderCurrentSessionHistory({
     getCurrentSessionId: () => chatStore.getCurrent(),
+    getHistoryRevision: sid => chatStore.getHistoryRevision?.(sid) || '',
     ensureRecentMessagesLoaded: sid => ensureRecentMessagesAndWorlds(sid),
     cancelInitialHistoryFill,
     clearMessages: () => ui.clearMessages(),
@@ -32661,6 +33008,7 @@ Phase G（Frame 36）：循环衔接
     },
   });
 
+  markBootPhase('restore-ui');
   await runAppBootRestoreFlow({
     restoreUiState,
     getActivePage: () => activePage,
@@ -33443,6 +33791,13 @@ Phase G（Frame 36）：循环衔接
     } else {
       chatRoom.style.removeProperty('--chat-text-color');
     }
+    const currentTheme = themeManager.resolveCurrentTheme();
+    const dialogueColor = resolveRpDialogueTextColor(currentTheme.preset?.tokens, {
+      mode: currentTheme.mode,
+      bubbleColor: settings?.bubbleColor,
+      primaryTextColor: settings?.textColor,
+    });
+    chatRoom.style.setProperty('--app-rp-dialogue-text', dialogueColor.color);
     applyUserMessageColors(sessionId);
     applyWallpaperToChatRoom(settings, sessionId);
   }
@@ -34069,6 +34424,7 @@ Phase G（Frame 36）：循环衔接
   }
 
   appRuntimeReady = true;
+  markBootPhase('done');
   logger.debug('Chat UI 初始化完成');
 
   const splash = document.getElementById('app-splash');
@@ -34080,17 +34436,22 @@ Phase G（Frame 36）：循环衔接
 
 document.addEventListener('DOMContentLoaded', () => {
   (async () => {
+    markBootPhase('dom-ready');
     // 尽早 hydrate：localStorage 配额满时 kv 才是设置/贴纸的权威通道（主题也读 settings）。
     try {
       const kvChannel = {
         loadKv: name => safeInvoke('load_kv', { name }),
         saveKv: (name, data) => safeInvoke('save_kv', { name, data }),
       };
+      markBootPhase('settings-hydrate');
       await appSettings.hydrate(kvChannel);
+      markBootPhase('sticker-hydrate');
       await stickerPackStore.hydrate(kvChannel);
     } catch (err) {
       console.warn('settings/sticker hydrate skipped', err);
+      recordBootError(`hydrate skipped: ${getRuntimeErrorMessage(err)}`);
     }
+    markBootPhase('theme-init');
     await themeManager.init();
     await initApp();
     initHelpTooltips();
@@ -34111,6 +34472,7 @@ document.addEventListener('DOMContentLoaded', () => {
         errorMessage: getRuntimeErrorMessage(err),
       },
     });
+    recordBootError(`App init failed: ${getRuntimeErrorMessage(err)}`);
     reportFatalError(err, 'App init failed');
   });
 });

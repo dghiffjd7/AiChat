@@ -6,7 +6,7 @@
  */
 import { RegexStore, isLocalRegexSetAutoActive, regex_placement } from '../storage/regex-store.js';
 import { logger } from '../utils/logger.js';
-import { appConfirm } from './app-confirm.js';
+import { appChoice, appConfirm } from './app-confirm.js';
 import { bindCustomSelectButton, closeCustomSelectMenu } from './custom-select.js';
 import { getPresetStore } from './preset-store-runtime-utils.js';
 import {
@@ -16,6 +16,7 @@ import {
     getRegexCustomPromptPresetBindIds,
     listRegexCustomPromptPresetChoices,
 } from './regex-preset-binding-utils.js';
+import { IMPORT_NAME_CONFLICT_DECISIONS, findRegexSetNameConflict } from './import-name-conflict-utils.js';
 import { getRegexContext } from './regex-store-runtime-utils.js';
 import { listWorldIds } from './world-store-runtime-utils.js';
 import {
@@ -1999,19 +2000,54 @@ export class RegexPanel {
                     : await this.pickPreset();
                 if (!bind) { this.showStatus('已取消绑定', 'info'); return; }
                 let lastId = '';
+                let importedSetCount = 0;
+                let importedRuleCount = 0;
+                let skippedSetCount = 0;
                 for (const s of validSets) {
+                    const setName = getRegexImportSetName(s.name, s.rules, `导入正则 ${new Date().toLocaleString()}`);
+                    const conflict = findRegexSetNameConflict(this.store.listLocalSets(), {
+                        name: setName,
+                        bindType: bind?.type,
+                    });
+                    let overwriteId = '';
+                    if (conflict) {
+                        const existingCount = Array.isArray(conflict.rules) ? conflict.rules.length : 0;
+                        const decision = await appChoice({
+                            title: '同名正则集合已存在',
+                            message: `${scopeLabel}正则「${setName}」已存在（现有 ${existingCount} 条，导入 ${s.rules.length} 条）。\n\n覆盖会完整替换该集合的规则与绑定；保留两份会新建一个同名集合。`,
+                            actions: [
+                                { id: IMPORT_NAME_CONFLICT_DECISIONS.cancel, label: '跳过此组', primary: true },
+                                { id: IMPORT_NAME_CONFLICT_DECISIONS.keepBoth, label: '保留两份' },
+                                { id: IMPORT_NAME_CONFLICT_DECISIONS.overwrite, label: '覆盖现有集合', variant: 'danger' },
+                            ],
+                            defaultActionId: IMPORT_NAME_CONFLICT_DECISIONS.cancel,
+                        });
+                        if (decision === IMPORT_NAME_CONFLICT_DECISIONS.overwrite) {
+                            overwriteId = conflict.id;
+                        } else if (decision !== IMPORT_NAME_CONFLICT_DECISIONS.keepBoth) {
+                            skippedSetCount += 1;
+                            continue;
+                        }
+                    }
                     lastId = await this.store.upsertLocalSet({
-                        name: getRegexImportSetName(s.name, s.rules, `导入正则 ${new Date().toLocaleString()}`),
+                        ...(overwriteId ? { id: overwriteId } : {}),
+                        name: setName,
                         enabled: s.enabled !== false,
                         bind,
                         rules: s.rules,
                     });
+                    importedSetCount += 1;
+                    importedRuleCount += Array.isArray(s.rules) ? s.rules.length : 0;
+                }
+                if (!importedSetCount) {
+                    this.showStatus('已跳过全部同名集合，未导入', 'info');
+                    return;
                 }
                 if (lastId) this.setActiveSetIdForScope(scope, lastId);
                 this.pendingEditorAnimation = true;
                 await this.refreshAll();
-                const count = validSets.reduce((sum, s) => sum + (Array.isArray(s.rules) ? s.rules.length : 0), 0);
-                this.showStatus(`已导入 ${validSets.length} 组 / ${count} 条规则`, 'success');
+                const skippedText = skippedSetCount ? `（跳过 ${skippedSetCount} 组同名）` : '';
+                this.showStatus(`已导入 ${importedSetCount} 组 / ${importedRuleCount} 条规则${skippedText}`, 'success');
                 window.dispatchEvent(new CustomEvent('regex-changed'));
             } catch (err) {
                 logger.error(`导入${scopeLabel}正则失败`, err);

@@ -45,6 +45,7 @@ import {
 } from './preset-preview-utils.js';
 import {
     REGEX_CUSTOM_PROMPT_PRESET_TYPE,
+    detachRegexPresetBind,
     resolveImportedRegexPresetBindTarget,
 } from './regex-preset-binding-utils.js';
 import {
@@ -7515,35 +7516,48 @@ export class PresetPanel {
         const ok = await appConfirm({ title: '删除预设', message: '删除该预设？此操作不可恢复。', danger: true });
         if (!ok) return;
         this.captureDraftsFromDOM();
+        const cleanupWarnings = [];
 
         try {
             await waitForRegexStoreReady(window.appBridge);
             const sets = listRegexLocalSets(window.appBridge);
-            const bound = sets.filter(s =>
-                s?.bind?.type === 'preset' &&
-                String(s.bind.presetType || '') === String(storeType) &&
-                String(s.bind.presetId || '') === String(id)
-            );
+            const bound = sets
+                .map(set => ({
+                    set,
+                    detached: detachRegexPresetBind(set?.bind, {
+                        presetType: storeType,
+                        presetId: id,
+                    }),
+                }))
+                .filter(item => item.detached.matched);
             if (bound.length) {
+                const sharedCount = bound.filter(item => item.detached.remainingIds.length > 0).length;
                 const delRegex = await appConfirm({
                     title: '删除正则', danger: true,
-                    message: `检测到该预设绑定了 ${bound.length} 组正则。是否一并删除？`,
+                    message: `检测到该预设绑定了 ${bound.length} 组正则。是否一并删除？${sharedCount ? `\n其中 ${sharedCount} 组仍绑定其他预设，只会解除当前预设的绑定。` : ''}`,
                     confirmText: '一并删除', cancelText: '仅删除预设',
                 });
                 if (delRegex) {
-                    for (const s of bound) {
-                        const sid = String(s?.id || '').trim();
-                        if (sid) await removeRegexLocalSet(window.appBridge, sid);
+                    for (const { set, detached } of bound) {
+                        const sid = String(set?.id || '').trim();
+                        if (!sid) continue;
+                        if (detached.bind) {
+                            await upsertRegexLocalSet(window.appBridge, { ...set, bind: detached.bind });
+                        } else {
+                            await removeRegexLocalSet(window.appBridge, sid);
+                        }
                     }
                     window.dispatchEvent(new CustomEvent('regex-changed'));
                 }
             }
-        } catch {}
+        } catch (error) {
+            logger.warn('delete preset regex cleanup failed', error);
+            cleanupWarnings.push('正则');
+        }
 
         try {
             const scriptStore = await waitForScriptStoreReady(window.appBridge);
             const scripts = scriptStore?.getScripts?.('preset', id) || [];
-            const scopeVariables = scriptStore?.getScopeVariables?.('preset', id) || {};
             if (Array.isArray(scripts) && scripts.length) {
                 const delScripts = await appConfirm({
                     title: '删除脚本', danger: true,
@@ -7557,16 +7571,24 @@ export class PresetPanel {
                         await scriptStore.setScripts('preset', id, []);
                     }
                 }
-            } else if (Object.keys(scopeVariables).length && typeof scriptStore?.removeScope === 'function') {
+            } else if (typeof scriptStore?.removeScope === 'function') {
                 await scriptStore.removeScope('preset', id);
             }
-        } catch {}
+        } catch (error) {
+            logger.warn('delete preset script cleanup failed', error);
+            cleanupWarnings.push('脚本');
+        }
 
         await this.store.remove(storeType, id);
         const key = this.getDraftKey(storeType, id);
         if (key) this.drafts.delete(key);
         this.renderAllSections();
-        this.showStatus('已删除', 'success');
+        this.showStatus(
+            cleanupWarnings.length
+                ? `预设已删除，但${cleanupWarnings.join('、')}清理失败，请重试或手动检查`
+                : '已删除',
+            cleanupWarnings.length ? 'error' : 'success',
+        );
         window.dispatchEvent(new CustomEvent('preset-changed'));
     }
 

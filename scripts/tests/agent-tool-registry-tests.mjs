@@ -219,6 +219,12 @@ const logger = { warn: () => {} };
   assert.equal(registry.get('network.lookup').capabilities.network, true);
   assert.equal(registry.get('network.lookup').capabilities.cost, 'variable');
   assert.equal(registry.get('network.lookup').capabilities.confirmation, 'required');
+  registry.register({
+    name: 'network.optional',
+    capabilities: { network: 'opt_in' },
+    execute: async () => true,
+  });
+  assert.equal(registry.get('network.optional').capabilities.network, 'opt_in', '按次授权联网标记必须原样保留');
   console.log('ok - agent tool registry infers capability hints from permissions and risk');
 }
 

@@ -319,6 +319,109 @@ import {
 }
 
 {
+  const requested = [];
+  const narrationConfig = {
+    provider: 'qwen_local',
+    baseUrl: 'http://127.0.0.1:8765/v1',
+    model: 'qwen-tts',
+    ttsVoice: 'Serena',
+  };
+  const dialogueConfig = {
+    provider: 'openai',
+    baseUrl: 'https://api.openai.com/v1',
+    apiKey: 'test-key',
+    model: 'gpt-4o-mini-tts',
+    ttsVoice: 'marin',
+  };
+  const runtime = createChatVoiceRuntime({
+    resolveConfig: async () => narrationConfig,
+    resolveSpeechConfig: async ({ voiceRefOverride }) => {
+      assert.equal(voiceRefOverride, null);
+      return narrationConfig;
+    },
+    buildSpeechSegments: async ({ text, config }) => {
+      assert.equal(text, '旁白“对白”收尾');
+      assert.equal(config, narrationConfig);
+      return [
+        { kind: 'narration', text: '旁白', config: narrationConfig },
+        { kind: 'dialogue', text: '“对白”', config: dialogueConfig },
+        { kind: 'narration', text: '收尾', config: narrationConfig },
+      ];
+    },
+    voiceClient: {
+      streamSpeech: async function* (config, options) {
+        requested.push([config.ttsVoice, options.text]);
+        yield new Uint8Array([0, 0]);
+      },
+    },
+    getSpeakableText: () => '旁白“对白”收尾',
+    playerFactory: () => ({
+      async start() {},
+      push() {},
+      async finish() {},
+      async stop() {},
+    }),
+    documentLike: { addEventListener() {}, removeEventListener() {} },
+    windowLike: { addEventListener() {}, removeEventListener() {} },
+    toast: {},
+  });
+
+  assert.equal(await runtime.speak({ id: 'dual-voice', role: 'assistant' }), true);
+  assert.deepEqual(requested, [
+    ['Serena', '旁白'],
+    ['marin', '“对白”'],
+    ['Serena', '收尾'],
+  ]);
+  await runtime.destroy();
+  console.log('ok - creative speech streams narration and dialogue configs sequentially');
+}
+
+{
+  let planningAttempts = 0;
+  let requestCount = 0;
+  const notices = [];
+  const runtime = createChatVoiceRuntime({
+    resolveConfig: async () => ({
+      provider: 'qwen_local',
+      baseUrl: 'http://127.0.0.1:8765/v1',
+      model: 'Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice',
+      ttsVoice: 'Serena',
+    }),
+    buildSpeechSegments: async ({ config }) => {
+      planningAttempts += 1;
+      if (planningAttempts === 1) throw new Error('planning failed');
+      return [{ kind: 'narration', text: '重试成功', config }];
+    },
+    voiceClient: {
+      streamSpeech: async function* () {
+        requestCount += 1;
+        yield new Uint8Array([0, 0]);
+      },
+    },
+    getSpeakableText: () => '分段规划失败后应能立即重试。',
+    playerFactory: () => ({
+      async start() {},
+      push() {},
+      async finish() {},
+      async stop() {},
+    }),
+    documentLike: { addEventListener() {}, removeEventListener() {} },
+    windowLike: { addEventListener() {}, removeEventListener() {} },
+    toast: {
+      error(message) { notices.push(message); },
+    },
+  });
+
+  assert.equal(await runtime.speak({ id: 'planning-retry', role: 'assistant' }), false);
+  assert.equal(await runtime.speak({ id: 'planning-retry', role: 'assistant' }), true);
+  assert.equal(planningAttempts, 2);
+  assert.equal(requestCount, 1);
+  assert.equal(notices.length, 1);
+  await runtime.destroy();
+  console.log('ok - failed creative speech planning leaves no stale active playback');
+}
+
+{
   let resolveConfig;
   const configReady = new Promise(resolve => { resolveConfig = resolve; });
   let requestCount = 0;

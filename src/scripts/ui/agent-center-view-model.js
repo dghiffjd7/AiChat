@@ -442,7 +442,7 @@ const normalizeTool = (tool = {}) => {
     capabilities: {
       read: capabilities.read === true,
       write: capabilities.write === true,
-      network: capabilities.network === true,
+      network: capabilities.network === 'opt_in' ? 'opt_in' : capabilities.network === true,
       cost: trim(capabilities.cost, 'none'),
       undo: trim(capabilities.undo, 'none'),
       modelContext: trim(capabilities.modelContext, 'none'),

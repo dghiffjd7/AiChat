@@ -46,6 +46,14 @@ const normalizeTextColor = (value, fallback = DEFAULT_USER_TEXT_COLOR) => {
     return /^#[0-9A-F]{6}$/i.test(raw) ? raw : fallback;
 };
 
+export const normalizePersonaVoiceSettings = (value = null) => {
+    const raw = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+    return {
+        narrationVoiceRef: String(raw.narrationVoiceRef || '').trim(),
+        dialogueVoiceRef: String(raw.dialogueVoiceRef || '').trim(),
+    };
+};
+
 const isLargeDataUrl = (value) => {
     if (typeof value !== 'string') return false;
     if (!value.startsWith('data:')) return false;
@@ -111,6 +119,7 @@ export class PersonaStore {
                 const role = Number.isFinite(Number(obj.role)) ? Math.max(0, Math.min(2, Math.trunc(Number(obj.role)))) : DEFAULT_ROLE;
                 const source = (obj.source && typeof obj.source === 'object') ? obj.source : null;
                 const originalCard = (obj.originalCard && typeof obj.originalCard === 'object') ? obj.originalCard : null;
+                const voiceSettings = normalizePersonaVoiceSettings(obj.voiceSettings);
                 const normalized = {
                     id: String(obj.id || '').trim() || `persona_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
                     name: String(obj.name || '').trim() || '我',
@@ -125,6 +134,7 @@ export class PersonaStore {
                     updated: Number.isFinite(Number(obj.updated)) ? Number(obj.updated) : Date.now(),
                     source,
                     originalCard,
+                    voiceSettings,
                 };
                 if (
                     normalized.id !== obj.id ||
@@ -140,6 +150,7 @@ export class PersonaStore {
                     normalized.updated !== obj.updated ||
                     (obj.source && typeof obj.source !== 'object') ||
                     (obj.originalCard && typeof obj.originalCard !== 'object')
+                    || JSON.stringify(voiceSettings) !== JSON.stringify(obj.voiceSettings || {})
                 ) {
                     changed = true;
                 }
@@ -185,7 +196,8 @@ export class PersonaStore {
             created: Date.now(),
             updated: Date.now(),
             source: null,
-            originalCard: null
+            originalCard: null,
+            voiceSettings: normalizePersonaVoiceSettings(),
         };
     }
 
@@ -328,7 +340,8 @@ export class PersonaStore {
             created: Date.now(),
             updated: Date.now(),
             source: (data && typeof data.source === 'object') ? data.source : null,
-            originalCard: (data && typeof data.originalCard === 'object') ? data.originalCard : null
+            originalCard: (data && typeof data.originalCard === 'object') ? data.originalCard : null,
+            voiceSettings: normalizePersonaVoiceSettings(data?.voiceSettings),
         };
         this.personas.push(newPersona);
         await this.save();
@@ -363,6 +376,9 @@ export class PersonaStore {
         }
         if (data && Object.prototype.hasOwnProperty.call(data, 'originalCard')) {
             next.originalCard = (data.originalCard && typeof data.originalCard === 'object') ? data.originalCard : null;
+        }
+        if (data && Object.prototype.hasOwnProperty.call(data, 'voiceSettings')) {
+            next.voiceSettings = normalizePersonaVoiceSettings(data.voiceSettings);
         }
 
         this.personas[idx] = {

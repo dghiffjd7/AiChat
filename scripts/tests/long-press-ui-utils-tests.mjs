@@ -116,6 +116,31 @@ const createTimerHarness = () => {
     schedule: harness.schedule,
     clearSchedule: harness.clear,
   });
+  let cleared = false;
+  const buttonTarget = {
+    closest(selector) {
+      return String(selector || '').includes('button') ? this : null;
+    },
+  };
+  const started = runtime.startLongPress({
+    selectionMode: false,
+    event: { type: 'pointerdown', target: buttonTarget },
+    clearExisting: () => {
+      cleared = true;
+    },
+  });
+  assert.equal(started, false);
+  assert.equal(cleared, false);
+  assert.equal(harness.timers.size, 0);
+  console.log('ok - startLongPress ignores message action buttons');
+}
+
+{
+  const harness = createTimerHarness();
+  const runtime = createLongPressUiRuntime({
+    schedule: harness.schedule,
+    clearSchedule: harness.clear,
+  });
   let timer = harness.schedule(() => {}, 500);
   let start = { x: 3, y: 4 };
   runtime.clearLongPress({
@@ -211,4 +236,44 @@ const createTimerHarness = () => {
   assert.equal(prevented, false);
   assert.equal(menuShown, false);
   console.log('ok - context menu yields to native selected text menu');
+}
+
+{
+  const runtime = createLongPressUiRuntime();
+  const listeners = new Map();
+  const wrapper = {
+    addEventListener(type, handler) {
+      listeners.set(type, handler);
+    },
+  };
+  let prevented = false;
+  let cleared = false;
+  let menuShown = false;
+  const buttonTarget = {
+    closest(selector) {
+      return String(selector || '').includes('button') ? this : null;
+    },
+  };
+  runtime.bindMessageContextInteractions({
+    wrapper,
+    message: { id: 'm-action-button' },
+    clearLongPress: () => {
+      cleared = true;
+    },
+    startLongPress() {},
+    showContextMenu: () => {
+      menuShown = true;
+    },
+  });
+  listeners.get('contextmenu')({
+    type: 'contextmenu',
+    target: buttonTarget,
+    preventDefault() {
+      prevented = true;
+    },
+  });
+  assert.equal(cleared, true);
+  assert.equal(prevented, true);
+  assert.equal(menuShown, false);
+  console.log('ok - context menu ignores message action buttons');
 }

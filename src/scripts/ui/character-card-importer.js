@@ -6,6 +6,7 @@ import { avatarDataUrlFromFile } from '../utils/image.js';
 import { safeInvoke } from '../utils/tauri.js';
 import { appSettings } from '../storage/app-settings.js';
 import { appConfirm, appChoice } from './app-confirm.js';
+import { IMPORT_NAME_CONFLICT_DECISIONS, findPersonaNameConflict } from './import-name-conflict-utils.js';
 import { bindBackdropActivation } from './backdrop-activation-utils.js';
 import {
   buildCharacterCardMvuConversion,
@@ -276,6 +277,20 @@ export class CharacterCardImporter {
   async importCard(card, { avatarDataUrl = '', raw = null, fileName = '' } = {}) {
     if (!card) throw new Error('角色卡解析失败');
     const displayName = String(card.name || '').trim() || '角色卡';
+    if (this.personaStore?.ready) await this.personaStore.ready;
+    const nameConflict = findPersonaNameConflict(this.personaStore?.getAll?.() || [], displayName);
+    if (nameConflict) {
+      const decision = await appChoice({
+        title: '同名角色已存在',
+        message: `已有角色「${displayName}」。继续导入会新建一个同名角色（现有角色及其会话保持不变，不会被覆盖）。`,
+        actions: [
+          { id: IMPORT_NAME_CONFLICT_DECISIONS.cancel, label: '取消导入', primary: true },
+          { id: IMPORT_NAME_CONFLICT_DECISIONS.keepBoth, label: '仍然新建' },
+        ],
+        defaultActionId: IMPORT_NAME_CONFLICT_DECISIONS.cancel,
+      });
+      if (decision !== IMPORT_NAME_CONFLICT_DECISIONS.keepBoth) return false;
+    }
     const greetings = buildGreetingList(card);
     const worldEntries = buildWorldbookEntries(card, { defaultScope: [] });
     const regexScripts = extractRegexScripts(card);

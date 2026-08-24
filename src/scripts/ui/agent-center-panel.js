@@ -2935,7 +2935,7 @@ const renderPermissionRuleSummary = (summary = {}) => {
 const capabilityLabels = (capabilities = {}) => [
     capabilities.read ? '可读取' : '',
     capabilities.write ? '会写入' : '只读',
-    capabilities.network ? '会联网' : '本地执行',
+    capabilities.network === 'opt_in' ? '可联网（按次授权）' : (capabilities.network ? '会联网' : '本地执行'),
     capabilities.undo && capabilities.undo !== 'none' ? '可撤销' : '无撤销',
     capabilities.modelContext === 'allowlist' ? 'AI 可请求' : 'AI 默认看不到',
     capabilities.confirmation === 'allow_once' ? '每次确认' : '',

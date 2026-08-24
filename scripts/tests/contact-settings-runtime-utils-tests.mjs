@@ -21,6 +21,8 @@ import {
   const avatarPreview = {};
   const nameInput = {};
   const labelsInput = {};
+  const voiceSelect = {};
+  const voiceSection = { style: {} };
   const templateToggle = {};
   const scriptToggle = {};
   const rpBridgeSection = { style: {} };
@@ -39,6 +41,7 @@ import {
         name: '好友甲',
         avatar: 'avatar:1',
         labels: ['旧友', '测试'],
+        voiceRef: 'voice-a',
       }),
       upsertContact: (payload) => upserts.push(payload),
     },
@@ -51,6 +54,8 @@ import {
     avatarPreview,
     nameInput,
     labelsInput,
+    voiceSelect,
+    voiceSection,
     templateToggle,
     scriptToggle,
     rpBridgeSection,
@@ -80,6 +85,8 @@ import {
   assert.equal(subtitle.textContent, '会话：contact:1');
   assert.equal(nameInput.value, '好友甲');
   assert.equal(labelsInput.value, '旧友, 测试');
+  assert.equal(voiceSelect.value, 'voice-a');
+  assert.equal(voiceSection.style.display, 'block');
   assert.equal(templateToggle.checked, false);
   assert.equal(scriptToggle.checked, true);
   assert.equal(bridgeTitle.style.display, 'block');
@@ -109,6 +116,7 @@ import {
   const avatarPreview = {};
   const nameInput = {};
   const labelsInput = {};
+  const voiceSection = { style: {} };
   const templateToggle = {};
   const scriptToggle = {};
   const rpBridgeSection = { style: {} };
@@ -135,6 +143,7 @@ import {
     avatarPreview,
     nameInput,
     labelsInput,
+    voiceSection,
     templateToggle,
     scriptToggle,
     rpBridgeSection,
@@ -160,9 +169,29 @@ import {
   assert.equal(title.textContent, '设置');
   assert.equal(nameInput.value, '角色甲');
   assert.equal(bridgeTitle.style.display, 'none');
+  assert.equal(voiceSection.style.display, 'none');
   assert.equal(exportExperiencePackBtn.style.display, 'none');
   assert.equal(exportExperiencePackBtn.disabled, true);
   console.log('ok - runContactSettingsPopulateFlow resolves rp session display and hides export action');
+}
+
+{
+  const voiceSection = { style: {} };
+  runContactSettingsPopulateFlow({
+    sessionId: 'group:friends',
+    contactsStore: {
+      getContact: () => ({ id: 'group:friends', name: '朋友群', isGroup: true }),
+      upsertContact() {},
+    },
+    chatStore: { getSessionSettings: () => ({}) },
+    panel: { querySelector: () => null },
+    voiceSection,
+    setCurrentAvatar() {},
+    refreshMemoryShareSummary: async () => {},
+    logger: { warn() {} },
+  });
+  assert.equal(voiceSection.style.display, 'none');
+  console.log('ok - group settings hide the unsupported group-level voice binding');
 }
 
 {
@@ -187,6 +216,7 @@ import {
     },
     nameInput: { value: '新名' },
     labelsInput: { value: ' 标签A,标签B , 标签A ' },
+    voiceSelect: { value: 'voice-new' },
     currentAvatar: 'avatar:new',
     templateToggle: { checked: true },
     scriptToggle: { checked: false },
@@ -210,11 +240,12 @@ import {
     name: '新名',
     avatar: 'avatar:new',
     labels: ['标签A', '标签B'],
+    voiceRef: 'voice-new',
   });
   assert.equal(hidden, true);
   assert.deepEqual(notifications, [
     ['success', '已保存好友设置'],
-    ['saved', { id: 'contact:2', name: '新名', avatar: 'avatar:new', labels: ['标签A', '标签B'] }],
+    ['saved', { id: 'contact:2', name: '新名', avatar: 'avatar:new', labels: ['标签A', '标签B'], voiceRef: 'voice-new' }],
   ]);
   console.log('ok - runContactSettingsSaveFlow persists labels avatar and session toggles then reports success');
 }

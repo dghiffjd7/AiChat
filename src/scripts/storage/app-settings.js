@@ -44,6 +44,7 @@ const defaults = {
   creativeWideBubble: true,
   creativeReadingSize: 'standard',
   creativeNarrativeFont: 'serif',
+  creativeDialogueHighlightEnabled: true,
   reasoningAutoParse: false,
   reasoningAutoExpand: false,
   reasoningShowHidden: false,
@@ -290,6 +291,7 @@ const migrateSettings = (settings = {}) => {
   next.voiceConnectionMode = String(next.voiceConnectionMode || '').trim().toLowerCase() === 'split'
     ? 'split'
     : defaults.voiceConnectionMode;
+  next.creativeDialogueHighlightEnabled = next.creativeDialogueHighlightEnabled !== false;
   return next;
 };
 

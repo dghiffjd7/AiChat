@@ -26,6 +26,8 @@ import {
 } from './rich-render-routing.js';
 import { hideCreativeContentTagsForDisplay } from './creative-content-display-utils.js';
 import { mergeRichCompatInputText } from './rich-input-compat.js';
+import { applyDialogueHighlightToDom, segmentDialogueText } from './dialogue-segment-utils.js';
+import { createRpMessageIconMarkup } from './rp-message-actions-ui-utils.js';
 import {
     CompatGapCorrelationTracker,
     resolveCompatGapMessage,
@@ -483,6 +485,23 @@ const escapeHtmlText = (value) => String(value ?? '')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
+// 「无头脚本块」：去掉脚本/样式/注释/文档骨架后没有任何可见内容。典型来源是 ST 正则注入的
+// 页面级装饰脚本（它们假设与消息 DOM 同页，在沙箱 iframe 里注定空白）。这类块没有"应该显示的内容"，
+// 不该套用交互卡片的空白回退占位；保持沙箱执行但折叠为零高度，真画出内容再展开。
+export const isHeadlessScriptOnlyHtml = (code = '') => {
+    const raw = String(code || '');
+    if (!/<script\b/i.test(raw) && !/<style\b/i.test(raw)) return false;
+    const stripped = raw
+        .replace(/<!--[\s\S]*?-->/g, '')
+        .replace(/<script\b[^>]*>[\s\S]*?<\/script\s*>/gi, '')
+        .replace(/<style\b[^>]*>[\s\S]*?<\/style\s*>/gi, '')
+        .replace(/<head\b[^>]*>[\s\S]*?<\/head\s*>/gi, '')
+        .replace(/<!doctype[^>]*>/gi, '')
+        .replace(/<\/?(?:html|body|meta|link|title|base)\b[^>]*>/gi, '')
+        .replace(/\u00a0/g, ' ');
+    return stripped.trim() === '';
+};
+
 const isLikelyBlankStaticDoc = (doc = '') => {
     const raw = String(doc || '');
     if (!raw.trim()) return true;
@@ -695,6 +714,11 @@ const applyIframeBlankFallbackIfNeeded = (
 ) => {
     if (!iframe || !id) return false;
     if (iframe.dataset.staticFallbackApplied === '1') return false;
+    if (iframe.dataset.richHeadless === '1') {
+        // 无头脚本块：空白是预期结果，不做静态回退占位
+        warnIframe('headless-skip-fallback', id, reason ? `reason=${String(reason).slice(0, 120)}` : '');
+        return false;
+    }
     if (requireLoaded && iframe.dataset.iframeLoaded !== '1') return false;
 
     const blankState = inspectIframeBlankState(iframe);
@@ -3657,6 +3681,19 @@ const clearIframeAutoResizeObservers = (iframe) => {
         }
         delete iframe.dataset.iframeAutoResize;
     } catch {}
+};
+
+export const cleanupRichIframeElement = (iframe, {
+    clearObservers = clearIframeAutoResizeObservers,
+    deleteDebugState = id => iframeDebugState.delete(id),
+} = {}) => {
+    if (!iframe) return false;
+    try { clearObservers?.(iframe); } catch {}
+    const iframeId = String(iframe.dataset?.iframeId || '').trim();
+    if (iframeId) {
+        try { deleteDebugState?.(iframeId); } catch {}
+    }
+    return true;
 };
 
 const switchIframeAuthority = (iframe, st, nextAuthority, reason = '') => {
@@ -8521,6 +8558,17 @@ const makeCodeBlock = ({
         iframe.dataset.richRenderLevel = renderLevel;
         iframe.dataset.richRenderExecution = renderExecution;
         iframe.style.cssText = 'width:100%; border:0; display:block; height:240px; background:transparent;';
+        const headlessScriptBlock = isHeadlessScriptOnlyHtml(code);
+        if (headlessScriptBlock) {
+            wrap.dataset.richHeadless = '1';
+            iframe.dataset.richHeadless = '1';
+            wrap.style.cssText = 'margin:0; border:0; height:0; min-height:0; overflow:hidden;';
+            setIframeStyleHeight(iframe, '0px');
+            iframe.style.minHeight = '0';
+            const headlessMsg = `headless-script-block collapsed msg=${String(messageId || '')} len=${String(code || '').length}${debugTag ? ` tag=${debugTag}` : ''}`;
+            emitDebugLog({ source: 'rich', type: 'info', message: headlessMsg, force: true });
+            logger.debug(`[rich] ${headlessMsg}`);
+        }
         if (!effectiveAllowScripts) {
             iframe.setAttribute('sandbox', 'allow-scripts');
         }
@@ -9074,6 +9122,18 @@ const makeCodeBlock = ({
         ) ? 7000 : 3200;
         setTimeout(() => {
             if (!isLiveIframe(iframe, iframeId)) return;
+            if (headlessScriptBlock) {
+                // 无头块不回退；若脚本真的往自己文档里画出了内容，则展开显示
+                const blankState = inspectIframeBlankState(iframe);
+                if (!blankState.isBlank && blankState.reason === 'ok') {
+                    wrap.dataset.richHeadless = 'revealed';
+                    iframe.dataset.richHeadless = 'revealed';
+                    wrap.style.cssText = 'border:1px solid rgba(0,0,0,0.10); border-radius:12px; overflow:hidden; margin:8px 0;';
+                    setIframeStyleHeight(iframe, `${Math.max(120, Number(blankState.scrollH) || 0)}px`);
+                    warnIframe('headless-revealed', iframeId, `scrollH=${Number(blankState.scrollH) || 0}`);
+                }
+                return;
+            }
             applyIframeBlankFallbackIfNeeded(iframe, iframeId, 'post-load-blank-probe', {
                 requireLoaded: true,
                 tryDirectRecover: true,
@@ -9090,6 +9150,36 @@ const makeCodeBlock = ({
 
     // Default code block (mobile wrapped, no horizontal scrolling)
     if (renderLevel === RICH_RENDER_LEVELS.SAFE && !(looksLikeHtmlDoc || isHtmlLang)) {
+        const header = document.createElement('div');
+        header.className = 'chat-codeblock-header';
+        header.style.cssText = 'display:flex; align-items:center; justify-content:space-between; gap:8px; padding:4px 6px 4px 12px; background:#111a2e; color:rgba(226,232,240,0.62); font-size:11px;';
+        const langLabel = document.createElement('span');
+        langLabel.style.cssText = 'overflow:hidden; text-overflow:ellipsis; white-space:nowrap; letter-spacing:.04em;';
+        langLabel.textContent = String(lang || '').trim().toLowerCase() || 'code';
+        const copyBtn = document.createElement('button');
+        copyBtn.type = 'button';
+        copyBtn.className = 'chat-codeblock-copy';
+        copyBtn.style.cssText = 'flex:0 0 auto; display:inline-flex; align-items:center; justify-content:center; width:26px; height:24px; border:0; padding:0; border-radius:6px; background:transparent; color:rgba(226,232,240,0.62); cursor:pointer;';
+        // 与气泡下方操作条同一套图标（createRpMessageIconMarkup）
+        const copyIconMarkup = createRpMessageIconMarkup('copy', { size: 14 });
+        copyBtn.innerHTML = copyIconMarkup;
+        copyBtn.title = '复制代码';
+        copyBtn.setAttribute('aria-label', '复制代码');
+        copyBtn.onclick = async (ev) => {
+            ev.stopPropagation();
+            const ok = await copyToClipboard(String(wrap.__chatappCode ?? code ?? ''));
+            copyBtn.innerHTML = ok ? createRpMessageIconMarkup('check', { size: 14 }) : copyIconMarkup;
+            copyBtn.style.color = ok ? '#6ee7b7' : '#fca5a5';
+            copyBtn.title = ok ? '已复制' : '复制失败';
+            setTimeout(() => {
+                copyBtn.innerHTML = copyIconMarkup;
+                copyBtn.style.color = 'rgba(226,232,240,0.62)';
+                copyBtn.title = '复制代码';
+            }, 1600);
+        };
+        header.appendChild(langLabel);
+        header.appendChild(copyBtn);
+        wrap.appendChild(header);
         const body = document.createElement('div');
         body.style.cssText = 'padding:10px; color:#e2e8f0; background:#0b1220;';
         const pre = document.createElement('pre');
@@ -10178,6 +10268,7 @@ export const renderRichText = (
         lazyMount = false,
         deferSandboxExecution = false,
         streaming = false,
+        highlightDialogue = false,
         openLightbox = null,
     } = {},
 ) => {
@@ -10196,6 +10287,7 @@ export const renderRichText = (
             sessionId,
             debugTag,
             deferSandboxExecution,
+            highlightDialogue,
             openLightbox,
         });
         return;
@@ -10303,6 +10395,9 @@ export const renderRichText = (
                 openLightbox,
             });
             if (rendered) {
+                // fragment 路径（如思维链折叠 HTML）整块按 HTML 挂载，正文不会经过下方
+                // 纯文本分支；改在渲染后的 DOM 文本节点上做对白高亮，覆盖同一份切分规则。
+                if (highlightDialogue) applyDialogueHighlightToDom(containerEl);
                 if (Boolean(debugTag) || shouldLogRichDebug()) {
                     const msg = `text route=${chunkRoute.level} interactive=${chunkRoute.hasInteractiveHtml ? 1 : 0} len=${displayChunk.length}${debugTag ? ` tag=${debugTag}` : ''}`;
                     emitDebugLog({ source: 'rich', type: 'info', message: msg, force: true });
@@ -10320,9 +10415,16 @@ export const renderRichText = (
                     RICH_IMAGE_TOKEN_RE.lastIndex = 0;
                     appendRichTextInlineMedia(containerEl, statusSeg, { openLightbox, escapeText });
                 } else if (statusSeg) {
-                    const span = document.createElement('span');
-                    span.textContent = escapeText(statusSeg);
-                    containerEl.appendChild(span);
+                    const textSegments = highlightDialogue
+                        ? segmentDialogueText(statusSeg)
+                        : [{ kind: 'narration', text: statusSeg }];
+                    textSegments.forEach((textSegment) => {
+                        if (!textSegment.text) return;
+                        const span = document.createElement('span');
+                        if (textSegment.kind === 'dialogue') span.className = 'rp-dialogue-text';
+                        span.textContent = escapeText(textSegment.text);
+                        containerEl.appendChild(span);
+                    });
                 }
                 if (statusIdx !== statusSegments.length - 1) {
                     const card = resolveStatusCard();
@@ -10340,4 +10442,8 @@ export const renderRichText = (
 export const cleanupRichText = (containerEl) => {
     if (!containerEl) return;
     cancelLazyRichMount(containerEl);
+    const iframes = [];
+    if (containerEl.matches?.('iframe')) iframes.push(containerEl);
+    containerEl.querySelectorAll?.('iframe').forEach(iframe => iframes.push(iframe));
+    iframes.forEach(iframe => cleanupRichIframeElement(iframe));
 };

@@ -3155,26 +3155,6 @@ fn extract_scoped_json_scope(file_name: &str, base: &str) -> Option<String> {
     Some(scope)
 }
 
-fn extract_memory_db_scope(file_name: &str) -> Option<String> {
-    if !file_name.starts_with("memories__") || !file_name.ends_with(".db") {
-        return None;
-    }
-    let raw_scope = &file_name["memories__".len()..file_name.len().saturating_sub(3)];
-    let scope = normalize_scope_id(raw_scope);
-    if scope.is_empty() {
-        return None;
-    }
-    Some(scope)
-}
-
-fn is_managed_persona_scope(scope: &str, explicit_scopes: &HashSet<String>) -> bool {
-    let normalized = normalize_scope_id(scope);
-    if normalized.is_empty() {
-        return false;
-    }
-    explicit_scopes.contains(&normalized) || normalized.starts_with("persona_")
-}
-
 fn read_json_file(path: &Path) -> Option<Value> {
     let json = fs::read_to_string(path).ok()?;
     serde_json::from_str(&json).ok()
@@ -3388,6 +3368,18 @@ fn purge_persona_scope_data(
     Ok(())
 }
 
+fn select_explicit_persona_scopes(
+    keep_scopes: &HashSet<String>,
+    delete_scopes: HashSet<String>,
+) -> Vec<String> {
+    let mut scopes: Vec<String> = delete_scopes
+        .into_iter()
+        .filter(|scope| !keep_scopes.contains(scope))
+        .collect();
+    scopes.sort();
+    scopes
+}
+
 #[tauri::command]
 pub async fn cleanup_persona_scoped_data(
     app: AppHandle,
@@ -3407,52 +3399,7 @@ pub async fn cleanup_persona_scoped_data(
         .collect();
 
     let data_dir = get_data_dir(&app)?;
-    let mut candidate_scopes: HashSet<String> = explicit_delete_scopes.clone();
-
-    if let Ok(entries) = fs::read_dir(&data_dir) {
-        for entry in entries.flatten() {
-            let name = entry.file_name().to_string_lossy().to_string();
-            for base in PERSONA_SCOPED_JSON_BASES {
-                if let Some(scope) = extract_scoped_json_scope(&name, base) {
-                    if is_managed_persona_scope(&scope, &explicit_delete_scopes) {
-                        candidate_scopes.insert(scope);
-                    }
-                }
-            }
-            if let Some(scope) = extract_memory_db_scope(&name) {
-                if is_managed_persona_scope(&scope, &explicit_delete_scopes) {
-                    candidate_scopes.insert(scope);
-                }
-            }
-        }
-    }
-
-    let chat_v2_base = chat_store_v2_base(&app)?;
-    if let Ok(entries) = fs::read_dir(chat_v2_base) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if !path.is_dir() {
-                continue;
-            }
-            let name = entry.file_name().to_string_lossy().to_string();
-            let Some(raw_scope) = name.strip_prefix("scope_") else {
-                continue;
-            };
-            let scope = normalize_scope_id(raw_scope);
-            if scope.is_empty() {
-                continue;
-            }
-            if is_managed_persona_scope(&scope, &explicit_delete_scopes) {
-                candidate_scopes.insert(scope);
-            }
-        }
-    }
-
-    let mut scopes_to_delete: Vec<String> = candidate_scopes
-        .into_iter()
-        .filter(|scope| !keep_scopes.contains(scope))
-        .collect();
-    scopes_to_delete.sort();
+    let scopes_to_delete = select_explicit_persona_scopes(&keep_scopes, explicit_delete_scopes);
     let scopes_to_delete_set: HashSet<String> = scopes_to_delete.iter().cloned().collect();
     let chat_v2_base = chat_store_v2_base(&app)?;
     let protected_session_ids =
@@ -4920,6 +4867,20 @@ mod tests {
         assert!(protected.contains("rp:persona_keep"));
         assert!(!protected.contains("rp:persona_deleted"));
         let _ = fs::remove_dir_all(&data_dir);
+    }
+
+    #[test]
+    fn persona_cleanup_selects_only_explicit_unretained_scopes() {
+        let keep = HashSet::from(["persona_keep".to_string()]);
+        let delete = HashSet::from([
+            "persona_target".to_string(),
+            "persona_keep".to_string(),
+        ]);
+
+        assert_eq!(
+            select_explicit_persona_scopes(&keep, delete),
+            vec!["persona_target".to_string()],
+        );
     }
 
     #[test]

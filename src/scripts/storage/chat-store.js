@@ -1320,6 +1320,7 @@ export class ChatStore {
     this._v2 = new ChatStoreV2({ scopeId: this.scopeId });
     this._v2ThreadState = new Map();
     this._recentMessageLoads = new Map();
+    this._threadLoadEpochs = new Map();
     this._diskBacked = false;
     this._lsDisabled = false;
     this._lsQuotaWarned = false;
@@ -1501,6 +1502,52 @@ export class ChatStore {
   _clearThreadState(threadKey) {
     if (!threadKey) return;
     this._v2ThreadState.delete(threadKey);
+  }
+
+  _getThreadLoadEpoch(threadKey) {
+    const key = String(threadKey || '').trim();
+    if (!key) return 0;
+    if (!this._threadLoadEpochs.has(key)) this._threadLoadEpochs.set(key, 0);
+    return Number(this._threadLoadEpochs.get(key) || 0);
+  }
+
+  _invalidateThreadLoad(threadKey) {
+    const key = String(threadKey || '').trim();
+    if (!key) return 0;
+    const next = this._getThreadLoadEpoch(key) + 1;
+    this._threadLoadEpochs.set(key, next);
+    this._recentMessageLoads.delete(`${this._scopeToken}:${key}`);
+    return next;
+  }
+
+  _invalidateSessionLoads(sessionId) {
+    const sid = String(sessionId || '').trim();
+    if (!sid) return;
+    const prefix = `${sid}::`;
+    const keys = new Set(
+      Array.from(this._threadLoadEpochs.keys()).filter(key => key.startsWith(prefix)),
+    );
+    for (const loadKey of this._recentMessageLoads.keys()) {
+      const threadKey = String(loadKey || '').slice(String(this._scopeToken).length + 1);
+      if (threadKey.startsWith(prefix)) keys.add(threadKey);
+    }
+    if (!keys.size) keys.add(this._getThreadKey(sid, ''));
+    keys.forEach(key => this._invalidateThreadLoad(key));
+  }
+
+  _isThreadLoadStale(threadKey, epoch, token, scopeId) {
+    return this._isScopeStale(token, scopeId)
+      || this._getThreadLoadEpoch(threadKey) !== epoch;
+  }
+
+  getHistoryRevision(id = this.currentId, archiveId = null) {
+    const sid = String(id || '').trim();
+    if (!sid) return '';
+    const aid = archiveId == null
+      ? String(this.state.sessions[sid]?.currentArchiveId || '').trim()
+      : String(archiveId || '').trim();
+    const threadKey = this._getThreadKey(sid, aid);
+    return `${this._scopeToken}:${this.scopeId}:${threadKey}:${this._getThreadLoadEpoch(threadKey)}`;
   }
 
   _recoverV2ArchiveMetadata() {
@@ -1689,16 +1736,19 @@ export class ChatStore {
     if (this._isScopeStale(token, scopeId)) return [];
     const aid = String(archiveId || '').trim();
     const threadKey = this._getThreadKey(sid, aid);
+    const loadEpoch = this._getThreadLoadEpoch(threadKey);
     const loadKey = `${token}:${threadKey}`;
     const pending = this._recentMessageLoads.get(loadKey);
     if (pending) return pending;
     const loadPromise = (async () => {
+      if (this._isThreadLoadStale(threadKey, loadEpoch, token, scopeId)) return [];
       this._ensureSession(sid);
       const entry = this._v2.ensureSession(sid);
       const thread = this._v2.getThread(sid, aid);
       const currentMessages = Array.isArray(this.state.sessions[sid]?.messages) ? this.state.sessions[sid].messages.slice() : [];
       const currentLoadedThreadKey = String(this.state.sessions[sid]?._loadedThreadKey || '').trim();
       if (!entry || !thread) {
+        if (this._isThreadLoadStale(threadKey, loadEpoch, token, scopeId)) return [];
         this.state.sessions[sid].messages = [];
         return [];
       }
@@ -1708,7 +1758,7 @@ export class ChatStore {
       const merged = [];
       for (const partId of ids) {
         const existing = await this._v2.readPart(entry, thread, partId);
-        if (this._isScopeStale(token, scopeId)) return [];
+        if (this._isThreadLoadStale(threadKey, loadEpoch, token, scopeId)) return [];
         const list = Array.isArray(existing) ? existing : [];
         for (const msg of list) {
           const mid = String(msg?.id || '');
@@ -1734,6 +1784,7 @@ export class ChatStore {
           );
         }
       }
+      if (this._isThreadLoadStale(threadKey, loadEpoch, token, scopeId)) return [];
       const nextMessages = dedupeMessagesById(merged);
       threadState.loadedParts = ids;
       this.state.sessions[sid].messages = nextMessages;
@@ -1793,6 +1844,7 @@ export class ChatStore {
     const thread = this._v2.getThread(sid, aid);
     if (!entry || !thread || !Array.isArray(thread.parts) || !thread.parts.length) return [];
     const threadKey = this._getThreadKey(sid, aid);
+    const loadEpoch = this._getThreadLoadEpoch(threadKey);
     const state = this._getThreadState(threadKey);
     const all = thread.parts.map(p => p.id);
     const loaded = state.loadedParts || [];
@@ -1804,7 +1856,7 @@ export class ChatStore {
     const older = [];
     for (const partId of pick) {
       const existing = await this._v2.readPart(entry, thread, partId);
-      if (this._isScopeStale(token, scopeId)) return [];
+      if (this._isThreadLoadStale(threadKey, loadEpoch, token, scopeId)) return [];
       const list = Array.isArray(existing) ? existing : [];
       for (const msg of list) {
         const mid = String(msg?.id || '');
@@ -1812,6 +1864,7 @@ export class ChatStore {
       }
       older.push(...list);
     }
+    if (this._isThreadLoadStale(threadKey, loadEpoch, token, scopeId)) return [];
     state.loadedParts = pick.concat(loaded);
     const current = dedupeMessagesById(this.state.sessions[sid].messages || []);
     const currentIds = new Set(current.map(message => String(message?.id || '').trim()).filter(Boolean));
@@ -1956,6 +2009,7 @@ export class ChatStore {
     this._skipMessagePersist = false;
     this._v2ThreadState.clear();
     this._recentMessageLoads.clear();
+    this._threadLoadEpochs.clear();
     this._v2 = new ChatStoreV2({ scopeId: this.scopeId });
     this._diskBacked = false;
     this._lsDisabled = false;
@@ -2620,6 +2674,7 @@ export class ChatStore {
       if (this._useV2) {
         const aid = String(this.state.sessions[sid]?.currentArchiveId || '').trim();
         const threadKey = this._getThreadKey(sid, aid);
+        this._invalidateThreadLoad(threadKey);
         this._clearThreadState(threadKey);
         const v2 = this._v2;
         v2.enqueue(async () => {
@@ -2634,6 +2689,7 @@ export class ChatStore {
     const sid = String(id || '').trim();
     if (!sid) return;
     const wasCurrent = String(this.currentId || '').trim() === sid;
+    this._invalidateSessionLoads(sid);
     delete this.state.sessions[sid];
     if (wasCurrent) {
       const remaining = this.listSessions();
@@ -2659,6 +2715,8 @@ export class ChatStore {
     if (!from || !to) return;
     if (!this.state.sessions[from]) return;
     if (this.state.sessions[to]) return; // prevent overwrite
+    this._invalidateSessionLoads(from);
+    this._invalidateSessionLoads(to);
     this.state.sessions[to] = this.state.sessions[from];
     delete this.state.sessions[from];
     if (this.currentId === from) {
@@ -2698,6 +2756,7 @@ export class ChatStore {
       if (this._useV2) {
         const aid = String(this.state.sessions[sid]?.currentArchiveId || '').trim();
         const threadKey = this._getThreadKey(sid, aid);
+        this._invalidateThreadLoad(threadKey);
         this._clearThreadState(threadKey);
         const v2 = this._v2;
         v2.enqueue(async () => {
@@ -2952,7 +3011,7 @@ export class ChatStore {
     const messages = session.messages || [];
     const currentArchiveId = session.currentArchiveId;
     const totalMessages = this._useV2
-      ? this._v2.getThreadTotal(sid, currentArchiveId)
+      ? Math.max(this._v2.getThreadTotal(sid, currentArchiveId), messages.length)
       : messages.length;
     if (!totalMessages) return null;
     this._lastArchiveTransition = null;
@@ -3098,10 +3157,18 @@ export class ChatStore {
     if (!sid) return null;
     const session = this.state.sessions[sid];
     if (!session) return null;
+    if (this._useV2) {
+      const previousArchiveId = String(session.currentArchiveId || '').trim();
+      this._invalidateThreadLoad(this._getThreadKey(sid, previousArchiveId));
+      if (previousArchiveId) this._invalidateThreadLoad(this._getThreadKey(sid, ''));
+    }
 
     let archiveId = null;
     const totalMessages = this._useV2
-      ? this._v2.getThreadTotal(sid, session.currentArchiveId)
+      ? Math.max(
+          this._v2.getThreadTotal(sid, session.currentArchiveId),
+          (session.messages || []).length,
+        )
       : (session.messages || []).length;
     if (totalMessages > 0) {
       const currentArchiveId = String(session.currentArchiveId || '').trim();
@@ -3173,6 +3240,11 @@ export class ChatStore {
     const archive = session.archives.find(a => a.id === archiveId);
     if (!archive) return false;
     this._lastArchiveTransition = null;
+    if (this._useV2) {
+      const previousArchiveId = String(session.currentArchiveId || '').trim();
+      this._invalidateThreadLoad(this._getThreadKey(sid, previousArchiveId));
+      this._invalidateThreadLoad(this._getThreadKey(sid, archiveId));
+    }
 
     // Save current state before switching
     const totalMessages = this._useV2
@@ -3214,6 +3286,7 @@ export class ChatStore {
     }
     if (this._useV2) {
       const aid = String(archiveId || '').trim();
+      this._invalidateThreadLoad(this._getThreadKey(sid, aid));
       this._clearThreadState(this._getThreadKey(sid, aid));
       const v2 = this._v2;
       v2.enqueue(async () => {

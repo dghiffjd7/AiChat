@@ -19,6 +19,13 @@ import { logger } from '../utils/logger.js';
 import { pickSavePath as pickNativeSavePath } from '../utils/save-dialog.js';
 import { safeInvoke } from '../utils/tauri.js';
 import {
+    DEFAULT_WORLD_AI_TEMPLATE as WORLD_AI_TEMPLATE,
+    buildWorldAiContinueMessages,
+    buildWorldAiMessages,
+    readWorldAiGenerationSettings,
+    saveWorldAiTemplate as saveSharedWorldAiTemplate,
+} from '../utils/world-ai-generation.js';
+import {
     genNodeId,
     genEdgeId,
     sanitizeNodeId,
@@ -206,25 +213,8 @@ const BLOCK_MODE_NODE_ICON_SVG = `
 `.trim();
 
 const WORLD_AI_INPUT_KEY = 'world_ai_input_v1';
-const WORLD_AI_TEMPLATE_KEY = 'world_ai_template_v1';
 const WORLD_VAR_BROWSER_RECENT_KEY = 'world_var_browser_recent_v1';
 const WORLD_VAR_GUIDE_KEY = 'world_var_guide_v1_seen';
-const WORLD_AI_TEMPLATE = `
-name: ""
-english_name: ""
-gender: ""
-background: ""
-appearance: ""
-personality:
-  mbti: ""
-  traits: ""
-dialogue_examples:
-  note: "仅供参考，勿完全按照其输出"
-  examples:
-    - ""
-    - ""
-    - ""
-`.trim();
 
 const deepClone = (obj) => {
     try {
@@ -385,19 +375,11 @@ const saveWorldAiInput = (value) => {
 };
 
 const loadWorldAiTemplate = () => {
-    try {
-        const stored = String(localStorage.getItem(WORLD_AI_TEMPLATE_KEY) || '').trim();
-        return stored || WORLD_AI_TEMPLATE;
-    } catch {
-        return WORLD_AI_TEMPLATE;
-    }
+    return readWorldAiGenerationSettings().template;
 };
 
 const saveWorldAiTemplate = (value) => {
-    try {
-        const trimmed = String(value || '').trim();
-        localStorage.setItem(WORLD_AI_TEMPLATE_KEY, trimmed || WORLD_AI_TEMPLATE);
-    } catch {}
+    saveSharedWorldAiTemplate(value);
 };
 
 const loadRecentVariableNames = () => {
@@ -459,53 +441,6 @@ const formatTraceValue = (value, maxLen = AI_TRACE_VALUE_LIMIT) => {
     } catch {
         return String(value);
     }
-};
-
-const buildWorldAiMessages = (template, inputText) => {
-    const trimmedTemplate = String(template || '').trim();
-    const trimmedInput = String(inputText || '').trim();
-    const userContent = [
-        '请根据模板与用户输入生成完整的「角色世界书条目」。',
-        '要求：',
-        '- 仅输出 YAML，不要解释，不要代码块，不要附加标题。',
-        '- YAML 结构必须与模板一致；内容尽量充实，未知的可以写“未说明”。',
-        '- 英文名使用英文；对话范例需明确“仅供参考，勿完全按照其输出”。',
-        '',
-        '<template>',
-        trimmedTemplate || '(空模板)',
-        '</template>',
-        '',
-        '<input>',
-        trimmedInput || '(未提供)',
-        '</input>',
-    ].join('\n');
-    return [{ role: 'user', content: userContent }];
-};
-
-const buildWorldAiContinueMessages = (template, inputText, draft) => {
-    const trimmedTemplate = String(template || '').trim();
-    const trimmedInput = String(inputText || '').trim();
-    const trimmedDraft = String(draft || '').trim();
-    const userContent = [
-        '请在模板约束下，结合用户输入，对已有草稿进行补全与润色。',
-        '要求：',
-        '- 仅输出 YAML，不要解释，不要代码块，不要附加标题。',
-        '- YAML 结构必须与模板一致；不要丢失草稿里已经明确的设定。',
-        '- 对话范例需明确“仅供参考，勿完全按照其输出”。',
-        '',
-        '<template>',
-        trimmedTemplate || '(空模板)',
-        '</template>',
-        '',
-        '<input>',
-        trimmedInput || '(未提供)',
-        '</input>',
-        '',
-        '<draft>',
-        trimmedDraft || '(空草稿)',
-        '</draft>',
-    ].join('\n');
-    return [{ role: 'user', content: userContent }];
 };
 
 const normalizeEntry = (entry = {}, index = 0, options = {}) => {

@@ -231,3 +231,63 @@ import {
   assert.deepEqual(calls, []);
   console.log('ok - runRpPlotResetFlow leaves UI and data untouched when the archive flow is cancelled');
 }
+
+{
+  const calls = [];
+  const result = await runRpPlotResetFlow({
+    sessionId: 'rp:barrier',
+    acquireResetBarrier: async sessionId => {
+      calls.push(`acquire:${sessionId}`);
+      return { ok: true, release: () => calls.push('release') };
+    },
+    runStartNewChat: async ({ startNewChat }) => {
+      calls.push('run-start');
+      startNewChat('rp:barrier', '', {});
+      return { started: true, cancelled: false, archiveId: 'archive-barrier' };
+    },
+    clearRenderedMessages: () => calls.push('clear-rendered'),
+    resetVariableState: () => calls.push('reset-variables'),
+    resetRenderState: () => calls.push('reset-render'),
+    startNewChat: () => {
+      calls.push('start');
+      return 'archive-barrier';
+    },
+    seedGreeting: async () => calls.push('seed'),
+    clearInput: () => calls.push('clear-input'),
+    refreshUi: () => calls.push('refresh'),
+  });
+  assert.equal(result.started, true);
+  assert.deepEqual(calls, [
+    'acquire:rp:barrier',
+    'run-start',
+    'clear-rendered',
+    'reset-variables',
+    'reset-render',
+    'start',
+    'seed',
+    'clear-input',
+    'refresh',
+    'release',
+  ]);
+  console.log('ok - runRpPlotResetFlow holds the session reset barrier until greeting reseed finishes');
+}
+
+{
+  const calls = [];
+  const result = await runRpPlotResetFlow({
+    sessionId: 'rp:barrier-timeout',
+    acquireResetBarrier: async () => ({ ok: false, reason: 'session_async_work_timeout' }),
+    runStartNewChat: async () => calls.push('run-start'),
+    clearRenderedMessages: () => calls.push('clear-rendered'),
+    startNewChat: () => calls.push('start'),
+    seedGreeting: async () => calls.push('seed'),
+  });
+  assert.deepEqual(result, {
+    started: false,
+    cancelled: true,
+    archiveId: '',
+    reason: 'session_async_work_timeout',
+  });
+  assert.deepEqual(calls, []);
+  console.log('ok - runRpPlotResetFlow aborts without clearing when the reset barrier cannot drain old work');
+}

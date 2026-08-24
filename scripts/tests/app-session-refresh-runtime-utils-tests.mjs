@@ -54,6 +54,51 @@ import {
 }
 
 {
+  let currentSessionId = 'group:c';
+  let releaseLoad;
+  const loadGate = new Promise(resolve => { releaseLoad = resolve; });
+  const calls = [];
+  const pending = rerenderCurrentSessionHistory({
+    getCurrentSessionId: () => currentSessionId,
+    ensureRecentMessagesLoaded: async () => {
+      await loadGate;
+      return [{ id: 'group-message' }];
+    },
+    clearMessages: () => calls.push('clear'),
+    preloadHistory: () => calls.push('preload'),
+  });
+
+  currentSessionId = 'rp:c';
+  releaseLoad();
+  assert.equal(await pending, false);
+  assert.deepEqual(calls, []);
+  console.log('ok - rerenderCurrentSessionHistory drops a load after the active session changes');
+}
+
+{
+  let revision = 'session-a:0';
+  let releaseLoad;
+  const loadGate = new Promise(resolve => { releaseLoad = resolve; });
+  const calls = [];
+  const pending = rerenderCurrentSessionHistory({
+    getCurrentSessionId: () => 'session-a',
+    getHistoryRevision: () => revision,
+    ensureRecentMessagesLoaded: async () => {
+      await loadGate;
+      return [{ id: 'old-message' }];
+    },
+    clearMessages: () => calls.push('clear'),
+    preloadHistory: () => calls.push('preload'),
+  });
+
+  revision = 'session-a:1';
+  releaseLoad();
+  assert.equal(await pending, false);
+  assert.deepEqual(calls, []);
+  console.log('ok - rerenderCurrentSessionHistory drops a same-session load after history reset');
+}
+
+{
   const calls = [];
   const result = applyMemoryTablePushEvent({
     detail: { sessionId: 's1', content: '新增记忆' },

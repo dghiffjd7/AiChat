@@ -88,4 +88,46 @@ const panel = {
   console.log('ok - persona delete core is idempotent for already absent targets');
 }
 
+{
+  assert.deepEqual(
+    PersonaPanel.prototype.collectScopedLocalStorageCandidates.call(
+      {},
+      ['persona_keep'],
+      ['persona_deleted', 'persona_keep'],
+    ),
+    ['persona_deleted'],
+  );
+  console.log('ok - persona deletion only targets explicitly deleted local scopes');
+}
+
+{
+  const cleanupCalls = [];
+  window.appBridge.getPresetStore = () => ({
+    ready: Promise.resolve(),
+    remove: async (type, id) => cleanupCalls.push(['preset', type, id]),
+  });
+  window.appBridge.getScriptStore = () => ({
+    ready: Promise.resolve(),
+    getScripts: () => [],
+    getScopeVariables: () => ({}),
+    removeScope: async (scope, id) => cleanupCalls.push(['script-scope', scope, id]),
+  });
+
+  await PersonaPanel.prototype.cleanupPersonaBindings.call({}, {
+    id: 'persona-a',
+    source: { systemPresetId: 'sysprompt-a' },
+  }, {
+    deletePreset: true,
+    deleteWorld: false,
+    deleteRegex: false,
+    deleteScripts: false,
+  });
+
+  assert.deepEqual(cleanupCalls, [
+    ['preset', 'sysprompt', 'sysprompt-a'],
+    ['script-scope', 'character', 'persona-a'],
+  ]);
+  console.log('ok - persona deletion cleans the selected system preset and historical empty script scope');
+}
+
 console.log('persona-delete-core-tests passed');

@@ -5,8 +5,11 @@
 
 import { logger } from './logger.js';
 
-const VARIABLE_MACRO_COMMANDS = new Set(['setvar', 'addvar', 'incvar', 'decvar', 'getvar', 'ifvar']);
-const VARIABLE_MACRO_HEAD_RE = /^\s*(?:setvar|addvar|incvar|decvar|getvar|ifvar)\s*::/i;
+const VARIABLE_MACRO_COMMANDS = new Set([
+    'setvar', 'addvar', 'incvar', 'decvar', 'getvar', 'ifvar',
+    'setglobalvar', 'addglobalvar', 'incglobalvar', 'decglobalvar', 'getglobalvar',
+]);
+const VARIABLE_MACRO_HEAD_RE = /^\s*(?:setvar|addvar|incvar|decvar|getvar|ifvar|setglobalvar|addglobalvar|incglobalvar|decglobalvar|getglobalvar)\s*::/i;
 
 export const stripPausedVariableMacros = (value = '') => {
     const text = String(value || '');
@@ -207,6 +210,45 @@ export class MacroEngine {
             return (val === undefined || val === null) ? '' : String(val);
         });
 
+        // 显式全局变量宏（ST 兼容）：无论 uiMode/useGlobalVariables 如何，始终走全局作用域
+        const globalAccess = this.getVariableAccess(context, { useGlobal: true });
+        const getGlobal = key => globalAccess.get(key);
+        const setGlobal = (key, value) => globalAccess.set(key, value);
+        out = out.replace(/{{\s*setglobalvar\s*::([^:}]+)::([^}]*)}}/gi, (_m, name, value) => {
+            const key = String(name || '').trim();
+            if (key) setGlobal(key, String(value ?? ''));
+            return '';
+        });
+        out = out.replace(/{{\s*addglobalvar\s*::([^:}]+)::([^}]*)}}/gi, (_m, name, value) => {
+            const key = String(name || '').trim();
+            if (!key) return '';
+            const curRaw = getGlobal(key);
+            const curNum = Number(curRaw);
+            const addNum = Number(value);
+            const next = (Number.isFinite(curNum) && Number.isFinite(addNum)) ? String(curNum + addNum) : `${String(curRaw ?? '')}${String(value ?? '')}`;
+            setGlobal(key, next);
+            return '';
+        });
+        out = out.replace(/{{\s*incglobalvar\s*::([^}]+)}}/gi, (_m, name) => {
+            const key = String(name || '').trim();
+            const cur = Number(getGlobal(key));
+            const next = (Number.isFinite(cur) ? cur : 0) + 1;
+            setGlobal(key, String(next));
+            return String(next);
+        });
+        out = out.replace(/{{\s*decglobalvar\s*::([^}]+)}}/gi, (_m, name) => {
+            const key = String(name || '').trim();
+            const cur = Number(getGlobal(key));
+            const next = (Number.isFinite(cur) ? cur : 0) - 1;
+            setGlobal(key, String(next));
+            return String(next);
+        });
+        out = out.replace(/{{\s*getglobalvar\s*::([^}]+)}}/gi, (_m, name) => {
+            const key = String(name || '').trim();
+            const val = getGlobal(key);
+            return (val === undefined || val === null) ? '' : String(val);
+        });
+
         return out;
     }
 
@@ -382,6 +424,7 @@ export class MacroEngine {
         // executeCommand 的既有语义是本地变量；常规 set/get 宏会先由
         // applyVariableMacros 依 uiMode/useGlobalVariables 处理。
         const variableAccess = this.getVariableAccess(context, { useGlobal: false });
+        const globalVariableAccess = this.getVariableAccess(context, { useGlobal: true });
 
         switch (cmd) {
             // --- 变量操作 ---
@@ -434,6 +477,56 @@ export class MacroEngine {
                 let val = Number(variableAccess.get(key)) || 0;
                 val -= amt;
                 variableAccess.set(key, val);
+                return '';
+            }
+            case 'setglobalvar': {
+                if (context?.variableRuntimeEnabled === false) return '';
+                // {{setglobalvar::key::value}}
+                if (args.length < 2) return '';
+                const key = args[0];
+                const val = args.slice(1).join('::');
+                globalVariableAccess.set(key, val);
+                return '';
+            }
+            case 'getglobalvar': {
+                if (context?.variableRuntimeEnabled === false) return '';
+                // {{getglobalvar::key::default}}
+                const key = args[0];
+                const def = args[1] || '';
+                const val = globalVariableAccess.get(key);
+                return (val !== undefined && val !== null) ? val : def;
+            }
+            case 'addglobalvar': {
+                if (context?.variableRuntimeEnabled === false) return '';
+                // {{addglobalvar::key::value}}
+                if (args.length < 2) return '';
+                const key = args[0];
+                const addRaw = args.slice(1).join('::');
+                const curRaw = globalVariableAccess.get(key);
+                const curNum = Number(curRaw);
+                const addNum = Number(addRaw);
+                const next = (Number.isFinite(curNum) && Number.isFinite(addNum)) ? String(curNum + addNum) : `${String(curRaw ?? '')}${String(addRaw ?? '')}`;
+                globalVariableAccess.set(key, next);
+                return '';
+            }
+            case 'incglobalvar': {
+                if (context?.variableRuntimeEnabled === false) return '';
+                // {{incglobalvar::key::amount}}
+                const key = args[0];
+                const amt = Number(args[1]) || 1;
+                let val = Number(globalVariableAccess.get(key)) || 0;
+                val += amt;
+                globalVariableAccess.set(key, val);
+                return '';
+            }
+            case 'decglobalvar': {
+                if (context?.variableRuntimeEnabled === false) return '';
+                // {{decglobalvar::key::amount}}
+                const key = args[0];
+                const amt = Number(args[1]) || 1;
+                let val = Number(globalVariableAccess.get(key)) || 0;
+                val -= amt;
+                globalVariableAccess.set(key, val);
                 return '';
             }
 

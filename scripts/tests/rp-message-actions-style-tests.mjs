@@ -95,6 +95,14 @@ assert.match(creativeCss, /\.rp-greeting-sheet\.is-opening\s*\{[^}]*animation:\s
 assert.match(creativeCss, /\.rp-greeting-sheet-item\.active::before\s*\{[^}]*background:\s*#c2482f/s);
 assert.match(creativeCss, /\.is-rp-greeting-message\s+\.QQ_chat_msgdiv\s*\{[^}]*border-radius:\s*26px\s*!important/s);
 assert.match(creativeCss, /\.rp-greeting-editor-overlay:not\(\.is-closing\)\s+\.rp-greeting-editor\s*\{[^}]*animation:\s*rp-greeting-editor-in/s);
+assert.match(
+  creativeCss,
+  /\.rp-greeting-editor-field\s+\.rp-greeting-editor-content\s*\{[^}]*height:\s*230px[^}]*overflow-y:\s*auto[^}]*white-space:\s*pre-wrap/s,
+);
+assert.match(
+  creativeCss,
+  /\.rp-greeting-editor-content\.is-empty::before\s*\{[^}]*content:\s*attr\(data-placeholder\)/s,
+);
 assert.match(creativeCss, /@media\s*\(prefers-reduced-motion:\s*reduce\)[\s\S]*\.rp-greeting-sheet\.is-opening[\s\S]*animation:\s*none\s*!important/s);
 assert.match(creativeCss, /body\[data-reduced-motion='on'\][\s\S]*\.rp-greeting-sheet\.is-opening[\s\S]*animation:\s*none\s*!important/s);
 assert.match(

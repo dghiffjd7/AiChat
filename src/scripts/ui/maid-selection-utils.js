@@ -24,6 +24,112 @@ export const normalizeMaidViewportRect = (raw = null) => {
   return { left, top, width, height };
 };
 
+const clampSelectionAxis = (position, size, viewportSize) => {
+  const limit = Number(viewportSize);
+  if (!Number.isFinite(limit) || limit <= 0) return position;
+  const min = Math.min(0, limit - size);
+  const max = Math.max(0, limit - size);
+  return Math.min(max, Math.max(min, position));
+};
+
+export const createMaidPointSelectionRect = (x, y, {
+  size = 88,
+  viewportWidth = 0,
+  viewportHeight = 0,
+} = {}) => {
+  const pointX = Number(x);
+  const pointY = Number(y);
+  const requestedSize = Number(size);
+  if (![pointX, pointY].every(Number.isFinite)) return null;
+  const bounds = [Number(viewportWidth), Number(viewportHeight)]
+    .filter(value => Number.isFinite(value) && value > 0);
+  const diameter = Math.min(
+    Number.isFinite(requestedSize) && requestedSize > 0 ? requestedSize : 88,
+    ...bounds,
+  );
+  return {
+    left: clampSelectionAxis(pointX - (diameter / 2), diameter, viewportWidth),
+    top: clampSelectionAxis(pointY - (diameter / 2), diameter, viewportHeight),
+    width: diameter,
+    height: diameter,
+  };
+};
+
+export const moveMaidSelectionRect = (rect = null, dx = 0, dy = 0, {
+  viewportWidth = 0,
+  viewportHeight = 0,
+} = {}) => {
+  const normalized = normalizeMaidViewportRect(rect);
+  if (!normalized) return null;
+  const offsetX = Number(dx);
+  const offsetY = Number(dy);
+  const nextLeft = normalized.left + (Number.isFinite(offsetX) ? offsetX : 0);
+  const nextTop = normalized.top + (Number.isFinite(offsetY) ? offsetY : 0);
+  return {
+    ...normalized,
+    left: clampSelectionAxis(nextLeft, normalized.width, viewportWidth),
+    top: clampSelectionAxis(nextTop, normalized.height, viewportHeight),
+  };
+};
+
+export const resizeMaidSelectionRect = (rect = null, handle = 'se', dx = 0, dy = 0, {
+  minSize = 20,
+  roundSelection = false,
+} = {}) => {
+  const normalized = normalizeMaidViewportRect(rect);
+  if (!normalized) return null;
+  const token = String(handle || '').trim().toLowerCase();
+  if (!/^(?:nw|n|ne|e|se|s|sw|w)$/.test(token)) return normalized;
+  const offsetX = Number.isFinite(Number(dx)) ? Number(dx) : 0;
+  const offsetY = Number.isFinite(Number(dy)) ? Number(dy) : 0;
+  const minimum = Number.isFinite(Number(minSize)) ? Math.max(1, Number(minSize)) : 20;
+
+  // 圆形起点的选区只有四角保持当前宽高比；四边只改变单轴，允许拉成椭圆。
+  if (roundSelection && token.length === 2) {
+    const horizontalDelta = token.includes('e')
+      ? offsetX
+      : (token.includes('w') ? -offsetX : null);
+    const verticalDelta = token.includes('s')
+      ? offsetY
+      : (token.includes('n') ? -offsetY : null);
+    const scaleDelta = (
+      (horizontalDelta * normalized.width)
+      + (verticalDelta * normalized.height)
+    ) / ((normalized.width ** 2) + (normalized.height ** 2));
+    const minimumScale = Math.max(minimum / normalized.width, minimum / normalized.height);
+    const scale = Math.max(minimumScale, 1 + scaleDelta);
+    const nextWidth = normalized.width * scale;
+    const nextHeight = normalized.height * scale;
+    const right = normalized.left + normalized.width;
+    const bottom = normalized.top + normalized.height;
+    return {
+      left: token.includes('w')
+        ? right - nextWidth
+        : normalized.left,
+      top: token.includes('n')
+        ? bottom - nextHeight
+        : normalized.top,
+      width: nextWidth,
+      height: nextHeight,
+    };
+  }
+
+  let { left, top, width, height } = normalized;
+  if (token.includes('w')) { left += offsetX; width -= offsetX; }
+  if (token.includes('e')) width += offsetX;
+  if (token.includes('n')) { top += offsetY; height -= offsetY; }
+  if (token.includes('s')) height += offsetY;
+  if (width < minimum) {
+    if (token.includes('w')) left -= (minimum - width);
+    width = minimum;
+  }
+  if (height < minimum) {
+    if (token.includes('n')) top -= (minimum - height);
+    height = minimum;
+  }
+  return { left, top, width, height };
+};
+
 export const resolveMaidAnchoredViewportRect = (rect = null, anchorRect = null, offset = null) => {
   const normalized = normalizeMaidViewportRect(rect);
   if (!normalized || !anchorRect || !offset) return null;
