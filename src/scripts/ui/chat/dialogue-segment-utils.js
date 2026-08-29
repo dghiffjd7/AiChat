@@ -77,55 +77,6 @@ export const segmentDialogueText = (value = '') => {
   return segments;
 };
 
-const DOM_SKIP_TAGS = new Set(['code', 'pre', 'script', 'style', 'textarea', 'svg', 'iframe']);
-const DOM_SKIP_CLASS_RE = /(?:^|\s)(?:rp-dialogue-text|chat-codeblock)(?:\s|$)/;
-
-const collectHighlightableTextNodes = (node, out) => {
-  const children = node?.childNodes ? Array.from(node.childNodes) : [];
-  for (const child of children) {
-    if (child.nodeType === 3) {
-      out.push(child);
-      continue;
-    }
-    if (child.nodeType !== 1) continue;
-    if (DOM_SKIP_TAGS.has(String(child.tagName || '').toLowerCase())) continue;
-    if (DOM_SKIP_CLASS_RE.test(String(child.className || ''))) continue;
-    collectHighlightableTextNodes(child, out);
-  }
-};
-
-// 渲染后 DOM 后处理：只改最终文本节点，结构上不可能切到 HTML 属性/脚本。
-// 局限：引号跨元素边界（如 “你好<b>世界</b>”）时单个文本节点内配不上对，不高亮。
-export const applyDialogueHighlightToDom = (root, {
-  documentRef = globalThis.document,
-} = {}) => {
-  if (!root || typeof documentRef?.createElement !== 'function' || typeof documentRef?.createTextNode !== 'function') return 0;
-  const textNodes = [];
-  collectHighlightableTextNodes(root, textNodes);
-  let wrapped = 0;
-  textNodes.forEach((node) => {
-    const parent = node.parentNode;
-    const text = String(node.nodeValue ?? '');
-    if (!parent || !text) return;
-    const segments = segmentDialogueText(text);
-    if (!segments.some(segment => segment.kind === 'dialogue')) return;
-    segments.forEach((segment) => {
-      if (!segment.text) return;
-      if (segment.kind === 'dialogue') {
-        const span = documentRef.createElement('span');
-        span.className = 'rp-dialogue-text';
-        span.textContent = segment.text;
-        parent.insertBefore(span, node);
-      } else {
-        parent.insertBefore(documentRef.createTextNode(segment.text), node);
-      }
-    });
-    parent.removeChild(node);
-    wrapped += 1;
-  });
-  return wrapped;
-};
-
 export const buildDualVoiceSpeechChunks = (value = '', {
   narrationConfig = null,
   dialogueConfig = null,
@@ -138,7 +89,11 @@ export const buildDualVoiceSpeechChunks = (value = '', {
     const config = segment.kind === 'dialogue' ? dialogueConfig : narrationConfig;
     if (!config || !segment.text) return;
     const chunks = splitText(segment.text, { maxChars: resolveMaxChars(config) });
-    chunks.forEach((text) => output.push({ kind: segment.kind, text, config }));
+    chunks.forEach((text) => {
+      const chunkText = String(text ?? '');
+      if (!chunkText.trim()) return;
+      output.push({ kind: segment.kind, text: chunkText, config });
+    });
   });
   return output;
 };

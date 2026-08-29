@@ -1,7 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { createSillyTavernSlashCompat } from '../../src/scripts/ui/chat/sillytavern-slash-compat.js';
+globalThis.localStorage = globalThis.localStorage || {
+  getItem: () => null,
+  setItem: () => {},
+};
+
+const { createSillyTavernSlashCompat } = await import('../../src/scripts/ui/chat/sillytavern-slash-compat.js');
+const { MacroEngine } = await import('../../src/scripts/utils/macro-engine.js');
 
 const createHarness = () => {
   const messages = [];
@@ -53,6 +59,7 @@ const createHarness = () => {
   const sent = [];
   const triggered = [];
   const images = [];
+  const macroEngine = new MacroEngine(chatStore);
   const appBridge = {
     activeSessionId: 's1',
     getChatStore: () => chatStore,
@@ -78,7 +85,7 @@ const createHarness = () => {
       images.push(prompt);
       return true;
     },
-    processTextMacros: text => text,
+    processTextMacros: (text, context = {}) => macroEngine.process(text, context),
     getCurrentWorldId: () => currentWorld,
     setCurrentWorld: id => {
       currentWorld = id;
@@ -115,6 +122,14 @@ test('SillyTavern slash compat supports pipe variables and setinput', async () =
   assert.equal(await h.triggerSlash('/setvar key=i 1 | /addvar key=i 2 | /getvar i | /setinput'), true);
   assert.equal(h.variables.i, '3');
   assert.equal(h.inputEl.value, '3');
+  assert.equal(await h.triggerSlash('/pass [{{var::i}}] | /setinput'), true);
+  assert.equal(h.inputEl.value, '[3]');
+});
+
+test('SillyTavern slash compat delegates lastMessageId empty-chat semantics to MacroEngine', async () => {
+  const h = createHarness();
+  assert.equal(await h.triggerSlash('/pass [{{lastMessageId}}] | /setinput'), true);
+  assert.equal(h.inputEl.value, '[]');
 });
 
 test('SillyTavern slash compat supports sendas sys comment and images', async () => {

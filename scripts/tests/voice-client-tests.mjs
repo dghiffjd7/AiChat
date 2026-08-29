@@ -43,6 +43,8 @@ const decodeMultipart = request => Buffer.from(request.bodyBase64, 'base64').toS
       { id: 'gpt-4o-transcribe-diarize' },
       { id: 'whisper-1' },
       { id: 'gpt-realtime-whisper' },
+      { id: 'gpt-realtime-2.1' },
+      { id: 'gpt-realtime-mini' },
       { id: 'gpt-5.6-luna' },
     ],
   });
@@ -58,6 +60,21 @@ const decodeMultipart = request => Buffer.from(request.bodyBase64, 'base64').toS
     'gpt-transcribe-2026-08-11',
     'gpt-4o-mini-transcribe',
     'gpt-4o-mini-transcribe-2025-12-15',
+    'whisper-1',
+  ]);
+  assert.deepEqual(parseVoiceModelCatalog(catalog, {
+    provider: 'openai',
+    capability: 'realtime',
+  }), ['gpt-realtime-whisper', 'gpt-realtime-2.1', 'gpt-realtime-mini']);
+  assert.deepEqual(parseVoiceModelCatalog(catalog, {
+    provider: 'openai',
+    capability: 'realtime_transcription',
+  }), [
+    'gpt-transcribe',
+    'gpt-transcribe-2026-08-11',
+    'gpt-4o-mini-transcribe',
+    'gpt-4o-mini-transcribe-2025-12-15',
+    'gpt-live-transcribe',
     'whisper-1',
   ]);
   console.log('ok - OpenAI voice model discovery only exposes supported file-transcription contracts');
@@ -188,6 +205,25 @@ const decodeMultipart = request => Buffer.from(request.bodyBase64, 'base64').toS
   assert.doesNotMatch(body, /name="language"\r\n/);
   assert.doesNotMatch(body, /name="response_format"\r\n/);
   console.log('ok - GPT Transcribe uses the current languages array contract');
+}
+
+{
+  const request = buildVoiceTranscriptionRequest({
+    provider: 'openai',
+    baseUrl: 'https://api.openai.com/v1',
+    apiKey: 'openai-test',
+    model: 'gpt-transcribe',
+  }, {
+    audioBytes: new Uint8Array([1, 2, 3, 4]),
+    mimeType: 'audio/wav',
+    language: 'zh,en',
+  });
+  const body = decodeMultipart(request);
+  assert.equal((body.match(/name="languages\[\]"/g) || []).length, 2);
+  assert.match(body, /name="languages\[\]"\r\n\r\nzh/);
+  assert.match(body, /name="languages\[\]"\r\n\r\nen/);
+  assert.doesNotMatch(body, /zh,en/);
+  console.log('ok - GPT Transcribe expands profile language hints into repeated multipart fields');
 }
 
 {

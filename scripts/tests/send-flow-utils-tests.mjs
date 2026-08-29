@@ -513,6 +513,7 @@ test('normalizeHandleSendOptions preserves valid fields and deduplicates exclude
     skipTemplate: true,
     skipScripts: true,
     previewOnly: true,
+    previewSessionId: '  rp:persona-1  ',
     suppressAssistantDom: true,
     createAssistantStream: streamFactory,
     continueTarget,
@@ -526,6 +527,7 @@ test('normalizeHandleSendOptions preserves valid fields and deduplicates exclude
   });
 
   assert.equal(result.overrideTextRaw, '  保留空格  ');
+  assert.equal(result.hasOverrideText, true);
   assert.equal(result.overrideText, '  保留空格  ');
   assert.equal(result.ignorePending, true);
   assert.equal(result.suppressUserMessage, true);
@@ -534,6 +536,7 @@ test('normalizeHandleSendOptions preserves valid fields and deduplicates exclude
   assert.equal(result.skipTemplate, true);
   assert.equal(result.skipScripts, true);
   assert.equal(result.previewOnly, true);
+  assert.equal(result.previewSessionId, 'rp:persona-1');
   assert.equal(result.suppressAssistantDom, true);
   assert.equal(result.assistantStreamFactory, streamFactory);
   assert.equal(result.continueTarget, continueTarget);
@@ -560,6 +563,7 @@ test('normalizeHandleSendOptions falls back safely for invalid payloads', () => 
   });
 
   assert.equal(result.overrideTextRaw, '   ');
+  assert.equal(result.hasOverrideText, true);
   assert.equal(result.overrideText, '');
   assert.equal(result.existingUserMessageId, '');
   assert.equal(result.assistantStreamFactory, null);
@@ -571,6 +575,7 @@ test('normalizeHandleSendOptions falls back safely for invalid payloads', () => 
   assert.equal(result.swipeTarget, null);
   assert.deepEqual(result.excludeMessageIds, []);
   assert.equal(result.previewOnly, false);
+  assert.equal(result.previewSessionId, '');
   assert.equal(result.includeAttachments, true);
 });
 

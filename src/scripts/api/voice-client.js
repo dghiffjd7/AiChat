@@ -119,8 +119,11 @@ const buildMultipart = ({ fields = {}, audioBytes, mimeType, fileName } = {}) =>
   const boundary = `MiPhoneVoice${Date.now().toString(36)}${Math.random().toString(16).slice(2)}`;
   const chunks = [];
   Object.entries(fields).forEach(([name, value]) => {
-    if (value === undefined || value === null || String(value) === '') return;
-    appendMultipartText(chunks, boundary, name, value);
+    const values = Array.isArray(value) ? value : [value];
+    values.forEach((entry) => {
+      if (entry === undefined || entry === null || String(entry) === '') return;
+      appendMultipartText(chunks, boundary, name, entry);
+    });
   });
   appendMultipartFile(chunks, boundary, 'file', {
     bytes: audioBytes instanceof Uint8Array ? audioBytes : new Uint8Array(audioBytes || []),
@@ -135,6 +138,12 @@ const buildMultipart = ({ fields = {}, audioBytes, mimeType, fileName } = {}) =>
     contentType: `multipart/form-data; boundary=${boundary}`,
   };
 };
+
+export const normalizeVoiceTranscriptionLanguages = value => Array.from(new Set(
+  (Array.isArray(value) ? value : String(value || '').split(','))
+    .map(entry => String(entry || '').trim().toLowerCase())
+    .filter(entry => /^[a-z]{2,3}(?:-[a-z]{2})?$/.test(entry)),
+)).slice(0, 8);
 
 export const buildVoiceModelsRequest = (config = {}) => {
   const provider = normalizeProvider(config.provider);
@@ -218,12 +227,14 @@ export const buildVoiceTranscriptionRequest = (config = {}, {
   if (provider === 'openai' && isOpenAiDiarizationModelId(model)) {
     throw new Error('当前录音转文字功能不支持说话人分离模型');
   }
+  const languages = normalizeVoiceTranscriptionLanguages(language);
+  const primaryLanguage = languages[0] || '';
 
   const fields = provider === 'elevenlabs'
-    ? { model_id: model, language_code: language }
+    ? { model_id: model, language_code: primaryLanguage }
     : isGptTranscribeModelId(model)
-      ? { model, 'languages[]': language, prompt }
-      : { model, response_format: 'json', language, prompt };
+      ? { model, 'languages[]': languages, prompt }
+      : { model, response_format: 'json', language: primaryLanguage, prompt };
   const multipart = buildMultipart({
     fields,
     audioBytes,
@@ -306,7 +317,10 @@ export const parseVoiceModelCatalog = (value, {
   capability = 'tts',
 } = {}) => {
   const normalizedProvider = normalizeProvider(provider);
-  const normalizedCapability = String(capability || '').trim().toLowerCase() === 'stt' ? 'stt' : 'tts';
+  const rawCapability = String(capability || '').trim().toLowerCase();
+  const normalizedCapability = ['stt', 'realtime', 'realtime_transcription'].includes(rawCapability)
+    ? rawCapability
+    : 'tts';
   let payload = value;
   if (typeof payload === 'string') {
     try {
@@ -335,6 +349,11 @@ export const parseVoiceModelCatalog = (value, {
   const filtered = records.filter((item) => {
     const id = item.id;
     const isRealtime = /(^|[-_/])realtime($|[-_/])/.test(id.toLowerCase());
+    if (normalizedProvider === 'openai' && normalizedCapability === 'realtime') return isRealtime;
+    if (normalizedProvider === 'openai' && normalizedCapability === 'realtime_transcription') {
+      return isSupportedOpenAiFileTranscriptionModelId(id)
+        || /^gpt-live-transcribe(?:-|$)/i.test(id);
+    }
     if (normalizedProvider === 'custom') return true;
     if (normalizedProvider === 'elevenlabs') {
       if (normalizedCapability === 'tts') return item.can_do_text_to_speech === true;

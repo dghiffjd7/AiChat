@@ -7,6 +7,101 @@ const bindBridgeMethod = (bridge, name) => (
     typeof bridge?.[name] === 'function' ? bridge[name].bind(bridge) : null
 );
 
+const cloneWorldValue = (value) => {
+    try {
+        return structuredClone(value);
+    } catch {
+        return JSON.parse(JSON.stringify(value ?? null));
+    }
+};
+
+const getWorldEntryId = (entry) => String(entry?.id ?? entry?.uid ?? '').trim();
+
+const resolveUniqueWorldEntryId = (candidate, usedIds) => {
+    const base = String(candidate || '').trim() || `entry-${Date.now()}`;
+    if (!usedIds.has(base)) return base;
+    let suffix = 1;
+    while (usedIds.has(`${base}_${suffix}`)) suffix += 1;
+    return `${base}_${suffix}`;
+};
+
+export const buildWorldEntryTransferPlan = (options = {}) => {
+    const {
+        mode = '',
+        sourceWorldId = '',
+        targetWorldId = '',
+        sourceData = null,
+        targetData = null,
+        entryId = '',
+        entryIndex = -1,
+        createEntryId = () => `entry-${Date.now()}`,
+    } = options || {};
+    const action = String(mode || '').trim().toLowerCase();
+    if (action !== 'move' && action !== 'copy') return { ok: false, reason: 'invalid-mode' };
+    const sourceId = String(sourceWorldId || '').trim();
+    const targetId = String(targetWorldId || '').trim();
+    if (!sourceId || !targetId) return { ok: false, reason: 'missing-world' };
+    if (sourceId === targetId) return { ok: false, reason: 'same-world' };
+    if (!sourceData || typeof sourceData !== 'object') return { ok: false, reason: 'source-missing' };
+    if (!targetData || typeof targetData !== 'object') return { ok: false, reason: 'target-missing' };
+    if (Array.isArray(targetData.refs) && targetData.refs.length) {
+        return { ok: false, reason: 'target-reference-world' };
+    }
+
+    const sourceEntries = Array.isArray(sourceData.entries) ? sourceData.entries : [];
+    const requestedEntryId = String(entryId || '').trim();
+    let sourceEntryIndex = requestedEntryId
+        ? sourceEntries.findIndex(entry => getWorldEntryId(entry) === requestedEntryId)
+        : -1;
+    if (!requestedEntryId
+        && Number.isInteger(entryIndex)
+        && entryIndex >= 0
+        && entryIndex < sourceEntries.length) {
+        sourceEntryIndex = entryIndex;
+    }
+    if (sourceEntryIndex < 0) return { ok: false, reason: 'entry-missing' };
+
+    const sourceEntry = sourceEntries[sourceEntryIndex];
+    const originalEntryId = getWorldEntryId(sourceEntry);
+    const targetEntries = Array.isArray(targetData.entries) ? targetData.entries : [];
+    const usedTargetIds = new Set(targetEntries.map(getWorldEntryId).filter(Boolean));
+    const preferredEntryId = action === 'move' && originalEntryId && !usedTargetIds.has(originalEntryId)
+        ? originalEntryId
+        : createEntryId();
+    const transferredEntryId = resolveUniqueWorldEntryId(preferredEntryId, usedTargetIds);
+    const transferredEntry = cloneWorldValue(sourceEntry);
+    transferredEntry.id = transferredEntryId;
+    if (transferredEntryId !== originalEntryId && Object.prototype.hasOwnProperty.call(transferredEntry, 'uid')) {
+        delete transferredEntry.uid;
+    } else if (transferredEntry.uid == null && /^\d+$/.test(transferredEntryId)) {
+        transferredEntry.uid = Number(transferredEntryId);
+    }
+    delete transferredEntry._refSourceId;
+    delete transferredEntry._refWorldId;
+    delete transferredEntry._refEntryId;
+    delete transferredEntry._refEntryIndex;
+
+    const nextSourceEntries = sourceEntries
+        .filter((_, index) => action !== 'move' || index !== sourceEntryIndex)
+        .map(entry => cloneWorldValue(entry));
+    const nextTargetEntries = [
+        ...targetEntries.map(entry => cloneWorldValue(entry)),
+        transferredEntry,
+    ];
+    return {
+        ok: true,
+        mode: action,
+        sourceWorldId: sourceId,
+        targetWorldId: targetId,
+        sourceEntryIndex,
+        originalEntryId,
+        transferredEntryId,
+        transferredEntry,
+        sourceData: { ...cloneWorldValue(sourceData), entries: nextSourceEntries },
+        targetData: { ...cloneWorldValue(targetData), entries: nextTargetEntries },
+    };
+};
+
 export const resolveWorldEditorBridgeContext = (options = {}) => {
     const hasBridge = Object.prototype.hasOwnProperty.call(options || {}, 'bridge');
     const bridge = hasBridge ? options.bridge : getDefaultBridge();

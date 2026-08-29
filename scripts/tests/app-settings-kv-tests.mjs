@@ -73,6 +73,34 @@ const { appSettings } = await import('../../src/scripts/storage/app-settings.js'
 }
 
 {
+  const kvMap = new Map();
+  await appSettings.hydrate({
+    loadKv: async key => kvMap.get(key) || null,
+    saveKv: async (key, data) => { kvMap.set(key, data); },
+  });
+  appSettings.update({
+    realtimeVoiceSettings: {
+      ...appSettings.get().realtimeVoiceSettings,
+      transcriptionLanguage: 'zh,en',
+    },
+  });
+  assert.equal(
+    appSettings.get().realtimeVoiceSettings.transcriptionLanguage,
+    'zh,en',
+    'Realtime 输入语言应独立规范化并保存',
+  );
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.equal(kvMap.get('app_settings_v1')?.realtimeVoiceSettings?.transcriptionLanguage, 'zh,en');
+  const reloadedModule = await import('../../src/scripts/storage/app-settings.js?realtime-language-reload=1');
+  await reloadedModule.appSettings.hydrate({
+    loadKv: async key => kvMap.get(key) || null,
+    saveKv: async () => {},
+  });
+  assert.equal(reloadedModule.appSettings.get().realtimeVoiceSettings.transcriptionLanguage, 'zh,en');
+  console.log('ok - Realtime 输入语言独立保存在 app settings 并可从 KV 恢复');
+}
+
+{
   globalThis.__quotaFull = false;
   const kvMap = new Map();
   await appSettings.hydrate({

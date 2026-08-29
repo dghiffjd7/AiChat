@@ -38,6 +38,11 @@ import {
     normalizeVoiceConnectionMode,
 } from './voice-config-utils.js';
 import { VoiceRegistryPanel } from './voice-registry-panel.js';
+import {
+    OPENAI_REALTIME_VOICES,
+    normalizeRealtimeVoiceSettings,
+    resolveRealtimeConfigReference,
+} from './realtime/realtime-voice-config-utils.js';
 
 const escapeHtml = (value) => String(value ?? '').replace(/[&<>"]/g, (ch) => ({
     '&': '&amp;',
@@ -149,6 +154,7 @@ export class ConfigPanel {
         });
         this.activeTab = 'chat';
         this.voiceConnectionMode = normalizeVoiceConnectionMode(appSettings.get().voiceConnectionMode);
+        this.voiceConfigView = this.voiceConnectionMode;
         this.voiceCapability = 'tts';
         this.configManager = this.chatConfigManager;
         this.element = null;
@@ -157,6 +163,7 @@ export class ConfigPanel {
         this.testButton = null;
         this.modelOptions = [];
         this.voiceModelOptions = { tts: [], stt: [] };
+        this.realtimeVoiceModelOptions = { realtime: [], transcription: [] };
         this.openrouterProviderOptions = [];
         this.openrouterProviderOnly = [];
         this.openrouterProviderModel = '';
@@ -216,6 +223,7 @@ export class ConfigPanel {
         }
         this.refreshProfileOptions();
         this.populateForm(config);
+        if (this.activeTab === 'voice') await this.renderRealtimeVoiceSettings();
         this.updateVoiceRegistrySummary();
         await this.refreshMaidSearchInputs?.();
         this.updateFcCompatibilitySummary();
@@ -264,16 +272,21 @@ export class ConfigPanel {
         this.activeTab = next;
         if (next === 'voice') {
             this.voiceConnectionMode = normalizeVoiceConnectionMode(appSettings.get().voiceConnectionMode);
+            if (this.voiceConfigView !== 'realtime') {
+                this.voiceConfigView = this.voiceConnectionMode;
+            }
         }
         this.configManager = this.getConfigManagerForTab(next);
         this.updateTabUI();
         this.clearModelOptions();
         this.clearVoiceModelOptions();
+        this.clearRealtimeVoiceModelOptions();
         if (skipLoad) return;
         let config = await this.configManager.load();
         if (!config) config = this.configManager.getDefault();
         this.refreshProfileOptions();
         this.populateForm(config);
+        if (next === 'voice') await this.renderRealtimeVoiceSettings();
         this.emitDraftChange();
     }
 
@@ -290,18 +303,35 @@ export class ConfigPanel {
 
     async setVoiceConnectionMode(mode, { skipLoad = false, persist = true } = {}) {
         this.voiceConnectionMode = normalizeVoiceConnectionMode(mode);
+        this.voiceConfigView = this.voiceConnectionMode;
         if (persist) appSettings.update({ voiceConnectionMode: this.voiceConnectionMode });
         if (this.activeTab !== 'voice') return;
         this.configManager = this.getVoiceConfigManager();
         this.updateTabUI();
         this.clearModelOptions();
         this.clearVoiceModelOptions();
+        this.clearRealtimeVoiceModelOptions();
         if (skipLoad) return;
         let config = await this.configManager.load();
         if (!config) config = this.configManager.getDefault();
         this.refreshProfileOptions();
         this.populateForm(config);
         this.emitDraftChange();
+    }
+
+    async setVoiceConfigView(view) {
+        const next = view === 'realtime' ? 'realtime' : normalizeVoiceConnectionMode(view);
+        if (next !== 'realtime') {
+            await this.setVoiceConnectionMode(next);
+            return;
+        }
+        this.voiceConfigView = 'realtime';
+        if (this.activeTab !== 'voice') return;
+        this.updateTabUI();
+        this.clearModelOptions();
+        this.clearVoiceModelOptions();
+        this.clearRealtimeVoiceModelOptions();
+        await this.renderRealtimeVoiceSettings();
     }
 
     async setVoiceCapability(capability, { skipLoad = false } = {}) {
@@ -391,6 +421,8 @@ export class ConfigPanel {
 
     updateTabUI() {
         if (!this.element) return;
+        const realtimeVoiceView = this.activeTab === 'voice' && this.voiceConfigView === 'realtime';
+        this.element.classList.toggle('is-voice-realtime-view', realtimeVoiceView);
         this.refreshProviderOptions();
         const title = this.element.querySelector('#config-title');
         if (title) {
@@ -430,14 +462,15 @@ export class ConfigPanel {
         if (voiceRouting) {
             voiceRouting.style.display = this.activeTab === 'voice' ? 'block' : 'none';
         }
-        this.element.querySelectorAll('[data-voice-connection-mode]').forEach((button) => {
-            const active = button.dataset.voiceConnectionMode === this.voiceConnectionMode;
+        this.element.querySelectorAll('[data-voice-config-view]').forEach((button) => {
+            const active = button.dataset.voiceConfigView === this.voiceConfigView;
             button.classList.toggle('is-active', active);
             button.setAttribute('aria-pressed', String(active));
         });
         const voiceCapabilityTabs = this.element.querySelector('#config-voice-capability-tabs');
         if (voiceCapabilityTabs) {
-            voiceCapabilityTabs.style.display = this.activeTab === 'voice' && this.voiceConnectionMode === 'split'
+            voiceCapabilityTabs.style.display = this.activeTab === 'voice'
+                && this.voiceConfigView === 'split'
                 ? 'grid'
                 : 'none';
         }
@@ -448,25 +481,40 @@ export class ConfigPanel {
         });
         const sharedModels = this.element.querySelector('#config-voice-shared-models');
         if (sharedModels) {
-            sharedModels.style.display = this.activeTab === 'voice' && this.voiceConnectionMode === 'shared'
+            sharedModels.style.display = this.activeTab === 'voice' && this.voiceConfigView === 'shared'
                 ? 'grid'
                 : 'none';
         }
         const voiceTtsSettings = this.element.querySelector('#config-voice-tts-settings');
         if (voiceTtsSettings) {
             voiceTtsSettings.style.display = this.activeTab === 'voice' && (
-                this.voiceConnectionMode === 'shared' || this.voiceCapability === 'tts'
+                this.voiceConfigView === 'shared'
+                || (this.voiceConfigView === 'split' && this.voiceCapability === 'tts')
+            ) ? 'block' : 'none';
+        }
+        const voiceSttLanguageSettings = this.element.querySelector('#config-voice-stt-language-settings');
+        if (voiceSttLanguageSettings) {
+            voiceSttLanguageSettings.style.display = this.activeTab === 'voice' && (
+                this.voiceConfigView === 'shared'
+                || (this.voiceConfigView === 'split' && this.voiceCapability === 'stt')
             ) ? 'block' : 'none';
         }
         const voiceLibraryEntry = this.element.querySelector('#config-voice-library-entry');
         if (voiceLibraryEntry) {
-            voiceLibraryEntry.style.display = this.activeTab === 'voice' && this.voiceRegistryPanel
+            voiceLibraryEntry.style.display = this.activeTab === 'voice'
+                && !realtimeVoiceView
+                && this.voiceRegistryPanel
                 ? 'block'
                 : 'none';
         }
+        const realtimeVoiceCard = this.element.querySelector('#config-voice-realtime-card');
+        if (realtimeVoiceCard) {
+            realtimeVoiceCard.style.display = realtimeVoiceView ? 'block' : 'none';
+        }
         const modelSection = this.element.querySelector('#config-model-section');
         if (modelSection) {
-            modelSection.style.display = this.activeTab === 'voice' && this.voiceConnectionMode === 'shared'
+            modelSection.style.display = this.activeTab === 'voice'
+                && (this.voiceConfigView === 'shared' || realtimeVoiceView)
                 ? 'none'
                 : 'block';
         }
@@ -485,14 +533,17 @@ export class ConfigPanel {
         }
         const refreshModels = this.element.querySelector('#refresh-models');
         if (refreshModels) {
-            refreshModels.style.display = this.activeTab === 'voice' && this.voiceConnectionMode === 'shared'
+            refreshModels.style.display = this.activeTab === 'voice'
+                && (this.voiceConfigView === 'shared' || realtimeVoiceView)
                 ? 'none'
                 : '';
         }
         const streamCard = this.element.querySelector('#config-stream-card');
         if (streamCard) streamCard.style.display = this.activeTab === 'voice' ? 'none' : 'block';
         const testButton = this.element.querySelector('#config-test');
-        if (testButton) testButton.style.display = 'inline-flex';
+        if (testButton) testButton.style.display = realtimeVoiceView ? 'none' : 'inline-flex';
+        const saveButton = this.element.querySelector('#config-save');
+        if (saveButton) saveButton.style.display = realtimeVoiceView ? 'none' : 'inline-flex';
         this.updateVoiceTtsSettings(this.element.querySelector('#config-provider')?.value || 'openai');
     }
 
@@ -581,18 +632,22 @@ export class ConfigPanel {
                 <section id="config-voice-routing" class="api-config-voice-routing" style="display:none;">
                     <div class="api-config-voice-routing-heading">
                         <div>
-                            <strong>连接方式</strong>
-                            <small>共用连接只复用服务商、地址与 API Key，TTS / STT 模型仍分别设置</small>
+                            <strong>语音配置</strong>
+                            <small>朗读/转写与实时通话彼此独立；切换分页不会改动另一类配置</small>
                         </div>
                     </div>
-                    <div class="api-config-voice-mode-grid" role="group" aria-label="TTS 与 STT 连接方式">
-                        <button type="button" class="api-config-voice-mode is-active" data-voice-connection-mode="shared" aria-pressed="true">
+                    <div class="api-config-voice-mode-grid has-realtime" role="group" aria-label="语音配置类型">
+                        <button type="button" class="api-config-voice-mode is-active" data-voice-config-view="shared" data-voice-connection-mode="shared" aria-pressed="true">
                             <strong>共用连接</strong>
                             <small>同一服务商与凭证</small>
                         </button>
-                        <button type="button" class="api-config-voice-mode" data-voice-connection-mode="split" aria-pressed="false">
+                        <button type="button" class="api-config-voice-mode" data-voice-config-view="split" data-voice-connection-mode="split" aria-pressed="false">
                             <strong>分别配置</strong>
                             <small>TTS / STT 可用不同服务</small>
+                        </button>
+                        <button type="button" class="api-config-voice-mode" data-voice-config-view="realtime" aria-pressed="false">
+                            <strong>实时通话</strong>
+                            <small>持续双向语音</small>
                         </button>
                     </div>
                     <div id="config-voice-capability-tabs" class="api-config-voice-capability-tabs" style="display:none;" role="group" aria-label="语音能力">
@@ -776,6 +831,23 @@ export class ConfigPanel {
                     <small class="api-config-voice-ai-disclosure">朗读内容使用 AI 合成语音，并非真人发声。</small>
                 </div>
 
+                <div id="config-voice-stt-language-settings" class="api-config-field" style="display:none;">
+                    <label class="api-config-field-label" for="config-voice-stt-language">输入识别语言</label>
+                    <select id="config-voice-stt-language" style="display:none;">
+                        <option value="">自动识别</option>
+                        <option value="zh">普通话／中文</option>
+                        <option value="zh,en">中文 + 英文</option>
+                        <option value="en">英文</option>
+                        <option value="ja">日文</option>
+                        <option value="ko">韩文</option>
+                    </select>
+                    <button type="button" id="config-voice-stt-language-btn" class="world-app-select-btn" data-select-id="config-voice-stt-language">
+                        <span class="config-custom-select-label">自动识别</span>
+                        <span class="world-app-select-btn-chevron">${API_CONFIG_ICONS.chevronDown}</span>
+                    </button>
+                    <small>保存在当前连线档；普通录音转写会沿用此语言提示。</small>
+                </div>
+
                 <div id="config-voice-library-entry" class="api-config-field" style="display:none;">
                     <button type="button" id="open-voice-library" class="api-config-row-card">
                         <span class="api-config-row-main">
@@ -788,6 +860,88 @@ export class ConfigPanel {
                         ${API_CONFIG_ICONS.chevronRight}
                     </button>
                 </div>
+
+                <section id="config-voice-realtime-card" class="api-config-realtime-card" style="display:none;">
+                    <div class="api-config-realtime-heading">
+                        <span class="api-config-row-icon">${API_CONFIG_ICONS.cable}</span>
+                        <div>
+                            <strong>OpenAI 实时语音通话</strong>
+                            <small>创意写作与私聊可持续双向通话；沿用既有 OpenAI 设置档与 Key</small>
+                        </div>
+                    </div>
+                    <div class="api-config-realtime-grid">
+                        <label class="api-config-realtime-field is-wide">
+                            <span>OpenAI 连线设置档</span>
+                            <select id="config-realtime-profile"></select>
+                            <small>只列出官方 OpenAI 设置档；不会复制保存 API Key</small>
+                        </label>
+                        <div class="api-config-realtime-field">
+                            <label class="api-config-field-label" for="config-realtime-model">
+                                <span>Realtime 模型</span>
+                                <button type="button" id="refresh-realtime-models" class="api-config-refresh-action">
+                                    ${API_CONFIG_ICONS.refresh}<span>刷新列表</span>
+                                </button>
+                            </label>
+                            <div class="api-config-model-picker">
+                                <input type="text" id="config-realtime-model" placeholder="gpt-realtime-2.1" autocomplete="off">
+                                <div id="realtime-model-options" class="api-config-model-options" aria-label="可用 Realtime 模型列表" style="display:none;"></div>
+                            </div>
+                            <small>负责持续理解语音并生成角色回复</small>
+                        </div>
+                        <div class="api-config-realtime-field">
+                            <label class="api-config-field-label" for="config-realtime-transcription-model">
+                                <span>输入转写模型</span>
+                                <button type="button" id="refresh-realtime-transcription-models" class="api-config-refresh-action">
+                                    ${API_CONFIG_ICONS.refresh}<span>刷新列表</span>
+                                </button>
+                            </label>
+                            <div class="api-config-model-picker">
+                                <input type="text" id="config-realtime-transcription-model" placeholder="gpt-4o-mini-transcribe" autocomplete="off">
+                                <div id="realtime-transcription-model-options" class="api-config-model-options" aria-label="可用输入转写模型列表" style="display:none;"></div>
+                            </div>
+                            <small>负责把用户语音转成可保存的文字记录</small>
+                        </div>
+                        <div class="api-config-realtime-field">
+                            <span>输入识别语言</span>
+                            <select id="config-realtime-transcription-language" style="display:none;">
+                                <option value="">自动识别</option>
+                                <option value="zh">普通话／中文</option>
+                                <option value="zh,en">中文 + 英文</option>
+                                <option value="en">英文</option>
+                                <option value="ja">日文</option>
+                                <option value="ko">韩文</option>
+                            </select>
+                            <button type="button" id="config-realtime-transcription-language-btn" class="world-app-select-btn" data-select-id="config-realtime-transcription-language">
+                                <span class="config-custom-select-label">自动识别</span>
+                                <span class="world-app-select-btn-chevron">${API_CONFIG_ICONS.chevronDown}</span>
+                            </button>
+                            <small>保存在 Realtime 设置中，不影响普通录音转写</small>
+                        </div>
+                        <label class="api-config-realtime-field">
+                            <span>声音</span>
+                            <select id="config-realtime-voice">
+                                ${OPENAI_REALTIME_VOICES.map(voice => `<option value="${voice}">${voice}</option>`).join('')}
+                            </select>
+                        </label>
+                        <label class="api-config-realtime-field">
+                            <span>停顿判定</span>
+                            <select id="config-realtime-vad-mode">
+                                <option value="server_vad">Server VAD</option>
+                                <option value="semantic_vad">Semantic VAD</option>
+                            </select>
+                        </label>
+                        <label class="api-config-realtime-field">
+                            <span>静音挂断（分钟）</span>
+                            <input id="config-realtime-idle-timeout" type="number" min="1" max="30" step="1">
+                        </label>
+                    </div>
+                    <div class="api-config-realtime-actions">
+                        <button type="button" id="config-realtime-save" class="api-config-text-action is-primary">
+                            ${API_CONFIG_ICONS.save}<span>保存实时通话</span>
+                        </button>
+                    </div>
+                    <small id="config-realtime-status" class="api-config-realtime-status">输入与输出音频会发送给 OpenAI；转写模型会独立计费。</small>
+                </section>
 
                 <div id="config-model-section" class="api-config-field" data-maid-guide-target="config-model-section">
                     <label class="api-config-field-label">
@@ -991,9 +1145,9 @@ export class ConfigPanel {
                 await this.setActiveTab(tab);
             });
         });
-        this.element.querySelectorAll('[data-voice-connection-mode]').forEach((button) => {
+        this.element.querySelectorAll('[data-voice-config-view]').forEach((button) => {
             button.addEventListener('click', async () => {
-                await this.setVoiceConnectionMode(button.dataset.voiceConnectionMode);
+                await this.setVoiceConfigView(button.dataset.voiceConfigView);
             });
         });
         this.element.querySelectorAll('[data-voice-capability]').forEach((button) => {
@@ -1167,6 +1321,9 @@ export class ConfigPanel {
             this.emitDraftChange();
             this.renderVoiceModelOptions('stt', this.voiceModelOptions.stt);
         });
+        this.element.querySelector('#config-voice-stt-language')?.addEventListener('change', () => {
+            this.emitDraftChange();
+        });
         this.element.querySelector('#refresh-voice-tts-models')?.addEventListener('click', () => {
             void this.refreshVoiceModels('tts');
         });
@@ -1188,6 +1345,21 @@ export class ConfigPanel {
         });
         this.element.querySelector('#open-voice-library')?.addEventListener('click', () => {
             void this.voiceRegistryPanel?.show?.();
+        });
+        this.element.querySelector('#config-realtime-model')?.addEventListener('input', () => {
+            this.renderRealtimeVoiceModelOptions('realtime', this.realtimeVoiceModelOptions.realtime);
+        });
+        this.element.querySelector('#config-realtime-transcription-model')?.addEventListener('input', () => {
+            this.renderRealtimeVoiceModelOptions('transcription', this.realtimeVoiceModelOptions.transcription);
+        });
+        this.element.querySelector('#refresh-realtime-models')?.addEventListener('click', () => {
+            void this.refreshRealtimeVoiceModels('realtime');
+        });
+        this.element.querySelector('#refresh-realtime-transcription-models')?.addEventListener('click', () => {
+            void this.refreshRealtimeVoiceModels('transcription');
+        });
+        this.element.querySelector('#config-realtime-save')?.addEventListener('click', () => {
+            void this.saveRealtimeVoiceSettings();
         });
         this.element.querySelector('#config-baseurl')?.addEventListener('input', () => this.emitDraftChange());
 
@@ -1354,7 +1526,7 @@ export class ConfigPanel {
     }
 
     refreshAllCustomSelects() {
-        ['config-profile', 'config-provider', 'config-vertex-auth-mode', 'config-region', 'config-ollama-mode', 'config-kimi-region', 'config-transport-mode', 'config-prompt-post-processing'].forEach((id) => this.refreshCustomSelect(id));
+        ['config-profile', 'config-provider', 'config-vertex-auth-mode', 'config-region', 'config-ollama-mode', 'config-kimi-region', 'config-transport-mode', 'config-prompt-post-processing', 'config-voice-stt-language', 'config-realtime-transcription-language'].forEach((id) => this.refreshCustomSelect(id));
     }
 
     bindCustomSelect(selectId) {
@@ -1390,7 +1562,7 @@ export class ConfigPanel {
     }
 
     initCustomSelects() {
-        ['config-profile', 'config-provider', 'config-vertex-auth-mode', 'config-region', 'config-ollama-mode', 'config-kimi-region', 'config-transport-mode', 'config-prompt-post-processing'].forEach((id) => this.bindCustomSelect(id));
+        ['config-profile', 'config-provider', 'config-vertex-auth-mode', 'config-region', 'config-ollama-mode', 'config-kimi-region', 'config-transport-mode', 'config-prompt-post-processing', 'config-voice-stt-language', 'config-realtime-transcription-language'].forEach((id) => this.bindCustomSelect(id));
         this.refreshAllCustomSelects();
     }
 
@@ -1991,6 +2163,62 @@ export class ConfigPanel {
         });
     }
 
+    clearRealtimeVoiceModelOptions(kind = null) {
+        const panel = this.element || document;
+        const kinds = kind === 'realtime' || kind === 'transcription'
+            ? [kind]
+            : ['realtime', 'transcription'];
+        kinds.forEach((name) => {
+            const container = panel.querySelector(`#realtime-${name === 'realtime' ? 'model' : 'transcription-model'}-options`);
+            if (container) {
+                container.innerHTML = '';
+                container.style.display = 'none';
+            }
+            this.realtimeVoiceModelOptions[name] = [];
+        });
+    }
+
+    renderRealtimeVoiceModelOptions(kind, models = []) {
+        const normalized = kind === 'transcription' ? 'transcription' : 'realtime';
+        const panel = this.element || document;
+        const input = panel.querySelector(normalized === 'realtime'
+            ? '#config-realtime-model'
+            : '#config-realtime-transcription-model');
+        const container = panel.querySelector(normalized === 'realtime'
+            ? '#realtime-model-options'
+            : '#realtime-transcription-model-options');
+        if (!input || !container) return;
+        if (!models.length) {
+            this.clearRealtimeVoiceModelOptions(normalized);
+            return;
+        }
+
+        this.realtimeVoiceModelOptions[normalized] = Array.from(models);
+        const query = String(input.value || '').trim();
+        const normalizedQuery = query.toLowerCase();
+        const rankedModels = rankModelCandidates(this.realtimeVoiceModelOptions[normalized], query);
+        container.innerHTML = '';
+        container.style.display = 'flex';
+        rankedModels.forEach((modelId) => {
+            const normalizedModelId = String(modelId).toLowerCase();
+            const isMatch = Boolean(normalizedQuery && normalizedModelId.includes(normalizedQuery));
+            const isSelected = String(input.value || '').trim() === modelId;
+            const chip = document.createElement('button');
+            chip.textContent = modelId;
+            chip.type = 'button';
+            chip.className = 'api-config-model-chip';
+            chip.classList.toggle('is-match', isMatch);
+            chip.classList.toggle('is-selected', isSelected);
+            chip.ariaPressed = String(isSelected);
+            chip.title = isMatch ? `匹配“${query}”` : modelId;
+            chip.onclick = () => {
+                input.value = modelId;
+                input.dispatchEvent(new Event('input', { bubbles: true }));
+            };
+            container.appendChild(chip);
+        });
+    }
+
     renderModelOptions(models = []) {
         if (this.modelFilterDebounceTimer !== null) {
             clearTimeout(this.modelFilterDebounceTimer);
@@ -2206,6 +2434,7 @@ export class ConfigPanel {
         const modelEl = panel.querySelector('#config-model');
         const ttsModelEl = panel.querySelector('#config-voice-tts-model');
         const sttModelEl = panel.querySelector('#config-voice-stt-model');
+        const sttLanguageEl = panel.querySelector('#config-voice-stt-language');
         const ttsVoiceEl = panel.querySelector('#config-voice-tts-voice');
         const streamEl = panel.querySelector('#config-stream');
         const webSearchEl = panel.querySelector('#config-web-search');
@@ -2263,6 +2492,7 @@ export class ConfigPanel {
             sttModelEl.value = config.sttModel || providerDefaults.sttModel || '';
             sttModelEl.placeholder = providerDefaults.sttModel || 'stt-model';
         }
+        if (sttLanguageEl) sttLanguageEl.value = config.sttLanguage || '';
         if (ttsVoiceEl) {
             ttsVoiceEl.value = config.ttsVoice || providerDefaults.ttsVoice || '';
             ttsVoiceEl.placeholder = providerDefaults.ttsVoice || 'Voice ID';
@@ -2725,11 +2955,14 @@ export class ConfigPanel {
             if (this.voiceConnectionMode === 'shared') {
                 formData.ttsModel = (panel.querySelector('#config-voice-tts-model')?.value || '').trim();
                 formData.sttModel = (panel.querySelector('#config-voice-stt-model')?.value || '').trim();
+                formData.sttLanguage = (panel.querySelector('#config-voice-stt-language')?.value || '').trim();
                 formData.ttsVoice = (panel.querySelector('#config-voice-tts-voice')?.value || '').trim();
                 // ConfigManager 的通用运行时仍保留 model；语音运行时会分别读取 ttsModel / sttModel。
                 formData.model = formData.ttsModel;
             } else if (this.voiceCapability === 'tts') {
                 formData.ttsVoice = (panel.querySelector('#config-voice-tts-voice')?.value || '').trim();
+            } else {
+                formData.sttLanguage = (panel.querySelector('#config-voice-stt-language')?.value || '').trim();
             }
         }
 
@@ -3240,6 +3473,184 @@ export class ConfigPanel {
     /**
      * 刷新模型列表
      */
+    getRealtimeVoiceManagers() {
+        return {
+            chat: this.chatConfigManager,
+            voice_shared: this.voiceSharedConfigManager,
+            voice_tts: this.voiceTtsConfigManager,
+            voice_stt: this.voiceSttConfigManager,
+        };
+    }
+
+    setRealtimeVoiceStatus(message = '', type = '') {
+        const element = this.element?.querySelector?.('#config-realtime-status');
+        if (!element) return;
+        element.textContent = String(message || '');
+        element.dataset.type = String(type || '');
+    }
+
+    readRealtimeVoiceForm() {
+        const panel = this.element;
+        const profileValue = String(panel?.querySelector?.('#config-realtime-profile')?.value || '');
+        const separator = profileValue.indexOf('::');
+        const scope = separator >= 0 ? profileValue.slice(0, separator) : 'voice_shared';
+        const profileId = separator >= 0 ? profileValue.slice(separator + 2) : '';
+        return normalizeRealtimeVoiceSettings({
+            ...appSettings.get().realtimeVoiceSettings,
+            configRef: { scope, profileId },
+            realtimeModel: panel?.querySelector?.('#config-realtime-model')?.value,
+            transcriptionModel: panel?.querySelector?.('#config-realtime-transcription-model')?.value,
+            transcriptionLanguage: panel?.querySelector?.('#config-realtime-transcription-language')?.value,
+            voice: panel?.querySelector?.('#config-realtime-voice')?.value,
+            vad: {
+                ...(appSettings.get().realtimeVoiceSettings?.vad || {}),
+                mode: panel?.querySelector?.('#config-realtime-vad-mode')?.value,
+            },
+            idleTimeoutMinutes: panel?.querySelector?.('#config-realtime-idle-timeout')?.value,
+        });
+    }
+
+    async getRealtimeVoiceProfileOptions() {
+        const labels = {
+            chat: '聊天模型',
+            voice_shared: '语音共用',
+            voice_tts: 'TTS',
+            voice_stt: 'STT',
+        };
+        const managers = this.getRealtimeVoiceManagers();
+        await Promise.all(Object.values(managers).map(async manager => {
+            try { await manager.load(); } catch {}
+        }));
+        const options = [];
+        Object.entries(managers).forEach(([scope, manager]) => {
+            const profiles = Array.isArray(manager.getProfiles?.()) ? manager.getProfiles() : [];
+            profiles.forEach(profile => {
+                if (String(profile?.provider || '').trim().toLowerCase() !== 'openai') return;
+                options.push({
+                    value: `${scope}::${profile.id}`,
+                    label: `${labels[scope]} · ${profile.name || '未命名设置档'}`,
+                });
+            });
+        });
+        return options;
+    }
+
+    async renderRealtimeVoiceSettings() {
+        if (!this.element) return;
+        const settings = normalizeRealtimeVoiceSettings(appSettings.get().realtimeVoiceSettings);
+        const profileSelect = this.element.querySelector('#config-realtime-profile');
+        const options = await this.getRealtimeVoiceProfileOptions();
+        if (profileSelect) {
+            profileSelect.innerHTML = options.length
+                ? options.map(option => `<option value="${escapeHtml(option.value)}">${escapeHtml(option.label)}</option>`).join('')
+                : '<option value="">暂无可用的 OpenAI 设置档</option>';
+            const selected = `${settings.configRef.scope}::${settings.configRef.profileId}`;
+            profileSelect.value = options.some(option => option.value === selected)
+                ? selected
+                : (options[0]?.value || '');
+        }
+        const setValue = (selector, value) => {
+            const input = this.element.querySelector(selector);
+            if (input?.tagName === 'SELECT' && value && !Array.from(input.options || []).some(option => option.value === String(value))) {
+                input.add(new Option(String(value), String(value)));
+            }
+            if (input) input.value = String(value ?? '');
+        };
+        setValue('#config-realtime-model', settings.realtimeModel);
+        setValue('#config-realtime-transcription-model', settings.transcriptionModel);
+        setValue('#config-realtime-transcription-language', settings.transcriptionLanguage);
+        setValue('#config-realtime-voice', settings.voice);
+        setValue('#config-realtime-vad-mode', settings.vad.mode);
+        setValue('#config-realtime-idle-timeout', settings.idleTimeoutMinutes);
+        this.refreshCustomSelect('config-realtime-transcription-language');
+        this.setRealtimeVoiceStatus(options.length
+            ? '输入与输出音频会发送给 OpenAI；转写模型会独立计费。'
+            : '请先建立并保存一个官方 OpenAI 连线设置档。', options.length ? '' : 'warning');
+    }
+
+    async saveRealtimeVoiceSettings() {
+        const settings = this.readRealtimeVoiceForm();
+        const resolved = await resolveRealtimeConfigReference({
+            settings,
+            managers: this.getRealtimeVoiceManagers(),
+        });
+        if (!resolved.ok) {
+            const messages = {
+                profile_missing: '请选择 OpenAI 连线设置档',
+                profile_not_found: '所选设置档已不存在，请重新选择',
+                provider_not_openai: '实时通话首版只支持官方 OpenAI 设置档',
+                api_key_missing: '所选设置档没有可用 API Key',
+                base_url_not_official: '实时通话首版只支持 OpenAI 官方 API 地址',
+                scope_unavailable: '无法读取所选设置档',
+                realtime_model_invalid: '请选择有效的 OpenAI Realtime 模型',
+                transcription_model_invalid: '请选择有效的输入转写模型',
+            };
+            this.setRealtimeVoiceStatus(messages[resolved.reason] || '实时通话配置无效', 'error');
+            return false;
+        }
+        appSettings.update({ realtimeVoiceSettings: settings });
+        this.setRealtimeVoiceStatus('实时通话设置已保存', 'success');
+        try {
+            window.dispatchEvent(new CustomEvent('realtime-voice-settings-changed', { detail: { settings } }));
+        } catch {}
+        return true;
+    }
+
+    async refreshRealtimeVoiceModels(kind = 'all') {
+        const normalizedKind = kind === 'realtime' || kind === 'transcription' ? kind : 'all';
+        const targets = normalizedKind === 'all'
+            ? ['realtime', 'transcription']
+            : [normalizedKind];
+        const buttons = targets.map((target) => this.element?.querySelector?.(target === 'realtime'
+            ? '#refresh-realtime-models'
+            : '#refresh-realtime-transcription-models')).filter(Boolean);
+        const settings = this.readRealtimeVoiceForm();
+        buttons.forEach((button) => {
+            button.disabled = true;
+            setApiButtonContent(button, API_CONFIG_ICONS.loader, '刷新中...');
+        });
+        this.setRealtimeVoiceStatus(
+            normalizedKind === 'realtime'
+                ? '正在读取 OpenAI Realtime 模型...'
+                : normalizedKind === 'transcription'
+                    ? '正在读取 OpenAI 输入转写模型...'
+                    : '正在读取 OpenAI 可用模型...',
+            '',
+        );
+        try {
+            const resolved = await resolveRealtimeConfigReference({
+                settings,
+                managers: this.getRealtimeVoiceManagers(),
+            });
+            if (!resolved.ok) throw new Error('请先选择具备 API Key 的 OpenAI 官方设置档');
+            const client = new VoiceClient();
+            const results = await Promise.all(targets.map(async (target) => {
+                const models = await client.listModels(resolved.config, {
+                    capability: target === 'realtime' ? 'realtime' : 'realtime_transcription',
+                });
+                if (!models.length) {
+                    throw new Error(target === 'realtime'
+                        ? '目录中没有可用 Realtime 模型'
+                        : '目录中没有可用输入转写模型');
+                }
+                return [target, models];
+            }));
+            if (this.activeTab !== 'voice' || this.voiceConfigView !== 'realtime') return;
+            results.forEach(([target, models]) => this.renderRealtimeVoiceModelOptions(target, models));
+            const counts = Object.fromEntries(results.map(([target, models]) => [target, models.length]));
+            this.setRealtimeVoiceStatus(normalizedKind === 'all'
+                ? `已加载 ${counts.realtime} 个 Realtime、${counts.transcription} 个转写模型`
+                : `已加载 ${counts[normalizedKind]} 个${normalizedKind === 'realtime' ? ' Realtime' : '输入转写'}模型`, 'success');
+        } catch (error) {
+            this.setRealtimeVoiceStatus(`刷新失败：${error.message}`, 'error');
+        } finally {
+            buttons.forEach((button) => {
+                setApiButtonContent(button, API_CONFIG_ICONS.refresh, '刷新列表');
+                button.disabled = false;
+            });
+        }
+    }
+
     async refreshVoiceModels(capability = this.voiceCapability) {
         const normalized = normalizeVoiceCapability(capability);
         const shared = this.voiceConnectionMode === 'shared';

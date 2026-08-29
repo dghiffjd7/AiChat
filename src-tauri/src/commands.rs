@@ -4271,6 +4271,189 @@ pub async fn http_request(
     }
 }
 
+fn validate_openai_realtime_call_input(
+    base_url: &str,
+    api_key: &str,
+    sdp: &str,
+    session_json: &str,
+) -> Result<(String, String), String> {
+    let normalized_base = base_url.trim().trim_end_matches('/');
+    if normalized_base != "https://api.openai.com/v1" {
+        return Err(
+            "OpenAI Realtime requires the official https://api.openai.com/v1 endpoint".to_string(),
+        );
+    }
+    let key = api_key.trim();
+    if key.is_empty() || key.len() > 1024 {
+        return Err("OpenAI Realtime API key is missing or invalid".to_string());
+    }
+    let offer = sdp.trim();
+    if offer.is_empty() || offer.len() > 1_000_000 || !offer.starts_with("v=0") {
+        return Err("OpenAI Realtime SDP offer is invalid".to_string());
+    }
+    if session_json.len() > 256_000 {
+        return Err("OpenAI Realtime session config is too large".to_string());
+    }
+    let session: Value = serde_json::from_str(session_json)
+        .map_err(|_| "OpenAI Realtime session config is invalid JSON".to_string())?;
+    if session.get("type").and_then(Value::as_str) != Some("realtime") {
+        return Err("OpenAI Realtime session config has an invalid type".to_string());
+    }
+    if session
+        .get("model")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .unwrap_or("")
+        .is_empty()
+    {
+        return Err("OpenAI Realtime session config has no model".to_string());
+    }
+    Ok((format!("{normalized_base}/realtime/calls"), key.to_string()))
+}
+
+fn sanitize_openai_realtime_error(body: &str) -> String {
+    let trimmed = body.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+    let message = serde_json::from_str::<Value>(trimmed)
+        .ok()
+        .and_then(|value| {
+            value
+                .get("error")
+                .and_then(|error| error.get("message"))
+                .or_else(|| value.get("message"))
+                .and_then(Value::as_str)
+                .map(str::to_string)
+        })
+        .unwrap_or_else(|| trimmed.to_string());
+    message.chars().take(400).collect()
+}
+
+fn build_openai_realtime_call_form(
+    sdp: String,
+    session_json: String,
+) -> Result<reqwest::multipart::Form, String> {
+    let sdp_part = reqwest::multipart::Part::text(sdp)
+        .mime_str("application/sdp")
+        .map_err(|_| "OpenAI Realtime multipart encoding failed".to_string())?;
+    let session_part = reqwest::multipart::Part::text(session_json)
+        .mime_str("application/json")
+        .map_err(|_| "OpenAI Realtime multipart encoding failed".to_string())?;
+    Ok(reqwest::multipart::Form::new()
+        .part("sdp", sdp_part)
+        .part("session", session_part))
+}
+
+fn validate_openai_realtime_sdp_answer(body: String) -> Result<String, String> {
+    if body.is_empty() || body.len() > 1_000_000 || !body.starts_with("v=0") {
+        return Err("OpenAI Realtime returned an invalid SDP answer".to_string());
+    }
+    Ok(body)
+}
+
+/// Creates one OpenAI Realtime WebRTC call through the unified multipart endpoint.
+/// The API key and SDP are consumed only by this native request and never logged.
+async fn execute_openai_realtime_call(
+    url: String,
+    key: String,
+    sdp: String,
+    session_json: String,
+    timeout: std::time::Duration,
+) -> Result<String, String> {
+    let client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .connect_timeout(timeout)
+        .timeout(timeout)
+        .build()
+        .map_err(|_| "OpenAI Realtime native client initialization failed".to_string())?;
+    let form = build_openai_realtime_call_form(sdp, session_json)?;
+    let response = client
+        .post(url)
+        .bearer_auth(key)
+        .multipart(form)
+        .send()
+        .await
+        .map_err(|error| {
+            if error.is_timeout() {
+                "OpenAI Realtime connection timed out".to_string()
+            } else {
+                "OpenAI Realtime connection failed".to_string()
+            }
+        })?;
+    let status = response.status();
+    let body = response
+        .text()
+        .await
+        .map_err(|_| "OpenAI Realtime response could not be read".to_string())?;
+    if !status.is_success() {
+        let detail = sanitize_openai_realtime_error(&body);
+        return Err(if detail.is_empty() {
+            format!("OpenAI Realtime session failed (HTTP {})", status.as_u16())
+        } else {
+            format!(
+                "OpenAI Realtime session failed (HTTP {}): {detail}",
+                status.as_u16()
+            )
+        });
+    }
+    validate_openai_realtime_sdp_answer(body)
+}
+
+async fn await_abortable_realtime_task<T: Send + 'static>(
+    task: tokio::task::JoinHandle<Result<T, String>>,
+    request_key: Option<String>,
+    abort_handles: Arc<Mutex<HashMap<String, tokio::task::AbortHandle>>>,
+) -> Result<T, String> {
+    if let Some(key) = request_key.clone() {
+        let abort_handle = task.abort_handle();
+        let mut map = abort_handles
+            .lock()
+            .map_err(|_| "http abort state lock poisoned".to_string())?;
+        if let Some(previous) = map.insert(key, abort_handle) {
+            previous.abort();
+        }
+    }
+    let joined = task.await;
+    if let Some(key) = request_key {
+        if let Ok(mut map) = abort_handles.lock() {
+            map.remove(&key);
+        }
+    }
+    match joined {
+        Ok(result) => result,
+        Err(error) if error.is_cancelled() => Err("aborted".to_string()),
+        Err(error) => Err(error.to_string()),
+    }
+}
+
+#[tauri::command]
+pub async fn openai_realtime_create_call(
+    base_url: String,
+    api_key: String,
+    sdp: String,
+    session_json: String,
+    timeout_ms: Option<u64>,
+    request_id: Option<String>,
+    abort_state: State<'_, HttpAbortState>,
+) -> Result<String, String> {
+    let (url, key) = validate_openai_realtime_call_input(&base_url, &api_key, &sdp, &session_json)?;
+    let request_key = match request_id {
+        Some(raw) => Some(validate_safe_key(&raw, "request_id")?),
+        None => None,
+    };
+    let timeout =
+        std::time::Duration::from_millis(timeout_ms.unwrap_or(30_000).clamp(5_000, 60_000));
+    let task = tokio::spawn(execute_openai_realtime_call(
+        url,
+        key,
+        sdp,
+        session_json,
+        timeout,
+    ));
+    await_abortable_realtime_task(task, request_key, abort_state.inner.clone()).await
+}
+
 fn describe_http_stream_error(e: &reqwest::Error) -> String {
     use std::error::Error as _;
     let mut msg = e.to_string();
@@ -4644,6 +4827,188 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
+    fn openai_realtime_call_contract_accepts_only_official_valid_inputs() {
+        let valid_session = r#"{"type":"realtime","model":"gpt-realtime-2.1"}"#;
+        let valid = validate_openai_realtime_call_input(
+            "https://api.openai.com/v1/",
+            "sk-test",
+            "v=0\r\no=- 0 0 IN IP4 127.0.0.1",
+            valid_session,
+        )
+        .unwrap();
+        assert_eq!(valid.0, "https://api.openai.com/v1/realtime/calls");
+        assert_eq!(valid.1, "sk-test");
+
+        assert!(validate_openai_realtime_call_input(
+            "https://example.com/v1",
+            "sk-test",
+            "v=0\r\n",
+            valid_session,
+        )
+        .is_err());
+        assert!(validate_openai_realtime_call_input(
+            "https://api.openai.com/v1",
+            "",
+            "v=0\r\n",
+            valid_session,
+        )
+        .is_err());
+        assert!(validate_openai_realtime_call_input(
+            "https://api.openai.com/v1",
+            "sk-test",
+            "not-sdp",
+            valid_session,
+        )
+        .is_err());
+        assert!(validate_openai_realtime_call_input(
+            "https://api.openai.com/v1",
+            "sk-test",
+            "v=0\r\n",
+            r#"{"type":"transcription","model":"gpt-realtime-2.1"}"#,
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn openai_realtime_multipart_preserves_sdp_and_part_content_types() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            stream
+                .set_read_timeout(Some(std::time::Duration::from_secs(5)))
+                .unwrap();
+            let mut request = Vec::new();
+            let mut buffer = [0_u8; 4096];
+            loop {
+                let count = stream.read(&mut buffer).unwrap();
+                if count == 0 {
+                    break;
+                }
+                request.extend_from_slice(&buffer[..count]);
+                let Some(header_end) = request.windows(4).position(|part| part == b"\r\n\r\n")
+                else {
+                    continue;
+                };
+                let headers = String::from_utf8_lossy(&request[..header_end]);
+                let content_length = headers.lines().find_map(|line| {
+                    let (name, value) = line.split_once(':')?;
+                    name.eq_ignore_ascii_case("content-length")
+                        .then(|| value.trim().parse::<usize>().ok())
+                        .flatten()
+                });
+                if content_length.is_some_and(|length| request.len() >= header_end + 4 + length) {
+                    break;
+                }
+            }
+            stream
+                .write_all(
+                    b"HTTP/1.1 201 Created\r\nContent-Type: application/sdp\r\nContent-Length: 5\r\nConnection: close\r\n\r\nv=0\r\n",
+                )
+                .unwrap();
+            String::from_utf8(request).unwrap()
+        });
+
+        let sdp = "v=0\r\no=fake-offer\r\n";
+        let session_json = r#"{"type":"realtime","model":"gpt-realtime-2.1"}"#;
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        runtime.block_on(async {
+            reqwest::Client::new()
+                .post(format!("http://{address}"))
+                .multipart(
+                    build_openai_realtime_call_form(sdp.to_string(), session_json.to_string())
+                        .unwrap(),
+                )
+                .send()
+                .await
+                .unwrap();
+        });
+
+        let request = server.join().unwrap();
+        assert!(request.contains(
+            "Content-Disposition: form-data; name=\"sdp\"\r\nContent-Type: application/sdp\r\n\r\nv=0\r\no=fake-offer\r\n"
+        ));
+        assert!(request.contains(
+            "Content-Disposition: form-data; name=\"session\"\r\nContent-Type: application/json\r\n\r\n{\"type\":\"realtime\",\"model\":\"gpt-realtime-2.1\"}"
+        ));
+    }
+
+    #[test]
+    fn openai_realtime_response_uses_sdp_body_as_the_success_contract() {
+        let body = "v=0\r\no=fake-answer\r\n".to_string();
+        assert_eq!(
+            validate_openai_realtime_sdp_answer(body.clone()).unwrap(),
+            body
+        );
+        assert!(validate_openai_realtime_sdp_answer(r#"{"ok":true}"#.to_string()).is_err());
+    }
+
+    #[test]
+    fn openai_realtime_error_parser_is_bounded() {
+        assert_eq!(
+            sanitize_openai_realtime_error(r#"{"error":{"message":"bad request"}}"#),
+            "bad request"
+        );
+        assert_eq!(sanitize_openai_realtime_error("   "), "");
+        assert_eq!(sanitize_openai_realtime_error(&"x".repeat(800)).len(), 400);
+    }
+
+    #[test]
+    fn openai_realtime_broker_enforces_request_timeout() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            let (_stream, _) = listener.accept().unwrap();
+            std::thread::sleep(std::time::Duration::from_millis(150));
+        });
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let result = runtime.block_on(execute_openai_realtime_call(
+            format!("http://{address}"),
+            "sk-test".to_string(),
+            "v=0\r\no=fake-offer\r\n".to_string(),
+            r#"{"type":"realtime","model":"gpt-realtime-2.1"}"#.to_string(),
+            std::time::Duration::from_millis(25),
+        ));
+        assert_eq!(result.unwrap_err(), "OpenAI Realtime connection timed out");
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn openai_realtime_broker_task_can_be_cancelled_and_is_removed() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        runtime.block_on(async {
+            let abort_handles = Arc::new(Mutex::new(HashMap::new()));
+            let task = tokio::spawn(async {
+                std::future::pending::<()>().await;
+                Ok::<String, String>("unreachable".to_string())
+            });
+            let waiter = tokio::spawn(await_abortable_realtime_task(
+                task,
+                Some("realtime-cancel-test".to_string()),
+                abort_handles.clone(),
+            ));
+            tokio::task::yield_now().await;
+            let handle = abort_handles
+                .lock()
+                .unwrap()
+                .remove("realtime-cancel-test")
+                .expect("Realtime task must register its abort handle");
+            handle.abort();
+            assert_eq!(waiter.await.unwrap().unwrap_err(), "aborted");
+            assert!(abort_handles.lock().unwrap().is_empty());
+        });
+    }
+
+    #[test]
     fn completed_http_stream_only_reports_done_after_queued_chunks_are_drained() {
         let mut entry = HttpStreamEntry {
             status: Some(200),
@@ -4872,10 +5237,7 @@ mod tests {
     #[test]
     fn persona_cleanup_selects_only_explicit_unretained_scopes() {
         let keep = HashSet::from(["persona_keep".to_string()]);
-        let delete = HashSet::from([
-            "persona_target".to_string(),
-            "persona_keep".to_string(),
-        ]);
+        let delete = HashSet::from(["persona_target".to_string(), "persona_keep".to_string()]);
 
         assert_eq!(
             select_explicit_persona_scopes(&keep, delete),

@@ -59,7 +59,7 @@ const makeFixedNegativePromptField = () => ({
     'negativePrompt',
     '固定负面提示词',
     '',
-    '随当前参数预设保存，每次生成都会自动加入；生图弹窗中的“本次负面提示词”会接在其后。',
+    '随当前参数预设保存；打开生图弹窗时会自动带入，弹窗中的编辑只覆盖本次生成。',
   ),
   badge: '随预设保存',
   placeholder: '例如：low quality, blurry, bad hands…',
@@ -644,6 +644,12 @@ export const getParamsForImageConfig = (preset = {}, config = {}) => {
   return sanitizeImageGenerationParams(params, config);
 };
 
+export const resolveImageNegativePromptDraft = (initialPrompt = '', baseParams = {}) => {
+  const initial = String(initialPrompt || '').trim();
+  if (initial) return initial;
+  return String(baseParams?.negativePrompt || baseParams?.negative_prompt || '').trim();
+};
+
 export const combineImageNegativePrompts = (fixedPrompt = '', perRunPrompt = '') => {
   const fixed = String(fixedPrompt || '').trim();
   const perRun = String(perRunPrompt || '').trim();
@@ -663,14 +669,22 @@ export const mergeImageGenerationRequestOptions = ({
   preset = null,
   overrides = {},
   extra = {},
+  negativePromptMode = 'append',
 } = {}) => {
   const base = preset ? getParamsForImageConfig(preset, config) : {};
   const merged = sanitizeImageGenerationParams({ ...base, ...(isObject(overrides) ? overrides : {}) }, config);
   const extraOptions = isObject(extra) ? { ...extra } : {};
-  const negativePrompt = combineImageNegativePrompts(
-    merged.negativePrompt || merged.negative_prompt,
-    extraOptions.negativePrompt || extraOptions.negative_prompt,
-  );
+  const hasExtraNegativePrompt = Object.prototype.hasOwnProperty.call(extraOptions, 'negativePrompt')
+    || Object.prototype.hasOwnProperty.call(extraOptions, 'negative_prompt');
+  const extraNegativePrompt = Object.prototype.hasOwnProperty.call(extraOptions, 'negativePrompt')
+    ? extraOptions.negativePrompt
+    : extraOptions.negative_prompt;
+  const negativePrompt = negativePromptMode === 'replace' && hasExtraNegativePrompt
+    ? String(extraNegativePrompt || '').trim()
+    : combineImageNegativePrompts(
+      merged.negativePrompt || merged.negative_prompt,
+      extraNegativePrompt,
+    );
   delete merged.negativePrompt;
   delete merged.negative_prompt;
   delete extraOptions.negativePrompt;

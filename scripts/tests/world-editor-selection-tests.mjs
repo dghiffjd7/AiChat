@@ -19,6 +19,107 @@ const { evaluateConditionTree } = await import('../../src/scripts/variables/worl
 }
 
 {
+  const clone = value => JSON.parse(JSON.stringify(value));
+  const source = {
+    name: 'Source World',
+    entries: [
+      { id: 'entry-a', comment: 'A', content: 'alpha' },
+      { id: 'entry-b', comment: 'B', content: 'beta' },
+    ],
+  };
+  const target = {
+    name: 'Target World',
+    entries: [{ id: 'entry-c', comment: 'C', content: 'gamma' }],
+  };
+  const writes = [];
+  window.appBridge = {
+    getWorldInfoSnapshot: async id => {
+      assert.equal(id, 'Target World');
+      return { worldbookId: id, exists: true, data: clone(target), revision: 4, generation: 2 };
+    },
+    saveWorldInfo: async (id, payload, options = {}) => {
+      writes.push({ id, payload: clone(payload), options: clone(options) });
+      if (id === 'Target World') {
+        assert.equal(options.expectedRevision, 4);
+        assert.equal(options.expectedGeneration, 2);
+        return { ok: true, data: clone(payload), revision: 5, generation: 2 };
+      }
+      assert.equal(id, 'Source World');
+      assert.equal(options.expectedRevision, 1);
+      return { ok: true, data: clone(payload), revision: 2, generation: 1 };
+    },
+  };
+  const editor = new WorldEditorModal();
+  editor.worldName = 'Source World';
+  editor.originalName = 'Source World';
+  editor.data = clone(source);
+  editor.baseWorldData = clone(source);
+  editor.baseRevision = 1;
+  editor.baseGeneration = 1;
+  editor.currentIndex = 1;
+  editor.renderList = () => {};
+  editor.renderEditor = () => {};
+  editor.refreshEntryListSelection = () => true;
+  editor.hideBlockManageModal = () => {};
+
+  const result = await editor.transferEntryToWorld({
+    mode: 'move',
+    targetWorldId: 'Target World',
+    entryId: 'entry-b',
+    entryIndex: 1,
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.mode, 'move');
+  assert.deepEqual(writes.map(write => write.id), ['Target World', 'Source World']);
+  assert.deepEqual(writes[0].payload.entries.map(entry => entry.id), ['entry-c', 'entry-b']);
+  assert.deepEqual(writes[1].payload.entries.map(entry => entry.id), ['entry-a']);
+  assert.deepEqual(editor.data.entries.map(entry => entry.id), ['entry-a']);
+  console.log('ok - cross-world move saves the target before removing the source entry');
+}
+
+{
+  const clone = value => JSON.parse(JSON.stringify(value));
+  const source = {
+    name: 'Safe Source',
+    entries: [{ id: 'entry-a', comment: 'A', content: 'alpha' }],
+  };
+  const target = { name: 'Safe Target', entries: [] };
+  const writes = [];
+  window.appBridge = {
+    getWorldInfoSnapshot: async id => ({
+      worldbookId: id,
+      exists: true,
+      data: clone(target),
+      revision: 1,
+      generation: 1,
+    }),
+    saveWorldInfo: async (id, payload) => {
+      writes.push({ id, payload: clone(payload) });
+      if (id === 'Safe Target') return { ok: true, data: clone(payload), revision: 2, generation: 1 };
+      throw new Error('source write failed');
+    },
+  };
+  const editor = new WorldEditorModal();
+  editor.worldName = 'Safe Source';
+  editor.data = clone(source);
+  editor.baseWorldData = clone(source);
+  editor.baseRevision = 1;
+  editor.baseGeneration = 1;
+
+  const result = await editor.transferEntryToWorld({
+    mode: 'move',
+    targetWorldId: 'Safe Target',
+    entryId: 'entry-a',
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, 'source-save-failed');
+  assert.equal(result.targetSaved, true);
+  assert.deepEqual(writes.map(write => write.id), ['Safe Target', 'Safe Source']);
+  assert.deepEqual(editor.data.entries.map(entry => entry.id), ['entry-a']);
+  console.log('ok - failed source removal degrades move to a safe copy without losing the original');
+}
+
+{
   const source = await readFile(new URL('../../src/scripts/ui/world-editor.js', import.meta.url), 'utf8');
   assert.match(source, /this\.entryCommentRenderTimer = setTimeout\([\s\S]*?this\.renderList\(\);[\s\S]*?}, 160\)/);
   console.log('ok - worldbook entry title list refresh is debounced');

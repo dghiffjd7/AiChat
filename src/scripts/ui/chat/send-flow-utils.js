@@ -503,6 +503,7 @@ export const normalizeHandleSendOptions = (options = {}) => {
   ]);
 
   return {
+    hasOverrideText: typeof raw.overrideText === 'string',
     overrideTextRaw,
     overrideText: overrideTextRaw.trim() ? overrideTextRaw : '',
     ignorePending: Boolean(raw.ignorePending),
@@ -513,6 +514,7 @@ export const normalizeHandleSendOptions = (options = {}) => {
     skipTemplate: Boolean(raw.skipTemplate),
     skipScripts: Boolean(raw.skipScripts),
     previewOnly: Boolean(raw.previewOnly),
+    previewSessionId: raw.previewOnly ? String(raw.previewSessionId || '').trim() : '',
     // 请求预览的场景覆盖（仅 previewOnly 时使用）：'chat' | 'rp'
     previewUiMode: raw.previewUiMode === 'chat' || raw.previewUiMode === 'rp' ? raw.previewUiMode : '',
     // 请求预览的私聊/群聊场景覆盖（仅 previewOnly + chat 场景使用）：覆盖 isGroupChat 组装分支

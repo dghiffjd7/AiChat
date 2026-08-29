@@ -78,6 +78,7 @@ pub fn run() {
             commands::http_stream_request_read,
             commands::http_stream_request_close,
             commands::http_abort_request,
+            commands::openai_realtime_create_call,
             commands::log_js,
             commands::save_raw_reply,
             commands::load_raw_reply,

@@ -61,6 +61,12 @@ import {
       providerSnapshot: 'qwen_local',
       voiceId: 'bad',
     }],
+    ['missing-profile', {
+      id: 'missing-profile',
+      configRef: { scope: 'voice_tts', profileId: 'deleted-profile' },
+      providerSnapshot: 'openai',
+      voiceId: 'cedar',
+    }],
   ]);
   const managers = {
     voice_shared: {
@@ -96,5 +102,15 @@ import {
   assert.deepEqual(await resolver('stale'), globalConfig);
   assert.deepEqual(warningRefs, ['stale']);
   assert.equal(globalResolveCount, 2, 'fallback config resolves once per speak attempt');
+  const missingVoice = await resolver.resolveWithMeta('deleted-voice');
+  assert.equal(missingVoice.reason, 'voice_missing');
+  assert.equal(missingVoice.valid, false);
+  assert.deepEqual(missingVoice.config, globalConfig);
+  const missingProfile = await resolver.resolveWithMeta('missing-profile');
+  assert.equal(missingProfile.reason, 'profile_missing');
+  assert.equal(missingProfile.valid, false);
+  assert.deepEqual(missingProfile.config, globalConfig);
+  assert.deepEqual(warningRefs, ['stale', 'deleted-voice', 'missing-profile']);
+  assert.equal(globalResolveCount, 4);
   console.log('ok - voice bindings resolve scoped profiles and dedupe invalid fallback warnings');
 }

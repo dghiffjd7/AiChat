@@ -130,6 +130,24 @@ const defaults = {
   webSearchLocale: 'zh-tw',
   webSearchApiKey: '',
   voiceConnectionMode: 'shared',
+  realtimeVoiceSettings: {
+    configRef: { scope: 'voice_shared', profileId: '' },
+    realtimeModel: 'gpt-realtime-2.1',
+    transcriptionModel: 'gpt-4o-mini-transcribe',
+    transcriptionLanguage: '',
+    voice: 'marin',
+    vad: {
+      mode: 'server_vad',
+      threshold: 0.5,
+      prefixPaddingMs: 300,
+      silenceDurationMs: 600,
+      createResponse: false,
+      interruptResponse: true,
+    },
+    idleTimeoutMinutes: 10,
+    retentionRatio: 0.8,
+    postInstructionsTokens: 8000,
+  },
 };
 
 // localStorage 配额满时 setItem 会静默失败（真机已发生）；kv（Tauri 本地文件）为权威通道，
@@ -291,6 +309,50 @@ const migrateSettings = (settings = {}) => {
   next.voiceConnectionMode = String(next.voiceConnectionMode || '').trim().toLowerCase() === 'split'
     ? 'split'
     : defaults.voiceConnectionMode;
+  const realtimeInput = next.realtimeVoiceSettings && typeof next.realtimeVoiceSettings === 'object'
+    ? next.realtimeVoiceSettings
+    : {};
+  const realtimeRef = realtimeInput.configRef && typeof realtimeInput.configRef === 'object'
+    ? realtimeInput.configRef
+    : {};
+  const realtimeScope = String(realtimeRef.scope || '').trim().toLowerCase();
+  const allowedRealtimeScopes = new Set(['chat', 'voice_shared', 'voice_tts', 'voice_stt']);
+  const realtimeVad = realtimeInput.vad && typeof realtimeInput.vad === 'object'
+    ? realtimeInput.vad
+    : {};
+  const realtimeTranscriptionLanguage = Array.from(new Set(
+    String(realtimeInput.transcriptionLanguage || '')
+      .split(',')
+      .map(value => value.trim().toLowerCase())
+      .filter(value => /^[a-z]{2,3}(?:-[a-z]{2})?$/.test(value)),
+  )).slice(0, 8).join(',');
+  const clampRealtimeNumber = (value, fallback, min, max) => {
+    const number = Number(value);
+    return Number.isFinite(number) ? Math.min(max, Math.max(min, number)) : fallback;
+  };
+  next.realtimeVoiceSettings = {
+    configRef: {
+      scope: allowedRealtimeScopes.has(realtimeScope) ? realtimeScope : 'voice_shared',
+      profileId: String(realtimeRef.profileId || '').trim(),
+    },
+    realtimeModel: String(realtimeInput.realtimeModel || 'gpt-realtime-2.1').trim() || 'gpt-realtime-2.1',
+    transcriptionModel: String(realtimeInput.transcriptionModel || 'gpt-4o-mini-transcribe').trim() || 'gpt-4o-mini-transcribe',
+    transcriptionLanguage: realtimeTranscriptionLanguage,
+    voice: String(realtimeInput.voice || 'marin').trim().toLowerCase() || 'marin',
+    vad: {
+      mode: String(realtimeVad.mode || '').trim().toLowerCase() === 'semantic_vad'
+        ? 'semantic_vad'
+        : 'server_vad',
+      threshold: clampRealtimeNumber(realtimeVad.threshold, 0.5, 0, 1),
+      prefixPaddingMs: Math.round(clampRealtimeNumber(realtimeVad.prefixPaddingMs, 300, 0, 5000)),
+      silenceDurationMs: Math.round(clampRealtimeNumber(realtimeVad.silenceDurationMs, 600, 100, 5000)),
+      createResponse: false,
+      interruptResponse: true,
+    },
+    idleTimeoutMinutes: Math.round(clampRealtimeNumber(realtimeInput.idleTimeoutMinutes, 10, 1, 30)),
+    retentionRatio: clampRealtimeNumber(realtimeInput.retentionRatio, 0.8, 0.5, 1),
+    postInstructionsTokens: Math.round(clampRealtimeNumber(realtimeInput.postInstructionsTokens, 8000, 1000, 16000)),
+  };
   next.creativeDialogueHighlightEnabled = next.creativeDialogueHighlightEnabled !== false;
   return next;
 };

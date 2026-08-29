@@ -338,6 +338,7 @@ export const createChatVoiceRuntime = ({
       const transcript = await voiceClient.transcribe(config, {
         audio,
         mimeType: audio.type,
+        language: config.sttLanguage,
         signal: transcriptionController.signal,
       });
       insertTranscriptAtSelection(composerInput, transcript);
@@ -526,17 +527,19 @@ export const createChatVoiceRuntime = ({
       notify('error', formatVoiceError(error));
       return false;
     }
-    const segments = Array.isArray(plannedSegments) && plannedSegments.length
+    const rawSegments = Array.isArray(plannedSegments) && plannedSegments.length
       ? plannedSegments
           .map(item => ({
             text: String(item?.text || ''),
             config: item?.config || config,
             kind: String(item?.kind || ''),
           }))
-          .filter(item => item.text && validateRuntimeConfig(item.config, 'tts'))
       : splitSpeechText(text, {
           maxChars: resolveSpeechChunkMaxChars(config),
         }).map(segmentText => ({ text: segmentText, config, kind: '' }));
+    const segments = rawSegments.filter(item => (
+      item.text.trim() && validateRuntimeConfig(item.config, 'tts')
+    ));
     if (!segments.length) {
       showConfigRequired('tts');
       return false;

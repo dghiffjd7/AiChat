@@ -6,10 +6,10 @@
 import { logger } from './logger.js';
 
 const VARIABLE_MACRO_COMMANDS = new Set([
-    'setvar', 'addvar', 'incvar', 'decvar', 'getvar', 'ifvar',
+    'setvar', 'addvar', 'incvar', 'decvar', 'getvar', 'var', 'ifvar',
     'setglobalvar', 'addglobalvar', 'incglobalvar', 'decglobalvar', 'getglobalvar',
 ]);
-const VARIABLE_MACRO_HEAD_RE = /^\s*(?:setvar|addvar|incvar|decvar|getvar|ifvar|setglobalvar|addglobalvar|incglobalvar|decglobalvar|getglobalvar)\s*::/i;
+const VARIABLE_MACRO_HEAD_RE = /^\s*(?:setvar|addvar|incvar|decvar|getvar|var|ifvar|setglobalvar|addglobalvar|incglobalvar|decglobalvar|getglobalvar)\s*::/i;
 
 export const stripPausedVariableMacros = (value = '') => {
     const text = String(value || '');
@@ -69,6 +69,14 @@ export class MacroEngine {
         return '';
     }
 
+    postProcessMacroValue(value, context) {
+        const normalized = value === null || value === undefined ? '' : String(value);
+        const postProcess = context?.macroPostProcess;
+        if (typeof postProcess !== 'function') return normalized;
+        const result = postProcess(normalized);
+        return result === null || result === undefined ? '' : String(result);
+    }
+
     getSessionId(context) {
         return String(context?.sessionId || 'default').trim() || 'default';
     }
@@ -98,6 +106,7 @@ export class MacroEngine {
             },
             set: (key, value) => {
                 if (!simulated) return writeStore(key, value);
+                context?.onMacroVariableWrite?.(useGlobal ? 'global' : 'local', key);
                 simulated.set(stateKey(key), value);
                 return value;
             },
@@ -111,8 +120,7 @@ export class MacroEngine {
                 const m = msgs[i];
                 if (!m) continue;
                 if (String(m.role || '') !== role) continue;
-                const raw = (typeof m.raw === 'string' && m.raw) ? m.raw : (typeof m.content === 'string' ? m.content : '');
-                return String(raw || '');
+                return this.getMessageText(m);
             }
         } catch {}
         return '';
@@ -125,11 +133,21 @@ export class MacroEngine {
                 const m = msgs[i];
                 if (!m) continue;
                 if (role && String(m.role || '') !== role) continue;
-                const id = (m && typeof m.id === 'string') ? m.id : '';
-                if (id) return id;
+                return String(i);
             }
         } catch {}
         return '';
+    }
+
+    getMessageText(message) {
+        if (!message || typeof message !== 'object') return '';
+        if (Array.isArray(message.content)) {
+            return message.content
+                .map(part => (part?.type === 'text' ? String(part.text || '') : ''))
+                .filter(Boolean)
+                .join('\n');
+        }
+        return String(message.rawOriginal || message.rawSource || message.raw || message.content || message.mes || message.message || '');
     }
 
     getLastMessage(sessionId) {
@@ -138,8 +156,8 @@ export class MacroEngine {
             for (let i = msgs.length - 1; i >= 0; i--) {
                 const m = msgs[i];
                 if (!m) continue;
-                const raw = (typeof m.raw === 'string' && m.raw) ? m.raw : (typeof m.content === 'string' ? m.content : '');
-                if (raw) return String(raw);
+                const raw = this.getMessageText(m);
+                if (raw) return raw;
             }
         } catch {}
         return '';
@@ -165,6 +183,7 @@ export class MacroEngine {
         const variableAccess = this.getVariableAccess(context, { useGlobal });
         const getVar = key => variableAccess.get(key);
         const setVar = (key, value) => variableAccess.set(key, value);
+        const finish = value => this.postProcessMacroValue(value, context);
         let out = String(text || '');
         const overrideLastUserMessage = (() => {
             const v = context?.lastUserMessage;
@@ -176,7 +195,7 @@ export class MacroEngine {
         out = out.replace(/{{\s*setvar\s*::([^:}]+)::([^}]*)}}/gi, (_m, name, value) => {
             const key = String(name || '').trim();
             if (key) setVar(key, String(value ?? ''));
-            return '';
+            return finish('');
         });
         // {{addvar::name::value}} - numeric add when possible
         out = out.replace(/{{\s*addvar\s*::([^:}]+)::([^}]*)}}/gi, (_m, name, value) => {
@@ -187,7 +206,7 @@ export class MacroEngine {
             const addNum = Number(value);
             const next = (Number.isFinite(curNum) && Number.isFinite(addNum)) ? String(curNum + addNum) : `${String(curRaw ?? '')}${String(value ?? '')}`;
             setVar(key, next);
-            return '';
+            return finish('');
         });
         // {{incvar::name}} / {{decvar::name}} return updated value
         out = out.replace(/{{\s*incvar\s*::([^}]+)}}/gi, (_m, name) => {
@@ -195,19 +214,19 @@ export class MacroEngine {
             const cur = Number(getVar(key));
             const next = (Number.isFinite(cur) ? cur : 0) + 1;
             setVar(key, String(next));
-            return String(next);
+            return finish(next);
         });
         out = out.replace(/{{\s*decvar\s*::([^}]+)}}/gi, (_m, name) => {
             const key = String(name || '').trim();
             const cur = Number(getVar(key));
             const next = (Number.isFinite(cur) ? cur : 0) - 1;
             setVar(key, String(next));
-            return String(next);
+            return finish(next);
         });
-        out = out.replace(/{{\s*getvar\s*::([^}]+)}}/gi, (_m, name) => {
+        out = out.replace(/{{\s*(?:getvar|var)\s*::([^:}]+)(?:::([^}]*))?}}/gi, (_m, name, fallback = '') => {
             const key = String(name || '').trim();
             const val = getVar(key);
-            return (val === undefined || val === null) ? '' : String(val);
+            return finish(val === undefined || val === null ? fallback : val);
         });
 
         // 显式全局变量宏（ST 兼容）：无论 uiMode/useGlobalVariables 如何，始终走全局作用域
@@ -217,7 +236,7 @@ export class MacroEngine {
         out = out.replace(/{{\s*setglobalvar\s*::([^:}]+)::([^}]*)}}/gi, (_m, name, value) => {
             const key = String(name || '').trim();
             if (key) setGlobal(key, String(value ?? ''));
-            return '';
+            return finish('');
         });
         out = out.replace(/{{\s*addglobalvar\s*::([^:}]+)::([^}]*)}}/gi, (_m, name, value) => {
             const key = String(name || '').trim();
@@ -227,26 +246,26 @@ export class MacroEngine {
             const addNum = Number(value);
             const next = (Number.isFinite(curNum) && Number.isFinite(addNum)) ? String(curNum + addNum) : `${String(curRaw ?? '')}${String(value ?? '')}`;
             setGlobal(key, next);
-            return '';
+            return finish('');
         });
         out = out.replace(/{{\s*incglobalvar\s*::([^}]+)}}/gi, (_m, name) => {
             const key = String(name || '').trim();
             const cur = Number(getGlobal(key));
             const next = (Number.isFinite(cur) ? cur : 0) + 1;
             setGlobal(key, String(next));
-            return String(next);
+            return finish(next);
         });
         out = out.replace(/{{\s*decglobalvar\s*::([^}]+)}}/gi, (_m, name) => {
             const key = String(name || '').trim();
             const cur = Number(getGlobal(key));
             const next = (Number.isFinite(cur) ? cur : 0) - 1;
             setGlobal(key, String(next));
-            return String(next);
+            return finish(next);
         });
-        out = out.replace(/{{\s*getglobalvar\s*::([^}]+)}}/gi, (_m, name) => {
+        out = out.replace(/{{\s*getglobalvar\s*::([^:}]+)(?:::([^}]*))?}}/gi, (_m, name, fallback = '') => {
             const key = String(name || '').trim();
             const val = getGlobal(key);
-            return (val === undefined || val === null) ? '' : String(val);
+            return finish(val === undefined || val === null ? fallback : val);
         });
 
         return out;
@@ -255,6 +274,7 @@ export class MacroEngine {
     applyBuiltInMacros(text, context, baseVars) {
         const sessionId = this.getSessionId(context);
         let out = String(text || '');
+        const finish = value => this.postProcessMacroValue(value, context);
         const user = String(baseVars?.user || 'User');
         const char = String(baseVars?.char || 'Assistant');
         const overrideLastUserMessage = (() => {
@@ -264,45 +284,45 @@ export class MacroEngine {
         })();
 
         // Legacy non-curly macros (ST-style)
-        out = out.replace(/<USER>/gi, user);
-        out = out.replace(/<CHARIFNOTGROUP>/gi, baseVars?.group ? String(baseVars.group) : char);
-        out = out.replace(/<GROUP>/gi, baseVars?.group ? String(baseVars.group) : '');
-        out = out.replace(/<BOT>/gi, char);
-        out = out.replace(/<CHAR>/gi, char);
+        out = out.replace(/<USER>/gi, () => finish(user));
+        out = out.replace(/<CHARIFNOTGROUP>/gi, () => finish(baseVars?.group ? String(baseVars.group) : char));
+        out = out.replace(/<GROUP>/gi, () => finish(baseVars?.group ? String(baseVars.group) : ''));
+        out = out.replace(/<BOT>/gi, () => finish(char));
+        out = out.replace(/<CHAR>/gi, () => finish(char));
 
         // Also accept lower-case variants (some IME / templates use these)
-        out = out.replace(/<user>/gi, user);
-        out = out.replace(/<char>/gi, char);
-        out = out.replace(/<bot>/gi, char);
+        out = out.replace(/<user>/gi, () => finish(user));
+        out = out.replace(/<char>/gi, () => finish(char));
+        out = out.replace(/<bot>/gi, () => finish(char));
 
         // Common utility macros
-        out = out.replace(/{{newline}}/gi, '\n');
-        out = out.replace(/(?:\r?\n)*{{trim}}(?:\r?\n)*/gi, '');
-        out = out.replace(/{{noop}}/gi, '');
+        out = out.replace(/{{newline}}/gi, () => finish('\n'));
+        out = out.replace(/(?:\r?\n)*{{trim}}(?:\r?\n)*/gi, () => finish(''));
+        out = out.replace(/{{noop}}/gi, () => finish(''));
         // {{// comment}} => removed
-        out = out.replace(/\{\{\/\/([\s\S]*?)\}\}/gm, '');
+        out = out.replace(/\{\{\/\/([\s\S]*?)\}\}/gm, () => finish(''));
 
         // Message macros (subset)
-        out = out.replace(/{{lastMessage}}/gi, () => this.getLastMessage(sessionId));
-        out = out.replace(/{{lastMessageId}}/gi, () => this.getLastIdByRole('', sessionId));
+        out = out.replace(/{{lastMessage}}/gi, () => finish(this.getLastMessage(sessionId)));
+        out = out.replace(/{{lastMessageId}}/gi, () => finish(this.getLastIdByRole('', sessionId)));
         // Accept a few common aliases used in templates.
         const lastUser = () => overrideLastUserMessage || this.getLastByRole('user', sessionId);
-        out = out.replace(/{{lastUserMessage}}/gi, lastUser);
-        out = out.replace(/{{userLastMessage}}/gi, lastUser);
-        out = out.replace(/{{user_last_message}}/gi, lastUser);
-        out = out.replace(/{{lastCharMessage}}/gi, () => this.getLastByRole('assistant', sessionId));
-        out = out.replace(/{{lastUserMessageId}}/gi, () => this.getLastIdByRole('user', sessionId));
-        out = out.replace(/{{lastCharMessageId}}/gi, () => this.getLastIdByRole('assistant', sessionId));
+        out = out.replace(/{{lastUserMessage}}/gi, () => finish(lastUser()));
+        out = out.replace(/{{userLastMessage}}/gi, () => finish(lastUser()));
+        out = out.replace(/{{user_last_message}}/gi, () => finish(lastUser()));
+        out = out.replace(/{{lastCharMessage}}/gi, () => finish(this.getLastByRole('assistant', sessionId)));
+        out = out.replace(/{{lastUserMessageId}}/gi, () => finish(this.getLastIdByRole('user', sessionId)));
+        out = out.replace(/{{lastCharMessageId}}/gi, () => finish(this.getLastIdByRole('assistant', sessionId)));
 
         // Time macros (subset, no moment.js dependency)
-        out = out.replace(/{{time}}/gi, () => new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
-        out = out.replace(/{{date}}/gi, () => new Date().toLocaleDateString());
-        out = out.replace(/{{weekday}}/gi, () => new Date().toLocaleDateString(undefined, { weekday: 'long' }));
-        out = out.replace(/{{isotime}}/gi, () => this.formatIsoTime(new Date()));
-        out = out.replace(/{{isodate}}/gi, () => this.formatIsoDate(new Date()));
+        out = out.replace(/{{time}}/gi, () => finish(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })));
+        out = out.replace(/{{date}}/gi, () => finish(new Date().toLocaleDateString()));
+        out = out.replace(/{{weekday}}/gi, () => finish(new Date().toLocaleDateString(undefined, { weekday: 'long' })));
+        out = out.replace(/{{isotime}}/gi, () => finish(this.formatIsoTime(new Date())));
+        out = out.replace(/{{isodate}}/gi, () => finish(this.formatIsoDate(new Date())));
 
         // Reverse macro: {{reverse:...}}
-        out = out.replace(/{{reverse:(.+?)}}/gi, (_m, str) => Array.from(String(str ?? '')).reverse().join(''));
+        out = out.replace(/{{reverse:(.+?)}}/gi, (_m, str) => finish(Array.from(String(str ?? '')).reverse().join('')));
 
         return out;
     }
@@ -332,7 +352,7 @@ export class MacroEngine {
         // （避免必须塞到 extraMacros 才能替换）
         try {
             for (const [k, v] of Object.entries(context || {})) {
-                if (!k || k === 'sessionId' || k === 'user' || k === 'char' || k === 'extraMacros' || k === 'macroVariableState' || k === 'variableRuntimeEnabled') continue;
+                if (!k || k === 'sessionId' || k === 'user' || k === 'char' || k === 'extraMacros' || k === 'macroVariableState' || k === 'variableRuntimeEnabled' || k === 'macroPostProcess' || k === 'onMacroVariableWrite') continue;
                 const normalized = this.normalizeMacroValue(v);
                 baseVars[k] = normalized;
             }
@@ -377,11 +397,11 @@ export class MacroEngine {
                 // 1. 优先匹配基础变量 (e.g. {{user}})
                 if (Object.prototype.hasOwnProperty.call(baseVars, trimmed)) {
                     replacedInThisPass = true;
-                    return baseVars[trimmed];
+                    return this.postProcessMacroValue(baseVars[trimmed], context);
                 }
                 if (Object.prototype.hasOwnProperty.call(baseVarsLower, trimmedLower)) {
                     replacedInThisPass = true;
-                    return baseVarsLower[trimmedLower];
+                    return this.postProcessMacroValue(baseVarsLower[trimmedLower], context);
                 }
 
                 // 2. 解析指令 {{cmd::arg1::arg2}}
@@ -403,7 +423,7 @@ export class MacroEngine {
                     const result = this.executeCommand(cmd, args, context);
                     if (result !== null) {
                         replacedInThisPass = true;
-                        return result;
+                        return this.postProcessMacroValue(result, context);
                     }
                 } catch (err) {
                     logger.warn(`Macro exec failed: ${cmd}`, err);
@@ -438,6 +458,7 @@ export class MacroEngine {
                 variableAccess.set(key, val);
                 return ''; // setvar 消耗掉标签，输出为空
             }
+            case 'var':
             case 'getvar': {
                 if (context?.variableRuntimeEnabled === false) return '';
                 // {{getvar::key::default}}
@@ -573,3 +594,11 @@ export class MacroEngine {
         }
     }
 }
+
+export const buildMacroEngineRuntimeSource = () => [
+    `const VARIABLE_MACRO_COMMANDS = new Set(${JSON.stringify(Array.from(VARIABLE_MACRO_COMMANDS))});`,
+    `const VARIABLE_MACRO_HEAD_RE = ${VARIABLE_MACRO_HEAD_RE.toString()};`,
+    `const stripPausedVariableMacros = ${stripPausedVariableMacros.toString()};`,
+    'const logger = { warn: (...args) => { try { console.warn(...args); } catch {} } };',
+    `const MacroEngine = ${MacroEngine.toString()};`,
+].join('\n');

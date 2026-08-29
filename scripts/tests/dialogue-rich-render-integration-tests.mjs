@@ -65,10 +65,13 @@ console.log('ok - creative dialogue highlighting is explicit, streaming-safe, an
 {
   const rendererSource = fs.readFileSync(path.join(process.cwd(), 'src/scripts/ui/chat/rich-text-renderer.js'), 'utf8');
   const fragmentIndex = rendererSource.indexOf('const rendered = renderScopedRichFragment(containerEl');
-  const highlightIndex = rendererSource.indexOf('if (highlightDialogue) applyDialogueHighlightToDom(containerEl);', fragmentIndex);
-  const returnIndex = rendererSource.indexOf('return;', highlightIndex);
+  const returnIndex = rendererSource.indexOf('return;', fragmentIndex);
   assert.ok(fragmentIndex >= 0, 'fragment 渲染路径必须存在');
-  assert.ok(highlightIndex > fragmentIndex, 'fragment 渲染成功后必须做 DOM 对白后处理');
-  assert.ok(returnIndex > highlightIndex, '后处理必须发生在该分支 return 之前');
-  console.log('ok - 思维链折叠等 fragment 消息的正文也会走对白高亮');
+  assert.ok(returnIndex > fragmentIndex, 'fragment 渲染成功后必须直接结束该路径');
+  assert.doesNotMatch(
+    rendererSource.slice(fragmentIndex, returnIndex),
+    /applyDialogueHighlightToDom/,
+    '作者自定义卡片与 fragment 不得进入对白高亮',
+  );
+  console.log('ok - rich fragments remain outside dialogue highlighting');
 }

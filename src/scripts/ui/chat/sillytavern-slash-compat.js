@@ -204,23 +204,9 @@ export const createSillyTavernSlashCompat = ({
 
   const expandMacros = (text = '') => {
     const bridge = getBridge();
-    const store = getStore();
     const sid = getSessionId();
-    const messages = store?.getMessages?.(sid) || [];
-    const lastMessage = messages.length ? messages[messages.length - 1] : null;
     let output = String(text ?? '');
     output = output.replace(/\{\{\s*pipe\s*\}\}/gi, () => state.pipe);
-    output = output.replace(/\{\{\s*newline\s*\}\}/gi, '\n');
-    output = output.replace(/\{\{\s*lastMessageId\s*\}\}/gi, () => String(Math.max(0, messages.length - 1)));
-    output = output.replace(/\{\{\s*lastMessage\s*\}\}/gi, () => pickMessageText(lastMessage));
-    output = output.replace(/\{\{\s*getglobalvar::([^}:]+)(?:::([^}]*))?\s*\}\}/gi, (_m, key, fallback = '') => {
-      const value = resolveVar(key, { global: true });
-      return value === undefined || value === null ? String(fallback || '') : toStringValue(value);
-    });
-    output = output.replace(/\{\{\s*(?:getvar|var)::([^}:]+)(?:::([^}]*))?\s*\}\}/gi, (_m, key, fallback = '') => {
-      const value = resolveVar(key);
-      return value === undefined || value === null ? String(fallback || '') : toStringValue(value);
-    });
     try {
       if (typeof bridge?.processTextMacros === 'function') {
         output = bridge.processTextMacros(output, {

@@ -157,6 +157,7 @@ const normalizeProfile = (p = {}, { touchUpdatedAt = false } = {}) => {
         model: p.model || 'gpt-3.5-turbo',
         ...(typeof p.ttsModel === 'string' ? { ttsModel: p.ttsModel } : {}),
         ...(typeof p.sttModel === 'string' ? { sttModel: p.sttModel } : {}),
+        sttLanguage: typeof p.sttLanguage === 'string' ? p.sttLanguage.trim().toLowerCase() : '',
         ...(typeof p.ttsVoice === 'string' ? { ttsVoice: p.ttsVoice } : {}),
         webSearchEnabled: p.webSearchEnabled === true,
         stream: p.stream !== false,
@@ -417,9 +418,12 @@ export class ConfigManager {
         if (isVoiceShared) {
             defaults.ttsModel = 'gpt-4o-mini-tts';
             defaults.sttModel = 'gpt-transcribe';
+            defaults.sttLanguage = '';
             defaults.ttsVoice = 'marin';
         } else if (isVoiceTts) {
             defaults.ttsVoice = 'marin';
+        } else if (isVoiceStt) {
+            defaults.sttLanguage = '';
         }
         return defaults;
     }
@@ -1004,6 +1008,7 @@ export class ConfigManager {
             model: p.model,
             ...(typeof p.ttsModel === 'string' ? { ttsModel: p.ttsModel } : {}),
             ...(typeof p.sttModel === 'string' ? { sttModel: p.sttModel } : {}),
+            sttLanguage: p.sttLanguage,
             ...(typeof p.ttsVoice === 'string' ? { ttsVoice: p.ttsVoice } : {}),
             webSearchEnabled: p.webSearchEnabled === true,
             stream: p.stream,

@@ -255,9 +255,13 @@ import {
       baseUrl: 'https://api.openai.com/v1',
       apiKey: 'test-key',
       model: 'gpt-transcribe',
+      sttLanguage: 'zh,en',
     }),
     voiceClient: {
-      transcribe: async () => '整理今天的任务',
+      transcribe: async (_config, options) => {
+        assert.equal(options.language, 'zh,en');
+        return '整理今天的任务';
+      },
     },
     composerInput,
     recorderButton,
@@ -345,6 +349,7 @@ import {
       return [
         { kind: 'narration', text: '旁白', config: narrationConfig },
         { kind: 'dialogue', text: '“对白”', config: dialogueConfig },
+        { kind: 'narration', text: '\n', config: narrationConfig },
         { kind: 'narration', text: '收尾', config: narrationConfig },
       ];
     },

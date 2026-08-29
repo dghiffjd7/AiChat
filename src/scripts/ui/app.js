@@ -308,8 +308,9 @@ import {
 import {
   getParamsForImageConfig,
   mergeImageGenerationRequestOptions,
-  resolveImageNegativePromptCapability,
   resolveImageGenerationParamSchema,
+  resolveImageNegativePromptCapability,
+  resolveImageNegativePromptDraft,
 } from './image-generation-params-utils.js';
 import { ChatUI } from './chat/chat-ui.js';
 import {
@@ -318,12 +319,21 @@ import {
   resolveSpeakableMessageText,
 } from './chat/voice-interaction-runtime.js';
 import {
+  createRealtimeCallAppRuntime,
+  isRealtimeCallTargetMatch,
+  resolveRealtimeCallTarget,
+} from './realtime/realtime-call-app-runtime.js';
+import { buildRealtimeSemanticSnapshotFromRequest } from './realtime/realtime-context-builder.js';
+import {
+  normalizeRealtimeVoiceSettings,
+  resolveRealtimeConfigReference,
+} from './realtime/realtime-voice-config-utils.js';
+import {
   createVoiceBindingConfigResolver,
   resolveMessageVoiceContact,
   resolveMessageVoiceRef,
 } from './chat/voice-binding-runtime-utils.js';
-import { buildDualVoiceSpeechChunks } from './chat/dialogue-segment-utils.js';
-import { resolveSpeechChunkMaxChars } from './chat/speech-chunk-utils.js';
+import { buildCreativeSpeechSegments as buildCreativeSpeechSegmentsCore } from './chat/creative-speech-segments-utils.js';
 import { enqueueMessagesCore } from './chat/typing-flow-ui-utils.js';
 import { createAssistantStreamRuntime, isStreamCtrlConnected } from './chat/assistant-stream-runtime.js';
 import { createDisposableStructuredPreviewRuntime } from './chat/structured-response-preview-runtime.js';
@@ -1614,23 +1624,15 @@ const initApp = async () => {
   };
   const buildCreativeSpeechSegments = async ({ text, wrapper, config, voiceRefOverride = null } = {}) => {
     const sessionId = String(chatStore.getCurrent?.() || '').trim();
-    if (
-      !sessionId.startsWith('rp:')
-      || wrapper?.querySelector?.('iframe, .chat-rich-fragment, .chat-codeblock')
-      || voiceRefOverride !== null
-    ) return null;
     const voiceSettings = resolveRpPersonaForSession(sessionId)?.voiceSettings || {};
-    const dialogueRef = String(voiceSettings.dialogueVoiceRef || '').trim();
-    const narrationConfig = config;
-    let dialogueConfig = narrationConfig;
-    if (dialogueRef) {
-      const dialogueResult = await voiceBindingConfigResolver.resolveWithMeta(dialogueRef);
-      if (dialogueResult.valid && dialogueResult.config) dialogueConfig = dialogueResult.config;
-    }
-    return buildDualVoiceSpeechChunks(text, {
-      narrationConfig,
-      dialogueConfig,
-      resolveMaxChars: resolveSpeechChunkMaxChars,
+    return buildCreativeSpeechSegmentsCore({
+      text,
+      wrapper,
+      voiceRefOverride,
+      isCreativeSession: sessionId.startsWith('rp:'),
+      narrationConfig: config,
+      voiceSettings,
+      resolveVoiceConfigWithMeta: voiceRef => voiceBindingConfigResolver.resolveWithMeta(voiceRef),
     });
   };
   const experiencePackTransfer = new ExperiencePackTransfer({
@@ -1645,6 +1647,7 @@ const initApp = async () => {
   let activePersonaScopeKey = '';
   let activePersonaId = 'default';
   let chatRoom = null;
+  let syncRealtimeCallButtonAvailability = () => {};
   const RP_SESSION_PREFIX = 'rp:';
   const isRpSessionId = (sessionId) => String(sessionId || '').startsWith(RP_SESSION_PREFIX);
   ui.setSpeakQuickVoicesResolver(() => resolveSpeakQuickVoices());
@@ -2199,7 +2202,7 @@ const initApp = async () => {
     }
   } catch {}
   if (scriptRuntime) {
-    scriptRuntime.setContext({ getEffectivePersona });
+    scriptRuntime.setContext({ getEffectivePersona, getActiveUserProfile });
     scriptRuntime.syncContext?.().catch(() => {});
   }
 
@@ -9876,6 +9879,7 @@ Phase G（Frame 36）：循环衔接
       modeSwitchBtn.setAttribute('title', isRp ? '切换到社交' : '切换到创意写作');
     }
     creativeExecutionLaneRuntime?.syncUiMode?.();
+    syncRealtimeCallButtonAvailability();
     scheduleModeSwitchSync();
   };
   const initialUiMode = loadUiMode();
@@ -9906,6 +9910,10 @@ Phase G（Frame 36）：循环衔接
   const chatScroll = document.getElementById('chat-scroll');
   const composerInput = document.getElementById('composer-input');
   const chatInputContainer = document.querySelector('.chat-input-container');
+  const realtimeCallButton = document.getElementById('realtime-call-button');
+  let realtimeCallRuntime = null;
+  let realtimeCallPanel = null;
+  let realtimeCallLifecycleEpoch = 0;
   const chatVoiceRuntime = createChatVoiceRuntime({
     resolveConfig: resolveVoiceRuntimeConfig,
     resolveSpeechConfig,
@@ -19150,7 +19158,7 @@ Phase G（Frame 36）：循环衔接
             <div class="chat-image-gen-negative" hidden>
               <div class="chat-image-gen-negative-head">
                 <span class="chat-image-gen-negative-label">负面提示词</span>
-                <span class="chat-image-gen-negative-hint">本次追加；固定内容由参数预设自动合并</span>
+                <span class="chat-image-gen-negative-hint">固定内容已自动带入；编辑只影响本次生成，不会修改生图设定</span>
               </div>
               <textarea class="chat-image-gen-textarea chat-image-gen-negative-textarea" placeholder="不想出现的内容，例如低清、畸形手、文字水印"></textarea>
             </div>
@@ -19238,7 +19246,7 @@ Phase G（Frame 36）：循环衔接
         const supported = isNegativePromptSupported();
         if (negativeWrap) negativeWrap.hidden = !supported;
         if (negativeHintEl) negativeHintEl.textContent = supported
-          ? String(negativeCapability?.help || '生成时可填写本次负面提示词。')
+          ? '固定内容已自动带入；编辑只影响本次生成，不会修改生图设定'
           : String(negativeCapability?.reason || '当前图片模型不支持负面提示词。');
         if (!negativeTextarea) return;
         if (!supported) {
@@ -19457,7 +19465,7 @@ Phase G（Frame 36）：循环衔接
       advancedDoneBtn?.addEventListener('click', () => closeAdvancedPage());
       advancedResetBtn?.addEventListener('click', () => {
         generationParamOverrides = {};
-        if (negativeTextarea) negativeTextarea.value = '';
+        if (negativeTextarea) negativeTextarea.value = resolveImageNegativePromptDraft('', generationParamBase);
         renderAdvancedFields();
         updateAdvancedButton();
       });
@@ -19533,7 +19541,9 @@ Phase G（Frame 36）：循环衔接
             secondaryBtn.style.display = secondaryText && secondaryHandler ? '' : 'none';
           }
           textarea.value = String(initialPrompt || '').trim();
-          if (negativeTextarea) negativeTextarea.value = String(initialNegativePrompt || '').trim();
+          if (negativeTextarea) {
+            negativeTextarea.value = resolveImageNegativePromptDraft(initialNegativePrompt, generationParamBase);
+          }
           syncNegativePromptOverrideFromInput();
           statusEl.textContent = '';
           closeAdvancedPage();
@@ -19843,6 +19853,7 @@ Phase G（Frame 36）：循环衔接
 	    surface = '',
 	    referenceImages = [],
 	    negativePrompt = '',
+	    negativePromptMode = 'append',
 	    generationParamOverrides = {},
 	    targetSessionId = '',
 	    autoGenerated = false,
@@ -19864,6 +19875,7 @@ Phase G（Frame 36）：循环衔接
 	    const referenceImageCount = normalizedReferences.length;
 	    const negativeCapability = resolveImageNegativePromptCapability(config);
 	    const negativePromptText = negativeCapability?.supported ? String(negativePrompt || '').trim() : '';
+	    const resolvedNegativePromptMode = negativePromptMode === 'replace' ? 'replace' : 'append';
 	    await imageGenerationParamsStore.ready;
       if (
         sessionAsyncWorkRuntime.isClosing(sessionId) ||
@@ -19877,12 +19889,15 @@ Phase G（Frame 36）：循环衔接
 	    if (referenceImageCount) {
 	      generationExtra.referenceImages = normalizedReferences.map(item => item.dataUrl).filter(Boolean);
 	    }
-	    if (negativePromptText) generationExtra.negativePrompt = negativePromptText;
+	    if (negativeCapability?.supported && (negativePromptText || resolvedNegativePromptMode === 'replace')) {
+	      generationExtra.negativePrompt = negativePromptText;
+	    }
 	    const generationOptions = mergeImageGenerationRequestOptions({
 	      config,
 	      preset: imageParamsPreset,
 	      overrides: generationParamOverrides,
 	      extra: generationExtra,
+	      negativePromptMode: resolvedNegativePromptMode,
 	    });
 	    const mediaSurface = surface || resolveMediaSurfaceForSession(sessionId);
 	    const surfaceCopy = getMediaSurfaceCopy(mediaSurface);
@@ -20232,6 +20247,7 @@ Phase G（Frame 36）：循环衔接
 	      surface: mediaSurface,
 	      referenceImages: modalReferenceImages,
 	      negativePrompt: modalNegativePrompt,
+	      negativePromptMode: 'replace',
 	      generationParamOverrides: modalGenerationParamOverrides,
 	    });
 	  };
@@ -21829,6 +21845,7 @@ Phase G（Frame 36）：循环衔接
 	    inlineGeneratedImage = null,
 	    prompt = '',
 	    negativePrompt = '',
+	    negativePromptMode = 'append',
 	    referenceImages = [],
 	    generationParamOverrides = {},
 	    targetSessionId = '',
@@ -21858,17 +21875,21 @@ Phase G（Frame 36）：循环衔接
 	    const normalizedReferences = normalizeImageGenerationReferenceItems(referenceImages, referenceCapability);
 	    const negativeCapability = resolveImageNegativePromptCapability(config);
 	    const negativePromptText = negativeCapability?.supported ? String(negativePrompt || '').trim() : '';
+	    const resolvedNegativePromptMode = negativePromptMode === 'replace' ? 'replace' : 'append';
 	    await imageGenerationParamsStore.ready;
 	    const generationExtra = {};
 	    if (normalizedReferences.length) {
 	      generationExtra.referenceImages = normalizedReferences.map(item => item.dataUrl).filter(Boolean);
 	    }
-	    if (negativePromptText) generationExtra.negativePrompt = negativePromptText;
+	    if (negativeCapability?.supported && (negativePromptText || resolvedNegativePromptMode === 'replace')) {
+	      generationExtra.negativePrompt = negativePromptText;
+	    }
 	    const generationOptions = mergeImageGenerationRequestOptions({
 	      config,
 	      preset: imageGenerationParamsStore.getActive(),
 	      overrides: generationParamOverrides,
 	      extra: generationExtra,
+	      negativePromptMode: resolvedNegativePromptMode,
 	    });
 	    window.toastr?.info?.('正在重新生成图片');
 	    try {
@@ -21966,6 +21987,7 @@ Phase G（Frame 36）：循环衔接
 	      inlineGeneratedImage,
 	      prompt: promptText,
 	      negativePrompt: String(modalResult?.negativePrompt || '').trim(),
+	      negativePromptMode: 'replace',
 	      referenceImages: Array.isArray(modalResult?.referenceImages) ? modalResult.referenceImages : [],
 	      generationParamOverrides: modalResult?.generationParamOverrides && typeof modalResult.generationParamOverrides === 'object'
 	        ? modalResult.generationParamOverrides
@@ -24358,6 +24380,9 @@ Phase G（Frame 36）：循环衔接
   const acquireRpResetBarrier = async (sessionId) => {
     const sid = String(sessionId || '').trim();
     if (!sid) return { ok: false, reason: 'missing_session_id' };
+    realtimeCallLifecycleEpoch += 1;
+    await realtimeCallRuntime?.end?.('session_reset');
+    realtimeCallPanel?.hide?.();
     cancelInitialHistoryFill(sid);
     try {
       ui.hideTyping?.();
@@ -24505,6 +24530,9 @@ Phase G（Frame 36）：循环衔接
       const originalStartNewChat = chatStore.startNewChat.bind(chatStore);
       chatStore.startNewChat = (id = chatStore.getCurrent(), archiveName = '', options = {}) => {
         const sid = String(id || chatStore.getCurrent() || '').trim();
+        realtimeCallLifecycleEpoch += 1;
+        void realtimeCallRuntime?.end?.('session_reset');
+        realtimeCallPanel?.hide?.();
         const result = originalStartNewChat(id, archiveName, options);
         if (sid && isRpSessionId(sid) && options?.skipRpGreetingSeed !== true) {
           seedRpGreetingIfNeeded(sid).catch(() => {});
@@ -26983,6 +27011,7 @@ Phase G（Frame 36）：循环衔接
           }
           if (!chatStore.hasOlderMessages?.(sid)) return;
           const older = await chatStore.loadOlderMessages(sid, '', { partCount: 1 });
+          if (String(chatStore.getCurrent() || '').trim() !== sid) return;
           if (older.length) {
             ui.prependHistory(decorateMessagesForDisplay(older, { sessionId: sid }));
             chatRenderState.set(sid, { start: 0 });
@@ -28928,6 +28957,7 @@ Phase G（Frame 36）：循环衔接
       ? options.resendAttachmentParts
       : [];
     const {
+      hasOverrideText,
       overrideText,
       ignorePending,
       suppressUserMessage,
@@ -28936,6 +28966,7 @@ Phase G（Frame 36）：循环衔接
       skipTemplate,
       skipScripts,
       previewOnly,
+      previewSessionId,
       previewUiMode,
       previewScenario,
       previewChatFormat,
@@ -28983,7 +29014,9 @@ Phase G（Frame 36）：循环衔接
     });
     const hasAttachments = attachmentQueue.length > 0;
     const hasRequestAttachments = hasAttachments || resendAttachmentParts.length > 0;
-    const sessionId = chatStore.getCurrent();
+    const sessionId = previewOnly && previewSessionId
+      ? previewSessionId
+      : chatStore.getCurrent();
     const messagesBeforeSend = chatStore.getMessages(sessionId) || [];
     const protocolHistoryFacts = inspectProtocolHistory(messagesBeforeSend, {
       lastRawResponse: chatStore.getLastRawResponse(sessionId),
@@ -29173,7 +29206,7 @@ Phase G（Frame 36）：循环衔接
     let pendingMessagesToConfirm = [];
     let text = '';
     if (previewOnly) {
-      text = overrideText || (hasAttachments
+      text = hasOverrideText ? overrideText : (hasAttachments
         ? stripComposerAttachmentPlaceholders(ui.getInputText(), attachmentQueue)
         : ui.getInputText());
     } else {
@@ -31703,6 +31736,189 @@ Phase G（Frame 36）：循环衔接
     }
   };
 
+  const getRealtimeCallTarget = () => {
+    return resolveRealtimeCallTarget({
+      uiMode,
+      currentSessionId: chatStore.getCurrent(),
+      activePersonaId: personaStore.getActive?.()?.id || activePersonaId,
+      getRpSessionId,
+      scopeId: chatStore.scopeId || activePersonaScopeKey || 'default',
+      lifecycleEpoch: realtimeCallLifecycleEpoch,
+      getContact: sessionId => contactsStore.getContact(sessionId),
+      formatSessionName,
+      getAssistantAvatar: getAssistantAvatarForSession,
+    });
+  };
+
+  const isRealtimeCallTargetCurrent = target => (
+    isRealtimeCallTargetMatch(target, getRealtimeCallTarget())
+  );
+
+  const buildRealtimeSemanticSnapshot = async ({
+    target,
+    inputText = '',
+    excludeMessageIds = [],
+  } = {}) => {
+    if (!isRealtimeCallTargetCurrent(target)) throw new Error('当前会话已切换');
+    const request = await handleSend(null, {
+      previewOnly: true,
+      previewSessionId: target.sessionId,
+      overrideText: String(inputText || ''),
+      ignorePending: true,
+      previewUiMode: target.uiMode,
+      previewScenario: 'private',
+      previewChatFormat: false,
+      previewInjectImage: false,
+      previewInjectMomentCreate: false,
+      includeAttachments: false,
+      excludeMessageIds,
+    });
+    if (!isRealtimeCallTargetCurrent(target)) throw new Error('构建语音上下文时会话已切换');
+    return buildRealtimeSemanticSnapshotFromRequest(request, {
+      currentInputText: inputText,
+    });
+  };
+
+  const commitRealtimeUserMessage = async ({ target, text, meta = {} } = {}) => {
+    if (!isRealtimeCallTargetCurrent(target)) return null;
+    const profile = getActiveUserProfile();
+    const message = buildSendUserMessage({
+      text,
+      userName: target.uiMode === 'rp' ? '我' : (String(profile?.name || '').trim() || '我'),
+      userAvatar: String(profile?.avatar || '').trim() || getActiveUserAvatar(),
+      time: formatNowTime(),
+      isStickerAllowed: () => false,
+      applyInputStoredRegex: (value, opts) => window.appBridge.applyInputStoredRegex(value, opts),
+      applyInputDisplayRegex: (value, opts) => window.appBridge.applyInputDisplayRegex(value, opts),
+    });
+    message.meta = { ...(message.meta || {}), ...meta };
+    if (!isRealtimeCallTargetCurrent(target)) return null;
+    const saved = chatStore.appendMessage(message, target.sessionId) || message;
+    ui.addMessage(saved);
+    dispatchAfterSendEvents({
+      messages: [saved],
+      sessionId: target.sessionId,
+      scriptRuntime,
+      pluginRuntime,
+      skipScripts: false,
+      logger,
+      recordTraceEvent: recordDebugTraceEvent,
+    });
+    maidGuideEmit(window, 'chat-message-sent', {
+      sessionId: target.sessionId,
+      messageId: String(saved?.id || '').trim(),
+    });
+    refreshChatAndContacts();
+    updatePendingFloat(target.sessionId);
+    return { messageId: String(saved?.id || '').trim() };
+  };
+
+  const commitRealtimeAssistantMessage = async ({ target, text, meta = {} } = {}) => {
+    if (!isRealtimeCallTargetCurrent(target)) return null;
+    const { usage: realtimeUsage = null, ...channelMeta } = meta;
+    const activeUserName = String(getActiveUserProfile()?.name || '').trim() || '我';
+    let message;
+    if (target.uiMode === 'rp') {
+      message = await buildCreativeAssistantMessageCore({
+        text,
+        rawOriginal: text,
+        sessionId: target.sessionId,
+        avatar: target.avatar,
+        formatTime: formatNowTime,
+        normalizeCreativeLineBreaks,
+        extractReasoningFromContent,
+        applyOutputRegexPairSafe,
+        appBridge: window.appBridge,
+        captureAssistantMemoryState,
+        attachAssistantMemoryStateToMeta,
+        usage: realtimeUsage,
+        isRpMode: true,
+        isGroupChat: false,
+      });
+    } else {
+      message = await buildAssistantMessageFromTextCore(text, {
+        sessionId: target.sessionId,
+        time: formatNowTime(),
+        name: target.name,
+        avatar: target.avatar,
+        promptUserName: activeUserName,
+        isGroupChat: false,
+        skipTemplate: true,
+        applyChatModeAssistantRegex: value => applyChatModeAssistantRegexCore(value, {
+          depth: 0,
+          promptUserName: activeUserName,
+          sanitizeAssistantReplyText,
+          extractReasoningFromContent,
+          applyStoredRegex: (next, opts) => window.appBridge.applyOutputStoredRegex(next, opts),
+          applyDisplayRegex: (next, opts) => window.appBridge.applyOutputDisplayRegex(next, opts),
+        }),
+        parseSpecialMessage,
+        getSessionContact: sid => contactsStore.getContact(sid),
+        resolveContactAvatar: (sid, contact) => resolveAvatarForContact(sid, contact),
+        getAssistantAvatarForSession,
+        usage: realtimeUsage,
+        logger,
+      });
+    }
+    if (!isRealtimeCallTargetCurrent(target)) return null;
+    message.meta = {
+      ...(message.meta || {}),
+      ...channelMeta,
+      ...(realtimeUsage ? { realtimeUsage } : {}),
+    };
+    const saved = chatStore.appendMessage(message, target.sessionId) || message;
+    ui.addMessage(saved);
+    autoMarkReadIfActive(target.sessionId, saved?.id);
+    emitPluginAfterReceiveEffects(saved, target.sessionId);
+    scriptRuntime?.consumeOnce?.(target.sessionId);
+    if (isTurnCheckpointSessionEnabled(target.sessionId)) {
+      syncTurnCheckpointForMessage(target.sessionId, saved).catch(err => {
+        logger.warn('sync turn checkpoint after Realtime reply failed', err);
+      });
+    }
+    refreshChatAndContacts();
+    return { messageId: String(saved?.id || '').trim() };
+  };
+
+  const realtimeCallAppRuntime = createRealtimeCallAppRuntime({
+    button: realtimeCallButton,
+    documentRef: document,
+    windowLike: window,
+    getCallTarget: getRealtimeCallTarget,
+    resolveConnection: async () => {
+      const settings = normalizeRealtimeVoiceSettings(appSettings.get().realtimeVoiceSettings);
+      const resolved = await resolveRealtimeConfigReference({
+        settings,
+        managers: configPanel.getRealtimeVoiceManagers(),
+      });
+      if (resolved.ok) return resolved;
+      const messages = {
+        profile_missing: '请先在语音 API 设置中选择 OpenAI 设置档',
+        profile_not_found: 'Realtime 绑定的 OpenAI 设置档已不存在',
+        provider_not_openai: '首版实时通话只支持 OpenAI 官方服务',
+        api_key_missing: 'OpenAI 设置档缺少 API Key',
+        base_url_not_official: '首版实时通话只支持 OpenAI 官方 API 地址',
+        scope_unavailable: '无法读取 Realtime 绑定的设置档',
+        realtime_model_invalid: 'Realtime 模型无效，请到语音 API 设置刷新模型',
+        transcription_model_invalid: '输入转写模型无效，请到语音 API 设置刷新模型',
+      };
+      const error = new Error(messages[resolved.reason] || 'Realtime 语音配置不可用');
+      error.code = `realtime_config_${resolved.reason || 'invalid'}`;
+      throw error;
+    },
+    buildSemanticSnapshot: buildRealtimeSemanticSnapshot,
+    isTargetCurrent: isRealtimeCallTargetCurrent,
+    commitUserMessage: commitRealtimeUserMessage,
+    commitAssistantMessage: commitRealtimeAssistantMessage,
+    openVoiceSettings: () => configPanel.show({ tab: 'voice' }),
+    onLifecycleInvalidated: () => { realtimeCallLifecycleEpoch += 1; },
+    toast: window.toastr,
+  });
+  realtimeCallRuntime = realtimeCallAppRuntime.runtime;
+  realtimeCallPanel = realtimeCallAppRuntime.panel;
+  syncRealtimeCallButtonAvailability = realtimeCallAppRuntime.syncButtonAvailability;
+  syncRealtimeCallButtonAvailability();
+
   const sendMessageFromPlugin = (content, options = {}) => runPluginSendMessageFlow({
     content,
     options,
@@ -32941,6 +33157,9 @@ Phase G（Frame 36）：循环衔接
     },
     onSessionChanged: async (id) => {
       await chatVoiceRuntime.cancel();
+      realtimeCallLifecycleEpoch += 1;
+      await realtimeCallRuntime?.end?.('session_changed');
+      realtimeCallPanel?.hide?.();
       await runSessionChangedFlow({
         sessionId: id,
         beginEnterRequest: sid => beginChatEnterRequest(sid),
@@ -33005,6 +33224,7 @@ Phase G（Frame 36）：循环衔接
           });
         }
       }
+      syncRealtimeCallButtonAvailability();
     },
   });
 

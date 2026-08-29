@@ -22,7 +22,7 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 base64 = "0.22"
 chrono = "0.4"
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "multipart"] }
 tokio = { version = "1", features = ["rt", "net", "time"] }
 libc = "0.2"
 rusqlite = { version = "0.31", features = ["bundled"] }

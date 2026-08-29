@@ -78,6 +78,7 @@ import {
     closeVariableBrowserImpl,
 } from './world-editor/world-variable-picker.js';
 import {
+    buildWorldEntryTransferPlan,
     collectBoundWorldRegexSets,
     ensureUniqueWorldbookIdCore,
     resolveRefEntriesForDisplayCore,
@@ -4203,6 +4204,7 @@ export class WorldEditorModal {
 
                 <div class="world-entry-actions">
                     <button id="we-duplicate">复制条目</button>
+                    <button id="we-transfer">移动 / 复制到…</button>
                     <button id="we-delete">删除条目</button>
                 </div>
             </div>
@@ -4663,6 +4665,17 @@ export class WorldEditorModal {
                 delBtn.onclick = () => this.deleteEntry(this.currentIndex);
             }
         }
+        const transferBtn = q('#we-transfer');
+        if (transferBtn) {
+            if (this.refMode) {
+                transferBtn.disabled = true;
+                transferBtn.style.opacity = '0.6';
+                transferBtn.style.cursor = 'not-allowed';
+                transferBtn.title = '引用型世界书的条目需在来源世界书中操作';
+            } else {
+                transferBtn.onclick = () => this.promptEntryTransfer(this.currentIndex);
+            }
+        }
         const aiBtn = q('#we-ai-generate');
         if (aiBtn) aiBtn.onclick = () => this.showAiModal(entry);
     }
@@ -4682,6 +4695,213 @@ export class WorldEditorModal {
         copy.comment = `${copy.comment || 'entry'}（复制）`;
         this.data.entries.splice(index + 1, 0, copy);
         this.selectEntry(index + 1, { forceRenderList: true });
+    }
+
+    async transferEntryToWorld({
+        mode = '',
+        targetWorldId = '',
+        entryId = '',
+        entryIndex = this.currentIndex,
+    } = {}) {
+        if (this.refMode) return { ok: false, reason: 'source-reference-world' };
+        const action = String(mode || '').trim().toLowerCase();
+        const sourceWorldId = String(this.worldName || '').trim();
+        const targetId = String(targetWorldId || '').trim();
+        const bridge = resolveWorldEditorBridgeContext();
+        if (typeof bridge.getWorldInfoSnapshot !== 'function' || typeof bridge.saveWorldInfo !== 'function') {
+            return { ok: false, reason: 'bridge-unavailable' };
+        }
+
+        const sourceData = this.prepareForSave(sourceWorldId);
+        let plan = null;
+        let targetSaveResult = null;
+        for (let attempt = 0; attempt < 4; attempt += 1) {
+            const targetSnapshot = await bridge.getWorldInfoSnapshot(targetId);
+            if (!targetSnapshot?.exists || !targetSnapshot?.data) {
+                return { ok: false, reason: 'target-missing' };
+            }
+            plan = buildWorldEntryTransferPlan({
+                mode: action,
+                sourceWorldId,
+                targetWorldId: targetId,
+                sourceData,
+                targetData: targetSnapshot.data,
+                entryId,
+                entryIndex,
+                createEntryId: () => `entry-${Date.now()}`,
+            });
+            if (!plan.ok) return plan;
+            targetSaveResult = await bridge.saveWorldInfo(targetId, plan.targetData, {
+                expectedRevision: targetSnapshot.revision,
+                expectedGeneration: targetSnapshot.generation,
+                expectedExists: true,
+                conflictMode: 'return',
+            });
+            if (targetSaveResult?.ok === false && targetSaveResult.reason === 'worldbook_revision_conflict') {
+                continue;
+            }
+            if (targetSaveResult?.ok === false) {
+                return { ...targetSaveResult, targetWorldId: targetId };
+            }
+            break;
+        }
+        if (!plan || !targetSaveResult || targetSaveResult?.ok === false) {
+            return { ok: false, reason: 'target-busy', targetWorldId: targetId };
+        }
+
+        const savedTargetData = deepClone(targetSaveResult.data || plan.targetData);
+        if (action === 'copy') {
+            this.onSaved?.(targetId, savedTargetData);
+            return {
+                ok: true,
+                mode: action,
+                sourceWorldId,
+                targetWorldId: targetId,
+                transferredEntryId: plan.transferredEntryId,
+            };
+        }
+
+        let sourceSaveResult = null;
+        try {
+            sourceSaveResult = await bridge.saveWorldInfo(sourceWorldId, plan.sourceData, {
+                expectedRevision: this.baseRevision,
+                expectedGeneration: this.baseGeneration,
+                expectedExists: true,
+                conflictMode: 'return',
+            });
+        } catch (error) {
+            this.onSaved?.(targetId, savedTargetData);
+            return {
+                ok: false,
+                reason: 'source-save-failed',
+                targetSaved: true,
+                sourceWorldId,
+                targetWorldId: targetId,
+                error,
+            };
+        }
+        if (sourceSaveResult?.ok === false) {
+            this.onSaved?.(targetId, savedTargetData);
+            return {
+                ok: false,
+                reason: 'source-save-failed',
+                targetSaved: true,
+                sourceWorldId,
+                targetWorldId: targetId,
+                sourceResult: sourceSaveResult,
+            };
+        }
+
+        this.worldName = sourceWorldId;
+        this.originalName = sourceWorldId;
+        this.data = deepClone(sourceSaveResult?.data || plan.sourceData);
+        this.baseWorldData = deepClone(this.data);
+        this.baseRevision = sourceSaveResult?.revision ?? null;
+        this.baseGeneration = sourceSaveResult?.generation ?? null;
+        this.selectedEntries.delete(plan.originalEntryId);
+        this.entryBlockPageMap.delete(plan.originalEntryId);
+        this.entrySearchCache = new WeakMap();
+        const nextIndex = Math.max(0, Math.min(plan.sourceEntryIndex, this.data.entries.length - 1));
+        this.selectEntry(nextIndex, { forceRenderList: true });
+        this.onSaved?.(this.worldName, this.data);
+        return {
+            ok: true,
+            mode: action,
+            sourceWorldId,
+            targetWorldId: targetId,
+            transferredEntryId: plan.transferredEntryId,
+        };
+    }
+
+    async promptEntryTransfer(index = this.currentIndex) {
+        if (this.refMode) {
+            window.toastr?.warning?.('引用型世界书请到来源世界书操作条目');
+            return false;
+        }
+        const entry = this.data.entries[index];
+        if (!entry) return false;
+        const entryId = this.getEntryId(entry, index);
+        const entryName = this.getEntryDisplayName(entry, index);
+        const mode = await appChoice({
+            title: '移动或复制条目',
+            message: `条目「${entryName}」要如何处理？`,
+            actions: [
+                { id: 'move', label: '移动（此处不保留）' },
+                { id: 'copy', label: '复制（此处保留）', primary: true },
+                { id: 'cancel', label: '取消' },
+            ],
+            defaultActionId: 'copy',
+        });
+        if (mode !== 'move' && mode !== 'copy') return false;
+
+        try {
+            const { listWorlds } = resolveWorldEditorBridgeContext();
+            const sourceWorldId = String(this.worldName || '').trim();
+            const targets = (typeof listWorlds === 'function' ? await listWorlds() : [])
+                .map(name => String(name || '').trim())
+                .filter(name => name && name !== sourceWorldId)
+                .sort((left, right) => left.localeCompare(right, 'zh-Hans-CN'));
+            if (!targets.length) {
+                window.toastr?.warning?.('没有其他世界书可作为目标');
+                return false;
+            }
+            const targetAction = await appChoice({
+                title: mode === 'move' ? '移动到世界书' : '复制到世界书',
+                message: `选择「${entryName}」的目标世界书`,
+                actions: [
+                    ...targets.map((name, targetIndex) => ({
+                        id: `target_${targetIndex}`,
+                        label: name,
+                    })),
+                    { id: 'cancel', label: '取消' },
+                ],
+                defaultActionId: 'target_0',
+            });
+            if (!String(targetAction || '').startsWith('target_')) return false;
+            const targetIndex = Number(String(targetAction).slice('target_'.length));
+            const targetWorldId = Number.isInteger(targetIndex) ? targets[targetIndex] : '';
+            if (!targetWorldId) return false;
+
+            const sourceSaved = await this.saveWorldSilently({ showToast: false });
+            if (!sourceSaved) {
+                window.toastr?.warning?.('当前世界书尚未保存，未执行移动或复制');
+                return false;
+            }
+            const resolved = this.resolveEntryById(entryId);
+            if (!resolved.entry || resolved.idx < 0) {
+                window.toastr?.warning?.('条目已发生变化，请重新选择');
+                return false;
+            }
+            const result = await this.transferEntryToWorld({
+                mode,
+                targetWorldId,
+                entryId,
+                entryIndex: resolved.idx,
+            });
+            if (result.ok) {
+                window.toastr?.success?.(mode === 'move'
+                    ? `已移动到「${targetWorldId}」`
+                    : `已复制到「${targetWorldId}」`);
+                return true;
+            }
+            if (result.reason === 'source-save-failed' && result.targetSaved) {
+                window.toastr?.warning?.(`已复制到「${targetWorldId}」，但来源删除失败；原条目已保留`);
+                return false;
+            }
+            const messages = {
+                'target-reference-world': '引用型世界书不能作为目标，请选择实际世界书',
+                'target-missing': '目标世界书已不存在，请重新选择',
+                'entry-missing': '条目已不存在，请重新选择',
+                'same-world': '请选择另一本世界书',
+                'target-busy': '目标世界书正在变更，请稍后重试',
+            };
+            window.toastr?.warning?.(messages[result.reason] || '移动或复制失败，请稍后重试');
+            return false;
+        } catch (err) {
+            logger.error('移动或复制世界书条目失败', err);
+            window.toastr?.error?.('移动或复制失败，请检查控制台');
+            return false;
+        }
     }
 
     deleteEntry(index) {

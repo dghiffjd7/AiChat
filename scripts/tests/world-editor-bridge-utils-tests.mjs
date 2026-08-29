@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import {
+  buildWorldEntryTransferPlan,
   collectBoundWorldRegexSets,
   ensureUniqueWorldbookIdCore,
   getWorldEntryActivationExplanationCore,
@@ -110,6 +111,92 @@ test('saveWorldInfoWithName saves unchanged names and renames changed names', as
     ['save', 'same', 'same'],
     ['rename', 'old', 'new', 'new'],
   ]);
+});
+
+test('world entry copy keeps the source and appends an independent id to the target', () => {
+  const sourceData = {
+    name: 'source',
+    entries: [
+      { id: 'entry-a', comment: 'A', content: 'alpha' },
+      { id: 'entry-b', comment: 'B', content: 'beta' },
+    ],
+  };
+  const targetData = {
+    name: 'target',
+    entries: [{ id: 'entry-copy', comment: 'Existing', content: 'existing' }],
+  };
+  const plan = buildWorldEntryTransferPlan({
+    mode: 'copy',
+    sourceWorldId: 'source',
+    targetWorldId: 'target',
+    sourceData,
+    targetData,
+    entryId: 'entry-b',
+    createEntryId: () => 'entry-copy',
+  });
+  assert.equal(plan.ok, true);
+  assert.deepEqual(plan.sourceData.entries.map(entry => entry.id), ['entry-a', 'entry-b']);
+  assert.deepEqual(plan.targetData.entries.map(entry => entry.id), ['entry-copy', 'entry-copy_1']);
+  assert.equal(plan.targetData.entries[1].content, 'beta');
+  assert.notEqual(plan.targetData.entries[1], sourceData.entries[1]);
+  assert.deepEqual(sourceData.entries.map(entry => entry.id), ['entry-a', 'entry-b']);
+  assert.deepEqual(targetData.entries.map(entry => entry.id), ['entry-copy']);
+});
+
+test('world entry move removes the source only in the prepared payload and preserves its id', () => {
+  const sourceData = {
+    name: 'source',
+    entries: [
+      { id: 'entry-a', comment: 'A', content: 'alpha' },
+      { id: 'entry-b', comment: 'B', content: 'beta' },
+    ],
+  };
+  const targetData = {
+    name: 'target',
+    entries: [{ id: 'entry-c', comment: 'C', content: 'gamma' }],
+  };
+  const plan = buildWorldEntryTransferPlan({
+    mode: 'move',
+    sourceWorldId: 'source',
+    targetWorldId: 'target',
+    sourceData,
+    targetData,
+    entryId: 'entry-b',
+    createEntryId: () => 'unused',
+  });
+  assert.equal(plan.ok, true);
+  assert.deepEqual(plan.sourceData.entries.map(entry => entry.id), ['entry-a']);
+  assert.deepEqual(plan.targetData.entries.map(entry => entry.id), ['entry-c', 'entry-b']);
+  assert.deepEqual(sourceData.entries.map(entry => entry.id), ['entry-a', 'entry-b']);
+});
+
+test('world entry transfer rejects the same world and reference-only targets', () => {
+  const sourceData = { name: 'source', entries: [{ id: 'entry-a', content: 'alpha' }] };
+  assert.equal(buildWorldEntryTransferPlan({
+    mode: 'move',
+    sourceWorldId: 'source',
+    targetWorldId: 'source',
+    sourceData,
+    targetData: sourceData,
+    entryId: 'entry-a',
+  }).reason, 'same-world');
+  assert.equal(buildWorldEntryTransferPlan({
+    mode: 'copy',
+    sourceWorldId: 'source',
+    targetWorldId: 'reference',
+    sourceData,
+    targetData: { name: 'reference', entries: [], refs: [{ sourceId: 'other', includeAll: true }] },
+    entryId: 'entry-a',
+  }).reason, 'target-reference-world');
+  assert.equal(buildWorldEntryTransferPlan({
+    mode: 'move',
+    sourceWorldId: 'source',
+    targetWorldId: 'target',
+    sourceData,
+    targetData: { name: 'target', entries: [] },
+    entryId: 'stale-entry-id',
+    entryIndex: 0,
+  }).reason, 'entry-missing');
 });
 
 test('resolveWorldEditorBridgeContext binds bridge methods and exposes stores', () => {

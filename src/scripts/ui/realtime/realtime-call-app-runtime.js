@@ -1,0 +1,181 @@
+import { OpenAiRealtimeSessionClient } from './openai-realtime-session-client.js';
+import { createRealtimeCallPanel } from './realtime-call-panel.js';
+import { createRealtimeCallRuntime } from './realtime-call-runtime.js';
+import { accumulateRealtimeUsage, createRealtimeUsageTotals } from './realtime-usage-utils.js';
+
+const normalizeText = value => String(value || '').trim();
+
+export const resolveRealtimeCallTarget = ({
+  uiMode = 'chat',
+  currentSessionId = '',
+  activePersonaId = '',
+  getRpSessionId = personaId => `rp:${normalizeText(personaId) || 'default'}`,
+  scopeId = 'default',
+  lifecycleEpoch = 0,
+  getContact = () => null,
+  formatSessionName = sessionId => sessionId,
+  getAssistantAvatar = () => '',
+} = {}) => {
+  const targetUiMode = normalizeText(uiMode).toLowerCase() === 'rp' ? 'rp' : 'chat';
+  const sessionId = targetUiMode === 'rp'
+    ? normalizeText(getRpSessionId(activePersonaId))
+    : normalizeText(currentSessionId);
+  if (!sessionId) {
+    return {
+      supported: false,
+      reason: targetUiMode === 'rp' ? '请先选择一个角色卡' : '请先打开一个角色会话',
+    };
+  }
+  if (targetUiMode === 'chat' && sessionId.startsWith('rp:')) {
+    return { supported: false, reason: '请先打开一个角色会话' };
+  }
+  const contact = getContact(sessionId);
+  if (targetUiMode === 'chat' && (Boolean(contact?.isGroup) || sessionId.startsWith('group:'))) {
+    return { supported: false, reason: '首版实时语音暂不支持群聊' };
+  }
+  return {
+    supported: true,
+    sessionId,
+    scopeId: normalizeText(scopeId) || 'default',
+    lifecycleEpoch: Number(lifecycleEpoch) || 0,
+    uiMode: targetUiMode,
+    name: normalizeText(formatSessionName(sessionId, contact)) || '角色',
+    avatar: normalizeText(getAssistantAvatar(sessionId)),
+  };
+};
+
+export const isRealtimeCallTargetMatch = (capturedTarget, currentTarget) => (
+  capturedTarget?.supported === true
+  && currentTarget?.supported === true
+  && normalizeText(capturedTarget.sessionId) === normalizeText(currentTarget.sessionId)
+  && normalizeText(capturedTarget.scopeId) === normalizeText(currentTarget.scopeId)
+  && Number(capturedTarget.lifecycleEpoch) === Number(currentTarget.lifecycleEpoch)
+  && normalizeText(capturedTarget.uiMode) === normalizeText(currentTarget.uiMode)
+);
+
+export const createRealtimeCallAppRuntime = ({
+  button = null,
+  documentRef = globalThis.document,
+  windowLike = globalThis.window,
+  getCallTarget,
+  resolveConnection,
+  buildSemanticSnapshot,
+  isTargetCurrent,
+  commitUserMessage,
+  commitAssistantMessage,
+  openVoiceSettings = null,
+  onLifecycleInvalidated = null,
+  toast = null,
+  createPanel = createRealtimeCallPanel,
+  createRuntime = createRealtimeCallRuntime,
+  createSessionClient = callbacks => new OpenAiRealtimeSessionClient(callbacks),
+} = {}) => {
+  let usageTotals = createRealtimeUsageTotals();
+  let runtime = null;
+  let panel = null;
+
+  const endAndHide = async reason => {
+    await runtime?.end?.(reason || 'user');
+    panel?.hide?.();
+  };
+
+  panel = createPanel({
+    documentRef,
+    onToggleMute: () => {
+      const muted = runtime?.getState?.().muted === true;
+      runtime?.setMicrophoneMuted?.(!muted);
+    },
+    onToggleOutputMute: () => {
+      const muted = runtime?.getState?.().outputMuted === true;
+      runtime?.setOutputMuted?.(!muted);
+    },
+    onInterrupt: () => runtime?.interrupt?.(),
+    onEnd: reason => endAndHide(reason),
+  });
+
+  runtime = createRuntime({
+    createSessionClient,
+    resolveConnection,
+    buildSemanticSnapshot,
+    getCallTarget,
+    isTargetCurrent,
+    commitUserMessage,
+    commitAssistantMessage,
+    onStateChange: state => {
+      panel?.renderState?.(state);
+      button?.classList?.toggle?.('is-active', state.status !== 'idle');
+      button?.setAttribute?.('aria-pressed', String(state.status !== 'idle'));
+    },
+    onCaption: caption => panel?.setCaption?.(caption),
+    onUsage: event => {
+      usageTotals = accumulateRealtimeUsage(usageTotals, event);
+      panel?.setUsage?.(usageTotals);
+    },
+    onWarning: message => {
+      panel?.setWarning?.(message);
+      toast?.warning?.(message);
+    },
+    onError: error => {
+      const message = String(error?.message || error || 'Realtime 语音发生错误');
+      panel?.setWarning?.(message);
+      if (error?.code === 'input_transcription_failed') toast?.warning?.(message);
+      else toast?.error?.(message);
+      if (String(error?.code || '').startsWith('realtime_config_')) void openVoiceSettings?.();
+    },
+  });
+
+  const syncButtonAvailability = () => {
+    if (!button) return;
+    const target = getCallTarget?.() || {};
+    button.hidden = target.supported !== true;
+    button.disabled = target.supported !== true;
+  };
+
+  const handleButtonClick = async () => {
+    const target = getCallTarget?.() || {};
+    if (!target.supported) {
+      toast?.warning?.(target.reason || '当前会话暂不支持实时语音');
+      return false;
+    }
+    if (runtime.getState().status !== 'idle') {
+      panel.show(target);
+      return true;
+    }
+    usageTotals = createRealtimeUsageTotals();
+    panel.setUsage(usageTotals);
+    panel.setWarning('');
+    panel.setCaption({ role: '', text: '连接后即可自然说话' });
+    panel.show(target);
+    const started = await runtime.start();
+    if (!started) panel.hide();
+    return started;
+  };
+
+  const handlePageHide = () => {
+    onLifecycleInvalidated?.('page_hidden');
+    void runtime.end('page_hidden');
+  };
+  const handleVisibilityChange = () => {
+    if (documentRef?.visibilityState !== 'hidden') return;
+    onLifecycleInvalidated?.('app_background');
+    void endAndHide('app_background');
+  };
+
+  button?.addEventListener?.('click', handleButtonClick);
+  windowLike?.addEventListener?.('pagehide', handlePageHide);
+  documentRef?.addEventListener?.('visibilitychange', handleVisibilityChange);
+  syncButtonAvailability();
+
+  return {
+    runtime,
+    panel,
+    syncButtonAvailability,
+    endAndHide,
+    destroy: async () => {
+      button?.removeEventListener?.('click', handleButtonClick);
+      windowLike?.removeEventListener?.('pagehide', handlePageHide);
+      documentRef?.removeEventListener?.('visibilitychange', handleVisibilityChange);
+      await endAndHide('destroy');
+    },
+  };
+};

@@ -76,10 +76,12 @@ test('voice profile scopes persist shared and split configurations independently
   await stt.load();
   assert.equal(shared.get().ttsModel, 'gpt-4o-mini-tts');
   assert.equal(shared.get().sttModel, 'gpt-transcribe');
+  assert.equal(shared.get().sttLanguage, '');
   assert.equal(shared.get().ttsVoice, 'marin');
   assert.equal(tts.get().model, 'gpt-4o-mini-tts');
   assert.equal(tts.get().ttsVoice, 'marin');
   assert.equal(stt.get().model, 'gpt-transcribe');
+  assert.equal(stt.get().sttLanguage, '');
 
   await shared.save({
     ...shared.get(),
@@ -88,6 +90,7 @@ test('voice profile scopes persist shared and split configurations independently
     model: 'eleven_flash_v2_5',
     ttsModel: 'eleven_flash_v2_5',
     sttModel: 'scribe_v2',
+    sttLanguage: 'zh,en',
     ttsVoice: 'JBFqnCBsd6RMkjVDRZzb',
   });
   await tts.save({
@@ -102,6 +105,7 @@ test('voice profile scopes persist shared and split configurations independently
     provider: 'custom',
     baseUrl: 'https://voice.example.test/v1',
     model: 'custom-transcriber',
+    sttLanguage: 'ja',
   });
 
   const reloadedShared = await new ConfigManager({ scope: 'voice_shared' }).load();
@@ -110,10 +114,12 @@ test('voice profile scopes persist shared and split configurations independently
   assert.equal(reloadedShared.provider, 'elevenlabs');
   assert.equal(reloadedShared.ttsModel, 'eleven_flash_v2_5');
   assert.equal(reloadedShared.sttModel, 'scribe_v2');
+  assert.equal(reloadedShared.sttLanguage, 'zh,en');
   assert.equal(reloadedShared.ttsVoice, 'JBFqnCBsd6RMkjVDRZzb');
   assert.equal(reloadedTts.model, 'tts-1-hd');
   assert.equal(reloadedTts.ttsVoice, 'cedar');
   assert.equal(reloadedStt.model, 'custom-transcriber');
+  assert.equal(reloadedStt.sttLanguage, 'ja');
 });
 
 test('voice profile validation rejects a half-configured shared provider', () => {
@@ -171,17 +177,44 @@ test('voice connection mode is a normalized app setting', () => {
   assert.equal(appSettings.get().voiceConnectionMode, 'shared');
 });
 
-test('API settings expose a voice tab and both routing choices', async () => {
+test('realtime is an independent config view and does not overwrite TTS/STT routing', async () => {
+  appSettings.update({ voiceConnectionMode: 'shared' });
+  const { ConfigPanel } = await import('../../src/scripts/ui/config-panel.js');
+  const panel = new ConfigPanel();
+
+  await panel.setVoiceConfigView('realtime');
+
+  assert.equal(panel.voiceConfigView, 'realtime');
+  assert.equal(panel.voiceConnectionMode, 'shared');
+  assert.equal(appSettings.get().voiceConnectionMode, 'shared');
+});
+
+test('API settings expose independent shared, split, and realtime voice views', async () => {
   const source = await readFile('src/scripts/ui/config-panel.js', 'utf8');
   assert.match(source, /data-tab="voice"/);
   assert.match(source, /data-voice-connection-mode="shared"/);
   assert.match(source, /data-voice-connection-mode="split"/);
+  assert.match(source, /data-voice-config-view="realtime"/);
   assert.match(source, /id="config-voice-tts-model"/);
   assert.match(source, /id="config-voice-stt-model"/);
+  assert.match(source, /<select id="config-voice-stt-language" style="display:none;">/);
+  assert.match(source, /id="config-voice-stt-language-btn"[^>]+data-select-id="config-voice-stt-language"/);
+  assert.match(source, /中文 \+ 英文/);
+  assert.match(source, /普通录音转写会沿用此语言提示/);
   assert.match(source, /id="refresh-voice-tts-models"/);
   assert.match(source, /id="refresh-voice-stt-models"/);
   assert.match(source, /id="voice-tts-model-options"/);
   assert.match(source, /id="voice-stt-model-options"/);
+  assert.match(source, /<input[^>]+id="config-realtime-model"/);
+  assert.match(source, /<input[^>]+id="config-realtime-transcription-model"/);
+  assert.match(source, /id="realtime-model-options"/);
+  assert.match(source, /id="realtime-transcription-model-options"/);
+  assert.match(source, /id="refresh-realtime-models"/);
+  assert.match(source, /id="refresh-realtime-transcription-models"/);
+  assert.match(source, /<select id="config-realtime-transcription-language" style="display:none;">/);
+  assert.match(source, /id="config-realtime-transcription-language-btn"[^>]+data-select-id="config-realtime-transcription-language"/);
+  assert.match(source, /保存在 Realtime 设置中，不影响普通录音转写/);
+  assert.doesNotMatch(source, /<select[^>]+id="config-realtime-(?:transcription-)?model"/);
   assert.match(source, /new VoiceClient/);
   assert.match(source, /id="config-voice-tts-voice"/);
   assert.match(source, /data-voice-preset/);
@@ -256,6 +289,21 @@ test('chat runtime wires microphone, assistant speech, and Android recording per
   assert.match(html, /id="voice-input-button"/);
   assert.match(manifest, /android\.permission\.RECORD_AUDIO/);
   assert.match(manifest, /android\.permission\.MODIFY_AUDIO_SETTINGS/);
+});
+
+test('realtime commit helpers never return null after persisting a message', async () => {
+  const appSource = await readFile('src/scripts/ui/app.js', 'utf8');
+  for (const name of ['commitRealtimeUserMessage', 'commitRealtimeAssistantMessage']) {
+    const start = appSource.indexOf(`const ${name} = async`);
+    assert.ok(start >= 0, `${name} 必须存在`);
+    const appendIndex = appSource.indexOf('chatStore.appendMessage', start);
+    const returnIndex = appSource.indexOf('return { messageId', start);
+    assert.ok(appendIndex > start && returnIndex > appendIndex, `${name} 必须持久化并返回 messageId`);
+    const beforeAppend = appSource.slice(start, appendIndex);
+    assert.match(beforeAppend, /isRealtimeCallTargetCurrent\(target\)/, `${name} 持久化前必须复核 target`);
+    const afterAppend = appSource.slice(appendIndex, returnIndex);
+    assert.ok(!afterAppend.includes('return null'), `${name} 持久化后不得返回 null（消息已落库必须回传 id 并完成 UI 同步）`);
+  }
 });
 
 let failed = 0;

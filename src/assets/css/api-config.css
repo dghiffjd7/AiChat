@@ -293,6 +293,15 @@ body #config-panel.api-config-panel .api-config-tab.is-active {
   gap: 10px;
 }
 
+.api-config-voice-mode-grid.has-realtime {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+#config-panel.api-config-panel.is-voice-realtime-view .api-config-scroll
+  > :not(#config-voice-routing):not(#config-voice-realtime-card) {
+  display: none !important;
+}
+
 body #config-panel.api-config-panel .api-config-voice-mode,
 body #config-panel.api-config-panel .api-config-voice-capability {
   min-width: 0;
@@ -360,6 +369,98 @@ body #config-panel.api-config-panel :is(.api-config-voice-mode, .api-config-voic
   color: var(--app-text-muted);
   font-size: 11.5px;
   line-height: 1.45;
+}
+
+.api-config-realtime-card {
+  margin: 0 0 24px;
+  padding: 16px;
+  border: 1px solid color-mix(in srgb, var(--app-accent-primary) 26%, var(--app-border-subtle));
+  border-radius: 14px;
+  background:
+    radial-gradient(circle at 100% 0%, color-mix(in srgb, var(--app-accent-soft) 72%, transparent), transparent 46%),
+    var(--app-surface-card);
+}
+
+.api-config-realtime-heading {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  margin-bottom: 14px;
+}
+
+.api-config-realtime-heading > div {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.api-config-realtime-heading strong {
+  color: var(--app-text-primary);
+  font-size: 14px;
+}
+
+.api-config-realtime-heading small,
+.api-config-realtime-field small,
+.api-config-realtime-status {
+  color: var(--app-text-muted);
+  font-size: 11.5px;
+  line-height: 1.45;
+}
+
+.api-config-realtime-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.api-config-realtime-field {
+  min-width: 0;
+  display: grid;
+  gap: 6px;
+  color: var(--app-text-secondary);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.api-config-realtime-field.is-wide {
+  grid-column: 1 / -1;
+}
+
+#config-panel.api-config-panel .api-config-realtime-field :is(input, select) {
+  width: 100%;
+  min-width: 0;
+  min-height: 40px;
+  box-sizing: border-box;
+  border: 1px solid var(--app-border-default);
+  border-radius: 10px;
+  background: var(--app-surface-input);
+  color: var(--app-text-primary);
+  padding: 8px 10px;
+}
+
+.api-config-realtime-actions {
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.api-config-realtime-status {
+  display: block;
+  margin-top: 9px;
+}
+
+.api-config-realtime-status[data-type="success"] {
+  color: var(--app-accent-strong);
+}
+
+.api-config-realtime-status[data-type="warning"] {
+  color: var(--app-warning-text, #9a6700);
+}
+
+.api-config-realtime-status[data-type="error"] {
+  color: var(--app-danger-text);
 }
 
 .api-config-voice-presets {
@@ -1207,8 +1308,31 @@ body[data-theme-mode='dark'] #config-panel.api-config-panel :is(
     padding: 0 6px;
   }
 
+  .api-config-voice-mode-grid.has-realtime {
+    gap: 6px;
+  }
+
+  body #config-panel.api-config-panel .api-config-voice-mode-grid.has-realtime .api-config-voice-mode {
+    min-height: 44px;
+    justify-items: center;
+    padding: 8px 5px;
+    text-align: center;
+  }
+
+  .api-config-voice-mode-grid.has-realtime .api-config-voice-mode small {
+    display: none;
+  }
+
   .api-config-voice-model-grid {
     grid-template-columns: 1fr;
+  }
+
+  .api-config-realtime-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .api-config-realtime-field.is-wide {
+    grid-column: auto;
   }
 
   .api-config-timeout-row > label {

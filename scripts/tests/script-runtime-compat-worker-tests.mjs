@@ -140,6 +140,224 @@ assert.equal(isEsmLikeScriptForTests('async function load() { return await Promi
 console.log('ok - script runtime recognizes actual ESM import and export syntax');
 
 {
+  const { sandbox, messages } = createWorkerHarness({
+    chatMessages: [
+      { id: 'record-user-a', role: 'user', raw: 'hello' },
+      { id: 'record-assistant-b', role: 'assistant', raw: 'world' },
+    ],
+  });
+  const script = `
+    eventOn('macro.compat', () => {
+      const direct = substitudeMacros('{{user}}/{{char}}/{{model}}/{{input}}/{{lastMessageId}}/{{lastMessage}}/{{getvar::hp}}/{{getglobalvar::shared}}');
+      const extended = SillyTavern.substituteParamsExtended(
+        '{{custom}}',
+        { custom: 'dynamic' },
+        value => '[' + value + ']',
+      );
+      const legacy = substituteParams(
+        '{{user}}/{{char}}/{{custom}}',
+        'LegacyUser',
+        'LegacyChar',
+        undefined,
+        undefined,
+        true,
+        { custom: 'legacy' },
+        value => '<' + value + '>',
+      );
+      const fromContext = SillyTavern.getContext().substituteParams('{{lastMessageId}}');
+      SillyTavern.registerMacro('registered', () => 'yes');
+      const helper = TavernHelper.substitudeMacros('{{registered}}');
+      const mutated = substituteParams('{{setvar::hp::7}}{{getvar::hp}}');
+      return {
+        direct,
+        extended,
+        legacy,
+        fromContext,
+        helper,
+        mutated,
+        sync: typeof direct === 'string' && !(direct && typeof direct.then === 'function'),
+      };
+    });
+  `;
+  await sandbox.self.onmessage({
+    data: {
+      type: 'sync',
+      settings: { allowReadMessages: true, allowModifyVariables: true },
+      context: {
+        sessionId: 's1',
+        userName: 'Alice',
+        characterName: 'Milla',
+        model: 'gpt-test',
+        input: 'draft',
+        variables: { hp: '2' },
+        localVariables: { hp: '2' },
+        globalVariables: { shared: '5' },
+        variableRuntimeEnabled: true,
+      },
+      scripts: [{ id: 'macro-compat', name: 'macro compat', enabled: true, content: script }],
+    },
+  });
+  await flushTimers();
+  await sandbox.self.onmessage({
+    data: { type: 'dispatch', id: 'macro-compat-dispatch', event: 'macro.compat', payload: {} },
+  });
+  await flushTimers();
+  const result = messages.find(msg => msg.type === 'dispatch_result' && msg.id === 'macro-compat-dispatch')?.result;
+  assert.deepEqual(JSON.parse(JSON.stringify(result)), {
+    direct: 'Alice/Milla/gpt-test/draft/1/world/2/5',
+    extended: '[dynamic]',
+    legacy: '<LegacyUser>/<LegacyChar>/<legacy>',
+    fromContext: '1',
+    helper: 'yes',
+    mutated: '7',
+    sync: true,
+  });
+  assert.equal(
+    messages.some(msg => msg.type === 'rpc' && msg.method === 'variables.set' && msg.params?.key === 'hp' && msg.params?.value === '7'),
+    true,
+    '启用脚本变量修改时宏写入应同步更新镜像并异步持久化',
+  );
+  console.log('ok - worker exposes synchronous ST macro API aliases backed by real macro evaluation');
+}
+
+{
+  const { sandbox, messages } = createWorkerHarness();
+  const script = `
+    eventOn('macro.shared', () => {
+      const before = substitudeMacros('{{getvar::x::fallback}}');
+      const mutated = substitudeMacros('{{setvar::x::next}}{{getvar::x}}');
+      return {
+        before,
+        mutated,
+        local: getVariables().x,
+        global: getVariables({ type: 'global' }).x,
+      };
+    });
+  `;
+  await sandbox.self.onmessage({
+    data: {
+      type: 'sync',
+      settings: { allowReadMessages: true, allowModifyVariables: true },
+      context: {
+        sessionId: 's1',
+        uiMode: 'chat',
+        sharedVariables: true,
+        variables: { x: 'global-value' },
+        localVariables: { x: 'local-value' },
+        globalVariables: { x: 'global-value' },
+        variableRuntimeEnabled: true,
+      },
+      scripts: [{ id: 'macro-shared', name: 'macro shared', enabled: true, content: script }],
+    },
+  });
+  await flushTimers();
+  await sandbox.self.onmessage({
+    data: { type: 'dispatch', id: 'macro-shared-dispatch', event: 'macro.shared', payload: {} },
+  });
+  await flushTimers();
+  const result = messages.find(msg => msg.type === 'dispatch_result' && msg.id === 'macro-shared-dispatch')?.result;
+  assert.deepEqual(JSON.parse(JSON.stringify(result)), {
+    before: 'global-value',
+    mutated: 'next',
+    local: 'local-value',
+    global: 'next',
+  });
+  assert.equal(
+    messages.some(msg => (
+      msg.type === 'rpc'
+      && msg.method === 'variables.set'
+      && msg.params?.key === 'x'
+      && msg.params?.options?.scope === 'global'
+    )),
+    true,
+    '共享变量会话的普通 setvar 必须与主链一样写入 global',
+  );
+  console.log('ok - worker macro API maps shared chat variables to the global scope');
+}
+
+{
+  const { sandbox, messages } = createWorkerHarness({
+    chatMessages: [{ id: 'secret', role: 'assistant', raw: 'must-not-leak' }],
+  });
+  const script = `
+    eventOn('macro.permission', () => ({
+      output: substitudeMacros('{{setvar::hp::9}}{{getvar::hp}}'),
+      hp: getVariables().hp,
+      lastMessage: substitudeMacros('[{{lastMessage}}]'),
+    }));
+  `;
+  await sandbox.self.onmessage({
+    data: {
+      type: 'sync',
+      settings: { allowReadMessages: false, allowModifyVariables: false },
+      context: {
+        sessionId: 's1',
+        variables: { hp: '2' },
+        localVariables: { hp: '2' },
+        globalVariables: {},
+        variableRuntimeEnabled: true,
+      },
+      scripts: [{ id: 'macro-permission', name: 'macro permission', enabled: true, content: script }],
+    },
+  });
+  await flushTimers();
+  await sandbox.self.onmessage({
+    data: { type: 'dispatch', id: 'macro-permission-dispatch', event: 'macro.permission', payload: {} },
+  });
+  await flushTimers();
+  const result = messages.find(msg => msg.type === 'dispatch_result' && msg.id === 'macro-permission-dispatch')?.result;
+  assert.deepEqual(JSON.parse(JSON.stringify(result)), { output: '9', hp: '2', lastMessage: '[]' });
+  assert.equal(
+    messages.some(msg => msg.type === 'rpc' && /^variables\./.test(String(msg.method || ''))),
+    false,
+    '禁用脚本变量修改时宏不得绕过权限写入',
+  );
+  assert.equal(
+    messages.filter(msg => (
+      msg.type === 'rpc'
+      && msg.method === 'log'
+      && msg.params?.args?.[0] === '脚本权限已禁用'
+      && msg.params?.args?.[1] === '修改变量'
+    )).length,
+    1,
+    '禁用写权限时同一个宏 API 生命周期只提示一次',
+  );
+  console.log('ok - synchronous macro API keeps script variable write permissions');
+}
+
+{
+  const { sandbox, messages } = createWorkerHarness();
+  const script = `
+    eventOn('macro.paused', () => ({
+      output: substitudeMacros('A{{setvar::hp::9}}B{{getvar::hp}}C'),
+    }));
+  `;
+  await sandbox.self.onmessage({
+    data: {
+      type: 'sync',
+      settings: { allowReadMessages: true, allowModifyVariables: true },
+      context: {
+        sessionId: 's1',
+        variables: {},
+        localVariables: {},
+        globalVariables: {},
+        variableRuntimeEnabled: false,
+      },
+      scripts: [{ id: 'macro-paused', name: 'macro paused', enabled: true, content: script }],
+    },
+  });
+  await flushTimers();
+  await sandbox.self.onmessage({
+    data: { type: 'dispatch', id: 'macro-paused-dispatch', event: 'macro.paused', payload: {} },
+  });
+  await flushTimers();
+  const result = messages.find(msg => msg.type === 'dispatch_result' && msg.id === 'macro-paused-dispatch')?.result;
+  assert.deepEqual(JSON.parse(JSON.stringify(result)), { output: 'ABC' });
+  assert.equal(messages.some(msg => msg.type === 'rpc' && /^variables\./.test(String(msg.method || ''))), false);
+  console.log('ok - synchronous macro API respects the session variable-runtime pause');
+}
+
+{
   const runtime = Object.create(ScriptRuntime.prototype);
   runtime.scriptDiagnosticSignatures = new Map();
   runtime.scriptDiagnosticRevisions = new Map();
@@ -1268,6 +1486,7 @@ console.log('ok - script runtime recognizes actual ESM import and export syntax'
   const calls = [];
   runtime.chatStore = {
     getCurrent: () => 's1',
+    getDraft: () => 'draft text',
     listVariables: () => ({ mood: 'calm', nested: { hp: 10 } }),
     listGlobalVariables: () => ({ globalMood: 'shared' }),
     getMessages: () => [{ id: 'm1', role: 'assistant', message: 'hello' }],
@@ -1281,6 +1500,7 @@ console.log('ok - script runtime recognizes actual ESM import and export syntax'
       return true;
     },
   };
+  runtime.contactsStore = { getContact: () => ({ id: 's1', name: 'Milla' }) };
   const liveWorld = {
     entries: [{ id: 'entry-1', comment: 'Entry', content: 'world content', disable: false, constant: false }],
   };
@@ -1302,6 +1522,7 @@ console.log('ok - script runtime recognizes actual ESM import and export syntax'
   runtime.presets = {
     getActive: type => (type === 'openai' ? {
       name: 'Preset',
+      model: 'gpt-test',
       temperature: 0.4,
       prompts: [{ id: 'rule', name: 'Rule', content: 'content', enabled: true, role: 'system' }],
       prompt_order: [{ character_id: 100001, order: [{ identifier: 'rule', enabled: true }] }],
@@ -1309,6 +1530,7 @@ console.log('ok - script runtime recognizes actual ESM import and export syntax'
     getActiveId: type => (type === 'openai' ? 'preset-openai' : ''),
   };
   runtime.getEffectivePersona = () => ({ id: 'character-1', name: 'Alice' });
+  runtime.getActiveUserProfile = () => ({ id: 'user-1', name: 'Bob' });
   const context = runtime.buildContext('s1');
   runtime.context = { ...runtime.context, ...context };
   assert.deepEqual(context.variables, { mood: 'calm', nested: { hp: 10 } });
@@ -1318,6 +1540,15 @@ console.log('ok - script runtime recognizes actual ESM import and export syntax'
   assert.deepEqual(context.worldbookNames, ['World', 'Extra']);
   assert.equal(context.activePreset.prompts[0].name, 'Rule');
   assert.equal(context.chatCompletionSettings.temperature, 0.4);
+  assert.equal(context.userName, 'Bob');
+  assert.equal(context.characterName, 'Milla');
+  assert.equal(context.model, 'gpt-test');
+  assert.equal(context.input, 'draft text');
+
+  const rpContext = runtime.buildContext('rp:character-1');
+  assert.equal(rpContext.uiMode, 'rp');
+  assert.equal(rpContext.userName, 'Bob');
+  assert.equal(rpContext.characterName, 'Alice');
 
   const iframeHtml = runtime.iframeRuntime.buildIframeHtml(
     { id: 'esm-compat', name: 'esm compat', data: { scriptSetting: true }, content: 'export default function() {}' },
@@ -1327,6 +1558,10 @@ console.log('ok - script runtime recognizes actual ESM import and export syntax'
   assert.match(iframeHtml, /window\.powerUserSettings/);
   assert.match(iframeHtml, /window\.tavern_events/);
   assert.match(iframeHtml, /bridgeCompatGlobalsToHost/);
+  assert.match(iframeHtml, /window\.substituteParams/);
+  assert.match(iframeHtml, /window\.substituteParamsExtended/);
+  assert.match(iframeHtml, /window\.substitudeMacros/);
+  assert.doesNotMatch(iframeHtml, /substitudeMacros\s*=\s*\(text\)\s*=>\s*String\(text/);
   assert.match(iframeHtml, /default-src 'none'; script-src 'unsafe-inline' blob:;/);
   assert.doesNotMatch(iframeHtml, /connect-src https:/);
   assert.match(iframeHtml, /script_variables/);

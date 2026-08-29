@@ -145,6 +145,7 @@ const splitScriptSteps = script =>
     'node scripts/tests/chat-store-large-field-tests.mjs',
     'node scripts/tests/chat-store-format-repair-envelope-tests.mjs',
     'node scripts/tests/chat-store-scope-guard-tests.mjs',
+    'node scripts/tests/chat-store-thread-reset-window-tests.mjs',
     'node scripts/tests/kv-too-large-guard-tests.mjs',
     'node scripts/tests/worldinfo-store-read-safety-tests.mjs',
     'node scripts/tests/legacy-state-tie-utils-tests.mjs',

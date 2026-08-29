@@ -392,3 +392,338 @@ body {
     .composer textarea { font-size: 14px; }
     .send-button { padding: 11px 16px; min-width: 60px; }
 }
+.chat-realtime-call-btn {
+  position: absolute;
+  right: 72px;
+  bottom: 50%;
+  width: 30px;
+  height: 30px;
+  transform: translateY(50%);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--app-text-muted);
+  cursor: pointer;
+  z-index: 3;
+  transition: color 150ms ease, transform 150ms ease, background 150ms ease;
+}
+
+body:not([data-ui-mode='rp']) .chat-input {
+  padding-right: 108px;
+}
+
+body[data-ui-mode='rp'] .chat-realtime-call-btn {
+  right: 42px;
+}
+
+body[data-ui-mode='rp'] .chat-input {
+  padding-right: 74px;
+}
+
+.chat-realtime-call-btn:hover {
+  color: var(--app-accent-strong);
+  background: var(--app-accent-soft);
+}
+
+.chat-realtime-call-btn:active {
+  transform: translateY(50%) scale(0.92);
+}
+
+.chat-realtime-call-btn[hidden] {
+  display: none !important;
+}
+
+.chat-realtime-call-btn svg {
+  width: 19px;
+  height: 19px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.realtime-call-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 22600;
+  display: grid;
+  place-items: center;
+  padding:
+    calc(18px + env(safe-area-inset-top, 0px))
+    calc(18px + env(safe-area-inset-right, 0px))
+    calc(18px + env(safe-area-inset-bottom, 0px))
+    calc(18px + env(safe-area-inset-left, 0px));
+  box-sizing: border-box;
+  background: color-mix(in srgb, #10131a 64%, transparent);
+  backdrop-filter: blur(10px);
+  opacity: 0;
+  transition: opacity 180ms ease;
+}
+
+.realtime-call-overlay[hidden] {
+  display: none;
+}
+
+.realtime-call-overlay.is-open {
+  opacity: 1;
+}
+
+.realtime-call-panel {
+  position: relative;
+  isolation: isolate;
+  width: min(92vw, 430px);
+  max-height: min(760px, calc(100dvh - 36px));
+  overflow: auto;
+  box-sizing: border-box;
+  padding: 20px 22px 18px;
+  border: 1px solid color-mix(in srgb, var(--app-border-default) 78%, transparent);
+  border-radius: 28px;
+  background: color-mix(in srgb, var(--app-surface-card) 94%, transparent);
+  color: var(--app-text-primary);
+  box-shadow: 0 28px 80px rgba(0, 0, 0, 0.28);
+  text-align: center;
+  transform: translateY(12px) scale(0.98);
+  transition: transform 220ms cubic-bezier(.2,.8,.2,1);
+}
+
+.realtime-call-overlay.is-open .realtime-call-panel {
+  transform: none;
+}
+
+.realtime-call-ambient {
+  position: absolute;
+  z-index: -1;
+  inset: 0;
+  overflow: hidden;
+  border-radius: inherit;
+  background:
+    radial-gradient(circle at 50% 14%, color-mix(in srgb, var(--app-accent-soft) 82%, transparent), transparent 40%),
+    linear-gradient(160deg, transparent 30%, color-mix(in srgb, var(--app-surface-subtle) 65%, transparent));
+}
+
+.realtime-call-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.realtime-call-ai-badge {
+  padding: 5px 9px;
+  border: 1px solid var(--app-border-subtle);
+  border-radius: 999px;
+  color: var(--app-text-muted);
+  font-size: 11px;
+  letter-spacing: .06em;
+}
+
+.realtime-call-close {
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 999px;
+  background: var(--app-surface-subtle);
+  color: var(--app-text-secondary);
+  cursor: pointer;
+}
+
+.realtime-call-close svg,
+.realtime-call-action svg {
+  width: 20px;
+  height: 20px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.realtime-call-avatar-shell {
+  position: relative;
+  width: 124px;
+  height: 124px;
+  margin: 22px auto 14px;
+}
+
+.realtime-call-avatar {
+  position: relative;
+  z-index: 2;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border: 3px solid var(--app-surface-card);
+  border-radius: 50%;
+  box-sizing: border-box;
+  box-shadow: 0 10px 30px color-mix(in srgb, var(--app-accent-primary) 24%, transparent);
+}
+
+.realtime-call-pulse {
+  position: absolute;
+  inset: -7px;
+  z-index: 1;
+  border: 2px solid color-mix(in srgb, var(--app-accent-primary) 54%, transparent);
+  border-radius: 50%;
+  opacity: 0;
+}
+
+.realtime-call-panel[data-state="listening"] .realtime-call-pulse,
+.realtime-call-panel[data-state="speaking"] .realtime-call-pulse {
+  animation: realtime-call-pulse 1.7s ease-out infinite;
+}
+
+.realtime-call-name {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 760;
+}
+
+.realtime-call-status-row {
+  min-height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  margin-top: 7px;
+  color: var(--app-text-secondary);
+  font-size: 12px;
+}
+
+.realtime-call-status-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--app-text-muted);
+}
+
+.realtime-call-panel[data-state="listening"] .realtime-call-status-dot,
+.realtime-call-panel[data-state="speaking"] .realtime-call-status-dot {
+  background: var(--app-accent-primary);
+  box-shadow: 0 0 0 5px color-mix(in srgb, var(--app-accent-primary) 14%, transparent);
+}
+
+.realtime-call-duration {
+  margin-left: 2px;
+  font-variant-numeric: tabular-nums;
+}
+
+.realtime-call-caption {
+  min-height: 86px;
+  display: grid;
+  align-content: center;
+  gap: 7px;
+  margin: 20px 0 14px;
+  padding: 13px 15px;
+  border: 1px solid var(--app-border-subtle);
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--app-surface-input) 82%, transparent);
+  text-align: left;
+}
+
+.realtime-call-caption-role {
+  color: var(--app-accent-strong);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.realtime-call-caption p {
+  max-height: 4.6em;
+  overflow: auto;
+  margin: 0;
+  color: var(--app-text-primary);
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+.realtime-call-warning {
+  margin: -3px 0 12px;
+  color: var(--app-warning-text, #9a6700);
+  font-size: 12px;
+}
+
+.realtime-call-actions {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.realtime-call-action {
+  min-width: 0;
+  display: grid;
+  justify-items: center;
+  gap: 6px;
+  padding: 11px 5px 9px;
+  border: 1px solid var(--app-border-subtle);
+  border-radius: 14px;
+  background: var(--app-surface-input);
+  color: var(--app-text-secondary);
+  cursor: pointer;
+}
+
+.realtime-call-action span {
+  font-size: 11px;
+}
+
+.realtime-call-action.is-active {
+  background: var(--app-accent-soft);
+  color: var(--app-accent-strong);
+}
+
+.realtime-call-action.is-end {
+  border-color: color-mix(in srgb, var(--app-danger-text) 26%, var(--app-border-subtle));
+  color: var(--app-danger-text);
+}
+
+.realtime-call-action:disabled {
+  opacity: .42;
+  cursor: default;
+}
+
+.realtime-call-usage {
+  white-space: pre-line;
+  margin-top: 13px;
+  color: var(--app-text-muted);
+  font-size: 11px;
+}
+
+.realtime-call-disclosure {
+  display: block;
+  margin-top: 5px;
+  color: var(--app-text-muted);
+  font-size: 10.5px;
+  line-height: 1.45;
+}
+
+@keyframes realtime-call-pulse {
+  0% { opacity: .7; transform: scale(.96); }
+  75%, 100% { opacity: 0; transform: scale(1.16); }
+}
+
+@media (max-width: 520px) {
+  .realtime-call-panel {
+    width: 100%;
+    padding: 17px 17px 15px;
+    border-radius: 24px;
+  }
+
+  .realtime-call-avatar-shell {
+    width: 108px;
+    height: 108px;
+    margin-top: 17px;
+  }
+
+  .realtime-call-actions {
+    gap: 6px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .realtime-call-pulse {
+    animation: none !important;
+  }
+}

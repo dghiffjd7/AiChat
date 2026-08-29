@@ -1321,6 +1321,7 @@ export class ChatStore {
     this._v2ThreadState = new Map();
     this._recentMessageLoads = new Map();
     this._threadLoadEpochs = new Map();
+    this._pendingThreadResets = new Map();
     this._diskBacked = false;
     this._lsDisabled = false;
     this._lsQuotaWarned = false;
@@ -1518,6 +1519,27 @@ export class ChatStore {
     this._threadLoadEpochs.set(key, next);
     this._recentMessageLoads.delete(`${this._scopeToken}:${key}`);
     return next;
+  }
+
+  // 线程重置（clone/reset）在 v2 队列里异步执行；内存清空与索引换空之间的窗口内，
+  // 读取方必须把该线程当作权威空态，否则滚动懒加载等路径会从旧索引复活旧消息。
+  _beginThreadReset(threadKey) {
+    const key = String(threadKey || '').trim();
+    if (!key) return () => {};
+    const pending = this._pendingThreadResets;
+    pending.set(key, Number(pending.get(key) || 0) + 1);
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      const count = Number(pending.get(key) || 0);
+      if (count <= 1) pending.delete(key);
+      else pending.set(key, count - 1);
+    };
+  }
+
+  _isThreadResetPending(threadKey) {
+    return Number(this._pendingThreadResets.get(String(threadKey || '').trim()) || 0) > 0;
   }
 
   _invalidateSessionLoads(sessionId) {
@@ -1736,6 +1758,7 @@ export class ChatStore {
     if (this._isScopeStale(token, scopeId)) return [];
     const aid = String(archiveId || '').trim();
     const threadKey = this._getThreadKey(sid, aid);
+    if (this._isThreadResetPending(threadKey)) return this.getMessages(sid);
     const loadEpoch = this._getThreadLoadEpoch(threadKey);
     const loadKey = `${token}:${threadKey}`;
     const pending = this._recentMessageLoads.get(loadKey);
@@ -1811,6 +1834,7 @@ export class ChatStore {
     const aid = String(archiveId || this.state.sessions[sid]?.currentArchiveId || '').trim();
     const threadKey = this._getThreadKey(sid, aid);
     if (!this._useV2) return this.getMessages(sid);
+    if (this._isThreadResetPending(threadKey)) return this.getMessages(sid);
     if (this.state.sessions[sid]._loadedThreadKey === threadKey) return this.getMessages(sid);
     return this._loadRecentMessages(sid, aid, { token, scopeId });
   }
@@ -1820,6 +1844,7 @@ export class ChatStore {
     const sid = String(id || '').trim();
     if (!sid) return false;
     const aid = String(archiveId || this.state.sessions[sid]?.currentArchiveId || '').trim();
+    if (this._isThreadResetPending(this._getThreadKey(sid, aid))) return false;
     const thread = this._v2.getThread(sid, aid);
     if (!thread || !Array.isArray(thread.parts)) return false;
     const threadKey = this._getThreadKey(sid, aid);
@@ -1844,6 +1869,7 @@ export class ChatStore {
     const thread = this._v2.getThread(sid, aid);
     if (!entry || !thread || !Array.isArray(thread.parts) || !thread.parts.length) return [];
     const threadKey = this._getThreadKey(sid, aid);
+    if (this._isThreadResetPending(threadKey)) return [];
     const loadEpoch = this._getThreadLoadEpoch(threadKey);
     const state = this._getThreadState(threadKey);
     const all = thread.parts.map(p => p.id);
@@ -2010,6 +2036,7 @@ export class ChatStore {
     this._v2ThreadState.clear();
     this._recentMessageLoads.clear();
     this._threadLoadEpochs.clear();
+    this._pendingThreadResets = new Map();
     this._v2 = new ChatStoreV2({ scopeId: this.scopeId });
     this._diskBacked = false;
     this._lsDisabled = false;
@@ -2677,8 +2704,13 @@ export class ChatStore {
         this._invalidateThreadLoad(threadKey);
         this._clearThreadState(threadKey);
         const v2 = this._v2;
+        const releaseThreadReset = this._beginThreadReset(threadKey);
         v2.enqueue(async () => {
-          await v2.resetThread(sid, aid);
+          try {
+            await v2.resetThread(sid, aid);
+          } finally {
+            releaseThreadReset();
+          }
         });
       }
       this._persist();
@@ -2759,8 +2791,13 @@ export class ChatStore {
         this._invalidateThreadLoad(threadKey);
         this._clearThreadState(threadKey);
         const v2 = this._v2;
+        const releaseThreadReset = this._beginThreadReset(threadKey);
         v2.enqueue(async () => {
-          await v2.resetThread(sid, aid);
+          try {
+            await v2.resetThread(sid, aid);
+          } finally {
+            releaseThreadReset();
+          }
         });
       }
       this._persist();
@@ -3137,8 +3174,13 @@ export class ChatStore {
       const threadKey = this._getThreadKey(sid, '');
       this._getThreadState(threadKey, { reset: true });
       const v2 = this._v2;
+      const releaseThreadReset = this._beginThreadReset(threadKey);
       v2.enqueue(async () => {
-        await v2.cloneCurrentToArchive(sid, archiveId);
+        try {
+          await v2.cloneCurrentToArchive(sid, archiveId);
+        } finally {
+          releaseThreadReset();
+        }
       });
     }
 

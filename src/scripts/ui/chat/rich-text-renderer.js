@@ -26,7 +26,7 @@ import {
 } from './rich-render-routing.js';
 import { hideCreativeContentTagsForDisplay } from './creative-content-display-utils.js';
 import { mergeRichCompatInputText } from './rich-input-compat.js';
-import { applyDialogueHighlightToDom, segmentDialogueText } from './dialogue-segment-utils.js';
+import { segmentDialogueText } from './dialogue-segment-utils.js';
 import { createRpMessageIconMarkup } from './rp-message-actions-ui-utils.js';
 import {
     CompatGapCorrelationTracker,
@@ -10395,9 +10395,6 @@ export const renderRichText = (
                 openLightbox,
             });
             if (rendered) {
-                // fragment 路径（如思维链折叠 HTML）整块按 HTML 挂载，正文不会经过下方
-                // 纯文本分支；改在渲染后的 DOM 文本节点上做对白高亮，覆盖同一份切分规则。
-                if (highlightDialogue) applyDialogueHighlightToDom(containerEl);
                 if (Boolean(debugTag) || shouldLogRichDebug()) {
                     const msg = `text route=${chunkRoute.level} interactive=${chunkRoute.hasInteractiveHtml ? 1 : 0} len=${displayChunk.length}${debugTag ? ` tag=${debugTag}` : ''}`;
                     emitDebugLog({ source: 'rich', type: 'info', message: msg, force: true });

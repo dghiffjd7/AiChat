@@ -2,6 +2,8 @@ import { appSettings } from '../storage/app-settings.js';
 import { logger } from '../utils/logger.js';
 import { emitDebugLog } from '../utils/debug-log.js';
 import { serializeForInlineScript } from '../utils/inline-script.js';
+import { buildMacroEngineRuntimeSource } from '../utils/macro-engine.js';
+import { createSillyTavernMacroApi } from '../utils/macro-compat-api.js';
 import {
   analyzeScriptCompatibility,
   buildScriptRuntimeErrorDiagnostic,
@@ -28,6 +30,8 @@ const buildWorkerScript = () => `
 const scripts = new Map();
 let currentContext = { sessionId: '', personaId: '', presetId: '', presetIds: [], worldId: '', worldIds: [] };
 let currentSettings = { allowReadMessages: true, allowModifyVariables: true, allowNetwork: false };
+${buildMacroEngineRuntimeSource()}
+${createSillyTavernMacroApi.toString()}
 const DISPATCH_RESULT_LIMIT = ${SCRIPT_PAYLOAD_LIMIT};
 let seq = 0;
 const pending = new Map();
@@ -2891,10 +2895,48 @@ const buildCompatStContext = () => ({
   },
 });
 
+const legacyMacros = new Map();
+let macroCompatApi = null;
+
+const setMacroCompatVariable = (scope, key, value) => {
+  const normalizedScope = scope === 'global' ? 'global' : 'chat';
+  const targetKey = getCompatVariableContextKey(normalizedScope);
+  const current = currentContext[targetKey] && typeof currentContext[targetKey] === 'object'
+    ? currentContext[targetKey]
+    : {};
+  const next = { ...current, [key]: value };
+  currentContext[targetKey] = next;
+  if (normalizedScope === 'chat') currentContext.variables = next;
+  callRpc('variables.set', {
+    key,
+    value,
+    options: { scope: normalizedScope === 'chat' ? 'local' : 'global' },
+    sessionId: currentContext.sessionId,
+  }).catch(() => {});
+  return true;
+};
+
+const getMacroCompatApi = () => {
+  if (macroCompatApi) return macroCompatApi;
+  macroCompatApi = createSillyTavernMacroApi({
+    MacroEngineClass: MacroEngine,
+    getRuntimeContext: () => currentContext,
+    getMessages: () => getTavernChatSnapshot(),
+    getVariables: scope => getCompatBaseVariables({ type: scope === 'global' ? 'global' : 'message' }),
+    setVariable: setMacroCompatVariable,
+    canReadMessages: () => currentSettings.allowReadMessages === true,
+    canWriteVariables: () => currentSettings.allowModifyVariables === true,
+    onWriteDenied: () => warnCompatPermissionDenied('修改变量'),
+    getRegisteredMacros: () => legacyMacros,
+  });
+  return macroCompatApi;
+};
+
 const getContext = () => {
   const compatContext = buildCompatStContext();
   const chatCompletionSettings = compatContext.chatCompletionSettings;
   const chat = ensureSillyTavern().chat || [];
+  const macros = getMacroCompatApi();
   return {
     ...currentContext,
     ...compatContext,
@@ -2905,10 +2947,10 @@ const getContext = () => {
     powerUserSettings: self.powerUserSettings || {},
     setExtensionPrompt,
     saveSettingsDebounced: () => saveCompatChatCompletionSettings(chatCompletionSettings),
+    substituteParams: macros.substituteParams,
+    substituteParamsExtended: macros.substituteParamsExtended,
   };
 };
-
-const legacyMacros = new Map();
 
 // 酒馆脚本的 prompt 注入桥（缺陷 #1）：setExtensionPrompt / injectPrompts 转发到主线程注入表。
 // position 数字为 ST extension_prompt_types：-1 NONE / 0 IN_PROMPT / 1 IN_CHAT / 2 BEFORE_PROMPT。
@@ -2961,6 +3003,7 @@ const generateRaw = (config = {}) => callRpc('generation.generateRaw', {
 
 const buildSillyTavern = () => {
   const st = {};
+  const macros = getMacroCompatApi();
   st.chat = [];
   st.characters = buildCompatCharacters();
   st.characterId = 0;
@@ -2970,6 +3013,8 @@ const buildSillyTavern = () => {
   st.eventTypes = EVENT_TYPES;
   st.event_types = EVENT_TYPES;
   st.getContext = getContext;
+  st.substituteParams = macros.substituteParams;
+  st.substituteParamsExtended = macros.substituteParamsExtended;
   st.ToolManager = {
     isToolCallingSupported: () => false,
     parseToolCalls: () => {},
@@ -3013,6 +3058,7 @@ const buildSillyTavern = () => {
 
 const ensureSillyTavern = () => {
   if (!self.SillyTavern) self.SillyTavern = buildSillyTavern();
+  const macros = getMacroCompatApi();
   self.SillyTavern.characters = buildCompatCharacters();
   self.SillyTavern.characterId = 0;
   self.SillyTavern.extensionSettings = buildCompatStContext().extensionSettings;
@@ -3021,6 +3067,8 @@ const ensureSillyTavern = () => {
   self.SillyTavern.eventTypes = EVENT_TYPES;
   self.SillyTavern.event_types = EVENT_TYPES;
   self.SillyTavern.getContext = getContext;
+  self.SillyTavern.substituteParams = macros.substituteParams;
+  self.SillyTavern.substituteParamsExtended = macros.substituteParamsExtended;
   self.SillyTavern.generateRaw = generateRaw;
   self.SillyTavern.saveSettingsDebounced = () => saveCompatChatCompletionSettings(self.SillyTavern.chatCompletionSettings);
   self.SillyTavern.reloadCurrentChat = self.SillyTavern.reloadCurrentChat || (() => callRpc('chat.reloadCurrent', { sessionId: currentContext.sessionId }));
@@ -3143,11 +3191,10 @@ const ensureCompatGlobals = () => {
   if (typeof self.setChatMessages !== 'function') self.setChatMessages = setChatMessages;
   if (typeof self.getTavernRegexes !== 'function') self.getTavernRegexes = getTavernRegexes;
   if (typeof self.replaceTavernRegexes !== 'function') self.replaceTavernRegexes = replaceTavernRegexes;
-  if (typeof self.substitudeMacros !== 'function') {
-    // ST 原拼写的宏替换，被 R寶提醒等脚本裸调用：宏引擎在 app 主链，这里退化为原文
-    // 返回，保证依赖它的正则/整理路径不因 ReferenceError 中断；真宏替换按需另接 RPC。
-    self.substitudeMacros = (text) => String(text ?? '');
-  }
+  const macros = getMacroCompatApi();
+  if (typeof self.substituteParams !== 'function') self.substituteParams = macros.substituteParams;
+  if (typeof self.substituteParamsExtended !== 'function') self.substituteParamsExtended = macros.substituteParamsExtended;
+  if (typeof self.substitudeMacros !== 'function') self.substitudeMacros = macros.substitudeMacros;
   if (typeof self.alert !== 'function') {
     self.alert = (message) => callRpc('ui.alert', { message: String(message || ''), sessionId: currentContext.sessionId });
   }
@@ -3168,6 +3215,9 @@ const ensureCompatGlobals = () => {
   if (!self.TavernHelper || typeof self.TavernHelper !== 'object') self.TavernHelper = {};
   const helper = self.TavernHelper;
   if (typeof helper.getTavernHelperVersion !== 'function') helper.getTavernHelperVersion = async () => '0.0.0';
+  if (typeof helper.substituteParams !== 'function') helper.substituteParams = macros.substituteParams;
+  if (typeof helper.substituteParamsExtended !== 'function') helper.substituteParamsExtended = macros.substituteParamsExtended;
+  if (typeof helper.substitudeMacros !== 'function') helper.substitudeMacros = macros.substitudeMacros;
   helper.getVariables = helper.getVariables || getVariables;
   helper.getAllVariables = helper.getAllVariables || getAllVariables;
   helper.setVariables = helper.setVariables || setCompatVariables;
@@ -4417,6 +4467,8 @@ ${allowNetwork ? `
     allowReadMessages: ${settings?.allowReadMessages !== false ? 'true' : 'false'},
     allowModifyVariables: ${settings?.allowModifyVariables !== false ? 'true' : 'false'},
   };
+  ${buildMacroEngineRuntimeSource()}
+  ${createSillyTavernMacroApi.toString()}
   const pending = new Map();
   let seq = 0;
   const handlers = new Map();
@@ -4560,9 +4612,32 @@ ${allowNetwork ? `
     }
     return true;
   }
+  const legacyMacros = new Map();
+  let macroCompatApi = null;
+  function getMacroCompatApi() {
+    if (macroCompatApi) return macroCompatApi;
+    macroCompatApi = createSillyTavernMacroApi({
+      MacroEngineClass: MacroEngine,
+      getRuntimeContext: () => currentContext,
+      getMessages: () => Array.isArray(window.SillyTavern?.chat) ? window.SillyTavern.chat : [],
+      getVariables: scope => getCompatBaseVariables({ type: scope === 'global' ? 'global' : 'message' }),
+      setVariable: (scope, key, value) => {
+        setVariables({ [key]: value }, { type: scope === 'global' ? 'global' : 'message' });
+        return true;
+      },
+      canReadMessages: () => currentSettings.allowReadMessages === true,
+      canWriteVariables: () => currentSettings.allowModifyVariables === true,
+      onWriteDenied: () => callParent('log', { level: 'warn', args: ['脚本权限已禁用', '修改变量'] }).catch(() => {}),
+      getRegisteredMacros: () => legacyMacros,
+    });
+    return macroCompatApi;
+  }
   function getContext() {
+    const macros = getMacroCompatApi();
     return Object.assign({}, currentContext, buildCompatVariablesSnapshot(), {
       powerUserSettings: window.powerUserSettings || {},
+      substituteParams: macros.substituteParams,
+      substituteParamsExtended: macros.substituteParamsExtended,
     });
   }
   window.powerUserSettings = window.powerUserSettings || {};
@@ -4573,6 +4648,10 @@ ${allowNetwork ? `
   window.insertOrAssignVariables = window.insertOrAssignVariables || setVariables;
   window.deleteVariable = window.deleteVariable || deleteVariable;
   window.getContext = window.getContext || getContext;
+  const macroApi = getMacroCompatApi();
+  window.substituteParams = window.substituteParams || macroApi.substituteParams;
+  window.substituteParamsExtended = window.substituteParamsExtended || macroApi.substituteParamsExtended;
+  window.substitudeMacros = window.substitudeMacros || macroApi.substitudeMacros;
   try {
     Object.defineProperty(window, 'Context', {
       configurable: true,
@@ -4589,6 +4668,9 @@ ${allowNetwork ? `
   var insertOrAssignVariables = window.insertOrAssignVariables;
   var deleteVariable = window.deleteVariable;
   var getContext = window.getContext;
+  var substituteParams = window.substituteParams;
+  var substituteParamsExtended = window.substituteParamsExtended;
+  var substitudeMacros = window.substitudeMacros;
   var Context = window.Context;
   var powerUserSettings = window.powerUserSettings;
   function bridgeCompatGlobalsToHost(host) {
@@ -4602,6 +4684,9 @@ ${allowNetwork ? `
       if (typeof host.updateVariablesWith !== 'function') host.updateVariablesWith = (...args) => window.updateVariablesWith(...args);
       if (typeof host.insertOrAssignVariables !== 'function') host.insertOrAssignVariables = (...args) => window.insertOrAssignVariables(...args);
       if (typeof host.deleteVariable !== 'function') host.deleteVariable = (...args) => window.deleteVariable(...args);
+      if (typeof host.substituteParams !== 'function') host.substituteParams = (...args) => window.substituteParams(...args);
+      if (typeof host.substituteParamsExtended !== 'function') host.substituteParamsExtended = (...args) => window.substituteParamsExtended(...args);
+      if (typeof host.substitudeMacros !== 'function') host.substitudeMacros = (...args) => window.substitudeMacros(...args);
       try {
         Object.defineProperty(host, 'Context', {
           configurable: true,
@@ -4819,11 +4904,17 @@ ${allowNetwork ? `
     st.getRequestHeaders = () => ({});
     st.getChatCompletionModel = () => '';
     st.getCurrentChatId = () => String(currentContext.sessionId || '');
+    st.getContext = getContext;
+    st.substituteParams = macroApi.substituteParams;
+    st.substituteParamsExtended = macroApi.substituteParamsExtended;
     st.saveChat = () => Promise.resolve(true);
     st.updateMessageBlock = () => {};
     st.saveSettingsDebounced = () => {};
-    st.registerMacro = () => {};
-    st.unregisterMacro = () => {};
+    st.registerMacro = (name, fn) => {
+      const key = String(name || '').trim();
+      if (key && typeof fn === 'function') legacyMacros.set(key, fn);
+    };
+    st.unregisterMacro = name => legacyMacros.delete(String(name || '').trim());
     st.registerFunctionTool = () => {};
     st.unregisterFunctionTool = () => {};
     st.POPUP_TYPE = { TEXT: 'text', INPUT: 'input', CONFIRM: 'confirm' };
@@ -4841,6 +4932,9 @@ ${allowNetwork ? `
   window.TavernHelper.updateVariablesWith = window.TavernHelper.updateVariablesWith || updateVariablesWith;
   window.TavernHelper.insertOrAssignVariables = window.TavernHelper.insertOrAssignVariables || setVariables;
   window.TavernHelper.deleteVariable = window.TavernHelper.deleteVariable || deleteVariable;
+  window.TavernHelper.substituteParams = window.TavernHelper.substituteParams || macroApi.substituteParams;
+  window.TavernHelper.substituteParamsExtended = window.TavernHelper.substituteParamsExtended || macroApi.substituteParamsExtended;
+  window.TavernHelper.substitudeMacros = window.TavernHelper.substitudeMacros || macroApi.substitudeMacros;
   var SillyTavern = window.SillyTavern;
   var TavernHelper = window.TavernHelper;
   if (!window._ && window.lodash) window._ = window.lodash;
@@ -5107,6 +5201,7 @@ export class ScriptRuntime {
     this.chatStore = null;
     this.contactsStore = null;
     this.getEffectivePersona = null;
+    this.getActiveUserProfile = null;
     this.presets = null;
     this.ready = this.init();
     window.addEventListener('scripts-changed', () => {
@@ -5822,11 +5917,12 @@ export class ScriptRuntime {
     await this.syncScripts();
   }
 
-  setContext({ bridge, chatStore, contactsStore, getEffectivePersona, presets } = {}) {
+  setContext({ bridge, chatStore, contactsStore, getEffectivePersona, getActiveUserProfile, presets } = {}) {
     this.bridge = bridge || this.bridge;
     this.chatStore = chatStore || this.chatStore;
     this.contactsStore = contactsStore || this.contactsStore;
     this.getEffectivePersona = typeof getEffectivePersona === 'function' ? getEffectivePersona : this.getEffectivePersona;
+    this.getActiveUserProfile = typeof getActiveUserProfile === 'function' ? getActiveUserProfile : this.getActiveUserProfile;
     this.presets = presets || this.presets;
   }
 
@@ -6002,10 +6098,21 @@ export class ScriptRuntime {
       : {};
     const sharedVariables = this.bridge?.isSharedVariableSession?.(sid) === true;
     const variables = sharedVariables ? globalVariables : localVariables;
+    const contact = this.contactsStore?.getContact?.(sid) || null;
+    const activeUser = this.getActiveUserProfile?.() || null;
+    const userName = String(activeUser?.name || '').trim() || 'User';
+    const characterName = String((uiMode === 'rp' ? personaName : contact?.name) || personaName || '').trim() || 'Assistant';
+    const model = String(activeOpenAiPreset?.model || '').trim();
+    const input = String(this.chatStore?.getDraft?.(sid) || '');
     return {
       sessionId: sid,
+      uiMode,
       personaId,
       personaName,
+      userName,
+      characterName,
+      model,
+      input,
       presetId,
       presetIds,
       openaiPresetId: activeOpenAiPresetId,
