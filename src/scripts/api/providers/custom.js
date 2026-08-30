@@ -602,6 +602,7 @@ export class CustomProvider {
             });
             const emitParsed = function* (data) {
                 notifyProviderToolCallDelta(data);
+                reportProviderWebSources(options, data, { provider: providerName });
                 if (data?.usage && typeof data.usage === 'object') lastUsage = data;
                 if (hasOpenAICompatibleToolDelta(data)) toolDeltaCount += 1;
                 const nextFinishReason = pickOpenAICompatibleFinishReason(data);
@@ -728,6 +729,7 @@ export class CustomProvider {
             for await (const data of handleSSE(response)) {
                 touch();
                 notifyProviderToolCallDelta(data);
+                reportProviderWebSources(options, data, { provider: providerName });
                 if (data?.usage && typeof data.usage === 'object') lastUsage = data;
                 if (hasOpenAICompatibleToolDelta(data)) toolDeltaCount += 1;
                 const nextFinishReason = pickOpenAICompatibleFinishReason(data);

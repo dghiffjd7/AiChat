@@ -127,6 +127,7 @@ export const buildAdHocWebSearchRuntime = ({
   const plan = buildWebSearchRequestPlan({
     enabled: enabled === true,
     provider: config?.provider,
+    baseUrl: config?.baseUrl,
     model: config?.model,
     existingOptions: [baseOptions],
     fallbackToolDefinitions,
@@ -157,8 +158,16 @@ export const buildAdHocWebSearchRuntime = ({
         notifyStatus({ state: 'done', message: '已取得联网资料。' });
       }
     },
+    onProviderSearchActivity: (activity = {}) => {
+      notifyStatus({
+        ...activity,
+        message: activity?.state === 'done'
+          ? '供应方原生联网搜索完成。'
+          : '供应方正在原生联网搜索…',
+      });
+    },
   };
-  if (plan.fallback === true) {
+  if (plan.fallback === true || plan.route === 'kimi_native') {
     const originalStatus = baseOptions.onWebSearchStatus;
     mergedOptions.onWebSearchStatus = (status = {}) => {
       try { originalStatus?.(status); } catch {}
@@ -166,15 +175,13 @@ export const buildAdHocWebSearchRuntime = ({
     };
   }
   notifyStatus({ state: 'ready', message: '已允许本次联网，正在生成…' });
-  const generationClient = plan.fallback === true
-    ? createWebSearchGenerationClient({
-        client,
-        plan,
-        toolRuntime: runtime,
-        provider: config?.provider,
-        model: config?.model,
-        sessionId,
-      })
-    : client;
+  const generationClient = createWebSearchGenerationClient({
+    client,
+    plan,
+    toolRuntime: runtime,
+    provider: config?.provider,
+    model: config?.model,
+    sessionId,
+  });
   return { client: generationClient, requestOptions: mergedOptions, plan };
 };

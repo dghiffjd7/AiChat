@@ -4159,7 +4159,13 @@ class AppBridge {
       messages = this.normalizeOutgoingProviderMessages(messages, config);
       const genOptions = this.getGenerationOptions(presetContext, config);
       const applyRuntimeParamFilter = options => applyGenerationParamFilter(options, config?.excludedGenerationParams, {
-        protectedParams: ['signal', 'nativeRequestId'],
+        protectedParams: [
+          'signal',
+          'nativeRequestId',
+          ...(config?.webSearchEnabled === true
+            ? ['tools', 'tool_choice', 'openaiApi', 'include', 'max_tool_calls']
+            : []),
+        ],
       });
       const configuredProviderDirectives = this.buildProviderRequestDirectives(nextContext, presetContext, config);
       const sessionId = String(nextContext?.session?.id || this.activeSessionId || 'default').trim() || 'default';
@@ -4187,6 +4193,7 @@ class AppBridge {
       const webSearchPlan = buildWebSearchRequestPlan({
         enabled: config?.webSearchEnabled === true,
         provider: config?.provider,
+        baseUrl: config?.baseUrl,
         model: config?.model,
         existingOptions: [
           genOptions,
@@ -4737,6 +4744,9 @@ class AppBridge {
           'responseId',
           'responseModel',
           'routedProvider',
+          'webSearchRequests',
+          'webSearchTokens',
+          'webSearchEngine',
         ].forEach(key => { delete next[key]; });
         this.lastRequest.responseDiagnostics = {
           ...next,
@@ -4817,6 +4827,9 @@ class AppBridge {
             responseId: measured.responseId,
             responseModel: measured.responseModel,
             routedProvider: measured.routedProvider,
+            webSearchRequests: measured.webSearchRequests,
+            webSearchTokens: measured.webSearchTokens,
+            webSearchEngine: measured.webSearchEngine,
             providerCalls: getProviderCalls(),
             usagePersistenceTarget: 'generation_record',
           };
@@ -4826,20 +4839,48 @@ class AppBridge {
       requestOptions.onProviderSources = (sources) => {
         this.lastGenerationSources = mergeWebSources(this.lastGenerationSources || [], sources || []);
       };
-      if (webSearchPlan.fallback === true) {
-        requestOptions.onWebSearchStatus = (status = {}) => {
-          const detail = {
-            state: String(status?.state || '').trim(),
-            message: String(status?.message || '').trim(),
-            sessionId,
-            requestId: nativeRequestId,
-          };
-          if (this.lastRequest?.requestId === nativeRequestId) {
-            this.lastRequest.webSearchStatus = { ...detail };
-          }
-          try {
-            window.dispatchEvent(new CustomEvent('chatapp-web-search-status', { detail }));
-          } catch {}
+      const reportWebSearchStatus = (status = {}) => {
+        const detail = {
+          state: String(status?.state || '').trim(),
+          message: String(status?.message || '').trim(),
+          execution: String(
+            status?.execution
+            || (webSearchPlan.native ? 'provider_native' : 'app_tool'),
+          ).trim(),
+          provider: String(status?.provider || config?.provider || '').trim(),
+          engine: String(status?.engine || '').trim(),
+          route: String(webSearchPlan.route || '').trim(),
+          searchRequests: status?.searchRequests !== null
+            && status?.searchRequests !== undefined
+            && Number.isFinite(Number(status.searchRequests))
+            ? Math.max(0, Math.trunc(Number(status.searchRequests)))
+            : null,
+          sourceCount: status?.sourceCount !== null
+            && status?.sourceCount !== undefined
+            && Number.isFinite(Number(status.sourceCount))
+            ? Math.max(0, Math.trunc(Number(status.sourceCount)))
+            : null,
+          sessionId,
+          requestId: nativeRequestId,
+        };
+        if (this.lastRequest?.requestId === nativeRequestId) {
+          this.lastRequest.webSearchStatus = { ...detail };
+        }
+        try {
+          window.dispatchEvent(new CustomEvent('chatapp-web-search-status', { detail }));
+        } catch {}
+      };
+      if (webSearchPlan.fallback === true || webSearchPlan.route === 'kimi_native') {
+        requestOptions.onWebSearchStatus = reportWebSearchStatus;
+      }
+      if (webSearchPlan.native === true) {
+        requestOptions.onProviderSearchActivity = (activity = {}) => {
+          reportWebSearchStatus({
+            ...activity,
+            message: activity?.state === 'done'
+              ? '供应方原生联网搜索完成'
+              : '供应方正在原生联网搜索…',
+          });
         };
       }
       const generationClient = createWebSearchGenerationClient({
@@ -4989,6 +5030,20 @@ class AppBridge {
         providerToolRequestSchema: providerToolRequestSchema.diagnostics,
         providerToolBridgeLoop: providerToolBridgeLoopPlan.diagnostics,
         webSearch: webSearchPlan.diagnostics,
+        webSearchStatus: webSearchPlan.enabled === true
+          ? {
+              state: 'ready_not_observed',
+              message: '已开放联网工具，本轮尚未观察到搜索',
+              execution: webSearchPlan.native ? 'provider_native' : 'app_tool',
+              provider: String(config?.provider || '').trim(),
+              engine: String(webSearchPlan.diagnostics?.searchEngine || '').trim(),
+              route: String(webSearchPlan.route || '').trim(),
+              searchRequests: null,
+              sourceCount: 0,
+              sessionId,
+              requestId: nativeRequestId,
+            }
+          : null,
         deepSeekPhonePrefill: phoneProviderFcRoute.eligible
           ? {
               ...(phonePrefillPlan.diagnostics || {}),

@@ -3,6 +3,7 @@ import {
   extractToolResultWebSources,
   mergeWebSources,
 } from '../../api/web-search-runtime.js';
+import { createKimiNativeWebSearchClient } from './kimi-native-web-search-client.js';
 
 const isPlainObject = value => Boolean(value && typeof value === 'object' && !Array.isArray(value));
 
@@ -197,7 +198,7 @@ const createTurnCapture = ({
 const notifyWebSearchStatus = (options, state, message) => {
   if (typeof options?.onWebSearchStatus !== 'function') return;
   try {
-    options.onWebSearchStatus({ state, message });
+    options.onWebSearchStatus({ state, message, execution: 'app_tool', provider: 'tool_fallback' });
   } catch {}
 };
 
@@ -280,6 +281,14 @@ export const createWebSearchGenerationClient = ({
   sessionId = '',
   maxToolCalls = 2,
 } = {}) => {
+  if (client && plan?.native === true && plan?.route === 'kimi_native') {
+    return createKimiNativeWebSearchClient({
+      client,
+      provider,
+      model,
+      maxContinuationTurns: plan?.diagnostics?.maxContinuationTurns,
+    });
+  }
   if (!client || plan?.fallback !== true) return client;
 
   // DeepSeek prefix 前缀补全与两轮搜索互斥：首轮去前缀会让“无搜索”回复未被前缀条件化，
@@ -317,7 +326,7 @@ export const createWebSearchGenerationClient = ({
       });
       const firstResponse = await client.chat(messages, firstOptions);
       if (hasFallbackProviderCall(completedCalls)) {
-        notifyWebSearchStatus(options, 'searching', '正在联网搜索…');
+        notifyWebSearchStatus(options, 'searching', '正在由 App 搜索工具联网…');
       }
       let toolResults;
       try {
@@ -343,7 +352,7 @@ export const createWebSearchGenerationClient = ({
         toolResults,
         assistantCapture,
       );
-      notifyWebSearchStatus(options, 'continuing', '已取得网页资料，正在整理回答…');
+      notifyWebSearchStatus(options, 'continuing', 'App 搜索工具已取得网页资料，正在整理回答…');
       const continuationOptions = withoutToolOptions(options);
       continuationOptions.onProviderUsage = usage => {
         if (usage && typeof usage === 'object') usageReports.push(usage);
@@ -385,7 +394,7 @@ export const createWebSearchGenerationClient = ({
           toolCallDetected = true;
           if (!searchStatusStarted) {
             searchStatusStarted = true;
-            notifyWebSearchStatus(options, 'searching', '正在联网搜索…');
+            notifyWebSearchStatus(options, 'searching', '正在由 App 搜索工具联网…');
           }
         },
       });
@@ -420,7 +429,7 @@ export const createWebSearchGenerationClient = ({
         toolResults,
         assistantCapture,
       );
-      notifyWebSearchStatus(options, 'continuing', '已取得网页资料，正在整理回答…');
+      notifyWebSearchStatus(options, 'continuing', 'App 搜索工具已取得网页资料，正在整理回答…');
       const continuationOptions = withoutToolOptions(options);
       continuationOptions.onProviderUsage = usage => {
         if (usage && typeof usage === 'object') usageReports.push(usage);

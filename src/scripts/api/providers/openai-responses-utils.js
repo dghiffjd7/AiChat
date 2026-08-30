@@ -60,6 +60,8 @@ export const toOpenAIResponsesInput = (messages = []) => (
 export const toOpenAIResponsesTools = (tools = []) => (
   (Array.isArray(tools) ? tools : []).flatMap((tool) => {
     if (!isPlainObject(tool)) return [];
+    const type = trim(tool.type);
+    if (type === 'web_search' || type === 'web_search_preview') return [clone(tool)];
     if (trim(tool.type) === 'function' && trim(tool.name)) return [clone(tool)];
     const fn = isPlainObject(tool.function) ? tool.function : {};
     if (trim(tool.type) !== 'function' || !trim(fn.name)) return [];
@@ -86,6 +88,10 @@ export const buildOpenAIResponsesOptions = (options = {}) => {
   if (Object.prototype.hasOwnProperty.call(source, 'tool_choice')) out.tool_choice = clone(source.tool_choice);
   if (typeof source.parallel_tool_calls === 'boolean') out.parallel_tool_calls = source.parallel_tool_calls;
   if (Number.isFinite(source.max_tool_calls)) out.max_tool_calls = Math.max(1, Math.trunc(source.max_tool_calls));
+  if (Array.isArray(source.include)) {
+    const include = source.include.map(item => trim(item)).filter(Boolean);
+    if (include.length) out.include = [...new Set(include)];
+  }
   const tools = toOpenAIResponsesTools(source.tools);
   if (tools.length) out.tools = tools;
   if (isPlainObject(source.reasoning)) out.reasoning = clone(source.reasoning);

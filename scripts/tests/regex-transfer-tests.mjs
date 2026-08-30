@@ -24,6 +24,7 @@ const {
   getRegexImportSetName,
   normalizeRegexScript,
   parseRegexImportText,
+  prepareVersionIsolatedPresetRegexSets,
   stripGenericRegexSetName,
 } = await import('../../src/scripts/utils/regex-transfer.js');
 const {
@@ -133,6 +134,31 @@ test('preset bundled regex conversion uses the shared snake-case normalizer', ()
   assert.equal(rules[0].runOnEdit, true);
   assert.equal(rules[0].minDepth, 0);
   assert.equal(rules[0].maxDepth, 3);
+});
+
+test('new preset versions keep a complete independent regex set and only dedupe their own payload', () => {
+  const sets = prepareVersionIsolatedPresetRegexSets([
+    {
+      name: '预设 A 原有正则',
+      rules: [
+        { scriptName: '旧规则一', findRegex: '/old-one/g', replaceString: 'one', placement: [2] },
+        { scriptName: '旧规则二', findRegex: '/old-two/g', replaceString: 'two', placement: [2] },
+      ],
+    },
+    {
+      name: '预设 A1.1 新增正则',
+      rules: [
+        { scriptName: '重复的旧规则一', findRegex: '/old-one/g', replaceString: 'one', placement: [2] },
+        { scriptName: '新增规则', findRegex: '/new/g', replaceString: 'new', placement: [2] },
+      ],
+    },
+  ]);
+
+  assert.equal(sets.length, 2);
+  assert.deepEqual(sets.map(set => set.rules.map(rule => rule.findRegex)), [
+    ['/old-one/g', '/old-two/g'],
+    ['/new/g'],
+  ]);
 });
 
 test('parseRegexImportText reads character card extension regex scripts', () => {

@@ -124,6 +124,22 @@ export const buildPromptOverviewView = (request = null, {
   const diagnostics = req.responseDiagnostics && typeof req.responseDiagnostics === 'object'
     ? req.responseDiagnostics
     : {};
+  const webSearch = req.webSearch && typeof req.webSearch === 'object' ? req.webSearch : {};
+  const webSearchStatus = req.webSearchStatus && typeof req.webSearchStatus === 'object'
+    ? req.webSearchStatus
+    : {};
+  const webSearchEnabled = webSearch.enabled === true;
+  const webSearchRoute = String(webSearch.route || '').trim();
+  const webSearchExecution = String(
+    webSearchStatus.execution
+    || webSearch.execution
+    || (webSearchRoute.endsWith('_native') ? 'provider_native' : 'app_tool'),
+  ).trim();
+  const webSearchObservedState = String(webSearchStatus.state || '').trim()
+    || (webSearchEnabled ? 'ready_not_observed' : 'disabled');
+  const webSearchEngine = String(
+    webSearchStatus.engine || diagnostics.webSearchEngine || webSearch.searchEngine || '',
+  ).trim();
   const params = normalizeParamEntries(req);
   const transport = req.phoneReplyTransport && typeof req.phoneReplyTransport === 'object'
     ? req.phoneReplyTransport
@@ -318,6 +334,9 @@ export const buildPromptOverviewView = (request = null, {
       responseId: String(call?.responseId || ''),
       responseModel: String(call?.responseModel || ''),
       routedProvider: String(call?.routedProvider || ''),
+      webSearchRequests: toFiniteNumber(call?.webSearchRequests),
+      webSearchTokens: toFiniteNumber(call?.webSearchTokens),
+      webSearchEngine: String(call?.webSearchEngine || ''),
     }));
   const providerCallsJson = providerCalls.length ? JSON.stringify(providerCalls, null, 2) : '';
   const providerCallTotalTokens = providerCalls.reduce((sum, call) => (
@@ -347,6 +366,12 @@ export const buildPromptOverviewView = (request = null, {
     ...(transportThinkingOverrideReason
       ? [['fc_thinking_override', transportThinkingOverrideReason]]
       : []),
+    ...(webSearchRoute ? [['web_search_route', webSearchRoute]] : []),
+    ...(webSearchEnabled ? [
+      ['web_search_execution', webSearchExecution || 'unknown'],
+      ['web_search_state', webSearchObservedState],
+    ] : []),
+    ...(webSearchEngine ? [['web_search_engine', webSearchEngine]] : []),
   ];
 
   const requestJsonRows = requestRows.map(([key, value], index) => `
@@ -369,6 +394,12 @@ export const buildPromptOverviewView = (request = null, {
     { label: '首字延迟', value: firstTokenValue, note: req.stream ? '首个 provider 流片段' : '仅流式请求可测' },
     { label: '输出速度', value: tpsValue, note: '真实输出 token ÷ 首字后时长' },
     { label: '输出 Token', value: formatInt(diagnostics.completionTokens), note: '供应方 usage' },
+    ...(diagnostics.webSearchRequests !== null && diagnostics.webSearchRequests !== undefined
+      ? [{ label: '原生搜索次数', value: formatInt(diagnostics.webSearchRequests), note: webSearchEngine || '供应方 usage' }]
+      : []),
+    ...(diagnostics.webSearchTokens !== null && diagnostics.webSearchTokens !== undefined
+      ? [{ label: '搜索 Token', value: formatInt(diagnostics.webSearchTokens), note: '供应方单独返回时记录' }]
+      : []),
   ];
 
   const html = `
@@ -521,6 +552,16 @@ export const buildPromptOverviewView = (request = null, {
     `route state: ${routePreviewState}`,
     routeLayer ? `route layer: ${routeLayer}` : '',
     routeOptionFacts.length ? `route options: ${routeOptionFacts.join('; ')}` : '',
+    webSearchRoute ? `web search route: ${webSearchRoute}` : '',
+    webSearchEnabled ? `web search execution: ${webSearchExecution || 'unknown'}` : '',
+    webSearchEnabled ? `web search state: ${webSearchObservedState}` : '',
+    webSearchEngine ? `web search engine: ${webSearchEngine}` : '',
+    diagnostics.webSearchRequests !== null && diagnostics.webSearchRequests !== undefined
+      ? `web search requests: ${formatInt(diagnostics.webSearchRequests)}`
+      : '',
+    diagnostics.webSearchTokens !== null && diagnostics.webSearchTokens !== undefined
+      ? `web search tokens: ${formatInt(diagnostics.webSearchTokens)}`
+      : '',
     transportReason ? `transport reason: ${transportReason}` : '',
     snapshotFingerprint ? `snapshot: ${snapshotFingerprint}` : '',
     hasTransportThinking ? `FC thinking requested: ${transport.thinkingRequested === true ? 'true' : 'false'}` : '',

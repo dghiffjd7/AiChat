@@ -64,6 +64,7 @@ import {
     getRegexImportSetName,
     getRegexRuleSignature,
     normalizeRegexScript,
+    prepareVersionIsolatedPresetRegexSets,
 } from '../utils/regex-transfer.js';
 import { getPresetStore } from './preset-store-runtime-utils.js';
 import { waitForScriptStoreReady } from './script-runtime-utils.js';
@@ -7686,15 +7687,6 @@ export class PresetPanel {
         return getRegexRuleSignature(r);
     }
 
-    getExistingLocalRuleSigs() {
-        const sigs = new Set();
-        try {
-            const sets = listRegexLocalSets(window.appBridge);
-            sets.forEach(s => { (Array.isArray(s?.rules) ? s.rules : []).forEach(r => { sigs.add(this.getRuleSignature(r)); }); });
-        } catch {}
-        return sigs;
-    }
-
     extractStRegexBindingSets(obj) {
         const out = [];
         const seenScriptIds = new Set();
@@ -7931,21 +7923,12 @@ export class PresetPanel {
                             regexPresetId,
                         ).trim() || regexPresetId;
                         const bind = bindTarget.bind;
-                        const existingSigs = this.getExistingLocalRuleSigs();
-                        for (const s of boundSets) {
-                            const rulesRaw = Array.isArray(s?.rules) ? s.rules : [];
-                            const rules = [];
-                            const localSeen = new Set();
-                            for (const rr of rulesRaw) {
-                                const sig = this.getRuleSignature(rr);
-                                if (!sig || localSeen.has(sig) || existingSigs.has(sig)) continue;
-                                localSeen.add(sig); existingSigs.add(sig); rules.push(rr);
-                            }
-                            if (!rules.length) continue;
+                        const isolatedSets = prepareVersionIsolatedPresetRegexSets(boundSets);
+                        for (const s of isolatedSets) {
                             const setName = String(s?.name || '正则').trim() || '正则';
                             await upsertRegexLocalSet(window.appBridge, {
                                 name: `${setName} (${regexPresetName})`, enabled: s?.enabled !== false,
-                                bind, rules,
+                                bind, rules: s.rules,
                             });
                         }
                         window.dispatchEvent(new CustomEvent('regex-changed'));

@@ -47,11 +47,18 @@ const appendResponseIdentity = (normalized, body = {}) => {
     ?? body?.provider_name
     ?? body?.provider,
   );
+  const webSearchEngine = responseIdentityText(
+    body?.web_search_engine
+    ?? body?.webSearchEngine
+    ?? body?.router_metadata?.web_search_engine
+    ?? body?.router_metadata?.web_search?.engine,
+  );
   if (systemFingerprint) normalized.systemFingerprint = systemFingerprint;
   if (modelVersion) normalized.modelVersion = modelVersion;
   if (responseId) normalized.responseId = responseId;
   if (responseModel) normalized.responseModel = responseModel;
   if (routedProvider) normalized.routedProvider = routedProvider;
+  if (webSearchEngine) normalized.webSearchEngine = webSearchEngine;
   return normalized;
 };
 
@@ -80,6 +87,22 @@ export const reportProviderUsage = (options, meta) => {
         ? toNullableTokenCount(usage.total_tokens ?? usage.totalTokenCount)
         : null,
     };
+    const webSearchRequests = usage ? toNullableTokenCount(
+      usage?.server_tool_use?.web_search_requests
+      ?? usage?.serverToolUse?.webSearchRequests
+      ?? usage?.web_search_requests
+      ?? usage?.webSearchRequests
+      ?? usage?.web_search_count,
+    ) : null;
+    const webSearchTokens = usage ? toNullableTokenCount(
+      usage?.server_tool_use?.web_search_tokens
+      ?? usage?.serverToolUse?.webSearchTokens
+      ?? usage?.web_search_tokens
+      ?? usage?.webSearchTokens
+      ?? usage?.search_tokens,
+    ) : null;
+    if (webSearchRequests !== null) normalized.webSearchRequests = webSearchRequests;
+    if (webSearchTokens !== null) normalized.webSearchTokens = webSearchTokens;
     cb(appendResponseIdentity(normalized, body));
   } catch {}
 };

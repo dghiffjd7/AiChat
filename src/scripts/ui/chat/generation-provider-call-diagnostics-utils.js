@@ -65,6 +65,9 @@ export const createGenerationProviderCallDiagnosticsTracker = ({ now = Date.now 
       responseId: '',
       responseModel: '',
       routedProvider: '',
+      webSearchRequests: null,
+      webSearchTokens: null,
+      webSearchEngine: '',
     });
     activeCallId = callId;
     return callId;

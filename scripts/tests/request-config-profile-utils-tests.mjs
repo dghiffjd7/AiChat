@@ -105,7 +105,10 @@ test('generation applies connection parameter filter to final request options', 
   assert.ok(streamStart > backgroundStart, 'backgroundChat body should be discoverable');
 
   const generateBody = source.slice(generateStart, backgroundStart);
-  assert.match(generateBody, /const applyRuntimeParamFilter = options => applyGenerationParamFilter\(options, config\?\.excludedGenerationParams,\s*\{\s*protectedParams: \['signal', 'nativeRequestId'\]/);
+  assert.match(
+    generateBody,
+    /const applyRuntimeParamFilter = options => applyGenerationParamFilter\(options, config\?\.excludedGenerationParams,\s*\{\s*protectedParams:\s*\[\s*'signal',\s*'nativeRequestId',\s*\.\.\.\(config\?\.webSearchEnabled === true\s*\? \['tools', 'tool_choice', 'openaiApi', 'include', 'max_tool_calls'\]/,
+  );
   assert.match(generateBody, /const requestOptions = applyRuntimeParamFilter\(\{\s*...\(genOptions \|\| \{\}\),\s*...\(providerDirectives \|\| \{\}\),\s*...\(providerToolRequestSchema\.requestOptions \|\| \{\}\),\s*...\(webSearchPlan\.requestOptions \|\| \{\}\),\s*signal: abortController\.signal,\s*nativeRequestId,/);
   assert.match(
     generateBody,

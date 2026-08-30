@@ -94,6 +94,9 @@ export const buildCompletedResponseDiagnostics = (current = null, {
     responseId: identityText(usage?.responseId, previous.responseId),
     responseModel: identityText(usage?.responseModel, previous.responseModel),
     routedProvider: identityText(usage?.routedProvider, previous.routedProvider),
+    webSearchRequests: toTokenCount(usage?.webSearchRequests),
+    webSearchTokens: toTokenCount(usage?.webSearchTokens),
+    webSearchEngine: identityText(usage?.webSearchEngine, previous.webSearchEngine),
   };
 };
 
@@ -128,6 +131,9 @@ export const mergeResponseDiagnosticsIntoUsage = (
     responseId: identityText(diagnostics.responseId, src.responseId),
     responseModel: identityText(diagnostics.responseModel, src.responseModel),
     routedProvider: identityText(diagnostics.routedProvider, src.routedProvider),
+    webSearchRequests: toTokenCount(diagnostics.webSearchRequests ?? src.webSearchRequests),
+    webSearchTokens: toTokenCount(diagnostics.webSearchTokens ?? src.webSearchTokens),
+    webSearchEngine: identityText(diagnostics.webSearchEngine, src.webSearchEngine),
     ...(calls.length ? { providerCalls: calls } : {}),
   };
 };

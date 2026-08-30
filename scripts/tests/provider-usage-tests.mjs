@@ -88,6 +88,28 @@ test('preserves provider-returned response model and routed provider identity', 
   assert.equal(seen.routedProvider, 'Upstream Labs');
 });
 
+test('reports provider-native web search usage and engine when returned', () => {
+  let seen = null;
+  reportProviderUsage({ onProviderUsage: (u) => { seen = u; } }, {
+    body: {
+      usage: {
+        prompt_tokens: 10,
+        completion_tokens: 4,
+        total_tokens: 14,
+        server_tool_use: {
+          web_search_requests: 2,
+          web_search_tokens: 320,
+        },
+      },
+      router_metadata: { web_search: { engine: 'exa' } },
+    },
+    model: 'model', provider: 'openrouter', finishReason: 'stop',
+  });
+  assert.equal(seen.webSearchRequests, 2);
+  assert.equal(seen.webSearchTokens, 320);
+  assert.equal(seen.webSearchEngine, 'exa');
+});
+
 test('does not double count OpenAI cached prompt tokens', () => {
   assert.equal(resolveProviderPromptTokens({
     prompt_tokens: 1200,

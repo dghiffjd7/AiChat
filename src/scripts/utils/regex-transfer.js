@@ -45,6 +45,26 @@ const normalizeRuleList = (rules = []) => {
   return out;
 };
 
+export const prepareVersionIsolatedPresetRegexSets = (sets = []) => {
+  const seen = new Set();
+  const out = [];
+  asArray(sets).forEach((rawSet) => {
+    if (!rawSet || typeof rawSet !== 'object') return;
+    const rules = [];
+    asArray(rawSet.rules).forEach((rawRule) => {
+      if (!rawRule || typeof rawRule !== 'object') return;
+      const rule = normalizeRegexScript(rawRule);
+      if (!String(rule.findRegex || '').trim()) return;
+      const sig = getRegexRuleSignature(rule);
+      if (!sig || seen.has(sig)) return;
+      seen.add(sig);
+      rules.push(rule);
+    });
+    if (rules.length) out.push({ ...rawSet, rules });
+  });
+  return out;
+};
+
 const GENERIC_SOURCE_NAME_PATTERNS = [
   /^regex\s*scripts?$/i,
   /^regex\s*bindings?$/i,

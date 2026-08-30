@@ -3,10 +3,14 @@ import assert from 'node:assert/strict';
 import { splitRequestOptions } from '../../src/scripts/api/abort.js';
 import { buildWebSearchRequestPlan } from '../../src/scripts/api/web-search-runtime.js';
 import { AnthropicProvider } from '../../src/scripts/api/providers/anthropic.js';
+import { DeepseekProvider } from '../../src/scripts/api/providers/deepseek.js';
 import { GeminiProvider } from '../../src/scripts/api/providers/gemini.js';
+import { KimiProvider } from '../../src/scripts/api/providers/kimi.js';
 import { MakersuiteProvider } from '../../src/scripts/api/providers/makersuite.js';
+import { OpenAIProvider } from '../../src/scripts/api/providers/openai.js';
 import { OpenRouterProvider } from '../../src/scripts/api/providers/openrouter.js';
 import { VertexAIProvider } from '../../src/scripts/api/providers/vertexai.js';
+import { ZhipuProvider } from '../../src/scripts/api/providers/zhipu.js';
 
 const messages = [{ role: 'user', content: 'latest news' }];
 const sourceCallback = () => {};
@@ -63,6 +67,85 @@ const sourceCallback = () => {};
   }), 'answer');
   assert.deepEqual(requestBody.tools, plan.requestOptions.tools);
   assert.equal(Object.prototype.hasOwnProperty.call(requestBody, 'onProviderSources'), false);
+}
+
+{
+  const plan = buildWebSearchRequestPlan({
+    enabled: true,
+    provider: 'zhipu',
+    baseUrl: 'https://open.bigmodel.cn/api/paas/v4',
+    model: 'glm-5.2',
+  });
+  const provider = new ZhipuProvider({ apiKey: 'test', model: 'glm-5.2' });
+  const prepared = provider.prepareChatRequest(messages, {
+    ...plan.requestOptions,
+    onProviderSources: sourceCallback,
+  });
+  assert.deepEqual(prepared.payload.tools, plan.requestOptions.tools);
+  assert.equal(Object.hasOwn(prepared.payload, 'onProviderSources'), false);
+}
+
+{
+  const plan = buildWebSearchRequestPlan({
+    enabled: true,
+    provider: 'kimi',
+    baseUrl: 'https://api.moonshot.ai/v1',
+    model: 'kimi-k2.6',
+  });
+  const provider = new KimiProvider({ apiKey: 'test', model: 'kimi-k2.6' });
+  const prepared = provider.prepareChatRequest(messages, {
+    ...plan.requestOptions,
+    onProviderSources: sourceCallback,
+  });
+  assert.deepEqual(prepared.payload.tools, [{
+    type: 'builtin_function',
+    function: { name: '$web_search' },
+  }]);
+  assert.equal(Object.hasOwn(prepared.payload, 'onProviderSources'), false);
+}
+
+{
+  const plan = buildWebSearchRequestPlan({
+    enabled: true,
+    provider: 'openai',
+    baseUrl: 'https://api.openai.com/v1',
+    model: 'gpt-5.6-sol',
+  });
+  const provider = new OpenAIProvider({
+    provider: 'openai',
+    apiKey: 'test',
+    baseUrl: 'https://api.openai.com/v1',
+    model: 'gpt-5.6-sol',
+  });
+  const prepared = provider.prepareResponsesRequest(messages, {
+    ...plan.requestOptions,
+    onProviderSources: sourceCallback,
+  });
+  assert.equal(prepared.url, 'https://api.openai.com/v1/responses');
+  assert.deepEqual(prepared.body.tools, [{ type: 'web_search' }]);
+  assert.equal(prepared.body.tool_choice, 'auto');
+  assert.deepEqual(prepared.body.include, ['web_search_call.action.sources']);
+  assert.equal(Object.hasOwn(prepared.body, 'onProviderSources'), false);
+}
+
+{
+  const plan = buildWebSearchRequestPlan({
+    enabled: true,
+    provider: 'deepseek',
+    baseUrl: 'https://api.deepseek.com/v1',
+    model: 'deepseek-v4-pro',
+  });
+  const provider = new DeepseekProvider({
+    provider: 'deepseek',
+    apiKey: 'test',
+    baseUrl: 'https://api.deepseek.com/v1',
+    model: 'deepseek-v4-pro',
+  });
+  const prepared = provider.prepareResponsesRequest(messages, plan.requestOptions);
+  assert.equal(prepared.url, 'https://api.deepseek.com/responses');
+  assert.deepEqual(prepared.body.tools, [{ type: 'web_search' }]);
+  assert.equal(prepared.body.tool_choice, 'auto');
+  assert.equal(Object.hasOwn(prepared.body, 'include'), false);
 }
 
 console.log('ok - native web search schemas reach each provider payload without leaking callbacks');

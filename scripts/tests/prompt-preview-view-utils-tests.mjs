@@ -24,6 +24,16 @@ const request = {
     { role: 'user', content: 'OVERVIEW_MUST_NOT_REPEAT_THIS_MESSAGE' },
   ],
   responsePrefix: '<assistant_prefill>',
+  webSearch: {
+    enabled: true,
+    route: 'openrouter_native',
+    execution: 'provider_native',
+  },
+  webSearchStatus: {
+    state: 'done',
+    execution: 'provider_native',
+    engine: 'exa',
+  },
   phoneReplyTransport: {
     requestedMode: 'provider_fc',
     effectiveMode: 'fc_fallback',
@@ -62,6 +72,9 @@ const request = {
     responseId: 'response-42',
     responseModel: 'actual-model-42',
     routedProvider: 'upstream-42',
+    webSearchRequests: 2,
+    webSearchTokens: 320,
+    webSearchEngine: 'exa',
     providerCalls: [
       {
         callIndex: 1,
@@ -101,6 +114,13 @@ const request = {
   assert.match(view.html, /model-version-42/);
   assert.match(view.html, /response-42/);
   assert.match(view.html, /Provider calls · 2/);
+  assert.match(view.html, /web_search_route/);
+  assert.match(view.html, /openrouter_native/);
+  assert.match(view.html, /原生搜索次数/);
+  assert.match(view.html, />2</);
+  assert.match(view.plain, /web search state: done/);
+  assert.match(view.plain, /web search engine: exa/);
+  assert.match(view.plain, /web search tokens: 320/);
   assert.match(view.html, /legacy_text_fallback/);
   assert.match(view.html, /2 条消息/);
   assert.match(view.html, /FC 失败后文本回退/);

@@ -805,6 +805,7 @@ export class OpenAIProvider {
             api: 'responses',
           });
         } catch {}
+        reportProviderWebSources(options, event, { provider: this.provider });
         deltaCount += 1;
         if (type === 'response.completed') finalResponse = event?.response || null;
         const reasoningDelta = (

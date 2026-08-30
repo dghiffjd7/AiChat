@@ -10,15 +10,25 @@ export const splitRequestOptions = (options = {}) => {
     typeof src.onProviderToolCallDelta === 'function' ? src.onProviderToolCallDelta : null;
   const onProviderSources =
     typeof src.onProviderSources === 'function' ? src.onProviderSources : null;
+  const onProviderSearchActivity =
+    typeof src.onProviderSearchActivity === 'function' ? src.onProviderSearchActivity : null;
   const {
     signal: _signal,
     nativeRequestId: _nativeRequestId,
     requestId: _requestId,
     onProviderToolCallDelta: _onProviderToolCallDelta,
     onProviderSources: _onProviderSources,
+    onProviderSearchActivity: _onProviderSearchActivity,
     ...rest
   } = src;
-  return { signal, requestId, onProviderToolCallDelta, onProviderSources, options: rest };
+  return {
+    signal,
+    requestId,
+    onProviderToolCallDelta,
+    onProviderSources,
+    onProviderSearchActivity,
+    options: rest,
+  };
 };
 
 let nativeHttpRequestSequence = 0;
