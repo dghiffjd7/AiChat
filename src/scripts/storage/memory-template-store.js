@@ -1,6 +1,10 @@
 import { safeInvoke } from '../utils/tauri.js';
 import { logger } from '../utils/logger.js';
 import { DEFAULT_MEMORY_TEMPLATE } from '../memory/default-template.js';
+import {
+  canonicalizeOfficialMemoryTemplateRecord,
+  localizeOfficialMemoryTemplateRecord,
+} from '../memory/memory-template-locale.js';
 
 const initDatabase = async (scopeId = '') => {
   try {
@@ -181,7 +185,8 @@ export class MemoryTemplateStore {
 
   async saveTemplateRaw(input) {
     await this.ensureReady();
-    return this.invokeCommand('save_template', { scopeId: this.scopeId, input });
+    const canonicalInput = canonicalizeOfficialMemoryTemplateRecord(input);
+    return this.invokeCommand('save_template', { scopeId: this.scopeId, input: canonicalInput });
   }
 
   async saveTemplateDefinition(template, { isDefault = false, isBuiltin = false } = {}) {
@@ -197,7 +202,10 @@ export class MemoryTemplateStore {
 
   async getTemplates(query = {}) {
     await this.ensureReady();
-    return this.invokeCommand('get_templates', { scopeId: this.scopeId, query });
+    const records = await this.invokeCommand('get_templates', { scopeId: this.scopeId, query });
+    return Array.isArray(records)
+      ? records.map(record => localizeOfficialMemoryTemplateRecord(record))
+      : records;
   }
 
   async getTemplateById(id) {

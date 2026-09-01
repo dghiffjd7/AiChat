@@ -61,7 +61,7 @@ const isOutlineSectionColumn = (tableId, column) => (
 
 const normalizeMemorySelectOption = (option) => {
   const value = String(option ?? '').trim();
-  return { value, label: value };
+  return { value, label: translateUiText(value) };
 };
 
 export const buildMemoryTableSelectFieldView = ({

@@ -23,6 +23,10 @@ test('data bundle export/import are unlimited (0 disables the IPC hang guard)', 
   assert.equal(resolveInvokeTimeoutMs('import_data_bundle_bytes', { data: '', mode: 'replace' }), 0);
 });
 
+test('native microphone permission prompt is not cut off by the IPC timeout', () => {
+  assert.equal(resolveInvokeTimeoutMs('prepare_microphone_permission_retry', {}), 0);
+});
+
 let failed = 0;
 for (const { name, fn } of tests) {
   try {

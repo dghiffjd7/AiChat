@@ -167,7 +167,7 @@ export class MemoryTemplatePanel {
   createUI() {
     this.overlay = document.createElement('div');
     this.overlay.className = 'app-themed-overlay memory-template-overlay';
-    this.overlay.style.cssText = 'display:none; position:fixed; inset:0; background:rgba(0,0,0,0.45); z-index:20000;';
+    this.overlay.style.cssText = 'display:none; position:fixed; inset:0; background:rgba(0,0,0,0.45); z-index:23200;';
     this.overlay.addEventListener('click', () => this.hide());
 
     this.panel = document.createElement('div');
@@ -180,7 +180,7 @@ export class MemoryTemplatePanel {
       height: calc(100vh - 20px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
       height: calc(100dvh - 20px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
       background:var(--app-surface-card); border-radius:12px; box-shadow:0 10px 40px rgba(0,0,0,0.25);
-      z-index:21000;
+      z-index:23400;
       overflow:hidden;
       display:flex; flex-direction:column;
     `;

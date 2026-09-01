@@ -2,7 +2,7 @@ use tauri::AppHandle;
 use tauri_plugin_opener::OpenerExt;
 
 const ALLOWED_EXTERNAL_URLS: [&str; 2] = [
-    "https://github.com/dghiffjd7",
+    "https://ko-fi.com/illusion7",
     "https://github.com/dghiffjd7/OmniTavern",
 ];
 
@@ -27,12 +27,13 @@ mod tests {
     use super::is_allowed_external_url;
 
     #[test]
-    fn allows_only_the_developer_github_pages() {
-        assert!(is_allowed_external_url("https://github.com/dghiffjd7"));
+    fn allows_only_the_developer_kofi_and_project_pages() {
+        assert!(is_allowed_external_url("https://ko-fi.com/illusion7"));
         assert!(is_allowed_external_url(
             "https://github.com/dghiffjd7/OmniTavern"
         ));
-        assert!(!is_allowed_external_url("http://github.com/dghiffjd7"));
+        assert!(!is_allowed_external_url("https://github.com/dghiffjd7"));
+        assert!(!is_allowed_external_url("http://ko-fi.com/illusion7"));
         assert!(!is_allowed_external_url(
             "https://github.com/dghiffjd7/OmniTavern/issues"
         ));

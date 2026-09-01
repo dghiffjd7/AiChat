@@ -669,7 +669,7 @@ export const buildFullPromptDocument = (request = null, { fallbackText = '' } = 
       text,
       globalPrompts,
       exactGlobalPrompt,
-      transportContract: /^本轮使用 JSON 结构化终态/u.test(String(text || '').trim()),
+      transportContract: /^(?:本轮使用 JSON 结构化终态|This turn uses the JSON structured terminal)/u.test(String(text || '').trim()),
     };
   });
   if (req.responsePrefix) {

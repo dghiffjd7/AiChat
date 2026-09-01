@@ -1,3 +1,5 @@
+import { translateUiText } from '../i18n/index.js';
+
 const OUTLINE_TABLE_IDS = new Set([
   'chat_outline',
   'group_outline',
@@ -50,8 +52,9 @@ export const normalizeOutlineSection = (value, fallback = 'current') => {
   return safeFallback;
 };
 
-export const getOutlineSectionLabel = section =>
-  OUTLINE_SECTION_LABELS[normalizeOutlineSection(section)] || OUTLINE_SECTION_LABELS.current;
+export const getOutlineSectionLabel = section => translateUiText(
+  OUTLINE_SECTION_LABELS[normalizeOutlineSection(section)] || OUTLINE_SECTION_LABELS.current,
+);
 
 export const normalizeOutlinePatchData = (data = {}, { outlineField = 'outline' } = {}) => {
   const source = data && typeof data === 'object' ? data : {};

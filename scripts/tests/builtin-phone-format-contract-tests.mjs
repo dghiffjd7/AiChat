@@ -362,4 +362,39 @@ const parse = (raw, userName = '我') => {
   console.log('ok - bridge Guardian and preset preview consume the shared contract instead of local skeletons');
 }
 
+{
+  const { setPromptLocale } = await import('../../src/scripts/i18n/prompt-locale.js');
+  try {
+    setPromptLocale('en');
+    const plan = resolveBuiltinPhoneFormatReminderPlan({
+      hasPreset: true,
+      isDefaultPreset: true,
+      surface: 'private_chat',
+      userName: 'user',
+      targetName: 'Lara',
+      scenarioReminder: '',
+    });
+    assert.match(plan.systemText, /The built-in format contract \(miphone\.text\.v1\) follows/);
+    assert.match(plan.systemText, /MiPhone_start/, 'protocol skeleton must stay locale-independent');
+    const continuation = resolveBuiltinPhoneFormatReminderPlan({
+      hasPreset: true,
+      isDefaultPreset: true,
+      assistantContinuation: true,
+      surface: 'private_chat',
+      scenarioReminder: '',
+    });
+    assert.match(continuation.systemText, /Continue the previous unfinished built-in-format reply/);
+  } finally {
+    setPromptLocale('zh-CN');
+  }
+  const zhPlan = resolveBuiltinPhoneFormatReminderPlan({
+    hasPreset: true,
+    isDefaultPreset: true,
+    surface: 'private_chat',
+    scenarioReminder: '',
+  });
+  assert.match(zhPlan.systemText, /以下为内建格式合同（miphone\.text\.v1）/);
+  console.log('ok - contract instructional text follows prompt locale while protocol markers stay fixed');
+}
+
 console.log('builtin-phone-format-contract-tests passed');

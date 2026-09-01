@@ -1,7 +1,7 @@
 import { safeInvoke } from '../utils/tauri.js';
 
 const ALLOWED_DEVELOPER_EXTERNAL_URLS = new Set([
-  'https://github.com/dghiffjd7',
+  'https://ko-fi.com/illusion7',
   'https://github.com/dghiffjd7/OmniTavern',
 ]);
 

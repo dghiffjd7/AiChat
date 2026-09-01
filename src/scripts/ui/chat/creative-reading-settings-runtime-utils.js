@@ -95,13 +95,17 @@ export const bindCreativeReadingSettings = ({
     value,
   });
 
-  const handleButtonClick = (event) => {
-    event.stopPropagation?.();
-    toggleSheetAt(menuEl, event.currentTarget || buttonEl, {
+  const openAt = (anchorEl = null) => {
+    toggleSheetAt(menuEl, anchorEl || buttonEl, {
       alignRight: true,
       kind: 'reading',
     });
     buttonEl?.classList?.toggle?.('is-active', !menuEl?.classList?.contains?.('hidden'));
+  };
+
+  const handleButtonClick = (event) => {
+    event.stopPropagation?.();
+    openAt(event.currentTarget || buttonEl);
   };
 
   const handleMenuClick = (event) => {
@@ -135,6 +139,7 @@ export const bindCreativeReadingSettings = ({
     sync,
     syncNarrativeFont,
     syncDialogueHighlight,
+    openAt,
     destroy() {
       buttonEl?.removeEventListener?.('click', handleButtonClick);
       menuEl?.removeEventListener?.('click', handleMenuClick);

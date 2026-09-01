@@ -45,7 +45,14 @@
   {
     "source": "· 未保存修改",
     "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual",
       "src/scripts/ui/agent-center-panel.js#html-text"
+    ]
+  },
+  {
+    "source": "· 终态工具 Schema（已脱敏）",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
     ]
   },
   {
@@ -151,6 +158,12 @@
     ]
   },
   {
+    "source": "（未填写）",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
     "source": "（无）",
     "references": [
       "src/scripts/ui/variable-panel-runtime.js#html-text"
@@ -178,6 +191,18 @@
     "source": "（无选项）",
     "references": [
       "src/scripts/ui/memory-table-editor.js#dom-assignment"
+    ]
+  },
+  {
+    "source": "（已截断保存）",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
+    "source": "（已脱敏）",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
     ]
   },
   {
@@ -214,6 +239,60 @@
     "source": "）或自闭（",
     "references": [
       "src/scripts/ui/chat/rich-text-renderer.js#html-text"
+    ]
+  },
+  {
+    "source": "[安全]",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
+    "source": "[待确认]",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
+    "source": "[复合内容]",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
+    "source": "[活动]",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
+    "source": "[提示词]",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
+    "source": "[图片：base64]",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
+    "source": "[语音]",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
+    "source": "[诊断]",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
+    "source": "[资源]",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
     ]
   },
   {
@@ -506,6 +585,12 @@
     ]
   },
   {
+    "source": "+ （删除这些行）",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
     "source": "＋ 添加",
     "references": [
       "src/scripts/ui/group-chat-panels.js#html-text"
@@ -581,6 +666,18 @@
     "source": "× 全部取消",
     "references": [
       "src/scripts/ui/preset-panel.js#html-text"
+    ]
+  },
+  {
+    "source": "<span>按</span><kbd>Esc</kbd><span>可随时让女仆收工</span>",
+    "references": [
+      "src/scripts/ui/maid-guide-spotlight.js#ui-definition"
+    ]
+  },
+  {
+    "source": "<span>等待主人操作</span>",
+    "references": [
+      "src/scripts/ui/maid-guide-spotlight.js#ui-definition"
     ]
   },
   {
@@ -820,6 +917,12 @@
     ]
   },
   {
+    "source": "0 条。工具请求仍会逐次确认。",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
     "source": "0 条规则已启用",
     "references": [
       "src/scripts/ui/variable-panel.js#html-text"
@@ -931,6 +1034,12 @@
     ]
   },
   {
+    "source": "按发送，把第一句话交给角色。",
+    "references": [
+      "src/scripts/ui/maid-onboarding-flows.js#ui-definition"
+    ]
+  },
+  {
     "source": "按规则替换输入/输出文本；全局始终生效，角色/预设按绑定对象生效",
     "references": [
       "src/scripts/ui/regex-panel.js#html-attribute"
@@ -991,6 +1100,12 @@
     ]
   },
   {
+    "source": "把服务商要求的连接资料填在这里。Key 只留在本机配置里，引导事件只检查是否填写，不会读取内容。",
+    "references": [
+      "src/scripts/ui/maid-onboarding-flows.js#ui-definition"
+    ]
+  },
+  {
     "source": "把联系人收进不同的小格子，找人不再抓瞎",
     "references": [
       "src/scripts/ui/group-panel.js#html-text"
@@ -1006,6 +1121,12 @@
     "source": "半严格（强制角色交替）",
     "references": [
       "src/scripts/ui/config-panel.js#html-text"
+    ]
+  },
+  {
+    "source": "帮主人来",
+    "references": [
+      "src/scripts/ui/maid-guide-spotlight.js#ui-definition"
     ]
   },
   {
@@ -1134,6 +1255,12 @@
     ]
   },
   {
+    "source": "包在我身上～我们去推荐列表认识第一位角色好友。",
+    "references": [
+      "src/scripts/ui/maid-intent-presets.js#ui-definition"
+    ]
+  },
+  {
     "source": "保持不变",
     "references": [
       "src/scripts/ui/memory-template-panel.js#ui-property"
@@ -1196,6 +1323,12 @@
     ]
   },
   {
+    "source": "保存并绑定女仆",
+    "references": [
+      "src/scripts/ui/maid-onboarding-flows.js#ui-definition"
+    ]
+  },
+  {
     "source": "保存参数",
     "references": [
       "scripts/i18n/manual-ui-source-keys.json#manual",
@@ -1237,6 +1370,18 @@
     "source": "保存后，发送预览将实时更新",
     "references": [
       "src/scripts/ui/memory-table-editor.js#html-text"
+    ]
+  },
+  {
+    "source": "保存后会继续回退全局声音",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
+    "source": "保存后会用于后续提示词上下文和动态弱触发。",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
     ]
   },
   {
@@ -1282,6 +1427,12 @@
     ]
   },
   {
+    "source": "保存画像失败",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
     "source": "保存记忆共享失败",
     "references": [
       "src/scripts/ui/contact-settings-panel.js#ui-call",
@@ -1292,6 +1443,18 @@
     "source": "保存记忆设置",
     "references": [
       "src/scripts/ui/agent-center-panel.js#html-text"
+    ]
+  },
+  {
+    "source": "保存可用配置",
+    "references": [
+      "src/scripts/ui/maid-onboarding-flows.js#ui-definition"
+    ]
+  },
+  {
+    "source": "保存联系人画像",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
     ]
   },
   {
@@ -1357,6 +1520,7 @@
   {
     "source": "保存一份可用的聊天 API 配置",
     "references": [
+      "src/scripts/ui/maid-onboarding-flows.js#ui-definition",
       "src/scripts/ui/maid-onboarding-flows.js#ui-property"
     ]
   },
@@ -1424,6 +1588,7 @@
     "source": "备注",
     "references": [
       "scripts/i18n/manual-ui-source-keys.json#manual",
+      "src/scripts/memory/default-template.js#ui-definition",
       "src/scripts/ui/maid-settings-panel.js#html-text"
     ]
   },
@@ -1557,6 +1722,12 @@
       "src/scripts/ui/persona-panel.js#html-text",
       "src/scripts/ui/persona-panel.js#ui-property",
       "src/scripts/ui/user-panel.js#ui-property"
+    ]
+  },
+  {
+    "source": "本地执行",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
     ]
   },
   {
@@ -1814,6 +1985,12 @@
     ]
   },
   {
+    "source": "变量变更预览",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
     "source": "变量初始化服务未就绪",
     "references": [
       "src/scripts/ui/variable-panel.js#ui-call"
@@ -2039,6 +2216,12 @@
     ]
   },
   {
+    "source": "表格",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
     "source": "表格、模板、导入导出。",
     "references": [
       "scripts/i18n/manual-ui-source-keys.json#manual"
@@ -2211,6 +2394,12 @@
     ]
   },
   {
+    "source": "不会自动开启，仍需你确认安全提示",
+    "references": [
+      "src/scripts/ui/maid-onboarding-flows.js#ui-definition"
+    ]
+  },
+  {
     "source": "不会自动写聊天",
     "references": [
       "scripts/i18n/manual-ui-source-keys.json#manual"
@@ -2261,9 +2450,21 @@
     ]
   },
   {
+    "source": "不用引导",
+    "references": [
+      "src/scripts/ui/maid-intent-presets.js#ui-definition"
+    ]
+  },
+  {
     "source": "不再提示",
     "references": [
       "src/scripts/ui/chat/send-prompt-gates.js#ui-property"
+    ]
+  },
+  {
+    "source": "不再提示女仆新手引导",
+    "references": [
+      "src/scripts/ui/maid-onboarding-entry-ui.js#ui-definition"
     ]
   },
   {
@@ -2288,6 +2489,12 @@
     "source": "不支持的角色卡格式",
     "references": [
       "src/scripts/ui/character-card-transfer.js#ui-call"
+    ]
+  },
+  {
+    "source": "不直接调用模型",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
     ]
   },
   {
@@ -2367,7 +2574,8 @@
   {
     "source": "参与者",
     "references": [
-      "scripts/i18n/manual-ui-source-keys.json#manual"
+      "scripts/i18n/manual-ui-source-keys.json#manual",
+      "src/scripts/memory/default-template.js#ui-definition"
     ]
   },
   {
@@ -2512,6 +2720,12 @@
     ]
   },
   {
+    "source": "查看清单",
+    "references": [
+      "src/scripts/ui/maid-onboarding-entry-ui.js#ui-definition"
+    ]
+  },
+  {
     "source": "查看完整资料",
     "references": [
       "src/scripts/ui/persona-panel.js#dom-assignment"
@@ -2631,6 +2845,12 @@
     ]
   },
   {
+    "source": "撤销聊天候选",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
     "source": "撤销权限授权",
     "references": [
       "src/scripts/ui/plugin-panel.js#ui-property"
@@ -2643,6 +2863,12 @@
     ]
   },
   {
+    "source": "撤销写入变更",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
     "source": "沉默",
     "references": [
       "scripts/i18n/manual-ui-source-keys.json#manual"
@@ -2651,13 +2877,20 @@
   {
     "source": "称呼",
     "references": [
-      "scripts/i18n/manual-ui-source-keys.json#manual"
+      "scripts/i18n/manual-ui-source-keys.json#manual",
+      "src/scripts/memory/default-template.js#ui-definition"
     ]
   },
   {
     "source": "成功",
     "references": [
       "src/scripts/ui/maid-settings-panel.js#ui-property"
+    ]
+  },
+  {
+    "source": "成就·",
+    "references": [
+      "src/scripts/ui/maid-onboarding-entry-ui.js#ui-definition"
     ]
   },
   {
@@ -2705,7 +2938,8 @@
   {
     "source": "持有者",
     "references": [
-      "scripts/i18n/manual-ui-source-keys.json#manual"
+      "scripts/i18n/manual-ui-source-keys.json#manual",
+      "src/scripts/memory/default-template.js#ui-definition"
     ]
   },
   {
@@ -2721,15 +2955,23 @@
     ]
   },
   {
+    "source": "出发",
+    "references": [
+      "src/scripts/ui/maid-onboarding-flows.js#ui-definition"
+    ]
+  },
+  {
     "source": "初次接线",
     "references": [
-      "scripts/i18n/manual-ui-source-keys.json#manual"
+      "scripts/i18n/manual-ui-source-keys.json#manual",
+      "src/scripts/ui/maid-onboarding-flows.js#ui-definition"
     ]
   },
   {
     "source": "初次相遇",
     "references": [
-      "scripts/i18n/manual-ui-source-keys.json#manual"
+      "scripts/i18n/manual-ui-source-keys.json#manual",
+      "src/scripts/ui/maid-onboarding-flows.js#ui-definition"
     ]
   },
   {
@@ -2739,12 +2981,24 @@
     ]
   },
   {
+    "source": "初始化用户档案，填写已知基础信息。",
+    "references": [
+      "src/scripts/memory/default-template.js#ui-definition"
+    ]
+  },
+  {
     "source": "初始值",
     "references": [
       "src/scripts/ui/variable-schema-editor.js#html-text",
       "src/scripts/ui/world-editor/world-variable-picker.js#dom-assignment",
       "src/scripts/ui/world-editor/world-variable-picker.js#html-attribute",
       "src/scripts/ui/world-editor/world-variable-picker.js#html-text"
+    ]
+  },
+  {
+    "source": "处理",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
     ]
   },
   {
@@ -2777,6 +3031,12 @@
     "references": [
       "src/scripts/ui/general-settings-panel.js#ui-property",
       "src/scripts/ui/world-editor.js#html-text"
+    ]
+  },
+  {
+    "source": "触发词",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
     ]
   },
   {
@@ -2902,6 +3162,12 @@
   },
   {
     "source": "创建天数",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
+    "source": "创建中…",
     "references": [
       "scripts/i18n/manual-ui-source-keys.json#manual"
     ]
@@ -3065,6 +3331,18 @@
     ]
   },
   {
+    "source": "从顶部提醒移除",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
+    "source": "从刚拉取的候选模型中选一个。也可以手动填写服务商支持的模型 ID。",
+    "references": [
+      "src/scripts/ui/maid-onboarding-flows.js#ui-definition"
+    ]
+  },
+  {
     "source": "从角色卡重新转换变量",
     "references": [
       "src/scripts/ui/variable-panel.js#ui-property"
@@ -3083,9 +3361,22 @@
     ]
   },
   {
+    "source": "从设置菜单进入 Agent Center；在聊天室或动态页，也可以直接点右上角的「A」。",
+    "references": [
+      "src/scripts/ui/maid-onboarding-flows.js#ui-definition"
+    ]
+  },
+  {
     "source": "从推荐列表认识一位角色",
     "references": [
+      "src/scripts/ui/maid-onboarding-flows.js#ui-definition",
       "src/scripts/ui/maid-onboarding-flows.js#ui-property"
+    ]
+  },
+  {
+    "source": "从推荐列表添加一位角色好友",
+    "references": [
+      "src/scripts/ui/maid-onboarding-flows.js#ui-definition"
     ]
   },
   {
@@ -3184,6 +3475,18 @@
     ]
   },
   {
+    "source": "打回聊天候选",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
+    "source": "打回写入预览",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
     "source": "打开",
     "references": [
       "scripts/i18n/manual-ui-source-keys.json#manual"
@@ -3192,7 +3495,8 @@
   {
     "source": "打开 Agent Center",
     "references": [
-      "scripts/i18n/manual-ui-source-keys.json#manual"
+      "scripts/i18n/manual-ui-source-keys.json#manual",
+      "src/scripts/ui/maid-onboarding-flows.js#ui-definition"
     ]
   },
   {
@@ -3256,9 +3560,33 @@
     ]
   },
   {
+    "source": "打开记忆共享失败",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
     "source": "打开角色关系图失败",
     "references": [
       "src/scripts/ui/app.js#ui-call"
+    ]
+  },
+  {
+    "source": "打开列表并选择服务商",
+    "references": [
+      "src/scripts/ui/maid-onboarding-flows.js#ui-definition"
+    ]
+  },
+  {
+    "source": "打开女仆指令条并认识 Agent Center",
+    "references": [
+      "src/scripts/ui/maid-onboarding-flows.js#ui-definition"
+    ]
+  },
+  {
+    "source": "打开任务页",
+    "references": [
+      "src/scripts/ui/maid-onboarding-entry-ui.js#ui-definition"
     ]
   },
   {
@@ -3274,9 +3602,23 @@
     ]
   },
   {
+    "source": "打开系统设置",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual",
+      "src/scripts/ui/microphone-permission-recovery.js#ui-property"
+    ]
+  },
+  {
+    "source": "大纲",
+    "references": [
+      "src/scripts/memory/outline-section-utils.js#ui-definition"
+    ]
+  },
+  {
     "source": "大纲类别",
     "references": [
-      "scripts/i18n/manual-ui-source-keys.json#manual"
+      "scripts/i18n/manual-ui-source-keys.json#manual",
+      "src/scripts/memory/default-template.js#ui-definition"
     ]
   },
   {
@@ -3343,9 +3685,34 @@
     ]
   },
   {
+    "source": "带我逛",
+    "references": [
+      "src/scripts/ui/maid-intent-presets.js#ui-definition"
+    ]
+  },
+  {
     "source": "带我配置 API",
     "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual",
       "src/scripts/ui/app.js#ui-property"
+    ]
+  },
+  {
+    "source": "带我去设置",
+    "references": [
+      "src/scripts/ui/maid-onboarding-flows.js#ui-definition"
+    ]
+  },
+  {
+    "source": "待办",
+    "references": [
+      "src/scripts/memory/outline-section-utils.js#ui-definition"
+    ]
+  },
+  {
+    "source": "待保存候选",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
     ]
   },
   {
@@ -3450,6 +3817,7 @@
   {
     "source": "当前",
     "references": [
+      "src/scripts/memory/outline-section-utils.js#ui-definition",
       "src/scripts/ui/app.js#dom-assignment",
       "src/scripts/ui/session-panel.js#html-text",
       "src/scripts/ui/world-editor/world-variable-picker.js#html-text"
@@ -3504,8 +3872,15 @@
     ]
   },
   {
+    "source": "当前绑定（已失效，将回退默认）",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
     "source": "当前绑定（已失效）",
     "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual",
       "src/scripts/ui/chat/creative-voice-settings-runtime.js#ui-property",
       "src/scripts/ui/voice-picker-modal.js#ui-property"
     ]
@@ -3603,6 +3978,12 @@
     ]
   },
   {
+    "source": "当前格式修复候选已经不可用",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
     "source": "当前还没有可识别的变量条件。",
     "references": [
       "src/scripts/ui/world-editor/world-block-overview.js#html-text"
@@ -3618,6 +3999,66 @@
     "source": "当前好友/群组设置",
     "references": [
       "src/index.html#html-text"
+    ]
+  },
+  {
+    "source": "当前画像",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
+    "source": "当前环境不能保存记忆表格 Agent 设置",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
+    "source": "当前环境不能保存记忆提示词模板",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
+    "source": "当前环境不能保存提示词",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
+    "source": "当前环境不能调整预览工具",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
+    "source": "当前环境不能更新 Agent 触发方式",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
+    "source": "当前环境不能更新 Agent 模型",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
+    "source": "当前环境不能切换 Agent",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
+    "source": "当前环境不能切换会话 Agent 工具",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
+    "source": "当前环境不能切换这个卡片",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
     ]
   },
   {
@@ -3690,6 +4131,60 @@
     "source": "当前环境不支持自定义资料包导入",
     "references": [
       "src/scripts/ui/custom-bundle-exporter.js#ui-call"
+    ]
+  },
+  {
+    "source": "当前环境没有 Agent 待确认处理动作",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
+    "source": "当前环境没有 Agent 工具权限处理动作",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
+    "source": "当前环境没有 Provider continuation 策略设置动作",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
+    "source": "当前环境没有聊天候选撤销动作",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
+    "source": "当前环境没有聊天候选打回动作",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
+    "source": "当前环境没有聊天候选提交动作",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
+    "source": "当前环境没有写入预览撤销动作",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
+    "source": "当前环境没有写入预览打回动作",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
+    "source": "当前环境没有写入预览提交动作",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
     ]
   },
   {
@@ -3792,6 +4287,18 @@
     ]
   },
   {
+    "source": "当前会话工具：已关闭",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
+    "source": "当前会话工具：已开启",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
     "source": "当前会话规则",
     "references": [
       "src/scripts/ui/variable-panel-runtime.js#html-attribute"
@@ -3852,6 +4359,12 @@
     ]
   },
   {
+    "source": "当前角色已切换，请返回原角色后再处理候选",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
     "source": "当前节点类型不支持这样连接",
     "references": [
       "scripts/i18n/manual-ui-source-keys.json#manual"
@@ -3867,6 +4380,12 @@
     "source": "当前精确组合连续失败",
     "references": [
       "src/scripts/ui/chat/chat-structured-profile-status.js#ui-call"
+    ]
+  },
+  {
+    "source": "当前局面",
+    "references": [
+      "src/scripts/memory/outline-section-utils.js#ui-definition"
     ]
   },
   {
@@ -3908,7 +4427,8 @@
   {
     "source": "当前立场",
     "references": [
-      "scripts/i18n/manual-ui-source-keys.json#manual"
+      "scripts/i18n/manual-ui-source-keys.json#manual",
+      "src/scripts/memory/default-template.js#ui-definition"
     ]
   },
   {
@@ -4353,7 +4873,8 @@
   {
     "source": "当前状态",
     "references": [
-      "scripts/i18n/manual-ui-source-keys.json#manual"
+      "scripts/i18n/manual-ui-source-keys.json#manual",
+      "src/scripts/memory/default-template.js#ui-definition"
     ]
   },
   {
@@ -4455,6 +4976,12 @@
     ]
   },
   {
+    "source": "导出角色体验包失败",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
     "source": "导出旧数据后清空",
     "references": [
       "src/scripts/ui/memory-template-panel.js#ui-property"
@@ -4517,6 +5044,12 @@
     "source": "导出世界书失败",
     "references": [
       "src/scripts/ui/memory-table-editor.js#ui-call"
+    ]
+  },
+  {
+    "source": "导出体验包失败",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
     ]
   },
   {
@@ -4753,9 +5286,21 @@
     ]
   },
   {
+    "source": "等待 AI 回复",
+    "references": [
+      "src/scripts/ui/maid-onboarding-flows.js#ui-definition"
+    ]
+  },
+  {
     "source": "等待授权",
     "references": [
       "src/scripts/ui/chat/execution-flow-runtime-utils.js#ui-property"
+    ]
+  },
+  {
+    "source": "等待预览",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
     ]
   },
   {
@@ -4773,7 +5318,14 @@
   {
     "source": "低",
     "references": [
+      "src/scripts/memory/default-template.js#ui-definition",
       "src/scripts/ui/image-generation-params-utils.js#ui-property"
+    ]
+  },
+  {
+    "source": "低风险",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
     ]
   },
   {
@@ -4820,6 +5372,18 @@
     ]
   },
   {
+    "source": "第{count}轮",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
+    "source": "第{from}-{to}轮",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
     "source": "第二层",
     "references": [
       "src/scripts/ui/chat/prompt-preview-view-utils.js#html-text"
@@ -4832,16 +5396,48 @@
     ]
   },
   {
+    "source": "第一次",
+    "references": [
+      "src/scripts/ui/maid-intent-presets.js#ui-definition"
+    ]
+  },
+  {
     "source": "第一次对话",
     "references": [
+      "src/scripts/ui/maid-intent-presets.js#ui-definition",
       "src/scripts/ui/maid-intent-presets.js#ui-property",
+      "src/scripts/ui/maid-onboarding-flows.js#ui-definition",
       "src/scripts/ui/maid-onboarding-flows.js#ui-property"
+    ]
+  },
+  {
+    "source": "第一次对话 · 完成",
+    "references": [
+      "src/scripts/ui/maid-onboarding-flows.js#ui-definition"
+    ]
+  },
+  {
+    "source": "第一次见面？长按小球叫我出来",
+    "references": [
+      "src/scripts/ui/maid-onboarding-entry-ui.js#ui-definition"
+    ]
+  },
+  {
+    "source": "第一次聊天",
+    "references": [
+      "src/scripts/ui/maid-intent-presets.js#ui-definition"
     ]
   },
   {
     "source": "第一阶段聚焦创作流程观察，不改变实际 prompt 行为。",
     "references": [
       "src/scripts/ui/agent-center-card-catalog.js#ui-definition"
+    ]
+  },
+  {
+    "source": "点击 API 设定",
+    "references": [
+      "src/scripts/ui/maid-onboarding-flows.js#ui-definition"
     ]
   },
   {
@@ -4858,6 +5454,12 @@
     ]
   },
   {
+    "source": "点击发消息进入聊天室",
+    "references": [
+      "src/scripts/ui/maid-onboarding-flows.js#ui-definition"
+    ]
+  },
+  {
     "source": "点击返回编辑",
     "references": [
       "src/scripts/ui/agent-center-panel.js#html-attribute"
@@ -4867,6 +5469,18 @@
     "source": "点击分层可展开或收合对应节点，聚焦查看上下文来源。",
     "references": [
       "src/scripts/ui/chat/lineage-graph-view-utils.js#html-text"
+    ]
+  },
+  {
+    "source": "点击高亮的加号",
+    "references": [
+      "src/scripts/ui/maid-onboarding-flows.js#ui-definition"
+    ]
+  },
+  {
+    "source": "点击高亮的设置按钮",
+    "references": [
+      "src/scripts/ui/maid-onboarding-flows.js#ui-definition"
     ]
   },
   {
@@ -4900,6 +5514,12 @@
     ]
   },
   {
+    "source": "点击可立即显示完整文字",
+    "references": [
+      "src/scripts/ui/maid-guide-spotlight.js#ui-definition"
+    ]
+  },
+  {
     "source": "点击切换用户",
     "references": [
       "src/scripts/ui/app.js#html-text"
@@ -4912,6 +5532,12 @@
     ]
   },
   {
+    "source": "点击任意 Agent 卡片",
+    "references": [
+      "src/scripts/ui/maid-onboarding-flows.js#ui-definition"
+    ]
+  },
+  {
     "source": "点击任意节点，追踪它的",
     "references": [
       "scripts/i18n/manual-ui-source-keys.json#manual",
@@ -4919,9 +5545,21 @@
     ]
   },
   {
+    "source": "点击任意推荐角色",
+    "references": [
+      "src/scripts/ui/maid-onboarding-flows.js#ui-definition"
+    ]
+  },
+  {
     "source": "点击上方「导入插件」选择文件夹或 ZIP 开始，也可以通过链接安装。",
     "references": [
       "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
+    "source": "点击设定",
+    "references": [
+      "src/scripts/ui/maid-onboarding-flows.js#ui-definition"
     ]
   },
   {
@@ -4932,9 +5570,21 @@
     ]
   },
   {
+    "source": "点击输入框查看推荐",
+    "references": [
+      "src/scripts/ui/maid-onboarding-flows.js#ui-definition"
+    ]
+  },
+  {
     "source": "点击添加到当前用户",
     "references": [
       "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
+    "source": "点击添加好友",
+    "references": [
+      "src/scripts/ui/maid-onboarding-flows.js#ui-definition"
     ]
   },
   {
@@ -4955,6 +5605,24 @@
     "references": [
       "scripts/i18n/manual-ui-source-keys.json#manual",
       "src/scripts/ui/agent-center-panel.js#html-attribute"
+    ]
+  },
+  {
+    "source": "点击这里",
+    "references": [
+      "src/scripts/ui/maid-guide-spotlight.js#ui-definition"
+    ]
+  },
+  {
+    "source": "点一下名称输入框，推荐角色会从这里展开。",
+    "references": [
+      "src/scripts/ui/maid-onboarding-flows.js#ui-definition"
+    ]
+  },
+  {
+    "source": "点右上角关闭 Agent Center，巡视就完成了。",
+    "references": [
+      "src/scripts/ui/maid-onboarding-flows.js#ui-definition"
     ]
   },
   {
@@ -5005,6 +5673,12 @@
     "source": "调整生图标签的提示词要求；实际生图仍用当前图片模型。",
     "references": [
       "src/scripts/ui/general-settings-panel.js#ui-property"
+    ]
+  },
+  {
+    "source": "调整预览工具失败",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
     ]
   },
   {
@@ -5095,6 +5769,7 @@
     "source": "动态",
     "references": [
       "src/index.html#html-text",
+      "src/scripts/memory/default-template.js#ui-definition",
       "src/scripts/ui/chat/lineage-graph-view-utils.js#ui-property",
       "src/scripts/ui/contact-memory-share-runtime-utils.js#ui-property",
       "src/scripts/ui/custom-bundle-exporter.js#html-text",
@@ -5135,6 +5810,12 @@
     "source": "动态发布格式",
     "references": [
       "src/scripts/ui/app.js#ui-property"
+    ]
+  },
+  {
+    "source": "动态发布候选",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
     ]
   },
   {
@@ -5184,6 +5865,12 @@
     ]
   },
   {
+    "source": "动态角色卡设置 · 完成",
+    "references": [
+      "src/scripts/ui/maid-onboarding-flows.js#ui-definition"
+    ]
+  },
+  {
     "source": "动态内容的配图格式。",
     "references": [
       "src/scripts/ui/general-settings-panel.js#ui-property"
@@ -5216,6 +5903,12 @@
     ]
   },
   {
+    "source": "动态评论候选",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
     "source": "动态评论回复规则",
     "references": [
       "src/scripts/ui/preset-panel.js#ui-property"
@@ -5239,6 +5932,12 @@
     "source": "动态评论时注入、自动写表。",
     "references": [
       "src/scripts/ui/general-settings-panel.js#html-attribute"
+    ]
+  },
+  {
+    "source": "动态区首次有效互动后插入一条摘要。",
+    "references": [
+      "src/scripts/memory/default-template.js#ui-definition"
     ]
   },
   {
@@ -5275,8 +5974,15 @@
   {
     "source": "动态摘要",
     "references": [
+      "src/scripts/memory/default-template.js#ui-definition",
       "src/scripts/ui/moment-summary-panel.js#dom-assignment",
       "src/scripts/ui/moment-summary-panel.js#html-text"
+    ]
+  },
+  {
+    "source": "动态整理",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
     ]
   },
   {
@@ -5300,7 +6006,8 @@
   {
     "source": "动态总体大纲",
     "references": [
-      "scripts/i18n/manual-ui-source-keys.json#manual"
+      "scripts/i18n/manual-ui-source-keys.json#manual",
+      "src/scripts/memory/default-template.js#ui-definition"
     ]
   },
   {
@@ -5384,9 +6091,39 @@
     ]
   },
   {
+    "source": "读取/压缩头像失败",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
+    "source": "读取本地资料",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
     "source": "读取壁纸失败",
     "references": [
       "src/scripts/ui/app.js#ui-call"
+    ]
+  },
+  {
+    "source": "读取变量",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
+    "source": "读取记忆",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
+    "source": "读取联系人",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
     ]
   },
   {
@@ -5411,6 +6148,12 @@
     "source": "读取模板失败。",
     "references": [
       "src/scripts/ui/memory-template-panel.js#dom-assignment"
+    ]
+  },
+  {
+    "source": "读取世界书",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
     ]
   },
   {
@@ -5449,7 +6192,14 @@
   {
     "source": "对方印象",
     "references": [
-      "scripts/i18n/manual-ui-source-keys.json#manual"
+      "scripts/i18n/manual-ui-source-keys.json#manual",
+      "src/scripts/memory/default-template.js#ui-definition"
+    ]
+  },
+  {
+    "source": "对话",
+    "references": [
+      "src/scripts/ui/maid-intent-presets.js#ui-definition"
     ]
   },
   {
@@ -5543,15 +6293,30 @@
     ]
   },
   {
+    "source": "发送消息",
+    "references": [
+      "src/scripts/ui/maid-intent-presets.js#ui-definition",
+      "src/scripts/ui/maid-onboarding-flows.js#ui-definition"
+    ]
+  },
+  {
+    "source": "发送消息并收到第一条 AI 回复",
+    "references": [
+      "src/scripts/ui/maid-onboarding-flows.js#ui-definition"
+    ]
+  },
+  {
     "source": "发送消息并收到角色回复",
     "references": [
+      "src/scripts/ui/maid-onboarding-flows.js#ui-definition",
       "src/scripts/ui/maid-onboarding-flows.js#ui-property"
     ]
   },
   {
     "source": "发消息",
     "references": [
-      "scripts/i18n/manual-ui-source-keys.json#manual"
+      "scripts/i18n/manual-ui-source-keys.json#manual",
+      "src/scripts/ui/maid-intent-presets.js#ui-definition"
     ]
   },
   {
@@ -5740,6 +6505,12 @@
     ]
   },
   {
+    "source": "分节",
+    "references": [
+      "src/scripts/memory/outline-section-utils.js#ui-definition"
+    ]
+  },
+  {
     "source": "分类: {category}",
     "references": [
       "scripts/i18n/manual-ui-source-keys.json#manual"
@@ -5815,9 +6586,27 @@
     ]
   },
   {
+    "source": "风险未知",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
     "source": "疯狂",
     "references": [
       "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
+    "source": "否",
+    "references": [
+      "src/scripts/memory/default-template.js#ui-definition"
+    ]
+  },
+  {
+    "source": "伏笔",
+    "references": [
+      "src/scripts/memory/outline-section-utils.js#ui-definition"
     ]
   },
   {
@@ -6085,6 +6874,30 @@
     ]
   },
   {
+    "source": "覆盖式创作总体大纲。按 current / plot / relationships / open_threads 分节维护；每轮只更新变化分节，禁止逐轮追加。大纲记录当前全局视图，逐轮历史由摘要表负责。",
+    "references": [
+      "src/scripts/memory/default-template.js#ui-definition"
+    ]
+  },
+  {
+    "source": "覆盖式动态总体大纲。按 current / plot / relationships / open_threads 分节维护，只更新发生变化的分节，禁止逐条动态追加。",
+    "references": [
+      "src/scripts/memory/default-template.js#ui-definition"
+    ]
+  },
+  {
+    "source": "覆盖式群聊总体大纲。按 current / plot / relationships / open_threads 分节维护；每轮只更新变化分节，禁止逐轮追加。仅记录群聊公开信息，不包含成员私聊或敏感隐私。",
+    "references": [
+      "src/scripts/memory/default-template.js#ui-definition"
+    ]
+  },
+  {
+    "source": "覆盖式总体大纲。按 current / plot / relationships / open_threads 分节维护；每轮只更新发生变化的分节，禁止逐轮追加。仅记录该私聊内容，避免泄露其他会话隐私。",
+    "references": [
+      "src/scripts/memory/default-template.js#ui-definition"
+    ]
+  },
+  {
     "source": "覆盖现有集合",
     "references": [
       "src/scripts/ui/regex-panel.js#ui-property"
@@ -6111,6 +6924,7 @@
   {
     "source": "该角色已在联系人列表",
     "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual",
       "src/scripts/ui/session-panel.js#ui-call"
     ]
   },
@@ -6153,6 +6967,7 @@
   {
     "source": "该渠道未返回模型列表，可手动输入",
     "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual",
       "src/scripts/ui/agent-center-panel.js#html-text",
       "src/scripts/ui/maid-settings-panel.js#html-text"
     ]
@@ -6226,6 +7041,7 @@
   {
     "source": "高",
     "references": [
+      "src/scripts/memory/default-template.js#ui-definition",
       "src/scripts/ui/image-generation-params-utils.js#ui-property"
     ]
   },
@@ -6315,6 +7131,12 @@
     ]
   },
   {
+    "source": "格式检查完成",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
     "source": "格式结尾",
     "references": [
       "src/scripts/ui/agent-center-card-catalog.js#ui-definition"
@@ -6363,6 +7185,12 @@
     ]
   },
   {
+    "source": "格式修复已应用",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
     "source": "格式修复越过了功能块边界，请重新检查",
     "references": [
       "src/scripts/ui/app.js#ui-call"
@@ -6390,7 +7218,20 @@
   {
     "source": "给女仆接上大脑",
     "references": [
+      "src/scripts/ui/maid-onboarding-flows.js#ui-definition",
       "src/scripts/ui/maid-onboarding-flows.js#ui-property"
+    ]
+  },
+  {
+    "source": "给女仆接上api",
+    "references": [
+      "src/scripts/ui/maid-intent-presets.js#ui-definition"
+    ]
+  },
+  {
+    "source": "给女仆接api",
+    "references": [
+      "src/scripts/ui/maid-intent-presets.js#ui-definition"
     ]
   },
   {
@@ -6561,6 +7402,7 @@
   {
     "source": "更新时间",
     "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual",
       "src/scripts/ui/variable-panel.js#html-text"
     ]
   },
@@ -6592,7 +7434,8 @@
   {
     "source": "工位巡视员",
     "references": [
-      "scripts/i18n/manual-ui-source-keys.json#manual"
+      "scripts/i18n/manual-ui-source-keys.json#manual",
+      "src/scripts/ui/maid-onboarding-flows.js#ui-definition"
     ]
   },
   {
@@ -6608,6 +7451,12 @@
     ]
   },
   {
+    "source": "公开互动或关系变化时覆盖对应分节。",
+    "references": [
+      "src/scripts/memory/default-template.js#ui-definition"
+    ]
+  },
+  {
     "source": "功能未启用（点击开启）",
     "references": [
       "src/scripts/ui/preset-panel.js#html-attribute"
@@ -6615,6 +7464,12 @@
   },
   {
     "source": "供应方 usage",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
+    "source": "供应方单独返回时记录",
     "references": [
       "scripts/i18n/manual-ui-source-keys.json#manual"
     ]
@@ -6645,9 +7500,22 @@
     ]
   },
   {
+    "source": "共识变化时更新。",
+    "references": [
+      "src/scripts/memory/default-template.js#ui-definition"
+    ]
+  },
+  {
     "source": "共识内容",
     "references": [
-      "scripts/i18n/manual-ui-source-keys.json#manual"
+      "scripts/i18n/manual-ui-source-keys.json#manual",
+      "src/scripts/memory/default-template.js#ui-definition"
+    ]
+  },
+  {
+    "source": "共识失效时删除。",
+    "references": [
+      "src/scripts/memory/default-template.js#ui-definition"
     ]
   },
   {
@@ -6755,6 +7623,12 @@
       "src/scripts/ui/world-editor/world-variable-picker.js#html-attribute",
       "src/scripts/ui/world-panel.js#html-attribute",
       "src/scripts/ui/world-panel.js#html-text"
+    ]
+  },
+  {
+    "source": "关闭 Agent Center",
+    "references": [
+      "src/scripts/ui/maid-onboarding-flows.js#ui-definition"
     ]
   },
   {
@@ -6886,6 +7760,12 @@
     ]
   },
   {
+    "source": "关闭卡片详情",
+    "references": [
+      "src/scripts/ui/maid-onboarding-flows.js#ui-definition"
+    ]
+  },
+  {
     "source": "关闭开场白面板",
     "references": [
       "src/index.html#html-attribute"
@@ -6922,9 +7802,21 @@
     ]
   },
   {
+    "source": "关闭完成提示",
+    "references": [
+      "src/scripts/ui/maid-onboarding-entry-ui.js#ui-definition"
+    ]
+  },
+  {
     "source": "关闭详情",
     "references": [
       "src/scripts/ui/chat/lineage-graph-view-utils.js#html-attribute"
+    ]
+  },
+  {
+    "source": "关闭新手任务",
+    "references": [
+      "src/scripts/ui/maid-onboarding-entry-ui.js#ui-definition"
     ]
   },
   {
@@ -7000,7 +7892,8 @@
   {
     "source": "关键线索",
     "references": [
-      "scripts/i18n/manual-ui-source-keys.json#manual"
+      "scripts/i18n/manual-ui-source-keys.json#manual",
+      "src/scripts/memory/default-template.js#ui-definition"
     ]
   },
   {
@@ -7019,20 +7912,48 @@
     "source": "关系",
     "references": [
       "scripts/i18n/manual-ui-source-keys.json#manual",
+      "src/scripts/memory/default-template.js#ui-definition",
+      "src/scripts/memory/outline-section-utils.js#ui-definition",
       "src/scripts/ui/app.js#html-text"
+    ]
+  },
+  {
+    "source": "关系、立场、状态、经历变化时更新。",
+    "references": [
+      "src/scripts/memory/default-template.js#ui-definition"
+    ]
+  },
+  {
+    "source": "关系变化",
+    "references": [
+      "src/scripts/memory/outline-section-utils.js#ui-definition"
+    ]
+  },
+  {
+    "source": "关系变化时更新。",
+    "references": [
+      "src/scripts/memory/default-template.js#ui-definition"
     ]
   },
   {
     "source": "关系记录",
     "references": [
-      "scripts/i18n/manual-ui-source-keys.json#manual"
+      "scripts/i18n/manual-ui-source-keys.json#manual",
+      "src/scripts/memory/default-template.js#ui-definition"
     ]
   },
   {
     "source": "关系阶段",
     "references": [
       "scripts/i18n/manual-ui-source-keys.json#manual",
+      "src/scripts/memory/default-template.js#ui-definition",
       "src/scripts/variables/variable-templates.js#ui-property"
+    ]
+  },
+  {
+    "source": "关系条目失效时删除。",
+    "references": [
+      "src/scripts/memory/default-template.js#ui-definition"
     ]
   },
   {
@@ -7045,6 +7966,12 @@
     "source": "观察",
     "references": [
       "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
+    "source": "官方",
+    "references": [
+      "src/scripts/memory/default-template.js#ui-definition"
     ]
   },
   {
@@ -7151,7 +8078,8 @@
   {
     "source": "归档",
     "references": [
-      "scripts/i18n/manual-ui-source-keys.json#manual"
+      "scripts/i18n/manual-ui-source-keys.json#manual",
+      "src/scripts/memory/outline-section-utils.js#ui-definition"
     ]
   },
   {
@@ -7252,6 +8180,13 @@
   {
     "source": "过往经历/状态",
     "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual",
+      "src/scripts/memory/default-template.js#ui-definition"
+    ]
+  },
+  {
+    "source": "还没有 Agent 活动记录。AI 检查、候选和后台任务会显示在这里。",
+    "references": [
       "scripts/i18n/manual-ui-source-keys.json#manual"
     ]
   },
@@ -7293,6 +8228,30 @@
     ]
   },
   {
+    "source": "还没有可管理的提示词/协议模块。",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
+    "source": "还没有可管理资源入口。",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
+    "source": "还没有可启用的 Agent",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
+    "source": "还没有可用卡片。",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
     "source": "还没有聊天室或群聊。",
     "references": [
       "scripts/i18n/manual-ui-source-keys.json#manual"
@@ -7318,6 +8277,18 @@
   },
   {
     "source": "还没有生成图片。",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
+    "source": "还没有诊断视图。",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
+    "source": "还没有注册 Agent 工具",
     "references": [
       "scripts/i18n/manual-ui-source-keys.json#manual"
     ]
@@ -7354,7 +8325,19 @@
     ]
   },
   {
+    "source": "好嘞，引导已收起。主人什么时候想继续，随时喊我～",
+    "references": [
+      "src/scripts/ui/maid-intent-presets.js#ui-definition"
+    ]
+  },
+  {
     "source": "好厉害！",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
+    "source": "好友",
     "references": [
       "scripts/i18n/manual-ui-source-keys.json#manual"
     ]
@@ -7368,6 +8351,7 @@
   {
     "source": "好友名称不可使用 group: 前綴",
     "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual",
       "src/scripts/ui/session-panel.js#ui-call"
     ]
   },
@@ -7380,6 +8364,7 @@
   {
     "source": "好友已存在",
     "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual",
       "src/scripts/ui/session-panel.js#ui-call"
     ]
   },
@@ -7494,10 +8479,40 @@
     ]
   },
   {
+    "source": "忽略候选失败",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
+    "source": "忽略画像候选",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
+    "source": "忽略联系人画像",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
     "source": "忽略预算",
     "references": [
       "scripts/i18n/manual-ui-source-keys.json#manual",
       "src/scripts/ui/world-editor.js#html-text"
+    ]
+  },
+  {
+    "source": "忽略只会清除本次候选，不删除已有画像。",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
+    "source": "互动",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
     ]
   },
   {
@@ -7509,7 +8524,8 @@
   {
     "source": "互相称呼",
     "references": [
-      "scripts/i18n/manual-ui-source-keys.json#manual"
+      "scripts/i18n/manual-ui-source-keys.json#manual",
+      "src/scripts/memory/default-template.js#ui-definition"
     ]
   },
   {
@@ -7521,7 +8537,19 @@
     ]
   },
   {
+    "source": "画像候选处理失败",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
     "source": "画像候选和联系人设置。",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
+    "source": "画像在候选生成后已被修改，请忽略旧候选并重新生成",
     "references": [
       "scripts/i18n/manual-ui-source-keys.json#manual"
     ]
@@ -7530,6 +8558,18 @@
     "source": "怀疑",
     "references": [
       "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
+    "source": "欢迎回家，主人～我备好了 4 堂新手小课，选一堂就能跟着聚光灯一步步完成：",
+    "references": [
+      "src/scripts/ui/maid-intent-presets.js#ui-definition"
+    ]
+  },
+  {
+    "source": "欢迎回来，主人～女仆要先接上一份 API 配置才能真正替你做事。跟着聚光灯走，大约两分钟就能完成。",
+    "references": [
+      "src/scripts/ui/maid-onboarding-flows.js#ui-definition"
     ]
   },
   {
@@ -7732,9 +8772,21 @@
     ]
   },
   {
+    "source": "会联网",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
     "source": "会让 title/meta/base 失去 head 语义；这里识别后补",
     "references": [
       "src/scripts/ui/chat/rich-text-renderer.js#html-text"
+    ]
+  },
+  {
+    "source": "会写入",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
     ]
   },
   {
@@ -7799,15 +8851,93 @@
     ]
   },
   {
+    "source": "极高",
+    "references": [
+      "src/scripts/memory/default-template.js#ui-definition"
+    ]
+  },
+  {
     "source": "计",
     "references": [
       "src/scripts/ui/chat/execution-flow-runtime-utils.js#html-text"
     ]
   },
   {
+    "source": "记录 RP 每轮推进后的阶段性摘要。每次推进必须新增一行，禁止用 update 覆盖旧行。",
+    "references": [
+      "src/scripts/memory/default-template.js#ui-definition"
+    ]
+  },
+  {
+    "source": "记录当前 RP 的主线、支线或阶段目标。",
+    "references": [
+      "src/scripts/memory/default-template.js#ui-definition"
+    ]
+  },
+  {
+    "source": "记录当前 RP 中推动剧情的重要人物，仅限当前 RP 会话。",
+    "references": [
+      "src/scripts/memory/default-template.js#ui-definition"
+    ]
+  },
+  {
+    "source": "记录动态区每次有效互动后的摘要。每次动态发布、动态评论回复或相关公开互动后必须新增一行，禁止用 update 覆盖旧行。只记录动态区公开信息与自然社交反应，禁止输出 <details>/<summary> 等标签。",
+    "references": [
+      "src/scripts/memory/default-template.js#ui-definition"
+    ]
+  },
+  {
+    "source": "记录角色档案信息。",
+    "references": [
+      "src/scripts/memory/default-template.js#ui-definition"
+    ]
+  },
+  {
+    "source": "记录每次私聊后的摘要。每次对话必须新增一行，禁止用 update 覆盖旧行。按手机对话模式写纯文本，禁止输出 <details>/<summary> 等标签。仅记录该私聊内容，避免泄露群聊或其他角色的私密信息。",
+    "references": [
+      "src/scripts/memory/default-template.js#ui-definition"
+    ]
+  },
+  {
+    "source": "记录群聊每次互动摘要。每次对话必须新增一行，禁止用 update 覆盖旧行。按手机对话模式写纯文本，禁止输出 <details>/<summary> 等标签。仅记录群聊公开信息，不包含成员私聊或敏感隐私。",
+    "references": [
+      "src/scripts/memory/default-template.js#ui-definition"
+    ]
+  },
+  {
+    "source": "记录群聊中形成的共识与规则。",
+    "references": [
+      "src/scripts/memory/default-template.js#ui-definition"
+    ]
+  },
+  {
+    "source": "记录用户基础档案，仅允许单行存在。",
+    "references": [
+      "src/scripts/memory/default-template.js#ui-definition"
+    ]
+  },
+  {
+    "source": "记录与当前角色的关系与印象变化。",
+    "references": [
+      "src/scripts/memory/default-template.js#ui-definition"
+    ]
+  },
+  {
     "source": "记录诊断日志",
     "references": [
       "src/scripts/ui/general-settings-panel.js#ui-property"
+    ]
+  },
+  {
+    "source": "记录重要事件的时间、描述与影响。",
+    "references": [
+      "src/scripts/memory/default-template.js#ui-definition"
+    ]
+  },
+  {
+    "source": "记录重要物品的名称、描述与持有者。",
+    "references": [
+      "src/scripts/memory/default-template.js#ui-definition"
     ]
   },
   {
@@ -7845,6 +8975,12 @@
   },
   {
     "source": "记忆/变量/世界书预览：AI 现在看不到这些预览工具。提交仍需要你手动确认。",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
+    "source": "记忆变更预览",
     "references": [
       "scripts/i18n/manual-ui-source-keys.json#manual"
     ]
@@ -7972,6 +9108,12 @@
     "source": "记忆存储未就绪",
     "references": [
       "src/scripts/ui/memory-template-panel.js#ui-call"
+    ]
+  },
+  {
+    "source": "记忆更新",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
     ]
   },
   {
@@ -8149,6 +9291,12 @@
     ]
   },
   {
+    "source": "继续上拉",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
     "source": "继续生成后的处理方式",
     "references": [
       "scripts/i18n/manual-ui-source-keys.json#manual",
@@ -8168,9 +9316,21 @@
     ]
   },
   {
+    "source": "加好友",
+    "references": [
+      "src/scripts/ui/maid-intent-presets.js#ui-definition"
+    ]
+  },
+  {
     "source": "加入",
     "references": [
       "src/scripts/ui/config-panel.js#html-text"
+    ]
+  },
+  {
+    "source": "加入写入预览工具",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
     ]
   },
   {
@@ -8232,6 +9392,7 @@
   {
     "source": "加载模型列表…",
     "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual",
       "src/scripts/ui/agent-center-panel.js#html-text",
       "src/scripts/ui/maid-settings-panel.js#html-text"
     ]
@@ -8328,6 +9489,18 @@
     ]
   },
   {
+    "source": "检查同名世界书失败（忽略）",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
+    "source": "检查原始回复",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
     "source": "简化结构",
     "references": [
       "src/scripts/ui/app.js#html-text"
@@ -8346,10 +9519,22 @@
     ]
   },
   {
+    "source": "建议",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
     "source": "键盘/视口诊断",
     "references": [
       "src/scripts/ui/debug-panel-dom-utils.js#ui-property",
       "src/scripts/ui/debug-panel.js#ui-property"
+    ]
+  },
+  {
+    "source": "将「{name}」添加为好友？",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
     ]
   },
   {
@@ -8379,7 +9564,8 @@
   {
     "source": "奖励/风险",
     "references": [
-      "scripts/i18n/manual-ui-source-keys.json#manual"
+      "scripts/i18n/manual-ui-source-keys.json#manual",
+      "src/scripts/memory/default-template.js#ui-definition"
     ]
   },
   {
@@ -8484,7 +9670,14 @@
   {
     "source": "角色档案",
     "references": [
-      "scripts/i18n/manual-ui-source-keys.json#manual"
+      "scripts/i18n/manual-ui-source-keys.json#manual",
+      "src/scripts/memory/default-template.js#ui-definition"
+    ]
+  },
+  {
+    "source": "角色档案失效且明确不再需要时删除。",
+    "references": [
+      "src/scripts/memory/default-template.js#ui-definition"
     ]
   },
   {
@@ -8604,6 +9797,12 @@
     ]
   },
   {
+    "source": "角色库搜索失败",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
     "source": "角色描述",
     "references": [
       "scripts/i18n/manual-ui-source-keys.json#manual",
@@ -8657,6 +9856,12 @@
     ]
   },
   {
+    "source": "角色信息之后",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
     "source": "角色性格",
     "references": [
       "scripts/i18n/manual-ui-source-keys.json#manual",
@@ -8667,6 +9872,12 @@
     "source": "角色与聊天室世界书",
     "references": [
       "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
+    "source": "角色正在回复。收到完整的 AI 消息后，这堂课就完成了。",
+    "references": [
+      "src/scripts/ui/maid-onboarding-flows.js#ui-definition"
     ]
   },
   {
@@ -8741,6 +9952,24 @@
     ]
   },
   {
+    "source": "教程",
+    "references": [
+      "src/scripts/ui/maid-intent-presets.js#ui-definition"
+    ]
+  },
+  {
+    "source": "教我",
+    "references": [
+      "src/scripts/ui/maid-intent-presets.js#ui-definition"
+    ]
+  },
+  {
+    "source": "教学",
+    "references": [
+      "src/scripts/ui/maid-intent-presets.js#ui-definition"
+    ]
+  },
+  {
     "source": "阶段",
     "references": [
       "src/scripts/ui/chat/creative-execution-lane-runtime-utils.js#html-text",
@@ -8756,7 +9985,14 @@
   {
     "source": "接好 API",
     "references": [
+      "src/scripts/ui/maid-intent-presets.js#ui-definition",
       "src/scripts/ui/maid-intent-presets.js#ui-property"
+    ]
+  },
+  {
+    "source": "接好api",
+    "references": [
+      "src/scripts/ui/maid-intent-presets.js#ui-definition"
     ]
   },
   {
@@ -8782,6 +10018,12 @@
     "source": "接受全部修改并保存",
     "references": [
       "src/scripts/ui/agent-center-panel.js#html-attribute"
+    ]
+  },
+  {
+    "source": "接线",
+    "references": [
+      "src/scripts/ui/maid-intent-presets.js#ui-definition"
     ]
   },
   {
@@ -8823,7 +10065,43 @@
     ]
   },
   {
+    "source": "结构化终态合同",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
+    "source": "结构化终态合同 · {types}",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
     "source": "结构化终态合同 · {types} · 可写表 {count}",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
+    "source": "结构化终态合同 · 可写表 {count}",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
+    "source": "结构化终态合同 · 终态工具 Schema（已脱敏）",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
+    "source": "结构化终态合同 · 终态工具 Schema（已脱敏） · {types}",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
+    "source": "结构化终态合同 · 终态工具 Schema（已脱敏） · {types} · 可写表 {count}",
     "references": [
       "scripts/i18n/manual-ui-source-keys.json#manual"
     ]
@@ -9008,6 +10286,12 @@
     ]
   },
   {
+    "source": "仅信任来源时开启并确认",
+    "references": [
+      "src/scripts/ui/maid-onboarding-flows.js#ui-definition"
+    ]
+  },
+  {
     "source": "仅修改显示名称，不会改变聊天室 ID。",
     "references": [
       "src/scripts/ui/contact-settings-panel.js#html-attribute"
@@ -9037,6 +10321,18 @@
     "source": "仅预览已选",
     "references": [
       "src/scripts/ui/app.js#html-text"
+    ]
+  },
+  {
+    "source": "仅允许初始化时插入一行。",
+    "references": [
+      "src/scripts/memory/default-template.js#ui-definition"
+    ]
+  },
+  {
+    "source": "仅在分节尚不存在时插入。",
+    "references": [
+      "src/scripts/memory/default-template.js#ui-definition"
     ]
   },
   {
@@ -9082,6 +10378,12 @@
     ]
   },
   {
+    "source": "近期主题",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
     "source": "进度",
     "references": [
       "src/scripts/ui/variable-schema-editor.js#html-text"
@@ -9100,9 +10402,33 @@
     ]
   },
   {
+    "source": "进入新好友聊天室失败",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
     "source": "禁用",
     "references": [
       "src/scripts/ui/memory-table-editor.js#dom-assignment"
+    ]
+  },
+  {
+    "source": "禁止模型删除大纲分节。",
+    "references": [
+      "src/scripts/memory/default-template.js#ui-definition"
+    ]
+  },
+  {
+    "source": "禁止删除。",
+    "references": [
+      "src/scripts/memory/default-template.js#ui-definition"
+    ]
+  },
+  {
+    "source": "禁止使用 update 覆盖旧摘要；如需修正请手动编辑。",
+    "references": [
+      "src/scripts/memory/default-template.js#ui-definition"
     ]
   },
   {
@@ -9185,6 +10511,24 @@
     ]
   },
   {
+    "source": "剧情",
+    "references": [
+      "src/scripts/memory/outline-section-utils.js#ui-definition"
+    ]
+  },
+  {
+    "source": "剧情、关系或伏笔变化时覆盖对应分节。",
+    "references": [
+      "src/scripts/memory/default-template.js#ui-definition"
+    ]
+  },
+  {
+    "source": "剧情或关系变化时覆盖对应分节，不改未变化分节。",
+    "references": [
+      "src/scripts/memory/default-template.js#ui-definition"
+    ]
+  },
+  {
     "source": "剧情阶段",
     "references": [
       "scripts/i18n/manual-ui-source-keys.json#manual",
@@ -9258,6 +10602,18 @@
     ]
   },
   {
+    "source": "卡片详情",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
+    "source": "卡片详情会从右侧展开。看完后先关闭详情，回到 Agent 列表。",
+    "references": [
+      "src/scripts/ui/maid-onboarding-flows.js#ui-definition"
+    ]
+  },
+  {
     "source": "开标签后； // 插在",
     "references": [
       "src/scripts/ui/chat/rich-text-renderer.js#html-text"
@@ -9288,15 +10644,16 @@
     ]
   },
   {
-    "source": "开发者主页",
+    "source": "开启",
     "references": [
-      "src/index.html#html-text"
+      "scripts/i18n/manual-ui-source-keys.json#manual",
+      "src/scripts/ui/image-generation-params-utils.js#ui-property"
     ]
   },
   {
-    "source": "开启",
+    "source": "开启「富文本 iframe 执行脚本」，再阅读并确认安全提示。只有设置真正启用后，这一步才会完成；不信任来源时请直接退出引导。",
     "references": [
-      "src/scripts/ui/image-generation-params-utils.js#ui-property"
+      "src/scripts/ui/maid-onboarding-flows.js#ui-definition"
     ]
   },
   {
@@ -9376,7 +10733,9 @@
   {
     "source": "开始",
     "references": [
-      "src/scripts/ui/chat/creative-execution-lane-runtime-utils.js#html-text"
+      "src/scripts/ui/chat/creative-execution-lane-runtime-utils.js#html-text",
+      "src/scripts/ui/maid-onboarding-entry-ui.js#ui-definition",
+      "src/scripts/ui/maid-onboarding-runtime.js#ui-definition"
     ]
   },
   {
@@ -9384,6 +10743,30 @@
     "references": [
       "src/scripts/ui/custom-bundle-exporter.js#ui-property",
       "src/scripts/ui/memory-template-panel.js#ui-property"
+    ]
+  },
+  {
+    "source": "开始第一次对话",
+    "references": [
+      "src/scripts/ui/maid-intent-presets.js#ui-definition"
+    ]
+  },
+  {
+    "source": "开始第一次聊天",
+    "references": [
+      "src/scripts/ui/maid-intent-presets.js#ui-definition"
+    ]
+  },
+  {
+    "source": "开始接线",
+    "references": [
+      "src/scripts/ui/maid-onboarding-flows.js#ui-definition"
+    ]
+  },
+  {
+    "source": "开始聊天",
+    "references": [
+      "src/scripts/ui/maid-onboarding-flows.js#ui-definition"
     ]
   },
   {
@@ -9442,6 +10825,24 @@
     ]
   },
   {
+    "source": "可撤销",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
+    "source": "可读取",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
+    "source": "可改选设置档，或沿用当前",
+    "references": [
+      "src/scripts/ui/maid-onboarding-flows.js#ui-definition"
+    ]
+  },
+  {
     "source": "可继续",
     "references": [
       "src/scripts/ui/agent-center-panel.js#ui-property"
@@ -9451,6 +10852,12 @@
     "source": "可降级建议",
     "references": [
       "src/scripts/ui/world-editor/world-block-overview.js#html-text"
+    ]
+  },
+  {
+    "source": "可联网（按次授权）",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
     ]
   },
   {
@@ -9484,6 +10891,12 @@
     ]
   },
   {
+    "source": "可写表 {count}",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
     "source": "可写表与行",
     "references": [
       "scripts/i18n/manual-ui-source-keys.json#manual"
@@ -9491,6 +10904,12 @@
   },
   {
     "source": "可写聊天",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
+    "source": "可修复",
     "references": [
       "scripts/i18n/manual-ui-source-keys.json#manual"
     ]
@@ -9684,6 +11103,7 @@
   {
     "source": "来源",
     "references": [
+      "src/scripts/memory/default-template.js#ui-definition",
       "src/scripts/ui/chat/ad-hoc-web-search-runtime.js#dom-assignment",
       "src/scripts/ui/maid-settings-panel.js#dom-assignment"
     ]
@@ -9735,18 +11155,26 @@
   {
     "source": "雷区/禁忌",
     "references": [
-      "scripts/i18n/manual-ui-source-keys.json#manual"
+      "scripts/i18n/manual-ui-source-keys.json#manual",
+      "src/scripts/memory/default-template.js#ui-definition"
     ]
   },
   {
     "source": "类型",
     "references": [
+      "src/scripts/memory/default-template.js#ui-definition",
       "src/scripts/ui/variable-panel-runtime.js#html-text",
       "src/scripts/ui/variable-schema-editor.js#html-text"
     ]
   },
   {
     "source": "类型：{value}",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
+    "source": "类型：诊断视图",
     "references": [
       "scripts/i18n/manual-ui-source-keys.json#manual"
     ]
@@ -9789,6 +11217,12 @@
     ]
   },
   {
+    "source": "历史",
+    "references": [
+      "src/scripts/memory/outline-section-utils.js#ui-definition"
+    ]
+  },
+  {
     "source": "历史存档",
     "references": [
       "src/scripts/ui/contact-settings-panel.js#ui-property",
@@ -9828,6 +11262,12 @@
       "src/scripts/ui/agent-center-panel.js#ui-property",
       "src/scripts/ui/preset-panel.js#ui-property",
       "src/scripts/ui/preset-prompt-inject-utils.js#ui-property"
+    ]
+  },
+  {
+    "source": "历史之前",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
     ]
   },
   {
@@ -9971,6 +11411,18 @@
     ]
   },
   {
+    "source": "连接资料齐了。点击刷新拉取可用模型；如果服务商不支持列表，也可以直接手动填写模型 ID。",
+    "references": [
+      "src/scripts/ui/maid-onboarding-flows.js#ui-definition"
+    ]
+  },
+  {
+    "source": "连线",
+    "references": [
+      "src/scripts/ui/maid-intent-presets.js#ui-definition"
+    ]
+  },
+  {
     "source": "连线 {name}",
     "references": [
       "scripts/i18n/manual-ui-source-keys.json#manual",
@@ -10033,7 +11485,8 @@
     "references": [
       "scripts/i18n/manual-ui-source-keys.json#manual",
       "src/index.html#html-text",
-      "src/scripts/ui/chat/lineage-graph-view-utils.js#ui-property"
+      "src/scripts/ui/chat/lineage-graph-view-utils.js#ui-property",
+      "src/scripts/ui/maid-intent-presets.js#ui-definition"
     ]
   },
   {
@@ -10072,12 +11525,14 @@
   {
     "source": "联系人已存在",
     "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual",
       "src/scripts/ui/session-panel.js#ui-call"
     ]
   },
   {
     "source": "联系人已在当前列表",
     "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual",
       "src/scripts/ui/session-panel.js#ui-call"
     ]
   },
@@ -10133,14 +11588,17 @@
   {
     "source": "聊落成花",
     "references": [
-      "scripts/i18n/manual-ui-source-keys.json#manual"
+      "scripts/i18n/manual-ui-source-keys.json#manual",
+      "src/scripts/ui/maid-onboarding-flows.js#ui-definition"
     ]
   },
   {
     "source": "聊天",
     "references": [
       "src/index.html#html-text",
+      "src/scripts/memory/default-template.js#ui-definition",
       "src/scripts/ui/general-settings-panel.js#html-text",
+      "src/scripts/ui/maid-intent-presets.js#ui-definition",
       "src/scripts/ui/memory-template-panel.js#html-text"
     ]
   },
@@ -10237,6 +11695,12 @@
     ]
   },
   {
+    "source": "聊天格式检查",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
     "source": "聊天管理",
     "references": [
       "src/scripts/ui/contact-settings-panel.js#html-text",
@@ -10247,6 +11711,12 @@
     "source": "聊天后独立请求",
     "references": [
       "src/scripts/ui/general-settings-panel.js#html-text"
+    ]
+  },
+  {
+    "source": "聊天候选",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
     ]
   },
   {
@@ -10326,6 +11796,12 @@
     ]
   },
   {
+    "source": "聊天事件候选",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
     "source": "聊天室",
     "references": [
       "src/scripts/ui/app.js#ui-property",
@@ -10385,13 +11861,14 @@
   {
     "source": "聊天室已创建，但暂时无法打开",
     "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual",
       "src/scripts/ui/session-panel.js#ui-call"
     ]
   },
   {
-    "source": "聊天室阅读设置",
+    "source": "聊天室与世界书已自动创建并绑定",
     "references": [
-      "src/index.html#html-attribute"
+      "scripts/i18n/manual-ui-source-keys.json#manual"
     ]
   },
   {
@@ -10410,6 +11887,12 @@
     "source": "聊天室字号",
     "references": [
       "src/index.html#html-attribute"
+    ]
+  },
+  {
+    "source": "聊天提示",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
     ]
   },
   {
@@ -10449,6 +11932,12 @@
     "references": [
       "src/scripts/ui/memory-template-panel.js#dom-assignment",
       "src/scripts/ui/memory-template-panel.js#html-attribute"
+    ]
+  },
+  {
+    "source": "零请求预览",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
     ]
   },
   {
@@ -10523,6 +12012,7 @@
   {
     "source": "绿色为新增、红色为删除；每一处可用 ✔ 保存或 × 回滚。点击正文可直接编辑。",
     "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual",
       "src/scripts/ui/agent-center-panel.js#html-text"
     ]
   },
@@ -10543,6 +12033,12 @@
     "source": "逻辑节点",
     "references": [
       "src/scripts/ui/world-editor/world-node-editor-core.js#ui-property"
+    ]
+  },
+  {
+    "source": "麦克风权限未开启。再次点击语音可重新请求，或前往系统设置开启。",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
     ]
   },
   {
@@ -10745,9 +12241,21 @@
     ]
   },
   {
+    "source": "每次动态互动新增一条摘要（必须）。",
+    "references": [
+      "src/scripts/memory/default-template.js#ui-definition"
+    ]
+  },
+  {
     "source": "每次请求注入的历史消息条数；0 全部注入（按预算自动裁剪）。",
     "references": [
       "src/scripts/ui/general-settings-panel.js#ui-property"
+    ]
+  },
+  {
+    "source": "每次确认",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
     ]
   },
   {
@@ -10767,6 +12275,30 @@
     "source": "每轮",
     "references": [
       "src/scripts/ui/variable-panel-runtime.js#html-text"
+    ]
+  },
+  {
+    "source": "每轮对话新增一条摘要（必须）。",
+    "references": [
+      "src/scripts/memory/default-template.js#ui-definition"
+    ]
+  },
+  {
+    "source": "每轮更新“是否在场”，人物关系/状态/物品变化时补充更新。",
+    "references": [
+      "src/scripts/memory/default-template.js#ui-definition"
+    ]
+  },
+  {
+    "source": "每轮互动新增一条摘要（必须）。",
+    "references": [
+      "src/scripts/memory/default-template.js#ui-definition"
+    ]
+  },
+  {
+    "source": "每轮推进新增一条摘要（必须）。",
+    "references": [
+      "src/scripts/memory/default-template.js#ui-definition"
     ]
   },
   {
@@ -10797,6 +12329,7 @@
   {
     "source": "描述",
     "references": [
+      "src/scripts/memory/default-template.js#ui-definition",
       "src/scripts/ui/memory-template-panel.js#html-text"
     ]
   },
@@ -11151,8 +12684,15 @@
     ]
   },
   {
+    "source": "模型可选；保存才会绑定女仆",
+    "references": [
+      "src/scripts/ui/maid-onboarding-flows.js#ui-definition"
+    ]
+  },
+  {
     "source": "模型配置",
     "references": [
+      "src/scripts/ui/maid-intent-presets.js#ui-definition",
       "src/scripts/ui/maid-settings-panel.js#html-text"
     ]
   },
@@ -11230,6 +12770,7 @@
   {
     "source": "默认（全局）",
     "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual",
       "src/scripts/ui/chat/creative-voice-settings-runtime.js#ui-property",
       "src/scripts/ui/voice-picker-modal.js#ui-property"
     ]
@@ -11270,6 +12811,12 @@
     "source": "默认回复视角。聊天界面与创意写作界面分开保存；不额外增加聊天区按钮。",
     "references": [
       "src/scripts/ui/preset-panel.js#dom-assignment"
+    ]
+  },
+  {
+    "source": "默认记忆模板",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
     ]
   },
   {
@@ -11340,7 +12887,8 @@
   {
     "source": "目标",
     "references": [
-      "scripts/i18n/manual-ui-source-keys.json#manual"
+      "scripts/i18n/manual-ui-source-keys.json#manual",
+      "src/scripts/memory/default-template.js#ui-definition"
     ]
   },
   {
@@ -11417,6 +12965,12 @@
     ]
   },
   {
+    "source": "目前为停用草稿；可编辑预览，但不会注入请求。",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
     "source": "呐",
     "references": [
       "scripts/i18n/manual-ui-source-keys.json#manual"
@@ -11427,6 +12981,12 @@
     "references": [
       "scripts/i18n/manual-ui-source-keys.json#manual",
       "src/scripts/ui/world-editor.js#html-text"
+    ]
+  },
+  {
+    "source": "男",
+    "references": [
+      "src/scripts/memory/default-template.js#ui-definition"
     ]
   },
   {
@@ -11540,9 +13100,21 @@
     ]
   },
   {
+    "source": "女",
+    "references": [
+      "src/scripts/memory/default-template.js#ui-definition"
+    ]
+  },
+  {
     "source": "女仆",
     "references": [
       "src/scripts/ui/agent-center-panel.js#html-text"
+    ]
+  },
+  {
+    "source": "女仆 · 主规划请求",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
     ]
   },
   {
@@ -11573,6 +13145,12 @@
     "source": "女仆的 web.search 与聊天模型的兜底搜索共用此服务；全局设置，即时保存",
     "references": [
       "src/scripts/ui/config-panel.js#html-attribute"
+    ]
+  },
+  {
+    "source": "女仆工作台",
+    "references": [
+      "src/scripts/ui/maid-intent-presets.js#ui-definition"
     ]
   },
   {
@@ -11613,9 +13191,33 @@
     ]
   },
   {
+    "source": "女仆新手任务",
+    "references": [
+      "src/scripts/ui/maid-onboarding-entry-ui.js#ui-definition"
+    ]
+  },
+  {
     "source": "女仆已完成任务 ✓",
     "references": [
       "src/scripts/ui/app.js#ui-call"
+    ]
+  },
+  {
+    "source": "女仆引导步骤",
+    "references": [
+      "src/scripts/ui/maid-guide-spotlight.js#ui-definition"
+    ]
+  },
+  {
+    "source": "女仆引导完成",
+    "references": [
+      "src/scripts/ui/maid-guide-spotlight.js#ui-definition"
+    ]
+  },
+  {
+    "source": "女仆与 Agent Center · 完成",
+    "references": [
+      "src/scripts/ui/maid-onboarding-flows.js#ui-definition"
     ]
   },
   {
@@ -11664,6 +13266,7 @@
   {
     "source": "排队",
     "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual",
       "src/scripts/ui/chat/execution-flow-runtime-utils.js#ui-property"
     ]
   },
@@ -11672,6 +13275,12 @@
     "references": [
       "src/scripts/ui/variable-panel.js#html-text",
       "src/scripts/ui/world-panel.js#html-text"
+    ]
+  },
+  {
+    "source": "排序保存失败",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
     ]
   },
   {
@@ -11698,6 +13307,12 @@
     "source": "配置检查模型",
     "references": [
       "src/scripts/ui/agent-center-panel.js#ui-property"
+    ]
+  },
+  {
+    "source": "配置模型",
+    "references": [
+      "src/scripts/ui/maid-intent-presets.js#ui-definition"
     ]
   },
   {
@@ -11868,6 +13483,7 @@
     "source": "其他信息",
     "references": [
       "scripts/i18n/manual-ui-source-keys.json#manual",
+      "src/scripts/memory/default-template.js#ui-definition",
       "src/scripts/ui/contact-detail-runtime-utils.js#ui-property"
     ]
   },
@@ -11923,6 +13539,12 @@
     "source": "启用插件",
     "references": [
       "src/scripts/ui/plugin-panel.js#ui-property"
+    ]
+  },
+  {
+    "source": "启用此提示词",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
     ]
   },
   {
@@ -12039,6 +13661,12 @@
     ]
   },
   {
+    "source": "启用状态保存失败",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
     "source": "起点端口不是输出端口",
     "references": [
       "scripts/i18n/manual-ui-source-keys.json#manual"
@@ -12078,6 +13706,12 @@
     "source": "迁移旧数据到新模板",
     "references": [
       "src/scripts/ui/memory-template-panel.js#ui-property"
+    ]
+  },
+  {
+    "source": "迁移前历史",
+    "references": [
+      "src/scripts/memory/outline-section-utils.js#ui-definition"
     ]
   },
   {
@@ -12135,6 +13769,12 @@
     "source": "切换到详情",
     "references": [
       "src/scripts/ui/agent-center-panel.js#html-attribute"
+    ]
+  },
+  {
+    "source": "切换会话 Agent 工具失败",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
     ]
   },
   {
@@ -12268,6 +13908,7 @@
   {
     "source": "清空会话",
     "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual",
       "src/scripts/ui/session-panel.js#ui-property"
     ]
   },
@@ -12443,6 +14084,12 @@
     ]
   },
   {
+    "source": "请确认当前有可用会话。",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
     "source": "请确认当前有可用会话后重试。",
     "references": [
       "src/scripts/ui/agent-center-panel.js#ui-property"
@@ -12506,6 +14153,7 @@
   {
     "source": "请输入好友名称",
     "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual",
       "src/scripts/ui/session-panel.js#ui-call"
     ]
   },
@@ -12555,6 +14203,12 @@
     "source": "请填写变量名",
     "references": [
       "src/scripts/ui/world-editor/world-variable-modal.js#ui-call"
+    ]
+  },
+  {
+    "source": "请先补齐有效内容再启用",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
     ]
   },
   {
@@ -12855,6 +14509,12 @@
     ]
   },
   {
+    "source": "区块预览",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
     "source": "取消",
     "references": [
       "src/index.html#html-text",
@@ -12955,6 +14615,12 @@
     ]
   },
   {
+    "source": "取消引导",
+    "references": [
+      "src/scripts/ui/maid-intent-presets.js#ui-definition"
+    ]
+  },
+  {
     "source": "去白边",
     "references": [
       "src/scripts/ui/app.js#html-text"
@@ -12976,6 +14642,24 @@
     "source": "去开启格式修复",
     "references": [
       "src/index.html#html-text"
+    ]
+  },
+  {
+    "source": "去看 Agent Center",
+    "references": [
+      "src/scripts/ui/maid-onboarding-flows.js#ui-definition"
+    ]
+  },
+  {
+    "source": "去聊天",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
+    "source": "去认识朋友",
+    "references": [
+      "src/scripts/ui/maid-onboarding-flows.js#ui-definition"
     ]
   },
   {
@@ -13091,6 +14775,12 @@
       "src/scripts/ui/regex-panel.js#html-text",
       "src/scripts/ui/script-panel.js#html-text",
       "src/scripts/ui/world-editor/world-variable-picker.js#html-text"
+    ]
+  },
+  {
+    "source": "全局 > 角色卡 > 当前会话 > Agent > 插件 > 默认",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
     ]
   },
   {
@@ -13214,6 +14904,12 @@
     ]
   },
   {
+    "source": "全局提示词保存失败",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
     "source": "全局提示词编辑",
     "references": [
       "scripts/i18n/manual-ui-source-keys.json#manual",
@@ -13221,10 +14917,46 @@
     ]
   },
   {
+    "source": "全局提示词导出失败",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
+    "source": "全局提示词导入失败",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
     "source": "全局提示词零请求预览",
     "references": [
       "scripts/i18n/manual-ui-source-keys.json#manual",
       "src/scripts/ui/agent-center-panel.js#html-attribute"
+    ]
+  },
+  {
+    "source": "全局提示词已保存",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
+    "source": "全局提示词已导出",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
+    "source": "全局提示词已导入",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
+    "source": "全局提示词预览失败",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
     ]
   },
   {
@@ -13355,7 +15087,8 @@
   {
     "source": "确立时间",
     "references": [
-      "scripts/i18n/manual-ui-source-keys.json#manual"
+      "scripts/i18n/manual-ui-source-keys.json#manual",
+      "src/scripts/memory/default-template.js#ui-definition"
     ]
   },
   {
@@ -13378,6 +15111,24 @@
     ]
   },
   {
+    "source": "确认后会建立联系人、聊天室与对应世界书。完成写入后我会自动继续。",
+    "references": [
+      "src/scripts/ui/maid-onboarding-flows.js#ui-definition"
+    ]
+  },
+  {
+    "source": "确认后会自动创建专属聊天室，并与该角色的「世界书」完成绑定。",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
+    "source": "确认女仆使用的连线设置档与模型",
+    "references": [
+      "src/scripts/ui/maid-onboarding-flows.js#ui-definition"
+    ]
+  },
+  {
     "source": "确认期间世界书已被修改，请重新导入并核对最新内容",
     "references": [
       "src/scripts/ui/world-panel.js#ui-call"
@@ -13393,6 +15144,12 @@
     "source": "确认收款",
     "references": [
       "src/scripts/ui/chat/message-bubble-content-ui-utils.js#dom-assignment"
+    ]
+  },
+  {
+    "source": "确认添加好友",
+    "references": [
+      "src/scripts/ui/maid-onboarding-flows.js#ui-definition"
     ]
   },
   {
@@ -13475,6 +15232,13 @@
   {
     "source": "群聊共识",
     "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual",
+      "src/scripts/memory/default-template.js#ui-definition"
+    ]
+  },
+  {
+    "source": "群聊候选",
+    "references": [
       "scripts/i18n/manual-ui-source-keys.json#manual"
     ]
   },
@@ -13482,6 +15246,12 @@
     "source": "群聊会自动合并群成员各自私聊中的附加世界书；只在包含该成员的群聊中生效。",
     "references": [
       "src/scripts/ui/world-panel.js#ui-property"
+    ]
+  },
+  {
+    "source": "群聊局面或关系变化时覆盖对应分节。",
+    "references": [
+      "src/scripts/memory/default-template.js#ui-definition"
     ]
   },
   {
@@ -13494,6 +15264,24 @@
     "source": "群聊设置",
     "references": [
       "src/scripts/ui/group-chat-panels.js#ui-property"
+    ]
+  },
+  {
+    "source": "群聊首次出现重要人物时插入。",
+    "references": [
+      "src/scripts/memory/default-template.js#ui-definition"
+    ]
+  },
+  {
+    "source": "群聊首次互动后插入一条摘要。",
+    "references": [
+      "src/scripts/memory/default-template.js#ui-definition"
+    ]
+  },
+  {
+    "source": "群聊提示",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
     ]
   },
   {
@@ -13526,7 +15314,8 @@
   {
     "source": "群聊摘要",
     "references": [
-      "scripts/i18n/manual-ui-source-keys.json#manual"
+      "scripts/i18n/manual-ui-source-keys.json#manual",
+      "src/scripts/memory/default-template.js#ui-definition"
     ]
   },
   {
@@ -13542,9 +15331,16 @@
     ]
   },
   {
+    "source": "群聊专用：记录群内或剧情中出现的重要人物。每轮需判断该人物是否仍在场/可互动，更新“是否在场”。私聊不使用该表。",
+    "references": [
+      "src/scripts/memory/default-template.js#ui-definition"
+    ]
+  },
+  {
     "source": "群聊总体大纲",
     "references": [
-      "scripts/i18n/manual-ui-source-keys.json#manual"
+      "scripts/i18n/manual-ui-source-keys.json#manual",
+      "src/scripts/memory/default-template.js#ui-definition"
     ]
   },
   {
@@ -13556,6 +15352,7 @@
   {
     "source": "群组不能通过添加好友导入",
     "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual",
       "src/scripts/ui/session-panel.js#ui-call"
     ]
   },
@@ -13568,6 +15365,7 @@
   {
     "source": "让角色卡完成动态渲染",
     "references": [
+      "src/scripts/ui/maid-onboarding-flows.js#ui-definition",
       "src/scripts/ui/maid-onboarding-flows.js#ui-property"
     ]
   },
@@ -13622,33 +15420,61 @@
     ]
   },
   {
+    "source": "人物长期离场且无关时可删除。",
+    "references": [
+      "src/scripts/memory/default-template.js#ui-definition"
+    ]
+  },
+  {
+    "source": "人物长期退出剧情且已无影响时可删除。",
+    "references": [
+      "src/scripts/memory/default-template.js#ui-definition"
+    ]
+  },
+  {
     "source": "人已赞",
     "references": [
       "src/scripts/ui/moments-card-view-utils.js#html-text"
     ]
   },
   {
+    "source": "认识角色",
+    "references": [
+      "src/scripts/ui/maid-intent-presets.js#ui-definition"
+    ]
+  },
+  {
     "source": "认识女仆",
     "references": [
+      "src/scripts/ui/maid-intent-presets.js#ui-definition",
       "src/scripts/ui/maid-intent-presets.js#ui-property"
     ]
   },
   {
     "source": "认识女仆与 Agent Center",
     "references": [
+      "src/scripts/ui/maid-onboarding-flows.js#ui-definition",
       "src/scripts/ui/maid-onboarding-flows.js#ui-property"
     ]
   },
   {
     "source": "任务",
     "references": [
-      "scripts/i18n/manual-ui-source-keys.json#manual"
+      "scripts/i18n/manual-ui-source-keys.json#manual",
+      "src/scripts/memory/default-template.js#ui-definition"
+    ]
+  },
+  {
+    "source": "任务彻底作废或已无意义时删除。",
+    "references": [
+      "src/scripts/memory/default-template.js#ui-definition"
     ]
   },
   {
     "source": "任务名称",
     "references": [
-      "scripts/i18n/manual-ui-source-keys.json#manual"
+      "scripts/i18n/manual-ui-source-keys.json#manual",
+      "src/scripts/memory/default-template.js#ui-definition"
     ]
   },
   {
@@ -13667,6 +15493,12 @@
     "source": "任务状态",
     "references": [
       "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
+    "source": "任务状态、线索、目标变化时更新。",
+    "references": [
+      "src/scripts/memory/default-template.js#ui-definition"
     ]
   },
   {
@@ -13704,6 +15536,12 @@
     "references": [
       "src/scripts/ui/maid-settings-panel.js#dom-assignment",
       "src/scripts/ui/maid-settings-panel.js#html-attribute"
+    ]
+  },
+  {
+    "source": "如何",
+    "references": [
+      "src/scripts/ui/maid-intent-presets.js#ui-definition"
     ]
   },
   {
@@ -13932,6 +15770,7 @@
   {
     "source": "删除好友",
     "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual",
       "src/scripts/ui/session-panel.js#ui-property"
     ]
   },
@@ -14026,6 +15865,12 @@
     "references": [
       "src/scripts/ui/config-panel.js#html-attribute",
       "src/scripts/ui/config-panel.js#ui-property"
+    ]
+  },
+  {
+    "source": "删除失败",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
     ]
   },
   {
@@ -14189,6 +16034,13 @@
     ]
   },
   {
+    "source": "上次没有取得麦克风权限。你可以重新请求权限，或前往系统设置手动开启。",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual",
+      "src/scripts/ui/microphone-permission-recovery.js#ui-property"
+    ]
+  },
+  {
     "source": "上级",
     "references": [
       "scripts/i18n/manual-ui-source-keys.json#manual",
@@ -14204,7 +16056,14 @@
   {
     "source": "上拉刷新",
     "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual",
       "src/scripts/ui/session-panel.js#html-text"
+    ]
+  },
+  {
+    "source": "上手",
+    "references": [
+      "src/scripts/ui/maid-intent-presets.js#ui-definition"
     ]
   },
   {
@@ -14249,6 +16108,7 @@
   {
     "source": "上一步",
     "references": [
+      "src/scripts/ui/maid-guide-spotlight.js#ui-definition",
       "src/scripts/ui/world-editor.js#html-text"
     ]
   },
@@ -14326,6 +16186,12 @@
     ]
   },
   {
+    "source": "尚未填写提示词正文",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
     "source": "尚未选择世界书",
     "references": [
       "src/scripts/ui/command-runner.js#ui-call"
@@ -14350,7 +16216,8 @@
       "src/scripts/ui/custom-bundle-import-diagnostics-utils.js#ui-property",
       "src/scripts/ui/experience-pack-import-utils.js#ui-property",
       "src/scripts/ui/general-settings-panel.js#ui-call",
-      "src/scripts/ui/general-settings-panel.js#ui-property"
+      "src/scripts/ui/general-settings-panel.js#ui-property",
+      "src/scripts/ui/microphone-permission-recovery.js#ui-property"
     ]
   },
   {
@@ -14386,6 +16253,7 @@
   {
     "source": "设为该角色默认声音",
     "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual",
       "src/scripts/ui/voice-picker-modal.js#html-text"
     ]
   },
@@ -14413,6 +16281,12 @@
     "references": [
       "src/scripts/ui/agent-center-panel.js#html-text",
       "src/scripts/ui/app.js#ui-property"
+    ]
+  },
+  {
+    "source": "设置档不可用",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
     ]
   },
   {
@@ -14461,7 +16335,8 @@
   {
     "source": "身份",
     "references": [
-      "scripts/i18n/manual-ui-source-keys.json#manual"
+      "scripts/i18n/manual-ui-source-keys.json#manual",
+      "src/scripts/memory/default-template.js#ui-definition"
     ]
   },
   {
@@ -14557,6 +16432,12 @@
   },
   {
     "source": "生成候选",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
+    "source": "生成画像候选失败",
     "references": [
       "scripts/i18n/manual-ui-source-keys.json#manual"
     ]
@@ -14672,6 +16553,12 @@
     ]
   },
   {
+    "source": "生图整理",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
     "source": "生效 {count}",
     "references": [
       "scripts/i18n/manual-ui-source-keys.json#manual"
@@ -14745,19 +16632,22 @@
   {
     "source": "时间",
     "references": [
+      "src/scripts/memory/default-template.js#ui-definition",
       "src/scripts/ui/world-panel.js#html-text"
     ]
   },
   {
     "source": "时间/轮次",
     "references": [
-      "scripts/i18n/manual-ui-source-keys.json#manual"
+      "scripts/i18n/manual-ui-source-keys.json#manual",
+      "src/scripts/memory/default-template.js#ui-definition"
     ]
   },
   {
     "source": "时间/章节",
     "references": [
-      "scripts/i18n/manual-ui-source-keys.json#manual"
+      "scripts/i18n/manual-ui-source-keys.json#manual",
+      "src/scripts/memory/default-template.js#ui-definition"
     ]
   },
   {
@@ -14898,6 +16788,12 @@
     ]
   },
   {
+    "source": "使用格式修复提示中的操作继续",
+    "references": [
+      "src/scripts/ui/maid-onboarding-runtime.js#ui-definition"
+    ]
+  },
+  {
     "source": "使用结构化表格保存角色、事件与状态。",
     "references": [
       "src/scripts/ui/general-settings-panel.js#ui-property"
@@ -14921,6 +16817,12 @@
       "scripts/i18n/manual-ui-source-keys.json#manual",
       "src/scripts/ui/preset-panel.js#html-text",
       "src/scripts/ui/preset-panel.js#ui-call"
+    ]
+  },
+  {
+    "source": "使用语音设置页目前的默认声音",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
     ]
   },
   {
@@ -14968,6 +16870,12 @@
     "source": "世界书编辑器",
     "references": [
       "src/scripts/ui/app.js#ui-property"
+    ]
+  },
+  {
+    "source": "世界书变更预览",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
     ]
   },
   {
@@ -15058,6 +16966,24 @@
     ]
   },
   {
+    "source": "示例私聊 · 传统文本",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
+    "source": "示例私聊 · 原生 FC",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
+    "source": "示例私聊 · JSON 终态",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
     "source": "示例私聊 FC",
     "references": [
       "src/scripts/ui/agent-center-panel.js#html-text"
@@ -15072,13 +16998,20 @@
   {
     "source": "事件描述",
     "references": [
-      "scripts/i18n/manual-ui-source-keys.json#manual"
+      "scripts/i18n/manual-ui-source-keys.json#manual",
+      "src/scripts/memory/default-template.js#ui-definition"
     ]
   },
   {
     "source": "事件时间线",
     "references": [
       "src/scripts/ui/debug-panel.js#ui-property"
+    ]
+  },
+  {
+    "source": "事件信息补充或修正时更新。",
+    "references": [
+      "src/scripts/memory/default-template.js#ui-definition"
     ]
   },
   {
@@ -15113,6 +17046,12 @@
     ]
   },
   {
+    "source": "是",
+    "references": [
+      "src/scripts/memory/default-template.js#ui-definition"
+    ]
+  },
+  {
     "source": "是否立即启用该插件？",
     "references": [
       "src/scripts/ui/plugin-panel.js#ui-property"
@@ -15121,7 +17060,8 @@
   {
     "source": "是否在场",
     "references": [
-      "scripts/i18n/manual-ui-source-keys.json#manual"
+      "scripts/i18n/manual-ui-source-keys.json#manual",
+      "src/scripts/memory/default-template.js#ui-definition"
     ]
   },
   {
@@ -15156,9 +17096,29 @@
     ]
   },
   {
+    "source": "适用于聊天界面、动态界面与 RP 界面的基础记忆表格模板。",
+    "references": [
+      "src/scripts/memory/default-template.js#ui-definition",
+      "src/scripts/memory/default-template.js#ui-property"
+    ]
+  },
+  {
     "source": "释放刷新",
     "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual",
       "src/scripts/ui/session-panel.js#dom-assignment"
+    ]
+  },
+  {
+    "source": "收到。这就带主人巡视女仆工作台和 Agent Center。",
+    "references": [
+      "src/scripts/ui/maid-intent-presets.js#ui-definition"
+    ]
+  },
+  {
+    "source": "收到～这就带主人给女仆接上 API，大约两分钟就好。",
+    "references": [
+      "src/scripts/ui/maid-intent-presets.js#ui-definition"
     ]
   },
   {
@@ -15182,6 +17142,7 @@
   {
     "source": "收起",
     "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual",
       "src/scripts/ui/chat/execution-flow-runtime-utils.js#html-attribute"
     ]
   },
@@ -15212,6 +17173,12 @@
     ]
   },
   {
+    "source": "收入囊中",
+    "references": [
+      "src/scripts/ui/maid-guide-spotlight.js#ui-definition"
+    ]
+  },
+  {
     "source": "手动",
     "references": [
       "src/scripts/ui/variable-panel-runtime.js#html-text"
@@ -15221,6 +17188,12 @@
     "source": "手动触发",
     "references": [
       "src/scripts/ui/agent-center-panel.js#ui-property"
+    ]
+  },
+  {
+    "source": "手动更新",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
     ]
   },
   {
@@ -15294,9 +17267,69 @@
     ]
   },
   {
+    "source": "首次出现关键人物时插入。",
+    "references": [
+      "src/scripts/memory/default-template.js#ui-definition"
+    ]
+  },
+  {
+    "source": "首次出现明确任务时插入。",
+    "references": [
+      "src/scripts/memory/default-template.js#ui-definition"
+    ]
+  },
+  {
+    "source": "首次出现重大事件时插入。",
+    "references": [
+      "src/scripts/memory/default-template.js#ui-definition"
+    ]
+  },
+  {
+    "source": "首次出现重要物品时插入。",
+    "references": [
+      "src/scripts/memory/default-template.js#ui-definition"
+    ]
+  },
+  {
+    "source": "首次对话后插入一条摘要。",
+    "references": [
+      "src/scripts/memory/default-template.js#ui-definition"
+    ]
+  },
+  {
+    "source": "首次对话时初始化关系记录。",
+    "references": [
+      "src/scripts/memory/default-template.js#ui-definition"
+    ]
+  },
+  {
     "source": "首次启动时选择的语言，也可以在这里更改。",
     "references": [
       "src/scripts/ui/general-settings-panel.js#ui-property"
+    ]
+  },
+  {
+    "source": "首次推进后插入一条摘要。",
+    "references": [
+      "src/scripts/memory/default-template.js#ui-definition"
+    ]
+  },
+  {
+    "source": "首次形成共识时插入。",
+    "references": [
+      "src/scripts/memory/default-template.js#ui-definition"
+    ]
+  },
+  {
+    "source": "首次需要记录时插入一行。",
+    "references": [
+      "src/scripts/memory/default-template.js#ui-definition"
+    ]
+  },
+  {
+    "source": "首次需要某个分节时插入该分节。",
+    "references": [
+      "src/scripts/memory/default-template.js#ui-definition"
     ]
   },
   {
@@ -15449,6 +17482,12 @@
     ]
   },
   {
+    "source": "输入任意内容",
+    "references": [
+      "src/scripts/ui/maid-onboarding-flows.js#ui-definition"
+    ]
+  },
+  {
     "source": "输入识别语言",
     "references": [
       "src/scripts/ui/config-panel.js#html-text"
@@ -15470,6 +17509,7 @@
   {
     "source": "输入新好友名称（同时作为聊天室 ID）",
     "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual",
       "src/scripts/ui/session-panel.js#ui-call"
     ]
   },
@@ -15587,11 +17627,23 @@
     ]
   },
   {
+    "source": "刷新角色推荐失败",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
     "source": "刷新列表",
     "references": [
       "src/scripts/ui/config-panel.js#html-text",
       "src/scripts/ui/memory-template-panel.js#html-text",
       "src/scripts/ui/plugin-panel.js#html-attribute"
+    ]
+  },
+  {
+    "source": "刷新列表，或手动填写模型",
+    "references": [
+      "src/scripts/ui/maid-onboarding-flows.js#ui-definition"
     ]
   },
   {
@@ -15609,6 +17661,7 @@
   {
     "source": "刷新中…",
     "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual",
       "src/scripts/ui/session-panel.js#dom-assignment"
     ]
   },
@@ -15697,6 +17750,12 @@
     ]
   },
   {
+    "source": "私聊候选",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
     "source": "私聊提示词",
     "references": [
       "src/scripts/ui/agent-center-card-catalog.js#ui-definition",
@@ -15732,7 +17791,8 @@
   {
     "source": "私聊摘要",
     "references": [
-      "scripts/i18n/manual-ui-source-keys.json#manual"
+      "scripts/i18n/manual-ui-source-keys.json#manual",
+      "src/scripts/memory/default-template.js#ui-definition"
     ]
   },
   {
@@ -15744,7 +17804,8 @@
   {
     "source": "私聊总体大纲",
     "references": [
-      "scripts/i18n/manual-ui-source-keys.json#manual"
+      "scripts/i18n/manual-ui-source-keys.json#manual",
+      "src/scripts/memory/default-template.js#ui-definition"
     ]
   },
   {
@@ -15766,6 +17827,12 @@
     ]
   },
   {
+    "source": "四项新手任务",
+    "references": [
+      "src/scripts/ui/maid-onboarding-entry-ui.js#ui-definition"
+    ]
+  },
+  {
     "source": "四周留白",
     "references": [
       "src/scripts/ui/app.js#html-text"
@@ -15780,6 +17847,7 @@
   {
     "source": "搜索 Token",
     "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual",
       "src/scripts/ui/chat/prompt-preview-view-utils.js#ui-property"
     ]
   },
@@ -15948,6 +18016,12 @@
     ]
   },
   {
+    "source": "搜索失败",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
     "source": "搜索世界书",
     "references": [
       "src/scripts/ui/world-panel.js#dom-assignment",
@@ -15969,6 +18043,12 @@
   },
   {
     "source": "搜索预设正则、绑定对象或影响条目",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
+    "source": "搜索中…",
     "references": [
       "scripts/i18n/manual-ui-source-keys.json#manual"
     ]
@@ -16172,6 +18252,12 @@
     ]
   },
   {
+    "source": "替换行已截断",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
     "source": "添加",
     "references": [
       "src/scripts/ui/app.js#ui-property",
@@ -16218,6 +18304,7 @@
   {
     "source": "添加第一位好友",
     "references": [
+      "src/scripts/ui/maid-onboarding-flows.js#ui-definition",
       "src/scripts/ui/maid-onboarding-flows.js#ui-property"
     ]
   },
@@ -16225,12 +18312,20 @@
     "source": "添加好友",
     "references": [
       "src/index.html#html-text",
+      "src/scripts/ui/maid-intent-presets.js#ui-definition",
       "src/scripts/ui/maid-intent-presets.js#ui-property"
+    ]
+  },
+  {
+    "source": "添加好友教学 · 完成",
+    "references": [
+      "src/scripts/ui/maid-onboarding-flows.js#ui-definition"
     ]
   },
   {
     "source": "添加好友失败，请稍后重试",
     "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual",
       "src/scripts/ui/session-panel.js#ui-call"
     ]
   },
@@ -16241,9 +18336,45 @@
     ]
   },
   {
+    "source": "添加推荐角色",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
+    "source": "添加推荐角色失败",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
+    "source": "填写 Base URL 与 API Key",
+    "references": [
+      "src/scripts/ui/maid-onboarding-runtime.js#ui-definition"
+    ]
+  },
+  {
+    "source": "填写 Service Account JSON",
+    "references": [
+      "src/scripts/ui/maid-onboarding-runtime.js#ui-definition"
+    ]
+  },
+  {
+    "source": "填写必要的连接资料",
+    "references": [
+      "src/scripts/ui/maid-onboarding-flows.js#ui-definition"
+    ]
+  },
+  {
     "source": "填这里即可。API Key 照常填写，请求会保留原协议、改走此出口。",
     "references": [
       "src/scripts/ui/config-panel.js#html-attribute"
+    ]
+  },
+  {
+    "source": "挑一位喜欢的角色。之后也可以随时回来继续添加。",
+    "references": [
+      "src/scripts/ui/maid-onboarding-flows.js#ui-definition"
     ]
   },
   {
@@ -16430,6 +18561,7 @@
     "references": [
       "src/scripts/ui/character-card-importer.js#ui-property",
       "src/scripts/ui/chat/execution-flow-runtime-utils.js#ui-property",
+      "src/scripts/ui/maid-intent-presets.js#ui-definition",
       "src/scripts/ui/memory-template-panel.js#ui-property",
       "src/scripts/ui/world-editor.js#html-text"
     ]
@@ -16444,6 +18576,12 @@
     "source": "跳过相似内容",
     "references": [
       "src/scripts/ui/memory-template-panel.js#ui-property"
+    ]
+  },
+  {
+    "source": "跳过引导",
+    "references": [
+      "src/scripts/ui/maid-guide-spotlight.js#ui-definition"
     ]
   },
   {
@@ -16535,6 +18673,18 @@
     ]
   },
   {
+    "source": "停用并保留为草稿",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
+    "source": "停用此提示词",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
     "source": "停用规则",
     "references": [
       "scripts/i18n/manual-ui-source-keys.json#manual"
@@ -16554,9 +18704,16 @@
     ]
   },
   {
+    "source": "停止引导",
+    "references": [
+      "src/scripts/ui/maid-intent-presets.js#ui-definition"
+    ]
+  },
+  {
     "source": "通用",
     "references": [
       "scripts/i18n/manual-ui-source-keys.json#manual",
+      "src/scripts/memory/default-template.js#ui-definition",
       "src/scripts/ui/memory-template-panel.js#html-text",
       "src/scripts/ui/memory-template-panel.js#ui-property"
     ]
@@ -16564,7 +18721,8 @@
   {
     "source": "通用记忆模板",
     "references": [
-      "scripts/i18n/manual-ui-source-keys.json#manual"
+      "scripts/i18n/manual-ui-source-keys.json#manual",
+      "src/scripts/memory/default-template.js#ui-definition"
     ]
   },
   {
@@ -16632,6 +18790,7 @@
   {
     "source": "同名世界书已存在",
     "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual",
       "src/scripts/ui/session-panel.js#ui-property",
       "src/scripts/ui/world-panel.js#ui-property"
     ]
@@ -16801,6 +18960,24 @@
     ]
   },
   {
+    "source": "推荐好友",
+    "references": [
+      "src/scripts/ui/maid-intent-presets.js#ui-definition"
+    ]
+  },
+  {
+    "source": "推荐加载失败",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
+    "source": "推荐角色",
+    "references": [
+      "src/scripts/ui/maid-intent-presets.js#ui-definition"
+    ]
+  },
+  {
     "source": "推理",
     "references": [
       "src/scripts/ui/regex-panel.js#html-text",
@@ -16878,6 +19055,12 @@
       "src/scripts/ui/contact-settings-panel.js#html-attribute",
       "src/scripts/ui/group-chat-panels.js#html-attribute",
       "src/scripts/ui/moment-summary-panel.js#html-attribute"
+    ]
+  },
+  {
+    "source": "退出引导",
+    "references": [
+      "src/scripts/ui/maid-intent-presets.js#ui-definition"
     ]
   },
   {
@@ -16967,7 +19150,8 @@
   {
     "source": "外貌特征",
     "references": [
-      "scripts/i18n/manual-ui-source-keys.json#manual"
+      "scripts/i18n/manual-ui-source-keys.json#manual",
+      "src/scripts/memory/default-template.js#ui-definition"
     ]
   },
   {
@@ -16976,6 +19160,7 @@
       "src/scripts/ui/chat/execution-flow-runtime-utils.js#ui-property",
       "src/scripts/ui/config-panel.js#html-text",
       "src/scripts/ui/general-settings-panel.js#html-text",
+      "src/scripts/ui/maid-onboarding-entry-ui.js#ui-definition",
       "src/scripts/ui/maid-selection-mode.js#html-text",
       "src/scripts/ui/world-editor.js#html-text"
     ]
@@ -17224,6 +19409,12 @@
     ]
   },
   {
+    "source": "未尝试",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
     "source": "未单独设置时使用创意写作默认。",
     "references": [
       "scripts/i18n/manual-ui-source-keys.json#manual"
@@ -17266,6 +19457,12 @@
     ]
   },
   {
+    "source": "未记录",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
     "source": "未接入当前生效链路",
     "references": [
       "scripts/i18n/manual-ui-source-keys.json#manual"
@@ -17281,6 +19478,12 @@
     "source": "未解析到有效对话标签，已丢弃；可在「本次 AI 回复」查看原始内容",
     "references": [
       "src/scripts/ui/app.js#ui-call"
+    ]
+  },
+  {
+    "source": "未决线索",
+    "references": [
+      "src/scripts/memory/outline-section-utils.js#ui-definition"
     ]
   },
   {
@@ -17302,10 +19505,34 @@
     ]
   },
   {
+    "source": "未命名表",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
     "source": "未命名表格",
     "references": [
       "scripts/i18n/manual-ui-source-keys.json#manual",
       "src/scripts/ui/memory-template-panel.js#ui-call"
+    ]
+  },
+  {
+    "source": "未命名存档",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
+    "source": "未命名区块",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
+    "source": "未命名提示词",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
     ]
   },
   {
@@ -17341,6 +19568,18 @@
   },
   {
     "source": "未配置",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
+    "source": "未配置 model",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
+    "source": "未配置 provider",
     "references": [
       "scripts/i18n/manual-ui-source-keys.json#manual"
     ]
@@ -17415,6 +19654,12 @@
   },
   {
     "source": "未填写比较值",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
+    "source": "未写入聊天",
     "references": [
       "scripts/i18n/manual-ui-source-keys.json#manual"
     ]
@@ -17641,6 +19886,12 @@
     ]
   },
   {
+    "source": "未找到匹配角色",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
     "source": "未找到匹配项",
     "references": [
       "src/scripts/ui/memory-template-panel.js#dom-assignment"
@@ -17674,6 +19925,24 @@
     "source": "未找到要更新的条目",
     "references": [
       "src/scripts/ui/world-panel.js#ui-call"
+    ]
+  },
+  {
+    "source": "未知",
+    "references": [
+      "src/scripts/memory/default-template.js#ui-definition"
+    ]
+  },
+  {
+    "source": "未知服务商",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
+    "source": "未执行",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
     ]
   },
   {
@@ -17748,6 +20017,12 @@
     ]
   },
   {
+    "source": "稳定特征",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
     "source": "问女仆...",
     "references": [
       "src/scripts/ui/maid-command-input-runtime-utils.js#dom-assignment",
@@ -17758,6 +20033,36 @@
     "source": "问题可能影响剧情或角色一致性时，建议生成新候选。",
     "references": [
       "src/scripts/ui/chat/chat-body-quality-guardian-utils.js#ui-property"
+    ]
+  },
+  {
+    "source": "我备好了四堂新手小课，选一堂就手把手陪主人完成。",
+    "references": [
+      "src/scripts/ui/maid-onboarding-entry-ui.js#ui-definition"
+    ]
+  },
+  {
+    "source": "我们来认识第一位朋友：打开添加好友，挑一位推荐角色，再确认添加。",
+    "references": [
+      "src/scripts/ui/maid-onboarding-flows.js#ui-definition"
+    ]
+  },
+  {
+    "source": "我想添加好友",
+    "references": [
+      "src/scripts/ui/maid-intent-presets.js#ui-definition"
+    ]
+  },
+  {
+    "source": "我准备了四堂新手课，主人可以慢慢挑。",
+    "references": [
+      "src/scripts/ui/maid-onboarding-entry-ui.js#ui-definition"
+    ]
+  },
+  {
+    "source": "无",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
     ]
   },
   {
@@ -17773,9 +20078,27 @@
     ]
   },
   {
+    "source": "无变更",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
+    "source": "无撤销",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
     "source": "无法打开链接，请稍后再试",
     "references": [
       "src/scripts/ui/developer-profile-panel.js#ui-call"
+    ]
+  },
+  {
+    "source": "无法打开系统麦克风权限设置，请手动在系统设置中允许 OmniTavern 使用麦克风。",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
     ]
   },
   {
@@ -17830,6 +20153,12 @@
     "source": "无法删除（至少保留一个用户）",
     "references": [
       "src/scripts/ui/user-panel.js#ui-call"
+    ]
+  },
+  {
+    "source": "无法新增全局提示词",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
     ]
   },
   {
@@ -17912,6 +20241,12 @@
     ]
   },
   {
+    "source": "无效事件可删除。",
+    "references": [
+      "src/scripts/memory/default-template.js#ui-definition"
+    ]
+  },
+  {
     "source": "无音频地址，播放失败",
     "references": [
       "src/scripts/ui/chat/message-bubble-content-ui-utils.js#ui-call"
@@ -17938,7 +20273,20 @@
   {
     "source": "物品名",
     "references": [
-      "scripts/i18n/manual-ui-source-keys.json#manual"
+      "scripts/i18n/manual-ui-source-keys.json#manual",
+      "src/scripts/memory/default-template.js#ui-definition"
+    ]
+  },
+  {
+    "source": "物品失效或丢失时删除。",
+    "references": [
+      "src/scripts/memory/default-template.js#ui-definition"
+    ]
+  },
+  {
+    "source": "物品信息变化时更新。",
+    "references": [
+      "src/scripts/memory/default-template.js#ui-definition"
     ]
   },
   {
@@ -17951,6 +20299,7 @@
     "source": "喜好",
     "references": [
       "scripts/i18n/manual-ui-source-keys.json#manual",
+      "src/scripts/memory/default-template.js#ui-definition",
       "src/scripts/ui/contact-detail-runtime-utils.js#ui-property"
     ]
   },
@@ -18008,6 +20357,13 @@
     ]
   },
   {
+    "source": "系统已不再显示麦克风权限询问。请打开应用权限设置，允许 OmniTavern 使用麦克风后再回来重试。",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual",
+      "src/scripts/ui/microphone-permission-recovery.js#ui-property"
+    ]
+  },
+  {
     "source": "系统注入 · 随右下角保存生效",
     "references": [
       "src/scripts/ui/preset-panel.js#dom-assignment"
@@ -18022,6 +20378,7 @@
   {
     "source": "下一步",
     "references": [
+      "src/scripts/ui/maid-guide-spotlight.js#ui-definition",
       "src/scripts/ui/memory-template-panel.js#ui-property",
       "src/scripts/ui/world-editor.js#html-text"
     ]
@@ -18075,9 +20432,34 @@
     ]
   },
   {
+    "source": "先打开「联系人」，选择任意一位联系人或群聊。没有聊过的人也会显示在这里。",
+    "references": [
+      "src/scripts/ui/maid-onboarding-flows.js#ui-definition"
+    ]
+  },
+  {
+    "source": "先打开右上角的设置菜单。角色卡与聊天会保留在原处。",
+    "references": [
+      "src/scripts/ui/maid-onboarding-flows.js#ui-definition"
+    ]
+  },
+  {
+    "source": "先点顶部的「+」打开快捷菜单。",
+    "references": [
+      "src/scripts/ui/maid-onboarding-flows.js#ui-definition"
+    ]
+  },
+  {
+    "source": "先点开右上角的设置入口，我会替主人守住其他按钮。",
+    "references": [
+      "src/scripts/ui/maid-onboarding-flows.js#ui-definition"
+    ]
+  },
+  {
     "source": "先接 API",
     "references": [
-      "scripts/i18n/manual-ui-source-keys.json#manual"
+      "scripts/i18n/manual-ui-source-keys.json#manual",
+      "src/scripts/ui/maid-onboarding-runtime.js#ui-definition"
     ]
   },
   {
@@ -18108,6 +20490,12 @@
     "source": "先选连线配置",
     "references": [
       "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
+    "source": "先选择主人要使用的服务商。即使继续使用默认的 OpenAI，也请在列表里确认一次。女仆要真正动手做事，这个渠道需支持工具调用；女仆一次任务会连发多次请求，用限流严的渠道容易撞 RPM。",
+    "references": [
+      "src/scripts/ui/maid-onboarding-flows.js#ui-definition"
     ]
   },
   {
@@ -18203,6 +20591,12 @@
     ]
   },
   {
+    "source": "想和角色聊天？安排！「第一次对话」引导这就开始。",
+    "references": [
+      "src/scripts/ui/maid-intent-presets.js#ui-definition"
+    ]
+  },
+  {
     "source": "向内收缩",
     "references": [
       "src/scripts/ui/app.js#html-text"
@@ -18242,6 +20636,12 @@
     "source": "小于等于 (<=)",
     "references": [
       "src/scripts/ui/world-editor.js#ui-property"
+    ]
+  },
+  {
+    "source": "小助手",
+    "references": [
+      "src/scripts/ui/maid-intent-presets.js#ui-definition"
     ]
   },
   {
@@ -18308,6 +20708,30 @@
     ]
   },
   {
+    "source": "写入本地资料",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
+    "source": "写入变量",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
+    "source": "写入记忆",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
+    "source": "写入世界书",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
     "source": "写入预览",
     "references": [
       "src/scripts/ui/agent-center-card-catalog.js#ui-definition"
@@ -18324,6 +20748,12 @@
     "references": [
       "src/scripts/ui/session-panel.js#dom-assignment",
       "src/scripts/ui/session-panel.js#html-attribute"
+    ]
+  },
+  {
+    "source": "新会话",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
     ]
   },
   {
@@ -18403,20 +20833,35 @@
     ]
   },
   {
+    "source": "新手",
+    "references": [
+      "src/scripts/ui/maid-intent-presets.js#ui-definition"
+    ]
+  },
+  {
+    "source": "新手任务",
+    "references": [
+      "src/scripts/ui/maid-onboarding-entry-ui.js#ui-definition"
+    ]
+  },
+  {
     "source": "新手任务完成",
     "references": [
-      "src/scripts/ui/maid-onboarding-entry-ui.js#html-attribute"
+      "src/scripts/ui/maid-onboarding-entry-ui.js#html-attribute",
+      "src/scripts/ui/maid-onboarding-entry-ui.js#ui-definition"
     ]
   },
   {
     "source": "新手上路",
     "references": [
+      "src/scripts/ui/maid-guide-spotlight.js#ui-definition",
       "src/scripts/ui/maid-settings-panel.js#dom-assignment"
     ]
   },
   {
     "source": "新手上路 · 上手指引",
     "references": [
+      "src/scripts/ui/maid-onboarding-entry-ui.js#ui-definition",
       "src/scripts/ui/maid-settings-panel.js#dom-assignment"
     ]
   },
@@ -18473,9 +20918,27 @@
     ]
   },
   {
+    "source": "新增档案时插入。",
+    "references": [
+      "src/scripts/memory/default-template.js#ui-definition"
+    ]
+  },
+  {
     "source": "新增附加",
     "references": [
       "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
+    "source": "新增共识条目。",
+    "references": [
+      "src/scripts/memory/default-template.js#ui-definition"
+    ]
+  },
+  {
+    "source": "新增关键人物时插入。",
+    "references": [
+      "src/scripts/memory/default-template.js#ui-definition"
     ]
   },
   {
@@ -18530,6 +20993,12 @@
     ]
   },
   {
+    "source": "新增区块缺少识别码",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
     "source": "新增全局",
     "references": [
       "scripts/i18n/manual-ui-source-keys.json#manual",
@@ -18537,9 +21006,45 @@
     ]
   },
   {
+    "source": "新增任务时插入。",
+    "references": [
+      "src/scripts/memory/default-template.js#ui-definition"
+    ]
+  },
+  {
     "source": "新增条件链",
     "references": [
       "src/scripts/ui/world-editor/world-node-editor-core.js#ui-property"
+    ]
+  },
+  {
+    "source": "新增重要关系条目。",
+    "references": [
+      "src/scripts/memory/default-template.js#ui-definition"
+    ]
+  },
+  {
+    "source": "新增重要人物时插入。",
+    "references": [
+      "src/scripts/memory/default-template.js#ui-definition"
+    ]
+  },
+  {
+    "source": "新增重要事件记录。",
+    "references": [
+      "src/scripts/memory/default-template.js#ui-definition"
+    ]
+  },
+  {
+    "source": "新增重要物品记录。",
+    "references": [
+      "src/scripts/memory/default-template.js#ui-definition"
+    ]
+  },
+  {
+    "source": "信息变化时更新。",
+    "references": [
+      "src/scripts/memory/default-template.js#ui-definition"
     ]
   },
   {
@@ -18551,19 +21056,22 @@
   {
     "source": "姓名",
     "references": [
-      "scripts/i18n/manual-ui-source-keys.json#manual"
+      "scripts/i18n/manual-ui-source-keys.json#manual",
+      "src/scripts/memory/default-template.js#ui-definition"
     ]
   },
   {
     "source": "性别",
     "references": [
-      "scripts/i18n/manual-ui-source-keys.json#manual"
+      "scripts/i18n/manual-ui-source-keys.json#manual",
+      "src/scripts/memory/default-template.js#ui-definition"
     ]
   },
   {
     "source": "性别/年龄",
     "references": [
-      "scripts/i18n/manual-ui-source-keys.json#manual"
+      "scripts/i18n/manual-ui-source-keys.json#manual",
+      "src/scripts/memory/default-template.js#ui-definition"
     ]
   },
   {
@@ -18574,6 +21082,19 @@
   },
   {
     "source": "性格（MBTI等）",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual",
+      "src/scripts/memory/default-template.js#ui-definition"
+    ]
+  },
+  {
+    "source": "修复后文本",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
+    "source": "修复后文本（已截断）",
     "references": [
       "scripts/i18n/manual-ui-source-keys.json#manual"
     ]
@@ -18594,6 +21115,12 @@
     "source": "修复结果与原文一致，无需修改。",
     "references": [
       "src/scripts/ui/app.js#ui-property"
+    ]
+  },
+  {
+    "source": "修改保留在草稿中",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
     ]
   },
   {
@@ -18630,6 +21157,13 @@
     "source": "需要 ref 或 label。",
     "references": [
       "src/scripts/ui/agent-ui-click-runtime.js#ui-property"
+    ]
+  },
+  {
+    "source": "需要在系统设置中开启麦克风",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual",
+      "src/scripts/ui/microphone-permission-recovery.js#ui-property"
     ]
   },
   {
@@ -18717,6 +21251,18 @@
     ]
   },
   {
+    "source": "选择「设定」，进入通用设置。",
+    "references": [
+      "src/scripts/ui/maid-onboarding-flows.js#ui-definition"
+    ]
+  },
+  {
+    "source": "选择「添加好友」。",
+    "references": [
+      "src/scripts/ui/maid-onboarding-flows.js#ui-definition"
+    ]
+  },
+  {
     "source": "选择/编辑提示词与生成参数",
     "references": [
       "src/scripts/ui/preset-panel.js#html-attribute"
@@ -18779,6 +21325,7 @@
   {
     "source": "选择声音",
     "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual",
       "src/scripts/ui/voice-picker-modal.js#html-attribute"
     ]
   },
@@ -18851,6 +21398,12 @@
     ]
   },
   {
+    "source": "选择一个模型",
+    "references": [
+      "src/scripts/ui/maid-onboarding-flows.js#ui-definition"
+    ]
+  },
+  {
     "source": "选择一条记录可直接打开对应世界书并定位到条目/分页。",
     "references": [
       "src/scripts/ui/app.js#html-text"
@@ -18859,7 +21412,8 @@
   {
     "source": "选择一位联系人",
     "references": [
-      "src/scripts/ui/contact-detail-runtime-utils.js#html-text"
+      "src/scripts/ui/contact-detail-runtime-utils.js#html-text",
+      "src/scripts/ui/maid-onboarding-flows.js#ui-definition"
     ]
   },
   {
@@ -18873,6 +21427,12 @@
     "references": [
       "src/scripts/ui/general-settings-panel.js#html-text",
       "src/scripts/ui/general-settings-panel.js#ui-call"
+    ]
+  },
+  {
+    "source": "选择这个 Agent 在 AI 回复后的工作方式。",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
     ]
   },
   {
@@ -18953,6 +21513,7 @@
   {
     "source": "巡视女仆工作台与 Agent 小帮手",
     "references": [
+      "src/scripts/ui/maid-onboarding-flows.js#ui-definition",
       "src/scripts/ui/maid-onboarding-flows.js#ui-property"
     ]
   },
@@ -18966,6 +21527,12 @@
     "source": "严格（强制 user 最先、角色交替）",
     "references": [
       "src/scripts/ui/config-panel.js#html-text"
+    ]
+  },
+  {
+    "source": "沿用当前连线",
+    "references": [
+      "src/scripts/ui/maid-onboarding-flows.js#ui-definition"
     ]
   },
   {
@@ -19012,6 +21579,12 @@
     ]
   },
   {
+    "source": "一般不删除，除非摘要明显错误或需要合并重写。",
+    "references": [
+      "src/scripts/memory/default-template.js#ui-definition"
+    ]
+  },
+  {
     "source": "一并导入",
     "references": [
       "src/scripts/ui/preset-panel.js#ui-property",
@@ -19025,9 +21598,21 @@
     ]
   },
   {
+    "source": "一步步",
+    "references": [
+      "src/scripts/ui/maid-intent-presets.js#ui-definition"
+    ]
+  },
+  {
     "source": "一步生成条件链",
     "references": [
       "src/scripts/ui/world-editor.js#ui-property"
+    ]
+  },
+  {
+    "source": "一步一步",
+    "references": [
+      "src/scripts/ui/maid-intent-presets.js#ui-definition"
     ]
   },
   {
@@ -19058,6 +21643,12 @@
     "source": "移除配图",
     "references": [
       "src/scripts/ui/app.js#html-attribute"
+    ]
+  },
+  {
+    "source": "移除写入预览工具",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
     ]
   },
   {
@@ -19148,9 +21739,21 @@
     ]
   },
   {
+    "source": "已保存 · 约 {count} tok",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
     "source": "已保存的 Keys",
     "references": [
       "src/scripts/ui/config-panel.js#html-text"
+    ]
+  },
+  {
+    "source": "已保存画像",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
     ]
   },
   {
@@ -19186,6 +21789,18 @@
     ]
   },
   {
+    "source": "已尝试",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
+    "source": "已撤销",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
     "source": "已撤销删除",
     "references": [
       "src/scripts/ui/variable-panel.js#ui-call"
@@ -19207,6 +21822,12 @@
     "source": "已触发手动规则",
     "references": [
       "src/scripts/ui/variable-panel-runtime.js#ui-call"
+    ]
+  },
+  {
+    "source": "已打回",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
     ]
   },
   {
@@ -19345,6 +21966,18 @@
     ]
   },
   {
+    "source": "已过期",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
+    "source": "已忽略候选",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
     "source": "已回滚上一轮记忆表格写入",
     "references": [
       "src/scripts/ui/session-memory-event-utils.js#ui-call"
@@ -19377,9 +22010,27 @@
     ]
   },
   {
+    "source": "已接受该处修改并保存",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
     "source": "已解绑角色世界书",
     "references": [
       "src/scripts/ui/world-panel.js#ui-call"
+    ]
+  },
+  {
+    "source": "已就绪",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
+    "source": "已拒绝",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
     ]
   },
   {
@@ -19409,6 +22060,12 @@
   },
   {
     "source": "已连接",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
+    "source": "已略过",
     "references": [
       "scripts/i18n/manual-ui-source-keys.json#manual"
     ]
@@ -19476,6 +22133,7 @@
   {
     "source": "已取消",
     "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual",
       "src/scripts/ui/chat/execution-flow-runtime-utils.js#ui-property"
     ]
   },
@@ -19588,6 +22246,18 @@
     ]
   },
   {
+    "source": "已提交",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
+    "source": "已添加「{name}」",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
     "source": "已添加到输入区",
     "references": [
       "src/scripts/ui/app.js#ui-call"
@@ -19649,6 +22319,12 @@
   },
   {
     "source": "已完成",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
+    "source": "已写入聊天",
     "references": [
       "scripts/i18n/manual-ui-source-keys.json#manual"
     ]
@@ -19754,6 +22430,18 @@
     ]
   },
   {
+    "source": "已与保存版本同步",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
+    "source": "已允许",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
     "source": "已允许本次联网，正在生成…",
     "references": [
       "src/scripts/ui/chat/ad-hoc-web-search-runtime.js#ui-property"
@@ -19775,6 +22463,12 @@
     "source": "已暂停",
     "references": [
       "src/scripts/ui/chat/message-bubble-content-ui-utils.js#dom-assignment"
+    ]
+  },
+  {
+    "source": "已执行",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
     ]
   },
   {
@@ -19808,6 +22502,18 @@
     "source": "已自动转换为直链",
     "references": [
       "src/scripts/ui/plugin-panel.js#ui-call"
+    ]
+  },
+  {
+    "source": "已阻止",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
+    "source": "以后可在「女仆设定 → 任务」中重温",
+    "references": [
+      "src/scripts/ui/maid-onboarding-entry-ui.js#ui-definition"
     ]
   },
   {
@@ -20013,7 +22719,8 @@
   {
     "source": "影响",
     "references": [
-      "scripts/i18n/manual-ui-source-keys.json#manual"
+      "scripts/i18n/manual-ui-source-keys.json#manual",
+      "src/scripts/memory/default-template.js#ui-definition"
     ]
   },
   {
@@ -20107,6 +22814,30 @@
     ]
   },
   {
+    "source": "影响范围：当前会话。关闭后，AI 后续请求工具不会执行；已有活动记录不会删除。",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
+    "source": "影响范围：当前会话。开启后，AI 可以请求已允许的工具；每次执行前仍会让你确认。",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
+    "source": "影响范围：当前会话。AI 后续不会再看到记忆、变量、世界书预览工具；已有待确认请求不会删除。",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
+    "source": "影响范围：当前会话。AI 可以请求记忆、变量、世界书的变更预览；真正提交仍需要你再次确认。",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
     "source": "影响面 TOP 5",
     "references": [
       "src/scripts/ui/chat/lineage-graph-view-utils.js#html-text"
@@ -20133,6 +22864,12 @@
   },
   {
     "source": "硬编码参考：相关群聊大纲",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
+    "source": "硬兜底读取其他联系人失败",
     "references": [
       "scripts/i18n/manual-ui-source-keys.json#manual"
     ]
@@ -20181,7 +22918,8 @@
   {
     "source": "用户档案",
     "references": [
-      "scripts/i18n/manual-ui-source-keys.json#manual"
+      "scripts/i18n/manual-ui-source-keys.json#manual",
+      "src/scripts/memory/default-template.js#ui-definition"
     ]
   },
   {
@@ -20220,6 +22958,12 @@
       "scripts/i18n/manual-ui-source-keys.json#manual",
       "src/scripts/ui/regex-panel.js#html-text",
       "src/scripts/ui/regex-session-panel.js#html-text"
+    ]
+  },
+  {
+    "source": "用户信息变化时更新。",
+    "references": [
+      "src/scripts/memory/default-template.js#ui-definition"
     ]
   },
   {
@@ -20323,6 +23067,18 @@
     "source": "游戏体验",
     "references": [
       "src/index.html#html-text"
+    ]
+  },
+  {
+    "source": "有未保存修改",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
+    "source": "有未保存修改，右侧可逐处 ✔ / ×",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
     ]
   },
   {
@@ -20432,7 +23188,8 @@
   {
     "source": "与用户关系",
     "references": [
-      "scripts/i18n/manual-ui-source-keys.json#manual"
+      "scripts/i18n/manual-ui-source-keys.json#manual",
+      "src/scripts/memory/default-template.js#ui-definition"
     ]
   },
   {
@@ -20466,6 +23223,18 @@
     ]
   },
   {
+    "source": "语义层头部",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
+    "source": "语义快照",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
     "source": "语义消息 ~{count} tok",
     "references": [
       "scripts/i18n/manual-ui-source-keys.json#manual"
@@ -20476,6 +23245,13 @@
     "references": [
       "src/scripts/ui/moments-card-view-utils.js#html-text",
       "src/scripts/ui/moments-detail-runtime-utils.js#html-text"
+    ]
+  },
+  {
+    "source": "语音功能需要麦克风权限",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual",
+      "src/scripts/ui/microphone-permission-recovery.js#ui-property"
     ]
   },
   {
@@ -20556,6 +23332,12 @@
     "source": "预览提示词",
     "references": [
       "src/scripts/ui/agent-center-panel.js#html-text"
+    ]
+  },
+  {
+    "source": "预览已生成",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
     ]
   },
   {
@@ -20656,6 +23438,7 @@
   {
     "source": "原生搜索次数",
     "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual",
       "src/scripts/ui/chat/prompt-preview-view-utils.js#ui-property"
     ]
   },
@@ -20673,6 +23456,18 @@
   },
   {
     "source": "原始前文",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
+    "source": "原文",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
+    "source": "原文校验未通过",
     "references": [
       "scripts/i18n/manual-ui-source-keys.json#manual"
     ]
@@ -20711,6 +23506,12 @@
     "source": "原文已变化，请重新发起正文优化。",
     "references": [
       "src/scripts/ui/app.js#ui-property"
+    ]
+  },
+  {
+    "source": "原因",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
     ]
   },
   {
@@ -20928,6 +23729,19 @@
     ]
   },
   {
+    "source": "再次请求",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual",
+      "src/scripts/ui/microphone-permission-recovery.js#ui-property"
+    ]
+  },
+  {
+    "source": "再确认这份设置档里的模型。模型可以改选或手动填写；若当前值就是主人要的，直接保存即可。",
+    "references": [
+      "src/scripts/ui/maid-onboarding-flows.js#ui-definition"
+    ]
+  },
+  {
     "source": "在 Agent Center 活动页查看这次格式检查记录。",
     "references": [
       "src/scripts/ui/chat/after-receive-dispatch-utils.js#ui-property"
@@ -20940,9 +23754,27 @@
     ]
   },
   {
+    "source": "在「界面与调试」卡片右上角展开「调试选项」。",
+    "references": [
+      "src/scripts/ui/maid-onboarding-flows.js#ui-definition"
+    ]
+  },
+  {
+    "source": "在联系人详情里点击「发消息」；群聊则点击「进入群聊」。",
+    "references": [
+      "src/scripts/ui/maid-onboarding-flows.js#ui-definition"
+    ]
+  },
+  {
     "source": "在上方创建第一个，把联系人归归类",
     "references": [
       "src/scripts/ui/group-panel.js#html-text"
+    ]
+  },
+  {
+    "source": "在输入框写一句想说的话。",
+    "references": [
+      "src/scripts/ui/maid-onboarding-flows.js#ui-definition"
     ]
   },
   {
@@ -20952,9 +23784,27 @@
     ]
   },
   {
+    "source": "在信任角色卡来源时开启富文本 iframe 脚本",
+    "references": [
+      "src/scripts/ui/maid-onboarding-flows.js#ui-definition"
+    ]
+  },
+  {
     "source": "在这里改条件细节",
     "references": [
       "src/scripts/ui/world-editor.js#ui-property"
+    ]
+  },
+  {
+    "source": "在这里输入",
+    "references": [
+      "src/scripts/ui/maid-guide-spotlight.js#ui-definition"
+    ]
+  },
+  {
+    "source": "载入推荐中…",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
     ]
   },
   {
@@ -20979,6 +23829,12 @@
     "source": "暂不思考，优先最稳格式",
     "references": [
       "src/scripts/ui/chat-fc-compatibility-panel.js#html-text"
+    ]
+  },
+  {
+    "source": "暂时无法构建本次 Prompt 预览。",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
     ]
   },
   {
@@ -21010,6 +23866,12 @@
     "source": "暂无",
     "references": [
       "src/scripts/ui/chat/lineage-graph-view-utils.js#html-text"
+    ]
+  },
+  {
+    "source": "暂无 Agent 记录可导出",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
     ]
   },
   {
@@ -21122,6 +23984,12 @@
     ]
   },
   {
+    "source": "暂无好友/群组",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
     "source": "暂无会话绑定此预设",
     "references": [
       "scripts/i18n/manual-ui-source-keys.json#manual",
@@ -21173,6 +24041,7 @@
   {
     "source": "暂无可添加联系人",
     "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual",
       "src/scripts/ui/contact-group-renderer.js#dom-assignment",
       "src/scripts/ui/session-panel.js#dom-assignment"
     ]
@@ -21312,6 +24181,12 @@
     ]
   },
   {
+    "source": "暂无推荐角色",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
     "source": "暂无未分组联系人",
     "references": [
       "src/scripts/ui/contact-group-renderer.js#dom-assignment"
@@ -21350,6 +24225,24 @@
     ]
   },
   {
+    "source": "怎么",
+    "references": [
+      "src/scripts/ui/maid-intent-presets.js#ui-definition"
+    ]
+  },
+  {
+    "source": "怎么开始",
+    "references": [
+      "src/scripts/ui/maid-intent-presets.js#ui-definition"
+    ]
+  },
+  {
+    "source": "怎么用女仆",
+    "references": [
+      "src/scripts/ui/maid-intent-presets.js#ui-definition"
+    ]
+  },
+  {
     "source": "增加输入",
     "references": [
       "src/scripts/ui/world-editor/world-node-editor-core.js#html-attribute"
@@ -21364,6 +24257,7 @@
   {
     "source": "摘要",
     "references": [
+      "src/scripts/memory/default-template.js#ui-definition",
       "src/scripts/ui/bridge.js#html-text",
       "src/scripts/ui/group-chat-panels.js#html-text",
       "src/scripts/ui/preset-panel.js#ui-property"
@@ -21418,6 +24312,12 @@
       "src/scripts/ui/agent-center-card-catalog.js#ui-definition",
       "src/scripts/ui/agent-center-card-catalog.js#ui-property",
       "src/scripts/ui/preset-panel.js#ui-property"
+    ]
+  },
+  {
+    "source": "摘要压缩",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
     ]
   },
   {
@@ -21477,6 +24377,12 @@
     ]
   },
   {
+    "source": "展开调试选项",
+    "references": [
+      "src/scripts/ui/maid-onboarding-flows.js#ui-definition"
+    ]
+  },
+  {
     "source": "展开零请求预览",
     "references": [
       "scripts/i18n/manual-ui-source-keys.json#manual",
@@ -21533,15 +24439,33 @@
     ]
   },
   {
+    "source": "章节",
+    "references": [
+      "src/scripts/memory/outline-section-utils.js#ui-definition"
+    ]
+  },
+  {
     "source": "长按分组名称快速批量加入",
     "references": [
       "src/scripts/ui/contact-group-renderer.js#html-text"
     ]
   },
   {
+    "source": "长按女仆悬浮球",
+    "references": [
+      "src/scripts/ui/maid-onboarding-flows.js#ui-definition"
+    ]
+  },
+  {
     "source": "长按约 0.6 秒",
     "references": [
       "src/scripts/ui/maid-onboarding-entry-ui.js#html-text"
+    ]
+  },
+  {
+    "source": "长按这颗悬浮球打开女仆指令条。电脑上按住片刻，手机上也是长按。",
+    "references": [
+      "src/scripts/ui/maid-onboarding-flows.js#ui-definition"
     ]
   },
   {
@@ -21569,7 +24493,20 @@
     ]
   },
   {
+    "source": "找到「API 设定」，打开连线配置面板。",
+    "references": [
+      "src/scripts/ui/maid-onboarding-flows.js#ui-definition"
+    ]
+  },
+  {
     "source": "召回关键词",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual",
+      "src/scripts/memory/default-template.js#ui-definition"
+    ]
+  },
+  {
+    "source": "这处修改保存失败",
     "references": [
       "scripts/i18n/manual-ui-source-keys.json#manual"
     ]
@@ -21587,9 +24524,22 @@
     ]
   },
   {
+    "source": "这次回复没有通过格式验收，所以没有投放成聊天气泡。请在下方提示中开启或配置格式修复 Agent，再重新检查；也可以直接重新生成。收到一条完整回复后，我会继续完成引导。",
+    "references": [
+      "src/scripts/ui/maid-onboarding-runtime.js#ui-definition"
+    ]
+  },
+  {
     "source": "这个卡片当前没有可编辑设置。",
     "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual",
       "src/scripts/ui/agent-center-panel.js#html-text"
+    ]
+  },
+  {
+    "source": "这个块已保存为停用草稿",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
     ]
   },
   {
@@ -21608,6 +24558,12 @@
     "source": "这个语境没有可注入的全局提示词",
     "references": [
       "src/scripts/ui/agent-center-panel.js#html-text"
+    ]
+  },
+  {
+    "source": "这就是女仆指令条。右侧齿轮只负责女仆自己的设定；Agent Center 有独立入口。",
+    "references": [
+      "src/scripts/ui/maid-onboarding-flows.js#ui-definition"
     ]
   },
   {
@@ -21663,6 +24619,18 @@
     "source": "这条回复没有可检查的原始内容",
     "references": [
       "src/scripts/ui/app.js#ui-call"
+    ]
+  },
+  {
+    "source": "这些卡片就是不同的小帮手。点开任意卡片，可以查看说明与配置。",
+    "references": [
+      "src/scripts/ui/maid-onboarding-flows.js#ui-definition"
+    ]
+  },
+  {
+    "source": "这张角色卡的开场页面由脚本动态生成；当前安全模式已拦截脚本，所以只剩静态空壳。这个开关会影响所有富文本卡，仅在你信任角色卡来源时开启。",
+    "references": [
+      "src/scripts/ui/maid-onboarding-flows.js#ui-definition"
     ]
   },
   {
@@ -21786,6 +24754,18 @@
     ]
   },
   {
+    "source": "正文检查",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
+    "source": "正文检查完成",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
     "source": "正文生成",
     "references": [
       "src/scripts/ui/chat/creative-execution-lane-runtime-utils.js#ui-property"
@@ -21861,6 +24841,12 @@
     "source": "正在读取当前模型的可用上游...",
     "references": [
       "src/scripts/ui/config-panel.js#dom-assignment"
+    ]
+  },
+  {
+    "source": "正在更新语境状态…",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
     ]
   },
   {
@@ -22029,6 +25015,12 @@
     ]
   },
   {
+    "source": "支持开发",
+    "references": [
+      "src/index.html#html-text"
+    ]
+  },
+  {
     "source": "知道了",
     "references": [
       "src/scripts/ui/agent-center-panel.js#ui-property",
@@ -22043,10 +25035,34 @@
     ]
   },
   {
+    "source": "执行聊天候选",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
+    "source": "执行写入预览",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
     "source": "执行一次",
     "references": [
       "src/scripts/ui/agent-center-panel.js#html-text",
       "src/scripts/ui/app.js#ui-property"
+    ]
+  },
+  {
+    "source": "执行一次只处理这个工具请求；不会重放聊天、不会自动继续生成、不会直接写聊天正文。",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
+    "source": "执行一次只生成变更预览和撤销记录；不会写入记忆、变量、世界书或聊天正文。真正提交还需要再次确认。",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
     ]
   },
   {
@@ -22130,6 +25146,12 @@
     ]
   },
   {
+    "source": "只读",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
     "source": "只读 · 关系图预览",
     "references": [
       "scripts/i18n/manual-ui-source-keys.json#manual"
@@ -22184,6 +25206,12 @@
     ]
   },
   {
+    "source": "只组装语义快照，不消耗模型额度",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
     "source": "只做格式缺漏、标签闭合、字段遗漏等检查；正文质量和剧情判断后续单独实现。",
     "references": [
       "src/scripts/agent/agent-feature-settings.js#ui-definition"
@@ -22199,6 +25227,12 @@
     "source": "指导深度",
     "references": [
       "src/scripts/ui/agent-center-panel.js#html-text"
+    ]
+  },
+  {
+    "source": "指导我",
+    "references": [
+      "src/scripts/ui/maid-intent-presets.js#ui-definition"
     ]
   },
   {
@@ -22254,7 +25288,8 @@
     "source": "智谱 GLM",
     "references": [
       "src/scripts/ui/config-panel.js#html-text",
-      "src/scripts/ui/config-panel.js#ui-property"
+      "src/scripts/ui/config-panel.js#ui-property",
+      "src/scripts/ui/maid-onboarding-runtime.js#ui-definition"
     ]
   },
   {
@@ -22280,6 +25315,7 @@
   {
     "source": "中",
     "references": [
+      "src/scripts/memory/default-template.js#ui-definition",
       "src/scripts/ui/app.js#html-text",
       "src/scripts/ui/image-generation-params-utils.js#ui-property"
     ]
@@ -22303,6 +25339,12 @@
     ]
   },
   {
+    "source": "中风险",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
     "source": "中国大陆站（api.moonshot.cn）",
     "references": [
       "src/scripts/ui/config-panel.js#html-text"
@@ -22318,6 +25360,12 @@
     "source": "中文 + 英文",
     "references": [
       "src/scripts/ui/config-panel.js#html-text"
+    ]
+  },
+  {
+    "source": "终态工具 Schema（已脱敏）",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
     ]
   },
   {
@@ -22398,7 +25446,8 @@
   {
     "source": "重温",
     "references": [
-      "scripts/i18n/manual-ui-source-keys.json#manual"
+      "scripts/i18n/manual-ui-source-keys.json#manual",
+      "src/scripts/ui/maid-onboarding-runtime.js#ui-definition"
     ]
   },
   {
@@ -22449,25 +25498,29 @@
   {
     "source": "重要程度",
     "references": [
-      "scripts/i18n/manual-ui-source-keys.json#manual"
+      "scripts/i18n/manual-ui-source-keys.json#manual",
+      "src/scripts/memory/default-template.js#ui-definition"
     ]
   },
   {
     "source": "重要人物表",
     "references": [
-      "scripts/i18n/manual-ui-source-keys.json#manual"
+      "scripts/i18n/manual-ui-source-keys.json#manual",
+      "src/scripts/memory/default-template.js#ui-definition"
     ]
   },
   {
     "source": "重要事件",
     "references": [
-      "scripts/i18n/manual-ui-source-keys.json#manual"
+      "scripts/i18n/manual-ui-source-keys.json#manual",
+      "src/scripts/memory/default-template.js#ui-definition"
     ]
   },
   {
     "source": "重要物品",
     "references": [
-      "scripts/i18n/manual-ui-source-keys.json#manual"
+      "scripts/i18n/manual-ui-source-keys.json#manual",
+      "src/scripts/memory/default-template.js#ui-definition"
     ]
   },
   {
@@ -22528,6 +25581,18 @@
     ]
   },
   {
+    "source": "逐次分账",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
+    "source": "逐次分账 · 总计 {count} tok",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
     "source": "逐条弹窗确认每条指令。",
     "references": [
       "src/scripts/ui/general-settings-panel.js#html-attribute"
@@ -22565,9 +25630,34 @@
     ]
   },
   {
+    "source": "主人还没给我接上大脑呢～先把 API 接好，我就陪你完成第一次对话。",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
     "source": "主人还没给我接上大脑呢～要我带你把 API 配好吗？",
     "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual",
       "src/scripts/ui/app.js#ui-property"
+    ]
+  },
+  {
+    "source": "主人好呀，我是你的贴身女仆",
+    "references": [
+      "src/scripts/ui/maid-onboarding-entry-ui.js#ui-definition"
+    ]
+  },
+  {
+    "source": "主人已有可用配置。请确认女仆要使用哪一份「连线设置档」；可以展开改选，也可以直接沿用当前这份。挑的渠道需支持工具调用，女仆才能真正执行操作；也留意它的 RPM 限制，女仆一次任务会连发多次请求。",
+    "references": [
+      "src/scripts/ui/maid-onboarding-flows.js#ui-definition"
+    ]
+  },
+  {
+    "source": "主人真是一点就通～获得成就",
+    "references": [
+      "src/scripts/ui/maid-guide-spotlight.js#ui-definition"
     ]
   },
   {
@@ -22586,6 +25676,18 @@
     "source": "主体是什么",
     "references": [
       "src/scripts/ui/app.js#html-text"
+    ]
+  },
+  {
+    "source": "主线",
+    "references": [
+      "src/scripts/memory/outline-section-utils.js#ui-definition"
+    ]
+  },
+  {
+    "source": "主线进展",
+    "references": [
+      "src/scripts/memory/outline-section-utils.js#ui-definition"
     ]
   },
   {
@@ -22679,6 +25781,12 @@
     ]
   },
   {
+    "source": "注意事项",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
     "source": "转换",
     "references": [
       "src/scripts/ui/character-card-importer.js#ui-property"
@@ -22694,6 +25802,18 @@
     "source": "状态",
     "references": [
       "src/scripts/ui/agent-center-panel.js#html-text"
+    ]
+  },
+  {
+    "source": "状态：默认关闭",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
+    "source": "状态：已开启",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
     ]
   },
   {
@@ -22840,7 +25960,14 @@
     "source": "自定义 API",
     "references": [
       "src/scripts/ui/config-panel.js#html-text",
-      "src/scripts/ui/config-panel.js#ui-property"
+      "src/scripts/ui/config-panel.js#ui-property",
+      "src/scripts/ui/maid-onboarding-runtime.js#ui-definition"
+    ]
+  },
+  {
+    "source": "自定义 API 需要正确的 Base URL 与 API Key。请确认地址指向兼容接口，再贴上 Key；内容只保存在本机。",
+    "references": [
+      "src/scripts/ui/maid-onboarding-runtime.js#ui-definition"
     ]
   },
   {
@@ -22940,6 +26067,18 @@
     ]
   },
   {
+    "source": "自动触发只在解析失败且没有聊天输出时直接尝试修复；手动检查的修复候选仍由你确认。",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
+    "source": "自动创建/绑定世界书失败",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
     "source": "自动存档 ({date})",
     "references": [
       "scripts/i18n/manual-ui-source-keys.json#manual"
@@ -23014,6 +26153,12 @@
     ]
   },
   {
+    "source": "自动应用开启",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
     "source": "自动展开",
     "references": [
       "src/scripts/ui/preset-panel.js#html-text"
@@ -23053,7 +26198,9 @@
   {
     "source": "总体大纲",
     "references": [
-      "scripts/i18n/manual-ui-source-keys.json#manual"
+      "scripts/i18n/manual-ui-source-keys.json#manual",
+      "src/scripts/memory/default-template.js#ui-definition",
+      "src/scripts/memory/outline-section-utils.js#ui-definition"
     ]
   },
   {
@@ -23146,6 +26293,18 @@
     ]
   },
   {
+    "source": "最后按下保存。只有配置真的保存成功，我才会把这堂课记为完成。",
+    "references": [
+      "src/scripts/ui/maid-onboarding-flows.js#ui-definition"
+    ]
+  },
+  {
+    "source": "最后来认识女仆的工作台：从悬浮球打开指令条，再看看 Agent Center 里的小帮手。",
+    "references": [
+      "src/scripts/ui/maid-onboarding-flows.js#ui-definition"
+    ]
+  },
+  {
     "source": "最近",
     "references": [
       "src/scripts/ui/sticker-picker.js#html-text",
@@ -23218,6 +26377,12 @@
     ]
   },
   {
+    "source": "最新用户消息之前",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
     "source": "最终",
     "references": [
       "src/scripts/ui/world-editor/world-node-editor-core.js#html-text"
@@ -23262,6 +26427,18 @@
   },
   {
     "source": "左已连",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
+    "source": "左右均可编辑，并与草稿实时联动",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
+    "source": "左右两侧均可编辑；修改会先保留为草稿。",
     "references": [
       "scripts/i18n/manual-ui-source-keys.json#manual"
     ]
@@ -23324,6 +26501,18 @@
     ]
   },
   {
+    "source": "Aa 阅读设置",
+    "references": [
+      "src/index.html#html-text"
+    ]
+  },
+  {
+    "source": "Agent 工具",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
     "source": "Agent 工具权限",
     "references": [
       "src/scripts/ui/app.js#ui-property"
@@ -23333,6 +26522,42 @@
     "source": "Agent 开启",
     "references": [
       "src/scripts/ui/agent-center-status-chip.js#ui-property"
+    ]
+  },
+  {
+    "source": "agent 中心",
+    "references": [
+      "src/scripts/ui/maid-intent-presets.js#ui-definition"
+    ]
+  },
+  {
+    "source": "Agent Center 导出",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
+    "source": "Agent Center 导出失败",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
+    "source": "Agent Center 导出失败: {message}",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
+    "source": "Agent Center 已导出",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
+    "source": "agent中心",
+    "references": [
+      "src/scripts/ui/maid-intent-presets.js#ui-definition"
     ]
   },
   {
@@ -23360,7 +26585,19 @@
     ]
   },
   {
+    "source": "AI 可请求",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
     "source": "AI 可以请求已允许的工具，执行前仍会让你确认。",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
+    "source": "AI 可以请求预览",
     "references": [
       "scripts/i18n/manual-ui-source-keys.json#manual"
     ]
@@ -23369,6 +26606,12 @@
     "source": "AI 可用贴图",
     "references": [
       "src/scripts/ui/app.js#html-attribute"
+    ]
+  },
+  {
+    "source": "AI 默认看不到",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
     ]
   },
   {
@@ -23434,6 +26677,12 @@
   },
   {
     "source": "AI 现在不会执行工具请求。",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
+    "source": "AI 现在看不到这些预览工具",
     "references": [
       "scripts/i18n/manual-ui-source-keys.json#manual"
     ]
@@ -23556,6 +26805,12 @@
     ]
   },
   {
+    "source": "API 接线教学 · 完成",
+    "references": [
+      "src/scripts/ui/maid-onboarding-flows.js#ui-definition"
+    ]
+  },
+  {
     "source": "API 配置",
     "references": [
       "src/scripts/ui/app.js#ui-property"
@@ -23565,6 +26820,12 @@
     "source": "API 配置类型",
     "references": [
       "src/scripts/ui/config-panel.js#html-attribute"
+    ]
+  },
+  {
+    "source": "API 已经接好啦。现在进入一个聊天室、发句话，再等角色回复。",
+    "references": [
+      "src/scripts/ui/maid-onboarding-flows.js#ui-definition"
     ]
   },
   {
@@ -23740,6 +27001,7 @@
   {
     "source": "FC 熔断后降级；JSON 使用独立健康状态。",
     "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual",
       "src/scripts/ui/chat/prompt-preview-view-utils.js#html-text"
     ]
   },
@@ -23778,6 +27040,12 @@
     "source": "global（推荐）",
     "references": [
       "src/scripts/ui/config-panel.js#html-text"
+    ]
+  },
+  {
+    "source": "Google Vertex AI 需要 Service Account JSON。请粘贴完整凭证；引导只检查是否填写，不会读取内容。",
+    "references": [
+      "src/scripts/ui/maid-onboarding-runtime.js#ui-definition"
     ]
   },
   {
@@ -23864,6 +27132,12 @@
       "scripts/i18n/manual-ui-source-keys.json#manual",
       "src/scripts/ui/chat/prompt-preview-view-utils.js#html-text",
       "src/scripts/ui/chat/prompt-preview-view-utils.js#ui-call"
+    ]
+  },
+  {
+    "source": "JSON 文件无法读取",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
     ]
   },
   {
@@ -23958,6 +27232,42 @@
   },
   {
     "source": "memory_hardcoded_related_group', '硬编码参考：相关群聊大纲",
+    "references": [
+      "src/scripts/ui/bridge.js#ui-call"
+    ]
+  },
+  {
+    "source": "memory.bridge.group_header', '【群聊：{name}】",
+    "references": [
+      "src/scripts/ui/bridge.js#ui-call"
+    ]
+  },
+  {
+    "source": "memory.bridge.header_moments', '【动态】",
+    "references": [
+      "src/scripts/ui/bridge.js#ui-call"
+    ]
+  },
+  {
+    "source": "memory.bridge.header_writing', '【创意写作】",
+    "references": [
+      "src/scripts/ui/bridge.js#ui-call"
+    ]
+  },
+  {
+    "source": "memory.bridge.private_header', '【用户和{name}的私聊】",
+    "references": [
+      "src/scripts/ui/bridge.js#ui-call"
+    ]
+  },
+  {
+    "source": "memory.bridge.unknown_contact', '未知联系人",
+    "references": [
+      "src/scripts/ui/bridge.js#ui-call"
+    ]
+  },
+  {
+    "source": "memory.bridge.unknown_group', '未知群聊",
     "references": [
       "src/scripts/ui/bridge.js#ui-call"
     ]

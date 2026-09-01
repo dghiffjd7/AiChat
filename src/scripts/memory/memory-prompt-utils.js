@@ -1,4 +1,5 @@
 import { resolveMemoryRowOrderKey } from './memory-row-order.js';
+import { getCurrentLocale, translateUiText } from '../i18n/index.js';
 import { getOutlineSectionLabel, isOutlineTableId } from './outline-section-utils.js';
 import { parseMemoryCoverageInterval } from './memory-coverage-utils.js';
 
@@ -81,7 +82,8 @@ export const limitSummaryRowsForPrompt = (rows = [], limit = 10) => {
 
 export const getMemoryBridgeTablePromptLabel = (tableId, fallback = '') => {
   const id = String(tableId || '').trim();
-  return MEMORY_BRIDGE_TABLE_LABELS[id] || String(fallback || id || '').trim();
+  const label = MEMORY_BRIDGE_TABLE_LABELS[id] || String(fallback || id || '').trim();
+  return translateUiText(label);
 };
 
 export const quoteYamlString = (value) => JSON.stringify(String(value ?? ''));
@@ -195,11 +197,19 @@ export const normalizeMemoryCell = (value) => {
 
 const normalizePromptCellText = (value) => normalizeMemoryCell(value).replace(/\s*\r?\n\s*/g, ' / ').trim();
 
+const emptyPromptValue = () => translateUiText('（未填写）');
+const joinPromptLabel = (label, value) => (
+  getCurrentLocale() === 'en' ? `${label}: ${value}` : `${label}：${value}`
+);
+
 const extractTimelineRoundLabel = (value) => {
   // 区间行（滚动压缩大总结）必须整段展示，压成单点会让模型以为只讲末轮；
   // 排序仍由 resolveMemoryRowOrderKey 按区间末端处理，这里只管展示。
   const interval = parseMemoryCoverageInterval(normalizePromptCellText(value));
   if (interval) {
+    if (getCurrentLocale() === 'en') {
+      return interval.from === interval.to ? `Turn ${interval.from}` : `Turns ${interval.from}-${interval.to}`;
+    }
     return interval.from === interval.to ? `第${interval.from}轮` : `第${interval.from}-${interval.to}轮`;
   }
   return normalizePromptCellText(value);
@@ -228,27 +238,33 @@ export const formatMemoryRowText = (rowData, columns, tableId = '') => {
   if (isOutlineTableId(id) && String(rowData?.section || '').trim()) {
     const content = normalizePromptCellText(rowData?.outline ?? rowData?.content);
     const sectionLabel = getOutlineSectionLabel(rowData.section);
-    return content ? `${sectionLabel}：${content}` : `${sectionLabel}：（未填写）`;
+    return joinPromptLabel(sectionLabel, content || emptyPromptValue());
   }
   if (SUMMARY_TABLE_IDS.has(id)) {
     const roundLabel = extractTimelineRoundLabel(rowData?.time);
     const content = extractTimelineContentText(rowData, columns);
-    if (roundLabel && content) return `${roundLabel}：${content}`;
+    if (roundLabel && content) return joinPromptLabel(roundLabel, content);
     if (content) return content;
     if (roundLabel) return roundLabel;
-    return '（未填写）';
+    return emptyPromptValue();
   }
   const parts = [];
   for (const col of Array.isArray(columns) ? columns : []) {
     const colId = String(col?.id || '').trim();
     if (!colId || colId === 'keywords') continue;
     const label = String(col?.name || colId).trim();
-    const text = normalizePromptCellText(rowData?.[colId]);
+    const rawText = normalizePromptCellText(rowData?.[colId]);
+    const optionValues = Array.isArray(col?.options)
+      ? col.options.map(value => String(value ?? '').trim())
+      : [];
+    const text = col?.type === 'select' && optionValues.includes(rawText)
+      ? translateUiText(rawText)
+      : rawText;
     if (!text) continue;
     parts.push(label ? `${label}: ${text}` : text);
   }
-  if (!parts.length) return '（未填写）';
-  return parts.join('；');
+  if (!parts.length) return emptyPromptValue();
+  return parts.join(getCurrentLocale() === 'en' ? '; ' : '；');
 };
 
 export const buildMemoryTablePlan = ({
@@ -353,7 +369,7 @@ export const buildMemoryTablePlan = ({
     orderedRows.forEach((row, index) => {
       const line = String(row?.rowText || '').trim();
       const prefix = autoExtract ? `- [${index}] ` : '- ';
-      tableParts.push(`${prefix}${line || '（未填写）'}`);
+      tableParts.push(`${prefix}${line || emptyPromptValue()}`);
       if (autoExtract) {
         if (!rowIndexMap[tableId]) rowIndexMap[tableId] = [];
         rowIndexMap[tableId][index] = row.id;

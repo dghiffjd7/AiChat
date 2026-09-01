@@ -1,3 +1,4 @@
+import { getLocalizedPromptText } from '../../i18n/prompt-locale.js';
 import { createProviderToolCallDeltaAccumulator } from '../../agent/provider-tool-call-delta-adapter.js';
 import {
   buildProviderFcRequestPlan,
@@ -89,6 +90,8 @@ const sanitizeMemoryEditRulesBody = (value = '') => String(value ?? '')
   .replace(/^\s*<\s*\/?\s*[^>\n]+>\s*$/gim, '')
   .replace(/^.*(?:按|依照|使用|严格).*?(?:XML|标签|文本格式|序列化|tableEdit).*?(?:输出|返回|提交|回复).*$/gimu, '')
   .replace(/^.*(?:输出|返回|提交|回复).*?(?:XML|标签|文本格式|序列化|tableEdit).*$/gimu, '')
+  .replace(/^.*\b(?:output|return|submit|reply)\b.*?\b(?:XML|tags?|tableEdit|serializ\w*)\b.*$/gim, '')
+  .replace(/^.*\b(?:XML|tableEdit|serializ\w*)\b.*?\b(?:output|return|submit|reply)\b.*$/gim, '')
   .replace(/^.*(?:除此之外|不要输出解释|不得输出解释|只输出).*(?:输出|解释|内容).*$/gimu, '')
   .replace(/(?:\r?\n[ \t]*){3,}/g, '\n\n')
   .trim();
@@ -97,11 +100,11 @@ export const sanitizePhoneBatchSemanticText = (value = '') => String(value ?? ''
   .replace(/<\s*memory_edit_rules\b[^>]*>([\s\S]*?)<\s*\/\s*memory_edit_rules\s*>/gi, (_match, body) => (
     sanitizeMemoryEditRulesBody(body)
   ))
-  .replace(/<\s*tableEdit\b[^>]*>[\s\S]*?<\s*\/\s*tableEdit\s*>/gi, '提交 table_edit item；无修改时不要提交该 item。')
-  .replace(/<\s*UpdateVariable\b[^>]*>[\s\S]*?<\s*\/\s*UpdateVariable\s*>/gi, '提交 variable_update item。')
+  .replace(/<\s*tableEdit\b[^>]*>[\s\S]*?<\s*\/\s*tableEdit\s*>/gi, () => getLocalizedPromptText('fc.batch.sanitize_table'))
+  .replace(/<\s*UpdateVariable\b[^>]*>[\s\S]*?<\s*\/\s*UpdateVariable\s*>/gi, () => getLocalizedPromptText('fc.batch.sanitize_variable'))
   .replace(/<\s*image_prompt\b[^>]*>[\s\S]*?<\s*\/\s*image_prompt\s*>/gi, 'image_prompt item')
   .replace(/<\s*details\b[^>]*>\s*<\s*summary\b[^>]*>\s*摘要\s*<\s*\/\s*summary\s*>[\s\S]*?<\s*\/\s*details\s*>/gi, 'summary item')
-  .replace(/<\s*\/?\s*content\s*>/gi, '结构化结果')
+  .replace(/<\s*\/?\s*content\s*>/gi, () => getLocalizedPromptText('fc.batch.sanitize_content'))
   .replace(/\bmoment_reply_start\s*\/\s*moment_reply_end\b/gi, 'moment_comment item')
   .replace(/\bmoment_start\s*(?:\.{3}|…{1,2}|\/|到|至)\s*moment_end\b/gi, 'moment_post item')
   .replace(/\b(?:MiPhone|msg)_(?:start|end)\b/gi, '')
@@ -143,45 +146,55 @@ export const buildPhoneBatchStructuredTransportInstruction = ({
     ...(caps.variableUpdate ? ['variable_update'] : []),
     ...(caps.summary ? ['summary'] : []),
   ];
+  const t = key => getLocalizedPromptText(key);
+  const fill = (key, params = {}) => Object.entries(params).reduce(
+    (text, [name, value]) => text.split(`{${name}}`).join(String(value ?? '')),
+    t(key),
+  );
   const lines = [
-    '本轮使用结构化手机回复：只通过唯一函数提交最终批次，不要输出包装文字。',
-    '会话与真实写入目标已由运行时冻结；只能使用 schema 中提供的 id，不得自创、改写或复述真实目标字段。',
-    `items 必须按此顺序排列：${order.join(' → ')}。第一项必须且只能有一个${mode === 'moment_comment' ? ' moment_comment' : ' chat'}。`,
-    '每个 item 只能使用所属 kind 的字段：chat={kind,messages}；moment_comment={kind,comments}；private_chat/group_chat={kind,targetId,messages}；moment_post={kind,posts}；image_prompt={kind,prompt}；table_edit={kind,actions}；variable_update={kind,operations}；summary={kind,content}。禁止把其他 kind 的可选字段一并填入。',
-    `聊天消息只可使用这些类型：${itemTypes.join('、')}。`,
-    mode === 'group_chat' ? describeIdentities('当前群成员 id', target?.members) : '',
-    mode === 'moment_comment' ? describeIdentities('公开评论作者 id', target?.momentAuthors) : '',
-    caps.momentPost ? describeIdentities('动态发布者 id', target?.momentAuthors) : '',
+    t('fc.batch.head'),
+    t('fc.batch.frozen'),
+    fill('fc.batch.order', {
+      order: order.join(' → '),
+      first: mode === 'moment_comment' ? ' moment_comment' : ' chat',
+    }),
+    t('fc.batch.kinds'),
+    fill('fc.batch.types', { types: itemTypes.join('、') }),
+    mode === 'group_chat' ? describeIdentities(t('fc.batch.label_group_members'), target?.members) : '',
+    mode === 'moment_comment' ? describeIdentities(t('fc.batch.label_comment_authors'), target?.momentAuthors) : '',
+    caps.momentPost ? describeIdentities(t('fc.batch.label_moment_authors'), target?.momentAuthors) : '',
     mode === 'moment_comment' && caps.momentCommentSideChats
-      ? describeIdentities('可选私聊目标 id', target?.privateTargets)
+      ? describeIdentities(t('fc.batch.label_private_targets'), target?.privateTargets)
       : '',
     mode === 'moment_comment' && caps.momentCommentSideChats && Array.isArray(target?.groupTargets)
-      ? `可选群聊目标 id：${target.groupTargets.map(item => `${trim(item?.id)}=${trim(item?.name || item?.id)}`).filter(Boolean).join('；')}`
+      ? fill('fc.batch.group_targets', {
+          list: target.groupTargets.map(item => `${trim(item?.id)}=${trim(item?.name || item?.id)}`).filter(Boolean).join('；'),
+        })
       : '',
     itemTypes.includes('sticker') && stickerKeywords.length
-      ? `贴图只能使用：${stickerKeywords.join('、')}。`
+      ? fill('fc.batch.stickers', { keywords: stickerKeywords.join('、') })
       : '',
-    caps.momentPost
-      ? 'moment_post item 只能包含 kind 与 posts；authorId、content 必须放在 posts 数组元素内，禁止直接放在 item 上。'
-      : '',
-    caps.momentPost ? '只有语境与角色性格确实适合公开分享时才提交 moment_post；否则省略。' : '',
-    caps.imagePrompt ? '只有本轮确实需要生成新图片时才提交 image_prompt；普通文字描述图片使用 image 消息类型。' : '',
+    caps.momentPost ? t('fc.batch.moment_post_shape') : '',
+    caps.momentPost ? t('fc.batch.moment_post_when') : '',
+    caps.imagePrompt ? t('fc.batch.image_prompt_when') : '',
     caps.tableEdit && Array.isArray(target?.tableTargets)
-      ? `可写记忆表：${target.tableTargets.map((item) => {
-          const id = trim(item?.id);
-          const name = trim(item?.name || item?.id);
-          if (!id || !name) return '';
-          const rowCount = Array.isArray(item?.rowIds)
-            ? item.rowIds.filter(rowId => trim(rowId)).length
-            : 0;
-          if (!rowCount) return `${id}=${name}（无现有行，只能 init/insert）`;
-          const indexes = rowCount === 1 ? '0' : `0–${rowCount - 1}`;
-          return `${id}=${name}（现有 rowIndex：${indexes}；rowId 见该表 schema）`;
-        }).filter(Boolean).join('；')}。更新或删除只能引用该表现有 rowId，或该表提示范围内的 rowIndex。`
+      ? fill('fc.batch.tables', {
+          list: target.tableTargets.map((item) => {
+            const id = trim(item?.id);
+            const name = trim(item?.name || item?.id);
+            if (!id || !name) return '';
+            const rowCount = Array.isArray(item?.rowIds)
+              ? item.rowIds.filter(rowId => trim(rowId)).length
+              : 0;
+            if (!rowCount) return fill('fc.batch.table_empty', { id, name });
+            const indexes = rowCount === 1 ? '0' : `0–${rowCount - 1}`;
+            return fill('fc.batch.table_rows', { id, name, indexes });
+          }).filter(Boolean).join('；'),
+        })
       : '',
-    caps.tableEdit ? '记忆确有新增或变化时才提交 table_edit；无变化时省略，禁止提交空动作。init/insert action 只能带 action、tableId、data，禁止带 rowId/rowIndex；update 必须带 data 与且仅一个 rowId/rowIndex；delete 不带 data，并且只带一个 rowId/rowIndex。' : '',
-    caps.variableUpdate ? '变量确有变化时才提交 variable_update；只使用已知变量路径。' : '',
-    caps.summary ? '最后提交一句简短、纯中文、无额外升华的 summary。' : '',
+    caps.tableEdit ? t('fc.batch.table_rules') : '',
+    caps.variableUpdate ? t('fc.batch.variable_rules') : '',
+    caps.summary ? t('fc.batch.summary_rule') : '',
   ];
   return lines.filter(Boolean).join('\n');
 };

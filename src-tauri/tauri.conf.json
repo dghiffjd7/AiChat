@@ -1,6 +1,6 @@
 {
   "productName": "OmniTavern",
-  "version": "0.7.2-diagnose-3",
+  "version": "0.7.2-diagnose-5",
   "identifier": "com.chatapp.dev",
   "build": {
     "beforeDevCommand": "",
@@ -23,7 +23,10 @@
     "windows": {
       "certificateThumbprint": null,
       "digestAlgorithm": "sha256",
-      "timestampUrl": ""
+      "timestampUrl": "",
+      "nsis": {
+        "installerHooks": "./windows/installer-hooks.nsh"
+      }
     },
     "android": {
       "minSdkVersion": 24,

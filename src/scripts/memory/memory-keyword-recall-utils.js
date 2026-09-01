@@ -4,6 +4,11 @@ import {
   formatMemoryRowText,
   normalizeMemoryCell,
 } from './memory-prompt-utils.js';
+import {
+  formatMemoryPromptText,
+  getMemoryPromptListSeparator,
+  getMemoryPromptSourceSeparator,
+} from './memory-prompt-locale.js';
 import { buildWorldEntryMatchReport } from '../utils/world-entry-activation.js';
 
 const SPLIT_RE = /[\s\r\n\t,，.。!！?？;；:：、|()[\]{}<>《》"'“”‘’`~@#%^&*+=]+/g;
@@ -176,7 +181,7 @@ export const buildMemoryRecallCandidate = ({
   const report = buildWorldEntryMatchReport(
     {
       key: keywords,
-      content: rowText || '（未填写）',
+      content: rowText || formatMemoryPromptText('memory.value.empty', '（未填写）'),
       constant: false,
       disable: false,
       matchWholeWords: false,
@@ -210,9 +215,18 @@ export const buildMemoryRecallCandidate = ({
     + (row?.is_pinned ? 4 : 0)
     + Math.max(-3, Math.min(3, priority));
   const sourceKinds = [];
-  if (explicitHits.length) sourceKinds.push('显式关键词');
-  if (entityHits.length) sourceKinds.push('实体字段');
-  if (lazyHits.length) sourceKinds.push('旧行懒索引');
+  if (explicitHits.length) sourceKinds.push(formatMemoryPromptText(
+    'memory.recall.source.explicit',
+    '显式关键词',
+  ));
+  if (entityHits.length) sourceKinds.push(formatMemoryPromptText(
+    'memory.recall.source.entity',
+    '实体字段',
+  ));
+  if (lazyHits.length) sourceKinds.push(formatMemoryPromptText(
+    'memory.recall.source.lazy',
+    '旧行懒索引',
+  ));
   return {
     id: String(row?.id || `${tableId}:${index}`),
     row,
@@ -233,9 +247,16 @@ export const buildMemoryRecallCandidate = ({
 };
 
 const formatRecallLine = (candidate) => {
-  const terms = candidate.matchedTerms.join('、');
-  const source = candidate.sourceKinds.join('＋') || '关键词';
-  return `- ${candidate.tableName}｜命中 ${terms}（${source}）：${candidate.rowText}`;
+  const terms = candidate.matchedTerms.join(getMemoryPromptListSeparator());
+  const source = candidate.sourceKinds.join(getMemoryPromptSourceSeparator()) || formatMemoryPromptText(
+    'memory.recall.source.fallback',
+    '关键词',
+  );
+  return formatMemoryPromptText(
+    'memory.recall.line',
+    '- {table}｜命中 {terms}（{source}）：{row}',
+    { table: candidate.tableName, terms, source, row: candidate.rowText },
+  );
 };
 
 export const buildMemoryKeywordRecallPlan = ({
@@ -266,7 +287,7 @@ export const buildMemoryKeywordRecallPlan = ({
   const safeMaxRows = Number.isFinite(Number(maxRows))
     ? Math.max(0, Math.trunc(Number(maxRows)))
     : Number.POSITIVE_INFINITY;
-  const header = '【按需召回｜只读历史】';
+  const header = formatMemoryPromptText('memory.recall.header', '【按需召回｜只读历史】');
   const headerTokens = estimateTokens(header, tokenMode);
   const selected = [];
   const truncated = [];

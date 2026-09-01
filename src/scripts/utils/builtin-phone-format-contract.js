@@ -1,3 +1,5 @@
+import { getLocalizedPromptText } from '../i18n/prompt-locale.js';
+
 export const BUILTIN_PHONE_FORMAT_CONTRACT_VERSION = 'miphone.text.v1';
 
 export const BUILTIN_PHONE_FORMAT_SURFACES = Object.freeze({
@@ -328,7 +330,8 @@ export const buildBuiltinPhoneFormatReminder = ({
     ...(includeTableEdit ? { tableEdit: '记忆表格内容' } : {}),
   };
   return [
-    `以下为内建格式合同（${BUILTIN_PHONE_FORMAT_CONTRACT_VERSION}），请严格按此结构输出：`,
+    getLocalizedPromptText('transport.contract_preamble')
+      .split('{version}').join(BUILTIN_PHONE_FORMAT_CONTRACT_VERSION),
     serializeBuiltinPhoneFormat(normalizedSurface, payload),
   ].join('\n');
 };
@@ -339,9 +342,10 @@ const buildContinuationReminder = (surface) => {
     ? 'moment_reply_start → 评论行 → moment_reply_end'
     : 'MiPhone_start → msg_start → 场景内容 → msg_end → MiPhone_end';
   return [
-    `继续上一条未完成的内建格式回复（${BUILTIN_PHONE_FORMAT_CONTRACT_VERSION}）。`,
-    '不要重复已经存在的标记，只补齐尚未完成的内容与闭合标记。',
-    `合并后的完整回复必须保持顺序：${order}。`,
+    getLocalizedPromptText('transport.continuation_head')
+      .split('{version}').join(BUILTIN_PHONE_FORMAT_CONTRACT_VERSION),
+    getLocalizedPromptText('transport.continuation_no_repeat'),
+    getLocalizedPromptText('transport.continuation_order').split('{order}').join(order),
   ].join('\n');
 };
 

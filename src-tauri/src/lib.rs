@@ -3,6 +3,7 @@
 mod commands;
 mod external_links;
 mod memory_db;
+mod microphone_permission;
 mod screenshot;
 mod storage;
 
@@ -11,7 +12,9 @@ use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let builder = tauri::Builder::default().plugin(tauri_plugin_opener::init());
+    let builder = tauri::Builder::default()
+        .plugin(tauri_plugin_opener::init())
+        .plugin(microphone_permission::init());
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
     let builder = builder.plugin(tauri_plugin_dialog::init());
     builder
@@ -80,6 +83,8 @@ pub fn run() {
             commands::http_stream_request_close,
             commands::http_abort_request,
             commands::openai_realtime_create_call,
+            microphone_permission::prepare_microphone_permission_retry,
+            microphone_permission::open_microphone_permission_settings,
             commands::log_js,
             commands::save_raw_reply,
             commands::load_raw_reply,

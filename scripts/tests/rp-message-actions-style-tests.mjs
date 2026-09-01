@@ -20,14 +20,14 @@ assert.match(css, /@media\s*\(hover:\s*none\),\s*\(pointer:\s*coarse\)[\s\S]*\.c
 assert.match(creativeCss, /body:not\(\[data-theme-mode='dark'\]\)\[data-ui-mode='rp'\][\s\S]*\.QQ_chat_charmsg\.has-rp-message-chrome[\s\S]*background:\s*var\(--app-surface-card\)/s);
 assert.doesNotMatch(creativeCss, /body\[data-theme-mode='dark'\]\[data-ui-mode='rp'\][\s\S]*\.QQ_chat_charmsg\.has-rp-message-chrome[\s\S]*background:/s);
 assert.match(creativeCss, /body\[data-ui-mode='rp'\]\s+#chat-room\s+\.chat-back-btn\s*\{[^}]*display:\s*none/s);
-assert.match(html, /id="rp-reading-settings-btn"[\s\S]*d="m15 16 2\.536-7\.328a1\.02 1\.02 0 0 1 1\.928 0L22 16"[\s\S]*d="M3\.304 13h6\.392"/s);
+assert.match(html, /class="chat-room-topbar"[\s\S]*id="realtime-call-button"[\s\S]*id="chat-menu-btn"/s);
 assert.match(creativeCss, /\.rp-reading-size-options::before\s*\{[^}]*transition:\s*transform/s);
-assert.match(html, /id="rp-reading-settings-btn"/);
+assert.match(html, /id="chatroom-menu"[\s\S]*data-action="reading-settings"[\s\S]*id="rp-chatroom-menu"[\s\S]*data-action="reading-settings"/s);
 assert.match(html, /data-rp-reading-size="compact"[\s\S]*data-rp-reading-size="standard"[\s\S]*data-rp-reading-size="relaxed"/);
 assert.match(html, /data-rp-narrative-font="serif"[\s\S]*data-rp-narrative-font="sans"/);
 assert.match(creativeCss, /data-rp-reading-size='compact'[\s\S]*font-size:\s*calc\(13\.5px\s*\*\s*var\(--app-font-scale,\s*1\)\)/s);
 assert.match(creativeCss, /data-rp-narrative-font='serif'[\s\S]*font-family:\s*'Noto Serif SC'/s);
-assert.match(creativeCss, /data-ui-mode='chat'[\s\S]*\.rp-reading-settings-btn[\s\S]*display:\s*inline-flex/s);
+assert.match(creativeCss, /data-ui-mode='chat'[\s\S]*\.chat-realtime-call-btn[\s\S]*display:\s*inline-flex/s);
 assert.match(creativeCss, /data-ui-mode='chat'\]\[data-rp-reading-size='standard'\][\s\S]*font-size:\s*calc\(14\.5px\s*\*\s*var\(--app-font-scale,\s*1\)\)/s);
 assert.match(creativeCss, /data-ui-mode='chat'\]\[data-rp-narrative-font='serif'\][\s\S]*font-family:\s*'Noto Serif SC'/s);
 assert.match(creativeCss, /body:not\(\[data-theme-mode='dark'\]\)\[data-ui-mode='chat'\][\s\S]*\.QQ_chat_charmsg[\s\S]*background:\s*var\(--app-surface-card\)/s);

@@ -1,3 +1,4 @@
+import { getLocalizedPromptText } from '../../i18n/prompt-locale.js';
 import { createProviderToolCallDeltaAccumulator } from '../../agent/provider-tool-call-delta-adapter.js';
 import {
   buildProviderFcRequestPlan,
@@ -76,20 +77,21 @@ export const buildPrivateChatStructuredTransportInstruction = ({
 } = {}) => {
   const types = normalizeItemTypes(allowedItemTypes);
   const stickerKeywords = normalizeKeywords(allowedStickerKeywords);
+  const t = key => getLocalizedPromptText(key);
   const specialLines = [];
   if (types.includes('sticker')) {
     specialLines.push(stickerKeywords.length
-      ? `贴图仅在语境和角色性格合适时适度使用，并且只能选择：${stickerKeywords.join('、')}。`
-      : '本轮没有可用贴图，不要生成贴图消息。');
+      ? t('fc.private.sticker_some').split('{keywords}').join(stickerKeywords.join('、'))
+      : t('fc.private.sticker_none'));
   }
-  if (types.includes('voice')) specialLines.push('语音用于自然适合口述的短内容，不要把所有文字都改成语音。');
-  if (types.includes('transfer')) specialLines.push('转账只在私聊语境明确需要金额互动时使用。');
-  if (types.includes('music')) specialLines.push('分享音乐时必须同时给出歌名与歌手。');
-  if (types.includes('image')) specialLines.push('图片消息只提供符合当前语境的简短画面描述。');
+  if (types.includes('voice')) specialLines.push(t('fc.private.voice'));
+  if (types.includes('transfer')) specialLines.push(t('fc.private.transfer'));
+  if (types.includes('music')) specialLines.push(t('fc.private.music'));
+  if (types.includes('image')) specialLines.push(t('fc.private.image'));
   return [
-    '本轮使用结构化私聊传输：只通过提供的唯一函数提交最终回复，不要输出包装文字。',
-    '目标会话和说话人已由运行时冻结，不要选择、改写或复述目标身份。',
-    `只可使用这些消息类型：${types.join('、')}；按自然聊天节奏输出 1 到 12 条有序消息。`,
+    t('fc.private.head'),
+    t('fc.private.frozen'),
+    t('fc.private.types').split('{types}').join(types.join('、')),
     ...specialLines,
   ].join('\n');
 };

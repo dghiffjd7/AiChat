@@ -65,7 +65,7 @@ const createMenu = (buttons = []) => ({
   assert.match(html, /class="desktop-rail-wordmark"[^>]*data-open-developer-profile/);
   assert.match(html, /data-action="about-aria"[^>]*data-open-developer-profile/);
   assert.match(html, /data-developer-external-url[^>]*href="https:\/\/github\.com\/dghiffjd7\/OmniTavern"/);
-  assert.match(html, /data-developer-external-url[^>]*href="https:\/\/github\.com\/dghiffjd7"/);
+  assert.match(html, /data-developer-external-url[^>]*href="https:\/\/ko-fi\.com\/illusion7"/);
   assert.match(developerProfileCss, /@media \(max-width: 620px\)[\s\S]*?\.developer-profile-overlay\s*\{[\s\S]*?align-items:\s*center;/);
   console.log('ok - developer profile entry is available from desktop brand and mobile settings');
 }
@@ -319,6 +319,19 @@ const createMenu = (buttons = []) => ({
     'config', 'hide',
   ]);
   console.log('ok - bindChatroomMenuActions dispatches chatroom menu actions then hides menus');
+}
+
+{
+  const calls = [];
+  const menu = createMenu([createButton('reading-settings')]);
+  bindChatroomMenuActions({
+    menuEl: menu,
+    openReadingSettings: () => calls.push('reading-settings'),
+    hideMenus: () => calls.push('hide'),
+  });
+  menu.querySelectorAll('button').forEach((button) => button.trigger());
+  assert.deepEqual(calls, ['reading-settings'], 'reading-settings opens its anchored sheet without the trailing hideMenus');
+  console.log('ok - bindChatroomMenuActions lets reading-settings manage menu visibility itself');
 }
 
 {

@@ -1,3 +1,4 @@
+import { getLocalizedPromptText } from '../../i18n/prompt-locale.js';
 import {
   sanitizeProviderFcInheritedRequestOptions,
 } from '../../agent/provider-fc-transport.js';
@@ -209,14 +210,14 @@ export const buildPhoneReplyJsonTransportInstruction = ({
     ? trimLower(formatMode)
     : PHONE_REPLY_JSON_FORMAT_MODES.promptJson;
   const lines = [
-    '本轮使用 JSON 结构化终态；完整回复必须且只能是一个 JSON 对象，不要 Markdown 代码围栏、解释或前后缀。',
-    `根对象固定为 {"version":"${PHONE_REPLY_IR_VERSION}","payload":{...}}；version 与 payload 以外禁止出现字段。`,
+    getLocalizedPromptText('fc.json_terminal.head'),
+    getLocalizedPromptText('fc.json_terminal.envelope').split('{irVersion}').join(PHONE_REPLY_IR_VERSION),
     trim(semanticInstruction),
   ].filter(Boolean);
   if (normalizedMode !== PHONE_REPLY_JSON_FORMAT_MODES.jsonSchema) {
-    lines.push(`必须严格满足以下 JSON Schema：${JSON.stringify(schema)}`);
+    lines.push(getLocalizedPromptText('fc.json_terminal.schema').split('{schema}').join(JSON.stringify(schema)));
   } else {
-    lines.push(`Provider 输出约束模式：${normalizedMode}；仍须遵守上述版本信封与业务字段。`);
+    lines.push(getLocalizedPromptText('fc.json_terminal.mode').split('{mode}').join(normalizedMode));
   }
   return lines.join('\n');
 };

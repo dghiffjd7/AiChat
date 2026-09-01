@@ -1134,10 +1134,7 @@ export class WorldPanel {
     async renderLibraryList({ names = [], boundIds = [], sessionId = '', scope = 'session_extra', personaId = '' } = {}) {
         if (!this.libraryListEl) return;
         const listEl = this.libraryListEl;
-        const worldStore = window.appBridge?.worldStore;
-        if (worldStore && typeof worldStore === 'object') {
-            worldStore.onEntriesCountBackfill = (id, metadata) => this.updateLibraryRowEntriesCount(id, metadata);
-        }
+        window.appBridge?.setWorldEntriesCountBackfill?.((id, metadata) => this.updateLibraryRowEntriesCount(id, metadata));
         listEl.innerHTML = '';
         const animateRows = this.libraryEntryMotionPending;
         this.libraryEntryMotionPending = false;

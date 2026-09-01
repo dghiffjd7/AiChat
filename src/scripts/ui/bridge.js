@@ -175,6 +175,12 @@ import {
   normalizeTokenMode,
   parseMemoryPromptPositions,
 } from '../memory/memory-prompt-utils.js';
+import { buildMemoryEditGuide } from '../memory/memory-edit-guide.js';
+import {
+  formatMemoryPromptText,
+  getMemoryPromptListSeparator,
+  joinMemoryPromptLabel,
+} from '../memory/memory-prompt-locale.js';
 import {
   DEFAULT_CONSERVATIVE_COEFFICIENT,
   tokenCalibrationStore,
@@ -1215,84 +1221,6 @@ class AppBridge {
     const injectDepthRaw = Math.trunc(Number(context?.meta?.memoryInjectDepth));
     const injectDepth = Number.isFinite(injectDepthRaw) ? Math.max(0, injectDepthRaw) : 0;
 
-    const buildMemoryEditGuide = (requiredHints = []) => {
-      const lines = [];
-      lines.push('<memory_edit_rules>');
-      if (requiredHints.length) {
-        lines.push('【系统必填】');
-        requiredHints.forEach((hint) => {
-          lines.push(`- ${hint}`);
-        });
-      }
-      if (updateMode === 'summary') {
-        lines.push('本轮仅允许更新“摘要/总体大纲”类表格，其他表格禁止写入。');
-      } else if (updateMode === 'standard') {
-        lines.push('本轮仅允许更新非摘要类表格，摘要/总体大纲类表格禁止写入。');
-      }
-      if (tableOrder.some(tableId => isSummaryTableId(tableId) && !isOutlineTableId(tableId))) {
-        lines.push('摘要表格只允许 insert；禁止 update/delete。');
-      }
-      if (tableOrder.some(tableId => isOutlineTableId(tableId))) {
-        lines.push('总体大纲采用分节覆盖：section 只允许 current、plot、relationships、open_threads；每轮只输出发生变化的分节。');
-        lines.push('大纲分节已存在时使用 update，不存在时使用 insert；不要逐轮新增大纲，也不要删除分节。');
-        lines.push('若无法判断分节，使用 section:"current" 作为全量重写兜底。');
-      }
-      lines.push('##在每次回复的末尾，按要求以规定格式，输出完整xml标签包裹tableEdit：');
-      lines.push('（格式示例）');
-      lines.push('<tableEdit>');
-      lines.push('{"action":"insert","table_id":"relationship","data":{"relation":"朋友"}}');
-      lines.push('{"action":"update","table_id":"relationship","row_index":0,"data":{"relation":"亲密朋友"}}');
-      lines.push('{"action":"delete","table_id":"relationship","row_index":0}');
-      lines.push('</tableEdit>');
-      lines.push('每行只允许一个 JSON 对象；不要使用其他语法。');
-      lines.push('若该表当前无任何行，只能使用 insert；不要输出 update/delete。');
-      lines.push('仅当 row_index 对应现有行时才使用 update/delete。');
-      lines.push('row_index 对应表格中每行前的编号；table_id 见下表。');
-      lines.push('无修改则输出空 <tableEdit></tableEdit>。');
-      lines.push('世界书负责“设定是什么”；记忆表格只记录“当前状态如何、发生过什么”，不要把静态设定整段抄入表格。');
-      const keywordTableIds = tableOrder.filter((tableId) => (
-        (tableById.get(tableId)?.columns || []).some(
-          column => String(column?.id || '').trim() === 'keywords',
-        )
-      ));
-      if (keywordTableIds.length) {
-        lines.push('带 keywords 列的表格在 insert 时必须填写召回关键词，update 时按内容变化同步维护；使用人物、地点、物品、事件等稳定名词，以逗号分隔，禁止写“这个/那件事”等模糊指代。');
-        lines.push('keywords 仅供本地按需召回，不要把它写成摘要正文；旧行缺少 keywords 时由 app 在本地懒生成索引。');
-      }
-      lines.push('表格索引:');
-      tableOrder.forEach((tableId, index) => {
-        const table = tableById.get(tableId) || { id: tableId, name: tableId, columns: [] };
-        const cols = (table?.columns || [])
-          .map(col => {
-            const cid = String(col?.id || '').trim();
-            const cname = String(col?.name || '').trim();
-            if (!cid && !cname) return '';
-            if (cid && cname && cid !== cname) return `${cid}:${cname}`;
-            return cid || cname;
-          })
-          .filter(Boolean)
-          .join(', ');
-        const scope = String(table?.scope || '').trim();
-        const meta = [scope ? `scope:${scope}` : '', cols ? `cols:${cols}` : ''].filter(Boolean).join(', ');
-        const label = String(table?.name || tableId);
-        lines.push(`[${index}] ${label} (table_id:${tableId}${meta ? `, ${meta}` : ''})`);
-        const sourceData = table?.sourceData || table?.source_data || {};
-        const ruleLines = [];
-        const note = String(sourceData?.note || '').trim();
-        const initNode = String(sourceData?.initNode || '').trim();
-        const insertNode = String(sourceData?.insertNode || '').trim();
-        const updateNode = String(sourceData?.updateNode || '').trim();
-        const deleteNode = String(sourceData?.deleteNode || '').trim();
-        if (note) ruleLines.push(`  - note: ${note}`);
-        if (initNode) ruleLines.push(`  - init: ${initNode}`);
-        if (insertNode) ruleLines.push(`  - insert: ${insertNode}`);
-        if (updateNode) ruleLines.push(`  - update: ${updateNode}`);
-        if (deleteNode) ruleLines.push(`  - delete: ${deleteNode}`);
-        if (ruleLines.length) lines.push(...ruleLines);
-      });
-      lines.push('</memory_edit_rules>');
-      return lines.join('\n').trim();
-    };
     let scopedRows = [];
     let globalRows = [];
     try {
@@ -1339,7 +1267,11 @@ class AppBridge {
             });
             const tableLabel = String(table?.name || targetTableId).trim() || targetTableId;
             const action = targetRows.length ? 'update' : 'insert';
-            hints.push(`系统检测：${tableLabel} 必填字段为空（${fieldNames.join('、')}）。请在 <tableEdit> 中使用 ${action} 补全。`);
+            hints.push(formatMemoryPromptText(
+              'memory.edit.missing_fields',
+              '系统检测：{table} 必填字段为空（{fields}）。请在 <tableEdit> 中使用 {action} 补全。',
+              { table: tableLabel, fields: fieldNames.join(', '), action },
+            ));
           }
         }
       }
@@ -1353,17 +1285,30 @@ class AppBridge {
       const summaryTable = tableById.get(summaryTableId);
       if (summaryTable) {
         const summaryLabel = String(summaryTable?.name || summaryTableId).trim() || summaryTableId;
-        hints.push(`本轮必须新增${summaryLabel}（摘要栏位使用“【摘要】...”格式；仅使用 insert）。`);
+        hints.push(formatMemoryPromptText(
+          'memory.edit.summary_required',
+          '本轮必须新增{table}（摘要栏位使用“【摘要】...”格式；仅使用 insert）。',
+          { table: summaryLabel },
+        ));
       }
       const outlineTable = tableById.get(outlineTableId);
       if (outlineTable) {
         const outlineLabel = String(outlineTable?.name || outlineTableId).trim() || outlineTableId;
-        hints.push(`请检查${outlineLabel}各分节；仅对本轮发生变化的分节执行 update/insert，禁止逐轮追加。`);
+        hints.push(formatMemoryPromptText(
+          'memory.edit.outline_check',
+          '请检查{table}各分节；仅对本轮发生变化的分节执行 update/insert，禁止逐轮追加。',
+          { table: outlineLabel },
+        ));
       }
       return hints;
     };
     const requiredHints = autoExtract ? resolveRequiredHints() : [];
-    const editGuide = autoExtract ? buildMemoryEditGuide(requiredHints) : '';
+    const editGuide = autoExtract ? buildMemoryEditGuide({
+      requiredHints,
+      updateMode,
+      tableOrder,
+      tableById,
+    }) : '';
 
     const emptyTemplate = renderStTemplate(templateRaw, { ...macroVars, tableData: '' });
     const emptyWrapped = wrapperRaw
@@ -1673,15 +1618,17 @@ class AppBridge {
       };
       const resolveBridgeRecordHeader = (record = {}, sourceKind = '') => {
         const kind = String(sourceKind || record?.sourceKind || '').trim();
-        if (kind === 'moments') return '【动态】';
-        if (kind === 'rp') return '【创意写作】';
+        if (kind === 'moments') return formatMemoryPromptText('memory.bridge.header_moments', '【动态】');
+        if (kind === 'rp') return formatMemoryPromptText('memory.bridge.header_writing', '【创意写作】');
         const sourceId = normalizeId(record?.sourceId);
         const sourceNameRaw = normalizeId(record?.sourceName) || resolveSessionSourceName(sourceId) || sourceId;
         const sourceName = record?.sourceIsGroup
-          ? sourceNameRaw.replace(/^group:/, '') || '未知群聊'
-          : sourceNameRaw || '未知联系人';
-        if (record?.sourceIsGroup) return `【群聊：${sourceName}】`;
-        return `【用户和${sourceName}的私聊】`;
+          ? sourceNameRaw.replace(/^group:/, '') || formatMemoryPromptText('memory.bridge.unknown_group', '未知群聊')
+          : sourceNameRaw || formatMemoryPromptText('memory.bridge.unknown_contact', '未知联系人');
+        if (record?.sourceIsGroup) {
+          return formatMemoryPromptText('memory.bridge.group_header', '【群聊：{name}】', { name: sourceName });
+        }
+        return formatMemoryPromptText('memory.bridge.private_header', '【用户和{name}的私聊】', { name: sourceName });
       };
       const buildBridgeTableGroupsForRecord = ({
         record = null,
@@ -1707,7 +1654,7 @@ class AppBridge {
             .map((row) => {
               const rowText = getRowText(row, table);
               if (!rowText) return '';
-              return prefixRows && sourceName ? `${sourceName}：${rowText}` : rowText;
+              return prefixRows && sourceName ? joinMemoryPromptLabel(sourceName, rowText) : rowText;
             })
             .filter(Boolean);
           if (!rowTexts.length) continue;
@@ -1918,8 +1865,14 @@ class AppBridge {
         const memberGroups = groups.filter(g => Array.isArray(g?.members) && g.members.includes(contactId));
         const outlineTable = tableByIdAll.get('group_outline');
         if (outlineTable && memberGroups.length) {
-          if (!pushLine('【跨会话参考｜群聊大纲】')) return buildCrossScopeResult('');
-          pushLine('（仅供当前私聊参考，不在本会话记忆表格中更新）');
+          if (!pushLine(formatMemoryPromptText(
+            'memory.bridge.group_outline_header',
+            '【跨会话参考｜群聊大纲】',
+          ))) return buildCrossScopeResult('');
+          pushLine(formatMemoryPromptText(
+            'memory.bridge.group_outline_note',
+            '（仅供当前私聊参考，不在本会话记忆表格中更新）',
+          ));
           for (const group of memberGroups) {
             const groupId = String(group?.id || '').trim();
             if (!groupId) continue;
@@ -1956,8 +1909,14 @@ class AppBridge {
         const outlineTableId = 'chat_outline';
         const outlineTable = tableByIdAll.get(outlineTableId);
         if (members.length) {
-          if (!pushLine('【跨会话参考｜成员私聊记忆】')) return buildCrossScopeResult('');
-          pushLine('（以下为用户与各成员的私聊关系记忆，群内其他人不应知道；仅供模型掌握，勿在群聊中泄露）');
+          if (!pushLine(formatMemoryPromptText(
+            'memory.bridge.member_private_header',
+            '【跨会话参考｜成员私聊记忆】',
+          ))) return buildCrossScopeResult('');
+          pushLine(formatMemoryPromptText(
+            'memory.bridge.member_private_note',
+            '（以下为用户与各成员的私聊关系记忆，群内其他人不应知道；仅供模型掌握，勿在群聊中泄露）',
+          ));
           for (const memberId of members) {
             const memberRows = await this.memoryTableStore.getMemories({
               scope: 'contact',
@@ -1976,7 +1935,11 @@ class AppBridge {
             if (!filteredRows.length && !outlineRows.length) continue;
             const memberName = resolveContactName(memberId);
             pushSpacer();
-            if (!pushLine(`【成员：${memberName || memberId}】`)) break;
+            if (!pushLine(formatMemoryPromptText(
+              'memory.bridge.member_header',
+              '【成员：{name}】',
+              { name: memberName || memberId },
+            ))) break;
             const rowsByTable = new Map();
             filteredRows.forEach((row) => {
               const tableId = normalizeId(row?.table_id);
@@ -2029,8 +1992,14 @@ class AppBridge {
             .filter(item => item.gid && item.gid !== normalizeId(sessionId))
             .filter(item => item.groupMembers.some(memberId => memberSet.has(memberId)));
           if (relatedGroups.length) {
-            if (!pushLine('【跨群聊参考｜相关群聊大纲】')) return buildCrossScopeResult('');
-            pushLine('（以下为与当前群成员重叠的群聊大纲，仅共享成员知情）');
+            if (!pushLine(formatMemoryPromptText(
+              'memory.bridge.related_group_header',
+              '【跨群聊参考｜相关群聊大纲】',
+            ))) return buildCrossScopeResult('');
+            pushLine(formatMemoryPromptText(
+              'memory.bridge.related_group_note',
+              '（以下为与当前群成员重叠的群聊大纲，仅共享成员知情）',
+            ));
             for (const item of relatedGroups) {
               const groupId = item.gid;
               const groupName = String(item.group?.name || groupId).trim() || groupId;
@@ -2048,7 +2017,11 @@ class AppBridge {
               pushSpacer();
               if (!pushLine(`【${groupName}】`)) break;
               if (unknownNames.length) {
-                if (!pushLine(`（提示：本群聊中成员${unknownNames.join('、')}未参与该群聊，不知道以下内容）`)) break;
+                if (!pushLine(formatMemoryPromptText(
+                  'memory.bridge.unknown_members_note',
+                  '（提示：本群聊中成员{names}未参与该群聊，不知道以下内容）',
+                  { names: unknownNames.join(getMemoryPromptListSeparator()) },
+                ))) break;
               }
               for (const row of outlineRows) {
                 const rowText = getRowText(row, groupOutlineTable);
@@ -2089,7 +2062,7 @@ class AppBridge {
             tableIds: enabledRpTableIds,
             getLimitForTable: tableId => rpTableSettings?.[tableId]?.limit,
             sourceKind: 'rp',
-            aggregateHeader: '【创意写作】',
+            aggregateHeader: formatMemoryPromptText('memory.bridge.header_writing', '【创意写作】'),
           });
         }
       } else if (sessionMode === 'rp') {
@@ -2181,7 +2154,7 @@ class AppBridge {
         appendSourceRecordTables({
           records: [{
             sourceId: 'moments',
-            sourceName: '动态',
+            sourceName: formatMemoryPromptText('memory.bridge.header_moments', '【动态】'),
             sourceKind: 'moments',
             sourceIsGroup: false,
             rows: momentRows,
@@ -2190,7 +2163,7 @@ class AppBridge {
           limit: clampBridgeLimit(globalSettings.memoryBridgeMomentsToChatLimit, 5),
           getLimitForTable: tableId => momentsTableSettings?.[tableId]?.limit,
           sourceKind: 'moments',
-          aggregateHeader: '【动态】',
+          aggregateHeader: formatMemoryPromptText('memory.bridge.header_moments', '【动态】'),
         });
       }
       if (sessionMode === 'moments') {
@@ -2236,7 +2209,7 @@ class AppBridge {
             limit: clampBridgeLimit(globalSettings.memoryBridgeRpToMomentsLimit, 5),
             getLimitForTable: tableId => rpToMomentsTableSettings?.[tableId]?.limit,
             sourceKind: 'rp',
-            aggregateHeader: '【创意写作】',
+            aggregateHeader: formatMemoryPromptText('memory.bridge.header_writing', '【创意写作】'),
             prefixRows: rpRecords.length > 1,
           });
         }
@@ -4932,7 +4905,9 @@ class AppBridge {
         ? requestPayloadMessages.filter((message) => {
             const content = typeof message?.content === 'string' ? message.content.trimStart() : '';
             return content.startsWith('本轮使用结构化')
-              || content.startsWith('本轮使用 JSON 结构化终态');
+              || content.startsWith('本轮使用 JSON 结构化终态')
+              || content.startsWith('This turn uses structured')
+              || content.startsWith('This turn uses the JSON structured terminal');
           })
         : [];
       const structuredContractMessageEstimateTokens = estimatePromptMessagesTokens(
@@ -6028,24 +6003,26 @@ class AppBridge {
     const scenarioSessionName = String(context?.session?.name || '').trim();
     const scenarioCharacterName = String(context?.character?.name || '').trim();
     const formatGroupName = String(
-      context?.group?.name || scenarioSessionName || scenarioCharacterName || context?.session?.id || '当前群聊',
+      context?.group?.name || scenarioSessionName || scenarioCharacterName || context?.session?.id
+        || getLocalizedPromptText('transport.fallback_group_name'),
     ).trim();
     const formatPrivateTargetName = String(
-      scenarioSessionName || scenarioCharacterName || context?.session?.id || '当前对象',
+      scenarioSessionName || scenarioCharacterName || context?.session?.id
+        || getLocalizedPromptText('transport.fallback_private_target'),
     ).trim();
     const scenarioHintBase = (() => {
       if (disableScenarioHint) return '';
       if (isMomentCommentTask) {
         if (isPublishedMomentCommentTask) {
-          return '用户刚发布动态，请生成与该动态相关的评论';
+          return getLocalizedPromptText('transport.scenario_published_moment_comment');
         }
         const isReply = Boolean(context?.task?.replyToAuthor) || Boolean(context?.task?.replyToCommentId) || Boolean(context?.task?.isReplyToComment);
-        return isReply ? '在动态评论回复，注意动态评论格式' : '在动态评论，注意动态评论格式';
+        return getLocalizedPromptText(isReply ? 'transport.scenario_moment_comment_reply' : 'transport.scenario_moment_comment');
       }
       if (isGroupChat) {
-        return `在${formatGroupName}中群聊，请遵循群聊格式`;
+        return getLocalizedPromptText('transport.scenario_group').split('{name}').join(formatGroupName);
       }
-      return `正在与${formatPrivateTargetName}私聊，请遵循私聊格式`;
+      return getLocalizedPromptText('transport.scenario_private').split('{name}').join(formatPrivateTargetName);
     })();
     const scenarioFormatReminder = scenarioHintBase
       ? scenarioHintBase
@@ -9612,6 +9589,12 @@ const stringifyMessageContent = (content) => {
 
   async waitForWorldStoreReady() {
     if (this.worldStore?.ready) await this.worldStore.ready;
+    return true;
+  }
+
+  setWorldEntriesCountBackfill(listener) {
+    if (!this.worldStore || typeof this.worldStore !== 'object') return false;
+    this.worldStore.onEntriesCountBackfill = typeof listener === 'function' ? listener : null;
     return true;
   }
 

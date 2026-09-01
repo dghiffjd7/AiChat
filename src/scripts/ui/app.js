@@ -2184,6 +2184,7 @@ const initApp = async () => {
         auditWorldInfoStorage: window.appBridge.auditWorldInfoStorage?.bind(window.appBridge),
         listWorlds: window.appBridge.listWorlds?.bind(window.appBridge),
         waitForWorldStoreReady: window.appBridge.waitForWorldStoreReady?.bind(window.appBridge),
+        setWorldEntriesCountBackfill: window.appBridge.setWorldEntriesCountBackfill?.bind(window.appBridge),
         loadStoredWorldInfo: window.appBridge.loadStoredWorldInfo?.bind(window.appBridge),
         hasStoredWorldInfo: window.appBridge.hasStoredWorldInfo?.bind(window.appBridge),
         bindWorldToSession: window.appBridge.bindWorldToSession?.bind(window.appBridge),
@@ -17834,7 +17835,8 @@ Phase G（Frame 36）：循环衔接
   document.getElementById('current-chat-title')?.setAttribute('data-maid-guide-target', 'chat-title-entry');
 	  const chatroomMenu = document.getElementById('chatroom-menu');
 	  const rpChatroomMenu = document.getElementById('rp-chatroom-menu');
-  const rpReadingSettingsBtn = document.getElementById('rp-reading-settings-btn');
+  // 顶栏 Aa 按钮已移除：阅读设置面板改由 ≡ 菜单的 reading-settings 动作打开（锚定 ≡ 按钮）
+  const rpReadingSettingsBtn = null;
   const rpReadingSettingsMenu = document.getElementById('rp-reading-settings-menu');
   settingsMenu?.querySelector?.('button[data-action="agent-center"]')?.setAttribute('data-maid-guide-target', 'settings-agent-center');
   settingsMenu?.querySelector?.('button[data-action="world-global"]')?.setAttribute('data-maid-guide-target', 'settings-world-global');
@@ -18035,7 +18037,7 @@ Phase G（Frame 36）：循环衔接
     quickMenuMotion.open(anchorEl);
     return true;
   };
-  bindCreativeReadingSettings({
+  const creativeReadingSettingsHandle = bindCreativeReadingSettings({
     bodyEl: document.body,
     buttonEl: rpReadingSettingsBtn,
     menuEl: rpReadingSettingsMenu,
@@ -18050,7 +18052,7 @@ Phase G（Frame 36）：循环衔接
     },
     toggleSheetAt,
   });
-  bindCreativeVoiceSettings({
+  const creativeVoiceSettingsHandle = bindCreativeVoiceSettings({
     buttonEl: rpReadingSettingsBtn,
     narrationSelectEl: document.getElementById('rp-narration-voice-select'),
     dialogueSelectEl: document.getElementById('rp-dialogue-voice-select'),
@@ -18686,8 +18688,14 @@ Phase G（Frame 36）：循环衔接
     showRawReplyModal: (text, meta, repairDetails) => rawReplyModal.show(text, meta, repairDetails),
     notifyWarning: (message) => window.toastr?.warning?.(message),
   });
+  // 阅读设置从顶栏 Aa 按钮迁入 ≡ 菜单：浮层锚定 ≡ 按钮，打开时同步声音选项（与旧按钮点击行为一致）
+  const openReadingSettingsFromMenu = () => {
+    creativeReadingSettingsHandle?.openAt?.(chatMenuBtn);
+    Promise.resolve(creativeVoiceSettingsHandle?.sync?.()).catch(() => {});
+  };
   bindChatroomMenuActions({
     menuEl: chatroomMenu,
+    openReadingSettings: openReadingSettingsFromMenu,
     openWorld: () => worldPanel.show(),
     openRegex: () => regexSessionPanel.show(),
 	    openVars: () => {
@@ -18702,6 +18710,7 @@ Phase G（Frame 36）：循环衔接
   });
   bindChatroomMenuActions({
     menuEl: rpChatroomMenu,
+    openReadingSettings: openReadingSettingsFromMenu,
     openWorld: () => worldPanel.show(),
     openRegex: () => regexSessionPanel.show(),
 	    openVars: () => {

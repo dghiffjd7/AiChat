@@ -450,18 +450,10 @@
               <div class="chat-room-title" id="current-chat-title">default</div>
               <div class="chat-room-presence"><span class="chat-room-presence-dot" aria-hidden="true"></span><span id="current-chat-presence">在线 · AI 角色</span></div>
             </div>
-            <button
-              id="rp-reading-settings-btn"
-              class="rp-reading-settings-btn"
-              type="button"
-              aria-label="聊天室阅读设置"
-              title="聊天室阅读设置"
-            >
-              <svg aria-hidden="true" viewBox="0 0 24 24">
-                <path d="m15 16 2.536-7.328a1.02 1.02 0 0 1 1.928 0L22 16"></path>
-                <path d="M15.697 14h5.606"></path>
-                <path d="m2 16 4.039-9.69a.5.5 0 0 1 .923 0L11 16"></path>
-                <path d="M3.304 13h6.392"></path>
+            <button type="button" id="realtime-call-button" class="chat-realtime-call-btn" aria-label="实时语音通话" title="实时语音通话">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M7.2 4.5 9.8 8l-2 2.1c1.4 2.6 3.5 4.7 6.1 6.1l2.1-2 3.5 2.6-1.1 3c-.3.8-1.1 1.3-2 1.2C9.1 20.2 3.8 14.9 3 7.6c-.1-.9.4-1.7 1.2-2l3-1.1Z"></path>
+                <path d="M14.5 4.5a6 6 0 0 1 5 5M14.5 8a2.5 2.5 0 0 1 1.5 1.5"></path>
               </svg>
             </button>
             <button id="chat-menu-btn" class="chat-menu-btn">≡</button>
@@ -580,12 +572,6 @@
               </div>
               <div class="chat-input-wrap">
                 <textarea id="composer-input" class="chat-input" placeholder="" rows="1"></textarea>
-                <button type="button" id="realtime-call-button" class="chat-realtime-call-btn" aria-label="实时语音通话" title="实时语音通话">
-                  <svg viewBox="0 0 24 24" aria-hidden="true">
-                    <path d="M7.2 4.5 9.8 8l-2 2.1c1.4 2.6 3.5 4.7 6.1 6.1l2.1-2 3.5 2.6-1.1 3c-.3.8-1.1 1.3-2 1.2C9.1 20.2 3.8 14.9 3 7.6c-.1-.9.4-1.7 1.2-2l3-1.1Z"></path>
-                    <path d="M14.5 4.5a6 6 0 0 1 5 5M14.5 8a2.5 2.5 0 0 1 1.5 1.5"></path>
-                  </svg>
-                </button>
                 <button type="button" id="voice-input-button" class="chat-voice-input-btn" aria-label="语音输入" title="语音输入">
                   <svg class="chat-voice-input-mic" viewBox="0 0 24 24" aria-hidden="true">
                     <rect x="9" y="3" width="6" height="11" rx="3"></rect>
@@ -701,6 +687,7 @@
         <div class="sheet-desc">当前聊天相关操作</div>
         <button data-action="world">🌐 人物设定</button>
         <button data-action="chat-settings" data-maid-guide-target="chatroom-chat-settings">🎨 聊天设置</button>
+        <button data-action="reading-settings">Aa 阅读设置</button>
         <button data-action="prompt-preview">🧩 本次 Prompt</button>
         <button data-action="raw-reply">📄 本次 AI 回复</button>
       </div>
@@ -710,6 +697,7 @@
         <div class="sheet-section-label">当前会话</div>
         <button data-action="world">🌐 角色世界书</button>
         <button data-action="chat-settings" data-maid-guide-target="chatroom-chat-settings">🎨 聊天设置</button>
+        <button data-action="reading-settings">Aa 阅读设置</button>
         <div class="sheet-section-label">本次生成</div>
         <button data-action="prompt-preview">🧩 本次 Prompt</button>
         <button data-action="raw-reply">📄 本次 AI 回复</button>
@@ -996,11 +984,11 @@
             <svg class="developer-link-arrow" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 16 16 8m-6 0h6v6"/></svg>
           </a>
 
-          <a class="developer-github-card" data-developer-external-url href="https://github.com/dghiffjd7" target="_blank" rel="noopener noreferrer">
+          <a class="developer-github-card" data-developer-external-url href="https://ko-fi.com/illusion7" target="_blank" rel="noopener noreferrer">
             <span class="developer-github-icon" aria-hidden="true">
-              <svg viewBox="0 0 24 24"><path d="M12 2.8a9.2 9.2 0 0 0-2.9 17.9c.5.1.6-.2.6-.5v-1.8c-2.7.6-3.3-1.1-3.3-1.1-.4-1.1-1.1-1.4-1.1-1.4-.9-.6.1-.6.1-.6 1 0 1.5 1 1.5 1 .9 1.5 2.3 1.1 2.9.8.1-.6.3-1.1.6-1.3-2.2-.2-4.5-1.1-4.5-4.8 0-1.1.4-1.9 1-2.6-.1-.3-.4-1.3.1-2.6 0 0 .8-.3 2.7 1a9.2 9.2 0 0 1 4.9 0c1.9-1.3 2.7-1 2.7-1 .5 1.3.2 2.3.1 2.6.6.7 1 1.5 1 2.6 0 3.7-2.3 4.5-4.5 4.8.4.3.7.9.7 1.7v2.5c0 .3.2.6.7.5A9.2 9.2 0 0 0 12 2.8Z"/></svg>
+              <svg viewBox="0 0 24 24"><path d="M5 7h11a1 1 0 0 1 1 1v1h1.2a2.8 2.8 0 0 1 0 5.6H17a5.5 5.5 0 0 1-5.4 4.4H9.4A5.4 5.4 0 0 1 4 13.6V8a1 1 0 0 1 1-1Zm12 3.6v2.9h1.2a1.45 1.45 0 0 0 0-2.9Zm-7.5 1.1c.9-1.5 3.1-1.2 3.4.4.2 1.2-1.1 2.3-3.4 3.8-2.3-1.5-3.6-2.6-3.4-3.8.3-1.6 2.5-1.9 3.4-.4Z"/></svg>
             </span>
-            <span><small>开发者主页</small><strong>@dghiffjd7</strong></span>
+            <span><small>支持开发</small><strong>Ko-fi</strong></span>
             <svg class="developer-link-arrow" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 16 16 8m-6 0h6v6"/></svg>
           </a>
         </div>

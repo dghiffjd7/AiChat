@@ -114,6 +114,7 @@ export const bindChatroomMenuActions = ({
   openGenerateImage = () => {},
   openWritingAssets = () => {},
   openChatSettings = () => {},
+  openReadingSettings = () => {},
   openPromptPreview = () => {},
   openRawReply = () => {},
   openPreset = () => {},
@@ -124,6 +125,11 @@ export const bindChatroomMenuActions = ({
   menuEl?.querySelectorAll?.('button').forEach((button) => {
     button.addEventListener('click', () => {
       const action = button.dataset?.action;
+      if (action === 'reading-settings') {
+        // 阅读设置打开的是锚定浮层，自己会先收起其他菜单；这里不能再走尾部 hideMenus，否则刚打开就被关闭。
+        openReadingSettings();
+        return;
+      }
       if (action === 'world') openWorld();
       if (action === 'regex') openRegex();
       if (action === 'vars') openVars();

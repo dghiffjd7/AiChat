@@ -7,6 +7,7 @@ import {
   resolveSpeechChunkMaxChars,
   splitSpeechText,
 } from './speech-chunk-utils.js';
+import { microphonePermissionRecovery } from '../microphone-permission-recovery.js';
 
 const DEFAULT_MAX_RECORDING_MS = 60000;
 export { resolveSpeechChunkMaxChars, splitSpeechText } from './speech-chunk-utils.js';
@@ -230,7 +231,7 @@ const validateRuntimeConfig = (config, capability) => {
 
 const formatVoiceError = error => {
   const message = String(error?.message || error || '').trim();
-  if (/notallowed|permission denied|permission dismissed/i.test(message)) return '麦克风权限未开启，请在系统权限中允许后再试。';
+  if (/notallowed|permission denied|permission dismissed/i.test(message)) return '麦克风权限未开启。再次点击语音可重新请求，或前往系统设置开启。';
   if (/notfound|devicesnotfound/i.test(message)) return '找不到可用的麦克风。';
   if (/notreadable|trackstart/i.test(message)) return '麦克风正被其他应用占用。';
   if (/HTTP 409|上一段.*(?:处理|生成)|already.*busy/i.test(message)) return '上一段本地语音仍在生成，请稍后再试。';
@@ -248,6 +249,7 @@ export const createChatVoiceRuntime = ({
   openVoiceSettings = () => {},
   toast = {},
   mediaDevices = globalThis.navigator?.mediaDevices,
+  microphoneAccess = microphonePermissionRecovery,
   MediaRecorderCtor = globalThis.MediaRecorder,
   AudioContextCtor = globalThis.AudioContext || globalThis.webkitAudioContext,
   documentLike = globalThis.document,
@@ -367,11 +369,14 @@ export const createChatVoiceRuntime = ({
     }
     setRecorderState('starting');
     try {
-      mediaStream = await mediaDevices.getUserMedia({
-        audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
+      mediaStream = await microphoneAccess.acquire({
+        mediaDevices,
+        constraints: {
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
+          },
         },
       });
       const mimeType = selectRecorderMimeType(MediaRecorderCtor);
@@ -400,7 +405,7 @@ export const createChatVoiceRuntime = ({
       stopTracks();
       mediaRecorder = null;
       setRecorderState('idle');
-      notify('error', formatVoiceError(error));
+      if (!isAbortError(error)) notify('error', formatVoiceError(error));
       return false;
     }
   };

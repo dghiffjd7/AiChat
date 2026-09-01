@@ -19,8 +19,8 @@ Private chats · Group chats · Creative writing · Image generation · All data
 
 | Platform | Installer |
 | --- | --- |
-| 🖥️ Windows | `OmniTavern_x.x.x_x64-setup.exe` |
-| 📱 Android | `OmniTavern_x.x.x.apk` |
+| Windows | `OmniTavern_x.x.x_x64-setup.exe` |
+| Android | `OmniTavern_x.x.x.apk` |
 
 <!-- TODO: hero screenshot (desktop dual-pane chat, English UI)
 ![OmniTavern desktop](docs/images/hero-en.png)
@@ -39,9 +39,9 @@ OmniTavern is a local-first AI roleplay chat app inspired by SillyTavern. Chat o
 - **Bring your own API**: plug in your own model API key — all major providers plus any OpenAI-compatible endpoint
 - **SillyTavern-friendly**: import SillyTavern character cards (PNG / JSON), presets and regex scripts
 
-## ✨ Highlights
+## Highlights
 
-### 💬 Chat & group chat
+### Chat & group chat
 
 Streaming output, message regeneration with swipes, reply quoting, emoji reactions, cross-session search, @mentions, image messages and automatic image generation. Every AI reply is validated before it is committed — malformed replies can be inspected, auto-repaired by AI or regenerated. Dual-pane layout on desktop; replies reveal message-by-message with a skip button.
 
@@ -49,7 +49,7 @@ Streaming output, message regeneration with swipes, reply quoting, emoji reactio
 ![Group chat](docs/images/group-chat-en.png)
 -->
 
-### 🖋️ Creative writing
+### Creative writing
 
 A dedicated long-form RP / fiction mode with its own prompts and parameters, separate from chat. Archive and reset the story at any point and switch back whenever you like, with inline image generation and asset reuse.
 
@@ -57,7 +57,7 @@ A dedicated long-form RP / fiction mode with its own prompts and parameters, sep
 ![Creative writing](docs/images/creative-writing-en.png)
 -->
 
-### 🧹 Maid assistant
+### Maid assistant
 
 An in-app AI agent you drive with natural language: create contacts, group chats and lorebooks, set up a full room from an imported character card in one step, batch-organize, generate avatars and wallpapers. Every write action asks for your confirmation; she has long-term memory and resumes interrupted tasks.
 
@@ -65,7 +65,7 @@ An in-app AI agent you drive with natural language: create contacts, group chats
 ![Maid assistant](docs/images/maid-en.png)
 -->
 
-### 📖 Lorebooks & memory
+### Lorebooks & memory
 
 Lorebook entries activate on keywords; the condition editor has a node-graph mode for visually wiring up trigger logic. Memory tables are filled in automatically by the AI as you chat (relationships, key events), and memory can be shared between chat, the social feed and creative writing.
 
@@ -73,7 +73,7 @@ Lorebook entries activate on keywords; the condition editor has a node-graph mod
 ![Lorebook condition editor](docs/images/worldbook-en.png)
 -->
 
-### 🌊 Moments (social feed)
+### Moments (social feed)
 
 Characters post moments and comment on each other; you can react and reply, and a moment can spill over into related private or group chats. Supports image attachments, feed-side image generation and its own memory table.
 
@@ -81,18 +81,18 @@ Characters post moments and comment on each other; you can react and reply, and 
 ![Moments](docs/images/moments-en.png)
 -->
 
-### 🎨 Image generation & stickers
+### Image generation & stickers
 
 Generate images in chat, creative writing and the feed, with NovelAI and other providers, parameter overrides and retry. Generate sticker packs with automatic background removal and slicing, managed per chat room.
 
-## 🆕 What's new in 0.7.2
+## What's new in 0.7.2
 
 - **Trilingual UI**: English and Traditional Chinese added alongside Simplified Chinese — pick a language on first launch, switch anytime in settings
 - **Renamed to OmniTavern**: formerly AiChat; existing data and old export files remain fully compatible — just install over the old version
 - **Native web search**: direct use of the official search capabilities of Gemini, Claude, OpenAI, DeepSeek, Kimi, GLM and OpenRouter, with an automatic generic fallback for other models
 - Fixes for regex scripts lost on preset re-import, large backup export timeouts, and more
 
-## 🔌 Supported AI providers
+## Supported AI providers
 
 | Type | Providers |
 | --- | --- |
@@ -101,7 +101,7 @@ Generate images in chat, creative writing and the feed, with NovelAI and other p
 
 Each chat room can use its own API and model.
 
-## 🚀 Quick start
+## Quick start
 
 1. Install and open OmniTavern, then tap ⚙ in the top-right corner to open Settings
 2. In **API settings**, enter your API key, refresh the model list, pick a model and save
@@ -109,16 +109,16 @@ Each chat room can use its own API and model.
    - **Chat mode**: tap `+` on the main screen to add a friend (pick from the built-in character library or create your own) and start chatting
    - **Creative writing / RP**: import a SillyTavern character card (PNG / JSON) — its lorebook and greetings come along automatically
 
-## 🔒 Data & privacy
+## Data & privacy
 
 Everything (chats, characters, lorebooks, memories, images) is stored only on your device. API requests go straight from the app to the provider you configured — there is no middleman server. Back up all your data to a single file and restore it on a new device in one step; exports automatically exclude sensitive data such as API keys.
 
-## ❤️ Support the project
+## Support the project
 
 OmniTavern is maintained by a solo developer. If you enjoy it, consider buying me a coffee:
 
 [![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/illusion7)
 
-## 📄 License
+## License
 
 [AGPL-3.0](LICENSE)

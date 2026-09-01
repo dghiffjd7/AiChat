@@ -1,3 +1,5 @@
+import { microphonePermissionRecovery } from '../microphone-permission-recovery.js';
+
 const DEFAULT_CONNECT_TIMEOUT_MS = 30000;
 let realtimeRequestSequence = 0;
 
@@ -79,6 +81,7 @@ export class OpenAiRealtimeSessionClient {
     invoke = undefined,
     peerConnectionClass = globalThis.RTCPeerConnection,
     mediaDevices = globalThis.navigator?.mediaDevices,
+    microphoneAccess = microphonePermissionRecovery,
     createAudioElement = () => globalThis.document?.createElement?.('audio') || null,
     onEvent = null,
     onConnectionState = null,
@@ -86,6 +89,7 @@ export class OpenAiRealtimeSessionClient {
     this.invoke = invoke === undefined ? getDefaultInvoker() : invoke;
     this.PeerConnection = peerConnectionClass;
     this.mediaDevices = mediaDevices;
+    this.microphoneAccess = microphoneAccess;
     this.createAudioElement = createAudioElement;
     this.onEvent = typeof onEvent === 'function' ? onEvent : null;
     this.onConnectionState = typeof onConnectionState === 'function' ? onConnectionState : null;
@@ -127,11 +131,14 @@ export class OpenAiRealtimeSessionClient {
         try { this.remoteAudio.play?.()?.catch?.(() => {}); } catch {}
       };
 
-      const localStream = await this.mediaDevices.getUserMedia({
-        audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
+      const localStream = await this.microphoneAccess.acquire({
+        mediaDevices: this.mediaDevices,
+        constraints: {
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
+          },
         },
       });
       if (signal?.aborted) throw makeAbortError();

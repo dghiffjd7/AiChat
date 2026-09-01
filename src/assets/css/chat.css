@@ -392,45 +392,9 @@ body {
     .composer textarea { font-size: 14px; }
     .send-button { padding: 11px 16px; min-width: 60px; }
 }
-.chat-realtime-call-btn {
-  position: absolute;
-  right: 72px;
-  bottom: 50%;
-  width: 30px;
-  height: 30px;
-  transform: translateY(50%);
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0;
-  border: 0;
-  border-radius: 999px;
-  background: transparent;
-  color: var(--app-text-muted);
-  cursor: pointer;
-  z-index: 3;
-  transition: color 150ms ease, transform 150ms ease, background 150ms ease;
-}
-
+/* 顶栏通话按钮的外观规则在 creative-writing-redesign.css（沿用原 Aa 阅读设置按钮的双模式/深色/动效样式槽位） */
 body:not([data-ui-mode='rp']) .chat-input {
-  padding-right: 108px;
-}
-
-body[data-ui-mode='rp'] .chat-realtime-call-btn {
-  right: 42px;
-}
-
-body[data-ui-mode='rp'] .chat-input {
   padding-right: 74px;
-}
-
-.chat-realtime-call-btn:hover {
-  color: var(--app-accent-strong);
-  background: var(--app-accent-soft);
-}
-
-.chat-realtime-call-btn:active {
-  transform: translateY(50%) scale(0.92);
 }
 
 .chat-realtime-call-btn[hidden] {

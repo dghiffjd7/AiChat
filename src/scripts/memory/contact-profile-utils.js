@@ -2,6 +2,12 @@ import {
   clampText,
   estimateTokens,
 } from './memory-prompt-utils.js';
+import {
+  formatMemoryPromptText,
+  getMemoryPromptClauseSeparator,
+  getMemoryPromptListSeparator,
+  joinMemoryPromptLabel,
+} from './memory-prompt-locale.js';
 
 export const CONTACT_PROFILE_DEFAULT_SETTINGS = Object.freeze({
   weakTriggerEnabled: true,
@@ -357,17 +363,30 @@ export const buildContactProfileHeader = (profile = {}, {
   const parts = [];
   const current = normalizeString(p.relationship?.current);
   if (current) parts.push(current);
+  const listSeparator = getMemoryPromptListSeparator();
   const focus = uniqueStrings(p.interaction_focus).slice(0, 2);
-  if (focus.length) parts.push(`近期主题：${focus.join('、')}`);
+  if (focus.length) parts.push(formatMemoryPromptText(
+    'memory.profile.recent_topics',
+    '近期主题：{values}',
+    { values: focus.join(listSeparator) },
+  ));
   const traits = (p.stable_traits || []).map(item => normalizeString(item.label)).filter(Boolean).slice(0, 2);
-  if (traits.length) parts.push(`稳定特征：${traits.join('、')}`);
+  if (traits.length) parts.push(formatMemoryPromptText(
+    'memory.profile.stable_traits',
+    '稳定特征：{values}',
+    { values: traits.join(listSeparator) },
+  ));
   const events = (p.important_events || []).map(item => normalizeString(item.label)).filter(Boolean).slice(0, 1);
-  if (events.length) parts.push(`重要事件：${events.join('、')}`);
-  let text = `${name}：${parts.join('；')}`.trim();
+  if (events.length) parts.push(formatMemoryPromptText(
+    'memory.profile.important_events',
+    '重要事件：{values}',
+    { values: events.join(listSeparator) },
+  ));
+  let text = joinMemoryPromptLabel(name, parts.join(getMemoryPromptClauseSeparator())).trim();
   if (estimateTokens(text, tokenMode) <= maxTokens) return text;
   while (parts.length > 1 && estimateTokens(text, tokenMode) > maxTokens) {
     parts.pop();
-    text = `${name}：${parts.join('；')}`.trim();
+    text = joinMemoryPromptLabel(name, parts.join(getMemoryPromptClauseSeparator())).trim();
   }
   return clampText(text, Math.max(40, maxTokens * 2));
 };
@@ -486,11 +505,15 @@ export const buildContactProfileWeakTriggerPrompt = (resolution = {}, {
   const selected = Array.isArray(resolution?.selectedSources) ? resolution.selectedSources : [];
   if (!selected.length) return '';
   const lines = [
-    '【动态弱触发｜联系人记忆】',
-    '以下内容仅用于理解本次动态/评论相关上下文；不要向无关对象泄露私聊信息。',
+    formatMemoryPromptText('memory.profile.weak_header', '【动态弱触发｜联系人记忆】'),
+    formatMemoryPromptText(
+      'memory.profile.weak_note',
+      '以下内容仅用于理解本次动态/评论相关上下文；不要向无关对象泄露私聊信息。',
+    ),
   ];
   selected.forEach((source) => {
-    const name = normalizeString(source?.name || source?.contactId) || '未知联系人';
+    const name = normalizeString(source?.name || source?.contactId)
+      || formatMemoryPromptText('memory.profile.unknown_contact', '未知联系人');
     const rows = Array.isArray(source?.matchedRows) ? source.matchedRows : [];
     const profileHeader = normalizeString(source?.profileHeader);
     const allowHeader =
@@ -499,12 +522,16 @@ export const buildContactProfileWeakTriggerPrompt = (resolution = {}, {
       Number(source?.score || 0) >= normalizedSettings.profileHeaderThreshold;
     if (!allowHeader && !rows.length) return;
     lines.push(`【${name}】`);
-    if (allowHeader) lines.push(`- 画像：${profileHeader}`);
+    if (allowHeader) lines.push(formatMemoryPromptText(
+      'memory.profile.profile_line',
+      '- 画像：{profile}',
+      { profile: profileHeader },
+    ));
     rows.forEach((row) => {
       const label = normalizeString(row?.tableName || row?.tableId);
       const text = normalizeString(row?.rowSummary || row?.rowText);
       if (!text) return;
-      lines.push(`- ${label ? `${label}：` : ''}${text}`);
+      lines.push(`- ${label ? `${joinMemoryPromptLabel(label, '')}` : ''}${text}`);
     });
   });
   return lines.length > 2 ? lines.join('\n').trim() : '';

@@ -4014,7 +4014,7 @@ export class PresetPanel {
             preview.className = 'pp-code-preview';
             preview.style.cssText = 'margin:0; padding:12px; border:1px solid var(--app-border-default); border-radius:12px; background:var(--app-surface-hover); color:var(--app-text-primary); white-space:pre-wrap; font-size:12px; line-height:1.5;';
             preview.textContent = [
-                '正在与XX私聊，请遵循私聊格式',
+                getLocalizedPromptText('transport.scenario_private').split('{name}').join('XX'),
                 '',
                 buildBuiltinPhoneFormatReminder({
                     surface: 'private_chat',
