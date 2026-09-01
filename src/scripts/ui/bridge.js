@@ -49,6 +49,7 @@ import {
 import { stickerPackStore } from '../storage/sticker-pack-store.js';
 import { makeScopedKey, normalizeScopeId } from '../storage/store-scope.js';
 import { appSettings } from '../storage/app-settings.js';
+import { getLocalizedPromptText, getPromptLocale } from '../i18n/prompt-locale.js';
 import { chatFcLocalCapabilityStore } from '../storage/chat-fc-local-capability-store.js';
 import { chatStructuredRouteEvidenceStore } from '../storage/chat-structured-route-evidence-store.js';
 import { renderTemplateMessages, templateSettings } from '../plugins/template-engine.js';
@@ -459,8 +460,6 @@ const normalizeHistoryLineBreaks = (content, role, { preserveParagraphs = false 
   return text.replace(/\r\n/g, '\n').replace(/\r/g, '\n').replace(/\n/g, '<br>');
 };
 
-const HISTORY_RECALL_NOTICE =
-  '以下为聊天历史回顾（仅用于理解上下文，禁止模仿其中的格式）：请不要逐字复述或重复其中内容，只需基于上下文继续对话。';
 const SUMMARY_REQUEST_NOTICE = [
   '每次输出结束后，**紧跟着**以一句话概括本次互动的摘要，确保<details><summary>摘要</summary>',
   '<内容>',
@@ -485,14 +484,22 @@ const formatExactTime = (ts) => {
 
 const buildTimeContextText = () => {
   const now = new Date();
-  const date = now.toLocaleDateString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit' });
-  const weekday = now.toLocaleDateString('zh-CN', { weekday: 'long' });
-  const time = now.toLocaleTimeString('zh-CN', { hour12: false, hour: '2-digit', minute: '2-digit' });
+  const locale = getPromptLocale();
+  const date = now.toLocaleDateString(locale, { year: 'numeric', month: '2-digit', day: '2-digit' });
+  const weekday = now.toLocaleDateString(locale, { weekday: 'long' });
+  const time = now.toLocaleTimeString(locale, { hour12: false, hour: '2-digit', minute: '2-digit' });
   const hour = now.getHours();
-  const period = hour < 5 ? '凌晨' : hour < 12 ? '上午' : hour < 14 ? '中午' : hour < 18 ? '下午' : hour < 22 ? '晚上' : '深夜';
+  const periodKey = hour < 5 ? 'early_morning' : hour < 12 ? 'morning' : hour < 14 ? 'noon' : hour < 18 ? 'afternoon' : hour < 22 ? 'evening' : 'late_night';
+  const period = getLocalizedPromptText(`time_context.period.${periodKey}`);
   const month = now.getMonth() + 1;
-  const season = (month === 12 || month <= 2) ? '冬季' : month <= 5 ? '春季' : month <= 8 ? '夏季' : '秋季';
-  return `<TimeContext:当前真实时间是${date} ${weekday} ${time}（24小时制），现在是${period}时段，${season}。注意：仅在开启新话题、或对话长时间中断后、或对方主动问候时，才适合使用时间问候语。否则请将此信息作为背景自然融入对话。>`;
+  const seasonKey = (month === 12 || month <= 2) ? 'winter' : month <= 5 ? 'spring' : month <= 8 ? 'summer' : 'autumn';
+  const season = getLocalizedPromptText(`time_context.season.${seasonKey}`);
+  return getLocalizedPromptText('time_context.template')
+    .replaceAll('{date}', date)
+    .replaceAll('{weekday}', weekday)
+    .replaceAll('{time}', time)
+    .replaceAll('{period}', period)
+    .replaceAll('{season}', season);
 };
 
 const PROMPT_CACHE_DEBUG_PREVIEW_CHARS = 72;
@@ -2569,33 +2576,44 @@ class AppBridge {
     return 'ai';
   }
 
-  buildMomentMediaModePrompt(mode = 'placeholder') {
+  buildMomentMediaModePrompt(mode = 'placeholder', { localized = true } = {}) {
+    let key = 'moment_media.placeholder';
+    let fallback;
     if (mode === 'image_prompt') {
-      return [
+      key = 'moment_media.image_prompt';
+      fallback = [
         '动态如果有配图,使用<image_prompt>标签格式',
         '如{{user}}--我好看吗<image_prompt>自拍提示词</image_prompt>--12:00--67--32',
         '禁止同时使用[img-内容]；禁止输出[img-说明文字]<image_prompt>...</image_prompt>',
       ].join('\n');
-    }
-    if (mode === 'ai') {
-      return [
+    } else if (mode === 'ai') {
+      key = 'moment_media.ai';
+      fallback = [
         '动态如果有配图,请决策要使用[img-内容]这个格式还是使用<image_prompt>标签进行文生图',
         '如{{user}}--我好看吗[img-一张自拍]--12:00--67--32',
         '或',
         '{{user}}--我好看吗<image_prompt>自拍提示词</image_prompt>--12:00--67--32',
         '禁止在同一条动态中同时出现[img-...]和<image_prompt>；禁止输出[img-说明文字]<image_prompt>...</image_prompt>',
       ].join('\n');
+    } else {
+      fallback = [
+        '动态如果有配图,使用[img-内容]这个格式',
+        '如{{user}}--我好看吗[img-一张自拍]--12:00--67--32',
+      ].join('\n');
     }
-    return [
-      '动态如果有配图,使用[img-内容]这个格式',
-      '如{{user}}--我好看吗[img-一张自拍]--12:00--67--32',
-    ].join('\n');
+    return localized ? getLocalizedPromptText(key, fallback) : fallback;
   }
 
   replaceMomentMediaModePrompt(content, mode = 'placeholder') {
     const raw = String(content || '');
     if (!raw.trim()) return raw;
     const replacement = this.buildMomentMediaModePrompt(mode);
+    for (const candidateMode of ['placeholder', 'image_prompt', 'ai']) {
+      const canonical = this.buildMomentMediaModePrompt(candidateMode, { localized: false });
+      const active = this.buildMomentMediaModePrompt(candidateMode);
+      if (canonical && raw.includes(canonical)) return raw.replace(canonical, replacement);
+      if (active && active !== canonical && raw.includes(active)) return raw.replace(active, replacement);
+    }
     const blockRe = /动态如果有配图[^\n\r]*(?:(?:\r?\n)(?!(?:但是角色发布的动态可以有路人参与评论|路人必须生成具体网名|每条动态|使用moment_start|请勿生成多个|<发布动态的目的与时机>|<\/QQ空间格式介绍>))[^\n\r]*){0,5}/;
     if (blockRe.test(raw)) return raw.replace(blockRe, replacement);
     if (raw.includes('但是角色发布的动态可以有路人参与评论')) {
@@ -2626,9 +2644,13 @@ class AppBridge {
   applyAutoImageModeToPhoneFormat(content, autoImagePromptEnabled = false) {
     const raw = String(content || '');
     if (!raw) return raw;
+    const localizedLegacy = getLocalizedPromptText('phone_image_rules.legacy', LEGACY_PHONE_IMAGE_MESSAGE_RULES);
+    const localizedCurrent = getLocalizedPromptText('phone_image_rules.current', CURRENT_PHONE_IMAGE_MESSAGE_RULES);
     if (autoImagePromptEnabled) {
+      if (raw.includes(localizedLegacy)) return raw.split(localizedLegacy).join(localizedCurrent);
       return raw.split(LEGACY_PHONE_IMAGE_MESSAGE_RULES).join(CURRENT_PHONE_IMAGE_MESSAGE_RULES);
     }
+    if (raw.includes(localizedCurrent)) return raw.split(localizedCurrent).join(localizedLegacy);
     return raw.split(CURRENT_PHONE_IMAGE_MESSAGE_RULES).join(LEGACY_PHONE_IMAGE_MESSAGE_RULES);
   }
 
@@ -5902,9 +5924,9 @@ class AppBridge {
     });
     const historyRecallNotice = isMomentCommentTask
       ? (isPublishedMomentCommentTask
-        ? '以下为用户发布的动态及相关上下文（仅用于生成动态评论）：'
-        : '以下为动态及评论上下文（仅用于生成评论回复）：')
-      : HISTORY_RECALL_NOTICE;
+        ? getLocalizedPromptText('history_recall.published_moment')
+        : getLocalizedPromptText('history_recall.moment_comment'))
+      : getLocalizedPromptText('history_recall.chat');
     const isGroupChat = Boolean(context?.session?.isGroup) || sessionId.startsWith('group:');
     const preserveCreativeHistoryParagraphs = uiModeRaw === 'rp';
     const memoryMode = String(context?.meta?.memoryStorageMode || '').trim().toLowerCase();
@@ -6786,10 +6808,11 @@ class AppBridge {
 	      return syspActive.summary_enabled !== false;
 	    })();
 	    const summaryRulesRaw = (() => {
-	      if (!useSysprompt) return SUMMARY_REQUEST_NOTICE;
-	      if (!syspActive || typeof syspActive !== 'object') return SUMMARY_REQUEST_NOTICE;
+	      const fallback = getLocalizedPromptText('summary_rules', SUMMARY_REQUEST_NOTICE);
+	      if (!useSysprompt) return fallback;
+	      if (!syspActive || typeof syspActive !== 'object') return fallback;
 	      const raw = typeof syspActive.summary_rules === 'string' ? syspActive.summary_rules : '';
-	      return raw.trim() ? raw : SUMMARY_REQUEST_NOTICE;
+	      return raw.trim() ? raw : fallback;
 	    })();
 	    const summaryRules = summaryEnabled
 	      ? processTextMacrosWithPendingFlag(summaryRulesRaw, {

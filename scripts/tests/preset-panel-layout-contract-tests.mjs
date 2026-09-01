@@ -50,7 +50,8 @@ assert.match(source, /\.pp-header-title\s*\{[\s\S]*white-space:\s*nowrap;/);
 assert.match(source, /\.pp-manager-actions\s*\{[\s\S]*grid-template-columns:\s*repeat\(4, minmax\(0, 1fr\)\);/);
 assert.match(source, /class="pp-block-title">\$\{escapeHtml\(title\)\}/, '导入的区块标题必须转义后再写入 HTML');
 assert.match(source, /pp-nav-item-sub">\$\{escapeHtml\(this\.getSectionBadge\(sec\)/, '预设名称徽标必须转义后再写入 HTML');
-assert.match(source, /escapeHtml\(boundItems\.map\(\(i\) => i\.name\)\.join\('、'\)\)/, '绑定会话名称必须转义后再写入 HTML');
+assert.match(source, /const sessionSummary = boundItems\.length[\s\S]*boundItems\.map\(\(i\) => i\.name\)\.join\('、'\)/, '绑定摘要必须包含实际会话名称');
+assert.match(source, /class="pp-binding-card-sub">\$\{escapeHtml\(sessionSummary\)\}/, '绑定会话摘要必须转义后再写入 HTML');
 assert.match(source, /includeHistory:\s*false/, '预设预览固定折叠聊天记录（面板从通用设定打开，无会话历史语境）');
 assert.match(source, /pp-prev-history-chip/, '聊天记录占位提示必须保留在实际展开位置');
 assert.match(source, /const presetMaximizeSvg = `<svg class="pp-maximize-icon"/, '预设放大按钮应使用独立 SVG');
@@ -74,6 +75,16 @@ for (const id of ['intro', 'chat', 'moment', 'footer']) {
     assert.match(source, new RegExp(`phone-format-${id}-depth`), `文本格式位置入口应包含 ${id} 条件深度`);
 }
 assert.match(source, /仅传统文本模式生效，FC\/JSON 请求不包含这些内容/, '位置编辑入口必须说明结构化路径隔离');
+assert.match(
+    source,
+    /this\.blockTitleEl\.textContent\s*=\s*translateUiText\(\{[\s\S]*dialogue:\s*'私聊格式提示词',[\s\S]*group:\s*'群聊格式提示词',[\s\S]*\}\[cardId\]\s*\|\|\s*item\.label\);/,
+    '私聊与群聊注入编辑器标题必须主动翻译，不能依赖已被 data-i18n-skip 跳过的 DOM 后处理',
+);
+assert.match(
+    source,
+    /this\.blockTitleEl\.textContent\s*=\s*translateUiText\(isGuide\s*\?\s*'记忆表格 · 写表指导'\s*:\s*'记忆表格 · 表格记忆'\);/,
+    '同一标题节点上的记忆注入编辑器也必须主动翻译',
+);
 
 const previewHandleButtons = Array.from(source.matchAll(
     /<button[^>]*class="(?:pp-preview-edge|pp-pane-handle[^\"]*|pp-editor-handle)"[^>]*>([\s\S]*?)<\/button>/g,

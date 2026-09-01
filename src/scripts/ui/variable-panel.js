@@ -22,6 +22,7 @@ import {
     applyTemplate,
     listVariableTemplates,
 } from '../variables/variable-templates.js';
+import { translateUiText } from '../i18n/index.js';
 
 export {
     buildVariableScopeImpactText,
@@ -421,7 +422,8 @@ export class VariablePanel extends VariablePanelRuntime {
         if (this.elements?.templateSearch) this.elements.templateSearch.value = '';
         if (this.elements?.clearSearch) this.elements.clearSearch.hidden = true;
         if (this.elements?.meta) {
-            this.elements.meta.textContent = formatVariableScopeLabel({ scope, sessionId: sid });
+            this.elements.meta.dataset.i18nSkip = '';
+            this.elements.meta.textContent = translateUiText(formatVariableScopeLabel({ scope, sessionId: sid }));
         }
         this.setImpactText('#var-impact', 'manage', this.panel);
         this.syncVariableRuntimeControl();
@@ -661,7 +663,8 @@ export class VariablePanel extends VariablePanelRuntime {
         });
         this.currentRows = allRows;
         if (this.elements.meta) {
-            this.elements.meta.textContent = formatVariableScopeLabel({ scope, sessionId: sid });
+            this.elements.meta.dataset.i18nSkip = '';
+            this.elements.meta.textContent = translateUiText(formatVariableScopeLabel({ scope, sessionId: sid }));
         }
         if (this.elements.listCount) {
             const total = Object.keys(vars || {}).length;
@@ -809,8 +812,9 @@ export class VariablePanel extends VariablePanelRuntime {
                 sessionId: sid,
                 action: 'templates',
             });
-            this.elements.templateImpact.textContent = formatVariableScopeLabel({ scope, sessionId: sid });
-            this.elements.templateImpact.title = impact;
+            this.elements.templateImpact.dataset.i18nSkip = '';
+            this.elements.templateImpact.textContent = translateUiText(formatVariableScopeLabel({ scope, sessionId: sid }));
+            this.elements.templateImpact.title = translateUiText(impact);
         }
         renderVariableTemplatesPage({
             container: this.elements.templateGrid,
@@ -866,8 +870,9 @@ export class VariablePanel extends VariablePanelRuntime {
                 sessionId: sid,
                 action: 'rules',
             });
-            this.elements.ruleImpact.textContent = formatVariableScopeLabel({ scope, sessionId: sid });
-            this.elements.ruleImpact.title = impact;
+            this.elements.ruleImpact.dataset.i18nSkip = '';
+            this.elements.ruleImpact.textContent = translateUiText(formatVariableScopeLabel({ scope, sessionId: sid }));
+            this.elements.ruleImpact.title = translateUiText(impact);
         }
         const result = renderVariableRulesPage({
             container: this.elements.ruleList,

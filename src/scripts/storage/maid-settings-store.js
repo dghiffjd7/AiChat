@@ -1,5 +1,9 @@
 import { safeInvoke } from '../utils/tauri.js';
-import { DEFAULT_MAID_PROMPT } from '../agent/maid-prompt-defaults.js';
+import {
+  DEFAULT_MAID_PROMPT,
+  canonicalizeMaidPrompt,
+  getLocalizedMaidPrompt,
+} from '../agent/maid-prompt-defaults.js';
 
 export const MAID_SETTINGS_STORE_KEY = 'maid_settings_store_v1';
 export const MAID_SETTINGS_STORE_VERSION = 1;
@@ -456,7 +460,7 @@ export class MaidSettingsStore {
 
   getMaidPrompt() {
     this.ensureLoaded();
-    return trim(this.state.maidPrompt, DEFAULT_MAID_PROMPT);
+    return getLocalizedMaidPrompt(trim(this.state.maidPrompt, DEFAULT_MAID_PROMPT));
   }
 
   getLastRequestPrompt() {
@@ -498,7 +502,7 @@ export class MaidSettingsStore {
 
   async setMaidPrompt(maidPrompt = '') {
     this.ensureLoaded();
-    this.state.maidPrompt = trim(maidPrompt, DEFAULT_MAID_PROMPT);
+    this.state.maidPrompt = canonicalizeMaidPrompt(trim(maidPrompt, DEFAULT_MAID_PROMPT));
     this.state.personaPrompt = this.state.maidPrompt;
     await this.write();
     return this.getMaidPrompt();
@@ -510,11 +514,11 @@ export class MaidSettingsStore {
       this.state.boundProfileId = trim(patch.boundProfileId);
     }
     if (Object.prototype.hasOwnProperty.call(patch || {}, 'personaPrompt')) {
-      this.state.maidPrompt = trim(patch.personaPrompt, DEFAULT_MAID_PROMPT);
+      this.state.maidPrompt = canonicalizeMaidPrompt(trim(patch.personaPrompt, DEFAULT_MAID_PROMPT));
       this.state.personaPrompt = this.state.maidPrompt;
     }
     if (Object.prototype.hasOwnProperty.call(patch || {}, 'maidPrompt')) {
-      this.state.maidPrompt = trim(patch.maidPrompt, DEFAULT_MAID_PROMPT);
+      this.state.maidPrompt = canonicalizeMaidPrompt(trim(patch.maidPrompt, DEFAULT_MAID_PROMPT));
       this.state.personaPrompt = this.state.maidPrompt;
     }
     if (Object.prototype.hasOwnProperty.call(patch || {}, 'memoryExtraction')) {

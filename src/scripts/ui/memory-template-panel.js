@@ -8,6 +8,7 @@ import { safeInvoke } from '../utils/tauri.js';
 import { appConfirm } from './app-confirm.js';
 import { bindCustomSelectButton, closeCustomSelectMenu, createCustomSelectWrapper, refreshCustomSelectButton } from './custom-select.js';
 import { buildMemoryImpactText, formatMemoryImpactScopeLabel } from './memory-impact-utils.js';
+import { translateUiText } from '../i18n/index.js';
 
 const MEMORY_SCOPE_BADGE_STYLE = 'display:inline-flex; align-items:center; width:max-content; max-width:100%; padding:4px 8px; border:1px solid var(--app-border-default); border-radius:999px; background:var(--app-surface-subtle); color:var(--app-text-secondary); font-size:11px; line-height:1.3; cursor:help;';
 
@@ -1758,7 +1759,12 @@ export class MemoryTemplatePanel {
       const summary = document.createElement('summary');
       summary.className = 'memory-template-table-summary';
       summary.style.cssText = 'cursor:pointer; font-weight:700; color:var(--app-text-primary);';
-      summary.textContent = `${table.name || table.id || '未命名表格'} · ${table.scope || 'contact'} · ${getMemoryTableUsageLabel(table.usage)}`;
+      summary.dataset.i18nSkip = '';
+      const refreshTableSummary = () => {
+        const name = table.name || table.id || translateUiText('未命名表格');
+        summary.textContent = `${name} · ${table.scope || 'contact'} · ${translateUiText(getMemoryTableUsageLabel(table.usage))}`;
+      };
+      refreshTableSummary();
       details.appendChild(summary);
 
       const body = document.createElement('div');
@@ -1827,19 +1833,19 @@ export class MemoryTemplatePanel {
 
       idInput?.addEventListener('input', () => {
         table.id = String(idInput.value || '').trim();
-        summary.textContent = `${table.name || table.id || '未命名表格'} · ${table.scope || 'contact'} · ${getMemoryTableUsageLabel(table.usage)}`;
+        refreshTableSummary();
       });
       nameInput?.addEventListener('input', () => {
         table.name = String(nameInput.value || '').trim();
-        summary.textContent = `${table.name || table.id || '未命名表格'} · ${table.scope || 'contact'} · ${getMemoryTableUsageLabel(table.usage)}`;
+        refreshTableSummary();
       });
       scopeSelect?.addEventListener('change', () => {
         table.scope = String(scopeSelect.value || 'contact');
-        summary.textContent = `${table.name || table.id || '未命名表格'} · ${table.scope || 'contact'} · ${getMemoryTableUsageLabel(table.usage)}`;
+        refreshTableSummary();
       });
       usageSelect?.addEventListener('change', () => {
         table.usage = normalizeMemoryTableUsage(usageSelect.value);
-        summary.textContent = `${table.name || table.id || '未命名表格'} · ${table.scope || 'contact'} · ${getMemoryTableUsageLabel(table.usage)}`;
+        refreshTableSummary();
       });
       maxRowsInput?.addEventListener('input', () => {
         const raw = Math.trunc(Number(maxRowsInput.value));

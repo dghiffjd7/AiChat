@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   buildElementUiSummary,
   isReadableElementVisible,
+  readElementSemanticKey,
   readVisibleText,
 } from '../../src/scripts/ui/agent-ui-inspect-utils.js';
 
@@ -41,6 +42,25 @@ const makeElement = ({
   getBoundingClientRect: () => ({ width: 10, height: 10 }),
   querySelectorAll: selector => descendants[selector] || [],
 });
+
+{
+  const action = makeElement({
+    tag: 'button',
+    text: '保存',
+    attrs: { 'data-maid-action-key': 'settings.save', id: 'save-button' },
+  });
+  const fallback = makeElement({ tag: 'button', text: '取消', attrs: { id: 'cancel-button' } });
+  assert.equal(readElementSemanticKey(action), 'settings.save');
+  assert.equal(readElementSemanticKey(fallback), 'cancel-button');
+  const panel = makeElement({
+    descendants: { 'button, [role="button"]': [action, fallback] },
+  });
+  assert.deepEqual(buildElementUiSummary(panel).buttons, [
+    { label: '保存', semanticKey: 'settings.save' },
+    { label: '取消', semanticKey: 'cancel-button' },
+  ]);
+  console.log('ok - inspect exposes stable semantic keys alongside localized labels');
+}
 
 {
   const visible = makeElement({ text: 'x' });
@@ -98,7 +118,13 @@ const makeElement = ({
     { label: '世界书', active: true },
     { label: '删除', disabled: true },
   ]);
-  assert.deepEqual(summary.fields[0], { label: 'pwd', type: 'password', filled: true, sensitive: true });
+  assert.deepEqual(summary.fields[0], {
+    label: 'pwd',
+    semanticKey: 'pwd',
+    type: 'password',
+    filled: true,
+    sensitive: true,
+  });
   assert.deepEqual(summary.fields[1], { label: '世界书名称', type: 'text', filled: true, value: '测试世界书' });
   assert.deepEqual(summary.fields[2], { label: '条目内容', type: 'textarea', filled: false });
   console.log('ok - 结构化摘要输出按钮状态与字段填写情况且不泄漏敏感值');

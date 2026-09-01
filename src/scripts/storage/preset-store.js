@@ -16,6 +16,10 @@ import {
     normalizePhoneFormatPromptDepth,
     normalizePhoneFormatPromptPosition,
 } from '../utils/phone-format-prompt-placement.js';
+import {
+    canonicalizeOfficialPromptRecord,
+    localizeOfficialPromptRecord,
+} from '../i18n/prompt-locale.js';
 
 const safeInvoke = async (cmd, args) => {
     const g = typeof globalThis !== 'undefined' ? globalThis : window;
@@ -268,6 +272,28 @@ const CURRENT_PHONE_FORMAT_SKELETON = [
 ].join('\n');
 
 const DEFAULT_PHONE_FORMAT_PROMPTS = getBuiltinPhoneFormatPromptSeed();
+
+export const getCanonicalBuiltinPromptDefaults = () => ({
+    ...Object.fromEntries(Object.entries(DEFAULT_PHONE_FORMAT_PROMPTS).filter(([key]) => key.endsWith('_rules'))),
+    dialogue_rules: DEFAULT_DIALOGUE_RULES_PRIVATE_CHAT,
+    group_rules: DEFAULT_GROUP_RULES,
+    moment_rules: DEFAULT_MOMENT_RULES,
+    moment_create_rules: DEFAULT_MOMENT_CREATION_RULES,
+    moment_comment_rules: DEFAULT_MOMENT_COMMENT_RULES,
+    moment_publish_comment_rules: DEFAULT_MOMENT_PUBLISH_COMMENT_RULES,
+    summary_rules: DEFAULT_SUMMARY_RULES,
+    auto_image_prompt_rules: DEFAULT_AUTO_IMAGE_PROMPT_RULES,
+});
+
+const localizeSyspromptDefaults = preset => localizeOfficialPromptRecord(
+    preset,
+    getCanonicalBuiltinPromptDefaults(),
+);
+
+const canonicalizeSyspromptDefaults = preset => canonicalizeOfficialPromptRecord(
+    preset,
+    getCanonicalBuiltinPromptDefaults(),
+);
 
 const ensurePhoneFormatPromptFields = (preset, seed = DEFAULT_PHONE_FORMAT_PROMPTS) => {
     const p = (preset && typeof preset === 'object') ? preset : null;
@@ -1631,7 +1657,10 @@ export class PresetStore {
         const t = normalizeType(type);
         const entries = Object.entries(this.state?.presets?.[t] || {});
         entries.sort((a, b) => String(a[1]?.name || a[0]).localeCompare(String(b[1]?.name || b[0])));
-        return entries.map(([id, data]) => ({ id, ...clone(data) }));
+        return entries.map(([id, data]) => {
+            const preset = clone(data);
+            return { id, ...(t === 'sysprompt' ? localizeSyspromptDefaults(preset) : preset) };
+        });
     }
 
     getActiveId(type) {
@@ -1642,7 +1671,9 @@ export class PresetStore {
     getActive(type) {
         const t = normalizeType(type);
         const id = this.getActiveId(t);
-        return id ? clone(this.state?.presets?.[t]?.[id] || null) : null;
+        if (!id) return null;
+        const preset = clone(this.state?.presets?.[t]?.[id] || null);
+        return t === 'sysprompt' && preset ? localizeSyspromptDefaults(preset) : preset;
     }
 
     getBindings(type) {
@@ -1708,9 +1739,10 @@ export class PresetStore {
         const t = normalizeType(type);
         const resolved = this.getResolvedActiveId(t, context);
         const presetId = String(resolved?.presetId || '').trim();
+        const preset = presetId ? clone(this.state?.presets?.[t]?.[presetId] || null) : null;
         return {
             ...resolved,
-            preset: presetId ? clone(this.state?.presets?.[t]?.[presetId] || null) : null,
+            preset: t === 'sysprompt' && preset ? localizeSyspromptDefaults(preset) : preset,
         };
     }
 
@@ -1910,7 +1942,7 @@ export class PresetStore {
         const t = normalizeType(type);
         const presetId = id || genId(`preset-${t}`);
         const existing = this.state?.presets?.[t]?.[presetId] || null;
-        const next = {
+        let next = {
             ...(data || {}),
             name: String(name || data?.name || presetId),
             app_scope: normalizePresetAppScope(
@@ -1919,6 +1951,7 @@ export class PresetStore {
             ),
         };
         if (t === 'sysprompt') {
+            next = canonicalizeSyspromptDefaults(next);
             ensurePhoneFormatPromptFields(next);
             ensureAutoImagePromptFields(next);
             if (typeof next.group_rules === 'string') {

@@ -27,7 +27,8 @@ const hasImplicitContentSignal = (s) => {
     // A private chat tag can appear without <content> when models don't follow the wrapper rule.
     // Example: <我和貝法的私聊> ... </我和貝法的私聊>
     if (/<\s*[^/][^>]*的私聊\s*>/i.test(src)) return true;
-    if (/<\s*群聊\s*:/i.test(src)) return true;
+    if (/<\s*(?:private_chat|group_chat)\s*[:：]/i.test(src)) return true;
+    if (/<\s*群聊\s*[:：]/i.test(src)) return true;
     return false;
 };
 
@@ -165,12 +166,12 @@ const parsePrivateChatMessages = (innerText) => {
 
 const isGroupChatTag = (tagName) => {
     const tn = String(tagName || '').trim();
-    return /^群聊\s*[:：]/i.test(tn);
+    return /^(?:群聊|group_chat)\s*[:：]/i.test(tn);
 };
 
 const extractGroupNameFromTag = (tagName) => {
     const tn = String(tagName || '').trim();
-    const m = tn.match(/^群聊\s*[:：]\s*(.+)\s*$/i);
+    const m = tn.match(/^(?:群聊|group_chat)\s*[:：]\s*(.+)\s*$/i);
     return m ? String(m[1] || '').trim() : '';
 };
 
@@ -320,6 +321,15 @@ const extractOtherNameFromPrivateChatTag = (tagName, userName) => {
     // - "我和室友的私聊"
     // - "{{user}}和{{char}}的私聊" (after macros applied)
     const tn = String(tagName || '').trim();
+    const english = tn.match(/^private_chat\s*[:：]\s*(.+)\s*$/i);
+    if (english) {
+        const names = String(english[1] || '')
+            .split(/[|,，]/)
+            .map(name => name.trim())
+            .filter(Boolean);
+        const normalizedUser = String(userName || '').trim().toLowerCase();
+        return names.find(name => name.toLowerCase() !== normalizedUser) || names[names.length - 1] || null;
+    }
     const suffix = '的私聊';
     if (!tn.endsWith(suffix)) return null;
     const core = tn.slice(0, -suffix.length);
@@ -600,7 +610,7 @@ export class DialogueStreamParser {
             const inner = work.slice(endIdx, closeIdx);
             const afterClose = close.afterClose;
 
-            if (tagName.endsWith('的私聊')) {
+            if (tagName.endsWith('的私聊') || /^private_chat\s*[:：]/i.test(tagName)) {
                 const otherName = extractOtherNameFromPrivateChatTag(tagName, this.userName);
                 const msgs = parsePrivateChatMessages(inner);
                 if (msgs.length) {

@@ -12,6 +12,8 @@ import {
     normalizePresetAppScope,
 } from '../storage/preset-store.js';
 import { appSettings } from '../storage/app-settings.js';
+import { t, translateUiText } from '../i18n/index.js';
+import { getLocalizedPromptText } from '../i18n/prompt-locale.js';
 import { buildReasoningRequestOptions, getReasoningCapability, getReasoningSamplerPolicy, normalizeReasoningEffort } from '../api/model-capabilities.js';
 import { resolveChatStructuredThinkingPreference } from '../agent/provider-fc-transport.js';
 import { formatChatStructuredThinkingDisclosure } from './chat/chat-structured-profile-status.js';
@@ -2113,13 +2115,13 @@ export class PresetPanel {
     }
 
     getBindingSourceLabel(source, mode = 'chat') {
-        if (source === 'session') return '会话绑定';
+        if (source === 'session') return t('会话绑定');
         if (source === 'mode') {
-            if (mode === 'rp') return '创意写作默认';
-            if (mode === 'moments') return '动态任务默认';
-            return '聊天对话默认';
+            if (mode === 'rp') return t('创意写作默认');
+            if (mode === 'moments') return t('动态任务默认');
+            return t('聊天对话默认');
         }
-        return '全局默认';
+        return t('全局默认');
     }
 
     describeResolvedPreset(storeType, context = null) {
@@ -2979,7 +2981,7 @@ export class PresetPanel {
     getStoreTypeSectionsLabel(storeType) {
         return SECTIONS
             .filter((sec) => sec.storeType === storeType)
-            .map((sec) => sec.label)
+            .map((sec) => translateUiText(sec.label))
             .join(' / ');
     }
 
@@ -2997,23 +2999,25 @@ export class PresetPanel {
     getSectionBadge(sec) {
         const p = this.getActivePresetSnapshot(sec.storeType) || {};
         if (sec.id === 'openai') {
-            const t = p.temperature ?? 1;
+            const temperature = p.temperature ?? 1;
             const tp = p.top_p ?? 0.98;
             const effort = normalizeReasoningEffort(
                 p.reasoning_effort,
                 'high',
                 { allowCustom: true },
             );
-            const effortLabel = REASONING_EFFORT_LABELS[effort] || `${effort}（自定义）`;
-            const reasoning = p.request_reasoning === true ? ` · 推理 ${effortLabel}` : '';
-            return `temp ${t} · top_p ${tp}${reasoning}`;
+            const effortLabel = translateUiText(REASONING_EFFORT_LABELS[effort] || `${effort}（自定义）`);
+            const reasoning = p.request_reasoning === true
+                ? ` · ${t('推理 {effort}', { effort: effortLabel })}`
+                : '';
+            return `temp ${temperature} · top_p ${tp}${reasoning}`;
         }
         if (sec.id === 'custom') {
             const prompts = Array.isArray(p.prompts) ? p.prompts : [];
-            return `${prompts.length} 区块`;
+            return t('{count} 区块', { count: prompts.length });
         }
         if (sec.id === 'taskprompts') {
-            return '动态评论 · 格式检查（独立组装，只读）';
+            return t('动态评论 · 格式检查（独立组装，只读）');
         }
         const name = p?.name || this.store.getActive(sec.storeType)?.name;
         return name || '';
@@ -3034,7 +3038,9 @@ export class PresetPanel {
                 <div class="pp-manager-head">
                     <div style="min-width:0;">
                         <div class="pp-manager-title">预设方案</div>
-                        <div class="pp-manager-sub">当前分类：${this.getStoreTypeSectionsLabel(storeType) || sec.label}</div>
+                        <div class="pp-manager-sub">${t('当前分类：{categories}', {
+                            categories: this.getStoreTypeSectionsLabel(storeType) || translateUiText(sec.label),
+                        })}</div>
                         <div class="pp-manager-context"><strong>当前会话实际使用：</strong>${escapeHtml(effectiveText || '未启用')}</div>
                     </div>
                     <div class="pp-enabled-chip ${enabledReadonly ? 'pp-readonly' : ''}">
@@ -3050,7 +3056,7 @@ export class PresetPanel {
                         <label class="pp-manager-label" for="preset-manager-select">当前预设</label>
                         <select class="pp-manager-select" id="preset-manager-select" style="display:none;"></select>
                         <button type="button" class="world-app-select-btn" data-select-id="preset-manager-select">
-                            <span class="pp-custom-select-label">请选择</span>
+                            <span class="pp-custom-select-label" data-i18n-skip>${t('请选择')}</span>
                             <span class="world-app-select-btn-chevron">▾</span>
                         </button>
                     </div>
@@ -3245,10 +3251,12 @@ export class PresetPanel {
             : null;
         const presetId = String(preset?.id || fallbackPresetId || '').trim();
         this.bindingPresetId = presetId;
-        this.bindingTitleEl.textContent = `${this.getStoreTypeSectionsLabel(storeType) || this.getTypeLabel(sec.id)} · 使用位置`;
-        this.bindingSubtitleEl.textContent = preset?.name
+        this.bindingTitleEl.dataset.i18nSkip = '';
+        this.bindingSubtitleEl.dataset.i18nSkip = '';
+        this.bindingTitleEl.textContent = `${translateUiText(this.getStoreTypeSectionsLabel(storeType) || this.getTypeLabel(sec.id))} · ${translateUiText('使用位置')}`;
+        this.bindingSubtitleEl.textContent = translateUiText(preset?.name
             ? `查看「${preset.name}」的既有绑定；新的聊天绑定请在会话配置中建立。`
-            : '查看当前预设的既有绑定；新的聊天绑定请在会话配置中建立。';
+            : '查看当前预设的既有绑定；新的聊天绑定请在会话配置中建立。');
         this.bindingEditorEl.innerHTML = '';
         this.renderBindingEditor({
             storeType,
@@ -3385,13 +3393,15 @@ export class PresetPanel {
             const main = document.createElement('div');
             const titleEl = document.createElement('div');
             titleEl.className = 'pp-binding-card-title';
-            titleEl.textContent = title || '';
+            titleEl.dataset.i18nSkip = '';
+            titleEl.textContent = translateUiText(title || '');
             main.appendChild(titleEl);
 
             if (subtitle) {
                 const subEl = document.createElement('div');
                 subEl.className = 'pp-binding-card-sub';
-                subEl.textContent = subtitle;
+                subEl.dataset.i18nSkip = '';
+                subEl.textContent = translateUiText(subtitle);
                 main.appendChild(subEl);
             }
             head.appendChild(main);
@@ -3399,7 +3409,8 @@ export class PresetPanel {
             if (chip) {
                 const chipEl = document.createElement('div');
                 chipEl.className = 'pp-binding-chip';
-                chipEl.textContent = chip;
+                chipEl.dataset.i18nSkip = '';
+                chipEl.textContent = translateUiText(chip);
                 head.appendChild(chipEl);
             }
 
@@ -3412,7 +3423,8 @@ export class PresetPanel {
                     const btn = document.createElement('button');
                     btn.type = 'button';
                     btn.className = `pp-binding-btn ${cfg.tone ? `is-${cfg.tone}` : ''}`.trim();
-                    btn.textContent = cfg.label || '';
+                    btn.dataset.i18nSkip = '';
+                    btn.textContent = translateUiText(cfg.label || '');
                     btn.disabled = cfg.disabled === true;
                     if (typeof cfg.onClick === 'function') {
                         btn.addEventListener('click', cfg.onClick);
@@ -3503,12 +3515,14 @@ export class PresetPanel {
             card.className = 'pp-binding-card';
             const head = document.createElement('div');
             head.className = 'pp-binding-card-head';
+            const sessionSummary = boundItems.length
+                ? translateUiText(`已绑定 ${boundItems.length} 个会话：${boundItems.map((i) => i.name).join('、')}`)
+                : translateUiText('暂无会话绑定此预设');
+            head.dataset.i18nSkip = '';
             head.innerHTML = `
                 <div>
-                    <div class="pp-binding-card-title">${escapeHtml(title)}</div>
-                    <div class="pp-binding-card-sub">${boundItems.length
-                        ? `已绑定 ${boundItems.length} 个会话：${escapeHtml(boundItems.map((i) => i.name).join('、'))}`
-                        : '暂无会话绑定此预设'}</div>
+                    <div class="pp-binding-card-title">${escapeHtml(translateUiText(title))}</div>
+                    <div class="pp-binding-card-sub">${escapeHtml(sessionSummary)}</div>
                 </div>
             `;
             card.appendChild(head);
@@ -4620,8 +4634,8 @@ export class PresetPanel {
                 <div class="pp-block-left">
                     <div class="pp-block-drag" aria-label="按住拖动排序">&#9776;</div>
                     <div style="min-width:0;">
-                        <div class="pp-block-title">${escapeHtml(title)}</div>
-                        <div class="pp-block-sub">${isMarker ? 'marker（自动填充）' : `role: ${roleName}`}</div>
+                        <div class="pp-block-title" data-i18n-skip>${escapeHtml(translateUiText(title))}</div>
+                        <div class="pp-block-sub" data-i18n-skip>${escapeHtml(translateUiText(isMarker ? 'marker（自动填充）' : `role: ${roleName}`))}</div>
                     </div>
                 </div>
             `;
@@ -4820,7 +4834,10 @@ export class PresetPanel {
         const isMarker = card.dataset.marker === 'true';
         const cardTitleEl = card.querySelector('.pp-block-title');
         const cardSubEl = card.querySelector('.pp-block-sub');
-        if (this.blockTitleEl) this.blockTitleEl.textContent = cardTitleEl?.textContent || identifier;
+        if (this.blockTitleEl) {
+            this.blockTitleEl.dataset.i18nSkip = '';
+            this.blockTitleEl.textContent = translateUiText(cardTitleEl?.textContent || identifier);
+        }
         if (this.blockSubtitleEl) {
             const cards = this.getBlockCards();
             const pos = cards.indexOf(card);
@@ -5047,16 +5064,7 @@ export class PresetPanel {
         list.appendChild(mkCard({
             title: '格式检查提示词（固定）',
             chips: [{ label: '独立管线', tone: 'scope' }],
-            body: [
-                '固定检查指令：只修复标签、顺序、闭合、缺失字段和时间等格式问题；不改写剧情或正文语义。',
-                '',
-                '运行时按触发目标选择最小格式规则：',
-                '- 私聊：QQ聊天格式 + 私聊格式',
-                '- 群聊：QQ聊天格式 + 群聊格式',
-                '- 动态：动态发布或动态评论格式',
-                '- 生图 / 记忆表格：只使用对应标签格式',
-                '- 创意写作：默认不注入聊天格式',
-            ].join('\n'),
+            body: getLocalizedPromptText('format_repair.fixed_preview'),
             foot: '格式检查不经过预设组装：自建 system+user 两条消息、要求 JSON 输出；与自定义提示词区块和注入选择条无关。',
         }));
         wrap.appendChild(list);
@@ -5464,12 +5472,12 @@ export class PresetPanel {
             const { presetId, preset, sysp } = this.getInjectSyspromptResolved();
             const cfg = readInjectItemConfig(sysp, cardId) || {};
             if (this.blockTitleEl) {
-                this.blockTitleEl.textContent = {
+                this.blockTitleEl.textContent = translateUiText({
                     dialogue: '私聊格式提示词',
                     group: '群聊格式提示词',
                     image: '自动生图提示词',
                     moment: '动态发布决策提示词',
-                }[cardId] || item.label;
+                }[cardId] || item.label);
             }
             if (this.blockSubtitleEl) this.blockSubtitleEl.textContent = '系统注入 · 随右下角保存生效';
             host.appendChild(note('该提示词按位置/深度锚定注入，不参与区块拖拽排序；与 Agent Center 内对应编辑器为同一份数据。'));
@@ -5509,7 +5517,7 @@ export class PresetPanel {
     renderMemoryInjectEditor(host, cardId, helpers) {
         const { mkSelect, mkNumber, mkRow, registerSave, note, mkLabel } = helpers;
         const isGuide = cardId === 'memory_guide';
-        if (this.blockTitleEl) this.blockTitleEl.textContent = isGuide ? '记忆表格 · 写表指导' : '记忆表格 · 表格记忆';
+        if (this.blockTitleEl) this.blockTitleEl.textContent = translateUiText(isGuide ? '记忆表格 · 写表指导' : '记忆表格 · 表格记忆');
         if (this.blockSubtitleEl) this.blockSubtitleEl.textContent = '系统注入 · 随右下角保存生效';
         const actions = this.getInjectActions();
         const { presetId, preset } = this.getInjectOpenAIResolved();

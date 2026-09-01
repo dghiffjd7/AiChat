@@ -1,3 +1,9 @@
+import {
+  formatDateTime as formatLocalizedDateTime,
+  formatNumber,
+  translateUiText,
+} from '../../i18n/index.js';
+
 const escapeHtml = (value) => String(value ?? '')
   .replace(/&/g, '&amp;')
   .replace(/</g, '&lt;')
@@ -51,7 +57,7 @@ const toFiniteNumber = (value) => {
 
 const formatInt = (value) => {
   const next = toFiniteNumber(value);
-  return next === null ? '—' : Math.max(0, Math.trunc(next)).toLocaleString('zh-CN');
+  return next === null ? '—' : formatNumber(Math.max(0, Math.trunc(next)));
 };
 
 const formatDuration = (value) => {
@@ -220,16 +226,18 @@ export const buildPromptOverviewView = (request = null, {
     ? contractSummary.fixedOrder.map(String).filter(Boolean)
     : [];
   const contractSummaryRows = [
-    contractTarget ? ['冻结目标', contractTarget] : null,
-    contractMembers ? ['冻结群成员', contractMembers] : null,
-    contractMomentAuthors ? ['动态作者候选', contractMomentAuthors] : null,
-    contractPrivateTargets ? ['可选私聊目标', contractPrivateTargets] : null,
-    contractGroupTargets ? ['可选群聊目标', contractGroupTargets] : null,
+    contractTarget ? ['冻结目标', contractTarget, true] : null,
+    contractMembers ? ['冻结群成员', contractMembers, true] : null,
+    contractMomentAuthors ? ['动态作者候选', contractMomentAuthors, true] : null,
+    contractPrivateTargets ? ['可选私聊目标', contractPrivateTargets, true] : null,
+    contractGroupTargets ? ['可选群聊目标', contractGroupTargets, true] : null,
     contractItemTypes.length ? ['允许消息类型', contractItemTypes.join('、')] : null,
-    contractStickers.length ? ['贴图白名单', contractStickers.join('、')] : null,
+    contractStickers.length ? ['贴图白名单', contractStickers.join('、'), true] : null,
     contractTables.length
       ? ['可写表与行', contractTables.map(table => (
           `${String(table.name || table.id || '未命名表')}（${Array.isArray(table.rowIds) ? table.rowIds.length : 0} 行）`
+        )).join('、'), false, contractTables.map(table => (
+          `<span data-i18n-skip>${escapeHtml(String(table.name || table.id || '未命名表'))}</span><span>（${Array.isArray(table.rowIds) ? table.rowIds.length : 0} 行）</span>`
         )).join('、')]
       : null,
     contractOrder.length ? ['固定顺序', contractOrder.join(' → ')] : null,
@@ -284,7 +292,15 @@ export const buildPromptOverviewView = (request = null, {
     || String(transport.fallbackReason || '').trim()
   );
   const at = req.at
-    ? new Date(req.at).toLocaleString('zh-CN', { hour12: false })
+    ? formatLocalizedDateTime(req.at, {
+        year: 'numeric',
+        month: 'numeric',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: false,
+      })
     : '—';
   const estimatedInput = toFiniteNumber(audit.totalEstimateTokens ?? audit.usedTokens);
   const inputBudget = toFiniteNumber(audit.inputBudgetTokens);
@@ -305,6 +321,7 @@ export const buildPromptOverviewView = (request = null, {
     ? `${tokensPerSecond.toFixed(1)} tok/s`
     : '—';
   const fingerprint = String(diagnostics.systemFingerprint || '').trim();
+  const providerUnavailable = translateUiText('供应方未返回');
   const responseIdentities = [
     ['system fingerprint', fingerprint],
     ['model version', diagnostics.modelVersion],
@@ -410,13 +427,13 @@ export const buildPromptOverviewView = (request = null, {
         <p>这里仅展示注入构成、请求配置与响应诊断；完整消息正文只在“完整 Prompt”分页出现。</p>
         <details class="prompt-overview-route${routeWarning ? ' is-warning' : ''}"${routeWarning ? ' open' : ''}>
           <summary>
-            <strong>${escapeHtml(routeStateLabel)} · ${escapeHtml(routeLayerLabel)}</strong>
+            <strong><span>${escapeHtml(routeStateLabel)}</span> · <span>${escapeHtml(routeLayerLabel)}</span></strong>
             <span>${escapeHtml(req.provider || '未配置')} · ${escapeHtml(req.model || '未配置')}</span>
           </summary>
           <div>
             ${routeOptionFacts.length
               ? routeOptionFacts.map(item => `<code>${escapeHtml(item)}</code>`).join('')
-              : '<code>本轮没有改变行为的结构化请求参数</code>'}
+              : `<code>${escapeHtml(translateUiText('本轮没有改变行为的结构化请求参数'))}</code>`}
             ${transportReason ? `<p>${escapeHtml(transportReason)}</p>` : ''}
             ${routeLayer === 'json_after_fc_circuit' ? '<p>FC 熔断后降级；JSON 使用独立健康状态。</p>' : ''}
           </div>
@@ -488,7 +505,7 @@ export const buildPromptOverviewView = (request = null, {
               <p>目标身份由运行时冻结；本轮只接受唯一终态调用，并在完整领域校验后一次提交。</p>
               ${contractSummaryRows.length ? `
                 <dl class="prompt-overview-contract-summary">
-                  ${contractSummaryRows.map(([label, value]) => `<div><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value)}</dd></div>`).join('')}
+                  ${contractSummaryRows.map(([label, value, userData, valueHtml]) => `<div><dt>${escapeHtml(label)}</dt><dd${userData ? ' data-i18n-skip' : ''}>${valueHtml || escapeHtml(value)}</dd></div>`).join('')}
                 </dl>
               ` : ''}
               <details class="prompt-overview-schema">
@@ -519,7 +536,7 @@ export const buildPromptOverviewView = (request = null, {
           ${diagnostics.finishReason ? `<b>finish · ${escapeHtml(diagnostics.finishReason)}</b>` : ''}
         </header>
         <div class="prompt-overview-metrics">${metrics.map(renderMetricCard).join('')}</div>
-        ${(responseIdentities.length ? responseIdentities : [['system fingerprint', '供应方未返回']]).map(([label, value]) => `
+        ${(responseIdentities.length ? responseIdentities : [['system fingerprint', providerUnavailable]]).map(([label, value]) => `
           <div class="prompt-overview-fingerprint">
             <span>${escapeHtml(label)}</span>
             <code title="${escapeHtml(value)}">${escapeHtml(value)}</code>
@@ -584,7 +601,7 @@ export const buildPromptOverviewView = (request = null, {
     `first token latency: ${firstTokenValue}`,
     `output speed: ${tpsValue}`,
     `completion tokens: ${formatInt(diagnostics.completionTokens)}`,
-    `system fingerprint: ${fingerprint || '供应方未返回'}`,
+    `system fingerprint: ${fingerprint || providerUnavailable}`,
     diagnostics.modelVersion ? `model version: ${String(diagnostics.modelVersion)}` : '',
     diagnostics.responseId ? `response id: ${String(diagnostics.responseId)}` : '',
     diagnostics.responseModel ? `response model: ${String(diagnostics.responseModel)}` : '',
@@ -706,7 +723,7 @@ export const buildFullPromptDocument = (request = null, { fallbackText = '' } = 
         <div class="prompt-document-line is-transport-contract" style="--prompt-line-index:${index}">
           <span class="prompt-document-line-number" data-prompt-line-number="${lineNumber}">${lineNumber}</span>
           <details class="prompt-document-contract">
-            <summary><strong>JSON 输出合同</strong><small>传输层 · 展开查看实际发送内容</small></summary>
+            <summary><strong>${escapeHtml(translateUiText('JSON 输出合同'))}</strong><small>${escapeHtml(translateUiText('传输层 · 展开查看实际发送内容'))}</small></summary>
             <pre><code>${escapeHtml(row.text)}</code></pre>
           </details>
         </div>
@@ -717,7 +734,7 @@ export const buildFullPromptDocument = (request = null, { fallbackText = '' } = 
         <div class="prompt-document-line is-global-prompt" style="--prompt-line-index:${index}">
           <span class="prompt-document-line-number" data-prompt-line-number="${lineNumber}">${lineNumber}</span>
           <details class="prompt-document-contract" open>
-            <summary><strong>全局提示词</strong><small>${escapeHtml(row.name)}${row.anchor ? ` · ${escapeHtml(row.anchor)}` : ''}</small></summary>
+            <summary><strong>${escapeHtml(translateUiText('全局提示词'))}</strong><small>${escapeHtml(row.name)}${row.anchor ? ` · ${escapeHtml(row.anchor)}` : ''}</small></summary>
             <pre><code>${escapeHtml(row.text)}</code></pre>
           </details>
         </div>
@@ -727,7 +744,7 @@ export const buildFullPromptDocument = (request = null, { fallbackText = '' } = 
       return `
         <div class="prompt-document-line is-global-prompt-marker" style="--prompt-line-index:${index}">
           <span class="prompt-document-line-number" data-prompt-line-number="${lineNumber}">${lineNumber}</span>
-          <strong>全局提示词</strong><small>${escapeHtml(row.text)}</small>
+          <strong>${escapeHtml(translateUiText('全局提示词'))}</strong><small>${escapeHtml(row.text)}</small>
         </div>
       `;
     }
@@ -772,7 +789,7 @@ export const buildFullPromptDocument = (request = null, { fallbackText = '' } = 
           <span>readonly</span>
         </div>
         <div class="prompt-document-scroll">
-          <div class="prompt-document-lines">${lineRows || '<div class="prompt-overview-empty">暂无 Prompt 内容</div>'}</div>
+          <div class="prompt-document-lines">${lineRows || `<div class="prompt-overview-empty">${escapeHtml(translateUiText('暂无 Prompt 内容'))}</div>`}</div>
         </div>
       </div>
       <footer class="prompt-document-end"><span></span>END OF PROMPT<span></span></footer>

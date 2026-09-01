@@ -8,6 +8,8 @@
 import { logger } from '../utils/logger.js';
 import { safeInvoke } from '../utils/tauri.js';
 import { parseNameBadge } from '../utils/name-badges.js';
+import { getCurrentLocale } from '../i18n/index.js';
+import { localizeBundledCharacterLibrary } from '../i18n/builtin-character-locale.js';
 import { makeScopedKey, normalizeScopeId } from './store-scope.js';
 
 const LIBRARY_URL = './assets/data/characters.json';
@@ -176,7 +178,8 @@ export class CharacterLibraryStore {
   }
 
   _setLibrary(data) {
-    this.library = data || { version: '0.0.0', fixedTags: [], characters: [] };
+    const source = data || { version: '0.0.0', fixedTags: [], characters: [] };
+    this.library = localizeBundledCharacterLibrary(source, getCurrentLocale());
     this.characters = safeArray(this.library.characters);
     this._rebuildIndexes();
   }
@@ -455,7 +458,10 @@ export class CharacterLibraryStore {
     const sourceAliases = safeArray(character.sourceAliases).map(normalizeText);
     if (sourceAliases.some((a) => a.includes(q))) score += 52;
 
-    const tags = safeArray(character.tags).map(normalizeText);
+    const tags = [
+      ...safeArray(character.tags),
+      ...safeArray(character.originalTags),
+    ].map(normalizeText);
     if (tags.some((t) => t.includes(q))) score += 34;
 
     // Small boost for badges (括号) so variants are easier to find

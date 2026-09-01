@@ -1,6 +1,7 @@
 import {
   buildElementUiSummary,
   isReadableElementVisible,
+  readElementSemanticKey,
 } from './agent-ui-inspect-utils.js';
 
 const normalizeText = value => String(value || '').replace(/\s+/g, ' ').trim();
@@ -112,6 +113,7 @@ export const createAgentUiClickRuntime = ({
             panelElement,
             panelId,
             label: readNodeLabel(node),
+            semanticKey: readElementSemanticKey(node),
             inspectRevision: revision,
             userInteractionRevision,
           }),
@@ -147,6 +149,7 @@ export const createAgentUiClickRuntime = ({
       ok: true,
       ref: wantedRef,
       label: record.label,
+      ...(record.semanticKey ? { semanticKey: record.semanticKey } : {}),
       panel: record.panelId,
       inspectRevision: record.inspectRevision,
     };

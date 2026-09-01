@@ -24,9 +24,9 @@ test('OpenRouterProvider uses OpenRouter defaults and attribution headers', () =
   const headers = provider.getHeaders();
   assert.equal(headers.Authorization, 'Bearer or-key');
   assert.equal(headers['Content-Type'], 'application/json');
-  assert.equal(headers['HTTP-Referer'], 'https://tauri-chat-app.local');
-  assert.equal(headers['X-OpenRouter-Title'], 'Tauri Chat App');
-  assert.equal(headers['X-Title'], 'Tauri Chat App');
+  assert.equal(headers['HTTP-Referer'], 'https://github.com/dghiffjd7/OmniTavern');
+  assert.equal(headers['X-OpenRouter-Title'], 'OmniTavern');
+  assert.equal(headers['X-Title'], 'OmniTavern');
 });
 
 test('OpenRouterProvider honors custom attribution config', () => {

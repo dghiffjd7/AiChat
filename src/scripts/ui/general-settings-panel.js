@@ -1,4 +1,6 @@
 import { appSettings } from '../storage/app-settings.js';
+import { LANGUAGE_OPTIONS } from '../i18n/first-run-language.js';
+import { localizeDomSubtree, t } from '../i18n/index.js';
 import { ConfigManager } from '../storage/config.js';
 import { pickSavePath } from '../utils/save-dialog.js';
 import { safeInvoke } from '../utils/tauri.js';
@@ -144,6 +146,9 @@ export class GeneralSettingsPanel {
     this.element = null;
     this.overlayElement = null;
     this.modalElement = null;
+    this.languageSelect = null;
+    this.languageButton = null;
+    this.languageStatus = null;
     this.themePresetSelect = null;
     this.themePresetButton = null;
     this.themeAdvancedToggle = null;
@@ -263,6 +268,7 @@ export class GeneralSettingsPanel {
       openSession: null,
       openMemoryTemplates: null,
       openConfig: null,
+      restartApp: null,
       importExperiencePackFile: null,
       importCustomBundleFile: null,
       exportCustomBundle: null,
@@ -281,6 +287,8 @@ export class GeneralSettingsPanel {
       typeof actions.openMemoryTemplates === 'function' ? actions.openMemoryTemplates : null;
     this.externalActions.openConfig =
       typeof actions.openConfig === 'function' ? actions.openConfig : null;
+    this.externalActions.restartApp =
+      typeof actions.restartApp === 'function' ? actions.restartApp : null;
     this.externalActions.importExperiencePackFile =
       typeof actions.importExperiencePackFile === 'function' ? actions.importExperiencePackFile : null;
     this.externalActions.importCustomBundleFile =
@@ -321,6 +329,14 @@ export class GeneralSettingsPanel {
       this.createUI();
     }
     const settings = appSettings.get();
+    if (this.languageSelect) {
+      this.languageSelect.value = String(settings.locale || 'system');
+      if (!Array.from(this.languageSelect.options || []).some(option => option.value === this.languageSelect.value)) {
+        this.languageSelect.value = 'system';
+      }
+    }
+    this.refreshThemeSelectButton(this.languageButton, this.languageSelect, t('选择语言'));
+    if (this.languageStatus) this.languageStatus.textContent = t('更改语言后需要重启应用。');
     if (this.debugToggle) {
       this.debugToggle.checked = Boolean(settings.showDebugToggle);
     }
@@ -627,9 +643,15 @@ export class GeneralSettingsPanel {
 
   refreshThemePresetOptions() {
     if (!this.themePresetSelect) return;
+    const localizeBuiltinThemeName = (item) => {
+      if (item.id === 'classic-light') return t('经典白');
+      if (item.id === 'classic-dark') return t('经典黑');
+      if (item.id === 'paper-ink') return t('纸墨 Paper Ink');
+      return item.name;
+    };
     const list = themeStore.listThemes().map((item) => ({
       value: item.id,
-      label: `${item.name}${themeStore.isBuiltin(item.id) ? ' · 内建' : ''}`,
+      label: `${themeStore.isBuiltin(item.id) ? localizeBuiltinThemeName(item) : item.name}${themeStore.isBuiltin(item.id) ? ` · ${t('内建')}` : ''}`,
     }));
     this.populateThemeSelect(this.themePresetSelect, list, this.themePresetSelect.value || appSettings.get().uiThemePresetId);
   }
@@ -1713,7 +1735,7 @@ export class GeneralSettingsPanel {
       : '';
     return `
       <button type="button" id="${id}" class="general-settings-fold-btn" data-expanded="0" aria-expanded="false"${guideAttr}>
-        <span class="general-settings-fold-btn-label">${label}</span>
+        <span class="general-settings-fold-btn-label">${t(label)}</span>
         <svg viewBox="0 0 24 24" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>
       </button>
     `.trim();
@@ -1803,6 +1825,31 @@ export class GeneralSettingsPanel {
         <div class="general-settings-subtitle">外观、图片、记忆、脚本等设定。</div>
 
         <div class="general-settings-cards">
+        <div class="general-settings-card" data-maid-action-key="general-settings.language">
+          <div class="general-settings-card-head">
+            <div>
+              <div class="general-settings-card-title has-help" data-help="选择界面语言；更改后需要重启应用。">语言与地区</div>
+            </div>
+          </div>
+          <div class="general-settings-setting-list">
+            ${this.renderInputRow({
+              title: '界面语言',
+              description: '首次启动时选择的语言，也可以在这里更改。',
+              icon: 'sliders',
+              control: `
+                <select id="general-language-select" class="general-settings-select" style="display:none;">
+                  ${LANGUAGE_OPTIONS.map(option => `<option value="${option.value}">${option.label}</option>`).join('')}
+                </select>
+                <button type="button" id="general-language-btn" class="world-app-select-btn" style="margin-top:0;">
+                  <span class="general-settings-custom-select-label">选择语言</span>
+                  <span class="world-app-select-btn-chevron">▾</span>
+                </button>
+                <div id="general-language-status" class="general-settings-inline-hint">更改语言后需要重启应用。</div>
+              `,
+            })}
+          </div>
+        </div>
+
         <div class="general-settings-card">
           <div class="general-settings-card-head">
             <div>
@@ -2486,6 +2533,9 @@ export class GeneralSettingsPanel {
     `;
     this.element.onclick = (e) => e.stopPropagation();
     this.modalElement = this.element.querySelector('.general-settings-modal');
+    this.languageSelect = this.element.querySelector('#general-language-select');
+    this.languageButton = this.element.querySelector('#general-language-btn');
+    this.languageStatus = this.element.querySelector('#general-language-status');
 
     this.themePresetSelect = this.element.querySelector('#general-theme-preset-select');
     this.themePresetButton = this.element.querySelector('#general-theme-preset-btn');
@@ -2853,6 +2903,39 @@ export class GeneralSettingsPanel {
       const enabled = Boolean(e?.target?.checked);
       appSettings.update({ debugExecutionLogs: enabled });
     });
+    this.languageButton?.addEventListener('click', () => {
+      this.openThemeSelectMenu(this.languageButton, this.languageSelect, t('选择语言'));
+    });
+    this.languageSelect?.addEventListener('change', async (e) => {
+      const value = String(e?.target?.value || 'system');
+      const allowed = new Set(LANGUAGE_OPTIONS.map(option => option.value));
+      const locale = allowed.has(value) ? value : 'system';
+      const previous = String(appSettings.get().locale || 'system');
+      if (e?.target) e.target.value = locale;
+      this.refreshThemeSelectButton(this.languageButton, this.languageSelect, t('选择语言'));
+      if (locale === previous) return;
+      appSettings.update({ locale, languageSetupCompleted: true });
+      if (this.languageStatus) this.languageStatus.textContent = t('语言设置已保存，等待重启。');
+      window.dispatchEvent(new CustomEvent('app-settings-changed', {
+        detail: { key: 'locale', value: locale },
+      }));
+      const restartNow = await appConfirm({
+        title: t('重启应用以切换语言'),
+        message: t('语言设置已保存。重启应用后，所有界面会使用新语言。'),
+        confirmText: t('立即重启'),
+        cancelText: t('稍后'),
+      });
+      if (!restartNow) return;
+      if (this.languageStatus) this.languageStatus.textContent = t('正在重启应用…');
+      const result = await this.externalActions.restartApp?.();
+      if (result?.ok) return;
+      const manual = result?.reason === 'manual_restart_required';
+      const message = manual
+        ? t('请关闭并重新打开应用以完成语言切换。')
+        : t('无法自动重启，请手动关闭并重新打开应用。');
+      if (this.languageStatus) this.languageStatus.textContent = message;
+      window.toastr?.info?.(message);
+    });
     this.typingDotsToggle?.addEventListener('change', (e) => {
       const enabled = Boolean(e?.target?.checked);
       const settings = appSettings.update({ typingDotsEnabled: enabled });
@@ -3190,7 +3273,7 @@ export class GeneralSettingsPanel {
       const now = new Date();
       const pad = (value) => String(value).padStart(2, '0');
       const ts = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}_${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
-      return `chatapp_backup_${ts}.zip`;
+      return `omnitavern_backup_${ts}.zip`;
     };
 
     const pickBundleExportPath = async () =>
@@ -3517,5 +3600,6 @@ export class GeneralSettingsPanel {
 
     document.body.appendChild(this.overlayElement);
     document.body.appendChild(this.element);
+    localizeDomSubtree(this.element);
   }
 }

@@ -1,16 +1,16 @@
 [package]
-name = "tauri-chat-app"
-version = "0.7.1-diagnose-1"
+name = "omnitavern"
+version = "0.7.2-diagnose-3"
 description = "A cross-platform chat application"
 authors = ["you"]
 edition = "2021"
 
 [lib]
-name = "tauri_chat_app_lib"
+name = "omnitavern_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [[bin]]
-name = "tauri-chat-app"
+name = "omnitavern"
 path = "src/main.rs"
 
 [build-dependencies]

@@ -5,6 +5,8 @@
 
 import { CharacterLibraryStore } from '../storage/character-library-store.js';
 import { ContactsStore } from '../storage/contacts-store.js';
+import { getCurrentLocale } from '../i18n/index.js';
+import { buildBuiltinCharacterWorldbookCopy } from '../i18n/builtin-character-locale.js';
 import { makeScopedKey, normalizeScopeId } from '../storage/store-scope.js';
 import { avatarDataUrlFromFile } from '../utils/image.js';
 import { FEATHER_DEFAULT, resolveLineAvatar } from '../utils/line-avatar.js';
@@ -389,9 +391,10 @@ export class SessionPanel {
         const currentTag =
           id === currentId ? `<span style="color:#059669; font-size:11px; margin-left:6px;">当前</span>` : '';
         const displayNameHtml = this.renderNameHtml(id, c);
-        name.innerHTML = `${displayNameHtml}${unreadBadge}${badge}${currentTag}`;
+        name.innerHTML = `<span data-i18n-skip>${displayNameHtml}</span>${unreadBadge}${badge}${currentTag}`;
         const meta = document.createElement('div');
         meta.className = 'sticker-bind-meta';
+        meta.setAttribute('data-i18n-skip', '');
         meta.textContent = `${snippet}${time ? ` · ${time}` : ''}`;
         info.appendChild(name);
         info.appendChild(meta);
@@ -642,7 +645,7 @@ export class SessionPanel {
     const name = document.createElement('div');
     name.className = 'sticker-bind-name';
     const isGroup = Boolean(contact.isGroup) || id.startsWith('group:');
-    name.innerHTML = this.renderNameHtml(id, contact);
+    name.innerHTML = `<span data-i18n-skip>${this.renderNameHtml(id, contact)}</span>`;
     const meta = document.createElement('div');
     meta.className = 'sticker-bind-meta';
     meta.textContent = item.alreadyAdded ? '已在当前联系人' : '点击添加到当前用户';
@@ -1010,6 +1013,7 @@ export class SessionPanel {
 
     const nameEl = document.createElement('div');
     nameEl.className = 'sticker-bind-name session-recommend-name';
+    nameEl.setAttribute('data-i18n-skip', '');
     const autoBadges = getAutoBadgeFromName(name);
     nameEl.innerHTML = buildNameWithBadgesHtml(name, autoBadges);
     info.appendChild(nameEl);
@@ -1018,6 +1022,7 @@ export class SessionPanel {
     if (metaText) {
       const meta = document.createElement('div');
       meta.className = 'session-recommend-meta';
+      meta.setAttribute('data-i18n-skip', '');
       meta.textContent = metaText;
       info.appendChild(meta);
     }
@@ -1031,6 +1036,7 @@ export class SessionPanel {
       tagList.forEach(tag => {
         const chip = document.createElement('span');
         chip.className = 'session-recommend-row-tag';
+        chip.setAttribute('data-i18n-skip', '');
         chip.textContent = tag;
         chips.appendChild(chip);
       });
@@ -1171,9 +1177,9 @@ export class SessionPanel {
       logger.debug('检查同名世界书失败（忽略）', err);
     }
 
-    const baseName = String(character?.baseName || character?.name || worldId).trim() || worldId;
-    const source = String(character?.source || '').trim() || '未知作品';
-    const content = `你是来自“${source}”的${baseName}。`;
+    const localizedCopy = buildBuiltinCharacterWorldbookCopy(character, getCurrentLocale());
+    const baseName = localizedCopy.name || worldId;
+    const content = localizedCopy.content;
     const entry = {
       id: baseName,
       comment: baseName,

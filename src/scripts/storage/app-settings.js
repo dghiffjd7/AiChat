@@ -35,6 +35,8 @@ const inferChatColorMode = (input = {}, fallback = 'theme') => {
 };
 
 const defaults = {
+  locale: 'system',
+  languageSetupCompleted: false,
   showDebugToggle: false,
   debugExecutionLogs: false,
   typingDotsEnabled: true,
@@ -154,6 +156,7 @@ const defaults = {
 // localStorage 仅作同步读缓存。会话内以内存态为准，跨启动由 hydrate 以 __updatedAt 裁决新旧。
 let memorySettings = null;
 let kvChannel = null;
+let persistenceMeta = { hasPersistedSettings: false, source: 'none' };
 
 const readLocalSettings = () => {
   try {
@@ -174,6 +177,7 @@ const readSettings = () => {
 const writeSettings = (next) => {
   const stamped = { ...next, __updatedAt: Date.now() };
   memorySettings = stamped;
+  persistenceMeta = { hasPersistedSettings: true, source: 'memory' };
   try {
     localStorage.setItem(SETTINGS_KEY, JSON.stringify(stamped));
   } catch {}
@@ -184,6 +188,15 @@ const writeSettings = (next) => {
 
 const migrateSettings = (settings = {}) => {
   const next = { ...(settings || {}) };
+  const localeRaw = String(next.locale || '').trim().toLowerCase();
+  next.locale = localeRaw === 'zh-cn'
+    ? 'zh-CN'
+    : localeRaw === 'zh-tw'
+      ? 'zh-TW'
+      : localeRaw === 'en'
+        ? 'en'
+        : 'system';
+  next.languageSetupCompleted = next.languageSetupCompleted === true;
   if (next.memoryUpdateContextRounds == null && next.memoryUpdateContextCount != null) {
     const raw = Math.trunc(Number(next.memoryUpdateContextCount));
     const safe = Number.isFinite(raw) ? Math.max(0, raw) : defaults.memoryUpdateContextRounds;
@@ -361,18 +374,28 @@ export const appSettings = {
   // boot 早期调用：注入 kv 通道并用较新的一侧（__updatedAt）作为权威。
   async hydrate({ loadKv = null, saveKv = null } = {}) {
     kvChannel = { load: loadKv, save: saveKv };
+    const localData = readLocalSettings();
+    const hasLocalData = Object.keys(localData).length > 0;
+    persistenceMeta = {
+      hasPersistedSettings: hasLocalData,
+      source: hasLocalData ? 'local' : 'none',
+    };
     if (typeof loadKv !== 'function') return this.get();
     try {
       const kvRaw = await loadKv(SETTINGS_KEY);
       const kvData = kvRaw && typeof kvRaw === 'object' && !kvRaw._tooLarge ? kvRaw : null;
       if (kvData && Object.keys(kvData).length) {
-        const localData = readLocalSettings();
         memorySettings = Number(kvData.__updatedAt || 0) >= Number(localData.__updatedAt || 0)
           ? kvData
           : localData;
+        const source = memorySettings === kvData ? 'kv' : 'local';
+        persistenceMeta = { hasPersistedSettings: true, source };
       }
     } catch {}
     return this.get();
+  },
+  getPersistenceMeta() {
+    return { ...persistenceMeta };
   },
   get() {
     const { __updatedAt: _stamp, ...settings } = { ...defaults, ...migrateSettings(readSettings()) };

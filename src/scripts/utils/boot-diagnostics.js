@@ -73,7 +73,7 @@ export const buildBootDiagReport = (diag = {}, { userAgent = '', version = '', a
     .map(item => `[${(Number(item.at) / 1000).toFixed(1)}s] ${item.message}`)
     .join('\n') || '(无)';
   return [
-    `ChatApp 启动诊断${version ? ` v${version}` : ''}`,
+    `OmniTavern 启动诊断${version ? ` v${version}` : ''}`,
     `耗时: ${elapsed}s | 主模块: ${diag.moduleLoaded ? '已加载' : '未加载'} | 运行时就绪: ${diag.runtimeReady ? '是' : '否'}`,
     `阶段: ${phases}`,
     `原生调用: ok=${invoke.ok || 0} timeout=${invoke.timeout || 0} error=${invoke.error || 0}`

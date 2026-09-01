@@ -215,6 +215,9 @@ const agentCenterPanelSource = await readFile(
   assert.match(floatingHtml, /固定检查指令/);
   assert.match(floatingHtml, /自动触发/);
   assert.match(floatingHtml, /value="profile:profile-a" selected/);
+  assert.match(floatingHtml, /agent-center-model-override-label">模型覆盖/);
+  assert.match(floatingHtml, /agent-center-agent-badge">✓</);
+  assert.match(agentCenterPanelSource, /grid-template-columns: 104px minmax\(0, 1fr\)/);
   console.log('ok - agent center panel renders available agent feature cards');
 }
 
@@ -292,6 +295,32 @@ const agentCenterPanelSource = await readFile(
     '手机版整行按钮规则不应吞到模型输入内部的下拉箭头',
   );
   console.log('ok - floating agent model sub-controls stay in the full-width settings column');
+}
+
+{
+  const panel = new AgentCenterPanel();
+  const html = panel.renderAgentEnabledSetting({
+    id: 'reply_check',
+    title: '检查回复格式',
+    enabled: true,
+    implemented: true,
+    category: 'core',
+  });
+  assert.match(html, /agent-center-setting-row is-status/);
+  assert.match(
+    agentCenterPanelSource,
+    /\.agent-center-setting-row\.is-status\s*\{[^}]*grid-template-columns:\s*minmax\(72px, max-content\) minmax\(88px, 1fr\) auto;/s,
+  );
+  assert.match(
+    agentCenterPanelSource,
+    /@media\s*\(max-width:\s*680px\)[\s\S]*?\.agent-center-setting-row\.is-status\s*\{[^}]*grid-template-columns:\s*minmax\(56px, max-content\) minmax\(72px, 1fr\) auto;/s,
+  );
+  assert.match(
+    agentCenterPanelSource,
+    /\.agent-center-setting-row\.is-status\s+\.agent-center-switch\s*\{[^}]*height:\s*22px;[^}]*min-height:\s*22px;[^}]*padding-block:\s*0;/s,
+    '详情页状态行应收紧开关命中盒，不能让 40px 卡面快捷开关撑破 34px 网格行',
+  );
+  console.log('ok - agent status row preserves separate columns without vertical overflow');
 }
 
 {
@@ -1539,7 +1568,7 @@ const agentCenterPanelSource = await readFile(
   assert.match(html, /is-danger/);
   assert.match(html, /查看后会从顶部提醒移除，不会删除活动记录/);
   assert.match(html, /data-failure-read-action="mark"/);
-  assert.match(html, /错误：provider unavailable/);
+  assert.match(html, /错误：<span data-i18n-skip>provider unavailable<\/span>/);
   assert.match(html, /agent-center-card is-failure/);
   console.log('ok - agent center panel renders failed activity filter and error detail');
 }

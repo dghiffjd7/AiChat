@@ -41,6 +41,19 @@ pub fn exit_app(app: AppHandle) {
     app.exit(0);
 }
 
+#[tauri::command]
+pub fn restart_app(app: AppHandle) -> Result<(), String> {
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    {
+        app.restart();
+    }
+    #[cfg(any(target_os = "android", target_os = "ios"))]
+    {
+        let _ = app;
+        Err("restart_not_supported_on_mobile".to_string())
+    }
+}
+
 fn is_kv_debug_enabled() -> bool {
     std::env::var("CHATAPP_DEBUG_KV")
         .map(|value| {
@@ -2380,7 +2393,7 @@ pub async fn export_data_bundle(
     state.close_all();
     let data_dir = get_data_dir(&app)?;
     let ts = chrono::Utc::now().format("%Y%m%d_%H%M%S");
-    let file_name = format!("chatapp_backup_{ts}.zip");
+    let file_name = format!("omnitavern_backup_{ts}.zip");
     let mut output_path: PathBuf;
     #[cfg(target_os = "android")]
     let mut publish_download = false;

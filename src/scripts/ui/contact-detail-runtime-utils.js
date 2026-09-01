@@ -112,7 +112,7 @@ export const buildContactDetailMarkup = ({ model, avatar = '', personaFields = [
     : '这个人还没有留下个性签名。');
   const tags = Array.isArray(model.tags) ? model.tags : [];
   const tagMarkup = tags.length
-    ? tags.map(tag => `<span class="contact-detail-tag">${escapeHtml(tag)}</span>`).join('')
+    ? tags.map(tag => `<span class="contact-detail-tag" data-i18n-skip>${escapeHtml(tag)}</span>`).join('')
     : '<span class="contact-detail-tag is-muted">暂无标签</span>';
   const thirdValue = model.isGroup ? model.memberCount : tags.length;
   const thirdLabel = model.isGroup ? '群成员' : '角色标签';
@@ -136,7 +136,7 @@ export const buildContactDetailMarkup = ({ model, avatar = '', personaFields = [
           ${resolvedPersonaFields.map(field => `
             <div class="contact-detail-persona-row">
               <span class="contact-detail-persona-label">${escapeHtml(field.label)}</span>
-              <p class="contact-detail-persona-value">${escapeHtml(field.value)}</p>
+              <p class="contact-detail-persona-value" data-i18n-skip>${escapeHtml(field.value)}</p>
             </div>
           `).join('')}
         </div>
@@ -150,8 +150,8 @@ export const buildContactDetailMarkup = ({ model, avatar = '', personaFields = [
       <section class="contact-detail-hero" aria-labelledby="contact-detail-name">
         <img class="contact-detail-avatar" src="${escapeHtml(avatar)}" alt="">
         <div class="contact-detail-kind">${model.isGroup ? '群聊' : '联系人'}</div>
-        <h2 id="contact-detail-name">${escapeHtml(model.name)}</h2>
-        <p class="contact-detail-signature">${escapeHtml(description)}</p>
+        <h2 id="contact-detail-name" data-i18n-skip>${escapeHtml(model.name)}</h2>
+        <p class="contact-detail-signature"${model.description ? ' data-i18n-skip' : ''}>${escapeHtml(description)}</p>
         <div class="contact-detail-tags">${tagMarkup}</div>
         <div class="contact-detail-stats">
           ${stats.map(stat => `

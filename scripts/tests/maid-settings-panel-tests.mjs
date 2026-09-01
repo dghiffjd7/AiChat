@@ -97,6 +97,10 @@ class FakeElement {
   setAttribute(name, value) {
     this.attributes[name] = value;
   }
+
+  scrollIntoView(options) {
+    this.scrollIntoViewOptions = options;
+  }
 }
 
 class FakeDocument {
@@ -125,6 +129,19 @@ const findByText = (root, text) => {
 };
 
 const flushMicrotasks = () => new Promise(resolve => setTimeout(resolve, 0));
+
+{
+  const documentRef = new FakeDocument();
+  const panel = createMaidSettingsPanel({
+    documentRef,
+    settingsStore: { getMaidPrompt: () => '' },
+  });
+  panel.show({ tab: 'prompt' });
+  const lastResponseTab = panel.getElements().promptTabButtons.get('lastResponse');
+  lastResponseTab.dispatchEvent('click', {});
+  assert.deepEqual(lastResponseTab.scrollIntoViewOptions, { block: 'nearest', inline: 'nearest' });
+  console.log('ok - long English maid prompt tabs scroll the active tab fully into view');
+}
 
 {
   const documentRef = new FakeDocument();

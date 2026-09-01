@@ -880,7 +880,7 @@ export class ExperiencePackTransfer extends CharacterCardTransfer {
     const built = await this.buildPackage(sid, exportOptions);
     const pick = await pickSavePath({
       defaultName: built.fileName,
-      filters: [{ name: 'AiChat Experience Pack', extensions: [EXPERIENCE_PACK_EXTENSION, 'zip'] }],
+      filters: [{ name: 'OmniTavern Experience Pack', extensions: [EXPERIENCE_PACK_EXTENSION, 'zip'] }],
     });
     if (pick.cancelled) return '';
     try {

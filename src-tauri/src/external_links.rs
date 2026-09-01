@@ -3,7 +3,7 @@ use tauri_plugin_opener::OpenerExt;
 
 const ALLOWED_EXTERNAL_URLS: [&str; 2] = [
     "https://github.com/dghiffjd7",
-    "https://github.com/dghiffjd7/AiChat",
+    "https://github.com/dghiffjd7/OmniTavern",
 ];
 
 fn is_allowed_external_url(url: &str) -> bool {
@@ -30,11 +30,11 @@ mod tests {
     fn allows_only_the_developer_github_pages() {
         assert!(is_allowed_external_url("https://github.com/dghiffjd7"));
         assert!(is_allowed_external_url(
-            "https://github.com/dghiffjd7/AiChat"
+            "https://github.com/dghiffjd7/OmniTavern"
         ));
         assert!(!is_allowed_external_url("http://github.com/dghiffjd7"));
         assert!(!is_allowed_external_url(
-            "https://github.com/dghiffjd7/AiChat/issues"
+            "https://github.com/dghiffjd7/OmniTavern/issues"
         ));
         assert!(!is_allowed_external_url("https://example.com/dghiffjd7"));
     }

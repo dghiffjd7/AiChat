@@ -1232,7 +1232,10 @@ export class ContactSettingsPanel {
         const contact = sessionId ? (this.contactsStore?.getContact?.(sessionId) || {}) : {};
         const displayName = trimProfileText(contact.name || contact.displayName || sessionId, '当前联系人');
         if (this.contactProfileTitle) this.contactProfileTitle.textContent = '联系人画像';
-        if (this.contactProfileSubtitle) this.contactProfileSubtitle.textContent = `${displayName} · ${sessionId || '-'}`;
+        if (this.contactProfileSubtitle) {
+            this.contactProfileSubtitle.dataset.i18nSkip = '';
+            this.contactProfileSubtitle.textContent = `${displayName} · ${sessionId || '-'}`;
+        }
 
         const profile = this.getCurrentContactProfile(sessionId);
         const pendingUpdates = this.listContactProfilePendingUpdates(sessionId);

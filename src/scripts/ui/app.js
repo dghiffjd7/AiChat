@@ -105,6 +105,9 @@ import { MaidConversationStore } from '../storage/maid-conversation-store.js';
 import { MaidSemanticMemoryStore } from '../storage/maid-semantic-memory-store.js';
 import { MaidSettingsStore } from '../storage/maid-settings-store.js';
 import { appSettings } from '../storage/app-settings.js';
+import { bootstrapAppLanguage } from '../i18n/app-language-bootstrap.js';
+import { requestAppLanguageRestart } from '../i18n/app-language-restart.js';
+import { translateUiText } from '../i18n/index.js';
 import { chatFcLocalCapabilityStore } from '../storage/chat-fc-local-capability-store.js';
 import { chatStructuredRouteEvidenceStore } from '../storage/chat-structured-route-evidence-store.js';
 import { renderTemplateTextAsync, templateSettings } from '../plugins/template-engine.js';
@@ -164,7 +167,10 @@ import { safeInvoke } from '../utils/tauri.js';
 import { createMaidSelectionMode } from './maid-selection-mode.js';
 import { captureMaidViewportRegion } from './maid-region-capture-utils.js';
 import { MAID_SUB_AGENT_SKILLS } from '../storage/maid-settings-store.js';
-import { hasLegacyMigratedPresetBindings } from '../storage/preset-store.js';
+import {
+  getCanonicalBuiltinPromptDefaults,
+  hasLegacyMigratedPresetBindings,
+} from '../storage/preset-store.js';
 import './bridge.js';
 import {
   registerChatUiBridgeContract,
@@ -1833,6 +1839,7 @@ const initApp = async () => {
     openSession: () => sessionPanel.show(),
     openMemoryTemplates: () => memoryTemplatePanel.show(),
     openConfig: (options = {}) => configPanel.show({ tab: 'chat', ...(options || {}) }),
+    restartApp: () => requestAppLanguageRestart({ safeInvokeFn: safeInvoke }),
     importExperiencePackFile: async (file) => {
       const imported = file
         ? await experiencePackTransfer.importFromFile(file)
@@ -2411,8 +2418,9 @@ const initApp = async () => {
       btn.dataset.personaAccent = '1';
       btn.style.setProperty('--persona-accent', accent.color);
       btn.style.setProperty('--persona-accent-soft', accent.soft);
-      btn.title = `当前${view.kindLabel}：${view.name}；点击切换用户或角色卡`;
-      btn.setAttribute('aria-label', `当前${view.kindLabel}：${view.name}；切换用户或角色卡`);
+      btn.title = translateUiText(`当前${view.kindLabel}：${view.name}；点击切换用户或角色卡`);
+      btn.setAttribute('aria-label', translateUiText(`当前${view.kindLabel}：${view.name}；切换用户或角色卡`));
+      btn.setAttribute('data-i18n-skip', '');
       const img = btn.querySelector('img');
       if (img) img.src = view.avatar;
     });
@@ -2892,7 +2900,9 @@ const initApp = async () => {
   } catch (err) {
     logger.debug('agent feature settings hydrate skipped', err);
   }
-  const agentCenterSettingsStore = createAgentCenterSettingsStore();
+  const agentCenterSettingsStore = createAgentCenterSettingsStore({
+    officialPromptDefaults: getCanonicalBuiltinPromptDefaults(),
+  });
   try {
     await agentCenterSettingsStore.hydrate?.();
     await agentCenterSettingsStore.migratePresetState?.(presetStore?.getState?.() || {});
@@ -9137,7 +9147,7 @@ Phase G（Frame 36）：循环衔接
 	                <span data-contact-avatar-slot></span>
 	                <div class="chat-item-content">
 	                    <div class="chat-item-header">
-	                        <div class="chat-item-name">${displayNameHtml}${unreadBadge}${pendingBadge}</div>
+	                        <div class="chat-item-name"><span data-i18n-skip>${displayNameHtml}</span>${unreadBadge}${pendingBadge}</div>
 	                        <div class="chat-item-time">${time}</div>
 	                    </div>
 	                    <div class="chat-item-preview">${preview}</div>
@@ -9189,8 +9199,8 @@ Phase G（Frame 36）：循环衔接
       item.innerHTML = `
 	                <img src="${avatar}" alt="" class="contact-avatar">
 	                <div class="contact-info">
-	                    <div class="contact-name">${nameHtml}${unreadBadge}${pendingBadge}</div>
-	                    <div class="contact-desc">${preview}</div>
+	                    <div class="contact-name"><span data-i18n-skip>${nameHtml}</span>${unreadBadge}${pendingBadge}</div>
+	                    <div class="contact-desc" data-i18n-skip>${preview}</div>
 	                </div>
 	                <div class="contact-time">${time}</div>
 	            `;
@@ -9234,6 +9244,9 @@ Phase G（Frame 36）：循环衔接
       const name = formatSessionName(id, g);
       const nameHtml = renderSessionNameHtml(id, g);
       const count = Array.isArray(g.members) ? g.members.length : 0;
+      const descriptionHtml = preview
+        ? `<div class="contact-desc" data-i18n-skip>${preview}</div>`
+        : `<div class="contact-desc">群成员：${count}人</div>`;
       const unread = chatStore.getUnreadCount(id);
       const unreadBadge =
         unread > 0
@@ -9247,8 +9260,8 @@ Phase G（Frame 36）：循环衔接
       item.innerHTML = `
 	                <span data-contact-avatar-slot></span>
 	                <div class="contact-info">
-	                    <div class="contact-name">${nameHtml}${unreadBadge}</div>
-	                    <div class="contact-desc">${preview || `群成员：${count}人`}</div>
+	                    <div class="contact-name"><span data-i18n-skip>${nameHtml}</span>${unreadBadge}</div>
+	                    ${descriptionHtml}
 	                </div>
 	                <div class="contact-time">${time || String(count).padStart(2, '0') + '人'}</div>
 	            `;
@@ -18098,6 +18111,10 @@ Phase G（Frame 36）：循环衔接
         const accent = getPersonaAccent(user);
         const avatar = escapeHtml(String(user?.avatar || '').trim() || getDefaultAppIcon());
         const name = escapeHtml(String(user?.name || '').trim() || '我');
+        const description = String(user?.description || '').trim();
+        const subtitleHtml = description
+          ? `<div class="persona-switcher-subtitle" data-i18n-skip>${escapeHtml(description)}</div>`
+          : '<div class="persona-switcher-subtitle">点击切换用户</div>';
         return `
           <button
             type="button"
@@ -18108,8 +18125,8 @@ Phase G（Frame 36）：循环衔接
               <img src="${avatar}" alt="">
             </div>
             <div class="persona-switcher-meta">
-              <span class="persona-switcher-name" style="--persona-accent:${accent.color}; --persona-accent-soft:${accent.soft};">${name}</span>
-              <div class="persona-switcher-subtitle">${escapeHtml(String(user?.description || '').trim() || '点击切换用户')}</div>
+              <span class="persona-switcher-name" data-i18n-skip style="--persona-accent:${accent.color}; --persona-accent-soft:${accent.soft};">${name}</span>
+              ${subtitleHtml}
             </div>
           </button>
         `;
@@ -18122,7 +18139,7 @@ Phase G（Frame 36）：循环衔接
             <img src="${currentAvatar}" alt="">
           </div>
           <div class="persona-switcher-meta">
-            <span class="persona-switcher-name" style="--persona-accent:${currentAccent.color}; --persona-accent-soft:${currentAccent.soft};">${currentName}</span>
+            <span class="persona-switcher-name" data-i18n-skip style="--persona-accent:${currentAccent.color}; --persona-accent-soft:${currentAccent.soft};">${currentName}</span>
             <div class="persona-switcher-subtitle">当前用户</div>
           </div>
         </div>
@@ -18171,7 +18188,7 @@ Phase G（Frame 36）：循环衔接
             <img src="${avatar}" alt="">
           </div>
           <div class="persona-switcher-meta">
-            <span class="persona-switcher-name" style="--persona-accent:${accent.color}; --persona-accent-soft:${accent.soft};">${name}</span>
+            <span class="persona-switcher-name" data-i18n-skip style="--persona-accent:${accent.color}; --persona-accent-soft:${accent.soft};">${name}</span>
             <div class="persona-switcher-tags">${tags.join('')}</div>
           </div>
           ${isActive ? '<span class="persona-switcher-check">✓</span>' : ''}
@@ -18186,7 +18203,7 @@ Phase G（Frame 36）：循环衔接
           <img src="${currentAvatar}" alt="">
         </div>
         <div class="persona-switcher-meta">
-          <span class="persona-switcher-name" style="--persona-accent:${currentAccent.color}; --persona-accent-soft:${currentAccent.soft};">${currentName}</span>
+          <span class="persona-switcher-name" data-i18n-skip style="--persona-accent:${currentAccent.color}; --persona-accent-soft:${currentAccent.soft};">${currentName}</span>
           <div class="persona-switcher-subtitle">${currentSub}</div>
         </div>
       </div>
@@ -22151,7 +22168,7 @@ Phase G（Frame 36）：循环衔接
 	            <div class="generated-image-album-detail-header">
 	              <div>
 	                <div id="generated-image-album-detail-title" class="generated-image-album-detail-title">图片详情</div>
-	                <div class="generated-image-album-detail-meta"></div>
+	                <div class="generated-image-album-detail-meta" data-i18n-skip></div>
 	              </div>
 	              <button type="button" class="generated-image-album-detail-close" aria-label="关闭">×</button>
 	            </div>
@@ -22317,9 +22334,9 @@ Phase G（Frame 36）：循环衔接
 		          <div class="writing-media-asset-card" data-asset-id="${escapeHtml(String(asset.albumId || asset.id || ''))}">
 		            <img src="${escapeHtml(url)}" alt="${escapeHtml(prompt || '生成图片')}" data-preview-url="${escapeHtml(url)}">
 	            <div class="writing-media-asset-meta">
-	              <div class="writing-media-asset-prompt">${escapeHtml(prompt || '（无提示词）')}</div>
-	              ${negative ? `<div class="writing-media-asset-prompt writing-media-asset-negative">负面：${escapeHtml(negative)}</div>` : ''}
-	              <div class="writing-media-asset-model">${escapeHtml([model, source, time].filter(Boolean).join(' · '))}</div>
+	              <div class="writing-media-asset-prompt" data-i18n-skip>${escapeHtml(prompt || translateUiText('（无提示词）'))}</div>
+	              ${negative ? `<div class="writing-media-asset-prompt writing-media-asset-negative"><span>负面：</span><span data-i18n-skip>${escapeHtml(negative)}</span></div>` : ''}
+	              <div class="writing-media-asset-model" data-i18n-skip>${escapeHtml([model, source, time].filter(Boolean).join(' · '))}</div>
 		            </div>
 		            <div class="writing-media-asset-actions">
 		              ${useButton}
@@ -33754,7 +33771,10 @@ Phase G（Frame 36）：循环衔接
 
   const updateWallpaperStatus = text => {
     if (!chatWallpaperStatus) return;
-    chatWallpaperStatus.textContent = text || '未设置壁纸';
+    const statusText = String(text || '').trim() || '未设置壁纸';
+    const isUserFileName = statusText !== '未设置壁纸' && statusText !== '已设置壁纸';
+    chatWallpaperStatus.toggleAttribute('data-i18n-skip', isUserFileName);
+    chatWallpaperStatus.textContent = statusText;
   };
 
   const applyWallpaperPreviewTransform = () => {
@@ -34658,18 +34678,28 @@ document.addEventListener('DOMContentLoaded', () => {
   (async () => {
     markBootPhase('dom-ready');
     // 尽早 hydrate：localStorage 配额满时 kv 才是设置/贴纸的权威通道（主题也读 settings）。
+    const kvChannel = {
+      loadKv: name => safeInvoke('load_kv', { name }),
+      saveKv: (name, data) => safeInvoke('save_kv', { name, data }),
+    };
     try {
-      const kvChannel = {
-        loadKv: name => safeInvoke('load_kv', { name }),
-        saveKv: (name, data) => safeInvoke('save_kv', { name, data }),
-      };
       markBootPhase('settings-hydrate');
       await appSettings.hydrate(kvChannel);
+    } catch (err) {
+      console.warn('settings hydrate skipped', err);
+      recordBootError(`settings hydrate skipped: ${getRuntimeErrorMessage(err)}`);
+    }
+    markBootPhase('language-bootstrap');
+    const languageState = await bootstrapAppLanguage({ appSettings });
+    if (languageState.loadError) {
+      console.warn('language catalog fallback', languageState.loadError);
+    }
+    try {
       markBootPhase('sticker-hydrate');
       await stickerPackStore.hydrate(kvChannel);
     } catch (err) {
-      console.warn('settings/sticker hydrate skipped', err);
-      recordBootError(`hydrate skipped: ${getRuntimeErrorMessage(err)}`);
+      console.warn('sticker hydrate skipped', err);
+      recordBootError(`sticker hydrate skipped: ${getRuntimeErrorMessage(err)}`);
     }
     markBootPhase('theme-init');
     await themeManager.init();

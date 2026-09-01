@@ -68,8 +68,8 @@ const makeFixedNegativePromptField = () => ({
 });
 
 const BOOLEAN_OPTIONS = [
-  { value: '', label: '关闭' },
-  { value: 'true', label: '开启' },
+  { value: '', label: '关闭', i18nContext: 'image-boolean' },
+  { value: 'true', label: '开启', i18nContext: 'image-boolean' },
 ];
 
 const NOVELAI_LEGACY_DEFAULTS = {

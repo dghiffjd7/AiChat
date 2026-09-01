@@ -1,5 +1,9 @@
 import { safeInvoke } from '../utils/tauri.js';
 import {
+  canonicalizeOfficialPromptRecord,
+  localizeOfficialPromptRecord,
+} from '../i18n/prompt-locale.js';
+import {
   exportGlobalSemanticPromptLibrary,
   importGlobalSemanticPromptLibrary,
   normalizeGlobalSemanticPromptLibrary,
@@ -147,6 +151,47 @@ export const SYSPROMPT_AGENT_PROMPT_MAPPINGS = Object.freeze([
   },
 ]);
 
+const getSyspromptMapping = (agentId = '', promptId = '') => (
+  SYSPROMPT_AGENT_PROMPT_MAPPINGS.find(mapping => (
+    mapping.agentId === trim(agentId) && mapping.promptId === trim(promptId)
+  )) || null
+);
+
+const transformOfficialPromptRules = (
+  rules = '',
+  mapping = null,
+  officialPromptDefaults = {},
+  transform = localizeOfficialPromptRecord,
+) => {
+  const rulesKey = trim(mapping?.rulesKey);
+  const canonical = rulesKey && typeof officialPromptDefaults?.[rulesKey] === 'string'
+    ? officialPromptDefaults[rulesKey]
+    : null;
+  if (!rulesKey || canonical === null) return String(rules ?? '');
+  return transform(
+    { [rulesKey]: String(rules ?? '') },
+    { [rulesKey]: canonical },
+  )[rulesKey];
+};
+
+const localizeOfficialPromptRules = (rules, mapping, officialPromptDefaults) => (
+  transformOfficialPromptRules(
+    rules,
+    mapping,
+    officialPromptDefaults,
+    localizeOfficialPromptRecord,
+  )
+);
+
+const canonicalizeOfficialPromptRules = (rules, mapping, officialPromptDefaults) => (
+  transformOfficialPromptRules(
+    rules,
+    mapping,
+    officialPromptDefaults,
+    canonicalizeOfficialPromptRecord,
+  )
+);
+
 export const MEMORY_AGENT_SETTING_KEYS = Object.freeze({
   dataPosition: 'memory_data_position',
   dataDepth: 'memory_data_depth',
@@ -212,6 +257,21 @@ const normalizeProfile = (profile = {}) => {
     agents,
     updatedAt: Number(src.updatedAt || 0) || 0,
   };
+};
+
+const localizeSyspromptProfile = (profile = null, officialPromptDefaults = {}) => {
+  if (!profile || trim(profile.profileType) !== 'sysprompt') return clone(profile, null);
+  const localized = normalizeProfile(profile);
+  SYSPROMPT_AGENT_PROMPT_MAPPINGS.forEach((mapping) => {
+    const prompt = localized.agents?.[mapping.agentId]?.prompts?.[mapping.promptId];
+    if (!prompt || typeof prompt.rules !== 'string') return;
+    prompt.rules = localizeOfficialPromptRules(
+      prompt.rules,
+      mapping,
+      officialPromptDefaults,
+    );
+  });
+  return localized;
 };
 
 const normalizeCardState = (card = {}) => {
@@ -326,14 +386,18 @@ const ensureProfileAgent = (profile, agentId = '', now = Date.now) => {
   return profile.agents[id];
 };
 
-const promptFromPreset = (preset = {}, mapping = {}) => {
+const promptFromPreset = (preset = {}, mapping = {}, officialPromptDefaults = {}) => {
   const defaults = mapping.defaults || {};
   const prompt = {
     enabled: typeof preset?.[mapping.enabledKey] === 'boolean'
       ? preset[mapping.enabledKey]
       : true,
     rules: typeof preset?.[mapping.rulesKey] === 'string'
-      ? preset[mapping.rulesKey]
+      ? canonicalizeOfficialPromptRules(
+        preset[mapping.rulesKey],
+        mapping,
+        officialPromptDefaults,
+      )
       : '',
   };
   if (mapping.positionKey) {
@@ -378,7 +442,10 @@ const mergeMissingPrompt = (target = {}, source = {}, now = Date.now) => {
   return next;
 };
 
-const applySyspromptPresetMigration = (settings, presetId = '', preset = {}, { now = Date.now } = {}) => {
+const applySyspromptPresetMigration = (settings, presetId = '', preset = {}, {
+  now = Date.now,
+  officialPromptDefaults = {},
+} = {}) => {
   const profile = ensureProfile(settings, 'sysprompt', presetId, preset, now);
   if (!profile) return settings;
   SYSPROMPT_AGENT_PROMPT_MAPPINGS.forEach((mapping) => {
@@ -386,7 +453,7 @@ const applySyspromptPresetMigration = (settings, presetId = '', preset = {}, { n
     if (!agent) return;
     agent.prompts[mapping.promptId] = mergeMissingPrompt(
       agent.prompts[mapping.promptId],
-      promptFromPreset(preset, mapping),
+      promptFromPreset(preset, mapping, officialPromptDefaults),
       now,
     );
   });
@@ -451,12 +518,13 @@ const applyInjectDefaultOffRollback = (settings, { now = Date.now } = {}) => {
 export const migratePresetStateToAgentCenterSettings = (settings = {}, presetState = {}, {
   now = Date.now,
   force = false,
+  officialPromptDefaults = {},
 } = {}) => {
   const next = normalizeAgentCenterSettings(settings);
   const state = isPlainObject(presetState) ? presetState : {};
   if (!next.migrations?.presetPromptV1?.completed || force) {
     Object.entries(state.presets?.sysprompt || {}).forEach(([presetId, preset]) => {
-      applySyspromptPresetMigration(next, presetId, preset, { now });
+      applySyspromptPresetMigration(next, presetId, preset, { now, officialPromptDefaults });
     });
     Object.entries(state.presets?.openai || {}).forEach(([presetId, preset]) => {
       applyOpenAIPresetMigration(next, presetId, preset, { now });
@@ -475,11 +543,12 @@ export const lazyMigratePresetProfileToAgentCenterSettings = (settings = {}, {
   presetId = '',
   preset = {},
   now = Date.now,
+  officialPromptDefaults = {},
 } = {}) => {
   const next = normalizeAgentCenterSettings(settings);
   const type = trim(profileType);
   if (type === 'sysprompt') {
-    applySyspromptPresetMigration(next, presetId, preset, { now });
+    applySyspromptPresetMigration(next, presetId, preset, { now, officialPromptDefaults });
   } else if (type === 'openai') {
     applyOpenAIPresetMigration(next, presetId, preset, { now });
   }
@@ -501,6 +570,7 @@ const isCardEnabled = (settings = {}, agentId = '') => {
 export const resolveAgentSyspromptPreset = (settings = {}, {
   presetId = '',
   preset = {},
+  officialPromptDefaults = {},
 } = {}) => {
   const normalized = normalizeAgentCenterSettings(settings);
   const out = clone(preset, {}) || {};
@@ -512,7 +582,13 @@ export const resolveAgentSyspromptPreset = (settings = {}, {
     const agentEnabled = agent ? agent.enabled !== false : true;
     if (prompt) {
       if (mapping.enabledKey) out[mapping.enabledKey] = cardEnabled && agentEnabled && prompt.enabled !== false;
-      if (mapping.rulesKey && typeof prompt.rules === 'string') out[mapping.rulesKey] = prompt.rules;
+      if (mapping.rulesKey && typeof prompt.rules === 'string') {
+        out[mapping.rulesKey] = localizeOfficialPromptRules(
+          prompt.rules,
+          mapping,
+          officialPromptDefaults,
+        );
+      }
       if (mapping.positionKey && prompt.position !== undefined) out[mapping.positionKey] = prompt.position;
       if (mapping.depthKey && prompt.depth !== undefined) out[mapping.depthKey] = prompt.depth;
       if (mapping.roleKey && prompt.role !== undefined) out[mapping.roleKey] = prompt.role;
@@ -541,6 +617,7 @@ export const resolveAgentOpenAIPreset = (settings = {}, {
 export const buildAgentCenterProfileView = (settings = {}, {
   syspromptResolved = null,
   openaiResolved = null,
+  officialPromptDefaults = {},
 } = {}) => {
   const normalized = normalizeAgentCenterSettings(settings);
   const syspromptKey = makeAgentProfileKey('sysprompt', syspromptResolved?.presetId);
@@ -550,7 +627,10 @@ export const buildAgentCenterProfileView = (settings = {}, {
       presetId: trim(syspromptResolved?.presetId),
       source: trim(syspromptResolved?.source),
       presetName: trim(syspromptResolved?.preset?.name || syspromptResolved?.presetId),
-      profile: clone(normalized.profiles[syspromptKey] || null, null),
+      profile: localizeSyspromptProfile(
+        normalized.profiles[syspromptKey] || null,
+        officialPromptDefaults,
+      ),
     },
     openai: {
       presetId: trim(openaiResolved?.presetId),
@@ -583,20 +663,30 @@ export const setAgentPromptConfig = (settings = {}, {
   preset = {},
 } = {}, {
   now = Date.now,
+  officialPromptDefaults = {},
 } = {}) => {
   const normalized = lazyMigratePresetProfileToAgentCenterSettings(settings, {
     profileType,
     presetId,
     preset,
     now,
+    officialPromptDefaults,
   });
   const profile = ensureProfile(normalized, profileType, presetId, preset, now);
   const agent = ensureProfileAgent(profile, agentId, now);
   const id = trim(promptId);
   if (!agent || !id) return normalized;
+  const configPatch = normalizePromptConfigPatch(config);
+  if (trim(profileType) === 'sysprompt' && typeof configPatch.rules === 'string') {
+    configPatch.rules = canonicalizeOfficialPromptRules(
+      configPatch.rules,
+      getSyspromptMapping(agentId, id),
+      officialPromptDefaults,
+    );
+  }
   agent.prompts[id] = {
     ...normalizePromptConfig(agent.prompts[id]),
-    ...normalizePromptConfigPatch(config),
+    ...configPatch,
     updatedAt: toTimestamp(now),
   };
   agent.updatedAt = toTimestamp(now);
@@ -764,6 +854,7 @@ export const createAgentCenterSettingsStore = ({
   key = AGENT_CENTER_SETTINGS_STORAGE_KEY,
   loadKv = safeInvoke,
   saveKv = safeInvoke,
+  officialPromptDefaults = {},
 } = {}) => {
   let current = readAgentCenterSettings({ storage, key });
   let kvWrite = Promise.resolve(false);
@@ -778,10 +869,15 @@ export const createAgentCenterSettingsStore = ({
     const snapshot = current;
     return persistKv(snapshot).then(() => normalizeAgentCenterSettings(snapshot));
   };
-  const migratePresetState = (presetState = {}, options = {}) => save(migratePresetStateToAgentCenterSettings(current, presetState, options));
+  const migratePresetState = (presetState = {}, options = {}) => save(migratePresetStateToAgentCenterSettings(
+    current,
+    presetState,
+    { ...(options || {}), officialPromptDefaults },
+  ));
   const lazyMigratePresetProfile = (options = {}, meta = {}) => save(lazyMigratePresetProfileToAgentCenterSettings(current, {
     ...(options || {}),
     now: meta.now || Date.now,
+    officialPromptDefaults,
   }));
   const saveGlobalPromptMutation = mutation => save(mutation.settings).then(settings => ({
     ok: true,
@@ -817,7 +913,10 @@ export const createAgentCenterSettingsStore = ({
       }));
     },
     setCardEnabled: (agentId, enabled, options = {}) => save(setAgentCardEnabled(current, agentId, enabled, options)),
-    setPromptConfig: (options = {}, meta = {}) => save(setAgentPromptConfig(current, options, meta)),
+    setPromptConfig: (options = {}, meta = {}) => save(setAgentPromptConfig(current, options, {
+      ...(meta || {}),
+      officialPromptDefaults,
+    })),
     setMemorySettings: (options = {}, meta = {}) => save(setMemoryAgentSettings(current, options, meta)),
     mergeImported: (imported = {}, options = {}) => save(mergeImportedAgentCenterSettings(current, imported, options)),
     migratePresetState,
@@ -833,9 +932,15 @@ export const createAgentCenterSettingsStore = ({
       await writeAgentCenterSettingsKv(current, { key, saveKv });
       return normalizeAgentCenterSettings(current);
     },
-    resolveSyspromptPreset: options => resolveAgentSyspromptPreset(current, options || {}),
+    resolveSyspromptPreset: options => resolveAgentSyspromptPreset(current, {
+      ...(options || {}),
+      officialPromptDefaults,
+    }),
     resolveOpenAIPreset: options => resolveAgentOpenAIPreset(current, options || {}),
-    buildProfileView: options => buildAgentCenterProfileView(current, options || {}),
+    buildProfileView: options => buildAgentCenterProfileView(current, {
+      ...(options || {}),
+      officialPromptDefaults,
+    }),
     flush: () => kvWrite.catch(() => false),
   };
 };

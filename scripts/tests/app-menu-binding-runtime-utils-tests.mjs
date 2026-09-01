@@ -64,7 +64,7 @@ const createMenu = (buttons = []) => ({
   const developerProfileCss = fs.readFileSync(new URL('../../src/assets/css/developer-profile.css', import.meta.url), 'utf8');
   assert.match(html, /class="desktop-rail-wordmark"[^>]*data-open-developer-profile/);
   assert.match(html, /data-action="about-aria"[^>]*data-open-developer-profile/);
-  assert.match(html, /data-developer-external-url[^>]*href="https:\/\/github\.com\/dghiffjd7\/AiChat"/);
+  assert.match(html, /data-developer-external-url[^>]*href="https:\/\/github\.com\/dghiffjd7\/OmniTavern"/);
   assert.match(html, /data-developer-external-url[^>]*href="https:\/\/github\.com\/dghiffjd7"/);
   assert.match(developerProfileCss, /@media \(max-width: 620px\)[\s\S]*?\.developer-profile-overlay\s*\{[\s\S]*?align-items:\s*center;/);
   console.log('ok - developer profile entry is available from desktop brand and mobile settings');
@@ -72,12 +72,12 @@ const createMenu = (buttons = []) => ({
 
 {
   const invocations = [];
-  assert.equal(await openDeveloperExternalUrl('https://github.com/dghiffjd7/AiChat', {
+  assert.equal(await openDeveloperExternalUrl('https://github.com/dghiffjd7/OmniTavern', {
     invoke: async (...args) => invocations.push(args),
   }), true);
   assert.deepEqual(invocations, [[
     'open_external_url',
-    { url: 'https://github.com/dghiffjd7/AiChat' },
+    { url: 'https://github.com/dghiffjd7/OmniTavern' },
   ]]);
   assert.equal(await openDeveloperExternalUrl('https://example.com/not-allowed', {
     invoke: async () => { throw new Error('must not invoke'); },
@@ -107,7 +107,7 @@ const createMenu = (buttons = []) => ({
   const closeButton = createEventTarget();
   const trigger = createEventTarget();
   const externalLink = Object.assign(createEventTarget(), {
-    href: 'https://github.com/dghiffjd7/AiChat',
+    href: 'https://github.com/dghiffjd7/OmniTavern',
   });
   const openedUrls = [];
   let linkDefaultPrevented = false;
@@ -143,7 +143,7 @@ const createMenu = (buttons = []) => ({
   });
   await Promise.resolve();
   assert.equal(linkDefaultPrevented, true);
-  assert.deepEqual(openedUrls, ['https://github.com/dghiffjd7/AiChat']);
+  assert.deepEqual(openedUrls, ['https://github.com/dghiffjd7/OmniTavern']);
   console.log('ok - developer profile panel opens from shared entries and closes with Escape');
 }
 

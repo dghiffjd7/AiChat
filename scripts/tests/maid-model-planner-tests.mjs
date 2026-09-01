@@ -15,8 +15,21 @@ import {
 import {
   buildMaidImageGenerationContext,
 } from '../../src/scripts/agent/maid-image-generation-context.js';
+import { setPromptLocale } from '../../src/scripts/i18n/prompt-locale.js';
 
 const cloneJson = value => JSON.parse(JSON.stringify(value));
+
+{
+  setPromptLocale('en');
+  const planner = buildMaidModelPlannerMessages({ input: '请查看状态', features: [] });
+  const react = buildMaidModelReActMessages({ input: '请查看状态', features: [], steps: [] });
+  for (const messages of [planner, react]) {
+    assert.match(messages[0].content, /every user-visible response in English/);
+    assert.match(messages[0].content, /internal instructions, app knowledge, tool results, or source data are written in Chinese/);
+  }
+  setPromptLocale('zh-CN');
+  console.log('ok - English maid planner paths enforce English user-visible responses');
+}
 
 {
   const entries = Array.from({ length: 97 }, (_, index) => ({

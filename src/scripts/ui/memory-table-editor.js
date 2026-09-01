@@ -19,6 +19,7 @@ import {
 } from '../memory/memory-row-order.js';
 import { buildMemoryTimelineRepairPlan } from '../memory/memory-timeline-repair-utils.js';
 import { logger } from '../utils/logger.js';
+import { translateUiText } from '../i18n/index.js';
 import { appConfirm } from './app-confirm.js';
 import { getLastMemoryUpdate } from './chat/memory-update-runtime-utils.js';
 import { bindCustomSelectButton, createCustomSelectWrapper, refreshCustomSelectButton } from './custom-select.js';
@@ -873,8 +874,9 @@ export class MemoryTableEditor {
 
   setImpactText(action = 'manage', ctx = this.currentContext, table = null, target = this.impactEl) {
     if (!target) return;
-    const impactText = this.buildImpactText(action, ctx, table);
-    target.textContent = `作用域：${this.buildImpactScopeLabel(ctx, table)}`;
+    const impactText = translateUiText(this.buildImpactText(action, ctx, table));
+    target.setAttribute?.('data-i18n-skip', '');
+    target.textContent = translateUiText(`作用域：${this.buildImpactScopeLabel(ctx, table)}`);
     target.title = impactText;
     target.setAttribute('aria-label', impactText);
   }
@@ -1428,7 +1430,8 @@ export class MemoryTableEditor {
     header.className = 'memory-table-block-header';
     const title = document.createElement('div');
     title.className = 'memory-table-block-title';
-    title.textContent = table.name || table.id || '记忆表格';
+    title.dataset.i18nSkip = '';
+    title.textContent = translateUiText(table.name || table.id || '记忆表格');
     const titleLine = document.createElement('div');
     titleLine.className = 'memory-table-block-title-line';
     titleLine.appendChild(title);
@@ -1487,7 +1490,7 @@ export class MemoryTableEditor {
     const columns = buildMemoryTableCellViews({}, table.columns || [], { tableId: table.id });
     const dataTable = document.createElement('table');
     dataTable.className = 'memory-table-data-grid';
-    dataTable.setAttribute('aria-label', table.name || table.id || '记忆表格');
+    dataTable.setAttribute('aria-label', translateUiText(table.name || table.id || '记忆表格'));
     const tableHead = document.createElement('thead');
     const headerRow = document.createElement('tr');
     if (this.batchMode) {
@@ -1503,7 +1506,8 @@ export class MemoryTableEditor {
       columnHeader.dataset.columnId = column.id;
       columnHeader.dataset.cellKind = column.kind;
       columnHeader.scope = 'col';
-      columnHeader.textContent = column.label;
+      columnHeader.dataset.i18nSkip = '';
+      columnHeader.textContent = translateUiText(column.label);
       headerRow.appendChild(columnHeader);
     });
     const actionHeader = document.createElement('th');

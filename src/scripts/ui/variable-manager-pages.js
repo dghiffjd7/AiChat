@@ -6,6 +6,7 @@ import {
   formatVariableDisplayValue,
   getVariablePercent,
 } from './variable-panel-views.js';
+import { translateUiText } from '../i18n/index.js';
 
 const resolveDocument = documentRef => documentRef || globalThis.document;
 
@@ -119,12 +120,10 @@ export const renderVariableTemplatesPage = ({
       card.style.setProperty('--variable-enter-index', String(index));
     }
     const header = makeElement(documentRef, 'div', 'variable-template-card-header');
-    const icon = makeElement(
-      documentRef,
-      'span',
-      'variable-template-icon',
-      Array.from(String(template.name || '模'))[0] || '模',
-    );
+    const icon = makeElement(documentRef, 'span', 'variable-template-icon');
+    icon.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="6" height="6" rx="1.5"></rect><rect x="14" y="4" width="6" height="6" rx="1.5"></rect><rect x="4" y="14" width="6" height="6" rx="1.5"></rect><path d="M17 14v6M14 17h6"></path></svg>';
+    icon.dataset.i18nSkip = '';
+    icon.setAttribute('aria-hidden', 'true');
     const meta = makeElement(documentRef, 'div', 'variable-template-meta');
     meta.appendChild(makeElement(documentRef, 'h3', '', template.name || template.id));
     meta.appendChild(makeElement(documentRef, 'p', '', template.desc || '变量组合模板'));
@@ -163,7 +162,9 @@ export const renderVariableTemplatesPage = ({
 const createRuleLine = (documentRef, label, text, className = '') => {
   const row = makeElement(documentRef, 'div', `variable-rule-line ${className}`.trim());
   row.appendChild(makeElement(documentRef, 'span', 'variable-rule-line-label', label));
-  row.appendChild(makeElement(documentRef, 'span', 'variable-rule-line-value', text));
+  const value = makeElement(documentRef, 'span', 'variable-rule-line-value', translateUiText(text));
+  value.dataset.i18nSkip = '';
+  row.appendChild(value);
   return row;
 };
 
@@ -207,7 +208,9 @@ export const renderVariableRulesPage = ({
     }
     const header = makeElement(documentRef, 'div', 'variable-rule-card-header');
     const title = makeElement(documentRef, 'div', 'variable-rule-card-title');
-    title.appendChild(makeElement(documentRef, 'h3', '', rule.name || rule.id));
+    const ruleTitle = makeElement(documentRef, 'h3', '', translateUiText(rule.name || rule.id));
+    ruleTitle.dataset.i18nSkip = '';
+    title.appendChild(ruleTitle);
     title.appendChild(makeElement(
       documentRef,
       'span',
@@ -230,7 +233,8 @@ export const renderVariableRulesPage = ({
     );
     toggle.setAttribute('role', 'switch');
     toggle.setAttribute('aria-checked', rule.enabled ? 'true' : 'false');
-    toggle.setAttribute('aria-label', `${rule.enabled ? '停用' : '启用'}规则 ${rule.name || rule.id}`);
+    toggle.dataset.i18nSkip = '';
+    toggle.setAttribute('aria-label', `${translateUiText(rule.enabled ? '停用规则' : '启用规则')} ${rule.name || rule.id}`);
     toggle.appendChild(makeElement(documentRef, 'span', 'variable-rule-toggle-knob'));
     header.appendChild(title);
     header.appendChild(toggle);

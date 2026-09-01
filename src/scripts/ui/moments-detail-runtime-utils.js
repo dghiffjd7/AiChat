@@ -22,8 +22,8 @@ export const buildMomentDetailBodyMarkup = ({
     ? comments
         .map(comment => `
                         <div class="moment-detail-comment" data-comment-id="${escapeHtml(comment?.id || '')}">
-                            <div class="moment-detail-author" role="button" tabindex="0" data-comment-id="${escapeHtml(comment?.id || '')}">${escapeHtml(comment?.author || '')}</div>
-                            <div class="moment-detail-comment-body">${renderMomentTextWithStickers(resolveMomentDisplayText(comment))}</div>
+                            <div class="moment-detail-author" role="button" tabindex="0" data-i18n-skip data-comment-id="${escapeHtml(comment?.id || '')}">${escapeHtml(comment?.author || '')}</div>
+                            <div class="moment-detail-comment-body" data-i18n-skip>${renderMomentTextWithStickers(resolveMomentDisplayText(comment))}</div>
                         </div>
                     `)
         .join('')
@@ -32,7 +32,7 @@ export const buildMomentDetailBodyMarkup = ({
                 <div class="moment-detail-summary">
                     <img src="${escapeHtml(avatar)}" alt="" class="moment-detail-summary-avatar">
                     <div class="moment-detail-summary-main">
-                        <div class="moment-detail-summary-author">${escapeHtml(target.author || '角色')}</div>
+                        <div class="moment-detail-summary-author" data-i18n-skip>${escapeHtml(target.author || '角色')}</div>
                         <div class="moment-detail-summary-meta">
                           <span>${escapeHtml(target.time || '')}</span>
                           <span>${MOMENT_DETAIL_ICONS.eye}${Number(target.views || 0)}</span>

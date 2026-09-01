@@ -1,3 +1,5 @@
+import { getLocalizedPromptText } from '../i18n/prompt-locale.js';
+
 export const WORLD_AI_TEMPLATE_STORAGE_KEY = 'world_ai_template_v1';
 
 export const DEFAULT_WORLD_AI_TEMPLATE = `
@@ -26,10 +28,13 @@ export const readWorldAiGenerationSettings = (storage = undefined) => {
   try {
     storedTemplate = text(resolveStorage(storage)?.getItem?.(WORLD_AI_TEMPLATE_STORAGE_KEY));
   } catch {}
+  const hasCustomTemplate = Boolean(storedTemplate && storedTemplate !== DEFAULT_WORLD_AI_TEMPLATE);
   return {
     templateStorageKey: WORLD_AI_TEMPLATE_STORAGE_KEY,
-    hasCustomTemplate: Boolean(storedTemplate),
-    template: storedTemplate || DEFAULT_WORLD_AI_TEMPLATE,
+    hasCustomTemplate,
+    template: hasCustomTemplate
+      ? storedTemplate
+      : getLocalizedPromptText('world_ai.default_template', DEFAULT_WORLD_AI_TEMPLATE),
   };
 };
 

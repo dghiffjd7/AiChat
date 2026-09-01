@@ -19,6 +19,7 @@ import {
 } from '../utils/generation-param-filter-utils.js';
 import { appConfirm } from './app-confirm.js';
 import { appSettings } from '../storage/app-settings.js';
+import { t, translateUiText } from '../i18n/index.js';
 import { bindBackdropActivation } from './backdrop-activation-utils.js';
 import { rankModelCandidates } from '../utils/model-candidates.js';
 import {
@@ -427,10 +428,10 @@ export class ConfigPanel {
         const title = this.element.querySelector('#config-title');
         if (title) {
             title.textContent = this.activeTab === 'image'
-                ? '图片模型配置'
+                ? t('图片模型配置')
                 : this.activeTab === 'voice'
-                    ? '语音模型配置'
-                    : '聊天模型配置';
+                    ? t('语音模型配置')
+                    : t('聊天模型配置');
         }
         const tabs = Array.from(this.element.querySelectorAll('.config-tab'));
         tabs.forEach(btn => {
@@ -616,15 +617,15 @@ export class ConfigPanel {
                     <div class="api-config-tabs" role="tablist" aria-label="API 配置类型">
                     <button type="button" class="config-tab api-config-tab is-active" data-tab="chat" role="tab" aria-selected="true">
                         ${API_CONFIG_ICONS.chat}
-                        聊天模型
+                        ${t('聊天模型')}
                     </button>
                     <button type="button" class="config-tab api-config-tab" data-tab="image" role="tab" aria-selected="false">
                         ${API_CONFIG_ICONS.image}
-                        图片模型
+                        ${t('图片模型')}
                     </button>
                     <button type="button" class="config-tab api-config-tab" data-tab="voice" role="tab" aria-selected="false">
                         ${API_CONFIG_ICONS.voice}
-                        语音模型
+                        ${t('语音模型')}
                     </button>
                     </div>
                 </div>
@@ -1591,8 +1592,8 @@ export class ConfigPanel {
         }
         if (summary) {
             summary.textContent = mode === 'reverse_proxy'
-                ? '当前：反代出口。保留服务商原协议，只改请求出口和附加鉴权。'
-                : '当前：直连。保持现在的请求方式，不经过反代。';
+                ? t('当前：反代出口。保留服务商原协议，只改请求出口和附加鉴权。')
+                : t('当前：直连。保持现在的请求方式，不经过反代。');
         }
         if (autoExpand && mode === 'reverse_proxy') {
             this.setTransportSectionExpanded(true);
@@ -1633,8 +1634,9 @@ export class ConfigPanel {
             return;
         }
         const visible = list.slice(0, 4).join(', ');
-        const suffix = list.length > 4 ? ` 等 ${list.length} 项` : '';
-        summary.textContent = `已排除：${visible}${suffix}`;
+        summary.textContent = list.length > 4
+            ? t('已排除：{items} 等 {count} 项', { items: visible, count: list.length })
+            : t('已排除：{items}', { items: visible });
         summary.title = list.join(', ');
     }
 
@@ -2684,7 +2686,7 @@ export class ConfigPanel {
             compatibilityModeEnabled: appSettings.get().traditionalModelOutputProtocolEnabled === true,
             evidenceStore: chatStructuredRouteEvidenceStore,
         });
-        summary.textContent = `${status.label}${status.detail ? ` · ${status.detail}` : ''}`;
+        summary.textContent = `${translateUiText(status.label)}${status.detail ? ` · ${translateUiText(status.detail)}` : ''}`;
         summary.title = `仅表示当前配置档、基础私聊与当前思考设置；内建兼容库及 ${count} 条本地规则的其他能力请点入查看。`;
     }
 
@@ -2875,8 +2877,8 @@ export class ConfigPanel {
             if (vertexServiceAccountField) vertexServiceAccountField.style.display = usesExpress ? 'none' : 'block';
             if (apiKeyHelp) {
                 apiKeyHelp.textContent = usesExpress
-                    ? 'Express 模式使用 Vertex AI 专用 API Key，不需要 Project ID 或 Region。'
-                    : '完整模式使用 Service Account 与 Google Cloud 项目额度；此处 API Key 不参与鉴权。';
+                    ? t('Express 模式使用 Vertex AI 专用 API Key，不需要 Project ID 或 Region。')
+                    : t('完整模式使用 Service Account 与 Google Cloud 项目额度；此处 API Key 不参与鉴权。');
             }
         } else if (provider === 'kimi') {
             vertexaiFields.style.display = 'none';

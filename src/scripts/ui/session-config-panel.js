@@ -1,6 +1,7 @@
 import { PresetStore, isPresetEligibleForMode } from '../storage/preset-store.js';
 import { getReasoningCapability } from '../api/model-capabilities.js';
 import { logger } from '../utils/logger.js';
+import { t } from '../i18n/index.js';
 import { getActiveConfigProfileId, getConfigProfileById, getConfigProfiles } from './config-runtime-utils.js';
 import { closeCustomSelectMenu as closeSharedCustomSelectMenu, openCustomSelectMenu } from './custom-select.js';
 import { getPresetStore } from './preset-store-runtime-utils.js';
@@ -449,7 +450,7 @@ export class SessionConfigPanel {
         const fallbackLabel = mode === 'rp' ? '跟随创意写作默认' : '跟随 APP 内建默认';
         const presetOptions = [{ value: '', label: fallbackLabel }, ...presetList];
         const presetSub = boundPresetId
-            ? `${isLegacyBinding ? '沿用旧设置' : '已绑定'}：${this.getPresetName(boundPresetId)}`
+            ? t(isLegacyBinding ? '沿用旧设置：{name}' : '已绑定：{name}', { name: this.getPresetName(boundPresetId) })
             : fallbackLabel;
 
         const row = document.createElement('div');
@@ -551,10 +552,10 @@ export class SessionConfigPanel {
             label: entry.group === 'rp' ? '跟随创意写作默认' : '跟随聊天默认',
         }, ...presetList];
         const currentProfileId = this.store.getSessionProfileId('openai', entry.id) || '';
-        const currentProfileName = currentProfileId ? (this.getProfileName(currentProfileId) || currentProfileId) : '跟随全局';
+        const currentProfileName = currentProfileId ? (this.getProfileName(currentProfileId) || currentProfileId) : t('跟随全局');
         const subtitle = boundPresetId
-            ? `已绑定预设：${this.getPresetName(boundPresetId)}`
-            : `当前预设：${resolvedName || '未设置'}`;
+            ? t('已绑定预设：{name}', { name: this.getPresetName(boundPresetId) })
+            : t('当前预设：{name}', { name: resolvedName || t('未设置') });
 
         const head = document.createElement('div');
         head.className = 'sc-session-head';
@@ -563,14 +564,14 @@ export class SessionConfigPanel {
         main.className = 'sc-session-main';
         main.innerHTML = `
             <div class="sc-session-titleline">
-                <div class="pp-binding-item-title">${escapeHtml(entry.name)}</div>
+                <div class="pp-binding-item-title" data-i18n-skip>${escapeHtml(entry.name)}</div>
                 <span class="sc-session-meta">${escapeHtml(entry.meta)}</span>
             </div>
             <div class="sc-session-sub">${escapeHtml(subtitle)}</div>
         `;
         const chipRow = document.createElement('div');
         chipRow.className = 'sc-session-chiprow';
-        chipRow.innerHTML = `<span class="sc-session-chip">${escapeHtml(`连线 ${currentProfileName}`)}</span>`;
+        chipRow.innerHTML = `<span class="sc-session-chip">${escapeHtml(t('连线 {name}', { name: currentProfileName }))}</span>`;
         const reasoningSummary = this.getSessionReasoningSummary(entry, currentProfileId, resolved?.preset || {});
         if (reasoningSummary) {
             const chip = document.createElement('span');

@@ -541,10 +541,13 @@ export class GroupCreatePanel {
         info.className = 'group-create-member-info';
         const memberName = document.createElement('span');
         memberName.className = 'group-create-member-name';
+        memberName.setAttribute('data-i18n-skip', '');
         memberName.textContent = name || id;
         const description = document.createElement('span');
         description.className = 'group-create-member-description';
-        description.textContent = String(contact?.description || contact?.signature || contact?.remark || '准备好一起聊天').trim();
+        const descriptionValue = String(contact?.description || contact?.signature || contact?.remark || '').trim();
+        if (descriptionValue) description.setAttribute('data-i18n-skip', '');
+        description.textContent = descriptionValue || '准备好一起聊天';
         info.append(memberName, description);
 
         const organization = (this.groupStore?.listGroups?.() || [])
@@ -553,6 +556,7 @@ export class GroupCreatePanel {
             const color = resolveContactGroupColor(organization.color);
             const badge = document.createElement('span');
             badge.className = 'group-create-member-group';
+            badge.setAttribute('data-i18n-skip', '');
             badge.style.setProperty('--group-badge-color', color.value);
             badge.innerHTML = `<i></i><span></span>`;
             badge.lastElementChild.textContent = organization.name;

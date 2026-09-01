@@ -6933,7 +6933,7 @@ body[data-reduced-motion='on'] .persona-gallery-search {
   cursor: pointer;
   padding: 0 4px;
   font-size: 16px;
-  line-height: 1;
+  line-height: 1.2;
 }
 
 .moment-comment-input-row {

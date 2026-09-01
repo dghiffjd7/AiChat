@@ -5,6 +5,7 @@
  * - Preset sets apply when their bound preset is active
  */
 import { RegexStore, isLocalRegexSetAutoActive, regex_placement } from '../storage/regex-store.js';
+import { translateUiText } from '../i18n/index.js';
 import { logger } from '../utils/logger.js';
 import { appChoice, appConfirm } from './app-confirm.js';
 import { bindCustomSelectButton, closeCustomSelectMenu } from './custom-select.js';
@@ -964,11 +965,19 @@ export class RegexPanel {
             const find = String(r.findRegex || '').trim();
             const placements = Array.isArray(r.placement) ? r.placement : [];
             const title = name || (find ? `${find.slice(0, 36)}${find.length > 36 ? '…' : ''}` : '未命名正则');
-            const affects = placements.length ? placements.map(p => placementLabels[p] || String(p)).join(' / ') : '未选择';
-            const epi = `${r.markdownOnly ? '显示' : ''}${r.markdownOnly && r.promptOnly ? '+' : ''}${r.promptOnly ? 'Prompt' : ''}`;
+            const affects = placements.length
+                ? placements.map(p => translateUiText(placementLabels[p] || String(p))).join(' / ')
+                : translateUiText('未选择');
+            const epi = [r.markdownOnly ? translateUiText('显示') : '', r.promptOnly ? 'Prompt' : '']
+                .filter(Boolean)
+                .join('+');
             const sub = `${affects}${epi ? ` · ${epi}` : ''}${r.disabled ? ' · Disabled' : ''}`;
-            left.querySelector('.re-title').textContent = title;
-            left.querySelector('.re-sub').textContent = sub;
+            const titleEl = left.querySelector('.re-title');
+            const subEl = left.querySelector('.re-sub');
+            titleEl.dataset.i18nSkip = '';
+            subEl.dataset.i18nSkip = '';
+            titleEl.textContent = translateUiText(title);
+            subEl.textContent = translateUiText(sub);
             enabledInput.checked = !r.disabled;
             card.style.opacity = r.disabled ? '0.62' : '';
         };
@@ -1276,6 +1285,11 @@ export class RegexPanel {
                 </label>
             </div>
         `;
+        const globalSummary = head.querySelector('.regex-editor-sub');
+        if (globalSummary) {
+            globalSummary.dataset.i18nSkip = '';
+            globalSummary.textContent = this.formatRuleStatsSummary(stats);
+        }
         head.querySelector('#re-global-enabled').checked = g.enabled !== false;
         head.querySelector('#re-global-enabled').addEventListener('change', () => this.markEditorDirty());
         wrap.appendChild(head);
@@ -1359,11 +1373,11 @@ export class RegexPanel {
 
     formatBind(bind) {
         if (!bind) return '';
-        if (bind.type === 'world') return `绑定世界书：${bind.worldId || ''}`;
+        if (bind.type === 'world') return `${translateUiText('绑定世界书：')}${bind.worldId || ''}`;
         if (bind.type === 'preset') {
             const ptLabel = PRESET_TYPES.find(t => t.id === bind.presetType)?.label || bind.presetType || '';
             const summary = buildRegexCustomPromptPresetBindSummary(bind, this.presetStore);
-            if (summary) return `绑定预设：${summary}`;
+            if (summary) return `${translateUiText('绑定预设：')}${summary}`;
             const presetIds = Array.from(new Set([
                 ...(Array.isArray(bind.presetIds) ? bind.presetIds : []),
                 bind.presetId,
@@ -1375,9 +1389,9 @@ export class RegexPanel {
                     : null;
                 return String(preset?.name || id).trim() || id;
             });
-            return `绑定预设：${ptLabel} / ${presetNames.join('、') || '未选择'}`;
+            return `${translateUiText('绑定预设：')}${translateUiText(ptLabel)} / ${presetNames.join('、') || translateUiText('未选择')}`;
         }
-        return '绑定：未知';
+        return translateUiText('绑定：未知');
     }
 
     getSetDisplayName(setObj) {
@@ -1416,6 +1430,17 @@ export class RegexPanel {
                 ? placements.map(p => placementLabels[p] || String(p)).join(' / ')
                 : '未设置影响条目',
         };
+    }
+
+    formatRulePlacementText(stats = {}) {
+        const placements = Array.isArray(stats.placements) ? stats.placements : [];
+        if (!placements.length) return translateUiText(stats.placementText || '未设置影响条目');
+        return placements.map(value => translateUiText(placementLabels[value] || String(value))).join(' / ');
+    }
+
+    formatRuleStatsSummary(stats = {}) {
+        const count = translateUiText(`${Number(stats.enabled || 0)}/${Number(stats.total || 0)} 条规则启用`);
+        return `${count} · ${this.formatRulePlacementText(stats)}`;
     }
 
     getLocalSetVisualState(setObj, context = null) {
@@ -1637,8 +1662,9 @@ export class RegexPanel {
         const muted = visual.kind !== 'active';
         const dimmed = visual.kind === 'disabled' || visual.kind === 'unbound';
         item.title = name;
+        item.dataset.i18nSkip = '';
         item.dataset.setId = String(s.id || '');
-        item.setAttribute('aria-label', `${name}，${visual.label}`);
+        item.setAttribute('aria-label', `${name}, ${translateUiText(visual.label)}`);
         item.setAttribute('aria-pressed', isActive ? 'true' : 'false');
         item.setAttribute('role', 'button');
         item.tabIndex = 0;
@@ -1659,7 +1685,7 @@ export class RegexPanel {
             check.type = 'checkbox';
             check.className = 'regex-set-check';
             check.checked = selected;
-            check.setAttribute('aria-label', `选择 ${name}`);
+            check.setAttribute('aria-label', `${translateUiText('选择')} ${name}`);
             check.onclick = (e) => e.stopPropagation();
             check.onchange = async (e) => {
                 e.stopPropagation();
@@ -1685,7 +1711,9 @@ export class RegexPanel {
 
         const meta = document.createElement('span');
         meta.className = 'regex-set-meta';
-        meta.textContent = stats.total ? `${stats.enabled}/${stats.total} 条启用` : '暂无规则';
+        meta.textContent = stats.total
+            ? translateUiText(`${stats.enabled}/${stats.total} 条启用`)
+            : translateUiText('暂无规则');
         main.appendChild(heading);
         main.appendChild(meta);
 
@@ -1816,7 +1844,7 @@ export class RegexPanel {
             const chip = document.createElement('button');
             chip.type = 'button';
             chip.className = `regex-filter-chip ${this.localSetFilters[scope] === id ? 'is-active' : ''}`.trim();
-            chip.setAttribute('aria-label', ariaLabel);
+            chip.setAttribute('aria-label', translateUiText(ariaLabel));
             if (color) {
                 const dot = document.createElement('span');
                 dot.className = 'regex-filter-dot';
@@ -2263,14 +2291,17 @@ export class RegexPanel {
         dot.className = 'regex-status-dot';
         const titleDiv = document.createElement('div');
         titleDiv.className = 'regex-editor-title';
-        titleDiv.textContent = displayName;
+        titleDiv.dataset.i18nSkip = '';
+        titleDiv.textContent = translateUiText(displayName);
         titleLine.appendChild(dot);
         titleLine.appendChild(titleDiv);
         const subDiv = document.createElement('div');
         subDiv.className = 'regex-editor-sub';
-        subDiv.textContent = `${stats.enabled}/${stats.total} 条规则启用 · ${stats.placementText}`;
+        subDiv.dataset.i18nSkip = '';
+        subDiv.textContent = this.formatRuleStatsSummary(stats);
         const stateDiv = document.createElement('div');
         stateDiv.className = 'regex-editor-sub';
+        stateDiv.dataset.i18nSkip = '';
         stateDiv.textContent = bindText;
         infoCol.appendChild(titleLine);
         infoCol.appendChild(subDiv);
@@ -2347,7 +2378,7 @@ export class RegexPanel {
         rulesHeader.className = 'regex-rules-head';
         const rulesTitle = document.createElement('div');
         rulesTitle.style.cssText = 'font-weight:900; color:var(--app-text-primary);';
-        rulesTitle.textContent = `规则 ${stats.total}`;
+        rulesTitle.textContent = translateUiText(`规则 ${stats.total}`);
         const btnAdd = document.createElement('button');
         btnAdd.type = 'button';
         btnAdd.textContent = '＋ 新增规则';

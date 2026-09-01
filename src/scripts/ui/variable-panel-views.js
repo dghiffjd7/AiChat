@@ -203,6 +203,7 @@ export const renderVariableListView = ({
     const meta = makeElement(documentRef, 'div', 'variable-row-meta');
     const title = makeElement(documentRef, 'div', 'variable-row-title');
     const key = makeElement(documentRef, 'span', 'variable-row-name', rowModel.key);
+    key.setAttribute('data-i18n-skip', '');
     title.appendChild(key);
     const typeName = String(rowModel.schema?.type || inferVariableValueType(rowModel.value));
     title.appendChild(makeElement(documentRef, 'span', 'variable-type-label', typeName));
@@ -225,6 +226,7 @@ export const renderVariableListView = ({
       rowModel,
       onChangeValue,
     });
+    if (rowModel.filled) valueWidget.setAttribute('data-i18n-skip', '');
 
     const actions = makeElement(documentRef, 'div', 'variable-row-actions');
     actions.appendChild(makeButton(
@@ -326,9 +328,13 @@ export const renderVariableTreeNode = ({
     });
     header.setAttribute('aria-expanded', 'true');
     header.appendChild(makeElement(documentRef, 'span', 'variable-tree-chevron', '⌄'));
-    header.appendChild(makeElement(documentRef, 'span', 'variable-tree-group-name', node.name || '(root)'));
+    const groupName = makeElement(documentRef, 'span', 'variable-tree-group-name', node.name || '(root)');
+    groupName.setAttribute('data-i18n-skip', '');
+    header.appendChild(groupName);
     if (valueText) {
-      header.appendChild(makeElement(documentRef, 'span', 'variable-tree-group-value', valueText));
+      const groupValue = makeElement(documentRef, 'span', 'variable-tree-group-value', valueText);
+      groupValue.setAttribute('data-i18n-skip', '');
+      header.appendChild(groupValue);
     }
     header.appendChild(makeElement(
       documentRef,
@@ -363,13 +369,17 @@ export const renderVariableTreeNode = ({
   const schema = schemas?.[node.path] || null;
   applyVariableColor(row, schema);
   row.appendChild(makeElement(documentRef, 'span', 'variable-tree-dot'));
-  row.appendChild(makeElement(documentRef, 'span', 'variable-tree-path', node.path || node.name || ''));
-  row.appendChild(makeElement(
+  const path = makeElement(documentRef, 'span', 'variable-tree-path', node.path || node.name || '');
+  path.setAttribute('data-i18n-skip', '');
+  row.appendChild(path);
+  const value = makeElement(
     documentRef,
     'span',
     `variable-tree-value${isVariableValueFilled(node.value) ? '' : ' is-empty'}`,
     valueText || '（空）',
-  ));
+  );
+  if (isVariableValueFilled(node.value)) value.setAttribute('data-i18n-skip', '');
+  row.appendChild(value);
   row.appendChild(makeButton(
     documentRef,
     'variable-reference-chip is-compact',

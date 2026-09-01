@@ -239,7 +239,7 @@ const {
     format: 'chatapp.experience-pack.v1',
     formatVersion: 1,
     exportedAt: '2026-05-08T13:50:00.000Z',
-    exportedBy: 'AiChat',
+    exportedBy: 'OmniTavern',
     character: {
       id: 'session:alice',
       name: 'Alice',
@@ -272,7 +272,7 @@ const {
       format: 'chatapp.experience-pack.v1',
       formatVersion: 1,
       exportedAt: 'now',
-      exportedBy: 'AiChat',
+      exportedBy: 'OmniTavern',
       character: {
         id: 'session:fallback',
         name: 'session:fallback',

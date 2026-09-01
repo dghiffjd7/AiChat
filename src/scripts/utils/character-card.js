@@ -138,7 +138,7 @@ const parseTextChunk = (type, data) => {
   return null;
 };
 
-const extractCardJsonFromPng = (buffer) => {
+export const extractCharacterCardJsonFromPng = (buffer) => {
   const chunks = readPngTextChunks(buffer);
   if (!chunks.length) return null;
   const candidates = [];
@@ -210,10 +210,9 @@ export const parseCharacterCardFile = async (file) => {
       readFileAsArrayBuffer(file),
       readFileAsDataUrl(file),
     ]);
-    const json = extractCardJsonFromPng(buffer);
+    const json = extractCharacterCardJsonFromPng(buffer);
     if (!json) throw new Error('未找到角色卡数据');
     return { card: normalizeCharacterCard(json), raw: json, avatarDataUrl };
   }
   throw new Error('仅支持 PNG 或 JSON 角色卡');
 };
-

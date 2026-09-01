@@ -497,7 +497,7 @@ export const renderLineageMapSearchResultsHtml = (results = []) => {
       data-lineage-jump-node-id="${escHtml(item?.id)}" data-lineage-layer-id="${escHtml(item?.categoryId || 'contexts')}">
       <span class="lineage-search-result-dot" aria-hidden="true"></span>
       <span class="lineage-search-result-icon" aria-hidden="true">${lineageIconSvg(item?.icon || item?.categoryId)}</span>
-      <span class="lineage-search-result-text"><strong>${escHtml(item?.label)}</strong><small>${escHtml(item?.meta)}</small></span>
+      <span class="lineage-search-result-text"><strong data-i18n-skip>${escHtml(item?.label)}</strong><small>${escHtml(item?.meta)}</small></span>
       <span class="lineage-search-result-status is-${escHtml(item?.status || 'unknown')}">${escHtml(labelFor(STATUS_LABELS, item?.status))}</span>
     </button>
   `).join('');
@@ -558,7 +558,7 @@ export const renderLineageMapDockHtml = (graph = null, { expandedIds = [] } = {}
               data-lineage-jump-node-id="${escHtml(node?.id)}" data-lineage-layer-id="${escHtml(category.id)}">
               <span class="lineage-impact-rank">${index + 1}</span>
               <span class="lineage-impact-icon" aria-hidden="true">${lineageIconSvg(category.icon)}</span>
-              <span class="lineage-impact-copy"><strong>${escHtml(labelOfNode(node))}</strong><small>下游影响 ${score}</small></span>
+              <span class="lineage-impact-copy"><strong data-i18n-skip>${escHtml(labelOfNode(node))}</strong><small>下游影响 ${score}</small></span>
               <span class="lineage-impact-meter"><i style="width:${Math.round(score / maxImpact * 100)}%"></i></span>
             </button>
           `;
@@ -575,7 +575,7 @@ const renderLineageDetailRelation = (node = null, label = '', category = null) =
     <button type="button" class="lineage-detail-relation is-layer-${escHtml(resolvedCategory.id)}"
       data-lineage-jump-node-id="${escHtml(node?.id)}" data-lineage-layer-id="${escHtml(resolvedCategory.id)}">
       <span class="lineage-detail-relation-icon" aria-hidden="true">${lineageIconSvg(resolvedCategory.icon)}</span>
-      <span><strong>${escHtml(labelOfNode(node))}</strong><small>${escHtml(label || labelFor(NODE_TYPE_LABELS, node?.type))}</small></span>
+      <span><strong data-i18n-skip>${escHtml(labelOfNode(node))}</strong><small>${escHtml(label || labelFor(NODE_TYPE_LABELS, node?.type))}</small></span>
       <b aria-hidden="true">↗</b>
     </button>
   `;
@@ -614,7 +614,7 @@ export const renderLineageMapDetailHtml = (kind = '', item = null, graph = null)
         <span class="lineage-detail-icon" aria-hidden="true">${lineageIconSvg(category.icon)}</span>
         <span class="lineage-detail-heading">
           <span><b>${escHtml(category.en || category.id)}</b><i>${escHtml(labelFor(STATUS_LABELS, status))}</i></span>
-          <strong>${escHtml(title)}</strong>
+          <strong data-i18n-skip>${escHtml(title)}</strong>
         </span>
         <button type="button" class="lineage-detail-close" data-lineage-detail-close="1" aria-label="关闭详情">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>
@@ -1548,7 +1548,7 @@ const renderLineageMapSceneModelHtml = (model = null) => {
       ? `显示${node.label}个${category.label || '节点'}`
       : node.categoryId
         ? `${model.expandedIds.includes(node.categoryId) ? '收合' : '展开'}${node.label}`
-        : `${node.label}，${labelFor(STATUS_LABELS, status)}`;
+        : `${node.label}，状态：${labelFor(STATUS_LABELS, status)}`;
     return `
       <div class="lineage-map-node is-${escHtml(node.kind)} is-${escHtml(status)} is-layer-${escHtml(layerId)}${lineageClass}" ${attrs}
         role="${isInteractive ? 'button' : 'img'}" tabindex="${isInteractive ? '0' : '-1'}" aria-label="${escHtml(ariaLabel)}" style="${escHtml(style)}">
@@ -1557,8 +1557,8 @@ const renderLineageMapSceneModelHtml = (model = null) => {
         <span class="lineage-map-node-icon" aria-hidden="true">${lineageIconSvg(node.kind === 'root' ? 'prompts' : category.icon)}</span>
         <span class="lineage-map-text">
           <span class="lineage-map-node-eyebrow"><b>${escHtml(category.en || layerId)}</b><i class="is-${escHtml(status)}">${escHtml(labelFor(STATUS_LABELS, status))}</i></span>
-          <strong>${escHtml(truncate(node.label, node.kind === 'root' ? 26 : 20))}</strong>
-          ${node.meta ? `<small>${escHtml(truncate(node.meta, 24))}</small>` : ''}
+          <strong data-i18n-skip>${escHtml(truncate(node.label, node.kind === 'root' ? 26 : 20))}</strong>
+          ${node.meta ? `<small data-i18n-skip>${escHtml(truncate(node.meta, 24))}</small>` : ''}
         </span>
         ${count}
       </div>

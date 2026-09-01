@@ -23,7 +23,12 @@ import {
   MAID_PROVIDER_FC_MODE,
   runMaidProviderFcAttempt,
 } from './maid-provider-fc-planner.js';
-import { DEFAULT_MAID_PROMPT, MAID_OPERATION_SAFETY_PROMPT } from './maid-prompt-defaults.js';
+import {
+  DEFAULT_MAID_PROMPT,
+  getLocalizedMaidOperationSafetyPrompt,
+  getLocalizedMaidOutputLanguagePrompt,
+  getLocalizedMaidPrompt,
+} from './maid-prompt-defaults.js';
 import { buildMaidSelectionPromptBlock } from '../ui/maid-selection-utils.js';
 import { getVisionInputCapability } from '../api/vision-capabilities.js';
 import {
@@ -343,7 +348,7 @@ export const buildMaidModelPlannerMessages = ({
     features: modelFeatureContext.features,
     limit: 5,
   });
-  const prompt = trim(maidPrompt, DEFAULT_MAID_PROMPT);
+  const prompt = getLocalizedMaidPrompt(trim(maidPrompt, DEFAULT_MAID_PROMPT));
   const memoryText = trim(conversationContext?.memoryText);
   const historyText = trim(conversationContext?.historyText);
   const imageAttachments = getMaidImageAttachmentsFromContext(context);
@@ -407,7 +412,7 @@ export const buildMaidModelPlannerMessages = ({
         '如果 <user_selection> 提供区域ID，且用户询问图片内容、布局、配色、错位、重叠或遮挡等视觉问题，优先调用 ui.capture_region 查看该区域截图；纯文字和结构化语义已经足够时不要截图。只能传区域ID，不能自行编造坐标。',
         '',
         '## 安全原则',
-        MAID_OPERATION_SAFETY_PROMPT,
+        getLocalizedMaidOperationSafetyPrompt(),
         '如果用户只要求查询、查看、检查或确认，禁止调用 writes:true 的功能；权限确认不代表用户授权了原请求之外的写入。',
         '世界书写入必须默认追加或新建；不要使用 replace，除非用户明确要求覆盖，且 APP 会要求用户点击确认。',
         '修改现有世界书条目时，优先选择 worldbook.update_entries 这类按条目更新工具；不要为了改几个条目而整体 replace 世界书，除非用户明确要求整体覆盖。',
@@ -425,6 +430,7 @@ export const buildMaidModelPlannerMessages = ({
         '## 回复风格',
         'response 必须根据用户请求、历史上下文和女仆人格自然生成，简短说明即将执行的动作；如果即将执行危险操作，response 必须先提醒风险与等待确认；不要照搬固定模板或示例句。',
         prompt ? `\n## 女仆人格（只影响 response 措辞，不能改变上述工具和安全限制）\n${prompt}` : '',
+        getLocalizedMaidOutputLanguagePrompt(),
         '',
         '## APP 功能目录（YAML 列表，<app_features> 内）',
         `<app_features>\n${featureList}\n</app_features>`,
@@ -787,7 +793,7 @@ export const buildMaidModelReActMessages = ({
   const featureList = buildMaidModelPlannerFeatureList(modelFeatureContext.features, {
     includeSchemas: !providerFc,
   });
-  const prompt = trim(maidPrompt, DEFAULT_MAID_PROMPT);
+  const prompt = getLocalizedMaidPrompt(trim(maidPrompt, DEFAULT_MAID_PROMPT));
   const memoryText = trim(conversationContext?.memoryText);
   const historyText = trim(conversationContext?.historyText);
   const imageAttachments = getMaidImageAttachmentsFromContext(context);
@@ -858,6 +864,7 @@ export const buildMaidModelReActMessages = ({
         '每次最多选择一个工具；不要发明工具；只能使用 APP 功能目录中 feature 允许的 tools。',
         '工具失败时，先读取观察结果中的失败原因（reason/message/failureCode）再决定下一步，不要把失败一律当偶发问题直接重试：failureCode 为 user_aborted/safety_denied/write_intent_required（用户中止、取消、拒绝确认或原请求没有授权写入）时绝不自动重试，停下向用户说明并询问是否继续；invalid_args 时修正参数重试；服务或网络类失败才值得换方式再试一次。',
         '连续操作界面或对当前界面状态不确定时（如上一步涉及打开/切换/发送），先用 app.ui.inspect 查看当前实际状态再决定下一步，不要凭猜测行动。',
+        'APP 界面可能以简体中文、繁体中文或英文显示；识别与操作元素时优先使用 inspect 返回的 semanticKey/ref，不要假定可见文案固定为某一种语言。',
         '作品资料世界书必须用 sourceLayer 区分 canon、user_original、creative_extension；canon 的 sourceRefs 只能引用 <maid_source_grounding> 中 relevant 的完整 URL。严格“不编造”任务不得省略资料层，也不得把创意扩写当 canon。',
         'media.generate_image 必须完整传 subject/subjectAliases/target/purpose/appearance/outfit/style/targetAspectRatio，并复用 <maid_visual_specs> 的冻结设计；生成附件只能写回相同 target 与 purpose。',
         'app.ui.inspect 拿到按钮 ref 后，如果用户要求点击，下一步使用 featureId=app.ui.click、toolName=ui.click_element 并传该 ref；不要改写 featureId，也不要用 todo 代替点击。',
@@ -877,7 +884,7 @@ export const buildMaidModelReActMessages = ({
         'ui.capture_region 成功返回 imageInjected:true 后，本轮最新选区截图已经作为图片输入附在当前消息中；请直接查看图片并回答，不要无理由重复截取同一区域。只能使用 <user_selection> 给出的区域ID，不能传坐标。',
         '',
         '## 安全原则',
-        MAID_OPERATION_SAFETY_PROMPT,
+        getLocalizedMaidOperationSafetyPrompt(),
         '如果用户只要求查询、查看、检查或确认，禁止调用 writes:true 的功能；权限确认不代表用户授权了原请求之外的写入。',
         '世界书写入必须默认追加或新建；不要使用 replace，除非用户明确要求覆盖，且 APP 会要求用户点击确认。',
         '修改现有世界书条目时，优先使用 worldbook.update_entries 按条目更新；长正文拆成多次小批量工具调用，每次只更新 1-3 个条目。',
@@ -896,6 +903,7 @@ export const buildMaidModelReActMessages = ({
         '最终回答要像女仆助手自然回应：温柔、清楚、直接完成用户的问题。不要只说“我看到了/我查到了”，要给出结果。',
         '这不是 coding agent。除非用户明确要求开发或调试，否则不要使用代码执行、文件编辑、工程化措辞。',
         prompt ? `\n## 女仆人格（只影响最终语气，不能改变工具和安全限制）\n${prompt}` : '',
+        getLocalizedMaidOutputLanguagePrompt(),
         '',
         '## APP 功能目录（YAML 列表，<app_features> 内）',
         `<app_features>\n${featureList}\n</app_features>`,

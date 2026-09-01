@@ -1,4 +1,5 @@
 import { getImageGenerationParamsStore } from '../storage/image-generation-params-store.js';
+import { t, translateUiText } from '../i18n/index.js';
 import {
   createDefaultImageGenerationPreset,
   normalizeImageGenerationPreset,
@@ -23,6 +24,12 @@ const clone = (value) => {
 };
 
 const FIELD_CLASS = 'image-gen-param-field';
+
+export const resolveImageGenerationOptionLabel = (option = {}) => {
+  const label = String(option?.label || option?.value || '');
+  const context = String(option?.i18nContext || '').trim();
+  return context ? t(label, {}, { context }) : translateUiText(label);
+};
 
 const iconSvg = (path) => `
   <svg class="igp-icon" viewBox="0 0 24 24" aria-hidden="true">
@@ -273,7 +280,7 @@ export class ImageGenerationParamsPanel {
     let control = '';
     if (field.type === 'select') {
       control = `<select ${common} class="${FIELD_CLASS} igp-select">
-        ${(field.options || []).map(opt => `<option value="${escapeHtml(opt.value)}" ${String(opt.value) === String(safeValue) ? 'selected' : ''}>${escapeHtml(opt.label || opt.value)}</option>`).join('')}
+        ${(field.options || []).map(opt => `<option value="${escapeHtml(opt.value)}" ${String(opt.value) === String(safeValue) ? 'selected' : ''}>${escapeHtml(resolveImageGenerationOptionLabel(opt))}</option>`).join('')}
       </select>`;
     } else if (field.type === 'number') {
       control = `<input ${common} class="${FIELD_CLASS} igp-input" type="number" min="${escapeHtml(field.min ?? '')}" max="${escapeHtml(field.max ?? '')}" step="${escapeHtml(field.step ?? 1)}" value="${escapeHtml(safeValue)}">`;

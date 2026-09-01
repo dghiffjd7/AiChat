@@ -1,6 +1,11 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
+import { initializeI18n } from '../../src/scripts/i18n/index.js';
+import {
+  ImageGenerationParamsPanel,
+  resolveImageGenerationOptionLabel,
+} from '../../src/scripts/ui/image-generation-params-panel.js';
 import {
   combineImageNegativePrompts,
   createDefaultImageGenerationPreset,
@@ -104,6 +109,39 @@ assert.equal(
   );
   assert.match(appSource, /negativePromptMode: 'replace'/);
   assert.match(appSource, /编辑只影响本次生成，不会修改生图设定/);
+}
+
+{
+  const englishBase = JSON.parse(await readFile(new URL('../i18n/en.base.json', import.meta.url), 'utf8'));
+  await initializeI18n({
+    preference: 'en',
+    documentLike: null,
+    fetchFn: async () => ({ ok: true, json: async () => englishBase }),
+  });
+  const configs = [
+    { provider: 'openai', model: 'gpt-image-1' },
+    { provider: 'openai', model: 'dall-e-3' },
+    { provider: 'novelai', model: 'nai-diffusion-4-5-full' },
+    { provider: 'stability', model: 'stable-image-ultra' },
+    { provider: 'togetherai', model: 'black-forest-labs/FLUX.1-schnell-Free' },
+    { provider: 'pollinations', model: 'flux' },
+    { provider: 'automatic1111', model: 'local' },
+    { provider: 'custom', model: 'custom' },
+  ];
+  const optionLabels = configs.flatMap(config => resolveImageGenerationParamSchema(config).fields)
+    .flatMap(field => field.options || [])
+    .map(resolveImageGenerationOptionLabel);
+  assert.equal(optionLabels.some(label => /\p{Script=Han}/u.test(label)), false);
+
+  const booleanField = resolveImageGenerationParamSchema({
+    provider: 'novelai',
+    model: 'nai-diffusion-4-5-full',
+  }).fields.find(field => field.key === 'qualityToggle');
+  const panel = new ImageGenerationParamsPanel({ store: {} });
+  const html = panel.renderField(booleanField, 'true');
+  assert.match(html, />Off<\/option>/);
+  assert.match(html, />On<\/option>/);
+  assert.doesNotMatch(html, />Close<\/option>|>开启<\/option>/);
 }
 
 console.log('ok - fixed image negative prompts support visible one-shot replacement without mutating presets');

@@ -1,3 +1,5 @@
+import { getLocalizedPromptText } from '../i18n/prompt-locale.js';
+
 export const DEFAULT_MAID_PROMPT = [
   '你是这个 APP 内的女仆助手。',
   '你可以自然回应用户的普通聊天，也可以简短说明 APP 操作状态。',
@@ -11,3 +13,25 @@ export const MAID_OPERATION_SAFETY_PROMPT = [
   '除非用户明确要求删除、覆盖、替换或同等危险动作，否则不要规划或执行危险操作；默认改用追加、新建副本、预览或打开对应界面。',
   '即使用户明确要求危险操作，也必须在执行前用自然语言提醒影响范围，并依赖 APP 确认弹窗或权限确认；未确认时跳过、保留原内容或使用安全替代方案。',
 ].join('\n');
+
+const samePromptText = (left, right) => String(left ?? '').replace(/\r\n?/g, '\n')
+  === String(right ?? '').replace(/\r\n?/g, '\n');
+
+export const getLocalizedMaidPrompt = (value = DEFAULT_MAID_PROMPT) => {
+  const prompt = String(value || '').trim() || DEFAULT_MAID_PROMPT;
+  return samePromptText(prompt, DEFAULT_MAID_PROMPT)
+    ? getLocalizedPromptText('maid.default')
+    : prompt;
+};
+
+export const canonicalizeMaidPrompt = (value = DEFAULT_MAID_PROMPT) => {
+  const prompt = String(value || '').trim() || DEFAULT_MAID_PROMPT;
+  const localized = getLocalizedPromptText('maid.default');
+  return samePromptText(prompt, localized) ? DEFAULT_MAID_PROMPT : prompt;
+};
+
+export const getLocalizedMaidOperationSafetyPrompt = () =>
+  getLocalizedPromptText('maid.safety', MAID_OPERATION_SAFETY_PROMPT);
+
+export const getLocalizedMaidOutputLanguagePrompt = () =>
+  getLocalizedPromptText('maid.output_language_guard');

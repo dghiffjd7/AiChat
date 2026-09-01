@@ -11,7 +11,7 @@ const shouldCaptureScreenshots = process.argv.includes('--screenshots');
 
 const page = await findAppPageTarget();
 if (!page?.webSocketDebuggerUrl) {
-  throw new Error('Chat App CDP target not found; start npm run dev with WebView2 remote debugging first');
+  throw new Error('OmniTavern CDP target not found; start npm run dev with WebView2 remote debugging first');
 }
 
 const pending = new Map();

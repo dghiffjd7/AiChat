@@ -2,6 +2,7 @@ import { appConfirm } from './app-confirm.js';
 import { bindBackdropActivation } from './backdrop-activation-utils.js';
 import { bindCustomSelectButton, closeCustomSelectMenu, refreshCustomSelectButton } from './custom-select.js';
 import { applyTemplate, listVariableTemplates } from '../variables/variable-templates.js';
+import { translateUiText } from '../i18n/index.js';
 // Compatibility runtime retained while the redesigned shell composes these
 // stable storage, rules, template, and import/export behaviors.
 import {
@@ -782,7 +783,10 @@ export class VariablePanel {
         this.ensureUI();
         const { sid, scope } = this.getVars();
         const meta = this.panel?.querySelector?.('#var-meta');
-        if (meta) meta.textContent = scope === 'global' ? '全局变量（共享）' : (sid ? `会话：${sid}` : '未选择会话');
+        if (meta) {
+            meta.dataset.i18nSkip = '';
+            meta.textContent = translateUiText(scope === 'global' ? '全局变量（共享）' : (sid ? `会话：${sid}` : '未选择会话'));
+        }
         this.setImpactText('#var-impact', 'manage', this.panel);
         this.term = '';
         const searchEl = this.panel?.querySelector?.('#var-search');
@@ -801,8 +805,9 @@ export class VariablePanel {
         const el = root?.querySelector?.(selector);
         if (!el) return;
         const { sid, scope } = this.getVars();
-        const impactText = buildVariableScopeImpactText({ scope, sessionId: sid, action });
-        el.textContent = `作用域：${formatVariableScopeLabel({ scope, sessionId: sid })}`;
+        const impactText = translateUiText(buildVariableScopeImpactText({ scope, sessionId: sid, action }));
+        el.dataset.i18nSkip = '';
+        el.textContent = translateUiText(`作用域：${formatVariableScopeLabel({ scope, sessionId: sid })}`);
         el.title = impactText;
         el.setAttribute('aria-label', impactText);
     }

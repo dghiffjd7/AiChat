@@ -8,7 +8,10 @@ import { recordInvokeResult } from './boot-diagnostics.js';
 
 // IPC 挂死防护：Tauri IPC 通道故障时 invoke 会永久 pending（无响应也无拒绝，catch 不到）。
 // 按命令给 IPC 级超时：http_request 用自身 timeoutMs+缓冲，其余命令 20s；超时抛错让调用方 fallback 生效。
-const resolveInvokeTimeoutMs = (cmd, args) => {
+// 资料包导出/导入耗时随数据量线性增长（实测 3GB 资料在 debug 构建下超过 10 分钟），返回 0 表示不设超时。
+const UNLIMITED_INVOKE_COMMANDS = new Set(['export_data_bundle', 'import_data_bundle', 'import_data_bundle_bytes']);
+export const resolveInvokeTimeoutMs = (cmd, args) => {
+    if (UNLIMITED_INVOKE_COMMANDS.has(cmd)) return 0;
     if (cmd === 'http_request' || cmd === 'public_http_request') {
         const requestTimeout = Number(args?.timeoutMs);
         return (Number.isFinite(requestTimeout) && requestTimeout > 0 ? requestTimeout : 240000) + 30000;
@@ -33,12 +36,12 @@ export const safeInvoke = async (cmd, args) => {
     const timeoutMs = resolveInvokeTimeoutMs(cmd, args);
     let timer = null;
     try {
-        const result = await Promise.race([
+        const result = await (timeoutMs <= 0 ? invoker(cmd, args) : Promise.race([
             invoker(cmd, args),
             new Promise((_, reject) => {
                 timer = setTimeout(() => reject(new Error(`tauri_invoke_timeout:${cmd}:${timeoutMs}ms`)), timeoutMs);
             }),
-        ]);
+        ]));
         recordInvokeResult({ cmd, status: 'ok' });
         return result;
     } catch (error) {

@@ -37,6 +37,7 @@ export function mountNodeEditorCoreImpl(context, { entry, block, markRefDirty } 
         deepClone,
         escapeHtml,
         clamp,
+        translateUiText = value => String(value ?? ''),
     } = deps || {};
 
     return (function mountNodeEditorCoreInner({ entry, block, markRefDirty } = {}) {
@@ -692,21 +693,21 @@ export function mountNodeEditorCoreImpl(context, { entry, block, markRefDirty } 
         };
         const getNodeLabel = (node) => {
             const type = normalizeNodeType(node?.type);
-            if (type === 'variable') return '变量';
-            if (type === 'value') return '值';
-            if (type === 'compare') return '比较';
-            if (type === 'logic') return '逻辑';
-            return '最终条件';
+            if (type === 'variable') return translateUiText('变量');
+            if (type === 'value') return translateUiText('值');
+            if (type === 'compare') return translateUiText('比较');
+            if (type === 'logic') return translateUiText('逻辑');
+            return translateUiText('最终条件');
         };
         const getPortLabel = (node, direction, port) => {
             const type = normalizeNodeType(node?.type);
             if (type === 'compare' && direction === 'input') {
-                if (port === 'left') return '左值';
-                if (port === 'right') return '右值';
+                if (port === 'left') return translateUiText('左值');
+                if (port === 'right') return translateUiText('右值');
             }
-            if (type === 'compare' && direction === 'output' && port === 'out') return '结果';
-            if (type === 'variable' && direction === 'output' && port === 'out') return '变量';
-            if (type === 'value' && direction === 'output' && port === 'out') return '值';
+            if (type === 'compare' && direction === 'output' && port === 'out') return translateUiText('结果');
+            if (type === 'variable' && direction === 'output' && port === 'out') return translateUiText('变量');
+            if (type === 'value' && direction === 'output' && port === 'out') return translateUiText('值');
             return '';
         };
         const getPortDisplayLabel = (nodeId, port, direction) => {
@@ -1855,8 +1856,8 @@ export function mountNodeEditorCoreImpl(context, { entry, block, markRefDirty } 
                     const issueClass = issueState.level ? ` is-${issueState.level}` : '';
                     const runtimeMeta = getRuntimeStateMeta(node);
                     const titleParts = [];
-                    if (issueState.issues.length) titleParts.push(issueState.issues.join(' / '));
-                    if (runtimeMeta.reason) titleParts.push(runtimeMeta.reason);
+                    if (issueState.issues.length) titleParts.push(issueState.issues.map(translateUiText).join(' / '));
+                    if (runtimeMeta.reason) titleParts.push(translateUiText(runtimeMeta.reason));
                     const issueTitle = titleParts.length ? ` title="${escapeHtml(titleParts.join(' / '))}"` : '';
                     const isFinal = finalSourceNodeId === node.id;
                     const isActivePath = activePathState.nodeIds.has(String(node.id || ''));

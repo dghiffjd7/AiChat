@@ -61,6 +61,37 @@ test('waits for MiPhone markers that arrive after a closed content block in late
   assert.equal(events[0].messages[0]?.content, '突然发个Hi过来，想搭讪也得看看对象吧？');
 });
 
+test('accepts ASCII private_chat aliases without removing the Chinese form', () => {
+  const parser = new DialogueStreamParser({ userName: 'Alan' });
+  const events = collect(parser, [
+    [
+      '<private_chat:Alan|Lara Croft>',
+      'Lara Croft--Ready when you are.--09:15',
+      '</private_chat:Alan|Lara Croft>',
+    ].join('\n'),
+  ]);
+  assert.equal(events.length, 1);
+  assert.equal(events[0].type, 'private_chat');
+  assert.equal(events[0].otherName, 'Lara Croft');
+  assert.equal(events[0].messages[0]?.content, 'Ready when you are.');
+});
+
+test('accepts ASCII group_chat aliases', () => {
+  const parser = new DialogueStreamParser({ userName: 'Alan' });
+  const events = collect(parser, [
+    [
+      '<group_chat:Night Watch>',
+      '<成员>Alan,Lara</成员>',
+      '<聊天内容>Lara--All clear.--23:40</聊天内容>',
+      '</group_chat:Night Watch>',
+    ].join('\n'),
+  ]);
+  assert.equal(events.length, 1);
+  assert.equal(events[0].type, 'group_chat');
+  assert.equal(events[0].groupName, 'Night Watch');
+  assert.equal(events[0].messages[0]?.speaker, 'Lara');
+});
+
 let failed = 0;
 for (const t of tests) {
   try {

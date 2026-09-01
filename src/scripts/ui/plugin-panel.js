@@ -278,7 +278,7 @@ const base64ToByteArray = (base64 = '') => {
 
 const isInvokeUnavailableError = (err) => /tauri invoke not available|command not found|unknown command/i.test(String(err?.message || err || ''));
 
-const SILLY_TAVERN_EXTENSION_MESSAGE = '检测到 SillyTavern/酒馆扩展格式（display_name/js/css）。当前插件系统不能直接运行酒馆扩展；需要先做兼容适配或转换为 ChatApp 插件清单。';
+const SILLY_TAVERN_EXTENSION_MESSAGE = '检测到 SillyTavern/酒馆扩展格式（display_name/js/css）。当前插件系统不能直接运行酒馆扩展；需要先做兼容适配或转换为 OmniTavern 插件清单。';
 
 const isSillyTavernExtensionManifest = (manifest) => {
   const raw = manifest && typeof manifest === 'object' ? manifest : {};

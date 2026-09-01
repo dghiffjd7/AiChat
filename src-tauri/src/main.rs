@@ -2,5 +2,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
-    tauri_chat_app_lib::run();
+    omnitavern_lib::run();
 }

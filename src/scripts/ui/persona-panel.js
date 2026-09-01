@@ -5,6 +5,7 @@ import { appChoice, appConfirm } from './app-confirm.js';
 import { bindBackdropActivation } from './backdrop-activation-utils.js';
 import { appSettings } from '../storage/app-settings.js';
 import { CharacterCardImporter } from './character-card-importer.js';
+import { CharacterCardExporter } from './character-card-exporter.js';
 import { getCharacterCardDisplayName, getCharacterCardSource } from '../utils/character-card-display.js';
 import { getDefaultAppIcon } from '../utils/default-icon.js';
 import { bindCustomSelectButton, closeCustomSelectMenu, refreshCustomSelectButton } from './custom-select.js';
@@ -26,6 +27,7 @@ import {
 } from './session-memory-table-utils.js';
 import { emitMemoryRowsUpdated as emitSharedMemoryRowsUpdated } from './session-memory-event-utils.js';
 import { logger } from '../utils/logger.js';
+import { translateUiText } from '../i18n/index.js';
 import {
     buildPersonaGalleryDetails,
     filterPersonaGalleryItems,
@@ -94,6 +96,10 @@ export class PersonaPanel {
             rpSessionStore: this.rpSessionStore,
             onPersonaChanged: () => this.notifyPersonaChanged(),
             onGreetingsImported: payload => this.notifyGreetingsImported(payload),
+        });
+        this.cardExporter = new CharacterCardExporter({
+            appBridge: window.appBridge,
+            getFallbackAvatar: () => getDefaultAppIcon(),
         });
         this.importInput = null;
         this.importOverlay = null;
@@ -666,6 +672,7 @@ export class PersonaPanel {
                     </div>
 
                     <button id="persona-new-chat-btn" class="persona-new-chat-btn" style="width: 100%; padding: 12px; background: var(--app-surface-subtle); color: #b45309; border: 1px solid #fcd34d; border-radius: 8px; margin-top: 20px; cursor: pointer; font-weight: 700;">为此角色卡开启新聊天</button>
+                    <button id="export-persona-btn" style="width: 100%; padding: 12px; background: var(--app-surface-card); color: var(--app-text-primary); border: 1px solid var(--app-border-default); border-radius: 8px; margin-top: 10px; cursor: pointer; font-weight: 700;">导出角色卡</button>
                     <button id="persona-archive-btn" style="width: 100%; padding: 12px; background: var(--app-surface-card); color: var(--app-text-primary); border: 1px solid var(--app-border-default); border-radius: 8px; margin-top: 10px; cursor: pointer; font-weight: 700;">角色卡存档</button>
                     <button id="delete-persona-btn" style="width: 100%; padding: 12px; background: #fee2e2; color: #dc2626; border: none; border-radius: 8px; margin-top: 10px; cursor: pointer;">删除此角色卡</button>
                 </div>
@@ -695,6 +702,7 @@ export class PersonaPanel {
         this.panel.querySelector('#save-persona-btn').addEventListener('click', () => this.saveEdit());
         this.panel.querySelector('#delete-persona-btn').addEventListener('click', () => this.deleteCurrent());
         this.panel.querySelector('#persona-new-chat-btn').addEventListener('click', () => this.startRoleNewChat(this.editingId));
+        this.panel.querySelector('#export-persona-btn').addEventListener('click', () => this.exportPersonaCard(this.editingId));
         this.panel.querySelector('#persona-archive-btn').addEventListener('click', () => this.openRoleArchiveModal(this.editingId));
         this.panel.querySelector('#edit-position').addEventListener('change', () => this.updateInjectionUi());
         bindCustomSelectButton({
@@ -953,7 +961,10 @@ export class PersonaPanel {
         };
 
         const metaEl = this.bulkModal.panel.querySelector('#persona-bulk-meta');
-        if (metaEl) metaEl.textContent = `角色卡：${this.bulkState.personaName}`;
+        if (metaEl) {
+            metaEl.dataset.i18nSkip = '';
+            metaEl.textContent = `${translateUiText('角色卡')}：${this.bulkState.personaName}`;
+        }
 
         this.renderBulkList();
         this.bulkModal.overlay.style.display = 'block';
@@ -1019,10 +1030,10 @@ export class PersonaPanel {
                     <input class="persona-bulk-check" type="checkbox" ${checked ? 'checked' : ''} style="width:18px; height:18px;">
                     <img src="${avatarUrl}" alt="" style="width:36px; height:36px; border-radius:12px; object-fit:cover; background:var(--app-surface-hover);">
                     <div style="flex:1; min-width:0;">
-                        <div style="font-weight:800; color:var(--app-text-primary); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">
-                            ${it.name}${it.isGroup ? ' · 群组' : ''}
+                        <div data-i18n-skip style="font-weight:800; color:var(--app-text-primary); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">
+                            ${it.name}${it.isGroup ? ` · ${translateUiText('群组')}` : ''}
                         </div>
-                        <div style="color:var(--app-text-muted); font-size:12px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${it.id}</div>
+                        <div data-i18n-skip style="color:var(--app-text-muted); font-size:12px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${it.id}</div>
                     </div>
                 `;
                 const checkbox = row.querySelector('.persona-bulk-check');
@@ -1043,7 +1054,7 @@ export class PersonaPanel {
                 listEl.appendChild(row);
             });
         }
-        if (countEl) countEl.textContent = `已选 ${this.bulkState.selected.size} / ${this.bulkState.sessionIds.length}`;
+        if (countEl) countEl.textContent = `${translateUiText('已选')} ${this.bulkState.selected.size} / ${this.bulkState.sessionIds.length}`;
     }
 
     async applyBulkModal() {
@@ -1399,6 +1410,7 @@ export class PersonaPanel {
             message: '选择要执行的操作。',
             actions: [
                 { id: 'edit', label: '编辑' },
+                { id: 'export', label: '导出角色卡' },
                 { id: 'archive', label: '存档' },
                 { id: 'cancel', label: '取消' },
             ],
@@ -1408,6 +1420,8 @@ export class PersonaPanel {
             this.hideGallery();
             await this.show();
             this.openEdit(personaId);
+        } else if (choice === 'export') {
+            await this.exportPersonaCard(personaId);
         } else if (choice === 'archive') {
             this.openRoleArchiveModal(personaId);
         }
@@ -1620,9 +1634,9 @@ export class PersonaPanel {
         bar.innerHTML = `
             <div style="display:flex; align-items:center; gap:10px;">
                 <div style="flex:1; min-width:0;">
-                    <div style="font-weight:800; color:var(--app-text-primary); font-size:13px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">当前会话：${sessionId}</div>
-                    <div style="color:var(--app-text-muted); font-size:12px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">
-                        ${lockPersonaId ? `已锁定角色卡：${lockedName}` : '未锁定（使用全局角色卡）'}
+                    <div data-i18n-skip style="font-weight:800; color:var(--app-text-primary); font-size:13px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${translateUiText(`当前会话：${sessionId}`)}</div>
+                    <div data-i18n-skip style="color:var(--app-text-muted); font-size:12px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">
+                        ${translateUiText(lockPersonaId ? `已锁定角色卡：${lockedName}` : '未锁定（使用全局角色卡）')}
                     </div>
                 </div>
                 ${lockPersonaId ? `<button id="persona-unlock-btn" style="border:1px solid var(--app-border-default); background:var(--app-surface-card); border-radius:10px; padding:6px 10px; cursor:pointer;">解除锁定</button>` : ''}
@@ -1675,6 +1689,7 @@ export class PersonaPanel {
             const isLockedForSession = lockPersonaId && p.id === lockPersonaId;
             const cardName = this.getCharacterCardName(p);
             const subtitle = p.description || '未设置角色描述';
+            const subtitleSkipAttribute = p.description ? ' data-i18n-skip' : '';
 
             item.innerHTML = `
                 <div style="position: relative;">
@@ -1683,8 +1698,8 @@ export class PersonaPanel {
                     ${isLockedForSession ? '<div title="此会话已锁定" style="position:absolute; top:-4px; right:-4px; width:18px; height:18px; background:#0f172a; color:var(--app-text-inverse); border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:11px; border:2px solid var(--app-surface-card);">🔒</div>' : ''}
                 </div>
                 <div style="flex: 1; min-width: 0;">
-                    <div style="font-weight: bold; color: var(--app-text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${cardName}</div>
-                    <div style="font-size: 12px; color: var(--app-text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${subtitle}</div>
+                    <div data-i18n-skip style="font-weight: bold; color: var(--app-text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${cardName}</div>
+                    <div${subtitleSkipAttribute} style="font-size: 12px; color: var(--app-text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${subtitle}</div>
                 </div>
                 <div class="persona-card-actions" style="display:flex; align-items:center; gap:4px; flex-shrink:0;">
                     <button class="persona-new-chat-btn" title="为此角色卡开启新聊天" style="
@@ -1734,6 +1749,7 @@ export class PersonaPanel {
         const deleteBtn = this.panel.querySelector('#delete-persona-btn');
         const newChatBtn = this.panel.querySelector('#persona-new-chat-btn');
         const archiveBtn = this.panel.querySelector('#persona-archive-btn');
+        const exportBtn = this.panel.querySelector('#export-persona-btn');
         const title = view.querySelector('span');
 
         if (id) {
@@ -1748,6 +1764,7 @@ export class PersonaPanel {
             deleteBtn.style.display = 'block';
             if (newChatBtn) newChatBtn.style.display = 'block';
             if (archiveBtn) archiveBtn.style.display = 'block';
+            if (exportBtn) exportBtn.style.display = 'block';
             title.textContent = '编辑角色卡';
             
             // Disable delete if it's the only one
@@ -1764,6 +1781,7 @@ export class PersonaPanel {
             deleteBtn.style.display = 'none';
             if (newChatBtn) newChatBtn.style.display = 'none';
             if (archiveBtn) archiveBtn.style.display = 'none';
+            if (exportBtn) exportBtn.style.display = 'none';
             title.textContent = '新建角色卡';
         }
 
@@ -1848,6 +1866,35 @@ export class PersonaPanel {
                 this.importUrlBtn.disabled = false;
                 this.importUrlBtn.textContent = '导入链接';
             }
+        }
+    }
+
+    async exportPersonaCard(personaId) {
+        const persona = this.store.get(String(personaId || '').trim());
+        if (!persona) {
+            window.toastr?.error?.('未找到要导出的角色卡');
+            return '';
+        }
+        const choice = await appChoice({
+            title: '导出角色卡',
+            message: '选择 SillyTavern 兼容格式。PNG 会把角色资料写入头像图片；JSON 只导出角色资料。',
+            actions: [
+                { id: 'png', label: 'PNG 角色卡', primary: true },
+                { id: 'json', label: 'JSON 角色卡' },
+                { id: 'cancel', label: '取消' },
+            ],
+            defaultActionId: 'png',
+        });
+        if (!['png', 'json'].includes(choice)) return '';
+        try {
+            const result = await this.cardExporter.export(persona, choice);
+            if (!result?.path) return '';
+            window.toastr?.success?.(`已导出角色卡：${result.path}`);
+            return result.path;
+        } catch (err) {
+            logger.error('导出角色卡失败', err);
+            window.toastr?.error?.(`导出角色卡失败：${err?.message || '未知错误'}`);
+            return '';
         }
     }
 

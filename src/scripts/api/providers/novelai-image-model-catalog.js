@@ -13,8 +13,8 @@ export const DEFAULT_NOVELAI_IMAGE_MODELS = Object.freeze([
 ]);
 
 export const NOVELAI_IMAGE_MODEL_CATALOG_URLS = Object.freeze([
-  'https://raw.githubusercontent.com/dghiffjd7/AiChat/main/src/assets/catalogs/novelai-image-models.json',
-  'https://cdn.jsdelivr.net/gh/dghiffjd7/AiChat@main/src/assets/catalogs/novelai-image-models.json',
+  'https://raw.githubusercontent.com/dghiffjd7/OmniTavern/main/src/assets/catalogs/novelai-image-models.json',
+  'https://cdn.jsdelivr.net/gh/dghiffjd7/OmniTavern@main/src/assets/catalogs/novelai-image-models.json',
 ]);
 
 export const NOVELAI_IMAGE_MODEL_CACHE_KEY = 'novelai_image_model_catalog_v1';

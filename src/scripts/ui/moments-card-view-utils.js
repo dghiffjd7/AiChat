@@ -1,3 +1,5 @@
+import { translateUiText } from '../i18n/index.js';
+
 const momentIconSvg = (body) => `
   <svg class="moment-icon" viewBox="0 0 24 24" aria-hidden="true">
     ${body}
@@ -19,6 +21,7 @@ export const buildMomentThreadedCommentsHtml = ({
   renderMomentTextWithStickers = (value) => String(value ?? ''),
   resolveMomentDisplayText = (value) => String(value?.content ?? ''),
 } = {}) => {
+  const replyLabel = escapeHtml(translateUiText('回复'));
   const { roots: commentRoots, repliesByParent } = buildThreadedComments(visibleComments);
   const collectReplies = (parentId, seen = new Set()) => {
     const id = String(parentId || '').trim();
@@ -44,16 +47,16 @@ export const buildMomentThreadedCommentsHtml = ({
           const replyToName = String(reply?.replyToAuthor || '').trim() || author;
           return `
                         <div class="moment-comment moment-comment-reply" data-comment-id="${escapeHtml(replyId)}">
-                            <span class="comment-user"><span class="comment-author moment-comment-author" role="button" tabindex="0" data-comment-id="${escapeHtml(replyId)}">${escapeHtml(replyAuthor)}</span> 回复 <span class="comment-replyto moment-comment-replyto">${escapeHtml(replyToName)}</span>：</span>
-                            <span class="comment-text">${renderMomentTextWithStickers(replyContent)}</span>
+                            <span class="comment-user"><span class="comment-author moment-comment-author" role="button" tabindex="0" data-i18n-skip data-comment-id="${escapeHtml(replyId)}">${escapeHtml(replyAuthor)}</span> <span class="moment-comment-reply-label">${replyLabel}</span> <span class="comment-replyto moment-comment-replyto" data-i18n-skip>${escapeHtml(replyToName)}</span>：</span>
+                            <span class="comment-text" data-i18n-skip>${renderMomentTextWithStickers(replyContent)}</span>
                         </div>
                     `;
         })
         .join('');
       return `
                         <div class="moment-comment" data-comment-id="${escapeHtml(commentId)}">
-                            <span class="comment-user"><span class="comment-author moment-comment-author" role="button" tabindex="0" data-comment-id="${escapeHtml(commentId)}">${escapeHtml(author)}</span>：</span>
-                            <span class="comment-text">${renderMomentTextWithStickers(content)}</span>
+                            <span class="comment-user"><span class="comment-author moment-comment-author" role="button" tabindex="0" data-i18n-skip data-comment-id="${escapeHtml(commentId)}">${escapeHtml(author)}</span>：</span>
+                            <span class="comment-text" data-i18n-skip>${renderMomentTextWithStickers(content)}</span>
                         </div>
                         ${replyHtml}
                     `;
@@ -78,6 +81,10 @@ export const buildMomentCardMarkup = ({
   const target = moment || {};
   const likes = Math.max(0, Number(target.likes || 0) || 0);
   const userLiked = Boolean(target.userLiked);
+  const replyLabel = translateUiText('回复');
+  const commentPlaceholder = replyTarget
+    ? `${replyLabel} ${String(replyTarget.author || '')}…`
+    : translateUiText('写评论…');
   return `
                 <div class="moment-header">
                     <img src="${escapeHtml(avatar)}" alt="" class="moment-avatar">
@@ -113,7 +120,7 @@ export const buildMomentCardMarkup = ({
                         <div class="moment-replying${replyTarget ? '' : ' hidden'}">
                             <div class="moment-replying-body">
                                 <div class="moment-replying-text">
-                                    回复 <b>${escapeHtml(replyTarget?.author || '')}</b>：${escapeHtml(resolveMomentDisplayText(replyTarget).slice(0, 120))}
+                                    <span class="moment-reply-label">${escapeHtml(replyLabel)}</span> <b data-i18n-skip>${escapeHtml(replyTarget?.author || '')}</b><span>：</span><span data-i18n-skip>${escapeHtml(resolveMomentDisplayText(replyTarget).slice(0, 120))}</span>
                                 </div>
                                 <button class="moment-reply-cancel" data-action="cancel-reply" type="button">×</button>
                             </div>
@@ -121,7 +128,7 @@ export const buildMomentCardMarkup = ({
                         <div class="moment-comment-compose-main">
                             <img class="moment-comment-avatar" src="${escapeHtml(userAvatar)}" alt="" aria-hidden="true">
                             <div class="moment-comment-input-row">
-                                <input class="moment-comment-input" type="text" placeholder="${replyTarget ? `回复 ${escapeHtml(replyTarget.author || '')}…` : '写评论…'}" ${pending ? 'disabled' : ''} />
+                                <input class="moment-comment-input" type="text" placeholder="${escapeHtml(commentPlaceholder)}" ${replyTarget ? 'data-i18n-skip' : ''} ${pending ? 'disabled' : ''} />
                                 <button class="moment_comment" data-action="send" ${pending ? 'disabled' : ''}>${MOMENT_ICONS.send}<span>${pending ? '发送中…' : '发送'}</span></button>
                             </div>
                         </div>

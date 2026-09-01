@@ -306,8 +306,8 @@ export class GroupPanel {
             <div class="group-manager-card" style="${cardStyle}" data-group-id="${idAttr}">
                 ${folderIcon}
                 <div class="group-manager-card-copy">
-                    <strong>${this.escapeHtml(group.name)}</strong>
-                    <span>${count} 位成员${parentName ? ` · 上级「${this.escapeHtml(parentName)}」` : ''}</span>
+                    <strong data-i18n-skip>${this.escapeHtml(group.name)}</strong>
+                    <span><span>${count} 位成员</span>${parentName ? ` · <span>上级</span>「<span data-i18n-skip>${this.escapeHtml(parentName)}</span>」` : ''}</span>
                 </div>
                 ${this.buildAvatarStack(group.contacts)}
                 <div class="group-manager-card-actions">

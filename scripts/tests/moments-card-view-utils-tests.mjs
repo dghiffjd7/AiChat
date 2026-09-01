@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 
+import { initializeI18n } from '../../src/scripts/i18n/index.js';
 import {
   buildMomentCardMarkup,
   buildMomentThreadedCommentsHtml,
@@ -28,7 +30,7 @@ import {
   assert.equal(html.includes('HTML:回复'), true);
   assert.equal(html.includes('HTML:回复楼中楼'), true);
   assert.equal(html.includes('moment-comment-reply'), true);
-  assert.equal(html.includes('回复 <span'), true);
+  assert.equal(html.includes('moment-comment-reply-label">回复</span>'), true);
   console.log('ok - buildMomentThreadedCommentsHtml renders root and flattened nested reply bodies');
 }
 
@@ -55,7 +57,7 @@ import {
   assert.equal(html.includes('展开查看更多评论 (2条)'), true);
   assert.equal(html.includes('data-action="like"'), true);
   assert.equal(html.includes('<span class="moment-like-count">3</span>'), true);
-  assert.equal(html.includes('回复 <b>甲</b>：你好'), true);
+  assert.equal(html.includes('<span class="moment-reply-label">回复</span> <b data-i18n-skip>甲</b><span>：</span><span data-i18n-skip>你好</span>'), true);
   assert.equal(html.includes('发送中…'), true);
   console.log('ok - buildMomentCardMarkup renders stats threaded comments and reply composer state');
 }
@@ -168,4 +170,39 @@ import {
   });
   assert.equal(cardEl.innerHTML.includes('收起评论'), true);
   console.log('ok - renderMomentCardContent keeps collapse control visible when expanded');
+}
+
+{
+  await initializeI18n({
+    preference: 'en',
+    documentLike: null,
+    fetchFn: async () => ({
+      ok: true,
+      json: async () => ({ 回复: 'Reply', 关闭: 'Close', '写评论…': 'Write a comment…' }),
+    }),
+  });
+  const threadedHtml = buildMomentThreadedCommentsHtml({
+    visibleComments: [],
+    buildThreadedComments: () => ({
+      roots: [{ id: 'c1', author: 'Alice', content: 'Hello' }],
+      repliesByParent: new Map([['c1', [{ id: 'c2', author: 'Bob', content: 'Hi', replyToAuthor: 'Alice' }]]]),
+    }),
+  });
+  const cardHtml = buildMomentCardMarkup({
+    moment: { author: 'Alice' },
+    replyTarget: { author: '关闭', content: '用户正文' },
+    showComposer: true,
+  });
+  assert.match(threadedHtml, /moment-comment-reply-label">Reply<\/span>/);
+  assert.match(cardHtml, /moment-reply-label">Reply<\/span>/);
+  assert.match(cardHtml, /placeholder="Reply 关闭…"/);
+  assert.match(cardHtml, /<b data-i18n-skip>关闭<\/b>/);
+  assert.match(cardHtml, /<span data-i18n-skip>用户正文<\/span>/);
+  console.log('ok - moment reply UI localizes system labels without translating user names or content');
+}
+
+{
+  const indexSource = await readFile(new URL('../../src/index.html', import.meta.url), 'utf8');
+  assert.doesNotMatch(indexSource, /moments-bell-btn/);
+  console.log('ok - moments topbar omits the unused bell action');
 }

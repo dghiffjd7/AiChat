@@ -1,0 +1,29 @@
+{
+  "files": [
+    "src/index.html",
+    "src/scripts/ui/general-settings-panel.js",
+    "src/scripts/ui/config-panel.js",
+    "src/scripts/ui/preset-panel.js",
+    "src/scripts/ui/character-card-importer.js",
+    "src/scripts/ui/character-card-transfer.js",
+    "src/scripts/ui/custom-bundle-exporter.js",
+    "src/scripts/ui/custom-bundle-import-diagnostics-utils.js",
+    "src/scripts/ui/custom-bundle-import-room-utils.js",
+    "src/scripts/ui/experience-pack-import-utils.js",
+    "src/scripts/ui/experience-pack-transfer.js",
+    "src/scripts/ui/session-conversation-export-utils.js",
+    "src/scripts/ui/chat/conversation-export-utils.js"
+  ],
+  "requiredKeys": [
+    "（暂无联系人）",
+    "（暂无群聊）",
+    "创建群聊",
+    "离线状态，无法发送",
+    "聊天室列表",
+    "试试添加一个好友开始聊天",
+    "搜索聊天室",
+    "设置已保存",
+    "暂无匹配聊天室",
+    "正在搜索聊天记录..."
+  ]
+}

@@ -118,9 +118,9 @@ export const analyzeScriptCompatibility = (scriptOrContent = '') => {
   const fingerprint = `${level}:${reasons.join('+') || 'none'}`;
   let message = '';
   if (blocked) {
-    message = '该脚本需要作为 SillyTavern 外部扩展安装；它请求宿主页面权限并加载扩展资源，ChatApp 已保留记录但不会启用。';
+    message = '该脚本需要作为 SillyTavern 外部扩展安装；它请求宿主页面权限并加载扩展资源，OmniTavern 已保留记录但不会启用。';
   } else if (level === 'sandbox_limited') {
-    message = '该脚本会访问宿主页面 DOM；ChatApp 只会在隔离沙箱中运行，部分界面功能可能不可用。';
+    message = '该脚本会访问宿主页面 DOM；OmniTavern 只会在隔离沙箱中运行，部分界面功能可能不可用。';
   } else if (level === 'module') {
     message = '该脚本使用顶层 await，将在隔离模块环境中运行。';
   }

@@ -39,6 +39,8 @@ const splitScriptSteps = script =>
 {
   const steps = splitScriptSteps(scripts['test:all']);
   assert.deepEqual(steps, [
+    'npm run test:brand',
+    'npm run test:i18n',
     'npm run test:maid-onboarding',
     'npm run test:agent',
     'npm run test:contact-profile',
@@ -57,7 +59,7 @@ const splitScriptSteps = script =>
     'npm run test:release',
     'npm run test:theme',
   ]);
-  console.log('ok - test:all keeps maid-onboarding agent contact-profile maid-memory role-worldbook web-search chat memory variables cancel moments sessions integration transfer migration release and theme gates');
+  console.log('ok - test:all keeps brand i18n maid-onboarding agent contact-profile maid-memory role-worldbook web-search chat memory variables cancel moments sessions integration transfer migration release and theme gates');
 }
 
 {
@@ -137,6 +139,7 @@ const splitScriptSteps = script =>
     'node scripts/tests/custom-bundle-import-diagnostics-utils-tests.mjs',
     'node scripts/tests/custom-bundle-rp-greeting-utils-tests.mjs',
     'node scripts/tests/transfer-package-contract-tests.mjs',
+    'node scripts/tests/tauri-invoke-timeout-tests.mjs',
   ]);
   assert.deepEqual(splitScriptSteps(scripts['test:migration']), [
     'node scripts/tests/app-settings-kv-tests.mjs',

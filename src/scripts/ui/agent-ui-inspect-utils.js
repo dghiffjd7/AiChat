@@ -6,6 +6,18 @@ const SENSITIVE_FIELD_PATTERN = /api[-_ ]?key|token|secret|password|密钥|金�
 
 const normalizeLabel = (value = '') => String(value || '').replace(/\s+/g, ' ').trim();
 
+export const readElementSemanticKey = (element = null) => {
+  if (!element) return '';
+  const candidates = [
+    element.getAttribute?.('data-maid-action-key'),
+    element.getAttribute?.('data-maid-guide-target'),
+    element.getAttribute?.('data-action'),
+    element.id,
+    element.name,
+  ];
+  return candidates.map(value => String(value || '').trim()).find(Boolean)?.slice(0, 100) || '';
+};
+
 const resolveComputedStyle = (getComputedStyle, element) => {
   try {
     if (typeof getComputedStyle === 'function') return getComputedStyle(element);
@@ -75,6 +87,7 @@ const readVisibleButtons = (element, { maxControls, getComputedStyle, collectRef
     }
     buttons.push({
       label: label.slice(0, 60),
+      ...(readElementSemanticKey(node) ? { semanticKey: readElementSemanticKey(node) } : {}),
       ...(ref ? { ref } : {}),
       ...(active ? { active: true } : {}),
       ...(node.disabled === true ? { disabled: true } : {}),
@@ -97,6 +110,7 @@ const readVisibleFields = (element, { maxControls, getComputedStyle }) => {
     const value = String(node.value || '').trim();
     fields.push({
       label: label.slice(0, 60),
+      ...(readElementSemanticKey(node) ? { semanticKey: readElementSemanticKey(node) } : {}),
       type,
       filled: Boolean(value),
       ...(sensitive

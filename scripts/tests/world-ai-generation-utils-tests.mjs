@@ -8,6 +8,7 @@ import {
   readWorldAiGenerationSettings,
   saveWorldAiTemplate,
 } from '../../src/scripts/utils/world-ai-generation.js';
+import { setPromptLocale } from '../../src/scripts/i18n/prompt-locale.js';
 
 const createStorage = (initial = {}) => {
   const values = new Map(Object.entries(initial));
@@ -30,6 +31,28 @@ const createStorage = (initial = {}) => {
     template: 'name: "自定义"',
   });
   console.log('ok - 世界书编辑器与女仆可读取同一份 AI 模板设置');
+}
+
+{
+  setPromptLocale('en');
+  const settings = readWorldAiGenerationSettings(createStorage({
+    [WORLD_AI_TEMPLATE_STORAGE_KEY]: DEFAULT_WORLD_AI_TEMPLATE,
+  }));
+  assert.equal(settings.hasCustomTemplate, false);
+  assert.match(settings.template, /For reference only/);
+  assert.doesNotMatch(settings.template, /\p{Script=Han}/u);
+
+  const resetStorage = createStorage();
+  saveWorldAiTemplate('', resetStorage);
+  assert.match(readWorldAiGenerationSettings(resetStorage).template, /For reference only/);
+
+  const custom = readWorldAiGenerationSettings(createStorage({
+    [WORLD_AI_TEMPLATE_STORAGE_KEY]: 'name: "用户自定义"',
+  }));
+  assert.equal(custom.hasCustomTemplate, true);
+  assert.equal(custom.template, 'name: "用户自定义"');
+  setPromptLocale('zh-CN');
+  console.log('ok - 世界书 AI 官方模板随语言切换且不改写用户模板');
 }
 
 {

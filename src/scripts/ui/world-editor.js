@@ -18,6 +18,7 @@ import { ConfigManager } from '../storage/config.js';
 import { logger } from '../utils/logger.js';
 import { pickSavePath as pickNativeSavePath } from '../utils/save-dialog.js';
 import { safeInvoke } from '../utils/tauri.js';
+import { translateUiText } from '../i18n/index.js';
 import {
     DEFAULT_WORLD_AI_TEMPLATE as WORLD_AI_TEMPLATE,
     buildWorldAiContinueMessages,
@@ -3151,6 +3152,7 @@ export class WorldEditorModal {
             deepClone,
             escapeHtml,
             clamp,
+            translateUiText,
         });
     }
 
@@ -3218,8 +3220,8 @@ export class WorldEditorModal {
                             <span class="world-block-manage-modal-badge subtle">P${escapeHtml(String(Number.isFinite(Number(block?.priority)) ? Number(block.priority) : 100))}</span>
                         </span>
                     </span>
-                    <span class="world-block-manage-modal-titleline">${escapeHtml(String(block?.title || '').trim() || `内容 ${idx + 1}`)}</span>
-                    <span class="world-block-manage-modal-preview">${compact(block?.content)}</span>
+                    <span class="world-block-manage-modal-titleline" data-i18n-skip>${escapeHtml(translateUiText(String(block?.title || '').trim() || `内容 ${idx + 1}`))}</span>
+                    <span class="world-block-manage-modal-preview" data-i18n-skip>${escapeHtml(compact(block?.content))}</span>
                 </button>
                 <div class="world-block-manage-modal-actions">
                     <button type="button" data-action="up" data-idx="${idx}" ${idx <= 0 ? 'disabled' : ''}>上移</button>
@@ -3284,7 +3286,7 @@ export class WorldEditorModal {
         const count = this.selectedEntries.size;
         if (this.batchBarEl) {
             this.batchBarEl.style.display = this.batchMode ? 'flex' : 'none';
-            if (this.batchCountEl) this.batchCountEl.textContent = `已选 ${count}`;
+            if (this.batchCountEl) this.batchCountEl.textContent = `${translateUiText('已选')} ${count}`;
             if (this.batchCreateBtn) this.batchCreateBtn.disabled = count === 0;
         }
         this.updateManageState();
@@ -3293,7 +3295,7 @@ export class WorldEditorModal {
     updateManageState() {
         this.syncSelectedEntries();
         const count = this.selectedEntries.size;
-        if (this.manageCountEl) this.manageCountEl.textContent = `已选 ${count}`;
+        if (this.manageCountEl) this.manageCountEl.textContent = `${translateUiText('已选')} ${count}`;
         const disableBatchActions = count === 0;
         if (this.manageCreateSelectedBtn) this.manageCreateSelectedBtn.disabled = disableBatchActions;
         if (this.manageDeleteBtn) this.manageDeleteBtn.disabled = disableBatchActions;
@@ -3335,9 +3337,11 @@ export class WorldEditorModal {
             main.className = 'world-manage-item-main';
             const titleEl = document.createElement('div');
             titleEl.className = 'world-manage-item-title';
-            titleEl.textContent = title;
+            titleEl.dataset.i18nSkip = '';
+            titleEl.textContent = translateUiText(title);
             const subEl = document.createElement('div');
             subEl.className = 'world-manage-item-sub';
+            subEl.dataset.i18nSkip = '';
             subEl.textContent = content || '';
             main.appendChild(titleEl);
             main.appendChild(subEl);
@@ -3739,7 +3743,8 @@ export class WorldEditorModal {
             main.className = 'world-entry-main';
             const title = document.createElement('div');
             title.className = 'world-entry-title';
-            title.textContent = entry.comment || `（无标题 ${i + 1}）`;
+            title.dataset.i18nSkip = '';
+            title.textContent = translateUiText(entry.comment || `（无标题 ${i + 1}）`);
             const meta = document.createElement('div');
             meta.className = 'world-entry-meta';
             const pos = positionLabel(entry.position, entry.role, entry.depth);

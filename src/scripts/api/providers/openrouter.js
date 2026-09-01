@@ -19,8 +19,8 @@ const OPENROUTER_DEFAULT_MODEL = 'openrouter/auto';
 const OPENROUTER_DEFAULT_MODELS = Object.freeze([
   OPENROUTER_DEFAULT_MODEL,
 ]);
-const DEFAULT_APP_TITLE = 'Tauri Chat App';
-const DEFAULT_HTTP_REFERER = 'https://tauri-chat-app.local';
+const DEFAULT_APP_TITLE = 'OmniTavern';
+const DEFAULT_HTTP_REFERER = 'https://github.com/dghiffjd7/OmniTavern';
 
 const trim = (value) => String(value ?? '').trim();
 

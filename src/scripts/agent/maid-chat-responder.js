@@ -1,4 +1,9 @@
-import { DEFAULT_MAID_PROMPT, MAID_OPERATION_SAFETY_PROMPT } from './maid-prompt-defaults.js';
+import {
+  DEFAULT_MAID_PROMPT,
+  getLocalizedMaidOperationSafetyPrompt,
+  getLocalizedMaidOutputLanguagePrompt,
+  getLocalizedMaidPrompt,
+} from './maid-prompt-defaults.js';
 import {
   buildAppFeatureSearchContextText,
   getMaidModelFeatureContext,
@@ -99,11 +104,12 @@ export const buildMaidChatResponderMessages = ({
     {
       role: 'system',
       content: [
-        trim(maidPrompt, DEFAULT_MAID_PROMPT),
-        MAID_OPERATION_SAFETY_PROMPT,
+        getLocalizedMaidPrompt(trim(maidPrompt, DEFAULT_MAID_PROMPT)),
+        getLocalizedMaidOperationSafetyPrompt(),
         modelFeatureContext.awareness,
         '你可以参考女仆分层记忆和历史上下文来延续对话、理解“刚才那个”等省略指代；不要编造不存在的历史。',
         observationText ? '如果提供了工具观察结果，请基于观察结果直接回答用户本次问题；不要只说已查看，也不要输出 JSON。' : '',
+        getLocalizedMaidOutputLanguagePrompt(),
       ].filter(Boolean).join('\n'),
     },
     {

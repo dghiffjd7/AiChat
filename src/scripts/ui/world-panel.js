@@ -10,6 +10,7 @@ import { logger } from '../utils/logger.js';
 import { FEATHER_DEFAULT, resolveLineAvatar } from '../utils/line-avatar.js';
 import { hasTauriRuntime, pickSavePath } from '../utils/save-dialog.js';
 import { safeInvoke } from '../utils/tauri.js';
+import { formatDateTime, t, translateUiText } from '../i18n/index.js';
 import { WorldEditorModal } from './world-editor.js';
 import { appChoice, appConfirm } from './app-confirm.js';
 import { bindBackdropActivation } from './backdrop-activation-utils.js';
@@ -28,6 +29,13 @@ import {
 import { emitWorldInfoChanged, getCurrentWorldId, getGlobalWorldId, getGlobalWorldIds } from './world-session-runtime-utils.js';
 
 const SCOPE_BADGE_STYLE = 'display:inline-flex; align-items:center; width:max-content; max-width:100%; padding:4px 8px; border:1px solid var(--app-border-default); border-radius:999px; background:var(--app-surface-subtle); color:var(--app-text-secondary); font-size:11px; line-height:1.3; cursor:help;';
+const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;',
+}[char]));
 
 const normalizeWorldTarget = (value, fallbackScope = 'session') => {
     const raw = String(value || '').trim();
@@ -284,7 +292,10 @@ export class WorldPanel {
                 ...base,
                 action,
             });
-            this.impactEl.textContent = `作用域：${formatWorldScopeLabel(base)}`;
+            this.impactEl.textContent = t('作用域：{scope}', {
+                scope: translateUiText(formatWorldScopeLabel(base)),
+            });
+            this.impactEl.setAttribute('data-i18n-skip', '');
             this.impactEl.title = impactText;
             this.impactEl.setAttribute('aria-label', impactText);
         }
@@ -293,7 +304,10 @@ export class WorldPanel {
                 ...base,
                 action: 'import',
             });
-            this.importImpactEl.textContent = `作用域：${formatWorldScopeLabel(base)}`;
+            this.importImpactEl.textContent = t('作用域：{scope}', {
+                scope: translateUiText(formatWorldScopeLabel(base)),
+            });
+            this.importImpactEl.setAttribute('data-i18n-skip', '');
             this.importImpactEl.title = impactText;
             this.importImpactEl.setAttribute('aria-label', impactText);
         }
@@ -308,7 +322,10 @@ export class WorldPanel {
             targetType: normalizedTarget.type,
         };
         const impactText = buildWorldbookImpactText({ ...base, action });
-        this.libraryImpactEl.textContent = `作用域：${formatWorldScopeLabel(base)}`;
+        this.libraryImpactEl.textContent = t('作用域：{scope}', {
+            scope: translateUiText(formatWorldScopeLabel(base)),
+        });
+        this.libraryImpactEl.setAttribute('data-i18n-skip', '');
         this.libraryImpactEl.title = impactText;
         this.libraryImpactEl.setAttribute('aria-label', impactText);
     }
@@ -525,17 +542,34 @@ export class WorldPanel {
             }
 
             if (indicator) {
+                let indicatorText = '';
                 if (this.scope === 'global') {
-                    indicator.textContent = `全局当前：${normalizedGlobalIds.length ? normalizedGlobalIds.join(' + ') : '未启用'}`;
+                    indicatorText = t('全局当前：{value}', {
+                        value: normalizedGlobalIds.length
+                            ? normalizedGlobalIds.join(' + ')
+                            : translateUiText('未启用'),
+                    });
                 } else if (isGroupSession) {
-                    indicator.textContent = `群聊 ${contact?.name || sessionKey}：角色 ${roleSummary} / 成员附加自动合并`;
+                    indicatorText = t('群聊 {name}：角色 {role} / 成员附加自动合并', {
+                        name: contact?.name || sessionKey,
+                        role: roleSummary === '未启用' ? translateUiText(roleSummary) : roleSummary,
+                    });
                 } else if (isRpSession) {
                     const extrasLabel = visibleSessionIds.length ? visibleSessionIds.join(' + ') : '未启用';
-                    indicator.textContent = `创意写作会话：角色 ${roleSummary} / 创作专属 ${extrasLabel}`;
+                    indicatorText = t('创意写作会话：角色 {role} / 创作专属 {extras}', {
+                        role: roleSummary === '未启用' ? translateUiText(roleSummary) : roleSummary,
+                        extras: extrasLabel === '未启用' ? translateUiText(extrasLabel) : extrasLabel,
+                    });
                 } else {
                     const extrasLabel = visibleSessionIds.length ? visibleSessionIds.join(' + ') : '未启用';
-                    indicator.textContent = `私聊 ${contact?.name || sessionKey}：角色 ${roleSummary} / 附加 ${extrasLabel}`;
+                    indicatorText = t('私聊 {name}：角色 {role} / 附加 {extras}', {
+                        name: contact?.name || sessionKey,
+                        role: roleSummary === '未启用' ? translateUiText(roleSummary) : roleSummary,
+                        extras: extrasLabel === '未启用' ? translateUiText(extrasLabel) : extrasLabel,
+                    });
                 }
+                indicator.textContent = indicatorText;
+                indicator.setAttribute('data-i18n-skip', '');
             }
 
             const names = await window.appBridge.listWorlds?.();
@@ -667,11 +701,13 @@ export class WorldPanel {
                 const title = document.createElement('button');
                 title.type = 'button';
                 title.className = 'world-panel-world-card-title';
+                title.setAttribute('data-i18n-skip', '');
                 title.textContent = displayName;
                 title.style.cssText = 'padding:0; border:none; background:none; text-align:left; font-weight:700; color:var(--app-text-primary); cursor:pointer; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;';
                 const meta = document.createElement('div');
                 meta.className = 'world-panel-world-card-meta';
-                meta.textContent = subtitle || '点击标题展开条目';
+                meta.setAttribute('data-i18n-skip', '');
+                meta.textContent = translateUiText(subtitle || '点击标题展开条目');
                 meta.style.cssText = 'font-size:12px; color:var(--app-text-muted);';
                 titleWrap.appendChild(title);
                 titleWrap.appendChild(meta);
@@ -716,7 +752,7 @@ export class WorldPanel {
                     try {
                         const latest = await getWorldData(worldId);
                         const entries = latest ? await this.resolveWorldEntries(latest, { worldId }) : [];
-                        meta.textContent = latest ? `共 ${entries.length} 条目${subtitle ? ` · ${subtitle}` : ''}` : '世界书不存在或已删除';
+                        meta.textContent = translateUiText(latest ? `共 ${entries.length} 条目${subtitle ? ` · ${subtitle}` : ''}` : '世界书不存在或已删除');
                         if (!entries.length) {
                             appendEmpty(entriesInner, latest ? '（无条目）' : '（无法读取条目）');
                             return;
@@ -728,6 +764,7 @@ export class WorldPanel {
                             const label = String(entry?.comment || entry?.title || entry?.id || `entry-${idx}`);
                             const nameEl = document.createElement('div');
                             nameEl.className = 'world-panel-world-entry-name';
+                            nameEl.setAttribute('data-i18n-skip', '');
                             nameEl.textContent = label;
                             nameEl.style.cssText = `font-size:12px; color:${entry?.disable ? 'var(--app-text-muted)' : 'var(--app-text-primary)'}; flex:1; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;`;
                             const entryToggle = buildToggle({
@@ -851,7 +888,7 @@ export class WorldPanel {
                             info.className = 'world-panel-empty-bind-copy';
                             info.style.cssText = 'min-width:0; flex:1;';
                             info.innerHTML = `
-                                <div style="font-weight:700; color:var(--app-text-primary);">${binding.personaName} · 当前角色卡</div>
+                                <div style="font-weight:700; color:var(--app-text-primary);"><span data-i18n-skip>${escapeHtml(binding.personaName)}</span><span> · 当前角色卡</span></div>
                                 <div style="font-size:12px; color:var(--app-text-muted); margin-top:2px;">未绑定角色世界书</div>
                             `;
                             const actions = document.createElement('div');
@@ -975,7 +1012,7 @@ export class WorldPanel {
                             info.className = 'world-panel-empty-bind-copy';
                             info.style.cssText = 'min-width:0; flex:1;';
                             info.innerHTML = `
-                                <div style="font-weight:700; color:var(--app-text-primary);">${binding.personaName} · 当前角色卡</div>
+                                <div style="font-weight:700; color:var(--app-text-primary);"><span data-i18n-skip>${escapeHtml(binding.personaName)}</span><span> · 当前角色卡</span></div>
                                 <div style="font-size:12px; color:var(--app-text-muted); margin-top:2px;">未绑定角色世界书</div>
                             `;
                             const actions = document.createElement('div');
@@ -1061,9 +1098,17 @@ export class WorldPanel {
     }
 
     formatLibraryRowMeta(entriesCount, updatedAt) {
-        const timeText = updatedAt ? new Date(updatedAt).toLocaleString('zh-CN', { hour12: false }) : '';
-        const countText = entriesCount === null ? '条目数待载入' : `${entriesCount} 条目`;
-        return timeText ? `${countText} · 更新：${timeText}` : countText;
+        const timeText = updatedAt ? formatDateTime(updatedAt, {
+            year: 'numeric',
+            month: 'numeric',
+            day: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit',
+            hour12: false,
+        }) : '';
+        const countText = translateUiText(entriesCount === null ? '条目数待载入' : `${entriesCount} 条目`);
+        return timeText ? `${countText} · ${translateUiText(`更新：${timeText}`)}` : countText;
     }
 
     // 懒加载下条目数首次载入正文时才可知；只回填对应行文本，不整表重渲染。
@@ -1199,9 +1244,11 @@ export class WorldPanel {
             info.className = 'sticker-bind-info';
             const title = document.createElement('div');
             title.className = 'sticker-bind-name';
+            title.dataset.i18nSkip = '';
             title.textContent = item.name;
             const meta = document.createElement('div');
             meta.className = 'sticker-bind-meta';
+            meta.dataset.i18nSkip = '';
             meta.textContent = this.formatLibraryRowMeta(item.entriesCount, item.updatedAt);
             info.appendChild(title);
             info.appendChild(meta);

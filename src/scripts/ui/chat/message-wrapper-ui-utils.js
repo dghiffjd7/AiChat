@@ -1,3 +1,5 @@
+import { translateUiText } from '../../i18n/index.js';
+
 export const createDividerMessageWrapperCore = ({
   documentLike,
   message,
@@ -11,7 +13,8 @@ export const createDividerMessageWrapperCore = ({
   const line = documentLike.createElement('div');
   line.className = 'QQ_chat_unread-line';
   const text = documentLike.createElement('span');
-  text.textContent = String(message?.content ?? '');
+  text.dataset.i18nSkip = '';
+  text.textContent = translateUiText(String(message?.content ?? ''));
   line.appendChild?.(text);
   wrapper.appendChild?.(line);
   return wrapper;
@@ -32,7 +35,8 @@ export const createSystemMessageWrapperCore = ({
 
   const bubble = documentLike.createElement('div');
   bubble.className = 'QQ_chat_sysbubble';
-  bubble.textContent = String(message?.content ?? '');
+  bubble.dataset.i18nSkip = '';
+  bubble.textContent = translateUiText(String(message?.content ?? ''));
 
   const timeEl = documentLike.createElement('span');
   timeEl.className = 'QQ_chat_time sys';

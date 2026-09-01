@@ -10,15 +10,16 @@ import {
   buildChatStructuredRequestEvidenceIdentity,
   resolveChatStructuredTextTransport,
 } from '../../agent/chat-structured-route-request.js';
+import { t } from '../../i18n/index.js';
 
 const trim = value => String(value ?? '').trim();
 
 export const formatChatStructuredThinkingDisclosure = (thinkingPlan = {}) => {
   if (thinkingPlan?.switchesRequestMode === true) {
-    return '开启思考将切换聊天请求模式，格式稳定性可能略降；追求最稳格式请关闭思考。';
+    return t('开启思考将切换聊天请求模式，格式稳定性可能略降；追求最稳格式请关闭思考。');
   }
   if (trim(thinkingPlan?.thinkingOverrideReason) === 'user_prefers_stable_format') {
-    return '已选择优先稳定格式；聊天请求会暂不启用思考。';
+    return t('已选择优先稳定格式；聊天请求会暂不启用思考。');
   }
   return '';
 };
@@ -34,32 +35,32 @@ export const formatChatStructuredProfileStatus = ({
     const stable = routeDecision.layer === 'verified_native_fc'
       || routeDecision.layer === 'local_observed_compatible';
     return stable
-      ? { state: 'stable', label: '聊天格式：✅ 稳定结构', detail: '' }
+      ? { state: 'stable', label: t('聊天格式：✅ 稳定结构'), detail: '' }
       : {
           state: 'conditional',
-          label: '聊天格式：🟡 结构化（按当前设置）',
+          label: t('聊天格式：🟡 结构化（按当前设置）'),
           detail: thinkingPlan.thinkingOverrideReason === 'user_prefers_stable_format'
-            ? '当前设置优先格式稳定'
-            : '当前模型使用兼容结构',
+            ? t('当前设置优先格式稳定')
+            : t('当前模型使用兼容结构'),
         };
   }
   if (mode === CHAT_STRUCTURED_ROUTE_MODES.jsonTerminal) {
     return {
       state: 'conditional',
-      label: '聊天格式：🟡 结构化（按当前设置）',
+      label: t('聊天格式：🟡 结构化（按当前设置）'),
       detail: thinkingPlan.switchesRequestMode === true
-        ? '当前设置保留思考'
-        : '当前模型使用兼容结构',
+        ? t('当前设置保留思考')
+        : t('当前模型使用兼容结构'),
     };
   }
   return {
     state: 'legacy',
-    label: '聊天格式：⚠️ 已切换传统模式（点击重试）',
+    label: t('聊天格式：⚠️ 已切换传统模式（点击重试）'),
     detail: compatibilityModeEnabled === true
-      ? '当前已开启兼容模式'
+      ? t('当前已开启兼容模式')
       : (reason.includes('circuit') || reason.includes('negative_capability')
-          ? '当前精确组合连续失败'
-          : '当前组合暂无可用结构化路径'),
+          ? t('当前精确组合连续失败')
+          : t('当前组合暂无可用结构化路径')),
   };
 };
 

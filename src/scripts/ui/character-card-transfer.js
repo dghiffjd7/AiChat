@@ -338,14 +338,14 @@ export class CharacterCardTransfer {
       });
     }
     const readme = [
-      '# ChatApp → SillyTavern 导出包',
+      '# OmniTavern → SillyTavern 导出包',
       '',
       '此包为简化兼容导出，仅包含：',
       '- worldbook.json（世界书）',
       '- regex-scripts.json（正则脚本）',
       '',
       '不包含：开场白/脚本/角色卡元数据。',
-      '如需完整导入，请在 ChatApp 内使用角色卡 ZIP。',
+      '如需完整导入，请在 OmniTavern 内使用角色卡 ZIP。',
     ].join('\n');
     const entries = [
       { name: 'worldbook.json', data_url: textToDataUrl(JSON.stringify(worldbook, null, 2), 'application/json') },

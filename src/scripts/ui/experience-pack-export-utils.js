@@ -153,7 +153,7 @@ export const buildExperiencePackManifest = ({
   chat = null,
   options = {},
   exportedAt = new Date().toISOString(),
-  exportedBy = 'AiChat',
+  exportedBy = 'OmniTavern',
   format = 'chatapp.experience-pack.v1',
   formatVersion = 1,
 } = {}) => ({

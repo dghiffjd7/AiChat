@@ -5,6 +5,7 @@ import { bindBackdropActivation } from './backdrop-activation-utils.js';
 import { getCharacterCardBoundUserId, getCharacterCardDisplayName, getCharacterCardSource } from '../utils/character-card-display.js';
 import { getDefaultAppIcon } from '../utils/default-icon.js';
 import { bindCustomSelectButton, closeCustomSelectMenu, refreshCustomSelectButton } from './custom-select.js';
+import { translateUiText } from '../i18n/index.js';
 
 const DEFAULT_USER_BUBBLE_COLOR = '#E8F0FE';
 const DEFAULT_USER_TEXT_COLOR = '#1F2937'; // theme-audit-ignore: light-mode default token
@@ -589,7 +590,10 @@ export class UserPanel {
         const metaEl = this.bindingModal.panel.querySelector('#user-binding-meta');
         const searchEl = this.bindingModal.panel.querySelector('#user-binding-search');
         const clearEl = this.bindingModal.panel.querySelector('#user-binding-clear');
-        if (metaEl) metaEl.textContent = `用户：${this.bindingState.userName}`;
+        if (metaEl) {
+            metaEl.dataset.i18nSkip = '';
+            metaEl.textContent = `${translateUiText('用户')}：${this.bindingState.userName}`;
+        }
         if (searchEl) searchEl.value = '';
         if (clearEl) clearEl.style.display = 'none';
         this.renderBindingList();
@@ -626,7 +630,7 @@ export class UserPanel {
             .filter(item => item.id)
             .filter(item => !term || `${item.name} ${item.id}`.toLowerCase().includes(term))
             .sort((a, b) => a.name.localeCompare(b.name));
-        if (countEl) countEl.textContent = `已选 ${this.bindingState.selected.size} / ${this.getCharacterCards().length}`;
+        if (countEl) countEl.textContent = `${translateUiText('已选')} ${this.bindingState.selected.size} / ${this.getCharacterCards().length}`;
         listEl.innerHTML = '';
         if (!cards.length) {
             listEl.innerHTML = '<div style="padding:18px 10px; color:var(--app-text-muted); text-align:center;">未找到匹配的角色卡</div>';
@@ -638,7 +642,7 @@ export class UserPanel {
             const boundUser = boundUserId ? this.store?.get?.(boundUserId) : null;
             let subtitle = '未绑定';
             if (checked) subtitle = '保存后切换此角色卡会自动切到当前用户';
-            else if (boundUserId && boundUserId !== userId) subtitle = `当前绑定：${escapeHtml(String(boundUser?.name || '').trim() || '用户')}`;
+            else if (boundUserId && boundUserId !== userId) subtitle = `当前绑定：${String(boundUser?.name || '').trim() || '用户'}`;
             const row = document.createElement('div');
             row.style.cssText = `
                 display:flex; align-items:center; gap:10px;
@@ -653,8 +657,8 @@ export class UserPanel {
                 <input class="user-binding-check" type="checkbox" ${checked ? 'checked' : ''} style="width:18px; height:18px;">
                 <img src="${escapeHtml(item.avatar)}" alt="" style="width:36px; height:36px; border-radius:12px; object-fit:cover; background:var(--app-surface-hover);">
                 <div style="flex:1; min-width:0;">
-                    <div style="font-weight:800; color:var(--app-text-primary); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${escapeHtml(item.name)}</div>
-                    <div style="font-size:12px; color:var(--app-text-muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${subtitle}</div>
+                    <div data-i18n-skip style="font-weight:800; color:var(--app-text-primary); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${escapeHtml(translateUiText(item.name))}</div>
+                    <div data-i18n-skip style="font-size:12px; color:var(--app-text-muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${escapeHtml(translateUiText(subtitle))}</div>
                 </div>
             `;
             const toggle = () => {
@@ -703,7 +707,7 @@ export class UserPanel {
                     ${user.id === activeId ? '<div style="position:absolute; bottom:0; right:0; width:14px; height:14px; background:#007bff; border-radius:50%; border:2px solid var(--app-surface-card);"></div>' : ''}
                 </div>
                 <div style="flex:1; min-width:0;">
-                    <div style="font-weight:bold; color:var(--app-text-primary); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${user.name || '我'}</div>
+                    <div data-i18n-skip style="font-weight:bold; color:var(--app-text-primary); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${user.name || '我'}</div>
                     <div style="font-size:12px; color:var(--app-text-muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${this.getBoundCharacterSummary(user.id)}</div>
                 </div>
                 <button class="bind-btn" title="绑定角色卡" style="padding:8px; border:none; background:transparent; color:${this.getBoundCharacterCards(user.id).length ? '#d4a100' : 'var(--app-text-muted)'}; cursor:pointer; font-size:16px;">🔒</button>

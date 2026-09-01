@@ -4,6 +4,19 @@ import {
   buildMaidChatResponderMessages,
   createMaidChatResponder,
 } from '../../src/scripts/agent/maid-chat-responder.js';
+import { setPromptLocale } from '../../src/scripts/i18n/prompt-locale.js';
+
+{
+  setPromptLocale('en');
+  const messages = buildMaidChatResponderMessages({
+    input: '请用女仆回复',
+    maidPrompt: '自定义人格可使用中文撰写。',
+  });
+  assert.match(messages[0].content, /every user-visible response in English/);
+  assert.match(messages[0].content, /internal instructions, app knowledge, tool results, or source data are written in Chinese/);
+  setPromptLocale('zh-CN');
+  console.log('ok - English maid chat responses keep the output-language guard with custom persona prompts');
+}
 
 {
   const messages = buildMaidChatResponderMessages({

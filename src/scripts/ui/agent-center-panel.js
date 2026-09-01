@@ -4,6 +4,8 @@ import { findAgentCenterResource } from './agent-center-resource-contract.js';
 import { WRITE_PREVIEW_PROVIDER_MODEL_CONTEXT_TOOLS } from '../agent/provider-tool-request-schema.js';
 import { PROVIDER_TOOL_PERMISSION_ACTIONS } from '../agent/provider-tool-permission-actions.js';
 import { appSettings } from '../storage/app-settings.js';
+import { getCurrentLocale, translateUiText } from '../i18n/index.js';
+import { getLocalizedPromptText } from '../i18n/prompt-locale.js';
 import { appChoice, appConfirm, appPromptText } from './app-confirm.js';
 import { bindBackdropActivation } from './backdrop-activation-utils.js';
 import { bindCustomSelectButton, closeCustomSelectMenu } from './custom-select.js';
@@ -1819,7 +1821,20 @@ const PANEL_CSS = `
     background: color-mix(in srgb, var(--app-surface-card) 96%, var(--app-surface-subtle));
 }
 .agent-center-setting-row.is-model {
-    grid-template-columns: 72px minmax(0, 1fr);
+    grid-template-columns: 104px minmax(0, 1fr);
+}
+.agent-center-setting-row.is-status {
+    grid-template-columns: minmax(72px, max-content) minmax(88px, 1fr) auto;
+}
+.agent-center-setting-row.is-status .agent-center-setting-value {
+    overflow: visible;
+    line-height: 1.35;
+    white-space: normal;
+}
+.agent-center-setting-row.is-status .agent-center-switch {
+    height: 22px;
+    min-height: 22px;
+    padding-block: 0;
 }
 .agent-center-setting-row.is-model > :not(.agent-center-setting-label) {
     grid-column: 2;
@@ -2254,6 +2269,9 @@ const PANEL_CSS = `
     .agent-center-setting-row.is-model {
         grid-template-columns: 64px minmax(0, 1fr);
     }
+    .agent-center-setting-row.is-status {
+        grid-template-columns: minmax(56px, max-content) minmax(72px, 1fr) auto;
+    }
     .agent-center-setting-row > .agent-center-card-action {
         grid-column: 1 / -1;
         width: 100%;
@@ -2413,6 +2431,14 @@ const list = value => (Array.isArray(value) ? value : [value])
 
 const formatMeta = (items = []) => items.filter(Boolean).join(' · ');
 
+const formatToggleTargetLabel = (action = 'enable', title = '') => {
+    const verb = getCurrentLocale() === 'en'
+        ? translateUiText(action === 'enable' ? '开启功能' : '关闭功能')
+        : translateUiText(action === 'enable' ? '开启' : '关闭');
+    const target = translateUiText(title);
+    return /^[A-Za-z]/.test(verb) ? `${verb} ${target}` : `${verb}${target}`;
+};
+
 const statusChipClass = value => `agent-center-chip is-status-${trim(value, 'unknown').toLowerCase().replace(/[^a-z0-9_-]+/g, '-')}`;
 
 const riskChipClass = value => `agent-center-chip is-risk-${trim(value, 'low').toLowerCase().replace(/[^a-z0-9_-]+/g, '-')}`;
@@ -2448,12 +2474,12 @@ const renderChips = (chips = []) => {
     const html = chips.filter(Boolean).map((chip) => {
         const label = trim(chip.label);
         if (!label) return '';
-        return `<span class="${escapeHtml(chip.className || 'agent-center-chip')}">${escapeHtml(label)}</span>`;
+        return `<span class="${escapeHtml(chip.className || 'agent-center-chip')}" data-i18n-skip>${escapeHtml(translateUiText(label))}</span>`;
     }).filter(Boolean).join('');
     return html ? `<div class="agent-center-chip-row">${html}</div>` : '';
 };
 
-const renderEmpty = message => `<div class="agent-center-empty">${escapeHtml(message)}</div>`;
+const renderEmpty = message => `<div class="agent-center-empty" data-i18n-skip>${escapeHtml(translateUiText(message))}</div>`;
 
 // Phase B 只读用量：token/延迟的紧凑格式化，仅呈现真实计量，无估算。
 const formatTokenCount = (value) => {
@@ -2498,16 +2524,16 @@ const renderUsageProfileSummary = (profile = null) => {
         overall.avgTotalTokens != null ? `均 ${formatTokenCount(overall.avgTotalTokens)}/次` : '',
         overall.avgLatencyMs != null ? `均延迟 ${formatLatencyMs(overall.avgLatencyMs)}` : '',
         overall.degradedCount ? `降级 ${Number(overall.degradedCount)}` : '',
-    ].filter(Boolean);
+    ].filter(Boolean).map(part => translateUiText(part));
     const topKinds = (Array.isArray(profile.byKind) ? profile.byKind : [])
         .filter(k => Number(k.runCount) > 0)
         .slice(0, 3)
-        .map(k => `${displayAgentKind(k.kind)} ${Number(k.runCount)}${k.recordedCount ? `（Token ${formatTokenCount(k.totalTokens)}）` : ''}`);
+        .map(k => `${translateUiText(displayAgentKind(k.kind))} ${Number(k.runCount)}${k.recordedCount ? ` (Token ${formatTokenCount(k.totalTokens)})` : ''}`);
     return `
         <div class="agent-center-usage-summary">
             <div class="agent-center-usage-summary-title">用量画像（当前活动列表 · 只读）</div>
-            <div class="agent-center-card-sub">${escapeHtml(formatMeta(parts))}</div>
-            ${topKinds.length ? `<div class="agent-center-card-sub">${escapeHtml(topKinds.join(' · '))}</div>` : ''}
+            <div class="agent-center-card-sub" data-i18n-skip>${escapeHtml(formatMeta(parts))}</div>
+            ${topKinds.length ? `<div class="agent-center-card-sub" data-i18n-skip>${escapeHtml(topKinds.join(' · '))}</div>` : ''}
         </div>`;
 };
 
@@ -2518,11 +2544,11 @@ const renderNotice = ({
     actionAttr = '',
 } = {}) => `
     <article class="agent-center-card is-notice">
-        ${title ? `<div class="agent-center-card-title">${escapeHtml(title)}</div>` : ''}
-        ${message ? `<div class="agent-center-card-sub">${escapeHtml(message)}</div>` : ''}
+        ${title ? `<div class="agent-center-card-title" data-i18n-skip>${escapeHtml(translateUiText(title))}</div>` : ''}
+        ${message ? `<div class="agent-center-card-sub" data-i18n-skip>${escapeHtml(translateUiText(message))}</div>` : ''}
         ${actionLabel && actionAttr ? `
             <div class="agent-center-card-actions">
-                <button type="button" class="agent-center-card-action" ${actionAttr}>${escapeHtml(actionLabel)}</button>
+                <button type="button" class="agent-center-card-action" ${actionAttr} data-i18n-skip>${escapeHtml(translateUiText(actionLabel))}</button>
             </div>
         ` : ''}
     </article>
@@ -2803,20 +2829,20 @@ const displayCardCategory = category => ({
 }[trim(category)] || trim(category, 'Agent'));
 
 const AGENT_CARD_GLYPHS = Object.freeze({
-    image_director: '图',
-    memory_table_agent: '记',
-    lineage_agent: '血',
-    execution_lane_agent: '泳',
-    summary_agent: '摘',
-    moment_agent: '动',
-    dialogue_agent: '私',
-    group_agent: '群',
-    phone_format_agent: '机',
-    reply_check: '检',
-    write_preview: '预',
-    text_completion: '补',
-    prompt_manager: '提',
-    memory_manager: '管',
+    image_director: '✦',
+    memory_table_agent: '▦',
+    lineage_agent: '⌘',
+    execution_lane_agent: '≋',
+    summary_agent: 'Σ',
+    moment_agent: '◉',
+    dialogue_agent: '◌',
+    group_agent: '◎',
+    phone_format_agent: '▯',
+    reply_check: '✓',
+    write_preview: '⌁',
+    text_completion: '…',
+    prompt_manager: '¶',
+    memory_manager: '◇',
 });
 
 const displayAgentCardGlyph = card => (
@@ -3617,6 +3643,7 @@ export class AgentCenterPanel {
                 const profile = profiles.find(item => item.id === trim(agent.modelProfileId));
                 const shownModel = agent.modelOverride || trim(profile?.model || '');
                 return `
+                <span class="agent-center-setting-label agent-center-model-override-label">模型覆盖</span>
                 <div class="agent-center-model-override-row">
                     <input
                         type="text"
@@ -3859,16 +3886,7 @@ export class AgentCenterPanel {
 
     renderReplyCheckPromptInfo(agent = {}) {
         if (agent.id !== 'reply_check') return '';
-        const promptText = [
-            '固定检查指令：只修复标签、顺序、闭合、缺失字段和时间等格式问题；不改写剧情或正文语义。',
-            '',
-            '运行时按触发目标选择最小格式规则：',
-            '- 私聊：QQ聊天格式 + 私聊格式',
-            '- 群聊：QQ聊天格式 + 群聊格式',
-            '- 动态：动态发布或动态评论格式',
-            '- 生图 / 记忆表格：只使用对应标签格式',
-            '- 创意写作：默认不注入聊天格式',
-        ].join('\n');
+        const promptText = getLocalizedPromptText('format_repair.fixed_preview');
         return `
             <div class="agent-center-agent-section agent-center-agent-editor">
                 <div class="agent-center-agent-section-title">检查提示词</div>
@@ -3951,7 +3969,7 @@ export class AgentCenterPanel {
         const action = agent.enabled === true ? 'disable' : 'enable';
         const title = agent.title || displayAgentFeature(agent.id);
         return `
-            <div class="agent-center-setting-row">
+            <div class="agent-center-setting-row is-status">
                 <span class="agent-center-setting-label">状态</span>
                 <span class="agent-center-setting-value">${agent.enabled ? '已开启' : '已关闭'}</span>
                 <button
@@ -3959,7 +3977,7 @@ export class AgentCenterPanel {
                     class="agent-center-switch${agent.enabled ? ' is-on' : ''}"
                     role="switch"
                     aria-checked="${agent.enabled === true}"
-                    aria-label="${escapeHtml(`${action === 'enable' ? '开启' : '关闭'}${title}`)}"
+                    aria-label="${escapeHtml(formatToggleTargetLabel(action, title))}"
                     data-agent-feature-action="${action}"
                     data-agent-feature-id="${escapeHtml(agent.id)}"
                 ><span class="agent-center-switch-track" aria-hidden="true"><span class="agent-center-switch-thumb"></span></span></button>
@@ -3974,7 +3992,7 @@ export class AgentCenterPanel {
         const memoryMode = isMemoryModeCard ? deriveMemoryStorageMode(appSettings.get()) : '';
         const memoryModeLabel = MEMORY_STORAGE_MODE_LABELS[memoryMode] || MEMORY_STORAGE_MODE_LABELS.table;
         const action = agent.enabled === true ? 'disable' : 'enable';
-        const switchLabel = `${action === 'enable' ? '开启' : '关闭'}${title}`;
+        const switchLabel = formatToggleTargetLabel(action, title);
         const quickSwitch = !isDiagnosticView && !isMemoryModeCard && agent.implemented
             ? `
                 <button
@@ -4003,7 +4021,7 @@ export class AgentCenterPanel {
         return `
             <div class="agent-center-agent-title-row">
                 <div class="agent-center-agent-title-main">
-                    <span class="agent-center-agent-badge">${escapeHtml(displayAgentCardGlyph(agent))}</span>
+                    <span class="agent-center-agent-badge" data-i18n-skip>${escapeHtml(displayAgentCardGlyph(agent))}</span>
                     <div>
                         <div class="agent-center-card-title">${escapeHtml(title)}</div>
                         <div class="agent-center-card-sub">${escapeHtml(agent.summary || '')}</div>
@@ -4058,7 +4076,7 @@ export class AgentCenterPanel {
         return `
             <div class="agent-center-agent-title-row">
                 <div class="agent-center-agent-title-main">
-                    <span class="agent-center-agent-badge">${escapeHtml(displayAgentCardGlyph(agent))}</span>
+                    <span class="agent-center-agent-badge" data-i18n-skip>${escapeHtml(displayAgentCardGlyph(agent))}</span>
                     <div>
                         <div class="agent-center-card-title">${escapeHtml(agent.title || displayAgentFeature(agent.id))}</div>
                         <div class="agent-center-card-sub">${escapeHtml(agent.summary || '')}</div>
@@ -4578,7 +4596,7 @@ export class AgentCenterPanel {
     setAgentQuickToggleVisual(button = null, enabled = false, agentTitle = 'Agent') {
         if (!button) return;
         const nextAction = enabled ? 'disable' : 'enable';
-        const nextLabel = `${enabled ? '关闭' : '开启'}${trim(agentTitle, 'Agent')}`;
+        const nextLabel = formatToggleTargetLabel(enabled ? 'disable' : 'enable', trim(agentTitle, 'Agent'));
         button.setAttribute?.('aria-checked', String(enabled));
         button.setAttribute?.('aria-label', nextLabel);
         button.setAttribute?.('title', nextLabel);
@@ -4988,13 +5006,13 @@ export class AgentCenterPanel {
                 type="button"
                 class="agent-center-filter${activeStatus === filter.status ? ' is-active' : ''}${filter.tone === 'danger' ? ' is-danger' : ''}"
                 data-activity-status="${escapeHtml(filter.status)}"
-            >${escapeHtml(filter.label)}</button>
+            >${escapeHtml(translateUiText(filter.label))}</button>
         `).join('')}${maidRunCount ? `
             <button
                 type="button"
                 class="agent-center-filter${activeKind === 'maid_assistant' ? ' is-active' : ''}"
                 data-activity-kind="${activeKind === 'maid_assistant' ? '' : 'maid_assistant'}"
-            >女仆 ${maidRunCount}</button>
+            >${escapeHtml(translateUiText(`女仆 ${maidRunCount}`))}</button>
         ` : ''}</div>`;
         const intro = activeStatus === 'failure'
             ? renderNotice({
@@ -5014,14 +5032,17 @@ export class AgentCenterPanel {
             <article class="${escapeHtml(activityCardClass(run))}">
                 <div class="agent-center-card-head">
                     <div>
-                        <div class="agent-center-card-title">${escapeHtml(run.title || run.kind || run.id)}</div>
-                        <div class="agent-center-card-sub">${escapeHtml(formatMeta([displayAgentKind(run.kind), run.sessionId ? `范围：${run.sessionId}` : '']))}</div>
+                        <div class="agent-center-card-title" data-i18n-skip>${escapeHtml(translateUiText(run.title || run.kind || run.id))}</div>
+                        <div class="agent-center-card-sub" data-i18n-skip>${escapeHtml(formatMeta([
+                            translateUiText(displayAgentKind(run.kind)),
+                            run.sessionId ? translateUiText(`范围：${run.sessionId}`) : '',
+                        ]))}</div>
                     </div>
                     <span class="${escapeHtml(statusChipClass(run.status))}">${escapeHtml(displayRunStatusLabel(run))}</span>
                 </div>
-                <div class="agent-center-card-sub">${escapeHtml(displayRunSummary(run))}</div>
-                ${run.goal && run.goal !== run.title ? `<div class="agent-center-card-sub">目标：${escapeHtml(run.goal)}</div>` : ''}
-                ${failureDetail ? `<div class="agent-center-card-sub agent-center-card-error">错误：${escapeHtml(failureDetail)}</div>` : ''}
+                <div class="agent-center-card-sub" data-i18n-skip>${escapeHtml(translateUiText(displayRunSummary(run)))}</div>
+                ${run.goal && run.goal !== run.title ? `<div class="agent-center-card-sub">${escapeHtml(translateUiText('目标：'))}<span data-i18n-skip>${escapeHtml(run.goal)}</span></div>` : ''}
+                ${failureDetail ? `<div class="agent-center-card-sub agent-center-card-error">${escapeHtml(translateUiText('错误：'))}<span data-i18n-skip>${escapeHtml(failureDetail)}</span></div>` : ''}
                 ${renderChips([
                     { label: `步骤 ${Number(run.stepCount || 0)}` },
                     { label: `工具 ${Number(run.toolCallCount || 0)}` },
@@ -5055,15 +5076,15 @@ export class AgentCenterPanel {
                 <div class="agent-center-resource-main">
                     <div class="agent-center-card-head">
                         <div>
-                            <div class="agent-center-resource-group">${escapeHtml(resource.group || '资源')}</div>
-                            <div class="agent-center-card-title">${escapeHtml(resource.title || resource.id)}</div>
+                            <div class="agent-center-resource-group" data-i18n-skip>${escapeHtml(translateUiText(resource.group || '资源'))}</div>
+                            <div class="agent-center-card-title" data-i18n-skip>${escapeHtml(translateUiText(resource.title || resource.id))}</div>
                         </div>
-                        <span class="${escapeHtml(statusChipClass(Number(resource.count || 0) > 0 ? 'pending' : 'succeeded'))}">${escapeHtml(resource.status || '就绪')}</span>
+                        <span class="${escapeHtml(statusChipClass(Number(resource.count || 0) > 0 ? 'pending' : 'succeeded'))}" data-i18n-skip>${escapeHtml(translateUiText(resource.status || '就绪'))}</span>
                     </div>
-                    ${resource.summary ? `<div class="agent-center-card-sub">${escapeHtml(resource.summary)}</div>` : ''}
+                    ${resource.summary ? `<div class="agent-center-card-sub" data-i18n-skip>${escapeHtml(translateUiText(resource.summary))}</div>` : ''}
                 </div>
                 <div class="agent-center-card-actions agent-center-resource-actions">
-                    <button type="button" class="agent-center-card-action is-primary" data-resource-open="${escapeHtml(resource.id)}">${escapeHtml(resource.actionLabel || '打开')}</button>
+                    <button type="button" class="agent-center-card-action is-primary" data-resource-open="${escapeHtml(resource.id)}" data-i18n-skip>${escapeHtml(translateUiText(resource.actionLabel || '打开'))}</button>
                     ${Number(resource.count || 0) > 0 ? `<button type="button" class="agent-center-card-action" data-resource-pending="${escapeHtml(resource.id)}">待处理</button>` : ''}
                 </div>
                 ${shortcuts.length ? `<div class="agent-center-resource-shortcuts">${shortcuts.map(shortcut => `
@@ -5072,7 +5093,7 @@ export class AgentCenterPanel {
                         class="agent-center-resource-shortcut"
                         data-resource-open="${escapeHtml(resource.id)}"
                         data-resource-prompt-id="${escapeHtml(shortcut.promptId)}"
-                    >${escapeHtml(shortcut.label)}</button>
+                    data-i18n-skip>${escapeHtml(translateUiText(shortcut.label))}</button>
                 `).join('')}</div>` : ''}
             </article>
         `; }).join('')}</div>`;

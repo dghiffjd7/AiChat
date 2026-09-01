@@ -7,8 +7,8 @@ import { createWsClient } from '../dev/cdp-client.mjs';
 const endpoint = process.env.CDP_ENDPOINT || 'http://127.0.0.1:9222';
 const outputDir = process.argv[2] ? path.resolve(process.argv[2]) : '';
 const targets = await fetch(`${endpoint}/json`).then(response => response.json());
-const target = targets.find(item => item.type === 'page' && item.title === 'Chat App');
-if (!target?.webSocketDebuggerUrl) throw new Error('Chat App CDP target not found');
+const target = targets.find(item => item.type === 'page' && item.title === 'OmniTavern');
+if (!target?.webSocketDebuggerUrl) throw new Error('OmniTavern CDP target not found');
 
 let commandId = 0;
 const pending = new Map();

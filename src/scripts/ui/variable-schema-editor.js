@@ -7,6 +7,7 @@ import {
   formatVariableDisplayValue,
   getVariablePercent,
 } from './variable-panel-views.js';
+import { translateUiText } from '../i18n/index.js';
 
 const ALLOWED_VARIABLE_TYPES = new Set([
   'number',
@@ -482,12 +483,13 @@ export class VariableSchemaEditor {
     const impact = this.fields?.impact;
     if (!impact) return;
     const { sid, scope } = this.getContext();
-    const text = buildVariableScopeImpactText({
+    const text = translateUiText(buildVariableScopeImpactText({
       scope,
       sessionId: sid,
       action: 'edit',
-    });
-    impact.textContent = formatVariableScopeLabel({ scope, sessionId: sid });
+    }));
+    impact.dataset.i18nSkip = '';
+    impact.textContent = translateUiText(formatVariableScopeLabel({ scope, sessionId: sid }));
     impact.title = text;
     impact.setAttribute('aria-label', text);
   }

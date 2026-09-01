@@ -7,7 +7,7 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <!-- Android 状态栏透明 -->
     <meta name="theme-color" content="transparent" />
-    <title>Chat App</title>
+    <title>OmniTavern</title>
 
     <link rel="stylesheet" href="./assets/css/toastr.min.css" />
     <style id="toastr-override">
@@ -103,6 +103,7 @@
     <link rel="stylesheet" href="./assets/css/group-creation-redesign.css" />
     <link rel="stylesheet" href="./assets/css/developer-profile.css" />
     <link rel="stylesheet" href="./assets/css/theme-paper-ink.css" />
+    <link rel="stylesheet" href="./assets/css/i18n.css" />
     <script id="app-boot-diagnostics-bootstrap">
       // 启动诊断引导（ES2015 以内写法，旧内核也要能跑）：最早建立诊断对象并捕获早期错误，
       // 主模块若根本没启动，看门狗仍能据此给出结论。
@@ -283,7 +284,7 @@
           }).join(' > ') || '(无)';
           var errText = errors.map(function (e) { return '[' + fmt(e.at) + '] ' + e.message; }).join('\n') || '(无)';
           return [
-            'ChatApp 启动诊断',
+            'OmniTavern 启动诊断',
             '耗时: ' + fmt(Date.now() - (d.startedAt || Date.now()))
               + ' | 主模块: ' + (d.moduleLoaded ? '已加载' : '未加载')
               + ' | 运行时就绪: ' + (d.runtimeReady ? '是' : '否'),
@@ -668,7 +669,6 @@
           <div class="moments-title">动态</div>
           <div class="moments-actions">
             <button class="icon-button-small" id="moments-compose-btn">＋</button>
-            <button class="icon-button-small" id="moments-bell-btn">🔔</button>
             <button class="icon-button-small" id="moments-settings-btn">⚙</button>
           </div>
         </div>
@@ -984,12 +984,12 @@
         </div>
 
         <div class="developer-profile-links">
-          <a class="developer-project-card" data-developer-external-url href="https://github.com/dghiffjd7/AiChat" target="_blank" rel="noopener noreferrer">
+          <a class="developer-project-card" data-developer-external-url href="https://github.com/dghiffjd7/OmniTavern" target="_blank" rel="noopener noreferrer">
             <span class="developer-project-icon" aria-hidden="true">
               <svg viewBox="0 0 24 24"><path d="M5.5 6.5h13v11h-13z"/><path d="M8 9h8m-8 3h5m-5 3h3"/><path d="m9 6.5 1.2-2h3.6l1.2 2"/></svg>
             </span>
             <span class="developer-project-copy">
-              <strong>AiChat · Aria</strong>
+              <strong>OmniTavern · Aria</strong>
               <small>AI 对话、角色扮演、创意写作与个人 Agent 的跨平台工作空间。</small>
               <span class="developer-project-meta">GitHub Project</span>
             </span>

@@ -1253,6 +1253,11 @@ button.variable-reference-chip {
   border-radius: 11px;
 }
 
+.variable-template-icon svg {
+  width: 21px;
+  height: 21px;
+}
+
 .variable-template-meta {
   min-width: 0;
   flex: 1;

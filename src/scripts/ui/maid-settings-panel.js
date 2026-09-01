@@ -2024,6 +2024,7 @@ export const createMaidSettingsPanel = ({
       heading.className = 'maid-settings-item-heading';
       const title = documentRef.createElement?.('div');
       title.className = 'maid-settings-item-title';
+      title.dataset.i18nSkip = '';
       title.textContent = trim(run?.metadata?.goal || run?.title, '（无目标记录）');
       const time = documentRef.createElement?.('time');
       time.className = 'maid-settings-item-time';
@@ -2031,6 +2032,7 @@ export const createMaidSettingsPanel = ({
       heading.append(title, chip, time);
       const meta = documentRef.createElement?.('div');
       meta.className = 'maid-settings-item-meta';
+      meta.dataset.i18nSkip = '';
       meta.textContent = trim(run?.summary, '暂无执行摘要。');
       const tags = documentRef.createElement?.('div');
       tags.className = 'maid-settings-item-tags';
@@ -2216,11 +2218,13 @@ export const createMaidSettingsPanel = ({
       status.textContent = MAID_MEMORY_STATUS_LABELS[memory?.status] || trim(memory?.status, '未知状态');
       const key = documentRef.createElement?.('code');
       key.className = 'maid-memory-key';
+      key.dataset.i18nSkip = '';
       key.textContent = trim(memory?.key, 'unknown.key');
       heading.append(kind, confidence, status, key);
 
       const content = documentRef.createElement?.('div');
       content.className = 'maid-memory-content';
+      content.dataset.i18nSkip = '';
       content.textContent = trim(memory?.content, '（空）');
       main.append(heading, content);
 
@@ -2232,6 +2236,7 @@ export const createMaidSettingsPanel = ({
         tags.forEach((tagText) => {
           const tag = documentRef.createElement?.('span');
           tag.className = 'maid-memory-tag';
+          tag.dataset.i18nSkip = '';
           tag.textContent = tagText;
           meta.appendChild(tag);
         });
@@ -2299,6 +2304,7 @@ export const createMaidSettingsPanel = ({
         sourceIds.slice(0, 4).forEach((sourceId) => {
           const source = documentRef.createElement?.('span');
           source.className = 'maid-memory-source';
+          source.dataset.i18nSkip = '';
           source.textContent = sourceId;
           source.title = sourceId;
           sources.appendChild(source);
@@ -2341,6 +2347,15 @@ export const createMaidSettingsPanel = ({
       pane.classList.toggle('is-active', key === activePromptTab);
       pane.setAttribute?.('aria-hidden', key === activePromptTab ? 'false' : 'true');
     });
+    const revealActivePromptTab = () => promptTabButtons.get(activePromptTab)?.scrollIntoView?.({
+      block: 'nearest',
+      inline: 'nearest',
+    });
+    if (typeof globalThis.requestAnimationFrame === 'function') {
+      globalThis.requestAnimationFrame(revealActivePromptTab);
+    } else {
+      revealActivePromptTab();
+    }
     refresh();
     setStatus('');
   };
@@ -2492,7 +2507,7 @@ export const createMaidSettingsPanel = ({
       if (!apiSection || typeof apiSection.querySelector !== 'function') return;
       const profiles = (typeof listModelProfiles === 'function' ? listModelProfiles() : []) || [];
       const profileById = id => profiles.find(item => item.id === id) || null;
-      const profileOptions = selected => profiles.map(p => `<option value="${escapeHtml(p.id)}"${p.id === selected ? ' selected' : ''}>${escapeHtml(p.label || p.name || p.id)}</option>`).join('');
+      const profileOptions = selected => profiles.map(p => `<option data-i18n-skip value="${escapeHtml(p.id)}"${p.id === selected ? ' selected' : ''}>${escapeHtml(p.label || p.name || p.id)}</option>`).join('');
       const boundId = settingsStore?.getBoundProfileId?.() || '';
       const boundOverride = settingsStore?.getBoundModelOverride?.() || '';
       const boundProfile = profileById(boundId);
@@ -2604,8 +2619,8 @@ export const createMaidSettingsPanel = ({
               ${subAgents.length ? subAgents.map(item => `
                 <div class="maid-subagent-item${item.id === editingSubAgentId ? ' is-editing' : ''}">
                   <div class="maid-subagent-item-main">
-                    <span class="maid-subagent-item-name">${escapeHtml(item.name)}</span>
-                    <span class="maid-subagent-item-meta">${escapeHtml(item.skills.map(id => MAID_SUB_AGENT_SKILLS.find(s => s.id === id)?.label || id).join('、') || '未设标签')}${item.modelOverride ? ` · ${escapeHtml(item.modelOverride)}` : ''}</span>
+                    <span class="maid-subagent-item-name" data-i18n-skip>${escapeHtml(item.name)}</span>
+                    <span class="maid-subagent-item-meta">${item.skills.length ? item.skills.map(id => `<span>${escapeHtml(MAID_SUB_AGENT_SKILLS.find(s => s.id === id)?.label || id)}</span>`).join(' · ') : '<span>未设标签</span>'}${item.modelOverride ? ` · <code data-i18n-skip>${escapeHtml(item.modelOverride)}</code>` : ''}</span>
                   </div>
                   <button type="button" class="maid-settings-action" data-sub-edit="${escapeHtml(item.id)}">编辑</button>
                   <button type="button" class="maid-settings-action" data-sub-remove="${escapeHtml(item.id)}">删除</button>
@@ -2653,7 +2668,7 @@ export const createMaidSettingsPanel = ({
         const mainName = boundProfile?.name || boundProfile?.label || '尚未绑定连线配置';
         const mainModel = boundOverride || boundProfile?.model || '';
         const subSummary = subAgents.length
-          ? subAgents.map(item => item.name).slice(0, 3).join('、') + (subAgents.length > 3 ? ` 等 ${subAgents.length} 个` : '')
+          ? subAgents.map(item => `<span data-i18n-skip>${escapeHtml(item.name)}</span>`).slice(0, 3).join('、') + (subAgents.length > 3 ? ` <span>等 ${subAgents.length} 个</span>` : '')
           : '按能力标签委派模型任务';
         const memorySummary = memoryExtractionMode === 'custom'
           ? (memoryExtractionProfile?.name || memoryExtractionProfile?.label || '尚未选择连线配置')
@@ -2672,7 +2687,7 @@ export const createMaidSettingsPanel = ({
                   <span class="maid-api-nav-badge${boundProfile ? '' : ' is-muted'}">${boundProfile ? '已连接' : '未配置'}</span>
                 </span>
                 <span class="maid-api-nav-summary">
-                  <span>${escapeHtml(mainName)}${fallbackId ? ' · 已配置故障降级' : ''}</span>
+                  <span><span data-i18n-skip>${escapeHtml(mainName)}</span>${fallbackId ? ' · <span>已配置故障降级</span>' : ''}</span>
                   ${mainModel ? `<code>${escapeHtml(mainModel)}</code>` : ''}
                 </span>
               </span>
@@ -2685,7 +2700,7 @@ export const createMaidSettingsPanel = ({
                   <span class="maid-api-nav-title">Sub-agent 模型</span>
                   <span class="maid-api-nav-badge${subAgents.length ? '' : ' is-muted'}">${subAgents.length ? `${subAgents.length} 个模型` : '未配置'}</span>
                 </span>
-                <span class="maid-api-nav-summary">${escapeHtml(subSummary)}</span>
+                <span class="maid-api-nav-summary">${subSummary}</span>
               </span>
               <span class="maid-api-nav-chevron">${ICONS.chevron}</span>
             </button>
@@ -2697,7 +2712,7 @@ export const createMaidSettingsPanel = ({
                   <span class="maid-api-nav-badge${memoryExtractionMode === 'custom' && !memoryExtractionProfile ? ' is-muted' : ''}">${memoryExtractionMode === 'custom' ? '自定义' : '跟随主模型'}</span>
                 </span>
                 <span class="maid-api-nav-summary">
-                  <span>${escapeHtml(memorySummary)}${memoryExtractionMode === 'custom' && memoryExtraction.fallbackToMain === true ? ' · 失败时回退主模型' : ''}</span>
+                  <span>${memoryExtractionMode === 'custom' ? `<span data-i18n-skip>${escapeHtml(memorySummary)}</span>` : `<span>${escapeHtml(memorySummary)}</span>`}${memoryExtractionMode === 'custom' && memoryExtraction.fallbackToMain === true ? ' · <span>失败时回退主模型</span>' : ''}</span>
                   ${memoryModel ? `<code>${escapeHtml(memoryModel)}</code>` : ''}
                 </span>
               </span>

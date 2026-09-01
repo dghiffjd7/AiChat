@@ -4,6 +4,7 @@ import {
   buildFullPromptDocument,
   buildPromptOverviewView,
 } from '../../src/scripts/ui/chat/prompt-preview-view-utils.js';
+import { initializeI18n } from '../../src/scripts/i18n/index.js';
 
 const request = {
   at: Date.UTC(2026, 7, 1, 3, 4, 5),
@@ -405,7 +406,7 @@ const request = {
   assert.match(view.html, /冻结群成员/);
   assert.match(view.html, /群成员甲/);
   assert.match(view.html, /微笑、点头/);
-  assert.match(view.html, /关系表（2 行）/);
+  assert.match(view.html, /<span data-i18n-skip>关系表<\/span><span>（2 行）<\/span>/);
   assert.match(view.html, /group:actual/);
   assert.doesNotMatch(view.html, /完整 Schema（已脱敏）/);
   assert.match(view.plain, /冻结目标: 真实测试群/);
@@ -429,4 +430,28 @@ const request = {
   assert.match(view.plain, /completion tokens: —/);
   assert.doesNotMatch(view.plain, /0(?:\.0)? (?:ms|tok\/s)/);
   console.log('ok - prompt overview preserves unavailable diagnostics instead of coercing null to zero');
+}
+
+{
+  await initializeI18n({
+    preference: 'en',
+    documentLike: null,
+    fetchFn: async () => ({
+      ok: true,
+      json: async () => ({
+        '供应方未返回': 'Not returned by provider',
+        '本轮没有改变行为的结构化请求参数': 'No structured request parameters changed behavior for this request',
+        '暂无 Prompt 内容': 'No Prompt content',
+      }),
+    }),
+  });
+  const view = buildPromptOverviewView({ messages: [], responseDiagnostics: {} });
+  assert.match(view.html, /Not returned by provider/);
+  assert.match(view.html, /No structured request parameters changed behavior for this request/);
+  assert.match(view.plain, /system fingerprint: Not returned by provider/);
+  assert.doesNotMatch(view.html, /供应方未返回|本轮没有改变行为的结构化请求参数/);
+  const full = buildFullPromptDocument({ messages: [] });
+  assert.match(full.html, /No Prompt content/);
+  assert.doesNotMatch(full.html, /暂无 Prompt 内容/);
+  console.log('ok - unavailable provider identity is localized inside skipped code content');
 }

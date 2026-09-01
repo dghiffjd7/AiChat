@@ -32,8 +32,8 @@ android {
             isDebuggable = true
             isJniDebuggable = true
             isMinifyEnabled = false
-            resValue("string", "app_name", "ChatApp Dev")
-            resValue("string", "main_activity_title", "ChatApp Dev")
+            resValue("string", "app_name", "OmniTavern Dev")
+            resValue("string", "main_activity_title", "OmniTavern Dev")
             packaging {                jniLibs.keepDebugSymbols.add("*/arm64-v8a/*.so")
                 jniLibs.keepDebugSymbols.add("*/armeabi-v7a/*.so")
                 jniLibs.keepDebugSymbols.add("*/x86/*.so")

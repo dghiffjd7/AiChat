@@ -289,12 +289,15 @@ export const createSessionArchiveRow = ({
   topRow.style.cssText = SESSION_SHARED_VIEW_STYLES.archiveTopRow;
 
   const info = documentRef.createElement('div');
+  info.className = 'session-archive-info';
   info.style.cssText = SESSION_SHARED_VIEW_STYLES.archiveInfo;
   info.title = archiveId ? `${archiveName || '未命名存档'}\nID: ${archiveId}` : (archiveName || '未命名存档');
 
   const title = documentRef.createElement('div');
+  title.className = 'session-archive-name';
   title.style.cssText = SESSION_SHARED_VIEW_STYLES.archiveTitle;
   title.textContent = `${archiveName || '未命名存档'}${isCurrent ? ' (当前)' : ''}`;
+  if (!isCurrent) title.setAttribute('data-i18n-skip', '');
 
   const meta = documentRef.createElement('div');
   meta.style.cssText = SESSION_SHARED_VIEW_STYLES.archiveMeta;

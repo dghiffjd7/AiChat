@@ -1,3 +1,5 @@
+import { getLocalizedPromptText } from '../../i18n/prompt-locale.js';
+
 const IMAGE_PROMPT_TAG = 'image_prompt';
 
 const htmlDecodeLite = (value = '') => String(value ?? '')
@@ -187,20 +189,20 @@ export const normalizeAutoImagePromptStyle = (value = '') => {
 
 export const describeAutoImagePromptStyle = (value = '') => {
   const style = normalizeAutoImagePromptStyle(value);
-  if (style === 'nai_tags') return 'NAI / 标签式提示词：英文逗号分隔标签，优先主体、角色、画风、构图、光线。';
-  if (style === 'natural') return '自然语言提示词：用清晰自然语言描述主体、场景、构图、风格和光线。';
-  return '自动：优先匹配当前图片模型；若无法判断，用清晰自然语言提示词。若用户明确要求 NAI/tag 风格，可用英文标签。';
+  if (style === 'nai_tags') return getLocalizedPromptText('auto_image.style.nai');
+  if (style === 'natural') return getLocalizedPromptText('auto_image.style.natural');
+  return getLocalizedPromptText('auto_image.style.auto');
 };
 
 export const describeAutoImagePromptDecisionMode = (value = '') => {
   const mode = String(value || '').trim().toLowerCase();
   if (mode === 'aggressive') {
-    return '触发策略：积极。用户明确要照片/自拍/图片时，优先视为新生成图片并使用 <image_prompt>；视觉场景、角色自然会发送图片、创意写作出现可视化段落时，可以更主动地输出 <image_prompt>。';
+    return getLocalizedPromptText('auto_image.decision.aggressive');
   }
   if (mode === 'standard') {
-    return '触发策略：标准。仅在本轮回复明显适合配图、用户提到图片需求、或角色自然会发送图片时输出 <image_prompt>。';
+    return getLocalizedPromptText('auto_image.decision.standard');
   }
-  return '触发策略：保守。默认不要输出图片标签；只有用户明确要求图片生成、场景强视觉化、角色明显自然会发送图片、或创意写作关键场景时才输出 <image_prompt>。普通闲聊、寒暄、解释、没有新视觉信息时禁止输出。';
+  return getLocalizedPromptText('auto_image.decision.conservative');
 };
 
 export const buildImagePromptModelHintFromConfig = (config = {}) => {
@@ -306,10 +308,14 @@ export const buildAutoImagePromptInstruction = ({
 } = {}) => {
   const mode = String(uiMode || '').trim().toLowerCase();
   const surface = mode === 'rp'
-    ? '创意写作插图'
-    : (isGroupChat ? '群聊图片消息' : '私聊图片消息');
-  const targetModel = String(modelHint || '').trim() || '未指定图片模型';
-  const source = String(template || '').trim() || DEFAULT_AUTO_IMAGE_PROMPT_RULES;
+    ? getLocalizedPromptText('auto_image.surface.creative')
+    : (isGroupChat
+      ? getLocalizedPromptText('auto_image.surface.group')
+      : getLocalizedPromptText('auto_image.surface.private'));
+  const targetModel = String(modelHint || '').trim()
+    || getLocalizedPromptText('auto_image.model.unspecified');
+  const source = String(template || '').trim()
+    || getLocalizedPromptText('auto_image_prompt_rules', DEFAULT_AUTO_IMAGE_PROMPT_RULES);
   const rendered = source
     .replace(/\{\{\s*image_prompt_surface\s*\}\}/gi, surface)
     .replace(/\{\{\s*image_prompt_model\s*\}\}/gi, targetModel)

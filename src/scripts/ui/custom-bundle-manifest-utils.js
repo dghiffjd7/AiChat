@@ -55,7 +55,7 @@ export const buildCustomBundleManifest = ({
   format,
   formatVersion,
   exportedAt,
-  exportedBy = 'AiChat',
+  exportedBy = 'OmniTavern',
   mode = '',
   options = {},
   summary = {},

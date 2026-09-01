@@ -1,4 +1,5 @@
 import { isRpSessionId } from '../memory/memory-context-utils.js';
+import { translateUiText } from '../i18n/index.js';
 import {
     getChatToRpBridgeSourceMeta,
     normalizeBridgeLimit,
@@ -266,7 +267,8 @@ export const createSessionMemoryShareSectionRuntime = ({
         const entries = Array.isArray(group?.context?.entries) ? group.context.entries : [];
         const desc = documentRef.createElement('div');
         desc.style.cssText = 'font-size:12px; color:var(--app-text-muted); margin-top:4px; line-height:1.4;';
-        desc.textContent = `${group?.description || group?.context?.summarySourceText || ''}${group?.description || group?.context?.summarySourceText ? '；' : ''}${getEntriesEnabledCount(entries)} 张表开启，可注入 ${getEntriesActualCount(entries)} 条`;
+        desc.setAttribute?.('data-i18n-skip', '');
+        desc.textContent = translateUiText(`${group?.description || group?.context?.summarySourceText || ''}${group?.description || group?.context?.summarySourceText ? '；' : ''}${getEntriesEnabledCount(entries)} 张表开启，可注入 ${getEntriesActualCount(entries)} 条`);
         textWrap.appendChild(title);
         textWrap.appendChild(desc);
         const toggle = documentRef.createElement('input');

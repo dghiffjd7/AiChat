@@ -1,5 +1,6 @@
 import { isRpSessionId } from '../memory/memory-context-utils.js';
 import { normalizeBadgeList } from '../utils/name-badges.js';
+import { translateUiText } from '../i18n/index.js';
 
 export const runContactSettingsPopulateFlow = ({
   sessionId = '',
@@ -36,7 +37,10 @@ export const runContactSettingsPopulateFlow = ({
   const title = panel?.querySelector?.('#contact-settings-title');
   if (title) title.textContent = isRpSession ? '设置' : '好友设置';
   const sub = panel?.querySelector?.('#contact-settings-sub');
-  if (sub) sub.textContent = `会话：${sessionId}`;
+  if (sub) {
+    sub.setAttribute?.('data-i18n-skip', '');
+    sub.textContent = translateUiText(`会话：${sessionId}`);
+  }
 
   const currentAvatar = contact.avatar || '';
   setCurrentAvatar(currentAvatar);

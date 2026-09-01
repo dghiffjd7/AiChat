@@ -63,7 +63,10 @@ export const resolveContactAvatarView = ({
 const applyElementIdentity = (element, { id = '', className = '', alt = '' } = {}) => {
   if (id) element.id = id;
   if (className) element.className = className;
-  if (alt) element.setAttribute?.('aria-label', alt);
+  if (alt) {
+    element.setAttribute?.('aria-label', alt);
+    element.setAttribute?.('data-i18n-skip', '');
+  }
   return element;
 };
 

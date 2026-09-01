@@ -18,6 +18,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             external_links::open_external_url,
             commands::exit_app,
+            commands::restart_app,
             commands::save_config,
             commands::load_config,
             commands::save_chat_history,

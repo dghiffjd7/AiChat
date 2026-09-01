@@ -4,6 +4,7 @@
  */
 import { RegexStore, regex_placement } from '../storage/regex-store.js';
 import { logger } from '../utils/logger.js';
+import { translateUiText } from '../i18n/index.js';
 import { bindCustomSelectButton, closeCustomSelectMenu } from './custom-select.js';
 import {
     downloadJsonFile,
@@ -1145,8 +1146,9 @@ export class RegexSessionPanel {
         const sid = this.getSessionId();
         const sub = this.element.querySelector('#re-session-sub');
         if (sub) {
-            sub.textContent = `会话：${sid}`;
-            sub.parentElement?.setAttribute('title', `当前会话：${sid}`);
+            sub.dataset.i18nSkip = '';
+            sub.textContent = translateUiText(`会话：${sid}`);
+            sub.parentElement?.setAttribute('title', translateUiText(`当前会话：${sid}`));
         }
         const state = this.store.getSession(sid);
         this.element.querySelector('#re-session-enabled').checked = state.enabled !== false;

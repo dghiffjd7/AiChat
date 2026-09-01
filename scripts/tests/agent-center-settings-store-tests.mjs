@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 
 import {
+  buildAgentCenterProfileView,
   createAgentCenterSettingsStore,
   getAgentCenterGlobalSemanticPromptLibrary,
   lazyMigratePresetProfileToAgentCenterSettings,
@@ -16,6 +17,17 @@ import {
   setMemoryAgentSettings,
   upsertAgentCenterGlobalSemanticPromptBlock,
 } from '../../src/scripts/storage/agent-center-settings-store.js';
+import {
+  getLocalizedPromptText,
+  setPromptLocale,
+} from '../../src/scripts/i18n/prompt-locale.js';
+
+globalThis.localStorage ||= {
+  getItem: () => null,
+  setItem: () => {},
+  removeItem: () => {},
+};
+const { getCanonicalBuiltinPromptDefaults } = await import('../../src/scripts/storage/preset-store.js');
 
 {
   let mutation = upsertAgentCenterGlobalSemanticPromptBlock({}, {
@@ -146,6 +158,75 @@ import {
   assert.equal(disabled.auto_image_prompt_enabled, false);
   assert.equal(disabled.auto_image_prompt_rules, 'new image rules');
   console.log('ok - agent center sysprompt resolver prefers new store and respects card disable');
+}
+
+{
+  const officialPromptDefaults = getCanonicalBuiltinPromptDefaults();
+  let settings = migratePresetStateToAgentCenterSettings({}, {
+    presets: {
+      sysprompt: {
+        official: {
+          name: 'Official',
+          dialogue_enabled: true,
+          dialogue_rules: officialPromptDefaults.dialogue_rules,
+        },
+      },
+      openai: {},
+    },
+  }, { now: () => 1000, officialPromptDefaults });
+
+  setPromptLocale('en');
+  const localizedPreset = {
+    name: 'Official',
+    dialogue_enabled: true,
+    dialogue_rules: getLocalizedPromptText('dialogue_rules', officialPromptDefaults.dialogue_rules),
+  };
+  const resolved = resolveAgentSyspromptPreset(settings, {
+    presetId: 'official',
+    preset: localizedPreset,
+    officialPromptDefaults,
+  });
+  assert.match(resolved.dialogue_rules, /Roleplay Core/);
+  assert.doesNotMatch(resolved.dialogue_rules, /角色扮演核心/);
+
+  const profileView = buildAgentCenterProfileView(settings, {
+    syspromptResolved: { presetId: 'official', preset: localizedPreset },
+    officialPromptDefaults,
+  });
+  assert.match(
+    profileView.sysprompt.profile.agents.dialogue_agent.prompts.dialogue.rules,
+    /Roleplay Core/,
+  );
+
+  settings = setAgentPromptConfig(settings, {
+    profileType: 'sysprompt',
+    presetId: 'official',
+    preset: localizedPreset,
+    agentId: 'dialogue_agent',
+    promptId: 'dialogue',
+    config: { rules: localizedPreset.dialogue_rules },
+  }, { now: () => 2000, officialPromptDefaults });
+  assert.equal(
+    settings.profiles['sysprompt:official'].agents.dialogue_agent.prompts.dialogue.rules,
+    officialPromptDefaults.dialogue_rules,
+    '保存未修改的英文官方提示词时应还原规范默认值',
+  );
+
+  settings = setAgentPromptConfig(settings, {
+    profileType: 'sysprompt',
+    presetId: 'official',
+    preset: localizedPreset,
+    agentId: 'dialogue_agent',
+    promptId: 'dialogue',
+    config: { rules: `${localizedPreset.dialogue_rules}\nCustom addition` },
+  }, { now: () => 3000, officialPromptDefaults });
+  assert.match(
+    settings.profiles['sysprompt:official'].agents.dialogue_agent.prompts.dialogue.rules,
+    /Custom addition$/,
+    '用户编辑后的提示词不得被规范化覆盖',
+  );
+  setPromptLocale('zh-CN');
+  console.log('ok - agent center localizes official prompt copies without changing custom edits');
 }
 
 {
