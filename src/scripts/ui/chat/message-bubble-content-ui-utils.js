@@ -62,6 +62,7 @@ export const renderMessageBubbleContentCore = ({
   createAudio = (url) => new Audio(url),
   warningToast,
   errorToast,
+  translateText = value => String(value ?? ''),
 } = {}) => {
   switch (message?.type) {
     case 'image': {
@@ -83,8 +84,8 @@ export const renderMessageBubbleContentCore = ({
       imgEl.addEventListener?.('click', () => openLightbox?.(imgSrc));
       const onFail = () => {
         imgEl.classList?.add?.('broken');
-        imgEl.alt = '图片加载失败';
-        toastOnce?.('图片加载失败，请检查链接或网络');
+        imgEl.alt = translateText('图片加载失败');
+        toastOnce?.(translateText('图片加载失败，请检查链接或网络'));
       };
       const hasFallback = typeof applyImageFallback === 'function'
         ? applyImageFallback(imgEl, resolved, { onFail })
@@ -97,7 +98,7 @@ export const renderMessageBubbleContentCore = ({
       const audioSrc = resolveMediaUrl?.('audio', message?.content) || '';
       const toolbar = documentLike.createElement('div');
       toolbar.className = 'message-toolbar';
-      appendChild(toolbar, createTextChip(documentLike, '语音'));
+      appendChild(toolbar, createTextChip(documentLike, translateText('语音')));
       const audioEl = documentLike.createElement('audio');
       audioEl.controls = true;
       audioEl.preload = 'none';
@@ -106,14 +107,14 @@ export const renderMessageBubbleContentCore = ({
       sourceEl.src = audioSrc;
       appendChild(audioEl, sourceEl);
       audioEl.onerror = () => {
-        toastOnce?.('语音加载失败');
+        toastOnce?.(translateText('语音加载失败'));
       };
       appendChild(toolbar, audioEl);
       appendChild(bubble, toolbar);
       break;
     }
     case 'document': {
-      const titleText = String(message?.content || message?.meta?.name || '文件');
+      const titleText = String(message?.content || message?.meta?.name || translateText('文件'));
       const metaLine = [message?.meta?.mime, message?.meta?.sizeLabel].filter(Boolean).join(' · ');
       const card = documentLike.createElement('div');
       card.className = 'card file-card';
@@ -135,12 +136,12 @@ export const renderMessageBubbleContentCore = ({
       const rawUrl = message?.meta?.url || '';
       const resolved = resolveMediaAsset?.('audio', rawUrl);
       const url = resolved?.url || rawUrl;
-      const statusText = url ? '待播放' : '无音频地址';
+      const statusText = translateText(url ? '待播放' : '无音频地址');
       const card = documentLike.createElement('div');
       card.className = 'card music-card';
       const title = documentLike.createElement('div');
       title.className = 'card-title';
-      title.textContent = `🎵 ${message?.content || '音乐'}`;
+      title.textContent = `🎵 ${message?.content || translateText('音乐')}`;
       appendChild(card, title);
       if (artist) {
         const subtitle = documentLike.createElement('div');
@@ -158,11 +159,11 @@ export const renderMessageBubbleContentCore = ({
       const playBtn = documentLike.createElement('button');
       playBtn.className = 'card-button';
       playBtn.dataset.action = 'play';
-      playBtn.textContent = '播放';
+      playBtn.textContent = translateText('播放');
       const pauseBtn = documentLike.createElement('button');
       pauseBtn.className = 'card-button';
       pauseBtn.dataset.action = 'pause';
-      pauseBtn.textContent = '暂停';
+      pauseBtn.textContent = translateText('暂停');
       appendChild(actions, playBtn);
       appendChild(actions, pauseBtn);
       if (url) {
@@ -195,39 +196,39 @@ export const renderMessageBubbleContentCore = ({
       if (audio) {
         audio.onerror = () => {
           playing = false;
-          playBtn.textContent = '播放';
-          statusEl.textContent = '播放错误';
-          errorToast?.('音频加载/播放失败');
+          playBtn.textContent = translateText('播放');
+          statusEl.textContent = translateText('播放错误');
+          errorToast?.(translateText('音频加载/播放失败'));
         };
         audio.addEventListener?.('timeupdate', updateProgress);
         audio.addEventListener?.('loadedmetadata', updateProgress);
         audio.addEventListener?.('ended', () => {
           playing = false;
-          playBtn.textContent = '播放';
-          statusEl.textContent = '播放完畢';
+          playBtn.textContent = translateText('播放');
+          statusEl.textContent = translateText('播放完畢');
           updateProgress();
         });
       }
 
       playBtn.onclick = () => {
         if (!audio) {
-          warningToast?.('无音频地址，播放失败');
+          warningToast?.(translateText('无音频地址，播放失败'));
           return;
         }
         audio.play()
           .then(() => {
             playing = true;
-            playBtn.textContent = '播放中';
-            statusEl.textContent = '播放中';
+            playBtn.textContent = translateText('播放中');
+            statusEl.textContent = translateText('播放中');
             updateProgress();
           })
-          .catch(() => warningToast?.('播放失败'));
+          .catch(() => warningToast?.(translateText('播放失败')));
       };
       pauseBtn.onclick = () => {
         audio?.pause?.();
         if (playing) {
-          playBtn.textContent = '播放';
-          statusEl.textContent = '已暂停';
+          playBtn.textContent = translateText('播放');
+          statusEl.textContent = translateText('已暂停');
           playing = false;
         }
       };
@@ -238,28 +239,28 @@ export const renderMessageBubbleContentCore = ({
       card.className = 'card transfer-card';
       const title = documentLike.createElement('div');
       title.className = 'card-title';
-      title.textContent = '转账';
+      title.textContent = translateText('转账');
       appendChild(card, title);
       const subtitle = documentLike.createElement('div');
       subtitle.className = 'card-subtitle';
-      subtitle.textContent = `金额：${message?.content}`;
+      subtitle.textContent = translateText(`金额：${message?.content}`);
       appendChild(card, subtitle);
       const statusEl = documentLike.createElement('div');
       statusEl.className = 'card-status';
       statusEl.dataset.role = 'status';
-      statusEl.textContent = '待确认';
+      statusEl.textContent = translateText('待确认');
       appendChild(card, statusEl);
       const actions = documentLike.createElement('div');
       actions.className = 'card-actions';
       const confirmBtn = documentLike.createElement('button');
       confirmBtn.className = 'card-button';
       confirmBtn.dataset.action = 'confirm';
-      confirmBtn.textContent = '确认收款';
+      confirmBtn.textContent = translateText('确认收款');
       confirmBtn.onclick = () => {
         confirmBtn.disabled = true;
-        confirmBtn.textContent = '已收款';
+        confirmBtn.textContent = translateText('已收款');
         const stamp = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-        statusEl.textContent = `已收款 ${stamp}`;
+        statusEl.textContent = translateText(`已收款 ${stamp}`);
       };
       appendChild(actions, confirmBtn);
       appendChild(card, actions);
@@ -277,8 +278,8 @@ export const renderMessageBubbleContentCore = ({
         const loaded = applyImageFallback?.(stickerImg, stickerResolved, {
           onFail: () => {
             stickerImg.classList?.add?.('broken');
-            stickerImg.alt = '表情包加载失败';
-            toastOnce?.('表情包加载失败');
+            stickerImg.alt = translateText('表情包加载失败');
+            toastOnce?.(translateText('表情包加载失败'));
           },
         });
         if (loaded) {
@@ -287,10 +288,10 @@ export const renderMessageBubbleContentCore = ({
           bubble.innerHTML = '';
           appendChild(bubble, stickerImg);
         } else {
-          appendChild(bubble, createTextChip(documentLike, `表情包：${message?.content}`));
+          appendChild(bubble, createTextChip(documentLike, translateText(`表情包：${message?.content}`)));
         }
       } else {
-        appendChild(bubble, createTextChip(documentLike, `表情包：${message?.content}`));
+        appendChild(bubble, createTextChip(documentLike, translateText(`表情包：${message?.content}`)));
       }
       break;
     }
@@ -330,14 +331,14 @@ export const renderMessageBubbleContentCore = ({
         summary.className = 'card-title';
         const titleText = documentLike.createElement('span');
         titleText.className = 'generated-media-error-title';
-        titleText.textContent = String(message?.content || '图片生成失败');
+        titleText.textContent = String(message?.content || translateText('图片生成失败'));
         appendChild(summary, titleText);
         if (String(generated?.prompt || '').trim()) {
           const retry = documentLike.createElement('button');
           retry.type = 'button';
           retry.className = 'card-button generated-media-error-retry';
           retry.dataset.action = 'retry-generated-media';
-          retry.textContent = '重新生成图片';
+          retry.textContent = translateText('重新生成图片');
           appendChild(summary, retry);
         }
         const body = documentLike.createElement('pre');

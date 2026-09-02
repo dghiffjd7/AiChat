@@ -108,6 +108,7 @@ import { appSettings } from '../storage/app-settings.js';
 import { bootstrapAppLanguage } from '../i18n/app-language-bootstrap.js';
 import { requestAppLanguageRestart } from '../i18n/app-language-restart.js';
 import { translateUiText } from '../i18n/index.js';
+import { getLocalizedPromptText } from '../i18n/prompt-locale.js';
 import { chatFcLocalCapabilityStore } from '../storage/chat-fc-local-capability-store.js';
 import { chatStructuredRouteEvidenceStore } from '../storage/chat-structured-route-evidence-store.js';
 import { renderTemplateTextAsync, templateSettings } from '../plugins/template-engine.js';
@@ -2439,7 +2440,7 @@ const initApp = async () => {
       el.dataset.personaAccent = '1';
       el.style.setProperty('--persona-accent', accent.color);
       el.style.setProperty('--persona-accent-soft', accent.soft);
-      el.title = `当前用户：${name}`;
+      el.title = translateUiText(`当前用户：${name}`);
     });
     try {
       momentsPanel?.setUserAvatar?.(url);
@@ -2452,6 +2453,10 @@ const initApp = async () => {
   });
   const applyPersonaScopeNow = async ({ personaId = null, force = false } = {}, scopeRun = null) => {
     const pid = personaId || personaStore.getActive?.()?.id || 'default';
+    // 换卡与同卡重应用（如 personaBindContacts 强制刷新）行为不同：
+    // 换卡后右侧必须回到列表/占位页，不得沿用新 scope 里残留的 current 指针自动进房。
+    const prevPersonaId = activePersonaId || 'default';
+    const isSameCard = String(pid) === String(prevPersonaId);
     const nextKey = getPersonaScopeKey(pid);
     if (canReusePersonaScope({
       nextScopeId: nextKey,
@@ -2468,7 +2473,7 @@ const initApp = async () => {
           contactsStore,
           allowRpSession: false,
         });
-        if (!current.sessionId) {
+        if (!current.sessionId || !isSameCard) {
           try {
             exitChatRoom({ animate: false });
           } catch {}
@@ -2583,7 +2588,7 @@ const initApp = async () => {
     }
     if (!isRpScopeSwitch) {
       if (wasChatRoomVisible) {
-        if (sid) {
+        if (sid && isSameCard) {
           const contact = contactsStore.getContact(sid);
           enterChatRoom(sid, contact?.name || sid, chatOriginPage);
         } else {
@@ -4060,7 +4065,7 @@ const initApp = async () => {
   } = {}) => {
     const promptText = requestPrompt || buildRequestPromptTextCore(Array.isArray(messages) ? messages : []);
     maidSettingsStore.setLastExchange({
-      requestPrompt: promptText || '本次请求未发送模型提示词。',
+      requestPrompt: promptText || translateUiText('本次请求未发送模型提示词。'),
       appContext: appContext || buildAppFeatureSearchContextText(input, { limit: 5 }),
       fullResponse: responseText || '',
       source,
@@ -6300,7 +6305,7 @@ const initApp = async () => {
           return setCachedDecoratedMessage(m, sid, decorationSignature, {
             ...m,
             type: 'text',
-            content: '[图片已过期]',
+            content: translateUiText('[图片已过期]'),
             avatar,
             status: m.status,
             sessionId: sid,
@@ -6394,7 +6399,7 @@ const initApp = async () => {
       id: dividerId,
       role: 'system',
       type: 'divider',
-      content: '以下为未读讯息',
+      content: translateUiText('以下为未读讯息'),
       time: '',
       meta: { transient: true, kind: 'unread-divider' },
     });
@@ -6423,7 +6428,9 @@ const initApp = async () => {
   };
 
   const snippetFromMessage = msg => {
-    if (!msg) return '尚无聊天';
+    // 预览容器（.chat-item-preview/.contact-desc）在 DOM 翻译器的跳过清单里（内容为用户/模型文本），
+    // 兜底文案必须在 JS 侧翻译。
+    if (!msg) return translateUiText('尚无聊天');
     return getMessagePreviewText(msg, { maxLength: 32, fallback: '...' });
   };
 
@@ -6600,7 +6607,7 @@ const initApp = async () => {
     // 否则从联系人获取真实名字
     const contact = contactsStore.getContact(sid);
     if (contact?.name) return String(contact.name || '').trim();
-    return msgName || '对方';
+    return msgName || translateUiText('对方');
   };
 
   const getReplyTargetForSession = (sessionId = chatStore.getCurrent()) => {
@@ -6788,61 +6795,6 @@ const initApp = async () => {
   let stickerPackDeleteTarget = '';
   let activeStickerEditor = null;
   const stickerLoadErrorKeys = new Set();
-  const STICKER_AI_TEMPLATE = `
-A 4K resolution, 16:9 image featuring a character sheet with a 4x6 grid layout.
-Style: cute Q-version (Chibi) anime art, resembling LINE stickers, full-body portraits.
-Background: solid white. Split by clean lines between each block.
-Subject: the character from the reference image. Redesign the poses creatively.
-Crucial: ensure headwear/accessories are drawn correctly and consistently.
-No text. Clean outlines, flat colors typical of sticker packs.
-No numbers, no labels, no index markers.
-Atmosphere: pink, bubbly, extremely girly.
-第一排（日常互动与可爱系）：...
-第二排（打工/学习/生活状态）：...
-`;
-  const STICKER_AI_SPRITE_TEMPLATE = `
-任务：
-根据用户输入，生成一份完整、可直接丢给生图模型的专业提示词，用<prompt>...</prompt>包裹。
-
----
-
-## 固定画面结构（不可更改）
-- 画布：正方形
-- 布局：6×6 = 36 格 Sprite Sheet
-- 播放顺序：从左上 → 右下
-- 风格：像素风（或用户选择风格）
-- 背景：纯白
-- 每一格之间：必须有 1px 细线分隔，方便切割
-- 主体与特效：不可出界
-- 动作连贯性：每一格必须与上一格自然衔接
-- 结尾必须能无缝回到第 1 格
-- 不要文字、水印、数字、序号或多余标记
-
----
-
-## 7 阶段结构（可根据用户输入调整）
-Phase A（Frames 1–4）：基准姿态
-Phase B（Frames 5–10）：张力积累
-Phase C（Frames 11–17）：能量/动态汇聚
-Phase D（Frames 18–25）：高潮爆发
-Phase E（Frames 26–31）：余波扩散
-Phase F（Frames 32–35）：回归平衡
-Phase G（Frame 36）：循环衔接
-
----
-
-## 视觉风格补充
-- 像素等级：按用户输入
-- 色彩基调：按用户输入
-- 视觉特效：按主题设计但不得遮挡主体
-
----
-
-## 输出要求
-- 只输出完整提示词，用<prompt>...</prompt>包裹，不要解释
-- 结尾必须包含：
-"Output as one single 6×6 sprite sheet image with thin grid lines."
-`;
   const ensureChatConfigReady = async () => {
     const config = await chatConfigManager.load();
     if (!canInitClient(config)) {
@@ -9540,10 +9492,10 @@ Phase G（Frame 36）：循环衔接
                 <div class="chat-search-count-pill">${result.count}</div>
               </div>
               <div class="chat-search-session-meta">
-                <span>${escapeHtml(speaker || '未知发送者')}</span>
+                <span data-i18n-skip>${escapeHtml(speaker || translateUiText('未知发送者'))}</span>
                 <span>${escapeHtml(formatSearchTime(latest.timestamp))}</span>
               </div>
-              <div class="chat-search-session-preview">${renderHighlightedSearchTextHtml(snippet, term)}</div>
+              <div class="chat-search-session-preview" data-i18n-skip>${renderHighlightedSearchTextHtml(snippet, term)}</div>
             </div>
           </div>
         `;
@@ -9594,10 +9546,10 @@ Phase G（Frame 36）：循环衔接
             <img src="${avatar}" alt="" class="chat-item-avatar">
             <div class="chat-item-content">
               <div class="chat-search-message-head">
-                <div class="chat-search-message-name">${escapeHtml(speaker || '未知发送者')}</div>
+                <div class="chat-search-message-name" data-i18n-skip>${escapeHtml(speaker || translateUiText('未知发送者'))}</div>
                 <div class="chat-search-message-time">${escapeHtml(formatSearchTime(match.timestamp))}</div>
               </div>
-              <div class="chat-search-message-text">${renderHighlightedSearchTextHtml(snippet, term)}</div>
+              <div class="chat-search-message-text" data-i18n-skip>${renderHighlightedSearchTextHtml(snippet, term)}</div>
             </div>
           </div>
         `;
@@ -10616,14 +10568,17 @@ Phase G（Frame 36）：循环衔接
   };
   bindComposerImagePasteAndDrop();
   const buildDocumentPromptText = attachment => {
-    const name = String(attachment?.name || '文件').trim() || '文件';
+    const fileMarker = getLocalizedPromptText('attachment.file_marker', '文件');
+    const name = String(attachment?.name || fileMarker).trim() || fileMarker;
     const meta = [];
     if (attachment?.mime) meta.push(String(attachment.mime));
     if (attachment?.sizeLabel) meta.push(String(attachment.sizeLabel));
-    const header = meta.length ? `【文件】${name} (${meta.join(', ')})` : `【文件】${name}`;
+    const header = meta.length ? `【${fileMarker}】${name} (${meta.join(', ')})` : `【${fileMarker}】${name}`;
     const body = String(attachment?.text || '').trim();
-    if (!body) return `${header}\n[无法读取文件内容，仅提供文件信息]`;
-    const suffix = attachment?.textTruncated ? '\n[内容已截断]' : '';
+    if (!body) return `${header}\n${getLocalizedPromptText('attachment.unreadable', '[无法读取文件内容，仅提供文件信息]')}`;
+    const suffix = attachment?.textTruncated
+      ? `\n${getLocalizedPromptText('attachment.truncated', '[内容已截断]')}`
+      : '';
     return `${header}\n${body}${suffix}`;
   };
   const stripComposerAttachmentPlaceholders = (text = '', attachments = composerAttachments) => {
@@ -11568,28 +11523,35 @@ Phase G（Frame 36）：循环衔接
       const theme = resolveSpriteOption(form.theme, form.themeCustom);
       const expression = resolveSpriteOption(form.expression, form.expressionCustom);
       const background = form.background === '自订' ? '' : form.background;
-      if (theme) lines.push(`主题类型: ${theme}`);
-      if (form.subject) lines.push(`主体: ${form.subject}`);
-      if (form.look) lines.push(`外观/风格: ${form.look}`);
-      if (form.mood) lines.push(`情绪氛围: ${form.mood}`);
-      if (expression) lines.push(`表现: ${expression}`);
-      if (form.narrative) lines.push(`叙事感: ${form.narrative}`);
-      if (form.pixel) lines.push(`像素等级: ${form.pixel}`);
-      if (form.tone) lines.push(`色彩基调: ${form.tone}`);
+      const addSummaryLine = (key, fallback, value) => {
+        if (value) lines.push(`${getLocalizedPromptText(key, fallback)}: ${value}`);
+      };
+      addSummaryLine('sticker_ai.summary.theme', '主题类型', theme);
+      addSummaryLine('sticker_ai.summary.subject', '主体', form.subject);
+      addSummaryLine('sticker_ai.summary.look', '外观/风格', form.look);
+      addSummaryLine('sticker_ai.summary.mood', '情绪氛围', form.mood);
+      addSummaryLine('sticker_ai.summary.expression', '表现', expression);
+      addSummaryLine('sticker_ai.summary.narrative', '叙事感', form.narrative);
+      addSummaryLine('sticker_ai.summary.pixel', '像素等级', form.pixel);
+      addSummaryLine('sticker_ai.summary.tone', '色彩基调', form.tone);
       if (background) {
-        const bgLine = form.transparent && background === '纯白' ? '背景: 纯白（后处理透明）' : `背景: ${background}`;
-        lines.push(bgLine);
+        const backgroundValue = form.transparent && background === '纯白'
+          ? getLocalizedPromptText('sticker_ai.summary.white_background', '纯白（后处理透明）')
+          : background;
+        addSummaryLine('sticker_ai.summary.background', '背景', backgroundValue);
       }
-      if (form.structure) lines.push(`动画结构: ${form.structure}`);
-      if (form.fps) lines.push(`帧速: ${form.fps}fps`);
-      if (form.extraText) lines.push(`补充: ${form.extraText}`);
+      addSummaryLine('sticker_ai.summary.structure', '动画结构', form.structure);
+      addSummaryLine('sticker_ai.summary.fps', '帧速', form.fps ? `${form.fps}fps` : '');
+      addSummaryLine('sticker_ai.summary.extra', '补充', form.extraText);
       return lines.join('\n').trim();
     };
     const getPromptInputText = () => {
       if (stickerAiMode === 'sprite') return buildSpriteInputSummary();
       return String(styleInput?.value || '').trim();
     };
-    const getDefaultTemplateForMode = mode => (mode === 'sprite' ? STICKER_AI_SPRITE_TEMPLATE : STICKER_AI_TEMPLATE);
+    const getDefaultTemplateForMode = mode => getLocalizedPromptText(
+      mode === 'sprite' ? 'sticker_ai.sprite_template' : 'sticker_ai.sticker_template',
+    );
     const normalizePreviewSettings = (settings = {}) => {
       const raw = settings && typeof settings === 'object' ? settings : {};
       return {
@@ -13748,10 +13710,10 @@ Phase G（Frame 36）：循环衔接
       const trimmedTemplate = String(template || '').trim();
       const trimmedInput = String(inputText || '').trim();
       const userContent = [
-        '请参考模板（包裹在<prompt>当中）和用户输入（包裹在<input>中）：',
-        `<prompt>${trimmedTemplate || '(空模板)'}</prompt>`,
-        `<input>${trimmedInput || '(未提供)'}</input>`,
-        '请直接生成由<prompt>表情包裹的完整提示词，不要生成图片：',
+        getLocalizedPromptText('sticker_ai.generate_request_intro'),
+        `<prompt>${trimmedTemplate || getLocalizedPromptText('sticker_ai.empty_template')}</prompt>`,
+        `<input>${trimmedInput || getLocalizedPromptText('sticker_ai.no_input')}</input>`,
+        getLocalizedPromptText('sticker_ai.generate_request_output'),
       ].join('\n');
       return [{ role: 'user', content: userContent }];
     };
@@ -13761,11 +13723,11 @@ Phase G（Frame 36）：循环衔接
       const trimmedInput = String(inputText || '').trim();
       const trimmedDraft = String(draft || '').trim();
       const userContent = [
-        '请参考模板（包裹在<prompt>当中）和用户输入（包裹在<input>中），并补全已生成的提示词草稿（包裹在<draft>中）：',
-        `<prompt>${trimmedTemplate || '(空模板)'}</prompt>`,
-        `<input>${trimmedInput || '(未提供)'}</input>`,
-        `<draft>${trimmedDraft || '(空草稿)'}</draft>`,
-        '请输出完整且自洽的提示词，只返回一个<prompt>...</prompt>，不要附加解释：',
+        getLocalizedPromptText('sticker_ai.continue_request_intro'),
+        `<prompt>${trimmedTemplate || getLocalizedPromptText('sticker_ai.empty_template')}</prompt>`,
+        `<input>${trimmedInput || getLocalizedPromptText('sticker_ai.no_input')}</input>`,
+        `<draft>${trimmedDraft || getLocalizedPromptText('sticker_ai.empty_draft')}</draft>`,
+        getLocalizedPromptText('sticker_ai.continue_request_output'),
       ].join('\n');
       return [{ role: 'user', content: userContent }];
     };
@@ -17835,8 +17797,7 @@ Phase G（Frame 36）：循环衔接
   document.getElementById('current-chat-title')?.setAttribute('data-maid-guide-target', 'chat-title-entry');
 	  const chatroomMenu = document.getElementById('chatroom-menu');
 	  const rpChatroomMenu = document.getElementById('rp-chatroom-menu');
-  // 顶栏 Aa 按钮已移除：阅读设置面板改由 ≡ 菜单的 reading-settings 动作打开（锚定 ≡ 按钮）
-  const rpReadingSettingsBtn = null;
+  const rpReadingSettingsBtn = document.getElementById('rp-reading-settings-btn');
   const rpReadingSettingsMenu = document.getElementById('rp-reading-settings-menu');
   settingsMenu?.querySelector?.('button[data-action="agent-center"]')?.setAttribute('data-maid-guide-target', 'settings-agent-center');
   settingsMenu?.querySelector?.('button[data-action="world-global"]')?.setAttribute('data-maid-guide-target', 'settings-world-global');
@@ -18037,7 +17998,7 @@ Phase G（Frame 36）：循环衔接
     quickMenuMotion.open(anchorEl);
     return true;
   };
-  const creativeReadingSettingsHandle = bindCreativeReadingSettings({
+  bindCreativeReadingSettings({
     bodyEl: document.body,
     buttonEl: rpReadingSettingsBtn,
     menuEl: rpReadingSettingsMenu,
@@ -18052,7 +18013,7 @@ Phase G（Frame 36）：循环衔接
     },
     toggleSheetAt,
   });
-  const creativeVoiceSettingsHandle = bindCreativeVoiceSettings({
+  bindCreativeVoiceSettings({
     buttonEl: rpReadingSettingsBtn,
     narrationSelectEl: document.getElementById('rp-narration-voice-select'),
     dialogueSelectEl: document.getElementById('rp-dialogue-voice-select'),
@@ -18688,14 +18649,8 @@ Phase G（Frame 36）：循环衔接
     showRawReplyModal: (text, meta, repairDetails) => rawReplyModal.show(text, meta, repairDetails),
     notifyWarning: (message) => window.toastr?.warning?.(message),
   });
-  // 阅读设置从顶栏 Aa 按钮迁入 ≡ 菜单：浮层锚定 ≡ 按钮，打开时同步声音选项（与旧按钮点击行为一致）
-  const openReadingSettingsFromMenu = () => {
-    creativeReadingSettingsHandle?.openAt?.(chatMenuBtn);
-    Promise.resolve(creativeVoiceSettingsHandle?.sync?.()).catch(() => {});
-  };
   bindChatroomMenuActions({
     menuEl: chatroomMenu,
-    openReadingSettings: openReadingSettingsFromMenu,
     openWorld: () => worldPanel.show(),
     openRegex: () => regexSessionPanel.show(),
 	    openVars: () => {
@@ -18710,7 +18665,6 @@ Phase G（Frame 36）：循环衔接
   });
   bindChatroomMenuActions({
     menuEl: rpChatroomMenu,
-    openReadingSettings: openReadingSettingsFromMenu,
     openWorld: () => worldPanel.show(),
     openRegex: () => regexSessionPanel.show(),
 	    openVars: () => {
@@ -23220,6 +23174,9 @@ Phase G（Frame 36）：循环衔接
     if (!result?.stale && String(chatStore.getCurrent?.() || '').trim() === sid) {
       syncRejectedFormatRepairBanner(sid);
       syncProtocolRevealButtonState();
+      // 实时通话按钮的可见性依赖当前会话；模式切换时的同步跑在旧会话仍为 current 的时刻，
+      // 必须在真正进房后再同步一次，否则按钮会被上一次“不支持”判定永久隐藏。
+      syncRealtimeCallButtonAvailability();
       maidGuideEmit(window, 'chat-room-entered', { sessionId: sid });
     }
 	    return result;
@@ -28284,7 +28241,10 @@ Phase G（Frame 36）：循环衔接
       if (!optimize.ok && (optimize.issues || []).some(issue => issue?.type === 'parse_error')) {
         logger.debug?.('maid body optimize retrying after model JSON parse failure');
         optimize = await requestOptimize(
-          '上一次输出的 JSON 无法解析。请重新输出：只输出一个完整 JSON 对象，禁止任何其他文字和 Markdown 代码块；JSON 字符串值内部不要使用未转义的英文双引号。',
+          getLocalizedPromptText(
+            'body_optimize.retry.invalid_json',
+            '上一次输出的 JSON 无法解析。请重新输出：只输出一个完整 JSON 对象，禁止任何其他文字和 Markdown 代码块；JSON 字符串值内部不要使用未转义的英文双引号。',
+          ),
         );
       }
     } catch (err) {

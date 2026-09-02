@@ -292,21 +292,47 @@ const guardianSnippets = Object.freeze({
   phoneShell: () => [...BUILTIN_PHONE_FORMAT_SHELL_LINES],
   privateChat: () => serializePrivateBody({
     userName: '{{user}}',
-    targetName: '联系人名',
+    targetName: getLocalizedPromptText('format_guardian.example.contact'),
+    messages: [{
+      speaker: getLocalizedPromptText('format_guardian.example.speaker'),
+      content: getLocalizedPromptText('format_guardian.example.body'),
+      time: 'HH:mm',
+    }],
     placeholder: true,
   }),
-  groupChat: () => serializeGroupBody({ placeholder: true }),
-  momentPost: () => serializeMomentPostBody({ placeholder: true }),
-  momentComment: () => serializeMomentComment({
-    momentId: '动态id',
-    author: '评论者',
-    content: '评论正文',
-    replyTo: '评论id',
-    replyToAuthor: '被回复者',
+  groupChat: () => serializeGroupBody({
+    groupName: getLocalizedPromptText('format_guardian.example.group'),
+    members: [
+      getLocalizedPromptText('format_guardian.example.member_1'),
+      getLocalizedPromptText('format_guardian.example.member_2'),
+    ],
+    messages: [{
+      speaker: getLocalizedPromptText('format_guardian.example.speaker'),
+      content: getLocalizedPromptText('format_guardian.example.body'),
+      time: 'HH:mm',
+    }],
+    placeholder: true,
   }),
-  tableEdit: () => ['<tableEdit>', '记忆表格内容', '</tableEdit>'],
-  imagePrompt: () => ['<image_prompt>', '图片提示词', '</image_prompt>'],
-  variableUpdate: () => ['<UpdateVariable>', '变量更新指令', '</UpdateVariable>'],
+  momentPost: () => serializeMomentPostBody({
+    posts: [{
+      author: getLocalizedPromptText('format_guardian.example.publisher'),
+      content: getLocalizedPromptText('format_guardian.example.moment_body'),
+      time: 'HH:mm',
+      views: 0,
+      likes: 0,
+    }],
+    placeholder: true,
+  }),
+  momentComment: () => serializeMomentComment({
+    momentId: getLocalizedPromptText('format_guardian.example.moment_id'),
+    author: getLocalizedPromptText('format_guardian.example.commenter'),
+    content: getLocalizedPromptText('format_guardian.example.comment_body'),
+    replyTo: getLocalizedPromptText('format_guardian.example.comment_id'),
+    replyToAuthor: getLocalizedPromptText('format_guardian.example.replied_author'),
+  }),
+  tableEdit: () => ['<tableEdit>', getLocalizedPromptText('format_guardian.example.table_content'), '</tableEdit>'],
+  imagePrompt: () => ['<image_prompt>', getLocalizedPromptText('format_guardian.example.image_prompt'), '</image_prompt>'],
+  variableUpdate: () => ['<UpdateVariable>', getLocalizedPromptText('format_guardian.example.variable_instruction'), '</UpdateVariable>'],
 });
 
 export const getBuiltinPhoneFormatGuardianSnippet = (id = '') => {

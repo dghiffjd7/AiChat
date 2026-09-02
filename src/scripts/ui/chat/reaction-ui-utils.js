@@ -74,6 +74,7 @@ export const buildReactionSummaryElement = (
     documentLike = document,
     isThreadingEnabled = false,
     onToggleReaction = null,
+    translateText = value => String(value ?? ''),
   } = {},
 ) => {
   if (!isThreadingEnabled) return null;
@@ -95,7 +96,7 @@ export const buildReactionSummaryElement = (
     count.textContent = String(countReactionActors(entry));
     chip.appendChild?.(emoji);
     chip.appendChild?.(count);
-    chip.setAttribute?.('aria-label', `${entry.emoji} ${countReactionActors(entry)}个反应`);
+    chip.setAttribute?.('aria-label', translateText(`${entry.emoji} ${countReactionActors(entry)}个反应`));
     chip.addEventListener?.('click', (event) => {
       event.preventDefault?.();
       event.stopPropagation?.();
@@ -112,13 +113,14 @@ export const createReactionTriggerButton = (
     documentLike = document,
     isThreadingEnabled = false,
     onShowPicker = null,
+    translateText = value => String(value ?? ''),
   } = {},
 ) => {
   if (!isThreadingEnabled) return null;
   const reactionBtn = documentLike.createElement('button');
   reactionBtn.type = 'button';
   reactionBtn.className = 'chat-reaction-trigger';
-  reactionBtn.setAttribute?.('aria-label', '添加反应');
+  reactionBtn.setAttribute?.('aria-label', translateText('添加反应'));
   reactionBtn.appendChild?.(createReactionMoreIcon(documentLike));
   reactionBtn.addEventListener?.('click', (event) => {
     event.preventDefault?.();
@@ -136,6 +138,7 @@ export const createReactionQuickBar = (
     emojis = [],
     onToggleReaction = null,
     onShowPicker = null,
+    translateText = value => String(value ?? ''),
   } = {},
 ) => {
   if (!isThreadingEnabled) return null;
@@ -148,7 +151,7 @@ export const createReactionQuickBar = (
   const bar = documentLike.createElement('div');
   bar.className = 'chat-reaction-quick-bar';
   bar.setAttribute?.('role', 'toolbar');
-  bar.setAttribute?.('aria-label', '快捷表情反应');
+  bar.setAttribute?.('aria-label', translateText('快捷表情反应'));
 
   values.forEach((emojiValue) => {
     const button = documentLike.createElement('button');
@@ -160,7 +163,7 @@ export const createReactionQuickBar = (
     ))) {
       button.classList?.add?.('is-active');
     }
-    button.setAttribute?.('aria-label', `使用${emojiValue}回应`);
+    button.setAttribute?.('aria-label', translateText(`使用${emojiValue}回应`));
     button.appendChild?.(createReactionEmojiVisual(emojiValue, { documentLike }));
     button.addEventListener?.('click', (event) => {
       event.preventDefault?.();
@@ -173,7 +176,7 @@ export const createReactionQuickBar = (
   const moreButton = documentLike.createElement('button');
   moreButton.type = 'button';
   moreButton.className = 'chat-reaction-quick-button chat-reaction-more';
-  moreButton.setAttribute?.('aria-label', '选择更多表情反应');
+  moreButton.setAttribute?.('aria-label', translateText('选择更多表情反应'));
   moreButton.appendChild?.(createReactionMoreIcon(documentLike));
   moreButton.addEventListener?.('click', (event) => {
     event.preventDefault?.();

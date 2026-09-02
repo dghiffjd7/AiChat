@@ -10,6 +10,7 @@ import { createRegexStoreRuntimeAdapter } from './regex-store-runtime-utils.js';
 import { collectTransferWorldbookBundle } from './transfer-worldbook-utils.js';
 import { hasStoredWorldInfo } from './world-store-runtime-utils.js';
 import { decodeZipEntryBase64Text } from './zip-entry-utils.js';
+import { translateUiText } from '../i18n/index.js';
 
 const hasTauriRuntime = () => {
   const g = typeof globalThis !== 'undefined' ? globalThis : window;
@@ -346,7 +347,7 @@ export class CharacterCardTransfer {
       '',
       '不包含：开场白/脚本/角色卡元数据。',
       '如需完整导入，请在 OmniTavern 内使用角色卡 ZIP。',
-    ].join('\n');
+    ].map(translateUiText).join('\n');
     const entries = [
       { name: 'worldbook.json', data_url: textToDataUrl(JSON.stringify(worldbook, null, 2), 'application/json') },
       { name: 'regex-scripts.json', data_url: textToDataUrl(JSON.stringify(regexRules, null, 2), 'application/json') },

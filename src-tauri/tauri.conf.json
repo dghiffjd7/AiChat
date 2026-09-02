@@ -1,6 +1,6 @@
 {
   "productName": "OmniTavern",
-  "version": "0.7.2-diagnose-5",
+  "version": "0.7.2-diagnose-8",
   "identifier": "com.chatapp.dev",
   "build": {
     "beforeDevCommand": "",

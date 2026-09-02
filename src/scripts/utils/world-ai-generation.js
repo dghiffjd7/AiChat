@@ -21,6 +21,14 @@ dialogue_examples:
 
 const text = value => String(value ?? '').trim();
 
+const prompt = (key, fallback, params = {}) => {
+  let output = getLocalizedPromptText(`world_ai.${key}`, fallback);
+  Object.entries(params).forEach(([name, value]) => {
+    output = output.replaceAll(`{${name}}`, String(value ?? ''));
+  });
+  return output;
+};
+
 const resolveStorage = storage => storage === undefined ? globalThis?.localStorage : storage;
 
 export const readWorldAiGenerationSettings = (storage = undefined) => {
@@ -54,18 +62,18 @@ export const buildWorldAiMessages = (template, inputText) => {
   return [{
     role: 'user',
     content: [
-      '请根据模板与用户输入生成完整的「角色世界书条目」。',
-      '要求：',
-      '- 仅输出 YAML，不要解释，不要代码块，不要附加标题。',
-      '- YAML 结构必须与模板一致；内容尽量充实，未知的可以写“未说明”。',
-      '- 英文名使用英文；对话范例需明确“仅供参考，勿完全按照其输出”。',
+      prompt('generate.intro', '请根据模板与用户输入生成完整的「角色世界书条目」。'),
+      prompt('requirements', '要求：'),
+      prompt('yaml_only', '- 仅输出 YAML，不要解释，不要代码块，不要附加标题。'),
+      prompt('generate.schema', '- YAML 结构必须与模板一致；内容尽量充实，未知的可以写“未说明”。'),
+      prompt('dialogue_note', '- 英文名使用英文；对话范例需明确“仅供参考，勿完全按照其输出”。'),
       '',
       '<template>',
-      trimmedTemplate || '(空模板)',
+      trimmedTemplate || prompt('empty_template', '(空模板)'),
       '</template>',
       '',
       '<input>',
-      trimmedInput || '(未提供)',
+      trimmedInput || prompt('no_input', '(未提供)'),
       '</input>',
     ].join('\n'),
   }];
@@ -78,22 +86,22 @@ export const buildWorldAiContinueMessages = (template, inputText, draft) => {
   return [{
     role: 'user',
     content: [
-      '请在模板约束下，结合用户输入，对已有草稿进行补全与润色。',
-      '要求：',
-      '- 仅输出 YAML，不要解释，不要代码块，不要附加标题。',
-      '- YAML 结构必须与模板一致；不要丢失草稿里已经明确的设定。',
-      '- 对话范例需明确“仅供参考，勿完全按照其输出”。',
+      prompt('continue.intro', '请在模板约束下，结合用户输入，对已有草稿进行补全与润色。'),
+      prompt('requirements', '要求：'),
+      prompt('yaml_only', '- 仅输出 YAML，不要解释，不要代码块，不要附加标题。'),
+      prompt('continue.schema', '- YAML 结构必须与模板一致；不要丢失草稿里已经明确的设定。'),
+      prompt('continue.dialogue_note', '- 对话范例需明确“仅供参考，勿完全按照其输出”。'),
       '',
       '<template>',
-      trimmedTemplate || '(空模板)',
+      trimmedTemplate || prompt('empty_template', '(空模板)'),
       '</template>',
       '',
       '<input>',
-      trimmedInput || '(未提供)',
+      trimmedInput || prompt('no_input', '(未提供)'),
       '</input>',
       '',
       '<draft>',
-      trimmedDraft || '(空草稿)',
+      trimmedDraft || prompt('empty_draft', '(空草稿)'),
       '</draft>',
     ].join('\n'),
   }];
@@ -114,21 +122,27 @@ export const buildWorldbookEntryGenerationPrompt = ({
   const targetLength = Math.max(50, Math.min(1200, Math.trunc(Number(length)) || 220));
   const templateText = text(template);
   return [
-    `为世界书「${text(worldbookName)}」生成条目正文。`,
-    `条目标题：${text(title)}`,
-    `要点大纲：${text(outline)}`,
-    `资料层：${text(sourceLayer) || '未标记'}`,
-    `来源引用：${refs.join('、') || '无'}`,
-    text(sourceNotes) ? `来源说明：${text(sourceNotes)}` : '',
-    '资料边界：只根据大纲与上述来源层写作；不得把用户原创或创意扩写伪装成原作事实。',
+    prompt('entry.intro', '为世界书「{name}」生成条目正文。', { name: text(worldbookName) }),
+    prompt('entry.title', '条目标题：{value}', { value: text(title) }),
+    prompt('entry.outline', '要点大纲：{value}', { value: text(outline) }),
+    prompt('entry.layer', '资料层：{value}', {
+      value: text(sourceLayer) || prompt('entry.unmarked', '未标记'),
+    }),
+    prompt('entry.refs', '来源引用：{value}', {
+      value: refs.join('、') || prompt('entry.no_refs', '无'),
+    }),
+    text(sourceNotes) ? prompt('entry.notes', '来源说明：{value}', { value: text(sourceNotes) }) : '',
+    prompt('entry.boundary', '资料边界：只根据大纲与上述来源层写作；不得把用户原创或创意扩写伪装成原作事实。'),
     useAiTemplate && templateText
       ? [
-          '输出要求：按模板结构输出 YAML；只输出 YAML 本身，不要解释、标题或 markdown 代码块。',
+          prompt('entry.yaml_output', '输出要求：按模板结构输出 YAML；只输出 YAML 本身，不要解释、标题或 markdown 代码块。'),
           '<ai_generation_template>',
           templateText,
           '</ai_generation_template>',
         ].join('\n')
-      : `要求：约 ${targetLength} 字；只输出条目正文本身（纯文本，不要标题、不要解释、不要 markdown 代码块）。`,
-    useAiTemplate && templateText ? `内容详略目标：约 ${targetLength} 字。` : '',
+      : prompt('entry.text_output', '要求：约 {length} 字；只输出条目正文本身（纯文本，不要标题、不要解释、不要 markdown 代码块）。', { length: targetLength }),
+    useAiTemplate && templateText
+      ? prompt('entry.length', '内容详略目标：约 {length} 字。', { length: targetLength })
+      : '',
   ].filter(Boolean).join('\n');
 };

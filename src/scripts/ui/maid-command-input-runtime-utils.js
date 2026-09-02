@@ -5,6 +5,7 @@ import {
 } from './image-attachment-input-utils.js';
 
 import { renderMaidMarkdownHtml } from './maid-markdown-utils.js';
+import { getLocalizedPromptText } from '../i18n/prompt-locale.js';
 
 const STYLE_ID = 'maid-command-input-runtime-style';
 const FIELD_MIN_HEIGHT = 32;
@@ -1473,7 +1474,7 @@ export const createMaidCommandInputRuntime = ({
     });
     const entry = {
       id: `maid_submission_${submissionSeq}`,
-      text: text || '请看这张图片。',
+      text: text || getLocalizedPromptText('maid.image_only_input', '请看这张图片。'),
       attachments,
       wasQueued,
       resolve: resolveSubmission,

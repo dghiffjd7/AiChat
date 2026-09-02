@@ -1,7 +1,17 @@
 import { logger } from '../utils/logger.js';
+import { getLocalizedPromptText } from '../i18n/prompt-locale.js';
 import { buildVariableContext } from './variable-path-utils.js';
 import { evaluateBooleanExpression } from './safe-expression-evaluator.js';
 import { buildRuleConditionDiagnostics } from './expression-compat-diagnostics.js';
+
+const DEFAULT_AFFECTION_EVALUATION_PROMPT = '根据本轮对话判断好感度变化（-5~+5 之间的整数，只输出数字）。';
+
+export const localizeVariableAiEvaluationPrompt = (value = '') => {
+  const prompt = String(value || '').trim();
+  return prompt === DEFAULT_AFFECTION_EVALUATION_PROMPT
+    ? getLocalizedPromptText('variable.ai_evaluate.affection', DEFAULT_AFFECTION_EVALUATION_PROMPT)
+    : prompt;
+};
 
 const genId = () => `vr_${Date.now()}_${Math.random().toString(16).slice(2, 8)}`;
 
@@ -264,12 +274,15 @@ export class VariableRuleEngine {
         logger.warn('ai_evaluate skipped: backgroundChat/buildMessages unavailable');
         return;
       }
-      const prompt = String(action.prompt || '').trim();
+      const prompt = localizeVariableAiEvaluationPrompt(action.prompt);
       if (!prompt) return;
       try {
         const history = this.chatStore?.getMessages?.(sessionId) || [];
         const recent = history.slice(-6).map(m => `${m.role || ''}: ${String(m.content || '').slice(0, 120)}`).join('\n');
-        const system = '你是规则评估器，只输出一个整数，不要解释。';
+        const system = getLocalizedPromptText(
+          'variable.ai_evaluate.system',
+          '你是规则评估器，只输出一个整数，不要解释。',
+        );
         const user = `${prompt}\n\n<chat_history>\n${recent}\n</chat_history>`;
         const messages = [
           { role: 'system', content: system },

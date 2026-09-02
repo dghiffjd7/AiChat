@@ -1,0 +1,22 @@
+{
+  "notes": [
+    "硬编码中文扫描的忽略配置。paths：整层非 UI（有独立本地化机制或本就应为中文）；",
+    "strings：确认非用户可见/装饰性的精确字串；patterns：正则（u flag）。",
+    "存量非 UI 项不放这里；一般源码与 agent/storage 内容分别进入带 category/reason 的审核快照。"
+  ],
+  "paths": [
+    "src/scripts/i18n/prompt-locale.js",
+    "src/scripts/i18n/prompt-locales/",
+    "src/scripts/i18n/locales/",
+    "src/scripts/i18n/builtin-character-locale.js",
+    "src/scripts/agent/",
+    "src/scripts/storage/",
+    "src/scripts/ui/chat/reaction-emoji-catalog.js",
+    "src/scripts/ui/theme-dark-batch-audit.js"
+  ],
+  "strings": [
+    "侍",
+    "序"
+  ],
+  "patterns": []
+}

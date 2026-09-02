@@ -267,3 +267,44 @@ const createFakeDocument = () => {
   assert.equal(target.style.whiteSpace, 'pre-wrap');
   console.log('ok - renderMessageBubbleContentCore falls back to normalized plain text when sticker rendering does not intercept');
 }
+
+{
+  const translations = new Map([
+    ['图片加载失败', 'Image failed to load'],
+    ['图片加载失败，请检查链接或网络', 'Image failed to load. Check the link or network connection.'],
+    ['图片生成失败', 'Image generation failed'],
+    ['重新生成图片', 'Regenerate image'],
+  ]);
+  const translateText = value => translations.get(String(value ?? '')) || String(value ?? '');
+  const documentLike = createFakeDocument();
+  const imageBubble = documentLike.createElement('div');
+  const toasts = [];
+  renderMessageBubbleContentCore({
+    bubble: imageBubble,
+    message: { type: 'image', content: 'cat.png' },
+    documentLike,
+    resolveMediaUrl: value => value,
+    toastOnce: text => toasts.push(text),
+    translateText,
+  });
+  imageBubble.children[0].onerror();
+  assert.equal(imageBubble.children[0].alt, 'Image failed to load');
+  assert.deepEqual(toasts, ['Image failed to load. Check the link or network connection.']);
+
+  const generatedBubble = documentLike.createElement('div');
+  renderMessageBubbleContentCore({
+    bubble: generatedBubble,
+    message: {
+      type: 'text',
+      content: '保留模型错误标题',
+      meta: { generatedMedia: { status: 'failed', prompt: 'blue sky', error: '保留错误详情' } },
+    },
+    documentLike,
+    translateText,
+  });
+  const generatedSummary = generatedBubble.children[0].children[0];
+  assert.equal(generatedSummary.children[0].textContent, '保留模型错误标题');
+  assert.equal(generatedSummary.children[1].textContent, 'Regenerate image');
+  assert.equal(generatedBubble.children[0].children[1].textContent, '保留错误详情');
+  console.log('ok - skipped media cards localize built-in chrome without translating message data');
+}

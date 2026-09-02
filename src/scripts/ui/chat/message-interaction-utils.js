@@ -1,3 +1,5 @@
+import { translateUiText } from '../../i18n/index.js';
+
 export const SELF_REACTION_ACTOR = '__self__';
 export const DEFAULT_REACTION_EMOJIS = ['👍', '❤️', '😂', '😮', '😢', '🙏'];
 
@@ -25,24 +27,25 @@ const normalizeEmojiValue = (value) => clampPreview(String(value || '').trim(), 
 export const getMessagePreviewText = (message, { maxLength = 120, fallback = '...' } = {}) => {
   const msg = message && typeof message === 'object' ? message : {};
   const meta = msg.meta && typeof msg.meta === 'object' ? msg.meta : null;
-  if (meta?.attachmentsOnly) return '[附件]';
+  // 预览渲染进 .chat-item-preview 等 DOM 翻译器跳过容器，类型标记必须在 JS 侧翻译。
+  if (meta?.attachmentsOnly) return translateUiText('[附件]');
   if (msg.role === 'assistant' && meta?.summary) {
     const summary = cleanPreviewText(meta.summary);
     if (summary) return clampPreview(summary, maxLength);
   }
   switch (String(msg.type || 'text')) {
     case 'image':
-      return '[图片]';
+      return translateUiText('[图片]');
     case 'audio':
-      return '[语音]';
+      return translateUiText('[语音]');
     case 'music':
-      return clampPreview(`[音乐] ${String(msg.content || '').trim()}`.trim(), maxLength);
+      return clampPreview(`${translateUiText('[音乐]')} ${String(msg.content || '').trim()}`.trim(), maxLength);
     case 'transfer':
-      return clampPreview(`[转账] ${String(msg.content || '').trim()}`.trim(), maxLength);
+      return clampPreview(`${translateUiText('[转账]')} ${String(msg.content || '').trim()}`.trim(), maxLength);
     case 'sticker':
-      return '[表情]';
+      return translateUiText('[表情]');
     case 'document':
-      return clampPreview(`[文件] ${String(msg.content || '').trim()}`.trim(), maxLength);
+      return clampPreview(`${translateUiText('[文件]')} ${String(msg.content || '').trim()}`.trim(), maxLength);
     default: {
       const raw = typeof msg.raw === 'string' && msg.raw.trim() ? msg.raw : msg.content;
       const cleaned = cleanPreviewText(raw);

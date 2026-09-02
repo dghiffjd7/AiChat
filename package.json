@@ -1,6 +1,6 @@
 {
   "name": "omnitavern",
-  "version": "0.7.2-diagnose-5",
+  "version": "0.7.2-diagnose-8",
   "description": "A cross-platform chat application with LLM integration",
   "type": "module",
   "scripts": {
@@ -12,9 +12,11 @@
     "i18n:extract": "node scripts/i18n/extract-ui-strings.mjs",
     "i18n:generate": "node scripts/i18n/generate-catalogs.mjs",
     "i18n:check": "node scripts/i18n/check-catalogs.mjs",
+    "i18n:scan": "node scripts/i18n/scan-hardcoded.mjs",
+    "i18n:scan:content": "node scripts/i18n/scan-hardcoded.mjs --scope=content",
     "i18n:audit:dev": "node scripts/dev/i18n-dom-audit.mjs",
     "i18n:audit:surfaces": "node scripts/dev/i18n-surface-audit.mjs",
-    "test:i18n": "npm run i18n:generate && node scripts/tests/i18n-runtime-tests.mjs && node scripts/tests/i18n-app-language-bootstrap-tests.mjs && node scripts/tests/i18n-app-language-restart-tests.mjs && node scripts/tests/i18n-catalog-generation-tests.mjs && node scripts/tests/i18n-settings-ui-contract-tests.mjs && node scripts/tests/prompt-locale-tests.mjs && node scripts/tests/builtin-character-locale-tests.mjs && npm run i18n:check",
+    "test:i18n": "npm run i18n:generate && node scripts/tests/i18n-runtime-tests.mjs && node scripts/tests/i18n-app-language-bootstrap-tests.mjs && node scripts/tests/i18n-app-language-restart-tests.mjs && node scripts/tests/i18n-catalog-generation-tests.mjs && node scripts/tests/i18n-settings-ui-contract-tests.mjs && node scripts/tests/prompt-locale-tests.mjs && node scripts/tests/builtin-character-locale-tests.mjs && node scripts/tests/i18n-hardcoded-scan-tests.mjs && npm run i18n:check && npm run i18n:scan && npm run i18n:scan:content",
     "prebuild": "npm run i18n:generate && npm run i18n:check",
     "memory:evaluate": "node scripts/evaluate-memory-replay.mjs",
     "test:voice-config": "node scripts/tests/voice-config-tests.mjs && node scripts/tests/voice-client-tests.mjs && node scripts/tests/microphone-permission-recovery-tests.mjs && node scripts/tests/voice-interaction-runtime-tests.mjs && node scripts/tests/voice-registry-store-tests.mjs && node scripts/tests/voice-binding-runtime-utils-tests.mjs && node scripts/tests/contact-voice-binding-scope-tests.mjs && node scripts/tests/persona-voice-settings-tests.mjs && node scripts/tests/dialogue-segment-utils-tests.mjs && node scripts/tests/dialogue-rich-render-integration-tests.mjs && node scripts/tests/creative-dialogue-setting-persistence-tests.mjs && node scripts/tests/creative-voice-settings-runtime-tests.mjs && node scripts/tests/creative-speech-segments-utils-tests.mjs && node scripts/tests/realtime-voice-config-tests.mjs && node scripts/tests/realtime-usage-utils-tests.mjs && node scripts/tests/openai-realtime-session-client-tests.mjs && node scripts/tests/realtime-call-runtime-tests.mjs && node scripts/tests/realtime-call-app-runtime-tests.mjs && node scripts/tests/realtime-context-builder-tests.mjs",

@@ -1,0 +1,144 @@
+{
+  "categories": {
+    "bootstrap_multilingual": "The first-run language chooser must contain multiple languages before a locale has been selected.",
+    "language_data": "Language-specific lexicon or matching data; changing it would alter parsing or recall behavior.",
+    "prompt_fallback": "Canonical Simplified-Chinese fallback behind a prompt-locale helper; locale-specific actual-send behavior is covered by prompt tests.",
+    "protocol_compatibility": "Stable parser token, compatibility alias, serialized marker, or example used to preserve existing data behavior.",
+    "developer_diagnostic": "Developer-only log, worker source, debug fixture, or internal diagnostic text that is not product UI.",
+    "agent_semantic_source": "Stable Maid/App Knowledge, planner, tool-observation, or retrieval semantics. This source is intentionally not mechanically translated; English output is enforced separately.",
+    "canonical_localized_default": "Canonical built-in content retained for identity/migration comparison and localized through a stable content or prompt ID before use.",
+    "storage_internal": "Persistence sentinel, legacy-data identity, migration message, or storage diagnostic; visible product chrome is covered by the UI catalog.",
+    "compatibility_guidance": "Compatibility-specific diagnostic text whose complete user-facing error is localized as a catalog template."
+  },
+  "rules": [
+    {
+      "scope": "source",
+      "paths": ["src/scripts/i18n/first-run-language.js"],
+      "category": "bootstrap_multilingual",
+      "reason": "This chooser is rendered before locale selection and deliberately presents English, Simplified Chinese, and Traditional Chinese together."
+    },
+    {
+      "scope": "source",
+      "paths": [
+        "src/scripts/memory/contact-profile-utils.js",
+        "src/scripts/memory/memory-keyword-recall-utils.js",
+        "src/scripts/memory/worldbook-downgrade-suggestion-utils.js"
+      ],
+      "category": "language_data",
+      "reason": "Chinese stop words and downgrade heuristics are matching data; prompt-facing labels in these modules already pass through memory prompt locale helpers."
+    },
+    {
+      "scope": "source",
+      "paths": [
+        "src/scripts/memory/memory-edit-guide.js",
+        "src/scripts/ui/chat/auto-image-prompt-utils.js",
+        "src/scripts/ui/chat/chat-body-optimize-utils.js",
+        "src/scripts/ui/chat/memory-update-runtime-utils.js",
+        "src/scripts/ui/chat/summary-compaction-utils.js",
+        "src/scripts/ui/maid-command-input-runtime-utils.js",
+        "src/scripts/ui/maid-run-resume-utils.js",
+        "src/scripts/ui/maid-selection-utils.js",
+        "src/scripts/ui/realtime/realtime-context-builder.js",
+        "src/scripts/utils/world-ai-generation.js",
+        "src/scripts/variables/variable-rule-engine.js",
+        "src/scripts/variables/variable-templates.js"
+      ],
+      "category": "prompt_fallback",
+      "reason": "These literals are canonical fallbacks behind prompt-locale builders; English actual-send output is asserted by prompt-locale and memory-template tests."
+    },
+    {
+      "scope": "source",
+      "paths": [
+        "src/scripts/plugins/plugin-runtime.js",
+        "src/scripts/plugins/script-runtime.js",
+        "src/scripts/plugins/template-engine.js",
+        "src/scripts/ui/debug-panel.js",
+        "src/scripts/ui/debug-panel-runtime-utils.js",
+        "src/scripts/ui/memory-template-panel.js",
+        "src/scripts/utils/boot-diagnostics.js"
+      ],
+      "category": "developer_diagnostic",
+      "reason": "Remaining literals are embedded worker/runtime source, debug logs, or diagnostics; user-facing errors from these files are registered in the UI catalog."
+    },
+    {
+      "scope": "source",
+      "paths": [
+        "src/scripts/api/providers/anthropic.js",
+        "src/scripts/api/providers/gemini.js",
+        "src/scripts/api/providers/makersuite.js",
+        "src/scripts/api/providers/vertexai.js",
+        "src/scripts/memory/memory-injection-audit-utils.js",
+        "src/scripts/ui/app.js",
+        "src/scripts/ui/chat/chat-format-guardian-utils.js",
+        "src/scripts/ui/chat/context-lineage-graph-utils.js",
+        "src/scripts/ui/chat/dialogue-stream-parser.js",
+        "src/scripts/ui/chat/group-system-ops-utils.js",
+        "src/scripts/ui/chat/llm-history-entry-utils.js",
+        "src/scripts/ui/chat/message-bubble-content-ui-utils.js",
+        "src/scripts/ui/chat/message-interaction-utils.js",
+        "src/scripts/ui/chat/message-parser.js",
+        "src/scripts/ui/chat/moment-ingest-utils.js",
+        "src/scripts/ui/chat/moments-runtime-utils.js",
+        "src/scripts/ui/chat/pending-message-utils.js",
+        "src/scripts/ui/chat/phone-batch-provider-fc.js",
+        "src/scripts/ui/chat/phone-reply-ir.js",
+        "src/scripts/ui/chat/prompt-context-utils.js",
+        "src/scripts/ui/chat/prompt-preview-view-utils.js",
+        "src/scripts/ui/chat/prompt-world-debug-utils.js",
+        "src/scripts/ui/chat/request-prompt-utils.js",
+        "src/scripts/ui/chat/rich-text-renderer.js",
+        "src/scripts/ui/chat/send-flow-utils.js",
+        "src/scripts/ui/chat/session-activity-runtime-utils.js",
+        "src/scripts/utils/builtin-phone-format-contract.js"
+      ],
+      "category": "protocol_compatibility",
+      "reason": "Remaining strings are message/media sentinels, legacy Chinese parser aliases, stable role names, or embedded bridge contracts; changing them would break existing chats or imports."
+    },
+    {
+      "scope": "source",
+      "paths": ["src/scripts/ui/bridge.js"],
+      "category": "prompt_fallback",
+      "reason": "The remaining bridge literals are canonical prompt fallbacks passed through prompt/memory locale helpers or stable protocol examples; all user-visible bridge chrome has moved to the UI catalog."
+    },
+    {
+      "scope": "source",
+      "paths": ["src/scripts/api/providers/custom.js"],
+      "category": "compatibility_guidance",
+      "reason": "This Claude-compatible empty-stream suffix is part of a complete localized error template; it remains separately visible to the scanner because the runtime composes the error from two constants."
+    },
+    {
+      "scope": "content",
+      "pathPrefixes": ["src/scripts/agent/"],
+      "category": "agent_semantic_source",
+      "reason": "Agent-layer Han text is stable App Knowledge, intent detection, planner/tool semantics, or deterministic observations. It is not UI-copy source; English Maid responses are enforced by the prompt output-language guard and its tests."
+    },
+    {
+      "scope": "content",
+      "paths": [
+        "src/scripts/storage/agent-center-settings-store.js",
+        "src/scripts/storage/preset-store.js",
+        "src/scripts/storage/memory-template-store.js"
+      ],
+      "category": "canonical_localized_default",
+      "reason": "Official default records remain canonical Chinese for migration/equality checks and are localized by stable prompt IDs only when they are still unmodified."
+    },
+    {
+      "scope": "content",
+      "paths": ["src/scripts/storage/builtin-worldbooks.js"],
+      "category": "protocol_compatibility",
+      "reason": "The bundled phone-format worldbook is a legacy protocol contract whose Chinese tags and aliases must remain parseable; it is not product chrome."
+    },
+    {
+      "scope": "content",
+      "paths": ["src/scripts/storage/maid-conversation-store.js"],
+      "category": "agent_semantic_source",
+      "reason": "These are structured Maid memory/history labels supplied back to the planner, not UI locale strings; output language is separately constrained."
+    },
+    {
+      "scope": "content",
+      "pathPrefixes": ["src/scripts/storage/"],
+      "category": "storage_internal",
+      "reason": "Remaining storage-layer Han text is a legacy identity/sentinel, persistence diagnostic, or migration fallback. User-visible labels and errors are handled by the UI catalog or stable content localization."
+    }
+  ]
+}

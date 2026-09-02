@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';
 
 import {
   buildCatalogKey,
@@ -157,6 +158,43 @@ assert.equal(
   assert.equal(attrs.get('placeholder'), 'Save', 'textarea UI attributes should be localized');
   assert.equal(contentNode.nodeValue, '保存', 'textarea content must remain user data');
 }
+
+const generatedEnglishCatalog = JSON.parse(await fs.readFile('src/scripts/i18n/locales/en.json', 'utf8'));
+await initializeI18n({
+  preference: 'en',
+  systemLocale: 'zh-CN',
+  documentLike: null,
+  fetchFn: async () => ({ ok: true, json: async () => generatedEnglishCatalog }),
+});
+assert.equal(translateUiText('已加载 3 个可用上游'), 'Loaded 3 available providers');
+assert.equal(translateUiText('导出完成：12 条'), 'Export complete: 12 records');
+assert.equal(translateUiText('字段7'), 'Field 7');
+assert.equal(translateUiText('当前用户：Alice'), 'Current user: Alice');
+assert.equal(
+  translateUiText('当前模型的联网请求已安全跳过：Tool calling is unavailable'),
+  'Web search was safely skipped for the current model: Tool calling is unavailable',
+);
+assert.equal(
+  translateUiText('当前图片模型最多支持 3 张参考图'),
+  'The current image model supports up to 3 reference images',
+);
+assert.equal(translateUiText('图片请求失败（HTTP 400）'), 'Image request failed (HTTP 400)');
+assert.equal(translateUiText('Thought for 1 秒'), 'Thought for 1 second');
+assert.equal(translateUiText('Thought for 9 秒'), 'Thought for 9 seconds');
+assert.equal(translateUiText('[图片已过期]'), '[Image expired]');
+assert.equal(translateUiText('以下为未读讯息'), 'Unread messages below');
+assert.equal(translateUiText('对方'), 'Chat Partner');
+assert.equal(translateUiText('👍 1个反应'), '👍 · 1 reaction');
+assert.equal(translateUiText('👍 2个反应'), '👍 · 2 reactions');
+assert.equal(translateUiText('使用👍回应'), 'React with 👍');
+assert.equal(
+  translateUiText('用「Calm」朗读本条（仅本次）'),
+  'Read this message with “Calm” (this time only)',
+);
+assert.equal(
+  translateUiText('确定保存联系人「Alice」的画像候选吗？ 保存后会影响后续动态弱触发、提示词上下文和 Agent 画像读取。'),
+  'Save the profile candidate for contact “Alice”? It will affect future weak Moment triggers, prompt context, and Agent profile reads.',
+);
 
 const originalConsoleError = console.error;
 console.error = () => {};

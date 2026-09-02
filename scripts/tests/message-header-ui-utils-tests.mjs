@@ -200,6 +200,7 @@ const createRuntime = (overrides = {}) => {
       }),
       resolveMessageSessionId: overrides.resolveMessageSessionId || (() => 'session-fallback'),
       warningToast: overrides.warningToast || (text => warningCalls.push(text)),
+      translateText: overrides.translateText || (value => String(value ?? '')),
     }),
   };
 };
@@ -408,4 +409,58 @@ const createRuntime = (overrides = {}) => {
   assert.equal(result, bubble);
   assert.equal(bubble.children.length, 0);
   console.log('ok - prepareTextContainer leaves plain bubbles unchanged');
+}
+
+{
+  const translations = new Map([
+    ['Thought for 1 秒', 'Thought for 1 second'],
+    ['编辑思维链', 'Edit reasoning'],
+    ['取消', 'Cancel'],
+    ['保存', 'Save'],
+    ['复制思维链', 'Copy reasoning'],
+    ['推理', 'Reasoning'],
+    ['开场白', 'Greeting'],
+    ['更换', 'Change'],
+    ['更换开场白', 'Change greeting'],
+    ['序', 'Intro'],
+    ['序　幕', 'Prologue'],
+    ['—— 幕 启 ——', '—— Curtain Rises ——'],
+    ['消息', 'Message'],
+    ['查看回复原消息：Alice', 'View replied-to message: Alice'],
+    ['未找到被回复的消息', 'The replied-to message was not found'],
+  ]);
+  const translateText = value => translations.get(String(value ?? '')) || String(value ?? '');
+  const bridge = {
+    getActiveSessionId: () => 'session-rp',
+    getRpGreetingState: () => ({ sessionId: 'session-rp', greetings: [] }),
+  };
+  const { runtime, documentLike, warningCalls } = createRuntime({ translateText, bridge });
+  documentLike.body.dataset.uiMode = 'rp';
+
+  const reasoning = runtime.buildReasoningElement({
+    role: 'assistant',
+    meta: { reasoning: 'keep this body unchanged', reasoningLabel: 'Thought for 1 秒' },
+  });
+  assert.equal(reasoning.querySelector('.chat-reasoning-label').textContent, 'Thought for 1 second');
+  assert.deepEqual(
+    reasoning.querySelector('.chat-reasoning-actions').children.map(button => button.attributes['aria-label']),
+    ['Copy reasoning', 'Edit reasoning'],
+  );
+  assert.equal(reasoning.querySelector('.chat-reasoning-content').textContent, 'keep this body unchanged');
+
+  const greeting = runtime.buildGreetingSwitch({ meta: { isGreeting: true } });
+  assert.equal(greeting.querySelector('.rp-greeting-card-title').textContent, 'Greeting');
+  assert.equal(greeting.querySelector('.rp-greeting-card-change').textContent, 'Change');
+  assert.equal(greeting.querySelector('.rp-greeting-card-seal').textContent, 'Intro');
+  assert.equal(greeting.querySelector('.rp-greeting-card-kicker').textContent, 'Prologue');
+
+  const reply = runtime.buildReplyPreviewElement({
+    meta: { replyTo: { id: 'missing', author: 'Alice', content: '保留用户正文' } },
+  });
+  assert.equal(reply.attributes['aria-label'], 'View replied-to message: Alice');
+  assert.equal(reply.querySelector('.chat-reply-preview-author').textContent, 'Alice');
+  assert.equal(reply.querySelector('.chat-reply-preview-snippet').textContent, '保留用户正文');
+  await reply.emit('click', { preventDefault() {}, stopPropagation() {} });
+  assert.deepEqual(warningCalls, ['The replied-to message was not found']);
+  console.log('ok - skipped chat content localizes built-in chrome without translating user content');
 }

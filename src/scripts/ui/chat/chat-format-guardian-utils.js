@@ -11,6 +11,7 @@ import {
   serializeBuiltinPhoneFormat,
   validateBuiltinPhoneFormat,
 } from '../../utils/builtin-phone-format-contract.js';
+import { getLocalizedPromptText } from '../../i18n/prompt-locale.js';
 
 export const CHAT_FORMAT_EVENT_TYPES = Object.freeze({
   privateMessage: 'private_message',
@@ -40,6 +41,14 @@ const isPlainObject = value => Boolean(value && typeof value === 'object' && !Ar
 const trim = (value, fallback = '') => {
   const text = String(value ?? '').trim();
   return text || fallback;
+};
+
+const getPromptLine = (key, replacements = {}) => {
+  let text = getLocalizedPromptText(key);
+  Object.entries(replacements).forEach(([name, value]) => {
+    text = text.split(`{${name}}`).join(String(value ?? ''));
+  });
+  return text;
 };
 
 const list = value => (Array.isArray(value) ? value : [value]).filter(item => item !== null && item !== undefined);
@@ -85,15 +94,15 @@ const formatNumberedLines = (value = '') => {
     .join('\n');
 };
 
-const CHAT_FORMAT_PROMPT_LABELS = Object.freeze({
-  phoneShell: 'MiPhone 外层格式',
-  privateChat: '私聊格式',
-  groupChat: '群聊格式',
-  momentComment: '动态评论格式',
-  momentPost: '动态发布格式',
-  tableEdit: '记忆表格写入格式',
-  imagePrompt: '图片提示词格式',
-  variableUpdate: '变量更新格式',
+const CHAT_FORMAT_PROMPT_LABEL_KEYS = Object.freeze({
+  phoneShell: 'format_guardian.label.phoneShell',
+  privateChat: 'format_guardian.label.privateChat',
+  groupChat: 'format_guardian.label.groupChat',
+  momentComment: 'format_guardian.label.momentComment',
+  momentPost: 'format_guardian.label.momentPost',
+  tableEdit: 'format_guardian.label.tableEdit',
+  imagePrompt: 'format_guardian.label.imagePrompt',
+  variableUpdate: 'format_guardian.label.variableUpdate',
 });
 
 export const normalizeChatFormatGuardianTarget = (value = '', fallback = CHAT_FORMAT_GUARDIAN_TARGETS.auto) => {
@@ -239,16 +248,16 @@ const normalizeEnabledFormatEntries = (enabledFormats = {}) => {
       .filter(Boolean)
       .map(id => ({
         id,
-        label: CHAT_FORMAT_PROMPT_LABELS[id] || id,
+        label: CHAT_FORMAT_PROMPT_LABEL_KEYS[id] ? getPromptLine(CHAT_FORMAT_PROMPT_LABEL_KEYS[id]) : id,
         snippet: getBuiltinPhoneFormatGuardianSnippet(id),
       }));
   }
   const src = isPlainObject(enabledFormats) ? enabledFormats : {};
-  return Object.keys(CHAT_FORMAT_PROMPT_LABELS)
+  return Object.keys(CHAT_FORMAT_PROMPT_LABEL_KEYS)
     .filter(id => src[id] === true)
     .map(id => ({
       id,
-      label: CHAT_FORMAT_PROMPT_LABELS[id],
+      label: getPromptLine(CHAT_FORMAT_PROMPT_LABEL_KEYS[id]),
       snippet: getBuiltinPhoneFormatGuardianSnippet(id),
     }));
 };
@@ -322,15 +331,20 @@ const buildPrivateChatTagName = ({ userName = '我', sessionLabel = '' } = {}) =
 
 const buildPrivateDirectRepairExample = ({ userName = '我', sessionLabel = '', fallbackTime = '' } = {}) => {
   const time = trim(fallbackTime, '00:00');
+  const contactName = getPromptLine('format_guardian.example.contact');
   return [
-    '错误原文示例：',
-    '联系人名: 在吗？',
+    getPromptLine('format_guardian.example.error_label'),
+    getPromptLine('format_guardian.example.private_invalid'),
     '',
-    '对应的正确结构示例：',
+    getPromptLine('format_guardian.example.correct_label'),
     serializeBuiltinPhoneFormat('private_chat', {
       userName,
-      targetName: trim(sessionLabel, '联系人名'),
-      messages: [{ speaker: '联系人名', content: '在吗？', time }],
+      targetName: trim(sessionLabel, contactName),
+      messages: [{
+        speaker: contactName,
+        content: getPromptLine('format_guardian.example.private_content'),
+        time,
+      }],
     }),
   ].join('\n');
 };
@@ -344,40 +358,49 @@ const buildDirectRepairExample = ({
   const normalizedTarget = normalizeChatFormatGuardianTarget(target, CHAT_FORMAT_GUARDIAN_TARGETS.privateChat);
   const time = trim(fallbackTime, '00:00');
   if (normalizedTarget === CHAT_FORMAT_GUARDIAN_TARGETS.groupChat) {
+    const memberA = getPromptLine('format_guardian.example.member_a');
+    const memberB = getPromptLine('format_guardian.example.member_b');
     return [
-      '错误原文示例：',
-      '成员A: 我到了',
+      getPromptLine('format_guardian.example.error_label'),
+      getPromptLine('format_guardian.example.group_invalid'),
       '',
-      '对应的正确结构示例：',
+      getPromptLine('format_guardian.example.correct_label'),
       serializeBuiltinPhoneFormat('group_chat', {
-        groupName: trim(sessionLabel, '群名'),
-        members: ['成员A', '成员B'],
-        messages: [{ speaker: '成员A', content: '我到了', time }],
+        groupName: trim(sessionLabel, getPromptLine('format_guardian.example.group')),
+        members: [memberA, memberB],
+        messages: [{
+          speaker: memberA,
+          content: getPromptLine('format_guardian.example.group_content'),
+          time,
+        }],
       }),
     ].join('\n');
   }
   if (normalizedTarget === CHAT_FORMAT_GUARDIAN_TARGETS.momentComment) {
     return [
-      '错误原文示例：',
-      '评论者: 好看！',
+      getPromptLine('format_guardian.example.error_label'),
+      getPromptLine('format_guardian.example.comment_invalid'),
       '',
-      '对应的正确结构示例：',
+      getPromptLine('format_guardian.example.correct_label'),
       serializeBuiltinPhoneFormat('moment_comment', {
-        momentId: '动态id',
-        comments: [{ author: '评论者', content: '好看！' }],
+        momentId: getPromptLine('format_guardian.example.moment_id'),
+        comments: [{
+          author: getPromptLine('format_guardian.example.commenter'),
+          content: getPromptLine('format_guardian.example.comment_content'),
+        }],
       }),
     ].join('\n');
   }
   if (normalizedTarget === CHAT_FORMAT_GUARDIAN_TARGETS.momentPost) {
     return [
-      '错误原文示例：',
-      '今天去了海边。',
+      getPromptLine('format_guardian.example.error_label'),
+      getPromptLine('format_guardian.example.post_content'),
       '',
-      '对应的正确结构示例：',
+      getPromptLine('format_guardian.example.correct_label'),
       serializeBuiltinPhoneFormat('moment_post', {
         posts: [{
           author: trim(userName, '我'),
-          content: '今天去了海边。',
+          content: getPromptLine('format_guardian.example.post_content'),
           time,
           views: 0,
           likes: 0,
@@ -387,23 +410,23 @@ const buildDirectRepairExample = ({
   }
   if (normalizedTarget === CHAT_FORMAT_GUARDIAN_TARGETS.imagePrompt) {
     return [
-      '错误原文示例：',
-      '画一张黄昏海边的少女',
+      getPromptLine('format_guardian.example.error_label'),
+      getPromptLine('format_guardian.example.image_invalid'),
       '',
-      '对应的正确结构示例：',
+      getPromptLine('format_guardian.example.correct_label'),
       '<image_prompt>',
-      '黄昏海边的少女，柔和光线，细节清晰',
+      getPromptLine('format_guardian.example.image_content'),
       '</image_prompt>',
     ].join('\n');
   }
   if (normalizedTarget === CHAT_FORMAT_GUARDIAN_TARGETS.memoryTableEdit) {
     return [
-      '错误原文示例：',
-      '把 Alice 的喜好改成喜欢红茶',
+      getPromptLine('format_guardian.example.error_label'),
+      getPromptLine('format_guardian.example.memory_invalid'),
       '',
-      '对应的正确结构示例：',
+      getPromptLine('format_guardian.example.correct_label'),
       '<tableEdit>',
-      'update memory set preference="喜欢红茶" where name="Alice"',
+      getPromptLine('format_guardian.example.memory_content'),
       '</tableEdit>',
     ].join('\n');
   }
@@ -473,37 +496,40 @@ export const buildChatFormatGuardianModelPrompt = ({
   const noEventsHint = compactReport?.status === 'no_events'
     ? (looseChatRowCount > 0
       ? [
-        `本地解析器没有发现可提交的完整协议内容，但原始回复包含 ${looseChatRowCount} 行疑似聊天内容（例如“说话人--正文”或“说话人--正文--HH:mm”）。`,
-        '这属于可修复的标签缺漏。保留原文发言人、顺序和正文，只补齐下方格式范例或格式规则明确要求的标签、字段和闭合结构。',
+        getPromptLine('format_guardian.no_events.loose', { count: looseChatRowCount }),
+        getPromptLine('format_guardian.no_events.repairable'),
         hasPrivateFormat
-          ? `私聊场景优先补成：MiPhone_start / msg_start / <${privateTagName}> / 原聊天行 / </${privateTagName}> / msg_end / MiPhone_end。`
-          : '优先补成当前目标格式要求的最小合法结构。',
-        `若聊天行缺少时间字段，优先使用 repairFallbackTime（${repairFallbackTime}）；没有可用时间时使用 00:00。`,
+          ? getPromptLine('format_guardian.no_events.private', { tag: privateTagName })
+          : getPromptLine('format_guardian.no_events.current'),
+        getPromptLine('format_guardian.no_events.time', { time: repairFallbackTime }),
       ].join('\n')
       : (customGuide
-        ? '本地解析器没有发现聊天协议内容，但本次存在 Custom Format Guide：修复目标以该 Guide 为准——保留正文原样，按 Guide 补齐要求的结构（如状态块、结构标签），canRepair 应为 true；只有正文为空时才返回 canRepair=false。'
-        : '本地解析器没有发现可提交的完整协议内容。若原始回复为空、完全没有有效聊天/动态内容，或修复必然需要编造正文，不要补写剧情；返回 status="cannot_repair"、linePatches=[]，并在 repairSummary 中建议用户重新生成。'))
+        ? getPromptLine('format_guardian.no_events.custom')
+        : getPromptLine('format_guardian.no_events.empty')))
     : '';
   const system = [
-    '你是聊天回复格式修复 Agent。',
-    `你必须遵守 ${FORMAT_PATCH_PROTOCOL_VERSION}：产物是最小行补丁，不是修复后的完整原文。`,
-    '任务：独立检查一段 AI 完整原始回复，并只用最小行补丁修复格式。',
-    '只修复格式，不评价剧情、修辞、角色一致性或用户意图。',
-    '允许修复：补齐/移动/闭合协议标签，补齐 msg 外层，补齐缺失时间，移除末尾残缺半行，把“说话人: 正文”转换为“说话人--正文--HH:mm”。',
-    '禁止修改：不得改写正文语义，不得新增剧情内容，不得扩写角色台词。',
-    hasPrivateFormat ? '私聊标签遵循现有协议：<{{user}}和联系人名的私聊>...</{{user}}和联系人名的私聊>；{{user}} 经过宏替换后也可能表现为“我和联系人名的私聊”或“用户名和联系人名的私聊”。' : '',
-    hasChatFormat ? '如果原始回复没有任何外层标签，但包含“说话人--正文”或“说话人--正文--HH:mm”聊天行，应视为可修复的标签缺漏，优先补齐标签而不是建议重新生成。' : '',
-    customGuide ? '如果正文本身可读但不满足下方 Custom Format Guide 的要求（如缺少规定的状态块/结构标签），这同样属于可修复的格式缺失：保留正文并按 Custom Format Guide 补齐要求的结构，不要以“无协议内容”为由拒绝修复。' : '',
-    '如果回复明显在末尾截断，不要补写新剧情；只保留已经完整成行的内容并补齐必要闭合标签，并在 issues 中使用 type="truncated_response" 标记。',
-    '本地解析报告可能存在误判或漏判；必须以本次提供的完整格式规范和完整原始回复独立判断。',
-    hasFunctionFormat ? '功能块（image_prompt、UpdateVariable、tableEdit）的载荷必须逐字保持不变；只允许修复其结构标签。载荷本身需要改写时返回 cannot_repair。' : '',
-    '输出必须是一个完整 JSON 对象。禁止 Markdown 代码块，禁止解释，禁止省略号，禁止在 JSON 前后输出任何文字。',
-    'JSON 字符串字段内部不要使用英文双引号；需要引用格式名时使用中文引号或直接写文字，避免破坏 JSON。',
-    '禁止输出 correctedText、corrected_text 或任何完整修复全文字段。',
-    'status=patch 时必须提供至少一个 linePatches；其他状态的 linePatches 必须为空。',
-    `补丁数量不得超过 ${FORMAT_PATCH_MAX_PATCHES}，删除行数与新增行数合计不得超过 ${FORMAT_PATCH_MAX_CHANGED_LINES}。`,
-    '每个补丁都必须提供 1-based startLine/endLine、与原文逐字一致的 originalLines、完整 replacementLines；多个补丁不得重叠。',
-    hasChatFormat ? '聊天/动态修复不要在 MiPhone_end 之后追加额外段落或无关标签；已存在且合同允许的 tableEdit、UpdateVariable、摘要后置块除外，并保持其相对顺序。' : '',
+    getPromptLine('format_guardian.system.role'),
+    getPromptLine('format_guardian.system.protocol', { version: FORMAT_PATCH_PROTOCOL_VERSION }),
+    getPromptLine('format_guardian.system.task'),
+    getPromptLine('format_guardian.system.scope'),
+    getPromptLine('format_guardian.system.allowed'),
+    getPromptLine('format_guardian.system.forbidden'),
+    hasPrivateFormat ? getPromptLine('format_guardian.system.private') : '',
+    hasChatFormat ? getPromptLine('format_guardian.system.loose_rows') : '',
+    customGuide ? getPromptLine('format_guardian.system.custom') : '',
+    getPromptLine('format_guardian.system.truncated'),
+    getPromptLine('format_guardian.system.parser'),
+    hasFunctionFormat ? getPromptLine('format_guardian.system.function_payload') : '',
+    getPromptLine('format_guardian.system.json_only'),
+    getPromptLine('format_guardian.system.json_quotes'),
+    getPromptLine('format_guardian.system.no_full_text'),
+    getPromptLine('format_guardian.system.patch_status'),
+    getPromptLine('format_guardian.system.limits', {
+      patches: FORMAT_PATCH_MAX_PATCHES,
+      lines: FORMAT_PATCH_MAX_CHANGED_LINES,
+    }),
+    getPromptLine('format_guardian.system.patch_fields'),
+    hasChatFormat ? getPromptLine('format_guardian.system.trailing_blocks') : '',
   ].filter(Boolean).join('\n');
   const targetSummary = repairTarget && typeof repairTarget === 'object'
     ? {
@@ -533,29 +559,18 @@ export const buildChatFormatGuardianModelPrompt = ({
     formatSummary ? `# Required Format Examples\n${formatSummary}` : '',
     directRepairExample ? `# Correct Structure Example\n${directRepairExample}` : '',
     reminder ? `# Required Additional Format Rules\n${reminder}` : '',
-    customGuide ? `# Custom Format Guide（从会话来源核验并通过画像有效性检查的自定义格式规范，修复结果必须同时满足）\n${customGuide}` : '',
+    customGuide ? `${getPromptLine('format_guardian.user.custom_heading')}\n${customGuide}` : '',
     compactReport ? `# Local Parser Report\n${JSON.stringify(compactReport, null, 2)}` : '',
     noEventsHint,
     [
-      '# Current Invalid Model Output（待检测 AI 原始回复）',
+      getPromptLine('format_guardian.user.invalid_heading'),
       'The line numbers are for locating text only. Do not copy line numbers into replacementLines.',
-      rawAssistantText.length ? numberedAssistantText : '（空）',
+      rawAssistantText.length ? numberedAssistantText : getPromptLine('format_guardian.user.empty'),
     ].join('\n'),
-    [
-      '# Output Contract',
-      'Return exactly one JSON object. Do not wrap it in Markdown code fences. Do not use ellipsis or comments.',
-      'Do not place unescaped double quotes inside JSON string values. Use Chinese quotes or plain text in message/repairSummary.',
-      '{',
-      `  "protocolVersion": "${FORMAT_PATCH_PROTOCOL_VERSION}",`,
-      '  "status": "no_change | patch | needs_format_spec | cannot_repair",',
-      `  "baseRevision": ${JSON.stringify(revisionToken)},`,
-      '  "issues": [{"severity":"error | warning","type":"missing_tag | wrong_order | missing_field | unresolved_target | truncated_response | parse_error | other","message":"简短说明","evidence":"相关短片段"}],',
-      '  "repairSummary": "一句话说明修复了什么；不可写长篇解释",',
-      '  "linePatches": [{"startLine":1,"endLine":1,"originalLines":["原始行"],"replacementLines":["替换行"],"reason":"只说明格式修改"}]',
-      '}',
-      'Never return correctedText or a full corrected response.',
-      'Use exact 1-based line ranges and exact originalLines. Never abbreviate replacementLines.',
-    ].join('\n'),
+    getPromptLine('format_guardian.user.output_contract', {
+      version: FORMAT_PATCH_PROTOCOL_VERSION,
+      baseRevision: JSON.stringify(revisionToken),
+    }),
   ].filter(Boolean).join('\n\n');
   return {
     messages: [

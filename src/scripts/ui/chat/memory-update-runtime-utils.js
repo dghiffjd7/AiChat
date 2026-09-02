@@ -3,6 +3,7 @@ import {
   resolveMemoryUpdateRequestPrompt,
 } from './request-prompt-utils.js';
 import { buildMemoryConfirmText } from './memory-edit-utils.js';
+import { getLocalizedPromptText } from '../../i18n/prompt-locale.js';
 import {
   emitLifecycleTraceEvent,
   normalizeLifecycleTraceDetails,
@@ -256,8 +257,8 @@ export const resolveMemoryUpdatePlanForSession = ({
 export const buildMemoryUpdateRequest = ({ promptText, historyText } = {}) => {
   const systemText = String(promptText || '').trim();
   const userText = [
-    '请根据以下聊天记录更新记忆表格。',
-    '只输出 <tableEdit>...</tableEdit>，不要输出任何解释。',
+    getLocalizedPromptText('memory.update.request', '请根据以下聊天记录更新记忆表格。'),
+    getLocalizedPromptText('memory.update.output', '只输出 <tableEdit>...</tableEdit>，不要输出任何解释。'),
     '',
     '<chat_history>',
     String(historyText || ''),

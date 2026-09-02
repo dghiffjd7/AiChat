@@ -2,6 +2,7 @@ import { VoiceClient } from '../api/voice-client.js';
 import { appConfirm } from './app-confirm.js';
 import { getVoiceProviderOptions } from './voice-config-utils.js';
 import { PcmStreamPlayer } from './chat/voice-interaction-runtime.js';
+import { translateUiText } from '../i18n/index.js';
 
 const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, char => ({
   '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
@@ -294,7 +295,7 @@ export class VoiceRegistryPanel {
     await player.start();
     try {
       for await (const bytes of this.voiceClient.streamSpeech(config, {
-        text: '你好，我是 Aria。很高兴认识你。',
+        text: translateUiText('你好，我是 Aria。很高兴认识你。'),
         signal: controller.signal,
       })) player.push(bytes);
       await player.finish();

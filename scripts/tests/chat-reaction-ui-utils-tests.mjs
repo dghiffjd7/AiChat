@@ -255,6 +255,41 @@ const createMemoryStorage = (initial = {}) => {
 }
 
 {
+  const documentLike = createFakeDocument();
+  const translations = new Map([
+    ['👍 2个反应', '👍 · 2 reactions'],
+    ['添加反应', 'Add reaction'],
+    ['快捷表情反应', 'Quick emoji reactions'],
+    ['使用👍回应', 'React with 👍'],
+    ['选择更多表情反应', 'Choose more emoji reactions'],
+  ]);
+  const translateText = value => translations.get(String(value ?? '')) || String(value ?? '');
+  const message = { meta: { reactions: [{ emoji: '👍', actors: ['__self__', 'u1'] }] } };
+  const summary = buildReactionSummaryElement(message, {
+    documentLike,
+    isThreadingEnabled: true,
+    translateText,
+  });
+  assert.equal(summary.children[0].attributes['aria-label'], '👍 · 2 reactions');
+  const trigger = createReactionTriggerButton(message, {
+    documentLike,
+    isThreadingEnabled: true,
+    translateText,
+  });
+  assert.equal(trigger.attributes['aria-label'], 'Add reaction');
+  const bar = createReactionQuickBar(message, {
+    documentLike,
+    isThreadingEnabled: true,
+    emojis: ['👍'],
+    translateText,
+  });
+  assert.equal(bar.attributes['aria-label'], 'Quick emoji reactions');
+  assert.equal(bar.children[0].attributes['aria-label'], 'React with 👍');
+  assert.equal(bar.children[1].attributes['aria-label'], 'Choose more emoji reactions');
+  console.log('ok - reaction controls inside skipped message DOM localize their built-in labels');
+}
+
+{
   const stack = {
     classList: createClassList(),
     getBoundingClientRect: () => ({ top: 18, bottom: 90 }),

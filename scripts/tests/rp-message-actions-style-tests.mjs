@@ -6,6 +6,8 @@ const creativeCss = fs.readFileSync(new URL('../../src/assets/css/creative-writi
 const html = fs.readFileSync(new URL('../../src/index.html', import.meta.url), 'utf8');
 const agentChipSource = fs.readFileSync(new URL('../../src/scripts/ui/agent-center-status-chip.js', import.meta.url), 'utf8');
 const appSource = fs.readFileSync(new URL('../../src/scripts/ui/app.js', import.meta.url), 'utf8');
+const chatCss = fs.readFileSync(new URL('../../src/assets/css/chat.css', import.meta.url), 'utf8');
+const chatUiSource = fs.readFileSync(new URL('../../src/scripts/ui/chat/chat-ui.js', import.meta.url), 'utf8');
 
 assert.match(css, /\.QQ_chat_charmsg\.has-rp-message-chrome\s*>\s*\.QQ_chat_head\s*\{[^}]*32px[^}]*margin-top:\s*4px/s);
 assert.match(css, /\.rp-message-header\s*\{[^}]*display:\s*flex/s);
@@ -20,14 +22,23 @@ assert.match(css, /@media\s*\(hover:\s*none\),\s*\(pointer:\s*coarse\)[\s\S]*\.c
 assert.match(creativeCss, /body:not\(\[data-theme-mode='dark'\]\)\[data-ui-mode='rp'\][\s\S]*\.QQ_chat_charmsg\.has-rp-message-chrome[\s\S]*background:\s*var\(--app-surface-card\)/s);
 assert.doesNotMatch(creativeCss, /body\[data-theme-mode='dark'\]\[data-ui-mode='rp'\][\s\S]*\.QQ_chat_charmsg\.has-rp-message-chrome[\s\S]*background:/s);
 assert.match(creativeCss, /body\[data-ui-mode='rp'\]\s+#chat-room\s+\.chat-back-btn\s*\{[^}]*display:\s*none/s);
-assert.match(html, /class="chat-room-topbar"[\s\S]*id="realtime-call-button"[\s\S]*id="chat-menu-btn"/s);
+assert.match(html, /class="chat-room-topbar"[\s\S]*id="rp-reading-settings-btn"[\s\S]*id="chat-menu-btn"/s);
+assert.doesNotMatch(html, /class="chat-room-topbar"[\s\S]{0,1200}id="realtime-call-button"/s);
+assert.match(html, /class="chat-input-wrap"[\s\S]*id="composer-input"[\s\S]*id="realtime-call-button"[\s\S]*id="voice-input-button"/s);
+// 打字时通话按钮收起：CSS 契约 + chat-ui 状态同步（input 监听与程序化写入两条路径）
+assert.match(chatCss, /\.chat-input-row\.composer-has-text \.chat-realtime-call-btn\s*\{[^}]*opacity:\s*0[^}]*pointer-events:\s*none/s);
+assert.match(chatCss, /body:not\(\[data-ui-mode='rp'\]\) \.chat-input-row\.composer-has-text \.chat-input\s*\{[^}]*padding-right:\s*74px/s);
+assert.match(chatCss, /body\[data-ui-mode='rp'\] \.chat-input-row\.composer-has-text \.chat-input\s*\{[^}]*padding-right:\s*40px/s);
+assert.match(chatUiSource, /classList\?\.toggle\?\.\('composer-has-text'/);
+assert.match(chatUiSource, /addEventListener\?\.\('input', this\.syncComposerTextState\)/);
+assert.match(chatUiSource, /setInputText\(val\)\s*\{[^}]*this\.syncComposerTextState\(\)/s);
 assert.match(creativeCss, /\.rp-reading-size-options::before\s*\{[^}]*transition:\s*transform/s);
-assert.match(html, /id="chatroom-menu"[\s\S]*data-action="reading-settings"[\s\S]*id="rp-chatroom-menu"[\s\S]*data-action="reading-settings"/s);
+assert.doesNotMatch(html, /data-action="reading-settings"/);
 assert.match(html, /data-rp-reading-size="compact"[\s\S]*data-rp-reading-size="standard"[\s\S]*data-rp-reading-size="relaxed"/);
 assert.match(html, /data-rp-narrative-font="serif"[\s\S]*data-rp-narrative-font="sans"/);
 assert.match(creativeCss, /data-rp-reading-size='compact'[\s\S]*font-size:\s*calc\(13\.5px\s*\*\s*var\(--app-font-scale,\s*1\)\)/s);
 assert.match(creativeCss, /data-rp-narrative-font='serif'[\s\S]*font-family:\s*'Noto Serif SC'/s);
-assert.match(creativeCss, /data-ui-mode='chat'[\s\S]*\.chat-realtime-call-btn[\s\S]*display:\s*inline-flex/s);
+assert.match(creativeCss, /data-ui-mode='chat'[\s\S]*\.rp-reading-settings-btn[\s\S]*display:\s*inline-flex/s);
 assert.match(creativeCss, /data-ui-mode='chat'\]\[data-rp-reading-size='standard'\][\s\S]*font-size:\s*calc\(14\.5px\s*\*\s*var\(--app-font-scale,\s*1\)\)/s);
 assert.match(creativeCss, /data-ui-mode='chat'\]\[data-rp-narrative-font='serif'\][\s\S]*font-family:\s*'Noto Serif SC'/s);
 assert.match(creativeCss, /body:not\(\[data-theme-mode='dark'\]\)\[data-ui-mode='chat'\][\s\S]*\.QQ_chat_charmsg[\s\S]*background:\s*var\(--app-surface-card\)/s);

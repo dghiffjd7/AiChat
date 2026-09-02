@@ -16,6 +16,7 @@ import {
   resolveCreativeRichRenderSource,
 } from './creative-content-display-utils.js';
 import { appSettings } from '../../storage/app-settings.js';
+import { translateUiText } from '../../i18n/index.js';
 import { logger } from '../../utils/logger.js';
 import { getDefaultAppIcon } from '../../utils/default-icon.js';
 import { getPluginRuntime } from '../app-runtime-service-utils.js';
@@ -339,6 +340,13 @@ export class ChatUI {
     this.inputEl = document.getElementById('composer-input');
     this.sendBtn = document.getElementById('send-button');
     this.inputContainer = document.querySelector('.chat-input-container');
+    this.composerInputRow = this.inputEl?.closest?.('.chat-input-row') || null;
+    // 打字时收起实时通话按钮（CSS 依赖 composer-has-text）；程序化写入走 setInputText/clearInput 同步
+    this.syncComposerTextState = () => {
+      this.composerInputRow?.classList?.toggle?.('composer-has-text', Boolean(this.inputEl?.value?.trim()));
+    };
+    this.inputEl?.addEventListener?.('input', this.syncComposerTextState);
+    this.syncComposerTextState();
     this.composerAttachmentsEl = document.getElementById('composer-attachments');
     this.configBtn = document.getElementById('config-button');
     this.worldBtn = document.getElementById('world-button');
@@ -376,6 +384,7 @@ export class ChatUI {
       scrollToMessage: (messageId, options) => this.scrollToMessage(messageId, options),
       resolveMessageSessionId: message => this.resolveMessageSessionId(message),
       warningToast: text => window.toastr?.warning?.(text),
+      translateText: translateUiText,
     });
     this.replyDraftRuntime = createReplyDraftUiRuntime({
       documentLike: document,
@@ -581,7 +590,7 @@ export class ChatUI {
   renderSwipeDraftPlaceholder(target, label = '生成新回复中...') {
     return renderSwipeDraftPlaceholderCore(target, {
       documentLike: document,
-      label,
+      label: translateUiText(label),
     });
   }
 
@@ -662,7 +671,7 @@ export class ChatUI {
       scrollEl: this.scrollEl,
       msgId,
       active,
-      label,
+      label: translateUiText(label),
     });
   }
 
@@ -777,6 +786,7 @@ export class ChatUI {
       documentLike: document,
       isThreadingEnabled: this.isThreadingEnabledForMessage(message),
       onToggleReaction: emoji => this.toggleReactionFromUi(message, emoji),
+      translateText: translateUiText,
     });
   }
 
@@ -799,6 +809,7 @@ export class ChatUI {
         emojis,
         onToggleReaction: emoji => this.toggleReactionFromUi(message, emoji),
         onShowPicker: (button, nextMessage) => this.showReactionPicker(button, nextMessage),
+        translateText: translateUiText,
       });
       if (!nextBar) return;
       currentBar.replaceWith?.(nextBar);
@@ -1344,6 +1355,7 @@ export class ChatUI {
 
   setInputText(val) {
     this.inputEl.value = val;
+    this.syncComposerTextState();
   }
 
   setSessionLabel(id) {
@@ -1572,10 +1584,12 @@ export class ChatUI {
   }
 
   clearInput(options = {}) {
-    return clearInputCore({
+    const result = clearInputCore({
       inputEl: this.inputEl,
       options,
     });
+    this.syncComposerTextState();
+    return result;
   }
 
   setSendingState(isSending) {
@@ -1851,11 +1865,13 @@ export class ChatUI {
           createAudio: url => new Audio(url),
           warningToast: text => window.toastr?.warning?.(text),
           errorToast: text => window.toastr?.error?.(text),
+          translateText: translateUiText,
         });
       },
       buildMessageSidecarElement: payload => {
         const agentSidecar = buildAgentMessageSidecarElement({
           ...payload,
+          translateText: translateUiText,
           onProviderToolPermissionAction: request => this.handleProviderToolPermissionAction(request),
           onProviderToolContinuationAction: request => this.handleProviderToolContinuationAction(request),
           onChatFormatGuardianAction: request => this.handleChatFormatGuardianAction(request),
@@ -1871,8 +1887,14 @@ export class ChatUI {
         return stack;
       },
       buildReactionSummaryElement: nextMessage => this.buildReactionSummaryElement(nextMessage),
-      createReactionQuickBar,
-      createReactionTriggerButton,
+      createReactionQuickBar: (messageValue, options = {}) => createReactionQuickBar(messageValue, {
+        ...options,
+        translateText: translateUiText,
+      }),
+      createReactionTriggerButton: (messageValue, options = {}) => createReactionTriggerButton(messageValue, {
+        ...options,
+        translateText: translateUiText,
+      }),
       getQuickReactionEmojis: () => this.getQuickReactionEmojis(),
       onToggleReaction: (nextMessage, emoji) => this.toggleReactionFromUi(nextMessage, emoji),
       bindReactionQuickBarTouch: payload => this.reactionQuickBarTouchRuntime.bind(payload),

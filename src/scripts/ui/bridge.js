@@ -613,18 +613,26 @@ const formatSince = (ts) => {
   if (!Number.isFinite(t) || t <= 0) return '';
   const delta = Math.max(0, Date.now() - t);
   const sec = Math.floor(delta / 1000);
-  if (sec < 60) return `${sec}秒前`;
+  const relative = (value, unit) => {
+    try {
+      return new Intl.RelativeTimeFormat(getPromptLocale(), { numeric: 'always' }).format(-value, unit);
+    } catch {
+      return '';
+    }
+  };
+  if (sec < 60) return relative(sec, 'second') || `${sec}秒前`;
   const min = Math.floor(sec / 60);
-  if (min < 60) return `${min}分钟前`;
+  if (min < 60) return relative(min, 'minute') || `${min}分钟前`;
   const hr = Math.floor(min / 60);
-  if (hr < 24) return `${hr}小时前`;
+  if (hr < 24) return relative(hr, 'hour') || `${hr}小时前`;
   const day = Math.floor(hr / 24);
-  return `${day}天前`;
+  return relative(day, 'day') || `${day}天前`;
 };
 
 const formatSinceInParens = (ts) => {
   const raw = formatSince(ts);
   if (!raw) return '';
+  if (getPromptLocale() !== 'zh-CN' && getPromptLocale() !== 'zh-TW') return raw;
   return `距今${raw.replace(/前$/, '')}`;
 };
 
@@ -6583,7 +6591,9 @@ class AppBridge {
         const arr = (compacted && String(compacted.text || '').trim()) ? arrRaw.slice(-2) : arrRaw.slice(-5);
         const items = [];
         if (compacted && String(compacted.text || '').trim()) {
-          items.push(`- 大总结：${String(compacted.text).trim()}`);
+          items.push(formatMemoryPromptText('memory.summary.long_line', '- 大总结：{value}', {
+            value: String(compacted.text).trim(),
+          }));
         }
         for (let j = 0; j < arr.length; j++) {
           const it = arr[j];
@@ -6592,17 +6602,24 @@ class AppBridge {
           const at = (typeof it === 'object' && it && it.at) ? Number(it.at) : 0;
           const isNewest = j === arr.length - 1;
           const when = (isNewest && at) ? formatSinceInParens(at) : '';
-          items.push(`- ${text}${when ? `（${when}）` : ''}`);
+          items.push(`- ${text}${when ? formatMemoryPromptText(
+            'memory.summary.relative_suffix',
+            '（{value}）',
+            { value: when },
+          ) : ''}`);
         }
         if (items.length) {
-          sections.push([`群聊：${gname}`, ...items].join('\n'));
+          sections.push([formatMemoryPromptText('memory.summary.group_label', '群聊：{value}', { value: gname }), ...items].join('\n'));
         }
       }
       if (!sections.length) return null;
       return {
         role: 'system',
         content: [
-          '角色所在群聊摘要回顾（仅供理解上下文）：',
+          formatMemoryPromptText(
+            'memory.summary.character_groups_header',
+            '角色所在群聊摘要回顾（仅供理解上下文）：',
+          ),
           ...sections,
         ].join('\n\n'),
       };
@@ -7037,7 +7054,11 @@ const stringifyMessageContent = (content) => {
 	      try {
 	        const compacted = this.momentSummaryStore.getCompactedSummary?.();
 	        const compactedText = String(compacted?.text || '').trim();
-	        if (compactedText) rows.push(`- 大总结：${compactedText}`);
+	        if (compactedText) rows.push(formatMemoryPromptText(
+	          'memory.summary.long_line',
+	          '- 大总结：{value}',
+	          { value: compactedText },
+	        ));
 	      } catch {}
 	      latest.forEach((it, idx) => {
 	        const text = String((typeof it === 'string') ? it : it?.text || '').trim();
@@ -7045,12 +7066,19 @@ const stringifyMessageContent = (content) => {
 	        const at = (typeof it === 'object' && it && it.at) ? Number(it.at) : 0;
 	        const isNewest = idx === latest.length - 1;
 	        const when = (isNewest && at) ? formatSinceInParens(at) : '';
-	        rows.push(`- ${text}${when ? `（${when}）` : ''}`);
+	        rows.push(`- ${text}${when ? formatMemoryPromptText(
+	          'memory.summary.relative_suffix',
+	          '（{value}）',
+	          { value: when },
+	        ) : ''}`);
 	      });
 	      if (!rows.length) return null;
 	      return {
 	        role: 'system',
-	        content: `以下为动态摘要回顾（仅供理解上下文）：\n${rows.join('\n')}`.trim(),
+	        content: `${formatMemoryPromptText(
+	          'memory.summary.moments_header',
+	          '以下为动态摘要回顾（仅供理解上下文）：',
+	        )}\n${rows.join('\n')}`.trim(),
 	      };
 	    };
 
@@ -7072,7 +7100,9 @@ const stringifyMessageContent = (content) => {
 	        const arr = compacted ? arrRaw.slice(-2) : arrRaw.slice(-3);
 	        const items = [];
 	        if (compacted && String(compacted.text || '').trim()) {
-	          items.push(`- 总结：${String(compacted.text).trim()}`);
+	          items.push(formatMemoryPromptText('memory.summary.compacted_line', '- 总结：{value}', {
+	            value: String(compacted.text).trim(),
+	          }));
 	        }
 	        for (let j = 0; j < arr.length; j++) {
 	          const it = arr[j];
@@ -7081,18 +7111,26 @@ const stringifyMessageContent = (content) => {
 	          const at = (typeof it === 'object' && it && it.at) ? Number(it.at) : 0;
 	          const isNewest = j === arr.length - 1;
 	          const when = (isNewest && at) ? formatSinceInParens(at) : '';
-	          items.push(`- ${text}${when ? `（${when}）` : ''}`);
+	          items.push(`- ${text}${when ? formatMemoryPromptText(
+	            'memory.summary.relative_suffix',
+	            '（{value}）',
+	            { value: when },
+	          ) : ''}`);
 	        }
 	        if (items.length) {
-	          sections.push(`${name1}与${display}:\n${items.join('\n')}`);
+	          sections.push(`${formatMemoryPromptText(
+	            'memory.summary.pair',
+	            '{user}与{name}:',
+	            { user: name1, name: display },
+	          )}\n${items.join('\n')}`);
 	        }
 	      }
 	      if (!sections.length) return null;
 	      return {
 	        role: 'system',
 	        content: [
-	          '群聊成员私聊摘要回顾（YAML，仅供理解上下文）：',
-	          '（私聊信息默认不对其他成员公开）',
+	          formatMemoryPromptText('memory.summary.member_private_header', '群聊成员私聊摘要回顾（YAML，仅供理解上下文）：'),
+	          formatMemoryPromptText('memory.summary.member_private_note', '（私聊信息默认不对其他成员公开）'),
 	          ...sections,
 	        ].join('\n'),
 	      };
@@ -7108,7 +7146,9 @@ const stringifyMessageContent = (content) => {
 	      const arr = compacted ? arrRaw.slice(-2) : arrRaw.slice(-3);
 	      const items = [];
 	      if (compacted && String(compacted.text || '').trim()) {
-	        items.push(`- 总结：${String(compacted.text).trim()}`);
+	        items.push(formatMemoryPromptText('memory.summary.compacted_line', '- 总结：{value}', {
+	          value: String(compacted.text).trim(),
+	        }));
 	      }
 	      for (let j = 0; j < arr.length; j++) {
 	        const it = arr[j];
@@ -7117,15 +7157,19 @@ const stringifyMessageContent = (content) => {
 	        const at = (typeof it === 'object' && it && it.at) ? Number(it.at) : 0;
 	        const isNewest = j === arr.length - 1;
 	        const when = (isNewest && at) ? formatSinceInParens(at) : '';
-	        items.push(`- ${text}${when ? `（${when}）` : ''}`);
+	        items.push(`- ${text}${when ? formatMemoryPromptText(
+	          'memory.summary.relative_suffix',
+	          '（{value}）',
+	          { value: when },
+	        ) : ''}`);
 	      }
 	      if (!items.length) return null;
 	      return {
 	        role: 'system',
 	        content: [
-	          `私聊摘要回顾（YAML，仅供理解上下文）：`,
-	          '（私聊信息默认不对第三方公开）',
-	          `${name1}与${name}:`,
+	          formatMemoryPromptText('memory.summary.private_header', '私聊摘要回顾（YAML，仅供理解上下文）：'),
+	          formatMemoryPromptText('memory.summary.private_note', '（私聊信息默认不对第三方公开）'),
+	          formatMemoryPromptText('memory.summary.pair', '{user}与{name}:', { user: name1, name }),
 	          ...items,
 	        ].join('\n'),
 	      };
@@ -8269,7 +8313,11 @@ const stringifyMessageContent = (content) => {
 	            const summaries = Array.isArray(sessionSummary?.summaries) ? sessionSummary.summaries : [];
 	            if (isGroupChat) {
 	              const rows = [];
-	              if (compactedText) rows.push(`- 大总结：${compactedText}`);
+	              if (compactedText) rows.push(formatMemoryPromptText(
+	                'memory.summary.long_line',
+	                '- 大总结：{value}',
+	                { value: compactedText },
+	              ));
 	              rows.push(
 	                ...summaries
 	                  .map(s => String(typeof s === 'string' ? s : s?.text || '').trim())
@@ -8279,14 +8327,20 @@ const stringifyMessageContent = (content) => {
 	              if (rows.length) {
 	                blocks.push({
 	                  role: 'system',
-	                  content: `以下为该群聊的摘要回顾：\n${rows.join('\n')}`.trim(),
+	                  content: `${formatMemoryPromptText(
+	                    'memory.summary.group_history_header',
+	                    '以下为该群聊的摘要回顾：',
+	                  )}\n${rows.join('\n')}`.trim(),
 	                });
 	              }
 	            } else {
 	              if (summaries.length) {
 	                blocks.push({
 	                  role: 'system',
-	                  content: `以下为该聊天室的简要摘要回顾：\n${summaries
+	                  content: `${formatMemoryPromptText(
+	                    'memory.summary.private_history_header',
+	                    '以下为该聊天室的简要摘要回顾：',
+	                  )}\n${summaries
 	                    .map(s => `- ${String(typeof s === 'string' ? s : s?.text || '').trim()}`)
 	                    .filter(Boolean)
 	                    .join('\n')}`.trim(),
@@ -8671,9 +8725,21 @@ const stringifyMessageContent = (content) => {
 	          messages.push({ role: 'system', content: chatGuideContent });
 	        }
 	        if (!suppressGenericReplyPrompt && context.character) {
-	          let characterPrompt = `你正在扮演: ${context.character.name}`;
-	          if (context.character.description) characterPrompt += `\n\n角色描述:\n${context.character.description}`;
-	          if (context.character.personality) characterPrompt += `\n\n性格特点:\n${context.character.personality}`;
+	          let characterPrompt = formatMemoryPromptText(
+	            'character.context.role',
+	            '你正在扮演: {name}',
+	            { name: context.character.name },
+	          );
+	          if (context.character.description) characterPrompt += `\n\n${formatMemoryPromptText(
+	            'character.context.description',
+	            '角色描述:\n{value}',
+	            { value: context.character.description },
+	          )}`;
+	          if (context.character.personality) characterPrompt += `\n\n${formatMemoryPromptText(
+	            'character.context.personality',
+	            '性格特点:\n{value}',
+	            { value: context.character.personality },
+	          )}`;
           messages.push({ role: 'system', content: characterPrompt });
         }
       });
@@ -8848,7 +8914,11 @@ const stringifyMessageContent = (content) => {
 	        const summaries = Array.isArray(sessionSummary?.summaries) ? sessionSummary.summaries : [];
 	        if (isGroupChat) {
 	          const rows = [];
-	          if (compactedText) rows.push(`- 大总结：${compactedText}`);
+	          if (compactedText) rows.push(formatMemoryPromptText(
+	            'memory.summary.long_line',
+	            '- 大总结：{value}',
+	            { value: compactedText },
+	          ));
 	          rows.push(
 	            ...summaries
 	              .map(s => String(typeof s === 'string' ? s : s?.text || '').trim())
@@ -8858,14 +8928,20 @@ const stringifyMessageContent = (content) => {
 	          if (rows.length) {
 	            messages.push({
 	              role: 'system',
-	              content: `以下为该群聊的摘要回顾：\n${rows.join('\n')}`.trim(),
+	              content: `${formatMemoryPromptText(
+	                'memory.summary.group_history_header',
+	                '以下为该群聊的摘要回顾：',
+	              )}\n${rows.join('\n')}`.trim(),
 	            });
 	          }
 	        } else {
 	          if (summaries.length) {
 	            messages.push({
 	              role: 'system',
-	              content: `以下为该聊天室的简要摘要回顾：\n${summaries
+	              content: `${formatMemoryPromptText(
+	                'memory.summary.private_history_header',
+	                '以下为该聊天室的简要摘要回顾：',
+	              )}\n${summaries
 	                .map(s => `- ${String(typeof s === 'string' ? s : s?.text || '').trim()}`)
 	                .filter(Boolean)
 	                .join('\n')}`.trim(),

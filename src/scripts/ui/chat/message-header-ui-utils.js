@@ -62,6 +62,7 @@ export const createMessageHeaderUiRuntime = ({
   scrollToMessage,
   resolveMessageSessionId,
   warningToast,
+  translateText = value => String(value ?? ''),
 } = {}) => {
   const runtime = {
     getReasoningText,
@@ -84,17 +85,17 @@ export const createMessageHeaderUiRuntime = ({
       const textarea = documentLike.createElement('textarea');
       textarea.className = 'chat-reasoning-edit-textarea';
       textarea.value = originalText;
-      textarea.setAttribute?.('aria-label', '编辑思维链');
+      textarea.setAttribute?.('aria-label', translateText('编辑思维链'));
       const actions = documentLike.createElement('div');
       actions.className = 'chat-reasoning-edit-actions';
       const cancelButton = documentLike.createElement('button');
       cancelButton.type = 'button';
       cancelButton.className = 'chat-reasoning-edit-cancel';
-      cancelButton.textContent = '取消';
+      cancelButton.textContent = translateText('取消');
       const saveButton = documentLike.createElement('button');
       saveButton.type = 'button';
       saveButton.className = 'chat-reasoning-edit-save';
-      saveButton.textContent = '保存';
+      saveButton.textContent = translateText('保存');
       actions.appendChild(cancelButton);
       actions.appendChild(saveButton);
       content.appendChild(textarea);
@@ -127,7 +128,7 @@ export const createMessageHeaderUiRuntime = ({
             textarea.disabled = false;
             cancelButton.disabled = false;
             saveButton.disabled = false;
-            warningToast?.('思维链保存失败');
+            warningToast?.(translateText('思维链保存失败'));
             return false;
           }
           const updatedMessage = reasoningEl.__chatappReasoningMessage || message;
@@ -137,7 +138,7 @@ export const createMessageHeaderUiRuntime = ({
           textarea.disabled = false;
           cancelButton.disabled = false;
           saveButton.disabled = false;
-          warningToast?.('思维链保存失败');
+          warningToast?.(translateText('思维链保存失败'));
           return false;
         } finally {
           saving = false;
@@ -184,7 +185,7 @@ export const createMessageHeaderUiRuntime = ({
         labelEl.className = 'chat-reasoning-label';
         summary.appendChild(labelEl);
       }
-      labelEl.textContent = label;
+      labelEl.textContent = translateText(label);
       let actionWrap = summary.querySelector?.('.chat-reasoning-actions') || null;
       if (!actionWrap) {
         actionWrap = documentLike.createElement('span');
@@ -194,8 +195,9 @@ export const createMessageHeaderUiRuntime = ({
           button.type = 'button';
           button.className = `chat-reasoning-action is-${action}`;
           button.dataset.reasoningAction = action;
-          button.setAttribute?.('aria-label', actionLabel);
-          button.title = actionLabel;
+          const translatedActionLabel = translateText(actionLabel);
+          button.setAttribute?.('aria-label', translatedActionLabel);
+          button.title = translatedActionLabel;
           button.innerHTML = createRpMessageIconMarkup(action, { size: 14 });
           button.addEventListener?.('click', async (event) => {
             event?.preventDefault?.();
@@ -258,7 +260,8 @@ export const createMessageHeaderUiRuntime = ({
       const list = Array.isArray(state?.greetings) ? state.greetings : [];
       const activeId = String(state?.activeId || meta.greetingId || '').trim();
       const active = list.find(item => String(item?.id || '').trim() === activeId) || list[0] || null;
-      const titleText = String(active?.title || meta.greetingTitle || '开场白').trim() || '开场白';
+      const fallbackTitle = translateText('开场白');
+      const titleText = String(active?.title || meta.greetingTitle || fallbackTitle).trim() || fallbackTitle;
 
       const wrap = documentLike.createElement('div');
       wrap.className = 'rp-greeting-switch rp-greeting-card-header';
@@ -266,8 +269,8 @@ export const createMessageHeaderUiRuntime = ({
       const changeButton = documentLike.createElement('button');
       changeButton.type = 'button';
       changeButton.className = 'rp-greeting-card-change';
-      changeButton.textContent = '更换';
-      changeButton.setAttribute?.('aria-label', '更换开场白');
+      changeButton.textContent = translateText('更换');
+      changeButton.setAttribute?.('aria-label', translateText('更换开场白'));
       changeButton.addEventListener?.('click', (event) => {
         event?.preventDefault?.();
         event?.stopPropagation?.();
@@ -281,7 +284,7 @@ export const createMessageHeaderUiRuntime = ({
       lineBefore.className = 'rp-greeting-card-line';
       const seal = documentLike.createElement('span');
       seal.className = 'rp-greeting-card-seal';
-      seal.textContent = '序';
+      seal.textContent = translateText('序');
       const lineAfter = documentLike.createElement('span');
       lineAfter.className = 'rp-greeting-card-line is-after';
       ornament.appendChild(lineBefore);
@@ -291,7 +294,7 @@ export const createMessageHeaderUiRuntime = ({
 
       const kicker = documentLike.createElement('div');
       kicker.className = 'rp-greeting-card-kicker';
-      kicker.textContent = '序　幕';
+      kicker.textContent = translateText('序　幕');
       wrap.appendChild(kicker);
 
       const title = documentLike.createElement('div');
@@ -316,7 +319,8 @@ export const createMessageHeaderUiRuntime = ({
       const box = documentLike.createElement('button');
       box.type = 'button';
       box.className = 'chat-reply-preview';
-      box.setAttribute('aria-label', `查看回复原消息：${replyTo.author || '消息'}`);
+      const replyAuthor = replyTo.author || translateText('消息');
+      box.setAttribute('aria-label', translateText(`查看回复原消息：${replyAuthor}`));
       const avatar = documentLike.createElement('img');
       avatar.className = 'chat-reply-preview-avatar';
       avatar.src = replyTo.avatar || getDefaultReplyAvatar?.() || '';
@@ -325,7 +329,7 @@ export const createMessageHeaderUiRuntime = ({
       textWrap.className = 'chat-reply-preview-text';
       const author = documentLike.createElement('span');
       author.className = 'chat-reply-preview-author';
-      author.textContent = replyTo.author || '消息';
+      author.textContent = replyAuthor;
       const snippet = documentLike.createElement('span');
       snippet.className = 'chat-reply-preview-snippet';
       snippet.textContent = replyTo.content || '...';
@@ -343,7 +347,7 @@ export const createMessageHeaderUiRuntime = ({
         });
         if (handled) return;
         if (replyTo.id && scrollToMessage?.(replyTo.id, { keyword: replyTo.content || '', kind: 'anchor' })) return;
-        warningToast?.('未找到被回复的消息');
+        warningToast?.(translateText('未找到被回复的消息'));
       });
       return box;
     },
@@ -354,7 +358,7 @@ export const createMessageHeaderUiRuntime = ({
       const greetingFooter = greetingEl ? documentLike.createElement('div') : null;
       if (greetingFooter) {
         greetingFooter.className = 'rp-greeting-card-footer';
-        greetingFooter.textContent = '—— 幕 启 ——';
+        greetingFooter.textContent = translateText('—— 幕 启 ——');
       }
       const existingReasoning = Array.from(bubble.children || [])
         .find(child => String(child?.className || '').split(/\s+/).includes('chat-reasoning')) || null;

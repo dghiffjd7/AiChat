@@ -362,8 +362,8 @@ export const preparePhoneReplyJsonRoute = ({
     };
   }
   const semanticInstruction = normalizedAdapter === BATCH_ADAPTER
-    ? 'payload 使用当前手机批次 schema；第一项仍须是当前聊天/动态评论，所有可选副作用保持既有顺序。'
-    : 'payload 使用当前私聊 messages schema；目标与说话人由运行时冻结，不得在 JSON 中选择身份。';
+    ? getLocalizedPromptText('fc.json_terminal.semantic_batch')
+    : getLocalizedPromptText('fc.json_terminal.semantic_private');
   const instruction = buildPhoneReplyJsonTransportInstruction({
     formatMode,
     schema,

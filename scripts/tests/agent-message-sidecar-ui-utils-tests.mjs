@@ -302,3 +302,42 @@ const collectElements = (node, predicate, out = []) => {
   assert.equal(actions[2].action, 'open_agent_center');
   console.log('ok - buildAgentMessageSidecarElement exposes chat body quality review actions');
 }
+
+{
+  const documentLike = createFakeDocument();
+  const translations = new Map([
+    ['聊天格式待确认', 'Chat Format Needs Review'],
+    ['应用修复', 'Apply Repair'],
+    ['查看原文', 'View Original'],
+    ['ask', 'Review'],
+  ]);
+  const element = buildAgentMessageSidecarElement({
+    documentLike,
+    message: {
+      id: 'm-localized-sidecar',
+      meta: {
+        agentMessageParts: [{
+          type: 'agent_status',
+          status: 'waiting_permission',
+          title: '聊天格式待确认',
+          summary: '保留这段模型摘要',
+          metadata: {
+            decisionActions: [
+              { id: 'apply_repair', label: '应用修复', enabled: true },
+              { id: 'review_original', label: '查看原文', enabled: true },
+            ],
+          },
+          kind: 'chat_format.validate',
+        }],
+      },
+    },
+    translateText: value => translations.get(String(value)) || String(value),
+    onChatFormatGuardianAction: () => {},
+  });
+  assert.equal(element.children[1].children[0].children[1].textContent, 'Chat Format Needs Review');
+  assert.equal(element.children[1].children[0].children[2].textContent, 'Review');
+  const buttons = collectElements(element, node => Boolean(node.dataset?.chatFormatGuardianAction));
+  assert.deepEqual(buttons.map(button => button.textContent), ['Apply Repair', 'View Original']);
+  assert.equal(collectElements(element, node => node.textContent.includes('保留这段模型摘要')).length > 0, true);
+  console.log('ok - chat sidecar localizes built-in chrome while preserving model-authored summaries');
+}

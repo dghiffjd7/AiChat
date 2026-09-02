@@ -60,18 +60,21 @@
     return `${element.tagName.toLowerCase()}${classes ? `.${classes}` : ''}`;
   };
   const han = [];
+  // 跳过区 UI 兜底检测：跳过容器（内容区）里的文本若“精确命中翻译目录 key”，
+  // 几乎一定是 UI 兜底文案漏了 JS 侧 translateUiText（如“尚无聊天”类）；用户内容整节点撞 key 极罕见。
+  const skipZoneUi = [];
+  const translateFn = typeof window.appI18n?.t === 'function' ? window.appI18n.t : null;
   const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
   let node = walker.nextNode();
   while (node) {
     const parent = node.parentElement;
     const text = String(node.nodeValue || '').replace(/\s+/g, ' ').trim();
-    if (
-      text
-      && /\p{Script=Han}/u.test(text)
-      && !parent?.closest?.(excludedTextSelector)
-      && visible(parent)
-    ) {
-      han.push({ target: describe(parent), text: text.slice(0, 160) });
+    if (text && /\p{Script=Han}/u.test(text) && visible(parent)) {
+      if (!parent?.closest?.(excludedTextSelector)) {
+        han.push({ target: describe(parent), text: text.slice(0, 160) });
+      } else if (translateFn && translateFn(text) !== text) {
+        skipZoneUi.push({ target: describe(parent), text: text.slice(0, 160) });
+      }
     }
     node = walker.nextNode();
   }
@@ -125,6 +128,8 @@
     pseudo: /^［/.test(window.appI18n?.t?.('保存') || ''),
     visibleHanCount: han.length,
     visibleHan: han.slice(0, 100),
+    skipZoneUiCount: skipZoneUi.length,
+    skipZoneUi: skipZoneUi.slice(0, 100),
     overflowCount: overflow.length,
     overflow: overflow.slice(0, 100),
   };

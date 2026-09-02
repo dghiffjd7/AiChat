@@ -19,6 +19,7 @@ import {
   analyzeChatBodyQuality,
   CHAT_BODY_QUALITY_STATUSES,
 } from './chat-body-quality-guardian-utils.js';
+import { getLocalizedPromptText } from '../../i18n/prompt-locale.js';
 
 const CHAT_FORMAT_GUARDIAN_SOURCE = 'chat-format-guardian';
 const CHAT_FORMAT_GUARDIAN_KIND = 'chat_format_guardian';
@@ -30,6 +31,14 @@ const isPlainObject = value => Boolean(value && typeof value === 'object' && !Ar
 const trim = (value, fallback = '') => {
   const text = String(value ?? '').trim();
   return text || fallback;
+};
+
+const getGuardianPromptLine = (key, replacements = {}) => {
+  let text = getLocalizedPromptText(key);
+  Object.entries(replacements).forEach(([name, value]) => {
+    text = text.split(`{${name}}`).join(String(value ?? ''));
+  });
+  return text;
 };
 
 const list = value => (Array.isArray(value) ? value : []).filter(Boolean);
@@ -152,13 +161,15 @@ const resolveChatFormatGuardianSurface = (events = []) => {
 const buildChatFormatGuardianInputSuggestion = ({ errors = [], warnings = [] } = {}) => {
   const issues = [...errors, ...warnings].map(item => trim(item)).filter(Boolean);
   const hints = [];
-  if (issues.some(issue => issue.includes('time is missing'))) hints.push('补齐每条聊天消息的时间');
-  if (issues.some(issue => issue.includes('target is unresolved'))) hints.push('明确私聊对象、群名或动态目标');
-  if (issues.some(issue => issue.includes('speaker is unresolved'))) hints.push('明确说话人，并使用联系人或群成员名称');
-  if (issues.some(issue => issue.includes('content is required'))) hints.push('保留实际正文内容');
-  if (!hints.length && issues.length) hints.push('修正格式字段与标签闭合');
-  const suffix = hints.length ? `重点：${hints.join('；')}。` : '重点：只输出可解析的聊天或动态格式。';
-  return `请重写上一条回复，严格遵守当前聊天/动态输出格式。${suffix}不要加入格式外说明。`;
+  if (issues.some(issue => issue.includes('time is missing'))) hints.push(getGuardianPromptLine('format_guardian.regenerate.hint_time'));
+  if (issues.some(issue => issue.includes('target is unresolved'))) hints.push(getGuardianPromptLine('format_guardian.regenerate.hint_target'));
+  if (issues.some(issue => issue.includes('speaker is unresolved'))) hints.push(getGuardianPromptLine('format_guardian.regenerate.hint_speaker'));
+  if (issues.some(issue => issue.includes('content is required'))) hints.push(getGuardianPromptLine('format_guardian.regenerate.hint_content'));
+  if (!hints.length && issues.length) hints.push(getGuardianPromptLine('format_guardian.regenerate.hint_structure'));
+  const focus = hints.length
+    ? getGuardianPromptLine('format_guardian.regenerate.focus', { hints: hints.join('; ') })
+    : getGuardianPromptLine('format_guardian.regenerate.focus_default');
+  return getGuardianPromptLine('format_guardian.regenerate.request', { focus });
 };
 
 const summarizeChatFormatRepairCandidate = (repairCandidate = null, { includeText = false } = {}) => {
@@ -1225,7 +1236,9 @@ export const validateChatFormatGuardianRepairCandidate = ({
 
 const serializeChatFormatGuardianRetryRaw = (raw) => {
   const text = typeof raw === 'string' ? raw : JSON.stringify(raw || {});
-  return text.length > 12000 ? `${text.slice(0, 12000)}\n（上一输出已截断）` : text;
+  return text.length > 12000
+    ? `${text.slice(0, 12000)}\n${getGuardianPromptLine('format_guardian.retry.truncated')}`
+    : text;
 };
 
 export const buildChatFormatGuardianRetryInstruction = ({
@@ -1244,16 +1257,16 @@ export const buildChatFormatGuardianRetryInstruction = ({
     : null;
   return [
     '# Retry Required',
-    '上一次返回未通过 APP 校验。原始回复与 baseRevision 均未改变。',
-    '请根据失败信息重新生成一套完整、互不重叠的 linePatches；不要只补充上一套补丁，也不要返回完整修复全文。',
-    `上一次模型输出：\n${serializeChatFormatGuardianRetryRaw(raw) || '（空）'}`,
+    getGuardianPromptLine('format_guardian.retry.failed'),
+    getGuardianPromptLine('format_guardian.retry.instruction'),
+    `${getGuardianPromptLine('format_guardian.retry.previous')}\n${serializeChatFormatGuardianRetryRaw(raw) || getLocalizedPromptText('format_guardian.user.empty')}`,
     validationErrors.length
-      ? `补丁协议校验失败：\n${JSON.stringify(validationErrors, null, 2)}`
+      ? `${getGuardianPromptLine('format_guardian.retry.patch_errors')}\n${JSON.stringify(validationErrors, null, 2)}`
       : '',
     parserReport
-      ? `应用上次完整补丁集后的格式复查结果：\n${JSON.stringify(parserReport, null, 2)}`
+      ? `${getGuardianPromptLine('format_guardian.retry.recheck')}\n${JSON.stringify(parserReport, null, 2)}`
       : '',
-    '仍然只输出一个符合 format_patch.v1 的 JSON 对象。',
+    getGuardianPromptLine('format_guardian.retry.json_only'),
   ].filter(Boolean).join('\n\n');
 };
 

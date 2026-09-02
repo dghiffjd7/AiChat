@@ -6,6 +6,7 @@ import {
     buildWorldConditionVariableRuntimeContext,
     resolveWorldVariableSessionContext,
 } from './world-variable-session-utils.js';
+import { translateUiText } from '../../i18n/index.js';
 
 export function getConditionSummaryOperatorImpl(op = '>') {
     const value = String(op || '>').trim();
@@ -190,7 +191,7 @@ export function renderEntryActivationOverviewImpl(explanation, deps = {}) {
                 ` : ''}
                 <div class="world-entry-activation-card">
                     <div class="world-entry-activation-label">匹配来源</div>
-                    <div class="world-entry-activation-value">${explanation.sourceFields.length ? escapeHtml(explanation.sourceFields.join(' / ')) : '当前没有可用上下文'}</div>
+                    <div class="world-entry-activation-value">${explanation.sourceFields.length ? escapeHtml(explanation.sourceFields.map(field => translateUiText(field)).join(' / ')) : '当前没有可用上下文'}</div>
                     <div class="world-entry-activation-meta">${explanation.hasMatchInput ? '已按当前会话上下文判定' : '当前没有聊天输入，按条目内容参与'}</div>
                 </div>
                 <div class="world-entry-activation-card">

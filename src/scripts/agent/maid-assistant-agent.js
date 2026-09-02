@@ -29,6 +29,7 @@ import {
   createMaidVisualSpecLedger,
   normalizeMaidVisualSpecLedger,
 } from './maid-visual-spec.js';
+import { getLocalizedPromptText } from '../i18n/prompt-locale.js';
 
 const trim = (value, fallback = '') => {
   const text = String(value ?? '').trim();
@@ -1553,7 +1554,15 @@ const callModelWithTimeout = async (invoke, { timeoutMs = MAID_MODEL_CALL_TIMEOU
   }
 };
 
-const buildContinueHint = ({
+const formatMaidPromptText = (key, fallback, replacements = {}) => {
+  let text = getLocalizedPromptText(key, fallback);
+  Object.entries(replacements).forEach(([name, value]) => {
+    text = text.split(`{${name}}`).join(String(value ?? ''));
+  });
+  return text;
+};
+
+export const buildContinueHint = ({
   input = '',
   pendingPlan = {},
   steps = [],
@@ -1566,18 +1575,34 @@ const buildContinueHint = ({
   // 恢复轮凭模糊记忆汇报会把已成功项误报为未完成；附准确的已完成/失败清单。
   const summarizeStep = (step) => {
     const summary = trim(step?.summary).slice(0, 60);
-    return `${trim(step?.toolName, '未知工具')}${summary ? `（${summary}）` : ''}`;
+    const tool = trim(
+      step?.toolName,
+      getLocalizedPromptText('maid.continue.unknown_tool', '未知工具'),
+    );
+    return summary
+      ? formatMaidPromptText('maid.continue.step', '{tool}（{summary}）', { tool, summary })
+      : tool;
   };
   const completed = list.filter(step => step?.status === 'succeeded').slice(-8).map(summarizeStep);
   const failed = list.filter(step => step?.status === 'failed').slice(-3).map(summarizeStep);
+  const separator = getLocalizedPromptText('maid.continue.separator', '；');
   return [
-    `用户原始目标：${trim(input, '-')}`,
-    completed.length ? `已完成步骤（恢复后不要重复执行，也不要报告为未完成）：${completed.join('；')}` : '',
-    failed.length ? `失败步骤：${failed.join('；')}` : '',
-    lastTool ? `上一轮最后执行工具：${lastTool}` : '',
-    pendingTool ? `下一步建议工具：${pendingTool}` : '',
-    reason ? `中断原因：${reason}` : '',
-    '用户说“继续”时，应基于本轮历史继续执行、验证和修正，不要改成普通闲聊。',
+    formatMaidPromptText('maid.continue.goal', '用户原始目标：{value}', { value: trim(input, '-') }),
+    completed.length ? formatMaidPromptText(
+      'maid.continue.completed',
+      '已完成步骤（恢复后不要重复执行，也不要报告为未完成）：{value}',
+      { value: completed.join(separator) },
+    ) : '',
+    failed.length ? formatMaidPromptText('maid.continue.failed', '失败步骤：{value}', {
+      value: failed.join(separator),
+    }) : '',
+    lastTool ? formatMaidPromptText('maid.continue.last_tool', '上一轮最后执行工具：{value}', { value: lastTool }) : '',
+    pendingTool ? formatMaidPromptText('maid.continue.next_tool', '下一步建议工具：{value}', { value: pendingTool }) : '',
+    reason ? formatMaidPromptText('maid.continue.reason', '中断原因：{value}', { value: reason }) : '',
+    getLocalizedPromptText(
+      'maid.continue.instruction',
+      '用户说“继续”时，应基于本轮历史继续执行、验证和修正，不要改成普通闲聊。',
+    ),
   ].filter(Boolean).join('\n');
 };
 

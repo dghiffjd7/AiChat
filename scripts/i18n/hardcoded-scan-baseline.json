@@ -1,0 +1,2510 @@
+[
+  {
+    "file": "src/scripts/api/providers/anthropic.js",
+    "text": "[图片] \u0000",
+    "category": "protocol_compatibility",
+    "reason": "Remaining strings are message/media sentinels, legacy Chinese parser aliases, stable role names, or embedded bridge contracts; changing them would break existing chats or imports."
+  },
+  {
+    "file": "src/scripts/api/providers/custom.js",
+    "text": "；可能原因：请求尾部不是有效 user 轮（如预填充/系统注入在最后），Claude/OpenAI-compatible 网关会返回空流。请在该连线配置将「提示词后处理」设为 semi 或 strict",
+    "category": "compatibility_guidance",
+    "reason": "This Claude-compatible empty-stream suffix is part of a complete localized error template; it remains separately visible to the scanner because the runtime composes the error from two constants."
+  },
+  {
+    "file": "src/scripts/api/providers/gemini.js",
+    "text": "[图片] \u0000",
+    "category": "protocol_compatibility",
+    "reason": "Remaining strings are message/media sentinels, legacy Chinese parser aliases, stable role names, or embedded bridge contracts; changing them would break existing chats or imports."
+  },
+  {
+    "file": "src/scripts/api/providers/makersuite.js",
+    "text": "[图片] \u0000",
+    "category": "protocol_compatibility",
+    "reason": "Remaining strings are message/media sentinels, legacy Chinese parser aliases, stable role names, or embedded bridge contracts; changing them would break existing chats or imports."
+  },
+  {
+    "file": "src/scripts/api/providers/vertexai.js",
+    "text": "[图片] \u0000",
+    "category": "protocol_compatibility",
+    "reason": "Remaining strings are message/media sentinels, legacy Chinese parser aliases, stable role names, or embedded bridge contracts; changing them would break existing chats or imports."
+  },
+  {
+    "file": "src/scripts/i18n/first-run-language.js",
+    "text": "跟随系统 / Follow system",
+    "category": "bootstrap_multilingual",
+    "reason": "This chooser is rendered before locale selection and deliberately presents English, Simplified Chinese, and Traditional Chinese together."
+  },
+  {
+    "file": "src/scripts/i18n/first-run-language.js",
+    "text": "跟隨系統 / Follow system",
+    "category": "bootstrap_multilingual",
+    "reason": "This chooser is rendered before locale selection and deliberately presents English, Simplified Chinese, and Traditional Chinese together."
+  },
+  {
+    "file": "src/scripts/i18n/first-run-language.js",
+    "text": "简体中文",
+    "category": "bootstrap_multilingual",
+    "reason": "This chooser is rendered before locale selection and deliberately presents English, Simplified Chinese, and Traditional Chinese together."
+  },
+  {
+    "file": "src/scripts/i18n/first-run-language.js",
+    "text": "繁體中文",
+    "category": "bootstrap_multilingual",
+    "reason": "This chooser is rendered before locale selection and deliberately presents English, Simplified Chinese, and Traditional Chinese together."
+  },
+  {
+    "file": "src/scripts/i18n/first-run-language.js",
+    "text": "之后可以在通用设置中更改。",
+    "category": "bootstrap_multilingual",
+    "reason": "This chooser is rendered before locale selection and deliberately presents English, Simplified Chinese, and Traditional Chinese together."
+  },
+  {
+    "file": "src/scripts/i18n/first-run-language.js",
+    "text": "系统推荐",
+    "category": "bootstrap_multilingual",
+    "reason": "This chooser is rendered before locale selection and deliberately presents English, Simplified Chinese, and Traditional Chinese together."
+  },
+  {
+    "file": "src/scripts/i18n/first-run-language.js",
+    "text": "之後可以在通用設定中更改。",
+    "category": "bootstrap_multilingual",
+    "reason": "This chooser is rendered before locale selection and deliberately presents English, Simplified Chinese, and Traditional Chinese together."
+  },
+  {
+    "file": "src/scripts/i18n/first-run-language.js",
+    "text": "繼續",
+    "category": "bootstrap_multilingual",
+    "reason": "This chooser is rendered before locale selection and deliberately presents English, Simplified Chinese, and Traditional Chinese together."
+  },
+  {
+    "file": "src/scripts/i18n/first-run-language.js",
+    "text": "系統建議",
+    "category": "bootstrap_multilingual",
+    "reason": "This chooser is rendered before locale selection and deliberately presents English, Simplified Chinese, and Traditional Chinese together."
+  },
+  {
+    "file": "src/scripts/i18n/first-run-language.js",
+    "text": "Aria · 语言 / 語言 / Language",
+    "category": "bootstrap_multilingual",
+    "reason": "This chooser is rendered before locale selection and deliberately presents English, Simplified Chinese, and Traditional Chinese together."
+  },
+  {
+    "file": "src/scripts/i18n/first-run-language.js",
+    "text": "选择语言 / 選擇語言 / Choose language",
+    "category": "bootstrap_multilingual",
+    "reason": "This chooser is rendered before locale selection and deliberately presents English, Simplified Chinese, and Traditional Chinese together."
+  },
+  {
+    "file": "src/scripts/memory/contact-profile-utils.js",
+    "text": "这个",
+    "category": "language_data",
+    "reason": "Chinese stop words and downgrade heuristics are matching data; prompt-facing labels in these modules already pass through memory prompt locale helpers."
+  },
+  {
+    "file": "src/scripts/memory/contact-profile-utils.js",
+    "text": "那个",
+    "category": "language_data",
+    "reason": "Chinese stop words and downgrade heuristics are matching data; prompt-facing labels in these modules already pass through memory prompt locale helpers."
+  },
+  {
+    "file": "src/scripts/memory/contact-profile-utils.js",
+    "text": "一下",
+    "category": "language_data",
+    "reason": "Chinese stop words and downgrade heuristics are matching data; prompt-facing labels in these modules already pass through memory prompt locale helpers."
+  },
+  {
+    "file": "src/scripts/memory/contact-profile-utils.js",
+    "text": "我们",
+    "category": "language_data",
+    "reason": "Chinese stop words and downgrade heuristics are matching data; prompt-facing labels in these modules already pass through memory prompt locale helpers."
+  },
+  {
+    "file": "src/scripts/memory/contact-profile-utils.js",
+    "text": "你们",
+    "category": "language_data",
+    "reason": "Chinese stop words and downgrade heuristics are matching data; prompt-facing labels in these modules already pass through memory prompt locale helpers."
+  },
+  {
+    "file": "src/scripts/memory/contact-profile-utils.js",
+    "text": "他们",
+    "category": "language_data",
+    "reason": "Chinese stop words and downgrade heuristics are matching data; prompt-facing labels in these modules already pass through memory prompt locale helpers."
+  },
+  {
+    "file": "src/scripts/memory/contact-profile-utils.js",
+    "text": "她们",
+    "category": "language_data",
+    "reason": "Chinese stop words and downgrade heuristics are matching data; prompt-facing labels in these modules already pass through memory prompt locale helpers."
+  },
+  {
+    "file": "src/scripts/memory/contact-profile-utils.js",
+    "text": "因为",
+    "category": "language_data",
+    "reason": "Chinese stop words and downgrade heuristics are matching data; prompt-facing labels in these modules already pass through memory prompt locale helpers."
+  },
+  {
+    "file": "src/scripts/memory/contact-profile-utils.js",
+    "text": "所以",
+    "category": "language_data",
+    "reason": "Chinese stop words and downgrade heuristics are matching data; prompt-facing labels in these modules already pass through memory prompt locale helpers."
+  },
+  {
+    "file": "src/scripts/memory/contact-profile-utils.js",
+    "text": "还是",
+    "category": "language_data",
+    "reason": "Chinese stop words and downgrade heuristics are matching data; prompt-facing labels in these modules already pass through memory prompt locale helpers."
+  },
+  {
+    "file": "src/scripts/memory/contact-profile-utils.js",
+    "text": "可以",
+    "category": "language_data",
+    "reason": "Chinese stop words and downgrade heuristics are matching data; prompt-facing labels in these modules already pass through memory prompt locale helpers."
+  },
+  {
+    "file": "src/scripts/memory/contact-profile-utils.js",
+    "text": "不是",
+    "category": "language_data",
+    "reason": "Chinese stop words and downgrade heuristics are matching data; prompt-facing labels in these modules already pass through memory prompt locale helpers."
+  },
+  {
+    "file": "src/scripts/memory/contact-profile-utils.js",
+    "text": "没有",
+    "category": "language_data",
+    "reason": "Chinese stop words and downgrade heuristics are matching data; prompt-facing labels in these modules already pass through memory prompt locale helpers."
+  },
+  {
+    "file": "src/scripts/memory/contact-profile-utils.js",
+    "text": "感觉",
+    "category": "language_data",
+    "reason": "Chinese stop words and downgrade heuristics are matching data; prompt-facing labels in these modules already pass through memory prompt locale helpers."
+  },
+  {
+    "file": "src/scripts/memory/contact-profile-utils.js",
+    "text": "时候",
+    "category": "language_data",
+    "reason": "Chinese stop words and downgrade heuristics are matching data; prompt-facing labels in these modules already pass through memory prompt locale helpers."
+  },
+  {
+    "file": "src/scripts/memory/contact-profile-utils.js",
+    "text": "真的",
+    "category": "language_data",
+    "reason": "Chinese stop words and downgrade heuristics are matching data; prompt-facing labels in these modules already pass through memory prompt locale helpers."
+  },
+  {
+    "file": "src/scripts/memory/contact-profile-utils.js",
+    "text": "现在",
+    "category": "language_data",
+    "reason": "Chinese stop words and downgrade heuristics are matching data; prompt-facing labels in these modules already pass through memory prompt locale helpers."
+  },
+  {
+    "file": "src/scripts/memory/contact-profile-utils.js",
+    "text": "近期主题：{values}",
+    "category": "language_data",
+    "reason": "Chinese stop words and downgrade heuristics are matching data; prompt-facing labels in these modules already pass through memory prompt locale helpers."
+  },
+  {
+    "file": "src/scripts/memory/contact-profile-utils.js",
+    "text": "稳定特征：{values}",
+    "category": "language_data",
+    "reason": "Chinese stop words and downgrade heuristics are matching data; prompt-facing labels in these modules already pass through memory prompt locale helpers."
+  },
+  {
+    "file": "src/scripts/memory/contact-profile-utils.js",
+    "text": "重要事件：{values}",
+    "category": "language_data",
+    "reason": "Chinese stop words and downgrade heuristics are matching data; prompt-facing labels in these modules already pass through memory prompt locale helpers."
+  },
+  {
+    "file": "src/scripts/memory/contact-profile-utils.js",
+    "text": "【动态弱触发｜联系人记忆】",
+    "category": "language_data",
+    "reason": "Chinese stop words and downgrade heuristics are matching data; prompt-facing labels in these modules already pass through memory prompt locale helpers."
+  },
+  {
+    "file": "src/scripts/memory/contact-profile-utils.js",
+    "text": "以下内容仅用于理解本次动态/评论相关上下文；不要向无关对象泄露私聊信息。",
+    "category": "language_data",
+    "reason": "Chinese stop words and downgrade heuristics are matching data; prompt-facing labels in these modules already pass through memory prompt locale helpers."
+  },
+  {
+    "file": "src/scripts/memory/contact-profile-utils.js",
+    "text": "未知联系人",
+    "category": "language_data",
+    "reason": "Chinese stop words and downgrade heuristics are matching data; prompt-facing labels in these modules already pass through memory prompt locale helpers."
+  },
+  {
+    "file": "src/scripts/memory/contact-profile-utils.js",
+    "text": "- 画像：{profile}",
+    "category": "language_data",
+    "reason": "Chinese stop words and downgrade heuristics are matching data; prompt-facing labels in these modules already pass through memory prompt locale helpers."
+  },
+  {
+    "file": "src/scripts/memory/memory-edit-guide.js",
+    "text": "【系统必填】",
+    "category": "prompt_fallback",
+    "reason": "These literals are canonical fallbacks behind prompt-locale builders; English actual-send output is asserted by prompt-locale and memory-template tests."
+  },
+  {
+    "file": "src/scripts/memory/memory-edit-guide.js",
+    "text": "本轮仅允许更新“摘要/总体大纲”类表格，其他表格禁止写入。",
+    "category": "prompt_fallback",
+    "reason": "These literals are canonical fallbacks behind prompt-locale builders; English actual-send output is asserted by prompt-locale and memory-template tests."
+  },
+  {
+    "file": "src/scripts/memory/memory-edit-guide.js",
+    "text": "本轮仅允许更新非摘要类表格，摘要/总体大纲类表格禁止写入。",
+    "category": "prompt_fallback",
+    "reason": "These literals are canonical fallbacks behind prompt-locale builders; English actual-send output is asserted by prompt-locale and memory-template tests."
+  },
+  {
+    "file": "src/scripts/memory/memory-edit-guide.js",
+    "text": "摘要表格只允许 insert；禁止 update/delete。",
+    "category": "prompt_fallback",
+    "reason": "These literals are canonical fallbacks behind prompt-locale builders; English actual-send output is asserted by prompt-locale and memory-template tests."
+  },
+  {
+    "file": "src/scripts/memory/memory-edit-guide.js",
+    "text": "总体大纲采用分节覆盖：section 只允许 current、plot、relationships、open_threads；每轮只输出发生变化的分节。",
+    "category": "prompt_fallback",
+    "reason": "These literals are canonical fallbacks behind prompt-locale builders; English actual-send output is asserted by prompt-locale and memory-template tests."
+  },
+  {
+    "file": "src/scripts/memory/memory-edit-guide.js",
+    "text": "大纲分节已存在时使用 update，不存在时使用 insert；不要逐轮新增大纲，也不要删除分节。",
+    "category": "prompt_fallback",
+    "reason": "These literals are canonical fallbacks behind prompt-locale builders; English actual-send output is asserted by prompt-locale and memory-template tests."
+  },
+  {
+    "file": "src/scripts/memory/memory-edit-guide.js",
+    "text": "若无法判断分节，使用 section:\"current\" 作为全量重写兜底。",
+    "category": "prompt_fallback",
+    "reason": "These literals are canonical fallbacks behind prompt-locale builders; English actual-send output is asserted by prompt-locale and memory-template tests."
+  },
+  {
+    "file": "src/scripts/memory/memory-edit-guide.js",
+    "text": "##在每次回复的末尾，按要求以规定格式，输出完整xml标签包裹tableEdit：",
+    "category": "prompt_fallback",
+    "reason": "These literals are canonical fallbacks behind prompt-locale builders; English actual-send output is asserted by prompt-locale and memory-template tests."
+  },
+  {
+    "file": "src/scripts/memory/memory-edit-guide.js",
+    "text": "（格式示例）",
+    "category": "prompt_fallback",
+    "reason": "These literals are canonical fallbacks behind prompt-locale builders; English actual-send output is asserted by prompt-locale and memory-template tests."
+  },
+  {
+    "file": "src/scripts/memory/memory-edit-guide.js",
+    "text": "{\"action\":\"insert\",\"table_id\":\"relationship\",\"data\":{\"relation\":\"朋友\"}}",
+    "category": "prompt_fallback",
+    "reason": "These literals are canonical fallbacks behind prompt-locale builders; English actual-send output is asserted by prompt-locale and memory-template tests."
+  },
+  {
+    "file": "src/scripts/memory/memory-edit-guide.js",
+    "text": "{\"action\":\"update\",\"table_id\":\"relationship\",\"row_index\":0,\"data\":{\"relation\":\"亲密朋友\"}}",
+    "category": "prompt_fallback",
+    "reason": "These literals are canonical fallbacks behind prompt-locale builders; English actual-send output is asserted by prompt-locale and memory-template tests."
+  },
+  {
+    "file": "src/scripts/memory/memory-edit-guide.js",
+    "text": "每行只允许一个 JSON 对象；不要使用其他语法。",
+    "category": "prompt_fallback",
+    "reason": "These literals are canonical fallbacks behind prompt-locale builders; English actual-send output is asserted by prompt-locale and memory-template tests."
+  },
+  {
+    "file": "src/scripts/memory/memory-edit-guide.js",
+    "text": "若该表当前无任何行，只能使用 insert；不要输出 update/delete。",
+    "category": "prompt_fallback",
+    "reason": "These literals are canonical fallbacks behind prompt-locale builders; English actual-send output is asserted by prompt-locale and memory-template tests."
+  },
+  {
+    "file": "src/scripts/memory/memory-edit-guide.js",
+    "text": "仅当 row_index 对应现有行时才使用 update/delete。",
+    "category": "prompt_fallback",
+    "reason": "These literals are canonical fallbacks behind prompt-locale builders; English actual-send output is asserted by prompt-locale and memory-template tests."
+  },
+  {
+    "file": "src/scripts/memory/memory-edit-guide.js",
+    "text": "row_index 对应表格中每行前的编号；table_id 见下表。",
+    "category": "prompt_fallback",
+    "reason": "These literals are canonical fallbacks behind prompt-locale builders; English actual-send output is asserted by prompt-locale and memory-template tests."
+  },
+  {
+    "file": "src/scripts/memory/memory-edit-guide.js",
+    "text": "无修改则输出空 <tableEdit></tableEdit>。",
+    "category": "prompt_fallback",
+    "reason": "These literals are canonical fallbacks behind prompt-locale builders; English actual-send output is asserted by prompt-locale and memory-template tests."
+  },
+  {
+    "file": "src/scripts/memory/memory-edit-guide.js",
+    "text": "世界书负责“设定是什么”；记忆表格只记录“当前状态如何、发生过什么”，不要把静态设定整段抄入表格。",
+    "category": "prompt_fallback",
+    "reason": "These literals are canonical fallbacks behind prompt-locale builders; English actual-send output is asserted by prompt-locale and memory-template tests."
+  },
+  {
+    "file": "src/scripts/memory/memory-edit-guide.js",
+    "text": "带 keywords 列的表格在 insert 时必须填写召回关键词，update 时按内容变化同步维护；使用人物、地点、物品、事件等稳定名词，以逗号分隔，禁止写“这个/那件事”等模糊指代。",
+    "category": "prompt_fallback",
+    "reason": "These literals are canonical fallbacks behind prompt-locale builders; English actual-send output is asserted by prompt-locale and memory-template tests."
+  },
+  {
+    "file": "src/scripts/memory/memory-edit-guide.js",
+    "text": "keywords 仅供本地按需召回，不要把它写成摘要正文；旧行缺少 keywords 时由 app 在本地懒生成索引。",
+    "category": "prompt_fallback",
+    "reason": "These literals are canonical fallbacks behind prompt-locale builders; English actual-send output is asserted by prompt-locale and memory-template tests."
+  },
+  {
+    "file": "src/scripts/memory/memory-edit-guide.js",
+    "text": "表格索引:",
+    "category": "prompt_fallback",
+    "reason": "These literals are canonical fallbacks behind prompt-locale builders; English actual-send output is asserted by prompt-locale and memory-template tests."
+  },
+  {
+    "file": "src/scripts/memory/memory-injection-audit-utils.js",
+    "text": "[图片]",
+    "category": "protocol_compatibility",
+    "reason": "Remaining strings are message/media sentinels, legacy Chinese parser aliases, stable role names, or embedded bridge contracts; changing them would break existing chats or imports."
+  },
+  {
+    "file": "src/scripts/memory/memory-keyword-recall-utils.js",
+    "text": "这个",
+    "category": "language_data",
+    "reason": "Chinese stop words and downgrade heuristics are matching data; prompt-facing labels in these modules already pass through memory prompt locale helpers."
+  },
+  {
+    "file": "src/scripts/memory/memory-keyword-recall-utils.js",
+    "text": "那个",
+    "category": "language_data",
+    "reason": "Chinese stop words and downgrade heuristics are matching data; prompt-facing labels in these modules already pass through memory prompt locale helpers."
+  },
+  {
+    "file": "src/scripts/memory/memory-keyword-recall-utils.js",
+    "text": "这些",
+    "category": "language_data",
+    "reason": "Chinese stop words and downgrade heuristics are matching data; prompt-facing labels in these modules already pass through memory prompt locale helpers."
+  },
+  {
+    "file": "src/scripts/memory/memory-keyword-recall-utils.js",
+    "text": "那些",
+    "category": "language_data",
+    "reason": "Chinese stop words and downgrade heuristics are matching data; prompt-facing labels in these modules already pass through memory prompt locale helpers."
+  },
+  {
+    "file": "src/scripts/memory/memory-keyword-recall-utils.js",
+    "text": "现在",
+    "category": "language_data",
+    "reason": "Chinese stop words and downgrade heuristics are matching data; prompt-facing labels in these modules already pass through memory prompt locale helpers."
+  },
+  {
+    "file": "src/scripts/memory/memory-keyword-recall-utils.js",
+    "text": "明天",
+    "category": "language_data",
+    "reason": "Chinese stop words and downgrade heuristics are matching data; prompt-facing labels in these modules already pass through memory prompt locale helpers."
+  },
+  {
+    "file": "src/scripts/memory/memory-keyword-recall-utils.js",
+    "text": "时候",
+    "category": "language_data",
+    "reason": "Chinese stop words and downgrade heuristics are matching data; prompt-facing labels in these modules already pass through memory prompt locale helpers."
+  },
+  {
+    "file": "src/scripts/memory/memory-keyword-recall-utils.js",
+    "text": "事情",
+    "category": "language_data",
+    "reason": "Chinese stop words and downgrade heuristics are matching data; prompt-facing labels in these modules already pass through memory prompt locale helpers."
+  },
+  {
+    "file": "src/scripts/memory/memory-keyword-recall-utils.js",
+    "text": "东西",
+    "category": "language_data",
+    "reason": "Chinese stop words and downgrade heuristics are matching data; prompt-facing labels in these modules already pass through memory prompt locale helpers."
+  },
+  {
+    "file": "src/scripts/memory/memory-keyword-recall-utils.js",
+    "text": "一个",
+    "category": "language_data",
+    "reason": "Chinese stop words and downgrade heuristics are matching data; prompt-facing labels in these modules already pass through memory prompt locale helpers."
+  },
+  {
+    "file": "src/scripts/memory/memory-keyword-recall-utils.js",
+    "text": "一些",
+    "category": "language_data",
+    "reason": "Chinese stop words and downgrade heuristics are matching data; prompt-facing labels in these modules already pass through memory prompt locale helpers."
+  },
+  {
+    "file": "src/scripts/memory/memory-keyword-recall-utils.js",
+    "text": "已经",
+    "category": "language_data",
+    "reason": "Chinese stop words and downgrade heuristics are matching data; prompt-facing labels in these modules already pass through memory prompt locale helpers."
+  },
+  {
+    "file": "src/scripts/memory/memory-keyword-recall-utils.js",
+    "text": "还是",
+    "category": "language_data",
+    "reason": "Chinese stop words and downgrade heuristics are matching data; prompt-facing labels in these modules already pass through memory prompt locale helpers."
+  },
+  {
+    "file": "src/scripts/memory/memory-keyword-recall-utils.js",
+    "text": "然后",
+    "category": "language_data",
+    "reason": "Chinese stop words and downgrade heuristics are matching data; prompt-facing labels in these modules already pass through memory prompt locale helpers."
+  },
+  {
+    "file": "src/scripts/memory/memory-keyword-recall-utils.js",
+    "text": "但是",
+    "category": "language_data",
+    "reason": "Chinese stop words and downgrade heuristics are matching data; prompt-facing labels in these modules already pass through memory prompt locale helpers."
+  },
+  {
+    "file": "src/scripts/memory/memory-keyword-recall-utils.js",
+    "text": "因为",
+    "category": "language_data",
+    "reason": "Chinese stop words and downgrade heuristics are matching data; prompt-facing labels in these modules already pass through memory prompt locale helpers."
+  },
+  {
+    "file": "src/scripts/memory/memory-keyword-recall-utils.js",
+    "text": "所以",
+    "category": "language_data",
+    "reason": "Chinese stop words and downgrade heuristics are matching data; prompt-facing labels in these modules already pass through memory prompt locale helpers."
+  },
+  {
+    "file": "src/scripts/memory/memory-keyword-recall-utils.js",
+    "text": "可以",
+    "category": "language_data",
+    "reason": "Chinese stop words and downgrade heuristics are matching data; prompt-facing labels in these modules already pass through memory prompt locale helpers."
+  },
+  {
+    "file": "src/scripts/memory/memory-keyword-recall-utils.js",
+    "text": "没有",
+    "category": "language_data",
+    "reason": "Chinese stop words and downgrade heuristics are matching data; prompt-facing labels in these modules already pass through memory prompt locale helpers."
+  },
+  {
+    "file": "src/scripts/memory/memory-keyword-recall-utils.js",
+    "text": "不是",
+    "category": "language_data",
+    "reason": "Chinese stop words and downgrade heuristics are matching data; prompt-facing labels in these modules already pass through memory prompt locale helpers."
+  },
+  {
+    "file": "src/scripts/memory/memory-keyword-recall-utils.js",
+    "text": "什么",
+    "category": "language_data",
+    "reason": "Chinese stop words and downgrade heuristics are matching data; prompt-facing labels in these modules already pass through memory prompt locale helpers."
+  },
+  {
+    "file": "src/scripts/memory/memory-keyword-recall-utils.js",
+    "text": "我们",
+    "category": "language_data",
+    "reason": "Chinese stop words and downgrade heuristics are matching data; prompt-facing labels in these modules already pass through memory prompt locale helpers."
+  },
+  {
+    "file": "src/scripts/memory/memory-keyword-recall-utils.js",
+    "text": "你们",
+    "category": "language_data",
+    "reason": "Chinese stop words and downgrade heuristics are matching data; prompt-facing labels in these modules already pass through memory prompt locale helpers."
+  },
+  {
+    "file": "src/scripts/memory/memory-keyword-recall-utils.js",
+    "text": "他们",
+    "category": "language_data",
+    "reason": "Chinese stop words and downgrade heuristics are matching data; prompt-facing labels in these modules already pass through memory prompt locale helpers."
+  },
+  {
+    "file": "src/scripts/memory/memory-keyword-recall-utils.js",
+    "text": "她们",
+    "category": "language_data",
+    "reason": "Chinese stop words and downgrade heuristics are matching data; prompt-facing labels in these modules already pass through memory prompt locale helpers."
+  },
+  {
+    "file": "src/scripts/memory/memory-keyword-recall-utils.js",
+    "text": "自己",
+    "category": "language_data",
+    "reason": "Chinese stop words and downgrade heuristics are matching data; prompt-facing labels in these modules already pass through memory prompt locale helpers."
+  },
+  {
+    "file": "src/scripts/memory/memory-keyword-recall-utils.js",
+    "text": "记录",
+    "category": "language_data",
+    "reason": "Chinese stop words and downgrade heuristics are matching data; prompt-facing labels in these modules already pass through memory prompt locale helpers."
+  },
+  {
+    "file": "src/scripts/memory/memory-keyword-recall-utils.js",
+    "text": "重要",
+    "category": "language_data",
+    "reason": "Chinese stop words and downgrade heuristics are matching data; prompt-facing labels in these modules already pass through memory prompt locale helpers."
+  },
+  {
+    "file": "src/scripts/memory/memory-keyword-recall-utils.js",
+    "text": "相关",
+    "category": "language_data",
+    "reason": "Chinese stop words and downgrade heuristics are matching data; prompt-facing labels in these modules already pass through memory prompt locale helpers."
+  },
+  {
+    "file": "src/scripts/memory/memory-keyword-recall-utils.js",
+    "text": "显式关键词",
+    "category": "language_data",
+    "reason": "Chinese stop words and downgrade heuristics are matching data; prompt-facing labels in these modules already pass through memory prompt locale helpers."
+  },
+  {
+    "file": "src/scripts/memory/memory-keyword-recall-utils.js",
+    "text": "实体字段",
+    "category": "language_data",
+    "reason": "Chinese stop words and downgrade heuristics are matching data; prompt-facing labels in these modules already pass through memory prompt locale helpers."
+  },
+  {
+    "file": "src/scripts/memory/memory-keyword-recall-utils.js",
+    "text": "旧行懒索引",
+    "category": "language_data",
+    "reason": "Chinese stop words and downgrade heuristics are matching data; prompt-facing labels in these modules already pass through memory prompt locale helpers."
+  },
+  {
+    "file": "src/scripts/memory/memory-keyword-recall-utils.js",
+    "text": "- {table}｜命中 {terms}（{source}）：{row}",
+    "category": "language_data",
+    "reason": "Chinese stop words and downgrade heuristics are matching data; prompt-facing labels in these modules already pass through memory prompt locale helpers."
+  },
+  {
+    "file": "src/scripts/memory/memory-keyword-recall-utils.js",
+    "text": "【按需召回｜只读历史】",
+    "category": "language_data",
+    "reason": "Chinese stop words and downgrade heuristics are matching data; prompt-facing labels in these modules already pass through memory prompt locale helpers."
+  },
+  {
+    "file": "src/scripts/memory/worldbook-downgrade-suggestion-utils.js",
+    "text": "世界",
+    "category": "language_data",
+    "reason": "Chinese stop words and downgrade heuristics are matching data; prompt-facing labels in these modules already pass through memory prompt locale helpers."
+  },
+  {
+    "file": "src/scripts/memory/worldbook-downgrade-suggestion-utils.js",
+    "text": "人物",
+    "category": "language_data",
+    "reason": "Chinese stop words and downgrade heuristics are matching data; prompt-facing labels in these modules already pass through memory prompt locale helpers."
+  },
+  {
+    "file": "src/scripts/memory/worldbook-downgrade-suggestion-utils.js",
+    "text": "信息",
+    "category": "language_data",
+    "reason": "Chinese stop words and downgrade heuristics are matching data; prompt-facing labels in these modules already pass through memory prompt locale helpers."
+  },
+  {
+    "file": "src/scripts/memory/worldbook-downgrade-suggestion-utils.js",
+    "text": "格式",
+    "category": "language_data",
+    "reason": "Chinese stop words and downgrade heuristics are matching data; prompt-facing labels in these modules already pass through memory prompt locale helpers."
+  },
+  {
+    "file": "src/scripts/plugins/plugin-runtime.js",
+    "text": "const listeners = new Map(); const pendingRpcs = new Map(); const subscriptions = new Set(); let rpcSeq = 1; let pluginMeta = {}; let listenerCount = 0; const v",
+    "category": "developer_diagnostic",
+    "reason": "Remaining literals are embedded worker/runtime source, debug logs, or diagnostics; user-facing errors from these files are registered in the UI catalog."
+  },
+  {
+    "file": "src/scripts/plugins/script-runtime.js",
+    "text": "const scripts = new Map(); let currentContext = { sessionId: '', personaId: '', presetId: '', presetIds: [], worldId: '', worldIds: [] }; let currentSettings = ",
+    "category": "developer_diagnostic",
+    "reason": "Remaining literals are embedded worker/runtime source, debug logs, or diagnostics; user-facing errors from these files are registered in the UI catalog."
+  },
+  {
+    "file": "src/scripts/plugins/script-runtime.js",
+    "text": "<!doctype html> <html> <head> <meta charset=\"utf-8\" /> <meta http-equiv=\"Content-Security-Policy\" content=\u0000 /> <base href=\u0000 /> </head> <body> \u0000 <script> const s",
+    "category": "developer_diagnostic",
+    "reason": "Remaining literals are embedded worker/runtime source, debug logs, or diagnostics; user-facing errors from these files are registered in the UI catalog."
+  },
+  {
+    "file": "src/scripts/plugins/script-runtime.js",
+    "text": "读取消息",
+    "category": "developer_diagnostic",
+    "reason": "Remaining literals are embedded worker/runtime source, debug logs, or diagnostics; user-facing errors from these files are registered in the UI catalog."
+  },
+  {
+    "file": "src/scripts/plugins/script-runtime.js",
+    "text": "读取/修改消息",
+    "category": "developer_diagnostic",
+    "reason": "Remaining literals are embedded worker/runtime source, debug logs, or diagnostics; user-facing errors from these files are registered in the UI catalog."
+  },
+  {
+    "file": "src/scripts/plugins/script-runtime.js",
+    "text": "访问网络",
+    "category": "developer_diagnostic",
+    "reason": "Remaining literals are embedded worker/runtime source, debug logs, or diagnostics; user-facing errors from these files are registered in the UI catalog."
+  },
+  {
+    "file": "src/scripts/plugins/template-engine.js",
+    "text": "const CACHE_LIMIT = \u0000; const TEMPLATE_GUARD_LIMIT = \u0000; const TEMPLATE_OUTPUT_LIMIT = \u0000; const DEFAULT_RESULT_LIMIT = \u0000; const DEFAULT_CHUNK_SIZE = \u0000; const VARI",
+    "category": "developer_diagnostic",
+    "reason": "Remaining literals are embedded worker/runtime source, debug logs, or diagnostics; user-facing errors from these files are registered in the UI catalog."
+  },
+  {
+    "file": "src/scripts/plugins/template-engine.js",
+    "text": "const __ensureOut = () => { if (__out.length > __outLimit) throw new Error(\"模板输出过大\"); };",
+    "category": "developer_diagnostic",
+    "reason": "Remaining literals are embedded worker/runtime source, debug logs, or diagnostics; user-facing errors from these files are registered in the UI catalog."
+  },
+  {
+    "file": "src/scripts/plugins/template-engine.js",
+    "text": "超时",
+    "category": "developer_diagnostic",
+    "reason": "Remaining literals are embedded worker/runtime source, debug logs, or diagnostics; user-facing errors from these files are registered in the UI catalog."
+  },
+  {
+    "file": "src/scripts/ui/app.js",
+    "text": "系统消息",
+    "category": "protocol_compatibility",
+    "reason": "Remaining strings are message/media sentinels, legacy Chinese parser aliases, stable role names, or embedded bridge contracts; changing them would break existing chats or imports."
+  },
+  {
+    "file": "src/scripts/ui/app.js",
+    "text": "系统提示",
+    "category": "protocol_compatibility",
+    "reason": "Remaining strings are message/media sentinels, legacy Chinese parser aliases, stable role names, or embedded bridge contracts; changing them would break existing chats or imports."
+  },
+  {
+    "file": "src/scripts/ui/app.js",
+    "text": "[img-图片生成中\u0000]",
+    "category": "protocol_compatibility",
+    "reason": "Remaining strings are message/media sentinels, legacy Chinese parser aliases, stable role names, or embedded bridge contracts; changing them would break existing chats or imports."
+  },
+  {
+    "file": "src/scripts/ui/app.js",
+    "text": "人",
+    "category": "protocol_compatibility",
+    "reason": "Remaining strings are message/media sentinels, legacy Chinese parser aliases, stable role names, or embedded bridge contracts; changing them would break existing chats or imports."
+  },
+  {
+    "file": "src/scripts/ui/app.js",
+    "text": "[无法读取文件内容，仅提供文件信息]",
+    "category": "protocol_compatibility",
+    "reason": "Remaining strings are message/media sentinels, legacy Chinese parser aliases, stable role names, or embedded bridge contracts; changing them would break existing chats or imports."
+  },
+  {
+    "file": "src/scripts/ui/app.js",
+    "text": "[内容已截断]",
+    "category": "protocol_compatibility",
+    "reason": "Remaining strings are message/media sentinels, legacy Chinese parser aliases, stable role names, or embedded bridge contracts; changing them would break existing chats or imports."
+  },
+  {
+    "file": "src/scripts/ui/app.js",
+    "text": "[附件]",
+    "category": "protocol_compatibility",
+    "reason": "Remaining strings are message/media sentinels, legacy Chinese parser aliases, stable role names, or embedded bridge contracts; changing them would break existing chats or imports."
+  },
+  {
+    "file": "src/scripts/ui/app.js",
+    "text": "7 阶段",
+    "category": "protocol_compatibility",
+    "reason": "Remaining strings are message/media sentinels, legacy Chinese parser aliases, stable role names, or embedded bridge contracts; changing them would break existing chats or imports."
+  },
+  {
+    "file": "src/scripts/ui/app.js",
+    "text": "主体",
+    "category": "protocol_compatibility",
+    "reason": "Remaining strings are message/media sentinels, legacy Chinese parser aliases, stable role names, or embedded bridge contracts; changing them would break existing chats or imports."
+  },
+  {
+    "file": "src/scripts/ui/app.js",
+    "text": "表现",
+    "category": "protocol_compatibility",
+    "reason": "Remaining strings are message/media sentinels, legacy Chinese parser aliases, stable role names, or embedded bridge contracts; changing them would break existing chats or imports."
+  },
+  {
+    "file": "src/scripts/ui/app.js",
+    "text": "纯白（后处理透明）",
+    "category": "protocol_compatibility",
+    "reason": "Remaining strings are message/media sentinels, legacy Chinese parser aliases, stable role names, or embedded bridge contracts; changing them would break existing chats or imports."
+  },
+  {
+    "file": "src/scripts/ui/app.js",
+    "text": "帧速",
+    "category": "protocol_compatibility",
+    "reason": "Remaining strings are message/media sentinels, legacy Chinese parser aliases, stable role names, or embedded bridge contracts; changing them would break existing chats or imports."
+  },
+  {
+    "file": "src/scripts/ui/app.js",
+    "text": "补充",
+    "category": "protocol_compatibility",
+    "reason": "Remaining strings are message/media sentinels, legacy Chinese parser aliases, stable role names, or embedded bridge contracts; changing them would break existing chats or imports."
+  },
+  {
+    "file": "src/scripts/ui/app.js",
+    "text": "[图片]",
+    "category": "protocol_compatibility",
+    "reason": "Remaining strings are message/media sentinels, legacy Chinese parser aliases, stable role names, or embedded bridge contracts; changing them would break existing chats or imports."
+  },
+  {
+    "file": "src/scripts/ui/app.js",
+    "text": "[插图：\u0000\u0000]",
+    "category": "protocol_compatibility",
+    "reason": "Remaining strings are message/media sentinels, legacy Chinese parser aliases, stable role names, or embedded bridge contracts; changing them would break existing chats or imports."
+  },
+  {
+    "file": "src/scripts/ui/app.js",
+    "text": "[图片：\u0000\u0000]",
+    "category": "protocol_compatibility",
+    "reason": "Remaining strings are message/media sentinels, legacy Chinese parser aliases, stable role names, or embedded bridge contracts; changing them would break existing chats or imports."
+  },
+  {
+    "file": "src/scripts/ui/app.js",
+    "text": "[图片]x\u0000",
+    "category": "protocol_compatibility",
+    "reason": "Remaining strings are message/media sentinels, legacy Chinese parser aliases, stable role names, or embedded bridge contracts; changing them would break existing chats or imports."
+  },
+  {
+    "file": "src/scripts/ui/app.js",
+    "text": "[文件]",
+    "category": "protocol_compatibility",
+    "reason": "Remaining strings are message/media sentinels, legacy Chinese parser aliases, stable role names, or embedded bridge contracts; changing them would break existing chats or imports."
+  },
+  {
+    "file": "src/scripts/ui/app.js",
+    "text": "[文件]x\u0000",
+    "category": "protocol_compatibility",
+    "reason": "Remaining strings are message/media sentinels, legacy Chinese parser aliases, stable role names, or embedded bridge contracts; changing them would break existing chats or imports."
+  },
+  {
+    "file": "src/scripts/ui/app.js",
+    "text": "上一次输出的 JSON 无法解析。请重新输出：只输出一个完整 JSON 对象，禁止任何其他文字和 Markdown 代码块；JSON 字符串值内部不要使用未转义的英文双引号。",
+    "category": "protocol_compatibility",
+    "reason": "Remaining strings are message/media sentinels, legacy Chinese parser aliases, stable role names, or embedded bridge contracts; changing them would break existing chats or imports."
+  },
+  {
+    "file": "src/scripts/ui/bridge.js",
+    "text": "每次输出结束后，**紧跟着**以一句话概括本次互动的摘要，确保<details><summary>摘要</summary>",
+    "category": "prompt_fallback",
+    "reason": "The remaining bridge literals are canonical prompt fallbacks passed through prompt/memory locale helpers or stable protocol examples; all user-visible bridge chrome has moved to the UI catalog."
+  },
+  {
+    "file": "src/scripts/ui/bridge.js",
+    "text": "<内容>",
+    "category": "prompt_fallback",
+    "reason": "The remaining bridge literals are canonical prompt fallbacks passed through prompt/memory locale helpers or stable protocol examples; all user-visible bridge chrome has moved to the UI catalog."
+  },
+  {
+    "file": "src/scripts/ui/bridge.js",
+    "text": "</details>标签顺序正确，摘要**纯中文输出**，不得夹杂其它语言",
+    "category": "prompt_fallback",
+    "reason": "The remaining bridge literals are canonical prompt fallbacks passed through prompt/memory locale helpers or stable protocol examples; all user-visible bridge chrome has moved to the UI catalog."
+  },
+  {
+    "file": "src/scripts/ui/bridge.js",
+    "text": "摘要格式示例：",
+    "category": "prompt_fallback",
+    "reason": "The remaining bridge literals are canonical prompt fallbacks passed through prompt/memory locale helpers or stable protocol examples; all user-visible bridge chrome has moved to the UI catalog."
+  },
+  {
+    "file": "src/scripts/ui/bridge.js",
+    "text": "用一句话概括本条回复的内容，禁止不必要的总结和升华",
+    "category": "prompt_fallback",
+    "reason": "The remaining bridge literals are canonical prompt fallbacks passed through prompt/memory locale helpers or stable protocol examples; all user-visible bridge chrome has moved to the UI catalog."
+  },
+  {
+    "file": "src/scripts/ui/bridge.js",
+    "text": "\u0000秒前",
+    "category": "prompt_fallback",
+    "reason": "The remaining bridge literals are canonical prompt fallbacks passed through prompt/memory locale helpers or stable protocol examples; all user-visible bridge chrome has moved to the UI catalog."
+  },
+  {
+    "file": "src/scripts/ui/bridge.js",
+    "text": "\u0000分钟前",
+    "category": "prompt_fallback",
+    "reason": "The remaining bridge literals are canonical prompt fallbacks passed through prompt/memory locale helpers or stable protocol examples; all user-visible bridge chrome has moved to the UI catalog."
+  },
+  {
+    "file": "src/scripts/ui/bridge.js",
+    "text": "\u0000小时前",
+    "category": "prompt_fallback",
+    "reason": "The remaining bridge literals are canonical prompt fallbacks passed through prompt/memory locale helpers or stable protocol examples; all user-visible bridge chrome has moved to the UI catalog."
+  },
+  {
+    "file": "src/scripts/ui/bridge.js",
+    "text": "\u0000天前",
+    "category": "prompt_fallback",
+    "reason": "The remaining bridge literals are canonical prompt fallbacks passed through prompt/memory locale helpers or stable protocol examples; all user-visible bridge chrome has moved to the UI catalog."
+  },
+  {
+    "file": "src/scripts/ui/bridge.js",
+    "text": "距今\u0000",
+    "category": "prompt_fallback",
+    "reason": "The remaining bridge literals are canonical prompt fallbacks passed through prompt/memory locale helpers or stable protocol examples; all user-visible bridge chrome has moved to the UI catalog."
+  },
+  {
+    "file": "src/scripts/ui/bridge.js",
+    "text": "系统检测：{table} 必填字段为空（{fields}）。请在 <tableEdit> 中使用 {action} 补全。",
+    "category": "prompt_fallback",
+    "reason": "The remaining bridge literals are canonical prompt fallbacks passed through prompt/memory locale helpers or stable protocol examples; all user-visible bridge chrome has moved to the UI catalog."
+  },
+  {
+    "file": "src/scripts/ui/bridge.js",
+    "text": "本轮必须新增{table}（摘要栏位使用“【摘要】...”格式；仅使用 insert）。",
+    "category": "prompt_fallback",
+    "reason": "The remaining bridge literals are canonical prompt fallbacks passed through prompt/memory locale helpers or stable protocol examples; all user-visible bridge chrome has moved to the UI catalog."
+  },
+  {
+    "file": "src/scripts/ui/bridge.js",
+    "text": "请检查{table}各分节；仅对本轮发生变化的分节执行 update/insert，禁止逐轮追加。",
+    "category": "prompt_fallback",
+    "reason": "The remaining bridge literals are canonical prompt fallbacks passed through prompt/memory locale helpers or stable protocol examples; all user-visible bridge chrome has moved to the UI catalog."
+  },
+  {
+    "file": "src/scripts/ui/bridge.js",
+    "text": "【动态】",
+    "category": "prompt_fallback",
+    "reason": "The remaining bridge literals are canonical prompt fallbacks passed through prompt/memory locale helpers or stable protocol examples; all user-visible bridge chrome has moved to the UI catalog."
+  },
+  {
+    "file": "src/scripts/ui/bridge.js",
+    "text": "【创意写作】",
+    "category": "prompt_fallback",
+    "reason": "The remaining bridge literals are canonical prompt fallbacks passed through prompt/memory locale helpers or stable protocol examples; all user-visible bridge chrome has moved to the UI catalog."
+  },
+  {
+    "file": "src/scripts/ui/bridge.js",
+    "text": "未知群聊",
+    "category": "prompt_fallback",
+    "reason": "The remaining bridge literals are canonical prompt fallbacks passed through prompt/memory locale helpers or stable protocol examples; all user-visible bridge chrome has moved to the UI catalog."
+  },
+  {
+    "file": "src/scripts/ui/bridge.js",
+    "text": "未知联系人",
+    "category": "prompt_fallback",
+    "reason": "The remaining bridge literals are canonical prompt fallbacks passed through prompt/memory locale helpers or stable protocol examples; all user-visible bridge chrome has moved to the UI catalog."
+  },
+  {
+    "file": "src/scripts/ui/bridge.js",
+    "text": "【群聊：{name}】",
+    "category": "prompt_fallback",
+    "reason": "The remaining bridge literals are canonical prompt fallbacks passed through prompt/memory locale helpers or stable protocol examples; all user-visible bridge chrome has moved to the UI catalog."
+  },
+  {
+    "file": "src/scripts/ui/bridge.js",
+    "text": "【用户和{name}的私聊】",
+    "category": "prompt_fallback",
+    "reason": "The remaining bridge literals are canonical prompt fallbacks passed through prompt/memory locale helpers or stable protocol examples; all user-visible bridge chrome has moved to the UI catalog."
+  },
+  {
+    "file": "src/scripts/ui/bridge.js",
+    "text": "【跨会话参考｜群聊大纲】",
+    "category": "prompt_fallback",
+    "reason": "The remaining bridge literals are canonical prompt fallbacks passed through prompt/memory locale helpers or stable protocol examples; all user-visible bridge chrome has moved to the UI catalog."
+  },
+  {
+    "file": "src/scripts/ui/bridge.js",
+    "text": "（仅供当前私聊参考，不在本会话记忆表格中更新）",
+    "category": "prompt_fallback",
+    "reason": "The remaining bridge literals are canonical prompt fallbacks passed through prompt/memory locale helpers or stable protocol examples; all user-visible bridge chrome has moved to the UI catalog."
+  },
+  {
+    "file": "src/scripts/ui/bridge.js",
+    "text": "【跨会话参考｜成员私聊记忆】",
+    "category": "prompt_fallback",
+    "reason": "The remaining bridge literals are canonical prompt fallbacks passed through prompt/memory locale helpers or stable protocol examples; all user-visible bridge chrome has moved to the UI catalog."
+  },
+  {
+    "file": "src/scripts/ui/bridge.js",
+    "text": "（以下为用户与各成员的私聊关系记忆，群内其他人不应知道；仅供模型掌握，勿在群聊中泄露）",
+    "category": "prompt_fallback",
+    "reason": "The remaining bridge literals are canonical prompt fallbacks passed through prompt/memory locale helpers or stable protocol examples; all user-visible bridge chrome has moved to the UI catalog."
+  },
+  {
+    "file": "src/scripts/ui/bridge.js",
+    "text": "【成员：{name}】",
+    "category": "prompt_fallback",
+    "reason": "The remaining bridge literals are canonical prompt fallbacks passed through prompt/memory locale helpers or stable protocol examples; all user-visible bridge chrome has moved to the UI catalog."
+  },
+  {
+    "file": "src/scripts/ui/bridge.js",
+    "text": "【跨群聊参考｜相关群聊大纲】",
+    "category": "prompt_fallback",
+    "reason": "The remaining bridge literals are canonical prompt fallbacks passed through prompt/memory locale helpers or stable protocol examples; all user-visible bridge chrome has moved to the UI catalog."
+  },
+  {
+    "file": "src/scripts/ui/bridge.js",
+    "text": "（以下为与当前群成员重叠的群聊大纲，仅共享成员知情）",
+    "category": "prompt_fallback",
+    "reason": "The remaining bridge literals are canonical prompt fallbacks passed through prompt/memory locale helpers or stable protocol examples; all user-visible bridge chrome has moved to the UI catalog."
+  },
+  {
+    "file": "src/scripts/ui/bridge.js",
+    "text": "（提示：本群聊中成员{names}未参与该群聊，不知道以下内容）",
+    "category": "prompt_fallback",
+    "reason": "The remaining bridge literals are canonical prompt fallbacks passed through prompt/memory locale helpers or stable protocol examples; all user-visible bridge chrome has moved to the UI catalog."
+  },
+  {
+    "file": "src/scripts/ui/bridge.js",
+    "text": "记忆共享：创意写作 → 聊天",
+    "category": "prompt_fallback",
+    "reason": "The remaining bridge literals are canonical prompt fallbacks passed through prompt/memory locale helpers or stable protocol examples; all user-visible bridge chrome has moved to the UI catalog."
+  },
+  {
+    "file": "src/scripts/ui/bridge.js",
+    "text": "记忆共享：社交 → 创意写作",
+    "category": "prompt_fallback",
+    "reason": "The remaining bridge literals are canonical prompt fallbacks passed through prompt/memory locale helpers or stable protocol examples; all user-visible bridge chrome has moved to the UI catalog."
+  },
+  {
+    "file": "src/scripts/ui/bridge.js",
+    "text": "记忆共享：动态 → 当前场景",
+    "category": "prompt_fallback",
+    "reason": "The remaining bridge literals are canonical prompt fallbacks passed through prompt/memory locale helpers or stable protocol examples; all user-visible bridge chrome has moved to the UI catalog."
+  },
+  {
+    "file": "src/scripts/ui/bridge.js",
+    "text": "动态弱触发召回",
+    "category": "prompt_fallback",
+    "reason": "The remaining bridge literals are canonical prompt fallbacks passed through prompt/memory locale helpers or stable protocol examples; all user-visible bridge chrome has moved to the UI catalog."
+  },
+  {
+    "file": "src/scripts/ui/bridge.js",
+    "text": "记忆共享：社交 → 动态",
+    "category": "prompt_fallback",
+    "reason": "The remaining bridge literals are canonical prompt fallbacks passed through prompt/memory locale helpers or stable protocol examples; all user-visible bridge chrome has moved to the UI catalog."
+  },
+  {
+    "file": "src/scripts/ui/bridge.js",
+    "text": "记忆共享：创意写作 → 动态",
+    "category": "prompt_fallback",
+    "reason": "The remaining bridge literals are canonical prompt fallbacks passed through prompt/memory locale helpers or stable protocol examples; all user-visible bridge chrome has moved to the UI catalog."
+  },
+  {
+    "file": "src/scripts/ui/bridge.js",
+    "text": "命中 \u0000 条，但 Q_recall 配额不足",
+    "category": "prompt_fallback",
+    "reason": "The remaining bridge literals are canonical prompt fallbacks passed through prompt/memory locale helpers or stable protocol examples; all user-visible bridge chrome has moved to the UI catalog."
+  },
+  {
+    "file": "src/scripts/ui/bridge.js",
+    "text": "动态如果有配图,使用<image_prompt>标签格式",
+    "category": "prompt_fallback",
+    "reason": "The remaining bridge literals are canonical prompt fallbacks passed through prompt/memory locale helpers or stable protocol examples; all user-visible bridge chrome has moved to the UI catalog."
+  },
+  {
+    "file": "src/scripts/ui/bridge.js",
+    "text": "如{{user}}--我好看吗<image_prompt>自拍提示词</image_prompt>--12:00--67--32",
+    "category": "prompt_fallback",
+    "reason": "The remaining bridge literals are canonical prompt fallbacks passed through prompt/memory locale helpers or stable protocol examples; all user-visible bridge chrome has moved to the UI catalog."
+  },
+  {
+    "file": "src/scripts/ui/bridge.js",
+    "text": "禁止同时使用[img-内容]；禁止输出[img-说明文字]<image_prompt>...</image_prompt>",
+    "category": "prompt_fallback",
+    "reason": "The remaining bridge literals are canonical prompt fallbacks passed through prompt/memory locale helpers or stable protocol examples; all user-visible bridge chrome has moved to the UI catalog."
+  },
+  {
+    "file": "src/scripts/ui/bridge.js",
+    "text": "动态如果有配图,请决策要使用[img-内容]这个格式还是使用<image_prompt>标签进行文生图",
+    "category": "prompt_fallback",
+    "reason": "The remaining bridge literals are canonical prompt fallbacks passed through prompt/memory locale helpers or stable protocol examples; all user-visible bridge chrome has moved to the UI catalog."
+  },
+  {
+    "file": "src/scripts/ui/bridge.js",
+    "text": "如{{user}}--我好看吗[img-一张自拍]--12:00--67--32",
+    "category": "prompt_fallback",
+    "reason": "The remaining bridge literals are canonical prompt fallbacks passed through prompt/memory locale helpers or stable protocol examples; all user-visible bridge chrome has moved to the UI catalog."
+  },
+  {
+    "file": "src/scripts/ui/bridge.js",
+    "text": "或",
+    "category": "prompt_fallback",
+    "reason": "The remaining bridge literals are canonical prompt fallbacks passed through prompt/memory locale helpers or stable protocol examples; all user-visible bridge chrome has moved to the UI catalog."
+  },
+  {
+    "file": "src/scripts/ui/bridge.js",
+    "text": "{{user}}--我好看吗<image_prompt>自拍提示词</image_prompt>--12:00--67--32",
+    "category": "prompt_fallback",
+    "reason": "The remaining bridge literals are canonical prompt fallbacks passed through prompt/memory locale helpers or stable protocol examples; all user-visible bridge chrome has moved to the UI catalog."
+  },
+  {
+    "file": "src/scripts/ui/bridge.js",
+    "text": "禁止在同一条动态中同时出现[img-...]和<image_prompt>；禁止输出[img-说明文字]<image_prompt>...</image_prompt>",
+    "category": "prompt_fallback",
+    "reason": "The remaining bridge literals are canonical prompt fallbacks passed through prompt/memory locale helpers or stable protocol examples; all user-visible bridge chrome has moved to the UI catalog."
+  },
+  {
+    "file": "src/scripts/ui/bridge.js",
+    "text": "动态如果有配图,使用[img-内容]这个格式",
+    "category": "prompt_fallback",
+    "reason": "The remaining bridge literals are canonical prompt fallbacks passed through prompt/memory locale helpers or stable protocol examples; all user-visible bridge chrome has moved to the UI catalog."
+  },
+  {
+    "file": "src/scripts/ui/bridge.js",
+    "text": "但是角色发布的动态可以有路人参与评论",
+    "category": "prompt_fallback",
+    "reason": "The remaining bridge literals are canonical prompt fallbacks passed through prompt/memory locale helpers or stable protocol examples; all user-visible bridge chrome has moved to the UI catalog."
+  },
+  {
+    "file": "src/scripts/ui/bridge.js",
+    "text": "\u0000 但是角色发布的动态可以有路人参与评论",
+    "category": "prompt_fallback",
+    "reason": "The remaining bridge literals are canonical prompt fallbacks passed through prompt/memory locale helpers or stable protocol examples; all user-visible bridge chrome has moved to the UI catalog."
+  },
+  {
+    "file": "src/scripts/ui/bridge.js",
+    "text": "</QQ空间格式介绍>",
+    "category": "prompt_fallback",
+    "reason": "The remaining bridge literals are canonical prompt fallbacks passed through prompt/memory locale helpers or stable protocol examples; all user-visible bridge chrome has moved to the UI catalog."
+  },
+  {
+    "file": "src/scripts/ui/bridge.js",
+    "text": "\u0000 </QQ空间格式介绍>",
+    "category": "prompt_fallback",
+    "reason": "The remaining bridge literals are canonical prompt fallbacks passed through prompt/memory locale helpers or stable protocol examples; all user-visible bridge chrome has moved to the UI catalog."
+  },
+  {
+    "file": "src/scripts/ui/bridge.js",
+    "text": "<发布动态的目的与时机> \u0000 </发布动态的目的与时机>",
+    "category": "prompt_fallback",
+    "reason": "The remaining bridge literals are canonical prompt fallbacks passed through prompt/memory locale helpers or stable protocol examples; all user-visible bridge chrome has moved to the UI catalog."
+  },
+  {
+    "file": "src/scripts/ui/bridge.js",
+    "text": "绑定的 API 配置不存在：\u0000",
+    "category": "prompt_fallback",
+    "reason": "The remaining bridge literals are canonical prompt fallbacks passed through prompt/memory locale helpers or stable protocol examples; all user-visible bridge chrome has moved to the UI catalog."
+  },
+  {
+    "file": "src/scripts/ui/bridge.js",
+    "text": "绑定的 API 配置「\u0000」不完整，请检查密钥、模型和地址",
+    "category": "prompt_fallback",
+    "reason": "The remaining bridge literals are canonical prompt fallbacks passed through prompt/memory locale helpers or stable protocol examples; all user-visible bridge chrome has moved to the UI catalog."
+  },
+  {
+    "file": "src/scripts/ui/bridge.js",
+    "text": "当前离线，请连接网络后再试",
+    "category": "prompt_fallback",
+    "reason": "The remaining bridge literals are canonical prompt fallbacks passed through prompt/memory locale helpers or stable protocol examples; all user-visible bridge chrome has moved to the UI catalog."
+  },
+  {
+    "file": "src/scripts/ui/bridge.js",
+    "text": "当前模型无法启用联网",
+    "category": "prompt_fallback",
+    "reason": "The remaining bridge literals are canonical prompt fallbacks passed through prompt/memory locale helpers or stable protocol examples; all user-visible bridge chrome has moved to the UI catalog."
+  },
+  {
+    "file": "src/scripts/ui/bridge.js",
+    "text": "供应方原生联网搜索完成",
+    "category": "prompt_fallback",
+    "reason": "The remaining bridge literals are canonical prompt fallbacks passed through prompt/memory locale helpers or stable protocol examples; all user-visible bridge chrome has moved to the UI catalog."
+  },
+  {
+    "file": "src/scripts/ui/bridge.js",
+    "text": "本轮使用结构化",
+    "category": "prompt_fallback",
+    "reason": "The remaining bridge literals are canonical prompt fallbacks passed through prompt/memory locale helpers or stable protocol examples; all user-visible bridge chrome has moved to the UI catalog."
+  },
+  {
+    "file": "src/scripts/ui/bridge.js",
+    "text": "本轮使用 JSON 结构化终态",
+    "category": "prompt_fallback",
+    "reason": "The remaining bridge literals are canonical prompt fallbacks passed through prompt/memory locale helpers or stable protocol examples; all user-visible bridge chrome has moved to the UI catalog."
+  },
+  {
+    "file": "src/scripts/ui/bridge.js",
+    "text": "\u0000 个启用块",
+    "category": "prompt_fallback",
+    "reason": "The remaining bridge literals are canonical prompt fallbacks passed through prompt/memory locale helpers or stable protocol examples; all user-visible bridge chrome has moved to the UI catalog."
+  },
+  {
+    "file": "src/scripts/ui/bridge.js",
+    "text": "结构化请求的凭证或权限有误，请检查 API 设置。",
+    "category": "prompt_fallback",
+    "reason": "The remaining bridge literals are canonical prompt fallbacks passed through prompt/memory locale helpers or stable protocol examples; all user-visible bridge chrome has moved to the UI catalog."
+  },
+  {
+    "file": "src/scripts/ui/bridge.js",
+    "text": "结构化请求失败。",
+    "category": "prompt_fallback",
+    "reason": "The remaining bridge literals are canonical prompt fallbacks passed through prompt/memory locale helpers or stable protocol examples; all user-visible bridge chrome has moved to the UI catalog."
+  },
+  {
+    "file": "src/scripts/ui/bridge.js",
+    "text": "API 凭证或权限错误，已停止回退以免掩盖配置问题。",
+    "category": "prompt_fallback",
+    "reason": "The remaining bridge literals are canonical prompt fallbacks passed through prompt/memory locale helpers or stable protocol examples; all user-visible bridge chrome has moved to the UI catalog."
+  },
+  {
+    "file": "src/scripts/ui/bridge.js",
+    "text": "结构化请求失败：\u0000",
+    "category": "prompt_fallback",
+    "reason": "The remaining bridge literals are canonical prompt fallbacks passed through prompt/memory locale helpers or stable protocol examples; all user-visible bridge chrome has moved to the UI catalog."
+  },
+  {
+    "file": "src/scripts/ui/bridge.js",
+    "text": "messages 不能为空",
+    "category": "prompt_fallback",
+    "reason": "The remaining bridge literals are canonical prompt fallbacks passed through prompt/memory locale helpers or stable protocol examples; all user-visible bridge chrome has moved to the UI catalog."
+  },
+  {
+    "file": "src/scripts/ui/bridge.js",
+    "text": "请求超时（\u0000秒），请稍后重试或在 API 设定中调低输出/切换网络",
+    "category": "prompt_fallback",
+    "reason": "The remaining bridge literals are canonical prompt fallbacks passed through prompt/memory locale helpers or stable protocol examples; all user-visible bridge chrome has moved to the UI catalog."
+  },
+  {
+    "file": "src/scripts/ui/bridge.js",
+    "text": "\u0000 提示词后处理：已应用 \u0000。tail=\u0000",
+    "category": "prompt_fallback",
+    "reason": "The remaining bridge literals are canonical prompt fallbacks passed through prompt/memory locale helpers or stable protocol examples; all user-visible bridge chrome has moved to the UI catalog."
+  },
+  {
+    "file": "src/scripts/ui/bridge.js",
+    "text": "\u0000 兼容：已将 \u0000 个合成 assistant 提示词改为 system。tail=\u0000",
+    "category": "prompt_fallback",
+    "reason": "The remaining bridge literals are canonical prompt fallbacks passed through prompt/memory locale helpers or stable protocol examples; all user-visible bridge chrome has moved to the UI catalog."
+  },
+  {
+    "file": "src/scripts/ui/bridge.js",
+    "text": "\u0000 兼容：检测到尾部 assistant 消息，已补空白 user turn。tail=\u0000",
+    "category": "prompt_fallback",
+    "reason": "The remaining bridge literals are canonical prompt fallbacks passed through prompt/memory locale helpers or stable protocol examples; all user-visible bridge chrome has moved to the UI catalog."
+  },
+  {
+    "file": "src/scripts/ui/bridge.js",
+    "text": "- 大总结：{value}",
+    "category": "prompt_fallback",
+    "reason": "The remaining bridge literals are canonical prompt fallbacks passed through prompt/memory locale helpers or stable protocol examples; all user-visible bridge chrome has moved to the UI catalog."
+  },
+  {
+    "file": "src/scripts/ui/bridge.js",
+    "text": "群聊：{value}",
+    "category": "prompt_fallback",
+    "reason": "The remaining bridge literals are canonical prompt fallbacks passed through prompt/memory locale helpers or stable protocol examples; all user-visible bridge chrome has moved to the UI catalog."
+  },
+  {
+    "file": "src/scripts/ui/bridge.js",
+    "text": "角色所在群聊摘要回顾（仅供理解上下文）：",
+    "category": "prompt_fallback",
+    "reason": "The remaining bridge literals are canonical prompt fallbacks passed through prompt/memory locale helpers or stable protocol examples; all user-visible bridge chrome has moved to the UI catalog."
+  },
+  {
+    "file": "src/scripts/ui/bridge.js",
+    "text": "系统消息：内容",
+    "category": "prompt_fallback",
+    "reason": "The remaining bridge literals are canonical prompt fallbacks passed through prompt/memory locale helpers or stable protocol examples; all user-visible bridge chrome has moved to the UI catalog."
+  },
+  {
+    "file": "src/scripts/ui/bridge.js",
+    "text": "以下为动态摘要回顾（仅供理解上下文）：",
+    "category": "prompt_fallback",
+    "reason": "The remaining bridge literals are canonical prompt fallbacks passed through prompt/memory locale helpers or stable protocol examples; all user-visible bridge chrome has moved to the UI catalog."
+  },
+  {
+    "file": "src/scripts/ui/bridge.js",
+    "text": "- 总结：{value}",
+    "category": "prompt_fallback",
+    "reason": "The remaining bridge literals are canonical prompt fallbacks passed through prompt/memory locale helpers or stable protocol examples; all user-visible bridge chrome has moved to the UI catalog."
+  },
+  {
+    "file": "src/scripts/ui/bridge.js",
+    "text": "{user}与{name}:",
+    "category": "prompt_fallback",
+    "reason": "The remaining bridge literals are canonical prompt fallbacks passed through prompt/memory locale helpers or stable protocol examples; all user-visible bridge chrome has moved to the UI catalog."
+  },
+  {
+    "file": "src/scripts/ui/bridge.js",
+    "text": "群聊成员私聊摘要回顾（YAML，仅供理解上下文）：",
+    "category": "prompt_fallback",
+    "reason": "The remaining bridge literals are canonical prompt fallbacks passed through prompt/memory locale helpers or stable protocol examples; all user-visible bridge chrome has moved to the UI catalog."
+  },
+  {
+    "file": "src/scripts/ui/bridge.js",
+    "text": "（私聊信息默认不对其他成员公开）",
+    "category": "prompt_fallback",
+    "reason": "The remaining bridge literals are canonical prompt fallbacks passed through prompt/memory locale helpers or stable protocol examples; all user-visible bridge chrome has moved to the UI catalog."
+  },
+  {
+    "file": "src/scripts/ui/bridge.js",
+    "text": "私聊摘要回顾（YAML，仅供理解上下文）：",
+    "category": "prompt_fallback",
+    "reason": "The remaining bridge literals are canonical prompt fallbacks passed through prompt/memory locale helpers or stable protocol examples; all user-visible bridge chrome has moved to the UI catalog."
+  },
+  {
+    "file": "src/scripts/ui/bridge.js",
+    "text": "（私聊信息默认不对第三方公开）",
+    "category": "prompt_fallback",
+    "reason": "The remaining bridge literals are canonical prompt fallbacks passed through prompt/memory locale helpers or stable protocol examples; all user-visible bridge chrome has moved to the UI catalog."
+  },
+  {
+    "file": "src/scripts/ui/bridge.js",
+    "text": "角色描述前",
+    "category": "prompt_fallback",
+    "reason": "The remaining bridge literals are canonical prompt fallbacks passed through prompt/memory locale helpers or stable protocol examples; all user-visible bridge chrome has moved to the UI catalog."
+  },
+  {
+    "file": "src/scripts/ui/bridge.js",
+    "text": "角色描述后",
+    "category": "prompt_fallback",
+    "reason": "The remaining bridge literals are canonical prompt fallbacks passed through prompt/memory locale helpers or stable protocol examples; all user-visible bridge chrome has moved to the UI catalog."
+  },
+  {
+    "file": "src/scripts/ui/bridge.js",
+    "text": "作者备注前",
+    "category": "prompt_fallback",
+    "reason": "The remaining bridge literals are canonical prompt fallbacks passed through prompt/memory locale helpers or stable protocol examples; all user-visible bridge chrome has moved to the UI catalog."
+  },
+  {
+    "file": "src/scripts/ui/bridge.js",
+    "text": "作者备注后",
+    "category": "prompt_fallback",
+    "reason": "The remaining bridge literals are canonical prompt fallbacks passed through prompt/memory locale helpers or stable protocol examples; all user-visible bridge chrome has moved to the UI catalog."
+  },
+  {
+    "file": "src/scripts/ui/bridge.js",
+    "text": "示例前",
+    "category": "prompt_fallback",
+    "reason": "The remaining bridge literals are canonical prompt fallbacks passed through prompt/memory locale helpers or stable protocol examples; all user-visible bridge chrome has moved to the UI catalog."
+  },
+  {
+    "file": "src/scripts/ui/bridge.js",
+    "text": "示例后",
+    "category": "prompt_fallback",
+    "reason": "The remaining bridge literals are canonical prompt fallbacks passed through prompt/memory locale helpers or stable protocol examples; all user-visible bridge chrome has moved to the UI catalog."
+  },
+  {
+    "file": "src/scripts/ui/bridge.js",
+    "text": "按深度插入",
+    "category": "prompt_fallback",
+    "reason": "The remaining bridge literals are canonical prompt fallbacks passed through prompt/memory locale helpers or stable protocol examples; all user-visible bridge chrome has moved to the UI catalog."
+  },
+  {
+    "file": "src/scripts/ui/bridge.js",
+    "text": "<表情包列表> \u0000 </表情包列表>",
+    "category": "prompt_fallback",
+    "reason": "The remaining bridge literals are canonical prompt fallbacks passed through prompt/memory locale helpers or stable protocol examples; all user-visible bridge chrome has moved to the UI catalog."
+  },
+  {
+    "file": "src/scripts/ui/bridge.js",
+    "text": "<表情包列表>",
+    "category": "prompt_fallback",
+    "reason": "The remaining bridge literals are canonical prompt fallbacks passed through prompt/memory locale helpers or stable protocol examples; all user-visible bridge chrome has moved to the UI catalog."
+  },
+  {
+    "file": "src/scripts/ui/bridge.js",
+    "text": "手机-格式",
+    "category": "prompt_fallback",
+    "reason": "The remaining bridge literals are canonical prompt fallbacks passed through prompt/memory locale helpers or stable protocol examples; all user-visible bridge chrome has moved to the UI catalog."
+  },
+  {
+    "file": "src/scripts/ui/bridge.js",
+    "text": "以下为该群聊的摘要回顾：",
+    "category": "prompt_fallback",
+    "reason": "The remaining bridge literals are canonical prompt fallbacks passed through prompt/memory locale helpers or stable protocol examples; all user-visible bridge chrome has moved to the UI catalog."
+  },
+  {
+    "file": "src/scripts/ui/bridge.js",
+    "text": "以下为该聊天室的简要摘要回顾：",
+    "category": "prompt_fallback",
+    "reason": "The remaining bridge literals are canonical prompt fallbacks passed through prompt/memory locale helpers or stable protocol examples; all user-visible bridge chrome has moved to the UI catalog."
+  },
+  {
+    "file": "src/scripts/ui/bridge.js",
+    "text": "你正在扮演: {name}",
+    "category": "prompt_fallback",
+    "reason": "The remaining bridge literals are canonical prompt fallbacks passed through prompt/memory locale helpers or stable protocol examples; all user-visible bridge chrome has moved to the UI catalog."
+  },
+  {
+    "file": "src/scripts/ui/bridge.js",
+    "text": "[图片]",
+    "category": "prompt_fallback",
+    "reason": "The remaining bridge literals are canonical prompt fallbacks passed through prompt/memory locale helpers or stable protocol examples; all user-visible bridge chrome has moved to the UI catalog."
+  },
+  {
+    "file": "src/scripts/ui/bridge.js",
+    "text": "世界书已被其他操作修改，请载入最新内容后重试。",
+    "category": "prompt_fallback",
+    "reason": "The remaining bridge literals are canonical prompt fallbacks passed through prompt/memory locale helpers or stable protocol examples; all user-visible bridge chrome has moved to the UI catalog."
+  },
+  {
+    "file": "src/scripts/ui/bridge.js",
+    "text": "世界书已在确认后发生变化，请重新确认删除。",
+    "category": "prompt_fallback",
+    "reason": "The remaining bridge literals are canonical prompt fallbacks passed through prompt/memory locale helpers or stable protocol examples; all user-visible bridge chrome has moved to the UI catalog."
+  },
+  {
+    "file": "src/scripts/ui/bridge.js",
+    "text": "任一副关键词命中",
+    "category": "prompt_fallback",
+    "reason": "The remaining bridge literals are canonical prompt fallbacks passed through prompt/memory locale helpers or stable protocol examples; all user-visible bridge chrome has moved to the UI catalog."
+  },
+  {
+    "file": "src/scripts/ui/bridge.js",
+    "text": "同名世界书「\u0000」已存在，需要明确确认后才能覆盖。",
+    "category": "prompt_fallback",
+    "reason": "The remaining bridge literals are canonical prompt fallbacks passed through prompt/memory locale helpers or stable protocol examples; all user-visible bridge chrome has moved to the UI catalog."
+  },
+  {
+    "file": "src/scripts/ui/chat/auto-image-prompt-utils.js",
+    "text": "不需要",
+    "category": "prompt_fallback",
+    "reason": "These literals are canonical fallbacks behind prompt-locale builders; English actual-send output is asserted by prompt-locale and memory-template tests."
+  },
+  {
+    "file": "src/scripts/ui/chat/auto-image-prompt-utils.js",
+    "text": "自动生图标签规则，用于生成{{image_prompt_surface}}。",
+    "category": "prompt_fallback",
+    "reason": "These literals are canonical fallbacks behind prompt-locale builders; English actual-send output is asserted by prompt-locale and memory-template tests."
+  },
+  {
+    "file": "src/scripts/ui/chat/auto-image-prompt-utils.js",
+    "text": "当前图片模型：{{image_prompt_model}}",
+    "category": "prompt_fallback",
+    "reason": "These literals are canonical fallbacks behind prompt-locale builders; English actual-send output is asserted by prompt-locale and memory-template tests."
+  },
+  {
+    "file": "src/scripts/ui/chat/auto-image-prompt-utils.js",
+    "text": "提示词风格：{{image_prompt_style}}",
+    "category": "prompt_fallback",
+    "reason": "These literals are canonical fallbacks behind prompt-locale builders; English actual-send output is asserted by prompt-locale and memory-template tests."
+  },
+  {
+    "file": "src/scripts/ui/chat/auto-image-prompt-utils.js",
+    "text": "【AI决策规则】",
+    "category": "prompt_fallback",
+    "reason": "These literals are canonical fallbacks behind prompt-locale builders; English actual-send output is asserted by prompt-locale and memory-template tests."
+  },
+  {
+    "file": "src/scripts/ui/chat/auto-image-prompt-utils.js",
+    "text": "- 若本轮需要新生成图片，输出 <image_prompt>...</image_prompt>",
+    "category": "prompt_fallback",
+    "reason": "These literals are canonical fallbacks behind prompt-locale builders; English actual-send output is asserted by prompt-locale and memory-template tests."
+  },
+  {
+    "file": "src/scripts/ui/chat/auto-image-prompt-utils.js",
+    "text": "- 若只是通过文本描述图片，输出 [img-内容]",
+    "category": "prompt_fallback",
+    "reason": "These literals are canonical fallbacks behind prompt-locale builders; English actual-send output is asserted by prompt-locale and memory-template tests."
+  },
+  {
+    "file": "src/scripts/ui/chat/auto-image-prompt-utils.js",
+    "text": "- 积极：用户明确要照片/自拍/图片时，优先视为新生成图片，使用 <image_prompt>",
+    "category": "prompt_fallback",
+    "reason": "These literals are canonical fallbacks behind prompt-locale builders; English actual-send output is asserted by prompt-locale and memory-template tests."
+  },
+  {
+    "file": "src/scripts/ui/chat/auto-image-prompt-utils.js",
+    "text": "- 标准：明确图片需求或强视觉场景才使用 <image_prompt>",
+    "category": "prompt_fallback",
+    "reason": "These literals are canonical fallbacks behind prompt-locale builders; English actual-send output is asserted by prompt-locale and memory-template tests."
+  },
+  {
+    "file": "src/scripts/ui/chat/auto-image-prompt-utils.js",
+    "text": "- 保守：只有用户明确要求图片生成时才使用 <image_prompt>",
+    "category": "prompt_fallback",
+    "reason": "These literals are canonical fallbacks behind prompt-locale builders; English actual-send output is asserted by prompt-locale and memory-template tests."
+  },
+  {
+    "file": "src/scripts/ui/chat/auto-image-prompt-utils.js",
+    "text": "请严格按以下XML格式输出：",
+    "category": "prompt_fallback",
+    "reason": "These literals are canonical fallbacks behind prompt-locale builders; English actual-send output is asserted by prompt-locale and memory-template tests."
+  },
+  {
+    "file": "src/scripts/ui/chat/auto-image-prompt-utils.js",
+    "text": "<image_prompt>这里写完整生图提示词</image_prompt>",
+    "category": "prompt_fallback",
+    "reason": "These literals are canonical fallbacks behind prompt-locale builders; English actual-send output is asserted by prompt-locale and memory-template tests."
+  },
+  {
+    "file": "src/scripts/ui/chat/auto-image-prompt-utils.js",
+    "text": "注意事项：",
+    "category": "prompt_fallback",
+    "reason": "These literals are canonical fallbacks behind prompt-locale builders; English actual-send output is asserted by prompt-locale and memory-template tests."
+  },
+  {
+    "file": "src/scripts/ui/chat/auto-image-prompt-utils.js",
+    "text": "- 所有信息需与当前剧情进展严格连贯。",
+    "category": "prompt_fallback",
+    "reason": "These literals are canonical fallbacks behind prompt-locale builders; English actual-send output is asserted by prompt-locale and memory-template tests."
+  },
+  {
+    "file": "src/scripts/ui/chat/auto-image-prompt-utils.js",
+    "text": "- 格式务必正确。",
+    "category": "prompt_fallback",
+    "reason": "These literals are canonical fallbacks behind prompt-locale builders; English actual-send output is asserted by prompt-locale and memory-template tests."
+  },
+  {
+    "file": "src/scripts/ui/chat/auto-image-prompt-utils.js",
+    "text": "- [img-内容] 是一般图片格式，<image_prompt> 是文生图格式，二者禁止在同一条内容中混用或嵌套。",
+    "category": "prompt_fallback",
+    "reason": "These literals are canonical fallbacks behind prompt-locale builders; English actual-send output is asserted by prompt-locale and memory-template tests."
+  },
+  {
+    "file": "src/scripts/ui/chat/auto-image-prompt-utils.js",
+    "text": "- 标签内只写生图提示词，不写解释、编号或 Markdown",
+    "category": "prompt_fallback",
+    "reason": "These literals are canonical fallbacks behind prompt-locale builders; English actual-send output is asserted by prompt-locale and memory-template tests."
+  },
+  {
+    "file": "src/scripts/ui/chat/auto-image-prompt-utils.js",
+    "text": "若本轮不需要图片，完全不要输出 <image_prompt> 标签。",
+    "category": "prompt_fallback",
+    "reason": "These literals are canonical fallbacks behind prompt-locale builders; English actual-send output is asserted by prompt-locale and memory-template tests."
+  },
+  {
+    "file": "src/scripts/ui/chat/auto-image-prompt-utils.js",
+    "text": "[img-图片生成中\u0000]",
+    "category": "prompt_fallback",
+    "reason": "These literals are canonical fallbacks behind prompt-locale builders; English actual-send output is asserted by prompt-locale and memory-template tests."
+  },
+  {
+    "file": "src/scripts/ui/chat/chat-body-optimize-utils.js",
+    "text": "你是正文优化 Agent。任务：按用户指示优化一段 AI 回复的文字表达。",
+    "category": "prompt_fallback",
+    "reason": "These literals are canonical fallbacks behind prompt-locale builders; English actual-send output is asserted by prompt-locale and memory-template tests."
+  },
+  {
+    "file": "src/scripts/ui/chat/chat-body-optimize-utils.js",
+    "text": "## 允许",
+    "category": "prompt_fallback",
+    "reason": "These literals are canonical fallbacks behind prompt-locale builders; English actual-send output is asserted by prompt-locale and memory-template tests."
+  },
+  {
+    "file": "src/scripts/ui/chat/chat-body-optimize-utils.js",
+    "text": "按指示精简重复、调整语序、改善流畅度、增强或收敛描写风格。",
+    "category": "prompt_fallback",
+    "reason": "These literals are canonical fallbacks behind prompt-locale builders; English actual-send output is asserted by prompt-locale and memory-template tests."
+  },
+  {
+    "file": "src/scripts/ui/chat/chat-body-optimize-utils.js",
+    "text": "## 禁止",
+    "category": "prompt_fallback",
+    "reason": "These literals are canonical fallbacks behind prompt-locale builders; English actual-send output is asserted by prompt-locale and memory-template tests."
+  },
+  {
+    "file": "src/scripts/ui/chat/chat-body-optimize-utils.js",
+    "text": "不得改变剧情事实、角色行为、说话人、时间线；不得改变任何数值、状态、日期。",
+    "category": "prompt_fallback",
+    "reason": "These literals are canonical fallbacks behind prompt-locale builders; English actual-send output is asserted by prompt-locale and memory-template tests."
+  },
+  {
+    "file": "src/scripts/ui/chat/chat-body-optimize-utils.js",
+    "text": "不得新增剧情内容或台词；不得删除承载剧情信息的段落（除非指示明确要求删减且内容重复）。",
+    "category": "prompt_fallback",
+    "reason": "These literals are canonical fallbacks behind prompt-locale builders; English actual-send output is asserted by prompt-locale and memory-template tests."
+  },
+  {
+    "file": "src/scripts/ui/chat/chat-body-optimize-utils.js",
+    "text": "原文中的协议/功能标签（如 <image_prompt>、<tableEdit>、状态块、HTML 结构标签）必须原样保留，只优化标签外或标签内的自然语言正文。",
+    "category": "prompt_fallback",
+    "reason": "These literals are canonical fallbacks behind prompt-locale builders; English actual-send output is asserted by prompt-locale and memory-template tests."
+  },
+  {
+    "file": "src/scripts/ui/chat/chat-body-optimize-utils.js",
+    "text": "## 输出",
+    "category": "prompt_fallback",
+    "reason": "These literals are canonical fallbacks behind prompt-locale builders; English actual-send output is asserted by prompt-locale and memory-template tests."
+  },
+  {
+    "file": "src/scripts/ui/chat/chat-body-optimize-utils.js",
+    "text": "输出必须是一个完整 JSON 对象。禁止 Markdown 代码块，禁止解释，禁止在 JSON 前后输出任何文字。",
+    "category": "prompt_fallback",
+    "reason": "These literals are canonical fallbacks behind prompt-locale builders; English actual-send output is asserted by prompt-locale and memory-template tests."
+  },
+  {
+    "file": "src/scripts/ui/chat/chat-body-optimize-utils.js",
+    "text": "JSON 字符串字段内部不要使用未转义的英文双引号；需要引用时使用中文引号。",
+    "category": "prompt_fallback",
+    "reason": "These literals are canonical fallbacks behind prompt-locale builders; English actual-send output is asserted by prompt-locale and memory-template tests."
+  },
+  {
+    "file": "src/scripts/ui/chat/chat-body-optimize-utils.js",
+    "text": "canOptimize=true 时，optimizedText 必须是完整的、可直接替换原文的优化后文本。",
+    "category": "prompt_fallback",
+    "reason": "These literals are canonical fallbacks behind prompt-locale builders; English actual-send output is asserted by prompt-locale and memory-template tests."
+  },
+  {
+    "file": "src/scripts/ui/chat/chat-body-optimize-utils.js",
+    "text": "canOptimize=false 时（原文为空、指示与正文无关、按指示无需修改），optimizedText 必须是空字符串，并在 summary 说明原因。",
+    "category": "prompt_fallback",
+    "reason": "These literals are canonical fallbacks behind prompt-locale builders; English actual-send output is asserted by prompt-locale and memory-template tests."
+  },
+  {
+    "file": "src/scripts/ui/chat/chat-body-optimize-utils.js",
+    "text": "# Instruction（用户优化指示）",
+    "category": "prompt_fallback",
+    "reason": "These literals are canonical fallbacks behind prompt-locale builders; English actual-send output is asserted by prompt-locale and memory-template tests."
+  },
+  {
+    "file": "src/scripts/ui/chat/chat-body-optimize-utils.js",
+    "text": "# Original Text（待优化正文）",
+    "category": "prompt_fallback",
+    "reason": "These literals are canonical fallbacks behind prompt-locale builders; English actual-send output is asserted by prompt-locale and memory-template tests."
+  },
+  {
+    "file": "src/scripts/ui/chat/chat-body-optimize-utils.js",
+    "text": "\"summary\": \"一句话说明改了什么或为何不改\",",
+    "category": "prompt_fallback",
+    "reason": "These literals are canonical fallbacks behind prompt-locale builders; English actual-send output is asserted by prompt-locale and memory-template tests."
+  },
+  {
+    "file": "src/scripts/ui/chat/chat-body-optimize-utils.js",
+    "text": "\"optimizedText\": \"完整优化后文本；canOptimize=true 时必须非空\"",
+    "category": "prompt_fallback",
+    "reason": "These literals are canonical fallbacks behind prompt-locale builders; English actual-send output is asserted by prompt-locale and memory-template tests."
+  },
+  {
+    "file": "src/scripts/ui/chat/chat-format-guardian-utils.js",
+    "text": "联系人名",
+    "category": "protocol_compatibility",
+    "reason": "Remaining strings are message/media sentinels, legacy Chinese parser aliases, stable role names, or embedded bridge contracts; changing them would break existing chats or imports."
+  },
+  {
+    "file": "src/scripts/ui/chat/chat-format-guardian-utils.js",
+    "text": "\u0000和\u0000的私聊",
+    "category": "protocol_compatibility",
+    "reason": "Remaining strings are message/media sentinels, legacy Chinese parser aliases, stable role names, or embedded bridge contracts; changing them would break existing chats or imports."
+  },
+  {
+    "file": "src/scripts/ui/chat/chat-format-guardian-utils.js",
+    "text": "系统消息",
+    "category": "protocol_compatibility",
+    "reason": "Remaining strings are message/media sentinels, legacy Chinese parser aliases, stable role names, or embedded bridge contracts; changing them would break existing chats or imports."
+  },
+  {
+    "file": "src/scripts/ui/chat/dialogue-stream-parser.js",
+    "text": "聊天内容",
+    "category": "protocol_compatibility",
+    "reason": "Remaining strings are message/media sentinels, legacy Chinese parser aliases, stable role names, or embedded bridge contracts; changing them would break existing chats or imports."
+  },
+  {
+    "file": "src/scripts/ui/chat/dialogue-stream-parser.js",
+    "text": "系统消息--\u0000",
+    "category": "protocol_compatibility",
+    "reason": "Remaining strings are message/media sentinels, legacy Chinese parser aliases, stable role names, or embedded bridge contracts; changing them would break existing chats or imports."
+  },
+  {
+    "file": "src/scripts/ui/chat/dialogue-stream-parser.js",
+    "text": "的私聊",
+    "category": "protocol_compatibility",
+    "reason": "Remaining strings are message/media sentinels, legacy Chinese parser aliases, stable role names, or embedded bridge contracts; changing them would break existing chats or imports."
+  },
+  {
+    "file": "src/scripts/ui/chat/dialogue-stream-parser.js",
+    "text": "\u0000和",
+    "category": "protocol_compatibility",
+    "reason": "Remaining strings are message/media sentinels, legacy Chinese parser aliases, stable role names, or embedded bridge contracts; changing them would break existing chats or imports."
+  },
+  {
+    "file": "src/scripts/ui/chat/dialogue-stream-parser.js",
+    "text": "和",
+    "category": "protocol_compatibility",
+    "reason": "Remaining strings are message/media sentinels, legacy Chinese parser aliases, stable role names, or embedded bridge contracts; changing them would break existing chats or imports."
+  },
+  {
+    "file": "src/scripts/ui/chat/group-system-ops-utils.js",
+    "text": "邀请",
+    "category": "protocol_compatibility",
+    "reason": "Remaining strings are message/media sentinels, legacy Chinese parser aliases, stable role names, or embedded bridge contracts; changing them would break existing chats or imports."
+  },
+  {
+    "file": "src/scripts/ui/chat/llm-history-entry-utils.js",
+    "text": "[图片]",
+    "category": "protocol_compatibility",
+    "reason": "Remaining strings are message/media sentinels, legacy Chinese parser aliases, stable role names, or embedded bridge contracts; changing them would break existing chats or imports."
+  },
+  {
+    "file": "src/scripts/ui/chat/llm-history-entry-utils.js",
+    "text": "系统消息（我们能解析的这种）：\u0000",
+    "category": "protocol_compatibility",
+    "reason": "Remaining strings are message/media sentinels, legacy Chinese parser aliases, stable role names, or embedded bridge contracts; changing them would break existing chats or imports."
+  },
+  {
+    "file": "src/scripts/ui/chat/llm-history-entry-utils.js",
+    "text": "[文件] \u0000",
+    "category": "protocol_compatibility",
+    "reason": "Remaining strings are message/media sentinels, legacy Chinese parser aliases, stable role names, or embedded bridge contracts; changing them would break existing chats or imports."
+  },
+  {
+    "file": "src/scripts/ui/chat/memory-update-runtime-utils.js",
+    "text": "请根据以下聊天记录更新记忆表格。",
+    "category": "prompt_fallback",
+    "reason": "These literals are canonical fallbacks behind prompt-locale builders; English actual-send output is asserted by prompt-locale and memory-template tests."
+  },
+  {
+    "file": "src/scripts/ui/chat/memory-update-runtime-utils.js",
+    "text": "只输出 <tableEdit>...</tableEdit>，不要输出任何解释。",
+    "category": "prompt_fallback",
+    "reason": "These literals are canonical fallbacks behind prompt-locale builders; English actual-send output is asserted by prompt-locale and memory-template tests."
+  },
+  {
+    "file": "src/scripts/ui/chat/message-bubble-content-ui-utils.js",
+    "text": "[图片]",
+    "category": "protocol_compatibility",
+    "reason": "Remaining strings are message/media sentinels, legacy Chinese parser aliases, stable role names, or embedded bridge contracts; changing them would break existing chats or imports."
+  },
+  {
+    "file": "src/scripts/ui/chat/message-interaction-utils.js",
+    "text": "[附件]",
+    "category": "protocol_compatibility",
+    "reason": "Remaining strings are message/media sentinels, legacy Chinese parser aliases, stable role names, or embedded bridge contracts; changing them would break existing chats or imports."
+  },
+  {
+    "file": "src/scripts/ui/chat/message-interaction-utils.js",
+    "text": "[图片]",
+    "category": "protocol_compatibility",
+    "reason": "Remaining strings are message/media sentinels, legacy Chinese parser aliases, stable role names, or embedded bridge contracts; changing them would break existing chats or imports."
+  },
+  {
+    "file": "src/scripts/ui/chat/message-interaction-utils.js",
+    "text": "[音乐] \u0000",
+    "category": "protocol_compatibility",
+    "reason": "Remaining strings are message/media sentinels, legacy Chinese parser aliases, stable role names, or embedded bridge contracts; changing them would break existing chats or imports."
+  },
+  {
+    "file": "src/scripts/ui/chat/message-interaction-utils.js",
+    "text": "[转账] \u0000",
+    "category": "protocol_compatibility",
+    "reason": "Remaining strings are message/media sentinels, legacy Chinese parser aliases, stable role names, or embedded bridge contracts; changing them would break existing chats or imports."
+  },
+  {
+    "file": "src/scripts/ui/chat/message-interaction-utils.js",
+    "text": "[表情]",
+    "category": "protocol_compatibility",
+    "reason": "Remaining strings are message/media sentinels, legacy Chinese parser aliases, stable role names, or embedded bridge contracts; changing them would break existing chats or imports."
+  },
+  {
+    "file": "src/scripts/ui/chat/message-interaction-utils.js",
+    "text": "[文件] \u0000",
+    "category": "protocol_compatibility",
+    "reason": "Remaining strings are message/media sentinels, legacy Chinese parser aliases, stable role names, or embedded bridge contracts; changing them would break existing chats or imports."
+  },
+  {
+    "file": "src/scripts/ui/chat/message-interaction-utils.js",
+    "text": "[消息]",
+    "category": "protocol_compatibility",
+    "reason": "Remaining strings are message/media sentinels, legacy Chinese parser aliases, stable role names, or embedded bridge contracts; changing them would break existing chats or imports."
+  },
+  {
+    "file": "src/scripts/ui/chat/message-interaction-utils.js",
+    "text": "#0 序章",
+    "category": "protocol_compatibility",
+    "reason": "Remaining strings are message/media sentinels, legacy Chinese parser aliases, stable role names, or embedded bridge contracts; changing them would break existing chats or imports."
+  },
+  {
+    "file": "src/scripts/ui/chat/message-parser.js",
+    "text": "图片：\u0000",
+    "category": "protocol_compatibility",
+    "reason": "Remaining strings are message/media sentinels, legacy Chinese parser aliases, stable role names, or embedded bridge contracts; changing them would break existing chats or imports."
+  },
+  {
+    "file": "src/scripts/ui/chat/message-parser.js",
+    "text": "语音：\u0000",
+    "category": "protocol_compatibility",
+    "reason": "Remaining strings are message/media sentinels, legacy Chinese parser aliases, stable role names, or embedded bridge contracts; changing them would break existing chats or imports."
+  },
+  {
+    "file": "src/scripts/ui/chat/moment-ingest-utils.js",
+    "text": "发言人",
+    "category": "protocol_compatibility",
+    "reason": "Remaining strings are message/media sentinels, legacy Chinese parser aliases, stable role names, or embedded bridge contracts; changing them would break existing chats or imports."
+  },
+  {
+    "file": "src/scripts/ui/chat/moment-ingest-utils.js",
+    "text": "角色名",
+    "category": "protocol_compatibility",
+    "reason": "Remaining strings are message/media sentinels, legacy Chinese parser aliases, stable role names, or embedded bridge contracts; changing them would break existing chats or imports."
+  },
+  {
+    "file": "src/scripts/ui/chat/moment-ingest-utils.js",
+    "text": "作者",
+    "category": "protocol_compatibility",
+    "reason": "Remaining strings are message/media sentinels, legacy Chinese parser aliases, stable role names, or embedded bridge contracts; changing them would break existing chats or imports."
+  },
+  {
+    "file": "src/scripts/ui/chat/moments-runtime-utils.js",
+    "text": "动态id",
+    "category": "protocol_compatibility",
+    "reason": "Remaining strings are message/media sentinels, legacy Chinese parser aliases, stable role names, or embedded bridge contracts; changing them would break existing chats or imports."
+  },
+  {
+    "file": "src/scripts/ui/chat/moments-runtime-utils.js",
+    "text": "动态ID",
+    "category": "protocol_compatibility",
+    "reason": "Remaining strings are message/media sentinels, legacy Chinese parser aliases, stable role names, or embedded bridge contracts; changing them would break existing chats or imports."
+  },
+  {
+    "file": "src/scripts/ui/chat/moments-runtime-utils.js",
+    "text": "用户发布动态",
+    "category": "protocol_compatibility",
+    "reason": "Remaining strings are message/media sentinels, legacy Chinese parser aliases, stable role names, or embedded bridge contracts; changing them would break existing chats or imports."
+  },
+  {
+    "file": "src/scripts/ui/chat/pending-message-utils.js",
+    "text": "[附件]",
+    "category": "protocol_compatibility",
+    "reason": "Remaining strings are message/media sentinels, legacy Chinese parser aliases, stable role names, or embedded bridge contracts; changing them would break existing chats or imports."
+  },
+  {
+    "file": "src/scripts/ui/chat/pending-message-utils.js",
+    "text": "[图片]",
+    "category": "protocol_compatibility",
+    "reason": "Remaining strings are message/media sentinels, legacy Chinese parser aliases, stable role names, or embedded bridge contracts; changing them would break existing chats or imports."
+  },
+  {
+    "file": "src/scripts/ui/chat/pending-message-utils.js",
+    "text": "[文件] \u0000",
+    "category": "protocol_compatibility",
+    "reason": "Remaining strings are message/media sentinels, legacy Chinese parser aliases, stable role names, or embedded bridge contracts; changing them would break existing chats or imports."
+  },
+  {
+    "file": "src/scripts/ui/chat/phone-batch-provider-fc.js",
+    "text": "replyToAuthor 字段：",
+    "category": "protocol_compatibility",
+    "reason": "Remaining strings are message/media sentinels, legacy Chinese parser aliases, stable role names, or embedded bridge contracts; changing them would break existing chats or imports."
+  },
+  {
+    "file": "src/scripts/ui/chat/phone-batch-provider-fc.js",
+    "text": "replyTo 字段：",
+    "category": "protocol_compatibility",
+    "reason": "Remaining strings are message/media sentinels, legacy Chinese parser aliases, stable role names, or embedded bridge contracts; changing them would break existing chats or imports."
+  },
+  {
+    "file": "src/scripts/ui/chat/phone-batch-provider-fc.js",
+    "text": "只通过唯一结构化函数提交最终回复。",
+    "category": "protocol_compatibility",
+    "reason": "Remaining strings are message/media sentinels, legacy Chinese parser aliases, stable role names, or embedded bridge contracts; changing them would break existing chats or imports."
+  },
+  {
+    "file": "src/scripts/ui/chat/phone-reply-ir.js",
+    "text": "联系人名",
+    "category": "protocol_compatibility",
+    "reason": "Remaining strings are message/media sentinels, legacy Chinese parser aliases, stable role names, or embedded bridge contracts; changing them would break existing chats or imports."
+  },
+  {
+    "file": "src/scripts/ui/chat/prompt-context-utils.js",
+    "text": "[消息]",
+    "category": "protocol_compatibility",
+    "reason": "Remaining strings are message/media sentinels, legacy Chinese parser aliases, stable role names, or embedded bridge contracts; changing them would break existing chats or imports."
+  },
+  {
+    "file": "src/scripts/ui/chat/prompt-context-utils.js",
+    "text": "\u0000（回复了\u0000：\u0000）",
+    "category": "protocol_compatibility",
+    "reason": "Remaining strings are message/media sentinels, legacy Chinese parser aliases, stable role names, or embedded bridge contracts; changing them would break existing chats or imports."
+  },
+  {
+    "file": "src/scripts/ui/chat/prompt-preview-view-utils.js",
+    "text": "[图片：\u0000]",
+    "category": "protocol_compatibility",
+    "reason": "Remaining strings are message/media sentinels, legacy Chinese parser aliases, stable role names, or embedded bridge contracts; changing them would break existing chats or imports."
+  },
+  {
+    "file": "src/scripts/ui/chat/prompt-world-debug-utils.js",
+    "text": "未知联系人",
+    "category": "protocol_compatibility",
+    "reason": "Remaining strings are message/media sentinels, legacy Chinese parser aliases, stable role names, or embedded bridge contracts; changing them would break existing chats or imports."
+  },
+  {
+    "file": "src/scripts/ui/chat/request-prompt-utils.js",
+    "text": "[图片]",
+    "category": "protocol_compatibility",
+    "reason": "Remaining strings are message/media sentinels, legacy Chinese parser aliases, stable role names, or embedded bridge contracts; changing them would break existing chats or imports."
+  },
+  {
+    "file": "src/scripts/ui/chat/request-prompt-utils.js",
+    "text": "[文件] \u0000",
+    "category": "protocol_compatibility",
+    "reason": "Remaining strings are message/media sentinels, legacy Chinese parser aliases, stable role names, or embedded bridge contracts; changing them would break existing chats or imports."
+  },
+  {
+    "file": "src/scripts/ui/chat/rich-text-renderer.js",
+    "text": "<script> (() => { const CHATAPP_IFRAME_ID = \u0000; const CHATAPP_SESSION_ID = \u0000; const CHATAPP_DEBUG_TAG = \u0000; const CHATAPP_MESSAGE_ID = \u0000; const CHATAPP_MESSAGE_IN",
+    "category": "protocol_compatibility",
+    "reason": "Remaining strings are message/media sentinels, legacy Chinese parser aliases, stable role names, or embedded bridge contracts; changing them would break existing chats or imports."
+  },
+  {
+    "file": "src/scripts/ui/chat/rich-text-renderer.js",
+    "text": "<script> (() => { const CHATAPP_IFRAME_ID = \u0000; const CHATAPP_SESSION_ID = \u0000; const CHATAPP_MESSAGE_ID = \u0000; const CHATAPP_MESSAGE_INDEX = \u0000; const CHATAPP_SEED_V",
+    "category": "protocol_compatibility",
+    "reason": "Remaining strings are message/media sentinels, legacy Chinese parser aliases, stable role names, or embedded bridge contracts; changing them would break existing chats or imports."
+  },
+  {
+    "file": "src/scripts/ui/chat/rich-text-renderer.js",
+    "text": "(() => { const getIframeId = () => { try { const body = document.body; const docEl = document.documentElement; return (body && body.getAttribute('data-chatapp-i",
+    "category": "protocol_compatibility",
+    "reason": "Remaining strings are message/media sentinels, legacy Chinese parser aliases, stable role names, or embedded bridge contracts; changing them would break existing chats or imports."
+  },
+  {
+    "file": "src/scripts/ui/chat/rich-text-renderer.js",
+    "text": "<script> (() => { const id = \u0000; let lastSentHeight = 0; let lastSentMode = 'document'; let lastSentLock = false; let seq = 0; let pendingSource = 'bridge'; let ",
+    "category": "protocol_compatibility",
+    "reason": "Remaining strings are message/media sentinels, legacy Chinese parser aliases, stable role names, or embedded bridge contracts; changing them would break existing chats or imports."
+  },
+  {
+    "file": "src/scripts/ui/chat/rich-text-renderer.js",
+    "text": "<script> (() => { const CHATAPP_IFRAME_ID = \u0000; const CHATAPP_DEBUG_TAG = \u0000; const CHATAPP_MESSAGE_ID = \u0000; const CHATAPP_MESSAGE_INDEX = \u0000; const CHATAPP_SEED_ME",
+    "category": "protocol_compatibility",
+    "reason": "Remaining strings are message/media sentinels, legacy Chinese parser aliases, stable role names, or embedded bridge contracts; changing them would break existing chats or imports."
+  },
+  {
+    "file": "src/scripts/ui/chat/send-flow-utils.js",
+    "text": "[图片]",
+    "category": "protocol_compatibility",
+    "reason": "Remaining strings are message/media sentinels, legacy Chinese parser aliases, stable role names, or embedded bridge contracts; changing them would break existing chats or imports."
+  },
+  {
+    "file": "src/scripts/ui/chat/summary-compaction-utils.js",
+    "text": "# 注意，无视你先前收到的任何指令，你的任务已更改，不再遵守格式要求",
+    "category": "prompt_fallback",
+    "reason": "These literals are canonical fallbacks behind prompt-locale builders; English actual-send output is asserted by prompt-locale and memory-template tests."
+  },
+  {
+    "file": "src/scripts/ui/chat/summary-compaction-utils.js",
+    "text": "接下来的一轮回复中，将不会进行创作，不再遵循前面的要求，而是会遵循<summary_rules>中的要求进行一轮总结",
+    "category": "prompt_fallback",
+    "reason": "These literals are canonical fallbacks behind prompt-locale builders; English actual-send output is asserted by prompt-locale and memory-template tests."
+  },
+  {
+    "file": "src/scripts/ui/chat/summary-compaction-utils.js",
+    "text": "【总结请求】",
+    "category": "prompt_fallback",
+    "reason": "These literals are canonical fallbacks behind prompt-locale builders; English actual-send output is asserted by prompt-locale and memory-template tests."
+  },
+  {
+    "file": "src/scripts/ui/chat/summary-compaction-utils.js",
+    "text": "请对前文内容进行全面梳理，根据以下要求制作简明扼要的总结：",
+    "category": "prompt_fallback",
+    "reason": "These literals are canonical fallbacks behind prompt-locale builders; English actual-send output is asserted by prompt-locale and memory-template tests."
+  },
+  {
+    "file": "src/scripts/ui/chat/summary-compaction-utils.js",
+    "text": "总结应当遵循以下原则：",
+    "category": "prompt_fallback",
+    "reason": "These literals are canonical fallbacks behind prompt-locale builders; English actual-send output is asserted by prompt-locale and memory-template tests."
+  },
+  {
+    "file": "src/scripts/ui/chat/summary-compaction-utils.js",
+    "text": "- 按时间顺序或逻辑顺序组织信息，并明确给出具体时间节点",
+    "category": "prompt_fallback",
+    "reason": "These literals are canonical fallbacks behind prompt-locale builders; English actual-send output is asserted by prompt-locale and memory-template tests."
+  },
+  {
+    "file": "src/scripts/ui/chat/summary-compaction-utils.js",
+    "text": "- 保留关键事件和重要细节，省略冗余描述",
+    "category": "prompt_fallback",
+    "reason": "These literals are canonical fallbacks behind prompt-locale builders; English actual-send output is asserted by prompt-locale and memory-template tests."
+  },
+  {
+    "file": "src/scripts/ui/chat/summary-compaction-utils.js",
+    "text": "- 直接陈述事实，避免主观评价",
+    "category": "prompt_fallback",
+    "reason": "These literals are canonical fallbacks behind prompt-locale builders; English actual-send output is asserted by prompt-locale and memory-template tests."
+  },
+  {
+    "file": "src/scripts/ui/chat/summary-compaction-utils.js",
+    "text": "- 使用简洁清晰的语言，避免过度修饰",
+    "category": "prompt_fallback",
+    "reason": "These literals are canonical fallbacks behind prompt-locale builders; English actual-send output is asserted by prompt-locale and memory-template tests."
+  },
+  {
+    "file": "src/scripts/ui/chat/summary-compaction-utils.js",
+    "text": "- 突出事件发展脉络和关键转折点",
+    "category": "prompt_fallback",
+    "reason": "These literals are canonical fallbacks behind prompt-locale builders; English actual-send output is asserted by prompt-locale and memory-template tests."
+  },
+  {
+    "file": "src/scripts/ui/chat/summary-compaction-utils.js",
+    "text": "- 不回避任何敏感内容，保证记录完全还原前文",
+    "category": "prompt_fallback",
+    "reason": "These literals are canonical fallbacks behind prompt-locale builders; English actual-send output is asserted by prompt-locale and memory-template tests."
+  },
+  {
+    "file": "src/scripts/ui/chat/summary-compaction-utils.js",
+    "text": "总结正文必须放在 <summary>...</summary> 中（只允许这一层 XML 标签；不要输出其他 XML 标签）。",
+    "category": "prompt_fallback",
+    "reason": "These literals are canonical fallbacks behind prompt-locale builders; English actual-send output is asserted by prompt-locale and memory-template tests."
+  },
+  {
+    "file": "src/scripts/ui/chat/summary-compaction-utils.js",
+    "text": "summary 内部的正文必须使用以下格式：",
+    "category": "prompt_fallback",
+    "reason": "These literals are canonical fallbacks behind prompt-locale builders; English actual-send output is asserted by prompt-locale and memory-template tests."
+  },
+  {
+    "file": "src/scripts/ui/chat/summary-compaction-utils.js",
+    "text": "【关键事件】",
+    "category": "prompt_fallback",
+    "reason": "These literals are canonical fallbacks behind prompt-locale builders; English actual-send output is asserted by prompt-locale and memory-template tests."
+  },
+  {
+    "file": "src/scripts/ui/chat/summary-compaction-utils.js",
+    "text": "• {事件1}: {简要描述}",
+    "category": "prompt_fallback",
+    "reason": "These literals are canonical fallbacks behind prompt-locale builders; English actual-send output is asserted by prompt-locale and memory-template tests."
+  },
+  {
+    "file": "src/scripts/ui/chat/summary-compaction-utils.js",
+    "text": "• {事件2}: {简要描述}",
+    "category": "prompt_fallback",
+    "reason": "These literals are canonical fallbacks behind prompt-locale builders; English actual-send output is asserted by prompt-locale and memory-template tests."
+  },
+  {
+    "file": "src/scripts/ui/chat/summary-compaction-utils.js",
+    "text": "• {事件3}: {简要描述}",
+    "category": "prompt_fallback",
+    "reason": "These literals are canonical fallbacks behind prompt-locale builders; English actual-send output is asserted by prompt-locale and memory-template tests."
+  },
+  {
+    "file": "src/scripts/ui/chat/summary-compaction-utils.js",
+    "text": "【已有大总结】",
+    "category": "prompt_fallback",
+    "reason": "These literals are canonical fallbacks behind prompt-locale builders; English actual-send output is asserted by prompt-locale and memory-template tests."
+  },
+  {
+    "file": "src/scripts/ui/chat/summary-compaction-utils.js",
+    "text": "【前文内容（按时间标注的摘要列表）】",
+    "category": "prompt_fallback",
+    "reason": "These literals are canonical fallbacks behind prompt-locale builders; English actual-send output is asserted by prompt-locale and memory-template tests."
+  },
+  {
+    "file": "src/scripts/ui/chat/summary-compaction-utils.js",
+    "text": "开始总结，勿输出聊天格式",
+    "category": "prompt_fallback",
+    "reason": "These literals are canonical fallbacks behind prompt-locale builders; English actual-send output is asserted by prompt-locale and memory-template tests."
+  },
+  {
+    "file": "src/scripts/ui/debug-panel.js",
+    "text": "=== APP 启动，调试面板已激活 ===",
+    "category": "developer_diagnostic",
+    "reason": "Remaining literals are embedded worker/runtime source, debug logs, or diagnostics; user-facing errors from these files are registered in the UI catalog."
+  },
+  {
+    "file": "src/scripts/ui/maid-command-input-runtime-utils.js",
+    "text": "请看这张图片。",
+    "category": "prompt_fallback",
+    "reason": "These literals are canonical fallbacks behind prompt-locale builders; English actual-send output is asserted by prompt-locale and memory-template tests."
+  },
+  {
+    "file": "src/scripts/ui/maid-run-resume-utils.js",
+    "text": "继续这条已中断的女仆任务。",
+    "category": "prompt_fallback",
+    "reason": "These literals are canonical fallbacks behind prompt-locale builders; English actual-send output is asserted by prompt-locale and memory-template tests."
+  },
+  {
+    "file": "src/scripts/ui/maid-run-resume-utils.js",
+    "text": "继续提示： {value}",
+    "category": "prompt_fallback",
+    "reason": "These literals are canonical fallbacks behind prompt-locale builders; English actual-send output is asserted by prompt-locale and memory-template tests."
+  },
+  {
+    "file": "src/scripts/ui/maid-run-resume-utils.js",
+    "text": "请基于这条 run 的历史继续执行、验证和修正，不要改成普通闲聊。",
+    "category": "prompt_fallback",
+    "reason": "These literals are canonical fallbacks behind prompt-locale builders; English actual-send output is asserted by prompt-locale and memory-template tests."
+  },
+  {
+    "file": "src/scripts/ui/maid-selection-utils.js",
+    "text": "聊天消息",
+    "category": "prompt_fallback",
+    "reason": "These literals are canonical fallbacks behind prompt-locale builders; English actual-send output is asserted by prompt-locale and memory-template tests."
+  },
+  {
+    "file": "src/scripts/ui/maid-selection-utils.js",
+    "text": "Agent Center 卡片",
+    "category": "prompt_fallback",
+    "reason": "These literals are canonical fallbacks behind prompt-locale builders; English actual-send output is asserted by prompt-locale and memory-template tests."
+  },
+  {
+    "file": "src/scripts/ui/maid-selection-utils.js",
+    "text": "动态条目",
+    "category": "prompt_fallback",
+    "reason": "These literals are canonical fallbacks behind prompt-locale builders; English actual-send output is asserted by prompt-locale and memory-template tests."
+  },
+  {
+    "file": "src/scripts/ui/maid-selection-utils.js",
+    "text": "按钮",
+    "category": "prompt_fallback",
+    "reason": "These literals are canonical fallbacks behind prompt-locale builders; English actual-send output is asserted by prompt-locale and memory-template tests."
+  },
+  {
+    "file": "src/scripts/ui/maid-selection-utils.js",
+    "text": "面板 {panel}",
+    "category": "prompt_fallback",
+    "reason": "These literals are canonical fallbacks behind prompt-locale builders; English actual-send output is asserted by prompt-locale and memory-template tests."
+  },
+  {
+    "file": "src/scripts/ui/maid-selection-utils.js",
+    "text": "界面元素",
+    "category": "prompt_fallback",
+    "reason": "These literals are canonical fallbacks behind prompt-locale builders; English actual-send output is asserted by prompt-locale and memory-template tests."
+  },
+  {
+    "file": "src/scripts/ui/maid-selection-utils.js",
+    "text": "消息ID: {id}",
+    "category": "prompt_fallback",
+    "reason": "These literals are canonical fallbacks behind prompt-locale builders; English actual-send output is asserted by prompt-locale and memory-template tests."
+  },
+  {
+    "file": "src/scripts/ui/maid-selection-utils.js",
+    "text": "会话: {id}",
+    "category": "prompt_fallback",
+    "reason": "These literals are canonical fallbacks behind prompt-locale builders; English actual-send output is asserted by prompt-locale and memory-template tests."
+  },
+  {
+    "file": "src/scripts/ui/maid-selection-utils.js",
+    "text": "区域ID: {id}（需要检查图片、布局、颜色、错位或遮挡时可调用 ui.capture_region）",
+    "category": "prompt_fallback",
+    "reason": "These literals are canonical fallbacks behind prompt-locale builders; English actual-send output is asserted by prompt-locale and memory-template tests."
+  },
+  {
+    "file": "src/scripts/ui/maid-selection-utils.js",
+    "text": "内容: {content}",
+    "category": "prompt_fallback",
+    "reason": "These literals are canonical fallbacks behind prompt-locale builders; English actual-send output is asserted by prompt-locale and memory-template tests."
+  },
+  {
+    "file": "src/scripts/ui/maid-selection-utils.js",
+    "text": "用户在界面上圈选了以下内容作为本次请求的针对目标（“这个/这段/这里”等指代优先指向这些选区）：",
+    "category": "prompt_fallback",
+    "reason": "These literals are canonical fallbacks behind prompt-locale builders; English actual-send output is asserted by prompt-locale and memory-template tests."
+  },
+  {
+    "file": "src/scripts/ui/maid-selection-utils.js",
+    "text": "等 {count} 项",
+    "category": "prompt_fallback",
+    "reason": "These literals are canonical fallbacks behind prompt-locale builders; English actual-send output is asserted by prompt-locale and memory-template tests."
+  },
+  {
+    "file": "src/scripts/ui/maid-selection-utils.js",
+    "text": "屏幕选区（{size}，含：{items}{more}）",
+    "category": "prompt_fallback",
+    "reason": "These literals are canonical fallbacks behind prompt-locale builders; English actual-send output is asserted by prompt-locale and memory-template tests."
+  },
+  {
+    "file": "src/scripts/ui/maid-selection-utils.js",
+    "text": "屏幕选区（{size}）",
+    "category": "prompt_fallback",
+    "reason": "These literals are canonical fallbacks behind prompt-locale builders; English actual-send output is asserted by prompt-locale and memory-template tests."
+  },
+  {
+    "file": "src/scripts/ui/memory-template-panel.js",
+    "text": "[模板#\u0000] \u0000 超时(\u0000ms)",
+    "category": "developer_diagnostic",
+    "reason": "Remaining literals are embedded worker/runtime source, debug logs, or diagnostics; user-facing errors from these files are registered in the UI catalog."
+  },
+  {
+    "file": "src/scripts/ui/memory-template-panel.js",
+    "text": "[模板#\u0000] \u0000 之后失败: \u0000",
+    "category": "developer_diagnostic",
+    "reason": "Remaining literals are embedded worker/runtime source, debug logs, or diagnostics; user-facing errors from these files are registered in the UI catalog."
+  },
+  {
+    "file": "src/scripts/ui/memory-template-panel.js",
+    "text": "[模板#\u0000] \u0000 之后完成",
+    "category": "developer_diagnostic",
+    "reason": "Remaining literals are embedded worker/runtime source, debug logs, or diagnostics; user-facing errors from these files are registered in the UI catalog."
+  },
+  {
+    "file": "src/scripts/ui/memory-template-panel.js",
+    "text": "[模板#\u0000] \u0000 失败: \u0000",
+    "category": "developer_diagnostic",
+    "reason": "Remaining literals are embedded worker/runtime source, debug logs, or diagnostics; user-facing errors from these files are registered in the UI catalog."
+  },
+  {
+    "file": "src/scripts/ui/memory-template-panel.js",
+    "text": "[模板#?] 刷新失败：templateStore 未初始化",
+    "category": "developer_diagnostic",
+    "reason": "Remaining literals are embedded worker/runtime source, debug logs, or diagnostics; user-facing errors from these files are registered in the UI catalog."
+  },
+  {
+    "file": "src/scripts/ui/memory-template-panel.js",
+    "text": "[模板#\u0000] 刷新开始: \u0000, \u0000, \u0000, \u0000, \u0000, \u0000",
+    "category": "developer_diagnostic",
+    "reason": "Remaining literals are embedded worker/runtime source, debug logs, or diagnostics; user-facing errors from these files are registered in the UI catalog."
+  },
+  {
+    "file": "src/scripts/ui/memory-template-panel.js",
+    "text": "[模板#\u0000] writeChain 已重置: \u0000",
+    "category": "developer_diagnostic",
+    "reason": "Remaining literals are embedded worker/runtime source, debug logs, or diagnostics; user-facing errors from these files are registered in the UI catalog."
+  },
+  {
+    "file": "src/scripts/ui/memory-template-panel.js",
+    "text": "[模板#\u0000] ensureDefaultTemplate=\u0000",
+    "category": "developer_diagnostic",
+    "reason": "Remaining literals are embedded worker/runtime source, debug logs, or diagnostics; user-facing errors from these files are registered in the UI catalog."
+  },
+  {
+    "file": "src/scripts/ui/memory-template-panel.js",
+    "text": "[模板#\u0000] getTemplates 返回 \u0000 条",
+    "category": "developer_diagnostic",
+    "reason": "Remaining literals are embedded worker/runtime source, debug logs, or diagnostics; user-facing errors from these files are registered in the UI catalog."
+  },
+  {
+    "file": "src/scripts/ui/memory-template-panel.js",
+    "text": "[模板#\u0000] forceDefaultTemplate=\u0000",
+    "category": "developer_diagnostic",
+    "reason": "Remaining literals are embedded worker/runtime source, debug logs, or diagnostics; user-facing errors from these files are registered in the UI catalog."
+  },
+  {
+    "file": "src/scripts/ui/memory-template-panel.js",
+    "text": "[模板#\u0000] 重载 getTemplates 返回 \u0000 条",
+    "category": "developer_diagnostic",
+    "reason": "Remaining literals are embedded worker/runtime source, debug logs, or diagnostics; user-facing errors from these files are registered in the UI catalog."
+  },
+  {
+    "file": "src/scripts/ui/memory-template-panel.js",
+    "text": "[模板#\u0000] 列表仍为空: ensure=\u0000, force=\u0000, lastError=\u0000",
+    "category": "developer_diagnostic",
+    "reason": "Remaining literals are embedded worker/runtime source, debug logs, or diagnostics; user-facing errors from these files are registered in the UI catalog."
+  },
+  {
+    "file": "src/scripts/ui/memory-template-panel.js",
+    "text": "[模板#\u0000] 刷新结束: total=\u0000, current=\u0000",
+    "category": "developer_diagnostic",
+    "reason": "Remaining literals are embedded worker/runtime source, debug logs, or diagnostics; user-facing errors from these files are registered in the UI catalog."
+  },
+  {
+    "file": "src/scripts/ui/memory-template-panel.js",
+    "text": "[模板#?] 结构编辑失败：无可用模板或 store 未就绪",
+    "category": "developer_diagnostic",
+    "reason": "Remaining literals are embedded worker/runtime source, debug logs, or diagnostics; user-facing errors from these files are registered in the UI catalog."
+  },
+  {
+    "file": "src/scripts/ui/memory-template-panel.js",
+    "text": "[模板#?] 结构编辑失败：模板为空 (\u0000)",
+    "category": "developer_diagnostic",
+    "reason": "Remaining literals are embedded worker/runtime source, debug logs, or diagnostics; user-facing errors from these files are registered in the UI catalog."
+  },
+  {
+    "file": "src/scripts/ui/realtime/realtime-context-builder.js",
+    "text": "你正在进行自然、连续的语音通话。以下内容是当前角色与情境的语义上下文。",
+    "category": "prompt_fallback",
+    "reason": "These literals are canonical fallbacks behind prompt-locale builders; English actual-send output is asserted by prompt-locale and memory-template tests."
+  },
+  {
+    "file": "src/scripts/ui/realtime/realtime-context-builder.js",
+    "text": "保持角色身份、关系、世界设定、记忆和最近对话的一致性；自然口语回答，不输出 JSON、工具协议、标签或界面控制文本。",
+    "category": "prompt_fallback",
+    "reason": "These literals are canonical fallbacks behind prompt-locale builders; English actual-send output is asserted by prompt-locale and memory-template tests."
+  },
+  {
+    "file": "src/scripts/ui/realtime/realtime-context-builder.js",
+    "text": "【角色与当前情境】",
+    "category": "prompt_fallback",
+    "reason": "These literals are canonical fallbacks behind prompt-locale builders; English actual-send output is asserted by prompt-locale and memory-template tests."
+  },
+  {
+    "file": "src/scripts/ui/realtime/realtime-context-builder.js",
+    "text": "【最近对话】",
+    "category": "prompt_fallback",
+    "reason": "These literals are canonical fallbacks behind prompt-locale builders; English actual-send output is asserted by prompt-locale and memory-template tests."
+  },
+  {
+    "file": "src/scripts/utils/boot-diagnostics.js",
+    "text": "(无)",
+    "category": "developer_diagnostic",
+    "reason": "Remaining literals are embedded worker/runtime source, debug logs, or diagnostics; user-facing errors from these files are registered in the UI catalog."
+  },
+  {
+    "file": "src/scripts/utils/boot-diagnostics.js",
+    "text": "OmniTavern 启动诊断\u0000",
+    "category": "developer_diagnostic",
+    "reason": "Remaining literals are embedded worker/runtime source, debug logs, or diagnostics; user-facing errors from these files are registered in the UI catalog."
+  },
+  {
+    "file": "src/scripts/utils/boot-diagnostics.js",
+    "text": "已加载",
+    "category": "developer_diagnostic",
+    "reason": "Remaining literals are embedded worker/runtime source, debug logs, or diagnostics; user-facing errors from these files are registered in the UI catalog."
+  },
+  {
+    "file": "src/scripts/utils/boot-diagnostics.js",
+    "text": "未加载",
+    "category": "developer_diagnostic",
+    "reason": "Remaining literals are embedded worker/runtime source, debug logs, or diagnostics; user-facing errors from these files are registered in the UI catalog."
+  },
+  {
+    "file": "src/scripts/utils/boot-diagnostics.js",
+    "text": "耗时: \u0000s | 主模块: \u0000 | 运行时就绪: \u0000",
+    "category": "developer_diagnostic",
+    "reason": "Remaining literals are embedded worker/runtime source, debug logs, or diagnostics; user-facing errors from these files are registered in the UI catalog."
+  },
+  {
+    "file": "src/scripts/utils/boot-diagnostics.js",
+    "text": "阶段: \u0000",
+    "category": "developer_diagnostic",
+    "reason": "Remaining literals are embedded worker/runtime source, debug logs, or diagnostics; user-facing errors from these files are registered in the UI catalog."
+  },
+  {
+    "file": "src/scripts/utils/boot-diagnostics.js",
+    "text": "原生调用: ok=\u0000 timeout=\u0000 error=\u0000",
+    "category": "developer_diagnostic",
+    "reason": "Remaining literals are embedded worker/runtime source, debug logs, or diagnostics; user-facing errors from these files are registered in the UI catalog."
+  },
+  {
+    "file": "src/scripts/utils/boot-diagnostics.js",
+    "text": "| 最近超时=\u0000",
+    "category": "developer_diagnostic",
+    "reason": "Remaining literals are embedded worker/runtime source, debug logs, or diagnostics; user-facing errors from these files are registered in the UI catalog."
+  },
+  {
+    "file": "src/scripts/utils/boot-diagnostics.js",
+    "text": "| 最近错误=\u0000",
+    "category": "developer_diagnostic",
+    "reason": "Remaining literals are embedded worker/runtime source, debug logs, or diagnostics; user-facing errors from these files are registered in the UI catalog."
+  },
+  {
+    "file": "src/scripts/utils/boot-diagnostics.js",
+    "text": "| 最近调用=\u0000",
+    "category": "developer_diagnostic",
+    "reason": "Remaining literals are embedded worker/runtime source, debug logs, or diagnostics; user-facing errors from these files are registered in the UI catalog."
+  },
+  {
+    "file": "src/scripts/utils/builtin-phone-format-contract.js",
+    "text": "联系人名",
+    "category": "protocol_compatibility",
+    "reason": "Remaining strings are message/media sentinels, legacy Chinese parser aliases, stable role names, or embedded bridge contracts; changing them would break existing chats or imports."
+  },
+  {
+    "file": "src/scripts/utils/builtin-phone-format-contract.js",
+    "text": "\u0000和\u0000的私聊",
+    "category": "protocol_compatibility",
+    "reason": "Remaining strings are message/media sentinels, legacy Chinese parser aliases, stable role names, or embedded bridge contracts; changing them would break existing chats or imports."
+  },
+  {
+    "file": "src/scripts/utils/builtin-phone-format-contract.js",
+    "text": "说话人",
+    "category": "protocol_compatibility",
+    "reason": "Remaining strings are message/media sentinels, legacy Chinese parser aliases, stable role names, or embedded bridge contracts; changing them would break existing chats or imports."
+  },
+  {
+    "file": "src/scripts/utils/builtin-phone-format-contract.js",
+    "text": "群名",
+    "category": "protocol_compatibility",
+    "reason": "Remaining strings are message/media sentinels, legacy Chinese parser aliases, stable role names, or embedded bridge contracts; changing them would break existing chats or imports."
+  },
+  {
+    "file": "src/scripts/utils/builtin-phone-format-contract.js",
+    "text": "成员1",
+    "category": "protocol_compatibility",
+    "reason": "Remaining strings are message/media sentinels, legacy Chinese parser aliases, stable role names, or embedded bridge contracts; changing them would break existing chats or imports."
+  },
+  {
+    "file": "src/scripts/utils/builtin-phone-format-contract.js",
+    "text": "成员2",
+    "category": "protocol_compatibility",
+    "reason": "Remaining strings are message/media sentinels, legacy Chinese parser aliases, stable role names, or embedded bridge contracts; changing them would break existing chats or imports."
+  },
+  {
+    "file": "src/scripts/utils/builtin-phone-format-contract.js",
+    "text": "<群聊:\u0000>",
+    "category": "protocol_compatibility",
+    "reason": "Remaining strings are message/media sentinels, legacy Chinese parser aliases, stable role names, or embedded bridge contracts; changing them would break existing chats or imports."
+  },
+  {
+    "file": "src/scripts/utils/builtin-phone-format-contract.js",
+    "text": "<成员>\u0000</成员>",
+    "category": "protocol_compatibility",
+    "reason": "Remaining strings are message/media sentinels, legacy Chinese parser aliases, stable role names, or embedded bridge contracts; changing them would break existing chats or imports."
+  },
+  {
+    "file": "src/scripts/utils/builtin-phone-format-contract.js",
+    "text": "<聊天内容>",
+    "category": "protocol_compatibility",
+    "reason": "Remaining strings are message/media sentinels, legacy Chinese parser aliases, stable role names, or embedded bridge contracts; changing them would break existing chats or imports."
+  },
+  {
+    "file": "src/scripts/utils/builtin-phone-format-contract.js",
+    "text": "</聊天内容>",
+    "category": "protocol_compatibility",
+    "reason": "Remaining strings are message/media sentinels, legacy Chinese parser aliases, stable role names, or embedded bridge contracts; changing them would break existing chats or imports."
+  },
+  {
+    "file": "src/scripts/utils/builtin-phone-format-contract.js",
+    "text": "</群聊:\u0000>",
+    "category": "protocol_compatibility",
+    "reason": "Remaining strings are message/media sentinels, legacy Chinese parser aliases, stable role names, or embedded bridge contracts; changing them would break existing chats or imports."
+  },
+  {
+    "file": "src/scripts/utils/builtin-phone-format-contract.js",
+    "text": "发布者",
+    "category": "protocol_compatibility",
+    "reason": "Remaining strings are message/media sentinels, legacy Chinese parser aliases, stable role names, or embedded bridge contracts; changing them would break existing chats or imports."
+  },
+  {
+    "file": "src/scripts/utils/builtin-phone-format-contract.js",
+    "text": "评论者",
+    "category": "protocol_compatibility",
+    "reason": "Remaining strings are message/media sentinels, legacy Chinese parser aliases, stable role names, or embedded bridge contracts; changing them would break existing chats or imports."
+  },
+  {
+    "file": "src/scripts/utils/builtin-phone-format-contract.js",
+    "text": "评论正文",
+    "category": "protocol_compatibility",
+    "reason": "Remaining strings are message/media sentinels, legacy Chinese parser aliases, stable role names, or embedded bridge contracts; changing them would break existing chats or imports."
+  },
+  {
+    "file": "src/scripts/utils/builtin-phone-format-contract.js",
+    "text": "记忆表格内容",
+    "category": "protocol_compatibility",
+    "reason": "Remaining strings are message/media sentinels, legacy Chinese parser aliases, stable role names, or embedded bridge contracts; changing them would break existing chats or imports."
+  },
+  {
+    "file": "src/scripts/utils/builtin-phone-format-contract.js",
+    "text": "moment_reply_start → 评论行 → moment_reply_end",
+    "category": "protocol_compatibility",
+    "reason": "Remaining strings are message/media sentinels, legacy Chinese parser aliases, stable role names, or embedded bridge contracts; changing them would break existing chats or imports."
+  },
+  {
+    "file": "src/scripts/utils/builtin-phone-format-contract.js",
+    "text": "MiPhone_start → msg_start → 场景内容 → msg_end → MiPhone_end",
+    "category": "protocol_compatibility",
+    "reason": "Remaining strings are message/media sentinels, legacy Chinese parser aliases, stable role names, or embedded bridge contracts; changing them would break existing chats or imports."
+  },
+  {
+    "file": "src/scripts/utils/builtin-phone-format-contract.js",
+    "text": "< s* / s*群聊 s*[:：] s*\u0000 s*>",
+    "category": "protocol_compatibility",
+    "reason": "Remaining strings are message/media sentinels, legacy Chinese parser aliases, stable role names, or embedded bridge contracts; changing them would break existing chats or imports."
+  },
+  {
+    "file": "src/scripts/utils/world-ai-generation.js",
+    "text": "name: \"\" english_name: \"\" gender: \"\" background: \"\" appearance: \"\" personality: mbti: \"\" traits: \"\" dialogue_examples: note: \"仅供参考，勿完全按照其输出\" examples: - \"\" - \"\"",
+    "category": "prompt_fallback",
+    "reason": "These literals are canonical fallbacks behind prompt-locale builders; English actual-send output is asserted by prompt-locale and memory-template tests."
+  },
+  {
+    "file": "src/scripts/utils/world-ai-generation.js",
+    "text": "请根据模板与用户输入生成完整的「角色世界书条目」。",
+    "category": "prompt_fallback",
+    "reason": "These literals are canonical fallbacks behind prompt-locale builders; English actual-send output is asserted by prompt-locale and memory-template tests."
+  },
+  {
+    "file": "src/scripts/utils/world-ai-generation.js",
+    "text": "要求：",
+    "category": "prompt_fallback",
+    "reason": "These literals are canonical fallbacks behind prompt-locale builders; English actual-send output is asserted by prompt-locale and memory-template tests."
+  },
+  {
+    "file": "src/scripts/utils/world-ai-generation.js",
+    "text": "- 仅输出 YAML，不要解释，不要代码块，不要附加标题。",
+    "category": "prompt_fallback",
+    "reason": "These literals are canonical fallbacks behind prompt-locale builders; English actual-send output is asserted by prompt-locale and memory-template tests."
+  },
+  {
+    "file": "src/scripts/utils/world-ai-generation.js",
+    "text": "- YAML 结构必须与模板一致；内容尽量充实，未知的可以写“未说明”。",
+    "category": "prompt_fallback",
+    "reason": "These literals are canonical fallbacks behind prompt-locale builders; English actual-send output is asserted by prompt-locale and memory-template tests."
+  },
+  {
+    "file": "src/scripts/utils/world-ai-generation.js",
+    "text": "- 英文名使用英文；对话范例需明确“仅供参考，勿完全按照其输出”。",
+    "category": "prompt_fallback",
+    "reason": "These literals are canonical fallbacks behind prompt-locale builders; English actual-send output is asserted by prompt-locale and memory-template tests."
+  },
+  {
+    "file": "src/scripts/utils/world-ai-generation.js",
+    "text": "(空模板)",
+    "category": "prompt_fallback",
+    "reason": "These literals are canonical fallbacks behind prompt-locale builders; English actual-send output is asserted by prompt-locale and memory-template tests."
+  },
+  {
+    "file": "src/scripts/utils/world-ai-generation.js",
+    "text": "(未提供)",
+    "category": "prompt_fallback",
+    "reason": "These literals are canonical fallbacks behind prompt-locale builders; English actual-send output is asserted by prompt-locale and memory-template tests."
+  },
+  {
+    "file": "src/scripts/utils/world-ai-generation.js",
+    "text": "请在模板约束下，结合用户输入，对已有草稿进行补全与润色。",
+    "category": "prompt_fallback",
+    "reason": "These literals are canonical fallbacks behind prompt-locale builders; English actual-send output is asserted by prompt-locale and memory-template tests."
+  },
+  {
+    "file": "src/scripts/utils/world-ai-generation.js",
+    "text": "- YAML 结构必须与模板一致；不要丢失草稿里已经明确的设定。",
+    "category": "prompt_fallback",
+    "reason": "These literals are canonical fallbacks behind prompt-locale builders; English actual-send output is asserted by prompt-locale and memory-template tests."
+  },
+  {
+    "file": "src/scripts/utils/world-ai-generation.js",
+    "text": "- 对话范例需明确“仅供参考，勿完全按照其输出”。",
+    "category": "prompt_fallback",
+    "reason": "These literals are canonical fallbacks behind prompt-locale builders; English actual-send output is asserted by prompt-locale and memory-template tests."
+  },
+  {
+    "file": "src/scripts/utils/world-ai-generation.js",
+    "text": "(空草稿)",
+    "category": "prompt_fallback",
+    "reason": "These literals are canonical fallbacks behind prompt-locale builders; English actual-send output is asserted by prompt-locale and memory-template tests."
+  },
+  {
+    "file": "src/scripts/utils/world-ai-generation.js",
+    "text": "为世界书「{name}」生成条目正文。",
+    "category": "prompt_fallback",
+    "reason": "These literals are canonical fallbacks behind prompt-locale builders; English actual-send output is asserted by prompt-locale and memory-template tests."
+  },
+  {
+    "file": "src/scripts/utils/world-ai-generation.js",
+    "text": "条目标题：{value}",
+    "category": "prompt_fallback",
+    "reason": "These literals are canonical fallbacks behind prompt-locale builders; English actual-send output is asserted by prompt-locale and memory-template tests."
+  },
+  {
+    "file": "src/scripts/utils/world-ai-generation.js",
+    "text": "要点大纲：{value}",
+    "category": "prompt_fallback",
+    "reason": "These literals are canonical fallbacks behind prompt-locale builders; English actual-send output is asserted by prompt-locale and memory-template tests."
+  },
+  {
+    "file": "src/scripts/utils/world-ai-generation.js",
+    "text": "资料层：{value}",
+    "category": "prompt_fallback",
+    "reason": "These literals are canonical fallbacks behind prompt-locale builders; English actual-send output is asserted by prompt-locale and memory-template tests."
+  },
+  {
+    "file": "src/scripts/utils/world-ai-generation.js",
+    "text": "来源引用：{value}",
+    "category": "prompt_fallback",
+    "reason": "These literals are canonical fallbacks behind prompt-locale builders; English actual-send output is asserted by prompt-locale and memory-template tests."
+  },
+  {
+    "file": "src/scripts/utils/world-ai-generation.js",
+    "text": "来源说明：{value}",
+    "category": "prompt_fallback",
+    "reason": "These literals are canonical fallbacks behind prompt-locale builders; English actual-send output is asserted by prompt-locale and memory-template tests."
+  },
+  {
+    "file": "src/scripts/utils/world-ai-generation.js",
+    "text": "资料边界：只根据大纲与上述来源层写作；不得把用户原创或创意扩写伪装成原作事实。",
+    "category": "prompt_fallback",
+    "reason": "These literals are canonical fallbacks behind prompt-locale builders; English actual-send output is asserted by prompt-locale and memory-template tests."
+  },
+  {
+    "file": "src/scripts/utils/world-ai-generation.js",
+    "text": "输出要求：按模板结构输出 YAML；只输出 YAML 本身，不要解释、标题或 markdown 代码块。",
+    "category": "prompt_fallback",
+    "reason": "These literals are canonical fallbacks behind prompt-locale builders; English actual-send output is asserted by prompt-locale and memory-template tests."
+  },
+  {
+    "file": "src/scripts/utils/world-ai-generation.js",
+    "text": "要求：约 {length} 字；只输出条目正文本身（纯文本，不要标题、不要解释、不要 markdown 代码块）。",
+    "category": "prompt_fallback",
+    "reason": "These literals are canonical fallbacks behind prompt-locale builders; English actual-send output is asserted by prompt-locale and memory-template tests."
+  },
+  {
+    "file": "src/scripts/utils/world-ai-generation.js",
+    "text": "内容详略目标：约 {length} 字。",
+    "category": "prompt_fallback",
+    "reason": "These literals are canonical fallbacks behind prompt-locale builders; English actual-send output is asserted by prompt-locale and memory-template tests."
+  },
+  {
+    "file": "src/scripts/variables/variable-rule-engine.js",
+    "text": "根据本轮对话判断好感度变化（-5~+5 之间的整数，只输出数字）。",
+    "category": "prompt_fallback",
+    "reason": "These literals are canonical fallbacks behind prompt-locale builders; English actual-send output is asserted by prompt-locale and memory-template tests."
+  },
+  {
+    "file": "src/scripts/variables/variable-rule-engine.js",
+    "text": "你是规则评估器，只输出一个整数，不要解释。",
+    "category": "prompt_fallback",
+    "reason": "These literals are canonical fallbacks behind prompt-locale builders; English actual-send output is asserted by prompt-locale and memory-template tests."
+  },
+  {
+    "file": "src/scripts/variables/variable-templates.js",
+    "text": "根据本轮对话判断好感度变化（-5~+5 之间的整数，只输出数字）。",
+    "category": "prompt_fallback",
+    "reason": "These literals are canonical fallbacks behind prompt-locale builders; English actual-send output is asserted by prompt-locale and memory-template tests."
+  }
+]

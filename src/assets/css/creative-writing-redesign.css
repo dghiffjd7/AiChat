@@ -1,6 +1,6 @@
 /* 创意写作与共享聊天阅读视觉层：参考 rpg-app-interface-optimization。 */
 
-.chat-realtime-call-btn {
+.rp-reading-settings-btn {
   display: none;
 }
 
@@ -88,7 +88,7 @@ body[data-ui-mode='rp'] #chat-room .chat-room-presence {
 }
 
 body[data-ui-mode='rp'] #chat-room :is(
-  .chat-realtime-call-btn,
+  .rp-reading-settings-btn,
   .chat-menu-btn,
   .agent-status-chip
 ) {
@@ -113,11 +113,11 @@ body[data-ui-mode='rp'] #chat-room :is(
     transform 120ms ease;
 }
 
-body[data-ui-mode='rp'] #chat-room .chat-realtime-call-btn {
+body[data-ui-mode='rp'] #chat-room .rp-reading-settings-btn {
   display: inline-flex;
 }
 
-body[data-ui-mode='chat'] #chat-room .chat-realtime-call-btn {
+body[data-ui-mode='chat'] #chat-room .rp-reading-settings-btn {
   width: 36px;
   height: 36px;
   min-width: 36px;
@@ -139,8 +139,8 @@ body[data-ui-mode='chat'] #chat-room .chat-realtime-call-btn {
     transform 120ms ease;
 }
 
-body[data-ui-mode='rp'] #chat-room .chat-realtime-call-btn svg,
-body[data-ui-mode='chat'] #chat-room .chat-realtime-call-btn svg {
+body[data-ui-mode='rp'] #chat-room .rp-reading-settings-btn svg,
+body[data-ui-mode='chat'] #chat-room .rp-reading-settings-btn svg {
   width: 18px;
   height: 18px;
   fill: none;
@@ -151,28 +151,28 @@ body[data-ui-mode='chat'] #chat-room .chat-realtime-call-btn svg {
   pointer-events: none;
 }
 
-body[data-ui-mode='chat'] #chat-room .chat-realtime-call-btn:hover,
-body[data-ui-mode='chat'] #chat-room .chat-realtime-call-btn.is-active {
+body[data-ui-mode='chat'] #chat-room .rp-reading-settings-btn:hover,
+body[data-ui-mode='chat'] #chat-room .rp-reading-settings-btn.is-active {
   background: var(--app-surface-subtle);
   color: var(--app-text-primary);
 }
 
-body[data-ui-mode='chat'] #chat-room .chat-realtime-call-btn:active {
+body[data-ui-mode='chat'] #chat-room .rp-reading-settings-btn:active {
   transform: scale(0.88);
 }
 
 body[data-ui-mode='rp'] #chat-room :is(
-  .chat-realtime-call-btn,
+  .rp-reading-settings-btn,
   .chat-menu-btn,
   .agent-status-chip
 ):hover,
-body[data-ui-mode='rp'] #chat-room .chat-realtime-call-btn.is-active {
+body[data-ui-mode='rp'] #chat-room .rp-reading-settings-btn.is-active {
   background: var(--app-surface-subtle);
   color: #525252;
 }
 
 body[data-ui-mode='rp'] #chat-room :is(
-  .chat-realtime-call-btn,
+  .rp-reading-settings-btn,
   .chat-menu-btn,
   .agent-status-chip
 ):active {
@@ -571,7 +571,7 @@ body[data-theme-mode='dark'][data-ui-mode='rp'] #chat-room .chat-room-title {
 }
 
 body[data-theme-mode='dark'][data-ui-mode='rp'] #chat-room :is(
-  .chat-realtime-call-btn,
+  .rp-reading-settings-btn,
   .chat-menu-btn,
   .agent-status-chip
 ) {
@@ -579,17 +579,17 @@ body[data-theme-mode='dark'][data-ui-mode='rp'] #chat-room :is(
 }
 
 body[data-theme-mode='dark'][data-ui-mode='rp'] #chat-room :is(
-  .chat-realtime-call-btn,
+  .rp-reading-settings-btn,
   .chat-menu-btn,
   .agent-status-chip
 ):hover,
-body[data-theme-mode='dark'][data-ui-mode='rp'] #chat-room .chat-realtime-call-btn.is-active {
+body[data-theme-mode='dark'][data-ui-mode='rp'] #chat-room .rp-reading-settings-btn.is-active {
   background: rgba(var(--app-tint-neutral-rgb), 0.1);
   color: var(--app-text-primary);
 }
 
-body[data-theme-mode='dark'][data-ui-mode='chat'] #chat-room .chat-realtime-call-btn:hover,
-body[data-theme-mode='dark'][data-ui-mode='chat'] #chat-room .chat-realtime-call-btn.is-active {
+body[data-theme-mode='dark'][data-ui-mode='chat'] #chat-room .rp-reading-settings-btn:hover,
+body[data-theme-mode='dark'][data-ui-mode='chat'] #chat-room .rp-reading-settings-btn.is-active {
   background: rgba(var(--app-tint-neutral-rgb), 0.1);
   color: var(--app-text-primary);
 }
@@ -644,7 +644,7 @@ body[data-theme-mode='dark']
   }
 
   body[data-ui-mode='rp'] #chat-room :is(
-    .chat-realtime-call-btn,
+    .rp-reading-settings-btn,
     .chat-menu-btn,
     .agent-status-chip
   ) {
@@ -664,7 +664,7 @@ body[data-theme-mode='dark']
   .rp-reading-size-options::before,
   .rp-narrative-font-options::before,
   body[data-ui-mode='rp'] #chat-room :is(
-    .chat-realtime-call-btn,
+    .rp-reading-settings-btn,
     .chat-menu-btn,
     .agent-status-chip
   ) {
@@ -672,18 +672,18 @@ body[data-theme-mode='dark']
   }
 
   body[data-ui-mode='rp'] #chat-room :is(
-    .chat-realtime-call-btn,
+    .rp-reading-settings-btn,
     .chat-menu-btn,
     .agent-status-chip
   ):active {
     transform: none !important;
   }
 
-  body[data-ui-mode='chat'] #chat-room .chat-realtime-call-btn {
+  body[data-ui-mode='chat'] #chat-room .rp-reading-settings-btn {
     transition: none !important;
   }
 
-  body[data-ui-mode='chat'] #chat-room .chat-realtime-call-btn:active {
+  body[data-ui-mode='chat'] #chat-room .rp-reading-settings-btn:active {
     transform: none !important;
   }
 }
@@ -695,7 +695,7 @@ body[data-reduced-motion='on'] .rp-reading-settings-menu {
 body[data-reduced-motion='on'] .rp-reading-size-options::before,
 body[data-reduced-motion='on'] .rp-narrative-font-options::before,
 body[data-reduced-motion='on'][data-ui-mode='rp'] #chat-room :is(
-  .chat-realtime-call-btn,
+  .rp-reading-settings-btn,
   .chat-menu-btn,
   .agent-status-chip
 ) {
@@ -703,18 +703,18 @@ body[data-reduced-motion='on'][data-ui-mode='rp'] #chat-room :is(
 }
 
 body[data-reduced-motion='on'][data-ui-mode='rp'] #chat-room :is(
-  .chat-realtime-call-btn,
+  .rp-reading-settings-btn,
   .chat-menu-btn,
   .agent-status-chip
 ):active {
   transform: none !important;
 }
 
-body[data-reduced-motion='on'][data-ui-mode='chat'] #chat-room .chat-realtime-call-btn {
+body[data-reduced-motion='on'][data-ui-mode='chat'] #chat-room .rp-reading-settings-btn {
   transition: none !important;
 }
 
-body[data-reduced-motion='on'][data-ui-mode='chat'] #chat-room .chat-realtime-call-btn:active {
+body[data-reduced-motion='on'][data-ui-mode='chat'] #chat-room .rp-reading-settings-btn:active {
   transform: none !important;
 }
 

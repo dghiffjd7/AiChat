@@ -1,4 +1,5 @@
 import { containsTextProtocol } from '../../utils/text-protocol-marker-utils.js';
+import { getLocalizedPromptText } from '../../i18n/prompt-locale.js';
 
 const DEFAULT_MAX_INSTRUCTION_CHARS = 60000;
 
@@ -23,9 +24,9 @@ const takeWithin = (value, maxChars) => {
 };
 
 const roleLabel = role => {
-  if (role === 'assistant') return '角色';
-  if (role === 'user') return '用户';
-  return '系统';
+  if (role === 'assistant') return getLocalizedPromptText('realtime.context.role.assistant', '角色');
+  if (role === 'user') return getLocalizedPromptText('realtime.context.role.user', '用户');
+  return getLocalizedPromptText('realtime.context.role.system', '系统');
 };
 
 export const buildRealtimeSemanticSnapshotFromRequest = (request = {}, {
@@ -58,8 +59,8 @@ export const buildRealtimeSemanticSnapshotFromRequest = (request = {}, {
   }
 
   const preamble = [
-    '你正在进行自然、连续的语音通话。以下内容是当前角色与情境的语义上下文。',
-    '保持角色身份、关系、世界设定、记忆和最近对话的一致性；自然口语回答，不输出 JSON、工具协议、标签或界面控制文本。',
+    getLocalizedPromptText('realtime.context.preamble', '你正在进行自然、连续的语音通话。以下内容是当前角色与情境的语义上下文。'),
+    getLocalizedPromptText('realtime.context.rules', '保持角色身份、关系、世界设定、记忆和最近对话的一致性；自然口语回答，不输出 JSON、工具协议、标签或界面控制文本。'),
   ].join('\n');
   const rules = records.filter(record => record.role === 'system' || record.role === 'developer');
   const history = records.filter(record => record.role === 'user' || record.role === 'assistant');
@@ -86,11 +87,16 @@ export const buildRealtimeSemanticSnapshotFromRequest = (request = {}, {
 
   const remaining = Math.max(0, safeMaxChars - used - 4);
   const ruleBudget = Math.max(0, Math.floor(remaining * 0.68));
-  appendSection('【角色与当前情境】', rules.map(record => record.text), ruleBudget);
+  appendSection(
+    getLocalizedPromptText('realtime.context.character', '【角色与当前情境】'),
+    rules.map(record => record.text),
+    ruleBudget,
+  );
 
   const historyBudget = Math.max(0, safeMaxChars - used - 2);
   const recentHistory = [];
-  let historyUsed = '【最近对话】'.length + 1;
+  const historyTitle = getLocalizedPromptText('realtime.context.history', '【最近对话】');
+  let historyUsed = historyTitle.length + 1;
   for (let index = history.length - 1; index >= 0; index -= 1) {
     const record = history[index];
     const line = `${roleLabel(record.role)}：${record.text}`;
@@ -101,7 +107,7 @@ export const buildRealtimeSemanticSnapshotFromRequest = (request = {}, {
     recentHistory.unshift(line);
     historyUsed += line.length + 1;
   }
-  appendSection('【最近对话】', recentHistory.filter(Boolean), historyBudget);
+  appendSection(historyTitle, recentHistory.filter(Boolean), historyBudget);
 
   const instructions = takeWithin(sections.join('\n\n'), safeMaxChars);
   return {

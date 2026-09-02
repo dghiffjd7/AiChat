@@ -1,5 +1,14 @@
 // 女仆选区模式纯函数（女仆交互优化计划 §1）：
 // 选区项归一化、元素语义描述、注入提示词块组装。DOM runtime 见 maid-selection-mode.js。
+import { getLocalizedPromptText } from '../i18n/prompt-locale.js';
+
+const prompt = (key, fallback, params = {}) => {
+  let text = getLocalizedPromptText(`maid.selection.${key}`, fallback);
+  Object.entries(params).forEach(([name, value]) => {
+    text = text.replaceAll(`{${name}}`, String(value ?? ''));
+  });
+  return text;
+};
 
 const trim = (value, fallback = '') => {
   const text = String(value ?? '').trim();
@@ -202,15 +211,15 @@ export const describeElementForSelection = (element = null, {
   const panel = trim(container.getAttribute?.('data-panel'));
   const parts = [];
   if (msgId) {
-    parts.push('聊天消息');
+    parts.push(prompt('chat_message', '聊天消息'));
   } else if (container.classList?.contains?.('agent-center-card')) {
-    parts.push('Agent Center 卡片');
+    parts.push(prompt('agent_card', 'Agent Center 卡片'));
   } else if (container.classList?.contains?.('moment-item')) {
-    parts.push('动态条目');
+    parts.push(prompt('moment_item', '动态条目'));
   } else if (container.tagName === 'BUTTON') {
-    parts.push('按钮');
+    parts.push(prompt('button', '按钮'));
   } else if (panel) {
-    parts.push(`面板 ${panel}`);
+    parts.push(prompt('panel', '面板 {panel}', { panel }));
   } else if (ariaLabel) {
     parts.push(ariaLabel);
   } else {
@@ -239,17 +248,17 @@ export const buildMaidSelectionPromptBlock = (items = []) => {
   if (!list.length) return '';
   const lines = list.map((item, index) => {
     const head = [
-      `${index + 1}. [${item.type === 'element' ? '界面元素' : '选中文字'}]`,
+      `${index + 1}. [${item.type === 'element' ? prompt('element', '界面元素') : prompt('text', '选中文字')}]`,
       item.semanticSummary,
-      item.messageId ? `消息ID: ${item.messageId}` : '',
-      item.sessionId ? `会话: ${item.sessionId}` : '',
-      item.regionId ? `区域ID: ${item.regionId}（需要检查图片、布局、颜色、错位或遮挡时可调用 ui.capture_region）` : '',
+      item.messageId ? prompt('message_id', '消息ID: {id}', { id: item.messageId }) : '',
+      item.sessionId ? prompt('session', '会话: {id}', { id: item.sessionId }) : '',
+      item.regionId ? prompt('region_id', '区域ID: {id}（需要检查图片、布局、颜色、错位或遮挡时可调用 ui.capture_region）', { id: item.regionId }) : '',
     ].filter(Boolean).join(' ');
-    return item.text ? `${head}\n   内容: ${item.text}` : head;
+    return item.text ? `${head}\n   ${prompt('content', '内容: {content}', { content: item.text })}` : head;
   });
   return [
     '<user_selection>',
-    '用户在界面上圈选了以下内容作为本次请求的针对目标（“这个/这段/这里”等指代优先指向这些选区）：',
+    prompt('intro', '用户在界面上圈选了以下内容作为本次请求的针对目标（“这个/这段/这里”等指代优先指向这些选区）：'),
     ...lines,
     '</user_selection>',
   ].join('\n');
@@ -283,11 +292,18 @@ export const describeRegionSelection = (coveredElements = [], rect = null, {
   const size = rect ? `${Math.round(rect.width)}×${Math.round(rect.height)}` : '';
   const summaries = described.map(item => item.semanticSummary).filter(Boolean);
   const messageIds = [...new Set(described.map(item => item.messageId).filter(Boolean))];
+  const more = summaries.length > 4
+    ? prompt('more', ' 等 {count} 项', { count: summaries.length })
+    : '';
   return normalizeMaidSelectionItem({
     type: 'element',
     semanticSummary: summaries.length
-      ? `屏幕选区（${size}，含：${summaries.slice(0, 4).join('、')}${summaries.length > 4 ? ` 等 ${summaries.length} 项` : ''}）`
-      : `屏幕选区（${size}）`,
+      ? prompt('region_with_items', '屏幕选区（{size}，含：{items}{more}）', {
+          size,
+          items: summaries.slice(0, 4).join('、'),
+          more,
+        })
+      : prompt('region', '屏幕选区（{size}）', { size }),
     text: described.map(item => item.text).filter(Boolean).join('\n---\n'),
     messageId: messageIds.length === 1 ? messageIds[0] : '',
     sessionId: described.find(item => item.sessionId)?.sessionId || '',

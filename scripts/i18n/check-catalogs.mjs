@@ -47,6 +47,17 @@ for (const [locale, catalog] of Object.entries(catalogs)) {
 for (const source of sourceSet) {
   if (!Object.prototype.hasOwnProperty.call(catalogs['zh-TW'], source)) errors.push(`zh-TW: missing source key: ${source}`);
 }
+// en 全覆盖硬门槛：除显式豁免（提取噪声/装饰字）外，每个 source key 都必须有英译，
+// 否则英文模式必然吐中文。新增 UI 字串时同步补 en.base.json。
+const enExempt = await readJson(path.join(PROJECT_ROOT, 'scripts/i18n/en-exempt-keys.json'));
+const enExemptSet = new Set(enExempt.keys || []);
+for (const source of sourceSet) {
+  if (enExemptSet.has(source)) continue;
+  if (!Object.prototype.hasOwnProperty.call(catalogs.en, source)) errors.push(`en: missing source key: ${source}`);
+}
+for (const key of enExemptSet) {
+  if (!sourceSet.has(key)) errors.push(`en-exempt: unknown source key: ${key}`);
+}
 const firstHourSources = new Set(firstHourManifest.requiredKeys || []);
 for (const file of firstHourManifest.files || []) {
   sourceEntries.forEach(entry => {

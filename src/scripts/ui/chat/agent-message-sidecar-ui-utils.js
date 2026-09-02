@@ -155,6 +155,7 @@ export const buildAgentMessageSidecarElement = ({
   documentLike = globalThis.document,
   message = {},
   maxParts = 6,
+  translateText = value => String(value ?? ''),
   onProviderToolPermissionAction = null,
   onProviderToolContinuationAction = null,
   onChatFormatGuardianAction = null,
@@ -192,11 +193,11 @@ export const buildAgentMessageSidecarElement = ({
       style: `${AGENT_MESSAGE_SIDECAR_STYLES.dot}background:${part.accent};`,
     });
     const label = createElement(documentLike, 'span', {
-      text: part.titleLabel || part.summaryLabel,
+      text: translateText(part.titleLabel || part.summaryLabel),
       style: AGENT_MESSAGE_SIDECAR_STYLES.title,
     });
     const badge = createElement(documentLike, 'span', {
-      text: part.statusLabel || trim(part.status, 'running'),
+      text: translateText(part.statusLabel || trim(part.status, 'running')),
       style: `${AGENT_MESSAGE_SIDECAR_STYLES.badge}color:${part.accent};`,
     });
     summary.appendChild(dot);
@@ -209,7 +210,7 @@ export const buildAgentMessageSidecarElement = ({
     });
     part.rows.slice(0, 4).forEach(([rowLabel, value]) => {
       const row = createElement(documentLike, 'div', {
-        text: `${rowLabel}: ${value}`,
+        text: `${translateText(rowLabel)}: ${translateText(value)}`,
       });
       body.appendChild(row);
     });
@@ -231,7 +232,7 @@ export const buildAgentMessageSidecarElement = ({
               : (action === 'remember_allow' ? 'Remember' : 'Deny');
             const button = buildActionButton({
               documentLike,
-              text: label,
+              text: translateText(label),
               action,
               datasetKey: 'providerToolPermissionAction',
               onClick: () => onProviderToolPermissionAction({
@@ -254,7 +255,7 @@ export const buildAgentMessageSidecarElement = ({
         ].forEach(([action, label]) => {
           const button = buildActionButton({
             documentLike,
-            text: label,
+            text: translateText(label),
             action,
             datasetKey: 'providerToolContinuationAction',
             onClick: () => onProviderToolContinuationAction({
@@ -284,7 +285,7 @@ export const buildAgentMessageSidecarElement = ({
           const label = trim(action?.label, actionId);
           const button = buildActionButton({
             documentLike,
-            text: label,
+            text: translateText(label),
             action: actionId,
             datasetKey: 'chatFormatGuardianAction',
             onClick: () => onChatFormatGuardianAction({

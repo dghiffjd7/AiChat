@@ -1411,11 +1411,12 @@ export class MemoryTableEditor {
     this.lastUpdateMeta.textContent = [mode, when].filter(Boolean).join(' · ');
     if (viewType === 'prompt') {
       const promptText = String(entry?.requestPrompt || '').trim();
-      this.lastUpdateContent.value = promptText || '尚未记录任何写表请求提示词。';
+      // textarea 在 DOM 翻译器跳过范围内，兜底文案须在 JS 侧翻译
+      this.lastUpdateContent.value = promptText || translateUiText('尚未记录任何写表请求提示词。');
     } else {
       const tableEditRaw = String(entry?.tableEditRaw || '').trim();
       const raw = String(entry?.raw || '').trim();
-      const display = tableEditRaw ? `<tableEdit>\n${tableEditRaw}\n</tableEdit>` : raw || '（空）';
+      const display = tableEditRaw ? `<tableEdit>\n${tableEditRaw}\n</tableEdit>` : raw || translateUiText('（空）');
       this.lastUpdateContent.value = display;
     }
     this.lastUpdateOverlay.style.display = 'block';

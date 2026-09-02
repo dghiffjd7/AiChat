@@ -450,10 +450,18 @@
               <div class="chat-room-title" id="current-chat-title">default</div>
               <div class="chat-room-presence"><span class="chat-room-presence-dot" aria-hidden="true"></span><span id="current-chat-presence">在线 · AI 角色</span></div>
             </div>
-            <button type="button" id="realtime-call-button" class="chat-realtime-call-btn" aria-label="实时语音通话" title="实时语音通话">
-              <svg viewBox="0 0 24 24" aria-hidden="true">
-                <path d="M7.2 4.5 9.8 8l-2 2.1c1.4 2.6 3.5 4.7 6.1 6.1l2.1-2 3.5 2.6-1.1 3c-.3.8-1.1 1.3-2 1.2C9.1 20.2 3.8 14.9 3 7.6c-.1-.9.4-1.7 1.2-2l3-1.1Z"></path>
-                <path d="M14.5 4.5a6 6 0 0 1 5 5M14.5 8a2.5 2.5 0 0 1 1.5 1.5"></path>
+            <button
+              id="rp-reading-settings-btn"
+              class="rp-reading-settings-btn"
+              type="button"
+              aria-label="聊天室阅读设置"
+              title="聊天室阅读设置"
+            >
+              <svg aria-hidden="true" viewBox="0 0 24 24">
+                <path d="m15 16 2.536-7.328a1.02 1.02 0 0 1 1.928 0L22 16"></path>
+                <path d="M15.697 14h5.606"></path>
+                <path d="m2 16 4.039-9.69a.5.5 0 0 1 .923 0L11 16"></path>
+                <path d="M3.304 13h6.392"></path>
               </svg>
             </button>
             <button id="chat-menu-btn" class="chat-menu-btn">≡</button>
@@ -572,6 +580,12 @@
               </div>
               <div class="chat-input-wrap">
                 <textarea id="composer-input" class="chat-input" placeholder="" rows="1"></textarea>
+                <button type="button" id="realtime-call-button" class="chat-realtime-call-btn" aria-label="实时语音通话" title="实时语音通话">
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M7.2 4.5 9.8 8l-2 2.1c1.4 2.6 3.5 4.7 6.1 6.1l2.1-2 3.5 2.6-1.1 3c-.3.8-1.1 1.3-2 1.2C9.1 20.2 3.8 14.9 3 7.6c-.1-.9.4-1.7 1.2-2l3-1.1Z"></path>
+                    <path d="M14.5 4.5a6 6 0 0 1 5 5M14.5 8a2.5 2.5 0 0 1 1.5 1.5"></path>
+                  </svg>
+                </button>
                 <button type="button" id="voice-input-button" class="chat-voice-input-btn" aria-label="语音输入" title="语音输入">
                   <svg class="chat-voice-input-mic" viewBox="0 0 24 24" aria-hidden="true">
                     <rect x="9" y="3" width="6" height="11" rx="3"></rect>
@@ -687,7 +701,6 @@
         <div class="sheet-desc">当前聊天相关操作</div>
         <button data-action="world">🌐 人物设定</button>
         <button data-action="chat-settings" data-maid-guide-target="chatroom-chat-settings">🎨 聊天设置</button>
-        <button data-action="reading-settings">Aa 阅读设置</button>
         <button data-action="prompt-preview">🧩 本次 Prompt</button>
         <button data-action="raw-reply">📄 本次 AI 回复</button>
       </div>
@@ -697,7 +710,6 @@
         <div class="sheet-section-label">当前会话</div>
         <button data-action="world">🌐 角色世界书</button>
         <button data-action="chat-settings" data-maid-guide-target="chatroom-chat-settings">🎨 聊天设置</button>
-        <button data-action="reading-settings">Aa 阅读设置</button>
         <div class="sheet-section-label">本次生成</div>
         <button data-action="prompt-preview">🧩 本次 Prompt</button>
         <button data-action="raw-reply">📄 本次 AI 回复</button>

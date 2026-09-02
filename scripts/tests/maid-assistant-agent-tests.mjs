@@ -3,11 +3,13 @@ import assert from 'node:assert/strict';
 import {
   aggregateMaidModelUsage,
   applyMaidPresentationPolicy,
+  buildContinueHint,
   classifyMaidPresentationIntent,
   classifyMaidOperationIntent,
   createMaidAssistantAgent,
   planMaidAssistantCommand,
 } from '../../src/scripts/agent/maid-assistant-agent.js';
+import { setPromptLocale } from '../../src/scripts/i18n/prompt-locale.js';
 import { buildMaidModelReActMessages } from '../../src/scripts/agent/maid-model-planner.js';
 import { createAgentTaskRuntime } from '../../src/scripts/agent/agent-task-runtime.js';
 import { createAgentToolRegistry } from '../../src/scripts/agent/agent-tool-registry.js';
@@ -17,6 +19,18 @@ import {
 } from '../../src/scripts/agent/maid-imported-card-workflow.js';
 import { fingerprintMaidToolCall } from '../../src/scripts/agent/maid-run-continuation.js';
 import { AgentRunStore } from '../../src/scripts/storage/agent-run-store.js';
+
+setPromptLocale('en');
+const englishContinueHint = buildContinueHint({
+  input: 'Finish the task',
+  steps: [{ status: 'succeeded', toolName: 'session.list', summary: 'Read sessions' }],
+  pendingPlan: { toolName: 'session.create' },
+  reason: 'budget',
+});
+assert.match(englishContinueHint, /Original user goal: Finish the task/);
+assert.match(englishContinueHint, /Completed steps .*session\.list \(Read sessions\)/);
+assert.doesNotMatch(englishContinueHint, /\p{Script=Han}/u);
+setPromptLocale('zh-CN');
 
 {
   assert.equal(classifyMaidPresentationIntent('创建聊天室「小美」').mode, 'background');

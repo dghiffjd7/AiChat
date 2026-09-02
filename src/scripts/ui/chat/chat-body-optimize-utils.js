@@ -1,4 +1,5 @@
 import { extractJsonObjectText } from './chat-format-guardian-utils.js';
+import { getLocalizedPromptText } from '../../i18n/prompt-locale.js';
 
 // 正文优化引擎（机制层，类 Claude Code：指示 -> 模型产出替换文本 -> diff 确认 -> 写回）。
 // 只负责“按用户指示优化表达”；写作引导、大纲规划、质量审查等提示词体系另行规划。
@@ -21,13 +22,16 @@ export const DEFAULT_CHAT_BODY_OPTIMIZE_INSTRUCTION = '优化表达：让文字�
 export const buildChatBodyOptimizeModelPrompt = ({
   originalText = '',
   instruction = '',
-  userName = '我',
+  userName = '',
   sessionLabel = '',
   surface = 'chat',
 } = {}) => {
   const rawText = String(originalText ?? '').trim();
-  const finalInstruction = trim(instruction, DEFAULT_CHAT_BODY_OPTIMIZE_INSTRUCTION);
-  const system = [
+  const finalInstruction = trim(
+    instruction,
+    getLocalizedPromptText('body_optimize.default_instruction', DEFAULT_CHAT_BODY_OPTIMIZE_INSTRUCTION),
+  );
+  const systemFallback = [
     '你是正文优化 Agent。任务：按用户指示优化一段 AI 回复的文字表达。',
     '',
     '## 允许',
@@ -44,6 +48,7 @@ export const buildChatBodyOptimizeModelPrompt = ({
     'canOptimize=true 时，optimizedText 必须是完整的、可直接替换原文的优化后文本。',
     'canOptimize=false 时（原文为空、指示与正文无关、按指示无需修改），optimizedText 必须是空字符串，并在 summary 说明原因。',
   ].join('\n');
+  const system = getLocalizedPromptText('body_optimize.system', systemFallback);
   const user = [
     [
       '# Task',
@@ -51,13 +56,13 @@ export const buildChatBodyOptimizeModelPrompt = ({
     ].join('\n'),
     [
       '# Runtime Context',
-      `userName: ${trim(userName, '我')}`,
+      `userName: ${trim(userName, getLocalizedPromptText('body_optimize.default_user', '我'))}`,
       `sessionLabel: ${trim(sessionLabel) || 'N/A'}`,
       `surface: ${trim(surface, 'chat')}`,
     ].join('\n'),
-    `# Instruction（用户优化指示）\n${finalInstruction}`,
-    `# Original Text（待优化正文）\n${rawText || '（空）'}`,
-    [
+    `${getLocalizedPromptText('body_optimize.instruction_heading', '# Instruction（用户优化指示）')}\n${finalInstruction}`,
+    `${getLocalizedPromptText('body_optimize.original_heading', '# Original Text（待优化正文）')}\n${rawText || getLocalizedPromptText('body_optimize.empty', '（空）')}`,
+    getLocalizedPromptText('body_optimize.output_contract', [
       '# Output Contract',
       'Return exactly one JSON object. Do not wrap it in Markdown code fences.',
       '{',
@@ -66,7 +71,7 @@ export const buildChatBodyOptimizeModelPrompt = ({
       '  "summary": "一句话说明改了什么或为何不改",',
       '  "optimizedText": "完整优化后文本；canOptimize=true 时必须非空"',
       '}',
-    ].join('\n'),
+    ].join('\n')),
   ].join('\n\n');
   return {
     messages: [

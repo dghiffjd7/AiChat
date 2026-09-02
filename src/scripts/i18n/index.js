@@ -16,6 +16,7 @@ const SHARED_SKIP_SELECTORS = [
   '#chat-scroll .rich-fragment',
   '#prompt-preview-panel .prompt-document-scroll',
   '.prompt-preview-copy-source',
+  '#preset-preview-body',
   '.chat-item-preview',
   '.group-name-label',
   '.user-nickname',
@@ -46,17 +47,25 @@ const compileTemplateEntry = ([source, translated]) => {
   const names = [];
   let cursor = 0;
   let pattern = '';
+  const literals = [];
   const matcher = /\{([a-zA-Z0-9_.-]+)\}/g;
   let match;
   while ((match = matcher.exec(source))) {
+    literals.push(source.slice(cursor, match.index));
     pattern += escapeRegExp(source.slice(cursor, match.index));
     pattern += match[1] === 'count' ? '(-?[\\d,.\\s\\u00A0\\u202F]+?)' : '(.+?)';
     names.push(match[1]);
     cursor = match.index + match[0].length;
   }
+  literals.push(source.slice(cursor));
   pattern += escapeRegExp(source.slice(cursor));
   const literalLength = source.replace(/\{[a-zA-Z0-9_.-]+\}/g, '').length;
-  return { source, translated, names, literalLength, regex: new RegExp(`^${pattern}$`) };
+  // probe：最长字面段（按查表侧同样的空白归一化）。不含该段的文本必然不匹配，
+  // 用廉价 includes 预筛，避免上千条模板正则对每个未命中文本节点全量 exec。
+  const probe = literals
+    .map(part => part.replace(/\s+/g, ' '))
+    .reduce((best, part) => (part.length > best.length ? part : best), '');
+  return { source, translated, names, literalLength, probe, regex: new RegExp(`^${pattern}$`) };
 };
 
 const rebuildTemplateEntries = () => {
@@ -141,6 +150,7 @@ export const t = (source, params = {}, options = {}) => translateFromCatalog({
 
 const translateTemplateValue = (source = '') => {
   for (const entry of templateEntries) {
+    if (entry.probe && !source.includes(entry.probe)) continue;
     const match = entry.regex.exec(source);
     if (!match) continue;
     const params = {};
@@ -165,7 +175,11 @@ export const translateUiText = (value = '') => {
   if (!core) return raw;
   const lookupCore = core.replace(/\s+/g, ' ');
   const exact = t(lookupCore);
-  const translated = exact === lookupCore ? translateTemplateValue(lookupCore) : exact;
+  if (exact !== lookupCore) return `${leading}${exact}${trailing}`;
+  // 归一化未命中时按原文再查一次：目录里少数 key 含换行/全角空格，归一化会错过它们
+  const rawExact = t(core);
+  if (rawExact !== core) return `${leading}${rawExact}${trailing}`;
+  const translated = translateTemplateValue(lookupCore);
   return translated === lookupCore ? raw : `${leading}${translated}${trailing}`;
 };
 

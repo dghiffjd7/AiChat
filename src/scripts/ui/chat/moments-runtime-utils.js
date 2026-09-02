@@ -4,8 +4,17 @@ import {
   normalizeLifecycleTraceText,
 } from './lifecycle-trace-utils.js';
 import { normalizeMomentMentionTarget } from './moment-world-resolver-utils.js';
+import { getLocalizedPromptText } from '../../i18n/prompt-locale.js';
 
 const normalizeNameValue = (value) => String(value || '').trim();
+
+const getMomentPromptLine = (key, replacements = {}) => {
+  let text = getLocalizedPromptText(key);
+  Object.entries(replacements).forEach(([name, value]) => {
+    text = text.split(`{${name}}`).join(String(value ?? ''));
+  });
+  return text;
+};
 
 const buildAlphaIndex = (index) => {
   let n = Math.max(0, Math.trunc(Number(index) || 0));
@@ -320,11 +329,14 @@ export const resolveMomentReplyTarget = ({
   if (isReplyToComment) {
     const name = normalize(replyTo?.author);
     const sessionId = resolveTarget(name) || (name === normalize(authorName) ? String(originSessionId || '').trim() : null);
-    return { name: name || String(authorName || '').trim() || '发布者', sessionId: String(sessionId || '').trim() };
+    return {
+      name: name || String(authorName || '').trim() || getMomentPromptLine('moment_comment.label.publisher'),
+      sessionId: String(sessionId || '').trim(),
+    };
   }
   const fallbackSessionId = String(originSessionId || '').trim() || resolveTarget(authorName) || '';
   return {
-    name: normalize(authorName) || '发布者',
+    name: normalize(authorName) || getMomentPromptLine('moment_comment.label.publisher'),
     sessionId: String(fallbackSessionId || '').trim(),
   };
 };
@@ -461,41 +473,15 @@ export const buildMomentCommentSideEffectInstructions = ({
 } = {}) => {
   if (enabled === false) return '';
   const displayUser = String(userName || '').trim() || '{{user}}';
-  return [
-    '【可选联动】',
-    '决策指南：',
-    '请根据以下几点，并结合角色性格，判断是否需要在公开评论之外发起私聊或群聊：',
-    '1. 话题是否私密或敏感？涉及个人情感、秘密、暧昧、只适合单独说的话，倾向私聊。',
-    '2. 你和用户的关系是否足够亲密？恋人、挚友、信任关系中的悄悄话，倾向私聊。',
-    '3. 用户是否在寻求安慰，或表达强烈负面情绪？如果是，倾向由合适角色发起私聊。',
-    '4. 话题是否适合公开讨论、分享或让多人参与？如果适合，倾向群聊。',
-    '5. 动态是否只是简单日常、轻松玩笑、晒图、点赞式互动？通常只需要公开评论，不要小题大做。',
-    '6. 如果决定私聊，发起者不限于动态发布者；任何因动态内容、与用户关系或自身性格而觉得有必要深入沟通的联系人，都可以发起私聊。',
-    '',
-    '输出格式：',
-    '- 公开评论仍必须输出 moment_reply_start/moment_reply_end。',
-    '- 如果决定私聊，可在评论区块之后追加一个或多个私聊标签块，但总数不超过 3 个：',
-    `<${displayUser}和联系人名的私聊>`,
-    '联系人名--消息内容',
-    `</${displayUser}和联系人名的私聊>`,
-    '- 如果决定群聊，可在评论区块之后追加一个群聊标签块：',
-    '<群聊：群名>',
-    '群成员名--消息内容',
-    '</群聊：群名>',
-    '- 如果不需要深入交流，不要输出任何私聊或群聊标签。',
-    '',
-    '注意事项：',
-    '- 最终决定必须符合角色性格；外向、爱热闹的角色更可能群聊回应，内向、体贴的角色更可能私聊。',
-    '- 私聊/群聊必须少量、自然、与这条动态强相关；不要为了联动而强行开启聊天。',
-  ].join('\n');
+  return getMomentPromptLine('moment_comment.side_effects', { user: displayUser });
 };
 
 export const buildMomentCommentPromptData = ({
-  taskTitle = 'QQ空间动态评论回复（数据）',
+  taskTitle = '',
   authorName = '',
   content = '',
   time = '',
-  userSectionTitle = '用户评论',
+  userSectionTitle = '',
   userLine = '',
   isReplyToComment = false,
   replyTo = null,
@@ -504,17 +490,17 @@ export const buildMomentCommentPromptData = ({
   groupList = '',
   sideEffectInstructions = '',
 } = {}) => `
-【${String(taskTitle || '').trim() || 'QQ空间动态评论回复（数据）'}】
-发布者: ${String(authorName || '').trim() || '发布者'}
-动态内容: ${String(content || '').trim()}
-动态时间: ${String(time || '').trim() || '（未知）'}
+【${String(taskTitle || '').trim() || getMomentPromptLine('moment_comment.title.reply')}】
+${getMomentPromptLine('moment_comment.label.publisher')}: ${String(authorName || '').trim() || getMomentPromptLine('moment_comment.label.publisher')}
+${getMomentPromptLine('moment_comment.label.content')}: ${String(content || '').trim()}
+${getMomentPromptLine('moment_comment.label.time')}: ${String(time || '').trim() || getMomentPromptLine('moment_comment.label.unknown')}
 
-【${String(userSectionTitle || '').trim() || '用户评论'}】
+【${String(userSectionTitle || '').trim() || getMomentPromptLine('moment_comment.section.user_comment')}】
 ${String(userLine || '').trim()}
 
 ${
   isReplyToComment
-    ? `【回复上下文】
+    ? `【${getMomentPromptLine('moment_comment.section.reply_context')}】
 reply_to_author: ${String(replyTo?.author || '').trim()}
 reply_to_content: ${String(replyTo?.content || '').trim()}
 `
@@ -523,17 +509,17 @@ reply_to_content: ${String(replyTo?.content || '').trim()}
 
 ${
   recentComments
-    ? `【当前评论列表（引用码用于 reply_to，最近12条及必要上级）】
+    ? `【${getMomentPromptLine('moment_comment.section.current_comments')}】
 ${String(recentComments || '').trim()}
 `
     : ''
 }
 
-【可用联系人名单】
-${String(contactList || '').trim() || '-（无）'}
+【${getMomentPromptLine('moment_comment.section.contacts')}】
+${String(contactList || '').trim() || getMomentPromptLine('moment_comment.empty_list')}
 
 ${String(groupList || '').trim()
-  ? `【可用群聊】\n${String(groupList || '').trim()}\n`
+  ? `【${getMomentPromptLine('moment_comment.section.groups')}】\n${String(groupList || '').trim()}\n`
   : ''}
 
 ${String(sideEffectInstructions || '').trim()}
@@ -691,7 +677,12 @@ export const buildMomentCommentGroupList = (
         if (!name || memberNames.includes(name)) return;
         memberNames.push(name);
       });
-      return `- ${groupName}（成员：${memberNames.length ? memberNames.join('、') : '未列出'}）`;
+      return getMomentPromptLine('moment_comment.group_line', {
+        group: groupName,
+        members: memberNames.length
+          ? memberNames.join(getMomentPromptLine('moment_comment.member_separator'))
+          : getMomentPromptLine('moment_comment.members_unlisted'),
+      });
     })
     .filter(Boolean)
     .join('\n');
@@ -819,7 +810,11 @@ export const buildMomentCommentTaskContext = ({
       personaDepth: profile?.depth,
       personaRole: profile?.role,
     },
-    character: { name: String(resolvedTarget?.name || '').trim() || String(authorName || '').trim() || '发布者' },
+    character: {
+      name: String(resolvedTarget?.name || '').trim()
+        || String(authorName || '').trim()
+        || getMomentPromptLine('moment_comment.label.publisher'),
+    },
     history: [],
     task: {
       type: 'moment_comment',
@@ -1617,7 +1612,7 @@ export const createMomentCommentLifecycleRuntime = ({
       bumpMomentEngagement(id, engagementCount);
     } catch {}
 
-    const authorName = String(moment.author || '').trim() || '发布者';
+    const authorName = String(moment.author || '').trim() || getMomentPromptLine('moment_comment.label.publisher');
     const originSessionId = String(
       moment.originSessionId || moment.authorId || getCurrentSessionId() || '',
     ).trim();
@@ -1683,20 +1678,22 @@ export const createMomentCommentLifecycleRuntime = ({
       : '';
     const userLine = isPublishedMomentComment
       ? [
-          '{{user}}刚刚发布了这条动态。',
-          '请让可用联系人对这条动态进行自然评论；不要代替{{user}}追加评论，也不要让{{user}}自评。',
+          getMomentPromptLine('moment_comment.published_notice'),
+          getMomentPromptLine('moment_comment.published_instruction'),
         ].join('\n')
       : isReplyToComment
-      ? `{{user}}回复了${replyTo.author}：{{lastUserMessage}}`
+      ? getMomentPromptLine('moment_comment.reply_line', { author: replyTo.author })
       : `{{user}}：{{lastUserMessage}}`;
     const promptData = buildMomentCommentPromptData({
       taskTitle: isPublishedMomentComment
-        ? 'QQ空间动态发布后评论（数据）'
-        : 'QQ空间动态评论回复（数据）',
+        ? getMomentPromptLine('moment_comment.title.published')
+        : getMomentPromptLine('moment_comment.title.reply'),
       authorName,
-      content: momentPromptContent || '（无文字，仅图片动态）',
+      content: momentPromptContent || getMomentPromptLine('moment_comment.image_only'),
       time: String(moment.time || '').trim(),
-      userSectionTitle: isPublishedMomentComment ? '用户发布动态' : '用户评论',
+      userSectionTitle: isPublishedMomentComment
+        ? getMomentPromptLine('moment_comment.section.user_post')
+        : getMomentPromptLine('moment_comment.section.user_comment'),
       userLine,
       isReplyToComment,
       replyTo: isReplyToComment
@@ -1706,7 +1703,7 @@ export const createMomentCommentLifecycleRuntime = ({
           }
         : null,
       recentComments,
-      contactList: contactList || '-（无）',
+      contactList: contactList || getMomentPromptLine('moment_comment.empty_list'),
       groupList,
       sideEffectInstructions,
     });
@@ -1812,7 +1809,7 @@ export const createMomentCommentLifecycleRuntime = ({
       }));
 
       const generationInput = isPublishedMomentComment
-        ? (momentPromptContent || '（无文字，仅图片动态）')
+        ? (momentPromptContent || getMomentPromptLine('moment_comment.image_only'))
         : userComment;
       const { fullRaw, sawMomentReply } = await runGeneration(generationInput, context, {
         stream: Boolean(config.stream),
