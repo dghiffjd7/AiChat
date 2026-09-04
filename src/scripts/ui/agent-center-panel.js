@@ -4038,7 +4038,7 @@ export class AgentCenterPanel {
             <div class="agent-center-card-sub agent-center-agent-card-description">${escapeHtml((Array.isArray(agent.detail) ? agent.detail[0] : '') || agent.summary || '')}</div>
             <div class="agent-center-agent-card-footer">
                 <span>${escapeHtml(displayCardCategory(agent.category) || 'Agent')}</span>
-                <span>详情 ${ICONS.chevron}</span>
+                <span>${escapeHtml(translateUiText('详情'))} ${ICONS.chevron}</span>
             </div>
         `;
     }

@@ -1546,12 +1546,6 @@
     ]
   },
   {
-    "source": "{value}上游",
-    "references": [
-      "scripts/i18n/manual-ui-source-keys.json#manual"
-    ]
-  },
-  {
     "source": "{value}失败",
     "references": [
       "src/scripts/ui/app.js#ui-call"
@@ -1585,12 +1579,6 @@
   },
   {
     "source": "{value}无可用预设",
-    "references": [
-      "scripts/i18n/manual-ui-source-keys.json#manual"
-    ]
-  },
-  {
-    "source": "{value}下游",
     "references": [
       "scripts/i18n/manual-ui-source-keys.json#manual"
     ]
@@ -25262,6 +25250,12 @@
     ]
   },
   {
+    "source": "上游",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
     "source": "上游 route 格式无效。",
     "references": [
       "scripts/i18n/manual-ui-source-keys.json#manual"
@@ -31973,6 +31967,12 @@
     ]
   },
   {
+    "source": "下游",
+    "references": [
+      "scripts/i18n/manual-ui-source-keys.json#manual"
+    ]
+  },
+  {
     "source": "下游影响",
     "references": [
       "scripts/i18n/manual-ui-source-keys.json#manual",
@@ -32216,7 +32216,7 @@
     ]
   },
   {
-    "source": "详情 {value}",
+    "source": "详情",
     "references": [
       "scripts/i18n/manual-ui-source-keys.json#manual"
     ]

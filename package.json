@@ -1,6 +1,6 @@
 {
   "name": "omnitavern",
-  "version": "0.7.2-diagnose-8",
+  "version": "0.7.2",
   "description": "A cross-platform chat application with LLM integration",
   "type": "module",
   "scripts": {

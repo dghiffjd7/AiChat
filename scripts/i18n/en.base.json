@@ -4395,10 +4395,8 @@
   "{value}（自定义 · 未验证）": "{value} (custom · unverified)",
   "{value}{value2}分层": "{value}{value2} layers",
   "{value}/{value2} 条规则启用 · {value3}": "{value}/{value2} rules enabled · {value3}",
-  "{value}上游": "{value} upstream",
   "{value}失败": "{value} failed",
   "{value}世界书 {value2}": "{value} lorebooks {value2}",
-  "{value}下游": "{value} downstream",
   "{value}正则「{value2}」已存在（现有 {value3} 条，导入 {value4} 条）。 覆盖会完整替换该集合的规则与绑定；保留两份会新建一个同名集合。": "The {value} regex set “{value2}” already exists ({value3} existing rules, {value4} imported). Overwrite replaces all rules and bindings in the set; Keep Both creates another set with the same name.",
   "{value}正则集合": "{value} regex sets",
   "「{value}」匹配到 {value2} 个按钮，请改用 ref 指定。": "“{value}” matched {value2} buttons; use ref to specify one.",
@@ -4610,7 +4608,6 @@
   "未注入：{value}": "Not injected: {value}",
   "下载动图失败：{value}": "Failed to download animation: {value}",
   "下载失败：{value}": "Download failed: {value}",
-  "详情 {value}": "Details {value}",
   "消息 {value}{value2}{value3}{value4}": "Message {value}{value2}{value3}{value4}",
   "效果：{value}": "Effect: {value}",
   "写入预览：{value}": "Write preview: {value}",
@@ -7149,5 +7146,8 @@
   "[表情]": "[Sticker]",
   "[音乐]": "[Music]",
   "[转账]": "[Transfer]",
-  "[文件]": "[File]"
+  "[文件]": "[File]",
+  "详情": "Details",
+  "上游": "Upstream",
+  "下游": "Downstream"
 }

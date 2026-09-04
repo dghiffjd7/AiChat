@@ -1,3 +1,5 @@
+import { translateUiText } from '../../i18n/index.js';
+
 const TERMINAL_TASK_STATUSES = new Set(['succeeded', 'failed', 'cancelled', 'skipped']);
 const RUNNING_TASK_STATUSES = new Set(['running', 'queued']);
 
@@ -661,8 +663,8 @@ const renderDetailsHtml = view => {
         <div><dt>阶段</dt><dd>T+${escapeHtml(task.timeBucket)}</dd></div>
       </dl>
       <div class="creative-execution-detail-actions">
-        <button type="button" data-cel-jump-upstream="${escapeHtml(task.id)}" ${upstreamId ? '' : 'disabled'}>${iconSvg('locate')}上游</button>
-        <button type="button" data-cel-jump-downstream="${escapeHtml(task.id)}" ${downstreamId ? '' : 'disabled'}>${iconSvg('locate')}下游</button>
+        <button type="button" data-cel-jump-upstream="${escapeHtml(task.id)}" ${upstreamId ? '' : 'disabled'}>${iconSvg('locate')}${escapeHtml(translateUiText('上游'))}</button>
+        <button type="button" data-cel-jump-downstream="${escapeHtml(task.id)}" ${downstreamId ? '' : 'disabled'}>${iconSvg('locate')}${escapeHtml(translateUiText('下游'))}</button>
       </div>
       ${errorText ? `<section class="creative-execution-detail-error"><strong>错误摘要</strong><p>${escapeHtml(errorText)}</p></section>` : ''}
       ${inputText ? `<details class="creative-execution-detail-block"><summary>输入摘要</summary><pre>${escapeHtml(inputText)}</pre></details>` : ''}
